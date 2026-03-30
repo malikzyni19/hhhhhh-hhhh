@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>ZyNi SMC — Login</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'JetBrains Mono',monospace;background:#0a0e17;color:#e2e8f0;min-height:100vh;display:flex;align-items:center;justify-content:center}
+
+.login-wrap{width:100%;max-width:360px;padding:24px}
+
+.logo{text-align:center;margin-bottom:36px}
+.logo-top{display:flex;align-items:flex-end;justify-content:center;gap:6px;margin-bottom:10px;height:52px;overflow:visible}
+.live-dot{width:10px;height:10px;border-radius:50%;background:#22c55e;box-shadow:0 0 10px #22c55e;flex-shrink:0;margin-bottom:10px;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.8)}}
+
+.zyni-wrap{display:inline-flex;align-items:flex-end;gap:1px;overflow:visible}
+.zl{
+  display:inline-block;
+  font-size:30px;
+  font-weight:700;
+  color:#22d3ee;
+  text-shadow:0 0 18px rgba(34,211,238,.6);
+  line-height:1;
+  will-change:transform;
+}
+.logo-rest{font-size:20px;font-weight:700;color:#22d3ee;letter-spacing:3px;opacity:.8;margin-bottom:2px}
+
+.logo-sub{font-size:10px;color:#334155;letter-spacing:3px;margin-top:6px}
+.glow-line{width:50px;height:2px;background:linear-gradient(90deg,transparent,#22d3ee,transparent);margin:10px auto 0;border-radius:2px;animation:glowPulse 2s ease-in-out infinite}
+@keyframes glowPulse{0%,100%{opacity:.3;width:30px}50%{opacity:1;width:90px}}
+
+.card{background:linear-gradient(135deg,#0d1828 0%,#0f1f2e 100%);border:1px solid #1e3040;border-radius:20px;padding:28px;animation:slideUp .5s ease .1s forwards;opacity:0;transform:translateY(14px)}
+@keyframes slideUp{to{opacity:1;transform:translateY(0)}}
+.card-title{font-size:11px;color:#64748b;letter-spacing:1.5px;margin-bottom:24px;text-align:center}
+
+.field{margin-bottom:16px}
+.field label{display:block;font-size:10px;color:#64748b;letter-spacing:.8px;text-transform:uppercase;margin-bottom:6px}
+.field input{width:100%;background:#080e1a;color:#e2e8f0;border:1px solid #1e3040;border-radius:10px;padding:12px 14px;font-family:'JetBrains Mono',monospace;font-size:14px;outline:none;transition:border-color .2s;letter-spacing:2px}
+.field input:focus{border-color:#22d3ee50;box-shadow:0 0 0 3px rgba(34,211,238,.05)}
+
+.btn{width:100%;background:linear-gradient(135deg,#0891b2,#0e7490);color:#fff;border:none;padding:13px;border-radius:10px;cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;letter-spacing:1px;transition:all .2s;box-shadow:0 0 20px rgba(8,145,178,.3);margin-top:4px}
+.btn:hover{box-shadow:0 0 30px rgba(8,145,178,.5);transform:translateY(-1px)}
+.btn:active{transform:translateY(0)}
+.error{background:#1f0a0a;border:1px solid #7f1d1d;color:#f87171;border-radius:8px;padding:10px 12px;font-size:11px;margin-bottom:16px;text-align:center}
+.footer{text-align:center;margin-top:20px;font-size:10px;color:#1e2d3d;letter-spacing:1px}
+</style>
+</head>
+<body>
+<div class="login-wrap">
+  <div class="logo">
+    <div class="logo-top">
+      <div class="live-dot"></div>
+      <div class="zyni-wrap">
+        <span class="zl" id="lZ">Z</span><span class="zl" id="lY">y</span><span class="zl" id="lN">N</span><span class="zl" id="lI">i</span>
+      </div>
+      <div class="logo-rest">SMC</div>
+    </div>
+    <div class="logo-sub">SMART MONEY SCREENER</div>
+    <div class="glow-line"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">ENTER PASSWORD TO ACCESS</div>
+    {% if error %}
+    <div class="error">{{ error }}</div>
+    {% endif %}
+    <form method="POST">
+      <div class="field">
+        <label>Password</label>
+        <input type="password" name="password" placeholder="••••••••" autofocus autocomplete="current-password" />
+      </div>
+      <button type="submit" class="btn">UNLOCK →</button>
+    </form>
+  </div>
+  <div class="footer">PRIVATE ACCESS ONLY</div>
+</div>
+
+<script>
+(function(){
+  var letters = [
+    document.getElementById('lZ'),
+    document.getElementById('lY'),
+    document.getElementById('lN'),
+    document.getElementById('lI')
+  ];
+  var JUMP = 26;
+  var DURATION = 380;
+  var GAP = 160;
+  var idx = 0;
+  var startTime = null;
+  var animating = false;
+
+  function easeInOutSine(t){ return -(Math.cos(Math.PI * t) - 1) / 2; }
+
+  function animateLetter(el, ts){
+    if(startTime === null) startTime = ts;
+    var progress = Math.min((ts - startTime) / DURATION, 1);
+    var y = -JUMP * Math.sin(Math.PI * progress);
+    el.style.transform = 'translateY(' + y.toFixed(2) + 'px)';
+    var glow = progress < 0.5
+      ? 'rgba(34,211,238,' + (0.6 + progress * 0.8).toFixed(2) + ')'
+      : 'rgba(34,211,238,0.6)';
+    var spread = Math.round(18 + progress * 30);
+    el.style.textShadow = '0 0 ' + spread + 'px ' + glow;
+    if(progress < 1){
+      requestAnimationFrame(function(t){ animateLetter(el, t); });
+    } else {
+      el.style.transform = 'translateY(0px)';
+      el.style.textShadow = '0 0 18px rgba(34,211,238,.6)';
+      idx = (idx + 1) % letters.length;
+      startTime = null;
+      setTimeout(next, GAP);
+    }
+  }
+
+  function next(){
+    requestAnimationFrame(function(ts){ animateLetter(letters[idx], ts); });
+  }
+
+  next();
+})();
+</script>
+</body>
+</html>
