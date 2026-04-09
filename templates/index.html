@@ -1,0 +1,1931 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>ZyNi SMC Screener</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg-primary:#0a0e17;--bg-card:#0d1525;--bg-input:#080e1a;--border:#1e3040;--text-primary:#e2e8f0;--text-secondary:#64748b;--accent:#22d3ee}
+[data-theme="light"]{--bg-primary:#f0f2f5;--bg-card:#ffffff;--bg-input:#f8fafc;--border:#e2e8f0;--text-primary:#1a202c;--text-secondary:#64748b;--accent:#0891b2}
+[data-theme="light"] body{background:#f4f6fa!important;color:#1a202c!important;background-image:linear-gradient(rgba(8,145,178,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(8,145,178,.05) 1px,transparent 1px)!important;background-size:40px 40px!important}
+[data-theme="light"] .header{background:#ffffff!important;border-bottom:3px solid #0891b2!important;box-shadow:0 0 20px rgba(8,145,178,.15),0 4px 12px rgba(0,0,0,.08)!important}
+[data-theme="light"] .card{background:#ffffff!important;border-color:#d0e5f0!important;border-top:2px solid #0891b250!important;box-shadow:0 2px 16px rgba(0,0,0,.06)!important}
+[data-theme="light"] .card-title{background:linear-gradient(90deg,#e8f4fb,#f4faff)!important;border-bottom-color:#d0e5f0!important;color:#0891b2!important}
+[data-theme="light"] .card-title::before{background:#0891b2!important;box-shadow:none!important}
+[data-theme="light"] .result-card{background:#f8fbff!important;border-color:#d0e5f0!important}
+[data-theme="light"] .result-card.bull-card{background:#f0faf4!important}
+[data-theme="light"] .result-card.bear-card{background:#fdf4f4!important}
+[data-theme="light"] .tabs{background:#ffffff!important;border-color:#d0e5f0!important}
+[data-theme="light"] .tab{color:#94a3b8!important}
+[data-theme="light"] .tab.active{background:linear-gradient(135deg,#e0f2fe,#bae6fd)!important;color:#0369a1!important;border-color:#7dd3fc!important;box-shadow:none!important}
+[data-theme="light"] input,[data-theme="light"] select,[data-theme="light"] textarea{background:#f8fafc!important;color:#1a202c!important;border-color:#e2e8f0!important}
+[data-theme="light"] .pair-item{background:#f8fafc!important;border-color:#e2e8f0!important}
+[data-theme="light"] .pair-symbol,[data-theme="light"] .symbol{color:#1a202c!important}
+[data-theme="light"] .price-tag,[data-theme="light"] .result-footer,[data-theme="light"] .status-text,[data-theme="light"] .pair-info-bar{color:#64748b!important}
+[data-theme="light"] .result-detail{color:#475569!important}
+[data-theme="light"] .card-title{color:#0891b2!important}
+[data-theme="light"] .card-title::before{background:#0891b2!important;box-shadow:none!important}
+[data-theme="light"] .setting-title{color:#0891b2!important}
+[data-theme="light"] .brand-name,.brand-rest{color:#0891b2}
+[data-theme="light"] .zl{color:#0891b2!important;text-shadow:none!important}
+[data-theme="light"] .brand-rest{color:#0891b2!important;text-shadow:none!important}
+[data-theme="light"] .clock{color:#0891b2!important}
+[data-theme="light"] .mode-pill{background:#f8fafc!important;border-color:#e2e8f0!important;color:#64748b!important}
+[data-theme="light"] .mode-pill.active{color:#0891b2!important;border-color:#0891b240!important;background:#e0f2fe!important}
+[data-theme="light"] .tip-box{background:#ffffff!important;border-color:#e2e8f0!important;border-left-color:#0891b2!important;color:#475569!important}
+[data-theme="light"] .tip-icon{background:#e0f2fe!important;color:#0891b2!important;border-color:#0891b235!important}
+[data-theme="light"] .btn-secondary{background:#f8fafc!important;border-color:#e2e8f0!important;color:#475569!important}
+[data-theme="light"] .chip,[data-theme="light"] .fib-chip{background:#f8fafc!important;border-color:#e2e8f0!important;color:#64748b!important}
+[data-theme="light"] .chip.active,[data-theme="light"] .fib-chip.active{background:#e0f2fe!important;border-color:#0891b2!important;color:#0891b2!important}
+[data-theme="light"] .badge.bull{background:#dcfce7!important;color:#16a34a!important;border-color:#86efac!important}
+[data-theme="light"] .badge.bear{background:#fecaca!important;color:#dc2626!important;border-color:#fca5a5!important}
+[data-theme="light"] .badge.neutral{background:#e0f2fe!important;color:#0369a1!important;border-color:#bae6fd!important}
+[data-theme="light"] .badge.warn{background:#fef3c7!important;color:#d97706!important;border-color:#fde68a!important}
+[data-theme="light"] .signal-chip{background:#f8fafc!important;border-color:#e2e8f0!important;color:#64748b!important}
+[data-theme="light"] .filter-signals{background:#f8fafc!important;border-color:#e2e8f0!important}
+[data-theme="light"] .empty{color:#94a3b8!important}
+[data-theme="light"] .live-label{color:#16a34a!important}
+[data-theme="light"] .live-dot{background:#16a34a!important;box-shadow:0 0 6px #16a34a!important}
+[data-theme="light"] .progress-wrap{background:#e2e8f0!important}
+[data-theme="light"] .dot:not([style]){background:#d1d5db!important}
+[data-theme="light"] .header-right{color:#64748b!important}
+/* Theme toggle */
+.theme-toggle{background:none;border:1px solid #1e3040;border-radius:50%;width:30px;height:30px;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;transition:all .2s;flex-shrink:0;line-height:1;-webkit-tap-highlight-color:transparent}
+.theme-toggle:hover{border-color:#22d3ee50;box-shadow:0 0 8px rgba(34,211,238,.2)}
+[data-theme="light"] .theme-toggle{border-color:#e2e8f0}
+/* FIX 1 — Full-screen ripple */
+.theme-ripple{position:fixed;border-radius:50%;pointer-events:none;z-index:99999;transform:scale(0);transition:none}
+.theme-ripple.expanding{animation:rippleExpand .8s ease-out forwards}
+@keyframes rippleExpand{0%{transform:scale(0);opacity:1}70%{opacity:1}100%{transform:scale(1);opacity:0}}
+/* Animations */
+@keyframes slideIn{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+.result-card{animation:slideIn .28s ease both}
+.skeleton{background:linear-gradient(90deg,#0d1525 25%,#1e3040 50%,#0d1525 75%);background-size:200% 100%;animation:shimmer 1.4s infinite;border-radius:12px;height:76px;border:1px solid #1e2d3d}
+[data-theme="light"] .skeleton{background:linear-gradient(90deg,#f0f4f8 25%,#e2e8f0 50%,#f0f4f8 75%);background-size:200% 100%;border-color:#e2e8f0}
+@keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+@keyframes dataPulse{0%{box-shadow:0 0 0 0 rgba(34,211,238,.4)}70%{box-shadow:0 0 0 8px rgba(34,211,238,0)}100%{box-shadow:0 0 0 0 rgba(34,211,238,0)}}
+/* TV link */
+.tv-link{text-decoration:none;font-size:13px;margin-left:5px;opacity:.55;transition:opacity .2s;vertical-align:middle}
+.tv-link:hover{opacity:1}
+/* Pairs upgrade */
+.pairs-toolbar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;align-items:center}
+.pairs-toolbar input,.pairs-toolbar select{flex:1;min-width:120px}
+.quick-btns{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.quick-btn{background:#080e1a;border:1px solid #1e3040;color:#64748b;border-radius:7px;padding:5px 11px;cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:11px;transition:all .2s}
+.quick-btn:hover{border-color:#22d3ee40;color:#22d3ee}
+[data-theme="light"] .quick-btn{background:#f8fafc!important;border-color:#e2e8f0!important;color:#64748b!important}
+.watchlist-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+.watchlist-row input,.watchlist-row select{flex:1;min-width:100px}
+body{
+  font-family:'Inter',system-ui,sans-serif;
+  background:#04070e;
+  color:#e2e8f0;
+  min-height:100vh;
+  font-size:13px;
+  background-image:
+    linear-gradient(rgba(34,211,238,.035) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(34,211,238,.035) 1px,transparent 1px);
+  background-size:40px 40px;
+}
+
+/* ── Header ── */
+.header{
+  background:#030810;
+  border-bottom:3px solid #22d3ee;
+  box-shadow:0 0 30px rgba(34,211,238,.25),0 4px 20px rgba(0,0,0,.8);
+  padding:10px 18px;
+  display:flex;align-items:center;justify-content:space-between;
+  position:sticky;top:0;z-index:100;
+}
+.brand{display:flex;align-items:center;gap:12px}
+.brand-name{font-size:18px;font-weight:700;letter-spacing:1px;color:#22d3ee;display:flex;align-items:flex-end;gap:0;overflow:visible;line-height:1.2;text-shadow:0 0 20px rgba(34,211,238,.6)}
+.live-dot{width:9px;height:9px;border-radius:50%;background:#22c55e;box-shadow:0 0 10px #22c55e,0 0 20px rgba(34,197,94,.4);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.75)}}
+.live-dot.data-flash{animation:dataPulse .7s ease}
+.live-label{font-size:10px;color:#22c55e;letter-spacing:1.5px;font-family:'Inter',system-ui,sans-serif;font-weight:700;text-shadow:0 0 8px rgba(34,197,94,.5)}
+.header-right{display:flex;align-items:center;gap:10px;font-size:11px;color:#4b6280;font-family:'Inter',system-ui,sans-serif}
+.clock{color:#22d3ee;font-weight:700;font-family:'JetBrains Mono',monospace;font-size:13px;text-shadow:0 0 10px rgba(34,211,238,.4)}
+
+/* ── ZyNi jumping letters ── */
+.zl{display:inline-block;font-weight:700;color:#22d3ee;text-shadow:0 0 20px rgba(34,211,238,.8),0 0 40px rgba(34,211,238,.3);will-change:transform;line-height:1}
+.brand-rest{color:#22d3ee;letter-spacing:2px;font-weight:700;text-shadow:0 0 16px rgba(34,211,238,.4)}
+
+/* ── Layout ── */
+.wrap{max-width:1400px;margin:0 auto;padding:14px}
+
+/* ── Tabs ── */
+.tabs{display:flex;gap:2px;flex-wrap:nowrap;overflow-x:auto;margin-bottom:16px;background:#060c18;border:1px solid #0e2030;border-radius:10px;padding:5px;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{background:transparent;color:#3d5570;border:none;border-radius:7px;padding:9px 16px;cursor:pointer;font-family:'Inter',system-ui,sans-serif;font-size:12px;font-weight:600;letter-spacing:.5px;white-space:nowrap;transition:all .18s;flex-shrink:0}
+.tab:hover{color:#7fa8c0;background:#0a1525}
+.tab.active{background:linear-gradient(135deg,#0c3a52,#0a2d42);color:#22d3ee;box-shadow:0 0 16px rgba(34,211,238,.2),inset 0 1px 0 rgba(34,211,238,.1);border:1px solid rgba(34,211,238,.2)}
+
+/* ── Scan mode pills ── */
+.mode-pills{display:flex;gap:6px}
+.mode-pill{background:#080e1a;color:#64748b;border:1px solid #1e3040;border-radius:8px;padding:7px 14px;cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;letter-spacing:.5px;transition:all .2s}
+.mode-pill.active{background:linear-gradient(135deg,#0e4b5c,#0d3d4f);color:#22d3ee;border-color:#22d3ee40;box-shadow:0 0 8px rgba(34,211,238,.15)}
+.filter-signals{display:none;background:#080e1a;border:1px solid #1e3040;border-radius:10px;padding:10px 12px;margin-bottom:8px}
+.filter-signals.visible{display:block}
+.filter-signals .fs-title{font-size:10px;color:#64748b;letter-spacing:.8px;margin-bottom:8px}
+.signal-chips{display:flex;gap:8px;flex-wrap:wrap}
+.signal-chip{display:flex;align-items:center;gap:5px;background:#0d1828;border:1px solid #1e3040;border-radius:8px;padding:6px 12px;cursor:pointer;font-size:11px;font-weight:600;color:#64748b;transition:all .2s;user-select:none}
+.signal-chip input{display:none}
+.signal-chip.active{color:#22d3ee;border-color:#22d3ee50;background:#0e3a4a;box-shadow:0 0 6px rgba(34,211,238,.1)}
+.signal-chip.active-ob{color:#f97316;border-color:#f9731650;background:#1a1206}
+.signal-chip.active-fib{color:#a78bfa;border-color:#a78bfa50;background:#130f1e}
+.page{display:none}.page.active{display:block}
+
+/* ── Help Tooltips ── */
+.tip-icon{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:#10243a;color:#22d3ee;font-size:9px;font-style:normal;cursor:pointer;border:1px solid #22d3ee35;vertical-align:middle;margin-left:5px;user-select:none;flex-shrink:0;transition:background .15s;-webkit-tap-highlight-color:transparent}
+.tip-icon:hover,.tip-icon:active{background:#0e4b5c;border-color:#22d3ee70}
+.tip-box{display:none;background:#070d18;border:1px solid #22d3ee25;border-left:2px solid #22d3ee;border-radius:6px;padding:9px 11px;font-size:10.5px;color:#94a3b8;line-height:1.6;margin:4px 0 10px 0;animation:tipIn .15s ease}
+.tip-box.open{display:block}
+@keyframes tipIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+
+/* ── Cards ── */
+.card{background:#05080f;border:1px solid #0d2035;border-top:2px solid #22d3ee55;border-radius:12px;padding:0 18px 18px;margin-bottom:14px;box-shadow:0 4px 30px rgba(0,0,0,.6),0 0 0 1px rgba(34,211,238,.04);overflow:hidden}
+.card-title{font-size:11px;font-weight:700;color:#22d3ee;letter-spacing:1.5px;text-transform:uppercase;display:flex;align-items:center;gap:10px;font-family:'Inter',system-ui,sans-serif;background:linear-gradient(90deg,#071525 0%,#050d18 100%);padding:12px 18px;border-bottom:1px solid #0d2030;margin:0 -18px 16px;border-radius:10px 10px 0 0}
+.card-title::before{content:'';width:3px;height:13px;background:#22d3ee;border-radius:2px;box-shadow:0 0 12px rgba(34,211,238,.9),0 0 24px rgba(34,211,238,.3);flex-shrink:0}
+
+/* ── Grid helpers ── */
+.split{display:grid;grid-template-columns:340px 1fr;gap:14px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px}
+
+/* ── Form fields ── */
+.field{display:flex;flex-direction:column;gap:5px}
+.field label{font-size:10px;color:#64748b;letter-spacing:.6px;text-transform:uppercase;font-family:'Inter',system-ui,sans-serif;font-weight:500}
+.field input,.field select{background:#080e1a;color:#e2e8f0;border:1px solid #1e3040;border-radius:8px;padding:9px 10px;font-family:'JetBrains Mono',monospace;font-size:12px;outline:none;transition:border-color .2s,box-shadow .2s}
+.field input:focus,.field select:focus{border-color:#22d3ee50;box-shadow:0 0 0 3px rgba(34,211,238,.05)}
+.field select option{background:#0d1828}
+.checkbox-row{display:flex;align-items:center;gap:8px;padding-top:22px;font-size:12px;color:#94a3b8;font-family:'Inter',system-ui,sans-serif}
+.checkbox-row input[type=checkbox]{width:14px;height:14px;accent-color:#22d3ee}
+
+/* ── Buttons ── */
+@keyframes scanPulse{0%,100%{box-shadow:0 0 20px rgba(34,211,238,.4),0 0 0 1px rgba(34,211,238,.3)}50%{box-shadow:0 0 40px rgba(34,211,238,.7),0 0 0 1px rgba(34,211,238,.5)}}
+.btn-primary{background:linear-gradient(135deg,#0891b2 0%,#06b6d4 100%);color:#fff;border:none;padding:13px 16px;border-radius:10px;cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;letter-spacing:1px;transition:all .2s;box-shadow:0 0 24px rgba(34,211,238,.5),0 0 0 1px rgba(34,211,238,.25);position:relative;overflow:hidden;animation:scanPulse 2.5s ease-in-out infinite}
+.btn-primary::after{content:'';position:absolute;inset:0;background:linear-gradient(135deg,rgba(255,255,255,.12),transparent);pointer-events:none}
+.btn-primary:hover{box-shadow:0 0 40px rgba(34,211,238,.8),0 0 0 2px rgba(34,211,238,.5);transform:translateY(-2px);animation:none}
+.btn-primary:active{transform:translateY(0)}
+.btn-secondary{background:#040910;color:#4b6280;border:1px solid #122030;padding:13px 16px;border-radius:10px;cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:12px;transition:all .2s}
+.btn-secondary:hover{border-color:#22d3ee30;color:#7fa8c0}
+.btn-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+
+/* ── Status ── */
+.status-text{font-size:11px;color:#64748b}
+.status-text.scanning{color:#f59e0b;animation:blink 1s infinite}
+@keyframes blink{50%{opacity:.4}}
+.status-text.done{color:#22c55e}
+
+/* ── Progress bar ── */
+.progress-wrap{background:#080e1a;border-radius:4px;height:3px;margin:8px 0;overflow:hidden;display:none}
+.progress-wrap.active{display:block}
+.progress-bar{height:100%;background:linear-gradient(90deg,#22d3ee,#0891b2);border-radius:4px;transition:width .3s;width:0}
+
+/* ── Result cards ── */
+.results{display:grid;gap:6px}
+.result-card{background:#05090f;border:1px solid #0a1d2e;border-left:3px solid #22d3ee50;border-radius:10px;padding:12px 14px;transition:all .18s;box-shadow:none}
+.result-card:hover{border-color:#1a3550;border-left-color:#22d3ee;box-shadow:0 0 20px rgba(34,211,238,.08),inset 0 0 30px rgba(34,211,238,.02);background:#060c18}
+.result-card.bull-card{border-left:3px solid #22c55e70;background:#040c08}
+.result-card.bull-card:hover{border-left-color:#22c55e;box-shadow:0 0 20px rgba(34,197,94,.1),inset 0 0 30px rgba(34,197,94,.02);border-color:#1a3528}
+.result-card.bear-card{border-left:3px solid #f8717170;background:#0a0508}
+.result-card.bear-card:hover{border-left-color:#f87171;box-shadow:0 0 20px rgba(248,113,113,.1),inset 0 0 30px rgba(248,113,113,.02);border-color:#35181a}
+.result-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.symbol{font-size:14px;font-weight:700;color:#e2e8f0;font-family:'JetBrains Mono',monospace}
+.price-tag{font-size:11px;color:#64748b;font-family:'JetBrains Mono',monospace}
+.badges{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px}
+.badge{display:inline-flex;align-items:center;padding:3px 9px;border-radius:5px;font-size:10px;font-weight:700;letter-spacing:.6px;text-transform:uppercase}
+.badge.bull{background:rgba(34,197,94,.15);color:#4ade80;border:1px solid rgba(34,197,94,.35)}
+.badge.bear{background:rgba(248,113,113,.12);color:#f87171;border:1px solid rgba(248,113,113,.3)}
+.badge.neutral{background:rgba(147,197,253,.1);color:#93c5fd;border:1px solid rgba(147,197,253,.25)}
+.badge.warn{background:rgba(251,191,36,.1);color:#fbbf24;border:1px solid rgba(251,191,36,.3)}
+.result-detail{font-size:11px;color:#94a3b8;line-height:1.5;margin-bottom:4px;font-family:'Inter',system-ui,sans-serif}
+.result-footer{font-size:10px;color:#475569;display:flex;gap:10px;font-family:'Inter',system-ui,sans-serif}
+
+/* ── Strength dots ── */
+.strength-dots{display:flex;gap:3px;align-items:center}
+.dot{width:6px;height:6px;border-radius:50%}
+
+/* ── Pairs list ── */
+.pair-item{background:#080e1a;border:1px solid #1e2d3d;border-radius:10px;padding:10px 12px;display:flex;align-items:center;gap:10px;cursor:pointer;transition:border-color .2s}
+.pair-item:hover{border-color:#22d3ee30}
+.pair-item input[type=checkbox]{accent-color:#22d3ee;width:14px;height:14px;flex-shrink:0}
+.pair-symbol{font-weight:600;color:#e2e8f0;flex:1;font-family:'JetBrains Mono',monospace}
+.pair-stats{font-size:10px;color:#64748b;display:flex;gap:8px;font-family:'JetBrains Mono',monospace}
+.up{color:#4ade80}.down{color:#f87171}
+
+/* ── Settings ── */
+.setting-section{margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid #1a2840}
+.setting-section:last-child{border-bottom:none;margin-bottom:0}
+.setting-title{font-size:10px;color:#22d3ee;letter-spacing:1.2px;font-weight:700;margin-bottom:10px;text-transform:uppercase;font-family:'Inter',system-ui,sans-serif}
+.subrow{display:grid;grid-template-columns:180px 1fr;gap:8px;align-items:center;margin-bottom:8px}
+.subrow label{font-size:11px;color:#94a3b8;display:flex;align-items:center;gap:6px;font-family:'Inter',system-ui,sans-serif}
+.subrow input[type=checkbox]{accent-color:#22d3ee}
+
+/* ── Chips ── */
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{padding:4px 10px;border-radius:6px;background:#080e1a;border:1px solid #1e3040;cursor:pointer;font-size:11px;color:#64748b;transition:all .2s}
+.chip:hover{border-color:#22d3ee40;color:#94a3b8}
+.chip.active{background:#0e4b5c;border-color:#22d3ee;color:#22d3ee}
+.fib-chip{padding:4px 10px;border-radius:6px;background:#080e1a;border:1px solid #1e3040;cursor:pointer;font-size:11px;color:#64748b;transition:all .2s}
+.fib-chip.active{background:#0e4b5c;border-color:#22d3ee;color:#22d3ee}
+
+/* ── Empty state ── */
+.empty{text-align:center;padding:40px 20px;color:#334155;font-size:12px}
+
+/* ── Pair info ── */
+.pair-info-bar{font-size:11px;color:#64748b;margin:8px 0}
+
+/* Scan overlay popup */
+.scan-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.85);backdrop-filter:blur(6px);z-index:10000;display:flex;align-items:center;justify-content:center;animation:overlayIn .3s ease}
+@keyframes overlayIn{from{opacity:0}to{opacity:1}}
+.scan-popup{background:var(--bg-card,#0d1525);border:1px solid var(--accent,#22d3ee);border-radius:16px;padding:24px 28px;text-align:center;box-shadow:0 0 60px rgba(34,211,238,.15);animation:popupBounce .4s cubic-bezier(.34,1.56,.64,1);min-width:300px;max-width:340px;position:relative;overflow:hidden}
+@keyframes popupBounce{from{opacity:0;transform:scale(.7) translateY(20px)}to{opacity:1;transform:scale(1) translateY(0)}}
+.matrix-canvas{position:absolute;top:0;left:0;right:0;bottom:0;opacity:.12;pointer-events:none;z-index:0}
+.scan-popup-content{position:relative;z-index:1}
+.scan-popup .scan-ring{width:44px;height:44px;border:3px solid var(--border,#1e3040);border-top-color:var(--accent,#22d3ee);border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 14px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.scan-popup .scan-title{font-size:14px;font-weight:700;color:var(--accent,#22d3ee);letter-spacing:2px;margin-bottom:16px}
+.scan-progress-wrap{width:100%;height:6px;background:var(--bg-input,#080e1a);border-radius:3px;overflow:hidden;margin-bottom:12px}
+.scan-progress-bar{height:100%;width:0%;background:linear-gradient(90deg,#22d3ee,#a78bfa);border-radius:3px;transition:width .3s ease;box-shadow:0 0 8px rgba(34,211,238,.5)}
+.scan-progress-text{font-size:12px;color:var(--accent,#22d3ee);font-weight:600;margin-bottom:10px;letter-spacing:1px}
+.scan-pair-name{font-size:13px;color:var(--text-primary,#e2e8f0);font-weight:700;letter-spacing:2px;margin-bottom:8px;min-height:20px}
+@keyframes pairFade{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+.scan-status-text{font-size:10px;color:var(--text-secondary,#64748b);letter-spacing:1px;margin-top:6px}
+/* legacy skel classes kept for safety */
+.skel-row{display:flex;gap:10px;margin-bottom:10px;align-items:center}
+.skel-bar{height:14px;border-radius:6px;background:linear-gradient(90deg,#080e1a 25%,#1e3040 50%,#080e1a 75%);background-size:200% 100%;animation:shimmer 1.5s infinite}
+.skel-bar.w30{width:30%}.skel-bar.w50{width:50%}.skel-bar.w70{width:70%}.skel-bar.w100{width:100%}
+.skel-bar.h8{height:8px}.skel-bar.h20{height:20px}
+
+/* Pro #2 — Candle countdown */
+.countdown{font-size:11px;color:#22d3ee;font-weight:600;letter-spacing:.8px;opacity:.85;font-family:'JetBrains Mono',monospace}
+
+/* Pro #3 — Heatmap */
+.view-toggle{display:flex;gap:6px;margin-bottom:10px}
+.view-btn{padding:6px 14px;border-radius:6px;border:1px solid #0d2035;background:#05090f;color:#4b6280;font-size:11px;cursor:pointer;font-family:'Inter',system-ui,sans-serif;transition:all .2s}
+.view-btn.active{background:#22d3ee;color:#000;border-color:#22d3ee;font-weight:700}
+.heatmap-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:6px}
+.heat-cell{padding:10px 6px;border-radius:8px;text-align:center;font-size:10px;font-weight:600;cursor:pointer;transition:transform .2s;border:1px solid transparent}
+.heat-cell:hover{transform:scale(1.05)}
+.heat-cell .heat-symbol{font-size:11px;font-weight:700}
+.heat-cell .heat-price{font-size:9px;opacity:.7;margin-top:2px}
+.heat-cell.bull{background:rgba(34,197,94,.15);border-color:rgba(34,197,94,.3);color:#22c55e}
+.heat-cell.bear{background:rgba(239,68,68,.15);border-color:rgba(239,68,68,.3);color:#ef4444}
+.heat-cell.neutral{background:rgba(100,116,139,.15);border-color:rgba(100,116,139,.3);color:#94a3b8}
+.heat-cell.strong{opacity:1}.heat-cell.moderate{opacity:.75}.heat-cell.weak{opacity:.5}
+
+/* Pro #4 — Collapsible cards */
+.result-details{max-height:0;overflow:hidden;transition:max-height .3s ease,opacity .3s ease;opacity:0}
+.result-card.expanded .result-details{max-height:600px;opacity:1}
+.expand-icon{font-size:10px;color:#4b6280;transition:transform .3s;display:inline-block;margin-left:4px}
+.result-card.expanded .expand-icon{transform:rotate(180deg)}
+.result-card{cursor:pointer}
+
+/* Pro #5 — Coin icon */
+.coin-icon{vertical-align:middle;margin-right:4px;border-radius:50%;width:18px;height:18px}
+
+/* Pro #6 — Watchlist star */
+.star-btn{cursor:pointer;font-size:15px;color:#3d5570;transition:all .2s;margin-left:6px;user-select:none;-webkit-tap-highlight-color:transparent}
+.star-btn.starred{color:#fbbf24;text-shadow:0 0 10px rgba(251,191,36,.6)}
+.star-btn:hover{transform:scale(1.25)}
+
+/* Pro #7 — Scan time */
+.scan-time{font-size:9px;color:#475569;opacity:.5;margin-top:6px;text-align:right;font-family:'Inter',system-ui,sans-serif}
+.score-ring{width:38px;height:38px;position:relative;display:inline-block;flex-shrink:0}
+.score-ring svg{transform:rotate(-90deg)}
+.score-ring .score-ring-num{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:11px;font-weight:800;color:var(--text-primary,#e2e8f0);line-height:1}
+
+/* Pro #8 — Summary bar */
+.scan-summary{display:flex;gap:0;margin-bottom:12px;background:#05080f;border:1px solid #0d2035;border-radius:10px;overflow:hidden}
+.summary-stat{flex:1;padding:10px 8px;text-align:center;border-right:1px solid #0d2035}
+.summary-stat:last-child{border-right:none}
+.summary-label{display:block;font-size:9px;color:#4b6280;letter-spacing:1px;margin-bottom:4px;font-family:'Inter',system-ui,sans-serif;font-weight:600;text-transform:uppercase}
+.summary-value{font-size:20px;font-weight:700;color:#e2e8f0;font-family:'JetBrains Mono',monospace}
+.summary-value.bull{color:#22c55e}.summary-value.bear{color:#ef4444}
+.result-card svg{opacity:.8}
+[data-theme="light"] .scan-summary{background:#ffffff!important;border-color:#d0e5f0!important}
+[data-theme="light"] .summary-stat{border-right-color:#d0e5f0!important}
+[data-theme="light"] .view-btn{background:#f8fafc!important;border-color:#d0e5f0!important;color:#64748b!important}
+[data-theme="light"] .scan-popup{background:#ffffff!important}
+[data-theme="light"] .skel-bar{background:linear-gradient(90deg,#f0f4f8 25%,#e2e8f0 50%,#f0f4f8 75%)!important;background-size:200% 100%!important}
+
+/* ── Responsive ── */
+@media(max-width:900px){
+  .split,.row,.row3{grid-template-columns:1fr}
+  .subrow{grid-template-columns:1fr}
+  .brand-name{font-size:13px}
+}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="brand">
+    <div class="live-dot"></div>
+    <div>
+      <div class="brand-name"><span class="zl l1">Z</span><span class="zl l2">y</span><span class="zl l3">N</span><span class="zl l4">i</span><span class="brand-rest">&nbsp;SMC SCREENER</span></div>
+    </div>
+    <div class="live-label">LIVE</div>
+  </div>
+  <div class="header-right">
+    <span id="clock" class="clock">--:--:--</span>
+    <span>UTC</span>
+    <span id="candleCountdown" class="countdown"></span>
+    <button id="themeToggle" class="theme-toggle" onclick="toggleTheme()" title="Toggle theme">🌙</button>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab active" onclick="showPage('scan',this)">SCAN</button>
+    <button class="tab" onclick="showPage('pairs',this)">PAIRS</button>
+    <button class="tab" onclick="showPage('settings',this)">SETTINGS</button>
+    <button class="tab" onclick="showPage('compressed',this)">COMPRESSED</button>
+    <button class="tab" onclick="showPage('trending',this)">TRENDING</button>
+    <button class="tab" onclick="showPage('athatl',this)">ATH / ATL</button>
+    <button class="tab" onclick="showPage('bias',this)">BIAS</button>
+  </div>
+
+  <!-- SCAN PAGE -->
+  <div id="page-scan" class="page active">
+    <div class="split">
+      <div>
+        <div class="card">
+          <div class="card-title">MAIN SCAN</div>
+          <div class="row">
+            <div class="field">
+              <label>Scan Source <span class="tip-icon" onclick="toggleTip('tip-scan-src')">ⓘ</span></label>
+              <select id="scanSource"><option value="selected">Selected Pairs</option><option value="market">Full Market</option></select>
+            </div>
+            <div class="field">
+              <label>Timeframe <span class="tip-icon" onclick="toggleTip('tip-tf')">ⓘ</span></label>
+              <select id="tf"><option>15m</option><option selected>1h</option><option>4h</option></select>
+            </div>
+          </div>
+          <div class="tip-box" id="tip-scan-src">Choose <b>Selected Pairs</b> to only scan the pairs you have chosen in the Pairs tab — fast and focused. Choose <b>Full Market</b> to scan all active USDT pairs on Binance — broader but slower.</div>
+          <div class="tip-box" id="tip-tf">The main chart timeframe used for all SMC analysis. <b>15m</b> is short-term and noisy, <b>1h</b> is the standard balanced choice, <b>4h</b> gives stronger and rarer signals. Higher timeframes = fewer but more reliable setups.</div>
+          <div class="row3">
+            <div class="field">
+              <label>Pairs / Cycle <span class="tip-icon" onclick="toggleTip('tip-pairs-cycle')">ⓘ</span></label>
+              <input id="pairsPerCycle" type="number" value="20">
+            </div>
+            <div class="field">
+              <label>Auto Interval <span class="tip-icon" onclick="toggleTip('tip-interval')">ⓘ</span></label>
+              <select id="autoInterval"><option>30</option><option selected>60</option><option>120</option><option>300</option></select>
+            </div>
+            <div class="checkbox-row">
+              <input id="roundRobin" type="checkbox" checked>
+              <label>Round Robin <span class="tip-icon" onclick="toggleTip('tip-rr')">ⓘ</span></label>
+            </div>
+          </div>
+          <div class="tip-box" id="tip-pairs-cycle">When Round Robin is on, this controls how many pairs are scanned each cycle. Lower = faster per cycle, higher = more coverage per cycle. Try 20–30 for a good balance.</div>
+          <div class="tip-box" id="tip-interval">How often the screener automatically reruns a scan cycle. <b>30s</b> is very frequent, <b>60s</b> is standard, <b>300s</b> is relaxed. Lower intervals use more data requests.</div>
+          <div class="tip-box" id="tip-rr">When enabled, each cycle scans a different batch of pairs, rotating through the full list over time. This prevents scanning the same pairs every cycle and gives broader market coverage. Recommended on.</div>
+          <div class="row" style="margin-bottom:6px">
+            <div class="checkbox-row" style="padding-top:0">
+              <input id="enableAutoScan" type="checkbox">
+              <label>Auto Scan <span class="tip-icon" onclick="toggleTip('tip-autoscan')">ⓘ</span></label>
+            </div>
+            <div class="field"><label>Status</label><div id="scanStatus" class="status-text">Idle</div></div>
+          </div>
+          <div class="tip-box" id="tip-autoscan">When enabled, the screener runs new scans continuously on its own at the set interval. You do not need to press Scan Now — it runs in the background and updates results automatically.</div>
+          <div class="progress-wrap" id="progressWrap"><div class="progress-bar" id="progressBar"></div></div>
+          <div class="btn-row">
+            <button class="btn-primary" onclick="runScan()">▶ SCAN NOW</button>
+            <button class="btn-secondary" onclick="toggleAutoScan()">⏱ AUTO</button>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="card">
+          <div class="card-title">RESULTS <span id="resultCount" style="font-size:10px;color:#64748b;font-weight:400;margin-left:6px"></span></div>
+          <div id="scanSummary" class="scan-summary" style="display:none">
+            <div class="summary-stat"><span class="summary-label">SETUPS</span><span class="summary-value" id="summaryTotal">0</span></div>
+            <div class="summary-stat"><span class="summary-label">BULLISH</span><span class="summary-value bull" id="summaryBull">0</span></div>
+            <div class="summary-stat"><span class="summary-label">BEARISH</span><span class="summary-value bear" id="summaryBear">0</span></div>
+            <div class="summary-stat"><span class="summary-label">STRONG</span><span class="summary-value" id="summaryStrong" style="color:var(--accent)">0</span></div>
+          </div>
+          <div class="view-toggle">
+            <button id="viewList" class="view-btn active" onclick="setView('list')">☰ List</button>
+            <button id="viewHeat" class="view-btn" onclick="setView('heatmap')">▦ Heatmap</button>
+          </div>
+          <div id="scanResults" class="results"><div class="empty">Run a scan to see results</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PAIRS PAGE -->
+  <div id="page-pairs" class="page">
+    <div class="card">
+      <div class="card-title">PAIR SELECTION</div>
+      <!-- Toolbar row 1: Load + Select All/Clear All -->
+      <div class="quick-btns" style="margin-bottom:8px">
+        <button class="btn-primary" onclick="loadPairs()" style="padding:7px 14px;font-size:11px">↻ LOAD</button>
+        <button class="quick-btn" onclick="selectAllPairs()">Select All</button>
+        <button class="quick-btn" onclick="clearAllPairs()">Clear All</button>
+        <button class="quick-btn" onclick="quickSelectPairs(10)">Top 10</button>
+        <button class="quick-btn" onclick="quickSelectPairs(30)">Top 30</button>
+        <button class="quick-btn" onclick="quickSelectPairs(50)">Top 50</button>
+        <button class="quick-btn" onclick="quickSelectPairs(100)">Top 100</button>
+      </div>
+      <!-- Category presets -->
+      <div class="quick-btns" style="margin-bottom:8px">
+        <span style="font-size:10px;color:#64748b;align-self:center;letter-spacing:.8px">CATEGORY:</span>
+        <button class="quick-btn" onclick="selectCategory('layer1')">Layer 1</button>
+        <button class="quick-btn" onclick="selectCategory('layer2')">Layer 2</button>
+        <button class="quick-btn" onclick="selectCategory('defi')">DeFi</button>
+        <button class="quick-btn" onclick="selectCategory('meme')">Meme</button>
+        <button class="quick-btn" onclick="selectCategory('ai')">AI</button>
+      </div>
+      <!-- Search + Sort -->
+      <div class="pairs-toolbar">
+        <input id="pairSearch" type="text" placeholder="Search pairs..." oninput="filterPairsList()" style="background:#080e1a;color:#e2e8f0;border:1px solid #1e3040;border-radius:8px;padding:8px 10px;font-family:'JetBrains Mono',monospace;font-size:12px;outline:none">
+        <select id="pairSort" onchange="sortPairsList()" style="background:#080e1a;color:#e2e8f0;border:1px solid #1e3040;border-radius:8px;padding:8px 10px;font-family:'JetBrains Mono',monospace;font-size:12px;outline:none">
+          <option value="volume">Volume ↓</option>
+          <option value="change">Change % ↓</option>
+          <option value="alpha">A → Z</option>
+        </select>
+      </div>
+      <!-- Manual add -->
+      <div style="margin-bottom:10px">
+        <textarea id="manualPairsInput" placeholder="Paste pairs: BTCUSDT,ETHUSDT,SOLUSDT..." rows="2" style="width:100%;background:#080e1a;color:#e2e8f0;border:1px solid #1e3040;border-radius:8px;padding:8px 10px;font-family:'JetBrains Mono',monospace;font-size:12px;outline:none;resize:vertical"></textarea>
+        <div style="display:flex;gap:8px;margin-top:6px;align-items:center">
+          <button class="quick-btn" onclick="addManualPairs()" style="padding:7px 14px">+ Add Pairs</button>
+          <span id="manualAddMsg" style="font-size:11px;color:#64748b"></span>
+        </div>
+      </div>
+      <!-- Watchlist -->
+      <div class="watchlist-row">
+        <input id="watchlistName" type="text" placeholder="Watchlist name..." style="background:#080e1a;color:#e2e8f0;border:1px solid #1e3040;border-radius:8px;padding:7px 10px;font-family:'JetBrains Mono',monospace;font-size:12px;outline:none">
+        <button class="quick-btn" onclick="saveWatchlist()" style="padding:7px 12px">💾 Save</button>
+        <select id="loadWatchlistSel" onchange="loadWatchlist(this.value)" style="background:#080e1a;color:#e2e8f0;border:1px solid #1e3040;border-radius:8px;padding:7px 10px;font-family:'JetBrains Mono',monospace;font-size:12px;outline:none;flex:1">
+          <option value="">Load watchlist...</option>
+        </select>
+      </div>
+      <div id="pairInfo" class="pair-info-bar"></div>
+      <div id="pairsList" class="results"></div>
+    </div>
+  </div>
+
+  <!-- SETTINGS PAGE -->
+  <div id="page-settings" class="page">
+    <div class="card">
+      <div class="card-title">SETTINGS</div>
+
+      <div class="setting-section">
+        <div class="setting-title">SCAN MODE <span class="tip-icon" onclick="toggleTip('tip-scanmode')">ⓘ</span></div>
+        <div class="tip-box" id="tip-scanmode"><b>Match</b> — shows all pairs that have any SMC signal. FVG, OB, and Fib badges appear as extras.<br><b>Filter Only</b> — only shows pairs that have ALL of the signal types you tick below. Use this to find the strongest confluence setups where multiple conditions line up at once.</div>
+        <div style="margin-bottom:10px">
+          <div class="mode-pills">
+            <button id="btnModeMatch" class="mode-pill active" onclick="setScanMode('match')">◈ Match</button>
+            <button id="btnModeFilter" class="mode-pill" onclick="setScanMode('filter')">⊟ Filter Only</button>
+          </div>
+          <div style="font-size:10px;color:#64748b;margin-top:6px" id="scanModeDesc">Show all pairs — FVG / OB / FIB badges appear as extras</div>
+        </div>
+        <div id="filterSignalBox" class="filter-signals">
+          <div class="fs-title">REQUIRE ALL CHECKED SIGNALS</div>
+          <div class="signal-chips">
+            <label id="chipFVG" class="signal-chip" onclick="toggleSignalChip(this,'filterFVG','active')"><input id="filterFVG" type="checkbox">FVG</label>
+            <label id="chipOB"  class="signal-chip" onclick="toggleSignalChip(this,'filterOB','active-ob')"><input id="filterOB"  type="checkbox">OB</label>
+            <label id="chipFIB" class="signal-chip" onclick="toggleSignalChip(this,'filterFIB','active-fib')"><input id="filterFIB" type="checkbox">FIB</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="setting-section">
+        <div class="setting-title">MARKET TYPE <span class="tip-icon" onclick="toggleTip('tip-market')">ⓘ</span></div>
+        <div class="tip-box" id="tip-market"><b>Perpetual</b> — uses Binance USDT futures pairs. These are leveraged contracts with no expiry, used by most active traders and institutions. More pairs, higher volume. Recommended for SMC analysis.<br><b>Spot</b> — uses regular buy/sell market data. No leverage. Good for identifying setups on actual token prices.</div>
+        <div class="row">
+          <div class="field">
+            <label>Market Source</label>
+            <select id="marketType">
+              <option value="spot">Spot</option>
+              <option value="perpetual" selected>Perpetual</option>
+            </select>
+          </div>
+          <div class="field" style="justify-content:flex-end;padding-top:20px">
+            <span id="marketTypeBadge" style="font-size:10px;color:#22d3ee;letter-spacing:1px;border:1px solid #22d3ee40;border-radius:6px;padding:4px 10px;background:#0e4b5c">PERP · USDT</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="setting-section">
+        <div class="setting-title">GENERAL</div>
+        <div class="row3">
+          <div class="field">
+            <label>Internal Lookback <span class="tip-icon" onclick="toggleTip('tip-ilen')">ⓘ</span></label>
+            <input id="iLen" type="number" value="5">
+          </div>
+          <div class="field">
+            <label>Swing Lookback <span class="tip-icon" onclick="toggleTip('tip-slen')">ⓘ</span></label>
+            <input id="sLen" type="number" value="30">
+          </div>
+          <div class="field">
+            <label>Approach % <span class="tip-icon" onclick="toggleTip('tip-approach')">ⓘ</span></label>
+            <input id="approachPct" type="number" step="0.1" value="2.0">
+          </div>
+        </div>
+        <div class="tip-box" id="tip-ilen">How many candles back the script looks to detect short-term structure. Lower = more sensitive to recent moves. Default of 5 works well for 1h charts.</div>
+        <div class="tip-box" id="tip-slen">How many candles back the script looks to identify swing highs and lows. Larger values find bigger structural moves. Default of 30 balances sensitivity and reliability.</div>
+        <div class="tip-box" id="tip-approach">How close (in %) price must be to an Order Block or zone before it is flagged as "approaching". Lower = stricter and fewer results. Higher = more results but less precise. 2% is a good starting point.</div>
+        <div class="row3">
+          <div class="field">
+            <label>Consol. Candles <span class="tip-icon" onclick="toggleTip('tip-consol')">ⓘ</span></label>
+            <input id="consolCandles" type="number" value="4">
+          </div>
+          <div class="field">
+            <label>RSI Overbought <span class="tip-icon" onclick="toggleTip('tip-rsi')">ⓘ</span></label>
+            <input id="rsiOB" type="number" value="75">
+          </div>
+          <div class="field"><label>RSI Oversold</label><input id="rsiOS" type="number" value="25"></div>
+        </div>
+        <div class="tip-box" id="tip-consol">How many consecutive candles must stay near a zone to count as consolidation. Higher values require longer holding around the zone, which signals stronger support or resistance. Try 3–6.</div>
+        <div class="tip-box" id="tip-rsi">RSI (Relative Strength Index) measures momentum. <b>Overbought</b> (default 75) means price may be due for a pullback. <b>Oversold</b> (default 25) means price may be due for a bounce. These thresholds are used as confluence signals in scan results.</div>
+      </div>
+
+      <div class="setting-section">
+        <div class="setting-title">ORDER BLOCK <span class="tip-icon" onclick="toggleTip('tip-ob-intro')">ⓘ</span></div>
+        <div class="tip-box" id="tip-ob-intro">An <b>Order Block (OB)</b> is a zone where large buyers or sellers placed big orders before a strong move. Price often returns to these zones. This section controls how the screener detects and filters Order Block setups.</div>
+        <div class="row3" style="margin-bottom:8px">
+          <div class="field">
+            <label>OB Distance % <span class="tip-icon" onclick="toggleTip('tip-ob-dist')">ⓘ</span></label>
+            <select id="obDistancePct">
+              <option value="0.5">0.5%</option>
+              <option value="1.0">1.0%</option>
+              <option value="1.5">1.5%</option>
+              <option value="2.0" selected>2.0%</option>
+              <option value="3.0">3.0%</option>
+              <option value="5.0">5.0%</option>
+              <option value="7.0">7.0%</option>
+              <option value="10.0">10.0%</option>
+            </select>
+          </div>
+        </div>
+        <div class="tip-box" id="tip-ob-dist">How close (in %) price must be to an Order Block zone to be flagged. <b>Lower</b> = price must be very close — fewer but more precise results. <b>Higher</b> = wider detection zone — more results but some may be less actionable. 2% is a good default for 1h.</div>
+        <div class="subrow">
+          <label><input id="useObStrengthFilter" type="checkbox"> OB Strength Filter <span class="tip-icon" onclick="toggleTip('tip-ob-strength')">ⓘ</span></label>
+          <div class="field"><label>Min %</label><input id="obMinStrengthPct" type="number" value="70"></div>
+        </div>
+        <div class="tip-box" id="tip-ob-strength">When enabled, only Order Blocks with a strength score above the <b>Min %</b> are kept. Strength is based on how explosive the move was that created the block. Higher min % removes weaker zones and keeps only high-quality blocks. Try 70% for a strong filter.</div>
+        <div class="subrow">
+          <label><input id="useHighProbOB" type="checkbox"> Use OB Quality Engine v2 <span class="tip-icon" onclick="toggleTip('tip-high-prob-ob')">ⓘ</span></label>
+          <div class="field" id="highProbQualityWrap" style="display:none">
+            <label>Min Quality</label>
+            <input id="obMinQuality" type="number" value="50" min="0" max="100" step="1">
+          </div>
+        </div>
+        <div class="tip-box" id="tip-high-prob-ob"><b>Near-discretionary OB filter.</b> When enabled, each Order Block gets a quality score using displacement strength, same-direction FVG relationship, liquidity sweep proximity, HTF bias alignment, opposing-zone danger, and freshness/retest behavior. The typed Min Quality value controls how strict the filter is. Higher = fewer but cleaner OBs.</div>
+        <div class="subrow">
+          <label><input id="useAtrObApproach" type="checkbox"> ATR-Based OB Approach <span class="tip-icon" onclick="toggleTip('tip-atr-ob-approach')">ⓘ</span></label>
+          <div class="field" id="atrObApproachWrap" style="display:none">
+            <label>ATR Mult</label>
+            <input id="obApproachAtrMult" type="number" value="0.5" min="0.1" max="5.0" step="0.1" style="width:60px">
+          </div>
+        </div>
+        <div class="tip-box" id="tip-atr-ob-approach">When enabled, the OB approach distance is calculated as <b>(ATR × multiplier) / price</b> instead of a fixed %. Slow/low-volatility coins get a tighter zone; fast/high-volatility coins get a wider zone automatically. <b>0.5</b> is a balanced default. Higher = wider approach zone.</div>
+      </div>
+
+      <div class="setting-section">
+        <div class="setting-title">FVG <span class="tip-icon" onclick="toggleTip('tip-fvg-intro')">ⓘ</span></div>
+        <div class="tip-box" id="tip-fvg-intro">A <b>Fair Value Gap (FVG)</b> is a price gap left behind when the market moves very quickly, leaving an area that was not properly traded through. Price often returns to fill these gaps. Use these filters to control which FVGs the screener includes.</div>
+        <div class="subrow">
+          <label><input id="useFvgValidOnly" type="checkbox" checked> Valid FVG Only <span class="tip-icon" onclick="toggleTip('tip-fvg-valid')">ⓘ</span></label>
+          <span></span>
+        </div>
+        <div class="tip-box" id="tip-fvg-valid">When enabled, only FVGs that pass the script's internal quality check are included. Weak or marginal gaps are removed. Keep this on to avoid noisy results — it filters out FVGs that are less likely to act as real price magnets.</div>
+        <div class="subrow">
+          <label><input id="useFvgState" type="checkbox"> FVG State <span class="tip-icon" onclick="toggleTip('tip-fvg-state')">ⓘ</span></label>
+          <div class="field"><select id="fvgState"><option value="all">All</option><option value="fresh">Fresh</option><option value="untouched">Untouched</option><option value="once_touched">Once Touched</option><option value="old_untouched">Old Untouched</option><option value="active_retested">Active Retested</option></select></div>
+        </div>
+        <div class="tip-box" id="tip-fvg-state"><b>Fresh</b> — just formed on recent candles. <b>Untouched</b> — price has not revisited the gap yet (highest probability). <b>Once Touched</b> — price dipped into it once. <b>Old Untouched</b> — older unfilled gap, still valid. <b>Active Retested</b> — currently being revisited by price. Best for entries: Untouched or Fresh.</div>
+        <div class="subrow">
+          <label><input id="useFvgAgeRange" type="checkbox"> Age Range <span class="tip-icon" onclick="toggleTip('tip-fvg-age')">ⓘ</span></label>
+          <div class="row" style="margin-bottom:0">
+            <div class="field"><label>Min</label><input id="fvgAgeMin" type="number" value="0"></div>
+            <div class="field"><label>Max</label><input id="fvgAgeMax" type="number" value="5"></div>
+          </div>
+        </div>
+        <div class="tip-box" id="tip-fvg-age">Filters by how many candles ago the FVG was formed. <b>Min</b> = earliest age allowed, <b>Max</b> = latest. For example Min 0 / Max 5 keeps only FVGs formed in the last 5 candles — very fresh. Use wider ranges to include older unfilled gaps.</div>
+        <div class="subrow">
+          <label><input id="useFvgDistance" type="checkbox"> Max Distance % <span class="tip-icon" onclick="toggleTip('tip-fvg-dist')">ⓘ</span></label>
+          <div class="field"><input id="fvgMaxDistancePct" type="number" step="0.1" value="1.5"></div>
+        </div>
+        <div class="tip-box" id="tip-fvg-dist">Only include FVGs within this percentage distance from current price. Lower value = only show FVGs that price is about to reach. Higher = show gaps further away. Useful for filtering out FVGs that are too far to be actionable right now.</div>
+        <div class="subrow">
+          <label><input id="useFvgTouchDepth" type="checkbox"> Touch Depth <span class="tip-icon" onclick="toggleTip('tip-fvg-touch')">ⓘ</span></label>
+          <div class="field"><select id="fvgTouchDepth"><option value="any">Any</option><option value="untouched">Untouched</option><option value="edge">Edge</option><option value="mid">Mid</option><option value="deep">Deep</option></select></div>
+        </div>
+        <div class="tip-box" id="tip-fvg-touch">Filters by how deeply price has already entered the gap. <b>Untouched</b> = price has never revisited (cleanest). <b>Edge</b> = only a shallow wick entry. <b>Mid</b> = price entered about halfway. <b>Deep</b> = price filled most of the gap. Use Untouched or Edge for the best setups.</div>
+        <div class="subrow">
+          <label><input id="useFvgObOverlap" type="checkbox"> OB + FVG Overlap <span class="tip-icon" onclick="toggleTip('tip-fvg-ob')">ⓘ</span></label>
+          <div class="row" style="margin-bottom:0">
+            <div class="field"><select id="fvgObOverlapMode"><option value="same_direction">Same Dir.</option><option value="any">Any</option></select></div>
+            <div class="field"><label>Min %</label><input id="fvgObMinOverlapPct" type="number" value="20"></div>
+          </div>
+        </div>
+        <div class="tip-box" id="tip-fvg-ob">When enabled, only FVGs that overlap with an Order Block are kept. This is a strong confluence filter — areas where both an FVG and an OB align are high-probability zones. <b>Min %</b> sets how much they must overlap. Same Direction means the OB and FVG must both be bullish or both bearish.</div>
+      </div>
+
+      <div class="setting-section">
+        <div class="setting-title">FIBONACCI <span class="tip-icon" onclick="toggleTip('tip-fib-intro')">ⓘ</span></div>
+        <div class="tip-box" id="tip-fib-intro"><b>Fibonacci retracement</b> helps find price levels where a pullback is likely to stop and reverse. The screener draws a Fib from a recent swing high to a swing low (or vice versa) and checks if price is sitting on key levels like 0.618 or 0.786.</div>
+        <div class="subrow">
+          <label><input id="useFibModule" type="checkbox"> Use Fib Module <span class="tip-icon" onclick="toggleTip('tip-fib-use')">ⓘ</span></label>
+          <span></span>
+        </div>
+        <div class="tip-box" id="tip-fib-use">Enables or disables the Fibonacci module entirely. When off, no Fib calculations are done and no Fib badges will appear in scan results. Turn on to add Fibonacci confluence to your scan.</div>
+        <div class="row" style="margin-bottom:10px">
+          <div class="field">
+            <label>Fib Timeframe <span class="tip-icon" onclick="toggleTip('tip-fib-tf')">ⓘ</span></label>
+            <select id="fibTf">
+              <option value="15m">15m</option>
+              <option value="1h" selected>1h</option>
+              <option value="4h">4h</option>
+              <option value="1d">1d</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Tolerance % <span class="tip-icon" onclick="toggleTip('tip-fib-tol')">ⓘ</span></label>
+            <input id="fibTolerancePct" type="number" step="0.1" value="0.5">
+          </div>
+        </div>
+        <div class="tip-box" id="tip-fib-tf">The timeframe used to calculate the Fibonacci leg. You can set this independently from the main scan timeframe. For example: scan on 15m but use 4h Fibs for higher-quality levels. Higher TF Fibs are generally more reliable.</div>
+        <div class="tip-box" id="tip-fib-tol">How close price must be to a Fib level to count as a REACTION hit. <b>0.5%</b> is strict — price must be almost exactly at the level. Increase if you are getting too few Fib results.</div>
+        <div style="display:flex;gap:10px;margin-bottom:10px">
+          <div style="flex:1">
+            <label>ATR Multiplier <span class="tip-icon" onclick="toggleTip('tip-fib-atr')">ⓘ</span></label>
+            <input id="fibAtrMultiplier" type="number" step="0.1" value="1.5" min="0.5" max="5.0">
+          </div>
+          <div style="flex:1">
+            <label>Approach Distance % <span class="tip-icon" onclick="toggleTip('tip-fib-approach')">ⓘ</span></label>
+            <input id="fibApproachPct" type="number" step="0.1" value="2.0" min="0.1" max="5.0">
+          </div>
+        </div>
+        <div class="tip-box" id="tip-fib-atr">Minimum swing size to qualify as a valid Fib leg, measured in ATR (Average True Range). <b>1.5</b> means the swing must be at least 1.5x the ATR. Higher = stricter, only large swings qualify. Lower = more legs found but may include noise. 1.5 is recommended.</div>
+        <div class="tip-box" id="tip-fib-approach">Distance from a Fib level at which the APPROACH alert fires. <b>2.0%</b> means you get alerted when price is within 2% of a level but hasn't touched it yet. The REACTION alert uses Tolerance % instead.</div>
+        <div style="margin-bottom:8px">
+          <div style="font-size:10px;color:#64748b;margin-bottom:6px">FIB LEVELS <span class="tip-icon" onclick="toggleTip('tip-fib-levels')">ⓘ</span></div>
+          <div class="tip-box" id="tip-fib-levels">Choose which Fibonacci retracement levels to watch. <b>0.5</b> = 50% pullback. <b>0.618</b> = the "golden ratio" — the most watched level by traders. <b>0.705</b> = slightly deeper, often creates strong entries. <b>0.786</b> = deep retracement, close to the full swing. Tap a chip to toggle a level on or off.</div>
+          <div class="chips">
+            <span class="fib-chip active" data-value="0.5">0.5</span>
+            <span class="fib-chip active" data-value="0.618">0.618</span>
+            <span class="fib-chip active" data-value="0.705">0.705</span>
+            <span class="fib-chip active" data-value="0.786">0.786</span>
+          </div>
+        </div>
+        <div class="subrow">
+          <label><input id="useFibRequireFvg" type="checkbox"> Require FVG Confluence <span class="tip-icon" onclick="toggleTip('tip-fib-fvg')">ⓘ</span></label>
+          <span></span>
+        </div>
+        <div class="tip-box" id="tip-fib-fvg">When enabled, a Fib hit is only counted if there is also a Fair Value Gap in the same direction near that Fib level. Bullish Fib requires a bullish FVG. Bearish Fib requires a bearish FVG.</div>
+        <div class="subrow">
+          <label><input id="useFibRequireOb" type="checkbox"> Require OB Confluence <span class="tip-icon" onclick="toggleTip('tip-fib-ob')">ⓘ</span></label>
+          <span></span>
+        </div>
+        <div class="tip-box" id="tip-fib-ob">When enabled, a Fib hit is only counted if there is also an Order Block in the same direction near that Fib level. Bullish Fib requires a bullish OB. Triple confluence (Fib + OB + FVG) creates very high-probability zones.</div>
+      </div>
+
+      <div class="setting-section">
+        <div class="setting-title">BTC CORRELATION <span class="tip-icon" onclick="toggleTip('tip-btc-intro')">ⓘ</span></div>
+        <div class="tip-box" id="tip-btc-intro">BTC Correlation measures how closely a coin's price moves with Bitcoin. A high correlation means the pair mostly follows BTC. A low correlation means it moves more independently. Use this to find pairs that trade on their own momentum instead of just following the market.</div>
+        <div class="subrow">
+          <label><input id="useBtcCorrelation" type="checkbox"> Use BTC Correlation <span class="tip-icon" onclick="toggleTip('tip-btc-use')">ⓘ</span></label>
+          <span></span>
+        </div>
+        <div class="tip-box" id="tip-btc-use">Enables the BTC correlation filter. When on, pairs are filtered by how much they move with BTC based on the Mode below. When off, all pairs are scanned regardless of their BTC correlation.</div>
+        <div class="row">
+          <div class="field">
+            <label>Mode <span class="tip-icon" onclick="toggleTip('tip-btc-mode')">ⓘ</span></label>
+            <select id="btcCorrelationMode"><option value="all">All Scan</option><option value="correlated">BTC Correlated</option><option value="non_correlated">Non-Correlated</option></select>
+          </div>
+          <div class="field">
+            <label>Lookback <span class="tip-icon" onclick="toggleTip('tip-btc-lb')">ⓘ</span></label>
+            <input id="btcLookback" type="number" value="60">
+          </div>
+        </div>
+        <div class="tip-box" id="tip-btc-mode"><b>All Scan</b> — no filtering, scan every pair. <b>BTC Correlated</b> — only scan pairs that move closely with BTC (useful during BTC-driven markets). <b>Non-Correlated</b> — only scan pairs moving independently (may have their own strong setups even when BTC is flat).</div>
+        <div class="tip-box" id="tip-btc-lb">Number of candles used to calculate the correlation between the pair and BTC. Higher = more stable and smoother reading. Lower = more reactive to recent changes. 60 candles (60 hours on 1h) is a solid default.</div>
+      </div>
+
+      <div class="setting-section">
+        <div class="setting-title">TRADINGVIEW LINKS</div>
+        <div class="subrow">
+          <label>Open links in:</label>
+          <select id="tvLinkTarget">
+            <option value="_blank">New tab</option>
+            <option value="_self">Same tab</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- COMPRESSED PAGE -->
+  <div id="page-compressed" class="page">
+    <div class="card">
+      <div class="card-title">COMPRESSED PAIRS</div>
+      <div class="row3">
+        <div class="field"><label>Timeframe</label><select id="compressedTf"><option>15m</option><option selected>1h</option><option>4h</option></select></div>
+        <div class="field"><label>Lookback</label><input id="compressedLookback" type="number" value="12"></div>
+        <div class="field"><label>Max Range %</label><input id="compressedMaxPct" type="number" step="0.1" value="2.0"></div>
+      </div>
+      <button class="btn-primary" onclick="scanCompressed()" style="margin-top:4px">▶ SCAN COMPRESSED</button>
+      <div id="compressedResults" class="results" style="margin-top:12px"><div class="empty">Click Scan Compressed to begin</div></div>
+    </div>
+  </div>
+
+  <!-- TRENDING PAGE -->
+  <div id="page-trending" class="page">
+    <div class="card">
+      <div class="card-title">TRENDING PAIRS</div>
+      <div class="row3">
+        <div class="field"><label>Mode</label>
+          <select id="trendingMode"><option value="movers">Binance Movers</option><option value="bullish">Bullish Trend</option><option value="bearish">Bearish Trend</option><option value="high_volume">High Volume</option></select>
+        </div>
+        <div class="field"><label>Timeframe</label><select id="trendingTf"><option>15m</option><option selected>1h</option><option>4h</option></select></div>
+        <div class="field"><label>Limit</label><input id="trendingLimit" type="number" value="20"></div>
+      </div>
+      <button class="btn-primary" onclick="scanTrending()" style="margin-top:4px">▶ SCAN TRENDING</button>
+      <div id="trendingResults" class="results" style="margin-top:12px"><div class="empty">Click Scan Trending to begin</div></div>
+    </div>
+  </div>
+
+  <!-- ATH / ATL PAGE -->
+  <div id="page-athatl" class="page">
+    <div class="card">
+      <div class="card-title">TRUE ATH / ATL SCANNER
+        <span style="font-size:9px;color:#64748b;font-weight:400;letter-spacing:.5px">· Full history since listing</span>
+      </div>
+      <div style="font-size:10px;color:#64748b;margin-bottom:10px;line-height:1.5">
+        True ATH &amp; ATL use full 1D history since listing. Window only controls status detection.
+      </div>
+      <div class="row3">
+        <div class="field">
+          <label>Mode <span class="tip-icon" onclick="toggleTip('tip-ath-mode')">ⓘ</span></label>
+          <select id="athMode">
+            <option value="both">Both ATH &amp; ATL</option>
+            <option value="ath">ATH Only</option>
+            <option value="atl">ATL Only</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Status Filter <span class="tip-icon" onclick="toggleTip('tip-ath-status')">ⓘ</span></label>
+          <select id="athStatus">
+            <option value="current">At Level Now</option>
+            <option value="recent">Hit Within Window</option>
+            <option value="near">Near Level</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Window <span class="tip-icon" onclick="toggleTip('tip-ath-window')">ⓘ</span></label>
+          <select id="athWindowHours">
+            <option value="6">6 hours</option>
+            <option value="12">12 hours</option>
+            <option value="24" selected>1 day</option>
+            <option value="48">2 days</option>
+            <option value="168">7 days</option>
+          </select>
+        </div>
+      </div>
+      <div class="tip-box" id="tip-ath-mode">Choose what to scan for. <b>ATH Only</b> = pairs near or at their All-Time High. <b>ATL Only</b> = pairs near or at their All-Time Low. <b>Both</b> = show either. ATH can signal extreme strength or exhaustion. ATL can signal capitulation or a historic buy zone.</div>
+      <div class="tip-box" id="tip-ath-status"><b>At Level Now</b> — price is currently touching the true ATH or ATL (within the Near % threshold). <b>Hit Within Window</b> — the true ATH or ATL was touched recently within the time window you set. <b>Near Level</b> — price is close to the level but may not have touched it yet.</div>
+      <div class="tip-box" id="tip-ath-window">This does NOT recalculate the ATH or ATL — those always use full history since listing. The window only controls how far back to look when checking if the level was <i>recently hit</i>. Only used with "Hit Within Window" status.</div>
+      <div class="row3">
+        <div class="field">
+          <label>Near % <span class="tip-icon" onclick="toggleTip('tip-ath-near')">ⓘ</span></label>
+          <input id="athNearPct" type="number" step="0.1" value="3.0">
+        </div>
+        <div class="field"><label>Pairs to Scan</label><input id="athLimit" type="number" value="20"></div>
+      </div>
+      <div class="tip-box" id="tip-ath-near">How close (in %) current price must be to the true ATH or ATL to be included. <b>1%</b> = very close to the level. <b>3–5%</b> = near the level with some room. Higher values will find more results. Used for "At Level Now" and "Near Level" status filters.</div>
+      <button class="btn-primary" onclick="scanAthAtl()" style="margin-top:4px">▶ SCAN TRUE ATH / ATL</button>
+      <div id="athScanNote" style="display:none;font-size:10px;color:#64748b;margin-top:8px">⏳ First scan fetches full history per pair — may take ~30s. Results cache for 4 hours.</div>
+      <div id="athResults" class="results" style="margin-top:12px"><div class="empty">Click Scan ATH / ATL to begin</div></div>
+    </div>
+  </div>
+
+  <!-- BIAS PAGE -->
+  <div id="page-bias" class="page">
+    <div class="card">
+      <div class="card-title">BIAS DETECTION</div>
+
+      <div class="setting-section">
+        <div class="setting-title">SCAN SETTINGS</div>
+        <div class="subrow">
+          <div class="field"><label>Timeframe</label>
+            <select id="biasTf">
+              <option value="1h">1h</option>
+              <option value="2h">2h</option>
+              <option value="4h" selected>4h</option>
+              <option value="6h">6h</option>
+              <option value="8h">8h</option>
+              <option value="12h">12h</option>
+              <option value="1d">1D</option>
+            </select>
+          </div>
+          <div class="field"><label>Candle Lookback</label>
+            <input id="biasCandleCount" type="number" value="3" min="1" max="10">
+          </div>
+          <div class="field"><label>Bias Filter</label>
+            <select id="biasFilter">
+              <option value="all">All Signals</option>
+              <option value="bullish">Bullish Only</option>
+              <option value="bearish">Bearish Only</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="setting-section">
+        <div class="setting-title">SIGNAL GATES</div>
+        <div class="subrow" style="flex-wrap:wrap;gap:8px">
+          <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="biasWickGate" checked> Wick Gate</label>
+          <div class="field" style="margin:0"><label>Min Wick %</label><input id="biasWickMinPct" type="number" value="40" style="width:60px"></div>
+          <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="biasMomentumGate" checked> Momentum</label>
+          <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="biasBodyGate" checked> Body Gate</label>
+          <div class="field" style="margin:0"><label>Min Body %</label><input id="biasBodyMinPct" type="number" value="20" style="width:60px"></div>
+          <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="biasVolumeGate"> Volume Spike</label>
+        </div>
+      </div>
+
+      <div class="setting-section">
+        <div class="setting-title">CONFLUENCE (OPTIONAL)</div>
+        <div class="subrow" style="flex-wrap:wrap;gap:12px">
+          <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="biasUseFvg"> FVG Confluence</label>
+          <div class="field" style="margin:0"><label>FVG Touch</label>
+            <select id="biasFvgTouch">
+              <option value="any">Any</option>
+              <option value="untouched">Untouched</option>
+              <option value="touched">Once Touched</option>
+            </select>
+          </div>
+          <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="biasUseOb"> OB Confluence</label>
+          <div class="field" style="margin:0"><label>OB Approach %</label><input id="biasObApproachPct" type="number" value="2.0" step="0.5" style="width:70px"></div>
+        </div>
+      </div>
+
+      <button class="btn-primary" onclick="scanBias()" style="margin-top:4px">▶ SCAN BIAS</button>
+      <div id="biasStatus" class="status-text" style="margin-top:8px"></div>
+      <div id="biasResults" class="results" style="margin-top:12px"><div class="empty">Configure settings and click Scan Bias</div></div>
+    </div>
+  </div>
+
+</div><!-- /wrap -->
+
+<script>
+const $ = id => document.getElementById(id);
+let allPairs = [];
+let selectedPairs = new Set();
+let autoTimer = null;
+
+// Clock
+function updateClock(){
+  const now = new Date();
+  $('clock').textContent = now.toUTCString().slice(17,25);
+}
+updateClock();
+setInterval(updateClock, 1000);
+
+// Market type helpers
+function marketType(){ return $('marketType') ? $('marketType').value : 'perpetual'; }
+function displaySymbol(sym){ return marketType() === 'perpetual' ? sym + '.P' : sym; }
+$('marketType').addEventListener('change', function(){
+  const isPerpetual = this.value === 'perpetual';
+  $('marketTypeBadge').textContent = isPerpetual ? 'PERP · USDT' : 'SPOT · USDT';
+  $('marketTypeBadge').style.color = isPerpetual ? '#22d3ee' : '#4ade80';
+  $('marketTypeBadge').style.borderColor = isPerpetual ? '#22d3ee40' : '#16653440';
+  $('marketTypeBadge').style.background = isPerpetual ? '#0e4b5c' : '#052e16';
+  allPairs = []; selectedPairs = new Set();
+  $('pairsList').innerHTML = '';
+  $('pairInfo').textContent = 'Market changed — reload pairs';
+});
+
+// Fib chips
+document.querySelectorAll('.fib-chip').forEach(el => el.onclick = () => el.classList.toggle('active'));
+
+// ── Scan Mode ──
+let _scanMode = 'match';
+function setScanMode(mode){
+  _scanMode = mode;
+  $('btnModeMatch').classList.toggle('active', mode === 'match');
+  $('btnModeFilter').classList.toggle('active', mode === 'filter');
+  $('filterSignalBox').classList.toggle('visible', mode === 'filter');
+  if($('scanModeDesc')){
+    $('scanModeDesc').textContent = mode === 'match'
+      ? 'Show all pairs — FVG / OB / FIB badges appear as extras'
+      : 'Only show pairs that have ALL checked signals below';
+  }
+  saveSettings();
+}
+
+function toggleSignalChip(label, inputId, activeClass){
+  const inp = $(inputId);
+  inp.checked = !inp.checked;
+  label.classList.toggle(activeClass, inp.checked);
+  saveSettings();
+}
+
+function showPage(id, btn){
+  document.querySelectorAll('.page').forEach(p => { p.classList.remove('active'); p.style.opacity = '0'; });
+  document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
+  const target = $('page-' + id);
+  if(target){
+    target.classList.add('active');
+    target.style.opacity = '0';
+    requestAnimationFrame(()=>{ target.style.transition = 'opacity 0.22s ease'; target.style.opacity = '1'; });
+  }
+  if(btn) btn.classList.add('active');
+}
+
+function currentSettings(){
+  return {
+    tf: $('tf').value,
+    iLen: +$('iLen').value,
+    sLen: +$('sLen').value,
+    approachPct: +$('approachPct').value,
+    consolCandles: +$('consolCandles').value,
+    rsiOB: +$('rsiOB').value,
+    rsiOS: +$('rsiOS').value,
+    obDistancePct: +$('obDistancePct').value,
+    useObStrengthFilter: $('useObStrengthFilter').checked,
+    obMinStrengthPct: +$('obMinStrengthPct').value,
+    useHighProbOB: $('useHighProbOB').checked,
+    obMinQuality: +$('obMinQuality').value,
+    useAtrObApproach: $('useAtrObApproach').checked,
+    obApproachAtrMult: parseFloat($('obApproachAtrMult').value) || 0.5,
+    useFvgValidOnly: $('useFvgValidOnly').checked,
+    useFvgState: $('useFvgState').checked,
+    fvgState: $('fvgState').value,
+    useFvgAgeRange: $('useFvgAgeRange').checked,
+    fvgAgeMin: +$('fvgAgeMin').value,
+    fvgAgeMax: +$('fvgAgeMax').value,
+    useFvgDistance: $('useFvgDistance').checked,
+    fvgMaxDistancePct: +$('fvgMaxDistancePct').value,
+    useFvgTouchDepth: $('useFvgTouchDepth').checked,
+    fvgTouchDepth: $('fvgTouchDepth').value,
+    useFvgObOverlap: $('useFvgObOverlap').checked,
+    fvgObOverlapMode: $('fvgObOverlapMode').value,
+    fvgObMinOverlapPct: +$('fvgObMinOverlapPct').value,
+    useFibModule: $('useFibModule').checked,
+    fibTf: $('fibTf').value,
+    fibTolerancePct: +$('fibTolerancePct').value,
+    fibAtrMultiplier: parseFloat($('fibAtrMultiplier').value) || 1.5,
+    fibApproachPct: parseFloat($('fibApproachPct').value) || 2.0,
+    fibLevels: [...document.querySelectorAll('.fib-chip.active')].map(x => x.dataset.value),
+    useFibRequireFvg: $('useFibRequireFvg').checked,
+    useFibRequireOb: $('useFibRequireOb').checked,
+    useBtcCorrelation: $('useBtcCorrelation').checked,
+    btcCorrelationMode: $('btcCorrelationMode').value,
+    btcLookback: +$('btcLookback').value,
+  };
+}
+
+// ── Pairs ──
+async function loadPairs(){
+  $('pairInfo').textContent = 'Loading pairs...';
+  try {
+    const res = await fetch(`/api/pairs?limit=200&market=${marketType()}`);
+    allPairs = await res.json();
+    const mLabel = marketType() === 'perpetual' ? 'Perpetual' : 'Spot';
+    $('pairInfo').textContent = `${allPairs.length} ${mLabel} pairs loaded`;
+    populateWatchlistDropdown();
+    sortPairsList();
+  } catch(e){ $('pairInfo').textContent = 'Error loading pairs'; }
+}
+
+function renderPairs(){ sortPairsList(); }
+
+function togglePair(sym, state){ if(state) selectedPairs.add(sym); else selectedPairs.delete(sym); }
+function selectTopPairs(){ selectedPairs = new Set(allPairs.slice(0,30).map(p => p.symbol)); sortPairsList(); }
+function formatVol(v){ if(v>=1e9)return (v/1e9).toFixed(2)+'B'; if(v>=1e6)return (v/1e6).toFixed(2)+'M'; if(v>=1e3)return (v/1e3).toFixed(2)+'K'; return String(Math.round(v)); }
+
+// ── Strength dots ──
+function strengthDots(strength){
+  const filled = Math.round(strength / 20);
+  const colors = ['#ef4444','#f97316','#eab308','#22c55e','#22d3ee'];
+  let html = '<div class="strength-dots">';
+  for(let i=0;i<5;i++){
+    const color = i < filled ? colors[Math.min(filled-1,4)] : '#1e2d3d';
+    html += `<div class="dot" style="background:${color}"></div>`;
+  }
+  return html + '</div>';
+}
+
+// ── Pro #5 — Coin icon ──
+function coinIcon(symbol){
+  const base = symbol.replace(/USDT$|BUSD$|USDC$/,'').toLowerCase();
+  return `<img src="https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/32/color/${base}.png" width="18" height="18" class="coin-icon" onerror="this.style.display='none'" loading="lazy">`;
+}
+
+// ── Pro #1 — Enhanced Sparkline ──
+function renderSparkline(prices, markers, width, height){
+  if(!prices || prices.length < 2) return '';
+  const w = width || 90, h = height || 32;
+  const min = Math.min(...prices);
+  const max = Math.max(...prices);
+  const range = max - min || 1;
+  function toY(p){ return h - 2 - ((p - min) / range) * (h - 4); }
+  function toX(i){ return 2 + (i / (prices.length - 1)) * (w - 4); }
+  const isUp = prices[prices.length-1] >= prices[0];
+  const lineColor = isUp ? '#22c55e' : '#ef4444';
+  const fillColor = isUp ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)';
+  const pts = prices.map((p,i) => `${toX(i).toFixed(1)},${toY(p).toFixed(1)}`).join(' ');
+  const fillPts = pts + ` ${toX(prices.length-1).toFixed(1)},${h} ${toX(0).toFixed(1)},${h}`;
+  const lx = toX(prices.length-1), ly = toY(prices[prices.length-1]);
+  let markerDots = '';
+  if(markers && markers.length){
+    markers.forEach(m => {
+      if(m.price >= min && m.price <= max){
+        const my = toY(m.price);
+        const dc = m.type === 'ob' ? '#f59e0b' : m.type === 'fvg' ? '#ec4899' : '#a78bfa';
+        markerDots += `<line x1="2" y1="${my.toFixed(1)}" x2="${w-2}" y2="${my.toFixed(1)}" stroke="${dc}" stroke-width="0.5" stroke-dasharray="2,2" opacity="0.5"/>`;
+        markerDots += `<circle cx="${(w-6).toFixed(1)}" cy="${my.toFixed(1)}" r="2" fill="${dc}" opacity="0.8"/>`;
+      }
+    });
+  }
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="vertical-align:middle;margin-left:6px">
+    <polygon points="${fillPts}" fill="${fillColor}"/>
+    <polyline points="${pts}" fill="none" stroke="${lineColor}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    ${markerDots}
+    <circle cx="${lx.toFixed(1)}" cy="${ly.toFixed(1)}" r="2.5" fill="${lineColor}"/>
+    <circle cx="${lx.toFixed(1)}" cy="${ly.toFixed(1)}" r="4" fill="${lineColor}" opacity="0.3">
+      <animate attributeName="r" values="3;6;3" dur="2s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0.3;0.1;0.3" dur="2s" repeatCount="indefinite"/>
+    </circle>
+  </svg>`;
+}
+
+// ── Score Ring Badge ──
+function renderScoreBadge(score, confidence){
+  const s = score || 0;
+  const conf = confidence || 'Low';
+  const color = conf === 'High' ? '#22c55e' : conf === 'Medium' ? '#eab308' : '#64748b';
+  const circ = 2 * Math.PI * 15;
+  const offset = circ - (Math.min(s, 100) / 100) * circ;
+  return `<div class="score-ring" title="${s}/100 — ${conf} Confidence">
+    <svg width="38" height="38" viewBox="0 0 38 38">
+      <circle cx="19" cy="19" r="15" fill="none" stroke="#1e3040" stroke-width="3"/>
+      <circle cx="19" cy="19" r="15" fill="none" stroke="${color}" stroke-width="3"
+        stroke-dasharray="${circ.toFixed(2)}" stroke-dashoffset="${offset.toFixed(2)}" stroke-linecap="round"/>
+    </svg>
+    <span class="score-ring-num">${s}</span>
+  </div>`;
+}
+
+// ── Pro #6 — Watchlist star ──
+let quickWatchlist = JSON.parse(localStorage.getItem('quickWatchlist') || '[]');
+function isStarred(symbol){ return quickWatchlist.includes(symbol); }
+function toggleWatchlistStar(el, symbol){
+  const idx = quickWatchlist.indexOf(symbol);
+  if(idx >= 0){ quickWatchlist.splice(idx,1); el.textContent='☆'; el.classList.remove('starred'); }
+  else{ quickWatchlist.push(symbol); el.textContent='★'; el.classList.add('starred'); }
+  localStorage.setItem('quickWatchlist', JSON.stringify(quickWatchlist));
+}
+
+// ── Pro #3 — Heatmap ──
+let currentView = 'list';
+let lastScanResults = [];
+
+function setView(view){
+  currentView = view;
+  $('viewList').classList.toggle('active', view === 'list');
+  $('viewHeat').classList.toggle('active', view === 'heatmap');
+  renderResults(lastScanResults);
+}
+
+function renderResults(results){
+  if(currentView === 'heatmap') $('scanResults').innerHTML = renderHeatmap(results);
+  else renderMainResultsList(results);
+}
+
+function renderHeatmap(data){
+  if(!data || !data.length) return '<div class="empty">No results to display</div>';
+  return '<div class="heatmap-grid">' + data.map(x => {
+    const alerts = x.alerts || [];
+    const dir = alerts.some(a=>a.direction==='bullish') ? 'bull' : alerts.some(a=>a.direction==='bearish') ? 'bear' : 'neutral';
+    const maxStr = Math.max(...alerts.map(a=>a.strength||0), 0);
+    const strength = maxStr >= 4 ? 'strong' : maxStr >= 2 ? 'moderate' : 'weak';
+    const price = Number(x.price);
+    const priceStr = price < 1 ? price.toFixed(6) : price < 100 ? price.toFixed(4) : price.toFixed(2);
+    return `<div class="heat-cell ${dir} ${strength}" onclick="showPairDetail('${x.symbol}')">
+      <div class="heat-symbol">${x.symbol.replace('USDT','')}</div>
+      <div class="heat-price">$${priceStr}</div>
+    </div>`;
+  }).join('') + '</div>';
+}
+
+function showPairDetail(symbol){
+  window.open(`https://www.tradingview.com/chart/?symbol=BINANCE:${symbol}.P`, tvTarget());
+}
+
+// ── Pro #8 — Summary bar ──
+function animateCount(id, target){
+  const el = $(id);
+  if(!el) return;
+  let current = 0;
+  const step = Math.max(1, Math.ceil(target/20));
+  const iv = setInterval(()=>{ current = Math.min(current+step, target); el.textContent = current; if(current>=target) clearInterval(iv); }, 30);
+}
+function updateSummary(results){
+  const el = $('scanSummary');
+  if(!el || !results || !results.length){ if(el) el.style.display='none'; return; }
+  el.style.display='flex';
+  const total = results.length;
+  let bull=0, bear=0, strong=0;
+  results.forEach(r => {
+    const alerts = r.alerts || [];
+    if(alerts.some(a=>a.direction==='bullish')) bull++;
+    if(alerts.some(a=>a.direction==='bearish')) bear++;
+    const mx = Math.max(...alerts.map(a=>a.strength||0), 0);
+    if(mx >= 4) strong++;
+  });
+  animateCount('summaryTotal', total);
+  animateCount('summaryBull', bull);
+  animateCount('summaryBear', bear);
+  animateCount('summaryStrong', strong);
+}
+
+// ── Main scan results ──
+function renderMainResultsList(results){
+  if(!results.length){ $('scanResults').innerHTML = '<div class="empty">No setups found</div>'; $('resultCount').textContent=''; return; }
+  $('resultCount').textContent = `${results.length} setup${results.length>1?'s':''}`;
+  const scanTime = new Date().toLocaleTimeString();
+  $('scanResults').innerHTML = results.map((item,idx) => {
+    const a = item.topAlert;
+    const allAlerts = item.alerts || [a];
+    const trendLabel = item.trend === 1 ? '<span class="badge bull">UPTREND</span>' : item.trend === -1 ? '<span class="badge bear">DOWNTREND</span>' : '<span class="badge neutral">RANGING</span>';
+    const corr = item.correlationLabel ? `<span class="badge neutral">BTC:${item.correlationLabel}</span>` : '';
+    const str = a.strength || 1;
+
+    const seen = new Set();
+    const setupBadges = allAlerts.map(al => {
+      const dc = al.direction === 'bullish' ? 'bull' : al.direction === 'bearish' ? 'bear' : 'neutral';
+      let label = al.setup;
+      if(al.setup === 'OB_APPROACH') label = 'OB↗';
+      else if(al.setup === 'OB_CONSOL') label = 'OB◈';
+      else if(al.setup === 'OB_REACTED') label = 'OB⚡';
+      else if(al.setup === 'FIB_REACTION') label = 'FIB⚡';
+      else if(al.setup === 'FIB_APPROACH') label = 'FIB→';
+      else if(al.setup === 'FIB') label = 'FIB';
+      const key = label + dc;
+      if(seen.has(key)) return '';
+      seen.add(key);
+      return `<span class="badge ${dc}">${label}</span>`;
+    }).join('');
+
+    const _obS = JSON.parse(localStorage.getItem('zyni_settings') || '{}');
+    const _highProbOn = _obS.useHighProbOB === true;
+
+    function buildObChecks(al){
+      if(!_highProbOn) return '';
+      var s = al.setup;
+      if(s !== 'OB_APPROACH' && s !== 'OB_CONSOL' && s !== 'OB_REACTED') return '';
+      var m = al.meta;
+      if(!m) return '';
+      function obCk(pass, label){
+        return '<span style="color:' + (pass?'#22c55e':'#f87171') + '">' + (pass?'\u2713':'\u2717') + '</span>\u00a0' + label;
+      }
+      var pts = [obCk(m.sweepPass,'Sweep'),obCk(m.dispPass,'Disp'),obCk(m.fvgPass,'FVG'),obCk(m.pdPass,'PD'),obCk(m.htfPass,'HTF'),obCk(m.safePass,'Safe')];
+      return '<div class="result-detail" style="margin-top:3px;font-family:\'JetBrains Mono\',monospace;font-size:0.72rem;letter-spacing:0.02em;opacity:0.9">Checks:\u00a0' + pts.join('\u00a0\u00a0') + '</div>';
+    }
+
+    const checksLine = buildObChecks(a);
+
+    const extraDetails = allAlerts.slice(1).filter(al => al.setup !== a.setup)
+      .map(al => '<div class="result-detail" style="margin-top:4px;opacity:0.7">' + al.detail + '</div>' + buildObChecks(al)).join('');
+
+    const starred = isStarred(item.symbol);
+    const sparkHtml = renderSparkline(item.sparkline, item.sparklineMarkers);
+    const scoreBadge = renderScoreBadge(item.score, item.confidence);
+
+    return `<div class="result-card" style="animation-delay:${idx*40}ms" onclick="this.classList.toggle('expanded')">
+      <div class="result-header">
+        <span class="symbol">${coinIcon(item.symbol)}${displaySymbol(item.symbol)}<a href="https://www.tradingview.com/chart/?symbol=BINANCE:${item.symbol}.P" target="${tvTarget()}" class="tv-link" rel="noopener" onclick="event.stopPropagation()">📊</a><span class="expand-icon">▼</span></span>
+        <span style="display:flex;align-items:center;gap:4px">
+          ${scoreBadge}
+          <span class="price-tag">${item.timeframe} · $${item.price}${sparkHtml}</span>
+          <span class="star-btn ${starred?'starred':''}" onclick="event.stopPropagation();toggleWatchlistStar(this,'${item.symbol}')">${starred?'★':'☆'}</span>
+        </span>
+      </div>
+      <div class="badges">
+        ${setupBadges}
+        ${trendLabel}${corr}
+        ${strengthDots(str * 20)}
+      </div>
+      <div class="result-details">
+        <div class="result-detail">${a.detail}</div>
+        ${checksLine}
+        ${extraDetails}
+        <div class="result-footer" style="margin-top:6px">
+          <span>RSI ${item.rsi}</span>
+          <span>ATR ${item.atr}</span>
+        </div>
+        <div class="scan-time">Scanned: ${scanTime}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderMainResults(results){
+  lastScanResults = results || [];
+  if(currentView === 'heatmap') renderHeatmap(results);
+  else renderMainResultsList(results);
+  updateSummary(results);
+}
+
+// ── Scan overlay popup ──
+let scanPopupInterval = null;
+let scanPairIndex = 0;
+let scanPairList = [];
+
+function showScanPopup(title, pairs){
+  const existing = document.getElementById('scanOverlay');
+  if(existing) existing.remove();
+  if(scanPopupInterval){ clearInterval(scanPopupInterval); scanPopupInterval = null; }
+  if(window._scanSimInterval){ clearInterval(window._scanSimInterval); window._scanSimInterval = null; }
+
+  scanPairList = pairs || [];
+  scanPairIndex = 0;
+  const totalPairs = scanPairList.length || 50;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'scanOverlay';
+  overlay.className = 'scan-overlay';
+  overlay.innerHTML = `<div class="scan-popup">
+    <canvas class="matrix-canvas" id="matrixCanvas"></canvas>
+    <div class="scan-popup-content">
+      <div class="scan-ring"></div>
+      <div class="scan-title">${title||'SCANNING MARKET'}</div>
+      <div class="scan-progress-wrap"><div class="scan-progress-bar" id="scanProgressBar"></div></div>
+      <div class="scan-progress-text" id="scanProgressText">0 / ${totalPairs} pairs</div>
+      <div class="scan-pair-name" id="scanPairName">Initializing...</div>
+      <div class="scan-status-text" id="scanStatusText">CONNECTING TO BINANCE FUTURES...</div>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+
+  initMatrixRain();
+
+  if(scanPairList.length > 0){
+    _updateScanPair(0);
+    scanPopupInterval = setInterval(() => {
+      scanPairIndex++;
+      if(scanPairIndex < scanPairList.length) _updateScanPair(scanPairIndex);
+    }, 300);
+  }
+
+  // Simulate progress filling over scan duration
+  let simProgress = 0;
+  window._scanSimInterval = setInterval(() => {
+    simProgress++;
+    if(simProgress <= totalPairs){
+      _updateScanProgress(simProgress, totalPairs);
+    } else {
+      clearInterval(window._scanSimInterval);
+      window._scanSimInterval = null;
+    }
+  }, 200);
+}
+
+function _updateScanProgress(current, total){
+  const bar = document.getElementById('scanProgressBar');
+  const text = document.getElementById('scanProgressText');
+  if(bar) bar.style.width = Math.min((current / Math.max(total,1)) * 100, 100) + '%';
+  if(text) text.textContent = `${current} / ${total} pairs`;
+}
+
+function _updateScanPair(index){
+  const el = document.getElementById('scanPairName');
+  const st = document.getElementById('scanStatusText');
+  if(el && scanPairList[index]){
+    el.style.animation = 'none';
+    void el.offsetHeight;
+    el.style.animation = 'pairFade 0.3s ease';
+    el.textContent = '⟫ ' + scanPairList[index];
+  }
+  if(st){
+    const msgs = [
+      'ANALYZING MARKET STRUCTURE...',
+      'DETECTING ORDER BLOCKS...',
+      'SCANNING FAIR VALUE GAPS...',
+      'CHECKING FIB LEVELS...',
+      'CALCULATING RSI...',
+      'EVALUATING SETUPS...',
+      'PROCESSING VOLUME DATA...',
+      'DETECTING BOS / CHOCH...',
+    ];
+    st.textContent = msgs[index % msgs.length];
+  }
+}
+
+function hideScanPopup(){
+  if(scanPopupInterval){ clearInterval(scanPopupInterval); scanPopupInterval = null; }
+  if(window._scanSimInterval){ clearInterval(window._scanSimInterval); window._scanSimInterval = null; }
+  const overlay = document.getElementById('scanOverlay');
+  if(overlay){
+    overlay.style.transition = 'opacity 0.3s ease';
+    overlay.style.opacity = '0';
+    setTimeout(() => overlay.remove(), 300);
+  }
+}
+
+function initMatrixRain(){
+  const canvas = document.getElementById('matrixCanvas');
+  if(!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const popup = canvas.parentElement;
+  canvas.width = popup.offsetWidth;
+  canvas.height = popup.offsetHeight;
+  const chars = '0123456789.%$₿ΞUSDT+-↑↓◆◇';
+  const fontSize = 10;
+  const columns = Math.floor(canvas.width / fontSize);
+  const drops = Array(columns).fill(1);
+  function drawMatrix(){
+    if(!document.getElementById('matrixCanvas')) return;
+    ctx.fillStyle = 'rgba(13,21,37,0.15)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#22d3ee';
+    ctx.font = fontSize + 'px monospace';
+    for(let i = 0; i < drops.length; i++){
+      const char = chars[Math.floor(Math.random() * chars.length)];
+      ctx.fillText(char, i * fontSize, drops[i] * fontSize);
+      if(drops[i] * fontSize > canvas.height && Math.random() > 0.975) drops[i] = 0;
+      drops[i]++;
+    }
+    requestAnimationFrame(drawMatrix);
+  }
+  drawMatrix();
+}
+
+// ── Scan ──
+async function runScan(){
+  showScanPopup('SCANNING MARKET', [...selectedPairs]);
+  const st = $('scanStatus');
+  const pw = $('progressWrap');
+  const pb = $('progressBar');
+  st.className = 'status-text scanning';
+  st.textContent = 'Scanning...';
+  pw.classList.add('active');
+  pb.style.width = '30%';
+
+  const requiredSignals = [];
+  if(_scanMode === 'filter'){
+    if($('filterFVG').checked) requiredSignals.push('FVG');
+    if($('filterOB').checked)  requiredSignals.push('OB');
+    if($('filterFIB').checked) requiredSignals.push('FIB');
+  }
+  const payload = {
+    settings: currentSettings(),
+    symbols: [...selectedPairs],
+    scanMode: $('scanSource').value,
+    roundRobin: $('roundRobin').checked,
+    pairsPerCycle: +$('pairsPerCycle').value,
+    market: marketType(),
+    filterMode: _scanMode,
+    requiredSignals,
+  };
+  try {
+    pb.style.width = '60%';
+    const res = await fetch('/api/scan', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    if(!res.ok){ throw new Error(`HTTP ${res.status}`); }
+    const data = await res.json();
+    pb.style.width = '100%';
+    setTimeout(()=>{ pw.classList.remove('active'); pb.style.width='0'; }, 500);
+    st.className = 'status-text done';
+    st.textContent = `Scanned ${data.scanned} pairs · ${new Date().toLocaleTimeString()}`;
+    const ld = document.querySelector('.live-dot');
+    if(ld){ ld.classList.remove('data-flash'); void ld.offsetWidth; ld.classList.add('data-flash'); setTimeout(()=>ld.classList.remove('data-flash'),800); }
+    renderMainResults(data.results || []);
+  } catch(e){
+    console.error('Scan error:', e);
+    st.className = 'status-text';
+    st.textContent = 'Scan failed: ' + (e.message || e);
+    pw.classList.remove('active');
+  } finally {
+    hideScanPopup();
+  }
+}
+
+function toggleAutoScan(){
+  if(autoTimer){ clearInterval(autoTimer); autoTimer = null; $('scanStatus').textContent = 'Auto scan stopped'; $('scanStatus').className='status-text'; return; }
+  if(!$('enableAutoScan').checked){ $('scanStatus').textContent = 'Enable auto scan first'; return; }
+  const ms = (+$('autoInterval').value) * 1000;
+  autoTimer = setInterval(runScan, ms);
+  $('scanStatus').textContent = `Auto every ${$('autoInterval').value}s`;
+  runScan();
+}
+
+// ── Compressed ──
+async function scanCompressed(){
+  showScanPopup('SCANNING COMPRESSED');
+  $('compressedResults').innerHTML = '<div class="empty">Scanning...</div>';
+  const payload = { timeframe: $('compressedTf').value, lookback:+$('compressedLookback').value, maxPct:+$('compressedMaxPct').value, symbols:[...selectedPairs], market: marketType() };
+  try {
+    const res = await fetch('/api/compressed_scan', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    const data = await res.json();
+    const scanTime = new Date().toLocaleTimeString();
+    $('compressedResults').innerHTML = data.length
+      ? data.map((x,i) => {
+          const starred = isStarred(x.symbol);
+          return `<div class="result-card" style="animation-delay:${i*40}ms" onclick="this.classList.toggle('expanded')">
+            <div class="result-header">
+              <span class="symbol">${coinIcon(x.symbol)}${displaySymbol(x.symbol)}<a href="https://www.tradingview.com/chart/?symbol=BINANCE:${x.symbol}.P" target="${tvTarget()}" class="tv-link" rel="noopener" onclick="event.stopPropagation()">📊</a><span class="expand-icon">▼</span></span>
+              <span style="display:flex;align-items:center;gap:4px">
+                <span class="price-tag">${x.timeframe}${renderSparkline(x.sparkline, x.sparklineMarkers)}</span>
+                <span class="star-btn ${starred?'starred':''}" onclick="event.stopPropagation();toggleWatchlistStar(this,'${x.symbol}')">${starred?'★':'☆'}</span>
+              </span>
+            </div>
+            <div class="badges"><span class="badge neutral">COMPRESSED</span></div>
+            <div class="result-details">
+              <div class="result-detail">Range ${x.rangePct}% | Zone ${typeof x.low==='number'?x.low.toFixed(6):x.low} – ${typeof x.high==='number'?x.high.toFixed(6):x.high}</div>
+              <div class="scan-time">Scanned: ${scanTime}</div>
+            </div>
+          </div>`;
+        }).join('')
+      : '<div class="empty">No compressed pairs found</div>';
+  } finally { hideScanPopup(); }
+}
+
+// ── Trending ──
+async function scanTrending(){
+  showScanPopup('SCANNING TRENDS');
+  $('trendingResults').innerHTML = '<div class="empty">Scanning...</div>';
+  const payload = { timeframe:$('trendingTf').value, mode:$('trendingMode').value, limit:+$('trendingLimit').value, market: marketType() };
+  try {
+    const res = await fetch('/api/trending_scan', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    const data = await res.json();
+    const scanTime = new Date().toLocaleTimeString();
+    $('trendingResults').innerHTML = data.length
+      ? data.map((x,i) => {
+          const chgClass = x.changePct >= 0 ? 'bull' : 'bear';
+          const sign = x.changePct >= 0 ? '+' : '';
+          const starred = isStarred(x.symbol);
+          return `<div class="result-card" style="animation-delay:${i*40}ms" onclick="this.classList.toggle('expanded')">
+            <div class="result-header">
+              <span class="symbol">${coinIcon(x.symbol)}${displaySymbol(x.symbol)}<a href="https://www.tradingview.com/chart/?symbol=BINANCE:${x.symbol}.P" target="${tvTarget()}" class="tv-link" rel="noopener" onclick="event.stopPropagation()">📊</a><span class="expand-icon">▼</span></span>
+              <span style="display:flex;align-items:center;gap:4px">
+                <span class="price-tag">${x.mode||'movers'}${renderSparkline(x.sparkline, x.sparklineMarkers)}</span>
+                <span class="star-btn ${starred?'starred':''}" onclick="event.stopPropagation();toggleWatchlistStar(this,'${x.symbol}')">${starred?'★':'☆'}</span>
+              </span>
+            </div>
+            <div class="badges"><span class="badge ${chgClass}">${sign}${Number(x.changePct).toFixed(2)}%</span>${x.relVol?`<span class="badge neutral">RelVol ${x.relVol}</span>`:''}<span class="badge neutral">Vol ${formatVol(x.quoteVolume||0)}</span></div>
+            <div class="result-details">
+              <div class="scan-time">Scanned: ${scanTime}</div>
+            </div>
+          </div>`;
+        }).join('')
+      : '<div class="empty">No trending pairs found</div>';
+  } finally { hideScanPopup(); }
+}
+
+// ── ATH / ATL ──
+async function scanAthAtl(){
+  showScanPopup('SCANNING ATH / ATL');
+  $('athResults').innerHTML = '<div class="empty">Scanning… fetching full history. Please wait.</div>';
+  if($('athScanNote')) $('athScanNote').style.display = 'block';
+  const payload = {
+    mode: $('athMode').value,
+    status: $('athStatus').value,
+    windowHours: +$('athWindowHours').value,
+    nearPct: +$('athNearPct').value,
+    limit: +$('athLimit').value,
+    market: marketType()
+  };
+  try {
+    const res = await fetch('/api/ath_atl_scan', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    if($('athScanNote')) $('athScanNote').style.display = 'none';
+    if(!res.ok){ $('athResults').innerHTML = `<div class="empty">Error: HTTP ${res.status}</div>`; return; }
+    const data = await res.json();
+    const scanTime = new Date().toLocaleTimeString();
+    $('athResults').innerHTML = data.length
+      ? data.map((x,i) => {
+          const tagBadges = (x.tags || []).map(t => {
+            const cls = t.includes('ATH') ? 'warn' : t.includes('ATL') ? 'bull' : 'neutral';
+            return `<span class="badge ${cls}">${t}</span>`;
+          }).join('');
+          const hist = x.daysHistory ? `<span style="color:#475569">${x.daysHistory}d history</span>` : '';
+          const starred = isStarred(x.symbol);
+          return `<div class="result-card" style="animation-delay:${i*40}ms" onclick="this.classList.toggle('expanded')">
+            <div class="result-header">
+              <span class="symbol">${coinIcon(x.symbol)}${displaySymbol(x.symbol)}<a href="https://www.tradingview.com/chart/?symbol=BINANCE:${x.symbol}.P" target="${tvTarget()}" class="tv-link" rel="noopener" onclick="event.stopPropagation()">📊</a><span class="expand-icon">▼</span></span>
+              <span style="display:flex;align-items:center;gap:4px">
+                <span class="price-tag">$${x.price}</span>
+                <span class="star-btn ${starred?'starred':''}" onclick="event.stopPropagation();toggleWatchlistStar(this,'${x.symbol}')">${starred?'★':'☆'}</span>
+              </span>
+            </div>
+            <div class="badges">${tagBadges}</div>
+            <div class="result-details">
+              <div class="result-detail">True ATH: <span style="color:#f97316">$${x.trueAth}</span> &nbsp;|&nbsp; True ATL: <span style="color:#22d3ee">$${x.trueAtl}</span></div>
+              <div class="result-detail" style="opacity:.75">From ATH: ${x.distAthPct}% &nbsp;|&nbsp; From ATL: ${x.distAtlPct}% &nbsp;|&nbsp; ${hist}</div>
+              <div class="scan-time">Scanned: ${scanTime}</div>
+            </div>
+          </div>`;
+        }).join('')
+      : '<div class="empty">No pairs matched — try a wider Near % or different status</div>';
+  } catch(e) {
+    if($('athScanNote')) $('athScanNote').style.display = 'none';
+    $('athResults').innerHTML = `<div class="empty">Scan failed: ${e.message}</div>`;
+  } finally { hideScanPopup(); }
+}
+
+// ── Help tooltip toggle ──
+function toggleTip(id){
+  const el = document.getElementById(id);
+  if(!el) return;
+  const wasOpen = el.classList.contains('open');
+  document.querySelectorAll('.tip-box.open').forEach(b => b.classList.remove('open'));
+  if(!wasOpen) el.classList.add('open');
+}
+
+// ── Settings persistence (localStorage) ──
+const SAVE_IDS_VAL = [
+  'tf','iLen','sLen','approachPct','consolCandles','rsiOB','rsiOS',
+  'obDistancePct','obMinStrengthPct','obMinQuality','obApproachAtrMult',
+  'fvgState','fvgAgeMin','fvgAgeMax','fvgMaxDistancePct','fvgTouchDepth',
+  'fvgObOverlapMode','fvgObMinOverlapPct',
+  'fibTf','fibTolerancePct','fibAtrMultiplier','fibApproachPct',
+  'btcCorrelationMode','btcLookback',
+  'scanSource','pairsPerCycle','autoInterval','marketType',
+  'compressedTf','compressedLookback','compressedMaxPct',
+  'trendingTf','trendingMode','trendingLimit',
+  'athMode','athStatus','athWindowHours','athNearPct','athLimit',
+  'tvLinkTarget'
+];
+const SAVE_IDS_CHK = [
+  'useObStrengthFilter','useHighProbOB','useAtrObApproach','useFvgValidOnly','useFvgState','useFvgAgeRange','useFvgDistance',
+  'useFvgTouchDepth','useFvgObOverlap','useFibModule','useFibRequireFvg','useFibRequireOb',
+  'useBtcCorrelation','roundRobin','enableAutoScan',
+  'filterFVG','filterOB','filterFIB'
+];
+
+function saveSettings(){
+  const data = {};
+  SAVE_IDS_VAL.forEach(id => { const el = $(id); if(el) data[id] = el.value; });
+  SAVE_IDS_CHK.forEach(id => { const el = $(id); if(el) data[id] = el.checked; });
+  data._fibChips = [...document.querySelectorAll('.fib-chip.active')].map(x => x.dataset.value);
+  data._scanMode = _scanMode;
+  try { localStorage.setItem('zyni_settings', JSON.stringify(data)); } catch(e){}
+}
+
+function loadSettings(){
+  let data;
+  try { data = JSON.parse(localStorage.getItem('zyni_settings') || 'null'); } catch(e){ return; }
+  if(!data) return;
+  SAVE_IDS_VAL.forEach(id => { const el = $(id); if(el && data[id] !== undefined) el.value = data[id]; });
+  SAVE_IDS_CHK.forEach(id => { const el = $(id); if(el && data[id] !== undefined) el.checked = data[id]; });
+  if(data._fibChips){
+    document.querySelectorAll('.fib-chip').forEach(el => {
+      el.classList.toggle('active', data._fibChips.includes(el.dataset.value));
+    });
+  }
+  if(data._scanMode) setScanMode(data._scanMode);
+  // Restore signal chip visual state
+  [['filterFVG','chipFVG','active'],['filterOB','chipOB','active-ob'],['filterFIB','chipFIB','active-fib']].forEach(([inp,chip,cls]) => {
+    const el = $(inp); const ch = $(chip);
+    if(el && ch) ch.classList.toggle(cls, el.checked);
+  });
+  if($('marketType')) $('marketType').dispatchEvent(new Event('change'));
+}
+
+// Auto-save on any settings change
+[...SAVE_IDS_VAL, ...SAVE_IDS_CHK].forEach(id => {
+  const el = $(id); if(el) el.addEventListener('change', saveSettings);
+});
+document.querySelectorAll('.fib-chip').forEach(el => el.addEventListener('click', saveSettings));
+
+function updateHighProbObFields(){
+  const wrap = $('highProbQualityWrap');
+  const chk  = $('useHighProbOB');
+  if(wrap && chk){ wrap.style.display = chk.checked ? 'block' : 'none'; }
+}
+
+function updateAtrObApproachFields(){
+  const wrap = $('atrObApproachWrap');
+  const chk  = $('useAtrObApproach');
+  if(wrap && chk){ wrap.style.display = chk.checked ? 'block' : 'none'; }
+}
+
+$('useHighProbOB')?.addEventListener('change', () => {
+  updateHighProbObFields();
+  saveSettings();
+});
+
+$('useAtrObApproach')?.addEventListener('change', () => {
+  updateAtrObApproachFields();
+  saveSettings();
+});
+
+loadSettings();
+updateHighProbObFields();
+updateAtrObApproachFields();
+loadPairs();
+
+// ── TradingView target ──
+function tvTarget(){
+  const el = $('tvLinkTarget');
+  return el ? el.value : '_blank';
+}
+
+// ── Skeleton loading ──
+function skeletonCards(n){
+  return Array(n||4).fill(0).map((_,i)=>`<div class="skeleton" style="animation-delay:${i*100}ms"></div>`).join('');
+}
+
+// ── FIX 1 — Theme toggle with full-screen ripple ──
+function toggleTheme(){
+  const btn = $('themeToggle');
+  if(!btn) return;
+  const rect = btn.getBoundingClientRect();
+  const ripple = document.createElement('div');
+  ripple.className = 'theme-ripple';
+
+  const maxDist = Math.max(
+    Math.hypot(rect.left, rect.top),
+    Math.hypot(window.innerWidth - rect.right, rect.top),
+    Math.hypot(rect.left, window.innerHeight - rect.bottom),
+    Math.hypot(window.innerWidth - rect.right, window.innerHeight - rect.bottom)
+  );
+  const size = maxDist * 2.5;
+  const isCurrentDark = document.body.getAttribute('data-theme') !== 'light';
+  const rippleColor = isCurrentDark ? 'rgba(240,242,245,0.35)' : 'rgba(4,7,14,0.45)';
+
+  ripple.style.width = size + 'px';
+  ripple.style.height = size + 'px';
+  ripple.style.left = (rect.left + rect.width/2 - size/2) + 'px';
+  ripple.style.top = (rect.top + rect.height/2 - size/2) + 'px';
+  ripple.style.background = rippleColor;
+  document.body.appendChild(ripple);
+
+  requestAnimationFrame(() => { ripple.classList.add('expanding'); });
+
+  setTimeout(() => {
+    if(isCurrentDark){ document.body.setAttribute('data-theme','light'); btn.textContent='☀️'; }
+    else{ document.body.removeAttribute('data-theme'); btn.textContent='🌙'; }
+    try{ localStorage.setItem('zyni_theme', isCurrentDark ? 'light' : 'dark'); }catch(e){}
+  }, 300);
+
+  setTimeout(() => { ripple.remove(); }, 900);
+}
+
+// ── Pro #2 — Candle countdown ──
+function updateCountdown(){
+  const tfSelect = $('tf');
+  if(!tfSelect) return;
+  const tf = tfSelect.value;
+  const utcMs = Date.now();
+  let intervalMs;
+  switch(tf){
+    case '15m': intervalMs=15*60*1000; break;
+    case '30m': intervalMs=30*60*1000; break;
+    case '1h':  intervalMs=60*60*1000; break;
+    case '2h':  intervalMs=2*60*60*1000; break;
+    case '4h':  intervalMs=4*60*60*1000; break;
+    case '6h':  intervalMs=6*60*60*1000; break;
+    case '12h': intervalMs=12*60*60*1000; break;
+    case '1d':  intervalMs=24*60*60*1000; break;
+    default:    intervalMs=60*60*1000;
+  }
+  const nextClose = Math.ceil(utcMs/intervalMs)*intervalMs;
+  const rem = nextClose - utcMs;
+  const h = Math.floor(rem/3600000);
+  const m = Math.floor((rem%3600000)/60000);
+  const s = Math.floor((rem%60000)/1000);
+  const el = $('candleCountdown');
+  if(el) el.textContent = `${tf} ${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+setInterval(updateCountdown, 1000);
+updateCountdown();
+const _tfEl = $('tf');
+if(_tfEl) _tfEl.addEventListener('change', updateCountdown);
+(function(){
+  try{
+    const t = localStorage.getItem('zyni_theme');
+    if(t === 'light'){ document.body.setAttribute('data-theme','light'); const b=$('themeToggle'); if(b) b.textContent='☀️'; }
+  }catch(e){}
+})();
+
+// ── Pairs helpers ──
+const CATEGORIES = {
+  layer1: ['BTC','ETH','SOL','ADA','AVAX','DOT','ATOM','NEAR','FTM','ALGO','ONE','EGLD','HBAR','XTZ','VET','ICP','XLM','MIOTA','NEO','WAVES'],
+  layer2: ['MATIC','ARB','OP','IMX','STRK','MANTA','METIS','BOBA','LRC','ZKS','ZETA'],
+  defi: ['UNI','AAVE','CRV','COMP','MKR','SNX','SUSHI','YFI','1INCH','BAL','DYDX','PERP','GMX','GNS','PENDLE','RUNE'],
+  meme: ['DOGE','SHIB','PEPE','FLOKI','BONK','WIF','NEIRO','DOGS','HMSTR','PNUT','MOODENG','TURBO'],
+  ai: ['FET','AGIX','RNDR','TAO','WLD','AKT','ALT','NMR','OCEAN','CTXC','IQ','ARKM','GRT'],
+};
+
+function selectAllPairs(){
+  const vis = getVisiblePairs();
+  vis.forEach(p => selectedPairs.add(p.symbol));
+  renderPairsVisible(vis);
+}
+function clearAllPairs(){
+  const vis = getVisiblePairs();
+  if(vis.length === allPairs.length){ selectedPairs.clear(); }
+  else{ vis.forEach(p => selectedPairs.delete(p.symbol)); }
+  renderPairsVisible(vis);
+}
+function quickSelectPairs(n){
+  selectedPairs = new Set(allPairs.slice(0, n).map(p => p.symbol));
+  sortPairsList();
+}
+function filterPairsList(){
+  sortPairsList();
+}
+function sortPairsList(){
+  const vis = getVisiblePairs();
+  renderPairsVisible(vis);
+}
+function getVisiblePairs(){
+  const q = ($('pairSearch') ? $('pairSearch').value : '').toLowerCase().trim();
+  const sortBy = $('pairSort') ? $('pairSort').value : 'volume';
+  let list = q ? allPairs.filter(p => p.symbol.toLowerCase().includes(q) || displaySymbol(p.symbol).toLowerCase().includes(q)) : [...allPairs];
+  if(sortBy === 'change') list.sort((a,b) => b.changePct - a.changePct);
+  else if(sortBy === 'alpha') list.sort((a,b) => a.symbol.localeCompare(b.symbol));
+  return list;
+}
+function renderPairsVisible(list){
+  $('pairsList').innerHTML = (list||allPairs).map(p => {
+    const checked = selectedPairs.has(p.symbol) ? 'checked' : '';
+    const chgClass = p.changePct >= 0 ? 'up' : 'down';
+    const chgSign = p.changePct >= 0 ? '+' : '';
+    return `<label class="pair-item">
+      <input type="checkbox" ${checked} onchange="togglePair('${p.symbol}',this.checked)">
+      <span class="pair-symbol">${displaySymbol(p.symbol)}</span>
+      <span class="pair-stats">
+        <span class="${chgClass}">${chgSign}${p.changePct.toFixed(2)}%</span>
+        <span>Vol ${formatVol(p.quoteVolume)}</span>
+      </span>
+    </label>`;
+  }).join('');
+}
+function selectCategory(cat){
+  const tokens = CATEGORIES[cat] || [];
+  const matching = allPairs.filter(p => tokens.some(t => p.symbol.startsWith(t)));
+  matching.forEach(p => selectedPairs.add(p.symbol));
+  sortPairsList();
+}
+function saveWatchlist(){
+  const name = ($('watchlistName') ? $('watchlistName').value : '').trim();
+  if(!name){ if($('manualAddMsg')) $('manualAddMsg').textContent='Enter a watchlist name'; return; }
+  try{
+    const all = JSON.parse(localStorage.getItem('zyni_watchlists') || '{}');
+    all[name] = [...selectedPairs];
+    localStorage.setItem('zyni_watchlists', JSON.stringify(all));
+    populateWatchlistDropdown();
+    if($('manualAddMsg')) $('manualAddMsg').textContent = `Saved "${name}" (${selectedPairs.size} pairs)`;
+    setTimeout(()=>{ if($('manualAddMsg')) $('manualAddMsg').textContent=''; }, 2000);
+  }catch(e){}
+}
+function loadWatchlist(name){
+  if(!name) return;
+  try{
+    const all = JSON.parse(localStorage.getItem('zyni_watchlists') || '{}');
+    if(all[name]){ selectedPairs = new Set(all[name]); sortPairsList(); }
+  }catch(e){}
+}
+function deleteWatchlist(){
+  const sel = $('loadWatchlistSel');
+  if(!sel || !sel.value) return;
+  const name = sel.value;
+  try{
+    const all = JSON.parse(localStorage.getItem('zyni_watchlists') || '{}');
+    delete all[name];
+    localStorage.setItem('zyni_watchlists', JSON.stringify(all));
+    populateWatchlistDropdown();
+  }catch(e){}
+}
+function populateWatchlistDropdown(){
+  const sel = $('loadWatchlistSel');
+  if(!sel) return;
+  try{
+    const all = JSON.parse(localStorage.getItem('zyni_watchlists') || '{}');
+    const names = Object.keys(all);
+    sel.innerHTML = '<option value="">Load watchlist…</option>' + names.map(n=>`<option value="${n}">${n} (${all[n].length})</option>`).join('');
+  }catch(e){}
+}
+function addManualPairs(){
+  const inp = $('manualPairsInput');
+  const msg = $('manualAddMsg') || $('manualAddStatus');
+  if(!inp) return;
+  const raw = inp.value.split(/[\s,;]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
+  const valid = raw.filter(s => s.endsWith('USDT') || s.endsWith('USDC') || s.endsWith('BUSD'));
+  valid.forEach(s => selectedPairs.add(s));
+  inp.value = '';
+  sortPairsList();
+  if(msg){ msg.textContent = `Added ${valid.length} pairs`; setTimeout(()=>{ msg.textContent=''; }, 2000); }
+}
+
+// ── Bias Scan ──
+async function scanBias(){
+  showScanPopup('DETECTING BIAS');
+  const st = $('biasStatus');
+  const res_div = $('biasResults');
+  if(st) st.textContent = 'Scanning…';
+  if(res_div) res_div.innerHTML = skeletonCards(6);
+
+  const payload = {
+    timeframe: $('biasTf') ? $('biasTf').value : '4h',
+    candleCount: $('biasCandleCount') ? +$('biasCandleCount').value : 3,
+    biasFilter: $('biasFilter') ? $('biasFilter').value : 'all',
+    useWickGate: $('biasWickGate') ? $('biasWickGate').checked : true,
+    wickMinPct: $('biasWickMinPct') ? +$('biasWickMinPct').value : 40,
+    useMomentumGate: $('biasMomentumGate') ? $('biasMomentumGate').checked : true,
+    useBodyGate: $('biasBodyGate') ? $('biasBodyGate').checked : true,
+    bodyMinPct: $('biasBodyMinPct') ? +$('biasBodyMinPct').value : 20,
+    useVolumeGate: $('biasVolumeGate') ? $('biasVolumeGate').checked : false,
+    useFvgConf: $('biasUseFvg') ? $('biasUseFvg').checked : false,
+    fvgTouch: $('biasFvgTouch') ? $('biasFvgTouch').value : 'any',
+    useObConf: $('biasUseOb') ? $('biasUseOb').checked : false,
+    obApproachPct: $('biasObApproachPct') ? +$('biasObApproachPct').value : 2.0,
+    symbols: [...selectedPairs],
+    market: marketType(),
+  };
+
+  try{
+    const r = await fetch('/api/bias_scan', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    const scanTime = new Date().toLocaleTimeString();
+    if(st) st.textContent = `${data.length} signal${data.length!==1?'s':''} · ${scanTime}`;
+    if(!res_div) return;
+    if(!data.length){ res_div.innerHTML = '<div class="empty">No bias signals found</div>'; return; }
+    res_div.innerHTML = data.map((x,i) => {
+      const bClass = x.bias === 'bullish' ? 'bull' : 'bear';
+      const bLabel = x.bias === 'bullish' ? '▲ BULL' : '▼ BEAR';
+      const confClass = x.confidence === 'Strong' ? 'bull' : x.confidence === 'Moderate' ? 'warn' : 'neutral';
+      const sigLabel = x.signal.replace(/_/g,' ');
+      const obHtml = x.obConf ? `<div class="result-detail" style="margin-top:4px;opacity:.8">OB Zone: ${x.obConf.zone} · ${x.obConf.volPct}% vol · ${x.obConf.dist}% away</div>` : '';
+      const fvgHtml = x.fvgConf ? `<div class="result-detail" style="margin-top:4px;opacity:.8">FVG: ${x.fvgConf.zone} [${x.fvgConf.touch}]</div>` : '';
+      const starred = isStarred(x.symbol);
+      return `<div class="result-card" style="animation-delay:${i*40}ms" onclick="this.classList.toggle('expanded')">
+        <div class="result-header">
+          <span class="symbol">${coinIcon(x.symbol)}${displaySymbol(x.symbol)}<a href="https://www.tradingview.com/chart/?symbol=BINANCE:${x.symbol}.P" target="${tvTarget()}" class="tv-link" rel="noopener" onclick="event.stopPropagation()">📊</a><span class="expand-icon">▼</span></span>
+          <span style="display:flex;align-items:center;gap:4px">
+            ${renderScoreBadge(x.score, x.confidence)}
+            <span class="price-tag">${x.timeframe} · $${x.price}${renderSparkline(x.sparkline, x.sparklineMarkers)}</span>
+            <span class="star-btn ${starred?'starred':''}" onclick="event.stopPropagation();toggleWatchlistStar(this,'${x.symbol}')">${starred?'★':'☆'}</span>
+          </span>
+        </div>
+        <div class="badges">
+          <span class="badge ${bClass}">${bLabel}</span>
+          <span class="badge ${confClass}">${x.confidence.toUpperCase()}</span>
+          <span class="badge neutral">${sigLabel}</span>
+        </div>
+        <div class="result-details">
+          <div class="result-detail">↑Wick ${x.upperWickPct}% · ↓Wick ${x.lowerWickPct}% · Body ${x.bodyPct}%${x.volSpike ? ' · 🔥 Vol' : ''}</div>
+          <div class="result-detail" style="opacity:.7;margin-top:3px">${x.gates}</div>
+          ${obHtml}${fvgHtml}
+          <div class="scan-time">Scanned: ${scanTime}</div>
+        </div>
+      </div>`;
+    }).join('');
+  }catch(e){
+    if(st) st.textContent = 'Scan failed: ' + e.message;
+    if(res_div) res_div.innerHTML = '<div class="empty">Error — check console</div>';
+  } finally { hideScanPopup(); }
+}
+
+// ── ZyNi letter bounce (JS-driven, guaranteed to run) ──
+(function(){
+  var letters = document.querySelectorAll('.brand-name .zl');
+  if(!letters.length) return;
+  var JUMP = 18;
+  var DURATION = 340;
+  var GAP = 140;
+  var idx = 0;
+  var startTime = null;
+
+  function animateLetter(el, ts){
+    if(startTime === null) startTime = ts;
+    var progress = Math.min((ts - startTime) / DURATION, 1);
+    var y = -JUMP * Math.sin(Math.PI * progress);
+    el.style.transform = 'translateY(' + y.toFixed(2) + 'px)';
+    var spread = Math.round(16 + progress * 28);
+    el.style.textShadow = '0 0 ' + spread + 'px rgba(34,211,238,' + (0.7 + progress * 0.5).toFixed(2) + ')';
+    if(progress < 1){
+      requestAnimationFrame(function(t){ animateLetter(el, t); });
+    } else {
+      el.style.transform = 'translateY(0px)';
+      el.style.textShadow = '0 0 16px rgba(34,211,238,.7)';
+      idx = (idx + 1) % letters.length;
+      startTime = null;
+      setTimeout(next, GAP);
+    }
+  }
+
+  function next(){
+    requestAnimationFrame(function(ts){ animateLetter(letters[idx], ts); });
+  }
+
+  next();
+})();
+</script>
+</body>
+</html>
