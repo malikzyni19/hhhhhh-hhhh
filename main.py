@@ -31,7 +31,21 @@ def no_cache(r):
     r.headers["Pragma"] = "no-cache"
     r.headers["Expires"] = "0"
     return r
-
+@app.before_request
+def block_koyeb():
+    if "koyeb.app" in request.host:
+        return """
+        <html>
+        <head><title>Access Restricted</title></head>
+        <body style="text-align:center; font-family:sans-serif; margin-top:100px;">
+            <h1>🚫 Access Restricted</h1>
+            <p>Please visit our official website:</p>
+            <a href="https://www.smcsetups.com" style="font-size:20px; color:blue;">
+                www.smcsetups.com
+            </a>
+        </body>
+        </html>
+        """, 403
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "Ulta8900")
 
 # ============================================================
