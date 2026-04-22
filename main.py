@@ -996,6 +996,74 @@ PAIR_CACHE: Dict[str, Any] = {
 }
 ROUND_ROBIN_STATE: Dict[str, int] = {"index": 0}
 
+# ═══════════════════════════════════════
+# REAL API WEIGHT TRACKER
+# ═══════════════════════════════════════
+import threading as _threading
+
+_api_weight: Dict[str, Any] = {
+    "binance": {"used": 0, "limit": 1200, "reset_at": 0},
+    "bybit":   {"used": 0, "limit": 600,  "reset_at": 0},
+    "okx":     {"used": 0, "limit": 2400, "reset_at": 0},
+    "mexc":    {"used": 0, "limit": 500,  "reset_at": 0},
+}
+_api_weight_lock = _threading.Lock()
+
+def update_api_weight(exchange: str, response=None, increment: int = 1):
+    """Update API weight from response headers or manual increment"""
+    exchange = (exchange or "binance").lower()
+    now = time.time()
+    with _api_weight_lock:
+        state = _api_weight.get(exchange, _api_weight["binance"])
+        # Reset every 60 seconds
+        if now >= state["reset_at"]:
+            state["used"] = 0
+            state["reset_at"] = now + 60
+        # Read real weight from Binance headers
+        if response is not None and exchange == "binance":
+            try:
+                weight = response.headers.get("X-MBX-USED-WEIGHT-1M")
+                if weight:
+                    state["used"] = int(weight)
+                    return
+            except: pass
+        # OKX rate limit remaining
+        if response is not None and exchange == "okx":
+            try:
+                remaining = response.headers.get("OK-ACCESS-RATELIMIT-REMAINING")
+                if remaining:
+                    state["used"] = state["limit"] - int(remaining)
+                    return
+            except: pass
+        # Fallback — increment counter
+        state["used"] = min(state["used"] + increment, state["limit"])
+
+def get_api_status(exchange: str = "binance") -> Dict[str, Any]:
+    """Get current API weight status"""
+    exchange = (exchange or "binance").lower()
+    now = time.time()
+    with _api_weight_lock:
+        state = dict(_api_weight.get(exchange, _api_weight["binance"]))
+        reset_in = max(0, int(state["reset_at"] - now))
+        return {
+            "exchange": exchange,
+            "used": state["used"],
+            "limit": state["limit"],
+            "remaining": max(0, state["limit"] - state["used"]),
+            "reset_in_seconds": reset_in,
+            "reset_at": state["reset_at"],
+            "pct_used": round((state["used"] / state["limit"]) * 100, 1)
+        }
+
+@app.route("/api/weight_status")
+@login_required
+def api_weight_status():
+    """Return real API weight usage for current exchange"""
+    exchange = request.args.get("exchange", "binance").lower()
+    return jsonify(get_api_status(exchange))
+
+
+
 # ═══════════════════════════════════════════════
 # HOMEPAGE DATA ROUTES
 # ═══════════════════════════════════════════════
@@ -3874,6 +3942,7 @@ def get_pairs(market: str = "perpetual", force: bool = False) -> List[Dict[str, 
         try:
             r = req.get(f"{BINANCE_FUTURES_API}/fapi/v1/ticker/24hr", timeout=15)
             if r.status_code == 200:
+                update_api_weight("binance", r)
                 data = r.json()
                 pairs = []
                 for t in data:
@@ -3961,6 +4030,7 @@ def get_klines(symbol: str, interval: str, limit: int = 300, market: str = "perp
             timeout=15,
         )
         if r.status_code == 200:
+            update_api_weight("binance", r)
             return _parse(r.json())
     except Exception:
         pass
@@ -4073,13 +4143,18 @@ def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if not session.get("logged_in"):
-            return redirect(url_for("login"))
+            return redirect(url_for("index"))
         return f(*args, **kwargs)
     return decorated
 
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    # GET request — always redirect to homepage
+    # Login happens via drop box on homepage
+    if request.method == "GET":
+        return redirect(url_for("index"))
+
     error = None
     if request.method == "POST":
         username = request.form.get("username", "").strip().lower()
@@ -4149,7 +4224,7 @@ def login():
 @app.route("/logout")
 def logout():
     session.clear()
-    return redirect(url_for("login"))
+    return redirect(url_for("index"))
 
 
 # ── Watchlist streaming endpoints ──
@@ -4552,6 +4627,7 @@ def api_watchlist_refresh():
     pairs     = [str(p).strip().upper() for p in data.get("pairs", []) if str(p).strip()]
     pairs     = [p for p in pairs if p.endswith("USDT")][:30]
     market    = data.get("market", "perpetual")
+    exchange  = data.get("exchange", "binance").lower()
     wl_config = data.get("config", {})
 
     if not pairs:

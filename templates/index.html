@@ -604,6 +604,7 @@ body{
 .api-sep,.api-tot{color:var(--text3,#2d4a5a);font-size:9px}
 .api-bar{width:52px;height:3px;background:rgba(255,255,255,0.06);border-radius:2px;overflow:hidden;margin-top:2px}
 .api-bar-fill{height:100%;border-radius:2px;transition:width .5s ease,background .5s ease}
+.api-reset-timer{font-size:7px;color:var(--text3,#2d4a5a);font-family:'JetBrains Mono',monospace;letter-spacing:.5px;margin-top:1px;text-align:right}
 
 /* SPOT / PERP buttons */
 .mkt-btn{
@@ -781,6 +782,7 @@ body{
           <span class="api-tot" id="apiTotal">1200</span>
         </div>
         <div class="api-bar"><div class="api-bar-fill" id="apiBarFill" style="width:0%;background:#22c55e"></div></div>
+      <span class="api-reset-timer" id="apiResetTimer" style="display:none"></span>
       </div>
     </div>
     <!-- Row 2: SPOT / PERP -->
@@ -3082,41 +3084,47 @@ function _updateWlSettingsSummary(){
 
 // ═══ EXCHANGE SELECTOR ═══
 const API_LIMITS = {binance:1200, bybit:600, okx:2400, mexc:500};
-let _apiUsed = 0;
 let _currentExchange = 'binance';
+let _apiPollInterval = null;
 
 function onExchangeChange(ex){
   _currentExchange = ex;
-  _apiUsed = 0;
-  updateApiCounter();
+  // Update total immediately based on exchange
+  const totalEl = document.getElementById('apiTotal');
+  if(totalEl) totalEl.textContent = API_LIMITS[ex] || 1200;
+  // Reset display
+  const usedEl = document.getElementById('apiUsed');
+  if(usedEl){ usedEl.textContent = '0'; usedEl.className = 'api-used'; }
+  const fill = document.getElementById('apiBarFill');
+  if(fill){ fill.style.width = '0%'; fill.style.background = '#22c55e'; }
   // Reload pairs for new exchange
   if(typeof loadPairs === 'function') loadPairs();
+  // Fetch real status immediately
+  fetchApiStatus();
 }
 
 function setMarketType(type){
   const isPerp = type === 'perp';
   document.getElementById('btnSpot').classList.toggle('mkt-active', !isPerp);
   document.getElementById('btnPerp').classList.toggle('mkt-active', isPerp);
-  // Move lightning to active button
   const ls = document.getElementById('lightningSpot');
   const lp = document.getElementById('lightningPerp');
   if(ls) ls.style.display = isPerp ? 'none' : 'inline';
   if(lp) lp.style.display = isPerp ? 'inline' : 'none';
-  // Sync with existing marketType select
   if($('marketType')){
     $('marketType').value = isPerp ? 'perpetual' : 'spot';
     $('marketType').dispatchEvent(new Event('change'));
   }
 }
 
-function updateApiCounter(){
-  const total = API_LIMITS[_currentExchange] || 1200;
-  const pct = (_apiUsed / total) * 100;
+function updateApiDisplay(used, total, resetIn){
+  const pct = (used / total) * 100;
   const usedEl = document.getElementById('apiUsed');
   const totalEl = document.getElementById('apiTotal');
   const fill = document.getElementById('apiBarFill');
+  const timerEl = document.getElementById('apiResetTimer');
   if(!usedEl) return;
-  usedEl.textContent = _apiUsed;
+  usedEl.textContent = used;
   totalEl.textContent = total;
   fill.style.width = Math.min(pct,100) + '%';
   if(pct < 60){
@@ -3129,16 +3137,46 @@ function updateApiCounter(){
     usedEl.className = 'api-used crit';
     fill.style.background = '#ef4444';
   }
+  // Show countdown timer
+  if(timerEl && resetIn > 0){
+    timerEl.textContent = 'resets in ' + resetIn + 's';
+    timerEl.style.display = 'block';
+  } else if(timerEl){
+    timerEl.style.display = 'none';
+  }
+}
+
+async function fetchApiStatus(){
+  try{
+    const r = await fetch(`/api/weight_status?exchange=${_currentExchange}`,
+      {credentials:'same-origin'});
+    if(!r.ok) return;
+    const d = await r.json();
+    updateApiDisplay(d.used, d.limit, d.reset_in_seconds);
+  }catch(e){}
 }
 
 function incrementApiCounter(n){
-  _apiUsed += (n || 1);
-  updateApiCounter();
+  // Optimistic increment while waiting for real data
+  const usedEl = document.getElementById('apiUsed');
+  if(usedEl){
+    const cur = parseInt(usedEl.textContent)||0;
+    const total = API_LIMITS[_currentExchange]||1200;
+    updateApiDisplay(cur+(n||1), total, 0);
+  }
+  // Then fetch real from backend
+  setTimeout(fetchApiStatus, 500);
+}
+
+// Poll real API status every 10s
+function startApiPolling(){
+  fetchApiStatus();
+  if(_apiPollInterval) clearInterval(_apiPollInterval);
+  _apiPollInterval = setInterval(fetchApiStatus, 10000);
 }
 
 // Init exchange bar
 (function(){
-  // Sync SPOT/PERP button with existing marketType select
   const mt = $('marketType');
   if(mt){
     const isPerp = mt.value === 'perpetual';
@@ -3149,7 +3187,10 @@ function incrementApiCounter(n){
     if(ls) ls.style.display = isPerp ? 'none' : 'inline';
     if(lp) lp.style.display = isPerp ? 'inline' : 'none';
   }
-  updateApiCounter();
+  // Set initial total based on exchange
+  const totalEl = document.getElementById('apiTotal');
+  if(totalEl) totalEl.textContent = API_LIMITS[_currentExchange] || 1200;
+  startApiPolling();
 })();
 
 // Fib chips for watchlist
@@ -3282,7 +3323,7 @@ async function refreshWatchlistData(){
     const res = await fetch('/api/watchlist/refresh', {
       method: 'POST', credentials: 'same-origin',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ pairs: quickWatchlist, market: marketType(), config })
+      body: JSON.stringify({ pairs: quickWatchlist, market: marketType(), exchange: currentExchange(), config })
     });
     if(!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
@@ -4978,6 +5019,94 @@ function _renderFvgPanel(panel,data,symbol){
     </a>
   </div>
 </div>
+
+
+<script>
+// ══════════════════════════════════════
+// SCREENER NAV — Language + Contact
+// ══════════════════════════════════════
+const HNAV_LANGS = [
+  {code:'en',flag:'🇬🇧',name:'English'},{code:'ur',flag:'🇵🇰',name:'اردو (Urdu)'},
+  {code:'hi',flag:'🇮🇳',name:'हिंदी (Hindi)'},{code:'ar',flag:'🇸🇦',name:'العربية (Arabic)'},
+  {code:'es',flag:'🇪🇸',name:'Español (Spanish)'},{code:'nl',flag:'🇳🇱',name:'Nederlands (Dutch)'},
+  {code:'fr',flag:'🇫🇷',name:'Français (French)'},{code:'de',flag:'🇩🇪',name:'Deutsch (German)'},
+  {code:'it',flag:'🇮🇹',name:'Italiano (Italian)'},{code:'pt',flag:'🇧🇷',name:'Português'},
+  {code:'ru',flag:'🇷🇺',name:'Русский (Russian)'},{code:'zh',flag:'🇨🇳',name:'中文 (Chinese)'},
+  {code:'ja',flag:'🇯🇵',name:'日本語 (Japanese)'},{code:'ko',flag:'🇰🇷',name:'한국어 (Korean)'},
+  {code:'tr',flag:'🇹🇷',name:'Türkçe (Turkish)'},{code:'id',flag:'🇮🇩',name:'Bahasa Indonesia'},
+  {code:'ms',flag:'🇲🇾',name:'Bahasa Melayu'},{code:'th',flag:'🇹🇭',name:'ภาษาไทย (Thai)'},
+  {code:'vi',flag:'🇻🇳',name:'Tiếng Việt'},{code:'pl',flag:'🇵🇱',name:'Polski (Polish)'},
+  {code:'uk',flag:'🇺🇦',name:'Українська'},{code:'ro',flag:'🇷🇴',name:'Română'},
+  {code:'sv',flag:'🇸🇪',name:'Svenska'},{code:'da',flag:'🇩🇰',name:'Dansk'},
+  {code:'fi',flag:'🇫🇮',name:'Suomi'},{code:'no',flag:'🇳🇴',name:'Norsk'},
+  {code:'cs',flag:'🇨🇿',name:'Čeština'},{code:'hu',flag:'🇭🇺',name:'Magyar'},
+  {code:'el',flag:'🇬🇷',name:'Ελληνικά'},{code:'fa',flag:'🇮🇷',name:'فارسی (Persian)'},
+  {code:'bn',flag:'🇧🇩',name:'বাংলা (Bengali)'},{code:'tl',flag:'🇵🇭',name:'Filipino'},
+];
+let _hnavCurrentLang = 'en';
+
+function filterHnavLangs(q){
+  const list = document.getElementById('hnavLangList');
+  if(!list) return;
+  const filtered = HNAV_LANGS.filter(l => l.name.toLowerCase().includes((q||'').toLowerCase()));
+  list.innerHTML = filtered.map(l =>
+    `<div class="hnav-lang-item${l.code===_hnavCurrentLang?' active':''}" onclick="setHnavLang('${l.code}')">
+      <span style="font-size:16px">${l.flag}</span>${l.name}
+    </div>`
+  ).join('');
+}
+
+function setHnavLang(code){
+  _hnavCurrentLang = code;
+  const el = document.getElementById('hnavLangCode');
+  if(el) el.textContent = code.toUpperCase();
+  const dd = document.getElementById('hnavLangDropdown');
+  if(dd) dd.classList.remove('open');
+  const search = document.getElementById('hnavLangSearch');
+  if(search) search.value = '';
+  filterHnavLangs('');
+  // RTL for Arabic/Urdu/Persian
+  document.body.style.direction = ['ar','ur','fa'].includes(code) ? 'rtl' : 'ltr';
+}
+
+function toggleHnavLang(e){
+  e.stopPropagation();
+  const dd = document.getElementById('hnavLangDropdown');
+  if(!dd) return;
+  const isOpen = dd.classList.contains('open');
+  dd.classList.toggle('open');
+  if(!isOpen){
+    filterHnavLangs('');
+    setTimeout(()=>{
+      const s = document.getElementById('hnavLangSearch');
+      if(s) s.focus();
+    }, 80);
+  }
+}
+
+function openScreenerContact(){
+  const el = document.getElementById('screenerContactOverlay');
+  if(el) el.classList.add('show');
+}
+function closeScreenerContact(){
+  const el = document.getElementById('screenerContactOverlay');
+  if(el) el.classList.remove('show');
+}
+
+// Close lang dropdown on outside click
+document.addEventListener('click', function(e){
+  const wrap = document.querySelector('.hnav-lang-wrap');
+  if(wrap && !wrap.contains(e.target)){
+    const dd = document.getElementById('hnavLangDropdown');
+    if(dd) dd.classList.remove('open');
+  }
+});
+
+// Init
+document.addEventListener('DOMContentLoaded', function(){
+  filterHnavLangs('');
+});
+</script>
 
 </body>
 </html>
