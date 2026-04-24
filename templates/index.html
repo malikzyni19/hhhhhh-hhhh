@@ -7,10 +7,25 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-:root{--bg-primary:#020408;--bg-card:#06101e;--bg-input:#040810;--border:#1a2d42;--text-primary:#f0f6ff;--text-secondary:#4d6b85;--accent:#22d3ee;--accent-purple:#818cf8;--glow-cyan:rgba(34,211,238,0.18);--glow-purple:rgba(129,140,248,0.12)}
-/* ══ LIGHT THEME ══ */
-[data-theme="light"]{--bg-primary:#eef2f8;--bg-card:#ffffff;--bg-input:#f4f7fc;--border:#d0daea;--text-primary:#0f172a;--text-secondary:#475569;--accent:#0284c7}
-[data-theme="light"] body{background:#eef2f8!important;color:#0f172a!important;background-image:radial-gradient(ellipse at 50% -5%,rgba(2,132,199,.06) 0%,transparent 50%),radial-gradient(circle,rgba(2,132,199,.18) 1px,transparent 1px)!important;background-size:100% 100%,24px 24px!important}
+/* ── CSS Variables ── */
+:root{
+  --bg-primary:#020810;--bg-card:#07111f;--bg-input:#060e1c;--bg-input2:#040a16;
+  --border:#162440;--border2:#0d1e35;
+  --text-primary:#e2e8f0;--text-secondary:#64748b;--text-muted:#3d5570;
+  --accent:#22d3ee;--accent-purple:#a78bfa;--accent-green:#22c55e;--accent-red:#ef4444;--accent-yellow:#f59e0b;
+  --glow-cyan:rgba(34,211,238,.18);--glow-purple:rgba(167,139,250,.12);
+  --card-shadow:0 4px 24px rgba(0,0,0,.5);
+}
+/* ── Light Theme ── */
+[data-theme="light"]{
+  --bg-primary:#f0f4f8;--bg-card:#ffffff;--bg-input:#f1f5f9;--bg-input2:#f4f7fc;
+  --border:#e2e8f0;--border2:#cbd5e1;
+  --text-primary:#0f172a;--text-secondary:#475569;--text-muted:#94a3b8;
+  --accent:#0284c7;--accent-purple:#7c3aed;--accent-green:#16a34a;--accent-red:#dc2626;--accent-yellow:#d97706;
+  --glow-cyan:rgba(2,132,199,.15);--glow-purple:rgba(124,58,237,.1);
+  --card-shadow:0 4px 24px rgba(0,0,0,.07);
+}
+[data-theme="light"] body{background:var(--bg-primary)!important;color:var(--text-primary)!important;background-image:radial-gradient(ellipse at 50% -5%,rgba(2,132,199,.07) 0%,transparent 50%),radial-gradient(circle,rgba(2,132,199,.14) 1px,transparent 1px)!important;background-size:100% 100%,26px 26px!important}
 [data-theme="light"] .header{background:linear-gradient(180deg,rgba(255,255,255,.97) 0%,rgba(244,249,255,.96) 100%)!important;backdrop-filter:blur(24px)!important;-webkit-backdrop-filter:blur(24px)!important;border-bottom:1px solid rgba(203,213,225,.8)!important;box-shadow:0 1px 0 rgba(2,132,199,.15),0 8px 32px rgba(2,132,199,.1),0 2px 8px rgba(0,0,0,.06)!important}
 [data-theme="light"] .smc-title{background:linear-gradient(90deg,#0891b2,#6366f1,#ec4899,#6366f1,#0891b2)!important;background-size:300% auto!important;-webkit-background-clip:text!important;-webkit-text-fill-color:transparent!important;background-clip:text!important;animation:gradientShift 5s linear infinite!important;filter:drop-shadow(0 0 6px rgba(8,145,178,.3))!important}
 [data-theme="light"] .welcome-name{color:#0891b2!important;text-shadow:none!important}
@@ -99,16 +114,31 @@
 .watchlist-row input,.watchlist-row select{flex:1;min-width:100px}
 body{
   font-family:'Inter',system-ui,sans-serif;
-  background:#020408;
-  color:#f0f6ff;
+  background:var(--bg-primary);
+  color:var(--text-primary);
   min-height:100vh;
   font-size:13px;
+  line-height:1.5;
   background-image:
-    radial-gradient(ellipse at 50% -5%,rgba(34,211,238,.07) 0%,transparent 55%),
-    radial-gradient(ellipse at 5% 100%,rgba(129,140,248,.05) 0%,transparent 45%),
-    radial-gradient(circle,rgba(34,211,238,.08) 1px,transparent 1px);
+    radial-gradient(ellipse at 50% -5%,rgba(34,211,238,.08) 0%,transparent 55%),
+    radial-gradient(ellipse at 5% 100%,rgba(167,139,250,.06) 0%,transparent 45%),
+    radial-gradient(circle,rgba(34,211,238,.07) 1px,transparent 1px);
   background-size:100% 100%,100% 100%,26px 26px;
 }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar{width:3px;height:3px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:linear-gradient(180deg,#22d3ee,#a78bfa);border-radius:3px}
+*{scrollbar-width:thin;scrollbar-color:rgba(34,211,238,.3) transparent}
+/* ── Selection ── */
+::selection{background:rgba(34,211,238,.2);color:#fff}
+[data-theme="light"] ::selection{background:rgba(2,132,199,.18);color:#0f172a}
+/* ── Focus ring ── */
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid rgba(34,211,238,.5);outline-offset:2px}
+[data-theme="light"] button:focus-visible,[data-theme="light"] input:focus-visible,[data-theme="light"] select:focus-visible{outline-color:rgba(2,132,199,.5)}
+/* ── Tabular nums on data elements ── */
+.summary-value,.symbol,.pair-symbol,.wl-symbol,.price-tag,.countdown,.clock,.api-nums{font-feature-settings:"tnum";font-variant-numeric:tabular-nums}
 
 /* ── Header ── */
 .header{
