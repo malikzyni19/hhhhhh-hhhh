@@ -887,7 +887,46 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
   .btn-primary,.btn-secondary{padding:11px 14px;font-size:12px}
   .card:hover{transform:none}
   .pair-item:hover{transform:none}
+  /* Fix Android compositing glitch: signal-band margin must match card padding */
+  .signal-band{margin:0 -12px 10px;padding:6px 12px}
+  /* Clip overflow so signal-band can't exceed compositing layer bounds */
+  .result-card{overflow:hidden}
+  /* Disable backdrop-filter on mobile — it causes teal-block rendering artifacts on Android WebView when combined with overflowing children */
+  .result-card{backdrop-filter:none;-webkit-backdrop-filter:none;background:rgba(4,8,18,.99)}
+  .result-card.bull-card{background:linear-gradient(135deg,rgba(34,197,94,.14) 0%,rgba(4,8,18,.99) 45%)}
+  .result-card.bear-card{background:linear-gradient(135deg,rgba(239,68,68,.14) 0%,rgba(4,8,18,.99) 45%)}
 }
+/* ── Signal band (prominent direction indicator) ── */
+.signal-band{margin:0 -14px 10px;padding:6px 14px;font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;display:flex;align-items:center;gap:7px;border-bottom:1px solid}
+.bull-band{background:linear-gradient(90deg,rgba(34,197,94,.22) 0%,rgba(34,197,94,.05) 60%,transparent);border-bottom-color:rgba(34,197,94,.22);color:#4ade80}
+.bear-band{background:linear-gradient(90deg,rgba(239,68,68,.22) 0%,rgba(239,68,68,.05) 60%,transparent);border-bottom-color:rgba(239,68,68,.22);color:#f87171}
+.neutral-band{background:linear-gradient(90deg,rgba(34,211,238,.14) 0%,rgba(34,211,238,.03) 60%,transparent);border-bottom-color:rgba(34,211,238,.12);color:#22d3ee}
+.signal-band-icon{font-size:13px;line-height:1}
+[data-theme="light"] .bull-band{background:linear-gradient(90deg,rgba(22,163,74,.14) 0%,rgba(22,163,74,.03) 60%,transparent)!important;border-bottom-color:rgba(22,163,74,.18)!important;color:#15803d!important}
+[data-theme="light"] .bear-band{background:linear-gradient(90deg,rgba(220,38,38,.12) 0%,rgba(220,38,38,.03) 60%,transparent)!important;border-bottom-color:rgba(220,38,38,.18)!important;color:#b91c1c!important}
+[data-theme="light"] .neutral-band{background:linear-gradient(90deg,rgba(2,132,199,.1) 0%,transparent 60%)!important;border-bottom-color:rgba(2,132,199,.15)!important;color:#0284c7!important}
+
+/* ── Always-visible result summary ── */
+.result-summary{font-size:11.5px;color:#7a9bb5;line-height:1.5;margin:6px 0 2px;font-family:'Inter',sans-serif;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.result-card.expanded .result-summary{display:none}
+[data-theme="light"] .result-summary{color:#475569!important}
+
+/* ── Bigger strength dots with label ── */
+.dot{width:8px;height:8px;border-radius:50%}
+.strength-dots{gap:3px;align-items:center}
+.strength-label{font-size:9px;color:#4d6b85;letter-spacing:1px;font-family:'JetBrains Mono',monospace;margin-left:4px}
+[data-theme="light"] .strength-label{color:#94a3b8!important}
+
+/* ── Badge improved sizing ── */
+.badge{padding:3px 10px;font-size:10px;letter-spacing:.7px}
+
+/* ── RSI coloring ── */
+.rsi-ob{color:#f87171}
+.rsi-os{color:#4ade80}
+.rsi-norm{color:#64748b}
+[data-theme="light"] .rsi-ob{color:#b91c1c!important}
+[data-theme="light"] .rsi-os{color:#15803d!important}
+[data-theme="light"] .rsi-norm{color:#475569!important}
 
 </style>
 </head>
@@ -983,13 +1022,13 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 
   <!-- Tabs -->
   <div class="tabs">
-    <button class="tab active" onclick="showPage('scan',this)">SCAN</button>
-    <button class="tab" onclick="showPage('pairs',this)">PAIRS</button>
-    <button class="tab" onclick="showPage('settings',this)">SETTINGS</button>
-    <button class="tab" onclick="showPage('compressed',this)">COMPRESSED</button>
-    <button class="tab" onclick="showPage('trending',this)">TRENDING</button>
-    <button class="tab" onclick="showPage('athatl',this)">ATH / ATL</button>
-    <button class="tab" onclick="showPage('bias',this)">BIAS</button>
+    <button class="tab active" onclick="showPage('scan',this)">🔍 SCAN</button>
+    <button class="tab" onclick="showPage('pairs',this)">📋 PAIRS</button>
+    <button class="tab" onclick="showPage('settings',this)">⚙️ SETTINGS</button>
+    <button class="tab" onclick="showPage('compressed',this)">📦 COMPRESSED</button>
+    <button class="tab" onclick="showPage('trending',this)">🔥 TRENDING</button>
+    <button class="tab" onclick="showPage('athatl',this)">🏆 ATH / ATL</button>
+    <button class="tab" onclick="showPage('bias',this)">🎯 BIAS</button>
     <button class="tab" onclick="showPage('watchlist',this);renderWatchlistTab()">📡 LIVE MONITOR</button>
   </div>
 
@@ -1993,12 +2032,15 @@ function formatVol(v){ if(v>=1e9)return (v/1e9).toFixed(2)+'B'; if(v>=1e6)return
 function strengthDots(strength){
   const filled = Math.round(strength / 20);
   const colors = ['#ef4444','#f97316','#eab308','#22c55e','#22d3ee'];
-  let html = '<div class="strength-dots">';
+  const labels = ['WEAK','LOW','MED','HIGH','MAX'];
+  const strengthLabel = filled > 0 ? labels[Math.min(filled-1,4)] : 'WEAK';
+  let dots = '';
   for(let i=0;i<5;i++){
     const color = i < filled ? colors[Math.min(filled-1,4)] : '#1e2d3d';
-    html += `<div class="dot" style="background:${color}"></div>`;
+    const glow = i < filled ? `box-shadow:0 0 6px ${color}` : '';
+    dots += `<div class="dot" style="background:${color};${glow}"></div>`;
   }
-  return html + '</div>';
+  return `<div class="strength-dots">${dots}<span class="strength-label">${strengthLabel}</span></div>`;
 }
 
 // ── Pro #5 — Coin icon ──
@@ -2147,10 +2189,32 @@ function renderMainResultsList(results){
     const corr = item.correlationLabel ? `<span class="badge neutral">BTC:${item.correlationLabel}</span>` : '';
     const str = a.strength || 1;
 
+    const dir = allAlerts.some(al=>al.direction==='bullish') ? 'bull' : allAlerts.some(al=>al.direction==='bearish') ? 'bear' : 'neutral';
+    const cardClass = dir === 'bull' ? 'bull-card' : dir === 'bear' ? 'bear-card' : '';
+    const signalBand = dir === 'bull'
+      ? `<div class="signal-band bull-band"><span class="signal-band-icon">▲</span> BULLISH SETUP — Price near demand zone, expecting move up</div>`
+      : dir === 'bear'
+      ? `<div class="signal-band bear-band"><span class="signal-band-icon">▼</span> BEARISH SETUP — Price near supply zone, expecting move down</div>`
+      : `<div class="signal-band neutral-band"><span class="signal-band-icon">◈</span> NEUTRAL — No clear directional bias yet</div>`;
+
+    const setupTitles = {
+      'OB_APPROACH':'Order Block Approach — Price approaching a key demand/supply zone',
+      'OB_CONSOL':'Order Block Consolidation — Price consolidating inside an order block',
+      'FIB_REACTION':'Fibonacci Reaction — Price reacting sharply at a Fib level',
+      'FIB_APPROACH':'Fibonacci Approach — Price moving toward a key Fib level',
+      'FIB':'Fibonacci Level — Price at a significant Fibonacci zone',
+      'BREAKER_APPROACH':'Breaker Block Approach — Failed structure acting as new S/R',
+      'BREAKER_INSIDE':'Breaker Block Inside — Price inside a breaker block zone',
+      'FVG':'Fair Value Gap — Imbalance zone price may return to fill',
+      'CHOCH':'Change of Character — First sign of trend reversal',
+      'BOS':'Break of Structure — Trend continuation confirmed'
+    };
+
     const seen = new Set();
     const setupBadges = allAlerts.map(al => {
       const dc = al.direction === 'bullish' ? 'bull' : al.direction === 'bearish' ? 'bear' : 'neutral';
       let label = al.setup;
+      let titleText = setupTitles[al.setup] || al.setup;
       if(al.setup === 'OB_APPROACH') label = 'OB↗';
       else if(al.setup === 'OB_CONSOL') label = 'OB◈';
       // OB_REACTED removed
@@ -2162,7 +2226,7 @@ function renderMainResultsList(results){
       const key = label + dc;
       if(seen.has(key)) return '';
       seen.add(key);
-      return `<span class="badge ${dc}">${label}</span>`;
+      return `<span class="badge ${dc}" title="${titleText}">${label}</span>`;
     }).join('');
 
     const _obS = JSON.parse(localStorage.getItem('zyni_settings') || '{}');
@@ -2190,7 +2254,12 @@ function renderMainResultsList(results){
     const sparkHtml = renderSparkline(item.sparkline, item.sparklineMarkers);
     const scoreBadge = renderScoreBadge(item.score, item.confidence);
 
-    return `<div class="result-card" style="animation-delay:${idx*40}ms" onclick="this.classList.toggle('expanded')">
+    const rsiVal = parseFloat(item.rsi);
+    const rsiClass = rsiVal >= 70 ? 'rsi-ob' : rsiVal <= 30 ? 'rsi-os' : 'rsi-norm';
+    const rsiLabel = rsiVal >= 70 ? ' OB' : rsiVal <= 30 ? ' OS' : '';
+
+    return `<div class="result-card ${cardClass}" style="animation-delay:${idx*40}ms" onclick="this.classList.toggle('expanded')">
+      ${signalBand}
       <div class="result-header">
         <span class="symbol" style="min-width:0;flex-shrink:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${coinIcon(item.symbol)}${displaySymbol(item.symbol)}<a href="https://www.tradingview.com/chart/?symbol=BINANCE:${item.symbol}.P" target="${tvTarget()}" class="tv-link" rel="noopener" onclick="event.stopPropagation()">📊</a><span class="expand-icon">▼</span></span>
         <span style="display:flex;align-items:center;gap:4px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end">
@@ -2204,13 +2273,13 @@ function renderMainResultsList(results){
         ${trendLabel}${corr}
         ${strengthDots(str * 20)}
       </div>
+      <div class="result-summary">${a.detail}</div>
       <div class="result-details">
-        <div class="result-detail">${a.detail}</div>
         ${checksLine}
         ${extraDetails}
         <div class="result-footer" style="margin-top:6px">
-          <span>RSI ${item.rsi}</span>
-          <span>ATR ${item.atr}</span>
+          <span title="Relative Strength Index — above 70 = overbought, below 30 = oversold">RSI <span class="${rsiClass}">${item.rsi}${rsiLabel}</span></span>
+          <span title="Average True Range — measures volatility / typical price swing">ATR ${item.atr}</span>
         </div>
         ${buildZoneButtons(item)}
         <div class="scan-time">Scanned: ${scanTime}</div>
