@@ -1008,6 +1008,8 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
   .summary-label{font-size:8px}
   .btn-primary,.btn-secondary{padding:11px 14px;font-size:12px}
   .card:hover{transform:none}
+  /* Disable card backdrop-filter on mobile — compositor layer explosions cause screen blinking/cutting when switching tabs */
+  .card{backdrop-filter:none;-webkit-backdrop-filter:none;background:linear-gradient(135deg,#07111f 0%,rgba(3,8,18,.99) 100%)}
   .pair-item:hover{transform:none}
   /* Fix Android compositing glitch: signal-band margin must match card padding */
   .signal-band{margin:0 -12px 10px;padding:6px 12px}
