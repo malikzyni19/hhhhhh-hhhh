@@ -418,9 +418,44 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 .lw-dust-wrap{position:absolute;bottom:-8px;left:50%;transform:translateX(-50%);width:380px;height:80px;pointer-events:none;z-index:-1}
 .lw-imp-ring{position:absolute;bottom:-18px;left:50%;transform:translateX(-50%);width:0;height:0;border-radius:50%;border:2px solid rgba(34,211,238,0);pointer-events:none;z-index:200}
 
+
+/* ── THREE.JS CANVAS ── */
+#three-canvas{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-events:none;opacity:1}
+
+/* ── FEATURE ROW 3D ENHANCEMENTS ── */
+.feat-row{overflow:visible!important}
+.phone-side{perspective:1200px;position:relative}
+.phone-3d-wrap{transform-style:preserve-3d;will-change:transform}
+
+/* Floating orbs around phone */
+.feat-orb{position:absolute;border-radius:50%;pointer-events:none;opacity:0;z-index:10;filter:blur(2px)}
+.feat-orb-a{width:56px;height:56px;background:radial-gradient(circle,rgba(99,102,241,0.7) 0%,transparent 70%);top:-18px;right:10px}
+.feat-orb-b{width:40px;height:40px;background:radial-gradient(circle,rgba(34,211,238,0.65) 0%,transparent 70%);bottom:30px;left:-10px}
+.feat-orb-c{width:72px;height:72px;background:radial-gradient(circle,rgba(167,139,250,0.5) 0%,transparent 70%);top:45%;right:-24px}
+.feat-orb-d{width:28px;height:28px;background:radial-gradient(circle,rgba(56,189,248,0.8) 0%,transparent 70%);top:15%;left:5px}
+
+/* Hero glow button enhancement */
+.btn-main{position:relative;z-index:1}
+.btn-main-glow{position:absolute;inset:-4px;border-radius:54px;background:linear-gradient(135deg,#22d3ee,#6366f1,#a78bfa);opacity:0;filter:blur(14px);z-index:-1;transition:opacity .4s;pointer-events:none}
+.btn-main:hover .btn-main-glow{opacity:0.55}
+.btn-main:hover{transform:translateY(-3px) scale(1.02);box-shadow:0 20px 50px rgba(34,211,238,0.4)}
+
+/* Hero floating shapes */
+.hero-shape{position:absolute;border-radius:50%;pointer-events:none;filter:blur(1px);opacity:0;animation:heroShapeFloat var(--dur,6s) ease-in-out infinite alternate}
+@keyframes heroShapeFloat{from{transform:translate(0,0) rotate(0deg)}to{transform:translate(var(--tx,10px),var(--ty,-15px)) rotate(var(--tr,45deg))}}
+
+/* Feature text animation initial states — set by GSAP */
+.gsap-feat-pill,.gsap-feat-title,.gsap-feat-desc{will-change:transform,opacity}
+
+/* Phone continuous float — added by GSAP after trigger */
+.phone{transform-style:preserve-3d;will-change:transform}
+
+/* Premium section glow accent */
+.section-glow{position:absolute;pointer-events:none;border-radius:50%;filter:blur(80px);opacity:0.07;z-index:0}
 </style>
 </head>
 <body>
+<canvas id="three-canvas"></canvas>
 <div class="bg-mesh"></div>
 <div class="bg-grid"></div>
 <div id="stars"></div>
@@ -572,7 +607,7 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
   </h1>
   <p class="hero-sub" data-i18n="hero_sub">Professional SMC scanner detecting Order Blocks, FVGs, Breaker Blocks and Fibonacci across 400+ crypto pairs — live, every second.</p>
   <div class="hero-btns">
-    <a class="btn-main" onclick="launchLogin()" data-i18n="hero_btn_launch">Launch App ↗</a>
+    <a class="btn-main" onclick="launchLogin()" data-i18n="hero_btn_launch"><span class="btn-main-glow"></span>Launch App ↗</a>
     <a class="btn-ghost" href="#features" data-i18n="hero_btn_explore">Explore Features ↓</a>
   </div>
   <div class="hero-bottom">
@@ -1427,6 +1462,248 @@ function lwStartBounce(){
   function next(){requestAnimationFrame(function(ts){animateLetter(letters[idx],ts);});}
   next();
 }
+</script>
+
+<!-- ── THREE.JS + GSAP CDN ── -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/ScrollTrigger.min.js"></script>
+
+<script>
+/* ════════════════════════════════════════════════════════════
+   THREE.JS — cinematic 3D background
+════════════════════════════════════════════════════════════ */
+(function initThree() {
+  if (!window.THREE) return;
+
+  var canvas = document.getElementById('three-canvas');
+  var renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+
+  var scene = new THREE.Scene();
+  var camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 100);
+  camera.position.z = 6;
+
+  /* ── Geometries & materials ── */
+  var geoList = [
+    new THREE.SphereGeometry(0.45, 32, 32),
+    new THREE.IcosahedronGeometry(0.42, 0),
+    new THREE.OctahedronGeometry(0.40, 0),
+    new THREE.BoxGeometry(0.55, 0.55, 0.55),
+    new THREE.TorusGeometry(0.32, 0.10, 16, 32),
+    new THREE.SphereGeometry(0.28, 16, 16),
+    new THREE.IcosahedronGeometry(0.35, 0),
+    new THREE.OctahedronGeometry(0.30, 0),
+    new THREE.BoxGeometry(0.38, 0.38, 0.38),
+    new THREE.TorusGeometry(0.22, 0.08, 12, 24),
+    new THREE.SphereGeometry(0.55, 24, 24),
+    new THREE.IcosahedronGeometry(0.25, 0),
+  ];
+
+  var palette = [0x6366f1, 0x22d3ee, 0xa78bfa, 0x818cf8, 0x38bdf8, 0x7c3aed, 0x06b6d4, 0xc084fc];
+
+  var shapes = [];
+  geoList.forEach(function(geo, i) {
+    var mat = new THREE.MeshBasicMaterial({
+      color: palette[i % palette.length],
+      transparent: true,
+      opacity: 0.10 + Math.random() * 0.08,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    var mesh = new THREE.Mesh(geo, mat);
+
+    /* Spread across wide 3D space */
+    mesh.position.set(
+      (Math.random() - 0.5) * 20,
+      (Math.random() - 0.5) * 14,
+      (Math.random() - 0.5) * 8 - 2
+    );
+    mesh.rotation.set(
+      Math.random() * Math.PI * 2,
+      Math.random() * Math.PI * 2,
+      Math.random() * Math.PI * 2
+    );
+
+    var ud = {
+      rotX: (Math.random() - 0.5) * 0.004,
+      rotY: (Math.random() - 0.5) * 0.005,
+      rotZ: (Math.random() - 0.5) * 0.003,
+      floatAmp: 0.8 + Math.random() * 1.2,
+      floatSpd: 0.0006 + Math.random() * 0.0007,
+      floatOff: Math.random() * Math.PI * 2,
+      driftAmp: 0.4 + Math.random() * 0.5,
+      driftSpd: 0.0004 + Math.random() * 0.0004,
+      origX: mesh.position.x,
+      origY: mesh.position.y,
+    };
+    mesh.userData = ud;
+
+    scene.add(mesh);
+    shapes.push(mesh);
+  });
+
+  /* ── Mouse parallax ── */
+  var mouseX = 0, mouseY = 0;
+  document.addEventListener('mousemove', function(e) {
+    mouseX = (e.clientX / window.innerWidth  - 0.5) * 0.5;
+    mouseY = (e.clientY / window.innerHeight - 0.5) * 0.3;
+  }, { passive: true });
+
+  /* ── Render loop ── */
+  var t = 0;
+  function animate() {
+    requestAnimationFrame(animate);
+    t++;
+
+    shapes.forEach(function(mesh) {
+      var ud = mesh.userData;
+      mesh.rotation.x += ud.rotX;
+      mesh.rotation.y += ud.rotY;
+      mesh.rotation.z += ud.rotZ;
+
+      mesh.position.y = ud.origY + Math.sin(t * ud.floatSpd + ud.floatOff) * ud.floatAmp;
+      mesh.position.x = ud.origX + Math.cos(t * ud.driftSpd + ud.floatOff) * ud.driftAmp;
+    });
+
+    /* Smooth camera parallax */
+    camera.position.x += (mouseX - camera.position.x) * 0.025;
+    camera.position.y += (-mouseY - camera.position.y) * 0.025;
+    camera.lookAt(scene.position);
+
+    renderer.render(scene, camera);
+  }
+  animate();
+
+  window.addEventListener('resize', function() {
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+  });
+})();
+
+/* ════════════════════════════════════════════════════════════
+   GSAP — hero shapes injection + feature ScrollTrigger
+════════════════════════════════════════════════════════════ */
+(function initGSAP() {
+  if (!window.gsap || !window.ScrollTrigger) return;
+  gsap.registerPlugin(ScrollTrigger);
+
+  /* ── Hero floating CSS shapes ── */
+  var hero = document.querySelector('.hero');
+  if (hero) {
+    var heroShapeDefs = [
+      { w:80, h:80, top:'12%', left:'8%',  tx:18,  ty:-22, tr:60,  dur:7,   clr:'rgba(99,102,241,0.18)',  br:'50%' },
+      { w:50, h:50, top:'70%', left:'5%',  tx:-12, ty:14,  tr:-45, dur:9,   clr:'rgba(34,211,238,0.20)',  br:'8px' },
+      { w:60, h:60, top:'20%', right:'6%', tx:14,  ty:-18, tr:90,  dur:8,   clr:'rgba(167,139,250,0.18)', br:'50%' },
+      { w:36, h:36, top:'55%', right:'9%', tx:-8,  ty:20,  tr:-30, dur:6,   clr:'rgba(56,189,248,0.22)',  br:'6px' },
+      { w:100,h:100,top:'80%', right:'3%', tx:20,  ty:-10, tr:120, dur:11,  clr:'rgba(124,58,237,0.12)',  br:'50%' },
+      { w:28, h:28, top:'40%', left:'3%',  tx:-6,  ty:-16, tr:-60, dur:7.5, clr:'rgba(34,211,238,0.25)',  br:'4px' },
+    ];
+
+    heroShapeDefs.forEach(function(d) {
+      var el = document.createElement('div');
+      el.className = 'hero-shape';
+      el.style.cssText = [
+        'position:absolute',
+        'pointer-events:none',
+        'border-radius:' + d.br,
+        'width:' + d.w + 'px',
+        'height:' + d.h + 'px',
+        'background:' + d.clr,
+        'filter:blur(2px)',
+        d.top   ? 'top:' + d.top     : '',
+        d.left  ? 'left:' + d.left   : '',
+        d.right ? 'right:' + d.right : '',
+        '--tx:' + d.tx + 'px',
+        '--ty:' + d.ty + 'px',
+        '--tr:' + d.tr + 'deg',
+        '--dur:' + d.dur + 's',
+      ].filter(Boolean).join(';');
+      el.setAttribute('aria-hidden','true');
+      hero.appendChild(el);
+
+      /* Fade in with GSAP then CSS animation handles the float */
+      gsap.to(el, { opacity: 1, duration: 1.5, delay: 0.5 + Math.random() });
+    });
+  }
+
+  /* ── Inject orbs into each phone-side ── */
+  document.querySelectorAll('.phone-side').forEach(function(ps) {
+    ['a','b','c','d'].forEach(function(k) {
+      var orb = document.createElement('div');
+      orb.className = 'feat-orb feat-orb-' + k;
+      orb.setAttribute('aria-hidden','true');
+      ps.appendChild(orb);
+    });
+  });
+
+  /* ── Feature row ScrollTrigger animations ── */
+  document.querySelectorAll('.feat-row').forEach(function(row, idx) {
+    var isRev   = row.classList.contains('rev');
+    var phone   = row.querySelector('.phone');
+    var pill    = row.querySelector('.feat-pill');
+    var title   = row.querySelector('.feat-title');
+    var descBox = row.querySelector('.feat-desc-box');
+    var orbs    = row.querySelectorAll('.feat-orb');
+    var textDir = isRev ? 50 : -50;
+
+    /* Set initial hidden states */
+    gsap.set(phone,   { opacity: 0, scale: 0.82, rotateY: isRev ? -18 : 18, y: 28 });
+    if (pill)    gsap.set(pill,    { opacity: 0, x: textDir });
+    if (title)   gsap.set(title,   { opacity: 0, x: textDir * 0.65 });
+    if (descBox) gsap.set(descBox, { opacity: 0, y: 18 });
+
+    var tl = gsap.timeline({
+      scrollTrigger: {
+        trigger: row,
+        start: 'top 78%',
+        once: true,
+      }
+    });
+
+    /* Phone scales in with tilt */
+    tl.to(phone, {
+      opacity: 1, scale: 1, rotateY: 0, y: 0,
+      duration: 1.1, ease: 'power3.out',
+    }, 0);
+
+    /* Text slides in from side */
+    if (pill)    tl.to(pill,    { opacity: 1, x: 0, duration: 0.65, ease: 'power2.out' }, 0.18);
+    if (title)   tl.to(title,   { opacity: 1, x: 0, duration: 0.75, ease: 'power3.out' }, 0.30);
+    if (descBox) tl.to(descBox, { opacity: 1, y: 0, duration: 0.65, ease: 'power2.out' }, 0.48);
+
+    /* Orbs pop in */
+    orbs.forEach(function(orb, j) {
+      tl.to(orb, { opacity: 1, scale: 1, duration: 0.9, ease: 'back.out(1.7)' }, 0.25 + j * 0.12);
+    });
+
+    /* After trigger: continuous phone float */
+    tl.call(function() {
+      gsap.to(phone, {
+        y: -14,
+        duration: 2.8 + idx * 0.25,
+        ease: 'sine.inOut',
+        yoyo: true,
+        repeat: -1,
+      });
+
+      /* Orb random drift */
+      orbs.forEach(function(orb, j) {
+        gsap.to(orb, {
+          x: (Math.random() - 0.5) * 24,
+          y: (Math.random() - 0.5) * 24,
+          rotation: 180 * (j % 2 === 0 ? 1 : -1),
+          duration: 3.5 + j * 1.2,
+          ease: 'sine.inOut',
+          yoyo: true,
+          repeat: -1,
+        });
+      });
+    });
+  });
+})();
 </script>
 </body>
 </html>
