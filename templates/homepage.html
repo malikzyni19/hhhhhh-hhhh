@@ -78,6 +78,9 @@ nav{position:relative;z-index:90;display:flex;align-items:center;justify-content
 /* Letter-level micro-float wave */
 .nl{display:inline-block;animation:nlWave 3.8s ease-in-out infinite;animation-delay:calc(var(--d,0) * 110ms)}
 @keyframes nlWave{0%,100%{transform:translateY(0)}50%{transform:translateY(-2.5px)}}
+/* Each inline-block letter needs its own gradient so -webkit-background-clip:text renders correctly */
+.nav-logo-zyni .nl{background:linear-gradient(135deg,var(--text) 0%,#22d3ee 60%,#a5f3fc 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.nav-logo-smc .nl{background:linear-gradient(135deg,#92400e 0%,#f59e0b 40%,#fde68a 60%,#f97316 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
 
 /* NAV RIGHT — horizontal buttons, always right */
 .nav-right{display:flex;align-items:center;gap:6px;margin-left:auto}
@@ -521,6 +524,63 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 
 /* ── LETTER TYPING SPANS ── */
 .letter-span{display:inline-block;opacity:0;will-change:opacity}
+
+/* ── MODULES 3-D LIGHTNING BOX BACKGROUND ── */
+.mlb-wrap{position:absolute;inset:0;overflow:hidden;z-index:0;pointer-events:none}
+.mlb-scene{position:absolute;top:50%;left:50%;perspective:1100px;transform:translate(-50%,-50%)}
+.mlb-box{
+  width:320px;height:320px;position:relative;transform-style:preserve-3d;
+  animation:mlbSpin 28s linear infinite, mlbPulse 10s ease-in-out infinite;
+}
+.mlb-f{
+  position:absolute;width:100%;height:100%;
+  border:1.5px solid rgba(99,102,241,0.22);
+  background:rgba(3,8,22,0.50);
+}
+.mlb-f::after{
+  content:'';position:absolute;inset:0;
+  box-shadow:inset 0 0 22px rgba(99,102,241,0.14),inset 0 0 50px rgba(34,211,238,0.05);
+  animation:mlbEdge 3.5s ease-in-out infinite alternate;
+}
+.mlb-front{transform:translateZ(160px)}
+.mlb-back {transform:rotateY(180deg) translateZ(160px)}
+.mlb-left {transform:rotateY(-90deg) translateZ(160px)}
+.mlb-right{transform:rotateY( 90deg) translateZ(160px)}
+.mlb-bot  {transform:rotateX(-90deg) translateZ(160px)}
+.mlb-top  {
+  transform:rotateX(90deg) translateZ(160px);
+  transform-origin:center bottom;
+  animation:mlbLidOpen 10s ease-in-out infinite;
+}
+.mlb-front::before{
+  content:'';position:absolute;top:50%;left:50%;
+  width:100px;height:100px;border-radius:50%;
+  transform:translate(-50%,-50%);
+  background:radial-gradient(circle,rgba(99,102,241,0.45) 0%,rgba(34,211,238,0.22) 40%,transparent 70%);
+  filter:blur(18px);
+  animation:mlbBurst 10s ease-in-out infinite;
+}
+/* Extra corner sparks on edges */
+.mlb-left::before,.mlb-right::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,transparent,rgba(99,102,241,0.7),rgba(34,211,238,0.9),rgba(99,102,241,0.7),transparent);
+  animation:mlbSpark 3s ease-in-out infinite alternate;
+}
+@keyframes mlbSpin{0%{transform:rotateY(0deg) rotateX(18deg)} 100%{transform:rotateY(360deg) rotateX(18deg)}}
+@keyframes mlbPulse{0%,100%{filter:none} 50%{filter:drop-shadow(0 0 40px rgba(99,102,241,0.18)) drop-shadow(0 0 80px rgba(34,211,238,0.08))}}
+@keyframes mlbLidOpen{
+  0%,15%{transform:rotateX(90deg) translateZ(160px)}
+  40%,70%{transform:rotateX(155deg) translateZ(160px)}
+  90%,100%{transform:rotateX(90deg) translateZ(160px)}
+}
+@keyframes mlbEdge{
+  from{box-shadow:inset 0 0 10px rgba(99,102,241,0.08)}
+  to{box-shadow:inset 0 0 30px rgba(99,102,241,0.28),inset 0 0 60px rgba(34,211,238,0.10)}
+}
+@keyframes mlbBurst{0%,100%{opacity:0.25;transform:translate(-50%,-50%) scale(0.7)} 50%{opacity:1;transform:translate(-50%,-50%) scale(1.5)}}
+@keyframes mlbSpark{from{opacity:0.3;width:30%} to{opacity:0.9;width:90%}}
+/* Ensure features section clips box correctly */
+#features{overflow:hidden}
 </style>
 </head>
 <body>
@@ -764,6 +824,19 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 
 <!-- FEATURES -->
 <div class="section" id="features">
+  <!-- 3-D lightning box background -->
+  <div class="mlb-wrap" aria-hidden="true">
+    <div class="mlb-scene">
+      <div class="mlb-box">
+        <div class="mlb-f mlb-front"></div>
+        <div class="mlb-f mlb-back"></div>
+        <div class="mlb-f mlb-left"></div>
+        <div class="mlb-f mlb-right"></div>
+        <div class="mlb-f mlb-top"></div>
+        <div class="mlb-f mlb-bot"></div>
+      </div>
+    </div>
+  </div>
   <div class="sec-eyebrow" data-i18n="feat_eyebrow">SMC Modules</div>
   <h2 class="sec-h"><span data-i18n="feat_h">Everything to trade smart money</span></h2>
   <p class="sec-sub" data-i18n="feat_sub">Six professional tools — scan, detect and act on every Smart Money setup across 400+ pairs.</p>
@@ -1886,12 +1959,19 @@ function lwStartBounce(){
   gCtx.fillStyle = bHalo;
   gCtx.fillRect(0, 0, 1024, 1024);
 
-  /* ₿ symbol */
-  gCtx.font = 'bold 480px Arial';
+  /* ₿ symbol — centred with glow emboss */
+  gCtx.font = 'bold 420px Arial';
   gCtx.textAlign = 'center';
   gCtx.textBaseline = 'middle';
-  gCtx.fillStyle = 'rgba(253,230,138,0.90)';
-  gCtx.fillText('₿', 512, 530);
+  /* outer glow pass */
+  gCtx.shadowColor = 'rgba(251,191,36,0.85)';
+  gCtx.shadowBlur = 55;
+  gCtx.fillStyle = 'rgba(253,230,138,0.35)';
+  gCtx.fillText('₿', 512, 512);
+  /* crisp pass */
+  gCtx.shadowBlur = 0;
+  gCtx.fillStyle = 'rgba(253,230,138,0.93)';
+  gCtx.fillText('₿', 512, 512);
 
   var globeTex = new THREE.CanvasTexture(globeCv);
 
@@ -1903,7 +1983,7 @@ function lwStartBounce(){
     emissive: new THREE.Color(0x0d2137),
     emissiveIntensity: 0.25
   });
-  var globeMesh = new THREE.Mesh(new THREE.SphereGeometry(1.4, 64, 64), globeMat);
+  var globeMesh = new THREE.Mesh(new THREE.SphereGeometry(2.0, 64, 64), globeMat);
   coinGroup.add(globeMesh);
 
   /* Atmosphere glow shell */
@@ -1915,7 +1995,7 @@ function lwStartBounce(){
     blending: THREE.AdditiveBlending,
     depthWrite: false
   });
-  coinGroup.add(new THREE.Mesh(new THREE.SphereGeometry(1.62, 32, 32), atmosMat));
+  coinGroup.add(new THREE.Mesh(new THREE.SphereGeometry(2.25, 32, 32), atmosMat));
 
   /* Additive gold glow sprite behind globe */
   var glowCv = document.createElement('canvas'); glowCv.width = glowCv.height = 256;
@@ -1924,12 +2004,12 @@ function lwStartBounce(){
   gr.addColorStop(0,'rgba(251,191,36,0.55)'); gr.addColorStop(0.4,'rgba(245,158,11,0.20)'); gr.addColorStop(1,'rgba(245,158,11,0)');
   gc.fillStyle = gr; gc.fillRect(0,0,256,256);
   coinGroup.add(new THREE.Mesh(
-    new THREE.PlaneGeometry(7, 7),
+    new THREE.PlaneGeometry(10, 10),
     new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(glowCv), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })
   ));
 
   /* ── SINGLE orbit ring ── */
-  var ORBIT_R = 3.0;
+  var ORBIT_R = 3.8;
   var orbitRing = new THREE.Mesh(
     new THREE.TorusGeometry(ORBIT_R, 0.013, 20, 140),
     new THREE.MeshBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.38, blending: THREE.AdditiveBlending })
@@ -2004,19 +2084,19 @@ function lwStartBounce(){
     if (!active) return;
     var t = clock.getElapsedTime();
 
-    /* Scroll parallax: scale coin + ring down, fade canvas */
+    /* Scroll parallax: smooth fade + scale + upward drift over full hero height */
     var heroH = hero.offsetHeight || 700;
-    var scrollFrac = Math.min(scrollY / (heroH * 0.6), 1);
-    var coinScale = 1 - scrollFrac * 0.45;
-    var sceneOpacity = 1 - scrollFrac * 0.85;
+    var scrollFrac = Math.min(scrollY / heroH, 1);
+    var coinScale = 1 - scrollFrac * 0.50;
+    var sceneOpacity = 1 - scrollFrac;
     canvas.style.opacity = sceneOpacity.toFixed(3);
-    canvas.style.transform = 'scale(' + (1 - scrollFrac * 0.08) + ')';
+    canvas.style.transform = 'scale(' + (1 - scrollFrac * 0.05) + ') translateY(' + (-scrollFrac * 55) + 'px)';
     coinGroup.scale.setScalar(coinScale);
     orbitRing.scale.setScalar(coinScale);
 
     /* Globe: slow Y-axis rotation + gentle vertical float */
     coinGroup.rotation.y += 0.005;
-    coinGroup.position.y = Math.sin(t * 0.4) * 0.10;
+    coinGroup.position.y = Math.sin(t * 0.4) * 0.10 + scrollFrac * 2.5;
 
     /* Ring stays fixed in tilt — icons orbit along it in one clean direction */
 
