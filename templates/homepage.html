@@ -463,7 +463,14 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 @media(max-width:960px){
   .hero-bottom{flex-direction:column}
   #hero-rw{min-width:160px}
-  #hero-3d-canvas{opacity:0.7}
+}
+@media(max-width:768px){
+  #hero-3d-canvas{opacity:0.75}
+  .orbit-pill{font-size:9px;padding:3px 9px;letter-spacing:1px}
+}
+@media(max-width:480px){
+  .orbit-pill{display:none} /* labels too cramped — hide on small phones */
+  #hero-3d-canvas{opacity:0.6}
 }
 
 /* ── HERO BUTTON GLOW ── */
@@ -655,8 +662,8 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
   <div class="hero-left">
   <div class="hero-eyebrow"><span class="hero-eyebrow-dot"></span><span data-i18n="hero_eyebrow">Smart Money Concepts · Real Time</span></div>
   <h1 class="hero-h1">
-    <div class="l1">Trade like</div>
-    <div class="l2"><span id="hero-rw">elite</span>&nbsp;money</div>
+    <div class="l1">Trade Like</div>
+    <div class="l2"><span id="hero-rw">Smart</span>&nbsp;Money</div>
   </h1>
   <p class="hero-sub" data-i18n="hero_sub">Professional SMC scanner detecting Order Blocks, FVGs, Breaker Blocks and Fibonacci across 400+ crypto pairs — live, every second.</p>
   <div class="hero-btns">
@@ -2029,18 +2036,28 @@ function lwStartBounce(){
   }
   animate();
 
+  /* ── Camera fit: pull back + widen FOV on narrow viewports ── */
+  function fitCamera() {
+    var narrow = W < 640;
+    var veryNarrow = W < 400;
+    camera.fov      = veryNarrow ? 62 : narrow ? 56 : 42;
+    camera.position.z = veryNarrow ? 16 : narrow ? 13 : 9;
+    camera.aspect   = W / H;
+    camera.updateProjectionMatrix();
+  }
+  fitCamera();
+
   /* ── Resize handler ── */
   window.addEventListener('resize', function() {
     W = hero.offsetWidth;
     H = hero.offsetHeight;
     renderer.setSize(W, H);
-    camera.aspect = W / H;
-    camera.updateProjectionMatrix();
+    fitCamera();
   });
 
-  /* ── Word rotation (GSAP) ── */
+  /* ── Word rotation (GSAP) — all words capitalised ── */
   if (!window.gsap) return;
-  var words = ['elite', 'pro', 'smart', 'strategic', 'advanced'];
+  var words = ['Smart', 'Elite', 'Pro', 'Strategic', 'Advanced'];
   var wordEl = document.getElementById('hero-rw');
   if (!wordEl) return;
   var wIdx = 0;
