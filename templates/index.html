@@ -1021,15 +1021,16 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
   .result-card.bear-card{background:linear-gradient(135deg,rgba(239,68,68,.14) 0%,rgba(4,8,18,.99) 45%)}
   /* Same compositor fix for pair-items — backdrop-filter makes items invisible on Android WebView */
   .pair-item{backdrop-filter:none;-webkit-backdrop-filter:none;overflow:hidden;background:rgba(4,8,20,.95)}
-  /* Light-mode compositor kill — [data-theme="light"] rules use backdrop-filter!important at specificity 0,2,0.
-     These selectors match that specificity and appear later, so they win the cascade and override the blur. */
-  [data-theme="light"] .card,[data-theme="light"] .result-card,[data-theme="light"] .pair-item,
-  [data-theme="light"] .wl-card,[data-theme="light"] .scan-summary,[data-theme="light"] .scan-popup,
-  [data-theme="light"] .mode-pill,[data-theme="light"] .tip-box,[data-theme="light"] .btn-secondary,
-  [data-theme="light"] .quick-btn,[data-theme="light"] .filter-signals,
-  [data-theme="light"] .fvg-accordion-header,[data-theme="light"] .zone-panel,
-  [data-theme="light"] input,[data-theme="light"] select,[data-theme="light"] textarea,
-  [data-theme="light"] .ex-bar{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+  /* Light-mode compositor kill — data-theme is on <body>, so body[data-theme="light"] selector
+     has specificity 0,2,1 which beats the original [data-theme="light"] rules at 0,2,0.
+     Wins purely by specificity — no reliance on cascade order. */
+  body[data-theme="light"] .card,body[data-theme="light"] .result-card,body[data-theme="light"] .pair-item,
+  body[data-theme="light"] .wl-card,body[data-theme="light"] .scan-summary,body[data-theme="light"] .scan-popup,
+  body[data-theme="light"] .mode-pill,body[data-theme="light"] .tip-box,body[data-theme="light"] .btn-secondary,
+  body[data-theme="light"] .quick-btn,body[data-theme="light"] .filter-signals,
+  body[data-theme="light"] .fvg-accordion-header,body[data-theme="light"] .zone-panel,
+  body[data-theme="light"] input,body[data-theme="light"] select,body[data-theme="light"] textarea,
+  body[data-theme="light"] .ex-bar{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
 }
 /* ── Signal band (prominent direction indicator) ── */
 .signal-band{margin:0 -14px 10px;padding:6px 14px;font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;display:flex;align-items:center;gap:7px;border-bottom:1px solid}
