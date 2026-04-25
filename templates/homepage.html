@@ -75,6 +75,9 @@ nav{position:relative;z-index:90;display:flex;align-items:center;justify-content
 @keyframes smcSweep{0%,68%{left:-120%}82%{left:150%}100%{left:150%}}
 .nav-logo-dot{width:10px;height:10px;border-radius:50%;background:#22c55e;box-shadow:0 0 10px #22c55e;animation:blink 2s infinite;flex-shrink:0}
 .nav-tag{font-size:9px;color:var(--text3);letter-spacing:3px;font-family:'DM Sans',sans-serif;-webkit-text-fill-color:var(--text3)}
+/* Letter-level micro-float wave */
+.nl{display:inline-block;animation:nlWave 3.8s ease-in-out infinite;animation-delay:calc(var(--d,0) * 110ms)}
+@keyframes nlWave{0%,100%{transform:translateY(0)}50%{transform:translateY(-2.5px)}}
 
 /* NAV RIGHT — horizontal buttons, always right */
 .nav-right{display:flex;align-items:center;gap:6px;margin-left:auto}
@@ -477,8 +480,8 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
   .orbit-pill{font-size:9px;padding:3px 9px;letter-spacing:1px}
 }
 @media(max-width:480px){
-  .orbit-pill{display:none} /* labels too cramped — hide on small phones */
-  #hero-3d-canvas{opacity:0.6}
+  #hero-3d-canvas{opacity:0.65}
+  .orbit-pill{font-size:12px;padding:4px 9px;letter-spacing:0;backdrop-filter:none;background:rgba(3,8,15,0.75)}
 }
 
 /* ── HERO BUTTON GLOW ── */
@@ -639,7 +642,7 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 <nav>
   <a class="nav-logo" href="#">
     <span class="nav-logo-dot"></span>
-    <span class="nav-logo-zyni">ZyNi</span><span class="nav-logo-smc">&nbsp;SMC</span>
+    <span class="nav-logo-zyni"><span class="nl" style="--d:0">Z</span><span class="nl" style="--d:1">y</span><span class="nl" style="--d:2">N</span><span class="nl" style="--d:3">i</span></span><span class="nav-logo-smc">&nbsp;<span class="nl" style="--d:4">S</span><span class="nl" style="--d:5">M</span><span class="nl" style="--d:6">C</span></span>
     <span class="nav-tag">SCREENER</span>
   </a>
   <div class="nav-right">
@@ -1848,37 +1851,77 @@ function lwStartBounce(){
   rimLight.position.set(0, -4, -3);
   scene.add(rimLight);
 
-  /* ── Bitcoin coin ── */
+  /* ── Bitcoin Globe ── */
   var coinGroup = new THREE.Group();
   scene.add(coinGroup);
 
-  var coinMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.96, roughness: 0.07 });
-  var coinMesh = new THREE.Mesh(new THREE.CylinderGeometry(1.35, 1.35, 0.22, 72), coinMat);
-  coinMesh.rotation.x = Math.PI / 2;
-  coinGroup.add(coinMesh);
-  coinGroup.add(new THREE.Mesh(
-    new THREE.TorusGeometry(1.35, 0.055, 20, 72),
-    new THREE.MeshStandardMaterial({ color: 0xd97706, metalness: 0.99, roughness: 0.04 })
-  ));
+  /* Globe canvas texture: dark navy base + gold grid lines + centred ₿ */
+  var globeCv = document.createElement('canvas'); globeCv.width = globeCv.height = 1024;
+  var gCtx = globeCv.getContext('2d');
 
-  /* ₿ canvas texture */
-  var symCv = document.createElement('canvas'); symCv.width = symCv.height = 512;
-  var sc2 = symCv.getContext('2d');
-  sc2.clearRect(0, 0, 512, 512);
-  sc2.font = 'bold 300px Arial'; sc2.textAlign = 'center'; sc2.textBaseline = 'middle';
-  sc2.fillStyle = '#fde68a'; sc2.globalAlpha = 0.92; sc2.fillText('₿', 265, 278);
-  var symTex = new THREE.CanvasTexture(symCv);
-  var faceMat = new THREE.MeshStandardMaterial({ map: symTex, color: 0xf59e0b, metalness: 0.82, roughness: 0.12, transparent: true });
-  var frontFace = new THREE.Mesh(new THREE.CircleGeometry(1.3, 72), faceMat);
-  frontFace.position.z = 0.12; coinGroup.add(frontFace);
-  var backFace = new THREE.Mesh(new THREE.CircleGeometry(1.3, 72), faceMat.clone());
-  backFace.position.z = -0.12; backFace.rotation.y = Math.PI; coinGroup.add(backFace);
+  /* Background fill */
+  gCtx.fillStyle = '#020b18';
+  gCtx.fillRect(0, 0, 1024, 1024);
 
-  /* Additive glow behind coin */
+  /* Gold latitude lines */
+  gCtx.strokeStyle = 'rgba(245,158,11,0.35)';
+  gCtx.lineWidth = 1.5;
+  var latCount = 9;
+  for (var li = 1; li < latCount; li++) {
+    var ly = (li / latCount) * 1024;
+    gCtx.beginPath(); gCtx.moveTo(0, ly); gCtx.lineTo(1024, ly); gCtx.stroke();
+  }
+
+  /* Gold longitude lines */
+  var lonCount = 12;
+  for (var lo = 0; lo < lonCount; lo++) {
+    var lx = (lo / lonCount) * 1024;
+    gCtx.beginPath(); gCtx.moveTo(lx, 0); gCtx.lineTo(lx, 1024); gCtx.stroke();
+  }
+
+  /* ₿ glow halo */
+  var bHalo = gCtx.createRadialGradient(512, 512, 0, 512, 512, 280);
+  bHalo.addColorStop(0, 'rgba(251,191,36,0.28)');
+  bHalo.addColorStop(1, 'rgba(251,191,36,0)');
+  gCtx.fillStyle = bHalo;
+  gCtx.fillRect(0, 0, 1024, 1024);
+
+  /* ₿ symbol */
+  gCtx.font = 'bold 480px Arial';
+  gCtx.textAlign = 'center';
+  gCtx.textBaseline = 'middle';
+  gCtx.fillStyle = 'rgba(253,230,138,0.90)';
+  gCtx.fillText('₿', 512, 530);
+
+  var globeTex = new THREE.CanvasTexture(globeCv);
+
+  /* Sphere mesh */
+  var globeMat = new THREE.MeshStandardMaterial({
+    map: globeTex,
+    metalness: 0.55,
+    roughness: 0.35,
+    emissive: new THREE.Color(0x0d2137),
+    emissiveIntensity: 0.25
+  });
+  var globeMesh = new THREE.Mesh(new THREE.SphereGeometry(1.4, 64, 64), globeMat);
+  coinGroup.add(globeMesh);
+
+  /* Atmosphere glow shell */
+  var atmosMat = new THREE.MeshBasicMaterial({
+    color: 0x1e90ff,
+    transparent: true,
+    opacity: 0.07,
+    side: THREE.BackSide,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false
+  });
+  coinGroup.add(new THREE.Mesh(new THREE.SphereGeometry(1.62, 32, 32), atmosMat));
+
+  /* Additive gold glow sprite behind globe */
   var glowCv = document.createElement('canvas'); glowCv.width = glowCv.height = 256;
   var gc = glowCv.getContext('2d');
   var gr = gc.createRadialGradient(128,128,0,128,128,128);
-  gr.addColorStop(0,'rgba(251,191,36,0.7)'); gr.addColorStop(0.4,'rgba(245,158,11,0.3)'); gr.addColorStop(1,'rgba(245,158,11,0)');
+  gr.addColorStop(0,'rgba(251,191,36,0.55)'); gr.addColorStop(0.4,'rgba(245,158,11,0.20)'); gr.addColorStop(1,'rgba(245,158,11,0)');
   gc.fillStyle = gr; gc.fillRect(0,0,256,256);
   coinGroup.add(new THREE.Mesh(
     new THREE.PlaneGeometry(7, 7),
@@ -1971,12 +2014,9 @@ function lwStartBounce(){
     coinGroup.scale.setScalar(coinScale);
     orbitRing.scale.setScalar(coinScale);
 
-    /* Coin: gentle tremor + slow Y-axis rotation */
-    var tremor = 0.018;
-    coinGroup.rotation.y += 0.007;
-    coinGroup.position.y = Math.sin(t * 0.5) * 0.12 + Math.sin(t * 3.1) * tremor;
-    coinGroup.position.x = Math.sin(t * 2.7) * tremor * 0.7;
-    coinGroup.position.z = Math.sin(t * 2.2) * tremor * 0.5;
+    /* Globe: slow Y-axis rotation + gentle vertical float */
+    coinGroup.rotation.y += 0.005;
+    coinGroup.position.y = Math.sin(t * 0.4) * 0.10;
 
     /* Ring stays fixed in tilt — icons orbit along it in one clean direction */
 
