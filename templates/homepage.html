@@ -2126,140 +2126,186 @@ function lwStartBounce(){
   renderer.setSize(W, H);
 
   var scene  = new THREE.Scene();
-  var camera = new THREE.PerspectiveCamera(30, W / H, 0.1, 100);
-  camera.position.set(0, 0.9, 12);
+  /* Narrow FOV + long distance = small, well-framed box */
+  var camera = new THREE.PerspectiveCamera(28, W / H, 0.1, 100);
+  camera.position.set(0, 0.7, 13);
   camera.lookAt(0, 0, 0);
 
-  /* ── Three-point lighting ── */
-  scene.add(new THREE.AmbientLight(0x04080f, 0.65));
+  /* ── Lights ── */
+  scene.add(new THREE.AmbientLight(0x04080f, 0.70));
 
-  /* Key: cool-blue upper-right */
-  var keyLight = new THREE.PointLight(0x3b5bdb, 2.2, 30);
-  keyLight.position.set(9, 9, 9);
+  var keyLight = new THREE.PointLight(0x3b5bdb, 2.5, 32);
+  keyLight.position.set(8, 8, 8);
   scene.add(keyLight);
 
-  /* Rim: cyan from behind-left */
-  var rimLight = new THREE.PointLight(0x22d3ee, 0.9, 20);
-  rimLight.position.set(-7, -2, -7);
+  var rimLight = new THREE.PointLight(0x22d3ee, 1.0, 22);
+  rimLight.position.set(-7, -1, -7);
   scene.add(rimLight);
 
-  /* Floor fill: soft navy from below */
-  var floorLight = new THREE.PointLight(0x1a3560, 1.4, 18);
-  floorLight.position.set(0, -9, 2);
-  scene.add(floorLight);
+  var fillLight = new THREE.PointLight(0x1a3560, 1.6, 20);
+  fillLight.position.set(0, -10, 2);
+  scene.add(fillLight);
 
-  /* ── Ambient radial glow backdrop ── */
+  /* ── Backdrop radial glow ── */
   var bgCv = document.createElement('canvas'); bgCv.width = bgCv.height = 256;
   var bgCtx = bgCv.getContext('2d');
-  var bgGr = bgCtx.createRadialGradient(128,128,0,128,128,128);
-  bgGr.addColorStop(0,   'rgba(70,85,210,0.42)');
-  bgGr.addColorStop(0.5, 'rgba(30,55,160,0.16)');
+  var bgGr  = bgCtx.createRadialGradient(128,128,0,128,128,128);
+  bgGr.addColorStop(0,   'rgba(60,75,200,0.45)');
+  bgGr.addColorStop(0.5, 'rgba(25,50,150,0.18)');
   bgGr.addColorStop(1,   'rgba(0,0,0,0)');
-  bgCtx.fillStyle = bgGr; bgCtx.fillRect(0, 0, 256, 256);
+  bgCtx.fillStyle = bgGr; bgCtx.fillRect(0,0,256,256);
   var bgGlowMat = new THREE.MeshBasicMaterial({
-    map: new THREE.CanvasTexture(bgCv),
-    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.65
+    map: new THREE.CanvasTexture(bgCv), transparent: true,
+    blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.60
   });
-  var bgGlowPlane = new THREE.Mesh(new THREE.PlaneGeometry(11, 11), bgGlowMat);
-  bgGlowPlane.position.z = -3.5;
+  var bgGlowPlane = new THREE.Mesh(new THREE.PlaneGeometry(12, 12), bgGlowMat);
+  bgGlowPlane.position.z = -4;
   scene.add(bgGlowPlane);
 
-  /* ── Box geometry (S=1.6 — right-sized for any screen) ── */
-  var S    = 1.6;
+  /* ── Box ── */
+  var S    = 1.1;
   var HALF = S / 2;
   var boxGroup = new THREE.Group();
   scene.add(boxGroup);
 
-  /* Inner gold light — child of box so it co-rotates */
-  var innerLight = new THREE.PointLight(0xf59e0b, 0, 12);
+  /* Inner gold point-light (child = co-rotates with box) */
+  var innerLight = new THREE.PointLight(0xf59e0b, 0, 10);
   boxGroup.add(innerLight);
 
+  /* Face material helper */
   function mkMat(col) {
     return new THREE.MeshStandardMaterial({
-      color: col, transparent: true, opacity: 0.86,
-      side: THREE.DoubleSide, roughness: 0.78, metalness: 0.28
+      color: col, transparent: true, opacity: 0.88,
+      side: THREE.DoubleSide, roughness: 0.72, metalness: 0.32
     });
   }
   var faceGeo = new THREE.PlaneGeometry(S, S);
 
-  /* Permanent faces: bottom, back, left, right */
-  var botFace = new THREE.Mesh(faceGeo.clone(), mkMat(0x04101e));
-  botFace.rotation.x =  Math.PI / 2; botFace.position.y = -HALF; boxGroup.add(botFace);
+  /* Permanent faces */
+  var botFace = new THREE.Mesh(faceGeo.clone(), mkMat(0x030e1a));
+  botFace.rotation.x =  Math.PI/2; botFace.position.y = -HALF; boxGroup.add(botFace);
 
-  var bkFace = new THREE.Mesh(faceGeo.clone(), mkMat(0x071626));
+  var bkFace = new THREE.Mesh(faceGeo.clone(), mkMat(0x061422));
   bkFace.rotation.y = Math.PI; bkFace.position.z = -HALF; boxGroup.add(bkFace);
 
-  var ltFace = new THREE.Mesh(faceGeo.clone(), mkMat(0x061220));
-  ltFace.rotation.y = -Math.PI / 2; ltFace.position.x = -HALF; boxGroup.add(ltFace);
+  var ltFace = new THREE.Mesh(faceGeo.clone(), mkMat(0x05101e));
+  ltFace.rotation.y = -Math.PI/2; ltFace.position.x = -HALF; boxGroup.add(ltFace);
 
-  var rtFace = new THREE.Mesh(faceGeo.clone(), mkMat(0x061220));
-  rtFace.rotation.y =  Math.PI / 2; rtFace.position.x =  HALF; boxGroup.add(rtFace);
+  var rtFace = new THREE.Mesh(faceGeo.clone(), mkMat(0x05101e));
+  rtFace.rotation.y =  Math.PI/2; rtFace.position.x =  HALF; boxGroup.add(rtFace);
 
-  /* Front face — fades on open to reveal interior */
-  var frFaceMat = mkMat(0x0a1828);
+  /* ── Branded front face (canvas texture) ── */
+  var bfCv = document.createElement('canvas'); bfCv.width = bfCv.height = 512;
+  var bfCtx = bfCv.getContext('2d');
+
+  /* Background */
+  bfCtx.fillStyle = '#071525';
+  bfCtx.fillRect(0, 0, 512, 512);
+
+  /* Subtle grid */
+  bfCtx.strokeStyle = 'rgba(34,211,238,0.07)';
+  bfCtx.lineWidth = 1;
+  for (var gi = 1; gi < 8; gi++) {
+    var gp = gi * 64;
+    bfCtx.beginPath(); bfCtx.moveTo(gp, 0);   bfCtx.lineTo(gp, 512); bfCtx.stroke();
+    bfCtx.beginPath(); bfCtx.moveTo(0,  gp);  bfCtx.lineTo(512, gp); bfCtx.stroke();
+  }
+
+  /* Cyan top rule */
+  bfCtx.strokeStyle = 'rgba(34,211,238,0.40)';
+  bfCtx.lineWidth = 2;
+  bfCtx.beginPath(); bfCtx.moveTo(80,175); bfCtx.lineTo(432,175); bfCtx.stroke();
+
+  /* Gold bottom rule */
+  bfCtx.strokeStyle = 'rgba(245,158,11,0.40)';
+  bfCtx.lineWidth = 2;
+  bfCtx.beginPath(); bfCtx.moveTo(80,340); bfCtx.lineTo(432,340); bfCtx.stroke();
+
+  /* "ZyNi" — cyan gradient */
+  bfCtx.font = 'bold 76px Arial';
+  bfCtx.textAlign = 'center'; bfCtx.textBaseline = 'middle';
+  var cGrad = bfCtx.createLinearGradient(90, 0, 255, 0);
+  cGrad.addColorStop(0, '#22d3ee'); cGrad.addColorStop(1, '#a5f3fc');
+  bfCtx.shadowColor = 'rgba(34,211,238,0.55)'; bfCtx.shadowBlur = 12;
+  bfCtx.fillStyle = cGrad;
+  bfCtx.fillText('ZyNi', 176, 257);
+
+  /* "SMC" — gold gradient */
+  var gGrad = bfCtx.createLinearGradient(255, 0, 430, 0);
+  gGrad.addColorStop(0, '#f59e0b'); gGrad.addColorStop(0.5, '#fde68a'); gGrad.addColorStop(1, '#f97316');
+  bfCtx.shadowColor = 'rgba(245,158,11,0.55)'; bfCtx.shadowBlur = 12;
+  bfCtx.fillStyle = gGrad;
+  bfCtx.fillText('SMC', 346, 257);
+  bfCtx.shadowBlur = 0;
+
+  /* Sub-label */
+  bfCtx.font = '500 19px Arial'; bfCtx.fillStyle = 'rgba(148,220,240,0.45)';
+  bfCtx.fillText('SMART MONEY CONCEPT', 256, 305);
+
+  /* Top-right gloss highlight */
+  var gloss = bfCtx.createLinearGradient(350, 0, 512, 160);
+  gloss.addColorStop(0, 'rgba(255,255,255,0.07)');
+  gloss.addColorStop(1, 'rgba(255,255,255,0)');
+  bfCtx.fillStyle = gloss; bfCtx.fillRect(0, 0, 512, 512);
+
+  var frFaceMat = new THREE.MeshStandardMaterial({
+    map: new THREE.CanvasTexture(bfCv), transparent: true, opacity: 0.92,
+    side: THREE.DoubleSide, roughness: 0.68, metalness: 0.28
+  });
   var frFace = new THREE.Mesh(faceGeo.clone(), frFaceMat);
   frFace.position.z = HALF; boxGroup.add(frFace);
 
-  /* Top lid — slides up in local Y */
+  /* Top lid */
   var topFaceMat = mkMat(0x0c1e38);
   var topFace = new THREE.Mesh(faceGeo.clone(), topFaceMat);
-  topFace.rotation.x = -Math.PI / 2; topFace.position.y = HALF; boxGroup.add(topFace);
+  topFace.rotation.x = -Math.PI/2; topFace.position.y = HALF; boxGroup.add(topFace);
 
-  /* ── Wireframe edges — primary sharp line ── */
-  var eGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(S, S, S));
-  var edgeMat = new THREE.LineBasicMaterial({ color: 0x4a65d8, transparent: true, opacity: 0.58 });
+  /* Primary wireframe edges */
+  var eGeo  = new THREE.EdgesGeometry(new THREE.BoxGeometry(S, S, S));
+  var edgeMat = new THREE.LineBasicMaterial({ color: 0x4a65d8, transparent: true, opacity: 0.60 });
   boxGroup.add(new THREE.LineSegments(eGeo, edgeMat));
 
-  /* ── Wireframe halo — slightly larger, additive blending for soft glow ── */
-  var eGeo2   = new THREE.EdgesGeometry(new THREE.BoxGeometry(S * 1.045, S * 1.045, S * 1.045));
+  /* Glow halo (slightly oversized, additive) */
+  var eGeo2    = new THREE.EdgesGeometry(new THREE.BoxGeometry(S*1.05, S*1.05, S*1.05));
   var edgeMat2 = new THREE.LineBasicMaterial({
-    color: 0x6070f0, transparent: true, opacity: 0.20,
+    color: 0x5f70f5, transparent: true, opacity: 0.22,
     blending: THREE.AdditiveBlending
   });
   boxGroup.add(new THREE.LineSegments(eGeo2, edgeMat2));
 
-  /* ── Bitcoin Sprite (auto-billboards to camera) ── */
-  var bCv = document.createElement('canvas'); bCv.width = bCv.height = 256;
-  var bCtx = bCv.getContext('2d');
-  bCtx.font = 'bold 150px Arial';
-  bCtx.textAlign = 'center'; bCtx.textBaseline = 'middle';
-  bCtx.shadowColor = 'rgba(251,191,36,1)'; bCtx.shadowBlur = 55;
-  bCtx.fillStyle = 'rgba(253,230,138,0.28)'; bCtx.fillText('₿', 128, 128);
-  bCtx.shadowBlur = 0;
-  bCtx.fillStyle = 'rgba(253,230,138,0.96)'; bCtx.fillText('₿', 128, 128);
+  /* ── Bitcoin Sprite ── */
+  var btcCv = document.createElement('canvas'); btcCv.width = btcCv.height = 256;
+  var btcCtx = btcCv.getContext('2d');
+  btcCtx.font = 'bold 148px Arial';
+  btcCtx.textAlign = 'center'; btcCtx.textBaseline = 'middle';
+  btcCtx.shadowColor = 'rgba(251,191,36,1)'; btcCtx.shadowBlur = 55;
+  btcCtx.fillStyle = 'rgba(253,230,138,0.28)'; btcCtx.fillText('₿', 128, 128);
+  btcCtx.shadowBlur = 0;
+  btcCtx.fillStyle = 'rgba(253,230,138,0.96)'; btcCtx.fillText('₿', 128, 128);
   var btcSpriteMat = new THREE.SpriteMaterial({
-    map: new THREE.CanvasTexture(bCv), transparent: true, opacity: 0,
+    map: new THREE.CanvasTexture(btcCv), transparent: true, opacity: 0,
     blending: THREE.AdditiveBlending, color: 0xfbbf24
   });
   var btcSprite = new THREE.Sprite(btcSpriteMat);
-  btcSprite.position.set(0, -0.15, 0);
+  btcSprite.position.set(0, -0.1, 0);
   boxGroup.add(btcSprite);
 
-  /* ── Responsive scale: update boxGroup.scale based on viewport width ── */
-  function getBoxScale() { return W < 480 ? 0.50 : W < 768 ? 0.68 : 1.0; }
+  /* ── Responsive ── */
+  function getScale() { return W < 480 ? 0.44 : W < 768 ? 0.66 : 0.90; }
 
   var clock = new THREE.Clock();
   var CYCLE = 16;
-  function ease(x) { var c = Math.max(0, Math.min(1, x)); return c < 0.5 ? 2*c*c : -1+(4-2*c)*c; }
+  function ease(x) { var c=Math.max(0,Math.min(1,x)); return c<0.5?2*c*c:-1+(4-2*c)*c; }
 
   function animateMB() {
     requestAnimationFrame(animateMB);
     var t  = clock.getElapsedTime();
     var ph = (t % CYCLE) / CYCLE;
 
-    /* Responsive scale */
-    boxGroup.scale.setScalar(getBoxScale());
-
-    /* Slow rotation so depth is always clear */
+    boxGroup.scale.setScalar(getScale());
     boxGroup.rotation.y = t * 0.09;
     boxGroup.rotation.x = 0.22;
 
-    /* Phase:
-       0.00-0.19  closed    (3.0s)
-       0.19-0.37  opening   (2.9s)
-       0.37-0.62  open+₿   (4.0s)
-       0.62-0.78  closing   (2.6s)
-       0.78-1.00  closed    (3.5s) */
     var openAmt = 0, btcAmt = 0;
     if      (ph < 0.19) { openAmt = 0; }
     else if (ph < 0.37) { openAmt = ease((ph - 0.19) / 0.18); }
@@ -2267,32 +2313,32 @@ function lwStartBounce(){
     else if (ph < 0.78) { openAmt = 1 - ease((ph - 0.62) / 0.16);
                           btcAmt  = 1 - ease((ph - 0.62) / 0.12); }
 
-    /* Lid rises proportionally to box size */
-    topFace.position.y = HALF + openAmt * (S * 0.85);
-    topFaceMat.opacity = 0.86 - openAmt * 0.66;
+    /* Lid */
+    topFace.position.y = HALF + openAmt * (S * 0.88);
+    topFaceMat.opacity = 0.88 - openAmt * 0.68;
 
-    /* Front face fades */
-    frFaceMat.opacity = 0.86 - openAmt * 0.74;
+    /* Front face (branded) */
+    frFaceMat.opacity = 0.92 - openAmt * 0.78;
 
-    /* Primary edges: navy → gold */
-    edgeMat.opacity = 0.52 + openAmt * 0.40;
-    edgeMat.color.setHSL(0.64 - openAmt * 0.22, 0.88, 0.52 + openAmt * 0.24);
+    /* Primary edges navy→gold */
+    edgeMat.opacity = 0.55 + openAmt * 0.38;
+    edgeMat.color.setHSL(0.64 - openAmt * 0.22, 0.88, 0.52 + openAmt * 0.26);
 
     /* Halo edges */
-    edgeMat2.opacity = 0.16 + openAmt * 0.32;
+    edgeMat2.opacity = 0.18 + openAmt * 0.30;
     edgeMat2.color.setHSL(0.64 - openAmt * 0.22, 0.90, 0.62 + openAmt * 0.20);
 
-    /* Inner gold light pulses with ₿ */
-    innerLight.intensity  = openAmt * 1.2 + btcAmt * 3.6;
-    innerLight.position.y = btcAmt * 0.55;
+    /* Inner light */
+    innerLight.intensity  = openAmt * 1.0 + btcAmt * 3.2;
+    innerLight.position.y = btcAmt * 0.45;
 
-    /* Backdrop glow pulses gently */
-    bgGlowMat.opacity = 0.55 + openAmt * 0.35;
+    /* Backdrop breathes */
+    bgGlowMat.opacity = 0.52 + openAmt * 0.38;
 
-    /* ₿ sprite — rises S+0.9 units above start, scales 0.55→1.50 */
-    btcSprite.position.y   = -0.12 + btcAmt * (S + 0.9);
+    /* ₿ sprite */
+    btcSprite.position.y   = -0.1 + btcAmt * (S + 1.0);
     btcSpriteMat.opacity   = btcAmt * 0.96;
-    var sc = 0.55 + btcAmt * 0.95;
+    var sc = 0.50 + btcAmt * 0.90;
     btcSprite.scale.set(sc, sc, 1);
 
     renderer.render(scene, camera);
