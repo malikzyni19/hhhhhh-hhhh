@@ -25,7 +25,7 @@
   --glow-cyan:rgba(2,132,199,.15);--glow-purple:rgba(124,58,237,.1);
   --card-shadow:0 4px 24px rgba(0,0,0,.07);
 }
-[data-theme="light"] body{background:var(--bg-primary)!important;color:var(--text-primary)!important;background-image:radial-gradient(ellipse at 50% -5%,rgba(2,132,199,.07) 0%,transparent 50%),radial-gradient(circle,rgba(2,132,199,.14) 1px,transparent 1px)!important;background-size:100% 100%,26px 26px!important}
+[data-theme="light"] body{background:var(--bg-primary)!important;color:var(--text-primary)!important;background-image:radial-gradient(ellipse at 50% -5%,rgba(2,132,199,.07) 0%,transparent 50%)!important;background-size:100% 100%!important}
 /* Header + tab light theme overrides moved inline with their sections below */
 [data-theme="light"] .card{background:rgba(255,255,255,.95)!important;backdrop-filter:blur(16px)!important;-webkit-backdrop-filter:blur(16px)!important;border:1px solid rgba(2,132,199,.14)!important;border-top:2px solid rgba(2,132,199,.8)!important;border-radius:16px!important;box-shadow:0 4px 24px rgba(2,132,199,.1),0 2px 8px rgba(0,0,0,.06),0 0 0 1px rgba(2,132,199,.08),inset 0 1px 0 rgba(255,255,255,.9)!important;transform:none!important}
 [data-theme="light"] .card:hover{box-shadow:0 8px 40px rgba(2,132,199,.18),0 4px 16px rgba(0,0,0,.08),0 0 0 1px rgba(2,132,199,.2),inset 0 1px 0 rgba(255,255,255,.95)!important;border-color:rgba(2,132,199,.28)!important;transform:translateY(-1px)!important}
@@ -112,6 +112,9 @@ body{
   min-height:100vh;
   font-size:13px;
   line-height:1.5;
+  will-change:background-color;
+  -webkit-backface-visibility:hidden;
+  backface-visibility:hidden;
   background-image:
     radial-gradient(ellipse at 50% -5%,rgba(34,211,238,.08) 0%,transparent 55%),
     radial-gradient(ellipse at 5% 100%,rgba(167,139,250,.06) 0%,transparent 45%),
@@ -2077,7 +2080,7 @@ function toggleSignalChip(label, inputId, activeClass){
 }
 
 function showPage(id, btn){
-  document.querySelectorAll('.page').forEach(p => { p.classList.remove('active'); p.style.opacity = '0'; });
+  document.querySelectorAll('.page').forEach(p => { p.classList.remove('active'); p.style.opacity = ''; p.style.transition = ''; });
   document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
   const target = $('page-' + id);
   if(target){
