@@ -2126,100 +2126,153 @@ function lwStartBounce(){
   renderer.setSize(W, H);
 
   var scene  = new THREE.Scene();
-  var camera = new THREE.PerspectiveCamera(40, W / H, 0.1, 100);
-  camera.position.set(0, 0, 9);
+  var camera = new THREE.PerspectiveCamera(34, W / H, 0.1, 100);
+  camera.position.set(0, 1.2, 10);
   camera.lookAt(0, 0, 0);
 
-  scene.add(new THREE.AmbientLight(0x080814, 0.5));
+  /* Lighting */
+  scene.add(new THREE.AmbientLight(0x04080f, 0.55));
+  var keyLight = new THREE.PointLight(0x3b5bdb, 1.8, 24);
+  keyLight.position.set(6, 7, 6);
+  scene.add(keyLight);
 
-  /* ── 6 individual face planes that slide outward on open ── */
-  var HALF = 1.7;
-  var SIZE = HALF * 2;
-  var faceInfos = [
-    { n: [ 0,  0,  1], rx: 0,           ry: 0,           col: 0x0d1a2d },
-    { n: [ 0,  0, -1], rx: 0,           ry: Math.PI,     col: 0x0d1a2d },
-    { n: [ 1,  0,  0], rx: 0,           ry:  Math.PI/2,  col: 0x091420 },
-    { n: [-1,  0,  0], rx: 0,           ry: -Math.PI/2,  col: 0x091420 },
-    { n: [ 0,  1,  0], rx: -Math.PI/2,  ry: 0,           col: 0x07101c },
-    { n: [ 0, -1,  0], rx:  Math.PI/2,  ry: 0,           col: 0x07101c },
-  ];
-
-  var faceGeo = new THREE.PlaneGeometry(SIZE, SIZE);
+  /* Box group — inner light is a child so it rotates with the box */
+  var innerLight = new THREE.PointLight(0xf59e0b, 0, 14);
+  var S    = 2.4;
+  var HALF = S / 2;
   var boxGroup = new THREE.Group();
   scene.add(boxGroup);
+  boxGroup.add(innerLight);
 
-  var faceMeshes = faceInfos.map(function(fi) {
-    var mat = new THREE.MeshStandardMaterial({
-      color: fi.col, transparent: true, opacity: 0.78,
-      side: THREE.DoubleSide, roughness: 0.9, metalness: 0.05
+  function mkMat(col) {
+    return new THREE.MeshStandardMaterial({
+      color: col, transparent: true, opacity: 0.82,
+      side: THREE.DoubleSide, roughness: 0.88, metalness: 0.14
     });
-    var mesh = new THREE.Mesh(faceGeo.clone(), mat);
-    mesh.rotation.set(fi.rx, fi.ry, 0);
-    mesh.position.set(fi.n[0] * HALF, fi.n[1] * HALF, fi.n[2] * HALF);
-    mesh.userData.n = fi.n;
-    boxGroup.add(mesh);
-    return mesh;
-  });
+  }
+  var faceGeo = new THREE.PlaneGeometry(S, S);
 
-  /* ── Glowing wireframe edges ── */
-  var edgesGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(SIZE, SIZE, SIZE));
-  var edgeMat  = new THREE.LineBasicMaterial({ color: 0x6366f1, transparent: true, opacity: 0.38 });
+  /* Bottom */
+  var botFace = new THREE.Mesh(faceGeo.clone(), mkMat(0x04101e));
+  botFace.rotation.x =  Math.PI / 2;
+  botFace.position.y = -HALF;
+  boxGroup.add(botFace);
+
+  /* Back */
+  var bkFace = new THREE.Mesh(faceGeo.clone(), mkMat(0x071626));
+  bkFace.rotation.y = Math.PI;
+  bkFace.position.z = -HALF;
+  boxGroup.add(bkFace);
+
+  /* Left */
+  var ltFace = new THREE.Mesh(faceGeo.clone(), mkMat(0x061220));
+  ltFace.rotation.y = -Math.PI / 2;
+  ltFace.position.x = -HALF;
+  boxGroup.add(ltFace);
+
+  /* Right */
+  var rtFace = new THREE.Mesh(faceGeo.clone(), mkMat(0x061220));
+  rtFace.rotation.y =  Math.PI / 2;
+  rtFace.position.x =  HALF;
+  boxGroup.add(rtFace);
+
+  /* Front — fades to transparent when box opens */
+  var frFaceMat = mkMat(0x0b1a30);
+  var frFace = new THREE.Mesh(faceGeo.clone(), frFaceMat);
+  frFace.position.z =  HALF;
+  boxGroup.add(frFace);
+
+  /* Top lid — slides UP in local space when opening */
+  var topFaceMat = mkMat(0x0e2040);
+  var topFace = new THREE.Mesh(faceGeo.clone(), topFaceMat);
+  topFace.rotation.x = -Math.PI / 2;
+  topFace.position.y =  HALF;
+  boxGroup.add(topFace);
+
+  /* Wireframe edges */
+  var edgesGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(S, S, S));
+  var edgeMat  = new THREE.LineBasicMaterial({ color: 0x4a65d8, transparent: true, opacity: 0.52 });
   var wireCube = new THREE.LineSegments(edgesGeo, edgeMat);
   boxGroup.add(wireCube);
 
-  /* ── Inner point light (off when closed, bright when open) ── */
-  var innerLight = new THREE.PointLight(0x818cf8, 0, 14);
-  boxGroup.add(innerLight);
+  /* Bitcoin sprite (THREE.Sprite auto-faces camera) */
+  var bCv = document.createElement('canvas'); bCv.width = bCv.height = 256;
+  var bCtx = bCv.getContext('2d');
+  bCtx.font = 'bold 155px Arial';
+  bCtx.textAlign = 'center'; bCtx.textBaseline = 'middle';
+  bCtx.shadowColor = 'rgba(251,191,36,0.95)'; bCtx.shadowBlur = 50;
+  bCtx.fillStyle = 'rgba(253,230,138,0.28)';
+  bCtx.fillText('₿', 128, 128);
+  bCtx.shadowBlur = 0;
+  bCtx.fillStyle = 'rgba(253,230,138,0.96)';
+  bCtx.fillText('₿', 128, 128);
 
-  /* ── Accent rim light from outside ── */
-  var rimLight = new THREE.PointLight(0x22d3ee, 0, 10);
-  rimLight.position.set(5, 3, 4);
-  scene.add(rimLight);
+  var btcSpriteMat = new THREE.SpriteMaterial({
+    map: new THREE.CanvasTexture(bCv),
+    transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending,
+    color: 0xfbbf24
+  });
+  var btcSprite = new THREE.Sprite(btcSpriteMat);
+  btcSprite.scale.set(1.6, 1.6, 1);
+  btcSprite.position.set(0, -0.3, 0);
+  boxGroup.add(btcSprite);
 
-  var clock2 = new THREE.Clock();
-  var CYCLE = 14;
+  var clock = new THREE.Clock();
+  var CYCLE = 16;
 
-  function smoothstep(x) { var c = Math.max(0, Math.min(1, x)); return c * c * (3 - 2 * c); }
+  function ease(x) {
+    var c = Math.max(0, Math.min(1, x));
+    return c < 0.5 ? 2 * c * c : -1 + (4 - 2 * c) * c;
+  }
 
-  function animate2() {
-    requestAnimationFrame(animate2);
-    var t = clock2.getElapsedTime();
-
-    /* Constant slow rotation */
-    boxGroup.rotation.y = t * 0.11;
-    boxGroup.rotation.x = 0.20;
-
-    /* Open/close phase (0 = closed, 1 = fully open) */
+  function animateMB() {
+    requestAnimationFrame(animateMB);
+    var t = clock.getElapsedTime();
     var ph = (t % CYCLE) / CYCLE;
-    var openAmt;
-    if      (ph < 0.28) openAmt = 0;
-    else if (ph < 0.46) openAmt = smoothstep((ph - 0.28) / 0.18);
-    else if (ph < 0.62) openAmt = 1;
-    else if (ph < 0.80) openAmt = 1 - smoothstep((ph - 0.62) / 0.18);
-    else                openAmt = 0;
 
-    /* Faces slide outward */
-    faceMeshes.forEach(function(mesh) {
-      var n = mesh.userData.n;
-      var ext = HALF + openAmt * 1.5;
-      mesh.position.set(n[0] * ext, n[1] * ext, n[2] * ext);
-      mesh.material.opacity = 0.78 - openAmt * 0.68;
-    });
+    /* Slow constant rotation — depth is always visible */
+    boxGroup.rotation.y = t * 0.09;
+    boxGroup.rotation.x = 0.22;
 
-    /* Edge colour: indigo closed → cyan-white open */
-    edgeMat.opacity = 0.35 + openAmt * 0.52;
-    edgeMat.color.setHSL(0.67 - openAmt * 0.12, 0.80, 0.52 + openAmt * 0.28);
-    wireCube.scale.setScalar(1 + openAmt * 0.08);
+    /* Timeline fractions of 16s:
+       0.00-0.19  closed    (3.0s)
+       0.19-0.37  opening   (2.9s)
+       0.37-0.62  open+btc  (4.0s)
+       0.62-0.78  closing   (2.6s)
+       0.78-1.00  closed    (3.5s) */
+    var openAmt = 0, btcAmt = 0;
+    if      (ph < 0.19) { openAmt = 0; }
+    else if (ph < 0.37) { openAmt = ease((ph - 0.19) / 0.18); }
+    else if (ph < 0.62) { openAmt = 1; btcAmt = ease((ph - 0.37) / 0.15); }
+    else if (ph < 0.78) { openAmt = 1 - ease((ph - 0.62) / 0.16);
+                          btcAmt  = 1 - ease((ph - 0.62) / 0.12); }
 
-    /* Lights */
-    innerLight.intensity = openAmt * 5.0;
-    rimLight.intensity   = openAmt * 2.0;
+    /* Lid slides up in boxGroup local space */
+    topFace.position.y = HALF + openAmt * 2.5;
+    topFaceMat.opacity = 0.82 - openAmt * 0.62;
+
+    /* Front face fades */
+    frFaceMat.opacity  = 0.82 - openAmt * 0.70;
+
+    /* Edges shift navy -> gold */
+    edgeMat.opacity = 0.48 + openAmt * 0.44;
+    edgeMat.color.setHSL(0.64 - openAmt * 0.22, 0.88, 0.52 + openAmt * 0.22);
+
+    /* Inner light brightens with btc reveal */
+    innerLight.intensity = openAmt * 1.6 + btcAmt * 4.2;
+    innerLight.position.y = btcAmt * 0.8;
+
+    /* Bitcoin sprite rises */
+    btcSprite.position.y       = -0.4 + btcAmt * 2.8;
+    btcSpriteMat.opacity       = btcAmt * 0.96;
+    var sc = 0.7 + btcAmt * 1.0;
+    btcSprite.scale.set(sc, sc, 1);
 
     renderer.render(scene, camera);
   }
-  animate2();
+  animateMB();
 
-  /* Responsive */
   if (window.ResizeObserver) {
     new ResizeObserver(function() {
       W = section.offsetWidth; H = section.offsetHeight;
