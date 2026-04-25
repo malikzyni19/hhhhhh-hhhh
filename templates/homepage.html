@@ -169,10 +169,9 @@ nav{position:relative;z-index:90;display:flex;align-items:center;justify-content
 .btn-pow{position:absolute;right:-3px;top:90px;width:3px;height:50px;background:#2a2a2a;border-radius:0 3px 3px 0}
 .btn-v1{position:absolute;left:-3px;top:76px;width:3px;height:35px;background:#2a2a2a;border-radius:3px 0 0 3px}
 .btn-v2{position:absolute;left:-3px;top:122px;width:3px;height:35px;background:#2a2a2a;border-radius:3px 0 0 3px}
-.p-screen{border-radius:34px;overflow:hidden;background:#000;border:1px solid rgba(255,255,255,.04);position:relative;perspective:1200px}
+.p-screen{border-radius:34px;overflow:hidden;background:#000;border:1px solid rgba(255,255,255,.04);position:relative}
 .p-cam{position:absolute;top:11px;right:14px;width:9px;height:9px;border-radius:50%;background:#050505;border:1.5px solid rgba(255,255,255,.06);z-index:10}
 .p-shine{position:absolute;inset:0;background:linear-gradient(135deg,rgba(255,255,255,.04) 0%,transparent 45%);pointer-events:none;border-radius:34px;z-index:5}
-/* Legacy .p-slide rule overridden by premium-slider block below */
 .p-ph{height:430px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px}
 .p-bottom{height:18px;display:flex;align-items:center;justify-content:center;margin-top:5px}
 .p-pill{width:70px;height:4px;background:rgba(255,255,255,.1);border-radius:2px}
@@ -497,39 +496,10 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 }
 .phone-glow.active{animation:phoneLightning 2.8s ease-in-out infinite}
 
-/* ── PREMIUM SCREENSHOT SLIDER ── */
-.p-screen{position:relative;overflow:hidden}
-/* Slides: non-active are absolute-stacked; active holds layout height */
-.p-slide{
-  position:absolute;top:0;left:0;width:100%;
-  opacity:0;pointer-events:none;
-  transform-origin:center center;
-  will-change:transform,opacity,filter;
-  backface-visibility:hidden;
-  perspective:1200px;
-}
-/* Active slide sits in normal flow so .p-screen gets the right height */
-.p-slide.active{
-  position:relative;
-  opacity:1;pointer-events:auto;
-}
+/* ── SCREENSHOT SLIDER ── */
+.p-slide{display:none;width:100%}
+.p-slide.active{display:block}
 .p-slide img{width:100%;display:block;max-height:500px;object-fit:cover;object-position:top}
-
-/* Glow sweep overlay (injected per p-screen by JS) */
-.slide-sweep{
-  position:absolute;top:0;left:-110%;width:60%;height:100%;
-  background:linear-gradient(105deg,transparent 0%,rgba(255,255,255,0.09) 50%,transparent 100%);
-  pointer-events:none;z-index:20;will-change:transform;
-}
-
-/* Typewriter cursor */
-.tw-cursor{
-  display:inline-block;width:2px;height:1em;
-  background:currentColor;vertical-align:text-bottom;
-  opacity:0;margin-left:1px;
-  animation:twBlink 0.7s step-start infinite;
-}
-@keyframes twBlink{0%,100%{opacity:1}50%{opacity:0}}
 
 /* ── LETTER TYPING SPANS ── */
 .letter-span{display:inline-block;opacity:0;will-change:opacity}
@@ -1350,144 +1320,36 @@ const MODS={
   mon:{descs:["All SMC zones load automatically — OBs, FVGs, Fibs and Breakers across 3 timeframes. Everything live.","Fully configurable — choose modules, timeframes and auto-refresh. Your watchlist stays updated automatically."],n:2,color:'#ec4899'},
   bias:{descs:["See directional bias signals across the full market. Momentum confirmed, volume backed — only strong setups.","Tune exactly which gates must pass. Prior momentum, wick, engulf, body strength — you control the filter.","Live Order Flow inside every signal card — Buy vs Sell volume, CVD, OI delta and funding rate."],n:3,color:'#f59e0b'},
 };
-const slideState={};const slideTimers={};const slideBusy={};
-
-/* ── Inject glow-sweep overlay into every .p-screen ── */
-document.querySelectorAll('.p-screen').forEach(function(ps){
-  if(!ps.querySelector('.slide-sweep')){
-    const sw=document.createElement('div');sw.className='slide-sweep';ps.appendChild(sw);
-  }
-});
-
-/* ── Typewriter helper ── */
-function typewriterAnim(el,text,color){
-  if(!el)return;
-  /* Build letter spans */
-  el.innerHTML='';
-  const frag=document.createDocumentFragment();
-  for(let i=0;i<text.length;i++){
-    const s=document.createElement('span');
-    s.textContent=text[i]===' '?' ':text[i];
-    s.style.cssText='opacity:0;display:inline-block;will-change:opacity,transform';
-    frag.appendChild(s);
-  }
-  /* Blinking cursor */
-  const cur=document.createElement('span');
-  cur.className='tw-cursor';
-  if(color)cur.style.background=color;
-  frag.appendChild(cur);
-  el.appendChild(frag);
-
-  const spans=[...el.querySelectorAll('span:not(.tw-cursor)')];
-  const CHAR_DELAY=28;   /* ms per character */
-  const RISE=6;          /* px upward travel */
-  let killed=false;
-
-  /* Show cursor immediately */
-  gsap.set(cur,{opacity:1});
-
-  /* Stagger each letter: fade-in + rise */
-  spans.forEach(function(s,i){
-    gsap.fromTo(s,
-      {opacity:0,y:RISE},
-      {opacity:1,y:0,duration:0.22,ease:'power2.out',delay:i*CHAR_DELAY/1000}
-    );
-  });
-
-  /* Hide cursor after all letters done */
-  const totalTime=(spans.length*CHAR_DELAY)/1000+0.35;
-  gsap.to(cur,{opacity:0,duration:0.3,delay:totalTime});
-
-  return {kill:function(){killed=true;gsap.killTweensOf(spans);gsap.killTweensOf(cur);}};
-}
-
-let _twHandle=null; /* track active typewriter so we can kill it */
-
+const slideState={};const slideTimers={};
+Object.keys(MODS).forEach(id=>{slideState[id]=0;slideTimers[id]=setInterval(()=>goSlide(id,(slideState[id]+1)%MODS[id].n),3200)});
 function goSlide(id,idx){
   const mod=MODS[id];
-  const prevIdx=slideState[id];
-  if(prevIdx===idx||slideBusy[id])return;
-  slideBusy[id]=true;
-
-  const isForward=(idx>prevIdx)||(prevIdx===mod.n-1&&idx===0);
-  const outX  = isForward ? '-100%' : '100%';
-  const inFromX = isForward ? '100%'  : '-100%';
-
-  const psEl=document.getElementById(`${id}-s${prevIdx}`);
-  const csEl=document.getElementById(`${id}-s${idx}`);
-
-  /* ── Update nav dots ── */
+  if(slideState[id]===idx)return;
   for(let i=0;i<mod.n;i++){
+    const s=document.getElementById(`${id}-s${i}`);
     const d=document.getElementById(`${id}-d${i}`);
+    if(s)s.classList.remove('active');
     if(d){d.classList.remove('on');d.style.cssText=''}
   }
+  const cs=document.getElementById(`${id}-s${idx}`);
   const cd=document.getElementById(`${id}-d${idx}`);
+  if(cs)cs.classList.add('active');
   if(cd){cd.classList.add('on');cd.style.background=mod.color;cd.style.boxShadow=`0 0 8px ${mod.color}`;cd.style.width='22px';cd.style.borderRadius='4px'}
-
-  const SLIDE_DUR=0.52;
-
-  /* ── Outgoing slide: slide + 3D-tilt out ── */
-  if(psEl){
-    gsap.to(psEl,{
-      x:outX,
-      rotateY: isForward ? -8 : 8,
-      opacity:0,
-      filter:'blur(2px)',
-      scale:0.96,
-      duration:SLIDE_DUR,
-      ease:'power3.in',
-      onComplete:()=>{
-        psEl.classList.remove('active');
-        gsap.set(psEl,{clearProps:'all'});
-      }
-    });
+  const desc=document.getElementById(`${id}-desc`);
+  if(desc&&mod.descs[idx]){
+    desc.style.transition='none';
+    desc.style.opacity='0';
+    desc.style.transform='translateY(6px)';
+    setTimeout(()=>{
+      desc.textContent=mod.descs[idx];
+      desc.style.transition='opacity .3s ease,transform .3s ease';
+      desc.style.opacity='1';
+      desc.style.transform='translateY(0)';
+    },180);
   }
-
-  /* ── Incoming slide: slide + 3D-tilt in, with perspective ── */
-  if(csEl){
-    csEl.classList.add('active');
-    gsap.set(csEl,{x:inFromX,rotateY: isForward ? 8 : -8,opacity:0,scale:0.96,filter:'blur(2px)'});
-    gsap.to(csEl,{
-      x:'0%',
-      rotateY:0,
-      opacity:1,
-      scale:1,
-      filter:'blur(0px)',
-      duration:SLIDE_DUR,
-      ease:'power3.out',
-      delay:0.06,
-      onComplete:()=>{
-        /* Glow sweep after image settles */
-        const sw=csEl.closest('.p-screen')?.querySelector('.slide-sweep');
-        if(sw){
-          gsap.fromTo(sw,
-            {x:'-110%',opacity:1},
-            {x:'200%',opacity:1,duration:0.65,ease:'power2.out'}
-          );
-        }
-        slideBusy[id]=false;
-        /* ── Typewriter description ── */
-        const desc=document.getElementById(`${id}-desc`);
-        if(desc&&mod.descs[idx]){
-          if(_twHandle)_twHandle.kill();
-          gsap.set(desc,{opacity:1,y:0});
-          _twHandle=typewriterAnim(desc,mod.descs[idx],mod.color);
-        }
-      }
-    });
-  } else {
-    slideBusy[id]=false;
-  }
-
   slideState[id]=idx;
 }
-function jump(id,idx){clearInterval(slideTimers[id]);slideBusy[id]=false;goSlide(id,idx);slideTimers[id]=setInterval(()=>goSlide(id,(slideState[id]+1)%MODS[id].n),3800)}
-
-Object.keys(MODS).forEach(id=>{
-  slideState[id]=0;slideBusy[id]=false;
-  slideTimers[id]=setInterval(()=>goSlide(id,(slideState[id]+1)%MODS[id].n),3800);
-});
-
+function jump(id,idx){clearInterval(slideTimers[id]);goSlide(id,idx);slideTimers[id]=setInterval(()=>goSlide(id,(slideState[id]+1)%MODS[id].n),3200)}
 // ── CONTACT ──
 function openContact(){document.getElementById('contactOverlay').classList.add('show')}
 function closeContact(){document.getElementById('contactOverlay').classList.remove('show')}
