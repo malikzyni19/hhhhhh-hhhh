@@ -525,62 +525,12 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 /* ── LETTER TYPING SPANS ── */
 .letter-span{display:inline-block;opacity:0;will-change:opacity}
 
-/* ── MODULES 3-D LIGHTNING BOX BACKGROUND ── */
-.mlb-wrap{position:absolute;inset:0;overflow:hidden;z-index:0;pointer-events:none}
-.mlb-scene{position:absolute;top:50%;left:50%;perspective:1100px;transform:translate(-50%,-50%)}
-.mlb-box{
-  width:320px;height:320px;position:relative;transform-style:preserve-3d;
-  animation:mlbSpin 28s linear infinite, mlbPulse 10s ease-in-out infinite;
+/* ── MODULES 3-D BOX — Three.js canvas background ── */
+#mod-box-bg{
+  position:absolute;top:0;left:0;width:100%;height:100%;
+  z-index:0;pointer-events:none;display:block;
 }
-.mlb-f{
-  position:absolute;width:100%;height:100%;
-  border:1.5px solid rgba(99,102,241,0.22);
-  background:rgba(3,8,22,0.50);
-}
-.mlb-f::after{
-  content:'';position:absolute;inset:0;
-  box-shadow:inset 0 0 22px rgba(99,102,241,0.14),inset 0 0 50px rgba(34,211,238,0.05);
-  animation:mlbEdge 3.5s ease-in-out infinite alternate;
-}
-.mlb-front{transform:translateZ(160px)}
-.mlb-back {transform:rotateY(180deg) translateZ(160px)}
-.mlb-left {transform:rotateY(-90deg) translateZ(160px)}
-.mlb-right{transform:rotateY( 90deg) translateZ(160px)}
-.mlb-bot  {transform:rotateX(-90deg) translateZ(160px)}
-.mlb-top  {
-  transform:rotateX(90deg) translateZ(160px);
-  transform-origin:center bottom;
-  animation:mlbLidOpen 10s ease-in-out infinite;
-}
-.mlb-front::before{
-  content:'';position:absolute;top:50%;left:50%;
-  width:100px;height:100px;border-radius:50%;
-  transform:translate(-50%,-50%);
-  background:radial-gradient(circle,rgba(99,102,241,0.45) 0%,rgba(34,211,238,0.22) 40%,transparent 70%);
-  filter:blur(18px);
-  animation:mlbBurst 10s ease-in-out infinite;
-}
-/* Extra corner sparks on edges */
-.mlb-left::before,.mlb-right::before{
-  content:'';position:absolute;top:0;left:0;right:0;height:2px;
-  background:linear-gradient(90deg,transparent,rgba(99,102,241,0.7),rgba(34,211,238,0.9),rgba(99,102,241,0.7),transparent);
-  animation:mlbSpark 3s ease-in-out infinite alternate;
-}
-@keyframes mlbSpin{0%{transform:rotateY(0deg) rotateX(18deg)} 100%{transform:rotateY(360deg) rotateX(18deg)}}
-@keyframes mlbPulse{0%,100%{filter:none} 50%{filter:drop-shadow(0 0 40px rgba(99,102,241,0.18)) drop-shadow(0 0 80px rgba(34,211,238,0.08))}}
-@keyframes mlbLidOpen{
-  0%,15%{transform:rotateX(90deg) translateZ(160px)}
-  40%,70%{transform:rotateX(155deg) translateZ(160px)}
-  90%,100%{transform:rotateX(90deg) translateZ(160px)}
-}
-@keyframes mlbEdge{
-  from{box-shadow:inset 0 0 10px rgba(99,102,241,0.08)}
-  to{box-shadow:inset 0 0 30px rgba(99,102,241,0.28),inset 0 0 60px rgba(34,211,238,0.10)}
-}
-@keyframes mlbBurst{0%,100%{opacity:0.25;transform:translate(-50%,-50%) scale(0.7)} 50%{opacity:1;transform:translate(-50%,-50%) scale(1.5)}}
-@keyframes mlbSpark{from{opacity:0.3;width:30%} to{opacity:0.9;width:90%}}
-/* Ensure features section clips box correctly */
-#features{overflow:hidden}
+#features{position:relative;overflow:hidden}
 </style>
 </head>
 <body>
@@ -824,19 +774,8 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 
 <!-- FEATURES -->
 <div class="section" id="features">
-  <!-- 3-D lightning box background -->
-  <div class="mlb-wrap" aria-hidden="true">
-    <div class="mlb-scene">
-      <div class="mlb-box">
-        <div class="mlb-f mlb-front"></div>
-        <div class="mlb-f mlb-back"></div>
-        <div class="mlb-f mlb-left"></div>
-        <div class="mlb-f mlb-right"></div>
-        <div class="mlb-f mlb-top"></div>
-        <div class="mlb-f mlb-bot"></div>
-      </div>
-    </div>
-  </div>
+  <!-- Three.js 3-D box background canvas -->
+  <canvas id="mod-box-bg" aria-hidden="true"></canvas>
   <div class="sec-eyebrow" data-i18n="feat_eyebrow">SMC Modules</div>
   <h2 class="sec-h"><span data-i18n="feat_h">Everything to trade smart money</span></h2>
   <p class="sec-sub" data-i18n="feat_sub">Six professional tools — scan, detect and act on every Smart Money setup across 400+ pairs.</p>
@@ -1959,19 +1898,24 @@ function lwStartBounce(){
   gCtx.fillStyle = bHalo;
   gCtx.fillRect(0, 0, 1024, 1024);
 
-  /* ₿ symbol — centred with glow emboss */
-  gCtx.font = 'bold 420px Arial';
+  /* ₿ symbols — 3 copies at 0°, 120°, 240° longitude so icon is
+     visible from any rotation angle (equirectangular: full width = 360°,
+     3 copies at x = 171, 512, 853 on a 1024px canvas) */
+  var btcPositions = [171, 512, 853];
+  gCtx.font = 'bold 290px Arial';
   gCtx.textAlign = 'center';
   gCtx.textBaseline = 'middle';
-  /* outer glow pass */
-  gCtx.shadowColor = 'rgba(251,191,36,0.85)';
-  gCtx.shadowBlur = 55;
-  gCtx.fillStyle = 'rgba(253,230,138,0.35)';
-  gCtx.fillText('₿', 512, 512);
-  /* crisp pass */
-  gCtx.shadowBlur = 0;
-  gCtx.fillStyle = 'rgba(253,230,138,0.93)';
-  gCtx.fillText('₿', 512, 512);
+  btcPositions.forEach(function(bx) {
+    /* glow bloom pass */
+    gCtx.shadowColor = 'rgba(251,191,36,0.90)';
+    gCtx.shadowBlur = 45;
+    gCtx.fillStyle = 'rgba(253,230,138,0.30)';
+    gCtx.fillText('\u20BF', bx, 512);
+    /* crisp solid pass */
+    gCtx.shadowBlur = 0;
+    gCtx.fillStyle = 'rgba(253,230,138,0.92)';
+    gCtx.fillText('\u20BF', bx, 512);
+  });
 
   var globeTex = new THREE.CanvasTexture(globeCv);
 
@@ -2164,6 +2108,126 @@ function lwStartBounce(){
     });
   }
   setInterval(rotateWord, 3200);
+})();
+
+/* ══════════════════════════════════════════════════════════
+   MODULES BACKGROUND — Three.js 3-D box (open / close cycle)
+═══════════════════════════════════════════════════════════ */
+(function initModulesBg() {
+  var section = document.getElementById('features');
+  var canvas  = document.getElementById('mod-box-bg');
+  if (!section || !canvas || !window.THREE) return;
+
+  var W = section.offsetWidth  || 900;
+  var H = section.offsetHeight || 700;
+
+  var renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+  renderer.setSize(W, H);
+
+  var scene  = new THREE.Scene();
+  var camera = new THREE.PerspectiveCamera(40, W / H, 0.1, 100);
+  camera.position.set(0, 0, 9);
+  camera.lookAt(0, 0, 0);
+
+  scene.add(new THREE.AmbientLight(0x080814, 0.5));
+
+  /* ── 6 individual face planes that slide outward on open ── */
+  var HALF = 1.7;
+  var SIZE = HALF * 2;
+  var faceInfos = [
+    { n: [ 0,  0,  1], rx: 0,           ry: 0,           col: 0x0d1a2d },
+    { n: [ 0,  0, -1], rx: 0,           ry: Math.PI,     col: 0x0d1a2d },
+    { n: [ 1,  0,  0], rx: 0,           ry:  Math.PI/2,  col: 0x091420 },
+    { n: [-1,  0,  0], rx: 0,           ry: -Math.PI/2,  col: 0x091420 },
+    { n: [ 0,  1,  0], rx: -Math.PI/2,  ry: 0,           col: 0x07101c },
+    { n: [ 0, -1,  0], rx:  Math.PI/2,  ry: 0,           col: 0x07101c },
+  ];
+
+  var faceGeo = new THREE.PlaneGeometry(SIZE, SIZE);
+  var boxGroup = new THREE.Group();
+  scene.add(boxGroup);
+
+  var faceMeshes = faceInfos.map(function(fi) {
+    var mat = new THREE.MeshStandardMaterial({
+      color: fi.col, transparent: true, opacity: 0.78,
+      side: THREE.DoubleSide, roughness: 0.9, metalness: 0.05
+    });
+    var mesh = new THREE.Mesh(faceGeo.clone(), mat);
+    mesh.rotation.set(fi.rx, fi.ry, 0);
+    mesh.position.set(fi.n[0] * HALF, fi.n[1] * HALF, fi.n[2] * HALF);
+    mesh.userData.n = fi.n;
+    boxGroup.add(mesh);
+    return mesh;
+  });
+
+  /* ── Glowing wireframe edges ── */
+  var edgesGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(SIZE, SIZE, SIZE));
+  var edgeMat  = new THREE.LineBasicMaterial({ color: 0x6366f1, transparent: true, opacity: 0.38 });
+  var wireCube = new THREE.LineSegments(edgesGeo, edgeMat);
+  boxGroup.add(wireCube);
+
+  /* ── Inner point light (off when closed, bright when open) ── */
+  var innerLight = new THREE.PointLight(0x818cf8, 0, 14);
+  boxGroup.add(innerLight);
+
+  /* ── Accent rim light from outside ── */
+  var rimLight = new THREE.PointLight(0x22d3ee, 0, 10);
+  rimLight.position.set(5, 3, 4);
+  scene.add(rimLight);
+
+  var clock2 = new THREE.Clock();
+  var CYCLE = 14;
+
+  function smoothstep(x) { var c = Math.max(0, Math.min(1, x)); return c * c * (3 - 2 * c); }
+
+  function animate2() {
+    requestAnimationFrame(animate2);
+    var t = clock2.getElapsedTime();
+
+    /* Constant slow rotation */
+    boxGroup.rotation.y = t * 0.11;
+    boxGroup.rotation.x = 0.20;
+
+    /* Open/close phase (0 = closed, 1 = fully open) */
+    var ph = (t % CYCLE) / CYCLE;
+    var openAmt;
+    if      (ph < 0.28) openAmt = 0;
+    else if (ph < 0.46) openAmt = smoothstep((ph - 0.28) / 0.18);
+    else if (ph < 0.62) openAmt = 1;
+    else if (ph < 0.80) openAmt = 1 - smoothstep((ph - 0.62) / 0.18);
+    else                openAmt = 0;
+
+    /* Faces slide outward */
+    faceMeshes.forEach(function(mesh) {
+      var n = mesh.userData.n;
+      var ext = HALF + openAmt * 1.5;
+      mesh.position.set(n[0] * ext, n[1] * ext, n[2] * ext);
+      mesh.material.opacity = 0.78 - openAmt * 0.68;
+    });
+
+    /* Edge colour: indigo closed → cyan-white open */
+    edgeMat.opacity = 0.35 + openAmt * 0.52;
+    edgeMat.color.setHSL(0.67 - openAmt * 0.12, 0.80, 0.52 + openAmt * 0.28);
+    wireCube.scale.setScalar(1 + openAmt * 0.08);
+
+    /* Lights */
+    innerLight.intensity = openAmt * 5.0;
+    rimLight.intensity   = openAmt * 2.0;
+
+    renderer.render(scene, camera);
+  }
+  animate2();
+
+  /* Responsive */
+  if (window.ResizeObserver) {
+    new ResizeObserver(function() {
+      W = section.offsetWidth; H = section.offsetHeight;
+      renderer.setSize(W, H);
+      camera.aspect = W / H;
+      camera.updateProjectionMatrix();
+    }).observe(section);
+  }
 })();
 
 </script>
