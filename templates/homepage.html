@@ -64,11 +64,15 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;overf
 
 /* ── NAV ── */
 nav{position:relative;z-index:90;display:flex;align-items:center;justify-content:space-between;padding:12px 28px;border-bottom:1px solid var(--border);background:var(--nav-bg);backdrop-filter:blur(16px);gap:10px}
-.nav-logo{font-family:'Outfit',sans-serif;font-size:20px;font-weight:800;text-decoration:none;display:flex;align-items:center;gap:10px;letter-spacing:0px}
-.nav-logo-zyni{background:linear-gradient(135deg,var(--text) 0%,#22d3ee 60%,#a5f3fc 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
-.nav-logo-smc{background:linear-gradient(135deg,#92400e 0%,#f59e0b 40%,#fde68a 60%,#f97316 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;position:relative;overflow:visible;filter:drop-shadow(0 0 8px rgba(251,191,36,0.45))}
-.nav-logo-smc::after{content:'';position:absolute;top:0;left:-120%;width:60%;height:100%;background:linear-gradient(105deg,transparent 0%,rgba(255,255,255,0.55) 50%,transparent 100%);animation:smcSweep 4s ease-in-out infinite;pointer-events:none}
-@keyframes smcSweep{0%,70%{left:-120%}85%{left:140%}100%{left:140%}}
+/* ── ZyNi SMC brand — premium animated identity ── */
+.nav-logo{font-family:'Outfit',sans-serif;font-size:20px;font-weight:800;text-decoration:none;display:flex;align-items:center;gap:10px;letter-spacing:0px;animation:navBreathe 7s ease-in-out infinite}
+@keyframes navBreathe{0%,100%{transform:scale(1)}50%{transform:scale(1.013)}}
+.nav-logo-zyni{background:linear-gradient(135deg,var(--text) 0%,#22d3ee 60%,#a5f3fc 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;animation:zyniGlow 5s ease-in-out infinite alternate}
+@keyframes zyniGlow{from{filter:drop-shadow(0 0 4px rgba(34,211,238,0.10))}to{filter:drop-shadow(0 0 10px rgba(34,211,238,0.38))}}
+.nav-logo-smc{background:linear-gradient(135deg,#92400e 0%,#f59e0b 40%,#fde68a 60%,#f97316 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;position:relative;overflow:visible;animation:smcGlow 4s ease-in-out infinite alternate}
+@keyframes smcGlow{from{filter:drop-shadow(0 0 5px rgba(251,191,36,0.25))}to{filter:drop-shadow(0 0 14px rgba(251,191,36,0.65)) drop-shadow(0 0 28px rgba(245,158,11,0.18))}}
+.nav-logo-smc::after{content:'';position:absolute;top:0;left:-120%;width:55%;height:100%;background:linear-gradient(105deg,transparent 0%,rgba(255,255,255,0.45) 50%,transparent 100%);animation:smcSweep 6.5s ease-in-out infinite;pointer-events:none}
+@keyframes smcSweep{0%,68%{left:-120%}82%{left:150%}100%{left:150%}}
 .nav-logo-dot{width:10px;height:10px;border-radius:50%;background:#22c55e;box-shadow:0 0 10px #22c55e;animation:blink 2s infinite;flex-shrink:0}
 .nav-tag{font-size:9px;color:var(--text3);letter-spacing:3px;font-family:'DM Sans',sans-serif;-webkit-text-fill-color:var(--text3)}
 
@@ -1974,12 +1978,11 @@ function lwStartBounce(){
     coinGroup.position.x = Math.sin(t * 2.7) * tremor * 0.7;
     coinGroup.position.z = Math.sin(t * 2.2) * tremor * 0.5;
 
-    /* Ring rotates around Y (precession) */
-    orbitRing.rotation.y += 0.004;
+    /* Ring stays fixed in tilt — icons orbit along it in one clean direction */
 
-    /* Orbit dot positions — all on the SAME ring */
+    /* Orbit dot positions — all on the SAME ring, advancing at constant rate */
     orbitAngles.forEach(function(a, i) {
-      orbitAngles[i] += 0.0032;
+      orbitAngles[i] += 0.0028;
       var ang = orbitAngles[i];
       /* Map circle on tilted ring plane using ring's rotation matrix */
       m4.makeRotationFromEuler(orbitRing.rotation);
