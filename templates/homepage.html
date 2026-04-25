@@ -64,7 +64,11 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;overf
 
 /* ── NAV ── */
 nav{position:relative;z-index:90;display:flex;align-items:center;justify-content:space-between;padding:12px 28px;border-bottom:1px solid var(--border);background:var(--nav-bg);backdrop-filter:blur(16px);gap:10px}
-.nav-logo{font-family:'Outfit',sans-serif;font-size:20px;font-weight:800;background:linear-gradient(135deg,var(--text) 0%,#22d3ee 60%,#a5f3fc 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;letter-spacing:0px;text-decoration:none;display:flex;align-items:center;gap:10px}
+.nav-logo{font-family:'Outfit',sans-serif;font-size:20px;font-weight:800;text-decoration:none;display:flex;align-items:center;gap:10px;letter-spacing:0px}
+.nav-logo-zyni{background:linear-gradient(135deg,var(--text) 0%,#22d3ee 60%,#a5f3fc 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.nav-logo-smc{background:linear-gradient(135deg,#92400e 0%,#f59e0b 40%,#fde68a 60%,#f97316 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;position:relative;overflow:visible;filter:drop-shadow(0 0 8px rgba(251,191,36,0.45))}
+.nav-logo-smc::after{content:'';position:absolute;top:0;left:-120%;width:60%;height:100%;background:linear-gradient(105deg,transparent 0%,rgba(255,255,255,0.55) 50%,transparent 100%);animation:smcSweep 4s ease-in-out infinite;pointer-events:none}
+@keyframes smcSweep{0%,70%{left:-120%}85%{left:140%}100%{left:140%}}
 .nav-logo-dot{width:10px;height:10px;border-radius:50%;background:#22c55e;box-shadow:0 0 10px #22c55e;animation:blink 2s infinite;flex-shrink:0}
 .nav-tag{font-size:9px;color:var(--text3);letter-spacing:3px;font-family:'DM Sans',sans-serif;-webkit-text-fill-color:var(--text3)}
 
@@ -623,7 +627,7 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 
 <!-- TICKER -->
 <div class="ticker">
-  <div class="ticker-tag"><span class="ticker-dot"></span>LIVE</div>
+  <div class="ticker-tag"><span class="ticker-dot"></span></div>
   <div class="ticker-track"><div class="ticker-inner" id="ticker"></div></div>
 </div>
 
@@ -631,7 +635,7 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 <nav>
   <a class="nav-logo" href="#">
     <span class="nav-logo-dot"></span>
-    ZyNi SMC
+    <span class="nav-logo-zyni">ZyNi</span><span class="nav-logo-smc">&nbsp;SMC</span>
     <span class="nav-tag">SCREENER</span>
   </a>
   <div class="nav-right">
@@ -675,7 +679,7 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
       <div class="stat"><div class="stat-num">400+</div><div class="stat-label" data-i18n="stat_pairs">Pairs Scanned</div></div>
       <div class="stat"><div class="stat-num">4</div><div class="stat-label" data-i18n="stat_tf">Timeframes</div></div>
       <div class="stat"><div class="stat-num">6</div><div class="stat-label" data-i18n="stat_mod">SMC Modules</div></div>
-      <div class="stat"><div class="stat-num" style="color:#22c55e">LIVE</div><div class="stat-label" data-i18n="stat_feed">Data Feed</div></div>
+      <div class="stat"><div class="stat-num"><span style="-webkit-text-fill-color:#22c55e;color:#22c55e;font-size:18px;display:inline-block;animation:blink 2s infinite">●</span></div><div class="stat-label" data-i18n="stat_feed">Data Feed</div></div>
     </div>
     <!-- Fear & Greed + Vol combined -->
     <div class="fg-vol-panel">
@@ -1794,13 +1798,13 @@ function lwStartBounce(){
 })();
 
 /* ════════════════════════════════════════════════════════════
-   HERO SCENE — Three.js 3D Bitcoin coin + orbital system
+   HERO SCENE — single orbit ring, icon symbols, scroll parallax
 ════════════════════════════════════════════════════════════ */
 (function initHeroScene() {
   var hero = document.querySelector('.hero');
   if (!hero || !window.THREE) return;
 
-  /* ── Create WebGL canvas inside hero ── */
+  /* ── Canvas ── */
   var canvas = document.createElement('canvas');
   canvas.id = 'hero-3d-canvas';
   canvas.setAttribute('aria-hidden', 'true');
@@ -1812,26 +1816,30 @@ function lwStartBounce(){
   var renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
   renderer.setSize(W, H);
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
   var scene  = new THREE.Scene();
   var camera = new THREE.PerspectiveCamera(42, W / H, 0.1, 100);
   camera.position.set(0, 0, 9);
   camera.lookAt(0, 0, 0);
 
-  /* ── Lighting: premium 3-point setup ── */
-  scene.add(new THREE.AmbientLight(0x0d0714, 0.8));
+  /* ── Responsive camera ── */
+  function fitCamera() {
+    var narrow = W < 640, veryNarrow = W < 400;
+    camera.fov      = veryNarrow ? 62 : narrow ? 56 : 42;
+    camera.position.z = veryNarrow ? 16 : narrow ? 13 : 9;
+    camera.aspect   = W / H;
+    camera.updateProjectionMatrix();
+  }
+  fitCamera();
 
+  /* ── 3-point lighting ── */
+  scene.add(new THREE.AmbientLight(0x0d0714, 0.8));
   var keyLight = new THREE.PointLight(0xfbbf24, 6, 18);
   keyLight.position.set(3, 4, 5);
-  keyLight.castShadow = true;
   scene.add(keyLight);
-
   var fillLight = new THREE.PointLight(0x22d3ee, 2.5, 14);
   fillLight.position.set(-4, -2, 3);
   scene.add(fillLight);
-
   var rimLight = new THREE.PointLight(0xf97316, 1.8, 10);
   rimLight.position.set(0, -4, -3);
   scene.add(rimLight);
@@ -1840,194 +1848,165 @@ function lwStartBounce(){
   var coinGroup = new THREE.Group();
   scene.add(coinGroup);
 
-  /* Coin body — cylinder seen edge-on, rotated to face camera */
-  var coinGeo = new THREE.CylinderGeometry(1.35, 1.35, 0.22, 72);
-  var coinMat = new THREE.MeshStandardMaterial({
-    color: 0xf59e0b, metalness: 0.96, roughness: 0.07,
-  });
-  var coinMesh = new THREE.Mesh(coinGeo, coinMat);
+  var coinMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.96, roughness: 0.07 });
+  var coinMesh = new THREE.Mesh(new THREE.CylinderGeometry(1.35, 1.35, 0.22, 72), coinMat);
   coinMesh.rotation.x = Math.PI / 2;
-  coinMesh.castShadow = true;
   coinGroup.add(coinMesh);
-
-  /* Coin rim — thinner torus around edge */
-  var rimMesh = new THREE.Mesh(
+  coinGroup.add(new THREE.Mesh(
     new THREE.TorusGeometry(1.35, 0.055, 20, 72),
     new THREE.MeshStandardMaterial({ color: 0xd97706, metalness: 0.99, roughness: 0.04 })
-  );
-  coinGroup.add(rimMesh);
+  ));
 
-  /* ₿ symbol baked onto a canvas texture */
-  var symCv = document.createElement('canvas');
-  symCv.width = symCv.height = 512;
-  var sc = symCv.getContext('2d');
-  sc.clearRect(0, 0, 512, 512);
-  /* Subtle base gradient */
-  var bg = sc.createRadialGradient(256,256,60,256,256,256);
-  bg.addColorStop(0, 'rgba(253,230,138,0.18)');
-  bg.addColorStop(1, 'rgba(180,83,9,0)');
-  sc.fillStyle = bg; sc.fillRect(0,0,512,512);
-  /* Symbol */
-  sc.font = 'bold 300px Arial';
-  sc.textAlign = 'center'; sc.textBaseline = 'middle';
-  sc.fillStyle = '#fde68a'; sc.globalAlpha = 0.92;
-  sc.fillText('₿', 265, 278);
+  /* ₿ canvas texture */
+  var symCv = document.createElement('canvas'); symCv.width = symCv.height = 512;
+  var sc2 = symCv.getContext('2d');
+  sc2.clearRect(0, 0, 512, 512);
+  sc2.font = 'bold 300px Arial'; sc2.textAlign = 'center'; sc2.textBaseline = 'middle';
+  sc2.fillStyle = '#fde68a'; sc2.globalAlpha = 0.92; sc2.fillText('₿', 265, 278);
   var symTex = new THREE.CanvasTexture(symCv);
-
-  /* Front face circle */
-  var faceMat = new THREE.MeshStandardMaterial({
-    map: symTex, color: 0xf59e0b, metalness: 0.82, roughness: 0.12, transparent: true,
-  });
+  var faceMat = new THREE.MeshStandardMaterial({ map: symTex, color: 0xf59e0b, metalness: 0.82, roughness: 0.12, transparent: true });
   var frontFace = new THREE.Mesh(new THREE.CircleGeometry(1.3, 72), faceMat);
-  frontFace.position.z = 0.12;
-  coinGroup.add(frontFace);
-
-  /* Back face */
+  frontFace.position.z = 0.12; coinGroup.add(frontFace);
   var backFace = new THREE.Mesh(new THREE.CircleGeometry(1.3, 72), faceMat.clone());
-  backFace.position.z = -0.12;
-  backFace.rotation.y = Math.PI;
-  coinGroup.add(backFace);
+  backFace.position.z = -0.12; backFace.rotation.y = Math.PI; coinGroup.add(backFace);
 
-  /* Additive glow sprite behind coin */
-  var glowCv = document.createElement('canvas');
-  glowCv.width = glowCv.height = 256;
-  var gc2 = glowCv.getContext('2d');
-  var gr = gc2.createRadialGradient(128,128,0,128,128,128);
-  gr.addColorStop(0, 'rgba(251,191,36,0.7)');
-  gr.addColorStop(0.4,'rgba(245,158,11,0.3)');
-  gr.addColorStop(1, 'rgba(245,158,11,0)');
-  gc2.fillStyle = gr; gc2.fillRect(0,0,256,256);
-  var glowTex = new THREE.CanvasTexture(glowCv);
-  var glowPlane = new THREE.Mesh(
+  /* Additive glow behind coin */
+  var glowCv = document.createElement('canvas'); glowCv.width = glowCv.height = 256;
+  var gc = glowCv.getContext('2d');
+  var gr = gc.createRadialGradient(128,128,0,128,128,128);
+  gr.addColorStop(0,'rgba(251,191,36,0.7)'); gr.addColorStop(0.4,'rgba(245,158,11,0.3)'); gr.addColorStop(1,'rgba(245,158,11,0)');
+  gc.fillStyle = gr; gc.fillRect(0,0,256,256);
+  coinGroup.add(new THREE.Mesh(
     new THREE.PlaneGeometry(7, 7),
-    new THREE.MeshBasicMaterial({ map: glowTex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })
-  );
-  glowPlane.position.z = -0.3;
-  coinGroup.add(glowPlane);
+    new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(glowCv), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })
+  ));
 
-  /* ── Orbit ring 1 — gold, inner ── */
-  var orbitR1 = 3.0, orbitR2 = 4.2;
-  var ring1 = new THREE.Mesh(
-    new THREE.TorusGeometry(orbitR1, 0.011, 16, 130),
-    new THREE.MeshBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.40, blending: THREE.AdditiveBlending })
+  /* ── SINGLE orbit ring ── */
+  var ORBIT_R = 3.0;
+  var orbitRing = new THREE.Mesh(
+    new THREE.TorusGeometry(ORBIT_R, 0.013, 20, 140),
+    new THREE.MeshBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.38, blending: THREE.AdditiveBlending })
   );
-  ring1.rotation.x = Math.PI / 2 + 0.38;
-  ring1.rotation.z = 0.28;
-  scene.add(ring1);
+  /* Slight tilt for depth illusion */
+  orbitRing.rotation.x = Math.PI / 2 + 0.3;
+  scene.add(orbitRing);
 
-  /* Orbit ring 2 — cyan, outer */
-  var ring2 = new THREE.Mesh(
-    new THREE.TorusGeometry(orbitR2, 0.008, 16, 160),
-    new THREE.MeshBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending })
-  );
-  ring2.rotation.x = Math.PI / 2 - 0.32;
-  ring2.rotation.z = -0.45;
-  scene.add(ring2);
-
-  /* ── Orbit dot beads ── */
-  var cryptoData = [
-    { name:'Bitcoin',      hex:'#f59e0b', c:0xf59e0b, ring:1, speed:0.0038, off:0 },
-    { name:'Ethereum',     hex:'#818cf8', c:0x818cf8, ring:1, speed:0.0038, off:Math.PI*0.72 },
-    { name:'Solana',       hex:'#22d3ee', c:0x22d3ee, ring:2, speed:0.0028, off:0 },
-    { name:'XRP',          hex:'#a78bfa', c:0xa78bfa, ring:2, speed:0.0028, off:Math.PI*0.65 },
-    { name:'Binance Coin', hex:'#fbbf24', c:0xfbbf24, ring:2, speed:0.0028, off:Math.PI*1.35 },
+  /* ── Crypto icon beads on the single ring ── */
+  var cryptos = [
+    { sym: '₿', color: 0xf59e0b, hex: '#f59e0b', off: 0 },
+    { sym: 'Ξ', color: 0x818cf8, hex: '#818cf8', off: Math.PI * 0.4 },
+    { sym: '◎', color: 0x22d3ee, hex: '#22d3ee', off: Math.PI * 0.8 },
+    { sym: '✕', color: 0xa78bfa, hex: '#a78bfa', off: Math.PI * 1.2 },
+    { sym: '◆', color: 0xfbbf24, hex: '#fbbf24', off: Math.PI * 1.6 },
   ];
 
-  var orbitDots = cryptoData.map(function(c) {
+  var orbitAngles = cryptos.map(function(c) { return c.off; });
+
+  var dotMeshes = cryptos.map(function(c) {
     var dot = new THREE.Mesh(
-      new THREE.SphereGeometry(0.065, 12, 12),
-      new THREE.MeshBasicMaterial({ color: c.c, blending: THREE.AdditiveBlending })
+      new THREE.SphereGeometry(0.07, 12, 12),
+      new THREE.MeshBasicMaterial({ color: c.color, blending: THREE.AdditiveBlending })
     );
     scene.add(dot);
-    return { mesh: dot, data: c, angle: c.off };
+    return dot;
   });
 
-  /* ── Billboard HTML labels ── */
+  /* Billboard icon labels */
   var labelLayer = document.createElement('div');
   labelLayer.className = 'hero-label-layer';
   hero.appendChild(labelLayer);
 
-  var labelEls = cryptoData.map(function(c) {
+  var labelEls = cryptos.map(function(c) {
     var el = document.createElement('div');
     el.className = 'orbit-pill';
-    el.style.borderColor = c.hex.replace(')', ',0.3)').replace('rgb','rgba');
-    el.style.border = '1px solid ' + c.hex + '44';
-    el.innerHTML = '<span style="color:' + c.hex + ';margin-right:5px;font-size:11px">●</span>' + c.name;
+    el.style.border = '1px solid ' + c.hex + '50';
+    el.style.fontSize = '14px';
+    el.style.padding = '5px 11px';
+    el.style.color = c.hex;
+    el.textContent = c.sym;
     labelLayer.appendChild(el);
     return el;
   });
 
-  /* ── Mouse parallax state ── */
+  /* ── Mouse parallax ── */
   var mx = 0, my = 0, camTx = 0, camTy = 0;
   hero.addEventListener('mousemove', function(e) {
     var r = hero.getBoundingClientRect();
-    mx =  (e.clientX - r.left)  / r.width  - 0.5;
-    my =  (e.clientY - r.top)   / r.height - 0.5;
+    mx = (e.clientX - r.left) / r.width  - 0.5;
+    my = (e.clientY - r.top)  / r.height - 0.5;
   }, { passive: true });
   hero.addEventListener('mouseleave', function() { mx = 0; my = 0; }, { passive: true });
 
-  /* ── Shared rotation Euler helpers ── */
-  var e1 = new THREE.Euler(), e2 = new THREE.Euler();
+  /* ── Scroll parallax (coin + ring fade/scale away) ── */
+  var scrollY = 0;
+  window.addEventListener('scroll', function() { scrollY = window.scrollY; }, { passive: true });
+
+  /* ── Helpers ── */
   var m4 = new THREE.Matrix4();
   var vp = new THREE.Vector3();
-
-  /* ── Render loop ── */
   var clock = new THREE.Clock();
-  var orbitAngles = cryptoData.map(function(c) { return c.off; });
-  var active = true;
 
-  /* Pause when hero is off-screen */
+  /* ── IntersectionObserver pause ── */
+  var active = true;
   if (window.IntersectionObserver) {
-    new IntersectionObserver(function(entries) {
-      active = entries[0].isIntersecting;
-    }, { threshold: 0.05 }).observe(hero);
+    new IntersectionObserver(function(e) { active = e[0].isIntersecting; }, { threshold: 0.05 }).observe(hero);
   }
 
   function animate() {
     requestAnimationFrame(animate);
     if (!active) return;
-
     var t = clock.getElapsedTime();
 
-    /* Coin: Y-axis spin + float */
-    coinGroup.rotation.z += 0.006;
-    coinGroup.position.y = Math.sin(t * 0.45) * 0.14;
+    /* Scroll parallax: scale coin + ring down, fade canvas */
+    var heroH = hero.offsetHeight || 700;
+    var scrollFrac = Math.min(scrollY / (heroH * 0.6), 1);
+    var coinScale = 1 - scrollFrac * 0.45;
+    var sceneOpacity = 1 - scrollFrac * 0.85;
+    canvas.style.opacity = sceneOpacity.toFixed(3);
+    canvas.style.transform = 'scale(' + (1 - scrollFrac * 0.08) + ')';
+    coinGroup.scale.setScalar(coinScale);
+    orbitRing.scale.setScalar(coinScale);
 
-    /* Rings slowly precess */
-    ring1.rotation.y += 0.0025;
-    ring2.rotation.y -= 0.0018;
+    /* Coin: gentle tremor + slow Y-axis rotation */
+    var tremor = 0.018;
+    coinGroup.rotation.y += 0.007;
+    coinGroup.position.y = Math.sin(t * 0.5) * 0.12 + Math.sin(t * 3.1) * tremor;
+    coinGroup.position.x = Math.sin(t * 2.7) * tremor * 0.7;
+    coinGroup.position.z = Math.sin(t * 2.2) * tremor * 0.5;
 
-    /* Position orbit dots in 3D using ring's current rotation matrix */
-    orbitDots.forEach(function(od, i) {
-      orbitAngles[i] += od.data.speed;
-      var a = orbitAngles[i];
-      var R = od.data.ring === 1 ? orbitR1 : orbitR2;
-      var ringRef = od.data.ring === 1 ? ring1 : ring2;
+    /* Ring rotates around Y (precession) */
+    orbitRing.rotation.y += 0.004;
 
-      /* Local circle point → world space via ring's rotation */
-      m4.makeRotationFromEuler(ringRef.rotation);
-      vp.set(Math.cos(a) * R, Math.sin(a) * R, 0);
+    /* Orbit dot positions — all on the SAME ring */
+    orbitAngles.forEach(function(a, i) {
+      orbitAngles[i] += 0.0032;
+      var ang = orbitAngles[i];
+      /* Map circle on tilted ring plane using ring's rotation matrix */
+      m4.makeRotationFromEuler(orbitRing.rotation);
+      vp.set(Math.cos(ang) * ORBIT_R, Math.sin(ang) * ORBIT_R, 0);
       vp.applyMatrix4(m4);
-      od.mesh.position.copy(vp);
+      /* Apply same scale as coin (scroll parallax) */
+      dotMeshes[i].position.copy(vp);
+      dotMeshes[i].scale.setScalar(coinScale);
 
-      /* Billboard label: project 3D → NDC → CSS pixels */
-      var p = od.mesh.position.clone().project(camera);
-      var visible = p.z < 1.0 && p.z > -1.0;
-      if (visible) {
-        var sx = ( p.x * 0.5 + 0.5) * W;
+      /* Project to CSS pixels for billboard labels */
+      var p = dotMeshes[i].position.clone().project(camera);
+      var inView = p.z < 1.0;
+      if (inView && sceneOpacity > 0.05) {
+        var sx = (p.x * 0.5 + 0.5) * W;
         var sy = (-p.y * 0.5 + 0.5) * H;
-        var depth = 1.0 - Math.max(0, Math.min(1, (p.z + 1) * 0.5));
+        var depth = 1 - Math.max(0, Math.min(1, (p.z + 1) * 0.5));
         labelEls[i].style.left    = sx + 'px';
         labelEls[i].style.top     = sy + 'px';
-        labelEls[i].style.opacity = (0.4 + depth * 0.55).toFixed(2);
+        labelEls[i].style.opacity = ((0.5 + depth * 0.5) * sceneOpacity).toFixed(3);
       } else {
         labelEls[i].style.opacity = '0';
       }
     });
 
-    /* Smooth camera parallax */
-    camTx += (mx * 1.8 - camTx) * 0.035;
-    camTy += (-my * 1.2 - camTy) * 0.035;
+    /* Camera parallax */
+    camTx += (mx * 1.5 - camTx) * 0.035;
+    camTy += (-my * 1.0 - camTy) * 0.035;
     camera.position.x = camTx;
     camera.position.y = camTy;
     camera.lookAt(0, 0, 0);
@@ -2036,26 +2015,13 @@ function lwStartBounce(){
   }
   animate();
 
-  /* ── Camera fit: pull back + widen FOV on narrow viewports ── */
-  function fitCamera() {
-    var narrow = W < 640;
-    var veryNarrow = W < 400;
-    camera.fov      = veryNarrow ? 62 : narrow ? 56 : 42;
-    camera.position.z = veryNarrow ? 16 : narrow ? 13 : 9;
-    camera.aspect   = W / H;
-    camera.updateProjectionMatrix();
-  }
-  fitCamera();
-
-  /* ── Resize handler ── */
+  /* ── Resize ── */
   window.addEventListener('resize', function() {
-    W = hero.offsetWidth;
-    H = hero.offsetHeight;
-    renderer.setSize(W, H);
-    fitCamera();
+    W = hero.offsetWidth; H = hero.offsetHeight;
+    renderer.setSize(W, H); fitCamera();
   });
 
-  /* ── Word rotation (GSAP) — all words capitalised ── */
+  /* ── Word rotation ── */
   if (!window.gsap) return;
   var words = ['Smart', 'Elite', 'Pro', 'Strategic', 'Advanced'];
   var wordEl = document.getElementById('hero-rw');
@@ -2063,8 +2029,7 @@ function lwStartBounce(){
   var wIdx = 0;
   function rotateWord() {
     gsap.to(wordEl, {
-      opacity: 0, y: -14, filter: 'blur(6px)',
-      duration: 0.45, ease: 'power2.in',
+      opacity: 0, y: -14, filter: 'blur(6px)', duration: 0.45, ease: 'power2.in',
       onComplete: function() {
         wIdx = (wIdx + 1) % words.length;
         wordEl.textContent = words[wIdx];
@@ -2077,6 +2042,7 @@ function lwStartBounce(){
   }
   setInterval(rotateWord, 3200);
 })();
+
 </script>
 </body>
 </html>
