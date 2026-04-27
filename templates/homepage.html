@@ -541,7 +541,10 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 .letter-span{display:inline-block;opacity:0;will-change:opacity}
 
 #features{position:relative}
-#mod-sun-bg{position:absolute;top:0;left:0;width:100%;height:100%;z-index:0;pointer-events:none;display:block;mix-blend-mode:screen}
+#mod-sun-wrap{position:relative;width:100%;height:420px;margin:32px 0 40px;overflow:hidden}
+@media(max-width:768px){#mod-sun-wrap{height:320px}}
+@media(max-width:480px){#mod-sun-wrap{height:260px}}
+#mod-sun-bg{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;display:block}
 </style>
 </head>
 <body>
@@ -785,10 +788,10 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 
 <!-- FEATURES -->
 <div class="section" id="features">
-  <canvas id="mod-sun-bg" aria-hidden="true"></canvas>
   <div class="sec-eyebrow" data-i18n="feat_eyebrow">SMC Modules</div>
   <h2 class="sec-h"><span data-i18n="feat_h">Everything to trade smart money</span></h2>
   <p class="sec-sub" data-i18n="feat_sub">Six professional tools — scan, detect and act on every Smart Money setup across 400+ pairs.</p>
+  <div id="mod-sun-wrap"><canvas id="mod-sun-bg" aria-hidden="true"></canvas></div>
 
   <!-- MODULE 01 -->
   <div class="feat-row" style="margin-bottom:16px">
@@ -1950,31 +1953,21 @@ function lwStartBounce(){
   var RB = { r: 4.00, tilt: 0.72, speed: 0.0038 };
   var RC = { r: 5.20, tilt: 0.18, speed: 0.0026 };
 
-  /* ── Dotted ring — Points along orbit circumference ── */
-  var ringM4 = new THREE.Matrix4();
-  function makeDottedRing(cfg, col) {
-    var numDots = 150;
-    var pos = new Float32Array(numDots * 3);
-    ringM4.makeRotationX(Math.PI / 2 + cfg.tilt);
-    for (var di = 0; di < numDots; di++) {
-      var ang = (di / numDots) * Math.PI * 2;
-      var v   = new THREE.Vector3(Math.cos(ang) * cfg.r, Math.sin(ang) * cfg.r, 0);
-      v.applyMatrix4(ringM4);
-      pos[di*3] = v.x; pos[di*3+1] = v.y; pos[di*3+2] = v.z;
-    }
-    var geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    var mat = new THREE.PointsMaterial({
-      color: col, size: 0.052, transparent: true, opacity: 0.65,
-      blending: THREE.AdditiveBlending, sizeAttenuation: true, depthWrite: false
+  /* ── Solid ring — TorusGeometry for clean continuous lines ── */
+  function makeRing(cfg, col) {
+    var geo = new THREE.TorusGeometry(cfg.r, 0.012, 3, 120);
+    var mat = new THREE.MeshBasicMaterial({
+      color: col, transparent: true, opacity: 0.60,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
     });
-    var pts = new THREE.Points(geo, mat);
-    scene.add(pts);
-    return pts;
+    var mesh = new THREE.Mesh(geo, mat);
+    mesh.rotation.x = Math.PI / 2 + cfg.tilt;
+    scene.add(mesh);
+    return mesh;
   }
-  var ringA = makeDottedRing(RA, 0xf59e0b);
-  var ringB = makeDottedRing(RB, 0x22d3ee);
-  var ringC = makeDottedRing(RC, 0xa78bfa);
+  var ringA = makeRing(RA, 0xf59e0b);
+  var ringB = makeRing(RB, 0x22d3ee);
+  var ringC = makeRing(RC, 0xa78bfa);
 
   /* ── Symbol sprite (canvas texture: circle bg + glowing symbol) ── */
   function makeSymbolSprite(sym, hex, rgbArr) {
@@ -2059,6 +2052,11 @@ function lwStartBounce(){
     /* Stars */
     starMat.opacity = 0.26 + Math.sin(t * 0.10) * 0.06;
 
+    /* Rings */
+    ringA.scale.setScalar(msc);
+    ringB.scale.setScalar(msc);
+    ringC.scale.setScalar(msc);
+
     /* Symbols */
     cryptos.forEach(function(c) {
       c.ang += c.cfg.speed;
@@ -2107,18 +2105,14 @@ function lwStartBounce(){
 })();
 
 /* ════════════════════════════════════════════════════════════
-   MODULES — CINEMATIC SUN BURST (6-phase orbit → collapse → burst → release)
+   MODULES — CINEMATIC SUN BURST (6-phase: orbit → impact → tremble → accel → burst → release)
 ════════════════════════════════════════════════════════════ */
 (function initModulesBg() {
   var canvas = document.getElementById('mod-sun-bg');
   if (!canvas) return;
   var ctx = canvas.getContext('2d');
 
-  /* Canvas uses mix-blend-mode:screen (set via CSS).
-     Black fill = screen identity → dark canvas areas pass content through.
-     Only bright pixels (sun + symbols) add a warm glow over the cards.    */
-
-  var CYCLE = 18; /* seconds per cinematic cycle */
+  var CYCLE = 16; /* seconds per cinematic cycle */
   var N = 5;
   var syms = [
     { s: '\u20BF', color: '#ffb800', rgb: [255,184,  0] },
@@ -2138,7 +2132,7 @@ function lwStartBounce(){
     var wrap = canvas.parentElement;
     if (!wrap) return;
     canvas.width  = wrap.offsetWidth  || 900;
-    canvas.height = wrap.offsetHeight || 600;
+    canvas.height = wrap.offsetHeight || 420;
   }
   resize();
   window.addEventListener('resize', function() { resize(); });
@@ -2254,33 +2248,37 @@ function lwStartBounce(){
     totalT += dt;
 
     var ph = (totalT % CYCLE) / CYCLE; /* 0..1 phase */
-    var P1=0.20, P2=0.35, P3=0.50, P4=0.65, P5=0.72;
+    /* Phase boundaries: ①Orbit ②Impact ③Tremble ④Accel ⑤BURST ⑥Release */
+    var P1=0.22, P2=0.45, P3=0.58, P4=0.68, P5=0.76;
 
-    var orbitR   = 1.0, speed = 0.55, sunGlowM = 1.0;
+    var orbitR = 1.0, speed = 0.55, sunGlowM = 1.0, trembleAmt = 0;
     var burstFlash = 0, btcAlpha = 0;
     var symAlphas = [1, 1, 1, 1, 1];
-    var fi, lt, t2, t3, e3, t4, t5, bf, t6, e6;
+    var fi, lt, t2, t3, t4, t5, t6, e6, bf;
 
     if (ph < P1) {
-      /* ① Calm — slow orbit */
+      /* ① Orbit — slow steady orbit */
       speed = 0.55; orbitR = 1.0; sunGlowM = 1.0;
     } else if (ph < P2) {
-      /* ② Acceleration */
+      /* ② Impact — symbols spiral inward and hit sun one-by-one */
       t2 = (ph - P1) / (P2 - P1);
-      speed = 0.55 + t2 * 3.8; orbitR = 1.0; sunGlowM = 1.0 + t2 * 0.32;
-    } else if (ph < P3) {
-      /* ③ Attraction — spiral inward */
-      t3 = (ph - P2) / (P3 - P2); e3 = t3 * t3;
-      speed = 4.35 + e3 * 3.2; orbitR = 1.0 - e3 * 0.88; sunGlowM = 1.32 + e3 * 0.62;
-    } else if (ph < P4) {
-      /* ④ Impact — one by one */
-      t4 = (ph - P3) / (P4 - P3);
-      speed = 7.2; orbitR = 0.12; sunGlowM = 1.94 + t4 * 0.36;
+      speed = 0.55 + t2 * 2.8; orbitR = 1.0 - t2 * 0.88; sunGlowM = 1.0 + t2 * 0.55;
       for (fi = 0; fi < N; fi++) {
-        lt = t4 - fi / N;
+        lt = t2 - fi / N;
         hitFlash[fi] = (lt > 0 && lt < 0.14) ? Math.pow(1 - lt / 0.14, 2) : 0;
         symAlphas[fi] = (lt > 0.14) ? 0 : 1;
       }
+    } else if (ph < P3) {
+      /* ③ Tremble — sun shakes with decreasing amplitude after impacts */
+      t3 = (ph - P2) / (P3 - P2);
+      trembleAmt = Math.pow(1 - t3, 1.5);
+      speed = 0; orbitR = 0.12; sunGlowM = 1.55 - t3 * 0.15;
+      for (fi = 0; fi < N; fi++) { symAlphas[fi] = 0; hitFlash[fi] = 0; }
+    } else if (ph < P4) {
+      /* ④ Acceleration — symbols reappear and speed up */
+      t4 = (ph - P3) / (P4 - P3);
+      speed = 0.55 + t4 * 6.5; orbitR = 0.12 + t4 * 0.45; sunGlowM = 1.40 + t4 * 0.58;
+      for (fi = 0; fi < N; fi++) { symAlphas[fi] = Math.min(1, t4 * 3.0); }
     } else if (ph < P5) {
       /* ⑤ BURST */
       t5 = (ph - P4) / (P5 - P4);
@@ -2289,7 +2287,7 @@ function lwStartBounce(){
       speed = 0; orbitR = 0.12;
       for (fi = 0; fi < N; fi++) { symAlphas[fi] = 0; hitFlash[fi] = 0; }
     } else {
-      /* ⑥ Release — fly outward + ₿ emerges */
+      /* ⑥ Release — fly outward + golden ₿ emerges */
       t6 = (ph - P5) / (1.0 - P5); e6 = 1 - Math.pow(1 - t6, 2);
       speed = 0.9 + t6 * 0.5; orbitR = 0.12 + e6 * 1.55; sunGlowM = 1.45 - t6 * 0.45;
       for (fi = 0; fi < N; fi++) {
@@ -2307,14 +2305,17 @@ function lwStartBounce(){
     var BASE_R = Math.min(W, H) * 0.30;
     var SUN_R  = Math.min(W, H) * 0.078;
 
-    /* Black fill — screen blend identity */
-    ctx.fillStyle = '#000000';
-    ctx.fillRect(0, 0, W, H);
+    /* Tremble offset — high-frequency shake that decays each phase */
+    var tremX = Math.sin(totalT * 28) * trembleAmt * 8;
+    var tremY = Math.cos(totalT * 22) * trembleAmt * 8;
+
+    /* Clear — preserves dark navy website background */
+    ctx.clearRect(0, 0, W, H);
 
     /* Sun */
     ctx.save();
     ctx.globalAlpha = 0.74;
-    drawPlasmaSun(cx, cy, SUN_R, totalT, sunGlowM);
+    drawPlasmaSun(cx + tremX, cy + tremY, SUN_R, totalT, sunGlowM);
     ctx.restore();
 
     /* Burst flash */
