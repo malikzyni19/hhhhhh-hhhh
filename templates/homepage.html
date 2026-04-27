@@ -557,6 +557,10 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 .letter-span{display:inline-block;opacity:0;will-change:opacity}
 
 #features{position:relative}
+#mod-sun-wrap{position:relative;width:100%;height:420px;margin:0 0 48px;overflow:hidden}
+#mod-box-bg{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;display:block}
+@media(max-width:768px){#mod-sun-wrap{height:320px;margin-bottom:36px}}
+@media(max-width:480px){#mod-sun-wrap{height:260px;margin-bottom:28px}}
 </style>
 </head>
 <body>
@@ -803,6 +807,8 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
   <div class="sec-eyebrow" data-i18n="feat_eyebrow">SMC Modules</div>
   <h2 class="sec-h"><span data-i18n="feat_h">Everything to trade smart money</span></h2>
   <p class="sec-sub" data-i18n="feat_sub">Six professional tools — scan, detect and act on every Smart Money setup across 400+ pairs.</p>
+
+  <div id="mod-sun-wrap"><canvas id="mod-box-bg" aria-hidden="true"></canvas></div>
 
   <!-- MODULE 01 -->
   <div class="feat-row" style="margin-bottom:16px">
@@ -2011,18 +2017,26 @@ function lwStartBounce(){
   eCtx.beginPath(); eCtx.ellipse(512, 0, 368, 86, 0, 0, Math.PI * 2); eCtx.fill();
   eCtx.fillRect(0, 950, 1024, 74);
 
-  /* Bitcoin ₿ — large, dominant, at 0° (x=512) + mirrored at 180° (x=0/1024) */
+  /* Bitcoin ₿ — 3 copies at 120° spacing (lon −120°/0°/+120°) for all-angle visibility */
   eCtx.font = 'bold 280px Arial';
   eCtx.textAlign    = 'center';
   eCtx.textBaseline = 'middle';
-  /* Primary — lon 0° */
-  eCtx.shadowColor = 'rgba(251,191,36,0.95)'; eCtx.shadowBlur = 52;
-  eCtx.fillStyle   = 'rgba(253,230,138,0.18)'; eCtx.fillText('₿', 512, 512);
-  eCtx.shadowBlur  = 0;
-  eCtx.fillStyle   = 'rgba(253,230,138,0.88)'; eCtx.fillText('₿', 512, 512);
-  /* Mirror — lon 180° (texture-wrap edges) */
-  eCtx.fillStyle   = 'rgba(253,230,138,0.70)'; eCtx.fillText('₿', 0, 512);
-  eCtx.fillStyle   = 'rgba(253,230,138,0.70)'; eCtx.fillText('₿', 1024, 512);
+  eCtx.shadowColor  = 'rgba(251,191,36,0.95)';
+  /* lon 0° (x=512) — primary */
+  eCtx.shadowBlur = 52;
+  eCtx.fillStyle  = 'rgba(253,230,138,0.18)'; eCtx.fillText('₿', 512, 512);
+  eCtx.shadowBlur = 0;
+  eCtx.fillStyle  = 'rgba(253,230,138,0.90)'; eCtx.fillText('₿', 512, 512);
+  /* lon −120° (x=171) */
+  eCtx.shadowBlur = 38;
+  eCtx.fillStyle  = 'rgba(253,230,138,0.14)'; eCtx.fillText('₿', 171, 512);
+  eCtx.shadowBlur = 0;
+  eCtx.fillStyle  = 'rgba(253,230,138,0.82)'; eCtx.fillText('₿', 171, 512);
+  /* lon +120° (x=853) */
+  eCtx.shadowBlur = 38;
+  eCtx.fillStyle  = 'rgba(253,230,138,0.14)'; eCtx.fillText('₿', 853, 512);
+  eCtx.shadowBlur = 0;
+  eCtx.fillStyle  = 'rgba(253,230,138,0.82)'; eCtx.fillText('₿', 853, 512);
 
   var earthTex = new THREE.CanvasTexture(earthCv);
 
@@ -2055,20 +2069,7 @@ function lwStartBounce(){
   /* Ring B — outer (r=4.3, cyan tint) */
   var RB = { r: 4.3, tilt: 0.68, speed: 0.0034 };
 
-  function makeRing(cfg, col) {
-    var m = new THREE.Mesh(
-      new THREE.TorusGeometry(cfg.r, 0.011, 20, 140),
-      new THREE.MeshBasicMaterial({
-        color: col, transparent: true, opacity: 0.27,
-        blending: THREE.AdditiveBlending, depthWrite: false
-      })
-    );
-    m.rotation.x = Math.PI / 2 + cfg.tilt;
-    scene.add(m);
-    return m;
-  }
-  var ringA = makeRing(RA, 0xf59e0b);
-  var ringB = makeRing(RB, 0x22d3ee);
+  /* Orbit rings intentionally invisible — configs RA/RB kept for symbol position math */
 
   /* ── 5 crypto symbols: 2 on inner ring, 3 on outer ── */
   /* Even spacing: inner = 180° apart, outer = 120° apart */
@@ -2173,10 +2174,6 @@ function lwStartBounce(){
     /* Stars — very gentle breath */
     starMat.opacity = 0.26 + Math.sin(t * 0.11) * 0.07;
 
-    /* Rings */
-    ringA.scale.setScalar(msc);
-    ringB.scale.setScalar(msc);
-
     /* Symbols */
     cryptos.forEach(function(c, i) {
       c.ang     += c.cfg.speed;
@@ -2245,6 +2242,216 @@ function lwStartBounce(){
     });
   }
   setInterval(rotateWord, 3200);
+})();
+
+/* ════════════════════════════════════════════════════════════
+   MODULES — SUN BURST SYSTEM (6-phase cinematic cycle)
+════════════════════════════════════════════════════════════ */
+(function initModulesBg() {
+  var canvas = document.getElementById('mod-box-bg');
+  if (!canvas) return;
+  var ctx = canvas.getContext('2d');
+
+  var CYCLE = 15; /* seconds per full animation cycle */
+  var N = 5;
+  var symbols = [
+    { sym: '₿', color: '#f59e0b', rgb: [245,158, 11] },
+    { sym: 'Ξ',  color: '#818cf8', rgb: [129,140,248] },
+    { sym: '◎',  color: '#22d3ee', rgb: [ 34,211,238] },
+    { sym: '✕', color: '#a78bfa', rgb: [167,139,250] },
+    { sym: '◆', color: '#fbbf24', rgb: [251,191, 36] },
+  ];
+
+  var baseAng = symbols.map(function(_, i) { return i * Math.PI * 2 / N; });
+  var totalAng = 0;
+  var impactFlash = [0, 0, 0, 0, 0];
+  var prevTs = null;
+  var cycleStart = null;
+
+  function resize() {
+    var wrap = canvas.parentElement;
+    if (!wrap) return;
+    canvas.width  = wrap.offsetWidth  || 800;
+    canvas.height = wrap.offsetHeight || 420;
+  }
+  resize();
+  window.addEventListener('resize', function() { resize(); });
+
+  var active = true;
+  if (window.IntersectionObserver) {
+    new IntersectionObserver(function(e) { active = e[0].isIntersecting; },
+      { threshold: 0.1 }).observe(canvas.parentElement);
+  }
+
+  function drawSun(cx, cy, baseR, scale) {
+    var r = baseR * scale;
+    /* outer atmosphere */
+    var og = ctx.createRadialGradient(cx, cy, 0, cx, cy, r * 3.2);
+    og.addColorStop(0,    'rgba(255,210,60,0.38)');
+    og.addColorStop(0.35, 'rgba(255,120,20,0.14)');
+    og.addColorStop(1,    'rgba(255,50,0,0)');
+    ctx.fillStyle = og;
+    ctx.beginPath(); ctx.arc(cx, cy, r * 3.2, 0, Math.PI * 2); ctx.fill();
+    /* corona */
+    var cg = ctx.createRadialGradient(cx, cy, r * 0.28, cx, cy, r * 1.85);
+    cg.addColorStop(0,   'rgba(255,230,90,0.82)');
+    cg.addColorStop(0.5, 'rgba(255,130,15,0.38)');
+    cg.addColorStop(1,   'rgba(255,50,0,0)');
+    ctx.fillStyle = cg;
+    ctx.beginPath(); ctx.arc(cx, cy, r * 1.85, 0, Math.PI * 2); ctx.fill();
+    /* bright core */
+    var ic = ctx.createRadialGradient(cx, cy, 0, cx, cy, r * 0.72);
+    ic.addColorStop(0,   'rgba(255,255,230,1)');
+    ic.addColorStop(0.5, 'rgba(255,215,80,0.95)');
+    ic.addColorStop(1,   'rgba(255,140,0,0)');
+    ctx.fillStyle = ic;
+    ctx.beginPath(); ctx.arc(cx, cy, r * 0.72, 0, Math.PI * 2); ctx.fill();
+  }
+
+  function raf(ts) {
+    requestAnimationFrame(raf);
+    if (!active) return;
+    if (prevTs === null) { prevTs = ts; cycleStart = ts; return; }
+    var dt = Math.min((ts - prevTs) / 1000, 0.08);
+    prevTs = ts;
+    var elapsed = (ts - cycleStart) / 1000;
+    var ph = (elapsed % CYCLE) / CYCLE;
+
+    var W = canvas.width, H = canvas.height;
+    var cx = W * 0.5, cy = H * 0.48;
+    var BASE_R  = Math.min(W, H) * 0.33;
+    var SUN_R   = Math.min(W, H) * 0.065;
+
+    /* phase thresholds */
+    var P2=0.20, P3=0.40, P4=0.55, P5=0.75, P6=0.82;
+
+    var orbitR   = BASE_R;
+    var speed    = 0.6;
+    var sunScale = 1.0;
+    var burstAmt = 0.0;
+    var symAlpha = 1.0;
+    var btcAlpha = 0.0;
+    var fi, lt;
+
+    if (ph < P2) {
+      /* Phase 1 — Calm */
+      speed    = 0.6;
+      orbitR   = BASE_R;
+      sunScale = 1.0;
+    } else if (ph < P3) {
+      /* Phase 2 — Acceleration */
+      var t2 = (ph - P2) / (P3 - P2);
+      speed    = 0.6 + t2 * 2.4;
+      orbitR   = BASE_R;
+      sunScale = 1.0 + t2 * 0.25;
+    } else if (ph < P4) {
+      /* Phase 3 — Collapse */
+      var t3 = (ph - P3) / (P4 - P3);
+      var e3 = t3 * t3;
+      speed    = 3.0 + e3 * 3.0;
+      orbitR   = BASE_R * (1 - e3 * 0.88);
+      sunScale = 1.25 + e3 * 0.6;
+    } else if (ph < P5) {
+      /* Phase 4 — Impact */
+      var t4 = (ph - P4) / (P5 - P4);
+      speed    = 6.0;
+      orbitR   = BASE_R * 0.12;
+      sunScale = 1.85 + t4 * 0.4;
+      for (fi = 0; fi < N; fi++) {
+        lt = t4 - fi / N;
+        impactFlash[fi] = (lt > 0 && lt < 0.13) ? Math.pow(1 - lt / 0.13, 2) : 0;
+      }
+    } else if (ph < P6) {
+      /* Phase 5 — BURST */
+      var t5  = (ph - P5) / (P6 - P5);
+      var bf  = t5 < 0.38 ? t5 / 0.38 : 1 - (t5 - 0.38) / 0.62;
+      burstAmt = bf;
+      sunScale = 2.3 + bf * 3.8;
+      orbitR   = BASE_R * 0.12;
+      speed    = 0;
+    } else {
+      /* Phase 6 — Release */
+      var t6  = (ph - P6) / (1.0 - P6);
+      var e6  = 1 - Math.pow(1 - t6, 2);
+      speed    = 1.2 - t6 * 1.1;
+      orbitR   = BASE_R * 0.12 + e6 * BASE_R * 1.45;
+      sunScale = 1.5 - t6 * 0.5;
+      symAlpha = Math.max(0, 1 - Math.max(0, (t6 - 0.55) / 0.45));
+      btcAlpha = t6 > 0.18 ? Math.min(1, (t6 - 0.18) / 0.32) * Math.max(0, 1 - Math.max(0, (t6 - 0.72) / 0.28)) : 0;
+      for (fi = 0; fi < N; fi++) impactFlash[fi] = 0;
+    }
+
+    totalAng += speed * dt;
+
+    ctx.clearRect(0, 0, W, H);
+    drawSun(cx, cy, SUN_R, sunScale);
+
+    /* burst flash overlay */
+    if (burstAmt > 0) {
+      var bfg = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(W, H));
+      bfg.addColorStop(0,    'rgba(255,255,220,' + (burstAmt * 0.94) + ')');
+      bfg.addColorStop(0.18, 'rgba(255,210,70,'  + (burstAmt * 0.58) + ')');
+      bfg.addColorStop(0.45, 'rgba(255,100,0,'   + (burstAmt * 0.22) + ')');
+      bfg.addColorStop(1,    'rgba(200,40,0,0)');
+      ctx.fillStyle = bfg;
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    /* symbols */
+    ctx.save();
+    ctx.globalAlpha = symAlpha;
+    var fsize = Math.max(14, Math.min(24, W * 0.027));
+    for (var si = 0; si < N; si++) {
+      var ang = totalAng + baseAng[si];
+      var sx  = cx + Math.cos(ang) * orbitR;
+      var sy  = cy + Math.sin(ang) * orbitR;
+      var c   = symbols[si];
+      /* glow halo */
+      var gg = ctx.createRadialGradient(sx, sy, 0, sx, sy, 32);
+      gg.addColorStop(0,   'rgba(' + c.rgb.join(',') + ',0.65)');
+      gg.addColorStop(0.5, 'rgba(' + c.rgb.join(',') + ',0.18)');
+      gg.addColorStop(1,   'rgba(' + c.rgb.join(',') + ',0)');
+      ctx.fillStyle = gg;
+      ctx.beginPath(); ctx.arc(sx, sy, 32, 0, Math.PI * 2); ctx.fill();
+      /* symbol text */
+      ctx.font         = 'bold ' + fsize + 'px Arial';
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle    = c.color;
+      ctx.shadowColor  = c.color;
+      ctx.shadowBlur   = 11;
+      ctx.fillText(c.sym, sx, sy);
+      ctx.shadowBlur   = 0;
+      /* impact flash */
+      if (impactFlash[si] > 0) {
+        var ifg = ctx.createRadialGradient(sx, sy, 0, sx, sy, 58);
+        ifg.addColorStop(0,   'rgba(255,255,200,' + impactFlash[si] + ')');
+        ifg.addColorStop(0.4, 'rgba(255,200,50,'  + (impactFlash[si] * 0.55) + ')');
+        ifg.addColorStop(1,   'rgba(255,90,0,0)');
+        ctx.fillStyle = ifg;
+        ctx.beginPath(); ctx.arc(sx, sy, 58, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    ctx.restore();
+
+    /* ₿ emergence in Phase 6 */
+    if (btcAlpha > 0) {
+      ctx.save();
+      ctx.globalAlpha  = btcAlpha;
+      var btcSz = Math.floor(SUN_R * 1.9);
+      ctx.font         = 'bold ' + btcSz + 'px Arial';
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.shadowColor  = 'rgba(251,191,36,1)';
+      ctx.shadowBlur   = 28;
+      ctx.fillStyle    = '#fbbf24';
+      ctx.fillText('₿', cx, cy);
+      ctx.shadowBlur   = 0;
+      ctx.restore();
+    }
+  }
+
+  requestAnimationFrame(raf);
 })();
 
 </script>
