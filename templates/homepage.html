@@ -1845,121 +1845,98 @@ function lwStartBounce(){
   renderer.setSize(W, H);
 
   var scene  = new THREE.Scene();
-  var camera = new THREE.PerspectiveCamera(42, W / H, 0.1, 200);
-  camera.position.set(0, 0.4, 9);
+  var camera = new THREE.PerspectiveCamera(44, W / H, 0.1, 200);
+  camera.position.set(0, 0.3, 9);
   camera.lookAt(0, 0, 0);
 
   function fitCamera() {
-    var narrow = W < 640, veryNarrow = W < 400;
-    camera.fov = veryNarrow ? 65 : narrow ? 58 : 42;
-    camera.position.z = veryNarrow ? 16 : narrow ? 13 : 9;
-    camera.aspect = W / H;
+    var vn = W < 400, n = W < 640;
+    camera.fov      = vn ? 64 : n ? 56 : 44;
+    camera.position.z = vn ? 15 : n ? 12 : 9;
+    camera.aspect   = W / H;
     camera.updateProjectionMatrix();
   }
   fitCamera();
 
-  /* ── Lighting ── */
-  scene.add(new THREE.AmbientLight(0x08162a, 1.0));
-  var sunLight = new THREE.PointLight(0xfff5e0, 5.5, 32);
-  sunLight.position.set(5, 3, 6);
+  /* ── 3-point lighting ── */
+  scene.add(new THREE.AmbientLight(0x0a1a2e, 0.90));
+  var sunLight = new THREE.PointLight(0xfff8e8, 4.5, 28);
+  sunLight.position.set(5, 3, 7);
   scene.add(sunLight);
-  var fillLight = new THREE.PointLight(0x22d3ee, 1.6, 22);
-  fillLight.position.set(-5, -2, 3);
+  var fillLight = new THREE.PointLight(0x1a6aee, 1.2, 20);
+  fillLight.position.set(-5, -1, 3);
   scene.add(fillLight);
-  var rimLight = new THREE.PointLight(0x6366f1, 1.2, 16);
-  rimLight.position.set(2, -4, -3);
-  scene.add(rimLight);
 
-  /* ── Starfield ── */
-  var starCount = 700;
-  var starPos = new Float32Array(starCount * 3);
-  for (var si = 0; si < starCount; si++) {
-    starPos[si*3]   = (Math.random() - 0.5) * 120;
-    starPos[si*3+1] = (Math.random() - 0.5) * 120;
-    starPos[si*3+2] = (Math.random() - 0.5) * 80 - 10;
+  /* ── Starfield — 220 particles, very subtle ── */
+  var starPos = new Float32Array(220 * 3);
+  for (var si = 0; si < 220; si++) {
+    starPos[si*3]   = (Math.random() - 0.5) * 110;
+    starPos[si*3+1] = (Math.random() - 0.5) * 90;
+    starPos[si*3+2] = (Math.random() - 0.5) * 60 - 15;
   }
   var starGeo = new THREE.BufferGeometry();
   starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
-  var starMat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.055, transparent: true, opacity: 0.50, sizeAttenuation: true });
+  var starMat = new THREE.PointsMaterial({
+    color: 0xffffff, size: 0.042, transparent: true,
+    opacity: 0.32, sizeAttenuation: true
+  });
   scene.add(new THREE.Points(starGeo, starMat));
 
-  /* ── Background nebula glow ── */
-  (function() {
-    var nCv = document.createElement('canvas');
-    nCv.width = nCv.height = 512;
-    var nCtx = nCv.getContext('2d');
-    var g1 = nCtx.createRadialGradient(256,256,0,256,256,256);
-    g1.addColorStop(0,'rgba(20,45,110,0.50)'); g1.addColorStop(0.5,'rgba(10,25,60,0.22)'); g1.addColorStop(1,'rgba(0,0,0,0)');
-    nCtx.fillStyle = g1; nCtx.fillRect(0,0,512,512);
-    var g2 = nCtx.createRadialGradient(370,130,0,370,130,160);
-    g2.addColorStop(0,'rgba(50,20,90,0.35)'); g2.addColorStop(1,'rgba(0,0,0,0)');
-    nCtx.fillStyle = g2; nCtx.fillRect(0,0,512,512);
-    var nMat = new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(nCv), transparent: true, blending: THREE.AdditiveBlending, opacity: 0.55 });
-    var nSp = new THREE.Sprite(nMat);
-    nSp.scale.set(28, 28, 1);
-    nSp.position.set(0, 0, -12);
-    scene.add(nSp);
-  })();
-
-  /* ── Earth canvas texture ── */
+  /* ── Earth canvas texture (1024×1024 equirectangular) ── */
   var earthCv = document.createElement('canvas');
   earthCv.width = earthCv.height = 1024;
   var eCtx = earthCv.getContext('2d');
 
-  /* Ocean */
-  var og = eCtx.createLinearGradient(0,0,0,1024);
-  og.addColorStop(0,'#051a32'); og.addColorStop(0.5,'#082540'); og.addColorStop(1,'#040f1c');
-  eCtx.fillStyle = og; eCtx.fillRect(0,0,1024,1024);
+  /* Ocean base */
+  var og = eCtx.createLinearGradient(0, 0, 0, 1024);
+  og.addColorStop(0,   '#051a32');
+  og.addColorStop(0.5, '#082540');
+  og.addColorStop(1,   '#040f1c');
+  eCtx.fillStyle = og;
+  eCtx.fillRect(0, 0, 1024, 1024);
 
-  /* Subtle coordinate grid */
-  eCtx.strokeStyle = 'rgba(34,211,238,0.06)';
+  /* Latitude / longitude grid (very faint) */
+  eCtx.strokeStyle = 'rgba(34,211,238,0.05)';
   eCtx.lineWidth = 1;
   for (var gi = 1; gi < 8; gi++) {
     var gp = gi * 128;
-    eCtx.beginPath(); eCtx.moveTo(gp,0);  eCtx.lineTo(gp,1024); eCtx.stroke();
-    eCtx.beginPath(); eCtx.moveTo(0,gp);  eCtx.lineTo(1024,gp); eCtx.stroke();
+    eCtx.beginPath(); eCtx.moveTo(gp, 0);   eCtx.lineTo(gp, 1024); eCtx.stroke();
+    eCtx.beginPath(); eCtx.moveTo(0,  gp);  eCtx.lineTo(1024, gp); eCtx.stroke();
   }
 
-  /* Land masses (ellipses in equirectangular coords) */
-  function landBlob(x, y, rx, ry, rot) {
+  /* Land masses — equirectangular ellipses */
+  function blob(x, y, rx, ry, rot) {
     eCtx.save(); eCtx.translate(x, y); eCtx.rotate(rot || 0);
-    eCtx.beginPath(); eCtx.ellipse(0, 0, rx, ry, 0, 0, Math.PI*2); eCtx.fill();
-    eCtx.restore();
+    eCtx.beginPath(); eCtx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+    eCtx.fill(); eCtx.restore();
   }
-  var landG = eCtx.createLinearGradient(0,0,0,1024);
-  landG.addColorStop(0,'#2b5c3e'); landG.addColorStop(0.6,'#3a6945'); landG.addColorStop(1,'#224433');
-  eCtx.fillStyle = landG;
-  landBlob(218, 290, 86, 130, -0.20);   /* North America */
-  landBlob(298, 645, 50, 125,  0.15);   /* South America */
-  landBlob(546, 232, 50,  60,  0.00);   /* Europe        */
-  landBlob(552, 545, 80, 155,  0.00);   /* Africa        */
-  landBlob(720, 268, 162, 128,-0.10);   /* Asia          */
-  landBlob(836, 640,  84,  64,  0.00);  /* Australia     */
-  landBlob(158, 488,  20,  13,  0.00);  /* Central Am    */
-  landBlob(598, 705,  30,  18,  0.30);  /* SE Asia       */
+  var lg = eCtx.createLinearGradient(0, 200, 0, 820);
+  lg.addColorStop(0, '#2a5a3c'); lg.addColorStop(0.6, '#385f42'); lg.addColorStop(1, '#1f4030');
+  eCtx.fillStyle = lg;
+  blob(218, 290, 84, 128, -0.20);  /* North America */
+  blob(298, 645, 48, 122,  0.15);  /* South America */
+  blob(546, 232, 50,  60,  0.00);  /* Europe        */
+  blob(552, 548, 78, 152,  0.00);  /* Africa        */
+  blob(718, 268, 158, 125,-0.10);  /* Asia          */
+  blob(834, 638,  82,  62,  0.00); /* Australia     */
 
-  /* Polar ice caps */
-  eCtx.fillStyle = 'rgba(210,235,255,0.65)';
-  eCtx.beginPath(); eCtx.ellipse(512,0,375,90,0,0,Math.PI*2); eCtx.fill();
-  eCtx.fillRect(0, 945, 1024, 79);
+  /* Polar ice */
+  eCtx.fillStyle = 'rgba(210,235,255,0.60)';
+  eCtx.beginPath(); eCtx.ellipse(512, 0, 368, 86, 0, 0, Math.PI * 2); eCtx.fill();
+  eCtx.fillRect(0, 950, 1024, 74);
 
-  /* Ocean shimmer (specular-like lines) */
-  eCtx.strokeStyle = 'rgba(100,180,255,0.06)'; eCtx.lineWidth = 1;
-  for (var oi = 0; oi < 20; oi++) {
-    var oy = 200 + oi * 30;
-    eCtx.beginPath(); eCtx.moveTo(0, oy); eCtx.lineTo(1024, oy + 8); eCtx.stroke();
-  }
-
-  /* Bitcoin ₿ painted on surface — 3 copies at 0°/120°/240° longitude */
-  var btcPx = [171, 512, 853];
-  eCtx.font = 'bold 175px Arial';
-  eCtx.textAlign = 'center'; eCtx.textBaseline = 'middle';
-  btcPx.forEach(function(bx) {
-    eCtx.shadowColor = 'rgba(251,191,36,0.90)'; eCtx.shadowBlur = 38;
-    eCtx.fillStyle = 'rgba(253,230,138,0.20)'; eCtx.fillText('₿', bx, 512);
-    eCtx.shadowBlur = 0;
-    eCtx.fillStyle = 'rgba(253,230,138,0.78)'; eCtx.fillText('₿', bx, 512);
-  });
+  /* Bitcoin ₿ — large, dominant, at 0° (x=512) + mirrored at 180° (x=0/1024) */
+  eCtx.font = 'bold 280px Arial';
+  eCtx.textAlign    = 'center';
+  eCtx.textBaseline = 'middle';
+  /* Primary — lon 0° */
+  eCtx.shadowColor = 'rgba(251,191,36,0.95)'; eCtx.shadowBlur = 52;
+  eCtx.fillStyle   = 'rgba(253,230,138,0.18)'; eCtx.fillText('₿', 512, 512);
+  eCtx.shadowBlur  = 0;
+  eCtx.fillStyle   = 'rgba(253,230,138,0.88)'; eCtx.fillText('₿', 512, 512);
+  /* Mirror — lon 180° (texture-wrap edges) */
+  eCtx.fillStyle   = 'rgba(253,230,138,0.70)'; eCtx.fillText('₿', 0, 512);
+  eCtx.fillStyle   = 'rgba(253,230,138,0.70)'; eCtx.fillText('₿', 1024, 512);
 
   var earthTex = new THREE.CanvasTexture(earthCv);
 
@@ -1967,93 +1944,83 @@ function lwStartBounce(){
   var earthGroup = new THREE.Group();
   scene.add(earthGroup);
 
+  var EARTH_R = 1.65;
   var earthMesh = new THREE.Mesh(
-    new THREE.SphereGeometry(2.0, 64, 64),
+    new THREE.SphereGeometry(EARTH_R, 64, 64),
     new THREE.MeshStandardMaterial({
-      map: earthTex, metalness: 0.12, roughness: 0.72,
-      emissive: new THREE.Color(0x061828), emissiveIntensity: 0.28
+      map: earthTex, metalness: 0.10, roughness: 0.75,
+      emissive: new THREE.Color(0x051525), emissiveIntensity: 0.28
     })
   );
   earthGroup.add(earthMesh);
 
-  /* Atmosphere shells */
-  function atmos(radius, col, opacity) {
-    earthGroup.add(new THREE.Mesh(
-      new THREE.SphereGeometry(radius, 32, 32),
-      new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: opacity,
-        side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false })
-    ));
+  /* Atmosphere shell */
+  earthGroup.add(new THREE.Mesh(
+    new THREE.SphereGeometry(EARTH_R + 0.16, 32, 32),
+    new THREE.MeshBasicMaterial({
+      color: 0x2299ff, transparent: true, opacity: 0.07,
+      side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false
+    })
+  ));
+
+  /* ── 2 orbit rings ── */
+  /* Ring A — inner (r=3.0, gold tint) */
+  var RA = { r: 3.0, tilt: 0.32, speed: 0.0055 };
+  /* Ring B — outer (r=4.3, cyan tint) */
+  var RB = { r: 4.3, tilt: 0.68, speed: 0.0034 };
+
+  function makeRing(cfg, col) {
+    var m = new THREE.Mesh(
+      new THREE.TorusGeometry(cfg.r, 0.011, 20, 140),
+      new THREE.MeshBasicMaterial({
+        color: col, transparent: true, opacity: 0.27,
+        blending: THREE.AdditiveBlending, depthWrite: false
+      })
+    );
+    m.rotation.x = Math.PI / 2 + cfg.tilt;
+    scene.add(m);
+    return m;
   }
-  atmos(2.22, 0x2299ff, 0.09);
-  atmos(2.34, 0x44aaff, 0.04);
+  var ringA = makeRing(RA, 0xf59e0b);
+  var ringB = makeRing(RB, 0x22d3ee);
 
-  /* Additive Earth glow sprite */
-  (function() {
-    var gCv = document.createElement('canvas'); gCv.width = gCv.height = 256;
-    var gCtx = gCv.getContext('2d');
-    var gGr = gCtx.createRadialGradient(128,128,0,128,128,128);
-    gGr.addColorStop(0,'rgba(34,100,220,0.45)'); gGr.addColorStop(0.5,'rgba(20,60,160,0.18)'); gGr.addColorStop(1,'rgba(0,0,0,0)');
-    gCtx.fillStyle = gGr; gCtx.fillRect(0,0,256,256);
-    var gMat = new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(gCv), transparent: true, blending: THREE.AdditiveBlending, opacity: 0.55 });
-    var gSp = new THREE.Sprite(gMat); gSp.scale.set(7.5, 7.5, 1);
-    earthGroup.add(gSp);
-  })();
-
-  /* ── Halo sprite factory ── */
-  function makeHalo(r8, g8, b8, sz) {
-    var hCv = document.createElement('canvas'); hCv.width = hCv.height = 128;
-    var hCtx = hCv.getContext('2d');
-    var hGr = hCtx.createRadialGradient(64,64,0,64,64,64);
-    hGr.addColorStop(0,   'rgba('+r8+','+g8+','+b8+',0.92)');
-    hGr.addColorStop(0.30,'rgba('+r8+','+g8+','+b8+',0.42)');
-    hGr.addColorStop(1,   'rgba('+r8+','+g8+','+b8+',0)');
-    hCtx.fillStyle = hGr; hCtx.fillRect(0,0,128,128);
-    var hMat = new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(hCv), transparent: true, blending: THREE.AdditiveBlending, opacity: 0.68 });
-    var hSp = new THREE.Sprite(hMat); hSp.scale.set(sz, sz, 1);
-    return hSp;
-  }
-
-  /* ── Galaxy orbit system — 5 rings, one crypto each ── */
+  /* ── 5 crypto symbols: 2 on inner ring, 3 on outer ── */
+  /* Even spacing: inner = 180° apart, outer = 120° apart */
   var cryptos = [
-    { sym:'₿', hex:'#f59e0b', color:0xf59e0b, rgb:[245,158,11],  r:2.85, tilt:0.28,  speed:0.0075, off:0              },
-    { sym:'Ξ',  hex:'#818cf8', color:0x818cf8, rgb:[129,140,248], r:3.85, tilt:0.92,  speed:0.0050, off:Math.PI        },
-    { sym:'◎', hex:'#22d3ee', color:0x22d3ee, rgb:[34,211,238],  r:4.80, tilt:1.30,  speed:0.0036, off:Math.PI*0.5    },
-    { sym:'✕', hex:'#a78bfa', color:0xa78bfa, rgb:[167,139,250], r:5.70, tilt:0.50,  speed:0.0024, off:Math.PI*1.5    },
-    { sym:'◆', hex:'#fbbf24', color:0xfbbf24, rgb:[251,191,36],  r:6.55, tilt:1.62,  speed:0.0016, off:Math.PI*0.78   },
+    { sym: '₿', hex: '#f59e0b', color: 0xf59e0b, rgb:[245,158, 11], cfg: RA, off: 0                },
+    { sym: '◎',  hex: '#22d3ee', color: 0x22d3ee, rgb:[ 34,211,238], cfg: RA, off: Math.PI          },
+    { sym: 'Ξ',  hex: '#818cf8', color: 0x818cf8, rgb:[129,140,248], cfg: RB, off: 0                },
+    { sym: '✕', hex: '#a78bfa', color: 0xa78bfa, rgb:[167,139,250], cfg: RB, off: Math.PI*2/3      },
+    { sym: '◆', hex: '#fbbf24', color: 0xfbbf24, rgb:[251,191, 36], cfg: RB, off: Math.PI*4/3      },
   ];
 
   var m4 = new THREE.Matrix4();
   var vp = new THREE.Vector3();
 
-  cryptos.forEach(function(c) {
-    c.ang    = c.off;
-    c.selfRot = 0;
+  cryptos.forEach(function(c, i) {
+    c.ang     = c.off;
+    c.selfRot = i * 72;    /* stagger start of self-rotation */
 
-    /* Main orbit ring */
-    c.ring = new THREE.Mesh(
-      new THREE.TorusGeometry(c.r, 0.012, 20, 120),
-      new THREE.MeshBasicMaterial({ color: c.color, transparent: true, opacity: 0.30, blending: THREE.AdditiveBlending, depthWrite: false })
-    );
-    c.ring.rotation.x = Math.PI / 2 + c.tilt;
-    scene.add(c.ring);
-
-    /* Glow ring (wider tube, additive) */
-    c.ringGlow = new THREE.Mesh(
-      new THREE.TorusGeometry(c.r, 0.042, 16, 100),
-      new THREE.MeshBasicMaterial({ color: c.color, transparent: true, opacity: 0.09, blending: THREE.AdditiveBlending, depthWrite: false })
-    );
-    c.ringGlow.rotation.x = Math.PI / 2 + c.tilt;
-    scene.add(c.ringGlow);
-
-    /* Symbol dot */
+    /* Sphere dot */
     c.dot = new THREE.Mesh(
-      new THREE.SphereGeometry(0.10, 16, 16),
+      new THREE.SphereGeometry(0.09, 14, 14),
       new THREE.MeshBasicMaterial({ color: c.color, blending: THREE.AdditiveBlending })
     );
     scene.add(c.dot);
 
-    /* Dot halo sprite */
-    c.halo = makeHalo(c.rgb[0], c.rgb[1], c.rgb[2], 0.68);
+    /* Small halo sprite */
+    var hCv = document.createElement('canvas'); hCv.width = hCv.height = 96;
+    var hCtx = hCv.getContext('2d');
+    var hGr  = hCtx.createRadialGradient(48,48,0,48,48,48);
+    hGr.addColorStop(0,    'rgba('+c.rgb[0]+','+c.rgb[1]+','+c.rgb[2]+',0.88)');
+    hGr.addColorStop(0.35, 'rgba('+c.rgb[0]+','+c.rgb[1]+','+c.rgb[2]+',0.28)');
+    hGr.addColorStop(1,    'rgba('+c.rgb[0]+','+c.rgb[1]+','+c.rgb[2]+',0)');
+    hCtx.fillStyle = hGr; hCtx.fillRect(0,0,96,96);
+    c.halo = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: new THREE.CanvasTexture(hCv), transparent: true,
+      blending: THREE.AdditiveBlending, opacity: 0.52
+    }));
+    c.halo.scale.set(0.52, 0.52, 1);
     scene.add(c.halo);
   });
 
@@ -2066,13 +2033,12 @@ function lwStartBounce(){
     var el = document.createElement('div');
     el.className = 'orbit-pill';
     el.style.cssText = [
-      'border:1.5px solid ' + c.hex + '70',
-      'font-size:19px',
-      'padding:5px 15px',
+      'border:1px solid ' + c.hex + '55',
+      'font-size:17px',
+      'padding:4px 13px',
       'color:' + c.hex,
-      'text-shadow:0 0 10px ' + c.hex + ',0 0 22px ' + c.hex + '55',
-      'background:rgba(2,8,20,0.82)',
-      'letter-spacing:0.5px',
+      'text-shadow:0 0 8px ' + c.hex + '90',
+      'background:rgba(3,8,18,0.80)',
       'will-change:transform,opacity'
     ].join(';');
     el.textContent = c.sym;
@@ -2080,7 +2046,7 @@ function lwStartBounce(){
     return el;
   });
 
-  /* ── Mouse parallax ── */
+  /* ── Input / scroll state ── */
   var mx = 0, my = 0, camTx = 0, camTy = 0;
   hero.addEventListener('mousemove', function(e) {
     var r = hero.getBoundingClientRect();
@@ -2089,14 +2055,13 @@ function lwStartBounce(){
   }, { passive: true });
   hero.addEventListener('mouseleave', function() { mx = 0; my = 0; }, { passive: true });
 
-  /* ── Scroll parallax ── */
   var scrollY = 0;
   window.addEventListener('scroll', function() { scrollY = window.scrollY; }, { passive: true });
 
-  /* ── Pause when off-screen ── */
   var active = true;
   if (window.IntersectionObserver) {
-    new IntersectionObserver(function(e) { active = e[0].isIntersecting; }, { threshold: 0.05 }).observe(hero);
+    new IntersectionObserver(function(e) { active = e[0].isIntersecting; },
+      { threshold: 0.05 }).observe(hero);
   }
 
   var clock = new THREE.Clock();
@@ -2106,77 +2071,69 @@ function lwStartBounce(){
     if (!active) return;
     var t = clock.getElapsedTime();
 
-    /* Scroll fade + drift */
+    /* Scroll fade / drift */
     var heroH = hero.offsetHeight || 700;
-    var scrollFrac = Math.min(scrollY / heroH, 1);
-    var sceneOpacity = 1 - scrollFrac;
-    canvas.style.opacity = sceneOpacity.toFixed(3);
-    canvas.style.transform = 'translateY(' + (-scrollFrac * 60) + 'px)';
-    var masterScale = 1 - scrollFrac * 0.50;
+    var sf = Math.min(scrollY / heroH, 1);
+    var sOp = 1 - sf;
+    canvas.style.opacity   = sOp.toFixed(3);
+    canvas.style.transform = 'translateY(' + (-sf * 55) + 'px)';
+    var msc = 1 - sf * 0.45;
 
-    /* Earth — slow Y rotation + gentle float */
-    earthMesh.rotation.y += 0.0020;
-    earthGroup.position.y = Math.sin(t * 0.36) * 0.09;
-    earthGroup.scale.setScalar(masterScale);
+    /* Earth */
+    earthMesh.rotation.y += 0.0018;
+    earthGroup.position.y = Math.sin(t * 0.34) * 0.08;
+    earthGroup.scale.setScalar(msc);
 
-    /* Stars breathe */
-    starMat.opacity = 0.42 + Math.sin(t * 0.15) * 0.10;
+    /* Stars — very gentle breath */
+    starMat.opacity = 0.26 + Math.sin(t * 0.11) * 0.07;
 
-    /* Galaxy orbits */
+    /* Rings */
+    ringA.scale.setScalar(msc);
+    ringB.scale.setScalar(msc);
+
+    /* Symbols */
     cryptos.forEach(function(c, i) {
-      c.ang     += c.speed;
-      c.selfRot += 1.2;          /* degrees per frame — coin-spin */
+      c.ang     += c.cfg.speed;
+      c.selfRot += 0.25;          /* ~15 deg/s — very subtle self-spin */
 
-      /* Position on tilted ring plane */
-      m4.makeRotationX(Math.PI / 2 + c.tilt);
-      vp.set(Math.cos(c.ang) * c.r, Math.sin(c.ang) * c.r, 0);
+      m4.makeRotationX(Math.PI / 2 + c.cfg.tilt);
+      vp.set(Math.cos(c.ang) * c.cfg.r, Math.sin(c.ang) * c.cfg.r, 0);
       vp.applyMatrix4(m4);
 
-      var sp = masterScale;
-      c.dot.position.copy(vp).multiplyScalar(sp);
-      c.dot.scale.setScalar(sp);
-      c.halo.position.copy(vp).multiplyScalar(sp);
-      c.ring.scale.setScalar(sp);
-      c.ringGlow.scale.setScalar(sp);
+      c.dot.position.copy(vp).multiplyScalar(msc);
+      c.dot.scale.setScalar(msc);
+      c.halo.position.copy(vp).multiplyScalar(msc);
 
-      /* Dot self-rotation (axis tilt shifts with time for interest) */
-      c.dot.rotation.y = t * 2.2 + i;
-      c.dot.rotation.x = t * 0.7 + i * 0.5;
-
-      /* Project dot to CSS coords */
+      /* Project to CSS */
       var p = c.dot.position.clone().project(camera);
-      var inView = p.z < 1.0;
-      if (inView && sceneOpacity > 0.05) {
-        var rawX = (p.x * 0.5 + 0.5) * W;
-        var rawY = (-p.y * 0.5 + 0.5) * H;
-        var M = 34;
-        var sx = Math.max(M, Math.min(W - M, rawX));
-        var sy = Math.max(M, Math.min(H - M, rawY));
-        var depth = 1 - Math.max(0, Math.min(1, (p.z + 1) * 0.5));
-        var opa   = (0.68 + depth * 0.32) * sceneOpacity;
-        var sc    = (0.80 + depth * 0.28).toFixed(3);
-        /* perspective rotateY for coin-spin self-rotation */
+      if (p.z < 1.0 && sOp > 0.05) {
+        var sx  = Math.max(30, Math.min(W - 30, (p.x * 0.5 + 0.5) * W));
+        var sy  = Math.max(30, Math.min(H - 30, (-p.y * 0.5 + 0.5) * H));
+        var dep = 1 - Math.max(0, Math.min(1, (p.z + 1) * 0.5));
+        var opa = (0.65 + dep * 0.35) * sOp;
+        var sc  = (0.82 + dep * 0.20).toFixed(3);
         labelEls[i].style.left      = sx + 'px';
         labelEls[i].style.top       = sy + 'px';
         labelEls[i].style.opacity   = opa.toFixed(3);
-        labelEls[i].style.transform = 'translate(-50%,-50%) perspective(140px) rotateY(' + c.selfRot + 'deg) scale(' + sc + ')';
+        /* Very slow rotateY for subtle self-rotation feel */
+        labelEls[i].style.transform =
+          'translate(-50%,-50%) rotateY(' + c.selfRot + 'deg) scale(' + sc + ')';
       } else {
         labelEls[i].style.opacity = '0';
       }
     });
 
-    /* Camera parallax (mouse) */
-    camTx += (mx * 1.3 - camTx) * 0.028;
-    camTy += (-my * 0.9 - camTy) * 0.028;
+    /* Camera parallax */
+    camTx += (mx * 1.0 - camTx) * 0.024;
+    camTy += (-my * 0.7 - camTy) * 0.024;
     camera.position.x = camTx;
-    camera.position.y = 0.4 + camTy;
+    camera.position.y = 0.3 + camTy;
     camera.lookAt(0, 0, 0);
 
     renderer.render(scene, camera);
   }
   animate();
 
-  /* Resize */
   window.addEventListener('resize', function() {
     W = hero.offsetWidth; H = hero.offsetHeight;
     renderer.setSize(W, H); fitCamera();
