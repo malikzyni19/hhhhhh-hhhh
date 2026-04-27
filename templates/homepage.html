@@ -556,12 +556,7 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 /* ── LETTER TYPING SPANS ── */
 .letter-span{display:inline-block;opacity:0;will-change:opacity}
 
-/* ── MODULES 3-D BOX — Three.js canvas background ── */
-#mod-box-bg{
-  position:absolute;top:0;left:0;width:100%;height:100%;
-  z-index:0;pointer-events:none;display:block;
-}
-#features{position:relative;overflow:hidden}
+#features{position:relative}
 </style>
 </head>
 <body>
@@ -805,8 +800,6 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 
 <!-- FEATURES -->
 <div class="section" id="features">
-  <!-- Three.js 3-D box background canvas -->
-  <canvas id="mod-box-bg" aria-hidden="true"></canvas>
   <div class="sec-eyebrow" data-i18n="feat_eyebrow">SMC Modules</div>
   <h2 class="sec-h"><span data-i18n="feat_h">Everything to trade smart money</span></h2>
   <p class="sec-sub" data-i18n="feat_sub">Six professional tools — scan, detect and act on every Smart Money setup across 400+ pairs.</p>
@@ -1924,7 +1917,7 @@ function lwStartBounce(){
   var hero = document.querySelector('.hero');
   if (!hero || !window.THREE) return;
 
-  /* ── Canvas ── */
+  /* Canvas */
   var canvas = document.createElement('canvas');
   canvas.id = 'hero-3d-canvas';
   canvas.setAttribute('aria-hidden', 'true');
@@ -1938,152 +1931,219 @@ function lwStartBounce(){
   renderer.setSize(W, H);
 
   var scene  = new THREE.Scene();
-  var camera = new THREE.PerspectiveCamera(42, W / H, 0.1, 100);
-  camera.position.set(0, 0, 9);
+  var camera = new THREE.PerspectiveCamera(42, W / H, 0.1, 200);
+  camera.position.set(0, 0.4, 9);
   camera.lookAt(0, 0, 0);
 
-  /* ── Responsive camera ── */
   function fitCamera() {
     var narrow = W < 640, veryNarrow = W < 400;
-    camera.fov      = veryNarrow ? 62 : narrow ? 56 : 42;
+    camera.fov = veryNarrow ? 65 : narrow ? 58 : 42;
     camera.position.z = veryNarrow ? 16 : narrow ? 13 : 9;
-    camera.aspect   = W / H;
+    camera.aspect = W / H;
     camera.updateProjectionMatrix();
   }
   fitCamera();
 
-  /* ── 3-point lighting ── */
-  scene.add(new THREE.AmbientLight(0x0d0714, 0.8));
-  var keyLight = new THREE.PointLight(0xfbbf24, 6, 18);
-  keyLight.position.set(3, 4, 5);
-  scene.add(keyLight);
-  var fillLight = new THREE.PointLight(0x22d3ee, 2.5, 14);
-  fillLight.position.set(-4, -2, 3);
+  /* ── Lighting ── */
+  scene.add(new THREE.AmbientLight(0x08162a, 1.0));
+  var sunLight = new THREE.PointLight(0xfff5e0, 5.5, 32);
+  sunLight.position.set(5, 3, 6);
+  scene.add(sunLight);
+  var fillLight = new THREE.PointLight(0x22d3ee, 1.6, 22);
+  fillLight.position.set(-5, -2, 3);
   scene.add(fillLight);
-  var rimLight = new THREE.PointLight(0xf97316, 1.8, 10);
-  rimLight.position.set(0, -4, -3);
+  var rimLight = new THREE.PointLight(0x6366f1, 1.2, 16);
+  rimLight.position.set(2, -4, -3);
   scene.add(rimLight);
 
-  /* ── Bitcoin Globe ── */
-  var coinGroup = new THREE.Group();
-  scene.add(coinGroup);
+  /* ── Starfield ── */
+  var starCount = 700;
+  var starPos = new Float32Array(starCount * 3);
+  for (var si = 0; si < starCount; si++) {
+    starPos[si*3]   = (Math.random() - 0.5) * 120;
+    starPos[si*3+1] = (Math.random() - 0.5) * 120;
+    starPos[si*3+2] = (Math.random() - 0.5) * 80 - 10;
+  }
+  var starGeo = new THREE.BufferGeometry();
+  starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+  var starMat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.055, transparent: true, opacity: 0.50, sizeAttenuation: true });
+  scene.add(new THREE.Points(starGeo, starMat));
 
-  /* Globe canvas texture: dark navy base + gold grid lines + centred ₿ */
-  var globeCv = document.createElement('canvas'); globeCv.width = globeCv.height = 1024;
-  var gCtx = globeCv.getContext('2d');
+  /* ── Background nebula glow ── */
+  (function() {
+    var nCv = document.createElement('canvas');
+    nCv.width = nCv.height = 512;
+    var nCtx = nCv.getContext('2d');
+    var g1 = nCtx.createRadialGradient(256,256,0,256,256,256);
+    g1.addColorStop(0,'rgba(20,45,110,0.50)'); g1.addColorStop(0.5,'rgba(10,25,60,0.22)'); g1.addColorStop(1,'rgba(0,0,0,0)');
+    nCtx.fillStyle = g1; nCtx.fillRect(0,0,512,512);
+    var g2 = nCtx.createRadialGradient(370,130,0,370,130,160);
+    g2.addColorStop(0,'rgba(50,20,90,0.35)'); g2.addColorStop(1,'rgba(0,0,0,0)');
+    nCtx.fillStyle = g2; nCtx.fillRect(0,0,512,512);
+    var nMat = new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(nCv), transparent: true, blending: THREE.AdditiveBlending, opacity: 0.55 });
+    var nSp = new THREE.Sprite(nMat);
+    nSp.scale.set(28, 28, 1);
+    nSp.position.set(0, 0, -12);
+    scene.add(nSp);
+  })();
 
-  /* Background fill */
-  gCtx.fillStyle = '#020b18';
-  gCtx.fillRect(0, 0, 1024, 1024);
+  /* ── Earth canvas texture ── */
+  var earthCv = document.createElement('canvas');
+  earthCv.width = earthCv.height = 1024;
+  var eCtx = earthCv.getContext('2d');
 
-  /* Gold latitude lines */
-  gCtx.strokeStyle = 'rgba(245,158,11,0.35)';
-  gCtx.lineWidth = 1.5;
-  var latCount = 9;
-  for (var li = 1; li < latCount; li++) {
-    var ly = (li / latCount) * 1024;
-    gCtx.beginPath(); gCtx.moveTo(0, ly); gCtx.lineTo(1024, ly); gCtx.stroke();
+  /* Ocean */
+  var og = eCtx.createLinearGradient(0,0,0,1024);
+  og.addColorStop(0,'#051a32'); og.addColorStop(0.5,'#082540'); og.addColorStop(1,'#040f1c');
+  eCtx.fillStyle = og; eCtx.fillRect(0,0,1024,1024);
+
+  /* Subtle coordinate grid */
+  eCtx.strokeStyle = 'rgba(34,211,238,0.06)';
+  eCtx.lineWidth = 1;
+  for (var gi = 1; gi < 8; gi++) {
+    var gp = gi * 128;
+    eCtx.beginPath(); eCtx.moveTo(gp,0);  eCtx.lineTo(gp,1024); eCtx.stroke();
+    eCtx.beginPath(); eCtx.moveTo(0,gp);  eCtx.lineTo(1024,gp); eCtx.stroke();
   }
 
-  /* Gold longitude lines */
-  var lonCount = 12;
-  for (var lo = 0; lo < lonCount; lo++) {
-    var lx = (lo / lonCount) * 1024;
-    gCtx.beginPath(); gCtx.moveTo(lx, 0); gCtx.lineTo(lx, 1024); gCtx.stroke();
+  /* Land masses (ellipses in equirectangular coords) */
+  function landBlob(x, y, rx, ry, rot) {
+    eCtx.save(); eCtx.translate(x, y); eCtx.rotate(rot || 0);
+    eCtx.beginPath(); eCtx.ellipse(0, 0, rx, ry, 0, 0, Math.PI*2); eCtx.fill();
+    eCtx.restore();
+  }
+  var landG = eCtx.createLinearGradient(0,0,0,1024);
+  landG.addColorStop(0,'#2b5c3e'); landG.addColorStop(0.6,'#3a6945'); landG.addColorStop(1,'#224433');
+  eCtx.fillStyle = landG;
+  landBlob(218, 290, 86, 130, -0.20);   /* North America */
+  landBlob(298, 645, 50, 125,  0.15);   /* South America */
+  landBlob(546, 232, 50,  60,  0.00);   /* Europe        */
+  landBlob(552, 545, 80, 155,  0.00);   /* Africa        */
+  landBlob(720, 268, 162, 128,-0.10);   /* Asia          */
+  landBlob(836, 640,  84,  64,  0.00);  /* Australia     */
+  landBlob(158, 488,  20,  13,  0.00);  /* Central Am    */
+  landBlob(598, 705,  30,  18,  0.30);  /* SE Asia       */
+
+  /* Polar ice caps */
+  eCtx.fillStyle = 'rgba(210,235,255,0.65)';
+  eCtx.beginPath(); eCtx.ellipse(512,0,375,90,0,0,Math.PI*2); eCtx.fill();
+  eCtx.fillRect(0, 945, 1024, 79);
+
+  /* Ocean shimmer (specular-like lines) */
+  eCtx.strokeStyle = 'rgba(100,180,255,0.06)'; eCtx.lineWidth = 1;
+  for (var oi = 0; oi < 20; oi++) {
+    var oy = 200 + oi * 30;
+    eCtx.beginPath(); eCtx.moveTo(0, oy); eCtx.lineTo(1024, oy + 8); eCtx.stroke();
   }
 
-  /* ₿ glow halo */
-  var bHalo = gCtx.createRadialGradient(512, 512, 0, 512, 512, 280);
-  bHalo.addColorStop(0, 'rgba(251,191,36,0.28)');
-  bHalo.addColorStop(1, 'rgba(251,191,36,0)');
-  gCtx.fillStyle = bHalo;
-  gCtx.fillRect(0, 0, 1024, 1024);
-
-  /* ₿ symbols — 3 copies at 0°, 120°, 240° longitude so icon is
-     visible from any rotation angle (equirectangular: full width = 360°,
-     3 copies at x = 171, 512, 853 on a 1024px canvas) */
-  var btcPositions = [171, 512, 853];
-  gCtx.font = 'bold 290px Arial';
-  gCtx.textAlign = 'center';
-  gCtx.textBaseline = 'middle';
-  btcPositions.forEach(function(bx) {
-    /* glow bloom pass */
-    gCtx.shadowColor = 'rgba(251,191,36,0.90)';
-    gCtx.shadowBlur = 45;
-    gCtx.fillStyle = 'rgba(253,230,138,0.30)';
-    gCtx.fillText('\u20BF', bx, 512);
-    /* crisp solid pass */
-    gCtx.shadowBlur = 0;
-    gCtx.fillStyle = 'rgba(253,230,138,0.92)';
-    gCtx.fillText('\u20BF', bx, 512);
+  /* Bitcoin ₿ painted on surface — 3 copies at 0°/120°/240° longitude */
+  var btcPx = [171, 512, 853];
+  eCtx.font = 'bold 175px Arial';
+  eCtx.textAlign = 'center'; eCtx.textBaseline = 'middle';
+  btcPx.forEach(function(bx) {
+    eCtx.shadowColor = 'rgba(251,191,36,0.90)'; eCtx.shadowBlur = 38;
+    eCtx.fillStyle = 'rgba(253,230,138,0.20)'; eCtx.fillText('₿', bx, 512);
+    eCtx.shadowBlur = 0;
+    eCtx.fillStyle = 'rgba(253,230,138,0.78)'; eCtx.fillText('₿', bx, 512);
   });
 
-  var globeTex = new THREE.CanvasTexture(globeCv);
+  var earthTex = new THREE.CanvasTexture(earthCv);
 
-  /* Sphere mesh */
-  var globeMat = new THREE.MeshStandardMaterial({
-    map: globeTex,
-    metalness: 0.55,
-    roughness: 0.35,
-    emissive: new THREE.Color(0x0d2137),
-    emissiveIntensity: 0.25
-  });
-  var globeMesh = new THREE.Mesh(new THREE.SphereGeometry(2.0, 64, 64), globeMat);
-  coinGroup.add(globeMesh);
+  /* ── Earth group ── */
+  var earthGroup = new THREE.Group();
+  scene.add(earthGroup);
 
-  /* Atmosphere glow shell */
-  var atmosMat = new THREE.MeshBasicMaterial({
-    color: 0x1e90ff,
-    transparent: true,
-    opacity: 0.07,
-    side: THREE.BackSide,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false
-  });
-  coinGroup.add(new THREE.Mesh(new THREE.SphereGeometry(2.25, 32, 32), atmosMat));
-
-  /* Additive gold glow sprite behind globe */
-  var glowCv = document.createElement('canvas'); glowCv.width = glowCv.height = 256;
-  var gc = glowCv.getContext('2d');
-  var gr = gc.createRadialGradient(128,128,0,128,128,128);
-  gr.addColorStop(0,'rgba(251,191,36,0.55)'); gr.addColorStop(0.4,'rgba(245,158,11,0.20)'); gr.addColorStop(1,'rgba(245,158,11,0)');
-  gc.fillStyle = gr; gc.fillRect(0,0,256,256);
-  coinGroup.add(new THREE.Mesh(
-    new THREE.PlaneGeometry(10, 10),
-    new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(glowCv), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })
-  ));
-
-  /* ── SINGLE orbit ring ── */
-  var ORBIT_R = 3.8;
-  var orbitRing = new THREE.Mesh(
-    new THREE.TorusGeometry(ORBIT_R, 0.013, 20, 140),
-    new THREE.MeshBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.38, blending: THREE.AdditiveBlending })
+  var earthMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(2.0, 64, 64),
+    new THREE.MeshStandardMaterial({
+      map: earthTex, metalness: 0.12, roughness: 0.72,
+      emissive: new THREE.Color(0x061828), emissiveIntensity: 0.28
+    })
   );
-  /* Slight tilt for depth illusion */
-  orbitRing.rotation.x = Math.PI / 2 + 0.3;
-  scene.add(orbitRing);
+  earthGroup.add(earthMesh);
 
-  /* ── Crypto icon beads on the single ring ── */
+  /* Atmosphere shells */
+  function atmos(radius, col, opacity) {
+    earthGroup.add(new THREE.Mesh(
+      new THREE.SphereGeometry(radius, 32, 32),
+      new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: opacity,
+        side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false })
+    ));
+  }
+  atmos(2.22, 0x2299ff, 0.09);
+  atmos(2.34, 0x44aaff, 0.04);
+
+  /* Additive Earth glow sprite */
+  (function() {
+    var gCv = document.createElement('canvas'); gCv.width = gCv.height = 256;
+    var gCtx = gCv.getContext('2d');
+    var gGr = gCtx.createRadialGradient(128,128,0,128,128,128);
+    gGr.addColorStop(0,'rgba(34,100,220,0.45)'); gGr.addColorStop(0.5,'rgba(20,60,160,0.18)'); gGr.addColorStop(1,'rgba(0,0,0,0)');
+    gCtx.fillStyle = gGr; gCtx.fillRect(0,0,256,256);
+    var gMat = new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(gCv), transparent: true, blending: THREE.AdditiveBlending, opacity: 0.55 });
+    var gSp = new THREE.Sprite(gMat); gSp.scale.set(7.5, 7.5, 1);
+    earthGroup.add(gSp);
+  })();
+
+  /* ── Halo sprite factory ── */
+  function makeHalo(r8, g8, b8, sz) {
+    var hCv = document.createElement('canvas'); hCv.width = hCv.height = 128;
+    var hCtx = hCv.getContext('2d');
+    var hGr = hCtx.createRadialGradient(64,64,0,64,64,64);
+    hGr.addColorStop(0,   'rgba('+r8+','+g8+','+b8+',0.92)');
+    hGr.addColorStop(0.30,'rgba('+r8+','+g8+','+b8+',0.42)');
+    hGr.addColorStop(1,   'rgba('+r8+','+g8+','+b8+',0)');
+    hCtx.fillStyle = hGr; hCtx.fillRect(0,0,128,128);
+    var hMat = new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(hCv), transparent: true, blending: THREE.AdditiveBlending, opacity: 0.68 });
+    var hSp = new THREE.Sprite(hMat); hSp.scale.set(sz, sz, 1);
+    return hSp;
+  }
+
+  /* ── Galaxy orbit system — 5 rings, one crypto each ── */
   var cryptos = [
-    { sym: '₿', color: 0xf59e0b, hex: '#f59e0b', off: 0 },
-    { sym: 'Ξ', color: 0x818cf8, hex: '#818cf8', off: Math.PI * 0.4 },
-    { sym: '◎', color: 0x22d3ee, hex: '#22d3ee', off: Math.PI * 0.8 },
-    { sym: '✕', color: 0xa78bfa, hex: '#a78bfa', off: Math.PI * 1.2 },
-    { sym: '◆', color: 0xfbbf24, hex: '#fbbf24', off: Math.PI * 1.6 },
+    { sym:'₿', hex:'#f59e0b', color:0xf59e0b, rgb:[245,158,11],  r:2.85, tilt:0.28,  speed:0.0075, off:0              },
+    { sym:'Ξ',  hex:'#818cf8', color:0x818cf8, rgb:[129,140,248], r:3.85, tilt:0.92,  speed:0.0050, off:Math.PI        },
+    { sym:'◎', hex:'#22d3ee', color:0x22d3ee, rgb:[34,211,238],  r:4.80, tilt:1.30,  speed:0.0036, off:Math.PI*0.5    },
+    { sym:'✕', hex:'#a78bfa', color:0xa78bfa, rgb:[167,139,250], r:5.70, tilt:0.50,  speed:0.0024, off:Math.PI*1.5    },
+    { sym:'◆', hex:'#fbbf24', color:0xfbbf24, rgb:[251,191,36],  r:6.55, tilt:1.62,  speed:0.0016, off:Math.PI*0.78   },
   ];
 
-  var orbitAngles = cryptos.map(function(c) { return c.off; });
+  var m4 = new THREE.Matrix4();
+  var vp = new THREE.Vector3();
 
-  var dotMeshes = cryptos.map(function(c) {
-    var dot = new THREE.Mesh(
-      new THREE.SphereGeometry(0.09, 12, 12),
+  cryptos.forEach(function(c) {
+    c.ang    = c.off;
+    c.selfRot = 0;
+
+    /* Main orbit ring */
+    c.ring = new THREE.Mesh(
+      new THREE.TorusGeometry(c.r, 0.012, 20, 120),
+      new THREE.MeshBasicMaterial({ color: c.color, transparent: true, opacity: 0.30, blending: THREE.AdditiveBlending, depthWrite: false })
+    );
+    c.ring.rotation.x = Math.PI / 2 + c.tilt;
+    scene.add(c.ring);
+
+    /* Glow ring (wider tube, additive) */
+    c.ringGlow = new THREE.Mesh(
+      new THREE.TorusGeometry(c.r, 0.042, 16, 100),
+      new THREE.MeshBasicMaterial({ color: c.color, transparent: true, opacity: 0.09, blending: THREE.AdditiveBlending, depthWrite: false })
+    );
+    c.ringGlow.rotation.x = Math.PI / 2 + c.tilt;
+    scene.add(c.ringGlow);
+
+    /* Symbol dot */
+    c.dot = new THREE.Mesh(
+      new THREE.SphereGeometry(0.10, 16, 16),
       new THREE.MeshBasicMaterial({ color: c.color, blending: THREE.AdditiveBlending })
     );
-    scene.add(dot);
-    return dot;
+    scene.add(c.dot);
+
+    /* Dot halo sprite */
+    c.halo = makeHalo(c.rgb[0], c.rgb[1], c.rgb[2], 0.68);
+    scene.add(c.halo);
   });
 
-  /* Billboard icon labels */
+  /* ── CSS label layer ── */
   var labelLayer = document.createElement('div');
   labelLayer.className = 'hero-label-layer';
   hero.appendChild(labelLayer);
@@ -2091,12 +2151,16 @@ function lwStartBounce(){
   var labelEls = cryptos.map(function(c) {
     var el = document.createElement('div');
     el.className = 'orbit-pill';
-    el.style.border = '1.5px solid ' + c.hex + '90';
-    el.style.fontSize = '17px';
-    el.style.padding = '5px 13px';
-    el.style.color = c.hex;
-    el.style.textShadow = '0 0 8px ' + c.hex + ', 0 0 16px ' + c.hex + '80';
-    el.style.background = 'rgba(3,8,15,0.78)';
+    el.style.cssText = [
+      'border:1.5px solid ' + c.hex + '70',
+      'font-size:19px',
+      'padding:5px 15px',
+      'color:' + c.hex,
+      'text-shadow:0 0 10px ' + c.hex + ',0 0 22px ' + c.hex + '55',
+      'background:rgba(2,8,20,0.82)',
+      'letter-spacing:0.5px',
+      'will-change:transform,opacity'
+    ].join(';');
     el.textContent = c.sym;
     labelLayer.appendChild(el);
     return el;
@@ -2111,91 +2175,100 @@ function lwStartBounce(){
   }, { passive: true });
   hero.addEventListener('mouseleave', function() { mx = 0; my = 0; }, { passive: true });
 
-  /* ── Scroll parallax (coin + ring fade/scale away) ── */
+  /* ── Scroll parallax ── */
   var scrollY = 0;
   window.addEventListener('scroll', function() { scrollY = window.scrollY; }, { passive: true });
 
-  /* ── Helpers ── */
-  var m4 = new THREE.Matrix4();
-  var vp = new THREE.Vector3();
-  var clock = new THREE.Clock();
-
-  /* ── IntersectionObserver pause ── */
+  /* ── Pause when off-screen ── */
   var active = true;
   if (window.IntersectionObserver) {
     new IntersectionObserver(function(e) { active = e[0].isIntersecting; }, { threshold: 0.05 }).observe(hero);
   }
+
+  var clock = new THREE.Clock();
 
   function animate() {
     requestAnimationFrame(animate);
     if (!active) return;
     var t = clock.getElapsedTime();
 
-    /* Scroll parallax: smooth fade + scale + upward drift over full hero height */
+    /* Scroll fade + drift */
     var heroH = hero.offsetHeight || 700;
     var scrollFrac = Math.min(scrollY / heroH, 1);
-    var coinScale = 1 - scrollFrac * 0.50;
     var sceneOpacity = 1 - scrollFrac;
     canvas.style.opacity = sceneOpacity.toFixed(3);
-    canvas.style.transform = 'scale(' + (1 - scrollFrac * 0.05) + ') translateY(' + (-scrollFrac * 55) + 'px)';
-    coinGroup.scale.setScalar(coinScale);
-    orbitRing.scale.setScalar(coinScale);
+    canvas.style.transform = 'translateY(' + (-scrollFrac * 60) + 'px)';
+    var masterScale = 1 - scrollFrac * 0.50;
 
-    /* Globe: slow Y-axis rotation + gentle vertical float */
-    coinGroup.rotation.y += 0.005;
-    coinGroup.position.y = Math.sin(t * 0.4) * 0.10 + scrollFrac * 2.5;
+    /* Earth — slow Y rotation + gentle float */
+    earthMesh.rotation.y += 0.0020;
+    earthGroup.position.y = Math.sin(t * 0.36) * 0.09;
+    earthGroup.scale.setScalar(masterScale);
 
-    /* Ring stays fixed in tilt — icons orbit along it in one clean direction */
+    /* Stars breathe */
+    starMat.opacity = 0.42 + Math.sin(t * 0.15) * 0.10;
 
-    /* Orbit dot positions — all on the SAME ring, advancing at constant rate */
-    orbitAngles.forEach(function(a, i) {
-      orbitAngles[i] += 0.0028;
-      var ang = orbitAngles[i];
-      /* Map circle on tilted ring plane using ring's rotation matrix */
-      m4.makeRotationFromEuler(orbitRing.rotation);
-      vp.set(Math.cos(ang) * ORBIT_R, Math.sin(ang) * ORBIT_R, 0);
+    /* Galaxy orbits */
+    cryptos.forEach(function(c, i) {
+      c.ang     += c.speed;
+      c.selfRot += 1.2;          /* degrees per frame — coin-spin */
+
+      /* Position on tilted ring plane */
+      m4.makeRotationX(Math.PI / 2 + c.tilt);
+      vp.set(Math.cos(c.ang) * c.r, Math.sin(c.ang) * c.r, 0);
       vp.applyMatrix4(m4);
-      /* Apply same scale as coin (scroll parallax) */
-      dotMeshes[i].position.copy(vp);
-      dotMeshes[i].scale.setScalar(coinScale);
 
-      /* Project to CSS pixels for billboard labels */
-      var p = dotMeshes[i].position.clone().project(camera);
+      var sp = masterScale;
+      c.dot.position.copy(vp).multiplyScalar(sp);
+      c.dot.scale.setScalar(sp);
+      c.halo.position.copy(vp).multiplyScalar(sp);
+      c.ring.scale.setScalar(sp);
+      c.ringGlow.scale.setScalar(sp);
+
+      /* Dot self-rotation (axis tilt shifts with time for interest) */
+      c.dot.rotation.y = t * 2.2 + i;
+      c.dot.rotation.x = t * 0.7 + i * 0.5;
+
+      /* Project dot to CSS coords */
+      var p = c.dot.position.clone().project(camera);
       var inView = p.z < 1.0;
       if (inView && sceneOpacity > 0.05) {
         var rawX = (p.x * 0.5 + 0.5) * W;
         var rawY = (-p.y * 0.5 + 0.5) * H;
-        /* Clamp so pills never clip off-screen */
-        var M = 28;
+        var M = 34;
         var sx = Math.max(M, Math.min(W - M, rawX));
         var sy = Math.max(M, Math.min(H - M, rawY));
         var depth = 1 - Math.max(0, Math.min(1, (p.z + 1) * 0.5));
-        labelEls[i].style.left    = sx + 'px';
-        labelEls[i].style.top     = sy + 'px';
-        labelEls[i].style.opacity = ((0.60 + depth * 0.40) * sceneOpacity).toFixed(3);
+        var opa   = (0.68 + depth * 0.32) * sceneOpacity;
+        var sc    = (0.80 + depth * 0.28).toFixed(3);
+        /* perspective rotateY for coin-spin self-rotation */
+        labelEls[i].style.left      = sx + 'px';
+        labelEls[i].style.top       = sy + 'px';
+        labelEls[i].style.opacity   = opa.toFixed(3);
+        labelEls[i].style.transform = 'translate(-50%,-50%) perspective(140px) rotateY(' + c.selfRot + 'deg) scale(' + sc + ')';
       } else {
         labelEls[i].style.opacity = '0';
       }
     });
 
-    /* Camera parallax */
-    camTx += (mx * 1.5 - camTx) * 0.035;
-    camTy += (-my * 1.0 - camTy) * 0.035;
+    /* Camera parallax (mouse) */
+    camTx += (mx * 1.3 - camTx) * 0.028;
+    camTy += (-my * 0.9 - camTy) * 0.028;
     camera.position.x = camTx;
-    camera.position.y = camTy;
+    camera.position.y = 0.4 + camTy;
     camera.lookAt(0, 0, 0);
 
     renderer.render(scene, camera);
   }
   animate();
 
-  /* ── Resize ── */
+  /* Resize */
   window.addEventListener('resize', function() {
     W = hero.offsetWidth; H = hero.offsetHeight;
     renderer.setSize(W, H); fitCamera();
   });
 
-  /* ── Word rotation ── */
+  /* ── Rotating word ── */
   if (!window.gsap) return;
   var words = ['Smart', 'Elite', 'Pro', 'Strategic', 'Advanced'];
   var wordEl = document.getElementById('hero-rw');
@@ -2215,269 +2288,6 @@ function lwStartBounce(){
     });
   }
   setInterval(rotateWord, 3200);
-})();
-
-/* ══════════════════════════════════════════════════════════
-   MODULES BACKGROUND — Three.js 3-D box (open / close cycle)
-═══════════════════════════════════════════════════════════ */
-(function initModulesBg() {
-  var section = document.getElementById('features');
-  var canvas  = document.getElementById('mod-box-bg');
-  if (!section || !canvas || !window.THREE) return;
-
-  var W = section.offsetWidth  || 900;
-  var H = section.offsetHeight || 700;
-
-  var renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-  renderer.setSize(W, H);
-
-  var scene  = new THREE.Scene();
-  /* Wider FOV + comfortable distance = box occupies ~20% of screen height */
-  var camera = new THREE.PerspectiveCamera(32, W / H, 0.1, 100);
-  camera.position.set(0, 0.6, 12);
-  camera.lookAt(0, 0, 0);
-
-  /* ── Lights ── */
-  scene.add(new THREE.AmbientLight(0x04080f, 0.70));
-
-  var keyLight = new THREE.PointLight(0x4060e0, 2.8, 32); /* cool-blue key */
-  keyLight.position.set(8, 8, 8);
-  scene.add(keyLight);
-
-  var rimLight = new THREE.PointLight(0x22d3ee, 1.0, 22); /* cyan rim */
-  rimLight.position.set(-7, -1, -7);
-  scene.add(rimLight);
-
-  var fillLight = new THREE.PointLight(0x1a3560, 1.8, 22); /* navy fill from below */
-  fillLight.position.set(0, -10, 2);
-  scene.add(fillLight);
-
-  /* ── Backdrop radial glow ── */
-  var bgCv = document.createElement('canvas'); bgCv.width = bgCv.height = 256;
-  var bgCtx = bgCv.getContext('2d');
-  var bgGr  = bgCtx.createRadialGradient(128,128,0,128,128,128);
-  bgGr.addColorStop(0,   'rgba(55,75,195,0.48)');
-  bgGr.addColorStop(0.5, 'rgba(22,45,140,0.20)');
-  bgGr.addColorStop(1,   'rgba(0,0,0,0)');
-  bgCtx.fillStyle = bgGr; bgCtx.fillRect(0,0,256,256);
-  var bgGlowMat = new THREE.MeshBasicMaterial({
-    map: new THREE.CanvasTexture(bgCv), transparent: true,
-    blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.58
-  });
-  var bgGlowPlane = new THREE.Mesh(new THREE.PlaneGeometry(12, 12), bgGlowMat);
-  bgGlowPlane.position.z = -4;
-  scene.add(bgGlowPlane);
-
-  /* ── Shared brand canvas (used on all 4 side faces) ── */
-  var bfCv = document.createElement('canvas'); bfCv.width = bfCv.height = 512;
-  var bfCtx = bfCv.getContext('2d');
-
-  /* Background */
-  var bgFill = bfCtx.createLinearGradient(0,0,0,512);
-  bgFill.addColorStop(0, '#071525'); bgFill.addColorStop(1, '#040e1a');
-  bfCtx.fillStyle = bgFill; bfCtx.fillRect(0,0,512,512);
-
-  /* Subtle grid */
-  bfCtx.strokeStyle = 'rgba(34,211,238,0.07)'; bfCtx.lineWidth = 1;
-  for (var gi = 1; gi < 8; gi++) {
-    var gp = gi * 64;
-    bfCtx.beginPath(); bfCtx.moveTo(gp,0);  bfCtx.lineTo(gp,512);  bfCtx.stroke();
-    bfCtx.beginPath(); bfCtx.moveTo(0,gp);  bfCtx.lineTo(512,gp);  bfCtx.stroke();
-  }
-
-  /* Top accent rule (cyan) */
-  bfCtx.strokeStyle = 'rgba(34,211,238,0.45)'; bfCtx.lineWidth = 2;
-  bfCtx.beginPath(); bfCtx.moveTo(70,172); bfCtx.lineTo(442,172); bfCtx.stroke();
-
-  /* Bottom accent rule (gold) */
-  bfCtx.strokeStyle = 'rgba(245,158,11,0.45)'; bfCtx.lineWidth = 2;
-  bfCtx.beginPath(); bfCtx.moveTo(70,342); bfCtx.lineTo(442,342); bfCtx.stroke();
-
-  /* Corner dots (tech feel) */
-  [[70,172],[442,172],[70,342],[442,342]].forEach(function(pt) {
-    bfCtx.beginPath(); bfCtx.arc(pt[0], pt[1], 3, 0, Math.PI*2);
-    bfCtx.fillStyle = 'rgba(34,211,238,0.60)'; bfCtx.fill();
-  });
-
-  /* "ZyNi" — cyan gradient */
-  bfCtx.font = 'bold 74px Arial';
-  bfCtx.textAlign = 'center'; bfCtx.textBaseline = 'middle';
-  var cGrad = bfCtx.createLinearGradient(90,0,258,0);
-  cGrad.addColorStop(0, '#22d3ee'); cGrad.addColorStop(1, '#a5f3fc');
-  bfCtx.shadowColor = 'rgba(34,211,238,0.60)'; bfCtx.shadowBlur = 14;
-  bfCtx.fillStyle = cGrad;
-  bfCtx.fillText('ZyNi', 176, 257);
-
-  /* "SMC" — gold gradient */
-  var gGrad = bfCtx.createLinearGradient(258,0,432,0);
-  gGrad.addColorStop(0, '#f59e0b'); gGrad.addColorStop(0.5, '#fde68a'); gGrad.addColorStop(1, '#f97316');
-  bfCtx.shadowColor = 'rgba(245,158,11,0.60)'; bfCtx.shadowBlur = 14;
-  bfCtx.fillStyle = gGrad;
-  bfCtx.fillText('SMC', 346, 257);
-  bfCtx.shadowBlur = 0;
-
-  /* Sub-label */
-  bfCtx.font = '500 18px Arial'; bfCtx.fillStyle = 'rgba(148,220,240,0.42)';
-  bfCtx.fillText('SMART MONEY CONCEPT', 256, 304);
-
-  /* Gloss highlight */
-  var gloss = bfCtx.createLinearGradient(360,0,512,150);
-  gloss.addColorStop(0, 'rgba(255,255,255,0.08)'); gloss.addColorStop(1, 'rgba(255,255,255,0)');
-  bfCtx.fillStyle = gloss; bfCtx.fillRect(0,0,512,512);
-
-  var brandTex = new THREE.CanvasTexture(bfCv);
-
-  /* Shared side face material */
-  function mkBrandMat() {
-    return new THREE.MeshStandardMaterial({
-      map: brandTex, transparent: true, opacity: 0.90,
-      side: THREE.DoubleSide, roughness: 0.68, metalness: 0.30
-    });
-  }
-
-  /* Cap (top/bottom) material — no text, just dark panel */
-  function mkCapMat(col) {
-    return new THREE.MeshStandardMaterial({
-      color: col, transparent: true, opacity: 0.88,
-      side: THREE.DoubleSide, roughness: 0.80, metalness: 0.25
-    });
-  }
-
-  /* ── Box ── */
-  var S    = 0.85;
-  var HALF = S / 2;
-  var boxGroup = new THREE.Group();
-  scene.add(boxGroup);
-
-  /* Inner gold light (co-rotates with box) */
-  var innerLight = new THREE.PointLight(0xf59e0b, 0, 10);
-  boxGroup.add(innerLight);
-
-  var faceGeo = new THREE.PlaneGeometry(S, S);
-
-  /* Bottom cap */
-  var botFace = new THREE.Mesh(faceGeo.clone(), mkCapMat(0x030d1a));
-  botFace.rotation.x =  Math.PI/2; botFace.position.y = -HALF; boxGroup.add(botFace);
-
-  /* Top lid (cap) */
-  var topFaceMat = mkCapMat(0x0a1c32);
-  var topFace = new THREE.Mesh(faceGeo.clone(), topFaceMat);
-  topFace.rotation.x = -Math.PI/2; topFace.position.y = HALF; boxGroup.add(topFace);
-
-  /* Back face — branded (texture reads correctly when back faces camera) */
-  var bkFaceMat = mkBrandMat();
-  var bkFace = new THREE.Mesh(faceGeo.clone(), bkFaceMat);
-  bkFace.rotation.y = Math.PI; bkFace.position.z = -HALF; boxGroup.add(bkFace);
-
-  /* Left face — branded */
-  var ltFaceMat = mkBrandMat();
-  var ltFace = new THREE.Mesh(faceGeo.clone(), ltFaceMat);
-  ltFace.rotation.y = -Math.PI/2; ltFace.position.x = -HALF; boxGroup.add(ltFace);
-
-  /* Right face — branded */
-  var rtFaceMat = mkBrandMat();
-  var rtFace = new THREE.Mesh(faceGeo.clone(), rtFaceMat);
-  rtFace.rotation.y =  Math.PI/2; rtFace.position.x =  HALF; boxGroup.add(rtFace);
-
-  /* Front face — branded, fades on open */
-  var frFaceMat = mkBrandMat();
-  var frFace = new THREE.Mesh(faceGeo.clone(), frFaceMat);
-  frFace.position.z = HALF; boxGroup.add(frFace);
-
-  /* Primary wireframe */
-  var eGeo    = new THREE.EdgesGeometry(new THREE.BoxGeometry(S, S, S));
-  var edgeMat = new THREE.LineBasicMaterial({ color: 0x4a65d8, transparent: true, opacity: 0.62 });
-  boxGroup.add(new THREE.LineSegments(eGeo, edgeMat));
-
-  /* Glow halo (5% larger, additive) */
-  var eGeo2    = new THREE.EdgesGeometry(new THREE.BoxGeometry(S*1.055, S*1.055, S*1.055));
-  var edgeMat2 = new THREE.LineBasicMaterial({ color: 0x5f70f5, transparent: true, opacity: 0.24, blending: THREE.AdditiveBlending });
-  boxGroup.add(new THREE.LineSegments(eGeo2, edgeMat2));
-
-  /* ── Bitcoin Sprite ── */
-  var btcCv = document.createElement('canvas'); btcCv.width = btcCv.height = 256;
-  var btcCtx = btcCv.getContext('2d');
-  btcCtx.font = 'bold 148px Arial';
-  btcCtx.textAlign = 'center'; btcCtx.textBaseline = 'middle';
-  btcCtx.shadowColor = 'rgba(251,191,36,1)'; btcCtx.shadowBlur = 55;
-  btcCtx.fillStyle = 'rgba(253,230,138,0.28)'; btcCtx.fillText('₿', 128, 128);
-  btcCtx.shadowBlur = 0;
-  btcCtx.fillStyle = 'rgba(253,230,138,0.96)'; btcCtx.fillText('₿', 128, 128);
-  var btcSpriteMat = new THREE.SpriteMaterial({
-    map: new THREE.CanvasTexture(btcCv), transparent: true, opacity: 0,
-    blending: THREE.AdditiveBlending, color: 0xfbbf24
-  });
-  var btcSprite = new THREE.Sprite(btcSpriteMat);
-  btcSprite.position.set(0, -0.08, 0);
-  boxGroup.add(btcSprite);
-
-  /* Responsive scale: wider FOV already makes box smaller; scale corrects for screen size */
-  function getScale() { return W < 480 ? 0.42 : W < 768 ? 0.60 : 0.85; }
-
-  var clock = new THREE.Clock();
-  var CYCLE = 16;
-  function ease(x) { var c=Math.max(0,Math.min(1,x)); return c<0.5?2*c*c:-1+(4-2*c)*c; }
-
-  function animateMB() {
-    requestAnimationFrame(animateMB);
-    var t  = clock.getElapsedTime();
-    var ph = (t % CYCLE) / CYCLE;
-
-    boxGroup.scale.setScalar(getScale());
-    boxGroup.rotation.y = t * 0.09;
-    boxGroup.rotation.x = 0.22;
-
-    var openAmt = 0, btcAmt = 0;
-    if      (ph < 0.19) { openAmt = 0; }
-    else if (ph < 0.37) { openAmt = ease((ph - 0.19) / 0.18); }
-    else if (ph < 0.62) { openAmt = 1; btcAmt = ease((ph - 0.37) / 0.15); }
-    else if (ph < 0.78) { openAmt = 1 - ease((ph - 0.62) / 0.16);
-                          btcAmt  = 1 - ease((ph - 0.62) / 0.12); }
-
-    /* Lid */
-    topFace.position.y = HALF + openAmt * (S * 0.88);
-    topFaceMat.opacity = 0.88 - openAmt * 0.70;
-
-    /* Front fades to reveal interior */
-    frFaceMat.opacity = 0.90 - openAmt * 0.80;
-
-    /* All other branded faces stay solid */
-    bkFaceMat.opacity = ltFaceMat.opacity = rtFaceMat.opacity = 0.90;
-
-    /* Primary edges navy→gold */
-    edgeMat.opacity = 0.56 + openAmt * 0.36;
-    edgeMat.color.setHSL(0.64 - openAmt * 0.22, 0.88, 0.52 + openAmt * 0.26);
-
-    /* Halo edges */
-    edgeMat2.opacity = 0.20 + openAmt * 0.28;
-    edgeMat2.color.setHSL(0.64 - openAmt * 0.22, 0.90, 0.62 + openAmt * 0.20);
-
-    /* Inner light */
-    innerLight.intensity  = openAmt * 0.9 + btcAmt * 3.0;
-    innerLight.position.y = btcAmt * 0.40;
-
-    /* Backdrop breathes */
-    bgGlowMat.opacity = 0.50 + openAmt * 0.36;
-
-    /* ₿ sprite rises */
-    btcSprite.position.y   = -0.08 + btcAmt * (S + 0.9);
-    btcSpriteMat.opacity   = btcAmt * 0.96;
-    var sc = 0.48 + btcAmt * 0.86;
-    btcSprite.scale.set(sc, sc, 1);
-
-    renderer.render(scene, camera);
-  }
-  animateMB();
-
-  if (window.ResizeObserver) {
-    new ResizeObserver(function() {
-      W = section.offsetWidth; H = section.offsetHeight;
-      renderer.setSize(W, H);
-      camera.aspect = W / H;
-      camera.updateProjectionMatrix();
-    }).observe(section);
-  }
 })();
 
 </script>
