@@ -103,7 +103,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <a href="{{ url_for('admin.users') }}" class="adm-nav-item {% if request.endpoint and request.endpoint.startswith('admin.users') %}active{% endif %}">
         <span class="adm-nav-icon">👥</span>Users
       </a>
-      <a href="#" class="adm-nav-item">
+      <a href="{{ url_for('admin.settings') }}" class="adm-nav-item {% if request.endpoint == 'admin.settings' %}active{% endif %}">
         <span class="adm-nav-icon">⚙</span>Settings
       </a>
       <div class="adm-nav-sep"></div>

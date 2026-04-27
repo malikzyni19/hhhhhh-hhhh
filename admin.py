@@ -1,10 +1,14 @@
 import re
+import json
 from flask import Blueprint, render_template, redirect, url_for, request, session, flash, jsonify
 from flask_login import login_user, logout_user, current_user
 from functools import wraps
 from datetime import datetime, timezone
 
-from models import db, User, AdminLog
+from models import (db, User, AdminLog, GlobalSetting, RolePermission, UserPermission,
+                    LoginHistory, DailyTokenUsage,
+                    ALL_MODULES, ALL_TABS, ALL_EXCHANGES, ALL_TIMEFRAMES)
+from permissions import get_user_permissions, save_user_permissions, _bust_cache
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
 
@@ -138,6 +142,7 @@ def dashboard():
         server_time=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
         app_version="1.0.0",
     )
+
 
 
 # ── Users List ─────────────────────────────────────────────────────
@@ -292,7 +297,60 @@ def users_edit(user_id):
                 db.session.rollback()
                 errors["_general"] = f"Database error: {e}"
 
-    return render_template("admin/users/edit.html", user=user, errors=errors)
+
+    # Gather extra context
+    eff = {}
+    user_perm = None
+    login_history = []
+    stats = None
+    try:
+        eff       = get_user_permissions(user)
+        user_perm = UserPermission.query.filter_by(user_id=user_id).first()
+
+        login_history = (
+            LoginHistory.query
+            .filter_by(user_id=user_id)
+            .order_by(LoginHistory.logged_in_at.desc())
+            .limit(10)
+            .all()
+        )
+
+        from datetime import date, timedelta
+        today = date.today()
+        month_start = today.replace(day=1)
+        week_start  = today - timedelta(days=today.weekday())
+
+        month_logins = LoginHistory.query.filter(
+            LoginHistory.user_id == user_id,
+            LoginHistory.logged_in_at >= month_start
+        ).count()
+        week_logins = LoginHistory.query.filter(
+            LoginHistory.user_id == user_id,
+            LoginHistory.logged_in_at >= week_start
+        ).count()
+        month_usage = DailyTokenUsage.query.filter(
+            DailyTokenUsage.user_id == user_id,
+            DailyTokenUsage.date >= month_start
+        ).all()
+        month_scans  = sum(u.scan_count  for u in month_usage)
+        month_tokens = sum(u.tokens_used for u in month_usage)
+        week_usage   = [u for u in month_usage if u.date >= week_start]
+        week_scans   = sum(u.scan_count for u in week_usage)
+        stats = {
+            "month_logins": month_logins, "month_scans": month_scans, "month_tokens": month_tokens,
+            "week_logins":  week_logins,  "week_scans":  week_scans,
+        }
+    except Exception as e:
+        print(f"[ADMIN-EDIT] extra context error: {e}")
+
+    return render_template(
+        "admin/users/edit.html",
+        user=user, errors=errors,
+        eff=eff, user_perm=user_perm,
+        login_history=login_history, stats=stats,
+        all_modules=ALL_MODULES, all_tabs=ALL_TABS,
+        all_exchanges=ALL_EXCHANGES, all_timeframes=ALL_TIMEFRAMES,
+    )
 
 
 # ── Delete User ────────────────────────────────────────────────────
@@ -377,3 +435,150 @@ def users_reset_password(user_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 500
+
+
+# ── User Permissions Override ──────────────────────────────────────
+@admin_bp.route("/users/<int:user_id>/permissions", methods=["POST"])
+@admin_required
+def users_save_permissions(user_id):
+    user = User.query.get_or_404(user_id)
+    data = request.get_json(force=True) or {}
+
+    if data.get("reset"):
+        try:
+            up = UserPermission.query.filter_by(user_id=user_id).first()
+            if up:
+                db.session.delete(up)
+                db.session.commit()
+            _bust_cache(user_id)
+            _log_action("reset_permissions", f"Reset to role defaults for {user.username}", target_user_id=user_id)
+            return jsonify({"success": True, "msg": "Permissions reset to role defaults."})
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({"error": str(e)}), 500
+
+    overrides = {}
+    for field in ("daily_tokens", "max_pairs_per_scan", "max_pairs_per_cycle"):
+        v = data.get(field)
+        overrides[field] = int(v) if v not in (None, "", "null") else None
+
+    for field in ("allowed_modules", "allowed_tabs", "allowed_exchanges", "allowed_timeframes"):
+        v = data.get(field)
+        overrides[field] = v if isinstance(v, list) else None
+
+    try:
+        save_user_permissions(user_id, overrides, current_user.id)
+        _log_action("edit_permissions", f"Updated permissions for {user.username}", target_user_id=user_id)
+        return jsonify({"success": True})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+
+# ── Settings ───────────────────────────────────────────────────────
+def _get_setting(key, default=""):
+    try:
+        s = GlobalSetting.query.filter_by(key=key).first()
+        return s.value if s and s.value is not None else default
+    except Exception:
+        return default
+
+
+def _set_setting(key, value, description=None):
+    try:
+        s = GlobalSetting.query.filter_by(key=key).first()
+        if s:
+            s.value = value
+            s.updated_at = datetime.now(timezone.utc)
+            s.updated_by = current_user.id
+        else:
+            s = GlobalSetting(key=key, value=value, description=description,
+                              updated_by=current_user.id)
+            db.session.add(s)
+    except Exception as e:
+        print(f"[SETTINGS] Error setting {key}: {e}")
+
+
+@admin_bp.route("/settings", methods=["GET", "POST"])
+@admin_required
+def settings():
+    role_perms = {}
+    try:
+        for role in ("admin", "user", "guest"):
+            rp = RolePermission.query.filter_by(role=role).first()
+            if rp:
+                role_perms[role] = {
+                    "daily_tokens":        rp.daily_tokens,
+                    "max_pairs_per_scan":  rp.max_pairs_per_scan,
+                    "max_pairs_per_cycle": rp.max_pairs_per_cycle,
+                    "allowed_modules":     json.loads(rp.allowed_modules or "[]"),
+                    "allowed_tabs":        json.loads(rp.allowed_tabs    or "[]"),
+                    "allowed_exchanges":   json.loads(rp.allowed_exchanges or "[]"),
+                    "allowed_timeframes":  json.loads(rp.allowed_timeframes or "[]"),
+                }
+    except Exception:
+        pass
+
+    if request.method == "POST":
+        try:
+            _set_setting("maintenance_mode",    request.form.get("maintenance_mode", "false"))
+            _set_setting("maintenance_message", request.form.get("maintenance_message", ""))
+            _set_setting("default_exchange",    request.form.get("default_exchange", "binance"))
+            _set_setting("allow_guest_access",  request.form.get("allow_guest_access", "true"))
+            _set_setting("max_guest_tokens",    request.form.get("max_guest_tokens", "50"))
+            _set_setting("guest_session_hours", request.form.get("guest_session_hours", "2"))
+            _set_setting("guest_expire_days",   request.form.get("guest_expire_days", "30"))
+
+            # Role permissions
+            for role in ("admin", "user", "guest"):
+                rp = RolePermission.query.filter_by(role=role).first()
+                if not rp:
+                    rp = RolePermission(role=role)
+                    db.session.add(rp)
+                prefix = f"role_{role}_"
+                rp.daily_tokens        = int(request.form.get(prefix + "daily_tokens", rp.daily_tokens or 500))
+                rp.max_pairs_per_scan  = int(request.form.get(prefix + "max_scan",  rp.max_pairs_per_scan  or 100))
+                rp.max_pairs_per_cycle = int(request.form.get(prefix + "max_cycle", rp.max_pairs_per_cycle or 50))
+                rp.allowed_modules     = json.dumps([m for m in ALL_MODULES    if request.form.get(prefix + "mod_"  + m)])
+                rp.allowed_tabs        = json.dumps([t for t in ALL_TABS       if request.form.get(prefix + "tab_"  + t)])
+                rp.allowed_exchanges   = json.dumps([e for e in ALL_EXCHANGES  if request.form.get(prefix + "exch_" + e)])
+                rp.allowed_timeframes  = json.dumps([f for f in ALL_TIMEFRAMES if request.form.get(prefix + "tf_"   + f)])
+                rp.updated_by = current_user.id
+                rp.updated_at = datetime.now(timezone.utc)
+
+            db.session.commit()
+            _log_action("update_settings", "Updated global settings")
+            flash("Settings saved.", "success")
+        except Exception as e:
+            db.session.rollback()
+            flash(f"Error saving settings: {e}", "error")
+        return redirect(url_for("admin.settings"))
+
+    cfg = {
+        "maintenance_mode":    _get_setting("maintenance_mode",    "false"),
+        "maintenance_message": _get_setting("maintenance_message", ""),
+        "default_exchange":    _get_setting("default_exchange",    "binance"),
+        "allow_guest_access":  _get_setting("allow_guest_access",  "true"),
+        "max_guest_tokens":    _get_setting("max_guest_tokens",    "50"),
+        "guest_session_hours": _get_setting("guest_session_hours", "2"),
+        "guest_expire_days":   _get_setting("guest_expire_days",   "30"),
+    }
+    try:
+        total_users    = User.query.count()
+        db_connected   = True
+    except Exception:
+        total_users    = 0
+        db_connected   = False
+
+    return render_template(
+        "admin/settings.html",
+        cfg=cfg,
+        role_perms=role_perms,
+        all_modules=ALL_MODULES,
+        all_tabs=ALL_TABS,
+        all_exchanges=ALL_EXCHANGES,
+        all_timeframes=ALL_TIMEFRAMES,
+        total_users=total_users,
+        db_connected=db_connected,
+        server_time=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+    )

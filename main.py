@@ -35,8 +35,10 @@ def no_cache(r):
     return r
 
 from flask_login import LoginManager
-from models import db, User as _DBUser
+from models import (db, User as _DBUser, GlobalSetting as _GlobalSetting,
+                    LoginHistory as _LoginHistory)
 from admin import admin_bp
+from permissions import get_user_permissions, consume_tokens, check_tokens
 
 db.init_app(app)
 _login_manager = LoginManager()
@@ -67,6 +69,74 @@ try:
         db.create_all()
 except Exception as _db_err:
     print(f"[DB] Could not create tables: {_db_err}")
+
+# ── IP geo cache ────────────────────────────────────────────────────
+_ip_geo: dict = {}   # {ip: (ts, {country, city})}
+
+def _geo_lookup(ip: str) -> dict:
+    """Return {country, city} for an IP. Cached 24h."""
+    if not ip or ip in ("unknown", "127.0.0.1") or ip.startswith("192.168") or ip.startswith("10."):
+        return {"country": "", "city": ""}
+    cached_ts, cached_geo = _ip_geo.get(ip, (0, None))
+    if cached_geo and (time.time() - cached_ts) < 86400:
+        return cached_geo
+    try:
+        r = req.get(f"http://ip-api.com/json/{ip}?fields=country,city", timeout=4)
+        if r.status_code == 200:
+            d = r.json()
+            geo = {"country": d.get("country", ""), "city": d.get("city", "")}
+        else:
+            geo = {"country": "", "city": ""}
+    except Exception:
+        geo = {"country": "", "city": ""}
+    _ip_geo[ip] = (time.time(), geo)
+    return geo
+
+def _parse_ua(ua: str) -> dict:
+    """Parse User-Agent string into device/browser/os."""
+    ua_l = (ua or "").lower()
+    if "mobile" in ua_l or "android" in ua_l or "iphone" in ua_l:
+        device = "mobile"
+    elif "tablet" in ua_l or "ipad" in ua_l:
+        device = "tablet"
+    else:
+        device = "desktop"
+
+    if "edg" in ua_l:      browser = "Edge"
+    elif "chrome" in ua_l: browser = "Chrome"
+    elif "firefox" in ua_l:browser = "Firefox"
+    elif "safari" in ua_l: browser = "Safari"
+    else:                  browser = "Unknown"
+
+    if "android" in ua_l:    os_ = "Android"
+    elif "iphone" in ua_l or "ipad" in ua_l: os_ = "iOS"
+    elif "windows" in ua_l:  os_ = "Windows"
+    elif "mac" in ua_l:      os_ = "macOS"
+    elif "linux" in ua_l:    os_ = "Linux"
+    else:                    os_ = "Unknown"
+
+    return {"device_type": device, "browser": browser, "os": os_}
+
+# ── Maintenance mode ────────────────────────────────────────────────
+_SKIP_MAINTENANCE_PATHS = ("/admin", "/static", "/api/", "/login",
+                           "/logout", "/guest", "/favicon")
+
+@app.before_request
+def _maintenance_check():
+    path = request.path
+    if any(path.startswith(p) for p in _SKIP_MAINTENANCE_PATHS):
+        return None
+    if session.get("is_admin"):
+        return None
+    try:
+        s = _GlobalSetting.query.filter_by(key="maintenance_mode").first()
+        if s and s.value == "true":
+            msg_s = _GlobalSetting.query.filter_by(key="maintenance_message").first()
+            msg   = msg_s.value if msg_s else "We're upgrading. Back soon!"
+            return render_template("maintenance.html", message=msg)
+    except Exception:
+        pass
+    return None
 
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "Ulta8900")
 
@@ -4419,6 +4489,31 @@ def login():
         except Exception as e:
             print(f"[LOGIN-NOTIFY] Error: {e}")
 
+        # Store user_id in session if DB user exists
+        if db_user is not None:
+            session["user_id"] = db_user.id
+
+        # Record login history asynchronously
+        def _record_login(uid, _ip, _ua):
+            try:
+                with app.app_context():
+                    geo  = _geo_lookup(_ip)
+                    ua_p = _parse_ua(_ua)
+                    lh   = _LoginHistory(
+                        user_id    = uid,
+                        ip_address = _ip,
+                        user_agent = _ua,
+                        country    = geo.get("country", ""),
+                        city       = geo.get("city", ""),
+                        **ua_p,
+                    )
+                    db.session.add(lh)
+                    db.session.commit()
+            except Exception as _e:
+                print(f"[LOGIN-HIST] {_e}")
+        if db_user is not None:
+            threading.Thread(target=_record_login, args=(db_user.id, ip, ua), daemon=True).start()
+
         return redirect(url_for("index"))
 
     LOGIN_AUDIT_LOG.appendleft({
@@ -4431,6 +4526,21 @@ def login():
 @app.route("/logout")
 def logout():
     username = session.get("username", "").lower()
+    # Update session duration in login history
+    uid = session.get("user_id")
+    if uid:
+        def _end_session(_uid):
+            try:
+                with app.app_context():
+                    from models import LoginHistory as _LH
+                    lh = _LH.query.filter_by(user_id=_uid).order_by(_LH.logged_in_at.desc()).first()
+                    if lh and lh.session_duration is None:
+                        mins = int((datetime.now(timezone.utc) - lh.logged_in_at.replace(tzinfo=timezone.utc)).total_seconds() / 60)
+                        lh.session_duration = mins
+                        db.session.commit()
+            except Exception:
+                pass
+        threading.Thread(target=_end_session, args=(uid,), daemon=True).start()
     with _sessions_lock:
         _active_sessions.pop(username, None)
     session.clear()
@@ -5079,11 +5189,102 @@ def api_pairs():
     return jsonify(get_pairs_exchange(exchange, market)[:limit])
 
 
+@app.route("/api/my-permissions")
+@login_required
+def api_my_permissions():
+    username = session.get("username", "")
+    try:
+        user = _DBUser.query.filter_by(username=username).first()
+        if not user:
+            return jsonify({"is_admin": False, "daily_tokens": 500, "tokens_remaining": 500,
+                            "allowed_tabs": ["scan","pairs","settings"],
+                            "allowed_modules": ["ob","fvg","fib","bias"],
+                            "allowed_exchanges": ["binance"], "allowed_timeframes": ["1h","4h"]})
+        perms = get_user_permissions(user)
+        maint = _GlobalSetting.query.filter_by(key="maintenance_mode").first()
+        perms["maintenance_mode"] = (maint.value == "true") if maint else False
+        perms["username"] = user.username
+        perms["role"]     = user.role
+        return jsonify(perms)
+    except Exception as e:
+        return jsonify({"error": str(e), "is_admin": False, "daily_tokens": 500,
+                        "tokens_remaining": 500, "allowed_tabs": ["scan","pairs","settings"],
+                        "allowed_modules": ["ob","fvg","fib","bias"],
+                        "allowed_exchanges": ["binance"], "allowed_timeframes": ["1h","4h"]})
+
+
+@app.route("/guest-access")
+def guest_access():
+    """Auto-login guest by device fingerprint."""
+    import hashlib, secrets
+    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
+    ua = request.headers.get("User-Agent", "")
+    lang = request.headers.get("Accept-Language", "")
+    fp_raw = f"{ip}|{ua}|{lang}"
+    fp = hashlib.sha256(fp_raw.encode()).hexdigest()
+    try:
+        from models import GuestDevice
+        allow = True
+        try:
+            gs = _GlobalSetting.query.filter_by(key="allow_guest_access").first()
+            if gs and gs.value == "false":
+                allow = False
+        except Exception:
+            pass
+        if not allow:
+            return redirect(url_for("index"))
+
+        gd = GuestDevice.query.filter_by(device_fingerprint=fp).first()
+        if gd:
+            user = _DBUser.query.get(gd.user_id)
+            if user and user.status == "active":
+                gd.last_seen_at = datetime.now(timezone.utc)
+                db.session.commit()
+                session["logged_in"] = True
+                session["username"]  = user.username
+                session["user_id"]   = user.id
+                return redirect(url_for("index"))
+
+        # Create new guest
+        rnd = secrets.token_hex(3)
+        gname = f"guest_{rnd}"
+        gpwd  = secrets.token_urlsafe(16)
+        new_user = _DBUser(username=gname, role="guest", status="active")
+        new_user.set_password(gpwd)
+        db.session.add(new_user)
+        db.session.flush()
+        gd_new = GuestDevice(device_fingerprint=fp, user_id=new_user.id,
+                              ip_address=ip, user_agent=ua)
+        db.session.add(gd_new)
+        db.session.commit()
+        session["logged_in"] = True
+        session["username"]  = gname
+        session["user_id"]   = new_user.id
+        session["is_guest"]  = True
+        session["guest_id"]  = gname
+        return redirect(url_for("index"))
+    except Exception as e:
+        print(f"[GUEST-ACCESS] Error: {e}")
+        return redirect(url_for("index"))
+
+
 @app.route("/api/scan", methods=["POST"])
 @login_required
 def api_scan():
     err = _guest_tab_check("scan")
     if err is not None: return err
+
+    # Token check
+    _scan_user_id = None
+    try:
+        _scan_db_user = _DBUser.query.filter_by(username=session.get("username", "")).first()
+        if _scan_db_user and not _scan_db_user.is_admin:
+            if not check_tokens(_scan_db_user):
+                return jsonify({"error": "Daily scan limit reached. Resets at midnight UTC."}), 429
+            _scan_user_id = _scan_db_user.id
+    except Exception:
+        pass
+
     payload = request.get_json(force=True) or {}
     settings = parse_settings(payload.get("settings", {}))
     market = payload.get("market", "perpetual")
@@ -5180,6 +5381,12 @@ def api_scan():
     elif filter_mode == "match" and checked_signals:
         # OR logic — at least one checked signal must be present
         results = [r for r in results if any(has_signal(r, s) for s in checked_signals)]
+
+    if _scan_user_id:
+        try:
+            consume_tokens(_scan_user_id, len(symbols))
+        except Exception:
+            pass
 
     return jsonify({
         "scanned": len(symbols),

@@ -3,7 +3,7 @@
 {% block page_title %}Edit User{% endblock %}
 
 {% block content %}
-<div style="max-width:580px">
+<div style="max-width:680px">
 
   <!-- Breadcrumb -->
   <div style="margin-bottom:20px;font-size:11px;color:var(--muted)">
@@ -12,85 +12,122 @@
     <span style="color:var(--text)">{{ user.username }}</span>
   </div>
 
-  <!-- Read-only info card -->
+  <!-- ── PROFILE CARD ── -->
   <div class="adm-card" style="margin-bottom:20px">
     <div class="adm-card-header">
-      <div class="adm-card-title">User Info</div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="font-size:22px">👤</span>
+        <div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:var(--cyan)">{{ user.username }}</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:2px">Member since {{ user.created_at.strftime('%b %Y') if user.created_at else '—' }}</div>
+        </div>
+      </div>
       <div style="display:flex;gap:6px">
-        {% if user.role == 'admin' %}
-          <span class="badge cyan">admin</span>
-        {% elif user.role == 'guest' %}
-          <span class="badge" style="background:rgba(100,116,139,.12);color:#94a3b8;border:1px solid rgba(100,116,139,.2)">guest</span>
-        {% else %}
-          <span class="badge blue">user</span>
-        {% endif %}
-        {% if user.status == 'active' %}
-          <span class="badge green">active</span>
-        {% elif user.status == 'paused' %}
-          <span class="badge amber">paused</span>
-        {% else %}
-          <span class="badge red">{{ user.status }}</span>
-        {% endif %}
+        {% if user.role == 'admin' %}<span class="badge cyan">admin</span>
+        {% elif user.role == 'guest' %}<span class="badge" style="background:rgba(100,116,139,.12);color:#94a3b8;border:1px solid rgba(100,116,139,.2)">guest</span>
+        {% else %}<span class="badge blue">user</span>{% endif %}
+        {% if user.status == 'active' %}<span class="badge green">active</span>
+        {% elif user.status == 'paused' %}<span class="badge amber">paused</span>
+        {% else %}<span class="badge red">{{ user.status }}</span>{% endif %}
       </div>
     </div>
     <div class="adm-card-body">
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px">
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:16px">
         <div class="info-chip">
           <div class="info-chip-label">User ID</div>
           <div class="info-chip-value">#{{ user.id }}</div>
         </div>
         <div class="info-chip">
           <div class="info-chip-label">Created</div>
-          <div class="info-chip-value">{{ user.created_at.strftime('%Y-%m-%d %H:%M') if user.created_at else '—' }}</div>
+          <div class="info-chip-value">{{ user.created_at.strftime('%Y-%m-%d') if user.created_at else '—' }}</div>
         </div>
         <div class="info-chip">
           <div class="info-chip-label">Last Login</div>
           <div class="info-chip-value">
-            {% if user.last_login_at %}
-              {{ user.last_login_at.strftime('%Y-%m-%d %H:%M') }}
+            {% if user.last_login_at %}{{ user.last_login_at.strftime('%Y-%m-%d %H:%M') }}
             {% else %}Never{% endif %}
           </div>
         </div>
         <div class="info-chip">
-          <div class="info-chip-label">Last Login IP</div>
+          <div class="info-chip-label">Last IP</div>
           <div class="info-chip-value">{{ user.last_login_ip or '—' }}</div>
         </div>
       </div>
+
+      <!-- Stats -->
+      {% if stats %}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+        <div style="background:#04090f;border:1px solid var(--border);border-radius:8px;padding:12px">
+          <div class="info-chip-label">This Month</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:6px">
+            Logins: <span style="color:var(--text)">{{ stats.month_logins }}</span> ·
+            Scans: <span style="color:var(--text)">{{ stats.month_scans }}</span> ·
+            Tokens: <span style="color:var(--cyan)">{{ stats.month_tokens }}</span>
+          </div>
+        </div>
+        <div style="background:#04090f;border:1px solid var(--border);border-radius:8px;padding:12px">
+          <div class="info-chip-label">This Week</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:6px">
+            Logins: <span style="color:var(--text)">{{ stats.week_logins }}</span> ·
+            Scans: <span style="color:var(--text)">{{ stats.week_scans }}</span>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Login history -->
+      {% if login_history %}
+      <div>
+        <div style="font-size:10px;color:var(--muted2);letter-spacing:1px;text-transform:uppercase;font-weight:600;margin-bottom:8px">Recent Login History</div>
+        <div class="adm-table-wrap" style="max-height:200px;overflow-y:auto">
+          <table class="adm-table">
+            <thead>
+              <tr><th>Date</th><th>IP</th><th>Location</th><th>Device</th><th>Browser</th></tr>
+            </thead>
+            <tbody>
+              {% for lh in login_history %}
+              <tr>
+                <td style="font-size:11px;color:var(--muted);white-space:nowrap">{{ lh.logged_in_at.strftime('%m-%d %H:%M') if lh.logged_in_at else '—' }}</td>
+                <td style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted)">{{ lh.ip_address or '—' }}</td>
+                <td style="font-size:11px;color:var(--muted)">{{ ((lh.city + ', ') if lh.city else '') + (lh.country or '—') }}</td>
+                <td style="font-size:11px">
+                  {% if lh.device_type == 'mobile' %}📱
+                  {% elif lh.device_type == 'tablet' %}📟
+                  {% else %}🖥{% endif %}
+                  {{ lh.device_type or '—' }}
+                </td>
+                <td style="font-size:11px;color:var(--muted)">{{ lh.browser or '—' }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% endif %}
       {% if user.notes %}
-      <div style="margin-top:14px;padding:10px 12px;background:#04090f;border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--muted)">
-        <span style="font-size:10px;color:var(--muted2);letter-spacing:1px;text-transform:uppercase;display:block;margin-bottom:4px">Notes</span>
-        {{ user.notes }}
+      <div style="margin-top:12px;padding:10px 12px;background:#04090f;border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--muted)">
+        <span class="info-chip-label" style="display:block;margin-bottom:4px">Notes</span>{{ user.notes }}
       </div>
       {% endif %}
     </div>
   </div>
 
-  <!-- Edit form -->
+  <!-- ── EDIT FORM ── -->
   <div class="adm-card" style="margin-bottom:20px">
-    <div class="adm-card-header">
-      <div class="adm-card-title">Edit Details</div>
-    </div>
+    <div class="adm-card-header"><div class="adm-card-title">Edit Details</div></div>
     <div class="adm-card-body">
-
-      {% if errors._general %}
-      <div class="adm-form-error-box">{{ errors._general }}</div>
-      {% endif %}
-
+      {% if errors._general %}<div class="adm-form-error-box">{{ errors._general }}</div>{% endif %}
       <form method="POST">
-
-        <!-- Username -->
         <div class="adm-field {% if errors.username %}has-error{% endif %}">
           <label>Username</label>
           <input type="text" name="username" value="{{ user.username }}" maxlength="30" autocomplete="off"/>
           {% if errors.username %}<div class="adm-field-error">{{ errors.username }}</div>{% endif %}
         </div>
-
-        <!-- Role + Status -->
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
           <div class="adm-field {% if errors.role %}has-error{% endif %}">
             <label>Role</label>
             <select name="role">
-              <option value="user" {% if user.role=='user' %}selected{% endif %}>user</option>
+              <option value="user"  {% if user.role=='user'  %}selected{% endif %}>user</option>
               <option value="admin" {% if user.role=='admin' %}selected{% endif %}>admin</option>
               <option value="guest" {% if user.role=='guest' %}selected{% endif %}>guest</option>
             </select>
@@ -105,90 +142,131 @@
             </select>
           </div>
         </div>
-
-        <!-- Notes -->
         <div class="adm-field">
           <label>Notes <span style="color:var(--muted)">(optional)</span></label>
-          <textarea name="notes" rows="3" placeholder="Internal admin notes…">{{ user.notes or '' }}</textarea>
+          <textarea name="notes" rows="2" placeholder="Internal admin notes…">{{ user.notes or '' }}</textarea>
         </div>
-
-        <!-- Password change section -->
-        <div style="border-top:1px solid var(--border);padding-top:16px;margin-top:4px">
+        <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:4px">
           <div style="font-size:11px;color:var(--muted2);letter-spacing:1px;text-transform:uppercase;font-weight:600;margin-bottom:12px">Change Password</div>
-          <div class="adm-field {% if errors.new_password %}has-error{% endif %}">
-            <label>New Password</label>
-            <div style="position:relative">
-              <input type="password" name="new_password" id="newPwdField" placeholder="Leave blank to keep current"/>
-              <button type="button" onclick="toggleVis('newPwdField',this)"
-                      style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px">👁</button>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+            <div class="adm-field {% if errors.new_password %}has-error{% endif %}">
+              <label>New Password</label>
+              <input type="password" name="new_password" placeholder="Leave blank to keep"/>
+              {% if errors.new_password %}<div class="adm-field-error">{{ errors.new_password }}</div>{% endif %}
             </div>
-            {% if errors.new_password %}<div class="adm-field-error">{{ errors.new_password }}</div>{% endif %}
-            <div class="adm-field-hint">Leave blank to keep current password</div>
-          </div>
-          <div class="adm-field {% if errors.confirm_password %}has-error{% endif %}">
-            <label>Confirm New Password</label>
-            <input type="password" name="confirm_password" placeholder="Repeat new password"/>
-            {% if errors.confirm_password %}<div class="adm-field-error">{{ errors.confirm_password }}</div>{% endif %}
+            <div class="adm-field {% if errors.confirm_password %}has-error{% endif %}">
+              <label>Confirm Password</label>
+              <input type="password" name="confirm_password" placeholder="Repeat"/>
+              {% if errors.confirm_password %}<div class="adm-field-error">{{ errors.confirm_password }}</div>{% endif %}
+            </div>
           </div>
         </div>
-
-        <!-- Buttons -->
         <div style="display:flex;gap:10px;margin-top:8px">
-          <a href="{{ url_for('admin.users') }}"
-             style="flex:1;text-align:center;background:rgba(255,255,255,.04);border:1px solid var(--border);color:var(--muted);padding:12px;border-radius:9px;text-decoration:none;font-size:12px;font-weight:600;transition:all .2s"
-             onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--muted)'">Cancel</a>
-          <button type="submit"
-                  style="flex:2;background:linear-gradient(135deg,#0891b2,#06b6d4);border:none;color:#fff;padding:12px;border-radius:9px;cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;letter-spacing:.5px;box-shadow:0 0 18px rgba(8,145,178,.35);transition:all .2s"
-                  onmouseover="this.style.boxShadow='0 0 30px rgba(8,145,178,.55)'" onmouseout="this.style.boxShadow='0 0 18px rgba(8,145,178,.35)'">
-            Save Changes →
-          </button>
+          <a href="{{ url_for('admin.users') }}" style="flex:1;text-align:center;background:rgba(255,255,255,.04);border:1px solid var(--border);color:var(--muted);padding:11px;border-radius:9px;text-decoration:none;font-size:12px;font-weight:600">Cancel</a>
+          <button type="submit" style="flex:2;background:linear-gradient(135deg,#0891b2,#06b6d4);border:none;color:#fff;padding:11px;border-radius:9px;cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;letter-spacing:.5px;box-shadow:0 0 16px rgba(8,145,178,.3)">Save Changes →</button>
         </div>
-
       </form>
     </div>
   </div>
 
-  <!-- Danger zone -->
+  <!-- ── PERMISSIONS OVERRIDE ── -->
+  <div class="adm-card" style="margin-bottom:20px">
+    <div class="adm-card-header">
+      <div class="adm-card-title">Permissions Override</div>
+      <div style="font-size:11px;color:var(--muted)">Role: <span style="color:var(--cyan)">{{ user.role }}</span> · Null = use role default</div>
+    </div>
+    <div class="adm-card-body">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
+        <div class="adm-field">
+          <label>Daily Tokens <span style="color:var(--muted)">(role default: {{ eff.daily_tokens }})</span></label>
+          <input type="number" id="ov_daily_tokens" placeholder="null = role default" min="0" max="999999"
+                 value="{{ user_perm.daily_tokens if user_perm and user_perm.daily_tokens is not none else '' }}"/>
+        </div>
+        <div class="adm-field">
+          <label>Max Pairs/Scan <span style="color:var(--muted)">(default: {{ eff.max_pairs_per_scan }})</span></label>
+          <input type="number" id="ov_max_scan" placeholder="null = role default" min="1" max="1000"
+                 value="{{ user_perm.max_pairs_per_scan if user_perm and user_perm.max_pairs_per_scan is not none else '' }}"/>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:18px;margin-bottom:16px">
+        <div>
+          <div class="perm-label">Modules</div>
+          {% for m in all_modules %}
+          <label class="perm-chk">
+            <input type="checkbox" class="ov-mod" value="{{ m }}"
+                   {% if m in eff.allowed_modules %}checked{% endif %}>
+            <span>{{ m|upper }}</span>
+          </label>
+          {% endfor %}
+        </div>
+        <div>
+          <div class="perm-label">Tabs</div>
+          {% for t in all_tabs %}
+          <label class="perm-chk">
+            <input type="checkbox" class="ov-tab" value="{{ t }}"
+                   {% if t in eff.allowed_tabs %}checked{% endif %}>
+            <span>{{ t }}</span>
+          </label>
+          {% endfor %}
+        </div>
+        <div>
+          <div class="perm-label">Exchanges</div>
+          {% for e in all_exchanges %}
+          <label class="perm-chk">
+            <input type="checkbox" class="ov-exch" value="{{ e }}"
+                   {% if e in eff.allowed_exchanges %}checked{% endif %}>
+            <span>{{ e|title }}</span>
+          </label>
+          {% endfor %}
+          <div class="perm-label" style="margin-top:12px">Timeframes</div>
+          {% for tf in all_timeframes %}
+          <label class="perm-chk">
+            <input type="checkbox" class="ov-tf" value="{{ tf }}"
+                   {% if tf in eff.allowed_timeframes %}checked{% endif %}>
+            <span>{{ tf }}</span>
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div id="permMsg" style="font-size:11px;margin-bottom:10px;display:none"></div>
+      <div style="display:flex;gap:10px">
+        <button onclick="savePermissions()"
+                style="background:linear-gradient(135deg,#0891b2,#06b6d4);border:none;color:#fff;padding:10px 20px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700">Save Permissions</button>
+        <button onclick="resetPermissions()"
+                style="background:rgba(255,255,255,.04);border:1px solid var(--border);color:var(--muted);padding:10px 20px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:600">Reset to Role Defaults</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── DANGER ZONE ── -->
   {% if user.id != current_user.id %}
-  <div class="adm-card" style="border-color:rgba(248,113,113,.2)">
+  <div class="adm-card" style="border-color:rgba(248,113,113,.2);margin-bottom:20px">
     <div class="adm-card-header" style="border-color:rgba(248,113,113,.15)">
       <div class="adm-card-title" style="color:var(--red)">Danger Zone</div>
     </div>
     <div class="adm-card-body">
-      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;margin-bottom:14px">
         <div>
           <div style="font-size:12px;color:var(--text);font-weight:600">Quick Reset Password</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:3px">Set a new password via popup</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:3px">Set a new password immediately</div>
         </div>
-        <button onclick="openResetModal()"
-                style="background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);color:var(--amber);padding:8px 16px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;transition:all .2s"
-                onmouseover="this.style.background='rgba(245,158,11,.2)'" onmouseout="this.style.background='rgba(245,158,11,.1)'">Reset Password</button>
+        <button onclick="openResetModal()" style="background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);color:var(--amber);padding:8px 16px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:600">Reset Password</button>
       </div>
-      <div style="border-top:1px solid rgba(248,113,113,.1);margin:16px 0"></div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between">
+      <div style="border-top:1px solid rgba(248,113,113,.1);padding-top:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;margin-bottom:14px">
         <div>
-          <div style="font-size:12px;color:var(--text);font-weight:600">
-            {% if user.status == 'active' %}Pause User{% else %}Unpause User{% endif %}
-          </div>
-          <div style="font-size:11px;color:var(--muted);margin-top:3px">
-            {% if user.status == 'active' %}Block login without deleting the account{% else %}Re-enable login for this user{% endif %}
-          </div>
+          <div style="font-size:12px;color:var(--text);font-weight:600">{% if user.status == 'active' %}Pause User{% else %}Unpause User{% endif %}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:3px">{% if user.status == 'active' %}Block login without deleting{% else %}Re-enable login{% endif %}</div>
         </div>
-        <button onclick="quickToggle({{ user.id }}, '{{ user.status }}')"
-                style="background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);color:var(--amber);padding:8px 16px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;transition:all .2s"
-                onmouseover="this.style.background='rgba(245,158,11,.2)'" onmouseout="this.style.background='rgba(245,158,11,.1)'">
-          {{ 'Pause Account' if user.status == 'active' else 'Unpause Account' }}
-        </button>
+        <button onclick="quickToggle({{ user.id }}, '{{ user.status }}')" style="background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);color:var(--amber);padding:8px 16px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:600">{{ 'Pause Account' if user.status == 'active' else 'Unpause Account' }}</button>
       </div>
-      <div style="border-top:1px solid rgba(248,113,113,.1);margin:16px 0"></div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between">
+      <div style="border-top:1px solid rgba(248,113,113,.1);padding-top:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between">
         <div>
           <div style="font-size:12px;color:var(--red);font-weight:600">Delete User</div>
           <div style="font-size:11px;color:var(--muted);margin-top:3px">Permanently remove this account</div>
         </div>
-        <button onclick="openDeleteModal()"
-                style="background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.3);color:var(--red);padding:8px 16px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;transition:all .2s"
-                onmouseover="this.style.background='rgba(248,113,113,.2)'" onmouseout="this.style.background='rgba(248,113,113,.1)'">Delete Account</button>
+        <button onclick="openDeleteModal()" style="background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.3);color:var(--red);padding:8px 16px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:600">Delete Account</button>
       </div>
     </div>
   </div>
@@ -196,122 +274,138 @@
 
 </div>
 
-<!-- Reset password modal -->
+<!-- Modals -->
 <div id="resetModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:200;align-items:center;justify-content:center">
-  <div style="background:#060f1e;border:1px solid var(--border);border-radius:14px;padding:28px;max-width:380px;width:90%">
+  <div style="background:#060f1e;border:1px solid var(--border);border-radius:14px;padding:28px;max-width:360px;width:90%">
     <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:16px">Reset Password — {{ user.username }}</div>
-    <div class="adm-field">
-      <label>New Password</label>
-      <input type="password" id="resetPwd" placeholder="Min. 8 characters"/>
-    </div>
-    <div class="adm-field">
-      <label>Confirm Password</label>
-      <input type="password" id="resetConfirm" placeholder="Repeat password"/>
-    </div>
+    <div class="adm-field"><label>New Password</label><input type="password" id="resetPwd" placeholder="Min. 8 characters"/></div>
+    <div class="adm-field"><label>Confirm Password</label><input type="password" id="resetConfirm" placeholder="Repeat"/></div>
     <div id="resetError" style="font-size:11px;color:var(--red);margin-bottom:10px;display:none"></div>
     <div style="display:flex;gap:10px">
-      <button onclick="document.getElementById('resetModal').style.display='none'"
-              style="flex:1;background:rgba(255,255,255,.04);border:1px solid var(--border);color:var(--muted);padding:10px;border-radius:8px;cursor:pointer;font-size:12px">Cancel</button>
-      <button onclick="submitReset()"
-              style="flex:2;background:linear-gradient(135deg,#b45309,#f59e0b);border:none;color:#fff;padding:10px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700">Reset Password</button>
+      <button onclick="document.getElementById('resetModal').style.display='none'" style="flex:1;background:rgba(255,255,255,.04);border:1px solid var(--border);color:var(--muted);padding:10px;border-radius:8px;cursor:pointer;font-size:12px">Cancel</button>
+      <button onclick="submitReset()" style="flex:2;background:linear-gradient(135deg,#b45309,#f59e0b);border:none;color:#fff;padding:10px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700">Reset</button>
     </div>
   </div>
 </div>
 
-<!-- Delete confirmation modal -->
 <div id="deleteModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:200;align-items:center;justify-content:center">
   <div style="background:#060f1e;border:1px solid var(--border);border-radius:14px;padding:28px;max-width:400px;width:90%">
     <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:8px">Delete {{ user.username }}?</div>
     <div style="font-size:12px;color:var(--muted);margin-bottom:18px">This cannot be undone. Type the username to confirm.</div>
     <div class="adm-field">
-      <label>Type <span style="color:var(--red);font-family:'JetBrains Mono',monospace">{{ user.username }}</span> to confirm</label>
+      <label>Type <span style="color:var(--red);font-family:'JetBrains Mono',monospace">{{ user.username }}</span></label>
       <input type="text" id="deleteConfirmInput" placeholder="{{ user.username }}" oninput="checkDeleteConfirm(this.value)"/>
     </div>
     <form id="deleteForm" method="POST" action="{{ url_for('admin.users_delete', user_id=user.id) }}">
       <input type="hidden" name="confirm_username" id="deleteConfirmHidden"/>
       <div style="display:flex;gap:10px">
-        <button type="button" onclick="document.getElementById('deleteModal').style.display='none'"
-                style="flex:1;background:rgba(255,255,255,.04);border:1px solid var(--border);color:var(--muted);padding:10px;border-radius:8px;cursor:pointer;font-size:12px">Cancel</button>
-        <button type="submit" id="deleteSubmitBtn" disabled
-                style="flex:2;background:linear-gradient(135deg,#b91c1c,#ef4444);border:none;color:#fff;padding:10px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700;opacity:.5;transition:opacity .2s">DELETE</button>
+        <button type="button" onclick="document.getElementById('deleteModal').style.display='none'" style="flex:1;background:rgba(255,255,255,.04);border:1px solid var(--border);color:var(--muted);padding:10px;border-radius:8px;cursor:pointer;font-size:12px">Cancel</button>
+        <button type="submit" id="deleteSubmitBtn" disabled style="flex:2;background:linear-gradient(135deg,#b91c1c,#ef4444);border:none;color:#fff;padding:10px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700;opacity:.5;transition:opacity .2s">DELETE</button>
       </div>
     </form>
   </div>
 </div>
 
-<!-- Toast -->
 <div id="toast" style="display:none;position:fixed;bottom:24px;right:24px;background:#0a1628;border:1px solid var(--border);border-radius:10px;padding:12px 18px;font-size:12px;z-index:300;max-width:300px"></div>
 
 <style>
-.adm-field{margin-bottom:16px}
+.adm-field{margin-bottom:14px}
 .adm-field label{display:block;font-size:10px;color:var(--muted2);letter-spacing:1px;text-transform:uppercase;margin-bottom:7px;font-weight:600}
-.adm-field input,.adm-field select,.adm-field textarea{width:100%;background:#04090f;color:var(--text);border:1px solid var(--border);border-radius:9px;padding:11px 14px;font-family:'JetBrains Mono',monospace;font-size:13px;outline:none;transition:border-color .2s,box-shadow .2s;resize:vertical}
+.adm-field input,.adm-field select,.adm-field textarea{width:100%;background:#04090f;color:var(--text);border:1px solid var(--border);border-radius:9px;padding:10px 12px;font-family:'JetBrains Mono',monospace;font-size:13px;outline:none;transition:border-color .2s;resize:vertical}
 .adm-field input:focus,.adm-field select:focus,.adm-field textarea:focus{border-color:rgba(34,211,238,.4);box-shadow:0 0 0 3px rgba(34,211,238,.06)}
-.adm-field select option{background:#060f1e;color:var(--text)}
+.adm-field select option{background:#060f1e}
 .adm-field.has-error input,.adm-field.has-error select{border-color:rgba(248,113,113,.5)}
 .adm-field-error{font-size:11px;color:var(--red);margin-top:5px}
-.adm-field-hint{font-size:10px;color:var(--muted2);margin-top:5px}
 .adm-form-error-box{background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.25);color:var(--red);border-radius:8px;padding:10px 14px;font-size:12px;margin-bottom:16px}
 .info-chip{background:#04090f;border:1px solid var(--border);border-radius:8px;padding:12px}
-.info-chip-label{font-size:9px;color:var(--muted2);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px}
+.info-chip-label{font-size:9px;color:var(--muted2);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;font-weight:600}
 .info-chip-value{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text)}
+.perm-label{font-size:9px;color:var(--muted2);letter-spacing:1px;text-transform:uppercase;font-weight:600;margin-bottom:8px}
+.perm-chk{display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;font-size:12px;color:var(--muted)}
+.perm-chk:hover{color:var(--text)}
+.perm-chk input[type=checkbox]{width:13px;height:13px;accent-color:var(--cyan);cursor:pointer;flex-shrink:0}
 </style>
 
 <script>
-function toggleVis(id, btn) {
-  var inp = document.getElementById(id);
-  inp.type = inp.type === 'password' ? 'text' : 'password';
+var USER_ID = {{ user.id }};
+
+function openResetModal(){
+  document.getElementById('resetPwd').value='';
+  document.getElementById('resetConfirm').value='';
+  document.getElementById('resetError').style.display='none';
+  document.getElementById('resetModal').style.display='flex';
 }
-function openResetModal() {
-  document.getElementById('resetPwd').value = '';
-  document.getElementById('resetConfirm').value = '';
-  document.getElementById('resetError').style.display = 'none';
-  document.getElementById('resetModal').style.display = 'flex';
+function submitReset(){
+  var pwd=document.getElementById('resetPwd').value;
+  var cfm=document.getElementById('resetConfirm').value;
+  var err=document.getElementById('resetError');
+  if(!pwd||pwd.length<8){err.textContent='Min. 8 characters.';err.style.display='block';return;}
+  if(pwd!==cfm){err.textContent='Passwords do not match.';err.style.display='block';return;}
+  fetch('/admin/users/'+USER_ID+'/reset-password',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({new_password:pwd,confirm_password:cfm})
+  }).then(function(r){return r.json();}).then(function(d){
+    if(d.error){err.textContent=d.error;err.style.display='block';return;}
+    document.getElementById('resetModal').style.display='none';
+    showToast('Password reset successfully.','green');
+  }).catch(function(){err.textContent='Request failed.';err.style.display='block';});
 }
-function submitReset() {
-  var pwd = document.getElementById('resetPwd').value;
-  var cfm = document.getElementById('resetConfirm').value;
-  var err = document.getElementById('resetError');
-  if (!pwd || pwd.length < 8) { err.textContent = 'Min. 8 characters required.'; err.style.display='block'; return; }
-  if (pwd !== cfm) { err.textContent = 'Passwords do not match.'; err.style.display='block'; return; }
-  fetch('/admin/users/{{ user.id }}/reset-password', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({new_password: pwd, confirm_password: cfm})
-  }).then(function(r){return r.json();}).then(function(data) {
-    if (data.error) { err.textContent = data.error; err.style.display='block'; return; }
-    document.getElementById('resetModal').style.display = 'none';
-    showToast('Password reset successfully.', 'green');
-  }).catch(function(){ err.textContent='Request failed.'; err.style.display='block'; });
-}
-function quickToggle(uid, status) {
-  fetch('/admin/users/' + uid + '/toggle-status', {method:'POST',headers:{'Content-Type':'application/json'}})
+function quickToggle(uid,status){
+  fetch('/admin/users/'+uid+'/toggle-status',{method:'POST',headers:{'Content-Type':'application/json'}})
     .then(function(r){return r.json();})
-    .then(function(data){
-      if (data.error) { showToast(data.error,'red'); return; }
-      showToast('Status updated to ' + data.status + '. Reloading…','green');
+    .then(function(d){
+      if(d.error){showToast(d.error,'red');return;}
+      showToast('Status → '+d.status+'. Reloading…','green');
       setTimeout(function(){location.reload();},1200);
     });
 }
-function openDeleteModal() {
-  document.getElementById('deleteConfirmInput').value = '';
-  document.getElementById('deleteSubmitBtn').disabled = true;
-  document.getElementById('deleteSubmitBtn').style.opacity = '.5';
-  document.getElementById('deleteModal').style.display = 'flex';
+function openDeleteModal(){
+  document.getElementById('deleteConfirmInput').value='';
+  document.getElementById('deleteSubmitBtn').disabled=true;
+  document.getElementById('deleteSubmitBtn').style.opacity='.5';
+  document.getElementById('deleteModal').style.display='flex';
 }
-function checkDeleteConfirm(v) {
-  var match = v === '{{ user.username }}';
-  document.getElementById('deleteSubmitBtn').disabled = !match;
-  document.getElementById('deleteSubmitBtn').style.opacity = match ? '1' : '.5';
-  document.getElementById('deleteConfirmHidden').value = v;
+function checkDeleteConfirm(v){
+  var match=v==='{{ user.username }}';
+  document.getElementById('deleteSubmitBtn').disabled=!match;
+  document.getElementById('deleteSubmitBtn').style.opacity=match?'1':'.5';
+  document.getElementById('deleteConfirmHidden').value=v;
 }
-function showToast(msg, color) {
-  var t = document.getElementById('toast');
-  t.textContent = msg;
-  t.style.color = color === 'green' ? 'var(--green)' : 'var(--red)';
-  t.style.borderColor = color === 'green' ? 'rgba(34,197,94,.3)' : 'rgba(248,113,113,.3)';
-  t.style.display = 'block';
-  setTimeout(function(){ t.style.display = 'none'; }, 3500);
+function savePermissions(){
+  var payload={
+    daily_tokens:      document.getElementById('ov_daily_tokens').value||null,
+    max_pairs_per_scan:document.getElementById('ov_max_scan').value||null,
+    allowed_modules:   Array.from(document.querySelectorAll('.ov-mod:checked')).map(function(e){return e.value;}),
+    allowed_tabs:      Array.from(document.querySelectorAll('.ov-tab:checked')).map(function(e){return e.value;}),
+    allowed_exchanges: Array.from(document.querySelectorAll('.ov-exch:checked')).map(function(e){return e.value;}),
+    allowed_timeframes:Array.from(document.querySelectorAll('.ov-tf:checked')).map(function(e){return e.value;}),
+  };
+  if(payload.daily_tokens) payload.daily_tokens=parseInt(payload.daily_tokens);
+  if(payload.max_pairs_per_scan) payload.max_pairs_per_scan=parseInt(payload.max_pairs_per_scan);
+  fetch('/admin/users/'+USER_ID+'/permissions',{
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)
+  }).then(function(r){return r.json();}).then(function(d){
+    if(d.error){showToast(d.error,'red');return;}
+    showToast('Permissions saved.','green');
+  }).catch(function(){showToast('Request failed.','red');});
+}
+function resetPermissions(){
+  if(!confirm('Reset to role defaults?')) return;
+  fetch('/admin/users/'+USER_ID+'/permissions',{
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reset:true})
+  }).then(function(r){return r.json();}).then(function(d){
+    if(d.error){showToast(d.error,'red');return;}
+    showToast('Reset to role defaults. Reloading…','green');
+    setTimeout(function(){location.reload();},1200);
+  }).catch(function(){showToast('Request failed.','red');});
+}
+function showToast(msg,color){
+  var t=document.getElementById('toast');
+  t.textContent=msg;
+  t.style.color=color==='green'?'var(--green)':'var(--red)';
+  t.style.borderColor=color==='green'?'rgba(34,197,94,.3)':'rgba(248,113,113,.3)';
+  t.style.display='block';
+  setTimeout(function(){t.style.display='none';},3500);
 }
 </script>
 
