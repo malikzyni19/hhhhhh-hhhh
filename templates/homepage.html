@@ -541,10 +541,7 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 .letter-span{display:inline-block;opacity:0;will-change:opacity}
 
 #features{position:relative}
-#mod-sun-wrap{position:relative;width:100%;height:420px;margin:0 0 48px;overflow:hidden}
-#mod-box-bg{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;display:block}
-@media(max-width:768px){#mod-sun-wrap{height:320px;margin-bottom:36px}}
-@media(max-width:480px){#mod-sun-wrap{height:260px;margin-bottom:28px}}
+#mod-sun-bg{position:absolute;top:0;left:0;width:100%;height:100%;z-index:-1;pointer-events:none;display:block}
 </style>
 </head>
 <body>
@@ -788,11 +785,10 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 
 <!-- FEATURES -->
 <div class="section" id="features">
+  <canvas id="mod-sun-bg" aria-hidden="true"></canvas>
   <div class="sec-eyebrow" data-i18n="feat_eyebrow">SMC Modules</div>
   <h2 class="sec-h"><span data-i18n="feat_h">Everything to trade smart money</span></h2>
   <p class="sec-sub" data-i18n="feat_sub">Six professional tools — scan, detect and act on every Smart Money setup across 400+ pairs.</p>
-
-  <div id="mod-sun-wrap"><canvas id="mod-box-bg" aria-hidden="true"></canvas></div>
 
   <!-- MODULE 01 -->
   <div class="feat-row" style="margin-bottom:16px">
@@ -1983,7 +1979,20 @@ function lwStartBounce(){
   /* Ring B — outer (r=4.3, cyan tint) */
   var RB = { r: 4.3, tilt: 0.68, speed: 0.0034 };
 
-  /* Orbit rings intentionally invisible — configs RA/RB kept for symbol position math */
+  function makeRing(cfg, col) {
+    var m = new THREE.Mesh(
+      new THREE.TorusGeometry(cfg.r, 0.012, 20, 140),
+      new THREE.MeshBasicMaterial({
+        color: col, transparent: true, opacity: 0.30,
+        blending: THREE.AdditiveBlending, depthWrite: false
+      })
+    );
+    m.rotation.x = Math.PI / 2 + cfg.tilt;
+    scene.add(m);
+    return m;
+  }
+  var ringA = makeRing(RA, 0xf59e0b);
+  var ringB = makeRing(RB, 0x22d3ee);
 
   /* ── 5 crypto symbols: 2 on inner ring, 3 on outer ── */
   /* Even spacing: inner = 180° apart, outer = 120° apart */
@@ -2088,6 +2097,10 @@ function lwStartBounce(){
     /* Stars — very gentle breath */
     starMat.opacity = 0.26 + Math.sin(t * 0.11) * 0.07;
 
+    /* Rings */
+    ringA.scale.setScalar(msc);
+    ringB.scale.setScalar(msc);
+
     /* Symbols */
     cryptos.forEach(function(c, i) {
       c.ang     += c.cfg.speed;
@@ -2159,34 +2172,22 @@ function lwStartBounce(){
 })();
 
 /* ════════════════════════════════════════════════════════════
-   MODULES — SUN BURST SYSTEM (6-phase cinematic cycle)
+   MODULES — REALISTIC PLASMA SUN (background of features)
 ════════════════════════════════════════════════════════════ */
 (function initModulesBg() {
-  var canvas = document.getElementById('mod-box-bg');
+  var canvas = document.getElementById('mod-sun-bg');
   if (!canvas) return;
   var ctx = canvas.getContext('2d');
 
-  var CYCLE = 15; /* seconds per full animation cycle */
-  var N = 5;
-  var symbols = [
-    { sym: '₿', color: '#f59e0b', rgb: [245,158, 11] },
-    { sym: 'Ξ',  color: '#818cf8', rgb: [129,140,248] },
-    { sym: '◎',  color: '#22d3ee', rgb: [ 34,211,238] },
-    { sym: '✕', color: '#a78bfa', rgb: [167,139,250] },
-    { sym: '◆', color: '#fbbf24', rgb: [251,191, 36] },
-  ];
-
-  var baseAng = symbols.map(function(_, i) { return i * Math.PI * 2 / N; });
-  var totalAng = 0;
-  var impactFlash = [0, 0, 0, 0, 0];
+  var CYCLE  = 10; /* seconds per burst cycle */
   var prevTs = null;
-  var cycleStart = null;
+  var totalT = 0;
 
   function resize() {
     var wrap = canvas.parentElement;
     if (!wrap) return;
-    canvas.width  = wrap.offsetWidth  || 800;
-    canvas.height = wrap.offsetHeight || 420;
+    canvas.width  = wrap.offsetWidth  || 900;
+    canvas.height = wrap.offsetHeight || 600;
   }
   resize();
   window.addEventListener('resize', function() { resize(); });
@@ -2194,175 +2195,143 @@ function lwStartBounce(){
   var active = true;
   if (window.IntersectionObserver) {
     new IntersectionObserver(function(e) { active = e[0].isIntersecting; },
-      { threshold: 0.1 }).observe(canvas.parentElement);
+      { threshold: 0.05 }).observe(canvas.parentElement);
   }
 
-  function drawSun(cx, cy, baseR, scale) {
-    var r = baseR * scale;
-    /* outer atmosphere */
-    var og = ctx.createRadialGradient(cx, cy, 0, cx, cy, r * 3.2);
-    og.addColorStop(0,    'rgba(255,210,60,0.38)');
-    og.addColorStop(0.35, 'rgba(255,120,20,0.14)');
-    og.addColorStop(1,    'rgba(255,50,0,0)');
-    ctx.fillStyle = og;
-    ctx.beginPath(); ctx.arc(cx, cy, r * 3.2, 0, Math.PI * 2); ctx.fill();
-    /* corona */
-    var cg = ctx.createRadialGradient(cx, cy, r * 0.28, cx, cy, r * 1.85);
-    cg.addColorStop(0,   'rgba(255,230,90,0.82)');
-    cg.addColorStop(0.5, 'rgba(255,130,15,0.38)');
-    cg.addColorStop(1,   'rgba(255,50,0,0)');
-    ctx.fillStyle = cg;
-    ctx.beginPath(); ctx.arc(cx, cy, r * 1.85, 0, Math.PI * 2); ctx.fill();
-    /* bright core */
-    var ic = ctx.createRadialGradient(cx, cy, 0, cx, cy, r * 0.72);
-    ic.addColorStop(0,   'rgba(255,255,230,1)');
-    ic.addColorStop(0.5, 'rgba(255,215,80,0.95)');
-    ic.addColorStop(1,   'rgba(255,140,0,0)');
-    ctx.fillStyle = ic;
-    ctx.beginPath(); ctx.arc(cx, cy, r * 0.72, 0, Math.PI * 2); ctx.fill();
+  /* ── Draw realistic plasma sun ── */
+  function drawSun(cx, cy, R, t, bs) {
+    /* bs = burst scale multiplier (1.0 = normal) */
+    ctx.save();
+
+    /* Deep atmosphere / outer halo */
+    var atm = ctx.createRadialGradient(cx, cy, R * 0.5, cx, cy, R * (3.6 + bs * 1.4));
+    atm.addColorStop(0,    'rgba(255,175,25,' + (0.28 * Math.min(bs, 2)).toFixed(3) + ')');
+    atm.addColorStop(0.28, 'rgba(255,100,8,'  + (0.11 * Math.min(bs, 2)).toFixed(3) + ')');
+    atm.addColorStop(0.6,  'rgba(210,45,0,'   + (0.04 * Math.min(bs, 2)).toFixed(3) + ')');
+    atm.addColorStop(1,    'rgba(160,15,0,0)');
+    ctx.fillStyle = atm;
+    ctx.beginPath(); ctx.arc(cx, cy, R * (3.6 + bs * 1.4), 0, Math.PI * 2); ctx.fill();
+
+    /* Clip everything inside the disc */
+    ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.clip();
+
+    /* Surface base: white centre → bright yellow → orange → dark red rim */
+    var surf = ctx.createRadialGradient(cx + R * 0.05, cy - R * 0.05, 0, cx, cy, R);
+    surf.addColorStop(0,    '#ffffc8');
+    surf.addColorStop(0.16, '#ffe640');
+    surf.addColorStop(0.44, '#ff8a0a');
+    surf.addColorStop(0.72, '#d63404');
+    surf.addColorStop(1,    '#8c1202');
+    ctx.fillStyle = surf;
+    ctx.fillRect(cx - R, cy - R, R * 2, R * 2);
+
+    /* Plasma granules — primary ring */
+    for (var i = 0; i < 14; i++) {
+      var a  = i * Math.PI * 2 / 14 + t * (0.09 + i * 0.003);
+      var d  = R * (0.18 + 0.32 * Math.abs(Math.sin(t * 0.38 + i * 0.88)));
+      var px = cx + Math.cos(a) * d;
+      var py = cy + Math.sin(a) * d;
+      var pr = R * (0.12 + 0.10 * Math.sin(t * 0.62 + i * 1.15));
+      var bv = 0.50 + 0.45 * Math.sin(t * 0.52 + i * 0.73);
+      var g1 = ctx.createRadialGradient(px, py, 0, px, py, pr);
+      g1.addColorStop(0,   'rgba(255,255,175,' + bv.toFixed(2) + ')');
+      g1.addColorStop(0.4, 'rgba(255,185,28,'  + (bv * 0.42).toFixed(2) + ')');
+      g1.addColorStop(1,   'rgba(255,70,0,0)');
+      ctx.fillStyle = g1;
+      ctx.beginPath(); ctx.arc(px, py, pr, 0, Math.PI * 2); ctx.fill();
+    }
+
+    /* Plasma granules — fine inner layer */
+    for (var j = 0; j < 9; j++) {
+      var aj  = j * Math.PI * 2 / 9 + t * 0.14 + 0.4;
+      var dj  = R * (0.42 + 0.18 * Math.sin(t * 0.28 + j * 1.5));
+      var pjx = cx + Math.cos(aj) * dj;
+      var pjy = cy + Math.sin(aj) * dj;
+      var prj = R * (0.08 + 0.05 * Math.cos(t * 0.75 + j));
+      var bj  = 0.38 + 0.38 * Math.cos(t * 0.48 + j * 1.25);
+      var g2  = ctx.createRadialGradient(pjx, pjy, 0, pjx, pjy, prj);
+      g2.addColorStop(0, 'rgba(255,238,110,' + bj.toFixed(2) + ')');
+      g2.addColorStop(1, 'rgba(255,90,0,0)');
+      ctx.fillStyle = g2;
+      ctx.beginPath(); ctx.arc(pjx, pjy, prj, 0, Math.PI * 2); ctx.fill();
+    }
+
+    /* Bright stellar core */
+    var core = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * 0.44);
+    core.addColorStop(0,    'rgba(255,255,255,0.90)');
+    core.addColorStop(0.35, 'rgba(255,252,195,0.55)');
+    core.addColorStop(1,    'rgba(255,220,75,0)');
+    ctx.fillStyle = core;
+    ctx.beginPath(); ctx.arc(cx, cy, R * 0.44, 0, Math.PI * 2); ctx.fill();
+
+    ctx.restore();
+
+    /* ── Corona flares (drawn outside clip) ── */
+    for (var k = 0; k < 8; k++) {
+      var ak   = k * Math.PI / 4 + t * 0.055;
+      var fLen = R * (0.65 + 0.55 * Math.sin(t * 0.20 + k * 1.35));
+      var fx1  = cx + Math.cos(ak) * R * 0.92;
+      var fy1  = cy + Math.sin(ak) * R * 0.92;
+      var fx2  = cx + Math.cos(ak) * (R + fLen);
+      var fy2  = cy + Math.sin(ak) * (R + fLen);
+      var fa   = 0.28 + 0.22 * Math.sin(t * 0.33 + k * 0.95);
+      var fg   = ctx.createLinearGradient(fx1, fy1, fx2, fy2);
+      fg.addColorStop(0,   'rgba(255,195,45,'  + fa.toFixed(2) + ')');
+      fg.addColorStop(0.5, 'rgba(255,110,8,'   + (fa * 0.48).toFixed(2) + ')');
+      fg.addColorStop(1,   'rgba(255,40,0,0)');
+      ctx.strokeStyle = fg;
+      ctx.lineWidth   = 2.0 + 1.5 * Math.sin(t * 0.38 + k);
+      ctx.beginPath(); ctx.moveTo(fx1, fy1); ctx.lineTo(fx2, fy2); ctx.stroke();
+    }
   }
 
   function raf(ts) {
     requestAnimationFrame(raf);
     if (!active) return;
-    if (prevTs === null) { prevTs = ts; cycleStart = ts; return; }
-    var dt = Math.min((ts - prevTs) / 1000, 0.08);
-    prevTs = ts;
-    var elapsed = (ts - cycleStart) / 1000;
-    var ph = (elapsed % CYCLE) / CYCLE;
+    if (prevTs === null) { prevTs = ts; return; }
+    var dt  = Math.min((ts - prevTs) / 1000, 0.05);
+    prevTs  = ts;
+    totalT += dt;
 
     var W = canvas.width, H = canvas.height;
-    var cx = W * 0.5, cy = H * 0.48;
-    var BASE_R  = Math.min(W, H) * 0.33;
-    var SUN_R   = Math.min(W, H) * 0.065;
-
-    /* phase thresholds */
-    var P2=0.20, P3=0.40, P4=0.55, P5=0.75, P6=0.82;
-
-    var orbitR   = BASE_R;
-    var speed    = 0.6;
-    var sunScale = 1.0;
-    var burstAmt = 0.0;
-    var symAlpha = 1.0;
-    var btcAlpha = 0.0;
-    var fi, lt;
-
-    if (ph < P2) {
-      /* Phase 1 — Calm */
-      speed    = 0.6;
-      orbitR   = BASE_R;
-      sunScale = 1.0;
-    } else if (ph < P3) {
-      /* Phase 2 — Acceleration */
-      var t2 = (ph - P2) / (P3 - P2);
-      speed    = 0.6 + t2 * 2.4;
-      orbitR   = BASE_R;
-      sunScale = 1.0 + t2 * 0.25;
-    } else if (ph < P4) {
-      /* Phase 3 — Collapse */
-      var t3 = (ph - P3) / (P4 - P3);
-      var e3 = t3 * t3;
-      speed    = 3.0 + e3 * 3.0;
-      orbitR   = BASE_R * (1 - e3 * 0.88);
-      sunScale = 1.25 + e3 * 0.6;
-    } else if (ph < P5) {
-      /* Phase 4 — Impact */
-      var t4 = (ph - P4) / (P5 - P4);
-      speed    = 6.0;
-      orbitR   = BASE_R * 0.12;
-      sunScale = 1.85 + t4 * 0.4;
-      for (fi = 0; fi < N; fi++) {
-        lt = t4 - fi / N;
-        impactFlash[fi] = (lt > 0 && lt < 0.13) ? Math.pow(1 - lt / 0.13, 2) : 0;
-      }
-    } else if (ph < P6) {
-      /* Phase 5 — BURST */
-      var t5  = (ph - P5) / (P6 - P5);
-      var bf  = t5 < 0.38 ? t5 / 0.38 : 1 - (t5 - 0.38) / 0.62;
-      burstAmt = bf;
-      sunScale = 2.3 + bf * 3.8;
-      orbitR   = BASE_R * 0.12;
-      speed    = 0;
-    } else {
-      /* Phase 6 — Release */
-      var t6  = (ph - P6) / (1.0 - P6);
-      var e6  = 1 - Math.pow(1 - t6, 2);
-      speed    = 1.2 - t6 * 1.1;
-      orbitR   = BASE_R * 0.12 + e6 * BASE_R * 1.45;
-      sunScale = 1.5 - t6 * 0.5;
-      symAlpha = Math.max(0, 1 - Math.max(0, (t6 - 0.55) / 0.45));
-      btcAlpha = t6 > 0.18 ? Math.min(1, (t6 - 0.18) / 0.32) * Math.max(0, 1 - Math.max(0, (t6 - 0.72) / 0.28)) : 0;
-      for (fi = 0; fi < N; fi++) impactFlash[fi] = 0;
-    }
-
-    totalAng += speed * dt;
-
     ctx.clearRect(0, 0, W, H);
-    drawSun(cx, cy, SUN_R, sunScale);
 
-    /* burst flash overlay */
-    if (burstAmt > 0) {
-      var bfg = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(W, H));
-      bfg.addColorStop(0,    'rgba(255,255,220,' + (burstAmt * 0.94) + ')');
-      bfg.addColorStop(0.18, 'rgba(255,210,70,'  + (burstAmt * 0.58) + ')');
-      bfg.addColorStop(0.45, 'rgba(255,100,0,'   + (burstAmt * 0.22) + ')');
-      bfg.addColorStop(1,    'rgba(200,40,0,0)');
-      ctx.fillStyle = bfg;
-      ctx.fillRect(0, 0, W, H);
+    var cx = W * 0.5;
+    var cy = H * 0.5;
+    var R  = Math.min(W * 0.18, H * 0.30, 130); /* modest — keeps phones readable */
+
+    /* 4-phase burst cycle */
+    var ph          = (totalT % CYCLE) / CYCLE;
+    var burstScale  = 1.0;
+    var globalAlpha = 0.22;
+
+    if (ph < 0.60) {
+      /* Phase 1: Calm plasma — very gentle pulse */
+      burstScale  = 1.0 + 0.038 * Math.sin(totalT * 1.7);
+      globalAlpha = 0.20 + 0.015 * Math.sin(totalT * 1.2);
+    } else if (ph < 0.75) {
+      /* Phase 2: Energy build-up */
+      var t2      = (ph - 0.60) / 0.15;
+      burstScale  = 1.038 + t2 * 0.21;
+      globalAlpha = 0.215 + t2 * 0.085;
+    } else if (ph < 0.85) {
+      /* Phase 3: Burst — glow expands outward */
+      var t3      = (ph - 0.75) / 0.10;
+      var e3      = t3 < 0.5 ? 2 * t3 * t3 : 1 - 2 * (1 - t3) * (1 - t3);
+      burstScale  = 1.25 + e3 * 0.65;
+      globalAlpha = 0.30 + e3 * 0.18;
+    } else {
+      /* Phase 4: Settle back — smooth return */
+      var t4      = (ph - 0.85) / 0.15;
+      var e4      = 1 - Math.pow(1 - t4, 2);
+      burstScale  = 1.90 - e4 * 0.90;
+      globalAlpha = 0.48 - e4 * 0.26;
     }
 
-    /* symbols */
     ctx.save();
-    ctx.globalAlpha = symAlpha;
-    var fsize = Math.max(14, Math.min(24, W * 0.027));
-    for (var si = 0; si < N; si++) {
-      var ang = totalAng + baseAng[si];
-      var sx  = cx + Math.cos(ang) * orbitR;
-      var sy  = cy + Math.sin(ang) * orbitR;
-      var c   = symbols[si];
-      /* glow halo */
-      var gg = ctx.createRadialGradient(sx, sy, 0, sx, sy, 32);
-      gg.addColorStop(0,   'rgba(' + c.rgb.join(',') + ',0.65)');
-      gg.addColorStop(0.5, 'rgba(' + c.rgb.join(',') + ',0.18)');
-      gg.addColorStop(1,   'rgba(' + c.rgb.join(',') + ',0)');
-      ctx.fillStyle = gg;
-      ctx.beginPath(); ctx.arc(sx, sy, 32, 0, Math.PI * 2); ctx.fill();
-      /* symbol text */
-      ctx.font         = 'bold ' + fsize + 'px Arial';
-      ctx.textAlign    = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillStyle    = c.color;
-      ctx.shadowColor  = c.color;
-      ctx.shadowBlur   = 11;
-      ctx.fillText(c.sym, sx, sy);
-      ctx.shadowBlur   = 0;
-      /* impact flash */
-      if (impactFlash[si] > 0) {
-        var ifg = ctx.createRadialGradient(sx, sy, 0, sx, sy, 58);
-        ifg.addColorStop(0,   'rgba(255,255,200,' + impactFlash[si] + ')');
-        ifg.addColorStop(0.4, 'rgba(255,200,50,'  + (impactFlash[si] * 0.55) + ')');
-        ifg.addColorStop(1,   'rgba(255,90,0,0)');
-        ctx.fillStyle = ifg;
-        ctx.beginPath(); ctx.arc(sx, sy, 58, 0, Math.PI * 2); ctx.fill();
-      }
-    }
+    ctx.globalAlpha = Math.max(0.15, Math.min(0.55, globalAlpha));
+    drawSun(cx, cy, R, totalT, burstScale);
     ctx.restore();
-
-    /* ₿ emergence in Phase 6 */
-    if (btcAlpha > 0) {
-      ctx.save();
-      ctx.globalAlpha  = btcAlpha;
-      var btcSz = Math.floor(SUN_R * 1.9);
-      ctx.font         = 'bold ' + btcSz + 'px Arial';
-      ctx.textAlign    = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.shadowColor  = 'rgba(251,191,36,1)';
-      ctx.shadowBlur   = 28;
-      ctx.fillStyle    = '#fbbf24';
-      ctx.fillText('₿', cx, cy);
-      ctx.shadowBlur   = 0;
-      ctx.restore();
-    }
   }
 
   requestAnimationFrame(raf);
