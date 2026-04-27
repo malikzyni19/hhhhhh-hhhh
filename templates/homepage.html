@@ -561,6 +561,17 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 @media(max-width:768px){#mod-sun-wrap{height:320px}}
 @media(max-width:480px){#mod-sun-wrap{height:260px}}
 #mod-sun-bg{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;display:block}
+
+/* ── STATEMENT SECTION ── */
+#statement{padding:72px 20px 80px;text-align:center}
+@media(max-width:640px){#statement{padding:48px 16px 56px}}
+.statement-wrap{max-width:860px;margin:0 auto}
+.statement-l1{font-size:clamp(1.15rem,2.5vw,1.72rem);font-weight:700;line-height:1.55;color:var(--text);margin:0 0 24px;opacity:0;transform:translateY(22px);transition:opacity .7s ease,transform .7s ease}
+.statement-l1.vis{opacity:1;transform:translateY(0)}
+.statement-l2{font-size:clamp(0.92rem,1.7vw,1.12rem);font-weight:400;line-height:1.7;color:rgba(180,200,225,0.72);margin:0;opacity:0;transform:translateY(22px);transition:opacity .7s .22s ease,transform .7s .22s ease}
+.statement-l2.vis{opacity:1;transform:translateY(0)}
+.stmt-hl{background:linear-gradient(90deg,#f59e0b,#fbbf24 60%,#f97316);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;filter:drop-shadow(0 0 10px rgba(245,158,11,0.40))}
+.stmt-hl2{background:linear-gradient(90deg,#22d3ee,#38bdf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
 </style>
 </head>
 <body>
@@ -799,6 +810,16 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
   </div>
   </div><!-- /hero-left -->
 </section>
+
+<div class="divider"></div>
+
+<!-- STATEMENT -->
+<div class="section" id="statement">
+  <div class="statement-wrap">
+    <p class="statement-l1">We don't provide any signals — we provide <span class="stmt-hl">ready-made setups</span> across <span class="stmt-hl">1000+ pairs</span>, just one click away.</p>
+    <p class="statement-l2">This is not for beginners — this is for traders already familiar with <span class="stmt-hl2">SMC methods</span> like Order Blocks, Fair Value Gaps, Fibonacci, and Breaker Blocks.</p>
+  </div>
+</div>
 
 <div class="divider"></div>
 
@@ -2003,14 +2024,16 @@ function lwStartBounce(){
   eCtx.fillRect(0, 950, 1024, 74);
   /* ₿ at 3 longitudes — 120° apart */
   eCtx.font = 'bold 300px Arial'; eCtx.textAlign = 'center'; eCtx.textBaseline = 'middle';
-  eCtx.shadowColor = 'rgba(251,191,36,0.95)';
-  var bPositions = [[512, 0.92], [171, 0.85], [853, 0.85]];
-  var bGlows     = [60, 40, 40];
+  var bPositions = [[512, 1.0], [171, 0.92], [853, 0.92]];
+  var bGlows     = [70, 50, 50];
   for (var bi = 0; bi < 3; bi++) {
-    eCtx.shadowBlur = bGlows[bi];
-    eCtx.fillStyle  = 'rgba(253,230,138,0.14)'; eCtx.fillText('\u20BF', bPositions[bi][0], 512);
-    eCtx.shadowBlur = 0;
-    eCtx.fillStyle  = 'rgba(253,230,138,' + bPositions[bi][1] + ')'; eCtx.fillText('\u20BF', bPositions[bi][0], 512);
+    eCtx.shadowColor = 'rgba(245,158,11,0.85)';
+    eCtx.shadowBlur  = bGlows[bi];
+    eCtx.fillStyle   = 'rgba(251,191,36,0.22)'; eCtx.fillText('\u20BF', bPositions[bi][0], 512);
+    eCtx.shadowColor = 'rgba(251,191,36,1)';
+    eCtx.shadowBlur  = 18;
+    eCtx.fillStyle   = 'rgba(245,158,11,' + bPositions[bi][1] + ')'; eCtx.fillText('\u20BF', bPositions[bi][0], 512);
+    eCtx.shadowBlur  = 0;
   }
   var earthTex = new THREE.CanvasTexture(earthCv);
 
@@ -2455,6 +2478,26 @@ function lwStartBounce(){
   }
 
   requestAnimationFrame(raf);
+})();
+
+/* ── Statement section reveal ── */
+(function() {
+  var sec = document.getElementById('statement');
+  if (!sec) return;
+  var l1 = sec.querySelector('.statement-l1');
+  var l2 = sec.querySelector('.statement-l2');
+  if (window.IntersectionObserver) {
+    var obs = new IntersectionObserver(function(entries) {
+      if (entries[0].isIntersecting) {
+        l1.classList.add('vis');
+        l2.classList.add('vis');
+        obs.disconnect();
+      }
+    }, { threshold: 0.35 });
+    obs.observe(sec);
+  } else {
+    l1.classList.add('vis'); l2.classList.add('vis');
+  }
 })();
 
 </script>
