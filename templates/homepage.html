@@ -445,6 +445,12 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 .lw-card.admin-mode{border-color:#2a2010}
 .lw-btn.admin-btn{background:linear-gradient(135deg,#92400e 0%,#d97706 100%);box-shadow:0 0 24px rgba(217,119,6,.45),0 0 0 1px rgba(245,158,11,.2),0 4px 16px rgba(0,0,0,.4)}
 .lw-btn.admin-btn:hover{box-shadow:0 0 36px rgba(217,119,6,.65),0 0 0 1px rgba(245,158,11,.35),0 4px 20px rgba(0,0,0,.5);transform:translateY(-1px)}
+.lw-guest-wrap{margin-top:14px}
+.lw-guest-btn{width:100%;background:linear-gradient(135deg,rgba(34,211,238,.04),rgba(6,182,212,.07));border:1px solid rgba(34,211,238,.32);color:#22d3ee;padding:13px 16px;border-radius:10px;cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;letter-spacing:1.5px;transition:all .25s;position:relative;overflow:hidden;box-sizing:border-box;animation:guestNeon 2.8s ease-in-out infinite}
+@keyframes guestNeon{0%,100%{box-shadow:0 0 18px rgba(34,211,238,.1),inset 0 0 18px rgba(34,211,238,.03);border-color:rgba(34,211,238,.32)}50%{box-shadow:0 0 32px rgba(34,211,238,.22),0 0 55px rgba(34,211,238,.07),inset 0 0 28px rgba(34,211,238,.08);border-color:rgba(34,211,238,.58)}}
+.lw-guest-btn:hover{background:rgba(34,211,238,.08);border-color:rgba(34,211,238,.7);box-shadow:0 0 40px rgba(34,211,238,.32),inset 0 0 28px rgba(34,211,238,.1);transform:translateY(-1px);animation:none;color:#67e8f9}
+.lw-guest-btn::after{content:'';position:absolute;inset:0;background:linear-gradient(135deg,rgba(34,211,238,.06),transparent 60%);pointer-events:none}
+.lw-guest-sub{text-align:center;font-size:9.5px;color:#1e3252;margin-top:8px;letter-spacing:1.2px;font-family:'Inter',sans-serif}
 @keyframes unlockCard{0%{opacity:1;transform:translateY(0) scale(1)}40%{opacity:1;transform:translateY(-6px) scale(1.015)}100%{opacity:0;transform:translateY(-50px) scale(.95)}}
 @keyframes zyniZoom{0%{transform:scale(1);opacity:1;text-shadow:0 0 30px rgba(34,211,238,.8),0 0 60px rgba(34,211,238,.4)}50%{transform:scale(3.5);opacity:1;text-shadow:0 0 60px rgba(34,211,238,1),0 0 120px rgba(34,211,238,.6)}100%{transform:scale(14);opacity:0;text-shadow:0 0 100px rgba(34,211,238,.5),0 0 200px rgba(34,211,238,.2)}}
 @keyframes bgPulse{0%{transform:scale(1);opacity:.8}100%{transform:scale(10);opacity:0}}
@@ -1470,6 +1476,10 @@ sCfg.forEach(c=>{const e=document.createElement('div');e.style.cssText=`position
         </div>
         <button type="submit" class="lw-btn" id="lwBtn">UNLOCK →</button>
         <div class="lw-admin-toggle"><span class="lw-admin-link" id="lwAdminLink" onclick="lwToggleAdminMode()">Admin Access</span></div>
+        <div class="lw-guest-wrap" id="lwGuestWrap">
+          <button type="button" class="lw-guest-btn" id="lwGuestBtn" onclick="lwGuestLogin()">◇ &nbsp;SIGN IN AS GUEST</button>
+          <div class="lw-guest-sub">LIMITED ACCESS · NO ACCOUNT REQUIRED</div>
+        </div>
       </form>
     </div>
     <div class="lw-footer">PRIVATE ACCESS ONLY</div>
@@ -1610,6 +1620,25 @@ function lwUnlockSequence(){
     ov.appendChild(pulse);ov.appendChild(txt);document.body.appendChild(ov);
   },380);
   setTimeout(function(){window.location.href='/';},1750);
+}
+
+function lwGuestLogin(){
+  var btn=document.getElementById('lwGuestBtn');
+  var errBox=document.getElementById('lwErrBox');
+  btn.disabled=true;btn.textContent='CONNECTING...';errBox.style.display='none';
+  fetch('/guest/login',{method:'POST',redirect:'manual'})
+    .then(function(r){
+      if(r.type==='opaqueredirect'||r.status===0||r.status===302){
+        btn.textContent='✓  GUEST ACCESS';btn.style.animation='none';btn.style.borderColor='rgba(34,211,238,.7)';
+        setTimeout(function(){window.location.href='/';},800);
+      } else {
+        return r.json().then(function(d){
+          btn.disabled=false;btn.textContent='◇  SIGN IN AS GUEST';
+          errBox.textContent=d.error||'Guest access disabled.';errBox.style.display='block';
+        });
+      }
+    })
+    .catch(function(){btn.disabled=false;btn.textContent='◇  SIGN IN AS GUEST';});
 }
 
 var _lwBounceStarted=false;

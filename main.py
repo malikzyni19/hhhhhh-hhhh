@@ -35,14 +35,23 @@ def no_cache(r):
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "Ulta8900")
 
 # ============================================================
-# USERNAME SYSTEM
-# Set USERS env var on Koyeb as comma-separated list
-# Example: USERS = zyni,abdul manan,friend1
-# All users share APP_PASSWORD
-# Each gets their own server-side watchlist
+# USERNAME SYSTEM — per-user passwords
+# USERS env var: comma-separated list of usernames
+# Individual passwords: USER_<NAME>_PASS env var per user
+# Falls back to APP_PASSWORD if individual pass not set
 # ============================================================
-_raw_users = os.environ.get("USERS", "zyni,abdul manan")
-ALLOWED_USERS: List[str] = [u.strip().lower() for u in _raw_users.split(",") if u.strip()]
+def _build_users_db() -> Dict[str, str]:
+    raw = os.environ.get("USERS", "zyni,abdul manan")
+    db: Dict[str, str] = {}
+    for u in raw.split(","):
+        u = u.strip().lower()
+        if u:
+            key = "USER_" + u.replace(" ", "_").upper() + "_PASS"
+            db[u] = os.environ.get(key, APP_PASSWORD)
+    return db
+
+_USERS_DB: Dict[str, str] = _build_users_db()
+ALLOWED_USERS = _USERS_DB  # alias kept for internal references
 
 # ── Admin credentials (separate from regular users) ──
 ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
@@ -61,6 +70,17 @@ _tab_controls: Dict[str, bool] = {
     "scan": True, "compressed": True, "trending": True,
     "ath_atl": True, "bias": True, "live_monitor": True
 }
+
+# ── Guest access system ──
+_guest_controls: Dict = {
+    "enabled": True,
+    "tabs": {"scan": True, "compressed": False, "trending": True, "ath_atl": False, "bias": False},
+    "max_scans_per_session": 5,
+    "max_pairs": 20,
+    "session_label": "Guest",
+}
+_guest_sessions: Dict[str, dict] = {}
+_guest_lock = threading.Lock()
 
 # ── App start time for uptime tracking ──
 _app_start_time = datetime.now(timezone.utc)
@@ -4227,6 +4247,29 @@ def admin_required(f):
     return decorated
 
 
+def _guest_tab_check(tab_name: str):
+    """Returns error tuple if guest is blocked, else None. Also increments scan count."""
+    if not session.get("is_guest"):
+        return None
+    if not _guest_controls.get("enabled", True):
+        return jsonify({"error": "Guest access is disabled."}), 403
+    if not _guest_controls["tabs"].get(tab_name, False):
+        return jsonify({"error": f"The '{tab_name}' tab is not available for guests."}), 403
+    guest_id = session.get("guest_id", "")
+    max_scans = int(_guest_controls.get("max_scans_per_session", 5))
+    with _guest_lock:
+        gs = _guest_sessions.get(guest_id, {})
+        if gs.get("scan_count", 0) >= max_scans:
+            return jsonify({"error": f"Guest scan limit reached ({max_scans}/session). Sign in for unlimited access."}), 429
+        gs["scan_count"] = gs.get("scan_count", 0) + 1
+        tabs = gs.get("tabs_visited", [])
+        if tab_name not in tabs:
+            tabs.append(tab_name)
+        gs["tabs_visited"] = tabs
+        _guest_sessions[guest_id] = gs
+    return None
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "GET":
@@ -4241,9 +4284,9 @@ def login():
 
     if not username:
         error = "Please enter your username."
-    elif username not in ALLOWED_USERS:
+    elif username not in _USERS_DB:
         error = "Username not recognised."
-    elif pwd != APP_PASSWORD:
+    elif pwd != _USERS_DB[username]:
         error = "Incorrect password. Try again."
     else:
         session["logged_in"] = True
@@ -4369,7 +4412,8 @@ def admin_panel():
 @app.route("/api/admin/users")
 @admin_required
 def api_admin_users():
-    return jsonify({"users": ALLOWED_USERS})
+    users = [{"username": u, "default_pass": (p == APP_PASSWORD)} for u, p in _USERS_DB.items()]
+    return jsonify({"users": users})
 
 
 @app.route("/api/admin/users/add", methods=["POST"])
@@ -4377,12 +4421,15 @@ def api_admin_users():
 def api_admin_users_add():
     data  = request.get_json(force=True) or {}
     uname = data.get("username", "").strip().lower()
+    pwd   = data.get("password", "").strip()
     if not uname:
         return jsonify({"error": "Username required"}), 400
-    if uname in ALLOWED_USERS:
+    if not pwd:
+        return jsonify({"error": "Password required"}), 400
+    if uname in _USERS_DB:
         return jsonify({"error": "User already exists"}), 409
-    ALLOWED_USERS.append(uname)
-    return jsonify({"ok": True, "users": ALLOWED_USERS})
+    _USERS_DB[uname] = pwd
+    return jsonify({"ok": True, "users": [{"username": u, "default_pass": (p == APP_PASSWORD)} for u, p in _USERS_DB.items()]})
 
 
 @app.route("/api/admin/users/remove", methods=["POST"])
@@ -4390,13 +4437,47 @@ def api_admin_users_add():
 def api_admin_users_remove():
     data  = request.get_json(force=True) or {}
     uname = data.get("username", "").strip().lower()
-    if uname not in ALLOWED_USERS:
+    if uname not in _USERS_DB:
         return jsonify({"error": "User not found"}), 404
-    ALLOWED_USERS.remove(uname)
+    del _USERS_DB[uname]
     _force_logout_users.add(uname)
     with _sessions_lock:
         _active_sessions.pop(uname, None)
-    return jsonify({"ok": True, "users": ALLOWED_USERS})
+    return jsonify({"ok": True, "users": [{"username": u, "default_pass": (p == APP_PASSWORD)} for u, p in _USERS_DB.items()]})
+
+
+@app.route("/api/admin/users/password", methods=["POST"])
+@admin_required
+def api_admin_users_password():
+    data  = request.get_json(force=True) or {}
+    uname = data.get("username", "").strip().lower()
+    pwd   = data.get("password", "").strip()
+    if uname not in _USERS_DB:
+        return jsonify({"error": "User not found"}), 404
+    if not pwd:
+        return jsonify({"error": "Password required"}), 400
+    _USERS_DB[uname] = pwd
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/users/<username>/detail")
+@admin_required
+def api_admin_user_detail(username):
+    username = username.lower()
+    if username not in _USERS_DB:
+        return jsonify({"error": "User not found"}), 404
+    user_logs = [e for e in LOGIN_AUDIT_LOG if e.get("username") == username]
+    with _sessions_lock:
+        current = _active_sessions.get(username)
+    return jsonify({
+        "username": username,
+        "is_online": username in _active_sessions,
+        "current_session": current,
+        "total_logins": sum(1 for e in user_logs if e.get("success")),
+        "failed_attempts": sum(1 for e in user_logs if not e.get("success")),
+        "last_login": user_logs[0] if user_logs else None,
+        "history": user_logs[:10],
+    })
 
 
 @app.route("/api/admin/sessions")
@@ -4445,7 +4526,7 @@ def api_admin_stats():
     return jsonify({
         "uptime": f"{h}h {m}m {s}s",
         "memory_mb": mem_mb,
-        "total_users": len(ALLOWED_USERS),
+        "total_users": len(_USERS_DB),
         "active_sessions": active_count,
         "total_logins": sum(1 for e in LOGIN_AUDIT_LOG if e.get("success")),
         "failed_attempts": sum(1 for e in LOGIN_AUDIT_LOG if not e.get("success")),
@@ -4469,6 +4550,60 @@ def api_admin_tab_toggle():
         return jsonify({"error": "Unknown tab"}), 400
     _tab_controls[tab] = enabled
     return jsonify({"ok": True, "tab_controls": _tab_controls})
+
+
+@app.route("/api/admin/guest/controls", methods=["GET", "POST"])
+@admin_required
+def api_admin_guest_controls():
+    if request.method == "GET":
+        return jsonify({"guest_controls": _guest_controls})
+    data = request.get_json(force=True) or {}
+    if "enabled" in data:
+        _guest_controls["enabled"] = bool(data["enabled"])
+    if "max_scans_per_session" in data:
+        _guest_controls["max_scans_per_session"] = max(1, int(data["max_scans_per_session"]))
+    if "max_pairs" in data:
+        _guest_controls["max_pairs"] = max(1, int(data["max_pairs"]))
+    if "tabs" in data and isinstance(data["tabs"], dict):
+        for tab, val in data["tabs"].items():
+            if tab in _guest_controls["tabs"]:
+                _guest_controls["tabs"][tab] = bool(val)
+    return jsonify({"ok": True, "guest_controls": _guest_controls})
+
+
+@app.route("/api/admin/guest/sessions")
+@admin_required
+def api_admin_guest_sessions():
+    with _guest_lock:
+        sessions = [{"guest_id": k, **v} for k, v in _guest_sessions.items()]
+    return jsonify({"sessions": sessions, "total": len(sessions)})
+
+
+# ── Guest login ──
+@app.route("/guest/login", methods=["POST"])
+def guest_login():
+    if not _guest_controls.get("enabled", True):
+        return jsonify({"error": "Guest access is currently disabled."}), 403
+    guest_id = os.urandom(12).hex()
+    display  = f"guest_{guest_id[:6]}"
+    session["logged_in"]  = True
+    session["is_guest"]   = True
+    session["guest_id"]   = guest_id
+    session["username"]   = display
+    ip      = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
+    ua      = request.headers.get("User-Agent", "unknown")
+    now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    with _guest_lock:
+        _guest_sessions[guest_id] = {
+            "ip": ip, "ua": ua,
+            "login_time": datetime.now(timezone.utc).isoformat(),
+            "scan_count": 0, "tabs_visited": [],
+        }
+    LOGIN_AUDIT_LOG.appendleft({
+        "username": f"GUEST-{guest_id[:6]}", "time": now_utc,
+        "ip": ip, "geo": "", "ua": ua, "success": True
+    })
+    return redirect(url_for("index"))
 
 
 # ── Watchlist streaming endpoints ──
@@ -4918,6 +5053,8 @@ def api_pairs():
 @app.route("/api/scan", methods=["POST"])
 @login_required
 def api_scan():
+    err = _guest_tab_check("scan")
+    if err is not None: return err
     payload = request.get_json(force=True) or {}
     settings = parse_settings(payload.get("settings", {}))
     market = payload.get("market", "perpetual")
@@ -5025,6 +5162,8 @@ def api_scan():
 @app.route("/api/compressed_scan", methods=["POST"])
 @login_required
 def api_compressed_scan():
+    err = _guest_tab_check("compressed")
+    if err is not None: return err
     payload = request.get_json(force=True) or {}
     tf = payload.get("timeframe", "1h")
     market = payload.get("market", "perpetual")
@@ -5069,6 +5208,8 @@ def api_compressed_scan():
 @app.route("/api/trending_scan", methods=["POST"])
 @login_required
 def api_trending_scan():
+    err = _guest_tab_check("trending")
+    if err is not None: return err
     payload = request.get_json(force=True) or {}
     tf = payload.get("timeframe", "1h")
     market = payload.get("market", "perpetual")
@@ -5112,6 +5253,8 @@ def api_trending_scan():
 @app.route("/api/ath_atl_scan", methods=["POST"])
 @login_required
 def api_ath_atl_scan():
+    err = _guest_tab_check("ath_atl")
+    if err is not None: return err
     payload = request.get_json(force=True) or {}
     mode = payload.get("mode", "both")          # ath | atl | both
     status = payload.get("status", "current")   # current | recent | near
@@ -5206,6 +5349,8 @@ def api_ath_atl_scan():
 @app.route("/api/bias_scan", methods=["POST"])
 @login_required
 def api_bias_scan():
+    err = _guest_tab_check("bias")
+    if err is not None: return err
     payload = request.get_json(force=True) or {}
     tf = payload.get("timeframe", "1d")
     market = payload.get("market", "perpetual")
