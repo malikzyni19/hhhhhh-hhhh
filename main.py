@@ -44,6 +44,27 @@ APP_PASSWORD = os.environ.get("APP_PASSWORD", "Ulta8900")
 _raw_users = os.environ.get("USERS", "zyni,abdul manan")
 ALLOWED_USERS: List[str] = [u.strip().lower() for u in _raw_users.split(",") if u.strip()]
 
+# ── Admin credentials (separate from regular users) ──
+ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "AdminZyNi2024!")
+
+# ── Active session tracking {username: {ip, ua, login_time, sid, is_admin}} ──
+_active_sessions: Dict[str, dict] = {}
+_sessions_lock = threading.Lock()
+_force_logout_users: set = set()
+
+# ── Login audit log (in-memory, max 500 entries) ──
+LOGIN_AUDIT_LOG: deque = deque(maxlen=500)
+
+# ── Feature tab toggles (admin-controlled) ──
+_tab_controls: Dict[str, bool] = {
+    "scan": True, "compressed": True, "trending": True,
+    "ath_atl": True, "bias": True, "live_monitor": True
+}
+
+# ── App start time for uptime tracking ──
+_app_start_time = datetime.now(timezone.utc)
+
 # ── Server-side watchlist storage ──
 # Stored in /tmp/wl_{username}.json
 # Persists until Koyeb restarts (fine for daily trading use)
@@ -4186,58 +4207,81 @@ def login_required(f):
     def decorated(*args, **kwargs):
         if not session.get("logged_in"):
             return redirect(url_for("index"))
+        uname = session.get("username", "").lower()
+        if uname in _force_logout_users:
+            _force_logout_users.discard(uname)
+            with _sessions_lock:
+                _active_sessions.pop(uname, None)
+            session.clear()
+            return redirect(url_for("index"))
+        return f(*args, **kwargs)
+    return decorated
+
+
+def admin_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get("is_admin"):
+            return redirect(url_for("index"))
         return f(*args, **kwargs)
     return decorated
 
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    # GET request — always redirect to homepage
-    # Login happens via drop box on homepage
     if request.method == "GET":
         return redirect(url_for("index"))
 
-    error = None
-    if request.method == "POST":
-        username = request.form.get("username", "").strip().lower()
-        pwd      = request.form.get("password", "")
+    username = request.form.get("username", "").strip().lower()
+    pwd      = request.form.get("password", "")
+    ip       = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
+    ua       = request.headers.get("User-Agent", "unknown")
+    now_utc  = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    error    = None
 
-        if not username:
-            error = "Please enter your username."
-        elif username not in ALLOWED_USERS:
-            error = "Username not recognised."
-        elif pwd != APP_PASSWORD:
-            error = "Incorrect password. Try again."
-        else:
-            session["logged_in"] = True
-            session["username"]  = username
+    if not username:
+        error = "Please enter your username."
+    elif username not in ALLOWED_USERS:
+        error = "Username not recognised."
+    elif pwd != APP_PASSWORD:
+        error = "Incorrect password. Try again."
+    else:
+        session["logged_in"] = True
+        session["username"]  = username
+        sid = os.urandom(16).hex()
+        session["sid"] = sid
 
-            # ── Restore server-side watchlist for this user ──
-            saved_pairs = load_user_watchlist(username)
-            with _wl_lock:
-                _wl_pairs[:] = saved_pairs
-            if saved_pairs:
-                _ensure_wl_thread()
+        saved_pairs = load_user_watchlist(username)
+        with _wl_lock:
+            _wl_pairs[:] = saved_pairs
+        if saved_pairs:
+            _ensure_wl_thread()
 
-            # ── Login notification email ──
-            try:
-                ip      = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown")
-                ip      = ip.split(",")[0].strip()
-                ua      = request.headers.get("User-Agent", "unknown")
-                now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-                geo     = "unknown"
-                try:
-                    gr = req.get(f"https://ipapi.co/{ip}/json/", timeout=4)
-                    if gr.status_code == 200:
-                        gd      = gr.json()
-                        city    = gd.get("city", "")
-                        country = gd.get("country_name", "")
-                        geo     = f"{city}, {country}" if city else country
-                except Exception:
-                    pass
+        geo = "unknown"
+        try:
+            gr = req.get(f"https://ipapi.co/{ip}/json/", timeout=4)
+            if gr.status_code == 200:
+                gd      = gr.json()
+                city    = gd.get("city", "")
+                country = gd.get("country_name", "")
+                geo     = f"{city}, {country}" if city else country
+        except Exception:
+            pass
 
-                subject = f"🔐 ZyNi Screener — {username.title()} logged in"
-                body = f"""
+        with _sessions_lock:
+            _active_sessions[username] = {
+                "ip": ip, "ua": ua,
+                "login_time": datetime.now(timezone.utc).isoformat(),
+                "sid": sid, "is_admin": False
+            }
+        LOGIN_AUDIT_LOG.appendleft({
+            "username": username, "time": now_utc,
+            "ip": ip, "geo": geo, "ua": ua, "success": True
+        })
+
+        try:
+            subject = f"🔐 ZyNi Screener — {username.title()} logged in"
+            body = f"""
 <html><body style="font-family:monospace;background:#0a0e17;color:#e2e8f0;padding:24px">
 <div style="max-width:520px;margin:0 auto;background:#0d1525;border:1px solid #1e3040;border-top:3px solid #22d3ee;border-radius:10px;padding:24px">
   <h2 style="color:#22d3ee;margin:0 0 16px">🔐 New Login — ZyNi SMC Screener</h2>
@@ -4254,19 +4298,177 @@ def login():
   </div>
 </div>
 </body></html>"""
-                threading.Thread(target=send_email_alert, args=(subject, body), daemon=True).start()
-            except Exception as e:
-                print(f"[LOGIN-NOTIFY] Error: {e}")
+            threading.Thread(target=send_email_alert, args=(subject, body), daemon=True).start()
+        except Exception as e:
+            print(f"[LOGIN-NOTIFY] Error: {e}")
 
-            return redirect(url_for("index"))
+        return redirect(url_for("index"))
 
+    LOGIN_AUDIT_LOG.appendleft({
+        "username": username or "(empty)", "time": now_utc,
+        "ip": ip, "geo": "", "ua": ua, "success": False
+    })
     return render_template("login.html", error=error)
 
 
 @app.route("/logout")
 def logout():
+    username = session.get("username", "").lower()
+    with _sessions_lock:
+        _active_sessions.pop(username, None)
     session.clear()
     return redirect(url_for("index"))
+
+
+# ═══════════════════════════════════════════════════════════════
+# ADMIN PANEL
+# ═══════════════════════════════════════════════════════════════
+
+@app.route("/admin/login", methods=["GET", "POST"])
+def admin_login():
+    if request.method == "GET":
+        return redirect(url_for("index"))
+
+    username = request.form.get("username", "").strip()
+    pwd      = request.form.get("password", "")
+    ip       = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
+    ua       = request.headers.get("User-Agent", "unknown")
+    now_utc  = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    if username.lower() == ADMIN_USERNAME.lower() and pwd == ADMIN_PASSWORD:
+        session["logged_in"] = True
+        session["username"]  = username.lower()
+        session["is_admin"]  = True
+        sid = os.urandom(16).hex()
+        session["sid"] = sid
+        with _sessions_lock:
+            _active_sessions[username.lower()] = {
+                "ip": ip, "ua": ua,
+                "login_time": datetime.now(timezone.utc).isoformat(),
+                "sid": sid, "is_admin": True
+            }
+        LOGIN_AUDIT_LOG.appendleft({
+            "username": f"{username} (ADMIN)", "time": now_utc,
+            "ip": ip, "geo": "", "ua": ua, "success": True
+        })
+        return redirect(url_for("admin_panel"))
+
+    LOGIN_AUDIT_LOG.appendleft({
+        "username": f"{username or '(empty)'} (ADMIN attempt)", "time": now_utc,
+        "ip": ip, "geo": "", "ua": ua, "success": False
+    })
+    return render_template("login.html", error="Invalid admin credentials.")
+
+
+@app.route("/admin")
+@admin_required
+def admin_panel():
+    return render_template("admin.html", admin_username=session.get("username", "admin"))
+
+
+@app.route("/api/admin/users")
+@admin_required
+def api_admin_users():
+    return jsonify({"users": ALLOWED_USERS})
+
+
+@app.route("/api/admin/users/add", methods=["POST"])
+@admin_required
+def api_admin_users_add():
+    data  = request.get_json(force=True) or {}
+    uname = data.get("username", "").strip().lower()
+    if not uname:
+        return jsonify({"error": "Username required"}), 400
+    if uname in ALLOWED_USERS:
+        return jsonify({"error": "User already exists"}), 409
+    ALLOWED_USERS.append(uname)
+    return jsonify({"ok": True, "users": ALLOWED_USERS})
+
+
+@app.route("/api/admin/users/remove", methods=["POST"])
+@admin_required
+def api_admin_users_remove():
+    data  = request.get_json(force=True) or {}
+    uname = data.get("username", "").strip().lower()
+    if uname not in ALLOWED_USERS:
+        return jsonify({"error": "User not found"}), 404
+    ALLOWED_USERS.remove(uname)
+    _force_logout_users.add(uname)
+    with _sessions_lock:
+        _active_sessions.pop(uname, None)
+    return jsonify({"ok": True, "users": ALLOWED_USERS})
+
+
+@app.route("/api/admin/sessions")
+@admin_required
+def api_admin_sessions():
+    with _sessions_lock:
+        sessions_list = [{"username": k, **v} for k, v in _active_sessions.items()]
+    return jsonify({"sessions": sessions_list})
+
+
+@app.route("/api/admin/sessions/logout", methods=["POST"])
+@admin_required
+def api_admin_sessions_logout():
+    data  = request.get_json(force=True) or {}
+    uname = data.get("username", "").strip().lower()
+    _force_logout_users.add(uname)
+    with _sessions_lock:
+        _active_sessions.pop(uname, None)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/logs")
+@admin_required
+def api_admin_logs():
+    limit = min(int(request.args.get("limit", 100)), 500)
+    return jsonify({"logs": list(LOGIN_AUDIT_LOG)[:limit]})
+
+
+@app.route("/api/admin/stats")
+@admin_required
+def api_admin_stats():
+    uptime_secs = int((datetime.now(timezone.utc) - _app_start_time).total_seconds())
+    h, rem      = divmod(uptime_secs, 3600)
+    m, s        = divmod(rem, 60)
+    mem_mb = 0
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    mem_mb = int(line.split()[1]) // 1024
+                    break
+    except Exception:
+        pass
+    with _sessions_lock:
+        active_count = len(_active_sessions)
+    return jsonify({
+        "uptime": f"{h}h {m}m {s}s",
+        "memory_mb": mem_mb,
+        "total_users": len(ALLOWED_USERS),
+        "active_sessions": active_count,
+        "total_logins": sum(1 for e in LOGIN_AUDIT_LOG if e.get("success")),
+        "failed_attempts": sum(1 for e in LOGIN_AUDIT_LOG if not e.get("success")),
+        "audit_log_size": len(LOGIN_AUDIT_LOG),
+    })
+
+
+@app.route("/api/admin/controls/tabs")
+@admin_required
+def api_admin_tab_status():
+    return jsonify({"tab_controls": _tab_controls})
+
+
+@app.route("/api/admin/controls/tab", methods=["POST"])
+@admin_required
+def api_admin_tab_toggle():
+    data    = request.get_json(force=True) or {}
+    tab     = data.get("tab", "")
+    enabled = bool(data.get("enabled", True))
+    if tab not in _tab_controls:
+        return jsonify({"error": "Unknown tab"}), 400
+    _tab_controls[tab] = enabled
+    return jsonify({"ok": True, "tab_controls": _tab_controls})
 
 
 # ── Watchlist streaming endpoints ──

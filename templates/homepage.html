@@ -435,6 +435,16 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 .lw-error{background:rgba(127,29,29,.3);border:1px solid #7f1d1d80;color:#f87171;border-radius:8px;padding:10px 12px;font-size:11px;margin-bottom:16px;text-align:center;font-family:'Inter',sans-serif}
 .lw-footer{text-align:center;margin-top:16px;font-size:10px;color:#152030;letter-spacing:1.5px;font-family:'Inter',sans-serif}
 .lw-card.fly-out{animation:unlockCard .55s cubic-bezier(.4,0,.2,1) forwards!important}
+.lw-admin-toggle{text-align:center;margin-top:16px}
+.lw-admin-link{font-size:10px;color:#2e5272;letter-spacing:1.5px;cursor:pointer;font-family:'Inter',sans-serif;text-transform:uppercase;transition:color .2s,border-color .2s;border-bottom:1px dashed #1e3a52;padding-bottom:2px;user-select:none}
+.lw-admin-link:hover{color:#f59e0b;border-bottom-color:rgba(245,158,11,.5)}
+.lw-admin-badge{display:none;background:rgba(180,83,9,.15);border:1px solid rgba(245,158,11,.25);color:#f59e0b;font-size:9px;letter-spacing:2px;padding:4px 10px;border-radius:5px;text-align:center;margin-bottom:16px;font-family:'Inter',sans-serif;font-weight:700}
+.lw-card.admin-mode .lw-admin-badge{display:block}
+.lw-card.admin-mode .lw-card-title{color:#d97706;letter-spacing:2.5px}
+.lw-card.admin-mode::before{background:linear-gradient(90deg,transparent,rgba(245,158,11,.4),transparent)}
+.lw-card.admin-mode{border-color:#2a2010}
+.lw-btn.admin-btn{background:linear-gradient(135deg,#92400e 0%,#d97706 100%);box-shadow:0 0 24px rgba(217,119,6,.45),0 0 0 1px rgba(245,158,11,.2),0 4px 16px rgba(0,0,0,.4)}
+.lw-btn.admin-btn:hover{box-shadow:0 0 36px rgba(217,119,6,.65),0 0 0 1px rgba(245,158,11,.35),0 4px 20px rgba(0,0,0,.5);transform:translateY(-1px)}
 @keyframes unlockCard{0%{opacity:1;transform:translateY(0) scale(1)}40%{opacity:1;transform:translateY(-6px) scale(1.015)}100%{opacity:0;transform:translateY(-50px) scale(.95)}}
 @keyframes zyniZoom{0%{transform:scale(1);opacity:1;text-shadow:0 0 30px rgba(34,211,238,.8),0 0 60px rgba(34,211,238,.4)}50%{transform:scale(3.5);opacity:1;text-shadow:0 0 60px rgba(34,211,238,1),0 0 120px rgba(34,211,238,.6)}100%{transform:scale(14);opacity:0;text-shadow:0 0 100px rgba(34,211,238,.5),0 0 200px rgba(34,211,238,.2)}}
 @keyframes bgPulse{0%{transform:scale(1);opacity:.8}100%{transform:scale(10);opacity:0}}
@@ -1446,7 +1456,8 @@ sCfg.forEach(c=>{const e=document.createElement('div');e.style.cssText=`position
     </div>
     <div class="lw-card" id="lwCard">
       <button class="lw-close" onclick="closeLoginDrop()">✕</button>
-      <div class="lw-card-title">ENTER CREDENTIALS TO ACCESS</div>
+      <div class="lw-card-title" id="lwCardTitle">ENTER CREDENTIALS TO ACCESS</div>
+      <div class="lw-admin-badge" id="lwAdminBadge">⚙ ADMIN ACCESS</div>
       <div id="lwErrBox" class="lw-error" style="display:none"></div>
       <form id="lwForm" method="POST" action="/login">
         <div class="lw-field">
@@ -1458,6 +1469,7 @@ sCfg.forEach(c=>{const e=document.createElement('div');e.style.cssText=`position
           <input type="password" name="password" id="lwPass" placeholder="••••••••" autocomplete="current-password">
         </div>
         <button type="submit" class="lw-btn" id="lwBtn">UNLOCK →</button>
+        <div class="lw-admin-toggle"><span class="lw-admin-link" id="lwAdminLink" onclick="lwToggleAdminMode()">Admin Access</span></div>
       </form>
     </div>
     <div class="lw-footer">PRIVATE ACCESS ONLY</div>
@@ -1519,6 +1531,30 @@ function closeLoginDrop(e){
   setTimeout(function(){wrap.classList.remove('visible');wrap.style.opacity='';wrap.style.transform='translate(-50%, calc(-50% - 120vh))';overlay.classList.remove('show');gridBg.classList.remove('show');},500);
 }
 
+var _lwAdminMode=false;
+function lwToggleAdminMode(){
+  _lwAdminMode=!_lwAdminMode;
+  var card=document.getElementById('lwCard');
+  var title=document.getElementById('lwCardTitle');
+  var btn=document.getElementById('lwBtn');
+  var link=document.getElementById('lwAdminLink');
+  var errBox=document.getElementById('lwErrBox');
+  errBox.style.display='none';
+  if(_lwAdminMode){
+    card.classList.add('admin-mode');
+    title.textContent='ADMIN ACCESS';
+    btn.textContent='ADMIN LOGIN →';
+    btn.classList.add('admin-btn');
+    link.textContent='← User Login';
+  } else {
+    card.classList.remove('admin-mode');
+    title.textContent='ENTER CREDENTIALS TO ACCESS';
+    btn.textContent='UNLOCK →';
+    btn.classList.remove('admin-btn');
+    link.textContent='Admin Access';
+  }
+}
+
 document.getElementById('lwForm').addEventListener('submit',function(e){
   e.preventDefault();
   var btn=document.getElementById('lwBtn');
@@ -1528,12 +1564,29 @@ document.getElementById('lwForm').addEventListener('submit',function(e){
   if(!un){errBox.textContent='Please enter your username.';errBox.style.display='block';document.getElementById('lwUser').focus();return;}
   btn.textContent='VERIFYING...';btn.disabled=true;errBox.style.display='none';
   var fd=new FormData();fd.append('username',un);fd.append('password',pw);
-  fetch('/login',{method:'POST',body:fd,redirect:'manual'})
+  var endpoint=_lwAdminMode?'/admin/login':'/login';
+  fetch(endpoint,{method:'POST',body:fd,redirect:'manual'})
     .then(function(r){
-      if(r.type==='opaqueredirect'||r.status===0||r.status===302||(r.ok&&r.url&&!r.url.includes('/login'))){lwUnlockSequence();}
-      else{return r.text().then(function(h){var hasErr=h.indexOf('error')!==-1||h.indexOf('invalid')!==-1||h.indexOf('wrong')!==-1||h.indexOf('incorrect')!==-1||h.indexOf('not recognised')!==-1;if(hasErr||r.status===200){btn.textContent='UNLOCK →';btn.disabled=false;var m=h.match(/<div class="error">([^<]+)<\/div>/);errBox.textContent=m?m[1]:'Invalid credentials. Try again.';errBox.style.display='block';}else{lwUnlockSequence();}});}
+      if(r.type==='opaqueredirect'||r.status===0||r.status===302){
+        if(_lwAdminMode){btn.textContent='✓ ADMIN';setTimeout(function(){window.location.href='/admin';},600);}
+        else{lwUnlockSequence();}
+      } else {
+        return r.text().then(function(h){
+          var hasErr=h.indexOf('error')!==-1||h.indexOf('invalid')!==-1||h.indexOf('wrong')!==-1||h.indexOf('incorrect')!==-1||h.indexOf('not recognised')!==-1||h.indexOf('Invalid admin')!==-1;
+          if(hasErr||r.status===200){
+            btn.textContent=_lwAdminMode?'ADMIN LOGIN →':'UNLOCK →';
+            btn.disabled=false;
+            var m=h.match(/<div class="error">([^<]+)<\/div>/);
+            errBox.textContent=m?m[1]:'Invalid credentials. Try again.';
+            errBox.style.display='block';
+          } else {
+            if(_lwAdminMode){btn.textContent='✓ ADMIN';setTimeout(function(){window.location.href='/admin';},600);}
+            else{lwUnlockSequence();}
+          }
+        });
+      }
     })
-    .catch(function(){lwUnlockSequence();});
+    .catch(function(){if(_lwAdminMode){window.location.href='/admin';}else{lwUnlockSequence();}});
 });
 
 function lwUnlockSequence(){

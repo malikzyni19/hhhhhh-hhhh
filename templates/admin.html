@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>ZyNi Admin Panel</title>
+<link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#04070e;--bg2:#080f1d;--bg3:#0d1525;--border:#1a2e40;--cyan:#22d3ee;--amber:#f59e0b;--green:#22c55e;--red:#f87171;--text:#e2e8f0;--muted:#64748b;--muted2:#3d5570}
+body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column}
+
+/* ── Header ── */
+.adm-header{display:flex;align-items:center;justify-content:space-between;padding:14px 24px;background:var(--bg2);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100}
+.adm-logo{display:flex;align-items:center;gap:10px}
+.adm-logo-text{font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;color:var(--cyan);letter-spacing:2px}
+.adm-logo-badge{font-size:9px;letter-spacing:2px;color:var(--amber);background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.25);padding:2px 7px;border-radius:4px;font-weight:700}
+.adm-user{display:flex;align-items:center;gap:12px;font-size:12px;color:var(--muted)}
+.adm-user span{color:var(--cyan);font-family:'JetBrains Mono',monospace}
+.adm-logout{background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.25);color:var(--red);padding:6px 14px;border-radius:7px;cursor:pointer;font-size:11px;letter-spacing:1px;font-weight:600;transition:all .2s;text-decoration:none}
+.adm-logout:hover{background:rgba(248,113,113,.2);border-color:rgba(248,113,113,.4)}
+
+/* ── Layout ── */
+.adm-body{display:flex;flex:1;min-height:0}
+
+/* ── Sidebar ── */
+.adm-sidebar{width:200px;background:var(--bg2);border-right:1px solid var(--border);padding:20px 0;flex-shrink:0}
+.adm-nav-item{display:flex;align-items:center;gap:10px;padding:10px 20px;cursor:pointer;font-size:12px;color:var(--muted);letter-spacing:.5px;transition:all .15s;border-left:2px solid transparent;font-weight:500}
+.adm-nav-item:hover{color:var(--text);background:rgba(255,255,255,.03)}
+.adm-nav-item.active{color:var(--cyan);border-left-color:var(--cyan);background:rgba(34,211,238,.05)}
+.adm-nav-icon{width:16px;text-align:center;font-size:14px}
+.adm-nav-sep{height:1px;background:var(--border);margin:12px 16px}
+
+/* ── Main ── */
+.adm-main{flex:1;padding:28px;overflow-y:auto;min-width:0}
+.adm-section{display:none}
+.adm-section.active{display:block}
+
+/* ── Section header ── */
+.adm-section-title{font-size:11px;letter-spacing:2.5px;color:var(--muted2);text-transform:uppercase;font-weight:600;margin-bottom:20px;padding-bottom:12px;border-bottom:1px solid var(--border)}
+
+/* ── Stat cards ── */
+.adm-stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:14px;margin-bottom:28px}
+.adm-stat-card{background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:18px 16px;position:relative;overflow:hidden}
+.adm-stat-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;border-radius:12px 12px 0 0}
+.adm-stat-card.cyan::before{background:linear-gradient(90deg,transparent,var(--cyan),transparent)}
+.adm-stat-card.amber::before{background:linear-gradient(90deg,transparent,var(--amber),transparent)}
+.adm-stat-card.green::before{background:linear-gradient(90deg,transparent,var(--green),transparent)}
+.adm-stat-card.red::before{background:linear-gradient(90deg,transparent,var(--red),transparent)}
+.adm-stat-label{font-size:10px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;font-weight:600}
+.adm-stat-value{font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:700;color:var(--text)}
+.adm-stat-value.cyan{color:var(--cyan)}
+.adm-stat-value.amber{color:var(--amber)}
+.adm-stat-value.green{color:var(--green)}
+.adm-stat-value.red{color:var(--red)}
+
+/* ── Tables ── */
+.adm-table-wrap{background:var(--bg3);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:20px}
+.adm-table{width:100%;border-collapse:collapse}
+.adm-table th{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted2);padding:12px 16px;text-align:left;border-bottom:1px solid var(--border);font-weight:600;background:rgba(0,0,0,.2)}
+.adm-table td{padding:12px 16px;font-size:12px;border-bottom:1px solid rgba(26,46,64,.5);vertical-align:middle}
+.adm-table tr:last-child td{border-bottom:none}
+.adm-table tr:hover td{background:rgba(255,255,255,.02)}
+.adm-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;letter-spacing:.5px}
+.adm-badge.green{background:rgba(34,197,94,.12);color:var(--green);border:1px solid rgba(34,197,94,.2)}
+.adm-badge.red{background:rgba(248,113,113,.12);color:var(--red);border:1px solid rgba(248,113,113,.2)}
+.adm-badge.amber{background:rgba(245,158,11,.12);color:var(--amber);border:1px solid rgba(245,158,11,.2)}
+.adm-badge.cyan{background:rgba(34,211,238,.1);color:var(--cyan);border:1px solid rgba(34,211,238,.2)}
+.adm-empty{padding:32px;text-align:center;color:var(--muted);font-size:12px;letter-spacing:.5px}
+
+/* ── Buttons ── */
+.adm-btn{border:none;padding:7px 14px;border-radius:7px;cursor:pointer;font-size:11px;font-weight:600;letter-spacing:.5px;transition:all .2s;font-family:'Inter',sans-serif}
+.adm-btn.danger{background:rgba(248,113,113,.1);color:var(--red);border:1px solid rgba(248,113,113,.25)}
+.adm-btn.danger:hover{background:rgba(248,113,113,.2)}
+.adm-btn.primary{background:linear-gradient(135deg,#0891b2,#06b6d4);color:#fff;box-shadow:0 0 12px rgba(8,145,178,.3)}
+.adm-btn.primary:hover{box-shadow:0 0 20px rgba(8,145,178,.5);transform:translateY(-1px)}
+.adm-btn.sm{padding:4px 10px;font-size:10px}
+
+/* ── Input row ── */
+.adm-input-row{display:flex;gap:10px;margin-bottom:20px;align-items:center}
+.adm-input{background:#040911;color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-family:'JetBrains Mono',monospace;font-size:13px;outline:none;transition:border-color .2s;flex:1;min-width:0}
+.adm-input:focus{border-color:rgba(34,211,238,.4);box-shadow:0 0 0 2px rgba(34,211,238,.06)}
+
+/* ── Toggle switches ── */
+.adm-toggles-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
+.adm-toggle-card{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:16px;display:flex;align-items:center;justify-content:space-between}
+.adm-toggle-name{font-size:12px;font-weight:600;color:var(--text);text-transform:capitalize;letter-spacing:.5px}
+.adm-toggle-sub{font-size:10px;color:var(--muted);margin-top:2px}
+.toggle-sw{position:relative;width:40px;height:22px;cursor:pointer;flex-shrink:0}
+.toggle-sw input{opacity:0;width:0;height:0;position:absolute}
+.toggle-track{position:absolute;inset:0;border-radius:11px;background:#152030;transition:background .2s;border:1px solid var(--border)}
+.toggle-thumb{position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:#3d5570;transition:all .2s}
+.toggle-sw input:checked+.toggle-track{background:rgba(34,211,238,.2);border-color:rgba(34,211,238,.4)}
+.toggle-sw input:checked+.toggle-track+.toggle-thumb{background:var(--cyan);left:21px;box-shadow:0 0 8px rgba(34,211,238,.5)}
+
+/* ── UA truncate ── */
+.ua-text{max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted);font-size:11px}
+
+/* ── Notification toast ── */
+#adm-toast{position:fixed;bottom:24px;right:24px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:12px 18px;font-size:12px;color:var(--text);z-index:9999;opacity:0;transform:translateY(8px);transition:all .25s;pointer-events:none;max-width:280px}
+#adm-toast.show{opacity:1;transform:translateY(0)}
+#adm-toast.ok{border-color:rgba(34,197,94,.4);color:var(--green)}
+#adm-toast.err{border-color:rgba(248,113,113,.4);color:var(--red)}
+
+/* ── Refresh btn ── */
+.adm-section-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;padding-bottom:12px;border-bottom:1px solid var(--border)}
+.adm-section-hdr .adm-section-title{margin-bottom:0;padding-bottom:0;border-bottom:none}
+
+@media(max-width:640px){
+  .adm-sidebar{display:none}
+  .adm-main{padding:16px}
+  .adm-stats-grid{grid-template-columns:repeat(2,1fr)}
+}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<header class="adm-header">
+  <div class="adm-logo">
+    <div class="adm-logo-text">ZyNi</div>
+    <div class="adm-logo-badge">ADMIN</div>
+  </div>
+  <div class="adm-user">
+    Logged in as <span>{{ admin_username }}</span>
+    <a href="/logout" class="adm-logout">Logout</a>
+  </div>
+</header>
+
+<div class="adm-body">
+  <!-- Sidebar -->
+  <nav class="adm-sidebar">
+    <div class="adm-nav-item active" onclick="showSection('dashboard')"><span class="adm-nav-icon">▣</span>Dashboard</div>
+    <div class="adm-nav-item" onclick="showSection('users')"><span class="adm-nav-icon">👥</span>Users</div>
+    <div class="adm-nav-item" onclick="showSection('sessions')"><span class="adm-nav-icon">💻</span>Live Sessions</div>
+    <div class="adm-nav-sep"></div>
+    <div class="adm-nav-item" onclick="showSection('logs')"><span class="adm-nav-icon">📋</span>Audit Log</div>
+    <div class="adm-nav-item" onclick="showSection('stats')"><span class="adm-nav-icon">📊</span>System Stats</div>
+    <div class="adm-nav-sep"></div>
+    <div class="adm-nav-item" onclick="showSection('controls')"><span class="adm-nav-icon">⚙</span>App Controls</div>
+  </nav>
+
+  <!-- Main -->
+  <main class="adm-main">
+
+    <!-- DASHBOARD -->
+    <section class="adm-section active" id="sec-dashboard">
+      <div class="adm-section-hdr">
+        <div class="adm-section-title">Dashboard Overview</div>
+        <button class="adm-btn primary sm" onclick="loadDashboard()">Refresh</button>
+      </div>
+      <div class="adm-stats-grid" id="dashboard-stats">
+        <div class="adm-stat-card cyan"><div class="adm-stat-label">Active Sessions</div><div class="adm-stat-value cyan" id="ds-sessions">—</div></div>
+        <div class="adm-stat-card green"><div class="adm-stat-label">Total Users</div><div class="adm-stat-value green" id="ds-users">—</div></div>
+        <div class="adm-stat-card amber"><div class="adm-stat-label">Total Logins</div><div class="adm-stat-value amber" id="ds-logins">—</div></div>
+        <div class="adm-stat-card red"><div class="adm-stat-label">Failed Attempts</div><div class="adm-stat-value red" id="ds-failed">—</div></div>
+        <div class="adm-stat-card cyan"><div class="adm-stat-label">Uptime</div><div class="adm-stat-value" id="ds-uptime" style="font-size:15px">—</div></div>
+        <div class="adm-stat-card amber"><div class="adm-stat-label">Memory (RSS)</div><div class="adm-stat-value amber" id="ds-memory">—</div></div>
+      </div>
+    </section>
+
+    <!-- USERS -->
+    <section class="adm-section" id="sec-users">
+      <div class="adm-section-hdr">
+        <div class="adm-section-title">User Management</div>
+        <button class="adm-btn primary sm" onclick="loadUsers()">Refresh</button>
+      </div>
+      <div class="adm-input-row">
+        <input class="adm-input" id="new-username" placeholder="new username" autocomplete="off"/>
+        <button class="adm-btn primary" onclick="addUser()">Add User</button>
+      </div>
+      <div class="adm-table-wrap">
+        <table class="adm-table">
+          <thead><tr><th>#</th><th>Username</th><th>Status</th><th>Action</th></tr></thead>
+          <tbody id="users-tbody"><tr><td colspan="4" class="adm-empty">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- SESSIONS -->
+    <section class="adm-section" id="sec-sessions">
+      <div class="adm-section-hdr">
+        <div class="adm-section-title">Live Sessions</div>
+        <button class="adm-btn primary sm" onclick="loadSessions()">Refresh</button>
+      </div>
+      <div class="adm-table-wrap">
+        <table class="adm-table">
+          <thead><tr><th>Username</th><th>IP</th><th>Login Time</th><th>Role</th><th>Device</th><th>Action</th></tr></thead>
+          <tbody id="sessions-tbody"><tr><td colspan="6" class="adm-empty">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- AUDIT LOG -->
+    <section class="adm-section" id="sec-logs">
+      <div class="adm-section-hdr">
+        <div class="adm-section-title">Login Audit Log</div>
+        <button class="adm-btn primary sm" onclick="loadLogs()">Refresh</button>
+      </div>
+      <div class="adm-table-wrap">
+        <table class="adm-table">
+          <thead><tr><th>Time</th><th>Username</th><th>IP</th><th>Location</th><th>Status</th><th>Device</th></tr></thead>
+          <tbody id="logs-tbody"><tr><td colspan="6" class="adm-empty">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- STATS -->
+    <section class="adm-section" id="sec-stats">
+      <div class="adm-section-hdr">
+        <div class="adm-section-title">System Statistics</div>
+        <button class="adm-btn primary sm" onclick="loadStats()">Refresh</button>
+      </div>
+      <div class="adm-stats-grid" id="stats-grid">
+        <div class="adm-stat-card cyan"><div class="adm-stat-label">Uptime</div><div class="adm-stat-value" id="st-uptime" style="font-size:16px">—</div></div>
+        <div class="adm-stat-card amber"><div class="adm-stat-label">Memory RSS</div><div class="adm-stat-value amber" id="st-mem">—</div></div>
+        <div class="adm-stat-card green"><div class="adm-stat-label">Total Users</div><div class="adm-stat-value green" id="st-users">—</div></div>
+        <div class="adm-stat-card cyan"><div class="adm-stat-label">Active Sessions</div><div class="adm-stat-value cyan" id="st-sessions">—</div></div>
+        <div class="adm-stat-card green"><div class="adm-stat-label">Successful Logins</div><div class="adm-stat-value green" id="st-logins">—</div></div>
+        <div class="adm-stat-card red"><div class="adm-stat-label">Failed Attempts</div><div class="adm-stat-value red" id="st-failed">—</div></div>
+        <div class="adm-stat-card amber"><div class="adm-stat-label">Audit Log Entries</div><div class="adm-stat-value amber" id="st-logsize">—</div></div>
+      </div>
+    </section>
+
+    <!-- APP CONTROLS -->
+    <section class="adm-section" id="sec-controls">
+      <div class="adm-section-hdr">
+        <div class="adm-section-title">App Controls — Tab Toggles</div>
+        <button class="adm-btn primary sm" onclick="loadControls()">Refresh</button>
+      </div>
+      <p style="font-size:11px;color:var(--muted);margin-bottom:18px;line-height:1.6">Enable or disable specific scan tabs for all users. Changes take effect immediately — disabled tabs will return an error when called.</p>
+      <div class="adm-toggles-grid" id="toggles-grid">
+        <div class="adm-empty">Loading...</div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<div id="adm-toast"></div>
+
+<script>
+var _currentSection='dashboard';
+
+function showSection(name){
+  document.querySelectorAll('.adm-section').forEach(function(s){s.classList.remove('active')});
+  document.querySelectorAll('.adm-nav-item').forEach(function(n){n.classList.remove('active')});
+  var sec=document.getElementById('sec-'+name);
+  if(sec)sec.classList.add('active');
+  document.querySelectorAll('.adm-nav-item').forEach(function(n){
+    if(n.textContent.toLowerCase().indexOf(name.replace('_',' '))!==-1||
+       (name==='dashboard'&&n.textContent.indexOf('Dashboard')!==-1)||
+       (name==='users'&&n.textContent.indexOf('Users')!==-1)||
+       (name==='sessions'&&n.textContent.indexOf('Sessions')!==-1)||
+       (name==='logs'&&n.textContent.indexOf('Audit')!==-1)||
+       (name==='stats'&&n.textContent.indexOf('Stats')!==-1)||
+       (name==='controls'&&n.textContent.indexOf('Controls')!==-1))
+      n.classList.add('active');
+  });
+  _currentSection=name;
+  if(name==='dashboard')loadDashboard();
+  else if(name==='users')loadUsers();
+  else if(name==='sessions')loadSessions();
+  else if(name==='logs')loadLogs();
+  else if(name==='stats')loadStats();
+  else if(name==='controls')loadControls();
+}
+
+function toast(msg,type){
+  var t=document.getElementById('adm-toast');
+  t.textContent=msg;t.className='show '+(type||'');
+  clearTimeout(t._tid);
+  t._tid=setTimeout(function(){t.className='';},3000);
+}
+
+function apiFetch(url,opts){
+  return fetch(url,opts||{}).then(function(r){
+    if(r.status===302||r.redirected){window.location.href='/';return null;}
+    return r.json();
+  });
+}
+
+/* ── Dashboard ── */
+function loadDashboard(){
+  apiFetch('/api/admin/stats').then(function(d){
+    if(!d)return;
+    document.getElementById('ds-sessions').textContent=d.active_sessions;
+    document.getElementById('ds-users').textContent=d.total_users;
+    document.getElementById('ds-logins').textContent=d.total_logins;
+    document.getElementById('ds-failed').textContent=d.failed_attempts;
+    document.getElementById('ds-uptime').textContent=d.uptime;
+    document.getElementById('ds-memory').textContent=d.memory_mb+'MB';
+  });
+}
+
+/* ── Users ── */
+function loadUsers(){
+  apiFetch('/api/admin/users').then(function(d){
+    if(!d)return;
+    var tb=document.getElementById('users-tbody');
+    if(!d.users||!d.users.length){tb.innerHTML='<tr><td colspan="4" class="adm-empty">No users found.</td></tr>';return;}
+    tb.innerHTML=d.users.map(function(u,i){
+      return '<tr><td style="color:var(--muted);font-family:JetBrains Mono,monospace">'+(i+1)+'</td>'+
+        '<td style="font-family:JetBrains Mono,monospace;color:var(--cyan)">'+esc(u)+'</td>'+
+        '<td><span class="adm-badge green">Active</span></td>'+
+        '<td><button class="adm-btn danger sm" onclick="removeUser(\''+esc(u)+'\')">Remove</button></td></tr>';
+    }).join('');
+  });
+}
+
+function addUser(){
+  var inp=document.getElementById('new-username');
+  var uname=inp.value.trim().toLowerCase();
+  if(!uname){toast('Enter a username','err');return;}
+  apiFetch('/api/admin/users/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:uname})})
+    .then(function(d){
+      if(!d)return;
+      if(d.error){toast(d.error,'err');}
+      else{inp.value='';toast('User "'+uname+'" added','ok');loadUsers();}
+    });
+}
+
+function removeUser(uname){
+  if(!confirm('Remove user "'+uname+'"? They will be logged out immediately.'))return;
+  apiFetch('/api/admin/users/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:uname})})
+    .then(function(d){
+      if(!d)return;
+      if(d.error){toast(d.error,'err');}
+      else{toast('User "'+uname+'" removed','ok');loadUsers();}
+    });
+}
+
+/* ── Sessions ── */
+function loadSessions(){
+  apiFetch('/api/admin/sessions').then(function(d){
+    if(!d)return;
+    var tb=document.getElementById('sessions-tbody');
+    if(!d.sessions||!d.sessions.length){tb.innerHTML='<tr><td colspan="6" class="adm-empty">No active sessions.</td></tr>';return;}
+    tb.innerHTML=d.sessions.map(function(s){
+      var t=s.login_time?s.login_time.replace('T',' ').split('.')[0]+' UTC':'—';
+      var role=s.is_admin?'<span class="adm-badge amber">Admin</span>':'<span class="adm-badge cyan">User</span>';
+      return '<tr>'+
+        '<td style="font-family:JetBrains Mono,monospace;color:var(--cyan)">'+esc(s.username)+'</td>'+
+        '<td style="font-family:JetBrains Mono,monospace;font-size:11px">'+esc(s.ip||'—')+'</td>'+
+        '<td style="font-size:11px;color:var(--muted)">'+esc(t)+'</td>'+
+        '<td>'+role+'</td>'+
+        '<td><div class="ua-text" title="'+esc(s.ua||'')+'">'+esc(s.ua||'—')+'</div></td>'+
+        '<td><button class="adm-btn danger sm" onclick="forceLogout(\''+esc(s.username)+'\')">Logout</button></td></tr>';
+    }).join('');
+  });
+}
+
+function forceLogout(uname){
+  if(!confirm('Force logout "'+uname+'"?'))return;
+  apiFetch('/api/admin/sessions/logout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:uname})})
+    .then(function(d){
+      if(!d)return;
+      toast('"'+uname+'" will be logged out on next request','ok');
+      loadSessions();
+    });
+}
+
+/* ── Audit Log ── */
+function loadLogs(){
+  apiFetch('/api/admin/logs?limit=100').then(function(d){
+    if(!d)return;
+    var tb=document.getElementById('logs-tbody');
+    if(!d.logs||!d.logs.length){tb.innerHTML='<tr><td colspan="6" class="adm-empty">No login events yet.</td></tr>';return;}
+    tb.innerHTML=d.logs.map(function(e){
+      var badge=e.success?'<span class="adm-badge green">✓ Success</span>':'<span class="adm-badge red">✗ Failed</span>';
+      return '<tr>'+
+        '<td style="font-size:11px;color:var(--muted);white-space:nowrap">'+esc(e.time||'—')+'</td>'+
+        '<td style="font-family:JetBrains Mono,monospace;color:var(--cyan)">'+esc(e.username||'—')+'</td>'+
+        '<td style="font-family:JetBrains Mono,monospace;font-size:11px">'+esc(e.ip||'—')+'</td>'+
+        '<td style="font-size:11px;color:var(--muted)">'+esc(e.geo||'—')+'</td>'+
+        '<td>'+badge+'</td>'+
+        '<td><div class="ua-text" title="'+esc(e.ua||'')+'">'+esc(e.ua||'—')+'</div></td></tr>';
+    }).join('');
+  });
+}
+
+/* ── Stats ── */
+function loadStats(){
+  apiFetch('/api/admin/stats').then(function(d){
+    if(!d)return;
+    document.getElementById('st-uptime').textContent=d.uptime;
+    document.getElementById('st-mem').textContent=d.memory_mb+'MB';
+    document.getElementById('st-users').textContent=d.total_users;
+    document.getElementById('st-sessions').textContent=d.active_sessions;
+    document.getElementById('st-logins').textContent=d.total_logins;
+    document.getElementById('st-failed').textContent=d.failed_attempts;
+    document.getElementById('st-logsize').textContent=d.audit_log_size;
+  });
+}
+
+/* ── Controls ── */
+function loadControls(){
+  apiFetch('/api/admin/controls/tabs').then(function(d){
+    if(!d)return;
+    var grid=document.getElementById('toggles-grid');
+    var tabs=d.tab_controls;
+    var labels={'scan':'Scan','compressed':'Compressed Scan','trending':'Trending','ath_atl':'ATH / ATL','bias':'Bias Analysis','live_monitor':'Live Monitor'};
+    grid.innerHTML=Object.keys(tabs).map(function(tab){
+      var checked=tabs[tab]?'checked':'';
+      var lbl=labels[tab]||tab;
+      return '<div class="adm-toggle-card">'+
+        '<div><div class="adm-toggle-name">'+esc(lbl)+'</div>'+
+        '<div class="adm-toggle-sub">'+esc(tab)+'</div></div>'+
+        '<label class="toggle-sw">'+
+          '<input type="checkbox" '+checked+' onchange="toggleTab(\''+tab+'\',this.checked)">'+
+          '<div class="toggle-track"></div>'+
+          '<div class="toggle-thumb"></div>'+
+        '</label>'+
+      '</div>';
+    }).join('');
+  });
+}
+
+function toggleTab(tab,enabled){
+  apiFetch('/api/admin/controls/tab',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tab:tab,enabled:enabled})})
+    .then(function(d){
+      if(!d)return;
+      if(d.error){toast(d.error,'err');loadControls();}
+      else{toast(tab+' '+(enabled?'enabled':'disabled'),'ok');}
+    });
+}
+
+function esc(str){
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// Init
+loadDashboard();
+</script>
+</body>
+</html>
