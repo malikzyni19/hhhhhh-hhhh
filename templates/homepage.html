@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>ZyNi SMC — Smart Money Screener</title>
-<style>
+{% raw %}<style>
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=Inter:wght@300;400;500;600;700&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&display=swap');
 
 [data-theme="dark"]{
@@ -572,7 +572,7 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 .statement-l2.vis{opacity:1;transform:translateY(0)}
 .stmt-hl{background:linear-gradient(90deg,#f59e0b,#fbbf24 60%,#f97316);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;filter:drop-shadow(0 0 10px rgba(245,158,11,0.40))}
 .stmt-hl2{background:linear-gradient(90deg,#22d3ee,#38bdf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
-</style>
+</style>{% endraw %}
 </head>
 <body>
 <canvas id="three-canvas"></canvas>
@@ -1043,7 +1043,7 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
   </div>
 </footer>
 
-<script>
+{% raw %}<script>
 // ════════════════════════════════
 // TRANSLATIONS
 // ════════════════════════════════
@@ -1455,7 +1455,7 @@ const sCfg=[[128,4,'#22d3ee',-48,-62],[202,4,'#22d3ee',48,-62],[143,2,'#a5f3fc',
 const sparks=[];
 sCfg.forEach(c=>{const e=document.createElement('div');e.style.cssText=`position:absolute;left:${c[0]}px;bottom:${c[1]}px;width:3px;height:3px;border-radius:50%;background:${c[2]};opacity:0;pointer-events:none`;dw.appendChild(e);sparks.push({el:e,dx:c[3],dy:c[4]})});
 
-</script>
+</script>{% endraw %}
 
 <!-- ═══════════════════════════════
      LOGIN OVERLAY — drop animation
@@ -1505,7 +1505,7 @@ sCfg.forEach(c=>{const e=document.createElement('div');e.style.cssText=`position
   </div>
 </div>
 
-<script>
+{% raw %}<script>
 // ═══ LOGIN DROP SYSTEM ═══
 (function(){
   const dw=document.getElementById('lwDustWrap');
@@ -1678,14 +1678,14 @@ function lwStartBounce(){
   function next(){requestAnimationFrame(function(ts){animateLetter(letters[idx],ts);});}
   next();
 }
-</script>
+</script>{% endraw %}
 
 <!-- ── THREE.JS + GSAP CDN ── -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/ScrollTrigger.min.js"></script>
 
-<script>
+{% raw %}<script>
 /* ════════════════════════════════════════════════════════════
    THREE.JS — cinematic 3D background
 ════════════════════════════════════════════════════════════ */
@@ -2500,6 +2500,6 @@ function lwStartBounce(){
   }
 })();
 
-</script>
+</script>{% endraw %}
 </body>
 </html>
