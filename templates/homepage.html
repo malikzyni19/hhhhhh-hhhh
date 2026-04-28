@@ -1937,7 +1937,10 @@ function lwStartBounce(){
 
 /* ════════════════════════════════════════════════════════════
    HERO SCENE — Flower-Bloom Globe · Orbiting Symbols · ₿ Reveal
-   Three.js + GSAP · dark navy petals · golden energy release
+
+/* ════════════════════════════════════════════════════════════
+   HERO SCENE — Bloom Globe · ₿ Orbit Reveal · Orbiting Symbols
+   Three.js + GSAP · emerge → rise → orbit → return → loop
 ════════════════════════════════════════════════════════════ */
 (function initHeroScene() {
   var hero = document.querySelector('.hero');
@@ -1980,7 +1983,6 @@ function lwStartBounce(){
   var rimLight = new THREE.PointLight(0x6644cc, 0.7, 18);
   rimLight.position.set(0, -4, -5);
   scene.add(rimLight);
-  /* Inner bloom light — intensifies when globe opens */
   var innerLight = new THREE.PointLight(0xf59e0b, 0, 12);
   innerLight.position.set(0, 0, 0);
   scene.add(innerLight);
@@ -1999,30 +2001,28 @@ function lwStartBounce(){
   });
   scene.add(new THREE.Points(starGeo, starMat));
 
-  /* ── Globe group ── */
+  /* ── Globe group (petals + core — rotates as unit) ── */
   var earthGroup = new THREE.Group();
   scene.add(earthGroup);
-  var EARTH_R  = 1.7;
-  var OPEN_D   = 0.70;
-  var N_PETALS = 6;
+  var EARTH_R = 1.7;
+  var OPEN_D  = 0.70;
 
-  /* ── Petal segments — 6 dark navy sphere wedges ── */
+  /* ── 6 petal segments ── */
   var petals = [];
-  for (var pi = 0; pi < N_PETALS; pi++) {
-    var phiS  = (Math.PI * 2 / N_PETALS) * pi;
-    var phiL  = (Math.PI * 2 / N_PETALS);
-    var pGeo  = new THREE.SphereGeometry(EARTH_R, 3, 24, phiS, phiL);
-    var pMat  = new THREE.MeshStandardMaterial({
+  for (var pi = 0; pi < 6; pi++) {
+    var phiS = (Math.PI * 2 / 6) * pi;
+    var pGeo = new THREE.SphereGeometry(EARTH_R, 3, 24, phiS, Math.PI * 2 / 6);
+    var pMat = new THREE.MeshStandardMaterial({
       color: 0x041d30, metalness: 0.55, roughness: 0.36,
       side: THREE.DoubleSide, emissive: 0x020e18, emissiveIntensity: 0.35
     });
     var pMesh = new THREE.Mesh(pGeo, pMat);
     earthGroup.add(pMesh);
-    var cPhi = phiS + phiL / 2;
+    var cPhi = phiS + Math.PI / 6;
     petals.push({ mesh: pMesh, dir: new THREE.Vector3(Math.cos(cPhi), 0, Math.sin(cPhi)) });
   }
 
-  /* ── Atmosphere halo ── */
+  /* ── Atmosphere ── */
   earthGroup.add(new THREE.Mesh(
     new THREE.SphereGeometry(EARTH_R + 0.14, 32, 32),
     new THREE.MeshBasicMaterial({
@@ -2031,7 +2031,7 @@ function lwStartBounce(){
     })
   ));
 
-  /* ── Inner golden core (hidden until bloom) ── */
+  /* ── Inner core (in earthGroup so it rotates with globe) ── */
   var innerMesh = new THREE.Mesh(
     new THREE.SphereGeometry(0.52, 32, 32),
     new THREE.MeshStandardMaterial({
@@ -2042,7 +2042,6 @@ function lwStartBounce(){
   innerMesh.scale.set(0, 0, 0);
   earthGroup.add(innerMesh);
 
-  /* ── Inner glow shell ── */
   var glowMesh = new THREE.Mesh(
     new THREE.SphereGeometry(0.90, 32, 32),
     new THREE.MeshBasicMaterial({
@@ -2056,17 +2055,17 @@ function lwStartBounce(){
   var RA = { r: 2.85, tilt: 0.42, speed: 0.0055 };
   var RB = { r: 4.00, tilt: 0.72, speed: 0.0038 };
   var RC = { r: 5.20, tilt: 0.18, speed: 0.0026 };
-
   function makeRing(cfg, col) {
-    var geo = new THREE.TorusGeometry(cfg.r, 0.010, 3, 120);
-    var mat = new THREE.MeshBasicMaterial({
-      color: col, transparent: true, opacity: 0.55,
-      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
-    });
-    var mesh = new THREE.Mesh(geo, mat);
-    mesh.rotation.x = Math.PI / 2 + cfg.tilt;
-    scene.add(mesh);
-    return mesh;
+    var m = new THREE.Mesh(
+      new THREE.TorusGeometry(cfg.r, 0.010, 3, 120),
+      new THREE.MeshBasicMaterial({
+        color: col, transparent: true, opacity: 0.55,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+      })
+    );
+    m.rotation.x = Math.PI / 2 + cfg.tilt;
+    scene.add(m);
+    return m;
   }
   var ringA = makeRing(RA, 0xf59e0b);
   var ringB = makeRing(RB, 0x22d3ee);
@@ -2095,7 +2094,6 @@ function lwStartBounce(){
     scene.add(sp);
     return sp;
   }
-
   var cryptos = [
     { sym: '₿', hex: '#f59e0b', rgb: [245,158, 11], cfg: RA, off: 0               },
     { sym: '◎', hex: '#22d3ee', rgb: [ 34,211,238], cfg: RA, off: Math.PI          },
@@ -2107,19 +2105,19 @@ function lwStartBounce(){
   var symV  = new THREE.Vector3();
   cryptos.forEach(function(c) { c.ang = c.off; c.sprite = makeSymbolSprite(c.sym, c.hex, c.rgb); });
 
-  /* ── ₿ Sprite — starts below, rises on bloom ── */
+  /* ── ₿ Sprite — in scene (world space) so orbit is globe-independent ── */
   var bCv = document.createElement('canvas');
   bCv.width = bCv.height = 256;
   var bCtx = bCv.getContext('2d');
   var bGrd = bCtx.createRadialGradient(128, 128, 0, 128, 128, 128);
-  bGrd.addColorStop(0,   'rgba(255,230,80,0.72)');
-  bGrd.addColorStop(0.35,'rgba(245,158,11,0.30)');
+  bGrd.addColorStop(0,   'rgba(255,230,80,0.78)');
+  bGrd.addColorStop(0.32,'rgba(245,158,11,0.32)');
   bGrd.addColorStop(1,   'rgba(245,158,11,0)');
   bCtx.fillStyle = bGrd; bCtx.fillRect(0, 0, 256, 256);
   bCtx.font = 'bold 158px Arial';
   bCtx.textAlign = 'center'; bCtx.textBaseline = 'middle';
   bCtx.fillStyle = '#fcd34d';
-  bCtx.shadowColor = '#fbbf24'; bCtx.shadowBlur = 32;
+  bCtx.shadowColor = '#fbbf24'; bCtx.shadowBlur = 34;
   bCtx.fillText('₿', 128, 134);
   var btcSprite = new THREE.Sprite(new THREE.SpriteMaterial({
     map: new THREE.CanvasTexture(bCv),
@@ -2127,19 +2125,19 @@ function lwStartBounce(){
     blending: THREE.AdditiveBlending, depthWrite: false
   }));
   btcSprite.scale.set(2.2, 2.2, 1);
-  btcSprite.position.set(0, -0.38, 0); /* starts below center */
-  earthGroup.add(btcSprite);
+  btcSprite.position.set(0, -0.40, 0);
+  scene.add(btcSprite); /* world space — orbit is camera-independent */
 
-  /* ── Shimmer spark sprites (8 golden motes, radiate on ₿ reveal) ── */
+  /* ── Shimmer sparks — 8 gold motes in scene ── */
   var shimmers = [];
   for (var shi = 0; shi < 8; shi++) {
     var shCv = document.createElement('canvas');
     shCv.width = shCv.height = 32;
     var shCtx = shCv.getContext('2d');
     var shGrd = shCtx.createRadialGradient(16, 16, 0, 16, 16, 16);
-    shGrd.addColorStop(0,   'rgba(255,230,60,1.0)');
-    shGrd.addColorStop(0.30,'rgba(245,158,11,0.65)');
-    shGrd.addColorStop(1,   'rgba(245,158,11,0)');
+    shGrd.addColorStop(0,    'rgba(255,230,60,1.0)');
+    shGrd.addColorStop(0.30, 'rgba(245,158,11,0.65)');
+    shGrd.addColorStop(1,    'rgba(245,158,11,0)');
     shCtx.fillStyle = shGrd; shCtx.fillRect(0, 0, 32, 32);
     var shSp = new THREE.Sprite(new THREE.SpriteMaterial({
       map: new THREE.CanvasTexture(shCv),
@@ -2148,12 +2146,17 @@ function lwStartBounce(){
     }));
     shSp.scale.set(0.20, 0.20, 1);
     shSp.position.set(0, 0, 0);
-    earthGroup.add(shSp);
+    scene.add(shSp);
     shimmers.push({ sp: shSp, ang: (Math.PI * 2 / 8) * shi });
   }
 
-  /* ── Interaction state ── */
+  /* ── State ── */
   var mx = 0, my = 0, camTx = 0, camTy = 0, scrollY = 0;
+  var bloomFactor = 0;
+  var orbitTween  = null;
+  var BTC_ORBIT_R = 0.68;
+  var BTC_ORBIT_P = 5.2; /* orbit period seconds */
+
   hero.addEventListener('mousemove', function(e) {
     var r = hero.getBoundingClientRect();
     mx = (e.clientX - r.left) / r.width  - 0.5;
@@ -2169,7 +2172,6 @@ function lwStartBounce(){
   }
 
   var clock = new THREE.Clock();
-  var bloomFactor = 0; /* 0=closed, 1=fully open — used for ring brightness boost */
 
   function animate() {
     requestAnimationFrame(animate);
@@ -2181,11 +2183,10 @@ function lwStartBounce(){
     canvas.style.opacity   = (1 - sf).toFixed(3);
     canvas.style.transform = 'translateY(' + (-sf * 55) + 'px)';
 
-    /* Idle globe rotation + subtle float */
     earthGroup.rotation.y += 0.0015;
     earthGroup.position.y  = Math.sin(t * 0.30) * 0.07;
 
-    /* Orbiting symbols — continuous, uninterrupted */
+    /* Continuous orbiting symbols — never interrupted */
     var msc = 1 - sf * 0.45;
     cryptos.forEach(function(c) {
       c.ang += c.cfg.speed;
@@ -2193,15 +2194,15 @@ function lwStartBounce(){
       symV.set(Math.cos(c.ang) * c.cfg.r, Math.sin(c.ang) * c.cfg.r, 0);
       symV.applyMatrix4(symM4);
       c.sprite.position.copy(symV).multiplyScalar(msc);
-      /* Brightness boost during bloom open */
-      c.sprite.material.opacity = 0.82 + bloomFactor * 0.18;
+      c.sprite.material.opacity = 0.80 + bloomFactor * 0.20;
     });
     ringA.scale.setScalar(msc); ringB.scale.setScalar(msc); ringC.scale.setScalar(msc);
+    ringA.material.opacity = 0.50 + bloomFactor * 0.20;
+    ringB.material.opacity = 0.50 + bloomFactor * 0.20;
+    ringC.material.opacity = 0.50 + bloomFactor * 0.20;
 
-    /* Stars twinkle */
     starMat.opacity = 0.24 + Math.sin(t * 0.10) * 0.06;
 
-    /* Camera parallax */
     camTx += (mx * 0.9 - camTx) * 0.022;
     camTy += (-my * 0.6 - camTy) * 0.022;
     camera.position.x = camTx;
@@ -2212,72 +2213,100 @@ function lwStartBounce(){
   }
   animate();
 
-  /* ── GSAP Bloom Timeline ── */
+  /* ── GSAP Bloom + ₿ Orbit Timeline ── */
   if (!window.gsap) return;
-
-  var floatTween = null;
 
   var tl = gsap.timeline({ repeat: -1, repeatDelay: 1.8 });
 
-  /* Phase 1 — Petals open, staggered */
+  /* ── Cycle reset at t=0 ── */
+  tl.call(function() {
+    if (orbitTween) { orbitTween.kill(); orbitTween = null; }
+    gsap.set(btcSprite.position, { x: 0, y: -0.40, z: 0 });
+    gsap.set(btcSprite.material, { opacity: 0 });
+    shimmers.forEach(function(sh) {
+      gsap.set(sh.sp.position, { x: 0, y: 0, z: 0 });
+      gsap.set(sh.sp.material, { opacity: 0 });
+    });
+    bloomFactor = 0;
+  }, [], 0);
+
+  /* Phase 1 — Petals open */
   petals.forEach(function(p, i) {
     tl.to(p.mesh.position, { x: p.dir.x * OPEN_D, z: p.dir.z * OPEN_D,
       duration: 1.35, ease: 'power3.inOut' }, i * 0.10);
   });
 
-  /* Phase 2 — Inner core + light + ring boost */
-  tl.to(innerMesh.scale, { x: 1, y: 1, z: 1, duration: 0.85, ease: 'back.out(1.5)' }, 0.50);
-  tl.to(glowMesh.material, { opacity: 0.20, duration: 0.75, ease: 'power2.out' }, 0.60);
-  tl.to(innerLight, { intensity: 5.5, duration: 0.85, ease: 'power2.out' }, 0.60);
-  tl.to(keyLight,   { intensity: 7.8, duration: 0.85, ease: 'power2.out' }, 0.60);
+  /* Phase 2 — Inner core materialises */
+  tl.to(innerMesh.scale, { x: 1, y: 1, z: 1,
+    duration: 0.85, ease: 'back.out(1.5)' }, 0.50);
+  tl.to(glowMesh.material, { opacity: 0.20,
+    duration: 0.75, ease: 'power2.out' }, 0.60);
+  tl.to(innerLight, { intensity: 5.5,
+    duration: 0.85, ease: 'power2.out' }, 0.60);
+  tl.to(keyLight,   { intensity: 8.0,
+    duration: 0.85, ease: 'power2.out' }, 0.60);
   tl.to({ v: 0 }, { v: 1, duration: 0.85,
     onUpdate: function() { bloomFactor = this.targets()[0].v; } }, 0.60);
 
-  /* Phase 3 — ₿ rises from below with energy-release feel */
-  tl.to(btcSprite.position, { y: 0.08, duration: 0.95, ease: 'power2.out' }, 0.92);
-  tl.to(btcSprite.material, { opacity: 1.0, duration: 0.65, ease: 'power2.out' }, 0.98);
+  /* Phase 3 — ₿ emerges from core, rises clear of globe */
+  tl.to(btcSprite.position, { y: 2.85, duration: 1.25, ease: 'power2.out' }, 0.92);
+  tl.to(btcSprite.material, { opacity: 1.0, duration: 0.55, ease: 'power2.out' }, 0.96);
 
-  /* Phase 3.5 — Shimmer sparks radiate outward */
+  /* Shimmer sparks at emergence */
   shimmers.forEach(function(sh, i) {
-    var t0   = 1.05 + i * 0.025;
-    var rad  = 0.72 + (i % 3) * 0.18;
-    var dx   = Math.cos(sh.ang) * rad;
-    var dy   = Math.sin(sh.ang * 0.7) * rad * 0.45;
-    var dz   = Math.sin(sh.ang) * rad * 0.30;
-    tl.set(sh.sp.position, { x: 0, y: 0, z: 0 }, t0);
+    var t0  = 1.05 + i * 0.024;
+    var rad = 0.70 + (i % 3) * 0.20;
+    tl.set(sh.sp.position, { x: 0, y: 0.2, z: 0 }, t0);
     tl.set(sh.sp.material,  { opacity: 0 }, t0);
-    tl.to(sh.sp.position, { x: dx, y: dy, z: dz, duration: 0.75, ease: 'power2.out' }, t0);
-    tl.to(sh.sp.material,  { opacity: 0.90, duration: 0.22, ease: 'none' }, t0);
-    tl.to(sh.sp.material,  { opacity: 0, duration: 0.55, ease: 'power2.in' }, t0 + 0.22);
+    tl.to(sh.sp.position, {
+      x: Math.cos(sh.ang) * rad,
+      y: 0.2 + Math.sin(sh.ang * 0.6) * rad * 0.40,
+      z: Math.sin(sh.ang) * rad * 0.28,
+      duration: 0.80, ease: 'power2.out' }, t0);
+    tl.to(sh.sp.material, { opacity: 0.88, duration: 0.20, ease: 'none' }, t0);
+    tl.to(sh.sp.material, { opacity: 0,    duration: 0.58, ease: 'power2.in' }, t0 + 0.20);
   });
 
-  /* Phase 4 — Hold open + ₿ floats gently */
+  /* Phase 4 — ₿ enters orbit above globe */
   tl.call(function() {
-    floatTween = gsap.to(btcSprite.position, {
-      y: 0.28, duration: 1.55, ease: 'sine.inOut', yoyo: true, repeat: -1
+    var oy = btcSprite.position.y; /* capture Y after rise (≈2.85) */
+    var proxy = { a: 0 };
+    orbitTween = gsap.to(proxy, {
+      a: Math.PI * 2, duration: BTC_ORBIT_P,
+      ease: 'none', repeat: -1,
+      onUpdate: function() {
+        btcSprite.position.x = Math.cos(proxy.a) * BTC_ORBIT_R;
+        btcSprite.position.z = Math.sin(proxy.a) * BTC_ORBIT_R;
+        btcSprite.position.y = oy + Math.sin(proxy.a * 2) * 0.13;
+      }
     });
-  }, [], 1.62);
-  tl.to({}, { duration: 2.2 }, 1.85);
+  }, [], 2.18);
 
-  /* Phase 5 — Kill float, ₿ fades and descends */
+  /* Phase 4 hold — orbit for 2.6s */
+  tl.to({}, { duration: 2.6 }, 2.18);
+
+  /* Phase 5 — Kill orbit, ₿ descends back into globe */
   tl.call(function() {
-    if (floatTween) { floatTween.kill(); floatTween = null; }
-  }, [], 4.05);
-  tl.to(btcSprite.material, { opacity: 0, duration: 0.55, ease: 'power2.in' }, 4.05);
-  tl.to(btcSprite.position, { y: -0.38, duration: 0.70, ease: 'power2.in' }, 4.05);
+    if (orbitTween) { orbitTween.kill(); orbitTween = null; }
+  }, [], 4.78);
+  tl.to(btcSprite.position, { x: 0, y: -0.40, z: 0,
+    duration: 1.15, ease: 'power2.inOut' }, 4.78);
+  tl.to(btcSprite.material, { opacity: 0,
+    duration: 0.65, ease: 'power2.in' }, 4.95);
 
-  /* Phase 6 — Inner core collapses, lights dim */
-  tl.to(glowMesh.material, { opacity: 0, duration: 0.55, ease: 'power2.in' }, 4.05);
-  tl.to(innerLight,        { intensity: 0, duration: 0.55, ease: 'power2.in' }, 4.05);
-  tl.to(keyLight,          { intensity: 5.2, duration: 0.65, ease: 'power2.in' }, 4.05);
+  /* Phase 6 — Core collapses, lights restore */
+  tl.to(glowMesh.material, { opacity: 0,  duration: 0.55, ease: 'power2.in' }, 4.78);
+  tl.to(innerLight,        { intensity: 0, duration: 0.55, ease: 'power2.in' }, 4.78);
+  tl.to(keyLight,          { intensity: 5.2, duration: 0.65, ease: 'power2.in' }, 4.78);
   tl.to({ v: 1 }, { v: 0, duration: 0.65,
-    onUpdate: function() { bloomFactor = this.targets()[0].v; } }, 4.05);
-  tl.to(innerMesh.scale, { x: 0, y: 0, z: 0, duration: 0.60, ease: 'power3.in' }, 4.20);
+    onUpdate: function() { bloomFactor = this.targets()[0].v; } }, 4.78);
+  tl.to(innerMesh.scale, { x: 0, y: 0, z: 0,
+    duration: 0.60, ease: 'power3.in' }, 4.92);
 
   /* Phase 7 — Petals close, reverse stagger */
   petals.slice().reverse().forEach(function(p, i) {
     tl.to(p.mesh.position, { x: 0, z: 0,
-      duration: 1.05, ease: 'power3.inOut' }, 4.85 + i * 0.08);
+      duration: 1.05, ease: 'power3.inOut' }, 5.58 + i * 0.08);
   });
 
   /* ── Rotating word ── */
@@ -2305,6 +2334,7 @@ function lwStartBounce(){
     renderer.setSize(W, H); fitCamera();
   });
 })();
+
 
 
 
