@@ -542,10 +542,7 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 /* ── LETTER TYPING SPANS ── */
 .letter-span{display:inline-block;opacity:0;will-change:opacity}
 
-#features{position:relative;overflow:hidden}
-#mod-particles-wrap{position:absolute;top:0;left:0;right:0;bottom:0;pointer-events:none;z-index:0}
-#mod-particles-bg{position:absolute;top:0;left:0;width:100%;height:100%;display:block;pointer-events:none;opacity:0.62}
-.feat-row,.sec-eyebrow,.sec-h,.sec-sub{position:relative;z-index:1}
+#features{position:relative}
 
 /* ── STATEMENT SECTION ── */
 #statement{padding:72px 20px 80px;text-align:center}
@@ -810,7 +807,6 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 
 <!-- FEATURES -->
 <div class="section" id="features">
-  <div id="mod-particles-wrap"><canvas id="mod-particles-bg" aria-hidden="true"></canvas></div>
   <div class="sec-eyebrow" data-i18n="feat_eyebrow">SMC Modules</div>
   <h2 class="sec-h"><span data-i18n="feat_h">Everything to trade smart money</span></h2>
   <p class="sec-sub" data-i18n="feat_sub">Six professional tools — scan, detect and act on every Smart Money setup across 400+ pairs.</p>
@@ -1851,8 +1847,10 @@ function lwStartBounce(){
   });
 })();
 
+
 /* ════════════════════════════════════════════════════════════
-   HERO SCENE — galaxy orbit system (dotted rings + sprite icons)
+   HERO SCENE — Premium Flower-Bloom Globe (Three.js + GSAP)
+   Dark navy sphere · petal segments · golden ₿ reveal · loop
 ════════════════════════════════════════════════════════════ */
 (function initHeroScene() {
   var hero = document.querySelector('.hero');
@@ -1885,148 +1883,107 @@ function lwStartBounce(){
   fitCamera();
 
   /* ── Lighting ── */
-  scene.add(new THREE.AmbientLight(0x100800, 0.55));
-  var keyLight = new THREE.PointLight(0xffeedd, 6.8, 36);
-  keyLight.position.set(6, 3, 9);
+  scene.add(new THREE.AmbientLight(0x060f1e, 0.78));
+  var keyLight = new THREE.PointLight(0xd8e8ff, 5.2, 36);
+  keyLight.position.set(6, 4, 9);
   scene.add(keyLight);
-  var fillLight = new THREE.PointLight(0xf59e0b, 2.0, 26);
-  fillLight.position.set(-5, 1, 4);
+  var fillLight = new THREE.PointLight(0x1a3a88, 1.0, 22);
+  fillLight.position.set(-5, -1, 4);
   scene.add(fillLight);
-  var rimLight = new THREE.PointLight(0xff8800, 1.1, 22);
-  rimLight.position.set(2, -4, -4);
-  scene.add(rimLight);
+  /* Inner bloom light — intensifies when globe opens */
+  var innerLight = new THREE.PointLight(0xf59e0b, 0, 10);
+  innerLight.position.set(0, 0, 0);
+  scene.add(innerLight);
 
   /* ── Starfield ── */
-  var starPos = new Float32Array(300 * 3);
-  for (var si = 0; si < 300; si++) {
-    starPos[si*3]   = (Math.random() - 0.5) * 130;
-    starPos[si*3+1] = (Math.random() - 0.5) * 100;
-    starPos[si*3+2] = (Math.random() - 0.5) * 70 - 15;
+  var starPos = new Float32Array(280 * 3);
+  for (var si = 0; si < 280; si++) {
+    starPos[si*3]   = (Math.random() - 0.5) * 120;
+    starPos[si*3+1] = (Math.random() - 0.5) * 90;
+    starPos[si*3+2] = (Math.random() - 0.5) * 65 - 15;
   }
   var starGeo = new THREE.BufferGeometry();
   starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
   var starMat = new THREE.PointsMaterial({
-    color: 0xffffff, size: 0.036, transparent: true, opacity: 0.32, sizeAttenuation: true
+    color: 0xffffff, size: 0.033, transparent: true, opacity: 0.27, sizeAttenuation: true
   });
   scene.add(new THREE.Points(starGeo, starMat));
 
-  /* ── Globe texture — premium gold coin (full-surface ₿) ── */
-  var earthCv = document.createElement('canvas');
-  earthCv.width = earthCv.height = 1024;
-  var eCtx = earthCv.getContext('2d');
-  /* Rich warm-dark gold base so no blank areas anywhere on sphere */
-  var og = eCtx.createRadialGradient(512, 480, 40, 512, 512, 640);
-  og.addColorStop(0, '#1c0f00'); og.addColorStop(0.4, '#140a00'); og.addColorStop(0.75, '#0e0700'); og.addColorStop(1, '#080400');
-  eCtx.fillStyle = og; eCtx.fillRect(0, 0, 1024, 1024);
-  /* Warm golden sheen overlay — fills sphere with ambient gold */
-  var sheen = eCtx.createLinearGradient(0, 0, 1024, 1024);
-  sheen.addColorStop(0, 'rgba(245,158,11,0.055)'); sheen.addColorStop(0.5, 'rgba(253,186,22,0.09)'); sheen.addColorStop(1, 'rgba(180,83,9,0.055)');
-  eCtx.fillStyle = sheen; eCtx.fillRect(0, 0, 1024, 1024);
-  /* ₿ — massive icon, 5-pass metallic coin rendering */
-  eCtx.textAlign = 'center'; eCtx.textBaseline = 'middle';
-  eCtx.font = 'bold 980px Arial';
-  /* pass 1 — extreme-spread corona fills entire canvas with golden ambient */
-  eCtx.shadowColor = 'rgba(245,158,11,0.52)'; eCtx.shadowBlur = 240;
-  eCtx.fillStyle = 'rgba(251,191,36,0.04)'; eCtx.fillText('\u20BF', 512, 545);
-  /* pass 2 — wide warm halo */
-  eCtx.shadowColor = 'rgba(253,186,22,0.78)'; eCtx.shadowBlur = 95;
-  eCtx.fillStyle = 'rgba(245,158,11,0.26)'; eCtx.fillText('\u20BF', 512, 545);
-  /* pass 3 — mid amber glow */
-  eCtx.shadowColor = 'rgba(251,191,36,0.88)'; eCtx.shadowBlur = 40;
-  eCtx.fillStyle = 'rgba(217,119,6,0.70)'; eCtx.fillText('\u20BF', 512, 545);
-  /* pass 4 — crisp metallic body */
-  eCtx.shadowColor = 'rgba(254,215,0,0.65)'; eCtx.shadowBlur = 14;
-  eCtx.fillStyle = 'rgba(251,191,36,0.94)'; eCtx.fillText('\u20BF', 512, 545);
-  /* pass 5 — bright highlight for gold-coin sheen */
-  eCtx.shadowBlur = 0;
-  eCtx.fillStyle = 'rgba(255,242,150,0.30)'; eCtx.fillText('\u20BF', 507, 540);
-  var earthTex = new THREE.CanvasTexture(earthCv);
-
-  /* ── Globe group ── */
+  /* ── Globe group (carries all globe elements + idle rotation) ── */
   var earthGroup = new THREE.Group();
   scene.add(earthGroup);
-  var EARTH_R = 1.7;
-  var earthMesh = new THREE.Mesh(
-    new THREE.SphereGeometry(EARTH_R, 64, 64),
-    new THREE.MeshStandardMaterial({
-      map: earthTex, metalness: 0.84, roughness: 0.10,
-      emissive: new THREE.Color(0x2a1000), emissiveIntensity: 0.30
-    })
-  );
-  earthGroup.add(earthMesh);
-  /* Rich amber atmosphere glow */
+  var EARTH_R  = 1.7;
+  var OPEN_D   = 0.70; /* how far petals translate outward */
+  var N_PETALS = 6;
+
+  /* ── Petal segments — 6 dark navy sphere wedges ── */
+  var petals = [];
+  for (var pi = 0; pi < N_PETALS; pi++) {
+    var phiS   = (Math.PI * 2 / N_PETALS) * pi;
+    var phiL   = (Math.PI * 2 / N_PETALS);
+    var pGeo   = new THREE.SphereGeometry(EARTH_R, 3, 24, phiS, phiL);
+    var pMat   = new THREE.MeshStandardMaterial({
+      color: 0x041d30, metalness: 0.55, roughness: 0.36,
+      side: THREE.DoubleSide,
+      emissive: 0x020e18, emissiveIntensity: 0.35
+    });
+    var pMesh  = new THREE.Mesh(pGeo, pMat);
+    earthGroup.add(pMesh);
+    var cPhi = phiS + phiL / 2;
+    petals.push({ mesh: pMesh, dir: new THREE.Vector3(Math.cos(cPhi), 0, Math.sin(cPhi)) });
+  }
+
+  /* ── Subtle atmosphere halo ── */
   earthGroup.add(new THREE.Mesh(
-    new THREE.SphereGeometry(EARTH_R + 0.20, 32, 32),
+    new THREE.SphereGeometry(EARTH_R + 0.14, 32, 32),
     new THREE.MeshBasicMaterial({
-      color: 0xf59e0b, transparent: true, opacity: 0.058,
+      color: 0x1a5080, transparent: true, opacity: 0.032,
       side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false
     })
   ));
-  /* ── Orbit configs: 3 rings with different tilts ── */
-  var RA = { r: 2.85, tilt: 0.42, speed: 0.0055 };
-  var RB = { r: 4.00, tilt: 0.72, speed: 0.0038 };
-  var RC = { r: 5.20, tilt: 0.18, speed: 0.0026 };
 
-  /* ── Solid ring — TorusGeometry for clean continuous lines ── */
-  function makeRing(cfg, col) {
-    var geo = new THREE.TorusGeometry(cfg.r, 0.012, 3, 120);
-    var mat = new THREE.MeshBasicMaterial({
-      color: col, transparent: true, opacity: 0.60,
-      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
-    });
-    var mesh = new THREE.Mesh(geo, mat);
-    mesh.rotation.x = Math.PI / 2 + cfg.tilt;
-    scene.add(mesh);
-    return mesh;
-  }
-  var ringA = makeRing(RA, 0xf59e0b);
-  var ringB = makeRing(RB, 0x22d3ee);
-  var ringC = makeRing(RC, 0xa78bfa);
+  /* ── Inner golden core (hidden until bloom) ── */
+  var innerMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.52, 32, 32),
+    new THREE.MeshStandardMaterial({
+      color: 0xf59e0b, metalness: 0.90, roughness: 0.07,
+      emissive: 0xf59e0b, emissiveIntensity: 0.82
+    })
+  );
+  innerMesh.scale.set(0, 0, 0);
+  earthGroup.add(innerMesh);
 
-  /* ── Symbol sprite (canvas texture: circle bg + glowing symbol) ── */
-  function makeSymbolSprite(sym, hex, rgbArr) {
-    var cv = document.createElement('canvas');
-    cv.width = cv.height = 128;
-    var ctx = cv.getContext('2d');
-    /* Outer glow */
-    var gw = ctx.createRadialGradient(64, 64, 22, 64, 64, 64);
-    gw.addColorStop(0, 'rgba(' + rgbArr.join(',') + ',0.60)');
-    gw.addColorStop(1, 'rgba(' + rgbArr.join(',') + ',0)');
-    ctx.fillStyle = gw; ctx.fillRect(0, 0, 128, 128);
-    /* Circle */
-    ctx.beginPath(); ctx.arc(64, 64, 46, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(3,8,18,0.90)'; ctx.fill();
-    ctx.strokeStyle = hex; ctx.lineWidth = 2.8; ctx.stroke();
-    /* Symbol text */
-    ctx.font = 'bold 48px Arial';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = hex;
-    ctx.shadowColor = hex; ctx.shadowBlur = 16;
-    ctx.fillText(sym, 64, 64);
-    ctx.shadowBlur = 0;
-    var sp = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: new THREE.CanvasTexture(cv), transparent: true, depthWrite: false
-    }));
-    sp.scale.set(0.72, 0.72, 1);
-    scene.add(sp);
-    return sp;
-  }
+  /* ── Inner glow shell (hidden until bloom) ── */
+  var glowMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.90, 32, 32),
+    new THREE.MeshBasicMaterial({
+      color: 0xffa500, transparent: true, opacity: 0,
+      side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false
+    })
+  );
+  earthGroup.add(glowMesh);
 
-  /* ── 5 crypto symbols on 3 rings ── */
-  var cryptos = [
-    { sym: '\u20BF', hex: '#f59e0b', rgb: [245,158, 11], cfg: RA, off: 0               },
-    { sym: '\u25CE',  hex: '#22d3ee', rgb: [ 34,211,238], cfg: RA, off: Math.PI          },
-    { sym: '\u039E',  hex: '#818cf8', rgb: [129,140,248], cfg: RB, off: 0               },
-    { sym: '\u2715', hex: '#a78bfa', rgb: [167,139,250], cfg: RB, off: Math.PI * 2 / 3  },
-    { sym: '\u25C6', hex: '#fbbf24', rgb: [251,191, 36], cfg: RC, off: 0               },
-  ];
-
-  var symM4 = new THREE.Matrix4();
-  var symV  = new THREE.Vector3();
-  cryptos.forEach(function(c) {
-    c.ang    = c.off;
-    c.sprite = makeSymbolSprite(c.sym, c.hex, c.rgb);
-  });
+  /* ── ₿ Sprite (hidden until bloom) ── */
+  var bCv = document.createElement('canvas');
+  bCv.width = bCv.height = 256;
+  var bCtx = bCv.getContext('2d');
+  var bGrd = bCtx.createRadialGradient(128, 128, 0, 128, 128, 128);
+  bGrd.addColorStop(0,   'rgba(253,224,71,0.65)');
+  bGrd.addColorStop(0.38,'rgba(245,158,11,0.25)');
+  bGrd.addColorStop(1,   'rgba(245,158,11,0)');
+  bCtx.fillStyle = bGrd; bCtx.fillRect(0, 0, 256, 256);
+  bCtx.font = 'bold 162px Arial';
+  bCtx.textAlign = 'center'; bCtx.textBaseline = 'middle';
+  bCtx.fillStyle = '#fcd34d';
+  bCtx.shadowColor = '#f59e0b'; bCtx.shadowBlur = 28;
+  bCtx.fillText('₿', 128, 134);
+  var btcSprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: new THREE.CanvasTexture(bCv),
+    transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, depthWrite: false
+  }));
+  btcSprite.scale.set(2.0, 2.0, 1);
+  earthGroup.add(btcSprite);
 
   /* ── Interaction state ── */
   var mx = 0, my = 0, camTx = 0, camTy = 0, scrollY = 0;
@@ -2053,36 +2010,19 @@ function lwStartBounce(){
 
     var heroH = hero.offsetHeight || 700;
     var sf    = Math.min(scrollY / heroH, 1);
-    var sOp   = 1 - sf;
-    canvas.style.opacity   = sOp.toFixed(3);
+    canvas.style.opacity   = (1 - sf).toFixed(3);
     canvas.style.transform = 'translateY(' + (-sf * 55) + 'px)';
-    var msc = 1 - sf * 0.45;
 
-    /* Earth */
-    earthMesh.rotation.y += 0.0017;
-    earthGroup.position.y  = Math.sin(t * 0.32) * 0.09;
-    earthGroup.scale.setScalar(msc);
+    /* Idle globe rotation + subtle float */
+    earthGroup.rotation.y += 0.0015;
+    earthGroup.position.y  = Math.sin(t * 0.30) * 0.07;
 
-    /* Stars */
-    starMat.opacity = 0.26 + Math.sin(t * 0.10) * 0.06;
+    /* Stars twinkle */
+    starMat.opacity = 0.23 + Math.sin(t * 0.10) * 0.06;
 
-    /* Rings */
-    ringA.scale.setScalar(msc);
-    ringB.scale.setScalar(msc);
-    ringC.scale.setScalar(msc);
-
-    /* Symbols */
-    cryptos.forEach(function(c) {
-      c.ang += c.cfg.speed;
-      symM4.makeRotationX(Math.PI / 2 + c.cfg.tilt);
-      symV.set(Math.cos(c.ang) * c.cfg.r, Math.sin(c.ang) * c.cfg.r, 0);
-      symV.applyMatrix4(symM4);
-      c.sprite.position.copy(symV).multiplyScalar(msc);
-    });
-
-    /* Camera parallax */
-    camTx += (mx * 1.0 - camTx) * 0.022;
-    camTy += (-my * 0.7 - camTy) * 0.022;
+    /* Camera parallax from mouse */
+    camTx += (mx * 0.9 - camTx) * 0.022;
+    camTy += (-my * 0.6 - camTy) * 0.022;
     camera.position.x = camTx;
     camera.position.y = 0.6 + camTy;
     camera.lookAt(0, 0, 0);
@@ -2091,12 +2031,58 @@ function lwStartBounce(){
   }
   animate();
 
-  window.addEventListener('resize', function() {
-    W = hero.offsetWidth; H = hero.offsetHeight;
-    renderer.setSize(W, H); fitCamera();
-  });
+  /* ── GSAP Flower Bloom Timeline (loops with pause) ── */
+  if (!window.gsap) {
+    /* Fallback: static state if GSAP not loaded */
+    petals.forEach(function(p) {
+      p.mesh.position.set(p.dir.x * OPEN_D * 0.4, 0, p.dir.z * OPEN_D * 0.4);
+    });
+    innerMesh.scale.set(0.7, 0.7, 0.7);
+    btcSprite.material.opacity = 0.7;
+    innerLight.intensity = 2.5;
+  } else {
+    var tl = gsap.timeline({ repeat: -1, repeatDelay: 1.8 });
 
-  /* ── Rotating word ── */
+    /* Phase 1 — Petals open, staggered */
+    petals.forEach(function(p, i) {
+      tl.to(p.mesh.position, {
+        x: p.dir.x * OPEN_D, z: p.dir.z * OPEN_D,
+        duration: 1.35, ease: 'power3.inOut'
+      }, i * 0.10);
+    });
+
+    /* Phase 2 — Inner golden core appears */
+    tl.to(innerMesh.scale, { x: 1, y: 1, z: 1,
+      duration: 0.85, ease: 'back.out(1.5)' }, 0.50);
+    tl.to(glowMesh.material, { opacity: 0.18,
+      duration: 0.75, ease: 'power2.out' }, 0.60);
+    tl.to(innerLight, { intensity: 5.0,
+      duration: 0.85, ease: 'power2.out' }, 0.60);
+
+    /* Phase 3 — ₿ rises into view */
+    tl.to(btcSprite.material, { opacity: 1.0,
+      duration: 0.65, ease: 'power2.out' }, 0.98);
+
+    /* Phase 4 — Hold open */
+    tl.to({}, { duration: 2.2 }, 1.80);
+
+    /* Phase 5 — ₿ fades */
+    tl.to(btcSprite.material, { opacity: 0, duration: 0.55, ease: 'power2.in' }, 4.00);
+
+    /* Phase 6 — Inner core collapses */
+    tl.to(glowMesh.material, { opacity: 0,  duration: 0.55, ease: 'power2.in' }, 4.00);
+    tl.to(innerLight,        { intensity: 0, duration: 0.55, ease: 'power2.in' }, 4.00);
+    tl.to(innerMesh.scale,   { x: 0, y: 0, z: 0,
+      duration: 0.60, ease: 'power3.in' }, 4.15);
+
+    /* Phase 7 — Petals close (reverse stagger) */
+    petals.slice().reverse().forEach(function(p, i) {
+      tl.to(p.mesh.position, { x: 0, z: 0,
+        duration: 1.05, ease: 'power3.inOut' }, 4.80 + i * 0.08);
+    });
+  }
+
+  /* ── Rotating word (GSAP) ── */
   if (!window.gsap) return;
   var words = ['Smart', 'Elite', 'Pro', 'Strategic', 'Advanced'];
   var wordEl = document.getElementById('hero-rw');
@@ -2116,182 +2102,18 @@ function lwStartBounce(){
     });
   }
   setInterval(rotateWord, 3200);
+
+  window.addEventListener('resize', function() {
+    W = hero.offsetWidth; H = hero.offsetHeight;
+    renderer.setSize(W, H); fitCamera();
+  });
 })();
+
 
 
 /* ════════════════════════════════════════════════════════════
    MODULES — 3D Particle Orbit System (Three.js WebGL)
    Glowing core · 4 tilted orbit layers · gold + cyan · scroll parallax
-════════════════════════════════════════════════════════════ */
-(function initModuleOrbit() {
-  var canvas = document.getElementById('mod-particles-bg');
-  if (!canvas || !window.THREE) return;
-  var wrap = canvas.parentElement;
-
-  var renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true });
-  renderer.setClearColor(0x000000, 0);
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-
-  var W = wrap.offsetWidth || 900;
-  var H = wrap.offsetHeight || 700;
-  renderer.setSize(W, H, false);
-
-  var scene  = new THREE.Scene();
-  var camera = new THREE.PerspectiveCamera(50, W / H, 0.1, 200);
-  camera.position.set(0, 2, 14);
-  camera.lookAt(0, 0, 0);
-
-  function resize() {
-    W = wrap.offsetWidth || 900;
-    H = wrap.offsetHeight || 700;
-    renderer.setSize(W, H, false);
-    camera.aspect = W / H;
-    camera.updateProjectionMatrix();
-  }
-  window.addEventListener('resize', resize, { passive: true });
-
-  /* ── Lighting ── */
-  scene.add(new THREE.AmbientLight(0x04080f, 0.65));
-  var coreLight = new THREE.PointLight(0xffa500, 5.5, 30);
-  coreLight.position.set(0, 0, 0);
-  scene.add(coreLight);
-  var blueLight = new THREE.PointLight(0x22d3ee, 2.0, 24);
-  blueLight.position.set(-5, 3, 6);
-  scene.add(blueLight);
-
-  /* ── Central gold core sphere ── */
-  scene.add(new THREE.Mesh(
-    new THREE.SphereGeometry(0.52, 32, 32),
-    new THREE.MeshStandardMaterial({
-      color: 0xf59e0b, metalness: 0.88, roughness: 0.08,
-      emissive: 0xf59e0b, emissiveIntensity: 0.78
-    })
-  ));
-  scene.add(new THREE.Mesh(
-    new THREE.SphereGeometry(0.80, 32, 32),
-    new THREE.MeshBasicMaterial({
-      color: 0xffa500, transparent: true, opacity: 0.13,
-      side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false
-    })
-  ));
-  scene.add(new THREE.Mesh(
-    new THREE.SphereGeometry(1.22, 32, 32),
-    new THREE.MeshBasicMaterial({
-      color: 0xf59e0b, transparent: true, opacity: 0.04,
-      side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false
-    })
-  ));
-
-  /* ── Orbit ring factory ── */
-  function mkRing(r, tx, tz, col, op) {
-    var m = new THREE.Mesh(
-      new THREE.TorusGeometry(r, 0.009, 3, 120),
-      new THREE.MeshBasicMaterial({
-        color: col, transparent: true, opacity: op,
-        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
-      })
-    );
-    m.rotation.x = tx; m.rotation.z = tz;
-    scene.add(m);
-  }
-  mkRing(2.0,  1.22,  0.12, 0xf59e0b, 0.48);
-  mkRing(3.3,  0.52,  0.30, 0x22d3ee, 0.38);
-  mkRing(4.5,  1.56, -0.22, 0xf59e0b, 0.26);
-  mkRing(5.8,  0.82,  0.46, 0x22d3ee, 0.18);
-
-  /* ── Glow sprite texture factory ── */
-  function mkGlowTex(r, g, b) {
-    var cv = document.createElement('canvas');
-    cv.width = cv.height = 64;
-    var c = cv.getContext('2d');
-    var grd = c.createRadialGradient(32, 32, 0, 32, 32, 32);
-    grd.addColorStop(0,    'rgba(' + r + ',' + g + ',' + b + ',1.0)');
-    grd.addColorStop(0.22, 'rgba(' + r + ',' + g + ',' + b + ',0.78)');
-    grd.addColorStop(0.55, 'rgba(' + r + ',' + g + ',' + b + ',0.20)');
-    grd.addColorStop(1,    'rgba(' + r + ',' + g + ',' + b + ',0)');
-    c.fillStyle = grd; c.fillRect(0, 0, 64, 64);
-    return new THREE.CanvasTexture(cv);
-  }
-  var goldTex = mkGlowTex(245, 158,  11);
-  var blueTex = mkGlowTex( 34, 211, 238);
-
-  /* ── Orbit configs ── */
-  var ORBS = [
-    { r: 2.0, tx: 1.22, tz:  0.12, n:  6, spd: 0.0140, tex: goldTex, sz: 0.24 },
-    { r: 3.3, tx: 0.52, tz:  0.30, n: 10, spd: 0.0085, tex: blueTex, sz: 0.20 },
-    { r: 4.5, tx: 1.56, tz: -0.22, n: 14, spd: 0.0055, tex: goldTex, sz: 0.17 },
-    { r: 5.8, tx: 0.82, tz:  0.46, n: 20, spd: 0.0035, tex: blueTex, sz: 0.14 },
-  ];
-
-  /* ── Particle sprites ── */
-  var parts = [];
-  ORBS.forEach(function(orb) {
-    var q = new THREE.Quaternion().setFromEuler(new THREE.Euler(orb.tx, 0, orb.tz, 'XYZ'));
-    for (var i = 0; i < orb.n; i++) {
-      var sp = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: orb.tex, transparent: true, depthWrite: false,
-        blending: THREE.AdditiveBlending
-      }));
-      sp.scale.set(orb.sz, orb.sz, 1);
-      scene.add(sp);
-      parts.push({
-        sp: sp, orb: orb, q: q,
-        ang:   (Math.PI * 2 / orb.n) * i + (Math.random() - 0.5) * 0.35,
-        spd:   orb.spd * (0.85 + Math.random() * 0.30),
-        pulse: Math.random() * Math.PI * 2
-      });
-    }
-  });
-
-  /* ── Scroll parallax (very subtle — "follows" the user) ── */
-  var camY = 2.0, targetCamY = 2.0;
-  window.addEventListener('scroll', function() {
-    var rect = wrap.getBoundingClientRect();
-    var prog = 1.0 - (rect.top + rect.height * 0.5) / window.innerHeight;
-    var off  = Math.max(-1.2, Math.min(1.2, prog * 1.6));
-    targetCamY = 2.0 + off * 0.50;
-  }, { passive: true });
-
-  /* ── Pause off-screen ── */
-  var active = true;
-  if (window.IntersectionObserver) {
-    new IntersectionObserver(function(e) { active = e[0].isIntersecting; },
-      { threshold: 0.02 }).observe(wrap);
-  }
-
-  var clock = new THREE.Clock();
-  var lp = new THREE.Vector3();
-
-  function tick() {
-    requestAnimationFrame(tick);
-    if (!active) return;
-    var t = clock.getElapsedTime();
-
-    /* Smooth camera parallax */
-    camY += (targetCamY - camY) * 0.038;
-    camera.position.y = camY;
-    camera.lookAt(0, (camY - 2.0) * 0.12, 0);
-
-    /* Animate particles */
-    parts.forEach(function(p) {
-      p.ang += p.spd;
-      lp.set(Math.cos(p.ang) * p.orb.r, Math.sin(p.ang) * p.orb.r, 0);
-      lp.applyQuaternion(p.q);
-      p.sp.position.copy(lp);
-      /* Depth-based scale + opacity for convincing 3D */
-      var dz     = (lp.z / p.orb.r + 1.0) * 0.5; /* 0=back, 1=front */
-      var pulse  = 0.86 + Math.sin(t * 2.5 + p.pulse) * 0.14;
-      p.sp.scale.setScalar(p.orb.sz * (0.68 + dz * 0.32) * pulse);
-      p.sp.material.opacity = 0.42 + dz * 0.48;
-    });
-
-    /* Slow scene drift for cinematic feel */
-    scene.rotation.y += 0.00052;
-
-    renderer.render(scene, camera);
-  }
-  tick();
-})();
 
 
 
