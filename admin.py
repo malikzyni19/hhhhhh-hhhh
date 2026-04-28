@@ -582,3 +582,89 @@ def settings():
         db_connected=db_connected,
         server_time=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
     )
+
+
+# ── Role Permissions Pages ──────────────────────────────────────────
+def _get_role_perm(role):
+    rp = RolePermission.query.filter_by(role=role).first()
+    if not rp:
+        from permissions import _ROLE_DEFAULTS
+        defaults = _ROLE_DEFAULTS.get(role, _ROLE_DEFAULTS["user"])
+        rp = RolePermission(role=role,
+            daily_tokens=defaults["daily_tokens"],
+            max_pairs_per_scan=defaults["max_pairs_per_scan"],
+            max_pairs_per_cycle=defaults["max_pairs_per_cycle"],
+            allowed_modules=json.dumps(defaults["allowed_modules"]),
+            allowed_tabs=json.dumps(defaults["allowed_tabs"]),
+            allowed_exchanges=json.dumps(defaults["allowed_exchanges"]),
+            allowed_timeframes=json.dumps(defaults["allowed_timeframes"]),
+        )
+    return rp
+
+
+def _parse_rp_lists(rp):
+    out = {}
+    for field in ("allowed_modules", "allowed_tabs", "allowed_exchanges", "allowed_timeframes"):
+        val = getattr(rp, field, None)
+        if isinstance(val, list):
+            out[field] = val
+        elif val:
+            try:
+                out[field] = json.loads(val)
+            except Exception:
+                out[field] = []
+        else:
+            out[field] = []
+    return out
+
+
+@admin_bp.route("/roles/<role>", methods=["GET", "POST"])
+@admin_required
+def role_edit(role):
+    if role not in ("admin", "user", "guest"):
+        return redirect(url_for("admin.settings"))
+
+    rp = _get_role_perm(role)
+
+    errors = {}
+    if request.method == "POST":
+        try:
+            rp.daily_tokens        = int(request.form.get("daily_tokens", 500))
+            rp.max_pairs_per_scan  = int(request.form.get("max_pairs_per_scan", 100))
+            rp.max_pairs_per_cycle = int(request.form.get("max_pairs_per_cycle", 50))
+            rp.allowed_modules     = json.dumps(request.form.getlist("allowed_modules"))
+            rp.allowed_tabs        = json.dumps(request.form.getlist("allowed_tabs"))
+            rp.allowed_exchanges   = json.dumps(request.form.getlist("allowed_exchanges"))
+            rp.allowed_timeframes  = json.dumps(request.form.getlist("allowed_timeframes"))
+            rp.updated_at          = datetime.now(timezone.utc)
+            rp.updated_by          = current_user.id
+            if not RolePermission.query.filter_by(role=role).first():
+                db.session.add(rp)
+            db.session.commit()
+            # bust cache for all users of this role
+            try:
+                from permissions import _CACHE
+                users = User.query.filter_by(role=role).all()
+                for u in users:
+                    _CACHE.pop(u.id, None)
+            except Exception:
+                pass
+            _log_action(f"role_save:{role}", f"Updated {role} permissions")
+            flash(f"{role.capitalize()} role permissions saved.")
+            return redirect(url_for("admin.role_edit", role=role))
+        except Exception as e:
+            errors["_general"] = str(e)
+            db.session.rollback()
+
+    lists = _parse_rp_lists(rp)
+    return render_template(
+        "admin/role.html",
+        role=role,
+        rp=rp,
+        lists=lists,
+        all_modules=ALL_MODULES,
+        all_tabs=ALL_TABS,
+        all_exchanges=ALL_EXCHANGES,
+        all_timeframes=ALL_TIMEFRAMES,
+        errors=errors,
+    )

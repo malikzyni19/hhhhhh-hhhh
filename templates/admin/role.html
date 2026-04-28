@@ -1,0 +1,147 @@
+{% extends "admin/base.html" %}
+{% block title %}{{ role|capitalize }} Role — ZyNi Admin{% endblock %}
+{% block page_title %}{{ role|capitalize }} Role Permissions{% endblock %}
+
+{% block content %}
+{% set role_colors = {'admin': 'cyan', 'user': 'blue', 'guest': 'amber'} %}
+{% set role_icons  = {'admin': '👑', 'user': '👤', 'guest': '👥'} %}
+{% set rc = role_colors.get(role, 'blue') %}
+{% set ri = role_icons.get(role, '👤') %}
+
+{% if errors._general %}
+<div style="background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.3);color:var(--red);padding:10px 14px;border-radius:8px;font-size:12px;margin-bottom:16px">{{ errors._general }}</div>
+{% endif %}
+
+<form method="POST">
+
+<!-- Header card -->
+<div class="adm-card" style="margin-bottom:20px">
+  <div class="adm-card-header">
+    <div class="adm-card-title">{{ ri }} {{ role|upper }} ROLE</div>
+    <span class="badge {{ rc }}">{{ role }}</span>
+  </div>
+  <div class="adm-card-body" style="font-size:12px;color:var(--muted)">
+    {% if role == 'admin' %}Admins have unrestricted access to everything. Settings below are stored but not enforced for admin accounts.
+    {% elif role == 'user' %}Default permissions for all registered users unless overridden per-user.
+    {% else %}Permissions for anonymous guest devices. Keep limits low.
+    {% endif %}
+  </div>
+</div>
+
+<!-- Scan Limits -->
+<div class="adm-card" style="margin-bottom:20px">
+  <div class="adm-card-header"><div class="adm-card-title">Scan Limits</div></div>
+  <div class="adm-card-body">
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:16px">
+      <div>
+        <label style="font-size:10px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;display:block;margin-bottom:6px">Daily Tokens</label>
+        <input type="number" name="daily_tokens" value="{{ rp.daily_tokens or 500 }}" min="0" max="999999"
+               style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:7px;font-size:13px;width:100%;font-family:'JetBrains Mono',monospace"/>
+      </div>
+      <div>
+        <label style="font-size:10px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;display:block;margin-bottom:6px">Max Pairs / Scan</label>
+        <input type="number" name="max_pairs_per_scan" value="{{ rp.max_pairs_per_scan or 100 }}" min="1" max="1000"
+               style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:7px;font-size:13px;width:100%;font-family:'JetBrains Mono',monospace"/>
+      </div>
+      <div>
+        <label style="font-size:10px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;display:block;margin-bottom:6px">Max Pairs / Cycle</label>
+        <input type="number" name="max_pairs_per_cycle" value="{{ rp.max_pairs_per_cycle or 50 }}" min="1" max="500"
+               style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:7px;font-size:13px;width:100%;font-family:'JetBrains Mono',monospace"/>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modules -->
+<div class="adm-card" style="margin-bottom:20px">
+  <div class="adm-card-header"><div class="adm-card-title">Allowed Modules</div></div>
+  <div class="adm-card-body">
+    <div style="display:flex;flex-wrap:wrap;gap:10px">
+      {% for mod in all_modules %}
+      <label style="display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 14px;cursor:pointer;font-size:12px;font-weight:600;letter-spacing:.5px;transition:border-color .15s"
+             onclick="this.style.borderColor=this.querySelector('input').checked?'var(--border)':'var(--cyan)'">
+        <input type="checkbox" name="allowed_modules" value="{{ mod }}"
+               {% if mod in lists.allowed_modules %}checked{% endif %}
+               style="accent-color:var(--cyan)"/>
+        {{ mod|upper }}
+      </label>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<!-- Tabs -->
+<div class="adm-card" style="margin-bottom:20px">
+  <div class="adm-card-header"><div class="adm-card-title">Allowed Tabs</div></div>
+  <div class="adm-card-body">
+    {% set tab_labels = {'scan':'🔍 Scan','pairs':'📋 Pairs','settings':'⚙️ Settings','compressed':'📦 Compressed','trending':'🔥 Trending','athatl':'🏆 ATH/ATL','bias':'🎯 Bias','watchlist':'📡 Live Monitor'} %}
+    <div style="display:flex;flex-wrap:wrap;gap:10px">
+      {% for tab in all_tabs %}
+      <label style="display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 14px;cursor:pointer;font-size:12px;font-weight:600;letter-spacing:.5px;transition:border-color .15s"
+             onclick="this.style.borderColor=this.querySelector('input').checked?'var(--border)':'var(--cyan)'">
+        <input type="checkbox" name="allowed_tabs" value="{{ tab }}"
+               {% if tab in lists.allowed_tabs %}checked{% endif %}
+               style="accent-color:var(--cyan)"/>
+        {{ tab_labels.get(tab, tab)|capitalize }}
+      </label>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<!-- Exchanges -->
+<div class="adm-card" style="margin-bottom:20px">
+  <div class="adm-card-header"><div class="adm-card-title">Allowed Exchanges</div></div>
+  <div class="adm-card-body">
+    <div style="display:flex;flex-wrap:wrap;gap:10px">
+      {% for ex in all_exchanges %}
+      <label style="display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 14px;cursor:pointer;font-size:12px;font-weight:600;letter-spacing:.5px;transition:border-color .15s"
+             onclick="this.style.borderColor=this.querySelector('input').checked?'var(--border)':'var(--cyan)'">
+        <input type="checkbox" name="allowed_exchanges" value="{{ ex }}"
+               {% if ex in lists.allowed_exchanges %}checked{% endif %}
+               style="accent-color:var(--cyan)"/>
+        {{ ex|capitalize }}
+      </label>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<!-- Timeframes -->
+<div class="adm-card" style="margin-bottom:20px">
+  <div class="adm-card-header"><div class="adm-card-title">Allowed Timeframes</div></div>
+  <div class="adm-card-body">
+    <div style="display:flex;flex-wrap:wrap;gap:10px">
+      {% for tf in all_timeframes %}
+      <label style="display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 14px;cursor:pointer;font-size:12px;font-weight:600;letter-spacing:.5px;transition:border-color .15s"
+             onclick="this.style.borderColor=this.querySelector('input').checked?'var(--border)':'var(--cyan)'">
+        <input type="checkbox" name="allowed_timeframes" value="{{ tf }}"
+               {% if tf in lists.allowed_timeframes %}checked{% endif %}
+               style="accent-color:var(--cyan)"/>
+        {{ tf }}
+      </label>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<!-- Save -->
+<div style="display:flex;gap:12px;align-items:center">
+  <button type="submit" style="background:rgba(34,211,238,.12);border:1px solid rgba(34,211,238,.3);color:var(--cyan);padding:10px 24px;border-radius:8px;font-size:12px;font-weight:700;letter-spacing:1px;cursor:pointer;transition:all .2s">
+    💾 SAVE {{ role|upper }} PERMISSIONS
+  </button>
+  <a href="{{ url_for('admin.settings') }}" style="color:var(--muted);font-size:12px;text-decoration:none">← Back to Settings</a>
+</div>
+
+</form>
+
+<script>
+// Highlight checked labels on load
+document.querySelectorAll('input[type=checkbox]').forEach(function(cb){
+  cb.closest('label').style.borderColor = cb.checked ? 'var(--cyan)' : 'var(--border)';
+  cb.addEventListener('change', function(){
+    cb.closest('label').style.borderColor = cb.checked ? 'var(--cyan)' : 'var(--border)';
+  });
+});
+</script>
+{% endblock %}

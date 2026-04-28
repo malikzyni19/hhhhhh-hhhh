@@ -65,102 +65,29 @@
   </div>
 </div>
 
-<!-- ── 3. ROLE PERMISSIONS TABLE ── -->
+<!-- ── 3. ROLE PERMISSIONS (Quick Links) ── -->
 <div class="adm-card" style="margin-bottom:20px">
-  <div class="adm-card-header">
-    <div class="adm-card-title">Role Scan Limits</div>
-  </div>
-  <div class="adm-table-wrap">
-    <table class="adm-table">
-      <thead>
-        <tr>
-          <th>Role</th>
-          <th>Daily Tokens</th>
-          <th>Max Pairs/Scan</th>
-          <th>Max Pairs/Cycle</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for role in ['admin','user','guest'] %}
-        {% set rp = role_perms.get(role, {}) %}
-        <tr>
-          <td>
-            {% if role == 'admin' %}<span class="badge cyan">admin</span>
-            {% elif role == 'guest' %}<span class="badge" style="background:rgba(100,116,139,.12);color:#94a3b8;border:1px solid rgba(100,116,139,.2)">guest</span>
-            {% else %}<span class="badge blue">user</span>{% endif %}
-          </td>
-          <td><input type="number" name="role_{{ role }}_daily_tokens" value="{{ rp.get('daily_tokens', 500) }}" min="0" max="999999" style="width:90px" class="adm-mini-input"/></td>
-          <td><input type="number" name="role_{{ role }}_max_scan"     value="{{ rp.get('max_pairs_per_scan', 100) }}"  min="1" max="1000" style="width:80px" class="adm-mini-input"/></td>
-          <td><input type="number" name="role_{{ role }}_max_cycle"    value="{{ rp.get('max_pairs_per_cycle', 50) }}" min="1" max="1000" style="width:80px" class="adm-mini-input"/></td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</div>
-
-<!-- ── 4. ROLE MODULE / TAB / EXCHANGE / TF ACCESS ── -->
-{% for role in ['admin','user','guest'] %}
-{% set rp = role_perms.get(role, {}) %}
-<div class="adm-card" style="margin-bottom:20px">
-  <div class="adm-card-header">
-    <div class="adm-card-title">
-      {% if role == 'admin' %}<span class="badge cyan" style="margin-right:8px">admin</span>
-      {% elif role == 'guest' %}<span class="badge" style="background:rgba(100,116,139,.12);color:#94a3b8;border:1px solid rgba(100,116,139,.2);margin-right:8px">guest</span>
-      {% else %}<span class="badge blue" style="margin-right:8px">user</span>{% endif %}
-      Role Permissions
-    </div>
-  </div>
+  <div class="adm-card-header"><div class="adm-card-title">Role Permissions</div></div>
   <div class="adm-card-body">
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:18px">
-
-      <div>
-        <div class="perm-section-label">Modules</div>
-        {% for m in all_modules %}
-        <label class="perm-check-row">
-          <input type="checkbox" name="role_{{ role }}_mod_{{ m }}"
-                 {% if m in rp.get('allowed_modules', []) %}checked{% endif %}>
-          <span>{{ m|upper }}</span>
-        </label>
-        {% endfor %}
-      </div>
-
-      <div>
-        <div class="perm-section-label">Tabs</div>
-        {% for t in all_tabs %}
-        <label class="perm-check-row">
-          <input type="checkbox" name="role_{{ role }}_tab_{{ t }}"
-                 {% if t in rp.get('allowed_tabs', []) %}checked{% endif %}>
-          <span>{{ t }}</span>
-        </label>
-        {% endfor %}
-      </div>
-
-      <div>
-        <div class="perm-section-label">Exchanges</div>
-        {% for e in all_exchanges %}
-        <label class="perm-check-row">
-          <input type="checkbox" name="role_{{ role }}_exch_{{ e }}"
-                 {% if e in rp.get('allowed_exchanges', []) %}checked{% endif %}>
-          <span>{{ e|title }}</span>
-        </label>
-        {% endfor %}
-        <div class="perm-section-label" style="margin-top:14px">Timeframes</div>
-        {% for tf in all_timeframes %}
-        <label class="perm-check-row">
-          <input type="checkbox" name="role_{{ role }}_tf_{{ tf }}"
-                 {% if tf in rp.get('allowed_timeframes', []) %}checked{% endif %}>
-          <span>{{ tf }}</span>
-        </label>
-        {% endfor %}
-      </div>
-
+    <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Configure per-role scan limits, modules, tabs, exchanges and timeframes on dedicated role pages.</div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <a href="{{ url_for('admin.role_edit', role='admin') }}"
+         style="display:inline-flex;align-items:center;gap:8px;background:rgba(34,211,238,.08);border:1px solid rgba(34,211,238,.25);color:var(--cyan);padding:10px 18px;border-radius:8px;text-decoration:none;font-size:12px;font-weight:700;letter-spacing:.5px">
+        👑 Admin Role →
+      </a>
+      <a href="{{ url_for('admin.role_edit', role='user') }}"
+         style="display:inline-flex;align-items:center;gap:8px;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);color:var(--blue);padding:10px 18px;border-radius:8px;text-decoration:none;font-size:12px;font-weight:700;letter-spacing:.5px">
+        👤 User Role →
+      </a>
+      <a href="{{ url_for('admin.role_edit', role='guest') }}"
+         style="display:inline-flex;align-items:center;gap:8px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.25);color:var(--amber);padding:10px 18px;border-radius:8px;text-decoration:none;font-size:12px;font-weight:700;letter-spacing:.5px">
+        👥 Guest Role →
+      </a>
     </div>
   </div>
 </div>
-{% endfor %}
 
-<!-- ── 5. SYSTEM INFO ── -->
+<!-- ── 4. SYSTEM INFO ── -->
 <div class="adm-card" style="margin-bottom:28px">
   <div class="adm-card-header">
     <div class="adm-card-title">System Info</div>
@@ -189,7 +116,7 @@
 <div style="position:sticky;bottom:0;padding:16px 0;background:var(--bg);border-top:1px solid var(--border);display:flex;gap:12px;z-index:10">
   <button type="submit"
           style="background:linear-gradient(135deg,#0891b2,#06b6d4);border:none;color:#fff;padding:12px 28px;border-radius:9px;cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;letter-spacing:.5px;box-shadow:0 0 18px rgba(8,145,178,.35);transition:all .2s">
-    Save All Settings →
+    Save Settings →
   </button>
   <a href="{{ url_for('admin.dashboard') }}"
      style="display:inline-flex;align-items:center;background:rgba(255,255,255,.04);border:1px solid var(--border);color:var(--muted);padding:12px 20px;border-radius:9px;text-decoration:none;font-size:12px;font-weight:600">Cancel</a>
@@ -203,8 +130,6 @@
 .adm-field input,.adm-field select,.adm-field textarea{width:100%;background:#04090f;color:var(--text);border:1px solid var(--border);border-radius:9px;padding:10px 12px;font-family:'JetBrains Mono',monospace;font-size:13px;outline:none;transition:border-color .2s;resize:vertical}
 .adm-field input:focus,.adm-field select:focus,.adm-field textarea:focus{border-color:rgba(34,211,238,.4)}
 .adm-field select option{background:#060f1e}
-.adm-mini-input{background:#04090f;color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-family:'JetBrains Mono',monospace;font-size:12px;outline:none}
-.adm-mini-input:focus{border-color:rgba(34,211,238,.4)}
 .toggle-wrap{position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0}
 .toggle-wrap input[type=checkbox]{position:absolute;opacity:0;width:0;height:0}
 .toggle-wrap input[type=hidden]{display:none}
@@ -212,10 +137,6 @@
 .toggle-slider::before{content:'';position:absolute;width:18px;height:18px;left:3px;bottom:3px;background:#64748b;border-radius:50%;transition:.2s}
 .toggle-wrap input[type=checkbox]:checked + input + .toggle-slider{background:rgba(34,211,238,.25);border:1px solid rgba(34,211,238,.4)}
 .toggle-wrap input[type=checkbox]:checked + input + .toggle-slider::before{transform:translateX(20px);background:var(--cyan)}
-.perm-section-label{font-size:9px;color:var(--muted2);letter-spacing:1px;text-transform:uppercase;font-weight:600;margin-bottom:8px}
-.perm-check-row{display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;font-size:12px;color:var(--muted)}
-.perm-check-row:hover{color:var(--text)}
-.perm-check-row input[type=checkbox]{width:14px;height:14px;accent-color:var(--cyan);cursor:pointer}
 </style>
 
 {% endblock %}

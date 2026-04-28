@@ -5141,6 +5141,9 @@ def _scan_pair_multitf(symbol: str, market: str = "perpetual", wl_config: Option
 @app.route("/api/watchlist/refresh", methods=["POST"])
 @login_required
 def api_watchlist_refresh():
+    _tok_user, _tok_uid = _check_and_get_token_user()
+    if _tok_user == "limit":
+        return jsonify({"error": "daily_limit_reached", "message": "Daily scan tokens exhausted. Resets at midnight UTC."}), 429
     data      = request.get_json(force=True) or {}
     pairs     = [str(p).strip().upper() for p in data.get("pairs", []) if str(p).strip()]
     pairs     = [p for p in pairs if p.endswith("USDT")][:30]
@@ -5165,7 +5168,9 @@ def api_watchlist_refresh():
         key=lambda x: x.get("tfs", {}).get("1h", {}).get("score", 0),
         reverse=True
     )
-
+    if _tok_uid:
+        try: consume_tokens(_tok_uid, len(pairs))
+        except Exception as _te: print(f"[Tokens] watchlist: {_te}")
     return jsonify({"results": results, "scanned": len(pairs)})
 
 
@@ -5266,6 +5271,35 @@ def guest_access():
     except Exception as e:
         print(f"[GUEST-ACCESS] Error: {e}")
         return redirect(url_for("index"))
+
+
+def _get_scan_user_id():
+    """Return DB user_id for token tracking, or None if not applicable."""
+    uid = session.get("user_id")
+    if not uid:
+        try:
+            u = _DBUser.query.filter_by(username=session.get("username", "")).first()
+            if u:
+                uid = u.id
+        except Exception:
+            pass
+    return uid
+
+
+def _check_and_get_token_user():
+    """Return (db_user, user_id) if token check passes, or (None, None) to skip, raises 429 on limit."""
+    uid = _get_scan_user_id()
+    if not uid:
+        return None, None
+    try:
+        db_user = _DBUser.query.get(uid)
+        if not db_user or db_user.is_admin:
+            return None, None
+        if not check_tokens(db_user):
+            return "limit", uid
+        return db_user, uid
+    except Exception:
+        return None, None
 
 
 @app.route("/api/scan", methods=["POST"])
@@ -5400,6 +5434,9 @@ def api_scan():
 def api_compressed_scan():
     err = _guest_tab_check("compressed")
     if err is not None: return err
+    _tok_user, _tok_uid = _check_and_get_token_user()
+    if _tok_user == "limit":
+        return jsonify({"error": "daily_limit_reached", "message": "Daily scan tokens exhausted. Resets at midnight UTC."}), 429
     payload = request.get_json(force=True) or {}
     tf = payload.get("timeframe", "1h")
     market = payload.get("market", "perpetual")
@@ -5438,6 +5475,9 @@ def api_compressed_scan():
             continue
     data.sort(key=lambda x: x["rangePct"])
     print(f"[DEBUG] compressed_scan results={len(data)}")
+    if _tok_uid:
+        try: consume_tokens(_tok_uid, len(symbols))
+        except Exception as _te: print(f"[Tokens] compressed: {_te}")
     return jsonify(data)
 
 
@@ -5446,6 +5486,9 @@ def api_compressed_scan():
 def api_trending_scan():
     err = _guest_tab_check("trending")
     if err is not None: return err
+    _tok_user, _tok_uid = _check_and_get_token_user()
+    if _tok_user == "limit":
+        return jsonify({"error": "daily_limit_reached", "message": "Daily scan tokens exhausted. Resets at midnight UTC."}), 429
     payload = request.get_json(force=True) or {}
     tf = payload.get("timeframe", "1h")
     market = payload.get("market", "perpetual")
@@ -5455,6 +5498,9 @@ def api_trending_scan():
     pairs = get_pairs_exchange(exchange, market)[:150]
     if mode == "movers":
         movers = sorted(pairs, key=lambda x: abs(x["changePct"]), reverse=True)[:limit]
+        if _tok_uid:
+            try: consume_tokens(_tok_uid, len(movers))
+            except Exception as _te: print(f"[Tokens] trending: {_te}")
         return jsonify(movers)
     out = []
     for item in pairs[:80]:
@@ -5483,6 +5529,9 @@ def api_trending_scan():
         except Exception:
             continue
     out.sort(key=lambda x: (x["relVol"], abs(x["changePct"])), reverse=True)
+    if _tok_uid:
+        try: consume_tokens(_tok_uid, len(pairs[:80]))
+        except Exception as _te: print(f"[Tokens] trending: {_te}")
     return jsonify(out[:limit])
 
 
@@ -5491,6 +5540,9 @@ def api_trending_scan():
 def api_ath_atl_scan():
     err = _guest_tab_check("ath_atl")
     if err is not None: return err
+    _tok_user, _tok_uid = _check_and_get_token_user()
+    if _tok_user == "limit":
+        return jsonify({"error": "daily_limit_reached", "message": "Daily scan tokens exhausted. Resets at midnight UTC."}), 429
     payload = request.get_json(force=True) or {}
     mode = payload.get("mode", "both")          # ath | atl | both
     status = payload.get("status", "current")   # current | recent | near
@@ -5579,6 +5631,9 @@ def api_ath_atl_scan():
                 results.append(r)
 
     results.sort(key=lambda x: min(x["distAthPct"], x["distAtlPct"]))
+    if _tok_uid:
+        try: consume_tokens(_tok_uid, len(symbols))
+        except Exception as _te: print(f"[Tokens] ath_atl: {_te}")
     return jsonify(results[:limit])
 
 
@@ -5587,6 +5642,9 @@ def api_ath_atl_scan():
 def api_bias_scan():
     err = _guest_tab_check("bias")
     if err is not None: return err
+    _tok_user, _tok_uid = _check_and_get_token_user()
+    if _tok_user == "limit":
+        return jsonify({"error": "daily_limit_reached", "message": "Daily scan tokens exhausted. Resets at midnight UTC."}), 429
     payload = request.get_json(force=True) or {}
     tf = payload.get("timeframe", "1d")
     market = payload.get("market", "perpetual")
@@ -5899,7 +5957,9 @@ def api_bias_scan():
 
     conf_order = {"Strong": 0, "Moderate": 1, "Weak": 2}
     results.sort(key=lambda x: (conf_order.get(x["confidence"], 3), -x["gatesPassed"]))
-
+    if _tok_uid:
+        try: consume_tokens(_tok_uid, len(symbols))
+        except Exception as _te: print(f"[Tokens] bias: {_te}")
     return jsonify({
         "results": results,
         "scanned": len(symbols),

@@ -106,6 +106,15 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <a href="{{ url_for('admin.settings') }}" class="adm-nav-item {% if request.endpoint == 'admin.settings' %}active{% endif %}">
         <span class="adm-nav-icon">⚙</span>Settings
       </a>
+      <a href="{{ url_for('admin.role_edit', role='admin') }}" class="adm-nav-item" style="padding-left:32px;font-size:11px" {% if request.endpoint == 'admin.role_edit' and request.view_args.get('role') == 'admin' %}style="padding-left:32px;font-size:11px;color:var(--cyan)"{% endif %}>
+        <span class="adm-nav-icon">👑</span>Admin Role
+      </a>
+      <a href="{{ url_for('admin.role_edit', role='user') }}" class="adm-nav-item" style="padding-left:32px;font-size:11px" {% if request.endpoint == 'admin.role_edit' and request.view_args.get('role') == 'user' %}style="padding-left:32px;font-size:11px;color:var(--cyan)"{% endif %}>
+        <span class="adm-nav-icon">👤</span>User Role
+      </a>
+      <a href="{{ url_for('admin.role_edit', role='guest') }}" class="adm-nav-item" style="padding-left:32px;font-size:11px" {% if request.endpoint == 'admin.role_edit' and request.view_args.get('role') == 'guest' %}style="padding-left:32px;font-size:11px;color:var(--cyan)"{% endif %}>
+        <span class="adm-nav-icon">👥</span>Guest Role
+      </a>
       <div class="adm-nav-sep"></div>
       <a href="#" class="adm-nav-item">
         <span class="adm-nav-icon">📋</span>Logs
