@@ -1965,22 +1965,29 @@ function lwStartBounce(){
   );
   earthGroup.add(glowMesh);
 
-  /* ── Premium Coin Orbit ── */
-  var COIN_ORBIT_R    = 3.65;
-  var COIN_ORBIT_TILT = 0.30;
-  var COIN_SPEED      = 0.0060;
-  var coinTiltMat = new THREE.Matrix4().makeRotationX(Math.PI / 2 + COIN_ORBIT_TILT);
+  /* ── Galaxy Orbit System — 3 tilted rings ── */
   var coinV = new THREE.Vector3();
 
-  var coinRing = new THREE.Mesh(
-    new THREE.TorusGeometry(COIN_ORBIT_R, 0.008, 3, 128),
-    new THREE.MeshBasicMaterial({
-      color: 0x64748b, transparent: true, opacity: 0.18,
-      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
-    })
-  );
-  coinRing.rotation.x = Math.PI / 2 + COIN_ORBIT_TILT;
-  scene.add(coinRing);
+  /* inner: steep tilt, fast · mid: moderate · outer: nearly flat, slow */
+  var orbRings = [
+    { r: 2.62, tilt: 0.52, speed: 0.0072, col: 0xf5a020 },
+    { r: 3.95, tilt: 0.27, speed: 0.0054, col: 0x7c6af7 },
+    { r: 5.15, tilt: 0.10, speed: 0.0038, col: 0x22c99e },
+  ];
+
+  orbRings.forEach(function(rd) {
+    rd.mat = new THREE.Matrix4().makeRotationX(Math.PI / 2 + rd.tilt);
+    var rm = new THREE.Mesh(
+      new THREE.TorusGeometry(rd.r, 0.007, 3, 128),
+      new THREE.MeshBasicMaterial({
+        color: rd.col, transparent: true, opacity: 0.16,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+      })
+    );
+    rm.rotation.x = Math.PI / 2 + rd.tilt;
+    scene.add(rm);
+    rd.mesh = rm;
+  });
 
   function makeCoinSprite(sym, ticker, bgStops, symCol) {
     var cv = document.createElement('canvas');
@@ -2030,12 +2037,14 @@ function lwStartBounce(){
     return sp;
   }
 
+  /* ring 0 = inner (BTC solo) · ring 1 = mid (SOL + ADA, 180° apart)
+     ring 2 = outer (USDT + SHIB, 180° apart)                          */
   var coinDefs = [
-    { sym: '₿', ticker: 'BTC',  stops: ['#fffbeb','#fbbf24','#f59e0b','#b45309'], symCol: '#fffbf0', spinDir:  1, ang: 0             },
-    { sym: 'S',  ticker: 'SOL',  stops: ['#1e0030','#7c3aed','#818cf8','#c4b5fd'], symCol: '#e9d5ff', spinDir: -1, ang: Math.PI*2/5   },
-    { sym: 'A',  ticker: 'ADA',  stops: ['#020f1e','#1d4ed8','#38bdf8','#bae6fd'], symCol: '#dbeafe', spinDir:  1, ang: Math.PI*4/5   },
-    { sym: '₮',  ticker: 'USDT', stops: ['#022c22','#065f46','#10b981','#a7f3d0'], symCol: '#d1fae5', spinDir:  1, ang: Math.PI*6/5   },
-    { sym: 'S',  ticker: 'SHIB', stops: ['#431407','#c2410c','#fb923c','#fde68a'], symCol: '#ffedd5', spinDir: -1, ang: Math.PI*8/5   },
+    { sym: '₿', ticker: 'BTC',  stops: ['#fffbeb','#fbbf24','#f59e0b','#b45309'], symCol: '#fffbf0', spinDir:  1, ring: 0, ang: 0        },
+    { sym: 'S',  ticker: 'SOL',  stops: ['#1e0030','#7c3aed','#818cf8','#c4b5fd'], symCol: '#e9d5ff', spinDir: -1, ring: 1, ang: 0        },
+    { sym: 'A',  ticker: 'ADA',  stops: ['#020f1e','#1d4ed8','#38bdf8','#bae6fd'], symCol: '#dbeafe', spinDir:  1, ring: 1, ang: Math.PI  },
+    { sym: '₮',  ticker: 'USDT', stops: ['#022c22','#065f46','#10b981','#a7f3d0'], symCol: '#d1fae5', spinDir:  1, ring: 2, ang: 0        },
+    { sym: 'S',  ticker: 'SHIB', stops: ['#431407','#c2410c','#fb923c','#fde68a'], symCol: '#ffedd5', spinDir: -1, ring: 2, ang: Math.PI  },
   ];
   coinDefs.forEach(function(c) { c.sprite = makeCoinSprite(c.sym, c.ticker, c.stops, c.symCol); });
 
@@ -2120,18 +2129,21 @@ function lwStartBounce(){
     earthGroup.rotation.y += 0.0015;
     earthGroup.position.y  = Math.sin(t * 0.30) * 0.07;
 
-    /* Coin orbit — continuous, never interrupted */
+    /* Galaxy orbit — structured rings, never interrupted */
     coinDefs.forEach(function(c) {
-      c.ang += COIN_SPEED;
-      coinV.set(Math.cos(c.ang) * COIN_ORBIT_R, 0, Math.sin(c.ang) * COIN_ORBIT_R);
-      coinV.applyMatrix4(coinTiltMat);
+      var rd = orbRings[c.ring];
+      c.ang += rd.speed;
+      coinV.set(Math.cos(c.ang) * rd.r, 0, Math.sin(c.ang) * rd.r);
+      coinV.applyMatrix4(rd.mat);
       c.sprite.position.copy(coinV);
       c.sprite.material.rotation += 0.006 * c.spinDir;
       c.sprite.material.opacity   = 0.88 + bloomFactor * 0.12;
-      var sc = 0.92 + Math.sin(t * 0.7 + c.ang) * 0.030;
+      var sc = 0.92 + Math.sin(t * 0.65 + c.ang) * 0.026;
       c.sprite.scale.set(sc, sc, 1);
     });
-    coinRing.material.opacity = 0.14 + bloomFactor * 0.08;
+    orbRings.forEach(function(rd) {
+      rd.mesh.material.opacity = 0.13 + bloomFactor * 0.07;
+    });
 
     starMat.opacity = 0.24 + Math.sin(t * 0.10) * 0.06;
 
