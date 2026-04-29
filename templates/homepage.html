@@ -2276,11 +2276,12 @@ function lwStartBounce(){
 })();
 
 /* ════════════════════════════════════════════════════════════
-   MODULES — AI Trading Brain Core
-   Three.js + GSAP  ·  neural nodes  ·  pulse connections
+   MODULES — Holographic AI Brain  (reference: golden wireframe)
+   Three.js + GSAP  ·  brain · stem · beam · HUD rings
 ════════════════════════════════════════════════════════════ */
 (function initAIBrain() {
   var wrap = document.getElementById('ai-brain-wrap');
+  if (!wrap || !window.THREE) return;
   if (!wrap || !window.THREE) return;
 
   var canvas = document.createElement('canvas');
@@ -2288,241 +2289,235 @@ function lwStartBounce(){
   canvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%';
   wrap.appendChild(canvas);
 
-  var W = wrap.offsetWidth  || 900;
-  var H = wrap.offsetHeight || 400;
+  var W = wrap.offsetWidth || 900;
+  var H = wrap.offsetHeight || 460;
 
   var renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
   renderer.setSize(W, H);
 
   var scene  = new THREE.Scene();
-  var camera = new THREE.PerspectiveCamera(54, W / H, 0.1, 100);
-  camera.position.set(0, 0, 8);
-  camera.lookAt(0, 0, 0);
+  var camera = new THREE.PerspectiveCamera(50, W / H, 0.1, 100);
+  camera.position.set(0, 0.8, 8.5);
+  camera.lookAt(0, -0.3, 0);
 
   /* ── Lighting ── */
-  scene.add(new THREE.AmbientLight(0x020810, 0.85));
-  var coreLight = new THREE.PointLight(0x22d3ee, 4.2, 22);
-  scene.add(coreLight);
-  var goldLight = new THREE.PointLight(0xf59e0b, 1.1, 14);
-  goldLight.position.set(4, 3, 2);
-  scene.add(goldLight);
-  var rimLight = new THREE.PointLight(0x3b82f6, 0.7, 16);
-  rimLight.position.set(-4, -2, -4);
-  scene.add(rimLight);
+  scene.add(new THREE.AmbientLight(0x020810, 0.7));
+  var brainLight  = new THREE.PointLight(0xf59e0b, 3.8, 16);
+  brainLight.position.set(0.6, 1.8, 2.5);
+  scene.add(brainLight);
+  var fillLight   = new THREE.PointLight(0x22d3ee, 1.0, 22);
+  fillLight.position.set(-4, 0, 3);
+  scene.add(fillLight);
+  var platLight   = new THREE.PointLight(0x22d3ee, 2.8, 10);
+  platLight.position.set(0, -1.8, 0);
+  scene.add(platLight);
 
-  /* ── Core sphere ── */
-  var coreMesh = new THREE.Mesh(
-    new THREE.SphereGeometry(0.78, 32, 32),
-    new THREE.MeshStandardMaterial({
-      color: 0x071420, metalness: 0.90, roughness: 0.10,
-      emissive: 0x22d3ee, emissiveIntensity: 0.60
-    })
-  );
-  scene.add(coreMesh);
+  /* ══ BRAIN ══════════════════════════════════════════════════ */
+  var brainGroup = new THREE.Group();
+  brainGroup.position.set(0, 0.7, 0);
+  scene.add(brainGroup);
 
-  scene.add(new THREE.Mesh(
-    new THREE.SphereGeometry(1.04, 24, 24),
+  /* Displaced icosahedron — brain folds */
+  var icoGeo = new THREE.IcosahedronGeometry(1.05, 3);
+  var pos    = icoGeo.attributes.position;
+  for (var i = 0; i < pos.count; i++) {
+    var ix = pos.getX(i), iy = pos.getY(i), iz = pos.getZ(i);
+    var sx = ix * 1.16, sy = iy * 0.87, sz = iz * 1.02;
+    if (sy < -0.45) sy *= 0.62;
+    var n = Math.sin(ix*4.1)*Math.cos(iy*3.6)*0.21
+          + Math.sin(iy*2.7)*Math.sin(iz*3.9)*0.16
+          + Math.cos(ix*5.3)*Math.sin(iy*4.4)*0.10
+          + Math.sin(iz*3.1)*Math.cos(ix*2.3)*0.07;
+    var len = Math.sqrt(sx*sx + sy*sy + sz*sz);
+    if (len > 0) {
+      var nr = len * (1 + n * 0.72);
+      pos.setXYZ(i, sx*nr/len, sy*nr/len, sz*nr/len);
+    }
+  }
+  pos.needsUpdate = true;
+  icoGeo.computeVertexNormals();
+
+  /* Golden wireframe */
+  var wireMat = new THREE.LineBasicMaterial({
+    color: 0xfbbf24, transparent: true, opacity: 0.50,
+    blending: THREE.AdditiveBlending
+  });
+  var brainWire = new THREE.LineSegments(new THREE.WireframeGeometry(icoGeo), wireMat);
+  brainGroup.add(brainWire);
+
+  /* Inner warm glow volume */
+  brainGroup.add(new THREE.Mesh(icoGeo, new THREE.MeshBasicMaterial({
+    color: 0xf59e0b, transparent: true, opacity: 0.028,
+    blending: THREE.AdditiveBlending, side: THREE.FrontSide
+  })));
+
+  /* Outer atmosphere */
+  brainGroup.add(new THREE.Mesh(
+    new THREE.SphereGeometry(1.45, 16, 16),
     new THREE.MeshBasicMaterial({
-      color: 0x22d3ee, transparent: true, opacity: 0.042,
+      color: 0xf59e0b, transparent: true, opacity: 0.014,
       side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false
     })
   ));
 
-  /* ── Neural nodes — Fibonacci sphere distribution ── */
-  var NODE_N = 22;
-  var nodes  = [];
-  var PHI_GR = (1 + Math.sqrt(5)) / 2;
-
-  for (var ni = 0; ni < NODE_N; ni++) {
-    var theta = 2 * Math.PI * ni / PHI_GR;
-    var phi   = Math.acos(1 - 2 * (ni + 0.5) / NODE_N);
-    var nr    = 1.72 + (ni % 4) * 0.34;
-    var isGold = (ni % 5 === 0);
-
-    var nMesh = new THREE.Mesh(
-      new THREE.SphereGeometry(0.055 + (ni % 3) * 0.022, 8, 8),
-      new THREE.MeshStandardMaterial({
-        color:           isGold ? 0xf59e0b : 0x22d3ee,
-        emissive:        isGold ? 0xf59e0b : 0x22d3ee,
-        emissiveIntensity: 0.78, metalness: 0.60, roughness: 0.20
-      })
-    );
-    nMesh.position.set(
-      nr * Math.sin(phi) * Math.cos(theta),
-      nr * Math.sin(phi) * Math.sin(theta),
-      nr * Math.cos(phi)
-    );
-    scene.add(nMesh);
-    nodes.push(nMesh);
-  }
-
-  /* ── Connection lines ── */
-  var connLines = [];
-
-  (function buildConns() {
-    /* Nearest-neighbour pairs */
-    var pairs = [];
-    for (var i = 0; i < NODE_N; i++) {
-      var best = -1, bestD = Infinity;
-      for (var j = 0; j < NODE_N; j++) {
-        if (i === j) continue;
-        var d = nodes[i].position.distanceTo(nodes[j].position);
-        if (d < bestD) { bestD = d; best = j; }
-      }
-      if (best >= 0) {
-        var dup = false;
-        for (var k = 0; k < pairs.length; k++) {
-          if ((pairs[k][0] === i && pairs[k][1] === best) ||
-              (pairs[k][0] === best && pairs[k][1] === i)) { dup = true; break; }
-        }
-        if (!dup) pairs.push([i, best]);
-      }
-    }
-    /* Extra cross-links */
-    for (var x = 0; x < 14; x++) {
-      var a = Math.floor(Math.random() * NODE_N);
-      var b = Math.floor(Math.random() * NODE_N);
-      if (a !== b) pairs.push([a, b]);
-    }
-    pairs.forEach(function(p) {
-      var isG = (p[0] % 5 === 0);
-      var geo = new THREE.BufferGeometry().setFromPoints([
-        nodes[p[0]].position.clone(), nodes[p[1]].position.clone()
-      ]);
-      var mat = new THREE.LineBasicMaterial({
-        color: isG ? 0xf59e0b : 0x38bdf8,
-        transparent: true, opacity: 0,
-        blending: THREE.AdditiveBlending, depthWrite: false
-      });
-      var line = new THREE.Line(geo, mat);
-      scene.add(line);
-      connLines.push({ line: line, pair: p, active: false });
-    });
-  })();
-
-  /* ── Pulse particles ── */
-  var pulses = [];
-  for (var ppi = 0; ppi < 4; ppi++) {
-    var pm = new THREE.Mesh(
-      new THREE.SphereGeometry(0.040, 6, 6),
+  /* Glowing surface nodes */
+  var nodeStep = Math.max(1, Math.floor(pos.count / 32));
+  for (var ni = 0; ni < pos.count; ni += nodeStep) {
+    var nm = new THREE.Mesh(
+      new THREE.SphereGeometry(0.024, 5, 5),
       new THREE.MeshBasicMaterial({
-        color: ppi < 2 ? 0xfbbf24 : 0x67e8f9,
-        transparent: true, opacity: 0,
+        color: ni % 5 === 0 ? 0xfef3c7 : 0xfbbf24,
+        transparent: true, opacity: 0.82,
         blending: THREE.AdditiveBlending
       })
     );
-    scene.add(pm);
-    pulses.push({ mesh: pm, busy: false });
+    nm.position.set(pos.getX(ni), pos.getY(ni), pos.getZ(ni));
+    brainGroup.add(nm);
   }
 
-  /* ── GSAP ── */
+  /* Brain stem */
+  var stemMesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.06, 0.11, 0.48, 8),
+    new THREE.MeshBasicMaterial({
+      color: 0xf59e0b, transparent: true, opacity: 0.42,
+      blending: THREE.AdditiveBlending
+    })
+  );
+  stemMesh.position.set(0, -0.92, 0.08);
+  brainGroup.add(stemMesh);
+
+  /* ══ BEAM ════════════════════════════════════════════════════ */
+  var beamMat = new THREE.MeshBasicMaterial({
+    color: 0x67e8f9, transparent: true, opacity: 0.52,
+    blending: THREE.AdditiveBlending
+  });
+  var beamMesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.006, 0.20, 1.80, 8),
+    beamMat
+  );
+  beamMesh.position.set(0, -1.55, 0.06);
+  scene.add(beamMesh);
+
+  /* Beam core (bright inner column) */
+  var beamCore = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.003, 0.045, 1.80, 6),
+    new THREE.MeshBasicMaterial({
+      color: 0xe0f2fe, transparent: true, opacity: 0.80,
+      blending: THREE.AdditiveBlending
+    })
+  );
+  beamCore.position.set(0, -1.55, 0.06);
+  scene.add(beamCore);
+
+  /* ══ HUD PLATFORM ════════════════════════════════════════════ */
+  var platGroup = new THREE.Group();
+  platGroup.position.set(0, -2.25, 0);
+  scene.add(platGroup);
+
+  var ringCfg = [
+    { r: 0.50, op: 0.78, col: 0xfbbf24, spd:  0.0060 },
+    { r: 0.95, op: 0.65, col: 0x22d3ee, spd: -0.0042 },
+    { r: 1.55, op: 0.52, col: 0x38bdf8, spd:  0.0032 },
+    { r: 2.20, op: 0.38, col: 0x0ea5e9, spd: -0.0022 },
+    { r: 2.95, op: 0.25, col: 0x0284c7, spd:  0.0015 },
+  ];
+  var ringMeshes = [];
+  ringCfg.forEach(function(rc) {
+    var rm = new THREE.Mesh(
+      new THREE.TorusGeometry(rc.r, 0.018, 3, 128),
+      new THREE.MeshBasicMaterial({
+        color: rc.col, transparent: true, opacity: rc.op,
+        blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite: false
+      })
+    );
+    rm.rotation.x = Math.PI / 2;
+    platGroup.add(rm);
+    ringMeshes.push({ mesh: rm, spd: rc.spd });
+  });
+
+  /* Central disc glow */
+  var discMat = new THREE.MeshBasicMaterial({
+    color: 0x22d3ee, transparent: true, opacity: 0.82,
+    blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite: false
+  });
+  var discMesh = new THREE.Mesh(new THREE.CircleGeometry(0.38, 32), discMat);
+  discMesh.rotation.x = -Math.PI / 2;
+  platGroup.add(discMesh);
+
+  /* Ground reflection plane */
+  platGroup.add(new THREE.Mesh(
+    new THREE.CircleGeometry(4.2, 64),
+    new THREE.MeshBasicMaterial({
+      color: 0x0d3a5c, transparent: true, opacity: 0.22,
+      blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite: false
+    })
+  ));
+
+  /* ══ GSAP ════════════════════════════════════════════════════ */
   if (window.gsap) {
-    gsap.to(coreLight, {
-      intensity: 8.0, duration: 1.15, yoyo: true, repeat: -1, ease: 'sine.inOut'
-    });
-    gsap.to(coreMesh.material, {
-      emissiveIntensity: 1.15, duration: 1.15, yoyo: true, repeat: -1, ease: 'sine.inOut'
-    });
-    nodes.forEach(function(n, i) {
-      gsap.to(n.material, {
-        emissiveIntensity: 0.18, duration: 0.65 + Math.random() * 1.4,
-        yoyo: true, repeat: -1, ease: 'sine.inOut', delay: i * 0.08
-      });
-    });
-
-    function pulseCycle() {
-      connLines.forEach(function(c) {
-        if (c.active) {
-          gsap.to(c.line.material, { opacity: 0, duration: 0.45, ease: 'power2.in' });
-          c.active = false;
-        }
-      });
-      var count = 9 + Math.floor(Math.random() * 6);
-      var pool  = connLines.slice().sort(function() { return Math.random() - 0.5; });
-      pool.slice(0, count).forEach(function(c, idx) {
-        c.active = true;
-        gsap.to(c.line.material, {
-          opacity: 0.28 + Math.random() * 0.24,
-          duration: 0.55, delay: idx * 0.035, ease: 'power2.out'
-        });
-        if (idx < 2) {
-          var fp = null;
-          for (var fi = 0; fi < pulses.length; fi++) {
-            if (!pulses[fi].busy) { fp = pulses[fi]; break; }
-          }
-          if (fp) {
-            fp.busy = true;
-            var posA = nodes[c.pair[0]].position;
-            var posB = nodes[c.pair[1]].position;
-            gsap.set(fp.mesh.position, { x: posA.x, y: posA.y, z: posA.z });
-            gsap.to(fp.mesh.material, { opacity: 0.90, duration: 0.14 });
-            gsap.to(fp.mesh.position, {
-              x: posB.x, y: posB.y, z: posB.z,
-              duration: 0.65 + Math.random() * 0.55, ease: 'power1.inOut',
-              onComplete: (function(fpRef) {
-                return function() {
-                  gsap.to(fpRef.mesh.material, {
-                    opacity: 0, duration: 0.18,
-                    onComplete: function() { fpRef.busy = false; }
-                  });
-                };
-              })(fp)
-            });
-          }
-        }
-      });
-      gsap.delayedCall(1.35 + Math.random() * 0.75, pulseCycle);
-    }
-    gsap.delayedCall(0.6, pulseCycle);
+    gsap.to(brainGroup.position, { y: 1.15, duration: 2.5, yoyo: true, repeat: -1, ease: 'sine.inOut' });
+    gsap.to(brainLight,  { intensity: 7.2, duration: 1.25, yoyo: true, repeat: -1, ease: 'sine.inOut' });
+    gsap.to(wireMat,     { opacity: 0.78, duration: 1.25, yoyo: true, repeat: -1, ease: 'sine.inOut' });
+    gsap.to(beamMat,     { opacity: 0.82, duration: 1.05, yoyo: true, repeat: -1, ease: 'sine.inOut' });
+    gsap.to(platLight,   { intensity: 5.0, duration: 1.80, yoyo: true, repeat: -1, ease: 'sine.inOut' });
+    gsap.to(discMat,     { opacity: 0.95, duration: 0.95, yoyo: true, repeat: -1, ease: 'sine.inOut' });
   }
 
-  /* ── Animate ── */
-  var brainActive = true;
+  /* ══ ANIMATE LOOP ════════════════════════════════════════════ */
+  var bActive = true;
   var bCamX = 0, bCamY = 0, bCamTx = 0, bCamTy = 0;
-  var bScrollY = 0;
-  var bClock   = new THREE.Clock();
+  var bClock  = new THREE.Clock();
 
   wrap.addEventListener('mousemove', function(e) {
     var r = wrap.getBoundingClientRect();
     bCamX = (e.clientX - r.left) / r.width  - 0.5;
     bCamY = (e.clientY - r.top)  / r.height - 0.5;
   }, { passive: true });
-  window.addEventListener('scroll', function() { bScrollY = window.scrollY; }, { passive: true });
 
   if (window.IntersectionObserver) {
-    new IntersectionObserver(function(e) { brainActive = e[0].isIntersecting; },
+    new IntersectionObserver(function(e) { bActive = e[0].isIntersecting; },
       { threshold: 0.05 }).observe(wrap);
   }
 
   function brainAnimate() {
     requestAnimationFrame(brainAnimate);
-    if (!brainActive) return;
+    if (!bActive) return;
+    var t = bClock.getElapsedTime();
 
-    coreMesh.rotation.y += 0.0035;
-    coreMesh.rotation.z += 0.0012;
+    brainGroup.rotation.y += 0.0028;
 
-    bCamTx += (bCamX * 0.9 - bCamTx) * 0.025;
-    bCamTy += (-bCamY * 0.6 - bCamTy) * 0.025;
+    /* HUD rings */
+    ringMeshes.forEach(function(rm) { rm.mesh.rotation.z += rm.spd; });
+
+    /* Beam width pulse */
+    var bp = 1 + Math.sin(t * 2.4) * 0.12;
+    beamMesh.scale.x = beamMesh.scale.z = bp;
+    beamCore.scale.x = beamCore.scale.z = bp;
+
+    /* Camera parallax */
+    bCamTx += (bCamX * 0.7 - bCamTx) * 0.028;
+    bCamTy += (-bCamY * 0.45 - bCamTy) * 0.028;
     camera.position.x = bCamTx;
-    camera.position.y = bCamTy;
+    camera.position.y = 0.8 + bCamTy;
 
+    /* Scroll — camera Z shift ("emerging from screen") */
     var wTop = wrap.getBoundingClientRect().top;
     var par  = Math.max(-1, Math.min(1, wTop / (window.innerHeight || 700)));
-    camera.position.z = 8 - par * 0.55;
+    camera.position.z = 8.5 - par * 0.5;
+    camera.lookAt(0, -0.3, 0);
 
-    camera.lookAt(0, 0, 0);
     renderer.render(scene, camera);
   }
   brainAnimate();
 
   window.addEventListener('resize', function() {
-    W = wrap.offsetWidth; H = wrap.offsetHeight || 400;
+    W = wrap.offsetWidth; H = wrap.offsetHeight || 460;
     renderer.setSize(W, H);
     camera.aspect = W / H;
     camera.updateProjectionMatrix();
   });
-})();
+
 
 
 
