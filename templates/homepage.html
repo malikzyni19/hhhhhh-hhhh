@@ -1939,8 +1939,8 @@ function lwStartBounce(){
    HERO SCENE — Flower-Bloom Globe · Orbiting Symbols · ₿ Reveal
 
 /* ════════════════════════════════════════════════════════════
-   HERO SCENE — Bloom Globe · ₿ Orbit Reveal · Orbiting Symbols
-   Three.js + GSAP · emerge → rise → orbit → return → loop
+   HERO SCENE — Bloom Globe · ₿ Orbit Reveal · Premium Coin Ring
+   Three.js + GSAP · BTC SOL ADA USDT SHIB orbital coins
 ════════════════════════════════════════════════════════════ */
 (function initHeroScene() {
   var hero = document.querySelector('.hero');
@@ -2051,59 +2051,79 @@ function lwStartBounce(){
   );
   earthGroup.add(glowMesh);
 
-  /* ── Orbit rings ── */
-  var RA = { r: 2.85, tilt: 0.42, speed: 0.0055 };
-  var RB = { r: 4.00, tilt: 0.72, speed: 0.0038 };
-  var RC = { r: 5.20, tilt: 0.18, speed: 0.0026 };
-  function makeRing(cfg, col) {
-    var m = new THREE.Mesh(
-      new THREE.TorusGeometry(cfg.r, 0.010, 3, 120),
-      new THREE.MeshBasicMaterial({
-        color: col, transparent: true, opacity: 0.55,
-        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
-      })
-    );
-    m.rotation.x = Math.PI / 2 + cfg.tilt;
-    scene.add(m);
-    return m;
-  }
-  var ringA = makeRing(RA, 0xf59e0b);
-  var ringB = makeRing(RB, 0x22d3ee);
-  var ringC = makeRing(RC, 0xa78bfa);
+  /* ── Premium Coin Orbit ── */
+  var COIN_ORBIT_R    = 3.65;
+  var COIN_ORBIT_TILT = 0.30;
+  var COIN_SPEED      = 0.0060;
+  var coinTiltMat = new THREE.Matrix4().makeRotationX(Math.PI / 2 + COIN_ORBIT_TILT);
+  var coinV = new THREE.Vector3();
 
-  /* ── Orbiting symbol sprites ── */
-  function makeSymbolSprite(sym, hex, rgbArr) {
+  var coinRing = new THREE.Mesh(
+    new THREE.TorusGeometry(COIN_ORBIT_R, 0.008, 3, 128),
+    new THREE.MeshBasicMaterial({
+      color: 0x64748b, transparent: true, opacity: 0.18,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+    })
+  );
+  coinRing.rotation.x = Math.PI / 2 + COIN_ORBIT_TILT;
+  scene.add(coinRing);
+
+  function makeCoinSprite(sym, ticker, bgStops, symCol) {
     var cv = document.createElement('canvas');
-    cv.width = cv.height = 128;
+    cv.width = cv.height = 256;
     var ctx = cv.getContext('2d');
-    var gw = ctx.createRadialGradient(64, 64, 22, 64, 64, 64);
-    gw.addColorStop(0, 'rgba(' + rgbArr.join(',') + ',0.60)');
-    gw.addColorStop(1, 'rgba(' + rgbArr.join(',') + ',0)');
-    ctx.fillStyle = gw; ctx.fillRect(0, 0, 128, 128);
-    ctx.beginPath(); ctx.arc(64, 64, 46, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(3,8,18,0.90)'; ctx.fill();
-    ctx.strokeStyle = hex; ctx.lineWidth = 2.8; ctx.stroke();
-    ctx.font = 'bold 48px Arial';
+    var R = 116, cxp = 128, cyp = 128;
+
+    ctx.save();
+    ctx.beginPath(); ctx.arc(cxp, cyp, R, 0, Math.PI * 2); ctx.clip();
+
+    var g = ctx.createLinearGradient(12, 12, 244, 244);
+    bgStops.forEach(function(s, i) { g.addColorStop(i / (bgStops.length - 1), s); });
+    ctx.fillStyle = g; ctx.fillRect(0, 0, 256, 256);
+
+    var hi = ctx.createRadialGradient(78, 64, 2, 78, 64, 92);
+    hi.addColorStop(0,   'rgba(255,255,255,0.58)');
+    hi.addColorStop(0.3, 'rgba(255,255,255,0.26)');
+    hi.addColorStop(1,   'rgba(255,255,255,0)');
+    ctx.fillStyle = hi; ctx.fillRect(0, 0, 256, 256);
+
+    var shd = ctx.createRadialGradient(192, 200, 8, 192, 200, 88);
+    shd.addColorStop(0, 'rgba(0,0,0,0.38)');
+    shd.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = shd; ctx.fillRect(0, 0, 256, 256);
+    ctx.restore();
+
+    ctx.beginPath(); ctx.arc(cxp, cyp, R, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.52)'; ctx.lineWidth = 6; ctx.stroke();
+    ctx.beginPath(); ctx.arc(cxp, cyp, R - 14, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.14)'; ctx.lineWidth = 2; ctx.stroke();
+
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = hex; ctx.shadowColor = hex; ctx.shadowBlur = 16;
-    ctx.fillText(sym, 64, 64); ctx.shadowBlur = 0;
+    ctx.fillStyle = symCol; ctx.shadowColor = symCol; ctx.shadowBlur = 22;
+    ctx.font = 'bold 88px Arial, sans-serif';
+    ctx.fillText(sym, cxp, cyp - 8);
+    ctx.shadowBlur = 0;
+    ctx.font = 'bold 26px Arial, sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.68)';
+    ctx.fillText(ticker, cxp, cyp + 58);
+
     var sp = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: new THREE.CanvasTexture(cv), transparent: true, depthWrite: false
+      map: new THREE.CanvasTexture(cv),
+      transparent: true, depthTest: true, depthWrite: false, opacity: 0.92
     }));
-    sp.scale.set(0.72, 0.72, 1);
+    sp.scale.set(0.92, 0.92, 1);
     scene.add(sp);
     return sp;
   }
-  var cryptos = [
-    { sym: '₿', hex: '#f59e0b', rgb: [245,158, 11], cfg: RA, off: 0               },
-    { sym: '◎', hex: '#22d3ee', rgb: [ 34,211,238], cfg: RA, off: Math.PI          },
-    { sym: 'Ξ', hex: '#818cf8', rgb: [129,140,248], cfg: RB, off: 0               },
-    { sym: '✕', hex: '#a78bfa', rgb: [167,139,250], cfg: RB, off: Math.PI * 2 / 3  },
-    { sym: '◆', hex: '#fbbf24', rgb: [251,191, 36], cfg: RC, off: 0               },
+
+  var coinDefs = [
+    { sym: '₿', ticker: 'BTC',  stops: ['#fffbeb','#fbbf24','#f59e0b','#b45309'], symCol: '#fffbf0', spinDir:  1, ang: 0             },
+    { sym: 'S',  ticker: 'SOL',  stops: ['#1e0030','#7c3aed','#818cf8','#c4b5fd'], symCol: '#e9d5ff', spinDir: -1, ang: Math.PI*2/5   },
+    { sym: 'A',  ticker: 'ADA',  stops: ['#020f1e','#1d4ed8','#38bdf8','#bae6fd'], symCol: '#dbeafe', spinDir:  1, ang: Math.PI*4/5   },
+    { sym: '₮',  ticker: 'USDT', stops: ['#022c22','#065f46','#10b981','#a7f3d0'], symCol: '#d1fae5', spinDir:  1, ang: Math.PI*6/5   },
+    { sym: 'S',  ticker: 'SHIB', stops: ['#431407','#c2410c','#fb923c','#fde68a'], symCol: '#ffedd5', spinDir: -1, ang: Math.PI*8/5   },
   ];
-  var symM4 = new THREE.Matrix4();
-  var symV  = new THREE.Vector3();
-  cryptos.forEach(function(c) { c.ang = c.off; c.sprite = makeSymbolSprite(c.sym, c.hex, c.rgb); });
+  coinDefs.forEach(function(c) { c.sprite = makeCoinSprite(c.sym, c.ticker, c.stops, c.symCol); });
 
   /* ── ₿ Sprite — in scene (world space) so orbit is globe-independent ── */
   var bCv = document.createElement('canvas');
@@ -2186,20 +2206,18 @@ function lwStartBounce(){
     earthGroup.rotation.y += 0.0015;
     earthGroup.position.y  = Math.sin(t * 0.30) * 0.07;
 
-    /* Continuous orbiting symbols — never interrupted */
-    var msc = 1 - sf * 0.45;
-    cryptos.forEach(function(c) {
-      c.ang += c.cfg.speed;
-      symM4.makeRotationX(Math.PI / 2 + c.cfg.tilt);
-      symV.set(Math.cos(c.ang) * c.cfg.r, Math.sin(c.ang) * c.cfg.r, 0);
-      symV.applyMatrix4(symM4);
-      c.sprite.position.copy(symV).multiplyScalar(msc);
-      c.sprite.material.opacity = 0.80 + bloomFactor * 0.20;
+    /* Coin orbit — continuous, never interrupted */
+    coinDefs.forEach(function(c) {
+      c.ang += COIN_SPEED;
+      coinV.set(Math.cos(c.ang) * COIN_ORBIT_R, 0, Math.sin(c.ang) * COIN_ORBIT_R);
+      coinV.applyMatrix4(coinTiltMat);
+      c.sprite.position.copy(coinV);
+      c.sprite.material.rotation += 0.006 * c.spinDir;
+      c.sprite.material.opacity   = 0.88 + bloomFactor * 0.12;
+      var sc = 0.92 + Math.sin(t * 0.7 + c.ang) * 0.030;
+      c.sprite.scale.set(sc, sc, 1);
     });
-    ringA.scale.setScalar(msc); ringB.scale.setScalar(msc); ringC.scale.setScalar(msc);
-    ringA.material.opacity = 0.50 + bloomFactor * 0.20;
-    ringB.material.opacity = 0.50 + bloomFactor * 0.20;
-    ringC.material.opacity = 0.50 + bloomFactor * 0.20;
+    coinRing.material.opacity = 0.14 + bloomFactor * 0.08;
 
     starMat.opacity = 0.24 + Math.sin(t * 0.10) * 0.06;
 
