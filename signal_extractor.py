@@ -103,3 +103,18 @@ def extract_scan_signal(result: dict, exchange: str, timeframe: str) -> dict | N
 
     except Exception:
         return None
+
+
+def extract_zone_signal_from_api_scan_result(result: dict, exchange: str = "binance") -> dict | None:
+    """
+    Convenience wrapper for the /api/scan hook.
+    Reads timeframe directly from result["timeframe"] so the caller
+    only needs to supply the exchange (available as a route variable).
+
+    Returns normalised signal dict or None if not loggable.
+    """
+    return extract_scan_signal(
+        result,
+        exchange=exchange,
+        timeframe=result.get("timeframe", "1h"),
+    )
