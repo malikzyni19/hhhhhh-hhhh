@@ -678,7 +678,7 @@ def role_edit(role):
 # Remove this route after Phase 2B is confirmed.
 # ─────────────────────────────────────────────────────────────────────────────
 @admin_bp.route("/intelligence/db-test")
-@login_required
+@admin_required
 def intelligence_db_test():
     from sqlalchemy import text as _sa_text
     from models import SignalEvent, SignalOutcome
