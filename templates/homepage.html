@@ -559,6 +559,9 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 .letter-span{display:inline-block;opacity:0;will-change:opacity}
 
 #features{position:relative}
+#ai-brain-wrap{position:absolute;top:0;left:0;right:0;bottom:0;pointer-events:none;overflow:hidden}
+#features>*:not(#ai-brain-wrap){position:relative;z-index:1}
+@media(max-width:640px){#ai-brain-wrap{opacity:.42}}
 
 /* ── STATEMENT SECTION ── */
 #statement{padding:72px 20px 80px;text-align:center}
@@ -823,6 +826,7 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 
 <!-- FEATURES -->
 <div class="section" id="features">
+  <div id="ai-brain-wrap" aria-hidden="true"></div>
   <div class="sec-eyebrow" data-i18n="feat_eyebrow">SMC Modules</div>
   <h2 class="sec-h"><span data-i18n="feat_h">Everything to trade smart money</span></h2>
   <p class="sec-sub" data-i18n="feat_sub">Six professional tools — scan, detect and act on every Smart Money setup across 400+ pairs.</p>
@@ -2064,9 +2068,9 @@ function lwStartBounce(){
   orbRings.forEach(function(rd) {
     rd.mat = new THREE.Matrix4().makeRotationX(Math.PI / 2 + rd.tilt);
     var rm = new THREE.Mesh(
-      new THREE.TorusGeometry(rd.r, 0.007, 3, 128),
+      new THREE.TorusGeometry(rd.r, 0.013, 3, 128),
       new THREE.MeshBasicMaterial({
-        color: rd.col, transparent: true, opacity: 0.16,
+        color: rd.col, transparent: true, opacity: 0.26,
         blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
       })
     );
@@ -2216,12 +2220,11 @@ function lwStartBounce(){
       coinV.applyMatrix4(rd.mat);
       c.sprite.position.copy(coinV);
       c.sprite.material.rotation += 0.006 * c.spinDir;
-      if (c.loaded) c.sprite.material.opacity = 0.88 + bloomFactor * 0.12;
-      var sc = 0.92 + Math.sin(t * 0.65 + c.ang) * 0.026;
-      c.sprite.scale.set(sc, sc, 1);
+      if (c.loaded) c.sprite.material.opacity = 0.90 + bloomFactor * 0.10;
+      c.sprite.scale.set(0.94, 0.94, 1);
     });
     orbRings.forEach(function(rd) {
-      rd.mesh.material.opacity = 0.13 + bloomFactor * 0.07;
+      rd.mesh.material.opacity = 0.24 + bloomFactor * 0.10;
     });
 
     starMat.opacity = 0.24 + Math.sin(t * 0.10) * 0.06;
@@ -2358,7 +2361,254 @@ function lwStartBounce(){
   });
 })();
 
+/* ════════════════════════════════════════════════════════════
+   MODULES — AI Trading Brain Core
+   Three.js + GSAP  ·  neural nodes  ·  pulse connections
+════════════════════════════════════════════════════════════ */
+(function initAIBrain() {
+  var wrap = document.getElementById('ai-brain-wrap');
+  if (!wrap || !window.THREE) return;
 
+  var canvas = document.createElement('canvas');
+  canvas.setAttribute('aria-hidden', 'true');
+  canvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%';
+  wrap.appendChild(canvas);
+
+  var W = wrap.offsetWidth  || 900;
+  var H = wrap.offsetHeight || 400;
+
+  var renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+  renderer.setSize(W, H);
+
+  var scene  = new THREE.Scene();
+  var camera = new THREE.PerspectiveCamera(54, W / H, 0.1, 100);
+  camera.position.set(0, 0, 8);
+  camera.lookAt(0, 0, 0);
+
+  /* ── Lighting ── */
+  scene.add(new THREE.AmbientLight(0x020810, 0.85));
+  var coreLight = new THREE.PointLight(0x22d3ee, 4.2, 22);
+  scene.add(coreLight);
+  var goldLight = new THREE.PointLight(0xf59e0b, 1.1, 14);
+  goldLight.position.set(4, 3, 2);
+  scene.add(goldLight);
+  var rimLight = new THREE.PointLight(0x3b82f6, 0.7, 16);
+  rimLight.position.set(-4, -2, -4);
+  scene.add(rimLight);
+
+  /* ── Core sphere ── */
+  var coreMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.78, 32, 32),
+    new THREE.MeshStandardMaterial({
+      color: 0x071420, metalness: 0.90, roughness: 0.10,
+      emissive: 0x22d3ee, emissiveIntensity: 0.60
+    })
+  );
+  scene.add(coreMesh);
+
+  scene.add(new THREE.Mesh(
+    new THREE.SphereGeometry(1.04, 24, 24),
+    new THREE.MeshBasicMaterial({
+      color: 0x22d3ee, transparent: true, opacity: 0.042,
+      side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false
+    })
+  ));
+
+  /* ── Neural nodes — Fibonacci sphere distribution ── */
+  var NODE_N = 22;
+  var nodes  = [];
+  var PHI_GR = (1 + Math.sqrt(5)) / 2;
+
+  for (var ni = 0; ni < NODE_N; ni++) {
+    var theta = 2 * Math.PI * ni / PHI_GR;
+    var phi   = Math.acos(1 - 2 * (ni + 0.5) / NODE_N);
+    var nr    = 1.72 + (ni % 4) * 0.34;
+    var isGold = (ni % 5 === 0);
+
+    var nMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(0.055 + (ni % 3) * 0.022, 8, 8),
+      new THREE.MeshStandardMaterial({
+        color:           isGold ? 0xf59e0b : 0x22d3ee,
+        emissive:        isGold ? 0xf59e0b : 0x22d3ee,
+        emissiveIntensity: 0.78, metalness: 0.60, roughness: 0.20
+      })
+    );
+    nMesh.position.set(
+      nr * Math.sin(phi) * Math.cos(theta),
+      nr * Math.sin(phi) * Math.sin(theta),
+      nr * Math.cos(phi)
+    );
+    scene.add(nMesh);
+    nodes.push(nMesh);
+  }
+
+  /* ── Connection lines ── */
+  var connLines = [];
+
+  (function buildConns() {
+    /* Nearest-neighbour pairs */
+    var pairs = [];
+    for (var i = 0; i < NODE_N; i++) {
+      var best = -1, bestD = Infinity;
+      for (var j = 0; j < NODE_N; j++) {
+        if (i === j) continue;
+        var d = nodes[i].position.distanceTo(nodes[j].position);
+        if (d < bestD) { bestD = d; best = j; }
+      }
+      if (best >= 0) {
+        var dup = false;
+        for (var k = 0; k < pairs.length; k++) {
+          if ((pairs[k][0] === i && pairs[k][1] === best) ||
+              (pairs[k][0] === best && pairs[k][1] === i)) { dup = true; break; }
+        }
+        if (!dup) pairs.push([i, best]);
+      }
+    }
+    /* Extra cross-links */
+    for (var x = 0; x < 14; x++) {
+      var a = Math.floor(Math.random() * NODE_N);
+      var b = Math.floor(Math.random() * NODE_N);
+      if (a !== b) pairs.push([a, b]);
+    }
+    pairs.forEach(function(p) {
+      var isG = (p[0] % 5 === 0);
+      var geo = new THREE.BufferGeometry().setFromPoints([
+        nodes[p[0]].position.clone(), nodes[p[1]].position.clone()
+      ]);
+      var mat = new THREE.LineBasicMaterial({
+        color: isG ? 0xf59e0b : 0x38bdf8,
+        transparent: true, opacity: 0,
+        blending: THREE.AdditiveBlending, depthWrite: false
+      });
+      var line = new THREE.Line(geo, mat);
+      scene.add(line);
+      connLines.push({ line: line, pair: p, active: false });
+    });
+  })();
+
+  /* ── Pulse particles ── */
+  var pulses = [];
+  for (var ppi = 0; ppi < 4; ppi++) {
+    var pm = new THREE.Mesh(
+      new THREE.SphereGeometry(0.040, 6, 6),
+      new THREE.MeshBasicMaterial({
+        color: ppi < 2 ? 0xfbbf24 : 0x67e8f9,
+        transparent: true, opacity: 0,
+        blending: THREE.AdditiveBlending
+      })
+    );
+    scene.add(pm);
+    pulses.push({ mesh: pm, busy: false });
+  }
+
+  /* ── GSAP ── */
+  if (window.gsap) {
+    gsap.to(coreLight, {
+      intensity: 8.0, duration: 1.15, yoyo: true, repeat: -1, ease: 'sine.inOut'
+    });
+    gsap.to(coreMesh.material, {
+      emissiveIntensity: 1.15, duration: 1.15, yoyo: true, repeat: -1, ease: 'sine.inOut'
+    });
+    nodes.forEach(function(n, i) {
+      gsap.to(n.material, {
+        emissiveIntensity: 0.18, duration: 0.65 + Math.random() * 1.4,
+        yoyo: true, repeat: -1, ease: 'sine.inOut', delay: i * 0.08
+      });
+    });
+
+    function pulseCycle() {
+      connLines.forEach(function(c) {
+        if (c.active) {
+          gsap.to(c.line.material, { opacity: 0, duration: 0.45, ease: 'power2.in' });
+          c.active = false;
+        }
+      });
+      var count = 9 + Math.floor(Math.random() * 6);
+      var pool  = connLines.slice().sort(function() { return Math.random() - 0.5; });
+      pool.slice(0, count).forEach(function(c, idx) {
+        c.active = true;
+        gsap.to(c.line.material, {
+          opacity: 0.28 + Math.random() * 0.24,
+          duration: 0.55, delay: idx * 0.035, ease: 'power2.out'
+        });
+        if (idx < 2) {
+          var fp = null;
+          for (var fi = 0; fi < pulses.length; fi++) {
+            if (!pulses[fi].busy) { fp = pulses[fi]; break; }
+          }
+          if (fp) {
+            fp.busy = true;
+            var posA = nodes[c.pair[0]].position;
+            var posB = nodes[c.pair[1]].position;
+            gsap.set(fp.mesh.position, { x: posA.x, y: posA.y, z: posA.z });
+            gsap.to(fp.mesh.material, { opacity: 0.90, duration: 0.14 });
+            gsap.to(fp.mesh.position, {
+              x: posB.x, y: posB.y, z: posB.z,
+              duration: 0.65 + Math.random() * 0.55, ease: 'power1.inOut',
+              onComplete: (function(fpRef) {
+                return function() {
+                  gsap.to(fpRef.mesh.material, {
+                    opacity: 0, duration: 0.18,
+                    onComplete: function() { fpRef.busy = false; }
+                  });
+                };
+              })(fp)
+            });
+          }
+        }
+      });
+      gsap.delayedCall(1.35 + Math.random() * 0.75, pulseCycle);
+    }
+    gsap.delayedCall(0.6, pulseCycle);
+  }
+
+  /* ── Animate ── */
+  var brainActive = true;
+  var bCamX = 0, bCamY = 0, bCamTx = 0, bCamTy = 0;
+  var bScrollY = 0;
+  var bClock   = new THREE.Clock();
+
+  wrap.addEventListener('mousemove', function(e) {
+    var r = wrap.getBoundingClientRect();
+    bCamX = (e.clientX - r.left) / r.width  - 0.5;
+    bCamY = (e.clientY - r.top)  / r.height - 0.5;
+  }, { passive: true });
+  window.addEventListener('scroll', function() { bScrollY = window.scrollY; }, { passive: true });
+
+  if (window.IntersectionObserver) {
+    new IntersectionObserver(function(e) { brainActive = e[0].isIntersecting; },
+      { threshold: 0.05 }).observe(wrap);
+  }
+
+  function brainAnimate() {
+    requestAnimationFrame(brainAnimate);
+    if (!brainActive) return;
+
+    coreMesh.rotation.y += 0.0035;
+    coreMesh.rotation.z += 0.0012;
+
+    bCamTx += (bCamX * 0.9 - bCamTx) * 0.025;
+    bCamTy += (-bCamY * 0.6 - bCamTy) * 0.025;
+    camera.position.x = bCamTx;
+    camera.position.y = bCamTy;
+
+    var wTop = wrap.getBoundingClientRect().top;
+    var par  = Math.max(-1, Math.min(1, wTop / (window.innerHeight || 700)));
+    camera.position.z = 8 - par * 0.55;
+
+    camera.lookAt(0, 0, 0);
+    renderer.render(scene, camera);
+  }
+  brainAnimate();
+
+  window.addEventListener('resize', function() {
+    W = wrap.offsetWidth; H = wrap.offsetHeight || 400;
+    renderer.setSize(W, H);
+    camera.aspect = W / H;
+    camera.updateProjectionMatrix();
+  });
+})();
 
 
 
