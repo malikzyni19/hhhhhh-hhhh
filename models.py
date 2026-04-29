@@ -177,20 +177,23 @@ class SignalEvent(db.Model):
 
     id             = db.Column(db.Integer, primary_key=True)
     signal_id      = db.Column(db.String(64), unique=True, nullable=False)
-    pair           = db.Column(db.String(20), nullable=False)
-    module         = db.Column(db.String(20), nullable=False)
-    timeframe      = db.Column(db.String(10), nullable=False)
+    pair           = db.Column(db.String(20), nullable=False, index=True)
+    module         = db.Column(db.String(20), nullable=False, index=True)
+    timeframe      = db.Column(db.String(10), nullable=False, index=True)
     direction      = db.Column(db.String(10), nullable=False)
     score          = db.Column(db.Integer, default=0)
     zone_high      = db.Column(db.Float, nullable=False)
     zone_low       = db.Column(db.Float, nullable=False)
     detected_price = db.Column(db.Float, nullable=False)
-    detected_at    = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    detected_at    = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), index=True)
     exchange       = db.Column(db.String(20), default="binance")
     strategy_ver   = db.Column(db.String(10), default="1.0")
     settings_json  = db.Column(db.Text, nullable=True)
-    status         = db.Column(db.String(30), default="WAITING_FOR_ENTRY")
+    status         = db.Column(db.String(30), default="WAITING_FOR_ENTRY", index=True)
     source         = db.Column(db.String(20), default="live")
+    setup_type     = db.Column(db.String(30), nullable=True)
+    raw_setup      = db.Column(db.String(50), nullable=True)
+    raw_meta_json  = db.Column(db.Text, nullable=True)
 
     outcome = db.relationship("SignalOutcome", uselist=False, backref="event",
                               foreign_keys="SignalOutcome.signal_id",
