@@ -70,6 +70,52 @@ try:
 except Exception as _db_err:
     print(f"[DB] Could not create tables: {_db_err}")
 
+# ── Intelligence schema migration — idempotent, safe on every deploy ──────────
+# db.create_all() creates new tables but does NOT alter existing PostgreSQL
+# tables. This patch adds any columns/indexes that were added after the initial
+# deploy. All statements use IF NOT EXISTS — safe to run repeatedly.
+try:
+    from sqlalchemy import text as _sa_text
+    with app.app_context():
+        try:
+            _migration_stmts = [
+                # New columns on signal_events
+                "ALTER TABLE signal_events ADD COLUMN IF NOT EXISTS setup_type VARCHAR(30)",
+                "ALTER TABLE signal_events ADD COLUMN IF NOT EXISTS raw_setup VARCHAR(50)",
+                "ALTER TABLE signal_events ADD COLUMN IF NOT EXISTS raw_meta_json TEXT",
+                # Indexes — non-unique
+                "CREATE INDEX IF NOT EXISTS ix_signal_events_pair        ON signal_events (pair)",
+                "CREATE INDEX IF NOT EXISTS ix_signal_events_module      ON signal_events (module)",
+                "CREATE INDEX IF NOT EXISTS ix_signal_events_timeframe   ON signal_events (timeframe)",
+                "CREATE INDEX IF NOT EXISTS ix_signal_events_status      ON signal_events (status)",
+                "CREATE INDEX IF NOT EXISTS ix_signal_events_detected_at ON signal_events (detected_at)",
+                # Unique index for signal_id (already enforced by unique=True on column,
+                # but explicit name makes it idempotent and inspectable)
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_signal_events_signal_id_unique ON signal_events (signal_id)",
+            ]
+            for _stmt in _migration_stmts:
+                db.session.execute(_sa_text(_stmt))
+            db.session.commit()
+
+            # Verify the three new columns are present
+            _verify_rows = db.session.execute(_sa_text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'signal_events' "
+                "  AND column_name IN ('setup_type', 'raw_setup', 'raw_meta_json')"
+            )).fetchall()
+            _found_cols  = {r[0] for r in _verify_rows}
+            _missing_cols = {"setup_type", "raw_setup", "raw_meta_json"} - _found_cols
+            if _missing_cols:
+                print(f"[Intelligence Migration] WARNING — columns still missing after patch: {_missing_cols}")
+            else:
+                print("[Intelligence Migration] schema patch applied — all columns verified OK")
+
+        except Exception as _migration_inner_err:
+            db.session.rollback()
+            print(f"[Intelligence Migration] skipped/error: {_migration_inner_err}")
+except Exception as _migration_outer_err:
+    print(f"[Intelligence Migration] skipped/error: {_migration_outer_err}")
+
 # ── IP geo cache ────────────────────────────────────────────────────
 _ip_geo: dict = {}   # {ip: (ts, {country, city})}
 
