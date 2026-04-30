@@ -990,7 +990,8 @@ def intelligence_auto_resolver_settings():
         row.auto_resolver_interval_minutes = interval
         row.auto_resolver_limit            = limit
         row.auto_resolver_mode             = mode
-        row.runner_installed               = False   # Phase 6A: never allow True
+        # runner_installed is managed exclusively by auto_resolver_runner.py —
+        # never reset it here; settings saves must not affect runner state.
         row.last_saved_at                  = datetime.now(_tz.utc)
         row.last_saved_by                  = (
             current_user.id if current_user.is_authenticated else None
