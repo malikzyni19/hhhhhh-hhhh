@@ -883,3 +883,194 @@ def intelligence_resolve_pending():
 
     except Exception as _rp_err:
         return jsonify({"ok": False, "error": str(_rp_err)}), 500
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 5A — read-only intelligence stats (admin-only, never mutates DB)
+# GET /admin/intelligence/stats
+# Optional params: source, module, timeframe, limit_recent (max 100)
+# ─────────────────────────────────────────────────────────────────────────────
+@admin_bp.route("/intelligence/stats")
+@admin_required
+def intelligence_stats():
+    try:
+        from models import SignalEvent, SignalOutcome
+
+        # ── Parse filters ────────────────────────────────────────────────
+        source_param = request.args.get("source", "live")
+        module_param = request.args.get("module") or None
+        tf_param     = request.args.get("timeframe") or None
+        try:
+            limit_recent = min(int(request.args.get("limit_recent", 50)), 100)
+        except (TypeError, ValueError):
+            limit_recent = 50
+
+        # ── Build outer-joined query so signals without outcomes appear ──
+        q = (
+            db.session.query(SignalEvent, SignalOutcome)
+            .outerjoin(SignalOutcome, SignalEvent.signal_id == SignalOutcome.signal_id)
+        )
+        if source_param != "all":
+            q = q.filter(SignalEvent.source == source_param)
+        if module_param:
+            q = q.filter(SignalEvent.module == module_param)
+        if tf_param:
+            q = q.filter(SignalEvent.timeframe == tf_param)
+
+        rows = q.order_by(SignalEvent.detected_at.desc()).all()
+
+        # ── Helper: safe percentage (returns None when denom == 0) ───────
+        def _pct(num, denom):
+            return round(num / denom * 100, 2) if denom > 0 else None
+
+        # ── Status counts ────────────────────────────────────────────────
+        sc = {}
+        for ev, _ in rows:
+            sc[ev.status] = sc.get(ev.status, 0) + 1
+
+        waiting   = sc.get("WAITING_FOR_ENTRY", 0)
+        entered   = sc.get("ENTERED",           0)
+        won       = sc.get("WON",               0)
+        lost      = sc.get("LOST",              0)
+        expired   = sc.get("EXPIRED",           0)
+        ambiguous = sc.get("AMBIGUOUS",         0)
+
+        pending_total  = waiting + entered
+        resolved_total = won + lost + expired + ambiguous
+        clean_resolved = won + lost   # only WON/LOST for win_rate denominator
+
+        # ── Win rates ────────────────────────────────────────────────────
+        win_rates = {
+            "win_rate_resolved":      _pct(won, resolved_total),
+            "win_rate_entered":       _pct(won, clean_resolved),
+            "loss_rate_resolved":     _pct(lost, resolved_total),
+            "ambiguous_rate_resolved":_pct(ambiguous, resolved_total),
+        }
+
+        # ── By-module breakdown ──────────────────────────────────────────
+        mod_data: dict = {}
+        for ev, _ in rows:
+            m = ev.module
+            if m not in mod_data:
+                mod_data[m] = {
+                    "module": m, "total": 0,
+                    "waiting_for_entry": 0, "entered": 0,
+                    "won": 0, "lost": 0, "expired": 0, "ambiguous": 0,
+                }
+            d = mod_data[m]
+            d["total"] += 1
+            s = ev.status
+            if   s == "WAITING_FOR_ENTRY": d["waiting_for_entry"] += 1
+            elif s == "ENTERED":           d["entered"]    += 1
+            elif s == "WON":               d["won"]        += 1
+            elif s == "LOST":              d["lost"]       += 1
+            elif s == "EXPIRED":           d["expired"]    += 1
+            elif s == "AMBIGUOUS":         d["ambiguous"]  += 1
+
+        by_module = sorted(
+            [{**d, "sample_reliable": d["total"] >= 30} for d in mod_data.values()],
+            key=lambda x: x["total"], reverse=True,
+        )
+
+        # ── By-timeframe breakdown ───────────────────────────────────────
+        tf_data: dict = {}
+        for ev, _ in rows:
+            tf = ev.timeframe
+            if tf not in tf_data:
+                tf_data[tf] = {
+                    "timeframe": tf, "total": 0,
+                    "waiting_for_entry": 0, "entered": 0,
+                    "won": 0, "lost": 0, "expired": 0, "ambiguous": 0,
+                }
+            d = tf_data[tf]
+            d["total"] += 1
+            s = ev.status
+            if   s == "WAITING_FOR_ENTRY": d["waiting_for_entry"] += 1
+            elif s == "ENTERED":           d["entered"]    += 1
+            elif s == "WON":               d["won"]        += 1
+            elif s == "LOST":              d["lost"]       += 1
+            elif s == "EXPIRED":           d["expired"]    += 1
+            elif s == "AMBIGUOUS":         d["ambiguous"]  += 1
+
+        by_timeframe = sorted(
+            [{**d, "sample_reliable": d["total"] >= 30} for d in tf_data.values()],
+            key=lambda x: x["total"], reverse=True,
+        )
+
+        # ── By score bucket ──────────────────────────────────────────────
+        _buckets = [
+            {"bucket": "80-100", "lo": 80, "hi": 100, "total": 0, "won": 0, "lost": 0},
+            {"bucket": "60-79",  "lo": 60, "hi": 79,  "total": 0, "won": 0, "lost": 0},
+            {"bucket": "40-59",  "lo": 40, "hi": 59,  "total": 0, "won": 0, "lost": 0},
+            {"bucket": "0-39",   "lo": 0,  "hi": 39,  "total": 0, "won": 0, "lost": 0},
+        ]
+        for ev, _ in rows:
+            score = ev.score or 0
+            for b in _buckets:
+                if b["lo"] <= score <= b["hi"]:
+                    b["total"] += 1
+                    if ev.status == "WON":  b["won"]  += 1
+                    if ev.status == "LOST": b["lost"] += 1
+                    break
+
+        by_score_bucket = [
+            {
+                "bucket":   b["bucket"],
+                "total":    b["total"],
+                "won":      b["won"],
+                "lost":     b["lost"],
+                "win_rate": _pct(b["won"], b["won"] + b["lost"]),
+            }
+            for b in _buckets
+        ]
+
+        # ── Recent signals with outcome fields ───────────────────────────
+        recent_signals = [
+            {
+                "signal_id":    ev.signal_id,
+                "pair":         ev.pair,
+                "module":       ev.module,
+                "timeframe":    ev.timeframe,
+                "direction":    ev.direction,
+                "score":        ev.score,
+                "status":       ev.status,
+                "result":       oc.result        if oc else None,
+                "result_reason":oc.result_reason if oc else None,
+                "detected_at":  ev.detected_at.isoformat() if ev.detected_at else None,
+                "zone_high":    ev.zone_high,
+                "zone_low":     ev.zone_low,
+                "entry_price":  oc.entry_price   if oc else None,
+                "target_price": oc.target_price  if oc else None,
+                "stop_price":   oc.stop_price    if oc else None,
+            }
+            for ev, oc in rows[:limit_recent]
+        ]
+
+        return jsonify({
+            "ok": True,
+            "filters": {
+                "source":    source_param,
+                "module":    module_param,
+                "timeframe": tf_param,
+            },
+            "totals": {
+                "total_signals":    len(rows),
+                "waiting_for_entry":waiting,
+                "entered":          entered,
+                "won":              won,
+                "lost":             lost,
+                "expired":          expired,
+                "ambiguous":        ambiguous,
+                "pending_total":    pending_total,
+                "resolved_total":   resolved_total,
+            },
+            "win_rates":      win_rates,
+            "by_module":      by_module,
+            "by_timeframe":   by_timeframe,
+            "by_score_bucket":by_score_bucket,
+            "recent_signals": recent_signals,
+        })
+
+    except Exception as _stats_err:
+        return jsonify({"ok": False, "error": str(_stats_err)}), 500
+
