@@ -91,6 +91,29 @@
 .ar-switch input:checked + .ar-slider{background:rgba(34,211,238,.25);border:1px solid rgba(34,211,238,.5)}
 .ar-switch input:checked + .ar-slider:before{transform:translateX(16px);background:var(--cyan)}
 .ar-disclaimer{font-size:10px;color:var(--muted);font-style:italic;margin-bottom:18px;padding-left:2px}
+
+/* ── Controlled Auto Resolver settings ── */
+.car-controls{display:grid;grid-template-columns:max-content 1fr;gap:10px 18px;align-items:center;
+              max-width:420px;margin-bottom:14px}
+.car-select{background:var(--bg2);border:1px solid var(--border);color:var(--text);
+            padding:5px 10px;border-radius:7px;font-size:12px;font-family:inherit}
+.car-select:focus{outline:none;border-color:var(--cyan)}
+.car-label{font-size:10px;color:var(--muted);letter-spacing:.8px;font-weight:600;
+           text-transform:uppercase;white-space:nowrap}
+.car-status-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));
+                 gap:10px;margin-top:14px}
+.car-status-card{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 12px}
+.car-status-label{font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;
+                  font-weight:600;margin-bottom:4px}
+.car-status-val{font-size:12px;font-weight:600;color:var(--text);font-family:'JetBrains Mono',monospace}
+.car-warn{background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.25);color:var(--amber);
+          padding:9px 13px;border-radius:7px;font-size:11px;margin-bottom:7px;display:none}
+.car-success{background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.25);color:var(--green);
+             padding:9px 13px;border-radius:7px;font-size:11px;margin-top:10px;display:none}
+.car-err{background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.25);color:var(--red);
+         padding:9px 13px;border-radius:7px;font-size:11px;margin-top:10px;display:none}
+.car-subtitle{font-size:11px;color:var(--muted);margin-bottom:14px;line-height:1.5}
+@media(max-width:600px){.car-controls{grid-template-columns:1fr;gap:6px}}
 </style>
 
 <!-- Header -->
@@ -179,6 +202,58 @@
         </table>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- Controlled Auto Resolver Settings -->
+<div class="adm-card" style="margin-bottom:20px">
+  <div class="adm-card-header">
+    <span class="adm-card-title">Controlled Auto Resolver</span>
+  </div>
+  <div class="adm-card-body">
+    <p class="car-subtitle">Configure automatic resolving behavior. Runner is not active until Phase 6B.</p>
+
+    <div class="car-controls">
+      <span class="car-label">Enable Auto Resolver</span>
+      <label class="ar-switch" title="Toggle auto resolver">
+        <input type="checkbox" id="car-enabled">
+        <span class="ar-slider"></span>
+      </label>
+
+      <span class="car-label">Interval</span>
+      <select id="car-interval" class="car-select">
+        <option value="15">15 minutes</option>
+        <option value="30" selected>30 minutes</option>
+        <option value="60">60 minutes</option>
+        <option value="120">120 minutes</option>
+      </select>
+
+      <span class="car-label">Limit per run</span>
+      <select id="car-limit" class="car-select">
+        <option value="20" selected>20</option>
+        <option value="50">50</option>
+        <option value="100">100</option>
+      </select>
+
+      <span class="car-label">Mode</span>
+      <select id="car-mode" class="car-select">
+        <option value="dry_run" selected>dry_run (safe, no DB writes)</option>
+        <option value="commit">commit (writes to DB)</option>
+      </select>
+    </div>
+
+    <div id="car-warn-enabled" class="car-warn">
+      ⚠ Auto Resolver is enabled in settings, but background runner is not active until Phase 6B.
+    </div>
+    <div id="car-warn-commit" class="car-warn">
+      ⚠ Commit mode will update DB statuses once runner is installed in Phase 6B.
+    </div>
+
+    <button type="button" id="car-save-btn" class="int-btn" style="min-height:36px">💾 Save Settings</button>
+    <div id="car-save-result" class="car-success"></div>
+    <div id="car-save-error"  class="car-err"></div>
+
+    <div id="car-status"></div>
   </div>
 </div>
 
@@ -607,6 +682,116 @@ function intRes_commit() {
     });
 }
 
+/* ── Controlled Auto Resolver Settings ── */
+
+function intCar_fetchSettings() {
+  fetch('/admin/intelligence/auto-resolver-settings')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (!data.ok) {
+        document.getElementById('car-status').innerHTML =
+          '<span style="color:var(--red);font-size:12px">Failed to load settings: ' +
+          intSt_esc(data.error || 'unknown error') + '</span>';
+        return;
+      }
+      intCar_applyToForm(data.settings);
+      intCar_renderStatus(data.settings);
+    })
+    .catch(function() {
+      document.getElementById('car-status').innerHTML =
+        '<span style="color:var(--red);font-size:12px">Network error loading settings.</span>';
+    });
+}
+
+function intCar_applyToForm(s) {
+  var enEl   = document.getElementById('car-enabled');
+  var ivEl   = document.getElementById('car-interval');
+  var limEl  = document.getElementById('car-limit');
+  var modeEl = document.getElementById('car-mode');
+  if (enEl)   enEl.checked = !!s.auto_resolver_enabled;
+  if (ivEl)   ivEl.value   = String(s.interval_minutes);
+  if (limEl)  limEl.value  = String(s.limit_per_run);
+  if (modeEl) modeEl.value = s.mode;
+  intCar_updateWarnings();
+}
+
+function intCar_updateWarnings() {
+  var enabled = document.getElementById('car-enabled');
+  var modeEl  = document.getElementById('car-mode');
+  var wEn     = document.getElementById('car-warn-enabled');
+  var wMode   = document.getElementById('car-warn-commit');
+  if (wEn)   wEn.style.display   = (enabled && enabled.checked) ? 'block' : 'none';
+  if (wMode) wMode.style.display = (modeEl && modeEl.value === 'commit') ? 'block' : 'none';
+}
+
+function intCar_renderStatus(s) {
+  var savedAt = s.last_saved_at ? s.last_saved_at.replace('T', ' ').slice(0, 16) : 'Never';
+  var enabledBadge = s.auto_resolver_enabled
+    ? '<span class="badge green">ON</span>'
+    : '<span class="badge" style="background:rgba(100,116,139,.12);color:#94a3b8;' +
+      'border:1px solid rgba(100,116,139,.25)">OFF</span>';
+  var modeBadge = s.mode === 'commit'
+    ? '<span class="badge amber">commit</span>'
+    : '<span class="badge cyan">dry_run</span>';
+  document.getElementById('car-status').innerHTML =
+    '<div class="car-status-grid">' +
+    '<div class="car-status-card"><div class="car-status-label">Enabled</div>' +
+      '<div class="car-status-val">' + enabledBadge + '</div></div>' +
+    '<div class="car-status-card"><div class="car-status-label">Interval</div>' +
+      '<div class="car-status-val">' + intSt_esc(String(s.interval_minutes)) + 'm</div></div>' +
+    '<div class="car-status-card"><div class="car-status-label">Limit</div>' +
+      '<div class="car-status-val">' + intSt_esc(String(s.limit_per_run)) + '</div></div>' +
+    '<div class="car-status-card"><div class="car-status-label">Mode</div>' +
+      '<div class="car-status-val">' + modeBadge + '</div></div>' +
+    '<div class="car-status-card"><div class="car-status-label">Runner</div>' +
+      '<div class="car-status-val" style="color:var(--amber)">NOT INSTALLED</div></div>' +
+    '<div class="car-status-card"><div class="car-status-label">Last Saved</div>' +
+      '<div class="car-status-val" style="font-size:10px">' + intSt_esc(savedAt) + '</div></div>' +
+    '</div>';
+}
+
+function intCar_saveSettings() {
+  var enEl    = document.getElementById('car-enabled');
+  var ivEl    = document.getElementById('car-interval');
+  var limEl   = document.getElementById('car-limit');
+  var modeEl  = document.getElementById('car-mode');
+  var saveBtn = document.getElementById('car-save-btn');
+  var resEl   = document.getElementById('car-save-result');
+  var errEl   = document.getElementById('car-save-error');
+
+  if (resEl) resEl.style.display = 'none';
+  if (errEl) errEl.style.display = 'none';
+  if (saveBtn) saveBtn.disabled = true;
+
+  var payload = {
+    auto_resolver_enabled: enEl   ? enEl.checked              : false,
+    interval_minutes:      ivEl   ? parseInt(ivEl.value,  10) : 30,
+    limit_per_run:         limEl  ? parseInt(limEl.value, 10) : 20,
+    mode:                  modeEl ? modeEl.value               : 'dry_run'
+  };
+
+  fetch('/admin/intelligence/auto-resolver-settings', {
+    method:  'POST',
+    headers: {'Content-Type': 'application/json'},
+    body:    JSON.stringify(payload)
+  })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (saveBtn) saveBtn.disabled = false;
+      if (!data.ok) {
+        if (errEl) { errEl.textContent = 'Error: ' + (data.error || 'Unknown'); errEl.style.display = 'block'; }
+        return;
+      }
+      if (resEl) { resEl.textContent = data.message || 'Settings saved.'; resEl.style.display = 'block'; }
+      intCar_applyToForm(data.settings);
+      intCar_renderStatus(data.settings);
+    })
+    .catch(function(err) {
+      if (saveBtn) saveBtn.disabled = false;
+      if (errEl) { errEl.textContent = 'Network error: ' + (err.message || ''); errEl.style.display = 'block'; }
+    });
+}
+
 /* ── Auto Refresh ── */
 var intAr_timer = null;  // null = not running
 
@@ -683,6 +868,13 @@ function intSt_init() {
   var arInterval = document.getElementById('ar-interval');
   if (arInterval) { arInterval.addEventListener('change', intAr_onIntervalChange); }
   document.addEventListener('visibilitychange', intAr_onVisibilityChange);
+  var carSave = document.getElementById('car-save-btn');
+  if (carSave) { carSave.addEventListener('click', intCar_saveSettings); }
+  var carEnabled = document.getElementById('car-enabled');
+  if (carEnabled) { carEnabled.addEventListener('change', intCar_updateWarnings); }
+  var carMode = document.getElementById('car-mode');
+  if (carMode) { carMode.addEventListener('change', intCar_updateWarnings); }
+  intCar_fetchSettings();
   intSt_fetchStats();
 }
 

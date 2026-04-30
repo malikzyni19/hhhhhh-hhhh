@@ -254,3 +254,25 @@ class BacktestRun(db.Model):
 
     def __repr__(self) -> str:
         return f"<BacktestRun id={self.id} status={self.status}>"
+
+
+class IntelligenceSettings(db.Model):
+    """Singleton settings row (id=1) for the auto-resolver. Created on first GET."""
+    __tablename__ = "intelligence_settings"
+
+    id                             = db.Column(db.Integer,    primary_key=True)
+    auto_resolver_enabled          = db.Column(db.Boolean,    default=False,     nullable=False)
+    auto_resolver_interval_minutes = db.Column(db.Integer,    default=30,        nullable=False)
+    auto_resolver_limit            = db.Column(db.Integer,    default=20,        nullable=False)
+    auto_resolver_mode             = db.Column(db.String(20), default="dry_run", nullable=False)
+    runner_installed               = db.Column(db.Boolean,    default=False,     nullable=False)
+    last_saved_at                  = db.Column(db.DateTime,   nullable=True)
+    last_saved_by                  = db.Column(db.Integer,    db.ForeignKey("users.id"), nullable=True)
+    last_run_at                    = db.Column(db.DateTime,   nullable=True)
+    last_run_summary               = db.Column(db.Text,       nullable=True)
+    created_at                     = db.Column(db.DateTime,   default=lambda: datetime.now(timezone.utc))
+    updated_at                     = db.Column(db.DateTime,   default=lambda: datetime.now(timezone.utc),
+                                               onupdate=lambda: datetime.now(timezone.utc))
+
+    def __repr__(self) -> str:
+        return f"<IntelligenceSettings enabled={self.auto_resolver_enabled} mode={self.auto_resolver_mode}>"

@@ -900,3 +900,118 @@ def intelligence_stats():
     except Exception as _stats_err:
         return jsonify({"ok": False, "error": str(_stats_err)}), 500
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 6A — Auto Resolver Settings (admin-only, no runner, no auto-execution)
+# GET  /admin/intelligence/auto-resolver-settings  → read settings (safe)
+# POST /admin/intelligence/auto-resolver-settings  → save settings only
+# ─────────────────────────────────────────────────────────────────────────────
+
+_AR_VALID_INTERVALS = {15, 30, 60, 120}
+_AR_VALID_MODES     = {"dry_run", "commit"}
+
+
+def _ar_get_or_create():
+    """Return singleton IntelligenceSettings row (id=1), creating with defaults if absent."""
+    from models import IntelligenceSettings
+    try:
+        row = db.session.get(IntelligenceSettings, 1)
+        if row is None:
+            row = IntelligenceSettings(id=1)
+            db.session.add(row)
+            db.session.commit()
+        return row
+    except Exception:
+        db.session.rollback()
+        try:
+            return db.session.get(IntelligenceSettings, 1)
+        except Exception:
+            return None
+
+
+def _ar_to_dict(row):
+    """Serialize IntelligenceSettings to API response dict."""
+    return {
+        "auto_resolver_enabled": row.auto_resolver_enabled,
+        "interval_minutes":      row.auto_resolver_interval_minutes,
+        "limit_per_run":         row.auto_resolver_limit,
+        "mode":                  row.auto_resolver_mode,
+        "runner_installed":      False,           # always False in Phase 6A
+        "runner_status":         "NOT_INSTALLED",
+        "last_saved_at":         row.last_saved_at.isoformat() if row.last_saved_at else None,
+        "last_saved_by":         row.last_saved_by,
+        "last_run_at":           row.last_run_at.isoformat()   if row.last_run_at   else None,
+        "last_run_summary":      row.last_run_summary,
+    }
+
+
+@admin_bp.route("/intelligence/auto-resolver-settings", methods=["GET", "POST"])
+@admin_required
+def intelligence_auto_resolver_settings():
+    from datetime import datetime, timezone as _tz
+
+    if request.method == "GET":
+        try:
+            row = _ar_get_or_create()
+            if row is None:
+                return jsonify({"ok": False, "error": "Could not load settings"}), 500
+            return jsonify({"ok": True, "settings": _ar_to_dict(row)})
+        except Exception as _e:
+            return jsonify({"ok": False, "error": str(_e)}), 500
+
+    # ── POST: validate inputs, save settings only — no resolver called ────────
+    try:
+        body = request.get_json(silent=True) or {}
+
+        enabled  = bool(body.get("auto_resolver_enabled", False))
+        interval = int(body.get("interval_minutes",  30))
+        limit    = int(body.get("limit_per_run",     20))
+        mode     = str(body.get("mode", "dry_run")).strip().lower()
+
+        errors = []
+        if interval not in _AR_VALID_INTERVALS:
+            errors.append(
+                f"interval_minutes must be one of {sorted(_AR_VALID_INTERVALS)}, got {interval}"
+            )
+        if not (1 <= limit <= 100):
+            errors.append(f"limit_per_run must be 1–100, got {limit}")
+        if mode not in _AR_VALID_MODES:
+            errors.append(f"mode must be 'dry_run' or 'commit', got {mode!r}")
+        if errors:
+            return jsonify({"ok": False, "error": "; ".join(errors)}), 400
+
+        row = _ar_get_or_create()
+        if row is None:
+            return jsonify({"ok": False, "error": "Could not load settings row"}), 500
+
+        row.auto_resolver_enabled          = enabled
+        row.auto_resolver_interval_minutes = interval
+        row.auto_resolver_limit            = limit
+        row.auto_resolver_mode             = mode
+        row.runner_installed               = False   # Phase 6A: never allow True
+        row.last_saved_at                  = datetime.now(_tz.utc)
+        row.last_saved_by                  = (
+            current_user.id if current_user.is_authenticated else None
+        )
+        db.session.commit()
+
+        msg = "Auto resolver settings saved. Runner is not installed yet."
+        if enabled:
+            msg += (
+                " Auto Resolver is enabled in settings, but background runner"
+                " is not active until Phase 6B."
+            )
+        if mode == "commit":
+            msg += (
+                " Commit mode will update DB statuses when runner is enabled"
+                " in Phase 6B."
+            )
+
+        return jsonify({"ok": True, "message": msg, "settings": _ar_to_dict(row)})
+
+    except (ValueError, TypeError) as _ve:
+        return jsonify({"ok": False, "error": f"Invalid input: {_ve}"}), 400
+    except Exception as _e:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": str(_e)}), 500
+
