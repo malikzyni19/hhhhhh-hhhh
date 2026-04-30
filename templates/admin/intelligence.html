@@ -248,6 +248,9 @@
     <div id="car-warn-commit" class="car-warn">
       ⚠ Commit mode will update DB statuses once runner is installed in Phase 6B.
     </div>
+    <div id="car-warn-installed-commit" class="car-warn">
+      ⚠ Runner installed but Phase 6B forces dry-run. Commit automation is disabled until Phase 6C.
+    </div>
 
     <button type="button" id="car-save-btn" class="int-btn" style="min-height:36px">💾 Save Settings</button>
     <div id="car-save-result" class="car-success"></div>
@@ -715,24 +718,63 @@ function intCar_applyToForm(s) {
   intCar_updateWarnings();
 }
 
+var intCar_lastSettings = null;  // cached settings for warning cross-check
+
 function intCar_updateWarnings() {
-  var enabled = document.getElementById('car-enabled');
-  var modeEl  = document.getElementById('car-mode');
-  var wEn     = document.getElementById('car-warn-enabled');
-  var wMode   = document.getElementById('car-warn-commit');
-  if (wEn)   wEn.style.display   = (enabled && enabled.checked) ? 'block' : 'none';
-  if (wMode) wMode.style.display = (modeEl && modeEl.value === 'commit') ? 'block' : 'none';
+  var enabled   = document.getElementById('car-enabled');
+  var modeEl    = document.getElementById('car-mode');
+  var wEn       = document.getElementById('car-warn-enabled');
+  var wMode     = document.getElementById('car-warn-commit');
+  var wInstCom  = document.getElementById('car-warn-installed-commit');
+  var isEnabled = enabled && enabled.checked;
+  var isCommit  = modeEl && modeEl.value === 'commit';
+  var installed = intCar_lastSettings ? intCar_lastSettings.runner_installed : false;
+
+  // "not installed yet" warning — only when not installed
+  if (wEn)      wEn.style.display      = (isEnabled && !installed) ? 'block' : 'none';
+  // "commit will write once installed" — only when not installed
+  if (wMode)    wMode.style.display    = (isCommit && !installed)  ? 'block' : 'none';
+  // "installed but Phase 6B forces dry-run" — only when installed + commit
+  if (wInstCom) wInstCom.style.display = (installed && isCommit)   ? 'block' : 'none';
 }
 
 function intCar_renderStatus(s) {
-  var savedAt = s.last_saved_at ? s.last_saved_at.replace('T', ' ').slice(0, 16) : 'Never';
+  intCar_lastSettings = s;
+
+  var savedAt  = s.last_saved_at ? s.last_saved_at.replace('T', ' ').slice(0, 16) : 'Never';
+  var runAt    = s.last_run_at   ? s.last_run_at.replace('T',   ' ').slice(0, 16) : 'Never';
+
   var enabledBadge = s.auto_resolver_enabled
     ? '<span class="badge green">ON</span>'
     : '<span class="badge" style="background:rgba(100,116,139,.12);color:#94a3b8;' +
       'border:1px solid rgba(100,116,139,.25)">OFF</span>';
+
   var modeBadge = s.mode === 'commit'
     ? '<span class="badge amber">commit</span>'
     : '<span class="badge cyan">dry_run</span>';
+
+  var runnerHtml;
+  if (s.runner_installed) {
+    runnerHtml = '<span class="badge green" style="font-size:9px">INSTALLED — DRY RUN ONLY</span>';
+  } else {
+    runnerHtml = '<span style="color:var(--amber);font-size:11px;font-weight:600">NOT INSTALLED</span>';
+  }
+
+  // Parse last_run_summary if present
+  var summaryHtml = '—';
+  if (s.last_run_summary) {
+    try {
+      var sr = JSON.parse(s.last_run_summary);
+      summaryHtml = 'checked=' + (sr.checked || 0) +
+        ' won=' + (sr.won || 0) +
+        ' lost=' + (sr.lost || 0) +
+        ' exp=' + (sr.expired || 0) +
+        ' err=' + (sr.errors || 0);
+    } catch (_) {
+      summaryHtml = intSt_esc(s.last_run_summary.slice(0, 60));
+    }
+  }
+
   document.getElementById('car-status').innerHTML =
     '<div class="car-status-grid">' +
     '<div class="car-status-card"><div class="car-status-label">Enabled</div>' +
@@ -744,10 +786,16 @@ function intCar_renderStatus(s) {
     '<div class="car-status-card"><div class="car-status-label">Mode</div>' +
       '<div class="car-status-val">' + modeBadge + '</div></div>' +
     '<div class="car-status-card"><div class="car-status-label">Runner</div>' +
-      '<div class="car-status-val" style="color:var(--amber)">NOT INSTALLED</div></div>' +
+      '<div class="car-status-val">' + runnerHtml + '</div></div>' +
     '<div class="car-status-card"><div class="car-status-label">Last Saved</div>' +
       '<div class="car-status-val" style="font-size:10px">' + intSt_esc(savedAt) + '</div></div>' +
+    '<div class="car-status-card"><div class="car-status-label">Last Run</div>' +
+      '<div class="car-status-val" style="font-size:10px">' + intSt_esc(runAt) + '</div></div>' +
+    '<div class="car-status-card" style="grid-column:1/-1"><div class="car-status-label">Last Run Summary</div>' +
+      '<div class="car-status-val" style="font-size:10px;color:var(--muted)">' + summaryHtml + '</div></div>' +
     '</div>';
+
+  intCar_updateWarnings();
 }
 
 function intCar_saveSettings() {

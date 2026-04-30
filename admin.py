@@ -931,13 +931,15 @@ def _ar_get_or_create():
 
 def _ar_to_dict(row):
     """Serialize IntelligenceSettings to API response dict."""
+    installed     = row.runner_installed
+    runner_status = "INSTALLED_DRY_RUN_ONLY" if installed else "NOT_INSTALLED"
     return {
         "auto_resolver_enabled": row.auto_resolver_enabled,
         "interval_minutes":      row.auto_resolver_interval_minutes,
         "limit_per_run":         row.auto_resolver_limit,
         "mode":                  row.auto_resolver_mode,
-        "runner_installed":      False,           # always False in Phase 6A
-        "runner_status":         "NOT_INSTALLED",
+        "runner_installed":      installed,
+        "runner_status":         runner_status,
         "last_saved_at":         row.last_saved_at.isoformat() if row.last_saved_at else None,
         "last_saved_by":         row.last_saved_by,
         "last_run_at":           row.last_run_at.isoformat()   if row.last_run_at   else None,

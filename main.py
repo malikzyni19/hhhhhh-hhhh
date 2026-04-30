@@ -116,6 +116,13 @@ try:
 except Exception as _migration_outer_err:
     print(f"[Intelligence Migration] skipped/error: {_migration_outer_err}")
 
+# ── Auto Resolver background runner (Phase 6B — dry-run only) ────────────────
+try:
+    from auto_resolver_runner import start_auto_resolver_runner
+    start_auto_resolver_runner(app)
+except Exception as _ar_start_err:
+    print(f"[AutoResolver] failed to start: {_ar_start_err}")
+
 # ── IP geo cache ────────────────────────────────────────────────────
 _ip_geo: dict = {}   # {ip: (ts, {country, city})}
 
