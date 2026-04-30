@@ -784,3 +784,70 @@ def intelligence_db_test():
         report["overall_ok"] = False
 
     return jsonify(report)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 3A verification — recent live signal_events (admin-only, read-only)
+# Hit GET /admin/intelligence/recent-signals after running a scan.
+# Returns last 20 live rows + linked outcomes so you can confirm the hook.
+# ─────────────────────────────────────────────────────────────────────────────
+@admin_bp.route("/intelligence/recent-signals")
+@admin_required
+def intelligence_recent_signals():
+    from models import SignalEvent, SignalOutcome
+
+    try:
+        # Last 20 live rows newest-first
+        rows = (SignalEvent.query
+                .filter_by(source="live")
+                .order_by(SignalEvent.detected_at.desc())
+                .limit(20)
+                .all())
+
+        signals = []
+        for ev in rows:
+            outcome = SignalOutcome.query.filter_by(signal_id=ev.signal_id).first()
+            signals.append({
+                "signal_id":           ev.signal_id,
+                "pair":                ev.pair,
+                "module":              ev.module,
+                "timeframe":           ev.timeframe,
+                "direction":           ev.direction,
+                "score":               ev.score,
+                "zone_high":           ev.zone_high,
+                "zone_low":            ev.zone_low,
+                "detected_price":      ev.detected_price,
+                "detected_at":         ev.detected_at.isoformat() if ev.detected_at else None,
+                "exchange":            ev.exchange,
+                "status":              ev.status,
+                "source":              ev.source,
+                "setup_type":          ev.setup_type,
+                "raw_setup":           ev.raw_setup,
+                "raw_meta_json_len":   len(ev.raw_meta_json) if ev.raw_meta_json else 0,
+                "outcome": {
+                    "found":                outcome is not None,
+                    "target_price":         outcome.target_price         if outcome else "N/A",
+                    "stop_price":           outcome.stop_price           if outcome else "N/A",
+                    "bounce_threshold_pct": outcome.bounce_threshold_pct if outcome else "N/A",
+                    "entry_price":          outcome.entry_price          if outcome else "N/A",
+                    "result":               outcome.result               if outcome else "N/A",
+                } if outcome else {"found": False},
+            })
+
+        # Counts summary
+        total_live    = SignalEvent.query.filter_by(source="live").count()
+        modules_found = db.session.execute(
+            __import__("sqlalchemy").text(
+                "SELECT module, COUNT(*) FROM signal_events WHERE source='live' "
+                "GROUP BY module ORDER BY COUNT(*) DESC"
+            )
+        ).fetchall()
+
+        return jsonify({
+            "total_live_signals": total_live,
+            "modules_breakdown":  [{"module": r[0], "count": r[1]} for r in modules_found],
+            "recent_20":          signals,
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
