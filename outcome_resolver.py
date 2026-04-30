@@ -248,7 +248,18 @@ def _run_resolution_loop(
 # resolve_one — fetches candles and updates one signal row
 # ─────────────────────────────────────────────────────────────────────────────
 
-def resolve_one(signal, db) -> dict:
+def _reason_label(new_status: str) -> str:
+    return {
+        "WAITING_FOR_ENTRY": "NO_ENTRY_YET",
+        "ENTERED":           "ENTRY_TOUCHED",
+        "WON":               "TARGET_HIT",
+        "LOST":              "STOP_HIT",
+        "EXPIRED":           "EXPIRED_NO_ENTRY",
+        "AMBIGUOUS":         "AMBIGUOUS_CANDLE",
+    }.get(new_status, "UNKNOWN")
+
+
+def resolve_one(signal, db, dry_run: bool = False) -> dict:
     """
     Resolve a single SignalEvent ORM object.
 
@@ -257,24 +268,38 @@ def resolve_one(signal, db) -> dict:
     SignalEvent + SignalOutcome rows.
 
     Args:
-        signal: SignalEvent ORM instance (must be within an app context).
-        db:     SQLAlchemy db instance.
+        signal:   SignalEvent ORM instance (must be within an app context).
+        db:       SQLAlchemy db instance.
+        dry_run:  If True, compute resolution but do NOT commit to DB.
 
-    Returns dict:
-        {"signal_id": ..., "status": ..., "result": ..., "updated": bool}
+    Returns dict with keys:
+        signal_id, pair, timeframe, old_status, new_status,
+        result, reason, updated, [error]
     """
     try:
         from main import get_klines_exchange
 
-        tf        = signal.timeframe
-        exchange  = signal.exchange or "binance"
-        pair      = signal.pair
-        outcome   = signal.outcome
+        old_status = signal.status
+        tf         = signal.timeframe
+        exchange   = signal.exchange or "binance"
+        pair       = signal.pair
+        outcome    = signal.outcome
+
+        def _base(new_status, result=None, updated=False, **extra):
+            return {
+                "signal_id":  signal.signal_id,
+                "pair":       pair,
+                "timeframe":  tf,
+                "old_status": old_status,
+                "new_status": new_status,
+                "result":     result,
+                "reason":     _reason_label(new_status),
+                "updated":    updated,
+                **extra,
+            }
 
         if outcome is None:
-            return {"signal_id": signal.signal_id, "status": "error",
-                    "result": None, "updated": False,
-                    "error": "no outcome row"}
+            return _base("error", error="no outcome row")
 
         bounce = outcome.bounce_threshold_pct or 0.010
 
@@ -283,8 +308,7 @@ def resolve_one(signal, db) -> dict:
 
         candles = get_klines_exchange(pair, tf, fetch_limit, "perpetual", exchange)
         if not candles:
-            return {"signal_id": signal.signal_id, "status": "no_data",
-                    "result": None, "updated": False}
+            return _base("no_data", reason="NO_CANDLE_DATA")
 
         detected_at_ms = _ts_ms(signal.detected_at)
 
@@ -301,9 +325,11 @@ def resolve_one(signal, db) -> dict:
         new_status = res["status"]
 
         # No state change — skip write
-        if new_status == signal.status and new_status in ("WAITING_FOR_ENTRY",):
-            return {"signal_id": signal.signal_id, "status": new_status,
-                    "result": None, "updated": False}
+        if new_status == old_status == "WAITING_FOR_ENTRY":
+            return _base(new_status)
+
+        if dry_run:
+            return _base(new_status, result=res["result"], dry_run=True)
 
         # ── Write updates ────────────────────────────────────────────────
         signal.status = new_status
@@ -323,8 +349,7 @@ def resolve_one(signal, db) -> dict:
 
         db.session.commit()
 
-        return {"signal_id": signal.signal_id, "status": new_status,
-                "result": res["result"], "updated": True}
+        return _base(new_status, result=res["result"], updated=True)
 
     except Exception as _err:
         try:
@@ -332,9 +357,17 @@ def resolve_one(signal, db) -> dict:
         except Exception:
             pass
         print(f"[OutcomeResolver] resolve_one error: {_err}")
-        return {"signal_id": getattr(signal, "signal_id", "?"),
-                "status": "error", "result": None, "updated": False,
-                "error": str(_err)}
+        return {
+            "signal_id":  getattr(signal, "signal_id", "?"),
+            "pair":       getattr(signal, "pair", "?"),
+            "timeframe":  getattr(signal, "timeframe", "?"),
+            "old_status": getattr(signal, "status", "?"),
+            "new_status": "error",
+            "result":     None,
+            "reason":     "ERROR",
+            "updated":    False,
+            "error":      str(_err),
+        }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -412,6 +445,104 @@ def resolve_pending_signals(app, limit: int = 50) -> dict:
     except Exception as _outer_err:
         print(f"[OutcomeResolver] resolve_pending_signals error: {_outer_err}")
         summary["errors"] += 1
+        return summary
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# resolve_pending_admin — admin endpoint helper (requires existing app context)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def resolve_pending_admin(limit: int = 20, dry_run: bool = False) -> dict:
+    """
+    Resolve pending signals within an already-active Flask app context.
+
+    Unlike resolve_pending_signals(), this does NOT wrap its own app_context()
+    — it must be called from within a Flask route or existing context.
+    Filters source='live' only. Returns full JSON-ready summary with per-signal
+    details list.
+
+    Args:
+        limit:   Max signals to process (default 20, max enforced by caller).
+        dry_run: If True, compute resolutions but do NOT commit DB changes.
+
+    Returns:
+        {
+            "ok": bool,
+            "checked": int,
+            "won": int, "lost": int, "expired": int, "ambiguous": int,
+            "entered": int, "no_resolution": int, "errors": int,
+            "dry_run": bool,
+            "details": [{"signal_id", "pair", "timeframe",
+                          "old_status", "new_status", "result", "reason"}, ...]
+        }
+    """
+    details = []
+    summary: dict = {
+        "ok":           True,
+        "checked":      0,
+        "won":          0,
+        "lost":         0,
+        "expired":      0,
+        "ambiguous":    0,
+        "entered":      0,
+        "no_resolution":0,
+        "errors":       0,
+        "dry_run":      dry_run,
+        "details":      details,
+    }
+
+    try:
+        from models import db, SignalEvent
+
+        signals = (
+            SignalEvent.query
+            .filter(SignalEvent.status.in_(["WAITING_FOR_ENTRY", "ENTERED"]))
+            .filter(SignalEvent.source == "live")
+            .order_by(SignalEvent.detected_at.asc())
+            .limit(limit)
+            .all()
+        )
+
+        for sig in signals:
+            summary["checked"] += 1
+            r = resolve_one(sig, db, dry_run=dry_run)
+
+            details.append({
+                "signal_id":  r.get("signal_id", "?"),
+                "pair":       r.get("pair",       sig.pair),
+                "timeframe":  r.get("timeframe",  sig.timeframe),
+                "old_status": r.get("old_status", sig.status),
+                "new_status": r.get("new_status", "error"),
+                "result":     r.get("result"),
+                "reason":     r.get("reason", "ERROR"),
+            })
+
+            if r.get("error") or r.get("new_status") in ("error", "no_data"):
+                summary["errors"] += 1
+                continue
+
+            new_status = r.get("new_status", "")
+            if new_status == "WON":
+                summary["won"] += 1
+            elif new_status == "LOST":
+                summary["lost"] += 1
+            elif new_status == "EXPIRED":
+                summary["expired"] += 1
+            elif new_status == "AMBIGUOUS":
+                summary["ambiguous"] += 1
+            elif new_status == "ENTERED":
+                summary["entered"] += 1
+            else:
+                summary["no_resolution"] += 1
+
+        print(f"[OutcomeResolver admin] dry_run={dry_run} {summary}")
+        return summary
+
+    except Exception as _err:
+        print(f"[OutcomeResolver] resolve_pending_admin error: {_err}")
+        summary["ok"]     = False
+        summary["errors"] += 1
+        summary["error"]  = str(_err)
         return summary
 
 
