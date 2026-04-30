@@ -855,9 +855,10 @@ def intelligence_recent_signals():
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Phase 4B — manual resolver endpoint (admin-only, JSON, never crashes app)
-# GET  /admin/intelligence/resolve-pending          → live run, limit=20
-# GET  /admin/intelligence/resolve-pending?dry_run=1 → simulate, no DB write
-# GET  /admin/intelligence/resolve-pending?limit=N  → override limit (max 100)
+# GET  /admin/intelligence/resolve-pending           → dry_run forced (read-only)
+# POST /admin/intelligence/resolve-pending           → real commit
+# POST /admin/intelligence/resolve-pending?dry_run=1 → simulate, no DB write
+# GET/POST ?limit=N                                  → override limit (max 100)
 # ─────────────────────────────────────────────────────────────────────────────
 @admin_bp.route("/intelligence/resolve-pending", methods=["GET", "POST"])
 @admin_required
@@ -865,13 +866,19 @@ def intelligence_resolve_pending():
     try:
         from outcome_resolver import resolve_pending_admin
 
-        dry_run = request.args.get("dry_run", "0") in ("1", "true", "yes")
+        # GET is always read-only — never mutates DB regardless of query params
+        if request.method == "GET":
+            dry_run = True
+        else:
+            dry_run = request.args.get("dry_run", "0") in ("1", "true", "yes")
+
         try:
             limit = min(int(request.args.get("limit", 20)), 100)
         except (TypeError, ValueError):
             limit = 20
 
         result = resolve_pending_admin(limit=limit, dry_run=dry_run)
+        result["mode"] = "dry_run" if dry_run else "commit"
         return jsonify(result)
 
     except Exception as _rp_err:
