@@ -80,6 +80,17 @@
 #res-error{background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.2);color:var(--red);
            padding:12px 16px;border-radius:8px;font-size:12px;margin-top:12px;display:none}
 #res-result{margin-top:4px;display:none}
+
+/* ── Auto-refresh toggle switch ── */
+.ar-switch{position:relative;display:inline-block;width:36px;height:20px;flex-shrink:0}
+.ar-switch input{position:absolute;opacity:0;width:0;height:0}
+.ar-slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;
+           background:var(--border);border-radius:20px;transition:.2s}
+.ar-slider:before{position:absolute;content:'';height:14px;width:14px;left:3px;bottom:3px;
+                  background:var(--muted);border-radius:50%;transition:.2s}
+.ar-switch input:checked + .ar-slider{background:rgba(34,211,238,.25);border:1px solid rgba(34,211,238,.5)}
+.ar-switch input:checked + .ar-slider:before{transform:translateX(16px);background:var(--cyan)}
+.ar-disclaimer{font-size:10px;color:var(--muted);font-style:italic;margin-bottom:18px;padding-left:2px}
 </style>
 
 <!-- Header -->
@@ -119,7 +130,24 @@
   </div>
   <button type="button" id="int-refresh-btn" class="int-btn">⟳ Refresh</button>
   <span id="int-ts" style="font-size:10px;color:var(--muted);margin-left:4px"></span>
+  <div class="int-filter-group" style="margin-left:6px">
+    <label for="ar-toggle">Auto</label>
+    <label class="ar-switch" title="Toggle auto-refresh">
+      <input type="checkbox" id="ar-toggle">
+      <span class="ar-slider"></span>
+    </label>
+  </div>
+  <div class="int-filter-group">
+    <label for="ar-interval">Every</label>
+    <select id="ar-interval">
+      <option value="30000">30s</option>
+      <option value="60000" selected>1m</option>
+      <option value="120000">2m</option>
+      <option value="300000">5m</option>
+    </select>
+  </div>
 </div>
+<p class="ar-disclaimer">Auto-refresh is read-only. It does not resolve or modify signals.</p>
 
 <!-- Error banner -->
 <div id="int-error"></div>
@@ -579,6 +607,54 @@ function intRes_commit() {
     });
 }
 
+/* ── Auto Refresh ── */
+var intAr_timer = null;  // null = not running
+
+function intAr_isEnabled() {
+  var tog = document.getElementById('ar-toggle');
+  return tog ? tog.checked : false;
+}
+
+function intAr_getMs() {
+  var el = document.getElementById('ar-interval');
+  var v = el ? parseInt(el.value, 10) : 60000;
+  return (isNaN(v) || v < 5000) ? 60000 : v;
+}
+
+function intAr_clearTimer() {
+  if (intAr_timer !== null) {
+    clearInterval(intAr_timer);
+    intAr_timer = null;
+  }
+}
+
+function intAr_start() {
+  intAr_clearTimer();  // prevent stacking
+  intAr_timer = setInterval(function() {
+    if (!document.hidden) { intSt_fetchStats(); }
+  }, intAr_getMs());
+}
+
+function intAr_stop() {
+  intAr_clearTimer();
+}
+
+function intAr_onToggle() {
+  if (intAr_isEnabled()) { intAr_start(); } else { intAr_stop(); }
+}
+
+function intAr_onIntervalChange() {
+  if (intAr_isEnabled()) { intAr_start(); }  // restart with new interval, clears old
+}
+
+function intAr_onVisibilityChange() {
+  if (document.hidden) {
+    intAr_clearTimer();  // pause while tab hidden
+  } else {
+    if (intAr_isEnabled()) { intAr_start(); }  // resume when visible if still ON
+  }
+}
+
 /* Wire button + initial load.
    readyState check handles both: script runs before or after DOMContentLoaded. */
 function intSt_init() {
@@ -602,6 +678,11 @@ function intSt_init() {
       intRes_commit();
     });
   }
+  var arToggle = document.getElementById('ar-toggle');
+  if (arToggle) { arToggle.addEventListener('change', intAr_onToggle); }
+  var arInterval = document.getElementById('ar-interval');
+  if (arInterval) { arInterval.addEventListener('change', intAr_onIntervalChange); }
+  document.addEventListener('visibilitychange', intAr_onVisibilityChange);
   intSt_fetchStats();
 }
 
