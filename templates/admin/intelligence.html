@@ -55,6 +55,31 @@
 #int-loading{text-align:center;padding:40px;color:var(--muted);font-size:13px}
 #int-error{background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.2);color:var(--red);
            padding:14px 18px;border-radius:10px;font-size:13px;margin-bottom:20px;display:none}
+
+/* ── Resolver panel ── */
+.int-btn-amber{background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.3);color:var(--amber);
+               padding:5px 14px;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;
+               letter-spacing:.5px;transition:all .2s;min-height:36px}
+.int-btn-amber:hover{background:rgba(245,158,11,.22)}
+.int-btn:disabled,.int-btn-amber:disabled{opacity:.45;cursor:not-allowed}
+.res-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+.res-limit-group{display:flex;align-items:center;gap:6px}
+.res-limit-group label{font-size:10px;color:var(--muted);letter-spacing:1px;
+                        text-transform:uppercase;font-weight:600}
+.res-limit-group input{background:var(--bg2);border:1px solid var(--border);color:var(--text);
+                        padding:5px 10px;border-radius:7px;font-size:12px;font-family:'JetBrains Mono',monospace;
+                        width:72px;text-align:center}
+.res-limit-group input:focus{outline:none;border-color:var(--cyan)}
+.res-summary-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;margin:14px 0}
+.res-sum-card{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px 10px;text-align:center}
+.res-sum-label{font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;font-weight:600;margin-bottom:5px}
+.res-sum-val{font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:var(--text)}
+.res-mode-badge{display:inline-block;padding:3px 10px;border-radius:5px;font-size:10px;font-weight:700;letter-spacing:.5px;margin-bottom:14px}
+.res-mode-dry{background:rgba(34,211,238,.1);color:var(--cyan);border:1px solid rgba(34,211,238,.2)}
+.res-mode-commit{background:rgba(245,158,11,.1);color:var(--amber);border:1px solid rgba(245,158,11,.2)}
+#res-error{background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.2);color:var(--red);
+           padding:12px 16px;border-radius:8px;font-size:12px;margin-top:12px;display:none}
+#res-result{margin-top:4px;display:none}
 </style>
 
 <!-- Header -->
@@ -98,6 +123,36 @@
 
 <!-- Error banner -->
 <div id="int-error"></div>
+
+<!-- Manual Resolver -->
+<div class="adm-card" style="margin-bottom:20px">
+  <div class="adm-card-header">
+    <span class="adm-card-title">Manual Resolver</span>
+  </div>
+  <div class="adm-card-body">
+    <div class="res-controls">
+      <div class="res-limit-group">
+        <label for="res-limit">Limit</label>
+        <input type="number" id="res-limit" value="20" min="1" max="100">
+      </div>
+      <button type="button" id="res-dry-btn" class="int-btn">🔍 Dry Run Resolve</button>
+      <button type="button" id="res-commit-btn" class="int-btn-amber">⚡ Commit Resolve</button>
+    </div>
+    <div id="res-error"></div>
+    <div id="res-result">
+      <div id="res-mode-wrap"></div>
+      <div class="res-summary-grid" id="res-summary-grid"></div>
+      <div class="adm-table-wrap" id="res-details-wrap" style="display:none">
+        <table class="adm-table">
+          <thead><tr>
+            <th>Pair</th><th>TF</th><th>Old Status</th><th>New Status</th><th>Result</th><th>Reason</th>
+          </tr></thead>
+          <tbody id="res-details-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- Loading -->
 <div id="int-loading">Loading intelligence data…</div>
@@ -389,6 +444,141 @@ function intSt_fetchStats() {
     });
 }
 
+/* ── Manual Resolver ── */
+
+function intRes_getLimit() {
+  var el = document.getElementById('res-limit');
+  var v = el ? parseInt(el.value, 10) : 20;
+  if (isNaN(v) || v < 1) v = 1;
+  if (v > 100) v = 100;
+  return v;
+}
+
+function intRes_showError(msg) {
+  var el = document.getElementById('res-error');
+  el.textContent = 'Error: ' + msg;
+  el.style.display = 'block';
+  document.getElementById('res-result').style.display = 'none';
+}
+
+function intRes_renderSummary(data) {
+  var modeEl = document.getElementById('res-mode-wrap');
+  var isDry = data.dry_run;
+  var modeCls = isDry ? 'res-mode-dry' : 'res-mode-commit';
+  var modeText = isDry ? '□ DRY RUN — no changes saved' : '✓ COMMITTED — database updated';
+  modeEl.innerHTML = '<span class="res-mode-badge ' + modeCls + '">' + modeText + '</span>';
+
+  var cards = [
+    {l:'Checked',   v:data.checked},
+    {l:'Won',       v:data.won,          c:'var(--green)'},
+    {l:'Lost',      v:data.lost,         c:'var(--red)'},
+    {l:'Expired',   v:data.expired},
+    {l:'Ambiguous', v:data.ambiguous,    c:'var(--amber)'},
+    {l:'Entered',   v:data.entered,      c:'var(--blue)'},
+    {l:'No Res.',   v:data.no_resolution},
+    {l:'Errors',    v:data.errors,       c:'var(--red)'}
+  ];
+  var html = '';
+  for (var i = 0; i < cards.length; i++) {
+    var cd = cards[i];
+    var colStyle = cd.c ? 'color:' + cd.c + ';' : '';
+    html += '<div class="res-sum-card">' +
+            '<div class="res-sum-label">' + cd.l + '</div>' +
+            '<div class="res-sum-val" style="' + colStyle + '">' + (cd.v != null ? cd.v : 0) + '</div>' +
+            '</div>';
+  }
+  document.getElementById('res-summary-grid').innerHTML = html;
+}
+
+function intRes_renderDetails(details) {
+  var wrap = document.getElementById('res-details-wrap');
+  var tb   = document.getElementById('res-details-tbody');
+  if (!details || !details.length) {
+    wrap.style.display = 'none';
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < details.length; i++) {
+    var d = details[i];
+    var newSt = d.new_status || d.status || '';
+    var oldSt = d.old_status || '';
+    var resBadge = '—';
+    if (d.result) {
+      var rc = d.result === 'WIN' ? 'green' : d.result === 'LOSS' ? 'red' : 'amber';
+      resBadge = '<span class="badge ' + rc + '">' + intSt_esc(d.result) + '</span>';
+    }
+    html += '<tr>' +
+      '<td style="font-weight:600">' + intSt_esc(d.pair) + '</td>' +
+      '<td style="font-family:\'JetBrains Mono\',monospace">' + intSt_esc(d.timeframe) + '</td>' +
+      '<td>' + intSt_statusBadge(oldSt) + '</td>' +
+      '<td>' + intSt_statusBadge(newSt) + '</td>' +
+      '<td>' + resBadge + '</td>' +
+      '<td style="font-size:11px;color:var(--muted)">' + intSt_esc(d.reason) + '</td>' +
+      '</tr>';
+  }
+  tb.innerHTML = html;
+  wrap.style.display = 'block';
+}
+
+function intRes_setBusy(busy) {
+  var d = document.getElementById('res-dry-btn');
+  var c = document.getElementById('res-commit-btn');
+  if (d) d.disabled = busy;
+  if (c) c.disabled = busy;
+}
+
+function intRes_handleResponse(data) {
+  document.getElementById('res-error').style.display = 'none';
+  var resEl = document.getElementById('res-result');
+  resEl.style.display = 'block';
+  intRes_renderSummary(data);
+  intRes_renderDetails(data.details || []);
+}
+
+function intRes_dryRun() {
+  var limit = intRes_getLimit();
+  document.getElementById('res-error').style.display = 'none';
+  document.getElementById('res-result').style.display = 'none';
+  intRes_setBusy(true);
+  fetch('/admin/intelligence/resolve-pending?limit=' + limit)
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      intRes_setBusy(false);
+      if (!data.ok) { intRes_showError(data.error || 'Server error'); return; }
+      intRes_handleResponse(data);
+    })
+    .catch(function(err) {
+      intRes_setBusy(false);
+      intRes_showError(err.message || 'Network error');
+    });
+}
+
+function intRes_commit() {
+  var limit = intRes_getLimit();
+  if (!window.confirm('Commit resolution for up to ' + limit + ' pending signals?\n\nThis will update the database.')) {
+    return;
+  }
+  document.getElementById('res-error').style.display = 'none';
+  document.getElementById('res-result').style.display = 'none';
+  intRes_setBusy(true);
+  fetch('/admin/intelligence/resolve-pending', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({limit: limit})
+  })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      intRes_setBusy(false);
+      if (!data.ok) { intRes_showError(data.error || 'Server error'); return; }
+      intRes_handleResponse(data);
+      if (!data.dry_run) { intSt_fetchStats(); }
+    })
+    .catch(function(err) {
+      intRes_setBusy(false);
+      intRes_showError(err.message || 'Network error');
+    });
+}
+
 /* Wire button + initial load.
    readyState check handles both: script runs before or after DOMContentLoaded. */
 function intSt_init() {
@@ -398,6 +588,18 @@ function intSt_init() {
     btn.addEventListener('touchend', function(e) {
       e.preventDefault();
       intSt_fetchStats();
+    });
+  }
+  var dryBtn = document.getElementById('res-dry-btn');
+  if (dryBtn) {
+    dryBtn.addEventListener('click', intRes_dryRun);
+  }
+  var commitBtn = document.getElementById('res-commit-btn');
+  if (commitBtn) {
+    commitBtn.addEventListener('click', intRes_commit);
+    commitBtn.addEventListener('touchend', function(e) {
+      e.preventDefault();
+      intRes_commit();
     });
   }
   intSt_fetchStats();
