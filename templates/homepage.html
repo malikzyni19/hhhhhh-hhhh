@@ -538,38 +538,37 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 .letter-span{display:inline-block;opacity:0;will-change:opacity}
 
 
-/* ── 3D WOODEN NAVY TEXT SYSTEM ── */
+/* ── STATEMENT 3D TEXT ── */
 @keyframes depthIn{
-  0%  {opacity:0;transform:perspective(900px) translateZ(-300px) scale(.60)}
-  65% {opacity:1;transform:perspective(900px) translateZ(16px) scale(1.024)}
-  80% {transform:perspective(900px) translateZ(-6px) scale(.997)}
-  92% {transform:perspective(900px) translateZ(4px) scale(1.002)}
-  100%{opacity:1;transform:perspective(900px) translateZ(0) scale(1)}
+  0%  {opacity:0;transform:perspective(1000px) translateZ(-320px) scale(.58)}
+  68% {opacity:1;transform:perspective(1000px) translateZ(18px) scale(1.022)}
+  83% {transform:perspective(1000px) translateZ(-7px) scale(.997)}
+  94% {transform:perspective(1000px) translateZ(4px) scale(1.001)}
+  100%{opacity:1;transform:perspective(1000px) translateZ(0) scale(1)}
 }
 @keyframes woodGlow{
   0%,100%{filter:drop-shadow(0 0 5px rgba(28,75,170,.30)) drop-shadow(0 0 14px rgba(12,50,140,.14))}
-  50%{filter:drop-shadow(0 0 11px rgba(38,95,200,.50)) drop-shadow(0 0 28px rgba(18,68,162,.24))}
+  50%    {filter:drop-shadow(0 0 12px rgba(38,95,200,.52)) drop-shadow(0 0 30px rgba(18,68,162,.25))}
 }
-.txt3d{
-  color:#6090d0;
+/* 3D wooden navy — statement text only */
+.stmt-3d{
+  color:#5e8ed6;
   text-shadow:
-    0 1px 0 #4f7fc0,
-    0 2px 0 #406dad,
-    0 3px 0 #325c9a,
-    0 4px 0 #254b87,
-    0 5px 0 #183a74,
-    0 6px 0 #0b2961,
-    0 8px 14px rgba(0,14,50,.52),
-    0 18px 28px rgba(0,7,34,.24);
-  opacity:0;
+    0 1px 0 #507dc3,
+    0 2px 0 #426cb0,
+    0 3px 0 #345b9d,
+    0 4px 0 #264a8a,
+    0 5px 0 #183977,
+    0 6px 0 #0a2864,
+    0 8px 16px rgba(0,14,52,.50),
+    0 20px 30px rgba(0,7,36,.22);
+  animation:
+    depthIn 1.5s var(--sd,0s) cubic-bezier(.22,.95,.36,1) backwards paused,
+    woodGlow 3.6s var(--sg,1.55s) ease-in-out infinite paused;
   will-change:opacity,transform,filter;
 }
-.txt3d.vis{
-  animation:
-    depthIn 1.28s var(--td,0ms) cubic-bezier(.22,1.08,.36,1) both,
-    woodGlow 3.4s calc(var(--td,0ms) + 1.32s) ease-in-out infinite;
-}
-@media(prefers-reduced-motion:reduce){.txt3d{opacity:1}.txt3d.vis{animation:none}}
+.stmt-3d.vis{animation-play-state:running}
+@media(prefers-reduced-motion:reduce){.stmt-3d{animation:none;opacity:1}}
 /* ── STATEMENT SECTION ── */
 #statement{padding:28px 48px 80px;position:relative;min-height:520px;display:flex;align-items:center;gap:48px;overflow:hidden}
 @media(max-width:960px){#statement{flex-direction:column-reverse;padding:32px 20px 56px;min-height:auto;gap:32px}}
@@ -842,8 +841,8 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 <div class="section" id="statement">
   <div class="statement-left">
     <div class="statement-wrap">
-      <p class="statement-l1 txt3d">We don't provide any signals — we provide <span class="stmt-hl">ready-made setups</span> across <span class="stmt-hl">1000+ pairs</span>, just one click away.</p>
-      <p class="statement-l2 txt3d">This is not for beginners — this is for traders already familiar with <span class="stmt-hl2">SMC methods</span> like Order Blocks, Fair Value Gaps, Fibonacci, and Breaker Blocks.</p>
+      <p class="statement-l1 stmt-3d">We don't provide any signals — we provide <span class="stmt-hl">ready-made setups</span> across <span class="stmt-hl">1000+ pairs</span>, just one click away.</p>
+      <p class="statement-l2 stmt-3d">This is not for beginners — this is for traders already familiar with <span class="stmt-hl2">SMC methods</span> like Order Blocks, Fair Value Gaps, Fibonacci, and Breaker Blocks.</p>
     </div>
   </div>
   <div id="statement-3d-canvas" aria-hidden="true"></div>
@@ -2573,13 +2572,10 @@ function lwStartBounce(){
 /* ── Unified 3D text + block scroll-reveal ── */
 (function sectionReveal() {
 
-  /* 3D wooden navy depthIn — statement text only */
-  var T3D = [
-    { sel: '.statement-l1', base: 0   },
-    { sel: '.statement-l2', base: 160 },
-  ];
+  /* Simple translateY fade — all section text + blocks */
+  var T3D = [];  /* statement text handled by dedicated observer below */
 
-  /* Simple translateY fade — all other section text + blocks */
+  /* Simple translateY fade — section text + blocks */
   var SR = [
     { sel: '.sec-eyebrow', delay: 0   },
     { sel: '.sec-h',       delay: 100 },
@@ -2589,19 +2585,6 @@ function lwStartBounce(){
     { sel: '.gl-card',     delay: 0   },
   ];
 
-  /* Prepare 3D text elements */
-  var t3dItems = [];
-  for (var ti = 0; ti < T3D.length; ti++) {
-    var els = document.querySelectorAll(T3D[ti].sel);
-    for (var ei = 0; ei < els.length; ei++) {
-      var el = els[ei];
-      if (el._t3dDone) continue;
-      el._t3dDone = true;
-      el.classList.add('txt3d');
-      el.style.setProperty('--td', T3D[ti].base + 'ms');
-      t3dItems.push(el);
-    }
-  }
 
   /* Prepare block elements */
   var srItems = [];
@@ -2630,23 +2613,11 @@ function lwStartBounce(){
 
   /* Fallback — no IntersectionObserver */
   if (!('IntersectionObserver' in window)) {
-    for (var i = 0; i < t3dItems.length; i++) t3dItems[i].classList.add('vis');
     for (var i = 0; i < srItems.length; i++) {
       srItems[i].style.opacity = '1'; srItems[i].style.transform = 'translateY(0)';
     }
     return;
   }
-
-  /* 3D text observer */
-  var t3obs = new IntersectionObserver(function(entries) {
-    for (var i = 0; i < entries.length; i++) {
-      if (entries[i].isIntersecting) {
-        entries[i].target.classList.add('vis');
-        t3obs.unobserve(entries[i].target);
-      }
-    }
-  }, { threshold: 0.10 });
-  for (var i = 0; i < t3dItems.length; i++) t3obs.observe(t3dItems[i]);
 
   /* Block observer */
   var srObs = new IntersectionObserver(function(entries) {
@@ -2660,6 +2631,39 @@ function lwStartBounce(){
   }, { threshold: 0.10 });
   for (var i = 0; i < srItems.length; i++) srObs.observe(srItems[i]);
 
+})();
+
+/* ── Statement 3D text reveal (dedicated observer) ── */
+(function stmtTextReveal() {
+  var sec = document.getElementById('statement');
+  var l1  = sec ? sec.querySelector('.statement-l1') : null;
+  var l2  = sec ? sec.querySelector('.statement-l2') : null;
+  if (!l1) return;
+
+  /* Set per-element delays via CSS custom properties */
+  l1.style.setProperty('--sd', '0s');
+  l1.style.setProperty('--sg', '1.55s');
+  if (l2) {
+    l2.style.setProperty('--sd', '0.18s');
+    l2.style.setProperty('--sg', '1.73s');
+  }
+
+  function reveal() {
+    l1.classList.add('vis');
+    if (l2) l2.classList.add('vis');
+  }
+
+  if ('IntersectionObserver' in window) {
+    var obs = new IntersectionObserver(function(entries) {
+      if (entries[0].isIntersecting) {
+        obs.disconnect();
+        reveal();
+      }
+    }, { threshold: 0.15, rootMargin: '0px 0px -40px 0px' });
+    obs.observe(sec);
+  } else {
+    reveal();
+  }
 })();
 
 </script>{% endraw %}
