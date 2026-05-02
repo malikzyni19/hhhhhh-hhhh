@@ -538,37 +538,7 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 .letter-span{display:inline-block;opacity:0;will-change:opacity}
 
 
-/* ── STATEMENT 3D TEXT ── */
-@keyframes depthIn{
-  0%  {opacity:0;transform:perspective(1000px) translateZ(-320px) scale(.58)}
-  68% {opacity:1;transform:perspective(1000px) translateZ(18px) scale(1.022)}
-  83% {transform:perspective(1000px) translateZ(-7px) scale(.997)}
-  94% {transform:perspective(1000px) translateZ(4px) scale(1.001)}
-  100%{opacity:1;transform:perspective(1000px) translateZ(0) scale(1)}
-}
-@keyframes woodGlow{
-  0%,100%{filter:drop-shadow(0 0 5px rgba(28,75,170,.30)) drop-shadow(0 0 14px rgba(12,50,140,.14))}
-  50%    {filter:drop-shadow(0 0 12px rgba(38,95,200,.52)) drop-shadow(0 0 30px rgba(18,68,162,.25))}
-}
-/* 3D wooden navy — statement text only */
-.stmt-3d{
-  color:#5e8ed6;
-  text-shadow:
-    0 1px 0 #507dc3,
-    0 2px 0 #426cb0,
-    0 3px 0 #345b9d,
-    0 4px 0 #264a8a,
-    0 5px 0 #183977,
-    0 6px 0 #0a2864,
-    0 8px 16px rgba(0,14,52,.50),
-    0 20px 30px rgba(0,7,36,.22);
-  animation:
-    depthIn 1.5s var(--sd,0s) cubic-bezier(.22,.95,.36,1) backwards paused,
-    woodGlow 3.6s var(--sg,1.55s) ease-in-out infinite paused;
-  will-change:opacity,transform,filter;
-}
-.stmt-3d.vis{animation-play-state:running}
-@media(prefers-reduced-motion:reduce){.stmt-3d{animation:none;opacity:1}}
+
 /* ── STATEMENT SECTION ── */
 #statement{padding:28px 48px 80px;position:relative;min-height:520px;display:flex;align-items:center;gap:48px;overflow:hidden}
 @media(max-width:960px){#statement{flex-direction:column-reverse;padding:32px 20px 56px;min-height:auto;gap:32px}}
@@ -579,9 +549,11 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 .sr-d1{transition-delay:.10s}.sr-d2{transition-delay:.20s}.sr-d3{transition-delay:.30s}.sr-d4{transition-delay:.40s}.sr-d5{transition-delay:.50s}
 .statement-left{flex:1;min-width:0;z-index:1}
 .statement-wrap{max-width:600px}
-.statement-l1{font-size:clamp(1.15rem,2.5vw,1.72rem);font-weight:700;line-height:1.6;margin:0 0 28px;text-align:left}
-.statement-l2{font-size:clamp(0.92rem,1.7vw,1.12rem);font-weight:400;line-height:1.8;margin:0;text-align:left}
+.statement-l1{font-size:clamp(1.15rem,2.5vw,1.72rem);font-weight:700;line-height:1.6;color:var(--text);margin:0 0 28px;text-align:left;opacity:0;transform:translateY(22px);transition:opacity .85s cubic-bezier(.22,1,.36,1),transform .85s cubic-bezier(.22,1,.36,1)}
+.statement-l2{font-size:clamp(0.92rem,1.7vw,1.12rem);font-weight:400;line-height:1.8;color:rgba(180,200,225,.72);margin:0;text-align:left;opacity:0;transform:translateY(22px);transition:opacity .85s .16s cubic-bezier(.22,1,.36,1),transform .85s .16s cubic-bezier(.22,1,.36,1)}
+.statement-l1.vis,.statement-l2.vis{opacity:1;transform:translateY(0)}
 @media(max-width:960px){.statement-l1,.statement-l2{text-align:center}}
+@media(prefers-reduced-motion:reduce){.statement-l1,.statement-l2{transition:none;opacity:1;transform:none}}
 #statement-3d-canvas{flex:0 0 440px;height:440px;position:relative;overflow:hidden;opacity:0;transform:translateX(50px);transition:opacity 0.8s cubic-bezier(.22,1,.36,1),transform 0.8s cubic-bezier(.22,1,.36,1)}
 #statement-3d-canvas.vis{opacity:1;transform:translateX(0)}
 #statement-3d-canvas canvas{position:absolute;top:0;left:0;display:block;width:100%;height:100%}
@@ -841,8 +813,8 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 <div class="section" id="statement">
   <div class="statement-left">
     <div class="statement-wrap">
-      <p class="statement-l1 stmt-3d">We don't provide any signals — we provide <span class="stmt-hl">ready-made setups</span> across <span class="stmt-hl">1000+ pairs</span>, just one click away.</p>
-      <p class="statement-l2 stmt-3d">This is not for beginners — this is for traders already familiar with <span class="stmt-hl2">SMC methods</span> like Order Blocks, Fair Value Gaps, Fibonacci, and Breaker Blocks.</p>
+      <p class="statement-l1">We don't provide any signals — we provide <span class="stmt-hl">ready-made setups</span> across <span class="stmt-hl">1000+ pairs</span>, just one click away.</p>
+      <p class="statement-l2">This is not for beginners — this is for traders already familiar with <span class="stmt-hl2">SMC methods</span> like Order Blocks, Fair Value Gaps, Fibonacci, and Breaker Blocks.</p>
     </div>
   </div>
   <div id="statement-3d-canvas" aria-hidden="true"></div>
@@ -2633,20 +2605,12 @@ function lwStartBounce(){
 
 })();
 
-/* ── Statement 3D text reveal (dedicated observer) ── */
+/* ── Statement text scroll reveal ── */
 (function stmtTextReveal() {
   var sec = document.getElementById('statement');
   var l1  = sec ? sec.querySelector('.statement-l1') : null;
   var l2  = sec ? sec.querySelector('.statement-l2') : null;
   if (!l1) return;
-
-  /* Set per-element delays via CSS custom properties */
-  l1.style.setProperty('--sd', '0s');
-  l1.style.setProperty('--sg', '1.55s');
-  if (l2) {
-    l2.style.setProperty('--sd', '0.18s');
-    l2.style.setProperty('--sg', '1.73s');
-  }
 
   function reveal() {
     l1.classList.add('vis');
@@ -2655,10 +2619,7 @@ function lwStartBounce(){
 
   if ('IntersectionObserver' in window) {
     var obs = new IntersectionObserver(function(entries) {
-      if (entries[0].isIntersecting) {
-        obs.disconnect();
-        reveal();
-      }
+      if (entries[0].isIntersecting) { obs.disconnect(); reveal(); }
     }, { threshold: 0.15, rootMargin: '0px 0px -40px 0px' });
     obs.observe(sec);
   } else {
