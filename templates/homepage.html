@@ -578,9 +578,7 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 .sr{opacity:0;transform:translateY(26px);transition:opacity 0.72s cubic-bezier(.22,1,.36,1),transform 0.72s cubic-bezier(.22,1,.36,1)}
 .sr.vis{opacity:1;transform:translateY(0)}
 .sr-d1{transition-delay:.10s}.sr-d2{transition-delay:.20s}.sr-d3{transition-delay:.30s}.sr-d4{transition-delay:.40s}.sr-d5{transition-delay:.50s}
-.statement-left{flex:1;min-width:0;z-index:1;opacity:0;transform:translateY(28px);transition:opacity 0.82s 0.5s cubic-bezier(.22,1,.36,1),transform 0.82s 0.5s cubic-bezier(.22,1,.36,1)}
-.statement-left.vis{opacity:1;transform:translateY(0)}
-@media(max-width:960px){.statement-left{transform:translateY(20px)}.statement-left.vis{transform:translateY(0)}}
+.statement-left{flex:1;min-width:0;z-index:1}
 .statement-wrap{max-width:600px}
 .statement-l1{font-size:clamp(1.15rem,2.5vw,1.72rem);font-weight:700;line-height:1.6;margin:0 0 28px;text-align:left}
 .statement-l2{font-size:clamp(0.92rem,1.7vw,1.12rem);font-weight:400;line-height:1.8;margin:0;text-align:left}
@@ -2575,20 +2573,20 @@ function lwStartBounce(){
 /* ── Unified 3D text + block scroll-reveal ── */
 (function sectionReveal() {
 
-  /* TEXT elements — 3D wooden navy depthIn animation */
+  /* 3D wooden navy depthIn — statement text only */
   var T3D = [
     { sel: '.statement-l1', base: 0   },
     { sel: '.statement-l2', base: 160 },
-    { sel: '.sec-eyebrow',  base: 0   },
-    { sel: '.sec-h',        base: 130 },
-    { sel: '.sec-sub',      base: 260 },
-    { sel: '.feat-title',   base: 0   },
   ];
 
-  /* BLOCK elements — simple translateY fade */
+  /* Simple translateY fade — all other section text + blocks */
   var SR = [
-    { sel: '.feat-row',  delay: 0  },
-    { sel: '.gl-card',   delay: 0  },
+    { sel: '.sec-eyebrow', delay: 0   },
+    { sel: '.sec-h',       delay: 100 },
+    { sel: '.sec-sub',     delay: 200 },
+    { sel: '.feat-title',  delay: 0   },
+    { sel: '.feat-row',    delay: 0   },
+    { sel: '.gl-card',     delay: 0   },
   ];
 
   /* Prepare 3D text elements */
@@ -2628,13 +2626,7 @@ function lwStartBounce(){
     for (var ri = 0; ri < rows.length; ri++) rows[ri].style.transitionDelay = (ri*105) + 'ms';
     var cards = secs[si].querySelectorAll('.gl-card');
     for (var ci = 0; ci < cards.length; ci++) cards[ci].style.transitionDelay = (ci*85) + 'ms';
-    /* Stagger txt3d within each section */
-    var t3 = secs[si].querySelectorAll('.txt3d:not(.statement-l1):not(.statement-l2)');
-    for (var xi = 0; xi < t3.length; xi++) {
-      var base = parseInt(t3[xi].style.getPropertyValue('--td')||'0', 10);
-      t3[xi].style.setProperty('--td', base + 'ms');
     }
-  }
 
   /* Fallback — no IntersectionObserver */
   if (!('IntersectionObserver' in window)) {
