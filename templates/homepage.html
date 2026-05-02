@@ -1889,7 +1889,7 @@ function lwStartBounce(){
 
   /* ── Box grid ── */
   var blues = [0x020d2e,0x030f35,0x04102a,0x020a22,0x050f30,0x030c28,0x040e32,0x021025,0x060d38,0x031128,0x050a30,0x020e2a];
-  var GAP = 0.04, COLS = 7, ROWS = 7, BOX_W = 0.82, BOX_D = 0.82;
+  var GAP = 0.04, COLS = 13, ROWS = 11, BOX_W = 0.82, BOX_D = 0.82;
   var allBoxes = [];
   var si = 0;
 
@@ -1897,7 +1897,7 @@ function lwStartBounce(){
     for (var col = 0; col < COLS; col++) {
       var cx = col - (COLS - 1) / 2;
       var cz = row - (ROWS - 1) / 2;
-      var isCenter = (col === 3 && row === 3);
+      var isCenter = (col === 6 && row === 5);
       var h = isCenter ? 0.55 : 0.20 + Math.random() * 0.40;
       var geo = new THREE.BoxGeometry(BOX_W, h, BOX_D);
       var mat = new THREE.MeshStandardMaterial({
@@ -1913,18 +1913,18 @@ function lwStartBounce(){
       var x  = cx * (BOX_W + GAP);
       var z  = cz * (BOX_D + GAP);
       var tY = h / 2;
-      var sY = tY + 5 + si * 0.15;
+      var sY = tY + 5 + si * 0.07;
       grp.position.set(x, sY, z);
       allBoxes.push({
         grp:        grp,
         targetY:    tY,
         startY:     sY,
-        delay:      si * 0.09,
+        delay:      si * 0.048,
         isCenter:   isCenter,
         landed:     false,
         floatOffset: si * 0.41 + Math.random() * 0.5,
-        floatSpeed:  0.55 + Math.random() * 0.30,
-        floatAmp:    isCenter ? 0.10 : 0.07 + Math.random() * 0.07
+        floatSpeed:  1.10 + Math.random() * 0.70,
+        floatAmp:    isCenter ? 0.18 : 0.12 + Math.random() * 0.13
       });
       si++;
       scene.add(grp);
@@ -2050,7 +2050,7 @@ function lwStartBounce(){
     });
 
     /* ₿ follows center box */
-    var cb = allBoxes[3 * 7 + 3];
+    var cb = allBoxes[5 * 13 + 6];
     btc.position.y = cb.grp.position.y + 0.55 / 2 + 0.38;
     btc.rotation.y = t * 0.25;
     gl.position.y  = btc.position.y - 0.1;
