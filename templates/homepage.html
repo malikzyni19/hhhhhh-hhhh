@@ -522,10 +522,9 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 .letter-span{display:inline-block;opacity:0;will-change:opacity}
 
 
-/* ── ORB TRANSITION SECTION ── */
-#orb-section{position:relative;height:280vh}
-#orb-transition-canvas{position:sticky;top:0;width:100%;height:100vh;overflow:hidden;pointer-events:none;opacity:0}
-#orb-transition-canvas canvas{position:absolute;top:0;left:0;display:block}
+/* ── ORB OVERLAY (fixed transition overlay) ── */
+#orb-overlay-canvas{position:fixed;top:0;left:0;width:100%;height:100%;z-index:50;pointer-events:none;opacity:0;background:rgba(0,2,14,0.96);overflow:hidden}
+#orb-overlay-canvas canvas{position:absolute;top:0;left:0;display:block}
 
 /* ── STATEMENT SECTION ── */
 #statement{padding:72px 20px 80px;text-align:center;position:relative;min-height:360px}
@@ -778,10 +777,8 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
   </div><!-- /hero-left -->
 </section>
 
-<!-- ORB TRANSITION -->
-<div id="orb-section">
-  <div id="orb-transition-canvas" aria-hidden="true"></div>
-</div>
+<!-- ORB OVERLAY (fixed transition) -->
+<div id="orb-overlay-canvas" aria-hidden="true"></div>
 
 <!-- STATEMENT -->
 <div class="section" id="statement">
@@ -2121,97 +2118,84 @@ function lwStartBounce(){
 
 
 /* ════════════════════════════════════════════════════════════
-   ORB TRANSITION — Navy orbiting spheres · scroll-fade bridge
-   Three.js · Fades in as hero exits · holds · fades to statement
+   ORB OVERLAY — Slide-in/orbit/slide-out scroll transition
+   Fixed overlay · triggered once on scroll · GSAP sequence
 ════════════════════════════════════════════════════════════ */
-(function initOrbScene() {
-  var orbSection = document.getElementById('orb-section');
-  var container  = document.getElementById('orb-transition-canvas');
-  if (!container || !orbSection || !window.THREE) return;
+(function initOrbOverlay() {
+  var overlay = document.getElementById('orb-overlay-canvas');
+  if (!overlay || !window.THREE || !window.gsap) return;
 
-  function cW() { return container.clientWidth  || window.innerWidth;  }
-  function cH() { return container.clientHeight || window.innerHeight; }
+  function VW() { return window.innerWidth;  }
+  function VH() { return window.innerHeight; }
 
   var renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.3;
-  renderer.shadowMap.enabled = true;
-  renderer.setSize(cW(), cH());
+  renderer.setSize(VW(), VH());
   renderer.domElement.style.cssText = 'position:absolute;top:0;left:0;display:block';
-  container.appendChild(renderer.domElement);
+  overlay.appendChild(renderer.domElement);
 
-  var scene = new THREE.Scene();
-  /* No scene.background — alpha: true, transparent over page */
-  scene.fog = new THREE.FogExp2(0x00010d, 0.022);
-
-  var camera = new THREE.PerspectiveCamera(50, cW() / cH(), 0.1, 200);
+  var scene  = new THREE.Scene();
+  var camera = new THREE.PerspectiveCamera(50, VW() / VH(), 0.1, 200);
   camera.position.set(0, 4, 22);
   camera.lookAt(0, 0, 0);
 
   /* ── Lights ── */
   scene.add(new THREE.AmbientLight(0x010310, 2));
-  var sun = new THREE.DirectionalLight(0x0a2050, 1.5);
-  sun.position.set(10, 15, 8); sun.castShadow = true; scene.add(sun);
-  var cL1 = new THREE.PointLight(0x1a3a8a, 7, 20); scene.add(cL1);
-  var cL2 = new THREE.PointLight(0x1a4a9a, 6, 18); scene.add(cL2);
-  var cL3 = new THREE.PointLight(0x1a3f8f, 6, 18); scene.add(cL3);
-  var rimL = new THREE.PointLight(0x0a1a4a, 3, 35);
+  var cL1 = new THREE.PointLight(0x1a3a8a, 9, 24); scene.add(cL1);
+  var cL2 = new THREE.PointLight(0x1a4a9a, 8, 21); scene.add(cL2);
+  var cL3 = new THREE.PointLight(0x1a3f8f, 8, 21); scene.add(cL3);
+  var rimL = new THREE.PointLight(0x0a1a4a, 4, 38);
   rimL.position.set(-10, 8, -8); scene.add(rimL);
 
-  /* ── Sphere factory ── */
-  function mkSphere(r, col, emis, eI, met, rou) {
-    var m = new THREE.Mesh(
+  /* ── Spheres (larger than reference) ── */
+  function mkS(r, col, emis, eI, met, rou) {
+    return new THREE.Mesh(
       new THREE.SphereGeometry(r, 48, 48),
       new THREE.MeshStandardMaterial({ color: col, emissive: emis, emissiveIntensity: eI, metalness: met, roughness: rou })
     );
-    m.castShadow = true; return m;
   }
-  var s1 = mkSphere(1.35, 0x0a1540, 0x1a3a8a, 1.2, 0.92, 0.08);
-  var s2 = mkSphere(1.10, 0x091230, 0x1a4a9a, 1.4, 0.88, 0.10);
-  var s3 = mkSphere(0.90, 0x070e25, 0x1a3f8f, 1.6, 0.95, 0.06);
+  var s1 = mkS(1.80, 0x0a1540, 0x1a3a8a, 1.4, 0.92, 0.07);
+  var s2 = mkS(1.45, 0x091230, 0x1a4a9a, 1.6, 0.88, 0.09);
+  var s3 = mkS(1.15, 0x070e25, 0x1a3f8f, 1.8, 0.95, 0.05);
   scene.add(s1, s2, s3);
 
-  /* ── Vein rings ── */
+  /* ── Vein rings (as children of each sphere so they travel with it) ── */
   function mkVein(R, t, col, eI, rx, ry) {
     var m = new THREE.Mesh(
       new THREE.TorusGeometry(R, t, 8, 100),
       new THREE.MeshStandardMaterial({
         color: col, emissive: col, emissiveIntensity: eI,
-        transparent: true, opacity: 0.85, metalness: 0.1, roughness: 0.2
+        transparent: true, opacity: 0.88, metalness: 0.1, roughness: 0.2
       })
     );
     m.rotation.x = rx; m.rotation.y = ry; return m;
   }
   function buildVeins(parent, baseR) {
-    var cfgs = [
-      [baseR, 0.022, 0x1a3a8a, 3.5, 0,           0          ],
-      [baseR, 0.018, 0x1a50aa, 3.0, Math.PI/2.5,  Math.PI/4  ],
-      [baseR, 0.015, 0x2060cc, 2.8, Math.PI/3,   -Math.PI/3  ],
-      [baseR, 0.013, 0x2a6acc, 2.5, Math.PI/1.8,  Math.PI/6  ],
-    ];
-    return cfgs.map(function(c) {
-      var v = mkVein(c[0]*1.01, c[1], c[2], c[3], c[4], c[5]);
-      parent.add(v); return v;
-    });
+    [[baseR, 0.026, 0x1a3a8a, 4.0, 0,           0          ],
+     [baseR, 0.020, 0x1a50aa, 3.5, Math.PI/2.5,  Math.PI/4 ],
+     [baseR, 0.016, 0x2060cc, 3.2, Math.PI/3,   -Math.PI/3 ],
+     [baseR, 0.013, 0x2a6acc, 2.8, Math.PI/1.8,  Math.PI/6 ]
+    ].forEach(function(c) { parent.add(mkVein(c[0]*1.01, c[1], c[2], c[3], c[4], c[5])); });
   }
-  var vn1 = buildVeins(s1, 1.35);
-  var vn2 = buildVeins(s2, 1.10);
-  var vn3 = buildVeins(s3, 0.90);
+  buildVeins(s1, 1.80);
+  buildVeins(s2, 1.45);
+  buildVeins(s3, 1.15);
 
   /* ── Glow shells ── */
-  [[s1,1.55,0x1a3a8a],[s2,1.28,0x1a4a9a],[s3,1.05,0x1a3f8f]].forEach(function(d) {
+  [[s1,2.06,0x1a3a8a],[s2,1.66,0x1a4a9a],[s3,1.32,0x1a3f8f]].forEach(function(d) {
     d[0].add(new THREE.Mesh(
       new THREE.SphereGeometry(d[1], 32, 32),
-      new THREE.MeshStandardMaterial({ color: d[2], emissive: d[2], emissiveIntensity: 0.4, transparent: true, opacity: 0.07 })
+      new THREE.MeshStandardMaterial({ color: d[2], emissive: d[2], emissiveIntensity: 0.5, transparent: true, opacity: 0.09 })
     ));
   });
 
   /* ── Particles ── */
-  var pN = 280;
-  var pPos = new Float32Array(pN * 3), pCol = new Float32Array(pN * 3);
+  var pN = 200;
+  var pPos = new Float32Array(pN*3), pCol = new Float32Array(pN*3);
   for (var pi = 0; pi < pN; pi++) {
-    var pr = 5 + Math.random()*10, pth = Math.random()*Math.PI*2, pph = Math.acos(2*Math.random()-1);
+    var pr = 4+Math.random()*9, pth = Math.random()*Math.PI*2, pph = Math.acos(2*Math.random()-1);
     pPos[pi*3]   = pr*Math.sin(pph)*Math.cos(pth);
     pPos[pi*3+1] = pr*Math.sin(pph)*Math.sin(pth);
     pPos[pi*3+2] = pr*Math.cos(pph);
@@ -2221,90 +2205,103 @@ function lwStartBounce(){
   var pGeo = new THREE.BufferGeometry();
   pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
   pGeo.setAttribute('color',    new THREE.BufferAttribute(pCol, 3));
-  var pMat = new THREE.PointsMaterial({ size: 0.055, vertexColors: true, transparent: true, opacity: 0.7 });
+  var pMat = new THREE.PointsMaterial({ size: 0.06, vertexColors: true, transparent: true, opacity: 0.8 });
   scene.add(new THREE.Points(pGeo, pMat));
 
-  /* ── Trails ── */
-  var TN = 10;
-  function mkTrails(sphere, col) {
-    var R = sphere.geometry.parameters.radius, arr = [];
-    for (var ti = 0; ti < TN; ti++) {
-      var fr = ti / TN;
-      var m = new THREE.Mesh(
-        new THREE.SphereGeometry(R*(1-fr*0.88), 10, 10),
-        new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 1.5*(1-fr), transparent: true, opacity: (1-fr)*0.22, metalness: 0.3, roughness: 0.4 })
-      );
-      m.visible = false; scene.add(m); arr.push(m);
-    }
-    return arr;
-  }
-  var tr1=mkTrails(s1,0x1a3a8a), tr2=mkTrails(s2,0x1a4a9a), tr3=mkTrails(s3,0x2055aa);
-  var ph1=[], ph2=[], ph3=[];
-  function stepTrails(tr, ph, sp) {
-    ph.unshift(sp.position.clone());
-    if (ph.length > TN*4) ph.length = TN*4;
-    for (var i=0;i<tr.length;i++) {
-      var idx=(i+1)*4;
-      if (ph[idx]){tr[i].visible=true;tr[i].position.copy(ph[idx]);}
-      else tr[i].visible=false;
-    }
+  /* ── Slide offset (drives ball x position during enter/exit) ── */
+  var xOff = 22;  /* start off-screen right; negative = exit left */
+  var f    = 0;
+  var playing = false;
+
+  /* ── Statement text reveal ── */
+  var stSec  = document.getElementById('statement');
+  var stL1   = stSec ? stSec.querySelector('.statement-l1') : null;
+  var stL2   = stSec ? stSec.querySelector('.statement-l2') : null;
+  var stDone = false;
+  function revealText() {
+    if (stDone) return; stDone = true;
+    if (stL1) stL1.classList.add('vis');
+    if (stL2) stL2.classList.add('vis');
   }
 
-  /* ── Animate state ── */
-  var f = 0;
-  var active = false;
-  if (window.IntersectionObserver) {
-    new IntersectionObserver(function(e) { active = e[0].isIntersecting; }, { threshold: 0.05 }).observe(orbSection);
-  } else { active = true; }
+  /* ── Play sequence once on trigger ── */
+  var triggered = false;
+  function play() {
+    if (triggered) return;
+    triggered = true;
+    playing   = true;
 
-  /* ── Scroll-based fade in/out ── */
-  function updateOpacity() {
-    var rect   = orbSection.getBoundingClientRect();
-    var sH     = orbSection.offsetHeight;
-    var vH     = window.innerHeight;
-    var scrolled = -rect.top;
-    var total    = sH - vH;
-    if (total <= 0) { container.style.opacity = '1'; return; }
-    var p  = Math.max(0, Math.min(1, scrolled / total));
-    /* fade-in 0→22%, full 22→78%, fade-out 78→100% */
-    var op = p < 0.22 ? p / 0.22 : p > 0.78 ? (1 - p) / 0.22 : 1;
-    container.style.opacity = Math.max(0, op).toFixed(3);
+    var proxy = { x: 22, op: 0 };
+
+    /* STEP 1 — slide in from right + fade overlay in */
+    gsap.to(proxy, {
+      x: 0, op: 1, duration: 0.38, ease: 'power3.out',
+      onUpdate: function() {
+        xOff = proxy.x;
+        overlay.style.opacity = proxy.op.toFixed(3);
+      },
+      onComplete: function() {
+        /* STEP 2 — orbit hold */
+        gsap.delayedCall(1.10, function() {
+          /* STEP 3 — slide out to left + fade overlay out */
+          gsap.to(proxy, {
+            x: -22, op: 0, duration: 0.38, ease: 'power3.in',
+            onUpdate: function() {
+              xOff = proxy.x;
+              overlay.style.opacity = proxy.op.toFixed(3);
+            },
+            onComplete: function() {
+              playing = false;
+              /* STEP 4 — reveal text immediately */
+              revealText();
+            }
+          });
+        });
+      }
+    });
   }
-  window.addEventListener('scroll', updateOpacity, { passive: true });
-  updateOpacity();
+
+  /* ── Scroll trigger — fire when hero is 65% scrolled past ── */
+  var heroEl = document.querySelector('.hero');
+  window.addEventListener('scroll', function() {
+    if (triggered) return;
+    var heroH = heroEl ? heroEl.offsetHeight : VH();
+    if (window.scrollY > heroH * 0.65) play();
+  }, { passive: true });
 
   /* ── Render loop ── */
   function loop() {
     requestAnimationFrame(loop);
-    if (!active) return;
+    if (!playing) return;
     f++;
 
-    s1.position.set(Math.cos(f*0.007)*5.5,  Math.sin(f*0.0042)*1.8, Math.sin(f*0.007)*3.85);
-    s2.position.set(Math.cos(f*0.011+2.1)*4.0, Math.sin(f*0.0088+1)*1.4, Math.sin(f*0.011+2.1)*3.2);
-    s3.position.set(Math.cos(f*0.017+4.2)*2.8, Math.sin(f*0.0187+2)*1.0, Math.sin(f*0.017+4.2)*2.52);
+    /* Orbit positions — 2× faster speeds, xOff drives slide */
+    s1.position.set(Math.cos(f*0.014)*6.0 + xOff, Math.sin(f*0.0084)*2.2, Math.sin(f*0.014)*4.2);
+    s2.position.set(Math.cos(f*0.022+2.1)*4.5 + xOff, Math.sin(f*0.0176+1)*1.8, Math.sin(f*0.022+2.1)*3.6);
+    s3.position.set(Math.cos(f*0.034+4.2)*3.2 + xOff, Math.sin(f*0.0374+2)*1.3, Math.sin(f*0.034+4.2)*2.9);
 
-    cL1.position.copy(s1.position); cL1.intensity = 6.0 + 2.5*Math.sin(f*0.08);
-    cL2.position.copy(s2.position); cL2.intensity = 5.5 + 2.0*Math.sin(f*0.10+1);
-    cL3.position.copy(s3.position); cL3.intensity = 5.0 + 2.0*Math.sin(f*0.12+2);
+    cL1.position.copy(s1.position); cL1.intensity = 8 + 3.0*Math.sin(f*0.08);
+    cL2.position.copy(s2.position); cL2.intensity = 7 + 2.5*Math.sin(f*0.10+1);
+    cL3.position.copy(s3.position); cL3.intensity = 6 + 2.5*Math.sin(f*0.12+2);
 
-    s1.material.emissiveIntensity = 0.8+0.5*Math.sin(f*0.08);
-    s2.material.emissiveIntensity = 0.9+0.5*Math.sin(f*0.10+1);
-    s3.material.emissiveIntensity = 1.0+0.6*Math.sin(f*0.12+2);
-    s1.rotation.y+=0.008; s1.rotation.x+=0.003;
-    s2.rotation.y-=0.010; s2.rotation.z+=0.004;
-    s3.rotation.y+=0.014; s3.rotation.x-=0.005;
+    s1.material.emissiveIntensity = 1.0+0.6*Math.sin(f*0.08);
+    s2.material.emissiveIntensity = 1.1+0.6*Math.sin(f*0.10+1);
+    s3.material.emissiveIntensity = 1.2+0.7*Math.sin(f*0.12+2);
 
-    vn1.forEach(function(v,i){v.rotation.y+=0.012+i*0.004;v.rotation.z+=0.007+i*0.002;v.material.emissiveIntensity=2.5+1.5*Math.sin(f*0.09+i);});
-    vn2.forEach(function(v,i){v.rotation.x+=0.009+i*0.003;v.rotation.y+=0.013+i*0.003;v.material.emissiveIntensity=2.5+1.5*Math.sin(f*0.11+i+1);});
-    vn3.forEach(function(v,i){v.rotation.z+=0.011+i*0.003;v.rotation.x+=0.008+i*0.003;v.material.emissiveIntensity=3.0+1.5*Math.sin(f*0.13+i+2);});
+    s1.rotation.y+=0.016; s1.rotation.x+=0.006;
+    s2.rotation.y-=0.020; s2.rotation.z+=0.008;
+    s3.rotation.y+=0.028; s3.rotation.x-=0.010;
 
-    stepTrails(tr1,ph1,s1); stepTrails(tr2,ph2,s2); stepTrails(tr3,ph3,s3);
+    /* Animate vein rings (children of each sphere) */
+    s1.children.forEach(function(v,i){ if(v.isMesh&&v.geometry.type==='TorusGeometry'){v.rotation.y+=0.024+i*0.008;v.rotation.z+=0.014+i*0.004;v.material.emissiveIntensity=3.0+2.0*Math.sin(f*0.09+i);} });
+    s2.children.forEach(function(v,i){ if(v.isMesh&&v.geometry.type==='TorusGeometry'){v.rotation.x+=0.018+i*0.006;v.rotation.y+=0.026+i*0.006;v.material.emissiveIntensity=3.0+2.0*Math.sin(f*0.11+i+1);} });
+    s3.children.forEach(function(v,i){ if(v.isMesh&&v.geometry.type==='TorusGeometry'){v.rotation.z+=0.022+i*0.006;v.rotation.x+=0.016+i*0.006;v.material.emissiveIntensity=3.5+2.0*Math.sin(f*0.13+i+2);} });
 
     pMat.opacity = 0.6+0.2*Math.sin(f*0.03);
 
     camera.position.x = Math.sin(f*0.006)*4;
-    camera.position.y = 4 + Math.sin(f*0.004)*1.5;
-    camera.position.z = 22 + Math.sin(f*0.005)*2;
+    camera.position.y = 4+Math.sin(f*0.004)*1.5;
+    camera.position.z = 22+Math.sin(f*0.005)*2;
     camera.lookAt(0, 0, 0);
 
     renderer.render(scene, camera);
@@ -2312,8 +2309,8 @@ function lwStartBounce(){
   loop();
 
   window.addEventListener('resize', function() {
-    renderer.setSize(cW(), cH());
-    camera.aspect = cW() / cH();
+    renderer.setSize(VW(), VH());
+    camera.aspect = VW() / VH();
     camera.updateProjectionMatrix();
   });
 })();
