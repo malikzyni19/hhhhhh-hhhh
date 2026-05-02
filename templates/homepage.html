@@ -538,12 +538,38 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 .letter-span{display:inline-block;opacity:0;will-change:opacity}
 
 
-/* ── NEON TEXT KEYFRAMES ── */
-@keyframes textFloat{0%,100%{transform:translateY(0px)}50%{transform:translateY(-6px)}}
-@keyframes neonPulse{
-  0%,100%{text-shadow:0 1px 0 rgba(255,255,255,.07),0 0 6px rgba(56,189,248,.40),0 0 16px rgba(56,189,248,.20),0 0 34px rgba(56,189,248,.08)}
-  50%{text-shadow:0 1px 0 rgba(255,255,255,.13),0 0 10px rgba(56,189,248,.68),0 0 26px rgba(56,189,248,.34),0 0 50px rgba(56,189,248,.16)}
+/* ── 3D WOODEN NAVY TEXT SYSTEM ── */
+@keyframes depthIn{
+  0%  {opacity:0;transform:perspective(900px) translateZ(-300px) scale(.60)}
+  65% {opacity:1;transform:perspective(900px) translateZ(16px) scale(1.024)}
+  80% {transform:perspective(900px) translateZ(-6px) scale(.997)}
+  92% {transform:perspective(900px) translateZ(4px) scale(1.002)}
+  100%{opacity:1;transform:perspective(900px) translateZ(0) scale(1)}
 }
+@keyframes woodGlow{
+  0%,100%{filter:drop-shadow(0 0 5px rgba(28,75,170,.30)) drop-shadow(0 0 14px rgba(12,50,140,.14))}
+  50%{filter:drop-shadow(0 0 11px rgba(38,95,200,.50)) drop-shadow(0 0 28px rgba(18,68,162,.24))}
+}
+.txt3d{
+  color:#6090d0;
+  text-shadow:
+    0 1px 0 #4f7fc0,
+    0 2px 0 #406dad,
+    0 3px 0 #325c9a,
+    0 4px 0 #254b87,
+    0 5px 0 #183a74,
+    0 6px 0 #0b2961,
+    0 8px 14px rgba(0,14,50,.52),
+    0 18px 28px rgba(0,7,34,.24);
+  opacity:0;
+  will-change:opacity,transform,filter;
+}
+.txt3d.vis{
+  animation:
+    depthIn 1.28s var(--td,0ms) cubic-bezier(.22,1.08,.36,1) both,
+    woodGlow 3.4s calc(var(--td,0ms) + 1.32s) ease-in-out infinite;
+}
+@media(prefers-reduced-motion:reduce){.txt3d{opacity:1}.txt3d.vis{animation:none}}
 /* ── STATEMENT SECTION ── */
 #statement{padding:28px 48px 80px;position:relative;min-height:520px;display:flex;align-items:center;gap:48px;overflow:hidden}
 @media(max-width:960px){#statement{flex-direction:column-reverse;padding:32px 20px 56px;min-height:auto;gap:32px}}
@@ -556,23 +582,9 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 .statement-left.vis{opacity:1;transform:translateY(0)}
 @media(max-width:960px){.statement-left{transform:translateY(20px)}.statement-left.vis{transform:translateY(0)}}
 .statement-wrap{max-width:600px}
-.statement-l1{
-  font-size:clamp(1.15rem,2.5vw,1.72rem);font-weight:700;line-height:1.6;
-  color:#d8f0ff;margin:0 0 28px;text-align:left;
-  animation:textFloat 5s ease-in-out infinite,neonPulse 4s ease-in-out infinite;
-  animation-play-state:paused;
-  will-change:transform,filter;
-}
-.statement-l2{
-  font-size:clamp(0.92rem,1.7vw,1.12rem);font-weight:400;line-height:1.8;
-  color:rgba(188,218,240,0.80);margin:0;text-align:left;
-  animation:textFloat 6.5s .8s ease-in-out infinite,neonPulse 5s 1.4s ease-in-out infinite;
-  animation-play-state:paused;
-  will-change:transform,filter;
-}
-.statement-left.vis .statement-l1,.statement-left.vis .statement-l2{animation-play-state:running}
+.statement-l1{font-size:clamp(1.15rem,2.5vw,1.72rem);font-weight:700;line-height:1.6;margin:0 0 28px;text-align:left}
+.statement-l2{font-size:clamp(0.92rem,1.7vw,1.12rem);font-weight:400;line-height:1.8;margin:0;text-align:left}
 @media(max-width:960px){.statement-l1,.statement-l2{text-align:center}}
-@media(prefers-reduced-motion:reduce){.statement-l1,.statement-l2{animation:none}}
 #statement-3d-canvas{flex:0 0 440px;height:440px;position:relative;overflow:hidden;opacity:0;transform:translateX(50px);transition:opacity 0.8s cubic-bezier(.22,1,.36,1),transform 0.8s cubic-bezier(.22,1,.36,1)}
 #statement-3d-canvas.vis{opacity:1;transform:translateX(0)}
 #statement-3d-canvas canvas{position:absolute;top:0;left:0;display:block;width:100%;height:100%}
@@ -832,8 +844,8 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 <div class="section" id="statement">
   <div class="statement-left">
     <div class="statement-wrap">
-      <p class="statement-l1">We don't provide any signals — we provide <span class="stmt-hl">ready-made setups</span> across <span class="stmt-hl">1000+ pairs</span>, just one click away.</p>
-      <p class="statement-l2">This is not for beginners — this is for traders already familiar with <span class="stmt-hl2">SMC methods</span> like Order Blocks, Fair Value Gaps, Fibonacci, and Breaker Blocks.</p>
+      <p class="statement-l1 txt3d">We don't provide any signals — we provide <span class="stmt-hl">ready-made setups</span> across <span class="stmt-hl">1000+ pairs</span>, just one click away.</p>
+      <p class="statement-l2 txt3d">This is not for beginners — this is for traders already familiar with <span class="stmt-hl2">SMC methods</span> like Order Blocks, Fair Value Gaps, Fibonacci, and Breaker Blocks.</p>
     </div>
   </div>
   <div id="statement-3d-canvas" aria-hidden="true"></div>
@@ -2537,9 +2549,8 @@ function lwStartBounce(){
   }
   loop();
 
-  /* ── Entry: fade canvas from right, then slide text from left ── */
-  var stSec  = document.getElementById('statement');
-  var stLeft = stSec ? stSec.querySelector('.statement-left') : null;
+  /* ── Canvas entry: fade in from right, activate render loop ── */
+  var stSec = document.getElementById('statement');
 
   if ('IntersectionObserver' in window) {
     var obs = new IntersectionObserver(function(entries) {
@@ -2547,15 +2558,11 @@ function lwStartBounce(){
       obs.disconnect();
       container.classList.add('vis');
       active = true;
-      setTimeout(function() {
-        if (stLeft) stLeft.classList.add('vis');
-      }, 500);
-    }, { threshold: 0.25 });
+    }, { threshold: 0.20 });
     obs.observe(stSec || container);
   } else {
     container.classList.add('vis');
     active = true;
-    if (stLeft) stLeft.classList.add('vis');
   }
 
   window.addEventListener('resize', function() {
@@ -2565,69 +2572,102 @@ function lwStartBounce(){
   });
 })();
 
-/* ── Section scroll-reveal ── */
+/* ── Unified 3D text + block scroll-reveal ── */
 (function sectionReveal() {
-  var SELS = [
-    { sel: '.sec-eyebrow', delay: 0   },
-    { sel: '.sec-h',       delay: 100 },
-    { sel: '.sec-sub',     delay: 200 },
-    { sel: '.feat-row',    delay: 0   },
-    { sel: '.gl-card',     delay: 0   }
+
+  /* TEXT elements — 3D wooden navy depthIn animation */
+  var T3D = [
+    { sel: '.statement-l1', base: 0   },
+    { sel: '.statement-l2', base: 160 },
+    { sel: '.sec-eyebrow',  base: 0   },
+    { sel: '.sec-h',        base: 130 },
+    { sel: '.sec-sub',      base: 260 },
+    { sel: '.feat-title',   base: 0   },
   ];
 
-  var items = [];
-  for (var si = 0; si < SELS.length; si++) {
-    var els = document.querySelectorAll(SELS[si].sel);
+  /* BLOCK elements — simple translateY fade */
+  var SR = [
+    { sel: '.feat-row',  delay: 0  },
+    { sel: '.gl-card',   delay: 0  },
+  ];
+
+  /* Prepare 3D text elements */
+  var t3dItems = [];
+  for (var ti = 0; ti < T3D.length; ti++) {
+    var els = document.querySelectorAll(T3D[ti].sel);
+    for (var ei = 0; ei < els.length; ei++) {
+      var el = els[ei];
+      if (el._t3dDone) continue;
+      el._t3dDone = true;
+      el.classList.add('txt3d');
+      el.style.setProperty('--td', T3D[ti].base + 'ms');
+      t3dItems.push(el);
+    }
+  }
+
+  /* Prepare block elements */
+  var srItems = [];
+  for (var si = 0; si < SR.length; si++) {
+    var els = document.querySelectorAll(SR[si].sel);
     for (var ei = 0; ei < els.length; ei++) {
       var el = els[ei];
       if (el._srDone) continue;
       el._srDone = true;
-      el.style.opacity      = '0';
-      el.style.transform    = 'translateY(26px)';
-      el.style.transition   = 'opacity 0.70s ' + SELS[si].delay + 'ms cubic-bezier(.22,1,.36,1),' +
-                              'transform 0.70s ' + SELS[si].delay + 'ms cubic-bezier(.22,1,.36,1)';
-      el.style.willChange   = 'opacity,transform';
-      items.push(el);
+      el.style.opacity    = '0';
+      el.style.transform  = 'translateY(24px)';
+      el.style.transition = 'opacity .65s cubic-bezier(.22,1,.36,1),transform .65s cubic-bezier(.22,1,.36,1)';
+      el.style.willChange = 'opacity,transform';
+      srItems.push(el);
     }
   }
 
-  /* Also stagger .feat-row siblings within each section */
-  var sections = document.querySelectorAll('.section');
-  for (var si = 0; si < sections.length; si++) {
-    var rows = sections[si].querySelectorAll('.feat-row');
-    for (var ri = 0; ri < rows.length; ri++) {
-      var delay = ri * 110;
-      rows[ri].style.transitionDelay = delay + 'ms';
-    }
-    var cards = sections[si].querySelectorAll('.gl-card');
-    for (var ci = 0; ci < cards.length; ci++) {
-      var delay = ci * 90;
-      cards[ci].style.transitionDelay = delay + 'ms';
+  /* Stagger rows/cards within sections */
+  var secs = document.querySelectorAll('.section');
+  for (var si = 0; si < secs.length; si++) {
+    var rows  = secs[si].querySelectorAll('.feat-row');
+    for (var ri = 0; ri < rows.length; ri++) rows[ri].style.transitionDelay = (ri*105) + 'ms';
+    var cards = secs[si].querySelectorAll('.gl-card');
+    for (var ci = 0; ci < cards.length; ci++) cards[ci].style.transitionDelay = (ci*85) + 'ms';
+    /* Stagger txt3d within each section */
+    var t3 = secs[si].querySelectorAll('.txt3d:not(.statement-l1):not(.statement-l2)');
+    for (var xi = 0; xi < t3.length; xi++) {
+      var base = parseInt(t3[xi].style.getPropertyValue('--td')||'0', 10);
+      t3[xi].style.setProperty('--td', base + 'ms');
     }
   }
 
+  /* Fallback — no IntersectionObserver */
   if (!('IntersectionObserver' in window)) {
-    for (var i = 0; i < items.length; i++) {
-      items[i].style.opacity = '1';
-      items[i].style.transform = 'translateY(0)';
+    for (var i = 0; i < t3dItems.length; i++) t3dItems[i].classList.add('vis');
+    for (var i = 0; i < srItems.length; i++) {
+      srItems[i].style.opacity = '1'; srItems[i].style.transform = 'translateY(0)';
     }
     return;
   }
 
-  var obs = new IntersectionObserver(function(entries) {
+  /* 3D text observer */
+  var t3obs = new IntersectionObserver(function(entries) {
+    for (var i = 0; i < entries.length; i++) {
+      if (entries[i].isIntersecting) {
+        entries[i].target.classList.add('vis');
+        t3obs.unobserve(entries[i].target);
+      }
+    }
+  }, { threshold: 0.10 });
+  for (var i = 0; i < t3dItems.length; i++) t3obs.observe(t3dItems[i]);
+
+  /* Block observer */
+  var srObs = new IntersectionObserver(function(entries) {
     for (var i = 0; i < entries.length; i++) {
       if (entries[i].isIntersecting) {
         var el = entries[i].target;
-        el.style.opacity   = '1';
-        el.style.transform = 'translateY(0)';
-        obs.unobserve(el);
+        el.style.opacity = '1'; el.style.transform = 'translateY(0)';
+        srObs.unobserve(el);
       }
     }
-  }, { threshold: 0.12 });
+  }, { threshold: 0.10 });
+  for (var i = 0; i < srItems.length; i++) srObs.observe(srItems[i]);
 
-  for (var i = 0; i < items.length; i++) {
-    obs.observe(items[i]);
-  }
 })();
 
 </script>{% endraw %}
