@@ -151,17 +151,18 @@ def _run_auto_resolver_once(snap):
 
         commit_forced_off = (snap["mode"] == "commit")
         summary = {
-            "mode":             "dry_run",
-            "phase":            "6B",
-            "checked":          result.get("checked",       0),
-            "entered":          result.get("entered",       0),
-            "won":              result.get("won",           0),
-            "lost":             result.get("lost",          0),
-            "expired":          result.get("expired",       0),
-            "ambiguous":        result.get("ambiguous",     0),
-            "no_resolution":    result.get("no_resolution", 0),
-            "errors":           result.get("errors",        0),
-            "commit_forced_off": commit_forced_off,
+            "mode":               "dry_run",
+            "phase":              "6B",
+            "checked":            result.get("checked",       0),
+            "won":                result.get("won",           0),
+            "lost":               result.get("lost",          0),
+            "expired":            result.get("expired",       0),
+            "ambiguous":          result.get("ambiguous",     0),
+            "entered":            result.get("entered",       0),
+            # no_resolution from outcome_resolver = still WAITING_FOR_ENTRY, not yet expired
+            "waiting_for_entry":  result.get("no_resolution", 0),
+            "errors":             result.get("errors",        0),
+            "commit_forced_off":  commit_forced_off,
         }
         if commit_forced_off:
             summary["note"] = (

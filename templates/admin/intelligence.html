@@ -870,6 +870,7 @@ function intCar_renderStatus(s) {
         ' won=' + (sr.won || 0) +
         ' lost=' + (sr.lost || 0) +
         ' exp=' + (sr.expired || 0) +
+        ' wait=' + (sr.waiting_for_entry || sr.no_resolution || 0) +
         ' err=' + (sr.errors || 0);
     } catch (_) {
       summaryHtml = intSt_esc(s.last_run_summary.slice(0, 60));
@@ -1005,14 +1006,16 @@ function intAud_outcomeClass(r) {
 function intAud_renderSummary(summary) {
   var el = document.getElementById('aud-summary');
   if (!el) return;
+  // backward-compat: old keys (would_win etc.) fall back to 0
   var cards = [
-    { label: 'Checked',      val: summary.checked          || 0, cls: 'cyan'  },
-    { label: 'Would WIN',    val: summary.would_win        || 0, cls: 'green' },
-    { label: 'Would LOSS',   val: summary.would_loss       || 0, cls: 'red'   },
-    { label: 'Would EXP',    val: summary.would_expire     || 0, cls: 'muted' },
-    { label: 'Ambiguous',    val: summary.would_ambiguous  || 0, cls: 'amber' },
-    { label: 'No Entry Yet', val: summary.no_entry_yet     || 0, cls: 'muted' },
-    { label: 'Errors',       val: summary.errors           || 0, cls: summary.errors ? 'red' : 'muted' },
+    { label: 'Checked',      val: summary.checked         || 0, cls: 'cyan'  },
+    { label: 'Won',          val: summary.won             || summary.would_win       || 0, cls: 'green' },
+    { label: 'Lost',         val: summary.lost            || summary.would_loss      || 0, cls: 'red'   },
+    { label: 'Expired',      val: summary.expired         || summary.would_expire    || 0, cls: 'muted' },
+    { label: 'Ambiguous',    val: summary.ambiguous       || summary.would_ambiguous || 0, cls: 'amber' },
+    { label: 'No Entry Yet', val: (summary.waiting_for_entry || summary.no_entry_yet || summary.no_resolution) || 0, cls: 'muted' },
+    { label: 'Entered',      val: summary.entered         || 0, cls: 'cyan'  },
+    { label: 'Errors',       val: summary.errors          || 0, cls: summary.errors ? 'red' : 'muted' },
   ];
   var html = '<div class="aud-summary-grid">';
   for (var i = 0; i < cards.length; i++) {
@@ -1058,7 +1061,7 @@ function intAud_renderSignals(signals) {
   var rows = '';
   for (var i = 0; i < signals.length; i++) {
     var s = signals[i];
-    var cur = s.current_result || '—';
+    var cur = s.final_result || s.current_result || '—';
     var curCls = intAud_outcomeClass(cur);
     rows += '<tr class="aud-signal-row" onclick="intAud_toggleTrace(' + i + ')">';
     rows += '<td style="font-family:\'JetBrains Mono\',monospace;font-size:11px">' + intAud_escHtml(s.pair || '—') + '</td>';
@@ -1078,7 +1081,8 @@ function intAud_renderSignals(signals) {
           if (k.indexOf(key) === 0) { cfVal = cf[k]; break; }
         }
       }
-      var cfResult = cfVal ? (cfVal.result || '—') : '—';
+      // cfVal is a plain string (status), not an object
+      var cfResult = (cfVal && typeof cfVal === 'string') ? cfVal : (cfVal && cfVal.result) ? cfVal.result : '—';
       var cfCls = intAud_outcomeClass(cfResult);
       cfHtml += '<div class="aud-cf-cell"><div class="aud-cf-label">' + intAud_cfLabel(key) + '</div>';
       cfHtml += '<div class="aud-cf-val ' + cfCls + '">' + intAud_escHtml(cfResult) + '</div></div>';
@@ -1130,10 +1134,11 @@ function intAud_runAudit() {
   var rFilter = (document.getElementById('aud-result-filter') || {}).value || '';
 
   var url = '/admin/intelligence/resolver-audit?limit=' + encodeURIComponent(limit);
-  if (module)  url += '&module='        + encodeURIComponent(module);
-  if (tf)      url += '&timeframe='     + encodeURIComponent(tf);
-  if (rFilter) url += '&result_filter=' + encodeURIComponent(rFilter);
+  if (module)  url += '&module='    + encodeURIComponent(module);
+  if (tf)      url += '&timeframe=' + encodeURIComponent(tf);
+  if (rFilter) url += '&result='    + encodeURIComponent(rFilter);
 
+  console.log('[AuditResolver] clicked — fetching', url);
   intAud_running = true;
   fetch(url, { credentials: 'same-origin' })
     .then(function(r) { return r.json(); })
@@ -1141,12 +1146,28 @@ function intAud_runAudit() {
       intAud_running = false;
       if (runBtn) { runBtn.textContent = '🔬 Run Audit'; runBtn.disabled = false; }
       if (!data.ok) {
+        console.error('[AuditResolver] error', data.error);
         if (errEl) { errEl.textContent = data.error || 'Audit failed'; errEl.style.display = 'block'; }
         return;
       }
+      var sa = data.summary_all || data.summary || {};
+      console.log('[AuditResolver] summary_all', sa);
+      console.log('[AuditResolver] summary_filtered', data.summary_filtered);
+      console.log('[AuditResolver] signals returned', (data.signals || []).length);
       if (resultEl) { resultEl.style.display = 'block'; }
-      intAud_renderSummary(data.summary || {});
+      // Show filter info above summary
+      var sf = data.summary_filtered || {};
+      var filterInfo = '';
+      if (sf.result && sf.result !== 'all') {
+        filterInfo = '<p style="font-size:10px;color:var(--muted);margin-bottom:10px">' +
+          'Filter: result=<strong style="color:var(--cyan)">' + intAud_escHtml(sf.result) + '</strong>' +
+          ' &nbsp;|&nbsp; Returned: <strong>' + (sf.returned || 0) + '</strong>' +
+          ' &nbsp;|&nbsp; All checked: <strong>' + (sa.checked || 0) + '</strong></p>';
+      }
+      if (summaryEl) { summaryEl.innerHTML = filterInfo; }
+      intAud_renderSummary(sa);
       intAud_renderSignals(data.signals  || []);
+      console.log('[AuditResolver] cards updated');
     })
     .catch(function(err) {
       intAud_running = false;
