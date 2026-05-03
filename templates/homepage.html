@@ -540,7 +540,7 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 
 
 /* ── STATEMENT SECTION ── */
-#statement{position:relative;min-height:100vh;background:#050510;display:flex;align-items:center;justify-content:center;overflow:hidden}
+#statement{position:relative;min-height:100vh;background:#050510;display:flex;align-items:center;justify-content:center;overflow:hidden;perspective:900px;perspective-origin:50% 50%}
 #stmt-bg-glow{position:absolute;inset:0;background:radial-gradient(ellipse 75% 65% at 50% 44%,rgba(26,100,255,.22) 0%,rgba(0,40,180,.09) 48%,transparent 74%);pointer-events:none;will-change:opacity}
 #stmt-inner{position:relative;z-index:1;width:100%;max-width:960px;padding:56px 32px;display:flex;flex-direction:column;align-items:center;gap:0}
 @media(max-width:640px){#stmt-inner{padding:44px 20px}}
@@ -2299,7 +2299,6 @@ function lwStartBounce(){
   var sec      = document.getElementById('statement');
   if (!sec) return;
   var bgGlow   = document.getElementById('stmt-bg-glow');
-  var orbitSvg = document.getElementById('stmt-orbit-svg');
   var sphWrap  = document.getElementById('stmt-sphere-wrap');
   var brand    = document.getElementById('stmt-brand');
   var l1       = document.getElementById('stmt-l1');
@@ -2341,8 +2340,8 @@ function lwStartBounce(){
   var prefersReduced = window.matchMedia &&
     window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (prefersReduced) {
-    gsap.set([bgGlow, orbitSvg, sphWrap, brand, l1, l2],
-             { opacity: 1, scale: 1, filter: 'blur(0px) brightness(1)', y: 0 });
+    gsap.set([bgGlow, sphWrap, brand, l1, l2],
+             { opacity: 1, scale: 1, filter: 'blur(0px) brightness(1)', y: 0, z: 0 });
     return;
   }
 
@@ -2350,22 +2349,22 @@ function lwStartBounce(){
   var words = splitWords(l1);
 
   /* ── Initial hidden states ── */
-  gsap.set(bgGlow,   { opacity: 0 });
-  gsap.set(orbitSvg, { opacity: 0 });
-  /* sphWrap: tiny scale + heavy blur + brightness flash ready for burst */
-  gsap.set(sphWrap,  { opacity: 0, scale: 0.04, filter: 'blur(32px) brightness(4)' });
-  gsap.set(brand,    { opacity: 0, y: -18, filter: 'blur(5px)' });
+  /* bgGlow starts scaled-down + shifted; pre-entry normalises scale+y */
+  gsap.set(bgGlow,  { opacity: 0, scale: 0.88, y: 18 });
+  /* sphWrap: deep behind screen (z:-340), tiny scale, heavy blur — camera-push ready */
+  gsap.set(sphWrap, { opacity: 0, z: -340, scale: 0.04, filter: 'blur(28px) brightness(3)', y: 28 });
+  gsap.set(brand,   { opacity: 0, y: -18, filter: 'blur(5px)' });
   gsap.set(l1,    { opacity: 1 });
   gsap.set(words, { opacity: 0, y: 24, filter: 'blur(6px)' });
   gsap.set(l2,    { opacity: 0, y: 16, filter: 'blur(4px)' });
 
-  /* ── PRE-ENTRY: only ambient glow appears as section scrolls into view ──
-     No sphere yet — just the faint blue aura hinting at what's coming.
-     When pin activates, sphere erupts. */
+  /* ── PRE-ENTRY: ambient glow drifts in as section scrolls into view ──
+     bgGlow scale:0.88→1 + y:18→0 + opacity:0→0.65 gives a slow "zoom-in"
+     before the pin activates — parallax warmup, no sphere yet. */
   gsap.fromTo(bgGlow,
-    { opacity: 0 },
+    { opacity: 0, scale: 0.88, y: 18 },
     {
-      opacity: 0.62, ease: 'power1.inOut',
+      opacity: 0.65, scale: 1, y: 0, ease: 'power1.inOut',
       scrollTrigger: {
         trigger: sec,
         start:   'top bottom',
@@ -2402,29 +2401,25 @@ function lwStartBounce(){
   });
 
   /* ── ACT 1: SPHERE BURST (pos 0 → 1.5) ──
-     The entire sphere — ring, triangle, glow — erupts as one single object.
-     Fast power4 ease = rapid initial pop, decelerates to a stop.
-     Bloom flash (brightness 4→2→1) gives the cinematic "impact" moment. */
+     sphWrap (sphere + ring as one unified object) punches from z:-340 deep
+     behind the screen to z:22 (slightly past the viewer's eye) in 0.95s —
+     true camera-projection feel, not just 2D scale.
+     immediateRender:false so pre-entry gsap.set state is preserved on load. */
 
-  /* glow completes */
-  tl.fromTo(bgGlow,
-    { opacity: 0.62 },
-    { opacity: 1, duration: 0.8, ease: 'power2.out' }, 0);
+  /* glow drives to full brightness — picks up from pre-entry's opacity:0.65 */
+  tl.to(bgGlow,
+    { opacity: 1, duration: 0.8, ease: 'power1.inOut' }, 0);
 
-  /* orbit ring appears with sphere */
-  tl.to(orbitSvg,
-    { opacity: 0.9, duration: 0.8, ease: 'power4.out' }, 0);
-
-  /* sphere bursts through — scale from 0.04 to slightly over 1 (overshoot) */
+  /* sphere + ring burst: z depth punch + scale overshoot + bloom flash */
   tl.fromTo(sphWrap,
-    { opacity: 0, scale: 0.04, filter: 'blur(32px) brightness(4)' },
-    { opacity: 1, scale: 1.055, filter: 'blur(0px) brightness(2.2)',
-      duration: 0.95, ease: 'power4.out' }, 0);
+    { opacity: 0, z: -340, scale: 0.04, filter: 'blur(28px) brightness(3)', y: 28 },
+    { opacity: 1, z: 22,   scale: 1.05, filter: 'blur(0px) brightness(2.2)', y: 0,
+      duration: 0.95, ease: 'power4.out', immediateRender: false }, 0);
 
-  /* settle: overshoot relaxes to rest position with tiny elastic bounce */
+  /* settle: z eases to 0 (screen plane), brightness cools, back.out overshoot */
   tl.to(sphWrap,
-    { scale: 1, filter: 'blur(0px) brightness(1)',
-      duration: 0.55, ease: 'back.out(1.6)' }, 0.95);
+    { z: 0, scale: 1, filter: 'blur(0px) brightness(1)',
+      duration: 0.5, ease: 'back.out(1.5)' }, 0.95);
 
   /* ── ACT 2: TEXT (pos 1.8 → end) ──
      Only starts AFTER sphere has fully landed (pos 1.5 is settled). */
