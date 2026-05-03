@@ -553,6 +553,8 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 #stmt-sphere::before{content:'';position:absolute;inset:0;border-radius:50%;background:conic-gradient(from 200deg,transparent 0%,rgba(100,180,255,.1) 18%,rgba(210,235,255,.22) 24%,rgba(100,180,255,.08) 30%,transparent 48%);animation:sphSweep 7s ease-in-out infinite;pointer-events:none}
 @keyframes sphSweep{0%,100%{transform:rotate(0deg)}50%{transform:rotate(200deg)}}
 #stmt-sphere::after{content:'';position:absolute;inset:0;border-radius:50%;background:radial-gradient(circle at 68% 72%,rgba(0,80,220,.32) 0%,transparent 30%);pointer-events:none}
+#stmt-sphere-light{position:absolute;width:58%;height:58%;border-radius:50%;background:radial-gradient(circle,rgba(80,190,255,.34) 0%,transparent 78%);filter:blur(18px);pointer-events:none;animation:sphLightFloat 3.8s ease-in-out infinite;top:8%;left:18%}
+@keyframes sphLightFloat{0%,100%{transform:translate(0px,0px);opacity:.72}42%{transform:translate(22px,15px);opacity:1}76%{transform:translate(-11px,24px);opacity:.78}}
 #stmt-tri-svg{width:52%;height:52%;position:relative;z-index:1;overflow:visible}
 #stmt-text-wrap{max-width:700px;text-align:center;position:relative;z-index:2;margin-top:36px}
 #stmt-l1{font-size:clamp(1.2rem,2.5vw,1.85rem);font-weight:700;line-height:1.68;color:#fff;margin:0 0 22px;word-break:break-word}
@@ -810,6 +812,7 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
         <circle id="stmt-orbit-ring" cx="280" cy="280" r="252" fill="none" stroke="rgba(80,160,255,0.5)" stroke-width="1.2"/>
       </svg>
       <div id="stmt-sphere">
+        <div id="stmt-sphere-light" aria-hidden="true"></div>
         <svg id="stmt-tri-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
           <path id="stmt-triangle" d="M100,42 L167,152 L33,152 Z" fill="none" stroke="rgba(255,255,255,0.75)" stroke-width="1.2" stroke-linejoin="round" pathLength="1"/>
         </svg>
@@ -2293,19 +2296,17 @@ function lwStartBounce(){
   if (!window.gsap || !window.ScrollTrigger) return;
   gsap.registerPlugin(ScrollTrigger);
 
-  var sec       = document.getElementById('statement');
+  var sec      = document.getElementById('statement');
   if (!sec) return;
-  var bgGlow    = document.getElementById('stmt-bg-glow');
-  var orbitSvg  = document.getElementById('stmt-orbit-svg');
-  var orbitRing = document.getElementById('stmt-orbit-ring');
-  var sphWrap   = document.getElementById('stmt-sphere-wrap');
-  var triangle  = document.getElementById('stmt-triangle');
-  var brand     = document.getElementById('stmt-brand');
-  var l1        = document.getElementById('stmt-l1');
-  var l2        = document.getElementById('stmt-l2');
+  var bgGlow   = document.getElementById('stmt-bg-glow');
+  var orbitSvg = document.getElementById('stmt-orbit-svg');
+  var sphWrap  = document.getElementById('stmt-sphere-wrap');
+  var brand    = document.getElementById('stmt-brand');
+  var l1       = document.getElementById('stmt-l1');
+  var l2       = document.getElementById('stmt-l2');
   if (!l1) return;
 
-  /* ── Word splitter: text nodes → word spans; element nodes wrapped as-is ── */
+  /* ── Word splitter ── */
   function splitWords(el) {
     var result = [];
     var nodes = Array.prototype.slice.call(el.childNodes);
@@ -2340,18 +2341,9 @@ function lwStartBounce(){
   var prefersReduced = window.matchMedia &&
     window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (prefersReduced) {
-    gsap.set([bgGlow, orbitSvg, sphWrap, brand, l1, l2], { opacity: 1, scale: 1, filter: 'blur(0px) brightness(1)', y: 0 });
-    if (orbitRing) { orbitRing.removeAttribute('stroke-dasharray'); orbitRing.removeAttribute('stroke-dashoffset'); }
-    if (triangle)  { triangle.setAttribute('stroke-dasharray', 'none'); triangle.removeAttribute('stroke-dashoffset'); }
+    gsap.set([bgGlow, orbitSvg, sphWrap, brand, l1, l2],
+             { opacity: 1, scale: 1, filter: 'blur(0px) brightness(1)', y: 0 });
     return;
-  }
-
-  /* ── Orbit ring draw setup ── */
-  /* circumference of r=252 in the 560x560 viewBox */
-  var ringC = 2 * Math.PI * 252; /* ≈ 1583 */
-  if (orbitRing) {
-    orbitRing.setAttribute('stroke-dasharray', ringC);
-    orbitRing.setAttribute('stroke-dashoffset', ringC);
   }
 
   /* ── Split l1 into word spans ── */
@@ -2359,101 +2351,101 @@ function lwStartBounce(){
 
   /* ── Initial hidden states ── */
   gsap.set(bgGlow,   { opacity: 0 });
-  gsap.set(orbitSvg, { opacity: 1 }); /* ring visibility controlled via stroke-dashoffset */
-  /* sphere starts partially present so pre-entry can bridge the transition */
-  gsap.set(sphWrap,  { opacity: 0, scale: 0.52, filter: 'blur(28px) brightness(1)' });
-  gsap.set(brand,    { opacity: 0, y: -14, filter: 'blur(5px)' });
-  if (triangle) {
-    triangle.setAttribute('stroke-dasharray', '1');
-    triangle.setAttribute('stroke-dashoffset', '1');
-  }
+  gsap.set(orbitSvg, { opacity: 0 });
+  /* sphWrap: tiny scale + heavy blur + brightness flash ready for burst */
+  gsap.set(sphWrap,  { opacity: 0, scale: 0.04, filter: 'blur(32px) brightness(4)' });
+  gsap.set(brand,    { opacity: 0, y: -18, filter: 'blur(5px)' });
   gsap.set(l1,    { opacity: 1 });
-  gsap.set(words, { opacity: 0, y: 26, filter: 'blur(6px)' });
-  gsap.set(l2,    { opacity: 0, y: 18, filter: 'blur(4px)' });
+  gsap.set(words, { opacity: 0, y: 24, filter: 'blur(6px)' });
+  gsap.set(l2,    { opacity: 0, y: 16, filter: 'blur(4px)' });
 
-  /* ── PRE-ENTRY: seamless hero → statement (no pin, scrub true) ── */
-  /* Fades in glow + partially reveals sphere BEFORE the pin activates,
-     eliminating the black-screen flash during the hero→section scroll. */
-  var preTL = gsap.timeline({
-    scrollTrigger: {
-      trigger: sec,
-      start:   'top bottom',
-      end:     'top top',
-      scrub:   true
+  /* ── PRE-ENTRY: only ambient glow appears as section scrolls into view ──
+     No sphere yet — just the faint blue aura hinting at what's coming.
+     When pin activates, sphere erupts. */
+  gsap.fromTo(bgGlow,
+    { opacity: 0 },
+    {
+      opacity: 0.62, ease: 'power1.inOut',
+      scrollTrigger: {
+        trigger: sec,
+        start:   'top bottom',
+        end:     'top top',
+        scrub:   true
+      }
     }
-  });
-  preTL.fromTo(bgGlow,  { opacity: 0 },
-                        { opacity: 0.55, ease: 'none' }, 0);
-  preTL.fromTo(sphWrap, { opacity: 0, scale: 0.52, filter: 'blur(28px) brightness(1)' },
-                        { opacity: 0.42, scale: 0.76, filter: 'blur(14px) brightness(1)', ease: 'none' }, 0);
+  );
 
-  /* ── IDLE ANIMATIONS: start when scroll exits the pinned section ── */
+  /* ── IDLE: sphere breathes after landing ── */
   var idleStarted = false;
   function startIdleAnims() {
     if (idleStarted) return;
     idleStarted = true;
-    /* sphere breathes gently */
     gsap.to('#stmt-sphere', {
       scale: 1.028, duration: 2.8, repeat: -1, yoyo: true,
       ease: 'sine.inOut', transformOrigin: 'center center'
     });
   }
 
-  /* ── MAIN CINEMATIC PINNED TIMELINE ── */
-  /* Exact sequence: Glow → Ring Draw → Sphere → Glow Boost → Triangle → Brand → Text */
+  /* ── MAIN CINEMATIC PINNED TIMELINE ──
+     Architecture: ONE high-impact burst for sphere, THEN text.
+     No staged construction — the sphere erupts as a complete object. */
   var tl = gsap.timeline({
-    defaults: { ease: 'power2.out' },
     scrollTrigger: {
       trigger:       sec,
       start:         'top top',
-      end:           '+=320%',
+      end:           '+=240%',
       pin:           true,
-      scrub:         1.5,
+      scrub:         0.9,
       anticipatePin: 1,
       onLeave: startIdleAnims
     }
   });
 
-  /* 1 — GLOW: complete ambient glow (continues from pre-entry 0.55 → 1) */
+  /* ── ACT 1: SPHERE BURST (pos 0 → 1.5) ──
+     The entire sphere — ring, triangle, glow — erupts as one single object.
+     Fast power4 ease = rapid initial pop, decelerates to a stop.
+     Bloom flash (brightness 4→2→1) gives the cinematic "impact" moment. */
+
+  /* glow completes */
   tl.fromTo(bgGlow,
-    { opacity: 0.55 },
-    { opacity: 1, duration: 1.0, ease: 'power1.inOut' }, 0);
+    { opacity: 0.62 },
+    { opacity: 1, duration: 0.8, ease: 'power2.out' }, 0);
 
-  /* 2 — RING DRAW: clockwise stroke-dashoffset animation */
-  tl.to(orbitRing, {
-    attr: { 'stroke-dashoffset': 0 },
-    duration: 2.0, ease: 'power2.inOut'
-  }, 0.2);
+  /* orbit ring appears with sphere */
+  tl.to(orbitSvg,
+    { opacity: 0.9, duration: 0.8, ease: 'power4.out' }, 0);
 
-  /* 3 — SPHERE: zoom in from depth, deblur (continues from pre-entry) */
+  /* sphere bursts through — scale from 0.04 to slightly over 1 (overshoot) */
   tl.fromTo(sphWrap,
-    { opacity: 0.42, scale: 0.76, filter: 'blur(14px) brightness(1)' },
-    { opacity: 1, scale: 1, filter: 'blur(0px) brightness(1)', duration: 1.6, ease: 'power3.out' }, 2.5);
+    { opacity: 0, scale: 0.04, filter: 'blur(32px) brightness(4)' },
+    { opacity: 1, scale: 1.055, filter: 'blur(0px) brightness(2.2)',
+      duration: 0.95, ease: 'power4.out' }, 0);
 
-  /* 4 — GLOW BOOST: sphere flares up then settles to normal */
-  tl.to(sphWrap, { filter: 'blur(0px) brightness(1.9)', duration: 0.45, ease: 'power2.inOut' }, 4.1);
-  tl.to(sphWrap, { filter: 'blur(0px) brightness(1)',   duration: 0.7,  ease: 'power2.out'   }, 4.55);
+  /* settle: overshoot relaxes to rest position with tiny elastic bounce */
+  tl.to(sphWrap,
+    { scale: 1, filter: 'blur(0px) brightness(1)',
+      duration: 0.55, ease: 'back.out(1.6)' }, 0.95);
 
-  /* 5 — TRIANGLE: draws clockwise inside sphere */
-  tl.to(triangle, {
-    attr: { 'stroke-dashoffset': 0 },
-    duration: 1.0, ease: 'power2.inOut'
-  }, 5.0);
+  /* ── ACT 2: TEXT (pos 1.8 → end) ──
+     Only starts AFTER sphere has fully landed (pos 1.5 is settled). */
 
-  /* 6 — BRAND TEXT: "ZyNi SMC" drifts in from above */
-  tl.to(brand, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.8 }, 6.0);
+  /* brand label floats down from above */
+  tl.to(brand,
+    { opacity: 1, y: 0, filter: 'blur(0px)',
+      duration: 0.75, ease: 'power2.out' }, 1.8);
 
-  /* 7 — MAIN TEXT: each word rises + sharpens, staggered */
-  tl.to(words, {
-    opacity: 1, y: 0, filter: 'blur(0px)',
-    duration: 0.5, stagger: 0.11, ease: 'power2.out'
-  }, 7.0);
+  /* main text: words rise + sharpen one by one */
+  tl.to(words,
+    { opacity: 1, y: 0, filter: 'blur(0px)',
+      duration: 0.45, stagger: 0.1, ease: 'power2.out' }, 2.7);
 
-  /* 8 — SECOND LINE: fades in after main text */
-  tl.to(l2, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.85 }, 8.8);
+  /* second paragraph */
+  tl.to(l2,
+    { opacity: 1, y: 0, filter: 'blur(0px)',
+      duration: 0.8, ease: 'power2.out' }, 4.6);
 
   /* tail hold */
-  tl.to({}, { duration: 0.4 }, 9.8);
+  tl.to({}, { duration: 0.35 }, 5.6);
 
 })();
 
