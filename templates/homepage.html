@@ -541,23 +541,24 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 
 /* ── STATEMENT SECTION ── */
 #statement{position:relative;min-height:100vh;background:#050510;display:flex;align-items:center;justify-content:center;overflow:hidden}
-#stmt-inner{position:relative;width:100%;max-width:1100px;margin:0 auto;padding:80px 40px;display:flex;flex-direction:column;align-items:center;gap:72px}
-@media(max-width:640px){#stmt-inner{padding:60px 20px;gap:48px}}
-#stmt-bg-glow{position:absolute;width:720px;height:720px;top:50%;left:50%;transform:translate(-50%,-50%);background:radial-gradient(circle,rgba(26,111,255,.18) 0%,rgba(26,111,255,.07) 40%,transparent 70%);pointer-events:none;will-change:opacity,filter}
-#stmt-visual-wrap{position:relative;width:380px;height:380px;flex-shrink:0}
-@media(max-width:640px){#stmt-visual-wrap{width:280px;height:280px}}
+#stmt-bg-glow{position:absolute;inset:0;background:radial-gradient(ellipse 75% 65% at 50% 44%,rgba(26,100,255,.22) 0%,rgba(0,40,180,.09) 48%,transparent 74%);pointer-events:none;will-change:opacity}
+#stmt-inner{position:relative;z-index:1;width:100%;max-width:960px;padding:56px 32px;display:flex;flex-direction:column;align-items:center;gap:0}
+@media(max-width:640px){#stmt-inner{padding:44px 20px}}
+#stmt-brand{font-size:.72rem;font-weight:600;letter-spacing:.26em;text-transform:uppercase;color:rgba(100,170,255,.68);margin-bottom:24px;will-change:opacity,filter,transform}
+#stmt-sphere-wrap{position:relative;width:400px;height:400px;display:flex;align-items:center;justify-content:center;flex-shrink:0;will-change:transform,opacity,filter;--orbit-r:180px}
+@media(max-width:640px){#stmt-sphere-wrap{width:286px;height:286px;--orbit-r:128px}}
 #stmt-orbit-svg{position:absolute;top:0;left:0;width:100%;height:100%;overflow:visible;transform-origin:center center;will-change:transform,opacity}
-#stmt-letters{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none}
-.sol{position:absolute;top:50%;left:50%;font-size:.86rem;font-weight:700;color:rgba(77,166,255,.9);letter-spacing:.06em;transform:translate(-50%,-50%) rotate(var(--a,0deg)) translateY(-182px) rotate(calc(-1*var(--a,0deg)));will-change:opacity}
-@media(max-width:640px){.sol{font-size:.72rem;transform:translate(-50%,-50%) rotate(var(--a,0deg)) translateY(-134px) rotate(calc(-1*var(--a,0deg)))}}
-#stmt-circle-wrap{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);will-change:transform,opacity,filter}
-#stmt-circle{width:230px;height:230px;border-radius:50%;background:radial-gradient(circle at 38% 36%,#1a6fff,#0044cc 52%,#001a66);box-shadow:0 0 48px rgba(26,111,255,.58),0 0 96px rgba(26,111,255,.3),0 0 160px rgba(0,68,204,.15),inset 0 0 32px rgba(255,255,255,.07);display:flex;align-items:center;justify-content:center;position:relative}
-@media(max-width:640px){#stmt-circle{width:168px;height:168px}}
-#stmt-circle-inner-glow{position:absolute;inset:0;border-radius:50%;background:radial-gradient(circle at 38% 28%,rgba(255,255,255,.22) 0%,transparent 58%);pointer-events:none}
-#stmt-tri-svg{width:54%;height:54%;position:relative;z-index:1;overflow:visible}
-#stmt-text-wrap{max-width:740px;text-align:center}
-#stmt-l1{font-size:clamp(1.25rem,2.8vw,1.95rem);font-weight:700;line-height:1.65;color:#ffffff;margin:0 0 28px;word-break:break-word}
-#stmt-l2{font-size:clamp(.95rem,1.8vw,1.15rem);font-weight:400;line-height:1.82;color:#4da6ff;margin:0}
+#stmt-olt-wrap{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none}
+.olt{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(var(--a,0deg)) translateY(calc(-1*var(--orbit-r,180px))) rotate(calc(-1*var(--a,0deg)));font-size:.74rem;font-weight:600;letter-spacing:.1em;color:rgba(110,178,255,.78);will-change:opacity}
+#stmt-sphere{position:relative;width:268px;height:268px;border-radius:50%;background:radial-gradient(circle at 34% 27%,rgba(135,198,255,.4) 0%,rgba(65,135,255,.18) 26%,transparent 50%),radial-gradient(ellipse at 50% 42%,#1a5eff 0%,#0033cc 38%,#001166 65%,#000820 100%);box-shadow:0 0 46px 18px rgba(26,111,255,.54),0 0 92px 34px rgba(26,111,255,.28),0 0 176px 58px rgba(26,111,255,.14),0 0 288px 92px rgba(26,111,255,.06),inset 0 0 56px rgba(0,18,110,.6),inset 0 -32px 68px rgba(0,0,100,.44);display:flex;align-items:center;justify-content:center;overflow:hidden}
+@media(max-width:640px){#stmt-sphere{width:192px;height:192px}}
+#stmt-sphere::before{content:'';position:absolute;inset:0;border-radius:50%;background:conic-gradient(from 200deg,transparent 0%,rgba(100,180,255,.1) 18%,rgba(210,235,255,.22) 24%,rgba(100,180,255,.08) 30%,transparent 48%);animation:sphSweep 7s ease-in-out infinite;pointer-events:none}
+@keyframes sphSweep{0%,100%{transform:rotate(0deg)}50%{transform:rotate(200deg)}}
+#stmt-sphere::after{content:'';position:absolute;inset:0;border-radius:50%;background:radial-gradient(circle at 68% 72%,rgba(0,80,220,.32) 0%,transparent 30%);pointer-events:none}
+#stmt-tri-svg{width:52%;height:52%;position:relative;z-index:1;overflow:visible}
+#stmt-text-wrap{max-width:700px;text-align:center;position:relative;z-index:2;margin-top:36px}
+#stmt-l1{font-size:clamp(1.2rem,2.5vw,1.85rem);font-weight:700;line-height:1.68;color:#fff;margin:0 0 22px;word-break:break-word}
+#stmt-l2{font-size:clamp(.9rem,1.7vw,1.1rem);font-weight:400;line-height:1.84;color:rgba(100,180,255,.78);margin:0}
 .sw{display:inline-block;will-change:transform,opacity,filter}
 .stmt-hl{background:linear-gradient(90deg,#f59e0b,#fbbf24 60%,#f97316);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;filter:drop-shadow(0 0 8px rgba(245,158,11,.55)) drop-shadow(0 0 22px rgba(245,158,11,.22))}
 .stmt-hl2{background:linear-gradient(90deg,#22d3ee,#38bdf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;filter:drop-shadow(0 0 8px rgba(34,211,238,.55)) drop-shadow(0 0 22px rgba(34,211,238,.22))}
@@ -803,28 +804,27 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 
 <!-- STATEMENT -->
 <section id="statement">
+  <div id="stmt-bg-glow" aria-hidden="true"></div>
   <div id="stmt-inner">
-    <div id="stmt-bg-glow" aria-hidden="true"></div>
-    <div id="stmt-visual-wrap" aria-hidden="true">
-      <svg id="stmt-orbit-svg" viewBox="0 0 500 500" xmlns="http://www.w3.org/2000/svg">
-        <circle id="stmt-orbit-ring" cx="250" cy="250" r="218" fill="none" stroke="rgba(26,111,255,0.45)" stroke-width="1.5" stroke-dasharray="5 9"/>
+    <div id="stmt-brand" aria-hidden="true">ZyNi SMC</div>
+    <div id="stmt-sphere-wrap" aria-hidden="true">
+      <svg id="stmt-orbit-svg" viewBox="0 0 560 560" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="280" cy="280" r="252" fill="none" stroke="rgba(80,160,255,0.28)" stroke-width="1" stroke-dasharray="3 7"/>
+        <circle cx="280" cy="28" r="2.2" fill="rgba(120,185,255,0.65)"/>
+        <circle cx="532" cy="280" r="2.2" fill="rgba(120,185,255,0.65)"/>
+        <circle cx="280" cy="532" r="2.2" fill="rgba(120,185,255,0.65)"/>
+        <circle cx="28" cy="280" r="2.2" fill="rgba(120,185,255,0.65)"/>
       </svg>
-      <div id="stmt-letters">
-        <span class="sol" style="--a:0deg">Z</span>
-        <span class="sol" style="--a:51.4deg">y</span>
-        <span class="sol" style="--a:102.9deg">N</span>
-        <span class="sol" style="--a:154.3deg">i</span>
-        <span class="sol" style="--a:205.7deg">S</span>
-        <span class="sol" style="--a:257.1deg">m</span>
-        <span class="sol" style="--a:308.6deg">c</span>
+      <div id="stmt-olt-wrap">
+        <span class="olt" style="--a:270deg">O</span>
+        <span class="olt" style="--a:180deg">V</span>
+        <span class="olt" style="--a:90deg">I</span>
+        <span class="olt" style="--a:0deg">A</span>
       </div>
-      <div id="stmt-circle-wrap">
-        <div id="stmt-circle">
-          <div id="stmt-circle-inner-glow"></div>
-          <svg id="stmt-tri-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
-            <path id="stmt-triangle" d="M100,28 L178,160 L22,160 Z" fill="none" stroke="rgba(255,255,255,0.85)" stroke-width="1.5" stroke-linejoin="round" pathLength="1"/>
-          </svg>
-        </div>
+      <div id="stmt-sphere">
+        <svg id="stmt-tri-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+          <path id="stmt-triangle" d="M100,42 L167,152 L33,152 Z" fill="none" stroke="rgba(255,255,255,0.75)" stroke-width="1.2" stroke-linejoin="round" pathLength="1"/>
+        </svg>
       </div>
     </div>
     <div id="stmt-text-wrap">
@@ -2305,19 +2305,20 @@ function lwStartBounce(){
   if (!window.gsap || !window.ScrollTrigger) return;
   gsap.registerPlugin(ScrollTrigger);
 
-  var sec        = document.getElementById('statement');
+  var sec      = document.getElementById('statement');
   if (!sec) return;
-  var bgGlow     = document.getElementById('stmt-bg-glow');
-  var orbitSvg   = document.getElementById('stmt-orbit-svg');
-  var letters    = sec.querySelectorAll('.sol');
-  var circleWrap = document.getElementById('stmt-circle-wrap');
-  var circle     = document.getElementById('stmt-circle');
-  var triangle   = document.getElementById('stmt-triangle');
-  var l1         = document.getElementById('stmt-l1');
-  var l2         = document.getElementById('stmt-l2');
+  var bgGlow   = document.getElementById('stmt-bg-glow');
+  var sphWrap  = document.getElementById('stmt-sphere-wrap');
+  var orbitSvg = document.getElementById('stmt-orbit-svg');
+  var oltWrap  = document.getElementById('stmt-olt-wrap');
+  var letters  = oltWrap ? oltWrap.querySelectorAll('.olt') : [];
+  var triangle = document.getElementById('stmt-triangle');
+  var brand    = document.getElementById('stmt-brand');
+  var l1       = document.getElementById('stmt-l1');
+  var l2       = document.getElementById('stmt-l2');
   if (!l1) return;
 
-  /* ── Word splitter: preserves inner spans as single units ── */
+  /* ── Word splitter: text nodes → word spans; element nodes wrapped as-is ── */
   function splitWords(el) {
     var result = [];
     var nodes = Array.prototype.slice.call(el.childNodes);
@@ -2352,8 +2353,8 @@ function lwStartBounce(){
   var prefersReduced = window.matchMedia &&
     window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (prefersReduced) {
-    gsap.set([bgGlow, orbitSvg, circleWrap, l2], { opacity: 1, scale: 1, filter: 'blur(0px)' });
-    gsap.set(letters, { opacity: 1 });
+    gsap.set([bgGlow, sphWrap, orbitSvg, brand, l1, l2], { opacity: 1, scale: 1, filter: 'blur(0px)', y: 0 });
+    if (letters.length) gsap.set(letters, { opacity: 1 });
     if (triangle) { triangle.setAttribute('stroke-dasharray', 'none'); triangle.removeAttribute('stroke-dashoffset'); }
     return;
   }
@@ -2361,41 +2362,60 @@ function lwStartBounce(){
   /* ── Split l1 into word spans ── */
   var words = splitWords(l1);
 
-  /* ── Initial hidden states (GSAP owns these properties) ── */
-  gsap.set(bgGlow,     { opacity: 0 });
-  gsap.set(orbitSvg,   { opacity: 0, scale: 0.72, transformOrigin: 'center center' });
-  gsap.set(circleWrap, { opacity: 0, scale: 0.28, filter: 'blur(24px)' });
-  gsap.set(letters,    { opacity: 0 });
+  /* ── Initial states (GSAP owns these properties) ── */
+  gsap.set(bgGlow,   { opacity: 0 });
+  /* sphere starts partially revealed so pre-entry can animate it in */
+  gsap.set(sphWrap,  { opacity: 0, scale: 0.52, filter: 'blur(28px)' });
+  gsap.set(orbitSvg, { opacity: 0 });
+  gsap.set(letters,  { opacity: 0 });
+  gsap.set(brand,    { opacity: 0, y: -14, filter: 'blur(6px)' });
   if (triangle) {
     triangle.setAttribute('stroke-dasharray', '1');
     triangle.setAttribute('stroke-dashoffset', '1');
   }
-  gsap.set(l1,    { opacity: 1 });  /* l1 visible; words are hidden */
-  gsap.set(words, { opacity: 0, y: 30, filter: 'blur(7px)' });
-  gsap.set(l2,    { opacity: 0, y: 24, filter: 'blur(5px)' });
+  gsap.set(l1,    { opacity: 1 });
+  gsap.set(words, { opacity: 0, y: 28, filter: 'blur(7px)' });
+  gsap.set(l2,    { opacity: 0, y: 20, filter: 'blur(5px)' });
 
-  /* ── Idle animations: kick in once entry is complete ── */
+  /* ── PRE-ENTRY: section scrolls into view before pin activates ── */
+  /* This prevents the black-screen flash during hero→statement transition */
+  var preTL = gsap.timeline({
+    scrollTrigger: {
+      trigger: sec,
+      start:   'top bottom',   /* section bottom edge enters viewport */
+      end:     'top top',      /* section top hits viewport top (pin activates) */
+      scrub:   true
+    }
+  });
+  preTL.fromTo(bgGlow,  { opacity: 0 }, { opacity: 0.55, ease: 'none' }, 0);
+  preTL.fromTo(sphWrap, { opacity: 0, scale: 0.52, filter: 'blur(28px)' },
+                        { opacity: 0.45, scale: 0.78, filter: 'blur(14px)', ease: 'none' }, 0);
+
+  /* ── IDLE ANIMATIONS: start once entry scroll is complete ── */
   var idleStarted = false;
   function startIdleAnims() {
     if (idleStarted) return;
     idleStarted = true;
+    /* orbit ring rotates continuously */
     gsap.to(orbitSvg, {
-      rotation: 360, duration: 8, repeat: -1, ease: 'none',
+      rotation: 360, duration: 14, repeat: -1, ease: 'none',
       transformOrigin: 'center center'
     });
-    gsap.to(circle, {
-      scale: 1.022, duration: 2.4, repeat: -1, yoyo: true,
+    /* sphere breathes gently */
+    gsap.to('#stmt-sphere', {
+      scale: 1.026, duration: 2.8, repeat: -1, yoyo: true,
       ease: 'sine.inOut', transformOrigin: 'center center'
     });
   }
 
-  /* ── Cinematic scroll timeline ── */
+  /* ── MAIN CINEMATIC PINNED TIMELINE ── */
+  /* fromTo used for bgGlow + sphWrap so values pick up exactly from pre-entry */
   var tl = gsap.timeline({
     defaults: { ease: 'power2.out' },
     scrollTrigger: {
       trigger:      sec,
       start:        'top top',
-      end:          '+=320%',
+      end:          '+=300%',
       pin:          true,
       scrub:        1.5,
       anticipatePin: 1,
@@ -2403,35 +2423,39 @@ function lwStartBounce(){
     }
   });
 
-  /* 1 — Radial glow materialises from center */
-  tl.to(bgGlow,   { opacity: 1, duration: 1.5, ease: 'power1.inOut' }, 0);
+  /* 1 — Glow completes (continues from pre-entry 0.55 → 1) */
+  tl.fromTo(bgGlow,
+    { opacity: 0.55 },
+    { opacity: 1, duration: 1.2, ease: 'power1.inOut' }, 0);
 
-  /* 2 — Orbit ring scales + fades in */
-  tl.to(orbitSvg, { opacity: 1, scale: 1, duration: 1.8 }, 0.8);
+  /* 2 — Sphere zooms in from depth, deblurs (continues from pre-entry) */
+  tl.fromTo(sphWrap,
+    { opacity: 0.45, scale: 0.78, filter: 'blur(14px)' },
+    { opacity: 1, scale: 1, filter: 'blur(0px)', duration: 1.8, ease: 'power3.out' }, 0);
 
-  /* 3 — Circle zooms in from depth + deblurs */
-  tl.to(circleWrap, { opacity: 1, scale: 1, filter: 'blur(0px)', duration: 1.5, ease: 'power3.out' }, 1.9);
+  /* 3 — Orbit ring fades in */
+  tl.to(orbitSvg, { opacity: 1, duration: 1.2 }, 1.2);
 
-  /* 4 — Triangle strokes on */
-  tl.to(triangle, { attr: { 'stroke-dashoffset': 0 }, duration: 1.0, ease: 'power2.inOut' }, 3.1);
+  /* 4 — Triangle draws clockwise */
+  tl.to(triangle, { attr: { 'stroke-dashoffset': 0 }, duration: 1.0, ease: 'power2.inOut' }, 2.0);
 
-  /* 5 — Letters appear one by one */
-  tl.to(letters,  { opacity: 1, duration: 0.3, stagger: 0.14 }, 3.6);
+  /* 5 — Orbit letters appear one by one */
+  tl.to(letters, { opacity: 1, duration: 0.45, stagger: 0.2 }, 2.6);
 
-  /* 6 — Circle drifts upward (float) */
-  tl.to(circleWrap, { y: -20, duration: 1.1, ease: 'power1.inOut' }, 4.4);
+  /* 6 — Brand label drifts in from above */
+  tl.to(brand, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.9 }, 3.4);
 
-  /* 7 — Main text: words rise + sharpen staggered */
+  /* 7 — Main text: each word rises + sharpens staggered */
   tl.to(words, {
     opacity: 1, y: 0, filter: 'blur(0px)',
-    duration: 0.55, stagger: 0.14, ease: 'power2.out'
-  }, 5.2);
+    duration: 0.5, stagger: 0.12, ease: 'power2.out'
+  }, 4.2);
 
-  /* 8 — Second paragraph fades in after text */
-  tl.to(l2, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 1.0 }, 7.4);
+  /* 8 — Second paragraph fades in */
+  tl.to(l2, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.9 }, 6.2);
 
   /* tail hold */
-  tl.to({}, { duration: 0.5 }, 9.0);
+  tl.to({}, { duration: 0.4 }, 7.5);
 
 })();
 
