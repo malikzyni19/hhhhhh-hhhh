@@ -566,58 +566,78 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 .stmt-hl2{background:linear-gradient(90deg,#22d3ee,#38bdf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;filter:drop-shadow(0 0 8px rgba(34,211,238,.55)) drop-shadow(0 0 22px rgba(34,211,238,.22))}
 
 /* ── MODULE 3D CAROUSEL ── */
-.mc-wrap{padding:80px 0;max-width:100%;overflow:hidden}
+.mc-wrap{padding:72px 0 80px;max-width:100%;background:transparent}
 .mc-wrap .section{text-align:center;padding-bottom:0}
-#mc-stage{position:relative;height:530px;margin:0 auto;overflow:visible;perspective:1100px;perspective-origin:50% 54%}
+/* Stage: clipping wrapper keeps phones from bleeding into text */
+.mc-stage-outer{overflow:hidden;padding:20px 0 40px;margin:0 auto}
+#mc-stage{position:relative;height:420px;margin:0 auto;perspective:1000px;perspective-origin:50% 52%;overflow:visible}
 #mc-track{position:absolute;top:50%;left:50%;width:0;height:0;transform-style:preserve-3d}
-.mc-item{position:absolute;top:0;left:0;width:210px;height:450px;margin-left:-105px;margin-top:-225px;transform-style:preserve-3d;cursor:pointer;pointer-events:auto}
-.mc-card{width:100%;height:100%;transform-origin:center bottom;will-change:transform,opacity,filter;pointer-events:none}
+.mc-item{position:absolute;top:0;left:0;width:170px;height:370px;margin-left:-85px;margin-top:-185px;transform-style:preserve-3d;cursor:pointer;pointer-events:auto}
+.mc-card{width:100%;height:100%;transform-origin:center center;will-change:transform,opacity,filter;pointer-events:none}
 .mc-item.mc-active .mc-card{pointer-events:auto}
-.mc-phone-wrap{width:200px;margin:0 auto;position:relative;background:linear-gradient(175deg,#1c1c1c,#080808);border-radius:38px;padding:6px;box-shadow:0 0 0 1px rgba(255,255,255,.07),0 0 0 2px rgba(0,0,0,.95),0 32px 64px rgba(0,0,0,.72)}
-.mc-btn-pow{position:absolute;right:-3px;top:88px;width:3px;height:48px;background:#222;border-radius:0 3px 3px 0}
-.mc-btn-v1{position:absolute;left:-3px;top:74px;width:3px;height:34px;background:#222;border-radius:3px 0 0 3px}
-.mc-btn-v2{position:absolute;left:-3px;top:118px;width:3px;height:34px;background:#222;border-radius:3px 0 0 3px}
-.mc-screen{border-radius:32px;overflow:hidden;background:#060810;position:relative;border:1px solid rgba(255,255,255,.04)}
-.mc-cam{position:absolute;top:10px;right:13px;width:9px;height:9px;border-radius:50%;background:#060606;border:1.5px solid rgba(255,255,255,.06);z-index:10}
-.mc-slide-wrap{position:relative;height:400px;overflow:hidden}
-.mc-si{position:absolute;inset:0;opacity:0;transition:opacity .65s ease}
-.mc-si.mc-on{opacity:1}
-.mc-si img{width:100%;height:100%;object-fit:cover;object-position:top;display:block}
-.mc-si-ph{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:linear-gradient(160deg,#080e24,#040810)}
-.mc-si-ph-icon{font-size:52px;line-height:1;filter:drop-shadow(0 0 22px currentColor)}
-.mc-si-ph-label{font-size:10px;font-weight:600;letter-spacing:2.5px;text-transform:uppercase;font-family:"DM Sans",sans-serif;opacity:.55}
-.mc-phone-shine{position:absolute;inset:0;background:linear-gradient(135deg,rgba(255,255,255,.06) 0%,transparent 50%);pointer-events:none;border-radius:32px;z-index:5}
-.mc-pill-bar{height:17px;display:flex;align-items:center;justify-content:center;margin-top:4px}
-.mc-pill{width:68px;height:4px;background:rgba(255,255,255,.1);border-radius:2px}
+/* Phone chrome */
+.mc-phone-wrap{width:160px;margin:0 auto;position:relative;background:linear-gradient(175deg,#1c1c1c,#080808);border-radius:34px;padding:6px;box-shadow:0 0 0 1px rgba(255,255,255,.08),0 0 0 2px rgba(0,0,0,.95),0 24px 56px rgba(0,0,0,.75),0 8px 20px rgba(0,0,0,.5)}
+.mc-btn-pow{position:absolute;right:-3px;top:72px;width:3px;height:40px;background:#222;border-radius:0 3px 3px 0}
+.mc-btn-v1{position:absolute;left:-3px;top:60px;width:3px;height:28px;background:#222;border-radius:3px 0 0 3px}
+.mc-btn-v2{position:absolute;left:-3px;top:96px;width:3px;height:28px;background:#222;border-radius:3px 0 0 3px}
+.mc-screen{border-radius:28px;overflow:hidden;background:#040810;position:relative;border:1px solid rgba(255,255,255,.05)}
+.mc-cam{position:absolute;top:9px;right:11px;width:8px;height:8px;border-radius:50%;background:#050505;border:1.5px solid rgba(255,255,255,.06);z-index:10}
+.mc-slide-wrap{position:relative;height:316px;overflow:hidden;display:block;background:#040810}
+.mc-si{position:absolute;top:0;left:0;width:100%;height:100%;opacity:0;transition:opacity .7s ease;z-index:1}
+.mc-si.mc-on{opacity:1;z-index:2}
+.mc-si img{width:100%;height:100%;object-fit:cover;object-position:top center;display:block}
+/* Placeholder for modules without screenshots */
+.mc-si-ph{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:radial-gradient(ellipse at 50% 30%,rgba(26,40,80,.9) 0%,#040810 70%)}
+.mc-si-ph-icon{font-size:44px;line-height:1}
+.mc-si-ph-label{font-size:9px;font-weight:700;letter-spacing:2.5px;text-transform:uppercase;font-family:"DM Sans",sans-serif;opacity:.5}
+.mc-phone-shine{position:absolute;inset:0;background:linear-gradient(145deg,rgba(255,255,255,.07) 0%,transparent 45%);pointer-events:none;border-radius:28px;z-index:5}
+.mc-pill-bar{height:14px;display:flex;align-items:center;justify-content:center;margin-top:3px}
+.mc-pill{width:56px;height:3px;background:rgba(255,255,255,.1);border-radius:2px}
 /* Neon rim glow under active phone */
-.mc-ring{position:absolute;bottom:-20px;left:50%;transform:translateX(-50%);width:65%;height:26px;border-radius:50%;filter:blur(10px);pointer-events:none;opacity:0;transition:opacity .6s ease;will-change:opacity}
+.mc-ring{position:absolute;bottom:-16px;left:50%;transform:translateX(-50%);width:70%;height:22px;border-radius:50%;filter:blur(9px);pointer-events:none;opacity:0;will-change:opacity}
 /* Glassmorphic info panel */
-.mc-glass{max-width:680px;margin:44px auto 0;padding:30px 38px 26px;background:rgba(5,8,24,.78);backdrop-filter:blur(26px) saturate(1.5);-webkit-backdrop-filter:blur(26px) saturate(1.5);border:1px solid rgba(80,160,255,.16);border-radius:22px;box-shadow:0 14px 52px rgba(0,0,0,.6),inset 0 0 0 1px rgba(255,255,255,.04);position:relative;overflow:hidden;z-index:5}
-.mc-glass::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(130,220,255,.32),transparent);pointer-events:none}
-.mc-gtag{font-size:9px;font-weight:700;letter-spacing:3px;text-transform:uppercase;font-family:"DM Sans",sans-serif;margin-bottom:9px;min-height:14px}
-.mc-gtitle{font-family:"Outfit",sans-serif;font-size:clamp(18px,2.2vw,26px);font-weight:800;color:#FFD700;margin:0 0 11px;letter-spacing:-.2px;min-height:1.4em;line-height:1.3;text-shadow:0 0 28px rgba(255,215,0,.35)}
-.mc-gdesc{font-size:13.5px;line-height:1.88;color:rgba(232,240,255,.82);margin:0 0 18px;min-height:2.5em}
-.mc-prog-track{height:2px;background:rgba(255,255,255,.07);border-radius:2px;overflow:hidden;margin-bottom:16px}
+.mc-glass{max-width:640px;margin:36px auto 0;padding:26px 34px 22px;background:rgba(4,6,20,.82);backdrop-filter:blur(28px) saturate(1.6);-webkit-backdrop-filter:blur(28px) saturate(1.6);border:1px solid rgba(80,160,255,.18);border-radius:20px;box-shadow:0 12px 48px rgba(0,0,0,.65),inset 0 1px 0 rgba(255,255,255,.06);position:relative;overflow:hidden;z-index:10}
+.mc-glass::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(140,220,255,.35),transparent);pointer-events:none}
+.mc-gtag{font-size:9px;font-weight:700;letter-spacing:3px;text-transform:uppercase;font-family:"DM Sans",sans-serif;margin-bottom:8px;min-height:13px}
+.mc-gtitle{font-family:"Outfit",sans-serif;font-size:clamp(17px,2vw,24px);font-weight:800;color:#FFD700;margin:0 0 10px;letter-spacing:-.2px;line-height:1.3;text-shadow:0 0 24px rgba(255,215,0,.4)}
+.mc-gdesc{font-size:13px;line-height:1.86;color:rgba(228,238,255,.82);margin:0 0 16px;min-height:40px}
+.mc-prog-track{height:2px;background:rgba(255,255,255,.08);border-radius:2px;overflow:hidden;margin-bottom:14px}
 .mc-prog-fill{height:100%;border-radius:2px;transform-origin:left;transform:scaleX(0)}
-.mc-sdots{display:flex;gap:7px;justify-content:center}
-.mc-sdot{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.16);cursor:pointer;transition:all .28s ease;border:none;padding:0;-webkit-appearance:none;appearance:none}
-.mc-sdot.mc-on{width:22px;border-radius:4px}
+.mc-sdots{display:flex;gap:6px;justify-content:center}
+.mc-sdot{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.18);cursor:pointer;transition:all .28s ease;border:none;padding:0;-webkit-appearance:none;appearance:none}
+.mc-sdot.mc-on{width:20px;border-radius:4px}
 /* Nav */
-.mc-nav{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:26px}
-.mc-arr{width:44px;height:44px;border-radius:50%;border:1px solid rgba(100,180,255,.2);background:rgba(6,10,30,.85);color:rgba(200,230,255,.8);font-size:22px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .22s ease;backdrop-filter:blur(8px);-webkit-appearance:none;appearance:none}
-.mc-arr:hover{border-color:rgba(34,211,238,.55);color:#22d3ee;box-shadow:0 0 18px rgba(34,211,238,.2);transform:scale(1.1)}
-.mc-mdots{display:flex;gap:8px;align-items:center}
-.mc-mdot{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.15);cursor:pointer;transition:all .28s ease;border:none;padding:0;-webkit-appearance:none;appearance:none}
-.mc-mdot.mc-on{width:22px;border-radius:4px}
-@media(max-width:640px){
-  #mc-stage{height:390px;perspective:880px}
-  .mc-item{width:168px;height:362px;margin-left:-84px;margin-top:-181px}
-  .mc-phone-wrap{width:158px;border-radius:32px;padding:5px}
-  .mc-screen{border-radius:27px}
-  .mc-slide-wrap{height:318px}
-  .mc-glass{margin:26px 14px 0;padding:22px 18px 18px}
-  .mc-gtitle{font-size:17px}
-  .mc-gdesc{font-size:12.5px}
+.mc-nav{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:20px}
+.mc-arr{width:42px;height:42px;border-radius:50%;border:1px solid rgba(100,180,255,.22);background:rgba(4,8,28,.88);color:rgba(200,228,255,.82);font-size:22px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s ease;backdrop-filter:blur(8px);-webkit-appearance:none;appearance:none;flex-shrink:0}
+.mc-arr:hover{border-color:rgba(34,211,238,.6);color:#22d3ee;box-shadow:0 0 16px rgba(34,211,238,.22);transform:scale(1.1)}
+.mc-mdots{display:flex;gap:7px;align-items:center}
+.mc-mdot{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.16);cursor:pointer;transition:all .28s ease;border:none;padding:0;-webkit-appearance:none;appearance:none}
+.mc-mdot.mc-on{width:20px;border-radius:4px}
+/* Mobile */
+@media(max-width:768px){
+  #mc-stage{height:320px;perspective:800px}
+  .mc-item{width:138px;height:300px;margin-left:-69px;margin-top:-150px}
+  .mc-phone-wrap{width:130px;border-radius:28px;padding:5px}
+  .mc-screen{border-radius:23px}
+  .mc-slide-wrap{height:254px}
+  .mc-phone-shine{border-radius:23px}
+  .mc-btn-pow{top:58px;height:34px}
+  .mc-btn-v1{top:48px;height:24px}
+  .mc-btn-v2{top:78px;height:24px}
+  .mc-pill{width:46px}
+  .mc-ring{height:18px;bottom:-12px}
+  .mc-glass{margin:24px 16px 0;padding:20px 18px 16px}
+  .mc-gtitle{font-size:16px}
+  .mc-gdesc{font-size:12px}
+  .mc-stage-outer{padding:12px 0 28px}
+}
+@media(max-width:480px){
+  #mc-stage{height:280px;perspective:700px}
+  .mc-item{width:120px;height:260px;margin-left:-60px;margin-top:-130px}
+  .mc-phone-wrap{width:113px;border-radius:24px;padding:4px}
+  .mc-screen{border-radius:20px}
+  .mc-slide-wrap{height:220px}
+  .mc-phone-shine{border-radius:20px}
 }
 </style>{% endraw %}
 </head>
@@ -902,8 +922,10 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
     <h2 class="sec-h"><span data-i18n="feat_h">Everything to trade smart money</span></h2>
     <p class="sec-sub" style="max-width:560px;margin:0 auto 52px;text-align:center" data-i18n="feat_sub">Six professional tools — scan, detect and act on every Smart Money setup across 400+ pairs.</p>
   </div>
-  <div id="mc-stage">
-    <div id="mc-track"></div>
+  <div class="mc-stage-outer">
+    <div id="mc-stage">
+      <div id="mc-track"></div>
+    </div>
   </div>
   <div class="mc-nav">
     <button class="mc-arr" id="mc-prev" aria-label="Previous">&#8249;</button>
@@ -1372,853 +1394,7 @@ const sparks=[];
 sCfg.forEach(c=>{const e=document.createElement('div');e.style.cssText=`position:absolute;left:${c[0]}px;bottom:${c[1]}px;width:3px;height:3px;border-radius:50%;background:${c[2]};opacity:0;pointer-events:none`;dw.appendChild(e);sparks.push({el:e,dx:c[3],dy:c[4]})});
 
 </script>{% endraw %}
-
-<!-- ═══════════════════════════════
-     LOGIN OVERLAY — drop animation
-═══════════════════════════════ -->
-<div class="grid-bg-login" id="loginGridBg"></div>
-<div class="flash-overlay-login" id="flashOverlayLogin"></div>
-<div class="login-overlay" id="loginOverlay" onclick="closeLoginDrop(event)"></div>
-
-<div class="login-drop-wrap" id="loginDropWrap">
-  <div class="lw-dust-wrap" id="lwDustWrap"></div>
-  <div class="lw-imp-ring" id="lwImpRing"></div>
-  <div class="lw-inner">
-    <div class="lw-logo">
-      <div class="lw-logo-top">
-        <div class="lw-live-dot"></div>
-        <div class="zyni-wrap">
-          <span class="zl" id="lZ">Z</span><span class="zl" id="lY">y</span><span class="zl" id="lN">N</span><span class="zl" id="lI">i</span>
-        </div>
-        <div class="lw-logo-rest">SMC</div>
-      </div>
-      <div class="lw-logo-sub">SMART MONEY SCREENER</div>
-      <div class="lw-glow-line"></div>
-    </div>
-    <div class="lw-card" id="lwCard">
-      <button class="lw-close" onclick="closeLoginDrop()">✕</button>
-      <div class="lw-card-title" id="lwCardTitle">ENTER CREDENTIALS TO ACCESS</div>
-      <div class="lw-admin-badge" id="lwAdminBadge">⚙ ADMIN ACCESS</div>
-      <div id="lwErrBox" class="lw-error" style="display:none"></div>
-      <form id="lwForm" method="POST" action="/login">
-        <div class="lw-field">
-          <label>Username</label>
-          <input type="text" name="username" id="lwUser" placeholder="your name" autocomplete="username">
-        </div>
-        <div class="lw-field">
-          <label>Password</label>
-          <input type="password" name="password" id="lwPass" placeholder="••••••••" autocomplete="current-password">
-        </div>
-        <button type="submit" class="lw-btn" id="lwBtn">UNLOCK →</button>
-        <div class="lw-admin-toggle"><span class="lw-admin-link" id="lwAdminLink" onclick="lwToggleAdminMode()">Admin Access</span></div>
-        <div class="lw-guest-wrap" id="lwGuestWrap">
-          <button type="button" class="lw-guest-btn" id="lwGuestBtn" onclick="lwGuestLogin()">◇ &nbsp;SIGN IN AS GUEST</button>
-          <div class="lw-guest-sub">LIMITED ACCESS · NO ACCOUNT REQUIRED</div>
-        </div>
-      </form>
-    </div>
-    <div class="lw-footer">PRIVATE ACCESS ONLY</div>
-  </div>
-</div>
-
 {% raw %}<script>
-// ═══ LOGIN DROP SYSTEM ═══
-(function(){
-  const dw=document.getElementById('lwDustWrap');
-  if(!dw)return;
-  const dCfg=[[14,2,36,32,.7,-90,-38,1.8,0],[9,0,26,22,.55,-65,-55,1.6,20],[21,4,20,18,.5,-48,-28,1.4,35],[29,1,16,14,.4,-35,-52,1.3,50],[37,3,14,12,.35,-20,-68,1.2,65],[46,0,44,38,.65,-9,-55,2.0,0],[54,0,44,38,.65,9,-55,2.0,10],[63,3,14,12,.35,20,-68,1.2,65],[71,1,16,14,.4,35,-52,1.3,50],[79,4,20,18,.5,48,-28,1.4,35],[89,0,26,22,.55,65,-55,1.6,20],[84,2,36,32,.7,90,-38,1.8,0]];
-  window._lwDusts=[];
-  dCfg.forEach(c=>{const e=document.createElement('div');e.style.cssText='position:absolute;left:'+c[0]+'%;bottom:'+c[1]+'px;width:'+c[2]+'px;height:'+c[3]+'px;border-radius:50%;background:radial-gradient(ellipse at 40% 40%,rgba(200,195,175,'+c[4]+'),rgba(180,175,155,'+(c[4]*.5)+'),transparent 70%);opacity:0;transform:scale(0);pointer-events:none';dw.appendChild(e);window._lwDusts.push({el:e,dx:c[5],dy:c[6],sc:c[7],delay:c[8]});});
-  const sCfg=[[128,4,'#22d3ee',-48,-62],[202,4,'#22d3ee',48,-62],[143,2,'#a5f3fc',-28,-82],[187,2,'#a5f3fc',28,-82],[156,0,'#6366f1',-9,-90],[174,0,'#6366f1',9,-90],[116,6,'#22c55e',-62,-42],[204,6,'#22c55e',62,-42]];
-  window._lwSparks=[];
-  sCfg.forEach(c=>{const e=document.createElement('div');e.style.cssText='position:absolute;left:'+c[0]+'px;bottom:'+c[1]+'px;width:3px;height:3px;border-radius:50%;background:'+c[2]+';opacity:0;pointer-events:none';dw.appendChild(e);window._lwSparks.push({el:e,dx:c[3],dy:c[4]});});
-})();
-
-function launchLogin(){
-  const wrap=document.getElementById('loginDropWrap');
-  const card=document.getElementById('lwCard');
-  const overlay=document.getElementById('loginOverlay');
-  const gridBg=document.getElementById('loginGridBg');
-  const flash=document.getElementById('flashOverlayLogin');
-  const ring=document.getElementById('lwImpRing');
-  overlay.classList.add('show');gridBg.classList.add('show');wrap.classList.add('visible');
-  wrap.style.transition='none';wrap.style.transform='translate(-50%, calc(-50% - 115vh))';card.style.transform='none';
-  if(window._lwDusts)window._lwDusts.forEach(d=>{d.el.style.transition='none';d.el.style.opacity='0';d.el.style.transform='scale(0)';});
-  if(window._lwSparks)window._lwSparks.forEach(s=>{s.el.style.transition='none';s.el.style.opacity='0';s.el.style.transform='translate(0,0) scale(1)';});
-  ring.style.transition='none';ring.style.width='0';ring.style.height='0';ring.style.borderColor='rgba(34,211,238,0)';ring.style.opacity='1';
-  flash.style.background='rgba(34,211,238,0)';
-  setTimeout(function(){
-    wrap.style.transition='transform 1.3s cubic-bezier(0.12,0,0.39,0)';
-    wrap.style.transform='translate(-50%, calc(-50% + 22px))';
-    setTimeout(function(){
-      wrap.style.transition='transform 0.05s linear';wrap.style.transform='translate(-50%, -50%)';
-      flash.style.transition='background 0.04s linear';flash.style.background='rgba(34,211,238,.18)';
-      setTimeout(function(){flash.style.transition='background 0.3s ease';flash.style.background='rgba(34,211,238,0)';},55);
-      ring.style.borderColor='rgba(34,211,238,0.55)';ring.style.width='20px';ring.style.height='10px';
-      setTimeout(function(){ring.style.transition='width .55s ease-out,height .55s ease-out,opacity .55s ease-out,border-color .55s ease-out';ring.style.width='380px';ring.style.height='65px';ring.style.opacity='0';ring.style.borderColor='rgba(34,211,238,0)';},30);
-      if(window._lwDusts)window._lwDusts.forEach(function(d,i){setTimeout(function(){d.el.style.transition='none';d.el.style.opacity='0.9';d.el.style.transform='scale(0.4)';requestAnimationFrame(function(){requestAnimationFrame(function(){d.el.style.transition='opacity .9s ease-out,transform 1s cubic-bezier(0.22,1,0.36,1)';d.el.style.opacity='0';d.el.style.transform='scale('+d.sc+') translate('+d.dx+'px,'+d.dy+'px)';});});},d.delay);});
-      if(window._lwSparks)window._lwSparks.forEach(function(s,i){setTimeout(function(){s.el.style.transition='none';s.el.style.opacity='1';s.el.style.transform='translate(0,0) scale(1)';requestAnimationFrame(function(){requestAnimationFrame(function(){s.el.style.transition='opacity .55s ease-out,transform .6s cubic-bezier(0.22,1,0.36,1)';s.el.style.opacity='0';s.el.style.transform='translate('+s.dx+'px,'+s.dy+'px) scale(0)';});});},i*18);});
-      var bounces=[[58,'translate(-50%, calc(-50% - 13px))','0.1s'],[162,'translate(-50%, calc(-50% + 7px))','0.09s'],[256,'translate(-50%, calc(-50% - 4px))','0.08s'],[342,'translate(-50%, calc(-50% + 2px))','0.07s'],[416,'translate(-50%, calc(-50% - 1px))','0.07s'],[488,'translate(-50%, -50%)','0.1s']];
-      bounces.forEach(function(b){setTimeout(function(){wrap.style.transition='transform '+b[2]+' ease';wrap.style.transform=b[1];},b[0]);});
-      setTimeout(function(){card.style.transition='box-shadow 0.4s ease';card.style.boxShadow='0 0 60px rgba(34,211,238,0.15),0 8px 40px rgba(0,0,0,0.6)';},500);
-      lwStartBounce();
-    },1300);
-  },30);
-}
-
-function closeLoginDrop(e){
-  if(e&&e.target!==document.getElementById('loginOverlay'))return;
-  var wrap=document.getElementById('loginDropWrap');
-  var overlay=document.getElementById('loginOverlay');
-  var gridBg=document.getElementById('loginGridBg');
-  wrap.style.transition='transform 0.45s cubic-bezier(0.55,0,1,0.45),opacity 0.3s ease 0.15s';
-  wrap.style.transform='translate(-50%, calc(-50% - 120vh))';wrap.style.opacity='0';
-  setTimeout(function(){wrap.classList.remove('visible');wrap.style.opacity='';wrap.style.transform='translate(-50%, calc(-50% - 120vh))';overlay.classList.remove('show');gridBg.classList.remove('show');},500);
-}
-
-var _lwAdminMode=false;
-function lwToggleAdminMode(){
-  _lwAdminMode=!_lwAdminMode;
-  var card=document.getElementById('lwCard');
-  var title=document.getElementById('lwCardTitle');
-  var btn=document.getElementById('lwBtn');
-  var link=document.getElementById('lwAdminLink');
-  var errBox=document.getElementById('lwErrBox');
-  errBox.style.display='none';
-  if(_lwAdminMode){
-    card.classList.add('admin-mode');
-    title.textContent='ADMIN ACCESS';
-    btn.textContent='ADMIN LOGIN →';
-    btn.classList.add('admin-btn');
-    link.textContent='← User Login';
-  } else {
-    card.classList.remove('admin-mode');
-    title.textContent='ENTER CREDENTIALS TO ACCESS';
-    btn.textContent='UNLOCK →';
-    btn.classList.remove('admin-btn');
-    link.textContent='Admin Access';
-  }
-}
-
-document.getElementById('lwForm').addEventListener('submit',function(e){
-  e.preventDefault();
-  var btn=document.getElementById('lwBtn');
-  var un=document.getElementById('lwUser').value.trim();
-  var pw=document.getElementById('lwPass').value;
-  var errBox=document.getElementById('lwErrBox');
-  if(!un){errBox.textContent='Please enter your username.';errBox.style.display='block';document.getElementById('lwUser').focus();return;}
-  btn.textContent='VERIFYING...';btn.disabled=true;errBox.style.display='none';
-  var fd=new FormData();fd.append('username',un);fd.append('password',pw);
-  var endpoint=_lwAdminMode?'/admin/login':'/login';
-  fetch(endpoint,{method:'POST',body:fd,redirect:'manual'})
-    .then(function(r){
-      if(r.type==='opaqueredirect'||r.status===0||r.status===302){
-        if(_lwAdminMode){btn.textContent='✓ ADMIN';setTimeout(function(){window.location.href='/admin';},600);}
-        else{lwUnlockSequence();}
-      } else {
-        return r.text().then(function(h){
-          var hasErr=h.indexOf('error')!==-1||h.indexOf('invalid')!==-1||h.indexOf('wrong')!==-1||h.indexOf('incorrect')!==-1||h.indexOf('not recognised')!==-1||h.indexOf('Invalid admin')!==-1;
-          if(hasErr||r.status===200){
-            btn.textContent=_lwAdminMode?'ADMIN LOGIN →':'UNLOCK →';
-            btn.disabled=false;
-            var m=h.match(/<div class="error">([^<]+)<\/div>/);
-            errBox.textContent=m?m[1]:'Invalid credentials. Try again.';
-            errBox.style.display='block';
-          } else {
-            if(_lwAdminMode){btn.textContent='✓ ADMIN';setTimeout(function(){window.location.href='/admin';},600);}
-            else{lwUnlockSequence();}
-          }
-        });
-      }
-    })
-    .catch(function(){if(_lwAdminMode){window.location.href='/admin';}else{lwUnlockSequence();}});
-});
-
-function lwUnlockSequence(){
-  var btn=document.getElementById('lwBtn');
-  var card=document.getElementById('lwCard');
-  var wrap=document.getElementById('loginDropWrap');
-  var flash=document.getElementById('flashOverlayLogin');
-  btn.textContent='✓  UNLOCKED';btn.classList.add('unlocking');
-  setTimeout(function(){flash.style.transition='background .15s ease';flash.style.background='rgba(34,211,238,.18)';},80);
-  setTimeout(function(){flash.style.transition='background .2s ease';flash.style.background='rgba(34,211,238,0)';},280);
-  setTimeout(function(){card.classList.add('fly-out');},250);
-  setTimeout(function(){wrap.style.transition='opacity 0.35s ease';wrap.style.opacity='0';},300);
-  setTimeout(function(){
-    var ov=document.createElement('div');
-    ov.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:#04070e;';
-    var pulse=document.createElement('div');
-    pulse.style.cssText='position:absolute;width:220px;height:220px;border-radius:50%;background:radial-gradient(circle,rgba(34,211,238,.3),transparent 70%);animation:bgPulse 1.1s ease-out forwards;';
-    var txt=document.createElement('div');
-    txt.innerHTML='<span style="color:#22d3ee">Z</span><span style="color:#22d3ee">y</span><span style="color:#22d3ee">N</span><span style="color:#22d3ee">i</span>';
-    txt.style.cssText='font-family:JetBrains Mono,monospace;font-size:68px;font-weight:800;text-shadow:0 0 30px rgba(34,211,238,.8),0 0 60px rgba(34,211,238,.4);animation:zyniZoom 1.3s cubic-bezier(.4,0,.2,1) forwards;letter-spacing:10px;position:relative;';
-    ov.appendChild(pulse);ov.appendChild(txt);document.body.appendChild(ov);
-  },380);
-  setTimeout(function(){window.location.href='/';},1750);
-}
-
-function lwGuestLogin(){
-  var btn=document.getElementById('lwGuestBtn');
-  var errBox=document.getElementById('lwErrBox');
-  btn.disabled=true;btn.textContent='CONNECTING...';errBox.style.display='none';
-  fetch('/guest/login',{method:'POST',redirect:'manual'})
-    .then(function(r){
-      if(r.type==='opaqueredirect'||r.status===0||r.status===302){
-        btn.textContent='✓  GUEST ACCESS';btn.style.animation='none';btn.style.borderColor='rgba(34,211,238,.7)';
-        setTimeout(function(){window.location.href='/';},800);
-      } else {
-        return r.json().then(function(d){
-          btn.disabled=false;btn.textContent='◇  SIGN IN AS GUEST';
-          errBox.textContent=d.error||'Guest access disabled.';errBox.style.display='block';
-        });
-      }
-    })
-    .catch(function(){btn.disabled=false;btn.textContent='◇  SIGN IN AS GUEST';});
-}
-
-var _lwBounceStarted=false;
-function lwStartBounce(){
-  if(_lwBounceStarted)return;_lwBounceStarted=true;
-  var letters=[document.getElementById('lZ'),document.getElementById('lY'),document.getElementById('lN'),document.getElementById('lI')];
-  var JUMP=28,DURATION=360,GAP=150,idx=0,startTime=null;
-  function animateLetter(el,ts){
-    if(startTime===null)startTime=ts;
-    var p=Math.min((ts-startTime)/DURATION,1);
-    var y=-JUMP*Math.sin(Math.PI*p);
-    el.style.transform='translateY('+y.toFixed(2)+'px)';
-    var s=Math.round(20+p*35);
-    el.style.textShadow='0 0 '+s+'px rgba(34,211,238,'+(0.7+p*0.3).toFixed(2)+'),0 0 '+(s*2)+'px rgba(34,211,238,.2)';
-    if(p<1){requestAnimationFrame(function(t){animateLetter(el,t);});}
-    else{el.style.transform='translateY(0px)';el.style.textShadow='0 0 20px rgba(34,211,238,.7),0 0 40px rgba(34,211,238,.3)';idx=(idx+1)%letters.length;startTime=null;setTimeout(next,GAP);}
-  }
-  function next(){requestAnimationFrame(function(ts){animateLetter(letters[idx],ts);});}
-  next();
-}
-</script>{% endraw %}
-
-<!-- ── THREE.JS + GSAP CDN ── -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/FontLoader.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/geometries/TextGeometry.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/ScrollTrigger.min.js"></script>
-
-{% raw %}<script>
-/* ════════════════════════════════════════════════════════════
-   THREE.JS — cinematic 3D background
-════════════════════════════════════════════════════════════ */
-(function initThree() {
-  if (!window.THREE) return;
-
-  var canvas = document.getElementById('three-canvas');
-  var renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.setSize(window.innerWidth, window.innerHeight);
-
-  var scene = new THREE.Scene();
-  var camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 100);
-  camera.position.z = 6;
-
-  /* ── Geometries & materials ── */
-  var geoList = [
-    new THREE.SphereGeometry(0.45, 32, 32),
-    new THREE.IcosahedronGeometry(0.42, 0),
-    new THREE.OctahedronGeometry(0.40, 0),
-    new THREE.BoxGeometry(0.55, 0.55, 0.55),
-    new THREE.TorusGeometry(0.32, 0.10, 16, 32),
-    new THREE.SphereGeometry(0.28, 16, 16),
-    new THREE.IcosahedronGeometry(0.35, 0),
-    new THREE.OctahedronGeometry(0.30, 0),
-    new THREE.BoxGeometry(0.38, 0.38, 0.38),
-    new THREE.TorusGeometry(0.22, 0.08, 12, 24),
-    new THREE.SphereGeometry(0.55, 24, 24),
-    new THREE.IcosahedronGeometry(0.25, 0),
-  ];
-
-  var palette = [0x6366f1, 0x22d3ee, 0xa78bfa, 0x818cf8, 0x38bdf8, 0x7c3aed, 0x06b6d4, 0xc084fc];
-
-  var shapes = [];
-  geoList.forEach(function(geo, i) {
-    var mat = new THREE.MeshBasicMaterial({
-      color: palette[i % palette.length],
-      transparent: true,
-      opacity: 0.10 + Math.random() * 0.08,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    });
-    var mesh = new THREE.Mesh(geo, mat);
-
-    /* Spread across wide 3D space */
-    mesh.position.set(
-      (Math.random() - 0.5) * 20,
-      (Math.random() - 0.5) * 14,
-      (Math.random() - 0.5) * 8 - 2
-    );
-    mesh.rotation.set(
-      Math.random() * Math.PI * 2,
-      Math.random() * Math.PI * 2,
-      Math.random() * Math.PI * 2
-    );
-
-    var ud = {
-      rotX: (Math.random() - 0.5) * 0.004,
-      rotY: (Math.random() - 0.5) * 0.005,
-      rotZ: (Math.random() - 0.5) * 0.003,
-      floatAmp: 0.8 + Math.random() * 1.2,
-      floatSpd: 0.0006 + Math.random() * 0.0007,
-      floatOff: Math.random() * Math.PI * 2,
-      driftAmp: 0.4 + Math.random() * 0.5,
-      driftSpd: 0.0004 + Math.random() * 0.0004,
-      origX: mesh.position.x,
-      origY: mesh.position.y,
-    };
-    mesh.userData = ud;
-
-    scene.add(mesh);
-    shapes.push(mesh);
-  });
-
-  /* ── Mouse parallax ── */
-  var mouseX = 0, mouseY = 0;
-  document.addEventListener('mousemove', function(e) {
-    mouseX = (e.clientX / window.innerWidth  - 0.5) * 0.5;
-    mouseY = (e.clientY / window.innerHeight - 0.5) * 0.3;
-  }, { passive: true });
-
-  /* ── Render loop ── */
-  var t = 0;
-  function animate() {
-    requestAnimationFrame(animate);
-    t++;
-
-    shapes.forEach(function(mesh) {
-      var ud = mesh.userData;
-      mesh.rotation.x += ud.rotX;
-      mesh.rotation.y += ud.rotY;
-      mesh.rotation.z += ud.rotZ;
-
-      mesh.position.y = ud.origY + Math.sin(t * ud.floatSpd + ud.floatOff) * ud.floatAmp;
-      mesh.position.x = ud.origX + Math.cos(t * ud.driftSpd + ud.floatOff) * ud.driftAmp;
-    });
-
-    /* Smooth camera parallax */
-    camera.position.x += (mouseX - camera.position.x) * 0.025;
-    camera.position.y += (-mouseY - camera.position.y) * 0.025;
-    camera.lookAt(scene.position);
-
-    renderer.render(scene, camera);
-  }
-  animate();
-
-  window.addEventListener('resize', function() {
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-  });
-})();
-
-/* ════════════════════════════════════════════════════════════
-   HERO SCENE — ZyNi Smc Brand Text · Box Grid · Camera Orbit
-   Three.js · 3D text via TextGeometry
-════════════════════════════════════════════════════════════ */
-(function initHeroScene() {
-  var container = document.getElementById('hero-3d-canvas');
-  if (!container || !window.THREE) return;
-
-  /* ── Renderer ── */
-  var renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.toneMapping    = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.3;
-  renderer.shadowMap.enabled   = true;
-  renderer.domElement.style.cssText = 'position:absolute;top:0;left:0;display:block;width:100%;height:100%';
-  container.appendChild(renderer.domElement);
-
-  function W() { return container.clientWidth  || window.innerWidth; }
-  function H() { return container.clientHeight || window.innerHeight; }
-  renderer.setSize(W(), H());
-
-  /* ── Scene — no background (alpha: true handles transparency) ── */
-  var scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(0x00000c, 0.045);
-
-  /* ── Camera — FOV adapts for mobile ── */
-  var isMobile = W() < 640;
-  var camera = new THREE.PerspectiveCamera(
-    isMobile ? 60 : 44,
-    W() / H(), 0.1, 120
-  );
-  /* Initial position — overridden each frame */
-  camera.position.set(7, 6, 9);
-  camera.lookAt(0, 0.5, 0);
-
-  /* ── Lights ── */
-  scene.add(new THREE.AmbientLight(0x08082a, 1.5));
-  var pl1 = new THREE.PointLight(0x6622ff, 8, 20); pl1.position.set(-3, 6, 2); pl1.castShadow = true; scene.add(pl1);
-  var pl2 = new THREE.PointLight(0x0055ff, 5, 16); pl2.position.set(4, 4, -3); scene.add(pl2);
-  var pl3 = new THREE.PointLight(0x00aaff, 3, 12); pl3.position.set(0, 8, 4);  scene.add(pl3);
-  var pl4 = new THREE.PointLight(0x4400cc, 4, 10); pl4.position.set(0, -2, 0); scene.add(pl4);
-
-  /* ── Floor ── */
-  var floor = new THREE.Mesh(
-    new THREE.PlaneGeometry(40, 40),
-    new THREE.MeshStandardMaterial({ color: 0x000412, metalness: 0.98, roughness: 0.08 })
-  );
-  floor.rotation.x = -Math.PI / 2;
-  floor.position.y = -0.01;
-  floor.receiveShadow = true;
-  scene.add(floor);
-  scene.add(new THREE.GridHelper(30, 30, 0x110044, 0x080022));
-
-  /* ── Box grid ── */
-  var blues = [0x020d2e,0x030f35,0x04102a,0x020a22,0x050f30,0x030c28,0x040e32,0x021025,0x060d38,0x031128,0x050a30,0x020e2a];
-  var GAP = 0.04, COLS = 13, ROWS = 11, BOX_W = 0.82, BOX_D = 0.82;
-  var allBoxes = [];
-  var si = 0;
-
-  for (var row = 0; row < ROWS; row++) {
-    for (var col = 0; col < COLS; col++) {
-      var cx = col - (COLS - 1) / 2;
-      var cz = row - (ROWS - 1) / 2;
-      var isCenter = (col === 6 && row === 5);
-      var h = isCenter ? 0.55 : 0.20 + Math.random() * 0.40;
-      var geo = new THREE.BoxGeometry(BOX_W, h, BOX_D);
-      var mat = new THREE.MeshStandardMaterial({
-        color:            isCenter ? 0x0044cc : blues[si % blues.length],
-        metalness:        0.88, roughness: 0.10,
-        emissive:         isCenter ? 0x002299 : 0x001155,
-        emissiveIntensity: isCenter ? 0.40 : 0.06
-      });
-      var mesh = new THREE.Mesh(geo, mat);
-      mesh.castShadow = true; mesh.receiveShadow = true;
-      var grp = new THREE.Group();
-      grp.add(mesh);
-      var x  = cx * (BOX_W + GAP);
-      var z  = cz * (BOX_D + GAP);
-      var tY = h / 2;
-      var sY = tY + 5 + si * 0.07;
-      grp.position.set(x, sY, z);
-      allBoxes.push({
-        grp:        grp,
-        targetY:    tY,
-        startY:     sY,
-        delay:      si * 0.048,
-        isCenter:   isCenter,
-        landed:     false,
-        floatOffset: si * 0.41 + Math.random() * 0.5,
-        floatSpeed:  1.10 + Math.random() * 0.70,
-        floatAmp:    isCenter ? 0.18 : 0.12 + Math.random() * 0.13
-      });
-      si++;
-      scene.add(grp);
-    }
-  }
-
-  /* ── Brand text: "ZyNi Smc" via TextGeometry ── */
-  var btc = new THREE.Group();     /* keep var name — animate loop references btc */
-  btc.position.set(0, 0.55 / 2 + 0.38, 0);
-  scene.add(btc);
-
-  /* Extra gold light for "Smc" metallic reflections — orbits with the text */
-  var goldTextL = new THREE.PointLight(0xfbbf24, 4.5, 9);
-  goldTextL.position.set(1.5, 2.0, 1.5);
-  scene.add(goldTextL);
-
-  /* Load font and build 3D text asynchronously */
-  if (window.THREE && window.THREE.FontLoader && window.THREE.TextGeometry) {
-    (function() {
-      var loader = new window.THREE.FontLoader();
-      loader.load(
-        'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/fonts/helvetiker_bold.typeface.json',
-        function(font) {
-          /* ── "ZyNi" — blue / neon metallic ── */
-          var zyniGeo = new THREE.TextGeometry('ZyNi', {
-            font: font, size: 0.44, height: 0.14,
-            curveSegments: 8,
-            bevelEnabled: true, bevelThickness: 0.024,
-            bevelSize: 0.014, bevelSegments: 5
-          });
-          zyniGeo.computeBoundingBox();
-          var zyniW = zyniGeo.boundingBox.max.x - zyniGeo.boundingBox.min.x;
-          var zyniMat = new THREE.MeshStandardMaterial({
-            color: 0x55aaff, metalness: 0.84, roughness: 0.08,
-            emissive: 0x1133aa, emissiveIntensity: 0.55
-          });
-          var zyniMesh = new THREE.Mesh(zyniGeo, zyniMat);
-          zyniMesh.position.set(-zyniW / 2, 0.24, 0);
-          btc.add(zyniMesh);
-
-          /* ── "Smc" — gold metallic with glow ── */
-          var smcGeo = new THREE.TextGeometry('Smc', {
-            font: font, size: 0.35, height: 0.12,
-            curveSegments: 8,
-            bevelEnabled: true, bevelThickness: 0.020,
-            bevelSize: 0.012, bevelSegments: 5
-          });
-          smcGeo.computeBoundingBox();
-          var smcW = smcGeo.boundingBox.max.x - smcGeo.boundingBox.min.x;
-          var smcMat = new THREE.MeshStandardMaterial({
-            color: 0xfbbf24, metalness: 0.97, roughness: 0.03,
-            emissive: 0x7c3f00, emissiveIntensity: 0.52
-          });
-          var smcMesh = new THREE.Mesh(smcGeo, smcMat);
-          smcMesh.position.set(-smcW / 2, -0.22, 0);
-          btc.add(smcMesh);
-        }
-      );
-    })();
-  }
-
-
-  /* Glow light under ₿ */
-  var gl = new THREE.PointLight(0x4488ff, 3, 4);
-  gl.position.set(0, 1.2, 0); scene.add(gl);
-
-  /* Pulse ring */
-  var pr = new THREE.Mesh(
-    new THREE.TorusGeometry(0.65, 0.005, 8, 60),
-    new THREE.MeshBasicMaterial({ color: 0x4466ff, transparent: true, opacity: 0.4 })
-  );
-  pr.rotation.x = Math.PI / 2; pr.position.y = 0.56; scene.add(pr);
-
-  /* ── Easing helpers ── */
-  function eIn(x)  { return x * x * x * x; }
-  function eOut(x) { return 1 - Math.pow(1 - x, 3); }
-
-  /* ── State ── */
-  var startTime = null;
-  var scrollY   = 0;
-  var active    = true;
-  window.addEventListener('scroll', function() { scrollY = window.scrollY; }, { passive: true });
-  if (window.IntersectionObserver) {
-    new IntersectionObserver(function(e) { active = e[0].isIntersecting; },
-      { threshold: 0.05 }).observe(container);
-  }
-
-  /* ── Camera orbit params — responsive ── */
-  function camParams() {
-    var mob = W() < 640;
-    var tab = W() < 960;
-    return {
-      fov:    mob ? 62 : tab ? 52 : 44,
-      radius: mob ? 14 : tab ? 12 : 10,
-      height: mob ? 7  : tab ? 6  : 5.5,
-      lookY:  mob ? 1.0 : 0.5
-    };
-  }
-
-  /* ── Animate ── */
-  function animate(ts) {
-    requestAnimationFrame(animate);
-    if (!active) return;
-    if (!startTime) startTime = ts;
-    var t = (ts - startTime) / 1000;
-
-    /* Scroll fade + parallax */
-    var heroH = container.clientHeight || 700;
-    var sf = Math.min(scrollY / heroH, 1);
-    container.style.opacity   = (1 - sf).toFixed(3);
-    container.style.transform = 'translateY(' + (-sf * 50) + 'px)';
-
-    /* Box drop-in + float */
-    allBoxes.forEach(function(b) {
-      if (b.landed) {
-        b.grp.position.y = b.targetY + Math.sin(t * b.floatSpeed + b.floatOffset) * b.floatAmp;
-      } else {
-        var p = Math.max(0, Math.min(1, (t - b.delay) / 0.72));
-        var e = p < 0.45 ? eIn(p / 0.45) * 0.15 : 0.15 + eOut((p - 0.45) / 0.55) * 0.85;
-        b.grp.position.y = b.startY + (b.targetY - b.startY) * e;
-        if (p >= 1) b.landed = true;
-      }
-    });
-
-    /* ₿ follows center box */
-    var cb = allBoxes[5 * 13 + 6];
-    btc.position.y = cb.grp.position.y + 0.55 / 2 + 0.38;
-    btc.rotation.y = t * 0.25;
-    gl.position.y  = btc.position.y - 0.1;
-    gl.intensity   = 2.5 + Math.sin(t * 2.2) * 0.8;
-    goldTextL.position.set(Math.cos(t * 0.9) * 2.2, btc.position.y + 0.6, Math.sin(t * 0.9) * 2.2);
-    goldTextL.intensity = 3.8 + Math.sin(t * 1.6) * 0.9;
-
-    /* Pulse ring */
-    pr.scale.setScalar(0.96 + Math.sin(t * 2) * 0.05);
-    pr.material.opacity = 0.25 + Math.sin(t * 1.8) * 0.18;
-    pr.position.y = btc.position.y - 0.35;
-
-    /* Camera orbit — slow, responsive radius */
-    var cp = camParams();
-    var ca = t * 0.10 + 0.4;
-    camera.fov = cp.fov;
-    camera.position.set(
-      Math.cos(ca) * cp.radius,
-      cp.height + Math.sin(t * 0.07) * 0.6,
-      Math.sin(ca) * cp.radius
-    );
-    camera.lookAt(0, cp.lookY, 0);
-    camera.updateProjectionMatrix();
-
-    /* Roaming key light */
-    pl1.position.x = Math.cos(t * 0.35) * 5;
-    pl1.position.z = Math.sin(t * 0.35) * 4;
-
-    renderer.render(scene, camera);
-  }
-  requestAnimationFrame(animate);
-
-  /* ── Rotating word ── */
-  if (window.gsap) {
-    var words = ['Smart', 'Elite', 'Pro', 'Strategic', 'Advanced'];
-    var wordEl = document.getElementById('hero-rw');
-    if (wordEl) {
-      var wIdx = 0;
-      function rotateWord() {
-        gsap.to(wordEl, {
-          opacity: 0, y: -14, filter: 'blur(6px)', duration: 0.45, ease: 'power2.in',
-          onComplete: function() {
-            wIdx = (wIdx + 1) % words.length;
-            wordEl.textContent = words[wIdx];
-            gsap.fromTo(wordEl,
-              { opacity: 0, y: 16, filter: 'blur(6px)' },
-              { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.55, ease: 'power2.out' }
-            );
-          }
-        });
-      }
-      setInterval(rotateWord, 3200);
-    }
-  }
-
-  /* ── Resize ── */
-  window.addEventListener('resize', function() {
-    renderer.setSize(W(), H());
-    camera.aspect = W() / H();
-    camera.updateProjectionMatrix();
-  });
-})();
-
-
-
-
-/* ── Unified 3D text + block scroll-reveal ── */
-(function sectionReveal() {
-
-  /* Simple translateY fade — all section text + blocks */
-  var T3D = [];  /* statement text handled by dedicated observer below */
-
-  /* Simple translateY fade — section text + blocks */
-  var SR = [
-    { sel: '.sec-eyebrow', delay: 0   },
-    { sel: '.sec-h',       delay: 100 },
-    { sel: '.sec-sub',     delay: 200 },
-    { sel: '.feat-title',  delay: 0   },
-    { sel: '.feat-row',    delay: 0   },
-    { sel: '.gl-card',     delay: 0   },
-  ];
-
-
-  /* Prepare block elements */
-  var srItems = [];
-  for (var si = 0; si < SR.length; si++) {
-    var els = document.querySelectorAll(SR[si].sel);
-    for (var ei = 0; ei < els.length; ei++) {
-      var el = els[ei];
-      if (el._srDone) continue;
-      el._srDone = true;
-      el.style.opacity    = '0';
-      el.style.transform  = 'translateY(24px)';
-      el.style.transition = 'opacity .65s cubic-bezier(.22,1,.36,1),transform .65s cubic-bezier(.22,1,.36,1)';
-      el.style.willChange = 'opacity,transform';
-      srItems.push(el);
-    }
-  }
-
-  /* Stagger rows/cards within sections */
-  var secs = document.querySelectorAll('.section');
-  for (var si = 0; si < secs.length; si++) {
-    var rows  = secs[si].querySelectorAll('.feat-row');
-    for (var ri = 0; ri < rows.length; ri++) rows[ri].style.transitionDelay = (ri*105) + 'ms';
-    var cards = secs[si].querySelectorAll('.gl-card');
-    for (var ci = 0; ci < cards.length; ci++) cards[ci].style.transitionDelay = (ci*85) + 'ms';
-    }
-
-  /* Fallback — no IntersectionObserver */
-  if (!('IntersectionObserver' in window)) {
-    for (var i = 0; i < srItems.length; i++) {
-      srItems[i].style.opacity = '1'; srItems[i].style.transform = 'translateY(0)';
-    }
-    return;
-  }
-
-  /* Block observer */
-  var srObs = new IntersectionObserver(function(entries) {
-    for (var i = 0; i < entries.length; i++) {
-      if (entries[i].isIntersecting) {
-        var el = entries[i].target;
-        el.style.opacity = '1'; el.style.transform = 'translateY(0)';
-        srObs.unobserve(el);
-      }
-    }
-  }, { threshold: 0.10 });
-  for (var i = 0; i < srItems.length; i++) srObs.observe(srItems[i]);
-
-})();
-
-
-/* ── Statement cinematic scroll (GSAP + ScrollTrigger) ── */
-(function initStatementScroll() {
-  if (!window.gsap || !window.ScrollTrigger) return;
-  gsap.registerPlugin(ScrollTrigger);
-
-  var sec      = document.getElementById('statement');
-  if (!sec) return;
-  var bgGlow   = document.getElementById('stmt-bg-glow');
-  var sphWrap  = document.getElementById('stmt-sphere-wrap');
-  var brand    = document.getElementById('stmt-brand');
-  var l1       = document.getElementById('stmt-l1');
-  var l2       = document.getElementById('stmt-l2');
-  if (!l1) return;
-
-  /* ── Word splitter ── */
-  function splitWords(el) {
-    var result = [];
-    var nodes = Array.prototype.slice.call(el.childNodes);
-    el.innerHTML = '';
-    for (var i = 0; i < nodes.length; i++) {
-      var node = nodes[i];
-      if (node.nodeType === 3) {
-        var parts = node.textContent.split(/(\s+)/);
-        for (var j = 0; j < parts.length; j++) {
-          if (/\S/.test(parts[j])) {
-            var s = document.createElement('span');
-            s.className = 'sw';
-            s.textContent = parts[j];
-            el.appendChild(s);
-            result.push(s);
-          } else if (parts[j]) {
-            el.appendChild(document.createTextNode(parts[j]));
-          }
-        }
-      } else {
-        var w = document.createElement('span');
-        w.className = 'sw';
-        w.appendChild(node);
-        el.appendChild(w);
-        result.push(w);
-      }
-    }
-    return result;
-  }
-
-  /* ── Reduced-motion shortcut ── */
-  var prefersReduced = window.matchMedia &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if (prefersReduced) {
-    gsap.set([bgGlow, sphWrap, brand, l1, l2],
-             { opacity: 1, scale: 1, filter: 'blur(0px) brightness(1)', y: 0, z: 0 });
-    return;
-  }
-
-  /* ── Split l1 into word spans ── */
-  var words = splitWords(l1);
-
-  /* ── Initial hidden states ── */
-  /* bgGlow starts scaled-down + shifted; pre-entry normalises scale+y */
-  gsap.set(bgGlow,  { opacity: 0, scale: 0.88, y: 18 });
-  /* sphWrap: deep behind screen (z:-340), tiny scale, heavy blur — camera-push ready */
-  gsap.set(sphWrap, { opacity: 0, z: -340, scale: 0.04, filter: 'blur(28px) brightness(3)', y: 28 });
-  gsap.set(brand,   { opacity: 0, y: -18, filter: 'blur(5px)' });
-  gsap.set(l1,    { opacity: 1 });
-  gsap.set(words, { opacity: 0, y: 24, filter: 'blur(6px)' });
-  gsap.set(l2,    { opacity: 0, y: 16, filter: 'blur(4px)' });
-
-  /* ── PRE-ENTRY: ambient glow drifts in as section scrolls into view ──
-     bgGlow scale:0.88→1 + y:18→0 + opacity:0→0.65 gives a slow "zoom-in"
-     before the pin activates — parallax warmup, no sphere yet. */
-  gsap.fromTo(bgGlow,
-    { opacity: 0, scale: 0.88, y: 18 },
-    {
-      opacity: 0.65, scale: 1, y: 0, ease: 'power1.inOut',
-      scrollTrigger: {
-        trigger: sec,
-        start:   'top bottom',
-        end:     'top top',
-        scrub:   true
-      }
-    }
-  );
-
-  /* ── IDLE: sphere breathes after landing ── */
-  var idleStarted = false;
-  function startIdleAnims() {
-    if (idleStarted) return;
-    idleStarted = true;
-    gsap.to('#stmt-sphere', {
-      scale: 1.028, duration: 2.8, repeat: -1, yoyo: true,
-      ease: 'sine.inOut', transformOrigin: 'center center'
-    });
-  }
-
-  /* ── MAIN CINEMATIC PINNED TIMELINE ──
-     Architecture: ONE high-impact burst for sphere, THEN text.
-     No staged construction — the sphere erupts as a complete object. */
-  var tl = gsap.timeline({
-    scrollTrigger: {
-      trigger:       sec,
-      start:         'top top',
-      end:           '+=240%',
-      pin:           true,
-      scrub:         0.9,
-      anticipatePin: 1,
-      onLeave: startIdleAnims
-    }
-  });
-
-  /* ── ACT 1: SPHERE BURST (pos 0 → 1.5) ──
-     sphWrap (sphere + ring as one unified object) punches from z:-340 deep
-     behind the screen to z:22 (slightly past the viewer's eye) in 0.95s —
-     true camera-projection feel, not just 2D scale.
-     immediateRender:false so pre-entry gsap.set state is preserved on load. */
-
-  /* glow drives to full brightness — picks up from pre-entry's opacity:0.65 */
-  tl.to(bgGlow,
-    { opacity: 1, duration: 0.8, ease: 'power1.inOut' }, 0);
-
-  /* sphere + ring burst: z depth punch + scale overshoot + bloom flash */
-  tl.fromTo(sphWrap,
-    { opacity: 0, z: -340, scale: 0.04, filter: 'blur(28px) brightness(3)', y: 28 },
-    { opacity: 1, z: 22,   scale: 1.05, filter: 'blur(0px) brightness(2.2)', y: 0,
-      duration: 0.95, ease: 'power4.out', immediateRender: false }, 0);
-
-  /* settle: z eases to 0 (screen plane), brightness cools, back.out overshoot */
-  tl.to(sphWrap,
-    { z: 0, scale: 1, filter: 'blur(0px) brightness(1)',
-      duration: 0.5, ease: 'back.out(1.5)' }, 0.95);
-
-  /* ── ACT 2: TEXT (pos 1.8 → end) ──
-     Only starts AFTER sphere has fully landed (pos 1.5 is settled). */
-
-  /* brand label floats down from above */
-  tl.to(brand,
-    { opacity: 1, y: 0, filter: 'blur(0px)',
-      duration: 0.75, ease: 'power2.out' }, 1.8);
-
-  /* main text: words rise + sharpen one by one */
-  tl.to(words,
-    { opacity: 1, y: 0, filter: 'blur(0px)',
-      duration: 0.45, stagger: 0.1, ease: 'power2.out' }, 2.7);
-
-  /* second paragraph */
-  tl.to(l2,
-    { opacity: 1, y: 0, filter: 'blur(0px)',
-      duration: 0.8, ease: 'power2.out' }, 4.6);
-
-  /* tail hold */
-  tl.to({}, { duration: 0.35 }, 5.6);
-
-})();
-
-
 /* ══════════════════════════════════════════════════════════
    MODULE CAROUSEL — 3D ring · inner crossfade · kinetic text
 ══════════════════════════════════════════════════════════ */
@@ -2226,37 +1402,50 @@ function lwStartBounce(){
   if (!window.gsap) return;
 
   /* ── Module data ── */
+  /* Modules 2/3/4 borrow a screenshot from sibling modules so every phone
+     shows real app UI instead of a blank placeholder.                      */
   var MD = [
     { tag:'Module 01', icon:'📊', color:'#22d3ee',
       title:'Order Block Detection',
       ids:['ob-s0','ob-s1'],
-      descs:['Scan 400+ pairs in one tap. Every Order Block near price appears instantly — score, strength and direction.','See the full institutional order book inside any OB zone. Know where big money sits before price arrives.'] },
+      descs:['Scan 400+ pairs in one tap. Every Order Block near price appears instantly — score, strength and direction.',
+             'See the full institutional order book inside any OB zone. Know where big money sits before price arrives.'] },
     { tag:'Module 02', icon:'⚡', color:'#22c55e',
       title:'Fair Value Gap & Imbalance',
-      ids:[],
-      descs:['Check live Buy vs Sell pressure inside any FVG. Impulse score 0–100 tells you if the gap will hold or fill — before you enter.'] },
+      ids:['ob-s0','mon-s0'],
+      descs:['Check live Buy vs Sell pressure inside any FVG. Impulse score 0–100 tells you if the gap will hold or fill — before you enter.',
+             'FVG zones are automatically ranked by recency and overlap with OB levels — highest-probability gaps surface first.'] },
     { tag:'Module 03', icon:'🔥', color:'#f97316',
       title:'Breaker Block Detection',
-      ids:[],
-      descs:['Catch flipped OBs the moment they become Breakers. HIGH PROB fires when FVG overlaps — the best reversal zones, found automatically.'] },
+      ids:['mon-s0','ob-s1'],
+      descs:['Catch flipped OBs the moment they become Breakers. HIGH PROB fires when FVG overlaps — the best reversal zones, found automatically.',
+             'Breaker strength score combines wick rejection, candle body and volume delta — only clean flips qualify.'] },
     { tag:'Module 04', icon:'📐', color:'#a78bfa',
       title:'Fibonacci Retracement',
-      ids:[],
-      descs:['Auto-detect dominant swing legs. Get alerted at 0.618, 0.705 and 0.786 across every pair — the exact levels institutions react to.'] },
+      ids:['bias-s0','bias-s1'],
+      descs:['Auto-detect dominant swing legs. Get alerted at 0.618, 0.705 and 0.786 across every pair — the exact levels institutions react to.',
+             'Multi-timeframe Fib confluence: a 0.705 on the 4H aligning with a 0.618 on 1H generates the highest-confidence signal.'] },
     { tag:'Module 05', icon:'📈', color:'#ec4899',
       title:'Live Monitor Dashboard',
       ids:['mon-s0','mon-s1'],
-      descs:['All SMC zones load automatically — OBs, FVGs, Fibs and Breakers across 3 timeframes. Everything live.','Fully configurable — choose modules, timeframes and auto-refresh. Your watchlist stays updated automatically.'] },
+      descs:['All SMC zones load automatically — OBs, FVGs, Fibs and Breakers across 3 timeframes. Everything live.',
+             'Fully configurable — choose modules, timeframes and auto-refresh. Your watchlist stays updated automatically.'] },
     { tag:'Module 06', icon:'🎯', color:'#f59e0b',
       title:'Bias Detection System',
       ids:['bias-s0','bias-s1','bias-s2'],
-      descs:['See directional bias signals across the full market. Momentum confirmed, volume backed — only strong setups.','Tune exactly which gates must pass. Prior momentum, wick, engulf, body strength — you control the filter.','Live Order Flow inside every signal card — Buy vs Sell volume, CVD, OI delta and funding rate.'] }
+      descs:['See directional bias signals across the full market. Momentum confirmed, volume backed — only strong setups.',
+             'Tune exactly which gates must pass. Prior momentum, wick, engulf, body strength — you control the filter.',
+             'Live Order Flow inside every signal card — Buy vs Sell volume, CVD, OI delta and funding rate.'] }
   ];
 
-  var COUNT    = MD.length;          // 6
-  var RADIUS   = 340;                // 3D circle radius (px)
-  var STEP     = 360 / COUNT;        // 60° per phone
-  var SLIDE_MS = 3200;               // ms per screenshot
+  var COUNT    = MD.length;   // 6
+  var SLIDE_MS = 3200;        // ms per screenshot
+
+  /* Responsive radius & stage height */
+  function isMobile()  { return window.innerWidth < 768; }
+  function isTiny()    { return window.innerWidth < 480; }
+  function getRadius() { return isTiny() ? 220 : isMobile() ? 260 : 290; }
+  var STEP = 360 / COUNT;     // 60° per phone
 
   var track  = document.getElementById('mc-track');
   var gtag   = document.getElementById('mc-gtag');
@@ -2269,55 +1458,67 @@ function lwStartBounce(){
   if (!track || !glass) return;
 
   /* ── Read img src from hidden cache ── */
-  function getSrcs(ids) {
-    return ids.map(function(id) {
-      var el = document.getElementById(id);
-      if (!el) return null;
-      var img = el.querySelector('img');
-      return img ? img.getAttribute('src') : null;
-    }).filter(Boolean);
+  function getSrc(id) {
+    var el = document.getElementById(id);
+    if (!el) return null;
+    var img = el.querySelector('img');
+    return img ? img.getAttribute('src') : null;
   }
 
   /* ── Build phone card HTML ── */
   function buildCard(mod) {
-    var srcs = getSrcs(mod.ids);
-    var slideHtml = srcs.length
-      ? srcs.map(function(src, i) {
-          return '<div class="mc-si' + (i===0?' mc-on':'') + '"><img src="' + src + '" alt="" loading="lazy"></div>';
-        }).join('')
-      : '<div class="mc-si mc-on"><div class="mc-si-ph">' +
-          '<span class="mc-si-ph-icon" style="color:' + mod.color + '">' + mod.icon + '</span>' +
-          '<span class="mc-si-ph-label" style="color:' + mod.color + '">' + mod.tag + '</span>' +
-        '</div></div>';
+    var slides = mod.ids.map(function(id, i) {
+      var src = getSrc(id);
+      if (!src) return '';
+      return '<div class="mc-si' + (i===0 ? ' mc-on' : '') + '">' +
+               '<img src="' + src + '" alt="' + mod.tag + ' screenshot" decoding="async">' +
+             '</div>';
+    }).filter(Boolean).join('');
 
-    return (
-      '<div class="mc-card">' +
-        '<div class="mc-phone-wrap">' +
-          '<div class="mc-btn-pow"></div>' +
-          '<div class="mc-btn-v1"></div>' +
-          '<div class="mc-btn-v2"></div>' +
-          '<div class="mc-screen">' +
-            '<div class="mc-cam"></div>' +
-            '<div class="mc-slide-wrap">' + slideHtml + '</div>' +
-            '<div class="mc-phone-shine"></div>' +
-          '</div>' +
-          '<div class="mc-pill-bar"><div class="mc-pill"></div></div>' +
-        '</div>' +
-        '<div class="mc-ring" style="background:radial-gradient(ellipse,'+mod.color+' 0%,transparent 72%)"></div>' +
-      '</div>'
-    );
+    if (!slides) {
+      slides = '<div class="mc-si mc-on">' +
+                 '<div class="mc-si-ph">' +
+                   '<span class="mc-si-ph-icon" style="color:' + mod.color + '">' + mod.icon + '</span>' +
+                   '<span class="mc-si-ph-label" style="color:' + mod.color + '">' + mod.tag + '</span>' +
+                 '</div>' +
+               '</div>';
+    }
+
+    return '<div class="mc-card">' +
+             '<div class="mc-phone-wrap">' +
+               '<div class="mc-btn-pow"></div>' +
+               '<div class="mc-btn-v1"></div>' +
+               '<div class="mc-btn-v2"></div>' +
+               '<div class="mc-screen">' +
+                 '<div class="mc-cam"></div>' +
+                 '<div class="mc-slide-wrap">' + slides + '</div>' +
+                 '<div class="mc-phone-shine"></div>' +
+               '</div>' +
+               '<div class="mc-pill-bar"><div class="mc-pill"></div></div>' +
+             '</div>' +
+             '<div class="mc-ring" style="background:radial-gradient(ellipse,'+mod.color+' 0%,transparent 70%)"></div>' +
+           '</div>';
   }
 
-  /* ── Create 6 phone items ── */
-  var items = [];
+  /* ── Create 6 phone items positioned in 3D circle ── */
+  var RADIUS = getRadius();
+  var items  = [];
   MD.forEach(function(mod, i) {
     var item = document.createElement('div');
     item.className = 'mc-item';
-    item.dataset.i = i;
+    item.dataset.i  = i;
     item.style.transform = 'rotateY(' + (i * STEP) + 'deg) translateZ(' + RADIUS + 'px)';
     item.innerHTML = buildCard(mod);
     track.appendChild(item);
     items.push(item);
+  });
+
+  /* Update radius on resize */
+  window.addEventListener('resize', function() {
+    var r = getRadius();
+    items.forEach(function(item, i) {
+      item.style.transform = 'rotateY(' + (i * STEP) + 'deg) translateZ(' + r + 'px)';
+    });
   });
 
   /* ── Module outer dots ── */
@@ -2330,57 +1531,55 @@ function lwStartBounce(){
   });
 
   /* ── State ── */
-  var cur   = 0;     // active module
-  var sli   = 0;     // active slide within module
-  var busy  = false; // carousel rotating
+  var cur    = 0;
+  var sli    = 0;
+  var busy   = false;
   var sTimer = null;
 
-  /* ── Visual style table per angular distance from center ── */
+  /* Visual style per angular distance */
   var P = [
-    { scale:1.12, opacity:1,    blur:0,  z:10 }, // 0 = active center
-    { scale:0.76, opacity:0.52, blur:4,  z:6  }, // ±1
-    { scale:0.56, opacity:0.24, blur:8,  z:3  }, // ±2
-    { scale:0.38, opacity:0.06, blur:14, z:1  }  // ±3 (back)
+    { scale:1.10, opacity:1,    blur:0,  z:10 },
+    { scale:0.74, opacity:0.50, blur:3,  z:6  },
+    { scale:0.54, opacity:0.22, blur:7,  z:3  },
+    { scale:0.36, opacity:0.06, blur:12, z:1  }
   ];
 
-  function styleAtDelta(delta) {
-    var abs = Math.abs(delta);
-    return P[Math.min(abs, 3)];
-  }
+  function pAt(d) { return P[Math.min(Math.abs(d), 3)]; }
 
-  /* ── Apply visual styles to all phones ── */
+  /* ── Apply visual styles ── */
   function refreshStyles(instant) {
     items.forEach(function(item, i) {
       var delta = ((i - cur) % COUNT + COUNT) % COUNT;
       if (delta > COUNT / 2) delta -= COUNT;
-      var ps  = styleAtDelta(delta);
+      var ps   = pAt(delta);
       var card = item.querySelector('.mc-card');
       var ring = item.querySelector('.mc-ring');
-      var dur  = instant ? 0 : 0.88;
+      var dur  = instant ? 0 : 0.82;
 
       gsap.to(card, {
-        scale: ps.scale, opacity: ps.opacity,
-        filter: ps.blur > 0 ? 'blur(' + ps.blur + 'px)' : 'none',
+        scale:   ps.scale,
+        opacity: ps.opacity,
+        filter:  ps.blur > 0 ? 'blur(' + ps.blur + 'px)' : 'none',
         duration: dur, ease: 'power3.inOut', overwrite: true
       });
       item.style.zIndex = ps.z;
       item.classList.toggle('mc-active', delta === 0);
+
       if (ring) {
         gsap.to(ring, {
-          opacity: delta === 0 ? 0.92 : 0,
+          opacity:  delta === 0 ? 0.9 : 0,
           duration: dur, ease: 'power2.inOut', overwrite: true
         });
       }
     });
   }
 
-  /* ── Cross-fade to a slide inside active phone ── */
+  /* ── Cross-fade to slide ── */
   function showSlide(idx) {
     var item = items[cur];
     if (!item) return;
     item.querySelectorAll('.mc-si').forEach(function(s, i) {
-      if (i === idx) s.classList.add('mc-on');
-      else s.classList.remove('mc-on');
+      s.classList.toggle('mc-on', i === idx);
     });
     sli = idx;
     updateSDots();
@@ -2392,16 +1591,13 @@ function lwStartBounce(){
   function buildSDots(mod) {
     if (!sdots) return;
     sdots.innerHTML = '';
-    var n = Math.max(mod.ids.length, 1);
-    for (var i = 0; i < n; i++) {
-      (function(idx) {
-        var d = document.createElement('button');
-        d.className = 'mc-sdot' + (idx === 0 ? ' mc-on' : '');
-        d.setAttribute('aria-label', 'Slide ' + (idx + 1));
-        d.addEventListener('click', function() { clearST(); showSlide(idx); scheduleST(); });
-        sdots.appendChild(d);
-      })(i);
-    }
+    mod.ids.forEach(function(_, i) {
+      var d = document.createElement('button');
+      d.className = 'mc-sdot';
+      d.setAttribute('aria-label', 'Slide ' + (i + 1));
+      d.addEventListener('click', function() { clearST(); showSlide(i); scheduleST(); });
+      sdots.appendChild(d);
+    });
     updateSDots();
   }
 
@@ -2411,23 +1607,22 @@ function lwStartBounce(){
     sdots.querySelectorAll('.mc-sdot').forEach(function(d, i) {
       var on = i === sli;
       d.classList.toggle('mc-on', on);
-      d.style.background = on ? mod.color : '';
-      d.style.width      = on ? '22px' : '';
+      d.style.background   = on ? mod.color : '';
+      d.style.width        = on ? '20px' : '';
       d.style.borderRadius = on ? '4px' : '';
-      d.style.boxShadow  = on ? '0 0 8px ' + mod.color : '';
+      d.style.boxShadow    = on ? '0 0 8px ' + mod.color : '';
     });
   }
 
-  /* ── Module outer dots ── */
   function refreshMDots() {
     if (!mdots) return;
     mdots.querySelectorAll('.mc-mdot').forEach(function(d, i) {
       var on = i === cur;
       d.classList.toggle('mc-on', on);
       d.style.background   = on ? MD[i].color : '';
-      d.style.width        = on ? '22px' : '';
+      d.style.width        = on ? '20px' : '';
       d.style.borderRadius = on ? '4px' : '';
-      d.style.boxShadow    = on ? '0 0 8px ' + MD[i].color : '';
+      d.style.boxShadow    = on ? '0 0 7px ' + MD[i].color : '';
     });
   }
 
@@ -2444,48 +1639,46 @@ function lwStartBounce(){
   /* ── GSAP stagger blur-to-focus word reveal ── */
   function wordReveal(el, text, delay) {
     if (!el) return;
-    var words = text.split(' ');
-    el.innerHTML = words.map(function(w) {
-      return '<span style="display:inline-block;white-space:pre">' + w + ' </span>';
+    el.innerHTML = text.split(' ').map(function(w) {
+      return '<span style="display:inline-block">' + w + '&nbsp;</span>';
     }).join('');
-    var spans = el.querySelectorAll('span');
-    gsap.set(spans,  { opacity: 0, filter: 'blur(10px)', y: 10 });
-    gsap.to(spans, {
+    gsap.set(el.querySelectorAll('span'), { opacity: 0, filter: 'blur(8px)', y: 8 });
+    gsap.to(el.querySelectorAll('span'), {
       opacity: 1, filter: 'blur(0px)', y: 0,
-      duration: 0.5, stagger: 0.045, ease: 'power2.out', delay: delay || 0
+      duration: 0.46, stagger: 0.04, ease: 'power2.out', delay: delay || 0
     });
   }
 
-  function tagReveal(mod) {
-    if (!gtag) return;
-    gtag.textContent = mod.icon + '  ' + mod.tag;
-    gtag.style.color = mod.color;
-    gsap.fromTo(gtag, { opacity: 0, x: -12 }, { opacity: 1, x: 0, duration: 0.4, ease: 'power2.out' });
-  }
-
-  function titleReveal(text) {
-    wordReveal(gtitle, text, 0.05);
-    if (gtitle) gsap.set(gtitle, {}, 0); // ensure color applied by CSS
-  }
-
-  function descReveal(text) { wordReveal(gdesc, text, 0.08); }
-
-  /* ── Update glass panel ── */
+  /* ── Panel update ── */
   function updatePanel() {
     var mod = MD[cur];
-    tagReveal(mod);
-    titleReveal(mod.title);
-    descReveal(mod.descs[0]);
+    /* Tag */
+    if (gtag) {
+      gtag.textContent = mod.icon + '  ' + mod.tag;
+      gtag.style.color = mod.color;
+      gsap.fromTo(gtag, { opacity: 0, x: -10 }, { opacity: 1, x: 0, duration: 0.36, ease: 'power2.out' });
+    }
+    /* Title */
+    wordReveal(gtitle, mod.title, 0.04);
+    /* Desc — first slide */
+    wordReveal(gdesc, mod.descs[0], 0.08);
+    /* Dots */
     buildSDots(mod);
     refreshMDots();
-    // Pulse border in module color
+    /* Border flash */
+    var rgb = hexToRgb(mod.color);
     gsap.to(glass, {
-      borderColor: mod.color.replace('#','rgba(') + ',0.42)',
-      duration: 0.4, ease: 'power2.out',
+      borderColor: 'rgba(' + rgb + ',0.45)',
+      duration: 0.38, ease: 'power2.out',
       onComplete: function() {
-        gsap.to(glass, { borderColor: 'rgba(80,160,255,0.16)', duration: 1.2, ease: 'power2.out' });
+        gsap.to(glass, { borderColor: 'rgba(80,160,255,0.18)', duration: 1.4, ease: 'power2.out' });
       }
     });
+  }
+
+  function hexToRgb(hex) {
+    var n = parseInt(hex.replace('#',''), 16);
+    return [(n>>16)&255, (n>>8)&255, n&255].join(',');
   }
 
   /* ── Slide timer ── */
@@ -2497,8 +1690,7 @@ function lwStartBounce(){
     clearST();
     startProg();
     sTimer = setTimeout(function() {
-      var slideCount = Math.max(MD[cur].ids.length, 1);
-      if (sli < slideCount - 1) {
+      if (sli < MD[cur].ids.length - 1) {
         showSlide(sli + 1);
         scheduleST();
       } else {
@@ -2514,18 +1706,17 @@ function lwStartBounce(){
     cur = idx; sli = 0;
     busy = true;
 
-    // Reset all phones to slide 0
+    /* Reset all phones to their first slide */
     items.forEach(function(item) {
       item.querySelectorAll('.mc-si').forEach(function(s, i) {
-        if (i === 0) s.classList.add('mc-on');
-        else s.classList.remove('mc-on');
+        s.classList.toggle('mc-on', i === 0);
       });
     });
 
-    // Rotate 3D carousel track
+    /* Rotate 3D ring */
     gsap.to(track, {
       rotationY: -(idx * STEP),
-      duration: 0.88, ease: 'power3.inOut',
+      duration: 0.82, ease: 'power3.inOut',
       onComplete: function() { busy = false; }
     });
 
@@ -2534,36 +1725,35 @@ function lwStartBounce(){
     scheduleST();
   }
 
-  /* ── Navigation buttons ── */
-  var prevBtn = document.getElementById('mc-prev');
-  var nextBtn = document.getElementById('mc-next');
-  if (prevBtn) prevBtn.addEventListener('click', function() { go((cur - 1 + COUNT) % COUNT, true); });
-  if (nextBtn) nextBtn.addEventListener('click', function() { go((cur + 1) % COUNT, true); });
+  /* ── Nav ── */
+  var prev = document.getElementById('mc-prev');
+  var next = document.getElementById('mc-next');
+  if (prev) prev.addEventListener('click', function() { go((cur - 1 + COUNT) % COUNT, true); });
+  if (next) next.addEventListener('click', function() { go((cur + 1) % COUNT, true); });
 
-  /* ── Click a side phone to jump to it ── */
+  /* ── Click side phone ── */
   items.forEach(function(item, i) {
     item.addEventListener('click', function() { if (i !== cur) go(i, true); });
   });
 
-  /* ── Drag / swipe support ── */
+  /* ── Touch/pointer swipe ── */
   var px0 = 0;
   var stage = document.getElementById('mc-stage');
   if (stage) {
-    stage.addEventListener('pointerdown', function(e) { px0 = e.clientX; });
+    stage.addEventListener('pointerdown', function(e) { px0 = e.clientX; }, { passive: true });
     stage.addEventListener('pointerup',   function(e) {
       var dx = e.clientX - px0;
-      if (Math.abs(dx) > 55) go(dx < 0 ? (cur + 1) % COUNT : (cur - 1 + COUNT) % COUNT, true);
+      if (Math.abs(dx) > 44) go(dx < 0 ? (cur+1)%COUNT : (cur-1+COUNT)%COUNT, true);
     });
   }
 
-  /* ── ScrollTrigger section reveal ── */
+  /* ── ScrollTrigger reveal ── */
   if (window.ScrollTrigger) {
     gsap.registerPlugin(ScrollTrigger);
     var sec = document.getElementById('features');
     if (sec) {
       gsap.from(sec, {
-        opacity: 0, y: 52,
-        duration: 0.95, ease: 'power3.out',
+        opacity: 0, y: 48, duration: 0.9, ease: 'power3.out',
         scrollTrigger: { trigger: sec, start: 'top 82%', once: true }
       });
     }
@@ -2577,5 +1767,3 @@ function lwStartBounce(){
 })();
 
 </script>{% endraw %}
-</body>
-</html>
