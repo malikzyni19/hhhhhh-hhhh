@@ -331,8 +331,8 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 ══════════════════════════════ */
 .backdrop{position:fixed;inset:0;z-index:500;backdrop-filter:blur(0px) brightness(1);background:rgba(3,8,15,0);opacity:0;pointer-events:none;transition:all .6s ease}
 .backdrop.show{opacity:1;pointer-events:all;backdrop-filter:blur(18px) brightness(0.55);background:rgba(3,8,15,0.55)}
-.login-wrap{position:fixed;left:50%;top:50%;transform:translate(-50%,calc(-50% - 120vh));z-index:600;opacity:0;pointer-events:none}
-.login-wrap.visible{pointer-events:all;opacity:1}
+.login-wrap{position:fixed;left:50%;top:50%;transform:translate(-50%,calc(-50% - 120vh));z-index:600;opacity:0;pointer-events:none;transition:transform .45s cubic-bezier(.22,1,.36,1),opacity .35s ease}
+.login-wrap.visible{pointer-events:all;opacity:1;transform:translate(-50%,-50%)}
 .login-card{width:300px;background:linear-gradient(135deg,rgba(255,255,255,0.10),rgba(255,255,255,0.05),rgba(34,211,238,0.05));backdrop-filter:blur(28px) saturate(180%);border-radius:24px;border:1px solid rgba(255,255,255,0.12);padding:32px 28px 28px;position:relative;overflow:hidden;box-shadow:0 32px 64px rgba(0,0,0,0.5),inset 0 1px 0 rgba(255,255,255,0.14)}
 .login-card::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.3),#22d3ee,rgba(255,255,255,0.3),transparent)}
 .login-card::after{content:'';position:absolute;inset:0;border-radius:24px;pointer-events:none;background:radial-gradient(ellipse at 50% 0%,rgba(34,211,238,0.07) 0%,transparent 65%)}
@@ -726,6 +726,8 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 </div>
 
 <!-- DROP LOGIN -->
+<div class="login-overlay" id="loginOverlay" onclick="closeLogin()"></div>
+<div class="grid-bg-login" id="loginGridBg"></div>
 <div class="login-wrap" id="loginWrap">
   <div class="dust-wrap" id="dustWrap"></div>
   <div class="imp-ring" id="impRing"></div>
@@ -739,13 +741,14 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
     <div class="lc-div"></div>
     <div class="lc-field">
       <label class="lc-label" data-i18n="login_user">Username</label>
-      <input class="lc-input" type="text" placeholder="Enter your name" autocomplete="off">
+      <input class="lc-input" id="lcUser" type="text" placeholder="Enter your username" autocomplete="username">
     </div>
     <div class="lc-field">
       <label class="lc-label" data-i18n="login_pass">Password</label>
-      <input class="lc-input" type="password" placeholder="••••••••••">
+      <input class="lc-input" id="lcPass" type="password" placeholder="••••••••••" autocomplete="current-password">
     </div>
-    <button class="lc-btn" data-i18n="login_btn">Unlock Access →</button>
+    <div id="lcErr" style="display:none;color:#f87171;font-size:12px;margin-top:4px;margin-bottom:-4px;text-align:center"></div>
+    <button class="lc-btn" id="lcSubmit" onclick="submitLogin()" data-i18n="login_btn">Unlock Access →</button>
     <div class="lc-foot">ZyNi SMC v2.0 · smcsetups.com</div>
   </div>
 </div>
@@ -1228,6 +1231,13 @@ function filterLangs(q) {
   ).join('');
 }
 document.addEventListener('click', ()=>document.getElementById('langDropdown').classList.remove('open'));
+// Submit login on Enter key inside password field
+(function(){
+  var p = document.getElementById('lcPass');
+  if (p) p.addEventListener('keydown', function(e){ if (e.key === 'Enter') submitLogin(); });
+  var u = document.getElementById('lcUser');
+  if (u) u.addEventListener('keydown', function(e){ if (e.key === 'Enter') { document.getElementById('lcPass').focus(); } });
+})();
 filterLangs('');
 
 // ── THEME ──
@@ -1373,6 +1383,52 @@ setInterval(simPrices, 2000);
 
 // ── Screenshot slides handled by initModuleCarousel ──
 // ── CONTACT ──
+function launchLogin(){
+  document.getElementById('loginWrap').classList.add('visible');
+  document.getElementById('loginOverlay').classList.add('show');
+  document.getElementById('loginGridBg').classList.add('show');
+  var u = document.getElementById('lcUser');
+  if (u) u.focus();
+}
+function closeLogin(){
+  document.getElementById('loginWrap').classList.remove('visible');
+  document.getElementById('loginOverlay').classList.remove('show');
+  document.getElementById('loginGridBg').classList.remove('show');
+}
+function submitLogin(){
+  var user = (document.getElementById('lcUser') || {}).value || '';
+  var pass = (document.getElementById('lcPass') || {}).value || '';
+  var btn  = document.getElementById('lcSubmit');
+  var err  = document.getElementById('lcErr');
+  if (err) { err.style.display = 'none'; err.textContent = ''; }
+  if (!user.trim()) {
+    if (err) { err.textContent = 'Please enter your username.'; err.style.display = 'block'; }
+    return;
+  }
+  if (btn) { btn.textContent = 'Checking…'; btn.disabled = true; }
+  var fd = new FormData();
+  fd.append('username', user.trim().toLowerCase());
+  fd.append('password', pass);
+  fetch('/login', {method:'POST', body:fd, credentials:'include'})
+    .then(function(r) {
+      if (r.redirected) {
+        window.location.href = r.url || '/';
+        return;
+      }
+      if (btn) { btn.textContent = 'Unlock Access →'; btn.disabled = false; }
+      // Server returned login page (error) — extract message from response text
+      return r.text().then(function(html) {
+        var m = html.match(/class="[^"]*error[^"]*"[^>]*>([^<]+)</) ||
+                html.match(/error[^>]*>\s*([^<]{4,})</);
+        var msg = m ? m[1].trim() : 'Invalid username or password.';
+        if (err) { err.textContent = msg; err.style.display = 'block'; }
+      });
+    })
+    .catch(function() {
+      if (btn) { btn.textContent = 'Unlock Access →'; btn.disabled = false; }
+      if (err) { err.textContent = 'Connection error. Please try again.'; err.style.display = 'block'; }
+    });
+}
 function openContact(){document.getElementById('contactOverlay').classList.add('show')}
 function closeContact(){document.getElementById('contactOverlay').classList.remove('show')}
 
