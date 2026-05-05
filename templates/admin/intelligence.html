@@ -138,6 +138,7 @@
 .aud-outcome-badge.exp{background:rgba(148,163,184,.1);color:var(--muted)}
 .aud-outcome-badge.amb{background:rgba(245,158,11,.1);color:var(--amber)}
 .aud-outcome-badge.wait{background:rgba(34,211,238,.1);color:var(--cyan)}
+.aud-outcome-badge.invalid{background:rgba(249,115,22,.15);color:#f97316;border:1px solid rgba(249,115,22,.3)}
 .aud-cf-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;font-size:10px;margin-top:4px}
 .aud-cf-cell{background:rgba(255,255,255,.03);border-radius:5px;padding:4px 7px}
 .aud-cf-label{color:var(--muted);font-size:9px;letter-spacing:.5px;text-transform:uppercase}
@@ -342,12 +343,17 @@
           <option value="expired">expired</option>
           <option value="ambiguous">ambiguous</option>
           <option value="no_entry">no entry</option>
+          <option value="invalid_retest">invalid retest</option>
         </select>
       </div>
       <button type="button" id="aud-run-btn" class="int-btn">🔬 Run Audit</button>
       <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);cursor:pointer;margin-left:4px;white-space:nowrap">
         <input type="checkbox" id="aud-include-fvg" style="cursor:pointer;accent-color:var(--cyan)">
         Include FVG standalone
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#f97316;cursor:pointer;margin-left:4px;white-space:nowrap" title="Separates Breaker LOST signals where the entry candle immediately pierced through the stop level (invalid retest) from genuine losses.">
+        <input type="checkbox" id="aud-quality-guard" checked style="cursor:pointer;accent-color:#f97316">
+        Breaker Quality Guard
       </label>
     </div>
     <div id="aud-error"></div>
@@ -357,7 +363,7 @@
         <table class="adm-table" style="table-layout:auto">
           <thead><tr>
             <th>Pair</th><th>TF</th><th>Module</th><th>Dir</th>
-            <th>Current</th><th>Counterfactuals</th><th style="width:28px"></th>
+            <th>Current</th><th>Quality</th><th>Counterfactuals</th><th style="width:28px"></th>
           </tr></thead>
           <tbody id="aud-tbody"></tbody>
         </table>
@@ -1001,14 +1007,15 @@ var intAud_running = false;
 function intAud_outcomeClass(r) {
   if (!r) return 'muted';
   var v = (r + '').toLowerCase();
-  if (v === 'won')       return 'win';
-  if (v === 'lost')      return 'loss';
-  if (v === 'expired')   return 'exp';
-  if (v === 'ambiguous') return 'amb';
+  if (v === 'won')            return 'win';
+  if (v === 'lost')           return 'loss';
+  if (v === 'expired')        return 'exp';
+  if (v === 'ambiguous')      return 'amb';
+  if (v === 'invalid_retest') return 'invalid';
   return 'wait';
 }
 
-function intAud_renderSummary(summary) {
+function intAud_renderSummary(summary, summaryQuality) {
   var el = document.getElementById('aud-summary');
   if (!el) return;
   // backward-compat: old keys (would_win etc.) fall back to 0
@@ -1022,13 +1029,37 @@ function intAud_renderSummary(summary) {
     { label: 'Entered',      val: summary.entered         || 0, cls: 'cyan'  },
     { label: 'Errors',       val: summary.errors          || 0, cls: summary.errors ? 'red' : 'muted' },
   ];
-  var html = '<div class="aud-summary-grid">';
+  var html = '<p style="font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;font-weight:600;margin-bottom:6px">Raw Outcomes (all signals)</p>';
+  html += '<div class="aud-summary-grid">';
   for (var i = 0; i < cards.length; i++) {
     var c = cards[i];
     html += '<div class="aud-sum-card"><div class="aud-sum-label">' + c.label + '</div>';
     html += '<div class="aud-sum-val ' + c.cls + '">' + c.val + '</div></div>';
   }
   html += '</div>';
+
+  if (summaryQuality) {
+    var qCards = [
+      { label: 'Checked',        val: summaryQuality.checked         || 0, cls: 'cyan'  },
+      { label: 'Won',            val: summaryQuality.won             || 0, cls: 'green' },
+      { label: 'Real Lost',      val: summaryQuality.lost            || 0, cls: 'red'   },
+      { label: 'Invalid Retest', val: summaryQuality.invalid_retest  || 0, cls: 'amber' },
+      { label: 'Expired',        val: summaryQuality.expired         || 0, cls: 'muted' },
+      { label: 'Ambiguous',      val: summaryQuality.ambiguous       || 0, cls: 'amber' },
+      { label: 'No Entry Yet',   val: summaryQuality.waiting_for_entry || 0, cls: 'muted' },
+      { label: 'Errors',         val: summaryQuality.errors          || 0, cls: summaryQuality.errors ? 'red' : 'muted' },
+    ];
+    html += '<p style="font-size:9px;color:#f97316;letter-spacing:1px;text-transform:uppercase;font-weight:600;margin:12px 0 6px">Quality-Adjusted (Breaker Guard active)</p>';
+    html += '<div class="aud-summary-grid">';
+    for (var j = 0; j < qCards.length; j++) {
+      var qc = qCards[j];
+      html += '<div class="aud-sum-card"><div class="aud-sum-label">' + qc.label + '</div>';
+      html += '<div class="aud-sum-val ' + qc.cls + '">' + qc.val + '</div></div>';
+    }
+    html += '</div>';
+    html += '<p style="font-size:10px;color:var(--muted);font-style:italic;margin-top:6px">Breaker Quality Guard separates immediate failed retests (entry candle pierced the stop level) from real losses.</p>';
+  }
+
   el.innerHTML = html;
 }
 
@@ -1066,7 +1097,7 @@ function intAud_renderSignals(signals) {
   var wrap  = document.getElementById('aud-table-wrap');
   if (!tbody || !wrap) return;
   if (!signals || signals.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:18px">No signals matched filters.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:18px">No signals matched filters.</td></tr>';
     wrap.style.display = 'block';
     return;
   }
@@ -1082,6 +1113,19 @@ function intAud_renderSignals(signals) {
     rows += '<td>' + intAud_escHtml(intAud_moduleLabel(s.module)) + '</td>';
     rows += '<td>' + intAud_escHtml(s.direction || '—') + '</td>';
     rows += '<td><span class="aud-outcome-badge ' + curCls + '">' + intAud_escHtml(cur) + '</span></td>';
+    // Quality column
+    var qr = s.quality_result;
+    if (qr !== undefined && qr !== null) {
+      var qCls = intAud_outcomeClass(qr);
+      var qLabel = (qr === 'INVALID_RETEST') ? 'INVALID RETEST' : intAud_escHtml(qr);
+      rows += '<td><span class="aud-outcome-badge ' + qCls + '">' + qLabel + '</span>';
+      if (s.quality_reason) {
+        rows += '<br><span style="font-size:9px;color:var(--muted)">' + intAud_escHtml(s.quality_reason) + '</span>';
+      }
+      rows += '</td>';
+    } else {
+      rows += '<td style="color:var(--muted);font-size:10px">—</td>';
+    }
     var cf = s.counterfactuals || {};
     var cfHtml = '<div class="aud-cf-grid">';
     for (var j = 0; j < cfKeys.length; j++) {
@@ -1104,7 +1148,7 @@ function intAud_renderSignals(signals) {
     rows += '<td>' + cfHtml + '</td>';
     rows += '<td style="text-align:center;font-size:14px;color:var(--muted)">&#9654;</td>';
     rows += '</tr>';
-    rows += '<tr id="aud-trace-' + i + '" style="display:none"><td colspan="7" style="padding:0 10px 10px">';
+    rows += '<tr id="aud-trace-' + i + '" style="display:none"><td colspan="8" style="padding:0 10px 10px">';
     rows += '<div class="aud-trace-wrap" id="aud-trace-inner-' + i + '">';
     var traceLines = (s.trace && s.trace.current_wick_stop) ? s.trace.current_wick_stop : [];
     for (var t = 0; t < traceLines.length; t++) {
@@ -1148,14 +1192,17 @@ function intAud_runAudit() {
 
   var inclFvgEl = document.getElementById('aud-include-fvg');
   var inclFvg   = inclFvgEl ? inclFvgEl.checked : false;
+  var bqgEl     = document.getElementById('aud-quality-guard');
+  var bqg       = bqgEl ? bqgEl.checked : false;
 
   var url = '/admin/intelligence/resolver-audit?limit=' + encodeURIComponent(limit);
   if (module)  url += '&module='    + encodeURIComponent(module);
   if (tf)      url += '&timeframe=' + encodeURIComponent(tf);
   if (rFilter) url += '&result='    + encodeURIComponent(rFilter);
   if (inclFvg) url += '&include_fvg_standalone=1';
+  if (bqg)     url += '&breaker_quality_guard=1';
 
-  console.log('[AuditResolver] clicked — fetching', url, 'inclFvg=', inclFvg);
+  console.log('[AuditResolver] clicked — fetching', url, 'inclFvg=', inclFvg, 'bqg=', bqg);
   intAud_running = true;
   fetch(url, { credentials: 'same-origin' })
     .then(function(r) { return r.json(); })
@@ -1191,7 +1238,7 @@ function intAud_runAudit() {
         ? '<p style="font-size:10px;color:var(--muted);margin-bottom:10px">' + infoParts.join(' &nbsp;|&nbsp; ') + '</p>'
         : '';
       if (summaryEl) { summaryEl.innerHTML = filterInfo; }
-      intAud_renderSummary(sa);
+      intAud_renderSummary(sa, data.summary_quality || null);
       intAud_renderSignals(data.signals  || []);
       console.log('[AuditResolver] cards updated');
     })

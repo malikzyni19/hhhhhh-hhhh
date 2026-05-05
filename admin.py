@@ -1046,6 +1046,7 @@ def intelligence_resolver_audit():
         )
         compact             = request.args.get("compact",              "0") in ("1", "true", "yes")
         include_fvg         = request.args.get("include_fvg_standalone","0") in ("1", "true", "yes")
+        bqg                 = request.args.get("breaker_quality_guard", "0") in ("1", "true", "yes")
 
         result = audit_resolver_outcomes(
             limit=limit,
@@ -1055,6 +1056,7 @@ def intelligence_resolver_audit():
             result_filter=result_filter,
             compact=compact,
             include_fvg_standalone=include_fvg,
+            breaker_quality_guard=bqg,
         )
         return jsonify(result)
 

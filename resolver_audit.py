@@ -83,7 +83,8 @@ def _run_traced(
     entry_time   = None
     target_price = None
     stop_price   = None
-    entry_candle_idx = None
+    entry_candle_idx  = None
+    entry_candle_ohlc = None
 
     trace = [
         f"Signal: {direction}  zone=[{zone_low:.6g}, {zone_high:.6g}]  "
@@ -126,7 +127,8 @@ def _run_traced(
                 entry_time  = candle_dt
                 target_price = entry_price * (1 + bounce)
                 stop_price   = zone_low
-                entry_candle_idx = candles_post
+                entry_candle_idx  = candles_post
+                entry_candle_ohlc = {"open": c_open, "high": c_high, "low": c_low, "close": c_close}
                 trace.append(
                     f"[{candle_label}] ENTRY bullish: low={c_low:.6g} <= "
                     f"zone_high={zone_high:.6g} → "
@@ -140,7 +142,8 @@ def _run_traced(
                 entry_time  = candle_dt
                 target_price = entry_price * (1 - bounce)
                 stop_price   = zone_high
-                entry_candle_idx = candles_post
+                entry_candle_idx  = candles_post
+                entry_candle_ohlc = {"open": c_open, "high": c_high, "low": c_low, "close": c_close}
                 trace.append(
                     f"[{candle_label}] ENTRY bearish: high={c_high:.6g} >= "
                     f"zone_low={zone_low:.6g} → "
@@ -173,6 +176,7 @@ def _run_traced(
                             "result": "EXPIRED",
                             "result_reason": "no_entry_within_expiry",
                             "same_candle_entry_stop": False,
+                            "entry_candle_ohlc": None,
                             "mfe_pct": None, "mae_pct": None,
                             "candles_checked": candles_post,
                         },
@@ -221,6 +225,7 @@ def _run_traced(
                     "result": "AMBIGUOUS",
                     "result_reason": "target_and_stop_same_candle",
                     "same_candle_entry_stop": same_entry_candle,
+                    "entry_candle_ohlc": entry_candle_ohlc,
                     "mfe_pct": round(mfe, 6), "mae_pct": round(mae, 6),
                     "candles_checked": candles_post,
                 },
@@ -243,6 +248,7 @@ def _run_traced(
                     "exit_price": float(target_price), "exit_time": candle_dt,
                     "result": "WIN", "result_reason": "target_reached",
                     "same_candle_entry_stop": False,
+                    "entry_candle_ohlc": entry_candle_ohlc,
                     "mfe_pct": round(mfe, 6), "mae_pct": round(mae, 6),
                     "candles_checked": candles_post,
                 },
@@ -270,6 +276,7 @@ def _run_traced(
                     "exit_price": float(stop_price), "exit_time": candle_dt,
                     "result": "LOSS", "result_reason": "stop_hit",
                     "same_candle_entry_stop": same_entry_candle,
+                    "entry_candle_ohlc": entry_candle_ohlc,
                     "mfe_pct": round(mfe, 6), "mae_pct": round(mae, 6),
                     "candles_checked": candles_post,
                 },
@@ -290,6 +297,7 @@ def _run_traced(
                 "exit_price": None, "exit_time": None,
                 "result": None, "result_reason": None,
                 "same_candle_entry_stop": False,
+                "entry_candle_ohlc": entry_candle_ohlc,
                 "mfe_pct": round(mfe, 6) if mfe else None,
                 "mae_pct": round(mae, 6) if mae else None,
                 "candles_checked": candles_post,
@@ -308,6 +316,7 @@ def _run_traced(
             "exit_price": None, "exit_time": None,
             "result": None, "result_reason": None,
             "same_candle_entry_stop": False,
+            "entry_candle_ohlc": None,
             "mfe_pct": None, "mae_pct": None,
             "candles_checked": candles_post,
         },
@@ -325,16 +334,20 @@ _COMPACT_FIELDS = frozenset({
     "entry_time", "entry_price", "target_price", "stop_price",
     "exit_time", "exit_price",
     "target_hit_before_stop", "stop_hit_before_target", "same_candle_entry_stop",
+    "entry_candle_ohlc",
+    "raw_result", "quality_result", "quality_reason",
+    "breaker_invalid_retest", "entry_candle_penetration_pct",
     "counterfactuals", "decision_trace",
 })
 
 # Maps ?result= value → set of audit statuses that match
 _FILTER_STATUSES = {
-    "lost":      {"LOST"},
-    "won":       {"WON"},
-    "expired":   {"EXPIRED"},
-    "ambiguous": {"AMBIGUOUS"},
-    "no_entry":  {"WAITING_FOR_ENTRY"},
+    "lost":           {"LOST"},
+    "won":            {"WON"},
+    "expired":        {"EXPIRED"},
+    "ambiguous":      {"AMBIGUOUS"},
+    "no_entry":       {"WAITING_FOR_ENTRY"},
+    "invalid_retest": {"LOST"},   # pre-filters to LOST, then quality guard reclassifies
 }
 
 # Main test modules — FVG is available as confluence data but excluded from
@@ -348,9 +361,10 @@ def audit_resolver_outcomes(
     module: str = None,
     timeframe: str = None,
     pair: str = None,
-    result_filter: str = None,        # "lost"|"won"|"expired"|"ambiguous"|"no_entry"|"all"|None
+    result_filter: str = None,        # "lost"|"won"|"expired"|"ambiguous"|"no_entry"|"invalid_retest"|"all"|None
     compact: bool = False,
     include_fvg_standalone: bool = False,  # False = exclude standalone FVG from main stats
+    breaker_quality_guard: bool = False,   # True = apply quality reclassification to bb LOST signals
 ) -> dict:
     """
     Dry-run diagnostic audit. Must be called inside an active Flask app context.
@@ -358,7 +372,7 @@ def audit_resolver_outcomes(
 
     Returns:
         {ok, mode, main_modules, fvg_standalone_excluded, excluded_fvg_count,
-         filters, summary_all, summary_filtered, signals}
+         filters, summary_all, summary_quality (when guard enabled), summary_filtered, signals}
     """
     try:
         from models import db, SignalEvent, SignalOutcome
@@ -383,10 +397,18 @@ def audit_resolver_outcomes(
             "ambiguous": 0, "waiting_for_entry": 0,
             "entered": 0, "errors": 0,
         }
+        summary_quality = {
+            "checked": 0,
+            "won": 0, "lost": 0, "expired": 0,
+            "ambiguous": 0, "waiting_for_entry": 0,
+            "entered": 0, "invalid_retest": 0, "errors": 0,
+        }
 
         # Normalise filter — "all" or None → no filtering
         rf = (result_filter or "").strip().lower()
         rf = rf if rf and rf != "all" else None
+        # invalid_retest filter: pre-filter to LOST, then narrow post-guard
+        filter_invalid_retest = (rf == "invalid_retest")
         target_statuses    = _FILTER_STATUSES.get(rf) if rf else None
         excluded_fvg_count = 0
         audit_list         = []
@@ -463,7 +485,7 @@ def audit_resolver_outcomes(
                 elif cur == "WAITING_FOR_ENTRY": summary_all["waiting_for_entry"] += 1
                 elif cur == "ENTERED":           summary_all["entered"]           += 1
 
-                # ── Apply result filter ───────────────────────────────────
+                # ── Apply result filter (pre-quality) ─────────────────────
                 if target_statuses and cur not in target_statuses:
                     continue
 
@@ -489,6 +511,7 @@ def audit_resolver_outcomes(
                     "exit_time":      _iso(res.get("exit_time")),
                     "exit_price":     res.get("exit_price"),
                     "same_candle_entry_stop": res.get("same_candle_entry_stop", False),
+                    "entry_candle_ohlc":      res.get("entry_candle_ohlc"),
                     "target_hit_before_stop": cur == "WON",
                     "stop_hit_before_target": cur == "LOST",
                     "mfe_pct":         res.get("mfe_pct"),
@@ -504,6 +527,26 @@ def audit_resolver_outcomes(
                     },
                 }
 
+                # ── Breaker Quality Guard ─────────────────────────────────
+                if breaker_quality_guard:
+                    from breaker_quality import apply_breaker_quality_guard
+                    entry = apply_breaker_quality_guard(entry)
+
+                    # Tally quality summary (parallel to summary_all)
+                    summary_quality["checked"] += 1
+                    qr = entry.get("quality_result", cur)
+                    if   qr == "WON":               summary_quality["won"]               += 1
+                    elif qr == "LOST":              summary_quality["lost"]              += 1
+                    elif qr == "INVALID_RETEST":    summary_quality["invalid_retest"]    += 1
+                    elif qr == "EXPIRED":           summary_quality["expired"]           += 1
+                    elif qr == "AMBIGUOUS":         summary_quality["ambiguous"]         += 1
+                    elif qr == "WAITING_FOR_ENTRY": summary_quality["waiting_for_entry"] += 1
+                    elif qr == "ENTERED":           summary_quality["entered"]           += 1
+
+                    # When filter is invalid_retest, drop non-INVALID_RETEST signals
+                    if filter_invalid_retest and qr != "INVALID_RETEST":
+                        continue
+
                 if compact:
                     entry = {k: v for k, v in entry.items() if k in _COMPACT_FIELDS}
 
@@ -517,12 +560,13 @@ def audit_resolver_outcomes(
                     "result_reason": str(_sig_err),
                 })
 
-        return {
+        out = {
             "ok":   True,
             "mode": "audit_dry_run",
             "main_modules":          _MAIN_TEST_MODULES,
             "fvg_standalone_excluded": not include_fvg_standalone,
             "excluded_fvg_count":    excluded_fvg_count,
+            "breaker_quality_guard": breaker_quality_guard,
             "filters": {
                 "module":                module,
                 "timeframe":             timeframe,
@@ -531,6 +575,7 @@ def audit_resolver_outcomes(
                 "limit":                 cap,
                 "compact":               compact,
                 "include_fvg_standalone": include_fvg_standalone,
+                "breaker_quality_guard": breaker_quality_guard,
             },
             "summary_all": summary_all,
             "summary_filtered": {
@@ -539,6 +584,9 @@ def audit_resolver_outcomes(
             },
             "signals": audit_list,
         }
+        if breaker_quality_guard:
+            out["summary_quality"] = summary_quality
+        return out
 
     except Exception as _outer:
         return {"ok": False, "error": str(_outer), "mode": "audit_dry_run"}
