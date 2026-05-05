@@ -5490,11 +5490,12 @@ def api_scan():
             _intel_allowed.update({"ob", "bb"})  # OB family includes Breakers
         if "BREAKER" in _sig_union:
             _intel_allowed.add("bb")
-        if "FVG" in _sig_union:
-            _intel_allowed.add("fvg")
-        # Empty = no filter active → accept all supported modules
+        if "FIB" in _sig_union:
+            _intel_allowed.add("fib_confluence")  # Fib only logged when confluence exists
+        # FVG: never allowed as a standalone main module
+        # Empty = no filter active → accept main modules only (no standalone fvg)
         if not _intel_allowed:
-            _intel_allowed = {"ob", "fvg", "bb"}
+            _intel_allowed = {"ob", "bb", "fib_confluence"}
 
         _intel_extracted = _intel_logged = _intel_dupes = _intel_skipped = _intel_errors = 0
 
@@ -5520,8 +5521,8 @@ def api_scan():
                 print(f"[Intel Hook api_scan] result error: {_intel_re}")
 
         _scan_filter_summary = (
-            f"ob={'OB' in _sig_union},fvg={'FVG' in _sig_union},"
-            f"bb={'BREAKER' in _sig_union}"
+            f"ob={'OB' in _sig_union},bb={'BREAKER' in _sig_union},"
+            f"fib={'FIB' in _sig_union}"
         )
         print(
             f"[Intel Hook api_scan] scan_filters={_scan_filter_summary} "
