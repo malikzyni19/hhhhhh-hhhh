@@ -4432,7 +4432,9 @@ def _guest_tab_check(tab_name: str):
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "GET":
-        return redirect(url_for("index"))
+        if session.get("logged_in"):
+            return redirect(url_for("index"))
+        return render_template("login.html")
 
     username = request.form.get("username", "").strip().lower()
     pwd      = request.form.get("password", "")
@@ -4574,6 +4576,34 @@ def login():
         "ip": ip, "geo": "", "ua": ua, "success": False
     })
     return render_template("login.html", error=error)
+
+
+@app.route("/register", methods=["POST"])
+def register():
+    username = request.form.get("username", "").strip().lower()
+    email    = request.form.get("email", "").strip()
+    password = request.form.get("password", "")
+
+    if not username:
+        return render_template("login.html", register_error="Username is required.", show_signup=True)
+    if not password:
+        return render_template("login.html", register_error="Password is required.", show_signup=True,
+                               reg_username=username, reg_email=email)
+    if len(password) < 6:
+        return render_template("login.html", register_error="Password must be at least 6 characters.", show_signup=True,
+                               reg_username=username, reg_email=email)
+    try:
+        if _DBUser.query.filter_by(username=username).first():
+            return render_template("login.html", register_error="Username already taken. Choose another.", show_signup=True,
+                                   reg_username=username, reg_email=email)
+        new_user = _DBUser(username=username, email=email or None, role="user", status="active")
+        new_user.set_password(password)
+        db.session.add(new_user)
+        db.session.commit()
+        return render_template("login.html", success="Account created! You can now sign in.", login_username=username)
+    except Exception as _re:
+        print(f"[REGISTER] Error: {_re}")
+        return render_template("login.html", register_error="Registration failed. Please try again.", show_signup=True)
 
 
 @app.route("/logout")
