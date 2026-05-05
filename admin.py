@@ -731,6 +731,14 @@ def intelligence_stats():
         except (TypeError, ValueError):
             limit_recent = 50
 
+        # Phase 6C: OB-only main test mode.
+        # Default (no module filter) → count only module="ob".
+        # Explicit module filter (e.g. ?module=bb) passes through as debug view.
+        _OB_ONLY_MODE     = True
+        _PAUSED_MODULES   = ["bb", "fvg", "fib_confluence"]
+        ob_only_active    = (module_param is None) and _OB_ONLY_MODE
+        effective_module  = "ob" if ob_only_active else module_param
+
         # ── Build outer-joined query so signals without outcomes appear ──
         q = (
             db.session.query(SignalEvent, SignalOutcome)
@@ -738,8 +746,8 @@ def intelligence_stats():
         )
         if source_param != "all":
             q = q.filter(SignalEvent.source == source_param)
-        if module_param:
-            q = q.filter(SignalEvent.module == module_param)
+        if effective_module:
+            q = q.filter(SignalEvent.module == effective_module)
         if tf_param:
             q = q.filter(SignalEvent.timeframe == tf_param)
 
@@ -874,10 +882,13 @@ def intelligence_stats():
 
         return jsonify({
             "ok": True,
+            "main_module_mode":  "ob_only" if ob_only_active else "filtered",
+            "excluded_modules":  _PAUSED_MODULES if ob_only_active else [],
             "filters": {
-                "source":    source_param,
-                "module":    module_param,
-                "timeframe": tf_param,
+                "source":           source_param,
+                "module":           module_param,
+                "effective_module": effective_module,
+                "timeframe":        tf_param,
             },
             "totals": {
                 "total_signals":    len(rows),
@@ -1047,6 +1058,7 @@ def intelligence_resolver_audit():
         compact             = request.args.get("compact",              "0") in ("1", "true", "yes")
         include_fvg         = request.args.get("include_fvg_standalone","0") in ("1", "true", "yes")
         bqg                 = request.args.get("breaker_quality_guard", "0") in ("1", "true", "yes")
+        include_non_ob      = request.args.get("include_non_ob_debug",  "0") in ("1", "true", "yes")
 
         result = audit_resolver_outcomes(
             limit=limit,
@@ -1057,6 +1069,7 @@ def intelligence_resolver_audit():
             compact=compact,
             include_fvg_standalone=include_fvg,
             breaker_quality_guard=bqg,
+            include_non_ob_debug=include_non_ob,
         )
         return jsonify(result)
 

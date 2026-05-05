@@ -452,7 +452,8 @@ def resolve_pending_signals(app, limit: int = 50) -> dict:
 # resolve_pending_admin — admin endpoint helper (requires existing app context)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def resolve_pending_admin(limit: int = 20, dry_run: bool = False) -> dict:
+def resolve_pending_admin(limit: int = 20, dry_run: bool = False,
+                          module_filter: str = None) -> dict:
     """
     Resolve pending signals within an already-active Flask app context.
 
@@ -462,8 +463,9 @@ def resolve_pending_admin(limit: int = 20, dry_run: bool = False) -> dict:
     details list.
 
     Args:
-        limit:   Max signals to process (default 20, max enforced by caller).
-        dry_run: If True, compute resolutions but do NOT commit DB changes.
+        limit:         Max signals to process (default 20, max enforced by caller).
+        dry_run:       If True, compute resolutions but do NOT commit DB changes.
+        module_filter: If set (e.g. "ob"), restrict to that module only.
 
     Returns:
         {
@@ -494,14 +496,14 @@ def resolve_pending_admin(limit: int = 20, dry_run: bool = False) -> dict:
     try:
         from models import db, SignalEvent
 
-        signals = (
+        q = (
             SignalEvent.query
             .filter(SignalEvent.status.in_(["WAITING_FOR_ENTRY", "ENTERED"]))
             .filter(SignalEvent.source == "live")
-            .order_by(SignalEvent.detected_at.asc())
-            .limit(limit)
-            .all()
         )
+        if module_filter:
+            q = q.filter(SignalEvent.module == module_filter)
+        signals = q.order_by(SignalEvent.detected_at.asc()).limit(limit).all()
 
         for sig in signals:
             summary["checked"] += 1

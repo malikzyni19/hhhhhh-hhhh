@@ -5480,22 +5480,11 @@ def api_scan():
         from signal_extractor import extract_zone_signals_from_api_scan_result
         from signal_logger import log_normalized_signal as _log_signal
 
-        # Derive allowed modules from what the user actually had checked.
-        # Both checked_signals (OR filter) and required_signals (AND filter)
-        # are combined — if either list mentions a signal type, that module
-        # is allowed in Intelligence.
-        _sig_union = set(checked_signals) | set(required_signals)
-        _intel_allowed: set = set()
-        if "OB" in _sig_union:
-            _intel_allowed.update({"ob", "bb"})  # OB family includes Breakers
-        if "BREAKER" in _sig_union:
-            _intel_allowed.add("bb")
-        if "FIB" in _sig_union:
-            _intel_allowed.add("fib_confluence")  # Fib only logged when confluence exists
-        # FVG: never allowed as a standalone main module
-        # Empty = no filter active → accept main modules only (no standalone fvg)
-        if not _intel_allowed:
-            _intel_allowed = {"ob", "bb", "fib_confluence"}
+        # Phase 6C cleanup: OB-only Intelligence logging.
+        # Breaker (bb), FVG, and Fib Confluence are paused from Intelligence
+        # counting. Scanner still detects and displays them on the frontend;
+        # they are simply not logged as SignalEvent rows.
+        _intel_allowed: set = {"ob"}
 
         _intel_extracted = _intel_logged = _intel_dupes = _intel_skipped = _intel_errors = 0
 
@@ -5520,13 +5509,8 @@ def api_scan():
                 _intel_errors += 1
                 print(f"[Intel Hook api_scan] result error: {_intel_re}")
 
-        _scan_filter_summary = (
-            f"ob={'OB' in _sig_union},bb={'BREAKER' in _sig_union},"
-            f"fib={'FIB' in _sig_union}"
-        )
         print(
-            f"[Intel Hook api_scan] scan_filters={_scan_filter_summary} "
-            f"allowed_modules={','.join(sorted(_intel_allowed))} "
+            f"[Intel Hook api_scan] ob_only_mode "
             f"extracted={_intel_extracted} logged={_intel_logged} "
             f"dupes={_intel_dupes} skipped={_intel_skipped} errors={_intel_errors}"
         )

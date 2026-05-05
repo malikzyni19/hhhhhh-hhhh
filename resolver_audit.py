@@ -350,9 +350,10 @@ _FILTER_STATUSES = {
     "invalid_retest": {"LOST"},   # pre-filters to LOST, then quality guard reclassifies
 }
 
-# Main test modules — FVG is available as confluence data but excluded from
-# default audit/stats so results reflect the primary setups being tested.
-_MAIN_TEST_MODULES    = ["ob", "bb", "fib_confluence"]
+# Phase 6C: OB-only main test mode.
+# Breaker (bb), FVG, and Fib Confluence paused from default audit/stats.
+_MAIN_TEST_MODULES    = ["ob"]
+_PAUSED_MODULES       = ["bb", "fvg", "fib_confluence"]
 _FVG_STANDALONE_MODULE = "fvg"
 
 
@@ -365,6 +366,7 @@ def audit_resolver_outcomes(
     compact: bool = False,
     include_fvg_standalone: bool = False,  # False = exclude standalone FVG from main stats
     breaker_quality_guard: bool = False,   # True = apply quality reclassification to bb LOST signals
+    include_non_ob_debug: bool = False,    # True = also show paused (bb/fvg/fib_confluence) rows for debug
 ) -> dict:
     """
     Dry-run diagnostic audit. Must be called inside an active Flask app context.
@@ -380,9 +382,14 @@ def audit_resolver_outcomes(
         from signal_logger import BOUNCE_THRESHOLDS
         from outcome_resolver import EXPIRY_CANDLES
 
+        # Phase 6C: OB-only default. If no explicit module requested and
+        # include_non_ob_debug is False, restrict to module="ob".
+        ob_only_active = (not module) and (not include_non_ob_debug)
+        effective_module = "ob" if ob_only_active else module
+
         q = SignalEvent.query.filter_by(source="live")
-        if module:
-            q = q.filter_by(module=module)
+        if effective_module:
+            q = q.filter_by(module=effective_module)
         if timeframe:
             q = q.filter_by(timeframe=timeframe)
         if pair:
@@ -390,6 +397,7 @@ def audit_resolver_outcomes(
 
         cap = max(1, min(int(limit), 100))
         signals = q.order_by(SignalEvent.detected_at.desc()).limit(cap).all()
+        excluded_non_ob_count = 0  # tallied below when include_non_ob_debug=False
 
         summary_all = {
             "checked": 0,
@@ -563,12 +571,16 @@ def audit_resolver_outcomes(
         out = {
             "ok":   True,
             "mode": "audit_dry_run",
+            "main_module_mode":      "ob_only" if ob_only_active else "filtered",
+            "excluded_modules":      _PAUSED_MODULES if ob_only_active else [],
+            "excluded_non_ob_count": excluded_non_ob_count,
             "main_modules":          _MAIN_TEST_MODULES,
             "fvg_standalone_excluded": not include_fvg_standalone,
             "excluded_fvg_count":    excluded_fvg_count,
             "breaker_quality_guard": breaker_quality_guard,
             "filters": {
                 "module":                module,
+                "effective_module":      effective_module,
                 "timeframe":             timeframe,
                 "pair":                  pair,
                 "result":                rf or "all",
@@ -576,6 +588,7 @@ def audit_resolver_outcomes(
                 "compact":               compact,
                 "include_fvg_standalone": include_fvg_standalone,
                 "breaker_quality_guard": breaker_quality_guard,
+                "include_non_ob_debug":  include_non_ob_debug,
             },
             "summary_all": summary_all,
             "summary_filtered": {

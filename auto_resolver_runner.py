@@ -66,7 +66,7 @@ def start_auto_resolver_runner(app):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _auto_resolver_loop(app):
-    print("[AutoResolver] runner installed dry-run only")
+    print("[AutoResolver] runner installed — dry-run OB-only mode")
     time.sleep(_STARTUP_DELAY_SECS)
 
     while True:
@@ -144,15 +144,16 @@ def _run_auto_resolver_once(snap):
             print(f"[AutoResolver] advisory lock unavailable ({_lock_err}), proceeding without it")
 
         limit = snap["limit"]
-        print(f"[AutoResolver] dry run started limit={limit}")
+        print(f"[AutoResolver] dry-run OB-only mode active limit={limit}")
 
-        # Phase 6B: ALWAYS force dry_run=True — never commit automatically
-        result = resolve_pending_admin(limit=limit, dry_run=True)
+        # Phase 6C: OB-only + ALWAYS force dry_run=True — never commit automatically.
+        result = resolve_pending_admin(limit=limit, dry_run=True, module_filter="ob")
 
         commit_forced_off = (snap["mode"] == "commit")
         summary = {
             "mode":               "dry_run",
-            "phase":              "6B",
+            "phase":              "6C",
+            "ob_only":            True,
             "checked":            result.get("checked",       0),
             "won":                result.get("won",           0),
             "lost":               result.get("lost",          0),
@@ -166,8 +167,7 @@ def _run_auto_resolver_once(snap):
         }
         if commit_forced_off:
             summary["note"] = (
-                "Phase 6B runner is dry-run only. "
-                "Commit mode ignored until Phase 6C."
+                "Runner is dry-run only. Commit mode ignored."
             )
 
         print(

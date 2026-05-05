@@ -162,6 +162,15 @@
   <p>Signal logging, resolver status, and live setup statistics.</p>
 </div>
 
+<!-- OB-only mode notice -->
+<div style="background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.2);border-radius:9px;
+            padding:10px 16px;margin-bottom:18px;font-size:11px;color:var(--muted);line-height:1.6">
+  <strong style="color:var(--cyan)">Current test mode: OB-only.</strong>
+  Breaker, FVG, and Fib Confluence are paused and excluded from main stats, audit, and auto-resolver.
+  Scanner still detects and displays all setups on the frontend.
+  To view paused module rows for debug: use <code style="font-size:10px;color:var(--amber)">include_non_ob_debug=1</code> on the audit endpoint.
+</div>
+
 <!-- Filters -->
 <div class="int-filters">
   <div class="int-filter-group">
@@ -174,10 +183,11 @@
   <div class="int-filter-group">
     <label>Module</label>
     <select id="f-module">
-      <option value="">all</option>
-      <option value="ob">ob</option>
-      <option value="fvg">fvg</option>
-      <option value="bb">bb</option>
+      <option value="">OB only (main)</option>
+      <option value="ob">OB</option>
+      <option value="bb" style="color:#f97316">Breaker [paused]</option>
+      <option value="fvg" style="color:#f97316">FVG [paused]</option>
+      <option value="fib_confluence" style="color:#f97316">Fib Confluence [paused]</option>
     </select>
   </div>
   <div class="int-filter-group">
@@ -316,11 +326,11 @@
       <div class="aud-filter-group">
         <label>Module</label>
         <select id="aud-module">
-          <option value="">main modules</option>
+          <option value="">OB only (main)</option>
           <option value="ob">OB</option>
-          <option value="bb">Breaker</option>
-          <option value="fib_confluence">Fib Confluence</option>
-          <option value="fvg">FVG (standalone)</option>
+          <option value="bb" style="color:#f97316">Breaker [paused]</option>
+          <option value="fib_confluence" style="color:#f97316">Fib Confluence [paused]</option>
+          <option value="fvg" style="color:#f97316">FVG [paused]</option>
         </select>
       </div>
       <div class="aud-filter-group">
@@ -1222,6 +1232,10 @@ function intAud_runAudit() {
       // Build filter info bar
       var sf = data.summary_filtered || {};
       var infoParts = [];
+      // OB-only mode badge
+      if (data.main_module_mode === 'ob_only') {
+        infoParts.push('<span style="color:var(--cyan);font-weight:700">OB-only mode</span>');
+      }
       if (sf.result && sf.result !== 'all') {
         infoParts.push('result=<strong style="color:var(--cyan)">' + intAud_escHtml(sf.result) + '</strong>');
         infoParts.push('returned: <strong>' + (sf.returned || 0) + '</strong>');
@@ -1231,8 +1245,6 @@ function intAud_runAudit() {
         var excNote = 'FVG excluded: <strong style="color:var(--amber)">' +
           (data.excluded_fvg_count || 0) + '</strong>';
         infoParts.push(excNote);
-      } else if (data.excluded_fvg_count === 0) {
-        infoParts.push('<span style="color:var(--green);font-size:10px">FVG included</span>');
       }
       var filterInfo = infoParts.length
         ? '<p style="font-size:10px;color:var(--muted);margin-bottom:10px">' + infoParts.join(' &nbsp;|&nbsp; ') + '</p>'
