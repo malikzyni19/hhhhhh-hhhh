@@ -438,64 +438,28 @@
         @media (max-width: 768px) {
             body { padding: 10px; }
             .footer { margin-top: 20px; font-size: 12px; }
-            .auth-wrapper { height: auto; min-height: 500px; flex-direction: column; }
 
-            .auth-wrapper .credentials-panel,
-            .welcome-section { width: 100%; position: relative; }
+            /* Fixed height keeps overflow:hidden clipping working for the slide */
+            .auth-wrapper { height: 520px; }
 
-            .credentials-panel.signin,
-            .credentials-panel.signup { padding: 40px 30px; left: 0; right: 0; }
+            /* Both panels: full width, same anchor point so translateX slides work */
+            .auth-wrapper .credentials-panel { width: 100%; }
+            .credentials-panel.signin { padding: 32px 30px; }
+            .credentials-panel.signup { right: auto; left: 0; padding: 32px 30px; }
 
-            .credentials-panel.signin { display: flex; animation: fadeInUp 0.6s ease forwards; }
-            .credentials-panel.signup { display: none; }
-
-            .auth-wrapper.toggled .credentials-panel.signin { display: none; }
-            .auth-wrapper.toggled .credentials-panel.signup {
-                display: flex;
-                animation: fadeInUp 0.6s ease forwards;
-            }
-
-            .credentials-panel.signin .slide-element,
-            .credentials-panel.signup .slide-element {
-                transform: translateY(0);
-                opacity: 1;
-                filter: blur(0);
-                animation: slideInUp 0.5s ease forwards;
-            }
-
-            .credentials-panel.signin .slide-element:nth-child(1),
-            .credentials-panel.signup .slide-element:nth-child(1) { animation-delay: 0.1s; opacity: 0; }
-            .credentials-panel.signin .slide-element:nth-child(2),
-            .credentials-panel.signup .slide-element:nth-child(2) { animation-delay: 0.2s; opacity: 0; }
-            .credentials-panel.signin .slide-element:nth-child(3),
-            .credentials-panel.signup .slide-element:nth-child(3) { animation-delay: 0.3s; opacity: 0; }
-            .credentials-panel.signin .slide-element:nth-child(4),
-            .credentials-panel.signup .slide-element:nth-child(4) { animation-delay: 0.4s; opacity: 0; }
-            .credentials-panel.signin .slide-element:nth-child(5),
-            .credentials-panel.signup .slide-element:nth-child(5) { animation-delay: 0.5s; opacity: 0; }
-            .credentials-panel.signup .slide-element:nth-child(6) { animation-delay: 0.6s; opacity: 0; }
-
-            @keyframes fadeInUp {
-                from { opacity: 0; transform: translateY(30px); }
-                to   { opacity: 1; transform: translateY(0); }
-            }
-            @keyframes slideInUp {
-                from { opacity: 0; transform: translateY(20px); }
-                to   { opacity: 1; transform: translateY(0); }
-            }
-
+            /* Welcome sections can't fit alongside full-width panels */
             .welcome-section { display: none; }
+
             .credentials-panel h2 { font-size: 26px; margin-bottom: 10px; }
-            .auth-wrapper .background-shape,
-            .auth-wrapper .secondary-shape { display: none; }
             .field-wrapper { margin-top: 20px; }
             .brand-logo .brand-name { font-size: 20px; }
             .brand-logo .z-icon { width: 40px; height: 40px; }
         }
 
         @media (max-width: 480px) {
+            .auth-wrapper { height: 540px; }
             .credentials-panel.signin,
-            .credentials-panel.signup { padding: 30px 20px; }
+            .credentials-panel.signup { padding: 24px 20px; }
             .credentials-panel h2 { font-size: 22px; }
             .field-wrapper input,
             .field-wrapper label { font-size: 14px; }
