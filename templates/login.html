@@ -1,319 +1,588 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>ZyNi SMC — Login</title>
-  <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZyNi SMC – Login</title>
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900&display=swap');
 
-body{
-  font-family:'Inter',system-ui,sans-serif;
-  background:#04070e;
-  color:#e2e8f0;
-  min-height:100vh;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  overflow:hidden;
-  position:relative;
-}
+        :root {
+            --navy:       #0a0f1e;
+            --navy-mid:   #0d1530;
+            --navy-light: #112040;
+            --black:      #060a14;
+            --accent:     #1eb8c8;
+            --accent2:    #0e8fa0;
+            --white:      #e8f0ff;
+            --border:     rgba(30,184,200,0.55);
+        }
 
-/* Grid background */
-.grid-bg{
-  position:fixed;inset:0;
-  background-image:
-    linear-gradient(rgba(34,211,238,.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(34,211,238,.04) 1px, transparent 1px);
-  background-size:40px 40px;
-  pointer-events:none;z-index:0;
-}
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Poppins', sans-serif;
+            color: var(--white);
+        }
 
-/* Corner glows */
-.glow-tl{position:fixed;top:-120px;left:-120px;width:400px;height:400px;border-radius:50%;background:radial-gradient(circle,rgba(34,211,238,.12) 0%,transparent 70%);pointer-events:none;z-index:0}
-.glow-br{position:fixed;bottom:-100px;right:-100px;width:350px;height:350px;border-radius:50%;background:radial-gradient(circle,rgba(8,145,178,.1) 0%,transparent 70%);pointer-events:none;z-index:0}
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: radial-gradient(ellipse at 60% 0%, #0d2040 0%, var(--black) 70%);
+            padding: 20px;
+        }
 
-/* Flash overlay — white burst on unlock */
-.flash-overlay{
-  position:fixed;inset:0;
-  background:rgba(34,211,238,0);
-  pointer-events:none;z-index:999;
-  transition:background .15s ease;
-}
-.flash-overlay.active{background:rgba(34,211,238,.18)}
+        /* ══════════════════════════════
+           BRAND LOGO
+        ══════════════════════════════ */
+        .brand-logo {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            margin-bottom: 28px;
+            user-select: none;
+        }
 
-.login-wrap{
-  width:100%;max-width:370px;padding:24px;
-  position:relative;z-index:1;
-}
+        .brand-logo .z-icon {
+            width: 52px;
+            height: 52px;
+            flex-shrink: 0;
+            object-fit: contain;
+            filter: drop-shadow(0 0 10px rgba(30,210,230,0.9)) drop-shadow(0 0 24px rgba(20,180,200,0.5));
+            display: block;
+        }
 
-/* ── Logo ── */
-.logo{text-align:center;margin-bottom:32px}
-.logo-top{display:flex;align-items:flex-end;justify-content:center;gap:7px;margin-bottom:12px;height:54px;overflow:visible}
-.live-dot{width:10px;height:10px;border-radius:50%;background:#22c55e;box-shadow:0 0 10px #22c55e,0 0 20px rgba(34,197,94,.4);flex-shrink:0;margin-bottom:10px;animation:pulseDot 2s infinite}
-@keyframes pulseDot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.6;transform:scale(.75)}}
+        .brand-logo .brand-text {
+            display: flex;
+            flex-direction: column;
+            line-height: 1;
+        }
 
-.zyni-wrap{display:inline-flex;align-items:flex-end;gap:1px;overflow:visible}
-.zl{display:inline-block;font-size:32px;font-weight:700;color:#22d3ee;font-family:'JetBrains Mono',monospace;text-shadow:0 0 20px rgba(34,211,238,.7),0 0 40px rgba(34,211,238,.3);line-height:1;will-change:transform}
-.logo-rest{font-size:21px;font-weight:700;color:#22d3ee;font-family:'JetBrains Mono',monospace;letter-spacing:3px;opacity:.75;margin-bottom:2px}
-.logo-sub{font-size:10px;color:#2a3d52;letter-spacing:3.5px;margin-top:8px;font-family:'Inter',system-ui,sans-serif;font-weight:500}
-.glow-line{width:60px;height:2px;background:linear-gradient(90deg,transparent,#22d3ee,transparent);margin:12px auto 0;border-radius:2px;animation:glowPulse 2.5s ease-in-out infinite}
-@keyframes glowPulse{0%,100%{opacity:.25;width:30px}50%{opacity:1;width:100px}}
+        .brand-logo .brand-name {
+            font-size: 24px;
+            font-weight: 800;
+            letter-spacing: 1.5px;
+            color: var(--white);
+        }
 
-/* ── Card ── */
-.card{
-  background:linear-gradient(145deg,#080f1d 0%,#060c18 100%);
-  border:1px solid #1a3045;
-  border-radius:20px;
-  padding:28px;
-  animation:slideUp .45s cubic-bezier(.22,1,.36,1) .08s forwards;
-  opacity:0;transform:translateY(18px);
-  box-shadow:
-    0 0 0 1px rgba(34,211,238,.06),
-    0 8px 40px rgba(0,0,0,.6),
-    0 0 60px rgba(34,211,238,.04);
-  position:relative;
-}
-/* Top edge highlight */
-.card::before{
-  content:'';
-  position:absolute;top:0;left:24px;right:24px;height:1px;
-  background:linear-gradient(90deg,transparent,rgba(34,211,238,.35),transparent);
-  border-radius:2px;
-}
-@keyframes slideUp{to{opacity:1;transform:translateY(0)}}
+        .brand-logo .brand-sub {
+            font-size: 10px;
+            font-weight: 500;
+            letter-spacing: 3.5px;
+            color: var(--accent);
+            text-transform: uppercase;
+            margin-top: 3px;
+        }
 
-.card-title{
-  font-size:11px;color:#3d5570;letter-spacing:2px;
-  margin-bottom:24px;text-align:center;
-  font-family:'Inter',system-ui,sans-serif;font-weight:600;
-  text-transform:uppercase;
-}
+        /* ══════════════════════════════
+           AUTH WRAPPER
+        ══════════════════════════════ */
+        .auth-wrapper {
+            position: relative;
+            width: 100%;
+            max-width: 800px;
+            height: 500px;
+            border: 1.5px solid var(--border);
+            box-shadow: 0 0 30px rgba(14,143,160,0.35), 0 0 80px rgba(14,143,160,0.12);
+            overflow: hidden;
+            background: var(--navy);
+        }
 
-/* ── Field ── */
-.field{margin-bottom:18px}
-.field label{
-  display:block;font-size:10.5px;color:#3d5570;
-  letter-spacing:1px;text-transform:uppercase;
-  margin-bottom:8px;font-family:'Inter',system-ui,sans-serif;font-weight:600;
-}
-.field input{
-  width:100%;background:#040911;color:#e2e8f0;
-  border:1px solid #152435;border-radius:10px;
-  padding:13px 14px;font-family:'JetBrains Mono',monospace;
-  font-size:15px;outline:none;
-  transition:border-color .2s,box-shadow .2s;
-  letter-spacing:3px;
-}
-.field input:focus{
-  border-color:#22d3ee50;
-  box-shadow:0 0 0 3px rgba(34,211,238,.07),0 0 20px rgba(34,211,238,.05);
-}
+        .auth-wrapper .credentials-panel {
+            position: absolute;
+            top: 0;
+            width: 50%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            flex-direction: column;
+        }
 
-/* ── Unlock button ── */
-.btn{
-  width:100%;
-  background:linear-gradient(135deg,#0891b2 0%,#06b6d4 100%);
-  color:#fff;border:none;padding:14px;
-  border-radius:10px;cursor:pointer;
-  font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;letter-spacing:1.2px;
-  transition:all .2s;
-  box-shadow:0 0 24px rgba(8,145,178,.5),0 0 0 1px rgba(34,211,238,.15),0 4px 16px rgba(0,0,0,.4);
-  margin-top:4px;position:relative;overflow:hidden;
-}
-.btn::after{
-  content:'';position:absolute;inset:0;
-  background:linear-gradient(135deg,rgba(255,255,255,.1),transparent);
-  pointer-events:none;
-}
-.btn:hover{
-  box-shadow:0 0 36px rgba(8,145,178,.7),0 0 0 1px rgba(34,211,238,.3),0 4px 20px rgba(0,0,0,.5);
-  transform:translateY(-1px);
-}
-.btn:active{transform:translateY(0)}
-.btn.unlocking{
-  pointer-events:none;
-  background:linear-gradient(135deg,#16a34a 0%,#22c55e 100%);
-  box-shadow:0 0 40px rgba(34,197,94,.7),0 0 0 1px rgba(34,197,94,.3),0 0 80px rgba(34,197,94,.2);
-  letter-spacing:2px;
-}
+        /* ── SIGNIN ── */
+        .credentials-panel.signin {
+            left: 0;
+            padding: 0 40px;
+        }
 
-/* ── Error ── */
-.error{
-  background:rgba(127,29,29,.3);border:1px solid #7f1d1d80;
-  color:#f87171;border-radius:8px;padding:10px 12px;
-  font-size:11px;margin-bottom:16px;text-align:center;
-  font-family:'Inter',system-ui,sans-serif;
-}
+        .credentials-panel.signin .slide-element {
+            transform: translateX(0%);
+            transition: .7s;
+            opacity: 1;
+        }
 
-.footer{text-align:center;margin-top:20px;font-size:10px;color:#152030;letter-spacing:1.5px;font-family:'Inter',system-ui,sans-serif}
+        .credentials-panel.signin .slide-element:nth-child(1) { transition-delay: 2.1s; }
+        .credentials-panel.signin .slide-element:nth-child(2) { transition-delay: 2.2s; }
+        .credentials-panel.signin .slide-element:nth-child(3) { transition-delay: 2.3s; }
+        .credentials-panel.signin .slide-element:nth-child(4) { transition-delay: 2.4s; }
+        .credentials-panel.signin .slide-element:nth-child(5) { transition-delay: 2.5s; }
 
-/* ── Fly-out animation ── */
-@keyframes unlockCard{
-  0%{opacity:1;transform:translateY(0) scale(1)}
-  40%{opacity:1;transform:translateY(-6px) scale(1.015)}
-  100%{opacity:0;transform:translateY(-50px) scale(.95)}
-}
-.card.fly-out{animation:unlockCard .55s cubic-bezier(.4,0,.2,1) forwards!important}
+        .auth-wrapper.toggled .credentials-panel.signin .slide-element {
+            transform: translateX(-120%);
+            opacity: 0;
+        }
 
-/* FIX 3 — ZyNi zoom animation */
-@keyframes zyniZoom{
-  0%{transform:scale(1);opacity:1;text-shadow:0 0 30px rgba(34,211,238,.8),0 0 60px rgba(34,211,238,.4)}
-  50%{transform:scale(3.5);opacity:1;text-shadow:0 0 60px rgba(34,211,238,1),0 0 120px rgba(34,211,238,.6)}
-  100%{transform:scale(14);opacity:0;text-shadow:0 0 100px rgba(34,211,238,.5),0 0 200px rgba(34,211,238,.2)}
-}
-@keyframes bgPulse{
-  0%{transform:scale(1);opacity:.8}
-  100%{transform:scale(10);opacity:0}
-}
-</style>
+        .auth-wrapper.toggled .credentials-panel.signin .slide-element:nth-child(1) { transition-delay: 0s; }
+        .auth-wrapper.toggled .credentials-panel.signin .slide-element:nth-child(2) { transition-delay: 0.1s; }
+        .auth-wrapper.toggled .credentials-panel.signin .slide-element:nth-child(3) { transition-delay: 0.2s; }
+        .auth-wrapper.toggled .credentials-panel.signin .slide-element:nth-child(4) { transition-delay: 0.3s; }
+        .auth-wrapper.toggled .credentials-panel.signin .slide-element:nth-child(5) { transition-delay: 0.4s; }
+
+        /* ── SIGNUP ── */
+        .credentials-panel.signup {
+            right: 0;
+            padding: 0 60px;
+            pointer-events: none;
+        }
+        .auth-wrapper.toggled .credentials-panel.signup {
+            pointer-events: auto;
+        }
+        .auth-wrapper.toggled .credentials-panel.signin {
+            pointer-events: none;
+        }
+
+        .credentials-panel.signup .slide-element {
+            transform: translateX(120%);
+            transition: .7s ease;
+            opacity: 0;
+            filter: blur(10px);
+        }
+
+        .credentials-panel.signup .slide-element:nth-child(1) { transition-delay: 0s; }
+        .credentials-panel.signup .slide-element:nth-child(2) { transition-delay: 0.1s; }
+        .credentials-panel.signup .slide-element:nth-child(3) { transition-delay: 0.2s; }
+        .credentials-panel.signup .slide-element:nth-child(4) { transition-delay: 0.3s; }
+        .credentials-panel.signup .slide-element:nth-child(5) { transition-delay: 0.4s; }
+        .credentials-panel.signup .slide-element:nth-child(6) { transition-delay: 0.5s; }
+
+        .auth-wrapper.toggled .credentials-panel.signup .slide-element {
+            transform: translateX(0%);
+            opacity: 1;
+            filter: blur(0px);
+        }
+
+        .auth-wrapper.toggled .credentials-panel.signup .slide-element:nth-child(1) { transition-delay: 1.7s; }
+        .auth-wrapper.toggled .credentials-panel.signup .slide-element:nth-child(2) { transition-delay: 1.8s; }
+        .auth-wrapper.toggled .credentials-panel.signup .slide-element:nth-child(3) { transition-delay: 1.9s; }
+        .auth-wrapper.toggled .credentials-panel.signup .slide-element:nth-child(4) { transition-delay: 1.9s; }
+        .auth-wrapper.toggled .credentials-panel.signup .slide-element:nth-child(5) { transition-delay: 2.0s; }
+        .auth-wrapper.toggled .credentials-panel.signup .slide-element:nth-child(6) { transition-delay: 2.1s; }
+
+        .credentials-panel h2 {
+            font-size: 32px;
+            text-align: center;
+        }
+
+        /* ── ALERT MESSAGES ── */
+        .alert-msg {
+            font-size: 12px;
+            border-radius: 6px;
+            padding: 8px 12px;
+            margin-bottom: 8px;
+            text-align: center;
+        }
+
+        .error-msg {
+            background: rgba(127,29,29,0.3);
+            border: 1px solid rgba(127,29,29,0.5);
+            color: #f87171;
+        }
+
+        .success-msg {
+            background: rgba(21,128,61,0.25);
+            border: 1px solid rgba(21,128,61,0.5);
+            color: #4ade80;
+        }
+
+        /* ── FIELDS ── */
+        .credentials-panel .field-wrapper {
+            position: relative;
+            width: 100%;
+            height: 50px;
+            margin-top: 25px;
+        }
+
+        .field-wrapper input {
+            width: 100%;
+            height: 100%;
+            background: transparent;
+            border: none;
+            outline: none;
+            font-size: 16px;
+            color: var(--white);
+            font-weight: 600;
+            border-bottom: 2px solid rgba(232,240,255,0.25);
+            padding-right: 23px;
+            transition: .5s;
+        }
+
+        .field-wrapper input:focus,
+        .field-wrapper input:valid {
+            border-bottom: 2px solid var(--accent);
+        }
+
+        .field-wrapper label {
+            position: absolute;
+            top: 50%;
+            left: 0;
+            transform: translateY(-50%);
+            font-size: 16px;
+            color: rgba(232,240,255,0.55);
+            transition: .5s;
+            pointer-events: none;
+        }
+
+        .field-wrapper input:focus ~ label,
+        .field-wrapper input:valid ~ label {
+            top: -5px;
+            color: var(--accent);
+            font-size: 12px;
+        }
+
+        .field-wrapper i {
+            position: absolute;
+            top: 50%;
+            right: 0;
+            font-size: 18px;
+            transform: translateY(-50%);
+            color: rgba(232,240,255,0.35);
+        }
+
+        .field-wrapper input:focus ~ i,
+        .field-wrapper input:valid ~ i {
+            color: var(--accent);
+        }
+
+        /* ── BUTTON ── */
+        .submit-button {
+            position: relative;
+            width: 100%;
+            height: 45px;
+            background: transparent;
+            border-radius: 40px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            border: 1.5px solid var(--accent);
+            overflow: hidden;
+            z-index: 1;
+            color: var(--white);
+            letter-spacing: 1px;
+        }
+
+        .submit-button::before {
+            content: "";
+            position: absolute;
+            height: 300%;
+            width: 100%;
+            background: linear-gradient(var(--navy), var(--accent), var(--navy), var(--accent));
+            top: -100%;
+            left: 0;
+            z-index: -1;
+            transition: .5s;
+        }
+
+        .submit-button:hover::before { top: 0; }
+
+        .switch-link {
+            font-size: 14px;
+            text-align: center;
+            margin: 20px 0 10px;
+        }
+
+        .switch-link a {
+            text-decoration: none;
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        .switch-link a:hover { text-decoration: underline; }
+
+        /* ══════════════════════════════
+           WELCOME SECTION
+        ══════════════════════════════ */
+        .welcome-section {
+            position: absolute;
+            top: 0;
+            height: 100%;
+            width: 50%;
+            display: flex;
+            justify-content: center;
+            flex-direction: column;
+        }
+
+        .welcome-section.signin {
+            right: 0;
+            text-align: right;
+            padding: 0 40px 60px 150px;
+        }
+
+        .welcome-section.signin .slide-element {
+            transform: translateX(0);
+            transition: .7s ease;
+            opacity: 1;
+            filter: blur(0px);
+        }
+
+        .welcome-section.signin .slide-element:nth-child(1) { transition-delay: 2.0s; }
+        .welcome-section.signin .slide-element:nth-child(2) { transition-delay: 2.1s; }
+
+        .auth-wrapper.toggled .welcome-section.signin .slide-element {
+            transform: translateX(120%);
+            opacity: 0;
+            filter: blur(10px);
+        }
+
+        .auth-wrapper.toggled .welcome-section.signin .slide-element:nth-child(1) { transition-delay: 0s; }
+        .auth-wrapper.toggled .welcome-section.signin .slide-element:nth-child(2) { transition-delay: 0.1s; }
+
+        .welcome-section.signup {
+            left: 0;
+            text-align: left;
+            padding: 0 150px 60px 38px;
+            pointer-events: none;
+        }
+
+        .welcome-section.signup .slide-element {
+            transform: translateX(-120%);
+            transition: .7s ease;
+            opacity: 0;
+            filter: blur(10px);
+        }
+
+        .welcome-section.signup .slide-element:nth-child(1) { transition-delay: 0s; }
+        .welcome-section.signup .slide-element:nth-child(2) { transition-delay: 0.1s; }
+
+        .auth-wrapper.toggled .welcome-section.signup .slide-element {
+            transform: translateX(0%);
+            opacity: 1;
+            filter: blur(0);
+        }
+
+        .auth-wrapper.toggled .welcome-section.signup .slide-element:nth-child(1) { transition-delay: 1.7s; }
+        .auth-wrapper.toggled .welcome-section.signup .slide-element:nth-child(2) { transition-delay: 1.8s; }
+
+        .welcome-section h2 {
+            text-transform: uppercase;
+            font-size: 36px;
+            line-height: 1.3;
+        }
+
+        .welcome-section p {
+            font-size: 15px;
+            color: rgba(232,240,255,0.65);
+            margin-top: 10px;
+        }
+
+        /* ══════════════════════════════
+           BACKGROUND SHAPES
+        ══════════════════════════════ */
+        .auth-wrapper .background-shape {
+            position: absolute;
+            right: 0;
+            top: -5px;
+            height: 600px;
+            width: 850px;
+            background: linear-gradient(45deg, var(--navy), var(--navy-light), var(--accent2));
+            transform: rotate(10deg) skewY(40deg);
+            transform-origin: bottom right;
+            transition: 1.5s ease;
+            transition-delay: 1.6s;
+        }
+
+        .auth-wrapper.toggled .background-shape {
+            transform: rotate(0deg) skewY(0deg);
+            transition-delay: .5s;
+        }
+
+        .auth-wrapper .secondary-shape {
+            position: absolute;
+            left: 250px;
+            top: 100%;
+            height: 700px;
+            width: 850px;
+            background: var(--navy-mid);
+            border-top: 2px solid rgba(30,184,200,0.35);
+            transform: rotate(0deg) skewY(0deg);
+            transform-origin: bottom left;
+            transition: 1.5s ease;
+            transition-delay: .5s;
+        }
+
+        .auth-wrapper.toggled .secondary-shape {
+            transform: rotate(-11deg) skewY(-41deg);
+            transition-delay: 1.2s;
+        }
+
+        /* ══════════════════════════════
+           FOOTER
+        ══════════════════════════════ */
+        .footer {
+            margin-top: 24px;
+            text-align: center;
+            padding: 10px;
+            font-size: 13px;
+            color: rgba(232,240,255,0.35);
+        }
+
+        .footer a {
+            color: var(--accent);
+            text-decoration: none;
+            font-weight: 600;
+            transition: .3s;
+        }
+
+        .footer a:hover { text-decoration: underline; }
+
+        /* ══════════════════════════════
+           MOBILE RESPONSIVE
+        ══════════════════════════════ */
+        @media (max-width: 768px) {
+            body { padding: 10px; }
+            .footer { margin-top: 20px; font-size: 12px; }
+
+            /* Fixed height keeps overflow:hidden clipping working for the slide */
+            .auth-wrapper { height: 520px; }
+
+            /* Both panels: full width, same anchor point so translateX slides work */
+            .auth-wrapper .credentials-panel { width: 100%; }
+            .credentials-panel.signin { padding: 32px 30px; }
+            .credentials-panel.signup { right: auto; left: 0; padding: 32px 30px; }
+
+            /* Welcome sections can't fit alongside full-width panels */
+            .welcome-section { display: none; }
+
+            .credentials-panel h2 { font-size: 26px; margin-bottom: 10px; }
+            .field-wrapper { margin-top: 20px; }
+            .brand-logo .brand-name { font-size: 20px; }
+            .brand-logo .z-icon { width: 40px; height: 40px; }
+        }
+
+        @media (max-width: 480px) {
+            .auth-wrapper { height: 540px; }
+            .credentials-panel.signin,
+            .credentials-panel.signup { padding: 24px 20px; }
+            .credentials-panel h2 { font-size: 22px; }
+            .field-wrapper input,
+            .field-wrapper label { font-size: 14px; }
+            .submit-button { font-size: 14px; height: 40px; }
+            .switch-link { font-size: 13px; }
+        }
+    </style>
 </head>
+
 <body>
-<div class="grid-bg"></div>
-<div class="glow-tl"></div>
-<div class="glow-br"></div>
-<div class="flash-overlay" id="flashOverlay"></div>
 
-<div class="login-wrap">
-  <div class="logo">
-    <div class="logo-top">
-      <div class="live-dot"></div>
-      <div class="zyni-wrap">
-        <span class="zl" id="lZ">Z</span><span class="zl" id="lY">y</span><span class="zl" id="lN">N</span><span class="zl" id="lI">i</span>
-      </div>
-      <div class="logo-rest">SMC</div>
+    <div class="brand-logo">
+        <img class="z-icon" src="{{ url_for('static', filename='images/favicon.png') }}" alt="ZyNi Logo">
+        <div class="brand-text">
+            <span class="brand-name">ZyNi SMC</span>
+            <span class="brand-sub">Smart Market Center</span>
+        </div>
     </div>
-    <div class="logo-sub">SMART MONEY SCREENER</div>
-    <div class="glow-line"></div>
-  </div>
 
-  <div class="card" id="loginCard">
-    <div class="card-title">ENTER CREDENTIALS TO ACCESS</div>
-    <div id="errBox" class="error" style="display:none"></div>
-    {% if error %}
-    <div class="error">{{ error }}</div>
-    {% endif %}
-    <form id="loginForm" method="POST">
-      <div class="field">
-        <label>Username</label>
-        <input type="text" name="username" id="unInput" placeholder="your name" autofocus autocomplete="username" style="letter-spacing:1px" />
-      </div>
-      <div class="field">
-        <label>Password</label>
-        <input type="password" name="password" id="pwInput" placeholder="••••••••" autocomplete="current-password" />
-      </div>
-      <button type="submit" class="btn" id="unlockBtn">UNLOCK →</button>
-    </form>
-  </div>
-  <div class="footer">PRIVATE ACCESS ONLY</div>
-</div>
+    <div class="auth-wrapper{% if show_signup %} toggled{% endif %}" id="authWrapper">
+        <div class="background-shape"></div>
+        <div class="secondary-shape"></div>
 
-<script>
-document.getElementById('loginForm').addEventListener('submit', function(e){
-  e.preventDefault();
-  var btn    = document.getElementById('unlockBtn');
-  var un     = document.getElementById('unInput').value.trim();
-  var pw     = document.getElementById('pwInput').value;
-  var errBox = document.getElementById('errBox');
+        <!-- LOGIN PANEL -->
+        <div class="credentials-panel signin">
+            <h2 class="slide-element">Login</h2>
+            {% if error %}
+            <div class="alert-msg error-msg">{{ error }}</div>
+            {% endif %}
+            {% if success %}
+            <div class="alert-msg success-msg">{{ success }}</div>
+            {% endif %}
+            <form action="/login" method="POST">
+                <div class="field-wrapper slide-element">
+                    <input type="text" name="username" required{% if login_username %} value="{{ login_username }}"{% endif %}>
+                    <label>Username</label>
+                    <i class="fa-solid fa-user"></i>
+                </div>
+                <div class="field-wrapper slide-element">
+                    <input type="password" name="password" required>
+                    <label>Password</label>
+                    <i class="fa-solid fa-lock"></i>
+                </div>
+                <div class="field-wrapper slide-element">
+                    <button class="submit-button" type="submit">Login</button>
+                </div>
+                <div class="switch-link slide-element">
+                    <p>Don't have an account?<br>
+                    <a href="#" class="register-trigger">Sign Up</a></p>
+                </div>
+            </form>
+        </div>
 
-  if(!un){
-    errBox.textContent = 'Please enter your username.';
-    errBox.style.display = 'block';
-    document.getElementById('unInput').focus();
-    return;
-  }
+        <!-- WELCOME — signin side -->
+        <div class="welcome-section signin">
+            <h2 class="slide-element">WELCOME<br>BACK!</h2>
+            <p class="slide-element">ZyNi SMC — your smart market companion.</p>
+        </div>
 
-  btn.textContent = 'VERIFYING...';
-  btn.disabled = true;
-  errBox.style.display = 'none';
+        <!-- SIGNUP PANEL -->
+        <div class="credentials-panel signup">
+            <h2 class="slide-element">Register</h2>
+            {% if register_error %}
+            <div class="alert-msg error-msg">{{ register_error }}</div>
+            {% endif %}
+            <form action="/register" method="POST">
+                <div class="field-wrapper slide-element">
+                    <input type="text" name="username" required{% if reg_username %} value="{{ reg_username }}"{% endif %}>
+                    <label>Username</label>
+                    <i class="fa-solid fa-user"></i>
+                </div>
+                <div class="field-wrapper slide-element">
+                    <input type="email" name="email"{% if reg_email %} value="{{ reg_email }}"{% endif %}>
+                    <label>Email</label>
+                    <i class="fa-solid fa-envelope"></i>
+                </div>
+                <div class="field-wrapper slide-element">
+                    <input type="password" name="password" required>
+                    <label>Password</label>
+                    <i class="fa-solid fa-lock"></i>
+                </div>
+                <div class="field-wrapper slide-element">
+                    <button class="submit-button" type="submit">Register</button>
+                </div>
+                <div class="switch-link slide-element">
+                    <p>Already have an account?<br>
+                    <a href="#" class="login-trigger">Sign In</a></p>
+                </div>
+            </form>
+        </div>
 
-  var fd = new FormData();
-  fd.append('username', un);
-  fd.append('password', pw);
+        <!-- WELCOME — signup side -->
+        <div class="welcome-section signup">
+            <h2 class="slide-element">JOIN<br>ZYNI SMC!</h2>
+            <p class="slide-element">Create your account and start screening.</p>
+        </div>
+    </div>
 
-  fetch('/login', {method:'POST', body: fd, redirect:'manual'})
-    .then(function(r){
-      if(r.type === 'opaqueredirect' || r.status === 0 || r.status === 302 || (r.ok && r.url && !r.url.includes('/login'))){
-        unlockSequence();
-      } else {
-        return r.text().then(function(html){
-          var hasError = html.indexOf('error') !== -1 || html.indexOf('invalid') !== -1 || html.indexOf('wrong') !== -1 || html.indexOf('incorrect') !== -1 || html.indexOf('not recognised') !== -1;
-          if(hasError || r.status === 200){
-            btn.textContent = 'UNLOCK →';
-            btn.disabled = false;
-            // Extract error from response if possible
-            var match = html.match(/<div class="error">([^<]+)<\/div>/);
-            errBox.textContent = match ? match[1] : 'Invalid credentials. Try again.';
-            errBox.style.display = 'block';
-          } else {
-            unlockSequence();
-          }
+    <div class="footer">
+        <p>© 2026 ZyNi SMC. All rights reserved. &nbsp;|&nbsp; <a href="/">← Back to Home</a></p>
+    </div>
+
+    <script>
+        const authWrapper     = document.getElementById('authWrapper');
+        const loginTrigger    = document.querySelector('.login-trigger');
+        const registerTrigger = document.querySelector('.register-trigger');
+
+        registerTrigger.addEventListener('click', (e) => {
+            e.preventDefault();
+            authWrapper.classList.add('toggled');
         });
-      }
-    })
-    .catch(function(){ unlockSequence(); });
-});
 
-function unlockSequence(){
-  var btn = document.getElementById('unlockBtn');
-  var flash = document.getElementById('flashOverlay');
-  var loginWrap = document.querySelector('.login-wrap');
-
-  btn.textContent = '✓  UNLOCKED';
-  btn.classList.add('unlocking');
-
-  // Flash
-  setTimeout(function(){ flash.classList.add('active'); }, 80);
-  setTimeout(function(){ flash.classList.remove('active'); }, 280);
-
-  // Fade out login wrap
-  setTimeout(function(){
-    loginWrap.style.transition = 'opacity 0.35s ease';
-    loginWrap.style.opacity = '0';
-  }, 250);
-
-  // Show ZyNi zoom overlay
-  setTimeout(function(){
-    var overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:#04070e;';
-
-    var pulse = document.createElement('div');
-    pulse.style.cssText = 'position:absolute;width:220px;height:220px;border-radius:50%;background:radial-gradient(circle,rgba(34,211,238,.3),transparent 70%);animation:bgPulse 1.1s ease-out forwards;';
-
-    var text = document.createElement('div');
-    text.innerHTML = '<span style="color:#22d3ee">Z</span><span style="color:#22d3ee">y</span><span style="color:#22d3ee">N</span><span style="color:#22d3ee">i</span>';
-    text.style.cssText = 'font-family:\'JetBrains Mono\',monospace;font-size:68px;font-weight:800;text-shadow:0 0 30px rgba(34,211,238,.8),0 0 60px rgba(34,211,238,.4);animation:zyniZoom 1.3s cubic-bezier(.4,0,.2,1) forwards;letter-spacing:10px;position:relative;';
-
-    overlay.appendChild(pulse);
-    overlay.appendChild(text);
-    document.body.appendChild(overlay);
-  }, 380);
-
-  // Redirect after animation
-  setTimeout(function(){
-    window.location.href = '/';
-  }, 1700);
-}
-
-// ZyNi letter bounce
-(function(){
-  var letters = [document.getElementById('lZ'),document.getElementById('lY'),document.getElementById('lN'),document.getElementById('lI')];
-  var JUMP=28,DURATION=360,GAP=150,idx=0,startTime=null;
-  function animateLetter(el,ts){
-    if(startTime===null) startTime=ts;
-    var p=Math.min((ts-startTime)/DURATION,1);
-    var y=-JUMP*Math.sin(Math.PI*p);
-    el.style.transform='translateY('+y.toFixed(2)+'px)';
-    var s=Math.round(20+p*35);
-    el.style.textShadow='0 0 '+s+'px rgba(34,211,238,'+(0.7+p*0.3).toFixed(2)+'),0 0 '+(s*2)+'px rgba(34,211,238,.2)';
-    if(p<1){requestAnimationFrame(function(t){animateLetter(el,t)});}
-    else{el.style.transform='translateY(0px)';el.style.textShadow='0 0 20px rgba(34,211,238,.7),0 0 40px rgba(34,211,238,.3)';idx=(idx+1)%letters.length;startTime=null;setTimeout(next,GAP);}
-  }
-  function next(){requestAnimationFrame(function(ts){animateLetter(letters[idx],ts)});}
-  next();
-})();
-</script>
+        loginTrigger.addEventListener('click', (e) => {
+            e.preventDefault();
+            authWrapper.classList.remove('toggled');
+        });
+    </script>
 </body>
 </html>
