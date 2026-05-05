@@ -753,6 +753,16 @@ def intelligence_stats():
 
         rows = q.order_by(SignalEvent.detected_at.desc()).all()
 
+        # ── Count excluded non-OB rows (for transparency) ────────────────
+        excluded_non_ob_count = 0
+        if ob_only_active:
+            excl_q = db.session.query(db.func.count(SignalEvent.signal_id)).filter(
+                SignalEvent.module != "ob"
+            )
+            if source_param != "all":
+                excl_q = excl_q.filter(SignalEvent.source == source_param)
+            excluded_non_ob_count = excl_q.scalar() or 0
+
         # ── Helper: safe percentage (returns None when denom == 0) ───────
         def _pct(num, denom):
             return round(num / denom * 100, 2) if denom > 0 else None
@@ -882,8 +892,10 @@ def intelligence_stats():
 
         return jsonify({
             "ok": True,
-            "main_module_mode":  "ob_only" if ob_only_active else "filtered",
-            "excluded_modules":  _PAUSED_MODULES if ob_only_active else [],
+            "main_module_mode":        "ob_only" if ob_only_active else "filtered",
+            "included_modules":        ["ob"] if ob_only_active else ([effective_module] if effective_module else []),
+            "excluded_modules":        _PAUSED_MODULES if ob_only_active else [],
+            "excluded_non_ob_count":   excluded_non_ob_count,
             "filters": {
                 "source":           source_param,
                 "module":           module_param,

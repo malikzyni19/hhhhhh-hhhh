@@ -464,6 +464,7 @@
 
   <!-- Overview cards -->
   <p class="int-section-title">Overview</p>
+  <div id="int-ob-mode-bar" style="display:none;margin-bottom:10px;padding:6px 12px;background:rgba(0,209,255,.08);border:1px solid rgba(0,209,255,.25);border-radius:6px;font-size:11px;color:var(--muted)"></div>
   <div class="adm-stats-grid" id="int-cards"></div>
 
   <!-- Win rate cards -->
@@ -561,6 +562,23 @@ function intSt_reliBadge(ok) {
   return ok
     ? '<span class="badge-ok">OK</span>'
     : '<span class="badge-low">LOW SAMPLE</span>';
+}
+
+function intSt_renderModeBanner(data) {
+  var el = document.getElementById('int-ob-mode-bar');
+  if (!el) return;
+  if (data.main_module_mode === 'ob_only') {
+    var excl = data.excluded_non_ob_count || 0;
+    var inc  = (data.included_modules || ['ob']).join(', ');
+    el.innerHTML =
+      '<span style="color:var(--cyan);font-weight:700">OB-only mode</span>' +
+      ' &nbsp;|&nbsp; included: <strong>' + intSt_esc(inc) + '</strong>' +
+      ' &nbsp;|&nbsp; excluded (non-OB in DB): <strong style="color:var(--amber)">' + excl + '</strong>' +
+      ' &nbsp;|&nbsp; <span style="color:var(--muted)">Overview Total = OB total</span>';
+    el.style.display = 'block';
+  } else {
+    el.style.display = 'none';
+  }
 }
 
 function intSt_renderCards(t) {
@@ -727,6 +745,7 @@ function intSt_fetchStats() {
 
       if (!data.ok) { intSt_showError(data.error || 'Unknown error'); return; }
 
+      intSt_renderModeBanner(data);
       intSt_renderCards(data.totals);
       intSt_renderWinRates(data.win_rates);
       intSt_renderModuleTable(data.by_module);
