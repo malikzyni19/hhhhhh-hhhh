@@ -800,7 +800,7 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
   </h1>
   <p class="hero-sub" data-i18n="hero_sub">Professional SMC scanner detecting Order Blocks, FVGs, Breaker Blocks and Fibonacci across 400+ crypto pairs — live, every second.</p>
   <div class="hero-btns">
-    <a class="btn-main" onclick="launchLogin()" data-i18n="hero_btn_launch"><span class="btn-main-glow"></span>Launch App ↗</a>
+    <a class="btn-main" href="javascript:void(0)" onclick="launchLogin()" data-i18n="hero_btn_launch"><span class="btn-main-glow"></span>Launch App ↗</a>
     <a class="btn-ghost" href="#features" data-i18n="hero_btn_explore">Explore Features ↓</a>
   </div>
   <div class="hero-bottom">
@@ -1384,16 +1384,22 @@ setInterval(simPrices, 2000);
 // ── Screenshot slides handled by initModuleCarousel ──
 // ── CONTACT ──
 function launchLogin(){
-  document.getElementById('loginWrap').classList.add('visible');
-  document.getElementById('loginOverlay').classList.add('show');
-  document.getElementById('loginGridBg').classList.add('show');
+  var wrap = document.getElementById('loginWrap');
+  var ov   = document.getElementById('loginOverlay');
+  var bg   = document.getElementById('loginGridBg');
+  if (wrap) wrap.classList.add('visible');
+  if (ov)   ov.classList.add('show');
+  if (bg)   bg.classList.add('show');
   var u = document.getElementById('lcUser');
-  if (u) u.focus();
+  if (u) setTimeout(function(){ u.focus(); }, 50);
 }
 function closeLogin(){
-  document.getElementById('loginWrap').classList.remove('visible');
-  document.getElementById('loginOverlay').classList.remove('show');
-  document.getElementById('loginGridBg').classList.remove('show');
+  var wrap = document.getElementById('loginWrap');
+  var ov   = document.getElementById('loginOverlay');
+  var bg   = document.getElementById('loginGridBg');
+  if (wrap) wrap.classList.remove('visible');
+  if (ov)   ov.classList.remove('show');
+  if (bg)   bg.classList.remove('show');
 }
 function submitLogin(){
   var user = (document.getElementById('lcUser') || {}).value || '';
