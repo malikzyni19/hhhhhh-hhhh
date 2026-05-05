@@ -315,10 +315,11 @@
       <div class="aud-filter-group">
         <label>Module</label>
         <select id="aud-module">
-          <option value="">all</option>
-          <option value="ob">ob</option>
-          <option value="fvg">fvg</option>
-          <option value="bb">bb</option>
+          <option value="">main modules</option>
+          <option value="ob">OB</option>
+          <option value="bb">Breaker</option>
+          <option value="fib_confluence">Fib Confluence</option>
+          <option value="fvg">FVG (standalone)</option>
         </select>
       </div>
       <div class="aud-filter-group">
@@ -340,10 +341,14 @@
           <option value="lost">lost</option>
           <option value="expired">expired</option>
           <option value="ambiguous">ambiguous</option>
-          <option value="waiting">waiting</option>
+          <option value="no_entry">no entry</option>
         </select>
       </div>
       <button type="button" id="aud-run-btn" class="int-btn">🔬 Run Audit</button>
+      <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);cursor:pointer;margin-left:4px;white-space:nowrap">
+        <input type="checkbox" id="aud-include-fvg" style="cursor:pointer;accent-color:var(--cyan)">
+        Include FVG standalone
+      </label>
     </div>
     <div id="aud-error"></div>
     <div id="aud-result">
@@ -1027,6 +1032,14 @@ function intAud_renderSummary(summary) {
   el.innerHTML = html;
 }
 
+function intAud_moduleLabel(m) {
+  if (m === 'ob')             return 'OB';
+  if (m === 'bb')             return 'Breaker';
+  if (m === 'fib_confluence') return 'Fib Conf';
+  if (m === 'fvg')            return 'FVG';
+  return m ? m.toUpperCase() : '—';
+}
+
 function intAud_cfLabel(key) {
   if (key === 'current_wick_stop')      return 'Current';
   if (key.indexOf('small_target') === 0) return 'SmallTgt';
@@ -1066,7 +1079,7 @@ function intAud_renderSignals(signals) {
     rows += '<tr class="aud-signal-row" onclick="intAud_toggleTrace(' + i + ')">';
     rows += '<td style="font-family:\'JetBrains Mono\',monospace;font-size:11px">' + intAud_escHtml(s.pair || '—') + '</td>';
     rows += '<td>' + intAud_escHtml(s.timeframe || '—') + '</td>';
-    rows += '<td>' + intAud_escHtml(s.module || '—') + '</td>';
+    rows += '<td>' + intAud_escHtml(intAud_moduleLabel(s.module)) + '</td>';
     rows += '<td>' + intAud_escHtml(s.direction || '—') + '</td>';
     rows += '<td><span class="aud-outcome-badge ' + curCls + '">' + intAud_escHtml(cur) + '</span></td>';
     var cf = s.counterfactuals || {};
@@ -1133,12 +1146,16 @@ function intAud_runAudit() {
   var tf      = (document.getElementById('aud-timeframe')     || {}).value || '';
   var rFilter = (document.getElementById('aud-result-filter') || {}).value || '';
 
+  var inclFvgEl = document.getElementById('aud-include-fvg');
+  var inclFvg   = inclFvgEl ? inclFvgEl.checked : false;
+
   var url = '/admin/intelligence/resolver-audit?limit=' + encodeURIComponent(limit);
   if (module)  url += '&module='    + encodeURIComponent(module);
   if (tf)      url += '&timeframe=' + encodeURIComponent(tf);
   if (rFilter) url += '&result='    + encodeURIComponent(rFilter);
+  if (inclFvg) url += '&include_fvg_standalone=1';
 
-  console.log('[AuditResolver] clicked — fetching', url);
+  console.log('[AuditResolver] clicked — fetching', url, 'inclFvg=', inclFvg);
   intAud_running = true;
   fetch(url, { credentials: 'same-origin' })
     .then(function(r) { return r.json(); })
@@ -1155,15 +1172,24 @@ function intAud_runAudit() {
       console.log('[AuditResolver] summary_filtered', data.summary_filtered);
       console.log('[AuditResolver] signals returned', (data.signals || []).length);
       if (resultEl) { resultEl.style.display = 'block'; }
-      // Show filter info above summary
+      // Build filter info bar
       var sf = data.summary_filtered || {};
-      var filterInfo = '';
+      var infoParts = [];
       if (sf.result && sf.result !== 'all') {
-        filterInfo = '<p style="font-size:10px;color:var(--muted);margin-bottom:10px">' +
-          'Filter: result=<strong style="color:var(--cyan)">' + intAud_escHtml(sf.result) + '</strong>' +
-          ' &nbsp;|&nbsp; Returned: <strong>' + (sf.returned || 0) + '</strong>' +
-          ' &nbsp;|&nbsp; All checked: <strong>' + (sa.checked || 0) + '</strong></p>';
+        infoParts.push('result=<strong style="color:var(--cyan)">' + intAud_escHtml(sf.result) + '</strong>');
+        infoParts.push('returned: <strong>' + (sf.returned || 0) + '</strong>');
+        infoParts.push('checked: <strong>' + (sa.checked || 0) + '</strong>');
       }
+      if (data.fvg_standalone_excluded) {
+        var excNote = 'FVG excluded: <strong style="color:var(--amber)">' +
+          (data.excluded_fvg_count || 0) + '</strong>';
+        infoParts.push(excNote);
+      } else if (data.excluded_fvg_count === 0) {
+        infoParts.push('<span style="color:var(--green);font-size:10px">FVG included</span>');
+      }
+      var filterInfo = infoParts.length
+        ? '<p style="font-size:10px;color:var(--muted);margin-bottom:10px">' + infoParts.join(' &nbsp;|&nbsp; ') + '</p>'
+        : '';
       if (summaryEl) { summaryEl.innerHTML = filterInfo; }
       intAud_renderSummary(sa);
       intAud_renderSignals(data.signals  || []);

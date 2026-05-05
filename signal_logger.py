@@ -35,7 +35,7 @@ BOUNCE_THRESHOLDS: dict[str, float] = {
     "1d":  0.040,
 }
 
-VALID_MODULES    = {"ob", "fvg", "bb"}
+VALID_MODULES    = {"ob", "fvg", "bb", "fib_confluence"}
 VALID_DIRECTIONS = {"bullish", "bearish"}
 
 # Minutes per timeframe (1d handled separately)
@@ -123,7 +123,7 @@ def _validate(signal: dict) -> dict:
 
     module = str(signal.get("module", ""))
     if module not in VALID_MODULES:
-        return {"ok": False, "reason": f"module '{module}' not supported (must be ob/fvg/bb)"}
+        return {"ok": False, "reason": f"module '{module}' not supported (must be ob/fvg/bb/fib_confluence)"}
 
     if not signal.get("timeframe"):
         return {"ok": False, "reason": "timeframe required"}

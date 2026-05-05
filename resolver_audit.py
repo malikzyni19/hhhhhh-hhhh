@@ -337,21 +337,28 @@ _FILTER_STATUSES = {
     "no_entry":  {"WAITING_FOR_ENTRY"},
 }
 
+# Main test modules — FVG is available as confluence data but excluded from
+# default audit/stats so results reflect the primary setups being tested.
+_MAIN_TEST_MODULES    = ["ob", "bb", "fib_confluence"]
+_FVG_STANDALONE_MODULE = "fvg"
+
 
 def audit_resolver_outcomes(
     limit: int = 50,
     module: str = None,
     timeframe: str = None,
     pair: str = None,
-    result_filter: str = None,   # "lost"|"won"|"expired"|"ambiguous"|"no_entry"|"all"|None
+    result_filter: str = None,        # "lost"|"won"|"expired"|"ambiguous"|"no_entry"|"all"|None
     compact: bool = False,
+    include_fvg_standalone: bool = False,  # False = exclude standalone FVG from main stats
 ) -> dict:
     """
     Dry-run diagnostic audit. Must be called inside an active Flask app context.
     Never commits to DB. Never mutates SignalEvent or SignalOutcome.
 
     Returns:
-        {ok, mode, filters, summary_all, summary_filtered, signals}
+        {ok, mode, main_modules, fvg_standalone_excluded, excluded_fvg_count,
+         filters, summary_all, summary_filtered, signals}
     """
     try:
         from models import db, SignalEvent, SignalOutcome
@@ -380,14 +387,18 @@ def audit_resolver_outcomes(
         # Normalise filter — "all" or None → no filtering
         rf = (result_filter or "").strip().lower()
         rf = rf if rf and rf != "all" else None
-        target_statuses = _FILTER_STATUSES.get(rf) if rf else None
-
-        audit_list = []
+        target_statuses    = _FILTER_STATUSES.get(rf) if rf else None
+        excluded_fvg_count = 0
+        audit_list         = []
 
         def _iso(dt):
             return dt.isoformat() if dt else None
 
         for ev in signals:
+            # Exclude standalone FVG from main test audit unless explicitly requested
+            if not include_fvg_standalone and ev.module == _FVG_STANDALONE_MODULE:
+                excluded_fvg_count += 1
+                continue
             try:
                 outcome = SignalOutcome.query.filter_by(signal_id=ev.signal_id).first()
                 bounce  = (
@@ -509,13 +520,17 @@ def audit_resolver_outcomes(
         return {
             "ok":   True,
             "mode": "audit_dry_run",
+            "main_modules":          _MAIN_TEST_MODULES,
+            "fvg_standalone_excluded": not include_fvg_standalone,
+            "excluded_fvg_count":    excluded_fvg_count,
             "filters": {
-                "module":    module,
-                "timeframe": timeframe,
-                "pair":      pair,
-                "result":    rf or "all",
-                "limit":     cap,
-                "compact":   compact,
+                "module":                module,
+                "timeframe":             timeframe,
+                "pair":                  pair,
+                "result":                rf or "all",
+                "limit":                 cap,
+                "compact":               compact,
+                "include_fvg_standalone": include_fvg_standalone,
             },
             "summary_all": summary_all,
             "summary_filtered": {

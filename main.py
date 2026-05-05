@@ -1451,12 +1451,12 @@ def hp_volume():
             print(traceback.format_exc())
             volumes.append({'exchange': 'MEXC', 'volume': 0, 'color': '#f97316'})
 
-        # Bitget Futures (umcbl = USDT margined perpetuals)
+        # Bitget Futures — V2 API (V1 mix/v1 was deprecated May 2026)
         try:
-            r = req.get('https://api.bitget.com/api/mix/v1/market/tickers?productType=umcbl', headers=hdrs, timeout=8)
+            r = req.get('https://api.bitget.com/api/v2/mix/market/tickers?productType=USDT-FUTURES', headers=hdrs, timeout=8)
             r.raise_for_status()
             data = r.json()
-            total = sum(float(d.get('usdtVolume', 0)) for d in data.get('data', []))
+            total = sum(float(d.get('quoteVolume', d.get('usdtVolume', 0))) for d in data.get('data', []))
             volumes.append({'exchange': 'Bitget', 'volume': round(total / 1e9, 1), 'color': '#a78bfa'})
             print(f"[HP Volume] Bitget: {round(total/1e9,1)}B")
         except Exception as e:
@@ -5520,11 +5520,12 @@ def api_scan():
             _intel_allowed.update({"ob", "bb"})  # OB family includes Breakers
         if "BREAKER" in _sig_union:
             _intel_allowed.add("bb")
-        if "FVG" in _sig_union:
-            _intel_allowed.add("fvg")
-        # Empty = no filter active → accept all supported modules
+        if "FIB" in _sig_union:
+            _intel_allowed.add("fib_confluence")  # Fib only logged when confluence exists
+        # FVG: never allowed as a standalone main module
+        # Empty = no filter active → accept main modules only (no standalone fvg)
         if not _intel_allowed:
-            _intel_allowed = {"ob", "fvg", "bb"}
+            _intel_allowed = {"ob", "bb", "fib_confluence"}
 
         _intel_extracted = _intel_logged = _intel_dupes = _intel_skipped = _intel_errors = 0
 
@@ -5550,8 +5551,8 @@ def api_scan():
                 print(f"[Intel Hook api_scan] result error: {_intel_re}")
 
         _scan_filter_summary = (
-            f"ob={'OB' in _sig_union},fvg={'FVG' in _sig_union},"
-            f"bb={'BREAKER' in _sig_union}"
+            f"ob={'OB' in _sig_union},bb={'BREAKER' in _sig_union},"
+            f"fib={'FIB' in _sig_union}"
         )
         print(
             f"[Intel Hook api_scan] scan_filters={_scan_filter_summary} "
