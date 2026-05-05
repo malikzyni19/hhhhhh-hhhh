@@ -515,8 +515,9 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 
 /* ── SCREENSHOT SLIDER ── */
 .p-slide{display:none;width:100%}
-.p-slide.active{display:block}
+.p-slide.active{display:block;animation:slideInRight .42s cubic-bezier(.22,1,.36,1)}
 .p-slide img{width:100%;display:block;max-height:500px;object-fit:cover;object-position:top}
+@keyframes slideInRight{from{transform:translateX(38px);opacity:0}to{transform:translateX(0);opacity:1}}
 
 /* ── LETTER TYPING SPANS ── */
 .letter-span{display:inline-block;opacity:0;will-change:opacity}
@@ -778,7 +779,7 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 </section>
 
 <!-- ORB OVERLAY (fixed transition) -->
-<div id="orb-overlay-canvas" aria-hidden="true"></div>
+<div id="orb-overlay-canvas" aria-hidden="true"><div id="orb-brand-text" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-family:'JetBrains Mono',monospace;font-size:clamp(1.6rem,5vw,3rem);font-weight:800;color:#22d3ee;letter-spacing:0.12em;text-shadow:0 0 28px rgba(34,211,238,.9),0 0 60px rgba(34,211,238,.4);opacity:0;z-index:2;pointer-events:none;white-space:nowrap">ZyNi SMC</div></div>
 
 <!-- STATEMENT -->
 <div class="section" id="statement">
@@ -2224,6 +2225,9 @@ function lwStartBounce(){
     if (stL2) stL2.classList.add('vis');
   }
 
+  /* ── Brand text element ── */
+  var brandText = document.getElementById('orb-brand-text');
+
   /* ── Play sequence once on trigger ── */
   var triggered = false;
   function play() {
@@ -2241,8 +2245,12 @@ function lwStartBounce(){
         overlay.style.opacity = proxy.op.toFixed(3);
       },
       onComplete: function() {
+        /* Fade brand text in during orbit */
+        if (brandText) gsap.to(brandText, { opacity: 1, duration: 0.32, ease: 'power2.out' });
         /* STEP 2 — orbit hold */
         gsap.delayedCall(1.10, function() {
+          /* Fade brand text out before exit */
+          if (brandText) gsap.to(brandText, { opacity: 0, duration: 0.20, ease: 'power2.in' });
           /* STEP 3 — slide out to left + fade overlay out */
           gsap.to(proxy, {
             x: -22, op: 0, duration: 0.38, ease: 'power3.in',

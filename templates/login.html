@@ -137,6 +137,13 @@
         .credentials-panel.signup {
             right: 0;
             padding: 0 60px;
+            pointer-events: none;
+        }
+        .auth-wrapper.toggled .credentials-panel.signup {
+            pointer-events: auto;
+        }
+        .auth-wrapper.toggled .credentials-panel.signin {
+            pointer-events: none;
         }
 
         .credentials-panel.signup .slide-element {
