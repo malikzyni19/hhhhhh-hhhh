@@ -1451,12 +1451,12 @@ def hp_volume():
             print(traceback.format_exc())
             volumes.append({'exchange': 'MEXC', 'volume': 0, 'color': '#f97316'})
 
-        # Bitget Futures (umcbl = USDT margined perpetuals)
+        # Bitget Futures — V2 API (V1 mix/v1 was deprecated May 2026)
         try:
-            r = req.get('https://api.bitget.com/api/mix/v1/market/tickers?productType=umcbl', headers=hdrs, timeout=8)
+            r = req.get('https://api.bitget.com/api/v2/mix/market/tickers?productType=USDT-FUTURES', headers=hdrs, timeout=8)
             r.raise_for_status()
             data = r.json()
-            total = sum(float(d.get('usdtVolume', 0)) for d in data.get('data', []))
+            total = sum(float(d.get('quoteVolume', d.get('usdtVolume', 0))) for d in data.get('data', []))
             volumes.append({'exchange': 'Bitget', 'volume': round(total / 1e9, 1), 'color': '#a78bfa'})
             print(f"[HP Volume] Bitget: {round(total/1e9,1)}B")
         except Exception as e:
