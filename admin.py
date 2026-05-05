@@ -1076,3 +1076,43 @@ def intelligence_resolver_audit():
     except Exception as _e:
         return jsonify({"ok": False, "error": str(_e)}), 500
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 7A — OB-only backtest (read-only, dry-run, never mutates DB)
+# GET /admin/intelligence/backtest-ob
+# Params: limit, timeframe, pair, setup_type, source, result
+# ─────────────────────────────────────────────────────────────────────────────
+@admin_bp.route("/intelligence/backtest-ob", methods=["GET"])
+@admin_required
+def intelligence_backtest_ob():
+    try:
+        from backtest_ob import run_ob_backtest
+
+        try:
+            limit = min(int(request.args.get("limit", 100)), 500)
+        except (TypeError, ValueError):
+            limit = 100
+
+        timeframe    = request.args.get("timeframe")   or None
+        pair         = request.args.get("pair")        or None
+        setup_type   = request.args.get("setup_type")  or None
+        source       = request.args.get("source",  "live")
+        result       = (
+            request.args.get("result") or
+            request.args.get("result_filter") or
+            None
+        )
+
+        result = run_ob_backtest(
+            limit=limit,
+            timeframe=timeframe,
+            pair=pair,
+            setup_type=setup_type,
+            source=source,
+            result_filter=result,
+        )
+        return jsonify(result)
+
+    except Exception as _e:
+        return jsonify({"ok": False, "error": str(_e)}), 500
+
