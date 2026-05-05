@@ -1044,7 +1044,8 @@ def intelligence_resolver_audit():
             request.args.get("result_filter") or
             None
         )
-        compact = request.args.get("compact", "0") in ("1", "true", "yes")
+        compact             = request.args.get("compact",              "0") in ("1", "true", "yes")
+        include_fvg         = request.args.get("include_fvg_standalone","0") in ("1", "true", "yes")
 
         result = audit_resolver_outcomes(
             limit=limit,
@@ -1053,6 +1054,7 @@ def intelligence_resolver_audit():
             pair=pair,
             result_filter=result_filter,
             compact=compact,
+            include_fvg_standalone=include_fvg,
         )
         return jsonify(result)
 
