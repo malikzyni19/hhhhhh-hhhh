@@ -329,8 +329,8 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 ══════════════════════════════ */
 .backdrop{position:fixed;inset:0;z-index:500;backdrop-filter:blur(0px) brightness(1);background:rgba(3,8,15,0);opacity:0;pointer-events:none;transition:all .6s ease}
 .backdrop.show{opacity:1;pointer-events:all;backdrop-filter:blur(18px) brightness(0.55);background:rgba(3,8,15,0.55)}
-.login-wrap{position:fixed;left:50%;top:50%;transform:translate(-50%,calc(-50% - 120vh));z-index:600;opacity:0;pointer-events:none;transition:transform .45s cubic-bezier(.22,1,.36,1),opacity .35s ease}
-.login-wrap.visible{pointer-events:all;opacity:1;transform:translate(-50%,-50%)}
+.login-wrap{position:fixed;left:50%;top:50%;transform:translate(-50%,calc(-50% - 120vh));z-index:600;opacity:0;pointer-events:none}
+.login-wrap.visible{pointer-events:all;opacity:1}
 .login-card{width:300px;background:linear-gradient(135deg,rgba(255,255,255,0.10),rgba(255,255,255,0.05),rgba(34,211,238,0.05));backdrop-filter:blur(28px) saturate(180%);border-radius:24px;border:1px solid rgba(255,255,255,0.12);padding:32px 28px 28px;position:relative;overflow:hidden;box-shadow:0 32px 64px rgba(0,0,0,0.5),inset 0 1px 0 rgba(255,255,255,0.14)}
 .login-card::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.3),#22d3ee,rgba(255,255,255,0.3),transparent)}
 .login-card::after{content:'';position:absolute;inset:0;border-radius:24px;pointer-events:none;background:radial-gradient(ellipse at 50% 0%,rgba(34,211,238,0.07) 0%,transparent 65%)}
@@ -471,7 +471,18 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 }
 
 /* ── HERO 3D CANVAS ── */
+#hero-3d-canvas{
+  position:absolute;inset:0;width:100%;height:100%;
+  z-index:0;overflow:hidden;pointer-events:none;
+}
+#hero-3d-canvas canvas{position:absolute;top:0;left:0}
 
+@media(max-width:960px){
+  .hero-bottom{flex-direction:column}
+  #hero-rw{min-width:160px}
+}
+@media(max-width:768px){ #hero-3d-canvas{opacity:0.75}}
+@media(max-width:480px){ #hero-3d-canvas{opacity:0.65}}
 
 /* ── HERO BUTTON GLOW ── */
 .btn-main{z-index:1}
@@ -613,8 +624,6 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 </div>
 
 <!-- DROP LOGIN -->
-<div class="login-overlay" id="loginOverlay" onclick="closeLogin()"></div>
-<div class="grid-bg-login" id="loginGridBg"></div>
 <div class="login-wrap" id="loginWrap">
   <div class="dust-wrap" id="dustWrap"></div>
   <div class="imp-ring" id="impRing"></div>
@@ -628,14 +637,13 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
     <div class="lc-div"></div>
     <div class="lc-field">
       <label class="lc-label" data-i18n="login_user">Username</label>
-      <input class="lc-input" id="lcUser" type="text" placeholder="Enter your username" autocomplete="username">
+      <input class="lc-input" type="text" placeholder="Enter your name" autocomplete="off">
     </div>
     <div class="lc-field">
       <label class="lc-label" data-i18n="login_pass">Password</label>
-      <input class="lc-input" id="lcPass" type="password" placeholder="••••••••••" autocomplete="current-password">
+      <input class="lc-input" type="password" placeholder="••••••••••">
     </div>
-    <div id="lcErr" style="display:none;color:#f87171;font-size:12px;margin-top:4px;margin-bottom:-4px;text-align:center"></div>
-    <button class="lc-btn" id="lcSubmit" onclick="submitLogin()" data-i18n="login_btn">Unlock Access →</button>
+    <button class="lc-btn" data-i18n="login_btn">Unlock Access →</button>
     <div class="lc-foot">ZyNi SMC v2.0 · smcsetups.com</div>
   </div>
 </div>
@@ -677,6 +685,7 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 
 <!-- HERO -->
 <section class="hero">
+  <div id="hero-3d-canvas" aria-hidden="true"></div>
   <!-- LEFT: text content -->
   <div class="hero-left">
   <div class="hero-eyebrow"><span class="hero-eyebrow-dot"></span><span data-i18n="hero_eyebrow">Smart Money Concepts · Real Time</span></div>
@@ -1212,13 +1221,6 @@ function filterLangs(q) {
   ).join('');
 }
 document.addEventListener('click', ()=>document.getElementById('langDropdown').classList.remove('open'));
-// Submit login on Enter key inside password field
-(function(){
-  var p = document.getElementById('lcPass');
-  if (p) p.addEventListener('keydown', function(e){ if (e.key === 'Enter') submitLogin(); });
-  var u = document.getElementById('lcUser');
-  if (u) u.addEventListener('keydown', function(e){ if (e.key === 'Enter') { document.getElementById('lcPass').focus(); } });
-})();
 filterLangs('');
 
 // ── THEME ──
@@ -1395,58 +1397,6 @@ function goSlide(id,idx){
 }
 function jump(id,idx){clearInterval(slideTimers[id]);goSlide(id,idx);slideTimers[id]=setInterval(()=>goSlide(id,(slideState[id]+1)%MODS[id].n),3200)}
 // ── CONTACT ──
-function launchLogin(){
-  var wrap = document.getElementById('loginWrap');
-  var ov   = document.getElementById('loginOverlay');
-  var bg   = document.getElementById('loginGridBg');
-  if (wrap) wrap.classList.add('visible');
-  if (ov)   ov.classList.add('show');
-  if (bg)   bg.classList.add('show');
-  var u = document.getElementById('lcUser');
-  if (u) setTimeout(function(){ u.focus(); }, 50);
-}
-function closeLogin(){
-  var wrap = document.getElementById('loginWrap');
-  var ov   = document.getElementById('loginOverlay');
-  var bg   = document.getElementById('loginGridBg');
-  if (wrap) wrap.classList.remove('visible');
-  if (ov)   ov.classList.remove('show');
-  if (bg)   bg.classList.remove('show');
-}
-function submitLogin(){
-  var user = (document.getElementById('lcUser') || {}).value || '';
-  var pass = (document.getElementById('lcPass') || {}).value || '';
-  var btn  = document.getElementById('lcSubmit');
-  var err  = document.getElementById('lcErr');
-  if (err) { err.style.display = 'none'; err.textContent = ''; }
-  if (!user.trim()) {
-    if (err) { err.textContent = 'Please enter your username.'; err.style.display = 'block'; }
-    return;
-  }
-  if (btn) { btn.textContent = 'Checking…'; btn.disabled = true; }
-  var fd = new FormData();
-  fd.append('username', user.trim().toLowerCase());
-  fd.append('password', pass);
-  fetch('/login', {method:'POST', body:fd, credentials:'include'})
-    .then(function(r) {
-      if (r.redirected) {
-        window.location.href = r.url || '/';
-        return;
-      }
-      if (btn) { btn.textContent = 'Unlock Access →'; btn.disabled = false; }
-      // Server returned login page (error) — extract message from response text
-      return r.text().then(function(html) {
-        var m = html.match(/class="[^"]*error[^"]*"[^>]*>([^<]+)</) ||
-                html.match(/error[^>]*>\s*([^<]{4,})</);
-        var msg = m ? m[1].trim() : 'Invalid username or password.';
-        if (err) { err.textContent = msg; err.style.display = 'block'; }
-      });
-    })
-    .catch(function() {
-      if (btn) { btn.textContent = 'Unlock Access →'; btn.disabled = false; }
-      if (err) { err.textContent = 'Connection error. Please try again.'; err.style.display = 'block'; }
-    });
-}
 function openContact(){document.getElementById('contactOverlay').classList.add('show')}
 function closeContact(){document.getElementById('contactOverlay').classList.remove('show')}
 
@@ -1886,7 +1836,285 @@ function lwStartBounce(){
 
 
 
+/* ════════════════════════════════════════════════════════════
+   HERO SCENE — ZyNi Smc Brand Text · Box Grid · Camera Orbit
+   Three.js · 3D text via TextGeometry
+════════════════════════════════════════════════════════════ */
+(function initHeroScene() {
+  var container = document.getElementById('hero-3d-canvas');
+  if (!container || !window.THREE) return;
 
+  /* ── Renderer ── */
+  var renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.toneMapping    = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.3;
+  renderer.shadowMap.enabled   = true;
+  renderer.domElement.style.cssText = 'position:absolute;top:0;left:0;display:block;width:100%;height:100%';
+  container.appendChild(renderer.domElement);
+
+  function W() { return container.clientWidth  || window.innerWidth; }
+  function H() { return container.clientHeight || window.innerHeight; }
+  renderer.setSize(W(), H());
+
+  /* ── Scene — no background (alpha: true handles transparency) ── */
+  var scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(0x00000c, 0.045);
+
+  /* ── Camera — FOV adapts for mobile ── */
+  var isMobile = W() < 640;
+  var camera = new THREE.PerspectiveCamera(
+    isMobile ? 60 : 44,
+    W() / H(), 0.1, 120
+  );
+  /* Initial position — overridden each frame */
+  camera.position.set(7, 6, 9);
+  camera.lookAt(0, 0.5, 0);
+
+  /* ── Lights ── */
+  scene.add(new THREE.AmbientLight(0x08082a, 1.5));
+  var pl1 = new THREE.PointLight(0x6622ff, 8, 20); pl1.position.set(-3, 6, 2); pl1.castShadow = true; scene.add(pl1);
+  var pl2 = new THREE.PointLight(0x0055ff, 5, 16); pl2.position.set(4, 4, -3); scene.add(pl2);
+  var pl3 = new THREE.PointLight(0x00aaff, 3, 12); pl3.position.set(0, 8, 4);  scene.add(pl3);
+  var pl4 = new THREE.PointLight(0x4400cc, 4, 10); pl4.position.set(0, -2, 0); scene.add(pl4);
+
+  /* ── Floor ── */
+  var floor = new THREE.Mesh(
+    new THREE.PlaneGeometry(40, 40),
+    new THREE.MeshStandardMaterial({ color: 0x000412, metalness: 0.98, roughness: 0.08 })
+  );
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.y = -0.01;
+  floor.receiveShadow = true;
+  scene.add(floor);
+  scene.add(new THREE.GridHelper(30, 30, 0x110044, 0x080022));
+
+  /* ── Box grid ── */
+  var blues = [0x020d2e,0x030f35,0x04102a,0x020a22,0x050f30,0x030c28,0x040e32,0x021025,0x060d38,0x031128,0x050a30,0x020e2a];
+  var GAP = 0.04, COLS = 13, ROWS = 11, BOX_W = 0.82, BOX_D = 0.82;
+  var allBoxes = [];
+  var si = 0;
+
+  for (var row = 0; row < ROWS; row++) {
+    for (var col = 0; col < COLS; col++) {
+      var cx = col - (COLS - 1) / 2;
+      var cz = row - (ROWS - 1) / 2;
+      var isCenter = (col === 6 && row === 5);
+      var h = isCenter ? 0.55 : 0.20 + Math.random() * 0.40;
+      var geo = new THREE.BoxGeometry(BOX_W, h, BOX_D);
+      var mat = new THREE.MeshStandardMaterial({
+        color:            isCenter ? 0x0044cc : blues[si % blues.length],
+        metalness:        0.88, roughness: 0.10,
+        emissive:         isCenter ? 0x002299 : 0x001155,
+        emissiveIntensity: isCenter ? 0.40 : 0.06
+      });
+      var mesh = new THREE.Mesh(geo, mat);
+      mesh.castShadow = true; mesh.receiveShadow = true;
+      var grp = new THREE.Group();
+      grp.add(mesh);
+      var x  = cx * (BOX_W + GAP);
+      var z  = cz * (BOX_D + GAP);
+      var tY = h / 2;
+      var sY = tY + 5 + si * 0.07;
+      grp.position.set(x, sY, z);
+      allBoxes.push({
+        grp:        grp,
+        targetY:    tY,
+        startY:     sY,
+        delay:      si * 0.048,
+        isCenter:   isCenter,
+        landed:     false,
+        floatOffset: si * 0.41 + Math.random() * 0.5,
+        floatSpeed:  1.10 + Math.random() * 0.70,
+        floatAmp:    isCenter ? 0.18 : 0.12 + Math.random() * 0.13
+      });
+      si++;
+      scene.add(grp);
+    }
+  }
+
+  /* ── Brand text: "ZyNi Smc" via TextGeometry ── */
+  var btc = new THREE.Group();     /* keep var name — animate loop references btc */
+  btc.position.set(0, 0.55 / 2 + 0.38, 0);
+  scene.add(btc);
+
+  /* Extra gold light for "Smc" metallic reflections — orbits with the text */
+  var goldTextL = new THREE.PointLight(0xfbbf24, 4.5, 9);
+  goldTextL.position.set(1.5, 2.0, 1.5);
+  scene.add(goldTextL);
+
+  /* Load font and build 3D text asynchronously */
+  if (window.THREE && window.THREE.FontLoader && window.THREE.TextGeometry) {
+    (function() {
+      var loader = new window.THREE.FontLoader();
+      loader.load(
+        'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/fonts/helvetiker_bold.typeface.json',
+        function(font) {
+          /* ── "ZyNi" — blue / neon metallic ── */
+          var zyniGeo = new THREE.TextGeometry('ZyNi', {
+            font: font, size: 0.44, height: 0.14,
+            curveSegments: 8,
+            bevelEnabled: true, bevelThickness: 0.024,
+            bevelSize: 0.014, bevelSegments: 5
+          });
+          zyniGeo.computeBoundingBox();
+          var zyniW = zyniGeo.boundingBox.max.x - zyniGeo.boundingBox.min.x;
+          var zyniMat = new THREE.MeshStandardMaterial({
+            color: 0x55aaff, metalness: 0.84, roughness: 0.08,
+            emissive: 0x1133aa, emissiveIntensity: 0.55
+          });
+          var zyniMesh = new THREE.Mesh(zyniGeo, zyniMat);
+          zyniMesh.position.set(-zyniW / 2, 0.24, 0);
+          btc.add(zyniMesh);
+
+          /* ── "Smc" — gold metallic with glow ── */
+          var smcGeo = new THREE.TextGeometry('Smc', {
+            font: font, size: 0.35, height: 0.12,
+            curveSegments: 8,
+            bevelEnabled: true, bevelThickness: 0.020,
+            bevelSize: 0.012, bevelSegments: 5
+          });
+          smcGeo.computeBoundingBox();
+          var smcW = smcGeo.boundingBox.max.x - smcGeo.boundingBox.min.x;
+          var smcMat = new THREE.MeshStandardMaterial({
+            color: 0xfbbf24, metalness: 0.97, roughness: 0.03,
+            emissive: 0x7c3f00, emissiveIntensity: 0.52
+          });
+          var smcMesh = new THREE.Mesh(smcGeo, smcMat);
+          smcMesh.position.set(-smcW / 2, -0.22, 0);
+          btc.add(smcMesh);
+        }
+      );
+    })();
+  }
+
+
+  /* Glow light under ₿ */
+  var gl = new THREE.PointLight(0x4488ff, 3, 4);
+  gl.position.set(0, 1.2, 0); scene.add(gl);
+
+  /* Pulse ring */
+  var pr = new THREE.Mesh(
+    new THREE.TorusGeometry(0.65, 0.005, 8, 60),
+    new THREE.MeshBasicMaterial({ color: 0x4466ff, transparent: true, opacity: 0.4 })
+  );
+  pr.rotation.x = Math.PI / 2; pr.position.y = 0.56; scene.add(pr);
+
+  /* ── Easing helpers ── */
+  function eIn(x)  { return x * x * x * x; }
+  function eOut(x) { return 1 - Math.pow(1 - x, 3); }
+
+  /* ── State ── */
+  var startTime = null;
+  var scrollY   = 0;
+  var active    = true;
+  window.addEventListener('scroll', function() { scrollY = window.scrollY; }, { passive: true });
+  if (window.IntersectionObserver) {
+    new IntersectionObserver(function(e) { active = e[0].isIntersecting; },
+      { threshold: 0.05 }).observe(container);
+  }
+
+  /* ── Camera orbit params — responsive ── */
+  function camParams() {
+    var mob = W() < 640;
+    var tab = W() < 960;
+    return {
+      fov:    mob ? 62 : tab ? 52 : 44,
+      radius: mob ? 14 : tab ? 12 : 10,
+      height: mob ? 7  : tab ? 6  : 5.5,
+      lookY:  mob ? 1.0 : 0.5
+    };
+  }
+
+  /* ── Animate ── */
+  function animate(ts) {
+    requestAnimationFrame(animate);
+    if (!active) return;
+    if (!startTime) startTime = ts;
+    var t = (ts - startTime) / 1000;
+
+    /* Scroll fade + parallax */
+    var heroH = container.clientHeight || 700;
+    var sf = Math.min(scrollY / heroH, 1);
+    container.style.opacity   = (1 - sf).toFixed(3);
+    container.style.transform = 'translateY(' + (-sf * 50) + 'px)';
+
+    /* Box drop-in + float */
+    allBoxes.forEach(function(b) {
+      if (b.landed) {
+        b.grp.position.y = b.targetY + Math.sin(t * b.floatSpeed + b.floatOffset) * b.floatAmp;
+      } else {
+        var p = Math.max(0, Math.min(1, (t - b.delay) / 0.72));
+        var e = p < 0.45 ? eIn(p / 0.45) * 0.15 : 0.15 + eOut((p - 0.45) / 0.55) * 0.85;
+        b.grp.position.y = b.startY + (b.targetY - b.startY) * e;
+        if (p >= 1) b.landed = true;
+      }
+    });
+
+    /* ₿ follows center box */
+    var cb = allBoxes[5 * 13 + 6];
+    btc.position.y = cb.grp.position.y + 0.55 / 2 + 0.38;
+    btc.rotation.y = t * 0.25;
+    gl.position.y  = btc.position.y - 0.1;
+    gl.intensity   = 2.5 + Math.sin(t * 2.2) * 0.8;
+    goldTextL.position.set(Math.cos(t * 0.9) * 2.2, btc.position.y + 0.6, Math.sin(t * 0.9) * 2.2);
+    goldTextL.intensity = 3.8 + Math.sin(t * 1.6) * 0.9;
+
+    /* Pulse ring */
+    pr.scale.setScalar(0.96 + Math.sin(t * 2) * 0.05);
+    pr.material.opacity = 0.25 + Math.sin(t * 1.8) * 0.18;
+    pr.position.y = btc.position.y - 0.35;
+
+    /* Camera orbit — slow, responsive radius */
+    var cp = camParams();
+    var ca = t * 0.10 + 0.4;
+    camera.fov = cp.fov;
+    camera.position.set(
+      Math.cos(ca) * cp.radius,
+      cp.height + Math.sin(t * 0.07) * 0.6,
+      Math.sin(ca) * cp.radius
+    );
+    camera.lookAt(0, cp.lookY, 0);
+    camera.updateProjectionMatrix();
+
+    /* Roaming key light */
+    pl1.position.x = Math.cos(t * 0.35) * 5;
+    pl1.position.z = Math.sin(t * 0.35) * 4;
+
+    renderer.render(scene, camera);
+  }
+  requestAnimationFrame(animate);
+
+  /* ── Rotating word ── */
+  if (window.gsap) {
+    var words = ['Smart', 'Elite', 'Pro', 'Strategic', 'Advanced'];
+    var wordEl = document.getElementById('hero-rw');
+    if (wordEl) {
+      var wIdx = 0;
+      function rotateWord() {
+        gsap.to(wordEl, {
+          opacity: 0, y: -14, filter: 'blur(6px)', duration: 0.45, ease: 'power2.in',
+          onComplete: function() {
+            wIdx = (wIdx + 1) % words.length;
+            wordEl.textContent = words[wIdx];
+            gsap.fromTo(wordEl,
+              { opacity: 0, y: 16, filter: 'blur(6px)' },
+              { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.55, ease: 'power2.out' }
+            );
+          }
+        });
+      }
+      setInterval(rotateWord, 3200);
+    }
+  }
+
+  /* ── Resize ── */
+  window.addEventListener('resize', function() {
+    renderer.setSize(W(), H());
+    camera.aspect = W() / H();
+    camera.updateProjectionMatrix();
+  });
+})();
 
 
 /* ════════════════════════════════════════════════════════════
