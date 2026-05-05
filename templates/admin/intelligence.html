@@ -163,12 +163,13 @@
 </div>
 
 <!-- OB-only mode notice -->
-<div style="background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.2);border-radius:9px;
-            padding:10px 16px;margin-bottom:18px;font-size:11px;color:var(--muted);line-height:1.6">
-  <strong style="color:var(--cyan)">Current test mode: OB-only.</strong>
-  Breaker, FVG, and Fib Confluence are paused and excluded from main stats, audit, and auto-resolver.
+<div style="background:rgba(34,211,238,.08);border:1px solid rgba(34,211,238,.35);border-radius:9px;
+            padding:12px 16px;margin-bottom:18px;font-size:12px;color:var(--muted);line-height:1.7">
+  <strong style="color:var(--cyan);font-size:13px">Current test/backtest mode: OB-only.</strong>
+  &nbsp;Breaker, FVG, and Fib Confluence are paused and excluded from main stats, audit, and auto-resolver.
+  <br>
+  Overview, By Module, Win Rates, Resolver Audit, and OB Backtest all count only <strong style="color:var(--cyan)">module = ob</strong>.
   Scanner still detects and displays all setups on the frontend.
-  To view paused module rows for debug: use <code style="font-size:10px;color:var(--amber)">include_non_ob_debug=1</code> on the audit endpoint.
 </div>
 
 <!-- Filters -->
@@ -183,11 +184,7 @@
   <div class="int-filter-group">
     <label>Module</label>
     <select id="f-module">
-      <option value="">OB only (main)</option>
-      <option value="ob">OB</option>
-      <option value="bb" style="color:#f97316">Breaker [paused]</option>
-      <option value="fvg" style="color:#f97316">FVG [paused]</option>
-      <option value="fib_confluence" style="color:#f97316">Fib Confluence [paused]</option>
+      <option value="">OB Only / Main</option>
     </select>
   </div>
   <div class="int-filter-group">
@@ -326,11 +323,7 @@
       <div class="aud-filter-group">
         <label>Module</label>
         <select id="aud-module">
-          <option value="">OB only (main)</option>
-          <option value="ob">OB</option>
-          <option value="bb" style="color:#f97316">Breaker [paused]</option>
-          <option value="fib_confluence" style="color:#f97316">Fib Confluence [paused]</option>
-          <option value="fvg" style="color:#f97316">FVG [paused]</option>
+          <option value="">OB Only / Main</option>
         </select>
       </div>
       <div class="aud-filter-group">
@@ -357,9 +350,10 @@
         </select>
       </div>
       <button type="button" id="aud-run-btn" class="int-btn">🔬 Run Audit</button>
-      <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);cursor:pointer;margin-left:4px;white-space:nowrap">
-        <input type="checkbox" id="aud-include-fvg" style="cursor:pointer;accent-color:var(--cyan)">
-        Include FVG standalone
+      <!-- FVG standalone: hidden in Phase 7A OB-only mode -->
+      <label style="display:none">
+        <input type="checkbox" id="aud-include-fvg">
+        Debug: include legacy standalone FVG
       </label>
       <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#f97316;cursor:pointer;margin-left:4px;white-space:nowrap" title="Separates Breaker LOST signals where the entry candle immediately pierced through the stop level (invalid retest) from genuine losses.">
         <input type="checkbox" id="aud-quality-guard" checked style="cursor:pointer;accent-color:#f97316">
