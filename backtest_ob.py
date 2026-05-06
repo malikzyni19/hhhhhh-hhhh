@@ -267,6 +267,7 @@ def run_ob_backtest(
     result_filter: str = None,
     stop_mode: str = "wick",
     freshness: str = "all",
+    strength_min: float = 0.0,
 ) -> dict:
     """
     OB-only candle-replay backtest with Phase 7B/7C diagnostics.
@@ -294,6 +295,13 @@ def run_ob_backtest(
         freshness_filter = (freshness or "all").strip().lower()
         if freshness_filter not in _FRESHNESS_VALUES:
             return {"ok": False, "error": f"freshness '{freshness_filter}' invalid; must be all/first_touch/already_touched/unknown"}
+
+        try:
+            strength_min = float(strength_min or 0)
+        except (TypeError, ValueError):
+            strength_min = 0.0
+        if strength_min < 0:
+            strength_min = 0.0
 
         rf = (result_filter or "").strip().lower()
         rf = rf if rf and rf != "all" else None
@@ -456,6 +464,11 @@ def run_ob_backtest(
                 except Exception:
                     ev_meta = {}
                 ob_strength, ob_strength_source = extract_ob_strength_from_meta(ev_meta)
+
+                # ── Strength pre-filter ───────────────────────────────────
+                if strength_min > 0:
+                    if ob_strength is None or ob_strength < strength_min:
+                        continue
 
                 # ── Freshness classification (uses pre-signal candles in ──
                 # ── already-fetched array — no extra API calls)           ──
@@ -628,10 +641,11 @@ def run_ob_backtest(
                 "timeframe":   timeframe,
                 "pair":        pair,
                 "source":      source,
-                "result":      rf or "all",
-                "limit":       cap,
-                "stop_mode":   stop_mode,
-                "freshness":   freshness_filter,
+                "result":       rf or "all",
+                "limit":        cap,
+                "stop_mode":    stop_mode,
+                "freshness":    freshness_filter,
+                "strength_min": strength_min,
             },
             "freshness_summary": freshness_summary,
             "summary":            summary,

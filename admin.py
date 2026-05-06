@@ -730,6 +730,12 @@ def intelligence_stats():
             limit_recent = min(int(request.args.get("limit_recent", 50)), 100)
         except (TypeError, ValueError):
             limit_recent = 50
+        try:
+            strength_min = float(request.args.get("strength_min") or 0)
+        except (TypeError, ValueError):
+            strength_min = 0.0
+        if strength_min < 0:
+            strength_min = 0.0
 
         # Phase 6C: OB-only main test mode.
         # Default (no module filter) → count only module="ob".
@@ -751,7 +757,28 @@ def intelligence_stats():
         if tf_param:
             q = q.filter(SignalEvent.timeframe == tf_param)
 
-        rows = q.order_by(SignalEvent.detected_at.desc()).all()
+        all_rows = q.order_by(SignalEvent.detected_at.desc()).all()
+
+        # ── Strength post-filter (applies only to OB signals) ────────────
+        # ob_strength lives in raw_meta_json — cannot be filtered in SQL.
+        if strength_min > 0:
+            import json as _json
+            from backtest_ob import extract_ob_strength_from_meta as _esm
+            filtered = []
+            for ev, oc in all_rows:
+                if ev.module != "ob":
+                    filtered.append((ev, oc))  # non-OB pass through unfiltered
+                    continue
+                try:
+                    _meta = _json.loads(ev.raw_meta_json or "{}")
+                except Exception:
+                    _meta = {}
+                _str, _ = _esm(_meta)
+                if _str is not None and _str >= strength_min:
+                    filtered.append((ev, oc))
+            rows = filtered
+        else:
+            rows = all_rows
 
         # ── Count excluded non-OB rows (for transparency) ────────────────
         excluded_non_ob_count = 0
@@ -901,6 +928,7 @@ def intelligence_stats():
                 "module":           module_param,
                 "effective_module": effective_module,
                 "timeframe":        tf_param,
+                "strength_min":     strength_min,
             },
             "totals": {
                 "total_signals":    len(rows),
@@ -1111,6 +1139,11 @@ def intelligence_backtest_ob():
         source       = request.args.get("source",  "live")
         stop_mode    = request.args.get("stop_mode", "wick").strip().lower() or "wick"
         freshness    = request.args.get("freshness", "all").strip().lower() or "all"
+        try:
+            strength_min = float(request.args.get("strength_min") or 0)
+        except (TypeError, ValueError):
+            strength_min = 0.0
+
         result       = (
             request.args.get("result") or
             request.args.get("result_filter") or
@@ -1126,6 +1159,7 @@ def intelligence_backtest_ob():
             result_filter=result,
             stop_mode=stop_mode,
             freshness=freshness,
+            strength_min=strength_min,
         )
         return jsonify(result)
 

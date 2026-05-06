@@ -195,6 +195,17 @@
       <option value="1d">1d</option>
     </select>
   </div>
+  <div class="int-filter-group">
+    <label>Strength</label>
+    <select id="f-strength" title="OB strength filter — applies to OB signals only">
+      <option value="0">All</option>
+      <option value="50">50%+</option>
+      <option value="60">60%+</option>
+      <option value="70">70%+</option>
+      <option value="80">80%+</option>
+      <option value="90">90%+</option>
+    </select>
+  </div>
   <button type="button" id="int-refresh-btn" class="int-btn">⟳ Refresh</button>
   <span id="int-ts" style="font-size:10px;color:var(--muted);margin-left:4px"></span>
   <div class="int-filter-group" style="margin-left:6px">
@@ -436,6 +447,17 @@
           <option value="first_touch">First Touch Only</option>
           <option value="already_touched">Already Touched</option>
           <option value="unknown">Unknown Freshness</option>
+        </select>
+      </div>
+      <div class="aud-filter-group">
+        <label>Strength</label>
+        <select id="bt-strength-min">
+          <option value="0">All</option>
+          <option value="50">50%+</option>
+          <option value="60">60%+</option>
+          <option value="70">70%+</option>
+          <option value="80">80%+</option>
+          <option value="90">90%+</option>
         </select>
       </div>
       <button type="button" id="bt-run-btn" class="int-btn">▶ Run OB Backtest</button>
@@ -741,13 +763,15 @@ function intSt_fetchStats() {
   document.getElementById('int-content').style.display = 'none';
   document.getElementById('int-error').style.display   = 'none';
 
-  var src = document.getElementById('f-source').value;
-  var mod = document.getElementById('f-module').value;
-  var tf  = document.getElementById('f-timeframe').value;
+  var src      = document.getElementById('f-source').value;
+  var mod      = document.getElementById('f-module').value;
+  var tf       = document.getElementById('f-timeframe').value;
+  var strMin   = (document.getElementById('f-strength') || {}).value || '0';
 
   var params = 'source=' + encodeURIComponent(src) + '&limit_recent=50';
-  if (mod) params += '&module='    + encodeURIComponent(mod);
-  if (tf)  params += '&timeframe=' + encodeURIComponent(tf);
+  if (mod)              params += '&module='       + encodeURIComponent(mod);
+  if (tf)               params += '&timeframe='    + encodeURIComponent(tf);
+  if (strMin && strMin !== '0') params += '&strength_min=' + encodeURIComponent(strMin);
 
   var url = '/admin/intelligence/stats?' + params;
   console.log('Fetching stats URL: ' + url);
@@ -1662,8 +1686,9 @@ function intBt_runBacktest() {
   var setup     = (document.getElementById('bt-setup-type')    || {}).value || 'all';
   var res       = (document.getElementById('bt-result-filter') || {}).value || 'all';
   var pair      = ((document.getElementById('bt-pair')         || {}).value || '').trim().toUpperCase();
-  var stopMode  = (document.getElementById('bt-stop-mode')     || {}).value || 'wick';
-  var freshness = (document.getElementById('bt-freshness')     || {}).value || 'all';
+  var stopMode   = (document.getElementById('bt-stop-mode')    || {}).value || 'wick';
+  var freshness  = (document.getElementById('bt-freshness')    || {}).value || 'all';
+  var strengthMn = (document.getElementById('bt-strength-min') || {}).value || '0';
 
   var url = '/admin/intelligence/backtest-ob?limit=' + encodeURIComponent(limit);
   if (tf)            url += '&timeframe='  + encodeURIComponent(tf);
@@ -1671,7 +1696,8 @@ function intBt_runBacktest() {
   if (res  && res  !== 'all')   url += '&result='     + encodeURIComponent(res);
   if (pair)          url += '&pair='       + encodeURIComponent(pair);
   url += '&stop_mode=' + encodeURIComponent(stopMode);
-  if (freshness && freshness !== 'all') url += '&freshness=' + encodeURIComponent(freshness);
+  if (freshness && freshness !== 'all')   url += '&freshness='    + encodeURIComponent(freshness);
+  if (strengthMn && strengthMn !== '0')   url += '&strength_min=' + encodeURIComponent(strengthMn);
 
   console.log('[Backtest OB] fetching', url);
   intBt_running = true;
