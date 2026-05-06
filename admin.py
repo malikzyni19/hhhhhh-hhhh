@@ -1249,3 +1249,59 @@ def intelligence_ob_strength_audit():
     except Exception as _e:
         return jsonify({"ok": False, "error": str(_e)}), 500
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 8A — OB Candidate Engine Preview (read-only, no DB writes, no trading)
+# GET /admin/intelligence/ob-candidates
+# ─────────────────────────────────────────────────────────────────────────────
+@admin_bp.route("/intelligence/ob-candidates", methods=["GET"])
+@admin_required
+def intelligence_ob_candidates():
+    try:
+        from ob_candidates import run_ob_candidates
+
+        try:
+            limit = min(int(request.args.get("limit", 100)), 500)
+        except (TypeError, ValueError):
+            limit = 100
+        try:
+            strength_min = float(request.args.get("strength_min") or 0)
+        except (TypeError, ValueError):
+            strength_min = 0.0
+        try:
+            max_distance_pct = float(request.args.get("max_distance_pct") or 1.0)
+        except (TypeError, ValueError):
+            max_distance_pct = 1.0
+        try:
+            tp_pct = float(request.args.get("tp_pct") or 0.30)
+        except (TypeError, ValueError):
+            tp_pct = 0.30
+        try:
+            rr = float(request.args.get("rr") or 1.5)
+        except (TypeError, ValueError):
+            rr = 1.5
+
+        timeframe  = request.args.get("timeframe")   or None
+        setup_type = request.args.get("setup_type")  or None
+        source     = request.args.get("source", "live").strip() or "live"
+        pair       = request.args.get("pair")        or None
+        entry_mode = request.args.get("entry_mode", "zone_middle").strip() or "zone_middle"
+        tp_mode    = request.args.get("tp_mode", "rr").strip() or "rr"
+
+        result = run_ob_candidates(
+            limit=limit,
+            timeframe=timeframe,
+            setup_type=setup_type,
+            strength_min=strength_min,
+            max_distance_pct=max_distance_pct,
+            source=source,
+            pair=pair,
+            entry_mode=entry_mode,
+            tp_mode=tp_mode,
+            tp_pct=tp_pct,
+            rr=rr,
+        )
+        return jsonify(result)
+
+    except Exception as _e:
+        return jsonify({"ok": False, "error": str(_e)}), 500

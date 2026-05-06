@@ -498,6 +498,97 @@
   </div>
 </div>
 
+<!-- OB Candidate Preview -->
+<div class="adm-card" style="margin-bottom:20px">
+  <div class="adm-card-header">
+    <span class="adm-card-title">OB Candidate Preview</span>
+    <span style="font-size:10px;color:var(--muted);margin-left:10px">read-only — paper trading not active</span>
+  </div>
+  <div class="adm-card-body">
+    <p class="car-subtitle">Preview which OB setups are near their zone right now. Paper trading is not active — this only shows which setups would become monitor candidates.</p>
+    <div class="aud-controls">
+      <div class="aud-filter-group">
+        <label>Limit</label>
+        <input type="number" id="cand-limit" value="100" min="1" max="500" style="width:70px">
+      </div>
+      <div class="aud-filter-group">
+        <label>Timeframe</label>
+        <select id="cand-timeframe">
+          <option value="">all</option>
+          <option value="15m">15m</option>
+          <option value="30m">30m</option>
+          <option value="1h">1h</option>
+          <option value="4h">4h</option>
+          <option value="1d">1d</option>
+        </select>
+      </div>
+      <div class="aud-filter-group">
+        <label>Setup</label>
+        <select id="cand-setup-type">
+          <option value="all">All OB</option>
+          <option value="OB_APPROACH">OB Approach</option>
+          <option value="OB_CONSOL">OB Consol</option>
+        </select>
+      </div>
+      <div class="aud-filter-group">
+        <label>Min OB Str %</label>
+        <input type="number" id="cand-strength-min" value="0" min="0" max="100" step="1"
+               placeholder="0" style="width:60px"
+               title="Min true OB strength %. 0 = show all.">
+      </div>
+      <div class="aud-filter-group">
+        <label>Max Dist %</label>
+        <input type="number" id="cand-max-distance" value="1.0" min="0" max="100" step="0.1"
+               placeholder="1.0" style="width:65px"
+               title="Max distance from current price to OB zone (%). e.g. 1.0 = within 1% of zone.">
+      </div>
+      <div class="aud-filter-group">
+        <label>Entry Mode</label>
+        <select id="cand-entry-mode">
+          <option value="zone_middle" selected>Zone Middle</option>
+          <option value="zone_top">Zone Top</option>
+          <option value="zone_bottom">Zone Bottom</option>
+        </select>
+      </div>
+      <div class="aud-filter-group">
+        <label>TP Mode</label>
+        <select id="cand-tp-mode">
+          <option value="rr" selected>R:R</option>
+          <option value="fixed_pct">Fixed %</option>
+        </select>
+      </div>
+      <div class="aud-filter-group" id="cand-rr-group">
+        <label>R:R</label>
+        <input type="number" id="cand-rr" value="1.5" min="0.1" max="20" step="0.1" style="width:55px">
+      </div>
+      <div class="aud-filter-group" id="cand-tp-pct-group" style="display:none">
+        <label>TP %</label>
+        <input type="number" id="cand-tp-pct" value="0.30" min="0.01" max="100" step="0.01" style="width:65px">
+      </div>
+      <button type="button" id="cand-run-btn" class="int-btn">🔍 Run Candidate Preview</button>
+    </div>
+    <div id="cand-error" style="display:none;background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.2);
+         color:var(--red);padding:12px 16px;border-radius:8px;font-size:12px;margin-top:12px"></div>
+    <div id="cand-result" style="display:none;margin-top:12px">
+      <div id="cand-summary"></div>
+      <div id="cand-api-info" style="margin-top:6px"></div>
+      <p style="font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin:14px 0 6px">
+        Candidates &nbsp;<span style="font-weight:400;text-transform:none;letter-spacing:0">← APPROACHING / TOUCHING = active monitor candidates</span>
+      </p>
+      <div class="adm-table-wrap" id="cand-table-wrap" style="display:none">
+        <table class="adm-table" style="table-layout:auto;font-size:11px">
+          <thead><tr>
+            <th>Pair</th><th>TF</th><th>Setup</th><th>Dir</th>
+            <th>OB Str</th><th>Current</th><th>Zone</th><th>Dist %</th>
+            <th>Status</th><th>Entry</th><th>SL Rule</th><th>TP</th><th>Monitor?</th>
+          </tr></thead>
+          <tbody id="cand-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Loading -->
 <div id="int-loading">Loading intelligence data…</div>
 
@@ -1792,6 +1883,163 @@ function intBt_runBacktest() {
     });
 }
 
+/* ── OB Candidate Preview — Phase 8A ── */
+
+var intCand_running = false;
+
+function intCand_statusBadge(s) {
+  var map = {
+    'APPROACHING_ZONE': 'background:rgba(34,197,94,.15);color:#22c55e',
+    'TOUCHING_ZONE':    'background:rgba(0,209,255,.15);color:var(--cyan)',
+    'TOO_FAR':          'background:rgba(148,163,184,.1);color:var(--muted)',
+    'BEYOND_ZONE':      'background:rgba(248,113,113,.12);color:var(--red)',
+    'MISSING_STRENGTH': 'background:rgba(251,191,36,.1);color:var(--amber)',
+    'MISSING_PRICE':    'background:rgba(251,191,36,.1);color:var(--amber)',
+    'UNKNOWN':          'background:rgba(148,163,184,.1);color:var(--muted)'
+  };
+  var st = map[s] || map['UNKNOWN'];
+  return '<span style="font-size:9px;font-weight:600;padding:2px 6px;border-radius:4px;' + st + '">' + (s || '—').replace(/_/g,' ') + '</span>';
+}
+
+function intCand_fmt(v) {
+  if (v == null) return '—';
+  var n = parseFloat(v);
+  return isNaN(n) ? String(v) : n.toPrecision(6);
+}
+
+function intCand_renderSummary(s, api) {
+  var el = document.getElementById('cand-summary');
+  if (!el) return;
+  var defs = [
+    {l:'Checked',       v:s.checked,           c:''},
+    {l:'Active',        v:s.active_candidates, c:'green'},
+    {l:'Approaching',   v:s.approaching_zone,  c:'green'},
+    {l:'Touching Zone', v:s.touching_zone,     c:'cyan'},
+    {l:'Too Far',       v:s.too_far,           c:''},
+    {l:'Beyond Zone',   v:s.beyond_zone,       c:'red'},
+    {l:'No OB Strength',v:s.missing_strength,  c:'amber'},
+    {l:'No Price',      v:s.missing_price,     c:'amber'}
+  ];
+  var html = '<div class="adm-stats-grid">';
+  for (var i = 0; i < defs.length; i++) {
+    var d = defs[i], cc = d.c ? ' ' + d.c : '';
+    html += '<div class="adm-stat-card' + cc + '">' +
+            '<div class="adm-stat-label">' + d.l + '</div>' +
+            '<div class="adm-stat-value' + cc + '">' + (d.v != null ? d.v : '—') + '</div>' +
+            '</div>';
+  }
+  html += '</div>';
+  el.innerHTML = html;
+
+  var apiEl = document.getElementById('cand-api-info');
+  if (apiEl && api) {
+    apiEl.innerHTML = '<span style="font-size:10px;color:var(--muted)">' +
+      '⚡ Price source: <strong>' + (api.price_fetch_mode || '—') + '</strong>' +
+      ' &nbsp;·&nbsp; Per-pair REST calls: <strong>' + (api.per_pair_rest_calls || 0) + '</strong>' +
+      '</span>';
+  }
+}
+
+function intCand_renderCandidates(candidates) {
+  var tbody = document.getElementById('cand-tbody');
+  var wrap  = document.getElementById('cand-table-wrap');
+  if (!tbody || !wrap) return;
+  if (!candidates || candidates.length === 0) { wrap.style.display = 'none'; return; }
+
+  var rows = '';
+  for (var i = 0; i < candidates.length; i++) {
+    var c = candidates[i];
+    var plan = c.trade_plan || {};
+    var isActive = (c.candidate_status === 'APPROACHING_ZONE' || c.candidate_status === 'TOUCHING_ZONE');
+    rows += '<tr' + (isActive ? ' style="background:rgba(34,197,94,.04)"' : '') + '>';
+    rows += '<td style="font-family:\'JetBrains Mono\',monospace;font-size:11px">' + intAud_escHtml(c.pair || '—') + '</td>';
+    rows += '<td>' + intAud_escHtml(c.timeframe || '—') + '</td>';
+    rows += '<td style="font-size:10px">' + intAud_escHtml((c.setup_type || '—').replace('OB_','')) + '</td>';
+    rows += '<td style="font-size:10px;color:' + (c.direction === 'bullish' ? 'var(--green)' : 'var(--red)') + '">' +
+            intAud_escHtml(c.direction ? c.direction.charAt(0).toUpperCase() : '—') + '</td>';
+    var strVal = c.ob_strength;
+    rows += '<td style="font-size:10px;color:' + (strVal != null ? 'var(--text)' : 'var(--muted)') + '">' +
+            (strVal != null ? strVal : '—') + '</td>';
+    rows += '<td style="font-family:\'JetBrains Mono\',monospace;font-size:10px">' + intCand_fmt(c.current_price) + '</td>';
+    rows += '<td style="font-size:10px;white-space:nowrap">' +
+            intCand_fmt(c.zone_low) + ' – ' + intCand_fmt(c.zone_high) + '</td>';
+    var dist = c.distance_pct;
+    rows += '<td style="font-size:10px;color:' + (dist != null && dist <= 0.5 ? 'var(--green)' : 'var(--text)') + '">' +
+            (dist != null ? dist.toFixed(3) + '%' : '—') + '</td>';
+    rows += '<td>' + intCand_statusBadge(c.candidate_status) + '</td>';
+    rows += '<td style="font-family:\'JetBrains Mono\',monospace;font-size:10px">' +
+            (plan.entry_price_preview != null ? intCand_fmt(plan.entry_price_preview) : '—') + '</td>';
+    rows += '<td style="font-size:9px;color:var(--muted)">' +
+            (plan.sl_rule ? plan.sl_rule.replace(/_/g,' ') : '—') + '</td>';
+    rows += '<td style="font-family:\'JetBrains Mono\',monospace;font-size:10px">' +
+            (plan.tp_price_preview != null ? intCand_fmt(plan.tp_price_preview) : '—') +
+            (plan.rr_preview != null ? '<span style="font-size:9px;color:var(--muted)"> R' + plan.rr_preview + '</span>' : '') +
+            '</td>';
+    rows += '<td style="text-align:center">' +
+            (c.would_monitor
+              ? '<span style="color:var(--green);font-weight:700">✓</span>'
+              : '<span style="color:var(--muted)">—</span>') +
+            '</td>';
+    rows += '</tr>';
+  }
+  tbody.innerHTML = rows;
+  wrap.style.display = 'block';
+}
+
+function intCand_run() {
+  if (intCand_running) return;
+  var errEl    = document.getElementById('cand-error');
+  var resultEl = document.getElementById('cand-result');
+  var runBtn   = document.getElementById('cand-run-btn');
+  var summaryEl = document.getElementById('cand-summary');
+  var wrap     = document.getElementById('cand-table-wrap');
+  if (errEl)    { errEl.style.display = 'none'; errEl.textContent = ''; }
+  if (resultEl) { resultEl.style.display = 'none'; }
+  if (runBtn)   { runBtn.textContent = '⏳ Running…'; runBtn.disabled = true; }
+  if (summaryEl){ summaryEl.innerHTML = ''; }
+  if (wrap)     { wrap.style.display = 'none'; }
+
+  var limit      = (document.getElementById('cand-limit')        || {}).value || '100';
+  var tf         = (document.getElementById('cand-timeframe')    || {}).value || '';
+  var setup      = (document.getElementById('cand-setup-type')   || {}).value || 'all';
+  var strMin     = (document.getElementById('cand-strength-min') || {}).value || '0';
+  var maxDist    = (document.getElementById('cand-max-distance') || {}).value || '1.0';
+  var entryMode  = (document.getElementById('cand-entry-mode')   || {}).value || 'zone_middle';
+  var tpMode     = (document.getElementById('cand-tp-mode')      || {}).value || 'rr';
+  var rrVal      = (document.getElementById('cand-rr')           || {}).value || '1.5';
+  var tpPctVal   = (document.getElementById('cand-tp-pct')       || {}).value || '0.30';
+
+  var url = '/admin/intelligence/ob-candidates?limit=' + encodeURIComponent(limit);
+  if (tf)                         url += '&timeframe='       + encodeURIComponent(tf);
+  if (setup && setup !== 'all')   url += '&setup_type='      + encodeURIComponent(setup);
+  if (strMin && strMin !== '0')   url += '&strength_min='    + encodeURIComponent(strMin);
+  url += '&max_distance_pct=' + encodeURIComponent(maxDist);
+  url += '&entry_mode='       + encodeURIComponent(entryMode);
+  url += '&tp_mode='          + encodeURIComponent(tpMode);
+  if (tpMode === 'rr')            url += '&rr='              + encodeURIComponent(rrVal);
+  else                            url += '&tp_pct='          + encodeURIComponent(tpPctVal);
+
+  intCand_running = true;
+  fetch(url, { credentials: 'same-origin' })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      intCand_running = false;
+      if (runBtn) { runBtn.textContent = '🔍 Run Candidate Preview'; runBtn.disabled = false; }
+      if (!data.ok) {
+        if (errEl) { errEl.textContent = data.error || 'Request failed'; errEl.style.display = 'block'; }
+        return;
+      }
+      if (resultEl) resultEl.style.display = 'block';
+      intCand_renderSummary(data.summary || {}, data.api_usage || {});
+      intCand_renderCandidates(data.candidates || []);
+    })
+    .catch(function(err) {
+      intCand_running = false;
+      if (runBtn) { runBtn.textContent = '🔍 Run Candidate Preview'; runBtn.disabled = false; }
+      if (errEl)  { errEl.textContent = 'Network error: ' + err.message; errEl.style.display = 'block'; }
+    });
+}
+
 /* Wire button + initial load.
    readyState check handles both: script runs before or after DOMContentLoaded. */
 function intSt_init() {
@@ -1830,6 +2078,18 @@ function intSt_init() {
   if (audBtn) { audBtn.addEventListener('click', intAud_runAudit); }
   var btBtn = document.getElementById('bt-run-btn');
   if (btBtn) { btBtn.addEventListener('click', intBt_runBacktest); }
+  var candBtn = document.getElementById('cand-run-btn');
+  if (candBtn) { candBtn.addEventListener('click', intCand_run); }
+  var candTpMode = document.getElementById('cand-tp-mode');
+  if (candTpMode) {
+    candTpMode.addEventListener('change', function() {
+      var isRr = this.value === 'rr';
+      var rrGrp = document.getElementById('cand-rr-group');
+      var pctGrp = document.getElementById('cand-tp-pct-group');
+      if (rrGrp)  rrGrp.style.display  = isRr ? '' : 'none';
+      if (pctGrp) pctGrp.style.display = isRr ? 'none' : '';
+    });
+  }
   intCar_fetchSettings();
   intSt_fetchStats();
 }
