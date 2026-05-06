@@ -48,30 +48,28 @@ _DIAG_KEYS = (
 # Valid freshness filter values
 _FRESHNESS_VALUES = frozenset({"all", "first_touch", "already_touched", "unknown"})
 
-# Ordered candidate keys for OB strength — checked left to right, first match wins
+# Strict OB-specific strength keys only — no generic score/priority fallbacks
 _OB_STRENGTH_KEYS = (
-    "ob_strength",        # normalized key written by updated signal_extractor
-    "obStrengthPct",      # already in meta for most logged signals
+    "ob_strength",           # normalized key written by updated signal_extractor
+    "obStrengthPct",         # already in meta for most logged signals (percentage 0-100)
     "obStrength",
     "ob_strength_pct",
-    "strengthPct",
-    "strength",
-    "alert_strength",     # top-level alert["strength"] preserved by updated extractor
-    "volumeStrength",
-    "volume_strength",
+    "orderBlockStrength",
+    "order_block_strength",
     "obVolumeStrength",
     "ob_volume_strength",
-    "percentage",
-    "pct",
 )
 
 
 def extract_ob_strength_from_meta(raw_meta: dict) -> "tuple[float | None, str]":
     """
-    Extract the best available OB strength number from raw_meta_json dict.
+    Extract true OB strength (percentage 0-100) from raw_meta_json dict.
 
-    Checks _OB_STRENGTH_KEYS left to right; returns (value, source_key) for
-    the first non-None numeric hit. Returns (None, "missing") if nothing found.
+    Only checks OB-specific keys. Generic fields like 'strength', 'score',
+    'alert_strength', 'percentage', 'pct' are intentionally excluded to
+    prevent mixing alert priority integers with OB strength percentages.
+
+    Returns (value, source_key) or (None, "missing_true_ob_strength").
     """
     for key in _OB_STRENGTH_KEYS:
         val = raw_meta.get(key)
@@ -83,7 +81,7 @@ def extract_ob_strength_from_meta(raw_meta: dict) -> "tuple[float | None, str]":
                 return round(f, 2), key
         except (TypeError, ValueError):
             continue
-    return None, "missing"
+    return None, "missing_true_ob_strength"
 
 
 # Candidate keys that would contain OB formation timestamp (none stored yet)
@@ -340,6 +338,12 @@ def run_ob_backtest(
             "ambiguous": 0, "waiting_for_entry": 0, "entered": 0, "errors": 0,
         }
         freshness_summary = {"first_touch": 0, "already_touched": 0, "unknown": 0}
+        strength_summary = {
+            "with_true_ob_strength":        0,
+            "missing_true_ob_strength":     0,
+            "filtered_out_missing_strength": 0,
+            "strength_min":                 strength_min,
+        }
         diagnostics = {k: 0 for k in _DIAG_KEYS}
         diag_summary = {
             "all_variants_lost":                0,
@@ -464,10 +468,19 @@ def run_ob_backtest(
                 except Exception:
                     ev_meta = {}
                 ob_strength, ob_strength_source = extract_ob_strength_from_meta(ev_meta)
+                alert_strength_debug = ev_meta.get("alert_strength_debug")
 
-                # ── Strength pre-filter ───────────────────────────────────
+                # ── Strength tally + pre-filter ───────────────────────────
+                if ob_strength is not None:
+                    strength_summary["with_true_ob_strength"] += 1
+                else:
+                    strength_summary["missing_true_ob_strength"] += 1
+
                 if strength_min > 0:
                     if ob_strength is None or ob_strength < strength_min:
+                        strength_summary["filtered_out_missing_strength"] += (
+                            1 if ob_strength is None else 0
+                        )
                         continue
 
                 # ── Freshness classification (uses pre-signal candles in ──
@@ -583,6 +596,7 @@ def run_ob_backtest(
                     "freshness_reason":          freshness_info.get("reason"),
                     "ob_strength":               ob_strength,
                     "ob_strength_source":        ob_strength_source,
+                    "alert_strength_debug":      alert_strength_debug,
                 })
 
             except Exception as _sig_err:
@@ -648,6 +662,7 @@ def run_ob_backtest(
                 "strength_min": strength_min,
             },
             "freshness_summary": freshness_summary,
+            "strength_summary":  strength_summary,
             "summary":            summary,
             "diagnostics":        diagnostics,
             "diagnostic_summary": diag_summary,

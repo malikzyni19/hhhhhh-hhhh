@@ -88,10 +88,12 @@ def _extract_ob_alert(alert: dict, result: dict, exchange: str, timeframe: str,
         # that are NOT inside meta so they aren't silently dropped.
         raw_meta = dict(meta)
 
-        # Preserve top-level alert["strength"] (priority integer 3–5)
-        _alert_strength = alert.get("strength")
-        if _alert_strength is not None:
-            raw_meta["alert_strength"] = _alert_strength
+        # Preserve top-level alert["strength"] for debug purposes ONLY.
+        # It is a coarse priority integer (3–5), NOT an OB strength percentage.
+        # Stored as alert_strength_debug so it cannot be confused with ob_strength.
+        _alert_strength_debug = alert.get("strength")
+        if _alert_strength_debug is not None:
+            raw_meta["alert_strength_debug"] = _alert_strength_debug
 
         # Preserve other useful top-level alert fields if present
         for _ak in ("score", "label"):
@@ -99,11 +101,16 @@ def _extract_ob_alert(alert: dict, result: dict, exchange: str, timeframe: str,
             if _av is not None:
                 raw_meta.setdefault(f"alert_{_ak}", _av)
 
-        # Normalized ob_strength: best available numeric strength value
+        # Normalized ob_strength: only true OB-specific strength keys allowed.
+        # alert_strength_debug is intentionally excluded — it is not a percentage.
         _ob_str = (
             _safe_float(meta.get("obStrengthPct")) or
             _safe_float(meta.get("obStrength")) or
-            _safe_float(_alert_strength)
+            _safe_float(meta.get("ob_strength_pct")) or
+            _safe_float(meta.get("orderBlockStrength")) or
+            _safe_float(meta.get("order_block_strength")) or
+            _safe_float(meta.get("obVolumeStrength")) or
+            _safe_float(meta.get("ob_volume_strength"))
         )
         if _ob_str is not None:
             raw_meta["ob_strength"] = round(_ob_str, 2)

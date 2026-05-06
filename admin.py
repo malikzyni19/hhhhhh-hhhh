@@ -1219,6 +1219,13 @@ def intelligence_ob_strength_audit():
                 "raw_meta_json":            raw_meta,
                 "detected_ob_strength":     strength,
                 "detected_strength_source": source,
+                "alert_strength_debug":     raw_meta.get("alert_strength_debug"),
+                "usable_for_strength_filter": strength is not None,
+                "note": (
+                    "ob_strength from true OB metadata"
+                    if strength is not None
+                    else "no true OB strength key found — row excluded by strength_min > 0"
+                ),
             })
 
         checked = len(events)
@@ -1232,9 +1239,10 @@ def intelligence_ob_strength_audit():
                 "sources":          sources_seen,
             },
             "note": (
-                "ob_strength / obStrengthPct already available in raw_meta for most rows. "
-                "alert_strength (top-level alert field) now also preserved by updated "
-                "signal_extractor for future signals. Old DB rows are NOT mutated."
+                "ob_strength uses only true OB-specific keys (obStrengthPct, obStrength, etc.). "
+                "alert_strength_debug is stored separately and is NOT used in the strength filter. "
+                "score (signal quality score) is also NOT used as OB strength. "
+                "Old DB rows are NOT mutated."
             ),
         })
 

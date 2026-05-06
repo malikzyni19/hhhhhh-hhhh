@@ -196,15 +196,10 @@
     </select>
   </div>
   <div class="int-filter-group">
-    <label>Strength</label>
-    <select id="f-strength" title="OB strength filter — applies to OB signals only">
-      <option value="0">All</option>
-      <option value="50">50%+</option>
-      <option value="60">60%+</option>
-      <option value="70">70%+</option>
-      <option value="80">80%+</option>
-      <option value="90">90%+</option>
-    </select>
+    <label>OB Strength</label>
+    <input type="number" id="f-strength" value="0" min="0" max="100" step="1"
+           placeholder="e.g. 70" style="width:60px"
+           title="Min OB strength % — applies to OB signals only. 0 = All.">
   </div>
   <button type="button" id="int-refresh-btn" class="int-btn">⟳ Refresh</button>
   <span id="int-ts" style="font-size:10px;color:var(--muted);margin-left:4px"></span>
@@ -450,15 +445,10 @@
         </select>
       </div>
       <div class="aud-filter-group">
-        <label>Strength</label>
-        <select id="bt-strength-min">
-          <option value="0">All</option>
-          <option value="50">50%+</option>
-          <option value="60">60%+</option>
-          <option value="70">70%+</option>
-          <option value="80">80%+</option>
-          <option value="90">90%+</option>
-        </select>
+        <label>Min OB Strength %</label>
+        <input type="number" id="bt-strength-min" value="0" min="0" max="100" step="1"
+               placeholder="e.g. 70" style="width:70px"
+               title="True OB strength only (obStrengthPct). 0 = All. Score is NOT used.">
       </div>
       <button type="button" id="bt-run-btn" class="int-btn">▶ Run OB Backtest</button>
     </div>
@@ -471,6 +461,8 @@
            background:rgba(148,163,184,.12);color:var(--muted)"></div>
       <!-- Summary cards -->
       <div id="bt-summary"></div>
+      <!-- Strength summary -->
+      <div id="bt-strength-summary" style="margin-top:10px"></div>
       <!-- Freshness summary cards -->
       <div id="bt-freshness-summary" style="margin-top:14px"></div>
       <!-- Cross-variant diagnostic summary -->
@@ -489,7 +481,7 @@
             <th>Pair</th><th>TF</th><th>Setup</th><th>Dir</th>
             <th>Score</th><th>Result</th><th>Loss Detail</th>
             <th id="bt-variants-th">Variants (Alt / ST / CCE)</th>
-            <th>Freshness</th><th>Str</th>
+            <th>Freshness</th><th>OB Str</th>
             <th>Entry</th><th>TP</th><th>SL</th><th>Reason</th>
           </tr></thead>
           <tbody id="bt-tbody"></tbody>
@@ -1587,6 +1579,49 @@ function intBt_freshnessBadge(fs, touchCount) {
   return '<span style="font-size:9px;font-weight:700;' + color + '">' + label + tcStr + '</span>';
 }
 
+function intBt_renderStrengthSummary(ss) {
+  var el = document.getElementById('bt-strength-summary');
+  if (!el) return;
+  if (!ss) { el.innerHTML = ''; return; }
+  var withStr   = ss.with_true_ob_strength    || 0;
+  var missing   = ss.missing_true_ob_strength || 0;
+  var filtered  = ss.filtered_out_missing_strength || 0;
+  var minVal    = ss.strength_min || 0;
+  var total     = withStr + missing;
+  if (total === 0) { el.innerHTML = ''; return; }
+
+  var note = '<p style="font-size:10px;color:var(--muted);margin:0">' +
+    'OB Strength filter uses only true OB strength metadata (obStrengthPct). ' +
+    'Score and alert_strength are <strong style="color:var(--text)">never</strong> used.</p>';
+
+  var warn = '';
+  if (total > 0 && (missing / total) > 0.5) {
+    warn = '<p style="font-size:10px;color:var(--amber,#fbbf24);margin:4px 0 0">' +
+      '⚠ Most rows do not have true OB strength metadata. ' +
+      'Run fresh scans — new signals will include obStrengthPct automatically.</p>';
+  }
+  if (minVal > 0 && filtered > 0) {
+    warn += '<p style="font-size:10px;color:var(--muted);margin:2px 0 0">' +
+      filtered + ' row(s) with missing OB strength excluded by ' + minVal + '% filter.</p>';
+  }
+
+  var bars = [
+    { label: 'With OB Strength', val: withStr,  color: 'var(--cyan,#22d3ee)' },
+    { label: 'Missing',          val: missing,  color: 'var(--muted)' },
+  ];
+  var html = '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px">';
+  bars.forEach(function(b) {
+    var pct = total > 0 ? Math.round(b.val / total * 100) : 0;
+    html += '<div style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);' +
+            'border-radius:8px;padding:8px 12px;min-width:110px">' +
+            '<div style="font-size:10px;color:var(--muted);margin-bottom:2px">' + b.label + '</div>' +
+            '<div style="font-size:20px;font-weight:700;color:' + b.color + '">' + b.val + '</div>' +
+            '<div style="font-size:10px;color:var(--muted)">' + pct + '%</div></div>';
+  });
+  html += '</div>' + note + warn;
+  el.innerHTML = html;
+}
+
 function intBt_renderFreshnessSummary(fs) {
   var el = document.getElementById('bt-freshness-summary');
   if (!el) return;
@@ -1668,13 +1703,15 @@ function intBt_runBacktest() {
   var bkEl     = document.getElementById('bt-breakdown');
   var wrap     = document.getElementById('bt-table-wrap');
 
-  var diagEl    = document.getElementById('bt-diag');
+  var diagEl       = document.getElementById('bt-diag');
   var diagSumEl    = document.getElementById('bt-diag-summary');
   var freshSumEl   = document.getElementById('bt-freshness-summary');
+  var strSumEl     = document.getElementById('bt-strength-summary');
   if (errEl)      { errEl.style.display = 'none'; errEl.textContent = ''; }
   if (resultEl)   { resultEl.style.display = 'none'; }
   if (runBtn)     { runBtn.textContent = '⏳ Running…'; runBtn.disabled = true; }
   if (summaryEl)  { summaryEl.innerHTML = ''; }
+  if (strSumEl)   { strSumEl.innerHTML = ''; }
   if (freshSumEl) { freshSumEl.innerHTML = ''; }
   if (diagSumEl)  { diagSumEl.innerHTML = ''; }
   if (diagEl)     { diagEl.innerHTML = ''; }
@@ -1729,6 +1766,7 @@ function intBt_runBacktest() {
         if (thEl) thEl.textContent = 'Variants (' + (modeIsClose ? 'WS' : 'CS') + ' / ST / CCE)';
       }
       intBt_renderSummary(data.summary || {});
+      intBt_renderStrengthSummary(data.strength_summary || {});
       intBt_renderFreshnessSummary(data.freshness_summary || {});
       intBt_renderDiagSummary(data.diagnostic_summary || {});
       intBt_renderDiagnostics(data.diagnostics || {});
