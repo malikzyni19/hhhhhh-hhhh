@@ -1,15 +1,14 @@
 """
-backtest_ob.py — Phase 7A: OB-Only Backtest Foundation
+backtest_ob.py — Phase 7B: OB Backtest with Loss Diagnostics
 
-Read-only dry-run backtest for Order Block signals only.
-Replays candles after detected_at and determines entry/exit outcomes
-using the same rules as the production outcome resolver.
+Phase 7A base: read-only OB-only candle-replay backtest.
+Phase 7B adds: per-signal loss_reason_detail, 3 counterfactual variants,
+and a diagnostics summary + per-breakdown diagnostic counts.
 
-Design:
-  - module="ob" ONLY. Breaker, FVG, Fib Confluence excluded.
-  - setup_type in ["OB_APPROACH", "OB_CONSOL"] only.
+Rules:
   - Never mutates SignalEvent or SignalOutcome.
-  - Reuses _run_traced() from resolver_audit.py for replay logic.
+  - Never writes to DB.
+  - module="ob" ONLY, setup_type in OB_APPROACH / OB_CONSOL.
   - Must be called inside an active Flask app context.
 """
 
@@ -18,45 +17,93 @@ from datetime import timezone
 _OB_MODULE      = "ob"
 _OB_SETUP_TYPES = frozenset({"OB_APPROACH", "OB_CONSOL"})
 
-# Valid result filter values → set of replay statuses that match
 _RESULT_FILTER_MAP = {
-    "won":     {"WON"},
-    "lost":    {"LOST"},
-    "expired": {"EXPIRED"},
-    "ambiguous":     {"AMBIGUOUS"},
-    "waiting":       {"WAITING_FOR_ENTRY"},
-    "entered":       {"ENTERED"},
+    "won":       {"WON"},
+    "lost":      {"LOST"},
+    "expired":   {"EXPIRED"},
+    "ambiguous": {"AMBIGUOUS"},
+    "waiting":   {"WAITING_FOR_ENTRY"},
+    "entered":   {"ENTERED"},
 }
+
+# All possible loss_reason_detail values
+_DIAG_KEYS = (
+    "same_candle_stop",
+    "wick_stop_only",
+    "close_stop_also_lost",
+    "stop_after_clean_entry",
+    "target_and_stop_same_candle",
+    "no_entry_expired",
+    "entered_then_expired",
+    "entered_open",
+    "waiting_for_entry",
+    "won_clean",
+    "unknown",
+)
 
 
 def _pct(num, denom):
     return round(num / denom * 100, 2) if denom else None
 
 
+def _classify_loss_reason(wick_res: dict, close_res: dict, bounce: float) -> str:
+    """
+    Classify why a signal ended the way it did.
+    Uses the wick-stop result as primary and close-stop counterfactual for LOST cases.
+    """
+    status = wick_res.get("status")
+    if status == "WON":               return "won_clean"
+    if status == "AMBIGUOUS":         return "target_and_stop_same_candle"
+    if status == "EXPIRED":           return "no_entry_expired"
+    if status == "WAITING_FOR_ENTRY": return "waiting_for_entry"
+    if status == "ENTERED":           return "entered_open"
+    if status == "LOST":
+        if wick_res.get("same_candle_entry_stop"):
+            return "same_candle_stop"
+        cs_status = close_res.get("status", "LOST")
+        if cs_status != "LOST":
+            # Close-based stop would have survived — wick triggered prematurely
+            return "wick_stop_only"
+        # Both wick and close would have stopped out
+        mfe = wick_res.get("mfe_pct") or 0.0
+        if mfe >= bounce * 0.5:
+            # Price moved favorably before reversing — genuine reversal loss
+            return "stop_after_clean_entry"
+        return "close_stop_also_lost"
+    return "unknown"
+
+
+def _cf_compact(res: dict) -> dict:
+    """Compact counterfactual summary for per-signal JSON."""
+    return {
+        "status":        res.get("status"),
+        "result_reason": res.get("result_reason"),
+        "mfe_pct":       res.get("mfe_pct"),
+        "mae_pct":       res.get("mae_pct"),
+    }
+
+
 def run_ob_backtest(
     limit: int = 100,
     timeframe: str = None,
     pair: str = None,
-    setup_type: str = None,     # "all" | "OB_APPROACH" | "OB_CONSOL"
+    setup_type: str = None,
     source: str = "live",
-    result_filter: str = None,  # "all"|"won"|"lost"|"expired"|"ambiguous"|"waiting"|"entered"
+    result_filter: str = None,
 ) -> dict:
     """
-    OB-only candle-replay backtest.
+    OB-only candle-replay backtest with Phase 7B diagnostics.
 
-    Must be called inside an active Flask app context.
+    Runs 4 _run_traced variants per signal (wick-stop, close-stop,
+    small-target, candle-close-entry) then classifies each outcome.
     Never commits to DB. Never mutates SignalEvent or SignalOutcome.
-
-    Returns:
-      {ok, mode, filters, summary, by_timeframe, by_setup_type,
-       by_score_bucket, signals}
     """
     try:
         from models import db, SignalEvent, SignalOutcome
         from main import get_klines_exchange
         from signal_logger import BOUNCE_THRESHOLDS
         from outcome_resolver import EXPIRY_CANDLES
-        from resolver_audit import _run_traced, _ts_ms
+        from resolver_audit import _run_traced, _ts_ms, _SMALL_BOUNCE
 
         # ── Normalise params ─────────────────────────────────────────────
         cap = max(1, min(int(limit), 500))
@@ -68,11 +115,14 @@ def run_ob_backtest(
         st_filter = (setup_type or "").strip().upper()
         st_filter = st_filter if st_filter and st_filter != "ALL" else None
         if st_filter and st_filter not in _OB_SETUP_TYPES:
-            return {"ok": False, "error": f"setup_type '{st_filter}' invalid; must be OB_APPROACH or OB_CONSOL"}
+            return {
+                "ok": False,
+                "error": f"setup_type '{st_filter}' invalid; must be OB_APPROACH or OB_CONSOL",
+            }
 
         src = (source or "live").strip().lower()
         if src == "all":
-            src = None  # no source filter
+            src = None
 
         # ── Query — OB module only ───────────────────────────────────────
         q = SignalEvent.query.filter(SignalEvent.module == _OB_MODULE)
@@ -85,38 +135,40 @@ def run_ob_backtest(
         if st_filter:
             q = q.filter(SignalEvent.setup_type == st_filter)
         else:
-            # Always restrict to valid OB setup types
             q = q.filter(SignalEvent.setup_type.in_(list(_OB_SETUP_TYPES)))
 
         events = q.order_by(SignalEvent.detected_at.desc()).limit(cap).all()
 
-        # ── Summary counters ─────────────────────────────────────────────
+        # ── Counters ─────────────────────────────────────────────────────
         summary = {
             "checked": 0, "won": 0, "lost": 0, "expired": 0,
             "ambiguous": 0, "waiting_for_entry": 0, "entered": 0, "errors": 0,
         }
+        diagnostics = {k: 0 for k in _DIAG_KEYS}
 
-        # Breakdowns — built before result filter is applied
+        # ── Breakdowns ───────────────────────────────────────────────────
         tf_data:    dict = {}
         setup_data: dict = {}
         score_buckets = [
             {"bucket": "80-100", "lo": 80, "hi": 100,
-             "checked": 0, "won": 0, "lost": 0},
+             "checked": 0, "won": 0, "lost": 0, "diag": {k: 0 for k in _DIAG_KEYS}},
             {"bucket": "60-79",  "lo": 60, "hi": 79,
-             "checked": 0, "won": 0, "lost": 0},
+             "checked": 0, "won": 0, "lost": 0, "diag": {k: 0 for k in _DIAG_KEYS}},
             {"bucket": "40-59",  "lo": 40, "hi": 59,
-             "checked": 0, "won": 0, "lost": 0},
+             "checked": 0, "won": 0, "lost": 0, "diag": {k: 0 for k in _DIAG_KEYS}},
             {"bucket": "0-39",   "lo": 0,  "hi": 39,
-             "checked": 0, "won": 0, "lost": 0},
+             "checked": 0, "won": 0, "lost": 0, "diag": {k: 0 for k in _DIAG_KEYS}},
         ]
 
-        def _tally_breakdowns(ev, status):
-            # By timeframe
+        def _tally_breakdowns(ev, status, diag_key):
             tf = ev.timeframe
             if tf not in tf_data:
-                tf_data[tf] = {"timeframe": tf, "checked": 0, "won": 0,
-                                "lost": 0, "expired": 0, "ambiguous": 0,
-                                "waiting_for_entry": 0, "entered": 0}
+                tf_data[tf] = {
+                    "timeframe": tf, "checked": 0, "won": 0,
+                    "lost": 0, "expired": 0, "ambiguous": 0,
+                    "waiting_for_entry": 0, "entered": 0,
+                    "diag": {k: 0 for k in _DIAG_KEYS},
+                }
             d = tf_data[tf]
             d["checked"] += 1
             if   status == "WON":               d["won"]               += 1
@@ -125,13 +177,16 @@ def run_ob_backtest(
             elif status == "AMBIGUOUS":         d["ambiguous"]         += 1
             elif status == "WAITING_FOR_ENTRY": d["waiting_for_entry"] += 1
             elif status == "ENTERED":           d["entered"]           += 1
+            d["diag"][diag_key] = d["diag"].get(diag_key, 0) + 1
 
-            # By setup type
             st = ev.setup_type or "unknown"
             if st not in setup_data:
-                setup_data[st] = {"setup_type": st, "checked": 0, "won": 0,
-                                   "lost": 0, "expired": 0, "ambiguous": 0,
-                                   "waiting_for_entry": 0, "entered": 0}
+                setup_data[st] = {
+                    "setup_type": st, "checked": 0, "won": 0,
+                    "lost": 0, "expired": 0, "ambiguous": 0,
+                    "waiting_for_entry": 0, "entered": 0,
+                    "diag": {k: 0 for k in _DIAG_KEYS},
+                }
             sd = setup_data[st]
             sd["checked"] += 1
             if   status == "WON":               sd["won"]               += 1
@@ -140,14 +195,15 @@ def run_ob_backtest(
             elif status == "AMBIGUOUS":         sd["ambiguous"]         += 1
             elif status == "WAITING_FOR_ENTRY": sd["waiting_for_entry"] += 1
             elif status == "ENTERED":           sd["entered"]           += 1
+            sd["diag"][diag_key] = sd["diag"].get(diag_key, 0) + 1
 
-            # By score bucket
             score = ev.score or 0
             for b in score_buckets:
                 if b["lo"] <= score <= b["hi"]:
                     b["checked"] += 1
                     if status == "WON":  b["won"]  += 1
                     if status == "LOST": b["lost"] += 1
+                    b["diag"][diag_key] = b["diag"].get(diag_key, 0) + 1
                     break
 
         def _iso(dt):
@@ -166,6 +222,7 @@ def run_ob_backtest(
                     if outcome and outcome.bounce_threshold_pct
                     else BOUNCE_THRESHOLDS.get(ev.timeframe, 0.010)
                 )
+                small_bounce = _SMALL_BOUNCE.get(ev.timeframe, bounce * 0.6)
 
                 detected_ms = _ts_ms(ev.detected_at)
                 fetch_limit = EXPIRY_CANDLES.get(ev.timeframe, 12) + 30
@@ -181,26 +238,43 @@ def run_ob_backtest(
                 if not candles:
                     summary["errors"] += 1
                     signal_rows.append({
-                        "signal_id":   ev.signal_id,
-                        "pair":        ev.pair,
-                        "timeframe":   ev.timeframe,
-                        "setup_type":  ev.setup_type,
-                        "direction":   ev.direction,
-                        "score":       ev.score,
-                        "result":      "ERROR",
-                        "result_reason": "no_candle_data",
+                        "signal_id":        ev.signal_id,
+                        "pair":             ev.pair,
+                        "timeframe":        ev.timeframe,
+                        "setup_type":       ev.setup_type,
+                        "direction":        ev.direction,
+                        "score":            ev.score,
+                        "result":           "ERROR",
+                        "result_reason":    "no_candle_data",
+                        "loss_reason_detail": "unknown",
                     })
                     continue
 
-                res, _, _ = _run_traced(
+                # ── 4 variants — same candle list, no extra fetches ──────
+                res_wick, _, _  = _run_traced(
                     ev.zone_high, ev.zone_low, ev.direction,
                     bounce, detected_ms, candles, ev.timeframe,
                     stop_mode="wick", entry_price_mode="zone",
                 )
+                res_close, _, _ = _run_traced(
+                    ev.zone_high, ev.zone_low, ev.direction,
+                    bounce, detected_ms, candles, ev.timeframe,
+                    stop_mode="close", entry_price_mode="zone",
+                )
+                res_small, _, _ = _run_traced(
+                    ev.zone_high, ev.zone_low, ev.direction,
+                    small_bounce, detected_ms, candles, ev.timeframe,
+                    stop_mode="wick", entry_price_mode="zone",
+                )
+                res_cce, _, _   = _run_traced(
+                    ev.zone_high, ev.zone_low, ev.direction,
+                    bounce, detected_ms, candles, ev.timeframe,
+                    stop_mode="wick", entry_price_mode="candle_close",
+                )
 
-                status = res["status"]
+                status     = res_wick["status"]
+                diag_key   = _classify_loss_reason(res_wick, res_close, bounce)
 
-                # Tally summary_all before filter
                 summary["checked"] += 1
                 if   status == "WON":               summary["won"]               += 1
                 elif status == "LOST":              summary["lost"]              += 1
@@ -209,52 +283,56 @@ def run_ob_backtest(
                 elif status == "WAITING_FOR_ENTRY": summary["waiting_for_entry"] += 1
                 elif status == "ENTERED":           summary["entered"]           += 1
 
-                _tally_breakdowns(ev, status)
+                diagnostics[diag_key] = diagnostics.get(diag_key, 0) + 1
+                _tally_breakdowns(ev, status, diag_key)
 
-                # Apply result filter
                 if target_statuses and status not in target_statuses:
                     continue
 
                 signal_rows.append({
-                    "signal_id":     ev.signal_id,
-                    "pair":          ev.pair,
-                    "timeframe":     ev.timeframe,
-                    "setup_type":    ev.setup_type,
-                    "direction":     ev.direction,
-                    "score":         ev.score,
-                    "detected_at":   _iso(ev.detected_at),
-                    "detected_price":ev.detected_price,
-                    "zone_high":     ev.zone_high,
-                    "zone_low":      ev.zone_low,
-                    "entry_time":    _iso(res.get("entry_time")),
-                    "entry_price":   res.get("entry_price"),
-                    "target_price":  res.get("target_price"),
-                    "stop_price":    res.get("stop_price"),
-                    "exit_time":     _iso(res.get("exit_time")),
-                    "exit_price":    res.get("exit_price"),
-                    "result":        status,
-                    "result_reason": res.get("result_reason"),
-                    "candles_checked": res.get("candles_checked", 0),
-                    "mfe_pct":       res.get("mfe_pct"),
-                    "mae_pct":       res.get("mae_pct"),
+                    "signal_id":          ev.signal_id,
+                    "pair":               ev.pair,
+                    "timeframe":          ev.timeframe,
+                    "setup_type":         ev.setup_type,
+                    "direction":          ev.direction,
+                    "score":              ev.score,
+                    "detected_at":        _iso(ev.detected_at),
+                    "detected_price":     ev.detected_price,
+                    "zone_high":          ev.zone_high,
+                    "zone_low":           ev.zone_low,
+                    "entry_time":         _iso(res_wick.get("entry_time")),
+                    "entry_price":        res_wick.get("entry_price"),
+                    "target_price":       res_wick.get("target_price"),
+                    "stop_price":         res_wick.get("stop_price"),
+                    "exit_time":          _iso(res_wick.get("exit_time")),
+                    "exit_price":         res_wick.get("exit_price"),
+                    "result":             status,
+                    "result_reason":      res_wick.get("result_reason"),
+                    "candles_checked":    res_wick.get("candles_checked", 0),
+                    "mfe_pct":            res_wick.get("mfe_pct"),
+                    "mae_pct":            res_wick.get("mae_pct"),
                     "bounce_threshold_pct": bounce,
+                    "loss_reason_detail": diag_key,
+                    "cf_close_stop":      _cf_compact(res_close),
+                    "cf_small_target":    _cf_compact(res_small),
+                    "cf_candle_close_entry": _cf_compact(res_cce),
                 })
 
             except Exception as _sig_err:
                 summary["errors"] += 1
                 signal_rows.append({
-                    "pair":          getattr(ev, "pair", "?"),
-                    "result":        "ERROR",
-                    "result_reason": str(_sig_err),
+                    "pair":             getattr(ev, "pair", "?"),
+                    "result":           "ERROR",
+                    "result_reason":    str(_sig_err),
+                    "loss_reason_detail": "unknown",
                 })
 
         # ── Win rates ────────────────────────────────────────────────────
-        clean = summary["won"] + summary["lost"]
+        clean         = summary["won"] + summary["lost"]
         total_decided = clean + summary["expired"] + summary["ambiguous"]
         summary["win_rate_entered"] = _pct(summary["won"], clean)
         summary["win_rate_total"]   = _pct(summary["won"], total_decided)
 
-        # ── Add win rates to breakdowns ──────────────────────────────────
         def _add_wr(d):
             c = d["won"] + d["lost"]
             t = c + d.get("expired", 0) + d.get("ambiguous", 0)
@@ -268,11 +346,12 @@ def run_ob_backtest(
 
         by_score = [
             {
-                "bucket":          b["bucket"],
-                "checked":         b["checked"],
-                "won":             b["won"],
-                "lost":            b["lost"],
+                "bucket":           b["bucket"],
+                "checked":          b["checked"],
+                "won":              b["won"],
+                "lost":             b["lost"],
                 "win_rate_entered": _pct(b["won"], b["won"] + b["lost"]),
+                "diag":             b["diag"],
             }
             for b in score_buckets
         ]
@@ -281,18 +360,19 @@ def run_ob_backtest(
             "ok":   True,
             "mode": "ob_backtest_dry_run",
             "filters": {
-                "module":        _OB_MODULE,
-                "setup_types":   list(_OB_SETUP_TYPES),
-                "setup_type":    st_filter or "all",
-                "timeframe":     timeframe,
-                "pair":          pair,
-                "source":        source,
-                "result":        rf or "all",
-                "limit":         cap,
+                "module":      _OB_MODULE,
+                "setup_types": list(_OB_SETUP_TYPES),
+                "setup_type":  st_filter or "all",
+                "timeframe":   timeframe,
+                "pair":        pair,
+                "source":      source,
+                "result":      rf or "all",
+                "limit":       cap,
             },
-            "summary":       summary,
-            "by_timeframe":  by_tf,
-            "by_setup_type": by_setup,
+            "summary":         summary,
+            "diagnostics":     diagnostics,
+            "by_timeframe":    by_tf,
+            "by_setup_type":   by_setup,
             "by_score_bucket": by_score,
             "summary_filtered": {
                 "result":   rf or "all",

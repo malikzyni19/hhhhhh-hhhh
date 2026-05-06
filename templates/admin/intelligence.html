@@ -429,6 +429,8 @@
     <div id="bt-result" style="display:none;margin-top:12px">
       <!-- Summary cards -->
       <div id="bt-summary"></div>
+      <!-- Diagnostics cards -->
+      <div id="bt-diag" style="margin-top:14px"></div>
       <!-- Breakdown tables -->
       <div id="bt-breakdown"></div>
       <!-- Signal table -->
@@ -436,7 +438,9 @@
         <table class="adm-table" style="table-layout:auto">
           <thead><tr>
             <th>Pair</th><th>TF</th><th>Setup</th><th>Dir</th>
-            <th>Score</th><th>Result</th><th>Entry</th><th>TP</th><th>SL</th><th>Reason</th>
+            <th>Score</th><th>Result</th><th>Loss Detail</th>
+            <th>Close Stop</th><th>Small TP</th><th>CCE</th>
+            <th>Entry</th><th>TP</th><th>SL</th><th>Reason</th>
           </tr></thead>
           <tbody id="bt-tbody"></tbody>
         </table>
@@ -1359,16 +1363,15 @@ function intBt_resultClass(r) {
 function intBt_renderSummary(s) {
   var el = document.getElementById('bt-summary');
   if (!el) return;
-  var clean = (s.won || 0) + (s.lost || 0);
   var cards = [
-    { label: 'Checked',    val: s.checked         || 0, cls: 'cyan'  },
-    { label: 'Won',        val: s.won              || 0, cls: 'green' },
-    { label: 'Lost',       val: s.lost             || 0, cls: 'red'   },
-    { label: 'Expired',    val: s.expired          || 0, cls: 'muted' },
-    { label: 'Ambiguous',  val: s.ambiguous        || 0, cls: 'amber' },
-    { label: 'Waiting',    val: s.waiting_for_entry|| 0, cls: 'muted' },
-    { label: 'Entered',    val: s.entered          || 0, cls: 'cyan'  },
-    { label: 'Errors',     val: s.errors           || 0, cls: s.errors ? 'red' : 'muted' },
+    { label: 'Checked',    val: s.checked          || 0, cls: 'cyan'  },
+    { label: 'Won',        val: s.won               || 0, cls: 'green' },
+    { label: 'Lost',       val: s.lost              || 0, cls: 'red'   },
+    { label: 'Expired',    val: s.expired           || 0, cls: 'muted' },
+    { label: 'Ambiguous',  val: s.ambiguous         || 0, cls: 'amber' },
+    { label: 'Waiting',    val: s.waiting_for_entry || 0, cls: 'muted' },
+    { label: 'Entered',    val: s.entered           || 0, cls: 'cyan'  },
+    { label: 'Errors',     val: s.errors            || 0, cls: s.errors ? 'red' : 'muted' },
     { label: 'WR (W+L)',   val: s.win_rate_entered !== null ? (s.win_rate_entered + '%') : '—',
       cls: s.win_rate_entered >= 50 ? 'green' : (s.win_rate_entered !== null ? 'red' : 'muted') },
     { label: 'WR (total)', val: s.win_rate_total !== null ? (s.win_rate_total + '%') : '—',
@@ -1379,6 +1382,46 @@ function intBt_renderSummary(s) {
     var c = cards[i];
     html += '<div class="aud-sum-card"><div class="aud-sum-label">' + c.label + '</div>';
     html += '<div class="aud-sum-val ' + c.cls + '">' + c.val + '</div></div>';
+  }
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+function intBt_diagCls(key) {
+  if (!key) return 'muted';
+  if (key === 'won_clean')              return 'color:var(--green)';
+  if (key === 'same_candle_stop')       return 'color:var(--red);font-weight:700';
+  if (key === 'wick_stop_only')         return 'color:var(--amber)';
+  if (key === 'close_stop_also_lost')   return 'color:var(--red)';
+  if (key === 'stop_after_clean_entry') return 'color:#f97316';
+  if (key === 'no_entry_expired')       return 'color:var(--muted)';
+  if (key === 'entered_open')           return 'color:var(--cyan)';
+  if (key === 'waiting_for_entry')      return 'color:var(--muted)';
+  if (key === 'target_and_stop_same_candle') return 'color:var(--amber)';
+  return 'color:var(--muted)';
+}
+
+function intBt_renderDiagnostics(diag) {
+  var el = document.getElementById('bt-diag');
+  if (!el || !diag) return;
+  var defs = [
+    { key: 'same_candle_stop',          label: 'Same Candle Stop',        cls: 'red'   },
+    { key: 'wick_stop_only',            label: 'Wick Stop Only',          cls: 'amber' },
+    { key: 'close_stop_also_lost',      label: 'Close Stop Also Lost',    cls: 'red'   },
+    { key: 'stop_after_clean_entry',    label: 'Stop After Clean Entry',  cls: 'amber' },
+    { key: 'target_and_stop_same_candle', label: 'Target+Stop Same Candle', cls: 'amber'},
+    { key: 'no_entry_expired',          label: 'No Entry Expired',        cls: 'muted' },
+    { key: 'entered_open',              label: 'Entered (Open)',          cls: 'cyan'  },
+    { key: 'won_clean',                 label: 'Won Clean',               cls: 'green' },
+    { key: 'waiting_for_entry',         label: 'Waiting Entry',           cls: 'muted' },
+  ];
+  var html = '<p style="font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">Loss Diagnostics</p>';
+  html += '<div class="aud-summary-grid" style="margin-bottom:14px">';
+  for (var i = 0; i < defs.length; i++) {
+    var d = defs[i];
+    var v = diag[d.key] || 0;
+    html += '<div class="aud-sum-card"><div class="aud-sum-label" style="font-size:9px">' + d.label + '</div>';
+    html += '<div class="aud-sum-val ' + d.cls + '">' + v + '</div></div>';
   }
   html += '</div>';
   el.innerHTML = html;
@@ -1441,6 +1484,14 @@ function intBt_renderBreakdown(byTf, bySetup) {
   el.innerHTML = html;
 }
 
+function intBt_cfBadge(cf) {
+  if (!cf || !cf.status) return '<span style="color:var(--muted)">—</span>';
+  var s = cf.status;
+  var cls = s === 'WON' ? 'win' : s === 'LOST' ? 'loss' : s === 'AMBIGUOUS' ? 'amb' : 'wait';
+  var short = s === 'WAITING_FOR_ENTRY' ? 'WAIT' : s === 'ENTERED' ? 'OPEN' : s;
+  return '<span class="aud-outcome-badge ' + cls + '" style="font-size:9px">' + short + '</span>';
+}
+
 function intBt_renderSignals(signals) {
   var tbody = document.getElementById('bt-tbody');
   var wrap  = document.getElementById('bt-table-wrap');
@@ -1453,13 +1504,18 @@ function intBt_renderSignals(signals) {
   for (var i = 0; i < signals.length; i++) {
     var s = signals[i];
     var rcls = intBt_resultClass(s.result);
+    var badgeCls = rcls === 'green' ? 'win' : rcls === 'red' ? 'loss' : rcls === 'amber' ? 'amb' : 'wait';
     rows += '<tr class="aud-signal-row">';
     rows += '<td style="font-family:\'JetBrains Mono\',monospace;font-size:11px">' + intAud_escHtml(s.pair || '—') + '</td>';
     rows += '<td>' + intAud_escHtml(s.timeframe || '—') + '</td>';
     rows += '<td>' + intAud_escHtml(s.setup_type || '—') + '</td>';
     rows += '<td>' + intAud_escHtml(s.direction || '—') + '</td>';
     rows += '<td>' + intAud_escHtml(String(s.score !== null && s.score !== undefined ? s.score : '—')) + '</td>';
-    rows += '<td><span class="aud-outcome-badge ' + (rcls === 'green' ? 'win' : rcls === 'red' ? 'loss' : rcls === 'amber' ? 'amb' : 'wait') + '">' + intAud_escHtml(s.result || '—') + '</span></td>';
+    rows += '<td><span class="aud-outcome-badge ' + badgeCls + '">' + intAud_escHtml(s.result || '—') + '</span></td>';
+    rows += '<td style="font-size:9px;' + intBt_diagCls(s.loss_reason_detail) + '">' + intAud_escHtml((s.loss_reason_detail || '—').replace(/_/g,' ')) + '</td>';
+    rows += '<td>' + intBt_cfBadge(s.cf_close_stop) + '</td>';
+    rows += '<td>' + intBt_cfBadge(s.cf_small_target) + '</td>';
+    rows += '<td>' + intBt_cfBadge(s.cf_candle_close_entry) + '</td>';
     rows += '<td style="font-family:\'JetBrains Mono\',monospace;font-size:10px">' + intBt_fmt(s.entry_price) + '</td>';
     rows += '<td style="font-family:\'JetBrains Mono\',monospace;font-size:10px">' + intBt_fmt(s.target_price) + '</td>';
     rows += '<td style="font-family:\'JetBrains Mono\',monospace;font-size:10px">' + intBt_fmt(s.stop_price) + '</td>';
@@ -1479,10 +1535,12 @@ function intBt_runBacktest() {
   var bkEl     = document.getElementById('bt-breakdown');
   var wrap     = document.getElementById('bt-table-wrap');
 
+  var diagEl = document.getElementById('bt-diag');
   if (errEl)    { errEl.style.display = 'none'; errEl.textContent = ''; }
   if (resultEl) { resultEl.style.display = 'none'; }
   if (runBtn)   { runBtn.textContent = '⏳ Running…'; runBtn.disabled = true; }
   if (summaryEl){ summaryEl.innerHTML = ''; }
+  if (diagEl)   { diagEl.innerHTML = ''; }
   if (bkEl)     { bkEl.innerHTML = ''; }
   if (wrap)     { wrap.style.display = 'none'; }
 
@@ -1512,8 +1570,10 @@ function intBt_runBacktest() {
       var sf = data.summary_filtered || {};
       console.log('[Backtest OB] summary', data.summary);
       console.log('[Backtest OB] returned', sf.returned || 0);
+      console.log('[Backtest OB] diagnostics', data.diagnostics);
       if (resultEl) { resultEl.style.display = 'block'; }
       intBt_renderSummary(data.summary || {});
+      intBt_renderDiagnostics(data.diagnostics || {});
       intBt_renderBreakdown(data.by_timeframe || [], data.by_setup_type || []);
       intBt_renderSignals(data.signals || []);
     })
