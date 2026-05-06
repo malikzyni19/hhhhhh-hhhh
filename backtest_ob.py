@@ -145,6 +145,17 @@ def run_ob_backtest(
             "ambiguous": 0, "waiting_for_entry": 0, "entered": 0, "errors": 0,
         }
         diagnostics = {k: 0 for k in _DIAG_KEYS}
+        diag_summary = {
+            "all_variants_lost":                0,
+            "small_target_would_win":           0,
+            "candle_close_entry_would_win":     0,
+            "candle_close_entry_would_survive": 0,
+            "all_variants_expired":             0,
+            "no_entry_expired":                 0,
+            "target_reached":                   0,
+            "target_and_stop_same_candle":      0,
+            "stop_hit":                         0,
+        }
 
         # ── Breakdowns ───────────────────────────────────────────────────
         tf_data:    dict = {}
@@ -286,6 +297,34 @@ def run_ob_backtest(
                 diagnostics[diag_key] = diagnostics.get(diag_key, 0) + 1
                 _tally_breakdowns(ev, status, diag_key)
 
+                # ── Cross-variant diagnostic summary ─────────────────────
+                _cs  = res_close["status"]
+                _st  = res_small["status"]
+                _cce = res_cce["status"]
+                _reason = res_wick.get("result_reason")
+
+                if status == "LOST":
+                    if _st == "LOST" and _cce == "LOST":
+                        diag_summary["all_variants_lost"] += 1
+                    if _st == "WON":
+                        diag_summary["small_target_would_win"] += 1
+                    if _cce == "WON":
+                        diag_summary["candle_close_entry_would_win"] += 1
+                    if _cce in {"ENTERED", "WAITING_FOR_ENTRY", "EXPIRED", "AMBIGUOUS"}:
+                        diag_summary["candle_close_entry_would_survive"] += 1
+
+                if status == "EXPIRED" and _cs == "EXPIRED" and _st == "EXPIRED" and _cce == "EXPIRED":
+                    diag_summary["all_variants_expired"] += 1
+
+                if _reason == "no_entry_within_expiry":
+                    diag_summary["no_entry_expired"] += 1
+                elif _reason == "target_reached":
+                    diag_summary["target_reached"] += 1
+                elif _reason == "target_and_stop_same_candle":
+                    diag_summary["target_and_stop_same_candle"] += 1
+                elif _reason == "stop_hit":
+                    diag_summary["stop_hit"] += 1
+
                 if target_statuses and status not in target_statuses:
                     continue
 
@@ -369,8 +408,9 @@ def run_ob_backtest(
                 "result":      rf or "all",
                 "limit":       cap,
             },
-            "summary":         summary,
-            "diagnostics":     diagnostics,
+            "summary":            summary,
+            "diagnostics":        diagnostics,
+            "diagnostic_summary": diag_summary,
             "by_timeframe":    by_tf,
             "by_setup_type":   by_setup,
             "by_score_bucket": by_score,

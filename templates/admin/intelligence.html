@@ -429,7 +429,9 @@
     <div id="bt-result" style="display:none;margin-top:12px">
       <!-- Summary cards -->
       <div id="bt-summary"></div>
-      <!-- Diagnostics cards -->
+      <!-- Cross-variant diagnostic summary -->
+      <div id="bt-diag-summary" style="margin-top:14px"></div>
+      <!-- Loss-reason diagnostic breakdown -->
       <div id="bt-diag" style="margin-top:14px"></div>
       <!-- Breakdown tables -->
       <div id="bt-breakdown"></div>
@@ -1404,6 +1406,35 @@ function intBt_diagCls(key) {
   return 'color:var(--muted)';
 }
 
+function intBt_renderDiagSummary(ds) {
+  var el = document.getElementById('bt-diag-summary');
+  if (!el || !ds) return;
+  var cards = [
+    { label: 'Real Losses',     key: 'all_variants_lost',                cls: 'red',   tip: 'All variants lost — likely genuine weak setup' },
+    { label: 'Small TP Saves',  key: 'small_target_would_win',           cls: 'green', tip: 'Current lost but smaller target would have won' },
+    { label: 'CCE Saves',       key: 'candle_close_entry_would_win',     cls: 'green', tip: 'Candle-close entry would have turned loss into win' },
+    { label: 'CCE Survives',    key: 'candle_close_entry_would_survive', cls: 'cyan',  tip: 'CCE avoids loss (not necessarily wins)' },
+    { label: 'All Expired',     key: 'all_variants_expired',             cls: 'muted', tip: 'All 4 variants expired — zone never reached' },
+    { label: 'No Entry Expiry', key: 'no_entry_expired',                 cls: 'muted', tip: 'Expired before first entry' },
+    { label: 'Stop Hit',        key: 'stop_hit',                         cls: 'red',   tip: 'Primary stop triggered' },
+    { label: 'Tgt+Stop Candle', key: 'target_and_stop_same_candle',      cls: 'amber', tip: 'Target and stop hit on same candle (ambiguous)' },
+    { label: 'Target Reached',  key: 'target_reached',                   cls: 'green', tip: 'Won — target reached' },
+  ];
+  var html = '<p style="font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">Variant Comparison</p>';
+  html += '<div class="aud-summary-grid" style="margin-bottom:6px">';
+  for (var i = 0; i < cards.length; i++) {
+    var c = cards[i];
+    var v = ds[c.key] !== undefined ? ds[c.key] : 0;
+    html += '<div class="aud-sum-card" title="' + intAud_escHtml(c.tip) + '">';
+    html += '<div class="aud-sum-label" style="font-size:9px">' + c.label + '</div>';
+    html += '<div class="aud-sum-val ' + c.cls + '">' + v + '</div></div>';
+  }
+  html += '</div>';
+  html += '<p style="font-size:10px;color:var(--muted);font-style:italic;margin-top:4px;margin-bottom:0">' +
+    'Diagnostics do not change results; they only show what alternative rules would have done.</p>';
+  el.innerHTML = html;
+}
+
 function intBt_renderDiagnostics(diag) {
   var el = document.getElementById('bt-diag');
   if (!el || !diag) return;
@@ -1541,14 +1572,16 @@ function intBt_runBacktest() {
   var bkEl     = document.getElementById('bt-breakdown');
   var wrap     = document.getElementById('bt-table-wrap');
 
-  var diagEl = document.getElementById('bt-diag');
-  if (errEl)    { errEl.style.display = 'none'; errEl.textContent = ''; }
-  if (resultEl) { resultEl.style.display = 'none'; }
-  if (runBtn)   { runBtn.textContent = '⏳ Running…'; runBtn.disabled = true; }
-  if (summaryEl){ summaryEl.innerHTML = ''; }
-  if (diagEl)   { diagEl.innerHTML = ''; }
-  if (bkEl)     { bkEl.innerHTML = ''; }
-  if (wrap)     { wrap.style.display = 'none'; }
+  var diagEl    = document.getElementById('bt-diag');
+  var diagSumEl = document.getElementById('bt-diag-summary');
+  if (errEl)     { errEl.style.display = 'none'; errEl.textContent = ''; }
+  if (resultEl)  { resultEl.style.display = 'none'; }
+  if (runBtn)    { runBtn.textContent = '⏳ Running…'; runBtn.disabled = true; }
+  if (summaryEl) { summaryEl.innerHTML = ''; }
+  if (diagSumEl) { diagSumEl.innerHTML = ''; }
+  if (diagEl)    { diagEl.innerHTML = ''; }
+  if (bkEl)      { bkEl.innerHTML = ''; }
+  if (wrap)      { wrap.style.display = 'none'; }
 
   var limit  = (document.getElementById('bt-limit')      || {}).value || '100';
   var tf     = (document.getElementById('bt-timeframe')  || {}).value || '';
@@ -1577,8 +1610,10 @@ function intBt_runBacktest() {
       console.log('[Backtest OB] summary', data.summary);
       console.log('[Backtest OB] returned', sf.returned || 0);
       console.log('[Backtest OB] diagnostics', data.diagnostics);
+      console.log('[Backtest OB] diagnostic_summary', data.diagnostic_summary);
       if (resultEl) { resultEl.style.display = 'block'; }
       intBt_renderSummary(data.summary || {});
+      intBt_renderDiagSummary(data.diagnostic_summary || {});
       intBt_renderDiagnostics(data.diagnostics || {});
       intBt_renderBreakdown(data.by_timeframe || [], data.by_setup_type || []);
       intBt_renderSignals(data.signals || []);
