@@ -178,7 +178,7 @@
       <option value="all">all</option>
     </select>
   </div>
-  <div class="int-filter-group">
+  <div class="int-filter-group" style="display:none">
     <label>Module</label>
     <select id="f-module">
       <option value="">OB Only / Main</option>
@@ -220,7 +220,6 @@
     </select>
   </div>
 </div>
-<p class="ar-disclaimer">Auto-refresh is read-only. It does not resolve or modify signals.</p>
 
 <!-- Error banner -->
 <div id="int-error"></div>
@@ -317,13 +316,13 @@
     <span style="font-size:10px;color:var(--muted);margin-left:10px">diagnostic dry-run — never modifies DB</span>
   </div>
   <div class="adm-card-body">
-    <p class="car-subtitle">Run counterfactual analysis to diagnose WON/LOST/EXPIRED outcomes. Each signal is replayed with 4 variants: current (wick-stop), small-target, close-stop, and candle-close-entry.</p>
+    <p class="car-subtitle">Counterfactual replay — 4 variants per signal: wick-stop, close-stop, small-target, CCE.</p>
     <div class="aud-controls">
       <div class="aud-filter-group">
         <label>Limit</label>
         <input type="number" id="aud-limit" value="20" min="1" max="100" style="width:70px">
       </div>
-      <div class="aud-filter-group">
+      <div class="aud-filter-group" style="display:none">
         <label>Module</label>
         <select id="aud-module">
           <option value="">OB Only / Main</option>
@@ -436,15 +435,6 @@
         </select>
       </div>
       <div class="aud-filter-group">
-        <label>Freshness</label>
-        <select id="bt-freshness">
-          <option value="all">All OBs</option>
-          <option value="first_touch">First Touch Only</option>
-          <option value="already_touched">Already Touched</option>
-          <option value="unknown">Unknown Freshness</option>
-        </select>
-      </div>
-      <div class="aud-filter-group">
         <label>Min OB Strength %</label>
         <input type="number" id="bt-strength-min" value="0" min="0" max="100" step="1"
                placeholder="e.g. 70" style="width:70px"
@@ -452,6 +442,23 @@
       </div>
       <button type="button" id="bt-run-btn" class="int-btn">▶ Run OB Backtest</button>
     </div>
+    <details style="margin-top:8px">
+      <summary style="font-size:10px;color:var(--muted);cursor:pointer;user-select:none;padding:4px 0">▸ Advanced / Experimental</summary>
+      <div style="padding:6px 0 0 0;display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end">
+        <div class="aud-filter-group">
+          <label>Freshness</label>
+          <select id="bt-freshness">
+            <option value="all">All OBs</option>
+            <option value="first_touch">First Touch Only</option>
+            <option value="already_touched">Already Touched</option>
+            <option value="unknown">Unknown Freshness</option>
+          </select>
+        </div>
+        <p style="font-size:10px;color:var(--muted);margin:0;align-self:center">
+          First-touch OB filtering is experimental. OB origin/touch-count metadata is not yet stored in most DB rows — freshness will show <em>unknown</em> for older signals.
+        </p>
+      </div>
+    </details>
     <div id="bt-error" style="display:none;background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.2);
          color:var(--red);padding:12px 16px;border-radius:8px;font-size:12px;margin-top:12px"></div>
     <div id="bt-result" style="display:none;margin-top:12px">
@@ -463,8 +470,8 @@
       <div id="bt-summary"></div>
       <!-- Strength summary -->
       <div id="bt-strength-summary" style="margin-top:10px"></div>
-      <!-- Freshness summary cards -->
-      <div id="bt-freshness-summary" style="margin-top:14px"></div>
+      <!-- Freshness summary cards (shown only when Advanced freshness filter is active) -->
+      <div id="bt-freshness-summary" style="margin-top:14px;display:none"></div>
       <!-- Cross-variant diagnostic summary -->
       <div id="bt-diag-summary" style="margin-top:14px"></div>
       <!-- Loss-reason diagnostic breakdown -->
@@ -481,7 +488,7 @@
             <th>Pair</th><th>TF</th><th>Setup</th><th>Dir</th>
             <th>Score</th><th>Result</th><th>Loss Detail</th>
             <th id="bt-variants-th">Variants (Alt / ST / CCE)</th>
-            <th>Freshness</th><th>OB Str</th>
+            <th class="bt-fresh-col" style="display:none">Freshness</th><th>OB Str</th>
             <th>Entry</th><th>TP</th><th>SL</th><th>Reason</th>
           </tr></thead>
           <tbody id="bt-tbody"></tbody>
@@ -1680,7 +1687,7 @@ function intBt_renderSignals(signals) {
       '<span style="font-size:9px;color:var(--muted)">ST:</span>' + intBt_cfBadge(s.cf_small_target) + ' ' +
       '<span style="font-size:9px;color:var(--muted)">CCE:</span>' + intBt_cfBadge(s.cf_candle_close_entry) +
       '</td>';
-    rows += '<td style="white-space:nowrap">' + intBt_freshnessBadge(s.freshness_status, s.touch_count_before_signal) + '</td>';
+    rows += '<td class="bt-fresh-col" style="white-space:nowrap;display:none">' + intBt_freshnessBadge(s.freshness_status, s.touch_count_before_signal) + '</td>';
     var strVal = (s.ob_strength !== null && s.ob_strength !== undefined) ? s.ob_strength : null;
     rows += '<td style="font-size:10px;white-space:nowrap;color:' + (strVal !== null ? 'var(--text)' : 'var(--muted)') + '">' +
             (strVal !== null ? strVal : '—') + '</td>';
@@ -1767,7 +1774,12 @@ function intBt_runBacktest() {
       }
       intBt_renderSummary(data.summary || {});
       intBt_renderStrengthSummary(data.strength_summary || {});
-      intBt_renderFreshnessSummary(data.freshness_summary || {});
+      if (freshness && freshness !== 'all') {
+        if (freshSumEl) freshSumEl.style.display = 'block';
+        intBt_renderFreshnessSummary(data.freshness_summary || {});
+      } else {
+        if (freshSumEl) { freshSumEl.style.display = 'none'; freshSumEl.innerHTML = ''; }
+      }
       intBt_renderDiagSummary(data.diagnostic_summary || {});
       intBt_renderDiagnostics(data.diagnostics || {});
       intBt_renderBreakdown(data.by_timeframe || [], data.by_setup_type || []);
