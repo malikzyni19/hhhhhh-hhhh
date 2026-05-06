@@ -162,14 +162,11 @@
   <p>Signal logging, resolver status, and live setup statistics.</p>
 </div>
 
-<!-- OB-only mode notice -->
-<div style="background:rgba(34,211,238,.08);border:1px solid rgba(34,211,238,.35);border-radius:9px;
-            padding:12px 16px;margin-bottom:18px;font-size:12px;color:var(--muted);line-height:1.7">
-  <strong style="color:var(--cyan);font-size:13px">Current test/backtest mode: OB-only.</strong>
-  &nbsp;Breaker, FVG, and Fib Confluence are paused and excluded from main stats, audit, and auto-resolver.
-  <br>
-  Overview, By Module, Win Rates, Resolver Audit, and OB Backtest all count only <strong style="color:var(--cyan)">module = ob</strong>.
-  Scanner still detects and displays all setups on the frontend.
+<!-- OB-only mode badge -->
+<div style="margin-bottom:14px">
+  <span style="display:inline-block;padding:3px 10px;border-radius:5px;font-size:10px;font-weight:700;
+               letter-spacing:.5px;background:rgba(34,211,238,.1);border:1px solid rgba(34,211,238,.3);
+               color:var(--cyan)">MODE: OB-ONLY</span>
 </div>
 
 <!-- Filters -->
@@ -258,7 +255,7 @@
     <span class="adm-card-title">Controlled Auto Resolver</span>
   </div>
   <div class="adm-card-body">
-    <p class="car-subtitle">Configure automatic resolving behavior. Runner is not active until Phase 6B.</p>
+    <p class="car-subtitle">Auto Resolver is installed in dry-run mode only. It checks OB-only signals and does not write DB results.</p>
 
     <div class="car-controls">
       <span class="car-label">Enable Auto Resolver</span>
@@ -290,13 +287,13 @@
     </div>
 
     <div id="car-warn-enabled" class="car-warn">
-      ⚠ Auto Resolver is enabled in settings, but background runner is not active until Phase 6B.
+      ⚠ Auto Resolver is enabled. Running in dry-run OB-only mode — no DB writes.
     </div>
     <div id="car-warn-commit" class="car-warn">
-      ⚠ Commit mode will update DB statuses once runner is installed in Phase 6B.
+      ⚠ Commit mode is set, but auto-runner is forced dry-run only. DB will not be modified.
     </div>
     <div id="car-warn-installed-commit" class="car-warn">
-      ⚠ Runner installed but Phase 6B forces dry-run. Commit automation is disabled until Phase 6C.
+      ⚠ Runner installed. Commit mode is set, but auto-runner is forced dry-run only — no DB writes.
     </div>
 
     <button type="button" id="car-save-btn" class="int-btn" style="min-height:36px">💾 Save Settings</button>
@@ -355,8 +352,9 @@
         <input type="checkbox" id="aud-include-fvg">
         Debug: include legacy standalone FVG
       </label>
-      <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#f97316;cursor:pointer;margin-left:4px;white-space:nowrap" title="Separates Breaker LOST signals where the entry candle immediately pierced through the stop level (invalid retest) from genuine losses.">
-        <input type="checkbox" id="aud-quality-guard" checked style="cursor:pointer;accent-color:#f97316">
+      <!-- Breaker Quality Guard: hidden in Phase 7A OB-only mode -->
+      <label style="display:none">
+        <input type="checkbox" id="aud-quality-guard" checked>
         Breaker Quality Guard
       </label>
     </div>
@@ -383,10 +381,7 @@
     <span style="font-size:10px;color:var(--muted);margin-left:10px">read-only dry-run — never modifies DB</span>
   </div>
   <div class="adm-card-body">
-    <p class="car-subtitle" style="color:#f97316;font-size:11px;margin-bottom:10px">
-      Backtest V1 is OB-only. Breaker, Fib Confluence, and FVG are paused for later versions.
-    </p>
-    <p class="car-subtitle">Replay OB signals against historical candles to determine win/loss outcomes. Uses the same entry and stop rules as the live resolver.</p>
+    <p class="car-subtitle">Replay OB signals against historical candles.</p>
     <div class="aud-controls">
       <div class="aud-filter-group">
         <label>Limit</label>
@@ -413,7 +408,7 @@
       </div>
       <div class="aud-filter-group">
         <label>Result</label>
-        <select id="bt-result">
+        <select id="bt-result-filter">
           <option value="all">all</option>
           <option value="won">won</option>
           <option value="lost">lost</option>
@@ -562,13 +557,7 @@ function intSt_renderModeBanner(data) {
   var el = document.getElementById('int-ob-mode-bar');
   if (!el) return;
   if (data.main_module_mode === 'ob_only') {
-    var excl = data.excluded_non_ob_count || 0;
-    var inc  = (data.included_modules || ['ob']).join(', ');
-    el.innerHTML =
-      '<span style="color:var(--cyan);font-weight:700">OB-only mode</span>' +
-      ' &nbsp;|&nbsp; included: <strong>' + intSt_esc(inc) + '</strong>' +
-      ' &nbsp;|&nbsp; excluded (non-OB in DB): <strong style="color:var(--amber)">' + excl + '</strong>' +
-      ' &nbsp;|&nbsp; <span style="color:var(--muted)">Overview Total = OB total</span>';
+    el.innerHTML = '<span style="color:var(--cyan);font-weight:600;font-size:11px">OB-only stats</span>';
     el.style.display = 'block';
   } else {
     el.style.display = 'none';
@@ -943,7 +932,7 @@ function intCar_updateWarnings() {
   if (wEn)      wEn.style.display      = (isEnabled && !installed) ? 'block' : 'none';
   // "commit will write once installed" — only when not installed
   if (wMode)    wMode.style.display    = (isCommit && !installed)  ? 'block' : 'none';
-  // "installed but Phase 6B forces dry-run" — only when installed + commit
+  // "runner installed + commit mode" — only when installed + commit (always forced dry-run)
   if (wInstCom) wInstCom.style.display = (installed && isCommit)   ? 'block' : 'none';
 }
 
@@ -1500,7 +1489,7 @@ function intBt_runBacktest() {
   var limit  = (document.getElementById('bt-limit')      || {}).value || '100';
   var tf     = (document.getElementById('bt-timeframe')  || {}).value || '';
   var setup  = (document.getElementById('bt-setup-type') || {}).value || 'all';
-  var res    = (document.getElementById('bt-result')     || {}).value || 'all';
+  var res    = (document.getElementById('bt-result-filter') || {}).value || 'all';
   var pair   = ((document.getElementById('bt-pair')      || {}).value || '').trim().toUpperCase();
 
   var url = '/admin/intelligence/backtest-ob?limit=' + encodeURIComponent(limit);
