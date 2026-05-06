@@ -1109,6 +1109,7 @@ def intelligence_backtest_ob():
         pair         = request.args.get("pair")        or None
         setup_type   = request.args.get("setup_type")  or None
         source       = request.args.get("source",  "live")
+        stop_mode    = request.args.get("stop_mode", "wick").strip().lower() or "wick"
         result       = (
             request.args.get("result") or
             request.args.get("result_filter") or
@@ -1122,6 +1123,7 @@ def intelligence_backtest_ob():
             setup_type=setup_type,
             source=source,
             result_filter=result,
+            stop_mode=stop_mode,
         )
         return jsonify(result)
 

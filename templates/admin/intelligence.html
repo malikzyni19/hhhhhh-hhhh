@@ -422,11 +422,22 @@
         <label>Pair</label>
         <input type="text" id="bt-pair" placeholder="e.g. BTCUSDT" style="width:110px;text-transform:uppercase">
       </div>
+      <div class="aud-filter-group">
+        <label>Stop Rule</label>
+        <select id="bt-stop-mode">
+          <option value="wick">Wick Stop (Default)</option>
+          <option value="close">Candle Close Stop</option>
+        </select>
+      </div>
       <button type="button" id="bt-run-btn" class="int-btn">▶ Run OB Backtest</button>
     </div>
     <div id="bt-error" style="display:none;background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.2);
          color:var(--red);padding:12px 16px;border-radius:8px;font-size:12px;margin-top:12px"></div>
     <div id="bt-result" style="display:none;margin-top:12px">
+      <!-- Stop mode indicator -->
+      <div id="bt-mode-badge" style="display:inline-block;font-size:10px;font-weight:600;letter-spacing:0.5px;
+           padding:3px 8px;border-radius:4px;margin-bottom:10px;
+           background:rgba(148,163,184,.12);color:var(--muted)"></div>
       <!-- Summary cards -->
       <div id="bt-summary"></div>
       <!-- Cross-variant diagnostic summary -->
@@ -444,7 +455,7 @@
           <thead><tr>
             <th>Pair</th><th>TF</th><th>Setup</th><th>Dir</th>
             <th>Score</th><th>Result</th><th>Loss Detail</th>
-            <th>Variants (CS / ST / CCE)</th>
+            <th id="bt-variants-th">Variants (Alt / ST / CCE)</th>
             <th>Entry</th><th>TP</th><th>SL</th><th>Reason</th>
           </tr></thead>
           <tbody id="bt-tbody"></tbody>
@@ -1548,8 +1559,9 @@ function intBt_renderSignals(signals) {
     rows += '<td>' + intAud_escHtml(String(s.score !== null && s.score !== undefined ? s.score : '—')) + '</td>';
     rows += '<td><span class="aud-outcome-badge ' + badgeCls + '">' + intAud_escHtml(s.result || '—') + '</span></td>';
     rows += '<td style="font-size:10px;' + intBt_diagCls(s.loss_reason_detail) + ';white-space:nowrap">' + intAud_escHtml((s.loss_reason_detail || '—').replace(/_/g,' ')) + '</td>';
+    var altLabel = (window._btStopMode === 'close') ? 'WS:' : 'CS:';
     rows += '<td style="white-space:nowrap">' +
-      '<span style="font-size:9px;color:var(--muted)">CS:</span>' + intBt_cfBadge(s.cf_close_stop) + ' ' +
+      '<span style="font-size:9px;color:var(--muted)">' + altLabel + '</span>' + intBt_cfBadge(s.cf_alt_stop) + ' ' +
       '<span style="font-size:9px;color:var(--muted)">ST:</span>' + intBt_cfBadge(s.cf_small_target) + ' ' +
       '<span style="font-size:9px;color:var(--muted)">CCE:</span>' + intBt_cfBadge(s.cf_candle_close_entry) +
       '</td>';
@@ -1583,17 +1595,19 @@ function intBt_runBacktest() {
   if (bkEl)      { bkEl.innerHTML = ''; }
   if (wrap)      { wrap.style.display = 'none'; }
 
-  var limit  = (document.getElementById('bt-limit')      || {}).value || '100';
-  var tf     = (document.getElementById('bt-timeframe')  || {}).value || '';
-  var setup  = (document.getElementById('bt-setup-type') || {}).value || 'all';
-  var res    = (document.getElementById('bt-result-filter') || {}).value || 'all';
-  var pair   = ((document.getElementById('bt-pair')      || {}).value || '').trim().toUpperCase();
+  var limit    = (document.getElementById('bt-limit')       || {}).value || '100';
+  var tf       = (document.getElementById('bt-timeframe')   || {}).value || '';
+  var setup    = (document.getElementById('bt-setup-type')  || {}).value || 'all';
+  var res      = (document.getElementById('bt-result-filter') || {}).value || 'all';
+  var pair     = ((document.getElementById('bt-pair')       || {}).value || '').trim().toUpperCase();
+  var stopMode = (document.getElementById('bt-stop-mode')   || {}).value || 'wick';
 
   var url = '/admin/intelligence/backtest-ob?limit=' + encodeURIComponent(limit);
   if (tf)            url += '&timeframe='  + encodeURIComponent(tf);
   if (setup && setup !== 'all') url += '&setup_type=' + encodeURIComponent(setup);
   if (res  && res  !== 'all')   url += '&result='     + encodeURIComponent(res);
   if (pair)          url += '&pair='       + encodeURIComponent(pair);
+  url += '&stop_mode=' + encodeURIComponent(stopMode);
 
   console.log('[Backtest OB] fetching', url);
   intBt_running = true;
@@ -1607,11 +1621,23 @@ function intBt_runBacktest() {
         return;
       }
       var sf = data.summary_filtered || {};
+      window._btStopMode = data.stop_mode || 'wick';
       console.log('[Backtest OB] summary', data.summary);
       console.log('[Backtest OB] returned', sf.returned || 0);
+      console.log('[Backtest OB] stop_mode', data.stop_mode, data.rule_note);
       console.log('[Backtest OB] diagnostics', data.diagnostics);
       console.log('[Backtest OB] diagnostic_summary', data.diagnostic_summary);
       if (resultEl) { resultEl.style.display = 'block'; }
+      var modeEl = document.getElementById('bt-mode-badge');
+      if (modeEl) {
+        var modeIsClose = data.stop_mode === 'close';
+        modeEl.textContent = modeIsClose ? 'CLOSE-STOP MODE' : 'WICK-STOP MODE';
+        modeEl.title = data.rule_note || '';
+        modeEl.style.background = modeIsClose ? 'rgba(251,191,36,.12)' : 'rgba(148,163,184,.12)';
+        modeEl.style.color = modeIsClose ? 'var(--yellow,#fbbf24)' : 'var(--muted)';
+        var thEl = document.getElementById('bt-variants-th');
+        if (thEl) thEl.textContent = 'Variants (' + (modeIsClose ? 'WS' : 'CS') + ' / ST / CCE)';
+      }
       intBt_renderSummary(data.summary || {});
       intBt_renderDiagSummary(data.diagnostic_summary || {});
       intBt_renderDiagnostics(data.diagnostics || {});

@@ -46,28 +46,36 @@ def _pct(num, denom):
     return round(num / denom * 100, 2) if denom else None
 
 
-def _classify_loss_reason(wick_res: dict, close_res: dict, bounce: float) -> str:
+def _classify_loss_reason(
+    primary_res: dict, alt_res: dict, bounce: float, stop_mode: str = "wick"
+) -> str:
     """
     Classify why a signal ended the way it did.
-    Uses the wick-stop result as primary and close-stop counterfactual for LOST cases.
+
+    primary_res  — the result for the requested stop_mode (wick or close).
+    alt_res      — the result for the opposite stop_mode.
+    stop_mode    — "wick" | "close" — the mode used for primary_res.
+
+    When stop_mode="wick", alt_res is the close-stop result.
+      wick_stop_only = wick LOST but close would have survived.
+    When stop_mode="close", alt_res is the wick-stop result.
+      close_stop_also_lost = both modes agree on LOST.
     """
-    status = wick_res.get("status")
+    status = primary_res.get("status")
     if status == "WON":               return "won_clean"
     if status == "AMBIGUOUS":         return "target_and_stop_same_candle"
     if status == "EXPIRED":           return "no_entry_expired"
     if status == "WAITING_FOR_ENTRY": return "waiting_for_entry"
     if status == "ENTERED":           return "entered_open"
     if status == "LOST":
-        if wick_res.get("same_candle_entry_stop"):
+        if primary_res.get("same_candle_entry_stop"):
             return "same_candle_stop"
-        cs_status = close_res.get("status", "LOST")
-        if cs_status != "LOST":
-            # Close-based stop would have survived — wick triggered prematurely
+        alt_status = alt_res.get("status", "LOST")
+        if stop_mode == "wick" and alt_status != "LOST":
+            # Wick triggered stop but candle close would have survived
             return "wick_stop_only"
-        # Both wick and close would have stopped out
-        mfe = wick_res.get("mfe_pct") or 0.0
+        mfe = primary_res.get("mfe_pct") or 0.0
         if mfe >= bounce * 0.5:
-            # Price moved favorably before reversing — genuine reversal loss
             return "stop_after_clean_entry"
         return "close_stop_also_lost"
     return "unknown"
@@ -90,12 +98,15 @@ def run_ob_backtest(
     setup_type: str = None,
     source: str = "live",
     result_filter: str = None,
+    stop_mode: str = "wick",
 ) -> dict:
     """
-    OB-only candle-replay backtest with Phase 7B diagnostics.
+    OB-only candle-replay backtest with Phase 7B/7C diagnostics.
 
-    Runs 4 _run_traced variants per signal (wick-stop, close-stop,
-    small-target, candle-close-entry) then classifies each outcome.
+    stop_mode="wick"  — traditional: loss when wick crosses OB boundary.
+    stop_mode="close" — strict: loss only when candle CLOSES beyond boundary.
+
+    Runs 4 _run_traced variants per signal then classifies each outcome.
     Never commits to DB. Never mutates SignalEvent or SignalOutcome.
     """
     try:
@@ -107,6 +118,10 @@ def run_ob_backtest(
 
         # ── Normalise params ─────────────────────────────────────────────
         cap = max(1, min(int(limit), 500))
+
+        stop_mode = (stop_mode or "wick").strip().lower()
+        if stop_mode not in {"wick", "close"}:
+            return {"ok": False, "error": f"stop_mode '{stop_mode}' invalid; must be wick or close"}
 
         rf = (result_filter or "").strip().lower()
         rf = rf if rf and rf != "all" else None
@@ -283,8 +298,11 @@ def run_ob_backtest(
                     stop_mode="wick", entry_price_mode="candle_close",
                 )
 
-                status     = res_wick["status"]
-                diag_key   = _classify_loss_reason(res_wick, res_close, bounce)
+                res_primary = res_close if stop_mode == "close" else res_wick
+                cf_alt_res  = res_wick  if stop_mode == "close" else res_close
+
+                status     = res_primary["status"]
+                diag_key   = _classify_loss_reason(res_primary, cf_alt_res, bounce, stop_mode)
 
                 summary["checked"] += 1
                 if   status == "WON":               summary["won"]               += 1
@@ -298,22 +316,22 @@ def run_ob_backtest(
                 _tally_breakdowns(ev, status, diag_key)
 
                 # ── Cross-variant diagnostic summary ─────────────────────
-                _cs  = res_close["status"]
-                _st  = res_small["status"]
-                _cce = res_cce["status"]
-                _reason = res_wick.get("result_reason")
+                _alt_s  = cf_alt_res["status"]
+                _st_s   = res_small["status"]
+                _cce_s  = res_cce["status"]
+                _reason = res_primary.get("result_reason")
 
                 if status == "LOST":
-                    if _st == "LOST" and _cce == "LOST":
+                    if _alt_s == "LOST" and _st_s == "LOST" and _cce_s == "LOST":
                         diag_summary["all_variants_lost"] += 1
-                    if _st == "WON":
+                    if _st_s == "WON":
                         diag_summary["small_target_would_win"] += 1
-                    if _cce == "WON":
+                    if _cce_s == "WON":
                         diag_summary["candle_close_entry_would_win"] += 1
-                    if _cce in {"ENTERED", "WAITING_FOR_ENTRY", "EXPIRED", "AMBIGUOUS"}:
+                    if _cce_s in {"ENTERED", "WAITING_FOR_ENTRY", "EXPIRED", "AMBIGUOUS"}:
                         diag_summary["candle_close_entry_would_survive"] += 1
 
-                if status == "EXPIRED" and _cs == "EXPIRED" and _st == "EXPIRED" and _cce == "EXPIRED":
+                if status == "EXPIRED" and _alt_s == "EXPIRED" and _st_s == "EXPIRED" and _cce_s == "EXPIRED":
                     diag_summary["all_variants_expired"] += 1
 
                 if _reason == "no_entry_within_expiry":
@@ -339,21 +357,21 @@ def run_ob_backtest(
                     "detected_price":     ev.detected_price,
                     "zone_high":          ev.zone_high,
                     "zone_low":           ev.zone_low,
-                    "entry_time":         _iso(res_wick.get("entry_time")),
-                    "entry_price":        res_wick.get("entry_price"),
-                    "target_price":       res_wick.get("target_price"),
-                    "stop_price":         res_wick.get("stop_price"),
-                    "exit_time":          _iso(res_wick.get("exit_time")),
-                    "exit_price":         res_wick.get("exit_price"),
+                    "entry_time":         _iso(res_primary.get("entry_time")),
+                    "entry_price":        res_primary.get("entry_price"),
+                    "target_price":       res_primary.get("target_price"),
+                    "stop_price":         res_primary.get("stop_price"),
+                    "exit_time":          _iso(res_primary.get("exit_time")),
+                    "exit_price":         res_primary.get("exit_price"),
                     "result":             status,
-                    "result_reason":      res_wick.get("result_reason"),
-                    "candles_checked":    res_wick.get("candles_checked", 0),
-                    "mfe_pct":            res_wick.get("mfe_pct"),
-                    "mae_pct":            res_wick.get("mae_pct"),
+                    "result_reason":      res_primary.get("result_reason"),
+                    "candles_checked":    res_primary.get("candles_checked", 0),
+                    "mfe_pct":            res_primary.get("mfe_pct"),
+                    "mae_pct":            res_primary.get("mae_pct"),
                     "bounce_threshold_pct": bounce,
                     "loss_reason_detail": diag_key,
-                    "cf_close_stop":      _cf_compact(res_close),
-                    "cf_small_target":    _cf_compact(res_small),
+                    "cf_alt_stop":           _cf_compact(cf_alt_res),
+                    "cf_small_target":       _cf_compact(res_small),
                     "cf_candle_close_entry": _cf_compact(res_cce),
                 })
 
@@ -395,9 +413,16 @@ def run_ob_backtest(
             for b in score_buckets
         ]
 
+        rule_note = (
+            "Loss requires candle close beyond OB zone"
+            if stop_mode == "close"
+            else "Loss uses wick stop (default)"
+        )
         return {
-            "ok":   True,
-            "mode": "ob_backtest_dry_run",
+            "ok":        True,
+            "mode":      "ob_backtest_dry_run",
+            "stop_mode": stop_mode,
+            "rule_note": rule_note,
             "filters": {
                 "module":      _OB_MODULE,
                 "setup_types": list(_OB_SETUP_TYPES),
@@ -407,6 +432,7 @@ def run_ob_backtest(
                 "source":      source,
                 "result":      rf or "all",
                 "limit":       cap,
+                "stop_mode":   stop_mode,
             },
             "summary":            summary,
             "diagnostics":        diagnostics,
