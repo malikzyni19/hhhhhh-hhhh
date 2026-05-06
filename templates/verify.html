@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZyNi SMC – Verify Email</title>
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap');
+
+        :root {
+            --navy:       #0a0f1e;
+            --navy-mid:   #0d1530;
+            --navy-light: #112040;
+            --black:      #060a14;
+            --accent:     #1eb8c8;
+            --accent2:    #0e8fa0;
+            --white:      #e8f0ff;
+            --border:     rgba(30,184,200,0.45);
+            --red:        #f87171;
+            --green:      #4ade80;
+        }
+
+        *, *::before, *::after {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Poppins', sans-serif;
+            color: var(--white);
+        }
+
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: radial-gradient(ellipse at 60% 0%, #0d2040 0%, var(--black) 70%);
+            padding: 20px;
+        }
+
+        /* Brand */
+        .brand-logo {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            margin-bottom: 28px;
+            user-select: none;
+        }
+
+        .brand-logo .z-icon {
+            width: 52px;
+            height: 52px;
+            object-fit: contain;
+            filter: drop-shadow(0 0 10px rgba(30,210,230,0.9)) drop-shadow(0 0 24px rgba(20,180,200,0.5));
+        }
+
+        .brand-logo .brand-text { display: flex; flex-direction: column; line-height: 1; }
+
+        .brand-logo .brand-name {
+            font-size: 24px;
+            font-weight: 800;
+            letter-spacing: 1.5px;
+        }
+
+        .brand-logo .brand-sub {
+            font-size: 10px;
+            font-weight: 500;
+            letter-spacing: 3.5px;
+            color: var(--accent);
+            text-transform: uppercase;
+            margin-top: 3px;
+        }
+
+        /* Card */
+        .verify-card {
+            width: 100%;
+            max-width: 460px;
+            background: var(--navy);
+            border: 1.5px solid var(--border);
+            border-radius: 16px;
+            box-shadow: 0 0 30px rgba(14,143,160,0.3), 0 0 80px rgba(14,143,160,0.1);
+            padding: 40px 44px 36px;
+            text-align: center;
+        }
+
+        .verify-icon {
+            width: 72px;
+            height: 72px;
+            border-radius: 50%;
+            background: rgba(30,184,200,0.1);
+            border: 2px solid rgba(30,184,200,0.4);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 20px;
+            font-size: 30px;
+            color: var(--accent);
+        }
+
+        .verify-title {
+            font-size: 22px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+
+        .verify-sub {
+            font-size: 13px;
+            color: rgba(232,240,255,0.55);
+            line-height: 1.6;
+            margin-bottom: 28px;
+        }
+
+        /* Alert messages */
+        .alert-msg {
+            font-size: 13px;
+            border-radius: 8px;
+            padding: 10px 14px;
+            margin-bottom: 18px;
+            text-align: left;
+            line-height: 1.5;
+        }
+
+        .error-msg {
+            background: rgba(127,29,29,0.3);
+            border: 1px solid rgba(248,113,113,0.35);
+            color: var(--red);
+        }
+
+        .success-msg {
+            background: rgba(21,128,61,0.2);
+            border: 1px solid rgba(74,222,128,0.35);
+            color: var(--green);
+        }
+
+        /* OTP input */
+        .otp-group {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-bottom: 24px;
+        }
+
+        .otp-digit {
+            width: 50px;
+            height: 58px;
+            background: rgba(255,255,255,0.05);
+            border: 1.5px solid rgba(30,184,200,0.3);
+            border-radius: 10px;
+            font-size: 26px;
+            font-weight: 700;
+            text-align: center;
+            color: var(--white);
+            outline: none;
+            transition: border-color .25s, box-shadow .25s;
+            caret-color: var(--accent);
+        }
+
+        .otp-digit:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(30,184,200,0.15);
+        }
+
+        .otp-digit.filled {
+            border-color: var(--accent);
+        }
+
+        /* Hidden combined code input (submitted with form) */
+        #codeInput { display: none; }
+
+        /* Submit button */
+        .verify-btn {
+            width: 100%;
+            height: 48px;
+            background: transparent;
+            border: 1.5px solid var(--accent);
+            border-radius: 40px;
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--white);
+            letter-spacing: 1px;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+            z-index: 1;
+            transition: opacity .2s;
+            margin-bottom: 20px;
+        }
+
+        .verify-btn::before {
+            content: "";
+            position: absolute;
+            height: 300%;
+            width: 100%;
+            background: linear-gradient(var(--navy), var(--accent), var(--navy), var(--accent));
+            top: -100%;
+            left: 0;
+            z-index: -1;
+            transition: .5s;
+        }
+
+        .verify-btn:hover::before { top: 0; }
+        .verify-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* Divider */
+        .divider {
+            font-size: 12px;
+            color: rgba(232,240,255,0.3);
+            margin-bottom: 16px;
+            position: relative;
+        }
+
+        .divider::before, .divider::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            width: 38%;
+            height: 1px;
+            background: rgba(30,184,200,0.2);
+        }
+
+        .divider::before { left: 0; }
+        .divider::after  { right: 0; }
+
+        /* Resend form */
+        .resend-form {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .resend-note {
+            font-size: 12px;
+            color: rgba(232,240,255,0.4);
+        }
+
+        .resend-btn {
+            background: none;
+            border: none;
+            color: var(--accent);
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: underline;
+            padding: 0;
+            font-family: 'Poppins', sans-serif;
+        }
+
+        .resend-btn:hover { color: #5dd8e8; }
+
+        /* Footer */
+        .footer {
+            margin-top: 24px;
+            text-align: center;
+            font-size: 13px;
+            color: rgba(232,240,255,0.35);
+        }
+
+        .footer a {
+            color: var(--accent);
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .footer a:hover { text-decoration: underline; }
+
+        /* Timer */
+        .timer-note {
+            font-size: 12px;
+            color: rgba(232,240,255,0.4);
+            margin-bottom: 22px;
+        }
+
+        .timer-note span { color: var(--accent); font-weight: 600; }
+
+        /* Fallback code box — shown when SMTP is not configured */
+        .fallback-box {
+            background: rgba(245,158,11,0.08);
+            border: 1px solid rgba(245,158,11,0.35);
+            border-radius: 10px;
+            padding: 18px 20px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .fallback-box .fb-label {
+            font-size: 11px;
+            color: rgba(245,158,11,0.8);
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+        }
+
+        .fallback-box .fb-code {
+            font-size: 38px;
+            font-weight: 800;
+            letter-spacing: 12px;
+            color: #f59e0b;
+            font-family: 'Courier New', monospace;
+        }
+
+        .fallback-box .fb-note {
+            font-size: 11px;
+            color: rgba(232,240,255,0.4);
+            margin-top: 8px;
+            line-height: 1.5;
+        }
+
+        .smtp-warn {
+            background: rgba(245,158,11,0.06);
+            border: 1px solid rgba(245,158,11,0.25);
+            border-radius: 8px;
+            padding: 10px 14px;
+            font-size: 11.5px;
+            color: rgba(245,158,11,0.9);
+            margin-bottom: 16px;
+            line-height: 1.55;
+        }
+
+        @media (max-width: 520px) {
+            .verify-card { padding: 30px 20px 26px; }
+            .otp-digit { width: 42px; height: 50px; font-size: 22px; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="brand-logo">
+        <img class="z-icon" src="{{ url_for('static', filename='images/favicon.png') }}" alt="ZyNi Logo">
+        <div class="brand-text">
+            <span class="brand-name">ZyNi SMC</span>
+            <span class="brand-sub">Smart Market Center</span>
+        </div>
+    </div>
+
+    <div class="verify-card">
+        <div class="verify-icon">
+            {% if email_sent == false or fallback_code %}
+            <i class="fa-solid fa-triangle-exclamation" style="color:#f59e0b"></i>
+            {% else %}
+            <i class="fa-solid fa-envelope-circle-check"></i>
+            {% endif %}
+        </div>
+
+        {% if fallback_code %}
+        <div class="verify-title">Email not sent — use code below</div>
+        <div class="verify-sub">
+            The email service is not configured on this server.<br>
+            Use the code shown below to verify your account.
+        </div>
+        <div class="smtp-warn">
+            <i class="fa-solid fa-circle-info" style="margin-right:5px"></i>
+            <strong>Admin notice:</strong> Set <code>ALERT_EMAIL_FROM</code> and
+            <code>ALERT_EMAIL_PASS</code> environment variables in Koyeb to enable email delivery.
+        </div>
+        <div class="fallback-box">
+            <div class="fb-label">Your verification code</div>
+            <div class="fb-code" id="fbCode">{{ fallback_code }}</div>
+            <div class="fb-note">Copy this code and enter it in the boxes below.<br>Valid for 15 minutes.</div>
+        </div>
+        {% else %}
+        <div class="verify-title">Check your inbox</div>
+        <div class="verify-sub">
+            We sent a 6-digit verification code to your email address.<br>
+            Enter it below to activate your account.
+        </div>
+        {% endif %}
+
+        {% if error %}
+        <div class="alert-msg error-msg">
+            <i class="fa-solid fa-circle-exclamation" style="margin-right:6px"></i>{{ error }}
+        </div>
+        {% endif %}
+
+        {% if success %}
+        <div class="alert-msg success-msg">
+            <i class="fa-solid fa-circle-check" style="margin-right:6px"></i>{{ success }}
+        </div>
+        {% endif %}
+
+        <form id="verifyForm" action="/verify-email" method="POST">
+            <input type="hidden" name="username" value="{{ username }}">
+            <input type="hidden" name="code" id="codeInput">
+
+            <div class="otp-group" id="otpGroup">
+                <input class="otp-digit" type="text" inputmode="numeric" maxlength="1" data-idx="0" autocomplete="one-time-code">
+                <input class="otp-digit" type="text" inputmode="numeric" maxlength="1" data-idx="1">
+                <input class="otp-digit" type="text" inputmode="numeric" maxlength="1" data-idx="2">
+                <input class="otp-digit" type="text" inputmode="numeric" maxlength="1" data-idx="3">
+                <input class="otp-digit" type="text" inputmode="numeric" maxlength="1" data-idx="4">
+                <input class="otp-digit" type="text" inputmode="numeric" maxlength="1" data-idx="5">
+            </div>
+
+            <p class="timer-note">Code expires in <span id="countdown">15:00</span></p>
+
+            <button class="verify-btn" type="submit" id="submitBtn" disabled>
+                Verify Account
+            </button>
+        </form>
+
+        <div class="divider">or</div>
+
+        <form class="resend-form" action="/resend-verification" method="POST">
+            <input type="hidden" name="username" value="{{ username }}">
+            <span class="resend-note">Didn't receive it? Check spam or</span>
+            <button class="resend-btn" type="submit">Resend verification code</button>
+        </form>
+    </div>
+
+    <div class="footer">
+        <p>© 2026 ZyNi SMC. &nbsp;|&nbsp;
+            <a href="/login">← Back to Login</a>
+        </p>
+    </div>
+
+    <script>
+        // ── OTP digit navigation ──────────────────────────────────────
+        const digits   = Array.from(document.querySelectorAll('.otp-digit'));
+        const codeInput = document.getElementById('codeInput');
+        const submitBtn = document.getElementById('submitBtn');
+
+        function updateHidden() {
+            const val = digits.map(d => d.value).join('');
+            codeInput.value = val;
+            submitBtn.disabled = val.length < 6;
+            digits.forEach((d, i) => {
+                d.classList.toggle('filled', d.value !== '');
+            });
+        }
+
+        digits.forEach((digit, idx) => {
+            digit.addEventListener('input', (e) => {
+                const v = e.target.value.replace(/\D/g, '');
+                e.target.value = v.slice(-1);
+
+                // Handle pasted 6-digit string into first box
+                if (idx === 0 && v.length >= 6) {
+                    v.slice(0, 6).split('').forEach((ch, i) => {
+                        if (digits[i]) digits[i].value = ch;
+                    });
+                    digits[5].focus();
+                    updateHidden();
+                    return;
+                }
+                if (v && idx < 5) digits[idx + 1].focus();
+                updateHidden();
+            });
+
+            digit.addEventListener('keydown', (e) => {
+                if (e.key === 'Backspace' && !digit.value && idx > 0) {
+                    digits[idx - 1].focus();
+                    digits[idx - 1].value = '';
+                    updateHidden();
+                }
+                if (e.key === 'ArrowLeft'  && idx > 0) digits[idx - 1].focus();
+                if (e.key === 'ArrowRight' && idx < 5) digits[idx + 1].focus();
+            });
+
+            // Allow pasting full code anywhere in the group
+            digit.addEventListener('paste', (e) => {
+                e.preventDefault();
+                const pasted = (e.clipboardData || window.clipboardData)
+                    .getData('text').replace(/\D/g, '').slice(0, 6);
+                pasted.split('').forEach((ch, i) => {
+                    if (digits[i]) digits[i].value = ch;
+                });
+                const focusIdx = Math.min(pasted.length, 5);
+                digits[focusIdx].focus();
+                updateHidden();
+            });
+        });
+
+        // Auto-fill OTP boxes when fallback code is shown (SMTP not configured)
+        const fbCodeEl = document.getElementById('fbCode');
+        if (fbCodeEl) {
+            const fc = fbCodeEl.textContent.replace(/\D/g, '').slice(0, 6);
+            fc.split('').forEach((ch, i) => { if (digits[i]) digits[i].value = ch; });
+            updateHidden();
+        }
+
+        // Auto-focus first digit on load
+        if (!fbCodeEl) digits[0].focus();
+
+        // ── Countdown timer (15 min) ──────────────────────────────────
+        let remaining = 15 * 60;
+        const countdownEl = document.getElementById('countdown');
+
+        function formatTime(s) {
+            const m = Math.floor(s / 60);
+            const sec = s % 60;
+            return String(m).padStart(2, '0') + ':' + String(sec).padStart(2, '0');
+        }
+
+        const timer = setInterval(() => {
+            remaining--;
+            countdownEl.textContent = formatTime(remaining);
+            if (remaining <= 0) {
+                clearInterval(timer);
+                countdownEl.textContent = '00:00';
+                countdownEl.style.color = '#f87171';
+                submitBtn.disabled = true;
+                submitBtn.textContent = 'Code expired — request a new one below';
+            }
+        }, 1000);
+    </script>
+</body>
+</html>
