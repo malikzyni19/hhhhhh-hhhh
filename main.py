@@ -16,7 +16,7 @@ from functools import wraps
 from typing import Any, Dict, List, Optional, Tuple
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import numpy as np
 import requests as req
@@ -36,7 +36,8 @@ def no_cache(r):
 
 from flask_login import LoginManager
 from models import (db, User as _DBUser, GlobalSetting as _GlobalSetting,
-                    LoginHistory as _LoginHistory)
+                    LoginHistory as _LoginHistory,
+                    EmailVerification as _EmailVerification)
 from admin import admin_bp
 from permissions import get_user_permissions, consume_tokens, check_tokens
 
@@ -297,6 +298,83 @@ def send_email_alert(subject: str, body: str) -> bool:
     except Exception as e:
         print(f"[EMAIL] Failed: {e}")
         return False
+
+
+def send_verification_email(to_email: str, code: str, username: str) -> bool:
+    """Send a 6-digit OTP verification email directly to the new user."""
+    if not all([ALERT_EMAIL_FROM, ALERT_EMAIL_PASS, to_email]):
+        return False
+    try:
+        subject = "ZyNi SMC — Verify Your Email Address"
+        body = f"""
+<html>
+<body style="margin:0;padding:0;background:#060a14;font-family:'Segoe UI',Arial,sans-serif">
+<div style="max-width:520px;margin:40px auto;background:#0d1525;border:1px solid rgba(30,184,200,0.25);
+            border-top:3px solid #1eb8c8;border-radius:12px;padding:36px 32px">
+  <div style="text-align:center;margin-bottom:28px">
+    <div style="font-size:28px;font-weight:800;color:#e8f0ff;letter-spacing:1px">ZyNi SMC</div>
+    <div style="font-size:11px;color:#1eb8c8;letter-spacing:3px;margin-top:4px">SMART MONEY SCREENER</div>
+  </div>
+  <h2 style="color:#e8f0ff;font-size:20px;font-weight:600;margin:0 0 12px;text-align:center">
+    Verify your email address
+  </h2>
+  <p style="color:rgba(232,240,255,0.6);font-size:14px;text-align:center;margin:0 0 28px">
+    Hi <strong style="color:#e8f0ff">{username}</strong>, enter the code below to activate your account.
+  </p>
+  <div style="background:#071525;border:1px solid rgba(30,184,200,0.35);border-radius:10px;
+              padding:24px;text-align:center;margin-bottom:28px">
+    <div style="font-size:42px;font-weight:800;letter-spacing:14px;color:#1eb8c8;
+                font-family:'Courier New',monospace">{code}</div>
+    <div style="font-size:12px;color:rgba(232,240,255,0.4);margin-top:10px">
+      Valid for 15 minutes · Do not share this code
+    </div>
+  </div>
+  <p style="color:rgba(232,240,255,0.35);font-size:12px;text-align:center;margin:0">
+    If you did not create a ZyNi SMC account, you can safely ignore this email.
+  </p>
+</div>
+</body>
+</html>"""
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"]    = ALERT_EMAIL_FROM
+        msg["To"]      = to_email
+        msg.attach(MIMEText(body, "html"))
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as srv:
+            srv.login(ALERT_EMAIL_FROM, ALERT_EMAIL_PASS)
+            srv.sendmail(ALERT_EMAIL_FROM, to_email, msg.as_string())
+        return True
+    except Exception as e:
+        print(f"[VERIFY-EMAIL] Failed to send to {to_email}: {e}")
+        return False
+
+
+def _auto_migrate():
+    """Add new columns / tables to an existing database without Flask-Migrate."""
+    with app.app_context():
+        try:
+            from sqlalchemy import text
+            with db.engine.connect() as conn:
+                # Create any brand-new tables (email_verifications, etc.)
+                db.create_all()
+                # Add email_verified column to users if it doesn't exist yet
+                conn.execute(text(
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                    "email_verified BOOLEAN NOT NULL DEFAULT FALSE"
+                ))
+                # Preserve access for users registered before this migration
+                conn.execute(text(
+                    "UPDATE users SET email_verified = TRUE "
+                    "WHERE email_verified = FALSE AND created_at < NOW() - INTERVAL '1 hour'"
+                ))
+                conn.commit()
+                print("[MIGRATE] email_verified column ensured on users table")
+        except Exception as exc:
+            print(f"[MIGRATE] Auto-migration warning: {exc}")
+
+
+# Run auto-migration at startup
+threading.Thread(target=_auto_migrate, daemon=True).start()
 
 
 # ============================================================
@@ -4458,6 +4536,8 @@ def login():
                     db_error = "Your account has been paused. Contact admin."
                 elif db_user.status != "active":
                     db_error = f"Account is {db_user.status}. Contact admin."
+                elif not db_user.email_verified:
+                    db_error = f"__unverified__{db_user.username}"
                 # success — db_error stays None
             # else: user not in DB, fall through to legacy
         except Exception as _dbe:
@@ -4575,17 +4655,29 @@ def login():
         "username": username or "(empty)", "time": now_utc,
         "ip": ip, "geo": "", "ua": ua, "success": False
     })
+    if error and error.startswith("__unverified__"):
+        unverified_user = error.split("__unverified__", 1)[1]
+        return render_template("login.html",
+                               error="Your email is not verified yet. Please check your inbox.",
+                               unverified_username=unverified_user)
     return render_template("login.html", error=error)
 
 
 @app.route("/register", methods=["POST"])
 def register():
+    import random
     username = request.form.get("username", "").strip().lower()
-    email    = request.form.get("email", "").strip()
+    email    = request.form.get("email", "").strip().lower()
     password = request.form.get("password", "")
 
     if not username:
         return render_template("login.html", register_error="Username is required.", show_signup=True)
+    if not email:
+        return render_template("login.html", register_error="Email address is required.", show_signup=True,
+                               reg_username=username)
+    if "@" not in email or "." not in email.split("@")[-1]:
+        return render_template("login.html", register_error="Please enter a valid email address.", show_signup=True,
+                               reg_username=username, reg_email=email)
     if not password:
         return render_template("login.html", register_error="Password is required.", show_signup=True,
                                reg_username=username, reg_email=email)
@@ -4596,14 +4688,116 @@ def register():
         if _DBUser.query.filter_by(username=username).first():
             return render_template("login.html", register_error="Username already taken. Choose another.", show_signup=True,
                                    reg_username=username, reg_email=email)
-        new_user = _DBUser(username=username, email=email or None, role="user", status="active")
+        if _DBUser.query.filter_by(email=email).first():
+            return render_template("login.html", register_error="This email is already registered. Sign in instead.", show_signup=True,
+                                   reg_username=username, reg_email=email)
+
+        new_user = _DBUser(username=username, email=email, role="user", status="active", email_verified=False)
         new_user.set_password(password)
         db.session.add(new_user)
+        db.session.flush()  # get new_user.id before commit
+
+        code    = f"{random.randint(0, 999999):06d}"
+        expires = datetime.now(timezone.utc) + timedelta(minutes=15)
+        ev = _EmailVerification(user_id=new_user.id, code=code, expires_at=expires)
+        db.session.add(ev)
         db.session.commit()
-        return render_template("login.html", success="Account created! You can now sign in.", login_username=username)
+
+        threading.Thread(
+            target=send_verification_email,
+            args=(email, code, username),
+            daemon=True,
+        ).start()
+
+        return redirect(url_for("verify_email", username=username))
     except Exception as _re:
         print(f"[REGISTER] Error: {_re}")
+        db.session.rollback()
         return render_template("login.html", register_error="Registration failed. Please try again.", show_signup=True)
+
+
+@app.route("/verify-email", methods=["GET", "POST"])
+def verify_email():
+    if request.method == "GET":
+        username = request.args.get("username", "")
+        return render_template("verify.html", username=username)
+
+    username = request.form.get("username", "").strip().lower()
+    code     = request.form.get("code", "").strip()
+
+    if not username or not code:
+        return render_template("verify.html", username=username,
+                               error="Please enter the 6-digit verification code.")
+    try:
+        user = _DBUser.query.filter_by(username=username).first()
+        if not user:
+            return render_template("verify.html", username=username,
+                                   error="Account not found. Please register again.")
+        if user.email_verified:
+            return render_template("login.html", success="Email already verified. You can sign in.",
+                                   login_username=username)
+
+        now = datetime.now(timezone.utc)
+        ev  = (_EmailVerification.query
+               .filter_by(user_id=user.id, code=code, used=False)
+               .filter(_EmailVerification.expires_at > now)
+               .first())
+
+        if not ev:
+            return render_template("verify.html", username=username,
+                                   error="Invalid or expired code. Request a new one below.")
+
+        ev.used            = True
+        user.email_verified = True
+        db.session.commit()
+
+        return render_template("login.html",
+                               success="Email verified! Your account is active — sign in below.",
+                               login_username=username)
+    except Exception as _ve:
+        print(f"[VERIFY] Error: {_ve}")
+        db.session.rollback()
+        return render_template("verify.html", username=username,
+                               error="Verification failed. Please try again.")
+
+
+@app.route("/resend-verification", methods=["POST"])
+def resend_verification():
+    import random
+    username = request.form.get("username", "").strip().lower()
+    try:
+        user = _DBUser.query.filter_by(username=username).first()
+        if not user or not user.email:
+            return render_template("verify.html", username=username,
+                                   error="Account not found or no email on file.")
+        if user.email_verified:
+            return render_template("login.html", success="Email already verified. You can sign in.",
+                                   login_username=username)
+
+        # Invalidate all previous unused codes
+        (_EmailVerification.query
+         .filter_by(user_id=user.id, used=False)
+         .update({"used": True}))
+
+        code    = f"{random.randint(0, 999999):06d}"
+        expires = datetime.now(timezone.utc) + timedelta(minutes=15)
+        ev = _EmailVerification(user_id=user.id, code=code, expires_at=expires)
+        db.session.add(ev)
+        db.session.commit()
+
+        threading.Thread(
+            target=send_verification_email,
+            args=(user.email, code, username),
+            daemon=True,
+        ).start()
+
+        return render_template("verify.html", username=username,
+                               success="A new verification code has been sent to your email.")
+    except Exception as _re:
+        print(f"[RESEND-VERIFY] Error: {_re}")
+        db.session.rollback()
+        return render_template("verify.html", username=username,
+                               error="Failed to resend. Please try again later.")
 
 
 @app.route("/logout")
