@@ -494,7 +494,12 @@
         <div class="credentials-panel signin">
             <h2 class="slide-element">Login</h2>
             {% if error %}
-            <div class="alert-msg error-msg">{{ error }}</div>
+            <div class="alert-msg error-msg">
+                {{ error }}
+                {% if unverified_username %}
+                <br><a href="/verify-email?username={{ unverified_username }}" style="color:#1eb8c8;font-weight:600;">Verify email →</a>
+                {% endif %}
+            </div>
             {% endif %}
             {% if success %}
             <div class="alert-msg success-msg">{{ success }}</div>
@@ -539,17 +544,17 @@
                     <i class="fa-solid fa-user"></i>
                 </div>
                 <div class="field-wrapper slide-element">
-                    <input type="email" name="email"{% if reg_email %} value="{{ reg_email }}"{% endif %}>
-                    <label>Email</label>
+                    <input type="email" name="email" required{% if reg_email %} value="{{ reg_email }}"{% endif %}>
+                    <label>Email (required for verification)</label>
                     <i class="fa-solid fa-envelope"></i>
                 </div>
                 <div class="field-wrapper slide-element">
-                    <input type="password" name="password" required>
-                    <label>Password</label>
+                    <input type="password" name="password" required minlength="6">
+                    <label>Password (min 6 chars)</label>
                     <i class="fa-solid fa-lock"></i>
                 </div>
                 <div class="field-wrapper slide-element">
-                    <button class="submit-button" type="submit">Register</button>
+                    <button class="submit-button" type="submit">Create Account</button>
                 </div>
                 <div class="switch-link slide-element">
                     <p>Already have an account?<br>

@@ -14,16 +14,17 @@ ALL_TIMEFRAMES  = ["15m", "30m", "1h", "4h", "1d"]
 class User(UserMixin, db.Model):
     __tablename__ = "users"
 
-    id            = db.Column(db.Integer, primary_key=True)
-    username      = db.Column(db.String(50), unique=True, nullable=False)
-    email         = db.Column(db.String(120), nullable=True)
-    password_hash = db.Column(db.String(256), nullable=False)
-    role          = db.Column(db.String(20), default="user", nullable=False)
-    status        = db.Column(db.String(20), default="active", nullable=False)
-    created_at    = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    last_login_at = db.Column(db.DateTime, nullable=True)
-    last_login_ip = db.Column(db.String(45), nullable=True)
-    notes         = db.Column(db.Text, nullable=True)
+    id             = db.Column(db.Integer, primary_key=True)
+    username       = db.Column(db.String(50), unique=True, nullable=False)
+    email          = db.Column(db.String(120), nullable=True)
+    password_hash  = db.Column(db.String(256), nullable=False)
+    role           = db.Column(db.String(20), default="user", nullable=False)
+    status         = db.Column(db.String(20), default="active", nullable=False)
+    email_verified = db.Column(db.Boolean, default=False, nullable=False, server_default="false")
+    created_at     = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    last_login_at  = db.Column(db.DateTime, nullable=True)
+    last_login_ip  = db.Column(db.String(45), nullable=True)
+    notes          = db.Column(db.Text, nullable=True)
 
     def set_password(self, password: str) -> None:
         self.password_hash = generate_password_hash(password)
@@ -166,6 +167,22 @@ class LoginHistory(db.Model):
 
     def __repr__(self) -> str:
         return f"<LoginHistory user_id={self.user_id} at={self.logged_in_at}>"
+
+
+class EmailVerification(db.Model):
+    __tablename__ = "email_verifications"
+
+    id         = db.Column(db.Integer, primary_key=True)
+    user_id    = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    code       = db.Column(db.String(6), nullable=False)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    expires_at = db.Column(db.DateTime, nullable=False)
+    used       = db.Column(db.Boolean, default=False, nullable=False)
+
+    user = db.relationship("User", foreign_keys=[user_id])
+
+    def __repr__(self) -> str:
+        return f"<EmailVerification user_id={self.user_id} used={self.used}>"
 
 
 # ─────────────────────────────────────────────────────────────
