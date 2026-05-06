@@ -429,6 +429,15 @@
           <option value="close">Candle Close Stop</option>
         </select>
       </div>
+      <div class="aud-filter-group">
+        <label>Freshness</label>
+        <select id="bt-freshness">
+          <option value="all">All OBs</option>
+          <option value="first_touch">First Touch Only</option>
+          <option value="already_touched">Already Touched</option>
+          <option value="unknown">Unknown Freshness</option>
+        </select>
+      </div>
       <button type="button" id="bt-run-btn" class="int-btn">▶ Run OB Backtest</button>
     </div>
     <div id="bt-error" style="display:none;background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.2);
@@ -440,6 +449,8 @@
            background:rgba(148,163,184,.12);color:var(--muted)"></div>
       <!-- Summary cards -->
       <div id="bt-summary"></div>
+      <!-- Freshness summary cards -->
+      <div id="bt-freshness-summary" style="margin-top:14px"></div>
       <!-- Cross-variant diagnostic summary -->
       <div id="bt-diag-summary" style="margin-top:14px"></div>
       <!-- Loss-reason diagnostic breakdown -->
@@ -456,6 +467,7 @@
             <th>Pair</th><th>TF</th><th>Setup</th><th>Dir</th>
             <th>Score</th><th>Result</th><th>Loss Detail</th>
             <th id="bt-variants-th">Variants (Alt / ST / CCE)</th>
+            <th>Freshness</th>
             <th>Entry</th><th>TP</th><th>SL</th><th>Reason</th>
           </tr></thead>
           <tbody id="bt-tbody"></tbody>
@@ -1538,6 +1550,50 @@ function intBt_cfBadge(cf) {
   return '<span class="aud-outcome-badge ' + cls + '" style="font-size:9px">' + short + '</span>';
 }
 
+function intBt_freshnessBadge(fs, touchCount) {
+  var label, color;
+  if (fs === 'first_touch') {
+    label = 'FIRST'; color = 'color:var(--green,#4ade80)';
+  } else if (fs === 'already_touched') {
+    label = 'TOUCHED'; color = 'color:var(--amber,#fbbf24)';
+  } else {
+    label = 'UNKNOWN'; color = 'color:var(--muted)';
+  }
+  var tcStr = (touchCount !== null && touchCount !== undefined) ? ' / ' + touchCount : '';
+  return '<span style="font-size:9px;font-weight:700;' + color + '">' + label + tcStr + '</span>';
+}
+
+function intBt_renderFreshnessSummary(fs) {
+  var el = document.getElementById('bt-freshness-summary');
+  if (!el) return;
+  if (!fs || (fs.first_touch === 0 && fs.already_touched === 0 && fs.unknown === 0)) {
+    el.innerHTML = ''; return;
+  }
+  var total = (fs.first_touch || 0) + (fs.already_touched || 0) + (fs.unknown || 0);
+  var cards = [
+    { label: 'First Touch',     val: fs.first_touch     || 0, color: 'var(--green,#4ade80)' },
+    { label: 'Already Touched', val: fs.already_touched || 0, color: 'var(--amber,#fbbf24)' },
+    { label: 'Unknown',         val: fs.unknown         || 0, color: 'var(--muted)' },
+  ];
+  var note = fs.unknown > 0 && (fs.unknown / Math.max(total, 1)) > 0.5
+    ? '<p style="font-size:10px;color:var(--muted);margin:6px 0 0">⚠ Most signals show Unknown — OB origin timestamp is not stored in current DB rows. ' +
+      'First-touch detection uses pre-signal candles in the backtest fetch window; older signals fall outside this window.</p>'
+    : '';
+  var html = '<p style="font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin:0 0 6px">Freshness Breakdown (all fetched signals)</p>';
+  html += '<div style="display:flex;gap:10px;flex-wrap:wrap">';
+  cards.forEach(function(c) {
+    var pct = total > 0 ? Math.round(c.val / total * 100) : 0;
+    html += '<div style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);' +
+            'border-radius:8px;padding:10px 14px;min-width:110px">' +
+            '<div style="font-size:10px;color:var(--muted);margin-bottom:4px">' + c.label + '</div>' +
+            '<div style="font-size:22px;font-weight:700;color:' + c.color + '">' + c.val + '</div>' +
+            '<div style="font-size:10px;color:var(--muted)">' + pct + '% of total</div>' +
+            '</div>';
+  });
+  html += '</div>' + note;
+  el.innerHTML = html;
+}
+
 function intBt_renderSignals(signals) {
   var tbody = document.getElementById('bt-tbody');
   var wrap  = document.getElementById('bt-table-wrap');
@@ -1565,6 +1621,7 @@ function intBt_renderSignals(signals) {
       '<span style="font-size:9px;color:var(--muted)">ST:</span>' + intBt_cfBadge(s.cf_small_target) + ' ' +
       '<span style="font-size:9px;color:var(--muted)">CCE:</span>' + intBt_cfBadge(s.cf_candle_close_entry) +
       '</td>';
+    rows += '<td style="white-space:nowrap">' + intBt_freshnessBadge(s.freshness_status, s.touch_count_before_signal) + '</td>';
     rows += '<td style="font-family:\'JetBrains Mono\',monospace;font-size:10px">' + intBt_fmt(s.entry_price) + '</td>';
     rows += '<td style="font-family:\'JetBrains Mono\',monospace;font-size:10px">' + intBt_fmt(s.target_price) + '</td>';
     rows += '<td style="font-family:\'JetBrains Mono\',monospace;font-size:10px">' + intBt_fmt(s.stop_price) + '</td>';
@@ -1585,22 +1642,25 @@ function intBt_runBacktest() {
   var wrap     = document.getElementById('bt-table-wrap');
 
   var diagEl    = document.getElementById('bt-diag');
-  var diagSumEl = document.getElementById('bt-diag-summary');
-  if (errEl)     { errEl.style.display = 'none'; errEl.textContent = ''; }
-  if (resultEl)  { resultEl.style.display = 'none'; }
-  if (runBtn)    { runBtn.textContent = '⏳ Running…'; runBtn.disabled = true; }
-  if (summaryEl) { summaryEl.innerHTML = ''; }
-  if (diagSumEl) { diagSumEl.innerHTML = ''; }
-  if (diagEl)    { diagEl.innerHTML = ''; }
-  if (bkEl)      { bkEl.innerHTML = ''; }
-  if (wrap)      { wrap.style.display = 'none'; }
+  var diagSumEl    = document.getElementById('bt-diag-summary');
+  var freshSumEl   = document.getElementById('bt-freshness-summary');
+  if (errEl)      { errEl.style.display = 'none'; errEl.textContent = ''; }
+  if (resultEl)   { resultEl.style.display = 'none'; }
+  if (runBtn)     { runBtn.textContent = '⏳ Running…'; runBtn.disabled = true; }
+  if (summaryEl)  { summaryEl.innerHTML = ''; }
+  if (freshSumEl) { freshSumEl.innerHTML = ''; }
+  if (diagSumEl)  { diagSumEl.innerHTML = ''; }
+  if (diagEl)     { diagEl.innerHTML = ''; }
+  if (bkEl)       { bkEl.innerHTML = ''; }
+  if (wrap)       { wrap.style.display = 'none'; }
 
-  var limit    = (document.getElementById('bt-limit')       || {}).value || '100';
-  var tf       = (document.getElementById('bt-timeframe')   || {}).value || '';
-  var setup    = (document.getElementById('bt-setup-type')  || {}).value || 'all';
-  var res      = (document.getElementById('bt-result-filter') || {}).value || 'all';
-  var pair     = ((document.getElementById('bt-pair')       || {}).value || '').trim().toUpperCase();
-  var stopMode = (document.getElementById('bt-stop-mode')   || {}).value || 'wick';
+  var limit     = (document.getElementById('bt-limit')         || {}).value || '100';
+  var tf        = (document.getElementById('bt-timeframe')     || {}).value || '';
+  var setup     = (document.getElementById('bt-setup-type')    || {}).value || 'all';
+  var res       = (document.getElementById('bt-result-filter') || {}).value || 'all';
+  var pair      = ((document.getElementById('bt-pair')         || {}).value || '').trim().toUpperCase();
+  var stopMode  = (document.getElementById('bt-stop-mode')     || {}).value || 'wick';
+  var freshness = (document.getElementById('bt-freshness')     || {}).value || 'all';
 
   var url = '/admin/intelligence/backtest-ob?limit=' + encodeURIComponent(limit);
   if (tf)            url += '&timeframe='  + encodeURIComponent(tf);
@@ -1608,6 +1668,7 @@ function intBt_runBacktest() {
   if (res  && res  !== 'all')   url += '&result='     + encodeURIComponent(res);
   if (pair)          url += '&pair='       + encodeURIComponent(pair);
   url += '&stop_mode=' + encodeURIComponent(stopMode);
+  if (freshness && freshness !== 'all') url += '&freshness=' + encodeURIComponent(freshness);
 
   console.log('[Backtest OB] fetching', url);
   intBt_running = true;
@@ -1639,6 +1700,7 @@ function intBt_runBacktest() {
         if (thEl) thEl.textContent = 'Variants (' + (modeIsClose ? 'WS' : 'CS') + ' / ST / CCE)';
       }
       intBt_renderSummary(data.summary || {});
+      intBt_renderFreshnessSummary(data.freshness_summary || {});
       intBt_renderDiagSummary(data.diagnostic_summary || {});
       intBt_renderDiagnostics(data.diagnostics || {});
       intBt_renderBreakdown(data.by_timeframe || [], data.by_setup_type || []);

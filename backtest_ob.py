@@ -1,9 +1,11 @@
 """
-backtest_ob.py — Phase 7B: OB Backtest with Loss Diagnostics
+backtest_ob.py — Phase 7B/7C/7D: OB Backtest with Loss Diagnostics + Freshness
 
 Phase 7A base: read-only OB-only candle-replay backtest.
 Phase 7B adds: per-signal loss_reason_detail, 3 counterfactual variants,
 and a diagnostics summary + per-breakdown diagnostic counts.
+Phase 7C adds: stop_mode (wick/close) selector.
+Phase 7D adds: first-touch freshness filter using pre-signal candles.
 
 Rules:
   - Never mutates SignalEvent or SignalOutcome.
@@ -12,6 +14,7 @@ Rules:
   - Must be called inside an active Flask app context.
 """
 
+import json
 from datetime import timezone
 
 _OB_MODULE      = "ob"
@@ -40,6 +43,131 @@ _DIAG_KEYS = (
     "won_clean",
     "unknown",
 )
+
+# Valid freshness filter values
+_FRESHNESS_VALUES = frozenset({"all", "first_touch", "already_touched", "unknown"})
+
+# Candidate keys that would contain OB formation timestamp (none stored yet)
+_OB_ORIGIN_KEYS = (
+    "ob_formed_at", "formed_at", "origin_time", "origin_ts",
+    "ob_time", "start_time", "start_ts", "left_time",
+    "candle_time", "formation_time",
+)
+
+
+def get_ob_origin_time(ev) -> "datetime | None":
+    """
+    Try to extract OB formation timestamp from raw_meta_json.
+
+    Checks all known candidate keys. Returns None if none found —
+    current DB rows do not store formation time.
+    """
+    try:
+        meta = json.loads(ev.raw_meta_json or "{}")
+    except Exception:
+        return None
+    for key in _OB_ORIGIN_KEYS:
+        val = meta.get(key)
+        if val:
+            # Handle ISO strings or numeric timestamps
+            try:
+                from datetime import datetime
+                if isinstance(val, (int, float)):
+                    ts = float(val)
+                    if ts > 1e12:
+                        ts /= 1000.0
+                    return datetime.fromtimestamp(ts, tz=timezone.utc)
+                return datetime.fromisoformat(str(val).replace("Z", "+00:00"))
+            except Exception:
+                continue
+    return None
+
+
+def classify_ob_freshness(ev, candles: list, detected_ms: int) -> dict:
+    """
+    Classify OB freshness using pre-signal candles from the already-fetched
+    candle array (zero extra API calls).
+
+    Candles with openTime < detected_ms are pre-signal. We count how many
+    overlap the OB zone (high >= zone_low AND low <= zone_high).
+
+    Returns:
+        freshness_status : "first_touch" | "already_touched" | "unknown"
+        first_touch      : True | False | None
+        touch_count_before_signal : int | None
+        first_touch_time : ISO str | None
+        origin_time      : ISO str | None (always None until metadata added)
+        reason           : str
+    """
+    zone_high = ev.zone_high
+    zone_low  = ev.zone_low
+
+    # Try stored origin time (currently returns None for all DB rows)
+    origin_dt = get_ob_origin_time(ev)
+    origin_ms = None
+    if origin_dt:
+        origin_ms = int(origin_dt.timestamp() * 1000)
+
+    # Identify pre-signal candles in the already-fetched array
+    pre_signal = [
+        c for c in candles
+        if c.get("openTime", 0) < detected_ms
+        and (origin_ms is None or c.get("openTime", 0) >= origin_ms)
+    ]
+
+    if not pre_signal:
+        return {
+            "freshness_status":          "unknown",
+            "first_touch":               None,
+            "touch_count_before_signal": None,
+            "first_touch_time":          None,
+            "origin_time":               origin_dt.isoformat() if origin_dt else None,
+            "reason":                    (
+                "no_origin_metadata_and_no_pre_signal_candles_in_fetch_window"
+                if origin_dt is None
+                else "no_candles_between_origin_and_detection"
+            ),
+        }
+
+    # Count zone overlaps: candle touches zone when high >= zone_low AND low <= zone_high
+    touches = []
+    for c in pre_signal:
+        c_high = c.get("high", 0)
+        c_low  = c.get("low", 0)
+        if c_high >= zone_low and c_low <= zone_high:
+            touches.append(c)
+
+    touch_count = len(touches)
+    first_touch_time = None
+    if touches:
+        ft_ms = touches[0].get("openTime")
+        if ft_ms:
+            from datetime import datetime
+            first_touch_time = datetime.fromtimestamp(ft_ms / 1000, tz=timezone.utc).isoformat()
+
+    if touch_count == 0:
+        status = "first_touch"
+        reason = (
+            "no_zone_touches_in_pre_signal_window"
+            if origin_dt is None
+            else "no_zone_touches_between_origin_and_detection"
+        )
+    else:
+        status = "already_touched"
+        reason = (
+            "zone_touched_in_pre_signal_window"
+            if origin_dt is None
+            else "zone_touched_between_origin_and_detection"
+        )
+
+    return {
+        "freshness_status":          status,
+        "first_touch":               touch_count == 0,
+        "touch_count_before_signal": touch_count,
+        "first_touch_time":          first_touch_time,
+        "origin_time":               origin_dt.isoformat() if origin_dt else None,
+        "reason":                    reason,
+    }
 
 
 def _pct(num, denom):
@@ -99,6 +227,7 @@ def run_ob_backtest(
     source: str = "live",
     result_filter: str = None,
     stop_mode: str = "wick",
+    freshness: str = "all",
 ) -> dict:
     """
     OB-only candle-replay backtest with Phase 7B/7C diagnostics.
@@ -122,6 +251,10 @@ def run_ob_backtest(
         stop_mode = (stop_mode or "wick").strip().lower()
         if stop_mode not in {"wick", "close"}:
             return {"ok": False, "error": f"stop_mode '{stop_mode}' invalid; must be wick or close"}
+
+        freshness_filter = (freshness or "all").strip().lower()
+        if freshness_filter not in _FRESHNESS_VALUES:
+            return {"ok": False, "error": f"freshness '{freshness_filter}' invalid; must be all/first_touch/already_touched/unknown"}
 
         rf = (result_filter or "").strip().lower()
         rf = rf if rf and rf != "all" else None
@@ -159,6 +292,7 @@ def run_ob_backtest(
             "checked": 0, "won": 0, "lost": 0, "expired": 0,
             "ambiguous": 0, "waiting_for_entry": 0, "entered": 0, "errors": 0,
         }
+        freshness_summary = {"first_touch": 0, "already_touched": 0, "unknown": 0}
         diagnostics = {k: 0 for k in _DIAG_KEYS}
         diag_summary = {
             "all_variants_lost":                0,
@@ -273,7 +407,18 @@ def run_ob_backtest(
                         "result":           "ERROR",
                         "result_reason":    "no_candle_data",
                         "loss_reason_detail": "unknown",
+                        "freshness_status": "unknown",
                     })
+                    continue
+
+                # ── Freshness classification (uses pre-signal candles in ──
+                # ── already-fetched array — no extra API calls)           ──
+                freshness_info = classify_ob_freshness(ev, candles, detected_ms)
+                fs = freshness_info["freshness_status"]
+                freshness_summary[fs] = freshness_summary.get(fs, 0) + 1
+
+                # Apply freshness filter — skip signal if it doesn't match
+                if freshness_filter != "all" and fs != freshness_filter:
                     continue
 
                 # ── 4 variants — same candle list, no extra fetches ──────
@@ -373,6 +518,10 @@ def run_ob_backtest(
                     "cf_alt_stop":           _cf_compact(cf_alt_res),
                     "cf_small_target":       _cf_compact(res_small),
                     "cf_candle_close_entry": _cf_compact(res_cce),
+                    "freshness_status":          fs,
+                    "touch_count_before_signal": freshness_info.get("touch_count_before_signal"),
+                    "origin_time":               freshness_info.get("origin_time"),
+                    "freshness_reason":          freshness_info.get("reason"),
                 })
 
             except Exception as _sig_err:
@@ -419,10 +568,11 @@ def run_ob_backtest(
             else "Loss uses wick stop (default)"
         )
         return {
-            "ok":        True,
-            "mode":      "ob_backtest_dry_run",
-            "stop_mode": stop_mode,
-            "rule_note": rule_note,
+            "ok":               True,
+            "mode":             "ob_backtest_dry_run",
+            "stop_mode":        stop_mode,
+            "rule_note":        rule_note,
+            "freshness_filter": freshness_filter,
             "filters": {
                 "module":      _OB_MODULE,
                 "setup_types": list(_OB_SETUP_TYPES),
@@ -433,7 +583,9 @@ def run_ob_backtest(
                 "result":      rf or "all",
                 "limit":       cap,
                 "stop_mode":   stop_mode,
+                "freshness":   freshness_filter,
             },
+            "freshness_summary": freshness_summary,
             "summary":            summary,
             "diagnostics":        diagnostics,
             "diagnostic_summary": diag_summary,

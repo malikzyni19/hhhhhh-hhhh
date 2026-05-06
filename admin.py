@@ -1110,6 +1110,7 @@ def intelligence_backtest_ob():
         setup_type   = request.args.get("setup_type")  or None
         source       = request.args.get("source",  "live")
         stop_mode    = request.args.get("stop_mode", "wick").strip().lower() or "wick"
+        freshness    = request.args.get("freshness", "all").strip().lower() or "all"
         result       = (
             request.args.get("result") or
             request.args.get("result_filter") or
@@ -1124,6 +1125,7 @@ def intelligence_backtest_ob():
             source=source,
             result_filter=result,
             stop_mode=stop_mode,
+            freshness=freshness,
         )
         return jsonify(result)
 
