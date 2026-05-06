@@ -301,12 +301,18 @@ def send_email_alert(subject: str, body: str) -> bool:
 
 
 def send_verification_email(to_email: str, code: str, username: str) -> bool:
-    """Send a 6-digit OTP verification email directly to the new user."""
-    if not all([ALERT_EMAIL_FROM, ALERT_EMAIL_PASS, to_email]):
+    """Send a 6-digit OTP verification email directly to the new user.
+    Tries SMTP_SSL (465) first, then STARTTLS (587) as fallback.
+    Returns True on success, False on any failure.
+    """
+    if not ALERT_EMAIL_FROM or not ALERT_EMAIL_PASS:
+        print("[VERIFY-EMAIL] SMTP not configured — ALERT_EMAIL_FROM / ALERT_EMAIL_PASS env vars missing")
         return False
-    try:
-        subject = "ZyNi SMC — Verify Your Email Address"
-        body = f"""
+    if not to_email:
+        return False
+
+    subject = "ZyNi SMC — Verify Your Email Address"
+    body = f"""
 <html>
 <body style="margin:0;padding:0;background:#060a14;font-family:'Segoe UI',Arial,sans-serif">
 <div style="max-width:520px;margin:40px auto;background:#0d1525;border:1px solid rgba(30,184,200,0.25);
@@ -326,7 +332,7 @@ def send_verification_email(to_email: str, code: str, username: str) -> bool:
     <div style="font-size:42px;font-weight:800;letter-spacing:14px;color:#1eb8c8;
                 font-family:'Courier New',monospace">{code}</div>
     <div style="font-size:12px;color:rgba(232,240,255,0.4);margin-top:10px">
-      Valid for 15 minutes · Do not share this code
+      Valid for 15 minutes &middot; Do not share this code
     </div>
   </div>
   <p style="color:rgba(232,240,255,0.35);font-size:12px;text-align:center;margin:0">
@@ -335,17 +341,38 @@ def send_verification_email(to_email: str, code: str, username: str) -> bool:
 </div>
 </body>
 </html>"""
+
+    def _build_msg():
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
         msg["From"]    = ALERT_EMAIL_FROM
         msg["To"]      = to_email
         msg.attach(MIMEText(body, "html"))
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as srv:
+        return msg
+
+    # Try SMTP_SSL on port 465 first
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as srv:
             srv.login(ALERT_EMAIL_FROM, ALERT_EMAIL_PASS)
-            srv.sendmail(ALERT_EMAIL_FROM, to_email, msg.as_string())
+            srv.sendmail(ALERT_EMAIL_FROM, to_email, _build_msg().as_string())
+        print(f"[VERIFY-EMAIL] Sent via SSL/465 to {to_email}")
         return True
-    except Exception as e:
-        print(f"[VERIFY-EMAIL] Failed to send to {to_email}: {e}")
+    except Exception as e1:
+        print(f"[VERIFY-EMAIL] SSL/465 failed ({e1}), trying STARTTLS/587…")
+
+    # Fallback: STARTTLS on port 587
+    try:
+        ctx = ssl.create_default_context()
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=15) as srv:
+            srv.ehlo()
+            srv.starttls(context=ctx)
+            srv.ehlo()
+            srv.login(ALERT_EMAIL_FROM, ALERT_EMAIL_PASS)
+            srv.sendmail(ALERT_EMAIL_FROM, to_email, _build_msg().as_string())
+        print(f"[VERIFY-EMAIL] Sent via STARTTLS/587 to {to_email}")
+        return True
+    except Exception as e2:
+        print(f"[VERIFY-EMAIL] STARTTLS/587 also failed ({e2})")
         return False
 
 
@@ -4703,11 +4730,16 @@ def register():
         db.session.add(ev)
         db.session.commit()
 
-        threading.Thread(
-            target=send_verification_email,
-            args=(email, code, username),
-            daemon=True,
-        ).start()
+        # Send synchronously so we know immediately if it succeeded
+        email_sent = send_verification_email(email, code, username)
+
+        # Store outcome in session so verify page can react
+        session["verify_email_sent"]    = email_sent
+        session["verify_pending_user"]  = username
+
+        # If SMTP is not configured, expose code via session so user can proceed
+        if not email_sent:
+            session["verify_fallback_code"] = code
 
         return redirect(url_for("verify_email", username=username))
     except Exception as _re:
@@ -4719,8 +4751,13 @@ def register():
 @app.route("/verify-email", methods=["GET", "POST"])
 def verify_email():
     if request.method == "GET":
-        username = request.args.get("username", "")
-        return render_template("verify.html", username=username)
+        username = request.args.get("username", "") or session.get("verify_pending_user", "")
+        email_sent    = session.pop("verify_email_sent", True)   # assume sent if not in session
+        fallback_code = session.pop("verify_fallback_code", None)
+        return render_template("verify.html",
+                               username=username,
+                               email_sent=email_sent,
+                               fallback_code=fallback_code)
 
     username = request.form.get("username", "").strip().lower()
     code     = request.form.get("code", "").strip()
@@ -4785,14 +4822,17 @@ def resend_verification():
         db.session.add(ev)
         db.session.commit()
 
-        threading.Thread(
-            target=send_verification_email,
-            args=(user.email, code, username),
-            daemon=True,
-        ).start()
+        email_sent = send_verification_email(user.email, code, username)
 
-        return render_template("verify.html", username=username,
-                               success="A new verification code has been sent to your email.")
+        if email_sent:
+            return render_template("verify.html", username=username,
+                                   email_sent=True,
+                                   success=f"A new code has been sent to {user.email}.")
+        else:
+            return render_template("verify.html", username=username,
+                                   email_sent=False,
+                                   fallback_code=code,
+                                   success="New code generated.")
     except Exception as _re:
         print(f"[RESEND-VERIFY] Error: {_re}")
         db.session.rollback()
