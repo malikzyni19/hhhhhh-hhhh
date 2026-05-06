@@ -276,24 +276,41 @@ def save_user_watchlist(username: str, pairs: List[str]) -> None:
 #   ALERT_EMAIL_PASS   = Gmail App Password (not your real password)
 #   ALERT_EMAIL_TO     = email where you want to receive alerts
 # ============================================================
-ALERT_EMAIL_FROM = os.environ.get("ALERT_EMAIL_FROM", "")
-ALERT_EMAIL_PASS = os.environ.get("ALERT_EMAIL_PASS", "")
-ALERT_EMAIL_TO   = os.environ.get("ALERT_EMAIL_TO", "")
+# Email env-var helpers — read at call time so Koyeb secrets
+# injected after process start are always picked up.
+def _email_from() -> str:
+    return os.environ.get("ALERT_EMAIL_FROM", "").strip()
+
+def _email_pass() -> str:
+    # Strip spaces — Gmail App Passwords are displayed with spaces
+    # (e.g. "xpbt jcgt fnds wcfx") but must be used without them.
+    return os.environ.get("ALERT_EMAIL_PASS", "").replace(" ", "")
+
+def _email_to() -> str:
+    return os.environ.get("ALERT_EMAIL_TO", "").strip()
+
+# Keep module-level aliases for legacy callers (send_email_alert)
+ALERT_EMAIL_FROM = ""
+ALERT_EMAIL_PASS = ""
+ALERT_EMAIL_TO   = ""
 
 
 def send_email_alert(subject: str, body: str) -> bool:
-    """Send email notification. Returns True on success."""
-    if not all([ALERT_EMAIL_FROM, ALERT_EMAIL_PASS, ALERT_EMAIL_TO]):
+    """Send login-alert email to admin. Returns True on success."""
+    frm  = _email_from()
+    pwd  = _email_pass()
+    to   = _email_to()
+    if not all([frm, pwd, to]):
         return False  # Not configured — silently skip
     try:
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
-        msg["From"]    = ALERT_EMAIL_FROM
-        msg["To"]      = ALERT_EMAIL_TO
+        msg["From"]    = frm
+        msg["To"]      = to
         msg.attach(MIMEText(body, "html"))
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as srv:
-            srv.login(ALERT_EMAIL_FROM, ALERT_EMAIL_PASS)
-            srv.sendmail(ALERT_EMAIL_FROM, ALERT_EMAIL_TO, msg.as_string())
+            srv.login(frm, pwd)
+            srv.sendmail(frm, to, msg.as_string())
         return True
     except Exception as e:
         print(f"[EMAIL] Failed: {e}")
@@ -302,11 +319,17 @@ def send_email_alert(subject: str, body: str) -> bool:
 
 def send_verification_email(to_email: str, code: str, username: str) -> bool:
     """Send a 6-digit OTP verification email directly to the new user.
+    Reads SMTP credentials fresh from env at call time (supports Koyeb
+    secrets injected after process start).
     Tries SMTP_SSL (465) first, then STARTTLS (587) as fallback.
     Returns True on success, False on any failure.
     """
-    if not ALERT_EMAIL_FROM or not ALERT_EMAIL_PASS:
-        print("[VERIFY-EMAIL] SMTP not configured — ALERT_EMAIL_FROM / ALERT_EMAIL_PASS env vars missing")
+    frm = _email_from()
+    pwd = _email_pass()
+    if not frm or not pwd:
+        print(f"[VERIFY-EMAIL] SMTP not configured — "
+              f"ALERT_EMAIL_FROM={'set' if frm else 'MISSING'}, "
+              f"ALERT_EMAIL_PASS={'set' if pwd else 'MISSING'}")
         return False
     if not to_email:
         return False
@@ -345,20 +368,22 @@ def send_verification_email(to_email: str, code: str, username: str) -> bool:
     def _build_msg():
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
-        msg["From"]    = ALERT_EMAIL_FROM
+        msg["From"]    = frm
         msg["To"]      = to_email
         msg.attach(MIMEText(body, "html"))
         return msg
 
+    print(f"[VERIFY-EMAIL] Attempting send from {frm} to {to_email}")
+
     # Try SMTP_SSL on port 465 first
     try:
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as srv:
-            srv.login(ALERT_EMAIL_FROM, ALERT_EMAIL_PASS)
-            srv.sendmail(ALERT_EMAIL_FROM, to_email, _build_msg().as_string())
+            srv.login(frm, pwd)
+            srv.sendmail(frm, to_email, _build_msg().as_string())
         print(f"[VERIFY-EMAIL] Sent via SSL/465 to {to_email}")
         return True
     except Exception as e1:
-        print(f"[VERIFY-EMAIL] SSL/465 failed ({e1}), trying STARTTLS/587…")
+        print(f"[VERIFY-EMAIL] SSL/465 failed: {e1}")
 
     # Fallback: STARTTLS on port 587
     try:
@@ -367,12 +392,12 @@ def send_verification_email(to_email: str, code: str, username: str) -> bool:
             srv.ehlo()
             srv.starttls(context=ctx)
             srv.ehlo()
-            srv.login(ALERT_EMAIL_FROM, ALERT_EMAIL_PASS)
-            srv.sendmail(ALERT_EMAIL_FROM, to_email, _build_msg().as_string())
+            srv.login(frm, pwd)
+            srv.sendmail(frm, to_email, _build_msg().as_string())
         print(f"[VERIFY-EMAIL] Sent via STARTTLS/587 to {to_email}")
         return True
     except Exception as e2:
-        print(f"[VERIFY-EMAIL] STARTTLS/587 also failed ({e2})")
+        print(f"[VERIFY-EMAIL] STARTTLS/587 also failed: {e2}")
         return False
 
 
@@ -4838,6 +4863,36 @@ def resend_verification():
         db.session.rollback()
         return render_template("verify.html", username=username,
                                error="Failed to resend. Please try again later.")
+
+
+@app.route("/admin/test-email")
+def admin_test_email():
+    """Diagnostic endpoint — admin only. Tests SMTP and shows env-var state."""
+    if not session.get("is_admin"):
+        return "Access denied", 403
+    frm = _email_from()
+    pwd = _email_pass()
+    to  = _email_to()
+    result = {"from_set": bool(frm), "pass_set": bool(pwd), "to_set": bool(to),
+              "from_val": frm, "to_val": to}
+    if not frm or not pwd:
+        result["smtp_test"] = "SKIPPED — credentials missing"
+        return jsonify(result)
+    # Try live SMTP test
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as srv:
+            srv.login(frm, pwd)
+        result["smtp_test"] = "OK via SSL/465"
+    except Exception as e1:
+        try:
+            ctx = ssl.create_default_context()
+            with smtplib.SMTP("smtp.gmail.com", 587, timeout=10) as srv:
+                srv.ehlo(); srv.starttls(context=ctx); srv.ehlo()
+                srv.login(frm, pwd)
+            result["smtp_test"] = "OK via STARTTLS/587"
+        except Exception as e2:
+            result["smtp_test"] = f"FAILED — 465: {e1} | 587: {e2}"
+    return jsonify(result)
 
 
 @app.route("/logout")
