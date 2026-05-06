@@ -84,8 +84,32 @@ def _extract_ob_alert(alert: dict, result: dict, exchange: str, timeframe: str,
         if not pair or detected_price <= 0:
             return None
 
+        # Build enriched meta — start from meta, then add top-level alert fields
+        # that are NOT inside meta so they aren't silently dropped.
+        raw_meta = dict(meta)
+
+        # Preserve top-level alert["strength"] (priority integer 3–5)
+        _alert_strength = alert.get("strength")
+        if _alert_strength is not None:
+            raw_meta["alert_strength"] = _alert_strength
+
+        # Preserve other useful top-level alert fields if present
+        for _ak in ("score", "label"):
+            _av = alert.get(_ak)
+            if _av is not None:
+                raw_meta.setdefault(f"alert_{_ak}", _av)
+
+        # Normalized ob_strength: best available numeric strength value
+        _ob_str = (
+            _safe_float(meta.get("obStrengthPct")) or
+            _safe_float(meta.get("obStrength")) or
+            _safe_float(_alert_strength)
+        )
+        if _ob_str is not None:
+            raw_meta["ob_strength"] = round(_ob_str, 2)
+
         try:
-            raw_meta_json = json.dumps(meta, default=str)
+            raw_meta_json = json.dumps(raw_meta, default=str)
         except Exception:
             raw_meta_json = None
 

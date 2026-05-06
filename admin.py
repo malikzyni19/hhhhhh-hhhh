@@ -1132,3 +1132,78 @@ def intelligence_backtest_ob():
     except Exception as _e:
         return jsonify({"ok": False, "error": str(_e)}), 500
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GET /admin/intelligence/ob-strength-audit
+# Read-only audit: shows raw_meta_json keys and strength fields for recent OBs
+# ─────────────────────────────────────────────────────────────────────────────
+@admin_bp.route("/intelligence/ob-strength-audit", methods=["GET"])
+@admin_required
+def intelligence_ob_strength_audit():
+    try:
+        import json as _json
+        from models import SignalEvent
+        from backtest_ob import extract_ob_strength_from_meta
+
+        try:
+            limit = min(int(request.args.get("limit", 20)), 200)
+        except (TypeError, ValueError):
+            limit = 20
+
+        events = (
+            SignalEvent.query
+            .filter(SignalEvent.module == "ob")
+            .order_by(SignalEvent.detected_at.desc())
+            .limit(limit)
+            .all()
+        )
+
+        rows = []
+        sources_seen: dict = {}
+        with_strength = 0
+
+        for ev in events:
+            try:
+                raw_meta = _json.loads(ev.raw_meta_json or "{}")
+            except Exception:
+                raw_meta = {}
+
+            strength, source = extract_ob_strength_from_meta(raw_meta)
+
+            if strength is not None:
+                with_strength += 1
+                sources_seen[source] = sources_seen.get(source, 0) + 1
+
+            rows.append({
+                "signal_id":                ev.signal_id,
+                "pair":                     ev.pair,
+                "timeframe":                ev.timeframe,
+                "setup_type":               ev.setup_type,
+                "score":                    ev.score,
+                "detected_at":              ev.detected_at.isoformat() if ev.detected_at else None,
+                "raw_meta_keys":            sorted(raw_meta.keys()),
+                "raw_meta_json":            raw_meta,
+                "detected_ob_strength":     strength,
+                "detected_strength_source": source,
+            })
+
+        checked = len(events)
+        return jsonify({
+            "ok":      True,
+            "checked": checked,
+            "rows":    rows,
+            "summary": {
+                "with_strength":    with_strength,
+                "missing_strength": checked - with_strength,
+                "sources":          sources_seen,
+            },
+            "note": (
+                "ob_strength / obStrengthPct already available in raw_meta for most rows. "
+                "alert_strength (top-level alert field) now also preserved by updated "
+                "signal_extractor for future signals. Old DB rows are NOT mutated."
+            ),
+        })
+
+    except Exception as _e:
+        return jsonify({"ok": False, "error": str(_e)}), 500
+

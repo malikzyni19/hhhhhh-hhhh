@@ -467,7 +467,7 @@
             <th>Pair</th><th>TF</th><th>Setup</th><th>Dir</th>
             <th>Score</th><th>Result</th><th>Loss Detail</th>
             <th id="bt-variants-th">Variants (Alt / ST / CCE)</th>
-            <th>Freshness</th>
+            <th>Freshness</th><th>Str</th>
             <th>Entry</th><th>TP</th><th>SL</th><th>Reason</th>
           </tr></thead>
           <tbody id="bt-tbody"></tbody>
@@ -1622,6 +1622,9 @@ function intBt_renderSignals(signals) {
       '<span style="font-size:9px;color:var(--muted)">CCE:</span>' + intBt_cfBadge(s.cf_candle_close_entry) +
       '</td>';
     rows += '<td style="white-space:nowrap">' + intBt_freshnessBadge(s.freshness_status, s.touch_count_before_signal) + '</td>';
+    var strVal = (s.ob_strength !== null && s.ob_strength !== undefined) ? s.ob_strength : null;
+    rows += '<td style="font-size:10px;white-space:nowrap;color:' + (strVal !== null ? 'var(--text)' : 'var(--muted)') + '">' +
+            (strVal !== null ? strVal : '—') + '</td>';
     rows += '<td style="font-family:\'JetBrains Mono\',monospace;font-size:10px">' + intBt_fmt(s.entry_price) + '</td>';
     rows += '<td style="font-family:\'JetBrains Mono\',monospace;font-size:10px">' + intBt_fmt(s.target_price) + '</td>';
     rows += '<td style="font-family:\'JetBrains Mono\',monospace;font-size:10px">' + intBt_fmt(s.stop_price) + '</td>';

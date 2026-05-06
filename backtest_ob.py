@@ -1,11 +1,12 @@
 """
-backtest_ob.py — Phase 7B/7C/7D: OB Backtest with Loss Diagnostics + Freshness
+backtest_ob.py — Phase 7B/7C/7D/7E: OB Backtest with Loss Diagnostics + Freshness + Strength
 
 Phase 7A base: read-only OB-only candle-replay backtest.
 Phase 7B adds: per-signal loss_reason_detail, 3 counterfactual variants,
 and a diagnostics summary + per-breakdown diagnostic counts.
 Phase 7C adds: stop_mode (wick/close) selector.
 Phase 7D adds: first-touch freshness filter using pre-signal candles.
+Phase 7E adds: OB strength extraction helper used in backtest rows.
 
 Rules:
   - Never mutates SignalEvent or SignalOutcome.
@@ -46,6 +47,44 @@ _DIAG_KEYS = (
 
 # Valid freshness filter values
 _FRESHNESS_VALUES = frozenset({"all", "first_touch", "already_touched", "unknown"})
+
+# Ordered candidate keys for OB strength — checked left to right, first match wins
+_OB_STRENGTH_KEYS = (
+    "ob_strength",        # normalized key written by updated signal_extractor
+    "obStrengthPct",      # already in meta for most logged signals
+    "obStrength",
+    "ob_strength_pct",
+    "strengthPct",
+    "strength",
+    "alert_strength",     # top-level alert["strength"] preserved by updated extractor
+    "volumeStrength",
+    "volume_strength",
+    "obVolumeStrength",
+    "ob_volume_strength",
+    "percentage",
+    "pct",
+)
+
+
+def extract_ob_strength_from_meta(raw_meta: dict) -> "tuple[float | None, str]":
+    """
+    Extract the best available OB strength number from raw_meta_json dict.
+
+    Checks _OB_STRENGTH_KEYS left to right; returns (value, source_key) for
+    the first non-None numeric hit. Returns (None, "missing") if nothing found.
+    """
+    for key in _OB_STRENGTH_KEYS:
+        val = raw_meta.get(key)
+        if val is None:
+            continue
+        try:
+            f = float(val)
+            if f > 0:
+                return round(f, 2), key
+        except (TypeError, ValueError):
+            continue
+    return None, "missing"
+
 
 # Candidate keys that would contain OB formation timestamp (none stored yet)
 _OB_ORIGIN_KEYS = (
@@ -411,6 +450,13 @@ def run_ob_backtest(
                     })
                     continue
 
+                # ── OB strength from raw_meta_json ───────────────────────
+                try:
+                    ev_meta = json.loads(ev.raw_meta_json or "{}")
+                except Exception:
+                    ev_meta = {}
+                ob_strength, ob_strength_source = extract_ob_strength_from_meta(ev_meta)
+
                 # ── Freshness classification (uses pre-signal candles in ──
                 # ── already-fetched array — no extra API calls)           ──
                 freshness_info = classify_ob_freshness(ev, candles, detected_ms)
@@ -522,6 +568,8 @@ def run_ob_backtest(
                     "touch_count_before_signal": freshness_info.get("touch_count_before_signal"),
                     "origin_time":               freshness_info.get("origin_time"),
                     "freshness_reason":          freshness_info.get("reason"),
+                    "ob_strength":               ob_strength,
+                    "ob_strength_source":        ob_strength_source,
                 })
 
             except Exception as _sig_err:
