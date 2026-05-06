@@ -434,12 +434,15 @@
       <!-- Breakdown tables -->
       <div id="bt-breakdown"></div>
       <!-- Signal table -->
-      <div class="adm-table-wrap" id="bt-table-wrap" style="display:none;margin-top:14px">
-        <table class="adm-table" style="table-layout:auto">
+      <p style="font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin:14px 0 6px">
+        Signal Detail &nbsp;<span style="font-weight:400;text-transform:none;letter-spacing:0">← scroll right for variants</span>
+      </p>
+      <div class="adm-table-wrap" id="bt-table-wrap" style="display:none">
+        <table class="adm-table" style="table-layout:auto;font-size:11px">
           <thead><tr>
             <th>Pair</th><th>TF</th><th>Setup</th><th>Dir</th>
             <th>Score</th><th>Result</th><th>Loss Detail</th>
-            <th>Close Stop</th><th>Small TP</th><th>CCE</th>
+            <th>Variants (CS / ST / CCE)</th>
             <th>Entry</th><th>TP</th><th>SL</th><th>Reason</th>
           </tr></thead>
           <tbody id="bt-tbody"></tbody>
@@ -1405,15 +1408,16 @@ function intBt_renderDiagnostics(diag) {
   var el = document.getElementById('bt-diag');
   if (!el || !diag) return;
   var defs = [
-    { key: 'same_candle_stop',          label: 'Same Candle Stop',        cls: 'red'   },
-    { key: 'wick_stop_only',            label: 'Wick Stop Only',          cls: 'amber' },
-    { key: 'close_stop_also_lost',      label: 'Close Stop Also Lost',    cls: 'red'   },
-    { key: 'stop_after_clean_entry',    label: 'Stop After Clean Entry',  cls: 'amber' },
-    { key: 'target_and_stop_same_candle', label: 'Target+Stop Same Candle', cls: 'amber'},
-    { key: 'no_entry_expired',          label: 'No Entry Expired',        cls: 'muted' },
-    { key: 'entered_open',              label: 'Entered (Open)',          cls: 'cyan'  },
-    { key: 'won_clean',                 label: 'Won Clean',               cls: 'green' },
-    { key: 'waiting_for_entry',         label: 'Waiting Entry',           cls: 'muted' },
+    { key: 'same_candle_stop',            label: 'Same Candle Stop',        cls: 'red'   },
+    { key: 'wick_stop_only',              label: 'Wick Stop Only',          cls: 'amber' },
+    { key: 'close_stop_also_lost',        label: 'Close Stop Also Lost',    cls: 'red'   },
+    { key: 'stop_after_clean_entry',      label: 'Stop After Clean Entry',  cls: 'amber' },
+    { key: 'target_and_stop_same_candle', label: 'Target+Stop Same Candle', cls: 'amber' },
+    { key: 'no_entry_expired',            label: 'No Entry Expired',        cls: 'muted' },
+    { key: 'entered_then_expired',        label: 'Entered Then Expired',    cls: 'muted' },
+    { key: 'entered_open',                label: 'Entered (Open)',          cls: 'cyan'  },
+    { key: 'won_clean',                   label: 'Won Clean',               cls: 'green' },
+    { key: 'waiting_for_entry',           label: 'Waiting Entry',           cls: 'muted' },
   ];
   var html = '<p style="font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">Loss Diagnostics</p>';
   html += '<div class="aud-summary-grid" style="margin-bottom:14px">';
@@ -1512,10 +1516,12 @@ function intBt_renderSignals(signals) {
     rows += '<td>' + intAud_escHtml(s.direction || '—') + '</td>';
     rows += '<td>' + intAud_escHtml(String(s.score !== null && s.score !== undefined ? s.score : '—')) + '</td>';
     rows += '<td><span class="aud-outcome-badge ' + badgeCls + '">' + intAud_escHtml(s.result || '—') + '</span></td>';
-    rows += '<td style="font-size:9px;' + intBt_diagCls(s.loss_reason_detail) + '">' + intAud_escHtml((s.loss_reason_detail || '—').replace(/_/g,' ')) + '</td>';
-    rows += '<td>' + intBt_cfBadge(s.cf_close_stop) + '</td>';
-    rows += '<td>' + intBt_cfBadge(s.cf_small_target) + '</td>';
-    rows += '<td>' + intBt_cfBadge(s.cf_candle_close_entry) + '</td>';
+    rows += '<td style="font-size:10px;' + intBt_diagCls(s.loss_reason_detail) + ';white-space:nowrap">' + intAud_escHtml((s.loss_reason_detail || '—').replace(/_/g,' ')) + '</td>';
+    rows += '<td style="white-space:nowrap">' +
+      '<span style="font-size:9px;color:var(--muted)">CS:</span>' + intBt_cfBadge(s.cf_close_stop) + ' ' +
+      '<span style="font-size:9px;color:var(--muted)">ST:</span>' + intBt_cfBadge(s.cf_small_target) + ' ' +
+      '<span style="font-size:9px;color:var(--muted)">CCE:</span>' + intBt_cfBadge(s.cf_candle_close_entry) +
+      '</td>';
     rows += '<td style="font-family:\'JetBrains Mono\',monospace;font-size:10px">' + intBt_fmt(s.entry_price) + '</td>';
     rows += '<td style="font-family:\'JetBrains Mono\',monospace;font-size:10px">' + intBt_fmt(s.target_price) + '</td>';
     rows += '<td style="font-family:\'JetBrains Mono\',monospace;font-size:10px">' + intBt_fmt(s.stop_price) + '</td>';
