@@ -202,6 +202,8 @@ def run_ob_candidates(
         "missing_strength": 0,
         "missing_price": 0,
     }
+    tv_vs_count = 0
+    tv_vs_missing = 0
 
     # ── DB query ──────────────────────────────────────────────────────────────
     q = SignalEvent.query.filter(
@@ -236,6 +238,19 @@ def run_ob_candidates(
         # True OB strength only — never score, never alert_strength
         ob_strength, ob_strength_source = extract_ob_strength_from_meta(raw_meta)
 
+        # TV OB volume share fields (only present for signals captured after Phase 8B)
+        tv_ob_volume_share_pct     = raw_meta.get("tvObVolumeSharePct")
+        tv_ob_volume_share_status  = raw_meta.get("tvObVolumeShareStatus")
+        tv_ob_formation_volume     = raw_meta.get("tvObFormationVolume")
+        tv_ob_visible_total_volume = raw_meta.get("tvObVisibleTotalVolume")
+        tv_ob_visible_count        = raw_meta.get("tvObVisibleCount")
+        tv_ob_parity_pool          = raw_meta.get("tvObParityPool")
+        tv_ob_parity_settings      = raw_meta.get("tvObParitySettings")
+        if tv_ob_volume_share_pct is not None:
+            tv_vs_count += 1
+        else:
+            tv_vs_missing += 1
+
         # Strength gate
         if strength_min > 0 and (ob_strength is None or ob_strength < strength_min):
             summary["missing_strength"] += 1
@@ -250,6 +265,13 @@ def run_ob_candidates(
                 "zone_low":           ev.zone_low,
                 "ob_strength":        ob_strength,
                 "ob_strength_source": ob_strength_source,
+                "tv_ob_volume_share_pct":     tv_ob_volume_share_pct,
+                "tv_ob_volume_share_status":  tv_ob_volume_share_status,
+                "tv_ob_formation_volume":     tv_ob_formation_volume,
+                "tv_ob_visible_total_volume": tv_ob_visible_total_volume,
+                "tv_ob_visible_count":        tv_ob_visible_count,
+                "tv_ob_parity_pool":          tv_ob_parity_pool,
+                "tv_ob_parity_settings":      tv_ob_parity_settings,
                 "current_price":      None,
                 "price_source":       None,
                 "distance_pct":       None,
@@ -320,6 +342,13 @@ def run_ob_candidates(
             "zone_low":           ev.zone_low,
             "ob_strength":        ob_strength,
             "ob_strength_source": ob_strength_source,
+            "tv_ob_volume_share_pct":     tv_ob_volume_share_pct,
+            "tv_ob_volume_share_status":  tv_ob_volume_share_status,
+            "tv_ob_formation_volume":     tv_ob_formation_volume,
+            "tv_ob_visible_total_volume": tv_ob_visible_total_volume,
+            "tv_ob_visible_count":        tv_ob_visible_count,
+            "tv_ob_parity_pool":          tv_ob_parity_pool,
+            "tv_ob_parity_settings":      tv_ob_parity_settings,
             "current_price":      current_price,
             "price_source":       price_source,
             "distance_pct":       distance_pct,
@@ -346,6 +375,10 @@ def run_ob_candidates(
             "rr":              rr,
         },
         "summary": summary,
+        "tv_volume_share_summary": {
+            "with_tv_volume_share":    tv_vs_count,
+            "missing_tv_volume_share": tv_vs_missing,
+        },
         "api_usage": {
             "price_fetch_mode":   price_fetch_mode,
             "per_pair_rest_calls": 0,

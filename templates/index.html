@@ -1385,10 +1385,20 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
         <div class="tip-box" id="tip-approach">How close (in %) price must be to an OB before flagged as approaching. Lower = stricter. 2% is a good default.</div>
         <div class="tip-box" id="tip-consol">How many consecutive candles must stay near a zone to count as consolidation. Try 3–6.</div>
         <div class="subrow">
-          <label><input id="useObStrengthFilter" type="checkbox"> OB Strength Filter <span class="tip-icon" onclick="toggleTip('tip-ob-strength')">ⓘ</span></label>
-          <div class="field"><label>Min %</label><input id="obMinStrengthPct" type="number" value="70"></div>
+          <label><input id="useObStrengthFilter" type="checkbox"> Use OB Strength Filter <span class="tip-icon" onclick="toggleTip('tip-ob-strength')">ⓘ</span></label>
         </div>
-        <div class="tip-box" id="tip-ob-strength">When enabled, only Order Blocks with a strength score above the <b>Min %</b> are kept. Strength is based on how explosive the move was that created the block. Higher min % removes weaker zones and keeps only high-quality blocks. Try 70% for a strong filter.</div>
+        <div id="obStrengthFilterOptions" style="display:none;margin-left:4px">
+          <div class="subrow">
+            <div class="field"><label>Strength Type</label>
+              <select id="obStrengthFilterMode">
+                <option value="screener_quality">Screener Quality Strength</option>
+                <option value="tv_volume_share">TradingView OB %</option>
+              </select>
+            </div>
+            <div class="field"><label>Min %</label><input id="obMinStrengthPct" type="number" value="70" min="0" max="100" step="1"></div>
+          </div>
+        </div>
+        <div class="tip-box" id="tip-ob-strength">Filter active OBs by strength. <b>Screener Quality</b> uses the built-in quality score (volume, side dominance, freshness). <b>TradingView OB %</b> uses the Pine-style visible OB volume share (floor of source volume / total visible pool × 100). The two metrics are never mixed or substituted for each other.</div>
         <div class="subrow">
           <label><input id="useHighProbOB" type="checkbox"> Use OB Quality Engine v2 <span class="tip-icon" onclick="toggleTip('tip-high-prob-ob')">ⓘ</span></label>
           <div class="field" id="highProbQualityWrap" style="display:none">
@@ -2103,8 +2113,9 @@ function currentSettings(){
     rsiOB: +$('rsiOB').value,
     rsiOS: +$('rsiOS').value,
     obDistancePct: +$('obDistancePct').value,
-    useObStrengthFilter: $('useObStrengthFilter').checked,
-    obMinStrengthPct: +$('obMinStrengthPct').value,
+    useObStrengthFilter:  $('useObStrengthFilter').checked,
+    obStrengthFilterMode: $('obStrengthFilterMode') ? $('obStrengthFilterMode').value : 'screener_quality',
+    obMinStrengthPct:     +$('obMinStrengthPct').value,
     useHighProbOB: $('useHighProbOB').checked,
     obMinQuality: +$('obMinQuality').value,
     useAtrObApproach: $('useAtrObApproach').checked,
@@ -2389,7 +2400,21 @@ function renderMainResultsList(results){
       return '<div class="result-detail" style="margin-top:3px;font-family:\'JetBrains Mono\',monospace;font-size:0.72rem;display:flex;flex-wrap:wrap;gap:6px;opacity:0.9"><span style="color:#475569">Checks:</span>' + pts.join('') + '</div>';
     }
 
-    const checksLine = buildObChecks(a);
+    function buildObStrengths(al){
+      var s = al.setup;
+      if(s !== 'OB_APPROACH' && s !== 'OB_CONSOL') return '';
+      var m = al.meta;
+      if(!m) return '';
+      var scrStr = m.obStrengthPct != null ? (parseFloat(m.obStrengthPct).toFixed(1) + '%') : '—';
+      var tvShare = m.tvObVolumeSharePct != null ? (m.tvObVolumeSharePct + '%') : '—';
+      return '<div class="result-detail" style="margin-top:3px;font-size:0.72rem;display:flex;gap:10px;flex-wrap:wrap">' +
+        '<span><span style="color:#475569">OB Str: </span><span style="color:#e2e8f0">' + scrStr + '</span></span>' +
+        '<span><span style="color:#475569">TV OB %: </span><span style="color:' + (m.tvObVolumeSharePct != null ? '#22d3ee' : '#475569') + '">' + tvShare + '</span></span>' +
+        '</div>';
+    }
+
+    const checksLine   = buildObChecks(a);
+    const strengthLine = buildObStrengths(a);
 
     const extraDetails = allAlerts.slice(1).filter(al => al.setup !== a.setup)
       .map(al => '<div class="result-detail" style="margin-top:4px;opacity:0.7">' + al.detail + '</div>' + buildObChecks(al)).join('');
@@ -2419,6 +2444,7 @@ function renderMainResultsList(results){
       </div>
       <div class="result-summary">${a.detail}</div>
       <div class="result-details">
+        ${strengthLine}
         ${checksLine}
         ${extraDetails}
         <div class="result-footer" style="margin-top:6px">
@@ -2769,7 +2795,7 @@ function toggleTip(id){
 // ── Settings persistence (localStorage) ──
 const SAVE_IDS_VAL = [
   'tf','iLen','sLen','approachPct','consolCandles','rsiOB','rsiOS',
-  'obDistancePct','obMinStrengthPct','obMinQuality','obApproachAtrMult',
+  'obDistancePct','obMinStrengthPct','obMinQuality','obApproachAtrMult','obStrengthFilterMode',
   'fvgState','fvgAgeMin','fvgAgeMax','fvgMaxDistancePct','fvgTouchDepth',
   'fvgObOverlapMode','fvgObMinOverlapPct',
   'fibTf','fibTolerancePct','fibAtrMultiplier','fibApproachPct',
@@ -2823,6 +2849,7 @@ function loadSettings(){
   if($('useObModule'))      toggleWlSection('obSubOptions',      $('useObModule').checked);
   if($('useFvgModule'))     toggleWlSection('fvgSubOptions',     $('useFvgModule').checked);
   if($('useBreakerModule')) toggleWlSection('breakerSubOptions', $('useBreakerModule').checked);
+  updateObStrengthFilterFields();
   if($('filterModeHint')) $('filterModeHint').style.display = (_scanMode === 'filter') ? 'block' : 'none';
 }
 
@@ -2851,6 +2878,17 @@ $('useHighProbOB')?.addEventListener('change', () => {
 
 $('useAtrObApproach')?.addEventListener('change', () => {
   updateAtrObApproachFields();
+  saveSettings();
+});
+
+function updateObStrengthFilterFields(){
+  const opts = $('obStrengthFilterOptions');
+  const chk  = $('useObStrengthFilter');
+  if(opts && chk){ opts.style.display = chk.checked ? 'block' : 'none'; }
+}
+
+$('useObStrengthFilter')?.addEventListener('change', () => {
+  updateObStrengthFilterFields();
   saveSettings();
 });
 

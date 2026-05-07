@@ -3345,6 +3345,62 @@ def ob_approach_pct_from_atr(price: float, atr_value: float, atr_mult: float = 0
     return (max(atr_value, 0.0) * max(atr_mult, 0.0)) / price * 100.0
 
 
+# ── Pine-style TV OB volume share settings (matches TradingView OB indicator) ──
+_TV_OB_PARITY_SETTINGS: Dict[str, Any] = {
+    "showLast":       5,
+    "internalOnly":   True,
+    "swingOrderBlocks": False,
+    "filtering":      "None",
+    "mitigation":     "Absolute",
+    "positioning":    "Precise",
+    "hideOverlap":    True,
+    "overlapMode":    "Previous",
+    "breakerIncluded": False,
+}
+
+
+def calculate_tv_ob_volume_share(obs: List[Dict[str, Any]], max_ob: int = 5,
+                                  pool_name: str = "unknown") -> None:
+    """
+    Attach Pine-style TV OB volume share fields to each OB in the visible pool.
+    Mutates obs in-place (same pattern as detect_obs strengthPct attachment).
+
+    Pine reference (drawVOB):
+      seq = min(ob_num - 1, obj.avg.size() - 1)
+      tV  = sum of obj.cV for visible sequence
+      obj.dV = floor((obj.cV / tV) * 100)
+
+    pool_name: "bullish" or "bearish" — pools are always calculated separately.
+    Breaker Blocks must be excluded before calling this function.
+    """
+    visible = obs[:max_ob]  # most recent max_ob OBs (detect_obs already limits to 5)
+    total_vol = sum(ob.get("volume") or 0 for ob in visible)
+    vis_count = len(visible)
+
+    for idx, ob in enumerate(visible):
+        ob_vol = ob.get("volume") or 0
+        if total_vol <= 0:
+            status   = "zero_total_volume" if total_vol == 0 else "missing_volume"
+            tv_share = None
+        elif ob_vol <= 0:
+            status   = "missing_volume"
+            tv_share = None
+        else:
+            status   = "ok"
+            tv_share = int((ob_vol / total_vol) * 100)   # floor for positive = int()
+
+        ob["tvObVolumeSharePct"]     = tv_share
+        ob["tvObVolumeShareStatus"]  = status
+        ob["tvObFormationVolume"]    = round(ob_vol, 2) if ob_vol else None
+        ob["tvObVisibleTotalVolume"] = round(total_vol, 2)
+        ob["tvObVisibleCount"]       = vis_count
+        ob["tvObVolumeShareSource"]  = "pine_visible_active_ob_volume_share"
+        ob["tvObVolumeShareFormula"] = "floor(source_volume / visible_total_volume * 100)"
+        ob["tvObParityPool"]         = pool_name
+        ob["tvObParitySeq"]          = idx
+        ob["tvObParitySettings"]     = _TV_OB_PARITY_SETTINGS
+
+
 def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings: Dict[str, Any], btc_closes: Optional[List[float]] = None, fib_candles: Optional[List[Dict[str, float]]] = None) -> Optional[Dict[str, Any]]:
     o = [x["open"] for x in candles]
     h = [x["high"] for x in candles]
@@ -3442,20 +3498,19 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
         else:
             return str(round(vv))
 
-    # ── Calculate volumePct SEPARATELY for bullish and bearish ──
-    # Pine Script calls drawVOB separately for bull/bear — each pool sums to 100%
+    # ── TV OB Volume Share — Pine-style, bull/bear pools calculated separately ──
+    # Matches TradingView OB indicator: floor(source_volume / visible_total * 100)
+    # Breaker Blocks are excluded (obs comes from detect_obs, not detect_obs_all)
     bullish_obs = [ob for ob in obs if ob["type"] == "bullish"]
     bearish_obs = [ob for ob in obs if ob["type"] == "bearish"]
 
-    bull_total_vol = sum(ob["volume"] for ob in bullish_obs)
-    for ob in bullish_obs:
-        ob["volumePct"]       = int((ob["volume"] / bull_total_vol) * 100) if bull_total_vol > 0 else 0
-        ob["volumeFormatted"] = _fmt_ob_vol(ob["volume"])
+    calculate_tv_ob_volume_share(bullish_obs, max_ob=5, pool_name="bullish")
+    calculate_tv_ob_volume_share(bearish_obs, max_ob=5, pool_name="bearish")
 
-    bear_total_vol = sum(ob["volume"] for ob in bearish_obs)
-    for ob in bearish_obs:
-        ob["volumePct"]       = int((ob["volume"] / bear_total_vol) * 100) if bear_total_vol > 0 else 0
-        ob["volumeFormatted"] = _fmt_ob_vol(ob["volume"])
+    # Backward-compatible volumePct + formatted volume label
+    for ob in bullish_obs + bearish_obs:
+        ob["volumePct"]       = ob["tvObVolumeSharePct"] if ob["tvObVolumeSharePct"] is not None else 0
+        ob["volumeFormatted"] = _fmt_ob_vol(ob.get("volume") or 0)
 
     # ── Distance helper ──
     def _ob_distance_pct(ob):
@@ -3510,9 +3565,26 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
     ob_consol_tol_pct    = min(ob_approach_pct_base, 0.50)
     needed_consol        = settings.get("consolCandles", 5)
 
-    min_str = settings.get("obMinStrengthPct", 0) if settings.get("useObStrengthFilter") else 0
-    bullish_obs_filt = [ob for ob in obs if ob["type"] == "bullish" and ob["strengthPct"] >= min_str]
-    bearish_obs_filt = [ob for ob in obs if ob["type"] == "bearish" and ob["strengthPct"] >= min_str]
+    _use_str_filter = settings.get("useObStrengthFilter", False)
+    _str_mode       = settings.get("obStrengthFilterMode", "screener_quality")
+    _min_str        = float(settings.get("obMinStrengthPct", 0)) if _use_str_filter else 0.0
+
+    if _use_str_filter and _str_mode == "tv_volume_share":
+        # Filter by tvObVolumeSharePct only — never fallback to screener quality or score
+        bullish_obs_filt = [
+            ob for ob in obs if ob["type"] == "bullish"
+            and ob.get("tvObVolumeSharePct") is not None
+            and ob["tvObVolumeSharePct"] >= _min_str
+        ]
+        bearish_obs_filt = [
+            ob for ob in obs if ob["type"] == "bearish"
+            and ob.get("tvObVolumeSharePct") is not None
+            and ob["tvObVolumeSharePct"] >= _min_str
+        ]
+    else:
+        # screener_quality (default) or filter OFF — use obStrengthPct
+        bullish_obs_filt = [ob for ob in obs if ob["type"] == "bullish" and ob["strengthPct"] >= _min_str]
+        bearish_obs_filt = [ob for ob in obs if ob["type"] == "bearish" and ob["strengthPct"] >= _min_str]
 
     # Optional OB Quality Engine v2
     use_high_prob = settings.get("useHighProbOB", False)
@@ -3615,20 +3687,33 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
             ob_strength = (5 if use_high_prob and ob.get("quality", 0) >= 80
                            else 4 if ob["strengthPct"] >= 70 else 3)
             ob_meta_base = {
-                "obStrengthPct": ob["strengthPct"],
+                # ── Screener quality strength (existing) ──
+                "obStrengthPct":   ob["strengthPct"],
                 "obStrengthLabel": ob["strengthLabel"],
+                # ── TradingView-style OB volume share (Phase 8B) ──
+                "tvObVolumeSharePct":     ob.get("tvObVolumeSharePct"),
+                "tvObVolumeShareStatus":  ob.get("tvObVolumeShareStatus"),
+                "tvObFormationVolume":    ob.get("tvObFormationVolume"),
+                "tvObVisibleTotalVolume": ob.get("tvObVisibleTotalVolume"),
+                "tvObVisibleCount":       ob.get("tvObVisibleCount"),
+                "tvObVolumeShareSource":  ob.get("tvObVolumeShareSource"),
+                "tvObVolumeShareFormula": ob.get("tvObVolumeShareFormula"),
+                "tvObParityPool":         ob.get("tvObParityPool"),
+                "tvObParitySettings":     ob.get("tvObParitySettings"),
+                # ── Zone & proximity ──
                 "obDistPct": round(dist_pct, 3),
                 "obQuality": ob.get("quality", 0),
                 "obQualityLabel": ob.get("qualityLabel", "Weak"),
-                "obTop":     round(ob["top"], 8),
-                "obBottom":  round(ob["bottom"], 8),
-                "absorption": ob.get("absorption", "NONE"),
-                "absorptionStr": ob.get("absorptionStr", "None"),
+                "obTop":    round(ob["top"], 8),
+                "obBottom": round(ob["bottom"], 8),
+                # ── Orderflow ──
+                "absorption":     ob.get("absorption", "NONE"),
+                "absorptionStr":  ob.get("absorptionStr", "None"),
                 "absorptionPass": ob.get("absorptionPass", False),
-                "delta": ob.get("delta", 0.0),
-                "oiSignal": ob.get("oiSignal", "unknown"),
+                "delta":          ob.get("delta", 0.0),
+                "oiSignal":       ob.get("oiSignal", "unknown"),
                 "fundingContext": ob.get("fundingContext", "unknown"),
-                "ofSummary": ob.get("ofSummary", ""),
+                "ofSummary":      ob.get("ofSummary", ""),
                 **ob.get("qualityMeta", {}),
             }
 
@@ -4469,8 +4554,9 @@ def parse_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
         "consolCandles": int(payload.get("consolCandles", 4)),
         "rsiOB": float(payload.get("rsiOB", 75)),
         "rsiOS": float(payload.get("rsiOS", 25)),
-        "useObStrengthFilter": bool(payload.get("useObStrengthFilter", False)),
-        "obMinStrengthPct": float(payload.get("obMinStrengthPct", 70)),
+        "useObStrengthFilter":  bool(payload.get("useObStrengthFilter", False)),
+        "obStrengthFilterMode": payload.get("obStrengthFilterMode", "screener_quality"),
+        "obMinStrengthPct":     float(payload.get("obMinStrengthPct", 70)),
         "useHighProbOB": bool(payload.get("useHighProbOB", False)),
         "obMinQuality": int(payload.get("obMinQuality", 50)),
         "useFvgValidOnly": bool(payload.get("useFvgValidOnly", True)),
@@ -5202,7 +5288,7 @@ _WL_SCAN_SETTINGS: Dict[str, Any] = {
     "iLen": 5, "sLen": 30,
     "approachPct": 2.0, "obDistancePct": 2.0,
     "consolCandles": 5, "rsiOB": 70, "rsiOS": 30,
-    "useObStrengthFilter": False, "obMinStrengthPct": 0,
+    "useObStrengthFilter": False, "obStrengthFilterMode": "screener_quality", "obMinStrengthPct": 0,
     "useHighProbOB": False, "obMinQuality": 50,
     "useAtrObApproach": False, "obApproachAtrMult": 0.5,
     "useFvgValidOnly": False, "useFvgState": False,
