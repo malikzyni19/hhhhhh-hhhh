@@ -3731,6 +3731,11 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
             dist_pct    = _ob_dist_from_price(ob, price)
             quality_str = (f' | Quality: {ob.get("quality", 0)}/100 ({ob.get("qualityLabel", "Weak")})'
                            if use_high_prob else '')
+            _tv_share     = ob.get("tvObVolumeSharePct")
+            _tv_share_str = f'{_tv_share}%' if _tv_share is not None else '—'
+            _filter_label = ((' | Filter: TV OB %' if _str_mode == 'tv_volume_share'
+                               else ' | Filter: Quality Str')
+                             if _use_str_filter else '')
 
             # Position label
             pos_label = "INSIDE ZONE" if price_in_zone else f"{dist_pct:.2f}% from zone"
@@ -3779,7 +3784,8 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
                         "timeframe": tf,
                         "detail": (f'Consolidating on {direction} OB | {pos_label} | '
                                    f'Candles: {consecutive} | '
-                                   f'Strength: {ob["strengthPct"]:.1f}% ({ob["strengthLabel"]}){quality_str} | '
+                                   f'Quality Str: {ob["strengthPct"]:.1f}% ({ob["strengthLabel"]}) | '
+                                   f'TV OB %: {_tv_share_str}{quality_str}{_filter_label} | '
                                    f'Zone: {fmt_price(zone_bottom)} – {fmt_price(zone_top)}'
                                    + (f' | {ob["ofSummary"]}' if ob.get("ofSummary") else '')),
                         "strength": ob_strength,
@@ -3798,7 +3804,8 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
                     "direction": direction,
                     "timeframe": tf,
                     "detail": (f'Approaching {direction} OB | Dist: {dist_pct:.2f}% | '
-                               f'Strength: {ob["strengthPct"]:.1f}% ({ob["strengthLabel"]}){quality_str} | '
+                               f'Quality Str: {ob["strengthPct"]:.1f}% ({ob["strengthLabel"]}) | '
+                               f'TV OB %: {_tv_share_str}{quality_str}{_filter_label} | '
                                f'Zone: {fmt_price(zone_bottom)} – {fmt_price(zone_top)}'
                                + (f' | {ob["ofSummary"]}' if ob.get("ofSummary") else '')),
                     "strength": ob_strength,

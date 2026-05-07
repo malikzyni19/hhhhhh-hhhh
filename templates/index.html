@@ -2408,7 +2408,7 @@ function renderMainResultsList(results){
       var scrStr = m.obStrengthPct != null ? (parseFloat(m.obStrengthPct).toFixed(1) + '%') : '—';
       var tvShare = m.tvObVolumeSharePct != null ? (m.tvObVolumeSharePct + '%') : '—';
       return '<div class="result-detail" style="margin-top:3px;font-size:0.72rem;display:flex;gap:10px;flex-wrap:wrap">' +
-        '<span><span style="color:#475569">OB Str: </span><span style="color:#e2e8f0">' + scrStr + '</span></span>' +
+        '<span><span style="color:#475569">Quality Str: </span><span style="color:#e2e8f0">' + scrStr + '</span></span>' +
         '<span><span style="color:#475569">TV OB %: </span><span style="color:' + (m.tvObVolumeSharePct != null ? '#22d3ee' : '#475569') + '">' + tvShare + '</span></span>' +
         '</div>';
     }
