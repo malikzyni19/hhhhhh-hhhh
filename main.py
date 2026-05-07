@@ -2319,7 +2319,7 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         ob["strengthLabel"] = "Strong" if strength >= 80 else "Good" if strength >= 60 else "Medium" if strength >= 40 else "Weak"
         active.append(ob)
 
-    return active[-max_ob:]
+    return active if max_ob is None else active[-max_ob:]
 
 
 def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
@@ -3383,7 +3383,8 @@ def _tv_visible_pool(obs_by_dir: List[Dict[str, Any]], max_ob: int = 5) -> List[
 
 
 def calculate_tv_ob_volume_share(obs: List[Dict[str, Any]],
-                                  pool_name: str = "unknown") -> None:
+                                  pool_name: str = "unknown",
+                                  source_pool_count: int = 0) -> None:
     """
     Attach Pine-style TV OB volume share fields to each OB in the visible pool.
     Mutates obs in-place. Caller is responsible for passing the correct visible
@@ -3393,12 +3394,21 @@ def calculate_tv_ob_volume_share(obs: List[Dict[str, Any]],
       tV  = sum of obj.cV for visible sequence
       obj.dV = floor((obj.cV / tV) * 100)
 
-    pool_name: "bullish" or "bearish" — pools must be passed separately.
+    pool_name:         "bullish" or "bearish" — pools must be passed separately.
+    source_pool_count: count of all active same-direction OBs before showLast.
     Breaker Blocks must be excluded before calling this function.
     """
     visible = obs
     total_vol = sum(ob.get("volume") or 0 for ob in visible)
     vis_count = len(visible)
+
+    # Build debug snapshot — tvObVolumeSharePct filled in during loop below
+    vis_debug = [
+        {"direction": pool_name, "bar": ob["bar"],
+         "zoneTop": round(ob["top"], 8), "zoneBottom": round(ob["bottom"], 8),
+         "volume": ob.get("volume"), "tvObVolumeSharePct": None}
+        for ob in visible
+    ]
 
     for idx, ob in enumerate(visible):
         ob_vol = ob.get("volume") or 0
@@ -3412,16 +3422,21 @@ def calculate_tv_ob_volume_share(obs: List[Dict[str, Any]],
             status   = "ok"
             tv_share = int((ob_vol / total_vol) * 100)   # floor for positive = int()
 
-        ob["tvObVolumeSharePct"]     = tv_share
-        ob["tvObVolumeShareStatus"]  = status
-        ob["tvObFormationVolume"]    = round(ob_vol, 2) if ob_vol else None
-        ob["tvObVisibleTotalVolume"] = round(total_vol, 2)
-        ob["tvObVisibleCount"]       = vis_count
-        ob["tvObVolumeShareSource"]  = "pine_visible_active_ob_volume_share"
-        ob["tvObVolumeShareFormula"] = "floor(source_volume / visible_total_volume * 100)"
-        ob["tvObParityPool"]         = pool_name
-        ob["tvObParitySeq"]          = idx
-        ob["tvObParitySettings"]     = _TV_OB_PARITY_SETTINGS
+        vis_debug[idx]["tvObVolumeSharePct"] = tv_share
+
+        ob["tvObVolumeSharePct"]                = tv_share
+        ob["tvObVolumeShareStatus"]             = status
+        ob["tvObFormationVolume"]               = round(ob_vol, 2) if ob_vol else None
+        ob["tvObVisibleTotalVolume"]            = round(total_vol, 2)
+        ob["tvObVisibleCount"]                  = vis_count
+        ob["tvObVolumeShareSource"]             = "pine_visible_active_ob_volume_share"
+        ob["tvObVolumeShareFormula"]            = "floor(source_volume / visible_total_volume * 100)"
+        ob["tvObParityPool"]                    = pool_name
+        ob["tvObParitySeq"]                     = idx
+        ob["tvObParitySettings"]                = _TV_OB_PARITY_SETTINGS
+        ob["tvObSourcePoolCountBeforeShowLast"] = source_pool_count
+        ob["tvObDirectionPoolCount"]            = source_pool_count
+        ob["tvObVisiblePoolDebug"]              = vis_debug
 
 
 def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings: Dict[str, Any], btc_closes: Optional[List[float]] = None, fib_candles: Optional[List[Dict[str, float]]] = None) -> Optional[Dict[str, Any]]:
@@ -3522,20 +3537,25 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
             return str(round(vv))
 
     # ── TV OB Volume Share — Pine showLast=5 per direction, hideOverlap=Previous ──
-    # Separate detect_obs call (max_ob=15) to build correct directional visible pools.
-    # Alert logic below uses the original obs (max_ob=5 mixed) — unchanged.
-    obs_tv_src   = detect_obs(o, h, l, c, v, settings["iLen"], settings["sLen"], max_ob=15)
-    tv_bull_pool = _tv_visible_pool([ob for ob in obs_tv_src if ob["type"] == "bullish"])
-    tv_bear_pool = _tv_visible_pool([ob for ob in obs_tv_src if ob["type"] == "bearish"])
-    calculate_tv_ob_volume_share(tv_bull_pool, pool_name="bullish")
-    calculate_tv_ob_volume_share(tv_bear_pool, pool_name="bearish")
+    # max_ob=None returns ALL active OBs (no mixed truncation) so each direction
+    # gets its own complete pool before showLast=5 + hideOverlap are applied.
+    # Alert logic uses the original obs (max_ob=5 mixed) — unchanged.
+    obs_tv_src  = detect_obs(o, h, l, c, v, settings["iLen"], settings["sLen"], max_ob=None)
+    bull_tv_src = [ob for ob in obs_tv_src if ob["type"] == "bullish"]
+    bear_tv_src = [ob for ob in obs_tv_src if ob["type"] == "bearish"]
+    tv_bull_pool = _tv_visible_pool(bull_tv_src)
+    tv_bear_pool = _tv_visible_pool(bear_tv_src)
+    calculate_tv_ob_volume_share(tv_bull_pool, pool_name="bullish", source_pool_count=len(bull_tv_src))
+    calculate_tv_ob_volume_share(tv_bear_pool, pool_name="bearish", source_pool_count=len(bear_tv_src))
 
     # Map TV fields onto OBs in the main pool, matched by (direction, formation bar index)
-    _tv_by_key = {(ob["type"], ob["bar"]): ob for ob in tv_bull_pool + tv_bear_pool}
+    _tv_by_key   = {(ob["type"], ob["bar"]): ob for ob in tv_bull_pool + tv_bear_pool}
+    _tv_src_counts = {"bullish": len(bull_tv_src), "bearish": len(bear_tv_src)}
     _TV_FIELDS = (
         "tvObVolumeSharePct", "tvObVolumeShareStatus", "tvObFormationVolume",
         "tvObVisibleTotalVolume", "tvObVisibleCount", "tvObVolumeShareSource",
         "tvObVolumeShareFormula", "tvObParityPool", "tvObParitySeq", "tvObParitySettings",
+        "tvObSourcePoolCountBeforeShowLast", "tvObDirectionPoolCount", "tvObVisiblePoolDebug",
     )
     for ob in obs:
         tv_ref = _tv_by_key.get((ob["type"], ob["bar"]))
@@ -3544,16 +3564,19 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
                 ob[_f] = tv_ref[_f]
         else:
             # Active but hidden by Pine (beyond showLast or overlapped by a more-recent OB)
-            ob["tvObVolumeSharePct"]     = None
-            ob["tvObVolumeShareStatus"]  = "ob_not_in_tv_visible_pool"
-            ob["tvObFormationVolume"]    = ob.get("volume")
-            ob["tvObVisibleTotalVolume"] = None
-            ob["tvObVisibleCount"]       = None
-            ob["tvObVolumeShareSource"]  = "pine_visible_active_ob_volume_share"
-            ob["tvObVolumeShareFormula"] = "floor(source_volume / visible_total_volume * 100)"
-            ob["tvObParityPool"]         = ob["type"]
-            ob["tvObParitySeq"]          = None
-            ob["tvObParitySettings"]     = _TV_OB_PARITY_SETTINGS
+            ob["tvObVolumeSharePct"]                = None
+            ob["tvObVolumeShareStatus"]             = "ob_not_in_tv_visible_pool"
+            ob["tvObFormationVolume"]               = ob.get("volume")
+            ob["tvObVisibleTotalVolume"]            = None
+            ob["tvObVisibleCount"]                  = None
+            ob["tvObVolumeShareSource"]             = "pine_visible_active_ob_volume_share"
+            ob["tvObVolumeShareFormula"]            = "floor(source_volume / visible_total_volume * 100)"
+            ob["tvObParityPool"]                    = ob["type"]
+            ob["tvObParitySeq"]                     = None
+            ob["tvObParitySettings"]                = _TV_OB_PARITY_SETTINGS
+            ob["tvObSourcePoolCountBeforeShowLast"] = _tv_src_counts.get(ob["type"], 0)
+            ob["tvObDirectionPoolCount"]            = _tv_src_counts.get(ob["type"], 0)
+            ob["tvObVisiblePoolDebug"]              = None
 
     bullish_obs = [ob for ob in obs if ob["type"] == "bullish"]
     bearish_obs = [ob for ob in obs if ob["type"] == "bearish"]
@@ -3755,7 +3778,10 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
                 "tvObVolumeShareSource":  ob.get("tvObVolumeShareSource"),
                 "tvObVolumeShareFormula": ob.get("tvObVolumeShareFormula"),
                 "tvObParityPool":         ob.get("tvObParityPool"),
-                "tvObParitySettings":     ob.get("tvObParitySettings"),
+                "tvObParitySettings":                ob.get("tvObParitySettings"),
+                "tvObSourcePoolCountBeforeShowLast": ob.get("tvObSourcePoolCountBeforeShowLast"),
+                "tvObDirectionPoolCount":            ob.get("tvObDirectionPoolCount"),
+                "tvObVisiblePoolDebug":              ob.get("tvObVisiblePoolDebug"),
                 # ── Zone & proximity ──
                 "obDistPct": round(dist_pct, 3),
                 "obQuality": ob.get("quality", 0),
