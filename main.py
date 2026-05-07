@@ -3359,21 +3359,44 @@ _TV_OB_PARITY_SETTINGS: Dict[str, Any] = {
 }
 
 
-def calculate_tv_ob_volume_share(obs: List[Dict[str, Any]], max_ob: int = 5,
+def _tv_visible_pool(obs_by_dir: List[Dict[str, Any]], max_ob: int = 5) -> List[Dict[str, Any]]:
+    """
+    Build the Pine-style visible OB pool for a single direction.
+
+    Pine drawVOB (hideOverlap=True, overlapMode=Previous):
+      seq 0 = most recent, seq N-1 = oldest.
+      For seq >= 1: if top[seq] > btm[seq-1] and btm[seq] < top[seq-1] → skip (hide older OB).
+
+    obs_by_dir: all active OBs of ONE direction, oldest-first (detect_obs insertion order).
+    Returns the visible subset, oldest-first, length ≤ max_ob.
+    """
+    pool = obs_by_dir[-max_ob:] if len(obs_by_dir) > max_ob else list(obs_by_dir)
+    newest_first = list(reversed(pool))
+    visible_nf: List[Dict[str, Any]] = []
+    for i, ob in enumerate(newest_first):
+        if i > 0:
+            newer = newest_first[i - 1]
+            if ob["top"] > newer["bottom"] and ob["bottom"] < newer["top"]:
+                continue  # overlaps more-recent OB — Pine hides it
+        visible_nf.append(ob)
+    return list(reversed(visible_nf))
+
+
+def calculate_tv_ob_volume_share(obs: List[Dict[str, Any]],
                                   pool_name: str = "unknown") -> None:
     """
     Attach Pine-style TV OB volume share fields to each OB in the visible pool.
-    Mutates obs in-place (same pattern as detect_obs strengthPct attachment).
+    Mutates obs in-place. Caller is responsible for passing the correct visible
+    pool (showLast + hideOverlap already applied by _tv_visible_pool).
 
     Pine reference (drawVOB):
-      seq = min(ob_num - 1, obj.avg.size() - 1)
       tV  = sum of obj.cV for visible sequence
       obj.dV = floor((obj.cV / tV) * 100)
 
-    pool_name: "bullish" or "bearish" — pools are always calculated separately.
+    pool_name: "bullish" or "bearish" — pools must be passed separately.
     Breaker Blocks must be excluded before calling this function.
     """
-    visible = obs[:max_ob]  # most recent max_ob OBs (detect_obs already limits to 5)
+    visible = obs
     total_vol = sum(ob.get("volume") or 0 for ob in visible)
     vis_count = len(visible)
 
@@ -3498,14 +3521,42 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
         else:
             return str(round(vv))
 
-    # ── TV OB Volume Share — Pine-style, bull/bear pools calculated separately ──
-    # Matches TradingView OB indicator: floor(source_volume / visible_total * 100)
-    # Breaker Blocks are excluded (obs comes from detect_obs, not detect_obs_all)
+    # ── TV OB Volume Share — Pine showLast=5 per direction, hideOverlap=Previous ──
+    # Separate detect_obs call (max_ob=15) to build correct directional visible pools.
+    # Alert logic below uses the original obs (max_ob=5 mixed) — unchanged.
+    obs_tv_src   = detect_obs(o, h, l, c, v, settings["iLen"], settings["sLen"], max_ob=15)
+    tv_bull_pool = _tv_visible_pool([ob for ob in obs_tv_src if ob["type"] == "bullish"])
+    tv_bear_pool = _tv_visible_pool([ob for ob in obs_tv_src if ob["type"] == "bearish"])
+    calculate_tv_ob_volume_share(tv_bull_pool, pool_name="bullish")
+    calculate_tv_ob_volume_share(tv_bear_pool, pool_name="bearish")
+
+    # Map TV fields onto OBs in the main pool, matched by (direction, formation bar index)
+    _tv_by_key = {(ob["type"], ob["bar"]): ob for ob in tv_bull_pool + tv_bear_pool}
+    _TV_FIELDS = (
+        "tvObVolumeSharePct", "tvObVolumeShareStatus", "tvObFormationVolume",
+        "tvObVisibleTotalVolume", "tvObVisibleCount", "tvObVolumeShareSource",
+        "tvObVolumeShareFormula", "tvObParityPool", "tvObParitySeq", "tvObParitySettings",
+    )
+    for ob in obs:
+        tv_ref = _tv_by_key.get((ob["type"], ob["bar"]))
+        if tv_ref:
+            for _f in _TV_FIELDS:
+                ob[_f] = tv_ref[_f]
+        else:
+            # Active but hidden by Pine (beyond showLast or overlapped by a more-recent OB)
+            ob["tvObVolumeSharePct"]     = None
+            ob["tvObVolumeShareStatus"]  = "ob_not_in_tv_visible_pool"
+            ob["tvObFormationVolume"]    = ob.get("volume")
+            ob["tvObVisibleTotalVolume"] = None
+            ob["tvObVisibleCount"]       = None
+            ob["tvObVolumeShareSource"]  = "pine_visible_active_ob_volume_share"
+            ob["tvObVolumeShareFormula"] = "floor(source_volume / visible_total_volume * 100)"
+            ob["tvObParityPool"]         = ob["type"]
+            ob["tvObParitySeq"]          = None
+            ob["tvObParitySettings"]     = _TV_OB_PARITY_SETTINGS
+
     bullish_obs = [ob for ob in obs if ob["type"] == "bullish"]
     bearish_obs = [ob for ob in obs if ob["type"] == "bearish"]
-
-    calculate_tv_ob_volume_share(bullish_obs, max_ob=5, pool_name="bullish")
-    calculate_tv_ob_volume_share(bearish_obs, max_ob=5, pool_name="bearish")
 
     # Backward-compatible volumePct + formatted volume label
     for ob in bullish_obs + bearish_obs:
