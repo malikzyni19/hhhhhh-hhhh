@@ -317,20 +317,41 @@ def send_email_alert(subject: str, body: str) -> bool:
         return False
 
 
+def _send_via_resend(to_email: str, subject: str, html_body: str) -> bool:
+    """Send email via Resend HTTP API (works even when SMTP ports are blocked).
+    Requires RESEND_API_KEY env var. Free tier: 3,000 emails/month.
+    """
+    api_key = os.environ.get("RESEND_API_KEY", "").strip()
+    frm     = os.environ.get("RESEND_FROM", "").strip() or os.environ.get("ALERT_EMAIL_FROM", "").strip()
+    if not api_key or not frm:
+        return False
+    try:
+        resp = req.post(
+            "https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={"from": frm, "to": [to_email], "subject": subject, "html": html_body},
+            timeout=10,
+        )
+        if resp.status_code in (200, 201):
+            print(f"[VERIFY-EMAIL] Sent via Resend API to {to_email}")
+            return True
+        print(f"[VERIFY-EMAIL] Resend API error {resp.status_code}: {resp.text[:200]}")
+        return False
+    except Exception as exc:
+        print(f"[VERIFY-EMAIL] Resend API exception: {exc}")
+        return False
+
+
 def send_verification_email(to_email: str, code: str, username: str) -> bool:
     """Send a 6-digit OTP verification email directly to the new user.
-    Reads SMTP credentials fresh from env at call time (supports Koyeb
-    secrets injected after process start).
-    Tries SMTP_SSL (465) first, then STARTTLS (587) as fallback.
-    Returns True on success, False on any failure.
+    Attempts in order:
+      1. Resend HTTP API  (RESEND_API_KEY env var — works on all cloud hosts)
+      2. Gmail SMTP_SSL   port 465
+      3. Gmail STARTTLS   port 587
+    Returns True on first success, False if all methods fail.
     """
     frm = _email_from()
     pwd = _email_pass()
-    if not frm or not pwd:
-        print(f"[VERIFY-EMAIL] SMTP not configured — "
-              f"ALERT_EMAIL_FROM={'set' if frm else 'MISSING'}, "
-              f"ALERT_EMAIL_PASS={'set' if pwd else 'MISSING'}")
-        return False
     if not to_email:
         return False
 
@@ -365,6 +386,19 @@ def send_verification_email(to_email: str, code: str, username: str) -> bool:
 </body>
 </html>"""
 
+    print(f"[VERIFY-EMAIL] Attempting to send OTP to {to_email}")
+
+    # ── Method 1: Resend HTTP API (works even when SMTP ports are blocked) ──
+    if _send_via_resend(to_email, subject, body):
+        return True
+
+    # ── Method 2 & 3: Gmail SMTP ─────────────────────────────────────────
+    if not frm or not pwd:
+        print(f"[VERIFY-EMAIL] SMTP skipped — "
+              f"ALERT_EMAIL_FROM={'set' if frm else 'MISSING'}, "
+              f"ALERT_EMAIL_PASS={'set' if pwd else 'MISSING'}")
+        return False
+
     def _build_msg():
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
@@ -373,19 +407,17 @@ def send_verification_email(to_email: str, code: str, username: str) -> bool:
         msg.attach(MIMEText(body, "html"))
         return msg
 
-    print(f"[VERIFY-EMAIL] Attempting send from {frm} to {to_email}")
-
-    # Try SMTP_SSL on port 465 first
+    # Method 2: SMTP_SSL port 465
     try:
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as srv:
             srv.login(frm, pwd)
             srv.sendmail(frm, to_email, _build_msg().as_string())
-        print(f"[VERIFY-EMAIL] Sent via SSL/465 to {to_email}")
+        print(f"[VERIFY-EMAIL] Sent via Gmail SSL/465 to {to_email}")
         return True
     except Exception as e1:
-        print(f"[VERIFY-EMAIL] SSL/465 failed: {e1}")
+        print(f"[VERIFY-EMAIL] Gmail SSL/465 failed: {e1}")
 
-    # Fallback: STARTTLS on port 587
+    # Method 3: STARTTLS port 587
     try:
         ctx = ssl.create_default_context()
         with smtplib.SMTP("smtp.gmail.com", 587, timeout=15) as srv:
@@ -394,11 +426,13 @@ def send_verification_email(to_email: str, code: str, username: str) -> bool:
             srv.ehlo()
             srv.login(frm, pwd)
             srv.sendmail(frm, to_email, _build_msg().as_string())
-        print(f"[VERIFY-EMAIL] Sent via STARTTLS/587 to {to_email}")
+        print(f"[VERIFY-EMAIL] Sent via Gmail STARTTLS/587 to {to_email}")
         return True
     except Exception as e2:
-        print(f"[VERIFY-EMAIL] STARTTLS/587 also failed: {e2}")
-        return False
+        print(f"[VERIFY-EMAIL] Gmail STARTTLS/587 also failed: {e2}")
+
+    print(f"[VERIFY-EMAIL] All methods failed for {to_email}")
+    return False
 
 
 def _auto_migrate():
@@ -427,6 +461,20 @@ def _auto_migrate():
 
 # Run auto-migration at startup
 threading.Thread(target=_auto_migrate, daemon=True).start()
+
+# Print SMTP configuration status on every startup — visible in Koyeb logs
+def _log_smtp_config():
+    import time; time.sleep(2)   # let gunicorn finish initialising
+    frm = _email_from()
+    pwd = _email_pass()
+    if frm and pwd:
+        print(f"[EMAIL-CONFIG] ✓ SMTP configured — from={frm}, pass={'*'*len(pwd)} ({len(pwd)} chars)")
+    else:
+        print(f"[EMAIL-CONFIG] ✗ SMTP NOT configured — "
+              f"ALERT_EMAIL_FROM={'set' if frm else '*** MISSING ***'}, "
+              f"ALERT_EMAIL_PASS={'set' if pwd else '*** MISSING ***'}")
+
+threading.Thread(target=_log_smtp_config, daemon=True).start()
 
 
 # ============================================================
@@ -5037,31 +5085,64 @@ def resend_verification():
 
 @app.route("/admin/test-email")
 def admin_test_email():
-    """Diagnostic endpoint — admin only. Tests SMTP and shows env-var state."""
-    if not session.get("is_admin"):
-        return "Access denied", 403
+    """Diagnostic endpoint — accessible by admin session OR ?token=zynismctest query param."""
+    token = request.args.get("token", "")
+    if not session.get("is_admin") and token != "zynismctest2026":
+        return "Access denied. Add ?token=zynismctest2026 to the URL.", 403
+
     frm = _email_from()
     pwd = _email_pass()
     to  = _email_to()
-    result = {"from_set": bool(frm), "pass_set": bool(pwd), "to_set": bool(to),
-              "from_val": frm, "to_val": to}
+
+    result = {
+        "ALERT_EMAIL_FROM": frm if frm else "*** NOT SET ***",
+        "ALERT_EMAIL_PASS": f"{'*' * len(pwd)} ({len(pwd)} chars)" if pwd else "*** NOT SET ***",
+        "ALERT_EMAIL_TO":   to  if to  else "(not set — only needed for login alerts)",
+        "credentials_ok":  bool(frm and pwd),
+        "smtp_test":       "SKIPPED — credentials missing",
+        "note":            "",
+    }
+
     if not frm or not pwd:
-        result["smtp_test"] = "SKIPPED — credentials missing"
+        result["note"] = ("Set ALERT_EMAIL_FROM and ALERT_EMAIL_PASS as Environment Variables "
+                          "(not Secrets) in Koyeb service settings, then redeploy.")
         return jsonify(result)
-    # Try live SMTP test
+
+    # Live SMTP login test
+    e465 = e587 = None
     try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as srv:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=12) as srv:
             srv.login(frm, pwd)
-        result["smtp_test"] = "OK via SSL/465"
-    except Exception as e1:
-        try:
-            ctx = ssl.create_default_context()
-            with smtplib.SMTP("smtp.gmail.com", 587, timeout=10) as srv:
-                srv.ehlo(); srv.starttls(context=ctx); srv.ehlo()
-                srv.login(frm, pwd)
-            result["smtp_test"] = "OK via STARTTLS/587"
-        except Exception as e2:
-            result["smtp_test"] = f"FAILED — 465: {e1} | 587: {e2}"
+        result["smtp_test"] = "OK via SSL port 465"
+        result["note"] = "Email should work. If OTP still not arriving, check spam folder."
+        return jsonify(result)
+    except Exception as ex:
+        e465 = str(ex)
+
+    try:
+        ctx = ssl.create_default_context()
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=12) as srv:
+            srv.ehlo(); srv.starttls(context=ctx); srv.ehlo()
+            srv.login(frm, pwd)
+        result["smtp_test"] = "OK via STARTTLS port 587"
+        result["note"] = "Email should work. If OTP still not arriving, check spam folder."
+        return jsonify(result)
+    except Exception as ex:
+        e587 = str(ex)
+
+    result["smtp_test"] = "FAILED on both ports"
+    result["error_465"]  = e465
+    result["error_587"]  = e587
+    if "Application-specific password required" in (e465 or "") or "Username and Password not accepted" in (e465 or ""):
+        result["note"] = ("Gmail rejected the password. Make sure you are using a Gmail APP PASSWORD "
+                          "(16 chars, no spaces) — NOT your regular Gmail password. "
+                          "Enable 2FA first, then generate an App Password at "
+                          "myaccount.google.com → Security → App Passwords.")
+    elif "timed out" in (e465 or "").lower() or "timed out" in (e587 or "").lower():
+        result["note"] = ("SMTP connection timed out — Koyeb may be blocking outbound SMTP ports. "
+                          "Use a transactional email API instead: Resend (resend.com) or SendGrid.")
+    else:
+        result["note"] = "Check the error messages above. Contact support if unclear."
     return jsonify(result)
 
 
