@@ -1373,6 +1373,9 @@ PAIR_CACHE: Dict[str, Any] = {
     "perpetual": {"ts": 0, "pairs": []},
 }
 ROUND_ROBIN_STATE: Dict[str, int] = {"index": 0}
+# Per-user round-robin cursor for Bias Shift full-market scans.
+# Key: "username|exchange|market|tf" — isolates each user's position.
+BIAS_SCAN_CURSOR: Dict[str, int] = {}
 
 # ═══════════════════════════════════════
 # REAL API WEIGHT TRACKER
@@ -6346,29 +6349,43 @@ def api_bias_scan():
 
     passed_symbols  = payload.get("symbols") or []
     scan_mode       = payload.get("scanMode", "selected")
-    pairs_per_cycle = int(payload.get("pairsPerCycle", 20))
+    pairs_per_cycle = max(5, min(100, int(payload.get("pairsPerCycle", 20))))
     exchange        = payload.get("exchange", "binance").lower()
-    # FIX BUG 2: roundRobin defaults True for bias scan (was False)
-    use_rr          = payload.get("roundRobin", True)
 
-    # FIX BUG 2: Full Market ALWAYS ignores passed_symbols on bias scan
+    # Per-user cursor key — prevents different users/settings from sharing state
+    username   = session.get("username", "anonymous")
+    cursor_key = f"{username}|{exchange}|{market}|{tf}"
+    market_coverage = None
+
     if scan_mode == "market":
-        all_pairs = [p["symbol"] for p in get_pairs_exchange(exchange, market)]
-        if use_rr:
-            start  = ROUND_ROBIN_STATE.get("bias_index", 0)
-            chosen = all_pairs[start:start + pairs_per_cycle]
-            if len(chosen) < pairs_per_cycle:
-                chosen += all_pairs[:max(0, pairs_per_cycle - len(chosen))]
-            ROUND_ROBIN_STATE["bias_index"] = (start + pairs_per_cycle) % max(len(all_pairs), 1)
-            symbols = chosen
-        else:
-            symbols = all_pairs[:pairs_per_cycle]
+        all_pairs   = [p["symbol"] for p in get_pairs_exchange(exchange, market)]
+        total_pairs = max(len(all_pairs), 1)
+        # Clamp cursor in case market size shrank since last scan
+        start    = BIAS_SCAN_CURSOR.get(cursor_key, 0) % total_pairs
+        symbols  = all_pairs[start:start + pairs_per_cycle]
+        next_cur = (start + pairs_per_cycle) % total_pairs
+        cycle_complete = (start + pairs_per_cycle) >= total_pairs
+        BIAS_SCAN_CURSOR[cursor_key] = next_cur
+        print(f"[BIAS_SCAN] round_robin user={username} tf={tf} "
+              f"batch={start+1}-{start+len(symbols)}/{total_pairs}")
+        market_coverage = {
+            "mode":           "round_robin",
+            "totalPairs":     total_pairs,
+            "batchSize":      len(symbols),
+            "startIndex":     start + 1,
+            "endIndex":       start + len(symbols),
+            "nextStartIndex": next_cur + 1,
+            "cycleComplete":  cycle_complete,
+        }
     elif passed_symbols:
-        # Selected Pairs mode — use what frontend sent
+        # Selected Pairs mode — use only what the frontend sent
         symbols = passed_symbols
     else:
-        # No pairs selected in selected mode — fallback to top pairs
-        symbols = [p["symbol"] for p in get_pairs_exchange(exchange, market)[:pairs_per_cycle]]
+        # Selected Pairs with nothing selected — tell the user clearly
+        return jsonify({
+            "error":   "no_selected_pairs",
+            "message": "Select at least one pair or switch to Full Market.",
+        }), 400
 
     results = []
 
@@ -6633,10 +6650,11 @@ def api_bias_scan():
         try: consume_tokens(_tok_uid, len(symbols))
         except Exception as _te: print(f"[Tokens] bias: {_te}")
     return jsonify({
-        "results": results,
-        "scanned": len(symbols),
-        "nextBiasIndex": ROUND_ROBIN_STATE.get("bias_index", 0),
-        "scanMode": scan_mode,
+        "results":        results,
+        "scanned":        len(symbols),
+        "scanMode":       scan_mode,
+        "nextBiasIndex":  BIAS_SCAN_CURSOR.get(cursor_key, 0),
+        "marketCoverage": market_coverage,
     })
 
 
