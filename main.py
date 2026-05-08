@@ -2348,7 +2348,7 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
 
     for ob in obs:
         mitigated = False
-        for j in range(ob["bar"] + 1, n):
+        for j in range(ob["bar"] + 1, n - 1):  # n-1: exclude current open candle (Pine barstate.isconfirmed)
             if ob_mitigation == "Middle":
                 trigger = ob["avg"]
             else:  # Absolute
