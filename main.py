@@ -6312,6 +6312,160 @@ def api_ath_atl_scan():
     return jsonify(results[:limit])
 
 
+# ── Bias Shift Phase 2 helpers ────────────────────────────────────────────────
+
+def _bias_normal_presets(bias_strength: str) -> dict:
+    if bias_strength == "early":
+        return {
+            "prior_move_n": 2, "signal_search_n": 3, "min_prior_checks": 2,
+            "min_wick_pct": 0.25, "min_body_pct": 0.10,
+            "require_close_beyond_mid": False, "detection_mode": "early",
+        }
+    elif bias_strength == "strong":
+        return {
+            "prior_move_n": 5, "signal_search_n": 1, "min_prior_checks": 3,
+            "min_wick_pct": 0.45, "min_body_pct": 0.20,
+            "require_close_beyond_mid": True, "detection_mode": "confirmed",
+        }
+    else:  # balanced
+        return {
+            "prior_move_n": 3, "signal_search_n": 2, "min_prior_checks": 2,
+            "min_wick_pct": 0.35, "min_body_pct": 0.15,
+            "require_close_beyond_mid": False, "detection_mode": "early",
+        }
+
+
+def _detect_prior_move(o: list, h: list, l: list, c: list, start: int, end: int) -> dict:
+    """Detect if candles [start, end) form a directional move."""
+    reasons: list[str] = []
+    if end <= start:
+        return {"direction": None, "checksPassed": 0, "summary": "empty", "reasons": []}
+    seg_o, seg_h, seg_l, seg_c = o[start:end], h[start:end], l[start:end], c[start:end]
+    n = len(seg_c)
+    if n < 1:
+        return {"direction": None, "checksPassed": 0, "summary": "empty", "reasons": []}
+
+    up_checks = down_checks = 0
+
+    net_close = seg_c[-1] - seg_c[0]
+    if net_close > 0:
+        up_checks += 1; reasons.append("close↑")
+    elif net_close < 0:
+        down_checks += 1; reasons.append("close↓")
+
+    if n >= 2:
+        if all(seg_h[i] >= seg_h[i - 1] for i in range(1, n)):
+            up_checks += 1; reasons.append("highs↑")
+        if all(seg_l[i] <= seg_l[i - 1] for i in range(1, n)):
+            down_checks += 1; reasons.append("lows↓")
+
+    greens = sum(1 for i in range(n) if seg_c[i] > seg_o[i])
+    reds = n - greens
+    if greens > reds:
+        up_checks += 1; reasons.append(f"{greens}/{n}green")
+    elif reds > greens:
+        down_checks += 1; reasons.append(f"{reds}/{n}red")
+
+    if seg_c[0] > 0:
+        move_pct = abs(net_close) / seg_c[0] * 100
+        if move_pct >= 0.3:
+            if net_close > 0: up_checks += 1
+            else: down_checks += 1
+            reasons.append(f"rng{move_pct:.1f}%")
+
+    if up_checks >= 2 and up_checks >= down_checks:
+        direction, checks_passed = "up", up_checks
+    elif down_checks >= 2 and down_checks > up_checks:
+        direction, checks_passed = "down", down_checks
+    else:
+        direction, checks_passed = None, max(up_checks, down_checks)
+
+    return {
+        "direction": direction, "checksPassed": checks_passed,
+        "summary": f"{direction or 'none'} ({checks_passed} checks)",
+        "reasons": reasons,
+    }
+
+
+def _check_rejection_candle(
+    o: list, h: list, l: list, c: list,
+    idx: int, rejection_dir: str,
+    min_wick: float, min_body: float,
+    require_close_beyond_mid: bool,
+) -> dict | None:
+    """Return rejection-candle metrics or None if hard requirements fail."""
+    rng = h[idx] - l[idx]
+    if rng <= 0:
+        return None
+    body       = abs(c[idx] - o[idx])
+    upper_wick = h[idx] - max(o[idx], c[idx])
+    lower_wick = min(o[idx], c[idx]) - l[idx]
+    body_pct   = body / rng
+    uw_pct     = upper_wick / rng
+    lw_pct     = lower_wick / rng
+    is_green   = c[idx] > o[idx]
+    mid        = l[idx] + rng / 2
+    reasons: list[str] = []
+    checks = 0
+
+    if rejection_dir == "bearish":
+        if is_green or uw_pct < min_wick or body_pct < min_body:
+            return None
+        if require_close_beyond_mid and c[idx] > mid:
+            return None
+        checks += 1
+        reasons.append(f"red·↑wick{uw_pct*100:.0f}%·body{body_pct*100:.0f}%")
+        if c[idx] < mid:
+            checks += 1; reasons.append("closeBelowMid")
+    else:
+        if not is_green or lw_pct < min_wick or body_pct < min_body:
+            return None
+        if require_close_beyond_mid and c[idx] < mid:
+            return None
+        checks += 1
+        reasons.append(f"green·↓wick{lw_pct*100:.0f}%·body{body_pct*100:.0f}%")
+        if c[idx] > mid:
+            checks += 1; reasons.append("closeAboveMid")
+
+    return {
+        "open": o[idx], "high": h[idx], "low": l[idx], "close": c[idx],
+        "bodyPct":      round(body_pct * 100, 1),
+        "upperWickPct": round(uw_pct   * 100, 1),
+        "lowerWickPct": round(lw_pct   * 100, 1),
+        "checksPassed": checks,
+        "reasons":      reasons,
+    }
+
+
+def _suggested_conf_tf(tf: str) -> str:
+    t = tf.lower()
+    if t in ("1d", "12h"):  return "4H / 1H"
+    if t in ("6h", "4h"):   return "1H / 15m"
+    if t in ("2h", "1h"):   return "15m / 5m"
+    if t in ("30m", "15m"): return "5m / 1m"
+    return "lower TF"
+
+
+def _is_better_setup(candidate: dict, current_best: dict) -> bool:
+    """True if candidate is strictly better. Priority: wickScore > priorChecks > bodyPct > offset."""
+    def _wick(s):
+        return s.get("rejectionUpperWickPct", 0) if s.get("priorMoveDirection") == "up" \
+               else s.get("rejectionLowerWickPct", 0)
+
+    cw, bw = _wick(candidate), _wick(current_best)
+    if cw > bw + 2: return True
+    if bw > cw + 2: return False
+    cc, bc = candidate.get("priorMoveChecks", 0), current_best.get("priorMoveChecks", 0)
+    if cc > bc: return True
+    if bc > cc: return False
+    cb, bb = candidate.get("rejectionBodyPct", 0), current_best.get("rejectionBodyPct", 0)
+    if cb > bb + 2: return True
+    if bb > cb + 2: return False
+    return candidate.get("signalCandleOffset", 999) < current_best.get("signalCandleOffset", 999)
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+
 @app.route("/api/bias_scan", methods=["POST"])
 @login_required
 def api_bias_scan():
@@ -6323,29 +6477,29 @@ def api_bias_scan():
     payload = request.get_json(force=True) or {}
     tf = payload.get("timeframe", "1d")
     market = payload.get("market", "perpetual")
-    candle_count = int(payload.get("candleCount", 3))
-    bias_filter = payload.get("biasFilter", "all")
+    bias_mode        = payload.get("biasMode", "normal")
+    bias_strength    = payload.get("biasStrength", "balanced")
+    bias_filter      = payload.get("biasFilter", "all")
+    detection_mode   = payload.get("detectionMode", "early")
+    use_volume_filter = bool(payload.get("volumeFilter", False))
+    vol_multiplier   = float(payload.get("volumeMultiplier", 1.5))
 
-    use_wick_gate      = payload.get("useWickGate", True)
-    wick_min_pct       = float(payload.get("wickMinPct", 35)) / 100.0
-    use_momentum_gate  = payload.get("useMomentumGate", True)
-    prior_candles_req  = int(payload.get("priorCandlesReq", 2))   # #4 min prior candles same direction
-    use_body_gate      = payload.get("useBodyGate", True)
-    body_min_pct       = float(payload.get("bodyMinPct", 20)) / 100.0
-    use_volume_gate    = payload.get("useVolumeGate", False)
-    vol_multiplier     = float(payload.get("volMultiplier", 1.2))  # #4 volume threshold
-    # #4 Signal candle sub-gates (any one counts)
-    sig_use_wick       = payload.get("sigUseWick", True)
-    sig_wick_min       = float(payload.get("sigWickMin", 35)) / 100.0
-    sig_use_engulf     = payload.get("sigUseEngulf", True)
-    sig_use_strong_body = payload.get("sigUseStrongBody", True)
-    sig_body_min       = float(payload.get("sigBodyMin", 55)) / 100.0
-    min_conditions     = int(payload.get("minConditions", 2))      # #4 min gates to pass
-
-    use_fvg_conf = payload.get("useFvgConf", False)
-    fvg_touch = payload.get("fvgTouch", "any")
-    use_ob_conf = payload.get("useObConf", False)
-    ob_approach_pct = float(payload.get("obApproachPct", 2.0))
+    if bias_mode == "normal":
+        p = _bias_normal_presets(bias_strength)
+        prior_move_n             = p["prior_move_n"]
+        signal_search_n          = p["signal_search_n"]
+        min_prior_checks         = p["min_prior_checks"]
+        min_wick_pct             = p["min_wick_pct"]
+        min_body_pct             = p["min_body_pct"]
+        require_close_beyond_mid = p["require_close_beyond_mid"]
+        detection_mode           = p["detection_mode"]
+    else:
+        prior_move_n             = max(1, int(payload.get("priorMoveCandles", 3)))
+        signal_search_n          = max(1, int(payload.get("signalSearchCandles", 2)))
+        min_prior_checks         = 2
+        min_wick_pct             = float(payload.get("minWickPct", 35)) / 100.0
+        min_body_pct             = float(payload.get("minBodyPct", 15)) / 100.0
+        require_close_beyond_mid = bool(payload.get("requireCloseBeyondMidpoint", False))
 
     passed_symbols  = payload.get("symbols") or []
     scan_mode       = payload.get("scanMode", "selected")
@@ -6388,257 +6542,153 @@ def api_bias_scan():
         }), 400
 
     results = []
+    fetch_limit = prior_move_n + signal_search_n + 30
 
     for sym in symbols:
         try:
-            kl = get_klines_exchange(sym, tf, candle_count + 30, market, exchange)
-            if not kl or len(kl) < candle_count + 2:
+            kl = get_klines_exchange(sym, tf, fetch_limit, market, exchange)
+            if not kl or len(kl) < prior_move_n + signal_search_n + 2:
                 continue
 
-            o = [x["open"] for x in kl]
-            h = [x["high"] for x in kl]
-            l = [x["low"] for x in kl]
-            c = [x["close"] for x in kl]
-            v = [x["volume"] for x in kl]
+            # Closed candles only — strip the still-running last candle
+            kl_closed = kl[:-1]
+            o  = [float(x["open"])   for x in kl_closed]
+            h  = [float(x["high"])   for x in kl_closed]
+            l  = [float(x["low"])    for x in kl_closed]
+            c  = [float(x["close"])  for x in kl_closed]
+            v  = [float(x["volume"]) for x in kl_closed]
+            ts = [int(x["openTime"]) for x in kl_closed]
+            n  = len(c)
 
-            sig_idx = len(c) - 2
-            if sig_idx < 1:
-                continue
+            vol_lb  = min(20, n)
+            avg_vol = sum(v[n - vol_lb:n]) / max(vol_lb, 1) if vol_lb > 0 else 0
 
-            sig_open = o[sig_idx]
-            sig_high = h[sig_idx]
-            sig_low = l[sig_idx]
-            sig_close = c[sig_idx]
-            sig_vol = v[sig_idx]
-            sig_range = sig_high - sig_low
-            if sig_range <= 0:
-                continue
+            best: dict | None = None
 
-            sig_body = abs(sig_close - sig_open)
-            sig_is_green = sig_close > sig_open
-            upper_wick = sig_high - max(sig_open, sig_close)
-            lower_wick = min(sig_open, sig_close) - sig_low
-
-            body_ratio = sig_body / sig_range
-            upper_wick_ratio = upper_wick / sig_range
-            lower_wick_ratio = lower_wick / sig_range
-
-            # ── #4 Prior momentum: check N candles before signal ──
-            prior_n     = prior_candles_req
-            prev_start  = max(0, sig_idx - prior_n)
-            prev_end    = sig_idx
-            prev_candles = list(range(prev_start, prev_end))
-
-            prev_bullish = 0
-            prev_bearish = 0
-            prev_strong  = 0
-            for pi in prev_candles:
-                p_range = h[pi] - l[pi]
-                if p_range <= 0:
+            for sig_offset in range(signal_search_n):
+                sig_idx = n - 1 - sig_offset
+                if sig_idx < prior_move_n + 1:
                     continue
-                p_body = abs(c[pi] - o[pi])
-                if c[pi] > o[pi]:
-                    prev_bullish += 1
-                else:
-                    prev_bearish += 1
-                if p_body / p_range > 0.5:
-                    prev_strong += 1
 
-            req_same    = max(1, prior_n - 1)  # at least N-1 of prior N same direction
-            has_bull_momentum = prev_bullish >= req_same
-            has_bear_momentum = prev_bearish >= req_same
-            has_momentum = has_bull_momentum or has_bear_momentum
+                prior_start  = sig_idx - prior_move_n
+                prior_result = _detect_prior_move(o, h, l, c, prior_start, sig_idx)
+                prior_dir    = prior_result["direction"]
 
-            # ── #4 Volume ──
-            vol_lookback = min(20, sig_idx)
-            avg_vol = sum(v[sig_idx - vol_lookback:sig_idx]) / max(vol_lookback, 1)
-            vol_spike = sig_vol >= avg_vol * vol_multiplier if avg_vol > 0 else False
+                if not prior_dir or prior_result["checksPassed"] < min_prior_checks:
+                    continue
 
-            # ── #4 Signal candle quality — any one of these counts ──
-            # a) Strong wick rejection
-            sig_has_bull_wick = lower_wick_ratio >= sig_wick_min
-            sig_has_bear_wick = upper_wick_ratio >= sig_wick_min
-            # b) Engulfing — closes beyond previous candle's open
-            prev_open = o[sig_idx - 1] if sig_idx > 0 else sig_open
-            sig_bull_engulf = sig_is_green and sig_close > prev_open
-            sig_bear_engulf = not sig_is_green and sig_close < prev_open
-            # c) Strong body
-            sig_strong_body = body_ratio >= sig_body_min
+                rej_dir = "bearish" if prior_dir == "up" else "bullish"
 
-            # ── Signal type detection ──
-            signal_type    = None
-            bias_direction = None
+                if bias_filter == "bullish" and rej_dir != "bullish":
+                    continue
+                if bias_filter == "bearish" and rej_dir != "bearish":
+                    continue
 
-            has_both_wicks = upper_wick_ratio > 0.2 and lower_wick_ratio > 0.2
+                sig_vol   = v[sig_idx]
+                vol_spike = avg_vol > 0 and sig_vol >= avg_vol * vol_multiplier
+                if use_volume_filter and not vol_spike:
+                    continue
 
-            if has_both_wicks and has_momentum:
-                signal_type    = "INDECISION"
-                bias_direction = "bearish" if has_bull_momentum else "bullish"
-            elif upper_wick_ratio >= wick_min_pct:
-                signal_type    = "WICK_REJECTION"
-                bias_direction = "bearish"
-            elif lower_wick_ratio >= wick_min_pct:
-                signal_type    = "WICK_REJECTION"
-                bias_direction = "bullish"
-            elif has_momentum and ((has_bull_momentum and not sig_is_green) or (has_bear_momentum and sig_is_green)):
-                signal_type    = "EXHAUSTION"
-                bias_direction = "bearish" if has_bull_momentum else "bullish"
-            elif body_ratio > 0.6 and upper_wick_ratio < 0.2 and lower_wick_ratio < 0.2:
-                signal_type    = "CONTINUATION"
-                bias_direction = "bullish" if sig_is_green else "bearish"
+                rej = _check_rejection_candle(
+                    o, h, l, c, sig_idx, rej_dir,
+                    min_wick_pct, min_body_pct, require_close_beyond_mid,
+                )
+                if rej is None:
+                    continue
 
-            if not signal_type or not bias_direction:
-                continue
-
-            if bias_filter == "bullish" and bias_direction != "bullish":
-                continue
-            if bias_filter == "bearish" and bias_direction != "bearish":
-                continue
-
-            # ── #4 Gate evaluation — selectable conditions ──
-            gates_passed  = 0
-            gates_checked = 0
-            gate_details  = []
-
-            # Gate 1: Prior Momentum
-            if use_momentum_gate:
-                gates_checked += 1
-                mom_ok = (bias_direction == "bearish" and has_bull_momentum) or \
-                         (bias_direction == "bullish" and has_bear_momentum) or \
-                         has_momentum
-                if mom_ok:
-                    gates_passed += 1
-                    gate_details.append(f"Momentum ✓ ({prev_bullish}↑/{prev_bearish}↓)")
-                else:
-                    gate_details.append("Momentum ✗")
-
-            # Gate 2: Signal Candle Quality (any sub-gate counts)
-            if use_wick_gate:
-                gates_checked += 1
-                sig_quality_ok = False
-                sig_quality_parts = []
-                if sig_use_wick:
-                    if bias_direction == "bearish" and sig_has_bear_wick:
-                        sig_quality_ok = True; sig_quality_parts.append("wick")
-                    elif bias_direction == "bullish" and sig_has_bull_wick:
-                        sig_quality_ok = True; sig_quality_parts.append("wick")
-                if sig_use_engulf:
-                    if bias_direction == "bearish" and sig_bear_engulf:
-                        sig_quality_ok = True; sig_quality_parts.append("engulf")
-                    elif bias_direction == "bullish" and sig_bull_engulf:
-                        sig_quality_ok = True; sig_quality_parts.append("engulf")
-                if sig_use_strong_body:
-                    if sig_strong_body:
-                        sig_quality_ok = True; sig_quality_parts.append("body")
-                # Also allow continuation signals through
-                if signal_type in ("CONTINUATION",):
-                    sig_quality_ok = True; sig_quality_parts.append("cont")
-                if sig_quality_ok:
-                    gates_passed += 1
-                    gate_details.append(f"Signal ✓ ({'+'.join(sig_quality_parts) or 'ok'})")
-                else:
-                    gate_details.append("Signal ✗")
-
-            # Gate 3: Body gate
-            if use_body_gate:
-                gates_checked += 1
-                if body_ratio >= body_min_pct:
-                    gates_passed += 1
-                    gate_details.append(f"Body ✓ ({body_ratio*100:.0f}%)")
-                else:
-                    gate_details.append(f"Body ✗ ({body_ratio*100:.0f}%)")
-
-            # Gate 4: Volume gate
-            if use_volume_gate:
-                gates_checked += 1
-                if vol_spike:
-                    gates_passed += 1
-                    gate_details.append(f"Vol ✓ ({sig_vol/max(avg_vol,1):.1f}x)")
-                else:
-                    gate_details.append(f"Vol ✗ ({sig_vol/max(avg_vol,1):.1f}x)")
-
-            # Apply min_conditions threshold
-            if gates_checked > 0 and gates_passed < min(min_conditions, gates_checked):
-                continue
-
-            gate_ratio = gates_passed / gates_checked if gates_checked > 0 else 0.5
-
-            if gate_ratio >= 0.9 or (gates_passed >= 3):
-                confidence = "Strong"
-            elif gate_ratio >= 0.6 or gates_passed >= 2:
-                confidence = "Moderate"
-            else:
-                confidence = "Weak"
-
-            if signal_type == "INDECISION" and confidence == "Strong":
-                confidence = "Moderate"
-
-            ob_info = None
-            if use_ob_conf:
-                obs = detect_obs(o, h, l, c, v, 7, 20, max_ob=5)
-                price = c[-2]
-                for ob in obs:
-                    dist = abs(price - (ob["top"] + ob["bottom"]) / 2) / max(price, 1e-10) * 100
-                    if dist <= ob_approach_pct and ob["type"] == bias_direction:
-                        same_dir_obs = [x for x in obs if x["type"] == ob["type"]]
-                        total_vol = sum(x["volume"] for x in same_dir_obs)
-                        vol_pct = int((ob["volume"] / total_vol) * 100) if total_vol > 0 else 0
-                        vv = ob["volume"]
-                        if vv >= 1e9:
-                            vol_fmt = f"{round(vv/1e9,3)}B"
-                        elif vv >= 1e6:
-                            vol_fmt = f"{round(vv/1e6,3)}M"
-                        elif vv >= 1e3:
-                            vol_fmt = f"{round(vv/1e3,3)}K"
+                confirmation_status = "early"
+                if detection_mode == "confirmed":
+                    if sig_idx + 1 < n:
+                        post_c = c[sig_idx + 1]
+                        if rej_dir == "bearish" and post_c < rej["low"]:
+                            confirmation_status = "confirmed"
+                        elif rej_dir == "bullish" and post_c > rej["high"]:
+                            confirmation_status = "confirmed"
                         else:
-                            vol_fmt = f"{round(vv)}"
-                        ob_info = {
-                            "zone": f"{ob['bottom']:.6f} - {ob['top']:.6f}",
-                            "volPct": vol_pct,
-                            "volFmt": vol_fmt,
-                            "dist": round(dist, 2),
-                        }
-                        break
+                            continue
+                    else:
+                        continue
 
-            fvg_info = None
-            if use_fvg_conf:
-                fvgs = detect_fvgs(o, h, l, c, v, tf)
-                price = c[-2]
-                for fvg in fvgs:
-                    if fvg["direction"] == bias_direction:
-                        if fvg_touch == "untouched" or fvg_touch == "fresh":
-                            if not fvg.get("untouched", True):
-                                continue
-                        elif fvg_touch == "touched":
-                            if fvg.get("untouched", True):
-                                continue
-                        if fvg["bottom"] <= price <= fvg["top"] or abs(price - (fvg["top"] + fvg["bottom"]) / 2) / max(price, 1e-10) * 100 <= 1.0:
-                            touch_label = "untouched" if fvg.get("untouched") else ("once" if fvg.get("onceTouched") else "touched")
-                            fvg_info = {
-                                "zone": f"{fvg['bottom']:.6f} - {fvg['top']:.6f}",
-                                "touch": touch_label,
-                            }
-                            break
+                if rej_dir == "bearish":
+                    invalidation_level = round(rej["high"], 8)
+                    invalidation_text  = f"Invalid above {rej['high']:.6f}"
+                else:
+                    invalidation_level = round(rej["low"], 8)
+                    invalidation_text  = f"Invalid below {rej['low']:.6f}"
 
-            sparkline = [float(c[i]) for i in range(max(0, len(c)-24), len(c))]
-            results.append({
-                "symbol": sym,
-                "price": round(c[-1], 8),
-                "timeframe": tf,
-                "bias": bias_direction,
-                "signal": signal_type,
-                "confidence": confidence,
-                "gates": " | ".join(gate_details),
-                "gatesPassed": gates_passed,
-                "gatesChecked": gates_checked,
-                "upperWickPct": round(upper_wick_ratio * 100, 1),
-                "lowerWickPct": round(lower_wick_ratio * 100, 1),
-                "bodyPct": round(body_ratio * 100, 1),
-                "volSpike": vol_spike,
-                "obConf": ob_info,
-                "fvgConf": fvg_info,
-                "sparkline": sparkline,
-            })
+                total_checks = prior_result["checksPassed"] + rej["checksPassed"]
+                if total_checks >= 5:
+                    confidence = "Strong"
+                elif total_checks >= 3:
+                    confidence = "Moderate"
+                else:
+                    confidence = "Weak"
+
+                reason_chain  = prior_result["reasons"] + rej["reasons"]
+                pattern       = (f"{'Bearish' if rej_dir == 'bearish' else 'Bullish'} Rejection"
+                                 f" · {'Uptrend' if prior_dir == 'up' else 'Downtrend'}")
+                conf_label    = "✓ Confirmed" if confirmation_status == "confirmed" else "Early"
+                detail        = (
+                    f"Prior {prior_dir.upper()} {prior_move_n}c"
+                    f" · {conf_label}"
+                    f" · Inv: {invalidation_level}"
+                    f" · Conf TF: {_suggested_conf_tf(tf)}"
+                )
+                sparkline = [float(c[i]) for i in range(max(0, n - 24), n)]
+
+                candidate = {
+                    # ── compat fields ──
+                    "symbol":       sym,
+                    "price":        round(c[-1], 8),
+                    "timeframe":    tf,
+                    "bias":         rej_dir,
+                    "signal":       "BIAS_SHIFT",
+                    "confidence":   confidence,
+                    "gates":        " · ".join(reason_chain),
+                    "gatesPassed":  total_checks,
+                    "gatesChecked": 6,
+                    "upperWickPct": rej["upperWickPct"],
+                    "lowerWickPct": rej["lowerWickPct"],
+                    "bodyPct":      rej["bodyPct"],
+                    "volSpike":     vol_spike,
+                    "obConf":       None,
+                    "fvgConf":      None,
+                    "score":        None,
+                    "sparkline":    sparkline,
+                    # ── Phase 2 fields ──
+                    "direction":              rej_dir,
+                    "biasDirection":          rej_dir,
+                    "setupType":              "BIAS_SHIFT",
+                    "pattern":                pattern,
+                    "detail":                 detail,
+                    "priorMoveDirection":      prior_dir,
+                    "priorMoveCandles":        prior_move_n,
+                    "priorMoveChecks":         prior_result["checksPassed"],
+                    "signalCandleOffset":      sig_offset,
+                    "signalCandleTime":        ts[sig_idx],
+                    "rejectionOpen":           rej["open"],
+                    "rejectionHigh":           rej["high"],
+                    "rejectionLow":            rej["low"],
+                    "rejectionClose":          rej["close"],
+                    "rejectionBodyPct":        rej["bodyPct"],
+                    "rejectionUpperWickPct":   rej["upperWickPct"],
+                    "rejectionLowerWickPct":   rej["lowerWickPct"],
+                    "invalidationLevel":       invalidation_level,
+                    "invalidationText":        invalidation_text,
+                    "confirmationStatus":      confirmation_status,
+                    "suggestedConfirmationTf": _suggested_conf_tf(tf),
+                    "reasonChain":             reason_chain,
+                    "debug": {
+                        "priorSummary": prior_result["summary"],
+                        "rejReasons":   rej["reasons"],
+                    },
+                }
+
+                if best is None or _is_better_setup(candidate, best):
+                    best = candidate
+
+            if best is not None:
+                results.append(best)
 
         except Exception as e:
             print(f"[DEBUG] bias_scan {sym} error: {e}")

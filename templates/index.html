@@ -3258,6 +3258,7 @@ async function scanBias(){
         <div class="result-details">
           <div class="result-detail">↑Wick ${x.upperWickPct}% · ↓Wick ${x.lowerWickPct}% · Body ${x.bodyPct}%${x.volSpike ? ' · 🔥 Vol' : ''}</div>
           <div class="result-detail" style="opacity:.7;margin-top:3px">${x.gates}</div>
+          ${x.detail ? `<div class="result-detail" style="margin-top:3px;opacity:.85">${x.detail}</div>` : ''}
           ${obHtml}${fvgHtml}
           <div class="scan-time">Scanned: ${scanTime}</div>
           <div style="margin-top:8px">
