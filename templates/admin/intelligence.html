@@ -178,7 +178,7 @@
       <option value="all">all</option>
     </select>
   </div>
-  <div class="int-filter-group">
+  <div class="int-filter-group" style="display:none">
     <label>Module</label>
     <select id="f-module">
       <option value="">OB Only / Main</option>
@@ -196,15 +196,10 @@
     </select>
   </div>
   <div class="int-filter-group">
-    <label>Strength</label>
-    <select id="f-strength" title="OB strength filter — applies to OB signals only">
-      <option value="0">All</option>
-      <option value="50">50%+</option>
-      <option value="60">60%+</option>
-      <option value="70">70%+</option>
-      <option value="80">80%+</option>
-      <option value="90">90%+</option>
-    </select>
+    <label>OB Strength</label>
+    <input type="number" id="f-strength" value="0" min="0" max="100" step="1"
+           placeholder="e.g. 70" style="width:60px"
+           title="Min OB strength % — applies to OB signals only. 0 = All.">
   </div>
   <button type="button" id="int-refresh-btn" class="int-btn">⟳ Refresh</button>
   <span id="int-ts" style="font-size:10px;color:var(--muted);margin-left:4px"></span>
@@ -225,7 +220,6 @@
     </select>
   </div>
 </div>
-<p class="ar-disclaimer">Auto-refresh is read-only. It does not resolve or modify signals.</p>
 
 <!-- Error banner -->
 <div id="int-error"></div>
@@ -322,13 +316,13 @@
     <span style="font-size:10px;color:var(--muted);margin-left:10px">diagnostic dry-run — never modifies DB</span>
   </div>
   <div class="adm-card-body">
-    <p class="car-subtitle">Run counterfactual analysis to diagnose WON/LOST/EXPIRED outcomes. Each signal is replayed with 4 variants: current (wick-stop), small-target, close-stop, and candle-close-entry.</p>
+    <p class="car-subtitle">Counterfactual replay — 4 variants per signal: wick-stop, close-stop, small-target, CCE.</p>
     <div class="aud-controls">
       <div class="aud-filter-group">
         <label>Limit</label>
         <input type="number" id="aud-limit" value="20" min="1" max="100" style="width:70px">
       </div>
-      <div class="aud-filter-group">
+      <div class="aud-filter-group" style="display:none">
         <label>Module</label>
         <select id="aud-module">
           <option value="">OB Only / Main</option>
@@ -441,27 +435,30 @@
         </select>
       </div>
       <div class="aud-filter-group">
-        <label>Freshness</label>
-        <select id="bt-freshness">
-          <option value="all">All OBs</option>
-          <option value="first_touch">First Touch Only</option>
-          <option value="already_touched">Already Touched</option>
-          <option value="unknown">Unknown Freshness</option>
-        </select>
-      </div>
-      <div class="aud-filter-group">
-        <label>Strength</label>
-        <select id="bt-strength-min">
-          <option value="0">All</option>
-          <option value="50">50%+</option>
-          <option value="60">60%+</option>
-          <option value="70">70%+</option>
-          <option value="80">80%+</option>
-          <option value="90">90%+</option>
-        </select>
+        <label>Min OB Strength %</label>
+        <input type="number" id="bt-strength-min" value="0" min="0" max="100" step="1"
+               placeholder="e.g. 70" style="width:70px"
+               title="True OB strength only (obStrengthPct). 0 = All. Score is NOT used.">
       </div>
       <button type="button" id="bt-run-btn" class="int-btn">▶ Run OB Backtest</button>
     </div>
+    <details style="margin-top:8px">
+      <summary style="font-size:10px;color:var(--muted);cursor:pointer;user-select:none;padding:4px 0">▸ Advanced / Experimental</summary>
+      <div style="padding:6px 0 0 0;display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end">
+        <div class="aud-filter-group">
+          <label>Freshness</label>
+          <select id="bt-freshness">
+            <option value="all">All OBs</option>
+            <option value="first_touch">First Touch Only</option>
+            <option value="already_touched">Already Touched</option>
+            <option value="unknown">Unknown Freshness</option>
+          </select>
+        </div>
+        <p style="font-size:10px;color:var(--muted);margin:0;align-self:center">
+          First-touch OB filtering is experimental. OB origin/touch-count metadata is not yet stored in most DB rows — freshness will show <em>unknown</em> for older signals.
+        </p>
+      </div>
+    </details>
     <div id="bt-error" style="display:none;background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.2);
          color:var(--red);padding:12px 16px;border-radius:8px;font-size:12px;margin-top:12px"></div>
     <div id="bt-result" style="display:none;margin-top:12px">
@@ -471,8 +468,10 @@
            background:rgba(148,163,184,.12);color:var(--muted)"></div>
       <!-- Summary cards -->
       <div id="bt-summary"></div>
-      <!-- Freshness summary cards -->
-      <div id="bt-freshness-summary" style="margin-top:14px"></div>
+      <!-- Strength summary -->
+      <div id="bt-strength-summary" style="margin-top:10px"></div>
+      <!-- Freshness summary cards (shown only when Advanced freshness filter is active) -->
+      <div id="bt-freshness-summary" style="margin-top:14px;display:none"></div>
       <!-- Cross-variant diagnostic summary -->
       <div id="bt-diag-summary" style="margin-top:14px"></div>
       <!-- Loss-reason diagnostic breakdown -->
@@ -489,10 +488,101 @@
             <th>Pair</th><th>TF</th><th>Setup</th><th>Dir</th>
             <th>Score</th><th>Result</th><th>Loss Detail</th>
             <th id="bt-variants-th">Variants (Alt / ST / CCE)</th>
-            <th>Freshness</th><th>Str</th>
+            <th class="bt-fresh-col" style="display:none">Freshness</th><th>OB Str</th>
             <th>Entry</th><th>TP</th><th>SL</th><th>Reason</th>
           </tr></thead>
           <tbody id="bt-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- OB Candidate Preview -->
+<div class="adm-card" style="margin-bottom:20px">
+  <div class="adm-card-header">
+    <span class="adm-card-title">OB Candidate Preview</span>
+    <span style="font-size:10px;color:var(--muted);margin-left:10px">read-only — paper trading not active</span>
+  </div>
+  <div class="adm-card-body">
+    <p class="car-subtitle">Preview which OB setups are near their zone right now. Paper trading is not active — this only shows which setups would become monitor candidates.</p>
+    <div class="aud-controls">
+      <div class="aud-filter-group">
+        <label>Limit</label>
+        <input type="number" id="cand-limit" value="100" min="1" max="500" style="width:70px">
+      </div>
+      <div class="aud-filter-group">
+        <label>Timeframe</label>
+        <select id="cand-timeframe">
+          <option value="">all</option>
+          <option value="15m">15m</option>
+          <option value="30m">30m</option>
+          <option value="1h">1h</option>
+          <option value="4h">4h</option>
+          <option value="1d">1d</option>
+        </select>
+      </div>
+      <div class="aud-filter-group">
+        <label>Setup</label>
+        <select id="cand-setup-type">
+          <option value="all">All OB</option>
+          <option value="OB_APPROACH">OB Approach</option>
+          <option value="OB_CONSOL">OB Consol</option>
+        </select>
+      </div>
+      <div class="aud-filter-group">
+        <label>Min OB Str %</label>
+        <input type="number" id="cand-strength-min" value="0" min="0" max="100" step="1"
+               placeholder="0" style="width:60px"
+               title="Min true OB strength %. 0 = show all.">
+      </div>
+      <div class="aud-filter-group">
+        <label>Max Dist %</label>
+        <input type="number" id="cand-max-distance" value="1.0" min="0" max="100" step="0.1"
+               placeholder="1.0" style="width:65px"
+               title="Max distance from current price to OB zone (%). e.g. 1.0 = within 1% of zone.">
+      </div>
+      <div class="aud-filter-group">
+        <label>Entry Mode</label>
+        <select id="cand-entry-mode">
+          <option value="zone_middle" selected>Zone Middle</option>
+          <option value="zone_top">Zone Top</option>
+          <option value="zone_bottom">Zone Bottom</option>
+        </select>
+      </div>
+      <div class="aud-filter-group">
+        <label>TP Mode</label>
+        <select id="cand-tp-mode">
+          <option value="rr" selected>R:R</option>
+          <option value="fixed_pct">Fixed %</option>
+        </select>
+      </div>
+      <div class="aud-filter-group" id="cand-rr-group">
+        <label>R:R</label>
+        <input type="number" id="cand-rr" value="1.5" min="0.1" max="20" step="0.1" style="width:55px">
+      </div>
+      <div class="aud-filter-group" id="cand-tp-pct-group" style="display:none">
+        <label>TP %</label>
+        <input type="number" id="cand-tp-pct" value="0.30" min="0.01" max="100" step="0.01" style="width:65px">
+      </div>
+      <button type="button" id="cand-run-btn" class="int-btn">🔍 Run Candidate Preview</button>
+    </div>
+    <div id="cand-error" style="display:none;background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.2);
+         color:var(--red);padding:12px 16px;border-radius:8px;font-size:12px;margin-top:12px"></div>
+    <div id="cand-result" style="display:none;margin-top:12px">
+      <div id="cand-summary"></div>
+      <div id="cand-api-info" style="margin-top:6px"></div>
+      <p style="font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin:14px 0 6px">
+        Candidates &nbsp;<span style="font-weight:400;text-transform:none;letter-spacing:0">← APPROACHING / TOUCHING = active monitor candidates</span>
+      </p>
+      <div class="adm-table-wrap" id="cand-table-wrap" style="display:none">
+        <table class="adm-table" style="table-layout:auto;font-size:11px">
+          <thead><tr>
+            <th>Pair</th><th>TF</th><th>Setup</th><th>Dir</th>
+            <th>OB Str</th><th>Current</th><th>Zone</th><th>Dist %</th>
+            <th>Status</th><th>Entry</th><th>SL Rule</th><th>TP</th><th>Monitor?</th>
+          </tr></thead>
+          <tbody id="cand-tbody"></tbody>
         </table>
       </div>
     </div>
@@ -1587,6 +1677,49 @@ function intBt_freshnessBadge(fs, touchCount) {
   return '<span style="font-size:9px;font-weight:700;' + color + '">' + label + tcStr + '</span>';
 }
 
+function intBt_renderStrengthSummary(ss) {
+  var el = document.getElementById('bt-strength-summary');
+  if (!el) return;
+  if (!ss) { el.innerHTML = ''; return; }
+  var withStr   = ss.with_true_ob_strength    || 0;
+  var missing   = ss.missing_true_ob_strength || 0;
+  var filtered  = ss.filtered_out_missing_strength || 0;
+  var minVal    = ss.strength_min || 0;
+  var total     = withStr + missing;
+  if (total === 0) { el.innerHTML = ''; return; }
+
+  var note = '<p style="font-size:10px;color:var(--muted);margin:0">' +
+    'OB Strength filter uses only true OB strength metadata (obStrengthPct). ' +
+    'Score and alert_strength are <strong style="color:var(--text)">never</strong> used.</p>';
+
+  var warn = '';
+  if (total > 0 && (missing / total) > 0.5) {
+    warn = '<p style="font-size:10px;color:var(--amber,#fbbf24);margin:4px 0 0">' +
+      '⚠ Most rows do not have true OB strength metadata. ' +
+      'Run fresh scans — new signals will include obStrengthPct automatically.</p>';
+  }
+  if (minVal > 0 && filtered > 0) {
+    warn += '<p style="font-size:10px;color:var(--muted);margin:2px 0 0">' +
+      filtered + ' row(s) with missing OB strength excluded by ' + minVal + '% filter.</p>';
+  }
+
+  var bars = [
+    { label: 'With OB Strength', val: withStr,  color: 'var(--cyan,#22d3ee)' },
+    { label: 'Missing',          val: missing,  color: 'var(--muted)' },
+  ];
+  var html = '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px">';
+  bars.forEach(function(b) {
+    var pct = total > 0 ? Math.round(b.val / total * 100) : 0;
+    html += '<div style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);' +
+            'border-radius:8px;padding:8px 12px;min-width:110px">' +
+            '<div style="font-size:10px;color:var(--muted);margin-bottom:2px">' + b.label + '</div>' +
+            '<div style="font-size:20px;font-weight:700;color:' + b.color + '">' + b.val + '</div>' +
+            '<div style="font-size:10px;color:var(--muted)">' + pct + '%</div></div>';
+  });
+  html += '</div>' + note + warn;
+  el.innerHTML = html;
+}
+
 function intBt_renderFreshnessSummary(fs) {
   var el = document.getElementById('bt-freshness-summary');
   if (!el) return;
@@ -1645,7 +1778,7 @@ function intBt_renderSignals(signals) {
       '<span style="font-size:9px;color:var(--muted)">ST:</span>' + intBt_cfBadge(s.cf_small_target) + ' ' +
       '<span style="font-size:9px;color:var(--muted)">CCE:</span>' + intBt_cfBadge(s.cf_candle_close_entry) +
       '</td>';
-    rows += '<td style="white-space:nowrap">' + intBt_freshnessBadge(s.freshness_status, s.touch_count_before_signal) + '</td>';
+    rows += '<td class="bt-fresh-col" style="white-space:nowrap;display:none">' + intBt_freshnessBadge(s.freshness_status, s.touch_count_before_signal) + '</td>';
     var strVal = (s.ob_strength !== null && s.ob_strength !== undefined) ? s.ob_strength : null;
     rows += '<td style="font-size:10px;white-space:nowrap;color:' + (strVal !== null ? 'var(--text)' : 'var(--muted)') + '">' +
             (strVal !== null ? strVal : '—') + '</td>';
@@ -1668,13 +1801,15 @@ function intBt_runBacktest() {
   var bkEl     = document.getElementById('bt-breakdown');
   var wrap     = document.getElementById('bt-table-wrap');
 
-  var diagEl    = document.getElementById('bt-diag');
+  var diagEl       = document.getElementById('bt-diag');
   var diagSumEl    = document.getElementById('bt-diag-summary');
   var freshSumEl   = document.getElementById('bt-freshness-summary');
+  var strSumEl     = document.getElementById('bt-strength-summary');
   if (errEl)      { errEl.style.display = 'none'; errEl.textContent = ''; }
   if (resultEl)   { resultEl.style.display = 'none'; }
   if (runBtn)     { runBtn.textContent = '⏳ Running…'; runBtn.disabled = true; }
   if (summaryEl)  { summaryEl.innerHTML = ''; }
+  if (strSumEl)   { strSumEl.innerHTML = ''; }
   if (freshSumEl) { freshSumEl.innerHTML = ''; }
   if (diagSumEl)  { diagSumEl.innerHTML = ''; }
   if (diagEl)     { diagEl.innerHTML = ''; }
@@ -1729,7 +1864,13 @@ function intBt_runBacktest() {
         if (thEl) thEl.textContent = 'Variants (' + (modeIsClose ? 'WS' : 'CS') + ' / ST / CCE)';
       }
       intBt_renderSummary(data.summary || {});
-      intBt_renderFreshnessSummary(data.freshness_summary || {});
+      intBt_renderStrengthSummary(data.strength_summary || {});
+      if (freshness && freshness !== 'all') {
+        if (freshSumEl) freshSumEl.style.display = 'block';
+        intBt_renderFreshnessSummary(data.freshness_summary || {});
+      } else {
+        if (freshSumEl) { freshSumEl.style.display = 'none'; freshSumEl.innerHTML = ''; }
+      }
       intBt_renderDiagSummary(data.diagnostic_summary || {});
       intBt_renderDiagnostics(data.diagnostics || {});
       intBt_renderBreakdown(data.by_timeframe || [], data.by_setup_type || []);
@@ -1739,6 +1880,163 @@ function intBt_runBacktest() {
       intBt_running = false;
       if (runBtn) { runBtn.textContent = '▶ Run OB Backtest'; runBtn.disabled = false; }
       if (errEl) { errEl.textContent = 'Network error: ' + (err.message || ''); errEl.style.display = 'block'; }
+    });
+}
+
+/* ── OB Candidate Preview — Phase 8A ── */
+
+var intCand_running = false;
+
+function intCand_statusBadge(s) {
+  var map = {
+    'APPROACHING_ZONE': 'background:rgba(34,197,94,.15);color:#22c55e',
+    'TOUCHING_ZONE':    'background:rgba(0,209,255,.15);color:var(--cyan)',
+    'TOO_FAR':          'background:rgba(148,163,184,.1);color:var(--muted)',
+    'BEYOND_ZONE':      'background:rgba(248,113,113,.12);color:var(--red)',
+    'MISSING_STRENGTH': 'background:rgba(251,191,36,.1);color:var(--amber)',
+    'MISSING_PRICE':    'background:rgba(251,191,36,.1);color:var(--amber)',
+    'UNKNOWN':          'background:rgba(148,163,184,.1);color:var(--muted)'
+  };
+  var st = map[s] || map['UNKNOWN'];
+  return '<span style="font-size:9px;font-weight:600;padding:2px 6px;border-radius:4px;' + st + '">' + (s || '—').replace(/_/g,' ') + '</span>';
+}
+
+function intCand_fmt(v) {
+  if (v == null) return '—';
+  var n = parseFloat(v);
+  return isNaN(n) ? String(v) : n.toPrecision(6);
+}
+
+function intCand_renderSummary(s, api) {
+  var el = document.getElementById('cand-summary');
+  if (!el) return;
+  var defs = [
+    {l:'Checked',       v:s.checked,           c:''},
+    {l:'Active',        v:s.active_candidates, c:'green'},
+    {l:'Approaching',   v:s.approaching_zone,  c:'green'},
+    {l:'Touching Zone', v:s.touching_zone,     c:'cyan'},
+    {l:'Too Far',       v:s.too_far,           c:''},
+    {l:'Beyond Zone',   v:s.beyond_zone,       c:'red'},
+    {l:'No OB Strength',v:s.missing_strength,  c:'amber'},
+    {l:'No Price',      v:s.missing_price,     c:'amber'}
+  ];
+  var html = '<div class="adm-stats-grid">';
+  for (var i = 0; i < defs.length; i++) {
+    var d = defs[i], cc = d.c ? ' ' + d.c : '';
+    html += '<div class="adm-stat-card' + cc + '">' +
+            '<div class="adm-stat-label">' + d.l + '</div>' +
+            '<div class="adm-stat-value' + cc + '">' + (d.v != null ? d.v : '—') + '</div>' +
+            '</div>';
+  }
+  html += '</div>';
+  el.innerHTML = html;
+
+  var apiEl = document.getElementById('cand-api-info');
+  if (apiEl && api) {
+    apiEl.innerHTML = '<span style="font-size:10px;color:var(--muted)">' +
+      '⚡ Price source: <strong>' + (api.price_fetch_mode || '—') + '</strong>' +
+      ' &nbsp;·&nbsp; Per-pair REST calls: <strong>' + (api.per_pair_rest_calls || 0) + '</strong>' +
+      '</span>';
+  }
+}
+
+function intCand_renderCandidates(candidates) {
+  var tbody = document.getElementById('cand-tbody');
+  var wrap  = document.getElementById('cand-table-wrap');
+  if (!tbody || !wrap) return;
+  if (!candidates || candidates.length === 0) { wrap.style.display = 'none'; return; }
+
+  var rows = '';
+  for (var i = 0; i < candidates.length; i++) {
+    var c = candidates[i];
+    var plan = c.trade_plan || {};
+    var isActive = (c.candidate_status === 'APPROACHING_ZONE' || c.candidate_status === 'TOUCHING_ZONE');
+    rows += '<tr' + (isActive ? ' style="background:rgba(34,197,94,.04)"' : '') + '>';
+    rows += '<td style="font-family:\'JetBrains Mono\',monospace;font-size:11px">' + intAud_escHtml(c.pair || '—') + '</td>';
+    rows += '<td>' + intAud_escHtml(c.timeframe || '—') + '</td>';
+    rows += '<td style="font-size:10px">' + intAud_escHtml((c.setup_type || '—').replace('OB_','')) + '</td>';
+    rows += '<td style="font-size:10px;color:' + (c.direction === 'bullish' ? 'var(--green)' : 'var(--red)') + '">' +
+            intAud_escHtml(c.direction ? c.direction.charAt(0).toUpperCase() : '—') + '</td>';
+    var strVal = c.ob_strength;
+    rows += '<td style="font-size:10px;color:' + (strVal != null ? 'var(--text)' : 'var(--muted)') + '">' +
+            (strVal != null ? strVal : '—') + '</td>';
+    rows += '<td style="font-family:\'JetBrains Mono\',monospace;font-size:10px">' + intCand_fmt(c.current_price) + '</td>';
+    rows += '<td style="font-size:10px;white-space:nowrap">' +
+            intCand_fmt(c.zone_low) + ' – ' + intCand_fmt(c.zone_high) + '</td>';
+    var dist = c.distance_pct;
+    rows += '<td style="font-size:10px;color:' + (dist != null && dist <= 0.5 ? 'var(--green)' : 'var(--text)') + '">' +
+            (dist != null ? dist.toFixed(3) + '%' : '—') + '</td>';
+    rows += '<td>' + intCand_statusBadge(c.candidate_status) + '</td>';
+    rows += '<td style="font-family:\'JetBrains Mono\',monospace;font-size:10px">' +
+            (plan.entry_price_preview != null ? intCand_fmt(plan.entry_price_preview) : '—') + '</td>';
+    rows += '<td style="font-size:9px;color:var(--muted)">' +
+            (plan.sl_rule ? plan.sl_rule.replace(/_/g,' ') : '—') + '</td>';
+    rows += '<td style="font-family:\'JetBrains Mono\',monospace;font-size:10px">' +
+            (plan.tp_price_preview != null ? intCand_fmt(plan.tp_price_preview) : '—') +
+            (plan.rr_preview != null ? '<span style="font-size:9px;color:var(--muted)"> R' + plan.rr_preview + '</span>' : '') +
+            '</td>';
+    rows += '<td style="text-align:center">' +
+            (c.would_monitor
+              ? '<span style="color:var(--green);font-weight:700">✓</span>'
+              : '<span style="color:var(--muted)">—</span>') +
+            '</td>';
+    rows += '</tr>';
+  }
+  tbody.innerHTML = rows;
+  wrap.style.display = 'block';
+}
+
+function intCand_run() {
+  if (intCand_running) return;
+  var errEl    = document.getElementById('cand-error');
+  var resultEl = document.getElementById('cand-result');
+  var runBtn   = document.getElementById('cand-run-btn');
+  var summaryEl = document.getElementById('cand-summary');
+  var wrap     = document.getElementById('cand-table-wrap');
+  if (errEl)    { errEl.style.display = 'none'; errEl.textContent = ''; }
+  if (resultEl) { resultEl.style.display = 'none'; }
+  if (runBtn)   { runBtn.textContent = '⏳ Running…'; runBtn.disabled = true; }
+  if (summaryEl){ summaryEl.innerHTML = ''; }
+  if (wrap)     { wrap.style.display = 'none'; }
+
+  var limit      = (document.getElementById('cand-limit')        || {}).value || '100';
+  var tf         = (document.getElementById('cand-timeframe')    || {}).value || '';
+  var setup      = (document.getElementById('cand-setup-type')   || {}).value || 'all';
+  var strMin     = (document.getElementById('cand-strength-min') || {}).value || '0';
+  var maxDist    = (document.getElementById('cand-max-distance') || {}).value || '1.0';
+  var entryMode  = (document.getElementById('cand-entry-mode')   || {}).value || 'zone_middle';
+  var tpMode     = (document.getElementById('cand-tp-mode')      || {}).value || 'rr';
+  var rrVal      = (document.getElementById('cand-rr')           || {}).value || '1.5';
+  var tpPctVal   = (document.getElementById('cand-tp-pct')       || {}).value || '0.30';
+
+  var url = '/admin/intelligence/ob-candidates?limit=' + encodeURIComponent(limit);
+  if (tf)                         url += '&timeframe='       + encodeURIComponent(tf);
+  if (setup && setup !== 'all')   url += '&setup_type='      + encodeURIComponent(setup);
+  if (strMin && strMin !== '0')   url += '&strength_min='    + encodeURIComponent(strMin);
+  url += '&max_distance_pct=' + encodeURIComponent(maxDist);
+  url += '&entry_mode='       + encodeURIComponent(entryMode);
+  url += '&tp_mode='          + encodeURIComponent(tpMode);
+  if (tpMode === 'rr')            url += '&rr='              + encodeURIComponent(rrVal);
+  else                            url += '&tp_pct='          + encodeURIComponent(tpPctVal);
+
+  intCand_running = true;
+  fetch(url, { credentials: 'same-origin' })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      intCand_running = false;
+      if (runBtn) { runBtn.textContent = '🔍 Run Candidate Preview'; runBtn.disabled = false; }
+      if (!data.ok) {
+        if (errEl) { errEl.textContent = data.error || 'Request failed'; errEl.style.display = 'block'; }
+        return;
+      }
+      if (resultEl) resultEl.style.display = 'block';
+      intCand_renderSummary(data.summary || {}, data.api_usage || {});
+      intCand_renderCandidates(data.candidates || []);
+    })
+    .catch(function(err) {
+      intCand_running = false;
+      if (runBtn) { runBtn.textContent = '🔍 Run Candidate Preview'; runBtn.disabled = false; }
+      if (errEl)  { errEl.textContent = 'Network error: ' + err.message; errEl.style.display = 'block'; }
     });
 }
 
@@ -1780,6 +2078,18 @@ function intSt_init() {
   if (audBtn) { audBtn.addEventListener('click', intAud_runAudit); }
   var btBtn = document.getElementById('bt-run-btn');
   if (btBtn) { btBtn.addEventListener('click', intBt_runBacktest); }
+  var candBtn = document.getElementById('cand-run-btn');
+  if (candBtn) { candBtn.addEventListener('click', intCand_run); }
+  var candTpMode = document.getElementById('cand-tp-mode');
+  if (candTpMode) {
+    candTpMode.addEventListener('change', function() {
+      var isRr = this.value === 'rr';
+      var rrGrp = document.getElementById('cand-rr-group');
+      var pctGrp = document.getElementById('cand-tp-pct-group');
+      if (rrGrp)  rrGrp.style.display  = isRr ? '' : 'none';
+      if (pctGrp) pctGrp.style.display = isRr ? 'none' : '';
+    });
+  }
   intCar_fetchSettings();
   intSt_fetchStats();
 }

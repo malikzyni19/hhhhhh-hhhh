@@ -275,6 +275,51 @@
 
         .timer-note span { color: var(--accent); font-weight: 600; }
 
+        /* Fallback code box — shown when email delivery fails */
+        .fallback-box {
+            background: rgba(245,158,11,0.08);
+            border: 1px solid rgba(245,158,11,0.35);
+            border-radius: 10px;
+            padding: 18px 20px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .fallback-box .fb-label {
+            font-size: 11px;
+            color: rgba(245,158,11,0.8);
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+        }
+
+        .fallback-box .fb-code {
+            font-size: 38px;
+            font-weight: 800;
+            letter-spacing: 12px;
+            color: #f59e0b;
+            font-family: 'Courier New', monospace;
+        }
+
+        .fallback-box .fb-note {
+            font-size: 11px;
+            color: rgba(232,240,255,0.4);
+            margin-top: 8px;
+            line-height: 1.5;
+        }
+
+        .smtp-warn {
+            background: rgba(245,158,11,0.06);
+            border: 1px solid rgba(245,158,11,0.25);
+            border-radius: 8px;
+            padding: 10px 14px;
+            font-size: 11.5px;
+            color: rgba(245,158,11,0.9);
+            margin-bottom: 16px;
+            line-height: 1.55;
+        }
+
+
         @media (max-width: 520px) {
             .verify-card { padding: 30px 20px 26px; }
             .otp-digit { width: 42px; height: 50px; font-size: 22px; }
@@ -293,13 +338,50 @@
 
     <div class="verify-card">
         <div class="verify-icon">
+            {% if email_sent == false or fallback_code %}
+            <i class="fa-solid fa-triangle-exclamation" style="color:#f59e0b"></i>
+            {% else %}
             <i class="fa-solid fa-envelope-circle-check"></i>
+            {% endif %}
         </div>
+
+        {% if fallback_code %}
+        <div class="verify-title">Email not sent — use code below</div>
+        {% if fail_reason == "delivery_failed" %}
+        <div class="verify-sub">
+            Your email credentials are configured but outbound email was blocked by the server.<br>
+            Use the code shown below to verify your account.
+        </div>
+        <div class="smtp-warn">
+            <i class="fa-solid fa-circle-info" style="margin-right:5px"></i>
+            <strong>Admin:</strong> SMTP credentials are set but delivery failed — the server
+            may be blocking outbound SMTP ports. Visit
+            <code>/admin/test-email</code> while logged in as admin to diagnose.
+        </div>
+        {% else %}
+        <div class="verify-sub">
+            The email service is not configured on this server.<br>
+            Use the code shown below to verify your account.
+        </div>
+        <div class="smtp-warn">
+            <i class="fa-solid fa-circle-info" style="margin-right:5px"></i>
+            <strong>Admin:</strong> Set <code>ALERT_EMAIL_FROM</code> and
+            <code>ALERT_EMAIL_PASS</code> in Koyeb <strong>Environment Variables</strong>
+            (link your Secrets to the service — Secrets alone are not enough).
+        </div>
+        {% endif %}
+        <div class="fallback-box">
+            <div class="fb-label">Your verification code</div>
+            <div class="fb-code" id="fbCode">{{ fallback_code }}</div>
+            <div class="fb-note">Copy this code and enter it in the boxes below.<br>Valid for 15 minutes.</div>
+        </div>
+        {% else %}
         <div class="verify-title">Check your inbox</div>
         <div class="verify-sub">
             We sent a 6-digit verification code to your email address.<br>
             Enter it below to activate your account.
         </div>
+        {% endif %}
 
         {% if error %}
         <div class="alert-msg error-msg">
@@ -405,8 +487,16 @@
             });
         });
 
+        // Auto-fill OTP boxes when fallback code is shown
+        const fbCodeEl = document.getElementById('fbCode');
+        if (fbCodeEl) {
+            const fc = fbCodeEl.textContent.replace(/\D/g, '').slice(0, 6);
+            fc.split('').forEach((ch, i) => { if (digits[i]) digits[i].value = ch; });
+            updateHidden();
+        }
+
         // Auto-focus first digit on load
-        digits[0].focus();
+        if (!fbCodeEl) digits[0].focus();
 
         // ── Countdown timer (15 min) ──────────────────────────────────
         let remaining = 15 * 60;

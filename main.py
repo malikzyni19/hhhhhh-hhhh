@@ -276,37 +276,66 @@ def save_user_watchlist(username: str, pairs: List[str]) -> None:
 #   ALERT_EMAIL_PASS   = Gmail App Password (not your real password)
 #   ALERT_EMAIL_TO     = email where you want to receive alerts
 # ============================================================
-ALERT_EMAIL_FROM = os.environ.get("ALERT_EMAIL_FROM", "")
-ALERT_EMAIL_PASS = os.environ.get("ALERT_EMAIL_PASS", "")
-ALERT_EMAIL_TO   = os.environ.get("ALERT_EMAIL_TO", "")
+# Email env-var helpers — read at call time so Koyeb secrets
+# injected after process start are always picked up.
+def _email_from() -> str:
+    return os.environ.get("ALERT_EMAIL_FROM", "").strip()
+
+def _email_pass() -> str:
+    # Strip spaces — Gmail App Passwords are displayed with spaces
+    # (e.g. "xpbt jcgt fnds wcfx") but must be used without them.
+    return os.environ.get("ALERT_EMAIL_PASS", "").replace(" ", "")
+
+def _email_to() -> str:
+    return os.environ.get("ALERT_EMAIL_TO", "").strip()
+
+# Keep module-level aliases for legacy callers (send_email_alert)
+ALERT_EMAIL_FROM = ""
+ALERT_EMAIL_PASS = ""
+ALERT_EMAIL_TO   = ""
 
 
 def send_email_alert(subject: str, body: str) -> bool:
-    """Send email notification. Returns True on success."""
-    if not all([ALERT_EMAIL_FROM, ALERT_EMAIL_PASS, ALERT_EMAIL_TO]):
+    """Send login-alert email to admin. Returns True on success."""
+    frm  = _email_from()
+    pwd  = _email_pass()
+    to   = _email_to()
+    if not all([frm, pwd, to]):
         return False  # Not configured — silently skip
     try:
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
-        msg["From"]    = ALERT_EMAIL_FROM
-        msg["To"]      = ALERT_EMAIL_TO
+        msg["From"]    = frm
+        msg["To"]      = to
         msg.attach(MIMEText(body, "html"))
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as srv:
-            srv.login(ALERT_EMAIL_FROM, ALERT_EMAIL_PASS)
-            srv.sendmail(ALERT_EMAIL_FROM, ALERT_EMAIL_TO, msg.as_string())
+            srv.login(frm, pwd)
+            srv.sendmail(frm, to, msg.as_string())
         return True
     except Exception as e:
         print(f"[EMAIL] Failed: {e}")
         return False
 
 
-def send_verification_email(to_email: str, code: str, username: str) -> bool:
-    """Send a 6-digit OTP verification email directly to the new user."""
-    if not all([ALERT_EMAIL_FROM, ALERT_EMAIL_PASS, to_email]):
-        return False
-    try:
-        subject = "ZyNi SMC — Verify Your Email Address"
-        body = f"""
+def send_verification_email(to_email: str, code: str, username: str) -> "tuple[bool, str]":
+    """Send a 6-digit OTP verification email directly to the new user.
+    Reads SMTP credentials fresh from env at call time (supports Koyeb secrets).
+    Tries SMTP_SSL (465) first, then STARTTLS (587) as fallback.
+    Returns (success: bool, fail_reason: str) where fail_reason is one of:
+      'ok' | 'missing_config' | 'delivery_failed'
+    """
+    frm = _email_from()
+    pwd = _email_pass()
+    if not frm or not pwd:
+        print(f"[VERIFY-EMAIL] SMTP not configured — "
+              f"ALERT_EMAIL_FROM={'set' if frm else 'MISSING'}, "
+              f"ALERT_EMAIL_PASS={'set' if pwd else 'MISSING'}")
+        return False, "missing_config"
+    if not to_email:
+        return False, "missing_config"
+
+    subject = "ZyNi SMC — Verify Your Email Address"
+    body = f"""
 <html>
 <body style="margin:0;padding:0;background:#060a14;font-family:'Segoe UI',Arial,sans-serif">
 <div style="max-width:520px;margin:40px auto;background:#0d1525;border:1px solid rgba(30,184,200,0.25);
@@ -326,7 +355,7 @@ def send_verification_email(to_email: str, code: str, username: str) -> bool:
     <div style="font-size:42px;font-weight:800;letter-spacing:14px;color:#1eb8c8;
                 font-family:'Courier New',monospace">{code}</div>
     <div style="font-size:12px;color:rgba(232,240,255,0.4);margin-top:10px">
-      Valid for 15 minutes · Do not share this code
+      Valid for 15 minutes &middot; Do not share this code
     </div>
   </div>
   <p style="color:rgba(232,240,255,0.35);font-size:12px;text-align:center;margin:0">
@@ -335,18 +364,44 @@ def send_verification_email(to_email: str, code: str, username: str) -> bool:
 </div>
 </body>
 </html>"""
+
+    def _build_msg():
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
-        msg["From"]    = ALERT_EMAIL_FROM
+        msg["From"]    = frm
         msg["To"]      = to_email
         msg.attach(MIMEText(body, "html"))
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as srv:
-            srv.login(ALERT_EMAIL_FROM, ALERT_EMAIL_PASS)
-            srv.sendmail(ALERT_EMAIL_FROM, to_email, msg.as_string())
-        return True
-    except Exception as e:
-        print(f"[VERIFY-EMAIL] Failed to send to {to_email}: {e}")
-        return False
+        return msg
+
+    print(f"[VERIFY-EMAIL] Attempting send from {frm} to {to_email}")
+
+    # Try SMTP_SSL on port 465 first
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as srv:
+            srv.login(frm, pwd)
+            srv.sendmail(frm, to_email, _build_msg().as_string())
+        print(f"[VERIFY-EMAIL] Sent via SSL/465 to {to_email}")
+        return True, "ok"
+    except Exception as e1:
+        print(f"[VERIFY-EMAIL] SSL/465 failed: {e1}")
+
+    # Fallback: STARTTLS on port 587
+    try:
+        ctx = ssl.create_default_context()
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=15) as srv:
+            srv.ehlo()
+            srv.starttls(context=ctx)
+            srv.ehlo()
+            srv.login(frm, pwd)
+            srv.sendmail(frm, to_email, _build_msg().as_string())
+        print(f"[VERIFY-EMAIL] Sent via STARTTLS/587 to {to_email}")
+        return True, "ok"
+    except Exception as e2:
+        print(f"[VERIFY-EMAIL] STARTTLS/587 also failed: {e2}")
+
+    # Credentials were present but all delivery methods failed (SMTP likely blocked)
+    print(f"[VERIFY-EMAIL] All methods failed for {to_email} — credentials set but delivery blocked")
+    return False, "delivery_failed"
 
 
 def _auto_migrate():
@@ -2267,7 +2322,7 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         ob["strengthLabel"] = "Strong" if strength >= 80 else "Good" if strength >= 60 else "Medium" if strength >= 40 else "Weak"
         active.append(ob)
 
-    return active[-max_ob:]
+    return active if max_ob is None else active[-max_ob:]
 
 
 def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
@@ -3293,6 +3348,100 @@ def ob_approach_pct_from_atr(price: float, atr_value: float, atr_mult: float = 0
     return (max(atr_value, 0.0) * max(atr_mult, 0.0)) / price * 100.0
 
 
+# ── Pine-style TV OB volume share settings (matches TradingView OB indicator) ──
+_TV_OB_PARITY_SETTINGS: Dict[str, Any] = {
+    "showLast":       5,
+    "internalOnly":   True,
+    "swingOrderBlocks": False,
+    "filtering":      "None",
+    "mitigation":     "Absolute",
+    "positioning":    "Precise",
+    "hideOverlap":    True,
+    "overlapMode":    "Previous",
+    "breakerIncluded": False,
+}
+
+
+def _tv_visible_pool(obs_by_dir: List[Dict[str, Any]], max_ob: int = 5) -> List[Dict[str, Any]]:
+    """
+    Build the Pine-style visible OB pool for a single direction.
+
+    Pine drawVOB (hideOverlap=True, overlapMode=Previous):
+      seq 0 = most recent, seq N-1 = oldest.
+      For seq >= 1: if top[seq] > btm[seq-1] and btm[seq] < top[seq-1] → skip (hide older OB).
+
+    obs_by_dir: all active OBs of ONE direction, oldest-first (detect_obs insertion order).
+    Returns the visible subset, oldest-first, length ≤ max_ob.
+    """
+    pool = obs_by_dir[-max_ob:] if len(obs_by_dir) > max_ob else list(obs_by_dir)
+    newest_first = list(reversed(pool))
+    visible_nf: List[Dict[str, Any]] = []
+    for i, ob in enumerate(newest_first):
+        if i > 0:
+            newer = newest_first[i - 1]
+            if ob["top"] > newer["bottom"] and ob["bottom"] < newer["top"]:
+                continue  # overlaps more-recent OB — Pine hides it
+        visible_nf.append(ob)
+    return list(reversed(visible_nf))
+
+
+def calculate_tv_ob_volume_share(obs: List[Dict[str, Any]],
+                                  pool_name: str = "unknown",
+                                  source_pool_count: int = 0) -> None:
+    """
+    Attach Pine-style TV OB volume share fields to each OB in the visible pool.
+    Mutates obs in-place. Caller is responsible for passing the correct visible
+    pool (showLast + hideOverlap already applied by _tv_visible_pool).
+
+    Pine reference (drawVOB):
+      tV  = sum of obj.cV for visible sequence
+      obj.dV = floor((obj.cV / tV) * 100)
+
+    pool_name:         "bullish" or "bearish" — pools must be passed separately.
+    source_pool_count: count of all active same-direction OBs before showLast.
+    Breaker Blocks must be excluded before calling this function.
+    """
+    visible = obs
+    total_vol = sum(ob.get("volume") or 0 for ob in visible)
+    vis_count = len(visible)
+
+    # Build debug snapshot — tvObVolumeSharePct filled in during loop below
+    vis_debug = [
+        {"direction": pool_name, "bar": ob["bar"],
+         "zoneTop": round(ob["top"], 8), "zoneBottom": round(ob["bottom"], 8),
+         "volume": ob.get("volume"), "tvObVolumeSharePct": None}
+        for ob in visible
+    ]
+
+    for idx, ob in enumerate(visible):
+        ob_vol = ob.get("volume") or 0
+        if total_vol <= 0:
+            status   = "zero_total_volume" if total_vol == 0 else "missing_volume"
+            tv_share = None
+        elif ob_vol <= 0:
+            status   = "missing_volume"
+            tv_share = None
+        else:
+            status   = "ok"
+            tv_share = int((ob_vol / total_vol) * 100)   # floor for positive = int()
+
+        vis_debug[idx]["tvObVolumeSharePct"] = tv_share
+
+        ob["tvObVolumeSharePct"]                = tv_share
+        ob["tvObVolumeShareStatus"]             = status
+        ob["tvObFormationVolume"]               = round(ob_vol, 2) if ob_vol else None
+        ob["tvObVisibleTotalVolume"]            = round(total_vol, 2)
+        ob["tvObVisibleCount"]                  = vis_count
+        ob["tvObVolumeShareSource"]             = "pine_visible_active_ob_volume_share"
+        ob["tvObVolumeShareFormula"]            = "floor(source_volume / visible_total_volume * 100)"
+        ob["tvObParityPool"]                    = pool_name
+        ob["tvObParitySeq"]                     = idx
+        ob["tvObParitySettings"]                = _TV_OB_PARITY_SETTINGS
+        ob["tvObSourcePoolCountBeforeShowLast"] = source_pool_count
+        ob["tvObDirectionPoolCount"]            = source_pool_count
+        ob["tvObVisiblePoolDebug"]              = vis_debug
+
+
 def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings: Dict[str, Any], btc_closes: Optional[List[float]] = None, fib_candles: Optional[List[Dict[str, float]]] = None) -> Optional[Dict[str, Any]]:
     o = [x["open"] for x in candles]
     h = [x["high"] for x in candles]
@@ -3390,20 +3539,55 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
         else:
             return str(round(vv))
 
-    # ── Calculate volumePct SEPARATELY for bullish and bearish ──
-    # Pine Script calls drawVOB separately for bull/bear — each pool sums to 100%
+    # ── TV OB Volume Share — Pine showLast=5 per direction, hideOverlap=Previous ──
+    # max_ob=None returns ALL active OBs (no mixed truncation) so each direction
+    # gets its own complete pool before showLast=5 + hideOverlap are applied.
+    # Alert logic uses the original obs (max_ob=5 mixed) — unchanged.
+    obs_tv_src  = detect_obs(o, h, l, c, v, settings["iLen"], settings["sLen"], max_ob=None)
+    bull_tv_src = [ob for ob in obs_tv_src if ob["type"] == "bullish"]
+    bear_tv_src = [ob for ob in obs_tv_src if ob["type"] == "bearish"]
+    tv_bull_pool = _tv_visible_pool(bull_tv_src)
+    tv_bear_pool = _tv_visible_pool(bear_tv_src)
+    calculate_tv_ob_volume_share(tv_bull_pool, pool_name="bullish", source_pool_count=len(bull_tv_src))
+    calculate_tv_ob_volume_share(tv_bear_pool, pool_name="bearish", source_pool_count=len(bear_tv_src))
+
+    # Map TV fields onto OBs in the main pool, matched by (direction, formation bar index)
+    _tv_by_key   = {(ob["type"], ob["bar"]): ob for ob in tv_bull_pool + tv_bear_pool}
+    _tv_src_counts = {"bullish": len(bull_tv_src), "bearish": len(bear_tv_src)}
+    _TV_FIELDS = (
+        "tvObVolumeSharePct", "tvObVolumeShareStatus", "tvObFormationVolume",
+        "tvObVisibleTotalVolume", "tvObVisibleCount", "tvObVolumeShareSource",
+        "tvObVolumeShareFormula", "tvObParityPool", "tvObParitySeq", "tvObParitySettings",
+        "tvObSourcePoolCountBeforeShowLast", "tvObDirectionPoolCount", "tvObVisiblePoolDebug",
+    )
+    for ob in obs:
+        tv_ref = _tv_by_key.get((ob["type"], ob["bar"]))
+        if tv_ref:
+            for _f in _TV_FIELDS:
+                ob[_f] = tv_ref[_f]
+        else:
+            # Active but hidden by Pine (beyond showLast or overlapped by a more-recent OB)
+            ob["tvObVolumeSharePct"]                = None
+            ob["tvObVolumeShareStatus"]             = "ob_not_in_tv_visible_pool"
+            ob["tvObFormationVolume"]               = ob.get("volume")
+            ob["tvObVisibleTotalVolume"]            = None
+            ob["tvObVisibleCount"]                  = None
+            ob["tvObVolumeShareSource"]             = "pine_visible_active_ob_volume_share"
+            ob["tvObVolumeShareFormula"]            = "floor(source_volume / visible_total_volume * 100)"
+            ob["tvObParityPool"]                    = ob["type"]
+            ob["tvObParitySeq"]                     = None
+            ob["tvObParitySettings"]                = _TV_OB_PARITY_SETTINGS
+            ob["tvObSourcePoolCountBeforeShowLast"] = _tv_src_counts.get(ob["type"], 0)
+            ob["tvObDirectionPoolCount"]            = _tv_src_counts.get(ob["type"], 0)
+            ob["tvObVisiblePoolDebug"]              = None
+
     bullish_obs = [ob for ob in obs if ob["type"] == "bullish"]
     bearish_obs = [ob for ob in obs if ob["type"] == "bearish"]
 
-    bull_total_vol = sum(ob["volume"] for ob in bullish_obs)
-    for ob in bullish_obs:
-        ob["volumePct"]       = int((ob["volume"] / bull_total_vol) * 100) if bull_total_vol > 0 else 0
-        ob["volumeFormatted"] = _fmt_ob_vol(ob["volume"])
-
-    bear_total_vol = sum(ob["volume"] for ob in bearish_obs)
-    for ob in bearish_obs:
-        ob["volumePct"]       = int((ob["volume"] / bear_total_vol) * 100) if bear_total_vol > 0 else 0
-        ob["volumeFormatted"] = _fmt_ob_vol(ob["volume"])
+    # Backward-compatible volumePct + formatted volume label
+    for ob in bullish_obs + bearish_obs:
+        ob["volumePct"]       = ob["tvObVolumeSharePct"] if ob["tvObVolumeSharePct"] is not None else 0
+        ob["volumeFormatted"] = _fmt_ob_vol(ob.get("volume") or 0)
 
     # ── Distance helper ──
     def _ob_distance_pct(ob):
@@ -3458,9 +3642,26 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
     ob_consol_tol_pct    = min(ob_approach_pct_base, 0.50)
     needed_consol        = settings.get("consolCandles", 5)
 
-    min_str = settings.get("obMinStrengthPct", 0) if settings.get("useObStrengthFilter") else 0
-    bullish_obs_filt = [ob for ob in obs if ob["type"] == "bullish" and ob["strengthPct"] >= min_str]
-    bearish_obs_filt = [ob for ob in obs if ob["type"] == "bearish" and ob["strengthPct"] >= min_str]
+    _use_str_filter = settings.get("useObStrengthFilter", False)
+    _str_mode       = settings.get("obStrengthFilterMode", "screener_quality")
+    _min_str        = float(settings.get("obMinStrengthPct", 0)) if _use_str_filter else 0.0
+
+    if _use_str_filter and _str_mode == "tv_volume_share":
+        # Filter by tvObVolumeSharePct only — never fallback to screener quality or score
+        bullish_obs_filt = [
+            ob for ob in obs if ob["type"] == "bullish"
+            and ob.get("tvObVolumeSharePct") is not None
+            and ob["tvObVolumeSharePct"] >= _min_str
+        ]
+        bearish_obs_filt = [
+            ob for ob in obs if ob["type"] == "bearish"
+            and ob.get("tvObVolumeSharePct") is not None
+            and ob["tvObVolumeSharePct"] >= _min_str
+        ]
+    else:
+        # screener_quality (default) or filter OFF — use obStrengthPct
+        bullish_obs_filt = [ob for ob in obs if ob["type"] == "bullish" and ob["strengthPct"] >= _min_str]
+        bearish_obs_filt = [ob for ob in obs if ob["type"] == "bearish" and ob["strengthPct"] >= _min_str]
 
     # Optional OB Quality Engine v2
     use_high_prob = settings.get("useHighProbOB", False)
@@ -3556,6 +3757,11 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
             dist_pct    = _ob_dist_from_price(ob, price)
             quality_str = (f' | Quality: {ob.get("quality", 0)}/100 ({ob.get("qualityLabel", "Weak")})'
                            if use_high_prob else '')
+            _tv_share     = ob.get("tvObVolumeSharePct")
+            _tv_share_str = f'{_tv_share}%' if _tv_share is not None else '—'
+            _filter_label = ((' | Filter: TV OB %' if _str_mode == 'tv_volume_share'
+                               else ' | Filter: Quality Str')
+                             if _use_str_filter else '')
 
             # Position label
             pos_label = "INSIDE ZONE" if price_in_zone else f"{dist_pct:.2f}% from zone"
@@ -3563,20 +3769,36 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
             ob_strength = (5 if use_high_prob and ob.get("quality", 0) >= 80
                            else 4 if ob["strengthPct"] >= 70 else 3)
             ob_meta_base = {
-                "obStrengthPct": ob["strengthPct"],
+                # ── Screener quality strength (existing) ──
+                "obStrengthPct":   ob["strengthPct"],
                 "obStrengthLabel": ob["strengthLabel"],
+                # ── TradingView-style OB volume share (Phase 8B) ──
+                "tvObVolumeSharePct":     ob.get("tvObVolumeSharePct"),
+                "tvObVolumeShareStatus":  ob.get("tvObVolumeShareStatus"),
+                "tvObFormationVolume":    ob.get("tvObFormationVolume"),
+                "tvObVisibleTotalVolume": ob.get("tvObVisibleTotalVolume"),
+                "tvObVisibleCount":       ob.get("tvObVisibleCount"),
+                "tvObVolumeShareSource":  ob.get("tvObVolumeShareSource"),
+                "tvObVolumeShareFormula": ob.get("tvObVolumeShareFormula"),
+                "tvObParityPool":         ob.get("tvObParityPool"),
+                "tvObParitySettings":                ob.get("tvObParitySettings"),
+                "tvObSourcePoolCountBeforeShowLast": ob.get("tvObSourcePoolCountBeforeShowLast"),
+                "tvObDirectionPoolCount":            ob.get("tvObDirectionPoolCount"),
+                "tvObVisiblePoolDebug":              ob.get("tvObVisiblePoolDebug"),
+                # ── Zone & proximity ──
                 "obDistPct": round(dist_pct, 3),
                 "obQuality": ob.get("quality", 0),
                 "obQualityLabel": ob.get("qualityLabel", "Weak"),
-                "obTop":     round(ob["top"], 8),
-                "obBottom":  round(ob["bottom"], 8),
-                "absorption": ob.get("absorption", "NONE"),
-                "absorptionStr": ob.get("absorptionStr", "None"),
+                "obTop":    round(ob["top"], 8),
+                "obBottom": round(ob["bottom"], 8),
+                # ── Orderflow ──
+                "absorption":     ob.get("absorption", "NONE"),
+                "absorptionStr":  ob.get("absorptionStr", "None"),
                 "absorptionPass": ob.get("absorptionPass", False),
-                "delta": ob.get("delta", 0.0),
-                "oiSignal": ob.get("oiSignal", "unknown"),
+                "delta":          ob.get("delta", 0.0),
+                "oiSignal":       ob.get("oiSignal", "unknown"),
                 "fundingContext": ob.get("fundingContext", "unknown"),
-                "ofSummary": ob.get("ofSummary", ""),
+                "ofSummary":      ob.get("ofSummary", ""),
                 **ob.get("qualityMeta", {}),
             }
 
@@ -3591,7 +3813,8 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
                         "timeframe": tf,
                         "detail": (f'Consolidating on {direction} OB | {pos_label} | '
                                    f'Candles: {consecutive} | '
-                                   f'Strength: {ob["strengthPct"]:.1f}% ({ob["strengthLabel"]}){quality_str} | '
+                                   f'Quality Str: {ob["strengthPct"]:.1f}% ({ob["strengthLabel"]}) | '
+                                   f'TV OB %: {_tv_share_str}{quality_str}{_filter_label} | '
                                    f'Zone: {fmt_price(zone_bottom)} – {fmt_price(zone_top)}'
                                    + (f' | {ob["ofSummary"]}' if ob.get("ofSummary") else '')),
                         "strength": ob_strength,
@@ -3610,7 +3833,8 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
                     "direction": direction,
                     "timeframe": tf,
                     "detail": (f'Approaching {direction} OB | Dist: {dist_pct:.2f}% | '
-                               f'Strength: {ob["strengthPct"]:.1f}% ({ob["strengthLabel"]}){quality_str} | '
+                               f'Quality Str: {ob["strengthPct"]:.1f}% ({ob["strengthLabel"]}) | '
+                               f'TV OB %: {_tv_share_str}{quality_str}{_filter_label} | '
                                f'Zone: {fmt_price(zone_bottom)} – {fmt_price(zone_top)}'
                                + (f' | {ob["ofSummary"]}' if ob.get("ofSummary") else '')),
                     "strength": ob_strength,
@@ -4417,8 +4641,9 @@ def parse_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
         "consolCandles": int(payload.get("consolCandles", 4)),
         "rsiOB": float(payload.get("rsiOB", 75)),
         "rsiOS": float(payload.get("rsiOS", 25)),
-        "useObStrengthFilter": bool(payload.get("useObStrengthFilter", False)),
-        "obMinStrengthPct": float(payload.get("obMinStrengthPct", 70)),
+        "useObStrengthFilter":  bool(payload.get("useObStrengthFilter", False)),
+        "obStrengthFilterMode": payload.get("obStrengthFilterMode", "screener_quality"),
+        "obMinStrengthPct":     float(payload.get("obMinStrengthPct", 70)),
         "useHighProbOB": bool(payload.get("useHighProbOB", False)),
         "obMinQuality": int(payload.get("obMinQuality", 50)),
         "useFvgValidOnly": bool(payload.get("useFvgValidOnly", True)),
@@ -4703,11 +4928,17 @@ def register():
         db.session.add(ev)
         db.session.commit()
 
-        threading.Thread(
-            target=send_verification_email,
-            args=(email, code, username),
-            daemon=True,
-        ).start()
+        # Send synchronously so we know immediately if it succeeded
+        email_sent, fail_reason = send_verification_email(email, code, username)
+
+        # Store outcome in session so verify page can react
+        session["verify_email_sent"]    = email_sent
+        session["verify_pending_user"]  = username
+        session["verify_fail_reason"]   = fail_reason
+
+        # Expose code on-screen so the user can proceed even if delivery failed
+        if not email_sent:
+            session["verify_fallback_code"] = code
 
         return redirect(url_for("verify_email", username=username))
     except Exception as _re:
@@ -4719,8 +4950,15 @@ def register():
 @app.route("/verify-email", methods=["GET", "POST"])
 def verify_email():
     if request.method == "GET":
-        username = request.args.get("username", "")
-        return render_template("verify.html", username=username)
+        username = request.args.get("username", "") or session.get("verify_pending_user", "")
+        email_sent    = session.pop("verify_email_sent", True)
+        fallback_code = session.pop("verify_fallback_code", None)
+        fail_reason   = session.pop("verify_fail_reason", "missing_config")
+        return render_template("verify.html",
+                               username=username,
+                               email_sent=email_sent,
+                               fallback_code=fallback_code,
+                               fail_reason=fail_reason)
 
     username = request.form.get("username", "").strip().lower()
     code     = request.form.get("code", "").strip()
@@ -4785,19 +5023,54 @@ def resend_verification():
         db.session.add(ev)
         db.session.commit()
 
-        threading.Thread(
-            target=send_verification_email,
-            args=(user.email, code, username),
-            daemon=True,
-        ).start()
+        email_sent, fail_reason = send_verification_email(user.email, code, username)
 
-        return render_template("verify.html", username=username,
-                               success="A new verification code has been sent to your email.")
+        if email_sent:
+            return render_template("verify.html", username=username,
+                                   email_sent=True,
+                                   success=f"A new code has been sent to {user.email}.")
+        else:
+            return render_template("verify.html", username=username,
+                                   email_sent=False,
+                                   fallback_code=code,
+                                   fail_reason=fail_reason,
+                                   success="New code generated.")
     except Exception as _re:
         print(f"[RESEND-VERIFY] Error: {_re}")
         db.session.rollback()
         return render_template("verify.html", username=username,
                                error="Failed to resend. Please try again later.")
+
+
+@app.route("/admin/test-email")
+def admin_test_email():
+    """Diagnostic endpoint — admin only. Tests SMTP and shows env-var state."""
+    if not session.get("is_admin"):
+        return "Access denied", 403
+    frm = _email_from()
+    pwd = _email_pass()
+    to  = _email_to()
+    result = {"from_set": bool(frm), "pass_set": bool(pwd), "to_set": bool(to),
+              "from_val": frm, "to_val": to}
+    if not frm or not pwd:
+        result["smtp_test"] = "SKIPPED — credentials missing"
+        return jsonify(result)
+    # Try live SMTP test
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as srv:
+            srv.login(frm, pwd)
+        result["smtp_test"] = "OK via SSL/465"
+    except Exception as e1:
+        try:
+            ctx = ssl.create_default_context()
+            with smtplib.SMTP("smtp.gmail.com", 587, timeout=10) as srv:
+                srv.ehlo(); srv.starttls(context=ctx); srv.ehlo()
+                srv.login(frm, pwd)
+            result["smtp_test"] = "OK via STARTTLS/587"
+        except Exception as e2:
+            result["smtp_test"] = f"FAILED — 465: {e1} | 587: {e2}"
+    return jsonify(result)
+
 
 
 @app.route("/logout")
@@ -5107,7 +5380,7 @@ _WL_SCAN_SETTINGS: Dict[str, Any] = {
     "iLen": 5, "sLen": 30,
     "approachPct": 2.0, "obDistancePct": 2.0,
     "consolCandles": 5, "rsiOB": 70, "rsiOS": 30,
-    "useObStrengthFilter": False, "obMinStrengthPct": 0,
+    "useObStrengthFilter": False, "obStrengthFilterMode": "screener_quality", "obMinStrengthPct": 0,
     "useHighProbOB": False, "obMinQuality": 50,
     "useAtrObApproach": False, "obApproachAtrMult": 0.5,
     "useFvgValidOnly": False, "useFvgState": False,

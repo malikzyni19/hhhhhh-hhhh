@@ -1219,6 +1219,13 @@ def intelligence_ob_strength_audit():
                 "raw_meta_json":            raw_meta,
                 "detected_ob_strength":     strength,
                 "detected_strength_source": source,
+                "alert_strength_debug":     raw_meta.get("alert_strength_debug"),
+                "usable_for_strength_filter": strength is not None,
+                "note": (
+                    "ob_strength from true OB metadata"
+                    if strength is not None
+                    else "no true OB strength key found — row excluded by strength_min > 0"
+                ),
             })
 
         checked = len(events)
@@ -1232,12 +1239,69 @@ def intelligence_ob_strength_audit():
                 "sources":          sources_seen,
             },
             "note": (
-                "ob_strength / obStrengthPct already available in raw_meta for most rows. "
-                "alert_strength (top-level alert field) now also preserved by updated "
-                "signal_extractor for future signals. Old DB rows are NOT mutated."
+                "ob_strength uses only true OB-specific keys (obStrengthPct, obStrength, etc.). "
+                "alert_strength_debug is stored separately and is NOT used in the strength filter. "
+                "score (signal quality score) is also NOT used as OB strength. "
+                "Old DB rows are NOT mutated."
             ),
         })
 
     except Exception as _e:
         return jsonify({"ok": False, "error": str(_e)}), 500
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 8A — OB Candidate Engine Preview (read-only, no DB writes, no trading)
+# GET /admin/intelligence/ob-candidates
+# ─────────────────────────────────────────────────────────────────────────────
+@admin_bp.route("/intelligence/ob-candidates", methods=["GET"])
+@admin_required
+def intelligence_ob_candidates():
+    try:
+        from ob_candidates import run_ob_candidates
+
+        try:
+            limit = min(int(request.args.get("limit", 100)), 500)
+        except (TypeError, ValueError):
+            limit = 100
+        try:
+            strength_min = float(request.args.get("strength_min") or 0)
+        except (TypeError, ValueError):
+            strength_min = 0.0
+        try:
+            max_distance_pct = float(request.args.get("max_distance_pct") or 1.0)
+        except (TypeError, ValueError):
+            max_distance_pct = 1.0
+        try:
+            tp_pct = float(request.args.get("tp_pct") or 0.30)
+        except (TypeError, ValueError):
+            tp_pct = 0.30
+        try:
+            rr = float(request.args.get("rr") or 1.5)
+        except (TypeError, ValueError):
+            rr = 1.5
+
+        timeframe  = request.args.get("timeframe")   or None
+        setup_type = request.args.get("setup_type")  or None
+        source     = request.args.get("source", "live").strip() or "live"
+        pair       = request.args.get("pair")        or None
+        entry_mode = request.args.get("entry_mode", "zone_middle").strip() or "zone_middle"
+        tp_mode    = request.args.get("tp_mode", "rr").strip() or "rr"
+
+        result = run_ob_candidates(
+            limit=limit,
+            timeframe=timeframe,
+            setup_type=setup_type,
+            strength_min=strength_min,
+            max_distance_pct=max_distance_pct,
+            source=source,
+            pair=pair,
+            entry_mode=entry_mode,
+            tp_mode=tp_mode,
+            tp_pct=tp_pct,
+            rr=rr,
+        )
+        return jsonify(result)
+
+    except Exception as _e:
+        return jsonify({"ok": False, "error": str(_e)}), 500
