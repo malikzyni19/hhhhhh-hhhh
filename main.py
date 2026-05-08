@@ -6448,21 +6448,111 @@ def _suggested_conf_tf(tf: str) -> str:
 
 
 def _is_better_setup(candidate: dict, current_best: dict) -> bool:
-    """True if candidate is strictly better. Priority: wickScore > priorChecks > bodyPct > offset."""
-    def _wick(s):
-        return s.get("rejectionUpperWickPct", 0) if s.get("priorMoveDirection") == "up" \
-               else s.get("rejectionLowerWickPct", 0)
-
-    cw, bw = _wick(candidate), _wick(current_best)
-    if cw > bw + 2: return True
-    if bw > cw + 2: return False
-    cc, bc = candidate.get("priorMoveChecks", 0), current_best.get("priorMoveChecks", 0)
-    if cc > bc: return True
-    if bc > cc: return False
-    cb, bb = candidate.get("rejectionBodyPct", 0), current_best.get("rejectionBodyPct", 0)
-    if cb > bb + 2: return True
-    if bb > cb + 2: return False
+    """True if candidate is strictly better, now driven by score."""
+    cs = candidate.get("score") or 0
+    bs = current_best.get("score") or 0
+    if cs != bs:
+        return cs > bs
     return candidate.get("signalCandleOffset", 999) < current_best.get("signalCandleOffset", 999)
+
+
+# ── Bias Shift Phase 3 — scoring & grading ────────────────────────────────────
+
+def _score_bias_shift(
+    prior_checks: int,
+    rej_wick_pct: float,
+    rej_body_pct: float,
+    min_wick_pct: float,
+    min_body_pct: float,
+    close_beyond_mid: bool,
+    confirmation_status: str,
+    vol_spike: bool,
+    volume_filter_mode: str,
+    sig_offset: int,
+) -> dict:
+    """Return score 0-100 with breakdown list. No OB/FVG/Fib points yet."""
+    pts = 0
+    bd: list[str] = []
+
+    # Prior move detected
+    pts += 20; bd.append("+20 prior move detected")
+
+    # Prior move check quality
+    if prior_checks >= 4:
+        p = 15
+    elif prior_checks >= 3:
+        p = 10
+    else:
+        p = 5
+    pts += p; bd.append(f"+{p} prior move checks ({prior_checks})")
+
+    # Rejection candle present
+    pts += 25; bd.append("+25 rejection candle valid")
+
+    # Wick quality (relative to required threshold)
+    wick_over = rej_wick_pct - round(min_wick_pct * 100)
+    if wick_over >= 20:
+        wp = 15
+    elif wick_over >= 10:
+        wp = 10
+    else:
+        wp = 5
+    pts += wp; bd.append(f"+{wp} wick quality ({rej_wick_pct:.0f}%)")
+
+    # Body quality (relative to required threshold)
+    body_over = rej_body_pct - round(min_body_pct * 100)
+    if body_over >= 20:
+        bp = 10
+    elif body_over >= 10:
+        bp = 8
+    else:
+        bp = 5
+    pts += bp; bd.append(f"+{bp} body quality ({rej_body_pct:.0f}%)")
+
+    # Close beyond midpoint
+    if close_beyond_mid:
+        pts += 10; bd.append("+10 close beyond midpoint")
+
+    # Confirmation
+    if confirmation_status == "confirmed":
+        pts += 10; bd.append("+10 confirmed by later candle")
+
+    # Volume
+    if vol_spike:
+        pts += 5; bd.append("+5 volume spike")
+        if volume_filter_mode == "required":
+            pts += 5; bd.append("+5 volume required and passed")
+
+    # Recency
+    if sig_offset == 0:
+        pts += 5; bd.append("+5 latest closed candle")
+    elif sig_offset == 1:
+        pts += 3; bd.append("+3 second-to-last candle")
+
+    return {"score": min(pts, 100), "breakdown": bd}
+
+
+def _grade_from_score(score: int) -> dict:
+    if score >= 90:
+        return {"grade": "A+", "gradeLabel": "A+ — Elite Bias Shift"}
+    if score >= 80:
+        return {"grade": "A",  "gradeLabel": "A — Strong Bias Shift"}
+    if score >= 65:
+        return {"grade": "B",  "gradeLabel": "B — Valid Bias Shift"}
+    if score >= 50:
+        return {"grade": "C",  "gradeLabel": "C — Watch Only"}
+    return {"grade": "D",      "gradeLabel": "D — Weak Setup"}
+
+
+# Allowed grade sets keyed by minimumGrade UI value
+_GRADE_ALLOWED: dict[str, set[str]] = {
+    "C+": {"A+", "A", "B", "C"},
+    "B+": {"A+", "A", "B"},
+    "A":  {"A+", "A"},
+}
+
+def _grade_passes_filter(grade: str, minimum_grade: str) -> bool:
+    return grade in _GRADE_ALLOWED.get(minimum_grade, {"A+", "A", "B"})
 
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -6505,6 +6595,8 @@ def api_bias_scan():
         min_wick_pct             = float(payload.get("minWickPct", 35)) / 100.0
         min_body_pct             = float(payload.get("minBodyPct", 15)) / 100.0
         require_close_beyond_mid = bool(payload.get("requireCloseBeyondMidpoint", False))
+
+    minimum_grade = payload.get("minimumGrade", "B+")
 
     passed_symbols  = payload.get("symbols") or []
     scan_mode       = payload.get("scanMode", "selected")
@@ -6623,17 +6715,42 @@ def api_bias_scan():
                     invalidation_level = round(rej["low"], 8)
                     invalidation_text  = f"Invalid below {rej['low']:.6f}"
 
-                total_checks = prior_result["checksPassed"] + rej["checksPassed"]
-                if total_checks >= 5:
+                # ── Phase 3: score & grade ────────────────────────────────────
+                rej_mid = rej["low"] + (rej["high"] - rej["low"]) / 2
+                close_is_beyond_mid = (
+                    (rej_dir == "bearish" and rej["close"] < rej_mid) or
+                    (rej_dir == "bullish" and rej["close"] > rej_mid)
+                )
+                rej_wick_pct_val = (
+                    rej["upperWickPct"] if rej_dir == "bearish" else rej["lowerWickPct"]
+                )
+                scored  = _score_bias_shift(
+                    prior_checks=prior_result["checksPassed"],
+                    rej_wick_pct=rej_wick_pct_val,
+                    rej_body_pct=rej["bodyPct"],
+                    min_wick_pct=min_wick_pct,
+                    min_body_pct=min_body_pct,
+                    close_beyond_mid=close_is_beyond_mid,
+                    confirmation_status=confirmation_status,
+                    vol_spike=vol_spike,
+                    volume_filter_mode=volume_filter_mode,
+                    sig_offset=sig_offset,
+                )
+                score_val = scored["score"]
+                graded    = _grade_from_score(score_val)
+
+                # Confidence driven by score (replaces total_checks heuristic)
+                if score_val >= 85:
                     confidence = "Strong"
-                elif total_checks >= 3:
+                elif score_val >= 65:
                     confidence = "Moderate"
                 else:
                     confidence = "Weak"
 
-                # Fix #5: human-readable reasonChain
-                rej_mid       = rej["low"] + (rej["high"] - rej["low"]) / 2
-                dir_word      = "upward" if prior_dir == "up" else "downward"
+                total_checks = prior_result["checksPassed"] + rej["checksPassed"]
+
+                # Human-readable reason chain
+                dir_word       = "upward" if prior_dir == "up" else "downward"
                 min_wick_pct_i = round(min_wick_pct * 100)
                 min_body_pct_i = round(min_body_pct * 100)
                 readable_chain: list[str] = [
@@ -6650,10 +6767,11 @@ def api_bias_scan():
                         f"Lower wick {rej['lowerWickPct']}% >= required {min_wick_pct_i}%"
                     )
                 readable_chain.append(f"Body {rej['bodyPct']}% >= required {min_body_pct_i}%")
-                if rej_dir == "bearish" and rej["close"] < rej_mid:
-                    readable_chain.append("Close below candle midpoint")
-                elif rej_dir == "bullish" and rej["close"] > rej_mid:
-                    readable_chain.append("Close above candle midpoint")
+                if close_is_beyond_mid:
+                    readable_chain.append(
+                        "Close below candle midpoint" if rej_dir == "bearish"
+                        else "Close above candle midpoint"
+                    )
                 if vol_spike:
                     vol_ratio = sig_vol / max(avg_vol, 1)
                     readable_chain.append(f"Volume spike {vol_ratio:.1f}x average")
@@ -6666,20 +6784,19 @@ def api_bias_scan():
                         f"Invalidation: close below rejection low {rej['low']:.6f}"
                     )
 
-                # Fix #4: human-readable setupType
                 setup_type_label = (
                     "Bearish Bias Shift" if rej_dir == "bearish" else "Bullish Bias Shift"
                 )
-                pattern       = (f"{'Bearish' if rej_dir == 'bearish' else 'Bullish'} Rejection"
-                                 f" · {'Uptrend' if prior_dir == 'up' else 'Downtrend'}")
-                conf_label    = "✓ Confirmed" if confirmation_status == "confirmed" else "Early"
-                detail        = (
+                pattern    = (f"{'Bearish' if rej_dir == 'bearish' else 'Bullish'} Rejection"
+                              f" · {'Uptrend' if prior_dir == 'up' else 'Downtrend'}")
+                conf_label = "✓ Confirmed" if confirmation_status == "confirmed" else "Early"
+                detail     = (
                     f"Prior {prior_dir.upper()} {prior_move_n}c"
                     f" · {conf_label}"
+                    f" · Grade {graded['grade']} ({score_val})"
                     f" · Inv: {invalidation_level}"
                     f" · Conf TF: {_suggested_conf_tf(tf)}"
                 )
-                # compact debug reasons (kept for gates display + debug field)
                 compact_reasons = prior_result["reasons"] + rej["reasons"]
                 sparkline = [float(c[i]) for i in range(max(0, n - 24), n)]
 
@@ -6700,7 +6817,11 @@ def api_bias_scan():
                     "volSpike":     vol_spike,
                     "obConf":       None,
                     "fvgConf":      None,
-                    "score":        None,
+                    # ── Phase 3: real score (no longer None) ──
+                    "score":        score_val,
+                    "grade":        graded["grade"],
+                    "gradeLabel":   graded["gradeLabel"],
+                    "scoreBreakdown": scored["breakdown"],
                     "sparkline":    sparkline,
                     # ── Phase 2 fields ──
                     "direction":               rej_dir,
@@ -6742,8 +6863,17 @@ def api_bias_scan():
             print(f"[DEBUG] bias_scan {sym} error: {e}")
             continue
 
-    conf_order = {"Strong": 0, "Moderate": 1, "Weak": 2}
-    results.sort(key=lambda x: (conf_order.get(x["confidence"], 3), -x["gatesPassed"]))
+    # Phase 3: apply minimum grade filter, then sort by best setup first
+    results = [r for r in results if _grade_passes_filter(r.get("grade", "D"), minimum_grade)]
+    _go = {"A+": 0, "A": 1, "B": 2, "C": 3, "D": 4}
+    results.sort(key=lambda x: (
+        -x.get("score", 0),
+        _go.get(x.get("grade", "D"), 4),
+        0 if x.get("confirmationStatus") == "confirmed" else 1,
+        x.get("signalCandleOffset", 0),
+        -(x.get("rejectionUpperWickPct", 0) if x.get("priorMoveDirection") == "up"
+          else x.get("rejectionLowerWickPct", 0)),
+    ))
     if _tok_uid:
         try: consume_tokens(_tok_uid, len(symbols))
         except Exception as _te: print(f"[Tokens] bias: {_te}")
