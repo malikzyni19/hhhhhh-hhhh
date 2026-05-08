@@ -342,18 +342,18 @@ def _send_via_resend(to_email: str, subject: str, html_body: str) -> bool:
         return False
 
 
-def send_verification_email(to_email: str, code: str, username: str) -> bool:
+def send_verification_email(to_email: str, code: str, username: str) -> "tuple[bool, str]":
     """Send a 6-digit OTP verification email directly to the new user.
     Attempts in order:
       1. Resend HTTP API  (RESEND_API_KEY env var — works on all cloud hosts)
       2. Gmail SMTP_SSL   port 465
       3. Gmail STARTTLS   port 587
-    Returns True on first success, False if all methods fail.
+    Returns (success: bool, fail_reason: str): 'ok' | 'missing_config' | 'delivery_failed'
     """
     frm = _email_from()
     pwd = _email_pass()
     if not to_email:
-        return False
+        return False, "missing_config"
 
     subject = "ZyNi SMC — Verify Your Email Address"
     body = f"""
@@ -390,14 +390,14 @@ def send_verification_email(to_email: str, code: str, username: str) -> bool:
 
     # ── Method 1: Resend HTTP API (works even when SMTP ports are blocked) ──
     if _send_via_resend(to_email, subject, body):
-        return True
+        return True, "ok"
 
     # ── Method 2 & 3: Gmail SMTP ─────────────────────────────────────────
     if not frm or not pwd:
         print(f"[VERIFY-EMAIL] SMTP skipped — "
               f"ALERT_EMAIL_FROM={'set' if frm else 'MISSING'}, "
               f"ALERT_EMAIL_PASS={'set' if pwd else 'MISSING'}")
-        return False
+        return False, "missing_config"
 
     def _build_msg():
         msg = MIMEMultipart("alternative")
@@ -413,7 +413,7 @@ def send_verification_email(to_email: str, code: str, username: str) -> bool:
             srv.login(frm, pwd)
             srv.sendmail(frm, to_email, _build_msg().as_string())
         print(f"[VERIFY-EMAIL] Sent via Gmail SSL/465 to {to_email}")
-        return True
+        return True, "ok"
     except Exception as e1:
         print(f"[VERIFY-EMAIL] Gmail SSL/465 failed: {e1}")
 
@@ -427,12 +427,13 @@ def send_verification_email(to_email: str, code: str, username: str) -> bool:
             srv.login(frm, pwd)
             srv.sendmail(frm, to_email, _build_msg().as_string())
         print(f"[VERIFY-EMAIL] Sent via Gmail STARTTLS/587 to {to_email}")
-        return True
+        return True, "ok"
     except Exception as e2:
         print(f"[VERIFY-EMAIL] Gmail STARTTLS/587 also failed: {e2}")
 
-    print(f"[VERIFY-EMAIL] All methods failed for {to_email}")
-    return False
+    # Credentials were present but all delivery methods failed (SMTP likely blocked)
+    print(f"[VERIFY-EMAIL] All methods failed for {to_email} — credentials set but delivery blocked")
+    return False, "delivery_failed"
 
 
 def _auto_migrate():
@@ -4983,13 +4984,14 @@ def register():
         db.session.commit()
 
         # Send synchronously so we know immediately if it succeeded
-        email_sent = send_verification_email(email, code, username)
+        email_sent, fail_reason = send_verification_email(email, code, username)
 
         # Store outcome in session so verify page can react
         session["verify_email_sent"]    = email_sent
         session["verify_pending_user"]  = username
+        session["verify_fail_reason"]   = fail_reason
 
-        # If SMTP is not configured, expose code via session so user can proceed
+        # Expose code on-screen so the user can proceed even if delivery failed
         if not email_sent:
             session["verify_fallback_code"] = code
 
@@ -5004,12 +5006,14 @@ def register():
 def verify_email():
     if request.method == "GET":
         username = request.args.get("username", "") or session.get("verify_pending_user", "")
-        email_sent    = session.pop("verify_email_sent", True)   # assume sent if not in session
+        email_sent    = session.pop("verify_email_sent", True)
         fallback_code = session.pop("verify_fallback_code", None)
+        fail_reason   = session.pop("verify_fail_reason", "missing_config")
         return render_template("verify.html",
                                username=username,
                                email_sent=email_sent,
-                               fallback_code=fallback_code)
+                               fallback_code=fallback_code,
+                               fail_reason=fail_reason)
 
     username = request.form.get("username", "").strip().lower()
     code     = request.form.get("code", "").strip()
@@ -5074,7 +5078,7 @@ def resend_verification():
         db.session.add(ev)
         db.session.commit()
 
-        email_sent = send_verification_email(user.email, code, username)
+        email_sent, fail_reason = send_verification_email(user.email, code, username)
 
         if email_sent:
             return render_template("verify.html", username=username,
@@ -5084,6 +5088,7 @@ def resend_verification():
             return render_template("verify.html", username=username,
                                    email_sent=False,
                                    fallback_code=code,
+                                   fail_reason=fail_reason,
                                    success="New code generated.")
     except Exception as _re:
         print(f"[RESEND-VERIFY] Error: {_re}")
@@ -5153,6 +5158,7 @@ def admin_test_email():
     else:
         result["note"] = "Check the error messages above. Contact support if unclear."
     return jsonify(result)
+
 
 
 @app.route("/logout")

@@ -275,7 +275,7 @@
 
         .timer-note span { color: var(--accent); font-weight: 600; }
 
-        /* Fallback code box — shown when SMTP is not configured */
+        /* Fallback code box — shown when email delivery fails */
         .fallback-box {
             background: rgba(245,158,11,0.08);
             border: 1px solid rgba(245,158,11,0.35);
@@ -319,6 +319,7 @@
             line-height: 1.55;
         }
 
+
         @media (max-width: 520px) {
             .verify-card { padding: 30px 20px 26px; }
             .otp-digit { width: 42px; height: 50px; font-size: 22px; }
@@ -346,15 +347,29 @@
 
         {% if fallback_code %}
         <div class="verify-title">Email not sent — use code below</div>
+        {% if fail_reason == "delivery_failed" %}
+        <div class="verify-sub">
+            Your email credentials are configured but outbound email was blocked by the server.<br>
+            Use the code shown below to verify your account.
+        </div>
+        <div class="smtp-warn">
+            <i class="fa-solid fa-circle-info" style="margin-right:5px"></i>
+            <strong>Admin:</strong> SMTP credentials are set but delivery failed — the server
+            may be blocking outbound SMTP ports. Visit
+            <code>/admin/test-email</code> while logged in as admin to diagnose.
+        </div>
+        {% else %}
         <div class="verify-sub">
             The email service is not configured on this server.<br>
             Use the code shown below to verify your account.
         </div>
         <div class="smtp-warn">
             <i class="fa-solid fa-circle-info" style="margin-right:5px"></i>
-            <strong>Admin notice:</strong> Set <code>ALERT_EMAIL_FROM</code> and
-            <code>ALERT_EMAIL_PASS</code> environment variables in Koyeb to enable email delivery.
+            <strong>Admin:</strong> Set <code>ALERT_EMAIL_FROM</code> and
+            <code>ALERT_EMAIL_PASS</code> in Koyeb <strong>Environment Variables</strong>
+            (link your Secrets to the service — Secrets alone are not enough).
         </div>
+        {% endif %}
         <div class="fallback-box">
             <div class="fb-label">Your verification code</div>
             <div class="fb-code" id="fbCode">{{ fallback_code }}</div>
@@ -472,7 +487,7 @@
             });
         });
 
-        // Auto-fill OTP boxes when fallback code is shown (SMTP not configured)
+        // Auto-fill OTP boxes when fallback code is shown
         const fbCodeEl = document.getElementById('fbCode');
         if (fbCodeEl) {
             const fc = fbCodeEl.textContent.replace(/\D/g, '').slice(0, 6);
