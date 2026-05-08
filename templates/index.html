@@ -1172,7 +1172,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
     <button class="tab" onclick="showPage('compressed',this)">📦 COMPRESSED</button>
     <button class="tab" onclick="showPage('trending',this)">🔥 TRENDING</button>
     <button class="tab" onclick="showPage('athatl',this)">🏆 ATH / ATL</button>
-    <button class="tab" onclick="showPage('bias',this)">🎯 BIAS</button>
+    <button class="tab" onclick="showPage('bias',this)">🎯 BIAS SHIFT</button>
     <button class="tab" onclick="showPage('watchlist',this);renderWatchlistTab()">📡 LIVE MONITOR</button>
   </div>
 
@@ -1664,139 +1664,159 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
   <!-- BIAS PAGE -->
   <div id="page-bias" class="page">
     <div class="card">
-      <div class="card-title">BIAS DETECTION</div>
+      <div class="card-title">BIAS SHIFT</div>
 
+      <!-- Hidden input tracks current mode for localStorage -->
+      <input type="hidden" id="biasModeInput" value="normal">
+
+      <!-- Mode Toggle -->
+      <div class="mode-pills" style="margin-bottom:16px">
+        <button id="biasModeNormalBtn" class="mode-pill active" onclick="setBiasMode('normal')">◈ Normal Mode</button>
+        <button id="biasModeExpertBtn" class="mode-pill" onclick="setBiasMode('expert')">⚡ Expert Mode</button>
+      </div>
+
+      <!-- Common Settings (visible in both modes) -->
       <div class="setting-section">
         <div class="setting-title">SCAN SETTINGS</div>
-        <div class="subrow">
-          <div class="field"><label>Scan Source</label>
+        <div class="row">
+          <div class="field"><label>Market Scope</label>
             <select id="biasScanSource">
               <option value="selected">Selected Pairs</option>
               <option value="market">Full Market</option>
             </select>
           </div>
-          <div class="field"><label>Pairs / Cycle</label>
-            <input id="biasPairsPerCycle" type="number" value="20" min="5" max="80">
-          </div>
           <div class="field"><label>Timeframe</label>
             <select id="biasTf">
-              <option value="1h">1h</option>
-              <option value="2h">2h</option>
-              <option value="4h" selected>4h</option>
-              <option value="6h">6h</option>
-              <option value="8h">8h</option>
-              <option value="12h">12h</option>
-              <option value="1d">1D</option>
+              <option value="1h">1H</option>
+              <option value="4h">4H</option>
+              <option value="6h">6H</option>
+              <option value="12h">12H</option>
+              <option value="1d" selected>1D</option>
             </select>
           </div>
         </div>
-        <div class="subrow">
-          <div class="field"><label>Candle Lookback</label>
-            <input id="biasCandleCount" type="number" value="3" min="1" max="10">
-          </div>
-          <div class="field"><label>Bias Filter</label>
-            <select id="biasFilter">
-              <option value="all">All Signals</option>
-              <option value="bullish">Bullish Only</option>
-              <option value="bearish">Bearish Only</option>
+        <div class="row3">
+          <div class="field"><label>Bias Strength</label>
+            <select id="biasStrength">
+              <option value="early">Early</option>
+              <option value="balanced" selected>Balanced</option>
+              <option value="strong">Strong Only</option>
             </select>
           </div>
-        </div>
-      </div>
-
-      <div class="setting-section">
-        <div class="setting-title">SIGNAL GATES</div>
-        <div style="display:flex;flex-direction:column;gap:10px">
-
-          <!-- Gate 1: Prior Momentum -->
-          <div>
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-              <input type="checkbox" id="biasMomentumGate" checked>
-              <span style="font-size:11px;color:#22d3ee;font-weight:600">Prior Momentum Gate</span>
-            </label>
-            <div style="padding:6px 0 0 20px;display:flex;gap:8px;align-items:center">
-              <span style="font-size:10px;color:var(--text-secondary)">Candles required:</span>
-              <input id="biasPriorCandlesReq" type="number" value="2" min="1" max="5" style="width:50px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:11px">
-            </div>
+          <div class="field"><label>Confluence</label>
+            <select id="biasConfluenceMode">
+              <option value="optional" selected>Optional</option>
+              <option value="required">Required</option>
+            </select>
           </div>
-
-          <!-- Gate 2: Signal Candle -->
-          <div>
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-              <input type="checkbox" id="biasWickGate" checked>
-              <span style="font-size:11px;color:#22d3ee;font-weight:600">Signal Candle Gate</span>
-            </label>
-            <div style="padding:6px 0 0 20px;display:flex;flex-direction:column;gap:6px">
-              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;color:#94a3b8">
-                <input type="checkbox" id="biasSigWick" checked> Strong Wick ≥
-                <input id="biasSigWickMin" type="number" value="35" min="10" max="80" style="width:45px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:3px 5px;font-size:10px">%
-              </label>
-              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;color:#94a3b8">
-                <input type="checkbox" id="biasSigEngulf" checked> Engulfing candle
-              </label>
-              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;color:#94a3b8">
-                <input type="checkbox" id="biasSigStrongBody" checked> Strong body ≥
-                <input id="biasSigBodyMin" type="number" value="55" min="30" max="90" style="width:45px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:3px 5px;font-size:10px">%
-              </label>
-            </div>
-          </div>
-
-          <!-- Gate 3: Body -->
-          <div>
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-              <input type="checkbox" id="biasBodyGate" checked>
-              <span style="font-size:11px;color:#22d3ee;font-weight:600">Body Gate</span>
-            </label>
-            <div style="padding:6px 0 0 20px;display:flex;gap:8px;align-items:center">
-              <span style="font-size:10px;color:var(--text-secondary)">Min body %:</span>
-              <input id="biasBodyMinPct" type="number" value="20" min="5" max="80" style="width:50px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:11px">
-            </div>
-          </div>
-
-          <!-- Gate 4: Volume -->
-          <div>
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-              <input type="checkbox" id="biasVolumeGate">
-              <span style="font-size:11px;color:#22d3ee;font-weight:600">Volume Gate</span>
-            </label>
-            <div style="padding:6px 0 0 20px;display:flex;gap:8px;align-items:center">
-              <span style="font-size:10px;color:var(--text-secondary)">Min multiplier:</span>
-              <input id="biasVolMultiplier" type="number" value="1.2" step="0.1" min="1.0" max="3.0" style="width:55px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:11px">x
-            </div>
-          </div>
-
-          <!-- Min conditions -->
-          <div style="display:flex;align-items:center;gap:8px;padding-top:4px;border-top:1px solid var(--border2)">
-            <span style="font-size:10px;color:var(--text-secondary)">Min gates to pass:</span>
-            <select id="biasMinConditions" style="background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:11px">
-              <option value="1">1 (relaxed)</option>
-              <option value="2" selected>2 (balanced)</option>
-              <option value="3">3 (strict)</option>
-              <option value="4">4 (very strict)</option>
+          <div class="field"><label>Minimum Grade</label>
+            <select id="biasMinGrade">
+              <option value="C+">C+</option>
+              <option value="B+" selected>B+</option>
+              <option value="A">A Only</option>
             </select>
           </div>
         </div>
       </div>
 
-      <div class="setting-section">
-        <div class="setting-title">CONFLUENCE (OPTIONAL)</div>
-        <div class="subrow" style="flex-wrap:wrap;gap:12px">
-          <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="biasUseFvg"> FVG Confluence</label>
-          <div class="field" style="margin:0"><label>FVG Touch</label>
-            <select id="biasFvgTouch">
-              <option value="any">Any</option>
-              <option value="untouched">Untouched</option>
-              <option value="touched">Once Touched</option>
-            </select>
+      <!-- Expert Mode Extra Settings (hidden by default) -->
+      <div id="biasExpertFields" style="display:none">
+
+        <div class="setting-section">
+          <div class="setting-title">SIGNAL PARAMETERS</div>
+          <div class="row3">
+            <div class="field"><label>Prior Move Candles</label>
+              <input id="biasPriorMoveCandles" type="number" value="4" min="1" max="20">
+            </div>
+            <div class="field"><label>Signal Search Candles</label>
+              <input id="biasSignalSearchCandles" type="number" value="1" min="1" max="10">
+            </div>
+            <div class="field"><label>Detection Mode</label>
+              <select id="biasDetectionMode">
+                <option value="early" selected>Early</option>
+                <option value="confirmed">Confirmed</option>
+              </select>
+            </div>
           </div>
-          <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="biasUseOb"> OB Confluence</label>
-          <div class="field" style="margin:0"><label>OB Approach %</label><input id="biasObApproachPct" type="number" value="2.0" step="0.5" style="width:70px"></div>
+          <div class="row">
+            <div class="field"><label>Min Wick %</label>
+              <input id="biasMinWickPct" type="number" value="35" min="5" max="80">
+            </div>
+            <div class="field"><label>Min Body %</label>
+              <input id="biasMinBodyPct" type="number" value="20" min="5" max="80">
+            </div>
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:11px;color:var(--text-secondary);margin-top:4px">
+            <input type="checkbox" id="biasRequireCloseBeyondMidpoint" checked style="accent-color:var(--accent);width:14px;height:14px">
+            Require Close Beyond Midpoint
+          </label>
         </div>
+
+        <div class="setting-section">
+          <div class="setting-title">VOLUME FILTER</div>
+          <div class="row">
+            <div class="field"><label>Volume Filter</label>
+              <select id="biasVolumeFilter">
+                <option value="optional" selected>Optional</option>
+                <option value="required">Required</option>
+              </select>
+            </div>
+            <div class="field"><label>Volume Multiplier</label>
+              <input id="biasVolumeMultiplier" type="number" value="1.5" step="0.1" min="1.0" max="5.0">
+            </div>
+          </div>
+        </div>
+
+        <div class="setting-section">
+          <div class="setting-title">CONFLUENCE</div>
+          <div style="display:flex;gap:20px;flex-wrap:wrap;padding:4px 0">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:11px;color:var(--text-secondary)">
+              <input type="checkbox" id="biasUseObConf" checked style="accent-color:var(--accent);width:14px;height:14px"> OB Confluence
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:11px;color:var(--text-secondary)">
+              <input type="checkbox" id="biasUseFvgConf" checked style="accent-color:var(--accent);width:14px;height:14px"> FVG Confluence
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:11px;color:var(--text-secondary)">
+              <input type="checkbox" id="biasUseFibConf" checked style="accent-color:var(--accent);width:14px;height:14px"> Fib Confluence
+            </label>
+          </div>
+        </div>
+
+        <div class="setting-section">
+          <div class="setting-title">SCAN OPTIONS</div>
+          <div class="field" style="max-width:160px"><label>Pairs / Cycle</label>
+            <input id="biasPairsPerCycle" type="number" value="20" min="5" max="80">
+          </div>
+        </div>
+
+      </div><!-- /biasExpertFields -->
+
+      <!-- Legacy hidden fields — keep IDs alive for /api/bias_scan backward compat -->
+      <div style="display:none" aria-hidden="true">
+        <input id="biasCandleCount" type="number" value="3">
+        <select id="biasFilter"><option value="all" selected>All</option></select>
+        <input type="checkbox" id="biasMomentumGate" checked>
+        <input id="biasPriorCandlesReq" type="number" value="2">
+        <input type="checkbox" id="biasWickGate" checked>
+        <input type="checkbox" id="biasSigWick" checked>
+        <input id="biasSigWickMin" type="number" value="35">
+        <input type="checkbox" id="biasSigEngulf" checked>
+        <input type="checkbox" id="biasSigStrongBody" checked>
+        <input id="biasSigBodyMin" type="number" value="55">
+        <input type="checkbox" id="biasBodyGate" checked>
+        <input id="biasBodyMinPct" type="number" value="20">
+        <input type="checkbox" id="biasVolumeGate">
+        <input id="biasVolMultiplier" type="number" value="1.2">
+        <select id="biasMinConditions"><option value="2" selected>2</option></select>
+        <input type="checkbox" id="biasUseFvg">
+        <select id="biasFvgTouch"><option value="any" selected>Any</option></select>
+        <input type="checkbox" id="biasUseOb">
+        <input id="biasObApproachPct" type="number" value="2.0">
       </div>
 
-      <button class="btn-primary" onclick="scanBias()" style="margin-top:4px">▶ SCAN BIAS</button>
+      <button class="btn-primary" onclick="scanBias()" style="margin-top:4px">▶ SCAN BIAS SHIFT</button>
       <div id="biasStatus" class="status-text" style="margin-top:8px"></div>
-      <div id="biasResults" class="results" style="margin-top:12px"><div class="empty">Configure settings and click Scan Bias</div></div>
+      <div id="biasResults" class="results" style="margin-top:12px"><div class="empty">Configure settings and click Scan Bias Shift</div></div>
     </div>
   </div>
 
@@ -2797,7 +2817,11 @@ const SAVE_IDS_VAL = [
   'athMode','athStatus','athWindowHours','athNearPct','athLimit',
   'tvLinkTarget',
   // ── Bias tab settings ──
-  'biasTf','biasCandleCount','biasFilter','biasWickMinPct','biasBodyMinPct','biasObApproachPct','biasFvgTouch',
+  'biasTf','biasModeInput','biasStrength','biasConfluenceMode','biasMinGrade',
+  'biasPriorMoveCandles','biasSignalSearchCandles','biasMinWickPct','biasMinBodyPct',
+  'biasVolumeFilter','biasVolumeMultiplier','biasDetectionMode',
+  // Legacy bias IDs (kept for /api/bias_scan backward compat)
+  'biasCandleCount','biasFilter','biasBodyMinPct','biasObApproachPct','biasFvgTouch',
 ];
 const SAVE_IDS_CHK = [
   'useObModule','useObStrengthFilter','useHighProbOB','useAtrObApproach','useFvgModule','useFvgValidOnly','useFvgState','useFvgAgeRange','useFvgDistance',
@@ -2806,6 +2830,7 @@ const SAVE_IDS_CHK = [
   'filterFVG','filterOB','filterFIB',
   // ── Bias tab checkboxes ──
   'biasWickGate','biasMomentumGate','biasBodyGate','biasVolumeGate','biasUseFvg','biasUseOb',
+  'biasRequireCloseBeyondMidpoint','biasUseObConf','biasUseFvgConf','biasUseFibConf',
 ];
 
 function saveSettings(){
@@ -2842,6 +2867,9 @@ function loadSettings(){
   if($('useBreakerModule')) toggleWlSection('breakerSubOptions', $('useBreakerModule').checked);
   updateObStrengthFilterFields();
   if($('filterModeHint')) $('filterModeHint').style.display = (_scanMode === 'filter') ? 'block' : 'none';
+  // Restore bias mode visual state after values are loaded
+  const _biasModeEl = $('biasModeInput');
+  setBiasMode(_biasModeEl && _biasModeEl.value ? _biasModeEl.value : 'normal');
 }
 
 // Auto-save on any settings change
@@ -3101,9 +3129,22 @@ function addManualPairs(){
   if(msg){ msg.textContent = `Added ${valid.length} pairs`; setTimeout(()=>{ msg.textContent=''; }, 2000); }
 }
 
+// ── Bias Mode Toggle ──
+function setBiasMode(mode){
+  const inp = $('biasModeInput');
+  if(inp) inp.value = mode;
+  const normalBtn = $('biasModeNormalBtn');
+  const expertBtn = $('biasModeExpertBtn');
+  if(normalBtn) normalBtn.classList.toggle('active', mode === 'normal');
+  if(expertBtn) expertBtn.classList.toggle('active', mode === 'expert');
+  const expertFields = $('biasExpertFields');
+  if(expertFields) expertFields.style.display = (mode === 'expert') ? 'block' : 'none';
+  saveSettings();
+}
+
 // ── Bias Scan ──
 async function scanBias(){
-  showScanPopup('DETECTING BIAS');
+  showScanPopup('SCANNING BIAS SHIFT');
   const st = $('biasStatus');
   const res_div = $('biasResults');
   if(st) st.textContent = 'Scanning…';
@@ -3141,6 +3182,22 @@ async function scanBias(){
     roundRobin: true,
     market: marketType(),
     exchange: currentExchange(),
+    // ── New Phase-1 fields (backend will use in Phase 2) ──
+    mode: $('biasModeInput') ? $('biasModeInput').value : 'normal',
+    biasStrength: $('biasStrength') ? $('biasStrength').value : 'balanced',
+    confluenceMode: $('biasConfluenceMode') ? $('biasConfluenceMode').value : 'optional',
+    minimumGrade: $('biasMinGrade') ? $('biasMinGrade').value : 'B+',
+    priorMoveCandles: $('biasPriorMoveCandles') ? +$('biasPriorMoveCandles').value : 4,
+    signalSearchCandles: $('biasSignalSearchCandles') ? +$('biasSignalSearchCandles').value : 1,
+    minWickPct: $('biasMinWickPct') ? +$('biasMinWickPct').value : 35,
+    minBodyPct: $('biasMinBodyPct') ? +$('biasMinBodyPct').value : 20,
+    requireCloseBeyondMidpoint: $('biasRequireCloseBeyondMidpoint') ? $('biasRequireCloseBeyondMidpoint').checked : true,
+    volumeFilter: $('biasVolumeFilter') ? $('biasVolumeFilter').value : 'optional',
+    volumeMultiplier: $('biasVolumeMultiplier') ? +$('biasVolumeMultiplier').value : 1.5,
+    useObConfluence: $('biasUseObConf') ? $('biasUseObConf').checked : true,
+    useFvgConfluence: $('biasUseFvgConf') ? $('biasUseFvgConf').checked : true,
+    useFibConfluence: $('biasUseFibConf') ? $('biasUseFibConf').checked : true,
+    detectionMode: $('biasDetectionMode') ? $('biasDetectionMode').value : 'early',
   };
 
   try{
@@ -5580,7 +5637,7 @@ document.addEventListener('DOMContentLoaded', function(){
     'compressed': '📦 COMPRESSED',
     'trending':   '🔥 TRENDING',
     'athatl':     '🏆 ATH / ATL',
-    'bias':       '🎯 BIAS',
+    'bias':       '🎯 BIAS SHIFT',
     'watchlist':  '📡 LIVE MONITOR'
   };
 
