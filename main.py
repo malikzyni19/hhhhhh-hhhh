@@ -2364,12 +2364,6 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         if mitigated:
             continue
 
-        vol_score = clamp((ob["volume"] / max(max_vol, 1e-10)) * 100, 0, 100)
-        side_dom  = (ob["buyVolume"] / max(ob["volume"], 1e-10) * 100) if ob["type"] == "bullish" else (ob["sellVolume"] / max(ob["volume"], 1e-10) * 100)
-        freshness = clamp(100 - ((n - 1 - ob["bar"]) * 4), 10, 100)
-        strength  = round(clamp(vol_score * 0.45 + side_dom * 0.35 + freshness * 0.20, 1, 100), 1)
-        ob["strengthPct"]   = strength
-        ob["strengthLabel"] = "Strong" if strength >= 80 else "Good" if strength >= 60 else "Medium" if strength >= 40 else "Weak"
         active.append(ob)
 
     return active if max_ob is None else active[-max_ob:]
@@ -2422,7 +2416,7 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
                         "top": ob_top, "bottom": ob_bottom, "avg": ob_avg,
                         "bar": min_idx, "sourceBar": ob_source,
                         "volume": total_v, "buyVolume": buy_v, "sellVolume": sell_v,
-                        "type": "bullish", "strengthPct": 50.0,
+                        "type": "bullish",
                     })
             upP.clear(); upB.clear()
 
@@ -2449,7 +2443,7 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
                         "top": ob_top, "bottom": ob_bottom, "avg": ob_avg,
                         "bar": max_idx, "sourceBar": ob_source,
                         "volume": total_v, "buyVolume": buy_v, "sellVolume": sell_v,
-                        "type": "bearish", "strengthPct": 50.0,
+                        "type": "bearish",
                     })
             dnP.clear(); dnB.clear()
 
@@ -2573,7 +2567,7 @@ def detect_breakers(
             "dist":       round(dist_pct, 3),
             "state":      state,
             "age":        age,
-            "strength":   round(ob.get("strengthPct", 0), 1),
+            "strength":   round(ob.get("tvObVolumeSharePct") or 0, 1),
             "fvg_overlap": fvg_overlap,
             "zone_str":   f"{zb:.6f} – {zt:.6f}",
         })
@@ -3712,11 +3706,9 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
     needed_consol        = settings.get("consolCandles", 5)
 
     _use_str_filter = settings.get("useObStrengthFilter", False)
-    _str_mode       = settings.get("obStrengthFilterMode", "screener_quality")
     _min_str        = float(settings.get("obMinStrengthPct", 0)) if _use_str_filter else 0.0
 
-    if _use_str_filter and _str_mode == "tv_volume_share":
-        # Filter by tvObVolumeSharePct only — never fallback to screener quality or score
+    if _use_str_filter:
         bullish_obs_filt = [
             ob for ob in obs if ob["type"] == "bullish"
             and ob.get("tvObVolumeSharePct") is not None
@@ -3728,9 +3720,8 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
             and ob["tvObVolumeSharePct"] >= _min_str
         ]
     else:
-        # screener_quality (default) or filter OFF — use obStrengthPct
-        bullish_obs_filt = [ob for ob in obs if ob["type"] == "bullish" and ob["strengthPct"] >= _min_str]
-        bearish_obs_filt = [ob for ob in obs if ob["type"] == "bearish" and ob["strengthPct"] >= _min_str]
+        bullish_obs_filt = [ob for ob in obs if ob["type"] == "bullish"]
+        bearish_obs_filt = [ob for ob in obs if ob["type"] == "bearish"]
 
     # Optional OB Quality Engine v2
     use_high_prob = settings.get("useHighProbOB", False)
@@ -3802,9 +3793,9 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
         return {"touched": True, "touch_bar": touch_bar, "reacted": reacted,
                 "reaction_side_ok": reaction_side_ok}
 
-    # Rank nearest first, then strongest, then best quality, then freshest
-    bullish_obs_filt.sort(key=lambda ob: (_ob_dist_from_price(ob, price), -ob["strengthPct"], -ob.get("quality", 0), ob.get("bar", 0)))
-    bearish_obs_filt.sort(key=lambda ob: (_ob_dist_from_price(ob, price), -ob["strengthPct"], -ob.get("quality", 0), ob.get("bar", 0)))
+    # Rank nearest first, then best TV OB %, then best quality, then freshest
+    bullish_obs_filt.sort(key=lambda ob: (_ob_dist_from_price(ob, price), -(ob.get("tvObVolumeSharePct") or 0), -ob.get("quality", 0), ob.get("bar", 0)))
+    bearish_obs_filt.sort(key=lambda ob: (_ob_dist_from_price(ob, price), -(ob.get("tvObVolumeSharePct") or 0), -ob.get("quality", 0), ob.get("bar", 0)))
 
     for direction, ob_list in [("bullish", bullish_obs_filt), ("bearish", bearish_obs_filt)]:
         if not ob_list:
@@ -3828,20 +3819,14 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
                            if use_high_prob else '')
             _tv_share     = ob.get("tvObVolumeSharePct")
             _tv_share_str = f'{_tv_share}%' if _tv_share is not None else '—'
-            _filter_label = ((' | Filter: TV OB %' if _str_mode == 'tv_volume_share'
-                               else ' | Filter: Quality Str')
-                             if _use_str_filter else '')
+            _filter_label = ' | Filter: TV OB %' if _use_str_filter else ''
 
             # Position label
             pos_label = "INSIDE ZONE" if price_in_zone else f"{dist_pct:.2f}% from zone"
 
-            ob_strength = (5 if use_high_prob and ob.get("quality", 0) >= 80
-                           else 4 if ob["strengthPct"] >= 70 else 3)
+            ob_strength = (5 if use_high_prob and ob.get("quality", 0) >= 80 else 3)
             ob_meta_base = {
-                # ── Screener quality strength (existing) ──
-                "obStrengthPct":   ob["strengthPct"],
-                "obStrengthLabel": ob["strengthLabel"],
-                # ── TradingView-style OB volume share (Phase 8B) ──
+                # ── TradingView-style OB volume share ──
                 "tvObVolumeSharePct":     ob.get("tvObVolumeSharePct"),
                 "tvObVolumeShareStatus":  ob.get("tvObVolumeShareStatus"),
                 "tvObFormationVolume":    ob.get("tvObFormationVolume"),
@@ -3882,7 +3867,6 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
                         "timeframe": tf,
                         "detail": (f'Consolidating on {direction} OB | {pos_label} | '
                                    f'Candles: {consecutive} | '
-                                   f'Quality Str: {ob["strengthPct"]:.1f}% ({ob["strengthLabel"]}) | '
                                    f'TV OB %: {_tv_share_str}{quality_str}{_filter_label} | '
                                    f'Zone: {fmt_price(zone_bottom)} – {fmt_price(zone_top)}'
                                    + (f' | {ob["ofSummary"]}' if ob.get("ofSummary") else '')),
@@ -3902,7 +3886,6 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
                     "direction": direction,
                     "timeframe": tf,
                     "detail": (f'Approaching {direction} OB | Dist: {dist_pct:.2f}% | '
-                               f'Quality Str: {ob["strengthPct"]:.1f}% ({ob["strengthLabel"]}) | '
                                f'TV OB %: {_tv_share_str}{quality_str}{_filter_label} | '
                                f'Zone: {fmt_price(zone_bottom)} – {fmt_price(zone_top)}'
                                + (f' | {ob["ofSummary"]}' if ob.get("ofSummary") else '')),
@@ -4711,7 +4694,6 @@ def parse_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
         "rsiOB": float(payload.get("rsiOB", 75)),
         "rsiOS": float(payload.get("rsiOS", 25)),
         "useObStrengthFilter":  bool(payload.get("useObStrengthFilter", False)),
-        "obStrengthFilterMode": payload.get("obStrengthFilterMode", "screener_quality"),
         "obMinStrengthPct":     float(payload.get("obMinStrengthPct", 70)),
         "useHighProbOB": bool(payload.get("useHighProbOB", False)),
         "obMinQuality": int(payload.get("obMinQuality", 50)),
@@ -5477,7 +5459,7 @@ _WL_SCAN_SETTINGS: Dict[str, Any] = {
     "iLen": 5, "sLen": 30,
     "approachPct": 2.0, "obDistancePct": 2.0,
     "consolCandles": 5, "rsiOB": 70, "rsiOS": 30,
-    "useObStrengthFilter": False, "obStrengthFilterMode": "screener_quality", "obMinStrengthPct": 0,
+    "useObStrengthFilter": False, "obMinStrengthPct": 0,
     "useHighProbOB": False, "obMinQuality": 50,
     "useAtrObApproach": False, "obApproachAtrMult": 0.5,
     "useFvgValidOnly": False, "useFvgState": False,
@@ -5643,7 +5625,7 @@ def _scan_pair_multitf(symbol: str, market: str = "perpetual", wl_config: Option
                         "setup":        "OB_APPROACH" if state != "far" else "OB_FAR",
                         "top":          round(zt, 8),
                         "bottom":       round(zb, 8),
-                        "strength":     round(ob.get("strengthPct", 0), 1),
+                        "strength":     round(ob.get("tvObVolumeSharePct") or 0, 1),
                         "quality":      q_score,
                         "qualityLabel": ("Elite" if q_score >= 85 else
                                          "High"  if q_score >= 70 else
@@ -5665,7 +5647,7 @@ def _scan_pair_multitf(symbol: str, market: str = "perpetual", wl_config: Option
                         "detail":   (
                             f'{"Approaching" if state == "approaching" else "Inside" if state == "inside" else "Far from"} '
                             f'{ob["type"]} OB | Dist: {dist_pct:.2f}% | '
-                            f'Strength: {ob.get("strengthPct", 0):.1f}% | '
+                            f'TV OB %: {ob.get("tvObVolumeSharePct") or "—"} | '
                             f'Zone: {fmt_price(zb)} – {fmt_price(zt)}'
                         ),
                     })

@@ -1389,16 +1389,10 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
         </div>
         <div id="obStrengthFilterOptions" style="display:none;margin-left:4px">
           <div class="subrow">
-            <div class="field"><label>Strength Type</label>
-              <select id="obStrengthFilterMode">
-                <option value="screener_quality">Screener Quality Strength</option>
-                <option value="tv_volume_share">TradingView OB %</option>
-              </select>
-            </div>
-            <div class="field"><label>Min %</label><input id="obMinStrengthPct" type="number" value="70" min="0" max="100" step="1"></div>
+            <div class="field"><label>Min TV OB %</label><input id="obMinStrengthPct" type="number" value="70" min="0" max="100" step="1"></div>
           </div>
         </div>
-        <div class="tip-box" id="tip-ob-strength">Filter active OBs by strength. <b>Screener Quality</b> uses the built-in quality score (volume, side dominance, freshness). <b>TradingView OB %</b> uses the Pine-style visible OB volume share (floor of source volume / total visible pool × 100). The two metrics are never mixed or substituted for each other.</div>
+        <div class="tip-box" id="tip-ob-strength">Filter active OBs by TradingView-style OB volume share %. Uses Pine-style visible OB volume share (floor of source volume / total visible pool × 100).</div>
         <div class="subrow">
           <label><input id="useHighProbOB" type="checkbox"> Use OB Quality Engine v2 <span class="tip-icon" onclick="toggleTip('tip-high-prob-ob')">ⓘ</span></label>
           <div class="field" id="highProbQualityWrap" style="display:none">
@@ -2114,7 +2108,6 @@ function currentSettings(){
     rsiOS: +$('rsiOS').value,
     obDistancePct: +$('obDistancePct').value,
     useObStrengthFilter:  $('useObStrengthFilter').checked,
-    obStrengthFilterMode: $('obStrengthFilterMode') ? $('obStrengthFilterMode').value : 'screener_quality',
     obMinStrengthPct:     +$('obMinStrengthPct').value,
     useHighProbOB: $('useHighProbOB').checked,
     obMinQuality: +$('obMinQuality').value,
@@ -2405,10 +2398,8 @@ function renderMainResultsList(results){
       if(s !== 'OB_APPROACH' && s !== 'OB_CONSOL') return '';
       var m = al.meta;
       if(!m) return '';
-      var scrStr = m.obStrengthPct != null ? (parseFloat(m.obStrengthPct).toFixed(1) + '%') : '—';
       var tvShare = m.tvObVolumeSharePct != null ? (m.tvObVolumeSharePct + '%') : '—';
       return '<div class="result-detail" style="margin-top:3px;font-size:0.72rem;display:flex;gap:10px;flex-wrap:wrap">' +
-        '<span><span style="color:#475569">Quality Str: </span><span style="color:#e2e8f0">' + scrStr + '</span></span>' +
         '<span><span style="color:#475569">TV OB %: </span><span style="color:' + (m.tvObVolumeSharePct != null ? '#22d3ee' : '#475569') + '">' + tvShare + '</span></span>' +
         '</div>';
     }
@@ -2795,7 +2786,7 @@ function toggleTip(id){
 // ── Settings persistence (localStorage) ──
 const SAVE_IDS_VAL = [
   'tf','iLen','sLen','approachPct','consolCandles','rsiOB','rsiOS',
-  'obDistancePct','obMinStrengthPct','obMinQuality','obApproachAtrMult','obStrengthFilterMode',
+  'obDistancePct','obMinStrengthPct','obMinQuality','obApproachAtrMult',
   'fvgState','fvgAgeMin','fvgAgeMax','fvgMaxDistancePct','fvgTouchDepth',
   'fvgObOverlapMode','fvgObMinOverlapPct',
   'fibTf','fibTolerancePct','fibAtrMultiplier','fibApproachPct',

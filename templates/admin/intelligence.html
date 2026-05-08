@@ -196,10 +196,10 @@
     </select>
   </div>
   <div class="int-filter-group">
-    <label>OB Strength</label>
+    <label>Min TV OB %</label>
     <input type="number" id="f-strength" value="0" min="0" max="100" step="1"
            placeholder="e.g. 70" style="width:60px"
-           title="Min OB strength % — applies to OB signals only. 0 = All.">
+           title="Min TV OB volume share % — applies to OB signals only. 0 = All.">
   </div>
   <button type="button" id="int-refresh-btn" class="int-btn">⟳ Refresh</button>
   <span id="int-ts" style="font-size:10px;color:var(--muted);margin-left:4px"></span>
@@ -435,10 +435,10 @@
         </select>
       </div>
       <div class="aud-filter-group">
-        <label>Min OB Strength %</label>
+        <label>Min TV OB %</label>
         <input type="number" id="bt-strength-min" value="0" min="0" max="100" step="1"
                placeholder="e.g. 70" style="width:70px"
-               title="True OB strength only (obStrengthPct). 0 = All. Score is NOT used.">
+               title="Min TV OB volume share %. 0 = All.">
       </div>
       <button type="button" id="bt-run-btn" class="int-btn">▶ Run OB Backtest</button>
     </div>
@@ -488,7 +488,7 @@
             <th>Pair</th><th>TF</th><th>Setup</th><th>Dir</th>
             <th>Score</th><th>Result</th><th>Loss Detail</th>
             <th id="bt-variants-th">Variants (Alt / ST / CCE)</th>
-            <th class="bt-fresh-col" style="display:none">Freshness</th><th>OB Str</th>
+            <th class="bt-fresh-col" style="display:none">Freshness</th><th>TV OB %</th>
             <th>Entry</th><th>TP</th><th>SL</th><th>Reason</th>
           </tr></thead>
           <tbody id="bt-tbody"></tbody>
@@ -531,10 +531,10 @@
         </select>
       </div>
       <div class="aud-filter-group">
-        <label>Min OB Str %</label>
+        <label>Min TV OB %</label>
         <input type="number" id="cand-strength-min" value="0" min="0" max="100" step="1"
                placeholder="0" style="width:60px"
-               title="Min true OB strength %. 0 = show all.">
+               title="Min TV OB volume share %. 0 = show all.">
       </div>
       <div class="aud-filter-group">
         <label>Max Dist %</label>
@@ -579,7 +579,7 @@
         <table class="adm-table" style="table-layout:auto;font-size:11px">
           <thead><tr>
             <th>Pair</th><th>TF</th><th>Setup</th><th>Dir</th>
-            <th>OB Str</th><th>Current</th><th>Zone</th><th>Dist %</th>
+            <th>TV OB %</th><th>Current</th><th>Zone</th><th>Dist %</th>
             <th>Status</th><th>Entry</th><th>SL Rule</th><th>TP</th><th>Monitor?</th>
           </tr></thead>
           <tbody id="cand-tbody"></tbody>
@@ -1689,23 +1689,22 @@ function intBt_renderStrengthSummary(ss) {
   if (total === 0) { el.innerHTML = ''; return; }
 
   var note = '<p style="font-size:10px;color:var(--muted);margin:0">' +
-    'OB Strength filter uses only true OB strength metadata (obStrengthPct). ' +
-    'Score and alert_strength are <strong style="color:var(--text)">never</strong> used.</p>';
+    'TV OB % filter uses tvObVolumeSharePct from signal metadata.</p>';
 
   var warn = '';
   if (total > 0 && (missing / total) > 0.5) {
     warn = '<p style="font-size:10px;color:var(--amber,#fbbf24);margin:4px 0 0">' +
-      '⚠ Most rows do not have true OB strength metadata. ' +
-      'Run fresh scans — new signals will include obStrengthPct automatically.</p>';
+      '⚠ Most rows do not have TV OB % metadata. ' +
+      'Run fresh scans — new signals will include tvObVolumeSharePct automatically.</p>';
   }
   if (minVal > 0 && filtered > 0) {
     warn += '<p style="font-size:10px;color:var(--muted);margin:2px 0 0">' +
-      filtered + ' row(s) with missing OB strength excluded by ' + minVal + '% filter.</p>';
+      filtered + ' row(s) with missing TV OB % excluded by ' + minVal + '% filter.</p>';
   }
 
   var bars = [
-    { label: 'With OB Strength', val: withStr,  color: 'var(--cyan,#22d3ee)' },
-    { label: 'Missing',          val: missing,  color: 'var(--muted)' },
+    { label: 'With TV OB %', val: withStr,  color: 'var(--cyan,#22d3ee)' },
+    { label: 'Missing',      val: missing,  color: 'var(--muted)' },
   ];
   var html = '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px">';
   bars.forEach(function(b) {
@@ -1779,9 +1778,9 @@ function intBt_renderSignals(signals) {
       '<span style="font-size:9px;color:var(--muted)">CCE:</span>' + intBt_cfBadge(s.cf_candle_close_entry) +
       '</td>';
     rows += '<td class="bt-fresh-col" style="white-space:nowrap;display:none">' + intBt_freshnessBadge(s.freshness_status, s.touch_count_before_signal) + '</td>';
-    var strVal = (s.ob_strength !== null && s.ob_strength !== undefined) ? s.ob_strength : null;
+    var strVal = (s.tv_ob_volume_share_pct !== null && s.tv_ob_volume_share_pct !== undefined) ? s.tv_ob_volume_share_pct : null;
     rows += '<td style="font-size:10px;white-space:nowrap;color:' + (strVal !== null ? 'var(--text)' : 'var(--muted)') + '">' +
-            (strVal !== null ? strVal : '—') + '</td>';
+            (strVal !== null ? strVal + '%' : '—') + '</td>';
     rows += '<td style="font-family:\'JetBrains Mono\',monospace;font-size:10px">' + intBt_fmt(s.entry_price) + '</td>';
     rows += '<td style="font-family:\'JetBrains Mono\',monospace;font-size:10px">' + intBt_fmt(s.target_price) + '</td>';
     rows += '<td style="font-family:\'JetBrains Mono\',monospace;font-size:10px">' + intBt_fmt(s.stop_price) + '</td>';
@@ -1917,7 +1916,7 @@ function intCand_renderSummary(s, api) {
     {l:'Touching Zone', v:s.touching_zone,     c:'cyan'},
     {l:'Too Far',       v:s.too_far,           c:''},
     {l:'Beyond Zone',   v:s.beyond_zone,       c:'red'},
-    {l:'No OB Strength',v:s.missing_strength,  c:'amber'},
+    {l:'No TV OB %',    v:s.missing_strength,  c:'amber'},
     {l:'No Price',      v:s.missing_price,     c:'amber'}
   ];
   var html = '<div class="adm-stats-grid">';
@@ -1957,9 +1956,9 @@ function intCand_renderCandidates(candidates) {
     rows += '<td style="font-size:10px">' + intAud_escHtml((c.setup_type || '—').replace('OB_','')) + '</td>';
     rows += '<td style="font-size:10px;color:' + (c.direction === 'bullish' ? 'var(--green)' : 'var(--red)') + '">' +
             intAud_escHtml(c.direction ? c.direction.charAt(0).toUpperCase() : '—') + '</td>';
-    var strVal = c.ob_strength;
+    var strVal = c.tv_ob_volume_share_pct;
     rows += '<td style="font-size:10px;color:' + (strVal != null ? 'var(--text)' : 'var(--muted)') + '">' +
-            (strVal != null ? strVal : '—') + '</td>';
+            (strVal != null ? strVal + '%' : '—') + '</td>';
     rows += '<td style="font-family:\'JetBrains Mono\',monospace;font-size:10px">' + intCand_fmt(c.current_price) + '</td>';
     rows += '<td style="font-size:10px;white-space:nowrap">' +
             intCand_fmt(c.zone_low) + ' – ' + intCand_fmt(c.zone_high) + '</td>';
