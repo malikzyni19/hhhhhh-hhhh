@@ -6469,8 +6469,12 @@ def _score_bias_shift(
     vol_spike: bool,
     volume_filter_mode: str,
     sig_offset: int,
+    ob_found: bool = False,
+    fvg_found: bool = False,
+    fib_found: bool = False,
+    confluence_required_passed: bool = False,
 ) -> dict:
-    """Return score 0-100 with breakdown list. No OB/FVG/Fib points yet."""
+    """Return score 0-100 with breakdown list."""
     pts = 0
     bd: list[str] = []
 
@@ -6529,6 +6533,16 @@ def _score_bias_shift(
     elif sig_offset == 1:
         pts += 3; bd.append("+3 second-to-last candle")
 
+    # ── Phase 4: confluence bonuses (OB/FVG/Fib — no-op until Phase 4 enabled) ──
+    if ob_found:
+        pts += 7; bd.append("+7 OB confluence")
+    if fvg_found:
+        pts += 7; bd.append("+7 FVG confluence")
+    if fib_found:
+        pts += 6; bd.append("+6 Fib confluence")
+    if confluence_required_passed:
+        pts += 5; bd.append("+5 required confluence passed")
+
     return {"score": min(pts, 100), "breakdown": bd}
 
 
@@ -6553,6 +6567,111 @@ _GRADE_ALLOWED: dict[str, set[str]] = {
 
 def _grade_passes_filter(grade: str, minimum_grade: str) -> bool:
     return grade in _GRADE_ALLOWED.get(minimum_grade, {"A+", "A", "B"})
+
+def _bias_confluence(
+    o: list, h: list, l: list, c: list, v: list,
+    tf: str,
+    sig_idx: int,
+    rej_dir: str,
+    rej: dict,
+    prior_start: int,
+    use_ob: bool,
+    use_fvg: bool,
+    use_fib: bool,
+) -> dict:
+    """
+    Check OB, FVG, and Fib confluence for a Bias Shift candidate.
+    All detection runs on the closed-candle arrays already available in the loop.
+    Returns {"ob": ob_conf|None, "fvg": fvg_conf|None, "fib": fib_conf|None}.
+    """
+    ref_price = rej["close"]
+    ob_conf = fvg_conf = fib_conf = None
+
+    # ── OB confluence ──────────────────────────────────────────────────────────
+    if use_ob and ref_price > 0:
+        try:
+            obs = detect_obs(o, h, l, c, v, 5, 20, max_ob=8)
+            for ob in obs:
+                if ob["type"] != rej_dir:
+                    continue
+                if ref_price <= 0:
+                    continue
+                if ob["bottom"] <= ref_price <= ob["top"]:
+                    dist_pct = 0.0
+                elif ref_price < ob["bottom"]:
+                    dist_pct = (ob["bottom"] - ref_price) / ref_price * 100
+                else:
+                    dist_pct = (ref_price - ob["top"]) / ref_price * 100
+                if dist_pct <= 2.0:
+                    ob_conf = {
+                        "found":       True,
+                        "type":        ob["type"],
+                        "zone":        f"{ob['bottom']:.6f} - {ob['top']:.6f}",
+                        "distancePct": round(dist_pct, 2),
+                        "reason":      f"Rejected near {rej_dir} OB zone",
+                    }
+                    break
+        except Exception:
+            pass
+
+    # ── FVG confluence ─────────────────────────────────────────────────────────
+    if use_fvg and ref_price > 0:
+        try:
+            fvgs = detect_fvgs(o, h, l, c, v, tf)
+            for fvg in fvgs:
+                if fvg["direction"] != rej_dir:
+                    continue
+                if fvg["bottom"] <= ref_price <= fvg["top"]:
+                    dist_pct = 0.0
+                elif ref_price < fvg["bottom"]:
+                    dist_pct = (fvg["bottom"] - ref_price) / ref_price * 100
+                else:
+                    dist_pct = (ref_price - fvg["top"]) / ref_price * 100
+                if dist_pct <= 1.5:
+                    touch = "untouched" if fvg.get("untouched") else "touched"
+                    fvg_conf = {
+                        "found":       True,
+                        "direction":   fvg["direction"],
+                        "zone":        f"{fvg['bottom']:.6f} - {fvg['top']:.6f}",
+                        "touch":       touch,
+                        "distancePct": round(dist_pct, 2),
+                        "reason":      f"Rejection near {rej_dir} FVG",
+                    }
+                    break
+        except Exception:
+            pass
+
+    # ── Fib confluence ─────────────────────────────────────────────────────────
+    if use_fib and ref_price > 0:
+        try:
+            prior_h = h[prior_start:sig_idx]
+            prior_l = l[prior_start:sig_idx]
+            if len(prior_h) >= 2:
+                fib_high  = max(prior_h)
+                fib_low   = min(prior_l)
+                fib_range = fib_high - fib_low
+                if fib_range > 0:
+                    for lvl in (0.786, 0.705, 0.618, 0.5):
+                        # Bearish: prior move was up → rejection near premium (upper fib levels)
+                        # Bullish: prior move was down → rejection near discount (same levels from top)
+                        if rej_dir == "bearish":
+                            fib_price = fib_low + fib_range * lvl
+                        else:
+                            fib_price = fib_high - fib_range * lvl
+                        dist_pct = abs(ref_price - fib_price) / ref_price * 100
+                        if dist_pct <= 1.0:
+                            fib_conf = {
+                                "found":       True,
+                                "level":       str(lvl),
+                                "price":       round(fib_price, 8),
+                                "distancePct": round(dist_pct, 2),
+                                "reason":      f"Rejection near Fib {lvl}",
+                            }
+                            break
+        except Exception:
+            pass
+
+    return {"ob": ob_conf, "fvg": fvg_conf, "fib": fib_conf}
 
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -6597,6 +6716,12 @@ def api_bias_scan():
         require_close_beyond_mid = bool(payload.get("requireCloseBeyondMidpoint", False))
 
     minimum_grade = payload.get("minimumGrade", "B+")
+
+    # Phase 4: confluence settings
+    confluence_mode    = payload.get("confluenceMode", "optional")
+    use_ob_confluence  = bool(payload.get("useObConfluence", True))
+    use_fvg_confluence = bool(payload.get("useFvgConfluence", True))
+    use_fib_confluence = bool(payload.get("useFibConfluence", True))
 
     passed_symbols  = payload.get("symbols") or []
     scan_mode       = payload.get("scanMode", "selected")
@@ -6715,7 +6840,7 @@ def api_bias_scan():
                     invalidation_level = round(rej["low"], 8)
                     invalidation_text  = f"Invalid below {rej['low']:.6f}"
 
-                # ── Phase 3: score & grade ────────────────────────────────────
+                # ── Phase 3 pre-metrics ───────────────────────────────────────
                 rej_mid = rej["low"] + (rej["high"] - rej["low"]) / 2
                 close_is_beyond_mid = (
                     (rej_dir == "bearish" and rej["close"] < rej_mid) or
@@ -6724,7 +6849,35 @@ def api_bias_scan():
                 rej_wick_pct_val = (
                     rej["upperWickPct"] if rej_dir == "bearish" else rej["lowerWickPct"]
                 )
-                scored  = _score_bias_shift(
+
+                # ── Phase 4: confluence check ─────────────────────────────────
+                conf_results = _bias_confluence(
+                    o, h, l, c, v, tf,
+                    sig_idx=sig_idx,
+                    rej_dir=rej_dir,
+                    rej=rej,
+                    prior_start=prior_start,
+                    use_ob=use_ob_confluence,
+                    use_fvg=use_fvg_confluence,
+                    use_fib=use_fib_confluence,
+                )
+                ob_conf  = conf_results["ob"]
+                fvg_conf = conf_results["fvg"]
+                fib_conf = conf_results["fib"]
+                ob_found  = ob_conf  is not None
+                fvg_found = fvg_conf is not None
+                fib_found = fib_conf is not None
+
+                enabled_conf_count = sum([use_ob_confluence, use_fvg_confluence, use_fib_confluence])
+                found_conf_count   = sum([ob_found, fvg_found, fib_found])
+                conf_req_passed    = confluence_mode == "required" and found_conf_count > 0
+
+                # Required mode: skip if at least one confluence is enabled but none found
+                if confluence_mode == "required" and enabled_conf_count > 0 and found_conf_count == 0:
+                    continue
+
+                # ── Phase 3+4: score with confluence bonuses ──────────────────
+                scored = _score_bias_shift(
                     prior_checks=prior_result["checksPassed"],
                     rej_wick_pct=rej_wick_pct_val,
                     rej_body_pct=rej["bodyPct"],
@@ -6735,11 +6888,14 @@ def api_bias_scan():
                     vol_spike=vol_spike,
                     volume_filter_mode=volume_filter_mode,
                     sig_offset=sig_offset,
+                    ob_found=ob_found,
+                    fvg_found=fvg_found,
+                    fib_found=fib_found,
+                    confluence_required_passed=conf_req_passed,
                 )
                 score_val = scored["score"]
                 graded    = _grade_from_score(score_val)
 
-                # Confidence driven by score (replaces total_checks heuristic)
                 if score_val >= 85:
                     confidence = "Strong"
                 elif score_val >= 65:
@@ -6749,7 +6905,7 @@ def api_bias_scan():
 
                 total_checks = prior_result["checksPassed"] + rej["checksPassed"]
 
-                # Human-readable reason chain
+                # Human-readable reason chain (includes confluence reasons)
                 dir_word       = "upward" if prior_dir == "up" else "downward"
                 min_wick_pct_i = round(min_wick_pct * 100)
                 min_body_pct_i = round(min_body_pct * 100)
@@ -6775,6 +6931,14 @@ def api_bias_scan():
                 if vol_spike:
                     vol_ratio = sig_vol / max(avg_vol, 1)
                     readable_chain.append(f"Volume spike {vol_ratio:.1f}x average")
+                if ob_found:
+                    readable_chain.append(f"OB confluence: {ob_conf['reason']}")
+                if fvg_found:
+                    readable_chain.append(f"FVG confluence: {fvg_conf['reason']}")
+                if fib_found:
+                    readable_chain.append(f"Fib confluence: {fib_conf['reason']}")
+                if conf_req_passed:
+                    readable_chain.append("Required confluence passed")
                 if rej_dir == "bearish":
                     readable_chain.append(
                         f"Invalidation: close above rejection high {rej['high']:.6f}"
@@ -6784,16 +6948,23 @@ def api_bias_scan():
                         f"Invalidation: close below rejection low {rej['low']:.6f}"
                     )
 
+                conf_found_list = (
+                    (["OB"]  if ob_found  else []) +
+                    (["FVG"] if fvg_found else []) +
+                    (["Fib"] if fib_found else [])
+                )
                 setup_type_label = (
                     "Bearish Bias Shift" if rej_dir == "bearish" else "Bullish Bias Shift"
                 )
                 pattern    = (f"{'Bearish' if rej_dir == 'bearish' else 'Bullish'} Rejection"
                               f" · {'Uptrend' if prior_dir == 'up' else 'Downtrend'}")
                 conf_label = "✓ Confirmed" if confirmation_status == "confirmed" else "Early"
+                conf_chip  = f" · {', '.join(conf_found_list)}" if conf_found_list else ""
                 detail     = (
                     f"Prior {prior_dir.upper()} {prior_move_n}c"
                     f" · {conf_label}"
                     f" · Grade {graded['grade']} ({score_val})"
+                    f"{conf_chip}"
                     f" · Inv: {invalidation_level}"
                     f" · Conf TF: {_suggested_conf_tf(tf)}"
                 )
@@ -6815,14 +6986,19 @@ def api_bias_scan():
                     "lowerWickPct": rej["lowerWickPct"],
                     "bodyPct":      rej["bodyPct"],
                     "volSpike":     vol_spike,
-                    "obConf":       None,
-                    "fvgConf":      None,
-                    # ── Phase 3: real score (no longer None) ──
-                    "score":        score_val,
-                    "grade":        graded["grade"],
-                    "gradeLabel":   graded["gradeLabel"],
+                    "obConf":       ob_conf,
+                    "fvgConf":      fvg_conf,
+                    # ── Phase 3: score/grade ──
+                    "score":          score_val,
+                    "grade":          graded["grade"],
+                    "gradeLabel":     graded["gradeLabel"],
                     "scoreBreakdown": scored["breakdown"],
-                    "sparkline":    sparkline,
+                    "sparkline":      sparkline,
+                    # ── Phase 4: confluence ──
+                    "fibConf":          fib_conf,
+                    "confluenceMode":   confluence_mode,
+                    "confluencesFound": conf_found_list,
+                    "confluenceCount":  len(conf_found_list),
                     # ── Phase 2 fields ──
                     "direction":               rej_dir,
                     "biasDirection":           rej_dir,

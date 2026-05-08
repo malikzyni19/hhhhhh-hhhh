@@ -3238,8 +3238,10 @@ async function scanBias(){
       const bLabel = x.bias === 'bullish' ? '▲ BULL' : '▼ BEAR';
       const confClass = x.confidence === 'Strong' ? 'bull' : x.confidence === 'Moderate' ? 'warn' : 'neutral';
       const sigLabel = x.signal.replace(/_/g,' ');
-      const obHtml = x.obConf ? `<div class="result-detail" style="margin-top:4px;opacity:.8">OB Zone: ${x.obConf.zone} · ${x.obConf.volPct}% vol · ${x.obConf.dist}% away</div>` : '';
-      const fvgHtml = x.fvgConf ? `<div class="result-detail" style="margin-top:4px;opacity:.8">FVG: ${x.fvgConf.zone} [${x.fvgConf.touch}]</div>` : '';
+      const obHtml  = x.obConf  ? `<div class="result-detail" style="margin-top:4px;opacity:.8">${x.obConf.reason} · ${x.obConf.zone} · ${x.obConf.distancePct}% away</div>` : '';
+      const fvgHtml = x.fvgConf ? `<div class="result-detail" style="margin-top:4px;opacity:.8">${x.fvgConf.reason} · ${x.fvgConf.zone} [${x.fvgConf.touch}]</div>` : '';
+      const fibHtml = x.fibConf  ? `<div class="result-detail" style="margin-top:4px;opacity:.8">${x.fibConf.reason} · $${x.fibConf.price} · ${x.fibConf.distancePct}% away</div>` : '';
+      const confChips = x.confluencesFound && x.confluencesFound.length ? x.confluencesFound.map(cf => `<span class="badge neutral" style="font-size:9px;letter-spacing:.5px">${cf} ✓</span>`).join('') : '';
       const starred = isStarred(x.symbol);
       const tf = x.timeframe || '1d';
       const ofId = 'bias-of-' + x.symbol.replace(/\./g,'_') + '_' + i;
@@ -3257,13 +3259,14 @@ async function scanBias(){
           <span class="badge ${confClass}">${x.confidence.toUpperCase()}</span>
           <span class="badge neutral">${sigLabel}</span>
           ${x.grade ? `<span class="badge neutral" style="font-size:9px;letter-spacing:.5px">${x.grade}</span>` : ''}
+          ${confChips}
         </div>
         <div class="result-details">
           <div class="result-detail">↑Wick ${x.upperWickPct}% · ↓Wick ${x.lowerWickPct}% · Body ${x.bodyPct}%${x.volSpike ? ' · 🔥 Vol' : ''}</div>
           <div class="result-detail" style="opacity:.7;margin-top:3px">${x.gates}</div>
           ${x.detail ? `<div class="result-detail" style="margin-top:3px;opacity:.85">${x.detail}</div>` : ''}
           ${x.gradeLabel ? `<div class="result-detail" style="margin-top:3px;opacity:.65;font-size:10px">${x.gradeLabel}</div>` : ''}
-          ${obHtml}${fvgHtml}
+          ${obHtml}${fvgHtml}${fibHtml}
           <div class="scan-time">Scanned: ${scanTime}</div>
           <div style="margin-top:8px">
             <button class="zone-btn" style="width:100%;padding:6px;font-size:10px;letter-spacing:.5px;border-color:#22d3ee30;color:#22d3ee"
