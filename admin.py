@@ -1449,11 +1449,15 @@ def debug_ob_tv_parity():
         def _ob_visible(ob):
             d = _ob_base(ob)
             d.update({
-                "tvObVolumeSharePct":     ob.get("tvObVolumeSharePct"),
-                "tvObVolumeShareStatus":  ob.get("tvObVolumeShareStatus"),
-                "tvObVisibleTotalVolume": ob.get("tvObVisibleTotalVolume"),
-                "tvObVisibleCount":       ob.get("tvObVisibleCount"),
-                "tvObParitySeq":          ob.get("tvObParitySeq"),
+                "tvObVolumeSharePct":      ob.get("tvObVolumeSharePct"),
+                "tvObVolumeShareStatus":   ob.get("tvObVolumeShareStatus"),
+                "tvObVisibleTotalVolume":  ob.get("tvObVisibleTotalVolume"),
+                "tvObVisibleCount":        ob.get("tvObVisibleCount"),
+                "tvObParitySeq":           ob.get("tvObParitySeq"),
+                "tvObOverlapMode":         ob.get("tvObOverlapMode"),
+                "tvObInputCount":          ob.get("tvObInputCount"),
+                "tvObAfterOverlapCount":   ob.get("tvObAfterOverlapCount"),
+                "tvObFinalShowLastCount":  ob.get("tvObFinalShowLastCount"),
             })
             return d
 
@@ -1465,16 +1469,32 @@ def debug_ob_tv_parity():
         # ── Hidden pools with reasons ─────────────────────────────────────────
         def _hidden_with_reasons(src_all, max_ob=5):
             hidden = []
-            pool   = src_all[-max_ob:] if len(src_all) > max_ob else list(src_all)
-            beyond = src_all[:-max_ob] if len(src_all) > max_ob else []
-            for ob in beyond:
-                d = _ob_base(ob); d["hidden_reason"] = "beyond_show_last"; hidden.append(d)
-            newest_first = list(reversed(pool))
-            for i, ob in enumerate(newest_first):
-                if i > 0:
-                    newer = newest_first[i - 1]
-                    if ob["top"] > newer["bottom"] and ob["bottom"] < newer["top"]:
-                        d = _ob_base(ob); d["hidden_reason"] = "overlap_previous"; hidden.append(d)
+            # Step 1: overlap filter — keep older, hide newer overlapping an accepted older OB
+            accepted = []
+            for ob in src_all:
+                overlapping_with = None
+                for acc in accepted:
+                    if ob["top"] > acc["bottom"] and ob["bottom"] < acc["top"]:
+                        overlapping_with = acc
+                        break
+                if overlapping_with is not None:
+                    d = _ob_base(ob)
+                    d["hidden_reason"]          = "overlap_previous"
+                    d["hidden_volume"]          = ob.get("volume")
+                    d["overlapped_with_volume"] = overlapping_with.get("volume")
+                    d["overlap_mode"]           = "previous"
+                    hidden.append(d)
+                else:
+                    accepted.append(ob)
+            # Step 2: showLast — oldest beyond max_ob are hidden
+            if len(accepted) > max_ob:
+                for ob in accepted[:-max_ob]:
+                    d = _ob_base(ob)
+                    d["hidden_reason"]          = "beyond_show_last"
+                    d["hidden_volume"]          = ob.get("volume")
+                    d["overlapped_with_volume"] = None
+                    d["overlap_mode"]           = "previous"
+                    hidden.append(d)
             return hidden
 
         bull_hidden_out = _hidden_with_reasons(a["bull_src"])
@@ -1495,9 +1515,9 @@ def debug_ob_tv_parity():
 
             if not in_visible:
                 src_for_dir = a["bull_src"] if nearest["type"] == "bullish" else a["bear_src"]
-                beyond_bars = {ob["bar"] for ob in (src_for_dir[:-5] if len(src_for_dir) > 5 else [])}
-                nv_reason   = ("beyond_show_last" if nearest["bar"] in beyond_bars
-                               else "overlap_previous_or_unknown")
+                hidden_for_dir = bull_hidden_out if nearest["type"] == "bullish" else bear_hidden_out
+                _hidden_map    = {h["bar"]: h.get("hidden_reason", "unknown") for h in hidden_for_dir}
+                nv_reason      = _hidden_map.get(nearest["bar"], "overlap_previous_or_unknown")
             else:
                 nv_reason = None
 

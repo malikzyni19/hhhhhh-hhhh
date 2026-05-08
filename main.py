@@ -3417,22 +3417,40 @@ def _tv_visible_pool(obs_by_dir: List[Dict[str, Any]], max_ob: int = 5) -> List[
     Build the Pine-style visible OB pool for a single direction.
 
     Pine drawVOB (hideOverlap=True, overlapMode=Previous):
-      seq 0 = most recent, seq N-1 = oldest.
-      For seq >= 1: if top[seq] > btm[seq-1] and btm[seq] < top[seq-1] → skip (hide older OB).
+      Keep older OBs; hide newer OBs that overlap an already-accepted (older) OB.
+      ShowLast=5 is applied AFTER overlap filtering.
+
+      Step 1: Iterate oldest→newest; hide newer OB if it overlaps any accepted older OB.
+      Step 2: Apply showLast = keep the most recent max_ob survivors.
 
     obs_by_dir: all active OBs of ONE direction, oldest-first (detect_obs insertion order).
-    Returns the visible subset, oldest-first, length ≤ max_ob.
+    Returns the final visible subset, oldest-first, length ≤ max_ob.
     """
-    pool = obs_by_dir[-max_ob:] if len(obs_by_dir) > max_ob else list(obs_by_dir)
-    newest_first = list(reversed(pool))
-    visible_nf: List[Dict[str, Any]] = []
-    for i, ob in enumerate(newest_first):
-        if i > 0:
-            newer = newest_first[i - 1]
-            if ob["top"] > newer["bottom"] and ob["bottom"] < newer["top"]:
-                continue  # overlaps more-recent OB — Pine hides it
-        visible_nf.append(ob)
-    return list(reversed(visible_nf))
+    input_count = len(obs_by_dir)
+
+    # Step 1: overlap filter — keep older, hide newer that overlaps an accepted older OB
+    accepted: List[Dict[str, Any]] = []
+    for ob in obs_by_dir:
+        overlaps = any(
+            ob["top"] > acc["bottom"] and ob["bottom"] < acc["top"]
+            for acc in accepted
+        )
+        if not overlaps:
+            accepted.append(ob)
+
+    after_overlap_count = len(accepted)
+
+    # Step 2: showLast — keep the most recent max_ob
+    visible = accepted[-max_ob:] if len(accepted) > max_ob else list(accepted)
+    final_count = len(visible)
+
+    for ob in visible:
+        ob["tvObOverlapMode"]        = "previous"
+        ob["tvObInputCount"]         = input_count
+        ob["tvObAfterOverlapCount"]  = after_overlap_count
+        ob["tvObFinalShowLastCount"] = final_count
+
+    return visible
 
 
 def calculate_tv_ob_volume_share(obs: List[Dict[str, Any]],
@@ -3609,6 +3627,7 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
         "tvObVisibleTotalVolume", "tvObVisibleCount", "tvObVolumeShareSource",
         "tvObVolumeShareFormula", "tvObParityPool", "tvObParitySeq", "tvObParitySettings",
         "tvObSourcePoolCountBeforeShowLast", "tvObDirectionPoolCount", "tvObVisiblePoolDebug",
+        "tvObOverlapMode", "tvObInputCount", "tvObAfterOverlapCount", "tvObFinalShowLastCount",
     )
     for ob in obs:
         tv_ref = _tv_by_key.get((ob["type"], ob["bar"]))
