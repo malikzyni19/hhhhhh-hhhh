@@ -2259,7 +2259,9 @@ function renderSparkline(prices, markers, width, height){
 function renderScoreBadge(score, confidence){
   const s = score || 0;
   const conf = confidence || 'Low';
-  const color = conf === 'High' ? '#22c55e' : conf === 'Medium' ? '#eab308' : '#64748b';
+  const isHigh = conf === 'High' || conf === 'Strong';
+  const isMed  = conf === 'Medium' || conf === 'Moderate';
+  const color  = isHigh ? '#22c55e' : isMed ? '#eab308' : '#64748b';
   const circ = 2 * Math.PI * 15;
   const offset = circ - (Math.min(s, 100) / 100) * circ;
   return `<div class="score-ring" title="${s}/100 — ${conf} Confidence">
@@ -3254,11 +3256,13 @@ async function scanBias(){
           <span class="badge ${bClass}">${bLabel}</span>
           <span class="badge ${confClass}">${x.confidence.toUpperCase()}</span>
           <span class="badge neutral">${sigLabel}</span>
+          ${x.grade ? `<span class="badge neutral" style="font-size:9px;letter-spacing:.5px">${x.grade}</span>` : ''}
         </div>
         <div class="result-details">
           <div class="result-detail">↑Wick ${x.upperWickPct}% · ↓Wick ${x.lowerWickPct}% · Body ${x.bodyPct}%${x.volSpike ? ' · 🔥 Vol' : ''}</div>
           <div class="result-detail" style="opacity:.7;margin-top:3px">${x.gates}</div>
           ${x.detail ? `<div class="result-detail" style="margin-top:3px;opacity:.85">${x.detail}</div>` : ''}
+          ${x.gradeLabel ? `<div class="result-detail" style="margin-top:3px;opacity:.65;font-size:10px">${x.gradeLabel}</div>` : ''}
           ${obHtml}${fvgHtml}
           <div class="scan-time">Scanned: ${scanTime}</div>
           <div style="margin-top:8px">
