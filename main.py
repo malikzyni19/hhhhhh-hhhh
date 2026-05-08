@@ -2176,11 +2176,15 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
     """
     Order Block detection — audited line-by-line against Pine Script drawVOB().
 
-    CRITICAL DIFFERENCE from previous version:
-    Pine Script finds the extreme candle (lowest low / highest high), then applies
-    a +1 offset to use the PREVIOUS candle (one bar earlier in time) for zone
-    boundary calculation (hl2) and volume. The zone bottom (bullish) or top (bearish)
-    still uses the actual extreme value.
+    Pine search window (Phase 8B.5 fix):
+      For bullish OB: search_start = hN.first() (most recent pivot HIGH bar, inclusive)
+      For bearish OB: search_start = lN.first() (most recent pivot LOW bar, inclusive)
+      Previously used pivot_bar+1 which excluded the pivot bar — mismatching Pine's loc.
+
+    Zone source candle (+1 offset within the search range):
+      Pine finds the extreme candle (lowest low / highest high), then takes
+      the candle ONE BAR EARLIER (the +1 offset) for hl2 and volume.
+      ob_source = max(search_start, extreme_idx - 1)
 
     Pine reference:
       int iU = obj.l.indexof(obj.l.min()) + 1   <- the +1 offset
@@ -2213,8 +2217,8 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         # ── INTERNAL BULLISH BREAK → Create Bullish OB ──
         if upP and len(dnL) > 1 and c[i] > upP[0] and (i == start or c[i - 1] <= upP[0]):
             pivot_bar    = upB[0] if upB else i - 10
-            # Pine scans from pivot+1 to break bar (excludes pivot itself)
-            search_start = max(0, pivot_bar + 1)
+            # Pine scans from pivot bar (hN.first()) to break bar — pivot included
+            search_start = max(0, pivot_bar)
             search_end   = i + 1  # include break bar
 
             if search_end > search_start:
@@ -2277,7 +2281,8 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         # ── INTERNAL BEARISH BREAK → Create Bearish OB ──
         if dnP and len(upL) > 1 and c[i] < dnP[0] and (i == start or c[i - 1] >= dnP[0]):
             pivot_bar    = dnB[0] if dnB else i - 10
-            search_start = max(0, pivot_bar + 1)
+            # Pine scans from pivot bar (lN.first()) to break bar — pivot included
+            search_start = max(0, pivot_bar)
             search_end   = i + 1
 
             if search_end > search_start:
