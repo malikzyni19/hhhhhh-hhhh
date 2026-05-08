@@ -6315,23 +6315,24 @@ def api_ath_atl_scan():
 # ── Bias Shift Phase 2 helpers ────────────────────────────────────────────────
 
 def _bias_normal_presets(bias_strength: str) -> dict:
+    """Return candle-quality presets for Normal mode. Never forces detectionMode."""
     if bias_strength == "early":
         return {
-            "prior_move_n": 2, "signal_search_n": 3, "min_prior_checks": 2,
-            "min_wick_pct": 0.25, "min_body_pct": 0.10,
-            "require_close_beyond_mid": False, "detection_mode": "early",
+            "prior_move_n": 3, "signal_search_n": 2, "min_prior_checks": 2,
+            "min_wick_pct": 0.25, "min_body_pct": 0.15,
+            "require_close_beyond_mid": True,
         }
     elif bias_strength == "strong":
         return {
-            "prior_move_n": 5, "signal_search_n": 1, "min_prior_checks": 3,
-            "min_wick_pct": 0.45, "min_body_pct": 0.20,
-            "require_close_beyond_mid": True, "detection_mode": "confirmed",
+            "prior_move_n": 5, "signal_search_n": 1, "min_prior_checks": 2,
+            "min_wick_pct": 0.45, "min_body_pct": 0.25,
+            "require_close_beyond_mid": True,
         }
     else:  # balanced
         return {
-            "prior_move_n": 3, "signal_search_n": 2, "min_prior_checks": 2,
-            "min_wick_pct": 0.35, "min_body_pct": 0.15,
-            "require_close_beyond_mid": False, "detection_mode": "early",
+            "prior_move_n": 4, "signal_search_n": 1, "min_prior_checks": 2,
+            "min_wick_pct": 0.35, "min_body_pct": 0.20,
+            "require_close_beyond_mid": True,
         }
 
 
@@ -6477,14 +6478,19 @@ def api_bias_scan():
     payload = request.get_json(force=True) or {}
     tf = payload.get("timeframe", "1d")
     market = payload.get("market", "perpetual")
-    bias_mode        = payload.get("biasMode", "normal")
+    # Fix #1: frontend sends "mode", not "biasMode"
+    bias_mode        = payload.get("mode", payload.get("biasMode", "normal"))
     bias_strength    = payload.get("biasStrength", "balanced")
     bias_filter      = payload.get("biasFilter", "all")
+    # detection_mode comes from payload — never overridden by presets
     detection_mode   = payload.get("detectionMode", "early")
-    use_volume_filter = bool(payload.get("volumeFilter", False))
-    vol_multiplier   = float(payload.get("volumeMultiplier", 1.5))
+    # Fix #3: volumeFilter is "optional" or "required", not a bool
+    volume_filter_mode = payload.get("volumeFilter", "optional")
+    use_volume_filter  = volume_filter_mode == "required"
+    vol_multiplier     = float(payload.get("volumeMultiplier", 1.5))
 
     if bias_mode == "normal":
+        # Fix #2: presets set candle-quality params only; detectionMode stays from payload
         p = _bias_normal_presets(bias_strength)
         prior_move_n             = p["prior_move_n"]
         signal_search_n          = p["signal_search_n"]
@@ -6492,7 +6498,6 @@ def api_bias_scan():
         min_wick_pct             = p["min_wick_pct"]
         min_body_pct             = p["min_body_pct"]
         require_close_beyond_mid = p["require_close_beyond_mid"]
-        detection_mode           = p["detection_mode"]
     else:
         prior_move_n             = max(1, int(payload.get("priorMoveCandles", 3)))
         signal_search_n          = max(1, int(payload.get("signalSearchCandles", 2)))
@@ -6596,18 +6601,20 @@ def api_bias_scan():
                 if rej is None:
                     continue
 
-                confirmation_status = "early"
+                # Fix #6: confirmed mode searches ALL later closed candles
+                confirmation_status = "early_unconfirmed"
                 if detection_mode == "confirmed":
-                    if sig_idx + 1 < n:
-                        post_c = c[sig_idx + 1]
-                        if rej_dir == "bearish" and post_c < rej["low"]:
-                            confirmation_status = "confirmed"
-                        elif rej_dir == "bullish" and post_c > rej["high"]:
-                            confirmation_status = "confirmed"
+                    confirmed = False
+                    for post_idx in range(sig_idx + 1, n):
+                        if rej_dir == "bearish":
+                            if l[post_idx] < rej["low"] or c[post_idx] < rej["low"]:
+                                confirmed = True; break
                         else:
-                            continue
-                    else:
+                            if h[post_idx] > rej["high"] or c[post_idx] > rej["high"]:
+                                confirmed = True; break
+                    if not confirmed:
                         continue
+                    confirmation_status = "confirmed"
 
                 if rej_dir == "bearish":
                     invalidation_level = round(rej["high"], 8)
@@ -6624,7 +6631,45 @@ def api_bias_scan():
                 else:
                     confidence = "Weak"
 
-                reason_chain  = prior_result["reasons"] + rej["reasons"]
+                # Fix #5: human-readable reasonChain
+                rej_mid       = rej["low"] + (rej["high"] - rej["low"]) / 2
+                dir_word      = "upward" if prior_dir == "up" else "downward"
+                min_wick_pct_i = round(min_wick_pct * 100)
+                min_body_pct_i = round(min_body_pct * 100)
+                readable_chain: list[str] = [
+                    f"Previous {prior_move_n} closed candles pushed {dir_word}",
+                ]
+                if rej_dir == "bearish":
+                    readable_chain.append("Signal candle closed bearish")
+                    readable_chain.append(
+                        f"Upper wick {rej['upperWickPct']}% >= required {min_wick_pct_i}%"
+                    )
+                else:
+                    readable_chain.append("Signal candle closed bullish")
+                    readable_chain.append(
+                        f"Lower wick {rej['lowerWickPct']}% >= required {min_wick_pct_i}%"
+                    )
+                readable_chain.append(f"Body {rej['bodyPct']}% >= required {min_body_pct_i}%")
+                if rej_dir == "bearish" and rej["close"] < rej_mid:
+                    readable_chain.append("Close below candle midpoint")
+                elif rej_dir == "bullish" and rej["close"] > rej_mid:
+                    readable_chain.append("Close above candle midpoint")
+                if vol_spike:
+                    vol_ratio = sig_vol / max(avg_vol, 1)
+                    readable_chain.append(f"Volume spike {vol_ratio:.1f}x average")
+                if rej_dir == "bearish":
+                    readable_chain.append(
+                        f"Invalidation: close above rejection high {rej['high']:.6f}"
+                    )
+                else:
+                    readable_chain.append(
+                        f"Invalidation: close below rejection low {rej['low']:.6f}"
+                    )
+
+                # Fix #4: human-readable setupType
+                setup_type_label = (
+                    "Bearish Bias Shift" if rej_dir == "bearish" else "Bullish Bias Shift"
+                )
                 pattern       = (f"{'Bearish' if rej_dir == 'bearish' else 'Bullish'} Rejection"
                                  f" · {'Uptrend' if prior_dir == 'up' else 'Downtrend'}")
                 conf_label    = "✓ Confirmed" if confirmation_status == "confirmed" else "Early"
@@ -6634,6 +6679,8 @@ def api_bias_scan():
                     f" · Inv: {invalidation_level}"
                     f" · Conf TF: {_suggested_conf_tf(tf)}"
                 )
+                # compact debug reasons (kept for gates display + debug field)
+                compact_reasons = prior_result["reasons"] + rej["reasons"]
                 sparkline = [float(c[i]) for i in range(max(0, n - 24), n)]
 
                 candidate = {
@@ -6644,7 +6691,7 @@ def api_bias_scan():
                     "bias":         rej_dir,
                     "signal":       "BIAS_SHIFT",
                     "confidence":   confidence,
-                    "gates":        " · ".join(reason_chain),
+                    "gates":        " · ".join(compact_reasons),
                     "gatesPassed":  total_checks,
                     "gatesChecked": 6,
                     "upperWickPct": rej["upperWickPct"],
@@ -6656,31 +6703,32 @@ def api_bias_scan():
                     "score":        None,
                     "sparkline":    sparkline,
                     # ── Phase 2 fields ──
-                    "direction":              rej_dir,
-                    "biasDirection":          rej_dir,
-                    "setupType":              "BIAS_SHIFT",
-                    "pattern":                pattern,
-                    "detail":                 detail,
-                    "priorMoveDirection":      prior_dir,
-                    "priorMoveCandles":        prior_move_n,
-                    "priorMoveChecks":         prior_result["checksPassed"],
-                    "signalCandleOffset":      sig_offset,
-                    "signalCandleTime":        ts[sig_idx],
-                    "rejectionOpen":           rej["open"],
-                    "rejectionHigh":           rej["high"],
-                    "rejectionLow":            rej["low"],
-                    "rejectionClose":          rej["close"],
-                    "rejectionBodyPct":        rej["bodyPct"],
-                    "rejectionUpperWickPct":   rej["upperWickPct"],
-                    "rejectionLowerWickPct":   rej["lowerWickPct"],
-                    "invalidationLevel":       invalidation_level,
-                    "invalidationText":        invalidation_text,
-                    "confirmationStatus":      confirmation_status,
-                    "suggestedConfirmationTf": _suggested_conf_tf(tf),
-                    "reasonChain":             reason_chain,
+                    "direction":               rej_dir,
+                    "biasDirection":           rej_dir,
+                    "setupType":               setup_type_label,
+                    "pattern":                 pattern,
+                    "detail":                  detail,
+                    "priorMoveDirection":       prior_dir,
+                    "priorMoveCandles":         prior_move_n,
+                    "priorMoveChecks":          prior_result["checksPassed"],
+                    "signalCandleOffset":       sig_offset,
+                    "signalCandleTime":         ts[sig_idx],
+                    "rejectionOpen":            rej["open"],
+                    "rejectionHigh":            rej["high"],
+                    "rejectionLow":             rej["low"],
+                    "rejectionClose":           rej["close"],
+                    "rejectionBodyPct":         rej["bodyPct"],
+                    "rejectionUpperWickPct":    rej["upperWickPct"],
+                    "rejectionLowerWickPct":    rej["lowerWickPct"],
+                    "invalidationLevel":        invalidation_level,
+                    "invalidationText":         invalidation_text,
+                    "confirmationStatus":       confirmation_status,
+                    "suggestedConfirmationTf":  _suggested_conf_tf(tf),
+                    "reasonChain":              readable_chain,
                     "debug": {
-                        "priorSummary": prior_result["summary"],
-                        "rejReasons":   rej["reasons"],
+                        "priorSummary":      prior_result["summary"],
+                        "priorMoveReasons":  prior_result["reasons"],
+                        "rejReasons":        rej["reasons"],
                     },
                 }
 
