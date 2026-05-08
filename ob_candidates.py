@@ -190,7 +190,6 @@ def run_ob_candidates(
     Uses batch price fetch (one call for all symbols) or app cache.
     """
     from models import SignalEvent
-    from backtest_ob import extract_ob_strength_from_meta
 
     summary = {
         "checked": 0,
@@ -235,10 +234,7 @@ def run_ob_candidates(
         except Exception:
             raw_meta = {}
 
-        # True OB strength only — never score, never alert_strength
-        ob_strength, ob_strength_source = extract_ob_strength_from_meta(raw_meta)
-
-        # TV OB volume share fields (only present for signals captured after Phase 8B)
+        # TV OB volume share fields
         tv_ob_volume_share_pct     = raw_meta.get("tvObVolumeSharePct")
         tv_ob_volume_share_status  = raw_meta.get("tvObVolumeShareStatus")
         tv_ob_formation_volume     = raw_meta.get("tvObFormationVolume")
@@ -251,8 +247,13 @@ def run_ob_candidates(
         else:
             tv_vs_missing += 1
 
-        # Strength gate
-        if strength_min > 0 and (ob_strength is None or ob_strength < strength_min):
+        # TV OB % gate
+        tv_ob_pct_val = None
+        try:
+            tv_ob_pct_val = float(tv_ob_volume_share_pct) if tv_ob_volume_share_pct is not None else None
+        except (TypeError, ValueError):
+            pass
+        if strength_min > 0 and (tv_ob_pct_val is None or tv_ob_pct_val < strength_min):
             summary["missing_strength"] += 1
             candidates.append({
                 "signal_id":          ev.signal_id,
@@ -263,8 +264,6 @@ def run_ob_candidates(
                 "detected_at":        ev.detected_at.isoformat() if ev.detected_at else None,
                 "zone_high":          ev.zone_high,
                 "zone_low":           ev.zone_low,
-                "ob_strength":        ob_strength,
-                "ob_strength_source": ob_strength_source,
                 "tv_ob_volume_share_pct":     tv_ob_volume_share_pct,
                 "tv_ob_volume_share_status":  tv_ob_volume_share_status,
                 "tv_ob_formation_volume":     tv_ob_formation_volume,
@@ -276,7 +275,7 @@ def run_ob_candidates(
                 "price_source":       None,
                 "distance_pct":       None,
                 "candidate_status":   "MISSING_STRENGTH",
-                "candidate_expiry_reason": "missing_true_ob_strength",
+                "candidate_expiry_reason": "missing_tv_ob_pct",
                 "would_monitor":      False,
                 "trade_plan":         None,
             })
@@ -340,8 +339,6 @@ def run_ob_candidates(
             "detected_at":        ev.detected_at.isoformat() if ev.detected_at else None,
             "zone_high":          ev.zone_high,
             "zone_low":           ev.zone_low,
-            "ob_strength":        ob_strength,
-            "ob_strength_source": ob_strength_source,
             "tv_ob_volume_share_pct":     tv_ob_volume_share_pct,
             "tv_ob_volume_share_status":  tv_ob_volume_share_status,
             "tv_ob_formation_volume":     tv_ob_formation_volume,
