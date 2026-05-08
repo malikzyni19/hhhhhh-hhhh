@@ -317,20 +317,41 @@ def send_email_alert(subject: str, body: str) -> bool:
         return False
 
 
+def _send_via_resend(to_email: str, subject: str, html_body: str) -> bool:
+    """Send email via Resend HTTP API (works even when SMTP ports are blocked).
+    Requires RESEND_API_KEY env var. Free tier: 3,000 emails/month.
+    """
+    api_key = os.environ.get("RESEND_API_KEY", "").strip()
+    frm     = os.environ.get("RESEND_FROM", "").strip() or os.environ.get("ALERT_EMAIL_FROM", "").strip()
+    if not api_key or not frm:
+        return False
+    try:
+        resp = req.post(
+            "https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={"from": frm, "to": [to_email], "subject": subject, "html": html_body},
+            timeout=10,
+        )
+        if resp.status_code in (200, 201):
+            print(f"[VERIFY-EMAIL] Sent via Resend API to {to_email}")
+            return True
+        print(f"[VERIFY-EMAIL] Resend API error {resp.status_code}: {resp.text[:200]}")
+        return False
+    except Exception as exc:
+        print(f"[VERIFY-EMAIL] Resend API exception: {exc}")
+        return False
+
+
 def send_verification_email(to_email: str, code: str, username: str) -> "tuple[bool, str]":
     """Send a 6-digit OTP verification email directly to the new user.
-    Reads SMTP credentials fresh from env at call time (supports Koyeb secrets).
-    Tries SMTP_SSL (465) first, then STARTTLS (587) as fallback.
-    Returns (success: bool, fail_reason: str) where fail_reason is one of:
-      'ok' | 'missing_config' | 'delivery_failed'
+    Attempts in order:
+      1. Resend HTTP API  (RESEND_API_KEY env var — works on all cloud hosts)
+      2. Gmail SMTP_SSL   port 465
+      3. Gmail STARTTLS   port 587
+    Returns (success: bool, fail_reason: str): 'ok' | 'missing_config' | 'delivery_failed'
     """
     frm = _email_from()
     pwd = _email_pass()
-    if not frm or not pwd:
-        print(f"[VERIFY-EMAIL] SMTP not configured — "
-              f"ALERT_EMAIL_FROM={'set' if frm else 'MISSING'}, "
-              f"ALERT_EMAIL_PASS={'set' if pwd else 'MISSING'}")
-        return False, "missing_config"
     if not to_email:
         return False, "missing_config"
 
@@ -365,6 +386,19 @@ def send_verification_email(to_email: str, code: str, username: str) -> "tuple[b
 </body>
 </html>"""
 
+    print(f"[VERIFY-EMAIL] Attempting to send OTP to {to_email}")
+
+    # ── Method 1: Resend HTTP API (works even when SMTP ports are blocked) ──
+    if _send_via_resend(to_email, subject, body):
+        return True, "ok"
+
+    # ── Method 2 & 3: Gmail SMTP ─────────────────────────────────────────
+    if not frm or not pwd:
+        print(f"[VERIFY-EMAIL] SMTP skipped — "
+              f"ALERT_EMAIL_FROM={'set' if frm else 'MISSING'}, "
+              f"ALERT_EMAIL_PASS={'set' if pwd else 'MISSING'}")
+        return False, "missing_config"
+
     def _build_msg():
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
@@ -373,19 +407,17 @@ def send_verification_email(to_email: str, code: str, username: str) -> "tuple[b
         msg.attach(MIMEText(body, "html"))
         return msg
 
-    print(f"[VERIFY-EMAIL] Attempting send from {frm} to {to_email}")
-
-    # Try SMTP_SSL on port 465 first
+    # Method 2: SMTP_SSL port 465
     try:
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as srv:
             srv.login(frm, pwd)
             srv.sendmail(frm, to_email, _build_msg().as_string())
-        print(f"[VERIFY-EMAIL] Sent via SSL/465 to {to_email}")
+        print(f"[VERIFY-EMAIL] Sent via Gmail SSL/465 to {to_email}")
         return True, "ok"
     except Exception as e1:
-        print(f"[VERIFY-EMAIL] SSL/465 failed: {e1}")
+        print(f"[VERIFY-EMAIL] Gmail SSL/465 failed: {e1}")
 
-    # Fallback: STARTTLS on port 587
+    # Method 3: STARTTLS port 587
     try:
         ctx = ssl.create_default_context()
         with smtplib.SMTP("smtp.gmail.com", 587, timeout=15) as srv:
@@ -394,10 +426,10 @@ def send_verification_email(to_email: str, code: str, username: str) -> "tuple[b
             srv.ehlo()
             srv.login(frm, pwd)
             srv.sendmail(frm, to_email, _build_msg().as_string())
-        print(f"[VERIFY-EMAIL] Sent via STARTTLS/587 to {to_email}")
+        print(f"[VERIFY-EMAIL] Sent via Gmail STARTTLS/587 to {to_email}")
         return True, "ok"
     except Exception as e2:
-        print(f"[VERIFY-EMAIL] STARTTLS/587 also failed: {e2}")
+        print(f"[VERIFY-EMAIL] Gmail STARTTLS/587 also failed: {e2}")
 
     # Credentials were present but all delivery methods failed (SMTP likely blocked)
     print(f"[VERIFY-EMAIL] All methods failed for {to_email} — credentials set but delivery blocked")
@@ -430,6 +462,20 @@ def _auto_migrate():
 
 # Run auto-migration at startup
 threading.Thread(target=_auto_migrate, daemon=True).start()
+
+# Print SMTP configuration status on every startup — visible in Koyeb logs
+def _log_smtp_config():
+    import time; time.sleep(2)   # let gunicorn finish initialising
+    frm = _email_from()
+    pwd = _email_pass()
+    if frm and pwd:
+        print(f"[EMAIL-CONFIG] ✓ SMTP configured — from={frm}, pass={'*'*len(pwd)} ({len(pwd)} chars)")
+    else:
+        print(f"[EMAIL-CONFIG] ✗ SMTP NOT configured — "
+              f"ALERT_EMAIL_FROM={'set' if frm else '*** MISSING ***'}, "
+              f"ALERT_EMAIL_PASS={'set' if pwd else '*** MISSING ***'}")
+
+threading.Thread(target=_log_smtp_config, daemon=True).start()
 
 
 # ============================================================
@@ -1328,6 +1374,9 @@ PAIR_CACHE: Dict[str, Any] = {
     "perpetual": {"ts": 0, "pairs": []},
 }
 ROUND_ROBIN_STATE: Dict[str, int] = {"index": 0}
+# Per-user round-robin cursor for Bias Shift full-market scans.
+# Key: "username|exchange|market|tf" — isolates each user's position.
+BIAS_SCAN_CURSOR: Dict[str, int] = {}
 
 # ═══════════════════════════════════════
 # REAL API WEIGHT TRACKER
@@ -2131,11 +2180,15 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
     """
     Order Block detection — audited line-by-line against Pine Script drawVOB().
 
-    CRITICAL DIFFERENCE from previous version:
-    Pine Script finds the extreme candle (lowest low / highest high), then applies
-    a +1 offset to use the PREVIOUS candle (one bar earlier in time) for zone
-    boundary calculation (hl2) and volume. The zone bottom (bullish) or top (bearish)
-    still uses the actual extreme value.
+    Pine search window (Phase 8B.5 fix):
+      For bullish OB: search_start = hN.first() (most recent pivot HIGH bar, inclusive)
+      For bearish OB: search_start = lN.first() (most recent pivot LOW bar, inclusive)
+      Previously used pivot_bar+1 which excluded the pivot bar — mismatching Pine's loc.
+
+    Zone source candle (+1 offset within the search range):
+      Pine finds the extreme candle (lowest low / highest high), then takes
+      the candle ONE BAR EARLIER (the +1 offset) for hl2 and volume.
+      ob_source = max(search_start, extreme_idx - 1)
 
     Pine reference:
       int iU = obj.l.indexof(obj.l.min()) + 1   <- the +1 offset
@@ -2168,8 +2221,8 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         # ── INTERNAL BULLISH BREAK → Create Bullish OB ──
         if upP and len(dnL) > 1 and c[i] > upP[0] and (i == start or c[i - 1] <= upP[0]):
             pivot_bar    = upB[0] if upB else i - 10
-            # Pine scans from pivot+1 to break bar (excludes pivot itself)
-            search_start = max(0, pivot_bar + 1)
+            # Pine scans from pivot bar (hN.first()) to break bar — pivot included
+            search_start = max(0, pivot_bar)
             search_end   = i + 1  # include break bar
 
             if search_end > search_start:
@@ -2232,7 +2285,8 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         # ── INTERNAL BEARISH BREAK → Create Bearish OB ──
         if dnP and len(upL) > 1 and c[i] < dnP[0] and (i == start or c[i - 1] >= dnP[0]):
             pivot_bar    = dnB[0] if dnB else i - 10
-            search_start = max(0, pivot_bar + 1)
+            # Pine scans from pivot bar (lN.first()) to break bar — pivot included
+            search_start = max(0, pivot_bar)
             search_end   = i + 1
 
             if search_end > search_start:
@@ -2298,7 +2352,7 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
 
     for ob in obs:
         mitigated = False
-        for j in range(ob["bar"] + 1, n):
+        for j in range(ob["bar"] + 1, n - 1):  # n-1: exclude current open candle (Pine barstate.isconfirmed)
             if ob_mitigation == "Middle":
                 trigger = ob["avg"]
             else:  # Absolute
@@ -2314,12 +2368,6 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         if mitigated:
             continue
 
-        vol_score = clamp((ob["volume"] / max(max_vol, 1e-10)) * 100, 0, 100)
-        side_dom  = (ob["buyVolume"] / max(ob["volume"], 1e-10) * 100) if ob["type"] == "bullish" else (ob["sellVolume"] / max(ob["volume"], 1e-10) * 100)
-        freshness = clamp(100 - ((n - 1 - ob["bar"]) * 4), 10, 100)
-        strength  = round(clamp(vol_score * 0.45 + side_dom * 0.35 + freshness * 0.20, 1, 100), 1)
-        ob["strengthPct"]   = strength
-        ob["strengthLabel"] = "Strong" if strength >= 80 else "Good" if strength >= 60 else "Medium" if strength >= 40 else "Weak"
         active.append(ob)
 
     return active if max_ob is None else active[-max_ob:]
@@ -2372,7 +2420,7 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
                         "top": ob_top, "bottom": ob_bottom, "avg": ob_avg,
                         "bar": min_idx, "sourceBar": ob_source,
                         "volume": total_v, "buyVolume": buy_v, "sellVolume": sell_v,
-                        "type": "bullish", "strengthPct": 50.0,
+                        "type": "bullish",
                     })
             upP.clear(); upB.clear()
 
@@ -2399,7 +2447,7 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
                         "top": ob_top, "bottom": ob_bottom, "avg": ob_avg,
                         "bar": max_idx, "sourceBar": ob_source,
                         "volume": total_v, "buyVolume": buy_v, "sellVolume": sell_v,
-                        "type": "bearish", "strengthPct": 50.0,
+                        "type": "bearish",
                     })
             dnP.clear(); dnB.clear()
 
@@ -2523,7 +2571,7 @@ def detect_breakers(
             "dist":       round(dist_pct, 3),
             "state":      state,
             "age":        age,
-            "strength":   round(ob.get("strengthPct", 0), 1),
+            "strength":   round(ob.get("tvObVolumeSharePct") or 0, 1),
             "fvg_overlap": fvg_overlap,
             "zone_str":   f"{zb:.6f} – {zt:.6f}",
         })
@@ -3367,22 +3415,40 @@ def _tv_visible_pool(obs_by_dir: List[Dict[str, Any]], max_ob: int = 5) -> List[
     Build the Pine-style visible OB pool for a single direction.
 
     Pine drawVOB (hideOverlap=True, overlapMode=Previous):
-      seq 0 = most recent, seq N-1 = oldest.
-      For seq >= 1: if top[seq] > btm[seq-1] and btm[seq] < top[seq-1] → skip (hide older OB).
+      Keep older OBs; hide newer OBs that overlap an already-accepted (older) OB.
+      ShowLast=5 is applied AFTER overlap filtering.
+
+      Step 1: Iterate oldest→newest; hide newer OB if it overlaps any accepted older OB.
+      Step 2: Apply showLast = keep the most recent max_ob survivors.
 
     obs_by_dir: all active OBs of ONE direction, oldest-first (detect_obs insertion order).
-    Returns the visible subset, oldest-first, length ≤ max_ob.
+    Returns the final visible subset, oldest-first, length ≤ max_ob.
     """
-    pool = obs_by_dir[-max_ob:] if len(obs_by_dir) > max_ob else list(obs_by_dir)
-    newest_first = list(reversed(pool))
-    visible_nf: List[Dict[str, Any]] = []
-    for i, ob in enumerate(newest_first):
-        if i > 0:
-            newer = newest_first[i - 1]
-            if ob["top"] > newer["bottom"] and ob["bottom"] < newer["top"]:
-                continue  # overlaps more-recent OB — Pine hides it
-        visible_nf.append(ob)
-    return list(reversed(visible_nf))
+    input_count = len(obs_by_dir)
+
+    # Step 1: overlap filter — keep older, hide newer that overlaps an accepted older OB
+    accepted: List[Dict[str, Any]] = []
+    for ob in obs_by_dir:
+        overlaps = any(
+            ob["top"] > acc["bottom"] and ob["bottom"] < acc["top"]
+            for acc in accepted
+        )
+        if not overlaps:
+            accepted.append(ob)
+
+    after_overlap_count = len(accepted)
+
+    # Step 2: showLast — keep the most recent max_ob
+    visible = accepted[-max_ob:] if len(accepted) > max_ob else list(accepted)
+    final_count = len(visible)
+
+    for ob in visible:
+        ob["tvObOverlapMode"]        = "previous"
+        ob["tvObInputCount"]         = input_count
+        ob["tvObAfterOverlapCount"]  = after_overlap_count
+        ob["tvObFinalShowLastCount"] = final_count
+
+    return visible
 
 
 def calculate_tv_ob_volume_share(obs: List[Dict[str, Any]],
@@ -3559,6 +3625,7 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
         "tvObVisibleTotalVolume", "tvObVisibleCount", "tvObVolumeShareSource",
         "tvObVolumeShareFormula", "tvObParityPool", "tvObParitySeq", "tvObParitySettings",
         "tvObSourcePoolCountBeforeShowLast", "tvObDirectionPoolCount", "tvObVisiblePoolDebug",
+        "tvObOverlapMode", "tvObInputCount", "tvObAfterOverlapCount", "tvObFinalShowLastCount",
     )
     for ob in obs:
         tv_ref = _tv_by_key.get((ob["type"], ob["bar"]))
@@ -3643,11 +3710,9 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
     needed_consol        = settings.get("consolCandles", 5)
 
     _use_str_filter = settings.get("useObStrengthFilter", False)
-    _str_mode       = settings.get("obStrengthFilterMode", "screener_quality")
     _min_str        = float(settings.get("obMinStrengthPct", 0)) if _use_str_filter else 0.0
 
-    if _use_str_filter and _str_mode == "tv_volume_share":
-        # Filter by tvObVolumeSharePct only — never fallback to screener quality or score
+    if _use_str_filter:
         bullish_obs_filt = [
             ob for ob in obs if ob["type"] == "bullish"
             and ob.get("tvObVolumeSharePct") is not None
@@ -3659,9 +3724,8 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
             and ob["tvObVolumeSharePct"] >= _min_str
         ]
     else:
-        # screener_quality (default) or filter OFF — use obStrengthPct
-        bullish_obs_filt = [ob for ob in obs if ob["type"] == "bullish" and ob["strengthPct"] >= _min_str]
-        bearish_obs_filt = [ob for ob in obs if ob["type"] == "bearish" and ob["strengthPct"] >= _min_str]
+        bullish_obs_filt = [ob for ob in obs if ob["type"] == "bullish"]
+        bearish_obs_filt = [ob for ob in obs if ob["type"] == "bearish"]
 
     # Optional OB Quality Engine v2
     use_high_prob = settings.get("useHighProbOB", False)
@@ -3733,9 +3797,9 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
         return {"touched": True, "touch_bar": touch_bar, "reacted": reacted,
                 "reaction_side_ok": reaction_side_ok}
 
-    # Rank nearest first, then strongest, then best quality, then freshest
-    bullish_obs_filt.sort(key=lambda ob: (_ob_dist_from_price(ob, price), -ob["strengthPct"], -ob.get("quality", 0), ob.get("bar", 0)))
-    bearish_obs_filt.sort(key=lambda ob: (_ob_dist_from_price(ob, price), -ob["strengthPct"], -ob.get("quality", 0), ob.get("bar", 0)))
+    # Rank nearest first, then best TV OB %, then best quality, then freshest
+    bullish_obs_filt.sort(key=lambda ob: (_ob_dist_from_price(ob, price), -(ob.get("tvObVolumeSharePct") or 0), -ob.get("quality", 0), ob.get("bar", 0)))
+    bearish_obs_filt.sort(key=lambda ob: (_ob_dist_from_price(ob, price), -(ob.get("tvObVolumeSharePct") or 0), -ob.get("quality", 0), ob.get("bar", 0)))
 
     for direction, ob_list in [("bullish", bullish_obs_filt), ("bearish", bearish_obs_filt)]:
         if not ob_list:
@@ -3759,20 +3823,14 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
                            if use_high_prob else '')
             _tv_share     = ob.get("tvObVolumeSharePct")
             _tv_share_str = f'{_tv_share}%' if _tv_share is not None else '—'
-            _filter_label = ((' | Filter: TV OB %' if _str_mode == 'tv_volume_share'
-                               else ' | Filter: Quality Str')
-                             if _use_str_filter else '')
+            _filter_label = ' | Filter: TV OB %' if _use_str_filter else ''
 
             # Position label
             pos_label = "INSIDE ZONE" if price_in_zone else f"{dist_pct:.2f}% from zone"
 
-            ob_strength = (5 if use_high_prob and ob.get("quality", 0) >= 80
-                           else 4 if ob["strengthPct"] >= 70 else 3)
+            ob_strength = (5 if use_high_prob and ob.get("quality", 0) >= 80 else 3)
             ob_meta_base = {
-                # ── Screener quality strength (existing) ──
-                "obStrengthPct":   ob["strengthPct"],
-                "obStrengthLabel": ob["strengthLabel"],
-                # ── TradingView-style OB volume share (Phase 8B) ──
+                # ── TradingView-style OB volume share ──
                 "tvObVolumeSharePct":     ob.get("tvObVolumeSharePct"),
                 "tvObVolumeShareStatus":  ob.get("tvObVolumeShareStatus"),
                 "tvObFormationVolume":    ob.get("tvObFormationVolume"),
@@ -3813,7 +3871,6 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
                         "timeframe": tf,
                         "detail": (f'Consolidating on {direction} OB | {pos_label} | '
                                    f'Candles: {consecutive} | '
-                                   f'Quality Str: {ob["strengthPct"]:.1f}% ({ob["strengthLabel"]}) | '
                                    f'TV OB %: {_tv_share_str}{quality_str}{_filter_label} | '
                                    f'Zone: {fmt_price(zone_bottom)} – {fmt_price(zone_top)}'
                                    + (f' | {ob["ofSummary"]}' if ob.get("ofSummary") else '')),
@@ -3833,7 +3890,6 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
                     "direction": direction,
                     "timeframe": tf,
                     "detail": (f'Approaching {direction} OB | Dist: {dist_pct:.2f}% | '
-                               f'Quality Str: {ob["strengthPct"]:.1f}% ({ob["strengthLabel"]}) | '
                                f'TV OB %: {_tv_share_str}{quality_str}{_filter_label} | '
                                f'Zone: {fmt_price(zone_bottom)} – {fmt_price(zone_top)}'
                                + (f' | {ob["ofSummary"]}' if ob.get("ofSummary") else '')),
@@ -4642,7 +4698,6 @@ def parse_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
         "rsiOB": float(payload.get("rsiOB", 75)),
         "rsiOS": float(payload.get("rsiOS", 25)),
         "useObStrengthFilter":  bool(payload.get("useObStrengthFilter", False)),
-        "obStrengthFilterMode": payload.get("obStrengthFilterMode", "screener_quality"),
         "obMinStrengthPct":     float(payload.get("obMinStrengthPct", 70)),
         "useHighProbOB": bool(payload.get("useHighProbOB", False)),
         "obMinQuality": int(payload.get("obMinQuality", 50)),
@@ -5044,31 +5099,64 @@ def resend_verification():
 
 @app.route("/admin/test-email")
 def admin_test_email():
-    """Diagnostic endpoint — admin only. Tests SMTP and shows env-var state."""
-    if not session.get("is_admin"):
-        return "Access denied", 403
+    """Diagnostic endpoint — accessible by admin session OR ?token=zynismctest query param."""
+    token = request.args.get("token", "")
+    if not session.get("is_admin") and token != "zynismctest2026":
+        return "Access denied. Add ?token=zynismctest2026 to the URL.", 403
+
     frm = _email_from()
     pwd = _email_pass()
     to  = _email_to()
-    result = {"from_set": bool(frm), "pass_set": bool(pwd), "to_set": bool(to),
-              "from_val": frm, "to_val": to}
+
+    result = {
+        "ALERT_EMAIL_FROM": frm if frm else "*** NOT SET ***",
+        "ALERT_EMAIL_PASS": f"{'*' * len(pwd)} ({len(pwd)} chars)" if pwd else "*** NOT SET ***",
+        "ALERT_EMAIL_TO":   to  if to  else "(not set — only needed for login alerts)",
+        "credentials_ok":  bool(frm and pwd),
+        "smtp_test":       "SKIPPED — credentials missing",
+        "note":            "",
+    }
+
     if not frm or not pwd:
-        result["smtp_test"] = "SKIPPED — credentials missing"
+        result["note"] = ("Set ALERT_EMAIL_FROM and ALERT_EMAIL_PASS as Environment Variables "
+                          "(not Secrets) in Koyeb service settings, then redeploy.")
         return jsonify(result)
-    # Try live SMTP test
+
+    # Live SMTP login test
+    e465 = e587 = None
     try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as srv:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=12) as srv:
             srv.login(frm, pwd)
-        result["smtp_test"] = "OK via SSL/465"
-    except Exception as e1:
-        try:
-            ctx = ssl.create_default_context()
-            with smtplib.SMTP("smtp.gmail.com", 587, timeout=10) as srv:
-                srv.ehlo(); srv.starttls(context=ctx); srv.ehlo()
-                srv.login(frm, pwd)
-            result["smtp_test"] = "OK via STARTTLS/587"
-        except Exception as e2:
-            result["smtp_test"] = f"FAILED — 465: {e1} | 587: {e2}"
+        result["smtp_test"] = "OK via SSL port 465"
+        result["note"] = "Email should work. If OTP still not arriving, check spam folder."
+        return jsonify(result)
+    except Exception as ex:
+        e465 = str(ex)
+
+    try:
+        ctx = ssl.create_default_context()
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=12) as srv:
+            srv.ehlo(); srv.starttls(context=ctx); srv.ehlo()
+            srv.login(frm, pwd)
+        result["smtp_test"] = "OK via STARTTLS port 587"
+        result["note"] = "Email should work. If OTP still not arriving, check spam folder."
+        return jsonify(result)
+    except Exception as ex:
+        e587 = str(ex)
+
+    result["smtp_test"] = "FAILED on both ports"
+    result["error_465"]  = e465
+    result["error_587"]  = e587
+    if "Application-specific password required" in (e465 or "") or "Username and Password not accepted" in (e465 or ""):
+        result["note"] = ("Gmail rejected the password. Make sure you are using a Gmail APP PASSWORD "
+                          "(16 chars, no spaces) — NOT your regular Gmail password. "
+                          "Enable 2FA first, then generate an App Password at "
+                          "myaccount.google.com → Security → App Passwords.")
+    elif "timed out" in (e465 or "").lower() or "timed out" in (e587 or "").lower():
+        result["note"] = ("SMTP connection timed out — Koyeb may be blocking outbound SMTP ports. "
+                          "Use a transactional email API instead: Resend (resend.com) or SendGrid.")
+    else:
+        result["note"] = "Check the error messages above. Contact support if unclear."
     return jsonify(result)
 
 
@@ -5380,7 +5468,7 @@ _WL_SCAN_SETTINGS: Dict[str, Any] = {
     "iLen": 5, "sLen": 30,
     "approachPct": 2.0, "obDistancePct": 2.0,
     "consolCandles": 5, "rsiOB": 70, "rsiOS": 30,
-    "useObStrengthFilter": False, "obStrengthFilterMode": "screener_quality", "obMinStrengthPct": 0,
+    "useObStrengthFilter": False, "obMinStrengthPct": 0,
     "useHighProbOB": False, "obMinQuality": 50,
     "useAtrObApproach": False, "obApproachAtrMult": 0.5,
     "useFvgValidOnly": False, "useFvgState": False,
@@ -5546,7 +5634,7 @@ def _scan_pair_multitf(symbol: str, market: str = "perpetual", wl_config: Option
                         "setup":        "OB_APPROACH" if state != "far" else "OB_FAR",
                         "top":          round(zt, 8),
                         "bottom":       round(zb, 8),
-                        "strength":     round(ob.get("strengthPct", 0), 1),
+                        "strength":     round(ob.get("tvObVolumeSharePct") or 0, 1),
                         "quality":      q_score,
                         "qualityLabel": ("Elite" if q_score >= 85 else
                                          "High"  if q_score >= 70 else
@@ -5568,7 +5656,7 @@ def _scan_pair_multitf(symbol: str, market: str = "perpetual", wl_config: Option
                         "detail":   (
                             f'{"Approaching" if state == "approaching" else "Inside" if state == "inside" else "Far from"} '
                             f'{ob["type"]} OB | Dist: {dist_pct:.2f}% | '
-                            f'Strength: {ob.get("strengthPct", 0):.1f}% | '
+                            f'TV OB %: {ob.get("tvObVolumeSharePct") or "—"} | '
                             f'Zone: {fmt_price(zb)} – {fmt_price(zt)}'
                         ),
                     })
@@ -6230,6 +6318,370 @@ def api_ath_atl_scan():
     return jsonify(results[:limit])
 
 
+# ── Bias Shift Phase 2 helpers ────────────────────────────────────────────────
+
+def _bias_normal_presets(bias_strength: str) -> dict:
+    """Return candle-quality presets for Normal mode. Never forces detectionMode."""
+    if bias_strength == "early":
+        return {
+            "prior_move_n": 3, "signal_search_n": 2, "min_prior_checks": 2,
+            "min_wick_pct": 0.25, "min_body_pct": 0.15,
+            "require_close_beyond_mid": True,
+        }
+    elif bias_strength == "strong":
+        return {
+            "prior_move_n": 5, "signal_search_n": 1, "min_prior_checks": 2,
+            "min_wick_pct": 0.45, "min_body_pct": 0.25,
+            "require_close_beyond_mid": True,
+        }
+    else:  # balanced
+        return {
+            "prior_move_n": 4, "signal_search_n": 1, "min_prior_checks": 2,
+            "min_wick_pct": 0.35, "min_body_pct": 0.20,
+            "require_close_beyond_mid": True,
+        }
+
+
+def _detect_prior_move(o: list, h: list, l: list, c: list, start: int, end: int) -> dict:
+    """Detect if candles [start, end) form a directional move."""
+    reasons: list[str] = []
+    if end <= start:
+        return {"direction": None, "checksPassed": 0, "summary": "empty", "reasons": []}
+    seg_o, seg_h, seg_l, seg_c = o[start:end], h[start:end], l[start:end], c[start:end]
+    n = len(seg_c)
+    if n < 1:
+        return {"direction": None, "checksPassed": 0, "summary": "empty", "reasons": []}
+
+    up_checks = down_checks = 0
+
+    net_close = seg_c[-1] - seg_c[0]
+    if net_close > 0:
+        up_checks += 1; reasons.append("close↑")
+    elif net_close < 0:
+        down_checks += 1; reasons.append("close↓")
+
+    if n >= 2:
+        if all(seg_h[i] >= seg_h[i - 1] for i in range(1, n)):
+            up_checks += 1; reasons.append("highs↑")
+        if all(seg_l[i] <= seg_l[i - 1] for i in range(1, n)):
+            down_checks += 1; reasons.append("lows↓")
+
+    greens = sum(1 for i in range(n) if seg_c[i] > seg_o[i])
+    reds = n - greens
+    if greens > reds:
+        up_checks += 1; reasons.append(f"{greens}/{n}green")
+    elif reds > greens:
+        down_checks += 1; reasons.append(f"{reds}/{n}red")
+
+    if seg_c[0] > 0:
+        move_pct = abs(net_close) / seg_c[0] * 100
+        if move_pct >= 0.3:
+            if net_close > 0: up_checks += 1
+            else: down_checks += 1
+            reasons.append(f"rng{move_pct:.1f}%")
+
+    if up_checks >= 2 and up_checks >= down_checks:
+        direction, checks_passed = "up", up_checks
+    elif down_checks >= 2 and down_checks > up_checks:
+        direction, checks_passed = "down", down_checks
+    else:
+        direction, checks_passed = None, max(up_checks, down_checks)
+
+    return {
+        "direction": direction, "checksPassed": checks_passed,
+        "summary": f"{direction or 'none'} ({checks_passed} checks)",
+        "reasons": reasons,
+    }
+
+
+def _check_rejection_candle(
+    o: list, h: list, l: list, c: list,
+    idx: int, rejection_dir: str,
+    min_wick: float, min_body: float,
+    require_close_beyond_mid: bool,
+) -> dict | None:
+    """Return rejection-candle metrics or None if hard requirements fail."""
+    rng = h[idx] - l[idx]
+    if rng <= 0:
+        return None
+    body       = abs(c[idx] - o[idx])
+    upper_wick = h[idx] - max(o[idx], c[idx])
+    lower_wick = min(o[idx], c[idx]) - l[idx]
+    body_pct   = body / rng
+    uw_pct     = upper_wick / rng
+    lw_pct     = lower_wick / rng
+    is_green   = c[idx] > o[idx]
+    mid        = l[idx] + rng / 2
+    reasons: list[str] = []
+    checks = 0
+
+    if rejection_dir == "bearish":
+        if is_green or uw_pct < min_wick or body_pct < min_body:
+            return None
+        if require_close_beyond_mid and c[idx] > mid:
+            return None
+        checks += 1
+        reasons.append(f"red·↑wick{uw_pct*100:.0f}%·body{body_pct*100:.0f}%")
+        if c[idx] < mid:
+            checks += 1; reasons.append("closeBelowMid")
+    else:
+        if not is_green or lw_pct < min_wick or body_pct < min_body:
+            return None
+        if require_close_beyond_mid and c[idx] < mid:
+            return None
+        checks += 1
+        reasons.append(f"green·↓wick{lw_pct*100:.0f}%·body{body_pct*100:.0f}%")
+        if c[idx] > mid:
+            checks += 1; reasons.append("closeAboveMid")
+
+    return {
+        "open": o[idx], "high": h[idx], "low": l[idx], "close": c[idx],
+        "bodyPct":      round(body_pct * 100, 1),
+        "upperWickPct": round(uw_pct   * 100, 1),
+        "lowerWickPct": round(lw_pct   * 100, 1),
+        "checksPassed": checks,
+        "reasons":      reasons,
+    }
+
+
+def _suggested_conf_tf(tf: str) -> str:
+    t = tf.lower()
+    if t in ("1d", "12h"):  return "4H / 1H"
+    if t in ("6h", "4h"):   return "1H / 15m"
+    if t in ("2h", "1h"):   return "15m / 5m"
+    if t in ("30m", "15m"): return "5m / 1m"
+    return "lower TF"
+
+
+def _is_better_setup(candidate: dict, current_best: dict) -> bool:
+    """True if candidate is strictly better, now driven by score."""
+    cs = candidate.get("score") or 0
+    bs = current_best.get("score") or 0
+    if cs != bs:
+        return cs > bs
+    return candidate.get("signalCandleOffset", 999) < current_best.get("signalCandleOffset", 999)
+
+
+# ── Bias Shift Phase 3 — scoring & grading ────────────────────────────────────
+
+def _score_bias_shift(
+    prior_checks: int,
+    rej_wick_pct: float,
+    rej_body_pct: float,
+    min_wick_pct: float,
+    min_body_pct: float,
+    close_beyond_mid: bool,
+    confirmation_status: str,
+    vol_spike: bool,
+    volume_filter_mode: str,
+    sig_offset: int,
+    ob_found: bool = False,
+    fvg_found: bool = False,
+    fib_found: bool = False,
+    confluence_required_passed: bool = False,
+) -> dict:
+    """Return score 0-100 with breakdown list."""
+    pts = 0
+    bd: list[str] = []
+
+    # Prior move detected
+    pts += 20; bd.append("+20 prior move detected")
+
+    # Prior move check quality
+    if prior_checks >= 4:
+        p = 15
+    elif prior_checks >= 3:
+        p = 10
+    else:
+        p = 5
+    pts += p; bd.append(f"+{p} prior move checks ({prior_checks})")
+
+    # Rejection candle present
+    pts += 25; bd.append("+25 rejection candle valid")
+
+    # Wick quality (relative to required threshold)
+    wick_over = rej_wick_pct - round(min_wick_pct * 100)
+    if wick_over >= 20:
+        wp = 15
+    elif wick_over >= 10:
+        wp = 10
+    else:
+        wp = 5
+    pts += wp; bd.append(f"+{wp} wick quality ({rej_wick_pct:.0f}%)")
+
+    # Body quality (relative to required threshold)
+    body_over = rej_body_pct - round(min_body_pct * 100)
+    if body_over >= 20:
+        bp = 10
+    elif body_over >= 10:
+        bp = 8
+    else:
+        bp = 5
+    pts += bp; bd.append(f"+{bp} body quality ({rej_body_pct:.0f}%)")
+
+    # Close beyond midpoint
+    if close_beyond_mid:
+        pts += 10; bd.append("+10 close beyond midpoint")
+
+    # Confirmation
+    if confirmation_status == "confirmed":
+        pts += 10; bd.append("+10 confirmed by later candle")
+
+    # Volume
+    if vol_spike:
+        pts += 5; bd.append("+5 volume spike")
+        if volume_filter_mode == "required":
+            pts += 5; bd.append("+5 volume required and passed")
+
+    # Recency
+    if sig_offset == 0:
+        pts += 5; bd.append("+5 latest closed candle")
+    elif sig_offset == 1:
+        pts += 3; bd.append("+3 second-to-last candle")
+
+    # ── Phase 4: confluence bonuses (OB/FVG/Fib — no-op until Phase 4 enabled) ──
+    if ob_found:
+        pts += 7; bd.append("+7 OB confluence")
+    if fvg_found:
+        pts += 7; bd.append("+7 FVG confluence")
+    if fib_found:
+        pts += 6; bd.append("+6 Fib confluence")
+    if confluence_required_passed:
+        pts += 5; bd.append("+5 required confluence passed")
+
+    return {"score": min(pts, 100), "breakdown": bd}
+
+
+def _grade_from_score(score: int) -> dict:
+    if score >= 90:
+        return {"grade": "A+", "gradeLabel": "A+ — Elite Bias Shift"}
+    if score >= 80:
+        return {"grade": "A",  "gradeLabel": "A — Strong Bias Shift"}
+    if score >= 65:
+        return {"grade": "B",  "gradeLabel": "B — Valid Bias Shift"}
+    if score >= 50:
+        return {"grade": "C",  "gradeLabel": "C — Watch Only"}
+    return {"grade": "D",      "gradeLabel": "D — Weak Setup"}
+
+
+# Allowed grade sets keyed by minimumGrade UI value
+_GRADE_ALLOWED: dict[str, set[str]] = {
+    "C+": {"A+", "A", "B", "C"},
+    "B+": {"A+", "A", "B"},
+    "A":  {"A+", "A"},
+}
+
+def _grade_passes_filter(grade: str, minimum_grade: str) -> bool:
+    return grade in _GRADE_ALLOWED.get(minimum_grade, {"A+", "A", "B"})
+
+def _bias_confluence(
+    o: list, h: list, l: list, c: list, v: list,
+    tf: str,
+    sig_idx: int,
+    rej_dir: str,
+    rej: dict,
+    prior_start: int,
+    use_ob: bool,
+    use_fvg: bool,
+    use_fib: bool,
+) -> dict:
+    """
+    Check OB, FVG, and Fib confluence for a Bias Shift candidate.
+    All detection runs on the closed-candle arrays already available in the loop.
+    Returns {"ob": ob_conf|None, "fvg": fvg_conf|None, "fib": fib_conf|None}.
+    """
+    ref_price = rej["close"]
+    ob_conf = fvg_conf = fib_conf = None
+
+    # ── OB confluence ──────────────────────────────────────────────────────────
+    if use_ob and ref_price > 0:
+        try:
+            obs = detect_obs(o, h, l, c, v, 5, 20, max_ob=8)
+            for ob in obs:
+                if ob["type"] != rej_dir:
+                    continue
+                if ref_price <= 0:
+                    continue
+                if ob["bottom"] <= ref_price <= ob["top"]:
+                    dist_pct = 0.0
+                elif ref_price < ob["bottom"]:
+                    dist_pct = (ob["bottom"] - ref_price) / ref_price * 100
+                else:
+                    dist_pct = (ref_price - ob["top"]) / ref_price * 100
+                if dist_pct <= 2.0:
+                    ob_conf = {
+                        "found":       True,
+                        "type":        ob["type"],
+                        "zone":        f"{ob['bottom']:.6f} - {ob['top']:.6f}",
+                        "distancePct": round(dist_pct, 2),
+                        "reason":      f"Rejected near {rej_dir} OB zone",
+                    }
+                    break
+        except Exception:
+            pass
+
+    # ── FVG confluence ─────────────────────────────────────────────────────────
+    if use_fvg and ref_price > 0:
+        try:
+            fvgs = detect_fvgs(o, h, l, c, v, tf)
+            for fvg in fvgs:
+                if fvg["direction"] != rej_dir:
+                    continue
+                if fvg["bottom"] <= ref_price <= fvg["top"]:
+                    dist_pct = 0.0
+                elif ref_price < fvg["bottom"]:
+                    dist_pct = (fvg["bottom"] - ref_price) / ref_price * 100
+                else:
+                    dist_pct = (ref_price - fvg["top"]) / ref_price * 100
+                if dist_pct <= 1.5:
+                    touch = "untouched" if fvg.get("untouched") else "touched"
+                    fvg_conf = {
+                        "found":       True,
+                        "direction":   fvg["direction"],
+                        "zone":        f"{fvg['bottom']:.6f} - {fvg['top']:.6f}",
+                        "touch":       touch,
+                        "distancePct": round(dist_pct, 2),
+                        "reason":      f"Rejection near {rej_dir} FVG",
+                    }
+                    break
+        except Exception:
+            pass
+
+    # ── Fib confluence ─────────────────────────────────────────────────────────
+    if use_fib and ref_price > 0:
+        try:
+            prior_h = h[prior_start:sig_idx]
+            prior_l = l[prior_start:sig_idx]
+            if len(prior_h) >= 2:
+                fib_high  = max(prior_h)
+                fib_low   = min(prior_l)
+                fib_range = fib_high - fib_low
+                if fib_range > 0:
+                    for lvl in (0.786, 0.705, 0.618, 0.5):
+                        # Bearish: prior move was up → rejection near premium (upper fib levels)
+                        # Bullish: prior move was down → rejection near discount (same levels from top)
+                        if rej_dir == "bearish":
+                            fib_price = fib_low + fib_range * lvl
+                        else:
+                            fib_price = fib_high - fib_range * lvl
+                        dist_pct = abs(ref_price - fib_price) / ref_price * 100
+                        if dist_pct <= 1.0:
+                            fib_conf = {
+                                "found":       True,
+                                "level":       str(lvl),
+                                "price":       round(fib_price, 8),
+                                "distancePct": round(dist_pct, 2),
+                                "reason":      f"Rejection near Fib {lvl}",
+                            }
+                            break
+        except Exception:
+            pass
+
+    return {"ob": ob_conf, "fvg": fvg_conf, "fib": fib_conf}
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+
 @app.route("/api/bias_scan", methods=["POST"])
 @login_required
 def api_bias_scan():
@@ -6241,323 +6693,378 @@ def api_bias_scan():
     payload = request.get_json(force=True) or {}
     tf = payload.get("timeframe", "1d")
     market = payload.get("market", "perpetual")
-    candle_count = int(payload.get("candleCount", 3))
-    bias_filter = payload.get("biasFilter", "all")
+    # Fix #1: frontend sends "mode", not "biasMode"
+    bias_mode        = payload.get("mode", payload.get("biasMode", "normal"))
+    bias_strength    = payload.get("biasStrength", "balanced")
+    bias_filter      = payload.get("biasFilter", "all")
+    # detection_mode comes from payload — never overridden by presets
+    detection_mode   = payload.get("detectionMode", "early")
+    # Fix #3: volumeFilter is "optional" or "required", not a bool
+    volume_filter_mode = payload.get("volumeFilter", "optional")
+    use_volume_filter  = volume_filter_mode == "required"
+    vol_multiplier     = float(payload.get("volumeMultiplier", 1.5))
 
-    use_wick_gate      = payload.get("useWickGate", True)
-    wick_min_pct       = float(payload.get("wickMinPct", 35)) / 100.0
-    use_momentum_gate  = payload.get("useMomentumGate", True)
-    prior_candles_req  = int(payload.get("priorCandlesReq", 2))   # #4 min prior candles same direction
-    use_body_gate      = payload.get("useBodyGate", True)
-    body_min_pct       = float(payload.get("bodyMinPct", 20)) / 100.0
-    use_volume_gate    = payload.get("useVolumeGate", False)
-    vol_multiplier     = float(payload.get("volMultiplier", 1.2))  # #4 volume threshold
-    # #4 Signal candle sub-gates (any one counts)
-    sig_use_wick       = payload.get("sigUseWick", True)
-    sig_wick_min       = float(payload.get("sigWickMin", 35)) / 100.0
-    sig_use_engulf     = payload.get("sigUseEngulf", True)
-    sig_use_strong_body = payload.get("sigUseStrongBody", True)
-    sig_body_min       = float(payload.get("sigBodyMin", 55)) / 100.0
-    min_conditions     = int(payload.get("minConditions", 2))      # #4 min gates to pass
+    if bias_mode == "normal":
+        # Fix #2: presets set candle-quality params only; detectionMode stays from payload
+        p = _bias_normal_presets(bias_strength)
+        prior_move_n             = p["prior_move_n"]
+        signal_search_n          = p["signal_search_n"]
+        min_prior_checks         = p["min_prior_checks"]
+        min_wick_pct             = p["min_wick_pct"]
+        min_body_pct             = p["min_body_pct"]
+        require_close_beyond_mid = p["require_close_beyond_mid"]
+    else:
+        prior_move_n             = max(1, int(payload.get("priorMoveCandles", 3)))
+        signal_search_n          = max(1, int(payload.get("signalSearchCandles", 2)))
+        min_prior_checks         = 2
+        min_wick_pct             = float(payload.get("minWickPct", 35)) / 100.0
+        min_body_pct             = float(payload.get("minBodyPct", 15)) / 100.0
+        require_close_beyond_mid = bool(payload.get("requireCloseBeyondMidpoint", False))
 
-    use_fvg_conf = payload.get("useFvgConf", False)
-    fvg_touch = payload.get("fvgTouch", "any")
-    use_ob_conf = payload.get("useObConf", False)
-    ob_approach_pct = float(payload.get("obApproachPct", 2.0))
+    minimum_grade = payload.get("minimumGrade", "B+")
+
+    # Phase 4: confluence settings
+    confluence_mode    = payload.get("confluenceMode", "optional")
+    use_ob_confluence  = bool(payload.get("useObConfluence", True))
+    use_fvg_confluence = bool(payload.get("useFvgConfluence", True))
+    use_fib_confluence = bool(payload.get("useFibConfluence", True))
 
     passed_symbols  = payload.get("symbols") or []
     scan_mode       = payload.get("scanMode", "selected")
-    pairs_per_cycle = int(payload.get("pairsPerCycle", 20))
+    pairs_per_cycle = max(5, min(100, int(payload.get("pairsPerCycle", 20))))
     exchange        = payload.get("exchange", "binance").lower()
-    # FIX BUG 2: roundRobin defaults True for bias scan (was False)
-    use_rr          = payload.get("roundRobin", True)
 
-    # FIX BUG 2: Full Market ALWAYS ignores passed_symbols on bias scan
+    # Per-user cursor key — prevents different users/settings from sharing state
+    username   = session.get("username", "anonymous")
+    cursor_key = f"{username}|{exchange}|{market}|{tf}"
+    market_coverage = None
+
     if scan_mode == "market":
-        all_pairs = [p["symbol"] for p in get_pairs_exchange(exchange, market)]
-        if use_rr:
-            start  = ROUND_ROBIN_STATE.get("bias_index", 0)
-            chosen = all_pairs[start:start + pairs_per_cycle]
-            if len(chosen) < pairs_per_cycle:
-                chosen += all_pairs[:max(0, pairs_per_cycle - len(chosen))]
-            ROUND_ROBIN_STATE["bias_index"] = (start + pairs_per_cycle) % max(len(all_pairs), 1)
-            symbols = chosen
-        else:
-            symbols = all_pairs[:pairs_per_cycle]
+        all_pairs   = [p["symbol"] for p in get_pairs_exchange(exchange, market)]
+        total_pairs = max(len(all_pairs), 1)
+        # Clamp cursor in case market size shrank since last scan
+        start    = BIAS_SCAN_CURSOR.get(cursor_key, 0) % total_pairs
+        symbols  = all_pairs[start:start + pairs_per_cycle]
+        next_cur = (start + pairs_per_cycle) % total_pairs
+        cycle_complete = (start + pairs_per_cycle) >= total_pairs
+        BIAS_SCAN_CURSOR[cursor_key] = next_cur
+        print(f"[BIAS_SCAN] round_robin user={username} tf={tf} "
+              f"batch={start+1}-{start+len(symbols)}/{total_pairs}")
+        market_coverage = {
+            "mode":           "round_robin",
+            "totalPairs":     total_pairs,
+            "batchSize":      len(symbols),
+            "startIndex":     start + 1,
+            "endIndex":       start + len(symbols),
+            "nextStartIndex": next_cur + 1,
+            "cycleComplete":  cycle_complete,
+        }
     elif passed_symbols:
-        # Selected Pairs mode — use what frontend sent
+        # Selected Pairs mode — use only what the frontend sent
         symbols = passed_symbols
     else:
-        # No pairs selected in selected mode — fallback to top pairs
-        symbols = [p["symbol"] for p in get_pairs_exchange(exchange, market)[:pairs_per_cycle]]
+        # Selected Pairs with nothing selected — tell the user clearly
+        return jsonify({
+            "error":   "no_selected_pairs",
+            "message": "Select at least one pair or switch to Full Market.",
+        }), 400
 
     results = []
+    fetch_limit = prior_move_n + signal_search_n + 30
 
     for sym in symbols:
         try:
-            kl = get_klines_exchange(sym, tf, candle_count + 30, market, exchange)
-            if not kl or len(kl) < candle_count + 2:
+            kl = get_klines_exchange(sym, tf, fetch_limit, market, exchange)
+            if not kl or len(kl) < prior_move_n + signal_search_n + 2:
                 continue
 
-            o = [x["open"] for x in kl]
-            h = [x["high"] for x in kl]
-            l = [x["low"] for x in kl]
-            c = [x["close"] for x in kl]
-            v = [x["volume"] for x in kl]
+            # Closed candles only — strip the still-running last candle
+            kl_closed = kl[:-1]
+            o  = [float(x["open"])   for x in kl_closed]
+            h  = [float(x["high"])   for x in kl_closed]
+            l  = [float(x["low"])    for x in kl_closed]
+            c  = [float(x["close"])  for x in kl_closed]
+            v  = [float(x["volume"]) for x in kl_closed]
+            ts = [int(x["openTime"]) for x in kl_closed]
+            n  = len(c)
 
-            sig_idx = len(c) - 2
-            if sig_idx < 1:
-                continue
+            vol_lb  = min(20, n)
+            avg_vol = sum(v[n - vol_lb:n]) / max(vol_lb, 1) if vol_lb > 0 else 0
 
-            sig_open = o[sig_idx]
-            sig_high = h[sig_idx]
-            sig_low = l[sig_idx]
-            sig_close = c[sig_idx]
-            sig_vol = v[sig_idx]
-            sig_range = sig_high - sig_low
-            if sig_range <= 0:
-                continue
+            best: dict | None = None
 
-            sig_body = abs(sig_close - sig_open)
-            sig_is_green = sig_close > sig_open
-            upper_wick = sig_high - max(sig_open, sig_close)
-            lower_wick = min(sig_open, sig_close) - sig_low
-
-            body_ratio = sig_body / sig_range
-            upper_wick_ratio = upper_wick / sig_range
-            lower_wick_ratio = lower_wick / sig_range
-
-            # ── #4 Prior momentum: check N candles before signal ──
-            prior_n     = prior_candles_req
-            prev_start  = max(0, sig_idx - prior_n)
-            prev_end    = sig_idx
-            prev_candles = list(range(prev_start, prev_end))
-
-            prev_bullish = 0
-            prev_bearish = 0
-            prev_strong  = 0
-            for pi in prev_candles:
-                p_range = h[pi] - l[pi]
-                if p_range <= 0:
+            for sig_offset in range(signal_search_n):
+                sig_idx = n - 1 - sig_offset
+                if sig_idx < prior_move_n + 1:
                     continue
-                p_body = abs(c[pi] - o[pi])
-                if c[pi] > o[pi]:
-                    prev_bullish += 1
-                else:
-                    prev_bearish += 1
-                if p_body / p_range > 0.5:
-                    prev_strong += 1
 
-            req_same    = max(1, prior_n - 1)  # at least N-1 of prior N same direction
-            has_bull_momentum = prev_bullish >= req_same
-            has_bear_momentum = prev_bearish >= req_same
-            has_momentum = has_bull_momentum or has_bear_momentum
+                prior_start  = sig_idx - prior_move_n
+                prior_result = _detect_prior_move(o, h, l, c, prior_start, sig_idx)
+                prior_dir    = prior_result["direction"]
 
-            # ── #4 Volume ──
-            vol_lookback = min(20, sig_idx)
-            avg_vol = sum(v[sig_idx - vol_lookback:sig_idx]) / max(vol_lookback, 1)
-            vol_spike = sig_vol >= avg_vol * vol_multiplier if avg_vol > 0 else False
+                if not prior_dir or prior_result["checksPassed"] < min_prior_checks:
+                    continue
 
-            # ── #4 Signal candle quality — any one of these counts ──
-            # a) Strong wick rejection
-            sig_has_bull_wick = lower_wick_ratio >= sig_wick_min
-            sig_has_bear_wick = upper_wick_ratio >= sig_wick_min
-            # b) Engulfing — closes beyond previous candle's open
-            prev_open = o[sig_idx - 1] if sig_idx > 0 else sig_open
-            sig_bull_engulf = sig_is_green and sig_close > prev_open
-            sig_bear_engulf = not sig_is_green and sig_close < prev_open
-            # c) Strong body
-            sig_strong_body = body_ratio >= sig_body_min
+                rej_dir = "bearish" if prior_dir == "up" else "bullish"
 
-            # ── Signal type detection ──
-            signal_type    = None
-            bias_direction = None
+                if bias_filter == "bullish" and rej_dir != "bullish":
+                    continue
+                if bias_filter == "bearish" and rej_dir != "bearish":
+                    continue
 
-            has_both_wicks = upper_wick_ratio > 0.2 and lower_wick_ratio > 0.2
+                sig_vol   = v[sig_idx]
+                vol_spike = avg_vol > 0 and sig_vol >= avg_vol * vol_multiplier
+                if use_volume_filter and not vol_spike:
+                    continue
 
-            if has_both_wicks and has_momentum:
-                signal_type    = "INDECISION"
-                bias_direction = "bearish" if has_bull_momentum else "bullish"
-            elif upper_wick_ratio >= wick_min_pct:
-                signal_type    = "WICK_REJECTION"
-                bias_direction = "bearish"
-            elif lower_wick_ratio >= wick_min_pct:
-                signal_type    = "WICK_REJECTION"
-                bias_direction = "bullish"
-            elif has_momentum and ((has_bull_momentum and not sig_is_green) or (has_bear_momentum and sig_is_green)):
-                signal_type    = "EXHAUSTION"
-                bias_direction = "bearish" if has_bull_momentum else "bullish"
-            elif body_ratio > 0.6 and upper_wick_ratio < 0.2 and lower_wick_ratio < 0.2:
-                signal_type    = "CONTINUATION"
-                bias_direction = "bullish" if sig_is_green else "bearish"
+                rej = _check_rejection_candle(
+                    o, h, l, c, sig_idx, rej_dir,
+                    min_wick_pct, min_body_pct, require_close_beyond_mid,
+                )
+                if rej is None:
+                    continue
 
-            if not signal_type or not bias_direction:
-                continue
-
-            if bias_filter == "bullish" and bias_direction != "bullish":
-                continue
-            if bias_filter == "bearish" and bias_direction != "bearish":
-                continue
-
-            # ── #4 Gate evaluation — selectable conditions ──
-            gates_passed  = 0
-            gates_checked = 0
-            gate_details  = []
-
-            # Gate 1: Prior Momentum
-            if use_momentum_gate:
-                gates_checked += 1
-                mom_ok = (bias_direction == "bearish" and has_bull_momentum) or \
-                         (bias_direction == "bullish" and has_bear_momentum) or \
-                         has_momentum
-                if mom_ok:
-                    gates_passed += 1
-                    gate_details.append(f"Momentum ✓ ({prev_bullish}↑/{prev_bearish}↓)")
-                else:
-                    gate_details.append("Momentum ✗")
-
-            # Gate 2: Signal Candle Quality (any sub-gate counts)
-            if use_wick_gate:
-                gates_checked += 1
-                sig_quality_ok = False
-                sig_quality_parts = []
-                if sig_use_wick:
-                    if bias_direction == "bearish" and sig_has_bear_wick:
-                        sig_quality_ok = True; sig_quality_parts.append("wick")
-                    elif bias_direction == "bullish" and sig_has_bull_wick:
-                        sig_quality_ok = True; sig_quality_parts.append("wick")
-                if sig_use_engulf:
-                    if bias_direction == "bearish" and sig_bear_engulf:
-                        sig_quality_ok = True; sig_quality_parts.append("engulf")
-                    elif bias_direction == "bullish" and sig_bull_engulf:
-                        sig_quality_ok = True; sig_quality_parts.append("engulf")
-                if sig_use_strong_body:
-                    if sig_strong_body:
-                        sig_quality_ok = True; sig_quality_parts.append("body")
-                # Also allow continuation signals through
-                if signal_type in ("CONTINUATION",):
-                    sig_quality_ok = True; sig_quality_parts.append("cont")
-                if sig_quality_ok:
-                    gates_passed += 1
-                    gate_details.append(f"Signal ✓ ({'+'.join(sig_quality_parts) or 'ok'})")
-                else:
-                    gate_details.append("Signal ✗")
-
-            # Gate 3: Body gate
-            if use_body_gate:
-                gates_checked += 1
-                if body_ratio >= body_min_pct:
-                    gates_passed += 1
-                    gate_details.append(f"Body ✓ ({body_ratio*100:.0f}%)")
-                else:
-                    gate_details.append(f"Body ✗ ({body_ratio*100:.0f}%)")
-
-            # Gate 4: Volume gate
-            if use_volume_gate:
-                gates_checked += 1
-                if vol_spike:
-                    gates_passed += 1
-                    gate_details.append(f"Vol ✓ ({sig_vol/max(avg_vol,1):.1f}x)")
-                else:
-                    gate_details.append(f"Vol ✗ ({sig_vol/max(avg_vol,1):.1f}x)")
-
-            # Apply min_conditions threshold
-            if gates_checked > 0 and gates_passed < min(min_conditions, gates_checked):
-                continue
-
-            gate_ratio = gates_passed / gates_checked if gates_checked > 0 else 0.5
-
-            if gate_ratio >= 0.9 or (gates_passed >= 3):
-                confidence = "Strong"
-            elif gate_ratio >= 0.6 or gates_passed >= 2:
-                confidence = "Moderate"
-            else:
-                confidence = "Weak"
-
-            if signal_type == "INDECISION" and confidence == "Strong":
-                confidence = "Moderate"
-
-            ob_info = None
-            if use_ob_conf:
-                obs = detect_obs(o, h, l, c, v, 7, 20, max_ob=5)
-                price = c[-2]
-                for ob in obs:
-                    dist = abs(price - (ob["top"] + ob["bottom"]) / 2) / max(price, 1e-10) * 100
-                    if dist <= ob_approach_pct and ob["type"] == bias_direction:
-                        same_dir_obs = [x for x in obs if x["type"] == ob["type"]]
-                        total_vol = sum(x["volume"] for x in same_dir_obs)
-                        vol_pct = int((ob["volume"] / total_vol) * 100) if total_vol > 0 else 0
-                        vv = ob["volume"]
-                        if vv >= 1e9:
-                            vol_fmt = f"{round(vv/1e9,3)}B"
-                        elif vv >= 1e6:
-                            vol_fmt = f"{round(vv/1e6,3)}M"
-                        elif vv >= 1e3:
-                            vol_fmt = f"{round(vv/1e3,3)}K"
+                # Fix #6: confirmed mode searches ALL later closed candles
+                confirmation_status = "early_unconfirmed"
+                if detection_mode == "confirmed":
+                    confirmed = False
+                    for post_idx in range(sig_idx + 1, n):
+                        if rej_dir == "bearish":
+                            if l[post_idx] < rej["low"] or c[post_idx] < rej["low"]:
+                                confirmed = True; break
                         else:
-                            vol_fmt = f"{round(vv)}"
-                        ob_info = {
-                            "zone": f"{ob['bottom']:.6f} - {ob['top']:.6f}",
-                            "volPct": vol_pct,
-                            "volFmt": vol_fmt,
-                            "dist": round(dist, 2),
-                        }
-                        break
+                            if h[post_idx] > rej["high"] or c[post_idx] > rej["high"]:
+                                confirmed = True; break
+                    if not confirmed:
+                        continue
+                    confirmation_status = "confirmed"
 
-            fvg_info = None
-            if use_fvg_conf:
-                fvgs = detect_fvgs(o, h, l, c, v, tf)
-                price = c[-2]
-                for fvg in fvgs:
-                    if fvg["direction"] == bias_direction:
-                        if fvg_touch == "untouched" or fvg_touch == "fresh":
-                            if not fvg.get("untouched", True):
-                                continue
-                        elif fvg_touch == "touched":
-                            if fvg.get("untouched", True):
-                                continue
-                        if fvg["bottom"] <= price <= fvg["top"] or abs(price - (fvg["top"] + fvg["bottom"]) / 2) / max(price, 1e-10) * 100 <= 1.0:
-                            touch_label = "untouched" if fvg.get("untouched") else ("once" if fvg.get("onceTouched") else "touched")
-                            fvg_info = {
-                                "zone": f"{fvg['bottom']:.6f} - {fvg['top']:.6f}",
-                                "touch": touch_label,
-                            }
-                            break
+                if rej_dir == "bearish":
+                    invalidation_level = round(rej["high"], 8)
+                    invalidation_text  = f"Invalid above {rej['high']:.6f}"
+                else:
+                    invalidation_level = round(rej["low"], 8)
+                    invalidation_text  = f"Invalid below {rej['low']:.6f}"
 
-            sparkline = [float(c[i]) for i in range(max(0, len(c)-24), len(c))]
-            results.append({
-                "symbol": sym,
-                "price": round(c[-1], 8),
-                "timeframe": tf,
-                "bias": bias_direction,
-                "signal": signal_type,
-                "confidence": confidence,
-                "gates": " | ".join(gate_details),
-                "gatesPassed": gates_passed,
-                "gatesChecked": gates_checked,
-                "upperWickPct": round(upper_wick_ratio * 100, 1),
-                "lowerWickPct": round(lower_wick_ratio * 100, 1),
-                "bodyPct": round(body_ratio * 100, 1),
-                "volSpike": vol_spike,
-                "obConf": ob_info,
-                "fvgConf": fvg_info,
-                "sparkline": sparkline,
-            })
+                # ── Phase 3 pre-metrics ───────────────────────────────────────
+                rej_mid = rej["low"] + (rej["high"] - rej["low"]) / 2
+                close_is_beyond_mid = (
+                    (rej_dir == "bearish" and rej["close"] < rej_mid) or
+                    (rej_dir == "bullish" and rej["close"] > rej_mid)
+                )
+                rej_wick_pct_val = (
+                    rej["upperWickPct"] if rej_dir == "bearish" else rej["lowerWickPct"]
+                )
+
+                # ── Phase 4: confluence check ─────────────────────────────────
+                conf_results = _bias_confluence(
+                    o, h, l, c, v, tf,
+                    sig_idx=sig_idx,
+                    rej_dir=rej_dir,
+                    rej=rej,
+                    prior_start=prior_start,
+                    use_ob=use_ob_confluence,
+                    use_fvg=use_fvg_confluence,
+                    use_fib=use_fib_confluence,
+                )
+                ob_conf  = conf_results["ob"]
+                fvg_conf = conf_results["fvg"]
+                fib_conf = conf_results["fib"]
+                ob_found  = ob_conf  is not None
+                fvg_found = fvg_conf is not None
+                fib_found = fib_conf is not None
+
+                enabled_conf_count = sum([use_ob_confluence, use_fvg_confluence, use_fib_confluence])
+                found_conf_count   = sum([ob_found, fvg_found, fib_found])
+                conf_req_passed    = confluence_mode == "required" and found_conf_count > 0
+
+                # Required mode: skip if at least one confluence is enabled but none found
+                if confluence_mode == "required" and enabled_conf_count > 0 and found_conf_count == 0:
+                    continue
+
+                # ── Phase 3+4: score with confluence bonuses ──────────────────
+                scored = _score_bias_shift(
+                    prior_checks=prior_result["checksPassed"],
+                    rej_wick_pct=rej_wick_pct_val,
+                    rej_body_pct=rej["bodyPct"],
+                    min_wick_pct=min_wick_pct,
+                    min_body_pct=min_body_pct,
+                    close_beyond_mid=close_is_beyond_mid,
+                    confirmation_status=confirmation_status,
+                    vol_spike=vol_spike,
+                    volume_filter_mode=volume_filter_mode,
+                    sig_offset=sig_offset,
+                    ob_found=ob_found,
+                    fvg_found=fvg_found,
+                    fib_found=fib_found,
+                    confluence_required_passed=conf_req_passed,
+                )
+                score_val = scored["score"]
+                graded    = _grade_from_score(score_val)
+
+                if score_val >= 85:
+                    confidence = "Strong"
+                elif score_val >= 65:
+                    confidence = "Moderate"
+                else:
+                    confidence = "Weak"
+
+                total_checks = prior_result["checksPassed"] + rej["checksPassed"]
+
+                # Human-readable reason chain (includes confluence reasons)
+                dir_word       = "upward" if prior_dir == "up" else "downward"
+                min_wick_pct_i = round(min_wick_pct * 100)
+                min_body_pct_i = round(min_body_pct * 100)
+                readable_chain: list[str] = [
+                    f"Previous {prior_move_n} closed candles pushed {dir_word}",
+                ]
+                if rej_dir == "bearish":
+                    readable_chain.append("Signal candle closed bearish")
+                    readable_chain.append(
+                        f"Upper wick {rej['upperWickPct']}% >= required {min_wick_pct_i}%"
+                    )
+                else:
+                    readable_chain.append("Signal candle closed bullish")
+                    readable_chain.append(
+                        f"Lower wick {rej['lowerWickPct']}% >= required {min_wick_pct_i}%"
+                    )
+                readable_chain.append(f"Body {rej['bodyPct']}% >= required {min_body_pct_i}%")
+                if close_is_beyond_mid:
+                    readable_chain.append(
+                        "Close below candle midpoint" if rej_dir == "bearish"
+                        else "Close above candle midpoint"
+                    )
+                if vol_spike:
+                    vol_ratio = sig_vol / max(avg_vol, 1)
+                    readable_chain.append(f"Volume spike {vol_ratio:.1f}x average")
+                if ob_found:
+                    readable_chain.append(f"OB confluence: {ob_conf['reason']}")
+                if fvg_found:
+                    readable_chain.append(f"FVG confluence: {fvg_conf['reason']}")
+                if fib_found:
+                    readable_chain.append(f"Fib confluence: {fib_conf['reason']}")
+                if conf_req_passed:
+                    readable_chain.append("Required confluence passed")
+                if rej_dir == "bearish":
+                    readable_chain.append(
+                        f"Invalidation: close above rejection high {rej['high']:.6f}"
+                    )
+                else:
+                    readable_chain.append(
+                        f"Invalidation: close below rejection low {rej['low']:.6f}"
+                    )
+
+                conf_found_list = (
+                    (["OB"]  if ob_found  else []) +
+                    (["FVG"] if fvg_found else []) +
+                    (["Fib"] if fib_found else [])
+                )
+                setup_type_label = (
+                    "Bearish Bias Shift" if rej_dir == "bearish" else "Bullish Bias Shift"
+                )
+                pattern    = (f"{'Bearish' if rej_dir == 'bearish' else 'Bullish'} Rejection"
+                              f" · {'Uptrend' if prior_dir == 'up' else 'Downtrend'}")
+                conf_label = "✓ Confirmed" if confirmation_status == "confirmed" else "Early"
+                conf_chip  = f" · {', '.join(conf_found_list)}" if conf_found_list else ""
+                detail     = (
+                    f"Prior {prior_dir.upper()} {prior_move_n}c"
+                    f" · {conf_label}"
+                    f" · Grade {graded['grade']} ({score_val})"
+                    f"{conf_chip}"
+                    f" · Inv: {invalidation_level}"
+                    f" · Conf TF: {_suggested_conf_tf(tf)}"
+                )
+                compact_reasons = prior_result["reasons"] + rej["reasons"]
+                sparkline = [float(c[i]) for i in range(max(0, n - 24), n)]
+
+                candidate = {
+                    # ── compat fields ──
+                    "symbol":       sym,
+                    "price":        round(c[-1], 8),
+                    "timeframe":    tf,
+                    "bias":         rej_dir,
+                    "signal":       "BIAS_SHIFT",
+                    "confidence":   confidence,
+                    "gates":        " · ".join(compact_reasons),
+                    "gatesPassed":  total_checks,
+                    "gatesChecked": 6,
+                    "upperWickPct": rej["upperWickPct"],
+                    "lowerWickPct": rej["lowerWickPct"],
+                    "bodyPct":      rej["bodyPct"],
+                    "volSpike":     vol_spike,
+                    "obConf":       ob_conf,
+                    "fvgConf":      fvg_conf,
+                    # ── Phase 3: score/grade ──
+                    "score":          score_val,
+                    "grade":          graded["grade"],
+                    "gradeLabel":     graded["gradeLabel"],
+                    "scoreBreakdown": scored["breakdown"],
+                    "sparkline":      sparkline,
+                    # ── Phase 4: confluence ──
+                    "fibConf":          fib_conf,
+                    "confluenceMode":   confluence_mode,
+                    "confluencesFound": conf_found_list,
+                    "confluenceCount":  len(conf_found_list),
+                    # ── Phase 2 fields ──
+                    "direction":               rej_dir,
+                    "biasDirection":           rej_dir,
+                    "setupType":               setup_type_label,
+                    "pattern":                 pattern,
+                    "detail":                  detail,
+                    "priorMoveDirection":       prior_dir,
+                    "priorMoveCandles":         prior_move_n,
+                    "priorMoveChecks":          prior_result["checksPassed"],
+                    "signalCandleOffset":       sig_offset,
+                    "signalCandleTime":         ts[sig_idx],
+                    "rejectionOpen":            rej["open"],
+                    "rejectionHigh":            rej["high"],
+                    "rejectionLow":             rej["low"],
+                    "rejectionClose":           rej["close"],
+                    "rejectionBodyPct":         rej["bodyPct"],
+                    "rejectionUpperWickPct":    rej["upperWickPct"],
+                    "rejectionLowerWickPct":    rej["lowerWickPct"],
+                    "invalidationLevel":        invalidation_level,
+                    "invalidationText":         invalidation_text,
+                    "confirmationStatus":       confirmation_status,
+                    "suggestedConfirmationTf":  _suggested_conf_tf(tf),
+                    "reasonChain":              readable_chain,
+                    "debug": {
+                        "priorSummary":      prior_result["summary"],
+                        "priorMoveReasons":  prior_result["reasons"],
+                        "rejReasons":        rej["reasons"],
+                    },
+                }
+
+                if best is None or _is_better_setup(candidate, best):
+                    best = candidate
+
+            if best is not None:
+                results.append(best)
 
         except Exception as e:
             print(f"[DEBUG] bias_scan {sym} error: {e}")
             continue
 
-    conf_order = {"Strong": 0, "Moderate": 1, "Weak": 2}
-    results.sort(key=lambda x: (conf_order.get(x["confidence"], 3), -x["gatesPassed"]))
+    # Phase 3: apply minimum grade filter, then sort by best setup first
+    results = [r for r in results if _grade_passes_filter(r.get("grade", "D"), minimum_grade)]
+    _go = {"A+": 0, "A": 1, "B": 2, "C": 3, "D": 4}
+    results.sort(key=lambda x: (
+        -x.get("score", 0),
+        _go.get(x.get("grade", "D"), 4),
+        0 if x.get("confirmationStatus") == "confirmed" else 1,
+        x.get("signalCandleOffset", 0),
+        -(x.get("rejectionUpperWickPct", 0) if x.get("priorMoveDirection") == "up"
+          else x.get("rejectionLowerWickPct", 0)),
+    ))
     if _tok_uid:
         try: consume_tokens(_tok_uid, len(symbols))
         except Exception as _te: print(f"[Tokens] bias: {_te}")
     return jsonify({
-        "results": results,
-        "scanned": len(symbols),
-        "nextBiasIndex": ROUND_ROBIN_STATE.get("bias_index", 0),
-        "scanMode": scan_mode,
+        "results":        results,
+        "scanned":        len(symbols),
+        "scanMode":       scan_mode,
+        "nextBiasIndex":  BIAS_SCAN_CURSOR.get(cursor_key, 0),
+        "marketCoverage": market_coverage,
     })
 
 

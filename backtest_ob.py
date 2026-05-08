@@ -48,41 +48,6 @@ _DIAG_KEYS = (
 # Valid freshness filter values
 _FRESHNESS_VALUES = frozenset({"all", "first_touch", "already_touched", "unknown"})
 
-# Strict OB-specific strength keys only — no generic score/priority fallbacks
-_OB_STRENGTH_KEYS = (
-    "ob_strength",           # normalized key written by updated signal_extractor
-    "obStrengthPct",         # already in meta for most logged signals (percentage 0-100)
-    "obStrength",
-    "ob_strength_pct",
-    "orderBlockStrength",
-    "order_block_strength",
-    "obVolumeStrength",
-    "ob_volume_strength",
-)
-
-
-def extract_ob_strength_from_meta(raw_meta: dict) -> "tuple[float | None, str]":
-    """
-    Extract true OB strength (percentage 0-100) from raw_meta_json dict.
-
-    Only checks OB-specific keys. Generic fields like 'strength', 'score',
-    'alert_strength', 'percentage', 'pct' are intentionally excluded to
-    prevent mixing alert priority integers with OB strength percentages.
-
-    Returns (value, source_key) or (None, "missing_true_ob_strength").
-    """
-    for key in _OB_STRENGTH_KEYS:
-        val = raw_meta.get(key)
-        if val is None:
-            continue
-        try:
-            f = float(val)
-            if f > 0:
-                return round(f, 2), key
-        except (TypeError, ValueError):
-            continue
-    return None, "missing_true_ob_strength"
-
 
 # Candidate keys that would contain OB formation timestamp (none stored yet)
 _OB_ORIGIN_KEYS = (
@@ -462,24 +427,28 @@ def run_ob_backtest(
                     })
                     continue
 
-                # ── OB strength from raw_meta_json ───────────────────────
+                # ── TV OB % from raw_meta_json ────────────────────────────
                 try:
                     ev_meta = json.loads(ev.raw_meta_json or "{}")
                 except Exception:
                     ev_meta = {}
-                ob_strength, ob_strength_source = extract_ob_strength_from_meta(ev_meta)
+                tv_ob_pct = ev_meta.get("tvObVolumeSharePct")
+                try:
+                    tv_ob_pct = float(tv_ob_pct) if tv_ob_pct is not None else None
+                except (TypeError, ValueError):
+                    tv_ob_pct = None
                 alert_strength_debug = ev_meta.get("alert_strength_debug")
 
                 # ── Strength tally + pre-filter ───────────────────────────
-                if ob_strength is not None:
+                if tv_ob_pct is not None:
                     strength_summary["with_true_ob_strength"] += 1
                 else:
                     strength_summary["missing_true_ob_strength"] += 1
 
                 if strength_min > 0:
-                    if ob_strength is None or ob_strength < strength_min:
+                    if tv_ob_pct is None or tv_ob_pct < strength_min:
                         strength_summary["filtered_out_missing_strength"] += (
-                            1 if ob_strength is None else 0
+                            1 if tv_ob_pct is None else 0
                         )
                         continue
 
@@ -594,8 +563,7 @@ def run_ob_backtest(
                     "touch_count_before_signal": freshness_info.get("touch_count_before_signal"),
                     "origin_time":               freshness_info.get("origin_time"),
                     "freshness_reason":          freshness_info.get("reason"),
-                    "ob_strength":               ob_strength,
-                    "ob_strength_source":        ob_strength_source,
+                    "tv_ob_volume_share_pct":    tv_ob_pct,
                     "alert_strength_debug":      alert_strength_debug,
                 })
 

@@ -101,20 +101,6 @@ def _extract_ob_alert(alert: dict, result: dict, exchange: str, timeframe: str,
             if _av is not None:
                 raw_meta.setdefault(f"alert_{_ak}", _av)
 
-        # Normalized ob_strength: only true OB-specific strength keys allowed.
-        # alert_strength_debug is intentionally excluded — it is not a percentage.
-        _ob_str = (
-            _safe_float(meta.get("obStrengthPct")) or
-            _safe_float(meta.get("obStrength")) or
-            _safe_float(meta.get("ob_strength_pct")) or
-            _safe_float(meta.get("orderBlockStrength")) or
-            _safe_float(meta.get("order_block_strength")) or
-            _safe_float(meta.get("obVolumeStrength")) or
-            _safe_float(meta.get("ob_volume_strength"))
-        )
-        if _ob_str is not None:
-            raw_meta["ob_strength"] = round(_ob_str, 2)
-
         try:
             raw_meta_json = json.dumps(raw_meta, default=str)
         except Exception:

@@ -759,11 +759,10 @@ def intelligence_stats():
 
         all_rows = q.order_by(SignalEvent.detected_at.desc()).all()
 
-        # ── Strength post-filter (applies only to OB signals) ────────────
-        # ob_strength lives in raw_meta_json — cannot be filtered in SQL.
+        # ── TV OB % post-filter (applies only to OB signals) ─────────────
+        # tvObVolumeSharePct lives in raw_meta_json — cannot be filtered in SQL.
         if strength_min > 0:
             import json as _json
-            from backtest_ob import extract_ob_strength_from_meta as _esm
             filtered = []
             for ev, oc in all_rows:
                 if ev.module != "ob":
@@ -773,8 +772,12 @@ def intelligence_stats():
                     _meta = _json.loads(ev.raw_meta_json or "{}")
                 except Exception:
                     _meta = {}
-                _str, _ = _esm(_meta)
-                if _str is not None and _str >= strength_min:
+                _tv_pct = _meta.get("tvObVolumeSharePct")
+                try:
+                    _tv_pct = float(_tv_pct) if _tv_pct is not None else None
+                except (TypeError, ValueError):
+                    _tv_pct = None
+                if _tv_pct is not None and _tv_pct >= strength_min:
                     filtered.append((ev, oc))
             rows = filtered
         else:
@@ -1177,7 +1180,6 @@ def intelligence_ob_strength_audit():
     try:
         import json as _json
         from models import SignalEvent
-        from backtest_ob import extract_ob_strength_from_meta
 
         try:
             limit = min(int(request.args.get("limit", 20)), 200)
@@ -1193,8 +1195,7 @@ def intelligence_ob_strength_audit():
         )
 
         rows = []
-        sources_seen: dict = {}
-        with_strength = 0
+        with_tv_pct = 0
 
         for ev in events:
             try:
@@ -1202,11 +1203,14 @@ def intelligence_ob_strength_audit():
             except Exception:
                 raw_meta = {}
 
-            strength, source = extract_ob_strength_from_meta(raw_meta)
+            tv_pct = raw_meta.get("tvObVolumeSharePct")
+            try:
+                tv_pct = float(tv_pct) if tv_pct is not None else None
+            except (TypeError, ValueError):
+                tv_pct = None
 
-            if strength is not None:
-                with_strength += 1
-                sources_seen[source] = sources_seen.get(source, 0) + 1
+            if tv_pct is not None:
+                with_tv_pct += 1
 
             rows.append({
                 "signal_id":                ev.signal_id,
@@ -1216,15 +1220,14 @@ def intelligence_ob_strength_audit():
                 "score":                    ev.score,
                 "detected_at":              ev.detected_at.isoformat() if ev.detected_at else None,
                 "raw_meta_keys":            sorted(raw_meta.keys()),
-                "raw_meta_json":            raw_meta,
-                "detected_ob_strength":     strength,
-                "detected_strength_source": source,
+                "tv_ob_volume_share_pct":   tv_pct,
+                "tv_ob_volume_share_status": raw_meta.get("tvObVolumeShareStatus"),
                 "alert_strength_debug":     raw_meta.get("alert_strength_debug"),
-                "usable_for_strength_filter": strength is not None,
+                "usable_for_strength_filter": tv_pct is not None,
                 "note": (
-                    "ob_strength from true OB metadata"
-                    if strength is not None
-                    else "no true OB strength key found — row excluded by strength_min > 0"
+                    "tv_ob_volume_share_pct present"
+                    if tv_pct is not None
+                    else "tvObVolumeSharePct missing — row excluded by strength_min > 0"
                 ),
             })
 
@@ -1234,16 +1237,10 @@ def intelligence_ob_strength_audit():
             "checked": checked,
             "rows":    rows,
             "summary": {
-                "with_strength":    with_strength,
-                "missing_strength": checked - with_strength,
-                "sources":          sources_seen,
+                "with_tv_ob_pct":    with_tv_pct,
+                "missing_tv_ob_pct": checked - with_tv_pct,
             },
-            "note": (
-                "ob_strength uses only true OB-specific keys (obStrengthPct, obStrength, etc.). "
-                "alert_strength_debug is stored separately and is NOT used in the strength filter. "
-                "score (signal quality score) is also NOT used as OB strength. "
-                "Old DB rows are NOT mutated."
-            ),
+            "note": "Strength filter uses tvObVolumeSharePct only.",
         })
 
     except Exception as _e:
@@ -1305,3 +1302,292 @@ def intelligence_ob_candidates():
 
     except Exception as _e:
         return jsonify({"ok": False, "error": str(_e)}), 500
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# /admin/debug/ob-tv-parity  — OB TV volume share parity inspector (admin only)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@admin_bp.route("/debug/ob-tv-parity", methods=["GET"])
+@admin_required
+def debug_ob_tv_parity():
+    try:
+        from main import (detect_obs, _tv_visible_pool, calculate_tv_ob_volume_share,
+                          get_klines_exchange, _TV_OB_PARITY_SETTINGS)
+        import datetime as _dt
+        import copy as _copy
+
+        symbol         = (request.args.get("symbol")    or "SOONUSDT").strip().upper()
+        timeframe      = (request.args.get("timeframe") or "15m").strip()
+        exchange       = (request.args.get("exchange")  or "binance").strip().lower()
+        market         = (request.args.get("market")    or "perpetual").strip().lower()
+        compare_limits = request.args.get("compare_limits", "false").strip().lower() in ("1", "true", "yes")
+
+        try:
+            kline_limit = min(max(int(request.args.get("kline_limit") or 300), 50), 1500)
+        except (TypeError, ValueError):
+            kline_limit = 300
+
+        I_LEN, S_LEN = 5, 30  # screener defaults (iLen/sLen from parse_settings)
+
+        # ── Candle fetch — one call; slice for comparison if requested ────────
+        fetch_limit = max(kline_limit, 1500) if compare_limits else kline_limit
+        candles = get_klines_exchange(symbol, timeframe, fetch_limit, market, exchange)
+        if not candles:
+            return jsonify({"ok": False, "error": "no candles returned"}), 200
+
+        def _ts(ms):
+            if not ms:
+                return None
+            try:
+                return _dt.datetime.utcfromtimestamp(ms / 1000).strftime("%Y-%m-%d %H:%M UTC")
+            except Exception:
+                return str(ms)
+
+        # ── Core analysis helper — runs on any candle slice ───────────────────
+        def _analyse(cnd):
+            _o = [x["open"]   for x in cnd]
+            _h = [x["high"]   for x in cnd]
+            _l = [x["low"]    for x in cnd]
+            _c = [x["close"]  for x in cnd]
+            _v = [x["volume"] for x in cnd]
+            _t = [x.get("time", x.get("openTime", 0)) for x in cnd]
+
+            _normal = detect_obs(_o, _h, _l, _c, _v, I_LEN, S_LEN, max_ob=5)
+            _all    = detect_obs(_o, _h, _l, _c, _v, I_LEN, S_LEN, max_ob=None)
+
+            _bull_src = _copy.deepcopy([ob for ob in _all if ob["type"] == "bullish"])
+            _bear_src = _copy.deepcopy([ob for ob in _all if ob["type"] == "bearish"])
+            _bull_vis = _tv_visible_pool(_bull_src)
+            _bear_vis = _tv_visible_pool(_bear_src)
+            calculate_tv_ob_volume_share(_bull_vis, pool_name="bullish",
+                                         source_pool_count=len(_bull_src))
+            calculate_tv_ob_volume_share(_bear_vis, pool_name="bearish",
+                                         source_pool_count=len(_bear_src))
+
+            _bull_vtot = round(sum(ob.get("volume") or 0 for ob in _bull_vis), 2)
+            _bear_vtot = round(sum(ob.get("volume") or 0 for ob in _bear_vis), 2)
+
+            _price = _c[-1] if _c else 0
+
+            def _dist(ob):
+                if ob["type"] == "bullish":
+                    return ((_price - ob["top"])    / max(_price, 1e-10) * 100) if _price > ob["top"]    else 0.0
+                return     ((ob["bottom"] - _price) / max(_price, 1e-10) * 100) if _price < ob["bottom"] else 0.0
+
+            _matched_tv_pct = None
+            _matched_type   = None
+            if _normal:
+                _near   = min(_normal, key=lambda ob: abs(_dist(ob)))
+                _tv_map = {(ob["type"], ob["bar"]): ob for ob in _bull_vis + _bear_vis}
+                _tv_ref = _tv_map.get((_near["type"], _near["bar"]))
+                _matched_tv_pct = _tv_ref.get("tvObVolumeSharePct") if _tv_ref else None
+                _matched_type   = _near["type"]
+
+            return {
+                "normal": _normal, "all": _all,
+                "bull_src": _bull_src, "bear_src": _bear_src,
+                "bull_vis": _bull_vis, "bear_vis": _bear_vis,
+                "bull_vtot": _bull_vtot, "bear_vtot": _bear_vtot,
+                "times": _t, "price": _price,
+                "matched_tv_pct": _matched_tv_pct, "matched_type": _matched_type,
+            }
+
+        # ── Main analysis with chosen kline_limit ─────────────────────────────
+        main_candles = candles[-kline_limit:] if len(candles) >= kline_limit else candles[:]
+        a = _analyse(main_candles)
+
+        times = a["times"]
+        price = a["price"]
+
+        def _ts_i(bar):
+            return _ts(times[bar]) if 0 <= bar < len(times) else None
+
+        candle_info = {
+            "symbol":             symbol,
+            "timeframe":          timeframe,
+            "exchange":           exchange,
+            "market":             market,
+            "kline_limit":        kline_limit,
+            "candles_count":      len(main_candles),
+            "oldest_candle_time": _ts(times[0])  if times else None,
+            "newest_candle_time": _ts(times[-1]) if times else None,
+            "current_price":      price,
+        }
+
+        detection_counts = {
+            "normal_obs_count":      len(a["normal"]),
+            "tv_all_obs_count":      len(a["all"]),
+            "bullish_source_count":  len(a["bull_src"]),
+            "bearish_source_count":  len(a["bear_src"]),
+            "bullish_visible_count": len(a["bull_vis"]),
+            "bearish_visible_count": len(a["bear_vis"]),
+        }
+
+        # ── Serialise helpers ─────────────────────────────────────────────────
+        def _ob_base(ob):
+            bar = ob.get("bar", 0)
+            return {
+                "type":           ob["type"],
+                "bar":            bar,
+                "time":           _ts_i(bar),
+                "top":            round(ob["top"],    8),
+                "bottom":         round(ob["bottom"], 8),
+                "avg":            round(ob.get("avg", (ob["top"] + ob["bottom"]) / 2), 8),
+                "volume":         ob.get("volume"),
+                "strengthPct":    ob.get("strengthPct"),
+                "strengthLabel":  ob.get("strengthLabel"),
+                "formationRange": ob.get("formationRange"),
+                "sourceBar":      ob.get("sourceBar"),
+                "candleDir":      ob.get("candleDir"),
+            }
+
+        def _ob_visible(ob):
+            d = _ob_base(ob)
+            d.update({
+                "tvObVolumeSharePct":      ob.get("tvObVolumeSharePct"),
+                "tvObVolumeShareStatus":   ob.get("tvObVolumeShareStatus"),
+                "tvObVisibleTotalVolume":  ob.get("tvObVisibleTotalVolume"),
+                "tvObVisibleCount":        ob.get("tvObVisibleCount"),
+                "tvObParitySeq":           ob.get("tvObParitySeq"),
+                "tvObOverlapMode":         ob.get("tvObOverlapMode"),
+                "tvObInputCount":          ob.get("tvObInputCount"),
+                "tvObAfterOverlapCount":   ob.get("tvObAfterOverlapCount"),
+                "tvObFinalShowLastCount":  ob.get("tvObFinalShowLastCount"),
+            })
+            return d
+
+        bull_source_out  = [_ob_base(ob) for ob in a["bull_src"][-20:]]
+        bear_source_out  = [_ob_base(ob) for ob in a["bear_src"][-20:]]
+        bull_visible_out = [_ob_visible(ob) for ob in a["bull_vis"]]
+        bear_visible_out = [_ob_visible(ob) for ob in a["bear_vis"]]
+
+        # ── Hidden pools with reasons ─────────────────────────────────────────
+        def _hidden_with_reasons(src_all, max_ob=5):
+            hidden = []
+            # Step 1: overlap filter — keep older, hide newer overlapping an accepted older OB
+            accepted = []
+            for ob in src_all:
+                overlapping_with = None
+                for acc in accepted:
+                    if ob["top"] > acc["bottom"] and ob["bottom"] < acc["top"]:
+                        overlapping_with = acc
+                        break
+                if overlapping_with is not None:
+                    d = _ob_base(ob)
+                    d["hidden_reason"]          = "overlap_previous"
+                    d["hidden_volume"]          = ob.get("volume")
+                    d["overlapped_with_volume"] = overlapping_with.get("volume")
+                    d["overlap_mode"]           = "previous"
+                    hidden.append(d)
+                else:
+                    accepted.append(ob)
+            # Step 2: showLast — oldest beyond max_ob are hidden
+            if len(accepted) > max_ob:
+                for ob in accepted[:-max_ob]:
+                    d = _ob_base(ob)
+                    d["hidden_reason"]          = "beyond_show_last"
+                    d["hidden_volume"]          = ob.get("volume")
+                    d["overlapped_with_volume"] = None
+                    d["overlap_mode"]           = "previous"
+                    hidden.append(d)
+            return hidden
+
+        bull_hidden_out = _hidden_with_reasons(a["bull_src"])
+        bear_hidden_out = _hidden_with_reasons(a["bear_src"])
+
+        # ── Nearest OB detail ─────────────────────────────────────────────────
+        matched = None
+        if a["normal"]:
+            def _dist(ob):
+                if ob["type"] == "bullish":
+                    return ((price - ob["top"])    / max(price, 1e-10) * 100) if price > ob["top"]    else 0.0
+                return     ((ob["bottom"] - price) / max(price, 1e-10) * 100) if price < ob["bottom"] else 0.0
+
+            nearest     = min(a["normal"], key=lambda ob: abs(_dist(ob)))
+            tv_pool_map = {(ob["type"], ob["bar"]): ob for ob in a["bull_vis"] + a["bear_vis"]}
+            tv_ref      = tv_pool_map.get((nearest["type"], nearest["bar"]))
+            in_visible  = tv_ref is not None
+
+            if not in_visible:
+                src_for_dir = a["bull_src"] if nearest["type"] == "bullish" else a["bear_src"]
+                hidden_for_dir = bull_hidden_out if nearest["type"] == "bullish" else bear_hidden_out
+                _hidden_map    = {h["bar"]: h.get("hidden_reason", "unknown") for h in hidden_for_dir}
+                nv_reason      = _hidden_map.get(nearest["bar"], "overlap_previous_or_unknown")
+            else:
+                nv_reason = None
+
+            dir_src_count = len(a["bull_src"] if nearest["type"] == "bullish" else a["bear_src"])
+            matched = {
+                "type":                              nearest["type"],
+                "bar":                               nearest["bar"],
+                "time":                              _ts_i(nearest["bar"]),
+                "top":                               round(nearest["top"],    8),
+                "bottom":                            round(nearest["bottom"], 8),
+                "volume":                            nearest.get("volume"),
+                "obStrengthPct":                     nearest.get("strengthPct"),
+                "tvObVolumeSharePct":                tv_ref.get("tvObVolumeSharePct")                if tv_ref else None,
+                "tvObVolumeShareStatus":             tv_ref.get("tvObVolumeShareStatus")             if tv_ref else "ob_not_in_tv_visible_pool",
+                "tvObVisibleTotalVolume":            tv_ref.get("tvObVisibleTotalVolume")            if tv_ref else None,
+                "tvObVisibleCount":                  tv_ref.get("tvObVisibleCount")                  if tv_ref else None,
+                "tvObSourcePoolCountBeforeShowLast": tv_ref.get("tvObSourcePoolCountBeforeShowLast") if tv_ref else dir_src_count,
+                "tvObDirectionPoolCount":            tv_ref.get("tvObDirectionPoolCount")            if tv_ref else dir_src_count,
+                "in_tv_visible_pool":                in_visible,
+                "not_visible_reason":                nv_reason,
+            }
+
+        # ── Limit comparison (one fetch, multiple slices) ─────────────────────
+        limit_comparison = []
+        if compare_limits:
+            for lim in [300, 500, 1000, 1500]:
+                cnd_slice = candles[-lim:] if len(candles) >= lim else candles[:]
+                try:
+                    b = _analyse(cnd_slice)
+                    bt = b["times"]
+                    limit_comparison.append({
+                        "limit":                        lim,
+                        "candles_count":                len(cnd_slice),
+                        "oldest_candle_time":           _ts(bt[0])  if bt else None,
+                        "newest_candle_time":           _ts(bt[-1]) if bt else None,
+                        "bullish_source_count":         len(b["bull_src"]),
+                        "bearish_source_count":         len(b["bear_src"]),
+                        "bullish_visible_count":        len(b["bull_vis"]),
+                        "bearish_visible_count":        len(b["bear_vis"]),
+                        "bullish_visible_total_volume": b["bull_vtot"],
+                        "bearish_visible_total_volume": b["bear_vtot"],
+                        "matched_nearest_type":         b["matched_type"],
+                        "matched_nearest_tv_pct":       b["matched_tv_pct"],
+                        "matched_bearish_tv_pct":       b["matched_tv_pct"] if b.get("matched_type") == "bearish" else None,
+                    })
+                except Exception as _le:
+                    limit_comparison.append({"limit": lim, "error": str(_le)})
+
+        return jsonify({
+            "ok":                           True,
+            "candle_info":                  candle_info,
+            "detection_counts":             detection_counts,
+            "bullish_source_pool":          bull_source_out,
+            "bearish_source_pool":          bear_source_out,
+            "bullish_visible_pool":         bull_visible_out,
+            "bearish_visible_pool":         bear_visible_out,
+            "bullish_visible_total_volume": a["bull_vtot"],
+            "bearish_visible_total_volume": a["bear_vtot"],
+            "bullish_hidden_pool":          bull_hidden_out,
+            "bearish_hidden_pool":          bear_hidden_out,
+            "matched_nearest_ob":           matched,
+            "limit_comparison":             limit_comparison,
+            "pine_assumptions": {
+                "bull_bear_pools_separate": True,
+                "show_last_per_direction":  5,
+                "hide_overlap":             True,
+                "overlap_mode":             "Previous",
+                "breaker_included":         False,
+                "formula":                  "floor(source_volume / visible_same_direction_total_volume * 100)",
+            },
+        })
+
+    except Exception as _e:
+        import traceback
+        return jsonify({"ok": False, "error": str(_e),
+                        "traceback": traceback.format_exc()}), 500
