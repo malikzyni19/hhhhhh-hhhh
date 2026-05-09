@@ -394,6 +394,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 /* ── Settings ── */
 .setting-section{margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border2)}
 .setting-section:last-child{border-bottom:none;margin-bottom:0}
+.setting-hint{font-size:10px;color:var(--text-muted);margin-top:3px;line-height:1.45}
 .setting-title{font-size:10px;color:var(--accent);letter-spacing:1.2px;font-weight:700;margin-bottom:10px;text-transform:uppercase;font-family:'Inter',system-ui,sans-serif}
 .subrow{display:grid;grid-template-columns:180px 1fr;gap:8px;align-items:center;margin-bottom:8px}
 .subrow label{font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:6px;font-family:'Inter',system-ui,sans-serif}
@@ -1669,13 +1670,16 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
       <!-- Hidden input tracks current mode for localStorage -->
       <input type="hidden" id="biasModeInput" value="normal">
 
-      <!-- Mode Toggle -->
-      <div class="mode-pills" style="margin-bottom:16px">
-        <button id="biasModeNormalBtn" class="mode-pill active" onclick="setBiasMode('normal')">◈ Normal Mode</button>
-        <button id="biasModeExpertBtn" class="mode-pill" onclick="setBiasMode('expert')">⚡ Expert Mode</button>
+      <!-- Mode Toggle + Reset -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px">
+        <div class="mode-pills">
+          <button id="biasModeNormalBtn" class="mode-pill active" onclick="setBiasMode('normal')">◈ Normal Mode</button>
+          <button id="biasModeExpertBtn" class="mode-pill" onclick="setBiasMode('expert')">⚡ Expert Mode</button>
+        </div>
+        <button class="zone-btn" style="font-size:9px;padding:4px 10px;color:#64748b;border-color:rgba(100,116,139,.25)" onclick="resetBiasDefaults()">↺ Reset Defaults</button>
       </div>
 
-      <!-- Common Settings (visible in both modes) -->
+      <!-- Common Settings (visible in both Normal and Expert mode) -->
       <div class="setting-section">
         <div class="setting-title">SCAN SETTINGS</div>
         <div class="row">
@@ -1685,29 +1689,51 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
               <option value="market">Full Market</option>
             </select>
           </div>
-          <div class="field"><label>Timeframe</label>
-            <select id="biasTf">
-              <option value="1h">1H</option>
-              <option value="4h">4H</option>
-              <option value="6h">6H</option>
-              <option value="12h">12H</option>
-              <option value="1d" selected>1D</option>
-            </select>
+          <div class="field"><label>Pairs / Cycle</label>
+            <input id="biasPairsPerCycle" type="number" value="60" min="5" max="100">
           </div>
         </div>
-        <div class="row3">
+        <div class="field" style="max-width:160px;margin-bottom:0"><label>Timeframe</label>
+          <select id="biasTf">
+            <option value="1h">1H</option>
+            <option value="4h">4H</option>
+            <option value="6h">6H</option>
+            <option value="12h">12H</option>
+            <option value="1d" selected>1D</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="setting-section">
+        <div class="setting-title">DETECTION</div>
+        <div class="row">
           <div class="field"><label>Bias Strength</label>
             <select id="biasStrength">
               <option value="early">Early</option>
               <option value="balanced" selected>Balanced</option>
               <option value="strong">Strong Only</option>
             </select>
+            <div class="setting-hint">Early: more results. Balanced: recommended. Strong Only: fewer, cleaner setups.</div>
           </div>
-          <div class="field"><label>Confluence</label>
+          <div class="field"><label>Detection Mode</label>
+            <select id="biasDetectionMode">
+              <option value="early" selected>Early</option>
+              <option value="confirmed">Confirmed</option>
+            </select>
+            <div class="setting-hint">Early: rejection candle closed. Confirmed: later candle confirms the break.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="setting-section">
+        <div class="setting-title">FILTERS</div>
+        <div class="row">
+          <div class="field"><label>Confluence Mode</label>
             <select id="biasConfluenceMode">
               <option value="optional" selected>Optional</option>
               <option value="required">Required</option>
             </select>
+            <div class="setting-hint">Optional: OB/FVG/Fib improve score. Required: hides setups with no confluence.</div>
           </div>
           <div class="field"><label>Minimum Grade</label>
             <select id="biasMinGrade">
@@ -1715,7 +1741,19 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
               <option value="B+" selected>B+</option>
               <option value="A">A Only</option>
             </select>
+            <div class="setting-hint">C+: more setups. B+: balanced. A: high quality only.</div>
           </div>
+        </div>
+        <div style="display:flex;gap:18px;flex-wrap:wrap;padding:6px 0 2px">
+          <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:11px;color:var(--text-secondary)">
+            <input type="checkbox" id="biasUseObConf" checked style="accent-color:var(--accent);width:14px;height:14px"> OB Confluence
+          </label>
+          <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:11px;color:var(--text-secondary)">
+            <input type="checkbox" id="biasUseFvgConf" checked style="accent-color:var(--accent);width:14px;height:14px"> FVG Confluence
+          </label>
+          <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:11px;color:var(--text-secondary)">
+            <input type="checkbox" id="biasUseFibConf" checked style="accent-color:var(--accent);width:14px;height:14px"> Fib Confluence
+          </label>
         </div>
       </div>
 
@@ -1723,27 +1761,29 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
       <div id="biasExpertFields" style="display:none">
 
         <div class="setting-section">
-          <div class="setting-title">SIGNAL PARAMETERS</div>
-          <div class="row3">
+          <div class="setting-title">CANDLE STRUCTURE</div>
+          <div class="row">
             <div class="field"><label>Prior Move Candles</label>
-              <input id="biasPriorMoveCandles" type="number" value="4" min="1" max="20">
+              <input id="biasPriorMoveCandles" type="number" value="4" min="2" max="10">
+              <div class="setting-hint">Candles forming the prior trend push. (2–10)</div>
             </div>
             <div class="field"><label>Signal Search Candles</label>
-              <input id="biasSignalSearchCandles" type="number" value="1" min="1" max="10">
-            </div>
-            <div class="field"><label>Detection Mode</label>
-              <select id="biasDetectionMode">
-                <option value="early" selected>Early</option>
-                <option value="confirmed">Confirmed</option>
-              </select>
+              <input id="biasSignalSearchCandles" type="number" value="1" min="1" max="5">
+              <div class="setting-hint">Recent candles searched for rejection. (1–5)</div>
             </div>
           </div>
+        </div>
+
+        <div class="setting-section">
+          <div class="setting-title">REJECTION QUALITY</div>
           <div class="row">
             <div class="field"><label>Min Wick %</label>
-              <input id="biasMinWickPct" type="number" value="35" min="5" max="80">
+              <input id="biasMinWickPct" type="number" value="35" min="10" max="80">
+              <div class="setting-hint">Rejection wick as % of candle range. (10–80)</div>
             </div>
             <div class="field"><label>Min Body %</label>
-              <input id="biasMinBodyPct" type="number" value="20" min="5" max="80">
+              <input id="biasMinBodyPct" type="number" value="20" min="5" max="70">
+              <div class="setting-hint">Body size as % of candle range. (5–70)</div>
             </div>
           </div>
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:11px;color:var(--text-secondary);margin-top:4px">
@@ -1753,7 +1793,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
         </div>
 
         <div class="setting-section">
-          <div class="setting-title">VOLUME FILTER</div>
+          <div class="setting-title">VOLUME</div>
           <div class="row">
             <div class="field"><label>Volume Filter</label>
               <select id="biasVolumeFilter">
@@ -1764,28 +1804,6 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
             <div class="field"><label>Volume Multiplier</label>
               <input id="biasVolumeMultiplier" type="number" value="1.5" step="0.1" min="1.0" max="5.0">
             </div>
-          </div>
-        </div>
-
-        <div class="setting-section">
-          <div class="setting-title">CONFLUENCE</div>
-          <div style="display:flex;gap:20px;flex-wrap:wrap;padding:4px 0">
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:11px;color:var(--text-secondary)">
-              <input type="checkbox" id="biasUseObConf" checked style="accent-color:var(--accent);width:14px;height:14px"> OB Confluence
-            </label>
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:11px;color:var(--text-secondary)">
-              <input type="checkbox" id="biasUseFvgConf" checked style="accent-color:var(--accent);width:14px;height:14px"> FVG Confluence
-            </label>
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:11px;color:var(--text-secondary)">
-              <input type="checkbox" id="biasUseFibConf" checked style="accent-color:var(--accent);width:14px;height:14px"> Fib Confluence
-            </label>
-          </div>
-        </div>
-
-        <div class="setting-section">
-          <div class="setting-title">SCAN OPTIONS</div>
-          <div class="field" style="max-width:160px"><label>Pairs / Cycle</label>
-            <input id="biasPairsPerCycle" type="number" value="20" min="5" max="80">
           </div>
         </div>
 
@@ -1816,6 +1834,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 
       <button class="btn-primary" onclick="scanBias()" style="margin-top:4px">▶ SCAN BIAS SHIFT</button>
       <div id="biasStatus" class="status-text" style="margin-top:8px"></div>
+      <div id="biasDiag" style="margin-top:4px"></div>
       <div id="biasResults" class="results" style="margin-top:12px"><div class="empty">Configure settings and click Scan Bias Shift</div></div>
     </div>
   </div>
@@ -3133,6 +3152,27 @@ function addManualPairs(){
 }
 
 // ── Bias Mode Toggle ──
+function resetBiasDefaults(){
+  const vals = {
+    biasModeInput:'normal', biasTf:'1d', biasScanSource:'market',
+    biasPairsPerCycle:'60', biasStrength:'balanced', biasDetectionMode:'early',
+    biasConfluenceMode:'optional', biasMinGrade:'B+',
+    biasPriorMoveCandles:'4', biasSignalSearchCandles:'1',
+    biasMinWickPct:'35', biasMinBodyPct:'20',
+    biasVolumeFilter:'optional', biasVolumeMultiplier:'1.5',
+  };
+  const chks = {
+    biasUseObConf:true, biasUseFvgConf:true, biasUseFibConf:true,
+    biasRequireCloseBeyondMidpoint:true,
+  };
+  Object.entries(vals).forEach(([id,v]) => { const el=$(id); if(el) el.value=v; });
+  Object.entries(chks).forEach(([id,v]) => { const el=$(id); if(el) el.checked=v; });
+  setBiasMode('normal');
+  saveSettings();
+  const st=$('biasStatus');
+  if(st) st.textContent='Bias Shift defaults restored.';
+}
+
 function setBiasMode(mode){
   const inp = $('biasModeInput');
   if(inp) inp.value = mode;
@@ -3146,47 +3186,296 @@ function setBiasMode(mode){
 }
 
 // ── Bias Scan ──
+// ── #7 Bias tab — diagnostics panel renderer ──
+function renderBiasDiagnostics(diag) {
+  if (!diag) return '';
+  const rej = diag.rejected || {};
+  const rejRows = [
+    ['No Prior Move',         rej.noPriorMove],
+    ['No Rejection Candle',   rej.noRejectionCandle],
+    ['Not Confirmed',         rej.notConfirmed],
+    ['Confluence Required',   rej.confluenceRequired],
+    ['Volume Filter',         rej.volumeFilter],
+    ['Direction Filter',      rej.biasFilterMismatch],
+    ['Min Grade Filter',      rej.minimumGrade],
+    ['No Data / Too Short',   rej.notEnoughCandles],
+    ['Errors',                rej.errors],
+  ].filter(([, v]) => v > 0);
+
+  const rejHtml = rejRows.map(([label, count]) =>
+    `<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0">
+       <span style="color:var(--text-secondary)">${label}</span>
+       <span style="color:#f87171;font-weight:700;font-family:'JetBrains Mono',monospace">${count}</span>
+     </div>`
+  ).join('');
+
+  const s = diag.symbolsScanned || 0;
+  const req = diag.symbolsRequested || 0;
+  const before = diag.setupsFoundBeforeFilters || 0;
+  const ret = diag.setupsReturned || 0;
+  const summaryLine = `${s} of ${req} pairs scanned · ${before} setup${before !== 1 ? 's' : ''} found · ${ret} returned`;
+
+  return `<details onclick="event.stopPropagation()">
+    <summary style="font-size:9px;font-weight:700;letter-spacing:.8px;color:#475569;cursor:pointer;list-style:none;user-select:none;padding:3px 0">SCAN DIAGNOSTICS ▾</summary>
+    <div style="margin-top:5px;padding:8px 10px;background:rgba(0,0,0,.25);border:1px solid rgba(71,85,105,.2);border-radius:8px;font-size:10px">
+      <div style="color:#64748b;margin-bottom:${rejRows.length ? 6 : 0}px;font-family:'JetBrains Mono',monospace">${summaryLine}</div>
+      ${rejRows.length
+        ? `<div style="font-size:9px;font-weight:700;letter-spacing:.8px;color:#475569;margin-bottom:4px">REJECTED</div>${rejHtml}`
+        : '<div style="color:#4ade80;font-size:10px;margin-top:4px">All setups passed filters.</div>'
+      }
+    </div>
+  </details>`;
+}
+
+// ── #5 Bias tab — Phase 5 card renderer ──
+function renderBiasCard(x, i, scanTime) {
+  const dir = (x.biasDirection || x.direction || x.bias || '').toLowerCase();
+  const isBull = dir === 'bullish';
+  const cardClass = isBull ? 'bull-card' : 'bear-card';
+  const dirArrow = isBull ? '▲' : '▼';
+  const dirColor = isBull ? '#4ade80' : '#f87171';
+  const setupLabel = x.setupType || (isBull ? 'Bullish Bias Shift' : 'Bearish Bias Shift');
+  const tf = x.timeframe || '?';
+  const score = x.score || 0;
+  const grade = x.grade || '';
+  const gradeLabel = x.gradeLabel || '';
+  const conf = x.confidence || 'Low';
+  const confClass = conf === 'Strong' ? 'bull' : conf === 'Moderate' ? 'warn' : 'neutral';
+  const confStatus = x.confirmationStatus || '';
+  const confStatusBadge = confStatus === 'confirmed'
+    ? `<span class="badge neutral" style="font-size:9px;background:rgba(34,197,94,.12);color:#4ade80;border-color:rgba(34,197,94,.3)">✓ Confirmed</span>`
+    : `<span class="badge neutral" style="font-size:9px;opacity:.65">Early</span>`;
+  const confFound = x.confluencesFound || [];
+  const confChips = confFound.map(cf =>
+    `<span class="badge neutral" style="font-size:9px;letter-spacing:.5px">${cf} ✓</span>`
+  ).join('');
+  const fmtP = p => {
+    if (p == null) return '—';
+    const n = +p;
+    return n < 1 ? n.toFixed(6) : n < 100 ? n.toFixed(4) : n.toFixed(2);
+  };
+  const priorDir = x.priorMoveDirection || '';
+  const priorN = x.priorMoveCandles || '';
+  let patternText = '';
+  if (priorDir && priorN) {
+    const priorLabel = priorDir === 'up' ? 'bullish' : 'bearish';
+    const rejLabel = isBull ? 'bullish' : 'bearish';
+    patternText = `${priorN}-candle ${priorLabel} drive → ${rejLabel} rejection candle`;
+  } else {
+    patternText = x.pattern || '';
+  }
+  const reasonChain = Array.isArray(x.reasonChain) && x.reasonChain.length
+    ? x.reasonChain
+    : (x.gates ? x.gates.split(' · ') : []);
+  const reasonHtml = reasonChain.length
+    ? reasonChain.map(r => `<div class="result-detail" style="line-height:1.7;padding:1px 0">✓ ${r}</div>`).join('')
+    : '';
+  const invText = x.invalidationText
+    || (isBull ? `close below $${fmtP(x.invalidationLevel)}` : `close above $${fmtP(x.invalidationLevel)}`);
+  const confTf = x.suggestedConfirmationTf || 'lower TF';
+  let confTfText;
+  if (confStatus === 'confirmed') {
+    confTfText = 'Confirmed by a later closed candle';
+  } else {
+    confTfText = `Watch ${confTf} for ${isBull ? 'CHOCH up' : 'CHOCH down'}`;
+  }
+  const confStatusNote = confStatus === 'early_unconfirmed'
+    ? `<div class="result-detail" style="opacity:.6;font-size:10px;margin-top:3px">Early setup — wait for lower-TF confirmation</div>`
+    : '';
+  let conflHtml = '';
+  if (x.obConf || x.fvgConf || x.fibConf) {
+    const rows = [];
+    if (x.obConf) {
+      let s = `<span style="color:#4ade80;font-weight:700">OB ✓</span> ${x.obConf.reason || ''}`;
+      if (x.obConf.zone) s += ` · Zone: ${x.obConf.zone}`;
+      if (x.obConf.distancePct != null) s += ` · ${x.obConf.distancePct}% away`;
+      rows.push(s);
+    }
+    if (x.fvgConf) {
+      let s = `<span style="color:#4ade80;font-weight:700">FVG ✓</span> ${x.fvgConf.reason || ''}`;
+      if (x.fvgConf.zone) s += ` · Zone: ${x.fvgConf.zone}`;
+      if (x.fvgConf.touch) s += ` [${x.fvgConf.touch}]`;
+      if (x.fvgConf.distancePct != null) s += ` · ${x.fvgConf.distancePct}% away`;
+      rows.push(s);
+    }
+    if (x.fibConf) {
+      let s = `<span style="color:#fbbf24;font-weight:700">Fib ✓</span> ${x.fibConf.reason || ''}`;
+      if (x.fibConf.level) s += ` · Level: ${x.fibConf.level}`;
+      if (x.fibConf.price) s += ` · $${fmtP(x.fibConf.price)}`;
+      if (x.fibConf.distancePct != null) s += ` · ${x.fibConf.distancePct}% away`;
+      rows.push(s);
+    }
+    conflHtml = `<div style="margin-top:8px;padding:8px 10px;background:rgba(34,211,238,.04);border:1px solid rgba(34,211,238,.12);border-radius:8px">
+      <div style="font-size:9px;font-weight:700;letter-spacing:.8px;color:#64748b;margin-bottom:5px">CONFLUENCE</div>
+      ${rows.map(r => `<div class="result-detail" style="margin-bottom:3px">${r}</div>`).join('')}
+    </div>`;
+  }
+  const bd = Array.isArray(x.scoreBreakdown) && x.scoreBreakdown.length ? x.scoreBreakdown : [];
+  const bdHtml = bd.length
+    ? `<details onclick="event.stopPropagation()" style="margin-top:8px"><summary style="font-size:9px;font-weight:700;letter-spacing:.8px;color:#475569;cursor:pointer;list-style:none;user-select:none">SCORE BREAKDOWN ▾</summary>
+        <div style="margin-top:4px;padding:6px 8px;background:rgba(0,0,0,.2);border-radius:6px">
+          ${bd.map(b => `<div class="result-detail" style="opacity:.65;font-size:10px;padding:1px 0">${b}</div>`).join('')}
+        </div>
+      </details>`
+    : '';
+  const starred = isStarred(x.symbol);
+  const symSafe = x.symbol.replace(/'/g, "\\'");
+  const ofId = 'bias-of-' + x.symbol.replace(/[^a-zA-Z0-9]/g, '_') + '_' + i;
+
+  return `<div class="result-card bias-card ${cardClass}" style="animation-delay:${i*40}ms" onclick="this.classList.toggle('expanded')">
+    <div class="result-header" style="align-items:flex-start">
+      <div style="flex:1;min-width:0">
+        <div class="symbol" style="font-size:13px;white-space:normal;line-height:1.3">
+          ${coinIcon(x.symbol)}${displaySymbol(x.symbol)}<span style="color:var(--text-muted);font-weight:400"> — ${tf}</span> <span style="color:${dirColor};font-weight:700">${setupLabel}</span>
+          <a href="https://www.tradingview.com/chart/?symbol=BINANCE:${x.symbol}.P" target="${tvTarget()}" class="tv-link" rel="noopener" onclick="event.stopPropagation()">📊</a>
+          <span class="expand-icon">▼</span>
+        </div>
+        <div class="badges" style="margin-top:5px;margin-bottom:0">
+          <span class="badge ${isBull ? 'bull' : 'bear'}" style="font-size:9px">${dirArrow} ${isBull ? 'Bullish' : 'Bearish'}</span>
+          ${grade ? `<span class="badge neutral" style="font-size:9px;font-weight:800;letter-spacing:.4px">${grade}</span>` : ''}
+          <span class="badge ${confClass}" style="font-size:9px">${conf}</span>
+          ${confStatusBadge}
+          ${confChips}
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;margin-left:8px">
+        ${renderScoreBadge(score, conf)}
+        <span class="star-btn ${starred ? 'starred' : ''}" onclick="event.stopPropagation();toggleWatchlistStar(this,'${symSafe}')">${starred ? '★' : '☆'}</span>
+      </div>
+    </div>
+
+    <div class="result-summary" style="margin-top:5px">
+      ${patternText || (isBull ? 'Bullish Bias Shift' : 'Bearish Bias Shift')} · $${fmtP(x.price)}${x.volSpike ? ' · 🔥 Vol' : ''}
+    </div>
+
+    <div class="result-details" style="padding-top:10px">
+      ${patternText ? `<div style="margin-bottom:10px">
+        <div style="font-size:9px;font-weight:700;letter-spacing:.8px;color:#64748b;margin-bottom:3px">PATTERN</div>
+        <div class="result-detail">${patternText}</div>
+      </div>` : ''}
+
+      ${reasonHtml ? `<div style="margin-bottom:10px;padding:8px 10px;background:rgba(0,0,0,.18);border-radius:8px;border:1px solid rgba(71,85,105,.2)">
+        <div style="font-size:9px;font-weight:700;letter-spacing:.8px;color:#64748b;margin-bottom:4px">REASON</div>
+        ${reasonHtml}
+      </div>` : ''}
+
+      <div style="margin-bottom:10px;display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        <div style="padding:8px 10px;background:rgba(0,0,0,.18);border-radius:8px;border:1px solid rgba(71,85,105,.2)">
+          <div style="font-size:9px;font-weight:700;letter-spacing:.8px;color:#64748b;margin-bottom:5px">LEVELS</div>
+          <div class="result-detail" style="margin-bottom:2px">High: $${fmtP(x.rejectionHigh)}</div>
+          <div class="result-detail" style="margin-bottom:2px">Low: $${fmtP(x.rejectionLow)}</div>
+          <div class="result-detail" style="margin-bottom:4px">Close: $${fmtP(x.rejectionClose)}</div>
+          <div class="result-detail" style="color:${dirColor};font-weight:600">⚠ ${invText}</div>
+        </div>
+        <div style="padding:8px 10px;background:rgba(0,0,0,.18);border-radius:8px;border:1px solid rgba(71,85,105,.2)">
+          <div style="font-size:9px;font-weight:700;letter-spacing:.8px;color:#64748b;margin-bottom:5px">CONFIRMATION</div>
+          <div class="result-detail">${confTfText}</div>
+          ${confStatusNote}
+          ${gradeLabel ? `<div class="result-detail" style="opacity:.45;font-size:10px;margin-top:5px">${gradeLabel}</div>` : ''}
+        </div>
+      </div>
+
+      ${conflHtml}
+      ${bdHtml}
+
+      <div class="result-detail" style="margin-top:8px;opacity:.4;font-size:10px">
+        ↑ ${x.rejectionUpperWickPct || x.upperWickPct || 0}% wick · ↓ ${x.rejectionLowerWickPct || x.lowerWickPct || 0}% wick · ${x.rejectionBodyPct || x.bodyPct || 0}% body${x.signalCandleOffset != null ? ` · signal -${x.signalCandleOffset}c` : ''}
+      </div>
+
+      <div style="margin-top:8px">
+        <button class="zone-btn" style="width:100%;padding:6px;font-size:10px;letter-spacing:.5px;border-color:#22d3ee30;color:#22d3ee"
+          onclick="event.stopPropagation();_toggleBiasOf(this,'${symSafe}','${tf}','${ofId}')">
+          📊 LIVE ORDER FLOW
+        </button>
+        <div id="${ofId}" style="margin-top:6px;display:none"></div>
+      </div>
+      <div class="scan-time">Scanned: ${scanTime}</div>
+    </div>
+  </div>`;
+}
+
 async function scanBias(){
-  showScanPopup('SCANNING BIAS SHIFT');
   const st = $('biasStatus');
   const res_div = $('biasResults');
-  if(st) st.textContent = 'Scanning…';
+
+  // ── Frontend validation ──
+  const validTfs = ['1h','4h','6h','12h','1d'];
+  const tfVal = $('biasTf') ? $('biasTf').value : '1d';
+  if(!validTfs.includes(tfVal.toLowerCase())){
+    if(st) st.textContent = 'Invalid timeframe selected.';
+    if(res_div) res_div.innerHTML = '<div class="empty">Select a valid timeframe: 1H, 4H, 6H, 12H, 1D.</div>';
+    return;
+  }
+  const ppc = $('biasPairsPerCycle') ? +$('biasPairsPerCycle').value : 60;
+  if(isNaN(ppc) || ppc < 5 || ppc > 100){
+    if(st) st.textContent = 'Pairs / Cycle must be between 5 and 100.';
+    if(res_div) res_div.innerHTML = '<div class="empty">Adjust Pairs / Cycle to a value between 5 and 100.</div>';
+    return;
+  }
+  const scanSource = $('biasScanSource') ? $('biasScanSource').value : 'market';
+  if(scanSource === 'selected' && (!selectedPairs || selectedPairs.size === 0)){
+    if(st) st.textContent = 'Select at least one pair or switch to Full Market.';
+    if(res_div) res_div.innerHTML = '<div class="empty">No pairs selected. Add pairs to your selection or switch Market Scope to Full Market.</div>';
+    return;
+  }
+  const biasMode = $('biasModeInput') ? $('biasModeInput').value : 'normal';
+  if(biasMode === 'expert'){
+    const priorN  = $('biasPriorMoveCandles')   ? +$('biasPriorMoveCandles').value   : 4;
+    const sigSrch = $('biasSignalSearchCandles') ? +$('biasSignalSearchCandles').value : 1;
+    const minWick = $('biasMinWickPct')          ? +$('biasMinWickPct').value          : 35;
+    const minBody = $('biasMinBodyPct')          ? +$('biasMinBodyPct').value          : 20;
+    const volMult = $('biasVolumeMultiplier')    ? +$('biasVolumeMultiplier').value    : 1.5;
+    const errs = [];
+    if(priorN  < 2  || priorN  > 10)  errs.push('Prior Move Candles (2–10)');
+    if(sigSrch < 1  || sigSrch > 5)   errs.push('Signal Search Candles (1–5)');
+    if(minWick < 10 || minWick > 80)  errs.push('Min Wick % (10–80)');
+    if(minBody < 5  || minBody > 70)  errs.push('Min Body % (5–70)');
+    if(volMult < 1.0|| volMult > 5.0) errs.push('Volume Multiplier (1.0–5.0)');
+    if(errs.length){
+      const msg = 'Fix expert settings: ' + errs.join(', ') + '.';
+      if(st) st.textContent = msg;
+      if(res_div) res_div.innerHTML = `<div class="empty">${msg}</div>`;
+      return;
+    }
+  }
+
+  showScanPopup('SCANNING BIAS SHIFT');
+  const diagEl = $('biasDiag');
+  if(diagEl) diagEl.innerHTML = '';
+  const scanningMsg = scanSource === 'selected'
+    ? `Scanning ${selectedPairs.size} selected pair${selectedPairs.size !== 1 ? 's' : ''}…`
+    : 'Scanning Bias Shift…';
+  if(st) st.textContent = scanningMsg;
   if(res_div) res_div.innerHTML = skeletonCards(6);
 
   const payload = {
-    timeframe: $('biasTf') ? $('biasTf').value : '4h',
+    timeframe: tfVal,
     candleCount: $('biasCandleCount') ? +$('biasCandleCount').value : 3,
     biasFilter: $('biasFilter') ? $('biasFilter').value : 'all',
-    // Gate 1 — Prior Momentum
     useMomentumGate: $('biasMomentumGate') ? $('biasMomentumGate').checked : true,
     priorCandlesReq: $('biasPriorCandlesReq') ? +$('biasPriorCandlesReq').value : 2,
-    // Gate 2 — Signal Candle
     useWickGate: $('biasWickGate') ? $('biasWickGate').checked : true,
     sigUseWick: $('biasSigWick') ? $('biasSigWick').checked : true,
     sigWickMin: $('biasSigWickMin') ? +$('biasSigWickMin').value : 35,
     sigUseEngulf: $('biasSigEngulf') ? $('biasSigEngulf').checked : true,
     sigUseStrongBody: $('biasSigStrongBody') ? $('biasSigStrongBody').checked : true,
     sigBodyMin: $('biasSigBodyMin') ? +$('biasSigBodyMin').value : 55,
-    // Gate 3 — Body
     useBodyGate: $('biasBodyGate') ? $('biasBodyGate').checked : true,
     bodyMinPct: $('biasBodyMinPct') ? +$('biasBodyMinPct').value : 20,
-    // Gate 4 — Volume
     useVolumeGate: $('biasVolumeGate') ? $('biasVolumeGate').checked : false,
     volMultiplier: $('biasVolMultiplier') ? +$('biasVolMultiplier').value : 1.2,
-    // Min conditions
     minConditions: $('biasMinConditions') ? +$('biasMinConditions').value : 2,
     useFvgConf: $('biasUseFvg') ? $('biasUseFvg').checked : false,
     fvgTouch: $('biasFvgTouch') ? $('biasFvgTouch').value : 'any',
     useObConf: $('biasUseOb') ? $('biasUseOb').checked : false,
     obApproachPct: $('biasObApproachPct') ? +$('biasObApproachPct').value : 2.0,
-    symbols: ($('biasScanSource') && $('biasScanSource').value === 'market') ? [] : [...selectedPairs],
-    scanMode: $('biasScanSource') ? $('biasScanSource').value : 'selected',
-    pairsPerCycle: $('biasPairsPerCycle') ? +$('biasPairsPerCycle').value : 20,
+    symbols: scanSource === 'market' ? [] : [...selectedPairs],
+    scanMode: scanSource,
+    pairsPerCycle: ppc,
     roundRobin: true,
     market: marketType(),
     exchange: currentExchange(),
-    // ── New Phase-1 fields (backend will use in Phase 2) ──
-    mode: $('biasModeInput') ? $('biasModeInput').value : 'normal',
+    mode: biasMode,
     biasStrength: $('biasStrength') ? $('biasStrength').value : 'balanced',
     confluenceMode: $('biasConfluenceMode') ? $('biasConfluenceMode').value : 'optional',
     minimumGrade: $('biasMinGrade') ? $('biasMinGrade').value : 'B+',
@@ -3205,7 +3494,6 @@ async function scanBias(){
 
   try{
     const r = await fetch('/api/bias_scan', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
-    // Handle no-selected-pairs error cleanly
     if(r.status === 400){
       const errData = await r.json().catch(() => ({}));
       const msg = errData.message || 'No pairs selected.';
@@ -3217,70 +3505,42 @@ async function scanBias(){
     const resp = await r.json();
     if(resp && resp.error === 'daily_limit_reached'){ if(window.showTokenLimitPopup) window.showTokenLimitPopup(); return; }
     if(window.refreshTokensAfterScan) window.refreshTokensAfterScan(resp.scanned || 20);
-    // Handle both old (array) and new (object) response format
     const data    = Array.isArray(resp) ? resp : (resp.results || []);
     const scanned = resp.scanned || data.length;
     const scanTime = new Date().toLocaleTimeString();
-    // Build coverage status text from marketCoverage metadata
     const cov = resp.marketCoverage;
     let covText = '';
     if(cov){
-      covText = ` · Pairs ${cov.startIndex}–${cov.endIndex} of ${cov.totalPairs}`;
+      covText = ` · batch ${cov.startIndex}–${cov.endIndex} of ${cov.totalPairs}`;
       covText += cov.cycleComplete
-        ? ' · full cycle done, restarting from 1'
+        ? ' · full cycle complete, restarting from 1'
         : ` · next from ${cov.nextStartIndex}`;
     }
-    if(st) st.textContent = `${data.length} signal${data.length!==1?'s':''} · ${scanTime}${covText}`;
+    if(st) st.textContent = `${data.length} Bias Shift setup${data.length!==1?'s':''} found${covText}`;
+    if(diagEl) diagEl.innerHTML = renderBiasDiagnostics(resp.diagnostics);
     if(!res_div) return;
-    if(!data.length){ res_div.innerHTML = '<div class="empty">No bias signals found</div>'; return; }
-    res_div.innerHTML = data.map((x,i) => {
-      const bClass = x.bias === 'bullish' ? 'bull' : 'bear';
-      const bLabel = x.bias === 'bullish' ? '▲ BULL' : '▼ BEAR';
-      const confClass = x.confidence === 'Strong' ? 'bull' : x.confidence === 'Moderate' ? 'warn' : 'neutral';
-      const sigLabel = x.signal.replace(/_/g,' ');
-      const obHtml  = x.obConf  ? `<div class="result-detail" style="margin-top:4px;opacity:.8">${x.obConf.reason} · ${x.obConf.zone} · ${x.obConf.distancePct}% away</div>` : '';
-      const fvgHtml = x.fvgConf ? `<div class="result-detail" style="margin-top:4px;opacity:.8">${x.fvgConf.reason} · ${x.fvgConf.zone} [${x.fvgConf.touch}]</div>` : '';
-      const fibHtml = x.fibConf  ? `<div class="result-detail" style="margin-top:4px;opacity:.8">${x.fibConf.reason} · $${x.fibConf.price} · ${x.fibConf.distancePct}% away</div>` : '';
-      const confChips = x.confluencesFound && x.confluencesFound.length ? x.confluencesFound.map(cf => `<span class="badge neutral" style="font-size:9px;letter-spacing:.5px">${cf} ✓</span>`).join('') : '';
-      const starred = isStarred(x.symbol);
-      const tf = x.timeframe || '1d';
-      const ofId = 'bias-of-' + x.symbol.replace(/\./g,'_') + '_' + i;
-      return `<div class="result-card" style="animation-delay:${i*40}ms" onclick="this.classList.toggle('expanded')">
-        <div class="result-header">
-          <span class="symbol">${coinIcon(x.symbol)}${displaySymbol(x.symbol)}<a href="https://www.tradingview.com/chart/?symbol=BINANCE:${x.symbol}.P" target="${tvTarget()}" class="tv-link" rel="noopener" onclick="event.stopPropagation()">📊</a><span class="expand-icon">▼</span></span>
-          <span style="display:flex;align-items:center;gap:4px">
-            ${renderScoreBadge(x.score, x.confidence)}
-            <span class="price-tag">${x.timeframe} · $${x.price}${renderSparkline(x.sparkline, x.sparklineMarkers)}</span>
-            <span class="star-btn ${starred?'starred':''}" onclick="event.stopPropagation();toggleWatchlistStar(this,'${x.symbol}')">${starred?'★':'☆'}</span>
-          </span>
-        </div>
-        <div class="badges">
-          <span class="badge ${bClass}">${bLabel}</span>
-          <span class="badge ${confClass}">${x.confidence.toUpperCase()}</span>
-          <span class="badge neutral">${sigLabel}</span>
-          ${x.grade ? `<span class="badge neutral" style="font-size:9px;letter-spacing:.5px">${x.grade}</span>` : ''}
-          ${confChips}
-        </div>
-        <div class="result-details">
-          <div class="result-detail">↑Wick ${x.upperWickPct}% · ↓Wick ${x.lowerWickPct}% · Body ${x.bodyPct}%${x.volSpike ? ' · 🔥 Vol' : ''}</div>
-          <div class="result-detail" style="opacity:.7;margin-top:3px">${x.gates}</div>
-          ${x.detail ? `<div class="result-detail" style="margin-top:3px;opacity:.85">${x.detail}</div>` : ''}
-          ${x.gradeLabel ? `<div class="result-detail" style="margin-top:3px;opacity:.65;font-size:10px">${x.gradeLabel}</div>` : ''}
-          ${obHtml}${fvgHtml}${fibHtml}
-          <div class="scan-time">Scanned: ${scanTime}</div>
-          <div style="margin-top:8px">
-            <button class="zone-btn" style="width:100%;padding:6px;font-size:10px;letter-spacing:.5px;border-color:#22d3ee30;color:#22d3ee"
-              onclick="event.stopPropagation();_toggleBiasOf(this,'${x.symbol}','${tf}','${ofId}')">
-              📊 LIVE ORDER FLOW
-            </button>
-            <div id="${ofId}" style="margin-top:6px;display:none"></div>
-          </div>
-        </div>
-      </div>`;
-    }).join('');
+    if(!data.length){
+      const diag = resp.diagnostics;
+      const rej = (diag && diag.rejected) || {};
+      const topRej = Object.entries(rej).filter(([,v]) => v > 0).sort(([,a],[,b]) => b - a)[0];
+      const topKey = topRej ? topRej[0] : null;
+      let emptyMsg = 'No Bias Shift setups found with current filters.';
+      if      (topKey === 'noPriorMove')        emptyMsg = 'No setups found. Most pairs did not have a clear prior move.';
+      else if (topKey === 'noRejectionCandle')  emptyMsg = 'No setups found. Prior moves existed, but rejection candles did not meet quality rules.';
+      else if (topKey === 'confluenceRequired') emptyMsg = 'No setups found. Required confluence filtered all setups — try Confluence Optional.';
+      else if (topKey === 'minimumGrade')       emptyMsg = 'No setups found. Minimum Grade is too strict — try lowering it.';
+      else if (topKey === 'notConfirmed')       emptyMsg = 'No setups found. Confirmed Mode is too strict — try Early mode.';
+      else if (topKey === 'volumeFilter')       emptyMsg = 'No setups found. Volume Filter (Required) rejected all setups.';
+      else if (topKey === 'notEnoughCandles')   emptyMsg = 'No setups found. Not enough historical candle data for the selected pairs.';
+      else if (payload.minimumGrade === 'A')    emptyMsg += ' Try lowering Minimum Grade.';
+      else if (payload.confluenceMode === 'required') emptyMsg += ' Try switching Confluence Mode to Optional.';
+      res_div.innerHTML = `<div class="empty">${emptyMsg}</div>`;
+      return;
+    }
+    res_div.innerHTML = data.map((x, i) => renderBiasCard(x, i, scanTime)).join('');
   }catch(e){
     if(st) st.textContent = 'Scan failed: ' + e.message;
-    if(res_div) res_div.innerHTML = '<div class="empty">Error — check console</div>';
+    if(res_div) res_div.innerHTML = '<div class="empty">Scan error — check connection and try again.</div>';
   } finally { hideScanPopup(); }
 }
 

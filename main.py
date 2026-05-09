@@ -6587,52 +6587,71 @@ def _bias_confluence(
 ) -> dict:
     """
     Check OB, FVG, and Fib confluence for a Bias Shift candidate.
-    All detection runs on the closed-candle arrays already available in the loop.
-    Returns {"ob": ob_conf|None, "fvg": fvg_conf|None, "fib": fib_conf|None}.
+    Uses direction-aware reference prices so wick-area confluence is detected:
+      bearish → [rej.high, rej.close]  (rejection likely at wick high)
+      bullish → [rej.low,  rej.close]  (rejection likely at wick low)
+    Distance = minimum distance from ANY reference price to the zone/level.
     """
-    ref_price = rej["close"]
+    if rej_dir == "bearish":
+        ref_prices = [p for p in (rej["high"], rej["close"]) if p > 0]
+        wick_label = "around rejection high"
+    else:
+        ref_prices = [p for p in (rej["low"], rej["close"]) if p > 0]
+        wick_label = "around rejection low"
+
+    if not ref_prices:
+        return {"ob": None, "fvg": None, "fib": None}
+
+    def _zone_dist(bot: float, top: float) -> float:
+        """Minimum % distance from any ref price to zone. 0.0 if inside."""
+        best = float("inf")
+        for p in ref_prices:
+            if bot <= p <= top:
+                return 0.0
+            d = (bot - p) / p * 100 if p < bot else (p - top) / p * 100
+            if d < best:
+                best = d
+        return best
+
+    def _level_dist(level: float) -> float:
+        """Minimum % distance from any ref price to a single level."""
+        best = float("inf")
+        for p in ref_prices:
+            d = abs(p - level) / p * 100
+            if d < best:
+                best = d
+        return best
+
     ob_conf = fvg_conf = fib_conf = None
 
     # ── OB confluence ──────────────────────────────────────────────────────────
-    if use_ob and ref_price > 0:
+    if use_ob:
         try:
             obs = detect_obs(o, h, l, c, v, 5, 20, max_ob=8)
             for ob in obs:
                 if ob["type"] != rej_dir:
                     continue
-                if ref_price <= 0:
-                    continue
-                if ob["bottom"] <= ref_price <= ob["top"]:
-                    dist_pct = 0.0
-                elif ref_price < ob["bottom"]:
-                    dist_pct = (ob["bottom"] - ref_price) / ref_price * 100
-                else:
-                    dist_pct = (ref_price - ob["top"]) / ref_price * 100
+                dist_pct = _zone_dist(ob["bottom"], ob["top"])
                 if dist_pct <= 2.0:
                     ob_conf = {
                         "found":       True,
                         "type":        ob["type"],
                         "zone":        f"{ob['bottom']:.6f} - {ob['top']:.6f}",
                         "distancePct": round(dist_pct, 2),
-                        "reason":      f"Rejected near {rej_dir} OB zone",
+                        "reason":      f"Rejected near {rej_dir} OB zone {wick_label}",
                     }
                     break
         except Exception:
             pass
 
     # ── FVG confluence ─────────────────────────────────────────────────────────
-    if use_fvg and ref_price > 0:
+    if use_fvg:
         try:
             fvgs = detect_fvgs(o, h, l, c, v, tf)
             for fvg in fvgs:
                 if fvg["direction"] != rej_dir:
                     continue
-                if fvg["bottom"] <= ref_price <= fvg["top"]:
-                    dist_pct = 0.0
-                elif ref_price < fvg["bottom"]:
-                    dist_pct = (fvg["bottom"] - ref_price) / ref_price * 100
-                else:
-                    dist_pct = (ref_price - fvg["top"]) / ref_price * 100
+                dist_pct = _zone_dist(fvg["bottom"], fvg["top"])
                 if dist_pct <= 1.5:
                     touch = "untouched" if fvg.get("untouched") else "touched"
                     fvg_conf = {
@@ -6641,14 +6660,14 @@ def _bias_confluence(
                         "zone":        f"{fvg['bottom']:.6f} - {fvg['top']:.6f}",
                         "touch":       touch,
                         "distancePct": round(dist_pct, 2),
-                        "reason":      f"Rejection near {rej_dir} FVG",
+                        "reason":      f"Rejection near {rej_dir} FVG {wick_label}",
                     }
                     break
         except Exception:
             pass
 
     # ── Fib confluence ─────────────────────────────────────────────────────────
-    if use_fib and ref_price > 0:
+    if use_fib:
         try:
             prior_h = h[prior_start:sig_idx]
             prior_l = l[prior_start:sig_idx]
@@ -6658,20 +6677,18 @@ def _bias_confluence(
                 fib_range = fib_high - fib_low
                 if fib_range > 0:
                     for lvl in (0.786, 0.705, 0.618, 0.5):
-                        # Bearish: prior move was up → rejection near premium (upper fib levels)
-                        # Bullish: prior move was down → rejection near discount (same levels from top)
                         if rej_dir == "bearish":
                             fib_price = fib_low + fib_range * lvl
                         else:
                             fib_price = fib_high - fib_range * lvl
-                        dist_pct = abs(ref_price - fib_price) / ref_price * 100
+                        dist_pct = _level_dist(fib_price)
                         if dist_pct <= 1.0:
                             fib_conf = {
                                 "found":       True,
                                 "level":       str(lvl),
                                 "price":       round(fib_price, 8),
                                 "distancePct": round(dist_pct, 2),
-                                "reason":      f"Rejection near Fib {lvl}",
+                                "reason":      f"Rejection near Fib {lvl} {wick_label}",
                             }
                             break
         except Exception:
@@ -6772,10 +6789,40 @@ def api_bias_scan():
     results = []
     fetch_limit = prior_move_n + signal_search_n + 30
 
+    diagnostics: dict = {
+        "symbolsRequested":         len(symbols),
+        "symbolsScanned":           0,
+        "setupsFoundBeforeFilters": 0,
+        "setupsReturned":           0,
+        "rejected": {
+            "notEnoughCandles":  0,
+            "noPriorMove":       0,
+            "biasFilterMismatch": 0,
+            "volumeFilter":      0,
+            "noRejectionCandle": 0,
+            "notConfirmed":      0,
+            "confluenceRequired": 0,
+            "minimumGrade":      0,
+            "errors":            0,
+        },
+        "settingsUsed": {
+            "timeframe":      tf,
+            "mode":           bias_mode,
+            "biasStrength":   bias_strength,
+            "detectionMode":  detection_mode,
+            "confluenceMode": confluence_mode,
+            "minimumGrade":   minimum_grade,
+            "volumeFilter":   volume_filter_mode,
+            "scanMode":       scan_mode,
+            "pairsPerCycle":  pairs_per_cycle,
+        },
+    }
+
     for sym in symbols:
         try:
             kl = get_klines_exchange(sym, tf, fetch_limit, market, exchange)
             if not kl or len(kl) < prior_move_n + signal_search_n + 2:
+                diagnostics["rejected"]["notEnoughCandles"] += 1
                 continue
 
             # Closed candles only — strip the still-running last candle
@@ -6791,7 +6838,16 @@ def api_bias_scan():
             vol_lb  = min(20, n)
             avg_vol = sum(v[n - vol_lb:n]) / max(vol_lb, 1) if vol_lb > 0 else 0
 
+            diagnostics["symbolsScanned"] += 1
             best: dict | None = None
+
+            # Per-symbol rejection trackers for diagnostics
+            _d_had_prior      = False
+            _d_had_rej        = False
+            _d_passed_confirm = False
+            _d_bias_miss      = False
+            _d_vol_miss       = False
+            _d_conf_miss      = False
 
             for sig_offset in range(signal_search_n):
                 sig_idx = n - 1 - sig_offset
@@ -6805,16 +6861,20 @@ def api_bias_scan():
                 if not prior_dir or prior_result["checksPassed"] < min_prior_checks:
                     continue
 
+                _d_had_prior = True
                 rej_dir = "bearish" if prior_dir == "up" else "bullish"
 
                 if bias_filter == "bullish" and rej_dir != "bullish":
+                    _d_bias_miss = True
                     continue
                 if bias_filter == "bearish" and rej_dir != "bearish":
+                    _d_bias_miss = True
                     continue
 
                 sig_vol   = v[sig_idx]
                 vol_spike = avg_vol > 0 and sig_vol >= avg_vol * vol_multiplier
                 if use_volume_filter and not vol_spike:
+                    _d_vol_miss = True
                     continue
 
                 rej = _check_rejection_candle(
@@ -6824,6 +6884,7 @@ def api_bias_scan():
                 if rej is None:
                     continue
 
+                _d_had_rej = True
                 # Fix #6: confirmed mode searches ALL later closed candles
                 confirmation_status = "early_unconfirmed"
                 if detection_mode == "confirmed":
@@ -6838,6 +6899,8 @@ def api_bias_scan():
                     if not confirmed:
                         continue
                     confirmation_status = "confirmed"
+
+                _d_passed_confirm = True
 
                 if rej_dir == "bearish":
                     invalidation_level = round(rej["high"], 8)
@@ -6880,6 +6943,7 @@ def api_bias_scan():
 
                 # Required mode: skip if at least one confluence is enabled but none found
                 if confluence_mode == "required" and enabled_conf_count > 0 and found_conf_count == 0:
+                    _d_conf_miss = True
                     continue
 
                 # ── Phase 3+4: score with confluence bonuses ──────────────────
@@ -7040,13 +7104,31 @@ def api_bias_scan():
 
             if best is not None:
                 results.append(best)
+            else:
+                # Attribute primary rejection reason (priority order)
+                if not _d_had_prior:
+                    diagnostics["rejected"]["noPriorMove"] += 1
+                elif _d_bias_miss:
+                    diagnostics["rejected"]["biasFilterMismatch"] += 1
+                elif _d_vol_miss:
+                    diagnostics["rejected"]["volumeFilter"] += 1
+                elif not _d_had_rej:
+                    diagnostics["rejected"]["noRejectionCandle"] += 1
+                elif not _d_passed_confirm:
+                    diagnostics["rejected"]["notConfirmed"] += 1
+                elif _d_conf_miss:
+                    diagnostics["rejected"]["confluenceRequired"] += 1
 
         except Exception as e:
             print(f"[DEBUG] bias_scan {sym} error: {e}")
+            diagnostics["rejected"]["errors"] += 1
             continue
 
     # Phase 3: apply minimum grade filter, then sort by best setup first
+    diagnostics["setupsFoundBeforeFilters"] = len(results)
+    _before_grade = len(results)
     results = [r for r in results if _grade_passes_filter(r.get("grade", "D"), minimum_grade)]
+    diagnostics["rejected"]["minimumGrade"] = _before_grade - len(results)
     _go = {"A+": 0, "A": 1, "B": 2, "C": 3, "D": 4}
     results.sort(key=lambda x: (
         -x.get("score", 0),
@@ -7056,6 +7138,7 @@ def api_bias_scan():
         -(x.get("rejectionUpperWickPct", 0) if x.get("priorMoveDirection") == "up"
           else x.get("rejectionLowerWickPct", 0)),
     ))
+    diagnostics["setupsReturned"] = len(results)
     if _tok_uid:
         try: consume_tokens(_tok_uid, len(symbols))
         except Exception as _te: print(f"[Tokens] bias: {_te}")
@@ -7065,6 +7148,7 @@ def api_bias_scan():
         "scanMode":       scan_mode,
         "nextBiasIndex":  BIAS_SCAN_CURSOR.get(cursor_key, 0),
         "marketCoverage": market_coverage,
+        "diagnostics":    diagnostics,
     })
 
 
