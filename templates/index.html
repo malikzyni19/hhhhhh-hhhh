@@ -3146,6 +3146,173 @@ function setBiasMode(mode){
 }
 
 // ── Bias Scan ──
+// ── #5 Bias tab — Phase 5 card renderer ──
+function renderBiasCard(x, i, scanTime) {
+  const dir = (x.biasDirection || x.direction || x.bias || '').toLowerCase();
+  const isBull = dir === 'bullish';
+  const cardClass = isBull ? 'bull-card' : 'bear-card';
+  const dirArrow = isBull ? '▲' : '▼';
+  const dirColor = isBull ? '#4ade80' : '#f87171';
+  const setupLabel = x.setupType || (isBull ? 'Bullish Bias Shift' : 'Bearish Bias Shift');
+  const tf = x.timeframe || '?';
+  const score = x.score || 0;
+  const grade = x.grade || '';
+  const gradeLabel = x.gradeLabel || '';
+  const conf = x.confidence || 'Low';
+  const confClass = conf === 'Strong' ? 'bull' : conf === 'Moderate' ? 'warn' : 'neutral';
+  const confStatus = x.confirmationStatus || '';
+  const confStatusBadge = confStatus === 'confirmed'
+    ? `<span class="badge neutral" style="font-size:9px;background:rgba(34,197,94,.12);color:#4ade80;border-color:rgba(34,197,94,.3)">✓ Confirmed</span>`
+    : `<span class="badge neutral" style="font-size:9px;opacity:.65">Early</span>`;
+  const confFound = x.confluencesFound || [];
+  const confChips = confFound.map(cf =>
+    `<span class="badge neutral" style="font-size:9px;letter-spacing:.5px">${cf} ✓</span>`
+  ).join('');
+  const fmtP = p => {
+    if (p == null) return '—';
+    const n = +p;
+    return n < 1 ? n.toFixed(6) : n < 100 ? n.toFixed(4) : n.toFixed(2);
+  };
+  const priorDir = x.priorMoveDirection || '';
+  const priorN = x.priorMoveCandles || '';
+  let patternText = '';
+  if (priorDir && priorN) {
+    const priorLabel = priorDir === 'up' ? 'bullish' : 'bearish';
+    const rejLabel = isBull ? 'bullish' : 'bearish';
+    patternText = `${priorN}-candle ${priorLabel} drive → ${rejLabel} rejection candle`;
+  } else {
+    patternText = x.pattern || '';
+  }
+  const reasonChain = Array.isArray(x.reasonChain) && x.reasonChain.length
+    ? x.reasonChain
+    : (x.gates ? x.gates.split(' · ') : []);
+  const reasonHtml = reasonChain.length
+    ? reasonChain.map(r => `<div class="result-detail" style="line-height:1.7;padding:1px 0">✓ ${r}</div>`).join('')
+    : '';
+  const invText = x.invalidationText
+    || (isBull ? `close below $${fmtP(x.invalidationLevel)}` : `close above $${fmtP(x.invalidationLevel)}`);
+  const confTf = x.suggestedConfirmationTf || 'lower TF';
+  let confTfText;
+  if (confStatus === 'confirmed') {
+    confTfText = 'Confirmed by a later closed candle';
+  } else {
+    confTfText = `Watch ${confTf} for ${isBull ? 'CHOCH up' : 'CHOCH down'}`;
+  }
+  const confStatusNote = confStatus === 'early_unconfirmed'
+    ? `<div class="result-detail" style="opacity:.6;font-size:10px;margin-top:3px">Early setup — wait for lower-TF confirmation</div>`
+    : '';
+  let conflHtml = '';
+  if (x.obConf || x.fvgConf || x.fibConf) {
+    const rows = [];
+    if (x.obConf) {
+      let s = `<span style="color:#4ade80;font-weight:700">OB ✓</span> ${x.obConf.reason || ''}`;
+      if (x.obConf.zone) s += ` · Zone: ${x.obConf.zone}`;
+      if (x.obConf.distancePct != null) s += ` · ${x.obConf.distancePct}% away`;
+      rows.push(s);
+    }
+    if (x.fvgConf) {
+      let s = `<span style="color:#4ade80;font-weight:700">FVG ✓</span> ${x.fvgConf.reason || ''}`;
+      if (x.fvgConf.zone) s += ` · Zone: ${x.fvgConf.zone}`;
+      if (x.fvgConf.touch) s += ` [${x.fvgConf.touch}]`;
+      if (x.fvgConf.distancePct != null) s += ` · ${x.fvgConf.distancePct}% away`;
+      rows.push(s);
+    }
+    if (x.fibConf) {
+      let s = `<span style="color:#fbbf24;font-weight:700">Fib ✓</span> ${x.fibConf.reason || ''}`;
+      if (x.fibConf.level) s += ` · Level: ${x.fibConf.level}`;
+      if (x.fibConf.price) s += ` · $${fmtP(x.fibConf.price)}`;
+      if (x.fibConf.distancePct != null) s += ` · ${x.fibConf.distancePct}% away`;
+      rows.push(s);
+    }
+    conflHtml = `<div style="margin-top:8px;padding:8px 10px;background:rgba(34,211,238,.04);border:1px solid rgba(34,211,238,.12);border-radius:8px">
+      <div style="font-size:9px;font-weight:700;letter-spacing:.8px;color:#64748b;margin-bottom:5px">CONFLUENCE</div>
+      ${rows.map(r => `<div class="result-detail" style="margin-bottom:3px">${r}</div>`).join('')}
+    </div>`;
+  }
+  const bd = Array.isArray(x.scoreBreakdown) && x.scoreBreakdown.length ? x.scoreBreakdown : [];
+  const bdHtml = bd.length
+    ? `<details style="margin-top:8px"><summary style="font-size:9px;font-weight:700;letter-spacing:.8px;color:#475569;cursor:pointer;list-style:none;user-select:none">SCORE BREAKDOWN ▾</summary>
+        <div style="margin-top:4px;padding:6px 8px;background:rgba(0,0,0,.2);border-radius:6px">
+          ${bd.map(b => `<div class="result-detail" style="opacity:.65;font-size:10px;padding:1px 0">${b}</div>`).join('')}
+        </div>
+      </details>`
+    : '';
+  const starred = isStarred(x.symbol);
+  const symSafe = x.symbol.replace(/'/g, "\\'");
+  const ofId = 'bias-of-' + x.symbol.replace(/[^a-zA-Z0-9]/g, '_') + '_' + i;
+
+  return `<div class="result-card bias-card ${cardClass}" style="animation-delay:${i*40}ms" onclick="this.classList.toggle('expanded')">
+    <div class="result-header" style="align-items:flex-start">
+      <div style="flex:1;min-width:0">
+        <div class="symbol" style="font-size:13px;white-space:normal;line-height:1.3">
+          ${coinIcon(x.symbol)}${displaySymbol(x.symbol)}<span style="color:var(--text-muted);font-weight:400"> — ${tf}</span> <span style="color:${dirColor};font-weight:700">${setupLabel}</span>
+          <a href="https://www.tradingview.com/chart/?symbol=BINANCE:${x.symbol}.P" target="${tvTarget()}" class="tv-link" rel="noopener" onclick="event.stopPropagation()">📊</a>
+          <span class="expand-icon">▼</span>
+        </div>
+        <div class="badges" style="margin-top:5px;margin-bottom:0">
+          <span class="badge ${isBull ? 'bull' : 'bear'}" style="font-size:9px">${dirArrow} ${isBull ? 'Bullish' : 'Bearish'}</span>
+          ${grade ? `<span class="badge neutral" style="font-size:9px;font-weight:800;letter-spacing:.4px">${grade}</span>` : ''}
+          <span class="badge ${confClass}" style="font-size:9px">${conf}</span>
+          ${confStatusBadge}
+          ${confChips}
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;margin-left:8px">
+        ${renderScoreBadge(score, conf)}
+        <span class="star-btn ${starred ? 'starred' : ''}" onclick="event.stopPropagation();toggleWatchlistStar(this,'${symSafe}')">${starred ? '★' : '☆'}</span>
+      </div>
+    </div>
+
+    <div class="result-summary" style="margin-top:5px">
+      ${patternText || (isBull ? 'Bullish Bias Shift' : 'Bearish Bias Shift')} · $${fmtP(x.price)}${x.volSpike ? ' · 🔥 Vol' : ''}
+    </div>
+
+    <div class="result-details" style="padding-top:10px">
+      ${patternText ? `<div style="margin-bottom:10px">
+        <div style="font-size:9px;font-weight:700;letter-spacing:.8px;color:#64748b;margin-bottom:3px">PATTERN</div>
+        <div class="result-detail">${patternText}</div>
+      </div>` : ''}
+
+      ${reasonHtml ? `<div style="margin-bottom:10px;padding:8px 10px;background:rgba(0,0,0,.18);border-radius:8px;border:1px solid rgba(71,85,105,.2)">
+        <div style="font-size:9px;font-weight:700;letter-spacing:.8px;color:#64748b;margin-bottom:4px">REASON</div>
+        ${reasonHtml}
+      </div>` : ''}
+
+      <div style="margin-bottom:10px;display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        <div style="padding:8px 10px;background:rgba(0,0,0,.18);border-radius:8px;border:1px solid rgba(71,85,105,.2)">
+          <div style="font-size:9px;font-weight:700;letter-spacing:.8px;color:#64748b;margin-bottom:5px">LEVELS</div>
+          <div class="result-detail" style="margin-bottom:2px">High: $${fmtP(x.rejectionHigh)}</div>
+          <div class="result-detail" style="margin-bottom:2px">Low: $${fmtP(x.rejectionLow)}</div>
+          <div class="result-detail" style="margin-bottom:4px">Close: $${fmtP(x.rejectionClose)}</div>
+          <div class="result-detail" style="color:${dirColor};font-weight:600">⚠ ${invText}</div>
+        </div>
+        <div style="padding:8px 10px;background:rgba(0,0,0,.18);border-radius:8px;border:1px solid rgba(71,85,105,.2)">
+          <div style="font-size:9px;font-weight:700;letter-spacing:.8px;color:#64748b;margin-bottom:5px">CONFIRMATION</div>
+          <div class="result-detail">${confTfText}</div>
+          ${confStatusNote}
+          ${gradeLabel ? `<div class="result-detail" style="opacity:.45;font-size:10px;margin-top:5px">${gradeLabel}</div>` : ''}
+        </div>
+      </div>
+
+      ${conflHtml}
+      ${bdHtml}
+
+      <div class="result-detail" style="margin-top:8px;opacity:.4;font-size:10px">
+        ↑ ${x.rejectionUpperWickPct || x.upperWickPct || 0}% wick · ↓ ${x.rejectionLowerWickPct || x.lowerWickPct || 0}% wick · ${x.rejectionBodyPct || x.bodyPct || 0}% body${x.signalCandleOffset != null ? ` · signal -${x.signalCandleOffset}c` : ''}
+      </div>
+
+      <div style="margin-top:8px">
+        <button class="zone-btn" style="width:100%;padding:6px;font-size:10px;letter-spacing:.5px;border-color:#22d3ee30;color:#22d3ee"
+          onclick="event.stopPropagation();_toggleBiasOf(this,'${symSafe}','${tf}','${ofId}')">
+          📊 LIVE ORDER FLOW
+        </button>
+        <div id="${ofId}" style="margin-top:6px;display:none"></div>
+      </div>
+      <div class="scan-time">Scanned: ${scanTime}</div>
+    </div>
+  </div>`;
+}
+
 async function scanBias(){
   showScanPopup('SCANNING BIAS SHIFT');
   const st = $('biasStatus');
@@ -3233,51 +3400,7 @@ async function scanBias(){
     if(st) st.textContent = `${data.length} signal${data.length!==1?'s':''} · ${scanTime}${covText}`;
     if(!res_div) return;
     if(!data.length){ res_div.innerHTML = '<div class="empty">No bias signals found</div>'; return; }
-    res_div.innerHTML = data.map((x,i) => {
-      const bClass = x.bias === 'bullish' ? 'bull' : 'bear';
-      const bLabel = x.bias === 'bullish' ? '▲ BULL' : '▼ BEAR';
-      const confClass = x.confidence === 'Strong' ? 'bull' : x.confidence === 'Moderate' ? 'warn' : 'neutral';
-      const sigLabel = x.signal.replace(/_/g,' ');
-      const obHtml  = x.obConf  ? `<div class="result-detail" style="margin-top:4px;opacity:.8">${x.obConf.reason} · ${x.obConf.zone} · ${x.obConf.distancePct}% away</div>` : '';
-      const fvgHtml = x.fvgConf ? `<div class="result-detail" style="margin-top:4px;opacity:.8">${x.fvgConf.reason} · ${x.fvgConf.zone} [${x.fvgConf.touch}]</div>` : '';
-      const fibHtml = x.fibConf  ? `<div class="result-detail" style="margin-top:4px;opacity:.8">${x.fibConf.reason} · $${x.fibConf.price} · ${x.fibConf.distancePct}% away</div>` : '';
-      const confChips = x.confluencesFound && x.confluencesFound.length ? x.confluencesFound.map(cf => `<span class="badge neutral" style="font-size:9px;letter-spacing:.5px">${cf} ✓</span>`).join('') : '';
-      const starred = isStarred(x.symbol);
-      const tf = x.timeframe || '1d';
-      const ofId = 'bias-of-' + x.symbol.replace(/\./g,'_') + '_' + i;
-      return `<div class="result-card" style="animation-delay:${i*40}ms" onclick="this.classList.toggle('expanded')">
-        <div class="result-header">
-          <span class="symbol">${coinIcon(x.symbol)}${displaySymbol(x.symbol)}<a href="https://www.tradingview.com/chart/?symbol=BINANCE:${x.symbol}.P" target="${tvTarget()}" class="tv-link" rel="noopener" onclick="event.stopPropagation()">📊</a><span class="expand-icon">▼</span></span>
-          <span style="display:flex;align-items:center;gap:4px">
-            ${renderScoreBadge(x.score, x.confidence)}
-            <span class="price-tag">${x.timeframe} · $${x.price}${renderSparkline(x.sparkline, x.sparklineMarkers)}</span>
-            <span class="star-btn ${starred?'starred':''}" onclick="event.stopPropagation();toggleWatchlistStar(this,'${x.symbol}')">${starred?'★':'☆'}</span>
-          </span>
-        </div>
-        <div class="badges">
-          <span class="badge ${bClass}">${bLabel}</span>
-          <span class="badge ${confClass}">${x.confidence.toUpperCase()}</span>
-          <span class="badge neutral">${sigLabel}</span>
-          ${x.grade ? `<span class="badge neutral" style="font-size:9px;letter-spacing:.5px">${x.grade}</span>` : ''}
-          ${confChips}
-        </div>
-        <div class="result-details">
-          <div class="result-detail">↑Wick ${x.upperWickPct}% · ↓Wick ${x.lowerWickPct}% · Body ${x.bodyPct}%${x.volSpike ? ' · 🔥 Vol' : ''}</div>
-          <div class="result-detail" style="opacity:.7;margin-top:3px">${x.gates}</div>
-          ${x.detail ? `<div class="result-detail" style="margin-top:3px;opacity:.85">${x.detail}</div>` : ''}
-          ${x.gradeLabel ? `<div class="result-detail" style="margin-top:3px;opacity:.65;font-size:10px">${x.gradeLabel}</div>` : ''}
-          ${obHtml}${fvgHtml}${fibHtml}
-          <div class="scan-time">Scanned: ${scanTime}</div>
-          <div style="margin-top:8px">
-            <button class="zone-btn" style="width:100%;padding:6px;font-size:10px;letter-spacing:.5px;border-color:#22d3ee30;color:#22d3ee"
-              onclick="event.stopPropagation();_toggleBiasOf(this,'${x.symbol}','${tf}','${ofId}')">
-              📊 LIVE ORDER FLOW
-            </button>
-            <div id="${ofId}" style="margin-top:6px;display:none"></div>
-          </div>
-        </div>
-      </div>`;
-    }).join('');
+    res_div.innerHTML = data.map((x, i) => renderBiasCard(x, i, scanTime)).join('');
   }catch(e){
     if(st) st.textContent = 'Scan failed: ' + e.message;
     if(res_div) res_div.innerHTML = '<div class="empty">Error — check console</div>';
