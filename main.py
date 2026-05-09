@@ -6789,10 +6789,40 @@ def api_bias_scan():
     results = []
     fetch_limit = prior_move_n + signal_search_n + 30
 
+    diagnostics: dict = {
+        "symbolsRequested":         len(symbols),
+        "symbolsScanned":           0,
+        "setupsFoundBeforeFilters": 0,
+        "setupsReturned":           0,
+        "rejected": {
+            "notEnoughCandles":  0,
+            "noPriorMove":       0,
+            "biasFilterMismatch": 0,
+            "volumeFilter":      0,
+            "noRejectionCandle": 0,
+            "notConfirmed":      0,
+            "confluenceRequired": 0,
+            "minimumGrade":      0,
+            "errors":            0,
+        },
+        "settingsUsed": {
+            "timeframe":      tf,
+            "mode":           bias_mode,
+            "biasStrength":   bias_strength,
+            "detectionMode":  detection_mode,
+            "confluenceMode": confluence_mode,
+            "minimumGrade":   minimum_grade,
+            "volumeFilter":   volume_filter_mode,
+            "scanMode":       scan_mode,
+            "pairsPerCycle":  pairs_per_cycle,
+        },
+    }
+
     for sym in symbols:
         try:
             kl = get_klines_exchange(sym, tf, fetch_limit, market, exchange)
             if not kl or len(kl) < prior_move_n + signal_search_n + 2:
+                diagnostics["rejected"]["notEnoughCandles"] += 1
                 continue
 
             # Closed candles only — strip the still-running last candle
@@ -6808,7 +6838,16 @@ def api_bias_scan():
             vol_lb  = min(20, n)
             avg_vol = sum(v[n - vol_lb:n]) / max(vol_lb, 1) if vol_lb > 0 else 0
 
+            diagnostics["symbolsScanned"] += 1
             best: dict | None = None
+
+            # Per-symbol rejection trackers for diagnostics
+            _d_had_prior      = False
+            _d_had_rej        = False
+            _d_passed_confirm = False
+            _d_bias_miss      = False
+            _d_vol_miss       = False
+            _d_conf_miss      = False
 
             for sig_offset in range(signal_search_n):
                 sig_idx = n - 1 - sig_offset
@@ -6822,16 +6861,20 @@ def api_bias_scan():
                 if not prior_dir or prior_result["checksPassed"] < min_prior_checks:
                     continue
 
+                _d_had_prior = True
                 rej_dir = "bearish" if prior_dir == "up" else "bullish"
 
                 if bias_filter == "bullish" and rej_dir != "bullish":
+                    _d_bias_miss = True
                     continue
                 if bias_filter == "bearish" and rej_dir != "bearish":
+                    _d_bias_miss = True
                     continue
 
                 sig_vol   = v[sig_idx]
                 vol_spike = avg_vol > 0 and sig_vol >= avg_vol * vol_multiplier
                 if use_volume_filter and not vol_spike:
+                    _d_vol_miss = True
                     continue
 
                 rej = _check_rejection_candle(
@@ -6841,6 +6884,7 @@ def api_bias_scan():
                 if rej is None:
                     continue
 
+                _d_had_rej = True
                 # Fix #6: confirmed mode searches ALL later closed candles
                 confirmation_status = "early_unconfirmed"
                 if detection_mode == "confirmed":
@@ -6855,6 +6899,8 @@ def api_bias_scan():
                     if not confirmed:
                         continue
                     confirmation_status = "confirmed"
+
+                _d_passed_confirm = True
 
                 if rej_dir == "bearish":
                     invalidation_level = round(rej["high"], 8)
@@ -6897,6 +6943,7 @@ def api_bias_scan():
 
                 # Required mode: skip if at least one confluence is enabled but none found
                 if confluence_mode == "required" and enabled_conf_count > 0 and found_conf_count == 0:
+                    _d_conf_miss = True
                     continue
 
                 # ── Phase 3+4: score with confluence bonuses ──────────────────
@@ -7057,13 +7104,31 @@ def api_bias_scan():
 
             if best is not None:
                 results.append(best)
+            else:
+                # Attribute primary rejection reason (priority order)
+                if not _d_had_prior:
+                    diagnostics["rejected"]["noPriorMove"] += 1
+                elif _d_bias_miss:
+                    diagnostics["rejected"]["biasFilterMismatch"] += 1
+                elif _d_vol_miss:
+                    diagnostics["rejected"]["volumeFilter"] += 1
+                elif not _d_had_rej:
+                    diagnostics["rejected"]["noRejectionCandle"] += 1
+                elif not _d_passed_confirm:
+                    diagnostics["rejected"]["notConfirmed"] += 1
+                elif _d_conf_miss:
+                    diagnostics["rejected"]["confluenceRequired"] += 1
 
         except Exception as e:
             print(f"[DEBUG] bias_scan {sym} error: {e}")
+            diagnostics["rejected"]["errors"] += 1
             continue
 
     # Phase 3: apply minimum grade filter, then sort by best setup first
+    diagnostics["setupsFoundBeforeFilters"] = len(results)
+    _before_grade = len(results)
     results = [r for r in results if _grade_passes_filter(r.get("grade", "D"), minimum_grade)]
+    diagnostics["rejected"]["minimumGrade"] = _before_grade - len(results)
     _go = {"A+": 0, "A": 1, "B": 2, "C": 3, "D": 4}
     results.sort(key=lambda x: (
         -x.get("score", 0),
@@ -7073,6 +7138,7 @@ def api_bias_scan():
         -(x.get("rejectionUpperWickPct", 0) if x.get("priorMoveDirection") == "up"
           else x.get("rejectionLowerWickPct", 0)),
     ))
+    diagnostics["setupsReturned"] = len(results)
     if _tok_uid:
         try: consume_tokens(_tok_uid, len(symbols))
         except Exception as _te: print(f"[Tokens] bias: {_te}")
@@ -7082,6 +7148,7 @@ def api_bias_scan():
         "scanMode":       scan_mode,
         "nextBiasIndex":  BIAS_SCAN_CURSOR.get(cursor_key, 0),
         "marketCoverage": market_coverage,
+        "diagnostics":    diagnostics,
     })
 
 
