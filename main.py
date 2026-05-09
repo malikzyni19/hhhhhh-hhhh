@@ -6587,52 +6587,71 @@ def _bias_confluence(
 ) -> dict:
     """
     Check OB, FVG, and Fib confluence for a Bias Shift candidate.
-    All detection runs on the closed-candle arrays already available in the loop.
-    Returns {"ob": ob_conf|None, "fvg": fvg_conf|None, "fib": fib_conf|None}.
+    Uses direction-aware reference prices so wick-area confluence is detected:
+      bearish → [rej.high, rej.close]  (rejection likely at wick high)
+      bullish → [rej.low,  rej.close]  (rejection likely at wick low)
+    Distance = minimum distance from ANY reference price to the zone/level.
     """
-    ref_price = rej["close"]
+    if rej_dir == "bearish":
+        ref_prices = [p for p in (rej["high"], rej["close"]) if p > 0]
+        wick_label = "around rejection high"
+    else:
+        ref_prices = [p for p in (rej["low"], rej["close"]) if p > 0]
+        wick_label = "around rejection low"
+
+    if not ref_prices:
+        return {"ob": None, "fvg": None, "fib": None}
+
+    def _zone_dist(bot: float, top: float) -> float:
+        """Minimum % distance from any ref price to zone. 0.0 if inside."""
+        best = float("inf")
+        for p in ref_prices:
+            if bot <= p <= top:
+                return 0.0
+            d = (bot - p) / p * 100 if p < bot else (p - top) / p * 100
+            if d < best:
+                best = d
+        return best
+
+    def _level_dist(level: float) -> float:
+        """Minimum % distance from any ref price to a single level."""
+        best = float("inf")
+        for p in ref_prices:
+            d = abs(p - level) / p * 100
+            if d < best:
+                best = d
+        return best
+
     ob_conf = fvg_conf = fib_conf = None
 
     # ── OB confluence ──────────────────────────────────────────────────────────
-    if use_ob and ref_price > 0:
+    if use_ob:
         try:
             obs = detect_obs(o, h, l, c, v, 5, 20, max_ob=8)
             for ob in obs:
                 if ob["type"] != rej_dir:
                     continue
-                if ref_price <= 0:
-                    continue
-                if ob["bottom"] <= ref_price <= ob["top"]:
-                    dist_pct = 0.0
-                elif ref_price < ob["bottom"]:
-                    dist_pct = (ob["bottom"] - ref_price) / ref_price * 100
-                else:
-                    dist_pct = (ref_price - ob["top"]) / ref_price * 100
+                dist_pct = _zone_dist(ob["bottom"], ob["top"])
                 if dist_pct <= 2.0:
                     ob_conf = {
                         "found":       True,
                         "type":        ob["type"],
                         "zone":        f"{ob['bottom']:.6f} - {ob['top']:.6f}",
                         "distancePct": round(dist_pct, 2),
-                        "reason":      f"Rejected near {rej_dir} OB zone",
+                        "reason":      f"Rejected near {rej_dir} OB zone {wick_label}",
                     }
                     break
         except Exception:
             pass
 
     # ── FVG confluence ─────────────────────────────────────────────────────────
-    if use_fvg and ref_price > 0:
+    if use_fvg:
         try:
             fvgs = detect_fvgs(o, h, l, c, v, tf)
             for fvg in fvgs:
                 if fvg["direction"] != rej_dir:
                     continue
-                if fvg["bottom"] <= ref_price <= fvg["top"]:
-                    dist_pct = 0.0
-                elif ref_price < fvg["bottom"]:
-                    dist_pct = (fvg["bottom"] - ref_price) / ref_price * 100
-                else:
-                    dist_pct = (ref_price - fvg["top"]) / ref_price * 100
+                dist_pct = _zone_dist(fvg["bottom"], fvg["top"])
                 if dist_pct <= 1.5:
                     touch = "untouched" if fvg.get("untouched") else "touched"
                     fvg_conf = {
@@ -6641,14 +6660,14 @@ def _bias_confluence(
                         "zone":        f"{fvg['bottom']:.6f} - {fvg['top']:.6f}",
                         "touch":       touch,
                         "distancePct": round(dist_pct, 2),
-                        "reason":      f"Rejection near {rej_dir} FVG",
+                        "reason":      f"Rejection near {rej_dir} FVG {wick_label}",
                     }
                     break
         except Exception:
             pass
 
     # ── Fib confluence ─────────────────────────────────────────────────────────
-    if use_fib and ref_price > 0:
+    if use_fib:
         try:
             prior_h = h[prior_start:sig_idx]
             prior_l = l[prior_start:sig_idx]
@@ -6658,20 +6677,18 @@ def _bias_confluence(
                 fib_range = fib_high - fib_low
                 if fib_range > 0:
                     for lvl in (0.786, 0.705, 0.618, 0.5):
-                        # Bearish: prior move was up → rejection near premium (upper fib levels)
-                        # Bullish: prior move was down → rejection near discount (same levels from top)
                         if rej_dir == "bearish":
                             fib_price = fib_low + fib_range * lvl
                         else:
                             fib_price = fib_high - fib_range * lvl
-                        dist_pct = abs(ref_price - fib_price) / ref_price * 100
+                        dist_pct = _level_dist(fib_price)
                         if dist_pct <= 1.0:
                             fib_conf = {
                                 "found":       True,
                                 "level":       str(lvl),
                                 "price":       round(fib_price, 8),
                                 "distancePct": round(dist_pct, 2),
-                                "reason":      f"Rejection near Fib {lvl}",
+                                "reason":      f"Rejection near Fib {lvl} {wick_label}",
                             }
                             break
         except Exception:
