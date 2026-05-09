@@ -3231,7 +3231,7 @@ function renderBiasCard(x, i, scanTime) {
   }
   const bd = Array.isArray(x.scoreBreakdown) && x.scoreBreakdown.length ? x.scoreBreakdown : [];
   const bdHtml = bd.length
-    ? `<details style="margin-top:8px"><summary style="font-size:9px;font-weight:700;letter-spacing:.8px;color:#475569;cursor:pointer;list-style:none;user-select:none">SCORE BREAKDOWN ▾</summary>
+    ? `<details onclick="event.stopPropagation()" style="margin-top:8px"><summary style="font-size:9px;font-weight:700;letter-spacing:.8px;color:#475569;cursor:pointer;list-style:none;user-select:none">SCORE BREAKDOWN ▾</summary>
         <div style="margin-top:4px;padding:6px 8px;background:rgba(0,0,0,.2);border-radius:6px">
           ${bd.map(b => `<div class="result-detail" style="opacity:.65;font-size:10px;padding:1px 0">${b}</div>`).join('')}
         </div>
