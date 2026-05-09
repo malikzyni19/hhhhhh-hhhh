@@ -1834,6 +1834,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 
       <button class="btn-primary" onclick="scanBias()" style="margin-top:4px">▶ SCAN BIAS SHIFT</button>
       <div id="biasStatus" class="status-text" style="margin-top:8px"></div>
+      <div id="biasDiag" style="margin-top:4px"></div>
       <div id="biasResults" class="results" style="margin-top:12px"><div class="empty">Configure settings and click Scan Bias Shift</div></div>
     </div>
   </div>
@@ -3185,6 +3186,47 @@ function setBiasMode(mode){
 }
 
 // ── Bias Scan ──
+// ── #7 Bias tab — diagnostics panel renderer ──
+function renderBiasDiagnostics(diag) {
+  if (!diag) return '';
+  const rej = diag.rejected || {};
+  const rejRows = [
+    ['No Prior Move',         rej.noPriorMove],
+    ['No Rejection Candle',   rej.noRejectionCandle],
+    ['Not Confirmed',         rej.notConfirmed],
+    ['Confluence Required',   rej.confluenceRequired],
+    ['Volume Filter',         rej.volumeFilter],
+    ['Direction Filter',      rej.biasFilterMismatch],
+    ['Min Grade Filter',      rej.minimumGrade],
+    ['No Data / Too Short',   rej.notEnoughCandles],
+    ['Errors',                rej.errors],
+  ].filter(([, v]) => v > 0);
+
+  const rejHtml = rejRows.map(([label, count]) =>
+    `<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0">
+       <span style="color:var(--text-secondary)">${label}</span>
+       <span style="color:#f87171;font-weight:700;font-family:'JetBrains Mono',monospace">${count}</span>
+     </div>`
+  ).join('');
+
+  const s = diag.symbolsScanned || 0;
+  const req = diag.symbolsRequested || 0;
+  const before = diag.setupsFoundBeforeFilters || 0;
+  const ret = diag.setupsReturned || 0;
+  const summaryLine = `${s} of ${req} pairs scanned · ${before} setup${before !== 1 ? 's' : ''} found · ${ret} returned`;
+
+  return `<details onclick="event.stopPropagation()">
+    <summary style="font-size:9px;font-weight:700;letter-spacing:.8px;color:#475569;cursor:pointer;list-style:none;user-select:none;padding:3px 0">SCAN DIAGNOSTICS ▾</summary>
+    <div style="margin-top:5px;padding:8px 10px;background:rgba(0,0,0,.25);border:1px solid rgba(71,85,105,.2);border-radius:8px;font-size:10px">
+      <div style="color:#64748b;margin-bottom:${rejRows.length ? 6 : 0}px;font-family:'JetBrains Mono',monospace">${summaryLine}</div>
+      ${rejRows.length
+        ? `<div style="font-size:9px;font-weight:700;letter-spacing:.8px;color:#475569;margin-bottom:4px">REJECTED</div>${rejHtml}`
+        : '<div style="color:#4ade80;font-size:10px;margin-top:4px">All setups passed filters.</div>'
+      }
+    </div>
+  </details>`;
+}
+
 // ── #5 Bias tab — Phase 5 card renderer ──
 function renderBiasCard(x, i, scanTime) {
   const dir = (x.biasDirection || x.direction || x.bias || '').toLowerCase();
@@ -3398,6 +3440,8 @@ async function scanBias(){
   }
 
   showScanPopup('SCANNING BIAS SHIFT');
+  const diagEl = $('biasDiag');
+  if(diagEl) diagEl.innerHTML = '';
   const scanningMsg = scanSource === 'selected'
     ? `Scanning ${selectedPairs.size} selected pair${selectedPairs.size !== 1 ? 's' : ''}…`
     : 'Scanning Bias Shift…';
@@ -3473,11 +3517,23 @@ async function scanBias(){
         : ` · next from ${cov.nextStartIndex}`;
     }
     if(st) st.textContent = `${data.length} Bias Shift setup${data.length!==1?'s':''} found${covText}`;
+    if(diagEl) diagEl.innerHTML = renderBiasDiagnostics(resp.diagnostics);
     if(!res_div) return;
     if(!data.length){
+      const diag = resp.diagnostics;
+      const rej = (diag && diag.rejected) || {};
+      const topRej = Object.entries(rej).filter(([,v]) => v > 0).sort(([,a],[,b]) => b - a)[0];
+      const topKey = topRej ? topRej[0] : null;
       let emptyMsg = 'No Bias Shift setups found with current filters.';
-      if(payload.minimumGrade === 'A') emptyMsg += ' Try lowering Minimum Grade.';
-      else if(payload.confluenceMode === 'required') emptyMsg += ' Try switching Confluence Mode to Optional.';
+      if      (topKey === 'noPriorMove')        emptyMsg = 'No setups found. Most pairs did not have a clear prior move.';
+      else if (topKey === 'noRejectionCandle')  emptyMsg = 'No setups found. Prior moves existed, but rejection candles did not meet quality rules.';
+      else if (topKey === 'confluenceRequired') emptyMsg = 'No setups found. Required confluence filtered all setups — try Confluence Optional.';
+      else if (topKey === 'minimumGrade')       emptyMsg = 'No setups found. Minimum Grade is too strict — try lowering it.';
+      else if (topKey === 'notConfirmed')       emptyMsg = 'No setups found. Confirmed Mode is too strict — try Early mode.';
+      else if (topKey === 'volumeFilter')       emptyMsg = 'No setups found. Volume Filter (Required) rejected all setups.';
+      else if (topKey === 'notEnoughCandles')   emptyMsg = 'No setups found. Not enough historical candle data for the selected pairs.';
+      else if (payload.minimumGrade === 'A')    emptyMsg += ' Try lowering Minimum Grade.';
+      else if (payload.confluenceMode === 'required') emptyMsg += ' Try switching Confluence Mode to Optional.';
       res_div.innerHTML = `<div class="empty">${emptyMsg}</div>`;
       return;
     }
