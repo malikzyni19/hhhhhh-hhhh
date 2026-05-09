@@ -4,14 +4,294 @@
 
 {% block content %}
 
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+<style>
+/* ── Override admin font to Poppins for this page ── */
+.adm-main, .adm-main * {
+    font-family: 'Poppins', sans-serif !important;
+}
+code, .mono { font-family: 'JetBrains Mono', monospace !important; }
+
+/* ── User rows ── */
+.user-row { cursor: pointer; transition: background 0.15s; }
+.user-row:hover { background: rgba(34,211,238,0.04) !important; }
+.user-row.selected { background: rgba(34,211,238,0.07) !important; }
+
+/* ── Detail Drawer ── */
+#detailDrawer {
+    position: fixed;
+    top: 54px; right: 0; bottom: 0;
+    width: 340px;
+    background: #060f1e;
+    border-left: 1px solid #1a2e40;
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+    transform: translateX(100%);
+    transition: transform 0.35s cubic-bezier(0.4,0,0.2,1);
+    box-shadow: -8px 0 32px rgba(0,0,0,0.5);
+}
+#detailDrawer.open { transform: translateX(0); }
+
+.drawer-header {
+    padding: 20px 20px 16px;
+    border-bottom: 1px solid #1a2e40;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+}
+.drawer-close {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid #1a2e40;
+    color: #64748b;
+    width: 28px; height: 28px;
+    border-radius: 7px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px;
+    transition: all 0.15s;
+}
+.drawer-close:hover { color: #e2e8f0; background: rgba(255,255,255,0.1); }
+
+.drawer-body { flex: 1; overflow-y: auto; padding: 20px; }
+
+/* avatar */
+.drawer-avatar {
+    width: 64px; height: 64px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #0e8fa0, #1eb8c8);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 24px; font-weight: 700;
+    color: #fff;
+    margin: 0 auto 14px;
+    box-shadow: 0 0 24px rgba(30,184,200,0.35);
+    flex-shrink: 0;
+}
+
+.drawer-username {
+    text-align: center;
+    font-size: 16px; font-weight: 700;
+    color: #e2e8f0;
+    margin-bottom: 4px;
+}
+.drawer-badges {
+    display: flex; gap: 6px;
+    justify-content: center;
+    margin-bottom: 20px;
+}
+
+/* info rows */
+.info-section { margin-bottom: 20px; }
+.info-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: #334d66;
+    margin-bottom: 10px;
+}
+.info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 9px 0;
+    border-bottom: 1px solid rgba(26,46,64,0.6);
+    gap: 12px;
+}
+.info-row:last-child { border-bottom: none; }
+.info-key {
+    font-size: 11.5px;
+    color: #64748b;
+    font-weight: 500;
+    flex-shrink: 0;
+}
+.info-val {
+    font-size: 12px;
+    color: #e2e8f0;
+    font-weight: 500;
+    text-align: right;
+    word-break: break-all;
+}
+.info-val.mono { font-family: 'JetBrains Mono', monospace !important; font-size: 11px; }
+.info-val.accent { color: #22d3ee; }
+.info-val.muted  { color: #64748b; font-style: italic; }
+
+/* drawer actions */
+.drawer-actions {
+    padding: 16px 20px;
+    border-top: 1px solid #1a2e40;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex-shrink: 0;
+}
+.drawer-btn {
+    width: 100%;
+    height: 38px;
+    border-radius: 9px;
+    border: 1px solid;
+    font-family: 'Poppins', sans-serif !important;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    gap: 7px;
+    transition: all 0.18s;
+    text-decoration: none;
+}
+.drawer-btn-edit {
+    background: rgba(34,211,238,0.07);
+    border-color: rgba(34,211,238,0.25);
+    color: #22d3ee;
+}
+.drawer-btn-edit:hover { background: rgba(34,211,238,0.15); }
+.drawer-btn-del {
+    background: rgba(248,113,113,0.07);
+    border-color: rgba(248,113,113,0.25);
+    color: #f87171;
+}
+.drawer-btn-del:hover { background: rgba(248,113,113,0.15); }
+
+/* ── Confirmation Modal ── */
+#delModal {
+    position: fixed; inset: 0;
+    background: rgba(2,8,16,0.82);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    z-index: 200;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+.del-modal-box {
+    background: #060f1e;
+    border: 1px solid #1a2e40;
+    border-radius: 16px;
+    padding: 28px 28px 24px;
+    max-width: 400px; width: 100%;
+    box-shadow: 0 0 0 1px rgba(34,211,238,0.05), 0 24px 64px rgba(0,0,0,0.7);
+    position: relative;
+}
+.del-modal-icon {
+    width: 48px; height: 48px;
+    border-radius: 50%;
+    background: rgba(248,113,113,0.10);
+    border: 1px solid rgba(248,113,113,0.25);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px; color: #f87171;
+    margin: 0 auto 16px;
+}
+.del-modal-title {
+    font-size: 15px; font-weight: 700;
+    color: #e2e8f0; text-align: center;
+    margin-bottom: 6px;
+}
+.del-modal-sub {
+    font-size: 12.5px; color: #64748b;
+    text-align: center; line-height: 1.6;
+    margin-bottom: 20px;
+}
+.del-modal-sub span { color: #f87171; font-weight: 600; font-family: 'JetBrains Mono', monospace !important; }
+.del-modal-input {
+    width: 100%;
+    background: #04090f;
+    border: 1.5px solid #1a2e40;
+    border-radius: 9px;
+    padding: 10px 14px;
+    color: #e2e8f0;
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.2s;
+    margin-bottom: 16px;
+}
+.del-modal-input:focus { border-color: rgba(248,113,113,0.5); }
+.del-modal-hint {
+    font-size: 11px; color: #334d66;
+    text-align: center; margin-bottom: 20px;
+    line-height: 1.5;
+}
+.del-modal-actions { display: flex; gap: 10px; }
+.del-modal-btn {
+    flex: 1; height: 40px; border-radius: 9px;
+    font-family: 'Poppins', sans-serif !important;
+    font-size: 12.5px; font-weight: 600;
+    cursor: pointer; transition: all 0.18s;
+    border: 1px solid;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+}
+.del-btn-cancel {
+    background: rgba(255,255,255,0.04);
+    border-color: #1a2e40;
+    color: #64748b;
+}
+.del-btn-cancel:hover { color: #e2e8f0; background: rgba(255,255,255,0.08); }
+.del-btn-confirm {
+    background: linear-gradient(135deg, #b91c1c, #dc2626);
+    border-color: transparent;
+    color: #fff;
+    box-shadow: 0 4px 14px rgba(185,28,28,0.35);
+}
+.del-btn-confirm:hover:not(:disabled) { box-shadow: 0 4px 22px rgba(185,28,28,0.55); transform: translateY(-1px); }
+.del-btn-confirm:disabled { opacity: 0.38; cursor: not-allowed; transform: none; }
+
+/* spinner inside btn */
+.btn-spin {
+    width: 13px; height: 13px;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: kspin 0.65s linear infinite;
+}
+@keyframes kspin { to { transform: rotate(360deg); } }
+
+/* ── Toast ── */
+#admToast {
+    position: fixed; bottom: 24px; right: 24px;
+    background: #0a1628;
+    border: 1px solid #1a2e40;
+    border-radius: 10px;
+    padding: 11px 18px;
+    font-size: 12.5px;
+    font-weight: 500;
+    z-index: 300;
+    max-width: 300px;
+    display: none;
+    gap: 8px;
+    align-items: center;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+
+/* ── Misc ── */
+.adm-btn-cyan { font-family: 'Poppins', sans-serif !important; }
+.adm-filter-pill { font-family: 'Poppins', sans-serif !important; }
+.loading-row td { opacity: 0.4; }
+#drawerSkeleton { display: none; }
+.skeleton-line {
+    height: 12px; border-radius: 6px;
+    background: linear-gradient(90deg, #0a1628 25%, #112040 50%, #0a1628 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s infinite;
+    margin-bottom: 10px;
+}
+@keyframes shimmer { to { background-position: -200% 0; } }
+
+@media (max-width: 900px) {
+    #detailDrawer { width: 100%; top: 54px; }
+}
+</style>
+
 <!-- Header row -->
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px">
-  <div style="font-size:12px;color:var(--muted)">
-    <span style="color:var(--text);font-weight:600">{{ total_count }}</span> total users
+  <div style="font-size:12.5px;color:var(--muted)">
+    <span style="color:var(--text);font-weight:600" id="totalCountLabel">{{ total_count }}</span> total users
     {% if status_filter %}<span style="color:var(--amber)"> · filtered: {{ status_filter }}</span>{% endif %}
-    {% if role_filter %}<span style="color:var(--cyan)"> · role: {{ role_filter }}</span>{% endif %}
+    {% if role_filter   %}<span style="color:var(--cyan)"> · role: {{ role_filter }}</span>{% endif %}
   </div>
-  <a href="{{ url_for('admin.users_create') }}" class="adm-btn-cyan">+ Add New User</a>
+  <a href="{{ url_for('admin.users_create') }}" class="adm-btn-cyan">+ Add User</a>
 </div>
 
 <!-- Search + filter bar -->
@@ -19,47 +299,50 @@
   <div class="adm-card-body" style="padding:14px 18px">
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
       <input id="userSearch" type="text" placeholder="Search username…"
-             style="flex:1;min-width:180px;background:#04090f;color:var(--text);border:1px solid var(--border);border-radius:8px;padding:9px 14px;font-family:'JetBrains Mono',monospace;font-size:13px;outline:none"
+             style="flex:1;min-width:180px;background:#04090f;color:var(--text);border:1.5px solid var(--border);border-radius:9px;padding:9px 14px;font-family:'Poppins',sans-serif;font-size:13px;outline:none;transition:border-color .2s"
+             onfocus="this.style.borderColor='rgba(34,211,238,.4)'" onblur="this.style.borderColor='var(--border)'"
              oninput="filterUsers(this.value)"/>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
-        <a href="{{ url_for('admin.users') }}" class="adm-filter-pill {% if not status_filter and not role_filter %}active{% endif %}">All</a>
-        <a href="{{ url_for('admin.users', status='active') }}" class="adm-filter-pill {% if status_filter=='active' %}active{% endif %}">Active</a>
-        <a href="{{ url_for('admin.users', status='paused') }}" class="adm-filter-pill {% if status_filter=='paused' %}active{% endif %}">Paused</a>
-        <a href="{{ url_for('admin.users', role='admin') }}" class="adm-filter-pill {% if role_filter=='admin' %}active{% endif %}">Admins</a>
-        <a href="{{ url_for('admin.users', role='user') }}" class="adm-filter-pill {% if role_filter=='user' %}active{% endif %}">Users</a>
+        <a href="{{ url_for('admin.users') }}"                      class="adm-filter-pill {% if not status_filter and not role_filter %}active{% endif %}">All</a>
+        <a href="{{ url_for('admin.users', status='active') }}"     class="adm-filter-pill {% if status_filter=='active'  %}active{% endif %}">Active</a>
+        <a href="{{ url_for('admin.users', status='paused') }}"     class="adm-filter-pill {% if status_filter=='paused'  %}active{% endif %}">Paused</a>
+        <a href="{{ url_for('admin.users', role='admin') }}"        class="adm-filter-pill {% if role_filter=='admin'     %}active{% endif %}">Admins</a>
+        <a href="{{ url_for('admin.users', role='user') }}"         class="adm-filter-pill {% if role_filter=='user'      %}active{% endif %}">Users</a>
       </div>
     </div>
   </div>
 </div>
 
 <!-- Users table -->
-<div class="adm-card">
+<div class="adm-card" id="usersCard">
   <div class="adm-table-wrap">
     <table class="adm-table" id="usersTable">
       <thead>
         <tr>
-          <th>#</th>
+          <th style="width:40px">#</th>
           <th>Username</th>
+          <th>Email</th>
           <th>Role</th>
           <th>Status</th>
-          <th>Password</th>
-          <th>Created</th>
+          <th>Joined</th>
           <th>Last Login</th>
-          <th>Actions</th>
+          <th style="width:110px">Actions</th>
         </tr>
       </thead>
-      <tbody>
+      <tbody id="usersBody">
         {% if users %}
           {% for u in users %}
-          <tr class="user-row" data-username="{{ u.username }}">
+          <tr class="user-row" id="row-{{ u.id }}" data-username="{{ u.username }}" data-id="{{ u.id }}"
+              onclick="openDrawer({{ u.id }}, '{{ u.username }}')">
             <td style="color:var(--muted);font-size:11px">{{ loop.index }}</td>
             <td>
-              <span style="font-family:'JetBrains Mono',monospace;color:var(--cyan);font-weight:600">
-                {{ u.username }}
-              </span>
+              <span class="mono" style="color:var(--cyan);font-weight:600;font-size:13px">{{ u.username }}</span>
               {% if u.id == current_user.id %}
                 <span style="font-size:9px;color:var(--muted);margin-left:4px">(you)</span>
               {% endif %}
+            </td>
+            <td style="font-size:12px;color:{% if u.email %}var(--text){% else %}var(--muted){% endif %}">
+              {{ u.email if u.email else '—' }}
             </td>
             <td>
               {% if u.role == 'admin' %}
@@ -76,44 +359,42 @@
               {% elif u.status == 'paused' %}
                 <span class="badge amber" id="status-badge-{{ u.id }}">paused</span>
               {% else %}
-                <span class="badge red" id="status-badge-{{ u.id }}">{{ u.status }}</span>
+                <span class="badge red"   id="status-badge-{{ u.id }}">{{ u.status }}</span>
               {% endif %}
             </td>
-            <td style="font-family:'JetBrains Mono',monospace;color:var(--muted);letter-spacing:2px;font-size:13px">••••••••</td>
-            <td style="color:var(--muted);font-size:11px;white-space:nowrap">
+            <td style="color:var(--muted);font-size:11.5px;white-space:nowrap">
               {{ u.created_at.strftime('%Y-%m-%d') if u.created_at else '—' }}
             </td>
-            <td style="color:var(--muted);font-size:11px;white-space:nowrap">
+            <td style="color:var(--muted);font-size:11.5px;white-space:nowrap">
               {% if u.last_login_at %}
-                <span title="{{ u.last_login_at.strftime('%Y-%m-%d %H:%M UTC') }}">
-                  {{ u.last_login_at | time_ago }}
-                </span>
+                <span title="{{ u.last_login_at.strftime('%Y-%m-%d %H:%M UTC') }}">{{ u.last_login_at | time_ago }}</span>
               {% else %}—{% endif %}
             </td>
-            <td>
-              <div style="display:flex;gap:6px;align-items:center">
+            <td onclick="event.stopPropagation()">
+              <div style="display:flex;gap:5px;align-items:center">
                 <!-- Edit -->
                 <a href="{{ url_for('admin.users_edit', user_id=u.id) }}"
-                   title="Edit" style="display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;background:rgba(34,211,238,.08);border:1px solid rgba(34,211,238,.2);border-radius:6px;color:var(--cyan);text-decoration:none;font-size:13px;transition:all .2s"
-                   onmouseover="this.style.background='rgba(34,211,238,.18)'" onmouseout="this.style.background='rgba(34,211,238,.08)'">✎</a>
-
-                <!-- Pause/Unpause -->
+                   title="Edit"
+                   style="display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;background:rgba(34,211,238,.07);border:1px solid rgba(34,211,238,.2);border-radius:7px;color:var(--cyan);text-decoration:none;font-size:13px;transition:background .15s"
+                   onmouseover="this.style.background='rgba(34,211,238,.18)'" onmouseout="this.style.background='rgba(34,211,238,.07)'">
+                   <i class="fa-solid fa-pen-to-square" style="font-family:unset"></i>
+                </a>
                 {% if u.id != current_user.id %}
+                <!-- Pause/Unpause -->
                 <button onclick="toggleStatus({{ u.id }}, '{{ u.status }}')"
                         id="toggle-btn-{{ u.id }}"
                         title="{{ 'Unpause' if u.status == 'paused' else 'Pause' }}"
-                        style="display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.2);border-radius:6px;color:var(--amber);cursor:pointer;font-size:13px;transition:all .2s"
-                        onmouseover="this.style.background='rgba(245,158,11,.18)'" onmouseout="this.style.background='rgba(245,158,11,.08)'">
+                        style="display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;background:rgba(245,158,11,.07);border:1px solid rgba(245,158,11,.2);border-radius:7px;color:var(--amber);cursor:pointer;font-size:12px;transition:background .15s"
+                        onmouseover="this.style.background='rgba(245,158,11,.18)'" onmouseout="this.style.background='rgba(245,158,11,.07)'">
                   {{ '▶' if u.status == 'paused' else '⏸' }}
                 </button>
-                {% endif %}
-
                 <!-- Delete -->
-                {% if u.id != current_user.id %}
-                <button onclick="confirmDelete({{ u.id }}, '{{ u.username }}')"
+                <button onclick="openDelModal({{ u.id }}, '{{ u.username }}')"
                         title="Delete"
-                        style="display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.2);border-radius:6px;color:var(--red);cursor:pointer;font-size:13px;transition:all .2s"
-                        onmouseover="this.style.background='rgba(248,113,113,.18)'" onmouseout="this.style.background='rgba(248,113,113,.08)'">🗑</button>
+                        style="display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;background:rgba(248,113,113,.07);border:1px solid rgba(248,113,113,.2);border-radius:7px;color:var(--red);cursor:pointer;font-size:12px;transition:background .15s"
+                        onmouseover="this.style.background='rgba(248,113,113,.18)'" onmouseout="this.style.background='rgba(248,113,113,.07)'">
+                  <i class="fa-solid fa-trash-can" style="font-family:unset"></i>
+                </button>
                 {% endif %}
               </div>
             </td>
@@ -127,100 +408,367 @@
   </div>
 </div>
 
-<!-- Delete confirmation modal -->
-<div id="deleteModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:200;align-items:center;justify-content:center">
-  <div style="background:#060f1e;border:1px solid var(--border);border-radius:14px;padding:28px;max-width:400px;width:90%;position:relative">
-    <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:8px">Delete User</div>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:18px">
-      Are you sure you want to delete <span id="deleteUsername" style="color:var(--red);font-family:'JetBrains Mono',monospace"></span>?
-      This cannot be undone.
-    </div>
-    <div style="margin-bottom:16px">
-      <label style="font-size:10px;color:var(--muted2);letter-spacing:1px;text-transform:uppercase;display:block;margin-bottom:7px">Type username to confirm</label>
-      <input id="deleteConfirmInput" type="text" placeholder="username"
-             style="width:100%;background:#04090f;color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-family:'JetBrains Mono',monospace;font-size:13px;outline:none"/>
-    </div>
-    <form id="deleteForm" method="POST">
-      <input type="hidden" name="confirm_username" id="deleteConfirmHidden"/>
-      <div style="display:flex;gap:10px">
-        <button type="button" onclick="closeDeleteModal()"
-                style="flex:1;background:rgba(255,255,255,.05);border:1px solid var(--border);color:var(--muted);padding:10px;border-radius:8px;cursor:pointer;font-size:12px">Cancel</button>
-        <button type="submit" id="deleteSubmitBtn" disabled
-                style="flex:1;background:linear-gradient(135deg,#b91c1c,#ef4444);border:none;color:#fff;padding:10px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700;opacity:.5;transition:opacity .2s">DELETE</button>
+<!-- ══ DETAIL DRAWER ══ -->
+<div id="detailDrawer">
+  <div class="drawer-header">
+    <span style="font-size:11.5px;font-weight:700;letter-spacing:.5px;color:var(--muted);text-transform:uppercase">User Details</span>
+    <button class="drawer-close" onclick="closeDrawer()" title="Close">✕</button>
+  </div>
+
+  <!-- skeleton while loading -->
+  <div id="drawerSkeleton" style="padding:24px 20px">
+    <div style="width:64px;height:64px;border-radius:50%;background:#0a1628;margin:0 auto 14px;animation:shimmer 1.4s infinite;background-size:200% 100%;background-image:linear-gradient(90deg,#0a1628 25%,#112040 50%,#0a1628 75%)"></div>
+    <div class="skeleton-line" style="width:60%;margin:0 auto 8px"></div>
+    <div class="skeleton-line" style="width:40%;margin:0 auto 20px"></div>
+    <div class="skeleton-line"></div>
+    <div class="skeleton-line" style="width:80%"></div>
+    <div class="skeleton-line"></div>
+    <div class="skeleton-line" style="width:70%"></div>
+  </div>
+
+  <div class="drawer-body" id="drawerContent" style="display:none">
+    <div class="drawer-avatar" id="drawerAvatar">?</div>
+    <div class="drawer-username" id="drawerUsername">—</div>
+    <div class="drawer-badges" id="drawerBadges"></div>
+
+    <div class="info-section">
+      <div class="info-label">Account Information</div>
+      <div class="info-row">
+        <span class="info-key">User ID</span>
+        <span class="info-val mono accent" id="dId">—</span>
       </div>
-    </form>
+      <div class="info-row">
+        <span class="info-key">Email</span>
+        <span class="info-val" id="dEmail">—</span>
+      </div>
+      <div class="info-row">
+        <span class="info-key">Email verified</span>
+        <span class="info-val" id="dEmailV">—</span>
+      </div>
+      <div class="info-row">
+        <span class="info-key">Role</span>
+        <span class="info-val" id="dRole">—</span>
+      </div>
+      <div class="info-row">
+        <span class="info-key">Status</span>
+        <span class="info-val" id="dStatus">—</span>
+      </div>
+    </div>
+
+    <div class="info-section">
+      <div class="info-label">Activity</div>
+      <div class="info-row">
+        <span class="info-key">Registered</span>
+        <span class="info-val mono" id="dCreated">—</span>
+      </div>
+      <div class="info-row">
+        <span class="info-key">Last login</span>
+        <span class="info-val mono" id="dLogin">—</span>
+      </div>
+      <div class="info-row">
+        <span class="info-key">Last IP</span>
+        <span class="info-val mono" id="dIp">—</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="drawer-actions" id="drawerActions" style="display:none">
+    <a href="#" id="drawerEditBtn" class="drawer-btn drawer-btn-edit">
+      <i class="fa-solid fa-pen-to-square" style="font-family:unset;font-size:12px"></i> Edit User
+    </a>
+    <button id="drawerDelBtn" class="drawer-btn drawer-btn-del" onclick="openDelModalFromDrawer()">
+      <i class="fa-solid fa-trash-can" style="font-family:unset;font-size:12px"></i> Delete User
+    </button>
   </div>
 </div>
 
-<!-- Toast -->
-<div id="toast" style="display:none;position:fixed;bottom:24px;right:24px;background:#0a1628;border:1px solid var(--border);border-radius:10px;padding:12px 18px;font-size:12px;z-index:300;max-width:300px"></div>
+<!-- ══ DELETE CONFIRMATION MODAL ══ -->
+<div id="delModal">
+  <div class="del-modal-box">
+    <div class="del-modal-icon">
+      <i class="fa-solid fa-triangle-exclamation" style="font-family:unset"></i>
+    </div>
+    <div class="del-modal-title">Delete User Account</div>
+    <div class="del-modal-sub">
+      You are about to permanently delete&nbsp;<span id="delModalUsername">?</span>.<br>
+      This action <strong>cannot be undone</strong>.
+    </div>
+    <input id="delConfirmInput" class="del-modal-input" type="text" placeholder="Type username to confirm" autocomplete="off"/>
+    <div class="del-modal-hint">Type the exact username above to enable the delete button.</div>
+    <div class="del-modal-actions">
+      <button class="del-modal-btn del-btn-cancel" onclick="closeDelModal()">Cancel</button>
+      <button class="del-modal-btn del-btn-confirm" id="delConfirmBtn" disabled onclick="executeDelete()">
+        Delete
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ TOAST ══ -->
+<div id="admToast" style="display:none;position:fixed;bottom:24px;right:24px;background:#0a1628;border:1px solid #1a2e40;border-radius:10px;padding:11px 18px;font-size:12.5px;font-weight:500;z-index:300;max-width:300px;align-items:center;gap:8px;box-shadow:0 8px 32px rgba(0,0,0,.5)">
+  <span id="admToastIcon">✓</span>
+  <span id="admToastMsg"></span>
+</div>
 
 <style>
-.adm-btn-cyan{display:inline-block;background:linear-gradient(135deg,#0891b2,#06b6d4);color:#fff;padding:9px 18px;border-radius:9px;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;letter-spacing:.5px;text-decoration:none;box-shadow:0 0 16px rgba(8,145,178,.35);transition:all .2s}
-.adm-btn-cyan:hover{box-shadow:0 0 28px rgba(8,145,178,.55);transform:translateY(-1px)}
-.adm-filter-pill{display:inline-block;padding:5px 12px;border-radius:6px;font-size:11px;font-weight:600;letter-spacing:.5px;text-decoration:none;border:1px solid var(--border);color:var(--muted);transition:all .15s}
-.adm-filter-pill:hover{color:var(--text);border-color:rgba(34,211,238,.3)}
-.adm-filter-pill.active{color:var(--cyan);border-color:rgba(34,211,238,.4);background:rgba(34,211,238,.07)}
+.adm-btn-cyan{display:inline-block;background:linear-gradient(135deg,#0891b2,#06b6d4);color:#fff;padding:9px 18px;border-radius:9px;font-size:12px;font-weight:700;letter-spacing:.3px;text-decoration:none;box-shadow:0 0 16px rgba(8,145,178,.3);transition:all .2s}
+.adm-btn-cyan:hover{box-shadow:0 0 28px rgba(8,145,178,.5);transform:translateY(-1px)}
+.adm-filter-pill{display:inline-block;padding:5px 12px;border-radius:6px;font-size:11px;font-weight:500;text-decoration:none;border:1px solid var(--border);color:var(--muted);transition:all .15s}
+.adm-filter-pill:hover{color:var(--text);border-color:rgba(34,211,238,.25)}
+.adm-filter-pill.active{color:var(--cyan);border-color:rgba(34,211,238,.35);background:rgba(34,211,238,.06)}
 </style>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
 <script>
+/* ══════════════════════════════════════════════════════
+   STATE
+══════════════════════════════════════════════════════ */
+let _drawerUserId   = null;
+let _drawerUsername = null;
+let _delUserId      = null;
+let _delUsername    = null;
+
+/* ══════════════════════════════════════════════════════
+   SEARCH FILTER
+══════════════════════════════════════════════════════ */
 function filterUsers(q) {
   q = q.toLowerCase();
-  document.querySelectorAll('.user-row').forEach(function(row) {
-    row.style.display = row.dataset.username.includes(q) ? '' : 'none';
+  document.querySelectorAll('.user-row').forEach(row => {
+    row.style.display = row.dataset.username.toLowerCase().includes(q) ? '' : 'none';
   });
 }
 
+/* ══════════════════════════════════════════════════════
+   DETAIL DRAWER
+══════════════════════════════════════════════════════ */
+function openDrawer(userId, username) {
+  const drawer  = document.getElementById('detailDrawer');
+  const skel    = document.getElementById('drawerSkeleton');
+  const content = document.getElementById('drawerContent');
+  const actions = document.getElementById('drawerActions');
+
+  // deselect old row, select new
+  document.querySelectorAll('.user-row.selected').forEach(r => r.classList.remove('selected'));
+  const row = document.getElementById('row-' + userId);
+  if (row) row.classList.add('selected');
+
+  _drawerUserId   = userId;
+  _drawerUsername = username;
+
+  // show skeleton
+  skel.style.display    = 'block';
+  content.style.display = 'none';
+  actions.style.display = 'none';
+
+  // open drawer
+  drawer.classList.add('open');
+
+  // fetch detail
+  fetch('/admin/users/' + userId + '/detail-json')
+    .then(r => r.json())
+    .then(d => populateDrawer(d))
+    .catch(() => showToast('Failed to load user details', 'red'));
+}
+
+function populateDrawer(d) {
+  const skel    = document.getElementById('drawerSkeleton');
+  const content = document.getElementById('drawerContent');
+  const actions = document.getElementById('drawerActions');
+
+  // avatar initials
+  const initials = d.username.slice(0, 2).toUpperCase();
+  document.getElementById('drawerAvatar').textContent   = initials;
+  document.getElementById('drawerUsername').textContent = d.username;
+
+  // badges
+  const badgeEl = document.getElementById('drawerBadges');
+  badgeEl.innerHTML = '';
+  const roleColors = { admin: '#22d3ee', user: '#3b82f6', guest: '#94a3b8' };
+  const rc = roleColors[d.role] || '#94a3b8';
+  badgeEl.innerHTML =
+    `<span style="background:rgba(${rc.slice(1).match(/../g).map(h=>parseInt(h,16)).join(',')},0.12);border:1px solid rgba(${rc.slice(1).match(/../g).map(h=>parseInt(h,16)).join(',')},0.3);color:${rc};padding:3px 10px;border-radius:20px;font-size:10.5px;font-weight:600">${d.role}</span>` +
+    `<span style="background:${d.status==='active'?'rgba(34,197,94,.1)':'rgba(245,158,11,.1)'};border:1px solid ${d.status==='active'?'rgba(34,197,94,.3)':'rgba(245,158,11,.3)'};color:${d.status==='active'?'#22c55e':'#f59e0b'};padding:3px 10px;border-radius:20px;font-size:10.5px;font-weight:600">${d.status}</span>`;
+
+  // info fields
+  document.getElementById('dId').textContent     = '#' + d.id;
+  document.getElementById('dEmail').textContent  = d.email || '—';
+  document.getElementById('dEmail').className    = 'info-val' + (d.email ? '' : ' muted');
+  document.getElementById('dEmailV').textContent = d.email_verified ? '✓ Verified' : '✗ Not verified';
+  document.getElementById('dEmailV').style.color = d.email_verified ? '#22c55e' : '#f59e0b';
+  document.getElementById('dRole').textContent   = d.role;
+  document.getElementById('dStatus').textContent = d.status;
+
+  document.getElementById('dCreated').textContent = d.created_at;
+  document.getElementById('dLogin').textContent   = d.last_login_at;
+  document.getElementById('dIp').textContent      = d.last_login_ip;
+
+  // edit link
+  document.getElementById('drawerEditBtn').href = '/admin/users/' + d.id + '/edit';
+
+  // hide delete btn for self or show it
+  const delBtn = document.getElementById('drawerDelBtn');
+  delBtn.style.display = d.is_self ? 'none' : 'flex';
+
+  // hide skeleton, reveal content
+  skel.style.display    = 'none';
+  content.style.display = 'block';
+  actions.style.display = 'flex';
+
+  gsap.fromTo(content, { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.35, ease: 'power2.out' });
+  gsap.fromTo(actions, { opacity: 0 },         { opacity: 1, duration: 0.3, delay: 0.15 });
+}
+
+function closeDrawer() {
+  document.getElementById('detailDrawer').classList.remove('open');
+  document.querySelectorAll('.user-row.selected').forEach(r => r.classList.remove('selected'));
+}
+
+/* ══════════════════════════════════════════════════════
+   DELETE MODAL
+══════════════════════════════════════════════════════ */
+function openDelModal(userId, username) {
+  _delUserId   = userId;
+  _delUsername = username;
+
+  document.getElementById('delModalUsername').textContent = username;
+  document.getElementById('delConfirmInput').value        = '';
+  document.getElementById('delConfirmBtn').disabled       = true;
+
+  const modal = document.getElementById('delModal');
+  modal.style.display = 'flex';
+  gsap.fromTo('.del-modal-box', { scale: 0.92, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.28, ease: 'back.out(1.4)' });
+
+  setTimeout(() => document.getElementById('delConfirmInput').focus(), 100);
+}
+
+function openDelModalFromDrawer() {
+  if (_drawerUserId) openDelModal(_drawerUserId, _drawerUsername);
+}
+
+function closeDelModal() {
+  gsap.to('.del-modal-box', {
+    scale: 0.92, opacity: 0, duration: 0.2, ease: 'power2.in',
+    onComplete: () => { document.getElementById('delModal').style.display = 'none'; }
+  });
+}
+
+// live-validate confirmation input
+document.getElementById('delConfirmInput').addEventListener('input', function() {
+  const match = this.value.trim().toLowerCase() === (_delUsername || '').toLowerCase();
+  const btn = document.getElementById('delConfirmBtn');
+  btn.disabled = !match;
+});
+
+// close on backdrop click
+document.getElementById('delModal').addEventListener('click', function(e) {
+  if (e.target === this) closeDelModal();
+});
+
+/* ══════════════════════════════════════════════════════
+   EXECUTE DELETE (AJAX)
+══════════════════════════════════════════════════════ */
+async function executeDelete() {
+  const btn = document.getElementById('delConfirmBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="btn-spin"></span> Deleting…';
+
+  const fd = new FormData();
+  fd.append('confirm_username', _delUsername);
+
+  try {
+    const resp = await fetch('/admin/users/' + _delUserId + '/delete', {
+      method:  'POST',
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      body:    fd,
+    });
+    const data = await resp.json();
+
+    if (data.error) {
+      showToast(data.error, 'red');
+      btn.disabled = false;
+      btn.textContent = 'Delete';
+      return;
+    }
+
+    // success: animate row out, then remove it
+    closeDelModal();
+    closeDrawer();
+
+    const row = document.getElementById('row-' + _delUserId);
+    if (row) {
+      gsap.to(row, {
+        opacity: 0, x: -30, height: 0, paddingTop: 0, paddingBottom: 0,
+        duration: 0.45, ease: 'power2.in',
+        onComplete: () => {
+          row.remove();
+          // update count label
+          const lbl = document.getElementById('totalCountLabel');
+          if (lbl) lbl.textContent = Math.max(0, parseInt(lbl.textContent) - 1);
+          // show empty if none left
+          if (!document.querySelectorAll('.user-row').length) {
+            const tb = document.getElementById('usersBody');
+            tb.innerHTML = '<tr><td colspan="8" class="adm-empty">No users found.</td></tr>';
+          }
+        }
+      });
+    }
+
+    showToast('User "' + data.username + '" deleted.', 'green');
+  } catch (err) {
+    showToast('Network error — please try again.', 'red');
+    btn.disabled = false;
+    btn.textContent = 'Delete';
+  }
+}
+
+/* ══════════════════════════════════════════════════════
+   TOGGLE STATUS (AJAX)
+══════════════════════════════════════════════════════ */
 function toggleStatus(userId, currentStatus) {
-  fetch('/admin/users/' + userId + '/toggle-status', {method:'POST', headers:{'Content-Type':'application/json'}})
-    .then(function(r){return r.json();})
-    .then(function(data) {
-      if (data.error) { showToast(data.error, 'red'); return; }
-      var badge = document.getElementById('status-badge-' + userId);
-      var btn   = document.getElementById('toggle-btn-' + userId);
-      if (data.status === 'paused') {
-        badge.className = 'badge amber'; badge.textContent = 'paused';
-        btn.title = 'Unpause'; btn.textContent = '▶';
-      } else {
-        badge.className = 'badge green'; badge.textContent = 'active';
-        btn.title = 'Pause'; btn.textContent = '⏸';
-      }
-      showToast('Status updated to ' + data.status, 'green');
-    })
-    .catch(function(){ showToast('Request failed', 'red'); });
+  fetch('/admin/users/' + userId + '/toggle-status', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' }
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.error) { showToast(data.error, 'red'); return; }
+    const badge = document.getElementById('status-badge-' + userId);
+    const btn   = document.getElementById('toggle-btn-' + userId);
+    if (data.status === 'paused') {
+      badge.className = 'badge amber'; badge.textContent = 'paused';
+      btn.title = 'Unpause'; btn.textContent = '▶';
+    } else {
+      badge.className = 'badge green'; badge.textContent = 'active';
+      btn.title = 'Pause'; btn.textContent = '⏸';
+    }
+    showToast('Status → ' + data.status, 'green');
+
+    // refresh drawer if open for this user
+    if (_drawerUserId === userId) openDrawer(userId, _drawerUsername);
+  })
+  .catch(() => showToast('Request failed', 'red'));
 }
 
-var _deleteUserId = null;
-function confirmDelete(userId, username) {
-  _deleteUserId = userId;
-  document.getElementById('deleteUsername').textContent = username;
-  document.getElementById('deleteConfirmInput').value = '';
-  document.getElementById('deleteSubmitBtn').disabled = true;
-  document.getElementById('deleteSubmitBtn').style.opacity = '.5';
-  document.getElementById('deleteForm').action = '/admin/users/' + userId + '/delete';
-  document.getElementById('deleteModal').style.display = 'flex';
-}
-function closeDeleteModal() {
-  document.getElementById('deleteModal').style.display = 'none';
-}
-document.getElementById('deleteConfirmInput').addEventListener('input', function() {
-  var expected = document.getElementById('deleteUsername').textContent;
-  var match = this.value === expected;
-  document.getElementById('deleteSubmitBtn').disabled = !match;
-  document.getElementById('deleteSubmitBtn').style.opacity = match ? '1' : '.5';
-  document.getElementById('deleteConfirmHidden').value = this.value;
-});
-document.getElementById('deleteModal').addEventListener('click', function(e) {
-  if (e.target === this) closeDeleteModal();
-});
+/* ══════════════════════════════════════════════════════
+   TOAST
+══════════════════════════════════════════════════════ */
+let _toastTimer;
+function showToast(msg, type) {
+  const t    = document.getElementById('admToast');
+  const icon = document.getElementById('admToastIcon');
+  const msgEl= document.getElementById('admToastMsg');
 
-function showToast(msg, color) {
-  var t = document.getElementById('toast');
-  t.textContent = msg;
-  t.style.color = color === 'green' ? 'var(--green)' : 'var(--red)';
-  t.style.borderColor = color === 'green' ? 'rgba(34,197,94,.3)' : 'rgba(248,113,113,.3)';
-  t.style.display = 'block';
-  setTimeout(function(){ t.style.display = 'none'; }, 3000);
+  clearTimeout(_toastTimer);
+  msgEl.textContent = msg;
+  icon.textContent  = type === 'green' ? '✓' : '✕';
+  t.style.color       = type === 'green' ? 'var(--green)' : 'var(--red)';
+  t.style.borderColor = type === 'green' ? 'rgba(34,197,94,.25)' : 'rgba(248,113,113,.25)';
+  t.style.display     = 'flex';
+
+  gsap.fromTo(t, { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.25 });
+  _toastTimer = setTimeout(() => {
+    gsap.to(t, { opacity: 0, y: 10, duration: 0.25, onComplete: () => t.style.display = 'none' });
+  }, 3200);
 }
 </script>
 

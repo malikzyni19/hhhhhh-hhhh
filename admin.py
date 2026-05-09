@@ -354,24 +354,47 @@ def users_edit(user_id):
     )
 
 
+# ── User Detail JSON (AJAX panel) ─────────────────────────────────
+@admin_bp.route("/users/<int:user_id>/detail-json")
+@admin_required
+def users_detail_json(user_id):
+    user = User.query.get_or_404(user_id)
+    return jsonify({
+        "id":             user.id,
+        "username":       user.username,
+        "email":          user.email or "",
+        "role":           user.role,
+        "status":         user.status,
+        "email_verified": bool(user.email_verified),
+        "created_at":     user.created_at.strftime("%Y-%m-%d %H:%M UTC") if user.created_at else "—",
+        "last_login_at":  user.last_login_at.strftime("%Y-%m-%d %H:%M UTC") if user.last_login_at else "Never",
+        "last_login_ip":  getattr(user, "last_login_ip", None) or "—",
+        "is_self":        user.id == current_user.id,
+    })
+
+
 # ── Delete User ────────────────────────────────────────────────────
 @admin_bp.route("/users/<int:user_id>/delete", methods=["POST"])
 @admin_required
 def users_delete(user_id):
     user = User.query.get_or_404(user_id)
+    is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+
+    def _err(msg, code=400):
+        if is_ajax:
+            return jsonify({"error": msg}), code
+        flash(msg, "error")
+        return redirect(url_for("admin.users"))
 
     if user.id == current_user.id:
-        flash("You cannot delete your own account.", "error")
-        return redirect(url_for("admin.users"))
+        return _err("You cannot delete your own account.")
 
     if user.role == "admin" and _admin_count() <= 1:
-        flash("Cannot delete the last admin account.", "error")
-        return redirect(url_for("admin.users"))
+        return _err("Cannot delete the last admin account.")
 
-    confirm = request.form.get("confirm_username", "").strip().lower()
-    if confirm != user.username:
-        flash("Confirmation username did not match. User not deleted.", "error")
-        return redirect(url_for("admin.users_edit", user_id=user_id))
+    confirm = request.form.get("confirm_username", "").strip()
+    if confirm.lower() != user.username.lower():
+        return _err("Username confirmation did not match.")
 
     try:
         uname = user.username
@@ -379,9 +402,13 @@ def users_delete(user_id):
         _log_action("delete_user", f"{uname} ({urole})", target_user_id=user.id)
         db.session.delete(user)
         db.session.commit()
+        if is_ajax:
+            return jsonify({"success": True, "username": uname})
         flash(f"User '{uname}' deleted.", "success")
     except Exception as e:
         db.session.rollback()
+        if is_ajax:
+            return jsonify({"error": str(e)}), 500
         flash(f"Delete failed: {e}", "error")
 
     return redirect(url_for("admin.users"))
