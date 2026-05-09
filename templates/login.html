@@ -7,89 +7,126 @@
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&display=swap');
 
         :root {
-            --navy:       #0a0f1e;
-            --navy-mid:   #0d1530;
-            --navy-light: #112040;
-            --black:      #060a14;
-            --accent:     #1eb8c8;
-            --accent2:    #0e8fa0;
-            --white:      #e8f0ff;
-            --border:     rgba(30,184,200,0.55);
+            --navy:         #0a0f1e;
+            --navy-mid:     #0d1530;
+            --navy-light:   #112040;
+            --black:        #060a14;
+            --accent:       #1eb8c8;
+            --accent2:      #0e8fa0;
+            --white:        #e8f0ff;
+            --muted:        rgba(232,240,255,0.50);
+            --border:       rgba(30,184,200,0.38);
+            --input-border: rgba(232,240,255,0.12);
+            --input-bg:     rgba(255,255,255,0.04);
         }
 
-        * {
+        *, *::before, *::after {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-            font-family: 'Poppins', sans-serif;
-            color: var(--white);
+        }
+
+        html, body {
+            height: 100%;
         }
 
         body {
+            font-family: 'DM Sans', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+            font-size: 15px;
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
             display: flex;
             flex-direction: column;
             justify-content: center;
             align-items: center;
             min-height: 100vh;
             background: radial-gradient(ellipse at 60% 0%, #0d2040 0%, var(--black) 70%);
-            padding: 20px;
+            padding: 24px 16px;
+            color: var(--white);
         }
 
-        /* ══════════════════════════════
+        /* ══════════════════════════════════════════
            BRAND LOGO
-        ══════════════════════════════ */
+        ══════════════════════════════════════════ */
         .brand-logo {
             display: flex;
             align-items: center;
             gap: 14px;
-            margin-bottom: 28px;
+            margin-bottom: 22px;
             user-select: none;
+            text-decoration: none;
         }
 
-        .brand-logo .z-icon {
-            width: 52px;
-            height: 52px;
+        .z-icon-wrap {
+            width: 56px;
+            height: 56px;
             flex-shrink: 0;
-            object-fit: contain;
-            filter: drop-shadow(0 0 10px rgba(30,210,230,0.9)) drop-shadow(0 0 24px rgba(20,180,200,0.5));
-            display: block;
+            background: transparent;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
 
-        .brand-logo .brand-text {
+        .z-icon {
+            width: 56px;
+            height: 56px;
+            object-fit: contain;
+            display: block;
+            filter:
+                drop-shadow(0 0 8px rgba(30, 210, 230, 0.9))
+                drop-shadow(0 0 22px rgba(20, 180, 200, 0.45))
+                drop-shadow(0 2px 8px rgba(0, 0, 0, 0.65));
+            transition: filter 0.3s ease;
+        }
+
+        .brand-logo:hover .z-icon {
+            filter:
+                drop-shadow(0 0 14px rgba(30, 220, 240, 1.0))
+                drop-shadow(0 0 36px rgba(20, 190, 210, 0.65))
+                drop-shadow(0 2px 10px rgba(0, 0, 0, 0.75));
+        }
+
+        .brand-text {
             display: flex;
             flex-direction: column;
             line-height: 1;
         }
 
-        .brand-logo .brand-name {
-            font-size: 24px;
-            font-weight: 800;
-            letter-spacing: 1.5px;
+        .brand-name {
+            font-size: 22px;
+            font-weight: 700;
+            letter-spacing: -0.2px;
             color: var(--white);
         }
 
-        .brand-logo .brand-sub {
+        .brand-sub {
             font-size: 10px;
             font-weight: 500;
-            letter-spacing: 3.5px;
+            letter-spacing: 3.2px;
             color: var(--accent);
             text-transform: uppercase;
-            margin-top: 3px;
+            margin-top: 5px;
         }
 
-        /* ══════════════════════════════
+        /* ══════════════════════════════════════════
            AUTH WRAPPER
-        ══════════════════════════════ */
+        ══════════════════════════════════════════ */
         .auth-wrapper {
             position: relative;
             width: 100%;
-            max-width: 800px;
-            height: 500px;
-            border: 1.5px solid var(--border);
-            box-shadow: 0 0 30px rgba(14,143,160,0.35), 0 0 80px rgba(14,143,160,0.12);
+            max-width: 820px;
+            height: 520px;
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            box-shadow:
+                0 0 0 1px rgba(30, 184, 200, 0.07),
+                0 0 40px rgba(14, 143, 160, 0.22),
+                0 0 100px rgba(14, 143, 160, 0.07),
+                0 24px 64px rgba(0, 0, 0, 0.55);
             overflow: hidden;
             background: var(--navy);
         }
@@ -102,17 +139,18 @@
             display: flex;
             justify-content: center;
             flex-direction: column;
+            z-index: 2;
         }
 
-        /* ── SIGNIN ── */
+        /* ── SIGNIN PANEL ── */
         .credentials-panel.signin {
             left: 0;
-            padding: 0 40px;
+            padding: 32px 44px;
         }
 
         .credentials-panel.signin .slide-element {
-            transform: translateX(0%);
-            transition: .7s;
+            transform: translateX(0);
+            transition: 0.7s cubic-bezier(0.4, 0, 0.2, 1);
             opacity: 1;
         }
 
@@ -133,24 +171,21 @@
         .auth-wrapper.toggled .credentials-panel.signin .slide-element:nth-child(4) { transition-delay: 0.3s; }
         .auth-wrapper.toggled .credentials-panel.signin .slide-element:nth-child(5) { transition-delay: 0.4s; }
 
-        /* ── SIGNUP ── */
+        /* ── SIGNUP PANEL ── */
         .credentials-panel.signup {
             right: 0;
-            padding: 0 60px;
-            pointer-events: none;
-        }
-        .auth-wrapper.toggled .credentials-panel.signup {
-            pointer-events: auto;
-        }
-        .auth-wrapper.toggled .credentials-panel.signin {
+            padding: 28px 44px;
             pointer-events: none;
         }
 
+        .auth-wrapper.toggled .credentials-panel.signup { pointer-events: auto; }
+        .auth-wrapper.toggled .credentials-panel.signin  { pointer-events: none; }
+
         .credentials-panel.signup .slide-element {
             transform: translateX(120%);
-            transition: .7s ease;
+            transition: 0.7s cubic-bezier(0.4, 0, 0.2, 1);
             opacity: 0;
-            filter: blur(10px);
+            filter: blur(8px);
         }
 
         .credentials-panel.signup .slide-element:nth-child(1) { transition-delay: 0s; }
@@ -161,9 +196,9 @@
         .credentials-panel.signup .slide-element:nth-child(6) { transition-delay: 0.5s; }
 
         .auth-wrapper.toggled .credentials-panel.signup .slide-element {
-            transform: translateX(0%);
+            transform: translateX(0);
             opacity: 1;
-            filter: blur(0px);
+            filter: blur(0);
         }
 
         .auth-wrapper.toggled .credentials-panel.signup .slide-element:nth-child(1) { transition-delay: 1.7s; }
@@ -173,139 +208,172 @@
         .auth-wrapper.toggled .credentials-panel.signup .slide-element:nth-child(5) { transition-delay: 2.0s; }
         .auth-wrapper.toggled .credentials-panel.signup .slide-element:nth-child(6) { transition-delay: 2.1s; }
 
+        /* ── PANEL HEADINGS ── */
         .credentials-panel h2 {
-            font-size: 32px;
-            text-align: center;
+            font-size: 26px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            line-height: 1.2;
+            color: var(--white);
+            margin-bottom: 18px;
         }
 
         /* ── ALERT MESSAGES ── */
         .alert-msg {
-            font-size: 12px;
-            border-radius: 6px;
-            padding: 8px 12px;
-            margin-bottom: 8px;
-            text-align: center;
+            font-size: 13px;
+            font-weight: 500;
+            border-radius: 9px;
+            padding: 9px 13px;
+            margin-bottom: 12px;
+            line-height: 1.5;
         }
 
         .error-msg {
-            background: rgba(127,29,29,0.3);
-            border: 1px solid rgba(127,29,29,0.5);
-            color: #f87171;
+            background: rgba(127, 29, 29, 0.22);
+            border: 1px solid rgba(220, 38, 38, 0.32);
+            color: #fca5a5;
         }
 
         .success-msg {
-            background: rgba(21,128,61,0.25);
-            border: 1px solid rgba(21,128,61,0.5);
-            color: #4ade80;
+            background: rgba(21, 128, 61, 0.18);
+            border: 1px solid rgba(34, 197, 94, 0.32);
+            color: #86efac;
         }
 
-        /* ── FIELDS ── */
-        .credentials-panel .field-wrapper {
+        /* ══════════════════════════════════════════
+           FIELD WRAPPERS & INPUTS
+        ══════════════════════════════════════════ */
+        .field-wrapper {
+            width: 100%;
+            margin-bottom: 13px;
+        }
+
+        .field-wrapper > label {
+            display: block;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.7px;
+            text-transform: uppercase;
+            color: var(--muted);
+            margin-bottom: 6px;
+        }
+
+        .input-wrap {
             position: relative;
             width: 100%;
-            height: 50px;
-            margin-top: 25px;
         }
 
-        .field-wrapper input {
+        .input-wrap input {
             width: 100%;
-            height: 100%;
-            background: transparent;
-            border: none;
+            height: 44px;
+            background: var(--input-bg);
+            border: 1.5px solid var(--input-border);
+            border-radius: 10px;
             outline: none;
-            font-size: 16px;
+            font-family: 'DM Sans', system-ui, sans-serif;
+            font-size: 15px;
+            font-weight: 400;
             color: var(--white);
-            font-weight: 600;
-            border-bottom: 2px solid rgba(232,240,255,0.25);
-            padding-right: 23px;
-            transition: .5s;
+            padding: 0 42px 0 14px;
+            line-height: 44px;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+            -webkit-appearance: none;
+            appearance: none;
         }
 
-        .field-wrapper input:focus,
-        .field-wrapper input:valid {
-            border-bottom: 2px solid var(--accent);
+        .input-wrap input::placeholder {
+            color: rgba(232, 240, 255, 0.25);
+            font-weight: 400;
         }
 
-        .field-wrapper label {
+        .input-wrap input:hover:not(:focus) {
+            border-color: rgba(232, 240, 255, 0.22);
+            background: rgba(255, 255, 255, 0.06);
+        }
+
+        .input-wrap input:focus {
+            border-color: var(--accent);
+            background: rgba(30, 184, 200, 0.05);
+            box-shadow: 0 0 0 3px rgba(30, 184, 200, 0.14);
+        }
+
+        .input-wrap .field-icon {
             position: absolute;
+            right: 14px;
             top: 50%;
-            left: 0;
             transform: translateY(-50%);
-            font-size: 16px;
-            color: rgba(232,240,255,0.55);
-            transition: .5s;
+            font-size: 13px;
+            color: rgba(232, 240, 255, 0.28);
             pointer-events: none;
+            transition: color 0.2s ease;
         }
 
-        .field-wrapper input:focus ~ label,
-        .field-wrapper input:valid ~ label {
-            top: -5px;
-            color: var(--accent);
-            font-size: 12px;
-        }
-
-        .field-wrapper i {
-            position: absolute;
-            top: 50%;
-            right: 0;
-            font-size: 18px;
-            transform: translateY(-50%);
-            color: rgba(232,240,255,0.35);
-        }
-
-        .field-wrapper input:focus ~ i,
-        .field-wrapper input:valid ~ i {
+        .input-wrap input:focus ~ .field-icon {
             color: var(--accent);
         }
 
-        /* ── BUTTON ── */
+        /* Prevent iOS text zoom on focus */
+        @supports (-webkit-touch-callout: none) {
+            .input-wrap input { font-size: 16px; }
+        }
+
+        /* ══════════════════════════════════════════
+           SUBMIT BUTTON
+        ══════════════════════════════════════════ */
         .submit-button {
-            position: relative;
             width: 100%;
-            height: 45px;
-            background: transparent;
-            border-radius: 40px;
+            height: 44px;
+            background: linear-gradient(135deg, var(--accent) 0%, var(--accent2) 100%);
+            border: none;
+            border-radius: 10px;
             cursor: pointer;
-            font-size: 16px;
+            font-family: 'DM Sans', system-ui, sans-serif;
+            font-size: 15px;
             font-weight: 600;
-            border: 1.5px solid var(--accent);
-            overflow: hidden;
-            z-index: 1;
-            color: var(--white);
-            letter-spacing: 1px;
+            color: #fff;
+            letter-spacing: 0.2px;
+            box-shadow: 0 4px 18px rgba(30, 184, 200, 0.32);
+            transition: opacity 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
+            margin-top: 2px;
         }
 
-        .submit-button::before {
-            content: "";
-            position: absolute;
-            height: 300%;
-            width: 100%;
-            background: linear-gradient(var(--navy), var(--accent), var(--navy), var(--accent));
-            top: -100%;
-            left: 0;
-            z-index: -1;
-            transition: .5s;
+        .submit-button:hover {
+            opacity: 0.90;
+            box-shadow: 0 6px 26px rgba(30, 184, 200, 0.48);
+            transform: translateY(-1px);
         }
 
-        .submit-button:hover::before { top: 0; }
+        .submit-button:active {
+            transform: translateY(0);
+            opacity: 1;
+            box-shadow: 0 2px 8px rgba(30, 184, 200, 0.22);
+        }
 
+        /* ── SWITCH LINK ── */
         .switch-link {
-            font-size: 14px;
+            font-size: 13px;
+            font-weight: 400;
             text-align: center;
-            margin: 20px 0 10px;
+            margin-top: 14px;
+            color: var(--muted);
+            line-height: 1.6;
         }
 
         .switch-link a {
-            text-decoration: none;
             color: var(--accent);
             font-weight: 600;
+            text-decoration: none;
+            transition: opacity 0.2s;
         }
 
-        .switch-link a:hover { text-decoration: underline; }
+        .switch-link a:hover {
+            opacity: 0.78;
+            text-decoration: underline;
+        }
 
-        /* ══════════════════════════════
+        /* ══════════════════════════════════════════
            WELCOME SECTION
-        ══════════════════════════════ */
+        ══════════════════════════════════════════ */
         .welcome-section {
             position: absolute;
             top: 0;
@@ -314,19 +382,20 @@
             display: flex;
             justify-content: center;
             flex-direction: column;
+            z-index: 1;
         }
 
         .welcome-section.signin {
             right: 0;
             text-align: right;
-            padding: 0 40px 60px 150px;
+            padding: 0 44px 60px 120px;
         }
 
         .welcome-section.signin .slide-element {
             transform: translateX(0);
-            transition: .7s ease;
+            transition: 0.7s ease;
             opacity: 1;
-            filter: blur(0px);
+            filter: blur(0);
         }
 
         .welcome-section.signin .slide-element:nth-child(1) { transition-delay: 2.0s; }
@@ -344,13 +413,13 @@
         .welcome-section.signup {
             left: 0;
             text-align: left;
-            padding: 0 150px 60px 38px;
+            padding: 0 120px 60px 44px;
             pointer-events: none;
         }
 
         .welcome-section.signup .slide-element {
             transform: translateX(-120%);
-            transition: .7s ease;
+            transition: 0.7s ease;
             opacity: 0;
             filter: blur(10px);
         }
@@ -359,7 +428,7 @@
         .welcome-section.signup .slide-element:nth-child(2) { transition-delay: 0.1s; }
 
         .auth-wrapper.toggled .welcome-section.signup .slide-element {
-            transform: translateX(0%);
+            transform: translateX(0);
             opacity: 1;
             filter: blur(0);
         }
@@ -368,50 +437,57 @@
         .auth-wrapper.toggled .welcome-section.signup .slide-element:nth-child(2) { transition-delay: 1.8s; }
 
         .welcome-section h2 {
+            font-size: 32px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
             text-transform: uppercase;
-            font-size: 36px;
-            line-height: 1.3;
+            line-height: 1.25;
+            color: var(--white);
         }
 
         .welcome-section p {
-            font-size: 15px;
-            color: rgba(232,240,255,0.65);
+            font-size: 14px;
+            font-weight: 400;
+            color: rgba(232, 240, 255, 0.58);
             margin-top: 10px;
+            line-height: 1.65;
         }
 
-        /* ══════════════════════════════
+        /* ══════════════════════════════════════════
            BACKGROUND SHAPES
-        ══════════════════════════════ */
+        ══════════════════════════════════════════ */
         .auth-wrapper .background-shape {
             position: absolute;
             right: 0;
             top: -5px;
-            height: 600px;
-            width: 850px;
+            height: 650px;
+            width: 880px;
             background: linear-gradient(45deg, var(--navy), var(--navy-light), var(--accent2));
             transform: rotate(10deg) skewY(40deg);
             transform-origin: bottom right;
             transition: 1.5s ease;
             transition-delay: 1.6s;
+            z-index: 0;
         }
 
         .auth-wrapper.toggled .background-shape {
             transform: rotate(0deg) skewY(0deg);
-            transition-delay: .5s;
+            transition-delay: 0.5s;
         }
 
         .auth-wrapper .secondary-shape {
             position: absolute;
             left: 250px;
             top: 100%;
-            height: 700px;
-            width: 850px;
+            height: 750px;
+            width: 880px;
             background: var(--navy-mid);
-            border-top: 2px solid rgba(30,184,200,0.35);
+            border-top: 1.5px solid rgba(30, 184, 200, 0.22);
             transform: rotate(0deg) skewY(0deg);
             transform-origin: bottom left;
             transition: 1.5s ease;
-            transition-delay: .5s;
+            transition-delay: 0.5s;
+            z-index: 0;
         }
 
         .auth-wrapper.toggled .secondary-shape {
@@ -419,59 +495,62 @@
             transition-delay: 1.2s;
         }
 
-        /* ══════════════════════════════
+        /* ══════════════════════════════════════════
            FOOTER
-        ══════════════════════════════ */
+        ══════════════════════════════════════════ */
         .footer {
-            margin-top: 24px;
+            margin-top: 20px;
             text-align: center;
-            padding: 10px;
-            font-size: 13px;
-            color: rgba(232,240,255,0.35);
+            font-size: 12px;
+            font-weight: 400;
+            color: rgba(232, 240, 255, 0.26);
+            letter-spacing: 0.1px;
         }
 
         .footer a {
             color: var(--accent);
             text-decoration: none;
-            font-weight: 600;
-            transition: .3s;
+            font-weight: 500;
+            transition: opacity 0.2s;
         }
 
-        .footer a:hover { text-decoration: underline; }
+        .footer a:hover {
+            opacity: 0.72;
+            text-decoration: underline;
+        }
 
-        /* ══════════════════════════════
-           MOBILE RESPONSIVE
-        ══════════════════════════════ */
+        /* ══════════════════════════════════════════
+           RESPONSIVE — TABLET & MOBILE
+        ══════════════════════════════════════════ */
         @media (max-width: 768px) {
-            body { padding: 10px; }
-            .footer { margin-top: 20px; font-size: 12px; }
+            body { padding: 16px; }
 
-            /* Fixed height keeps overflow:hidden clipping working for the slide */
-            .auth-wrapper { height: 520px; }
+            .auth-wrapper {
+                height: 500px;
+                border-radius: 16px;
+            }
 
-            /* Both panels: full width, same anchor point so translateX slides work */
             .auth-wrapper .credentials-panel { width: 100%; }
-            .credentials-panel.signin { padding: 32px 30px; }
-            .credentials-panel.signup { right: auto; left: 0; padding: 32px 30px; }
+            .credentials-panel.signin  { padding: 32px 28px; }
+            .credentials-panel.signup  { right: auto; left: 0; padding: 32px 28px; }
 
-            /* Welcome sections can't fit alongside full-width panels */
             .welcome-section { display: none; }
 
-            .credentials-panel h2 { font-size: 26px; margin-bottom: 10px; }
-            .field-wrapper { margin-top: 20px; }
-            .brand-logo .brand-name { font-size: 20px; }
-            .brand-logo .z-icon { width: 40px; height: 40px; }
+            .credentials-panel h2 { font-size: 22px; margin-bottom: 14px; }
+
+            .brand-name { font-size: 18px; }
+            .z-icon, .z-icon-wrap { width: 44px; height: 44px; }
+
+            .footer { margin-top: 16px; }
         }
 
         @media (max-width: 480px) {
-            .auth-wrapper { height: 540px; }
+            .auth-wrapper { height: 520px; }
             .credentials-panel.signin,
-            .credentials-panel.signup { padding: 24px 20px; }
-            .credentials-panel h2 { font-size: 22px; }
-            .field-wrapper input,
-            .field-wrapper label { font-size: 14px; }
-            .submit-button { font-size: 14px; height: 40px; }
-            .switch-link { font-size: 13px; }
+            .credentials-panel.signup { padding: 28px 20px; }
+            .credentials-panel h2 { font-size: 20px; }
+            .submit-button { font-size: 15px; }
+            .switch-link  { font-size: 12px; }
         }
     </style>
 </head>
@@ -479,7 +558,9 @@
 <body>
 
     <div class="brand-logo">
-        <img class="z-icon" src="{{ url_for('static', filename='images/favicon.png') }}" alt="ZyNi Logo">
+        <div class="z-icon-wrap">
+            <img class="z-icon" src="{{ url_for('static', filename='images/favicon.png') }}" alt="ZyNi Logo">
+        </div>
         <div class="brand-text">
             <span class="brand-name">ZyNi SMC</span>
             <span class="brand-sub">Smart Market Center</span>
@@ -490,80 +571,110 @@
         <div class="background-shape"></div>
         <div class="secondary-shape"></div>
 
-        <!-- LOGIN PANEL -->
+        <!-- ── LOGIN PANEL ── -->
         <div class="credentials-panel signin">
-            <h2 class="slide-element">Login</h2>
+            <h2 class="slide-element">Welcome back</h2>
+
             {% if error %}
-            <div class="alert-msg error-msg">
+            <div class="alert-msg error-msg slide-element">
                 {{ error }}
                 {% if unverified_username %}
                 <br><a href="/verify-email?username={{ unverified_username }}" style="color:#1eb8c8;font-weight:600;">Verify email →</a>
                 {% endif %}
             </div>
             {% endif %}
+
             {% if success %}
-            <div class="alert-msg success-msg">{{ success }}</div>
+            <div class="alert-msg success-msg slide-element">{{ success }}</div>
             {% endif %}
+
             <form action="/login" method="POST">
                 <div class="field-wrapper slide-element">
-                    <input type="text" name="username" required{% if login_username %} value="{{ login_username }}"{% endif %}>
-                    <label>Username</label>
-                    <i class="fa-solid fa-user"></i>
+                    <label for="login_username">Username</label>
+                    <div class="input-wrap">
+                        <input type="text" id="login_username" name="username"
+                               placeholder="Enter your username" required
+                               {% if login_username %}value="{{ login_username }}"{% endif %}>
+                        <i class="fa-solid fa-user field-icon"></i>
+                    </div>
                 </div>
+
                 <div class="field-wrapper slide-element">
-                    <input type="password" name="password" required>
-                    <label>Password</label>
-                    <i class="fa-solid fa-lock"></i>
+                    <label for="login_password">Password</label>
+                    <div class="input-wrap">
+                        <input type="password" id="login_password" name="password"
+                               placeholder="Enter your password" required>
+                        <i class="fa-solid fa-lock field-icon"></i>
+                    </div>
                 </div>
+
                 <div class="field-wrapper slide-element">
-                    <button class="submit-button" type="submit">Login</button>
+                    <button class="submit-button" type="submit">Sign In</button>
                 </div>
+
                 <div class="switch-link slide-element">
-                    <p>Don't have an account?<br>
-                    <a href="#" class="register-trigger">Sign Up</a></p>
+                    Don't have an account?&nbsp;
+                    <a href="#" class="register-trigger">Create one →</a>
                 </div>
             </form>
         </div>
 
-        <!-- WELCOME — signin side -->
+        <!-- ── WELCOME — signin side ── -->
         <div class="welcome-section signin">
             <h2 class="slide-element">WELCOME<br>BACK!</h2>
             <p class="slide-element">ZyNi SMC — your smart market companion.</p>
         </div>
 
-        <!-- SIGNUP PANEL -->
+        <!-- ── SIGNUP PANEL ── -->
         <div class="credentials-panel signup">
-            <h2 class="slide-element">Register</h2>
+            <h2 class="slide-element">Create account</h2>
+
             {% if register_error %}
-            <div class="alert-msg error-msg">{{ register_error }}</div>
+            <div class="alert-msg error-msg slide-element">{{ register_error }}</div>
             {% endif %}
+
             <form action="/register" method="POST">
                 <div class="field-wrapper slide-element">
-                    <input type="text" name="username" required{% if reg_username %} value="{{ reg_username }}"{% endif %}>
-                    <label>Username</label>
-                    <i class="fa-solid fa-user"></i>
+                    <label for="reg_username_field">Username</label>
+                    <div class="input-wrap">
+                        <input type="text" id="reg_username_field" name="username"
+                               placeholder="Choose a username" required
+                               {% if reg_username %}value="{{ reg_username }}"{% endif %}>
+                        <i class="fa-solid fa-user field-icon"></i>
+                    </div>
                 </div>
+
                 <div class="field-wrapper slide-element">
-                    <input type="email" name="email" required{% if reg_email %} value="{{ reg_email }}"{% endif %}>
-                    <label>Email (required for verification)</label>
-                    <i class="fa-solid fa-envelope"></i>
+                    <label for="reg_email_field">Email</label>
+                    <div class="input-wrap">
+                        <input type="email" id="reg_email_field" name="email"
+                               placeholder="you@example.com" required
+                               {% if reg_email %}value="{{ reg_email }}"{% endif %}>
+                        <i class="fa-solid fa-envelope field-icon"></i>
+                    </div>
                 </div>
+
                 <div class="field-wrapper slide-element">
-                    <input type="password" name="password" required minlength="6">
-                    <label>Password (min 6 chars)</label>
-                    <i class="fa-solid fa-lock"></i>
+                    <label for="reg_password_field">Password</label>
+                    <div class="input-wrap">
+                        <input type="password" id="reg_password_field" name="password"
+                               placeholder="Min. 6 characters" required minlength="6">
+                        <i class="fa-solid fa-lock field-icon"></i>
+                    </div>
                 </div>
+
                 <div class="field-wrapper slide-element">
                     <button class="submit-button" type="submit">Create Account</button>
                 </div>
+
                 <div class="switch-link slide-element">
-                    <p>Already have an account?<br>
-                    <a href="#" class="login-trigger">Sign In</a></p>
+                    Already have an account?&nbsp;
+                    <a href="#" class="login-trigger">Sign in →</a>
                 </div>
             </form>
         </div>
 
-        <!-- WELCOME — signup side -->
+        <!-- ── WELCOME — signup side ── -->
         <div class="welcome-section signup">
             <h2 class="slide-element">JOIN<br>ZYNI SMC!</h2>
             <p class="slide-element">Create your account and start screening.</p>
