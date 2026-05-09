@@ -31,8 +31,9 @@
         *, *::before, *::after {
             margin: 0; padding: 0;
             box-sizing: border-box;
-            font-family: 'Poppins', sans-serif;
         }
+
+        * { font-family: 'Poppins', sans-serif; }
 
         html, body { height: 100%; }
 
@@ -350,7 +351,7 @@
             font-size: 14px;
             font-weight: 400;
             color: var(--white);
-            padding: 0 42px 0 15px;
+            padding: 0 15px 0 42px;
             line-height: 46px;
             transition: border-color 0.22s ease, box-shadow 0.22s ease, background 0.22s ease;
             -webkit-appearance: none;
@@ -376,20 +377,49 @@
 
         .input-wrap .field-icon {
             position: absolute;
-            right: 14px;
+            left: 15px;
             top: 50%;
             transform: translateY(-50%);
-            font-size: 13px;
-            color: rgba(232,240,255,0.25);
+            font-size: 14px;
+            color: rgba(232,240,255,0.32);
             pointer-events: none;
             transition: color 0.22s ease;
         }
 
         .input-wrap input:focus ~ .field-icon { color: var(--accent); }
 
+        /* password eye toggle — right side */
+        .eye-toggle {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            cursor: pointer;
+            color: rgba(232,240,255,0.28);
+            font-size: 13px;
+            padding: 4px 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: color 0.2s ease;
+            line-height: 1;
+        }
+
+        .eye-toggle:hover { color: var(--accent); }
+        .eye-toggle:focus { outline: none; }
+        .eye-toggle.visible { color: var(--accent); }
+
         /* prevent iOS zoom */
         @supports (-webkit-touch-callout: none) {
             .input-wrap input { font-size: 16px; }
+        }
+
+        /* password input needs extra right padding for eye button */
+        .input-wrap input[type="password"],
+        .input-wrap input[type="text"].pw-field {
+            padding-right: 42px;
         }
 
         /* ══════════════════════════════════════════
@@ -711,19 +741,23 @@
                 <div class="field-wrapper slide-element">
                     <label for="login_username">Username</label>
                     <div class="input-wrap">
+                        <i class="fa-solid fa-user field-icon"></i>
                         <input type="text" id="login_username" name="username"
                                placeholder="Enter your username" required
                                {% if login_username %}value="{{ login_username }}"{% endif %}>
-                        <i class="fa-solid fa-user field-icon"></i>
                     </div>
                 </div>
 
                 <div class="field-wrapper slide-element">
                     <label for="login_password">Password</label>
                     <div class="input-wrap">
-                        <input type="password" id="login_password" name="password"
-                               placeholder="Enter your password" required>
                         <i class="fa-solid fa-lock field-icon"></i>
+                        <input type="password" id="login_password" name="password"
+                               class="pw-field"
+                               placeholder="Enter your password" required>
+                        <button type="button" class="eye-toggle" id="loginEye" tabindex="-1" aria-label="Toggle password">
+                            <i class="fa-solid fa-eye" id="loginEyeIcon"></i>
+                        </button>
                     </div>
                 </div>
 
@@ -756,29 +790,33 @@
                 <div class="field-wrapper slide-element">
                     <label for="reg_username_field">Username</label>
                     <div class="input-wrap">
+                        <i class="fa-solid fa-user field-icon"></i>
                         <input type="text" id="reg_username_field" name="username"
                                placeholder="Choose a username" required
                                {% if reg_username %}value="{{ reg_username }}"{% endif %}>
-                        <i class="fa-solid fa-user field-icon"></i>
                     </div>
                 </div>
 
                 <div class="field-wrapper slide-element">
                     <label for="reg_email_field">Email address</label>
                     <div class="input-wrap">
+                        <i class="fa-solid fa-envelope field-icon"></i>
                         <input type="email" id="reg_email_field" name="email"
                                placeholder="you@example.com" required
                                {% if reg_email %}value="{{ reg_email }}"{% endif %}>
-                        <i class="fa-solid fa-envelope field-icon"></i>
                     </div>
                 </div>
 
                 <div class="field-wrapper slide-element">
                     <label for="reg_password_field">Password</label>
                     <div class="input-wrap">
-                        <input type="password" id="reg_password_field" name="password"
-                               placeholder="Minimum 6 characters" required minlength="6">
                         <i class="fa-solid fa-lock field-icon"></i>
+                        <input type="password" id="reg_password_field" name="password"
+                               class="pw-field"
+                               placeholder="Minimum 6 characters" required minlength="6">
+                        <button type="button" class="eye-toggle" id="regEye" tabindex="-1" aria-label="Toggle password">
+                            <i class="fa-solid fa-eye" id="regEyeIcon"></i>
+                        </button>
                     </div>
                 </div>
 
@@ -1008,6 +1046,25 @@
     ══════════════════════════════════════════════════════ */
     const signupForm = document.getElementById('signupForm');
     const signupBtn  = document.getElementById('signupBtn');
+
+    /* ══════════════════════════════════════════════════════
+       PASSWORD EYE TOGGLE
+    ══════════════════════════════════════════════════════ */
+    function setupEyeToggle(btnId, iconId, inputId) {
+        const btn  = document.getElementById(btnId);
+        const icon = document.getElementById(iconId);
+        const inp  = document.getElementById(inputId);
+        if (!btn || !icon || !inp) return;
+        btn.addEventListener('click', () => {
+            const hidden = inp.type === 'password';
+            inp.type = hidden ? 'text' : 'password';
+            icon.className = hidden ? 'fa-solid fa-eye-slash' : 'fa-solid fa-eye';
+            btn.classList.toggle('visible', hidden);
+        });
+    }
+
+    setupEyeToggle('loginEye', 'loginEyeIcon', 'login_password');
+    setupEyeToggle('regEye',   'regEyeIcon',   'reg_password_field');
 
     signupForm.addEventListener('submit', async (e) => {
         e.preventDefault();
