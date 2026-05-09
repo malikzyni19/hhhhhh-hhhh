@@ -354,9 +354,11 @@
         </div>
         <div class="smtp-warn">
             <i class="fa-solid fa-circle-info" style="margin-right:5px"></i>
-            <strong>Admin:</strong> SMTP credentials are set but delivery failed — the server
-            may be blocking outbound SMTP ports. Visit
-            <code>/admin/test-email</code> while logged in as admin to diagnose.
+            <strong>Admin:</strong> SMTP credentials are set but delivery failed — ports 465/587 may be
+            blocked by Koyeb. Check
+            <a href="/admin/test-email?token=zynismctest2026" target="_blank"
+               style="color:#f59e0b;text-decoration:underline">/admin/test-email</a>
+            for the exact error, or set <code>RESEND_API_KEY</code> (resend.com, free) to bypass SMTP entirely.
         </div>
         {% else %}
         <div class="verify-sub">
@@ -365,9 +367,13 @@
         </div>
         <div class="smtp-warn">
             <i class="fa-solid fa-circle-info" style="margin-right:5px"></i>
-            <strong>Admin:</strong> Set <code>ALERT_EMAIL_FROM</code> and
-            <code>ALERT_EMAIL_PASS</code> in Koyeb <strong>Environment Variables</strong>
-            (link your Secrets to the service — Secrets alone are not enough).
+            <strong>Admin:</strong> Environment variables are missing.<br>
+            In Koyeb → your service → <strong>Environment</strong> tab → <strong>Add variable</strong>,
+            set <code>ALERT_EMAIL_FROM</code> (your Gmail) and <code>ALERT_EMAIL_PASS</code> (16-char App Password).
+            Adding them under <em>Secrets</em> alone is not enough — they must be linked as
+            <strong>Environment Variables</strong> on the service, then redeploy.<br>
+            <a href="/admin/test-email?token=zynismctest2026" target="_blank"
+               style="color:#f59e0b;text-decoration:underline">Click here to verify env vars are loaded →</a>
         </div>
         {% endif %}
         <div class="fallback-box">
