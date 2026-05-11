@@ -6841,6 +6841,7 @@ def api_bias_scan():
             "notConfirmed":      0,
             "confluenceRequired": 0,
             "minimumGrade":      0,
+            "invalidated":       0,
             "errors":            0,
         },
         "settingsUsed": {
@@ -6862,6 +6863,9 @@ def api_bias_scan():
             if not kl or len(kl) < prior_move_n + signal_search_n + 2:
                 diagnostics["rejected"]["notEnoughCandles"] += 1
                 continue
+
+            # Running candle close = best live-price proxy without an extra API call
+            current_price: float | None = float(kl[-1]["close"]) if kl else None
 
             # Closed candles only — strip the still-running last candle
             kl_closed = kl[:-1]
@@ -7155,7 +7159,44 @@ def api_bias_scan():
                     best = candidate
 
             if best is not None:
-                results.append(best)
+                # Compute live / closed invalidation status
+                inv_level  = best["invalidationLevel"]
+                inv_dir    = best["bias"]
+                latest_cc  = c[-1]
+                cp         = current_price
+                _cp_or_cc  = cp if cp is not None else latest_cc
+
+                if inv_dir == "bearish":
+                    closed_inv = latest_cc > inv_level
+                    live_br    = cp is not None and cp > inv_level
+                    dist_pct   = round((inv_level - _cp_or_cc) / _cp_or_cc * 100, 4) if inv_level > 0 and _cp_or_cc > 0 else None
+                else:
+                    closed_inv = latest_cc < inv_level
+                    live_br    = cp is not None and cp < inv_level
+                    dist_pct   = round((_cp_or_cc - inv_level) / _cp_or_cc * 100, 4) if inv_level > 0 and _cp_or_cc > 0 else None
+
+                inv_status = ("closed_invalidated" if closed_inv
+                              else "live_breached" if live_br
+                              else "valid")
+                best["invalidationStatus"]       = inv_status
+                best["invalidationBreachedLive"] = live_br
+                best["invalidationClosed"]       = closed_inv
+                best["currentPrice"]             = cp
+                best["latestClosedClose"]        = round(latest_cc, 8)
+                best["invalidationDistancePct"]  = dist_pct
+
+                if live_br and not closed_inv:
+                    warn = (
+                        "Warning: current price has breached bearish invalidation intrabar"
+                        if inv_dir == "bearish" else
+                        "Warning: current price has breached bullish invalidation intrabar"
+                    )
+                    best["reasonChain"].append(warn)
+
+                if closed_inv:
+                    diagnostics["rejected"]["invalidated"] += 1
+                else:
+                    results.append(best)
             else:
                 # Attribute primary rejection reason (priority order)
                 if not _d_had_prior and _d_weak_prior:
