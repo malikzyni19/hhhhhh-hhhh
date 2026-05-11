@@ -3669,27 +3669,21 @@ async function _loadBiasOf(symbol, tf, containerId, setupDirection){
   if(!el) return;
   const isFirst = !el.dataset.loaded;
   if(isFirst) el.innerHTML = '<div style="color:#475569;font-size:9px;padding:4px 0">⦿ Loading order flow...</div>';
-  const rawSym = symbol.replace('.P','').replace(/USDT$/,'') + 'USDT';
+  const exchange = currentExchange();
+  const sym = symbol.replace('.P','').replace(/USDT$/,'') + 'USDT';
   try {
-    const [kRes, oiRes, fundRes, bookRes] = await Promise.all([
-      fetch('https://fapi.binance.com/fapi/v1/klines?symbol='+rawSym+'&interval='+tf+'&limit=4', {cache:'no-store'}),
-      fetch('https://fapi.binance.com/futures/data/openInterestHist?symbol='+rawSym+'&period='+tf+'&limit=4', {cache:'no-store'}),
-      fetch('https://fapi.binance.com/fapi/v1/fundingRate?symbol='+rawSym+'&limit=4', {cache:'no-store'}),
-      _fetchDepthWithFallback(rawSym),
-    ]);
-    if(!kRes.ok) throw new Error('Failed');
-    const klines = await kRes.json();
-    if(!klines || klines.length < 2) throw new Error('No data');
-    let oiData = [null,null,null], oiValue = null;
-    if(oiRes.ok){ try{ const h=await oiRes.json(); if(h&&h.length>=2){ const ois=[]; for(let i=1;i<h.length;i++){ const p=parseFloat(h[i-1].sumOpenInterestValue),c=parseFloat(h[i].sumOpenInterestValue); ois.push(p>0?parseFloat(((c-p)/p*100).toFixed(2)):0); } while(ois.length<3)ois.unshift(null); oiData=ois.slice(-3); oiValue=parseFloat(h[h.length-1].sumOpenInterestValue); } }catch(e2){} }
-    let fundData = [null,null,null];
-    if(fundRes.ok){ try{ const fh=await fundRes.json(); if(fh&&fh.length>=1){ const funds=fh.map(f=>parseFloat(f.fundingRate)*100); while(funds.length<3)funds.unshift(null); fundData=funds.slice(-3); } }catch(e3){} }
-    let ctxData = null;
-    if(bookRes&&bookRes.ok){ try{ const book=await bookRes.json(); const cp=parseFloat(klines[klines.length-1][4]); ctxData=_processBookData(book.bids,book.asks,cp,_ofTfRange(tf)); if(ctxData) ctxData.oiValue=oiValue; }catch(e4){} }
-    el.innerHTML = '<div class="of-box">' + _buildOfTableHtml(tf, klines, oiData, fundData, ctxData, rawSym, setupDirection) + '</div>';
+    const params = new URLSearchParams({exchange, symbol:sym, timeframe:tf});
+    if(setupDirection) params.set('setupDirection', setupDirection);
+    const r = await fetch(`/api/order-flow?${params}`, {cache:'no-store'});
+    const data = await r.json();
+    if(!data.ok){
+      if(isFirst) el.innerHTML = `<div style="color:#f87171;font-size:9px;padding:4px">${(data.errors||[]).join(', ')||'Order flow unavailable'}</div>`;
+      return;
+    }
+    el.innerHTML = '<div class="of-box">' + _renderOfFromApi(data, setupDirection) + '</div>';
     el.dataset.loaded = '1';
   } catch(e){
-    if(isFirst) el.innerHTML = '<div style="color:#f87171;font-size:9px">Order flow unavailable: '+e.message+'</div>';
+    if(isFirst) el.innerHTML = `<div style="color:#f87171;font-size:9px">Order flow unavailable: ${e.message}</div>`;
   }
 }
 
@@ -4959,70 +4953,28 @@ function _setOfTf(sym, tf, el){
 }
 
 async function _fetchOfData(sym, tf){
+  const exchange = currentExchange();
   const rawSym = sym.replace('.P','').replace(/USDT$/,'') + 'USDT';
   try {
-    const [kRes, oiRes, fundRes, bookRes] = await Promise.all([
-      fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${rawSym}&interval=${tf}&limit=4`, {cache:'no-store'}),
-      fetch(`https://fapi.binance.com/futures/data/openInterestHist?symbol=${rawSym}&period=${tf}&limit=4`, {cache:'no-store'}),
-      fetch(`https://fapi.binance.com/fapi/v1/fundingRate?symbol=${rawSym}&limit=4`, {cache:'no-store'}),
-      _fetchDepthWithFallback(rawSym),
-    ]);
-    if(!kRes.ok) return;
-    const klines = await kRes.json();
-    if(!klines || klines.length < 2) return;
-
-    let oiData = [null, null, null], oiValue = null;
-    if(oiRes.ok){
-      try {
-        const oiHist = await oiRes.json();
-        if(oiHist && oiHist.length >= 2){
-          const ois = [];
-          for(let i=1; i<oiHist.length; i++){
-            const prev = parseFloat(oiHist[i-1].sumOpenInterestValue);
-            const curr = parseFloat(oiHist[i].sumOpenInterestValue);
-            ois.push(prev>0 ? parseFloat(((curr-prev)/prev*100).toFixed(2)) : 0);
-          }
-          while(ois.length < 3) ois.unshift(null);
-          oiData = ois.slice(-3);
-          oiValue = parseFloat(oiHist[oiHist.length-1].sumOpenInterestValue);
-        }
-      } catch(e2){}
-    }
-
-    let fundData = [null, null, null];
-    if(fundRes.ok){
-      try {
-        const fundHist = await fundRes.json();
-        if(fundHist && fundHist.length >= 1){
-          const funds = fundHist.map(f => parseFloat(f.fundingRate)*100);
-          while(funds.length < 3) funds.unshift(null);
-          fundData = funds.slice(-3);
-        }
-      } catch(e3){}
-    }
-
-    let ctxData = null;
-    if(bookRes && bookRes.ok){
-      try {
-        const book = await bookRes.json();
-        const cp = parseFloat(klines[klines.length-1][4]);
-        ctxData = _processBookData(book.bids, book.asks, cp, _ofTfRange(tf));
-        if(ctxData) ctxData.oiValue = oiValue;
-      } catch(e4){}
-    }
-
+    const r = await fetch(`/api/order-flow?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(rawSym)}&timeframe=${encodeURIComponent(tf)}`, {cache:'no-store'});
+    const data = await r.json();
     if(!wlOfCache[sym]) wlOfCache[sym] = {};
-    wlOfCache[sym][tf] = {klines, oiData, fundData, ctxData};
-    _renderOfBox(sym, tf, klines, oiData, fundData, ctxData);
+    wlOfCache[sym][tf] = data;
+    _renderOfBox(sym, tf, data);
   } catch(e){ console.error('OF fetch error:', sym, tf, e); }
 }
 
-function _renderOfBox(sym, tf, klines, oiData, fundData, ctxData, setupDirection){
+function _renderOfBox(sym, tf, apiData, setupDirection){
   const el = document.getElementById('wl-live-' + sym);
   if(!el) return;
   const ofBox = el.querySelector('.of-data-wrap');
   if(!ofBox) return;
-  ofBox.innerHTML = _buildOfTableHtml(tf, klines, oiData, fundData, ctxData, sym, setupDirection);
+  if(!apiData||!apiData.ok){
+    const msg=(apiData&&apiData.errors)?apiData.errors.join(', '):'Order flow unavailable';
+    ofBox.innerHTML=`<div style="color:#f87171;font-size:9px;padding:4px">${msg}</div>`;
+    return;
+  }
+  ofBox.innerHTML = _renderOfFromApi(apiData, setupDirection);
 }
 
 // ── OF v4 helpers ──
@@ -5072,6 +5024,191 @@ function _processBookData(bids, asks, currentPrice, rangePct){
   const imbalancePct = bidPct-askPct;
   const sideHeavier = bidPct>=55 ? 'Buy side heavier' : askPct>=55 ? 'Sell side heavier' : 'Balanced book';
   return {top5Bids,top5Asks,bidVolumeUSDT,askVolumeUSDT,bidPct,askPct,imbalancePct,sideHeavier,tfRangePct:rangePct,oiValue:null};
+}
+
+// ── Order Flow v5 — Renderer for /api/order-flow normalized response ──
+// TODO(ws): Replace polling with WebSocket stream (fapi/ws/<symbol>@depth20@100ms + <symbol>@aggTrade)
+//           when a persistent connection manager is added. Polling interval currently 2–3s.
+function _renderOfFromApi(data, setupDirection){
+  const{exchange,sourceLabel,timeframe,candles=[],cvd=[],
+        oiDeltaHistory=[],oiValueUSDT,fundingHistory=[],
+        bidAsk,buySellAvailable=false}=data;
+  const tf=(timeframe||'1H').toUpperCase();
+  const sym=data.symbol||'';
+  const curr=candles[candles.length-1];
+  const prev1=candles[candles.length-2];
+  const prev2=candles.length>=3?candles[candles.length-3]:null;
+  const oiC=oiDeltaHistory[2],oi1=oiDeltaHistory[1],oi2=oiDeltaHistory[0];
+  const fundC=fundingHistory[2],fund1=fundingHistory[1],fund2=fundingHistory[0];
+  const cvdC=cvd[cvd.length-1],cvd1=cvd.length>=2?cvd[cvd.length-2]:null,cvd2=cvd.length>=3?cvd[cvd.length-3]:null;
+
+  function fmtV(v){const a=Math.abs(v||0);return a>=1e9?(a/1e9).toFixed(2)+'B':a>=1e6?(a/1e6).toFixed(2)+'M':a>=1e3?(a/1e3).toFixed(1)+'K':(a||0).toFixed(1);}
+  function fmtS(v){return(v>=0?'+':'-')+fmtV(Math.abs(v));}
+  function pnCls(v){return v>0?'of-pos':v<0?'of-neg':'of-neu';}
+  function arr(v){return v>0?'↑':v<0?'↓':'→';}
+  function fmtTimer(ms){const s=Math.max(0,Math.floor(ms/1000)),h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sc=s%60;return h>0?`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sc).padStart(2,'0')}`:`${String(m).padStart(2,'0')}:${String(sc).padStart(2,'0')}`;}
+  function mv(v,pct){if(v==null)return '<span class="of-neu">—</span>';const val=pct?(v>=0?'+':'')+v.toFixed(2)+'%':fmtS(v);return `<span class="${pnCls(v)}">${val} ${arr(v)}</span>`;}
+  function fmtBkP(p){return p<1?p.toFixed(6):p<100?p.toFixed(4):p<10000?p.toFixed(2):p.toFixed(0);}
+  function fmtSz(v){const a=Math.abs(v||0);return a>=1e6?(a/1e6).toFixed(2)+'M':a>=1e3?(a/1e3).toFixed(1)+'K':(a||0).toFixed(2);}
+
+  // ── Header ──
+  const headerHtml=`<div class="of-conf-header">
+    <div class="of-conf-title">ORDER FLOW CONFIRMATION</div>
+    <div class="of-conf-meta">${sym?sym+' · ':''}${tf} · Source: ${sourceLabel||exchange||'Unknown'} · Near-live polling refresh</div>
+  </div>`;
+
+  // ── Candle block builder ──
+  function dayBlock(cls,candle,oi,fund,cvd_val,timerMs){
+    if(!candle) return '';
+    const{label,buyPct,sellPct,delta,totalVolumeQuote,totalVolumeBase,takerBuyQuote,takerSellQuote,isRunning,closeTimeMs}=candle;
+    const timerHtml=isRunning?`<span class="of-timer">⏱ ${fmtTimer(timerMs)}</span>`:`<span class="of-closed">● closed</span>`;
+    let pressureHtml='';
+    if(buySellAvailable&&buyPct!=null){
+      const buyW=Math.round(buyPct),sellW=100-buyW;
+      let sig;
+      if(buyPct>=65&&delta>0)sig={cls:'of-bull',txt:'✓ Buyers dominant — bullish pressure'};
+      else if(buyPct>=58&&delta>0)sig={cls:'of-bull',txt:'✓ Buyers absorbing — mild bullish'};
+      else if(sellPct>=65&&delta<0)sig={cls:'of-bear',txt:'✓ Sellers dominant — bearish pressure'};
+      else if(sellPct>=58&&delta<0)sig={cls:'of-bear',txt:'✓ Sellers absorbing — mild bearish'};
+      else sig={cls:'of-neu',txt:'→ Balanced — no clear bias'};
+      pressureHtml=`<div class="of-bar-wrap">
+        <div class="of-bar-pcts"><span class="of-pct-buy">Buy ${buyPct.toFixed(1)}%</span><span class="of-pct-sell">${sellPct.toFixed(1)}% Sell</span></div>
+        <div class="of-bar"><div class="of-bar-buy" style="width:${buyW}%"></div><div class="of-bar-sell" style="width:${sellW}%"></div></div>
+      </div>
+      <div class="of-bs-grid">
+        <div class="of-buy-col">
+          <div class="of-bs-row"><span class="of-bs-lbl">BUY USDT</span><span class="of-val-buy">${fmtV(takerBuyQuote)}</span></div>
+          <div class="of-bs-row"><span class="of-bs-lbl">BUY COIN</span><span class="of-val-buy">${fmtV((totalVolumeBase||0)*(buyPct/100))}</span></div>
+        </div>
+        <div class="of-divider"></div>
+        <div class="of-sell-col">
+          <div class="of-bs-row"><span class="of-bs-lbl">SELL USDT</span><span class="of-val-sell">${fmtV(takerSellQuote)}</span></div>
+          <div class="of-bs-row"><span class="of-bs-lbl">SELL COIN</span><span class="of-val-sell">${fmtV((totalVolumeBase||0)*(sellPct/100))}</span></div>
+        </div>
+      </div>
+      <div class="of-signal ${sig.cls}">${sig.txt}</div>`;
+    } else {
+      pressureHtml=`<div style="padding:6px 0;font-size:8px;color:var(--text-muted);text-align:center">Vol: ${fmtV(totalVolumeQuote)} USDT · Buy/Sell split unavailable (REST mode)</div>`;
+    }
+    return `<div class="of-day ${cls}">
+      <div class="of-day-header"><span class="of-day-label">${label}</span>${timerHtml}</div>
+      ${pressureHtml}
+      <div class="of-metrics">
+        <div class="of-metric"><span class="of-mlbl">Δ DELTA</span>${buySellAvailable&&delta!=null?mv(delta,false):'<span class="of-neu">—</span>'}</div>
+        <div class="of-metric"><span class="of-mlbl">OI Δ% (${tf})</span>${mv(oi,true)}</div>
+        <div class="of-metric"><span class="of-mlbl">Funding</span>${mv(fund,true)}</div>
+        <div class="of-metric"><span class="of-mlbl">CVD</span>${buySellAvailable&&cvd_val!=null?mv(cvd_val,false):'<span class="of-neu">—</span>'}</div>
+      </div>
+    </div>`;
+  }
+
+  const remaining=curr&&curr.isRunning?Math.max(0,curr.closeTimeMs-Date.now()):0;
+  const candleHtml=`<div class="of-book-title" style="padding:4px 8px 0;margin-bottom:2px">BUY vs SELL PRESSURE</div>`
+    +dayBlock('of-curr',curr,oiC,fundC,cvdC,remaining)
+    +dayBlock('of-prev1',prev1,oi1,fund1,cvd1,0)
+    +(prev2?dayBlock('of-prev2',prev2,oi2,fund2,cvd2,0):'');
+
+  // ── Bid/Ask imbalance bar ──
+  let bidAskHtml='';
+  if(bidAsk&&bidAsk.bidPct!=null){
+    const bidP=bidAsk.bidPct,askP=bidAsk.askPct!=null?bidAsk.askPct:100-bidP;
+    bidAskHtml=`<div class="of-bid-ask-wrap">
+      <div class="of-book-title" style="margin-bottom:4px">BID / ASK IMBALANCE — ${tf} RANGE ±${(bidAsk.tfRangePct||2).toFixed(1)}%</div>
+      <div class="of-bid-ask-label"><span class="of-bid-lbl">Bid ${bidP.toFixed(1)}%</span><span class="of-ask-lbl">${askP.toFixed(1)}% Ask</span></div>
+      <div class="of-combo-bar"><div class="of-combo-bid" style="width:${bidP}%"></div><div class="of-combo-ask" style="width:${askP}%"></div></div>
+    </div><div class="of-section-divider"></div>`;
+  }
+
+  // ── Market Context cards ──
+  function fmtOI(v){if(v==null||isNaN(v))return'—';if(v>=1e9)return(v/1e9).toFixed(2)+'B';if(v>=1e6)return(v/1e6).toFixed(2)+'M';if(v>=1e3)return(v/1e3).toFixed(1)+'K';return v.toFixed(0);}
+  let oiSub='—',oiSubCls='of-neu';
+  if(oiC!=null){if(oiC>0.5){oiSub=`↑ ${oiC.toFixed(2)}% (${tf})`;oiSubCls='of-bull';}else if(oiC<-0.5){oiSub=`↓ ${Math.abs(oiC).toFixed(2)}% (${tf})`;oiSubCls='of-bear';}else{oiSub=`→ ${oiC.toFixed(2)}% (${tf})`;}}
+  let fundTxt='—',fundCls='of-neu';
+  if(fundC!=null){if(fundC>0.05){fundTxt='Long crowd bias';fundCls='of-bear';}else if(fundC<-0.05){fundTxt='Short crowd bias';fundCls='of-bull';}else if(fundC>0.01){fundTxt='Slight long lean';}else if(fundC<-0.01){fundTxt='Slight short lean';}else{fundTxt='Neutral crowd';}}
+  let bookTxt='—',bookCls='of-neu';
+  if(bidAsk&&bidAsk.bidPct!=null){bookTxt=bidAsk.sideHeavier||'Balanced book';bookCls=bookTxt==='Buy side heavier'?'of-bull':bookTxt==='Sell side heavier'?'of-bear':'of-neu';}
+  const ctxHtml=`<div class="of-book-title" style="padding:4px 8px 0">MARKET CONTEXT</div>
+  <div class="of-ctx-grid">
+    <div class="of-ctx-card">
+      <div class="of-ctx-label">OPEN INTEREST</div>
+      <div class="of-ctx-main">${fmtOI(oiValueUSDT)}</div>
+      <div class="of-ctx-sub ${oiSubCls}">${oiSub}</div>
+    </div>
+    <div class="of-ctx-card">
+      <div class="of-ctx-label">FUNDING CONTEXT</div>
+      <div class="of-ctx-main">${fundC!=null?(fundC>=0?'+':'')+fundC.toFixed(4)+'%':'—'}</div>
+      <div class="of-ctx-sub ${fundCls}">${fundC!=null?'Latest Funding · '+fundTxt:fundTxt}</div>
+    </div>
+    <div class="of-ctx-card">
+      <div class="of-ctx-label">BOOK IMBALANCE</div>
+      <div class="of-ctx-main">${bidAsk&&bidAsk.bidPct!=null?bidAsk.bidPct.toFixed(1)+'% Bid':'—'}</div>
+      <div class="of-ctx-sub ${bookCls}">${bookTxt}</div>
+    </div>
+  </div><div class="of-section-divider"></div>`;
+
+  // ── Top Bid/Ask levels ──
+  let bidLvlHtml='',askLvlHtml='';
+  if(bidAsk&&bidAsk.top5Bids&&bidAsk.top5Bids.length){
+    bidLvlHtml=`<div class="of-book-section"><div class="of-book-title">TOP BID LEVELS (${bidAsk.top5Bids.length})</div>`
+      +bidAsk.top5Bids.map(b=>`<div class="of-book-level">
+        <span class="of-book-price" style="color:#34d399">${fmtBkP(b.price)}</span>
+        <div class="of-book-bar-wrap"><div class="of-book-bar-fill of-bid-fill" style="width:${b.strengthPct}%"></div></div>
+        <span class="of-book-size">${fmtSz(b.notional)}</span>
+        <span class="of-book-dist">${b.distancePct}%↓</span>
+      </div>`).join('')+'</div>';
+  }
+  if(bidAsk&&bidAsk.top5Asks&&bidAsk.top5Asks.length){
+    askLvlHtml=`<div class="of-book-section"><div class="of-book-title">TOP ASK LEVELS (${bidAsk.top5Asks.length})</div>`
+      +bidAsk.top5Asks.map(a=>`<div class="of-book-level">
+        <span class="of-book-price" style="color:#fb923c">${fmtBkP(a.price)}</span>
+        <div class="of-book-bar-wrap"><div class="of-book-bar-fill of-ask-fill" style="width:${a.strengthPct}%"></div></div>
+        <span class="of-book-size">${fmtSz(a.notional)}</span>
+        <span class="of-book-dist">${a.distancePct}%↑</span>
+      </div>`).join('')+'</div>';
+  }
+  const bookHtml=(bidLvlHtml||askLvlHtml)?bidLvlHtml+(bidLvlHtml&&askLvlHtml?'<div class="of-section-divider"></div>':'')+askLvlHtml+'<div class="of-section-divider"></div>':'';
+
+  // ── Flow Verdict ──
+  function verdict(){
+    if(!curr) return{txt:'No data',cls:'of-neu',expl:'No candle data available.'};
+    let bp=0,brp=0;
+    if(buySellAvailable&&curr.buyPct!=null){
+      if(curr.buyPct>=55)bp+=2; else if(curr.sellPct>=55)brp+=2;
+      if(curr.delta>0)bp++; else if(curr.delta<0)brp++;
+    }
+    if(oiC!=null&&oiC>0){if(buySellAvailable&&curr.buyPct>=55)bp++;else if(buySellAvailable)brp++;}
+    if(fundC!=null){if(fundC>0.05)brp++;else if(fundC<-0.05)bp++;}
+    if(bidAsk&&bidAsk.bidPct!=null){if(bidAsk.bidPct>=55)bp++;else if(100-bidAsk.bidPct>=55)brp++;}
+    const tot=bp+brp;
+    if(!tot)return{txt:'Mixed / Neutral ⚠',cls:'of-neu',expl:'Buyers and sellers are evenly matched — no clear edge.'};
+    const r=bp/tot;
+    const dir=(setupDirection||'').toLowerCase();
+    if(dir==='bullish'||dir==='bull'){
+      if(r>=0.7)return{txt:'Confirms Bullish Setup ✅',cls:'of-bull',expl:'Order flow strongly supports the bullish bias.'};
+      if(r>=0.5)return{txt:'Mildly Supports Bullish Setup ↑',cls:'of-bull',expl:'Flow leans bullish. Proceed with caution.'};
+      if(r<=0.3)return{txt:'Flow Opposes Bullish Setup ⚠',cls:'of-bear',expl:'Bearish flow conflicts with bullish setup. Wait for alignment.'};
+      return{txt:'Mixed Flow — Bullish Setup Uncertain ⚠',cls:'of-neu',expl:'No strong flow conviction to confirm or deny the bullish bias.'};
+    }
+    if(dir==='bearish'||dir==='bear'){
+      if(r<=0.3)return{txt:'Confirms Bearish Setup ✅',cls:'of-bear',expl:'Order flow strongly supports the bearish bias.'};
+      if(r<0.5)return{txt:'Mildly Supports Bearish Setup ↓',cls:'of-bear',expl:'Flow leans bearish. Proceed with caution.'};
+      if(r>=0.7)return{txt:'Flow Opposes Bearish Setup ⚠',cls:'of-bull',expl:'Bullish flow conflicts with bearish setup. Wait for alignment.'};
+      return{txt:'Mixed Flow — Bearish Setup Uncertain ⚠',cls:'of-neu',expl:'No strong flow conviction to confirm or deny the bearish bias.'};
+    }
+    if(r>=0.7)return{txt:'Strong Bullish Flow ✅',cls:'of-bull',expl:'Buyers dominating across multiple signals.'};
+    if(r<=0.3)return{txt:'Strong Bearish Flow ✅',cls:'of-bear',expl:'Sellers dominating across multiple signals.'};
+    if(r>0.5)return{txt:'Mild Bullish Flow ↑',cls:'of-bull',expl:'Buyers have a slight edge.'};
+    if(r<0.5)return{txt:'Mild Bearish Flow ↓',cls:'of-bear',expl:'Sellers have a slight edge.'};
+    return{txt:'Mixed / Neutral ⚠',cls:'of-neu',expl:'No clear edge.'};
+  }
+  const v=verdict();
+  const verdictHtml=`<div class="of-verdict-block ${v.cls}">
+    <div class="of-verdict-title">FLOW VERDICT</div>
+    <div class="of-verdict-text ${v.cls}">${v.txt}</div>
+    <div style="font-size:8px;color:var(--text-muted);margin-top:4px;line-height:1.4">${v.expl}</div>
+  </div>`;
+
+  return headerHtml+candleHtml+(bidAskHtml||'')+ctxHtml+bookHtml+verdictHtml;
 }
 
 // ── Shared OF table builder v4 — premium confirmation module ──
@@ -5699,26 +5836,18 @@ async function toggleScanOfPanel(btn, symbol, tf, panelId){
 async function _loadScanOfPanel(symbol, tf, panelId, setupDirection){
   const panel = document.getElementById(panelId);
   if(!panel) return;
+  const exchange = currentExchange();
   const rawSym = symbol.replace('.P','').replace(/USDT$/,'') + 'USDT';
   try {
-    const [kRes, oiRes, fundRes, bookRes] = await Promise.all([
-      fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${rawSym}&interval=${tf}&limit=4`, {cache:'no-store'}),
-      fetch(`https://fapi.binance.com/futures/data/openInterestHist?symbol=${rawSym}&period=${tf}&limit=4`, {cache:'no-store'}),
-      fetch(`https://fapi.binance.com/fapi/v1/fundingRate?symbol=${rawSym}&limit=4`, {cache:'no-store'}),
-      _fetchDepthWithFallback(rawSym),
-    ]);
-    if(!kRes.ok) throw new Error('Fetch failed');
-    const klines = await kRes.json();
-    if(!klines || klines.length < 2) throw new Error('No data');
-
-    let oiData=[null,null,null], oiValue=null;
-    if(oiRes.ok){ try{ const h=await oiRes.json(); if(h&&h.length>=2){ const ois=[]; for(let i=1;i<h.length;i++){const p=parseFloat(h[i-1].sumOpenInterestValue),c=parseFloat(h[i].sumOpenInterestValue); ois.push(p>0?parseFloat(((c-p)/p*100).toFixed(2)):0);} while(ois.length<3)ois.unshift(null); oiData=ois.slice(-3); oiValue=parseFloat(h[h.length-1].sumOpenInterestValue); }}catch(e2){} }
-    let fundData=[null,null,null];
-    if(fundRes.ok){ try{ const fh=await fundRes.json(); if(fh&&fh.length>=1){ const funds=fh.map(f=>parseFloat(f.fundingRate)*100); while(funds.length<3)funds.unshift(null); fundData=funds.slice(-3); }}catch(e3){} }
-    let ctxData=null;
-    if(bookRes&&bookRes.ok){ try{ const book=await bookRes.json(); const cp=parseFloat(klines[klines.length-1][4]); ctxData=_processBookData(book.bids,book.asks,cp,_ofTfRange(tf)); if(ctxData) ctxData.oiValue=oiValue; }catch(e4){} }
-
-    panel.innerHTML = `<div class="of-box">${_buildOfTableHtml(tf, klines, oiData, fundData, ctxData, rawSym, setupDirection)}</div>`;
+    const params = new URLSearchParams({exchange, symbol:rawSym, timeframe:tf});
+    if(setupDirection) params.set('setupDirection', setupDirection);
+    const r = await fetch(`/api/order-flow?${params}`, {cache:'no-store'});
+    const data = await r.json();
+    if(!data.ok){
+      panel.innerHTML = `<div style="color:#f87171;font-size:9px;padding:4px">${(data.errors||[]).join(', ')||'Order flow unavailable'}</div>`;
+      return;
+    }
+    panel.innerHTML = `<div class="of-box">${_renderOfFromApi(data, setupDirection)}</div>`;
   } catch(e){
     panel.innerHTML = `<div style="color:#f87171;font-size:9px;padding:4px">Order flow unavailable: ${e.message}</div>`;
   }
