@@ -3206,6 +3206,7 @@ function renderBiasDiagnostics(diag) {
   const rejRows = [
     ['No Prior Move',         rej.noPriorMove],
     ['No Clean Prior Drive',  rej.noCleanPriorDrive],
+    ['Invalidated',           rej.invalidated],
     ['No Rejection Candle',   rej.noRejectionCandle],
     ['Not Confirmed',         rej.notConfirmed],
     ['Confluence Required',   rej.confluenceRequired],
@@ -3335,6 +3336,12 @@ function renderBiasCard(x, i, scanTime) {
         </div>
       </details>`
     : '';
+  const invStatus = x.invalidationStatus || 'valid';
+  const liveBreached = invStatus === 'live_breached';
+  const closedInv    = invStatus === 'closed_invalidated';
+  const atRiskBadge  = liveBreached
+    ? `<span class="badge neutral" style="font-size:9px;background:rgba(251,146,60,.15);color:#fb923c;border-color:rgba(251,146,60,.4);font-weight:700">⚠ At Risk</span>`
+    : '';
   const starred = isStarred(rawSym);
   const symSafe = rawSym.replace(/'/g, "\\'");
   const ofId = 'bias-of-' + rawSym.replace(/[^a-zA-Z0-9]/g, '_') + '_' + i;
@@ -3353,6 +3360,7 @@ function renderBiasCard(x, i, scanTime) {
           <span class="badge ${confClass}" style="font-size:9px">${conf}</span>
           ${confStatusBadge}
           ${confChips}
+          ${atRiskBadge}
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;margin-left:8px">
@@ -3377,12 +3385,25 @@ function renderBiasCard(x, i, scanTime) {
       </div>` : ''}
 
       <div style="margin-bottom:10px;display:grid;grid-template-columns:1fr 1fr;gap:6px">
-        <div style="padding:8px 10px;background:rgba(0,0,0,.18);border-radius:8px;border:1px solid rgba(71,85,105,.2)">
+        <div style="padding:8px 10px;background:rgba(0,0,0,.18);border-radius:8px;border:1px solid ${liveBreached ? 'rgba(251,146,60,.35)' : closedInv ? 'rgba(248,113,113,.35)' : 'rgba(71,85,105,.2)'}">
           <div style="font-size:9px;font-weight:700;letter-spacing:.8px;color:#64748b;margin-bottom:5px">LEVELS</div>
           <div class="result-detail" style="margin-bottom:2px">High: $${fmtP(x.rejectionHigh)}</div>
           <div class="result-detail" style="margin-bottom:2px">Low: $${fmtP(x.rejectionLow)}</div>
           <div class="result-detail" style="margin-bottom:4px">Close: $${fmtP(x.rejectionClose)}</div>
           <div class="result-detail" style="color:${dirColor};font-weight:600">⚠ ${invText}</div>
+          ${x.currentPrice != null && fmtP(x.currentPrice) !== '—'
+            ? `<div class="result-detail" style="margin-top:3px;opacity:.7">Current: $${fmtP(x.currentPrice)}</div>`
+            : ''}
+          ${liveBreached
+            ? `<div class="result-detail" style="margin-top:4px;color:#fb923c;font-size:10px;font-weight:600">
+                ${isBull
+                  ? 'Live breach: current price is below invalidation level. Wait for close.'
+                  : 'Live breach: current price is above invalidation level. Wait for close.'}
+               </div>`
+            : ''}
+          ${closedInv
+            ? `<div class="result-detail" style="margin-top:4px;color:#f87171;font-size:10px;font-weight:600">Invalidated by closed candle</div>`
+            : ''}
         </div>
         <div style="padding:8px 10px;background:rgba(0,0,0,.18);border-radius:8px;border:1px solid rgba(71,85,105,.2)">
           <div style="font-size:9px;font-weight:700;letter-spacing:.8px;color:#64748b;margin-bottom:5px">CONFIRMATION</div>
@@ -3550,6 +3571,7 @@ async function scanBias(){
       let emptyMsg = 'No Bias Shift setups found with current filters.';
       if      (topKey === 'noPriorMove')        emptyMsg = 'No setups found. Most pairs did not have a clear prior move.';
       else if (topKey === 'noCleanPriorDrive') emptyMsg = 'No setups found. Prior moves existed, but they were not clean enough.';
+      else if (topKey === 'invalidated')       emptyMsg = 'No setups found. Setups were invalidated by closed candles.';
       else if (topKey === 'noRejectionCandle')  emptyMsg = 'No setups found. Prior moves existed, but rejection candles did not meet quality rules.';
       else if (topKey === 'confluenceRequired') emptyMsg = 'No setups found. Required confluence filtered all setups — try Confluence Optional.';
       else if (topKey === 'minimumGrade')       emptyMsg = 'No setups found. Minimum Grade is too strict — try lowering it.';
