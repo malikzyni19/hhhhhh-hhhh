@@ -7411,6 +7411,459 @@ def api_bias_scan():
 
 
 # ============================================================
+# Order Flow v5 — Exchange-Aware REST Adapters
+# ============================================================
+
+def normalize_of_symbol(exchange: str, symbol: str) -> str:
+    """Normalize symbol to each exchange's perpetual contract format."""
+    sym = symbol.upper().replace('.P', '').strip()
+    if exchange in ('binance', 'bybit'):
+        sym = sym.replace('/', '').replace('-', '').replace('_', '')
+        if not sym.endswith('USDT'):
+            sym = sym + 'USDT'
+        return sym
+    elif exchange == 'okx':
+        if sym.endswith('-USDT-SWAP'):
+            return sym
+        base = sym.replace('USDT', '').replace('/', '').replace('-', '').replace('_', '')
+        return f"{base}-USDT-SWAP"
+    elif exchange == 'mexc':
+        if '_USDT' in sym:
+            return sym
+        base = sym.replace('USDT', '').replace('/', '').replace('-', '').replace('_', '')
+        return f"{base}_USDT"
+    return sym
+
+
+def normalize_of_timeframe(exchange: str, timeframe: str) -> Tuple[Optional[str], Optional[str]]:
+    """Returns (exchange_interval, error_or_None)."""
+    tf = timeframe.lower()
+    maps = {
+        'binance': {'1h':'1h','4h':'4h','6h':'6h','12h':'12h','1d':'1d'},
+        'bybit':   {'1h':'60','4h':'240','6h':'360','12h':'720','1d':'D'},
+        'okx':     {'1h':'1H','4h':'4H','6h':'6H','12h':'12H','1d':'1D'},
+        'mexc':    {'1h':'Min60','4h':'Hour4','1d':'Day1'},
+    }
+    iv = maps.get(exchange, {}).get(tf)
+    if not iv:
+        return None, f"Timeframe {timeframe} not supported for {exchange.upper()}"
+    return iv, None
+
+
+def _of_tf_range_pct(tf: str) -> float:
+    return {'1h':1.0,'4h':2.0,'6h':2.5,'12h':3.0,'1d':5.0}.get(tf.lower(), 2.0)
+
+
+def process_order_book_levels(bids: list, asks: list, current_price: float, range_pct: float) -> Optional[dict]:
+    """Python equivalent of frontend _processBookData. Uses USDT notional for sizing/ranking."""
+    if not bids or not asks or not current_price or current_price <= 0:
+        return None
+    lo = current_price * (1 - range_pct / 100)
+    hi = current_price * (1 + range_pct / 100)
+
+    def parse_level(lv):
+        try:
+            p, q = float(lv[0]), float(lv[1])
+            return {'price': p, 'qty': q, 'notional': p * q}
+        except Exception:
+            return None
+
+    fb = [l for l in (parse_level(b) for b in bids) if l and lo <= l['price'] <= current_price]
+    fa = [l for l in (parse_level(a) for a in asks) if l and current_price <= l['price'] <= hi]
+    max_n = max(
+        max((x['notional'] for x in fb), default=0),
+        max((x['notional'] for x in fa), default=0), 1)
+
+    def blend(item, is_bid):
+        ss = item['notional'] / max_n
+        dist = ((current_price - item['price']) / current_price if is_bid
+                else (item['price'] - current_price) / current_price)
+        cs = max(0.0, 1.0 - dist / (range_pct / 100))
+        return ss * 0.75 + cs * 0.25
+
+    top5_b = sorted(fb, key=lambda x: blend(x, True),  reverse=True)[:5]
+    top5_a = sorted(fa, key=lambda x: blend(x, False), reverse=True)[:5]
+    bid_vol = sum(b['notional'] for b in fb)
+    ask_vol = sum(a['notional'] for a in fa)
+    tot = bid_vol + ask_vol
+    bid_pct = round(bid_vol / tot * 100) if tot > 0 else 50
+    ask_pct = 100 - bid_pct
+    return {
+        'top5Bids': [{'price':b['price'],'qty':b['qty'],'notional':b['notional'],
+                      'distancePct':round((current_price-b['price'])/current_price*100,2),
+                      'strengthPct':round(b['notional']/max_n*100)} for b in top5_b],
+        'top5Asks': [{'price':a['price'],'qty':a['qty'],'notional':a['notional'],
+                      'distancePct':round((a['price']-current_price)/current_price*100,2),
+                      'strengthPct':round(a['notional']/max_n*100)} for a in top5_a],
+        'bidVolumeUSDT': bid_vol, 'askVolumeUSDT': ask_vol,
+        'bidPct': bid_pct,        'askPct': ask_pct,
+        'imbalancePct': bid_pct - ask_pct,
+        'sideHeavier': ('Buy side heavier' if bid_pct >= 55
+                        else 'Sell side heavier' if ask_pct >= 55 else 'Balanced book'),
+    }
+
+
+def _of_pad_history(arr: list, length: int = 3) -> list:
+    while len(arr) < length:
+        arr.insert(0, None)
+    return arr[-length:]
+
+
+def _of_build_candles_binance(klines_raw: list, tf: str) -> list:
+    candles, tf_up, now_ms = [], tf.upper(), int(time.time() * 1000)
+    n = len(klines_raw)
+    for i, k in enumerate(klines_raw):
+        total_quote = safe_float(k[7])
+        tb_quote    = safe_float(k[10])
+        ts_quote    = total_quote - tb_quote
+        buy_pct     = round(tb_quote / total_quote * 100, 1) if total_quote > 0 else None
+        sell_pct    = round(100 - buy_pct, 1) if buy_pct is not None else None
+        delta       = round(tb_quote - ts_quote, 2) if total_quote > 0 else None
+        close_ms    = int(k[6])
+        is_running  = (i == n - 1) and (close_ms > now_ms)
+        label = (f"Current {tf_up} Candle — Running" if i == n - 1
+                 else f"Last Closed {tf_up} Candle — Confirmed" if i == n - 2
+                 else f"Previous {tf_up} Candle — Confirmed")
+        candles.append({'label':label,
+            'open':safe_float(k[1]),'high':safe_float(k[2]),'low':safe_float(k[3]),'close':safe_float(k[4]),
+            'totalVolumeBase':safe_float(k[5]),'totalVolumeQuote':total_quote,
+            'takerBuyQuote':tb_quote,'takerSellQuote':ts_quote,
+            'buyPct':buy_pct,'sellPct':sell_pct,'delta':delta,
+            'isRunning':is_running,'closeTimeMs':close_ms,'dataQuality':'native'})
+    return candles
+
+
+def _of_build_candles_no_split(klines_norm: list, tf: str) -> list:
+    candles, tf_up, now_ms = [], tf.upper(), int(time.time() * 1000)
+    n = len(klines_norm)
+    for i, k in enumerate(klines_norm):
+        close_ms   = int(k.get('closeTimeMs', k.get('openTime', 0)))
+        is_running = (i == n - 1) and (close_ms > now_ms)
+        label = (f"Current {tf_up} Candle — Running" if i == n - 1
+                 else f"Last Closed {tf_up} Candle — Confirmed" if i == n - 2
+                 else f"Previous {tf_up} Candle — Confirmed")
+        candles.append({'label':label,
+            'open':k.get('open',0),'high':k.get('high',0),'low':k.get('low',0),'close':k.get('close',0),
+            'totalVolumeBase':k.get('volume',0),'totalVolumeQuote':k.get('quoteVolume',k.get('turnover',0)),
+            'takerBuyQuote':None,'takerSellQuote':None,'buyPct':None,'sellPct':None,'delta':None,
+            'isRunning':is_running,'closeTimeMs':close_ms,'dataQuality':'unavailable'})
+    return candles
+
+
+def fetch_of_binance(symbol: str, tf: str) -> dict:
+    errors, iv = [], tf.lower()
+    klines_raw = []
+    try:
+        r = req.get(f"{BINANCE_FUTURES_API}/fapi/v1/klines",
+                    params={'symbol':symbol,'interval':iv,'limit':4}, timeout=10)
+        if r.status_code == 200:
+            klines_raw = r.json()
+    except Exception as e:
+        errors.append(f"klines: {e}")
+    if not klines_raw or len(klines_raw) < 2:
+        return {'ok':False,'errors':[f'Candle data unavailable for {symbol}']+errors}
+
+    oi_delta, oi_value = [], None
+    try:
+        r = req.get(f"{BINANCE_FUTURES_API}/futures/data/openInterestHist",
+                    params={'symbol':symbol,'period':iv,'limit':4}, timeout=10)
+        if r.status_code == 200:
+            oi_raw = r.json()
+            if oi_raw and len(oi_raw) >= 2:
+                for i in range(1, len(oi_raw)):
+                    pv = safe_float(oi_raw[i-1].get('sumOpenInterestValue',0))
+                    cv = safe_float(oi_raw[i].get('sumOpenInterestValue',0))
+                    oi_delta.append(round((cv-pv)/pv*100,2) if pv > 0 else 0)
+                oi_value = safe_float(oi_raw[-1].get('sumOpenInterestValue',0))
+    except Exception as e:
+        errors.append(f"OI: {e}")
+
+    fund_hist = []
+    try:
+        r = req.get(f"{BINANCE_FUTURES_API}/fapi/v1/fundingRate",
+                    params={'symbol':symbol,'limit':4}, timeout=10)
+        if r.status_code == 200:
+            fraw = r.json()
+            if fraw:
+                fund_hist = [round(safe_float(f.get('fundingRate',0))*100,6) for f in fraw]
+    except Exception as e:
+        errors.append(f"funding: {e}")
+
+    bid_ask = None
+    try:
+        for lim in [500, 100]:
+            r = req.get(f"{BINANCE_FUTURES_API}/fapi/v1/depth",
+                        params={'symbol':symbol,'limit':lim}, timeout=10)
+            if r.status_code == 200:
+                d = r.json()
+                cp = safe_float(klines_raw[-1][4])
+                bid_ask = process_order_book_levels(d.get('bids',[]), d.get('asks',[]), cp, _of_tf_range_pct(iv))
+                if bid_ask:
+                    bid_ask['tfRangePct'] = _of_tf_range_pct(iv)
+                break
+    except Exception as e:
+        errors.append(f"depth: {e}")
+    if bid_ask:
+        bid_ask['oiValue'] = oi_value
+
+    candles = _of_build_candles_binance(klines_raw, iv)
+    cvd, cvd_r = [], 0.0
+    for c in candles:
+        cvd_r += c['delta'] or 0
+        cvd.append(round(cvd_r, 2))
+    return {'ok':True,'exchange':'binance','sourceLabel':'Binance Futures',
+            'symbol':symbol,'displaySymbol':symbol,'timeframe':iv.upper(),
+            'candles':candles,'cvd':cvd,
+            'oiDeltaHistory':_of_pad_history(oi_delta),
+            'oiValueUSDT':oi_value,'fundingHistory':_of_pad_history(fund_hist),
+            'bidAsk':bid_ask,'buySellAvailable':True,'errors':errors}
+
+
+def fetch_of_bybit(symbol: str, tf: str) -> dict:
+    errors = []
+    iv, err = normalize_of_timeframe('bybit', tf)
+    if err:
+        return {'ok':False,'errors':[err]}
+    iv_ms = int(iv) * 60000 if iv.isdigit() else 86400000
+
+    klines_norm = []
+    try:
+        r = req.get(f"{BYBIT_PERP_API}/kline",
+                    params={'category':'linear','symbol':symbol,'interval':iv,'limit':4}, timeout=10)
+        if r.status_code == 200:
+            raw = list(reversed(r.json().get('result',{}).get('list',[])))
+            for k in raw:
+                open_ms = int(k[0])
+                klines_norm.append({'open':float(k[1]),'high':float(k[2]),'low':float(k[3]),
+                    'close':float(k[4]),'volume':float(k[5]),'turnover':float(k[6]),
+                    'openTime':open_ms,'closeTimeMs':open_ms+iv_ms-1})
+    except Exception as e:
+        errors.append(f"klines: {e}")
+    if not klines_norm or len(klines_norm) < 2:
+        return {'ok':False,'errors':[f'Candle data unavailable for {symbol}']+errors}
+    current_price = klines_norm[-1]['close']
+
+    oi_delta, oi_value = [], None
+    oi_iv_map = {'60':'1h','240':'4h','360':'4h','720':'4h','D':'1d'}
+    oi_interval = oi_iv_map.get(iv, '1h')
+    try:
+        r = req.get(f"{BYBIT_PERP_API}/open-interest",
+                    params={'category':'linear','symbol':symbol,'intervalTime':oi_interval,'limit':4}, timeout=10)
+        if r.status_code == 200:
+            oi_list = list(reversed(r.json().get('result',{}).get('list',[])))
+            if len(oi_list) >= 2:
+                for i in range(1, len(oi_list)):
+                    pv = safe_float(oi_list[i-1].get('openInterest',0)) * current_price
+                    cv = safe_float(oi_list[i].get('openInterest',0)) * current_price
+                    oi_delta.append(round((cv-pv)/pv*100,2) if pv > 0 else 0)
+                oi_value = safe_float(oi_list[-1].get('openInterest',0)) * current_price
+    except Exception as e:
+        errors.append(f"OI: {e}")
+
+    fund_hist = []
+    try:
+        r = req.get(f"{BYBIT_PERP_API}/funding/history",
+                    params={'category':'linear','symbol':symbol,'limit':4}, timeout=10)
+        if r.status_code == 200:
+            flist = list(reversed(r.json().get('result',{}).get('list',[])))
+            fund_hist = [round(safe_float(f.get('fundingRate',0))*100,6) for f in flist]
+    except Exception as e:
+        errors.append(f"funding: {e}")
+
+    bid_ask = None
+    try:
+        r = req.get(f"{BYBIT_PERP_API}/orderbook",
+                    params={'category':'linear','symbol':symbol,'limit':200}, timeout=10)
+        if r.status_code == 200:
+            res = r.json().get('result',{})
+            bid_ask = process_order_book_levels(res.get('b',[]), res.get('a',[]), current_price, _of_tf_range_pct(tf))
+            if bid_ask:
+                bid_ask['tfRangePct'] = _of_tf_range_pct(tf)
+    except Exception as e:
+        errors.append(f"depth: {e}")
+    if bid_ask:
+        bid_ask['oiValue'] = oi_value
+
+    candles = _of_build_candles_no_split(klines_norm, tf)
+    return {'ok':True,'exchange':'bybit','sourceLabel':'Bybit USDT Perp',
+            'symbol':symbol,'displaySymbol':symbol,'timeframe':tf.upper(),
+            'candles':candles,'cvd':[None]*len(candles),
+            'oiDeltaHistory':_of_pad_history(oi_delta),
+            'oiValueUSDT':oi_value,'fundingHistory':_of_pad_history(fund_hist),
+            'bidAsk':bid_ask,'buySellAvailable':False,'errors':errors}
+
+
+def fetch_of_okx(symbol: str, tf: str) -> dict:
+    errors = []
+    iv, err = normalize_of_timeframe('okx', tf)
+    if err:
+        return {'ok':False,'errors':[err]}
+    iv_ms_map = {'1H':3600000,'4H':14400000,'6H':21600000,'12H':43200000,'1D':86400000}
+    iv_ms = iv_ms_map.get(iv, 3600000)
+    okx_pub = "https://www.okx.com/api/v5/public"
+
+    klines_norm = []
+    try:
+        r = req.get(f"{OKX_PERP_API}/candles",
+                    params={'instId':symbol,'bar':iv,'limit':4}, timeout=10)
+        if r.status_code == 200:
+            raw = list(reversed(r.json().get('data',[])))
+            for k in raw:
+                open_ms = int(k[0])
+                klines_norm.append({'open':float(k[1]),'high':float(k[2]),'low':float(k[3]),
+                    'close':float(k[4]),'volume':float(k[5]),
+                    'quoteVolume':float(k[7]) if len(k)>7 else 0,
+                    'openTime':open_ms,'closeTimeMs':open_ms+iv_ms-1})
+    except Exception as e:
+        errors.append(f"klines: {e}")
+    if not klines_norm or len(klines_norm) < 2:
+        return {'ok':False,'errors':[f'Candle data unavailable for {symbol}']+errors}
+    current_price = klines_norm[-1]['close']
+
+    oi_value = None
+    try:
+        r = req.get(f"{okx_pub}/open-interest", params={'instType':'SWAP','instId':symbol}, timeout=10)
+        if r.status_code == 200:
+            d = r.json().get('data',[])
+            if d:
+                oi_value = safe_float(d[0].get('oiCcy',0)) * current_price
+    except Exception as e:
+        errors.append(f"OI: {e}")
+
+    fund_hist = []
+    try:
+        r = req.get(f"{okx_pub}/funding-rate-history", params={'instId':symbol,'limit':4}, timeout=10)
+        if r.status_code == 200:
+            fraw = list(reversed(r.json().get('data',[])))
+            fund_hist = [round(safe_float(f.get('fundingRate',0))*100,6) for f in fraw]
+    except Exception as e:
+        errors.append(f"funding: {e}")
+
+    bid_ask = None
+    try:
+        r = req.get(f"{OKX_PERP_API}/books", params={'instId':symbol,'sz':200}, timeout=10)
+        if r.status_code == 200:
+            d = r.json().get('data',[])
+            if d:
+                bids = [[b[0],b[1]] for b in d[0].get('bids',[])]
+                asks = [[a[0],a[1]] for a in d[0].get('asks',[])]
+                bid_ask = process_order_book_levels(bids, asks, current_price, _of_tf_range_pct(tf))
+                if bid_ask:
+                    bid_ask['tfRangePct'] = _of_tf_range_pct(tf)
+    except Exception as e:
+        errors.append(f"depth: {e}")
+    if bid_ask:
+        bid_ask['oiValue'] = oi_value
+
+    candles = _of_build_candles_no_split(klines_norm, tf)
+    return {'ok':True,'exchange':'okx','sourceLabel':'OKX Swap',
+            'symbol':symbol,'displaySymbol':symbol,'timeframe':tf.upper(),
+            'candles':candles,'cvd':[None]*len(candles),
+            'oiDeltaHistory':[None,None,None],
+            'oiValueUSDT':oi_value,'fundingHistory':_of_pad_history(fund_hist),
+            'bidAsk':bid_ask,'buySellAvailable':False,'errors':errors}
+
+
+def fetch_of_mexc(symbol: str, tf: str) -> dict:
+    errors = []
+    iv, err = normalize_of_timeframe('mexc', tf)
+    if err:
+        return {'ok':False,'errors':[err]}
+    iv_ms_map = {'Min60':3600000,'Hour4':14400000,'Day1':86400000}
+    iv_ms = iv_ms_map.get(iv, 3600000)
+
+    klines_norm = []
+    try:
+        r = req.get(f"{MEXC_PERP_API}/kline",
+                    params={'symbol':symbol,'interval':iv,'limit':4}, timeout=10)
+        if r.status_code == 200:
+            data = r.json().get('data',{})
+            times  = data.get('time',[])
+            opens  = data.get('open',[])
+            highs  = data.get('high',[])
+            lows   = data.get('low',[])
+            closes = data.get('close',[])
+            vols   = data.get('vol',[])
+            for i in range(len(times)):
+                open_ms = int(times[i]) * 1000
+                klines_norm.append({'open':float(opens[i]) if i<len(opens) else 0,
+                    'high':float(highs[i]) if i<len(highs) else 0,
+                    'low': float(lows[i])  if i<len(lows)  else 0,
+                    'close':float(closes[i]) if i<len(closes) else 0,
+                    'volume':float(vols[i]) if i<len(vols) else 0,
+                    'openTime':open_ms,'closeTimeMs':open_ms+iv_ms-1})
+    except Exception as e:
+        errors.append(f"klines: {e}")
+    if not klines_norm or len(klines_norm) < 2:
+        return {'ok':False,'errors':[f'Candle data unavailable for {symbol}']+errors}
+    current_price = klines_norm[-1]['close']
+
+    oi_value, fund_hist = None, []
+    try:
+        r = req.get(f"{MEXC_PERP_API}/ticker", params={'symbol':symbol}, timeout=10)
+        if r.status_code == 200:
+            body = r.json().get('data',[])
+            ticker = None
+            if isinstance(body, list):
+                for t in body:
+                    if t.get('symbol','').lower() == symbol.lower():
+                        ticker = t; break
+            elif isinstance(body, dict):
+                ticker = body
+            if ticker:
+                oi_value = safe_float(ticker.get('holdVol',0)) * current_price
+                fr = safe_float(ticker.get('fundingRate',0))
+                fund_hist = [round(fr * 100, 6)]
+    except Exception as e:
+        errors.append(f"OI/funding: {e}")
+
+    bid_ask = None
+    try:
+        r = req.get(f"{MEXC_PERP_API}/depth/{symbol}", timeout=10)
+        if r.status_code == 200:
+            d = r.json().get('data',{})
+            bids = [[str(b[0]),str(b[1])] for b in d.get('bids',[])]
+            asks = [[str(a[0]),str(a[1])] for a in d.get('asks',[])]
+            bid_ask = process_order_book_levels(bids, asks, current_price, _of_tf_range_pct(tf))
+            if bid_ask:
+                bid_ask['tfRangePct'] = _of_tf_range_pct(tf)
+    except Exception as e:
+        errors.append(f"depth: {e}")
+    if bid_ask:
+        bid_ask['oiValue'] = oi_value
+
+    candles = _of_build_candles_no_split(klines_norm, tf)
+    return {'ok':True,'exchange':'mexc','sourceLabel':'MEXC Contract',
+            'symbol':symbol,'displaySymbol':symbol,'timeframe':tf.upper(),
+            'candles':candles,'cvd':[None]*len(candles),
+            'oiDeltaHistory':[None,None,None],
+            'oiValueUSDT':oi_value,'fundingHistory':_of_pad_history(fund_hist),
+            'bidAsk':bid_ask,'buySellAvailable':False,'oiDataQuality':'native_holdVol','errors':errors}
+
+
+@app.route("/api/order-flow")
+def api_order_flow():
+    """Order Flow v5 — exchange-aware. Returns normalized OF data for Binance/Bybit/OKX/MEXC."""
+    exchange = (request.args.get('exchange','binance') or 'binance').lower().strip()
+    symbol   = (request.args.get('symbol','') or '').strip().upper()
+    tf       = (request.args.get('timeframe','1h') or '1h').strip().lower()
+    if not symbol:
+        return jsonify({'ok':False,'errors':['symbol is required']}), 400
+    norm_sym = normalize_of_symbol(exchange, symbol)
+    if exchange == 'binance':
+        data = fetch_of_binance(norm_sym, tf)
+    elif exchange == 'bybit':
+        data = fetch_of_bybit(norm_sym, tf)
+    elif exchange == 'okx':
+        data = fetch_of_okx(norm_sym, tf)
+    elif exchange == 'mexc':
+        data = fetch_of_mexc(norm_sym, tf)
+    else:
+        return jsonify({'ok':False,'errors':[f'Order Flow not supported for exchange: {exchange}']}), 400
+    return jsonify(data)
+
+
+# ============================================================
 # /api/orderflow — Phase 3 live streaming endpoint
 # Called every 5s by the Watchlist tab per pair
 # Returns lightweight orderflow snapshot: absorption + OI + funding
