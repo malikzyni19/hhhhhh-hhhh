@@ -7,7 +7,8 @@ from functools import wraps
 from datetime import datetime, timezone
 
 from models import (db, User, AdminLog, GlobalSetting, RolePermission, UserPermission,
-                    LoginHistory, DailyTokenUsage,
+                    LoginHistory, DailyTokenUsage, EmailVerification, GuestDevice,
+                    BacktestRun, IntelligenceSettings,
                     ALL_MODULES, ALL_TABS, ALL_EXCHANGES, ALL_TIMEFRAMES)
 from permissions import get_user_permissions, save_user_permissions, _bust_cache
 
@@ -399,16 +400,43 @@ def users_delete(user_id):
     try:
         uname = user.username
         urole = user.role
-        _log_action("delete_user", f"{uname} ({urole})", target_user_id=user.id)
+        uid   = user.id
+
+        # Log before deletion so the record exists
+        _log_action("delete_user", f"{uname} ({urole})", target_user_id=uid)
+
+        # Delete owned records (strict FK — cannot be nullified)
+        EmailVerification.query.filter_by(user_id=uid).delete(synchronize_session=False)
+        GuestDevice.query.filter_by(user_id=uid).delete(synchronize_session=False)
+        LoginHistory.query.filter_by(user_id=uid).delete(synchronize_session=False)
+        DailyTokenUsage.query.filter_by(user_id=uid).delete(synchronize_session=False)
+        UserPermission.query.filter_by(user_id=uid).delete(synchronize_session=False)
+        AdminLog.query.filter_by(admin_id=uid).delete(synchronize_session=False)
+
+        # Nullify nullable audit references
+        db.session.query(BacktestRun).filter(BacktestRun.run_by == uid).update(
+            {"run_by": None}, synchronize_session=False)
+        db.session.query(IntelligenceSettings).filter(
+            IntelligenceSettings.last_saved_by == uid).update(
+            {"last_saved_by": None}, synchronize_session=False)
+        db.session.query(GlobalSetting).filter(GlobalSetting.updated_by == uid).update(
+            {"updated_by": None}, synchronize_session=False)
+        db.session.query(RolePermission).filter(RolePermission.updated_by == uid).update(
+            {"updated_by": None}, synchronize_session=False)
+        db.session.query(UserPermission).filter(UserPermission.updated_by == uid).update(
+            {"updated_by": None}, synchronize_session=False)
+
         db.session.delete(user)
         db.session.commit()
+        _bust_cache(uid)
+
         if is_ajax:
             return jsonify({"success": True, "username": uname})
         flash(f"User '{uname}' deleted.", "success")
     except Exception as e:
         db.session.rollback()
         if is_ajax:
-            return jsonify({"error": str(e)}), 500
+            return jsonify({"error": "Deletion failed. Please try again."}), 500
         flash(f"Delete failed: {e}", "error")
 
     return redirect(url_for("admin.users"))
