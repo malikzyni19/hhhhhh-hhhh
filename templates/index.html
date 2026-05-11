@@ -583,6 +583,42 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .of-divider-row td{padding:2px 6px;font-size:7px;font-weight:700;color:var(--text-muted);letter-spacing:.5px;background:rgba(34,211,238,.03);border-top:1px solid var(--border2);border-bottom:1px solid var(--border2)}
 .of-footer-row{display:flex;justify-content:space-between;padding:4px 8px;background:var(--bg-input2);border-top:1px solid var(--border2);font-size:7px;color:var(--text-muted)}
 .of-signal-row{padding:4px 8px;font-size:8px;color:var(--text-secondary);font-style:italic;border-top:1px solid var(--border2)}
+/* OF v4 — premium confirmation module */
+.of-conf-header{padding:8px 10px 6px;background:rgba(4,13,26,.8);border-bottom:1px solid var(--border2)}
+.of-conf-title{font-size:9px;font-weight:700;letter-spacing:1px;color:var(--accent)}
+.of-conf-meta{font-size:8px;color:var(--text-muted);margin-top:2px;font-family:'JetBrains Mono',monospace}
+.of-ctx-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;padding:6px 8px}
+.of-ctx-card{background:rgba(0,0,0,.25);border:1px solid var(--border2);border-radius:7px;padding:6px 7px}
+.of-ctx-label{font-size:7px;font-weight:700;letter-spacing:.7px;color:var(--text-muted);margin-bottom:3px}
+.of-ctx-main{font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--text-primary);line-height:1.1}
+.of-ctx-sub{font-size:8px;margin-top:2px}
+.of-bid-ask-wrap{padding:6px 8px 4px}
+.of-bid-lbl{font-size:9px;font-weight:700;color:#34d399}
+.of-ask-lbl{font-size:9px;font-weight:700;color:#fb923c}
+.of-bid-ask-label{display:flex;justify-content:space-between;margin-bottom:3px}
+.of-combo-bar{height:8px;background:var(--bg-input);border-radius:4px;overflow:hidden;position:relative}
+.of-combo-bid{position:absolute;left:0;top:0;height:100%;background:linear-gradient(90deg,#34d399,#059669);border-radius:4px 0 0 4px;transition:width .5s ease}
+.of-combo-ask{position:absolute;right:0;top:0;height:100%;background:linear-gradient(270deg,#fb923c,#ea580c);border-radius:0 4px 4px 0;transition:width .5s ease}
+.of-book-section{padding:4px 8px 6px}
+.of-book-title{font-size:7px;font-weight:700;letter-spacing:.8px;color:var(--text-muted);margin-bottom:5px}
+.of-book-level{display:grid;grid-template-columns:auto 1fr auto auto;gap:6px;align-items:center;margin-bottom:4px}
+.of-book-price{font-size:8px;font-weight:700;font-family:'JetBrains Mono',monospace;white-space:nowrap}
+.of-book-bar-wrap{height:5px;background:var(--bg-input);border-radius:3px;overflow:hidden}
+.of-book-bar-fill{height:100%;border-radius:3px;transition:width .5s ease}
+.of-bid-fill{background:linear-gradient(90deg,#34d399,#059669)}
+.of-ask-fill{background:linear-gradient(90deg,#fb923c,#ea580c)}
+.of-book-size{font-size:7px;color:var(--text-secondary);font-family:'JetBrains Mono',monospace;text-align:right;white-space:nowrap}
+.of-book-dist{font-size:7px;color:var(--text-muted);text-align:right;white-space:nowrap}
+.of-verdict-block{margin:6px 8px 8px;padding:8px 10px;border-radius:8px;border:1px solid;text-align:center}
+.of-verdict-block.of-bull{border-color:rgba(34,197,94,.3);background:rgba(34,197,94,.06)}
+.of-verdict-block.of-bear{border-color:rgba(248,113,113,.3);background:rgba(248,113,113,.06)}
+.of-verdict-block.of-neu{border-color:rgba(71,85,105,.3);background:rgba(71,85,105,.06)}
+.of-verdict-title{font-size:7px;font-weight:700;letter-spacing:.8px;color:var(--text-muted);margin-bottom:4px}
+.of-verdict-text{font-size:11px;font-weight:700}
+.of-verdict-text.of-bull{color:#22c55e}
+.of-verdict-text.of-bear{color:#f87171}
+.of-verdict-text.of-neu{color:var(--text-secondary)}
+.of-section-divider{height:1px;background:var(--border2);margin:3px 0}
 /* Price flash animation */
 @keyframes priceFlashUp{0%{color:#22c55e;text-shadow:0 0 10px rgba(34,197,94,.8)}100%{color:#22c55e;text-shadow:none}}
 @keyframes priceFlashDown{0%{color:#f87171;text-shadow:0 0 10px rgba(248,113,113,.8)}100%{color:#f87171;text-shadow:none}}
@@ -3592,7 +3628,8 @@ async function scanBias(){
 
 
 // ── #5 Bias tab — load order flow detail on expand ──
-// Toggle bias OF on button tap
+const _biasOfIntervals = {};
+
 function _toggleBiasOf(btn, symbol, tf, containerId){
   const el = document.getElementById(containerId);
   if(!el) return;
@@ -3602,45 +3639,56 @@ function _toggleBiasOf(btn, symbol, tf, containerId){
     btn.style.color = '#22c55e';
     btn.style.borderColor = 'rgba(34,197,94,0.4)';
     btn.textContent = '📊 LIVE ORDER FLOW ▲';
-    // Load OF data if not loaded yet
-    if(!el.dataset.loaded){
-      const fakeCard = { classList: { contains: () => true } };
-      _loadBiasOf(symbol, tf, containerId, fakeCard);
+    _loadBiasOf(symbol, tf, containerId);
+    if(!_biasOfIntervals[containerId]){
+      _biasOfIntervals[containerId] = setInterval(()=>{
+        const panel = document.getElementById(containerId);
+        if(!panel || panel.style.display === 'none'){
+          clearInterval(_biasOfIntervals[containerId]);
+          delete _biasOfIntervals[containerId];
+          return;
+        }
+        _loadBiasOf(symbol, tf, containerId);
+      }, 3000);
     }
   } else {
     el.style.display = 'none';
     btn.style.color = '#22d3ee';
     btn.style.borderColor = 'rgba(34,211,238,0.2)';
     btn.textContent = '📊 LIVE ORDER FLOW';
+    if(_biasOfIntervals[containerId]){
+      clearInterval(_biasOfIntervals[containerId]);
+      delete _biasOfIntervals[containerId];
+    }
   }
 }
 
-async function _loadBiasOf(symbol, tf, containerId, card){
+async function _loadBiasOf(symbol, tf, containerId){
   const el = document.getElementById(containerId);
-  if(!el || el.dataset.loaded === '1') return;
-  el.innerHTML = '<div style="color:#475569;font-size:9px;padding:4px 0">⦿ Loading order flow...</div>';
+  if(!el) return;
+  const isFirst = !el.dataset.loaded;
+  if(isFirst) el.innerHTML = '<div style="color:#475569;font-size:9px;padding:4px 0">⦿ Loading order flow...</div>';
   const rawSym = symbol.replace('.P','').replace(/USDT$/,'') + 'USDT';
   try {
-    const [kRes, oiRes, fundRes] = await Promise.all([
+    const [kRes, oiRes, fundRes, bookRes] = await Promise.all([
       fetch('https://fapi.binance.com/fapi/v1/klines?symbol='+rawSym+'&interval='+tf+'&limit=4', {cache:'no-store'}),
       fetch('https://fapi.binance.com/futures/data/openInterestHist?symbol='+rawSym+'&period='+tf+'&limit=4', {cache:'no-store'}),
-      fetch('https://fapi.binance.com/fapi/v1/fundingRate?symbol='+rawSym+'&limit=4', {cache:'no-store'})
+      fetch('https://fapi.binance.com/fapi/v1/fundingRate?symbol='+rawSym+'&limit=4', {cache:'no-store'}),
+      fetch('https://fapi.binance.com/fapi/v1/depth?symbol='+rawSym+'&limit=50', {cache:'no-store'}),
     ]);
     if(!kRes.ok) throw new Error('Failed');
     const klines = await kRes.json();
     if(!klines || klines.length < 2) throw new Error('No data');
-    let oiData = [null,null,null];
-    if(oiRes.ok){ try{ const h=await oiRes.json(); if(h&&h.length>=2){ const ois=[]; for(let i=1;i<h.length;i++){ const p=parseFloat(h[i-1].sumOpenInterestValue),c=parseFloat(h[i].sumOpenInterestValue); ois.push(p>0?parseFloat(((c-p)/p*100).toFixed(2)):0); } while(ois.length<3)ois.unshift(null); oiData=ois.slice(-3); } }catch(e2){} }
+    let oiData = [null,null,null], oiValue = null;
+    if(oiRes.ok){ try{ const h=await oiRes.json(); if(h&&h.length>=2){ const ois=[]; for(let i=1;i<h.length;i++){ const p=parseFloat(h[i-1].sumOpenInterestValue),c=parseFloat(h[i].sumOpenInterestValue); ois.push(p>0?parseFloat(((c-p)/p*100).toFixed(2)):0); } while(ois.length<3)ois.unshift(null); oiData=ois.slice(-3); oiValue=parseFloat(h[h.length-1].sumOpenInterestValue); } }catch(e2){} }
     let fundData = [null,null,null];
     if(fundRes.ok){ try{ const fh=await fundRes.json(); if(fh&&fh.length>=1){ const funds=fh.map(f=>parseFloat(f.fundingRate)*100); while(funds.length<3)funds.unshift(null); fundData=funds.slice(-3); } }catch(e3){} }
-    el.innerHTML = '<div class="of-box">'
-      + '<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 8px;background:#040d1a;border-bottom:1px solid #0d2035">'
-      + '<span style="font-size:8px;font-weight:700;color:#3d5570;letter-spacing:1px">ORDER FLOW — '+tf.toUpperCase()+'</span>'
-      + '<span style="font-size:7px;color:#22c55e">● kline-based</span></div>'
-      + _buildOfTableHtml(tf, klines, oiData, fundData) + '</div>';
+    let ctxData = null;
+    if(bookRes&&bookRes.ok){ try{ const book=await bookRes.json(); const cp=parseFloat(klines[klines.length-1][4]); ctxData=_processBookData(book.bids,book.asks,cp,_ofTfRange(tf)); if(ctxData) ctxData.oiValue=oiValue; }catch(e4){} }
+    el.innerHTML = '<div class="of-box">' + _buildOfTableHtml(tf, klines, oiData, fundData, ctxData, rawSym) + '</div>';
     el.dataset.loaded = '1';
   } catch(e){
-    el.innerHTML = '<div style="color:#f87171;font-size:9px">Order flow unavailable: '+e.message+'</div>';
+    if(isFirst) el.innerHTML = '<div style="color:#f87171;font-size:9px">Order flow unavailable: '+e.message+'</div>';
   }
 }
 
@@ -4912,17 +4960,17 @@ function _setOfTf(sym, tf, el){
 async function _fetchOfData(sym, tf){
   const rawSym = sym.replace('.P','').replace(/USDT$/,'') + 'USDT';
   try {
-    const [kRes, oiRes, fundRes] = await Promise.all([
+    const [kRes, oiRes, fundRes, bookRes] = await Promise.all([
       fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${rawSym}&interval=${tf}&limit=4`, {cache:'no-store'}),
       fetch(`https://fapi.binance.com/futures/data/openInterestHist?symbol=${rawSym}&period=${tf}&limit=4`, {cache:'no-store'}),
-      fetch(`https://fapi.binance.com/fapi/v1/fundingRate?symbol=${rawSym}&limit=4`, {cache:'no-store'})
+      fetch(`https://fapi.binance.com/fapi/v1/fundingRate?symbol=${rawSym}&limit=4`, {cache:'no-store'}),
+      fetch(`https://fapi.binance.com/fapi/v1/depth?symbol=${rawSym}&limit=50`, {cache:'no-store'}),
     ]);
     if(!kRes.ok) return;
     const klines = await kRes.json();
     if(!klines || klines.length < 2) return;
 
-    // OI change % per candle
-    let oiData = [null, null, null];
+    let oiData = [null, null, null], oiValue = null;
     if(oiRes.ok){
       try {
         const oiHist = await oiRes.json();
@@ -4935,11 +4983,11 @@ async function _fetchOfData(sym, tf){
           }
           while(ois.length < 3) ois.unshift(null);
           oiData = ois.slice(-3);
+          oiValue = parseFloat(oiHist[oiHist.length-1].sumOpenInterestValue);
         }
       } catch(e2){}
     }
 
-    // Funding rate per candle
     let fundData = [null, null, null];
     if(fundRes.ok){
       try {
@@ -4952,135 +5000,213 @@ async function _fetchOfData(sym, tf){
       } catch(e3){}
     }
 
+    let ctxData = null;
+    if(bookRes && bookRes.ok){
+      try {
+        const book = await bookRes.json();
+        const cp = parseFloat(klines[klines.length-1][4]);
+        ctxData = _processBookData(book.bids, book.asks, cp, _ofTfRange(tf));
+        if(ctxData) ctxData.oiValue = oiValue;
+      } catch(e4){}
+    }
+
     if(!wlOfCache[sym]) wlOfCache[sym] = {};
-    wlOfCache[sym][tf] = {klines, oiData, fundData};
-    _renderOfBox(sym, tf, klines, oiData, fundData);
+    wlOfCache[sym][tf] = {klines, oiData, fundData, ctxData};
+    _renderOfBox(sym, tf, klines, oiData, fundData, ctxData);
   } catch(e){ console.error('OF fetch error:', sym, tf, e); }
 }
 
-function _renderOfBox(sym, tf, klines, oiData, fundData){
+function _renderOfBox(sym, tf, klines, oiData, fundData, ctxData){
   const el = document.getElementById('wl-live-' + sym);
   if(!el) return;
   const ofBox = el.querySelector('.of-data-wrap');
   if(!ofBox) return;
-  ofBox.innerHTML = _buildOfTableHtml(tf, klines, oiData, fundData);
+  ofBox.innerHTML = _buildOfTableHtml(tf, klines, oiData, fundData, ctxData, sym);
 }
 
-// ── Shared OF table builder v3 — vertical day blocks ──
-function _buildOfTableHtml(tf, klines, oiData, fundData){
+// ── OF v4 helpers ──
+function _ofTfRange(tf){
+  const m = {'1h':1.0,'4h':2.0,'6h':2.5,'12h':3.0,'1d':5.0,'d':5.0};
+  return m[tf.toLowerCase()] || 2.0;
+}
+
+function _processBookData(bids, asks, currentPrice, rangePct){
+  if(!bids||!asks||!currentPrice||currentPrice<=0) return null;
+  const lo = currentPrice*(1-rangePct/100), hi = currentPrice*(1+rangePct/100);
+  const fB = bids.map(([p,q])=>({price:parseFloat(p),size:parseFloat(q)})).filter(b=>b.price>=lo&&b.price<=currentPrice).sort((a,b)=>b.size-a.size);
+  const fA = asks.map(([p,q])=>({price:parseFloat(p),size:parseFloat(q)})).filter(a=>a.price>=currentPrice&&a.price<=hi).sort((a,b)=>b.size-a.size);
+  const maxSz = Math.max(...fB.map(b=>b.size),...fA.map(a=>a.size),1);
+  const top5Bids = fB.slice(0,5).map(b=>({price:b.price,size:b.size,distancePct:((currentPrice-b.price)/currentPrice*100).toFixed(2),strengthPct:Math.round(b.size/maxSz*100)}));
+  const top5Asks = fA.slice(0,5).map(a=>({price:a.price,size:a.size,distancePct:((a.price-currentPrice)/currentPrice*100).toFixed(2),strengthPct:Math.round(a.size/maxSz*100)}));
+  const bidVol = fB.reduce((s,b)=>s+b.size,0), askVol = fA.reduce((s,a)=>s+a.size,0);
+  const tot = bidVol+askVol;
+  const bidPct = tot>0 ? Math.round(bidVol/tot*100) : 50;
+  return {top5Bids,top5Asks,bidPct,tfRangePct:rangePct,oiValue:null};
+}
+
+// ── Shared OF table builder v4 — premium confirmation module ──
+function _buildOfTableHtml(tf, klines, oiData, fundData, ctxData, symbol){
   function parseCandle(k){
-    const baseVol  = parseFloat(k[5]);
-    const quoteVol = parseFloat(k[7]);
-    const buyBase  = parseFloat(k[9]);
-    const buyQuote = parseFloat(k[10]);
-    const sellBase  = baseVol  - buyBase;
-    const sellQuote = quoteVol - buyQuote;
-    const buyPct    = quoteVol > 0 ? (buyQuote/quoteVol*100) : 50;
-    const sellPct   = 100 - buyPct;
-    const delta     = buyQuote - sellQuote;
-    const isOpen    = Date.now() < parseInt(k[6]);
-    const closeTime = parseInt(k[6]);
-    return { baseVol, quoteVol, buyBase, buyQuote, sellBase, sellQuote, buyPct, sellPct, delta, isOpen, closeTime };
+    const baseVol=parseFloat(k[5]),quoteVol=parseFloat(k[7]),buyBase=parseFloat(k[9]),buyQuote=parseFloat(k[10]);
+    const sellBase=baseVol-buyBase,sellQuote=quoteVol-buyQuote;
+    const buyPct=quoteVol>0?(buyQuote/quoteVol*100):50,sellPct=100-buyPct;
+    const delta=buyQuote-sellQuote,isOpen=Date.now()<parseInt(k[6]),closeTime=parseInt(k[6]);
+    return {baseVol,quoteVol,buyBase,buyQuote,sellBase,sellQuote,buyPct,sellPct,delta,isOpen,closeTime};
   }
 
-  const candles = klines.map(parseCandle);
-  const curr  = candles[candles.length-1];
-  const prev1 = candles[candles.length-2];
-  const prev2 = candles.length >= 3 ? candles[candles.length-3] : null;
+  const candles=klines.map(parseCandle);
+  const curr=candles[candles.length-1],prev1=candles[candles.length-2],prev2=candles.length>=3?candles[candles.length-3]:null;
+  const oi2=oiData&&oiData[0],oi1=oiData&&oiData[1],oiC=oiData&&oiData[2];
+  const fund2=fundData&&fundData[0],fund1=fundData&&fundData[1],fundC=fundData&&fundData[2];
 
-  const oi2   = oiData && oiData[0];
-  const oi1   = oiData && oiData[1];
-  const oiC   = oiData && oiData[2];
-  const fund2 = fundData && fundData[0];
-  const fund1 = fundData && fundData[1];
-  const fundC = fundData && fundData[2];
+  let cvdR=0;
+  const cvds=candles.map(c=>{cvdR+=c.delta;return cvdR;});
+  const cvd2=prev2?cvds[cvds.length-3]:null,cvd1=cvds[cvds.length-2],cvdC=cvds[cvds.length-1];
 
-  // CVD cumulative
-  let cvdRunning = 0;
-  const cvds = candles.map(c => { cvdRunning += c.delta; return cvdRunning; });
-  const cvd2 = prev2 ? cvds[cvds.length-3] : null;
-  const cvd1 = cvds[cvds.length-2];
-  const cvdC = cvds[cvds.length-1];
+  function fmtV(v){const a=Math.abs(v);return a>=1e9?(a/1e9).toFixed(2)+'B':a>=1e6?(a/1e6).toFixed(2)+'M':a>=1e3?(a/1e3).toFixed(1)+'K':a.toFixed(1);}
+  function fmtS(v){return (v>=0?'+':'-')+fmtV(Math.abs(v));}
+  function pnCls(v){return v>0?'of-pos':v<0?'of-neg':'of-neu';}
+  function arr(v){return v>0?'↑':v<0?'↓':'→';}
+  function fmtTimer(ms){const s=Math.max(0,Math.floor(ms/1000)),h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sc=s%60;return h>0?`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sc).padStart(2,'0')}`:`${String(m).padStart(2,'0')}:${String(sc).padStart(2,'0')}`;}
 
-  function fmtV(v){ const a=Math.abs(v); return a>=1e9?(a/1e9).toFixed(2)+'B':a>=1e6?(a/1e6).toFixed(2)+'M':a>=1e3?(a/1e3).toFixed(1)+'K':a.toFixed(1); }
-  function fmtS(v){ return (v>=0?'+':'-')+fmtV(Math.abs(v)); }
-  function pnCls(v){ return v>0?'of-pos':v<0?'of-neg':'of-neu'; }
-  function arr(v){ return v>0?'↑':v<0?'↓':'→'; }
-
-  // Timer for open candle
-  function fmtTimer(ms){
-    const s = Math.max(0, Math.floor(ms/1000));
-    const h = Math.floor(s/3600);
-    const m = Math.floor((s%3600)/60);
-    const sec = s%60;
-    if(h>0) return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
-    return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
-  }
-
-  const remaining = curr.isOpen ? (curr.closeTime - Date.now()) : 0;
+  const remaining=curr.isOpen?(curr.closeTime-Date.now()):0;
+  const tfUp=tf.toUpperCase(), sym=symbol||'';
 
   function signal(d){
-    if(d.buyPct >= 65 && d.delta > 0) return { cls:'of-bull', txt:'✓ Buyers dominant — bullish pressure' };
-    if(d.buyPct >= 58 && d.delta > 0) return { cls:'of-bull', txt:'✓ Buyers absorbing — mild bullish' };
-    if(d.sellPct >= 65 && d.delta < 0) return { cls:'of-bear', txt:'✓ Sellers dominant — bearish pressure' };
-    if(d.sellPct >= 58 && d.delta < 0) return { cls:'of-bear', txt:'✓ Sellers absorbing — mild bearish' };
-    return { cls:'of-neu', txt:'→ Balanced — no clear bias' };
+    if(d.buyPct>=65&&d.delta>0) return {cls:'of-bull',txt:'✓ Buyers dominant — bullish pressure'};
+    if(d.buyPct>=58&&d.delta>0) return {cls:'of-bull',txt:'✓ Buyers absorbing — mild bullish'};
+    if(d.sellPct>=65&&d.delta<0) return {cls:'of-bear',txt:'✓ Sellers dominant — bearish pressure'};
+    if(d.sellPct>=58&&d.delta<0) return {cls:'of-bear',txt:'✓ Sellers absorbing — mild bearish'};
+    return {cls:'of-neu',txt:'→ Balanced — no clear bias'};
   }
 
-  function dayBlock(cls, label, d, isOpen, oi, fund, cvd, timerMs){
+  function dayBlock(cls,label,d,isOpen,oi,fund,cvd,timerMs){
     if(!d) return '';
-    const buyW  = Math.round(d.buyPct);
-    const sellW = 100 - buyW;
-    const sig   = signal(d);
-    const timerHtml = isOpen
-      ? `<span class="of-timer">⏱ ${fmtTimer(timerMs)}</span>`
-      : `<span class="of-closed">● closed</span>`;
-
-    const metricVal = (v, pct) => {
-      if(v == null) return '<span class="of-neu">—</span>';
-      const val = pct ? (v>=0?'+':'')+v.toFixed(2)+'%' : fmtS(v);
-      return `<span class="${pnCls(v)}">${val} ${arr(v)}</span>`;
-    };
-
+    const buyW=Math.round(d.buyPct),sellW=100-buyW,sig=signal(d);
+    const timerHtml=isOpen?`<span class="of-timer">⏱ ${fmtTimer(timerMs)}</span>`:`<span class="of-closed">● closed</span>`;
+    const mv=(v,pct)=>{if(v==null)return '<span class="of-neu">—</span>';const val=pct?(v>=0?'+':'')+v.toFixed(2)+'%':fmtS(v);return `<span class="${pnCls(v)}">${val} ${arr(v)}</span>`;};
     return `<div class="of-day ${cls}">
-      <div class="of-day-header">
-        <span class="of-day-label">${label}</span>
-        ${timerHtml}
-      </div>
+      <div class="of-day-header"><span class="of-day-label">${label}</span>${timerHtml}</div>
       <div class="of-bar-wrap">
-        <div class="of-bar-pcts">
-          <span class="of-pct-buy">🟢 ${d.buyPct.toFixed(1)}%</span>
-          <span class="of-pct-sell">${d.sellPct.toFixed(1)}% 🔴</span>
-        </div>
-        <div class="of-bar">
-          <div class="of-bar-buy" style="width:${buyW}%"></div>
-          <div class="of-bar-sell" style="width:${sellW}%"></div>
-        </div>
+        <div class="of-bar-pcts"><span class="of-pct-buy">Buy ${d.buyPct.toFixed(1)}%</span><span class="of-pct-sell">${d.sellPct.toFixed(1)}% Sell</span></div>
+        <div class="of-bar"><div class="of-bar-buy" style="width:${buyW}%"></div><div class="of-bar-sell" style="width:${sellW}%"></div></div>
       </div>
       <div class="of-bs-grid">
         <div class="of-buy-col">
-          <div class="of-bs-row"><span class="of-bs-lbl">🟢 USDT</span><span class="of-val-buy">${fmtV(d.buyQuote)}</span></div>
-          <div class="of-bs-row"><span class="of-bs-lbl">🟢 COIN</span><span class="of-val-buy">${fmtV(d.buyBase)}</span></div>
+          <div class="of-bs-row"><span class="of-bs-lbl">BUY USDT</span><span class="of-val-buy">${fmtV(d.buyQuote)}</span></div>
+          <div class="of-bs-row"><span class="of-bs-lbl">BUY COIN</span><span class="of-val-buy">${fmtV(d.buyBase)}</span></div>
         </div>
         <div class="of-divider"></div>
         <div class="of-sell-col">
-          <div class="of-bs-row"><span class="of-bs-lbl">USDT 🔴</span><span class="of-val-sell">${fmtV(d.sellQuote)}</span></div>
-          <div class="of-bs-row"><span class="of-bs-lbl">COIN 🔴</span><span class="of-val-sell">${fmtV(d.sellBase)}</span></div>
+          <div class="of-bs-row"><span class="of-bs-lbl">SELL USDT</span><span class="of-val-sell">${fmtV(d.sellQuote)}</span></div>
+          <div class="of-bs-row"><span class="of-bs-lbl">SELL COIN</span><span class="of-val-sell">${fmtV(d.sellBase)}</span></div>
         </div>
       </div>
       <div class="of-metrics">
-        <div class="of-metric"><span class="of-mlbl">Δ DELTA</span>${metricVal(d.delta, false)}</div>
-        <div class="of-metric"><span class="of-mlbl">OI Δ%</span>${metricVal(oi, true)}</div>
-        <div class="of-metric"><span class="of-mlbl">FUNDING</span>${metricVal(fund, true)}</div>
-        <div class="of-metric"><span class="of-mlbl">CVD</span>${metricVal(cvd, false)}</div>
+        <div class="of-metric"><span class="of-mlbl">Δ DELTA</span>${mv(d.delta,false)}</div>
+        <div class="of-metric"><span class="of-mlbl">OI Δ%</span>${mv(oi,true)}</div>
+        <div class="of-metric"><span class="of-mlbl">FUNDING</span>${mv(fund,true)}</div>
+        <div class="of-metric"><span class="of-mlbl">CVD</span>${mv(cvd,false)}</div>
       </div>
       <div class="of-signal ${sig.cls}">${sig.txt}</div>
     </div>`;
   }
 
-  return dayBlock('of-curr', 'CURR ●', curr, curr.isOpen, oiC, fundC, cvdC, remaining)
-       + dayBlock('of-prev1', 'PREV-1', prev1, false, oi1, fund1, cvd1, 0)
-       + (prev2 ? dayBlock('of-prev2', 'PREV-2', prev2, false, oi2, fund2, cvd2, 0) : '');
+  // ── 1. Header ──
+  const headerHtml=`<div class="of-conf-header">
+    <div class="of-conf-title">ORDER FLOW CONFIRMATION</div>
+    <div class="of-conf-meta">${sym?sym+' · ':''}${tfUp} · Live + Candle Confirmation</div>
+  </div>`;
+
+  // ── 2. Candle rows ──
+  const candleHtml=dayBlock('of-curr',`CURRENT ${tfUp} CANDLE — RUNNING`,curr,curr.isOpen,oiC,fundC,cvdC,remaining)
+    +dayBlock('of-prev1',`LAST CLOSED ${tfUp} CANDLE — CONFIRMED`,prev1,false,oi1,fund1,cvd1,0)
+    +(prev2?dayBlock('of-prev2',`PREVIOUS ${tfUp} CANDLE — CONFIRMED`,prev2,false,oi2,fund2,cvd2,0):'');
+
+  // ── 3. Bid/Ask imbalance bar ──
+  let bidAskHtml='';
+  if(ctxData&&ctxData.bidPct!=null){
+    const bidP=ctxData.bidPct,askP=100-bidP;
+    bidAskHtml=`<div class="of-bid-ask-wrap">
+      <div class="of-book-title" style="margin-bottom:4px">BID / ASK IMBALANCE — ±${(ctxData.tfRangePct||2).toFixed(1)}% RANGE</div>
+      <div class="of-bid-ask-label"><span class="of-bid-lbl">Bid ${bidP.toFixed(1)}%</span><span class="of-ask-lbl">${askP.toFixed(1)}% Ask</span></div>
+      <div class="of-combo-bar"><div class="of-combo-bid" style="width:${bidP}%"></div><div class="of-combo-ask" style="width:${askP}%"></div></div>
+    </div><div class="of-section-divider"></div>`;
+  }
+
+  // ── 4. Market Context cards ──
+  function fmtOI(v){if(v==null||isNaN(v))return '—';if(v>=1e9)return (v/1e9).toFixed(2)+'B';if(v>=1e6)return (v/1e6).toFixed(2)+'M';if(v>=1e3)return (v/1e3).toFixed(1)+'K';return v.toFixed(0);}
+  const oiVal=ctxData&&ctxData.oiValue;
+  let oiSub='—',oiSubCls='of-neu';
+  if(oiC!=null){if(oiC>0.5){oiSub=`↑ ${oiC.toFixed(2)}% (5m)`;oiSubCls='of-bull';}else if(oiC<-0.5){oiSub=`↓ ${Math.abs(oiC).toFixed(2)}% (5m)`;oiSubCls='of-bear';}else{oiSub=`→ ${oiC.toFixed(2)}% (5m)`;}}
+  let fundTxt='—',fundCls='of-neu';
+  if(fundC!=null){if(fundC>0.05){fundTxt='Long crowd bias';fundCls='of-bear';}else if(fundC<-0.05){fundTxt='Short crowd bias';fundCls='of-bull';}else if(fundC>0.01){fundTxt='Slight long lean';}else if(fundC<-0.01){fundTxt='Slight short lean';}else{fundTxt='Neutral crowd';}}
+  let bookTxt='—',bookCls='of-neu';
+  if(ctxData&&ctxData.bidPct!=null){const bp=ctxData.bidPct;if(bp>=55){bookTxt='Buy side heavier';bookCls='of-bull';}else if(100-bp>=55){bookTxt='Sell side heavier';bookCls='of-bear';}else{bookTxt='Balanced book';}}
+  const ctxHtml=`<div class="of-book-title" style="padding:4px 8px 0">MARKET CONTEXT</div>
+  <div class="of-ctx-grid">
+    <div class="of-ctx-card">
+      <div class="of-ctx-label">OPEN INTEREST</div>
+      <div class="of-ctx-main">${fmtOI(oiVal)}</div>
+      <div class="of-ctx-sub ${oiSubCls}">${oiSub}</div>
+    </div>
+    <div class="of-ctx-card">
+      <div class="of-ctx-label">FUNDING RATE</div>
+      <div class="of-ctx-main">${fundC!=null?(fundC>=0?'+':'')+fundC.toFixed(4)+'%':'—'}</div>
+      <div class="of-ctx-sub ${fundCls}">${fundTxt}</div>
+    </div>
+    <div class="of-ctx-card">
+      <div class="of-ctx-label">BOOK IMBALANCE</div>
+      <div class="of-ctx-main">${ctxData&&ctxData.bidPct!=null?ctxData.bidPct.toFixed(1)+'% Bid':'—'}</div>
+      <div class="of-ctx-sub ${bookCls}">${bookTxt}</div>
+    </div>
+  </div><div class="of-section-divider"></div>`;
+
+  // ── 5 & 6. Top Bid / Ask levels ──
+  function fmtBkP(p){return p<1?p.toFixed(6):p<100?p.toFixed(4):p<10000?p.toFixed(2):p.toFixed(0);}
+  function fmtSz(v){const a=Math.abs(v);return a>=1e6?(a/1e6).toFixed(2)+'M':a>=1e3?(a/1e3).toFixed(1)+'K':a.toFixed(2);}
+  let bidLvlHtml='',askLvlHtml='';
+  if(ctxData&&ctxData.top5Bids&&ctxData.top5Bids.length){
+    bidLvlHtml=`<div class="of-book-section"><div class="of-book-title">TOP BID LEVELS (${ctxData.top5Bids.length})</div>`
+      +ctxData.top5Bids.map(b=>`<div class="of-book-level">
+        <span class="of-book-price" style="color:#34d399">${fmtBkP(b.price)}</span>
+        <div class="of-book-bar-wrap"><div class="of-book-bar-fill of-bid-fill" style="width:${b.strengthPct}%"></div></div>
+        <span class="of-book-size">${fmtSz(b.size)}</span>
+        <span class="of-book-dist">${b.distancePct}%↓</span>
+      </div>`).join('')+'</div>';
+  }
+  if(ctxData&&ctxData.top5Asks&&ctxData.top5Asks.length){
+    askLvlHtml=`<div class="of-book-section"><div class="of-book-title">TOP ASK LEVELS (${ctxData.top5Asks.length})</div>`
+      +ctxData.top5Asks.map(a=>`<div class="of-book-level">
+        <span class="of-book-price" style="color:#fb923c">${fmtBkP(a.price)}</span>
+        <div class="of-book-bar-wrap"><div class="of-book-bar-fill of-ask-fill" style="width:${a.strengthPct}%"></div></div>
+        <span class="of-book-size">${fmtSz(a.size)}</span>
+        <span class="of-book-dist">${a.distancePct}%↑</span>
+      </div>`).join('')+'</div>';
+  }
+  const bookHtml=(bidLvlHtml||askLvlHtml)?bidLvlHtml+(bidLvlHtml&&askLvlHtml?'<div class="of-section-divider"></div>':'')+askLvlHtml+'<div class="of-section-divider"></div>':'';
+
+  // ── 7. Final Verdict ──
+  function verdict(){
+    if(!curr) return {txt:'No data',cls:'of-neu'};
+    let bp=0,brp=0;
+    if(curr.buyPct>=55)bp+=2; else if(curr.sellPct>=55)brp+=2;
+    if(curr.delta>0)bp++; else if(curr.delta<0)brp++;
+    if(oiC!=null&&oiC>0){if(curr.buyPct>=55)bp++;else brp++;}
+    if(fundC!=null){if(fundC>0.05)brp++;else if(fundC<-0.05)bp++;}
+    if(ctxData&&ctxData.bidPct!=null){if(ctxData.bidPct>=55)bp++;else if(100-ctxData.bidPct>=55)brp++;}
+    const tot=bp+brp; if(!tot)return {txt:'Mixed / Neutral ⚠',cls:'of-neu'};
+    const r=bp/tot;
+    if(r>=0.7)return {txt:'Aligned with Bullish Bias ✅',cls:'of-bull'};
+    if(r<=0.3)return {txt:'Aligned with Bearish Bias ✅',cls:'of-bear'};
+    if(r>0.5) return {txt:'Mild Bullish Flow ↑',cls:'of-bull'};
+    if(r<0.5) return {txt:'Mild Bearish Flow ↓',cls:'of-bear'};
+    return {txt:'Mixed / Neutral ⚠',cls:'of-neu'};
+  }
+  const v=verdict();
+  const verdictHtml=`<div class="of-verdict-block ${v.cls}"><div class="of-verdict-title">FLOW VERDICT</div><div class="of-verdict-text ${v.cls}">${v.txt}</div></div>`;
+
+  return headerHtml+candleHtml+(bidAskHtml||'')+ctxHtml+bookHtml+verdictHtml;
 }
 
 // Start OF kline polling per symbol
@@ -5522,27 +5648,24 @@ async function _loadScanOfPanel(symbol, tf, panelId){
   if(!panel) return;
   const rawSym = symbol.replace('.P','').replace(/USDT$/,'') + 'USDT';
   try {
-    const [kRes, oiRes, fundRes] = await Promise.all([
+    const [kRes, oiRes, fundRes, bookRes] = await Promise.all([
       fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${rawSym}&interval=${tf}&limit=4`, {cache:'no-store'}),
       fetch(`https://fapi.binance.com/futures/data/openInterestHist?symbol=${rawSym}&period=${tf}&limit=4`, {cache:'no-store'}),
-      fetch(`https://fapi.binance.com/fapi/v1/fundingRate?symbol=${rawSym}&limit=4`, {cache:'no-store'})
+      fetch(`https://fapi.binance.com/fapi/v1/fundingRate?symbol=${rawSym}&limit=4`, {cache:'no-store'}),
+      fetch(`https://fapi.binance.com/fapi/v1/depth?symbol=${rawSym}&limit=50`, {cache:'no-store'}),
     ]);
     if(!kRes.ok) throw new Error('Fetch failed');
     const klines = await kRes.json();
     if(!klines || klines.length < 2) throw new Error('No data');
 
-    let oiData = [null,null,null];
-    if(oiRes.ok){ try{ const h=await oiRes.json(); if(h&&h.length>=2){ const ois=[]; for(let i=1;i<h.length;i++){const p=parseFloat(h[i-1].sumOpenInterestValue),c=parseFloat(h[i].sumOpenInterestValue); ois.push(p>0?parseFloat(((c-p)/p*100).toFixed(2)):0);} while(ois.length<3)ois.unshift(null); oiData=ois.slice(-3); }}catch(e2){} }
-    let fundData = [null,null,null];
+    let oiData=[null,null,null], oiValue=null;
+    if(oiRes.ok){ try{ const h=await oiRes.json(); if(h&&h.length>=2){ const ois=[]; for(let i=1;i<h.length;i++){const p=parseFloat(h[i-1].sumOpenInterestValue),c=parseFloat(h[i].sumOpenInterestValue); ois.push(p>0?parseFloat(((c-p)/p*100).toFixed(2)):0);} while(ois.length<3)ois.unshift(null); oiData=ois.slice(-3); oiValue=parseFloat(h[h.length-1].sumOpenInterestValue); }}catch(e2){} }
+    let fundData=[null,null,null];
     if(fundRes.ok){ try{ const fh=await fundRes.json(); if(fh&&fh.length>=1){ const funds=fh.map(f=>parseFloat(f.fundingRate)*100); while(funds.length<3)funds.unshift(null); fundData=funds.slice(-3); }}catch(e3){} }
+    let ctxData=null;
+    if(bookRes&&bookRes.ok){ try{ const book=await bookRes.json(); const cp=parseFloat(klines[klines.length-1][4]); ctxData=_processBookData(book.bids,book.asks,cp,_ofTfRange(tf)); if(ctxData) ctxData.oiValue=oiValue; }catch(e4){} }
 
-    panel.innerHTML = `<div class="of-box">
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 8px;background:#040d1a;border-bottom:1px solid #0d2035">
-        <span style="font-size:8px;font-weight:700;color:#3d5570;letter-spacing:1px">ORDER FLOW — ${tf.toUpperCase()}</span>
-        <span style="font-size:7px;color:#22c55e">● LIVE · 2s</span>
-      </div>
-      ${_buildOfTableHtml(tf, klines, oiData, fundData)}
-    </div>`;
+    panel.innerHTML = `<div class="of-box">${_buildOfTableHtml(tf, klines, oiData, fundData, ctxData, rawSym)}</div>`;
   } catch(e){
     panel.innerHTML = `<div style="color:#f87171;font-size:9px;padding:4px">Order flow unavailable: ${e.message}</div>`;
   }
