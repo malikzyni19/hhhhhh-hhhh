@@ -6342,55 +6342,92 @@ def _bias_normal_presets(bias_strength: str) -> dict:
         }
 
 
-def _detect_prior_move(o: list, h: list, l: list, c: list, start: int, end: int) -> dict:
-    """Detect if candles [start, end) form a directional move."""
-    reasons: list[str] = []
+def _detect_prior_move(o: list, h: list, l: list, c: list, start: int, end: int, tf: str = "1d") -> dict:
+    """Detect a clean directional drive in candles [start, end).
+    Returns quality='clean' only when all 5 hard conditions pass per direction."""
+    _empty: dict = {
+        "direction": None, "quality": "none", "checksPassed": 0,
+        "summary": "empty", "reasons": [],
+        "netPct": 0.0, "greenCount": 0, "redCount": 0,
+        "upCloseSteps": 0, "downCloseSteps": 0, "requiredMovePct": 0.0,
+    }
     if end <= start:
-        return {"direction": None, "checksPassed": 0, "summary": "empty", "reasons": []}
+        return _empty
     seg_o, seg_h, seg_l, seg_c = o[start:end], h[start:end], l[start:end], c[start:end]
     n = len(seg_c)
     if n < 1:
-        return {"direction": None, "checksPassed": 0, "summary": "empty", "reasons": []}
+        return _empty
 
-    up_checks = down_checks = 0
+    # Timeframe-aware minimum net move threshold
+    tf_lower = tf.lower()
+    if   tf_lower in ("1d", "12h"): req_pct = 0.8
+    elif tf_lower in ("4h", "6h"):  req_pct = 0.5
+    else:                            req_pct = 0.3
 
-    net_close = seg_c[-1] - seg_c[0]
-    if net_close > 0:
-        up_checks += 1; reasons.append("close↑")
-    elif net_close < 0:
-        down_checks += 1; reasons.append("close↓")
+    net_close      = seg_c[-1] - seg_c[0]
+    net_pct        = abs(net_close) / seg_c[0] * 100 if seg_c[0] > 0 else 0.0
+    green_count    = sum(1 for i in range(n) if seg_c[i] > seg_o[i])
+    red_count      = n - green_count
+    up_close_steps = sum(1 for i in range(1, n) if seg_c[i] > seg_c[i - 1])
+    dn_close_steps = sum(1 for i in range(1, n) if seg_c[i] < seg_c[i - 1])
+    prior_mid      = min(seg_l) + (max(seg_h) - min(seg_l)) / 2
+    green_needed   = math.ceil(n * 0.60)
+    steps_needed   = math.ceil((n - 1) * 0.60) if n >= 2 else 0
 
-    if n >= 2:
-        if all(seg_h[i] >= seg_h[i - 1] for i in range(1, n)):
-            up_checks += 1; reasons.append("highs↑")
-        if all(seg_l[i] <= seg_l[i - 1] for i in range(1, n)):
-            down_checks += 1; reasons.append("lows↓")
+    # Evaluate all 5 hard conditions for each direction
+    up_cond = [
+        net_close > 0,
+        green_count >= green_needed,
+        up_close_steps >= steps_needed,
+        net_pct >= req_pct,
+        seg_c[-1] > prior_mid,
+    ]
+    dn_cond = [
+        net_close < 0,
+        red_count >= green_needed,
+        dn_close_steps >= steps_needed,
+        net_pct >= req_pct,
+        seg_c[-1] < prior_mid,
+    ]
+    up_passed = sum(up_cond)
+    dn_passed = sum(dn_cond)
 
-    greens = sum(1 for i in range(n) if seg_c[i] > seg_o[i])
-    reds = n - greens
-    if greens > reds:
-        up_checks += 1; reasons.append(f"{greens}/{n}green")
-    elif reds > greens:
-        down_checks += 1; reasons.append(f"{reds}/{n}red")
-
-    if seg_c[0] > 0:
-        move_pct = abs(net_close) / seg_c[0] * 100
-        if move_pct >= 0.3:
-            if net_close > 0: up_checks += 1
-            else: down_checks += 1
-            reasons.append(f"rng{move_pct:.1f}%")
-
-    if up_checks >= 2 and up_checks >= down_checks:
-        direction, checks_passed = "up", up_checks
-    elif down_checks >= 2 and down_checks > up_checks:
-        direction, checks_passed = "down", down_checks
+    if up_passed == 5:
+        direction, quality, checks_passed = "up", "clean", 5
+        reasons = [
+            f"netClose↑{net_pct:.2f}%",
+            f"{green_count}/{n}green≥{green_needed}",
+            f"closeSteps↑{up_close_steps}≥{steps_needed}",
+            f"move≥{req_pct}%",
+            "closedAboveMid",
+        ]
+    elif dn_passed == 5:
+        direction, quality, checks_passed = "down", "clean", 5
+        reasons = [
+            f"netClose↓{net_pct:.2f}%",
+            f"{red_count}/{n}red≥{green_needed}",
+            f"closeSteps↓{dn_close_steps}≥{steps_needed}",
+            f"move≥{req_pct}%",
+            "closedBelowMid",
+        ]
     else:
-        direction, checks_passed = None, max(up_checks, down_checks)
+        direction, quality = None, "weak" if max(up_passed, dn_passed) > 0 else "none"
+        checks_passed = max(up_passed, dn_passed)
+        lead = "up" if up_passed >= dn_passed else "dn"
+        reasons = [f"{lead}:{checks_passed}/5"]
 
     return {
-        "direction": direction, "checksPassed": checks_passed,
-        "summary": f"{direction or 'none'} ({checks_passed} checks)",
-        "reasons": reasons,
+        "direction":       direction,
+        "quality":         quality,
+        "checksPassed":    checks_passed,
+        "summary":         f"{direction or 'none'} ({quality}·{checks_passed}/5)",
+        "reasons":         reasons,
+        "netPct":          round(net_pct, 4),
+        "greenCount":      green_count,
+        "redCount":        red_count,
+        "upCloseSteps":    up_close_steps,
+        "downCloseSteps":  dn_close_steps,
+        "requiredMovePct": req_pct,
     }
 
 
@@ -6796,7 +6833,8 @@ def api_bias_scan():
         "setupsReturned":           0,
         "rejected": {
             "notEnoughCandles":  0,
-            "noPriorMove":       0,
+            "noPriorMove":        0,
+            "noCleanPriorDrive":  0,
             "biasFilterMismatch": 0,
             "volumeFilter":      0,
             "noRejectionCandle": 0,
@@ -6843,6 +6881,7 @@ def api_bias_scan():
 
             # Per-symbol rejection trackers for diagnostics
             _d_had_prior      = False
+            _d_weak_prior     = False
             _d_had_rej        = False
             _d_passed_confirm = False
             _d_bias_miss      = False
@@ -6855,10 +6894,12 @@ def api_bias_scan():
                     continue
 
                 prior_start  = sig_idx - prior_move_n
-                prior_result = _detect_prior_move(o, h, l, c, prior_start, sig_idx)
+                prior_result = _detect_prior_move(o, h, l, c, prior_start, sig_idx, tf)
                 prior_dir    = prior_result["direction"]
 
-                if not prior_dir or prior_result["checksPassed"] < min_prior_checks:
+                if prior_result["quality"] != "clean":
+                    if prior_result["quality"] == "weak":
+                        _d_weak_prior = True
                     continue
 
                 _d_had_prior = True
@@ -6979,8 +7020,10 @@ def api_bias_scan():
                 dir_word       = "upward" if prior_dir == "up" else "downward"
                 min_wick_pct_i = round(min_wick_pct * 100)
                 min_body_pct_i = round(min_body_pct * 100)
+                drive_word = "bullish" if prior_dir == "up" else "bearish"
                 readable_chain: list[str] = [
-                    f"Previous {prior_move_n} closed candles pushed {dir_word}",
+                    f"Clean {prior_move_n}-candle {drive_word} drive detected before rejection",
+                    f"Drive proof: {prior_result['netPct']:.2f}% net · {prior_result['greenCount'] if prior_dir == 'up' else prior_result['redCount']}/{prior_move_n} {'green' if prior_dir == 'up' else 'red'} · {prior_result['upCloseSteps'] if prior_dir == 'up' else prior_result['downCloseSteps']} step{'s' if (prior_result['upCloseSteps'] if prior_dir == 'up' else prior_result['downCloseSteps']) != 1 else ''} · min {prior_result['requiredMovePct']}%",
                 ]
                 if rej_dir == "bearish":
                     readable_chain.append("Signal candle closed bearish")
@@ -7075,11 +7118,20 @@ def api_bias_scan():
                     "setupType":               setup_type_label,
                     "pattern":                 pattern,
                     "detail":                  detail,
-                    "priorMoveDirection":       prior_dir,
-                    "priorMoveCandles":         prior_move_n,
-                    "priorMoveChecks":          prior_result["checksPassed"],
-                    "signalCandleOffset":       sig_offset,
-                    "signalCandleTime":         ts[sig_idx],
+                    "priorMoveDirection":        prior_dir,
+                    "priorMoveCandles":          prior_move_n,
+                    "priorMoveChecks":           prior_result["checksPassed"],
+                    "priorMoveQuality":          prior_result["quality"],
+                    "priorMoveNetPct":           prior_result["netPct"],
+                    "priorMoveGreenCount":       prior_result["greenCount"],
+                    "priorMoveRedCount":         prior_result["redCount"],
+                    "priorMoveUpCloseSteps":     prior_result["upCloseSteps"],
+                    "priorMoveDownCloseSteps":   prior_result["downCloseSteps"],
+                    "priorMoveRequiredMovePct":  prior_result["requiredMovePct"],
+                    "priorWindowStartTime":      ts[prior_start],
+                    "priorWindowEndTime":        ts[sig_idx - 1],
+                    "signalCandleOffset":        sig_offset,
+                    "signalCandleTime":          ts[sig_idx],
                     "rejectionOpen":            rej["open"],
                     "rejectionHigh":            rej["high"],
                     "rejectionLow":             rej["low"],
@@ -7106,7 +7158,9 @@ def api_bias_scan():
                 results.append(best)
             else:
                 # Attribute primary rejection reason (priority order)
-                if not _d_had_prior:
+                if not _d_had_prior and _d_weak_prior:
+                    diagnostics["rejected"]["noCleanPriorDrive"] += 1
+                elif not _d_had_prior:
                     diagnostics["rejected"]["noPriorMove"] += 1
                 elif _d_bias_miss:
                     diagnostics["rejected"]["biasFilterMismatch"] += 1
