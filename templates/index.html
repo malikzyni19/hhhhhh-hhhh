@@ -3190,11 +3190,22 @@ function setBiasMode(mode){
 
 // ── Bias Scan ──
 // ── #7 Bias tab — diagnostics panel renderer ──
+function fmtBiasTime(ms) {
+  if (!ms) return '—';
+  const d = new Date(+ms);
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
+  const dy = String(d.getDate()).padStart(2, '0');
+  const hr = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return `${d.getFullYear()}-${mo}-${dy} ${hr}:${mi}`;
+}
+
 function renderBiasDiagnostics(diag) {
   if (!diag) return '';
   const rej = diag.rejected || {};
   const rejRows = [
     ['No Prior Move',         rej.noPriorMove],
+    ['No Clean Prior Drive',  rej.noCleanPriorDrive],
     ['No Rejection Candle',   rej.noRejectionCandle],
     ['Not Confirmed',         rej.notConfirmed],
     ['Confluence Required',   rej.confluenceRequired],
@@ -3387,6 +3398,11 @@ function renderBiasCard(x, i, scanTime) {
       <div class="result-detail" style="margin-top:8px;opacity:.4;font-size:10px">
         ↑ ${x.rejectionUpperWickPct || x.upperWickPct || 0}% wick · ↓ ${x.rejectionLowerWickPct || x.lowerWickPct || 0}% wick · ${x.rejectionBodyPct || x.bodyPct || 0}% body${x.signalCandleOffset != null ? ` · signal -${x.signalCandleOffset}c` : ''}
       </div>
+      ${(x.priorWindowStartTime || x.priorWindowEndTime || x.signalCandleTime)
+        ? `<div class="result-detail" style="margin-top:3px;opacity:.35;font-size:9px;font-family:'JetBrains Mono',monospace">
+            ${x.priorWindowStartTime ? `drive: ${fmtBiasTime(x.priorWindowStartTime)}` : ''}${x.priorWindowEndTime ? ` → ${fmtBiasTime(x.priorWindowEndTime)}` : ''}${x.signalCandleTime ? ` · signal: ${fmtBiasTime(x.signalCandleTime)}` : ''}
+           </div>`
+        : ''}
 
       <div style="margin-top:8px">
         <button class="zone-btn" style="width:100%;padding:6px;font-size:10px;letter-spacing:.5px;border-color:#22d3ee30;color:#22d3ee"
@@ -3533,6 +3549,7 @@ async function scanBias(){
       const topKey = topRej ? topRej[0] : null;
       let emptyMsg = 'No Bias Shift setups found with current filters.';
       if      (topKey === 'noPriorMove')        emptyMsg = 'No setups found. Most pairs did not have a clear prior move.';
+      else if (topKey === 'noCleanPriorDrive') emptyMsg = 'No setups found. Prior moves existed, but they were not clean enough.';
       else if (topKey === 'noRejectionCandle')  emptyMsg = 'No setups found. Prior moves existed, but rejection candles did not meet quality rules.';
       else if (topKey === 'confluenceRequired') emptyMsg = 'No setups found. Required confluence filtered all setups — try Confluence Optional.';
       else if (topKey === 'minimumGrade')       emptyMsg = 'No setups found. Minimum Grade is too strict — try lowering it.';
