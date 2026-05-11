@@ -318,34 +318,212 @@ def send_email_alert(subject: str, body: str) -> bool:
 
 
 def _send_via_resend(to_email: str, subject: str, html_body: str) -> bool:
-    """Send email via Resend HTTP API (works even when SMTP ports are blocked).
-    Requires RESEND_API_KEY env var. Free tier: 3,000 emails/month.
+    """Send email via official Resend Python SDK.
+    Only requires RESEND_API_KEY env var. Sender is always support@smcsetups.com.
     """
     api_key = os.environ.get("RESEND_API_KEY", "").strip()
-    frm     = os.environ.get("RESEND_FROM", "").strip() or os.environ.get("ALERT_EMAIL_FROM", "").strip()
-    if not api_key or not frm:
+    if not api_key:
+        print("[VERIFY-EMAIL] RESEND_API_KEY not set — Resend skipped")
         return False
     try:
-        resp = req.post(
-            "https://api.resend.com/emails",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={"from": frm, "to": [to_email], "subject": subject, "html": html_body},
-            timeout=10,
-        )
-        if resp.status_code in (200, 201):
-            print(f"[VERIFY-EMAIL] Sent via Resend API to {to_email}")
-            return True
-        print(f"[VERIFY-EMAIL] Resend API error {resp.status_code}: {resp.text[:200]}")
-        return False
+        import resend as _resend_sdk
+        _resend_sdk.api_key = api_key
+        resp = _resend_sdk.Emails.send({
+            "from": "ZyNi SMC <support@smcsetups.com>",
+            "to": [to_email],
+            "subject": subject,
+            "html": html_body,
+        })
+        email_id = getattr(resp, "id", None) or (resp.get("id") if isinstance(resp, dict) else "n/a")
+        print(f"[VERIFY-EMAIL] Sent via Resend SDK to {to_email} — id={email_id}")
+        return True
     except Exception as exc:
-        print(f"[VERIFY-EMAIL] Resend API exception: {exc}")
+        print(f"[VERIFY-EMAIL] Resend SDK exception: {exc}")
         return False
+
+
+def _build_verification_email(username: str, code: str) -> str:
+    """Return the premium HTML email body for OTP verification."""
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>Verify Your Email — ZyNi SMC</title>
+</head>
+<body style="margin:0;padding:0;background:#060a14;font-family:'Segoe UI',Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;">
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background:#060a14;">
+  <tr><td align="center" style="padding:40px 16px;">
+    <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="max-width:580px;">
+
+      <!-- HEADER / LOGO -->
+      <tr><td style="background:#0a0f1e;border-radius:16px 16px 0 0;padding:30px 40px 26px;text-align:center;border:1px solid rgba(249,115,22,0.25);border-bottom:3px solid #f97316;">
+        <div style="font-size:30px;font-weight:900;color:#ffffff;letter-spacing:1.5px;margin-bottom:5px;">ZyNi SMC</div>
+        <div style="font-size:11px;color:#f97316;letter-spacing:4px;font-weight:600;text-transform:uppercase;">Smart Money Center</div>
+      </td></tr>
+
+      <!-- HERO BANNER -->
+      <tr><td style="background:linear-gradient(135deg,#0d1525 0%,#0f1e38 60%,#0a0f1e 100%);padding:36px 40px 28px;text-align:center;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
+        <div style="width:70px;height:70px;background:rgba(249,115,22,0.12);border:2px solid rgba(249,115,22,0.45);border-radius:50%;margin:0 auto 20px;line-height:70px;text-align:center;font-size:30px;">&#9993;</div>
+        <h1 style="color:#ffffff;font-size:23px;font-weight:800;margin:0 0 14px;letter-spacing:-0.3px;">Verify Your Email Address</h1>
+        <p style="color:rgba(232,240,255,0.65);font-size:15px;margin:0;line-height:1.75;">
+          Hi <strong style="color:#ffffff;">{username}</strong>, welcome to ZyNi SMC!<br>
+          Enter the code below to activate your account and start trading smarter.
+        </p>
+      </td></tr>
+
+      <!-- OTP CODE -->
+      <tr><td style="background:#0d1525;padding:32px 40px;text-align:center;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
+        <p style="color:rgba(232,240,255,0.50);font-size:12px;margin:0 0 14px;letter-spacing:2px;text-transform:uppercase;font-weight:600;">Your Verification Code</p>
+        <div style="background:#07101f;border:2px solid rgba(249,115,22,0.55);border-radius:14px;padding:26px 20px 22px;margin-bottom:14px;display:inline-block;width:100%;box-sizing:border-box;">
+          <div style="font-size:50px;font-weight:900;letter-spacing:18px;color:#f97316;font-family:'Courier New',Courier,monospace;line-height:1;padding-left:18px;">{code}</div>
+        </div>
+        <p style="color:rgba(232,240,255,0.40);font-size:13px;margin:0;line-height:1.6;">
+          &#8987; Valid for <strong style="color:#f97316;">10 minutes</strong> only &nbsp;&middot;&nbsp; Do not share this code with anyone
+        </p>
+      </td></tr>
+
+      <!-- CTA BUTTON -->
+      <tr><td style="background:#0d1525;padding:4px 40px 30px;text-align:center;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
+        <a href="https://smcsetups.com" style="display:inline-block;background:linear-gradient(135deg,#f97316 0%,#ea580c 100%);color:#ffffff;text-decoration:none;font-size:15px;font-weight:700;padding:14px 38px;border-radius:10px;letter-spacing:0.3px;box-shadow:0 4px 20px rgba(249,115,22,0.35);">
+          Explore Features &rarr;
+        </a>
+      </td></tr>
+
+      <!-- DIVIDER -->
+      <tr><td style="background:#0d1525;padding:0 40px;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
+        <div style="height:1px;background:linear-gradient(90deg,transparent,rgba(249,115,22,0.35),transparent);"></div>
+      </td></tr>
+
+      <!-- PLATFORM FEATURES -->
+      <tr><td style="background:#0d1525;padding:28px 40px;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
+        <h2 style="color:#ffffff;font-size:17px;font-weight:700;margin:0 0 20px;text-align:center;">What You Can Do on ZyNi SMC</h2>
+        <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+          <tr><td style="padding:0 0 15px;">
+            <table cellpadding="0" cellspacing="0" role="presentation"><tr>
+              <td style="width:40px;vertical-align:top;padding-top:3px;">
+                <div style="width:32px;height:32px;background:rgba(249,115,22,0.12);border:1px solid rgba(249,115,22,0.35);border-radius:8px;text-align:center;line-height:32px;font-size:16px;">&#128202;</div>
+              </td>
+              <td style="padding-left:12px;">
+                <div style="color:#ffffff;font-size:14px;font-weight:700;margin-bottom:3px;">Smart Money Scanner</div>
+                <div style="color:rgba(232,240,255,0.55);font-size:13px;line-height:1.6;">Scan hundreds of crypto pairs for institutional order blocks, fair value gaps, and breaker patterns in real time.</div>
+              </td>
+            </tr></table>
+          </td></tr>
+          <tr><td style="padding:0 0 15px;">
+            <table cellpadding="0" cellspacing="0" role="presentation"><tr>
+              <td style="width:40px;vertical-align:top;padding-top:3px;">
+                <div style="width:32px;height:32px;background:rgba(249,115,22,0.12);border:1px solid rgba(249,115,22,0.35);border-radius:8px;text-align:center;line-height:32px;font-size:16px;">&#9889;</div>
+              </td>
+              <td style="padding-left:12px;">
+                <div style="color:#ffffff;font-size:14px;font-weight:700;margin-bottom:3px;">Multi-Exchange Coverage</div>
+                <div style="color:rgba(232,240,255,0.55);font-size:13px;line-height:1.6;">Access signals from Binance, Bybit, OKX &amp; MEXC across 15m, 30m, 1H, 4H, and 1D timeframes simultaneously.</div>
+              </td>
+            </tr></table>
+          </td></tr>
+          <tr><td style="padding:0 0 15px;">
+            <table cellpadding="0" cellspacing="0" role="presentation"><tr>
+              <td style="width:40px;vertical-align:top;padding-top:3px;">
+                <div style="width:32px;height:32px;background:rgba(249,115,22,0.12);border:1px solid rgba(249,115,22,0.35);border-radius:8px;text-align:center;line-height:32px;font-size:16px;">&#127919;</div>
+              </td>
+              <td style="padding-left:12px;">
+                <div style="color:#ffffff;font-size:14px;font-weight:700;margin-bottom:3px;">Bias &amp; Trend Analysis</div>
+                <div style="color:rgba(232,240,255,0.55);font-size:13px;line-height:1.6;">Get clear bullish/bearish bias per pair per timeframe with scoring, trend direction, and ATH/ATL levels.</div>
+              </td>
+            </tr></table>
+          </td></tr>
+          <tr><td>
+            <table cellpadding="0" cellspacing="0" role="presentation"><tr>
+              <td style="width:40px;vertical-align:top;padding-top:3px;">
+                <div style="width:32px;height:32px;background:rgba(249,115,22,0.12);border:1px solid rgba(249,115,22,0.35);border-radius:8px;text-align:center;line-height:32px;font-size:16px;">&#128276;</div>
+              </td>
+              <td style="padding-left:12px;">
+                <div style="color:#ffffff;font-size:14px;font-weight:700;margin-bottom:3px;">Watchlist &amp; Pair Tracking</div>
+                <div style="color:rgba(232,240,255,0.55);font-size:13px;line-height:1.6;">Build a personalised watchlist, save top setups, and monitor compressed pairs before major moves.</div>
+              </td>
+            </tr></table>
+          </td></tr>
+        </table>
+      </td></tr>
+
+      <!-- DIVIDER -->
+      <tr><td style="background:#0d1525;padding:0 40px;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
+        <div style="height:1px;background:linear-gradient(90deg,transparent,rgba(249,115,22,0.35),transparent);"></div>
+      </td></tr>
+
+      <!-- HOW TO GET STARTED -->
+      <tr><td style="background:#080e1c;padding:26px 40px 28px;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
+        <h2 style="color:#ffffff;font-size:16px;font-weight:700;margin:0 0 18px;text-align:center;">How to Get Started</h2>
+        <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+          <tr><td style="padding:0 0 12px;">
+            <table cellpadding="0" cellspacing="0" role="presentation"><tr>
+              <td style="width:30px;vertical-align:top;">
+                <div style="width:24px;height:24px;background:#f97316;border-radius:50%;text-align:center;line-height:24px;font-size:12px;font-weight:700;color:#fff;">1</div>
+              </td>
+              <td style="padding-left:10px;"><div style="color:rgba(232,240,255,0.80);font-size:13.5px;line-height:1.6;"><strong style="color:#f97316;">Verify your email</strong> — Enter the 6-digit code on the verification page.</div></td>
+            </tr></table>
+          </td></tr>
+          <tr><td style="padding:0 0 12px;">
+            <table cellpadding="0" cellspacing="0" role="presentation"><tr>
+              <td style="width:30px;vertical-align:top;">
+                <div style="width:24px;height:24px;background:#f97316;border-radius:50%;text-align:center;line-height:24px;font-size:12px;font-weight:700;color:#fff;">2</div>
+              </td>
+              <td style="padding-left:10px;"><div style="color:rgba(232,240,255,0.80);font-size:13.5px;line-height:1.6;"><strong style="color:#f97316;">Sign in to your dashboard</strong> — Use your credentials on the login page.</div></td>
+            </tr></table>
+          </td></tr>
+          <tr><td style="padding:0 0 12px;">
+            <table cellpadding="0" cellspacing="0" role="presentation"><tr>
+              <td style="width:30px;vertical-align:top;">
+                <div style="width:24px;height:24px;background:#f97316;border-radius:50%;text-align:center;line-height:24px;font-size:12px;font-weight:700;color:#fff;">3</div>
+              </td>
+              <td style="padding-left:10px;"><div style="color:rgba(232,240,255,0.80);font-size:13.5px;line-height:1.6;"><strong style="color:#f97316;">Run your first scan</strong> — Select exchange, timeframe, and module to discover setups.</div></td>
+            </tr></table>
+          </td></tr>
+          <tr><td>
+            <table cellpadding="0" cellspacing="0" role="presentation"><tr>
+              <td style="width:30px;vertical-align:top;">
+                <div style="width:24px;height:24px;background:#f97316;border-radius:50%;text-align:center;line-height:24px;font-size:12px;font-weight:700;color:#fff;">4</div>
+              </td>
+              <td style="padding-left:10px;"><div style="color:rgba(232,240,255,0.80);font-size:13.5px;line-height:1.6;"><strong style="color:#f97316;">Build your watchlist</strong> — Save top setups and track them with compressed &amp; trending views.</div></td>
+            </tr></table>
+          </td></tr>
+        </table>
+      </td></tr>
+
+      <!-- SECURITY NOTE -->
+      <tr><td style="background:#070c1a;padding:16px 40px;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
+        <p style="color:rgba(232,240,255,0.30);font-size:12px;margin:0;text-align:center;line-height:1.7;">
+          &#128274; If you did not create a ZyNi SMC account, ignore this email safely.<br>
+          Never share your verification code with anyone.
+        </p>
+      </td></tr>
+
+      <!-- FOOTER -->
+      <tr><td style="background:#050810;border-radius:0 0 16px 16px;padding:22px 40px;text-align:center;border:1px solid rgba(249,115,22,0.15);border-top:none;">
+        <div style="margin-bottom:10px;">
+          <span style="color:#f97316;font-size:17px;font-weight:900;">ZyNi SMC</span>
+          <span style="color:rgba(232,240,255,0.30);font-size:13px;"> &middot; Smart Money Center</span>
+        </div>
+        <div style="margin-bottom:8px;">
+          <a href="https://smcsetups.com" style="color:#f97316;text-decoration:none;font-size:13px;font-weight:500;">smcsetups.com</a>
+          <span style="color:rgba(232,240,255,0.20);font-size:13px;"> &middot; </span>
+          <a href="mailto:support@smcsetups.com" style="color:rgba(232,240,255,0.50);text-decoration:none;font-size:13px;">support@smcsetups.com</a>
+        </div>
+        <p style="color:rgba(232,240,255,0.18);font-size:11px;margin:6px 0 0;">&copy; 2026 ZyNi SMC. All rights reserved.</p>
+      </td></tr>
+
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>"""
 
 
 def send_verification_email(to_email: str, code: str, username: str) -> "tuple[bool, str]":
     """Send a 6-digit OTP verification email directly to the new user.
     Attempts in order:
-      1. Resend HTTP API  (RESEND_API_KEY env var — works on all cloud hosts)
+      1. Resend Python SDK  (RESEND_API_KEY env var — works on all cloud hosts)
       2. Gmail SMTP_SSL   port 465
       3. Gmail STARTTLS   port 587
     Returns (success: bool, fail_reason: str): 'ok' | 'missing_config' | 'delivery_failed'
@@ -356,35 +534,7 @@ def send_verification_email(to_email: str, code: str, username: str) -> "tuple[b
         return False, "missing_config"
 
     subject = "ZyNi SMC — Verify Your Email Address"
-    body = f"""
-<html>
-<body style="margin:0;padding:0;background:#060a14;font-family:'Segoe UI',Arial,sans-serif">
-<div style="max-width:520px;margin:40px auto;background:#0d1525;border:1px solid rgba(30,184,200,0.25);
-            border-top:3px solid #1eb8c8;border-radius:12px;padding:36px 32px">
-  <div style="text-align:center;margin-bottom:28px">
-    <div style="font-size:28px;font-weight:800;color:#e8f0ff;letter-spacing:1px">ZyNi SMC</div>
-    <div style="font-size:11px;color:#1eb8c8;letter-spacing:3px;margin-top:4px">SMART MONEY SCREENER</div>
-  </div>
-  <h2 style="color:#e8f0ff;font-size:20px;font-weight:600;margin:0 0 12px;text-align:center">
-    Verify your email address
-  </h2>
-  <p style="color:rgba(232,240,255,0.6);font-size:14px;text-align:center;margin:0 0 28px">
-    Hi <strong style="color:#e8f0ff">{username}</strong>, enter the code below to activate your account.
-  </p>
-  <div style="background:#071525;border:1px solid rgba(30,184,200,0.35);border-radius:10px;
-              padding:24px;text-align:center;margin-bottom:28px">
-    <div style="font-size:42px;font-weight:800;letter-spacing:14px;color:#1eb8c8;
-                font-family:'Courier New',monospace">{code}</div>
-    <div style="font-size:12px;color:rgba(232,240,255,0.4);margin-top:10px">
-      Valid for 15 minutes &middot; Do not share this code
-    </div>
-  </div>
-  <p style="color:rgba(232,240,255,0.35);font-size:12px;text-align:center;margin:0">
-    If you did not create a ZyNi SMC account, you can safely ignore this email.
-  </p>
-</div>
-</body>
-</html>"""
+    body    = _build_verification_email(username, code)
 
     print(f"[VERIFY-EMAIL] Attempting to send OTP to {to_email}")
 
@@ -4978,7 +5128,7 @@ def register():
         db.session.flush()  # get new_user.id before commit
 
         code    = f"{random.randint(0, 999999):06d}"
-        expires = datetime.now(timezone.utc) + timedelta(minutes=15)
+        expires = datetime.now(timezone.utc) + timedelta(minutes=10)
         ev = _EmailVerification(user_id=new_user.id, code=code, expires_at=expires)
         db.session.add(ev)
         db.session.commit()
@@ -5067,13 +5217,26 @@ def resend_verification():
             return render_template("login.html", success="Email already verified. You can sign in.",
                                    login_username=username)
 
+        # Rate-limit: block resend if a fresh code was issued within the last 2 minutes
+        cooldown_cutoff = datetime.now(timezone.utc) - timedelta(minutes=2)
+        recent = (_EmailVerification.query
+                  .filter_by(user_id=user.id, used=False)
+                  .filter(_EmailVerification.created_at > cooldown_cutoff)
+                  .first())
+        if recent:
+            wait_sec = int((recent.created_at + timedelta(minutes=2)
+                            - datetime.now(timezone.utc)).total_seconds())
+            wait_sec = max(wait_sec, 1)
+            return render_template("verify.html", username=username,
+                                   error=f"Please wait {wait_sec}s before requesting a new code.")
+
         # Invalidate all previous unused codes
         (_EmailVerification.query
          .filter_by(user_id=user.id, used=False)
          .update({"used": True}))
 
         code    = f"{random.randint(0, 999999):06d}"
-        expires = datetime.now(timezone.utc) + timedelta(minutes=15)
+        expires = datetime.now(timezone.utc) + timedelta(minutes=10)
         ev = _EmailVerification(user_id=user.id, code=code, expires_at=expires)
         db.session.add(ev)
         db.session.commit()
