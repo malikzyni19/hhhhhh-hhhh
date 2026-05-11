@@ -3675,7 +3675,7 @@ async function _loadBiasOf(symbol, tf, containerId, setupDirection){
       fetch('https://fapi.binance.com/fapi/v1/klines?symbol='+rawSym+'&interval='+tf+'&limit=4', {cache:'no-store'}),
       fetch('https://fapi.binance.com/futures/data/openInterestHist?symbol='+rawSym+'&period='+tf+'&limit=4', {cache:'no-store'}),
       fetch('https://fapi.binance.com/fapi/v1/fundingRate?symbol='+rawSym+'&limit=4', {cache:'no-store'}),
-      fetch('https://fapi.binance.com/fapi/v1/depth?symbol='+rawSym+'&limit=500', {cache:'no-store'}),
+      _fetchDepthWithFallback(rawSym),
     ]);
     if(!kRes.ok) throw new Error('Failed');
     const klines = await kRes.json();
@@ -4965,7 +4965,7 @@ async function _fetchOfData(sym, tf){
       fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${rawSym}&interval=${tf}&limit=4`, {cache:'no-store'}),
       fetch(`https://fapi.binance.com/futures/data/openInterestHist?symbol=${rawSym}&period=${tf}&limit=4`, {cache:'no-store'}),
       fetch(`https://fapi.binance.com/fapi/v1/fundingRate?symbol=${rawSym}&limit=4`, {cache:'no-store'}),
-      fetch(`https://fapi.binance.com/fapi/v1/depth?symbol=${rawSym}&limit=500`, {cache:'no-store'}),
+      _fetchDepthWithFallback(rawSym),
     ]);
     if(!kRes.ok) return;
     const klines = await kRes.json();
@@ -5031,6 +5031,14 @@ function _ofTfRange(tf){
   return m[tf.toLowerCase()] || 2.0;
 }
 
+async function _fetchDepthWithFallback(rawSym){
+  let res = await fetch(`https://fapi.binance.com/fapi/v1/depth?symbol=${rawSym}&limit=500`, {cache:'no-store'});
+  if(res.ok) return res;
+  console.warn('[OF] depth limit=500 failed, falling back to 100 for', rawSym);
+  res = await fetch(`https://fapi.binance.com/fapi/v1/depth?symbol=${rawSym}&limit=100`, {cache:'no-store'});
+  return res;
+}
+
 function _processBookData(bids, asks, currentPrice, rangePct){
   if(!bids||!asks||!currentPrice||currentPrice<=0) return null;
   const lo = currentPrice*(1-rangePct/100), hi = currentPrice*(1+rangePct/100);
@@ -5057,10 +5065,13 @@ function _processBookData(bids, asks, currentPrice, rangePct){
     distancePct:((a.price-currentPrice)/currentPrice*100).toFixed(2),
     strengthPct:Math.round(a.notional/maxN*100)}));
   // Imbalance uses USDT notional totals
-  const bidVol = fB.reduce((s,b)=>s+b.notional,0), askVol = fA.reduce((s,a)=>s+a.notional,0);
-  const tot = bidVol+askVol;
-  const bidPct = tot>0 ? Math.round(bidVol/tot*100) : 50;
-  return {top5Bids,top5Asks,bidPct,tfRangePct:rangePct,oiValue:null};
+  const bidVolumeUSDT = fB.reduce((s,b)=>s+b.notional,0), askVolumeUSDT = fA.reduce((s,a)=>s+a.notional,0);
+  const tot = bidVolumeUSDT+askVolumeUSDT;
+  const bidPct = tot>0 ? Math.round(bidVolumeUSDT/tot*100) : 50;
+  const askPct = 100-bidPct;
+  const imbalancePct = bidPct-askPct;
+  const sideHeavier = bidPct>=55 ? 'Buy side heavier' : askPct>=55 ? 'Sell side heavier' : 'Balanced book';
+  return {top5Bids,top5Asks,bidVolumeUSDT,askVolumeUSDT,bidPct,askPct,imbalancePct,sideHeavier,tfRangePct:rangePct,oiValue:null};
 }
 
 // ── Shared OF table builder v4 — premium confirmation module ──
@@ -5136,7 +5147,7 @@ function _buildOfTableHtml(tf, klines, oiData, fundData, ctxData, symbol, setupD
   // ── 1. Header ──
   const headerHtml=`<div class="of-conf-header">
     <div class="of-conf-title">ORDER FLOW CONFIRMATION</div>
-    <div class="of-conf-meta">${sym?sym+' · ':''}${tfUp} · Polling refresh · 3s</div>
+    <div class="of-conf-meta">${sym?sym+' · ':''}${tfUp} · Near-live polling refresh</div>
   </div>`;
 
   // ── 2. Candle rows ──
@@ -5149,7 +5160,7 @@ function _buildOfTableHtml(tf, klines, oiData, fundData, ctxData, symbol, setupD
   // ── 3. Bid/Ask imbalance bar ──
   let bidAskHtml='';
   if(ctxData&&ctxData.bidPct!=null){
-    const bidP=ctxData.bidPct,askP=100-bidP;
+    const bidP=ctxData.bidPct,askP=ctxData.askPct!=null?ctxData.askPct:(100-bidP);
     bidAskHtml=`<div class="of-bid-ask-wrap">
       <div class="of-book-title" style="margin-bottom:4px">BID / ASK IMBALANCE — ${tfUp} RANGE ±${(ctxData.tfRangePct||2).toFixed(1)}%</div>
       <div class="of-bid-ask-label"><span class="of-bid-lbl">Bid ${bidP.toFixed(1)}%</span><span class="of-ask-lbl">${askP.toFixed(1)}% Ask</span></div>
@@ -5165,7 +5176,7 @@ function _buildOfTableHtml(tf, klines, oiData, fundData, ctxData, symbol, setupD
   let fundTxt='—',fundCls='of-neu';
   if(fundC!=null){if(fundC>0.05){fundTxt='Long crowd bias';fundCls='of-bear';}else if(fundC<-0.05){fundTxt='Short crowd bias';fundCls='of-bull';}else if(fundC>0.01){fundTxt='Slight long lean';}else if(fundC<-0.01){fundTxt='Slight short lean';}else{fundTxt='Neutral crowd';}}
   let bookTxt='—',bookCls='of-neu';
-  if(ctxData&&ctxData.bidPct!=null){const bp=ctxData.bidPct;if(bp>=55){bookTxt='Buy side heavier';bookCls='of-bull';}else if(100-bp>=55){bookTxt='Sell side heavier';bookCls='of-bear';}else{bookTxt='Balanced book';}}
+  if(ctxData&&ctxData.bidPct!=null){bookTxt=ctxData.sideHeavier||'Balanced book';bookCls=bookTxt==='Buy side heavier'?'of-bull':bookTxt==='Sell side heavier'?'of-bear':'of-neu';}
   const ctxHtml=`<div class="of-book-title" style="padding:4px 8px 0">MARKET CONTEXT</div>
   <div class="of-ctx-grid">
     <div class="of-ctx-card">
@@ -5694,7 +5705,7 @@ async function _loadScanOfPanel(symbol, tf, panelId, setupDirection){
       fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${rawSym}&interval=${tf}&limit=4`, {cache:'no-store'}),
       fetch(`https://fapi.binance.com/futures/data/openInterestHist?symbol=${rawSym}&period=${tf}&limit=4`, {cache:'no-store'}),
       fetch(`https://fapi.binance.com/fapi/v1/fundingRate?symbol=${rawSym}&limit=4`, {cache:'no-store'}),
-      fetch(`https://fapi.binance.com/fapi/v1/depth?symbol=${rawSym}&limit=500`, {cache:'no-store'}),
+      _fetchDepthWithFallback(rawSym),
     ]);
     if(!kRes.ok) throw new Error('Fetch failed');
     const klines = await kRes.json();
