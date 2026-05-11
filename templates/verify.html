@@ -409,7 +409,7 @@
         <div class="fallback-box">
             <div class="fb-label">Your verification code</div>
             <div class="fb-code" id="fbCode">{{ fallback_code }}</div>
-            <div class="fb-note">Copy this code and enter it in the boxes below.<br>Valid for 15 minutes.</div>
+            <div class="fb-note">Copy this code and enter it in the boxes below.<br>Valid for 10 minutes.</div>
         </div>
         {% else %}
         <div class="verify-title">Check your inbox</div>
@@ -444,7 +444,7 @@
                 <input class="otp-digit" type="text" inputmode="numeric" maxlength="1" data-idx="5">
             </div>
 
-            <p class="timer-note">Code expires in <span id="countdown">15:00</span></p>
+            <p class="timer-note">Code expires in <span id="countdown">10:00</span></p>
 
             <button class="verify-btn" type="submit" id="submitBtn" disabled>
                 Verify Account
@@ -535,7 +535,7 @@
         if (!fbCodeEl) digits[0].focus();
 
         // ── Countdown timer (15 min) ──────────────────────────────────
-        let remaining = 15 * 60;
+        let remaining = 10 * 60;
         const countdownEl = document.getElementById('countdown');
 
         function formatTime(s) {
