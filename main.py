@@ -357,10 +357,12 @@ def _build_verification_email(username: str, code: str) -> str:
   <tr><td align="center" style="padding:40px 16px;">
     <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="max-width:580px;">
 
-      <!-- HEADER / LOGO -->
-      <tr><td style="background:#0a0f1e;border-radius:16px 16px 0 0;padding:30px 40px 26px;text-align:center;border:1px solid rgba(249,115,22,0.25);border-bottom:3px solid #f97316;">
-        <div style="font-size:30px;font-weight:900;color:#ffffff;letter-spacing:1.5px;margin-bottom:5px;">ZyNi SMC</div>
-        <div style="font-size:11px;color:#f97316;letter-spacing:4px;font-weight:600;text-transform:uppercase;">Smart Money Center</div>
+      <!-- HEADER / LOGO BANNER — image fills the header, black bg matches image bg exactly -->
+      <tr><td style="background:#000000;border-radius:16px 16px 0 0;padding:0;text-align:center;border:1px solid rgba(249,115,22,0.25);border-bottom:3px solid #f97316;overflow:hidden;line-height:0;font-size:0;">
+        <img src="https://smcsetups.com/static/images/logo-email.png"
+             alt="ZyNi SMC"
+             width="580"
+             style="width:100%;max-width:580px;height:auto;display:block;border-radius:16px 16px 0 0;">
       </td></tr>
 
       <!-- HERO BANNER -->
