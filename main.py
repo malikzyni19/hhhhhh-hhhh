@@ -4504,6 +4504,37 @@ def get_pairs_bybit(market: str = "perpetual") -> List[Dict[str, Any]]:
         return cache["pairs"].get(market, [])
 
 
+def _klines_bybit_paginated(symbol: str, interval: str, limit: int, market: str) -> List[Dict[str, float]]:
+    """Paginated Bybit fetch — max 200/request, pages backward until `limit` reached."""
+    category = "linear" if market == "perpetual" else "spot"
+    iv       = INTERVAL_MAP["bybit"].get(interval, "60")
+    all_candles: List[Dict[str, float]] = []
+    end_ms: Optional[int] = None
+    for _ in range((limit + 199) // 200):
+        params: Dict[str, Any] = {"category": category, "symbol": symbol, "interval": iv, "limit": 200}
+        if end_ms is not None:
+            params["end"] = end_ms
+        try:
+            r = req.get(f"{BYBIT_PERP_API}/kline", params=params, timeout=15)
+            if r.status_code != 200:
+                break
+            items = r.json().get("result", {}).get("list", [])
+            if not items:
+                break
+            chunk = list(reversed([{
+                "openTime": int(k[0]), "open": float(k[1]), "high": float(k[2]),
+                "low": float(k[3]), "close": float(k[4]), "volume": float(k[5]),
+            } for k in items]))
+            all_candles = chunk + all_candles
+            end_ms = int(items[-1][0]) - 1  # items[-1] is oldest (Bybit newest-first)
+            if len(items) < 200:
+                break
+        except Exception as e:
+            print(f"[Bybit-paginated] {symbol}: {e}")
+            break
+    return all_candles[-limit:] if len(all_candles) > limit else all_candles
+
+
 def get_klines_bybit(symbol: str, interval: str, limit: int = 300, market: str = "perpetual") -> List[Dict[str, float]]:
     """Fetch OHLCV candles from Bybit"""
     try:
@@ -4906,15 +4937,20 @@ def get_klines(symbol: str, interval: str, limit: int = 300, market: str = "perp
     except Exception:
         pass
 
-    # ── Fallback: geo-safe spot mirror ──
-    url = f"{SPOT_API}/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
-    r2 = req.get(url, timeout=20)
-    if r2.status_code != 200:
-        return []
-    data = r2.json()
-    if not isinstance(data, list):
-        return []
-    return _parse(data)
+    # ── Fallback 1: geo-safe spot mirror (for spot symbols) ──
+    try:
+        url = f"{SPOT_API}/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
+        r2 = req.get(url, timeout=20)
+        if r2.status_code == 200:
+            data = r2.json()
+            if isinstance(data, list) and data:
+                return _parse(data)
+    except Exception:
+        pass
+
+    # ── Fallback 2: Bybit (when all Binance endpoints are blocked/unavailable) ──
+    print(f"[Binance] blocked for {symbol}, falling back to Bybit")
+    return _klines_bybit_paginated(symbol, interval, limit, market)
 
 
 def get_all_daily_klines(symbol: str) -> List[Dict[str, float]]:
