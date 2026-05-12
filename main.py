@@ -1469,7 +1469,11 @@ INTERVAL_MAP = {
     "mexc": {
         "1m":"Min1","5m":"Min5","15m":"Min15","30m":"Min30",
         "1h":"Min60","4h":"Hour4","1d":"Day1"
-    }
+    },
+    "hyperliquid": {
+        "1m":"1m","3m":"3m","5m":"5m","15m":"15m","30m":"30m",
+        "1h":"1h","2h":"2h","4h":"4h","6h":"6h","12h":"12h","1d":"1d"
+    },
 }
 
 # Per-exchange pair caches
@@ -4733,6 +4737,39 @@ def get_pairs_exchange(exchange: str, market: str = "perpetual") -> List[Dict[st
         return get_pairs(market)  # Binance (default)
 
 
+def get_klines_hyperliquid(symbol: str, interval: str, limit: int = 300, market: str = "perpetual") -> List[Dict[str, float]]:
+    """Fetch OHLCV candles from Hyperliquid. Symbol like 'HYPEUSDT' → coin 'HYPE'."""
+    try:
+        coin = symbol.upper().replace("USDT", "").replace("USD", "")
+        iv   = INTERVAL_MAP["hyperliquid"].get(interval, interval)
+        interval_ms = {
+            "1m": 60_000, "3m": 180_000, "5m": 300_000, "15m": 900_000,
+            "30m": 1_800_000, "1h": 3_600_000, "2h": 7_200_000,
+            "4h": 14_400_000, "6h": 21_600_000, "12h": 43_200_000, "1d": 86_400_000,
+        }.get(interval, 3_600_000)
+        end_ms   = int(time.time() * 1000)
+        start_ms = end_ms - limit * interval_ms
+        r = req.post(
+            "https://api.hyperliquid.xyz/info",
+            json={"type": "candleSnapshot", "req": {"coin": coin, "interval": iv, "startTime": start_ms, "endTime": end_ms}},
+            timeout=20,
+        )
+        if r.status_code == 200:
+            data = r.json()
+            if isinstance(data, list) and data:
+                return [{
+                    "openTime": c["t"],
+                    "open":     float(c["o"]),
+                    "high":     float(c["h"]),
+                    "low":      float(c["l"]),
+                    "close":    float(c["c"]),
+                    "volume":   float(c["v"]),
+                } for c in data]
+    except Exception as e:
+        print(f"[Hyperliquid] klines error for {symbol}: {e}")
+    return []
+
+
 def get_klines_exchange(symbol: str, interval: str, limit: int = 300,
                         market: str = "perpetual", exchange: str = "binance") -> List[Dict[str, float]]:
     """Universal get_klines — routes to correct exchange"""
@@ -4743,6 +4780,8 @@ def get_klines_exchange(symbol: str, interval: str, limit: int = 300,
         result = get_klines_okx(symbol, interval, limit, market)
     elif exchange == "mexc":
         result = get_klines_mexc(symbol, interval, limit, market)
+    elif exchange == "hyperliquid":
+        result = get_klines_hyperliquid(symbol, interval, limit, market)
     else:
         result = get_klines(symbol, interval, limit, market)  # Binance
 
@@ -4865,7 +4904,12 @@ def get_klines(symbol: str, interval: str, limit: int = 300, market: str = "perp
 
     # ── Fallback: geo-safe spot mirror ──
     url = f"{SPOT_API}/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
-    data = req.get(url, timeout=20).json()
+    r2 = req.get(url, timeout=20)
+    if r2.status_code != 200:
+        return []
+    data = r2.json()
+    if not isinstance(data, list):
+        return []
     return _parse(data)
 
 
