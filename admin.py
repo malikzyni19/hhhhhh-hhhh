@@ -7,7 +7,8 @@ from functools import wraps
 from datetime import datetime, timezone
 
 from models import (db, User, AdminLog, GlobalSetting, RolePermission, UserPermission,
-                    LoginHistory, DailyTokenUsage,
+                    LoginHistory, DailyTokenUsage, EmailVerification, GuestDevice,
+                    BacktestRun, IntelligenceSettings,
                     ALL_MODULES, ALL_TABS, ALL_EXCHANGES, ALL_TIMEFRAMES)
 from permissions import get_user_permissions, save_user_permissions, _bust_cache
 
@@ -354,34 +355,88 @@ def users_edit(user_id):
     )
 
 
+# ── User Detail JSON (AJAX panel) ─────────────────────────────────
+@admin_bp.route("/users/<int:user_id>/detail-json")
+@admin_required
+def users_detail_json(user_id):
+    user = User.query.get_or_404(user_id)
+    return jsonify({
+        "id":             user.id,
+        "username":       user.username,
+        "email":          user.email or "",
+        "role":           user.role,
+        "status":         user.status,
+        "email_verified": bool(user.email_verified),
+        "created_at":     user.created_at.strftime("%Y-%m-%d %H:%M UTC") if user.created_at else "—",
+        "last_login_at":  user.last_login_at.strftime("%Y-%m-%d %H:%M UTC") if user.last_login_at else "Never",
+        "last_login_ip":  getattr(user, "last_login_ip", None) or "—",
+        "is_self":        user.id == current_user.id,
+    })
+
+
 # ── Delete User ────────────────────────────────────────────────────
 @admin_bp.route("/users/<int:user_id>/delete", methods=["POST"])
 @admin_required
 def users_delete(user_id):
     user = User.query.get_or_404(user_id)
+    is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+
+    def _err(msg, code=400):
+        if is_ajax:
+            return jsonify({"error": msg}), code
+        flash(msg, "error")
+        return redirect(url_for("admin.users"))
 
     if user.id == current_user.id:
-        flash("You cannot delete your own account.", "error")
-        return redirect(url_for("admin.users"))
+        return _err("You cannot delete your own account.")
 
     if user.role == "admin" and _admin_count() <= 1:
-        flash("Cannot delete the last admin account.", "error")
-        return redirect(url_for("admin.users"))
+        return _err("Cannot delete the last admin account.")
 
-    confirm = request.form.get("confirm_username", "").strip().lower()
-    if confirm != user.username:
-        flash("Confirmation username did not match. User not deleted.", "error")
-        return redirect(url_for("admin.users_edit", user_id=user_id))
+    confirm = request.form.get("confirm_username", "").strip()
+    if confirm.lower() != user.username.lower():
+        return _err("Username confirmation did not match.")
 
     try:
         uname = user.username
         urole = user.role
-        _log_action("delete_user", f"{uname} ({urole})", target_user_id=user.id)
+        uid   = user.id
+
+        # Log before deletion so the record exists
+        _log_action("delete_user", f"{uname} ({urole})", target_user_id=uid)
+
+        # Delete owned records (strict FK — cannot be nullified)
+        EmailVerification.query.filter_by(user_id=uid).delete(synchronize_session=False)
+        GuestDevice.query.filter_by(user_id=uid).delete(synchronize_session=False)
+        LoginHistory.query.filter_by(user_id=uid).delete(synchronize_session=False)
+        DailyTokenUsage.query.filter_by(user_id=uid).delete(synchronize_session=False)
+        UserPermission.query.filter_by(user_id=uid).delete(synchronize_session=False)
+        AdminLog.query.filter_by(admin_id=uid).delete(synchronize_session=False)
+
+        # Nullify nullable audit references
+        db.session.query(BacktestRun).filter(BacktestRun.run_by == uid).update(
+            {"run_by": None}, synchronize_session=False)
+        db.session.query(IntelligenceSettings).filter(
+            IntelligenceSettings.last_saved_by == uid).update(
+            {"last_saved_by": None}, synchronize_session=False)
+        db.session.query(GlobalSetting).filter(GlobalSetting.updated_by == uid).update(
+            {"updated_by": None}, synchronize_session=False)
+        db.session.query(RolePermission).filter(RolePermission.updated_by == uid).update(
+            {"updated_by": None}, synchronize_session=False)
+        db.session.query(UserPermission).filter(UserPermission.updated_by == uid).update(
+            {"updated_by": None}, synchronize_session=False)
+
         db.session.delete(user)
         db.session.commit()
+        _bust_cache(uid)
+
+        if is_ajax:
+            return jsonify({"success": True, "username": uname})
         flash(f"User '{uname}' deleted.", "success")
     except Exception as e:
         db.session.rollback()
+        if is_ajax:
+            return jsonify({"error": "Deletion failed. Please try again."}), 500
         flash(f"Delete failed: {e}", "error")
 
     return redirect(url_for("admin.users"))
@@ -759,11 +814,10 @@ def intelligence_stats():
 
         all_rows = q.order_by(SignalEvent.detected_at.desc()).all()
 
-        # ── Strength post-filter (applies only to OB signals) ────────────
-        # ob_strength lives in raw_meta_json — cannot be filtered in SQL.
+        # ── TV OB % post-filter (applies only to OB signals) ─────────────
+        # tvObVolumeSharePct lives in raw_meta_json — cannot be filtered in SQL.
         if strength_min > 0:
             import json as _json
-            from backtest_ob import extract_ob_strength_from_meta as _esm
             filtered = []
             for ev, oc in all_rows:
                 if ev.module != "ob":
@@ -773,8 +827,12 @@ def intelligence_stats():
                     _meta = _json.loads(ev.raw_meta_json or "{}")
                 except Exception:
                     _meta = {}
-                _str, _ = _esm(_meta)
-                if _str is not None and _str >= strength_min:
+                _tv_pct = _meta.get("tvObVolumeSharePct")
+                try:
+                    _tv_pct = float(_tv_pct) if _tv_pct is not None else None
+                except (TypeError, ValueError):
+                    _tv_pct = None
+                if _tv_pct is not None and _tv_pct >= strength_min:
                     filtered.append((ev, oc))
             rows = filtered
         else:
@@ -1177,7 +1235,6 @@ def intelligence_ob_strength_audit():
     try:
         import json as _json
         from models import SignalEvent
-        from backtest_ob import extract_ob_strength_from_meta
 
         try:
             limit = min(int(request.args.get("limit", 20)), 200)
@@ -1193,8 +1250,7 @@ def intelligence_ob_strength_audit():
         )
 
         rows = []
-        sources_seen: dict = {}
-        with_strength = 0
+        with_tv_pct = 0
 
         for ev in events:
             try:
@@ -1202,11 +1258,14 @@ def intelligence_ob_strength_audit():
             except Exception:
                 raw_meta = {}
 
-            strength, source = extract_ob_strength_from_meta(raw_meta)
+            tv_pct = raw_meta.get("tvObVolumeSharePct")
+            try:
+                tv_pct = float(tv_pct) if tv_pct is not None else None
+            except (TypeError, ValueError):
+                tv_pct = None
 
-            if strength is not None:
-                with_strength += 1
-                sources_seen[source] = sources_seen.get(source, 0) + 1
+            if tv_pct is not None:
+                with_tv_pct += 1
 
             rows.append({
                 "signal_id":                ev.signal_id,
@@ -1216,15 +1275,14 @@ def intelligence_ob_strength_audit():
                 "score":                    ev.score,
                 "detected_at":              ev.detected_at.isoformat() if ev.detected_at else None,
                 "raw_meta_keys":            sorted(raw_meta.keys()),
-                "raw_meta_json":            raw_meta,
-                "detected_ob_strength":     strength,
-                "detected_strength_source": source,
+                "tv_ob_volume_share_pct":   tv_pct,
+                "tv_ob_volume_share_status": raw_meta.get("tvObVolumeShareStatus"),
                 "alert_strength_debug":     raw_meta.get("alert_strength_debug"),
-                "usable_for_strength_filter": strength is not None,
+                "usable_for_strength_filter": tv_pct is not None,
                 "note": (
-                    "ob_strength from true OB metadata"
-                    if strength is not None
-                    else "no true OB strength key found — row excluded by strength_min > 0"
+                    "tv_ob_volume_share_pct present"
+                    if tv_pct is not None
+                    else "tvObVolumeSharePct missing — row excluded by strength_min > 0"
                 ),
             })
 
@@ -1234,16 +1292,10 @@ def intelligence_ob_strength_audit():
             "checked": checked,
             "rows":    rows,
             "summary": {
-                "with_strength":    with_strength,
-                "missing_strength": checked - with_strength,
-                "sources":          sources_seen,
+                "with_tv_ob_pct":    with_tv_pct,
+                "missing_tv_ob_pct": checked - with_tv_pct,
             },
-            "note": (
-                "ob_strength uses only true OB-specific keys (obStrengthPct, obStrength, etc.). "
-                "alert_strength_debug is stored separately and is NOT used in the strength filter. "
-                "score (signal quality score) is also NOT used as OB strength. "
-                "Old DB rows are NOT mutated."
-            ),
+            "note": "Strength filter uses tvObVolumeSharePct only.",
         })
 
     except Exception as _e:

@@ -394,6 +394,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 /* ── Settings ── */
 .setting-section{margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border2)}
 .setting-section:last-child{border-bottom:none;margin-bottom:0}
+.setting-hint{font-size:10px;color:var(--text-muted);margin-top:3px;line-height:1.45}
 .setting-title{font-size:10px;color:var(--accent);letter-spacing:1.2px;font-weight:700;margin-bottom:10px;text-transform:uppercase;font-family:'Inter',system-ui,sans-serif}
 .subrow{display:grid;grid-template-columns:180px 1fr;gap:8px;align-items:center;margin-bottom:8px}
 .subrow label{font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:6px;font-family:'Inter',system-ui,sans-serif}
@@ -582,6 +583,43 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .of-divider-row td{padding:2px 6px;font-size:7px;font-weight:700;color:var(--text-muted);letter-spacing:.5px;background:rgba(34,211,238,.03);border-top:1px solid var(--border2);border-bottom:1px solid var(--border2)}
 .of-footer-row{display:flex;justify-content:space-between;padding:4px 8px;background:var(--bg-input2);border-top:1px solid var(--border2);font-size:7px;color:var(--text-muted)}
 .of-signal-row{padding:4px 8px;font-size:8px;color:var(--text-secondary);font-style:italic;border-top:1px solid var(--border2)}
+/* OF v4 — premium confirmation module */
+.of-conf-header{padding:8px 10px 6px;background:rgba(4,13,26,.8);border-bottom:1px solid var(--border2)}
+.of-conf-title{font-size:9px;font-weight:700;letter-spacing:1px;color:var(--accent)}
+.of-conf-meta{font-size:8px;color:var(--text-muted);margin-top:2px;font-family:'JetBrains Mono',monospace}
+.of-ctx-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;padding:6px 8px}
+@media(max-width:480px){.of-ctx-grid{grid-template-columns:1fr}.of-book-level{flex-wrap:wrap;gap:2px}.of-book-bar-wrap{width:100%;order:3}}
+.of-ctx-card{background:rgba(0,0,0,.25);border:1px solid var(--border2);border-radius:7px;padding:6px 7px}
+.of-ctx-label{font-size:7px;font-weight:700;letter-spacing:.7px;color:var(--text-muted);margin-bottom:3px}
+.of-ctx-main{font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--text-primary);line-height:1.1}
+.of-ctx-sub{font-size:8px;margin-top:2px}
+.of-bid-ask-wrap{padding:6px 8px 4px}
+.of-bid-lbl{font-size:9px;font-weight:700;color:#34d399}
+.of-ask-lbl{font-size:9px;font-weight:700;color:#fb923c}
+.of-bid-ask-label{display:flex;justify-content:space-between;margin-bottom:3px}
+.of-combo-bar{height:8px;background:var(--bg-input);border-radius:4px;overflow:hidden;position:relative}
+.of-combo-bid{position:absolute;left:0;top:0;height:100%;background:linear-gradient(90deg,#34d399,#059669);border-radius:4px 0 0 4px;transition:width .5s ease}
+.of-combo-ask{position:absolute;right:0;top:0;height:100%;background:linear-gradient(270deg,#fb923c,#ea580c);border-radius:0 4px 4px 0;transition:width .5s ease}
+.of-book-section{padding:4px 8px 6px}
+.of-book-title{font-size:7px;font-weight:700;letter-spacing:.8px;color:var(--text-muted);margin-bottom:5px}
+.of-book-level{display:grid;grid-template-columns:auto 1fr auto auto;gap:6px;align-items:center;margin-bottom:4px}
+.of-book-price{font-size:8px;font-weight:700;font-family:'JetBrains Mono',monospace;white-space:nowrap}
+.of-book-bar-wrap{height:5px;background:var(--bg-input);border-radius:3px;overflow:hidden}
+.of-book-bar-fill{height:100%;border-radius:3px;transition:width .5s ease}
+.of-bid-fill{background:linear-gradient(90deg,#34d399,#059669)}
+.of-ask-fill{background:linear-gradient(90deg,#fb923c,#ea580c)}
+.of-book-size{font-size:7px;color:var(--text-secondary);font-family:'JetBrains Mono',monospace;text-align:right;white-space:nowrap}
+.of-book-dist{font-size:7px;color:var(--text-muted);text-align:right;white-space:nowrap}
+.of-verdict-block{margin:6px 8px 8px;padding:8px 10px;border-radius:8px;border:1px solid;text-align:center}
+.of-verdict-block.of-bull{border-color:rgba(34,197,94,.3);background:rgba(34,197,94,.06)}
+.of-verdict-block.of-bear{border-color:rgba(248,113,113,.3);background:rgba(248,113,113,.06)}
+.of-verdict-block.of-neu{border-color:rgba(71,85,105,.3);background:rgba(71,85,105,.06)}
+.of-verdict-title{font-size:7px;font-weight:700;letter-spacing:.8px;color:var(--text-muted);margin-bottom:4px}
+.of-verdict-text{font-size:11px;font-weight:700}
+.of-verdict-text.of-bull{color:#22c55e}
+.of-verdict-text.of-bear{color:#f87171}
+.of-verdict-text.of-neu{color:var(--text-secondary)}
+.of-section-divider{height:1px;background:var(--border2);margin:3px 0}
 /* Price flash animation */
 @keyframes priceFlashUp{0%{color:#22c55e;text-shadow:0 0 10px rgba(34,197,94,.8)}100%{color:#22c55e;text-shadow:none}}
 @keyframes priceFlashDown{0%{color:#f87171;text-shadow:0 0 10px rgba(248,113,113,.8)}100%{color:#f87171;text-shadow:none}}
@@ -1172,7 +1210,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
     <button class="tab" onclick="showPage('compressed',this)">📦 COMPRESSED</button>
     <button class="tab" onclick="showPage('trending',this)">🔥 TRENDING</button>
     <button class="tab" onclick="showPage('athatl',this)">🏆 ATH / ATL</button>
-    <button class="tab" onclick="showPage('bias',this)">🎯 BIAS</button>
+    <button class="tab" onclick="showPage('bias',this)">🎯 BIAS SHIFT</button>
     <button class="tab" onclick="showPage('watchlist',this);renderWatchlistTab()">📡 LIVE MONITOR</button>
   </div>
 
@@ -1389,16 +1427,10 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
         </div>
         <div id="obStrengthFilterOptions" style="display:none;margin-left:4px">
           <div class="subrow">
-            <div class="field"><label>Strength Type</label>
-              <select id="obStrengthFilterMode">
-                <option value="screener_quality">Screener Quality Strength</option>
-                <option value="tv_volume_share">TradingView OB %</option>
-              </select>
-            </div>
-            <div class="field"><label>Min %</label><input id="obMinStrengthPct" type="number" value="70" min="0" max="100" step="1"></div>
+            <div class="field"><label>Min TV OB %</label><input id="obMinStrengthPct" type="number" value="70" min="0" max="100" step="1"></div>
           </div>
         </div>
-        <div class="tip-box" id="tip-ob-strength">Filter active OBs by strength. <b>Screener Quality</b> uses the built-in quality score (volume, side dominance, freshness). <b>TradingView OB %</b> uses the Pine-style visible OB volume share (floor of source volume / total visible pool × 100). The two metrics are never mixed or substituted for each other.</div>
+        <div class="tip-box" id="tip-ob-strength">Filter active OBs by TradingView-style OB volume share %. Uses Pine-style visible OB volume share (floor of source volume / total visible pool × 100).</div>
         <div class="subrow">
           <label><input id="useHighProbOB" type="checkbox"> Use OB Quality Engine v2 <span class="tip-icon" onclick="toggleTip('tip-high-prob-ob')">ⓘ</span></label>
           <div class="field" id="highProbQualityWrap" style="display:none">
@@ -1670,139 +1702,180 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
   <!-- BIAS PAGE -->
   <div id="page-bias" class="page">
     <div class="card">
-      <div class="card-title">BIAS DETECTION</div>
+      <div class="card-title">BIAS SHIFT</div>
 
+      <!-- Hidden input tracks current mode for localStorage -->
+      <input type="hidden" id="biasModeInput" value="normal">
+
+      <!-- Mode Toggle + Reset -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px">
+        <div class="mode-pills">
+          <button id="biasModeNormalBtn" class="mode-pill active" onclick="setBiasMode('normal')">◈ Normal Mode</button>
+          <button id="biasModeExpertBtn" class="mode-pill" onclick="setBiasMode('expert')">⚡ Expert Mode</button>
+        </div>
+        <button class="zone-btn" style="font-size:9px;padding:4px 10px;color:#64748b;border-color:rgba(100,116,139,.25)" onclick="resetBiasDefaults()">↺ Reset Defaults</button>
+      </div>
+
+      <!-- Common Settings (visible in both Normal and Expert mode) -->
       <div class="setting-section">
         <div class="setting-title">SCAN SETTINGS</div>
-        <div class="subrow">
-          <div class="field"><label>Scan Source</label>
+        <div class="row">
+          <div class="field"><label>Market Scope</label>
             <select id="biasScanSource">
               <option value="selected">Selected Pairs</option>
               <option value="market">Full Market</option>
             </select>
           </div>
           <div class="field"><label>Pairs / Cycle</label>
-            <input id="biasPairsPerCycle" type="number" value="20" min="5" max="80">
-          </div>
-          <div class="field"><label>Timeframe</label>
-            <select id="biasTf">
-              <option value="1h">1h</option>
-              <option value="2h">2h</option>
-              <option value="4h" selected>4h</option>
-              <option value="6h">6h</option>
-              <option value="8h">8h</option>
-              <option value="12h">12h</option>
-              <option value="1d">1D</option>
-            </select>
+            <input id="biasPairsPerCycle" type="number" value="60" min="5" max="100">
           </div>
         </div>
-        <div class="subrow">
-          <div class="field"><label>Candle Lookback</label>
-            <input id="biasCandleCount" type="number" value="3" min="1" max="10">
-          </div>
-          <div class="field"><label>Bias Filter</label>
-            <select id="biasFilter">
-              <option value="all">All Signals</option>
-              <option value="bullish">Bullish Only</option>
-              <option value="bearish">Bearish Only</option>
+        <div class="field" style="max-width:160px;margin-bottom:0"><label>Timeframe</label>
+          <select id="biasTf">
+            <option value="1h">1H</option>
+            <option value="4h">4H</option>
+            <option value="6h">6H</option>
+            <option value="12h">12H</option>
+            <option value="1d" selected>1D</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="setting-section">
+        <div class="setting-title">DETECTION</div>
+        <div class="row">
+          <div class="field"><label>Bias Strength</label>
+            <select id="biasStrength">
+              <option value="early">Early</option>
+              <option value="balanced" selected>Balanced</option>
+              <option value="strong">Strong Only</option>
             </select>
+            <div class="setting-hint">Early: more results. Balanced: recommended. Strong Only: fewer, cleaner setups.</div>
+          </div>
+          <div class="field"><label>Detection Mode</label>
+            <select id="biasDetectionMode">
+              <option value="early" selected>Early</option>
+              <option value="confirmed">Confirmed</option>
+            </select>
+            <div class="setting-hint">Early: rejection candle closed. Confirmed: later candle confirms the break.</div>
           </div>
         </div>
       </div>
 
       <div class="setting-section">
-        <div class="setting-title">SIGNAL GATES</div>
-        <div style="display:flex;flex-direction:column;gap:10px">
-
-          <!-- Gate 1: Prior Momentum -->
-          <div>
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-              <input type="checkbox" id="biasMomentumGate" checked>
-              <span style="font-size:11px;color:#22d3ee;font-weight:600">Prior Momentum Gate</span>
-            </label>
-            <div style="padding:6px 0 0 20px;display:flex;gap:8px;align-items:center">
-              <span style="font-size:10px;color:var(--text-secondary)">Candles required:</span>
-              <input id="biasPriorCandlesReq" type="number" value="2" min="1" max="5" style="width:50px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:11px">
-            </div>
-          </div>
-
-          <!-- Gate 2: Signal Candle -->
-          <div>
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-              <input type="checkbox" id="biasWickGate" checked>
-              <span style="font-size:11px;color:#22d3ee;font-weight:600">Signal Candle Gate</span>
-            </label>
-            <div style="padding:6px 0 0 20px;display:flex;flex-direction:column;gap:6px">
-              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;color:#94a3b8">
-                <input type="checkbox" id="biasSigWick" checked> Strong Wick ≥
-                <input id="biasSigWickMin" type="number" value="35" min="10" max="80" style="width:45px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:3px 5px;font-size:10px">%
-              </label>
-              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;color:#94a3b8">
-                <input type="checkbox" id="biasSigEngulf" checked> Engulfing candle
-              </label>
-              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;color:#94a3b8">
-                <input type="checkbox" id="biasSigStrongBody" checked> Strong body ≥
-                <input id="biasSigBodyMin" type="number" value="55" min="30" max="90" style="width:45px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:3px 5px;font-size:10px">%
-              </label>
-            </div>
-          </div>
-
-          <!-- Gate 3: Body -->
-          <div>
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-              <input type="checkbox" id="biasBodyGate" checked>
-              <span style="font-size:11px;color:#22d3ee;font-weight:600">Body Gate</span>
-            </label>
-            <div style="padding:6px 0 0 20px;display:flex;gap:8px;align-items:center">
-              <span style="font-size:10px;color:var(--text-secondary)">Min body %:</span>
-              <input id="biasBodyMinPct" type="number" value="20" min="5" max="80" style="width:50px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:11px">
-            </div>
-          </div>
-
-          <!-- Gate 4: Volume -->
-          <div>
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-              <input type="checkbox" id="biasVolumeGate">
-              <span style="font-size:11px;color:#22d3ee;font-weight:600">Volume Gate</span>
-            </label>
-            <div style="padding:6px 0 0 20px;display:flex;gap:8px;align-items:center">
-              <span style="font-size:10px;color:var(--text-secondary)">Min multiplier:</span>
-              <input id="biasVolMultiplier" type="number" value="1.2" step="0.1" min="1.0" max="3.0" style="width:55px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:11px">x
-            </div>
-          </div>
-
-          <!-- Min conditions -->
-          <div style="display:flex;align-items:center;gap:8px;padding-top:4px;border-top:1px solid var(--border2)">
-            <span style="font-size:10px;color:var(--text-secondary)">Min gates to pass:</span>
-            <select id="biasMinConditions" style="background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:11px">
-              <option value="1">1 (relaxed)</option>
-              <option value="2" selected>2 (balanced)</option>
-              <option value="3">3 (strict)</option>
-              <option value="4">4 (very strict)</option>
+        <div class="setting-title">FILTERS</div>
+        <div class="row">
+          <div class="field"><label>Confluence Mode</label>
+            <select id="biasConfluenceMode">
+              <option value="optional" selected>Optional</option>
+              <option value="required">Required</option>
             </select>
+            <div class="setting-hint">Optional: OB/FVG/Fib improve score. Required: hides setups with no confluence.</div>
           </div>
+          <div class="field"><label>Minimum Grade</label>
+            <select id="biasMinGrade">
+              <option value="C+">C+</option>
+              <option value="B+" selected>B+</option>
+              <option value="A">A Only</option>
+            </select>
+            <div class="setting-hint">C+: more setups. B+: balanced. A: high quality only.</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:18px;flex-wrap:wrap;padding:6px 0 2px">
+          <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:11px;color:var(--text-secondary)">
+            <input type="checkbox" id="biasUseObConf" checked style="accent-color:var(--accent);width:14px;height:14px"> OB Confluence
+          </label>
+          <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:11px;color:var(--text-secondary)">
+            <input type="checkbox" id="biasUseFvgConf" checked style="accent-color:var(--accent);width:14px;height:14px"> FVG Confluence
+          </label>
+          <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:11px;color:var(--text-secondary)">
+            <input type="checkbox" id="biasUseFibConf" checked style="accent-color:var(--accent);width:14px;height:14px"> Fib Confluence
+          </label>
         </div>
       </div>
 
-      <div class="setting-section">
-        <div class="setting-title">CONFLUENCE (OPTIONAL)</div>
-        <div class="subrow" style="flex-wrap:wrap;gap:12px">
-          <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="biasUseFvg"> FVG Confluence</label>
-          <div class="field" style="margin:0"><label>FVG Touch</label>
-            <select id="biasFvgTouch">
-              <option value="any">Any</option>
-              <option value="untouched">Untouched</option>
-              <option value="touched">Once Touched</option>
-            </select>
+      <!-- Expert Mode Extra Settings (hidden by default) -->
+      <div id="biasExpertFields" style="display:none">
+
+        <div class="setting-section">
+          <div class="setting-title">CANDLE STRUCTURE</div>
+          <div class="row">
+            <div class="field"><label>Prior Move Candles</label>
+              <input id="biasPriorMoveCandles" type="number" value="4" min="2" max="10">
+              <div class="setting-hint">Candles forming the prior trend push. (2–10)</div>
+            </div>
+            <div class="field"><label>Signal Search Candles</label>
+              <input id="biasSignalSearchCandles" type="number" value="1" min="1" max="5">
+              <div class="setting-hint">Recent candles searched for rejection. (1–5)</div>
+            </div>
           </div>
-          <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="biasUseOb"> OB Confluence</label>
-          <div class="field" style="margin:0"><label>OB Approach %</label><input id="biasObApproachPct" type="number" value="2.0" step="0.5" style="width:70px"></div>
         </div>
+
+        <div class="setting-section">
+          <div class="setting-title">REJECTION QUALITY</div>
+          <div class="row">
+            <div class="field"><label>Min Wick %</label>
+              <input id="biasMinWickPct" type="number" value="35" min="10" max="80">
+              <div class="setting-hint">Rejection wick as % of candle range. (10–80)</div>
+            </div>
+            <div class="field"><label>Min Body %</label>
+              <input id="biasMinBodyPct" type="number" value="20" min="5" max="70">
+              <div class="setting-hint">Body size as % of candle range. (5–70)</div>
+            </div>
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:11px;color:var(--text-secondary);margin-top:4px">
+            <input type="checkbox" id="biasRequireCloseBeyondMidpoint" checked style="accent-color:var(--accent);width:14px;height:14px">
+            Require Close Beyond Midpoint
+          </label>
+        </div>
+
+        <div class="setting-section">
+          <div class="setting-title">VOLUME</div>
+          <div class="row">
+            <div class="field"><label>Volume Filter</label>
+              <select id="biasVolumeFilter">
+                <option value="optional" selected>Optional</option>
+                <option value="required">Required</option>
+              </select>
+            </div>
+            <div class="field"><label>Volume Multiplier</label>
+              <input id="biasVolumeMultiplier" type="number" value="1.5" step="0.1" min="1.0" max="5.0">
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /biasExpertFields -->
+
+      <!-- Legacy hidden fields — keep IDs alive for /api/bias_scan backward compat -->
+      <div style="display:none" aria-hidden="true">
+        <input id="biasCandleCount" type="number" value="3">
+        <select id="biasFilter"><option value="all" selected>All</option></select>
+        <input type="checkbox" id="biasMomentumGate" checked>
+        <input id="biasPriorCandlesReq" type="number" value="2">
+        <input type="checkbox" id="biasWickGate" checked>
+        <input type="checkbox" id="biasSigWick" checked>
+        <input id="biasSigWickMin" type="number" value="35">
+        <input type="checkbox" id="biasSigEngulf" checked>
+        <input type="checkbox" id="biasSigStrongBody" checked>
+        <input id="biasSigBodyMin" type="number" value="55">
+        <input type="checkbox" id="biasBodyGate" checked>
+        <input id="biasBodyMinPct" type="number" value="20">
+        <input type="checkbox" id="biasVolumeGate">
+        <input id="biasVolMultiplier" type="number" value="1.2">
+        <select id="biasMinConditions"><option value="2" selected>2</option></select>
+        <input type="checkbox" id="biasUseFvg">
+        <select id="biasFvgTouch"><option value="any" selected>Any</option></select>
+        <input type="checkbox" id="biasUseOb">
+        <input id="biasObApproachPct" type="number" value="2.0">
       </div>
 
-      <button class="btn-primary" onclick="scanBias()" style="margin-top:4px">▶ SCAN BIAS</button>
+      <div style="font-size:10px;color:var(--text-muted);margin-top:12px;margin-bottom:6px;line-height:1.5">
+        Uses closed candles only — looks for a prior trend drive followed by a rejection candle in the opposite direction.
+      </div>
+      <button class="btn-primary" onclick="scanBias()" style="margin-top:0">▶ SCAN BIAS SHIFT</button>
       <div id="biasStatus" class="status-text" style="margin-top:8px"></div>
-      <div id="biasResults" class="results" style="margin-top:12px"><div class="empty">Configure settings and click Scan Bias</div></div>
+      <div id="biasDiag" style="margin-top:4px"></div>
+      <div id="biasResults" class="results" style="margin-top:12px"><div class="empty">Configure settings and click Scan Bias Shift</div></div>
     </div>
   </div>
 
@@ -2114,7 +2187,6 @@ function currentSettings(){
     rsiOS: +$('rsiOS').value,
     obDistancePct: +$('obDistancePct').value,
     useObStrengthFilter:  $('useObStrengthFilter').checked,
-    obStrengthFilterMode: $('obStrengthFilterMode') ? $('obStrengthFilterMode').value : 'screener_quality',
     obMinStrengthPct:     +$('obMinStrengthPct').value,
     useHighProbOB: $('useHighProbOB').checked,
     obMinQuality: +$('obMinQuality').value,
@@ -2246,7 +2318,9 @@ function renderSparkline(prices, markers, width, height){
 function renderScoreBadge(score, confidence){
   const s = score || 0;
   const conf = confidence || 'Low';
-  const color = conf === 'High' ? '#22c55e' : conf === 'Medium' ? '#eab308' : '#64748b';
+  const isHigh = conf === 'High' || conf === 'Strong';
+  const isMed  = conf === 'Medium' || conf === 'Moderate';
+  const color  = isHigh ? '#22c55e' : isMed ? '#eab308' : '#64748b';
   const circ = 2 * Math.PI * 15;
   const offset = circ - (Math.min(s, 100) / 100) * circ;
   return `<div class="score-ring" title="${s}/100 — ${conf} Confidence">
@@ -2405,10 +2479,8 @@ function renderMainResultsList(results){
       if(s !== 'OB_APPROACH' && s !== 'OB_CONSOL') return '';
       var m = al.meta;
       if(!m) return '';
-      var scrStr = m.obStrengthPct != null ? (parseFloat(m.obStrengthPct).toFixed(1) + '%') : '—';
       var tvShare = m.tvObVolumeSharePct != null ? (m.tvObVolumeSharePct + '%') : '—';
       return '<div class="result-detail" style="margin-top:3px;font-size:0.72rem;display:flex;gap:10px;flex-wrap:wrap">' +
-        '<span><span style="color:#475569">Quality Str: </span><span style="color:#e2e8f0">' + scrStr + '</span></span>' +
         '<span><span style="color:#475569">TV OB %: </span><span style="color:' + (m.tvObVolumeSharePct != null ? '#22d3ee' : '#475569') + '">' + tvShare + '</span></span>' +
         '</div>';
     }
@@ -2795,18 +2867,23 @@ function toggleTip(id){
 // ── Settings persistence (localStorage) ──
 const SAVE_IDS_VAL = [
   'tf','iLen','sLen','approachPct','consolCandles','rsiOB','rsiOS',
-  'obDistancePct','obMinStrengthPct','obMinQuality','obApproachAtrMult','obStrengthFilterMode',
+  'obDistancePct','obMinStrengthPct','obMinQuality','obApproachAtrMult',
   'fvgState','fvgAgeMin','fvgAgeMax','fvgMaxDistancePct','fvgTouchDepth',
   'fvgObOverlapMode','fvgObMinOverlapPct',
   'fibTf','fibTolerancePct','fibAtrMultiplier','fibApproachPct',
   'btcCorrelationMode','btcLookback',
-  'scanSource','pairsPerCycle','autoInterval','marketType','biasScanSource','biasPairsPerCycle',
+  'scanSource','pairsPerCycle','autoInterval','marketType',
   'compressedTf','compressedLookback','compressedMaxPct',
   'trendingTf','trendingMode','trendingLimit',
   'athMode','athStatus','athWindowHours','athNearPct','athLimit',
   'tvLinkTarget',
   // ── Bias tab settings ──
-  'biasTf','biasCandleCount','biasFilter','biasWickMinPct','biasBodyMinPct','biasObApproachPct','biasFvgTouch',
+  'biasScanSource','biasPairsPerCycle',
+  'biasTf','biasModeInput','biasStrength','biasConfluenceMode','biasMinGrade',
+  'biasPriorMoveCandles','biasSignalSearchCandles','biasMinWickPct','biasMinBodyPct',
+  'biasVolumeFilter','biasVolumeMultiplier','biasDetectionMode',
+  // Legacy bias IDs (kept for /api/bias_scan backward compat)
+  'biasCandleCount','biasFilter','biasBodyMinPct','biasObApproachPct','biasFvgTouch',
 ];
 const SAVE_IDS_CHK = [
   'useObModule','useObStrengthFilter','useHighProbOB','useAtrObApproach','useFvgModule','useFvgValidOnly','useFvgState','useFvgAgeRange','useFvgDistance',
@@ -2815,6 +2892,7 @@ const SAVE_IDS_CHK = [
   'filterFVG','filterOB','filterFIB',
   // ── Bias tab checkboxes ──
   'biasWickGate','biasMomentumGate','biasBodyGate','biasVolumeGate','biasUseFvg','biasUseOb',
+  'biasRequireCloseBeyondMidpoint','biasUseObConf','biasUseFvgConf','biasUseFibConf',
 ];
 
 function saveSettings(){
@@ -2851,6 +2929,9 @@ function loadSettings(){
   if($('useBreakerModule')) toggleWlSection('breakerSubOptions', $('useBreakerModule').checked);
   updateObStrengthFilterFields();
   if($('filterModeHint')) $('filterModeHint').style.display = (_scanMode === 'filter') ? 'block' : 'none';
+  // Restore bias mode visual state after values are loaded
+  const _biasModeEl = $('biasModeInput');
+  setBiasMode(_biasModeEl && _biasModeEl.value ? _biasModeEl.value : 'normal');
 }
 
 // Auto-save on any settings change
@@ -3110,113 +3191,447 @@ function addManualPairs(){
   if(msg){ msg.textContent = `Added ${valid.length} pairs`; setTimeout(()=>{ msg.textContent=''; }, 2000); }
 }
 
+// ── Bias Mode Toggle ──
+function resetBiasDefaults(){
+  const vals = {
+    biasModeInput:'normal', biasTf:'1d', biasScanSource:'market',
+    biasPairsPerCycle:'60', biasStrength:'balanced', biasDetectionMode:'early',
+    biasConfluenceMode:'optional', biasMinGrade:'B+',
+    biasPriorMoveCandles:'4', biasSignalSearchCandles:'1',
+    biasMinWickPct:'35', biasMinBodyPct:'20',
+    biasVolumeFilter:'optional', biasVolumeMultiplier:'1.5',
+  };
+  const chks = {
+    biasUseObConf:true, biasUseFvgConf:true, biasUseFibConf:true,
+    biasRequireCloseBeyondMidpoint:true,
+  };
+  Object.entries(vals).forEach(([id,v]) => { const el=$(id); if(el) el.value=v; });
+  Object.entries(chks).forEach(([id,v]) => { const el=$(id); if(el) el.checked=v; });
+  setBiasMode('normal');
+  saveSettings();
+  const st=$('biasStatus');
+  if(st) st.textContent='Bias Shift defaults restored.';
+}
+
+function setBiasMode(mode){
+  const inp = $('biasModeInput');
+  if(inp) inp.value = mode;
+  const normalBtn = $('biasModeNormalBtn');
+  const expertBtn = $('biasModeExpertBtn');
+  if(normalBtn) normalBtn.classList.toggle('active', mode === 'normal');
+  if(expertBtn) expertBtn.classList.toggle('active', mode === 'expert');
+  const expertFields = $('biasExpertFields');
+  if(expertFields) expertFields.style.display = (mode === 'expert') ? 'block' : 'none';
+  saveSettings();
+}
+
 // ── Bias Scan ──
+// ── #7 Bias tab — diagnostics panel renderer ──
+function fmtBiasTime(ms) {
+  if (!ms) return '—';
+  const d = new Date(+ms);
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
+  const dy = String(d.getDate()).padStart(2, '0');
+  const hr = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return `${d.getFullYear()}-${mo}-${dy} ${hr}:${mi}`;
+}
+
+function renderBiasDiagnostics(diag) {
+  if (!diag) return '';
+  const rej = diag.rejected || {};
+  const rejRows = [
+    ['No Prior Move',         rej.noPriorMove],
+    ['No Clean Prior Drive',  rej.noCleanPriorDrive],
+    ['Invalidated',           rej.invalidated],
+    ['No Rejection Candle',   rej.noRejectionCandle],
+    ['Not Confirmed',         rej.notConfirmed],
+    ['Confluence Required',   rej.confluenceRequired],
+    ['Volume Filter',         rej.volumeFilter],
+    ['Direction Filter',      rej.biasFilterMismatch],
+    ['Min Grade Filter',      rej.minimumGrade],
+    ['No Data / Too Short',   rej.notEnoughCandles],
+    ['Errors',                rej.errors],
+  ].filter(([, v]) => v > 0);
+
+  const rejHtml = rejRows.map(([label, count]) =>
+    `<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0">
+       <span style="color:var(--text-secondary)">${label}</span>
+       <span style="color:#f87171;font-weight:700;font-family:'JetBrains Mono',monospace">${count}</span>
+     </div>`
+  ).join('');
+
+  const s = diag.symbolsScanned || 0;
+  const req = diag.symbolsRequested || 0;
+  const before = diag.setupsFoundBeforeFilters || 0;
+  const ret = diag.setupsReturned || 0;
+  const summaryLine = `${s} of ${req} pairs scanned · ${before} setup${before !== 1 ? 's' : ''} found · ${ret} returned`;
+
+  return `<details onclick="event.stopPropagation()">
+    <summary style="font-size:9px;font-weight:700;letter-spacing:.8px;color:#475569;cursor:pointer;list-style:none;user-select:none;padding:3px 0">SCAN DIAGNOSTICS ▾</summary>
+    <div style="margin-top:5px;padding:8px 10px;background:rgba(0,0,0,.25);border:1px solid rgba(71,85,105,.2);border-radius:8px;font-size:10px">
+      <div style="color:#64748b;margin-bottom:${rejRows.length ? 6 : 0}px;font-family:'JetBrains Mono',monospace">${summaryLine}</div>
+      ${rejRows.length
+        ? `<div style="font-size:9px;font-weight:700;letter-spacing:.8px;color:#475569;margin-bottom:4px">REJECTED</div>${rejHtml}`
+        : ret > 0
+          ? '<div style="color:#4ade80;font-size:10px;margin-top:4px">All setups passed filters.</div>'
+          : '<div style="color:#64748b;font-size:10px;margin-top:4px">No rejection counters recorded.</div>'
+      }
+    </div>
+  </details>`;
+}
+
+// ── #5 Bias tab — Phase 5 card renderer ──
+function renderBiasCard(x, i, scanTime) {
+  const dir = (x.biasDirection || x.direction || x.bias || '').toLowerCase();
+  const isBull = dir === 'bullish';
+  const cardClass = isBull ? 'bull-card' : 'bear-card';
+  const dirArrow = isBull ? '▲' : '▼';
+  const dirColor = isBull ? '#4ade80' : '#f87171';
+  const setupLabel = x.setupType || (isBull ? 'Bullish Bias Shift' : 'Bearish Bias Shift');
+  const tf = x.timeframe || '?';
+  const score = x.score || 0;
+  const grade = x.grade || '';
+  const gradeLabel = x.gradeLabel || '';
+  const conf = x.confidence || 'Low';
+  const confClass = conf === 'Strong' ? 'bull' : conf === 'Moderate' ? 'warn' : 'neutral';
+  const confStatus = x.confirmationStatus || '';
+  const confStatusBadge = confStatus === 'confirmed'
+    ? `<span class="badge neutral" style="font-size:9px;background:rgba(34,197,94,.12);color:#4ade80;border-color:rgba(34,197,94,.3)">✓ Confirmed</span>`
+    : `<span class="badge neutral" style="font-size:9px;opacity:.65">Early</span>`;
+  const confFound = x.confluencesFound || [];
+  const confChips = confFound.map(cf =>
+    `<span class="badge neutral" style="font-size:9px;letter-spacing:.5px">${cf} ✓</span>`
+  ).join('');
+  const fmtP = p => {
+    if (p == null || p === '' || isNaN(+p) || !isFinite(+p)) return '—';
+    const n = +p;
+    return n < 1 ? n.toFixed(6) : n < 100 ? n.toFixed(4) : n.toFixed(2);
+  };
+  const rawSym = String(x.symbol || 'UNKNOWNUSDT');
+  const priorDir = x.priorMoveDirection || '';
+  const priorN = x.priorMoveCandles || '';
+  let patternText = '';
+  if (priorDir && priorN) {
+    const priorLabel = priorDir === 'up' ? 'bullish' : 'bearish';
+    const rejLabel = isBull ? 'bullish' : 'bearish';
+    patternText = `${priorN}-candle ${priorLabel} drive → ${rejLabel} rejection candle`;
+  } else {
+    patternText = x.pattern || '';
+  }
+  const reasonChain = Array.isArray(x.reasonChain) && x.reasonChain.length
+    ? x.reasonChain
+    : (x.gates ? x.gates.split(' · ') : []);
+  const reasonHtml = reasonChain.length
+    ? reasonChain.map(r => `<div class="result-detail" style="line-height:1.7;padding:1px 0">✓ ${r}</div>`).join('')
+    : '';
+  const invText = x.invalidationText
+    || (isBull ? `close below $${fmtP(x.invalidationLevel)}` : `close above $${fmtP(x.invalidationLevel)}`);
+  const confTf = x.suggestedConfirmationTf || 'lower TF';
+  let confTfText;
+  if (confStatus === 'confirmed') {
+    confTfText = 'Confirmed by a later closed candle';
+  } else {
+    confTfText = `Watch ${confTf} for ${isBull ? 'CHOCH up' : 'CHOCH down'}`;
+  }
+  const confStatusNote = confStatus === 'early_unconfirmed'
+    ? `<div class="result-detail" style="opacity:.6;font-size:10px;margin-top:3px">Early setup — wait for lower-TF confirmation</div>`
+    : '';
+  let conflHtml = '';
+  if (x.obConf || x.fvgConf || x.fibConf) {
+    const rows = [];
+    if (x.obConf) {
+      let s = `<span style="color:#4ade80;font-weight:700">OB ✓</span> ${x.obConf.reason || ''}`;
+      if (x.obConf.zone) s += ` · Zone: ${x.obConf.zone}`;
+      if (x.obConf.distancePct != null) s += ` · ${x.obConf.distancePct}% away`;
+      rows.push(s);
+    }
+    if (x.fvgConf) {
+      let s = `<span style="color:#4ade80;font-weight:700">FVG ✓</span> ${x.fvgConf.reason || ''}`;
+      if (x.fvgConf.zone) s += ` · Zone: ${x.fvgConf.zone}`;
+      if (x.fvgConf.touch) s += ` [${x.fvgConf.touch}]`;
+      if (x.fvgConf.distancePct != null) s += ` · ${x.fvgConf.distancePct}% away`;
+      rows.push(s);
+    }
+    if (x.fibConf) {
+      let s = `<span style="color:#fbbf24;font-weight:700">Fib ✓</span> ${x.fibConf.reason || ''}`;
+      if (x.fibConf.level) s += ` · Level: ${x.fibConf.level}`;
+      if (x.fibConf.price) s += ` · $${fmtP(x.fibConf.price)}`;
+      if (x.fibConf.distancePct != null) s += ` · ${x.fibConf.distancePct}% away`;
+      rows.push(s);
+    }
+    conflHtml = `<div style="margin-top:8px;padding:8px 10px;background:rgba(34,211,238,.04);border:1px solid rgba(34,211,238,.12);border-radius:8px">
+      <div style="font-size:9px;font-weight:700;letter-spacing:.8px;color:#64748b;margin-bottom:5px">CONFLUENCE</div>
+      ${rows.map(r => `<div class="result-detail" style="margin-bottom:3px">${r}</div>`).join('')}
+    </div>`;
+  }
+  const bd = Array.isArray(x.scoreBreakdown) && x.scoreBreakdown.length ? x.scoreBreakdown : [];
+  const bdHtml = bd.length
+    ? `<details onclick="event.stopPropagation()" style="margin-top:8px"><summary style="font-size:9px;font-weight:700;letter-spacing:.8px;color:#475569;cursor:pointer;list-style:none;user-select:none">SCORE BREAKDOWN ▾</summary>
+        <div style="margin-top:4px;padding:6px 8px;background:rgba(0,0,0,.2);border-radius:6px">
+          ${bd.map(b => `<div class="result-detail" style="opacity:.65;font-size:10px;padding:1px 0">${b}</div>`).join('')}
+        </div>
+      </details>`
+    : '';
+  const invStatus = x.invalidationStatus || 'valid';
+  const liveBreached = invStatus === 'live_breached';
+  const closedInv    = invStatus === 'closed_invalidated';
+  const atRiskBadge  = liveBreached
+    ? `<span class="badge neutral" style="font-size:9px;background:rgba(251,146,60,.15);color:#fb923c;border-color:rgba(251,146,60,.4);font-weight:700">⚠ At Risk</span>`
+    : '';
+  const starred = isStarred(rawSym);
+  const symSafe = rawSym.replace(/'/g, "\\'");
+  const ofId = 'bias-of-' + rawSym.replace(/[^a-zA-Z0-9]/g, '_') + '_' + i;
+
+  return `<div class="result-card bias-card ${cardClass}" style="animation-delay:${i*40}ms" onclick="this.classList.toggle('expanded')">
+    <div class="result-header" style="align-items:flex-start">
+      <div style="flex:1;min-width:0">
+        <div class="symbol" style="font-size:13px;white-space:normal;line-height:1.3">
+          ${coinIcon(rawSym)}${displaySymbol(rawSym)}<span style="color:var(--text-muted);font-weight:400"> — ${tf}</span> <span style="color:${dirColor};font-weight:700">${setupLabel}</span>
+          <a href="https://www.tradingview.com/chart/?symbol=BINANCE:${rawSym}.P" target="${tvTarget()}" class="tv-link" rel="noopener" onclick="event.stopPropagation()">📊</a>
+          <span class="expand-icon">▼</span>
+        </div>
+        <div class="badges" style="margin-top:5px;margin-bottom:0">
+          <span class="badge ${isBull ? 'bull' : 'bear'}" style="font-size:9px">${dirArrow} ${isBull ? 'Bullish' : 'Bearish'}</span>
+          ${grade ? `<span class="badge neutral" style="font-size:9px;font-weight:800;letter-spacing:.4px">${grade}</span>` : ''}
+          <span class="badge ${confClass}" style="font-size:9px">${conf}</span>
+          ${confStatusBadge}
+          ${confChips}
+          ${atRiskBadge}
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;margin-left:8px">
+        ${renderScoreBadge(score, conf)}
+        <span class="star-btn ${starred ? 'starred' : ''}" onclick="event.stopPropagation();toggleWatchlistStar(this,'${symSafe}')">${starred ? '★' : '☆'}</span>
+      </div>
+    </div>
+
+    <div class="result-summary" style="margin-top:5px">
+      ${patternText || (isBull ? 'Bullish Bias Shift' : 'Bearish Bias Shift')} · $${fmtP(x.price)}${x.volSpike ? ' · 🔥 Vol' : ''}
+    </div>
+
+    <div class="result-details" style="padding-top:10px">
+      ${patternText ? `<div style="margin-bottom:10px">
+        <div style="font-size:9px;font-weight:700;letter-spacing:.8px;color:#64748b;margin-bottom:3px">PATTERN</div>
+        <div class="result-detail">${patternText}</div>
+      </div>` : ''}
+
+      ${reasonHtml ? `<div style="margin-bottom:10px;padding:8px 10px;background:rgba(0,0,0,.18);border-radius:8px;border:1px solid rgba(71,85,105,.2)">
+        <div style="font-size:9px;font-weight:700;letter-spacing:.8px;color:#64748b;margin-bottom:4px">REASON</div>
+        ${reasonHtml}
+      </div>` : ''}
+
+      <div style="margin-bottom:10px;display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        <div style="padding:8px 10px;background:rgba(0,0,0,.18);border-radius:8px;border:1px solid ${liveBreached ? 'rgba(251,146,60,.35)' : closedInv ? 'rgba(248,113,113,.35)' : 'rgba(71,85,105,.2)'}">
+          <div style="font-size:9px;font-weight:700;letter-spacing:.8px;color:#64748b;margin-bottom:5px">LEVELS</div>
+          <div class="result-detail" style="margin-bottom:2px">High: $${fmtP(x.rejectionHigh)}</div>
+          <div class="result-detail" style="margin-bottom:2px">Low: $${fmtP(x.rejectionLow)}</div>
+          <div class="result-detail" style="margin-bottom:4px">Close: $${fmtP(x.rejectionClose)}</div>
+          <div class="result-detail" style="color:${dirColor};font-weight:600">⚠ ${invText}</div>
+          ${x.currentPrice != null && fmtP(x.currentPrice) !== '—'
+            ? `<div class="result-detail" style="margin-top:3px;opacity:.7">Current: $${fmtP(x.currentPrice)}</div>`
+            : ''}
+          ${liveBreached
+            ? `<div class="result-detail" style="margin-top:4px;color:#fb923c;font-size:10px;font-weight:600">
+                ${isBull
+                  ? 'Live breach: current price is below invalidation level. Wait for close.'
+                  : 'Live breach: current price is above invalidation level. Wait for close.'}
+               </div>`
+            : ''}
+          ${closedInv
+            ? `<div class="result-detail" style="margin-top:4px;color:#f87171;font-size:10px;font-weight:600">Invalidated by closed candle</div>`
+            : ''}
+        </div>
+        <div style="padding:8px 10px;background:rgba(0,0,0,.18);border-radius:8px;border:1px solid rgba(71,85,105,.2)">
+          <div style="font-size:9px;font-weight:700;letter-spacing:.8px;color:#64748b;margin-bottom:5px">CONFIRMATION</div>
+          <div class="result-detail">${confTfText}</div>
+          ${confStatusNote}
+          ${gradeLabel ? `<div class="result-detail" style="opacity:.45;font-size:10px;margin-top:5px">${gradeLabel}</div>` : ''}
+        </div>
+      </div>
+
+      ${conflHtml}
+      ${bdHtml}
+
+      <div class="result-detail" style="margin-top:8px;opacity:.4;font-size:10px">
+        ↑ ${x.rejectionUpperWickPct || x.upperWickPct || 0}% wick · ↓ ${x.rejectionLowerWickPct || x.lowerWickPct || 0}% wick · ${x.rejectionBodyPct || x.bodyPct || 0}% body${x.signalCandleOffset != null ? ` · signal -${x.signalCandleOffset}c` : ''}
+      </div>
+      ${(x.priorWindowStartTime || x.priorWindowEndTime || x.signalCandleTime)
+        ? `<div class="result-detail" style="margin-top:3px;opacity:.35;font-size:9px;font-family:'JetBrains Mono',monospace">
+            ${x.priorWindowStartTime ? `drive: ${fmtBiasTime(x.priorWindowStartTime)}` : ''}${x.priorWindowEndTime ? ` → ${fmtBiasTime(x.priorWindowEndTime)}` : ''}${x.signalCandleTime ? ` · signal: ${fmtBiasTime(x.signalCandleTime)}` : ''}
+           </div>`
+        : ''}
+
+      <div style="margin-top:8px">
+        <button class="zone-btn" style="width:100%;padding:6px;font-size:10px;letter-spacing:.5px;border-color:#22d3ee30;color:#22d3ee"
+          onclick="event.stopPropagation();_toggleBiasOf(this,'${symSafe}','${tf}','${ofId}','${dir}')">
+          📊 LIVE ORDER FLOW
+        </button>
+        <div id="${ofId}" style="margin-top:6px;display:none"></div>
+      </div>
+      <div class="scan-time">Scanned: ${scanTime}</div>
+    </div>
+  </div>`;
+}
+
 async function scanBias(){
-  showScanPopup('DETECTING BIAS');
   const st = $('biasStatus');
   const res_div = $('biasResults');
-  if(st) st.textContent = 'Scanning…';
+
+  // ── Frontend validation ──
+  const validTfs = ['1h','4h','6h','12h','1d'];
+  const tfVal = $('biasTf') ? $('biasTf').value : '1d';
+  if(!validTfs.includes(tfVal.toLowerCase())){
+    if(st) st.textContent = 'Invalid timeframe selected.';
+    if(res_div) res_div.innerHTML = '<div class="empty">Select a valid timeframe: 1H, 4H, 6H, 12H, 1D.</div>';
+    return;
+  }
+  const ppc = $('biasPairsPerCycle') ? +$('biasPairsPerCycle').value : 60;
+  if(isNaN(ppc) || ppc < 5 || ppc > 100){
+    if(st) st.textContent = 'Pairs / Cycle must be between 5 and 100.';
+    if(res_div) res_div.innerHTML = '<div class="empty">Adjust Pairs / Cycle to a value between 5 and 100.</div>';
+    return;
+  }
+  const scanSource = $('biasScanSource') ? $('biasScanSource').value : 'market';
+  if(scanSource === 'selected' && (!selectedPairs || selectedPairs.size === 0)){
+    if(st) st.textContent = 'Select at least one pair or switch to Full Market.';
+    if(res_div) res_div.innerHTML = '<div class="empty">No pairs selected. Add pairs to your selection or switch Market Scope to Full Market.</div>';
+    return;
+  }
+  const biasMode = $('biasModeInput') ? $('biasModeInput').value : 'normal';
+  if(biasMode === 'expert'){
+    const priorN  = $('biasPriorMoveCandles')   ? +$('biasPriorMoveCandles').value   : 4;
+    const sigSrch = $('biasSignalSearchCandles') ? +$('biasSignalSearchCandles').value : 1;
+    const minWick = $('biasMinWickPct')          ? +$('biasMinWickPct').value          : 35;
+    const minBody = $('biasMinBodyPct')          ? +$('biasMinBodyPct').value          : 20;
+    const volMult = $('biasVolumeMultiplier')    ? +$('biasVolumeMultiplier').value    : 1.5;
+    const errs = [];
+    if(priorN  < 2  || priorN  > 10)  errs.push('Prior Move Candles (2–10)');
+    if(sigSrch < 1  || sigSrch > 5)   errs.push('Signal Search Candles (1–5)');
+    if(minWick < 10 || minWick > 80)  errs.push('Min Wick % (10–80)');
+    if(minBody < 5  || minBody > 70)  errs.push('Min Body % (5–70)');
+    if(volMult < 1.0|| volMult > 5.0) errs.push('Volume Multiplier (1.0–5.0)');
+    if(errs.length){
+      const msg = 'Fix expert settings: ' + errs.join(', ') + '.';
+      if(st) st.textContent = msg;
+      if(res_div) res_div.innerHTML = `<div class="empty">${msg}</div>`;
+      return;
+    }
+  }
+
+  showScanPopup('SCANNING BIAS SHIFT');
+  const diagEl = $('biasDiag');
+  if(diagEl) diagEl.innerHTML = '';
+  const scanningMsg = scanSource === 'selected'
+    ? `Scanning ${selectedPairs.size} selected pair${selectedPairs.size !== 1 ? 's' : ''}…`
+    : 'Scanning Bias Shift…';
+  if(st) st.textContent = scanningMsg;
   if(res_div) res_div.innerHTML = skeletonCards(6);
 
   const payload = {
-    timeframe: $('biasTf') ? $('biasTf').value : '4h',
+    timeframe: tfVal,
     candleCount: $('biasCandleCount') ? +$('biasCandleCount').value : 3,
     biasFilter: $('biasFilter') ? $('biasFilter').value : 'all',
-    // Gate 1 — Prior Momentum
     useMomentumGate: $('biasMomentumGate') ? $('biasMomentumGate').checked : true,
     priorCandlesReq: $('biasPriorCandlesReq') ? +$('biasPriorCandlesReq').value : 2,
-    // Gate 2 — Signal Candle
     useWickGate: $('biasWickGate') ? $('biasWickGate').checked : true,
     sigUseWick: $('biasSigWick') ? $('biasSigWick').checked : true,
     sigWickMin: $('biasSigWickMin') ? +$('biasSigWickMin').value : 35,
     sigUseEngulf: $('biasSigEngulf') ? $('biasSigEngulf').checked : true,
     sigUseStrongBody: $('biasSigStrongBody') ? $('biasSigStrongBody').checked : true,
     sigBodyMin: $('biasSigBodyMin') ? +$('biasSigBodyMin').value : 55,
-    // Gate 3 — Body
     useBodyGate: $('biasBodyGate') ? $('biasBodyGate').checked : true,
     bodyMinPct: $('biasBodyMinPct') ? +$('biasBodyMinPct').value : 20,
-    // Gate 4 — Volume
     useVolumeGate: $('biasVolumeGate') ? $('biasVolumeGate').checked : false,
     volMultiplier: $('biasVolMultiplier') ? +$('biasVolMultiplier').value : 1.2,
-    // Min conditions
     minConditions: $('biasMinConditions') ? +$('biasMinConditions').value : 2,
     useFvgConf: $('biasUseFvg') ? $('biasUseFvg').checked : false,
     fvgTouch: $('biasFvgTouch') ? $('biasFvgTouch').value : 'any',
     useObConf: $('biasUseOb') ? $('biasUseOb').checked : false,
     obApproachPct: $('biasObApproachPct') ? +$('biasObApproachPct').value : 2.0,
-    symbols: ($('biasScanSource') && $('biasScanSource').value === 'market') ? [] : [...selectedPairs],
-    scanMode: $('biasScanSource') ? $('biasScanSource').value : 'selected',
-    pairsPerCycle: $('biasPairsPerCycle') ? +$('biasPairsPerCycle').value : 20,
+    symbols: scanSource === 'market' ? [] : [...selectedPairs],
+    scanMode: scanSource,
+    pairsPerCycle: ppc,
     roundRobin: true,
     market: marketType(),
     exchange: currentExchange(),
+    mode: biasMode,
+    biasStrength: $('biasStrength') ? $('biasStrength').value : 'balanced',
+    confluenceMode: $('biasConfluenceMode') ? $('biasConfluenceMode').value : 'optional',
+    minimumGrade: $('biasMinGrade') ? $('biasMinGrade').value : 'B+',
+    priorMoveCandles: $('biasPriorMoveCandles') ? +$('biasPriorMoveCandles').value : 4,
+    signalSearchCandles: $('biasSignalSearchCandles') ? +$('biasSignalSearchCandles').value : 1,
+    minWickPct: $('biasMinWickPct') ? +$('biasMinWickPct').value : 35,
+    minBodyPct: $('biasMinBodyPct') ? +$('biasMinBodyPct').value : 20,
+    requireCloseBeyondMidpoint: $('biasRequireCloseBeyondMidpoint') ? $('biasRequireCloseBeyondMidpoint').checked : true,
+    volumeFilter: $('biasVolumeFilter') ? $('biasVolumeFilter').value : 'optional',
+    volumeMultiplier: $('biasVolumeMultiplier') ? +$('biasVolumeMultiplier').value : 1.5,
+    useObConfluence: $('biasUseObConf') ? $('biasUseObConf').checked : true,
+    useFvgConfluence: $('biasUseFvgConf') ? $('biasUseFvgConf').checked : true,
+    useFibConfluence: $('biasUseFibConf') ? $('biasUseFibConf').checked : true,
+    detectionMode: $('biasDetectionMode') ? $('biasDetectionMode').value : 'early',
   };
 
   try{
     const r = await fetch('/api/bias_scan', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    if(r.status === 400){
+      const errData = await r.json().catch(() => ({}));
+      const msg = errData.message || 'No pairs selected.';
+      if(st) st.textContent = msg;
+      if(res_div) res_div.innerHTML = `<div class="empty">${msg}</div>`;
+      return;
+    }
     if(!r.ok) throw new Error('HTTP ' + r.status);
     const resp = await r.json();
     if(resp && resp.error === 'daily_limit_reached'){ if(window.showTokenLimitPopup) window.showTokenLimitPopup(); return; }
     if(window.refreshTokensAfterScan) window.refreshTokensAfterScan(resp.scanned || 20);
-    // Handle both old (array) and new (object) response format
     const data    = Array.isArray(resp) ? resp : (resp.results || []);
     const scanned = resp.scanned || data.length;
     const scanTime = new Date().toLocaleTimeString();
-    // Show Round Robin status if full market mode
-    const isFullMkt = ($('biasScanSource') ? $('biasScanSource').value : 'selected') === 'market';
-    const rrStatus  = isFullMkt ? ` · ${scanned} scanned · next batch →` : '';
-    if(st) st.textContent = `${data.length} signal${data.length!==1?'s':''} · ${scanTime}${rrStatus}`;
+    const cov = resp.marketCoverage;
+    let covText = '';
+    if(cov){
+      covText = ` · batch ${cov.startIndex}–${cov.endIndex} of ${cov.totalPairs}`;
+      covText += cov.cycleComplete
+        ? ' · full cycle complete, restarting from 1'
+        : ` · next from ${cov.nextStartIndex}`;
+    }
+    const srcSuffix = scanSource === 'selected' ? ' from selected pairs' : covText;
+    if(st) st.textContent = `${data.length} Bias Shift setup${data.length!==1?'s':''} found${srcSuffix}`;
+    if(diagEl) diagEl.innerHTML = renderBiasDiagnostics(resp.diagnostics);
     if(!res_div) return;
-    if(!data.length){ res_div.innerHTML = '<div class="empty">No bias signals found</div>'; return; }
-    res_div.innerHTML = data.map((x,i) => {
-      const bClass = x.bias === 'bullish' ? 'bull' : 'bear';
-      const bLabel = x.bias === 'bullish' ? '▲ BULL' : '▼ BEAR';
-      const confClass = x.confidence === 'Strong' ? 'bull' : x.confidence === 'Moderate' ? 'warn' : 'neutral';
-      const sigLabel = x.signal.replace(/_/g,' ');
-      const obHtml = x.obConf ? `<div class="result-detail" style="margin-top:4px;opacity:.8">OB Zone: ${x.obConf.zone} · ${x.obConf.volPct}% vol · ${x.obConf.dist}% away</div>` : '';
-      const fvgHtml = x.fvgConf ? `<div class="result-detail" style="margin-top:4px;opacity:.8">FVG: ${x.fvgConf.zone} [${x.fvgConf.touch}]</div>` : '';
-      const starred = isStarred(x.symbol);
-      const tf = x.timeframe || '1d';
-      const ofId = 'bias-of-' + x.symbol.replace(/\./g,'_') + '_' + i;
-      return `<div class="result-card" style="animation-delay:${i*40}ms" onclick="this.classList.toggle('expanded')">
-        <div class="result-header">
-          <span class="symbol">${coinIcon(x.symbol)}${displaySymbol(x.symbol)}<a href="https://www.tradingview.com/chart/?symbol=BINANCE:${x.symbol}.P" target="${tvTarget()}" class="tv-link" rel="noopener" onclick="event.stopPropagation()">📊</a><span class="expand-icon">▼</span></span>
-          <span style="display:flex;align-items:center;gap:4px">
-            ${renderScoreBadge(x.score, x.confidence)}
-            <span class="price-tag">${x.timeframe} · $${x.price}${renderSparkline(x.sparkline, x.sparklineMarkers)}</span>
-            <span class="star-btn ${starred?'starred':''}" onclick="event.stopPropagation();toggleWatchlistStar(this,'${x.symbol}')">${starred?'★':'☆'}</span>
-          </span>
-        </div>
-        <div class="badges">
-          <span class="badge ${bClass}">${bLabel}</span>
-          <span class="badge ${confClass}">${x.confidence.toUpperCase()}</span>
-          <span class="badge neutral">${sigLabel}</span>
-        </div>
-        <div class="result-details">
-          <div class="result-detail">↑Wick ${x.upperWickPct}% · ↓Wick ${x.lowerWickPct}% · Body ${x.bodyPct}%${x.volSpike ? ' · 🔥 Vol' : ''}</div>
-          <div class="result-detail" style="opacity:.7;margin-top:3px">${x.gates}</div>
-          ${obHtml}${fvgHtml}
-          <div class="scan-time">Scanned: ${scanTime}</div>
-          <div style="margin-top:8px">
-            <button class="zone-btn" style="width:100%;padding:6px;font-size:10px;letter-spacing:.5px;border-color:#22d3ee30;color:#22d3ee"
-              onclick="event.stopPropagation();_toggleBiasOf(this,'${x.symbol}','${tf}','${ofId}')">
-              📊 LIVE ORDER FLOW
-            </button>
-            <div id="${ofId}" style="margin-top:6px;display:none"></div>
-          </div>
-        </div>
-      </div>`;
-    }).join('');
+    if(!data.length){
+      const diag = resp.diagnostics;
+      const rej = (diag && diag.rejected) || {};
+      const topRej = Object.entries(rej).filter(([,v]) => v > 0).sort(([,a],[,b]) => b - a)[0];
+      const topKey = topRej ? topRej[0] : null;
+      let emptyMsg = 'No Bias Shift setups found with current filters.';
+      if      (topKey === 'noPriorMove')        emptyMsg = 'No setups found. Most pairs did not have a clear prior move.';
+      else if (topKey === 'noCleanPriorDrive') emptyMsg = 'No setups found. Prior moves existed, but they were not clean enough.';
+      else if (topKey === 'invalidated')       emptyMsg = 'No setups found. Setups were invalidated by closed candles.';
+      else if (topKey === 'noRejectionCandle')  emptyMsg = 'No setups found. Prior moves existed, but rejection candles did not meet quality rules.';
+      else if (topKey === 'confluenceRequired') emptyMsg = 'No setups found. Required confluence filtered all setups — try Confluence Optional.';
+      else if (topKey === 'minimumGrade')       emptyMsg = 'No setups found. Minimum Grade is too strict — try lowering it.';
+      else if (topKey === 'notConfirmed')       emptyMsg = 'No setups found. Confirmed Mode is too strict — try Early mode.';
+      else if (topKey === 'volumeFilter')       emptyMsg = 'No setups found. Volume Filter (Required) rejected all setups.';
+      else if (topKey === 'notEnoughCandles')   emptyMsg = 'No setups found. Not enough historical candle data for the selected pairs.';
+      else if (payload.minimumGrade === 'A')    emptyMsg += ' Try lowering Minimum Grade.';
+      else if (payload.confluenceMode === 'required') emptyMsg += ' Try switching Confluence Mode to Optional.';
+      res_div.innerHTML = `<div class="empty">${emptyMsg}</div>`;
+      return;
+    }
+    res_div.innerHTML = data.map((x, i) => renderBiasCard(x, i, scanTime)).join('');
   }catch(e){
     if(st) st.textContent = 'Scan failed: ' + e.message;
-    if(res_div) res_div.innerHTML = '<div class="empty">Error — check console</div>';
+    if(res_div) res_div.innerHTML = '<div class="empty">Scan error — check connection and try again.</div>';
   } finally { hideScanPopup(); }
 }
 
 
 // ── #5 Bias tab — load order flow detail on expand ──
-// Toggle bias OF on button tap
-function _toggleBiasOf(btn, symbol, tf, containerId){
+const _biasOfIntervals = {};
+
+function _toggleBiasOf(btn, symbol, tf, containerId, setupDirection){
   const el = document.getElementById(containerId);
   if(!el) return;
   const isHidden = el.style.display === 'none' || !el.style.display;
@@ -3225,45 +3640,50 @@ function _toggleBiasOf(btn, symbol, tf, containerId){
     btn.style.color = '#22c55e';
     btn.style.borderColor = 'rgba(34,197,94,0.4)';
     btn.textContent = '📊 LIVE ORDER FLOW ▲';
-    // Load OF data if not loaded yet
-    if(!el.dataset.loaded){
-      const fakeCard = { classList: { contains: () => true } };
-      _loadBiasOf(symbol, tf, containerId, fakeCard);
+    _loadBiasOf(symbol, tf, containerId, setupDirection);
+    if(!_biasOfIntervals[containerId]){
+      _biasOfIntervals[containerId] = setInterval(()=>{
+        const panel = document.getElementById(containerId);
+        if(!panel || panel.style.display === 'none'){
+          clearInterval(_biasOfIntervals[containerId]);
+          delete _biasOfIntervals[containerId];
+          return;
+        }
+        _loadBiasOf(symbol, tf, containerId, setupDirection);
+      }, 3000);
     }
   } else {
     el.style.display = 'none';
     btn.style.color = '#22d3ee';
     btn.style.borderColor = 'rgba(34,211,238,0.2)';
     btn.textContent = '📊 LIVE ORDER FLOW';
+    if(_biasOfIntervals[containerId]){
+      clearInterval(_biasOfIntervals[containerId]);
+      delete _biasOfIntervals[containerId];
+    }
   }
 }
 
-async function _loadBiasOf(symbol, tf, containerId, card){
+async function _loadBiasOf(symbol, tf, containerId, setupDirection){
   const el = document.getElementById(containerId);
-  if(!el || el.dataset.loaded === '1') return;
-  el.innerHTML = '<div style="color:#475569;font-size:9px;padding:4px 0">⦿ Loading order flow...</div>';
-  const rawSym = symbol.replace('.P','').replace(/USDT$/,'') + 'USDT';
+  if(!el) return;
+  const isFirst = !el.dataset.loaded;
+  if(isFirst) el.innerHTML = '<div style="color:#475569;font-size:9px;padding:4px 0">⦿ Loading order flow...</div>';
+  const exchange = currentExchange();
+  const sym = symbol.replace('.P','').replace(/USDT$/,'') + 'USDT';
   try {
-    const [kRes, oiRes, fundRes] = await Promise.all([
-      fetch('https://fapi.binance.com/fapi/v1/klines?symbol='+rawSym+'&interval='+tf+'&limit=4', {cache:'no-store'}),
-      fetch('https://fapi.binance.com/futures/data/openInterestHist?symbol='+rawSym+'&period='+tf+'&limit=4', {cache:'no-store'}),
-      fetch('https://fapi.binance.com/fapi/v1/fundingRate?symbol='+rawSym+'&limit=4', {cache:'no-store'})
-    ]);
-    if(!kRes.ok) throw new Error('Failed');
-    const klines = await kRes.json();
-    if(!klines || klines.length < 2) throw new Error('No data');
-    let oiData = [null,null,null];
-    if(oiRes.ok){ try{ const h=await oiRes.json(); if(h&&h.length>=2){ const ois=[]; for(let i=1;i<h.length;i++){ const p=parseFloat(h[i-1].sumOpenInterestValue),c=parseFloat(h[i].sumOpenInterestValue); ois.push(p>0?parseFloat(((c-p)/p*100).toFixed(2)):0); } while(ois.length<3)ois.unshift(null); oiData=ois.slice(-3); } }catch(e2){} }
-    let fundData = [null,null,null];
-    if(fundRes.ok){ try{ const fh=await fundRes.json(); if(fh&&fh.length>=1){ const funds=fh.map(f=>parseFloat(f.fundingRate)*100); while(funds.length<3)funds.unshift(null); fundData=funds.slice(-3); } }catch(e3){} }
-    el.innerHTML = '<div class="of-box">'
-      + '<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 8px;background:#040d1a;border-bottom:1px solid #0d2035">'
-      + '<span style="font-size:8px;font-weight:700;color:#3d5570;letter-spacing:1px">ORDER FLOW — '+tf.toUpperCase()+'</span>'
-      + '<span style="font-size:7px;color:#22c55e">● kline-based</span></div>'
-      + _buildOfTableHtml(tf, klines, oiData, fundData) + '</div>';
+    const params = new URLSearchParams({exchange, symbol:sym, timeframe:tf});
+    if(setupDirection) params.set('setupDirection', setupDirection);
+    const r = await fetch(`/api/order-flow?${params}`, {cache:'no-store'});
+    const data = await r.json();
+    if(!data.ok){
+      if(isFirst) el.innerHTML = `<div style="color:#f87171;font-size:9px;padding:4px">${(data.errors||[]).join(', ')||'Order flow unavailable'}</div>`;
+      return;
+    }
+    el.innerHTML = '<div class="of-box">' + _renderOfFromApi(data, setupDirection) + '</div>';
     el.dataset.loaded = '1';
   } catch(e){
-    el.innerHTML = '<div style="color:#f87171;font-size:9px">Order flow unavailable: '+e.message+'</div>';
+    if(isFirst) el.innerHTML = `<div style="color:#f87171;font-size:9px">Order flow unavailable: ${e.message}</div>`;
   }
 }
 
@@ -4533,177 +4953,450 @@ function _setOfTf(sym, tf, el){
 }
 
 async function _fetchOfData(sym, tf){
+  const exchange = currentExchange();
   const rawSym = sym.replace('.P','').replace(/USDT$/,'') + 'USDT';
   try {
-    const [kRes, oiRes, fundRes] = await Promise.all([
-      fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${rawSym}&interval=${tf}&limit=4`, {cache:'no-store'}),
-      fetch(`https://fapi.binance.com/futures/data/openInterestHist?symbol=${rawSym}&period=${tf}&limit=4`, {cache:'no-store'}),
-      fetch(`https://fapi.binance.com/fapi/v1/fundingRate?symbol=${rawSym}&limit=4`, {cache:'no-store'})
-    ]);
-    if(!kRes.ok) return;
-    const klines = await kRes.json();
-    if(!klines || klines.length < 2) return;
-
-    // OI change % per candle
-    let oiData = [null, null, null];
-    if(oiRes.ok){
-      try {
-        const oiHist = await oiRes.json();
-        if(oiHist && oiHist.length >= 2){
-          const ois = [];
-          for(let i=1; i<oiHist.length; i++){
-            const prev = parseFloat(oiHist[i-1].sumOpenInterestValue);
-            const curr = parseFloat(oiHist[i].sumOpenInterestValue);
-            ois.push(prev>0 ? parseFloat(((curr-prev)/prev*100).toFixed(2)) : 0);
-          }
-          while(ois.length < 3) ois.unshift(null);
-          oiData = ois.slice(-3);
-        }
-      } catch(e2){}
-    }
-
-    // Funding rate per candle
-    let fundData = [null, null, null];
-    if(fundRes.ok){
-      try {
-        const fundHist = await fundRes.json();
-        if(fundHist && fundHist.length >= 1){
-          const funds = fundHist.map(f => parseFloat(f.fundingRate)*100);
-          while(funds.length < 3) funds.unshift(null);
-          fundData = funds.slice(-3);
-        }
-      } catch(e3){}
-    }
-
+    const r = await fetch(`/api/order-flow?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(rawSym)}&timeframe=${encodeURIComponent(tf)}`, {cache:'no-store'});
+    const data = await r.json();
     if(!wlOfCache[sym]) wlOfCache[sym] = {};
-    wlOfCache[sym][tf] = {klines, oiData, fundData};
-    _renderOfBox(sym, tf, klines, oiData, fundData);
+    wlOfCache[sym][tf] = data;
+    _renderOfBox(sym, tf, data);
   } catch(e){ console.error('OF fetch error:', sym, tf, e); }
 }
 
-function _renderOfBox(sym, tf, klines, oiData, fundData){
+function _renderOfBox(sym, tf, apiData, setupDirection){
   const el = document.getElementById('wl-live-' + sym);
   if(!el) return;
   const ofBox = el.querySelector('.of-data-wrap');
   if(!ofBox) return;
-  ofBox.innerHTML = _buildOfTableHtml(tf, klines, oiData, fundData);
+  if(!apiData||!apiData.ok){
+    const msg=(apiData&&apiData.errors)?apiData.errors.join(', '):'Order flow unavailable';
+    ofBox.innerHTML=`<div style="color:#f87171;font-size:9px;padding:4px">${msg}</div>`;
+    return;
+  }
+  ofBox.innerHTML = _renderOfFromApi(apiData, setupDirection);
 }
 
-// ── Shared OF table builder v3 — vertical day blocks ──
-function _buildOfTableHtml(tf, klines, oiData, fundData){
-  function parseCandle(k){
-    const baseVol  = parseFloat(k[5]);
-    const quoteVol = parseFloat(k[7]);
-    const buyBase  = parseFloat(k[9]);
-    const buyQuote = parseFloat(k[10]);
-    const sellBase  = baseVol  - buyBase;
-    const sellQuote = quoteVol - buyQuote;
-    const buyPct    = quoteVol > 0 ? (buyQuote/quoteVol*100) : 50;
-    const sellPct   = 100 - buyPct;
-    const delta     = buyQuote - sellQuote;
-    const isOpen    = Date.now() < parseInt(k[6]);
-    const closeTime = parseInt(k[6]);
-    return { baseVol, quoteVol, buyBase, buyQuote, sellBase, sellQuote, buyPct, sellPct, delta, isOpen, closeTime };
+// ── OF v4 helpers ──
+function _ofTfRange(tf){
+  const m = {'1h':1.0,'4h':2.0,'6h':2.5,'12h':3.0,'1d':5.0,'d':5.0};
+  return m[tf.toLowerCase()] || 2.0;
+}
+
+async function _fetchDepthWithFallback(rawSym){
+  let res = await fetch(`https://fapi.binance.com/fapi/v1/depth?symbol=${rawSym}&limit=500`, {cache:'no-store'});
+  if(res.ok) return res;
+  console.warn('[OF] depth limit=500 failed, falling back to 100 for', rawSym);
+  res = await fetch(`https://fapi.binance.com/fapi/v1/depth?symbol=${rawSym}&limit=100`, {cache:'no-store'});
+  return res;
+}
+
+function _processBookData(bids, asks, currentPrice, rangePct){
+  if(!bids||!asks||!currentPrice||currentPrice<=0) return null;
+  const lo = currentPrice*(1-rangePct/100), hi = currentPrice*(1+rangePct/100);
+  // Use USDT notional (price * qty) as the size metric throughout
+  const fB = bids.map(([p,q])=>{const price=parseFloat(p),qty=parseFloat(q),notional=price*qty;return{price,qty,notional};})
+    .filter(b=>b.price>=lo&&b.price<=currentPrice);
+  const fA = asks.map(([p,q])=>{const price=parseFloat(p),qty=parseFloat(q),notional=price*qty;return{price,qty,notional};})
+    .filter(a=>a.price>=currentPrice&&a.price<=hi);
+  // Blended rank: 75% notional size + 25% closeness to current price
+  const maxBidN = Math.max(...fB.map(b=>b.notional),1), maxAskN = Math.max(...fA.map(a=>a.notional),1);
+  const maxN = Math.max(maxBidN, maxAskN, 1);
+  function blendScore(item, isBid){
+    const sizeScore = item.notional / maxN;
+    const dist = isBid ? (currentPrice-item.price)/currentPrice : (item.price-currentPrice)/currentPrice;
+    const closenessScore = Math.max(0, 1 - dist/(rangePct/100));
+    return sizeScore*0.75 + closenessScore*0.25;
   }
+  const rB = fB.map(b=>({...b,score:blendScore(b,true)})).sort((a,b)=>b.score-a.score);
+  const rA = fA.map(a=>({...a,score:blendScore(a,false)})).sort((a,b)=>b.score-a.score);
+  const top5Bids = rB.slice(0,5).map(b=>({price:b.price,qty:b.qty,notional:b.notional,
+    distancePct:((currentPrice-b.price)/currentPrice*100).toFixed(2),
+    strengthPct:Math.round(b.notional/maxN*100)}));
+  const top5Asks = rA.slice(0,5).map(a=>({price:a.price,qty:a.qty,notional:a.notional,
+    distancePct:((a.price-currentPrice)/currentPrice*100).toFixed(2),
+    strengthPct:Math.round(a.notional/maxN*100)}));
+  // Imbalance uses USDT notional totals
+  const bidVolumeUSDT = fB.reduce((s,b)=>s+b.notional,0), askVolumeUSDT = fA.reduce((s,a)=>s+a.notional,0);
+  const tot = bidVolumeUSDT+askVolumeUSDT;
+  const bidPct = tot>0 ? Math.round(bidVolumeUSDT/tot*100) : 50;
+  const askPct = 100-bidPct;
+  const imbalancePct = bidPct-askPct;
+  const sideHeavier = bidPct>=55 ? 'Buy side heavier' : askPct>=55 ? 'Sell side heavier' : 'Balanced book';
+  return {top5Bids,top5Asks,bidVolumeUSDT,askVolumeUSDT,bidPct,askPct,imbalancePct,sideHeavier,tfRangePct:rangePct,oiValue:null};
+}
 
-  const candles = klines.map(parseCandle);
-  const curr  = candles[candles.length-1];
-  const prev1 = candles[candles.length-2];
-  const prev2 = candles.length >= 3 ? candles[candles.length-3] : null;
+// ── Order Flow v5 — Renderer for /api/order-flow normalized response ──
+// TODO(ws): Replace polling with WebSocket stream (fapi/ws/<symbol>@depth20@100ms + <symbol>@aggTrade)
+//           when a persistent connection manager is added. Polling interval currently 2–3s.
+function _renderOfFromApi(data, setupDirection){
+  const{exchange,sourceLabel,timeframe,candles=[],cvd=[],
+        oiDeltaHistory=[],oiValueUSDT,fundingHistory=[],
+        bidAsk,buySellAvailable=false}=data;
+  const tf=(timeframe||'1H').toUpperCase();
+  const sym=data.symbol||'';
+  const curr=candles[candles.length-1];
+  const prev1=candles[candles.length-2];
+  const prev2=candles.length>=3?candles[candles.length-3]:null;
+  const oiC=oiDeltaHistory[2],oi1=oiDeltaHistory[1],oi2=oiDeltaHistory[0];
+  const fundC=fundingHistory[2],fund1=fundingHistory[1],fund2=fundingHistory[0];
+  const cvdC=cvd[cvd.length-1],cvd1=cvd.length>=2?cvd[cvd.length-2]:null,cvd2=cvd.length>=3?cvd[cvd.length-3]:null;
 
-  const oi2   = oiData && oiData[0];
-  const oi1   = oiData && oiData[1];
-  const oiC   = oiData && oiData[2];
-  const fund2 = fundData && fundData[0];
-  const fund1 = fundData && fundData[1];
-  const fundC = fundData && fundData[2];
+  function fmtV(v){const a=Math.abs(v||0);return a>=1e9?(a/1e9).toFixed(2)+'B':a>=1e6?(a/1e6).toFixed(2)+'M':a>=1e3?(a/1e3).toFixed(1)+'K':(a||0).toFixed(1);}
+  function fmtS(v){return(v>=0?'+':'-')+fmtV(Math.abs(v));}
+  function pnCls(v){return v>0?'of-pos':v<0?'of-neg':'of-neu';}
+  function arr(v){return v>0?'↑':v<0?'↓':'→';}
+  function fmtTimer(ms){const s=Math.max(0,Math.floor(ms/1000)),h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sc=s%60;return h>0?`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sc).padStart(2,'0')}`:`${String(m).padStart(2,'0')}:${String(sc).padStart(2,'0')}`;}
+  function mv(v,pct){if(v==null)return '<span class="of-neu">—</span>';const val=pct?(v>=0?'+':'')+v.toFixed(2)+'%':fmtS(v);return `<span class="${pnCls(v)}">${val} ${arr(v)}</span>`;}
+  function fmtBkP(p){return p<1?p.toFixed(6):p<100?p.toFixed(4):p<10000?p.toFixed(2):p.toFixed(0);}
+  function fmtSz(v){const a=Math.abs(v||0);return a>=1e6?(a/1e6).toFixed(2)+'M':a>=1e3?(a/1e3).toFixed(1)+'K':(a||0).toFixed(2);}
 
-  // CVD cumulative
-  let cvdRunning = 0;
-  const cvds = candles.map(c => { cvdRunning += c.delta; return cvdRunning; });
-  const cvd2 = prev2 ? cvds[cvds.length-3] : null;
-  const cvd1 = cvds[cvds.length-2];
-  const cvdC = cvds[cvds.length-1];
+  // ── Header ──
+  const headerHtml=`<div class="of-conf-header">
+    <div class="of-conf-title">ORDER FLOW CONFIRMATION</div>
+    <div class="of-conf-meta">${sym?sym+' · ':''}${tf} · Source: ${sourceLabel||exchange||'Unknown'} · Near-live polling refresh</div>
+  </div>`;
 
-  function fmtV(v){ const a=Math.abs(v); return a>=1e9?(a/1e9).toFixed(2)+'B':a>=1e6?(a/1e6).toFixed(2)+'M':a>=1e3?(a/1e3).toFixed(1)+'K':a.toFixed(1); }
-  function fmtS(v){ return (v>=0?'+':'-')+fmtV(Math.abs(v)); }
-  function pnCls(v){ return v>0?'of-pos':v<0?'of-neg':'of-neu'; }
-  function arr(v){ return v>0?'↑':v<0?'↓':'→'; }
-
-  // Timer for open candle
-  function fmtTimer(ms){
-    const s = Math.max(0, Math.floor(ms/1000));
-    const h = Math.floor(s/3600);
-    const m = Math.floor((s%3600)/60);
-    const sec = s%60;
-    if(h>0) return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
-    return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
-  }
-
-  const remaining = curr.isOpen ? (curr.closeTime - Date.now()) : 0;
-
-  function signal(d){
-    if(d.buyPct >= 65 && d.delta > 0) return { cls:'of-bull', txt:'✓ Buyers dominant — bullish pressure' };
-    if(d.buyPct >= 58 && d.delta > 0) return { cls:'of-bull', txt:'✓ Buyers absorbing — mild bullish' };
-    if(d.sellPct >= 65 && d.delta < 0) return { cls:'of-bear', txt:'✓ Sellers dominant — bearish pressure' };
-    if(d.sellPct >= 58 && d.delta < 0) return { cls:'of-bear', txt:'✓ Sellers absorbing — mild bearish' };
-    return { cls:'of-neu', txt:'→ Balanced — no clear bias' };
-  }
-
-  function dayBlock(cls, label, d, isOpen, oi, fund, cvd, timerMs){
-    if(!d) return '';
-    const buyW  = Math.round(d.buyPct);
-    const sellW = 100 - buyW;
-    const sig   = signal(d);
-    const timerHtml = isOpen
-      ? `<span class="of-timer">⏱ ${fmtTimer(timerMs)}</span>`
-      : `<span class="of-closed">● closed</span>`;
-
-    const metricVal = (v, pct) => {
-      if(v == null) return '<span class="of-neu">—</span>';
-      const val = pct ? (v>=0?'+':'')+v.toFixed(2)+'%' : fmtS(v);
-      return `<span class="${pnCls(v)}">${val} ${arr(v)}</span>`;
-    };
-
-    return `<div class="of-day ${cls}">
-      <div class="of-day-header">
-        <span class="of-day-label">${label}</span>
-        ${timerHtml}
-      </div>
-      <div class="of-bar-wrap">
-        <div class="of-bar-pcts">
-          <span class="of-pct-buy">🟢 ${d.buyPct.toFixed(1)}%</span>
-          <span class="of-pct-sell">${d.sellPct.toFixed(1)}% 🔴</span>
-        </div>
-        <div class="of-bar">
-          <div class="of-bar-buy" style="width:${buyW}%"></div>
-          <div class="of-bar-sell" style="width:${sellW}%"></div>
-        </div>
+  // ── Candle block builder ──
+  function dayBlock(cls,candle,oi,fund,cvd_val,timerMs){
+    if(!candle) return '';
+    const{label,buyPct,sellPct,delta,totalVolumeQuote,totalVolumeBase,takerBuyQuote,takerSellQuote,isRunning,closeTimeMs}=candle;
+    const timerHtml=isRunning?`<span class="of-timer">⏱ ${fmtTimer(timerMs)}</span>`:`<span class="of-closed">● closed</span>`;
+    let pressureHtml='';
+    if(buySellAvailable&&buyPct!=null){
+      const buyW=Math.round(buyPct),sellW=100-buyW;
+      let sig;
+      if(buyPct>=65&&delta>0)sig={cls:'of-bull',txt:'✓ Buyers dominant — bullish pressure'};
+      else if(buyPct>=58&&delta>0)sig={cls:'of-bull',txt:'✓ Buyers absorbing — mild bullish'};
+      else if(sellPct>=65&&delta<0)sig={cls:'of-bear',txt:'✓ Sellers dominant — bearish pressure'};
+      else if(sellPct>=58&&delta<0)sig={cls:'of-bear',txt:'✓ Sellers absorbing — mild bearish'};
+      else sig={cls:'of-neu',txt:'→ Balanced — no clear bias'};
+      pressureHtml=`<div class="of-bar-wrap">
+        <div class="of-bar-pcts"><span class="of-pct-buy">Buy ${buyPct.toFixed(1)}%</span><span class="of-pct-sell">${sellPct.toFixed(1)}% Sell</span></div>
+        <div class="of-bar"><div class="of-bar-buy" style="width:${buyW}%"></div><div class="of-bar-sell" style="width:${sellW}%"></div></div>
       </div>
       <div class="of-bs-grid">
         <div class="of-buy-col">
-          <div class="of-bs-row"><span class="of-bs-lbl">🟢 USDT</span><span class="of-val-buy">${fmtV(d.buyQuote)}</span></div>
-          <div class="of-bs-row"><span class="of-bs-lbl">🟢 COIN</span><span class="of-val-buy">${fmtV(d.buyBase)}</span></div>
+          <div class="of-bs-row"><span class="of-bs-lbl">BUY USDT</span><span class="of-val-buy">${fmtV(takerBuyQuote)}</span></div>
+          <div class="of-bs-row"><span class="of-bs-lbl">BUY COIN</span><span class="of-val-buy">${fmtV((totalVolumeBase||0)*(buyPct/100))}</span></div>
         </div>
         <div class="of-divider"></div>
         <div class="of-sell-col">
-          <div class="of-bs-row"><span class="of-bs-lbl">USDT 🔴</span><span class="of-val-sell">${fmtV(d.sellQuote)}</span></div>
-          <div class="of-bs-row"><span class="of-bs-lbl">COIN 🔴</span><span class="of-val-sell">${fmtV(d.sellBase)}</span></div>
+          <div class="of-bs-row"><span class="of-bs-lbl">SELL USDT</span><span class="of-val-sell">${fmtV(takerSellQuote)}</span></div>
+          <div class="of-bs-row"><span class="of-bs-lbl">SELL COIN</span><span class="of-val-sell">${fmtV((totalVolumeBase||0)*(sellPct/100))}</span></div>
+        </div>
+      </div>
+      <div class="of-signal ${sig.cls}">${sig.txt}</div>`;
+    } else {
+      pressureHtml=`<div style="padding:6px 0;font-size:8px;color:var(--text-muted);text-align:center">Vol: ${fmtV(totalVolumeQuote)} USDT · Buy/Sell split unavailable (REST mode)</div>`;
+    }
+    return `<div class="of-day ${cls}">
+      <div class="of-day-header"><span class="of-day-label">${label}</span>${timerHtml}</div>
+      ${pressureHtml}
+      <div class="of-metrics">
+        <div class="of-metric"><span class="of-mlbl">Δ DELTA</span>${buySellAvailable&&delta!=null?mv(delta,false):'<span class="of-neu">—</span>'}</div>
+        <div class="of-metric"><span class="of-mlbl">OI Δ% (${tf})</span>${mv(oi,true)}</div>
+        <div class="of-metric"><span class="of-mlbl">Funding</span>${mv(fund,true)}</div>
+        <div class="of-metric"><span class="of-mlbl">CVD</span>${buySellAvailable&&cvd_val!=null?mv(cvd_val,false):'<span class="of-neu">—</span>'}</div>
+      </div>
+    </div>`;
+  }
+
+  const remaining=curr&&curr.isRunning?Math.max(0,curr.closeTimeMs-Date.now()):0;
+  const candleHtml=`<div class="of-book-title" style="padding:4px 8px 0;margin-bottom:2px">BUY vs SELL PRESSURE</div>`
+    +dayBlock('of-curr',curr,oiC,fundC,cvdC,remaining)
+    +dayBlock('of-prev1',prev1,oi1,fund1,cvd1,0)
+    +(prev2?dayBlock('of-prev2',prev2,oi2,fund2,cvd2,0):'');
+
+  // ── Bid/Ask imbalance bar ──
+  let bidAskHtml='';
+  if(bidAsk&&bidAsk.bidPct!=null){
+    const bidP=bidAsk.bidPct,askP=bidAsk.askPct!=null?bidAsk.askPct:100-bidP;
+    bidAskHtml=`<div class="of-bid-ask-wrap">
+      <div class="of-book-title" style="margin-bottom:4px">BID / ASK IMBALANCE — ${tf} RANGE ±${(bidAsk.tfRangePct||2).toFixed(1)}%</div>
+      <div class="of-bid-ask-label"><span class="of-bid-lbl">Bid ${bidP.toFixed(1)}%</span><span class="of-ask-lbl">${askP.toFixed(1)}% Ask</span></div>
+      <div class="of-combo-bar"><div class="of-combo-bid" style="width:${bidP}%"></div><div class="of-combo-ask" style="width:${askP}%"></div></div>
+    </div><div class="of-section-divider"></div>`;
+  }
+
+  // ── Market Context cards ──
+  function fmtOI(v){if(v==null||isNaN(v))return'—';if(v>=1e9)return(v/1e9).toFixed(2)+'B';if(v>=1e6)return(v/1e6).toFixed(2)+'M';if(v>=1e3)return(v/1e3).toFixed(1)+'K';return v.toFixed(0);}
+  let oiSub='—',oiSubCls='of-neu';
+  if(oiC!=null){if(oiC>0.5){oiSub=`↑ ${oiC.toFixed(2)}% (${tf})`;oiSubCls='of-bull';}else if(oiC<-0.5){oiSub=`↓ ${Math.abs(oiC).toFixed(2)}% (${tf})`;oiSubCls='of-bear';}else{oiSub=`→ ${oiC.toFixed(2)}% (${tf})`;}}
+  let fundTxt='—',fundCls='of-neu';
+  if(fundC!=null){if(fundC>0.05){fundTxt='Long crowd bias';fundCls='of-bear';}else if(fundC<-0.05){fundTxt='Short crowd bias';fundCls='of-bull';}else if(fundC>0.01){fundTxt='Slight long lean';}else if(fundC<-0.01){fundTxt='Slight short lean';}else{fundTxt='Neutral crowd';}}
+  let bookTxt='—',bookCls='of-neu';
+  if(bidAsk&&bidAsk.bidPct!=null){bookTxt=bidAsk.sideHeavier||'Balanced book';bookCls=bookTxt==='Buy side heavier'?'of-bull':bookTxt==='Sell side heavier'?'of-bear':'of-neu';}
+  const ctxHtml=`<div class="of-book-title" style="padding:4px 8px 0">MARKET CONTEXT</div>
+  <div class="of-ctx-grid">
+    <div class="of-ctx-card">
+      <div class="of-ctx-label">OPEN INTEREST</div>
+      <div class="of-ctx-main">${fmtOI(oiValueUSDT)}</div>
+      <div class="of-ctx-sub ${oiSubCls}">${oiSub}</div>
+    </div>
+    <div class="of-ctx-card">
+      <div class="of-ctx-label">FUNDING CONTEXT</div>
+      <div class="of-ctx-main">${fundC!=null?(fundC>=0?'+':'')+fundC.toFixed(4)+'%':'—'}</div>
+      <div class="of-ctx-sub ${fundCls}">${fundC!=null?'Latest Funding · '+fundTxt:fundTxt}</div>
+    </div>
+    <div class="of-ctx-card">
+      <div class="of-ctx-label">BOOK IMBALANCE</div>
+      <div class="of-ctx-main">${bidAsk&&bidAsk.bidPct!=null?bidAsk.bidPct.toFixed(1)+'% Bid':'—'}</div>
+      <div class="of-ctx-sub ${bookCls}">${bookTxt}</div>
+    </div>
+  </div><div class="of-section-divider"></div>`;
+
+  // ── Top Bid/Ask levels ──
+  let bidLvlHtml='',askLvlHtml='';
+  if(bidAsk&&bidAsk.top5Bids&&bidAsk.top5Bids.length){
+    bidLvlHtml=`<div class="of-book-section"><div class="of-book-title">TOP BID LEVELS (${bidAsk.top5Bids.length})</div>`
+      +bidAsk.top5Bids.map(b=>`<div class="of-book-level">
+        <span class="of-book-price" style="color:#34d399">${fmtBkP(b.price)}</span>
+        <div class="of-book-bar-wrap"><div class="of-book-bar-fill of-bid-fill" style="width:${b.strengthPct}%"></div></div>
+        <span class="of-book-size">${fmtSz(b.notional)}</span>
+        <span class="of-book-dist">${b.distancePct}%↓</span>
+      </div>`).join('')+'</div>';
+  }
+  if(bidAsk&&bidAsk.top5Asks&&bidAsk.top5Asks.length){
+    askLvlHtml=`<div class="of-book-section"><div class="of-book-title">TOP ASK LEVELS (${bidAsk.top5Asks.length})</div>`
+      +bidAsk.top5Asks.map(a=>`<div class="of-book-level">
+        <span class="of-book-price" style="color:#fb923c">${fmtBkP(a.price)}</span>
+        <div class="of-book-bar-wrap"><div class="of-book-bar-fill of-ask-fill" style="width:${a.strengthPct}%"></div></div>
+        <span class="of-book-size">${fmtSz(a.notional)}</span>
+        <span class="of-book-dist">${a.distancePct}%↑</span>
+      </div>`).join('')+'</div>';
+  }
+  const bookHtml=(bidLvlHtml||askLvlHtml)?bidLvlHtml+(bidLvlHtml&&askLvlHtml?'<div class="of-section-divider"></div>':'')+askLvlHtml+'<div class="of-section-divider"></div>':'';
+
+  // ── Flow Verdict ──
+  function verdict(){
+    if(!curr) return{txt:'No data',cls:'of-neu',expl:'No candle data available.'};
+    let bp=0,brp=0;
+    if(buySellAvailable&&curr.buyPct!=null){
+      if(curr.buyPct>=55)bp+=2; else if(curr.sellPct>=55)brp+=2;
+      if(curr.delta>0)bp++; else if(curr.delta<0)brp++;
+    }
+    if(oiC!=null&&oiC>0){if(buySellAvailable&&curr.buyPct>=55)bp++;else if(buySellAvailable)brp++;}
+    if(fundC!=null){if(fundC>0.05)brp++;else if(fundC<-0.05)bp++;}
+    if(bidAsk&&bidAsk.bidPct!=null){if(bidAsk.bidPct>=55)bp++;else if(100-bidAsk.bidPct>=55)brp++;}
+    const tot=bp+brp;
+    if(!tot)return{txt:'Mixed / Neutral ⚠',cls:'of-neu',expl:'Buyers and sellers are evenly matched — no clear edge.'};
+    const r=bp/tot;
+    const dir=(setupDirection||'').toLowerCase();
+    if(dir==='bullish'||dir==='bull'){
+      if(r>=0.7)return{txt:'Confirms Bullish Setup ✅',cls:'of-bull',expl:'Order flow strongly supports the bullish bias.'};
+      if(r>=0.5)return{txt:'Mildly Supports Bullish Setup ↑',cls:'of-bull',expl:'Flow leans bullish. Proceed with caution.'};
+      if(r<=0.3)return{txt:'Flow Opposes Bullish Setup ⚠',cls:'of-bear',expl:'Bearish flow conflicts with bullish setup. Wait for alignment.'};
+      return{txt:'Mixed Flow — Bullish Setup Uncertain ⚠',cls:'of-neu',expl:'No strong flow conviction to confirm or deny the bullish bias.'};
+    }
+    if(dir==='bearish'||dir==='bear'){
+      if(r<=0.3)return{txt:'Confirms Bearish Setup ✅',cls:'of-bear',expl:'Order flow strongly supports the bearish bias.'};
+      if(r<0.5)return{txt:'Mildly Supports Bearish Setup ↓',cls:'of-bear',expl:'Flow leans bearish. Proceed with caution.'};
+      if(r>=0.7)return{txt:'Flow Opposes Bearish Setup ⚠',cls:'of-bull',expl:'Bullish flow conflicts with bearish setup. Wait for alignment.'};
+      return{txt:'Mixed Flow — Bearish Setup Uncertain ⚠',cls:'of-neu',expl:'No strong flow conviction to confirm or deny the bearish bias.'};
+    }
+    if(r>=0.7)return{txt:'Strong Bullish Flow ✅',cls:'of-bull',expl:'Buyers dominating across multiple signals.'};
+    if(r<=0.3)return{txt:'Strong Bearish Flow ✅',cls:'of-bear',expl:'Sellers dominating across multiple signals.'};
+    if(r>0.5)return{txt:'Mild Bullish Flow ↑',cls:'of-bull',expl:'Buyers have a slight edge.'};
+    if(r<0.5)return{txt:'Mild Bearish Flow ↓',cls:'of-bear',expl:'Sellers have a slight edge.'};
+    return{txt:'Mixed / Neutral ⚠',cls:'of-neu',expl:'No clear edge.'};
+  }
+  const v=verdict();
+  const verdictHtml=`<div class="of-verdict-block ${v.cls}">
+    <div class="of-verdict-title">FLOW VERDICT</div>
+    <div class="of-verdict-text ${v.cls}">${v.txt}</div>
+    <div style="font-size:8px;color:var(--text-muted);margin-top:4px;line-height:1.4">${v.expl}</div>
+  </div>`;
+
+  return headerHtml+candleHtml+(bidAskHtml||'')+ctxHtml+bookHtml+verdictHtml;
+}
+
+// ── Shared OF table builder v4 — premium confirmation module ──
+// TODO(ws): Replace polling with WebSocket stream (fapi/ws/<symbol>@depth20@100ms + <symbol>@aggTrade)
+//           when a persistent connection manager is added. Polling interval currently 2–3s.
+function _buildOfTableHtml(tf, klines, oiData, fundData, ctxData, symbol, setupDirection){
+  function parseCandle(k){
+    const baseVol=parseFloat(k[5]),quoteVol=parseFloat(k[7]),buyBase=parseFloat(k[9]),buyQuote=parseFloat(k[10]);
+    const sellBase=baseVol-buyBase,sellQuote=quoteVol-buyQuote;
+    const buyPct=quoteVol>0?(buyQuote/quoteVol*100):50,sellPct=100-buyPct;
+    const delta=buyQuote-sellQuote,isOpen=Date.now()<parseInt(k[6]),closeTime=parseInt(k[6]);
+    return {baseVol,quoteVol,buyBase,buyQuote,sellBase,sellQuote,buyPct,sellPct,delta,isOpen,closeTime};
+  }
+
+  const candles=klines.map(parseCandle);
+  const curr=candles[candles.length-1],prev1=candles[candles.length-2],prev2=candles.length>=3?candles[candles.length-3]:null;
+  const oi2=oiData&&oiData[0],oi1=oiData&&oiData[1],oiC=oiData&&oiData[2];
+  const fund2=fundData&&fundData[0],fund1=fundData&&fundData[1],fundC=fundData&&fundData[2];
+
+  let cvdR=0;
+  const cvds=candles.map(c=>{cvdR+=c.delta;return cvdR;});
+  const cvd2=prev2?cvds[cvds.length-3]:null,cvd1=cvds[cvds.length-2],cvdC=cvds[cvds.length-1];
+
+  function fmtV(v){const a=Math.abs(v);return a>=1e9?(a/1e9).toFixed(2)+'B':a>=1e6?(a/1e6).toFixed(2)+'M':a>=1e3?(a/1e3).toFixed(1)+'K':a.toFixed(1);}
+  function fmtS(v){return (v>=0?'+':'-')+fmtV(Math.abs(v));}
+  function pnCls(v){return v>0?'of-pos':v<0?'of-neg':'of-neu';}
+  function arr(v){return v>0?'↑':v<0?'↓':'→';}
+  function fmtTimer(ms){const s=Math.max(0,Math.floor(ms/1000)),h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sc=s%60;return h>0?`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sc).padStart(2,'0')}`:`${String(m).padStart(2,'0')}:${String(sc).padStart(2,'0')}`;}
+
+  const remaining=curr.isOpen?(curr.closeTime-Date.now()):0;
+  const tfUp=tf.toUpperCase(), sym=symbol||'';
+
+  function signal(d){
+    if(d.buyPct>=65&&d.delta>0) return {cls:'of-bull',txt:'✓ Buyers dominant — bullish pressure'};
+    if(d.buyPct>=58&&d.delta>0) return {cls:'of-bull',txt:'✓ Buyers absorbing — mild bullish'};
+    if(d.sellPct>=65&&d.delta<0) return {cls:'of-bear',txt:'✓ Sellers dominant — bearish pressure'};
+    if(d.sellPct>=58&&d.delta<0) return {cls:'of-bear',txt:'✓ Sellers absorbing — mild bearish'};
+    return {cls:'of-neu',txt:'→ Balanced — no clear bias'};
+  }
+
+  function dayBlock(cls,label,d,isOpen,oi,fund,cvd,timerMs){
+    if(!d) return '';
+    const buyW=Math.round(d.buyPct),sellW=100-buyW,sig=signal(d);
+    const timerHtml=isOpen?`<span class="of-timer">⏱ ${fmtTimer(timerMs)}</span>`:`<span class="of-closed">● closed</span>`;
+    const mv=(v,pct)=>{if(v==null)return '<span class="of-neu">—</span>';const val=pct?(v>=0?'+':'')+v.toFixed(2)+'%':fmtS(v);return `<span class="${pnCls(v)}">${val} ${arr(v)}</span>`;};
+    return `<div class="of-day ${cls}">
+      <div class="of-day-header"><span class="of-day-label">${label}</span>${timerHtml}</div>
+      <div class="of-bar-wrap">
+        <div class="of-bar-pcts"><span class="of-pct-buy">Buy ${d.buyPct.toFixed(1)}%</span><span class="of-pct-sell">${d.sellPct.toFixed(1)}% Sell</span></div>
+        <div class="of-bar"><div class="of-bar-buy" style="width:${buyW}%"></div><div class="of-bar-sell" style="width:${sellW}%"></div></div>
+      </div>
+      <div class="of-bs-grid">
+        <div class="of-buy-col">
+          <div class="of-bs-row"><span class="of-bs-lbl">BUY USDT</span><span class="of-val-buy">${fmtV(d.buyQuote)}</span></div>
+          <div class="of-bs-row"><span class="of-bs-lbl">BUY COIN</span><span class="of-val-buy">${fmtV(d.buyBase)}</span></div>
+        </div>
+        <div class="of-divider"></div>
+        <div class="of-sell-col">
+          <div class="of-bs-row"><span class="of-bs-lbl">SELL USDT</span><span class="of-val-sell">${fmtV(d.sellQuote)}</span></div>
+          <div class="of-bs-row"><span class="of-bs-lbl">SELL COIN</span><span class="of-val-sell">${fmtV(d.sellBase)}</span></div>
         </div>
       </div>
       <div class="of-metrics">
-        <div class="of-metric"><span class="of-mlbl">Δ DELTA</span>${metricVal(d.delta, false)}</div>
-        <div class="of-metric"><span class="of-mlbl">OI Δ%</span>${metricVal(oi, true)}</div>
-        <div class="of-metric"><span class="of-mlbl">FUNDING</span>${metricVal(fund, true)}</div>
-        <div class="of-metric"><span class="of-mlbl">CVD</span>${metricVal(cvd, false)}</div>
+        <div class="of-metric"><span class="of-mlbl">Δ DELTA</span>${mv(d.delta,false)}</div>
+        <div class="of-metric"><span class="of-mlbl">OI Δ% (${tfUp})</span>${mv(oi,true)}</div>
+        <div class="of-metric"><span class="of-mlbl">Funding</span>${mv(fund,true)}</div>
+        <div class="of-metric"><span class="of-mlbl">CVD</span>${mv(cvd,false)}</div>
       </div>
       <div class="of-signal ${sig.cls}">${sig.txt}</div>
     </div>`;
   }
 
-  return dayBlock('of-curr', 'CURR ●', curr, curr.isOpen, oiC, fundC, cvdC, remaining)
-       + dayBlock('of-prev1', 'PREV-1', prev1, false, oi1, fund1, cvd1, 0)
-       + (prev2 ? dayBlock('of-prev2', 'PREV-2', prev2, false, oi2, fund2, cvd2, 0) : '');
+  // ── 1. Header ──
+  const headerHtml=`<div class="of-conf-header">
+    <div class="of-conf-title">ORDER FLOW CONFIRMATION</div>
+    <div class="of-conf-meta">${sym?sym+' · ':''}${tfUp} · Near-live polling refresh</div>
+  </div>`;
+
+  // ── 2. Candle rows ──
+  const buySellTitle=`<div class="of-book-title" style="padding:4px 8px 0;margin-bottom:2px">BUY vs SELL PRESSURE</div>`;
+  const candleHtml=buySellTitle
+    +dayBlock('of-curr',`CURRENT ${tfUp} CANDLE — RUNNING`,curr,curr.isOpen,oiC,fundC,cvdC,remaining)
+    +dayBlock('of-prev1',`LAST CLOSED ${tfUp} CANDLE — CONFIRMED`,prev1,false,oi1,fund1,cvd1,0)
+    +(prev2?dayBlock('of-prev2',`PREVIOUS ${tfUp} CANDLE — CONFIRMED`,prev2,false,oi2,fund2,cvd2,0):'');
+
+  // ── 3. Bid/Ask imbalance bar ──
+  let bidAskHtml='';
+  if(ctxData&&ctxData.bidPct!=null){
+    const bidP=ctxData.bidPct,askP=ctxData.askPct!=null?ctxData.askPct:(100-bidP);
+    bidAskHtml=`<div class="of-bid-ask-wrap">
+      <div class="of-book-title" style="margin-bottom:4px">BID / ASK IMBALANCE — ${tfUp} RANGE ±${(ctxData.tfRangePct||2).toFixed(1)}%</div>
+      <div class="of-bid-ask-label"><span class="of-bid-lbl">Bid ${bidP.toFixed(1)}%</span><span class="of-ask-lbl">${askP.toFixed(1)}% Ask</span></div>
+      <div class="of-combo-bar"><div class="of-combo-bid" style="width:${bidP}%"></div><div class="of-combo-ask" style="width:${askP}%"></div></div>
+    </div><div class="of-section-divider"></div>`;
+  }
+
+  // ── 4. Market Context cards ──
+  function fmtOI(v){if(v==null||isNaN(v))return '—';if(v>=1e9)return (v/1e9).toFixed(2)+'B';if(v>=1e6)return (v/1e6).toFixed(2)+'M';if(v>=1e3)return (v/1e3).toFixed(1)+'K';return v.toFixed(0);}
+  const oiVal=ctxData&&ctxData.oiValue;
+  let oiSub='—',oiSubCls='of-neu';
+  if(oiC!=null){if(oiC>0.5){oiSub=`↑ ${oiC.toFixed(2)}% (${tfUp})`;oiSubCls='of-bull';}else if(oiC<-0.5){oiSub=`↓ ${Math.abs(oiC).toFixed(2)}% (${tfUp})`;oiSubCls='of-bear';}else{oiSub=`→ ${oiC.toFixed(2)}% (${tfUp})`;}}
+  let fundTxt='—',fundCls='of-neu';
+  if(fundC!=null){if(fundC>0.05){fundTxt='Long crowd bias';fundCls='of-bear';}else if(fundC<-0.05){fundTxt='Short crowd bias';fundCls='of-bull';}else if(fundC>0.01){fundTxt='Slight long lean';}else if(fundC<-0.01){fundTxt='Slight short lean';}else{fundTxt='Neutral crowd';}}
+  let bookTxt='—',bookCls='of-neu';
+  if(ctxData&&ctxData.bidPct!=null){bookTxt=ctxData.sideHeavier||'Balanced book';bookCls=bookTxt==='Buy side heavier'?'of-bull':bookTxt==='Sell side heavier'?'of-bear':'of-neu';}
+  const ctxHtml=`<div class="of-book-title" style="padding:4px 8px 0">MARKET CONTEXT</div>
+  <div class="of-ctx-grid">
+    <div class="of-ctx-card">
+      <div class="of-ctx-label">OPEN INTEREST</div>
+      <div class="of-ctx-main">${fmtOI(oiVal)}</div>
+      <div class="of-ctx-sub ${oiSubCls}">${oiSub}</div>
+    </div>
+    <div class="of-ctx-card">
+      <div class="of-ctx-label">FUNDING CONTEXT</div>
+      <div class="of-ctx-main">${fundC!=null?(fundC>=0?'+':'')+fundC.toFixed(4)+'%':'—'}</div>
+      <div class="of-ctx-sub ${fundCls}">${fundC!=null?'Latest Funding · '+fundTxt:fundTxt}</div>
+    </div>
+    <div class="of-ctx-card">
+      <div class="of-ctx-label">BOOK IMBALANCE</div>
+      <div class="of-ctx-main">${ctxData&&ctxData.bidPct!=null?ctxData.bidPct.toFixed(1)+'% Bid':'—'}</div>
+      <div class="of-ctx-sub ${bookCls}">${bookTxt}</div>
+    </div>
+  </div><div class="of-section-divider"></div>`;
+
+  // ── 5 & 6. Top Bid / Ask levels ──
+  function fmtBkP(p){return p<1?p.toFixed(6):p<100?p.toFixed(4):p<10000?p.toFixed(2):p.toFixed(0);}
+  function fmtSz(v){const a=Math.abs(v);return a>=1e6?(a/1e6).toFixed(2)+'M':a>=1e3?(a/1e3).toFixed(1)+'K':a.toFixed(2);}
+  let bidLvlHtml='',askLvlHtml='';
+  if(ctxData&&ctxData.top5Bids&&ctxData.top5Bids.length){
+    bidLvlHtml=`<div class="of-book-section"><div class="of-book-title">TOP BID LEVELS (${ctxData.top5Bids.length})</div>`
+      +ctxData.top5Bids.map(b=>`<div class="of-book-level">
+        <span class="of-book-price" style="color:#34d399">${fmtBkP(b.price)}</span>
+        <div class="of-book-bar-wrap"><div class="of-book-bar-fill of-bid-fill" style="width:${b.strengthPct}%"></div></div>
+        <span class="of-book-size">${fmtSz(b.notional)}</span>
+        <span class="of-book-dist">${b.distancePct}%↓</span>
+      </div>`).join('')+'</div>';
+  }
+  if(ctxData&&ctxData.top5Asks&&ctxData.top5Asks.length){
+    askLvlHtml=`<div class="of-book-section"><div class="of-book-title">TOP ASK LEVELS (${ctxData.top5Asks.length})</div>`
+      +ctxData.top5Asks.map(a=>`<div class="of-book-level">
+        <span class="of-book-price" style="color:#fb923c">${fmtBkP(a.price)}</span>
+        <div class="of-book-bar-wrap"><div class="of-book-bar-fill of-ask-fill" style="width:${a.strengthPct}%"></div></div>
+        <span class="of-book-size">${fmtSz(a.notional)}</span>
+        <span class="of-book-dist">${a.distancePct}%↑</span>
+      </div>`).join('')+'</div>';
+  }
+  const bookHtml=(bidLvlHtml||askLvlHtml)?bidLvlHtml+(bidLvlHtml&&askLvlHtml?'<div class="of-section-divider"></div>':'')+askLvlHtml+'<div class="of-section-divider"></div>':'';
+
+  // ── 7. Final Verdict ──
+  function verdict(){
+    if(!curr) return {txt:'No data',cls:'of-neu',expl:'No candle data available.'};
+    let bp=0,brp=0;
+    if(curr.buyPct>=55)bp+=2; else if(curr.sellPct>=55)brp+=2;
+    if(curr.delta>0)bp++; else if(curr.delta<0)brp++;
+    if(oiC!=null&&oiC>0){if(curr.buyPct>=55)bp++;else brp++;}
+    if(fundC!=null){if(fundC>0.05)brp++;else if(fundC<-0.05)bp++;}
+    if(ctxData&&ctxData.bidPct!=null){if(ctxData.bidPct>=55)bp++;else if(100-ctxData.bidPct>=55)brp++;}
+    const tot=bp+brp; if(!tot)return {txt:'Mixed / Neutral ⚠',cls:'of-neu',expl:'Buyers and sellers are evenly matched — no clear edge.'};
+    const r=bp/tot;
+    const dir=(setupDirection||'').toLowerCase();
+    // Direction-aware verdict: compare flow vs setup direction when known
+    if(dir==='bullish'||dir==='bull'){
+      if(r>=0.7)return {txt:'Confirms Bullish Setup ✅',cls:'of-bull',expl:'Order flow strongly supports the bullish bias. Buyers in control across multiple signals.'};
+      if(r>=0.5)return {txt:'Mildly Supports Bullish Setup ↑',cls:'of-bull',expl:'Flow leans bullish but not dominant. Proceed with caution.'};
+      if(r<=0.3)return {txt:'Flow Opposes Bullish Setup ⚠',cls:'of-bear',expl:'Bearish order flow conflicts with the bullish setup. Consider waiting for flow alignment.'};
+      return {txt:'Mixed Flow — Bullish Setup Uncertain ⚠',cls:'of-neu',expl:'No strong flow conviction to confirm or deny the bullish bias.'};
+    }
+    if(dir==='bearish'||dir==='bear'){
+      if(r<=0.3)return {txt:'Confirms Bearish Setup ✅',cls:'of-bear',expl:'Order flow strongly supports the bearish bias. Sellers in control across multiple signals.'};
+      if(r<0.5) return {txt:'Mildly Supports Bearish Setup ↓',cls:'of-bear',expl:'Flow leans bearish but not dominant. Proceed with caution.'};
+      if(r>=0.7)return {txt:'Flow Opposes Bearish Setup ⚠',cls:'of-bull',expl:'Bullish order flow conflicts with the bearish setup. Consider waiting for flow alignment.'};
+      return {txt:'Mixed Flow — Bearish Setup Uncertain ⚠',cls:'of-neu',expl:'No strong flow conviction to confirm or deny the bearish bias.'};
+    }
+    // Generic (no setup direction known)
+    if(r>=0.7)return {txt:'Strong Bullish Flow ✅',cls:'of-bull',expl:'Buyers are dominating across volume, delta, and book pressure.'};
+    if(r<=0.3)return {txt:'Strong Bearish Flow ✅',cls:'of-bear',expl:'Sellers are dominating across volume, delta, and book pressure.'};
+    if(r>0.5) return {txt:'Mild Bullish Flow ↑',cls:'of-bull',expl:'Buyers have a slight edge but flow is not conclusive.'};
+    if(r<0.5) return {txt:'Mild Bearish Flow ↓',cls:'of-bear',expl:'Sellers have a slight edge but flow is not conclusive.'};
+    return {txt:'Mixed / Neutral ⚠',cls:'of-neu',expl:'Buyers and sellers are evenly matched — no clear edge.'};
+  }
+  const v=verdict();
+  const verdictHtml=`<div class="of-verdict-block ${v.cls}">
+    <div class="of-verdict-title">FLOW VERDICT</div>
+    <div class="of-verdict-text ${v.cls}">${v.txt}</div>
+    <div style="font-size:8px;color:var(--text-muted);margin-top:4px;line-height:1.4">${v.expl}</div>
+  </div>`;
+
+  return headerHtml+candleHtml+(bidAskHtml||'')+ctxHtml+bookHtml+verdictHtml;
 }
 
 // Start OF kline polling per symbol
@@ -5140,32 +5833,21 @@ async function toggleScanOfPanel(btn, symbol, tf, panelId){
   }, 2000);
 }
 
-async function _loadScanOfPanel(symbol, tf, panelId){
+async function _loadScanOfPanel(symbol, tf, panelId, setupDirection){
   const panel = document.getElementById(panelId);
   if(!panel) return;
+  const exchange = currentExchange();
   const rawSym = symbol.replace('.P','').replace(/USDT$/,'') + 'USDT';
   try {
-    const [kRes, oiRes, fundRes] = await Promise.all([
-      fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${rawSym}&interval=${tf}&limit=4`, {cache:'no-store'}),
-      fetch(`https://fapi.binance.com/futures/data/openInterestHist?symbol=${rawSym}&period=${tf}&limit=4`, {cache:'no-store'}),
-      fetch(`https://fapi.binance.com/fapi/v1/fundingRate?symbol=${rawSym}&limit=4`, {cache:'no-store'})
-    ]);
-    if(!kRes.ok) throw new Error('Fetch failed');
-    const klines = await kRes.json();
-    if(!klines || klines.length < 2) throw new Error('No data');
-
-    let oiData = [null,null,null];
-    if(oiRes.ok){ try{ const h=await oiRes.json(); if(h&&h.length>=2){ const ois=[]; for(let i=1;i<h.length;i++){const p=parseFloat(h[i-1].sumOpenInterestValue),c=parseFloat(h[i].sumOpenInterestValue); ois.push(p>0?parseFloat(((c-p)/p*100).toFixed(2)):0);} while(ois.length<3)ois.unshift(null); oiData=ois.slice(-3); }}catch(e2){} }
-    let fundData = [null,null,null];
-    if(fundRes.ok){ try{ const fh=await fundRes.json(); if(fh&&fh.length>=1){ const funds=fh.map(f=>parseFloat(f.fundingRate)*100); while(funds.length<3)funds.unshift(null); fundData=funds.slice(-3); }}catch(e3){} }
-
-    panel.innerHTML = `<div class="of-box">
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 8px;background:#040d1a;border-bottom:1px solid #0d2035">
-        <span style="font-size:8px;font-weight:700;color:#3d5570;letter-spacing:1px">ORDER FLOW — ${tf.toUpperCase()}</span>
-        <span style="font-size:7px;color:#22c55e">● LIVE · 2s</span>
-      </div>
-      ${_buildOfTableHtml(tf, klines, oiData, fundData)}
-    </div>`;
+    const params = new URLSearchParams({exchange, symbol:rawSym, timeframe:tf});
+    if(setupDirection) params.set('setupDirection', setupDirection);
+    const r = await fetch(`/api/order-flow?${params}`, {cache:'no-store'});
+    const data = await r.json();
+    if(!data.ok){
+      panel.innerHTML = `<div style="color:#f87171;font-size:9px;padding:4px">${(data.errors||[]).join(', ')||'Order flow unavailable'}</div>`;
+      return;
+    }
+    panel.innerHTML = `<div class="of-box">${_renderOfFromApi(data, setupDirection)}</div>`;
   } catch(e){
     panel.innerHTML = `<div style="color:#f87171;font-size:9px;padding:4px">Order flow unavailable: ${e.message}</div>`;
   }
@@ -5589,7 +6271,7 @@ document.addEventListener('DOMContentLoaded', function(){
     'compressed': '📦 COMPRESSED',
     'trending':   '🔥 TRENDING',
     'athatl':     '🏆 ATH / ATL',
-    'bias':       '🎯 BIAS',
+    'bias':       '🎯 BIAS SHIFT',
     'watchlist':  '📡 LIVE MONITOR'
   };
 

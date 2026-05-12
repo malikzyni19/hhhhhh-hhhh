@@ -318,86 +318,236 @@ def send_email_alert(subject: str, body: str) -> bool:
 
 
 def _send_via_resend(to_email: str, subject: str, html_body: str) -> bool:
-    """Send email via Resend HTTP API (works even when SMTP ports are blocked).
-    Requires RESEND_API_KEY env var. Free tier: 3,000 emails/month.
+    """Send email via official Resend Python SDK.
+    Only requires RESEND_API_KEY env var. Sender is always support@smcsetups.com.
     """
     api_key = os.environ.get("RESEND_API_KEY", "").strip()
-    frm     = os.environ.get("RESEND_FROM", "").strip() or os.environ.get("ALERT_EMAIL_FROM", "").strip()
-    if not api_key or not frm:
+    if not api_key:
+        print("[VERIFY-EMAIL] RESEND_API_KEY not set — Resend skipped")
         return False
     try:
-        resp = req.post(
-            "https://api.resend.com/emails",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={"from": frm, "to": [to_email], "subject": subject, "html": html_body},
-            timeout=10,
-        )
-        if resp.status_code in (200, 201):
-            print(f"[VERIFY-EMAIL] Sent via Resend API to {to_email}")
-            return True
-        print(f"[VERIFY-EMAIL] Resend API error {resp.status_code}: {resp.text[:200]}")
-        return False
+        import resend as _resend_sdk
+        _resend_sdk.api_key = api_key
+        resp = _resend_sdk.Emails.send({
+            "from": "ZyNi SMC <support@smcsetups.com>",
+            "to": [to_email],
+            "subject": subject,
+            "html": html_body,
+        })
+        email_id = getattr(resp, "id", None) or (resp.get("id") if isinstance(resp, dict) else "n/a")
+        print(f"[VERIFY-EMAIL] Sent via Resend SDK to {to_email} — id={email_id}")
+        return True
     except Exception as exc:
-        print(f"[VERIFY-EMAIL] Resend API exception: {exc}")
+        print(f"[VERIFY-EMAIL] Resend SDK exception: {exc}")
         return False
 
 
-def send_verification_email(to_email: str, code: str, username: str) -> bool:
+def _build_verification_email(username: str, code: str) -> str:
+    """Return the premium HTML email body for OTP verification."""
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>Verify Your Email — ZyNi SMC</title>
+</head>
+<body style="margin:0;padding:0;background:#060a14;font-family:'Segoe UI',Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;">
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background:#060a14;">
+  <tr><td align="center" style="padding:40px 16px;">
+    <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="max-width:580px;">
+
+      <!-- HEADER / LOGO -->
+      <tr><td style="background:#0a0f1e;border-radius:16px 16px 0 0;padding:30px 40px 26px;text-align:center;border:1px solid rgba(249,115,22,0.25);border-bottom:3px solid #f97316;">
+        <div style="font-size:30px;font-weight:900;color:#ffffff;letter-spacing:1.5px;margin-bottom:5px;">ZyNi SMC</div>
+        <div style="font-size:11px;color:#f97316;letter-spacing:4px;font-weight:600;text-transform:uppercase;">Smart Money Center</div>
+      </td></tr>
+
+      <!-- HERO BANNER -->
+      <tr><td style="background:linear-gradient(135deg,#0d1525 0%,#0f1e38 60%,#0a0f1e 100%);padding:36px 40px 28px;text-align:center;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
+        <div style="width:70px;height:70px;background:rgba(249,115,22,0.12);border:2px solid rgba(249,115,22,0.45);border-radius:50%;margin:0 auto 20px;line-height:70px;text-align:center;font-size:30px;">&#9993;</div>
+        <h1 style="color:#ffffff;font-size:23px;font-weight:800;margin:0 0 14px;letter-spacing:-0.3px;">Verify Your Email Address</h1>
+        <p style="color:rgba(232,240,255,0.65);font-size:15px;margin:0;line-height:1.75;">
+          Hi <strong style="color:#ffffff;">{username}</strong>, welcome to ZyNi SMC!<br>
+          Enter the code below to activate your account and start trading smarter.
+        </p>
+      </td></tr>
+
+      <!-- OTP CODE -->
+      <tr><td style="background:#0d1525;padding:32px 40px;text-align:center;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
+        <p style="color:rgba(232,240,255,0.50);font-size:12px;margin:0 0 14px;letter-spacing:2px;text-transform:uppercase;font-weight:600;">Your Verification Code</p>
+        <div style="background:#07101f;border:2px solid rgba(249,115,22,0.55);border-radius:14px;padding:26px 20px 22px;margin-bottom:14px;display:inline-block;width:100%;box-sizing:border-box;">
+          <div style="font-size:50px;font-weight:900;letter-spacing:18px;color:#f97316;font-family:'Courier New',Courier,monospace;line-height:1;padding-left:18px;">{code}</div>
+        </div>
+        <p style="color:rgba(232,240,255,0.40);font-size:13px;margin:0;line-height:1.6;">
+          &#8987; Valid for <strong style="color:#f97316;">10 minutes</strong> only &nbsp;&middot;&nbsp; Do not share this code with anyone
+        </p>
+      </td></tr>
+
+      <!-- CTA BUTTON -->
+      <tr><td style="background:#0d1525;padding:4px 40px 30px;text-align:center;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
+        <a href="https://smcsetups.com" style="display:inline-block;background:linear-gradient(135deg,#f97316 0%,#ea580c 100%);color:#ffffff;text-decoration:none;font-size:15px;font-weight:700;padding:14px 38px;border-radius:10px;letter-spacing:0.3px;box-shadow:0 4px 20px rgba(249,115,22,0.35);">
+          Explore Features &rarr;
+        </a>
+      </td></tr>
+
+      <!-- DIVIDER -->
+      <tr><td style="background:#0d1525;padding:0 40px;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
+        <div style="height:1px;background:linear-gradient(90deg,transparent,rgba(249,115,22,0.35),transparent);"></div>
+      </td></tr>
+
+      <!-- PLATFORM FEATURES -->
+      <tr><td style="background:#0d1525;padding:28px 40px;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
+        <h2 style="color:#ffffff;font-size:17px;font-weight:700;margin:0 0 20px;text-align:center;">What You Can Do on ZyNi SMC</h2>
+        <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+          <tr><td style="padding:0 0 15px;">
+            <table cellpadding="0" cellspacing="0" role="presentation"><tr>
+              <td style="width:40px;vertical-align:top;padding-top:3px;">
+                <div style="width:32px;height:32px;background:rgba(249,115,22,0.12);border:1px solid rgba(249,115,22,0.35);border-radius:8px;text-align:center;line-height:32px;font-size:16px;">&#128202;</div>
+              </td>
+              <td style="padding-left:12px;">
+                <div style="color:#ffffff;font-size:14px;font-weight:700;margin-bottom:3px;">Smart Money Scanner</div>
+                <div style="color:rgba(232,240,255,0.55);font-size:13px;line-height:1.6;">Scan hundreds of crypto pairs for institutional order blocks, fair value gaps, and breaker patterns in real time.</div>
+              </td>
+            </tr></table>
+          </td></tr>
+          <tr><td style="padding:0 0 15px;">
+            <table cellpadding="0" cellspacing="0" role="presentation"><tr>
+              <td style="width:40px;vertical-align:top;padding-top:3px;">
+                <div style="width:32px;height:32px;background:rgba(249,115,22,0.12);border:1px solid rgba(249,115,22,0.35);border-radius:8px;text-align:center;line-height:32px;font-size:16px;">&#9889;</div>
+              </td>
+              <td style="padding-left:12px;">
+                <div style="color:#ffffff;font-size:14px;font-weight:700;margin-bottom:3px;">Multi-Exchange Coverage</div>
+                <div style="color:rgba(232,240,255,0.55);font-size:13px;line-height:1.6;">Access signals from Binance, Bybit, OKX &amp; MEXC across 15m, 30m, 1H, 4H, and 1D timeframes simultaneously.</div>
+              </td>
+            </tr></table>
+          </td></tr>
+          <tr><td style="padding:0 0 15px;">
+            <table cellpadding="0" cellspacing="0" role="presentation"><tr>
+              <td style="width:40px;vertical-align:top;padding-top:3px;">
+                <div style="width:32px;height:32px;background:rgba(249,115,22,0.12);border:1px solid rgba(249,115,22,0.35);border-radius:8px;text-align:center;line-height:32px;font-size:16px;">&#127919;</div>
+              </td>
+              <td style="padding-left:12px;">
+                <div style="color:#ffffff;font-size:14px;font-weight:700;margin-bottom:3px;">Bias &amp; Trend Analysis</div>
+                <div style="color:rgba(232,240,255,0.55);font-size:13px;line-height:1.6;">Get clear bullish/bearish bias per pair per timeframe with scoring, trend direction, and ATH/ATL levels.</div>
+              </td>
+            </tr></table>
+          </td></tr>
+          <tr><td>
+            <table cellpadding="0" cellspacing="0" role="presentation"><tr>
+              <td style="width:40px;vertical-align:top;padding-top:3px;">
+                <div style="width:32px;height:32px;background:rgba(249,115,22,0.12);border:1px solid rgba(249,115,22,0.35);border-radius:8px;text-align:center;line-height:32px;font-size:16px;">&#128276;</div>
+              </td>
+              <td style="padding-left:12px;">
+                <div style="color:#ffffff;font-size:14px;font-weight:700;margin-bottom:3px;">Watchlist &amp; Pair Tracking</div>
+                <div style="color:rgba(232,240,255,0.55);font-size:13px;line-height:1.6;">Build a personalised watchlist, save top setups, and monitor compressed pairs before major moves.</div>
+              </td>
+            </tr></table>
+          </td></tr>
+        </table>
+      </td></tr>
+
+      <!-- DIVIDER -->
+      <tr><td style="background:#0d1525;padding:0 40px;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
+        <div style="height:1px;background:linear-gradient(90deg,transparent,rgba(249,115,22,0.35),transparent);"></div>
+      </td></tr>
+
+      <!-- HOW TO GET STARTED -->
+      <tr><td style="background:#080e1c;padding:26px 40px 28px;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
+        <h2 style="color:#ffffff;font-size:16px;font-weight:700;margin:0 0 18px;text-align:center;">How to Get Started</h2>
+        <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+          <tr><td style="padding:0 0 12px;">
+            <table cellpadding="0" cellspacing="0" role="presentation"><tr>
+              <td style="width:30px;vertical-align:top;">
+                <div style="width:24px;height:24px;background:#f97316;border-radius:50%;text-align:center;line-height:24px;font-size:12px;font-weight:700;color:#fff;">1</div>
+              </td>
+              <td style="padding-left:10px;"><div style="color:rgba(232,240,255,0.80);font-size:13.5px;line-height:1.6;"><strong style="color:#f97316;">Verify your email</strong> — Enter the 6-digit code on the verification page.</div></td>
+            </tr></table>
+          </td></tr>
+          <tr><td style="padding:0 0 12px;">
+            <table cellpadding="0" cellspacing="0" role="presentation"><tr>
+              <td style="width:30px;vertical-align:top;">
+                <div style="width:24px;height:24px;background:#f97316;border-radius:50%;text-align:center;line-height:24px;font-size:12px;font-weight:700;color:#fff;">2</div>
+              </td>
+              <td style="padding-left:10px;"><div style="color:rgba(232,240,255,0.80);font-size:13.5px;line-height:1.6;"><strong style="color:#f97316;">Sign in to your dashboard</strong> — Use your credentials on the login page.</div></td>
+            </tr></table>
+          </td></tr>
+          <tr><td style="padding:0 0 12px;">
+            <table cellpadding="0" cellspacing="0" role="presentation"><tr>
+              <td style="width:30px;vertical-align:top;">
+                <div style="width:24px;height:24px;background:#f97316;border-radius:50%;text-align:center;line-height:24px;font-size:12px;font-weight:700;color:#fff;">3</div>
+              </td>
+              <td style="padding-left:10px;"><div style="color:rgba(232,240,255,0.80);font-size:13.5px;line-height:1.6;"><strong style="color:#f97316;">Run your first scan</strong> — Select exchange, timeframe, and module to discover setups.</div></td>
+            </tr></table>
+          </td></tr>
+          <tr><td>
+            <table cellpadding="0" cellspacing="0" role="presentation"><tr>
+              <td style="width:30px;vertical-align:top;">
+                <div style="width:24px;height:24px;background:#f97316;border-radius:50%;text-align:center;line-height:24px;font-size:12px;font-weight:700;color:#fff;">4</div>
+              </td>
+              <td style="padding-left:10px;"><div style="color:rgba(232,240,255,0.80);font-size:13.5px;line-height:1.6;"><strong style="color:#f97316;">Build your watchlist</strong> — Save top setups and track them with compressed &amp; trending views.</div></td>
+            </tr></table>
+          </td></tr>
+        </table>
+      </td></tr>
+
+      <!-- SECURITY NOTE -->
+      <tr><td style="background:#070c1a;padding:16px 40px;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
+        <p style="color:rgba(232,240,255,0.30);font-size:12px;margin:0;text-align:center;line-height:1.7;">
+          &#128274; If you did not create a ZyNi SMC account, ignore this email safely.<br>
+          Never share your verification code with anyone.
+        </p>
+      </td></tr>
+
+      <!-- FOOTER -->
+      <tr><td style="background:#050810;border-radius:0 0 16px 16px;padding:22px 40px;text-align:center;border:1px solid rgba(249,115,22,0.15);border-top:none;">
+        <div style="margin-bottom:10px;">
+          <span style="color:#f97316;font-size:17px;font-weight:900;">ZyNi SMC</span>
+          <span style="color:rgba(232,240,255,0.30);font-size:13px;"> &middot; Smart Money Center</span>
+        </div>
+        <div style="margin-bottom:8px;">
+          <a href="https://smcsetups.com" style="color:#f97316;text-decoration:none;font-size:13px;font-weight:500;">smcsetups.com</a>
+          <span style="color:rgba(232,240,255,0.20);font-size:13px;"> &middot; </span>
+          <a href="mailto:support@smcsetups.com" style="color:rgba(232,240,255,0.50);text-decoration:none;font-size:13px;">support@smcsetups.com</a>
+        </div>
+        <p style="color:rgba(232,240,255,0.18);font-size:11px;margin:6px 0 0;">&copy; 2026 ZyNi SMC. All rights reserved.</p>
+      </td></tr>
+
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>"""
+
+
+def send_verification_email(to_email: str, code: str, username: str) -> "tuple[bool, str]":
     """Send a 6-digit OTP verification email directly to the new user.
     Attempts in order:
-      1. Resend HTTP API  (RESEND_API_KEY env var — works on all cloud hosts)
+      1. Resend Python SDK  (RESEND_API_KEY env var — works on all cloud hosts)
       2. Gmail SMTP_SSL   port 465
       3. Gmail STARTTLS   port 587
-    Returns True on first success, False if all methods fail.
+    Returns (success: bool, fail_reason: str): 'ok' | 'missing_config' | 'delivery_failed'
     """
     frm = _email_from()
     pwd = _email_pass()
     if not to_email:
-        return False
+        return False, "missing_config"
 
     subject = "ZyNi SMC — Verify Your Email Address"
-    body = f"""
-<html>
-<body style="margin:0;padding:0;background:#060a14;font-family:'Segoe UI',Arial,sans-serif">
-<div style="max-width:520px;margin:40px auto;background:#0d1525;border:1px solid rgba(30,184,200,0.25);
-            border-top:3px solid #1eb8c8;border-radius:12px;padding:36px 32px">
-  <div style="text-align:center;margin-bottom:28px">
-    <div style="font-size:28px;font-weight:800;color:#e8f0ff;letter-spacing:1px">ZyNi SMC</div>
-    <div style="font-size:11px;color:#1eb8c8;letter-spacing:3px;margin-top:4px">SMART MONEY SCREENER</div>
-  </div>
-  <h2 style="color:#e8f0ff;font-size:20px;font-weight:600;margin:0 0 12px;text-align:center">
-    Verify your email address
-  </h2>
-  <p style="color:rgba(232,240,255,0.6);font-size:14px;text-align:center;margin:0 0 28px">
-    Hi <strong style="color:#e8f0ff">{username}</strong>, enter the code below to activate your account.
-  </p>
-  <div style="background:#071525;border:1px solid rgba(30,184,200,0.35);border-radius:10px;
-              padding:24px;text-align:center;margin-bottom:28px">
-    <div style="font-size:42px;font-weight:800;letter-spacing:14px;color:#1eb8c8;
-                font-family:'Courier New',monospace">{code}</div>
-    <div style="font-size:12px;color:rgba(232,240,255,0.4);margin-top:10px">
-      Valid for 15 minutes &middot; Do not share this code
-    </div>
-  </div>
-  <p style="color:rgba(232,240,255,0.35);font-size:12px;text-align:center;margin:0">
-    If you did not create a ZyNi SMC account, you can safely ignore this email.
-  </p>
-</div>
-</body>
-</html>"""
+    body    = _build_verification_email(username, code)
 
     print(f"[VERIFY-EMAIL] Attempting to send OTP to {to_email}")
 
     # ── Method 1: Resend HTTP API (works even when SMTP ports are blocked) ──
     if _send_via_resend(to_email, subject, body):
-        return True
+        return True, "ok"
 
     # ── Method 2 & 3: Gmail SMTP ─────────────────────────────────────────
     if not frm or not pwd:
         print(f"[VERIFY-EMAIL] SMTP skipped — "
               f"ALERT_EMAIL_FROM={'set' if frm else 'MISSING'}, "
               f"ALERT_EMAIL_PASS={'set' if pwd else 'MISSING'}")
-        return False
+        return False, "missing_config"
 
     def _build_msg():
         msg = MIMEMultipart("alternative")
@@ -413,7 +563,7 @@ def send_verification_email(to_email: str, code: str, username: str) -> bool:
             srv.login(frm, pwd)
             srv.sendmail(frm, to_email, _build_msg().as_string())
         print(f"[VERIFY-EMAIL] Sent via Gmail SSL/465 to {to_email}")
-        return True
+        return True, "ok"
     except Exception as e1:
         print(f"[VERIFY-EMAIL] Gmail SSL/465 failed: {e1}")
 
@@ -427,12 +577,13 @@ def send_verification_email(to_email: str, code: str, username: str) -> bool:
             srv.login(frm, pwd)
             srv.sendmail(frm, to_email, _build_msg().as_string())
         print(f"[VERIFY-EMAIL] Sent via Gmail STARTTLS/587 to {to_email}")
-        return True
+        return True, "ok"
     except Exception as e2:
         print(f"[VERIFY-EMAIL] Gmail STARTTLS/587 also failed: {e2}")
 
-    print(f"[VERIFY-EMAIL] All methods failed for {to_email}")
-    return False
+    # Credentials were present but all delivery methods failed (SMTP likely blocked)
+    print(f"[VERIFY-EMAIL] All methods failed for {to_email} — credentials set but delivery blocked")
+    return False, "delivery_failed"
 
 
 def _auto_migrate():
@@ -1373,6 +1524,9 @@ PAIR_CACHE: Dict[str, Any] = {
     "perpetual": {"ts": 0, "pairs": []},
 }
 ROUND_ROBIN_STATE: Dict[str, int] = {"index": 0}
+# Per-user round-robin cursor for Bias Shift full-market scans.
+# Key: "username|exchange|market|tf" — isolates each user's position.
+BIAS_SCAN_CURSOR: Dict[str, int] = {}
 
 # ═══════════════════════════════════════
 # REAL API WEIGHT TRACKER
@@ -2364,12 +2518,6 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         if mitigated:
             continue
 
-        vol_score = clamp((ob["volume"] / max(max_vol, 1e-10)) * 100, 0, 100)
-        side_dom  = (ob["buyVolume"] / max(ob["volume"], 1e-10) * 100) if ob["type"] == "bullish" else (ob["sellVolume"] / max(ob["volume"], 1e-10) * 100)
-        freshness = clamp(100 - ((n - 1 - ob["bar"]) * 4), 10, 100)
-        strength  = round(clamp(vol_score * 0.45 + side_dom * 0.35 + freshness * 0.20, 1, 100), 1)
-        ob["strengthPct"]   = strength
-        ob["strengthLabel"] = "Strong" if strength >= 80 else "Good" if strength >= 60 else "Medium" if strength >= 40 else "Weak"
         active.append(ob)
 
     return active if max_ob is None else active[-max_ob:]
@@ -2422,7 +2570,7 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
                         "top": ob_top, "bottom": ob_bottom, "avg": ob_avg,
                         "bar": min_idx, "sourceBar": ob_source,
                         "volume": total_v, "buyVolume": buy_v, "sellVolume": sell_v,
-                        "type": "bullish", "strengthPct": 50.0,
+                        "type": "bullish",
                     })
             upP.clear(); upB.clear()
 
@@ -2449,7 +2597,7 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
                         "top": ob_top, "bottom": ob_bottom, "avg": ob_avg,
                         "bar": max_idx, "sourceBar": ob_source,
                         "volume": total_v, "buyVolume": buy_v, "sellVolume": sell_v,
-                        "type": "bearish", "strengthPct": 50.0,
+                        "type": "bearish",
                     })
             dnP.clear(); dnB.clear()
 
@@ -2573,7 +2721,7 @@ def detect_breakers(
             "dist":       round(dist_pct, 3),
             "state":      state,
             "age":        age,
-            "strength":   round(ob.get("strengthPct", 0), 1),
+            "strength":   round(ob.get("tvObVolumeSharePct") or 0, 1),
             "fvg_overlap": fvg_overlap,
             "zone_str":   f"{zb:.6f} – {zt:.6f}",
         })
@@ -3717,11 +3865,9 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
     needed_consol        = settings.get("consolCandles", 5)
 
     _use_str_filter = settings.get("useObStrengthFilter", False)
-    _str_mode       = settings.get("obStrengthFilterMode", "screener_quality")
     _min_str        = float(settings.get("obMinStrengthPct", 0)) if _use_str_filter else 0.0
 
-    if _use_str_filter and _str_mode == "tv_volume_share":
-        # Filter by tvObVolumeSharePct only — never fallback to screener quality or score
+    if _use_str_filter:
         bullish_obs_filt = [
             ob for ob in obs if ob["type"] == "bullish"
             and ob.get("tvObVolumeSharePct") is not None
@@ -3733,9 +3879,8 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
             and ob["tvObVolumeSharePct"] >= _min_str
         ]
     else:
-        # screener_quality (default) or filter OFF — use obStrengthPct
-        bullish_obs_filt = [ob for ob in obs if ob["type"] == "bullish" and ob["strengthPct"] >= _min_str]
-        bearish_obs_filt = [ob for ob in obs if ob["type"] == "bearish" and ob["strengthPct"] >= _min_str]
+        bullish_obs_filt = [ob for ob in obs if ob["type"] == "bullish"]
+        bearish_obs_filt = [ob for ob in obs if ob["type"] == "bearish"]
 
     # Optional OB Quality Engine v2
     use_high_prob = settings.get("useHighProbOB", False)
@@ -3807,9 +3952,9 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
         return {"touched": True, "touch_bar": touch_bar, "reacted": reacted,
                 "reaction_side_ok": reaction_side_ok}
 
-    # Rank nearest first, then strongest, then best quality, then freshest
-    bullish_obs_filt.sort(key=lambda ob: (_ob_dist_from_price(ob, price), -ob["strengthPct"], -ob.get("quality", 0), ob.get("bar", 0)))
-    bearish_obs_filt.sort(key=lambda ob: (_ob_dist_from_price(ob, price), -ob["strengthPct"], -ob.get("quality", 0), ob.get("bar", 0)))
+    # Rank nearest first, then best TV OB %, then best quality, then freshest
+    bullish_obs_filt.sort(key=lambda ob: (_ob_dist_from_price(ob, price), -(ob.get("tvObVolumeSharePct") or 0), -ob.get("quality", 0), ob.get("bar", 0)))
+    bearish_obs_filt.sort(key=lambda ob: (_ob_dist_from_price(ob, price), -(ob.get("tvObVolumeSharePct") or 0), -ob.get("quality", 0), ob.get("bar", 0)))
 
     for direction, ob_list in [("bullish", bullish_obs_filt), ("bearish", bearish_obs_filt)]:
         if not ob_list:
@@ -3833,20 +3978,14 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
                            if use_high_prob else '')
             _tv_share     = ob.get("tvObVolumeSharePct")
             _tv_share_str = f'{_tv_share}%' if _tv_share is not None else '—'
-            _filter_label = ((' | Filter: TV OB %' if _str_mode == 'tv_volume_share'
-                               else ' | Filter: Quality Str')
-                             if _use_str_filter else '')
+            _filter_label = ' | Filter: TV OB %' if _use_str_filter else ''
 
             # Position label
             pos_label = "INSIDE ZONE" if price_in_zone else f"{dist_pct:.2f}% from zone"
 
-            ob_strength = (5 if use_high_prob and ob.get("quality", 0) >= 80
-                           else 4 if ob["strengthPct"] >= 70 else 3)
+            ob_strength = (5 if use_high_prob and ob.get("quality", 0) >= 80 else 3)
             ob_meta_base = {
-                # ── Screener quality strength (existing) ──
-                "obStrengthPct":   ob["strengthPct"],
-                "obStrengthLabel": ob["strengthLabel"],
-                # ── TradingView-style OB volume share (Phase 8B) ──
+                # ── TradingView-style OB volume share ──
                 "tvObVolumeSharePct":     ob.get("tvObVolumeSharePct"),
                 "tvObVolumeShareStatus":  ob.get("tvObVolumeShareStatus"),
                 "tvObFormationVolume":    ob.get("tvObFormationVolume"),
@@ -3887,7 +4026,6 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
                         "timeframe": tf,
                         "detail": (f'Consolidating on {direction} OB | {pos_label} | '
                                    f'Candles: {consecutive} | '
-                                   f'Quality Str: {ob["strengthPct"]:.1f}% ({ob["strengthLabel"]}) | '
                                    f'TV OB %: {_tv_share_str}{quality_str}{_filter_label} | '
                                    f'Zone: {fmt_price(zone_bottom)} – {fmt_price(zone_top)}'
                                    + (f' | {ob["ofSummary"]}' if ob.get("ofSummary") else '')),
@@ -3907,7 +4045,6 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
                     "direction": direction,
                     "timeframe": tf,
                     "detail": (f'Approaching {direction} OB | Dist: {dist_pct:.2f}% | '
-                               f'Quality Str: {ob["strengthPct"]:.1f}% ({ob["strengthLabel"]}) | '
                                f'TV OB %: {_tv_share_str}{quality_str}{_filter_label} | '
                                f'Zone: {fmt_price(zone_bottom)} – {fmt_price(zone_top)}'
                                + (f' | {ob["ofSummary"]}' if ob.get("ofSummary") else '')),
@@ -4716,7 +4853,6 @@ def parse_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
         "rsiOB": float(payload.get("rsiOB", 75)),
         "rsiOS": float(payload.get("rsiOS", 25)),
         "useObStrengthFilter":  bool(payload.get("useObStrengthFilter", False)),
-        "obStrengthFilterMode": payload.get("obStrengthFilterMode", "screener_quality"),
         "obMinStrengthPct":     float(payload.get("obMinStrengthPct", 70)),
         "useHighProbOB": bool(payload.get("useHighProbOB", False)),
         "obMinQuality": int(payload.get("obMinQuality", 50)),
@@ -4997,19 +5133,20 @@ def register():
         db.session.flush()  # get new_user.id before commit
 
         code    = f"{random.randint(0, 999999):06d}"
-        expires = datetime.now(timezone.utc) + timedelta(minutes=15)
+        expires = datetime.now(timezone.utc) + timedelta(minutes=10)
         ev = _EmailVerification(user_id=new_user.id, code=code, expires_at=expires)
         db.session.add(ev)
         db.session.commit()
 
         # Send synchronously so we know immediately if it succeeded
-        email_sent = send_verification_email(email, code, username)
+        email_sent, fail_reason = send_verification_email(email, code, username)
 
         # Store outcome in session so verify page can react
         session["verify_email_sent"]    = email_sent
         session["verify_pending_user"]  = username
+        session["verify_fail_reason"]   = fail_reason
 
-        # If SMTP is not configured, expose code via session so user can proceed
+        # Expose code on-screen so the user can proceed even if delivery failed
         if not email_sent:
             session["verify_fallback_code"] = code
 
@@ -5024,12 +5161,14 @@ def register():
 def verify_email():
     if request.method == "GET":
         username = request.args.get("username", "") or session.get("verify_pending_user", "")
-        email_sent    = session.pop("verify_email_sent", True)   # assume sent if not in session
+        email_sent    = session.pop("verify_email_sent", True)
         fallback_code = session.pop("verify_fallback_code", None)
+        fail_reason   = session.pop("verify_fail_reason", "missing_config")
         return render_template("verify.html",
                                username=username,
                                email_sent=email_sent,
-                               fallback_code=fallback_code)
+                               fallback_code=fallback_code,
+                               fail_reason=fail_reason)
 
     username = request.form.get("username", "").strip().lower()
     code     = request.form.get("code", "").strip()
@@ -5083,18 +5222,31 @@ def resend_verification():
             return render_template("login.html", success="Email already verified. You can sign in.",
                                    login_username=username)
 
+        # Rate-limit: block resend if a fresh code was issued within the last 2 minutes
+        cooldown_cutoff = datetime.now(timezone.utc) - timedelta(minutes=2)
+        recent = (_EmailVerification.query
+                  .filter_by(user_id=user.id, used=False)
+                  .filter(_EmailVerification.created_at > cooldown_cutoff)
+                  .first())
+        if recent:
+            wait_sec = int((recent.created_at + timedelta(minutes=2)
+                            - datetime.now(timezone.utc)).total_seconds())
+            wait_sec = max(wait_sec, 1)
+            return render_template("verify.html", username=username,
+                                   error=f"Please wait {wait_sec}s before requesting a new code.")
+
         # Invalidate all previous unused codes
         (_EmailVerification.query
          .filter_by(user_id=user.id, used=False)
          .update({"used": True}))
 
         code    = f"{random.randint(0, 999999):06d}"
-        expires = datetime.now(timezone.utc) + timedelta(minutes=15)
+        expires = datetime.now(timezone.utc) + timedelta(minutes=10)
         ev = _EmailVerification(user_id=user.id, code=code, expires_at=expires)
         db.session.add(ev)
         db.session.commit()
 
-        email_sent = send_verification_email(user.email, code, username)
+        email_sent, fail_reason = send_verification_email(user.email, code, username)
 
         if email_sent:
             return render_template("verify.html", username=username,
@@ -5104,6 +5256,7 @@ def resend_verification():
             return render_template("verify.html", username=username,
                                    email_sent=False,
                                    fallback_code=code,
+                                   fail_reason=fail_reason,
                                    success="New code generated.")
     except Exception as _re:
         print(f"[RESEND-VERIFY] Error: {_re}")
@@ -5173,6 +5326,7 @@ def admin_test_email():
     else:
         result["note"] = "Check the error messages above. Contact support if unclear."
     return jsonify(result)
+
 
 
 @app.route("/logout")
@@ -5482,7 +5636,7 @@ _WL_SCAN_SETTINGS: Dict[str, Any] = {
     "iLen": 5, "sLen": 30,
     "approachPct": 2.0, "obDistancePct": 2.0,
     "consolCandles": 5, "rsiOB": 70, "rsiOS": 30,
-    "useObStrengthFilter": False, "obStrengthFilterMode": "screener_quality", "obMinStrengthPct": 0,
+    "useObStrengthFilter": False, "obMinStrengthPct": 0,
     "useHighProbOB": False, "obMinQuality": 50,
     "useAtrObApproach": False, "obApproachAtrMult": 0.5,
     "useFvgValidOnly": False, "useFvgState": False,
@@ -5648,7 +5802,7 @@ def _scan_pair_multitf(symbol: str, market: str = "perpetual", wl_config: Option
                         "setup":        "OB_APPROACH" if state != "far" else "OB_FAR",
                         "top":          round(zt, 8),
                         "bottom":       round(zb, 8),
-                        "strength":     round(ob.get("strengthPct", 0), 1),
+                        "strength":     round(ob.get("tvObVolumeSharePct") or 0, 1),
                         "quality":      q_score,
                         "qualityLabel": ("Elite" if q_score >= 85 else
                                          "High"  if q_score >= 70 else
@@ -5670,7 +5824,7 @@ def _scan_pair_multitf(symbol: str, market: str = "perpetual", wl_config: Option
                         "detail":   (
                             f'{"Approaching" if state == "approaching" else "Inside" if state == "inside" else "Far from"} '
                             f'{ob["type"]} OB | Dist: {dist_pct:.2f}% | '
-                            f'Strength: {ob.get("strengthPct", 0):.1f}% | '
+                            f'TV OB %: {ob.get("tvObVolumeSharePct") or "—"} | '
                             f'Zone: {fmt_price(zb)} – {fmt_price(zt)}'
                         ),
                     })
@@ -6332,6 +6486,424 @@ def api_ath_atl_scan():
     return jsonify(results[:limit])
 
 
+# ── Bias Shift Phase 2 helpers ────────────────────────────────────────────────
+
+def _bias_normal_presets(bias_strength: str) -> dict:
+    """Return candle-quality presets for Normal mode. Never forces detectionMode."""
+    if bias_strength == "early":
+        return {
+            "prior_move_n": 3, "signal_search_n": 2, "min_prior_checks": 2,
+            "min_wick_pct": 0.25, "min_body_pct": 0.15,
+            "require_close_beyond_mid": True,
+        }
+    elif bias_strength == "strong":
+        return {
+            "prior_move_n": 5, "signal_search_n": 1, "min_prior_checks": 2,
+            "min_wick_pct": 0.45, "min_body_pct": 0.25,
+            "require_close_beyond_mid": True,
+        }
+    else:  # balanced
+        return {
+            "prior_move_n": 4, "signal_search_n": 1, "min_prior_checks": 2,
+            "min_wick_pct": 0.35, "min_body_pct": 0.20,
+            "require_close_beyond_mid": True,
+        }
+
+
+def _detect_prior_move(o: list, h: list, l: list, c: list, start: int, end: int, tf: str = "1d") -> dict:
+    """Detect a clean directional drive in candles [start, end).
+    Returns quality='clean' only when all 5 hard conditions pass per direction."""
+    _empty: dict = {
+        "direction": None, "quality": "none", "checksPassed": 0,
+        "summary": "empty", "reasons": [],
+        "netPct": 0.0, "greenCount": 0, "redCount": 0,
+        "upCloseSteps": 0, "downCloseSteps": 0, "requiredMovePct": 0.0,
+    }
+    if end <= start:
+        return _empty
+    seg_o, seg_h, seg_l, seg_c = o[start:end], h[start:end], l[start:end], c[start:end]
+    n = len(seg_c)
+    if n < 1:
+        return _empty
+
+    # Timeframe-aware minimum net move threshold
+    tf_lower = tf.lower()
+    if   tf_lower in ("1d", "12h"): req_pct = 0.8
+    elif tf_lower in ("4h", "6h"):  req_pct = 0.5
+    else:                            req_pct = 0.3
+
+    net_close      = seg_c[-1] - seg_c[0]
+    net_pct        = abs(net_close) / seg_c[0] * 100 if seg_c[0] > 0 else 0.0
+    green_count    = sum(1 for i in range(n) if seg_c[i] > seg_o[i])
+    red_count      = n - green_count
+    up_close_steps = sum(1 for i in range(1, n) if seg_c[i] > seg_c[i - 1])
+    dn_close_steps = sum(1 for i in range(1, n) if seg_c[i] < seg_c[i - 1])
+    prior_mid      = min(seg_l) + (max(seg_h) - min(seg_l)) / 2
+    green_needed   = math.ceil(n * 0.60)
+    steps_needed   = math.ceil((n - 1) * 0.60) if n >= 2 else 0
+
+    # Evaluate all 5 hard conditions for each direction
+    up_cond = [
+        net_close > 0,
+        green_count >= green_needed,
+        up_close_steps >= steps_needed,
+        net_pct >= req_pct,
+        seg_c[-1] > prior_mid,
+    ]
+    dn_cond = [
+        net_close < 0,
+        red_count >= green_needed,
+        dn_close_steps >= steps_needed,
+        net_pct >= req_pct,
+        seg_c[-1] < prior_mid,
+    ]
+    up_passed = sum(up_cond)
+    dn_passed = sum(dn_cond)
+
+    if up_passed == 5:
+        direction, quality, checks_passed = "up", "clean", 5
+        reasons = [
+            f"netClose↑{net_pct:.2f}%",
+            f"{green_count}/{n}green≥{green_needed}",
+            f"closeSteps↑{up_close_steps}≥{steps_needed}",
+            f"move≥{req_pct}%",
+            "closedAboveMid",
+        ]
+    elif dn_passed == 5:
+        direction, quality, checks_passed = "down", "clean", 5
+        reasons = [
+            f"netClose↓{net_pct:.2f}%",
+            f"{red_count}/{n}red≥{green_needed}",
+            f"closeSteps↓{dn_close_steps}≥{steps_needed}",
+            f"move≥{req_pct}%",
+            "closedBelowMid",
+        ]
+    else:
+        direction, quality = None, "weak" if max(up_passed, dn_passed) > 0 else "none"
+        checks_passed = max(up_passed, dn_passed)
+        lead = "up" if up_passed >= dn_passed else "dn"
+        reasons = [f"{lead}:{checks_passed}/5"]
+
+    return {
+        "direction":       direction,
+        "quality":         quality,
+        "checksPassed":    checks_passed,
+        "summary":         f"{direction or 'none'} ({quality}·{checks_passed}/5)",
+        "reasons":         reasons,
+        "netPct":          round(net_pct, 4),
+        "greenCount":      green_count,
+        "redCount":        red_count,
+        "upCloseSteps":    up_close_steps,
+        "downCloseSteps":  dn_close_steps,
+        "requiredMovePct": req_pct,
+    }
+
+
+def _check_rejection_candle(
+    o: list, h: list, l: list, c: list,
+    idx: int, rejection_dir: str,
+    min_wick: float, min_body: float,
+    require_close_beyond_mid: bool,
+) -> dict | None:
+    """Return rejection-candle metrics or None if hard requirements fail."""
+    rng = h[idx] - l[idx]
+    if rng <= 0:
+        return None
+    body       = abs(c[idx] - o[idx])
+    upper_wick = h[idx] - max(o[idx], c[idx])
+    lower_wick = min(o[idx], c[idx]) - l[idx]
+    body_pct   = body / rng
+    uw_pct     = upper_wick / rng
+    lw_pct     = lower_wick / rng
+    is_green   = c[idx] > o[idx]
+    mid        = l[idx] + rng / 2
+    reasons: list[str] = []
+    checks = 0
+
+    if rejection_dir == "bearish":
+        if is_green or uw_pct < min_wick or body_pct < min_body:
+            return None
+        if require_close_beyond_mid and c[idx] > mid:
+            return None
+        checks += 1
+        reasons.append(f"red·↑wick{uw_pct*100:.0f}%·body{body_pct*100:.0f}%")
+        if c[idx] < mid:
+            checks += 1; reasons.append("closeBelowMid")
+    else:
+        if not is_green or lw_pct < min_wick or body_pct < min_body:
+            return None
+        if require_close_beyond_mid and c[idx] < mid:
+            return None
+        checks += 1
+        reasons.append(f"green·↓wick{lw_pct*100:.0f}%·body{body_pct*100:.0f}%")
+        if c[idx] > mid:
+            checks += 1; reasons.append("closeAboveMid")
+
+    return {
+        "open": o[idx], "high": h[idx], "low": l[idx], "close": c[idx],
+        "bodyPct":      round(body_pct * 100, 1),
+        "upperWickPct": round(uw_pct   * 100, 1),
+        "lowerWickPct": round(lw_pct   * 100, 1),
+        "checksPassed": checks,
+        "reasons":      reasons,
+    }
+
+
+def _suggested_conf_tf(tf: str) -> str:
+    t = tf.lower()
+    if t in ("1d", "12h"):  return "4H / 1H"
+    if t in ("6h", "4h"):   return "1H / 15m"
+    if t in ("2h", "1h"):   return "15m / 5m"
+    if t in ("30m", "15m"): return "5m / 1m"
+    return "lower TF"
+
+
+def _is_better_setup(candidate: dict, current_best: dict) -> bool:
+    """True if candidate is strictly better, now driven by score."""
+    cs = candidate.get("score") or 0
+    bs = current_best.get("score") or 0
+    if cs != bs:
+        return cs > bs
+    return candidate.get("signalCandleOffset", 999) < current_best.get("signalCandleOffset", 999)
+
+
+# ── Bias Shift Phase 3 — scoring & grading ────────────────────────────────────
+
+def _score_bias_shift(
+    prior_checks: int,
+    rej_wick_pct: float,
+    rej_body_pct: float,
+    min_wick_pct: float,
+    min_body_pct: float,
+    close_beyond_mid: bool,
+    confirmation_status: str,
+    vol_spike: bool,
+    volume_filter_mode: str,
+    sig_offset: int,
+    ob_found: bool = False,
+    fvg_found: bool = False,
+    fib_found: bool = False,
+    confluence_required_passed: bool = False,
+) -> dict:
+    """Return score 0-100 with breakdown list."""
+    pts = 0
+    bd: list[str] = []
+
+    # Prior move detected
+    pts += 20; bd.append("+20 prior move detected")
+
+    # Prior move check quality
+    if prior_checks >= 4:
+        p = 15
+    elif prior_checks >= 3:
+        p = 10
+    else:
+        p = 5
+    pts += p; bd.append(f"+{p} prior move checks ({prior_checks})")
+
+    # Rejection candle present
+    pts += 25; bd.append("+25 rejection candle valid")
+
+    # Wick quality (relative to required threshold)
+    wick_over = rej_wick_pct - round(min_wick_pct * 100)
+    if wick_over >= 20:
+        wp = 15
+    elif wick_over >= 10:
+        wp = 10
+    else:
+        wp = 5
+    pts += wp; bd.append(f"+{wp} wick quality ({rej_wick_pct:.0f}%)")
+
+    # Body quality (relative to required threshold)
+    body_over = rej_body_pct - round(min_body_pct * 100)
+    if body_over >= 20:
+        bp = 10
+    elif body_over >= 10:
+        bp = 8
+    else:
+        bp = 5
+    pts += bp; bd.append(f"+{bp} body quality ({rej_body_pct:.0f}%)")
+
+    # Close beyond midpoint
+    if close_beyond_mid:
+        pts += 10; bd.append("+10 close beyond midpoint")
+
+    # Confirmation
+    if confirmation_status == "confirmed":
+        pts += 10; bd.append("+10 confirmed by later candle")
+
+    # Volume
+    if vol_spike:
+        pts += 5; bd.append("+5 volume spike")
+        if volume_filter_mode == "required":
+            pts += 5; bd.append("+5 volume required and passed")
+
+    # Recency
+    if sig_offset == 0:
+        pts += 5; bd.append("+5 latest closed candle")
+    elif sig_offset == 1:
+        pts += 3; bd.append("+3 second-to-last candle")
+
+    # ── Phase 4: confluence bonuses (OB/FVG/Fib — no-op until Phase 4 enabled) ──
+    if ob_found:
+        pts += 7; bd.append("+7 OB confluence")
+    if fvg_found:
+        pts += 7; bd.append("+7 FVG confluence")
+    if fib_found:
+        pts += 6; bd.append("+6 Fib confluence")
+    if confluence_required_passed:
+        pts += 5; bd.append("+5 required confluence passed")
+
+    return {"score": min(pts, 100), "breakdown": bd}
+
+
+def _grade_from_score(score: int) -> dict:
+    if score >= 90:
+        return {"grade": "A+", "gradeLabel": "A+ — Elite Bias Shift"}
+    if score >= 80:
+        return {"grade": "A",  "gradeLabel": "A — Strong Bias Shift"}
+    if score >= 65:
+        return {"grade": "B",  "gradeLabel": "B — Valid Bias Shift"}
+    if score >= 50:
+        return {"grade": "C",  "gradeLabel": "C — Watch Only"}
+    return {"grade": "D",      "gradeLabel": "D — Weak Setup"}
+
+
+# Allowed grade sets keyed by minimumGrade UI value
+_GRADE_ALLOWED: dict[str, set[str]] = {
+    "C+": {"A+", "A", "B", "C"},
+    "B+": {"A+", "A", "B"},
+    "A":  {"A+", "A"},
+}
+
+def _grade_passes_filter(grade: str, minimum_grade: str) -> bool:
+    return grade in _GRADE_ALLOWED.get(minimum_grade, {"A+", "A", "B"})
+
+def _bias_confluence(
+    o: list, h: list, l: list, c: list, v: list,
+    tf: str,
+    sig_idx: int,
+    rej_dir: str,
+    rej: dict,
+    prior_start: int,
+    use_ob: bool,
+    use_fvg: bool,
+    use_fib: bool,
+) -> dict:
+    """
+    Check OB, FVG, and Fib confluence for a Bias Shift candidate.
+    Uses direction-aware reference prices so wick-area confluence is detected:
+      bearish → [rej.high, rej.close]  (rejection likely at wick high)
+      bullish → [rej.low,  rej.close]  (rejection likely at wick low)
+    Distance = minimum distance from ANY reference price to the zone/level.
+    """
+    if rej_dir == "bearish":
+        ref_prices = [p for p in (rej["high"], rej["close"]) if p > 0]
+        wick_label = "around rejection high"
+    else:
+        ref_prices = [p for p in (rej["low"], rej["close"]) if p > 0]
+        wick_label = "around rejection low"
+
+    if not ref_prices:
+        return {"ob": None, "fvg": None, "fib": None}
+
+    def _zone_dist(bot: float, top: float) -> float:
+        """Minimum % distance from any ref price to zone. 0.0 if inside."""
+        best = float("inf")
+        for p in ref_prices:
+            if bot <= p <= top:
+                return 0.0
+            d = (bot - p) / p * 100 if p < bot else (p - top) / p * 100
+            if d < best:
+                best = d
+        return best
+
+    def _level_dist(level: float) -> float:
+        """Minimum % distance from any ref price to a single level."""
+        best = float("inf")
+        for p in ref_prices:
+            d = abs(p - level) / p * 100
+            if d < best:
+                best = d
+        return best
+
+    ob_conf = fvg_conf = fib_conf = None
+
+    # ── OB confluence ──────────────────────────────────────────────────────────
+    if use_ob:
+        try:
+            obs = detect_obs(o, h, l, c, v, 5, 20, max_ob=8)
+            for ob in obs:
+                if ob["type"] != rej_dir:
+                    continue
+                dist_pct = _zone_dist(ob["bottom"], ob["top"])
+                if dist_pct <= 2.0:
+                    ob_conf = {
+                        "found":       True,
+                        "type":        ob["type"],
+                        "zone":        f"{ob['bottom']:.6f} - {ob['top']:.6f}",
+                        "distancePct": round(dist_pct, 2),
+                        "reason":      f"Rejected near {rej_dir} OB zone {wick_label}",
+                    }
+                    break
+        except Exception:
+            pass
+
+    # ── FVG confluence ─────────────────────────────────────────────────────────
+    if use_fvg:
+        try:
+            fvgs = detect_fvgs(o, h, l, c, v, tf)
+            for fvg in fvgs:
+                if fvg["direction"] != rej_dir:
+                    continue
+                dist_pct = _zone_dist(fvg["bottom"], fvg["top"])
+                if dist_pct <= 1.5:
+                    touch = "untouched" if fvg.get("untouched") else "touched"
+                    fvg_conf = {
+                        "found":       True,
+                        "direction":   fvg["direction"],
+                        "zone":        f"{fvg['bottom']:.6f} - {fvg['top']:.6f}",
+                        "touch":       touch,
+                        "distancePct": round(dist_pct, 2),
+                        "reason":      f"Rejection near {rej_dir} FVG {wick_label}",
+                    }
+                    break
+        except Exception:
+            pass
+
+    # ── Fib confluence ─────────────────────────────────────────────────────────
+    if use_fib:
+        try:
+            prior_h = h[prior_start:sig_idx]
+            prior_l = l[prior_start:sig_idx]
+            if len(prior_h) >= 2:
+                fib_high  = max(prior_h)
+                fib_low   = min(prior_l)
+                fib_range = fib_high - fib_low
+                if fib_range > 0:
+                    for lvl in (0.786, 0.705, 0.618, 0.5):
+                        if rej_dir == "bearish":
+                            fib_price = fib_low + fib_range * lvl
+                        else:
+                            fib_price = fib_high - fib_range * lvl
+                        dist_pct = _level_dist(fib_price)
+                        if dist_pct <= 1.0:
+                            fib_conf = {
+                                "found":       True,
+                                "level":       str(lvl),
+                                "price":       round(fib_price, 8),
+                                "distancePct": round(dist_pct, 2),
+                                "reason":      f"Rejection near Fib {lvl} {wick_label}",
+                            }
+                            break
+        except Exception:
+            pass
+
+    return {"ob": ob_conf, "fvg": fvg_conf, "fib": fib_conf}
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+
 @app.route("/api/bias_scan", methods=["POST"])
 @login_required
 def api_bias_scan():
@@ -6343,324 +6915,957 @@ def api_bias_scan():
     payload = request.get_json(force=True) or {}
     tf = payload.get("timeframe", "1d")
     market = payload.get("market", "perpetual")
-    candle_count = int(payload.get("candleCount", 3))
-    bias_filter = payload.get("biasFilter", "all")
+    # Fix #1: frontend sends "mode", not "biasMode"
+    bias_mode        = payload.get("mode", payload.get("biasMode", "normal"))
+    bias_strength    = payload.get("biasStrength", "balanced")
+    bias_filter      = payload.get("biasFilter", "all")
+    # detection_mode comes from payload — never overridden by presets
+    detection_mode   = payload.get("detectionMode", "early")
+    # Fix #3: volumeFilter is "optional" or "required", not a bool
+    volume_filter_mode = payload.get("volumeFilter", "optional")
+    use_volume_filter  = volume_filter_mode == "required"
+    vol_multiplier     = float(payload.get("volumeMultiplier", 1.5))
 
-    use_wick_gate      = payload.get("useWickGate", True)
-    wick_min_pct       = float(payload.get("wickMinPct", 35)) / 100.0
-    use_momentum_gate  = payload.get("useMomentumGate", True)
-    prior_candles_req  = int(payload.get("priorCandlesReq", 2))   # #4 min prior candles same direction
-    use_body_gate      = payload.get("useBodyGate", True)
-    body_min_pct       = float(payload.get("bodyMinPct", 20)) / 100.0
-    use_volume_gate    = payload.get("useVolumeGate", False)
-    vol_multiplier     = float(payload.get("volMultiplier", 1.2))  # #4 volume threshold
-    # #4 Signal candle sub-gates (any one counts)
-    sig_use_wick       = payload.get("sigUseWick", True)
-    sig_wick_min       = float(payload.get("sigWickMin", 35)) / 100.0
-    sig_use_engulf     = payload.get("sigUseEngulf", True)
-    sig_use_strong_body = payload.get("sigUseStrongBody", True)
-    sig_body_min       = float(payload.get("sigBodyMin", 55)) / 100.0
-    min_conditions     = int(payload.get("minConditions", 2))      # #4 min gates to pass
+    if bias_mode == "normal":
+        # Fix #2: presets set candle-quality params only; detectionMode stays from payload
+        p = _bias_normal_presets(bias_strength)
+        prior_move_n             = p["prior_move_n"]
+        signal_search_n          = p["signal_search_n"]
+        min_prior_checks         = p["min_prior_checks"]
+        min_wick_pct             = p["min_wick_pct"]
+        min_body_pct             = p["min_body_pct"]
+        require_close_beyond_mid = p["require_close_beyond_mid"]
+    else:
+        prior_move_n             = max(1, int(payload.get("priorMoveCandles", 3)))
+        signal_search_n          = max(1, int(payload.get("signalSearchCandles", 2)))
+        min_prior_checks         = 2
+        min_wick_pct             = float(payload.get("minWickPct", 35)) / 100.0
+        min_body_pct             = float(payload.get("minBodyPct", 15)) / 100.0
+        require_close_beyond_mid = bool(payload.get("requireCloseBeyondMidpoint", False))
 
-    use_fvg_conf = payload.get("useFvgConf", False)
-    fvg_touch = payload.get("fvgTouch", "any")
-    use_ob_conf = payload.get("useObConf", False)
-    ob_approach_pct = float(payload.get("obApproachPct", 2.0))
+    minimum_grade = payload.get("minimumGrade", "B+")
+
+    # Phase 4: confluence settings
+    confluence_mode    = payload.get("confluenceMode", "optional")
+    use_ob_confluence  = bool(payload.get("useObConfluence", True))
+    use_fvg_confluence = bool(payload.get("useFvgConfluence", True))
+    use_fib_confluence = bool(payload.get("useFibConfluence", True))
 
     passed_symbols  = payload.get("symbols") or []
     scan_mode       = payload.get("scanMode", "selected")
-    pairs_per_cycle = int(payload.get("pairsPerCycle", 20))
+    pairs_per_cycle = max(5, min(100, int(payload.get("pairsPerCycle", 20))))
     exchange        = payload.get("exchange", "binance").lower()
-    # FIX BUG 2: roundRobin defaults True for bias scan (was False)
-    use_rr          = payload.get("roundRobin", True)
 
-    # FIX BUG 2: Full Market ALWAYS ignores passed_symbols on bias scan
+    # Per-user cursor key — prevents different users/settings from sharing state
+    username   = session.get("username", "anonymous")
+    cursor_key = f"{username}|{exchange}|{market}|{tf}"
+    market_coverage = None
+
     if scan_mode == "market":
-        all_pairs = [p["symbol"] for p in get_pairs_exchange(exchange, market)]
-        if use_rr:
-            start  = ROUND_ROBIN_STATE.get("bias_index", 0)
-            chosen = all_pairs[start:start + pairs_per_cycle]
-            if len(chosen) < pairs_per_cycle:
-                chosen += all_pairs[:max(0, pairs_per_cycle - len(chosen))]
-            ROUND_ROBIN_STATE["bias_index"] = (start + pairs_per_cycle) % max(len(all_pairs), 1)
-            symbols = chosen
-        else:
-            symbols = all_pairs[:pairs_per_cycle]
+        all_pairs   = [p["symbol"] for p in get_pairs_exchange(exchange, market)]
+        total_pairs = max(len(all_pairs), 1)
+        # Clamp cursor in case market size shrank since last scan
+        start    = BIAS_SCAN_CURSOR.get(cursor_key, 0) % total_pairs
+        symbols  = all_pairs[start:start + pairs_per_cycle]
+        next_cur = (start + pairs_per_cycle) % total_pairs
+        cycle_complete = (start + pairs_per_cycle) >= total_pairs
+        BIAS_SCAN_CURSOR[cursor_key] = next_cur
+        print(f"[BIAS_SCAN] round_robin user={username} tf={tf} "
+              f"batch={start+1}-{start+len(symbols)}/{total_pairs}")
+        market_coverage = {
+            "mode":           "round_robin",
+            "totalPairs":     total_pairs,
+            "batchSize":      len(symbols),
+            "startIndex":     start + 1,
+            "endIndex":       start + len(symbols),
+            "nextStartIndex": next_cur + 1,
+            "cycleComplete":  cycle_complete,
+        }
     elif passed_symbols:
-        # Selected Pairs mode — use what frontend sent
+        # Selected Pairs mode — use only what the frontend sent
         symbols = passed_symbols
     else:
-        # No pairs selected in selected mode — fallback to top pairs
-        symbols = [p["symbol"] for p in get_pairs_exchange(exchange, market)[:pairs_per_cycle]]
+        # Selected Pairs with nothing selected — tell the user clearly
+        return jsonify({
+            "error":   "no_selected_pairs",
+            "message": "Select at least one pair or switch to Full Market.",
+        }), 400
 
     results = []
+    fetch_limit = prior_move_n + signal_search_n + 30
+
+    diagnostics: dict = {
+        "symbolsRequested":         len(symbols),
+        "symbolsScanned":           0,
+        "setupsFoundBeforeFilters": 0,
+        "setupsReturned":           0,
+        "rejected": {
+            "notEnoughCandles":  0,
+            "noPriorMove":        0,
+            "noCleanPriorDrive":  0,
+            "biasFilterMismatch": 0,
+            "volumeFilter":      0,
+            "noRejectionCandle": 0,
+            "notConfirmed":      0,
+            "confluenceRequired": 0,
+            "minimumGrade":      0,
+            "invalidated":       0,
+            "errors":            0,
+        },
+        "settingsUsed": {
+            "timeframe":      tf,
+            "mode":           bias_mode,
+            "biasStrength":   bias_strength,
+            "detectionMode":  detection_mode,
+            "confluenceMode": confluence_mode,
+            "minimumGrade":   minimum_grade,
+            "volumeFilter":   volume_filter_mode,
+            "scanMode":       scan_mode,
+            "pairsPerCycle":  pairs_per_cycle,
+        },
+    }
 
     for sym in symbols:
         try:
-            kl = get_klines_exchange(sym, tf, candle_count + 30, market, exchange)
-            if not kl or len(kl) < candle_count + 2:
+            kl = get_klines_exchange(sym, tf, fetch_limit, market, exchange)
+            if not kl or len(kl) < prior_move_n + signal_search_n + 2:
+                diagnostics["rejected"]["notEnoughCandles"] += 1
                 continue
 
-            o = [x["open"] for x in kl]
-            h = [x["high"] for x in kl]
-            l = [x["low"] for x in kl]
-            c = [x["close"] for x in kl]
-            v = [x["volume"] for x in kl]
+            # Running candle close = best live-price proxy without an extra API call
+            current_price: float | None = float(kl[-1]["close"]) if kl else None
 
-            sig_idx = len(c) - 2
-            if sig_idx < 1:
-                continue
+            # Closed candles only — strip the still-running last candle
+            kl_closed = kl[:-1]
+            o  = [float(x["open"])   for x in kl_closed]
+            h  = [float(x["high"])   for x in kl_closed]
+            l  = [float(x["low"])    for x in kl_closed]
+            c  = [float(x["close"])  for x in kl_closed]
+            v  = [float(x["volume"]) for x in kl_closed]
+            ts = [int(x["openTime"]) for x in kl_closed]
+            n  = len(c)
 
-            sig_open = o[sig_idx]
-            sig_high = h[sig_idx]
-            sig_low = l[sig_idx]
-            sig_close = c[sig_idx]
-            sig_vol = v[sig_idx]
-            sig_range = sig_high - sig_low
-            if sig_range <= 0:
-                continue
+            vol_lb  = min(20, n)
+            avg_vol = sum(v[n - vol_lb:n]) / max(vol_lb, 1) if vol_lb > 0 else 0
 
-            sig_body = abs(sig_close - sig_open)
-            sig_is_green = sig_close > sig_open
-            upper_wick = sig_high - max(sig_open, sig_close)
-            lower_wick = min(sig_open, sig_close) - sig_low
+            diagnostics["symbolsScanned"] += 1
+            best: dict | None = None
 
-            body_ratio = sig_body / sig_range
-            upper_wick_ratio = upper_wick / sig_range
-            lower_wick_ratio = lower_wick / sig_range
+            # Per-symbol rejection trackers for diagnostics
+            _d_had_prior      = False
+            _d_weak_prior     = False
+            _d_had_rej        = False
+            _d_passed_confirm = False
+            _d_bias_miss      = False
+            _d_vol_miss       = False
+            _d_conf_miss      = False
 
-            # ── #4 Prior momentum: check N candles before signal ──
-            prior_n     = prior_candles_req
-            prev_start  = max(0, sig_idx - prior_n)
-            prev_end    = sig_idx
-            prev_candles = list(range(prev_start, prev_end))
-
-            prev_bullish = 0
-            prev_bearish = 0
-            prev_strong  = 0
-            for pi in prev_candles:
-                p_range = h[pi] - l[pi]
-                if p_range <= 0:
+            for sig_offset in range(signal_search_n):
+                sig_idx = n - 1 - sig_offset
+                if sig_idx < prior_move_n + 1:
                     continue
-                p_body = abs(c[pi] - o[pi])
-                if c[pi] > o[pi]:
-                    prev_bullish += 1
-                else:
-                    prev_bearish += 1
-                if p_body / p_range > 0.5:
-                    prev_strong += 1
 
-            req_same    = max(1, prior_n - 1)  # at least N-1 of prior N same direction
-            has_bull_momentum = prev_bullish >= req_same
-            has_bear_momentum = prev_bearish >= req_same
-            has_momentum = has_bull_momentum or has_bear_momentum
+                prior_start  = sig_idx - prior_move_n
+                prior_result = _detect_prior_move(o, h, l, c, prior_start, sig_idx, tf)
+                prior_dir    = prior_result["direction"]
 
-            # ── #4 Volume ──
-            vol_lookback = min(20, sig_idx)
-            avg_vol = sum(v[sig_idx - vol_lookback:sig_idx]) / max(vol_lookback, 1)
-            vol_spike = sig_vol >= avg_vol * vol_multiplier if avg_vol > 0 else False
+                if prior_result["quality"] != "clean":
+                    if prior_result["quality"] == "weak":
+                        _d_weak_prior = True
+                    continue
 
-            # ── #4 Signal candle quality — any one of these counts ──
-            # a) Strong wick rejection
-            sig_has_bull_wick = lower_wick_ratio >= sig_wick_min
-            sig_has_bear_wick = upper_wick_ratio >= sig_wick_min
-            # b) Engulfing — closes beyond previous candle's open
-            prev_open = o[sig_idx - 1] if sig_idx > 0 else sig_open
-            sig_bull_engulf = sig_is_green and sig_close > prev_open
-            sig_bear_engulf = not sig_is_green and sig_close < prev_open
-            # c) Strong body
-            sig_strong_body = body_ratio >= sig_body_min
+                _d_had_prior = True
+                rej_dir = "bearish" if prior_dir == "up" else "bullish"
 
-            # ── Signal type detection ──
-            signal_type    = None
-            bias_direction = None
+                if bias_filter == "bullish" and rej_dir != "bullish":
+                    _d_bias_miss = True
+                    continue
+                if bias_filter == "bearish" and rej_dir != "bearish":
+                    _d_bias_miss = True
+                    continue
 
-            has_both_wicks = upper_wick_ratio > 0.2 and lower_wick_ratio > 0.2
+                sig_vol   = v[sig_idx]
+                vol_spike = avg_vol > 0 and sig_vol >= avg_vol * vol_multiplier
+                if use_volume_filter and not vol_spike:
+                    _d_vol_miss = True
+                    continue
 
-            if has_both_wicks and has_momentum:
-                signal_type    = "INDECISION"
-                bias_direction = "bearish" if has_bull_momentum else "bullish"
-            elif upper_wick_ratio >= wick_min_pct:
-                signal_type    = "WICK_REJECTION"
-                bias_direction = "bearish"
-            elif lower_wick_ratio >= wick_min_pct:
-                signal_type    = "WICK_REJECTION"
-                bias_direction = "bullish"
-            elif has_momentum and ((has_bull_momentum and not sig_is_green) or (has_bear_momentum and sig_is_green)):
-                signal_type    = "EXHAUSTION"
-                bias_direction = "bearish" if has_bull_momentum else "bullish"
-            elif body_ratio > 0.6 and upper_wick_ratio < 0.2 and lower_wick_ratio < 0.2:
-                signal_type    = "CONTINUATION"
-                bias_direction = "bullish" if sig_is_green else "bearish"
+                rej = _check_rejection_candle(
+                    o, h, l, c, sig_idx, rej_dir,
+                    min_wick_pct, min_body_pct, require_close_beyond_mid,
+                )
+                if rej is None:
+                    continue
 
-            if not signal_type or not bias_direction:
-                continue
-
-            if bias_filter == "bullish" and bias_direction != "bullish":
-                continue
-            if bias_filter == "bearish" and bias_direction != "bearish":
-                continue
-
-            # ── #4 Gate evaluation — selectable conditions ──
-            gates_passed  = 0
-            gates_checked = 0
-            gate_details  = []
-
-            # Gate 1: Prior Momentum
-            if use_momentum_gate:
-                gates_checked += 1
-                mom_ok = (bias_direction == "bearish" and has_bull_momentum) or \
-                         (bias_direction == "bullish" and has_bear_momentum) or \
-                         has_momentum
-                if mom_ok:
-                    gates_passed += 1
-                    gate_details.append(f"Momentum ✓ ({prev_bullish}↑/{prev_bearish}↓)")
-                else:
-                    gate_details.append("Momentum ✗")
-
-            # Gate 2: Signal Candle Quality (any sub-gate counts)
-            if use_wick_gate:
-                gates_checked += 1
-                sig_quality_ok = False
-                sig_quality_parts = []
-                if sig_use_wick:
-                    if bias_direction == "bearish" and sig_has_bear_wick:
-                        sig_quality_ok = True; sig_quality_parts.append("wick")
-                    elif bias_direction == "bullish" and sig_has_bull_wick:
-                        sig_quality_ok = True; sig_quality_parts.append("wick")
-                if sig_use_engulf:
-                    if bias_direction == "bearish" and sig_bear_engulf:
-                        sig_quality_ok = True; sig_quality_parts.append("engulf")
-                    elif bias_direction == "bullish" and sig_bull_engulf:
-                        sig_quality_ok = True; sig_quality_parts.append("engulf")
-                if sig_use_strong_body:
-                    if sig_strong_body:
-                        sig_quality_ok = True; sig_quality_parts.append("body")
-                # Also allow continuation signals through
-                if signal_type in ("CONTINUATION",):
-                    sig_quality_ok = True; sig_quality_parts.append("cont")
-                if sig_quality_ok:
-                    gates_passed += 1
-                    gate_details.append(f"Signal ✓ ({'+'.join(sig_quality_parts) or 'ok'})")
-                else:
-                    gate_details.append("Signal ✗")
-
-            # Gate 3: Body gate
-            if use_body_gate:
-                gates_checked += 1
-                if body_ratio >= body_min_pct:
-                    gates_passed += 1
-                    gate_details.append(f"Body ✓ ({body_ratio*100:.0f}%)")
-                else:
-                    gate_details.append(f"Body ✗ ({body_ratio*100:.0f}%)")
-
-            # Gate 4: Volume gate
-            if use_volume_gate:
-                gates_checked += 1
-                if vol_spike:
-                    gates_passed += 1
-                    gate_details.append(f"Vol ✓ ({sig_vol/max(avg_vol,1):.1f}x)")
-                else:
-                    gate_details.append(f"Vol ✗ ({sig_vol/max(avg_vol,1):.1f}x)")
-
-            # Apply min_conditions threshold
-            if gates_checked > 0 and gates_passed < min(min_conditions, gates_checked):
-                continue
-
-            gate_ratio = gates_passed / gates_checked if gates_checked > 0 else 0.5
-
-            if gate_ratio >= 0.9 or (gates_passed >= 3):
-                confidence = "Strong"
-            elif gate_ratio >= 0.6 or gates_passed >= 2:
-                confidence = "Moderate"
-            else:
-                confidence = "Weak"
-
-            if signal_type == "INDECISION" and confidence == "Strong":
-                confidence = "Moderate"
-
-            ob_info = None
-            if use_ob_conf:
-                obs = detect_obs(o, h, l, c, v, 7, 20, max_ob=5)
-                price = c[-2]
-                for ob in obs:
-                    dist = abs(price - (ob["top"] + ob["bottom"]) / 2) / max(price, 1e-10) * 100
-                    if dist <= ob_approach_pct and ob["type"] == bias_direction:
-                        same_dir_obs = [x for x in obs if x["type"] == ob["type"]]
-                        total_vol = sum(x["volume"] for x in same_dir_obs)
-                        vol_pct = int((ob["volume"] / total_vol) * 100) if total_vol > 0 else 0
-                        vv = ob["volume"]
-                        if vv >= 1e9:
-                            vol_fmt = f"{round(vv/1e9,3)}B"
-                        elif vv >= 1e6:
-                            vol_fmt = f"{round(vv/1e6,3)}M"
-                        elif vv >= 1e3:
-                            vol_fmt = f"{round(vv/1e3,3)}K"
+                _d_had_rej = True
+                # Fix #6: confirmed mode searches ALL later closed candles
+                confirmation_status = "early_unconfirmed"
+                if detection_mode == "confirmed":
+                    confirmed = False
+                    for post_idx in range(sig_idx + 1, n):
+                        if rej_dir == "bearish":
+                            if l[post_idx] < rej["low"] or c[post_idx] < rej["low"]:
+                                confirmed = True; break
                         else:
-                            vol_fmt = f"{round(vv)}"
-                        ob_info = {
-                            "zone": f"{ob['bottom']:.6f} - {ob['top']:.6f}",
-                            "volPct": vol_pct,
-                            "volFmt": vol_fmt,
-                            "dist": round(dist, 2),
-                        }
-                        break
+                            if h[post_idx] > rej["high"] or c[post_idx] > rej["high"]:
+                                confirmed = True; break
+                    if not confirmed:
+                        continue
+                    confirmation_status = "confirmed"
 
-            fvg_info = None
-            if use_fvg_conf:
-                fvgs = detect_fvgs(o, h, l, c, v, tf)
-                price = c[-2]
-                for fvg in fvgs:
-                    if fvg["direction"] == bias_direction:
-                        if fvg_touch == "untouched" or fvg_touch == "fresh":
-                            if not fvg.get("untouched", True):
-                                continue
-                        elif fvg_touch == "touched":
-                            if fvg.get("untouched", True):
-                                continue
-                        if fvg["bottom"] <= price <= fvg["top"] or abs(price - (fvg["top"] + fvg["bottom"]) / 2) / max(price, 1e-10) * 100 <= 1.0:
-                            touch_label = "untouched" if fvg.get("untouched") else ("once" if fvg.get("onceTouched") else "touched")
-                            fvg_info = {
-                                "zone": f"{fvg['bottom']:.6f} - {fvg['top']:.6f}",
-                                "touch": touch_label,
-                            }
-                            break
+                _d_passed_confirm = True
 
-            sparkline = [float(c[i]) for i in range(max(0, len(c)-24), len(c))]
-            results.append({
-                "symbol": sym,
-                "price": round(c[-1], 8),
-                "timeframe": tf,
-                "bias": bias_direction,
-                "signal": signal_type,
-                "confidence": confidence,
-                "gates": " | ".join(gate_details),
-                "gatesPassed": gates_passed,
-                "gatesChecked": gates_checked,
-                "upperWickPct": round(upper_wick_ratio * 100, 1),
-                "lowerWickPct": round(lower_wick_ratio * 100, 1),
-                "bodyPct": round(body_ratio * 100, 1),
-                "volSpike": vol_spike,
-                "obConf": ob_info,
-                "fvgConf": fvg_info,
-                "sparkline": sparkline,
-            })
+                if rej_dir == "bearish":
+                    invalidation_level = round(rej["high"], 8)
+                    invalidation_text  = f"Invalid above {rej['high']:.6f}"
+                else:
+                    invalidation_level = round(rej["low"], 8)
+                    invalidation_text  = f"Invalid below {rej['low']:.6f}"
+
+                # ── Phase 3 pre-metrics ───────────────────────────────────────
+                rej_mid = rej["low"] + (rej["high"] - rej["low"]) / 2
+                close_is_beyond_mid = (
+                    (rej_dir == "bearish" and rej["close"] < rej_mid) or
+                    (rej_dir == "bullish" and rej["close"] > rej_mid)
+                )
+                rej_wick_pct_val = (
+                    rej["upperWickPct"] if rej_dir == "bearish" else rej["lowerWickPct"]
+                )
+
+                # ── Phase 4: confluence check ─────────────────────────────────
+                conf_results = _bias_confluence(
+                    o, h, l, c, v, tf,
+                    sig_idx=sig_idx,
+                    rej_dir=rej_dir,
+                    rej=rej,
+                    prior_start=prior_start,
+                    use_ob=use_ob_confluence,
+                    use_fvg=use_fvg_confluence,
+                    use_fib=use_fib_confluence,
+                )
+                ob_conf  = conf_results["ob"]
+                fvg_conf = conf_results["fvg"]
+                fib_conf = conf_results["fib"]
+                ob_found  = ob_conf  is not None
+                fvg_found = fvg_conf is not None
+                fib_found = fib_conf is not None
+
+                enabled_conf_count = sum([use_ob_confluence, use_fvg_confluence, use_fib_confluence])
+                found_conf_count   = sum([ob_found, fvg_found, fib_found])
+                conf_req_passed    = confluence_mode == "required" and found_conf_count > 0
+
+                # Required mode: skip if at least one confluence is enabled but none found
+                if confluence_mode == "required" and enabled_conf_count > 0 and found_conf_count == 0:
+                    _d_conf_miss = True
+                    continue
+
+                # ── Phase 3+4: score with confluence bonuses ──────────────────
+                scored = _score_bias_shift(
+                    prior_checks=prior_result["checksPassed"],
+                    rej_wick_pct=rej_wick_pct_val,
+                    rej_body_pct=rej["bodyPct"],
+                    min_wick_pct=min_wick_pct,
+                    min_body_pct=min_body_pct,
+                    close_beyond_mid=close_is_beyond_mid,
+                    confirmation_status=confirmation_status,
+                    vol_spike=vol_spike,
+                    volume_filter_mode=volume_filter_mode,
+                    sig_offset=sig_offset,
+                    ob_found=ob_found,
+                    fvg_found=fvg_found,
+                    fib_found=fib_found,
+                    confluence_required_passed=conf_req_passed,
+                )
+                score_val = scored["score"]
+                graded    = _grade_from_score(score_val)
+
+                if score_val >= 85:
+                    confidence = "Strong"
+                elif score_val >= 65:
+                    confidence = "Moderate"
+                else:
+                    confidence = "Weak"
+
+                total_checks = prior_result["checksPassed"] + rej["checksPassed"]
+
+                # Human-readable reason chain (includes confluence reasons)
+                dir_word       = "upward" if prior_dir == "up" else "downward"
+                min_wick_pct_i = round(min_wick_pct * 100)
+                min_body_pct_i = round(min_body_pct * 100)
+                drive_word = "bullish" if prior_dir == "up" else "bearish"
+                readable_chain: list[str] = [
+                    f"Clean {prior_move_n}-candle {drive_word} drive detected before rejection",
+                    f"Drive proof: {prior_result['netPct']:.2f}% net · {prior_result['greenCount'] if prior_dir == 'up' else prior_result['redCount']}/{prior_move_n} {'green' if prior_dir == 'up' else 'red'} · {prior_result['upCloseSteps'] if prior_dir == 'up' else prior_result['downCloseSteps']} step{'s' if (prior_result['upCloseSteps'] if prior_dir == 'up' else prior_result['downCloseSteps']) != 1 else ''} · min {prior_result['requiredMovePct']}%",
+                ]
+                if rej_dir == "bearish":
+                    readable_chain.append("Signal candle closed bearish")
+                    readable_chain.append(
+                        f"Upper wick {rej['upperWickPct']}% >= required {min_wick_pct_i}%"
+                    )
+                else:
+                    readable_chain.append("Signal candle closed bullish")
+                    readable_chain.append(
+                        f"Lower wick {rej['lowerWickPct']}% >= required {min_wick_pct_i}%"
+                    )
+                readable_chain.append(f"Body {rej['bodyPct']}% >= required {min_body_pct_i}%")
+                if close_is_beyond_mid:
+                    readable_chain.append(
+                        "Close below candle midpoint" if rej_dir == "bearish"
+                        else "Close above candle midpoint"
+                    )
+                if vol_spike:
+                    vol_ratio = sig_vol / max(avg_vol, 1)
+                    readable_chain.append(f"Volume spike {vol_ratio:.1f}x average")
+                if ob_found:
+                    readable_chain.append(f"OB confluence: {ob_conf['reason']}")
+                if fvg_found:
+                    readable_chain.append(f"FVG confluence: {fvg_conf['reason']}")
+                if fib_found:
+                    readable_chain.append(f"Fib confluence: {fib_conf['reason']}")
+                if conf_req_passed:
+                    readable_chain.append("Required confluence passed")
+                if rej_dir == "bearish":
+                    readable_chain.append(
+                        f"Invalidation: close above rejection high {rej['high']:.6f}"
+                    )
+                else:
+                    readable_chain.append(
+                        f"Invalidation: close below rejection low {rej['low']:.6f}"
+                    )
+
+                conf_found_list = (
+                    (["OB"]  if ob_found  else []) +
+                    (["FVG"] if fvg_found else []) +
+                    (["Fib"] if fib_found else [])
+                )
+                setup_type_label = (
+                    "Bearish Bias Shift" if rej_dir == "bearish" else "Bullish Bias Shift"
+                )
+                pattern    = (f"{'Bearish' if rej_dir == 'bearish' else 'Bullish'} Rejection"
+                              f" · {'Uptrend' if prior_dir == 'up' else 'Downtrend'}")
+                conf_label = "✓ Confirmed" if confirmation_status == "confirmed" else "Early"
+                conf_chip  = f" · {', '.join(conf_found_list)}" if conf_found_list else ""
+                detail     = (
+                    f"Prior {prior_dir.upper()} {prior_move_n}c"
+                    f" · {conf_label}"
+                    f" · Grade {graded['grade']} ({score_val})"
+                    f"{conf_chip}"
+                    f" · Inv: {invalidation_level}"
+                    f" · Conf TF: {_suggested_conf_tf(tf)}"
+                )
+                compact_reasons = prior_result["reasons"] + rej["reasons"]
+                sparkline = [float(c[i]) for i in range(max(0, n - 24), n)]
+
+                candidate = {
+                    # ── compat fields ──
+                    "symbol":       sym,
+                    "price":        round(c[-1], 8),
+                    "timeframe":    tf,
+                    "bias":         rej_dir,
+                    "signal":       "BIAS_SHIFT",
+                    "confidence":   confidence,
+                    "gates":        " · ".join(compact_reasons),
+                    "gatesPassed":  total_checks,
+                    "gatesChecked": 6,
+                    "upperWickPct": rej["upperWickPct"],
+                    "lowerWickPct": rej["lowerWickPct"],
+                    "bodyPct":      rej["bodyPct"],
+                    "volSpike":     vol_spike,
+                    "obConf":       ob_conf,
+                    "fvgConf":      fvg_conf,
+                    # ── Phase 3: score/grade ──
+                    "score":          score_val,
+                    "grade":          graded["grade"],
+                    "gradeLabel":     graded["gradeLabel"],
+                    "scoreBreakdown": scored["breakdown"],
+                    "sparkline":      sparkline,
+                    # ── Phase 4: confluence ──
+                    "fibConf":          fib_conf,
+                    "confluenceMode":   confluence_mode,
+                    "confluencesFound": conf_found_list,
+                    "confluenceCount":  len(conf_found_list),
+                    # ── Phase 2 fields ──
+                    "direction":               rej_dir,
+                    "biasDirection":           rej_dir,
+                    "setupType":               setup_type_label,
+                    "pattern":                 pattern,
+                    "detail":                  detail,
+                    "priorMoveDirection":        prior_dir,
+                    "priorMoveCandles":          prior_move_n,
+                    "priorMoveChecks":           prior_result["checksPassed"],
+                    "priorMoveQuality":          prior_result["quality"],
+                    "priorMoveNetPct":           prior_result["netPct"],
+                    "priorMoveGreenCount":       prior_result["greenCount"],
+                    "priorMoveRedCount":         prior_result["redCount"],
+                    "priorMoveUpCloseSteps":     prior_result["upCloseSteps"],
+                    "priorMoveDownCloseSteps":   prior_result["downCloseSteps"],
+                    "priorMoveRequiredMovePct":  prior_result["requiredMovePct"],
+                    "priorWindowStartTime":      ts[prior_start],
+                    "priorWindowEndTime":        ts[sig_idx - 1],
+                    "signalCandleOffset":        sig_offset,
+                    "signalCandleTime":          ts[sig_idx],
+                    "rejectionOpen":            rej["open"],
+                    "rejectionHigh":            rej["high"],
+                    "rejectionLow":             rej["low"],
+                    "rejectionClose":           rej["close"],
+                    "rejectionBodyPct":         rej["bodyPct"],
+                    "rejectionUpperWickPct":    rej["upperWickPct"],
+                    "rejectionLowerWickPct":    rej["lowerWickPct"],
+                    "invalidationLevel":        invalidation_level,
+                    "invalidationText":         invalidation_text,
+                    "confirmationStatus":       confirmation_status,
+                    "suggestedConfirmationTf":  _suggested_conf_tf(tf),
+                    "reasonChain":              readable_chain,
+                    "debug": {
+                        "priorSummary":      prior_result["summary"],
+                        "priorMoveReasons":  prior_result["reasons"],
+                        "rejReasons":        rej["reasons"],
+                    },
+                }
+
+                if best is None or _is_better_setup(candidate, best):
+                    best = candidate
+
+            if best is not None:
+                # Compute live / closed invalidation status
+                inv_level  = best["invalidationLevel"]
+                inv_dir    = best["bias"]
+                latest_cc  = c[-1]
+                cp         = current_price
+                _cp_or_cc  = cp if cp is not None else latest_cc
+
+                if inv_dir == "bearish":
+                    closed_inv = latest_cc > inv_level
+                    live_br    = cp is not None and cp > inv_level
+                    dist_pct   = round((inv_level - _cp_or_cc) / _cp_or_cc * 100, 4) if inv_level > 0 and _cp_or_cc > 0 else None
+                else:
+                    closed_inv = latest_cc < inv_level
+                    live_br    = cp is not None and cp < inv_level
+                    dist_pct   = round((_cp_or_cc - inv_level) / _cp_or_cc * 100, 4) if inv_level > 0 and _cp_or_cc > 0 else None
+
+                inv_status = ("closed_invalidated" if closed_inv
+                              else "live_breached" if live_br
+                              else "valid")
+                best["invalidationStatus"]       = inv_status
+                best["invalidationBreachedLive"] = live_br
+                best["invalidationClosed"]       = closed_inv
+                best["currentPrice"]             = cp
+                best["latestClosedClose"]        = round(latest_cc, 8)
+                best["invalidationDistancePct"]  = dist_pct
+
+                if live_br and not closed_inv:
+                    warn = (
+                        "Warning: current price has breached bearish invalidation intrabar"
+                        if inv_dir == "bearish" else
+                        "Warning: current price has breached bullish invalidation intrabar"
+                    )
+                    best["reasonChain"].append(warn)
+
+                if closed_inv:
+                    diagnostics["rejected"]["invalidated"] += 1
+                else:
+                    results.append(best)
+            else:
+                # Attribute primary rejection reason (priority order)
+                if not _d_had_prior and _d_weak_prior:
+                    diagnostics["rejected"]["noCleanPriorDrive"] += 1
+                elif not _d_had_prior:
+                    diagnostics["rejected"]["noPriorMove"] += 1
+                elif _d_bias_miss:
+                    diagnostics["rejected"]["biasFilterMismatch"] += 1
+                elif _d_vol_miss:
+                    diagnostics["rejected"]["volumeFilter"] += 1
+                elif not _d_had_rej:
+                    diagnostics["rejected"]["noRejectionCandle"] += 1
+                elif not _d_passed_confirm:
+                    diagnostics["rejected"]["notConfirmed"] += 1
+                elif _d_conf_miss:
+                    diagnostics["rejected"]["confluenceRequired"] += 1
 
         except Exception as e:
             print(f"[DEBUG] bias_scan {sym} error: {e}")
+            diagnostics["rejected"]["errors"] += 1
             continue
 
-    conf_order = {"Strong": 0, "Moderate": 1, "Weak": 2}
-    results.sort(key=lambda x: (conf_order.get(x["confidence"], 3), -x["gatesPassed"]))
+    # Phase 3: apply minimum grade filter, then sort by best setup first
+    diagnostics["setupsFoundBeforeFilters"] = len(results)
+    _before_grade = len(results)
+    results = [r for r in results if _grade_passes_filter(r.get("grade", "D"), minimum_grade)]
+    diagnostics["rejected"]["minimumGrade"] = _before_grade - len(results)
+    _go = {"A+": 0, "A": 1, "B": 2, "C": 3, "D": 4}
+    results.sort(key=lambda x: (
+        -x.get("score", 0),
+        _go.get(x.get("grade", "D"), 4),
+        0 if x.get("confirmationStatus") == "confirmed" else 1,
+        x.get("signalCandleOffset", 0),
+        -(x.get("rejectionUpperWickPct", 0) if x.get("priorMoveDirection") == "up"
+          else x.get("rejectionLowerWickPct", 0)),
+    ))
+    diagnostics["setupsReturned"] = len(results)
     if _tok_uid:
         try: consume_tokens(_tok_uid, len(symbols))
         except Exception as _te: print(f"[Tokens] bias: {_te}")
     return jsonify({
-        "results": results,
-        "scanned": len(symbols),
-        "nextBiasIndex": ROUND_ROBIN_STATE.get("bias_index", 0),
-        "scanMode": scan_mode,
+        "results":        results,
+        "scanned":        len(symbols),
+        "scanMode":       scan_mode,
+        "nextBiasIndex":  BIAS_SCAN_CURSOR.get(cursor_key, 0),
+        "marketCoverage": market_coverage,
+        "diagnostics":    diagnostics,
     })
+
+
+# ============================================================
+# Order Flow v5 — Exchange-Aware REST Adapters
+# ============================================================
+
+def normalize_of_symbol(exchange: str, symbol: str) -> str:
+    """Normalize symbol to each exchange's perpetual contract format."""
+    sym = symbol.upper().replace('.P', '').strip()
+    if exchange in ('binance', 'bybit'):
+        sym = sym.replace('/', '').replace('-', '').replace('_', '')
+        if not sym.endswith('USDT'):
+            sym = sym + 'USDT'
+        return sym
+    elif exchange == 'okx':
+        if sym.endswith('-USDT-SWAP'):
+            return sym
+        base = sym.replace('USDT', '').replace('/', '').replace('-', '').replace('_', '')
+        return f"{base}-USDT-SWAP"
+    elif exchange == 'mexc':
+        if '_USDT' in sym:
+            return sym
+        base = sym.replace('USDT', '').replace('/', '').replace('-', '').replace('_', '')
+        return f"{base}_USDT"
+    return sym
+
+
+def normalize_of_timeframe(exchange: str, timeframe: str) -> Tuple[Optional[str], Optional[str]]:
+    """Returns (exchange_interval, error_or_None)."""
+    tf = timeframe.lower()
+    maps = {
+        'binance': {'1h':'1h','4h':'4h','6h':'6h','12h':'12h','1d':'1d'},
+        'bybit':   {'1h':'60','4h':'240','6h':'360','12h':'720','1d':'D'},
+        'okx':     {'1h':'1H','4h':'4H','6h':'6H','12h':'12H','1d':'1D'},
+        'mexc':    {'1h':'Min60','4h':'Hour4','1d':'Day1'},
+    }
+    iv = maps.get(exchange, {}).get(tf)
+    if not iv:
+        return None, f"Timeframe {timeframe} not supported for {exchange.upper()}"
+    return iv, None
+
+
+def _of_tf_range_pct(tf: str) -> float:
+    return {'1h':1.0,'4h':2.0,'6h':2.5,'12h':3.0,'1d':5.0}.get(tf.lower(), 2.0)
+
+
+def process_order_book_levels(bids: list, asks: list, current_price: float, range_pct: float) -> Optional[dict]:
+    """Python equivalent of frontend _processBookData. Uses USDT notional for sizing/ranking."""
+    if not bids or not asks or not current_price or current_price <= 0:
+        return None
+    lo = current_price * (1 - range_pct / 100)
+    hi = current_price * (1 + range_pct / 100)
+
+    def parse_level(lv):
+        try:
+            p, q = float(lv[0]), float(lv[1])
+            return {'price': p, 'qty': q, 'notional': p * q}
+        except Exception:
+            return None
+
+    fb = [l for l in (parse_level(b) for b in bids) if l and lo <= l['price'] <= current_price]
+    fa = [l for l in (parse_level(a) for a in asks) if l and current_price <= l['price'] <= hi]
+    max_n = max(
+        max((x['notional'] for x in fb), default=0),
+        max((x['notional'] for x in fa), default=0), 1)
+
+    def blend(item, is_bid):
+        ss = item['notional'] / max_n
+        dist = ((current_price - item['price']) / current_price if is_bid
+                else (item['price'] - current_price) / current_price)
+        cs = max(0.0, 1.0 - dist / (range_pct / 100))
+        return ss * 0.75 + cs * 0.25
+
+    top5_b = sorted(fb, key=lambda x: blend(x, True),  reverse=True)[:5]
+    top5_a = sorted(fa, key=lambda x: blend(x, False), reverse=True)[:5]
+    bid_vol = sum(b['notional'] for b in fb)
+    ask_vol = sum(a['notional'] for a in fa)
+    tot = bid_vol + ask_vol
+    bid_pct = round(bid_vol / tot * 100) if tot > 0 else 50
+    ask_pct = 100 - bid_pct
+    return {
+        'top5Bids': [{'price':b['price'],'qty':b['qty'],'notional':b['notional'],
+                      'distancePct':round((current_price-b['price'])/current_price*100,2),
+                      'strengthPct':round(b['notional']/max_n*100)} for b in top5_b],
+        'top5Asks': [{'price':a['price'],'qty':a['qty'],'notional':a['notional'],
+                      'distancePct':round((a['price']-current_price)/current_price*100,2),
+                      'strengthPct':round(a['notional']/max_n*100)} for a in top5_a],
+        'bidVolumeUSDT': bid_vol, 'askVolumeUSDT': ask_vol,
+        'bidPct': bid_pct,        'askPct': ask_pct,
+        'imbalancePct': bid_pct - ask_pct,
+        'sideHeavier': ('Buy side heavier' if bid_pct >= 55
+                        else 'Sell side heavier' if ask_pct >= 55 else 'Balanced book'),
+    }
+
+
+def _of_pad_history(arr: list, length: int = 3) -> list:
+    while len(arr) < length:
+        arr.insert(0, None)
+    return arr[-length:]
+
+
+def _of_build_candles_binance(klines_raw: list, tf: str) -> list:
+    candles, tf_up, now_ms = [], tf.upper(), int(time.time() * 1000)
+    n = len(klines_raw)
+    for i, k in enumerate(klines_raw):
+        total_quote = safe_float(k[7])
+        tb_quote    = safe_float(k[10])
+        ts_quote    = total_quote - tb_quote
+        buy_pct     = round(tb_quote / total_quote * 100, 1) if total_quote > 0 else None
+        sell_pct    = round(100 - buy_pct, 1) if buy_pct is not None else None
+        delta       = round(tb_quote - ts_quote, 2) if total_quote > 0 else None
+        close_ms    = int(k[6])
+        is_running  = (i == n - 1) and (close_ms > now_ms)
+        label = (f"Current {tf_up} Candle — Running" if i == n - 1
+                 else f"Last Closed {tf_up} Candle — Confirmed" if i == n - 2
+                 else f"Previous {tf_up} Candle — Confirmed")
+        candles.append({'label':label,
+            'open':safe_float(k[1]),'high':safe_float(k[2]),'low':safe_float(k[3]),'close':safe_float(k[4]),
+            'totalVolumeBase':safe_float(k[5]),'totalVolumeQuote':total_quote,
+            'takerBuyQuote':tb_quote,'takerSellQuote':ts_quote,
+            'buyPct':buy_pct,'sellPct':sell_pct,'delta':delta,
+            'isRunning':is_running,'closeTimeMs':close_ms,'dataQuality':'native'})
+    return candles
+
+
+def _of_build_candles_no_split(klines_norm: list, tf: str) -> list:
+    candles, tf_up, now_ms = [], tf.upper(), int(time.time() * 1000)
+    n = len(klines_norm)
+    for i, k in enumerate(klines_norm):
+        close_ms   = int(k.get('closeTimeMs', k.get('openTime', 0)))
+        is_running = (i == n - 1) and (close_ms > now_ms)
+        label = (f"Current {tf_up} Candle — Running" if i == n - 1
+                 else f"Last Closed {tf_up} Candle — Confirmed" if i == n - 2
+                 else f"Previous {tf_up} Candle — Confirmed")
+        candles.append({'label':label,
+            'open':k.get('open',0),'high':k.get('high',0),'low':k.get('low',0),'close':k.get('close',0),
+            'totalVolumeBase':k.get('volume',0),'totalVolumeQuote':k.get('quoteVolume',k.get('turnover',0)),
+            'takerBuyQuote':None,'takerSellQuote':None,'buyPct':None,'sellPct':None,'delta':None,
+            'isRunning':is_running,'closeTimeMs':close_ms,'dataQuality':'unavailable'})
+    return candles
+
+
+def fetch_of_binance(symbol: str, tf: str) -> dict:
+    errors, iv = [], tf.lower()
+    klines_raw = []
+    try:
+        r = req.get(f"{BINANCE_FUTURES_API}/fapi/v1/klines",
+                    params={'symbol':symbol,'interval':iv,'limit':4}, timeout=10)
+        if r.status_code == 200:
+            klines_raw = r.json()
+    except Exception as e:
+        errors.append(f"klines: {e}")
+    if not klines_raw or len(klines_raw) < 2:
+        return {'ok':False,'errors':[f'Candle data unavailable for {symbol}']+errors}
+
+    oi_delta, oi_value = [], None
+    try:
+        r = req.get(f"{BINANCE_FUTURES_API}/futures/data/openInterestHist",
+                    params={'symbol':symbol,'period':iv,'limit':4}, timeout=10)
+        if r.status_code == 200:
+            oi_raw = r.json()
+            if oi_raw and len(oi_raw) >= 2:
+                for i in range(1, len(oi_raw)):
+                    pv = safe_float(oi_raw[i-1].get('sumOpenInterestValue',0))
+                    cv = safe_float(oi_raw[i].get('sumOpenInterestValue',0))
+                    oi_delta.append(round((cv-pv)/pv*100,2) if pv > 0 else 0)
+                oi_value = safe_float(oi_raw[-1].get('sumOpenInterestValue',0))
+    except Exception as e:
+        errors.append(f"OI: {e}")
+
+    fund_hist = []
+    try:
+        r = req.get(f"{BINANCE_FUTURES_API}/fapi/v1/fundingRate",
+                    params={'symbol':symbol,'limit':4}, timeout=10)
+        if r.status_code == 200:
+            fraw = r.json()
+            if fraw:
+                fund_hist = [round(safe_float(f.get('fundingRate',0))*100,6) for f in fraw]
+    except Exception as e:
+        errors.append(f"funding: {e}")
+
+    bid_ask = None
+    try:
+        for lim in [500, 100]:
+            r = req.get(f"{BINANCE_FUTURES_API}/fapi/v1/depth",
+                        params={'symbol':symbol,'limit':lim}, timeout=10)
+            if r.status_code == 200:
+                d = r.json()
+                cp = safe_float(klines_raw[-1][4])
+                bid_ask = process_order_book_levels(d.get('bids',[]), d.get('asks',[]), cp, _of_tf_range_pct(iv))
+                if bid_ask:
+                    bid_ask['tfRangePct'] = _of_tf_range_pct(iv)
+                break
+    except Exception as e:
+        errors.append(f"depth: {e}")
+    if bid_ask:
+        bid_ask['oiValue'] = oi_value
+
+    candles = _of_build_candles_binance(klines_raw, iv)
+    cvd, cvd_r = [], 0.0
+    for c in candles:
+        cvd_r += c['delta'] or 0
+        cvd.append(round(cvd_r, 2))
+    return {'ok':True,'exchange':'binance','sourceLabel':'Binance Futures',
+            'symbol':symbol,'displaySymbol':symbol,'timeframe':iv.upper(),
+            'candles':candles,'cvd':cvd,
+            'oiDeltaHistory':_of_pad_history(oi_delta),
+            'oiValueUSDT':oi_value,'fundingHistory':_of_pad_history(fund_hist),
+            'bidAsk':bid_ask,'buySellAvailable':True,'errors':errors}
+
+
+def fetch_of_bybit(symbol: str, tf: str) -> dict:
+    errors = []
+    iv, err = normalize_of_timeframe('bybit', tf)
+    if err:
+        return {'ok':False,'errors':[err]}
+    iv_ms = int(iv) * 60000 if iv.isdigit() else 86400000
+
+    klines_norm = []
+    try:
+        r = req.get(f"{BYBIT_PERP_API}/kline",
+                    params={'category':'linear','symbol':symbol,'interval':iv,'limit':4}, timeout=10)
+        if r.status_code == 200:
+            raw = list(reversed(r.json().get('result',{}).get('list',[])))
+            for k in raw:
+                open_ms = int(k[0])
+                klines_norm.append({'open':float(k[1]),'high':float(k[2]),'low':float(k[3]),
+                    'close':float(k[4]),'volume':float(k[5]),'turnover':float(k[6]),
+                    'openTime':open_ms,'closeTimeMs':open_ms+iv_ms-1})
+    except Exception as e:
+        errors.append(f"klines: {e}")
+    if not klines_norm or len(klines_norm) < 2:
+        return {'ok':False,'errors':[f'Candle data unavailable for {symbol}']+errors}
+    current_price = klines_norm[-1]['close']
+
+    oi_delta, oi_value = [], None
+    oi_iv_map = {'60':'1h','240':'4h','360':'4h','720':'4h','D':'1d'}
+    oi_interval = oi_iv_map.get(iv, '1h')
+    try:
+        r = req.get(f"{BYBIT_PERP_API}/open-interest",
+                    params={'category':'linear','symbol':symbol,'intervalTime':oi_interval,'limit':4}, timeout=10)
+        if r.status_code == 200:
+            oi_list = list(reversed(r.json().get('result',{}).get('list',[])))
+            if len(oi_list) >= 2:
+                for i in range(1, len(oi_list)):
+                    pv = safe_float(oi_list[i-1].get('openInterest',0)) * current_price
+                    cv = safe_float(oi_list[i].get('openInterest',0)) * current_price
+                    oi_delta.append(round((cv-pv)/pv*100,2) if pv > 0 else 0)
+                oi_value = safe_float(oi_list[-1].get('openInterest',0)) * current_price
+    except Exception as e:
+        errors.append(f"OI: {e}")
+
+    fund_hist = []
+    try:
+        r = req.get(f"{BYBIT_PERP_API}/funding/history",
+                    params={'category':'linear','symbol':symbol,'limit':4}, timeout=10)
+        if r.status_code == 200:
+            flist = list(reversed(r.json().get('result',{}).get('list',[])))
+            fund_hist = [round(safe_float(f.get('fundingRate',0))*100,6) for f in flist]
+    except Exception as e:
+        errors.append(f"funding: {e}")
+
+    bid_ask = None
+    try:
+        r = req.get(f"{BYBIT_PERP_API}/orderbook",
+                    params={'category':'linear','symbol':symbol,'limit':200}, timeout=10)
+        if r.status_code == 200:
+            res = r.json().get('result',{})
+            bid_ask = process_order_book_levels(res.get('b',[]), res.get('a',[]), current_price, _of_tf_range_pct(tf))
+            if bid_ask:
+                bid_ask['tfRangePct'] = _of_tf_range_pct(tf)
+    except Exception as e:
+        errors.append(f"depth: {e}")
+    if bid_ask:
+        bid_ask['oiValue'] = oi_value
+
+    candles = _of_build_candles_no_split(klines_norm, tf)
+    return {'ok':True,'exchange':'bybit','sourceLabel':'Bybit USDT Perp',
+            'symbol':symbol,'displaySymbol':symbol,'timeframe':tf.upper(),
+            'candles':candles,'cvd':[None]*len(candles),
+            'oiDeltaHistory':_of_pad_history(oi_delta),
+            'oiValueUSDT':oi_value,'fundingHistory':_of_pad_history(fund_hist),
+            'bidAsk':bid_ask,'buySellAvailable':False,'errors':errors}
+
+
+def fetch_of_okx(symbol: str, tf: str) -> dict:
+    errors = []
+    iv, err = normalize_of_timeframe('okx', tf)
+    if err:
+        return {'ok':False,'errors':[err]}
+    iv_ms_map = {'1H':3600000,'4H':14400000,'6H':21600000,'12H':43200000,'1D':86400000}
+    iv_ms = iv_ms_map.get(iv, 3600000)
+    okx_pub = "https://www.okx.com/api/v5/public"
+
+    klines_norm = []
+    try:
+        r = req.get(f"{OKX_PERP_API}/candles",
+                    params={'instId':symbol,'bar':iv,'limit':4}, timeout=10)
+        if r.status_code == 200:
+            raw = list(reversed(r.json().get('data',[])))
+            for k in raw:
+                open_ms = int(k[0])
+                klines_norm.append({'open':float(k[1]),'high':float(k[2]),'low':float(k[3]),
+                    'close':float(k[4]),'volume':float(k[5]),
+                    'quoteVolume':float(k[7]) if len(k)>7 else 0,
+                    'openTime':open_ms,'closeTimeMs':open_ms+iv_ms-1})
+    except Exception as e:
+        errors.append(f"klines: {e}")
+    if not klines_norm or len(klines_norm) < 2:
+        return {'ok':False,'errors':[f'Candle data unavailable for {symbol}']+errors}
+    current_price = klines_norm[-1]['close']
+
+    oi_value = None
+    try:
+        r = req.get(f"{okx_pub}/open-interest", params={'instType':'SWAP','instId':symbol}, timeout=10)
+        if r.status_code == 200:
+            d = r.json().get('data',[])
+            if d:
+                oi_value = safe_float(d[0].get('oiCcy',0)) * current_price
+    except Exception as e:
+        errors.append(f"OI: {e}")
+
+    fund_hist = []
+    try:
+        r = req.get(f"{okx_pub}/funding-rate-history", params={'instId':symbol,'limit':4}, timeout=10)
+        if r.status_code == 200:
+            fraw = list(reversed(r.json().get('data',[])))
+            fund_hist = [round(safe_float(f.get('fundingRate',0))*100,6) for f in fraw]
+    except Exception as e:
+        errors.append(f"funding: {e}")
+
+    bid_ask = None
+    try:
+        r = req.get(f"{OKX_PERP_API}/books", params={'instId':symbol,'sz':200}, timeout=10)
+        if r.status_code == 200:
+            d = r.json().get('data',[])
+            if d:
+                bids = [[b[0],b[1]] for b in d[0].get('bids',[])]
+                asks = [[a[0],a[1]] for a in d[0].get('asks',[])]
+                bid_ask = process_order_book_levels(bids, asks, current_price, _of_tf_range_pct(tf))
+                if bid_ask:
+                    bid_ask['tfRangePct'] = _of_tf_range_pct(tf)
+    except Exception as e:
+        errors.append(f"depth: {e}")
+    if bid_ask:
+        bid_ask['oiValue'] = oi_value
+
+    candles = _of_build_candles_no_split(klines_norm, tf)
+    return {'ok':True,'exchange':'okx','sourceLabel':'OKX Swap',
+            'symbol':symbol,'displaySymbol':symbol,'timeframe':tf.upper(),
+            'candles':candles,'cvd':[None]*len(candles),
+            'oiDeltaHistory':[None,None,None],
+            'oiValueUSDT':oi_value,'fundingHistory':_of_pad_history(fund_hist),
+            'bidAsk':bid_ask,'buySellAvailable':False,'errors':errors}
+
+
+def fetch_of_mexc(symbol: str, tf: str) -> dict:
+    errors = []
+    iv, err = normalize_of_timeframe('mexc', tf)
+    if err:
+        return {'ok':False,'errors':[err]}
+    iv_ms_map = {'Min60':3600000,'Hour4':14400000,'Day1':86400000}
+    iv_ms = iv_ms_map.get(iv, 3600000)
+
+    klines_norm = []
+    try:
+        r = req.get(f"{MEXC_PERP_API}/kline",
+                    params={'symbol':symbol,'interval':iv,'limit':4}, timeout=10)
+        if r.status_code == 200:
+            data = r.json().get('data',{})
+            times  = data.get('time',[])
+            opens  = data.get('open',[])
+            highs  = data.get('high',[])
+            lows   = data.get('low',[])
+            closes = data.get('close',[])
+            vols   = data.get('vol',[])
+            for i in range(len(times)):
+                open_ms = int(times[i]) * 1000
+                klines_norm.append({'open':float(opens[i]) if i<len(opens) else 0,
+                    'high':float(highs[i]) if i<len(highs) else 0,
+                    'low': float(lows[i])  if i<len(lows)  else 0,
+                    'close':float(closes[i]) if i<len(closes) else 0,
+                    'volume':float(vols[i]) if i<len(vols) else 0,
+                    'openTime':open_ms,'closeTimeMs':open_ms+iv_ms-1})
+    except Exception as e:
+        errors.append(f"klines: {e}")
+    if not klines_norm or len(klines_norm) < 2:
+        return {'ok':False,'errors':[f'Candle data unavailable for {symbol}']+errors}
+    current_price = klines_norm[-1]['close']
+
+    oi_value, fund_hist = None, []
+    try:
+        r = req.get(f"{MEXC_PERP_API}/ticker", params={'symbol':symbol}, timeout=10)
+        if r.status_code == 200:
+            body = r.json().get('data',[])
+            ticker = None
+            if isinstance(body, list):
+                for t in body:
+                    if t.get('symbol','').lower() == symbol.lower():
+                        ticker = t; break
+            elif isinstance(body, dict):
+                ticker = body
+            if ticker:
+                oi_value = safe_float(ticker.get('holdVol',0)) * current_price
+                fr = safe_float(ticker.get('fundingRate',0))
+                fund_hist = [round(fr * 100, 6)]
+    except Exception as e:
+        errors.append(f"OI/funding: {e}")
+
+    bid_ask = None
+    try:
+        r = req.get(f"{MEXC_PERP_API}/depth/{symbol}", timeout=10)
+        if r.status_code == 200:
+            d = r.json().get('data',{})
+            bids = [[str(b[0]),str(b[1])] for b in d.get('bids',[])]
+            asks = [[str(a[0]),str(a[1])] for a in d.get('asks',[])]
+            bid_ask = process_order_book_levels(bids, asks, current_price, _of_tf_range_pct(tf))
+            if bid_ask:
+                bid_ask['tfRangePct'] = _of_tf_range_pct(tf)
+    except Exception as e:
+        errors.append(f"depth: {e}")
+    if bid_ask:
+        bid_ask['oiValue'] = oi_value
+
+    candles = _of_build_candles_no_split(klines_norm, tf)
+    return {'ok':True,'exchange':'mexc','sourceLabel':'MEXC Contract',
+            'symbol':symbol,'displaySymbol':symbol,'timeframe':tf.upper(),
+            'candles':candles,'cvd':[None]*len(candles),
+            'oiDeltaHistory':[None,None,None],
+            'oiValueUSDT':oi_value,'fundingHistory':_of_pad_history(fund_hist),
+            'bidAsk':bid_ask,'buySellAvailable':False,'oiDataQuality':'native_holdVol','errors':errors}
+
+
+@app.route("/api/order-flow")
+def api_order_flow():
+    """Order Flow v5 — exchange-aware. Returns normalized OF data for Binance/Bybit/OKX/MEXC."""
+    exchange = (request.args.get('exchange','binance') or 'binance').lower().strip()
+    symbol   = (request.args.get('symbol','') or '').strip().upper()
+    tf       = (request.args.get('timeframe','1h') or '1h').strip().lower()
+    if not symbol:
+        return jsonify({'ok':False,'errors':['symbol is required']}), 400
+    norm_sym = normalize_of_symbol(exchange, symbol)
+    if exchange == 'binance':
+        data = fetch_of_binance(norm_sym, tf)
+    elif exchange == 'bybit':
+        data = fetch_of_bybit(norm_sym, tf)
+    elif exchange == 'okx':
+        data = fetch_of_okx(norm_sym, tf)
+    elif exchange == 'mexc':
+        data = fetch_of_mexc(norm_sym, tf)
+    else:
+        return jsonify({'ok':False,'errors':[f'Order Flow not supported for exchange: {exchange}']}), 400
+    return jsonify(data)
 
 
 # ============================================================
