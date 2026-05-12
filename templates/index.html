@@ -1754,29 +1754,25 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
         <div class="mode-pills">
           <button id="biasModeNormalBtn" class="mode-pill active" onclick="setBiasMode('normal')">◈ Normal Mode</button>
           <button id="biasModeExpertBtn" class="mode-pill" onclick="setBiasMode('expert')">⚡ Expert Mode</button>
-          <span class="tip-icon" onclick="toggleTip('tip-bias-mode')" style="margin-left:6px">ⓘ</span>
         </div>
         <button class="zone-btn" style="font-size:9px;padding:4px 10px;color:#64748b;border-color:rgba(100,116,139,.25)" onclick="resetBiasDefaults()">↺ Reset Defaults</button>
       </div>
-      <div class="tip-box" id="tip-bias-mode"><b>Normal Mode</b> shows only the most important settings — good for most users. <b>Expert Mode</b> unlocks advanced filters for fine-tuning candle structure, rejection quality, and volume requirements.</div>
 
       <!-- Common Settings (visible in both Normal and Expert mode) -->
       <div class="setting-section">
         <div class="setting-title">SCAN SETTINGS</div>
         <div class="row">
-          <div class="field"><label>Market Scope <span class="tip-icon" onclick="toggleTip('tip-bias-scope')">ⓘ</span></label>
+          <div class="field"><label>Market Scope</label>
             <select id="biasScanSource">
               <option value="selected">Selected Pairs</option>
               <option value="market">Full Market</option>
             </select>
-            <div class="tip-box" id="tip-bias-scope"><b>Selected Pairs</b> scans only the pairs you have added in the Pairs tab — fast and focused. <b>Full Market</b> scans all available USDT pairs — broader coverage but takes longer.</div>
           </div>
-          <div class="field"><label>Pairs / Cycle <span class="tip-icon" onclick="toggleTip('tip-bias-pairs')">ⓘ</span></label>
+          <div class="field"><label>Pairs / Cycle</label>
             <input id="biasPairsPerCycle" type="number" value="60" min="5" max="100">
-            <div class="tip-box" id="tip-bias-pairs">How many pairs are checked each scan cycle. Lower numbers finish faster but cover fewer pairs per run. Try 30–60 for a good balance between speed and coverage.</div>
           </div>
         </div>
-        <div class="field" style="max-width:160px;margin-bottom:0"><label>Timeframe <span class="tip-icon" onclick="toggleTip('tip-bias-tf')">ⓘ</span></label>
+        <div class="field" style="max-width:160px;margin-bottom:0"><label>Timeframe</label>
           <select id="biasTf">
             <option value="1h">1H</option>
             <option value="4h">4H</option>
@@ -1784,29 +1780,26 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
             <option value="12h">12H</option>
             <option value="1d" selected>1D</option>
           </select>
-          <div class="tip-box" id="tip-bias-tf">Select the candle timeframe for Bias Detection. <b>1H</b> gives more frequent signals, <b>4H</b> or <b>1D</b> gives stronger and rarer setups. Higher timeframes = fewer but more reliable signals.</div>
         </div>
       </div>
 
       <div class="setting-section">
         <div class="setting-title">DETECTION</div>
         <div class="row">
-          <div class="field"><label>Bias Strength <span class="tip-icon" onclick="toggleTip('tip-bias-strength')">ⓘ</span></label>
+          <div class="field"><label>Bias Strength</label>
             <select id="biasStrength">
               <option value="early">Early</option>
               <option value="balanced" selected>Balanced</option>
               <option value="strong">Strong Only</option>
             </select>
             <div class="setting-hint">Early: more results. Balanced: recommended. Strong Only: fewer, cleaner setups.</div>
-            <div class="tip-box" id="tip-bias-strength">Controls how strong the setup must be before it appears. <b>Early</b> shows more setups but some may be weaker. <b>Balanced</b> is the recommended middle ground. <b>Strong Only</b> gives fewer but cleaner, higher-confidence results.</div>
           </div>
-          <div class="field"><label>Detection Mode <span class="tip-icon" onclick="toggleTip('tip-bias-detmode')">ⓘ</span></label>
+          <div class="field"><label>Detection Mode</label>
             <select id="biasDetectionMode">
               <option value="early" selected>Early</option>
               <option value="confirmed">Confirmed</option>
             </select>
             <div class="setting-hint">Early: rejection candle closed. Confirmed: later candle confirms the break.</div>
-            <div class="tip-box" id="tip-bias-detmode">Controls how early or strict the signal is. <b>Early</b> shows a setup as soon as the rejection candle closes — faster signals but slightly more noise. <b>Confirmed</b> waits for a follow-up candle to confirm the move before showing the setup.</div>
           </div>
         </div>
       </div>
@@ -1814,38 +1807,33 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
       <div class="setting-section">
         <div class="setting-title">FILTERS</div>
         <div class="row">
-          <div class="field"><label>Confluence Mode <span class="tip-icon" onclick="toggleTip('tip-bias-confmode')">ⓘ</span></label>
+          <div class="field"><label>Confluence Mode</label>
             <select id="biasConfluenceMode">
               <option value="optional" selected>Optional</option>
               <option value="required">Required</option>
             </select>
             <div class="setting-hint">Optional: OB/FVG/Fib improve score. Required: hides setups with no confluence.</div>
-            <div class="tip-box" id="tip-bias-confmode">Controls whether extra confirmations (OB, FVG, Fib) are required or optional. <b>Optional</b> shows all setups but gives a higher grade when confluence is present. <b>Required</b> only shows setups that have at least one confluence zone nearby.</div>
           </div>
-          <div class="field"><label>Minimum Grade <span class="tip-icon" onclick="toggleTip('tip-bias-grade')">ⓘ</span></label>
+          <div class="field"><label>Minimum Grade</label>
             <select id="biasMinGrade">
               <option value="C+">C+</option>
               <option value="B+" selected>B+</option>
               <option value="A">A Only</option>
             </select>
             <div class="setting-hint">C+: more setups. B+: balanced. A: high quality only.</div>
-            <div class="tip-box" id="tip-bias-grade">Filters results by quality score. <b>C+</b> shows more setups including weaker ones. <b>B+</b> is the balanced recommended setting. <b>A Only</b> shows only the strongest setups. Grade scale: A+ elite → A strong → B valid → C watch-only → D weak.</div>
           </div>
         </div>
         <div style="display:flex;gap:18px;flex-wrap:wrap;padding:6px 0 2px">
           <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:11px;color:var(--text-secondary)">
-            <input type="checkbox" id="biasUseObConf" checked style="accent-color:var(--accent);width:14px;height:14px"> OB Confluence <span class="tip-icon" onclick="toggleTip('tip-bias-obconf')">ⓘ</span>
+            <input type="checkbox" id="biasUseObConf" checked style="accent-color:var(--accent);width:14px;height:14px"> OB Confluence
           </label>
           <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:11px;color:var(--text-secondary)">
-            <input type="checkbox" id="biasUseFvgConf" checked style="accent-color:var(--accent);width:14px;height:14px"> FVG Confluence <span class="tip-icon" onclick="toggleTip('tip-bias-fvgconf')">ⓘ</span>
+            <input type="checkbox" id="biasUseFvgConf" checked style="accent-color:var(--accent);width:14px;height:14px"> FVG Confluence
           </label>
           <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:11px;color:var(--text-secondary)">
-            <input type="checkbox" id="biasUseFibConf" checked style="accent-color:var(--accent);width:14px;height:14px"> Fib Confluence <span class="tip-icon" onclick="toggleTip('tip-bias-fibconf')">ⓘ</span>
+            <input type="checkbox" id="biasUseFibConf" checked style="accent-color:var(--accent);width:14px;height:14px"> Fib Confluence
           </label>
         </div>
-        <div class="tip-box" id="tip-bias-obconf">When checked, the scan checks if the rejection happened near an <b>Order Block</b> zone — areas where large players previously reversed price. Having OB confluence boosts the setup's grade.</div>
-        <div class="tip-box" id="tip-bias-fvgconf">When checked, the scan checks if the rejection happened near a <b>Fair Value Gap</b> — a price imbalance that often gets revisited. Having FVG confluence boosts the setup's grade.</div>
-        <div class="tip-box" id="tip-bias-fibconf">When checked, the scan checks if the rejection happened near a key <b>Fibonacci level</b> (like 50% or 61.8%). These are areas where reversals commonly occur. Having Fib confluence boosts the setup's grade.</div>
       </div>
 
       <!-- Expert Mode Extra Settings (hidden by default) -->
@@ -1854,15 +1842,13 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
         <div class="setting-section">
           <div class="setting-title">CANDLE STRUCTURE</div>
           <div class="row">
-            <div class="field"><label>Prior Move Candles <span class="tip-icon" onclick="toggleTip('tip-bias-priormove')">ⓘ</span></label>
+            <div class="field"><label>Prior Move Candles</label>
               <input id="biasPriorMoveCandles" type="number" value="4" min="2" max="10">
               <div class="setting-hint">Candles forming the prior trend push. (2–10)</div>
-              <div class="tip-box" id="tip-bias-priormove">Number of previous closed candles used to check if price had a clean push before the rejection candle. More candles means a longer trend is required. A good prior drive usually leads to a stronger bias shift. Try 3–5 as a starting point.</div>
             </div>
-            <div class="field"><label>Signal Search Candles <span class="tip-icon" onclick="toggleTip('tip-bias-sigsearch')">ⓘ</span></label>
+            <div class="field"><label>Signal Search Candles</label>
               <input id="biasSignalSearchCandles" type="number" value="1" min="1" max="5">
               <div class="setting-hint">Recent candles searched for rejection. (1–5)</div>
-              <div class="tip-box" id="tip-bias-sigsearch">How many recent closed candles to look at when searching for the rejection candle. Setting to 1 checks only the latest closed candle. Higher values can catch setups that formed a few candles ago but are still valid.</div>
             </div>
           </div>
         </div>
@@ -1870,37 +1856,32 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
         <div class="setting-section">
           <div class="setting-title">REJECTION QUALITY</div>
           <div class="row">
-            <div class="field"><label>Min Wick % <span class="tip-icon" onclick="toggleTip('tip-bias-wick')">ⓘ</span></label>
+            <div class="field"><label>Min Wick %</label>
               <input id="biasMinWickPct" type="number" value="35" min="10" max="80">
               <div class="setting-hint">Rejection wick as % of candle range. (10–80)</div>
-              <div class="tip-box" id="tip-bias-wick">Minimum wick size on the rejection candle, as a percentage of the full candle range. A bigger wick means price strongly rejected from that level. Default 35% is a balanced threshold — lower it to see more setups, raise it to filter weaker rejections.</div>
             </div>
-            <div class="field"><label>Min Body % <span class="tip-icon" onclick="toggleTip('tip-bias-body')">ⓘ</span></label>
+            <div class="field"><label>Min Body %</label>
               <input id="biasMinBodyPct" type="number" value="20" min="5" max="70">
               <div class="setting-hint">Body size as % of candle range. (5–70)</div>
-              <div class="tip-box" id="tip-bias-body">Minimum candle body size as a percentage of the full range. This filters out candles with no real close conviction — doji candles or very small bodies. A larger body means the candle closed with more directional pressure.</div>
             </div>
           </div>
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:11px;color:var(--text-secondary);margin-top:4px">
             <input type="checkbox" id="biasRequireCloseBeyondMidpoint" checked style="accent-color:var(--accent);width:14px;height:14px">
-            Require Close Beyond Midpoint <span class="tip-icon" onclick="toggleTip('tip-bias-midpoint')">ⓘ</span>
+            Require Close Beyond Midpoint
           </label>
-          <div class="tip-box" id="tip-bias-midpoint">Requires the rejection candle to close beyond the midpoint of its range. This confirms real rejection — if the candle only has a wick but closes near the open, the rejection may be weak. When checked, only candles with a strong close away from the level are shown.</div>
         </div>
 
         <div class="setting-section">
           <div class="setting-title">VOLUME</div>
           <div class="row">
-            <div class="field"><label>Volume Filter <span class="tip-icon" onclick="toggleTip('tip-bias-volfil')">ⓘ</span></label>
+            <div class="field"><label>Volume Filter</label>
               <select id="biasVolumeFilter">
                 <option value="optional" selected>Optional</option>
                 <option value="required">Required</option>
               </select>
-              <div class="tip-box" id="tip-bias-volfil">Checks if the rejection candle had higher-than-normal volume. <b>Optional</b> means a volume spike improves the grade but is not required to show the setup. <b>Required</b> only shows setups where volume was notably elevated — fewer but higher-conviction signals.</div>
             </div>
-            <div class="field"><label>Volume Multiplier <span class="tip-icon" onclick="toggleTip('tip-bias-volmult')">ⓘ</span></label>
+            <div class="field"><label>Volume Multiplier</label>
               <input id="biasVolumeMultiplier" type="number" value="1.5" step="0.1" min="1.0" max="5.0">
-              <div class="tip-box" id="tip-bias-volmult">How much higher the signal candle's volume must be compared to the recent average. Example: <b>1.5</b> means the candle needs at least 50% more volume than average. Higher values give a stricter volume requirement.</div>
             </div>
           </div>
         </div>
