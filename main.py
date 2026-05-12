@@ -2338,7 +2338,7 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
     Zone source candle (+1 offset within the search range):
       Pine finds the extreme candle (lowest low / highest high), then takes
       the candle ONE BAR EARLIER (the +1 offset) for hl2 and volume.
-      ob_source = max(search_start, extreme_idx - 1)
+      ob_source = max(0, extreme_idx - 1)  # floor=0 only, Pine's offset is unconditional
 
     Pine reference:
       int iU = obj.l.indexof(obj.l.min()) + 1   <- the +1 offset
@@ -2384,7 +2384,8 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
 
                 # Step 2: +1 offset — Pine uses the candle ONE BAR EARLIER for hl2/volume
                 # In Pine's reversed array: +1 = older = one bar to the left in forward time
-                ob_source = max(search_start, min_idx - 1)
+                # Floor is 0 (array boundary), NOT search_start — Pine's offset is unconditional
+                ob_source = max(0, min_idx - 1)
 
                 # Step 3: Zone boundaries
                 hl2_val   = (h[ob_source] + l[ob_source]) / 2.0
@@ -2446,8 +2447,8 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
                     if h[j] > h[max_idx]:
                         max_idx = j
 
-                # Step 2: +1 offset
-                ob_source = max(search_start, max_idx - 1)
+                # Step 2: +1 offset — floor is 0, NOT search_start (Pine's offset is unconditional)
+                ob_source = max(0, max_idx - 1)
 
                 # Step 3: Zone boundaries
                 hl2_val   = (h[ob_source] + l[ob_source]) / 2.0
@@ -2557,7 +2558,7 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
                 for j in range(search_start, search_end):
                     if l[j] < l[min_idx]:
                         min_idx = j
-                ob_source = max(search_start, min_idx - 1)
+                ob_source = max(0, min_idx - 1)
                 hl2_val   = (h[ob_source] + l[ob_source]) / 2.0
                 ob_top    = hl2_val
                 ob_bottom = l[min_idx]
@@ -2584,7 +2585,7 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
                 for j in range(search_start, search_end):
                     if h[j] > h[max_idx]:
                         max_idx = j
-                ob_source = max(search_start, max_idx - 1)
+                ob_source = max(0, max_idx - 1)
                 hl2_val   = (h[ob_source] + l[ob_source]) / 2.0
                 ob_top    = h[max_idx]
                 ob_bottom = hl2_val
@@ -3576,13 +3577,18 @@ def _tv_visible_pool(obs_by_dir: List[Dict[str, Any]], max_ob: int = 5) -> List[
     """
     input_count = len(obs_by_dir)
 
-    # Step 1: overlap filter — keep older, hide newer that overlaps an accepted older OB
+    # Step 1: overlap filter — Pine checks ONLY new OB vs immediately previous accepted OB
+    # Pine line 1285-1288: obj.btm.first() < obj.top.get(1) — index 0 vs index 1 only
     accepted: List[Dict[str, Any]] = []
     for ob in obs_by_dir:
-        overlaps = any(
-            ob["top"] > acc["bottom"] and ob["bottom"] < acc["top"]
-            for acc in accepted
-        )
+        if accepted:
+            last = accepted[-1]
+            if ob["type"] == "bullish":
+                overlaps = ob["bottom"] < last["top"]
+            else:
+                overlaps = ob["top"] > last["bottom"]
+        else:
+            overlaps = False
         if not overlaps:
             accepted.append(ob)
 
