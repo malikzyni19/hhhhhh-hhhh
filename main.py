@@ -7620,6 +7620,9 @@ def fetch_of_binance(symbol: str, tf: str) -> dict:
     return {'ok':True,'exchange':'binance','sourceLabel':'Binance Futures',
             'symbol':symbol,'displaySymbol':symbol,'timeframe':iv.upper(),
             'candles':candles,'cvd':cvd,
+            'currentCandle':candles[-1] if candles else None,
+            'lastClosedCandle':candles[-2] if len(candles)>=2 else None,
+            'previousCandle':candles[-3] if len(candles)>=3 else None,
             'oiDeltaHistory':_of_pad_history(oi_delta),
             'oiValueUSDT':oi_value,'fundingHistory':_of_pad_history(fund_hist),
             'bidAsk':bid_ask,'buySellAvailable':True,'errors':errors}
@@ -7694,6 +7697,9 @@ def fetch_of_bybit(symbol: str, tf: str) -> dict:
     return {'ok':True,'exchange':'bybit','sourceLabel':'Bybit USDT Perp',
             'symbol':symbol,'displaySymbol':symbol,'timeframe':tf.upper(),
             'candles':candles,'cvd':[None]*len(candles),
+            'currentCandle':candles[-1] if candles else None,
+            'lastClosedCandle':candles[-2] if len(candles)>=2 else None,
+            'previousCandle':candles[-3] if len(candles)>=3 else None,
             'oiDeltaHistory':_of_pad_history(oi_delta),
             'oiValueUSDT':oi_value,'fundingHistory':_of_pad_history(fund_hist),
             'bidAsk':bid_ask,'buySellAvailable':False,'errors':errors}
@@ -7765,6 +7771,9 @@ def fetch_of_okx(symbol: str, tf: str) -> dict:
     return {'ok':True,'exchange':'okx','sourceLabel':'OKX Swap',
             'symbol':symbol,'displaySymbol':symbol,'timeframe':tf.upper(),
             'candles':candles,'cvd':[None]*len(candles),
+            'currentCandle':candles[-1] if candles else None,
+            'lastClosedCandle':candles[-2] if len(candles)>=2 else None,
+            'previousCandle':candles[-3] if len(candles)>=3 else None,
             'oiDeltaHistory':[None,None,None],
             'oiValueUSDT':oi_value,'fundingHistory':_of_pad_history(fund_hist),
             'bidAsk':bid_ask,'buySellAvailable':False,'errors':errors}
@@ -7842,9 +7851,28 @@ def fetch_of_mexc(symbol: str, tf: str) -> dict:
     return {'ok':True,'exchange':'mexc','sourceLabel':'MEXC Contract',
             'symbol':symbol,'displaySymbol':symbol,'timeframe':tf.upper(),
             'candles':candles,'cvd':[None]*len(candles),
+            'currentCandle':candles[-1] if candles else None,
+            'lastClosedCandle':candles[-2] if len(candles)>=2 else None,
+            'previousCandle':candles[-3] if len(candles)>=3 else None,
             'oiDeltaHistory':[None,None,None],
             'oiValueUSDT':oi_value,'fundingHistory':_of_pad_history(fund_hist),
             'bidAsk':bid_ask,'buySellAvailable':False,'oiDataQuality':'native_holdVol','errors':errors}
+
+
+# Supported timeframes per exchange (uppercase); used for early validation.
+# MEXC contract API supports Min60/Hour4/Day1 only — 6H and 12H have no equivalent interval.
+_OF_SUPPORTED_TF: Dict[str, List[str]] = {
+    'binance': ['1H', '4H', '6H', '12H', '1D'],
+    'bybit':   ['1H', '4H', '6H', '12H', '1D'],
+    'okx':     ['1H', '4H', '6H', '12H', '1D'],
+    'mexc':    ['1H', '4H', '1D'],
+}
+_OF_SOURCE_LABEL: Dict[str, str] = {
+    'binance': 'Binance Futures',
+    'bybit':   'Bybit USDT Perp',
+    'okx':     'OKX Swap',
+    'mexc':    'MEXC Contract',
+}
 
 
 @app.route("/api/order-flow")
@@ -7855,6 +7883,21 @@ def api_order_flow():
     tf       = (request.args.get('timeframe','1h') or '1h').strip().lower()
     if not symbol:
         return jsonify({'ok':False,'errors':['symbol is required']}), 400
+    supported = _OF_SUPPORTED_TF.get(exchange, [])
+    if supported and tf.upper() not in supported:
+        exc_label = _OF_SOURCE_LABEL.get(exchange, exchange.upper())
+        tf_up     = tf.upper()
+        sup_str   = ', '.join(supported)
+        msg = f"{exc_label} does not support {tf_up} Order Flow in REST mode. Please select {sup_str}."
+        return jsonify({
+            'ok': False,
+            'errorCode': 'UNSUPPORTED_TIMEFRAME',
+            'exchange': exchange,
+            'timeframe': tf_up,
+            'supportedTimeframes': supported,
+            'message': msg,
+            'errors': [msg],
+        })
     norm_sym = normalize_of_symbol(exchange, symbol)
     if exchange == 'binance':
         data = fetch_of_binance(norm_sym, tf)
