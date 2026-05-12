@@ -1380,7 +1380,7 @@ def debug_ob_tv_parity():
         compare_limits = request.args.get("compare_limits", "false").strip().lower() in ("1", "true", "yes")
 
         try:
-            kline_limit = min(max(int(request.args.get("kline_limit") or 300), 50), 1500)
+            kline_limit = min(max(int(request.args.get("kline_limit") or 300), 50), 2000)
         except (TypeError, ValueError):
             kline_limit = 300
 
