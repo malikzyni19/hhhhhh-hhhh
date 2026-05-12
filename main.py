@@ -2371,8 +2371,8 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         # ── INTERNAL BULLISH BREAK → Create Bullish OB ──
         if upP and len(dnL) > 1 and c[i] > upP[0] and (i == start or c[i - 1] <= upP[0]):
             pivot_bar    = upB[0] if upB else i - 10
-            # Pine loc = hN.unshift(int(b.n[iLen])) = i - i_len (not the pivot bar)
-            search_start = max(0, i - i_len)
+            # Pine: for i=0 to iLen-1 (iLen iterations) → range [i-(iLen-1), i]
+            search_start = max(0, i - i_len + 1)
             search_end   = i + 1  # include break bar
 
             if search_end > search_start:
@@ -2436,8 +2436,8 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         # ── INTERNAL BEARISH BREAK → Create Bearish OB ──
         if dnP and len(upL) > 1 and c[i] < dnP[0] and (i == start or c[i - 1] >= dnP[0]):
             pivot_bar    = dnB[0] if dnB else i - 10
-            # Pine loc = lN.unshift(int(b.n[iLen])) = i - i_len (not the pivot bar)
-            search_start = max(0, i - i_len)
+            # Pine: for i=0 to iLen-1 (iLen iterations) → range [i-(iLen-1), i]
+            search_start = max(0, i - i_len + 1)
             search_end   = i + 1
 
             if search_end > search_start:
