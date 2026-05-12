@@ -2185,6 +2185,68 @@ def detect_pivots(high: List[float], low: List[float], left: int, right: int) ->
     return ph, pl
 
 
+def _compute_dynamic_ilen(c: List[float], i_len_default: int) -> List[int]:
+    """
+    Replicate Pine's per-bar dynamic iLen adjustment.
+    Pine: vv = f_zscore(((close-close[iLen])/close[iLen])*100, iLen)
+    switch: abs(vv)>=2.0→5, >=1.9→6, >=1.8→7, >=1.7→8, >=1.6→9, >=1.5→10, else→default
+    f_zscore uses sample stdev (Bessel-corrected, same as Pine's ta.stdev).
+    iLen is a persistent variable — its change on bar N affects bar N+1's window.
+    """
+    n = len(c)
+    dyn: List[int] = [i_len_default] * n
+    src_hist: List[float] = [0.0] * n
+    current_ilen: int = i_len_default
+
+    for i in range(n):
+        prev_i = i - current_ilen
+        if prev_i >= 0 and c[prev_i] != 0.0:
+            src_hist[i] = (c[i] - c[prev_i]) / c[prev_i] * 100.0
+
+        if i + 1 >= current_ilen:
+            start_w = i - current_ilen + 1
+            w = src_hist[start_w: i + 1]
+            n_w = len(w)
+            if n_w >= 2:
+                mean_w = sum(w) / n_w
+                var_w  = sum((x - mean_w) ** 2 for x in w) / (n_w - 1)
+                std_w  = var_w ** 0.5
+                if std_w > 0.0:
+                    abs_vv = abs((src_hist[i] - mean_w) / std_w)
+                    if   abs_vv >= 2.0: current_ilen = 5
+                    elif abs_vv >= 1.9: current_ilen = 6
+                    elif abs_vv >= 1.8: current_ilen = 7
+                    elif abs_vv >= 1.7: current_ilen = 8
+                    elif abs_vv >= 1.6: current_ilen = 9
+                    elif abs_vv >= 1.5: current_ilen = 10
+                    # no else — Pine's switch has no default, iLen keeps previous value
+
+        dyn[i] = current_ilen
+
+    return dyn
+
+
+def _is_dyn_pivot_high(h: List[float], bar: int, window: int) -> bool:
+    """
+    Replicate Pine's ta.pivothigh(high, iLen, iLen) with dynamic window.
+    Caller guarantees bar >= window and bar + window < len(h).
+    Returns True if h[bar] is strictly greater than all surrounding `window` bars.
+    """
+    pv = h[bar]
+    for j in range(bar - window, bar + window + 1):
+        if j != bar and h[j] >= pv:
+            return False
+    return True
+
+
+def _is_dyn_pivot_low(l: List[float], bar: int, window: int) -> bool:
+    pv = l[bar]
+    for j in range(bar - window, bar + window + 1):
+        if j != bar and l[j] <= pv:
+            return False
+    return True
+
+
 def detect_structure(high: List[float], low: List[float], close: List[float], i_len: int, s_len: int) -> Tuple[int, int]:
     ph_i, pl_i = detect_pivots(high, low, i_len, i_len)
     ph_s, pl_s = detect_pivots(high, low, s_len, s_len)
@@ -2340,7 +2402,7 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
     Zone source candle (+1 offset within the search range):
       Pine finds the extreme candle (lowest low / highest high), then takes
       the candle ONE BAR EARLIER (the +1 offset) for hl2 and volume.
-      ob_source = max(search_start, extreme_idx - 1)
+      ob_source = max(0, extreme_idx - 1)  # floor=0 only, Pine's offset is unconditional
 
     Pine reference:
       int iU = obj.l.indexof(obj.l.min()) + 1   <- the +1 offset
@@ -2349,7 +2411,7 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
       obj.cV.unshift(b.v[iU])                    <- volume from offset candle
     """
     n = len(c)
-    ph, pl = detect_pivots(h, l, i_len, i_len)
+    dyn_ilen = _compute_dynamic_ilen(c, i_len)
     obs = []
 
     upP, upB, upL = [], [], []
@@ -2361,20 +2423,24 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
     # OB is confirmed by BOS (break of structure) — the BOS candle can be current.
     # Unlike FVG which needs 3 closed candles, OB only needs the BOS to occur.
     for i in range(start, n):
-        if i - i_len >= 0 and ph[i - i_len]:
-            upP.insert(0, h[i - i_len])
-            upB.insert(0, i - i_len)
-            upL.insert(0, h[i - i_len])
-        if i - i_len >= 0 and pl[i - i_len]:
-            dnP.insert(0, l[i - i_len])
-            dnB.insert(0, i - i_len)
-            dnL.insert(0, l[i - i_len])
+        # Dynamic pivot detection — replicates Pine's ta.pivothigh/pivotlow(h, iLen, iLen)
+        # where iLen changes per bar. The candidate pivot bar is i - dyn_ilen[i] (iLen bars back).
+        cand = i - dyn_ilen[i]
+        if cand >= dyn_ilen[i]:  # left-side window fits (right-side: cand+iLen = i < n always)
+            if _is_dyn_pivot_high(h, cand, dyn_ilen[i]):
+                upP.insert(0, h[cand])
+                upB.insert(0, cand)
+                upL.insert(0, h[cand])
+            if _is_dyn_pivot_low(l, cand, dyn_ilen[i]):
+                dnP.insert(0, l[cand])
+                dnB.insert(0, cand)
+                dnL.insert(0, l[cand])
 
         # ── INTERNAL BULLISH BREAK → Create Bullish OB ──
         if upP and len(dnL) > 1 and c[i] > upP[0] and (i == start or c[i - 1] <= upP[0]):
             pivot_bar    = upB[0] if upB else i - 10
-            # Pine scans from pivot bar (hN.first()) to break bar — pivot included
-            search_start = max(0, pivot_bar)
+            # Pine: iLen is dynamic per bar; loop for j=0 to iLen-1 → range [i-(iLen-1), i]
+            search_start = max(0, i - dyn_ilen[i] + 1)
             search_end   = i + 1  # include break bar
 
             if search_end > search_start:
@@ -2386,7 +2452,8 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
 
                 # Step 2: +1 offset — Pine uses the candle ONE BAR EARLIER for hl2/volume
                 # In Pine's reversed array: +1 = older = one bar to the left in forward time
-                ob_source = max(search_start, min_idx - 1)
+                # Floor is 0 (array boundary), NOT search_start — Pine's offset is unconditional
+                ob_source = max(0, min_idx - 1)
 
                 # Step 3: Zone boundaries
                 hl2_val   = (h[ob_source] + l[ob_source]) / 2.0
@@ -2437,8 +2504,8 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         # ── INTERNAL BEARISH BREAK → Create Bearish OB ──
         if dnP and len(upL) > 1 and c[i] < dnP[0] and (i == start or c[i - 1] >= dnP[0]):
             pivot_bar    = dnB[0] if dnB else i - 10
-            # Pine scans from pivot bar (lN.first()) to break bar — pivot included
-            search_start = max(0, pivot_bar)
+            # Pine: iLen is dynamic per bar; loop for j=0 to iLen-1 → range [i-(iLen-1), i]
+            search_start = max(0, i - dyn_ilen[i] + 1)
             search_end   = i + 1
 
             if search_end > search_start:
@@ -2448,8 +2515,8 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
                     if h[j] > h[max_idx]:
                         max_idx = j
 
-                # Step 2: +1 offset
-                ob_source = max(search_start, max_idx - 1)
+                # Step 2: +1 offset — floor is 0, NOT search_start (Pine's offset is unconditional)
+                ob_source = max(0, max_idx - 1)
 
                 # Step 3: Zone boundaries
                 hl2_val   = (h[ob_source] + l[ob_source]) / 2.0
@@ -2531,7 +2598,7 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
     Uses exact same pivot/BOS logic as detect_obs — only skips the mitigation filter.
     """
     n = len(c)
-    ph, pl = detect_pivots(h, l, i_len, i_len)
+    dyn_ilen = _compute_dynamic_ilen(c, i_len)
     obs = []
 
     upP, upB, upL = [], [], []
@@ -2540,26 +2607,28 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
     start_i = max(i_len * 2 + 2, s_len + 2)
 
     for i in range(start_i, n):
-        if i - i_len >= 0 and ph[i - i_len]:
-            upP.insert(0, h[i - i_len])
-            upB.insert(0, i - i_len)
-            upL.insert(0, h[i - i_len])
-        if i - i_len >= 0 and pl[i - i_len]:
-            dnP.insert(0, l[i - i_len])
-            dnB.insert(0, i - i_len)
-            dnL.insert(0, l[i - i_len])
+        cand = i - dyn_ilen[i]
+        if cand >= dyn_ilen[i]:
+            if _is_dyn_pivot_high(h, cand, dyn_ilen[i]):
+                upP.insert(0, h[cand])
+                upB.insert(0, cand)
+                upL.insert(0, h[cand])
+            if _is_dyn_pivot_low(l, cand, dyn_ilen[i]):
+                dnP.insert(0, l[cand])
+                dnB.insert(0, cand)
+                dnL.insert(0, l[cand])
 
         # Bullish OB — same as detect_obs
         if upP and len(dnL) > 1 and c[i] > upP[0] and (i == start_i or c[i - 1] <= upP[0]):
             pivot_bar    = upB[0] if upB else i - 10
-            search_start = max(0, pivot_bar + 1)
+            search_start = max(0, i - dyn_ilen[i] + 1)
             search_end   = i + 1
             if search_end > search_start:
                 min_idx = search_start
                 for j in range(search_start, search_end):
                     if l[j] < l[min_idx]:
                         min_idx = j
-                ob_source = max(search_start, min_idx - 1)
+                ob_source = max(0, min_idx - 1)
                 hl2_val   = (h[ob_source] + l[ob_source]) / 2.0
                 ob_top    = hl2_val
                 ob_bottom = l[min_idx]
@@ -2573,20 +2642,22 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
                         "bar": min_idx, "sourceBar": ob_source,
                         "volume": total_v, "buyVolume": buy_v, "sellVolume": sell_v,
                         "type": "bullish",
+                        "_dbg_bos_bar": i, "_dbg_dyn_ilen": dyn_ilen[i],
+                        "_dbg_search_start": search_start, "_dbg_search_end": search_end - 1,
                     })
             upP.clear(); upB.clear()
 
         # Bearish OB — same as detect_obs
         if dnP and len(upL) > 1 and c[i] < dnP[0] and (i == start_i or c[i - 1] >= dnP[0]):
             pivot_bar    = dnB[0] if dnB else i - 10
-            search_start = max(0, pivot_bar + 1)
+            search_start = max(0, i - dyn_ilen[i] + 1)
             search_end   = i + 1
             if search_end > search_start:
                 max_idx = search_start
                 for j in range(search_start, search_end):
                     if h[j] > h[max_idx]:
                         max_idx = j
-                ob_source = max(search_start, max_idx - 1)
+                ob_source = max(0, max_idx - 1)
                 hl2_val   = (h[ob_source] + l[ob_source]) / 2.0
                 ob_top    = h[max_idx]
                 ob_bottom = hl2_val
@@ -2600,6 +2671,8 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
                         "bar": max_idx, "sourceBar": ob_source,
                         "volume": total_v, "buyVolume": buy_v, "sellVolume": sell_v,
                         "type": "bearish",
+                        "_dbg_bos_bar": i, "_dbg_dyn_ilen": dyn_ilen[i],
+                        "_dbg_search_start": search_start, "_dbg_search_end": search_end - 1,
                     })
             dnP.clear(); dnB.clear()
 
@@ -3578,13 +3651,18 @@ def _tv_visible_pool(obs_by_dir: List[Dict[str, Any]], max_ob: int = 5) -> List[
     """
     input_count = len(obs_by_dir)
 
-    # Step 1: overlap filter — keep older, hide newer that overlaps an accepted older OB
+    # Step 1: overlap filter — Pine checks ONLY new OB vs immediately previous accepted OB
+    # Pine line 1285-1288: obj.btm.first() < obj.top.get(1) — index 0 vs index 1 only
     accepted: List[Dict[str, Any]] = []
     for ob in obs_by_dir:
-        overlaps = any(
-            ob["top"] > acc["bottom"] and ob["bottom"] < acc["top"]
-            for acc in accepted
-        )
+        if accepted:
+            last = accepted[-1]
+            if ob["type"] == "bullish":
+                overlaps = ob["bottom"] < last["top"]
+            else:
+                overlaps = ob["top"] > last["bottom"]
+        else:
+            overlaps = False
         if not overlaps:
             accepted.append(ob)
 
@@ -6507,55 +6585,92 @@ def _bias_normal_presets(bias_strength: str) -> dict:
         }
 
 
-def _detect_prior_move(o: list, h: list, l: list, c: list, start: int, end: int) -> dict:
-    """Detect if candles [start, end) form a directional move."""
-    reasons: list[str] = []
+def _detect_prior_move(o: list, h: list, l: list, c: list, start: int, end: int, tf: str = "1d") -> dict:
+    """Detect a clean directional drive in candles [start, end).
+    Returns quality='clean' only when all 5 hard conditions pass per direction."""
+    _empty: dict = {
+        "direction": None, "quality": "none", "checksPassed": 0,
+        "summary": "empty", "reasons": [],
+        "netPct": 0.0, "greenCount": 0, "redCount": 0,
+        "upCloseSteps": 0, "downCloseSteps": 0, "requiredMovePct": 0.0,
+    }
     if end <= start:
-        return {"direction": None, "checksPassed": 0, "summary": "empty", "reasons": []}
+        return _empty
     seg_o, seg_h, seg_l, seg_c = o[start:end], h[start:end], l[start:end], c[start:end]
     n = len(seg_c)
     if n < 1:
-        return {"direction": None, "checksPassed": 0, "summary": "empty", "reasons": []}
+        return _empty
 
-    up_checks = down_checks = 0
+    # Timeframe-aware minimum net move threshold
+    tf_lower = tf.lower()
+    if   tf_lower in ("1d", "12h"): req_pct = 0.8
+    elif tf_lower in ("4h", "6h"):  req_pct = 0.5
+    else:                            req_pct = 0.3
 
-    net_close = seg_c[-1] - seg_c[0]
-    if net_close > 0:
-        up_checks += 1; reasons.append("close↑")
-    elif net_close < 0:
-        down_checks += 1; reasons.append("close↓")
+    net_close      = seg_c[-1] - seg_c[0]
+    net_pct        = abs(net_close) / seg_c[0] * 100 if seg_c[0] > 0 else 0.0
+    green_count    = sum(1 for i in range(n) if seg_c[i] > seg_o[i])
+    red_count      = n - green_count
+    up_close_steps = sum(1 for i in range(1, n) if seg_c[i] > seg_c[i - 1])
+    dn_close_steps = sum(1 for i in range(1, n) if seg_c[i] < seg_c[i - 1])
+    prior_mid      = min(seg_l) + (max(seg_h) - min(seg_l)) / 2
+    green_needed   = math.ceil(n * 0.60)
+    steps_needed   = math.ceil((n - 1) * 0.60) if n >= 2 else 0
 
-    if n >= 2:
-        if all(seg_h[i] >= seg_h[i - 1] for i in range(1, n)):
-            up_checks += 1; reasons.append("highs↑")
-        if all(seg_l[i] <= seg_l[i - 1] for i in range(1, n)):
-            down_checks += 1; reasons.append("lows↓")
+    # Evaluate all 5 hard conditions for each direction
+    up_cond = [
+        net_close > 0,
+        green_count >= green_needed,
+        up_close_steps >= steps_needed,
+        net_pct >= req_pct,
+        seg_c[-1] > prior_mid,
+    ]
+    dn_cond = [
+        net_close < 0,
+        red_count >= green_needed,
+        dn_close_steps >= steps_needed,
+        net_pct >= req_pct,
+        seg_c[-1] < prior_mid,
+    ]
+    up_passed = sum(up_cond)
+    dn_passed = sum(dn_cond)
 
-    greens = sum(1 for i in range(n) if seg_c[i] > seg_o[i])
-    reds = n - greens
-    if greens > reds:
-        up_checks += 1; reasons.append(f"{greens}/{n}green")
-    elif reds > greens:
-        down_checks += 1; reasons.append(f"{reds}/{n}red")
-
-    if seg_c[0] > 0:
-        move_pct = abs(net_close) / seg_c[0] * 100
-        if move_pct >= 0.3:
-            if net_close > 0: up_checks += 1
-            else: down_checks += 1
-            reasons.append(f"rng{move_pct:.1f}%")
-
-    if up_checks >= 2 and up_checks >= down_checks:
-        direction, checks_passed = "up", up_checks
-    elif down_checks >= 2 and down_checks > up_checks:
-        direction, checks_passed = "down", down_checks
+    if up_passed == 5:
+        direction, quality, checks_passed = "up", "clean", 5
+        reasons = [
+            f"netClose↑{net_pct:.2f}%",
+            f"{green_count}/{n}green≥{green_needed}",
+            f"closeSteps↑{up_close_steps}≥{steps_needed}",
+            f"move≥{req_pct}%",
+            "closedAboveMid",
+        ]
+    elif dn_passed == 5:
+        direction, quality, checks_passed = "down", "clean", 5
+        reasons = [
+            f"netClose↓{net_pct:.2f}%",
+            f"{red_count}/{n}red≥{green_needed}",
+            f"closeSteps↓{dn_close_steps}≥{steps_needed}",
+            f"move≥{req_pct}%",
+            "closedBelowMid",
+        ]
     else:
-        direction, checks_passed = None, max(up_checks, down_checks)
+        direction, quality = None, "weak" if max(up_passed, dn_passed) > 0 else "none"
+        checks_passed = max(up_passed, dn_passed)
+        lead = "up" if up_passed >= dn_passed else "dn"
+        reasons = [f"{lead}:{checks_passed}/5"]
 
     return {
-        "direction": direction, "checksPassed": checks_passed,
-        "summary": f"{direction or 'none'} ({checks_passed} checks)",
-        "reasons": reasons,
+        "direction":       direction,
+        "quality":         quality,
+        "checksPassed":    checks_passed,
+        "summary":         f"{direction or 'none'} ({quality}·{checks_passed}/5)",
+        "reasons":         reasons,
+        "netPct":          round(net_pct, 4),
+        "greenCount":      green_count,
+        "redCount":        red_count,
+        "upCloseSteps":    up_close_steps,
+        "downCloseSteps":  dn_close_steps,
+        "requiredMovePct": req_pct,
     }
 
 
@@ -6961,13 +7076,15 @@ def api_bias_scan():
         "setupsReturned":           0,
         "rejected": {
             "notEnoughCandles":  0,
-            "noPriorMove":       0,
+            "noPriorMove":        0,
+            "noCleanPriorDrive":  0,
             "biasFilterMismatch": 0,
             "volumeFilter":      0,
             "noRejectionCandle": 0,
             "notConfirmed":      0,
             "confluenceRequired": 0,
             "minimumGrade":      0,
+            "invalidated":       0,
             "errors":            0,
         },
         "settingsUsed": {
@@ -6990,6 +7107,9 @@ def api_bias_scan():
                 diagnostics["rejected"]["notEnoughCandles"] += 1
                 continue
 
+            # Running candle close = best live-price proxy without an extra API call
+            current_price: float | None = float(kl[-1]["close"]) if kl else None
+
             # Closed candles only — strip the still-running last candle
             kl_closed = kl[:-1]
             o  = [float(x["open"])   for x in kl_closed]
@@ -7008,6 +7128,7 @@ def api_bias_scan():
 
             # Per-symbol rejection trackers for diagnostics
             _d_had_prior      = False
+            _d_weak_prior     = False
             _d_had_rej        = False
             _d_passed_confirm = False
             _d_bias_miss      = False
@@ -7020,10 +7141,12 @@ def api_bias_scan():
                     continue
 
                 prior_start  = sig_idx - prior_move_n
-                prior_result = _detect_prior_move(o, h, l, c, prior_start, sig_idx)
+                prior_result = _detect_prior_move(o, h, l, c, prior_start, sig_idx, tf)
                 prior_dir    = prior_result["direction"]
 
-                if not prior_dir or prior_result["checksPassed"] < min_prior_checks:
+                if prior_result["quality"] != "clean":
+                    if prior_result["quality"] == "weak":
+                        _d_weak_prior = True
                     continue
 
                 _d_had_prior = True
@@ -7144,8 +7267,10 @@ def api_bias_scan():
                 dir_word       = "upward" if prior_dir == "up" else "downward"
                 min_wick_pct_i = round(min_wick_pct * 100)
                 min_body_pct_i = round(min_body_pct * 100)
+                drive_word = "bullish" if prior_dir == "up" else "bearish"
                 readable_chain: list[str] = [
-                    f"Previous {prior_move_n} closed candles pushed {dir_word}",
+                    f"Clean {prior_move_n}-candle {drive_word} drive detected before rejection",
+                    f"Drive proof: {prior_result['netPct']:.2f}% net · {prior_result['greenCount'] if prior_dir == 'up' else prior_result['redCount']}/{prior_move_n} {'green' if prior_dir == 'up' else 'red'} · {prior_result['upCloseSteps'] if prior_dir == 'up' else prior_result['downCloseSteps']} step{'s' if (prior_result['upCloseSteps'] if prior_dir == 'up' else prior_result['downCloseSteps']) != 1 else ''} · min {prior_result['requiredMovePct']}%",
                 ]
                 if rej_dir == "bearish":
                     readable_chain.append("Signal candle closed bearish")
@@ -7240,11 +7365,20 @@ def api_bias_scan():
                     "setupType":               setup_type_label,
                     "pattern":                 pattern,
                     "detail":                  detail,
-                    "priorMoveDirection":       prior_dir,
-                    "priorMoveCandles":         prior_move_n,
-                    "priorMoveChecks":          prior_result["checksPassed"],
-                    "signalCandleOffset":       sig_offset,
-                    "signalCandleTime":         ts[sig_idx],
+                    "priorMoveDirection":        prior_dir,
+                    "priorMoveCandles":          prior_move_n,
+                    "priorMoveChecks":           prior_result["checksPassed"],
+                    "priorMoveQuality":          prior_result["quality"],
+                    "priorMoveNetPct":           prior_result["netPct"],
+                    "priorMoveGreenCount":       prior_result["greenCount"],
+                    "priorMoveRedCount":         prior_result["redCount"],
+                    "priorMoveUpCloseSteps":     prior_result["upCloseSteps"],
+                    "priorMoveDownCloseSteps":   prior_result["downCloseSteps"],
+                    "priorMoveRequiredMovePct":  prior_result["requiredMovePct"],
+                    "priorWindowStartTime":      ts[prior_start],
+                    "priorWindowEndTime":        ts[sig_idx - 1],
+                    "signalCandleOffset":        sig_offset,
+                    "signalCandleTime":          ts[sig_idx],
                     "rejectionOpen":            rej["open"],
                     "rejectionHigh":            rej["high"],
                     "rejectionLow":             rej["low"],
@@ -7268,10 +7402,49 @@ def api_bias_scan():
                     best = candidate
 
             if best is not None:
-                results.append(best)
+                # Compute live / closed invalidation status
+                inv_level  = best["invalidationLevel"]
+                inv_dir    = best["bias"]
+                latest_cc  = c[-1]
+                cp         = current_price
+                _cp_or_cc  = cp if cp is not None else latest_cc
+
+                if inv_dir == "bearish":
+                    closed_inv = latest_cc > inv_level
+                    live_br    = cp is not None and cp > inv_level
+                    dist_pct   = round((inv_level - _cp_or_cc) / _cp_or_cc * 100, 4) if inv_level > 0 and _cp_or_cc > 0 else None
+                else:
+                    closed_inv = latest_cc < inv_level
+                    live_br    = cp is not None and cp < inv_level
+                    dist_pct   = round((_cp_or_cc - inv_level) / _cp_or_cc * 100, 4) if inv_level > 0 and _cp_or_cc > 0 else None
+
+                inv_status = ("closed_invalidated" if closed_inv
+                              else "live_breached" if live_br
+                              else "valid")
+                best["invalidationStatus"]       = inv_status
+                best["invalidationBreachedLive"] = live_br
+                best["invalidationClosed"]       = closed_inv
+                best["currentPrice"]             = cp
+                best["latestClosedClose"]        = round(latest_cc, 8)
+                best["invalidationDistancePct"]  = dist_pct
+
+                if live_br and not closed_inv:
+                    warn = (
+                        "Warning: current price has breached bearish invalidation intrabar"
+                        if inv_dir == "bearish" else
+                        "Warning: current price has breached bullish invalidation intrabar"
+                    )
+                    best["reasonChain"].append(warn)
+
+                if closed_inv:
+                    diagnostics["rejected"]["invalidated"] += 1
+                else:
+                    results.append(best)
             else:
                 # Attribute primary rejection reason (priority order)
-                if not _d_had_prior:
+                if not _d_had_prior and _d_weak_prior:
+                    diagnostics["rejected"]["noCleanPriorDrive"] += 1
+                elif not _d_had_prior:
                     diagnostics["rejected"]["noPriorMove"] += 1
                 elif _d_bias_miss:
                     diagnostics["rejected"]["biasFilterMismatch"] += 1
@@ -7315,6 +7488,502 @@ def api_bias_scan():
         "marketCoverage": market_coverage,
         "diagnostics":    diagnostics,
     })
+
+
+# ============================================================
+# Order Flow v5 — Exchange-Aware REST Adapters
+# ============================================================
+
+def normalize_of_symbol(exchange: str, symbol: str) -> str:
+    """Normalize symbol to each exchange's perpetual contract format."""
+    sym = symbol.upper().replace('.P', '').strip()
+    if exchange in ('binance', 'bybit'):
+        sym = sym.replace('/', '').replace('-', '').replace('_', '')
+        if not sym.endswith('USDT'):
+            sym = sym + 'USDT'
+        return sym
+    elif exchange == 'okx':
+        if sym.endswith('-USDT-SWAP'):
+            return sym
+        base = sym.replace('USDT', '').replace('/', '').replace('-', '').replace('_', '')
+        return f"{base}-USDT-SWAP"
+    elif exchange == 'mexc':
+        if '_USDT' in sym:
+            return sym
+        base = sym.replace('USDT', '').replace('/', '').replace('-', '').replace('_', '')
+        return f"{base}_USDT"
+    return sym
+
+
+def normalize_of_timeframe(exchange: str, timeframe: str) -> Tuple[Optional[str], Optional[str]]:
+    """Returns (exchange_interval, error_or_None)."""
+    tf = timeframe.lower()
+    maps = {
+        'binance': {'1h':'1h','4h':'4h','6h':'6h','12h':'12h','1d':'1d'},
+        'bybit':   {'1h':'60','4h':'240','6h':'360','12h':'720','1d':'D'},
+        'okx':     {'1h':'1H','4h':'4H','6h':'6H','12h':'12H','1d':'1D'},
+        'mexc':    {'1h':'Min60','4h':'Hour4','1d':'Day1'},
+    }
+    iv = maps.get(exchange, {}).get(tf)
+    if not iv:
+        return None, f"Timeframe {timeframe} not supported for {exchange.upper()}"
+    return iv, None
+
+
+def _of_tf_range_pct(tf: str) -> float:
+    return {'1h':1.0,'4h':2.0,'6h':2.5,'12h':3.0,'1d':5.0}.get(tf.lower(), 2.0)
+
+
+def process_order_book_levels(bids: list, asks: list, current_price: float, range_pct: float) -> Optional[dict]:
+    """Python equivalent of frontend _processBookData. Uses USDT notional for sizing/ranking."""
+    if not bids or not asks or not current_price or current_price <= 0:
+        return None
+    lo = current_price * (1 - range_pct / 100)
+    hi = current_price * (1 + range_pct / 100)
+
+    def parse_level(lv):
+        try:
+            p, q = float(lv[0]), float(lv[1])
+            return {'price': p, 'qty': q, 'notional': p * q}
+        except Exception:
+            return None
+
+    fb = [l for l in (parse_level(b) for b in bids) if l and lo <= l['price'] <= current_price]
+    fa = [l for l in (parse_level(a) for a in asks) if l and current_price <= l['price'] <= hi]
+    max_n = max(
+        max((x['notional'] for x in fb), default=0),
+        max((x['notional'] for x in fa), default=0), 1)
+
+    def blend(item, is_bid):
+        ss = item['notional'] / max_n
+        dist = ((current_price - item['price']) / current_price if is_bid
+                else (item['price'] - current_price) / current_price)
+        cs = max(0.0, 1.0 - dist / (range_pct / 100))
+        return ss * 0.75 + cs * 0.25
+
+    top5_b = sorted(fb, key=lambda x: blend(x, True),  reverse=True)[:5]
+    top5_a = sorted(fa, key=lambda x: blend(x, False), reverse=True)[:5]
+    bid_vol = sum(b['notional'] for b in fb)
+    ask_vol = sum(a['notional'] for a in fa)
+    tot = bid_vol + ask_vol
+    bid_pct = round(bid_vol / tot * 100) if tot > 0 else 50
+    ask_pct = 100 - bid_pct
+    return {
+        'top5Bids': [{'price':b['price'],'qty':b['qty'],'notional':b['notional'],
+                      'distancePct':round((current_price-b['price'])/current_price*100,2),
+                      'strengthPct':round(b['notional']/max_n*100)} for b in top5_b],
+        'top5Asks': [{'price':a['price'],'qty':a['qty'],'notional':a['notional'],
+                      'distancePct':round((a['price']-current_price)/current_price*100,2),
+                      'strengthPct':round(a['notional']/max_n*100)} for a in top5_a],
+        'bidVolumeUSDT': bid_vol, 'askVolumeUSDT': ask_vol,
+        'bidPct': bid_pct,        'askPct': ask_pct,
+        'imbalancePct': bid_pct - ask_pct,
+        'sideHeavier': ('Buy side heavier' if bid_pct >= 55
+                        else 'Sell side heavier' if ask_pct >= 55 else 'Balanced book'),
+    }
+
+
+def _of_pad_history(arr: list, length: int = 3) -> list:
+    while len(arr) < length:
+        arr.insert(0, None)
+    return arr[-length:]
+
+
+def _of_build_candles_binance(klines_raw: list, tf: str) -> list:
+    candles, tf_up, now_ms = [], tf.upper(), int(time.time() * 1000)
+    n = len(klines_raw)
+    for i, k in enumerate(klines_raw):
+        total_quote = safe_float(k[7])
+        tb_quote    = safe_float(k[10])
+        ts_quote    = total_quote - tb_quote
+        buy_pct     = round(tb_quote / total_quote * 100, 1) if total_quote > 0 else None
+        sell_pct    = round(100 - buy_pct, 1) if buy_pct is not None else None
+        delta       = round(tb_quote - ts_quote, 2) if total_quote > 0 else None
+        close_ms    = int(k[6])
+        is_running  = (i == n - 1) and (close_ms > now_ms)
+        label = (f"Current {tf_up} Candle — Running" if i == n - 1
+                 else f"Last Closed {tf_up} Candle — Confirmed" if i == n - 2
+                 else f"Previous {tf_up} Candle — Confirmed")
+        candles.append({'label':label,
+            'open':safe_float(k[1]),'high':safe_float(k[2]),'low':safe_float(k[3]),'close':safe_float(k[4]),
+            'totalVolumeBase':safe_float(k[5]),'totalVolumeQuote':total_quote,
+            'takerBuyQuote':tb_quote,'takerSellQuote':ts_quote,
+            'buyPct':buy_pct,'sellPct':sell_pct,'delta':delta,
+            'isRunning':is_running,'closeTimeMs':close_ms,'dataQuality':'native'})
+    return candles
+
+
+def _of_build_candles_no_split(klines_norm: list, tf: str) -> list:
+    candles, tf_up, now_ms = [], tf.upper(), int(time.time() * 1000)
+    n = len(klines_norm)
+    for i, k in enumerate(klines_norm):
+        close_ms   = int(k.get('closeTimeMs', k.get('openTime', 0)))
+        is_running = (i == n - 1) and (close_ms > now_ms)
+        label = (f"Current {tf_up} Candle — Running" if i == n - 1
+                 else f"Last Closed {tf_up} Candle — Confirmed" if i == n - 2
+                 else f"Previous {tf_up} Candle — Confirmed")
+        candles.append({'label':label,
+            'open':k.get('open',0),'high':k.get('high',0),'low':k.get('low',0),'close':k.get('close',0),
+            'totalVolumeBase':k.get('volume',0),'totalVolumeQuote':k.get('quoteVolume',k.get('turnover',0)),
+            'takerBuyQuote':None,'takerSellQuote':None,'buyPct':None,'sellPct':None,'delta':None,
+            'isRunning':is_running,'closeTimeMs':close_ms,'dataQuality':'unavailable'})
+    return candles
+
+
+def fetch_of_binance(symbol: str, tf: str) -> dict:
+    errors, iv = [], tf.lower()
+    klines_raw = []
+    try:
+        r = req.get(f"{BINANCE_FUTURES_API}/fapi/v1/klines",
+                    params={'symbol':symbol,'interval':iv,'limit':4}, timeout=10)
+        if r.status_code == 200:
+            klines_raw = r.json()
+    except Exception as e:
+        errors.append(f"klines: {e}")
+    if not klines_raw or len(klines_raw) < 2:
+        return {'ok':False,'errors':[f'Candle data unavailable for {symbol}']+errors}
+
+    oi_delta, oi_value = [], None
+    try:
+        r = req.get(f"{BINANCE_FUTURES_API}/futures/data/openInterestHist",
+                    params={'symbol':symbol,'period':iv,'limit':4}, timeout=10)
+        if r.status_code == 200:
+            oi_raw = r.json()
+            if oi_raw and len(oi_raw) >= 2:
+                for i in range(1, len(oi_raw)):
+                    pv = safe_float(oi_raw[i-1].get('sumOpenInterestValue',0))
+                    cv = safe_float(oi_raw[i].get('sumOpenInterestValue',0))
+                    oi_delta.append(round((cv-pv)/pv*100,2) if pv > 0 else 0)
+                oi_value = safe_float(oi_raw[-1].get('sumOpenInterestValue',0))
+    except Exception as e:
+        errors.append(f"OI: {e}")
+
+    fund_hist = []
+    try:
+        r = req.get(f"{BINANCE_FUTURES_API}/fapi/v1/fundingRate",
+                    params={'symbol':symbol,'limit':4}, timeout=10)
+        if r.status_code == 200:
+            fraw = r.json()
+            if fraw:
+                fund_hist = [round(safe_float(f.get('fundingRate',0))*100,6) for f in fraw]
+    except Exception as e:
+        errors.append(f"funding: {e}")
+
+    bid_ask = None
+    try:
+        for lim in [500, 100]:
+            r = req.get(f"{BINANCE_FUTURES_API}/fapi/v1/depth",
+                        params={'symbol':symbol,'limit':lim}, timeout=10)
+            if r.status_code == 200:
+                d = r.json()
+                cp = safe_float(klines_raw[-1][4])
+                bid_ask = process_order_book_levels(d.get('bids',[]), d.get('asks',[]), cp, _of_tf_range_pct(iv))
+                if bid_ask:
+                    bid_ask['tfRangePct'] = _of_tf_range_pct(iv)
+                break
+    except Exception as e:
+        errors.append(f"depth: {e}")
+    if bid_ask:
+        bid_ask['oiValue'] = oi_value
+
+    candles = _of_build_candles_binance(klines_raw, iv)
+    cvd, cvd_r = [], 0.0
+    for c in candles:
+        cvd_r += c['delta'] or 0
+        cvd.append(round(cvd_r, 2))
+    return {'ok':True,'exchange':'binance','sourceLabel':'Binance Futures',
+            'symbol':symbol,'displaySymbol':symbol,'timeframe':iv.upper(),
+            'candles':candles,'cvd':cvd,
+            'currentCandle':candles[-1] if candles else None,
+            'lastClosedCandle':candles[-2] if len(candles)>=2 else None,
+            'previousCandle':candles[-3] if len(candles)>=3 else None,
+            'oiDeltaHistory':_of_pad_history(oi_delta),
+            'oiValueUSDT':oi_value,'fundingHistory':_of_pad_history(fund_hist),
+            'bidAsk':bid_ask,'buySellAvailable':True,'errors':errors}
+
+
+def fetch_of_bybit(symbol: str, tf: str) -> dict:
+    errors = []
+    iv, err = normalize_of_timeframe('bybit', tf)
+    if err:
+        return {'ok':False,'errors':[err]}
+    iv_ms = int(iv) * 60000 if iv.isdigit() else 86400000
+
+    klines_norm = []
+    try:
+        r = req.get(f"{BYBIT_PERP_API}/kline",
+                    params={'category':'linear','symbol':symbol,'interval':iv,'limit':4}, timeout=10)
+        if r.status_code == 200:
+            raw = list(reversed(r.json().get('result',{}).get('list',[])))
+            for k in raw:
+                open_ms = int(k[0])
+                klines_norm.append({'open':float(k[1]),'high':float(k[2]),'low':float(k[3]),
+                    'close':float(k[4]),'volume':float(k[5]),'turnover':float(k[6]),
+                    'openTime':open_ms,'closeTimeMs':open_ms+iv_ms-1})
+    except Exception as e:
+        errors.append(f"klines: {e}")
+    if not klines_norm or len(klines_norm) < 2:
+        return {'ok':False,'errors':[f'Candle data unavailable for {symbol}']+errors}
+    current_price = klines_norm[-1]['close']
+
+    oi_delta, oi_value = [], None
+    oi_iv_map = {'60':'1h','240':'4h','360':'4h','720':'4h','D':'1d'}
+    oi_interval = oi_iv_map.get(iv, '1h')
+    try:
+        r = req.get(f"{BYBIT_PERP_API}/open-interest",
+                    params={'category':'linear','symbol':symbol,'intervalTime':oi_interval,'limit':4}, timeout=10)
+        if r.status_code == 200:
+            oi_list = list(reversed(r.json().get('result',{}).get('list',[])))
+            if len(oi_list) >= 2:
+                for i in range(1, len(oi_list)):
+                    pv = safe_float(oi_list[i-1].get('openInterest',0)) * current_price
+                    cv = safe_float(oi_list[i].get('openInterest',0)) * current_price
+                    oi_delta.append(round((cv-pv)/pv*100,2) if pv > 0 else 0)
+                oi_value = safe_float(oi_list[-1].get('openInterest',0)) * current_price
+    except Exception as e:
+        errors.append(f"OI: {e}")
+
+    fund_hist = []
+    try:
+        r = req.get(f"{BYBIT_PERP_API}/funding/history",
+                    params={'category':'linear','symbol':symbol,'limit':4}, timeout=10)
+        if r.status_code == 200:
+            flist = list(reversed(r.json().get('result',{}).get('list',[])))
+            fund_hist = [round(safe_float(f.get('fundingRate',0))*100,6) for f in flist]
+    except Exception as e:
+        errors.append(f"funding: {e}")
+
+    bid_ask = None
+    try:
+        r = req.get(f"{BYBIT_PERP_API}/orderbook",
+                    params={'category':'linear','symbol':symbol,'limit':200}, timeout=10)
+        if r.status_code == 200:
+            res = r.json().get('result',{})
+            bid_ask = process_order_book_levels(res.get('b',[]), res.get('a',[]), current_price, _of_tf_range_pct(tf))
+            if bid_ask:
+                bid_ask['tfRangePct'] = _of_tf_range_pct(tf)
+    except Exception as e:
+        errors.append(f"depth: {e}")
+    if bid_ask:
+        bid_ask['oiValue'] = oi_value
+
+    candles = _of_build_candles_no_split(klines_norm, tf)
+    return {'ok':True,'exchange':'bybit','sourceLabel':'Bybit USDT Perp',
+            'symbol':symbol,'displaySymbol':symbol,'timeframe':tf.upper(),
+            'candles':candles,'cvd':[None]*len(candles),
+            'currentCandle':candles[-1] if candles else None,
+            'lastClosedCandle':candles[-2] if len(candles)>=2 else None,
+            'previousCandle':candles[-3] if len(candles)>=3 else None,
+            'oiDeltaHistory':_of_pad_history(oi_delta),
+            'oiValueUSDT':oi_value,'fundingHistory':_of_pad_history(fund_hist),
+            'bidAsk':bid_ask,'buySellAvailable':False,'errors':errors}
+
+
+def fetch_of_okx(symbol: str, tf: str) -> dict:
+    errors = []
+    iv, err = normalize_of_timeframe('okx', tf)
+    if err:
+        return {'ok':False,'errors':[err]}
+    iv_ms_map = {'1H':3600000,'4H':14400000,'6H':21600000,'12H':43200000,'1D':86400000}
+    iv_ms = iv_ms_map.get(iv, 3600000)
+    okx_pub = "https://www.okx.com/api/v5/public"
+
+    klines_norm = []
+    try:
+        r = req.get(f"{OKX_PERP_API}/candles",
+                    params={'instId':symbol,'bar':iv,'limit':4}, timeout=10)
+        if r.status_code == 200:
+            raw = list(reversed(r.json().get('data',[])))
+            for k in raw:
+                open_ms = int(k[0])
+                klines_norm.append({'open':float(k[1]),'high':float(k[2]),'low':float(k[3]),
+                    'close':float(k[4]),'volume':float(k[5]),
+                    'quoteVolume':float(k[7]) if len(k)>7 else 0,
+                    'openTime':open_ms,'closeTimeMs':open_ms+iv_ms-1})
+    except Exception as e:
+        errors.append(f"klines: {e}")
+    if not klines_norm or len(klines_norm) < 2:
+        return {'ok':False,'errors':[f'Candle data unavailable for {symbol}']+errors}
+    current_price = klines_norm[-1]['close']
+
+    oi_value = None
+    try:
+        r = req.get(f"{okx_pub}/open-interest", params={'instType':'SWAP','instId':symbol}, timeout=10)
+        if r.status_code == 200:
+            d = r.json().get('data',[])
+            if d:
+                oi_value = safe_float(d[0].get('oiCcy',0)) * current_price
+    except Exception as e:
+        errors.append(f"OI: {e}")
+
+    fund_hist = []
+    try:
+        r = req.get(f"{okx_pub}/funding-rate-history", params={'instId':symbol,'limit':4}, timeout=10)
+        if r.status_code == 200:
+            fraw = list(reversed(r.json().get('data',[])))
+            fund_hist = [round(safe_float(f.get('fundingRate',0))*100,6) for f in fraw]
+    except Exception as e:
+        errors.append(f"funding: {e}")
+
+    bid_ask = None
+    try:
+        r = req.get(f"{OKX_PERP_API}/books", params={'instId':symbol,'sz':200}, timeout=10)
+        if r.status_code == 200:
+            d = r.json().get('data',[])
+            if d:
+                bids = [[b[0],b[1]] for b in d[0].get('bids',[])]
+                asks = [[a[0],a[1]] for a in d[0].get('asks',[])]
+                bid_ask = process_order_book_levels(bids, asks, current_price, _of_tf_range_pct(tf))
+                if bid_ask:
+                    bid_ask['tfRangePct'] = _of_tf_range_pct(tf)
+    except Exception as e:
+        errors.append(f"depth: {e}")
+    if bid_ask:
+        bid_ask['oiValue'] = oi_value
+
+    candles = _of_build_candles_no_split(klines_norm, tf)
+    return {'ok':True,'exchange':'okx','sourceLabel':'OKX Swap',
+            'symbol':symbol,'displaySymbol':symbol,'timeframe':tf.upper(),
+            'candles':candles,'cvd':[None]*len(candles),
+            'currentCandle':candles[-1] if candles else None,
+            'lastClosedCandle':candles[-2] if len(candles)>=2 else None,
+            'previousCandle':candles[-3] if len(candles)>=3 else None,
+            'oiDeltaHistory':[None,None,None],
+            'oiValueUSDT':oi_value,'fundingHistory':_of_pad_history(fund_hist),
+            'bidAsk':bid_ask,'buySellAvailable':False,'errors':errors}
+
+
+def fetch_of_mexc(symbol: str, tf: str) -> dict:
+    errors = []
+    iv, err = normalize_of_timeframe('mexc', tf)
+    if err:
+        return {'ok':False,'errors':[err]}
+    iv_ms_map = {'Min60':3600000,'Hour4':14400000,'Day1':86400000}
+    iv_ms = iv_ms_map.get(iv, 3600000)
+
+    klines_norm = []
+    try:
+        r = req.get(f"{MEXC_PERP_API}/kline",
+                    params={'symbol':symbol,'interval':iv,'limit':4}, timeout=10)
+        if r.status_code == 200:
+            data = r.json().get('data',{})
+            times  = data.get('time',[])
+            opens  = data.get('open',[])
+            highs  = data.get('high',[])
+            lows   = data.get('low',[])
+            closes = data.get('close',[])
+            vols   = data.get('vol',[])
+            for i in range(len(times)):
+                open_ms = int(times[i]) * 1000
+                klines_norm.append({'open':float(opens[i]) if i<len(opens) else 0,
+                    'high':float(highs[i]) if i<len(highs) else 0,
+                    'low': float(lows[i])  if i<len(lows)  else 0,
+                    'close':float(closes[i]) if i<len(closes) else 0,
+                    'volume':float(vols[i]) if i<len(vols) else 0,
+                    'openTime':open_ms,'closeTimeMs':open_ms+iv_ms-1})
+    except Exception as e:
+        errors.append(f"klines: {e}")
+    if not klines_norm or len(klines_norm) < 2:
+        return {'ok':False,'errors':[f'Candle data unavailable for {symbol}']+errors}
+    current_price = klines_norm[-1]['close']
+
+    oi_value, fund_hist = None, []
+    try:
+        r = req.get(f"{MEXC_PERP_API}/ticker", params={'symbol':symbol}, timeout=10)
+        if r.status_code == 200:
+            body = r.json().get('data',[])
+            ticker = None
+            if isinstance(body, list):
+                for t in body:
+                    if t.get('symbol','').lower() == symbol.lower():
+                        ticker = t; break
+            elif isinstance(body, dict):
+                ticker = body
+            if ticker:
+                oi_value = safe_float(ticker.get('holdVol',0)) * current_price
+                fr = safe_float(ticker.get('fundingRate',0))
+                fund_hist = [round(fr * 100, 6)]
+    except Exception as e:
+        errors.append(f"OI/funding: {e}")
+
+    bid_ask = None
+    try:
+        r = req.get(f"{MEXC_PERP_API}/depth/{symbol}", timeout=10)
+        if r.status_code == 200:
+            d = r.json().get('data',{})
+            bids = [[str(b[0]),str(b[1])] for b in d.get('bids',[])]
+            asks = [[str(a[0]),str(a[1])] for a in d.get('asks',[])]
+            bid_ask = process_order_book_levels(bids, asks, current_price, _of_tf_range_pct(tf))
+            if bid_ask:
+                bid_ask['tfRangePct'] = _of_tf_range_pct(tf)
+    except Exception as e:
+        errors.append(f"depth: {e}")
+    if bid_ask:
+        bid_ask['oiValue'] = oi_value
+
+    candles = _of_build_candles_no_split(klines_norm, tf)
+    return {'ok':True,'exchange':'mexc','sourceLabel':'MEXC Contract',
+            'symbol':symbol,'displaySymbol':symbol,'timeframe':tf.upper(),
+            'candles':candles,'cvd':[None]*len(candles),
+            'currentCandle':candles[-1] if candles else None,
+            'lastClosedCandle':candles[-2] if len(candles)>=2 else None,
+            'previousCandle':candles[-3] if len(candles)>=3 else None,
+            'oiDeltaHistory':[None,None,None],
+            'oiValueUSDT':oi_value,'fundingHistory':_of_pad_history(fund_hist),
+            'bidAsk':bid_ask,'buySellAvailable':False,'oiDataQuality':'native_holdVol','errors':errors}
+
+
+# Supported timeframes per exchange (uppercase); used for early validation.
+# MEXC contract API supports Min60/Hour4/Day1 only — 6H and 12H have no equivalent interval.
+_OF_SUPPORTED_TF: Dict[str, List[str]] = {
+    'binance': ['1H', '4H', '6H', '12H', '1D'],
+    'bybit':   ['1H', '4H', '6H', '12H', '1D'],
+    'okx':     ['1H', '4H', '6H', '12H', '1D'],
+    'mexc':    ['1H', '4H', '1D'],
+}
+_OF_SOURCE_LABEL: Dict[str, str] = {
+    'binance': 'Binance Futures',
+    'bybit':   'Bybit USDT Perp',
+    'okx':     'OKX Swap',
+    'mexc':    'MEXC Contract',
+}
+
+
+@app.route("/api/order-flow")
+def api_order_flow():
+    """Order Flow v5 — exchange-aware. Returns normalized OF data for Binance/Bybit/OKX/MEXC."""
+    exchange = (request.args.get('exchange','binance') or 'binance').lower().strip()
+    symbol   = (request.args.get('symbol','') or '').strip().upper()
+    tf       = (request.args.get('timeframe','1h') or '1h').strip().lower()
+    if not symbol:
+        return jsonify({'ok':False,'errors':['symbol is required']}), 400
+    supported = _OF_SUPPORTED_TF.get(exchange, [])
+    if supported and tf.upper() not in supported:
+        exc_label = _OF_SOURCE_LABEL.get(exchange, exchange.upper())
+        tf_up     = tf.upper()
+        sup_str   = ', '.join(supported)
+        msg = f"{exc_label} does not support {tf_up} Order Flow in REST mode. Please select {sup_str}."
+        return jsonify({
+            'ok': False,
+            'errorCode': 'UNSUPPORTED_TIMEFRAME',
+            'exchange': exchange,
+            'timeframe': tf_up,
+            'supportedTimeframes': supported,
+            'message': msg,
+            'errors': [msg],
+        })
+    norm_sym = normalize_of_symbol(exchange, symbol)
+    if exchange == 'binance':
+        data = fetch_of_binance(norm_sym, tf)
+    elif exchange == 'bybit':
+        data = fetch_of_bybit(norm_sym, tf)
+    elif exchange == 'okx':
+        data = fetch_of_okx(norm_sym, tf)
+    elif exchange == 'mexc':
+        data = fetch_of_mexc(norm_sym, tf)
+    else:
+        return jsonify({'ok':False,'errors':[f'Order Flow not supported for exchange: {exchange}']}), 400
+    return jsonify(data)
 
 
 # ============================================================
