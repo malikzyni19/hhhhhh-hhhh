@@ -2217,7 +2217,7 @@ def _compute_dynamic_ilen(c: List[float], i_len_default: int) -> List[int]:
                     elif abs_vv >= 1.7: current_ilen = 8
                     elif abs_vv >= 1.6: current_ilen = 9
                     elif abs_vv >= 1.5: current_ilen = 10
-                    # no else — Pine's switch has no default, iLen keeps previous value
+                    else:               current_ilen = i_len_default
 
         dyn[i] = current_ilen
 
