@@ -5030,24 +5030,31 @@ def login():
     ua       = request.headers.get("User-Agent", "unknown")
     now_utc  = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     error    = None
+    is_ajax  = request.headers.get("X-Requested-With") == "XMLHttpRequest"
 
     # ── Try DB login first ──────────────────────────────────────────
-    db_user = None
-    db_error = None
+    db_user      = None
+    db_error     = None
+    db_error_code = None
     if not username:
-        db_error = "Please enter your username."
+        db_error      = "Please enter your username."
+        db_error_code = "empty"
     else:
         try:
             db_user = _DBUser.query.filter_by(username=username).first()
             if db_user:
                 if not db_user.check_password(pwd):
-                    db_error = "Incorrect password. Try again."
+                    db_error      = "Incorrect password. Please try again."
+                    db_error_code = "wrong_password"
                 elif db_user.status == "paused":
-                    db_error = "Your account has been paused. Contact admin."
+                    db_error      = "Your account has been paused. Contact admin."
+                    db_error_code = "paused"
                 elif db_user.status != "active":
-                    db_error = f"Account is {db_user.status}. Contact admin."
+                    db_error      = f"Account is {db_user.status}. Contact admin."
+                    db_error_code = "paused"
                 elif not db_user.email_verified:
-                    db_error = f"__unverified__{db_user.username}"
+                    db_error      = db_user.username   # carry username for resend link
+                    db_error_code = "unverified"
                 # success — db_error stays None
             # else: user not in DB, fall through to legacy
         except Exception as _dbe:
@@ -5055,17 +5062,22 @@ def login():
             db_user = None  # DB unavailable — fall to legacy
 
     # ── Legacy fallback if DB user not found ──────────────────────
+    error_code = None
     if not username:
-        error = db_error
+        error      = db_error
+        error_code = db_error_code
     elif db_user is not None:
         # DB user found — honour DB result
-        error = db_error
+        error      = db_error
+        error_code = db_error_code
     else:
         # Not in DB — try in-memory legacy list
         if username not in _USERS_DB:
-            error = "Username not recognised."
+            error      = "No account found. Please create and verify your account first."
+            error_code = "no_account"
         elif pwd != _USERS_DB[username]:
-            error = "Incorrect password. Try again."
+            error      = "Incorrect password. Please try again."
+            error_code = "wrong_password"
         # else: legacy success, error stays None
 
     if error is None and username:
@@ -5159,17 +5171,27 @@ def login():
         if db_user is not None:
             threading.Thread(target=_record_login, args=(db_user.id, ip, ua), daemon=True).start()
 
+        if is_ajax:
+            return jsonify({"success": True, "redirect": url_for("index")})
         return redirect(url_for("index"))
 
     LOGIN_AUDIT_LOG.appendleft({
         "username": username or "(empty)", "time": now_utc,
         "ip": ip, "geo": "", "ua": ua, "success": False
     })
-    if error and error.startswith("__unverified__"):
-        unverified_user = error.split("__unverified__", 1)[1]
+
+    if error_code == "unverified":
+        unverified_user = error   # error holds the username for this code
+        msg = "Your account is not verified yet. Please verify your email before logging in."
+        if is_ajax:
+            return jsonify({"error": "unverified", "message": msg, "username": unverified_user}), 401
         return render_template("login.html",
-                               error="Your email is not verified yet. Please check your inbox.",
+                               error=msg,
                                unverified_username=unverified_user)
+
+    if is_ajax:
+        return jsonify({"error": error_code or "auth_failed",
+                        "message": error or "Login failed. Please try again."}), 401
     return render_template("login.html", error=error)
 
 
