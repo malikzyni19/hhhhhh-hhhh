@@ -2441,9 +2441,8 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         # ── INTERNAL BULLISH BREAK → Create Bullish OB ──
         if upP and len(dnL) > 1 and c[i] > upP[0] and (i == start or c[i - 1] <= upP[0]):
             pivot_bar    = upB[0] if upB else i - 10
-            # Pine: for i = 0 to math.abs((loc - b.n)) - 1 where loc = pivot bar
-            # → search from pivot_bar+1 to current (inclusive), NOT dyn_ilen bars back
-            search_start = max(0, pivot_bar + 1)
+            # Pine: iLen is dynamic per bar; loop for j=0 to iLen-1 → range [i-(iLen-1), i]
+            search_start = max(0, i - dyn_ilen[i] + 1)
             search_end   = i + 1  # include break bar
 
             if search_end > search_start:
@@ -2507,9 +2506,8 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         # ── INTERNAL BEARISH BREAK → Create Bearish OB ──
         if dnP and len(upL) > 1 and c[i] < dnP[0] and (i == start or c[i - 1] >= dnP[0]):
             pivot_bar    = dnB[0] if dnB else i - 10
-            # Pine: for i = 0 to math.abs((loc - b.n)) - 1 where loc = pivot bar
-            # → search from pivot_bar+1 to current (inclusive), NOT dyn_ilen bars back
-            search_start = max(0, pivot_bar + 1)
+            # Pine: iLen is dynamic per bar; loop for j=0 to iLen-1 → range [i-(iLen-1), i]
+            search_start = max(0, i - dyn_ilen[i] + 1)
             search_end   = i + 1
 
             if search_end > search_start:
@@ -2625,7 +2623,7 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
         # Bullish OB — same as detect_obs
         if upP and len(dnL) > 1 and c[i] > upP[0] and (i == start_i or c[i - 1] <= upP[0]):
             pivot_bar    = upB[0] if upB else i - 10
-            search_start = max(0, pivot_bar + 1)  # Pine: loc+1 to b.n, not dyn_ilen window
+            search_start = max(0, i - dyn_ilen[i] + 1)
             search_end   = i + 1
             if search_end > search_start:
                 min_idx = search_start
@@ -2646,8 +2644,7 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
                         "bar": min_idx, "sourceBar": ob_source,
                         "volume": total_v, "buyVolume": buy_v, "sellVolume": sell_v,
                         "type": "bullish",
-                        "_dbg_bos_bar": i, "_dbg_pivot_bar": pivot_bar,
-                        "_dbg_dyn_ilen": dyn_ilen[i],
+                        "_dbg_bos_bar": i, "_dbg_dyn_ilen": dyn_ilen[i],
                         "_dbg_search_start": search_start, "_dbg_search_end": search_end - 1,
                     })
             upP.clear(); upB.clear()
@@ -2655,7 +2652,7 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
         # Bearish OB — same as detect_obs
         if dnP and len(upL) > 1 and c[i] < dnP[0] and (i == start_i or c[i - 1] >= dnP[0]):
             pivot_bar    = dnB[0] if dnB else i - 10
-            search_start = max(0, pivot_bar + 1)  # Pine: loc+1 to b.n, not dyn_ilen window
+            search_start = max(0, i - dyn_ilen[i] + 1)
             search_end   = i + 1
             if search_end > search_start:
                 max_idx = search_start
@@ -2676,8 +2673,7 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
                         "bar": max_idx, "sourceBar": ob_source,
                         "volume": total_v, "buyVolume": buy_v, "sellVolume": sell_v,
                         "type": "bearish",
-                        "_dbg_bos_bar": i, "_dbg_pivot_bar": pivot_bar,
-                        "_dbg_dyn_ilen": dyn_ilen[i],
+                        "_dbg_bos_bar": i, "_dbg_dyn_ilen": dyn_ilen[i],
                         "_dbg_search_start": search_start, "_dbg_search_end": search_end - 1,
                     })
             dnP.clear(); dnB.clear()
