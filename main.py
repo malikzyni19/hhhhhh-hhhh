@@ -1469,11 +1469,7 @@ INTERVAL_MAP = {
     "mexc": {
         "1m":"Min1","5m":"Min5","15m":"Min15","30m":"Min30",
         "1h":"Min60","4h":"Hour4","1d":"Day1"
-    },
-    "hyperliquid": {
-        "1m":"1m","3m":"3m","5m":"5m","15m":"15m","30m":"30m",
-        "1h":"1h","2h":"2h","4h":"4h","6h":"6h","12h":"12h","1d":"1d"
-    },
+    }
 }
 
 # Per-exchange pair caches
@@ -2441,9 +2437,8 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         # ── INTERNAL BULLISH BREAK → Create Bullish OB ──
         if upP and len(dnL) > 1 and c[i] > upP[0] and (i == start or c[i - 1] <= upP[0]):
             pivot_bar    = upB[0] if upB else i - 10
-            # Pine: for i = 0 to math.abs((loc - b.n)) - 1 where loc = pivot bar
-            # → search from pivot_bar+1 to current (inclusive), NOT dyn_ilen bars back
-            search_start = max(0, pivot_bar + 1)
+            # Pine: iLen is dynamic per bar; loop for j=0 to iLen-1 → range [i-(iLen-1), i]
+            search_start = max(0, i - dyn_ilen[i] + 1)
             search_end   = i + 1  # include break bar
 
             if search_end > search_start:
@@ -2507,9 +2502,8 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         # ── INTERNAL BEARISH BREAK → Create Bearish OB ──
         if dnP and len(upL) > 1 and c[i] < dnP[0] and (i == start or c[i - 1] >= dnP[0]):
             pivot_bar    = dnB[0] if dnB else i - 10
-            # Pine: for i = 0 to math.abs((loc - b.n)) - 1 where loc = pivot bar
-            # → search from pivot_bar+1 to current (inclusive), NOT dyn_ilen bars back
-            search_start = max(0, pivot_bar + 1)
+            # Pine: iLen is dynamic per bar; loop for j=0 to iLen-1 → range [i-(iLen-1), i]
+            search_start = max(0, i - dyn_ilen[i] + 1)
             search_end   = i + 1
 
             if search_end > search_start:
@@ -2625,7 +2619,7 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
         # Bullish OB — same as detect_obs
         if upP and len(dnL) > 1 and c[i] > upP[0] and (i == start_i or c[i - 1] <= upP[0]):
             pivot_bar    = upB[0] if upB else i - 10
-            search_start = max(0, pivot_bar + 1)  # Pine: loc+1 to b.n, not dyn_ilen window
+            search_start = max(0, i - dyn_ilen[i] + 1)
             search_end   = i + 1
             if search_end > search_start:
                 min_idx = search_start
@@ -2646,8 +2640,7 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
                         "bar": min_idx, "sourceBar": ob_source,
                         "volume": total_v, "buyVolume": buy_v, "sellVolume": sell_v,
                         "type": "bullish",
-                        "_dbg_bos_bar": i, "_dbg_pivot_bar": pivot_bar,
-                        "_dbg_dyn_ilen": dyn_ilen[i],
+                        "_dbg_bos_bar": i, "_dbg_dyn_ilen": dyn_ilen[i],
                         "_dbg_search_start": search_start, "_dbg_search_end": search_end - 1,
                     })
             upP.clear(); upB.clear()
@@ -2655,7 +2648,7 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
         # Bearish OB — same as detect_obs
         if dnP and len(upL) > 1 and c[i] < dnP[0] and (i == start_i or c[i - 1] >= dnP[0]):
             pivot_bar    = dnB[0] if dnB else i - 10
-            search_start = max(0, pivot_bar + 1)  # Pine: loc+1 to b.n, not dyn_ilen window
+            search_start = max(0, i - dyn_ilen[i] + 1)
             search_end   = i + 1
             if search_end > search_start:
                 max_idx = search_start
@@ -2676,8 +2669,7 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
                         "bar": max_idx, "sourceBar": ob_source,
                         "volume": total_v, "buyVolume": buy_v, "sellVolume": sell_v,
                         "type": "bearish",
-                        "_dbg_bos_bar": i, "_dbg_pivot_bar": pivot_bar,
-                        "_dbg_dyn_ilen": dyn_ilen[i],
+                        "_dbg_bos_bar": i, "_dbg_dyn_ilen": dyn_ilen[i],
                         "_dbg_search_start": search_start, "_dbg_search_end": search_end - 1,
                     })
             dnP.clear(); dnB.clear()
@@ -4741,39 +4733,6 @@ def get_pairs_exchange(exchange: str, market: str = "perpetual") -> List[Dict[st
         return get_pairs(market)  # Binance (default)
 
 
-def get_klines_hyperliquid(symbol: str, interval: str, limit: int = 300, market: str = "perpetual") -> List[Dict[str, float]]:
-    """Fetch OHLCV candles from Hyperliquid. Symbol like 'HYPEUSDT' → coin 'HYPE'."""
-    try:
-        coin = symbol.upper().replace("USDT", "").replace("USD", "")
-        iv   = INTERVAL_MAP["hyperliquid"].get(interval, interval)
-        interval_ms = {
-            "1m": 60_000, "3m": 180_000, "5m": 300_000, "15m": 900_000,
-            "30m": 1_800_000, "1h": 3_600_000, "2h": 7_200_000,
-            "4h": 14_400_000, "6h": 21_600_000, "12h": 43_200_000, "1d": 86_400_000,
-        }.get(interval, 3_600_000)
-        end_ms   = int(time.time() * 1000)
-        start_ms = end_ms - limit * interval_ms
-        r = req.post(
-            "https://api.hyperliquid.xyz/info",
-            json={"type": "candleSnapshot", "req": {"coin": coin, "interval": iv, "startTime": start_ms, "endTime": end_ms}},
-            timeout=20,
-        )
-        if r.status_code == 200:
-            data = r.json()
-            if isinstance(data, list) and data:
-                return [{
-                    "openTime": c["t"],
-                    "open":     float(c["o"]),
-                    "high":     float(c["h"]),
-                    "low":      float(c["l"]),
-                    "close":    float(c["c"]),
-                    "volume":   float(c["v"]),
-                } for c in data]
-    except Exception as e:
-        print(f"[Hyperliquid] klines error for {symbol}: {e}")
-    return []
-
-
 def get_klines_exchange(symbol: str, interval: str, limit: int = 300,
                         market: str = "perpetual", exchange: str = "binance") -> List[Dict[str, float]]:
     """Universal get_klines — routes to correct exchange"""
@@ -4784,8 +4743,6 @@ def get_klines_exchange(symbol: str, interval: str, limit: int = 300,
         result = get_klines_okx(symbol, interval, limit, market)
     elif exchange == "mexc":
         result = get_klines_mexc(symbol, interval, limit, market)
-    elif exchange == "hyperliquid":
-        result = get_klines_hyperliquid(symbol, interval, limit, market)
     else:
         result = get_klines(symbol, interval, limit, market)  # Binance
 
@@ -4908,12 +4865,7 @@ def get_klines(symbol: str, interval: str, limit: int = 300, market: str = "perp
 
     # ── Fallback: geo-safe spot mirror ──
     url = f"{SPOT_API}/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
-    r2 = req.get(url, timeout=20)
-    if r2.status_code != 200:
-        return []
-    data = r2.json()
-    if not isinstance(data, list):
-        return []
+    data = req.get(url, timeout=20).json()
     return _parse(data)
 
 
