@@ -3576,13 +3576,18 @@ def _tv_visible_pool(obs_by_dir: List[Dict[str, Any]], max_ob: int = 5) -> List[
     """
     input_count = len(obs_by_dir)
 
-    # Step 1: overlap filter — keep older, hide newer that overlaps an accepted older OB
+    # Step 1: overlap filter — Pine checks ONLY new OB vs immediately previous accepted OB
+    # Pine line 1285-1288: obj.btm.first() < obj.top.get(1) — index 0 vs index 1 only
     accepted: List[Dict[str, Any]] = []
     for ob in obs_by_dir:
-        overlaps = any(
-            ob["top"] > acc["bottom"] and ob["bottom"] < acc["top"]
-            for acc in accepted
-        )
+        if accepted:
+            last = accepted[-1]
+            if ob["type"] == "bullish":
+                overlaps = ob["bottom"] < last["top"]
+            else:
+                overlaps = ob["top"] > last["bottom"]
+        else:
+            overlaps = False
         if not overlaps:
             accepted.append(ob)
 
