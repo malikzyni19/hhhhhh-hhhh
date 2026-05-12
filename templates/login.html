@@ -384,9 +384,11 @@
             color: rgba(232,240,255,0.32);
             pointer-events: none;
             transition: color 0.22s ease;
+            z-index: 2;
         }
 
-        .input-wrap input:focus ~ .field-icon { color: var(--accent); }
+        /* JS adds .focused on the wrap; ~ selector doesn't work for preceding siblings */
+        .input-wrap.focused .field-icon { color: var(--accent); }
 
         /* password eye toggle — right side */
         .eye-toggle {
@@ -405,11 +407,29 @@
             justify-content: center;
             transition: color 0.2s ease;
             line-height: 1;
+            z-index: 2;
         }
 
         .eye-toggle:hover { color: var(--accent); }
         .eye-toggle:focus { outline: none; }
         .eye-toggle.visible { color: var(--accent); }
+
+        /* ── Autofill override ──────────────────────────────────────────
+           Chrome injects a solid white background via -webkit-autofill that
+           cannot be overridden with the background property (browser security).
+           The inset box-shadow trick paints over it with the dark card colour.
+           transition: background-color 5000s freezes the white from appearing.
+        ────────────────────────────────────────────────────────────────── */
+        .input-wrap input:-webkit-autofill,
+        .input-wrap input:-webkit-autofill:hover,
+        .input-wrap input:-webkit-autofill:focus,
+        .input-wrap input:-webkit-autofill:active {
+            -webkit-box-shadow: 0 0 0 1000px #0b1428 inset !important;
+            box-shadow:         0 0 0 1000px #0b1428 inset !important;
+            -webkit-text-fill-color: #e8f0ff !important;
+            caret-color: #e8f0ff;
+            transition: background-color 5000s ease-in-out 0s;
+        }
 
         /* prevent iOS zoom */
         @supports (-webkit-touch-callout: none) {
@@ -1065,6 +1085,12 @@
 
     setupEyeToggle('loginEye', 'loginEyeIcon', 'login_password');
     setupEyeToggle('regEye',   'regEyeIcon',   'reg_password_field');
+
+    /* Add .focused on .input-wrap so the preceding-sibling icon lights up */
+    document.querySelectorAll('.input-wrap input').forEach(inp => {
+        inp.addEventListener('focus', () => inp.closest('.input-wrap').classList.add('focused'));
+        inp.addEventListener('blur',  () => inp.closest('.input-wrap').classList.remove('focused'));
+    });
 
     signupForm.addEventListener('submit', async (e) => {
         e.preventDefault();
