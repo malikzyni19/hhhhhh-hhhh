@@ -2224,6 +2224,27 @@ def _compute_dynamic_ilen(c: List[float], i_len_default: int) -> List[int]:
     return dyn
 
 
+def _is_dyn_pivot_high(h: List[float], bar: int, window: int) -> bool:
+    """
+    Replicate Pine's ta.pivothigh(high, iLen, iLen) with dynamic window.
+    Caller guarantees bar >= window and bar + window < len(h).
+    Returns True if h[bar] is strictly greater than all surrounding `window` bars.
+    """
+    pv = h[bar]
+    for j in range(bar - window, bar + window + 1):
+        if j != bar and h[j] >= pv:
+            return False
+    return True
+
+
+def _is_dyn_pivot_low(l: List[float], bar: int, window: int) -> bool:
+    pv = l[bar]
+    for j in range(bar - window, bar + window + 1):
+        if j != bar and l[j] <= pv:
+            return False
+    return True
+
+
 def detect_structure(high: List[float], low: List[float], close: List[float], i_len: int, s_len: int) -> Tuple[int, int]:
     ph_i, pl_i = detect_pivots(high, low, i_len, i_len)
     ph_s, pl_s = detect_pivots(high, low, s_len, s_len)
@@ -2388,7 +2409,6 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
       obj.cV.unshift(b.v[iU])                    <- volume from offset candle
     """
     n = len(c)
-    ph, pl = detect_pivots(h, l, i_len, i_len)
     dyn_ilen = _compute_dynamic_ilen(c, i_len)
     obs = []
 
@@ -2401,14 +2421,18 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
     # OB is confirmed by BOS (break of structure) — the BOS candle can be current.
     # Unlike FVG which needs 3 closed candles, OB only needs the BOS to occur.
     for i in range(start, n):
-        if i - i_len >= 0 and ph[i - i_len]:
-            upP.insert(0, h[i - i_len])
-            upB.insert(0, i - i_len)
-            upL.insert(0, h[i - i_len])
-        if i - i_len >= 0 and pl[i - i_len]:
-            dnP.insert(0, l[i - i_len])
-            dnB.insert(0, i - i_len)
-            dnL.insert(0, l[i - i_len])
+        # Dynamic pivot detection — replicates Pine's ta.pivothigh/pivotlow(h, iLen, iLen)
+        # where iLen changes per bar. The candidate pivot bar is i - dyn_ilen[i] (iLen bars back).
+        cand = i - dyn_ilen[i]
+        if cand >= dyn_ilen[i]:  # left-side window fits (right-side: cand+iLen = i < n always)
+            if _is_dyn_pivot_high(h, cand, dyn_ilen[i]):
+                upP.insert(0, h[cand])
+                upB.insert(0, cand)
+                upL.insert(0, h[cand])
+            if _is_dyn_pivot_low(l, cand, dyn_ilen[i]):
+                dnP.insert(0, l[cand])
+                dnB.insert(0, cand)
+                dnL.insert(0, l[cand])
 
         # ── INTERNAL BULLISH BREAK → Create Bullish OB ──
         if upP and len(dnL) > 1 and c[i] > upP[0] and (i == start or c[i - 1] <= upP[0]):
@@ -2572,7 +2596,6 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
     Uses exact same pivot/BOS logic as detect_obs — only skips the mitigation filter.
     """
     n = len(c)
-    ph, pl = detect_pivots(h, l, i_len, i_len)
     dyn_ilen = _compute_dynamic_ilen(c, i_len)
     obs = []
 
@@ -2582,14 +2605,16 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
     start_i = max(i_len * 2 + 2, s_len + 2)
 
     for i in range(start_i, n):
-        if i - i_len >= 0 and ph[i - i_len]:
-            upP.insert(0, h[i - i_len])
-            upB.insert(0, i - i_len)
-            upL.insert(0, h[i - i_len])
-        if i - i_len >= 0 and pl[i - i_len]:
-            dnP.insert(0, l[i - i_len])
-            dnB.insert(0, i - i_len)
-            dnL.insert(0, l[i - i_len])
+        cand = i - dyn_ilen[i]
+        if cand >= dyn_ilen[i]:
+            if _is_dyn_pivot_high(h, cand, dyn_ilen[i]):
+                upP.insert(0, h[cand])
+                upB.insert(0, cand)
+                upL.insert(0, h[cand])
+            if _is_dyn_pivot_low(l, cand, dyn_ilen[i]):
+                dnP.insert(0, l[cand])
+                dnB.insert(0, cand)
+                dnL.insert(0, l[cand])
 
         # Bullish OB — same as detect_obs
         if upP and len(dnL) > 1 and c[i] > upP[0] and (i == start_i or c[i - 1] <= upP[0]):
