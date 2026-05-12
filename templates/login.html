@@ -1289,12 +1289,23 @@
 
         try {
             const resp = await fetch('/register', {
-                method:   'POST',
-                body:     new FormData(signupForm),
-                redirect: 'follow',
+                method:  'POST',
+                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                body:    new FormData(signupForm),
             });
 
-            window.location.href = resp.url || '/login';
+            const data = await resp.json();
+
+            if (data.success) {
+                window.location.href = data.redirect;
+            } else {
+                resetBtn(signupBtn, 'Create Account');
+                showAuthToast({
+                    type:    'error',
+                    title:   'Registration Failed',
+                    message: data.message || 'Please check your details and try again.',
+                });
+            }
         } catch {
             signupForm.submit();
         }

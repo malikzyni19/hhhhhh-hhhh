@@ -5195,34 +5195,38 @@ def login():
     return render_template("login.html", error=error)
 
 
-@app.route("/register", methods=["POST"])
+@app.route("/register", methods=["GET", "POST"])
 def register():
+    if request.method == "GET":
+        return redirect(url_for("login"))
+
     import random
+    is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+
     username = request.form.get("username", "").strip().lower()
     email    = request.form.get("email", "").strip().lower()
     password = request.form.get("password", "")
 
+    def _err(msg, **kw):
+        if is_ajax:
+            return jsonify({"error": "validation", "message": msg}), 400
+        return render_template("login.html", register_error=msg, show_signup=True, **kw)
+
     if not username:
-        return render_template("login.html", register_error="Username is required.", show_signup=True)
+        return _err("Username is required.")
     if not email:
-        return render_template("login.html", register_error="Email address is required.", show_signup=True,
-                               reg_username=username)
+        return _err("Email address is required.", reg_username=username)
     if "@" not in email or "." not in email.split("@")[-1]:
-        return render_template("login.html", register_error="Please enter a valid email address.", show_signup=True,
-                               reg_username=username, reg_email=email)
+        return _err("Please enter a valid email address.", reg_username=username, reg_email=email)
     if not password:
-        return render_template("login.html", register_error="Password is required.", show_signup=True,
-                               reg_username=username, reg_email=email)
+        return _err("Password is required.", reg_username=username, reg_email=email)
     if len(password) < 6:
-        return render_template("login.html", register_error="Password must be at least 6 characters.", show_signup=True,
-                               reg_username=username, reg_email=email)
+        return _err("Password must be at least 6 characters.", reg_username=username, reg_email=email)
     try:
         if _DBUser.query.filter_by(username=username).first():
-            return render_template("login.html", register_error="Username already taken. Choose another.", show_signup=True,
-                                   reg_username=username, reg_email=email)
+            return _err("Username already taken. Choose another.", reg_username=username, reg_email=email)
         if _DBUser.query.filter_by(email=email).first():
-            return render_template("login.html", register_error="This email is already registered. Sign in instead.", show_signup=True,
-                                   reg_username=username, reg_email=email)
+            return _err("This email is already registered. Sign in instead.", reg_username=username, reg_email=email)
 
         new_user = _DBUser(username=username, email=email, role="user", status="active", email_verified=False)
         new_user.set_password(password)
@@ -5247,11 +5251,14 @@ def register():
         if not email_sent:
             session["verify_fallback_code"] = code
 
-        return redirect(url_for("verify_email", username=username))
+        redirect_url = url_for("verify_email", username=username)
+        if is_ajax:
+            return jsonify({"success": True, "redirect": redirect_url})
+        return redirect(redirect_url)
     except Exception as _re:
         print(f"[REGISTER] Error: {_re}")
         db.session.rollback()
-        return render_template("login.html", register_error="Registration failed. Please try again.", show_signup=True)
+        return _err("Registration failed. Please try again.")
 
 
 @app.route("/verify-email", methods=["GET", "POST"])
