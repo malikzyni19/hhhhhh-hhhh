@@ -367,7 +367,7 @@ def _build_verification_email(username: str, code: str) -> str:
 
       <!-- HERO BANNER -->
       <tr><td style="background:linear-gradient(135deg,#0d1525 0%,#0f1e38 60%,#0a0f1e 100%);padding:36px 40px 28px;text-align:center;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
-        <div style="width:70px;height:70px;background:rgba(249,115,22,0.12);border:2px solid rgba(249,115,22,0.45);border-radius:50%;margin:0 auto 20px;line-height:70px;text-align:center;font-size:30px;">&#9993;</div>
+        <img src="https://smcsetups.com/static/images/avatar-email.png" alt="ZyNi SMC" width="90" height="90" style="width:90px;height:90px;border-radius:50%;display:block;margin:0 auto 20px;border:2.5px solid rgba(249,115,22,0.70);box-shadow:0 0 0 4px rgba(249,115,22,0.12),0 8px 28px rgba(0,0,0,0.55),0 0 30px rgba(249,115,22,0.18);object-fit:cover;">
         <h1 style="color:#ffffff;font-size:23px;font-weight:800;margin:0 0 14px;letter-spacing:-0.3px;">Verify Your Email Address</h1>
         <p style="color:rgba(232,240,255,0.65);font-size:15px;margin:0;line-height:1.75;">
           Hi <strong style="color:#ffffff;">{username}</strong>, welcome to ZyNi SMC!<br>
