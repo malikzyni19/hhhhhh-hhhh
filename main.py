@@ -2640,6 +2640,8 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
                         "bar": min_idx, "sourceBar": ob_source,
                         "volume": total_v, "buyVolume": buy_v, "sellVolume": sell_v,
                         "type": "bullish",
+                        "_dbg_bos_bar": i, "_dbg_dyn_ilen": dyn_ilen[i],
+                        "_dbg_search_start": search_start, "_dbg_search_end": search_end - 1,
                     })
             upP.clear(); upB.clear()
 
@@ -2667,6 +2669,8 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
                         "bar": max_idx, "sourceBar": ob_source,
                         "volume": total_v, "buyVolume": buy_v, "sellVolume": sell_v,
                         "type": "bearish",
+                        "_dbg_bos_bar": i, "_dbg_dyn_ilen": dyn_ilen[i],
+                        "_dbg_search_start": search_start, "_dbg_search_end": search_end - 1,
                     })
             dnP.clear(); dnB.clear()
 
