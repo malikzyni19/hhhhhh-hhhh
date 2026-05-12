@@ -2125,6 +2125,11 @@ setTimeout(() => typeWelcomeName(_welcomeUsername), 400);
 // Market type helpers
 function marketType(){ return $('marketType') ? $('marketType').value : 'perpetual'; }
 function currentExchange(){ return $('exchangeSelect') ? $('exchangeSelect').value : 'binance'; }
+function getOrderFlowExchangeForPair(pairObjOrSymbol){
+  if(pairObjOrSymbol && typeof pairObjOrSymbol === 'object' && pairObjOrSymbol.exchange)
+    return pairObjOrSymbol.exchange;
+  return currentExchange() || 'binance';
+}
 function displaySymbol(sym){ return marketType() === 'perpetual' ? sym + '.P' : sym; }
 $('marketType').addEventListener('change', function(){
   const isPerpetual = this.value === 'perpetual';
@@ -3677,7 +3682,17 @@ async function _loadBiasOf(symbol, tf, containerId, setupDirection){
     const r = await fetch(`/api/order-flow?${params}`, {cache:'no-store'});
     const data = await r.json();
     if(!data.ok){
-      if(isFirst) el.innerHTML = `<div style="color:#f87171;font-size:9px;padding:4px">${(data.errors||[]).join(', ')||'Order flow unavailable'}</div>`;
+      if(data.errorCode === 'UNSUPPORTED_TIMEFRAME'){
+        const toastKey = `${exchange}:${tf}`;
+        if(!_ofUnsupportedToastSeen[toastKey]){
+          showToastWarning(data.message || 'Your selected exchange does not support your selected timeframe.');
+          _ofUnsupportedToastSeen[toastKey] = true;
+        }
+        const sup = (data.supportedTimeframes||[]).join(', ');
+        el.innerHTML = `<div style="color:#f59e0b;font-size:9px;padding:4px">${data.message||'Unsupported timeframe'}${sup?' Supported: '+sup:''}</div>`;
+      } else {
+        if(isFirst) el.innerHTML = `<div style="color:#f87171;font-size:9px;padding:4px">${(data.errors||[]).join(', ')||'Order flow unavailable'}</div>`;
+      }
       return;
     }
     el.innerHTML = '<div class="of-box">' + _renderOfFromApi(data, setupDirection) + '</div>';
@@ -4852,6 +4867,7 @@ let wlPriceInterval   = null;  // #3 live price polling
 let wlAutoScanTimer   = null;  // #2 auto scan
 let wlOfTfSelected    = {};    // per-symbol selected TF for OF box
 let wlOfCache         = {};    // per-symbol per-TF kline OF data
+const _ofUnsupportedToastSeen = {}; // key: "exchange:tf" — prevents toast spam per unsupported combo
 let wlStreamActive    = false;
 
 function startWlStream(){
@@ -4953,7 +4969,7 @@ function _setOfTf(sym, tf, el){
 }
 
 async function _fetchOfData(sym, tf){
-  const exchange = currentExchange();
+  const exchange = getOrderFlowExchangeForPair(sym);
   const rawSym = sym.replace('.P','').replace(/USDT$/,'') + 'USDT';
   try {
     const r = await fetch(`/api/order-flow?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(rawSym)}&timeframe=${encodeURIComponent(tf)}`, {cache:'no-store'});
@@ -4970,19 +4986,33 @@ function _renderOfBox(sym, tf, apiData, setupDirection){
   const ofBox = el.querySelector('.of-data-wrap');
   if(!ofBox) return;
   if(!apiData||!apiData.ok){
-    const msg=(apiData&&apiData.errors)?apiData.errors.join(', '):'Order flow unavailable';
-    ofBox.innerHTML=`<div style="color:#f87171;font-size:9px;padding:4px">${msg}</div>`;
+    if(apiData && apiData.errorCode === 'UNSUPPORTED_TIMEFRAME'){
+      const exchange = getOrderFlowExchangeForPair(sym);
+      const toastKey = `${exchange}:${tf}`;
+      if(!_ofUnsupportedToastSeen[toastKey]){
+        showToastWarning(apiData.message || 'Your selected exchange does not support your selected timeframe.');
+        _ofUnsupportedToastSeen[toastKey] = true;
+      }
+      const sup = (apiData.supportedTimeframes||[]).join(', ');
+      ofBox.innerHTML = `<div style="color:#f59e0b;font-size:9px;padding:4px">${apiData.message||'Unsupported timeframe'}${sup?' Supported: '+sup:''}</div>`;
+    } else {
+      const msg=(apiData&&apiData.errors)?apiData.errors.join(', '):'Order flow unavailable';
+      ofBox.innerHTML=`<div style="color:#f87171;font-size:9px;padding:4px">${msg}</div>`;
+    }
     return;
   }
   ofBox.innerHTML = _renderOfFromApi(apiData, setupDirection);
 }
 
-// ── OF v4 helpers ──
+// ── OF v4 helpers — @deprecated: dead code; all OF now routes through /api/order-flow ──
+// These functions are no longer called by any active Order Flow path (v5+).
+// Kept to avoid accidental breakage; do not add new call sites.
 function _ofTfRange(tf){
   const m = {'1h':1.0,'4h':2.0,'6h':2.5,'12h':3.0,'1d':5.0,'d':5.0};
   return m[tf.toLowerCase()] || 2.0;
 }
 
+// @deprecated — direct Binance depth fetch, replaced by backend fetch_of_binance()
 async function _fetchDepthWithFallback(rawSym){
   let res = await fetch(`https://fapi.binance.com/fapi/v1/depth?symbol=${rawSym}&limit=500`, {cache:'no-store'});
   if(res.ok) return res;
@@ -4991,6 +5021,7 @@ async function _fetchDepthWithFallback(rawSym){
   return res;
 }
 
+// @deprecated — frontend book processor, replaced by backend process_order_book_levels()
 function _processBookData(bids, asks, currentPrice, rangePct){
   if(!bids||!asks||!currentPrice||currentPrice<=0) return null;
   const lo = currentPrice*(1-rangePct/100), hi = currentPrice*(1+rangePct/100);
@@ -5211,7 +5242,8 @@ function _renderOfFromApi(data, setupDirection){
   return headerHtml+candleHtml+(bidAskHtml||'')+ctxHtml+bookHtml+verdictHtml;
 }
 
-// ── Shared OF table builder v4 — premium confirmation module ──
+// ── Shared OF table builder v4 — @deprecated: dead code, replaced by _renderOfFromApi() ──
+// No active Order Flow path calls this function. Kept to avoid accidental breakage.
 // TODO(ws): Replace polling with WebSocket stream (fapi/ws/<symbol>@depth20@100ms + <symbol>@aggTrade)
 //           when a persistent connection manager is added. Polling interval currently 2–3s.
 function _buildOfTableHtml(tf, klines, oiData, fundData, ctxData, symbol, setupDirection){
@@ -5844,7 +5876,17 @@ async function _loadScanOfPanel(symbol, tf, panelId, setupDirection){
     const r = await fetch(`/api/order-flow?${params}`, {cache:'no-store'});
     const data = await r.json();
     if(!data.ok){
-      panel.innerHTML = `<div style="color:#f87171;font-size:9px;padding:4px">${(data.errors||[]).join(', ')||'Order flow unavailable'}</div>`;
+      if(data.errorCode === 'UNSUPPORTED_TIMEFRAME'){
+        const toastKey = `${exchange}:${tf}`;
+        if(!_ofUnsupportedToastSeen[toastKey]){
+          showToastWarning(data.message || 'Your selected exchange does not support your selected timeframe.');
+          _ofUnsupportedToastSeen[toastKey] = true;
+        }
+        const sup = (data.supportedTimeframes||[]).join(', ');
+        panel.innerHTML = `<div style="color:#f59e0b;font-size:9px;padding:4px">${data.message||'Unsupported timeframe'}${sup?' Supported: '+sup:''}</div>`;
+      } else {
+        panel.innerHTML = `<div style="color:#f87171;font-size:9px;padding:4px">${(data.errors||[]).join(', ')||'Order flow unavailable'}</div>`;
+      }
       return;
     }
     panel.innerHTML = `<div class="of-box">${_renderOfFromApi(data, setupDirection)}</div>`;
