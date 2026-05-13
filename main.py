@@ -2187,68 +2187,6 @@ def detect_pivots(high: List[float], low: List[float], left: int, right: int) ->
     return ph, pl
 
 
-def _compute_dynamic_ilen(c: List[float], i_len_default: int) -> List[int]:
-    """
-    Replicate Pine's per-bar dynamic iLen adjustment.
-    Pine: vv = f_zscore(((close-close[iLen])/close[iLen])*100, iLen)
-    switch: abs(vv)>=2.0→5, >=1.9→6, >=1.8→7, >=1.7→8, >=1.6→9, >=1.5→10, else→default
-    f_zscore uses sample stdev (Bessel-corrected, same as Pine's ta.stdev).
-    iLen is a persistent variable — its change on bar N affects bar N+1's window.
-    """
-    n = len(c)
-    dyn: List[int] = [i_len_default] * n
-    src_hist: List[float] = [0.0] * n
-    current_ilen: int = i_len_default
-
-    for i in range(n):
-        prev_i = i - current_ilen
-        if prev_i >= 0 and c[prev_i] != 0.0:
-            src_hist[i] = (c[i] - c[prev_i]) / c[prev_i] * 100.0
-
-        if i + 1 >= current_ilen:
-            start_w = i - current_ilen + 1
-            w = src_hist[start_w: i + 1]
-            n_w = len(w)
-            if n_w >= 2:
-                mean_w = sum(w) / n_w
-                var_w  = sum((x - mean_w) ** 2 for x in w) / (n_w - 1)
-                std_w  = var_w ** 0.5
-                if std_w > 0.0:
-                    abs_vv = abs((src_hist[i] - mean_w) / std_w)
-                    if   abs_vv >= 2.0: current_ilen = 5
-                    elif abs_vv >= 1.9: current_ilen = 6
-                    elif abs_vv >= 1.8: current_ilen = 7
-                    elif abs_vv >= 1.7: current_ilen = 8
-                    elif abs_vv >= 1.6: current_ilen = 9
-                    elif abs_vv >= 1.5: current_ilen = 10
-                    # no else — Pine's switch has no default, iLen keeps previous value
-
-        dyn[i] = current_ilen
-
-    return dyn
-
-
-def _is_dyn_pivot_high(h: List[float], bar: int, window: int) -> bool:
-    """
-    Replicate Pine's ta.pivothigh(high, iLen, iLen) with dynamic window.
-    Caller guarantees bar >= window and bar + window < len(h).
-    Returns True if h[bar] is strictly greater than all surrounding `window` bars.
-    """
-    pv = h[bar]
-    for j in range(bar - window, bar + window + 1):
-        if j != bar and h[j] >= pv:
-            return False
-    return True
-
-
-def _is_dyn_pivot_low(l: List[float], bar: int, window: int) -> bool:
-    pv = l[bar]
-    for j in range(bar - window, bar + window + 1):
-        if j != bar and l[j] <= pv:
-            return False
-    return True
-
-
 def detect_structure(high: List[float], low: List[float], close: List[float], i_len: int, s_len: int) -> Tuple[int, int]:
     ph_i, pl_i = detect_pivots(high, low, i_len, i_len)
     ph_s, pl_s = detect_pivots(high, low, s_len, s_len)
@@ -2392,14 +2330,124 @@ def detect_fvgs(o: List[float], h: List[float], l: List[float], c: List[float], 
     return [f for f in fvgs if not f["mitigated"]][-30:]
 
 
+# ── OB touch counting (clearance-based) ─────────────────────────────────────
+# Phase 1A: backend-only metadata. Does not alter OB parity (top/bottom/avg/
+# sourceBar/volume/TV OB %) and does not change mitigation behavior.
+_OB_TOUCH_CLEARANCE = 0.5  # fixed internal default; settings come in a later phase
+
+
+def _compute_ob_touch_meta(ob, h, l, c, n, ob_mitigation="Absolute",
+                            track_mitigation=False,
+                            clearance_factor=_OB_TOUCH_CLEARANCE):
+    """
+    Walk forward from ob["bar"] + 1 through n - 1 (excluding the current open
+    candle) and count zone touches with a clearance-based de-duplication rule.
+
+    A touch begins when a candle wicks into the zone (low <= top and high >=
+    bottom). After a touch, a new touch only counts once price has cleared the
+    zone by `clearance_factor * height`:
+
+        bullish: clearance_level = top    + clearance_factor * (top - bottom)
+        bearish: clearance_level = bottom - clearance_factor * (top - bottom)
+
+    Counting starts at ob["bar"] + 1 (NOT sourceBar) so the formation candle
+    itself is never counted.
+
+    track_mitigation:
+      False  — used by detect_obs(); mitigation has already been resolved by
+               the existing mitigation loop, so we just count touches across
+               the full counting window and report mitigationBar=None.
+      True   — used by detect_obs_all(); detect mitigation in the same pass.
+               If the mitigation candle also enters the zone, the touch on
+               that bar is counted FIRST, then mitigation is marked and the
+               walk stops. Bars after mitigationBar are not counted.
+    """
+    top    = ob["top"]
+    bottom = ob["bottom"]
+    avg_v  = ob.get("avg", (top + bottom) / 2.0)
+    height = max(top - bottom, 1e-10)
+    is_bull = ob["type"] == "bullish"
+
+    if is_bull:
+        clearance_level = top + clearance_factor * height
+    else:
+        clearance_level = bottom - clearance_factor * height
+
+    if ob_mitigation == "Middle":
+        mit_trigger = avg_v
+    else:
+        mit_trigger = bottom if is_bull else top
+
+    start = ob["bar"] + 1
+    end   = n - 1  # exclude current open candle (Pine barstate.isconfirmed)
+
+    touches = 0
+    first_touch_bar = None
+    last_touch_bar  = None
+    cleared = True   # initial state: first contact is allowed to count
+    seq = []
+    mitigated      = False
+    mitigation_bar = None
+
+    for j in range(start, end):
+        bar_inside = (l[j] <= top) and (h[j] >= bottom)
+
+        if bar_inside:
+            if cleared:
+                touches += 1
+                if first_touch_bar is None:
+                    first_touch_bar = j
+                last_touch_bar = j
+                cleared = False
+                seq.append(j)
+            else:
+                last_touch_bar = j
+        else:
+            if is_bull:
+                if h[j] >= clearance_level:
+                    cleared = True
+            else:
+                if l[j] <= clearance_level:
+                    cleared = True
+
+        if track_mitigation:
+            if is_bull and c[j] < mit_trigger:
+                mitigated      = True
+                mitigation_bar = j
+                break
+            if (not is_bull) and c[j] > mit_trigger:
+                mitigated      = True
+                mitigation_bar = j
+                break
+
+    currently_inside = False
+    if n >= 2 and touches > 0:
+        last_idx = n - 2
+        if 0 <= last_idx < n and last_idx >= start:
+            currently_inside = (l[last_idx] <= top) and (h[last_idx] >= bottom)
+
+    return {
+        "touches":         touches,
+        "firstTouchBar":   first_touch_bar,
+        "lastTouchBar":    last_touch_bar,
+        "untouched":       touches == 0,
+        "onceTouched":     touches == 1,
+        "touchSeq":        seq,
+        "isVirgin":        touches == 0,
+        "currentlyInside": currently_inside,
+        "mitigated":       mitigated,
+        "mitigationBar":   mitigation_bar,
+    }
+
+
 def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", ob_mitigation="Absolute"):
     """
     Order Block detection — audited line-by-line against Pine Script drawVOB().
 
-    Pine search window (Phase 8B.5 fix):
-      For bullish OB: search_start = hN.first() (most recent pivot HIGH bar, inclusive)
-      For bearish OB: search_start = lN.first() (most recent pivot LOW bar, inclusive)
-      Previously used pivot_bar+1 which excluded the pivot bar — mismatching Pine's loc.
+    Pine search window:
+      search_start = pivot_bar + 1 (Pine loc = hN/lN.first() = absolute pivot bar).
+      Pine loop: for i = 0 to math.abs((loc - b.n)) - 1 → covers [pivot+1, BOS_bar].
+      Window size = BOS_bar - pivot_bar, independent of iLen.
 
     Zone source candle (+1 offset within the search range):
       Pine finds the extreme candle (lowest low / highest high), then takes
@@ -2413,7 +2461,7 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
       obj.cV.unshift(b.v[iU])                    <- volume from offset candle
     """
     n = len(c)
-    dyn_ilen = _compute_dynamic_ilen(c, i_len)
+    ph, pl = detect_pivots(h, l, i_len, i_len)
     obs = []
 
     upP, upB, upL = [], [], []
@@ -2425,24 +2473,21 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
     # OB is confirmed by BOS (break of structure) — the BOS candle can be current.
     # Unlike FVG which needs 3 closed candles, OB only needs the BOS to occur.
     for i in range(start, n):
-        # Dynamic pivot detection — replicates Pine's ta.pivothigh/pivotlow(h, iLen, iLen)
-        # where iLen changes per bar. The candidate pivot bar is i - dyn_ilen[i] (iLen bars back).
-        cand = i - dyn_ilen[i]
-        if cand >= dyn_ilen[i]:  # left-side window fits (right-side: cand+iLen = i < n always)
-            if _is_dyn_pivot_high(h, cand, dyn_ilen[i]):
-                upP.insert(0, h[cand])
-                upB.insert(0, cand)
-                upL.insert(0, h[cand])
-            if _is_dyn_pivot_low(l, cand, dyn_ilen[i]):
-                dnP.insert(0, l[cand])
-                dnB.insert(0, cand)
-                dnL.insert(0, l[cand])
+        if i - i_len >= 0 and ph[i - i_len]:
+            upP.insert(0, h[i - i_len])
+            upB.insert(0, i - i_len)
+            upL.insert(0, h[i - i_len])
+        if i - i_len >= 0 and pl[i - i_len]:
+            dnP.insert(0, l[i - i_len])
+            dnB.insert(0, i - i_len)
+            dnL.insert(0, l[i - i_len])
 
         # ── INTERNAL BULLISH BREAK → Create Bullish OB ──
         if upP and len(dnL) > 1 and c[i] > upP[0] and (i == start or c[i - 1] <= upP[0]):
             pivot_bar    = upB[0] if upB else i - 10
-            # Pine: iLen is dynamic per bar; loop for j=0 to iLen-1 → range [i-(iLen-1), i]
-            search_start = max(0, i - dyn_ilen[i] + 1)
+            # Pine: loc = hN.first() = absolute pivot bar. Loop covers (BOS - pivot)
+            # bars, accessing [pivot+1, BOS]. Window size is independent of iLen.
+            search_start = max(0, pivot_bar + 1)
             search_end   = i + 1  # include break bar
 
             if search_end > search_start:
@@ -2506,8 +2551,9 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         # ── INTERNAL BEARISH BREAK → Create Bearish OB ──
         if dnP and len(upL) > 1 and c[i] < dnP[0] and (i == start or c[i - 1] >= dnP[0]):
             pivot_bar    = dnB[0] if dnB else i - 10
-            # Pine: iLen is dynamic per bar; loop for j=0 to iLen-1 → range [i-(iLen-1), i]
-            search_start = max(0, i - dyn_ilen[i] + 1)
+            # Pine: loc = lN.first() = absolute pivot bar. Loop covers (BOS - pivot)
+            # bars, accessing [pivot+1, BOS]. Window size is independent of iLen.
+            search_start = max(0, pivot_bar + 1)
             search_end   = i + 1
 
             if search_end > search_start:
@@ -2589,6 +2635,25 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         if mitigated:
             continue
 
+        # ── Phase 1A: touch metadata (parity-preserving) ──
+        # Mitigation has already been resolved above; surviving OBs simply
+        # count touches across [bar+1, n-1). mitigationBar is always None
+        # for OBs returned by detect_obs().
+        _tm = _compute_ob_touch_meta(
+            ob, h, l, c, n,
+            ob_mitigation=ob_mitigation,
+            track_mitigation=False,
+        )
+        ob["touches"]         = _tm["touches"]
+        ob["firstTouchBar"]   = _tm["firstTouchBar"]
+        ob["lastTouchBar"]    = _tm["lastTouchBar"]
+        ob["untouched"]       = _tm["untouched"]
+        ob["onceTouched"]     = _tm["onceTouched"]
+        ob["touchSeq"]        = _tm["touchSeq"]
+        ob["isVirgin"]        = _tm["isVirgin"]
+        ob["currentlyInside"] = _tm["currentlyInside"]
+        ob["mitigationBar"]   = None
+
         active.append(ob)
 
     return active if max_ob is None else active[-max_ob:]
@@ -2600,7 +2665,7 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
     Uses exact same pivot/BOS logic as detect_obs — only skips the mitigation filter.
     """
     n = len(c)
-    dyn_ilen = _compute_dynamic_ilen(c, i_len)
+    ph, pl = detect_pivots(h, l, i_len, i_len)
     obs = []
 
     upP, upB, upL = [], [], []
@@ -2609,21 +2674,19 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
     start_i = max(i_len * 2 + 2, s_len + 2)
 
     for i in range(start_i, n):
-        cand = i - dyn_ilen[i]
-        if cand >= dyn_ilen[i]:
-            if _is_dyn_pivot_high(h, cand, dyn_ilen[i]):
-                upP.insert(0, h[cand])
-                upB.insert(0, cand)
-                upL.insert(0, h[cand])
-            if _is_dyn_pivot_low(l, cand, dyn_ilen[i]):
-                dnP.insert(0, l[cand])
-                dnB.insert(0, cand)
-                dnL.insert(0, l[cand])
+        if i - i_len >= 0 and ph[i - i_len]:
+            upP.insert(0, h[i - i_len])
+            upB.insert(0, i - i_len)
+            upL.insert(0, h[i - i_len])
+        if i - i_len >= 0 and pl[i - i_len]:
+            dnP.insert(0, l[i - i_len])
+            dnB.insert(0, i - i_len)
+            dnL.insert(0, l[i - i_len])
 
         # Bullish OB — same as detect_obs
         if upP and len(dnL) > 1 and c[i] > upP[0] and (i == start_i or c[i - 1] <= upP[0]):
             pivot_bar    = upB[0] if upB else i - 10
-            search_start = max(0, i - dyn_ilen[i] + 1)
+            search_start = max(0, pivot_bar + 1)
             search_end   = i + 1
             if search_end > search_start:
                 min_idx = search_start
@@ -2644,15 +2707,13 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
                         "bar": min_idx, "sourceBar": ob_source,
                         "volume": total_v, "buyVolume": buy_v, "sellVolume": sell_v,
                         "type": "bullish",
-                        "_dbg_bos_bar": i, "_dbg_dyn_ilen": dyn_ilen[i],
-                        "_dbg_search_start": search_start, "_dbg_search_end": search_end - 1,
                     })
             upP.clear(); upB.clear()
 
         # Bearish OB — same as detect_obs
         if dnP and len(upL) > 1 and c[i] < dnP[0] and (i == start_i or c[i - 1] >= dnP[0]):
             pivot_bar    = dnB[0] if dnB else i - 10
-            search_start = max(0, i - dyn_ilen[i] + 1)
+            search_start = max(0, pivot_bar + 1)
             search_end   = i + 1
             if search_end > search_start:
                 max_idx = search_start
@@ -2673,8 +2734,6 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
                         "bar": max_idx, "sourceBar": ob_source,
                         "volume": total_v, "buyVolume": buy_v, "sellVolume": sell_v,
                         "type": "bearish",
-                        "_dbg_bos_bar": i, "_dbg_dyn_ilen": dyn_ilen[i],
-                        "_dbg_search_start": search_start, "_dbg_search_end": search_end - 1,
                     })
             dnP.clear(); dnB.clear()
 
@@ -2685,7 +2744,29 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
         if ob["bar"] not in seen:
             seen.add(ob["bar"])
             unique.append(ob)
-    return unique[:max_ob]
+    unique = unique[:max_ob]
+
+    # ── Phase 1A: touch + mitigation metadata for analytics/backtest ──
+    # detect_obs_all() must preserve mitigated OB records. Touches are counted
+    # up to and including the mitigation bar (per rule), then counting stops.
+    for ob in unique:
+        _tm = _compute_ob_touch_meta(
+            ob, h, l, c, n,
+            ob_mitigation="Absolute",
+            track_mitigation=True,
+        )
+        ob["touches"]         = _tm["touches"]
+        ob["firstTouchBar"]   = _tm["firstTouchBar"]
+        ob["lastTouchBar"]    = _tm["lastTouchBar"]
+        ob["untouched"]       = _tm["untouched"]
+        ob["onceTouched"]     = _tm["onceTouched"]
+        ob["touchSeq"]        = _tm["touchSeq"]
+        ob["isVirgin"]        = _tm["isVirgin"]
+        ob["currentlyInside"] = _tm["currentlyInside"]
+        ob["mitigated"]       = _tm["mitigated"]
+        ob["mitigationBar"]   = _tm["mitigationBar"]
+
+    return unique
 
 
 
@@ -3127,6 +3208,64 @@ def filter_fvg(fvg: Dict[str, Any], obs: List[Dict[str, Any]], price: float, set
                 matched = True
                 break
         if not matched:
+            return False
+
+    return True
+
+
+# ── OB touch-state filter (Phase 1B) ────────────────────────────────────────
+# Reads Phase 1A touch metadata only; never recomputes touches and never
+# mutates the OB. Returns True when the OB should be considered for alerts.
+_OB_TOUCH_STATE_VALUES = frozenset({
+    "all", "virgin", "first_touch", "second_touch", "third_plus", "any_retested",
+})
+
+
+def filter_ob(ob: Dict[str, Any], price: float, settings: Dict[str, Any]) -> bool:
+    if not settings:
+        return True
+
+    use_state    = bool(settings.get("useObTouchState", False))
+    use_virgin   = bool(settings.get("useObVirginApproach", False))
+
+    if not use_state and not use_virgin:
+        return True
+
+    try:
+        touches = int(ob.get("touches", 0) or 0)
+    except (TypeError, ValueError):
+        touches = 0
+
+    if use_state:
+        state = settings.get("obTouchState", "all")
+        if state not in _OB_TOUCH_STATE_VALUES:
+            state = "all"
+
+        if state == "virgin"        and touches != 0: return False
+        if state == "first_touch"   and touches != 1: return False
+        if state == "second_touch"  and touches != 2: return False
+        if state == "third_plus"    and touches < 3:  return False
+        if state == "any_retested"  and touches < 1:  return False
+
+        try:
+            max_touches = int(settings.get("obMaxTouches", 99))
+        except (TypeError, ValueError):
+            max_touches = 99
+        if touches > max_touches:
+            return False
+
+    if use_virgin:
+        if touches != 0:
+            return False
+        try:
+            approach_pct = float(settings.get("obVirginApproachPct", 1.5))
+        except (TypeError, ValueError):
+            approach_pct = 1.5
+        ob_mid = ob.get("avg")
+        if ob_mid is None:
+            ob_mid = (ob["top"] + ob["bottom"]) / 2.0
+        denom = max(abs(price), 1e-10)
+        if abs(price - ob_mid) / denom * 100.0 > approach_pct:
             return False
 
     return True
@@ -3707,7 +3846,17 @@ def calculate_tv_ob_volume_share(obs: List[Dict[str, Any]],
     vis_debug = [
         {"direction": pool_name, "bar": ob["bar"],
          "zoneTop": round(ob["top"], 8), "zoneBottom": round(ob["bottom"], 8),
-         "volume": ob.get("volume"), "tvObVolumeSharePct": None}
+         "volume": ob.get("volume"), "tvObVolumeSharePct": None,
+         "touches":         ob.get("touches"),
+         "isVirgin":        ob.get("isVirgin"),
+         "currentlyInside": ob.get("currentlyInside"),
+         "firstTouchBar":   ob.get("firstTouchBar"),
+         "lastTouchBar":    ob.get("lastTouchBar"),
+         "mitigationBar":   ob.get("mitigationBar"),
+         "mitigated":       ob.get("mitigated"),
+         "untouched":       ob.get("untouched"),
+         "onceTouched":     ob.get("onceTouched"),
+         "touchSeq":        ob.get("touchSeq")}
         for ob in visible
     ]
 
@@ -4039,6 +4188,9 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
 
         found_alert = False
         for ob in ob_list:  # ← check ALL OBs, not just nearest
+            # Phase 1B: backend touch-state filter (no-op when disabled)
+            if not filter_ob(ob, price, settings):
+                continue
             zone_top      = ob["top"]
             zone_bottom   = ob["bottom"]
             price_in_zone = zone_bottom <= price <= zone_top
@@ -4920,6 +5072,21 @@ def detect_true_ath_atl(symbol: str, market: str = "perpetual") -> Optional[Dict
 
 
 def parse_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
+    # Phase 1B hardening: safe int/float casts with min-0 clamping for the
+    # new OB touch settings. Invalid / empty / missing values fall back to
+    # defaults instead of crashing the scan.
+    def _safe_int_min0(v: Any, default: int) -> int:
+        try:
+            return max(0, int(v))
+        except (TypeError, ValueError):
+            return default
+
+    def _safe_float_min0(v: Any, default: float) -> float:
+        try:
+            return max(0.0, float(v))
+        except (TypeError, ValueError):
+            return default
+
     return {
         "tf": payload.get("tf", "1h"),
         "iLen": int(payload.get("iLen", 5)),
@@ -4933,6 +5100,12 @@ def parse_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
         "obMinStrengthPct":     float(payload.get("obMinStrengthPct", 70)),
         "useHighProbOB": bool(payload.get("useHighProbOB", False)),
         "obMinQuality": int(payload.get("obMinQuality", 50)),
+        # Phase 1B: backend OB touch-state filters (no UI yet)
+        "useObTouchState":      bool(payload.get("useObTouchState", False)),
+        "obTouchState":         payload.get("obTouchState", "all"),
+        "obMaxTouches":         _safe_int_min0(payload.get("obMaxTouches"), 99),
+        "useObVirginApproach":  bool(payload.get("useObVirginApproach", False)),
+        "obVirginApproachPct":  _safe_float_min0(payload.get("obVirginApproachPct"), 1.5),
         "useFvgValidOnly": bool(payload.get("useFvgValidOnly", True)),
         "useFvgState": bool(payload.get("useFvgState", False)),
         "fvgState": payload.get("fvgState", "all"),
@@ -5935,6 +6108,9 @@ _WL_SCAN_SETTINGS: Dict[str, Any] = {
     "useObStrengthFilter": False, "obMinStrengthPct": 0,
     "useHighProbOB": False, "obMinQuality": 50,
     "useAtrObApproach": False, "obApproachAtrMult": 0.5,
+    # Phase 1B: backend OB touch-state filters (no UI yet)
+    "useObTouchState": False, "obTouchState": "all", "obMaxTouches": 99,
+    "useObVirginApproach": False, "obVirginApproachPct": 1.5,
     "useFvgValidOnly": False, "useFvgState": False,
     "fvgState": "all", "fvgAgeMin": 0, "fvgAgeMax": 50,
     "useFvgAgeRange": False, "useFvgDistance": False,
@@ -6073,6 +6249,9 @@ def _scan_pair_multitf(symbol: str, market: str = "perpetual", wl_config: Option
                 itrend_q, trend_q = detect_structure(h, l, c, iLen, sLen)
 
                 for ob in raw_obs:
+                    # Phase 1B: backend touch-state filter (no-op when disabled)
+                    if not filter_ob(ob, price, settings):
+                        continue
                     zt  = ob["top"]
                     zb  = ob["bottom"]
                     dist_pct = obq_dist_from_price(price, zt, zb, ob["type"])
