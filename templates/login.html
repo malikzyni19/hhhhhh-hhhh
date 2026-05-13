@@ -810,6 +810,99 @@
         #auth-toast.toast-warning .toast-bar { background: rgba(245,158,11,0.55); }
         #auth-toast.toast-info    .toast-bar { background: rgba(30,184,200,0.55); }
         @keyframes toast-drain { from { transform:scaleX(1); } to { transform:scaleX(0); } }
+
+        /* ══════════════════════════════════════════
+           FORGOT PASSWORD MODAL
+        ══════════════════════════════════════════ */
+        .forgot-link {
+            font-size: 12px;
+            color: rgba(249,115,22,0.75);
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.2s;
+            cursor: pointer;
+            float: right;
+            line-height: 1;
+        }
+        .forgot-link:hover { color: #f97316; }
+
+        .forgot-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            z-index: 500;
+            background: rgba(4,7,16,0.72);
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+        }
+        .forgot-overlay.active { display: flex; }
+
+        .forgot-card {
+            background: linear-gradient(145deg, #0c1630 0%, #0f1e38 100%);
+            border: 1px solid rgba(249,115,22,0.28);
+            border-radius: 20px;
+            padding: 40px 36px 36px;
+            width: 100%;
+            max-width: 400px;
+            position: relative;
+            box-shadow:
+                0 0 0 1px rgba(249,115,22,0.08),
+                0 32px 80px rgba(0,0,0,0.65),
+                0 0 60px rgba(249,115,22,0.06);
+            animation: fgd-in 0.32s cubic-bezier(0.34,1.56,0.64,1);
+        }
+        @keyframes fgd-in {
+            from { opacity:0; transform:translateY(18px) scale(0.96); }
+            to   { opacity:1; transform:none; }
+        }
+
+        .forgot-close-btn {
+            position: absolute;
+            top: 14px; right: 14px;
+            width: 30px; height: 30px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.09);
+            border-radius: 8px;
+            color: rgba(232,240,255,0.45);
+            font-size: 16px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            transition: all 0.2s;
+        }
+        .forgot-close-btn:hover {
+            background: rgba(249,115,22,0.14);
+            color: #f97316;
+            border-color: rgba(249,115,22,0.38);
+        }
+
+        .forgot-icon-wrap {
+            width: 52px; height: 52px;
+            background: rgba(249,115,22,0.09);
+            border: 1.5px solid rgba(249,115,22,0.32);
+            border-radius: 14px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 21px;
+            color: #f97316;
+            margin-bottom: 18px;
+        }
+
+        .forgot-card h3 {
+            color: #e8f0ff;
+            font-size: 19px;
+            font-weight: 700;
+            margin: 0 0 8px;
+            letter-spacing: -0.2px;
+        }
+
+        .forgot-card .forgot-desc {
+            color: rgba(232,240,255,0.52);
+            font-size: 13.5px;
+            line-height: 1.65;
+            margin: 0 0 24px;
+        }
     </style>
 </head>
 
@@ -825,6 +918,27 @@
         </div>
         <button class="toast-close" aria-label="Dismiss">&times;</button>
         <div class="toast-bar"></div>
+    </div>
+
+    <!-- FORGOT PASSWORD MODAL -->
+    <div id="forgotOverlay" class="forgot-overlay" role="dialog" aria-modal="true" aria-labelledby="forgotTitle">
+        <div class="forgot-card">
+            <button class="forgot-close-btn" id="forgotClose" aria-label="Close">&times;</button>
+            <div class="forgot-icon-wrap">
+                <i class="fa-solid fa-key"></i>
+            </div>
+            <h3 id="forgotTitle">Reset Password</h3>
+            <p class="forgot-desc">Enter the email or username linked to your account and we'll send you a reset link.</p>
+            <div class="field-wrapper" style="margin-bottom:18px;">
+                <label for="forgotInput">Email or Username</label>
+                <div class="input-wrap">
+                    <i class="fa-solid fa-envelope field-icon"></i>
+                    <input type="text" id="forgotInput" placeholder="you@example.com or username"
+                           autocomplete="email" spellcheck="false">
+                </div>
+            </div>
+            <button class="submit-button" id="forgotBtn" style="width:100%;">Send Reset Link</button>
+        </div>
     </div>
 
     <!-- ══════════════════════════════════════════
@@ -896,7 +1010,10 @@
                 </div>
 
                 <div class="field-wrapper slide-element">
-                    <label for="login_password">Password</label>
+                    <label for="login_password" style="display:flex;justify-content:space-between;align-items:center;">
+                        Password
+                        <a href="#" class="forgot-link" id="forgotTrigger" tabindex="-1">Forgot?</a>
+                    </label>
                     <div class="input-wrap">
                         <i class="fa-solid fa-lock field-icon"></i>
                         <input type="password" id="login_password" name="password"
@@ -1308,6 +1425,71 @@
             }
         } catch {
             signupForm.submit();
+        }
+    });
+
+    /* ══════════════════════════════════════════════════════
+       FORGOT PASSWORD MODAL
+    ══════════════════════════════════════════════════════ */
+    const forgotOverlay = document.getElementById('forgotOverlay');
+    const forgotTrigger = document.getElementById('forgotTrigger');
+    const forgotClose   = document.getElementById('forgotClose');
+    const forgotInput   = document.getElementById('forgotInput');
+    const forgotBtn     = document.getElementById('forgotBtn');
+
+    /* Show success toast when redirected back from reset-password */
+    {% if pw_reset_success %}
+    window.addEventListener('DOMContentLoaded', () => {
+        showAuthToast({
+            type:    'info',
+            title:   'Password Updated',
+            message: 'Your password has been reset successfully. You can now sign in.',
+        });
+    });
+    {% endif %}
+
+    function openForgotModal() {
+        forgotOverlay.classList.add('active');
+        setTimeout(() => forgotInput.focus(), 50);
+    }
+    function closeForgotModal() {
+        forgotOverlay.classList.remove('active');
+    }
+
+    forgotTrigger.addEventListener('click', (e) => { e.preventDefault(); openForgotModal(); });
+    forgotClose.addEventListener('click', closeForgotModal);
+    forgotOverlay.addEventListener('click', (e) => { if (e.target === forgotOverlay) closeForgotModal(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeForgotModal(); });
+
+    forgotInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') forgotBtn.click(); });
+
+    forgotBtn.addEventListener('click', async () => {
+        const val = forgotInput.value.trim();
+        if (!val) {
+            forgotInput.focus();
+            return;
+        }
+        setLoading(forgotBtn, 'Sending...');
+        try {
+            const resp = await fetch('/forgot-password', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                body:    JSON.stringify({ identifier: val }),
+            });
+            const data = await resp.json();
+            closeForgotModal();
+            resetBtn(forgotBtn, 'Send Reset Link');
+            forgotInput.value = '';
+            showAuthToast({
+                type:    data.success ? 'info' : 'error',
+                title:   data.success ? 'Check Your Inbox' : 'Error',
+                message: data.message || (data.success
+                    ? 'If that account exists, a reset link has been sent.'
+                    : 'Something went wrong. Please try again.'),
+            });
+        } catch {
+            resetBtn(forgotBtn, 'Send Reset Link');
+            showAuthToast({ type: 'error', title: 'Error', message: 'Could not send request. Please try again.' });
         }
     });
     </script>
