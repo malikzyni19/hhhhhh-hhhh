@@ -3211,6 +3211,64 @@ def filter_fvg(fvg: Dict[str, Any], obs: List[Dict[str, Any]], price: float, set
     return True
 
 
+# ── OB touch-state filter (Phase 1B) ────────────────────────────────────────
+# Reads Phase 1A touch metadata only; never recomputes touches and never
+# mutates the OB. Returns True when the OB should be considered for alerts.
+_OB_TOUCH_STATE_VALUES = frozenset({
+    "all", "virgin", "first_touch", "second_touch", "third_plus", "any_retested",
+})
+
+
+def filter_ob(ob: Dict[str, Any], price: float, settings: Dict[str, Any]) -> bool:
+    if not settings:
+        return True
+
+    use_state    = bool(settings.get("useObTouchState", False))
+    use_virgin   = bool(settings.get("useObVirginApproach", False))
+
+    if not use_state and not use_virgin:
+        return True
+
+    try:
+        touches = int(ob.get("touches", 0) or 0)
+    except (TypeError, ValueError):
+        touches = 0
+
+    if use_state:
+        state = settings.get("obTouchState", "all")
+        if state not in _OB_TOUCH_STATE_VALUES:
+            state = "all"
+
+        if state == "virgin"        and touches != 0: return False
+        if state == "first_touch"   and touches != 1: return False
+        if state == "second_touch"  and touches != 2: return False
+        if state == "third_plus"    and touches < 3:  return False
+        if state == "any_retested"  and touches < 1:  return False
+
+        try:
+            max_touches = int(settings.get("obMaxTouches", 99))
+        except (TypeError, ValueError):
+            max_touches = 99
+        if touches > max_touches:
+            return False
+
+    if use_virgin:
+        if touches != 0:
+            return False
+        try:
+            approach_pct = float(settings.get("obVirginApproachPct", 1.5))
+        except (TypeError, ValueError):
+            approach_pct = 1.5
+        ob_mid = ob.get("avg")
+        if ob_mid is None:
+            ob_mid = (ob["top"] + ob["bottom"]) / 2.0
+        denom = max(abs(price), 1e-10)
+        if abs(price - ob_mid) / denom * 100.0 > approach_pct:
+            return False
+
+    return True
+
+
 # ============================================================
 # Scan modules
 # ============================================================
@@ -4128,6 +4186,9 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
 
         found_alert = False
         for ob in ob_list:  # ← check ALL OBs, not just nearest
+            # Phase 1B: backend touch-state filter (no-op when disabled)
+            if not filter_ob(ob, price, settings):
+                continue
             zone_top      = ob["top"]
             zone_bottom   = ob["bottom"]
             price_in_zone = zone_bottom <= price <= zone_top
@@ -5022,6 +5083,12 @@ def parse_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
         "obMinStrengthPct":     float(payload.get("obMinStrengthPct", 70)),
         "useHighProbOB": bool(payload.get("useHighProbOB", False)),
         "obMinQuality": int(payload.get("obMinQuality", 50)),
+        # Phase 1B: backend OB touch-state filters (no UI yet)
+        "useObTouchState":      bool(payload.get("useObTouchState", False)),
+        "obTouchState":         payload.get("obTouchState", "all"),
+        "obMaxTouches":         int(payload.get("obMaxTouches", 99)),
+        "useObVirginApproach":  bool(payload.get("useObVirginApproach", False)),
+        "obVirginApproachPct":  float(payload.get("obVirginApproachPct", 1.5)),
         "useFvgValidOnly": bool(payload.get("useFvgValidOnly", True)),
         "useFvgState": bool(payload.get("useFvgState", False)),
         "fvgState": payload.get("fvgState", "all"),
@@ -5834,6 +5901,9 @@ _WL_SCAN_SETTINGS: Dict[str, Any] = {
     "useObStrengthFilter": False, "obMinStrengthPct": 0,
     "useHighProbOB": False, "obMinQuality": 50,
     "useAtrObApproach": False, "obApproachAtrMult": 0.5,
+    # Phase 1B: backend OB touch-state filters (no UI yet)
+    "useObTouchState": False, "obTouchState": "all", "obMaxTouches": 99,
+    "useObVirginApproach": False, "obVirginApproachPct": 1.5,
     "useFvgValidOnly": False, "useFvgState": False,
     "fvgState": "all", "fvgAgeMin": 0, "fvgAgeMax": 50,
     "useFvgAgeRange": False, "useFvgDistance": False,
@@ -5972,6 +6042,9 @@ def _scan_pair_multitf(symbol: str, market: str = "perpetual", wl_config: Option
                 itrend_q, trend_q = detect_structure(h, l, c, iLen, sLen)
 
                 for ob in raw_obs:
+                    # Phase 1B: backend touch-state filter (no-op when disabled)
+                    if not filter_ob(ob, price, settings):
+                        continue
                     zt  = ob["top"]
                     zb  = ob["bottom"]
                     dist_pct = obq_dist_from_price(price, zt, zb, ob["type"])
