@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from models import (db, User, AdminLog, GlobalSetting, RolePermission, UserPermission,
                     LoginHistory, DailyTokenUsage, EmailVerification, GuestDevice,
-                    BacktestRun, IntelligenceSettings,
+                    BacktestRun, IntelligenceSettings, PasswordResetToken,
                     ALL_MODULES, ALL_TABS, ALL_EXCHANGES, ALL_TIMEFRAMES)
 from permissions import get_user_permissions, save_user_permissions, _bust_cache
 
@@ -407,6 +407,7 @@ def users_delete(user_id):
 
         # Delete owned records (strict FK — cannot be nullified)
         EmailVerification.query.filter_by(user_id=uid).delete(synchronize_session=False)
+        PasswordResetToken.query.filter_by(user_id=uid).delete(synchronize_session=False)
         GuestDevice.query.filter_by(user_id=uid).delete(synchronize_session=False)
         LoginHistory.query.filter_by(user_id=uid).delete(synchronize_session=False)
         DailyTokenUsage.query.filter_by(user_id=uid).delete(synchronize_session=False)

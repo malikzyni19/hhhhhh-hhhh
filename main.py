@@ -9,6 +9,7 @@ import ssl
 import socket
 import struct
 import hashlib
+import secrets
 import base64
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -37,7 +38,8 @@ def no_cache(r):
 from flask_login import LoginManager
 from models import (db, User as _DBUser, GlobalSetting as _GlobalSetting,
                     LoginHistory as _LoginHistory,
-                    EmailVerification as _EmailVerification)
+                    EmailVerification as _EmailVerification,
+                    PasswordResetToken as _PasswordResetToken)
 from admin import admin_bp
 from permissions import get_user_permissions, consume_tokens, check_tokens
 
@@ -5195,7 +5197,8 @@ def login():
     if request.method == "GET":
         if session.get("logged_in"):
             return redirect(url_for("index"))
-        return render_template("login.html")
+        pw_reset = request.args.get("reset") == "1"
+        return render_template("login.html", pw_reset_success=pw_reset)
 
     username = request.form.get("username", "").strip().lower()
     pwd      = request.form.get("password", "")
@@ -5540,6 +5543,195 @@ def resend_verification():
         db.session.rollback()
         return render_template("verify.html", username=username,
                                error="Failed to resend. Please try again later.")
+
+
+# ── Password Reset ─────────────────────────────────────────────────────────────
+
+def _build_password_reset_email(username: str, reset_url: str) -> str:
+    """Return the premium HTML email body for password reset."""
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>Reset Your Password — ZyNi SMC</title>
+</head>
+<body style="margin:0;padding:0;background:#060a14;font-family:'Segoe UI',Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;">
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background:#060a14;">
+  <tr><td align="center" style="padding:40px 16px;">
+    <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="max-width:580px;">
+
+      <!-- HEADER / LOGO BANNER -->
+      <tr><td style="background:#000000;border-radius:16px 16px 0 0;padding:0;text-align:center;border:1px solid rgba(249,115,22,0.25);border-bottom:3px solid #f97316;overflow:hidden;line-height:0;font-size:0;">
+        <img src="https://smcsetups.com/static/images/logo-email.png"
+             alt="ZyNi SMC"
+             width="580"
+             style="width:100%;max-width:580px;height:auto;display:block;border-radius:16px 16px 0 0;">
+      </td></tr>
+
+      <!-- HERO BANNER -->
+      <tr><td style="background:linear-gradient(135deg,#0d1525 0%,#0f1e38 60%,#0a0f1e 100%);padding:36px 40px 28px;text-align:center;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
+        <img src="https://smcsetups.com/static/images/avatar-email.png" alt="ZyNi SMC" width="90" height="90"
+             style="width:90px;height:90px;border-radius:50%;display:block;margin:0 auto 20px;border:2.5px solid rgba(249,115,22,0.70);box-shadow:0 0 0 4px rgba(249,115,22,0.12),0 8px 28px rgba(0,0,0,0.55),0 0 30px rgba(249,115,22,0.18);object-fit:cover;">
+        <h1 style="color:#ffffff;font-size:23px;font-weight:800;margin:0 0 14px;letter-spacing:-0.3px;">Password Reset Request</h1>
+        <p style="color:rgba(232,240,255,0.65);font-size:15px;margin:0;line-height:1.75;">
+          Hi <strong style="color:#ffffff;">{username}</strong>, we received a request to reset your ZyNi SMC password.<br>
+          Click the button below to choose a new password.
+        </p>
+      </td></tr>
+
+      <!-- CTA BUTTON -->
+      <tr><td style="background:linear-gradient(135deg,#0d1525 0%,#0f1e38 100%);padding:0 40px 36px;text-align:center;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
+        <table cellpadding="0" cellspacing="0" role="presentation" style="margin:0 auto;">
+          <tr><td style="border-radius:12px;background:linear-gradient(135deg,#f97316 0%,#ea580c 100%);box-shadow:0 8px 32px rgba(249,115,22,0.35);">
+            <a href="{reset_url}"
+               style="display:inline-block;padding:15px 44px;color:#ffffff;font-size:15px;font-weight:700;text-decoration:none;letter-spacing:0.3px;border-radius:12px;">
+              Reset My Password
+            </a>
+          </td></tr>
+        </table>
+        <p style="color:rgba(232,240,255,0.40);font-size:12px;margin:18px 0 0;line-height:1.6;">
+          This link expires in <strong style="color:rgba(249,115,22,0.75);">30 minutes</strong>.
+          If you did not request a password reset, you can safely ignore this email — your account is secure.
+        </p>
+      </td></tr>
+
+      <!-- DIVIDER -->
+      <tr><td style="background:linear-gradient(135deg,#0d1525 0%,#0f1e38 100%);padding:0 40px;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
+        <div style="height:1px;background:linear-gradient(90deg,transparent,rgba(249,115,22,0.25),transparent);"></div>
+      </td></tr>
+
+      <!-- SECURITY NOTE -->
+      <tr><td style="background:linear-gradient(135deg,#0d1525 0%,#0f1e38 100%);padding:24px 40px 32px;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
+        <table cellpadding="0" cellspacing="0" role="presentation" width="100%">
+          <tr>
+            <td style="background:rgba(249,115,22,0.07);border:1px solid rgba(249,115,22,0.2);border-radius:10px;padding:16px 20px;">
+              <p style="color:rgba(232,240,255,0.55);font-size:12.5px;margin:0;line-height:1.7;">
+                <strong style="color:rgba(249,115,22,0.85);">Security tip:</strong>
+                ZyNi SMC will never ask for your password via email or phone.
+                This link can only be used once and will expire automatically.
+                If you didn't request this, please contact us at
+                <a href="mailto:support@smcsetups.com" style="color:#f97316;text-decoration:none;">support@smcsetups.com</a>.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td></tr>
+
+      <!-- FOOTER -->
+      <tr><td style="background:#040710;border-radius:0 0 16px 16px;padding:24px 40px;text-align:center;border:1px solid rgba(249,115,22,0.12);border-top:none;">
+        <p style="color:rgba(232,240,255,0.30);font-size:11.5px;margin:0 0 6px;line-height:1.7;">
+          ZyNi SMC — Smart Market Center<br>
+          Questions? <a href="mailto:support@smcsetups.com" style="color:#f97316;text-decoration:none;">support@smcsetups.com</a>
+        </p>
+        <p style="color:rgba(232,240,255,0.18);font-size:10.5px;margin:0;">
+          You received this email because a password reset was requested for your account.
+        </p>
+      </td></tr>
+
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>"""
+
+
+@app.route("/forgot-password", methods=["POST"])
+def forgot_password():
+    is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+
+    data       = request.get_json(silent=True) or {}
+    identifier = (data.get("identifier") or request.form.get("identifier", "")).strip().lower()
+
+    # Always return a generic success message to prevent user enumeration
+    generic_ok = {"success": True,
+                  "message": "If that account exists, a reset link has been sent to the registered email."}
+
+    if not identifier:
+        if is_ajax:
+            return jsonify({"error": "validation", "message": "Please enter your email or username."}), 400
+        return redirect(url_for("login"))
+
+    # Rate-limit: allow at most 1 reset request per email per 5 minutes
+    user = _DBUser.query.filter(
+        (_DBUser.email == identifier) | (_DBUser.username == identifier)
+    ).first()
+
+    if user:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=5)
+        recent = (_PasswordResetToken.query
+                  .filter_by(user_id=user.id)
+                  .filter(_PasswordResetToken.created_at > cutoff)
+                  .first())
+        if not recent:
+            raw_token  = secrets.token_urlsafe(32)
+            token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+            expires    = datetime.now(timezone.utc) + timedelta(minutes=30)
+            prt = _PasswordResetToken(user_id=user.id, token_hash=token_hash, expires_at=expires)
+            db.session.add(prt)
+            db.session.commit()
+
+            reset_url  = url_for("reset_password", token=raw_token, _external=True)
+            email_body = _build_password_reset_email(user.username, reset_url)
+            _send_via_resend(user.email, "ZyNi SMC — Reset Your Password", email_body)
+            print(f"[RESET] Sent password reset to {user.email}")
+        else:
+            print(f"[RESET] Rate-limited: reset already sent for user_id={user.id}")
+
+    if is_ajax:
+        return jsonify(generic_ok)
+    return redirect(url_for("login"))
+
+
+@app.route("/reset-password/<token>", methods=["GET", "POST"])
+def reset_password(token):
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    now        = datetime.now(timezone.utc)
+
+    prt = (_PasswordResetToken.query
+           .filter_by(token_hash=token_hash, used=False)
+           .filter(_PasswordResetToken.expires_at > now)
+           .first())
+
+    if not prt:
+        return render_template("reset_password.html", invalid=True)
+
+    if request.method == "GET":
+        return render_template("reset_password.html", token=token)
+
+    # POST — set new password
+    password  = request.form.get("password", "")
+    password2 = request.form.get("password2", "")
+    is_ajax   = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+
+    def _err(msg):
+        if is_ajax:
+            return jsonify({"error": "validation", "message": msg}), 400
+        return render_template("reset_password.html", token=token, error=msg)
+
+    if not password:
+        return _err("Please enter a new password.")
+    if len(password) < 6:
+        return _err("Password must be at least 6 characters.")
+    if password != password2:
+        return _err("Passwords do not match.")
+
+    try:
+        user = _DBUser.query.get(prt.user_id)
+        if not user:
+            return render_template("reset_password.html", invalid=True)
+        user.set_password(password)
+        prt.used = True
+        db.session.commit()
+        print(f"[RESET] Password updated for user_id={user.id}")
+        if is_ajax:
+            return jsonify({"success": True, "redirect": url_for("login")})
+        return redirect(url_for("login"))
+    except Exception as exc:
+        db.session.rollback()
+        print(f"[RESET] Error updating password: {exc}")
+        return _err("Something went wrong. Please try again.")
 
 
 @app.route("/admin/test-email")
