@@ -2185,68 +2185,6 @@ def detect_pivots(high: List[float], low: List[float], left: int, right: int) ->
     return ph, pl
 
 
-def _compute_dynamic_ilen(c: List[float], i_len_default: int) -> List[int]:
-    """
-    Replicate Pine's per-bar dynamic iLen adjustment.
-    Pine: vv = f_zscore(((close-close[iLen])/close[iLen])*100, iLen)
-    switch: abs(vv)>=2.0→5, >=1.9→6, >=1.8→7, >=1.7→8, >=1.6→9, >=1.5→10, else→default
-    f_zscore uses sample stdev (Bessel-corrected, same as Pine's ta.stdev).
-    iLen is a persistent variable — its change on bar N affects bar N+1's window.
-    """
-    n = len(c)
-    dyn: List[int] = [i_len_default] * n
-    src_hist: List[float] = [0.0] * n
-    current_ilen: int = i_len_default
-
-    for i in range(n):
-        prev_i = i - current_ilen
-        if prev_i >= 0 and c[prev_i] != 0.0:
-            src_hist[i] = (c[i] - c[prev_i]) / c[prev_i] * 100.0
-
-        if i + 1 >= current_ilen:
-            start_w = i - current_ilen + 1
-            w = src_hist[start_w: i + 1]
-            n_w = len(w)
-            if n_w >= 2:
-                mean_w = sum(w) / n_w
-                var_w  = sum((x - mean_w) ** 2 for x in w) / (n_w - 1)
-                std_w  = var_w ** 0.5
-                if std_w > 0.0:
-                    abs_vv = abs((src_hist[i] - mean_w) / std_w)
-                    if   abs_vv >= 2.0: current_ilen = 5
-                    elif abs_vv >= 1.9: current_ilen = 6
-                    elif abs_vv >= 1.8: current_ilen = 7
-                    elif abs_vv >= 1.7: current_ilen = 8
-                    elif abs_vv >= 1.6: current_ilen = 9
-                    elif abs_vv >= 1.5: current_ilen = 10
-                    # no else — Pine's switch has no default, iLen keeps previous value
-
-        dyn[i] = current_ilen
-
-    return dyn
-
-
-def _is_dyn_pivot_high(h: List[float], bar: int, window: int) -> bool:
-    """
-    Replicate Pine's ta.pivothigh(high, iLen, iLen) with dynamic window.
-    Caller guarantees bar >= window and bar + window < len(h).
-    Returns True if h[bar] is strictly greater than all surrounding `window` bars.
-    """
-    pv = h[bar]
-    for j in range(bar - window, bar + window + 1):
-        if j != bar and h[j] >= pv:
-            return False
-    return True
-
-
-def _is_dyn_pivot_low(l: List[float], bar: int, window: int) -> bool:
-    pv = l[bar]
-    for j in range(bar - window, bar + window + 1):
-        if j != bar and l[j] <= pv:
-            return False
-    return True
-
-
 def detect_structure(high: List[float], low: List[float], close: List[float], i_len: int, s_len: int) -> Tuple[int, int]:
     ph_i, pl_i = detect_pivots(high, low, i_len, i_len)
     ph_s, pl_s = detect_pivots(high, low, s_len, s_len)
@@ -2411,7 +2349,7 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
       obj.cV.unshift(b.v[iU])                    <- volume from offset candle
     """
     n = len(c)
-    dyn_ilen = _compute_dynamic_ilen(c, i_len)
+    ph, pl = detect_pivots(h, l, i_len, i_len)
     obs = []
 
     upP, upB, upL = [], [], []
@@ -2423,24 +2361,20 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
     # OB is confirmed by BOS (break of structure) — the BOS candle can be current.
     # Unlike FVG which needs 3 closed candles, OB only needs the BOS to occur.
     for i in range(start, n):
-        # Dynamic pivot detection — replicates Pine's ta.pivothigh/pivotlow(h, iLen, iLen)
-        # where iLen changes per bar. The candidate pivot bar is i - dyn_ilen[i] (iLen bars back).
-        cand = i - dyn_ilen[i]
-        if cand >= dyn_ilen[i]:  # left-side window fits (right-side: cand+iLen = i < n always)
-            if _is_dyn_pivot_high(h, cand, dyn_ilen[i]):
-                upP.insert(0, h[cand])
-                upB.insert(0, cand)
-                upL.insert(0, h[cand])
-            if _is_dyn_pivot_low(l, cand, dyn_ilen[i]):
-                dnP.insert(0, l[cand])
-                dnB.insert(0, cand)
-                dnL.insert(0, l[cand])
+        if i - i_len >= 0 and ph[i - i_len]:
+            upP.insert(0, h[i - i_len])
+            upB.insert(0, i - i_len)
+            upL.insert(0, h[i - i_len])
+        if i - i_len >= 0 and pl[i - i_len]:
+            dnP.insert(0, l[i - i_len])
+            dnB.insert(0, i - i_len)
+            dnL.insert(0, l[i - i_len])
 
         # ── INTERNAL BULLISH BREAK → Create Bullish OB ──
         if upP and len(dnL) > 1 and c[i] > upP[0] and (i == start or c[i - 1] <= upP[0]):
             pivot_bar    = upB[0] if upB else i - 10
-            # Pine: iLen is dynamic per bar; loop for j=0 to iLen-1 → range [i-(iLen-1), i]
-            search_start = max(0, i - dyn_ilen[i] + 1)
+            # Pine: for i=0 to iLen-1 (iLen iterations) → range [i-(iLen-1), i]
+            search_start = max(0, i - i_len + 1)
             search_end   = i + 1  # include break bar
 
             if search_end > search_start:
@@ -2504,8 +2438,8 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         # ── INTERNAL BEARISH BREAK → Create Bearish OB ──
         if dnP and len(upL) > 1 and c[i] < dnP[0] and (i == start or c[i - 1] >= dnP[0]):
             pivot_bar    = dnB[0] if dnB else i - 10
-            # Pine: iLen is dynamic per bar; loop for j=0 to iLen-1 → range [i-(iLen-1), i]
-            search_start = max(0, i - dyn_ilen[i] + 1)
+            # Pine: for i=0 to iLen-1 (iLen iterations) → range [i-(iLen-1), i]
+            search_start = max(0, i - i_len + 1)
             search_end   = i + 1
 
             if search_end > search_start:
@@ -2598,7 +2532,7 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
     Uses exact same pivot/BOS logic as detect_obs — only skips the mitigation filter.
     """
     n = len(c)
-    dyn_ilen = _compute_dynamic_ilen(c, i_len)
+    ph, pl = detect_pivots(h, l, i_len, i_len)
     obs = []
 
     upP, upB, upL = [], [], []
@@ -2607,21 +2541,19 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
     start_i = max(i_len * 2 + 2, s_len + 2)
 
     for i in range(start_i, n):
-        cand = i - dyn_ilen[i]
-        if cand >= dyn_ilen[i]:
-            if _is_dyn_pivot_high(h, cand, dyn_ilen[i]):
-                upP.insert(0, h[cand])
-                upB.insert(0, cand)
-                upL.insert(0, h[cand])
-            if _is_dyn_pivot_low(l, cand, dyn_ilen[i]):
-                dnP.insert(0, l[cand])
-                dnB.insert(0, cand)
-                dnL.insert(0, l[cand])
+        if i - i_len >= 0 and ph[i - i_len]:
+            upP.insert(0, h[i - i_len])
+            upB.insert(0, i - i_len)
+            upL.insert(0, h[i - i_len])
+        if i - i_len >= 0 and pl[i - i_len]:
+            dnP.insert(0, l[i - i_len])
+            dnB.insert(0, i - i_len)
+            dnL.insert(0, l[i - i_len])
 
         # Bullish OB — same as detect_obs
         if upP and len(dnL) > 1 and c[i] > upP[0] and (i == start_i or c[i - 1] <= upP[0]):
             pivot_bar    = upB[0] if upB else i - 10
-            search_start = max(0, i - dyn_ilen[i] + 1)
+            search_start = max(0, pivot_bar + 1)
             search_end   = i + 1
             if search_end > search_start:
                 min_idx = search_start
@@ -2642,15 +2574,13 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
                         "bar": min_idx, "sourceBar": ob_source,
                         "volume": total_v, "buyVolume": buy_v, "sellVolume": sell_v,
                         "type": "bullish",
-                        "_dbg_bos_bar": i, "_dbg_dyn_ilen": dyn_ilen[i],
-                        "_dbg_search_start": search_start, "_dbg_search_end": search_end - 1,
                     })
             upP.clear(); upB.clear()
 
         # Bearish OB — same as detect_obs
         if dnP and len(upL) > 1 and c[i] < dnP[0] and (i == start_i or c[i - 1] >= dnP[0]):
             pivot_bar    = dnB[0] if dnB else i - 10
-            search_start = max(0, i - dyn_ilen[i] + 1)
+            search_start = max(0, pivot_bar + 1)
             search_end   = i + 1
             if search_end > search_start:
                 max_idx = search_start
@@ -2671,8 +2601,6 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
                         "bar": max_idx, "sourceBar": ob_source,
                         "volume": total_v, "buyVolume": buy_v, "sellVolume": sell_v,
                         "type": "bearish",
-                        "_dbg_bos_bar": i, "_dbg_dyn_ilen": dyn_ilen[i],
-                        "_dbg_search_start": search_start, "_dbg_search_end": search_end - 1,
                     })
             dnP.clear(); dnB.clear()
 
