@@ -3793,7 +3793,10 @@ def calculate_tv_ob_volume_share(obs: List[Dict[str, Any]],
          "firstTouchBar":   ob.get("firstTouchBar"),
          "lastTouchBar":    ob.get("lastTouchBar"),
          "mitigationBar":   ob.get("mitigationBar"),
-         "mitigated":       ob.get("mitigated")}
+         "mitigated":       ob.get("mitigated"),
+         "untouched":       ob.get("untouched"),
+         "onceTouched":     ob.get("onceTouched"),
+         "touchSeq":        ob.get("touchSeq")}
         for ob in visible
     ]
 
