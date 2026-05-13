@@ -1504,6 +1504,9 @@ def debug_ob_tv_parity():
                 "lastTouchBar":    ob.get("lastTouchBar"),
                 "mitigationBar":   ob.get("mitigationBar"),
                 "mitigated":       ob.get("mitigated"),
+                "untouched":       ob.get("untouched"),
+                "onceTouched":     ob.get("onceTouched"),
+                "touchSeq":        ob.get("touchSeq"),
             }
 
         def _ob_visible(ob):
@@ -1606,6 +1609,9 @@ def debug_ob_tv_parity():
                 "lastTouchBar":    nearest.get("lastTouchBar"),
                 "mitigationBar":   nearest.get("mitigationBar"),
                 "mitigated":       nearest.get("mitigated"),
+                "untouched":       nearest.get("untouched"),
+                "onceTouched":     nearest.get("onceTouched"),
+                "touchSeq":        nearest.get("touchSeq"),
             }
 
         # ── Limit comparison (one fetch, multiple slices) ─────────────────────
@@ -1642,6 +1648,7 @@ def debug_ob_tv_parity():
                 "touches", "isVirgin", "currentlyInside",
                 "firstTouchBar", "lastTouchBar",
                 "mitigationBar", "mitigated",
+                "untouched", "onceTouched", "touchSeq",
             ],
             "candle_info":                  candle_info,
             "detection_counts":             detection_counts,
