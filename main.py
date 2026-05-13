@@ -3271,6 +3271,17 @@ def filter_ob(ob: Dict[str, Any], price: float, settings: Dict[str, Any]) -> boo
     return True
 
 
+def _ob_touch_label(ob: Dict[str, Any]) -> str:
+    """Phase 1D: short human-readable OB touch label for alert details."""
+    try:
+        touches = int(ob.get("touches", 0) or 0)
+    except (TypeError, ValueError):
+        touches = 0
+    if bool(ob.get("isVirgin", touches == 0)) or touches == 0:
+        return "VIRGIN"
+    return f"Touch: {touches}"
+
+
 # ============================================================
 # Scan modules
 # ============================================================
@@ -4257,7 +4268,8 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
                                    f'Candles: {consecutive} | '
                                    f'TV OB %: {_tv_share_str}{quality_str}{_filter_label} | '
                                    f'Zone: {fmt_price(zone_bottom)} – {fmt_price(zone_top)}'
-                                   + (f' | {ob["ofSummary"]}' if ob.get("ofSummary") else '')),
+                                   + (f' | {ob["ofSummary"]}' if ob.get("ofSummary") else '')
+                                   + f' | {_ob_touch_label(ob)}'),
                         "strength": ob_strength,
                         "meta": {**ob_meta_base, "consolCandles": consecutive, "obState": "inside"},
                     })
@@ -4276,7 +4288,8 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
                     "detail": (f'Approaching {direction} OB | Dist: {dist_pct:.2f}% | '
                                f'TV OB %: {_tv_share_str}{quality_str}{_filter_label} | '
                                f'Zone: {fmt_price(zone_bottom)} – {fmt_price(zone_top)}'
-                               + (f' | {ob["ofSummary"]}' if ob.get("ofSummary") else '')),
+                               + (f' | {ob["ofSummary"]}' if ob.get("ofSummary") else '')
+                               + f' | {_ob_touch_label(ob)}'),
                     "strength": ob_strength,
                     "meta": {**ob_meta_base, "obState": "approaching" if not price_in_zone else "inside"},
                 })
