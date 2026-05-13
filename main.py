@@ -2332,10 +2332,10 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
     """
     Order Block detection — audited line-by-line against Pine Script drawVOB().
 
-    Pine search window (Phase 8B.5 fix):
-      For bullish OB: search_start = hN.first() (most recent pivot HIGH bar, inclusive)
-      For bearish OB: search_start = lN.first() (most recent pivot LOW bar, inclusive)
-      Previously used pivot_bar+1 which excluded the pivot bar — mismatching Pine's loc.
+    Pine search window:
+      search_start = pivot_bar + 1 (Pine loc = hN/lN.first() = absolute pivot bar).
+      Pine loop: for i = 0 to math.abs((loc - b.n)) - 1 → covers [pivot+1, BOS_bar].
+      Window size = BOS_bar - pivot_bar, independent of iLen.
 
     Zone source candle (+1 offset within the search range):
       Pine finds the extreme candle (lowest low / highest high), then takes
@@ -2373,8 +2373,9 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         # ── INTERNAL BULLISH BREAK → Create Bullish OB ──
         if upP and len(dnL) > 1 and c[i] > upP[0] and (i == start or c[i - 1] <= upP[0]):
             pivot_bar    = upB[0] if upB else i - 10
-            # Pine: for i=0 to iLen-1 (iLen iterations) → range [i-(iLen-1), i]
-            search_start = max(0, i - i_len + 1)
+            # Pine: loc = hN.first() = absolute pivot bar. Loop covers (BOS - pivot)
+            # bars, accessing [pivot+1, BOS]. Window size is independent of iLen.
+            search_start = max(0, pivot_bar + 1)
             search_end   = i + 1  # include break bar
 
             if search_end > search_start:
@@ -2438,8 +2439,9 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         # ── INTERNAL BEARISH BREAK → Create Bearish OB ──
         if dnP and len(upL) > 1 and c[i] < dnP[0] and (i == start or c[i - 1] >= dnP[0]):
             pivot_bar    = dnB[0] if dnB else i - 10
-            # Pine: for i=0 to iLen-1 (iLen iterations) → range [i-(iLen-1), i]
-            search_start = max(0, i - i_len + 1)
+            # Pine: loc = lN.first() = absolute pivot bar. Loop covers (BOS - pivot)
+            # bars, accessing [pivot+1, BOS]. Window size is independent of iLen.
+            search_start = max(0, pivot_bar + 1)
             search_end   = i + 1
 
             if search_end > search_start:
