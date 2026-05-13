@@ -1496,6 +1496,14 @@ def debug_ob_tv_parity():
                 "formationRange": ob.get("formationRange"),
                 "sourceBar":      ob.get("sourceBar"),
                 "candleDir":      ob.get("candleDir"),
+                # Phase 1A: OB touch metadata (backend-only)
+                "touches":         ob.get("touches"),
+                "isVirgin":        ob.get("isVirgin"),
+                "currentlyInside": ob.get("currentlyInside"),
+                "firstTouchBar":   ob.get("firstTouchBar"),
+                "lastTouchBar":    ob.get("lastTouchBar"),
+                "mitigationBar":   ob.get("mitigationBar"),
+                "mitigated":       ob.get("mitigated"),
             }
 
         def _ob_visible(ob):
