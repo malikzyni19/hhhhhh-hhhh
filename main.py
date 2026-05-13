@@ -5070,6 +5070,21 @@ def detect_true_ath_atl(symbol: str, market: str = "perpetual") -> Optional[Dict
 
 
 def parse_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
+    # Phase 1B hardening: safe int/float casts with min-0 clamping for the
+    # new OB touch settings. Invalid / empty / missing values fall back to
+    # defaults instead of crashing the scan.
+    def _safe_int_min0(v: Any, default: int) -> int:
+        try:
+            return max(0, int(v))
+        except (TypeError, ValueError):
+            return default
+
+    def _safe_float_min0(v: Any, default: float) -> float:
+        try:
+            return max(0.0, float(v))
+        except (TypeError, ValueError):
+            return default
+
     return {
         "tf": payload.get("tf", "1h"),
         "iLen": int(payload.get("iLen", 5)),
@@ -5086,9 +5101,9 @@ def parse_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
         # Phase 1B: backend OB touch-state filters (no UI yet)
         "useObTouchState":      bool(payload.get("useObTouchState", False)),
         "obTouchState":         payload.get("obTouchState", "all"),
-        "obMaxTouches":         int(payload.get("obMaxTouches", 99)),
+        "obMaxTouches":         _safe_int_min0(payload.get("obMaxTouches"), 99),
         "useObVirginApproach":  bool(payload.get("useObVirginApproach", False)),
-        "obVirginApproachPct":  float(payload.get("obVirginApproachPct", 1.5)),
+        "obVirginApproachPct":  _safe_float_min0(payload.get("obVirginApproachPct"), 1.5),
         "useFvgValidOnly": bool(payload.get("useFvgValidOnly", True)),
         "useFvgState": bool(payload.get("useFvgState", False)),
         "fvgState": payload.get("fvgState", "all"),
