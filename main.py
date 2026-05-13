@@ -2328,6 +2328,116 @@ def detect_fvgs(o: List[float], h: List[float], l: List[float], c: List[float], 
     return [f for f in fvgs if not f["mitigated"]][-30:]
 
 
+# ── OB touch counting (clearance-based) ─────────────────────────────────────
+# Phase 1A: backend-only metadata. Does not alter OB parity (top/bottom/avg/
+# sourceBar/volume/TV OB %) and does not change mitigation behavior.
+_OB_TOUCH_CLEARANCE = 0.5  # fixed internal default; settings come in a later phase
+
+
+def _compute_ob_touch_meta(ob, h, l, c, n, ob_mitigation="Absolute",
+                            track_mitigation=False,
+                            clearance_factor=_OB_TOUCH_CLEARANCE):
+    """
+    Walk forward from ob["bar"] + 1 through n - 1 (excluding the current open
+    candle) and count zone touches with a clearance-based de-duplication rule.
+
+    A touch begins when a candle wicks into the zone (low <= top and high >=
+    bottom). After a touch, a new touch only counts once price has cleared the
+    zone by `clearance_factor * height`:
+
+        bullish: clearance_level = top    + clearance_factor * (top - bottom)
+        bearish: clearance_level = bottom - clearance_factor * (top - bottom)
+
+    Counting starts at ob["bar"] + 1 (NOT sourceBar) so the formation candle
+    itself is never counted.
+
+    track_mitigation:
+      False  — used by detect_obs(); mitigation has already been resolved by
+               the existing mitigation loop, so we just count touches across
+               the full counting window and report mitigationBar=None.
+      True   — used by detect_obs_all(); detect mitigation in the same pass.
+               If the mitigation candle also enters the zone, the touch on
+               that bar is counted FIRST, then mitigation is marked and the
+               walk stops. Bars after mitigationBar are not counted.
+    """
+    top    = ob["top"]
+    bottom = ob["bottom"]
+    avg_v  = ob.get("avg", (top + bottom) / 2.0)
+    height = max(top - bottom, 1e-10)
+    is_bull = ob["type"] == "bullish"
+
+    if is_bull:
+        clearance_level = top + clearance_factor * height
+    else:
+        clearance_level = bottom - clearance_factor * height
+
+    if ob_mitigation == "Middle":
+        mit_trigger = avg_v
+    else:
+        mit_trigger = bottom if is_bull else top
+
+    start = ob["bar"] + 1
+    end   = n - 1  # exclude current open candle (Pine barstate.isconfirmed)
+
+    touches = 0
+    first_touch_bar = None
+    last_touch_bar  = None
+    cleared = True   # initial state: first contact is allowed to count
+    seq = []
+    mitigated      = False
+    mitigation_bar = None
+
+    for j in range(start, end):
+        bar_inside = (l[j] <= top) and (h[j] >= bottom)
+
+        if bar_inside:
+            if cleared:
+                touches += 1
+                if first_touch_bar is None:
+                    first_touch_bar = j
+                last_touch_bar = j
+                cleared = False
+                seq.append(j)
+            else:
+                last_touch_bar = j
+        else:
+            if is_bull:
+                if h[j] >= clearance_level:
+                    cleared = True
+            else:
+                if l[j] <= clearance_level:
+                    cleared = True
+
+        if track_mitigation:
+            if is_bull and c[j] < mit_trigger:
+                mitigated      = True
+                mitigation_bar = j
+                break
+            if (not is_bull) and c[j] > mit_trigger:
+                mitigated      = True
+                mitigation_bar = j
+                break
+
+    currently_inside = False
+    if n >= 2 and touches > 0:
+        last_idx = n - 2
+        if 0 <= last_idx < n and last_idx >= start:
+            currently_inside = (l[last_idx] <= top) and (h[last_idx] >= bottom)
+
+    return {
+        "touches":         touches,
+        "firstTouchBar":   first_touch_bar,
+        "lastTouchBar":    last_touch_bar,
+        "untouched":       touches == 0,
+        "onceTouched":     touches == 1,
+        "touchSeq":        seq,
+        "isVirgin":        touches == 0,
+        "currentlyInside": currently_inside,
+        "mitigated":       mitigated,
+        "mitigationBar":   mitigation_bar,
+    }
+
+
 def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", ob_mitigation="Absolute"):
     """
     Order Block detection — audited line-by-line against Pine Script drawVOB().
@@ -2523,6 +2633,25 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         if mitigated:
             continue
 
+        # ── Phase 1A: touch metadata (parity-preserving) ──
+        # Mitigation has already been resolved above; surviving OBs simply
+        # count touches across [bar+1, n-1). mitigationBar is always None
+        # for OBs returned by detect_obs().
+        _tm = _compute_ob_touch_meta(
+            ob, h, l, c, n,
+            ob_mitigation=ob_mitigation,
+            track_mitigation=False,
+        )
+        ob["touches"]         = _tm["touches"]
+        ob["firstTouchBar"]   = _tm["firstTouchBar"]
+        ob["lastTouchBar"]    = _tm["lastTouchBar"]
+        ob["untouched"]       = _tm["untouched"]
+        ob["onceTouched"]     = _tm["onceTouched"]
+        ob["touchSeq"]        = _tm["touchSeq"]
+        ob["isVirgin"]        = _tm["isVirgin"]
+        ob["currentlyInside"] = _tm["currentlyInside"]
+        ob["mitigationBar"]   = None
+
         active.append(ob)
 
     return active if max_ob is None else active[-max_ob:]
@@ -2613,7 +2742,29 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
         if ob["bar"] not in seen:
             seen.add(ob["bar"])
             unique.append(ob)
-    return unique[:max_ob]
+    unique = unique[:max_ob]
+
+    # ── Phase 1A: touch + mitigation metadata for analytics/backtest ──
+    # detect_obs_all() must preserve mitigated OB records. Touches are counted
+    # up to and including the mitigation bar (per rule), then counting stops.
+    for ob in unique:
+        _tm = _compute_ob_touch_meta(
+            ob, h, l, c, n,
+            ob_mitigation="Absolute",
+            track_mitigation=True,
+        )
+        ob["touches"]         = _tm["touches"]
+        ob["firstTouchBar"]   = _tm["firstTouchBar"]
+        ob["lastTouchBar"]    = _tm["lastTouchBar"]
+        ob["untouched"]       = _tm["untouched"]
+        ob["onceTouched"]     = _tm["onceTouched"]
+        ob["touchSeq"]        = _tm["touchSeq"]
+        ob["isVirgin"]        = _tm["isVirgin"]
+        ob["currentlyInside"] = _tm["currentlyInside"]
+        ob["mitigated"]       = _tm["mitigated"]
+        ob["mitigationBar"]   = _tm["mitigationBar"]
+
+    return unique
 
 
 
@@ -3635,7 +3786,14 @@ def calculate_tv_ob_volume_share(obs: List[Dict[str, Any]],
     vis_debug = [
         {"direction": pool_name, "bar": ob["bar"],
          "zoneTop": round(ob["top"], 8), "zoneBottom": round(ob["bottom"], 8),
-         "volume": ob.get("volume"), "tvObVolumeSharePct": None}
+         "volume": ob.get("volume"), "tvObVolumeSharePct": None,
+         "touches":         ob.get("touches"),
+         "isVirgin":        ob.get("isVirgin"),
+         "currentlyInside": ob.get("currentlyInside"),
+         "firstTouchBar":   ob.get("firstTouchBar"),
+         "lastTouchBar":    ob.get("lastTouchBar"),
+         "mitigationBar":   ob.get("mitigationBar"),
+         "mitigated":       ob.get("mitigated")}
         for ob in visible
     ]
 

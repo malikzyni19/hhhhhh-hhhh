@@ -1496,6 +1496,14 @@ def debug_ob_tv_parity():
                 "formationRange": ob.get("formationRange"),
                 "sourceBar":      ob.get("sourceBar"),
                 "candleDir":      ob.get("candleDir"),
+                # Phase 1A: OB touch metadata (backend-only)
+                "touches":         ob.get("touches"),
+                "isVirgin":        ob.get("isVirgin"),
+                "currentlyInside": ob.get("currentlyInside"),
+                "firstTouchBar":   ob.get("firstTouchBar"),
+                "lastTouchBar":    ob.get("lastTouchBar"),
+                "mitigationBar":   ob.get("mitigationBar"),
+                "mitigated":       ob.get("mitigated"),
             }
 
         def _ob_visible(ob):
@@ -1590,6 +1598,14 @@ def debug_ob_tv_parity():
                 "tvObDirectionPoolCount":            tv_ref.get("tvObDirectionPoolCount")            if tv_ref else dir_src_count,
                 "in_tv_visible_pool":                in_visible,
                 "not_visible_reason":                nv_reason,
+                # Phase 1A: touch metadata (backend-only)
+                "touches":         nearest.get("touches"),
+                "isVirgin":        nearest.get("isVirgin"),
+                "currentlyInside": nearest.get("currentlyInside"),
+                "firstTouchBar":   nearest.get("firstTouchBar"),
+                "lastTouchBar":    nearest.get("lastTouchBar"),
+                "mitigationBar":   nearest.get("mitigationBar"),
+                "mitigated":       nearest.get("mitigated"),
             }
 
         # ── Limit comparison (one fetch, multiple slices) ─────────────────────
@@ -1620,6 +1636,13 @@ def debug_ob_tv_parity():
 
         return jsonify({
             "ok":                           True,
+            "phase":                        "1A",
+            "ob_touch_meta_enabled":        True,
+            "ob_touch_fields":              [
+                "touches", "isVirgin", "currentlyInside",
+                "firstTouchBar", "lastTouchBar",
+                "mitigationBar", "mitigated",
+            ],
             "candle_info":                  candle_info,
             "detection_counts":             detection_counts,
             "bullish_source_pool":          bull_source_out,
