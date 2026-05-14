@@ -440,8 +440,15 @@
                placeholder="e.g. 70" style="width:70px"
                title="Min TV OB volume share %. 0 = All.">
       </div>
+      <div class="aud-filter-group">
+        <label>Max OB Touches</label>
+        <input type="number" id="bt-max-touch-count" min="0" step="1"
+               placeholder="All" style="width:70px"
+               title="Optional. 0 = virgin only, 1 = virgin + first touch, 2 = up to second touch. Empty = all.">
+      </div>
       <button type="button" id="bt-run-btn" class="int-btn">▶ Run OB Backtest</button>
     </div>
+    <p style="font-size:10px;color:var(--muted);margin:6px 0 0">0 = virgin only · 1 = virgin + first touch · empty = all</p>
     <details style="margin-top:8px">
       <summary style="font-size:10px;color:var(--muted);cursor:pointer;user-select:none;padding:4px 0">▸ Advanced / Experimental</summary>
       <div style="padding:6px 0 0 0;display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end">
@@ -472,6 +479,8 @@
       <div id="bt-strength-summary" style="margin-top:10px"></div>
       <!-- Freshness summary cards (shown only when Advanced freshness filter is active) -->
       <div id="bt-freshness-summary" style="margin-top:14px;display:none"></div>
+      <!-- Phase 8B touch-bucket summary (shown when backend returns touch_bucket_summary) -->
+      <div id="bt-touch-bucket-summary" style="margin-top:14px;display:none"></div>
       <!-- Cross-variant diagnostic summary -->
       <div id="bt-diag-summary" style="margin-top:14px"></div>
       <!-- Loss-reason diagnostic breakdown -->
@@ -489,6 +498,8 @@
             <th>Score</th><th>Result</th><th>Loss Detail</th>
             <th id="bt-variants-th">Variants (Alt / ST / CCE)</th>
             <th class="bt-fresh-col" style="display:none">Freshness</th><th>TV OB %</th>
+            <th title="Signal-time clearance-based touch count (Phase 8B)">Touch</th>
+            <th title="Phase 8B bucket: virgin / touch_1 / touch_2 / 3+ touch / unknown">Bucket</th>
             <th>Entry</th><th>TP</th><th>SL</th><th>Reason</th>
           </tr></thead>
           <tbody id="bt-tbody"></tbody>
@@ -1719,6 +1730,119 @@ function intBt_renderStrengthSummary(ss) {
   el.innerHTML = html;
 }
 
+// Phase 8C: human label for the Touch Filter mode badge.
+function intBt_touchFilterLabel(mtc) {
+  if (mtc === null || mtc === undefined) return 'All';
+  var n = Number(mtc);
+  if (!Number.isFinite(n)) return 'All';
+  if (n === 0) return 'Virgin only';
+  if (n === 1) return '≤1 touch';
+  return '≤' + Math.floor(n) + ' touches';
+}
+
+// Phase 8C: render the Phase 8B touch-bucket summary cards. Defensive against
+// missing fields — if the backend doesn't include touch_bucket_summary the
+// container stays hidden.
+function intBt_renderTouchBucketSummary(tbs, filteredOut) {
+  var el = document.getElementById('bt-touch-bucket-summary');
+  if (!el) return;
+  if (!tbs || typeof tbs !== 'object') {
+    el.style.display = 'none'; el.innerHTML = ''; return;
+  }
+  var order = [
+    { key: 'virgin',       label: 'Virgin',     color: 'var(--green,#4ade80)' },
+    { key: 'touch_1',      label: 'Touch 1',    color: 'var(--cyan,#22d3ee)' },
+    { key: 'touch_2',      label: 'Touch 2',    color: 'var(--amber,#fbbf24)' },
+    { key: 'touch_3_plus', label: '3+ Touch',   color: 'var(--red,#f87171)' },
+    { key: 'unknown',      label: 'Unknown',    color: 'var(--muted)' }
+  ];
+  var anyData = false;
+  for (var i = 0; i < order.length; i++) {
+    var b = tbs[order[i].key] || {};
+    if ((b.checked || 0) > 0) { anyData = true; break; }
+  }
+  if (!anyData && !filteredOut) {
+    el.style.display = 'none'; el.innerHTML = ''; return;
+  }
+
+  var html = '<p style="font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin:0 0 6px">' +
+             'OB Touch Buckets (signal-time, clearance 0.5×h)</p>';
+  html += '<div style="display:flex;gap:10px;flex-wrap:wrap">';
+  order.forEach(function(c) {
+    var b = tbs[c.key] || {};
+    var checked = b.checked || 0;
+    var won = b.won || 0;
+    var lost = b.lost || 0;
+    var wr = (b.win_rate_entered === null || b.win_rate_entered === undefined)
+      ? '—'
+      : (b.win_rate_entered + '%');
+    html += '<div style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);' +
+            'border-radius:8px;padding:10px 14px;min-width:120px">' +
+            '<div style="font-size:10px;color:var(--muted);margin-bottom:4px">' + c.label + '</div>' +
+            '<div style="font-size:18px;font-weight:700;color:' + c.color + '">' + checked + '</div>' +
+            '<div style="font-size:10px;color:var(--muted);margin-top:2px">WR: ' + wr + '</div>' +
+            '<div style="font-size:9px;color:var(--muted)">W/L: ' + won + ' / ' + lost + '</div>' +
+            '</div>';
+  });
+  html += '</div>';
+  if (filteredOut && filteredOut > 0) {
+    html += '<p style="font-size:10px;color:var(--muted);margin:6px 0 0">' +
+            'Filtered by touch cap: <strong>' + filteredOut + '</strong></p>';
+  }
+  el.innerHTML = html;
+  el.style.display = 'block';
+}
+
+// Phase 8C: per-row touch-cell renderer. Tooltip shows touchSeqAtSignalBars as
+// readable UTC times when present; falls back to raw ms.
+function intBt_touchCells(s) {
+  var t = (s && s.touchSeqAtSignal);
+  var bucket = (s && s.obTouchBucket) || null;
+  var reason = (s && s.obTouchBucketReason) || '';
+  var bars   = (s && s.touchSeqAtSignalBars) || [];
+  var touchTxt, bucketTxt, color;
+  if (t === null || t === undefined) {
+    touchTxt = '—';
+    bucketTxt = 'Unknown';
+    color = 'var(--muted)';
+  } else if (t === 0) {
+    touchTxt = '0';
+    bucketTxt = 'VIRGIN';
+    color = 'var(--green,#4ade80)';
+  } else if (t === 1) {
+    touchTxt = '1';
+    bucketTxt = 'Touch 1';
+    color = 'var(--cyan,#22d3ee)';
+  } else if (t === 2) {
+    touchTxt = '2';
+    bucketTxt = 'Touch 2';
+    color = 'var(--amber,#fbbf24)';
+  } else {
+    touchTxt = String(t);
+    bucketTxt = '3+ Touch';
+    color = 'var(--red,#f87171)';
+  }
+  var tip = '';
+  if (Array.isArray(bars) && bars.length) {
+    try {
+      tip = 'Touch bars (UTC): ' + bars.map(function(ms) {
+        var d = new Date(Number(ms));
+        return isNaN(d.getTime()) ? String(ms) : d.toISOString().replace('.000Z', 'Z');
+      }).join(', ');
+    } catch (e) {
+      tip = 'Touch bars: ' + bars.join(', ');
+    }
+  }
+  if (reason && reason !== 'ok') {
+    tip = (tip ? (tip + ' • ') : '') + 'Reason: ' + reason;
+  }
+  var tipAttr = tip ? ' title="' + intAud_escHtml(tip) + '"' : '';
+  return {
+    touchCell: '<td style="font-size:10px;white-space:nowrap;color:' + color + '"' + tipAttr + '>' + touchTxt + '</td>',
+    bucketCell: '<td style="font-size:10px;white-space:nowrap;color:' + color + '">' + bucketTxt + '</td>'
+  };
+}
+
 function intBt_renderFreshnessSummary(fs) {
   var el = document.getElementById('bt-freshness-summary');
   if (!el) return;
@@ -1781,6 +1905,9 @@ function intBt_renderSignals(signals) {
     var strVal = (s.tv_ob_volume_share_pct !== null && s.tv_ob_volume_share_pct !== undefined) ? s.tv_ob_volume_share_pct : null;
     rows += '<td style="font-size:10px;white-space:nowrap;color:' + (strVal !== null ? 'var(--text)' : 'var(--muted)') + '">' +
             (strVal !== null ? strVal + '%' : '—') + '</td>';
+    var _tc = intBt_touchCells(s);
+    rows += _tc.touchCell;
+    rows += _tc.bucketCell;
     rows += '<td style="font-family:\'JetBrains Mono\',monospace;font-size:10px">' + intBt_fmt(s.entry_price) + '</td>';
     rows += '<td style="font-family:\'JetBrains Mono\',monospace;font-size:10px">' + intBt_fmt(s.target_price) + '</td>';
     rows += '<td style="font-family:\'JetBrains Mono\',monospace;font-size:10px">' + intBt_fmt(s.stop_price) + '</td>';
@@ -1803,17 +1930,19 @@ function intBt_runBacktest() {
   var diagEl       = document.getElementById('bt-diag');
   var diagSumEl    = document.getElementById('bt-diag-summary');
   var freshSumEl   = document.getElementById('bt-freshness-summary');
+  var touchSumEl   = document.getElementById('bt-touch-bucket-summary');
   var strSumEl     = document.getElementById('bt-strength-summary');
-  if (errEl)      { errEl.style.display = 'none'; errEl.textContent = ''; }
-  if (resultEl)   { resultEl.style.display = 'none'; }
-  if (runBtn)     { runBtn.textContent = '⏳ Running…'; runBtn.disabled = true; }
-  if (summaryEl)  { summaryEl.innerHTML = ''; }
-  if (strSumEl)   { strSumEl.innerHTML = ''; }
-  if (freshSumEl) { freshSumEl.innerHTML = ''; }
-  if (diagSumEl)  { diagSumEl.innerHTML = ''; }
-  if (diagEl)     { diagEl.innerHTML = ''; }
-  if (bkEl)       { bkEl.innerHTML = ''; }
-  if (wrap)       { wrap.style.display = 'none'; }
+  if (errEl)       { errEl.style.display = 'none'; errEl.textContent = ''; }
+  if (resultEl)    { resultEl.style.display = 'none'; }
+  if (runBtn)      { runBtn.textContent = '⏳ Running…'; runBtn.disabled = true; }
+  if (summaryEl)   { summaryEl.innerHTML = ''; }
+  if (strSumEl)    { strSumEl.innerHTML = ''; }
+  if (freshSumEl)  { freshSumEl.innerHTML = ''; }
+  if (touchSumEl)  { touchSumEl.innerHTML = ''; touchSumEl.style.display = 'none'; }
+  if (diagSumEl)   { diagSumEl.innerHTML = ''; }
+  if (diagEl)      { diagEl.innerHTML = ''; }
+  if (bkEl)        { bkEl.innerHTML = ''; }
+  if (wrap)        { wrap.style.display = 'none'; }
 
   var limit     = (document.getElementById('bt-limit')         || {}).value || '100';
   var tf        = (document.getElementById('bt-timeframe')     || {}).value || '';
@@ -1832,6 +1961,16 @@ function intBt_runBacktest() {
   url += '&stop_mode=' + encodeURIComponent(stopMode);
   if (freshness && freshness !== 'all')   url += '&freshness='    + encodeURIComponent(freshness);
   if (strengthMn && strengthMn !== '0')   url += '&strength_min=' + encodeURIComponent(strengthMn);
+
+  // Phase 8C: append max_touch_count only when the input has a numeric value.
+  // Number.isFinite preserves 0 (truthy-fallback would drop it).
+  var maxTouchRaw = ((document.getElementById('bt-max-touch-count') || {}).value || '').trim();
+  if (maxTouchRaw !== '') {
+    var _mt = Number(maxTouchRaw);
+    if (Number.isFinite(_mt)) {
+      url += '&max_touch_count=' + encodeURIComponent(String(Math.max(0, Math.floor(_mt))));
+    }
+  }
 
   console.log('[Backtest OB] fetching', url);
   intBt_running = true;
@@ -1855,8 +1994,17 @@ function intBt_runBacktest() {
       var modeEl = document.getElementById('bt-mode-badge');
       if (modeEl) {
         var modeIsClose = data.stop_mode === 'close';
-        modeEl.textContent = modeIsClose ? 'CLOSE-STOP MODE' : 'WICK-STOP MODE';
-        modeEl.title = data.rule_note || '';
+        var _stopLabel = modeIsClose ? 'CLOSE-STOP MODE' : 'WICK-STOP MODE';
+        // Phase 8C: append touch-filter label so users see the active cap.
+        var _mtc = (data.filters && data.filters.max_touch_count !== undefined)
+          ? data.filters.max_touch_count : null;
+        var _touchLabel = 'Touch Filter: ' + intBt_touchFilterLabel(_mtc);
+        var _filteredOut = (data.filtered_out_by_touch_cap || 0);
+        var _filteredTxt = _filteredOut > 0
+          ? '  |  Filtered by touch cap: ' + _filteredOut : '';
+        modeEl.textContent = _stopLabel + '  |  ' + _touchLabel + _filteredTxt;
+        modeEl.title = (data.rule_note || '') +
+          (_mtc !== null ? '  |  max_touch_count=' + _mtc : '');
         modeEl.style.background = modeIsClose ? 'rgba(251,191,36,.12)' : 'rgba(148,163,184,.12)';
         modeEl.style.color = modeIsClose ? 'var(--yellow,#fbbf24)' : 'var(--muted)';
         var thEl = document.getElementById('bt-variants-th');
@@ -1870,6 +2018,11 @@ function intBt_runBacktest() {
       } else {
         if (freshSumEl) { freshSumEl.style.display = 'none'; freshSumEl.innerHTML = ''; }
       }
+      // Phase 8C: render touch-bucket summary if backend returns it.
+      intBt_renderTouchBucketSummary(
+        data.touch_bucket_summary || null,
+        data.filtered_out_by_touch_cap || 0
+      );
       intBt_renderDiagSummary(data.diagnostic_summary || {});
       intBt_renderDiagnostics(data.diagnostics || {});
       intBt_renderBreakdown(data.by_timeframe || [], data.by_setup_type || []);
