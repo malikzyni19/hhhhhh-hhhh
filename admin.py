@@ -1203,6 +1203,17 @@ def intelligence_backtest_ob():
         except (TypeError, ValueError):
             strength_min = 0.0
 
+        # Phase 8B: signal-time OB touch cap. Empty / missing / invalid → None
+        # (filter disabled). Negative → clamped to 0 inside run_ob_backtest.
+        _mtc_raw = request.args.get("max_touch_count")
+        if _mtc_raw is None or str(_mtc_raw).strip() == "":
+            max_touch_count = None
+        else:
+            try:
+                max_touch_count = int(_mtc_raw)
+            except (TypeError, ValueError):
+                max_touch_count = None
+
         result       = (
             request.args.get("result") or
             request.args.get("result_filter") or
@@ -1219,6 +1230,7 @@ def intelligence_backtest_ob():
             stop_mode=stop_mode,
             freshness=freshness,
             strength_min=strength_min,
+            max_touch_count=max_touch_count,
         )
         return jsonify(result)
 
