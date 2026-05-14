@@ -1491,35 +1491,12 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
         <div class="tip-box" id="tip-atr-ob-approach">When enabled, the OB approach distance is calculated as <b>(ATR × multiplier) / price</b> instead of a fixed %. Slow/low-volatility coins get a tighter zone; fast/high-volatility coins get a wider zone automatically. <b>0.5</b> is a balanced default. Higher = wider approach zone.</div>
         <div class="subrow">
           <label><input id="useObTouchState" type="checkbox"> Enable OB Touch Filter <span class="tip-icon" onclick="toggleTip('tip-ob-touch-state')">ⓘ</span></label>
-        </div>
-        <div id="obTouchStateOptions" style="display:none;margin-left:4px">
-          <div class="subrow">
-            <div class="field">
-              <label>Touch State</label>
-              <select id="obTouchState">
-                <option value="all">All OBs</option>
-                <option value="virgin">Virgin only</option>
-                <option value="first_touch">First touch only</option>
-                <option value="second_touch">Second touch only</option>
-                <option value="third_plus">Third+ touch</option>
-                <option value="any_retested">Any retested</option>
-              </select>
-            </div>
-            <div class="field">
-              <label>Max Touches</label>
-              <input id="obMaxTouches" type="number" value="99" min="0" step="1">
-            </div>
+          <div class="field" id="obTouchStateOptions" style="display:none">
+            <label>Max OB Touch Count</label>
+            <input id="obMaxTouches" type="number" value="99" min="0" step="1" style="width:70px">
           </div>
         </div>
-        <div class="tip-box" id="tip-ob-touch-state"><b>Filter OBs by how many times price has revisited the zone.</b> <b>Virgin</b> = never touched (best fresh entries). <b>First touch</b> = price has revisited exactly once. <b>Second / Third+</b> = filter for repeated tests. <b>Any retested</b> = at least one prior touch. <b>Max Touches</b> caps how many retests are still allowed (set high to disable the cap).</div>
-        <div class="subrow">
-          <label><input id="useObVirginApproach" type="checkbox"> Virgin Approach Only <span class="tip-icon" onclick="toggleTip('tip-ob-virgin-approach')">ⓘ</span></label>
-          <div class="field" id="obVirginApproachWrap" style="display:none">
-            <label>Approach %</label>
-            <input id="obVirginApproachPct" type="number" value="1.5" min="0" step="0.1" style="width:60px">
-          </div>
-        </div>
-        <div class="tip-box" id="tip-ob-virgin-approach">When enabled, only untouched OBs whose midpoint is within this percent of current price are flagged. Useful for catching fresh setups before they get tested. Lower = stricter proximity.</div>
+        <div class="tip-box" id="tip-ob-touch-state"><b>Maximum number of times price can have already touched the zone.</b> <b>0</b> = virgin only (never touched). <b>1</b> = virgin + first-touch. Higher values progressively allow more retested OBs. <b>99</b> effectively disables the cap.</div>
         </div><!-- end obSubOptions -->
       </div>
 
@@ -2309,10 +2286,7 @@ function currentSettings(){
     useAtrObApproach: $('useAtrObApproach').checked,
     obApproachAtrMult: parseFloat($('obApproachAtrMult').value) || 0.5,
     useObTouchState: $('useObTouchState').checked,
-    obTouchState: $('obTouchState').value,
     obMaxTouches: (() => { const _v = parseInt($('obMaxTouches').value, 10); return Number.isFinite(_v) ? _v : 99; })(),
-    useObVirginApproach: $('useObVirginApproach').checked,
-    obVirginApproachPct: (() => { const _v = parseFloat($('obVirginApproachPct').value); return Number.isFinite(_v) ? _v : 1.5; })(),
     useFvgValidOnly: $('useFvgValidOnly').checked,
     useFvgState: $('useFvgState').checked,
     fvgState: $('fvgState').value,
@@ -2989,7 +2963,7 @@ function toggleTip(id){
 const SAVE_IDS_VAL = [
   'tf','iLen','sLen','approachPct','consolCandles','rsiOB','rsiOS',
   'obDistancePct','obMinStrengthPct','obMinQuality','obApproachAtrMult',
-  'obTouchState','obMaxTouches','obVirginApproachPct',
+  'obMaxTouches',
   'fvgState','fvgAgeMin','fvgAgeMax','fvgMaxDistancePct','fvgTouchDepth',
   'fvgObOverlapMode','fvgObMinOverlapPct',
   'fibTf','fibTolerancePct','fibAtrMultiplier','fibApproachPct',
@@ -3008,7 +2982,7 @@ const SAVE_IDS_VAL = [
   'biasCandleCount','biasFilter','biasBodyMinPct','biasObApproachPct','biasFvgTouch',
 ];
 const SAVE_IDS_CHK = [
-  'useObModule','useObStrengthFilter','useHighProbOB','useAtrObApproach','useObTouchState','useObVirginApproach','useFvgModule','useFvgValidOnly','useFvgState','useFvgAgeRange','useFvgDistance',
+  'useObModule','useObStrengthFilter','useHighProbOB','useAtrObApproach','useObTouchState','useFvgModule','useFvgValidOnly','useFvgState','useFvgAgeRange','useFvgDistance',
   'useFvgTouchDepth','useFvgObOverlap','useFibModule','useFibRequireFvg','useFibRequireOb',
   'useBtcCorrelation','roundRobin','enableAutoScan',
   'filterFVG','filterOB','filterFIB',
@@ -3051,7 +3025,6 @@ function loadSettings(){
   if($('useBreakerModule')) toggleWlSection('breakerSubOptions', $('useBreakerModule').checked);
   updateObStrengthFilterFields();
   updateObTouchStateFields();
-  updateObVirginApproachFields();
   if($('filterModeHint')) $('filterModeHint').style.display = (_scanMode === 'filter') ? 'block' : 'none';
   // Restore bias mode visual state after values are loaded
   const _biasModeEl = $('biasModeInput');
@@ -3082,12 +3055,6 @@ function updateObTouchStateFields(){
   if(wrap && chk){ wrap.style.display = chk.checked ? 'block' : 'none'; }
 }
 
-function updateObVirginApproachFields(){
-  const wrap = $('obVirginApproachWrap');
-  const chk  = $('useObVirginApproach');
-  if(wrap && chk){ wrap.style.display = chk.checked ? 'block' : 'none'; }
-}
-
 $('useHighProbOB')?.addEventListener('change', () => {
   updateHighProbObFields();
   saveSettings();
@@ -3100,11 +3067,6 @@ $('useAtrObApproach')?.addEventListener('change', () => {
 
 $('useObTouchState')?.addEventListener('change', () => {
   updateObTouchStateFields();
-  saveSettings();
-});
-
-$('useObVirginApproach')?.addEventListener('change', () => {
-  updateObVirginApproachFields();
   saveSettings();
 });
 

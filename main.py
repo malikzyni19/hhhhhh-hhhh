@@ -3213,22 +3213,22 @@ def filter_fvg(fvg: Dict[str, Any], obs: List[Dict[str, Any]], price: float, set
     return True
 
 
-# ── OB touch-state filter (Phase 1B) ────────────────────────────────────────
+# ── OB touch filter ──────────────────────────────────────────────────────────
 # Reads Phase 1A touch metadata only; never recomputes touches and never
 # mutates the OB. Returns True when the OB should be considered for alerts.
-_OB_TOUCH_STATE_VALUES = frozenset({
-    "all", "virgin", "first_touch", "second_touch", "third_plus", "any_retested",
-})
-
-
+#
+# When useObTouchState is enabled, the OB passes only if its touch count is
+# at most obMaxTouches. obMaxTouches=0 keeps virgin OBs only; higher values
+# include progressively more retested OBs.
+#
+# Legacy keys obTouchState / useObVirginApproach / obVirginApproachPct are
+# accepted by parse_settings for backward compatibility but no longer affect
+# filtering. Normal OB approach / consolidation logic decides proximity.
 def filter_ob(ob: Dict[str, Any], price: float, settings: Dict[str, Any]) -> bool:
     if not settings:
         return True
 
-    use_state    = bool(settings.get("useObTouchState", False))
-    use_virgin   = bool(settings.get("useObVirginApproach", False))
-
-    if not use_state and not use_virgin:
+    if not bool(settings.get("useObTouchState", False)):
         return True
 
     try:
@@ -3236,37 +3236,15 @@ def filter_ob(ob: Dict[str, Any], price: float, settings: Dict[str, Any]) -> boo
     except (TypeError, ValueError):
         touches = 0
 
-    if use_state:
-        state = settings.get("obTouchState", "all")
-        if state not in _OB_TOUCH_STATE_VALUES:
-            state = "all"
+    try:
+        max_touches = int(settings.get("obMaxTouches", 99))
+    except (TypeError, ValueError):
+        max_touches = 99
+    if max_touches < 0:
+        max_touches = 0
 
-        if state == "virgin"        and touches != 0: return False
-        if state == "first_touch"   and touches != 1: return False
-        if state == "second_touch"  and touches != 2: return False
-        if state == "third_plus"    and touches < 3:  return False
-        if state == "any_retested"  and touches < 1:  return False
-
-        try:
-            max_touches = int(settings.get("obMaxTouches", 99))
-        except (TypeError, ValueError):
-            max_touches = 99
-        if touches > max_touches:
-            return False
-
-    if use_virgin:
-        if touches != 0:
-            return False
-        try:
-            approach_pct = float(settings.get("obVirginApproachPct", 1.5))
-        except (TypeError, ValueError):
-            approach_pct = 1.5
-        ob_mid = ob.get("avg")
-        if ob_mid is None:
-            ob_mid = (ob["top"] + ob["bottom"]) / 2.0
-        denom = max(abs(price), 1e-10)
-        if abs(price - ob_mid) / denom * 100.0 > approach_pct:
-            return False
+    if touches > max_touches:
+        return False
 
     return True
 
@@ -4218,7 +4196,6 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
                            if use_high_prob else '')
             _tv_share     = ob.get("tvObVolumeSharePct")
             _tv_share_str = f'{_tv_share}%' if _tv_share is not None else '—'
-            _filter_label = ' | Filter: TV OB %' if _use_str_filter else ''
 
             # Position label
             pos_label = "INSIDE ZONE" if price_in_zone else f"{dist_pct:.2f}% from zone"
@@ -4266,7 +4243,7 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
                         "timeframe": tf,
                         "detail": (f'Consolidating on {direction} OB | {pos_label} | '
                                    f'Candles: {consecutive} | '
-                                   f'TV OB %: {_tv_share_str}{quality_str}{_filter_label} | '
+                                   f'Order Block %: {_tv_share_str}{quality_str} | '
                                    f'Zone: {fmt_price(zone_bottom)} – {fmt_price(zone_top)}'
                                    + (f' | {ob["ofSummary"]}' if ob.get("ofSummary") else '')
                                    + f' | {_ob_touch_label(ob)}'),
@@ -4286,7 +4263,7 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
                     "direction": direction,
                     "timeframe": tf,
                     "detail": (f'Approaching {direction} OB | Dist: {dist_pct:.2f}% | '
-                               f'TV OB %: {_tv_share_str}{quality_str}{_filter_label} | '
+                               f'Order Block %: {_tv_share_str}{quality_str} | '
                                f'Zone: {fmt_price(zone_bottom)} – {fmt_price(zone_top)}'
                                + (f' | {ob["ofSummary"]}' if ob.get("ofSummary") else '')
                                + f' | {_ob_touch_label(ob)}'),
@@ -6312,7 +6289,7 @@ def _scan_pair_multitf(symbol: str, market: str = "perpetual", wl_config: Option
                         "detail":   (
                             f'{"Approaching" if state == "approaching" else "Inside" if state == "inside" else "Far from"} '
                             f'{ob["type"]} OB | Dist: {dist_pct:.2f}% | '
-                            f'TV OB %: {ob.get("tvObVolumeSharePct") or "—"} | '
+                            f'Order Block %: {ob.get("tvObVolumeSharePct") or "—"} | '
                             f'Zone: {fmt_price(zb)} – {fmt_price(zt)}'
                         ),
                     })
