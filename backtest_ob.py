@@ -243,9 +243,9 @@ def run_ob_backtest(
     """
     try:
         from models import db, SignalEvent, SignalOutcome
-        from main import get_klines_exchange
+        from main import get_klines_exchange, get_klines_exchange_window
         from signal_logger import BOUNCE_THRESHOLDS
-        from outcome_resolver import EXPIRY_CANDLES
+        from outcome_resolver import EXPIRY_CANDLES, _TF_MINUTES
         from resolver_audit import _run_traced, _ts_ms, _SMALL_BOUNCE
 
         # ── Normalise params ─────────────────────────────────────────────
@@ -401,15 +401,37 @@ def run_ob_backtest(
                 small_bounce = _SMALL_BOUNCE.get(ev.timeframe, bounce * 0.6)
 
                 detected_ms = _ts_ms(ev.detected_at)
-                fetch_limit = EXPIRY_CANDLES.get(ev.timeframe, 12) + 30
                 exchange    = ev.exchange or "binance"
 
+                # Backtest candle window: up to 1500 bars BEFORE detection
+                # (for signal-time OB touch counting) plus EXPIRY_CANDLES+5
+                # bars AFTER detection (for result replay). Falls back to the
+                # legacy latest-N fetch if the windowed call returns nothing
+                # (e.g. very old signal beyond exchange retention).
+                _expiry_post = EXPIRY_CANDLES.get(ev.timeframe, 12)
+                _tf_min      = _TF_MINUTES.get(ev.timeframe, 60)
+                _tf_ms       = _tf_min * 60_000
+                _pre_count   = 1500
+                _post_count  = _expiry_post + 5
+                _start_ms    = detected_ms - _pre_count  * _tf_ms
+                _end_ms      = detected_ms + _post_count * _tf_ms
+
                 try:
-                    candles = get_klines_exchange(
-                        ev.pair, ev.timeframe, fetch_limit, "perpetual", exchange
+                    candles = get_klines_exchange_window(
+                        ev.pair, ev.timeframe, _start_ms, _end_ms,
+                        "perpetual", exchange,
                     )
                 except Exception:
                     candles = []
+
+                if not candles:
+                    try:
+                        candles = get_klines_exchange(
+                            ev.pair, ev.timeframe,
+                            _expiry_post + 30, "perpetual", exchange,
+                        )
+                    except Exception:
+                        candles = []
 
                 if not candles:
                     summary["errors"] += 1

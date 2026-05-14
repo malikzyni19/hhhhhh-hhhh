@@ -4898,6 +4898,111 @@ def get_klines_exchange(symbol: str, interval: str, limit: int = 300,
         result = get_klines(symbol, interval, limit, market)
     return result
 
+
+def get_klines_exchange_window(symbol: str, interval: str,
+                               start_ms: int, end_ms: int,
+                               market: str = "perpetual",
+                               exchange: str = "binance") -> List[Dict[str, float]]:
+    """Fetch OHLCV candles in the time range [start_ms, end_ms] (by bar open).
+
+    Backtest-only helper. Do NOT use in scanner code paths — the scanner is
+    locked to the latest-N fetch (`get_klines_exchange`). This helper exists
+    so backtest_ob.py can grab a candle slice covering both the pre-signal
+    touch-count window AND the post-signal result-replay window in one
+    request set, regardless of how old the signal is.
+
+    Uses Binance Futures `/fapi/v1/klines` with `startTime`/`endTime`/`limit`
+    (up to 1500 candles per call), paginating until the window is covered.
+    Falls back to the geo-safe spot mirror with the same parameters. For
+    non-Binance `exchange` tags, falls back to Binance too — most pairs share
+    OHLC closely across exchanges for backtest purposes, and the historical
+    routes for Bybit/OKX/MEXC do not expose a uniform time-range API today.
+    """
+    try:
+        start_ms = int(start_ms)
+        end_ms   = int(end_ms)
+    except (TypeError, ValueError):
+        return []
+    if end_ms <= start_ms:
+        return []
+
+    def _parse(data):
+        out = []
+        for k in data or []:
+            try:
+                out.append({
+                    "openTime": int(k[0]),
+                    "open":     float(k[1]),
+                    "high":     float(k[2]),
+                    "low":      float(k[3]),
+                    "close":    float(k[4]),
+                    "volume":   float(k[5]),
+                })
+            except (TypeError, ValueError, IndexError):
+                continue
+        return out
+
+    def _fapi(start: int, end: int, limit: int):
+        try:
+            r = req.get(
+                f"{BINANCE_FUTURES_API}/fapi/v1/klines",
+                params={"symbol": symbol, "interval": interval,
+                        "startTime": start, "endTime": end, "limit": limit},
+                timeout=15,
+            )
+            if r.status_code == 200:
+                update_api_weight("binance", r)
+                return r.json()
+        except Exception:
+            pass
+        return None
+
+    def _spot(start: int, end: int, limit: int):
+        try:
+            r = req.get(
+                f"{SPOT_API}/api/v3/klines",
+                params={"symbol": symbol, "interval": interval,
+                        "startTime": start, "endTime": end, "limit": limit},
+                timeout=20,
+            )
+            if r.status_code == 200:
+                return r.json()
+        except Exception:
+            pass
+        return None
+
+    BINANCE_MAX = 1500
+    SPOT_MAX    = 1000
+
+    out:    List[Dict[str, float]] = []
+    cursor                          = start_ms
+    safety                          = 12
+    seen_open_times                 = set()
+
+    while cursor < end_ms and safety > 0:
+        safety -= 1
+        raw = _fapi(cursor, end_ms, BINANCE_MAX)
+        if raw is None or not raw:
+            raw = _spot(cursor, end_ms, SPOT_MAX)
+        parsed = _parse(raw)
+        if not parsed:
+            break
+
+        new_rows = [r for r in parsed if r["openTime"] not in seen_open_times]
+        if not new_rows:
+            break
+        for r in new_rows:
+            seen_open_times.add(r["openTime"])
+        out.extend(new_rows)
+
+        last_open = new_rows[-1]["openTime"]
+        if len(parsed) < BINANCE_MAX or last_open >= end_ms:
+            break
+        cursor = last_open + 1
+
+    out.sort(key=lambda r: r["openTime"])
+    return out
+
 def get_pairs(market: str = "perpetual", force: bool = False) -> List[Dict[str, Any]]:
     """
     Fetch USDT pairs. For perpetual mode, tries Binance Futures API first
