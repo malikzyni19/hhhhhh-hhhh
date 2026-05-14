@@ -4899,6 +4899,24 @@ def get_klines_exchange(symbol: str, interval: str, limit: int = 300,
     return result
 
 
+def _scan_kline_limit() -> int:
+    """Shared candle-fetch limit for normal scanner / watchlist analysis.
+
+    Default 1500 — needed for OB-percentage parity with TradingView and with
+    /admin/debug/ob-tv-parity (which historically used 1500 candles too).
+    Override with SCAN_KLINE_LIMIT env var. Clamped to [300, 1500].
+
+    Used ONLY by scanner code paths. Admin debug routes pass their own
+    `kline_limit` query param and the backtest uses get_klines_exchange_window;
+    neither path goes through this helper.
+    """
+    try:
+        v = int(os.environ.get("SCAN_KLINE_LIMIT", "1500"))
+    except (TypeError, ValueError):
+        v = 1500
+    return max(300, min(v, 1500))
+
+
 def get_klines_exchange_window(symbol: str, interval: str,
                                start_ms: int, end_ms: int,
                                market: str = "perpetual",
@@ -6287,9 +6305,10 @@ def _scan_pair_multitf(symbol: str, market: str = "perpetual", wl_config: Option
         except Exception:
             pass
 
+    scan_limit = _scan_kline_limit()
     for tf in tfs:
         try:
-            candles = get_klines_exchange(symbol, tf, 300, market, exchange)
+            candles = get_klines_exchange(symbol, tf, scan_limit, market, exchange)
             if not candles or len(candles) < 100:
                 result["tfs"][tf] = {"error": "insufficient data"}
                 continue
@@ -6491,6 +6510,8 @@ def _scan_pair_multitf(symbol: str, market: str = "perpetual", wl_config: Option
                 "fvgs":       tf_fvgs,
                 "fibs":       tf_fibs,
                 "breakers":   tf_breakers,
+                "candleLimitUsed": scan_limit,
+                "candlesCount":    len(candles),
             }
 
             result["obs"].extend(tf_obs)
@@ -6732,17 +6753,22 @@ def api_scan():
     fib_tf = settings.get("fibTf", settings["tf"]) if settings.get("useFibModule") else None
     fetch_fib_separately = fib_tf and fib_tf != settings["tf"]
 
+    scan_limit = _scan_kline_limit()
+
     def scan_symbol(sym):
         try:
-            candles = get_klines_exchange(sym, settings["tf"], 300, market, exchange)
+            candles = get_klines_exchange(sym, settings["tf"], scan_limit, market, exchange)
             fib_candles = None
             if fetch_fib_separately:
                 try:
-                    fib_candles = get_klines_exchange(sym, fib_tf, 300, market, exchange)
+                    fib_candles = get_klines_exchange(sym, fib_tf, scan_limit, market, exchange)
                 except Exception:
                     pass
             result = analyze_pair(sym, candles, settings["tf"], settings, btc_closes, fib_candles=fib_candles)
             if result and candles:
+                # Backend visibility for scanner candle depth (no UI yet).
+                result["candleLimitUsed"] = scan_limit
+                result["candlesCount"]    = len(candles)
                 c = [x["close"] for x in candles]
                 sp = [float(c[i]) for i in range(max(0, len(c)-24), len(c))]
                 result["sparkline"] = sp
