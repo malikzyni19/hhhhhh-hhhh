@@ -172,6 +172,124 @@ def classify_ob_freshness(ev, candles: list, detected_ms: int) -> dict:
     }
 
 
+# Phase 8B touch buckets used by the new clearance-based signal-time counter.
+_OB_TOUCH_BUCKETS = ("virgin", "touch_1", "touch_2", "touch_3_plus", "unknown")
+
+
+def _ob_touch_bucket_for(touches):
+    if touches is None:
+        return "unknown"
+    if touches <= 0:
+        return "virgin"
+    if touches == 1:
+        return "touch_1"
+    if touches == 2:
+        return "touch_2"
+    return "touch_3_plus"
+
+
+def _pre_signal_touch_seq(zone_high, zone_low, direction, candles, detected_ms,
+                          clearance_factor: float = 0.5) -> dict:
+    """
+    Signal-time clearance-based OB touch counter (Phase 8B).
+
+    Walks only pre-signal candles (openTime < detected_ms). The signal /
+    detection candle itself is excluded. A touch is recorded the first time
+    a candle wicks into the zone (low <= zone_high AND high >= zone_low). A
+    new touch only counts after price has CLEARED the zone by
+    `clearance_factor × height`:
+
+      bullish: cleared once a later candle's low  > zone_top    + clearance × h
+      bearish: cleared once a later candle's high < zone_bottom - clearance × h
+
+    Replicates the scanner's clearance rule (`_compute_ob_touch_meta`) on
+    candles dicts as they come from get_klines_exchange_window. No coupling
+    to scanner internals.
+
+    NO LOOKAHEAD:
+      - Only pre-signal candles are read.
+      - The signal candle is NOT counted.
+      - Result must NOT depend on any candle whose openTime >= detected_ms.
+      - Scanner's current `touches` field (from raw_meta_json) is irrelevant
+        here and must not be used as a fallback.
+    """
+    try:
+        zone_top    = float(zone_high)
+        zone_bottom = float(zone_low)
+    except (TypeError, ValueError):
+        return {
+            "touchSeqAtSignal":    None,
+            "obTouchBucket":       "unknown",
+            "obTouchBucketReason": "invalid_zone",
+            "firstTouchBar":       None,
+            "lastTouchBar":        None,
+            "touchSeq":            [],
+        }
+
+    if zone_top < zone_bottom:
+        zone_top, zone_bottom = zone_bottom, zone_top
+
+    height          = max(zone_top - zone_bottom, 1e-10)
+    is_bullish      = (direction == "bullish")
+    clearance_level = (zone_top + clearance_factor * height) if is_bullish \
+                      else (zone_bottom - clearance_factor * height)
+
+    pre_signal = [c for c in (candles or []) if c.get("openTime", 0) < detected_ms]
+
+    if not pre_signal:
+        return {
+            "touchSeqAtSignal":    None,
+            "obTouchBucket":       "unknown",
+            "obTouchBucketReason": "no_pre_signal_candles",
+            "firstTouchBar":       None,
+            "lastTouchBar":        None,
+            "touchSeq":            [],
+        }
+
+    touches         = 0
+    first_touch_bar = None
+    last_touch_bar  = None
+    touch_seq       = []
+    cleared         = True  # first contact may count
+
+    for c in pre_signal:
+        try:
+            c_open = int(c.get("openTime", 0))
+            c_high = float(c.get("high",   0))
+            c_low  = float(c.get("low",    0))
+        except (TypeError, ValueError):
+            continue
+
+        bar_inside = (c_low <= zone_top) and (c_high >= zone_bottom)
+
+        if bar_inside:
+            if cleared:
+                touches += 1
+                if first_touch_bar is None:
+                    first_touch_bar = c_open
+                last_touch_bar = c_open
+                cleared = False
+                touch_seq.append(c_open)
+            else:
+                last_touch_bar = c_open
+        else:
+            if is_bullish:
+                if c_low > clearance_level:
+                    cleared = True
+            else:
+                if c_high < clearance_level:
+                    cleared = True
+
+    return {
+        "touchSeqAtSignal":    touches,
+        "obTouchBucket":       _ob_touch_bucket_for(touches),
+        "obTouchBucketReason": "ok",
+        "firstTouchBar":       first_touch_bar,
+        "lastTouchBar":        last_touch_bar,
+        "touchSeq":            touch_seq,
+    }
+
+
 def _pct(num, denom):
     return round(num / denom * 100, 2) if denom else None
 
@@ -231,6 +349,7 @@ def run_ob_backtest(
     stop_mode: str = "wick",
     freshness: str = "all",
     strength_min: float = 0.0,
+    max_touch_count: "int | None" = None,
 ) -> dict:
     """
     OB-only candle-replay backtest with Phase 7B/7C diagnostics.
@@ -265,6 +384,18 @@ def run_ob_backtest(
             strength_min = 0.0
         if strength_min < 0:
             strength_min = 0.0
+
+        # Phase 8B: signal-time touch cap. None disables the filter entirely.
+        # Negative values clamp to 0 (virgin only). Invalid → None.
+        if max_touch_count is None:
+            _max_tc = None
+        else:
+            try:
+                _max_tc = int(max_touch_count)
+                if _max_tc < 0:
+                    _max_tc = 0
+            except (TypeError, ValueError):
+                _max_tc = None
 
         rf = (result_filter or "").strip().lower()
         rf = rf if rf and rf != "all" else None
@@ -303,6 +434,12 @@ def run_ob_backtest(
             "ambiguous": 0, "waiting_for_entry": 0, "entered": 0, "errors": 0,
         }
         freshness_summary = {"first_touch": 0, "already_touched": 0, "unknown": 0}
+        # Phase 8B: per-bucket counters. Win-rate filled in at the end via _add_wr.
+        touch_bucket_summary = {
+            b: {"checked": 0, "won": 0, "lost": 0, "expired": 0, "ambiguous": 0}
+            for b in _OB_TOUCH_BUCKETS
+        }
+        filtered_out_by_touch_cap = 0
         strength_summary = {
             "with_true_ob_strength":        0,
             "missing_true_ob_strength":     0,
@@ -484,6 +621,25 @@ def run_ob_backtest(
                 if freshness_filter != "all" and fs != freshness_filter:
                     continue
 
+                # ── Phase 8B: signal-time clearance-based touch count ──────
+                # Uses ONLY candles with openTime < detected_ms. The signal
+                # candle itself is excluded. Post-signal candles consumed by
+                # _run_traced below MUST NOT affect this bucket. The scanner's
+                # current touches from raw_meta_json is irrelevant here.
+                touch_info = _pre_signal_touch_seq(
+                    ev.zone_high, ev.zone_low, ev.direction,
+                    candles, detected_ms,
+                )
+                touch_seq_at_signal = touch_info["touchSeqAtSignal"]
+                touch_bucket        = touch_info["obTouchBucket"]
+
+                # Apply max-touch cap. Unknown buckets are kept by design
+                # (no pre-signal candles in the fetch window → can't decide).
+                if _max_tc is not None and touch_seq_at_signal is not None:
+                    if touch_seq_at_signal > _max_tc:
+                        filtered_out_by_touch_cap += 1
+                        continue
+
                 # ── 4 variants — same candle list, no extra fetches ──────
                 res_wick, _, _  = _run_traced(
                     ev.zone_high, ev.zone_low, ev.direction,
@@ -519,6 +675,15 @@ def run_ob_backtest(
                 elif status == "AMBIGUOUS":         summary["ambiguous"]         += 1
                 elif status == "WAITING_FOR_ENTRY": summary["waiting_for_entry"] += 1
                 elif status == "ENTERED":           summary["entered"]           += 1
+
+                # Phase 8B: tally per-touch-bucket outcomes.
+                _tb = touch_bucket_summary.get(touch_bucket)
+                if _tb is not None:
+                    _tb["checked"] += 1
+                    if   status == "WON":       _tb["won"]       += 1
+                    elif status == "LOST":      _tb["lost"]      += 1
+                    elif status == "EXPIRED":   _tb["expired"]   += 1
+                    elif status == "AMBIGUOUS": _tb["ambiguous"] += 1
 
                 diagnostics[diag_key] = diagnostics.get(diag_key, 0) + 1
                 _tally_breakdowns(ev, status, diag_key)
@@ -585,6 +750,13 @@ def run_ob_backtest(
                     "touch_count_before_signal": freshness_info.get("touch_count_before_signal"),
                     "origin_time":               freshness_info.get("origin_time"),
                     "freshness_reason":          freshness_info.get("reason"),
+                    # Phase 8B: clearance-based signal-time touch count.
+                    "touchSeqAtSignal":         touch_seq_at_signal,
+                    "obTouchBucket":            touch_bucket,
+                    "obTouchBucketReason":      touch_info.get("obTouchBucketReason"),
+                    "firstTouchBarAtSignal":    touch_info.get("firstTouchBar"),
+                    "lastTouchBarAtSignal":     touch_info.get("lastTouchBar"),
+                    "touchSeqAtSignalBars":     touch_info.get("touchSeq"),
                     "tv_ob_volume_share_pct":    tv_ob_pct,
                     "alert_strength_debug":      alert_strength_debug,
                 })
@@ -614,6 +786,8 @@ def run_ob_backtest(
         by_setup = sorted(setup_data.values(), key=lambda x: x["checked"], reverse=True)
         for d in by_tf:    _add_wr(d)
         for d in by_setup: _add_wr(d)
+        for _bk in _OB_TOUCH_BUCKETS:
+            _add_wr(touch_bucket_summary[_bk])
 
         by_score = [
             {
@@ -650,9 +824,12 @@ def run_ob_backtest(
                 "stop_mode":    stop_mode,
                 "freshness":    freshness_filter,
                 "strength_min": strength_min,
+                "max_touch_count": _max_tc,
             },
-            "freshness_summary": freshness_summary,
-            "strength_summary":  strength_summary,
+            "freshness_summary":     freshness_summary,
+            "strength_summary":      strength_summary,
+            "touch_bucket_summary":  touch_bucket_summary,
+            "filtered_out_by_touch_cap": filtered_out_by_touch_cap,
             "summary":            summary,
             "diagnostics":        diagnostics,
             "diagnostic_summary": diag_summary,
