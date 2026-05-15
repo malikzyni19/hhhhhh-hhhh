@@ -526,7 +526,8 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
   display:inline-block;
   background:linear-gradient(135deg,#f59e0b 0%,#fbbf24 45%,#f97316 100%);
   -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
-  min-width:260px;text-align:left;vertical-align:bottom;
+  text-align:left;
+  will-change:transform,opacity;
 }
 
 /* ── HERO 3D CANVAS ── */
@@ -562,7 +563,7 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
   .hero-sub{text-align:center;max-width:520px}
   .hero-btns{justify-content:center!important}
   .hero-bottom{justify-content:center!important}
-  #hero-rw{min-width:160px;text-align:center}
+  #hero-rw{text-align:center}
 }
 @media(max-width:768px){ #hero-3d-canvas{opacity:0.18}}
 @media(max-width:480px){ #hero-3d-canvas{opacity:0.12}}
@@ -784,7 +785,8 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
   <div class="hero-eyebrow"><span class="hero-eyebrow-dot"></span><span data-i18n="hero_eyebrow">SMC Simpler. Real Time.</span></div>
   <h1 class="hero-h1">
     <div class="l1">Trade Like</div>
-    <div class="l2"><span id="hero-rw" style="background:linear-gradient(135deg,#f59e0b 0%,#fbbf24 45%,#f97316 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text">Elite</span>&nbsp;Money.</div>
+    <div class="l2 rw-line" style="line-height:1.1"><span id="hero-rw" style="background:linear-gradient(135deg,#f59e0b 0%,#fbbf24 45%,#f97316 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text">Elite</span></div>
+    <div class="l2" style="line-height:1.1">Money.</div>
     <div class="l3" style="font-size:clamp(1.1rem,2.8vw,1.8rem);font-weight:500;opacity:.85;margin-top:4px">Facing the Markets.</div>
   </h1>
   <p class="hero-sub" data-i18n="hero_sub">Professional SMC scanner detecting Order Blocks, FVGs, Breaker Blocks and Fibonacci across 400+ crypto pairs — live, every second.</p>
@@ -2109,28 +2111,37 @@ function lwStartBounce(){
   }
   requestAnimationFrame(animate);
 
-  /* ── Rotating word ── */
-  if (window.gsap) {
+  /* ── Rotating word — horizontal fade only, no vertical movement ── */
+  (function() {
     var words = ['Smart', 'Elite', 'Pro', 'Strategic', 'Advanced'];
     var wordEl = document.getElementById('hero-rw');
-    if (wordEl) {
-      var wIdx = 0;
-      function rotateWord() {
+    if (!wordEl) return;
+    var wIdx = 0;
+    function rotateWord() {
+      if (window.gsap) {
         gsap.to(wordEl, {
-          opacity: 0, y: -14, filter: 'blur(6px)', duration: 0.45, ease: 'power2.in',
+          opacity: 0, x: -10, filter: 'blur(5px)', duration: 0.35, ease: 'power2.in',
           onComplete: function() {
             wIdx = (wIdx + 1) % words.length;
             wordEl.textContent = words[wIdx];
             gsap.fromTo(wordEl,
-              { opacity: 0, y: 16, filter: 'blur(6px)' },
-              { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.55, ease: 'power2.out' }
+              { opacity: 0, x: 12, filter: 'blur(5px)' },
+              { opacity: 1, x: 0,  filter: 'blur(0px)', duration: 0.45, ease: 'power2.out' }
             );
           }
         });
+      } else {
+        wordEl.style.transition = 'opacity 0.25s';
+        wordEl.style.opacity = '0';
+        setTimeout(function() {
+          wIdx = (wIdx + 1) % words.length;
+          wordEl.textContent = words[wIdx];
+          wordEl.style.opacity = '1';
+        }, 260);
       }
-      setInterval(rotateWord, 3200);
     }
-  }
+    setInterval(rotateWord, 3200);
+  })();
 
   /* ── Resize ── */
   window.addEventListener('resize', function() {
