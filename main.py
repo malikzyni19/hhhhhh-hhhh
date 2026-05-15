@@ -2466,6 +2466,8 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
 
     upP, upB, upL = [], [], []
     dnP, dnB, dnL = [], [], []
+    prev_upP_first = None   # Pine: up.p.first()[1] — end-of-previous-bar value
+    prev_dnP_first = None   # Pine: dn.p.first()[1] — end-of-previous-bar value
 
     start = max(i_len * 2 + 2, s_len + 2)
 
@@ -2483,7 +2485,10 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
             dnL.insert(0, l[i - i_len])
 
         # ── INTERNAL BULLISH BREAK → Create Bullish OB ──
-        if upP and len(dnL) > 1 and c[i] > upP[0] and (i == start or c[i - 1] <= upP[0]):
+        # Pine: ta.crossover(b.c, up.p.first()) → c[i] > upP[0] AND c[i-1] <= prev value
+        # prev_upP_first is None when up.p was empty last bar → cross fails (matches Pine na)
+        if upP and len(dnL) > 1 and c[i] > upP[0] \
+                and prev_upP_first is not None and c[i - 1] <= prev_upP_first:
             pivot_bar    = upB[0] if upB else i - 10
             # Pine: loc = hN.first() = absolute pivot bar. Loop covers (BOS - pivot)
             # bars, accessing [pivot+1, BOS]. Window size is independent of iLen.
@@ -2549,7 +2554,9 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
             upB.clear()
 
         # ── INTERNAL BEARISH BREAK → Create Bearish OB ──
-        if dnP and len(upL) > 1 and c[i] < dnP[0] and (i == start or c[i - 1] >= dnP[0]):
+        # Pine: ta.crossunder(b.c, dn.p.first()) → c[i] < dnP[0] AND c[i-1] >= prev value
+        if dnP and len(upL) > 1 and c[i] < dnP[0] \
+                and prev_dnP_first is not None and c[i - 1] >= prev_dnP_first:
             pivot_bar    = dnB[0] if dnB else i - 10
             # Pine: loc = lN.first() = absolute pivot bar. Loop covers (BOS - pivot)
             # bars, accessing [pivot+1, BOS]. Window size is independent of iLen.
@@ -2613,6 +2620,10 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
             dnP.clear()
             dnB.clear()
 
+        # End-of-bar snapshot — next iteration's "[1]" (previous-bar) lookup
+        prev_upP_first = upP[0] if upP else None
+        prev_dnP_first = dnP[0] if dnP else None
+
     # ── Mitigate / invalidate OBs ──
     active = []
     max_vol = max(v[-100:]) if len(v) >= 100 else max(v) if v else 1.0
@@ -2670,6 +2681,8 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
 
     upP, upB, upL = [], [], []
     dnP, dnB, dnL = [], [], []
+    prev_upP_first = None   # Pine: up.p.first()[1] — end-of-previous-bar value
+    prev_dnP_first = None   # Pine: dn.p.first()[1] — end-of-previous-bar value
 
     start_i = max(i_len * 2 + 2, s_len + 2)
 
@@ -2684,7 +2697,8 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
             dnL.insert(0, l[i - i_len])
 
         # Bullish OB — same as detect_obs
-        if upP and len(dnL) > 1 and c[i] > upP[0] and (i == start_i or c[i - 1] <= upP[0]):
+        if upP and len(dnL) > 1 and c[i] > upP[0] \
+                and prev_upP_first is not None and c[i - 1] <= prev_upP_first:
             pivot_bar    = upB[0] if upB else i - 10
             search_start = max(0, pivot_bar + 1)
             search_end   = i + 1
@@ -2711,7 +2725,8 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
             upP.clear(); upB.clear()
 
         # Bearish OB — same as detect_obs
-        if dnP and len(upL) > 1 and c[i] < dnP[0] and (i == start_i or c[i - 1] >= dnP[0]):
+        if dnP and len(upL) > 1 and c[i] < dnP[0] \
+                and prev_dnP_first is not None and c[i - 1] >= prev_dnP_first:
             pivot_bar    = dnB[0] if dnB else i - 10
             search_start = max(0, pivot_bar + 1)
             search_end   = i + 1
@@ -2736,6 +2751,10 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
                         "type": "bearish",
                     })
             dnP.clear(); dnB.clear()
+
+        # End-of-bar snapshot — next iteration's "[1]" (previous-bar) lookup
+        prev_upP_first = upP[0] if upP else None
+        prev_dnP_first = dnP[0] if dnP else None
 
     # Sort by bar descending (most recent first), deduplicate, limit
     seen = set()
@@ -3213,22 +3232,22 @@ def filter_fvg(fvg: Dict[str, Any], obs: List[Dict[str, Any]], price: float, set
     return True
 
 
-# ── OB touch-state filter (Phase 1B) ────────────────────────────────────────
+# ── OB touch filter ──────────────────────────────────────────────────────────
 # Reads Phase 1A touch metadata only; never recomputes touches and never
 # mutates the OB. Returns True when the OB should be considered for alerts.
-_OB_TOUCH_STATE_VALUES = frozenset({
-    "all", "virgin", "first_touch", "second_touch", "third_plus", "any_retested",
-})
-
-
+#
+# When useObTouchState is enabled, the OB passes only if its touch count is
+# at most obMaxTouches. obMaxTouches=0 keeps virgin OBs only; higher values
+# include progressively more retested OBs.
+#
+# Legacy keys obTouchState / useObVirginApproach / obVirginApproachPct are
+# accepted by parse_settings for backward compatibility but no longer affect
+# filtering. Normal OB approach / consolidation logic decides proximity.
 def filter_ob(ob: Dict[str, Any], price: float, settings: Dict[str, Any]) -> bool:
     if not settings:
         return True
 
-    use_state    = bool(settings.get("useObTouchState", False))
-    use_virgin   = bool(settings.get("useObVirginApproach", False))
-
-    if not use_state and not use_virgin:
+    if not bool(settings.get("useObTouchState", False)):
         return True
 
     try:
@@ -3236,39 +3255,28 @@ def filter_ob(ob: Dict[str, Any], price: float, settings: Dict[str, Any]) -> boo
     except (TypeError, ValueError):
         touches = 0
 
-    if use_state:
-        state = settings.get("obTouchState", "all")
-        if state not in _OB_TOUCH_STATE_VALUES:
-            state = "all"
+    try:
+        max_touches = int(settings.get("obMaxTouches", 99))
+    except (TypeError, ValueError):
+        max_touches = 99
+    if max_touches < 0:
+        max_touches = 0
 
-        if state == "virgin"        and touches != 0: return False
-        if state == "first_touch"   and touches != 1: return False
-        if state == "second_touch"  and touches != 2: return False
-        if state == "third_plus"    and touches < 3:  return False
-        if state == "any_retested"  and touches < 1:  return False
-
-        try:
-            max_touches = int(settings.get("obMaxTouches", 99))
-        except (TypeError, ValueError):
-            max_touches = 99
-        if touches > max_touches:
-            return False
-
-    if use_virgin:
-        if touches != 0:
-            return False
-        try:
-            approach_pct = float(settings.get("obVirginApproachPct", 1.5))
-        except (TypeError, ValueError):
-            approach_pct = 1.5
-        ob_mid = ob.get("avg")
-        if ob_mid is None:
-            ob_mid = (ob["top"] + ob["bottom"]) / 2.0
-        denom = max(abs(price), 1e-10)
-        if abs(price - ob_mid) / denom * 100.0 > approach_pct:
-            return False
+    if touches > max_touches:
+        return False
 
     return True
+
+
+def _ob_touch_label(ob: Dict[str, Any]) -> str:
+    """Phase 1D: short human-readable OB touch label for alert details."""
+    try:
+        touches = int(ob.get("touches", 0) or 0)
+    except (TypeError, ValueError):
+        touches = 0
+    if bool(ob.get("isVirgin", touches == 0)) or touches == 0:
+        return "VIRGIN"
+    return f"Touch: {touches}"
 
 
 # ============================================================
@@ -4207,7 +4215,6 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
                            if use_high_prob else '')
             _tv_share     = ob.get("tvObVolumeSharePct")
             _tv_share_str = f'{_tv_share}%' if _tv_share is not None else '—'
-            _filter_label = ' | Filter: TV OB %' if _use_str_filter else ''
 
             # Position label
             pos_label = "INSIDE ZONE" if price_in_zone else f"{dist_pct:.2f}% from zone"
@@ -4255,9 +4262,10 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
                         "timeframe": tf,
                         "detail": (f'Consolidating on {direction} OB | {pos_label} | '
                                    f'Candles: {consecutive} | '
-                                   f'TV OB %: {_tv_share_str}{quality_str}{_filter_label} | '
+                                   f'Order Block %: {_tv_share_str}{quality_str} | '
                                    f'Zone: {fmt_price(zone_bottom)} – {fmt_price(zone_top)}'
-                                   + (f' | {ob["ofSummary"]}' if ob.get("ofSummary") else '')),
+                                   + (f' | {ob["ofSummary"]}' if ob.get("ofSummary") else '')
+                                   + f' | {_ob_touch_label(ob)}'),
                         "strength": ob_strength,
                         "meta": {**ob_meta_base, "consolCandles": consecutive, "obState": "inside"},
                     })
@@ -4274,9 +4282,10 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
                     "direction": direction,
                     "timeframe": tf,
                     "detail": (f'Approaching {direction} OB | Dist: {dist_pct:.2f}% | '
-                               f'TV OB %: {_tv_share_str}{quality_str}{_filter_label} | '
+                               f'Order Block %: {_tv_share_str}{quality_str} | '
                                f'Zone: {fmt_price(zone_bottom)} – {fmt_price(zone_top)}'
-                               + (f' | {ob["ofSummary"]}' if ob.get("ofSummary") else '')),
+                               + (f' | {ob["ofSummary"]}' if ob.get("ofSummary") else '')
+                               + f' | {_ob_touch_label(ob)}'),
                     "strength": ob_strength,
                     "meta": {**ob_meta_base, "obState": "approaching" if not price_in_zone else "inside"},
                 })
@@ -4907,6 +4916,129 @@ def get_klines_exchange(symbol: str, interval: str, limit: int = 300,
         print(f"[{exchange}] klines empty for {symbol}, falling back to Binance")
         result = get_klines(symbol, interval, limit, market)
     return result
+
+
+def _scan_kline_limit() -> int:
+    """Shared candle-fetch limit for normal scanner / watchlist analysis.
+
+    Default 1500 — needed for OB-percentage parity with TradingView and with
+    /admin/debug/ob-tv-parity (which historically used 1500 candles too).
+    Override with SCAN_KLINE_LIMIT env var. Clamped to [300, 1500].
+
+    Used ONLY by scanner code paths. Admin debug routes pass their own
+    `kline_limit` query param and the backtest uses get_klines_exchange_window;
+    neither path goes through this helper.
+    """
+    try:
+        v = int(os.environ.get("SCAN_KLINE_LIMIT", "1500"))
+    except (TypeError, ValueError):
+        v = 1500
+    return max(300, min(v, 1500))
+
+
+def get_klines_exchange_window(symbol: str, interval: str,
+                               start_ms: int, end_ms: int,
+                               market: str = "perpetual",
+                               exchange: str = "binance") -> List[Dict[str, float]]:
+    """Fetch OHLCV candles in the time range [start_ms, end_ms] (by bar open).
+
+    Backtest-only helper. Do NOT use in scanner code paths — the scanner is
+    locked to the latest-N fetch (`get_klines_exchange`). This helper exists
+    so backtest_ob.py can grab a candle slice covering both the pre-signal
+    touch-count window AND the post-signal result-replay window in one
+    request set, regardless of how old the signal is.
+
+    Uses Binance Futures `/fapi/v1/klines` with `startTime`/`endTime`/`limit`
+    (up to 1500 candles per call), paginating until the window is covered.
+    Falls back to the geo-safe spot mirror with the same parameters. For
+    non-Binance `exchange` tags, falls back to Binance too — most pairs share
+    OHLC closely across exchanges for backtest purposes, and the historical
+    routes for Bybit/OKX/MEXC do not expose a uniform time-range API today.
+    """
+    try:
+        start_ms = int(start_ms)
+        end_ms   = int(end_ms)
+    except (TypeError, ValueError):
+        return []
+    if end_ms <= start_ms:
+        return []
+
+    def _parse(data):
+        out = []
+        for k in data or []:
+            try:
+                out.append({
+                    "openTime": int(k[0]),
+                    "open":     float(k[1]),
+                    "high":     float(k[2]),
+                    "low":      float(k[3]),
+                    "close":    float(k[4]),
+                    "volume":   float(k[5]),
+                })
+            except (TypeError, ValueError, IndexError):
+                continue
+        return out
+
+    def _fapi(start: int, end: int, limit: int):
+        try:
+            r = req.get(
+                f"{BINANCE_FUTURES_API}/fapi/v1/klines",
+                params={"symbol": symbol, "interval": interval,
+                        "startTime": start, "endTime": end, "limit": limit},
+                timeout=15,
+            )
+            if r.status_code == 200:
+                update_api_weight("binance", r)
+                return r.json()
+        except Exception:
+            pass
+        return None
+
+    def _spot(start: int, end: int, limit: int):
+        try:
+            r = req.get(
+                f"{SPOT_API}/api/v3/klines",
+                params={"symbol": symbol, "interval": interval,
+                        "startTime": start, "endTime": end, "limit": limit},
+                timeout=20,
+            )
+            if r.status_code == 200:
+                return r.json()
+        except Exception:
+            pass
+        return None
+
+    BINANCE_MAX = 1500
+    SPOT_MAX    = 1000
+
+    out:    List[Dict[str, float]] = []
+    cursor                          = start_ms
+    safety                          = 12
+    seen_open_times                 = set()
+
+    while cursor < end_ms and safety > 0:
+        safety -= 1
+        raw = _fapi(cursor, end_ms, BINANCE_MAX)
+        if raw is None or not raw:
+            raw = _spot(cursor, end_ms, SPOT_MAX)
+        parsed = _parse(raw)
+        if not parsed:
+            break
+
+        new_rows = [r for r in parsed if r["openTime"] not in seen_open_times]
+        if not new_rows:
+            break
+        for r in new_rows:
+            seen_open_times.add(r["openTime"])
+        out.extend(new_rows)
+
+        last_open = new_rows[-1]["openTime"]
+        if len(parsed) < BINANCE_MAX or last_open >= end_ms:
+            break
+        cursor = last_open + 1
+
+    out.sort(key=lambda r: r["openTime"])
+    return out
 
 def get_pairs(market: str = "perpetual", force: bool = False) -> List[Dict[str, Any]]:
     """
@@ -6192,9 +6324,10 @@ def _scan_pair_multitf(symbol: str, market: str = "perpetual", wl_config: Option
         except Exception:
             pass
 
+    scan_limit = _scan_kline_limit()
     for tf in tfs:
         try:
-            candles = get_klines_exchange(symbol, tf, 300, market, exchange)
+            candles = get_klines_exchange(symbol, tf, scan_limit, market, exchange)
             if not candles or len(candles) < 100:
                 result["tfs"][tf] = {"error": "insufficient data"}
                 continue
@@ -6299,7 +6432,7 @@ def _scan_pair_multitf(symbol: str, market: str = "perpetual", wl_config: Option
                         "detail":   (
                             f'{"Approaching" if state == "approaching" else "Inside" if state == "inside" else "Far from"} '
                             f'{ob["type"]} OB | Dist: {dist_pct:.2f}% | '
-                            f'TV OB %: {ob.get("tvObVolumeSharePct") or "—"} | '
+                            f'Order Block %: {ob.get("tvObVolumeSharePct") or "—"} | '
                             f'Zone: {fmt_price(zb)} – {fmt_price(zt)}'
                         ),
                     })
@@ -6396,6 +6529,8 @@ def _scan_pair_multitf(symbol: str, market: str = "perpetual", wl_config: Option
                 "fvgs":       tf_fvgs,
                 "fibs":       tf_fibs,
                 "breakers":   tf_breakers,
+                "candleLimitUsed": scan_limit,
+                "candlesCount":    len(candles),
             }
 
             result["obs"].extend(tf_obs)
@@ -6637,17 +6772,22 @@ def api_scan():
     fib_tf = settings.get("fibTf", settings["tf"]) if settings.get("useFibModule") else None
     fetch_fib_separately = fib_tf and fib_tf != settings["tf"]
 
+    scan_limit = _scan_kline_limit()
+
     def scan_symbol(sym):
         try:
-            candles = get_klines_exchange(sym, settings["tf"], 300, market, exchange)
+            candles = get_klines_exchange(sym, settings["tf"], scan_limit, market, exchange)
             fib_candles = None
             if fetch_fib_separately:
                 try:
-                    fib_candles = get_klines_exchange(sym, fib_tf, 300, market, exchange)
+                    fib_candles = get_klines_exchange(sym, fib_tf, scan_limit, market, exchange)
                 except Exception:
                     pass
             result = analyze_pair(sym, candles, settings["tf"], settings, btc_closes, fib_candles=fib_candles)
             if result and candles:
+                # Backend visibility for scanner candle depth (no UI yet).
+                result["candleLimitUsed"] = scan_limit
+                result["candlesCount"]    = len(candles)
                 c = [x["close"] for x in candles]
                 sp = [float(c[i]) for i in range(max(0, len(c)-24), len(c))]
                 result["sparkline"] = sp
