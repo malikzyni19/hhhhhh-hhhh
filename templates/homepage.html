@@ -450,39 +450,193 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 /* ── THREE.JS GLOBAL CANVAS ── */
 #three-canvas{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-events:none}
 
-/* ── HERO LAYOUT: CENTERED (restored) ── */
-.hero{flex-direction:column!important;text-align:center!important;align-items:center!important;
-  justify-content:center;padding:80px 24px 60px!important;min-height:90vh;overflow:hidden;position:relative}
-.hero-left{display:contents}
-.hero-right,.hero-right *{display:none!important}
+/* ── HERO LAYOUT: IMAGE LEFT · TEXT RIGHT ── */
+.hero{
+  flex-direction:row!important;
+  text-align:left!important;
+  align-items:flex-end!important;
+  justify-content:flex-end!important;
+  padding:0 5vw 0 0!important;
+  min-height:92vh;
+  overflow:hidden;
+  position:relative;
+}
+
+/* Image column — absolute left, fills hero height */
+.hero-img-col{
+  position:absolute;
+  left:0; top:0; bottom:0;
+  width:52%;
+  display:flex;
+  align-items:flex-end;
+  justify-content:center;
+  z-index:1;
+  pointer-events:none;
+}
+
+/* Text column — right side, flex child */
+.hero-left{
+  flex:0 0 50%;
+  max-width:50%;
+  display:flex!important;
+  flex-direction:column;
+  align-items:flex-start;
+  justify-content:center;
+  z-index:2;
+  padding:80px 0 60px 0;
+  position:relative;
+}
 
 .hero-eyebrow{animation:fadeUp .8s ease both;position:relative;z-index:2}
-.hero-h1{text-align:center;animation:fadeUp .8s .1s ease both;position:relative;z-index:2}
-.hero-sub{text-align:center;max-width:520px;animation:fadeUp .8s .2s ease both;position:relative;z-index:2}
-.hero-btns{justify-content:center!important;animation:fadeUp .8s .3s ease both;position:relative;z-index:2}
-.hero-bottom{justify-content:center!important;animation:fadeUp .8s .4s ease both;max-width:900px;position:relative;z-index:2}
+.hero-h1{text-align:left;animation:fadeUp .8s .1s ease both;position:relative;z-index:2}
+.hero-sub{text-align:left;max-width:480px;animation:fadeUp .8s .2s ease both;position:relative;z-index:2}
+.hero-btns{justify-content:flex-start!important;animation:fadeUp .8s .3s ease both;position:relative;z-index:2}
+.hero-bottom{justify-content:flex-start!important;animation:fadeUp .8s .4s ease both;max-width:820px;position:relative;z-index:2}
+
+/* ── MAN IMAGE 3D CINEMATIC ── */
+.hero-man-glow{
+  position:absolute;
+  bottom:0; left:0; right:0;
+  height:85%;
+  background:radial-gradient(ellipse at 52% 72%, rgba(249,115,22,0.28) 0%, rgba(249,115,22,0.10) 38%, rgba(34,211,238,0.04) 60%, transparent 72%);
+  filter:blur(36px);
+  z-index:0;
+  pointer-events:none;
+  animation:heroGlowPulse 4s ease-in-out infinite alternate;
+}
+@keyframes heroGlowPulse{
+  from{opacity:.65;transform:scale(.97) translateY(6px)}
+  to{opacity:1;transform:scale(1.04) translateY(-6px)}
+}
+
+.hero-man-wrap{
+  position:relative;
+  z-index:1;
+  width:110%;
+  max-width:640px;
+  display:flex;
+  align-items:flex-end;
+  justify-content:center;
+  animation:heroFloat 5s ease-in-out infinite;
+  will-change:transform;
+}
+@keyframes heroFloat{
+  0%,100%{transform:translateY(0px)}
+  50%{transform:translateY(-18px)}
+}
+
+.hero-man-img{
+  width:100%;
+  height:auto;
+  display:block;
+  position:relative;
+  z-index:1;
+  transform-origin:bottom center;
+  transform:perspective(700px) rotateY(7deg) rotateX(1.5deg) scale(1.07);
+  filter:
+    drop-shadow(-10px 0 50px rgba(0,0,0,.90))
+    drop-shadow(0 30px 60px rgba(0,0,0,.80))
+    drop-shadow(0 0 50px rgba(249,115,22,.20))
+    drop-shadow(-2px 0 20px rgba(34,211,238,.08));
+  transition:transform .9s cubic-bezier(.22,1,.36,1), filter .9s;
+  will-change:transform;
+}
+
+/* Hard ground shadow for depth illusion */
+.hero-man-shadow{
+  position:absolute;
+  bottom:-12px; left:50%;
+  transform:translateX(-50%) scaleY(.35);
+  width:70%; height:80px;
+  background:radial-gradient(ellipse at center, rgba(0,0,0,.75) 0%, transparent 68%);
+  filter:blur(22px);
+  z-index:0;
+  pointer-events:none;
+  animation:heroShadowPulse 5s ease-in-out infinite;
+}
+@keyframes heroShadowPulse{
+  0%,100%{opacity:.85;width:70%}
+  50%{opacity:.55;width:60%}
+}
+
+/* Edge gradient — blends image left edge into page bg */
+.hero-img-edge{
+  position:absolute;
+  top:0; left:0; bottom:0;
+  width:15%;
+  background:linear-gradient(to right, var(--bg) 0%, transparent 100%);
+  z-index:2;
+  pointer-events:none;
+}
+/* Right-side fade to blend image into text area */
+.hero-img-fade{
+  position:absolute;
+  top:0; right:0; bottom:0;
+  width:40%;
+  background:linear-gradient(to left, var(--bg) 0%, rgba(var(--bg-rgb,6,10,20),.6) 40%, transparent 100%);
+  z-index:2;
+  pointer-events:none;
+}
 
 /* ── ROTATING WORD ── */
 #hero-rw{
   display:inline-block;
   background:linear-gradient(135deg,#f59e0b 0%,#fbbf24 45%,#f97316 100%);
   -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
-  min-width:260px;text-align:center;vertical-align:bottom;
+  min-width:260px;text-align:left;vertical-align:bottom;
 }
 
 /* ── HERO 3D CANVAS ── */
 #hero-3d-canvas{
   position:absolute;inset:0;width:100%;height:100%;
   z-index:0;overflow:hidden;pointer-events:none;
+  opacity:0.4;
 }
 #hero-3d-canvas canvas{position:absolute;top:0;left:0}
 
-@media(max-width:960px){
-  .hero-bottom{flex-direction:column}
-  #hero-rw{min-width:160px}
+/* ── MOBILE: stack image on top, text below ── */
+@media(max-width:1024px){
+  .hero{
+    flex-direction:column!important;
+    align-items:center!important;
+    justify-content:flex-end!important;
+    padding:0 0 40px!important;
+    min-height:100svh;
+  }
+  .hero-img-col{
+    position:relative;
+    left:auto; top:auto; bottom:auto;
+    width:100%;
+    height:55vw;
+    min-height:260px;
+    max-height:420px;
+    align-items:flex-end;
+    flex-shrink:0;
+  }
+  .hero-img-fade{width:0;display:none}
+  .hero-left{
+    flex:0 0 auto;
+    max-width:600px;
+    width:100%;
+    align-items:center;
+    padding:24px 20px 0;
+  }
+  .hero-h1{text-align:center}
+  .hero-sub{text-align:center;max-width:520px}
+  .hero-btns{justify-content:center!important}
+  .hero-bottom{justify-content:center!important}
+  .hero-man-img{transform:perspective(700px) rotateY(0deg) rotateX(2deg) scale(1.05)}
+  #hero-rw{min-width:160px;text-align:center}
 }
-@media(max-width:768px){ #hero-3d-canvas{opacity:0.75}}
-@media(max-width:480px){ #hero-3d-canvas{opacity:0.65}}
+@media(max-width:600px){
+  .hero-img-col{height:62vw;max-height:340px}
+  .hero-man-wrap{width:95%}
+}
+@media(max-width:768px){ #hero-3d-canvas{opacity:0.3}}
+@media(max-width:480px){ #hero-3d-canvas{opacity:0.2}}
+@media(max-width:960px){ .hero-bottom{flex-direction:column} }
+
+
 
 /* ── HERO BUTTON GLOW ── */
 .btn-main{z-index:1}
@@ -685,9 +839,24 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 </nav>
 
 <!-- HERO -->
-<section class="hero">
+<section class="hero" id="heroSection">
   <div id="hero-3d-canvas" aria-hidden="true"></div>
-  <!-- LEFT: text content -->
+
+  <!-- IMAGE COLUMN — LEFT (cinematic 3D man) -->
+  <div class="hero-img-col" id="heroImgCol">
+    <div class="hero-img-edge" aria-hidden="true"></div>
+    <div class="hero-man-glow" aria-hidden="true"></div>
+    <div class="hero-man-wrap" id="heroManWrap">
+      <img class="hero-man-img" id="heroManImg"
+           src="{{ url_for('static', filename='images/hero-man.png') }}"
+           alt="ZyNi SMC Trader"
+           loading="eager" draggable="false">
+      <div class="hero-man-shadow" aria-hidden="true"></div>
+    </div>
+    <div class="hero-img-fade" aria-hidden="true"></div>
+  </div>
+
+  <!-- TEXT COLUMN — RIGHT -->
   <div class="hero-left">
   <div class="hero-eyebrow"><span class="hero-eyebrow-dot"></span><span data-i18n="hero_eyebrow">Smart Money Concepts · Real Time</span></div>
   <h1 class="hero-h1">
@@ -2341,6 +2510,73 @@ function lwStartBounce(){
   } else {
     l1.classList.add('vis'); l2.classList.add('vis');
   }
+})();
+
+/* ══════════════════════════════════════════════════════════
+   HERO MAN — 3D Parallax + Entrance
+══════════════════════════════════════════════════════════ */
+(function initHeroParallax() {
+  var img     = document.getElementById('heroManImg');
+  var wrap    = document.getElementById('heroManWrap');
+  var section = document.getElementById('heroSection');
+  if (!img || !wrap || !section) return;
+
+  var isMobile  = window.innerWidth < 1024;
+  var baseRotY  = isMobile ? 0 : 7;    // deg
+  var baseRotX  = 1.5;                  // deg
+  var baseScale = isMobile ? 1.05 : 1.07;
+  var maxTiltY  = isMobile ? 2 : 8;    // max extra rotation from mouse
+  var maxTiltX  = isMobile ? 1 : 4;
+  var curX = 0, curY = 0, tX = 0, tY = 0;
+  var raf;
+
+  /* Smooth lerp loop */
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function tick() {
+    curX = lerp(curX, tX, 0.06);
+    curY = lerp(curY, tY, 0.06);
+    img.style.transform =
+      'perspective(700px) rotateY(' + (baseRotY + curX) + 'deg) ' +
+      'rotateX(' + (baseRotX - curY) + 'deg) ' +
+      'scale(' + baseScale + ')';
+    raf = requestAnimationFrame(tick);
+  }
+  tick();
+
+  /* Mouse move over hero section */
+  section.addEventListener('mousemove', function(e) {
+    if (window.innerWidth < 1024) return;
+    var rect = section.getBoundingClientRect();
+    var nx   = (e.clientX - rect.left) / rect.width  - 0.5;  // -0.5 to 0.5
+    var ny   = (e.clientY - rect.top)  / rect.height - 0.5;
+    tX = nx * maxTiltY;   // left→right shifts rotateY
+    tY = ny * maxTiltX;   // up→down shifts rotateX
+  }, { passive: true });
+
+  section.addEventListener('mouseleave', function() {
+    tX = 0; tY = 0;
+  });
+
+  /* Touch: subtle tilt on mobile */
+  section.addEventListener('touchmove', function(e) {
+    if (window.innerWidth >= 1024) return;
+    var t    = e.touches[0];
+    var rect = section.getBoundingClientRect();
+    var nx   = (t.clientX - rect.left) / rect.width - 0.5;
+    tX = nx * 3;
+    tY = 0;
+  }, { passive: true });
+
+  section.addEventListener('touchend', function() { tX = 0; tY = 0; });
+
+  /* Resize: update mobile flag */
+  window.addEventListener('resize', function() {
+    isMobile  = window.innerWidth < 1024;
+    baseRotY  = isMobile ? 0 : 7;
+    baseScale = isMobile ? 1.05 : 1.07;
+    maxTiltY  = isMobile ? 2 : 8;
+    maxTiltX  = isMobile ? 1 : 4;
+  });
 })();
 
 </script>
