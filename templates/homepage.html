@@ -737,7 +737,7 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 
 <!-- TICKER -->
 <div class="ticker">
-  <div class="ticker-tag"><span class="ticker-dot"></span></div>
+  <div class="ticker-tag"><span class="ticker-dot"></span>LIVE</div>
   <div class="ticker-track"><div class="ticker-inner" id="ticker"></div></div>
 </div>
 
@@ -1344,7 +1344,8 @@ document.getElementById('losers').innerHTML=LOSERS.map(g=>`<div class="gl-row"><
 
 // ── VOL MINI ──
 const mx=Math.max(...EXCHS.map(e=>e.v));
-document.getElementById('vol-mini').innerHTML=EXCHS.map(e=>{const h=Math.round(e.v/mx*48);const lbl=e.v>=10?'$'+e.v.toFixed(0)+'B':'$'+e.v.toFixed(1)+'B';return`<div class="vol-mini-col"><div style="font-size:7px;color:var(--text3);font-family:'DM Sans',sans-serif;margin-bottom:2px">${lbl}</div><div class="vol-mini-bar" style="height:${h}px;background:${e.c};opacity:0.6;border-radius:3px 3px 0 0"></div><div class="vol-mini-name">${e.n}</div></div>`}).join('');
+const _volMini=document.getElementById('vol-mini');
+if(_volMini)_volMini.innerHTML=EXCHS.map(e=>{const h=Math.round(e.v/mx*48);const lbl=e.v>=10?'$'+e.v.toFixed(0)+'B':'$'+e.v.toFixed(1)+'B';return`<div class="vol-mini-col"><div style="font-size:7px;color:var(--text3);font-family:'DM Sans',sans-serif;margin-bottom:2px">${lbl}</div><div class="vol-mini-bar" style="height:${h}px;background:${e.c};opacity:0.6;border-radius:3px 3px 0 0"></div><div class="vol-mini-name">${e.n}</div></div>`}).join('');
 
 // ── GAUGE ──
 let fgV=72;
@@ -1352,23 +1353,20 @@ function updateGauge(v){
   const val=document.getElementById('gauge-val');
   const nm=document.getElementById('gauge-name');
   const needle=document.getElementById('gauge-needle');
+  if(!val||!nm||!needle) return;
   const c=v<20?'#ef4444':v<40?'#f97316':v<60?'#eab308':v<80?'#84cc16':'#22c55e';
   val.setAttribute('fill',c);
   val.textContent=v;
   nm.style.color=c;
   nm.textContent=v<20?'Extreme Fear':v<40?'Fear':v<60?'Neutral':v<80?'Greed':'Extreme Greed';
-  // Light up segments based on value
   ['seg1','seg2','seg3','seg4','seg5'].forEach((id,i)=>{
-    const threshold = (i+1)*20;
+    const threshold=(i+1)*20;
     const seg=document.getElementById(id);
-    if(v>=threshold-20){
-      seg.style.opacity = v>=threshold ? '1' : String(0.3 + ((v-(threshold-20))/20)*0.7);
-    } else {
-      seg.style.opacity='0';
-    }
+    if(!seg) return;
+    if(v>=threshold-20){seg.style.opacity=v>=threshold?'1':String(0.3+((v-(threshold-20))/20)*0.7);}
+    else{seg.style.opacity='0';}
   });
-  // Needle: -90 = 0%, +90 = 100%
-  const angle = -90 + (v/100)*180;
+  const angle=-90+(v/100)*180;
   needle.setAttribute('transform',`rotate(${angle} 110 105)`);
 }
 // ── INIT — real data from Flask ──
