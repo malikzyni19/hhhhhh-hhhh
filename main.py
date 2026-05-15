@@ -2466,6 +2466,8 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
 
     upP, upB, upL = [], [], []
     dnP, dnB, dnL = [], [], []
+    prev_upP_first = None   # Pine: up.p.first()[1] — end-of-previous-bar value
+    prev_dnP_first = None   # Pine: dn.p.first()[1] — end-of-previous-bar value
 
     start = max(i_len * 2 + 2, s_len + 2)
 
@@ -2483,7 +2485,10 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
             dnL.insert(0, l[i - i_len])
 
         # ── INTERNAL BULLISH BREAK → Create Bullish OB ──
-        if upP and len(dnL) > 1 and c[i] > upP[0] and (i == start or c[i - 1] <= upP[0]):
+        # Pine: ta.crossover(b.c, up.p.first()) → c[i] > upP[0] AND c[i-1] <= prev value
+        # prev_upP_first is None when up.p was empty last bar → cross fails (matches Pine na)
+        if upP and len(dnL) > 1 and c[i] > upP[0] \
+                and prev_upP_first is not None and c[i - 1] <= prev_upP_first:
             pivot_bar    = upB[0] if upB else i - 10
             # Pine: loc = hN.first() = absolute pivot bar. Loop covers (BOS - pivot)
             # bars, accessing [pivot+1, BOS]. Window size is independent of iLen.
@@ -2549,7 +2554,9 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
             upB.clear()
 
         # ── INTERNAL BEARISH BREAK → Create Bearish OB ──
-        if dnP and len(upL) > 1 and c[i] < dnP[0] and (i == start or c[i - 1] >= dnP[0]):
+        # Pine: ta.crossunder(b.c, dn.p.first()) → c[i] < dnP[0] AND c[i-1] >= prev value
+        if dnP and len(upL) > 1 and c[i] < dnP[0] \
+                and prev_dnP_first is not None and c[i - 1] >= prev_dnP_first:
             pivot_bar    = dnB[0] if dnB else i - 10
             # Pine: loc = lN.first() = absolute pivot bar. Loop covers (BOS - pivot)
             # bars, accessing [pivot+1, BOS]. Window size is independent of iLen.
@@ -2613,6 +2620,10 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
             dnP.clear()
             dnB.clear()
 
+        # End-of-bar snapshot — next iteration's "[1]" (previous-bar) lookup
+        prev_upP_first = upP[0] if upP else None
+        prev_dnP_first = dnP[0] if dnP else None
+
     # ── Mitigate / invalidate OBs ──
     active = []
     max_vol = max(v[-100:]) if len(v) >= 100 else max(v) if v else 1.0
@@ -2670,6 +2681,8 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
 
     upP, upB, upL = [], [], []
     dnP, dnB, dnL = [], [], []
+    prev_upP_first = None   # Pine: up.p.first()[1] — end-of-previous-bar value
+    prev_dnP_first = None   # Pine: dn.p.first()[1] — end-of-previous-bar value
 
     start_i = max(i_len * 2 + 2, s_len + 2)
 
@@ -2684,7 +2697,8 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
             dnL.insert(0, l[i - i_len])
 
         # Bullish OB — same as detect_obs
-        if upP and len(dnL) > 1 and c[i] > upP[0] and (i == start_i or c[i - 1] <= upP[0]):
+        if upP and len(dnL) > 1 and c[i] > upP[0] \
+                and prev_upP_first is not None and c[i - 1] <= prev_upP_first:
             pivot_bar    = upB[0] if upB else i - 10
             search_start = max(0, pivot_bar + 1)
             search_end   = i + 1
@@ -2711,7 +2725,8 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
             upP.clear(); upB.clear()
 
         # Bearish OB — same as detect_obs
-        if dnP and len(upL) > 1 and c[i] < dnP[0] and (i == start_i or c[i - 1] >= dnP[0]):
+        if dnP and len(upL) > 1 and c[i] < dnP[0] \
+                and prev_dnP_first is not None and c[i - 1] >= prev_dnP_first:
             pivot_bar    = dnB[0] if dnB else i - 10
             search_start = max(0, pivot_bar + 1)
             search_end   = i + 1
@@ -2736,6 +2751,10 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
                         "type": "bearish",
                     })
             dnP.clear(); dnB.clear()
+
+        # End-of-bar snapshot — next iteration's "[1]" (previous-bar) lookup
+        prev_upP_first = upP[0] if upP else None
+        prev_dnP_first = dnP[0] if dnP else None
 
     # Sort by bar descending (most recent first), deduplicate, limit
     seen = set()
