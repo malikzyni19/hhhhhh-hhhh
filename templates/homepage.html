@@ -909,9 +909,32 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
   .mcar-card[data-pos="l1"]{transform:translate(calc(-50% - 148px),-50%) scale(.50) rotateY(18deg);opacity:.38;filter:blur(1px) brightness(.65)}
   .mcar-arrow{width:36px;height:36px}
   .mcar-arrow svg{width:15px;height:15px}
-  #mod-info-wrap{min-height:220px}
   .mcar-info-title{font-size:22px}
   .mcar-info-desc{font-size:13px}
+}
+/* ── Mobile info panels: stack naturally below phone, no clipping ── */
+@media(max-width:1024px){
+  /* Override JS-injected min-height; height:auto grows with content */
+  /* overflow:hidden kept to clip horizontal GSAP slide animation only */
+  #mod-info-wrap{
+    min-height:0!important;
+    height:auto;
+  }
+  /* Switch from absolute-stack to natural flow; visibility via display */
+  .mcar-info-item{
+    position:relative;
+    inset:auto;
+    display:none;
+    opacity:1;
+    pointer-events:auto;
+  }
+  .mcar-info-item.active{
+    display:flex;
+  }
+  /* Breathing room so text doesn't touch screen edges */
+  #mod-text-col{
+    padding:0 8px;
+  }
 }
 </style>
 </head>
