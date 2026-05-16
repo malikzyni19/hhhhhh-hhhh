@@ -908,8 +908,8 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
   <!-- MORPH SIDE PANEL — fades in beside sphere during scroll morph -->
   <div id="morph-side-panel">
     <div class="msp-eyebrow">SMC Intelligence</div>
-    <p class="msp-l1">We don't provide signals —<br>we provide <span class="hl">ready-made setups</span><br>across <span class="hl">1000+ pairs.</span></p>
-    <p class="msp-l2">Not for beginners — built for traders already familiar with SMC methods like Order Blocks, Fair Value Gaps, Fibonacci, and Breaker Blocks.</p>
+    <p class="msp-l1">We don't provide any signals —<br>we provide <span class="hl">ready-made setups</span><br>across <span class="hl">1000+ pairs,</span> just one click away.</p>
+    <p class="msp-l2">This is not for beginners — this is for traders already familiar with SMC methods like Order Blocks, Fair Value Gaps, Fibonacci, and Breaker Blocks.</p>
   </div>
 
   <!-- TEXT — LEFT OVERLAY -->
@@ -2379,15 +2379,12 @@ function lwStartBounce(){
     });
 
   window.addEventListener('resize', function() {
-    if (window.innerWidth < 1024) tl.pause();
-  }, { passive: true });
-})();
-
-/* ════════════════════════════════════════════════════════════
-   HERO MORPH SCENE — Three.js particle sphere → solid fluid
-   Phase 1: floating orange/gold particle sphere
-   Phase 2: scroll-driven morph to solid organic shape
-   Phase 3: hero text fades, statement panel slides up
+    if (window.innerWidth < 1024) tl.pause(/* ════════════════════════════════════════════════════════════
+   HERO CUBE ASSEMBLY — Three.js cinematic cube formation
+   Phase 1: hero text fades as scroll begins      (0 → 0.28)
+   Phase 2: blue/gold cubes scatter and converge  (0.04 → 0.80)
+   Phase 3: large glowing cube materialises       (0.72 → 0.94)
+   Phase 4: text panel fades in beside cube       (0.78 → 1.0)
 ════════════════════════════════════════════════════════════ */
 (function initHeroMorphScene() {
   if (!window.THREE || !window.gsap) return;
@@ -2395,7 +2392,6 @@ function lwStartBounce(){
   if (!canvas) return;
 
   var isMobile = window.innerWidth < 768;
-  var PARTICLE_COUNT = isMobile ? 1600 : 3200;
 
   /* ── Renderer ── */
   var renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: !isMobile });
@@ -2405,232 +2401,246 @@ function lwStartBounce(){
 
   /* ── Scene + Camera ── */
   var scene  = new THREE.Scene();
-  /* Mobile: pull camera back for better sphere-in-viewport fit */
-  var camZ   = isMobile ? 5.2 : 4.2;
-  var camera = new THREE.PerspectiveCamera(55, (canvas.offsetWidth || window.innerWidth) / (canvas.offsetHeight || window.innerHeight), 0.1, 100);
+  var camZ   = isMobile ? 5.5 : 4.5;
+  var camera = new THREE.PerspectiveCamera(
+    55,
+    (canvas.offsetWidth || window.innerWidth) / (canvas.offsetHeight || window.innerHeight),
+    0.1, 100
+  );
   camera.position.z = camZ;
 
-  /* ── Particle sphere — Fibonacci distribution ── */
-  var pGeo  = new THREE.BufferGeometry();
-  var posArr = new Float32Array(PARTICLE_COUNT * 3);
-  var colArr = new Float32Array(PARTICLE_COUNT * 3);
-  var phi   = Math.PI * (3 - Math.sqrt(5));
-
-  for (var i = 0; i < PARTICLE_COUNT; i++) {
-    var y      = 1 - (i / (PARTICLE_COUNT - 1)) * 2;
-    var r      = Math.sqrt(1 - y * y);
-    var theta  = phi * i;
-    var rad    = 1.28 + (Math.random() - 0.5) * 0.14;
-    posArr[i*3]   = Math.cos(theta) * r * rad;
-    posArr[i*3+1] = y * rad;
-    posArr[i*3+2] = Math.sin(theta) * r * rad;
-
-    /* Orange→amber→gold palette */
-    var t = Math.random();
-    if (t < 0.45) {
-      colArr[i*3]=0.980; colArr[i*3+1]=0.455; colArr[i*3+2]=0.086; /* #f97316 */
-    } else if (t < 0.78) {
-      colArr[i*3]=0.984; colArr[i*3+1]=0.749; colArr[i*3+2]=0.141; /* #fbbf24 */
-    } else {
-      colArr[i*3]=0.961; colArr[i*3+1]=0.620; colArr[i*3+2]=0.043; /* #f59e0b */
-    }
-  }
-
-  pGeo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
-  pGeo.setAttribute('color',    new THREE.BufferAttribute(colArr, 3));
-
-  var pMat = new THREE.PointsMaterial({
-    size: 0.038,
-    vertexColors: true,
-    blending: THREE.AdditiveBlending,
-    transparent: true,
-    opacity: 1,
-    depthWrite: false,
-    sizeAttenuation: true
-  });
-
-  var particles = new THREE.Points(pGeo, pMat);
-  scene.add(particles);
-
-  /* ── Solid morph sphere — IcosahedronGeometry + shader ── */
-  var detail = isMobile ? 3 : 4;
-  var sGeo   = new THREE.IcosahedronGeometry(1.28, detail);
-
-  var sMat = new THREE.ShaderMaterial({
-    uniforms: {
-      uTime:     { value: 0 },
-      uProgress: { value: 0 }
-    },
-    vertexShader: [
-      'uniform float uTime;',
-      'uniform float uProgress;',
-      'varying vec3 vNormalView;',
-      'varying vec3 vViewPos;',
-      'varying float vNoise;',
-
-      'vec3 mod289v3(vec3 x){return x-floor(x*(1./289.))*289.;}',
-      'vec4 mod289v4(vec4 x){return x-floor(x*(1./289.))*289.;}',
-      'vec4 permute4(vec4 x){return mod289v4(((x*34.)+1.)*x);}',
-      'vec4 taylorInvSqrt4(vec4 r){return 1.79284291400159-0.85373472095314*r;}',
-      'float snoise(vec3 v){',
-      '  const vec2 C=vec2(1./6.,1./3.);',
-      '  const vec4 D=vec4(0.,.5,1.,2.);',
-      '  vec3 i=floor(v+dot(v,C.yyy));',
-      '  vec3 x0=v-i+dot(i,C.xxx);',
-      '  vec3 g=step(x0.yzx,x0.xyz);',
-      '  vec3 l=1.-g;',
-      '  vec3 i1=min(g.xyz,l.zxy);',
-      '  vec3 i2=max(g.xyz,l.zxy);',
-      '  vec3 x1=x0-i1+C.xxx;',
-      '  vec3 x2=x0-i2+C.yyy;',
-      '  vec3 x3=x0-D.yyy;',
-      '  i=mod289v3(i);',
-      '  vec4 p=permute4(permute4(permute4(i.z+vec4(0.,i1.z,i2.z,1.))+i.y+vec4(0.,i1.y,i2.y,1.))+i.x+vec4(0.,i1.x,i2.x,1.));',
-      '  float n_=.142857142857;',
-      '  vec3 ns=n_*D.wyz-D.xzx;',
-      '  vec4 j=p-49.*floor(p*ns.z*ns.z);',
-      '  vec4 x_=floor(j*ns.z);',
-      '  vec4 y_=floor(j-7.*x_);',
-      '  vec4 xs=x_*ns.x+ns.yyyy;',
-      '  vec4 ys=y_*ns.x+ns.yyyy;',
-      '  vec4 h=1.-abs(xs)-abs(ys);',
-      '  vec4 b0=vec4(xs.xy,ys.xy);',
-      '  vec4 b1=vec4(xs.zw,ys.zw);',
-      '  vec4 s0=floor(b0)*2.+1.;',
-      '  vec4 s1=floor(b1)*2.+1.;',
-      '  vec4 sh=-step(h,vec4(0.));',
-      '  vec4 a0=b0.xzyw+s0.xzyw*sh.xxyy;',
-      '  vec4 a1=b1.xzyw+s1.xzyw*sh.zzww;',
-      '  vec3 p0=vec3(a0.xy,h.x);',
-      '  vec3 p1=vec3(a0.zw,h.y);',
-      '  vec3 p2=vec3(a1.xy,h.z);',
-      '  vec3 p3=vec3(a1.zw,h.w);',
-      '  vec4 norm=taylorInvSqrt4(vec4(dot(p0,p0),dot(p1,p1),dot(p2,p2),dot(p3,p3)));',
-      '  p0*=norm.x;p1*=norm.y;p2*=norm.z;p3*=norm.w;',
-      '  vec4 m=max(.6-vec4(dot(x0,x0),dot(x1,x1),dot(x2,x2),dot(x3,x3)),0.);',
-      '  m=m*m;',
-      '  return 42.*dot(m*m,vec4(dot(p0,x0),dot(p1,x1),dot(p2,x2),dot(p3,x3)));',
-      '}',
-
-      'void main(){',
-      '  float noise=snoise(position*1.1+uTime*0.22);',
-      '  vNoise=noise;',
-      '  float disp=noise*0.26*uProgress;',
-      '  vec3 displaced=position+normal*disp;',
-      '  vec4 mvPos=modelViewMatrix*vec4(displaced,1.);',
-      '  vViewPos=-mvPos.xyz;',
-      '  vNormalView=normalize(normalMatrix*normal);',
-      '  gl_Position=projectionMatrix*mvPos;',
-      '}'
-    ].join('\n'),
-
-    fragmentShader: [
-      'uniform float uTime;',
-      'uniform float uProgress;',
-      'varying vec3 vNormalView;',
-      'varying vec3 vViewPos;',
-      'varying float vNoise;',
-
-      'void main(){',
-      '  vec3 vd=normalize(vViewPos);',
-      '  vec3 n=normalize(vNormalView);',
-      '  float fresnel=pow(1.-clamp(dot(vd,n),0.,1.),3.);',
-
-      '  /* Y-based orange→amber gradient */',
-      '  float ty=clamp(vNormalView.y*.5+.5,0.,1.);',
-      '  vec3 cA=vec3(.980,.455,.086);', /* deep orange */
-      '  vec3 cB=vec3(.984,.749,.141);', /* amber */
-      '  vec3 base=mix(cA,cB,ty);',
-      '  base+=vNoise*0.07*vec3(1.,.55,0.);',
-
-      '  /* Diffuse lighting */',
-      '  vec3 ldir=normalize(vec3(.4,1.,.6));',
-      '  float diff=clamp(dot(n,ldir),0.,1.);',
-      '  vec3 col=base*(0.38+diff*0.72);',
-
-      '  /* Specular */',
-      '  vec3 h2=normalize(ldir+vd);',
-      '  float spec=pow(clamp(dot(n,h2),0.,1.),40.);',
-      '  col+=spec*0.55*vec3(1.,.82,.38);',
-
-      '  /* Rim glow */',
-      '  col=mix(col,vec3(1.,.52,.1),fresnel*0.75);',
-
-      '  float alpha=uProgress*(0.88+fresnel*0.12);',
-      '  gl_FragColor=vec4(col,alpha);',
-      '}'
-    ].join('\n'),
-
-    transparent: true,
-    side: THREE.FrontSide
-  });
-
-  var solidMesh = new THREE.Mesh(sGeo, sMat);
-  solidMesh.visible = false;
-  scene.add(solidMesh);
-
-  /* ── Position sphere — right on desktop, centered+up on mobile ── */
-  var sphereOffsetX = isMobile ? 0 : 1.0;
-  var sphereOffsetY = isMobile ? 0.32 : 0;   /* push sphere up on mobile so text panel doesn't cover it */
-  particles.position.set(sphereOffsetX, sphereOffsetY, 0);
-  solidMesh.position.set(sphereOffsetX, sphereOffsetY, 0);
-
-  /* Scale sphere to fit viewport — portrait mobile clips if full size */
-  var vw = window.innerWidth;
-  var mobileScale = vw < 480 ? 0.66 : (vw < 768 ? 0.80 : 1.0);
-  if (mobileScale < 1) {
-    particles.scale.setScalar(mobileScale);
-    solidMesh.scale.setScalar(mobileScale);
-  }
+  /* ── Scene group — desktop offset + mobile scale anchor ── */
+  var sceneGroup = new THREE.Group();
+  scene.add(sceneGroup);
+  var offsetX = isMobile ? 0 : 0.82;
+  var offsetY = isMobile ? 0.26 : 0;
+  sceneGroup.position.set(offsetX, offsetY, 0);
 
   /* ── Cinematic lighting ── */
-  scene.add(new THREE.AmbientLight(0xffffff, 0.30));
-  var pl1 = new THREE.PointLight(0xf97316, 4, 9);
-  pl1.position.set(2.5, 2, 2);
+  scene.add(new THREE.AmbientLight(0x0d1a3a, 0.55));
+
+  var pl1 = new THREE.PointLight(0x3b82f6, 9, 15);   /* blue key */
+  pl1.position.set(4, 2.5, 3);
   scene.add(pl1);
-  var pl2 = new THREE.PointLight(0xfbbf24, 2, 7);
-  pl2.position.set(-2, -1.5, 1.5);
+
+  var pl2 = new THREE.PointLight(0xf59e0b, 7, 12);   /* gold fill */
+  pl2.position.set(-3.5, -1.5, 2.5);
   scene.add(pl2);
 
-  /* ── GSAP ScrollTrigger — 3-phase cinematic scroll ── */
-  var heroSection  = document.getElementById('heroSection');
-  var heroLeft     = document.querySelector('.hero-left');
-  var sidePanel    = document.getElementById('morph-side-panel');
+  var pl3 = new THREE.PointLight(0x93c5fd, 3.5, 9);  /* sky-blue back */
+  pl3.position.set(0.5, 4, -3);
+  scene.add(pl3);
+
+  /* ── Grid / cube parameters ── */
+  var GRID_N   = isMobile ? 4 : 5;       /* n×n×n grid forms the large cube */
+  var COUNT    = isMobile ? 80 : 150;    /* total small cubes */
+  var cSz      = isMobile ? 0.155 : 0.175; /* individual cube edge */
+  var spacing  = isMobile ? 0.325 : 0.365; /* centre-to-centre distance */
+  var halfGrid = (GRID_N - 1) * spacing * 0.5;
+  var GTOTAL   = GRID_N * GRID_N * GRID_N; /* 64 or 125 */
+
+  /* ── Build + shuffle grid end-positions ── */
+  var gridPos = [];
+  for (var gx = 0; gx < GRID_N; gx++)
+    for (var gy = 0; gy < GRID_N; gy++)
+      for (var gz = 0; gz < GRID_N; gz++)
+        gridPos.push([gx * spacing - halfGrid, gy * spacing - halfGrid, gz * spacing - halfGrid]);
+
+  for (var si = gridPos.length - 1; si > 0; si--) {
+    var sj = Math.floor(Math.random() * (si + 1));
+    var tmp = gridPos[si]; gridPos[si] = gridPos[sj]; gridPos[sj] = tmp;
+  }
+
+  /* ── Per-cube random start data ── */
+  var startPos = new Float32Array(COUNT * 3);
+  var startRot = new Float32Array(COUNT * 3);
+  var endPos   = new Float32Array(COUNT * 3);
+
+  /* Six colour stops: 55% blue family, 45% gold/orange */
+  var COLORS = [
+    new THREE.Color(0x3b82f6),  /* blue-500 */
+    new THREE.Color(0x1d4ed8),  /* blue-700 */
+    new THREE.Color(0x60a5fa),  /* blue-400 */
+    new THREE.Color(0xf59e0b),  /* amber-500 */
+    new THREE.Color(0xfbbf24),  /* amber-400 */
+    new THREE.Color(0xf97316)   /* orange-500 */
+  ];
+  var colorWeights = [0.22, 0.18, 0.15, 0.18, 0.15, 0.12]; /* cumulative below */
+  var colorCum    = [0.22, 0.40, 0.55, 0.73, 0.88, 1.00];
+
+  function pickColor(r) {
+    for (var ci = 0; ci < colorCum.length; ci++) if (r < colorCum[ci]) return COLORS[ci];
+    return COLORS[5];
+  }
+
+  for (var i = 0; i < COUNT; i++) {
+    /* Start: random ring/disk — x/y spread, mild z variation — all off-screen edges */
+    var angle = Math.random() * Math.PI * 2;
+    var dist  = 3.8 + Math.random() * 2.8;
+    startPos[i*3]   = Math.cos(angle) * dist;
+    startPos[i*3+1] = Math.sin(angle) * dist;
+    startPos[i*3+2] = (Math.random() - 0.5) * 2.0;
+
+    startRot[i*3]   = (Math.random() - 0.5) * Math.PI * 2;
+    startRot[i*3+1] = (Math.random() - 0.5) * Math.PI * 2;
+    startRot[i*3+2] = (Math.random() - 0.5) * Math.PI;
+
+    /* End: assign grid slot (wrap for extras) */
+    var gp = gridPos[i < GTOTAL ? i : (i % GTOTAL)];
+    endPos[i*3] = gp[0]; endPos[i*3+1] = gp[1]; endPos[i*3+2] = gp[2];
+  }
+
+  /* ── InstancedMesh — small cubes ── */
+  var smallGeo = new THREE.BoxGeometry(cSz, cSz, cSz);
+  var smallMat = new THREE.MeshStandardMaterial({
+    metalness: 0.78,
+    roughness: 0.10,
+    emissive: new THREE.Color(0x0b1a3f),
+    emissiveIntensity: 0.50,
+    transparent: true,
+    opacity: 0
+  });
+  var instMesh = new THREE.InstancedMesh(smallGeo, smallMat, COUNT);
+  instMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  for (var ci = 0; ci < COUNT; ci++) instMesh.setColorAt(ci, pickColor(Math.random()));
+  instMesh.instanceColor.needsUpdate = true;
+  sceneGroup.add(instMesh);
+
+  /* ── Glow-halo mesh — slightly larger BackSide box, additive blend ── */
+  var haloGeo = new THREE.BoxGeometry(cSz * 2.4, cSz * 2.4, cSz * 2.4);
+  var haloMat = new THREE.MeshBasicMaterial({
+    color: 0x3b82f6,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.BackSide
+  });
+  var haloMesh = new THREE.InstancedMesh(haloGeo, haloMat, COUNT);
+  haloMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  sceneGroup.add(haloMesh);
+
+  /* ── Large final cube — ShaderMaterial ── */
+  var largeSide = GRID_N * spacing;
+  var largeGeo  = new THREE.BoxGeometry(largeSide, largeSide, largeSide);
+  var largeMat  = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime:   { value: 0 },
+      uReveal: { value: 0 }
+    },
+    vertexShader: [
+      'varying vec2 vUv;',
+      'varying vec3 vNv;',
+      'varying vec3 vVP;',
+      'void main(){',
+      '  vUv=uv;',
+      '  vNv=normalize(normalMatrix*normal);',
+      '  vec4 mv=modelViewMatrix*vec4(position,1.);',
+      '  vVP=-mv.xyz;',
+      '  gl_Position=projectionMatrix*mv;',
+      '}'
+    ].join('\n'),
+    fragmentShader: [
+      'uniform float uTime;',
+      'uniform float uReveal;',
+      'varying vec2 vUv;',
+      'varying vec3 vNv;',
+      'varying vec3 vVP;',
+      'void main(){',
+      '  vec2 e2=min(vUv,1.-vUv);',
+      '  float edge=1.-smoothstep(0.,.038,min(e2.x,e2.y));',
+      '  vec2 gf=fract(vUv*4.);',
+      '  vec2 ge=min(gf,1.-gf);',
+      '  float grid=1.-smoothstep(0.,.055,min(ge.x,ge.y));',
+      '  vec3 vd=normalize(vVP);',
+      '  float fres=pow(1.-clamp(dot(normalize(vNv),vd),0.,1.),2.5);',
+      '  float pulse=.5+.5*sin(uTime*1.8);',
+      '  vec3 body=vec3(.03,.06,.17);',
+      '  vec3 edgec=mix(vec3(.23,.51,.98),vec3(.98,.62,.04),pulse);',
+      '  vec3 gridc=vec3(.37,.65,.98)*.5;',
+      '  float em=max(edge*.92,fres*.5);',
+      '  vec3 col=mix(body,edgec,em);',
+      '  col=mix(col,gridc,grid*(1.-edge)*.42);',
+      '  vec3 ld=normalize(vec3(1.,1.5,1.));',
+      '  float spec=pow(max(0.,dot(reflect(-ld,normalize(vNv)),vd)),34.);',
+      '  col+=spec*.9*vec3(.55,.78,1.);',
+      '  float a=uReveal*(edge*.93+grid*.28+fres*.46+.05);',
+      '  gl_FragColor=vec4(col,clamp(a,0.,.94));',
+      '}'
+    ].join('\n'),
+    transparent: true,
+    side: THREE.DoubleSide,
+    depthWrite: false
+  });
+
+  var largeCube = new THREE.Mesh(largeGeo, largeMat);
+  largeCube.visible = false;
+  sceneGroup.add(largeCube);
+
+  /* Bright wireframe edge on large cube */
+  var leGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(largeSide, largeSide, largeSide));
+  var leMat = new THREE.LineBasicMaterial({
+    color: 0x93c5fd,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false
+  });
+  var lcEdges = new THREE.LineSegments(leGeo, leMat);
+  sceneGroup.add(lcEdges);
+
+  /* ── Mobile scale ── */
+  var vw = window.innerWidth;
+  var groupScale = vw < 480 ? 0.60 : (vw < 768 ? 0.76 : 1.0);
+  sceneGroup.scale.setScalar(groupScale);
+
+  /* ── Scroll state ── */
+  var morphProgress = 0;
+  var heroSection   = document.getElementById('heroSection');
+  var heroLeft      = document.querySelector('.hero-left');
+  var sidePanel     = document.getElementById('morph-side-panel');
 
   if (window.ScrollTrigger && heroSection) {
     ScrollTrigger.create({
       trigger: heroSection,
       start: 'top top',
-      /* Desktop pinned; mobile natural scroll with shorter range */
-      end: isMobile ? '+=80%' : '+=130%',
+      end: isMobile ? '+=90%' : '+=145%',
       pin: !isMobile,
-      scrub: isMobile ? 1.0 : 1.6,
+      scrub: isMobile ? 1.0 : 1.8,
       invalidateOnRefresh: true,
       onUpdate: function(self) {
         var p = self.progress;
 
-        /* ── Phase 1 (0→0.35): hero-left fades + slides up ── */
-        var p1 = Math.min(1, p / 0.35);
+        /* Phase 1 (0→0.28): hero-left fades + lifts */
+        var p1 = Math.min(1, p / 0.28);
         if (heroLeft) {
-          heroLeft.style.opacity = (1 - p1).toFixed(3);
-          heroLeft.style.transform = 'translateY(' + (-p1 * 28).toFixed(1) + 'px)';
+          heroLeft.style.opacity  = (1 - p1).toFixed(3);
+          heroLeft.style.transform = 'translateY(' + (-p1 * 30).toFixed(1) + 'px)';
         }
 
-        /* ── Phase 2 (0.10→0.85): sphere morphs ── */
-        var p2 = Math.max(0, Math.min(1, (p - 0.10) / 0.75));
-        sMat.uniforms.uProgress.value = p2;
-        solidMesh.visible = p2 > 0.02;
-        pMat.opacity = Math.max(0, 1 - p2 * 1.55);
+        /* Phase 2 (0.04→0.80): cube assembly progress */
+        morphProgress = Math.max(0, Math.min(1, (p - 0.04) / 0.76));
 
-        /* ── Phase 3 (0.30→0.72): side panel fades in from below ── */
-        var p3 = Math.max(0, Math.min(1, (p - 0.30) / 0.42));
+        /* Small-cube opacity: fade in during first 10% of assembly, fade out at end */
+        var cubeIn  = Math.min(1, morphProgress / 0.10);
+        var p3      = Math.max(0, Math.min(1, (p - 0.72) / 0.22));
+        var cubeOp  = cubeIn * (1 - p3);
+        smallMat.opacity = cubeOp;
+        haloMat.opacity  = 0.065 * cubeOp;
+
+        /* Phase 3 (0.72→0.94): large cube materialises */
+        largeCube.visible = p3 > 0.01;
+        largeMat.uniforms.uReveal.value = p3;
+        leMat.opacity = p3 * 0.90;
+
+        /* Phase 4 (0.78→1.0): text panel fades in AFTER cube is formed */
+        var p4 = Math.max(0, Math.min(1, (p - 0.78) / 0.22));
         if (sidePanel) {
-          sidePanel.style.opacity = p3.toFixed(3);
-          sidePanel.style.transform = 'translateY(' + ((1 - p3) * 28).toFixed(1) + 'px)';
+          sidePanel.style.opacity   = p4.toFixed(3);
+          sidePanel.style.transform = 'translateY(' + ((1 - p4) * 28).toFixed(1) + 'px)';
         }
 
-        /* Reset on scroll back to top */
-        if (p < 0.05) {
+        if (p < 0.04) {
           if (heroLeft)  { heroLeft.style.opacity = ''; heroLeft.style.transform = ''; }
           if (sidePanel) { sidePanel.style.opacity = '0'; sidePanel.style.transform = ''; }
         }
@@ -2639,7 +2649,8 @@ function lwStartBounce(){
   }
 
   /* ── Animation loop ── */
-  var clock = new THREE.Clock();
+  var clock     = new THREE.Clock();
+  var dummy     = new THREE.Object3D();
   var loopActive = false;
 
   function morphLoop() {
@@ -2647,16 +2658,55 @@ function lwStartBounce(){
     requestAnimationFrame(function tick() {
       if (document.hidden) { loopActive = false; return; }
       requestAnimationFrame(tick);
-      var t = clock.getElapsedTime();
-      sMat.uniforms.uTime.value = t;
+      var t  = clock.getElapsedTime();
+      largeMat.uniforms.uTime.value = t;
 
-      particles.rotation.y = t * 0.16;
-      particles.rotation.x = Math.sin(t * 0.11) * 0.07;
-      solidMesh.rotation.y = t * 0.13;
-      solidMesh.rotation.x = Math.sin(t * 0.08) * 0.055;
+      /* Cubic ease in-out for smooth convergence */
+      var mp   = morphProgress;
+      var ease = mp < 0.5 ? 4*mp*mp*mp : 1 - Math.pow(-2*mp+2,3)/2;
 
-      pl1.position.x = Math.cos(t * 0.45) * 2.8;
-      pl1.position.z = Math.sin(t * 0.45) * 2.8;
+      /* Update every small cube: scatter → grid */
+      for (var i = 0; i < COUNT; i++) {
+        var sx = startPos[i*3],   sy = startPos[i*3+1], sz = startPos[i*3+2];
+        var ex = endPos[i*3],     ey = endPos[i*3+1],   ez = endPos[i*3+2];
+
+        /* Orbital flutter dampens as cubes lock in */
+        var flutter = (1 - ease) * Math.sin(t * (2.4 + i * 0.038) + i * 1.27) * 0.09;
+        dummy.position.set(
+          sx + (ex - sx) * ease + flutter * (i % 3 === 0 ? 1 : 0),
+          sy + (ey - sy) * ease + flutter * (i % 3 === 1 ? 1 : 0),
+          sz + (ez - sz) * ease
+        );
+
+        /* Random tumble → clean alignment */
+        var spin = t * 0.38 * (1 - ease);
+        dummy.rotation.x = startRot[i*3]   * (1 - ease);
+        dummy.rotation.y = startRot[i*3+1] * (1 - ease) + spin;
+        dummy.rotation.z = startRot[i*3+2] * (1 - ease);
+        dummy.scale.setScalar(1);
+        dummy.updateMatrix();
+
+        instMesh.setMatrixAt(i, dummy.matrix);
+        haloMesh.setMatrixAt(i, dummy.matrix);
+      }
+      instMesh.instanceMatrix.needsUpdate = true;
+      haloMesh.instanceMatrix.needsUpdate = true;
+
+      /* Group slow-spin that settles as cube locks */
+      sceneGroup.rotation.y = t * 0.09 * (1 - ease * 0.75);
+      sceneGroup.rotation.x = Math.sin(t * 0.07) * 0.028 * (1 - ease * 0.5);
+
+      /* Idle rotation of final large cube */
+      largeCube.rotation.y = t * 0.07;
+      largeCube.rotation.x = Math.sin(t * 0.055) * 0.022;
+      lcEdges.rotation.y   = largeCube.rotation.y;
+      lcEdges.rotation.x   = largeCube.rotation.x;
+
+      /* Point-light orbit */
+      pl1.position.x = Math.cos(t * 0.46) * 5;
+      pl1.position.z = Math.sin(t * 0.46) * 5;
+      pl2.position.x = Math.cos(t * 0.31 + Math.PI) * 4.5;
+      pl2.position.z = Math.sin(t * 0.31 + Math.PI) * 4.5;
 
       renderer.render(scene, camera);
     });
@@ -2667,7 +2717,7 @@ function lwStartBounce(){
     if (!document.hidden && !loopActive) morphLoop();
   });
 
-  /* ── Resize — recalculate sphere scale for new viewport ── */
+  /* ── Resize / orientation change ── */
   function onResize() {
     var wrap = document.getElementById('hero-morph-wrap');
     if (!wrap) return;
@@ -2676,13 +2726,11 @@ function lwStartBounce(){
     renderer.setSize(w, h);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    /* Re-apply mobile scale when orientation changes */
-    var sc = w < 480 ? 0.66 : (w < 768 ? 0.80 : 1.0);
-    particles.scale.setScalar(sc);
-    solidMesh.scale.setScalar(sc);
-    var offsetY = w < 768 ? 0.32 : 0;
-    particles.position.y = offsetY;
-    solidMesh.position.y = offsetY;
+    var sc = w < 480 ? 0.60 : (w < 768 ? 0.76 : 1.0);
+    sceneGroup.scale.setScalar(sc);
+    var oY = w < 768 ? 0.26 : 0;
+    sceneGroup.position.y  = oY;
+    sceneGroup.position.x  = w < 768 ? 0 : 0.82;
   }
   window.addEventListener('resize', onResize, { passive: true });
 })();
