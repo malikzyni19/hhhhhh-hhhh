@@ -500,41 +500,6 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 }
 
 /* Statement panel — Phase 3 scroll text */
-#hero-stmt-panel{
-  position:absolute;
-  inset:0;
-  z-index:4;
-  display:flex;
-  flex-direction:column;
-  align-items:center;
-  justify-content:center;
-  opacity:0;
-  pointer-events:none;
-  text-align:center;
-  padding:0 5vw;
-}
-.hsp-l1{
-  font-family:'Outfit',sans-serif;
-  font-size:clamp(2rem,4.8vw,3.6rem);
-  font-weight:800;
-  color:#fff;
-  line-height:1.1;
-  letter-spacing:-0.02em;
-  margin-bottom:18px;
-}
-.hsp-l1 span{
-  background:linear-gradient(135deg,#f59e0b 0%,#fbbf24 45%,#f97316 100%);
-  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
-}
-.hsp-l2{
-  font-family:'DM Sans',sans-serif;
-  font-size:clamp(1rem,1.8vw,1.25rem);
-  font-weight:400;
-  color:rgba(255,255,255,0.68);
-  max-width:580px;
-  line-height:1.65;
-}
-
 /* Hide old image column */
 .hero-img-col{display:none!important}
 
@@ -713,18 +678,17 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 
 
 /* ── ORB OVERLAY (fixed transition overlay) ── */
-#orb-overlay-canvas{position:fixed;top:0;left:0;width:100%;height:100%;z-index:50;pointer-events:none;opacity:0;background:rgba(0,2,14,0.96);overflow:hidden}
-#orb-overlay-canvas canvas{position:absolute;top:0;left:0;display:block}
+
 
 /* ── STATEMENT SECTION ── */
-#statement{padding:72px 20px 80px;text-align:center;position:relative;min-height:360px}
+#statement{padding:88px 20px 96px;text-align:center;position:relative;min-height:380px;background:linear-gradient(180deg,rgba(6,10,20,0.96) 0%,rgba(6,10,20,0.82) 40%,transparent 100%)}
 @media(max-width:640px){ #statement{padding:48px 16px 56px}}
 #statement .statement-wrap{position:relative;z-index:1}
 .statement-wrap{max-width:860px;margin:0 auto}
-.statement-l1{font-size:clamp(1.15rem,2.5vw,1.72rem);font-weight:700;line-height:1.55;color:var(--text);margin:0 0 24px;opacity:0;transform:perspective(700px) translateZ(-80px) scale(0.78);filter:blur(4px);transition:opacity 1.1s cubic-bezier(.22,1,.36,1),transform 1.1s cubic-bezier(.22,1,.36,1),filter 1.1s cubic-bezier(.22,1,.36,1)}
-.statement-l1.vis{opacity:1;transform:perspective(700px) translateZ(0) scale(1);filter:blur(0px)}
-.statement-l2{font-size:clamp(0.92rem,1.7vw,1.12rem);font-weight:400;line-height:1.7;color:rgba(180,200,225,0.72);margin:0;opacity:0;transform:perspective(700px) translateZ(-60px) scale(0.84);filter:blur(3px);transition:opacity 1.0s .32s cubic-bezier(.22,1,.36,1),transform 1.0s .32s cubic-bezier(.22,1,.36,1),filter 1.0s .32s cubic-bezier(.22,1,.36,1)}
-.statement-l2.vis{opacity:1;transform:perspective(700px) translateZ(0) scale(1);filter:blur(0px)}
+.statement-l1{font-size:clamp(1.15rem,2.5vw,1.72rem);font-weight:700;line-height:1.65;color:var(--text);margin:0 0 28px}
+.statement-l2{font-size:clamp(0.92rem,1.7vw,1.12rem);font-weight:400;line-height:1.75;color:rgba(180,200,225,0.72);margin:0}
+/* Character-by-character animation spans */
+.sc{display:inline-block;opacity:0;transform:translateY(10px);filter:blur(4px);will-change:opacity,transform,filter}
 .stmt-hl{background:linear-gradient(90deg,#f59e0b,#fbbf24 60%,#f97316);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;filter:drop-shadow(0 0 10px rgba(245,158,11,0.40))}
 .stmt-hl2{background:linear-gradient(90deg,#22d3ee,#38bdf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
 </style>
@@ -884,12 +848,6 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
   <!-- GRADIENT OVERLAY — text contrast on left -->
   <div class="hero-overlay" aria-hidden="true"></div>
 
-  <!-- STATEMENT PANEL — slides up during scroll Phase 3 -->
-  <div id="hero-stmt-panel" aria-hidden="true">
-    <div class="hsp-l1">Trade at the <span>Institutional Level.</span></div>
-    <div class="hsp-l2">Real-time SMC intelligence across 400+ pairs — Order Blocks, Fair Value Gaps, and Fibonacci zones, live every second.</div>
-  </div>
-
   <!-- TEXT — LEFT OVERLAY -->
   <div class="hero-left">
   <div class="hero-eyebrow"><span class="hero-eyebrow-dot"></span><span data-i18n="hero_eyebrow">SMC Simpler. Real Time.</span></div>
@@ -949,9 +907,6 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
   </div>
 
 </section>
-
-<!-- ORB OVERLAY (fixed transition) -->
-<div id="orb-overlay-canvas" aria-hidden="true"><div id="orb-brand-text" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-family:'JetBrains Mono',monospace;font-size:clamp(1.6rem,5vw,3rem);font-weight:800;color:#22d3ee;letter-spacing:0.12em;text-shadow:0 0 28px rgba(34,211,238,.9),0 0 60px rgba(34,211,238,.4);opacity:0;z-index:2;pointer-events:none;white-space:nowrap">ZyNi SMC</div></div>
 
 <!-- STATEMENT -->
 <div class="section" id="statement">
@@ -2570,54 +2525,25 @@ function lwStartBounce(){
   pl2.position.set(-2, -1.5, 1.5);
   scene.add(pl2);
 
-  /* ── GSAP ScrollTrigger scroll-driven morph (desktop only) ── */
-  var heroLeft   = document.querySelector('.hero-left');
-  var stmtPanel  = document.getElementById('hero-stmt-panel');
+  /* ── GSAP ScrollTrigger — particle→solid morph (desktop + mobile) ── */
   var heroSection = document.getElementById('heroSection');
-  var morphProg  = 0;
 
-  if (window.ScrollTrigger && !isMobile && heroSection) {
+  if (window.ScrollTrigger && heroSection) {
+    /* Mobile: no pin (natural scroll), shorter range.
+       Desktop: pin hero, longer scrub distance.           */
     ScrollTrigger.create({
       trigger: heroSection,
       start: 'top top',
-      end: '+=110%',
-      pin: true,
-      scrub: 1.8,
+      end: isMobile ? '+=70%' : '+=110%',
+      pin: !isMobile,
+      scrub: isMobile ? 1.2 : 1.8,
+      invalidateOnRefresh: true,
       onUpdate: function(self) {
         var p = self.progress;
-        morphProg = p;
-
-        if (p < 0.55) {
-          /* Phase 1→2: particles fade, solid morphs in */
-          var ph = p / 0.55;
-          sMat.uniforms.uProgress.value = ph;
-          solidMesh.visible = ph > 0.04;
-          pMat.opacity = Math.max(0, 1 - ph * 1.4);
-        } else {
-          /* Phase 2→3: solid complete, text crossfade */
-          var ph2 = (p - 0.55) / 0.45;
-          sMat.uniforms.uProgress.value = 1;
-          pMat.opacity = 0;
-          solidMesh.visible = true;
-          if (heroLeft) {
-            heroLeft.style.opacity = Math.max(0, 1 - ph2 * 1.8);
-            heroLeft.style.transform = 'translateY(' + (-ph2 * 55) + 'px)';
-          }
-          if (stmtPanel) {
-            stmtPanel.style.opacity = Math.min(1, ph2 * 1.6);
-            stmtPanel.style.transform = 'translateY(' + (70 * (1 - ph2)) + 'px)';
-          }
-        }
-
-        /* Reset heroLeft when scrolling back */
-        if (p < 0.55 && heroLeft) {
-          heroLeft.style.opacity = '';
-          heroLeft.style.transform = '';
-        }
-        if (p < 0.55 && stmtPanel) {
-          stmtPanel.style.opacity = '0';
-          stmtPanel.style.transform = '';
-        }
+        /* Full range 0→1 drives particle→solid morph */
+        sMat.uniforms.uProgress.value = p;
+        solidMesh.visible = p > 0.02;
+        pMat.opacity = Math.max(0, 1 - p * 1.6);
       }
     });
   }
@@ -2665,229 +2591,79 @@ function lwStartBounce(){
 })();
 
 /* ════════════════════════════════════════════════════════════
-   ORB OVERLAY — Slide-in/orbit/slide-out scroll transition
-   Fixed overlay · triggered once on scroll · GSAP sequence
+   STATEMENT — Letter-by-letter cinematic character reveal
+   Triggered when section enters viewport (IntersectionObserver)
+   GSAP stagger: opacity + translateY + blur per character
 ════════════════════════════════════════════════════════════ */
-(function initOrbOverlay() {
-  var overlay = document.getElementById('orb-overlay-canvas');
-  if (!overlay || !window.THREE || !window.gsap) return;
-
-  function VW() { return window.innerWidth;  }
-  function VH() { return window.innerHeight; }
-
-  var renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.3;
-  renderer.setSize(VW(), VH());
-  renderer.domElement.style.cssText = 'position:absolute;top:0;left:0;display:block';
-  overlay.appendChild(renderer.domElement);
-
-  var scene  = new THREE.Scene();
-  var camera = new THREE.PerspectiveCamera(50, VW() / VH(), 0.1, 200);
-  camera.position.set(0, 4, 22);
-  camera.lookAt(0, 0, 0);
-
-  /* ── Lights ── */
-  scene.add(new THREE.AmbientLight(0x010310, 2));
-  var cL1 = new THREE.PointLight(0x1a3a8a, 9, 24); scene.add(cL1);
-  var cL2 = new THREE.PointLight(0x1a4a9a, 8, 21); scene.add(cL2);
-  var cL3 = new THREE.PointLight(0x1a3f8f, 8, 21); scene.add(cL3);
-  var rimL = new THREE.PointLight(0x0a1a4a, 4, 38);
-  rimL.position.set(-10, 8, -8); scene.add(rimL);
-
-  /* ── Spheres (larger than reference) ── */
-  function mkS(r, col, emis, eI, met, rou) {
-    return new THREE.Mesh(
-      new THREE.SphereGeometry(r, 48, 48),
-      new THREE.MeshStandardMaterial({ color: col, emissive: emis, emissiveIntensity: eI, metalness: met, roughness: rou })
-    );
-  }
-  var s1 = mkS(1.80, 0x0a1540, 0x1a3a8a, 1.4, 0.92, 0.07);
-  var s2 = mkS(1.45, 0x091230, 0x1a4a9a, 1.6, 0.88, 0.09);
-  var s3 = mkS(1.15, 0x070e25, 0x1a3f8f, 1.8, 0.95, 0.05);
-  scene.add(s1, s2, s3);
-
-  /* ── Vein rings (as children of each sphere so they travel with it) ── */
-  function mkVein(R, t, col, eI, rx, ry) {
-    var m = new THREE.Mesh(
-      new THREE.TorusGeometry(R, t, 8, 100),
-      new THREE.MeshStandardMaterial({
-        color: col, emissive: col, emissiveIntensity: eI,
-        transparent: true, opacity: 0.88, metalness: 0.1, roughness: 0.2
-      })
-    );
-    m.rotation.x = rx; m.rotation.y = ry; return m;
-  }
-  function buildVeins(parent, baseR) {
-    [[baseR, 0.026, 0x1a3a8a, 4.0, 0,           0          ],
-     [baseR, 0.020, 0x1a50aa, 3.5, Math.PI/2.5,  Math.PI/4 ],
-     [baseR, 0.016, 0x2060cc, 3.2, Math.PI/3,   -Math.PI/3 ],
-     [baseR, 0.013, 0x2a6acc, 2.8, Math.PI/1.8,  Math.PI/6 ]
-    ].forEach(function(c) { parent.add(mkVein(c[0]*1.01, c[1], c[2], c[3], c[4], c[5])); });
-  }
-  buildVeins(s1, 1.80);
-  buildVeins(s2, 1.45);
-  buildVeins(s3, 1.15);
-
-  /* ── Glow shells ── */
-  [[s1,2.06,0x1a3a8a],[s2,1.66,0x1a4a9a],[s3,1.32,0x1a3f8f]].forEach(function(d) {
-    d[0].add(new THREE.Mesh(
-      new THREE.SphereGeometry(d[1], 32, 32),
-      new THREE.MeshStandardMaterial({ color: d[2], emissive: d[2], emissiveIntensity: 0.5, transparent: true, opacity: 0.09 })
-    ));
-  });
-
-  /* ── Particles ── */
-  var pN = 200;
-  var pPos = new Float32Array(pN*3), pCol = new Float32Array(pN*3);
-  for (var pi = 0; pi < pN; pi++) {
-    var pr = 4+Math.random()*9, pth = Math.random()*Math.PI*2, pph = Math.acos(2*Math.random()-1);
-    pPos[pi*3]   = pr*Math.sin(pph)*Math.cos(pth);
-    pPos[pi*3+1] = pr*Math.sin(pph)*Math.sin(pth);
-    pPos[pi*3+2] = pr*Math.cos(pph);
-    var pb = 0.4+Math.random()*0.6;
-    pCol[pi*3]=0.08*pb; pCol[pi*3+1]=0.18*pb; pCol[pi*3+2]=0.55*pb;
-  }
-  var pGeo = new THREE.BufferGeometry();
-  pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
-  pGeo.setAttribute('color',    new THREE.BufferAttribute(pCol, 3));
-  var pMat = new THREE.PointsMaterial({ size: 0.06, vertexColors: true, transparent: true, opacity: 0.8 });
-  scene.add(new THREE.Points(pGeo, pMat));
-
-  /* ── Slide offset (drives ball x position during enter/exit) ── */
-  var xOff = 22;  /* start off-screen right; negative = exit left */
-  var f    = 0;
-  var playing = false;
-
-  /* ── Statement text reveal ── */
-  var stSec  = document.getElementById('statement');
-  var stL1   = stSec ? stSec.querySelector('.statement-l1') : null;
-  var stL2   = stSec ? stSec.querySelector('.statement-l2') : null;
-  var stDone = false;
-  function revealText() {
-    if (stDone) return; stDone = true;
-    if (stL1) stL1.classList.add('vis');
-    if (stL2) stL2.classList.add('vis');
-  }
-
-  /* ── Brand text element ── */
-  var brandText = document.getElementById('orb-brand-text');
-
-  /* ── Play sequence once on trigger ── */
-  var triggered = false;
-  function play() {
-    if (triggered) return;
-    triggered = true;
-    playing   = true;
-
-    var proxy = { x: 22, op: 0 };
-
-    /* STEP 1 — slide in from right + fade overlay in */
-    gsap.to(proxy, {
-      x: 0, op: 1, duration: 0.38, ease: 'power3.out',
-      onUpdate: function() {
-        xOff = proxy.x;
-        overlay.style.opacity = proxy.op.toFixed(3);
-      },
-      onComplete: function() {
-        /* Fade brand text in during orbit */
-        if (brandText) gsap.to(brandText, { opacity: 1, duration: 0.32, ease: 'power2.out' });
-        /* STEP 2 — orbit hold */
-        gsap.delayedCall(1.10, function() {
-          /* Fade brand text out before exit */
-          if (brandText) gsap.to(brandText, { opacity: 0, duration: 0.20, ease: 'power2.in' });
-          /* STEP 3 — slide out to left + fade overlay out */
-          gsap.to(proxy, {
-            x: -22, op: 0, duration: 0.38, ease: 'power3.in',
-            onUpdate: function() {
-              xOff = proxy.x;
-              overlay.style.opacity = proxy.op.toFixed(3);
-            },
-            onComplete: function() {
-              playing = false;
-              /* STEP 4 — reveal text immediately */
-              revealText();
-            }
-          });
-        });
-      }
-    });
-  }
-
-  /* ── Scroll trigger — fire when hero is 65% scrolled past ── */
-  var heroEl = document.querySelector('.hero');
-  window.addEventListener('scroll', function() {
-    if (triggered) return;
-    var heroH = heroEl ? heroEl.offsetHeight : VH();
-    if (window.scrollY > heroH * 0.65) play();
-  }, { passive: true });
-
-  /* ── Render loop ── */
-  function loop() {
-    requestAnimationFrame(loop);
-    if (!playing) return;
-    f++;
-
-    /* Orbit positions — 2× faster speeds, xOff drives slide */
-    s1.position.set(Math.cos(f*0.014)*6.0 + xOff, Math.sin(f*0.0084)*2.2, Math.sin(f*0.014)*4.2);
-    s2.position.set(Math.cos(f*0.022+2.1)*4.5 + xOff, Math.sin(f*0.0176+1)*1.8, Math.sin(f*0.022+2.1)*3.6);
-    s3.position.set(Math.cos(f*0.034+4.2)*3.2 + xOff, Math.sin(f*0.0374+2)*1.3, Math.sin(f*0.034+4.2)*2.9);
-
-    cL1.position.copy(s1.position); cL1.intensity = 8 + 3.0*Math.sin(f*0.08);
-    cL2.position.copy(s2.position); cL2.intensity = 7 + 2.5*Math.sin(f*0.10+1);
-    cL3.position.copy(s3.position); cL3.intensity = 6 + 2.5*Math.sin(f*0.12+2);
-
-    s1.material.emissiveIntensity = 1.0+0.6*Math.sin(f*0.08);
-    s2.material.emissiveIntensity = 1.1+0.6*Math.sin(f*0.10+1);
-    s3.material.emissiveIntensity = 1.2+0.7*Math.sin(f*0.12+2);
-
-    s1.rotation.y+=0.016; s1.rotation.x+=0.006;
-    s2.rotation.y-=0.020; s2.rotation.z+=0.008;
-    s3.rotation.y+=0.028; s3.rotation.x-=0.010;
-
-    /* Animate vein rings (children of each sphere) */
-    s1.children.forEach(function(v,i){ if(v.isMesh&&v.geometry.type==='TorusGeometry'){v.rotation.y+=0.024+i*0.008;v.rotation.z+=0.014+i*0.004;v.material.emissiveIntensity=3.0+2.0*Math.sin(f*0.09+i);} });
-    s2.children.forEach(function(v,i){ if(v.isMesh&&v.geometry.type==='TorusGeometry'){v.rotation.x+=0.018+i*0.006;v.rotation.y+=0.026+i*0.006;v.material.emissiveIntensity=3.0+2.0*Math.sin(f*0.11+i+1);} });
-    s3.children.forEach(function(v,i){ if(v.isMesh&&v.geometry.type==='TorusGeometry'){v.rotation.z+=0.022+i*0.006;v.rotation.x+=0.016+i*0.006;v.material.emissiveIntensity=3.5+2.0*Math.sin(f*0.13+i+2);} });
-
-    pMat.opacity = 0.6+0.2*Math.sin(f*0.03);
-
-    camera.position.x = Math.sin(f*0.006)*4;
-    camera.position.y = 4+Math.sin(f*0.004)*1.5;
-    camera.position.z = 22+Math.sin(f*0.005)*2;
-    camera.lookAt(0, 0, 0);
-
-    renderer.render(scene, camera);
-  }
-  loop();
-
-  window.addEventListener('resize', function() {
-    renderer.setSize(VW(), VH());
-    camera.aspect = VW() / VH();
-    camera.updateProjectionMatrix();
-  });
-})();
-
-/* ── Statement section reveal ── */
-(function() {
+(function initStatementLetters() {
   var sec = document.getElementById('statement');
-  if (!sec) return;
+  if (!sec || !window.gsap) return;
+
   var l1 = sec.querySelector('.statement-l1');
   var l2 = sec.querySelector('.statement-l2');
+  if (!l1 || !l2) return;
+
+  /* Split a paragraph's text nodes into individual .sc character spans
+     while preserving existing child element wrappers (e.g. .stmt-hl)   */
+  function splitToChars(el) {
+    function processNode(node) {
+      if (node.nodeType === 3) {
+        var chars = node.textContent.split('');
+        var parent = node.parentNode;
+        chars.forEach(function(c) {
+          var s = document.createElement('span');
+          s.className = 'sc';
+          s.textContent = c === ' ' ? ' ' : c;
+          parent.insertBefore(s, node);
+        });
+        parent.removeChild(node);
+      } else if (node.nodeType === 1) {
+        Array.from(node.childNodes).forEach(processNode);
+      }
+    }
+    Array.from(el.childNodes).forEach(processNode);
+    return el.querySelectorAll('.sc');
+  }
+
+  var chars1 = splitToChars(l1);
+  var chars2 = splitToChars(l2);
+  var fired  = false;
+
+  function runLetterAnimation() {
+    if (fired) return;
+    fired = true;
+
+    gsap.timeline()
+      .to(chars1, {
+        opacity: 1,
+        y: 0,
+        filter: 'blur(0px)',
+        duration: 0.5,
+        stagger: { each: 0.022, ease: 'power2.out' },
+        ease: 'power3.out'
+      })
+      .to(chars2, {
+        opacity: 1,
+        y: 0,
+        filter: 'blur(0px)',
+        duration: 0.45,
+        stagger: { each: 0.018, ease: 'power2.out' },
+        ease: 'power3.out'
+      }, '-=0.25');
+  }
+
+  /* Trigger on viewport entry */
   if (window.IntersectionObserver) {
     var obs = new IntersectionObserver(function(entries) {
-      if (entries[0].isIntersecting) {
-        l1.classList.add('vis');
-        l2.classList.add('vis');
-        obs.disconnect();
-      }
-    }, { threshold: 0.35 });
+      if (entries[0].isIntersecting) { runLetterAnimation(); obs.disconnect(); }
+    }, { threshold: 0.22 });
     obs.observe(sec);
   } else {
-    l1.classList.add('vis'); l2.classList.add('vis');
+    runLetterAnimation();
   }
 })();
+
+
 
 /* ══════════════════════════════════════════════════════════
    HERO MAN — 3D Parallax + Entrance
