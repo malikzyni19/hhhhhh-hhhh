@@ -2440,9 +2440,19 @@ def _compute_ob_touch_meta(ob, h, l, c, n, ob_mitigation="Absolute",
     }
 
 
-def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", ob_mitigation="Absolute"):
+def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", ob_mitigation="Absolute",
+               mitigation_closed_only=False, overlap_effective_zone=False):
     """
     Order Block detection — audited line-by-line against Pine Script drawVOB().
+
+    Debug-only parameters (defaults preserve production behavior — DO NOT pass
+    these from the screener / analyze_pair path):
+      mitigation_closed_only: when True, per-bar mitigation skips the last
+        (possibly still-open) candle, i.e. mitigation is only evaluated for
+        bars i <= n-2. OB creation still scans the full candle stream.
+      overlap_effective_zone: when True, the creation-time overlap-deletion
+        compares using the effective/displayed zone (extreme side collapsed to
+        avg) instead of the raw hidden extreme.
 
     Pine search window:
       search_start = pivot_bar + 1 (Pine loc = hN/lN.first() = absolute pivot bar).
@@ -2546,7 +2556,7 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
                     "ob_top": ob_top, "ob_bottom": ob_bottom, "ob_source_bar": ob_source,
                 })
                 if ob_top > ob_bottom:
-                    obs.append({
+                    _new_payload = {
                         "top": ob_top,
                         "bottom": ob_bottom,
                         "avg": ob_avg,
@@ -2558,7 +2568,15 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
                         "type": "bullish",
                         "candleDir": candle_dir,
                         "formationRange": max(ob_top - ob_bottom, 1e-10),
-                    })
+                    }
+                    obs.append(_new_payload)
+                    # Pine line 1282-1296: overlap deletion (mode="Previous",
+                    # rmP=0 → drop the newly-appended OB)
+                    _prev = next((x for x in reversed(obs[:-1]) if x["type"] == "bullish"), None)
+                    if _prev is not None:
+                        _new_lo = _new_payload["avg"] if overlap_effective_zone else _new_payload["bottom"]
+                        if _new_lo < _prev["top"]:
+                            obs.pop()
 
             upP.clear()
             upB.clear()
@@ -2619,7 +2637,7 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
                     "ob_top": ob_top, "ob_bottom": ob_bottom, "ob_source_bar": ob_source,
                 })
                 if ob_top > ob_bottom:
-                    obs.append({
+                    _new_payload = {
                         "top": ob_top,
                         "bottom": ob_bottom,
                         "avg": ob_avg,
@@ -2631,41 +2649,54 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
                         "type": "bearish",
                         "candleDir": candle_dir,
                         "formationRange": max(ob_top - ob_bottom, 1e-10),
-                    })
+                    }
+                    obs.append(_new_payload)
+                    # Pine line 1282-1296: overlap deletion (mode="Previous",
+                    # rmP=0 → drop the newly-appended OB)
+                    _prev = next((x for x in reversed(obs[:-1]) if x["type"] == "bearish"), None)
+                    if _prev is not None:
+                        _new_hi = _new_payload["avg"] if overlap_effective_zone else _new_payload["top"]
+                        if _new_hi > _prev["bottom"]:
+                            obs.pop()
 
             dnP.clear()
             dnB.clear()
+
+        # ── Pine line 1298-1321: per-bar mitigation (barstate.isconfirmed) ──
+        # ob_mitigation defaults to "Absolute": bull→ob.bottom, bear→ob.top
+        # show_breakers=False → mitigated OBs are REMOVED from the array.
+        # This must run EVERY bar, not only on BOS bars, so that the array
+        # is clean when the next bar's overlap check looks up the
+        # "previous" same-direction OB.
+        # mitigation_closed_only (debug): skip the last (possibly still-open)
+        # candle so mitigation is only evaluated for bars i <= n-2.
+        if obs and (not mitigation_closed_only or i < n - 1):
+            _close_i = c[i]
+            _kept = []
+            for _ob in obs:
+                if ob_mitigation == "Middle":
+                    _trigger = _ob["avg"]
+                else:  # Absolute
+                    _trigger = _ob["bottom"] if _ob["type"] == "bullish" else _ob["top"]
+                _mit = (_ob["type"] == "bullish" and _close_i < _trigger) or \
+                       (_ob["type"] == "bearish" and _close_i > _trigger)
+                if not _mit:
+                    _kept.append(_ob)
+            if len(_kept) != len(obs):
+                obs[:] = _kept
 
         # End-of-bar snapshot — next iteration's "[1]" (previous-bar) lookup
         prev_upP_first = upP[0] if upP else None
         prev_dnP_first = dnP[0] if dnP else None
 
-    # ── Mitigate / invalidate OBs ──
+    # ── Surviving OBs (mitigation already applied per-bar above) ──
+    # Annotate each surviving OB with touch metadata. No mitigation
+    # work here — Pine line 1298-1321 was already replicated inside
+    # the bar loop, so obs only contains OBs that survived.
     active = []
     max_vol = max(v[-100:]) if len(v) >= 100 else max(v) if v else 1.0
 
     for ob in obs:
-        mitigated = False
-        for j in range(ob["bar"] + 1, n - 1):  # n-1: exclude current open candle (Pine barstate.isconfirmed)
-            if ob_mitigation == "Middle":
-                trigger = ob["avg"]
-            else:  # Absolute
-                trigger = ob["bottom"] if ob["type"] == "bullish" else ob["top"]
-
-            if ob["type"] == "bullish" and c[j] < trigger:
-                mitigated = True
-                break
-            if ob["type"] == "bearish" and c[j] > trigger:
-                mitigated = True
-                break
-
-        if mitigated:
-            continue
-
-        # ── Phase 1A: touch metadata (parity-preserving) ──
-        # Mitigation has already been resolved above; surviving OBs simply
-        # count touches across [bar+1, n-1). mitigationBar is always None
-        # for OBs returned by detect_obs().
         _tm = _compute_ob_touch_meta(
             ob, h, l, c, n,
             ob_mitigation=ob_mitigation,
@@ -2680,7 +2711,6 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         ob["isVirgin"]        = _tm["isVirgin"]
         ob["currentlyInside"] = _tm["currentlyInside"]
         ob["mitigationBar"]   = None
-
         active.append(ob)
 
     return (active if max_ob is None else active[-max_ob:]), _trace
@@ -2732,12 +2762,18 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
                 buy_v     = total_v * 0.6
                 sell_v    = total_v - buy_v
                 if ob_top > ob_bottom:
-                    obs.append({
+                    _new_payload = {
                         "top": ob_top, "bottom": ob_bottom, "avg": ob_avg,
                         "bar": min_idx, "sourceBar": ob_source,
                         "volume": total_v, "buyVolume": buy_v, "sellVolume": sell_v,
                         "type": "bullish",
-                    })
+                    }
+                    obs.append(_new_payload)
+                    # Pine line 1282-1296: overlap deletion (mode="Previous",
+                    # rmP=0 → drop the newly-appended OB)
+                    _prev = next((x for x in reversed(obs[:-1]) if x["type"] == "bullish"), None)
+                    if _prev is not None and _new_payload["bottom"] < _prev["top"]:
+                        obs.pop()
             upP.clear(); upB.clear()
 
         # Bearish OB — same as detect_obs
@@ -2760,13 +2796,36 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
                 buy_v     = total_v * 0.4
                 sell_v    = total_v - buy_v
                 if ob_top > ob_bottom:
-                    obs.append({
+                    _new_payload = {
                         "top": ob_top, "bottom": ob_bottom, "avg": ob_avg,
                         "bar": max_idx, "sourceBar": ob_source,
                         "volume": total_v, "buyVolume": buy_v, "sellVolume": sell_v,
                         "type": "bearish",
-                    })
+                    }
+                    obs.append(_new_payload)
+                    # Pine line 1282-1296: overlap deletion (mode="Previous",
+                    # rmP=0 → drop the newly-appended OB)
+                    _prev = next((x for x in reversed(obs[:-1]) if x["type"] == "bearish"), None)
+                    if _prev is not None and _new_payload["top"] > _prev["bottom"]:
+                        obs.pop()
             dnP.clear(); dnB.clear()
+
+        # ── Pine line 1298-1321: per-bar mitigation (barstate.isconfirmed) ──
+        # detect_obs_all uses Absolute mitigation (bull→ob.bottom, bear→ob.top),
+        # matching the touch-meta pass below. Pine deletes mitigated OBs from
+        # the array each bar; replicate that here so the next bar's overlap
+        # check looks up the correct "previous" same-direction OB.
+        if obs:
+            _close_i = c[i]
+            _kept = []
+            for _ob in obs:
+                _trigger = _ob["bottom"] if _ob["type"] == "bullish" else _ob["top"]
+                _mit = (_ob["type"] == "bullish" and _close_i < _trigger) or \
+                       (_ob["type"] == "bearish" and _close_i > _trigger)
+                if not _mit:
+                    _kept.append(_ob)
+            if len(_kept) != len(obs):
+                obs[:] = _kept
 
         # End-of-bar snapshot — next iteration's "[1]" (previous-bar) lookup
         prev_upP_first = upP[0] if upP else None
@@ -3800,7 +3859,8 @@ _TV_OB_PARITY_SETTINGS: Dict[str, Any] = {
 }
 
 
-def _tv_visible_pool(obs_by_dir: List[Dict[str, Any]], max_ob: int = 5) -> List[Dict[str, Any]]:
+def _tv_visible_pool(obs_by_dir: List[Dict[str, Any]], max_ob: int = 5,
+                     overlap_effective_zone: bool = False) -> List[Dict[str, Any]]:
     """
     Build the Pine-style visible OB pool for a single direction.
 
@@ -3813,6 +3873,10 @@ def _tv_visible_pool(obs_by_dir: List[Dict[str, Any]], max_ob: int = 5) -> List[
 
     obs_by_dir: all active OBs of ONE direction, oldest-first (detect_obs insertion order).
     Returns the final visible subset, oldest-first, length ≤ max_ob.
+
+    overlap_effective_zone (debug-only, default False preserves production):
+      when True, the overlap test uses the effective/displayed zone (the
+      extreme side collapsed to avg) instead of the raw hidden extreme.
     """
     input_count = len(obs_by_dir)
 
@@ -3823,9 +3887,11 @@ def _tv_visible_pool(obs_by_dir: List[Dict[str, Any]], max_ob: int = 5) -> List[
         if accepted:
             last = accepted[-1]
             if ob["type"] == "bullish":
-                overlaps = ob["bottom"] < last["top"]
+                _lo = ob.get("avg", ob["bottom"]) if overlap_effective_zone else ob["bottom"]
+                overlaps = _lo < last["top"]
             else:
-                overlaps = ob["top"] > last["bottom"]
+                _hi = ob.get("avg", ob["top"]) if overlap_effective_zone else ob["top"]
+                overlaps = _hi > last["bottom"]
         else:
             overlaps = False
         if not overlaps:
@@ -4916,7 +4982,13 @@ def get_pairs_exchange(exchange: str, market: str = "perpetual") -> List[Dict[st
 
 def get_klines_exchange(symbol: str, interval: str, limit: int = 300,
                         market: str = "perpetual", exchange: str = "binance") -> List[Dict[str, float]]:
-    """Universal get_klines — routes to correct exchange"""
+    """Universal get_klines — routes to correct exchange.
+
+    For Binance: if limit > 1500, automatically paginates via
+    get_binance_klines_paginated_latest(). get_klines() already handles this
+    internally, so the routing here is for clarity.
+    Non-Binance exchanges are not paginated (live scanner caps at 1500).
+    """
     exchange = (exchange or "binance").lower()
     if exchange == "bybit":
         result = get_klines_bybit(symbol, interval, limit, market)
@@ -4925,7 +4997,8 @@ def get_klines_exchange(symbol: str, interval: str, limit: int = 300,
     elif exchange == "mexc":
         result = get_klines_mexc(symbol, interval, limit, market)
     else:
-        result = get_klines(symbol, interval, limit, market)  # Binance
+        # get_klines() auto-paginates when limit > 1500
+        result = get_klines(symbol, interval, limit, market)
 
     # Fallback to Binance if exchange returns empty
     if not result:
@@ -5034,9 +5107,11 @@ def get_klines_exchange_window(symbol: str, interval: str,
 
     while cursor < end_ms and safety > 0:
         safety -= 1
-        raw = _fapi(cursor, end_ms, BINANCE_MAX)
+        raw          = _fapi(cursor, end_ms, BINANCE_MAX)
+        actual_limit = BINANCE_MAX  # track per-source cap for break check
         if raw is None or not raw:
-            raw = _spot(cursor, end_ms, SPOT_MAX)
+            raw          = _spot(cursor, end_ms, SPOT_MAX)
+            actual_limit = SPOT_MAX
         parsed = _parse(raw)
         if not parsed:
             break
@@ -5049,7 +5124,9 @@ def get_klines_exchange_window(symbol: str, interval: str,
         out.extend(new_rows)
 
         last_open = new_rows[-1]["openTime"]
-        if len(parsed) < BINANCE_MAX or last_open >= end_ms:
+        # Use actual_limit (not BINANCE_MAX) so spot fallback doesn't stop
+        # after its first 1000-candle batch due to len(parsed) < 1500.
+        if len(parsed) < actual_limit or last_open >= end_ms:
             break
         cursor = last_open + 1
 
@@ -5143,7 +5220,22 @@ def get_klines(symbol: str, interval: str, limit: int = 300, market: str = "perp
     """
     Fetch OHLCV candles. Tries Binance Futures API first (real futures volume),
     falls back to the geo-safe spot mirror.
+
+    If limit > 1500 (Binance hard cap per request), automatically paginates
+    backward via get_binance_klines_paginated_latest(). This lets debug/backtest
+    routes request 4000-10000 candles without any per-site changes.
+    Live scanner always stays ≤1500 via _scan_kline_limit(), so this path is
+    only hit from the debug route.
     """
+    try:
+        requested = int(limit)
+    except (TypeError, ValueError):
+        requested = 300
+
+    BINANCE_FUTURES_MAX = 1500
+    if requested > BINANCE_FUTURES_MAX:
+        return get_binance_klines_paginated_latest(symbol, interval, requested, market)
+
     def _parse(data):
         return [{
             "openTime": k[0],
@@ -5158,7 +5250,7 @@ def get_klines(symbol: str, interval: str, limit: int = 300, market: str = "perp
     try:
         r = req.get(
             f"{BINANCE_FUTURES_API}/fapi/v1/klines",
-            params={"symbol": symbol, "interval": interval, "limit": limit},
+            params={"symbol": symbol, "interval": interval, "limit": requested},
             timeout=15,
         )
         if r.status_code == 200:
@@ -5168,9 +5260,140 @@ def get_klines(symbol: str, interval: str, limit: int = 300, market: str = "perp
         pass
 
     # ── Fallback: geo-safe spot mirror ──
-    url = f"{SPOT_API}/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
+    url = f"{SPOT_API}/api/v3/klines?symbol={symbol}&interval={interval}&limit={requested}"
     data = req.get(url, timeout=20).json()
     return _parse(data)
+
+
+def get_binance_klines_paginated_latest(symbol: str, interval: str,
+                                        total_limit: int = 1500,
+                                        market: str = "perpetual") -> List[Dict[str, float]]:
+    """Fetch the latest N Binance candles by paginating backward with endTime.
+
+    Binance hard caps:
+      - Futures /fapi/v1/klines: 1500 candles per request
+      - Spot    /api/v3/klines:  1000 candles per request
+
+    Supports total_limit up to 10000. Each batch is fetched at the correct
+    per-source limit so we never exceed the API cap. Deduplicates by openTime,
+    returns candles sorted oldest→newest.
+
+    Used only by debug/backtest paths — the live scanner stays ≤1500 via
+    _scan_kline_limit() and never calls this function.
+    """
+    FUTURES_MAX = 1500
+    SPOT_MAX    = 1000
+
+    try:
+        target = max(1, min(int(total_limit), 10000))
+    except (TypeError, ValueError):
+        target = 300
+
+    def _parse(data):
+        if not isinstance(data, list):
+            return []
+        out = []
+        for k in data:
+            try:
+                out.append({
+                    "openTime": int(k[0]),
+                    "open":     float(k[1]),
+                    "high":     float(k[2]),
+                    "low":      float(k[3]),
+                    "close":    float(k[4]),
+                    "volume":   float(k[5]),
+                })
+            except (TypeError, ValueError, IndexError):
+                pass
+        return out
+
+    collected: List[Dict[str, float]] = []
+    seen_open_times: set               = set()
+    end_time_ms: Optional[int]         = None
+    batches                            = 0
+    source                             = "futures"
+    import math as _math
+    safety = _math.ceil(target / SPOT_MAX) + 5  # worst-case spot batches + margin
+
+    while len(collected) < target and safety > 0:
+        safety   -= 1
+        remaining = target - len(collected)
+
+        # ── Try Futures ──────────────────────────────────────────────────────
+        futures_limit = min(FUTURES_MAX, remaining)
+        fparams: Dict[str, Any] = {
+            "symbol": symbol, "interval": interval, "limit": futures_limit,
+        }
+        if end_time_ms is not None:
+            fparams["endTime"] = end_time_ms
+
+        batch: List[Dict[str, float]] = []
+        actual_limit = futures_limit
+        try:
+            r = req.get(
+                f"{BINANCE_FUTURES_API}/fapi/v1/klines",
+                params=fparams, timeout=15,
+            )
+            if r.status_code == 200:
+                update_api_weight("binance", r)
+                batch  = _parse(r.json())
+                source = "futures"
+        except Exception:
+            pass
+
+        # ── Spot fallback with correct spot limit ─────────────────────────
+        if not batch:
+            spot_limit = min(SPOT_MAX, remaining)
+            sparams: Dict[str, Any] = {
+                "symbol": symbol, "interval": interval, "limit": spot_limit,
+            }
+            if end_time_ms is not None:
+                sparams["endTime"] = end_time_ms
+            actual_limit = spot_limit
+            try:
+                r = req.get(f"{SPOT_API}/api/v3/klines", params=sparams, timeout=20)
+                if r.status_code == 200:
+                    batch  = _parse(r.json())
+                    source = "spot_fallback"
+            except Exception:
+                pass
+
+        if not batch:
+            break
+
+        batches  += 1
+        new_rows  = [row for row in batch if row["openTime"] not in seen_open_times]
+        if not new_rows:
+            break
+        for row in new_rows:
+            seen_open_times.add(row["openTime"])
+        collected.extend(new_rows)
+
+        oldest_open = min(row["openTime"] for row in new_rows)
+        end_time_ms = oldest_open - 1
+
+        # If the exchange returned fewer candles than we asked for, we've
+        # reached the beginning of its history — stop paginating.
+        if len(batch) < actual_limit:
+            break
+
+        time.sleep(0.1)
+
+    collected.sort(key=lambda x: x["openTime"])
+    if len(collected) > target:
+        collected = collected[-target:]
+
+    print(
+        f"[KL-PAGINATION] {symbol} {interval} requested={target} "
+        f"fetched={len(collected)} batches={batches} source={source}"
+    )
+    return collected
+
+
+# Keep old name as a thin alias so any existing call sites still work.
+def get_klines_paginated(symbol: str, interval: str, total_limit: int,
+                         market: str = "perpetual") -> List[Dict[str, float]]:
+    return get_binance_klines_paginated_latest(symbol, interval, total_limit, market)
 
 
 def get_all_daily_klines(symbol: str) -> List[Dict[str, float]]:

@@ -1392,8 +1392,51 @@ def debug_ob_tv_parity():
         market         = (request.args.get("market")    or "perpetual").strip().lower()
         compare_limits = request.args.get("compare_limits", "false").strip().lower() in ("1", "true", "yes")
 
+        # ── Debug-only OB parity variants (diagnostic; production untouched) ──
+        # Flags map: variant -> (mitigation_closed_only, overlap_effective_zone)
+        _VARIANT_FLAGS = {
+            "baseline":                            (False, False),
+            "closed_mitigation":                   (True,  False),
+            "effective_overlap":                   (False, True),
+            "closed_mitigation_effective_overlap": (True,  True),
+        }
+        _VARIANT_NOTES = {
+            "baseline":
+                "Production behavior. Per-bar mitigation runs through the last "
+                "(possibly still-open) candle (i up to n-1). Overlap-deletion "
+                "(creation-time + visible-pool) uses the raw hidden extreme zone "
+                "[bottom..top].",
+            "closed_mitigation":
+                "Mitigation skips the last (possibly still-open) candle — only "
+                "evaluated for bars i <= n-2. OB creation still scans the full "
+                "candle stream. Overlap uses the raw hidden extreme zone.",
+            "effective_overlap":
+                "Overlap comparison (creation-time + visible-pool) uses the "
+                "effective/displayed zone: the extreme side is collapsed to avg "
+                "(bullish bottom→avg, bearish top→avg) instead of the raw hidden "
+                "extreme. Mitigation unchanged (runs through the last candle).",
+            "closed_mitigation_effective_overlap":
+                "Combined: mitigation skips the last (possibly open) candle "
+                "(i <= n-2) AND overlap uses the effective/displayed (avg-collapsed) "
+                "zone.",
+        }
+        ob_debug_variant = (request.args.get("ob_debug_variant") or "baseline").strip().lower()
+        if ob_debug_variant == "all":
+            _variants_to_run = list(_VARIANT_FLAGS.keys())
+        elif ob_debug_variant in _VARIANT_FLAGS:
+            # Always include baseline for side-by-side comparison.
+            _variants_to_run = (["baseline"] if ob_debug_variant == "baseline"
+                                else ["baseline", ob_debug_variant])
+        else:
+            return jsonify({
+                "ok": False,
+                "error": f"invalid ob_debug_variant '{ob_debug_variant}'",
+                "allowed": ["baseline", "closed_mitigation", "effective_overlap",
+                            "closed_mitigation_effective_overlap", "all"],
+            }), 200
+
         try:
-            kline_limit = min(max(int(request.args.get("kline_limit") or 300), 50), 1500)
+            kline_limit = min(max(int(request.args.get("kline_limit") or 300), 50), 10000)
         except (TypeError, ValueError):
             kline_limit = 300
 
@@ -1414,7 +1457,7 @@ def debug_ob_tv_parity():
                 return str(ms)
 
         # ── Core analysis helper — runs on any candle slice ───────────────────
-        def _analyse(cnd):
+        def _analyse(cnd, mit_closed=False, eff_overlap=False):
             _o = [x["open"]   for x in cnd]
             _h = [x["high"]   for x in cnd]
             _l = [x["low"]    for x in cnd]
@@ -1422,17 +1465,21 @@ def debug_ob_tv_parity():
             _v = [x["volume"] for x in cnd]
             _t = [x.get("time", x.get("openTime", 0)) for x in cnd]
 
-            _normal_result = detect_obs(_o, _h, _l, _c, _v, I_LEN, S_LEN, max_ob=5)
+            _normal_result = detect_obs(_o, _h, _l, _c, _v, I_LEN, S_LEN, max_ob=5,
+                                        mitigation_closed_only=mit_closed,
+                                        overlap_effective_zone=eff_overlap)
             if isinstance(_normal_result, tuple):
                 _normal, _bos_trace = _normal_result
             else:
                 _normal, _bos_trace = _normal_result, None
-            _all, _ = detect_obs(_o, _h, _l, _c, _v, I_LEN, S_LEN, max_ob=None)
+            _all, _ = detect_obs(_o, _h, _l, _c, _v, I_LEN, S_LEN, max_ob=None,
+                                 mitigation_closed_only=mit_closed,
+                                 overlap_effective_zone=eff_overlap)
 
             _bull_src = _copy.deepcopy([ob for ob in _all if ob["type"] == "bullish"])
             _bear_src = _copy.deepcopy([ob for ob in _all if ob["type"] == "bearish"])
-            _bull_vis = _tv_visible_pool(_bull_src)
-            _bear_vis = _tv_visible_pool(_bear_src)
+            _bull_vis = _tv_visible_pool(_bull_src, overlap_effective_zone=eff_overlap)
+            _bear_vis = _tv_visible_pool(_bear_src, overlap_effective_zone=eff_overlap)
             calculate_tv_ob_volume_share(_bull_vis, pool_name="bullish",
                                          source_pool_count=len(_bull_src))
             calculate_tv_ob_volume_share(_bear_vis, pool_name="bearish",
@@ -1478,15 +1525,21 @@ def debug_ob_tv_parity():
             return _ts(times[bar]) if 0 <= bar < len(times) else None
 
         candle_info = {
-            "symbol":             symbol,
-            "timeframe":          timeframe,
-            "exchange":           exchange,
-            "market":             market,
-            "kline_limit":        kline_limit,
-            "candles_count":      len(main_candles),
-            "oldest_candle_time": _ts(times[0])  if times else None,
-            "newest_candle_time": _ts(times[-1]) if times else None,
-            "current_price":      price,
+            "symbol":                symbol,
+            "timeframe":             timeframe,
+            "exchange":              exchange,
+            "market":                market,
+            "kline_limit":           kline_limit,
+            "requestedKlineLimit":   kline_limit,
+            "candlesFetched":        len(main_candles),
+            "paginationUsed":        kline_limit > 1500 and exchange == "binance",
+            "binancePerRequestLimit": 1500,
+            "requested_limit":       kline_limit,
+            "actual_count":          len(main_candles),
+            "candles_count":         len(main_candles),
+            "oldest_candle_time":    _ts(times[0])  if times else None,
+            "newest_candle_time":    _ts(times[-1]) if times else None,
+            "current_price":         price,
         }
 
         detection_counts = {
@@ -1658,9 +1711,50 @@ def debug_ob_tv_parity():
                 except Exception as _le:
                     limit_comparison.append({"limit": lim, "error": str(_le)})
 
+        # ── Debug-only variant diagnostics (additive — baseline top-level keys
+        #    are computed from `a` and remain byte-identical to deployed) ──────
+        variant_diagnostics = {}
+        variant_summary     = {}
+        for _vn in _variants_to_run:
+            _mc, _eo = _VARIANT_FLAGS[_vn]
+            _x = a if _vn == "baseline" else _analyse(main_candles,
+                                                      mit_closed=_mc,
+                                                      eff_overlap=_eo)
+            _bv = [_ob_visible(ob) for ob in _x["bull_vis"]]
+            _rv = [_ob_visible(ob) for ob in _x["bear_vis"]]
+            variant_diagnostics[_vn] = {
+                "variant":        _vn,
+                "notes":          _VARIANT_NOTES[_vn],
+                "rules":          {"mitigation_closed_only": _mc,
+                                   "overlap_effective_zone": _eo},
+                "source_counts":  {"bullish": len(_x["bull_src"]),
+                                   "bearish": len(_x["bear_src"])},
+                "visible_counts": {"bullish": len(_x["bull_vis"]),
+                                   "bearish": len(_x["bear_vis"])},
+                "bullish_visible_total_volume": _x["bull_vtot"],
+                "bearish_visible_total_volume": _x["bear_vtot"],
+                "bullish_visible_pool":         _bv,
+                "bearish_visible_pool":         _rv,
+            }
+            variant_summary[_vn] = {
+                "bull_times":        [d["time"] for d in _bv],
+                "bear_times":        [d["time"] for d in _rv],
+                "bull_total_volume": _x["bull_vtot"],
+                "bear_total_volume": _x["bear_vtot"],
+                "bull_pct_list":     [d.get("tvObVolumeSharePct") for d in _bv],
+                "bear_pct_list":     [d.get("tvObVolumeSharePct") for d in _rv],
+            }
+
         return jsonify({
             "ok":                           True,
             "phase":                        "1A",
+            "ob_debug_variant":             ob_debug_variant,
+            "ob_debug_variant_allowed":     ["baseline", "closed_mitigation",
+                                             "effective_overlap",
+                                             "closed_mitigation_effective_overlap",
+                                             "all"],
+            "variant_diagnostics":          variant_diagnostics,
+            "variant_summary":              variant_summary,
             "ob_touch_meta_enabled":        True,
             "ob_touch_fields":              [
                 "touches", "isVirgin", "currentlyInside",
