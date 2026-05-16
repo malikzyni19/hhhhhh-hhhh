@@ -6600,6 +6600,309 @@ def _detect_prior_move(o: list, h: list, l: list, c: list, start: int, end: int,
     }
 
 
+def _detect_prior_move_adaptive(
+    o: list, h: list, l: list, c: list,
+    sig_idx: int, tf: str, base_n: int,
+    bias_strength: str, bias_mode: str = "normal",
+) -> dict:
+    """Adaptive prior-drive detector.
+
+    Tests multiple prior-window lengths before sig_idx, scores each candidate
+    drive, and returns the highest-scoring accepted result.
+
+    Acceptance thresholds:
+      strong   -> quality=="clean",          score >= 85
+      balanced -> quality in [clean, good],  score >= 70
+      early    -> quality in [clean, good, impulse], score >= 60
+    """
+    _tf = tf.lower()
+    if   _tf in ("1d", "12h"): req_pct = 0.8
+    elif _tf in ("4h",  "6h"): req_pct = 0.5
+    else:                       req_pct = 0.3
+
+    # Window candidates per strength / mode
+    if bias_mode == "expert":
+        raw_windows = [base_n - 1, base_n, base_n + 1, base_n + 2]
+    elif bias_strength == "strong":
+        raw_windows = [base_n, base_n + 1]
+    elif bias_strength == "early":
+        raw_windows = [3, 4, 5, 6]
+    else:  # balanced
+        raw_windows = [3, 4, 5, 6, 7]
+
+    # Clamp: min 3, max 8, must fit before sig_idx
+    windows = sorted(set(
+        w for w in raw_windows if 3 <= w <= 8 and sig_idx - w >= 0
+    ))
+
+    _null: dict = {
+        "direction": None, "quality": "none", "accepted": False,
+        "score": 0, "checksPassed": 0, "windowN": base_n,
+        "priorStart": max(0, sig_idx - base_n), "priorEnd": sig_idx,
+        "driveType": "none", "netPct": 0.0,
+        "greenCount": 0, "redCount": 0,
+        "upCloseSteps": 0, "downCloseSteps": 0,
+        "requiredMovePct": req_pct, "maxPullbackPct": 0.0,
+        "impulseFound": False, "reasons": ["no_window"], "summary": "no_window",
+    }
+    if not windows:
+        return _null
+
+    # Mode pullback limits (fib levels)
+    if   bias_strength == "strong":  max_pb = 38.2
+    elif bias_strength == "early":   max_pb = 61.8
+    else:                            max_pb = 50.0
+
+    best_candidate: dict | None = None
+
+    for w in windows:
+        start   = sig_idx - w
+        seg_o   = o[start:sig_idx]
+        seg_h   = h[start:sig_idx]
+        seg_l   = l[start:sig_idx]
+        seg_c   = c[start:sig_idx]
+        n_seg   = len(seg_c)
+        if n_seg < 1:
+            continue
+
+        # ── Basic metrics ──────────────────────────────────────────────────────
+        net_close       = seg_c[-1] - seg_c[0]
+        net_pct         = abs(net_close) / seg_c[0] * 100 if seg_c[0] > 0 else 0.0
+        green_count     = sum(1 for i in range(n_seg) if seg_c[i] > seg_o[i])
+        red_count       = n_seg - green_count
+        up_close_steps  = sum(1 for i in range(1, n_seg) if seg_c[i] > seg_c[i - 1])
+        dn_close_steps  = sum(1 for i in range(1, n_seg) if seg_c[i] < seg_c[i - 1])
+        total_range     = max(seg_h) - min(seg_l)
+        prior_mid       = min(seg_l) + total_range / 2.0
+
+        green_need_60   = math.ceil(n_seg * 0.60)
+        steps_need_60   = math.ceil((n_seg - 1) * 0.60) if n_seg >= 2 else 0
+        green_need_50   = math.ceil(n_seg * 0.50)
+        steps_need_50   = math.ceil((n_seg - 1) * 0.50) if n_seg >= 2 else 0
+
+        # Chop ratio: fraction of adjacent candles that flip color
+        alt_count = sum(
+            1 for i in range(1, n_seg)
+            if (seg_c[i] > seg_o[i]) != (seg_c[i - 1] > seg_o[i - 1])
+        )
+        chop_ratio = alt_count / max(n_seg - 1, 1)
+
+        # ── Displacement-candle detection (strongest in window) ────────────────
+        avg_body = sum(abs(seg_c[i] - seg_o[i]) for i in range(n_seg)) / max(n_seg, 1)
+        impulse_found_up  = False
+        impulse_found_dn  = False
+        best_disp_score   = 0.0
+        for i in range(n_seg):
+            rng_i  = seg_h[i] - seg_l[i]
+            body_i = abs(seg_c[i] - seg_o[i])
+            if rng_i <= 0:
+                continue
+            body_pct = body_i / rng_i
+            if body_pct >= 0.55 and body_i >= avg_body * 1.3:
+                upper35 = seg_l[i] + rng_i * 0.65
+                lower35 = seg_l[i] + rng_i * 0.35
+                ds = body_pct * (body_i / max(avg_body, 1e-9))
+                if seg_c[i] > seg_o[i] and seg_c[i] >= upper35:
+                    impulse_found_up = True
+                    best_disp_score  = max(best_disp_score, ds)
+                elif seg_c[i] < seg_o[i] and seg_c[i] <= lower35:
+                    impulse_found_dn = True
+                    best_disp_score  = max(best_disp_score, ds)
+
+        # ── Pullback % for each direction ──────────────────────────────────────
+        def _pb_up() -> float:
+            peak_i = seg_h.index(max(seg_h))
+            if peak_i >= n_seg - 1:
+                return 0.0
+            post_low   = min(seg_l[peak_i + 1:])
+            drv_range  = max(seg_h) - min(seg_l[:peak_i + 1])
+            return max(0.0, (max(seg_h) - post_low) / drv_range * 100) if drv_range > 0 else 0.0
+
+        def _pb_dn() -> float:
+            trough_i  = seg_l.index(min(seg_l))
+            if trough_i >= n_seg - 1:
+                return 0.0
+            post_high  = max(seg_h[trough_i + 1:])
+            drv_range  = max(seg_h[:trough_i + 1]) - min(seg_l)
+            return max(0.0, (post_high - min(seg_l)) / drv_range * 100) if drv_range > 0 else 0.0
+
+        # ── Evaluate each direction ────────────────────────────────────────────
+        for direction in ("up", "down"):
+            is_up     = direction == "up"
+            net_ok    = net_close > 0 if is_up else net_close < 0
+            if not net_ok:
+                continue
+
+            imp_found   = impulse_found_up if is_up else impulse_found_dn
+            eff_req     = req_pct * 0.75 if imp_found else req_pct
+            if net_pct < eff_req:
+                continue
+
+            color_count   = green_count if is_up else red_count
+            close_steps   = up_close_steps if is_up else dn_close_steps
+            pb_pct        = _pb_up() if is_up else _pb_dn()
+            beyond_mid    = seg_c[-1] > prior_mid if is_up else seg_c[-1] < prior_mid
+            color_ratio   = color_count / n_seg
+            step_ratio    = close_steps / max(n_seg - 1, 1)
+
+            # ── Quality determination ──────────────────────────────────────────
+            is_choppy     = chop_ratio > 0.6 and net_pct < req_pct * 1.2
+
+            # Clean: all 5 hard conditions
+            clean_ok      = (
+                net_ok and
+                color_count >= green_need_60 and
+                close_steps >= steps_need_60 and
+                net_pct >= req_pct and
+                beyond_mid
+            )
+            clean_checks  = sum([
+                net_ok,
+                color_count >= green_need_60,
+                close_steps >= steps_need_60,
+                net_pct >= req_pct,
+                beyond_mid,
+            ])
+
+            # Good: mandatory + 2/3 soft
+            soft_ok       = (
+                net_ok and net_pct >= req_pct and not is_choppy
+            )
+            soft_passed   = sum([
+                color_count >= green_need_50,
+                close_steps >= steps_need_50,
+                beyond_mid,
+            ])
+            good_ok       = soft_ok and soft_passed >= 2 and pb_pct <= max_pb
+
+            # Impulse: displacement candle + correct net direction
+            impulse_ok    = (
+                imp_found and net_ok and
+                net_pct >= req_pct * 0.75 and
+                not is_choppy
+            )
+
+            if is_choppy and not imp_found:
+                quality = "weak"
+            elif clean_ok:
+                quality = "clean"
+            elif good_ok:
+                # Downgrade if pullback too deep and no strong displacement
+                if pb_pct > max_pb:
+                    quality = "impulse" if (imp_found and best_disp_score >= 1.5) else "weak"
+                else:
+                    quality = "good"
+            elif impulse_ok:
+                quality = "impulse"
+            else:
+                quality = "weak"
+
+            if quality == "weak":
+                continue
+
+            # ── Scoring ────────────────────────────────────────────────────────
+            score = 0
+
+            if quality == "impulse":
+                # Impulse path: reward net move + displacement strength
+                if   net_pct >= req_pct * 2.0: score += 35
+                elif net_pct >= req_pct * 1.5: score += 30
+                else:                           score += 22
+                score += 20  # impulse-drive structure credit
+                if beyond_mid:
+                    score += 12
+                score += min(15, int(best_disp_score * 8))
+            else:
+                # Clean / Good path: traditional structure scoring
+                if   net_pct >= req_pct * 2.0: score += 30
+                elif net_pct >= req_pct * 1.5: score += 25
+                else:                           score += 22
+
+                if   color_ratio >= 0.6: score += 20
+                elif color_ratio >= 0.5: score += 17
+                elif color_ratio >= 0.4: score += 11
+                else:                    score += 5
+
+                if   step_ratio >= 0.6: score += 20
+                elif step_ratio >= 0.5: score += 17
+                elif step_ratio >= 0.4: score += 11
+                else:                   score += 5
+
+                if beyond_mid:
+                    score += 15
+                    # Near-extreme bonus
+                    q_range  = total_range * 0.25
+                    extremal = (max(seg_h) - q_range if is_up else min(seg_l) + q_range)
+                    if (is_up and seg_c[-1] >= extremal) or (not is_up and seg_c[-1] <= extremal):
+                        score += 5
+
+                if imp_found:
+                    score += min(10, int(best_disp_score * 4))
+
+            # Common penalties
+            if   pb_pct > max_pb * 0.75: score -= 10
+            elif pb_pct > max_pb * 0.50: score -= 5
+            if chop_ratio > 0.4:
+                score -= int(chop_ratio * 10)
+
+            score = max(0, min(100, score))
+
+            # ── Build candidate ────────────────────────────────────────────────
+            color_word = "green" if is_up else "red"
+            step_word  = "↑" if is_up else "↓"
+            checks_val = clean_checks if quality == "clean" else (2 + soft_passed if quality == "good" else 2)
+            reasons_c  = [
+                f"net{step_word}{net_pct:.2f}%",
+                f"{color_count}/{n_seg}{color_word}",
+                f"steps{step_word}{close_steps}",
+                f"score{score}",
+            ]
+            if imp_found:
+                reasons_c.append("impulse")
+            if pb_pct > 0:
+                reasons_c.append(f"pb{pb_pct:.0f}%")
+
+            candidate: dict = {
+                "direction":      direction,
+                "quality":        quality,
+                "score":          score,
+                "checksPassed":   checks_val,
+                "windowN":        w,
+                "priorStart":     start,
+                "priorEnd":       sig_idx,
+                "driveType":      quality,
+                "netPct":         round(net_pct, 4),
+                "greenCount":     green_count,
+                "redCount":       red_count,
+                "upCloseSteps":   up_close_steps,
+                "downCloseSteps": dn_close_steps,
+                "requiredMovePct":  req_pct,
+                "maxPullbackPct":   round(pb_pct, 2),
+                "impulseFound":    imp_found,
+                "reasons":         reasons_c,
+                "summary":         f"{direction}({quality}·{score}/100·w{w})",
+            }
+
+            if best_candidate is None or score > best_candidate["score"]:
+                best_candidate = candidate
+
+    if best_candidate is None:
+        return {**_null, "reasons": ["no_drive_found"]}
+
+    # ── Apply acceptance rules ─────────────────────────────────────────────────
+    q_best = best_candidate["quality"]
+    s_best = best_candidate["score"]
+    if   bias_strength == "strong":
+        accepted = q_best == "clean" and s_best >= 85
+    elif bias_strength == "balanced":
+        accepted = q_best in ("clean", "good") and s_best >= 70
+    else:  # early
+        accepted = q_best in ("clean", "good", "impulse") and s_best >= 60
+
+    best_candidate["accepted"] = accepted
+    return best_candidate
+
+
 def _check_rejection_candle(
     o: list, h: list, l: list, c: list,
     idx: int, rejection_dir: str,
@@ -6685,22 +6988,29 @@ def _score_bias_shift(
     fvg_found: bool = False,
     fib_found: bool = False,
     confluence_required_passed: bool = False,
+    prior_quality: str = "clean",
+    prior_drive_score: int = 100,
 ) -> dict:
     """Return score 0-100 with breakdown list."""
     pts = 0
     bd: list[str] = []
 
-    # Prior move detected
-    pts += 20; bd.append("+20 prior move detected")
-
-    # Prior move check quality
-    if prior_checks >= 4:
-        p = 15
-    elif prior_checks >= 3:
-        p = 10
-    else:
-        p = 5
-    pts += p; bd.append(f"+{p} prior move checks ({prior_checks})")
+    # Prior move contribution — scaled by drive quality
+    if prior_quality == "impulse":
+        pts += 15; bd.append("+15 prior move detected (impulse)")
+        pts += 8;  bd.append("+8 prior impulse drive")
+    elif prior_quality == "good":
+        pts += 20; bd.append("+20 prior move detected")
+        pts += 10; bd.append("+10 prior good drive")
+    else:  # clean (default)
+        pts += 20; bd.append("+20 prior move detected")
+        if prior_checks >= 4:
+            p = 15
+        elif prior_checks >= 3:
+            p = 10
+        else:
+            p = 5
+        pts += p; bd.append(f"+{p} prior move checks ({prior_checks})")
 
     # Rejection candle present
     pts += 25; bd.append("+25 rejection candle valid")
@@ -7004,6 +7314,8 @@ def api_bias_scan():
             "notEnoughCandles":  0,
             "noPriorMove":        0,
             "noCleanPriorDrive":  0,
+            "noAdaptivePriorDrive": 0,
+            "weakOrChoppyPriorDrive": 0,
             "biasFilterMismatch": 0,
             "volumeFilter":      0,
             "noRejectionCandle": 0,
@@ -7012,6 +7324,13 @@ def api_bias_scan():
             "minimumGrade":      0,
             "invalidated":       0,
             "errors":            0,
+        },
+        "adaptivePriorDrive": {
+            "cleanAccepted":   0,
+            "goodAccepted":    0,
+            "impulseAccepted": 0,
+            "weakRejected":    0,
+            "chopRejected":    0,
         },
         "settingsUsed": {
             "timeframe":      tf,
@@ -7066,16 +7385,28 @@ def api_bias_scan():
                 if sig_idx < prior_move_n + 1:
                     continue
 
-                prior_start  = sig_idx - prior_move_n
-                prior_result = _detect_prior_move(o, h, l, c, prior_start, sig_idx, tf)
-                prior_dir    = prior_result["direction"]
+                prior_result = _detect_prior_move_adaptive(
+                    o, h, l, c, sig_idx, tf, prior_move_n, bias_strength, bias_mode
+                )
+                prior_dir = prior_result["direction"]
 
-                if prior_result["quality"] != "clean":
-                    if prior_result["quality"] == "weak":
+                if not prior_result.get("accepted"):
+                    pq = prior_result.get("quality", "none")
+                    if pq in ("weak", "good", "impulse"):
                         _d_weak_prior = True
+                        diagnostics["adaptivePriorDrive"]["weakRejected"] += 1
                     continue
 
+                # Track accepted drive quality for diagnostics
+                _adp = diagnostics["adaptivePriorDrive"]
+                _pq  = prior_result["quality"]
+                if   _pq == "clean":   _adp["cleanAccepted"]   += 1
+                elif _pq == "good":    _adp["goodAccepted"]     += 1
+                elif _pq == "impulse": _adp["impulseAccepted"]  += 1
+
                 _d_had_prior = True
+                prior_start    = prior_result["priorStart"]
+                actual_window_n = prior_result["windowN"]
                 rej_dir = "bearish" if prior_dir == "up" else "bullish"
 
                 if bias_filter == "bullish" and rej_dir != "bullish":
@@ -7161,6 +7492,7 @@ def api_bias_scan():
                     continue
 
                 # ── Phase 3+4: score with confluence bonuses ──────────────────
+                drive_quality  = prior_result["quality"]   # clean|good|impulse
                 scored = _score_bias_shift(
                     prior_checks=prior_result["checksPassed"],
                     rej_wick_pct=rej_wick_pct_val,
@@ -7176,6 +7508,8 @@ def api_bias_scan():
                     fvg_found=fvg_found,
                     fib_found=fib_found,
                     confluence_required_passed=conf_req_passed,
+                    prior_quality=drive_quality,
+                    prior_drive_score=prior_result["score"],
                 )
                 score_val = scored["score"]
                 graded    = _grade_from_score(score_val)
@@ -7189,15 +7523,38 @@ def api_bias_scan():
 
                 total_checks = prior_result["checksPassed"] + rej["checksPassed"]
 
-                # Human-readable reason chain (includes confluence reasons)
-                dir_word       = "upward" if prior_dir == "up" else "downward"
-                min_wick_pct_i = round(min_wick_pct * 100)
-                min_body_pct_i = round(min_body_pct * 100)
-                drive_word = "bullish" if prior_dir == "up" else "bearish"
-                readable_chain: list[str] = [
-                    f"Clean {prior_move_n}-candle {drive_word} drive detected before rejection",
-                    f"Drive proof: {prior_result['netPct']:.2f}% net · {prior_result['greenCount'] if prior_dir == 'up' else prior_result['redCount']}/{prior_move_n} {'green' if prior_dir == 'up' else 'red'} · {prior_result['upCloseSteps'] if prior_dir == 'up' else prior_result['downCloseSteps']} step{'s' if (prior_result['upCloseSteps'] if prior_dir == 'up' else prior_result['downCloseSteps']) != 1 else ''} · min {prior_result['requiredMovePct']}%",
-                ]
+                # Human-readable reason chain
+                min_wick_pct_i  = round(min_wick_pct * 100)
+                min_body_pct_i  = round(min_body_pct * 100)
+                drive_word      = "bullish" if prior_dir == "up" else "bearish"
+                quality_label   = drive_quality.capitalize()  # Clean / Good / Impulse
+                color_word_r    = "green" if prior_dir == "up" else "red"
+                color_cnt_r     = prior_result["greenCount"] if prior_dir == "up" else prior_result["redCount"]
+                step_cnt_r      = prior_result["upCloseSteps"] if prior_dir == "up" else prior_result["downCloseSteps"]
+
+                if drive_quality == "impulse":
+                    drive_line1 = f"Impulse {drive_word} drive detected before rejection"
+                    drive_line2 = (
+                        f"Impulse proof: {prior_result['netPct']:.2f}% net"
+                        f" · displacement candle found"
+                        f" · score {prior_result['score']}"
+                        f" · min {prior_result['requiredMovePct']}%"
+                    )
+                else:
+                    drive_line1 = (
+                        f"{quality_label} {actual_window_n}-candle {drive_word} drive"
+                        f" detected before rejection"
+                    )
+                    drive_line2 = (
+                        f"Drive proof: {prior_result['netPct']:.2f}% net"
+                        f" · {color_cnt_r}/{actual_window_n} {color_word_r}"
+                        f" · {step_cnt_r} step{'s' if step_cnt_r != 1 else ''}"
+                        f" · score {prior_result['score']}"
+                        f" · min {prior_result['requiredMovePct']}%"
+                    )
+
+                readable_chain: list[str] = [drive_line1, drive_line2]
+
                 if rej_dir == "bearish":
                     readable_chain.append("Signal candle closed bearish")
                     readable_chain.append(
@@ -7247,7 +7604,7 @@ def api_bias_scan():
                 conf_label = "✓ Confirmed" if confirmation_status == "confirmed" else "Early"
                 conf_chip  = f" · {', '.join(conf_found_list)}" if conf_found_list else ""
                 detail     = (
-                    f"Prior {prior_dir.upper()} {prior_move_n}c"
+                    f"Prior {prior_dir.upper()} {actual_window_n}c({drive_quality})"
                     f" · {conf_label}"
                     f" · Grade {graded['grade']} ({score_val})"
                     f"{conf_chip}"
@@ -7292,7 +7649,7 @@ def api_bias_scan():
                     "pattern":                 pattern,
                     "detail":                  detail,
                     "priorMoveDirection":        prior_dir,
-                    "priorMoveCandles":          prior_move_n,
+                    "priorMoveCandles":          actual_window_n,
                     "priorMoveChecks":           prior_result["checksPassed"],
                     "priorMoveQuality":          prior_result["quality"],
                     "priorMoveNetPct":           prior_result["netPct"],
@@ -7317,6 +7674,17 @@ def api_bias_scan():
                     "confirmationStatus":       confirmation_status,
                     "suggestedConfirmationTf":  _suggested_conf_tf(tf),
                     "reasonChain":              readable_chain,
+                    # ── Adaptive prior drive details (new) ──
+                    "priorDrive": {
+                        "quality":      drive_quality,
+                        "driveType":    prior_result.get("driveType", drive_quality),
+                        "score":        prior_result["score"],
+                        "windowN":      actual_window_n,
+                        "netPct":       prior_result["netPct"],
+                        "pullbackPct":  prior_result.get("maxPullbackPct", 0),
+                        "impulseFound": prior_result["impulseFound"],
+                        "reasons":      prior_result["reasons"],
+                    },
                     "debug": {
                         "priorSummary":      prior_result["summary"],
                         "priorMoveReasons":  prior_result["reasons"],
@@ -7370,6 +7738,7 @@ def api_bias_scan():
                 # Attribute primary rejection reason (priority order)
                 if not _d_had_prior and _d_weak_prior:
                     diagnostics["rejected"]["noCleanPriorDrive"] += 1
+                    diagnostics["rejected"]["noAdaptivePriorDrive"] += 1
                 elif not _d_had_prior:
                     diagnostics["rejected"]["noPriorMove"] += 1
                 elif _d_bias_miss:
@@ -7387,6 +7756,14 @@ def api_bias_scan():
             print(f"[DEBUG] bias_scan {sym} error: {e}")
             diagnostics["rejected"]["errors"] += 1
             continue
+
+    # Tally adaptive prior-drive quality counts from accepted results
+    for _r in results:
+        _pd = _r.get("priorDrive", {})
+        _q  = _pd.get("quality", "")
+        if   _q == "clean":   diagnostics["adaptivePriorDrive"]["cleanAccepted"]   += 1
+        elif _q == "good":    diagnostics["adaptivePriorDrive"]["goodAccepted"]    += 1
+        elif _q == "impulse": diagnostics["adaptivePriorDrive"]["impulseAccepted"] += 1
 
     # Phase 3: apply minimum grade filter, then sort by best setup first
     diagnostics["setupsFoundBeforeFilters"] = len(results)
