@@ -1393,7 +1393,7 @@ def debug_ob_tv_parity():
         compare_limits = request.args.get("compare_limits", "false").strip().lower() in ("1", "true", "yes")
 
         try:
-            kline_limit = min(max(int(request.args.get("kline_limit") or 300), 50), 1500)
+            kline_limit = min(max(int(request.args.get("kline_limit") or 300), 50), 4000)
         except (TypeError, ValueError):
             kline_limit = 300
 
@@ -1483,6 +1483,8 @@ def debug_ob_tv_parity():
             "exchange":           exchange,
             "market":             market,
             "kline_limit":        kline_limit,
+            "requested_limit":    kline_limit,
+            "actual_count":       len(main_candles),
             "candles_count":      len(main_candles),
             "oldest_candle_time": _ts(times[0])  if times else None,
             "newest_candle_time": _ts(times[-1]) if times else None,

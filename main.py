@@ -4918,6 +4918,9 @@ def get_klines_exchange(symbol: str, interval: str, limit: int = 300,
                         market: str = "perpetual", exchange: str = "binance") -> List[Dict[str, float]]:
     """Universal get_klines — routes to correct exchange"""
     exchange = (exchange or "binance").lower()
+    # Paginate for large requests (debug route only; live screener stays ≤1500)
+    if limit > 1500 and exchange == "binance":
+        return get_klines_paginated(symbol, interval, limit, market)
     if exchange == "bybit":
         result = get_klines_bybit(symbol, interval, limit, market)
     elif exchange == "okx":
@@ -5171,6 +5174,98 @@ def get_klines(symbol: str, interval: str, limit: int = 300, market: str = "perp
     url = f"{SPOT_API}/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
     data = req.get(url, timeout=20).json()
     return _parse(data)
+
+
+def get_klines_paginated(symbol: str, interval: str, total_limit: int,
+                         market: str = "perpetual") -> List[Dict[str, float]]:
+    """Fetch up to `total_limit` candles from Binance by paginating backward.
+
+    Each request fetches ≤1500 candles (Binance hard cap).  Works by walking
+    backward via the `endTime` parameter until we have enough data.
+    Used by the debug route only; the live screener never exceeds 1500 bars.
+    """
+    BINANCE_MAX = 1500
+    if total_limit <= BINANCE_MAX:
+        return get_klines(symbol, interval, total_limit, market)
+
+    def _parse(data):
+        if not isinstance(data, list):
+            return []
+        out = []
+        for k in data:
+            try:
+                out.append({
+                    "openTime": int(k[0]),
+                    "open":     float(k[1]),
+                    "high":     float(k[2]),
+                    "low":      float(k[3]),
+                    "close":    float(k[4]),
+                    "volume":   float(k[5]),
+                })
+            except (TypeError, ValueError, IndexError):
+                pass
+        return out
+
+    def _fetch_batch(params):
+        # Try futures first, then geo-safe spot mirror
+        try:
+            r = req.get(
+                f"{BINANCE_FUTURES_API}/fapi/v1/klines",
+                params=params, timeout=15,
+            )
+            if r.status_code == 200:
+                update_api_weight("binance", r)
+                batch = _parse(r.json())
+                if batch:
+                    return batch
+        except Exception:
+            pass
+        try:
+            spot_params = dict(params)
+            r = req.get(f"{SPOT_API}/api/v3/klines", params=spot_params, timeout=20)
+            if r.status_code == 200:
+                return _parse(r.json())
+        except Exception:
+            pass
+        return []
+
+    collected: List[Dict[str, float]] = []
+    seen_open_times: set = set()
+    end_time_ms: Optional[int] = None
+    max_iters = (total_limit // BINANCE_MAX) + 3
+
+    for _ in range(max_iters):
+        if len(collected) >= total_limit:
+            break
+        remaining   = total_limit - len(collected)
+        this_batch  = min(BINANCE_MAX, remaining)
+        params: Dict[str, Any] = {
+            "symbol":   symbol,
+            "interval": interval,
+            "limit":    this_batch,
+        }
+        if end_time_ms is not None:
+            params["endTime"] = end_time_ms
+
+        batch = _fetch_batch(params)
+        if not batch:
+            break
+
+        new_rows = [r for r in batch if r["openTime"] not in seen_open_times]
+        if not new_rows:
+            break
+        for r in new_rows:
+            seen_open_times.add(r["openTime"])
+        collected.extend(new_rows)
+
+        oldest_open = min(r["openTime"] for r in new_rows)
+        end_time_ms = oldest_open - 1
+        time.sleep(0.1)
+
+    collected.sort(key=lambda x: x["openTime"])
+    if len(collected) > total_limit:
+        collected = collected[-total_limit:]
+    return collected
 
 
 def get_all_daily_klines(symbol: str) -> List[Dict[str, float]]:
