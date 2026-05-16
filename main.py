@@ -2441,7 +2441,8 @@ def _compute_ob_touch_meta(ob, h, l, c, n, ob_mitigation="Absolute",
 
 
 def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", ob_mitigation="Absolute",
-               mitigation_closed_only=False, overlap_effective_zone=False):
+               mitigation_closed_only=False, overlap_effective_zone=False,
+               bearish_effective_bottom_overlap=False):
     """
     Order Block detection — audited line-by-line against Pine Script drawVOB().
 
@@ -2450,9 +2451,13 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
       mitigation_closed_only: when True, per-bar mitigation skips the last
         (possibly still-open) candle, i.e. mitigation is only evaluated for
         bars i <= n-2. OB creation still scans the full candle stream.
-      overlap_effective_zone: when True, the creation-time overlap-deletion
-        compares using the effective/displayed zone (extreme side collapsed to
-        avg) instead of the raw hidden extreme.
+      overlap_effective_zone: DEPRECATED / WRONG. Collapsed the *new* OB's
+        extreme edge to avg (bullish bottom→avg, bearish top→avg). Kept only
+        for diagnostic comparison; do not use for production parity.
+      bearish_effective_bottom_overlap: CORRECT bearish rule. For bearish
+        overlap only, the *previous* OB's effective bottom is its avg (TV
+        displays the bearish lower boundary at avg, not the raw extreme). The
+        new OB's top stays raw. Bullish overlap stays raw/unchanged.
 
     Pine search window:
       search_start = pivot_bar + 1 (Pine loc = hN/lN.first() = absolute pivot bar).
@@ -2655,9 +2660,15 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
                     # rmP=0 → drop the newly-appended OB)
                     _prev = next((x for x in reversed(obs[:-1]) if x["type"] == "bearish"), None)
                     if _prev is not None:
-                        _new_hi = _new_payload["avg"] if overlap_effective_zone else _new_payload["top"]
-                        if _new_hi > _prev["bottom"]:
-                            obs.pop()
+                        if bearish_effective_bottom_overlap:
+                            # CORRECT: prev OB effective bottom = its avg;
+                            # new OB top stays raw.
+                            if _new_payload["top"] > _prev.get("avg", _prev["bottom"]):
+                                obs.pop()
+                        else:
+                            _new_hi = _new_payload["avg"] if overlap_effective_zone else _new_payload["top"]
+                            if _new_hi > _prev["bottom"]:
+                                obs.pop()
 
             dnP.clear()
             dnB.clear()
@@ -3860,7 +3871,8 @@ _TV_OB_PARITY_SETTINGS: Dict[str, Any] = {
 
 
 def _tv_visible_pool(obs_by_dir: List[Dict[str, Any]], max_ob: int = 5,
-                     overlap_effective_zone: bool = False) -> List[Dict[str, Any]]:
+                     overlap_effective_zone: bool = False,
+                     bearish_effective_bottom_overlap: bool = False) -> List[Dict[str, Any]]:
     """
     Build the Pine-style visible OB pool for a single direction.
 
@@ -3875,8 +3887,12 @@ def _tv_visible_pool(obs_by_dir: List[Dict[str, Any]], max_ob: int = 5,
     Returns the final visible subset, oldest-first, length ≤ max_ob.
 
     overlap_effective_zone (debug-only, default False preserves production):
-      when True, the overlap test uses the effective/displayed zone (the
-      extreme side collapsed to avg) instead of the raw hidden extreme.
+      DEPRECATED / WRONG. Collapsed the *new* OB's extreme edge to avg.
+      Kept only for diagnostic comparison.
+    bearish_effective_bottom_overlap (debug-only, default False):
+      CORRECT bearish rule. For bearish overlap only, the *previous*
+      accepted OB's effective bottom is its avg (TV displays the bearish
+      lower boundary at avg). New OB top stays raw. Bullish stays raw.
     """
     input_count = len(obs_by_dir)
 
@@ -3887,8 +3903,12 @@ def _tv_visible_pool(obs_by_dir: List[Dict[str, Any]], max_ob: int = 5,
         if accepted:
             last = accepted[-1]
             if ob["type"] == "bullish":
+                # Bullish stays raw (ETH 4H bull matches TV with raw overlap).
                 _lo = ob.get("avg", ob["bottom"]) if overlap_effective_zone else ob["bottom"]
                 overlaps = _lo < last["top"]
+            elif bearish_effective_bottom_overlap:
+                # CORRECT: prev OB effective bottom = its avg; new OB top raw.
+                overlaps = ob["top"] > last.get("avg", last["bottom"])
             else:
                 _hi = ob.get("avg", ob["top"]) if overlap_effective_zone else ob["top"]
                 overlaps = _hi > last["bottom"]
