@@ -758,68 +758,79 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 /* ═══════════════════════════════════════════════════════════════
    MODULE CAROUSEL — premium 3D cinematic phone showcase
 ═══════════════════════════════════════════════════════════════ */
-#features{overflow:visible}
+/* Two-column showcase: phone carousel left, text right */
+#mod-showcase{
+  display:grid;
+  grid-template-columns:52% 1fr;
+  gap:48px;
+  align-items:center;
+  margin:52px 0 0;
+}
+#mod-text-col{
+  display:flex;flex-direction:column;gap:28px;padding:8px 0;
+}
+/* Carousel stage */
 #mod-carousel-wrap{
-  position:relative;height:628px;margin:52px 0 0;overflow:visible;
+  position:relative;height:500px;margin:0;overflow:visible;
 }
 .mcar-glow-edge{
   position:absolute;top:50%;transform:translateY(-50%);
-  width:220px;height:540px;border-radius:50%;pointer-events:none;z-index:0;
+  width:180px;height:420px;border-radius:50%;pointer-events:none;z-index:0;
 }
-.mcar-glow-l{left:-56px;background:radial-gradient(ellipse at left,rgba(249,115,22,.22) 0%,transparent 66%)}
-.mcar-glow-r{right:-56px;background:radial-gradient(ellipse at right,rgba(249,115,22,.22) 0%,transparent 66%)}
+.mcar-glow-l{left:-48px;background:radial-gradient(ellipse at left,rgba(249,115,22,.22) 0%,transparent 66%)}
+.mcar-glow-r{right:-48px;background:radial-gradient(ellipse at right,rgba(249,115,22,.22) 0%,transparent 66%)}
 #mod-stage{
   position:relative;width:100%;height:100%;
-  perspective:1400px;perspective-origin:50% 50%;overflow:visible;
+  perspective:1200px;perspective-origin:50% 50%;overflow:visible;
 }
 .mcar-card{
   position:absolute;top:50%;left:50%;
-  transform:translate(-50%,-50%);
-  cursor:pointer;will-change:transform,opacity,filter;
-  transition:transform .65s cubic-bezier(.34,1.12,.64,1),opacity .55s ease,filter .55s ease;
+  transform:translate(-50%,-50%);cursor:pointer;
+  will-change:transform,opacity,filter;
+  transition:transform .62s cubic-bezier(.34,1.10,.64,1),opacity .52s ease,filter .52s ease;
   transform-style:preserve-3d;overflow:visible;
 }
 .mcar-card[data-pos="c"]{
-  transform:translate(-50%,-50%) scale(1.14) rotateY(0deg);
+  transform:translate(-50%,-50%) scale(.90) rotateY(0deg);
   opacity:1;filter:none;z-index:10;cursor:default;
 }
 .mcar-card[data-pos="r1"]{
-  transform:translate(calc(-50% + 268px),-50%) scale(0.78) rotateY(-24deg);
-  opacity:.58;filter:blur(1px) brightness(.72);z-index:7;
+  transform:translate(calc(-50% + 210px),-50%) scale(.62) rotateY(-26deg);
+  opacity:.55;filter:blur(1px) brightness(.70);z-index:7;
 }
 .mcar-card[data-pos="l1"]{
-  transform:translate(calc(-50% - 268px),-50%) scale(0.78) rotateY(24deg);
-  opacity:.58;filter:blur(1px) brightness(.72);z-index:7;
+  transform:translate(calc(-50% - 210px),-50%) scale(.62) rotateY(26deg);
+  opacity:.55;filter:blur(1px) brightness(.70);z-index:7;
 }
 .mcar-card[data-pos="r2"]{
-  transform:translate(calc(-50% + 490px),-50%) scale(0.52) rotateY(-40deg);
-  opacity:.24;filter:blur(2.5px) brightness(.48);z-index:5;
+  transform:translate(calc(-50% + 370px),-50%) scale(.42) rotateY(-42deg);
+  opacity:.20;filter:blur(2.5px) brightness(.45);z-index:5;
 }
 .mcar-card[data-pos="l2"]{
-  transform:translate(calc(-50% - 490px),-50%) scale(0.52) rotateY(40deg);
-  opacity:.24;filter:blur(2.5px) brightness(.48);z-index:5;
+  transform:translate(calc(-50% - 370px),-50%) scale(.42) rotateY(42deg);
+  opacity:.20;filter:blur(2.5px) brightness(.45);z-index:5;
 }
 .mcar-card[data-pos="hide"]{
-  transform:translate(-50%,-50%) scale(0.25);
+  transform:translate(-50%,-50%) scale(.22);
   opacity:0;z-index:1;pointer-events:none;
 }
-/* Strip phone-side styling in carousel */
-.mcar-card .phone-side{padding:0!important;background:transparent!important;gap:18px}
+/* Strip phone-side styling inside carousel */
+.mcar-card .phone-side{padding:0!important;background:transparent!important;gap:16px}
 [data-theme="light"] .mcar-card .phone-side{background:transparent!important}
-/* Suppress CSS hover — GSAP float handles motion */
+/* Suppress CSS hover — GSAP manages position */
 .mcar-card .phone:hover{transform:none!important}
 /* Orange glow ring on center phone */
 .mcar-card[data-pos="c"] .phone{
   box-shadow:
     0 0 0 1px rgba(249,115,22,.55),
     0 0 0 3px rgba(249,115,22,.14),
-    0 40px 80px rgba(0,0,0,.65),
-    0 0 64px rgba(249,115,22,.30)!important;
+    0 32px 64px rgba(0,0,0,.65),
+    0 0 56px rgba(249,115,22,.28)!important;
 }
 /* Arrows */
 .mcar-arrow{
   position:absolute;top:50%;transform:translateY(-50%);z-index:20;
-  width:52px;height:52px;border-radius:50%;
+  width:48px;height:48px;border-radius:50%;
   border:1px solid rgba(249,115,22,.38);
   background:rgba(249,115,22,.09);backdrop-filter:blur(8px);
   color:#f97316;display:flex;align-items:center;justify-content:center;
@@ -827,43 +838,45 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 }
 .mcar-arrow:hover{
   background:rgba(249,115,22,.24);
-  box-shadow:0 0 24px rgba(249,115,22,.45);
-  border-color:rgba(249,115,22,.78);
+  box-shadow:0 0 22px rgba(249,115,22,.44);
+  border-color:rgba(249,115,22,.75);
 }
-.mcar-prev{left:8px}.mcar-next{right:8px}
+.mcar-prev{left:4px}.mcar-next{right:4px}
 .mcar-arrow svg{width:20px;height:20px}
-/* Info panel */
-#mod-info-wrap{position:relative;height:192px;margin-top:40px;overflow:hidden}
+/* Info panel (right column) */
+#mod-info-wrap{position:relative;min-height:230px;overflow:hidden}
 .mcar-info-item{
   position:absolute;inset:0;
-  display:flex;flex-direction:column;align-items:center;text-align:center;
-  padding:0 20px;
-  opacity:0;transform:translateY(16px);
-  transition:opacity .42s ease,transform .42s ease;
+  display:flex;flex-direction:column;align-items:flex-start;text-align:left;
+  padding:0;
+  opacity:0;
   pointer-events:none;
 }
-.mcar-info-item.active{opacity:1;transform:translateY(0);pointer-events:auto}
+.mcar-info-item.active{opacity:1;pointer-events:auto}
 .mcar-info-tag{
   font-family:'DM Sans',sans-serif;font-size:10px;font-weight:700;
-  letter-spacing:3px;text-transform:uppercase;margin-bottom:12px;
-  display:flex;align-items:center;gap:10px;
+  letter-spacing:3px;text-transform:uppercase;margin-bottom:14px;
+  display:flex;align-items:center;gap:8px;
 }
-.mcar-info-tag::before,.mcar-info-tag::after{
-  content:'';display:inline-block;width:22px;height:1.5px;
+.mcar-info-tag::before{
+  content:'';display:inline-block;width:20px;height:1.5px;
   background:currentColor;flex-shrink:0;
 }
 .mcar-info-title{
   font-family:'Outfit',sans-serif;
-  font-size:clamp(22px,2.6vw,34px);
-  font-weight:800;color:#fff;margin:0 0 12px;line-height:1.2;
+  font-size:clamp(24px,2.8vw,38px);
+  font-weight:800;color:#fff;margin:0 0 16px;line-height:1.15;
+  overflow:hidden;
 }
 .mcar-info-desc{
   font-family:'DM Sans',sans-serif;
-  font-size:clamp(13px,1.4vw,15px);
-  color:rgba(180,200,225,.78);line-height:1.8;max-width:540px;margin:0;
+  font-size:clamp(13px,1.2vw,15px);
+  color:rgba(180,200,225,.80);line-height:1.85;max-width:480px;margin:0;
 }
+/* Character animation spans */
+.mcar-c{display:inline-block}
 /* Nav dots */
-#mcar-dots{display:flex;gap:10px;justify-content:center;margin-top:28px}
+#mcar-dots{display:flex;gap:10px;align-items:center}
 .mcar-dot{
   width:8px;height:8px;border-radius:50%;
   background:rgba(255,255,255,.18);border:none;cursor:pointer;
@@ -876,23 +889,29 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 }
 /* Responsive */
 @media(max-width:1024px){
-  #mod-carousel-wrap{height:560px;margin:36px 0 0}
-  .mcar-card[data-pos="r1"]{transform:translate(calc(-50% + 188px),-50%) scale(0.68) rotateY(-20deg);opacity:.52;filter:blur(.5px) brightness(.78)}
-  .mcar-card[data-pos="l1"]{transform:translate(calc(-50% - 188px),-50%) scale(0.68) rotateY(20deg);opacity:.52;filter:blur(.5px) brightness(.78)}
-  .mcar-card[data-pos="r2"],.mcar-card[data-pos="l2"]{opacity:0;pointer-events:none;transform:translate(-50%,-50%) scale(0.25)}
-  .mcar-arrow{width:44px;height:44px}
-  .mcar-prev{left:4px}.mcar-next{right:4px}
-  #mod-info-wrap{height:216px}
+  #mod-showcase{grid-template-columns:1fr;gap:32px}
+  #mod-text-col{align-items:center}
+  .mcar-info-item{align-items:center;text-align:center}
+  .mcar-info-tag::before{display:none}
+  #mod-info-wrap{min-height:200px}
+  #mcar-dots{justify-content:center}
+  #mod-carousel-wrap{height:440px}
+  .mcar-card[data-pos="r1"]{transform:translate(calc(-50% + 178px),-50%) scale(.60) rotateY(-22deg);opacity:.50;filter:blur(.5px) brightness(.72)}
+  .mcar-card[data-pos="l1"]{transform:translate(calc(-50% - 178px),-50%) scale(.60) rotateY(22deg);opacity:.50;filter:blur(.5px) brightness(.72)}
+  .mcar-card[data-pos="r2"],.mcar-card[data-pos="l2"]{opacity:0;pointer-events:none;transform:translate(-50%,-50%) scale(.22)}
+  .mcar-arrow{width:42px;height:42px}
+  .mcar-prev{left:2px}.mcar-next{right:2px}
 }
 @media(max-width:640px){
-  #mod-carousel-wrap{height:480px;margin:24px 0 0}
-  .mcar-card[data-pos="r1"]{transform:translate(calc(-50% + 145px),-50%) scale(0.56) rotateY(-18deg);opacity:.38;filter:blur(1px) brightness(.68)}
-  .mcar-card[data-pos="l1"]{transform:translate(calc(-50% - 145px),-50%) scale(0.56) rotateY(18deg);opacity:.38;filter:blur(1px) brightness(.68)}
+  #mod-carousel-wrap{height:390px}
+  .mcar-card[data-pos="c"]{transform:translate(-50%,-50%) scale(.78) rotateY(0deg)}
+  .mcar-card[data-pos="r1"]{transform:translate(calc(-50% + 148px),-50%) scale(.50) rotateY(-18deg);opacity:.38;filter:blur(1px) brightness(.65)}
+  .mcar-card[data-pos="l1"]{transform:translate(calc(-50% - 148px),-50%) scale(.50) rotateY(18deg);opacity:.38;filter:blur(1px) brightness(.65)}
   .mcar-arrow{width:36px;height:36px}
   .mcar-arrow svg{width:15px;height:15px}
-  .mcar-prev{left:2px}.mcar-next{right:2px}
-  #mod-info-wrap{height:248px}
-  .mcar-info-title{font-size:20px}
+  #mod-info-wrap{min-height:220px}
+  .mcar-info-title{font-size:22px}
+  .mcar-info-desc{font-size:13px}
 }
 </style>
 </head>
@@ -1127,8 +1146,9 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
   <p class="sec-sub" data-i18n="feat_sub">Six professional tools — scan, detect and act on every Smart Money setup across 400+ pairs.</p>
 
 
-  <!-- MODULE CAROUSEL -->
-  <div id="mod-carousel-wrap">
+  <!-- MODULE SHOWCASE -->
+  <div id="mod-showcase">
+    <div id="mod-carousel-wrap">
     <div class="mcar-glow-edge mcar-glow-l"></div>
     <div class="mcar-glow-edge mcar-glow-r"></div>
     <div id="mod-stage">
@@ -1231,9 +1251,8 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
     <button class="mcar-arrow mcar-prev" id="mcar-prev" aria-label="Previous module"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg></button>
     <button class="mcar-arrow mcar-next" id="mcar-next" aria-label="Next module"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"></polyline></svg></button>
   </div>
-
-  <!-- MODULE INFO PANELS -->
-  <div id="mod-info-wrap">
+    <div id="mod-text-col">
+      <div id="mod-info-wrap">
     <div class="mcar-info-item active" data-idx="0">
       <div class="mcar-info-tag" style="color:#22d3ee">📊 <span data-i18n="mod01_tag">Module 01</span></div>
       <h3 class="mcar-info-title" data-i18n="mod01_title">Order Block Detection</h3>
@@ -1266,15 +1285,17 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
     </div>
   </div>
 
-  <!-- CAROUSEL DOTS -->
-  <div id="mcar-dots">
-    <button class="mcar-dot" data-dot="0"></button>
-    <button class="mcar-dot" data-dot="1"></button>
-    <button class="mcar-dot" data-dot="2"></button>
-    <button class="mcar-dot" data-dot="3"></button>
-    <button class="mcar-dot" data-dot="4"></button>
-    <button class="mcar-dot" data-dot="5"></button>
-  </div>
+      <!-- CAROUSEL DOTS -->
+      <div id="mcar-dots">
+        <button class="mcar-dot" data-dot="0"></button>
+        <button class="mcar-dot" data-dot="1"></button>
+        <button class="mcar-dot" data-dot="2"></button>
+        <button class="mcar-dot" data-dot="3"></button>
+        <button class="mcar-dot" data-dot="4"></button>
+        <button class="mcar-dot" data-dot="5"></button>
+      </div>
+    </div><!-- /mod-text-col -->
+  </div><!-- /mod-showcase -->
 </div>
 
 <div class="divider"></div>
@@ -2987,6 +3008,7 @@ function lwStartBounce(){
 })();
 
 
+
 /* ════════════════════════════════════════════════════════════
    MODULE CAROUSEL — 3D cinematic phone showcase
 ════════════════════════════════════════════════════════════ */
@@ -2998,7 +3020,75 @@ function lwStartBounce(){
   if (!n) return;
   var active = 0;
   var COLORS = ['#22d3ee','#22c55e','#f97316','#a78bfa','#ec4899','#f59e0b'];
+  var busy   = false;
 
+  /* ── Utility: split text node into .mcar-c spans ── */
+  function splitChars(el) {
+    var text = (el.textContent || '').trim();
+    if (!text) return [];
+    el.innerHTML = text.split('').map(function(ch) {
+      if (ch === ' ') return '<span class="mcar-c"> </span>';
+      return '<span class="mcar-c">' + ch.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</span>';
+    }).join('');
+    return Array.from(el.querySelectorAll('.mcar-c'));
+  }
+
+  /* ── Restore plain text (collapses char spans) ── */
+  function restoreText(el) {
+    if (el) el.textContent = el.textContent;
+  }
+
+  /* ── Animate a full info panel ── */
+  function animatePanel(idx) {
+    var panel = infos[idx];
+    if (!panel || !window.gsap) return;
+
+    var tag   = panel.querySelector('.mcar-info-tag');
+    var title = panel.querySelector('.mcar-info-title');
+    var desc  = panel.querySelector('.mcar-info-desc');
+    var tl    = gsap.timeline();
+
+    /* Tag badge slides in */
+    if (tag) {
+      tl.fromTo(tag,
+        { opacity: 0, x: -24 },
+        { opacity: 1, x:   0, duration: 0.38, ease: 'power2.out' },
+        0);
+    }
+
+    /* Title materialises with blur */
+    if (title) {
+      tl.fromTo(title,
+        { opacity: 0, y: 18, filter: 'blur(4px)' },
+        { opacity: 1, y:  0, filter: 'blur(0px)', duration: 0.55, ease: 'power3.out' },
+        0.12);
+    }
+
+    /* Description — letter by letter */
+    if (desc) {
+      restoreText(desc);
+      var chars = splitChars(desc);
+      if (chars.length && window.gsap) {
+        gsap.set(chars, { opacity: 0, y: 8 });
+        tl.to(chars,
+          { opacity: 1, y: 0, duration: 0.40, ease: 'power2.out', stagger: 0.010 },
+          0.28);
+      }
+    }
+  }
+
+  /* ── Animate description only (for slide changes) ── */
+  function animateDescOnly(descEl) {
+    if (!descEl || !window.gsap) return;
+    restoreText(descEl);
+    var chars = splitChars(descEl);
+    if (chars.length) {
+      gsap.set(chars, { opacity: 0, y: 7 });
+      gsap.to(chars, { opacity: 1, y: 0, duration: 0.38, ease: 'power2.out', stagger: 0.009 });
+    }
+  }
+
+  /* ── Position mapping ── */
   function getPos(idx) {
     var d = ((idx - active) % n + n) % n;
     if (d === 0)     return 'c';
@@ -3009,9 +3099,9 @@ function lwStartBounce(){
     return 'hide';
   }
 
+  /* ── Core update (positions + glows + dots) ── */
   function update() {
     cards.forEach(function(card, i) { card.setAttribute('data-pos', getPos(i)); });
-    infos.forEach(function(info, i) { info.classList.toggle('active', i === active); });
     dots.forEach(function(dot, i) {
       dot.classList.toggle('active', i === active);
       dot.style.setProperty('--mcar-color', COLORS[i]);
@@ -3024,8 +3114,45 @@ function lwStartBounce(){
     });
   }
 
-  function goTo(idx) { active = ((idx % n) + n) % n; update(); }
+  /* ── Navigate ── */
+  function goTo(idx) {
+    var prev = active;
+    active = ((idx % n) + n) % n;
+    if (prev === active) return;
 
+    /* Hide previous panel */
+    var prevPanel = infos[prev];
+    if (prevPanel && window.gsap) {
+      gsap.to(prevPanel, {
+        opacity: 0, x: -20, duration: 0.28, ease: 'power2.in',
+        onComplete: function() {
+          prevPanel.classList.remove('active');
+          if (window.gsap) gsap.set(prevPanel, { x: 0 });
+        }
+      });
+    } else if (prevPanel) {
+      prevPanel.classList.remove('active');
+    }
+
+    /* Restore text in new panel before animating */
+    var nextPanel = infos[active];
+    if (nextPanel) {
+      restoreText(nextPanel.querySelector('.mcar-info-desc'));
+      restoreText(nextPanel.querySelector('.mcar-info-title'));
+
+      /* Show + animate new panel after prev fades out */
+      setTimeout(function() {
+        nextPanel.classList.add('active');
+        if (window.gsap) gsap.set(nextPanel, { opacity: 0, x: 24 });
+        if (window.gsap) gsap.to(nextPanel, { opacity: 1, x: 0, duration: 0.35, ease: 'power2.out' });
+        animatePanel(active);
+      }, 200);
+    }
+
+    update();
+  }
+
+  /* ── Event listeners ── */
   var prevBtn = document.getElementById('mcar-prev');
   var nextBtn = document.getElementById('mcar-next');
   if (prevBtn) prevBtn.addEventListener('click', function() { goTo(active - 1); });
@@ -3053,11 +3180,28 @@ function lwStartBounce(){
 
   /* Auto-advance */
   var autoTimer = null;
-  function startAuto() { autoTimer = setInterval(function() { goTo(active + 1); }, 5200); }
+  function startAuto() { autoTimer = setInterval(function() { goTo(active + 1); }, 5500); }
   function stopAuto()  { if (autoTimer) { clearInterval(autoTimer); autoTimer = null; } }
   if (wrap) {
     wrap.addEventListener('mouseenter', stopAuto);
     wrap.addEventListener('mouseleave', startAuto);
+  }
+
+  /* ── Hook into goSlide for letter-by-letter on slide change ── */
+  if (typeof window.goSlide === 'function') {
+    var _origGoSlide = window.goSlide;
+    window.goSlide = function(id, idx) {
+      _origGoSlide(id, idx);
+      /* goSlide updates text after 180ms; we wait 210ms then reanimate */
+      setTimeout(function() {
+        var descEl = document.getElementById(id + '-desc');
+        if (descEl) {
+          descEl.style.opacity   = '1';
+          descEl.style.transform = 'none';
+          animateDescOnly(descEl);
+        }
+      }, 210);
+    };
   }
 
   /* Float animation via GSAP */
@@ -3066,25 +3210,48 @@ function lwStartBounce(){
       var phone = card.querySelector('.phone');
       if (phone) {
         gsap.to(phone, {
-          y: -11, duration: 2.8 + i * 0.18,
-          ease: 'sine.inOut', yoyo: true, repeat: -1, delay: i * 0.3,
+          y: -10, duration: 2.8 + i * 0.16,
+          ease: 'sine.inOut', yoyo: true, repeat: -1, delay: i * 0.28,
         });
       }
     });
   }
 
+  /* Measure tallest panel → set min-height so layout stays stable */
+  (function measureInfoWrap() {
+    var wrap = document.getElementById('mod-info-wrap');
+    if (!wrap) return;
+    var maxH = 0;
+    infos.forEach(function(info) {
+      info.style.cssText += ';opacity:1!important;visibility:hidden!important';
+      maxH = Math.max(maxH, info.scrollHeight);
+      info.style.opacity = '';
+      info.style.visibility = '';
+    });
+    if (maxH > 0) wrap.style.minHeight = (maxH + 8) + 'px';
+  })();
+
   /* Scroll entrance */
   if (window.gsap && window.ScrollTrigger) {
     var section = document.getElementById('features');
     if (section) {
-      var tl = gsap.timeline({ scrollTrigger: { trigger: section, start: 'top 72%', once: true } });
-      tl.fromTo('#mod-carousel-wrap', { opacity: 0, y: 52 }, { opacity: 1, y: 0, duration: 1.1, ease: 'power3.out' })
-        .fromTo('#mod-info-wrap',     { opacity: 0, y: 22 }, { opacity: 1, y: 0, duration: 0.7, ease: 'power2.out' }, '-=0.5')
-        .fromTo('#mcar-dots',         { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.45, ease: 'power2.out' }, '-=0.3');
+      var tl = gsap.timeline({
+        scrollTrigger: { trigger: section, start: 'top 72%', once: true,
+          onEnter: function() {
+            /* Animate initial panel after entrance */
+            setTimeout(function() { animatePanel(0); }, 700);
+          }
+        }
+      });
+      tl.fromTo('#mod-showcase',
+        { opacity: 0, y: 48 },
+        { opacity: 1, y:  0, duration: 1.1, ease: 'power3.out' });
     }
   }
 
+  /* Initialise */
   update();
+  infos[0] && infos[0].classList.add('active');
   startAuto();
 })();
 </script>
