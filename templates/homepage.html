@@ -468,32 +468,71 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
   position:relative;
 }
 
-/* Full-bleed background image */
-.hero-bg-img{
+/* Three.js morph canvas container */
+#hero-morph-wrap{
   position:absolute;
   inset:0;
+  z-index:0;
+  overflow:hidden;
+  pointer-events:none;
+  background:#060a14;
+}
+#hero-morph-canvas{
   width:100%;
   height:100%;
-  object-fit:cover;
-  object-position:70% center;
-  z-index:0;
-  pointer-events:none;
+  display:block;
 }
 
-/* Dark gradient overlay — left opaque, right transparent */
+/* Gradient overlay — left for text contrast, subtle */
 .hero-overlay{
   position:absolute;
   inset:0;
   background:linear-gradient(
     to right,
-    rgba(6,10,20,0.97) 0%,
-    rgba(6,10,20,0.90) 32%,
-    rgba(6,10,20,0.60) 56%,
-    rgba(6,10,20,0.12) 78%,
+    rgba(6,10,20,0.94) 0%,
+    rgba(6,10,20,0.82) 30%,
+    rgba(6,10,20,0.42) 55%,
+    rgba(6,10,20,0.08) 75%,
     transparent 100%
   );
   z-index:1;
   pointer-events:none;
+}
+
+/* Statement panel — Phase 3 scroll text */
+#hero-stmt-panel{
+  position:absolute;
+  inset:0;
+  z-index:4;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  opacity:0;
+  pointer-events:none;
+  text-align:center;
+  padding:0 5vw;
+}
+.hsp-l1{
+  font-family:'Outfit',sans-serif;
+  font-size:clamp(2rem,4.8vw,3.6rem);
+  font-weight:800;
+  color:#fff;
+  line-height:1.1;
+  letter-spacing:-0.02em;
+  margin-bottom:18px;
+}
+.hsp-l1 span{
+  background:linear-gradient(135deg,#f59e0b 0%,#fbbf24 45%,#f97316 100%);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+}
+.hsp-l2{
+  font-family:'DM Sans',sans-serif;
+  font-size:clamp(1rem,1.8vw,1.25rem);
+  font-weight:400;
+  color:rgba(255,255,255,0.68);
+  max-width:580px;
+  line-height:1.65;
 }
 
 /* Hide old image column */
@@ -546,26 +585,20 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
     min-height:100svh;
     min-height:100dvh;
   }
-  /* Reposition character for portrait screens */
-  .hero-bg-img{
-    object-position:62% 10%;
-    filter:brightness(1.08) saturate(1.14);
-  }
-  /* Lighter overlay + orange ambient glow baked into gradient */
+  /* Mobile overlay — bottom-up fade for text contrast */
   .hero-overlay{
     background:
-      radial-gradient(ellipse at 58% 36%,
-        rgba(249,115,22,0.22) 0%,
-        rgba(249,115,22,0.08) 28%,
-        rgba(34,211,238,0.05) 48%,
-        transparent 65%
+      radial-gradient(ellipse at 50% 60%,
+        rgba(249,115,22,0.18) 0%,
+        rgba(249,115,22,0.06) 30%,
+        transparent 60%
       ),
       linear-gradient(
         to top,
-        rgba(6,10,20,0.92) 0%,
-        rgba(6,10,20,0.68) 30%,
-        rgba(6,10,20,0.32) 60%,
-        rgba(6,10,20,0.08) 82%,
+        rgba(6,10,20,0.96) 0%,
+        rgba(6,10,20,0.72) 32%,
+        rgba(6,10,20,0.28) 62%,
+        rgba(6,10,20,0.06) 84%,
         transparent 100%
       );
   }
@@ -586,20 +619,11 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
   .stat-label{font-size:7px;letter-spacing:1px}
 }
 @media(max-width:768px){
-  #hero-3d-canvas{opacity:0.15}
   .hero{padding:0 0 44px!important}
-  .hero-bg-img{object-position:58% 7%}
   .hero-sub{font-size:13.5px}
 }
 @media(max-width:480px){
-  #hero-3d-canvas{opacity:0.10}
   .hero{padding:0 0 32px!important}
-  /* Tighter portrait: show face/upper body */
-  .hero-bg-img{
-    object-position:54% 4%;
-    filter:brightness(1.12) saturate(1.20);
-  }
-  /* Bigger headline for visual impact on small phones */
   .hero-h1{
     font-size:clamp(34px,10.5vw,50px)!important;
     line-height:1.1!important;
@@ -851,12 +875,20 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 
 <!-- HERO -->
 <section class="hero" id="heroSection">
-  <div id="hero-3d-canvas" aria-hidden="true"></div>
 
-  <!-- FULL-BLEED BACKGROUND IMAGE -->
-  <img class="hero-bg-img" src="{{ url_for('static', filename='images/hero-man.png') }}" alt="" aria-hidden="true" loading="eager" draggable="false">
-  <!-- DARK GRADIENT OVERLAY -->
+  <!-- THREE.JS MORPH CANVAS — particle sphere → solid fluid shape -->
+  <div id="hero-morph-wrap" aria-hidden="true">
+    <canvas id="hero-morph-canvas"></canvas>
+  </div>
+
+  <!-- GRADIENT OVERLAY — text contrast on left -->
   <div class="hero-overlay" aria-hidden="true"></div>
+
+  <!-- STATEMENT PANEL — slides up during scroll Phase 3 -->
+  <div id="hero-stmt-panel" aria-hidden="true">
+    <div class="hsp-l1">Trade at the <span>Institutional Level.</span></div>
+    <div class="hsp-l2">Real-time SMC intelligence across 400+ pairs — Order Blocks, Fair Value Gaps, and Fibonacci zones, live every second.</div>
+  </div>
 
   <!-- TEXT — LEFT OVERLAY -->
   <div class="hero-left">
@@ -2273,20 +2305,15 @@ function lwStartBounce(){
   if (!window.gsap) return;
   if (window.innerWidth < 1024) return;
 
-  var bg      = document.querySelector('.hero-bg-img');
-  var overlay = document.querySelector('.hero-overlay');
   var section = document.getElementById('heroSection');
   var c1      = document.getElementById('hcc1');
   var c2      = document.getElementById('hcc2');
   var c3      = document.getElementById('hcc3');
 
-  if (!bg || !c1 || !c2 || !c3) return;
+  if (!c1 || !c2 || !c3) return;
 
   /* 3D perspective on the hero section */
   gsap.set(section, { perspective: 1200 });
-
-  /* Character image — transform origin where the person's core is */
-  gsap.set(bg, { transformOrigin: '70% 60%', willChange: 'transform,filter', scale: 1 });
 
   /* Cards — start offset to the right with slight Y-rotation, invisible */
   gsap.set(c1, { opacity: 0, x: 48, rotateY: 14, scale: 0.92 });
@@ -2296,63 +2323,40 @@ function lwStartBounce(){
   /* Master timeline */
   var tl = gsap.timeline({ defaults: { ease: 'power3.out' } });
 
-  /* ── STEP 1: Entry (0 – 0.7s) ─────────────────────────────
-     Character subtly scales in; cards fly in from right     */
-  tl.to(bg,  { scale: 1.0,  duration: 0.7, ease: 'power2.out' }, 0)
-    .to(c1,  { opacity: 1, x: 0, rotateY: 0, scale: 1, duration: 0.60, ease: 'power2.out' }, 0.20)
-    .to(c2,  { opacity: 1, x: 0, rotateY: 0, scale: 1, duration: 0.60, ease: 'power2.out' }, 0.35)
-    .to(c3,  { opacity: 1, x: 0, rotateY: 0, scale: 1, duration: 0.60, ease: 'power2.out' }, 0.50)
+  /* STEP 1: Entry — cards fly in from right */
+  tl.to(c1, { opacity: 1, x: 0, rotateY: 0, scale: 1, duration: 0.60, ease: 'power2.out' }, 0.30)
+    .to(c2, { opacity: 1, x: 0, rotateY: 0, scale: 1, duration: 0.60, ease: 'power2.out' }, 0.45)
+    .to(c3, { opacity: 1, x: 0, rotateY: 0, scale: 1, duration: 0.60, ease: 'power2.out' }, 0.60)
 
-  /* ── STEP 2: Natural Settle / Smile (0.7 – 1.5s) ──────────
-     Character softens: micro-scale + brightness warm-up.
-     Cards gently lift to signal awareness.                  */
-    .to(bg,  { scale: 1.012, filter: 'brightness(1.05) saturate(1.06)', duration: 0.90, ease: 'sine.inOut' }, 0.75)
-    .to([c1,c2,c3], { y: -7, duration: 0.75, ease: 'power1.inOut', stagger: 0.08 }, 0.95)
+  /* STEP 2: Cards gently lift */
+    .to([c1,c2,c3], { y: -7, duration: 0.75, ease: 'power1.inOut', stagger: 0.08 }, 1.10)
 
-  /* ── STEP 3: Lean Forward / Preparation (1.5 – 2.5s) ──────
-     Character pushes forward in Z-space (scale + rotateY).
-     Cards react with small tilt — anticipation micro-shake. */
-    .to(bg,  { scale: 1.030, rotateY: -1.5, duration: 0.85, ease: 'power2.inOut' }, 1.55)
-    .to(c1,  { y: -12, rotateX: -5, rotateY: -3, scale: 1.02, duration: 0.70, ease: 'power2.inOut' }, 1.70)
-    .to(c2,  { y: -10, rotateX: -4, rotateY: -2, scale: 1.02, duration: 0.70, ease: 'power2.inOut' }, 1.82)
-    .to(c3,  { y: -8,  rotateX: -3, rotateY: -2, scale: 1.02, duration: 0.70, ease: 'power2.inOut' }, 1.94)
+  /* STEP 3: Cards tilt in 3D — anticipation */
+    .to(c1, { y: -12, rotateX: -5, rotateY: -3, scale: 1.02, duration: 0.70, ease: 'power2.inOut' }, 1.80)
+    .to(c2, { y: -10, rotateX: -4, rotateY: -2, scale: 1.02, duration: 0.70, ease: 'power2.inOut' }, 1.92)
+    .to(c3, { y: -8,  rotateX: -3, rotateY: -2, scale: 1.02, duration: 0.70, ease: 'power2.inOut' }, 2.04)
 
-  /* ── STEP 4: Card Lift — MAIN ACTION (2.5 – 4.0s) ─────────
-     Character surges forward (depth pop). Cards dramatically
-     lift up, rotate in 3D — peak cinematic moment.          */
-    .to(bg,  { scale: 1.055, rotateY: -3.5, filter: 'brightness(1.08) saturate(1.10)', duration: 1.10, ease: 'expo.out' }, 2.45)
-    .to(c1,  { y: -56, rotateX: -12, rotateY: -8, scale: 1.08, z: 48, duration: 1.05, ease: 'expo.out' }, 2.55)
-    .to(c2,  { y: -46, rotateX: -10, rotateY: -6, scale: 1.07, z: 36, duration: 1.05, ease: 'expo.out' }, 2.72)
-    .to(c3,  { y: -36, rotateX: -8,  rotateY: -4, scale: 1.05, z: 24, duration: 1.05, ease: 'expo.out' }, 2.89)
+  /* STEP 4: Cards dramatically lift — peak cinematic moment */
+    .to(c1, { y: -56, rotateX: -12, rotateY: -8, scale: 1.08, z: 48, duration: 1.05, ease: 'expo.out' }, 2.65)
+    .to(c2, { y: -46, rotateX: -10, rotateY: -6, scale: 1.07, z: 36, duration: 1.05, ease: 'expo.out' }, 2.82)
+    .to(c3, { y: -36, rotateX: -8,  rotateY: -4, scale: 1.05, z: 24, duration: 1.05, ease: 'expo.out' }, 2.99)
 
-  /* ── STEP 5: Stack to Side (4.0 – 6.0s) ───────────────────
-     Cards drift outward as if placed by the character.
-     Character eases back slightly — weight transfer.        */
-    .to(bg,  { scale: 1.030, rotateY: -1.0, filter: 'brightness(1.05) saturate(1.06)', duration: 1.20, ease: 'power3.inOut' }, 4.10)
-    .to(c1,  { y: -20, x: -14, rotateX: -4, rotateY: -4, scale: 1.04, z: 20, duration: 1.10, ease: 'power3.out' }, 4.20)
-    .to(c2,  { y: -14, x: -10, rotateX: -3, rotateY: -3, scale: 1.03, z: 14, duration: 1.10, ease: 'power3.out' }, 4.38)
-    .to(c3,  { y: -8,  x: -6,  rotateX: -2, rotateY: -2, scale: 1.02, z: 8,  duration: 1.10, ease: 'power3.out' }, 4.56)
+  /* STEP 5: Cards drift to side */
+    .to(c1, { y: -20, x: -14, rotateX: -4, rotateY: -4, scale: 1.04, z: 20, duration: 1.10, ease: 'power3.out' }, 4.30)
+    .to(c2, { y: -14, x: -10, rotateX: -3, rotateY: -3, scale: 1.03, z: 14, duration: 1.10, ease: 'power3.out' }, 4.48)
+    .to(c3, { y: -8,  x: -6,  rotateX: -2, rotateY: -2, scale: 1.02, z: 8,  duration: 1.10, ease: 'power3.out' }, 4.66)
 
-  /* ── STEP 6: Final Settle (6.0 – 7.0s) ────────────────────
-     Character and cards return to neutral resting state.
-     Scene becomes ready for the breathing idle loop.        */
-    .to(bg,  { scale: 1.016, rotateY: 0, filter: 'brightness(1.03) saturate(1.04)', duration: 1.00, ease: 'power2.out' }, 6.00)
-    .to(c1,  { y: -7,  x: 0, rotateX: 0, rotateY: 0, z: 0, scale: 1, duration: 0.90, ease: 'power2.out' }, 6.05)
-    .to(c2,  { y: -5,  x: 0, rotateX: 0, rotateY: 0, z: 0, scale: 1, duration: 0.90, ease: 'power2.out' }, 6.15)
-    .to(c3,  { y: -3,  x: 0, rotateX: 0, rotateY: 0, z: 0, scale: 1, duration: 0.90, ease: 'power2.out' }, 6.25)
+  /* STEP 6: Final settle */
+    .to(c1, { y: -7, x: 0, rotateX: 0, rotateY: 0, z: 0, scale: 1, duration: 0.90, ease: 'power2.out' }, 6.05)
+    .to(c2, { y: -5, x: 0, rotateX: 0, rotateY: 0, z: 0, scale: 1, duration: 0.90, ease: 'power2.out' }, 6.15)
+    .to(c3, { y: -3, x: 0, rotateX: 0, rotateY: 0, z: 0, scale: 1, duration: 0.90, ease: 'power2.out' }, 6.25)
 
-  /* ── BREATHING IDLE LOOP ────────────────────────────────────
-     After the cinematic sequence: character gently breathes,
-     cards float independently at different phases.          */
+  /* Idle float loop */
     .call(function() {
-      gsap.to(bg, {
-        scale: 1.022, duration: 3.8,
-        ease: 'sine.inOut', yoyo: true, repeat: -1
-      });
       var floatParams = [
-        { dur: 2.6, dy: -9,  delay: 0.0 },
-        { dur: 2.9, dy: -7,  delay: 0.6 },
-        { dur: 3.2, dy: -5,  delay: 1.1 }
+        { dur: 2.6, dy: -9, delay: 0.0 },
+        { dur: 2.9, dy: -7, delay: 0.6 },
+        { dur: 3.2, dy: -5, delay: 1.1 }
       ];
       [c1, c2, c3].forEach(function(card, i) {
         var p = floatParams[i];
@@ -2363,10 +2367,301 @@ function lwStartBounce(){
       });
     });
 
-  /* Resize guard — skip animation entirely below 1024px */
   window.addEventListener('resize', function() {
     if (window.innerWidth < 1024) tl.pause();
   }, { passive: true });
+})();
+
+/* ════════════════════════════════════════════════════════════
+   HERO MORPH SCENE — Three.js particle sphere → solid fluid
+   Phase 1: floating orange/gold particle sphere
+   Phase 2: scroll-driven morph to solid organic shape
+   Phase 3: hero text fades, statement panel slides up
+════════════════════════════════════════════════════════════ */
+(function initHeroMorphScene() {
+  if (!window.THREE || !window.gsap) return;
+  var canvas = document.getElementById('hero-morph-canvas');
+  if (!canvas) return;
+
+  var isMobile = window.innerWidth < 768;
+  var PARTICLE_COUNT = isMobile ? 1600 : 3200;
+
+  /* ── Renderer ── */
+  var renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: !isMobile });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobile ? 1.5 : 2));
+  renderer.setSize(canvas.offsetWidth || window.innerWidth, canvas.offsetHeight || window.innerHeight);
+  renderer.setClearColor(0x060a14, 1);
+
+  /* ── Scene + Camera ── */
+  var scene  = new THREE.Scene();
+  var camera = new THREE.PerspectiveCamera(55, (canvas.offsetWidth || window.innerWidth) / (canvas.offsetHeight || window.innerHeight), 0.1, 100);
+  camera.position.z = 4.2;
+
+  /* ── Particle sphere — Fibonacci distribution ── */
+  var pGeo  = new THREE.BufferGeometry();
+  var posArr = new Float32Array(PARTICLE_COUNT * 3);
+  var colArr = new Float32Array(PARTICLE_COUNT * 3);
+  var phi   = Math.PI * (3 - Math.sqrt(5));
+
+  for (var i = 0; i < PARTICLE_COUNT; i++) {
+    var y      = 1 - (i / (PARTICLE_COUNT - 1)) * 2;
+    var r      = Math.sqrt(1 - y * y);
+    var theta  = phi * i;
+    var rad    = 1.28 + (Math.random() - 0.5) * 0.14;
+    posArr[i*3]   = Math.cos(theta) * r * rad;
+    posArr[i*3+1] = y * rad;
+    posArr[i*3+2] = Math.sin(theta) * r * rad;
+
+    /* Orange→amber→gold palette */
+    var t = Math.random();
+    if (t < 0.45) {
+      colArr[i*3]=0.980; colArr[i*3+1]=0.455; colArr[i*3+2]=0.086; /* #f97316 */
+    } else if (t < 0.78) {
+      colArr[i*3]=0.984; colArr[i*3+1]=0.749; colArr[i*3+2]=0.141; /* #fbbf24 */
+    } else {
+      colArr[i*3]=0.961; colArr[i*3+1]=0.620; colArr[i*3+2]=0.043; /* #f59e0b */
+    }
+  }
+
+  pGeo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
+  pGeo.setAttribute('color',    new THREE.BufferAttribute(colArr, 3));
+
+  var pMat = new THREE.PointsMaterial({
+    size: 0.038,
+    vertexColors: true,
+    blending: THREE.AdditiveBlending,
+    transparent: true,
+    opacity: 1,
+    depthWrite: false,
+    sizeAttenuation: true
+  });
+
+  var particles = new THREE.Points(pGeo, pMat);
+  scene.add(particles);
+
+  /* ── Solid morph sphere — IcosahedronGeometry + shader ── */
+  var detail = isMobile ? 3 : 4;
+  var sGeo   = new THREE.IcosahedronGeometry(1.28, detail);
+
+  var sMat = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime:     { value: 0 },
+      uProgress: { value: 0 }
+    },
+    vertexShader: [
+      'uniform float uTime;',
+      'uniform float uProgress;',
+      'varying vec3 vNormalView;',
+      'varying vec3 vViewPos;',
+      'varying float vNoise;',
+
+      'vec3 mod289v3(vec3 x){return x-floor(x*(1./289.))*289.;}',
+      'vec4 mod289v4(vec4 x){return x-floor(x*(1./289.))*289.;}',
+      'vec4 permute4(vec4 x){return mod289v4(((x*34.)+1.)*x);}',
+      'vec4 taylorInvSqrt4(vec4 r){return 1.79284291400159-0.85373472095314*r;}',
+      'float snoise(vec3 v){',
+      '  const vec2 C=vec2(1./6.,1./3.);',
+      '  const vec4 D=vec4(0.,.5,1.,2.);',
+      '  vec3 i=floor(v+dot(v,C.yyy));',
+      '  vec3 x0=v-i+dot(i,C.xxx);',
+      '  vec3 g=step(x0.yzx,x0.xyz);',
+      '  vec3 l=1.-g;',
+      '  vec3 i1=min(g.xyz,l.zxy);',
+      '  vec3 i2=max(g.xyz,l.zxy);',
+      '  vec3 x1=x0-i1+C.xxx;',
+      '  vec3 x2=x0-i2+C.yyy;',
+      '  vec3 x3=x0-D.yyy;',
+      '  i=mod289v3(i);',
+      '  vec4 p=permute4(permute4(permute4(i.z+vec4(0.,i1.z,i2.z,1.))+i.y+vec4(0.,i1.y,i2.y,1.))+i.x+vec4(0.,i1.x,i2.x,1.));',
+      '  float n_=.142857142857;',
+      '  vec3 ns=n_*D.wyz-D.xzx;',
+      '  vec4 j=p-49.*floor(p*ns.z*ns.z);',
+      '  vec4 x_=floor(j*ns.z);',
+      '  vec4 y_=floor(j-7.*x_);',
+      '  vec4 xs=x_*ns.x+ns.yyyy;',
+      '  vec4 ys=y_*ns.x+ns.yyyy;',
+      '  vec4 h=1.-abs(xs)-abs(ys);',
+      '  vec4 b0=vec4(xs.xy,ys.xy);',
+      '  vec4 b1=vec4(xs.zw,ys.zw);',
+      '  vec4 s0=floor(b0)*2.+1.;',
+      '  vec4 s1=floor(b1)*2.+1.;',
+      '  vec4 sh=-step(h,vec4(0.));',
+      '  vec4 a0=b0.xzyw+s0.xzyw*sh.xxyy;',
+      '  vec4 a1=b1.xzyw+s1.xzyw*sh.zzww;',
+      '  vec3 p0=vec3(a0.xy,h.x);',
+      '  vec3 p1=vec3(a0.zw,h.y);',
+      '  vec3 p2=vec3(a1.xy,h.z);',
+      '  vec3 p3=vec3(a1.zw,h.w);',
+      '  vec4 norm=taylorInvSqrt4(vec4(dot(p0,p0),dot(p1,p1),dot(p2,p2),dot(p3,p3)));',
+      '  p0*=norm.x;p1*=norm.y;p2*=norm.z;p3*=norm.w;',
+      '  vec4 m=max(.6-vec4(dot(x0,x0),dot(x1,x1),dot(x2,x2),dot(x3,x3)),0.);',
+      '  m=m*m;',
+      '  return 42.*dot(m*m,vec4(dot(p0,x0),dot(p1,x1),dot(p2,x2),dot(p3,x3)));',
+      '}',
+
+      'void main(){',
+      '  float noise=snoise(position*1.1+uTime*0.22);',
+      '  vNoise=noise;',
+      '  float disp=noise*0.26*uProgress;',
+      '  vec3 displaced=position+normal*disp;',
+      '  vec4 mvPos=modelViewMatrix*vec4(displaced,1.);',
+      '  vViewPos=-mvPos.xyz;',
+      '  vNormalView=normalize(normalMatrix*normal);',
+      '  gl_Position=projectionMatrix*mvPos;',
+      '}'
+    ].join('\n'),
+
+    fragmentShader: [
+      'uniform float uTime;',
+      'uniform float uProgress;',
+      'varying vec3 vNormalView;',
+      'varying vec3 vViewPos;',
+      'varying float vNoise;',
+
+      'void main(){',
+      '  vec3 vd=normalize(vViewPos);',
+      '  vec3 n=normalize(vNormalView);',
+      '  float fresnel=pow(1.-clamp(dot(vd,n),0.,1.),3.);',
+
+      '  /* Y-based orange→amber gradient */',
+      '  float ty=clamp(vNormalView.y*.5+.5,0.,1.);',
+      '  vec3 cA=vec3(.980,.455,.086);', /* deep orange */
+      '  vec3 cB=vec3(.984,.749,.141);', /* amber */
+      '  vec3 base=mix(cA,cB,ty);',
+      '  base+=vNoise*0.07*vec3(1.,.55,0.);',
+
+      '  /* Diffuse lighting */',
+      '  vec3 ldir=normalize(vec3(.4,1.,.6));',
+      '  float diff=clamp(dot(n,ldir),0.,1.);',
+      '  vec3 col=base*(0.38+diff*0.72);',
+
+      '  /* Specular */',
+      '  vec3 h2=normalize(ldir+vd);',
+      '  float spec=pow(clamp(dot(n,h2),0.,1.),40.);',
+      '  col+=spec*0.55*vec3(1.,.82,.38);',
+
+      '  /* Rim glow */',
+      '  col=mix(col,vec3(1.,.52,.1),fresnel*0.75);',
+
+      '  float alpha=uProgress*(0.88+fresnel*0.12);',
+      '  gl_FragColor=vec4(col,alpha);',
+      '}'
+    ].join('\n'),
+
+    transparent: true,
+    side: THREE.FrontSide
+  });
+
+  var solidMesh = new THREE.Mesh(sGeo, sMat);
+  solidMesh.visible = false;
+  scene.add(solidMesh);
+
+  /* ── Position sphere — right-of-center on desktop ── */
+  var sphereOffsetX = isMobile ? 0 : 1.0;
+  particles.position.x = sphereOffsetX;
+  solidMesh.position.x = sphereOffsetX;
+
+  /* ── Cinematic lighting ── */
+  scene.add(new THREE.AmbientLight(0xffffff, 0.30));
+  var pl1 = new THREE.PointLight(0xf97316, 4, 9);
+  pl1.position.set(2.5, 2, 2);
+  scene.add(pl1);
+  var pl2 = new THREE.PointLight(0xfbbf24, 2, 7);
+  pl2.position.set(-2, -1.5, 1.5);
+  scene.add(pl2);
+
+  /* ── GSAP ScrollTrigger scroll-driven morph (desktop only) ── */
+  var heroLeft   = document.querySelector('.hero-left');
+  var stmtPanel  = document.getElementById('hero-stmt-panel');
+  var heroSection = document.getElementById('heroSection');
+  var morphProg  = 0;
+
+  if (window.ScrollTrigger && !isMobile && heroSection) {
+    ScrollTrigger.create({
+      trigger: heroSection,
+      start: 'top top',
+      end: '+=110%',
+      pin: true,
+      scrub: 1.8,
+      onUpdate: function(self) {
+        var p = self.progress;
+        morphProg = p;
+
+        if (p < 0.55) {
+          /* Phase 1→2: particles fade, solid morphs in */
+          var ph = p / 0.55;
+          sMat.uniforms.uProgress.value = ph;
+          solidMesh.visible = ph > 0.04;
+          pMat.opacity = Math.max(0, 1 - ph * 1.4);
+        } else {
+          /* Phase 2→3: solid complete, text crossfade */
+          var ph2 = (p - 0.55) / 0.45;
+          sMat.uniforms.uProgress.value = 1;
+          pMat.opacity = 0;
+          solidMesh.visible = true;
+          if (heroLeft) {
+            heroLeft.style.opacity = Math.max(0, 1 - ph2 * 1.8);
+            heroLeft.style.transform = 'translateY(' + (-ph2 * 55) + 'px)';
+          }
+          if (stmtPanel) {
+            stmtPanel.style.opacity = Math.min(1, ph2 * 1.6);
+            stmtPanel.style.transform = 'translateY(' + (70 * (1 - ph2)) + 'px)';
+          }
+        }
+
+        /* Reset heroLeft when scrolling back */
+        if (p < 0.55 && heroLeft) {
+          heroLeft.style.opacity = '';
+          heroLeft.style.transform = '';
+        }
+        if (p < 0.55 && stmtPanel) {
+          stmtPanel.style.opacity = '0';
+          stmtPanel.style.transform = '';
+        }
+      }
+    });
+  }
+
+  /* ── Animation loop ── */
+  var clock = new THREE.Clock();
+  var loopActive = false;
+
+  function morphLoop() {
+    loopActive = true;
+    requestAnimationFrame(function tick() {
+      if (document.hidden) { loopActive = false; return; }
+      requestAnimationFrame(tick);
+      var t = clock.getElapsedTime();
+      sMat.uniforms.uTime.value = t;
+
+      particles.rotation.y = t * 0.16;
+      particles.rotation.x = Math.sin(t * 0.11) * 0.07;
+      solidMesh.rotation.y = t * 0.13;
+      solidMesh.rotation.x = Math.sin(t * 0.08) * 0.055;
+
+      pl1.position.x = Math.cos(t * 0.45) * 2.8;
+      pl1.position.z = Math.sin(t * 0.45) * 2.8;
+
+      renderer.render(scene, camera);
+    });
+  }
+  morphLoop();
+
+  document.addEventListener('visibilitychange', function() {
+    if (!document.hidden && !loopActive) morphLoop();
+  });
+
+  /* ── Resize ── */
+  function onResize() {
+    var wrap = document.getElementById('hero-morph-wrap');
+    if (!wrap) return;
+    var w = wrap.clientWidth  || window.innerWidth;
+    var h = wrap.clientHeight || window.innerHeight;
+    renderer.setSize(w, h);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+  window.addEventListener('resize', onResize, { passive: true });
 })();
 
 /* ════════════════════════════════════════════════════════════
