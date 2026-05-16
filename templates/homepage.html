@@ -514,6 +514,7 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
   align-items:flex-start;
   justify-content:center;
   padding:80px 0 60px 6vw;
+  will-change:opacity,transform;
 }
 
 .hero-eyebrow{animation:fadeUp .8s ease both;position:relative;z-index:2}
@@ -687,10 +688,72 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 .statement-wrap{max-width:860px;margin:0 auto}
 .statement-l1{font-size:clamp(1.15rem,2.5vw,1.72rem);font-weight:700;line-height:1.65;color:var(--text);margin:0 0 28px}
 .statement-l2{font-size:clamp(0.92rem,1.7vw,1.12rem);font-weight:400;line-height:1.75;color:rgba(180,200,225,0.72);margin:0}
-/* Character-by-character animation spans */
-.sc{display:inline-block;opacity:0;transform:translateY(10px);filter:blur(4px);will-change:opacity,transform,filter}
+/* Character animation spans — GSAP sets initial opacity:0 via gsap.set(); default visible */
+.sc{display:inline-block;will-change:opacity,transform,filter}
 .stmt-hl{background:linear-gradient(90deg,#f59e0b,#fbbf24 60%,#f97316);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;filter:drop-shadow(0 0 10px rgba(245,158,11,0.40))}
 .stmt-hl2{background:linear-gradient(90deg,#22d3ee,#38bdf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+
+/* ── MORPH SIDE PANEL — appears beside sphere during scroll morph ── */
+#morph-side-panel{
+  position:absolute;
+  z-index:3;
+  left:0;top:0;bottom:0;
+  width:50%;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  padding:80px 40px 60px 6vw;
+  opacity:0;
+  pointer-events:none;
+  will-change:opacity,transform;
+}
+.msp-eyebrow{
+  font-family:'DM Sans',sans-serif;
+  font-size:10px;font-weight:700;
+  letter-spacing:3.5px;text-transform:uppercase;
+  color:#f59e0b;margin-bottom:20px;
+  display:flex;align-items:center;gap:8px;
+}
+.msp-eyebrow::before{
+  content:'';display:inline-block;
+  width:24px;height:1.5px;background:#f59e0b;flex-shrink:0;
+}
+.msp-l1{
+  font-family:'Outfit',sans-serif;
+  font-size:clamp(1.25rem,2.5vw,1.85rem);
+  font-weight:800;line-height:1.35;
+  color:#fff;margin:0 0 20px;
+}
+.msp-l1 .hl{
+  background:linear-gradient(135deg,#f59e0b 0%,#fbbf24 45%,#f97316 100%);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+}
+.msp-l2{
+  font-family:'DM Sans',sans-serif;
+  font-size:clamp(0.88rem,1.45vw,1.05rem);
+  font-weight:400;line-height:1.75;
+  color:rgba(180,200,225,0.75);
+  max-width:440px;margin:0;
+}
+@media(max-width:1024px){
+  #morph-side-panel{
+    width:100%;
+    left:0;top:auto;bottom:0;
+    height:auto;
+    justify-content:flex-end;
+    align-items:center;
+    padding:0 20px 60px;
+    text-align:center;
+    background:linear-gradient(to top,rgba(6,10,20,0.88) 0%,rgba(6,10,20,0.55) 55%,transparent 100%);
+  }
+  .msp-eyebrow{justify-content:center}
+  .msp-l1{font-size:clamp(1.1rem,4vw,1.5rem)}
+  .msp-l2{max-width:88vw;font-size:clamp(0.85rem,3.2vw,1rem)}
+}
+@media(max-width:480px){
+  #morph-side-panel{padding:0 16px 44px}
+  .msp-l1{font-size:clamp(1rem,5vw,1.3rem)}
+}
 </style>
 </head>
 <body>
@@ -848,10 +911,11 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
   <!-- GRADIENT OVERLAY — text contrast on left -->
   <div class="hero-overlay" aria-hidden="true"></div>
 
-  <!-- STATEMENT PANEL — slides up during scroll Phase 3 -->
-  <div id="hero-stmt-panel" aria-hidden="true">
-    <div class="hsp-l1">Trade at the <span>Institutional Level.</span></div>
-    <div class="hsp-l2">Real-time SMC intelligence across 400+ pairs — Order Blocks, Fair Value Gaps, and Fibonacci zones, live every second.</div>
+  <!-- MORPH SIDE PANEL — fades in beside sphere during scroll morph -->
+  <div id="morph-side-panel">
+    <div class="msp-eyebrow">SMC Intelligence</div>
+    <p class="msp-l1">We don't provide signals —<br>we provide <span class="hl">ready-made setups</span><br>across <span class="hl">1000+ pairs.</span></p>
+    <p class="msp-l2">Not for beginners — built for traders already familiar with SMC methods like Order Blocks, Fair Value Gaps, Fibonacci, and Breaker Blocks.</p>
   </div>
 
   <!-- TEXT — LEFT OVERLAY -->
@@ -2531,25 +2595,48 @@ function lwStartBounce(){
   pl2.position.set(-2, -1.5, 1.5);
   scene.add(pl2);
 
-  /* ── GSAP ScrollTrigger — particle→solid morph (desktop + mobile) ── */
-  var heroSection = document.getElementById('heroSection');
+  /* ── GSAP ScrollTrigger — 3-phase cinematic scroll ── */
+  var heroSection  = document.getElementById('heroSection');
+  var heroLeft     = document.querySelector('.hero-left');
+  var sidePanel    = document.getElementById('morph-side-panel');
 
   if (window.ScrollTrigger && heroSection) {
-    /* Mobile: no pin (natural scroll), shorter range.
-       Desktop: pin hero, longer scrub distance.           */
     ScrollTrigger.create({
       trigger: heroSection,
       start: 'top top',
-      end: isMobile ? '+=70%' : '+=110%',
+      /* Desktop pinned; mobile natural scroll with shorter range */
+      end: isMobile ? '+=80%' : '+=130%',
       pin: !isMobile,
-      scrub: isMobile ? 1.2 : 1.8,
+      scrub: isMobile ? 1.0 : 1.6,
       invalidateOnRefresh: true,
       onUpdate: function(self) {
         var p = self.progress;
-        /* Full range 0→1 drives particle→solid morph */
-        sMat.uniforms.uProgress.value = p;
-        solidMesh.visible = p > 0.02;
-        pMat.opacity = Math.max(0, 1 - p * 1.6);
+
+        /* ── Phase 1 (0→0.35): hero-left fades + slides up ── */
+        var p1 = Math.min(1, p / 0.35);
+        if (heroLeft) {
+          heroLeft.style.opacity = (1 - p1).toFixed(3);
+          heroLeft.style.transform = 'translateY(' + (-p1 * 28).toFixed(1) + 'px)';
+        }
+
+        /* ── Phase 2 (0.10→0.85): sphere morphs ── */
+        var p2 = Math.max(0, Math.min(1, (p - 0.10) / 0.75));
+        sMat.uniforms.uProgress.value = p2;
+        solidMesh.visible = p2 > 0.02;
+        pMat.opacity = Math.max(0, 1 - p2 * 1.55);
+
+        /* ── Phase 3 (0.30→0.72): side panel fades in from below ── */
+        var p3 = Math.max(0, Math.min(1, (p - 0.30) / 0.42));
+        if (sidePanel) {
+          sidePanel.style.opacity = p3.toFixed(3);
+          sidePanel.style.transform = 'translateY(' + ((1 - p3) * 28).toFixed(1) + 'px)';
+        }
+
+        /* Reset on scroll back to top */
+        if (p < 0.05) {
+          if (heroLeft)  { heroLeft.style.opacity = ''; heroLeft.style.transform = ''; }
+          if (sidePanel) { sidePanel.style.opacity = '0'; sidePanel.style.transform = ''; }
+        }
       }
     });
   }
@@ -2609,8 +2696,7 @@ function lwStartBounce(){
   var l2 = sec.querySelector('.statement-l2');
   if (!l1 || !l2) return;
 
-  /* Split a paragraph's text nodes into individual .sc character spans
-     while preserving existing child element wrappers (e.g. .stmt-hl)   */
+  /* Walk DOM, wrap each character in .sc span (preserves .stmt-hl wrappers) */
   function splitToChars(el) {
     function processNode(node) {
       if (node.nodeType === 3) {
@@ -2619,7 +2705,7 @@ function lwStartBounce(){
         chars.forEach(function(c) {
           var s = document.createElement('span');
           s.className = 'sc';
-          s.textContent = c === ' ' ? ' ' : c;
+          s.textContent = c === ' ' ? ' ' : c;
           parent.insertBefore(s, node);
         });
         parent.removeChild(node);
@@ -2633,39 +2719,47 @@ function lwStartBounce(){
 
   var chars1 = splitToChars(l1);
   var chars2 = splitToChars(l2);
-  var fired  = false;
 
+  /* Safety: always make text visible after 5s even if animation never fires */
+  var safetyTimer = setTimeout(function makeVisible() {
+    gsap.set([chars1, chars2], { opacity: 1, y: 0, clearProps: 'filter,transform' });
+  }, 5000);
+
+  var fired = false;
   function runLetterAnimation() {
     if (fired) return;
     fired = true;
+    clearTimeout(safetyTimer);
+
+    /* GSAP sets initial hidden state (CSS default is visible — safe fallback) */
+    gsap.set(chars1, { opacity: 0, y: 10, filter: 'blur(4px)' });
+    gsap.set(chars2, { opacity: 0, y: 10, filter: 'blur(4px)' });
 
     gsap.timeline()
       .to(chars1, {
-        opacity: 1,
-        y: 0,
-        filter: 'blur(0px)',
-        duration: 0.5,
-        stagger: { each: 0.022, ease: 'power2.out' },
-        ease: 'power3.out'
+        opacity: 1, y: 0, filter: 'blur(0px)',
+        duration: 0.48,
+        stagger: { each: 0.020, ease: 'power2.out' },
+        ease: 'power3.out',
+        clearProps: 'filter'
       })
       .to(chars2, {
-        opacity: 1,
-        y: 0,
-        filter: 'blur(0px)',
-        duration: 0.45,
-        stagger: { each: 0.018, ease: 'power2.out' },
-        ease: 'power3.out'
-      }, '-=0.25');
+        opacity: 1, y: 0, filter: 'blur(0px)',
+        duration: 0.42,
+        stagger: { each: 0.016, ease: 'power2.out' },
+        ease: 'power3.out',
+        clearProps: 'filter'
+      }, '-=0.3');
   }
 
-  /* Trigger on viewport entry */
+  /* Lower threshold + negative rootMargin = fires earlier on mobile */
   if (window.IntersectionObserver) {
     var obs = new IntersectionObserver(function(entries) {
       if (entries[0].isIntersecting) { runLetterAnimation(); obs.disconnect(); }
-    }, { threshold: 0.22 });
+    }, { threshold: 0.12, rootMargin: '0px 0px -30px 0px' });
     obs.observe(sec);
   } else {
-    runLetterAnimation();
+    setTimeout(runLetterAnimation, 200);
   }
 })();
 
