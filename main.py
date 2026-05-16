@@ -2546,7 +2546,7 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
                     "ob_top": ob_top, "ob_bottom": ob_bottom, "ob_source_bar": ob_source,
                 })
                 if ob_top > ob_bottom:
-                    obs.append({
+                    _new_payload = {
                         "top": ob_top,
                         "bottom": ob_bottom,
                         "avg": ob_avg,
@@ -2558,7 +2558,13 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
                         "type": "bullish",
                         "candleDir": candle_dir,
                         "formationRange": max(ob_top - ob_bottom, 1e-10),
-                    })
+                    }
+                    obs.append(_new_payload)
+                    # Pine line 1282-1296: overlap deletion (mode="Previous",
+                    # rmP=0 → drop the newly-appended OB)
+                    _prev = next((x for x in reversed(obs[:-1]) if x["type"] == "bullish"), None)
+                    if _prev is not None and _new_payload["bottom"] < _prev["top"]:
+                        obs.pop()
 
             upP.clear()
             upB.clear()
@@ -2619,7 +2625,7 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
                     "ob_top": ob_top, "ob_bottom": ob_bottom, "ob_source_bar": ob_source,
                 })
                 if ob_top > ob_bottom:
-                    obs.append({
+                    _new_payload = {
                         "top": ob_top,
                         "bottom": ob_bottom,
                         "avg": ob_avg,
@@ -2631,41 +2637,50 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
                         "type": "bearish",
                         "candleDir": candle_dir,
                         "formationRange": max(ob_top - ob_bottom, 1e-10),
-                    })
+                    }
+                    obs.append(_new_payload)
+                    # Pine line 1282-1296: overlap deletion (mode="Previous",
+                    # rmP=0 → drop the newly-appended OB)
+                    _prev = next((x for x in reversed(obs[:-1]) if x["type"] == "bearish"), None)
+                    if _prev is not None and _new_payload["top"] > _prev["bottom"]:
+                        obs.pop()
 
             dnP.clear()
             dnB.clear()
+
+        # ── Pine line 1298-1321: per-bar mitigation (barstate.isconfirmed) ──
+        # ob_mitigation defaults to "Absolute": bull→ob.bottom, bear→ob.top
+        # show_breakers=False → mitigated OBs are REMOVED from the array.
+        # This must run EVERY bar, not only on BOS bars, so that the array
+        # is clean when the next bar's overlap check looks up the
+        # "previous" same-direction OB.
+        if obs:
+            _close_i = c[i]
+            _kept = []
+            for _ob in obs:
+                if ob_mitigation == "Middle":
+                    _trigger = _ob["avg"]
+                else:  # Absolute
+                    _trigger = _ob["bottom"] if _ob["type"] == "bullish" else _ob["top"]
+                _mit = (_ob["type"] == "bullish" and _close_i < _trigger) or \
+                       (_ob["type"] == "bearish" and _close_i > _trigger)
+                if not _mit:
+                    _kept.append(_ob)
+            if len(_kept) != len(obs):
+                obs[:] = _kept
 
         # End-of-bar snapshot — next iteration's "[1]" (previous-bar) lookup
         prev_upP_first = upP[0] if upP else None
         prev_dnP_first = dnP[0] if dnP else None
 
-    # ── Mitigate / invalidate OBs ──
+    # ── Surviving OBs (mitigation already applied per-bar above) ──
+    # Annotate each surviving OB with touch metadata. No mitigation
+    # work here — Pine line 1298-1321 was already replicated inside
+    # the bar loop, so obs only contains OBs that survived.
     active = []
     max_vol = max(v[-100:]) if len(v) >= 100 else max(v) if v else 1.0
 
     for ob in obs:
-        mitigated = False
-        for j in range(ob["bar"] + 1, n - 1):  # n-1: exclude current open candle (Pine barstate.isconfirmed)
-            if ob_mitigation == "Middle":
-                trigger = ob["avg"]
-            else:  # Absolute
-                trigger = ob["bottom"] if ob["type"] == "bullish" else ob["top"]
-
-            if ob["type"] == "bullish" and c[j] < trigger:
-                mitigated = True
-                break
-            if ob["type"] == "bearish" and c[j] > trigger:
-                mitigated = True
-                break
-
-        if mitigated:
-            continue
-
-        # ── Phase 1A: touch metadata (parity-preserving) ──
-        # Mitigation has already been resolved above; surviving OBs simply
-        # count touches across [bar+1, n-1). mitigationBar is always None
-        # for OBs returned by detect_obs().
         _tm = _compute_ob_touch_meta(
             ob, h, l, c, n,
             ob_mitigation=ob_mitigation,
@@ -2680,7 +2695,6 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         ob["isVirgin"]        = _tm["isVirgin"]
         ob["currentlyInside"] = _tm["currentlyInside"]
         ob["mitigationBar"]   = None
-
         active.append(ob)
 
     return (active if max_ob is None else active[-max_ob:]), _trace
@@ -2732,12 +2746,18 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
                 buy_v     = total_v * 0.6
                 sell_v    = total_v - buy_v
                 if ob_top > ob_bottom:
-                    obs.append({
+                    _new_payload = {
                         "top": ob_top, "bottom": ob_bottom, "avg": ob_avg,
                         "bar": min_idx, "sourceBar": ob_source,
                         "volume": total_v, "buyVolume": buy_v, "sellVolume": sell_v,
                         "type": "bullish",
-                    })
+                    }
+                    obs.append(_new_payload)
+                    # Pine line 1282-1296: overlap deletion (mode="Previous",
+                    # rmP=0 → drop the newly-appended OB)
+                    _prev = next((x for x in reversed(obs[:-1]) if x["type"] == "bullish"), None)
+                    if _prev is not None and _new_payload["bottom"] < _prev["top"]:
+                        obs.pop()
             upP.clear(); upB.clear()
 
         # Bearish OB — same as detect_obs
@@ -2760,13 +2780,36 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
                 buy_v     = total_v * 0.4
                 sell_v    = total_v - buy_v
                 if ob_top > ob_bottom:
-                    obs.append({
+                    _new_payload = {
                         "top": ob_top, "bottom": ob_bottom, "avg": ob_avg,
                         "bar": max_idx, "sourceBar": ob_source,
                         "volume": total_v, "buyVolume": buy_v, "sellVolume": sell_v,
                         "type": "bearish",
-                    })
+                    }
+                    obs.append(_new_payload)
+                    # Pine line 1282-1296: overlap deletion (mode="Previous",
+                    # rmP=0 → drop the newly-appended OB)
+                    _prev = next((x for x in reversed(obs[:-1]) if x["type"] == "bearish"), None)
+                    if _prev is not None and _new_payload["top"] > _prev["bottom"]:
+                        obs.pop()
             dnP.clear(); dnB.clear()
+
+        # ── Pine line 1298-1321: per-bar mitigation (barstate.isconfirmed) ──
+        # detect_obs_all uses Absolute mitigation (bull→ob.bottom, bear→ob.top),
+        # matching the touch-meta pass below. Pine deletes mitigated OBs from
+        # the array each bar; replicate that here so the next bar's overlap
+        # check looks up the correct "previous" same-direction OB.
+        if obs:
+            _close_i = c[i]
+            _kept = []
+            for _ob in obs:
+                _trigger = _ob["bottom"] if _ob["type"] == "bullish" else _ob["top"]
+                _mit = (_ob["type"] == "bullish" and _close_i < _trigger) or \
+                       (_ob["type"] == "bearish" and _close_i > _trigger)
+                if not _mit:
+                    _kept.append(_ob)
+            if len(_kept) != len(obs):
+                obs[:] = _kept
 
         # End-of-bar snapshot — next iteration's "[1]" (previous-bar) lookup
         prev_upP_first = upP[0] if upP else None
