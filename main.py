@@ -2440,9 +2440,19 @@ def _compute_ob_touch_meta(ob, h, l, c, n, ob_mitigation="Absolute",
     }
 
 
-def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", ob_mitigation="Absolute"):
+def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", ob_mitigation="Absolute",
+               mitigation_closed_only=False, overlap_effective_zone=False):
     """
     Order Block detection — audited line-by-line against Pine Script drawVOB().
+
+    Debug-only parameters (defaults preserve production behavior — DO NOT pass
+    these from the screener / analyze_pair path):
+      mitigation_closed_only: when True, per-bar mitigation skips the last
+        (possibly still-open) candle, i.e. mitigation is only evaluated for
+        bars i <= n-2. OB creation still scans the full candle stream.
+      overlap_effective_zone: when True, the creation-time overlap-deletion
+        compares using the effective/displayed zone (extreme side collapsed to
+        avg) instead of the raw hidden extreme.
 
     Pine search window:
       search_start = pivot_bar + 1 (Pine loc = hN/lN.first() = absolute pivot bar).
@@ -2563,8 +2573,10 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
                     # Pine line 1282-1296: overlap deletion (mode="Previous",
                     # rmP=0 → drop the newly-appended OB)
                     _prev = next((x for x in reversed(obs[:-1]) if x["type"] == "bullish"), None)
-                    if _prev is not None and _new_payload["bottom"] < _prev["top"]:
-                        obs.pop()
+                    if _prev is not None:
+                        _new_lo = _new_payload["avg"] if overlap_effective_zone else _new_payload["bottom"]
+                        if _new_lo < _prev["top"]:
+                            obs.pop()
 
             upP.clear()
             upB.clear()
@@ -2642,8 +2654,10 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
                     # Pine line 1282-1296: overlap deletion (mode="Previous",
                     # rmP=0 → drop the newly-appended OB)
                     _prev = next((x for x in reversed(obs[:-1]) if x["type"] == "bearish"), None)
-                    if _prev is not None and _new_payload["top"] > _prev["bottom"]:
-                        obs.pop()
+                    if _prev is not None:
+                        _new_hi = _new_payload["avg"] if overlap_effective_zone else _new_payload["top"]
+                        if _new_hi > _prev["bottom"]:
+                            obs.pop()
 
             dnP.clear()
             dnB.clear()
@@ -2654,7 +2668,9 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         # This must run EVERY bar, not only on BOS bars, so that the array
         # is clean when the next bar's overlap check looks up the
         # "previous" same-direction OB.
-        if obs:
+        # mitigation_closed_only (debug): skip the last (possibly still-open)
+        # candle so mitigation is only evaluated for bars i <= n-2.
+        if obs and (not mitigation_closed_only or i < n - 1):
             _close_i = c[i]
             _kept = []
             for _ob in obs:
@@ -3843,7 +3859,8 @@ _TV_OB_PARITY_SETTINGS: Dict[str, Any] = {
 }
 
 
-def _tv_visible_pool(obs_by_dir: List[Dict[str, Any]], max_ob: int = 5) -> List[Dict[str, Any]]:
+def _tv_visible_pool(obs_by_dir: List[Dict[str, Any]], max_ob: int = 5,
+                     overlap_effective_zone: bool = False) -> List[Dict[str, Any]]:
     """
     Build the Pine-style visible OB pool for a single direction.
 
@@ -3856,6 +3873,10 @@ def _tv_visible_pool(obs_by_dir: List[Dict[str, Any]], max_ob: int = 5) -> List[
 
     obs_by_dir: all active OBs of ONE direction, oldest-first (detect_obs insertion order).
     Returns the final visible subset, oldest-first, length ≤ max_ob.
+
+    overlap_effective_zone (debug-only, default False preserves production):
+      when True, the overlap test uses the effective/displayed zone (the
+      extreme side collapsed to avg) instead of the raw hidden extreme.
     """
     input_count = len(obs_by_dir)
 
@@ -3866,9 +3887,11 @@ def _tv_visible_pool(obs_by_dir: List[Dict[str, Any]], max_ob: int = 5) -> List[
         if accepted:
             last = accepted[-1]
             if ob["type"] == "bullish":
-                overlaps = ob["bottom"] < last["top"]
+                _lo = ob.get("avg", ob["bottom"]) if overlap_effective_zone else ob["bottom"]
+                overlaps = _lo < last["top"]
             else:
-                overlaps = ob["top"] > last["bottom"]
+                _hi = ob.get("avg", ob["top"]) if overlap_effective_zone else ob["top"]
+                overlaps = _hi > last["bottom"]
         else:
             overlaps = False
         if not overlaps:
