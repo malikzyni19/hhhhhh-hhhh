@@ -551,22 +551,15 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
     min-height:100svh;
     min-height:100dvh;
   }
-  /* Mobile overlay — bottom-up fade for text contrast */
+  /* Mobile overlay — dark only at very bottom for text; center clear for sphere */
   .hero-overlay{
-    background:
-      radial-gradient(ellipse at 50% 60%,
-        rgba(249,115,22,0.18) 0%,
-        rgba(249,115,22,0.06) 30%,
-        transparent 60%
-      ),
-      linear-gradient(
-        to top,
-        rgba(6,10,20,0.96) 0%,
-        rgba(6,10,20,0.72) 32%,
-        rgba(6,10,20,0.28) 62%,
-        rgba(6,10,20,0.06) 84%,
-        transparent 100%
-      );
+    background:linear-gradient(
+      to top,
+      rgba(6,10,20,0.97) 0%,
+      rgba(6,10,20,0.75) 20%,
+      rgba(6,10,20,0.22) 42%,
+      transparent 62%
+    );
   }
   .hero-left{
     max-width:100%;
@@ -742,13 +735,14 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
     height:auto;
     justify-content:flex-end;
     align-items:center;
-    padding:0 20px 60px;
+    padding:0 20px 52px;
     text-align:center;
-    background:linear-gradient(to top,rgba(6,10,20,0.88) 0%,rgba(6,10,20,0.55) 55%,transparent 100%);
+    /* Dark gradient only at bottom — sphere stays visible above */
+    background:linear-gradient(to top,rgba(6,10,20,0.96) 0%,rgba(6,10,20,0.78) 38%,transparent 68%);
   }
   .msp-eyebrow{justify-content:center}
-  .msp-l1{font-size:clamp(1.1rem,4vw,1.5rem)}
-  .msp-l2{max-width:88vw;font-size:clamp(0.85rem,3.2vw,1rem)}
+  .msp-l1{font-size:clamp(1rem,4.2vw,1.45rem);margin-bottom:12px}
+  .msp-l2{max-width:88vw;font-size:clamp(0.82rem,3.2vw,0.98rem)}
 }
 @media(max-width:480px){
   #morph-side-panel{padding:0 16px 44px}
@@ -977,14 +971,6 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
   </div>
 
 </section>
-
-<!-- STATEMENT -->
-<div class="section" id="statement">
-  <div class="statement-wrap">
-    <p class="statement-l1">We don't provide any signals — we provide <span class="stmt-hl">ready-made setups</span> across <span class="stmt-hl">1000+ pairs</span>, just one click away.</p>
-    <p class="statement-l2">This is not for beginners — this is for traders already familiar with <span class="stmt-hl2">SMC methods</span> like Order Blocks, Fair Value Gaps, Fibonacci, and Breaker Blocks.</p>
-  </div>
-</div>
 
 <div class="divider"></div>
 
@@ -2419,8 +2405,10 @@ function lwStartBounce(){
 
   /* ── Scene + Camera ── */
   var scene  = new THREE.Scene();
+  /* Mobile: pull camera back for better sphere-in-viewport fit */
+  var camZ   = isMobile ? 5.2 : 4.2;
   var camera = new THREE.PerspectiveCamera(55, (canvas.offsetWidth || window.innerWidth) / (canvas.offsetHeight || window.innerHeight), 0.1, 100);
-  camera.position.z = 4.2;
+  camera.position.z = camZ;
 
   /* ── Particle sphere — Fibonacci distribution ── */
   var pGeo  = new THREE.BufferGeometry();
@@ -2581,10 +2569,19 @@ function lwStartBounce(){
   solidMesh.visible = false;
   scene.add(solidMesh);
 
-  /* ── Position sphere — right-of-center on desktop ── */
+  /* ── Position sphere — right on desktop, centered+up on mobile ── */
   var sphereOffsetX = isMobile ? 0 : 1.0;
-  particles.position.x = sphereOffsetX;
-  solidMesh.position.x = sphereOffsetX;
+  var sphereOffsetY = isMobile ? 0.32 : 0;   /* push sphere up on mobile so text panel doesn't cover it */
+  particles.position.set(sphereOffsetX, sphereOffsetY, 0);
+  solidMesh.position.set(sphereOffsetX, sphereOffsetY, 0);
+
+  /* Scale sphere to fit viewport — portrait mobile clips if full size */
+  var vw = window.innerWidth;
+  var mobileScale = vw < 480 ? 0.66 : (vw < 768 ? 0.80 : 1.0);
+  if (mobileScale < 1) {
+    particles.scale.setScalar(mobileScale);
+    solidMesh.scale.setScalar(mobileScale);
+  }
 
   /* ── Cinematic lighting ── */
   scene.add(new THREE.AmbientLight(0xffffff, 0.30));
@@ -2670,7 +2667,7 @@ function lwStartBounce(){
     if (!document.hidden && !loopActive) morphLoop();
   });
 
-  /* ── Resize ── */
+  /* ── Resize — recalculate sphere scale for new viewport ── */
   function onResize() {
     var wrap = document.getElementById('hero-morph-wrap');
     if (!wrap) return;
@@ -2679,90 +2676,16 @@ function lwStartBounce(){
     renderer.setSize(w, h);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
+    /* Re-apply mobile scale when orientation changes */
+    var sc = w < 480 ? 0.66 : (w < 768 ? 0.80 : 1.0);
+    particles.scale.setScalar(sc);
+    solidMesh.scale.setScalar(sc);
+    var offsetY = w < 768 ? 0.32 : 0;
+    particles.position.y = offsetY;
+    solidMesh.position.y = offsetY;
   }
   window.addEventListener('resize', onResize, { passive: true });
 })();
-
-/* ════════════════════════════════════════════════════════════
-   STATEMENT — Letter-by-letter cinematic character reveal
-   Triggered when section enters viewport (IntersectionObserver)
-   GSAP stagger: opacity + translateY + blur per character
-════════════════════════════════════════════════════════════ */
-(function initStatementLetters() {
-  var sec = document.getElementById('statement');
-  if (!sec || !window.gsap) return;
-
-  var l1 = sec.querySelector('.statement-l1');
-  var l2 = sec.querySelector('.statement-l2');
-  if (!l1 || !l2) return;
-
-  /* Walk DOM, wrap each character in .sc span (preserves .stmt-hl wrappers) */
-  function splitToChars(el) {
-    function processNode(node) {
-      if (node.nodeType === 3) {
-        var chars = node.textContent.split('');
-        var parent = node.parentNode;
-        chars.forEach(function(c) {
-          var s = document.createElement('span');
-          s.className = 'sc';
-          s.textContent = c === ' ' ? ' ' : c;
-          parent.insertBefore(s, node);
-        });
-        parent.removeChild(node);
-      } else if (node.nodeType === 1) {
-        Array.from(node.childNodes).forEach(processNode);
-      }
-    }
-    Array.from(el.childNodes).forEach(processNode);
-    return el.querySelectorAll('.sc');
-  }
-
-  var chars1 = splitToChars(l1);
-  var chars2 = splitToChars(l2);
-
-  /* Safety: always make text visible after 5s even if animation never fires */
-  var safetyTimer = setTimeout(function makeVisible() {
-    gsap.set([chars1, chars2], { opacity: 1, y: 0, clearProps: 'filter,transform' });
-  }, 5000);
-
-  var fired = false;
-  function runLetterAnimation() {
-    if (fired) return;
-    fired = true;
-    clearTimeout(safetyTimer);
-
-    /* GSAP sets initial hidden state (CSS default is visible — safe fallback) */
-    gsap.set(chars1, { opacity: 0, y: 10, filter: 'blur(4px)' });
-    gsap.set(chars2, { opacity: 0, y: 10, filter: 'blur(4px)' });
-
-    gsap.timeline()
-      .to(chars1, {
-        opacity: 1, y: 0, filter: 'blur(0px)',
-        duration: 0.48,
-        stagger: { each: 0.020, ease: 'power2.out' },
-        ease: 'power3.out',
-        clearProps: 'filter'
-      })
-      .to(chars2, {
-        opacity: 1, y: 0, filter: 'blur(0px)',
-        duration: 0.42,
-        stagger: { each: 0.016, ease: 'power2.out' },
-        ease: 'power3.out',
-        clearProps: 'filter'
-      }, '-=0.3');
-  }
-
-  /* Lower threshold + negative rootMargin = fires earlier on mobile */
-  if (window.IntersectionObserver) {
-    var obs = new IntersectionObserver(function(entries) {
-      if (entries[0].isIntersecting) { runLetterAnimation(); obs.disconnect(); }
-    }, { threshold: 0.12, rootMargin: '0px 0px -30px 0px' });
-    obs.observe(sec);
-  } else {
-    setTimeout(runLetterAnimation, 200);
-  }
-})();
-
 
 
 /* ══════════════════════════════════════════════════════════
