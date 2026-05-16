@@ -4916,7 +4916,13 @@ def get_pairs_exchange(exchange: str, market: str = "perpetual") -> List[Dict[st
 
 def get_klines_exchange(symbol: str, interval: str, limit: int = 300,
                         market: str = "perpetual", exchange: str = "binance") -> List[Dict[str, float]]:
-    """Universal get_klines — routes to correct exchange"""
+    """Universal get_klines — routes to correct exchange.
+
+    For Binance: if limit > 1500, automatically paginates via
+    get_binance_klines_paginated_latest(). get_klines() already handles this
+    internally, so the routing here is for clarity.
+    Non-Binance exchanges are not paginated (live scanner caps at 1500).
+    """
     exchange = (exchange or "binance").lower()
     if exchange == "bybit":
         result = get_klines_bybit(symbol, interval, limit, market)
@@ -4925,7 +4931,8 @@ def get_klines_exchange(symbol: str, interval: str, limit: int = 300,
     elif exchange == "mexc":
         result = get_klines_mexc(symbol, interval, limit, market)
     else:
-        result = get_klines(symbol, interval, limit, market)  # Binance
+        # get_klines() auto-paginates when limit > 1500
+        result = get_klines(symbol, interval, limit, market)
 
     # Fallback to Binance if exchange returns empty
     if not result:
@@ -5034,9 +5041,11 @@ def get_klines_exchange_window(symbol: str, interval: str,
 
     while cursor < end_ms and safety > 0:
         safety -= 1
-        raw = _fapi(cursor, end_ms, BINANCE_MAX)
+        raw          = _fapi(cursor, end_ms, BINANCE_MAX)
+        actual_limit = BINANCE_MAX  # track per-source cap for break check
         if raw is None or not raw:
-            raw = _spot(cursor, end_ms, SPOT_MAX)
+            raw          = _spot(cursor, end_ms, SPOT_MAX)
+            actual_limit = SPOT_MAX
         parsed = _parse(raw)
         if not parsed:
             break
@@ -5049,7 +5058,9 @@ def get_klines_exchange_window(symbol: str, interval: str,
         out.extend(new_rows)
 
         last_open = new_rows[-1]["openTime"]
-        if len(parsed) < BINANCE_MAX or last_open >= end_ms:
+        # Use actual_limit (not BINANCE_MAX) so spot fallback doesn't stop
+        # after its first 1000-candle batch due to len(parsed) < 1500.
+        if len(parsed) < actual_limit or last_open >= end_ms:
             break
         cursor = last_open + 1
 
@@ -5143,7 +5154,22 @@ def get_klines(symbol: str, interval: str, limit: int = 300, market: str = "perp
     """
     Fetch OHLCV candles. Tries Binance Futures API first (real futures volume),
     falls back to the geo-safe spot mirror.
+
+    If limit > 1500 (Binance hard cap per request), automatically paginates
+    backward via get_binance_klines_paginated_latest(). This lets debug/backtest
+    routes request 4000-10000 candles without any per-site changes.
+    Live scanner always stays ≤1500 via _scan_kline_limit(), so this path is
+    only hit from the debug route.
     """
+    try:
+        requested = int(limit)
+    except (TypeError, ValueError):
+        requested = 300
+
+    BINANCE_FUTURES_MAX = 1500
+    if requested > BINANCE_FUTURES_MAX:
+        return get_binance_klines_paginated_latest(symbol, interval, requested, market)
+
     def _parse(data):
         return [{
             "openTime": k[0],
@@ -5158,7 +5184,7 @@ def get_klines(symbol: str, interval: str, limit: int = 300, market: str = "perp
     try:
         r = req.get(
             f"{BINANCE_FUTURES_API}/fapi/v1/klines",
-            params={"symbol": symbol, "interval": interval, "limit": limit},
+            params={"symbol": symbol, "interval": interval, "limit": requested},
             timeout=15,
         )
         if r.status_code == 200:
@@ -5168,9 +5194,140 @@ def get_klines(symbol: str, interval: str, limit: int = 300, market: str = "perp
         pass
 
     # ── Fallback: geo-safe spot mirror ──
-    url = f"{SPOT_API}/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
+    url = f"{SPOT_API}/api/v3/klines?symbol={symbol}&interval={interval}&limit={requested}"
     data = req.get(url, timeout=20).json()
     return _parse(data)
+
+
+def get_binance_klines_paginated_latest(symbol: str, interval: str,
+                                        total_limit: int = 1500,
+                                        market: str = "perpetual") -> List[Dict[str, float]]:
+    """Fetch the latest N Binance candles by paginating backward with endTime.
+
+    Binance hard caps:
+      - Futures /fapi/v1/klines: 1500 candles per request
+      - Spot    /api/v3/klines:  1000 candles per request
+
+    Supports total_limit up to 10000. Each batch is fetched at the correct
+    per-source limit so we never exceed the API cap. Deduplicates by openTime,
+    returns candles sorted oldest→newest.
+
+    Used only by debug/backtest paths — the live scanner stays ≤1500 via
+    _scan_kline_limit() and never calls this function.
+    """
+    FUTURES_MAX = 1500
+    SPOT_MAX    = 1000
+
+    try:
+        target = max(1, min(int(total_limit), 10000))
+    except (TypeError, ValueError):
+        target = 300
+
+    def _parse(data):
+        if not isinstance(data, list):
+            return []
+        out = []
+        for k in data:
+            try:
+                out.append({
+                    "openTime": int(k[0]),
+                    "open":     float(k[1]),
+                    "high":     float(k[2]),
+                    "low":      float(k[3]),
+                    "close":    float(k[4]),
+                    "volume":   float(k[5]),
+                })
+            except (TypeError, ValueError, IndexError):
+                pass
+        return out
+
+    collected: List[Dict[str, float]] = []
+    seen_open_times: set               = set()
+    end_time_ms: Optional[int]         = None
+    batches                            = 0
+    source                             = "futures"
+    import math as _math
+    safety = _math.ceil(target / SPOT_MAX) + 5  # worst-case spot batches + margin
+
+    while len(collected) < target and safety > 0:
+        safety   -= 1
+        remaining = target - len(collected)
+
+        # ── Try Futures ──────────────────────────────────────────────────────
+        futures_limit = min(FUTURES_MAX, remaining)
+        fparams: Dict[str, Any] = {
+            "symbol": symbol, "interval": interval, "limit": futures_limit,
+        }
+        if end_time_ms is not None:
+            fparams["endTime"] = end_time_ms
+
+        batch: List[Dict[str, float]] = []
+        actual_limit = futures_limit
+        try:
+            r = req.get(
+                f"{BINANCE_FUTURES_API}/fapi/v1/klines",
+                params=fparams, timeout=15,
+            )
+            if r.status_code == 200:
+                update_api_weight("binance", r)
+                batch  = _parse(r.json())
+                source = "futures"
+        except Exception:
+            pass
+
+        # ── Spot fallback with correct spot limit ─────────────────────────
+        if not batch:
+            spot_limit = min(SPOT_MAX, remaining)
+            sparams: Dict[str, Any] = {
+                "symbol": symbol, "interval": interval, "limit": spot_limit,
+            }
+            if end_time_ms is not None:
+                sparams["endTime"] = end_time_ms
+            actual_limit = spot_limit
+            try:
+                r = req.get(f"{SPOT_API}/api/v3/klines", params=sparams, timeout=20)
+                if r.status_code == 200:
+                    batch  = _parse(r.json())
+                    source = "spot_fallback"
+            except Exception:
+                pass
+
+        if not batch:
+            break
+
+        batches  += 1
+        new_rows  = [row for row in batch if row["openTime"] not in seen_open_times]
+        if not new_rows:
+            break
+        for row in new_rows:
+            seen_open_times.add(row["openTime"])
+        collected.extend(new_rows)
+
+        oldest_open = min(row["openTime"] for row in new_rows)
+        end_time_ms = oldest_open - 1
+
+        # If the exchange returned fewer candles than we asked for, we've
+        # reached the beginning of its history — stop paginating.
+        if len(batch) < actual_limit:
+            break
+
+        time.sleep(0.1)
+
+    collected.sort(key=lambda x: x["openTime"])
+    if len(collected) > target:
+        collected = collected[-target:]
+
+    print(
+        f"[KL-PAGINATION] {symbol} {interval} requested={target} "
+        f"fetched={len(collected)} batches={batches} source={source}"
+    )
+    return collected
+
+
+# Keep old name as a thin alias so any existing call sites still work.
+def get_klines_paginated(symbol: str, interval: str, total_limit: int,
+                         market: str = "perpetual") -> List[Dict[str, float]]:
+    return get_binance_klines_paginated_latest(symbol, interval, total_limit, market)
 
 
 def get_all_daily_klines(symbol: str) -> List[Dict[str, float]]:

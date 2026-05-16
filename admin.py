@@ -1393,7 +1393,7 @@ def debug_ob_tv_parity():
         compare_limits = request.args.get("compare_limits", "false").strip().lower() in ("1", "true", "yes")
 
         try:
-            kline_limit = min(max(int(request.args.get("kline_limit") or 300), 50), 1500)
+            kline_limit = min(max(int(request.args.get("kline_limit") or 300), 50), 10000)
         except (TypeError, ValueError):
             kline_limit = 300
 
@@ -1478,15 +1478,21 @@ def debug_ob_tv_parity():
             return _ts(times[bar]) if 0 <= bar < len(times) else None
 
         candle_info = {
-            "symbol":             symbol,
-            "timeframe":          timeframe,
-            "exchange":           exchange,
-            "market":             market,
-            "kline_limit":        kline_limit,
-            "candles_count":      len(main_candles),
-            "oldest_candle_time": _ts(times[0])  if times else None,
-            "newest_candle_time": _ts(times[-1]) if times else None,
-            "current_price":      price,
+            "symbol":                symbol,
+            "timeframe":             timeframe,
+            "exchange":              exchange,
+            "market":                market,
+            "kline_limit":           kline_limit,
+            "requestedKlineLimit":   kline_limit,
+            "candlesFetched":        len(main_candles),
+            "paginationUsed":        kline_limit > 1500 and exchange == "binance",
+            "binancePerRequestLimit": 1500,
+            "requested_limit":       kline_limit,
+            "actual_count":          len(main_candles),
+            "candles_count":         len(main_candles),
+            "oldest_candle_time":    _ts(times[0])  if times else None,
+            "newest_candle_time":    _ts(times[-1]) if times else None,
+            "current_price":         price,
         }
 
         detection_counts = {
