@@ -1422,8 +1422,12 @@ def debug_ob_tv_parity():
             _v = [x["volume"] for x in cnd]
             _t = [x.get("time", x.get("openTime", 0)) for x in cnd]
 
-            _normal = detect_obs(_o, _h, _l, _c, _v, I_LEN, S_LEN, max_ob=5)
-            _all    = detect_obs(_o, _h, _l, _c, _v, I_LEN, S_LEN, max_ob=None)
+            _normal_result = detect_obs(_o, _h, _l, _c, _v, I_LEN, S_LEN, max_ob=5)
+            if isinstance(_normal_result, tuple):
+                _normal, _bos_trace = _normal_result
+            else:
+                _normal, _bos_trace = _normal_result, None
+            _all, _ = detect_obs(_o, _h, _l, _c, _v, I_LEN, S_LEN, max_ob=None)
 
             _bull_src = _copy.deepcopy([ob for ob in _all if ob["type"] == "bullish"])
             _bear_src = _copy.deepcopy([ob for ob in _all if ob["type"] == "bearish"])
@@ -1460,6 +1464,7 @@ def debug_ob_tv_parity():
                 "bull_vtot": _bull_vtot, "bear_vtot": _bear_vtot,
                 "times": _t, "price": _price,
                 "matched_tv_pct": _matched_tv_pct, "matched_type": _matched_type,
+                "bos_trace": _bos_trace,
             }
 
         # ── Main analysis with chosen kline_limit ─────────────────────────────
@@ -1675,6 +1680,7 @@ def debug_ob_tv_parity():
             "bearish_hidden_pool":          bear_hidden_out,
             "matched_nearest_ob":           matched,
             "limit_comparison":             limit_comparison,
+            "bos_trace":                    a.get("bos_trace"),
             "pine_assumptions": {
                 "bull_bear_pools_separate": True,
                 "show_last_per_direction":  5,
