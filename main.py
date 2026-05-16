@@ -681,7 +681,7 @@ def _wl_background_loop():
                             v_ = [float(k[5]) for k in klines]
                             price = c_[-1]
                             if len(c_) >= 20:
-                                obs_ = detect_obs(o_, h_, l_, c_, v_, 5, 10, max_ob=3)
+                                obs_, _ = detect_obs(o_, h_, l_, c_, v_, 5, 10, max_ob=3)
                                 if obs_:
                                     nearest = min(obs_, key=lambda ob: obq_dist_from_price(
                                         price, ob["top"], ob["bottom"], ob["type"]))
@@ -2468,6 +2468,8 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
     dnP, dnB, dnL = [], [], []
     prev_upP_first = None   # Pine: up.p.first()[1] — end-of-previous-bar value
     prev_dnP_first = None   # Pine: dn.p.first()[1] — end-of-previous-bar value
+    # ─── DIAGNOSTIC TRACE — TEMPORARY ───
+    _trace = {"pivot_high": [], "pivot_low": [], "bull_bos": [], "bear_bos": []}
 
     start = max(i_len * 2 + 2, s_len + 2)
 
@@ -2479,10 +2481,12 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
             upP.insert(0, h[i - i_len])
             upB.insert(0, i - i_len)
             upL.insert(0, h[i - i_len])
+            _trace["pivot_high"].append({"bar": i - i_len, "i_at_push": i, "price": h[i - i_len]})
         if i - i_len >= 0 and pl[i - i_len]:
             dnP.insert(0, l[i - i_len])
             dnB.insert(0, i - i_len)
             dnL.insert(0, l[i - i_len])
+            _trace["pivot_low"].append({"bar": i - i_len, "i_at_push": i, "price": l[i - i_len]})
 
         # ── INTERNAL BULLISH BREAK → Create Bullish OB ──
         # Pine: ta.crossover(b.c, up.p.first()) → c[i] > upP[0] AND c[i-1] <= prev value
@@ -2535,6 +2539,12 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
                 buy_v      = total_v * (0.6 if candle_dir == 1 else 0.4)
                 sell_v     = total_v - buy_v
 
+                _trace["bull_bos"].append({
+                    "bos_bar": i, "pivot_bar": pivot_bar,
+                    "upP_first": upP[0], "prev_upP_first": prev_upP_first,
+                    "close_curr": c[i], "close_prev": c[i - 1],
+                    "ob_top": ob_top, "ob_bottom": ob_bottom, "ob_source_bar": ob_source,
+                })
                 if ob_top > ob_bottom:
                     obs.append({
                         "top": ob_top,
@@ -2602,6 +2612,12 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
                 sell_v     = total_v * (0.6 if candle_dir == -1 else 0.4)
                 buy_v      = total_v - sell_v
 
+                _trace["bear_bos"].append({
+                    "bos_bar": i, "pivot_bar": pivot_bar,
+                    "dnP_first": dnP[0], "prev_dnP_first": prev_dnP_first,
+                    "close_curr": c[i], "close_prev": c[i - 1],
+                    "ob_top": ob_top, "ob_bottom": ob_bottom, "ob_source_bar": ob_source,
+                })
                 if ob_top > ob_bottom:
                     obs.append({
                         "top": ob_top,
@@ -2667,7 +2683,7 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
 
         active.append(ob)
 
-    return active if max_ob is None else active[-max_ob:]
+    return (active if max_ob is None else active[-max_ob:]), _trace
 
 
 def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
@@ -3915,7 +3931,7 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
     current_rsi = rsi[-1] if rsi[-1] is not None else 50.0
     current_atr = atr[-1] if atr[-1] is not None else max((max(h[-14:]) - min(l[-14:])), 1e-10)
 
-    obs = detect_obs(o, h, l, c, v, settings["iLen"], settings["sLen"])
+    obs, _ = detect_obs(o, h, l, c, v, settings["iLen"], settings["sLen"])
     fvgs = detect_fvgs(o, h, l, c, v, tf)
 
     corr_value = None
@@ -3998,7 +4014,7 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
     # max_ob=None returns ALL active OBs (no mixed truncation) so each direction
     # gets its own complete pool before showLast=5 + hideOverlap are applied.
     # Alert logic uses the original obs (max_ob=5 mixed) — unchanged.
-    obs_tv_src  = detect_obs(o, h, l, c, v, settings["iLen"], settings["sLen"], max_ob=None)
+    obs_tv_src, _ = detect_obs(o, h, l, c, v, settings["iLen"], settings["sLen"], max_ob=None)
     bull_tv_src = [ob for ob in obs_tv_src if ob["type"] == "bullish"]
     bear_tv_src = [ob for ob in obs_tv_src if ob["type"] == "bearish"]
     tv_bull_pool = _tv_visible_pool(bull_tv_src)
@@ -6376,7 +6392,7 @@ def _scan_pair_multitf(symbol: str, market: str = "perpetual", wl_config: Option
             if scan_ob:
                 iLen = settings["iLen"]
                 sLen = settings["sLen"]
-                raw_obs = detect_obs(o, h, l, c, v, iLen, sLen, max_ob=5)
+                raw_obs, _ = detect_obs(o, h, l, c, v, iLen, sLen, max_ob=5)
                 ob_approach_pct = ob_appr.get(tf, 2.0)
                 fvgs_for_quality = detect_fvgs(o, h, l, c, v, tf)
                 itrend_q, trend_q = detect_structure(h, l, c, iLen, sLen)
@@ -7447,7 +7463,7 @@ def _bias_confluence(
     # ── OB confluence ──────────────────────────────────────────────────────────
     if use_ob:
         try:
-            obs = detect_obs(o, h, l, c, v, 5, 20, max_ob=8)
+            obs, _ = detect_obs(o, h, l, c, v, 5, 20, max_ob=8)
             for ob in obs:
                 if ob["type"] != rej_dir:
                     continue
@@ -8566,7 +8582,7 @@ def api_orderflow():
 
                 # Quick OB detection to get nearest zone
                 if len(c) >= 20:
-                    obs = detect_obs(o, h, l, c, v, 5, 10, max_ob=3)
+                    obs, _ = detect_obs(o, h, l, c, v, 5, 10, max_ob=3)
                     if obs:
                         # Find nearest OB to current price
                         def _dist(ob):
@@ -8637,7 +8653,7 @@ def api_zone_liquidity():
                     c_ = [float(k[4]) for k in klines]
                     v_ = [float(k[5]) for k in klines]
                     price_ref = price_ref or c_[-1]
-                    obs_ = detect_obs(o_, h_, l_, c_, v_, 5, 10, max_ob=5)
+                    obs_, _ = detect_obs(o_, h_, l_, c_, v_, 5, 10, max_ob=5)
                     if obs_:
                         # Find OB matching ob_type, nearest to price
                         typed = [ob for ob in obs_ if ob["type"] == ob_type]
