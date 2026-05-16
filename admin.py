@@ -1393,13 +1393,18 @@ def debug_ob_tv_parity():
         compare_limits = request.args.get("compare_limits", "false").strip().lower() in ("1", "true", "yes")
 
         # ── Debug-only OB parity variants (diagnostic; production untouched) ──
-        # Flags map: variant -> (mitigation_closed_only, overlap_effective_zone)
+        # Flags map: variant -> (mitigation_closed_only,
+        #                         overlap_effective_zone [DEPRECATED/WRONG],
+        #                         bearish_effective_bottom_overlap [CORRECT])
         _VARIANT_FLAGS = {
-            "baseline":                            (False, False),
-            "closed_mitigation":                   (True,  False),
-            "effective_overlap":                   (False, True),
-            "closed_mitigation_effective_overlap": (True,  True),
+            "baseline":                                           (False, False, False),
+            "closed_mitigation":                                  (True,  False, False),
+            "effective_overlap":                                  (False, True,  False),
+            "closed_mitigation_effective_overlap":                (True,  True,  False),
+            "bearish_effective_bottom_overlap":                   (False, False, True),
+            "closed_mitigation_bearish_effective_bottom_overlap": (True,  False, True),
         }
+        _ALLOWED_VARIANTS = list(_VARIANT_FLAGS.keys()) + ["all"]
         _VARIANT_NOTES = {
             "baseline":
                 "Production behavior. Per-bar mitigation runs through the last "
@@ -1411,14 +1416,25 @@ def debug_ob_tv_parity():
                 "evaluated for bars i <= n-2. OB creation still scans the full "
                 "candle stream. Overlap uses the raw hidden extreme zone.",
             "effective_overlap":
-                "Overlap comparison (creation-time + visible-pool) uses the "
-                "effective/displayed zone: the extreme side is collapsed to avg "
-                "(bullish bottom→avg, bearish top→avg) instead of the raw hidden "
-                "extreme. Mitigation unchanged (runs through the last candle).",
+                "DEPRECATED / WRONG — kept for diagnostic comparison only. "
+                "Collapsed the NEW OB's extreme edge to avg (bullish bottom→avg, "
+                "bearish top→avg). This is not the TV rule; do not use for "
+                "production parity.",
             "closed_mitigation_effective_overlap":
-                "Combined: mitigation skips the last (possibly open) candle "
-                "(i <= n-2) AND overlap uses the effective/displayed (avg-collapsed) "
-                "zone.",
+                "DEPRECATED / WRONG — kept for comparison only. Combined the "
+                "deprecated effective_overlap rule with closed_mitigation.",
+            "bearish_effective_bottom_overlap":
+                "CORRECT bearish rule. For bearish overlap ONLY, the previous "
+                "OB's effective bottom = its avg (TV displays the bearish lower "
+                "boundary at avg, not the raw extreme); the new OB's top stays "
+                "raw. Bullish overlap stays raw/unchanged (ETH 4H bull already "
+                "matches TV with raw overlap). Applied to creation-time deletion "
+                "AND visible-pool filtering. Mitigation runs through the last "
+                "candle.",
+            "closed_mitigation_bearish_effective_bottom_overlap":
+                "Combined: closed_mitigation (mitigation skips the last possibly "
+                "open candle, i <= n-2) AND the CORRECT bearish_effective_bottom_"
+                "overlap rule. This is the candidate production-parity behavior.",
         }
         ob_debug_variant = (request.args.get("ob_debug_variant") or "baseline").strip().lower()
         if ob_debug_variant == "all":
@@ -1431,8 +1447,7 @@ def debug_ob_tv_parity():
             return jsonify({
                 "ok": False,
                 "error": f"invalid ob_debug_variant '{ob_debug_variant}'",
-                "allowed": ["baseline", "closed_mitigation", "effective_overlap",
-                            "closed_mitigation_effective_overlap", "all"],
+                "allowed": _ALLOWED_VARIANTS,
             }), 200
 
         try:
@@ -1457,7 +1472,7 @@ def debug_ob_tv_parity():
                 return str(ms)
 
         # ── Core analysis helper — runs on any candle slice ───────────────────
-        def _analyse(cnd, mit_closed=False, eff_overlap=False):
+        def _analyse(cnd, mit_closed=False, eff_overlap=False, bear_eff_bottom=False):
             _o = [x["open"]   for x in cnd]
             _h = [x["high"]   for x in cnd]
             _l = [x["low"]    for x in cnd]
@@ -1467,19 +1482,23 @@ def debug_ob_tv_parity():
 
             _normal_result = detect_obs(_o, _h, _l, _c, _v, I_LEN, S_LEN, max_ob=5,
                                         mitigation_closed_only=mit_closed,
-                                        overlap_effective_zone=eff_overlap)
+                                        overlap_effective_zone=eff_overlap,
+                                        bearish_effective_bottom_overlap=bear_eff_bottom)
             if isinstance(_normal_result, tuple):
                 _normal, _bos_trace = _normal_result
             else:
                 _normal, _bos_trace = _normal_result, None
             _all, _ = detect_obs(_o, _h, _l, _c, _v, I_LEN, S_LEN, max_ob=None,
                                  mitigation_closed_only=mit_closed,
-                                 overlap_effective_zone=eff_overlap)
+                                 overlap_effective_zone=eff_overlap,
+                                 bearish_effective_bottom_overlap=bear_eff_bottom)
 
             _bull_src = _copy.deepcopy([ob for ob in _all if ob["type"] == "bullish"])
             _bear_src = _copy.deepcopy([ob for ob in _all if ob["type"] == "bearish"])
-            _bull_vis = _tv_visible_pool(_bull_src, overlap_effective_zone=eff_overlap)
-            _bear_vis = _tv_visible_pool(_bear_src, overlap_effective_zone=eff_overlap)
+            _bull_vis = _tv_visible_pool(_bull_src, overlap_effective_zone=eff_overlap,
+                                         bearish_effective_bottom_overlap=bear_eff_bottom)
+            _bear_vis = _tv_visible_pool(_bear_src, overlap_effective_zone=eff_overlap,
+                                         bearish_effective_bottom_overlap=bear_eff_bottom)
             calculate_tv_ob_volume_share(_bull_vis, pool_name="bullish",
                                          source_pool_count=len(_bull_src))
             calculate_tv_ob_volume_share(_bear_vis, pool_name="bearish",
@@ -1716,17 +1735,19 @@ def debug_ob_tv_parity():
         variant_diagnostics = {}
         variant_summary     = {}
         for _vn in _variants_to_run:
-            _mc, _eo = _VARIANT_FLAGS[_vn]
+            _mc, _eo, _beb = _VARIANT_FLAGS[_vn]
             _x = a if _vn == "baseline" else _analyse(main_candles,
                                                       mit_closed=_mc,
-                                                      eff_overlap=_eo)
+                                                      eff_overlap=_eo,
+                                                      bear_eff_bottom=_beb)
             _bv = [_ob_visible(ob) for ob in _x["bull_vis"]]
             _rv = [_ob_visible(ob) for ob in _x["bear_vis"]]
             variant_diagnostics[_vn] = {
                 "variant":        _vn,
                 "notes":          _VARIANT_NOTES[_vn],
                 "rules":          {"mitigation_closed_only": _mc,
-                                   "overlap_effective_zone": _eo},
+                                   "overlap_effective_zone": _eo,
+                                   "bearish_effective_bottom_overlap": _beb},
                 "source_counts":  {"bullish": len(_x["bull_src"]),
                                    "bearish": len(_x["bear_src"])},
                 "visible_counts": {"bullish": len(_x["bull_vis"]),
@@ -1749,10 +1770,7 @@ def debug_ob_tv_parity():
             "ok":                           True,
             "phase":                        "1A",
             "ob_debug_variant":             ob_debug_variant,
-            "ob_debug_variant_allowed":     ["baseline", "closed_mitigation",
-                                             "effective_overlap",
-                                             "closed_mitigation_effective_overlap",
-                                             "all"],
+            "ob_debug_variant_allowed":     _ALLOWED_VARIANTS,
             "variant_diagnostics":          variant_diagnostics,
             "variant_summary":              variant_summary,
             "ob_touch_meta_enabled":        True,
