@@ -27,6 +27,13 @@ body{font-family:'Inter',sans-serif;background:#020810;color:#e2e8f0;min-height:
 .tg-btn:hover{background:rgba(34,211,238,.15);box-shadow:0 0 20px rgba(34,211,238,.25)}
 .refresh-note{font-size:10px;color:#1a2e40;margin-top:24px;letter-spacing:1px}
 </style>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#f59e0b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ZyNi SMC">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="apple-touch-icon" href="/static/icons/icon-192x192.png">
 </head>
 <body>
 <div class="stars" id="stars"></div>
@@ -62,6 +69,14 @@ body{font-family:'Inter',sans-serif;background:#020810;color:#e2e8f0;min-height:
     stars.appendChild(s);
   }
 })();
+</script>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function() {
+    navigator.serviceWorker.register('/service-worker.js', { scope: '/' })
+      .catch(function(e) { console.warn('[PWA] SW registration failed:', e); });
+  });
+}
 </script>
 </body>
 </html>

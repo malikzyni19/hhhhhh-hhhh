@@ -355,6 +355,13 @@
             .otp-digit { width: 42px; height: 50px; font-size: 22px; }
         }
     </style>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#f59e0b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ZyNi SMC">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="apple-touch-icon" href="/static/icons/icon-192x192.png">
 </head>
 <body>
 
@@ -556,5 +563,13 @@
             }
         }, 1000);
     </script>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function() {
+    navigator.serviceWorker.register('/service-worker.js', { scope: '/' })
+      .catch(function(e) { console.warn('[PWA] SW registration failed:', e); });
+  });
+}
+</script>
 </body>
 </html>
