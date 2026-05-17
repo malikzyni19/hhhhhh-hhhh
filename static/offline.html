@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>ZyNi SMC — Offline</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:#020810;color:#e2e8f0;font-family:'Inter',system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh}
+.wrap{text-align:center;padding:40px 24px;max-width:480px}
+.logo{font-size:42px;font-weight:900;letter-spacing:-1px;margin-bottom:8px}
+.logo-z{background:linear-gradient(135deg,#e2e8f0,#22d3ee);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.logo-smc{background:linear-gradient(135deg,#92400e,#f59e0b,#fde68a);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.icon{font-size:56px;margin:24px 0 16px;display:block}
+h1{font-size:22px;font-weight:700;color:#e2e8f0;margin-bottom:10px}
+p{font-size:14px;color:#64748b;line-height:1.7;margin-bottom:28px}
+.btn{display:inline-block;padding:12px 28px;background:linear-gradient(135deg,#92400e,#f59e0b);color:#020810;font-weight:700;font-size:14px;border-radius:10px;text-decoration:none;cursor:pointer;border:none;transition:opacity .2s}
+.btn:hover{opacity:.85}
+.dot{width:6px;height:6px;border-radius:50%;background:#ef4444;display:inline-block;margin-right:6px;animation:blink 1.5s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}
+.status{font-size:12px;color:#475569;margin-top:20px;display:flex;align-items:center;justify-content:center;gap:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="logo">
+    <span class="logo-z">ZyNi</span>&nbsp;<span class="logo-smc">SMC</span>
+  </div>
+  <span class="icon">📡</span>
+  <h1>You're Offline</h1>
+  <p>No internet connection detected. Please check your network and try again. The ZyNi SMC Screener requires a live connection to display real-time market data.</p>
+  <button class="btn" onclick="window.location.reload()">Try Again</button>
+  <div class="status">
+    <span class="dot"></span>
+    <span>Waiting for connection...</span>
+  </div>
+</div>
+<script>
+window.addEventListener('online', function() {
+  window.location.reload();
+});
+</script>
+</body>
+</html>

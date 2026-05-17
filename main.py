@@ -30,6 +30,11 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 @app.after_request
 def no_cache(r):
+    path = request.path
+    # Allow proper caching for PWA static assets — do not override
+    if (path.startswith('/static/icons/') or path.startswith('/static/images/')
+            or path in ('/service-worker.js', '/manifest.json', '/offline')):
+        return r
     r.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     r.headers["Pragma"] = "no-cache"
     r.headers["Expires"] = "0"
@@ -1590,6 +1595,31 @@ def get_api_status(exchange: str = "binance") -> Dict[str, Any]:
             "reset_at": state["reset_at"],
             "pct_used": round((state["used"] / state["limit"]) * 100, 1)
         }
+
+# ── PWA routes ───────────────────────────────────────────────────────────────
+@app.route('/service-worker.js')
+def pwa_service_worker():
+    response = app.send_static_file('service-worker.js')
+    response.headers['Content-Type'] = 'application/javascript'
+    response.headers['Cache-Control'] = 'no-cache, max-age=0'
+    response.headers['Service-Worker-Allowed'] = '/'
+    return response
+
+@app.route('/manifest.json')
+def pwa_manifest():
+    response = app.send_static_file('manifest.json')
+    response.headers['Content-Type'] = 'application/manifest+json'
+    response.headers['Cache-Control'] = 'public, max-age=86400'
+    return response
+
+@app.route('/offline')
+def pwa_offline():
+    response = app.send_static_file('offline.html')
+    response.headers['Content-Type'] = 'text/html'
+    response.headers['Cache-Control'] = 'public, max-age=86400'
+    return response
+
+# ── End PWA routes ────────────────────────────────────────────────────────────
 
 @app.route("/api/weight_status")
 def api_weight_status():
