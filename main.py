@@ -9,6 +9,7 @@ import ssl
 import socket
 import struct
 import hashlib
+import secrets
 import base64
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -37,7 +38,8 @@ def no_cache(r):
 from flask_login import LoginManager
 from models import (db, User as _DBUser, GlobalSetting as _GlobalSetting,
                     LoginHistory as _LoginHistory,
-                    EmailVerification as _EmailVerification)
+                    EmailVerification as _EmailVerification,
+                    PasswordResetToken as _PasswordResetToken)
 from admin import admin_bp
 from permissions import get_user_permissions, consume_tokens, check_tokens
 
@@ -357,15 +359,17 @@ def _build_verification_email(username: str, code: str) -> str:
   <tr><td align="center" style="padding:40px 16px;">
     <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="max-width:580px;">
 
-      <!-- HEADER / LOGO -->
-      <tr><td style="background:#0a0f1e;border-radius:16px 16px 0 0;padding:30px 40px 26px;text-align:center;border:1px solid rgba(249,115,22,0.25);border-bottom:3px solid #f97316;">
-        <div style="font-size:30px;font-weight:900;color:#ffffff;letter-spacing:1.5px;margin-bottom:5px;">ZyNi SMC</div>
-        <div style="font-size:11px;color:#f97316;letter-spacing:4px;font-weight:600;text-transform:uppercase;">Smart Money Center</div>
+      <!-- HEADER / LOGO BANNER — image fills the header, black bg matches image bg exactly -->
+      <tr><td style="background:#000000;border-radius:16px 16px 0 0;padding:0;text-align:center;border:1px solid rgba(249,115,22,0.25);border-bottom:3px solid #f97316;overflow:hidden;line-height:0;font-size:0;">
+        <img src="https://smcsetups.com/static/images/logo-email.png"
+             alt="ZyNi SMC"
+             width="580"
+             style="width:100%;max-width:580px;height:auto;display:block;border-radius:16px 16px 0 0;">
       </td></tr>
 
       <!-- HERO BANNER -->
       <tr><td style="background:linear-gradient(135deg,#0d1525 0%,#0f1e38 60%,#0a0f1e 100%);padding:36px 40px 28px;text-align:center;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
-        <div style="width:70px;height:70px;background:rgba(249,115,22,0.12);border:2px solid rgba(249,115,22,0.45);border-radius:50%;margin:0 auto 20px;line-height:70px;text-align:center;font-size:30px;">&#9993;</div>
+        <img src="https://smcsetups.com/static/images/avatar-email.png" alt="ZyNi SMC" width="90" height="90" style="width:90px;height:90px;border-radius:50%;display:block;margin:0 auto 20px;border:2.5px solid rgba(249,115,22,0.70);box-shadow:0 0 0 4px rgba(249,115,22,0.12),0 8px 28px rgba(0,0,0,0.55),0 0 30px rgba(249,115,22,0.18);object-fit:cover;">
         <h1 style="color:#ffffff;font-size:23px;font-weight:800;margin:0 0 14px;letter-spacing:-0.3px;">Verify Your Email Address</h1>
         <p style="color:rgba(232,240,255,0.65);font-size:15px;margin:0;line-height:1.75;">
           Hi <strong style="color:#ffffff;">{username}</strong>, welcome to ZyNi SMC!<br>
@@ -677,7 +681,7 @@ def _wl_background_loop():
                             v_ = [float(k[5]) for k in klines]
                             price = c_[-1]
                             if len(c_) >= 20:
-                                obs_ = detect_obs(o_, h_, l_, c_, v_, 5, 10, max_ob=3)
+                                obs_, _ = detect_obs(o_, h_, l_, c_, v_, 5, 10, max_ob=3)
                                 if obs_:
                                     nearest = min(obs_, key=lambda ob: obq_dist_from_price(
                                         price, ob["top"], ob["bottom"], ob["type"]))
@@ -2326,14 +2330,139 @@ def detect_fvgs(o: List[float], h: List[float], l: List[float], c: List[float], 
     return [f for f in fvgs if not f["mitigated"]][-30:]
 
 
-def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", ob_mitigation="Absolute"):
+# ── OB touch counting (clearance-based) ─────────────────────────────────────
+# Phase 1A: backend-only metadata. Does not alter OB parity (top/bottom/avg/
+# sourceBar/volume/TV OB %) and does not change mitigation behavior.
+_OB_TOUCH_CLEARANCE = 0.5  # fixed internal default; settings come in a later phase
+
+
+def _compute_ob_touch_meta(ob, h, l, c, n, ob_mitigation="Absolute",
+                            track_mitigation=False,
+                            clearance_factor=_OB_TOUCH_CLEARANCE):
+    """
+    Walk forward from ob["bar"] + 1 through n - 1 (excluding the current open
+    candle) and count zone touches with a clearance-based de-duplication rule.
+
+    A touch begins when a candle wicks into the zone (low <= top and high >=
+    bottom). After a touch, a new touch only counts once price has cleared the
+    zone by `clearance_factor * height`:
+
+        bullish: clearance_level = top    + clearance_factor * (top - bottom)
+        bearish: clearance_level = bottom - clearance_factor * (top - bottom)
+
+    Counting starts at ob["bar"] + 1 (NOT sourceBar) so the formation candle
+    itself is never counted.
+
+    track_mitigation:
+      False  — used by detect_obs(); mitigation has already been resolved by
+               the existing mitigation loop, so we just count touches across
+               the full counting window and report mitigationBar=None.
+      True   — used by detect_obs_all(); detect mitigation in the same pass.
+               If the mitigation candle also enters the zone, the touch on
+               that bar is counted FIRST, then mitigation is marked and the
+               walk stops. Bars after mitigationBar are not counted.
+    """
+    top    = ob["top"]
+    bottom = ob["bottom"]
+    avg_v  = ob.get("avg", (top + bottom) / 2.0)
+    height = max(top - bottom, 1e-10)
+    is_bull = ob["type"] == "bullish"
+
+    if is_bull:
+        clearance_level = top + clearance_factor * height
+    else:
+        clearance_level = bottom - clearance_factor * height
+
+    if ob_mitigation == "Middle":
+        mit_trigger = avg_v
+    else:
+        mit_trigger = bottom if is_bull else top
+
+    start = ob["bar"] + 1
+    end   = n - 1  # exclude current open candle (Pine barstate.isconfirmed)
+
+    touches = 0
+    first_touch_bar = None
+    last_touch_bar  = None
+    cleared = True   # initial state: first contact is allowed to count
+    seq = []
+    mitigated      = False
+    mitigation_bar = None
+
+    for j in range(start, end):
+        bar_inside = (l[j] <= top) and (h[j] >= bottom)
+
+        if bar_inside:
+            if cleared:
+                touches += 1
+                if first_touch_bar is None:
+                    first_touch_bar = j
+                last_touch_bar = j
+                cleared = False
+                seq.append(j)
+            else:
+                last_touch_bar = j
+        else:
+            if is_bull:
+                if h[j] >= clearance_level:
+                    cleared = True
+            else:
+                if l[j] <= clearance_level:
+                    cleared = True
+
+        if track_mitigation:
+            if is_bull and c[j] < mit_trigger:
+                mitigated      = True
+                mitigation_bar = j
+                break
+            if (not is_bull) and c[j] > mit_trigger:
+                mitigated      = True
+                mitigation_bar = j
+                break
+
+    currently_inside = False
+    if n >= 2 and touches > 0:
+        last_idx = n - 2
+        if 0 <= last_idx < n and last_idx >= start:
+            currently_inside = (l[last_idx] <= top) and (h[last_idx] >= bottom)
+
+    return {
+        "touches":         touches,
+        "firstTouchBar":   first_touch_bar,
+        "lastTouchBar":    last_touch_bar,
+        "untouched":       touches == 0,
+        "onceTouched":     touches == 1,
+        "touchSeq":        seq,
+        "isVirgin":        touches == 0,
+        "currentlyInside": currently_inside,
+        "mitigated":       mitigated,
+        "mitigationBar":   mitigation_bar,
+    }
+
+
+def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", ob_mitigation="Absolute",
+               mitigation_closed_only=False, overlap_effective_zone=False,
+               bearish_effective_bottom_overlap=False):
     """
     Order Block detection — audited line-by-line against Pine Script drawVOB().
 
-    Pine search window (Phase 8B.5 fix):
-      For bullish OB: search_start = hN.first() (most recent pivot HIGH bar, inclusive)
-      For bearish OB: search_start = lN.first() (most recent pivot LOW bar, inclusive)
-      Previously used pivot_bar+1 which excluded the pivot bar — mismatching Pine's loc.
+    Debug-only parameters (defaults preserve production behavior — DO NOT pass
+    these from the screener / analyze_pair path):
+      mitigation_closed_only: when True, per-bar mitigation skips the last
+        (possibly still-open) candle, i.e. mitigation is only evaluated for
+        bars i <= n-2. OB creation still scans the full candle stream.
+      overlap_effective_zone: DEPRECATED / WRONG. Collapsed the *new* OB's
+        extreme edge to avg (bullish bottom→avg, bearish top→avg). Kept only
+        for diagnostic comparison; do not use for production parity.
+      bearish_effective_bottom_overlap: CORRECT bearish rule. For bearish
+        overlap only, the *previous* OB's effective bottom is its avg (TV
+        displays the bearish lower boundary at avg, not the raw extreme). The
+        new OB's top stays raw. Bullish overlap stays raw/unchanged.
+
+    Pine search window:
+      search_start = pivot_bar + 1 (Pine loc = hN/lN.first() = absolute pivot bar).
+      Pine loop: for i = 0 to math.abs((loc - b.n)) - 1 → covers [pivot+1, BOS_bar].
+      Window size = BOS_bar - pivot_bar, independent of iLen.
 
     Zone source candle (+1 offset within the search range):
       Pine finds the extreme candle (lowest low / highest high), then takes
@@ -2352,6 +2481,10 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
 
     upP, upB, upL = [], [], []
     dnP, dnB, dnL = [], [], []
+    prev_upP_first = None   # Pine: up.p.first()[1] — end-of-previous-bar value
+    prev_dnP_first = None   # Pine: dn.p.first()[1] — end-of-previous-bar value
+    # ─── DIAGNOSTIC TRACE — TEMPORARY ───
+    _trace = {"pivot_high": [], "pivot_low": [], "bull_bos": [], "bear_bos": []}
 
     start = max(i_len * 2 + 2, s_len + 2)
 
@@ -2363,16 +2496,22 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
             upP.insert(0, h[i - i_len])
             upB.insert(0, i - i_len)
             upL.insert(0, h[i - i_len])
+            _trace["pivot_high"].append({"bar": i - i_len, "i_at_push": i, "price": h[i - i_len]})
         if i - i_len >= 0 and pl[i - i_len]:
             dnP.insert(0, l[i - i_len])
             dnB.insert(0, i - i_len)
             dnL.insert(0, l[i - i_len])
+            _trace["pivot_low"].append({"bar": i - i_len, "i_at_push": i, "price": l[i - i_len]})
 
         # ── INTERNAL BULLISH BREAK → Create Bullish OB ──
-        if upP and len(dnL) > 1 and c[i] > upP[0] and (i == start or c[i - 1] <= upP[0]):
+        # Pine: ta.crossover(b.c, up.p.first()) → c[i] > upP[0] AND c[i-1] <= prev value
+        # prev_upP_first is None when up.p was empty last bar → cross fails (matches Pine na)
+        if upP and len(dnL) > 1 and c[i] > upP[0] \
+                and prev_upP_first is not None and c[i - 1] <= prev_upP_first:
             pivot_bar    = upB[0] if upB else i - 10
-            # Pine loc = hN.unshift(int(b.n[iLen])) = i - i_len (not the pivot bar)
-            search_start = max(0, i - i_len)
+            # Pine: loc = hN.first() = absolute pivot bar. Loop covers (BOS - pivot)
+            # bars, accessing [pivot+1, BOS]. Window size is independent of iLen.
+            search_start = max(0, pivot_bar + 1)
             search_end   = i + 1  # include break bar
 
             if search_end > search_start:
@@ -2415,8 +2554,14 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
                 buy_v      = total_v * (0.6 if candle_dir == 1 else 0.4)
                 sell_v     = total_v - buy_v
 
+                _trace["bull_bos"].append({
+                    "bos_bar": i, "pivot_bar": pivot_bar,
+                    "upP_first": upP[0], "prev_upP_first": prev_upP_first,
+                    "close_curr": c[i], "close_prev": c[i - 1],
+                    "ob_top": ob_top, "ob_bottom": ob_bottom, "ob_source_bar": ob_source,
+                })
                 if ob_top > ob_bottom:
-                    obs.append({
+                    _new_payload = {
                         "top": ob_top,
                         "bottom": ob_bottom,
                         "avg": ob_avg,
@@ -2428,16 +2573,27 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
                         "type": "bullish",
                         "candleDir": candle_dir,
                         "formationRange": max(ob_top - ob_bottom, 1e-10),
-                    })
+                    }
+                    obs.append(_new_payload)
+                    # Pine line 1282-1296: overlap deletion (mode="Previous",
+                    # rmP=0 → drop the newly-appended OB)
+                    _prev = next((x for x in reversed(obs[:-1]) if x["type"] == "bullish"), None)
+                    if _prev is not None:
+                        _new_lo = _new_payload["avg"] if overlap_effective_zone else _new_payload["bottom"]
+                        if _new_lo < _prev["top"]:
+                            obs.pop()
 
             upP.clear()
             upB.clear()
 
         # ── INTERNAL BEARISH BREAK → Create Bearish OB ──
-        if dnP and len(upL) > 1 and c[i] < dnP[0] and (i == start or c[i - 1] >= dnP[0]):
+        # Pine: ta.crossunder(b.c, dn.p.first()) → c[i] < dnP[0] AND c[i-1] >= prev value
+        if dnP and len(upL) > 1 and c[i] < dnP[0] \
+                and prev_dnP_first is not None and c[i - 1] >= prev_dnP_first:
             pivot_bar    = dnB[0] if dnB else i - 10
-            # Pine loc = lN.unshift(int(b.n[iLen])) = i - i_len (not the pivot bar)
-            search_start = max(0, i - i_len)
+            # Pine: loc = lN.first() = absolute pivot bar. Loop covers (BOS - pivot)
+            # bars, accessing [pivot+1, BOS]. Window size is independent of iLen.
+            search_start = max(0, pivot_bar + 1)
             search_end   = i + 1
 
             if search_end > search_start:
@@ -2479,8 +2635,14 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
                 sell_v     = total_v * (0.6 if candle_dir == -1 else 0.4)
                 buy_v      = total_v - sell_v
 
+                _trace["bear_bos"].append({
+                    "bos_bar": i, "pivot_bar": pivot_bar,
+                    "dnP_first": dnP[0], "prev_dnP_first": prev_dnP_first,
+                    "close_curr": c[i], "close_prev": c[i - 1],
+                    "ob_top": ob_top, "ob_bottom": ob_bottom, "ob_source_bar": ob_source,
+                })
                 if ob_top > ob_bottom:
-                    obs.append({
+                    _new_payload = {
                         "top": ob_top,
                         "bottom": ob_bottom,
                         "avg": ob_avg,
@@ -2492,36 +2654,77 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
                         "type": "bearish",
                         "candleDir": candle_dir,
                         "formationRange": max(ob_top - ob_bottom, 1e-10),
-                    })
+                    }
+                    obs.append(_new_payload)
+                    # Pine line 1282-1296: overlap deletion (mode="Previous",
+                    # rmP=0 → drop the newly-appended OB)
+                    _prev = next((x for x in reversed(obs[:-1]) if x["type"] == "bearish"), None)
+                    if _prev is not None:
+                        if bearish_effective_bottom_overlap:
+                            # CORRECT: prev OB effective bottom = its avg;
+                            # new OB top stays raw.
+                            if _new_payload["top"] > _prev.get("avg", _prev["bottom"]):
+                                obs.pop()
+                        else:
+                            _new_hi = _new_payload["avg"] if overlap_effective_zone else _new_payload["top"]
+                            if _new_hi > _prev["bottom"]:
+                                obs.pop()
 
             dnP.clear()
             dnB.clear()
 
-    # ── Mitigate / invalidate OBs ──
+        # ── Pine line 1298-1321: per-bar mitigation (barstate.isconfirmed) ──
+        # ob_mitigation defaults to "Absolute": bull→ob.bottom, bear→ob.top
+        # show_breakers=False → mitigated OBs are REMOVED from the array.
+        # This must run EVERY bar, not only on BOS bars, so that the array
+        # is clean when the next bar's overlap check looks up the
+        # "previous" same-direction OB.
+        # mitigation_closed_only (debug): skip the last (possibly still-open)
+        # candle so mitigation is only evaluated for bars i <= n-2.
+        if obs and (not mitigation_closed_only or i < n - 1):
+            _close_i = c[i]
+            _kept = []
+            for _ob in obs:
+                if ob_mitigation == "Middle":
+                    _trigger = _ob["avg"]
+                else:  # Absolute
+                    _trigger = _ob["bottom"] if _ob["type"] == "bullish" else _ob["top"]
+                _mit = (_ob["type"] == "bullish" and _close_i < _trigger) or \
+                       (_ob["type"] == "bearish" and _close_i > _trigger)
+                if not _mit:
+                    _kept.append(_ob)
+            if len(_kept) != len(obs):
+                obs[:] = _kept
+
+        # End-of-bar snapshot — next iteration's "[1]" (previous-bar) lookup
+        prev_upP_first = upP[0] if upP else None
+        prev_dnP_first = dnP[0] if dnP else None
+
+    # ── Surviving OBs (mitigation already applied per-bar above) ──
+    # Annotate each surviving OB with touch metadata. No mitigation
+    # work here — Pine line 1298-1321 was already replicated inside
+    # the bar loop, so obs only contains OBs that survived.
     active = []
     max_vol = max(v[-100:]) if len(v) >= 100 else max(v) if v else 1.0
 
     for ob in obs:
-        mitigated = False
-        for j in range(ob["bar"] + 1, n - 1):  # n-1: exclude current open candle (Pine barstate.isconfirmed)
-            if ob_mitigation == "Middle":
-                trigger = ob["avg"]
-            else:  # Absolute
-                trigger = ob["bottom"] if ob["type"] == "bullish" else ob["top"]
-
-            if ob["type"] == "bullish" and c[j] < trigger:
-                mitigated = True
-                break
-            if ob["type"] == "bearish" and c[j] > trigger:
-                mitigated = True
-                break
-
-        if mitigated:
-            continue
-
+        _tm = _compute_ob_touch_meta(
+            ob, h, l, c, n,
+            ob_mitigation=ob_mitigation,
+            track_mitigation=False,
+        )
+        ob["touches"]         = _tm["touches"]
+        ob["firstTouchBar"]   = _tm["firstTouchBar"]
+        ob["lastTouchBar"]    = _tm["lastTouchBar"]
+        ob["untouched"]       = _tm["untouched"]
+        ob["onceTouched"]     = _tm["onceTouched"]
+        ob["touchSeq"]        = _tm["touchSeq"]
+        ob["isVirgin"]        = _tm["isVirgin"]
+        ob["currentlyInside"] = _tm["currentlyInside"]
+        ob["mitigationBar"]   = None
         active.append(ob)
 
-    return active if max_ob is None else active[-max_ob:]
+    return (active if max_ob is None else active[-max_ob:]), _trace
 
 
 def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
@@ -2535,6 +2738,8 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
 
     upP, upB, upL = [], [], []
     dnP, dnB, dnL = [], [], []
+    prev_upP_first = None   # Pine: up.p.first()[1] — end-of-previous-bar value
+    prev_dnP_first = None   # Pine: dn.p.first()[1] — end-of-previous-bar value
 
     start_i = max(i_len * 2 + 2, s_len + 2)
 
@@ -2549,7 +2754,8 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
             dnL.insert(0, l[i - i_len])
 
         # Bullish OB — same as detect_obs
-        if upP and len(dnL) > 1 and c[i] > upP[0] and (i == start_i or c[i - 1] <= upP[0]):
+        if upP and len(dnL) > 1 and c[i] > upP[0] \
+                and prev_upP_first is not None and c[i - 1] <= prev_upP_first:
             pivot_bar    = upB[0] if upB else i - 10
             search_start = max(0, pivot_bar + 1)
             search_end   = i + 1
@@ -2567,16 +2773,23 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
                 buy_v     = total_v * 0.6
                 sell_v    = total_v - buy_v
                 if ob_top > ob_bottom:
-                    obs.append({
+                    _new_payload = {
                         "top": ob_top, "bottom": ob_bottom, "avg": ob_avg,
                         "bar": min_idx, "sourceBar": ob_source,
                         "volume": total_v, "buyVolume": buy_v, "sellVolume": sell_v,
                         "type": "bullish",
-                    })
+                    }
+                    obs.append(_new_payload)
+                    # Pine line 1282-1296: overlap deletion (mode="Previous",
+                    # rmP=0 → drop the newly-appended OB)
+                    _prev = next((x for x in reversed(obs[:-1]) if x["type"] == "bullish"), None)
+                    if _prev is not None and _new_payload["bottom"] < _prev["top"]:
+                        obs.pop()
             upP.clear(); upB.clear()
 
         # Bearish OB — same as detect_obs
-        if dnP and len(upL) > 1 and c[i] < dnP[0] and (i == start_i or c[i - 1] >= dnP[0]):
+        if dnP and len(upL) > 1 and c[i] < dnP[0] \
+                and prev_dnP_first is not None and c[i - 1] >= prev_dnP_first:
             pivot_bar    = dnB[0] if dnB else i - 10
             search_start = max(0, pivot_bar + 1)
             search_end   = i + 1
@@ -2594,13 +2807,40 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
                 buy_v     = total_v * 0.4
                 sell_v    = total_v - buy_v
                 if ob_top > ob_bottom:
-                    obs.append({
+                    _new_payload = {
                         "top": ob_top, "bottom": ob_bottom, "avg": ob_avg,
                         "bar": max_idx, "sourceBar": ob_source,
                         "volume": total_v, "buyVolume": buy_v, "sellVolume": sell_v,
                         "type": "bearish",
-                    })
+                    }
+                    obs.append(_new_payload)
+                    # Pine line 1282-1296: overlap deletion (mode="Previous",
+                    # rmP=0 → drop the newly-appended OB)
+                    _prev = next((x for x in reversed(obs[:-1]) if x["type"] == "bearish"), None)
+                    if _prev is not None and _new_payload["top"] > _prev["bottom"]:
+                        obs.pop()
             dnP.clear(); dnB.clear()
+
+        # ── Pine line 1298-1321: per-bar mitigation (barstate.isconfirmed) ──
+        # detect_obs_all uses Absolute mitigation (bull→ob.bottom, bear→ob.top),
+        # matching the touch-meta pass below. Pine deletes mitigated OBs from
+        # the array each bar; replicate that here so the next bar's overlap
+        # check looks up the correct "previous" same-direction OB.
+        if obs:
+            _close_i = c[i]
+            _kept = []
+            for _ob in obs:
+                _trigger = _ob["bottom"] if _ob["type"] == "bullish" else _ob["top"]
+                _mit = (_ob["type"] == "bullish" and _close_i < _trigger) or \
+                       (_ob["type"] == "bearish" and _close_i > _trigger)
+                if not _mit:
+                    _kept.append(_ob)
+            if len(_kept) != len(obs):
+                obs[:] = _kept
+
+        # End-of-bar snapshot — next iteration's "[1]" (previous-bar) lookup
+        prev_upP_first = upP[0] if upP else None
+        prev_dnP_first = dnP[0] if dnP else None
 
     # Sort by bar descending (most recent first), deduplicate, limit
     seen = set()
@@ -2609,7 +2849,29 @@ def detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20):
         if ob["bar"] not in seen:
             seen.add(ob["bar"])
             unique.append(ob)
-    return unique[:max_ob]
+    unique = unique[:max_ob]
+
+    # ── Phase 1A: touch + mitigation metadata for analytics/backtest ──
+    # detect_obs_all() must preserve mitigated OB records. Touches are counted
+    # up to and including the mitigation bar (per rule), then counting stops.
+    for ob in unique:
+        _tm = _compute_ob_touch_meta(
+            ob, h, l, c, n,
+            ob_mitigation="Absolute",
+            track_mitigation=True,
+        )
+        ob["touches"]         = _tm["touches"]
+        ob["firstTouchBar"]   = _tm["firstTouchBar"]
+        ob["lastTouchBar"]    = _tm["lastTouchBar"]
+        ob["untouched"]       = _tm["untouched"]
+        ob["onceTouched"]     = _tm["onceTouched"]
+        ob["touchSeq"]        = _tm["touchSeq"]
+        ob["isVirgin"]        = _tm["isVirgin"]
+        ob["currentlyInside"] = _tm["currentlyInside"]
+        ob["mitigated"]       = _tm["mitigated"]
+        ob["mitigationBar"]   = _tm["mitigationBar"]
+
+    return unique
 
 
 
@@ -3054,6 +3316,53 @@ def filter_fvg(fvg: Dict[str, Any], obs: List[Dict[str, Any]], price: float, set
             return False
 
     return True
+
+
+# ── OB touch filter ──────────────────────────────────────────────────────────
+# Reads Phase 1A touch metadata only; never recomputes touches and never
+# mutates the OB. Returns True when the OB should be considered for alerts.
+#
+# When useObTouchState is enabled, the OB passes only if its touch count is
+# at most obMaxTouches. obMaxTouches=0 keeps virgin OBs only; higher values
+# include progressively more retested OBs.
+#
+# Legacy keys obTouchState / useObVirginApproach / obVirginApproachPct are
+# accepted by parse_settings for backward compatibility but no longer affect
+# filtering. Normal OB approach / consolidation logic decides proximity.
+def filter_ob(ob: Dict[str, Any], price: float, settings: Dict[str, Any]) -> bool:
+    if not settings:
+        return True
+
+    if not bool(settings.get("useObTouchState", False)):
+        return True
+
+    try:
+        touches = int(ob.get("touches", 0) or 0)
+    except (TypeError, ValueError):
+        touches = 0
+
+    try:
+        max_touches = int(settings.get("obMaxTouches", 99))
+    except (TypeError, ValueError):
+        max_touches = 99
+    if max_touches < 0:
+        max_touches = 0
+
+    if touches > max_touches:
+        return False
+
+    return True
+
+
+def _ob_touch_label(ob: Dict[str, Any]) -> str:
+    """Phase 1D: short human-readable OB touch label for alert details."""
+    try:
+        touches = int(ob.get("touches", 0) or 0)
+    except (TypeError, ValueError):
+        touches = 0
+    if bool(ob.get("isVirgin", touches == 0)) or touches == 0:
+        return "VIRGIN"
+    return f"Touch: {touches}"
 
 
 # ============================================================
@@ -3561,7 +3870,9 @@ _TV_OB_PARITY_SETTINGS: Dict[str, Any] = {
 }
 
 
-def _tv_visible_pool(obs_by_dir: List[Dict[str, Any]], max_ob: int = 5) -> List[Dict[str, Any]]:
+def _tv_visible_pool(obs_by_dir: List[Dict[str, Any]], max_ob: int = 5,
+                     overlap_effective_zone: bool = False,
+                     bearish_effective_bottom_overlap: bool = False) -> List[Dict[str, Any]]:
     """
     Build the Pine-style visible OB pool for a single direction.
 
@@ -3574,6 +3885,14 @@ def _tv_visible_pool(obs_by_dir: List[Dict[str, Any]], max_ob: int = 5) -> List[
 
     obs_by_dir: all active OBs of ONE direction, oldest-first (detect_obs insertion order).
     Returns the final visible subset, oldest-first, length ≤ max_ob.
+
+    overlap_effective_zone (debug-only, default False preserves production):
+      DEPRECATED / WRONG. Collapsed the *new* OB's extreme edge to avg.
+      Kept only for diagnostic comparison.
+    bearish_effective_bottom_overlap (debug-only, default False):
+      CORRECT bearish rule. For bearish overlap only, the *previous*
+      accepted OB's effective bottom is its avg (TV displays the bearish
+      lower boundary at avg). New OB top stays raw. Bullish stays raw.
     """
     input_count = len(obs_by_dir)
 
@@ -3584,9 +3903,15 @@ def _tv_visible_pool(obs_by_dir: List[Dict[str, Any]], max_ob: int = 5) -> List[
         if accepted:
             last = accepted[-1]
             if ob["type"] == "bullish":
-                overlaps = ob["bottom"] < last["top"]
+                # Bullish stays raw (ETH 4H bull matches TV with raw overlap).
+                _lo = ob.get("avg", ob["bottom"]) if overlap_effective_zone else ob["bottom"]
+                overlaps = _lo < last["top"]
+            elif bearish_effective_bottom_overlap:
+                # CORRECT: prev OB effective bottom = its avg; new OB top raw.
+                overlaps = ob["top"] > last.get("avg", last["bottom"])
             else:
-                overlaps = ob["top"] > last["bottom"]
+                _hi = ob.get("avg", ob["top"]) if overlap_effective_zone else ob["top"]
+                overlaps = _hi > last["bottom"]
         else:
             overlaps = False
         if not overlaps:
@@ -3631,7 +3956,17 @@ def calculate_tv_ob_volume_share(obs: List[Dict[str, Any]],
     vis_debug = [
         {"direction": pool_name, "bar": ob["bar"],
          "zoneTop": round(ob["top"], 8), "zoneBottom": round(ob["bottom"], 8),
-         "volume": ob.get("volume"), "tvObVolumeSharePct": None}
+         "volume": ob.get("volume"), "tvObVolumeSharePct": None,
+         "touches":         ob.get("touches"),
+         "isVirgin":        ob.get("isVirgin"),
+         "currentlyInside": ob.get("currentlyInside"),
+         "firstTouchBar":   ob.get("firstTouchBar"),
+         "lastTouchBar":    ob.get("lastTouchBar"),
+         "mitigationBar":   ob.get("mitigationBar"),
+         "mitigated":       ob.get("mitigated"),
+         "untouched":       ob.get("untouched"),
+         "onceTouched":     ob.get("onceTouched"),
+         "touchSeq":        ob.get("touchSeq")}
         for ob in visible
     ]
 
@@ -3682,7 +4017,7 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
     current_rsi = rsi[-1] if rsi[-1] is not None else 50.0
     current_atr = atr[-1] if atr[-1] is not None else max((max(h[-14:]) - min(l[-14:])), 1e-10)
 
-    obs = detect_obs(o, h, l, c, v, settings["iLen"], settings["sLen"])
+    obs, _ = detect_obs(o, h, l, c, v, settings["iLen"], settings["sLen"])
     fvgs = detect_fvgs(o, h, l, c, v, tf)
 
     corr_value = None
@@ -3765,7 +4100,7 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
     # max_ob=None returns ALL active OBs (no mixed truncation) so each direction
     # gets its own complete pool before showLast=5 + hideOverlap are applied.
     # Alert logic uses the original obs (max_ob=5 mixed) — unchanged.
-    obs_tv_src  = detect_obs(o, h, l, c, v, settings["iLen"], settings["sLen"], max_ob=None)
+    obs_tv_src, _ = detect_obs(o, h, l, c, v, settings["iLen"], settings["sLen"], max_ob=None)
     bull_tv_src = [ob for ob in obs_tv_src if ob["type"] == "bullish"]
     bear_tv_src = [ob for ob in obs_tv_src if ob["type"] == "bearish"]
     tv_bull_pool = _tv_visible_pool(bull_tv_src)
@@ -3963,6 +4298,9 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
 
         found_alert = False
         for ob in ob_list:  # ← check ALL OBs, not just nearest
+            # Phase 1B: backend touch-state filter (no-op when disabled)
+            if not filter_ob(ob, price, settings):
+                continue
             zone_top      = ob["top"]
             zone_bottom   = ob["bottom"]
             price_in_zone = zone_bottom <= price <= zone_top
@@ -3979,7 +4317,6 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
                            if use_high_prob else '')
             _tv_share     = ob.get("tvObVolumeSharePct")
             _tv_share_str = f'{_tv_share}%' if _tv_share is not None else '—'
-            _filter_label = ' | Filter: TV OB %' if _use_str_filter else ''
 
             # Position label
             pos_label = "INSIDE ZONE" if price_in_zone else f"{dist_pct:.2f}% from zone"
@@ -4027,9 +4364,10 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
                         "timeframe": tf,
                         "detail": (f'Consolidating on {direction} OB | {pos_label} | '
                                    f'Candles: {consecutive} | '
-                                   f'TV OB %: {_tv_share_str}{quality_str}{_filter_label} | '
+                                   f'Order Block %: {_tv_share_str}{quality_str} | '
                                    f'Zone: {fmt_price(zone_bottom)} – {fmt_price(zone_top)}'
-                                   + (f' | {ob["ofSummary"]}' if ob.get("ofSummary") else '')),
+                                   + (f' | {ob["ofSummary"]}' if ob.get("ofSummary") else '')
+                                   + f' | {_ob_touch_label(ob)}'),
                         "strength": ob_strength,
                         "meta": {**ob_meta_base, "consolCandles": consecutive, "obState": "inside"},
                     })
@@ -4046,9 +4384,10 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
                     "direction": direction,
                     "timeframe": tf,
                     "detail": (f'Approaching {direction} OB | Dist: {dist_pct:.2f}% | '
-                               f'TV OB %: {_tv_share_str}{quality_str}{_filter_label} | '
+                               f'Order Block %: {_tv_share_str}{quality_str} | '
                                f'Zone: {fmt_price(zone_bottom)} – {fmt_price(zone_top)}'
-                               + (f' | {ob["ofSummary"]}' if ob.get("ofSummary") else '')),
+                               + (f' | {ob["ofSummary"]}' if ob.get("ofSummary") else '')
+                               + f' | {_ob_touch_label(ob)}'),
                     "strength": ob_strength,
                     "meta": {**ob_meta_base, "obState": "approaching" if not price_in_zone else "inside"},
                 })
@@ -4663,7 +5002,13 @@ def get_pairs_exchange(exchange: str, market: str = "perpetual") -> List[Dict[st
 
 def get_klines_exchange(symbol: str, interval: str, limit: int = 300,
                         market: str = "perpetual", exchange: str = "binance") -> List[Dict[str, float]]:
-    """Universal get_klines — routes to correct exchange"""
+    """Universal get_klines — routes to correct exchange.
+
+    For Binance: if limit > 1500, automatically paginates via
+    get_binance_klines_paginated_latest(). get_klines() already handles this
+    internally, so the routing here is for clarity.
+    Non-Binance exchanges are not paginated (live scanner caps at 1500).
+    """
     exchange = (exchange or "binance").lower()
     if exchange == "bybit":
         result = get_klines_bybit(symbol, interval, limit, market)
@@ -4672,13 +5017,141 @@ def get_klines_exchange(symbol: str, interval: str, limit: int = 300,
     elif exchange == "mexc":
         result = get_klines_mexc(symbol, interval, limit, market)
     else:
-        result = get_klines(symbol, interval, limit, market)  # Binance
+        # get_klines() auto-paginates when limit > 1500
+        result = get_klines(symbol, interval, limit, market)
 
     # Fallback to Binance if exchange returns empty
     if not result:
         print(f"[{exchange}] klines empty for {symbol}, falling back to Binance")
         result = get_klines(symbol, interval, limit, market)
     return result
+
+
+def _scan_kline_limit() -> int:
+    """Shared candle-fetch limit for normal scanner / watchlist analysis.
+
+    Default 1500 — needed for OB-percentage parity with TradingView and with
+    /admin/debug/ob-tv-parity (which historically used 1500 candles too).
+    Override with SCAN_KLINE_LIMIT env var. Clamped to [300, 1500].
+
+    Used ONLY by scanner code paths. Admin debug routes pass their own
+    `kline_limit` query param and the backtest uses get_klines_exchange_window;
+    neither path goes through this helper.
+    """
+    try:
+        v = int(os.environ.get("SCAN_KLINE_LIMIT", "1500"))
+    except (TypeError, ValueError):
+        v = 1500
+    return max(300, min(v, 1500))
+
+
+def get_klines_exchange_window(symbol: str, interval: str,
+                               start_ms: int, end_ms: int,
+                               market: str = "perpetual",
+                               exchange: str = "binance") -> List[Dict[str, float]]:
+    """Fetch OHLCV candles in the time range [start_ms, end_ms] (by bar open).
+
+    Backtest-only helper. Do NOT use in scanner code paths — the scanner is
+    locked to the latest-N fetch (`get_klines_exchange`). This helper exists
+    so backtest_ob.py can grab a candle slice covering both the pre-signal
+    touch-count window AND the post-signal result-replay window in one
+    request set, regardless of how old the signal is.
+
+    Uses Binance Futures `/fapi/v1/klines` with `startTime`/`endTime`/`limit`
+    (up to 1500 candles per call), paginating until the window is covered.
+    Falls back to the geo-safe spot mirror with the same parameters. For
+    non-Binance `exchange` tags, falls back to Binance too — most pairs share
+    OHLC closely across exchanges for backtest purposes, and the historical
+    routes for Bybit/OKX/MEXC do not expose a uniform time-range API today.
+    """
+    try:
+        start_ms = int(start_ms)
+        end_ms   = int(end_ms)
+    except (TypeError, ValueError):
+        return []
+    if end_ms <= start_ms:
+        return []
+
+    def _parse(data):
+        out = []
+        for k in data or []:
+            try:
+                out.append({
+                    "openTime": int(k[0]),
+                    "open":     float(k[1]),
+                    "high":     float(k[2]),
+                    "low":      float(k[3]),
+                    "close":    float(k[4]),
+                    "volume":   float(k[5]),
+                })
+            except (TypeError, ValueError, IndexError):
+                continue
+        return out
+
+    def _fapi(start: int, end: int, limit: int):
+        try:
+            r = req.get(
+                f"{BINANCE_FUTURES_API}/fapi/v1/klines",
+                params={"symbol": symbol, "interval": interval,
+                        "startTime": start, "endTime": end, "limit": limit},
+                timeout=15,
+            )
+            if r.status_code == 200:
+                update_api_weight("binance", r)
+                return r.json()
+        except Exception:
+            pass
+        return None
+
+    def _spot(start: int, end: int, limit: int):
+        try:
+            r = req.get(
+                f"{SPOT_API}/api/v3/klines",
+                params={"symbol": symbol, "interval": interval,
+                        "startTime": start, "endTime": end, "limit": limit},
+                timeout=20,
+            )
+            if r.status_code == 200:
+                return r.json()
+        except Exception:
+            pass
+        return None
+
+    BINANCE_MAX = 1500
+    SPOT_MAX    = 1000
+
+    out:    List[Dict[str, float]] = []
+    cursor                          = start_ms
+    safety                          = 12
+    seen_open_times                 = set()
+
+    while cursor < end_ms and safety > 0:
+        safety -= 1
+        raw          = _fapi(cursor, end_ms, BINANCE_MAX)
+        actual_limit = BINANCE_MAX  # track per-source cap for break check
+        if raw is None or not raw:
+            raw          = _spot(cursor, end_ms, SPOT_MAX)
+            actual_limit = SPOT_MAX
+        parsed = _parse(raw)
+        if not parsed:
+            break
+
+        new_rows = [r for r in parsed if r["openTime"] not in seen_open_times]
+        if not new_rows:
+            break
+        for r in new_rows:
+            seen_open_times.add(r["openTime"])
+        out.extend(new_rows)
+
+        last_open = new_rows[-1]["openTime"]
+        # Use actual_limit (not BINANCE_MAX) so spot fallback doesn't stop
+        # after its first 1000-candle batch due to len(parsed) < 1500.
+        if len(parsed) < actual_limit or last_open >= end_ms:
+            break
+        cursor = last_open + 1
+
+    out.sort(key=lambda r: r["openTime"])
+    return out
 
 def get_pairs(market: str = "perpetual", force: bool = False) -> List[Dict[str, Any]]:
     """
@@ -4767,7 +5240,22 @@ def get_klines(symbol: str, interval: str, limit: int = 300, market: str = "perp
     """
     Fetch OHLCV candles. Tries Binance Futures API first (real futures volume),
     falls back to the geo-safe spot mirror.
+
+    If limit > 1500 (Binance hard cap per request), automatically paginates
+    backward via get_binance_klines_paginated_latest(). This lets debug/backtest
+    routes request 4000-10000 candles without any per-site changes.
+    Live scanner always stays ≤1500 via _scan_kline_limit(), so this path is
+    only hit from the debug route.
     """
+    try:
+        requested = int(limit)
+    except (TypeError, ValueError):
+        requested = 300
+
+    BINANCE_FUTURES_MAX = 1500
+    if requested > BINANCE_FUTURES_MAX:
+        return get_binance_klines_paginated_latest(symbol, interval, requested, market)
+
     def _parse(data):
         return [{
             "openTime": k[0],
@@ -4782,7 +5270,7 @@ def get_klines(symbol: str, interval: str, limit: int = 300, market: str = "perp
     try:
         r = req.get(
             f"{BINANCE_FUTURES_API}/fapi/v1/klines",
-            params={"symbol": symbol, "interval": interval, "limit": limit},
+            params={"symbol": symbol, "interval": interval, "limit": requested},
             timeout=15,
         )
         if r.status_code == 200:
@@ -4792,9 +5280,140 @@ def get_klines(symbol: str, interval: str, limit: int = 300, market: str = "perp
         pass
 
     # ── Fallback: geo-safe spot mirror ──
-    url = f"{SPOT_API}/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
+    url = f"{SPOT_API}/api/v3/klines?symbol={symbol}&interval={interval}&limit={requested}"
     data = req.get(url, timeout=20).json()
     return _parse(data)
+
+
+def get_binance_klines_paginated_latest(symbol: str, interval: str,
+                                        total_limit: int = 1500,
+                                        market: str = "perpetual") -> List[Dict[str, float]]:
+    """Fetch the latest N Binance candles by paginating backward with endTime.
+
+    Binance hard caps:
+      - Futures /fapi/v1/klines: 1500 candles per request
+      - Spot    /api/v3/klines:  1000 candles per request
+
+    Supports total_limit up to 10000. Each batch is fetched at the correct
+    per-source limit so we never exceed the API cap. Deduplicates by openTime,
+    returns candles sorted oldest→newest.
+
+    Used only by debug/backtest paths — the live scanner stays ≤1500 via
+    _scan_kline_limit() and never calls this function.
+    """
+    FUTURES_MAX = 1500
+    SPOT_MAX    = 1000
+
+    try:
+        target = max(1, min(int(total_limit), 10000))
+    except (TypeError, ValueError):
+        target = 300
+
+    def _parse(data):
+        if not isinstance(data, list):
+            return []
+        out = []
+        for k in data:
+            try:
+                out.append({
+                    "openTime": int(k[0]),
+                    "open":     float(k[1]),
+                    "high":     float(k[2]),
+                    "low":      float(k[3]),
+                    "close":    float(k[4]),
+                    "volume":   float(k[5]),
+                })
+            except (TypeError, ValueError, IndexError):
+                pass
+        return out
+
+    collected: List[Dict[str, float]] = []
+    seen_open_times: set               = set()
+    end_time_ms: Optional[int]         = None
+    batches                            = 0
+    source                             = "futures"
+    import math as _math
+    safety = _math.ceil(target / SPOT_MAX) + 5  # worst-case spot batches + margin
+
+    while len(collected) < target and safety > 0:
+        safety   -= 1
+        remaining = target - len(collected)
+
+        # ── Try Futures ──────────────────────────────────────────────────────
+        futures_limit = min(FUTURES_MAX, remaining)
+        fparams: Dict[str, Any] = {
+            "symbol": symbol, "interval": interval, "limit": futures_limit,
+        }
+        if end_time_ms is not None:
+            fparams["endTime"] = end_time_ms
+
+        batch: List[Dict[str, float]] = []
+        actual_limit = futures_limit
+        try:
+            r = req.get(
+                f"{BINANCE_FUTURES_API}/fapi/v1/klines",
+                params=fparams, timeout=15,
+            )
+            if r.status_code == 200:
+                update_api_weight("binance", r)
+                batch  = _parse(r.json())
+                source = "futures"
+        except Exception:
+            pass
+
+        # ── Spot fallback with correct spot limit ─────────────────────────
+        if not batch:
+            spot_limit = min(SPOT_MAX, remaining)
+            sparams: Dict[str, Any] = {
+                "symbol": symbol, "interval": interval, "limit": spot_limit,
+            }
+            if end_time_ms is not None:
+                sparams["endTime"] = end_time_ms
+            actual_limit = spot_limit
+            try:
+                r = req.get(f"{SPOT_API}/api/v3/klines", params=sparams, timeout=20)
+                if r.status_code == 200:
+                    batch  = _parse(r.json())
+                    source = "spot_fallback"
+            except Exception:
+                pass
+
+        if not batch:
+            break
+
+        batches  += 1
+        new_rows  = [row for row in batch if row["openTime"] not in seen_open_times]
+        if not new_rows:
+            break
+        for row in new_rows:
+            seen_open_times.add(row["openTime"])
+        collected.extend(new_rows)
+
+        oldest_open = min(row["openTime"] for row in new_rows)
+        end_time_ms = oldest_open - 1
+
+        # If the exchange returned fewer candles than we asked for, we've
+        # reached the beginning of its history — stop paginating.
+        if len(batch) < actual_limit:
+            break
+
+        time.sleep(0.1)
+
+    collected.sort(key=lambda x: x["openTime"])
+    if len(collected) > target:
+        collected = collected[-target:]
+
+    print(
+        f"[KL-PAGINATION] {symbol} {interval} requested={target} "
+        f"fetched={len(collected)} batches={batches} source={source}"
+    )
+    return collected
+
+
+# Keep old name as a thin alias so any existing call sites still work.
+def get_klines_paginated(symbol: str, interval: str, total_limit: int,
+                         market: str = "perpetual") -> List[Dict[str, float]]:
+    return get_binance_klines_paginated_latest(symbol, interval, total_limit, market)
 
 
 def get_all_daily_klines(symbol: str) -> List[Dict[str, float]]:
@@ -4844,6 +5463,21 @@ def detect_true_ath_atl(symbol: str, market: str = "perpetual") -> Optional[Dict
 
 
 def parse_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
+    # Phase 1B hardening: safe int/float casts with min-0 clamping for the
+    # new OB touch settings. Invalid / empty / missing values fall back to
+    # defaults instead of crashing the scan.
+    def _safe_int_min0(v: Any, default: int) -> int:
+        try:
+            return max(0, int(v))
+        except (TypeError, ValueError):
+            return default
+
+    def _safe_float_min0(v: Any, default: float) -> float:
+        try:
+            return max(0.0, float(v))
+        except (TypeError, ValueError):
+            return default
+
     return {
         "tf": payload.get("tf", "1h"),
         "iLen": int(payload.get("iLen", 5)),
@@ -4857,6 +5491,12 @@ def parse_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
         "obMinStrengthPct":     float(payload.get("obMinStrengthPct", 70)),
         "useHighProbOB": bool(payload.get("useHighProbOB", False)),
         "obMinQuality": int(payload.get("obMinQuality", 50)),
+        # Phase 1B: backend OB touch-state filters (no UI yet)
+        "useObTouchState":      bool(payload.get("useObTouchState", False)),
+        "obTouchState":         payload.get("obTouchState", "all"),
+        "obMaxTouches":         _safe_int_min0(payload.get("obMaxTouches"), 99),
+        "useObVirginApproach":  bool(payload.get("useObVirginApproach", False)),
+        "obVirginApproachPct":  _safe_float_min0(payload.get("obVirginApproachPct"), 1.5),
         "useFvgValidOnly": bool(payload.get("useFvgValidOnly", True)),
         "useFvgState": bool(payload.get("useFvgState", False)),
         "fvgState": payload.get("fvgState", "all"),
@@ -4948,7 +5588,8 @@ def login():
     if request.method == "GET":
         if session.get("logged_in"):
             return redirect(url_for("index"))
-        return render_template("login.html")
+        pw_reset = request.args.get("reset") == "1"
+        return render_template("login.html", pw_reset_success=pw_reset)
 
     username = request.form.get("username", "").strip().lower()
     pwd      = request.form.get("password", "")
@@ -4956,24 +5597,31 @@ def login():
     ua       = request.headers.get("User-Agent", "unknown")
     now_utc  = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     error    = None
+    is_ajax  = request.headers.get("X-Requested-With") == "XMLHttpRequest"
 
     # ── Try DB login first ──────────────────────────────────────────
-    db_user = None
-    db_error = None
+    db_user      = None
+    db_error     = None
+    db_error_code = None
     if not username:
-        db_error = "Please enter your username."
+        db_error      = "Please enter your username."
+        db_error_code = "empty"
     else:
         try:
             db_user = _DBUser.query.filter_by(username=username).first()
             if db_user:
                 if not db_user.check_password(pwd):
-                    db_error = "Incorrect password. Try again."
+                    db_error      = "Incorrect password. Please try again."
+                    db_error_code = "wrong_password"
                 elif db_user.status == "paused":
-                    db_error = "Your account has been paused. Contact admin."
+                    db_error      = "Your account has been paused. Contact admin."
+                    db_error_code = "paused"
                 elif db_user.status != "active":
-                    db_error = f"Account is {db_user.status}. Contact admin."
+                    db_error      = f"Account is {db_user.status}. Contact admin."
+                    db_error_code = "paused"
                 elif not db_user.email_verified:
-                    db_error = f"__unverified__{db_user.username}"
+                    db_error      = db_user.username   # carry username for resend link
+                    db_error_code = "unverified"
                 # success — db_error stays None
             # else: user not in DB, fall through to legacy
         except Exception as _dbe:
@@ -4981,17 +5629,22 @@ def login():
             db_user = None  # DB unavailable — fall to legacy
 
     # ── Legacy fallback if DB user not found ──────────────────────
+    error_code = None
     if not username:
-        error = db_error
+        error      = db_error
+        error_code = db_error_code
     elif db_user is not None:
         # DB user found — honour DB result
-        error = db_error
+        error      = db_error
+        error_code = db_error_code
     else:
         # Not in DB — try in-memory legacy list
         if username not in _USERS_DB:
-            error = "Username not recognised."
+            error      = "No account found. Please create and verify your account first."
+            error_code = "no_account"
         elif pwd != _USERS_DB[username]:
-            error = "Incorrect password. Try again."
+            error      = "Incorrect password. Please try again."
+            error_code = "wrong_password"
         # else: legacy success, error stays None
 
     if error is None and username:
@@ -5085,48 +5738,62 @@ def login():
         if db_user is not None:
             threading.Thread(target=_record_login, args=(db_user.id, ip, ua), daemon=True).start()
 
+        if is_ajax:
+            return jsonify({"success": True, "redirect": url_for("index")})
         return redirect(url_for("index"))
 
     LOGIN_AUDIT_LOG.appendleft({
         "username": username or "(empty)", "time": now_utc,
         "ip": ip, "geo": "", "ua": ua, "success": False
     })
-    if error and error.startswith("__unverified__"):
-        unverified_user = error.split("__unverified__", 1)[1]
+
+    if error_code == "unverified":
+        unverified_user = error   # error holds the username for this code
+        msg = "Your account is not verified yet. Please verify your email before logging in."
+        if is_ajax:
+            return jsonify({"error": "unverified", "message": msg, "username": unverified_user}), 401
         return render_template("login.html",
-                               error="Your email is not verified yet. Please check your inbox.",
+                               error=msg,
                                unverified_username=unverified_user)
+
+    if is_ajax:
+        return jsonify({"error": error_code or "auth_failed",
+                        "message": error or "Login failed. Please try again."}), 401
     return render_template("login.html", error=error)
 
 
-@app.route("/register", methods=["POST"])
+@app.route("/register", methods=["GET", "POST"])
 def register():
+    if request.method == "GET":
+        return redirect(url_for("login"))
+
     import random
+    is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+
     username = request.form.get("username", "").strip().lower()
     email    = request.form.get("email", "").strip().lower()
     password = request.form.get("password", "")
 
+    def _err(msg, **kw):
+        if is_ajax:
+            return jsonify({"error": "validation", "message": msg}), 400
+        return render_template("login.html", register_error=msg, show_signup=True, **kw)
+
     if not username:
-        return render_template("login.html", register_error="Username is required.", show_signup=True)
+        return _err("Username is required.")
     if not email:
-        return render_template("login.html", register_error="Email address is required.", show_signup=True,
-                               reg_username=username)
+        return _err("Email address is required.", reg_username=username)
     if "@" not in email or "." not in email.split("@")[-1]:
-        return render_template("login.html", register_error="Please enter a valid email address.", show_signup=True,
-                               reg_username=username, reg_email=email)
+        return _err("Please enter a valid email address.", reg_username=username, reg_email=email)
     if not password:
-        return render_template("login.html", register_error="Password is required.", show_signup=True,
-                               reg_username=username, reg_email=email)
+        return _err("Password is required.", reg_username=username, reg_email=email)
     if len(password) < 6:
-        return render_template("login.html", register_error="Password must be at least 6 characters.", show_signup=True,
-                               reg_username=username, reg_email=email)
+        return _err("Password must be at least 6 characters.", reg_username=username, reg_email=email)
     try:
         if _DBUser.query.filter_by(username=username).first():
-            return render_template("login.html", register_error="Username already taken. Choose another.", show_signup=True,
-                                   reg_username=username, reg_email=email)
+            return _err("Username already taken. Choose another.", reg_username=username, reg_email=email)
         if _DBUser.query.filter_by(email=email).first():
-            return render_template("login.html", register_error="This email is already registered. Sign in instead.", show_signup=True,
-                                   reg_username=username, reg_email=email)
+            return _err("This email is already registered. Sign in instead.", reg_username=username, reg_email=email)
 
         new_user = _DBUser(username=username, email=email, role="user", status="active", email_verified=False)
         new_user.set_password(password)
@@ -5151,11 +5818,14 @@ def register():
         if not email_sent:
             session["verify_fallback_code"] = code
 
-        return redirect(url_for("verify_email", username=username))
+        redirect_url = url_for("verify_email", username=username)
+        if is_ajax:
+            return jsonify({"success": True, "redirect": redirect_url})
+        return redirect(redirect_url)
     except Exception as _re:
         print(f"[REGISTER] Error: {_re}")
         db.session.rollback()
-        return render_template("login.html", register_error="Registration failed. Please try again.", show_signup=True)
+        return _err("Registration failed. Please try again.")
 
 
 @app.route("/verify-email", methods=["GET", "POST"])
@@ -5264,6 +5934,195 @@ def resend_verification():
         db.session.rollback()
         return render_template("verify.html", username=username,
                                error="Failed to resend. Please try again later.")
+
+
+# ── Password Reset ─────────────────────────────────────────────────────────────
+
+def _build_password_reset_email(username: str, reset_url: str) -> str:
+    """Return the premium HTML email body for password reset."""
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>Reset Your Password — ZyNi SMC</title>
+</head>
+<body style="margin:0;padding:0;background:#060a14;font-family:'Segoe UI',Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;">
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background:#060a14;">
+  <tr><td align="center" style="padding:40px 16px;">
+    <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="max-width:580px;">
+
+      <!-- HEADER / LOGO BANNER -->
+      <tr><td style="background:#000000;border-radius:16px 16px 0 0;padding:0;text-align:center;border:1px solid rgba(249,115,22,0.25);border-bottom:3px solid #f97316;overflow:hidden;line-height:0;font-size:0;">
+        <img src="https://smcsetups.com/static/images/logo-email.png"
+             alt="ZyNi SMC"
+             width="580"
+             style="width:100%;max-width:580px;height:auto;display:block;border-radius:16px 16px 0 0;">
+      </td></tr>
+
+      <!-- HERO BANNER -->
+      <tr><td style="background:linear-gradient(135deg,#0d1525 0%,#0f1e38 60%,#0a0f1e 100%);padding:36px 40px 28px;text-align:center;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
+        <img src="https://smcsetups.com/static/images/avatar-email.png" alt="ZyNi SMC" width="90" height="90"
+             style="width:90px;height:90px;border-radius:50%;display:block;margin:0 auto 20px;border:2.5px solid rgba(249,115,22,0.70);box-shadow:0 0 0 4px rgba(249,115,22,0.12),0 8px 28px rgba(0,0,0,0.55),0 0 30px rgba(249,115,22,0.18);object-fit:cover;">
+        <h1 style="color:#ffffff;font-size:23px;font-weight:800;margin:0 0 14px;letter-spacing:-0.3px;">Password Reset Request</h1>
+        <p style="color:rgba(232,240,255,0.65);font-size:15px;margin:0;line-height:1.75;">
+          Hi <strong style="color:#ffffff;">{username}</strong>, we received a request to reset your ZyNi SMC password.<br>
+          Click the button below to choose a new password.
+        </p>
+      </td></tr>
+
+      <!-- CTA BUTTON -->
+      <tr><td style="background:linear-gradient(135deg,#0d1525 0%,#0f1e38 100%);padding:0 40px 36px;text-align:center;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
+        <table cellpadding="0" cellspacing="0" role="presentation" style="margin:0 auto;">
+          <tr><td style="border-radius:12px;background:linear-gradient(135deg,#f97316 0%,#ea580c 100%);box-shadow:0 8px 32px rgba(249,115,22,0.35);">
+            <a href="{reset_url}"
+               style="display:inline-block;padding:15px 44px;color:#ffffff;font-size:15px;font-weight:700;text-decoration:none;letter-spacing:0.3px;border-radius:12px;">
+              Reset My Password
+            </a>
+          </td></tr>
+        </table>
+        <p style="color:rgba(232,240,255,0.40);font-size:12px;margin:18px 0 0;line-height:1.6;">
+          This link expires in <strong style="color:rgba(249,115,22,0.75);">30 minutes</strong>.
+          If you did not request a password reset, you can safely ignore this email — your account is secure.
+        </p>
+      </td></tr>
+
+      <!-- DIVIDER -->
+      <tr><td style="background:linear-gradient(135deg,#0d1525 0%,#0f1e38 100%);padding:0 40px;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
+        <div style="height:1px;background:linear-gradient(90deg,transparent,rgba(249,115,22,0.25),transparent);"></div>
+      </td></tr>
+
+      <!-- SECURITY NOTE -->
+      <tr><td style="background:linear-gradient(135deg,#0d1525 0%,#0f1e38 100%);padding:24px 40px 32px;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
+        <table cellpadding="0" cellspacing="0" role="presentation" width="100%">
+          <tr>
+            <td style="background:rgba(249,115,22,0.07);border:1px solid rgba(249,115,22,0.2);border-radius:10px;padding:16px 20px;">
+              <p style="color:rgba(232,240,255,0.55);font-size:12.5px;margin:0;line-height:1.7;">
+                <strong style="color:rgba(249,115,22,0.85);">Security tip:</strong>
+                ZyNi SMC will never ask for your password via email or phone.
+                This link can only be used once and will expire automatically.
+                If you didn't request this, please contact us at
+                <a href="mailto:support@smcsetups.com" style="color:#f97316;text-decoration:none;">support@smcsetups.com</a>.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td></tr>
+
+      <!-- FOOTER -->
+      <tr><td style="background:#040710;border-radius:0 0 16px 16px;padding:24px 40px;text-align:center;border:1px solid rgba(249,115,22,0.12);border-top:none;">
+        <p style="color:rgba(232,240,255,0.30);font-size:11.5px;margin:0 0 6px;line-height:1.7;">
+          ZyNi SMC — Smart Market Center<br>
+          Questions? <a href="mailto:support@smcsetups.com" style="color:#f97316;text-decoration:none;">support@smcsetups.com</a>
+        </p>
+        <p style="color:rgba(232,240,255,0.18);font-size:10.5px;margin:0;">
+          You received this email because a password reset was requested for your account.
+        </p>
+      </td></tr>
+
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>"""
+
+
+@app.route("/forgot-password", methods=["POST"])
+def forgot_password():
+    is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+
+    data       = request.get_json(silent=True) or {}
+    identifier = (data.get("identifier") or request.form.get("identifier", "")).strip().lower()
+
+    # Always return a generic success message to prevent user enumeration
+    generic_ok = {"success": True,
+                  "message": "If that account exists, a reset link has been sent to the registered email."}
+
+    if not identifier:
+        if is_ajax:
+            return jsonify({"error": "validation", "message": "Please enter your email or username."}), 400
+        return redirect(url_for("login"))
+
+    # Rate-limit: allow at most 1 reset request per email per 5 minutes
+    user = _DBUser.query.filter(
+        (_DBUser.email == identifier) | (_DBUser.username == identifier)
+    ).first()
+
+    if user:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=5)
+        recent = (_PasswordResetToken.query
+                  .filter_by(user_id=user.id)
+                  .filter(_PasswordResetToken.created_at > cutoff)
+                  .first())
+        if not recent:
+            raw_token  = secrets.token_urlsafe(32)
+            token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+            expires    = datetime.now(timezone.utc) + timedelta(minutes=30)
+            prt = _PasswordResetToken(user_id=user.id, token_hash=token_hash, expires_at=expires)
+            db.session.add(prt)
+            db.session.commit()
+
+            reset_url  = url_for("reset_password", token=raw_token, _external=True)
+            email_body = _build_password_reset_email(user.username, reset_url)
+            _send_via_resend(user.email, "ZyNi SMC — Reset Your Password", email_body)
+            print(f"[RESET] Sent password reset to {user.email}")
+        else:
+            print(f"[RESET] Rate-limited: reset already sent for user_id={user.id}")
+
+    if is_ajax:
+        return jsonify(generic_ok)
+    return redirect(url_for("login"))
+
+
+@app.route("/reset-password/<token>", methods=["GET", "POST"])
+def reset_password(token):
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    now        = datetime.now(timezone.utc)
+
+    prt = (_PasswordResetToken.query
+           .filter_by(token_hash=token_hash, used=False)
+           .filter(_PasswordResetToken.expires_at > now)
+           .first())
+
+    if not prt:
+        return render_template("reset_password.html", invalid=True)
+
+    if request.method == "GET":
+        return render_template("reset_password.html", token=token)
+
+    # POST — set new password
+    password  = request.form.get("password", "")
+    password2 = request.form.get("password2", "")
+    is_ajax   = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+
+    def _err(msg):
+        if is_ajax:
+            return jsonify({"error": "validation", "message": msg}), 400
+        return render_template("reset_password.html", token=token, error=msg)
+
+    if not password:
+        return _err("Please enter a new password.")
+    if len(password) < 6:
+        return _err("Password must be at least 6 characters.")
+    if password != password2:
+        return _err("Passwords do not match.")
+
+    try:
+        user = _DBUser.query.get(prt.user_id)
+        if not user:
+            return render_template("reset_password.html", invalid=True)
+        user.set_password(password)
+        prt.used = True
+        db.session.commit()
+        print(f"[RESET] Password updated for user_id={user.id}")
+        if is_ajax:
+            return jsonify({"success": True, "redirect": url_for("login")})
+        return redirect(url_for("login"))
+    except Exception as exc:
+        db.session.rollback()
+        print(f"[RESET] Error updating password: {exc}")
+        return _err("Something went wrong. Please try again.")
 
 
 @app.route("/admin/test-email")
@@ -5640,6 +6499,9 @@ _WL_SCAN_SETTINGS: Dict[str, Any] = {
     "useObStrengthFilter": False, "obMinStrengthPct": 0,
     "useHighProbOB": False, "obMinQuality": 50,
     "useAtrObApproach": False, "obApproachAtrMult": 0.5,
+    # Phase 1B: backend OB touch-state filters (no UI yet)
+    "useObTouchState": False, "obTouchState": "all", "obMaxTouches": 99,
+    "useObVirginApproach": False, "obVirginApproachPct": 1.5,
     "useFvgValidOnly": False, "useFvgState": False,
     "fvgState": "all", "fvgAgeMin": 0, "fvgAgeMax": 50,
     "useFvgAgeRange": False, "useFvgDistance": False,
@@ -5721,9 +6583,10 @@ def _scan_pair_multitf(symbol: str, market: str = "perpetual", wl_config: Option
         except Exception:
             pass
 
+    scan_limit = _scan_kline_limit()
     for tf in tfs:
         try:
-            candles = get_klines_exchange(symbol, tf, 300, market, exchange)
+            candles = get_klines_exchange(symbol, tf, scan_limit, market, exchange)
             if not candles or len(candles) < 100:
                 result["tfs"][tf] = {"error": "insufficient data"}
                 continue
@@ -5772,12 +6635,15 @@ def _scan_pair_multitf(symbol: str, market: str = "perpetual", wl_config: Option
             if scan_ob:
                 iLen = settings["iLen"]
                 sLen = settings["sLen"]
-                raw_obs = detect_obs(o, h, l, c, v, iLen, sLen, max_ob=5)
+                raw_obs, _ = detect_obs(o, h, l, c, v, iLen, sLen, max_ob=5)
                 ob_approach_pct = ob_appr.get(tf, 2.0)
                 fvgs_for_quality = detect_fvgs(o, h, l, c, v, tf)
                 itrend_q, trend_q = detect_structure(h, l, c, iLen, sLen)
 
                 for ob in raw_obs:
+                    # Phase 1B: backend touch-state filter (no-op when disabled)
+                    if not filter_ob(ob, price, settings):
+                        continue
                     zt  = ob["top"]
                     zb  = ob["bottom"]
                     dist_pct = obq_dist_from_price(price, zt, zb, ob["type"])
@@ -5825,7 +6691,7 @@ def _scan_pair_multitf(symbol: str, market: str = "perpetual", wl_config: Option
                         "detail":   (
                             f'{"Approaching" if state == "approaching" else "Inside" if state == "inside" else "Far from"} '
                             f'{ob["type"]} OB | Dist: {dist_pct:.2f}% | '
-                            f'TV OB %: {ob.get("tvObVolumeSharePct") or "—"} | '
+                            f'Order Block %: {ob.get("tvObVolumeSharePct") or "—"} | '
                             f'Zone: {fmt_price(zb)} – {fmt_price(zt)}'
                         ),
                     })
@@ -5922,6 +6788,8 @@ def _scan_pair_multitf(symbol: str, market: str = "perpetual", wl_config: Option
                 "fvgs":       tf_fvgs,
                 "fibs":       tf_fibs,
                 "breakers":   tf_breakers,
+                "candleLimitUsed": scan_limit,
+                "candlesCount":    len(candles),
             }
 
             result["obs"].extend(tf_obs)
@@ -6163,17 +7031,22 @@ def api_scan():
     fib_tf = settings.get("fibTf", settings["tf"]) if settings.get("useFibModule") else None
     fetch_fib_separately = fib_tf and fib_tf != settings["tf"]
 
+    scan_limit = _scan_kline_limit()
+
     def scan_symbol(sym):
         try:
-            candles = get_klines_exchange(sym, settings["tf"], 300, market, exchange)
+            candles = get_klines_exchange(sym, settings["tf"], scan_limit, market, exchange)
             fib_candles = None
             if fetch_fib_separately:
                 try:
-                    fib_candles = get_klines_exchange(sym, fib_tf, 300, market, exchange)
+                    fib_candles = get_klines_exchange(sym, fib_tf, scan_limit, market, exchange)
                 except Exception:
                     pass
             result = analyze_pair(sym, candles, settings["tf"], settings, btc_closes, fib_candles=fib_candles)
             if result and candles:
+                # Backend visibility for scanner candle depth (no UI yet).
+                result["candleLimitUsed"] = scan_limit
+                result["candlesCount"]    = len(candles)
                 c = [x["close"] for x in candles]
                 sp = [float(c[i]) for i in range(max(0, len(c)-24), len(c))]
                 result["sparkline"] = sp
@@ -7152,7 +8025,7 @@ def _bias_confluence(
     # ── OB confluence ──────────────────────────────────────────────────────────
     if use_ob:
         try:
-            obs = detect_obs(o, h, l, c, v, 5, 20, max_ob=8)
+            obs, _ = detect_obs(o, h, l, c, v, 5, 20, max_ob=8)
             for ob in obs:
                 if ob["type"] != rej_dir:
                     continue
@@ -7767,6 +8640,14 @@ def api_bias_scan():
             diagnostics["rejected"]["errors"] += 1
             continue
 
+    # Tally adaptive prior-drive quality counts from accepted results
+    for _r in results:
+        _pd = _r.get("priorDrive", {})
+        _q  = _pd.get("quality", "")
+        if   _q == "clean":   diagnostics["adaptivePriorDrive"]["cleanAccepted"]   += 1
+        elif _q == "good":    diagnostics["adaptivePriorDrive"]["goodAccepted"]    += 1
+        elif _q == "impulse": diagnostics["adaptivePriorDrive"]["impulseAccepted"] += 1
+
     # Phase 3: apply minimum grade filter, then sort by best setup first
     diagnostics["setupsFoundBeforeFilters"] = len(results)
     _before_grade = len(results)
@@ -8341,7 +9222,7 @@ def api_orderflow():
 
                 # Quick OB detection to get nearest zone
                 if len(c) >= 20:
-                    obs = detect_obs(o, h, l, c, v, 5, 10, max_ob=3)
+                    obs, _ = detect_obs(o, h, l, c, v, 5, 10, max_ob=3)
                     if obs:
                         # Find nearest OB to current price
                         def _dist(ob):
@@ -8412,7 +9293,7 @@ def api_zone_liquidity():
                     c_ = [float(k[4]) for k in klines]
                     v_ = [float(k[5]) for k in klines]
                     price_ref = price_ref or c_[-1]
-                    obs_ = detect_obs(o_, h_, l_, c_, v_, 5, 10, max_ob=5)
+                    obs_, _ = detect_obs(o_, h_, l_, c_, v_, 5, 10, max_ob=5)
                     if obs_:
                         # Find OB matching ob_type, nearest to price
                         typed = [ob for ob in obs_ if ob["type"] == ob_type]

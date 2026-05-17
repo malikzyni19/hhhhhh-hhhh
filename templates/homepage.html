@@ -82,6 +82,13 @@ nav{position:relative;z-index:90;display:flex;align-items:center;justify-content
 .nav-logo-zyni .nl{background:linear-gradient(135deg,var(--text) 0%,#22d3ee 60%,#a5f3fc 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
 .nav-logo-smc .nl{background:linear-gradient(135deg,#92400e 0%,#f59e0b 40%,#fde68a 60%,#f97316 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
 
+/* Z image logo */
+.nav-z-img{width:34px;height:34px;border-radius:8px;object-fit:cover;flex-shrink:0;filter:drop-shadow(0 0 6px rgba(249,115,22,0.35));transition:filter .3s}
+.nav-logo:hover .nav-z-img{filter:drop-shadow(0 0 12px rgba(249,115,22,0.65))}
+.nav-logo-name{font-family:'Outfit',sans-serif;font-size:20px;font-weight:800;background:linear-gradient(135deg,#f59e0b 0%,#fbbf24 50%,#f97316 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;letter-spacing:0}
+@media(min-width:961px){.nav-z-img{width:38px;height:38px}.nav-logo-name{font-size:22px}}
+@media(max-width:480px){.nav-z-img{width:30px;height:30px}.nav-logo-name{font-size:18px}}
+
 /* NAV RIGHT — horizontal buttons, always right */
 .nav-right{display:flex;align-items:center;gap:6px;margin-left:auto}
 
@@ -450,39 +457,181 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 /* ── THREE.JS GLOBAL CANVAS ── */
 #three-canvas{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-events:none}
 
-/* ── HERO LAYOUT: CENTERED (restored) ── */
-.hero{flex-direction:column!important;text-align:center!important;align-items:center!important;
-  justify-content:center;padding:80px 24px 60px!important;min-height:90vh;overflow:hidden;position:relative}
-.hero-left{display:contents}
-.hero-right,.hero-right *{display:none!important}
+/* ── HERO LAYOUT: FULL-BLEED BACKGROUND ── */
+.hero{
+  flex-direction:column!important;
+  align-items:flex-start!important;
+  justify-content:center!important;
+  padding:0!important;
+  min-height:92vh;
+  overflow:hidden;
+  position:relative;
+}
+
+/* Three.js morph canvas container */
+#hero-morph-wrap{
+  position:absolute;
+  inset:0;
+  z-index:0;
+  overflow:hidden;
+  pointer-events:none;
+  background:#060a14;
+}
+#hero-morph-canvas{
+  width:100%;
+  height:100%;
+  display:block;
+}
+
+/* Gradient overlay — left for text contrast, subtle */
+.hero-overlay{
+  position:absolute;
+  inset:0;
+  background:linear-gradient(
+    to right,
+    rgba(6,10,20,0.94) 0%,
+    rgba(6,10,20,0.82) 30%,
+    rgba(6,10,20,0.42) 55%,
+    rgba(6,10,20,0.08) 75%,
+    transparent 100%
+  );
+  z-index:1;
+  pointer-events:none;
+}
+
+/* Statement panel — Phase 3 scroll text */
+/* Hide old image column */
+.hero-img-col{display:none!important}
+
+/* Text column — overlaid left */
+.hero-left{
+  position:relative;
+  z-index:2;
+  max-width:640px;
+  width:100%;
+  display:flex!important;
+  flex-direction:column;
+  align-items:flex-start;
+  justify-content:center;
+  padding:80px 0 60px 6vw;
+  will-change:opacity,transform;
+}
 
 .hero-eyebrow{animation:fadeUp .8s ease both;position:relative;z-index:2}
-.hero-h1{text-align:center;animation:fadeUp .8s .1s ease both;position:relative;z-index:2}
-.hero-sub{text-align:center;max-width:520px;animation:fadeUp .8s .2s ease both;position:relative;z-index:2}
-.hero-btns{justify-content:center!important;animation:fadeUp .8s .3s ease both;position:relative;z-index:2}
-.hero-bottom{justify-content:center!important;animation:fadeUp .8s .4s ease both;max-width:900px;position:relative;z-index:2}
+.hero-h1{text-align:left;animation:fadeUp .8s .1s ease both;position:relative;z-index:2}
+.hero-sub{text-align:left;max-width:480px;animation:fadeUp .8s .2s ease both;position:relative;z-index:2}
+.hero-btns{justify-content:flex-start!important;animation:fadeUp .8s .3s ease both;position:relative;z-index:2}
+.hero-bottom{justify-content:flex-start!important;animation:fadeUp .8s .4s ease both;max-width:820px;position:relative;z-index:2}
+
+/* Hide Fear & Greed panel in hero */
+.fg-vol-panel{display:none!important}
 
 /* ── ROTATING WORD ── */
 #hero-rw{
   display:inline-block;
+  min-width:8ch; /* prevent layout shift during word rotation */
   background:linear-gradient(135deg,#f59e0b 0%,#fbbf24 45%,#f97316 100%);
   -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
-  min-width:260px;text-align:center;vertical-align:bottom;
+  text-align:left;
+  will-change:transform,opacity;
 }
 
 /* ── HERO 3D CANVAS ── */
 #hero-3d-canvas{
   position:absolute;inset:0;width:100%;height:100%;
   z-index:0;overflow:hidden;pointer-events:none;
+  opacity:0.25;
 }
 #hero-3d-canvas canvas{position:absolute;top:0;left:0}
 
-@media(max-width:960px){
-  .hero-bottom{flex-direction:column}
-  #hero-rw{min-width:160px}
+/* ── MOBILE: cinematic full-bleed hero ── */
+@media(max-width:1024px){
+  .hero{
+    justify-content:flex-end!important;
+    padding:0 0 48px!important;
+    min-height:100svh;
+    min-height:100dvh;
+  }
+  /* Mobile overlay — dark only at very bottom for text; center clear for sphere */
+  .hero-overlay{
+    background:linear-gradient(
+      to top,
+      rgba(6,10,20,0.97) 0%,
+      rgba(6,10,20,0.75) 20%,
+      rgba(6,10,20,0.22) 42%,
+      transparent 62%
+    );
+  }
+  .hero-left{
+    max-width:100%;
+    align-items:center;
+    padding:0 20px;
+  }
+  .hero-h1{text-align:center}
+  .hero-sub{text-align:center;max-width:520px}
+  .hero-btns{justify-content:center!important}
+  .hero-bottom{justify-content:center!important}
+  #hero-rw{text-align:center}
+  /* Stats panel — tighter for mobile */
+  .stats-panel{min-width:0}
+  .stat{padding:16px 10px}
+  .stat-num{font-size:20px}
+  .stat-label{font-size:7px;letter-spacing:1px}
 }
-@media(max-width:768px){ #hero-3d-canvas{opacity:0.75}}
-@media(max-width:480px){ #hero-3d-canvas{opacity:0.65}}
+@media(max-width:768px){
+  .hero{padding:0 0 44px!important}
+  .hero-sub{font-size:13.5px}
+}
+@media(max-width:480px){
+  .hero{padding:0 0 32px!important}
+  .hero-h1{
+    font-size:clamp(34px,10.5vw,50px)!important;
+    line-height:1.1!important;
+  }
+  .hero-eyebrow{font-size:9px;padding:5px 14px;margin-bottom:18px}
+  .hero-sub{font-size:13px;line-height:1.75;max-width:92vw}
+  .hero-btns{gap:10px;margin-bottom:24px}
+  .stat{padding:14px 8px}
+  .stat-num{font-size:18px}
+  .stat-label{font-size:7px;letter-spacing:.6px}
+}
+@media(max-width:960px){ .hero-bottom{flex-direction:column} }
+
+/* ── HERO CINEMATIC CARDS ── */
+.hero-cin-card{
+  position:absolute;
+  right:4vw;
+  z-index:3;
+  background:rgba(6,10,20,0.78);
+  border:1px solid rgba(255,255,255,0.11);
+  border-radius:16px;
+  padding:16px 20px;
+  min-width:188px;
+  backdrop-filter:blur(28px);
+  -webkit-backdrop-filter:blur(28px);
+  opacity:0;
+  will-change:transform,opacity;
+  pointer-events:none;
+  transform-style:preserve-3d;
+  box-shadow:0 8px 32px rgba(0,0,0,0.55),0 0 0 1px rgba(255,255,255,0.04) inset;
+}
+.hcc-1{top:16%}
+.hcc-2{top:40%}
+.hcc-3{top:63%}
+.hcc-badge{font-family:'DM Sans',sans-serif;font-size:8px;letter-spacing:2.5px;color:#22d3ee;text-transform:uppercase;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:5px}
+.hcc-badge.fvg{color:#22c55e}.hcc-badge.live{color:var(--text3)}
+.hcc-pair{font-family:'Outfit',sans-serif;font-size:15px;font-weight:700;color:var(--text);margin-bottom:10px;letter-spacing:.3px}
+.hcc-tf{font-size:10px;color:var(--text3);font-weight:400;margin-left:5px;letter-spacing:0}
+.hcc-bar-wrap{height:4px;background:rgba(255,255,255,0.07);border-radius:2px;margin-bottom:12px;overflow:hidden}
+.hcc-bar{display:block;height:100%;border-radius:2px}
+.hcc-row{display:flex;justify-content:space-between;align-items:center;font-family:'DM Sans',sans-serif;font-size:11px;margin-bottom:5px;gap:24px}
+.hcc-lbl{color:var(--text3);font-size:10px;letter-spacing:.5px}
+.hcc-val{color:var(--text);font-weight:600}
+.hcc-num{font-family:'Outfit',sans-serif;font-size:26px;font-weight:800;color:var(--text);letter-spacing:-1px;line-height:1;margin:6px 0 4px}
+.hcc-divider{height:1px;background:rgba(255,255,255,0.06);margin:10px 0}
+@media(max-width:1024px){.hero-cin-card{display:none!important}}
+
+
 
 /* ── HERO BUTTON GLOW ── */
 .btn-main{z-index:1}
@@ -524,20 +673,269 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 
 
 /* ── ORB OVERLAY (fixed transition overlay) ── */
-#orb-overlay-canvas{position:fixed;top:0;left:0;width:100%;height:100%;z-index:50;pointer-events:none;opacity:0;background:rgba(0,2,14,0.96);overflow:hidden}
-#orb-overlay-canvas canvas{position:absolute;top:0;left:0;display:block}
+
 
 /* ── STATEMENT SECTION ── */
-#statement{padding:72px 20px 80px;text-align:center;position:relative;min-height:360px}
+#statement{padding:88px 20px 96px;text-align:center;position:relative;min-height:380px;background:linear-gradient(180deg,rgba(6,10,20,0.96) 0%,rgba(6,10,20,0.82) 40%,transparent 100%)}
 @media(max-width:640px){ #statement{padding:48px 16px 56px}}
 #statement .statement-wrap{position:relative;z-index:1}
 .statement-wrap{max-width:860px;margin:0 auto}
-.statement-l1{font-size:clamp(1.15rem,2.5vw,1.72rem);font-weight:700;line-height:1.55;color:var(--text);margin:0 0 24px;opacity:0;transform:perspective(700px) translateZ(-80px) scale(0.78);filter:blur(4px);transition:opacity 1.1s cubic-bezier(.22,1,.36,1),transform 1.1s cubic-bezier(.22,1,.36,1),filter 1.1s cubic-bezier(.22,1,.36,1)}
-.statement-l1.vis{opacity:1;transform:perspective(700px) translateZ(0) scale(1);filter:blur(0px)}
-.statement-l2{font-size:clamp(0.92rem,1.7vw,1.12rem);font-weight:400;line-height:1.7;color:rgba(180,200,225,0.72);margin:0;opacity:0;transform:perspective(700px) translateZ(-60px) scale(0.84);filter:blur(3px);transition:opacity 1.0s .32s cubic-bezier(.22,1,.36,1),transform 1.0s .32s cubic-bezier(.22,1,.36,1),filter 1.0s .32s cubic-bezier(.22,1,.36,1)}
-.statement-l2.vis{opacity:1;transform:perspective(700px) translateZ(0) scale(1);filter:blur(0px)}
+.statement-l1{font-size:clamp(1.15rem,2.5vw,1.72rem);font-weight:700;line-height:1.65;color:var(--text);margin:0 0 28px}
+.statement-l2{font-size:clamp(0.92rem,1.7vw,1.12rem);font-weight:400;line-height:1.75;color:rgba(180,200,225,0.72);margin:0}
+/* Character animation spans — GSAP sets initial opacity:0 via gsap.set(); default visible */
+.sc{display:inline-block;will-change:opacity,transform,filter}
 .stmt-hl{background:linear-gradient(90deg,#f59e0b,#fbbf24 60%,#f97316);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;filter:drop-shadow(0 0 10px rgba(245,158,11,0.40))}
 .stmt-hl2{background:linear-gradient(90deg,#22d3ee,#38bdf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+
+/* ── MORPH SIDE PANEL — appears beside sphere during scroll morph ── */
+#morph-side-panel{
+  position:absolute;
+  z-index:3;
+  left:0;top:0;bottom:0;
+  width:50%;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  padding:80px 40px 60px 6vw;
+  opacity:0;
+  pointer-events:none;
+  will-change:opacity,transform;
+}
+.msp-eyebrow{
+  font-family:'DM Sans',sans-serif;
+  font-size:10px;font-weight:700;
+  letter-spacing:3.5px;text-transform:uppercase;
+  color:#f59e0b;margin-bottom:20px;
+  display:flex;align-items:center;gap:8px;
+}
+.msp-eyebrow::before{
+  content:'';display:inline-block;
+  width:24px;height:1.5px;background:#f59e0b;flex-shrink:0;
+}
+.msp-l1{
+  font-family:'Outfit',sans-serif;
+  font-size:clamp(1.25rem,2.5vw,1.85rem);
+  font-weight:800;line-height:1.35;
+  color:#fff;margin:0 0 20px;
+}
+.msp-l1 .hl{
+  background:linear-gradient(135deg,#f59e0b 0%,#fbbf24 45%,#f97316 100%);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+}
+.msp-l2{
+  font-family:'DM Sans',sans-serif;
+  font-size:clamp(0.88rem,1.45vw,1.05rem);
+  font-weight:400;line-height:1.75;
+  color:rgba(180,200,225,0.75);
+  max-width:440px;margin:0;
+}
+@media(max-width:1024px){
+  #morph-side-panel{
+    width:100%;
+    left:0;top:auto;bottom:0;
+    height:48%;          /* occupy lower half of the pinned screen */
+    justify-content:center;
+    align-items:center;
+    padding:0 24px 40px;
+    text-align:center;
+    /* Deep gradient so text is legible over the 3D scene below */
+    background:linear-gradient(to top,
+      rgba(6,10,20,0.98) 0%,
+      rgba(6,10,20,0.92) 30%,
+      rgba(6,10,20,0.72) 56%,
+      transparent 80%);
+  }
+  .msp-eyebrow{justify-content:center}
+  .msp-l1{font-size:clamp(1rem,4.2vw,1.45rem);margin-bottom:12px}
+  .msp-l2{max-width:88vw;font-size:clamp(0.82rem,3.2vw,0.98rem)}
+}
+@media(max-width:480px){
+  #morph-side-panel{padding:0 18px 32px;height:46%}
+  .msp-l1{font-size:clamp(0.95rem,5vw,1.2rem)}
+  .msp-l2{font-size:clamp(0.78rem,3.5vw,0.92rem)}
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   MODULE CAROUSEL — premium 3D cinematic phone showcase
+═══════════════════════════════════════════════════════════════ */
+/* Two-column showcase: phone carousel left, text right */
+#mod-showcase{
+  display:grid;
+  grid-template-columns:52% 1fr;
+  gap:48px;
+  align-items:center;
+  margin:52px 0 0;
+}
+#mod-text-col{
+  display:flex;flex-direction:column;gap:28px;padding:8px 0;
+}
+/* Carousel stage */
+#mod-carousel-wrap{
+  position:relative;height:500px;margin:0;overflow:visible;
+}
+.mcar-glow-edge{
+  position:absolute;top:50%;transform:translateY(-50%);
+  width:180px;height:420px;border-radius:50%;pointer-events:none;z-index:0;
+}
+.mcar-glow-l{left:-48px;background:radial-gradient(ellipse at left,rgba(249,115,22,.22) 0%,transparent 66%)}
+.mcar-glow-r{right:-48px;background:radial-gradient(ellipse at right,rgba(249,115,22,.22) 0%,transparent 66%)}
+#mod-stage{
+  position:relative;width:100%;height:100%;
+  perspective:1200px;perspective-origin:50% 50%;overflow:visible;
+}
+.mcar-card{
+  position:absolute;top:50%;left:50%;
+  transform:translate(-50%,-50%);cursor:pointer;
+  will-change:transform,opacity,filter;
+  transition:transform .62s cubic-bezier(.34,1.10,.64,1),opacity .52s ease,filter .52s ease;
+  transform-style:preserve-3d;overflow:visible;
+}
+.mcar-card[data-pos="c"]{
+  transform:translate(-50%,-50%) scale(.90) rotateY(0deg);
+  opacity:1;filter:none;z-index:10;cursor:default;
+}
+.mcar-card[data-pos="r1"]{
+  transform:translate(calc(-50% + 210px),-50%) scale(.62) rotateY(-26deg);
+  opacity:.55;filter:blur(1px) brightness(.70);z-index:7;
+}
+.mcar-card[data-pos="l1"]{
+  transform:translate(calc(-50% - 210px),-50%) scale(.62) rotateY(26deg);
+  opacity:.55;filter:blur(1px) brightness(.70);z-index:7;
+}
+.mcar-card[data-pos="r2"]{
+  transform:translate(calc(-50% + 370px),-50%) scale(.42) rotateY(-42deg);
+  opacity:.20;filter:blur(2.5px) brightness(.45);z-index:5;
+}
+.mcar-card[data-pos="l2"]{
+  transform:translate(calc(-50% - 370px),-50%) scale(.42) rotateY(42deg);
+  opacity:.20;filter:blur(2.5px) brightness(.45);z-index:5;
+}
+.mcar-card[data-pos="hide"]{
+  transform:translate(-50%,-50%) scale(.22);
+  opacity:0;z-index:1;pointer-events:none;
+}
+/* Strip phone-side styling inside carousel */
+.mcar-card .phone-side{padding:0!important;background:transparent!important;gap:16px}
+[data-theme="light"] .mcar-card .phone-side{background:transparent!important}
+/* Suppress CSS hover — GSAP manages position */
+.mcar-card .phone:hover{transform:none!important}
+/* Orange glow ring on center phone */
+.mcar-card[data-pos="c"] .phone{
+  box-shadow:
+    0 0 0 1px rgba(249,115,22,.55),
+    0 0 0 3px rgba(249,115,22,.14),
+    0 32px 64px rgba(0,0,0,.65),
+    0 0 56px rgba(249,115,22,.28)!important;
+}
+/* Arrows */
+.mcar-arrow{
+  position:absolute;top:50%;transform:translateY(-50%);z-index:20;
+  width:48px;height:48px;border-radius:50%;
+  border:1px solid rgba(249,115,22,.38);
+  background:rgba(249,115,22,.09);backdrop-filter:blur(8px);
+  color:#f97316;display:flex;align-items:center;justify-content:center;
+  cursor:pointer;transition:background .25s,box-shadow .25s,border-color .25s;
+}
+.mcar-arrow:hover{
+  background:rgba(249,115,22,.24);
+  box-shadow:0 0 22px rgba(249,115,22,.44);
+  border-color:rgba(249,115,22,.75);
+}
+.mcar-prev{left:4px}.mcar-next{right:4px}
+.mcar-arrow svg{width:20px;height:20px}
+/* Info panel (right column) */
+#mod-info-wrap{position:relative;min-height:230px;overflow:hidden}
+.mcar-info-item{
+  position:absolute;inset:0;
+  display:flex;flex-direction:column;align-items:flex-start;text-align:left;
+  padding:0;
+  opacity:0;
+  pointer-events:none;
+}
+.mcar-info-item.active{opacity:1;pointer-events:auto}
+.mcar-info-tag{
+  font-family:'DM Sans',sans-serif;font-size:10px;font-weight:700;
+  letter-spacing:3px;text-transform:uppercase;margin-bottom:14px;
+  display:flex;align-items:center;gap:8px;
+}
+.mcar-info-tag::before{
+  content:'';display:inline-block;width:20px;height:1.5px;
+  background:currentColor;flex-shrink:0;
+}
+.mcar-info-title{
+  font-family:'Outfit',sans-serif;
+  font-size:clamp(24px,2.8vw,38px);
+  font-weight:800;color:#fff;margin:0 0 16px;line-height:1.15;
+  overflow:hidden;
+}
+.mcar-info-desc{
+  font-family:'DM Sans',sans-serif;
+  font-size:clamp(13px,1.2vw,15px);
+  color:rgba(180,200,225,.80);line-height:1.85;max-width:480px;margin:0;
+}
+/* Character animation spans */
+.mcar-c{display:inline-block}
+/* Nav dots */
+#mcar-dots{display:flex;gap:10px;align-items:center}
+.mcar-dot{
+  width:8px;height:8px;border-radius:50%;
+  background:rgba(255,255,255,.18);border:none;cursor:pointer;
+  transition:all .3s ease;padding:0;
+}
+.mcar-dot.active{
+  width:28px;border-radius:4px;
+  background:var(--mcar-color,#f97316);
+  box-shadow:0 0 10px var(--mcar-color,#f97316);
+}
+/* Responsive */
+@media(max-width:1024px){
+  #mod-showcase{grid-template-columns:1fr;gap:32px}
+  #mod-text-col{align-items:center}
+  .mcar-info-item{align-items:center;text-align:center}
+  .mcar-info-tag::before{display:none}
+  #mod-info-wrap{min-height:200px}
+  #mcar-dots{justify-content:center}
+  #mod-carousel-wrap{height:440px}
+  .mcar-card[data-pos="r1"]{transform:translate(calc(-50% + 178px),-50%) scale(.60) rotateY(-22deg);opacity:.50;filter:blur(.5px) brightness(.72)}
+  .mcar-card[data-pos="l1"]{transform:translate(calc(-50% - 178px),-50%) scale(.60) rotateY(22deg);opacity:.50;filter:blur(.5px) brightness(.72)}
+  .mcar-card[data-pos="r2"],.mcar-card[data-pos="l2"]{opacity:0;pointer-events:none;transform:translate(-50%,-50%) scale(.22)}
+  .mcar-arrow{width:42px;height:42px}
+  .mcar-prev{left:2px}.mcar-next{right:2px}
+}
+@media(max-width:640px){
+  #mod-carousel-wrap{height:390px}
+  .mcar-card[data-pos="c"]{transform:translate(-50%,-50%) scale(.78) rotateY(0deg)}
+  .mcar-card[data-pos="r1"]{transform:translate(calc(-50% + 148px),-50%) scale(.50) rotateY(-18deg);opacity:.38;filter:blur(1px) brightness(.65)}
+  .mcar-card[data-pos="l1"]{transform:translate(calc(-50% - 148px),-50%) scale(.50) rotateY(18deg);opacity:.38;filter:blur(1px) brightness(.65)}
+  .mcar-arrow{width:36px;height:36px}
+  .mcar-arrow svg{width:15px;height:15px}
+  .mcar-info-title{font-size:22px}
+  .mcar-info-desc{font-size:13px}
+}
+/* ── Mobile info panels: stack naturally below phone, no clipping ── */
+@media(max-width:1024px){
+  /* Override JS-injected min-height; height:auto grows with content */
+  /* overflow:hidden kept to clip horizontal GSAP slide animation only */
+  #mod-info-wrap{
+    min-height:0!important;
+    height:auto;
+  }
+  /* Switch from absolute-stack to natural flow; visibility via display */
+  .mcar-info-item{
+    position:relative;
+    inset:auto;
+    display:none;
+    opacity:1;
+    pointer-events:auto;
+  }
+  .mcar-info-item.active{
+    display:flex;
+  }
+  /* Breathing room so text doesn't touch screen edges */
+  #mod-text-col{
+    padding:0 8px;
+  }
+}
 </style>
 </head>
 <body>
@@ -651,15 +1049,15 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 
 <!-- TICKER -->
 <div class="ticker">
-  <div class="ticker-tag"><span class="ticker-dot"></span></div>
+  <div class="ticker-tag"><span class="ticker-dot"></span>LIVE</div>
   <div class="ticker-track"><div class="ticker-inner" id="ticker"></div></div>
 </div>
 
 <!-- NAV -->
 <nav>
   <a class="nav-logo" href="#">
-    <span class="nav-logo-dot"></span>
-    <span class="nav-logo-zyni"><span class="nl" style="--d:0">Z</span><span class="nl" style="--d:1">y</span><span class="nl" style="--d:2">N</span><span class="nl" style="--d:3">i</span></span><span class="nav-logo-smc">&nbsp;<span class="nl" style="--d:4">S</span><span class="nl" style="--d:5">M</span><span class="nl" style="--d:6">C</span></span>
+    <img class="nav-z-img" src="{{ url_for('static', filename='images/z-logo.png') }}" alt="ZyNi SMC">
+    <span class="nav-logo-name">ZyNi SMC</span>
     <span class="nav-tag">SCREENER</span>
   </a>
   <div class="nav-right">
@@ -685,14 +1083,31 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
 </nav>
 
 <!-- HERO -->
-<section class="hero">
-  <div id="hero-3d-canvas" aria-hidden="true"></div>
-  <!-- LEFT: text content -->
+<section class="hero" id="heroSection">
+
+  <!-- THREE.JS MORPH CANVAS — particle sphere → solid fluid shape -->
+  <div id="hero-morph-wrap" aria-hidden="true">
+    <canvas id="hero-morph-canvas"></canvas>
+  </div>
+
+  <!-- GRADIENT OVERLAY — text contrast on left -->
+  <div class="hero-overlay" aria-hidden="true"></div>
+
+  <!-- MORPH SIDE PANEL — fades in beside sphere during scroll morph -->
+  <div id="morph-side-panel">
+    <div class="msp-eyebrow">SMC Intelligence</div>
+    <p class="msp-l1">We don't provide any signals —<br>we provide <span class="hl">ready-made setups</span><br>across <span class="hl">1000+ pairs,</span> just one click away.</p>
+    <p class="msp-l2">This is not for beginners — this is for traders already familiar with SMC methods like Order Blocks, Fair Value Gaps, Fibonacci, and Breaker Blocks.</p>
+  </div>
+
+  <!-- TEXT — LEFT OVERLAY -->
   <div class="hero-left">
-  <div class="hero-eyebrow"><span class="hero-eyebrow-dot"></span><span data-i18n="hero_eyebrow">Smart Money Concepts · Real Time</span></div>
+  <div class="hero-eyebrow"><span class="hero-eyebrow-dot"></span><span data-i18n="hero_eyebrow">SMC Simpler. Real Time.</span></div>
   <h1 class="hero-h1">
     <div class="l1">Trade Like</div>
-    <div class="l2"><span id="hero-rw">Smart</span>&nbsp;Money</div>
+    <div class="l2 rw-line" style="line-height:1.1"><span id="hero-rw" style="background:linear-gradient(135deg,#f59e0b 0%,#fbbf24 45%,#f97316 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text">Elite</span></div>
+    <div class="l2" style="line-height:1.1">Money.</div>
+    <div class="l3" style="font-size:clamp(1.1rem,2.8vw,1.8rem);font-weight:500;opacity:.85;margin-top:4px">Facing the Markets.</div>
   </h1>
   <p class="hero-sub" data-i18n="hero_sub">Professional SMC scanner detecting Order Blocks, FVGs, Breaker Blocks and Fibonacci across 400+ crypto pairs — live, every second.</p>
   <div class="hero-btns">
@@ -706,88 +1121,44 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
       <div class="stat"><div class="stat-num">6</div><div class="stat-label" data-i18n="stat_mod">SMC Modules</div></div>
       <div class="stat"><div class="stat-num"><span style="-webkit-text-fill-color:#22c55e;color:#22c55e;font-size:18px;display:inline-block;animation:blink 2s infinite">●</span></div><div class="stat-label" data-i18n="stat_feed">Data Feed</div></div>
     </div>
-    <!-- Fear & Greed + Vol combined -->
-    <div class="fg-vol-panel">
-      <div class="fg-lbl" data-i18n="fg_label">Fear & Greed Index</div>
-      <div class="gauge-wrap">
-        <svg id="gaugesvg" viewBox="0 0 220 130" width="220" height="130">
-          <!-- Full semicircle base: center 110,105 radius 80 -->
-          <!-- Using single path with dasharray trick for 5 clean segments -->
-          <!-- Total arc length ≈ 251.3 (π * 80), each seg = 46.26, gap = 4 -->
-
-          <!-- BG track -->
-          <path d="M20,105 A90,90 0 0,1 200,105" fill="none" stroke="var(--gauge-track)" stroke-width="14" stroke-linecap="butt"/>
-
-          <!-- SEG 1: Extreme Fear — RED — 0 to 20% -->
-          <path d="M20,105 A90,90 0 0,1 200,105" fill="none" stroke="#ef4444" stroke-width="14" stroke-linecap="butt"
-            stroke-dasharray="46 8 46 8 46 8 46 8 46 8" stroke-dashoffset="0" opacity="0.18" id="seg1-bg"/>
-          <path d="M20,105 A90,90 0 0,1 200,105" fill="none" stroke="#ef4444" stroke-width="14" stroke-linecap="butt"
-            stroke-dasharray="46 8 0 999" stroke-dashoffset="0" opacity="0" id="seg1"/>
-
-          <!-- SEG 2: Fear — ORANGE — 20 to 40% -->
-          <path d="M20,105 A90,90 0 0,1 200,105" fill="none" stroke="#f97316" stroke-width="14" stroke-linecap="butt"
-            stroke-dasharray="46 8 46 8 46 8 46 8 46 8" stroke-dashoffset="-54" opacity="0.18" id="seg2-bg"/>
-          <path d="M20,105 A90,90 0 0,1 200,105" fill="none" stroke="#f97316" stroke-width="14" stroke-linecap="butt"
-            stroke-dasharray="46 999" stroke-dashoffset="-54" opacity="0" id="seg2"/>
-
-          <!-- SEG 3: Neutral — YELLOW — 40 to 60% -->
-          <path d="M20,105 A90,90 0 0,1 200,105" fill="none" stroke="#eab308" stroke-width="14" stroke-linecap="butt"
-            stroke-dasharray="46 999" stroke-dashoffset="-108" opacity="0.18" id="seg3-bg"/>
-          <path d="M20,105 A90,90 0 0,1 200,105" fill="none" stroke="#eab308" stroke-width="14" stroke-linecap="butt"
-            stroke-dasharray="46 999" stroke-dashoffset="-108" opacity="0" id="seg3"/>
-
-          <!-- SEG 4: Greed — LIGHT GREEN — 60 to 80% -->
-          <path d="M20,105 A90,90 0 0,1 200,105" fill="none" stroke="#84cc16" stroke-width="14" stroke-linecap="butt"
-            stroke-dasharray="46 999" stroke-dashoffset="-162" opacity="0.18" id="seg4-bg"/>
-          <path d="M20,105 A90,90 0 0,1 200,105" fill="none" stroke="#84cc16" stroke-width="14" stroke-linecap="butt"
-            stroke-dasharray="46 999" stroke-dashoffset="-162" opacity="0" id="seg4"/>
-
-          <!-- SEG 5: Extreme Greed — GREEN — 80 to 100% -->
-          <path d="M20,105 A90,90 0 0,1 200,105" fill="none" stroke="#22c55e" stroke-width="14" stroke-linecap="butt"
-            stroke-dasharray="46 999" stroke-dashoffset="-216" opacity="0.18" id="seg5-bg"/>
-          <path d="M20,105 A90,90 0 0,1 200,105" fill="none" stroke="#22c55e" stroke-width="14" stroke-linecap="butt"
-            stroke-dasharray="46 999" stroke-dashoffset="-216" opacity="0" id="seg5"/>
-
-          <!-- Needle -->
-          <line id="gauge-needle" x1="110" y1="105" x2="110" y2="28"
-            stroke="white" stroke-width="2.5" stroke-linecap="round" opacity="0.9"
-            transform="rotate(-90 110 105)"/>
-          <circle cx="110" cy="105" r="7" fill="var(--bg2,#060d18)" stroke="rgba(255,255,255,0.3)" stroke-width="1.5"/>
-          <circle cx="110" cy="105" r="3.5" fill="#22d3ee"/>
-
-          <!-- Value text -->
-          <text id="gauge-val" x="110" y="94" text-anchor="middle"
-            font-family="Outfit,sans-serif" font-size="24" font-weight="800" fill="#f59e0b">72</text>
-
-          <!-- Labels outside arc -->
-          <text x="10"  y="122" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="6.5" fill="#ef4444" font-weight="500">Extreme</text>
-          <text x="10"  y="129" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="6.5" fill="#ef4444" font-weight="500">Fear</text>
-          <text x="50"  y="60"  text-anchor="middle" font-family="DM Sans,sans-serif" font-size="6.5" fill="#f97316" font-weight="500">Fear</text>
-          <text x="110" y="16"  text-anchor="middle" font-family="DM Sans,sans-serif" font-size="6.5" fill="#eab308" font-weight="500">Neutral</text>
-          <text x="170" y="60"  text-anchor="middle" font-family="DM Sans,sans-serif" font-size="6.5" fill="#84cc16" font-weight="500">Greed</text>
-          <text x="210" y="122" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="6.5" fill="#22c55e" font-weight="500">Extreme</text>
-          <text x="210" y="129" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="6.5" fill="#22c55e" font-weight="500">Greed</text>
-        </svg>
-      </div>
-      <div class="gauge-name" id="gauge-name" style="color:#f59e0b">Greed</div>
-      <div class="vol-divider"></div>
-      <div class="vol-mini-lbl" data-i18n="vol_label">Exchange Volume 24H</div>
-      <div class="vol-mini-bars" id="vol-mini"></div>
-    </div>
   </div>
   </div><!-- /hero-left -->
-</section>
 
-<!-- ORB OVERLAY (fixed transition) -->
-<div id="orb-overlay-canvas" aria-hidden="true"><div id="orb-brand-text" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-family:'JetBrains Mono',monospace;font-size:clamp(1.6rem,5vw,3rem);font-weight:800;color:#22d3ee;letter-spacing:0.12em;text-shadow:0 0 28px rgba(34,211,238,.9),0 0 60px rgba(34,211,238,.4);opacity:0;z-index:2;pointer-events:none;white-space:nowrap">ZyNi SMC</div></div>
-
-<!-- STATEMENT -->
-<div class="section" id="statement">
-  <div class="statement-wrap">
-    <p class="statement-l1">We don't provide any signals — we provide <span class="stmt-hl">ready-made setups</span> across <span class="stmt-hl">1000+ pairs</span>, just one click away.</p>
-    <p class="statement-l2">This is not for beginners — this is for traders already familiar with <span class="stmt-hl2">SMC methods</span> like Order Blocks, Fair Value Gaps, Fibonacci, and Breaker Blocks.</p>
+  <!-- CINEMATIC CARDS — right side near character, animated by GSAP -->
+  <div class="hero-cin-card hcc-1" id="hcc1" aria-hidden="true">
+    <div class="hcc-badge">
+      <svg width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="4" fill="#22d3ee"/></svg>
+      Order Block
+    </div>
+    <div class="hcc-pair">BTCUSDT <span class="hcc-tf">4H</span></div>
+    <div class="hcc-bar-wrap"><span class="hcc-bar" style="width:87%;background:linear-gradient(90deg,#22d3ee,#6366f1)"></span></div>
+    <div class="hcc-row"><span class="hcc-lbl">Score</span><span class="hcc-val up">87/100</span></div>
+    <div class="hcc-row"><span class="hcc-lbl">Zone</span><span class="hcc-val">Near Price ↑</span></div>
   </div>
-</div>
+
+  <div class="hero-cin-card hcc-2" id="hcc2" aria-hidden="true">
+    <div class="hcc-badge fvg">
+      <svg width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="4" fill="#22c55e"/></svg>
+      Fair Value Gap
+    </div>
+    <div class="hcc-pair">ETHUSDT <span class="hcc-tf">1H</span></div>
+    <div class="hcc-row"><span class="hcc-lbl">Buy</span><span class="hcc-val up">62%</span></div>
+    <div class="hcc-row"><span class="hcc-lbl">Sell</span><span class="hcc-val dn">38%</span></div>
+    <div class="hcc-divider"></div>
+    <div class="hcc-row"><span class="hcc-lbl">Imbalance</span><span class="hcc-val" style="-webkit-text-fill-color:#f59e0b;color:#f59e0b">HIGH</span></div>
+  </div>
+
+  <div class="hero-cin-card hcc-3" id="hcc3" aria-hidden="true">
+    <div class="hcc-badge live">
+      <span style="color:#22c55e;font-size:9px">●</span> Live Scan
+    </div>
+    <div class="hcc-num">400+</div>
+    <div class="hcc-row"><span class="hcc-lbl">Pairs Active</span></div>
+    <div class="hcc-divider"></div>
+    <div class="hcc-row"><span class="hcc-lbl">Updated</span><span class="hcc-val" style="-webkit-text-fill-color:#22d3ee;color:#22d3ee">2s ago</span></div>
+  </div>
+
+</section>
 
 <div class="divider"></div>
 
@@ -797,14 +1168,15 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
   <h2 class="sec-h"><span data-i18n="feat_h">Everything to trade smart money</span></h2>
   <p class="sec-sub" data-i18n="feat_sub">Six professional tools — scan, detect and act on every Smart Money setup across 400+ pairs.</p>
 
-  <!-- MODULE 01 -->
-  <div class="feat-row" style="margin-bottom:16px">
-    <div class="feat-text">
-      <div class="feat-pill" style="color:#22d3ee;border-color:rgba(34,211,238,.25);background:rgba(34,211,238,.07)">📊 <span data-i18n="mod01_tag">Module 01</span></div>
-      <h3 class="feat-title" data-i18n="mod01_title">Order Block Detection</h3>
-      <div class="feat-desc-box"><p class="feat-desc" id="ob-desc" data-i18n="mod01_desc">Scan 400+ pairs in one tap. Every Order Block near price appears instantly — score, strength and direction across 15m, 1H and 4H.</p></div>
-    </div>
-    <div class="phone-side">
+
+  <!-- MODULE SHOWCASE -->
+  <div id="mod-showcase">
+    <div id="mod-carousel-wrap">
+    <div class="mcar-glow-edge mcar-glow-l"></div>
+    <div class="mcar-glow-edge mcar-glow-r"></div>
+    <div id="mod-stage">
+    <div class="mcar-card" data-idx="0" data-pos="c">
+      <div class="phone-side">
       <div class="phone" style="box-shadow:0 0 0 1px rgba(255,255,255,.07),0 0 0 2px rgba(0,0,0,.95),0 40px 80px rgba(0,0,0,.65),0 0 80px rgba(34,211,238,0.1)">
         <div class="btn-pow"></div><div class="btn-v1"></div><div class="btn-v2"></div>
         <div class="p-screen">
@@ -820,16 +1192,9 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
         <span class="sdot" id="ob-d1" onclick="jump('ob',1)"></span>
       </div>
     </div>
-  </div>
-
-  <!-- MODULE 02 -->
-  <div class="feat-row rev" style="margin-bottom:16px">
-    <div class="feat-text">
-      <div class="feat-pill" style="color:#22c55e;border-color:rgba(34,197,94,.25);background:rgba(34,197,94,.07)">⚡ <span data-i18n="mod02_tag">Module 02</span></div>
-      <h3 class="feat-title" data-i18n="mod02_title">Fair Value Gap & Imbalance</h3>
-      <div class="feat-desc-box"><p class="feat-desc" data-i18n="mod02_desc">Check live Buy vs Sell pressure inside any FVG. Impulse score 0–100 tells you if the gap will hold or fill — before you enter.</p></div>
     </div>
-    <div class="phone-side">
+    <div class="mcar-card" data-idx="1" data-pos="r1">
+      <div class="phone-side">
       <div class="phone" style="box-shadow:0 0 0 1px rgba(255,255,255,.07),0 0 0 2px rgba(0,0,0,.95),0 40px 80px rgba(0,0,0,.65),0 0 80px rgba(34,197,94,0.1)">
         <div class="btn-pow"></div><div class="btn-v1"></div><div class="btn-v2"></div>
         <div class="p-screen">
@@ -840,16 +1205,9 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
         <div class="p-bottom"><div class="p-pill"></div></div>
       </div>
     </div>
-  </div>
-
-  <!-- MODULE 03 -->
-  <div class="feat-row" style="margin-bottom:16px">
-    <div class="feat-text">
-      <div class="feat-pill" style="color:#f97316;border-color:rgba(249,115,22,.25);background:rgba(249,115,22,.07)">🔥 <span data-i18n="mod03_tag">Module 03</span></div>
-      <h3 class="feat-title" data-i18n="mod03_title">Breaker Block Detection</h3>
-      <div class="feat-desc-box"><p class="feat-desc" data-i18n="mod03_desc">Catch flipped OBs the moment they become Breakers. HIGH PROB fires when FVG overlaps — the best reversal zones, found automatically.</p></div>
     </div>
-    <div class="phone-side">
+    <div class="mcar-card" data-idx="2" data-pos="r2">
+      <div class="phone-side">
       <div class="phone" style="box-shadow:0 0 0 1px rgba(255,255,255,.07),0 0 0 2px rgba(0,0,0,.95),0 40px 80px rgba(0,0,0,.65),0 0 80px rgba(249,115,22,0.1)">
         <div class="btn-pow"></div><div class="btn-v1"></div><div class="btn-v2"></div>
         <div class="p-screen">
@@ -860,16 +1218,9 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
         <div class="p-bottom"><div class="p-pill"></div></div>
       </div>
     </div>
-  </div>
-
-  <!-- MODULE 04 -->
-  <div class="feat-row rev" style="margin-bottom:16px">
-    <div class="feat-text">
-      <div class="feat-pill" style="color:#a78bfa;border-color:rgba(167,139,250,.25);background:rgba(167,139,250,.07)">📐 <span data-i18n="mod04_tag">Module 04</span></div>
-      <h3 class="feat-title" data-i18n="mod04_title">Fibonacci Retracement</h3>
-      <div class="feat-desc-box"><p class="feat-desc" data-i18n="mod04_desc">Auto-detect dominant swing legs. Get alerted at 0.618, 0.705 and 0.786 across every pair — the exact levels institutions react to.</p></div>
     </div>
-    <div class="phone-side">
+    <div class="mcar-card" data-idx="3" data-pos="hide">
+      <div class="phone-side">
       <div class="phone" style="box-shadow:0 0 0 1px rgba(255,255,255,.07),0 0 0 2px rgba(0,0,0,.95),0 40px 80px rgba(0,0,0,.65),0 0 80px rgba(167,139,250,0.1)">
         <div class="btn-pow"></div><div class="btn-v1"></div><div class="btn-v2"></div>
         <div class="p-screen">
@@ -880,16 +1231,9 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
         <div class="p-bottom"><div class="p-pill"></div></div>
       </div>
     </div>
-  </div>
-
-  <!-- MODULE 05 -->
-  <div class="feat-row" style="margin-bottom:16px">
-    <div class="feat-text">
-      <div class="feat-pill" style="color:#ec4899;border-color:rgba(236,72,153,.25);background:rgba(236,72,153,.07)">📈 <span data-i18n="mod05_tag">Module 05</span></div>
-      <h3 class="feat-title" data-i18n="mod05_title">Live Monitor Dashboard</h3>
-      <div class="feat-desc-box"><p class="feat-desc" id="mon-desc" data-i18n="mod05_desc">All SMC zones load automatically — OBs, FVGs, Fibs and Breakers across 3 timeframes. Everything live, zero manual work.</p></div>
     </div>
-    <div class="phone-side">
+    <div class="mcar-card" data-idx="4" data-pos="l2">
+      <div class="phone-side">
       <div class="phone" style="box-shadow:0 0 0 1px rgba(255,255,255,.07),0 0 0 2px rgba(0,0,0,.95),0 40px 80px rgba(0,0,0,.65),0 0 80px rgba(236,72,153,0.1)">
         <div class="btn-pow"></div><div class="btn-v1"></div><div class="btn-v2"></div>
         <div class="p-screen">
@@ -905,16 +1249,9 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
         <span class="sdot" id="mon-d1" onclick="jump('mon',1)"></span>
       </div>
     </div>
-  </div>
-
-  <!-- MODULE 06 -->
-  <div class="feat-row rev">
-    <div class="feat-text">
-      <div class="feat-pill" style="color:#f59e0b;border-color:rgba(245,158,11,.25);background:rgba(245,158,11,.07)">🎯 <span data-i18n="mod06_tag">Module 06</span></div>
-      <h3 class="feat-title" data-i18n="mod06_title">Bias Detection System</h3>
-      <div class="feat-desc-box"><p class="feat-desc" id="bias-desc" data-i18n="mod06_desc">See directional bias signals across the full market. Momentum confirmed, volume backed — only strong setups reach you.</p></div>
     </div>
-    <div class="phone-side">
+    <div class="mcar-card" data-idx="5" data-pos="l1">
+      <div class="phone-side">
       <div class="phone" style="box-shadow:0 0 0 1px rgba(255,255,255,.07),0 0 0 2px rgba(0,0,0,.95),0 40px 80px rgba(0,0,0,.65),0 0 80px rgba(245,158,11,0.1)">
         <div class="btn-pow"></div><div class="btn-v1"></div><div class="btn-v2"></div>
         <div class="p-screen">
@@ -932,7 +1269,56 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
         <span class="sdot" id="bias-d2" onclick="jump('bias',2)"></span>
       </div>
     </div>
+    </div>
+    </div>
+    <button class="mcar-arrow mcar-prev" id="mcar-prev" aria-label="Previous module"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg></button>
+    <button class="mcar-arrow mcar-next" id="mcar-next" aria-label="Next module"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"></polyline></svg></button>
   </div>
+    <div id="mod-text-col">
+      <div id="mod-info-wrap">
+    <div class="mcar-info-item active" data-idx="0">
+      <div class="mcar-info-tag" style="color:#22d3ee">📊 <span data-i18n="mod01_tag">Module 01</span></div>
+      <h3 class="mcar-info-title" data-i18n="mod01_title">Order Block Detection</h3>
+      <p class="mcar-info-desc" id="ob-desc" data-i18n="mod01_desc">Scan 400+ pairs in one tap. Every Order Block near price appears instantly — score, strength and direction across 15m, 1H and 4H.</p>
+    </div>
+    <div class="mcar-info-item" data-idx="1">
+      <div class="mcar-info-tag" style="color:#22c55e">⚡ <span data-i18n="mod02_tag">Module 02</span></div>
+      <h3 class="mcar-info-title" data-i18n="mod02_title">Fair Value Gap &amp; Imbalance</h3>
+      <p class="mcar-info-desc" data-i18n="mod02_desc">Check live Buy vs Sell pressure inside any FVG. Impulse score 0–100 tells you if the gap will hold or fill — before you enter.</p>
+    </div>
+    <div class="mcar-info-item" data-idx="2">
+      <div class="mcar-info-tag" style="color:#f97316">🔥 <span data-i18n="mod03_tag">Module 03</span></div>
+      <h3 class="mcar-info-title" data-i18n="mod03_title">Breaker Block Detection</h3>
+      <p class="mcar-info-desc" data-i18n="mod03_desc">Catch flipped OBs the moment they become Breakers. HIGH PROB fires when FVG overlaps — the best reversal zones, found automatically.</p>
+    </div>
+    <div class="mcar-info-item" data-idx="3">
+      <div class="mcar-info-tag" style="color:#a78bfa">📐 <span data-i18n="mod04_tag">Module 04</span></div>
+      <h3 class="mcar-info-title" data-i18n="mod04_title">Fibonacci Retracement</h3>
+      <p class="mcar-info-desc" data-i18n="mod04_desc">Auto-detect dominant swing legs. Get alerted at 0.618, 0.705 and 0.786 across every pair — the exact levels institutions react to.</p>
+    </div>
+    <div class="mcar-info-item" data-idx="4">
+      <div class="mcar-info-tag" style="color:#ec4899">📈 <span data-i18n="mod05_tag">Module 05</span></div>
+      <h3 class="mcar-info-title" data-i18n="mod05_title">Live Monitor Dashboard</h3>
+      <p class="mcar-info-desc" id="mon-desc" data-i18n="mod05_desc">All SMC zones load automatically — OBs, FVGs, Fibs and Breakers across 3 timeframes. Everything live, zero manual work.</p>
+    </div>
+    <div class="mcar-info-item" data-idx="5">
+      <div class="mcar-info-tag" style="color:#f59e0b">🎯 <span data-i18n="mod06_tag">Module 06</span></div>
+      <h3 class="mcar-info-title" data-i18n="mod06_title">Bias Detection System</h3>
+      <p class="mcar-info-desc" id="bias-desc" data-i18n="mod06_desc">See directional bias signals across the full market. Momentum confirmed, volume backed — only strong setups reach you.</p>
+    </div>
+  </div>
+
+      <!-- CAROUSEL DOTS -->
+      <div id="mcar-dots">
+        <button class="mcar-dot" data-dot="0"></button>
+        <button class="mcar-dot" data-dot="1"></button>
+        <button class="mcar-dot" data-dot="2"></button>
+        <button class="mcar-dot" data-dot="3"></button>
+        <button class="mcar-dot" data-dot="4"></button>
+        <button class="mcar-dot" data-dot="5"></button>
+      </div>
+    </div><!-- /mod-text-col -->
+  </div><!-- /mod-showcase -->
 </div>
 
 <div class="divider"></div>
@@ -1319,7 +1705,8 @@ document.getElementById('losers').innerHTML=LOSERS.map(g=>`<div class="gl-row"><
 
 // ── VOL MINI ──
 const mx=Math.max(...EXCHS.map(e=>e.v));
-document.getElementById('vol-mini').innerHTML=EXCHS.map(e=>{const h=Math.round(e.v/mx*48);const lbl=e.v>=10?'$'+e.v.toFixed(0)+'B':'$'+e.v.toFixed(1)+'B';return`<div class="vol-mini-col"><div style="font-size:7px;color:var(--text3);font-family:'DM Sans',sans-serif;margin-bottom:2px">${lbl}</div><div class="vol-mini-bar" style="height:${h}px;background:${e.c};opacity:0.6;border-radius:3px 3px 0 0"></div><div class="vol-mini-name">${e.n}</div></div>`}).join('');
+const _volMini=document.getElementById('vol-mini');
+if(_volMini)_volMini.innerHTML=EXCHS.map(e=>{const h=Math.round(e.v/mx*48);const lbl=e.v>=10?'$'+e.v.toFixed(0)+'B':'$'+e.v.toFixed(1)+'B';return`<div class="vol-mini-col"><div style="font-size:7px;color:var(--text3);font-family:'DM Sans',sans-serif;margin-bottom:2px">${lbl}</div><div class="vol-mini-bar" style="height:${h}px;background:${e.c};opacity:0.6;border-radius:3px 3px 0 0"></div><div class="vol-mini-name">${e.n}</div></div>`}).join('');
 
 // ── GAUGE ──
 let fgV=72;
@@ -1327,23 +1714,20 @@ function updateGauge(v){
   const val=document.getElementById('gauge-val');
   const nm=document.getElementById('gauge-name');
   const needle=document.getElementById('gauge-needle');
+  if(!val||!nm||!needle) return;
   const c=v<20?'#ef4444':v<40?'#f97316':v<60?'#eab308':v<80?'#84cc16':'#22c55e';
   val.setAttribute('fill',c);
   val.textContent=v;
   nm.style.color=c;
   nm.textContent=v<20?'Extreme Fear':v<40?'Fear':v<60?'Neutral':v<80?'Greed':'Extreme Greed';
-  // Light up segments based on value
   ['seg1','seg2','seg3','seg4','seg5'].forEach((id,i)=>{
-    const threshold = (i+1)*20;
+    const threshold=(i+1)*20;
     const seg=document.getElementById(id);
-    if(v>=threshold-20){
-      seg.style.opacity = v>=threshold ? '1' : String(0.3 + ((v-(threshold-20))/20)*0.7);
-    } else {
-      seg.style.opacity='0';
-    }
+    if(!seg) return;
+    if(v>=threshold-20){seg.style.opacity=v>=threshold?'1':String(0.3+((v-(threshold-20))/20)*0.7);}
+    else{seg.style.opacity='0';}
   });
-  // Needle: -90 = 0%, +90 = 100%
-  const angle = -90 + (v/100)*180;
+  const angle=-90+(v/100)*180;
   needle.setAttribute('transform',`rotate(${angle} 110 105)`);
 }
 // ── INIT — real data from Flask ──
@@ -2086,28 +2470,37 @@ function lwStartBounce(){
   }
   requestAnimationFrame(animate);
 
-  /* ── Rotating word ── */
-  if (window.gsap) {
+  /* ── Rotating word — horizontal fade only, no vertical movement ── */
+  (function() {
     var words = ['Smart', 'Elite', 'Pro', 'Strategic', 'Advanced'];
     var wordEl = document.getElementById('hero-rw');
-    if (wordEl) {
-      var wIdx = 0;
-      function rotateWord() {
+    if (!wordEl) return;
+    var wIdx = 0;
+    function rotateWord() {
+      if (window.gsap) {
         gsap.to(wordEl, {
-          opacity: 0, y: -14, filter: 'blur(6px)', duration: 0.45, ease: 'power2.in',
+          opacity: 0, x: -10, filter: 'blur(5px)', duration: 0.35, ease: 'power2.in',
           onComplete: function() {
             wIdx = (wIdx + 1) % words.length;
             wordEl.textContent = words[wIdx];
             gsap.fromTo(wordEl,
-              { opacity: 0, y: 16, filter: 'blur(6px)' },
-              { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.55, ease: 'power2.out' }
+              { opacity: 0, x: 12, filter: 'blur(5px)' },
+              { opacity: 1, x: 0,  filter: 'blur(0px)', duration: 0.45, ease: 'power2.out' }
             );
           }
         });
+      } else {
+        wordEl.style.transition = 'opacity 0.25s';
+        wordEl.style.opacity = '0';
+        setTimeout(function() {
+          wIdx = (wIdx + 1) % words.length;
+          wordEl.textContent = words[wIdx];
+          wordEl.style.opacity = '1';
+        }, 260);
       }
-      setInterval(rotateWord, 3200);
     }
-  }
+    setInterval(rotateWord, 3200);
+  })();
 
   /* ── Resize ── */
   window.addEventListener('resize', function() {
@@ -2119,230 +2512,812 @@ function lwStartBounce(){
 
 
 /* ════════════════════════════════════════════════════════════
-   ORB OVERLAY — Slide-in/orbit/slide-out scroll transition
-   Fixed overlay · triggered once on scroll · GSAP sequence
+   HERO CINEMATIC — AAA-style GSAP character + card timeline
+   Scripted sequence: entry → lean → lift → settle → breathe
 ════════════════════════════════════════════════════════════ */
-(function initOrbOverlay() {
-  var overlay = document.getElementById('orb-overlay-canvas');
-  if (!overlay || !window.THREE || !window.gsap) return;
+(function initHeroCinematic() {
+  if (!window.gsap) return;
+  if (window.innerWidth < 1024) return;
 
-  function VW() { return window.innerWidth;  }
-  function VH() { return window.innerHeight; }
+  var section = document.getElementById('heroSection');
+  var c1      = document.getElementById('hcc1');
+  var c2      = document.getElementById('hcc2');
+  var c3      = document.getElementById('hcc3');
 
-  var renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.3;
-  renderer.setSize(VW(), VH());
-  renderer.domElement.style.cssText = 'position:absolute;top:0;left:0;display:block';
-  overlay.appendChild(renderer.domElement);
+  if (!c1 || !c2 || !c3) return;
 
+  /* 3D perspective on the hero section */
+  gsap.set(section, { perspective: 1200 });
+
+  /* Cards — start offset to the right with slight Y-rotation, invisible */
+  gsap.set(c1, { opacity: 0, x: 48, rotateY: 14, scale: 0.92 });
+  gsap.set(c2, { opacity: 0, x: 56, rotateY: 12, scale: 0.90 });
+  gsap.set(c3, { opacity: 0, x: 40, rotateY: 10, scale: 0.88 });
+
+  /* Master timeline */
+  var tl = gsap.timeline({ defaults: { ease: 'power3.out' } });
+
+  /* STEP 1: Entry — cards fly in from right */
+  tl.to(c1, { opacity: 1, x: 0, rotateY: 0, scale: 1, duration: 0.60, ease: 'power2.out' }, 0.30)
+    .to(c2, { opacity: 1, x: 0, rotateY: 0, scale: 1, duration: 0.60, ease: 'power2.out' }, 0.45)
+    .to(c3, { opacity: 1, x: 0, rotateY: 0, scale: 1, duration: 0.60, ease: 'power2.out' }, 0.60)
+
+  /* STEP 2: Cards gently lift */
+    .to([c1,c2,c3], { y: -7, duration: 0.75, ease: 'power1.inOut', stagger: 0.08 }, 1.10)
+
+  /* STEP 3: Cards tilt in 3D — anticipation */
+    .to(c1, { y: -12, rotateX: -5, rotateY: -3, scale: 1.02, duration: 0.70, ease: 'power2.inOut' }, 1.80)
+    .to(c2, { y: -10, rotateX: -4, rotateY: -2, scale: 1.02, duration: 0.70, ease: 'power2.inOut' }, 1.92)
+    .to(c3, { y: -8,  rotateX: -3, rotateY: -2, scale: 1.02, duration: 0.70, ease: 'power2.inOut' }, 2.04)
+
+  /* STEP 4: Cards dramatically lift — peak cinematic moment */
+    .to(c1, { y: -56, rotateX: -12, rotateY: -8, scale: 1.08, z: 48, duration: 1.05, ease: 'expo.out' }, 2.65)
+    .to(c2, { y: -46, rotateX: -10, rotateY: -6, scale: 1.07, z: 36, duration: 1.05, ease: 'expo.out' }, 2.82)
+    .to(c3, { y: -36, rotateX: -8,  rotateY: -4, scale: 1.05, z: 24, duration: 1.05, ease: 'expo.out' }, 2.99)
+
+  /* STEP 5: Cards drift to side */
+    .to(c1, { y: -20, x: -14, rotateX: -4, rotateY: -4, scale: 1.04, z: 20, duration: 1.10, ease: 'power3.out' }, 4.30)
+    .to(c2, { y: -14, x: -10, rotateX: -3, rotateY: -3, scale: 1.03, z: 14, duration: 1.10, ease: 'power3.out' }, 4.48)
+    .to(c3, { y: -8,  x: -6,  rotateX: -2, rotateY: -2, scale: 1.02, z: 8,  duration: 1.10, ease: 'power3.out' }, 4.66)
+
+  /* STEP 6: Final settle */
+    .to(c1, { y: -7, x: 0, rotateX: 0, rotateY: 0, z: 0, scale: 1, duration: 0.90, ease: 'power2.out' }, 6.05)
+    .to(c2, { y: -5, x: 0, rotateX: 0, rotateY: 0, z: 0, scale: 1, duration: 0.90, ease: 'power2.out' }, 6.15)
+    .to(c3, { y: -3, x: 0, rotateX: 0, rotateY: 0, z: 0, scale: 1, duration: 0.90, ease: 'power2.out' }, 6.25)
+
+  /* Idle float loop */
+    .call(function() {
+      var floatParams = [
+        { dur: 2.6, dy: -9, delay: 0.0 },
+        { dur: 2.9, dy: -7, delay: 0.6 },
+        { dur: 3.2, dy: -5, delay: 1.1 }
+      ];
+      [c1, c2, c3].forEach(function(card, i) {
+        var p = floatParams[i];
+        gsap.to(card, {
+          y: '-=' + p.dy, duration: p.dur,
+          ease: 'sine.inOut', yoyo: true, repeat: -1, delay: p.delay
+        });
+      });
+    });
+})();
+
+/* ════════════════════════════════════════════════════════════
+   HERO MORPH SCENE — sphere floats → transforms → cube assembly
+   Initial : orange/gold Fibonacci particle sphere (pMat opacity 1)
+   Scroll 0-28%  : hero-left fades
+   Scroll 5-30%  : sphere fades out, cubes fade in from sphere area
+   Scroll 12-82% : cube assembly (scatter→grid)
+   Scroll 72-94% : large glowing cube materialises
+   Scroll 80-100%: text panel fades in beside cube
+════════════════════════════════════════════════════════════ */
+(function initHeroMorphScene() {
+  if (!window.THREE || !window.gsap) return;
+  var canvas = document.getElementById('hero-morph-canvas');
+  if (!canvas) return;
+
+  var isMobile = window.innerWidth < 768;
+
+  /* ── Renderer ── */
+  var renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: !isMobile });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobile ? 1.5 : 2));
+  renderer.setSize(canvas.offsetWidth || window.innerWidth, canvas.offsetHeight || window.innerHeight);
+  renderer.setClearColor(0x060a14, 1);
+
+  /* ── Scene + Camera ── */
   var scene  = new THREE.Scene();
-  var camera = new THREE.PerspectiveCamera(50, VW() / VH(), 0.1, 200);
-  camera.position.set(0, 4, 22);
-  camera.lookAt(0, 0, 0);
+  var camZ   = isMobile ? 4.8 : 4.5;
+  var camera = new THREE.PerspectiveCamera(
+    55,
+    (canvas.offsetWidth || window.innerWidth) / (canvas.offsetHeight || window.innerHeight),
+    0.1, 100
+  );
+  camera.position.z = camZ;
 
-  /* ── Lights ── */
-  scene.add(new THREE.AmbientLight(0x010310, 2));
-  var cL1 = new THREE.PointLight(0x1a3a8a, 9, 24); scene.add(cL1);
-  var cL2 = new THREE.PointLight(0x1a4a9a, 8, 21); scene.add(cL2);
-  var cL3 = new THREE.PointLight(0x1a3f8f, 8, 21); scene.add(cL3);
-  var rimL = new THREE.PointLight(0x0a1a4a, 4, 38);
-  rimL.position.set(-10, 8, -8); scene.add(rimL);
+  /* ── Scene group — single anchor for sphere + cubes ── */
+  var sceneGroup = new THREE.Group();
+  scene.add(sceneGroup);
+  var offsetX = isMobile ? 0 : 0.82;
+  var offsetY = isMobile ? 0.42 : 0;
+  sceneGroup.position.set(offsetX, offsetY, 0);
 
-  /* ── Spheres (larger than reference) ── */
-  function mkS(r, col, emis, eI, met, rou) {
-    return new THREE.Mesh(
-      new THREE.SphereGeometry(r, 48, 48),
-      new THREE.MeshStandardMaterial({ color: col, emissive: emis, emissiveIntensity: eI, metalness: met, roughness: rou })
-    );
+  /* ── Cinematic lighting ── */
+  scene.add(new THREE.AmbientLight(0x0d1a3a, 0.55));
+
+  var pl1 = new THREE.PointLight(0x3b82f6, 9, 15);   /* blue key */
+  pl1.position.set(4, 2.5, 3);
+  scene.add(pl1);
+  var pl2 = new THREE.PointLight(0xf59e0b, 7, 12);   /* gold fill */
+  pl2.position.set(-3.5, -1.5, 2.5);
+  scene.add(pl2);
+  var pl3 = new THREE.PointLight(0x93c5fd, 3.5, 9);  /* sky-blue back */
+  pl3.position.set(0.5, 4, -3);
+  scene.add(pl3);
+
+  /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     PART A — Fibonacci particle sphere (visible before scroll)
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+  var PARTICLE_COUNT = isMobile ? 1800 : 3200;
+  var pGeo = new THREE.BufferGeometry();
+  var posArr = new Float32Array(PARTICLE_COUNT * 3);
+  var colArr = new Float32Array(PARTICLE_COUNT * 3);
+  var fib    = Math.PI * (3 - Math.sqrt(5));
+
+  for (var i = 0; i < PARTICLE_COUNT; i++) {
+    var y2   = 1 - (i / (PARTICLE_COUNT - 1)) * 2;
+    var r2   = Math.sqrt(1 - y2 * y2);
+    var t2   = fib * i;
+    var rad2 = 1.28 + (Math.random() - 0.5) * 0.14;
+    posArr[i*3]   = Math.cos(t2) * r2 * rad2;
+    posArr[i*3+1] = y2 * rad2;
+    posArr[i*3+2] = Math.sin(t2) * r2 * rad2;
+
+    var tc = Math.random();
+    if (tc < 0.45) {
+      colArr[i*3]=0.980; colArr[i*3+1]=0.455; colArr[i*3+2]=0.086; /* #f97316 */
+    } else if (tc < 0.78) {
+      colArr[i*3]=0.984; colArr[i*3+1]=0.749; colArr[i*3+2]=0.141; /* #fbbf24 */
+    } else {
+      colArr[i*3]=0.961; colArr[i*3+1]=0.620; colArr[i*3+2]=0.043; /* #f59e0b */
+    }
   }
-  var s1 = mkS(1.80, 0x0a1540, 0x1a3a8a, 1.4, 0.92, 0.07);
-  var s2 = mkS(1.45, 0x091230, 0x1a4a9a, 1.6, 0.88, 0.09);
-  var s3 = mkS(1.15, 0x070e25, 0x1a3f8f, 1.8, 0.95, 0.05);
-  scene.add(s1, s2, s3);
+  pGeo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
+  pGeo.setAttribute('color',    new THREE.BufferAttribute(colArr, 3));
 
-  /* ── Vein rings (as children of each sphere so they travel with it) ── */
-  function mkVein(R, t, col, eI, rx, ry) {
-    var m = new THREE.Mesh(
-      new THREE.TorusGeometry(R, t, 8, 100),
-      new THREE.MeshStandardMaterial({
-        color: col, emissive: col, emissiveIntensity: eI,
-        transparent: true, opacity: 0.88, metalness: 0.1, roughness: 0.2
-      })
-    );
-    m.rotation.x = rx; m.rotation.y = ry; return m;
-  }
-  function buildVeins(parent, baseR) {
-    [[baseR, 0.026, 0x1a3a8a, 4.0, 0,           0          ],
-     [baseR, 0.020, 0x1a50aa, 3.5, Math.PI/2.5,  Math.PI/4 ],
-     [baseR, 0.016, 0x2060cc, 3.2, Math.PI/3,   -Math.PI/3 ],
-     [baseR, 0.013, 0x2a6acc, 2.8, Math.PI/1.8,  Math.PI/6 ]
-    ].forEach(function(c) { parent.add(mkVein(c[0]*1.01, c[1], c[2], c[3], c[4], c[5])); });
-  }
-  buildVeins(s1, 1.80);
-  buildVeins(s2, 1.45);
-  buildVeins(s3, 1.15);
+  var pMat = new THREE.PointsMaterial({
+    size: 0.038,
+    vertexColors: true,
+    blending: THREE.AdditiveBlending,
+    transparent: true,
+    opacity: 1,           /* VISIBLE by default — sphere shown before scroll */
+    depthWrite: false,
+    sizeAttenuation: true
+  });
+  var sphere = new THREE.Points(pGeo, pMat);
+  sceneGroup.add(sphere);
 
-  /* ── Glow shells ── */
-  [[s1,2.06,0x1a3a8a],[s2,1.66,0x1a4a9a],[s3,1.32,0x1a3f8f]].forEach(function(d) {
-    d[0].add(new THREE.Mesh(
-      new THREE.SphereGeometry(d[1], 32, 32),
-      new THREE.MeshStandardMaterial({ color: d[2], emissive: d[2], emissiveIntensity: 0.5, transparent: true, opacity: 0.09 })
-    ));
+  /* Warm orbiting light that makes sphere glow */
+  var spl = new THREE.PointLight(0xf97316, 5, 7);
+  spl.position.set(2, 1.5, 2);
+  sceneGroup.add(spl);
+
+  /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     PART B — Small cube InstancedMesh (hidden initially)
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+  var GRID_N  = isMobile ? 4 : 5;
+  var COUNT   = isMobile ? 80 : 150;
+  var cSz     = isMobile ? 0.155 : 0.175;
+  var spacing = isMobile ? 0.325 : 0.365;
+  var halfGrid = (GRID_N - 1) * spacing * 0.5;
+  var GTOTAL  = GRID_N * GRID_N * GRID_N;
+
+  /* Grid end-positions (shuffled so cubes arrive in random order) */
+  var gridPos = [];
+  for (var gx = 0; gx < GRID_N; gx++)
+    for (var gy = 0; gy < GRID_N; gy++)
+      for (var gz = 0; gz < GRID_N; gz++)
+        gridPos.push([gx * spacing - halfGrid, gy * spacing - halfGrid, gz * spacing - halfGrid]);
+  for (var si = gridPos.length - 1; si > 0; si--) {
+    var sj = Math.floor(Math.random() * (si + 1));
+    var tmp = gridPos[si]; gridPos[si] = gridPos[sj]; gridPos[sj] = tmp;
+  }
+
+  var startPos = new Float32Array(COUNT * 3);
+  var startRot = new Float32Array(COUNT * 3);
+  var endPos   = new Float32Array(COUNT * 3);
+
+  var COLORS = [
+    new THREE.Color(0x3b82f6), new THREE.Color(0x1d4ed8), new THREE.Color(0x60a5fa),
+    new THREE.Color(0xf59e0b), new THREE.Color(0xfbbf24), new THREE.Color(0xf97316)
+  ];
+  var colorCum = [0.22, 0.40, 0.55, 0.73, 0.88, 1.00];
+  function pickColor(r) {
+    for (var ci = 0; ci < colorCum.length; ci++) if (r < colorCum[ci]) return COLORS[ci];
+    return COLORS[5];
+  }
+
+  for (var i = 0; i < COUNT; i++) {
+    /* Start: scattered ring — same rough area as sphere surface */
+    var ang = Math.random() * Math.PI * 2;
+    var dst = 3.5 + Math.random() * 2.5;
+    startPos[i*3]   = Math.cos(ang) * dst;
+    startPos[i*3+1] = Math.sin(ang) * dst;
+    startPos[i*3+2] = (Math.random() - 0.5) * 2.0;
+
+    startRot[i*3]   = (Math.random() - 0.5) * Math.PI * 2;
+    startRot[i*3+1] = (Math.random() - 0.5) * Math.PI * 2;
+    startRot[i*3+2] = (Math.random() - 0.5) * Math.PI;
+
+    var gp = gridPos[i < GTOTAL ? i : (i % GTOTAL)];
+    endPos[i*3] = gp[0]; endPos[i*3+1] = gp[1]; endPos[i*3+2] = gp[2];
+  }
+
+  var smallGeo = new THREE.BoxGeometry(cSz, cSz, cSz);
+  var smallMat = new THREE.MeshStandardMaterial({
+    metalness: 0.78, roughness: 0.10,
+    emissive: new THREE.Color(0x0b1a3f), emissiveIntensity: 0.50,
+    transparent: true, opacity: 0   /* hidden initially, fades in as sphere fades out */
+  });
+  var instMesh = new THREE.InstancedMesh(smallGeo, smallMat, COUNT);
+  instMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  for (var ci = 0; ci < COUNT; ci++) instMesh.setColorAt(ci, pickColor(Math.random()));
+  instMesh.instanceColor.needsUpdate = true;
+  sceneGroup.add(instMesh);
+
+  var haloGeo = new THREE.BoxGeometry(cSz * 2.4, cSz * 2.4, cSz * 2.4);
+  var haloMat = new THREE.MeshBasicMaterial({
+    color: 0x3b82f6, transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.BackSide
+  });
+  var haloMesh = new THREE.InstancedMesh(haloGeo, haloMat, COUNT);
+  haloMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  sceneGroup.add(haloMesh);
+
+  /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     PART C — Large final cube ShaderMaterial
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+  var largeSide = GRID_N * spacing;
+  var largeMat  = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 }, uReveal: { value: 0 } },
+    vertexShader: [
+      'varying vec2 vUv; varying vec3 vNv; varying vec3 vVP;',
+      'void main(){',
+      '  vUv=uv; vNv=normalize(normalMatrix*normal);',
+      '  vec4 mv=modelViewMatrix*vec4(position,1.); vVP=-mv.xyz;',
+      '  gl_Position=projectionMatrix*mv;',
+      '}'
+    ].join('\n'),
+    fragmentShader: [
+      'uniform float uTime; uniform float uReveal;',
+      'varying vec2 vUv; varying vec3 vNv; varying vec3 vVP;',
+      'void main(){',
+      '  vec2 e2=min(vUv,1.-vUv);',
+      '  float edge=1.-smoothstep(0.,.038,min(e2.x,e2.y));',
+      '  vec2 gf=fract(vUv*4.); vec2 ge=min(gf,1.-gf);',
+      '  float grid=1.-smoothstep(0.,.055,min(ge.x,ge.y));',
+      '  vec3 vd=normalize(vVP);',
+      '  float fres=pow(1.-clamp(dot(normalize(vNv),vd),0.,1.),2.5);',
+      '  float pulse=.5+.5*sin(uTime*1.8);',
+      '  vec3 body=vec3(.03,.06,.17);',
+      '  vec3 edgec=mix(vec3(.23,.51,.98),vec3(.98,.62,.04),pulse);',
+      '  vec3 gridc=vec3(.37,.65,.98)*.5;',
+      '  float em=max(edge*.92,fres*.5);',
+      '  vec3 col=mix(body,edgec,em);',
+      '  col=mix(col,gridc,grid*(1.-edge)*.42);',
+      '  vec3 ld=normalize(vec3(1.,1.5,1.));',
+      '  float spec=pow(max(0.,dot(reflect(-ld,normalize(vNv)),vd)),34.);',
+      '  col+=spec*.9*vec3(.55,.78,1.);',
+      '  float a=uReveal*(edge*.93+grid*.28+fres*.46+.05);',
+      '  gl_FragColor=vec4(col,clamp(a,0.,.94));',
+      '}'
+    ].join('\n'),
+    transparent: true, side: THREE.DoubleSide, depthWrite: false
+  });
+  var largeCube = new THREE.Mesh(new THREE.BoxGeometry(largeSide, largeSide, largeSide), largeMat);
+  largeCube.visible = false;
+  sceneGroup.add(largeCube);
+
+  var leGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(largeSide, largeSide, largeSide));
+  var leMat = new THREE.LineBasicMaterial({
+    color: 0x93c5fd, transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, depthWrite: false
+  });
+  var lcEdges = new THREE.LineSegments(leGeo, leMat);
+  sceneGroup.add(lcEdges);
+
+  /* ── Mobile viewport scale ── */
+  var vw = window.innerWidth;
+  var groupScale = vw < 480 ? 0.82 : (vw < 768 ? 0.94 : 1.0);
+  sceneGroup.scale.setScalar(groupScale);
+
+  /* ── Scroll state ── */
+  var morphProgress = 0;
+  var heroSection   = document.getElementById('heroSection');
+  var heroLeft      = document.querySelector('.hero-left');
+  var sidePanel     = document.getElementById('morph-side-panel');
+
+  if (window.ScrollTrigger && heroSection) {
+    ScrollTrigger.create({
+      trigger: heroSection,
+      start: 'top top',
+      end: isMobile ? '+=220%' : '+=145%',
+      pin: true,
+      anticipatePin: 1,
+      scrub: isMobile ? 0.8 : 1.8,
+      invalidateOnRefresh: true,
+      onUpdate: function(self) {
+        var p = self.progress;
+
+        /* Phase 1 (0→0.28): hero-left fades + lifts */
+        var p1 = Math.min(1, p / 0.28);
+        if (heroLeft) {
+          heroLeft.style.opacity   = (1 - p1).toFixed(3);
+          heroLeft.style.transform = 'translateY(' + (-p1 * 30).toFixed(1) + 'px)';
+        }
+
+        /* Sphere fade-out (0.05→0.30): sphere dissolves as cubes appear */
+        var sphereFade = Math.max(0, Math.min(1, (p - 0.05) / 0.25));
+        pMat.opacity   = Math.max(0, 1 - sphereFade);
+
+        /* Cube assembly (0.12→0.82): cubes fly from scatter → grid */
+        morphProgress  = Math.max(0, Math.min(1, (p - 0.12) / 0.70));
+
+        /* Cube opacity: fade in, then stay — small cubes ARE the final formation */
+        var cubeIn = Math.min(1, morphProgress / 0.10);
+        var p3     = Math.max(0, Math.min(1, (p - 0.72) / 0.22));
+        smallMat.opacity         = cubeIn;
+        haloMat.opacity          = 0.065 * cubeIn;
+        /* Boost emissive glow as cubes lock into grid */
+        smallMat.emissiveIntensity = 0.50 + p3 * 2.4;
+
+        /* Keep large-cube shader hidden — colorful instanced cubes form the structure */
+        largeCube.visible               = false;
+        leMat.opacity                   = p3 * 0.90; /* blue edge outline still glows */
+
+        /* Text panel (0.80→1.0) — appears only after cube is formed */
+        var p4 = Math.max(0, Math.min(1, (p - 0.80) / 0.20));
+        if (sidePanel) {
+          sidePanel.style.opacity   = p4.toFixed(3);
+          sidePanel.style.transform = 'translateY(' + ((1 - p4) * 28).toFixed(1) + 'px)';
+        }
+
+        /* Reset when scrolled back to top */
+        if (p < 0.04) {
+          pMat.opacity = 1;
+          smallMat.emissiveIntensity = 0.50;
+          if (heroLeft)  { heroLeft.style.opacity = ''; heroLeft.style.transform = ''; }
+          if (sidePanel) { sidePanel.style.opacity = '0'; sidePanel.style.transform = ''; }
+        }
+      }
+    });
+  }
+
+  /* ── Animation loop ── */
+  var clock      = new THREE.Clock();
+  var dummy      = new THREE.Object3D();
+  var loopActive = false;
+
+  function morphLoop() {
+    loopActive = true;
+    requestAnimationFrame(function tick() {
+      if (document.hidden) { loopActive = false; return; }
+      requestAnimationFrame(tick);
+      var t = clock.getElapsedTime();
+      largeMat.uniforms.uTime.value = t;
+
+      /* ── Sphere idle: slow rotation + orbiting light ── */
+      sphere.rotation.y = t * 0.16;
+      sphere.rotation.x = Math.sin(t * 0.11) * 0.07;
+      spl.position.x    = Math.cos(t * 0.52) * 2.4;
+      spl.position.z    = Math.sin(t * 0.52) * 2.4;
+
+      /* ── Cube assembly: cubic ease-in-out + flutter ── */
+      var mp   = morphProgress;
+      var ease = mp < 0.5 ? 4*mp*mp*mp : 1 - Math.pow(-2*mp+2,3)/2;
+
+      for (var i = 0; i < COUNT; i++) {
+        var sx = startPos[i*3],   sy = startPos[i*3+1], sz = startPos[i*3+2];
+        var ex = endPos[i*3],     ey = endPos[i*3+1],   ez = endPos[i*3+2];
+
+        /* Orbital flutter that dampens as cubes lock into grid */
+        var flutter = (1 - ease) * Math.sin(t * (2.4 + i * 0.038) + i * 1.27) * 0.09;
+        dummy.position.set(
+          sx + (ex - sx) * ease + flutter * (i % 3 === 0 ? 1 : 0),
+          sy + (ey - sy) * ease + flutter * (i % 3 === 1 ? 1 : 0),
+          sz + (ez - sz) * ease
+        );
+
+        /* Cubes tumble chaotically then snap to clean alignment */
+        var spin = t * 0.38 * (1 - ease);
+        dummy.rotation.x = startRot[i*3]   * (1 - ease);
+        dummy.rotation.y = startRot[i*3+1] * (1 - ease) + spin;
+        dummy.rotation.z = startRot[i*3+2] * (1 - ease);
+        dummy.scale.setScalar(1);
+        dummy.updateMatrix();
+
+        instMesh.setMatrixAt(i, dummy.matrix);
+        haloMesh.setMatrixAt(i, dummy.matrix);
+      }
+      instMesh.instanceMatrix.needsUpdate = true;
+      haloMesh.instanceMatrix.needsUpdate = true;
+
+      /* Group slow-spin that settles as cube locks */
+      sceneGroup.rotation.y = t * 0.09 * (1 - ease * 0.75);
+      sceneGroup.rotation.x = Math.sin(t * 0.07) * 0.028 * (1 - ease * 0.5);
+
+      /* Final cube idle rotation */
+      largeCube.rotation.y = t * 0.07;
+      largeCube.rotation.x = Math.sin(t * 0.055) * 0.022;
+      lcEdges.rotation.y   = largeCube.rotation.y;
+      lcEdges.rotation.x   = largeCube.rotation.x;
+
+      /* Point-light orbit */
+      pl1.position.x = Math.cos(t * 0.46) * 5;
+      pl1.position.z = Math.sin(t * 0.46) * 5;
+      pl2.position.x = Math.cos(t * 0.31 + Math.PI) * 4.5;
+      pl2.position.z = Math.sin(t * 0.31 + Math.PI) * 4.5;
+
+      renderer.render(scene, camera);
+    });
+  }
+  morphLoop();
+
+  document.addEventListener('visibilitychange', function() {
+    if (!document.hidden && !loopActive) morphLoop();
   });
 
-  /* ── Particles ── */
-  var pN = 200;
-  var pPos = new Float32Array(pN*3), pCol = new Float32Array(pN*3);
-  for (var pi = 0; pi < pN; pi++) {
-    var pr = 4+Math.random()*9, pth = Math.random()*Math.PI*2, pph = Math.acos(2*Math.random()-1);
-    pPos[pi*3]   = pr*Math.sin(pph)*Math.cos(pth);
-    pPos[pi*3+1] = pr*Math.sin(pph)*Math.sin(pth);
-    pPos[pi*3+2] = pr*Math.cos(pph);
-    var pb = 0.4+Math.random()*0.6;
-    pCol[pi*3]=0.08*pb; pCol[pi*3+1]=0.18*pb; pCol[pi*3+2]=0.55*pb;
+  /* ── Resize / orientation change ── */
+  function onResize() {
+    var wrap = document.getElementById('hero-morph-wrap');
+    if (!wrap) return;
+    var w = wrap.clientWidth  || window.innerWidth;
+    var h = wrap.clientHeight || window.innerHeight;
+    renderer.setSize(w, h);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+    var sc = w < 480 ? 0.82 : (w < 768 ? 0.94 : 1.0);
+    sceneGroup.scale.setScalar(sc);
+    sceneGroup.position.y = w < 768 ? 0.42 : 0;
+    sceneGroup.position.x = w < 768 ? 0 : 0.82;
   }
-  var pGeo = new THREE.BufferGeometry();
-  pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
-  pGeo.setAttribute('color',    new THREE.BufferAttribute(pCol, 3));
-  var pMat = new THREE.PointsMaterial({ size: 0.06, vertexColors: true, transparent: true, opacity: 0.8 });
-  scene.add(new THREE.Points(pGeo, pMat));
+  window.addEventListener('resize', onResize, { passive: true });
+})();
 
-  /* ── Slide offset (drives ball x position during enter/exit) ── */
-  var xOff = 22;  /* start off-screen right; negative = exit left */
-  var f    = 0;
-  var playing = false;
 
-  /* ── Statement text reveal ── */
-  var stSec  = document.getElementById('statement');
-  var stL1   = stSec ? stSec.querySelector('.statement-l1') : null;
-  var stL2   = stSec ? stSec.querySelector('.statement-l2') : null;
-  var stDone = false;
-  function revealText() {
-    if (stDone) return; stDone = true;
-    if (stL1) stL1.classList.add('vis');
-    if (stL2) stL2.classList.add('vis');
+/* ══════════════════════════════════════════════════════════
+   HERO ROTATING WORD — "Trade Like [Elite/Advanced/Pro/…]"
+   Runs independently of Three.js / WebGL availability.
+══════════════════════════════════════════════════════════ */
+(function initHeroRotatingWord() {
+  var words  = ['Elite', 'Advanced', 'Pro', 'Strategic', 'Smart'];
+  var wordEl = document.getElementById('hero-rw');
+  if (!wordEl) return;
+
+  var wIdx = 0; /* 0 = 'Elite', already shown in HTML */
+
+  function rotateWord() {
+    wIdx = (wIdx + 1) % words.length;
+    var next = words[wIdx];
+    if (window.gsap) {
+      gsap.to(wordEl, {
+        opacity: 0, x: -10, filter: 'blur(5px)',
+        duration: 0.35, ease: 'power2.in',
+        onComplete: function() {
+          wordEl.textContent = next;
+          gsap.fromTo(wordEl,
+            { opacity: 0, x: 12, filter: 'blur(5px)' },
+            { opacity: 1, x:  0, filter: 'blur(0px)', duration: 0.45, ease: 'power2.out' }
+          );
+        }
+      });
+    } else {
+      wordEl.style.transition = 'opacity 0.25s';
+      wordEl.style.opacity = '0';
+      setTimeout(function() {
+        wordEl.textContent = next;
+        wordEl.style.opacity = '1';
+      }, 260);
+    }
   }
 
-  /* ── Brand text element ── */
-  var brandText = document.getElementById('orb-brand-text');
+  setInterval(rotateWord, 3200);
+})();
 
-  /* ── Play sequence once on trigger ── */
-  var triggered = false;
-  function play() {
-    if (triggered) return;
-    triggered = true;
-    playing   = true;
 
-    var proxy = { x: 22, op: 0 };
+/* ══════════════════════════════════════════════════════════
+   HERO MAN — 3D Parallax + Entrance
+══════════════════════════════════════════════════════════ */
+(function initHeroParallax() {
+  var img     = document.getElementById('heroManImg');
+  var wrap    = document.getElementById('heroManWrap');
+  var section = document.getElementById('heroSection');
+  if (!img || !wrap || !section) return;
 
-    /* STEP 1 — slide in from right + fade overlay in */
-    gsap.to(proxy, {
-      x: 0, op: 1, duration: 0.38, ease: 'power3.out',
-      onUpdate: function() {
-        xOff = proxy.x;
-        overlay.style.opacity = proxy.op.toFixed(3);
-      },
-      onComplete: function() {
-        /* Fade brand text in during orbit */
-        if (brandText) gsap.to(brandText, { opacity: 1, duration: 0.32, ease: 'power2.out' });
-        /* STEP 2 — orbit hold */
-        gsap.delayedCall(1.10, function() {
-          /* Fade brand text out before exit */
-          if (brandText) gsap.to(brandText, { opacity: 0, duration: 0.20, ease: 'power2.in' });
-          /* STEP 3 — slide out to left + fade overlay out */
-          gsap.to(proxy, {
-            x: -22, op: 0, duration: 0.38, ease: 'power3.in',
-            onUpdate: function() {
-              xOff = proxy.x;
-              overlay.style.opacity = proxy.op.toFixed(3);
-            },
-            onComplete: function() {
-              playing = false;
-              /* STEP 4 — reveal text immediately */
-              revealText();
-            }
-          });
+  var isMobile  = window.innerWidth < 1024;
+  var baseRotY  = isMobile ? 0 : 7;    // deg
+  var baseRotX  = 1.5;                  // deg
+  var baseScale = isMobile ? 1.05 : 1.07;
+  var maxTiltY  = isMobile ? 2 : 8;    // max extra rotation from mouse
+  var maxTiltX  = isMobile ? 1 : 4;
+  var curX = 0, curY = 0, tX = 0, tY = 0;
+  var raf;
+
+  /* Smooth lerp loop */
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function tick() {
+    curX = lerp(curX, tX, 0.06);
+    curY = lerp(curY, tY, 0.06);
+    img.style.transform =
+      'perspective(700px) rotateY(' + (baseRotY + curX) + 'deg) ' +
+      'rotateX(' + (baseRotX - curY) + 'deg) ' +
+      'scale(' + baseScale + ')';
+    raf = requestAnimationFrame(tick);
+  }
+  tick();
+
+  /* Mouse move over hero section */
+  section.addEventListener('mousemove', function(e) {
+    if (window.innerWidth < 1024) return;
+    var rect = section.getBoundingClientRect();
+    var nx   = (e.clientX - rect.left) / rect.width  - 0.5;  // -0.5 to 0.5
+    var ny   = (e.clientY - rect.top)  / rect.height - 0.5;
+    tX = nx * maxTiltY;   // left→right shifts rotateY
+    tY = ny * maxTiltX;   // up→down shifts rotateX
+  }, { passive: true });
+
+  section.addEventListener('mouseleave', function() {
+    tX = 0; tY = 0;
+  });
+
+  /* Touch: subtle tilt on mobile */
+  section.addEventListener('touchmove', function(e) {
+    if (window.innerWidth >= 1024) return;
+    var t    = e.touches[0];
+    var rect = section.getBoundingClientRect();
+    var nx   = (t.clientX - rect.left) / rect.width - 0.5;
+    tX = nx * 3;
+    tY = 0;
+  }, { passive: true });
+
+  section.addEventListener('touchend', function() { tX = 0; tY = 0; });
+
+  /* Resize: update mobile flag */
+  window.addEventListener('resize', function() {
+    isMobile  = window.innerWidth < 1024;
+    baseRotY  = isMobile ? 0 : 7;
+    baseScale = isMobile ? 1.05 : 1.07;
+    maxTiltY  = isMobile ? 2 : 8;
+    maxTiltX  = isMobile ? 1 : 4;
+  });
+})();
+
+
+
+/* ════════════════════════════════════════════════════════════
+   MODULE CAROUSEL — 3D cinematic phone showcase
+════════════════════════════════════════════════════════════ */
+(function initModCarousel() {
+  var cards = Array.from(document.querySelectorAll('.mcar-card'));
+  var infos = Array.from(document.querySelectorAll('.mcar-info-item'));
+  var dots  = Array.from(document.querySelectorAll('.mcar-dot'));
+  var n = cards.length;
+  if (!n) return;
+  var active = 0;
+  var COLORS = ['#22d3ee','#22c55e','#f97316','#a78bfa','#ec4899','#f59e0b'];
+  var busy   = false;
+
+  /* ── Utility: split text node into .mcar-c spans ── */
+  function splitChars(el) {
+    var text = (el.textContent || '').trim();
+    if (!text) return [];
+    el.innerHTML = text.split('').map(function(ch) {
+      if (ch === ' ') return '<span class="mcar-c"> </span>';
+      return '<span class="mcar-c">' + ch.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</span>';
+    }).join('');
+    return Array.from(el.querySelectorAll('.mcar-c'));
+  }
+
+  /* ── Restore plain text (collapses char spans) ── */
+  function restoreText(el) {
+    if (el) el.textContent = el.textContent;
+  }
+
+  /* ── Animate a full info panel ── */
+  function animatePanel(idx) {
+    var panel = infos[idx];
+    if (!panel || !window.gsap) return;
+
+    var tag   = panel.querySelector('.mcar-info-tag');
+    var title = panel.querySelector('.mcar-info-title');
+    var desc  = panel.querySelector('.mcar-info-desc');
+    var tl    = gsap.timeline();
+
+    /* Tag badge slides in */
+    if (tag) {
+      tl.fromTo(tag,
+        { opacity: 0, x: -24 },
+        { opacity: 1, x:   0, duration: 0.38, ease: 'power2.out' },
+        0);
+    }
+
+    /* Title materialises with blur */
+    if (title) {
+      tl.fromTo(title,
+        { opacity: 0, y: 18, filter: 'blur(4px)' },
+        { opacity: 1, y:  0, filter: 'blur(0px)', duration: 0.55, ease: 'power3.out' },
+        0.12);
+    }
+
+    /* Description — letter by letter */
+    if (desc) {
+      restoreText(desc);
+      var chars = splitChars(desc);
+      if (chars.length && window.gsap) {
+        gsap.set(chars, { opacity: 0, y: 8 });
+        tl.to(chars,
+          { opacity: 1, y: 0, duration: 0.40, ease: 'power2.out', stagger: 0.010 },
+          0.28);
+      }
+    }
+  }
+
+  /* ── Animate description only (for slide changes) ── */
+  function animateDescOnly(descEl) {
+    if (!descEl || !window.gsap) return;
+    restoreText(descEl);
+    var chars = splitChars(descEl);
+    if (chars.length) {
+      gsap.set(chars, { opacity: 0, y: 7 });
+      gsap.to(chars, { opacity: 1, y: 0, duration: 0.38, ease: 'power2.out', stagger: 0.009 });
+    }
+  }
+
+  /* ── Position mapping ── */
+  function getPos(idx) {
+    var d = ((idx - active) % n + n) % n;
+    if (d === 0)     return 'c';
+    if (d === 1)     return 'r1';
+    if (d === 2)     return 'r2';
+    if (d === n - 1) return 'l1';
+    if (d === n - 2) return 'l2';
+    return 'hide';
+  }
+
+  /* ── Core update (positions + glows + dots) ── */
+  function update() {
+    cards.forEach(function(card, i) { card.setAttribute('data-pos', getPos(i)); });
+    dots.forEach(function(dot, i) {
+      dot.classList.toggle('active', i === active);
+      dot.style.setProperty('--mcar-color', COLORS[i]);
+    });
+    cards.forEach(function(card, i) {
+      var glow = card.querySelector('.phone-glow');
+      if (!glow) return;
+      if (i === active) { glow.style.opacity = '1'; glow.classList.add('active'); }
+      else              { glow.style.opacity = '0'; glow.classList.remove('active'); }
+    });
+  }
+
+  /* ── Navigate ── */
+  function goTo(idx) {
+    var prev = active;
+    active = ((idx % n) + n) % n;
+    if (prev === active) return;
+
+    /* Hide previous panel */
+    var prevPanel = infos[prev];
+    if (prevPanel && window.gsap) {
+      gsap.to(prevPanel, {
+        opacity: 0, x: -20, duration: 0.28, ease: 'power2.in',
+        onComplete: function() {
+          prevPanel.classList.remove('active');
+          if (window.gsap) gsap.set(prevPanel, { x: 0 });
+        }
+      });
+    } else if (prevPanel) {
+      prevPanel.classList.remove('active');
+    }
+
+    /* Restore text in new panel before animating */
+    var nextPanel = infos[active];
+    if (nextPanel) {
+      restoreText(nextPanel.querySelector('.mcar-info-desc'));
+      restoreText(nextPanel.querySelector('.mcar-info-title'));
+
+      /* Show + animate new panel after prev fades out */
+      setTimeout(function() {
+        nextPanel.classList.add('active');
+        if (window.gsap) gsap.set(nextPanel, { opacity: 0, x: 24 });
+        if (window.gsap) gsap.to(nextPanel, { opacity: 1, x: 0, duration: 0.35, ease: 'power2.out' });
+        animatePanel(active);
+      }, 200);
+    }
+
+    update();
+  }
+
+  /* ── Event listeners ── */
+  var prevBtn = document.getElementById('mcar-prev');
+  var nextBtn = document.getElementById('mcar-next');
+  if (prevBtn) prevBtn.addEventListener('click', function() { goTo(active - 1); });
+  if (nextBtn) nextBtn.addEventListener('click', function() { goTo(active + 1); });
+
+  cards.forEach(function(card, i) {
+    card.addEventListener('click', function() {
+      if (card.getAttribute('data-pos') !== 'c') goTo(i);
+    });
+  });
+  dots.forEach(function(dot, i) {
+    dot.addEventListener('click', function() { goTo(i); });
+  });
+
+  /* Touch swipe */
+  var touchX = 0;
+  var wrap = document.getElementById('mod-carousel-wrap');
+  if (wrap) {
+    wrap.addEventListener('touchstart', function(e) { touchX = e.touches[0].clientX; }, { passive: true });
+    wrap.addEventListener('touchend', function(e) {
+      var dx = touchX - e.changedTouches[0].clientX;
+      if (Math.abs(dx) > 44) { if (dx > 0) goTo(active + 1); else goTo(active - 1); }
+    }, { passive: true });
+  }
+
+  /* Auto-advance */
+  var autoTimer = null;
+  function startAuto() { autoTimer = setInterval(function() { goTo(active + 1); }, 5500); }
+  function stopAuto()  { if (autoTimer) { clearInterval(autoTimer); autoTimer = null; } }
+  if (wrap) {
+    wrap.addEventListener('mouseenter', stopAuto);
+    wrap.addEventListener('mouseleave', startAuto);
+  }
+
+  /* ── Hook into goSlide for letter-by-letter on slide change ── */
+  if (typeof window.goSlide === 'function') {
+    var _origGoSlide = window.goSlide;
+    window.goSlide = function(id, idx) {
+      _origGoSlide(id, idx);
+      /* goSlide updates text after 180ms; we wait 210ms then reanimate */
+      setTimeout(function() {
+        var descEl = document.getElementById(id + '-desc');
+        if (descEl) {
+          descEl.style.opacity   = '1';
+          descEl.style.transform = 'none';
+          animateDescOnly(descEl);
+        }
+      }, 210);
+    };
+  }
+
+  /* Float animation via GSAP */
+  if (window.gsap) {
+    cards.forEach(function(card, i) {
+      var phone = card.querySelector('.phone');
+      if (phone) {
+        gsap.to(phone, {
+          y: -10, duration: 2.8 + i * 0.16,
+          ease: 'sine.inOut', yoyo: true, repeat: -1, delay: i * 0.28,
         });
       }
     });
   }
 
-  /* ── Scroll trigger — fire when hero is 65% scrolled past ── */
-  var heroEl = document.querySelector('.hero');
-  window.addEventListener('scroll', function() {
-    if (triggered) return;
-    var heroH = heroEl ? heroEl.offsetHeight : VH();
-    if (window.scrollY > heroH * 0.65) play();
-  }, { passive: true });
+  /* Measure tallest panel → set min-height so layout stays stable */
+  (function measureInfoWrap() {
+    var wrap = document.getElementById('mod-info-wrap');
+    if (!wrap) return;
+    var maxH = 0;
+    infos.forEach(function(info) {
+      info.style.cssText += ';opacity:1!important;visibility:hidden!important';
+      maxH = Math.max(maxH, info.scrollHeight);
+      info.style.opacity = '';
+      info.style.visibility = '';
+    });
+    if (maxH > 0) wrap.style.minHeight = (maxH + 8) + 'px';
+  })();
 
-  /* ── Render loop ── */
-  function loop() {
-    requestAnimationFrame(loop);
-    if (!playing) return;
-    f++;
-
-    /* Orbit positions — 2× faster speeds, xOff drives slide */
-    s1.position.set(Math.cos(f*0.014)*6.0 + xOff, Math.sin(f*0.0084)*2.2, Math.sin(f*0.014)*4.2);
-    s2.position.set(Math.cos(f*0.022+2.1)*4.5 + xOff, Math.sin(f*0.0176+1)*1.8, Math.sin(f*0.022+2.1)*3.6);
-    s3.position.set(Math.cos(f*0.034+4.2)*3.2 + xOff, Math.sin(f*0.0374+2)*1.3, Math.sin(f*0.034+4.2)*2.9);
-
-    cL1.position.copy(s1.position); cL1.intensity = 8 + 3.0*Math.sin(f*0.08);
-    cL2.position.copy(s2.position); cL2.intensity = 7 + 2.5*Math.sin(f*0.10+1);
-    cL3.position.copy(s3.position); cL3.intensity = 6 + 2.5*Math.sin(f*0.12+2);
-
-    s1.material.emissiveIntensity = 1.0+0.6*Math.sin(f*0.08);
-    s2.material.emissiveIntensity = 1.1+0.6*Math.sin(f*0.10+1);
-    s3.material.emissiveIntensity = 1.2+0.7*Math.sin(f*0.12+2);
-
-    s1.rotation.y+=0.016; s1.rotation.x+=0.006;
-    s2.rotation.y-=0.020; s2.rotation.z+=0.008;
-    s3.rotation.y+=0.028; s3.rotation.x-=0.010;
-
-    /* Animate vein rings (children of each sphere) */
-    s1.children.forEach(function(v,i){ if(v.isMesh&&v.geometry.type==='TorusGeometry'){v.rotation.y+=0.024+i*0.008;v.rotation.z+=0.014+i*0.004;v.material.emissiveIntensity=3.0+2.0*Math.sin(f*0.09+i);} });
-    s2.children.forEach(function(v,i){ if(v.isMesh&&v.geometry.type==='TorusGeometry'){v.rotation.x+=0.018+i*0.006;v.rotation.y+=0.026+i*0.006;v.material.emissiveIntensity=3.0+2.0*Math.sin(f*0.11+i+1);} });
-    s3.children.forEach(function(v,i){ if(v.isMesh&&v.geometry.type==='TorusGeometry'){v.rotation.z+=0.022+i*0.006;v.rotation.x+=0.016+i*0.006;v.material.emissiveIntensity=3.5+2.0*Math.sin(f*0.13+i+2);} });
-
-    pMat.opacity = 0.6+0.2*Math.sin(f*0.03);
-
-    camera.position.x = Math.sin(f*0.006)*4;
-    camera.position.y = 4+Math.sin(f*0.004)*1.5;
-    camera.position.z = 22+Math.sin(f*0.005)*2;
-    camera.lookAt(0, 0, 0);
-
-    renderer.render(scene, camera);
+  /* Scroll entrance */
+  if (window.gsap && window.ScrollTrigger) {
+    var section = document.getElementById('features');
+    if (section) {
+      var tl = gsap.timeline({
+        scrollTrigger: { trigger: section, start: 'top 72%', once: true,
+          onEnter: function() {
+            /* Animate initial panel after entrance */
+            setTimeout(function() { animatePanel(0); }, 700);
+          }
+        }
+      });
+      tl.fromTo('#mod-showcase',
+        { opacity: 0, y: 48 },
+        { opacity: 1, y:  0, duration: 1.1, ease: 'power3.out' });
+    }
   }
-  loop();
 
-  window.addEventListener('resize', function() {
-    renderer.setSize(VW(), VH());
-    camera.aspect = VW() / VH();
-    camera.updateProjectionMatrix();
-  });
+  /* Initialise */
+  update();
+  infos[0] && infos[0].classList.add('active');
+  startAuto();
 })();
-
-/* ── Statement section reveal ── */
-(function() {
-  var sec = document.getElementById('statement');
-  if (!sec) return;
-  var l1 = sec.querySelector('.statement-l1');
-  var l2 = sec.querySelector('.statement-l2');
-  if (window.IntersectionObserver) {
-    var obs = new IntersectionObserver(function(entries) {
-      if (entries[0].isIntersecting) {
-        l1.classList.add('vis');
-        l2.classList.add('vis');
-        obs.disconnect();
-      }
-    }, { threshold: 0.35 });
-    obs.observe(sec);
-  } else {
-    l1.classList.add('vis'); l2.classList.add('vis');
-  }
-})();
-
 </script>
 </body>
 </html>
