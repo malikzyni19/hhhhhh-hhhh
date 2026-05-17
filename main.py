@@ -6653,7 +6653,8 @@ def _detect_prior_move_adaptive(
     elif bias_strength == "early":   max_pb = 61.8
     else:                            max_pb = 50.0
 
-    best_candidate: dict | None = None
+    candidates: list[dict] = []
+    _any_choppy = False  # at least one window/direction was rejected for chop
 
     for w in windows:
         start   = sig_idx - w
@@ -6783,6 +6784,7 @@ def _detect_prior_move_adaptive(
             )
 
             if is_choppy and not imp_found:
+                _any_choppy = True
                 quality = "weak"
             elif clean_ok:
                 quality = "clean"
@@ -6883,24 +6885,31 @@ def _detect_prior_move_adaptive(
                 "summary":         f"{direction}({quality}·{score}/100·w{w})",
             }
 
-            if best_candidate is None or score > best_candidate["score"]:
-                best_candidate = candidate
+            candidates.append(candidate)
 
-    if best_candidate is None:
-        return {**_null, "reasons": ["no_drive_found"]}
+    # ── Mode-aware candidate selection ────────────────────────────────────────
+    if not candidates:
+        reject_reason = "choppy_drive" if _any_choppy else "no_drive_found"
+        return {**_null, "reasons": [reject_reason], "rejectReason": reject_reason}
 
-    # ── Apply acceptance rules ─────────────────────────────────────────────────
-    q_best = best_candidate["quality"]
-    s_best = best_candidate["score"]
-    if   bias_strength == "strong":
-        accepted = q_best == "clean" and s_best >= 85
-    elif bias_strength == "balanced":
-        accepted = q_best in ("clean", "good") and s_best >= 70
-    else:  # early
-        accepted = q_best in ("clean", "good", "impulse") and s_best >= 60
+    def _allowed_for_mode(cand: dict) -> bool:
+        q, s = cand["quality"], cand["score"]
+        if   bias_strength == "strong":   return q == "clean"              and s >= 85
+        elif bias_strength == "balanced": return q in ("clean", "good")    and s >= 70
+        else:                              return q in ("clean", "good", "impulse") and s >= 60
 
-    best_candidate["accepted"] = accepted
-    return best_candidate
+    allowed = [x for x in candidates if _allowed_for_mode(x)]
+
+    if allowed:
+        best = max(allowed, key=lambda x: x["score"])
+        best["accepted"] = True
+        return best
+
+    # No mode-allowed candidate — return highest raw candidate for diagnostics
+    best_rejected = max(candidates, key=lambda x: x["score"])
+    best_rejected["accepted"] = False
+    best_rejected["rejectReason"] = "not_allowed_for_mode_or_score"
+    return best_rejected
 
 
 def _check_rejection_candle(
@@ -7392,17 +7401,18 @@ def api_bias_scan():
 
                 if not prior_result.get("accepted"):
                     pq = prior_result.get("quality", "none")
-                    if pq in ("weak", "good", "impulse"):
+                    rr = prior_result.get("rejectReason", "")
+                    # A recognisable (but rejected) drive: quality was determined,
+                    # OR chop killed candidates before quality could be assigned.
+                    # "no_drive_found" means truly no directional move → noPriorMove.
+                    _had_drive = pq not in ("none",) or rr == "choppy_drive"
+                    if _had_drive:
                         _d_weak_prior = True
-                        diagnostics["adaptivePriorDrive"]["weakRejected"] += 1
+                        if rr == "choppy_drive":
+                            diagnostics["adaptivePriorDrive"]["chopRejected"] += 1
+                        else:
+                            diagnostics["adaptivePriorDrive"]["weakRejected"] += 1
                     continue
-
-                # Track accepted drive quality for diagnostics
-                _adp = diagnostics["adaptivePriorDrive"]
-                _pq  = prior_result["quality"]
-                if   _pq == "clean":   _adp["cleanAccepted"]   += 1
-                elif _pq == "good":    _adp["goodAccepted"]     += 1
-                elif _pq == "impulse": _adp["impulseAccepted"]  += 1
 
                 _d_had_prior = True
                 prior_start    = prior_result["priorStart"]
@@ -7757,19 +7767,21 @@ def api_bias_scan():
             diagnostics["rejected"]["errors"] += 1
             continue
 
-    # Tally adaptive prior-drive quality counts from accepted results
-    for _r in results:
-        _pd = _r.get("priorDrive", {})
-        _q  = _pd.get("quality", "")
-        if   _q == "clean":   diagnostics["adaptivePriorDrive"]["cleanAccepted"]   += 1
-        elif _q == "good":    diagnostics["adaptivePriorDrive"]["goodAccepted"]    += 1
-        elif _q == "impulse": diagnostics["adaptivePriorDrive"]["impulseAccepted"] += 1
-
     # Phase 3: apply minimum grade filter, then sort by best setup first
     diagnostics["setupsFoundBeforeFilters"] = len(results)
     _before_grade = len(results)
     results = [r for r in results if _grade_passes_filter(r.get("grade", "D"), minimum_grade)]
     diagnostics["rejected"]["minimumGrade"] = _before_grade - len(results)
+
+    # Tally accepted drive quality from FINAL results (after grade filter) — single source of truth
+    diagnostics["adaptivePriorDrive"]["cleanAccepted"]   = 0
+    diagnostics["adaptivePriorDrive"]["goodAccepted"]    = 0
+    diagnostics["adaptivePriorDrive"]["impulseAccepted"] = 0
+    for _r in results:
+        _q = (_r.get("priorDrive") or {}).get("quality", "")
+        if   _q == "clean":   diagnostics["adaptivePriorDrive"]["cleanAccepted"]   += 1
+        elif _q == "good":    diagnostics["adaptivePriorDrive"]["goodAccepted"]    += 1
+        elif _q == "impulse": diagnostics["adaptivePriorDrive"]["impulseAccepted"] += 1
     _go = {"A+": 0, "A": 1, "B": 2, "C": 3, "D": 4}
     results.sort(key=lambda x: (
         -x.get("score", 0),
