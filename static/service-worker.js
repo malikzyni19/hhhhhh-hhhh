@@ -8,7 +8,7 @@
      • /admin/*           → Network only
    ───────────────────────────────────────────────────────── */
 
-const CACHE_VERSION = 'zyni-smc-v1';
+const CACHE_VERSION = 'zyni-smc-v2';
 const OFFLINE_URL   = '/offline';
 
 const PRECACHE_ASSETS = [

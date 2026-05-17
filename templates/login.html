@@ -912,9 +912,65 @@
 <meta name="mobile-web-app-capable" content="yes">
 <link rel="apple-touch-icon" href="/static/icons/icon-192x192.png">
 <link rel="icon" type="image/png" sizes="192x192" href="/static/icons/icon-192x192.png">
+<style>
+/* ── ZyNi SMC · PWA Cinematic Splash ── */
+#pwa-splash{position:fixed;inset:0;z-index:999999;background:#020810;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden}
+#pwa-splash::before{content:'';position:absolute;width:clamp(250px,80vw,500px);height:clamp(250px,80vw,500px);border-radius:50%;background:radial-gradient(ellipse at center,rgba(245,158,11,.18) 0%,rgba(245,158,11,.06) 45%,transparent 70%);animation:splGlow 2.8s ease-out forwards;will-change:transform,opacity}
+#pwa-splash::after{content:'';position:absolute;left:0;right:0;height:2px;top:-2px;background:linear-gradient(90deg,transparent,rgba(245,158,11,.65),transparent);animation:splScan 1.4s ease-in-out .28s forwards}
+.spl-core{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:clamp(14px,3vw,22px);animation:splCore 1.05s cubic-bezier(.16,1,.3,1) .08s both;will-change:transform,opacity,filter}
+.spl-logo-wrap{position:relative;width:clamp(78px,19vw,108px);height:clamp(78px,19vw,108px);display:flex;align-items:center;justify-content:center}
+.spl-logo{width:100%;height:100%;object-fit:contain;position:relative;z-index:2;animation:splLogoGlow 2.8s ease-out .15s both;will-change:filter}
+.spl-ring{position:absolute;top:50%;left:50%;border-radius:50%;border:1px solid rgba(245,158,11,.2);will-change:transform,opacity}
+.spl-ring-1{width:155%;height:155%;margin-top:-77.5%;margin-left:-77.5%;animation:splRing 1.45s ease-out .48s both}
+.spl-ring-2{width:225%;height:225%;margin-top:-112.5%;margin-left:-112.5%;animation:splRing 1.45s ease-out .68s both}
+.spl-ring-3{width:300%;height:300%;margin-top:-150%;margin-left:-150%;animation:splRing 1.45s ease-out .84s both}
+.spl-brand{display:flex;align-items:baseline;gap:clamp(5px,1.2vw,10px);font-family:'Outfit','Inter','Poppins',system-ui,sans-serif;font-size:clamp(30px,8vw,48px);font-weight:900;letter-spacing:-1.5px;line-height:1;animation:splText .85s cubic-bezier(.16,1,.3,1) .58s both;will-change:transform,opacity}
+.spl-zyni{background:linear-gradient(135deg,#e2e8f0 0%,#22d3ee 55%,#a5f3fc 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.spl-smc{background:linear-gradient(135deg,#92400e 0%,#f59e0b 42%,#fde68a 65%,#f97316 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.spl-tag{font-family:'JetBrains Mono','Courier New',monospace;font-size:clamp(8px,2vw,10px);letter-spacing:clamp(2px,.6vw,3.5px);color:rgba(245,158,11,.5);text-transform:uppercase;animation:splTag .6s ease-out .94s both}
+.spl-bar-wrap{position:absolute;bottom:0;left:0;right:0;height:2px;background:rgba(255,255,255,.03);overflow:hidden;z-index:1}
+.spl-bar{height:100%;width:0;background:linear-gradient(90deg,rgba(245,158,11,.1),rgba(245,158,11,.8) 50%,rgba(245,158,11,.1));animation:splBar 2.1s cubic-bezier(.4,0,.6,1) .1s forwards}
+.spl-exit{animation:splExit .72s cubic-bezier(.4,0,1,1) forwards!important;pointer-events:none!important}
+@keyframes splCore{0%{opacity:0;transform:scale(.12) perspective(900px) translateZ(-700px);filter:blur(20px)}60%{filter:blur(0)}80%{transform:scale(1.04)}100%{opacity:1;transform:scale(1);filter:blur(0)}}
+@keyframes splLogoGlow{0%{filter:drop-shadow(0 0 0 rgba(245,158,11,0))}55%{filter:drop-shadow(0 0 32px rgba(245,158,11,.85)) drop-shadow(0 0 64px rgba(245,158,11,.35))}100%{filter:drop-shadow(0 0 20px rgba(245,158,11,.6)) drop-shadow(0 0 40px rgba(245,158,11,.22))}}
+@keyframes splRing{0%{opacity:.7;transform:scale(.18)}100%{opacity:0;transform:scale(1)}}
+@keyframes splText{0%{opacity:0;transform:translateY(20px)}100%{opacity:1;transform:translateY(0)}}
+@keyframes splTag{0%{opacity:0}100%{opacity:1}}
+@keyframes splGlow{0%{opacity:0;transform:scale(.15)}45%{opacity:1;transform:scale(1.1)}100%{opacity:.6;transform:scale(1)}}
+@keyframes splScan{0%{top:-2px;opacity:0}12%{opacity:.95}88%{opacity:.55}100%{top:calc(100% + 2px);opacity:0}}
+@keyframes splBar{0%{width:0}100%{width:100%}}
+@keyframes splExit{0%{opacity:1}100%{opacity:0}}
+@media(prefers-reduced-motion:reduce){.spl-core,.spl-logo,.spl-ring,.spl-brand,.spl-tag,.spl-bar,#pwa-splash::before,#pwa-splash::after{animation:none!important}.spl-core{opacity:1;transform:none;filter:none}.spl-brand,.spl-tag{opacity:1;transform:none}}
+</style>
 </head>
 
 <body>
+<div id="pwa-splash" style="display:none" role="presentation" aria-hidden="true">
+  <div class="spl-core">
+    <div class="spl-logo-wrap">
+      <div class="spl-ring spl-ring-1"></div>
+      <div class="spl-ring spl-ring-2"></div>
+      <div class="spl-ring spl-ring-3"></div>
+      <img src="/static/images/z-logo.png" class="spl-logo" alt="" loading="eager" decoding="async">
+    </div>
+    <div class="spl-brand"><span class="spl-zyni">ZyNi</span>&nbsp;<span class="spl-smc">SMC</span></div>
+    <div class="spl-tag">Smart Money Screener</div>
+  </div>
+  <div class="spl-bar-wrap"><div class="spl-bar"></div></div>
+</div>
+<script>
+(function(){
+  var s=document.getElementById('pwa-splash');
+  if(!s)return;
+  if(sessionStorage.getItem('z_sp')){s.remove();return;}
+  sessionStorage.setItem('z_sp','1');
+  s.style.display='flex';
+  setTimeout(function(){
+    s.classList.add('spl-exit');
+    setTimeout(function(){if(s&&s.parentNode)s.parentNode.removeChild(s);},760);
+  },2200);
+})();
+</script>
 
     <!-- AUTH TOAST -->
     <div id="auth-toast" role="alert" aria-live="assertive">
