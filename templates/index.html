@@ -1150,6 +1150,18 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 [data-theme="light"] .rsi-os{color:#15803d!important}
 [data-theme="light"] .rsi-norm{color:#475569!important}
 
+/* ── Bias Candle Close Timer ─────────────────────────────────────── */
+.bias-candle-timer{margin-top:8px;padding:9px 11px;border:1px solid rgba(34,211,238,.22);background:linear-gradient(135deg,rgba(15,23,42,.72),rgba(2,6,23,.88));border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.22)}
+.bias-timer-top{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:10px;font-weight:700;color:var(--text-secondary);letter-spacing:.4px;text-transform:uppercase}
+.bias-timer-countdown{margin-top:4px;font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:800;color:var(--accent);line-height:1}
+.bias-timer-hint{margin-top:3px;font-size:9px;color:var(--text-muted);line-height:1.35}
+.bias-timer-live-dot{width:7px;height:7px;border-radius:50%;background:#22c55e;box-shadow:0 0 8px #22c55e;animation:biasTimerPulse 1.4s infinite;flex-shrink:0}
+.bias-candle-timer.bias-timer-closed{border-color:rgba(34,197,94,.45);background:linear-gradient(135deg,rgba(20,83,45,.22),rgba(2,6,23,.88))}
+.bias-candle-timer.bias-timer-closed .bias-timer-countdown{color:#22c55e}
+.bias-candle-timer.bias-timer-closed .bias-timer-hint{color:#4ade80}
+@keyframes biasTimerPulse{0%,100%{opacity:1}50%{opacity:.35}}
+@media(max-width:480px){.bias-timer-countdown{font-size:15px}}
+
 </style>
 </head>
 <body>
@@ -1794,6 +1806,16 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
           </select>
           <div class="tip-box" id="tip-bias-tf">Select the candle timeframe for Bias Detection. <b>1H</b> gives more frequent signals, <b>4H</b> or <b>1D</b> gives stronger and rarer setups. Higher timeframes = fewer but more reliable signals.</div>
         </div>
+      </div>
+
+      <!-- Candle close countdown timer -->
+      <div id="biasCandleTimerBox" class="bias-candle-timer">
+        <div class="bias-timer-top">
+          <span id="biasTimerTfLabel">Current 1D Candle</span>
+          <span class="bias-timer-live-dot"></span>
+        </div>
+        <div id="biasTimerCountdown" class="bias-timer-countdown">--:--:--</div>
+        <div id="biasTimerHint" class="bias-timer-hint">Signal logic: Closed candles only</div>
       </div>
 
       <div class="setting-section">
@@ -6661,6 +6683,94 @@ document.addEventListener('DOMContentLoaded', function(){
         window._lockedTabs.forEach(lockTabButton);
       })
       .catch(function(){});
+  });
+})();
+</script>
+
+<!-- ── Bias Candle Close Timer ──────────────────────────────────── -->
+<script>
+(function(){
+  // Returns the millisecond duration of a bias timeframe string.
+  function getBiasTfMs(tf){
+    var t = String(tf||'').toLowerCase();
+    if(t==='1h')  return 60*60*1000;
+    if(t==='4h')  return 4*60*60*1000;
+    if(t==='6h')  return 6*60*60*1000;
+    if(t==='12h') return 12*60*60*1000;
+    if(t==='1d')  return 24*60*60*1000;
+    return 60*60*1000; // safe default: 1H
+  }
+
+  // Returns UTC epoch ms of the next candle close for the given timeframe.
+  function getBiasCurrentCandleCloseMs(tf){
+    var tfMs = getBiasTfMs(tf);
+    var now  = Date.now();
+    return Math.floor(now/tfMs)*tfMs + tfMs;
+  }
+
+  // Formats a remaining-milliseconds value as HH:MM:SS.
+  function formatBiasCountdown(ms){
+    ms = Math.max(0, ms||0);
+    var totalSec = Math.floor(ms/1000);
+    var h = Math.floor(totalSec/3600);
+    var m = Math.floor((totalSec%3600)/60);
+    var s = totalSec%60;
+    return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
+  }
+
+  var _biasCandleTimerInterval = null;
+  var _biasLastCloseTs         = null;
+  var _biasJustClosedUntil     = 0;
+
+  function updateBiasCandleTimer(){
+    var tfEl      = document.getElementById('biasTf');
+    var box       = document.getElementById('biasCandleTimerBox');
+    var tfLabel   = document.getElementById('biasTimerTfLabel');
+    var countdown = document.getElementById('biasTimerCountdown');
+    var hint      = document.getElementById('biasTimerHint');
+    if(!tfEl||!box||!tfLabel||!countdown||!hint) return;
+
+    var tf        = tfEl.value||'1d';
+    var tfDisplay = tf.toUpperCase();
+    var closeTs   = getBiasCurrentCandleCloseMs(tf);
+    var now       = Date.now();
+    var remaining = closeTs - now;
+
+    tfLabel.textContent  = 'Current '+tfDisplay+' Candle';
+    countdown.textContent = formatBiasCountdown(remaining);
+
+    // Detect the moment a candle just closed (new closeTs vs previous)
+    if(_biasLastCloseTs && closeTs !== _biasLastCloseTs){
+      _biasJustClosedUntil = now + 60000; // show "just closed" for 60s
+    }
+    _biasLastCloseTs = closeTs;
+
+    if(now < _biasJustClosedUntil){
+      box.classList.add('bias-timer-closed');
+      hint.textContent = 'Candle closed ✅ Run scan now for confirmed data';
+    } else {
+      box.classList.remove('bias-timer-closed');
+      hint.textContent = 'Signal logic: Closed candles only';
+    }
+  }
+
+  function startBiasCandleTimer(){
+    if(_biasCandleTimerInterval) clearInterval(_biasCandleTimerInterval);
+    updateBiasCandleTimer();
+    _biasCandleTimerInterval = setInterval(updateBiasCandleTimer, 1000);
+  }
+
+  // Reset just-closed state and immediately refresh when the user picks a new TF.
+  document.addEventListener('DOMContentLoaded', function(){
+    var biasTfEl = document.getElementById('biasTf');
+    if(biasTfEl){
+      biasTfEl.addEventListener('change', function(){
+        _biasLastCloseTs     = null;
+        _biasJustClosedUntil = 0;
+        updateBiasCandleTimer();
+      });
+    }
+    startBiasCandleTimer();
   });
 })();
 </script>
