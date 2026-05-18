@@ -2938,10 +2938,15 @@ async function scanCompressed(){
     const res = await fetch('/api/compressed_scan', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
     const data = await res.json();
     if(data && data.error === 'daily_limit_reached'){ if(window.showTokenLimitPopup) window.showTokenLimitPopup(); return; }
-    if(window.refreshTokensAfterScan) window.refreshTokensAfterScan(payload.symbols ? payload.symbols.length : 80);
+    if(data && data.error){ $('compressedResults').innerHTML = `<div class="empty">Scan error: ${data.message || data.error}</div>`; return; }
+    const attemptedCount = data?.scanned || (payload.symbols?.length || 80);
+    if(window.refreshTokensAfterScan) window.refreshTokensAfterScan(attemptedCount);
+    // Support both legacy raw-array response and new structured response
+    const rows = Array.isArray(data) ? data : (data.results || []);
     const scanTime = new Date().toLocaleTimeString();
-    $('compressedResults').innerHTML = data.length
-      ? data.map((x,i) => {
+    const summaryHtml = data?.scanned != null ? `<div style="font-size:11px;color:var(--muted);margin-bottom:6px">Scanned ${data.scanned} pairs · ${data.errors || 0} errors · ${data.timeframe || ''}</div>` : '';
+    $('compressedResults').innerHTML = rows.length
+      ? summaryHtml + rows.map((x,i) => {
           const starred = isStarred(x.symbol);
           return `<div class="result-card" style="animation-delay:${i*40}ms" onclick="this.classList.toggle('expanded')">
             <div class="result-header">
@@ -2958,7 +2963,9 @@ async function scanCompressed(){
             </div>
           </div>`;
         }).join('')
-      : '<div class="empty">No compressed pairs found</div>';
+      : summaryHtml + '<div class="empty">No compressed pairs found</div>';
+  } catch(err) {
+    $('compressedResults').innerHTML = `<div class="empty">Compressed scan failed: ${err.message || err}</div>`;
   } finally { hideScanPopup(); }
 }
 
