@@ -7537,47 +7537,102 @@ def api_compressed_scan():
     if _tok_user == "limit":
         return jsonify({"error": "daily_limit_reached", "message": "Daily scan tokens exhausted. Resets at midnight UTC."}), 429
     payload = request.get_json(force=True) or {}
+
+    # Always define exchange first so it is available regardless of symbol path
+    exchange = payload.get("exchange", "binance").lower()
+
+    # Input validation
+    VALID_TF = {"15m", "30m", "1h", "4h", "1d"}
     tf = payload.get("timeframe", "1h")
+    if tf not in VALID_TF:
+        return jsonify({"error": "invalid_input", "message": f"timeframe must be one of {sorted(VALID_TF)}"}), 400
+
     market = payload.get("market", "perpetual")
-    lookback = int(payload.get("lookback", 12))
-    max_pct = float(payload.get("maxPct", 2.0))
-    passed_symbols = payload.get("symbols") or []
-    if passed_symbols:
-        symbols = passed_symbols
+    if market not in ("spot", "perpetual"):
+        return jsonify({"error": "invalid_input", "message": "market must be spot or perpetual"}), 400
+
+    try:
+        lookback = int(payload.get("lookback", 12))
+        if not (5 <= lookback <= 80):
+            return jsonify({"error": "invalid_input", "message": "lookback must be between 5 and 80"}), 400
+    except (ValueError, TypeError):
+        return jsonify({"error": "invalid_input", "message": "lookback must be an integer"}), 400
+
+    try:
+        max_pct = float(payload.get("maxPct", 2.0))
+        if not (0.1 <= max_pct <= 20):
+            return jsonify({"error": "invalid_input", "message": "maxPct must be between 0.1 and 20"}), 400
+    except (ValueError, TypeError):
+        return jsonify({"error": "invalid_input", "message": "maxPct must be a number"}), 400
+
+    # Use passed symbols if provided; never overwrite them with fallback
+    raw_symbols = payload.get("symbols") or []
+    if raw_symbols:
+        symbols = list(dict.fromkeys(str(s).strip() for s in raw_symbols if str(s).strip()))
     else:
-        exchange = payload.get("exchange", "binance").lower()
-    symbols = [p["symbol"] for p in get_pairs_exchange(exchange, market)[:80]]
-    print(f"[DEBUG] compressed_scan market={market} tf={tf} lookback={lookback} max_pct={max_pct} symbols_count={len(symbols)}")
-    data = []
+        symbols = [p["symbol"] for p in get_pairs_exchange(exchange, market)[:80]]
+
+    print(f"[DEBUG] compressed_scan exchange={exchange} market={market} tf={tf} lookback={lookback} max_pct={max_pct} symbols_count={len(symbols)}")
+
+    results = []
+    errors = 0
     for sym in symbols:
         try:
             kl = get_klines_exchange(sym, tf, max(160, lookback + 20), market, exchange)
-            h = [x["high"] for x in kl]
-            l = [x["low"] for x in kl]
-            c = [x["close"] for x in kl]
-            v = [x["volume"] for x in kl]
+            if not kl or len(kl) < lookback + 2:
+                errors += 1
+                continue
+            # Exclude the currently forming candle — detect compression on closed candles only
+            closed_kl = kl[:-1]
+            h = [x["high"] for x in closed_kl]
+            l = [x["low"] for x in closed_kl]
+            c = [x["close"] for x in closed_kl]
+            v = [x["volume"] for x in closed_kl]
             ok, info = detect_compression(h, l, c, lookback, max_pct)
             if ok:
+                price = c[-1]
+                box_high = round(info["high"], 6)
+                box_low = round(info["low"], 6)
+                box_mid = round((box_high + box_low) / 2, 6)
+                box_range = box_high - box_low
+                price_pos = round(((price - box_low) / max(box_range, 1e-10)) * 100, 1)
                 sparkline = [float(c[i]) for i in range(max(0, len(c)-24), len(c))]
-                data.append({
+                results.append({
                     "symbol": sym,
-                    "price": c[-1],
+                    "price": price,
                     "timeframe": tf,
                     "rangePct": round(info["rangePct"], 2),
-                    "high": round(info["high"], 6),
-                    "low": round(info["low"], 6),
+                    "high": box_high,
+                    "low": box_low,
                     "volume": v[-1],
                     "sparkline": sparkline,
+                    "boxHigh": box_high,
+                    "boxLow": box_low,
+                    "boxMid": box_mid,
+                    "pricePositionPct": price_pos,
                 })
         except Exception as e:
+            errors += 1
             print(f"[DEBUG] compressed_scan {sym} error: {e}")
             continue
-    data.sort(key=lambda x: x["rangePct"])
-    print(f"[DEBUG] compressed_scan results={len(data)}")
+
+    results.sort(key=lambda x: x["rangePct"])
+    print(f"[DEBUG] compressed_scan results={len(results)} errors={errors}")
+
     if _tok_uid:
         try: consume_tokens(_tok_uid, len(symbols))
         except Exception as _te: print(f"[Tokens] compressed: {_te}")
-    return jsonify(data)
+
+    return jsonify({
+        "ok": True,
+        "scanned": len(symbols),
+        "results": results,
+        "errors": errors,
+        "timeframe": tf,
+        "market": market,
+        "exchange": exchange,
+        "usedClosedCandles": True,
+    })
 
 
 @app.route("/api/trending_scan", methods=["POST"])
