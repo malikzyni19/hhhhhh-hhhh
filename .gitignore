@@ -26,7 +26,7 @@ ruvector.db
 .claude-flow/security/*.log
 .claude-flow/*.sock
 .claude-flow/tmp/
-.claude-flow/metrics/consolidation.json
+.claude-flow/metrics/
 
 # Template backups
 templates/*.backup-*.html
