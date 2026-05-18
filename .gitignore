@@ -16,3 +16,8 @@ ruvector.db
 .claude-flow/data/
 .claude-flow/logs/
 .claude-flow/sessions/
+.claude-flow/daemon.pid
+.claude-flow/daemon-state.json
+.claude-flow/daemon.log
+.claude-flow/swarm/
+.claude-flow/metrics/codebase-map.json
