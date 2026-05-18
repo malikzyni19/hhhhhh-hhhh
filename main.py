@@ -5458,73 +5458,267 @@ def get_klines_paginated(symbol: str, interval: str, total_limit: int,
     return get_binance_klines_paginated_latest(symbol, interval, total_limit, market)
 
 
-def get_all_daily_klines_exchange(symbol: str, exchange: str = "binance",
-                                   market: str = "perpetual") -> List[Dict[str, float]]:
-    """Full 1D history for ATH/ATL, sourced per exchange + market.
+def fetch_daily_binance(symbol: str, market: str) -> Tuple[List[Dict[str, float]], str]:
+    """Binance full 1D history.
 
-    Phase 2 supports Binance only:
+      spot       → Binance Spot   /api/v3/klines  (limit 1000, from 2017)
+      perpetual  → Binance USDT-M /fapi/v1/klines (limit 1500, from 2019)
 
-      binance + spot       → Binance Spot   /api/v3/klines  (limit 1000)
-      binance + perpetual  → Binance USDT-M /fapi/v1/klines (limit 1500)
-
-    Spot history is NEVER used for perpetual and futures history is NEVER
-    used for spot — the two can legitimately differ for the same symbol.
-
-    Non-Binance exchanges return [] here (the ATH/ATL endpoint surfaces a
-    clear warning). We deliberately do NOT fall back to Binance history for
-    Bybit/OKX/MEXC, so their ATH/ATL is never silently wrong.
-    """
-    exchange = (exchange or "binance").lower()
-    if exchange != "binance":
-        return []
-
+    Forward-paginated with startTime. Returns (rows, source)."""
     is_spot = (market == "spot")
     if is_spot:
-        base_url   = f"{SPOT_API}/api/v3/klines"
-        page_limit = 1000
-        start_ms   = 1483228800000   # 2017-01-01 UTC (pre-dates any spot listing)
-        source     = "binance_spot"
+        base_url, page_limit, start_ms, source = (
+            f"{SPOT_API}/api/v3/klines", 1000, 1483228800000, "binance_spot")
     else:
-        base_url   = f"{BINANCE_FUTURES_API}/fapi/v1/klines"
-        page_limit = 1500
-        start_ms   = 1546300800000   # 2019-01-01 UTC (pre-dates USDT-M launch)
-        source     = "binance_futures"
+        base_url, page_limit, start_ms, source = (
+            f"{BINANCE_FUTURES_API}/fapi/v1/klines", 1500, 1546300800000, "binance_futures")
 
-    all_klines: List[Dict[str, float]] = []
-    max_iters = 15  # safety cap
-    for _ in range(max_iters):
+    out: List[Dict[str, float]] = []
+    for _ in range(15):
         try:
-            r = req.get(
-                base_url,
-                params={"symbol": symbol, "interval": "1d",
-                        "limit": page_limit, "startTime": start_ms},
-                timeout=30,
-            )
+            r = req.get(base_url, params={"symbol": symbol, "interval": "1d",
+                        "limit": page_limit, "startTime": start_ms}, timeout=30)
             if r.status_code != 200:
                 break
             update_api_weight("binance", r)
             resp = r.json()
         except Exception:
             break
-        if not resp or not isinstance(resp, list) or len(resp) == 0:
+        if not resp or not isinstance(resp, list):
             break
         for k in resp:
             try:
-                all_klines.append({
-                    "openTime": int(k[0]),
-                    "high": float(k[2]),
-                    "low": float(k[3]),
-                    "close": float(k[4]),
-                })
+                out.append({"openTime": int(k[0]), "high": float(k[2]),
+                            "low": float(k[3]), "close": float(k[4])})
             except (TypeError, ValueError, IndexError):
                 continue
         if len(resp) < page_limit:
             break
-        start_ms = int(resp[-1][0]) + 86_400_000  # next day
+        start_ms = int(resp[-1][0]) + 86_400_000
+    out.sort(key=lambda x: x["openTime"])
+    return out, source
 
-    print(f"[ATH-HIST] {symbol} exchange={exchange} market={market} "
-          f"source={source} bars={len(all_klines)}")
-    return all_klines
+
+def fetch_daily_bybit(symbol: str, market: str) -> Tuple[List[Dict[str, float]], str]:
+    """Bybit V5 full 1D history. category=linear (perp) / spot. Symbol stays
+    ETHUSDT. Newest-first pages, paginated backward via `end`."""
+    category = "linear" if market != "spot" else "spot"
+    source = "bybit_linear" if category == "linear" else "bybit_spot"
+    out: List[Dict[str, float]] = []
+    seen: set = set()
+    end_ms: Optional[int] = None
+    prev_oldest: Optional[int] = None
+    for _ in range(40):
+        params: Dict[str, Any] = {"category": category, "symbol": symbol,
+                                  "interval": "D", "limit": 1000}
+        if end_ms is not None:
+            params["end"] = end_ms
+        try:
+            r = req.get(f"{BYBIT_PERP_API}/kline", params=params, timeout=20)
+            if r.status_code != 200:
+                break
+            update_api_weight("bybit", r)
+            lst = r.json().get("result", {}).get("list", [])
+        except Exception:
+            break
+        if not lst:
+            break
+        page: List[int] = []
+        for k in lst:                       # newest-first
+            try:
+                ot = int(k[0])
+            except (TypeError, ValueError, IndexError):
+                continue
+            page.append(ot)
+            if ot in seen:
+                continue
+            try:
+                out.append({"openTime": ot, "high": float(k[2]),
+                            "low": float(k[3]), "close": float(k[4])})
+                seen.add(ot)
+            except (TypeError, ValueError, IndexError):
+                continue
+        if not page:
+            break
+        oldest = min(page)
+        if prev_oldest is not None and oldest >= prev_oldest:
+            break                            # no backward progress
+        prev_oldest = oldest
+        if len(lst) < 1000:
+            break
+        end_ms = oldest - 1
+        time.sleep(0.1)
+    out.sort(key=lambda x: x["openTime"])
+    return out, source
+
+
+def fetch_daily_okx(symbol: str, market: str) -> Tuple[List[Dict[str, float]], str]:
+    """OKX full 1D history via /history-candles (older history, 100/page).
+    instId: spot ETH-USDT, swap ETH-USDT-SWAP. Newest-first, paginated
+    backward via `after`."""
+    base = symbol[:-4] if symbol.endswith("USDT") else symbol.replace("USDT", "")
+    if market != "spot":
+        inst_id, source = f"{base}-USDT-SWAP", "okx_swap"
+    else:
+        inst_id, source = f"{base}-USDT", "okx_spot"
+    out: List[Dict[str, float]] = []
+    seen: set = set()
+    after_ms: Optional[int] = None
+    prev_oldest: Optional[int] = None
+    for _ in range(80):
+        params: Dict[str, Any] = {"instId": inst_id, "bar": "1D", "limit": 100}
+        if after_ms is not None:
+            params["after"] = after_ms
+        try:
+            r = req.get(f"{OKX_PERP_API}/history-candles", params=params, timeout=20)
+            if r.status_code != 200:
+                break
+            update_api_weight("okx", r)
+            data = r.json().get("data", [])
+        except Exception:
+            break
+        if not data:
+            break
+        page: List[int] = []
+        for k in data:                       # newest-first
+            try:
+                ot = int(k[0])
+            except (TypeError, ValueError, IndexError):
+                continue
+            page.append(ot)
+            if ot in seen:
+                continue
+            try:
+                out.append({"openTime": ot, "high": float(k[2]),
+                            "low": float(k[3]), "close": float(k[4])})
+                seen.add(ot)
+            except (TypeError, ValueError, IndexError):
+                continue
+        if not page:
+            break
+        oldest = min(page)
+        if prev_oldest is not None and oldest >= prev_oldest:
+            break
+        prev_oldest = oldest
+        if len(data) < 100:
+            break
+        after_ms = oldest                    # next page returns ts < oldest
+        time.sleep(0.1)
+    out.sort(key=lambda x: x["openTime"])
+    return out, source
+
+
+def fetch_daily_mexc(symbol: str, market: str) -> Tuple[List[Dict[str, float]], str]:
+    """MEXC full 1D history.
+
+      spot       → /api/v3/klines (ETHUSDT, interval 1d, forward via startTime)
+      perpetual  → contract /kline (ETH_USDT, interval Day1, forward via start
+                   in seconds; response is column arrays in seconds)."""
+    if market == "spot":
+        out: List[Dict[str, float]] = []
+        start_ms = 1483228800000
+        for _ in range(15):
+            try:
+                r = req.get(f"{MEXC_SPOT_API}/klines",
+                            params={"symbol": symbol, "interval": "1d",
+                                    "limit": 1000, "startTime": start_ms},
+                            timeout=20)
+                if r.status_code != 200:
+                    break
+                update_api_weight("mexc", r)
+                resp = r.json()
+            except Exception:
+                break
+            if not resp or not isinstance(resp, list):
+                break
+            for k in resp:
+                try:
+                    out.append({"openTime": int(k[0]), "high": float(k[2]),
+                                "low": float(k[3]), "close": float(k[4])})
+                except (TypeError, ValueError, IndexError):
+                    continue
+            if len(resp) < 1000:
+                break
+            start_ms = int(resp[-1][0]) + 86_400_000
+        out.sort(key=lambda x: x["openTime"])
+        return out, "mexc_spot"
+
+    # ── MEXC USDT-M perpetual (contract kline, seconds, column arrays) ──
+    mx_sym = symbol.replace("USDT", "_USDT")
+    out2: List[Dict[str, float]] = []
+    seen: set = set()
+    start_s = 1483228800            # 2017-01-01 in seconds
+    prev_newest: Optional[int] = None
+    for _ in range(15):
+        try:
+            r = req.get(f"{MEXC_PERP_API}/kline/{mx_sym}",
+                        params={"interval": "Day1", "start": start_s},
+                        timeout=20)
+            if r.status_code != 200:
+                break
+            update_api_weight("mexc", r)
+            d = r.json().get("data", {}) or {}
+        except Exception:
+            break
+        times = d.get("time", []) or []
+        if not times:
+            break
+        highs = d.get("high", []); lows = d.get("low", []); closes = d.get("close", [])
+        for i in range(len(times)):
+            try:
+                ts = int(times[i])
+            except (TypeError, ValueError):
+                continue
+            if ts in seen:
+                continue
+            try:
+                out2.append({"openTime": ts * 1000, "high": float(highs[i]),
+                             "low": float(lows[i]), "close": float(closes[i])})
+                seen.add(ts)
+            except (TypeError, ValueError, IndexError):
+                continue
+        newest = max(int(t) for t in times)
+        if prev_newest is not None and newest <= prev_newest:
+            break                            # no forward progress
+        prev_newest = newest
+        if len(times) < 2:
+            break
+        start_s = newest + 86_400
+        time.sleep(0.1)
+    out2.sort(key=lambda x: x["openTime"])
+    return out2, "mexc_perp"
+
+
+def get_all_daily_klines_exchange(symbol: str, exchange: str = "binance",
+                                   market: str = "perpetual") -> List[Dict[str, float]]:
+    """Full 1D history for ATH/ATL, sourced per exchange + market.
+
+    Phase 3 — every supported exchange has a native adapter:
+
+      binance spot/perp  → fetch_daily_binance
+      bybit   spot/perp  → fetch_daily_bybit   (category spot / linear)
+      okx     spot/perp  → fetch_daily_okx     (ETH-USDT / ETH-USDT-SWAP)
+      mexc    spot/perp  → fetch_daily_mexc    (ETHUSDT / ETH_USDT)
+
+    Hard rules: never mix exchanges, never mix spot/perp, never fall back to
+    Binance for another exchange. Unknown exchange → [] (caller skips the
+    symbol safely). `symbol` stays the screener symbol (ETHUSDT); each
+    adapter converts to its own format internally only for the API call."""
+    exchange = (exchange or "binance").lower()
+    if exchange == "binance":
+        rows, source = fetch_daily_binance(symbol, market)
+    elif exchange == "bybit":
+        rows, source = fetch_daily_bybit(symbol, market)
+    elif exchange == "okx":
+        rows, source = fetch_daily_okx(symbol, market)
+    elif exchange == "mexc":
+        rows, source = fetch_daily_mexc(symbol, market)
+    else:
+        rows, source = [], "unsupported"
+
+    print(f"[ATH-HIST] symbol={symbol} exchange={exchange} market={market} "
+          f"source={source} bars={len(rows)}")
+    return rows
 
 
 def get_all_daily_klines(symbol: str) -> List[Dict[str, float]]:
@@ -5622,7 +5816,12 @@ def compute_window_ath_atl(symbol: str, window_hours: int,
     # "previous" level. The 1h pre-window bars above bridge the daily->window
     # gap so a pre-window same-day high is not lost.
     daily = _get_daily_klines_cached(symbol, exchange, market)
-    for d in daily or []:
+    if not daily:
+        # No native full history for this exchange/market/symbol → skip the
+        # symbol rather than derive a misleading "previous ATH/ATL" from only
+        # the recent pre-window 1h bars. Never falls back to another source.
+        return None
+    for d in daily:
         if int(d["openTime"]) + 86_400_000 <= cutoff_ms:
             prev_highs.append(d["high"])
             prev_lows.append(d["low"])
@@ -7507,23 +7706,10 @@ def api_ath_atl_scan():
             "reset": True,
         })
 
-    # ── Phase 2: only Binance has accurate full daily history. Never
-    # silently use Binance history for Bybit/OKX/MEXC ATH/ATL. ──
-    if exchange != "binance":
-        return jsonify({
-            "totalPairs": 0, "scannedCount": 0,
-            "currentBatchStart": 0, "currentBatchEnd": 0, "nextBatchStart": 0,
-            "cursor": 0, "completedCycle": False,
-            "results": [], "accumulatedResults": [], "found": 0,
-            "exchange": exchange, "market": market, "windowHours": window_hours,
-            "windowLabel": _ath_window_label(window_hours),
-            "status": status, "mode": mode,
-            "breakTolerancePct": break_tol_pct, "nearPct": near_pct,
-            "unsupportedExchange": True,
-            "warning": ("ATH/ATL full-history support for this exchange will be "
-                        "added in the next phase. Please use Binance Spot or "
-                        "Binance Perpetual for accurate ATH/ATL."),
-        })
+    # ── Phase 3: every supported exchange (Binance/Bybit/OKX/MEXC) has a
+    # native daily-history adapter. If an adapter returns no history for a
+    # given symbol, process_pair() skips that symbol — it never falls back
+    # to another exchange or the other market. ──
 
     pairs = get_pairs_exchange(exchange, market)
     total_pairs = len(pairs)
