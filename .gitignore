@@ -9,3 +9,24 @@ build/
 .DS_Store
 .venv/
 venv/
+
+# Ruflo runtime artifacts (regenerated each session — do not track)
+.swarm/
+ruvector.db
+.claude-flow/data/
+.claude-flow/logs/
+.claude-flow/sessions/
+.claude-flow/daemon.pid
+.claude-flow/daemon-state.json
+.claude-flow/daemon.log
+.claude-flow/swarm/
+.claude-flow/metrics/codebase-map.json
+.claude-flow/metrics/security-audit.json
+.claude-flow/metrics/performance*.json
+.claude-flow/security/*.log
+.claude-flow/*.sock
+.claude-flow/tmp/
+.claude-flow/metrics/consolidation.json
+
+# Template backups
+templates/*.backup-*.html
