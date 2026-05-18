@@ -7589,34 +7589,150 @@ def api_compressed_scan():
             c = [x["close"] for x in closed_kl]
             v = [x["volume"] for x in closed_kl]
             ok, info = detect_compression(h, l, c, lookback, max_pct)
-            if ok:
-                price = c[-1]
-                box_high = round(info["high"], 6)
-                box_low = round(info["low"], 6)
-                box_mid = round((box_high + box_low) / 2, 6)
-                box_range = box_high - box_low
-                price_pos = round(((price - box_low) / max(box_range, 1e-10)) * 100, 1)
-                sparkline = [float(c[i]) for i in range(max(0, len(c)-24), len(c))]
-                results.append({
-                    "symbol": sym,
-                    "price": price,
-                    "timeframe": tf,
-                    "rangePct": round(info["rangePct"], 2),
-                    "high": box_high,
-                    "low": box_low,
-                    "volume": v[-1],
-                    "sparkline": sparkline,
-                    "boxHigh": box_high,
-                    "boxLow": box_low,
-                    "boxMid": box_mid,
-                    "pricePositionPct": price_pos,
-                })
+            if not ok:
+                continue
+
+            price = c[-1]
+            box_high = round(info["high"], 6)
+            box_low = round(info["low"], 6)
+            box_range = max(box_high - box_low, 1e-10)
+            box_mid = round((box_high + box_low) / 2, 6)
+            range_pct = round(info["rangePct"], 2)
+
+            # Close-only range — separates body compression from wick noise
+            recent_close_high = max(c[-lookback:])
+            recent_close_low = min(c[-lookback:])
+            close_range_pct = round(((recent_close_high - recent_close_low) / max(price, 1e-10)) * 100, 2)
+
+            # Price position inside box, clamped 0–100
+            price_pos = round(max(0.0, min(100.0, ((price - box_low) / box_range) * 100)), 1)
+
+            # Distance to box edges
+            dist_to_high = round(((box_high - price) / max(price, 1e-10)) * 100, 2)
+            dist_to_low = round(((price - box_low) / max(price, 1e-10)) * 100, 2)
+
+            # Box location
+            if price_pos >= 70:
+                box_location = "near_high"
+            elif price_pos <= 30:
+                box_location = "near_low"
+            else:
+                box_location = "middle"
+
+            # ATR contraction — ATR(14) on closed candles
+            atr_vals = calc_atr(h, l, c, 14)
+            current_atr = next((av for av in reversed(atr_vals) if av is not None), None)
+            prior_atr_vals = [av for av in atr_vals[:-1] if av is not None]
+            if current_atr is not None and len(prior_atr_vals) >= 10:
+                avg_atr = float(np.mean(prior_atr_vals[-50:]))
+                atr_ratio = round(current_atr / max(avg_atr, 1e-10), 3)
+                if atr_ratio <= 0.70:
+                    atr_state = "strong_contraction"
+                elif atr_ratio <= 1.10:
+                    atr_state = "normal"
+                else:
+                    atr_state = "expanding"
+            else:
+                atr_ratio = None
+                atr_state = "unknown"
+
+            # Volume dry-up — compare recent lookback to prior lookback
+            if len(v) >= 2 * lookback:
+                recent_vol_avg = float(np.mean(v[-lookback:]))
+                prior_vol_avg = float(np.mean(v[-2 * lookback:-lookback]))
+                vol_dry_ratio = round(recent_vol_avg / max(prior_vol_avg, 1e-10), 3)
+                if vol_dry_ratio <= 0.75:
+                    vol_state = "drying"
+                elif vol_dry_ratio <= 1.20:
+                    vol_state = "normal"
+                else:
+                    vol_state = "expanding"
+            else:
+                vol_dry_ratio = None
+                vol_state = "unknown"
+
+            # Candles whose close sits inside the box
+            recent_closes = c[-lookback:]
+            inside_count = sum(1 for cl in recent_closes if box_low <= cl <= box_high)
+            candles_inside_pct = round((inside_count / max(lookback, 1)) * 100, 1)
+
+            # Compression score (0–100)
+            score = 0.0
+            # Tight high/low range: up to 30 pts — smaller = better
+            score += 30.0 * max(0.0, 1.0 - range_pct / max(max_pct, 1e-10))
+            # Tight close range relative to high/low range: up to 20 pts
+            score += 20.0 * max(0.0, 1.0 - close_range_pct / max(range_pct, 1e-10))
+            # ATR contraction: up to 20 pts
+            if atr_state == "strong_contraction":
+                score += 20.0
+            elif atr_state == "normal":
+                score += 10.0
+            # Volume dry-up: up to 15 pts
+            if vol_state == "drying":
+                score += 15.0
+            elif vol_state == "normal":
+                score += 7.0
+            # Clean inside box: up to 10 pts
+            score += 10.0 * (candles_inside_pct / 100.0)
+            # Price near edge: up to 5 pts
+            score += 5.0 if box_location in ("near_high", "near_low") else 2.0
+            compression_score = round(min(score, 100.0))
+
+            # Grade
+            if compression_score >= 85:
+                compression_grade = "A+"
+            elif compression_score >= 75:
+                compression_grade = "A"
+            elif compression_score >= 60:
+                compression_grade = "B"
+            else:
+                compression_grade = "C"
+
+            # Watch state
+            if box_location == "near_high" and compression_score >= 70:
+                watch_state = "upside_breakout_watch"
+            elif box_location == "near_low" and compression_score >= 70:
+                watch_state = "downside_breakout_watch"
+            elif compression_score >= 60:
+                watch_state = "compression_building"
+            else:
+                watch_state = "weak_compression"
+
+            sparkline = [float(c[i]) for i in range(max(0, len(c) - 24), len(c))]
+            results.append({
+                "symbol": sym,
+                "price": price,
+                "timeframe": tf,
+                "rangePct": range_pct,
+                "high": box_high,
+                "low": box_low,
+                "volume": v[-1],
+                "sparkline": sparkline,
+                "boxHigh": box_high,
+                "boxLow": box_low,
+                "boxMid": box_mid,
+                "closeRangePct": close_range_pct,
+                "pricePositionPct": price_pos,
+                "distanceToHighPct": dist_to_high,
+                "distanceToLowPct": dist_to_low,
+                "boxLocation": box_location,
+                "atrCompressionRatio": atr_ratio,
+                "atrState": atr_state,
+                "volumeDryRatio": vol_dry_ratio,
+                "volumeState": vol_state,
+                "candlesInsideBox": inside_count,
+                "candlesInsideBoxPct": candles_inside_pct,
+                "compressionScore": compression_score,
+                "compressionGrade": compression_grade,
+                "watchState": watch_state,
+            })
         except Exception as e:
             errors += 1
             print(f"[DEBUG] compressed_scan {sym} error: {e}")
             continue
 
-    results.sort(key=lambda x: x["rangePct"])
+    # Best compression first: highest score, then tightest range
+    results.sort(key=lambda x: (-x["compressionScore"], x["rangePct"]))
     print(f"[DEBUG] compressed_scan results={len(results)} errors={errors}")
 
     if _tok_uid:

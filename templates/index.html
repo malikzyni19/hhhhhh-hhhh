@@ -2930,6 +2930,42 @@ function toggleAutoScan(){
 }
 
 // ── Compressed ──
+// ── Compressed scan helpers ──
+function compressedGradeClass(grade){
+  if(grade==='A+' || grade==='A') return 'bull';
+  if(grade==='B') return 'warn';
+  return 'neutral';
+}
+function watchStateLabel(ws){
+  const m={'upside_breakout_watch':'↑ Upside Watch','downside_breakout_watch':'↓ Downside Watch','compression_building':'⬛ Building','weak_compression':'· Weak'};
+  return m[ws]||ws||'—';
+}
+function watchStateBadgeClass(ws){
+  if(ws==='upside_breakout_watch') return 'bull';
+  if(ws==='downside_breakout_watch') return 'bear';
+  if(ws==='compression_building') return 'neutral';
+  return 'neutral';
+}
+function atrStateLabel(s){
+  const m={'strong_contraction':'ATR ↓ Contracting','normal':'ATR Normal','expanding':'ATR ↑ Expanding','unknown':'ATR ?'};
+  return m[s]||s||'—';
+}
+function atrStateBadgeClass(s){
+  if(s==='strong_contraction') return 'bull';
+  if(s==='expanding') return 'warn';
+  return 'neutral';
+}
+function volumeStateLabel(s){
+  const m={'drying':'Vol ↓ Drying','normal':'Vol Normal','expanding':'Vol ↑ Expanding','unknown':'Vol ?'};
+  return m[s]||s||'—';
+}
+function volumeStateBadgeClass(s){
+  if(s==='drying') return 'bull';
+  if(s==='expanding') return 'warn';
+  return 'neutral';
+}
+function fmtP(n,d=2){ return (typeof n==='number')?n.toFixed(d):'—'; }
+
 async function scanCompressed(){
   showScanPopup('SCANNING COMPRESSED');
   $('compressedResults').innerHTML = '<div class="empty">Scanning...</div>';
@@ -2948,17 +2984,30 @@ async function scanCompressed(){
     $('compressedResults').innerHTML = rows.length
       ? summaryHtml + rows.map((x,i) => {
           const starred = isStarred(x.symbol);
+          const hasScore = typeof x.compressionScore === 'number';
+          const gradeHtml = x.compressionGrade ? `<span class="badge ${compressedGradeClass(x.compressionGrade)}" style="font-size:9px">${x.compressionGrade}</span>` : '';
+          const scoreHtml = hasScore ? `<span style="font-size:10px;font-weight:700;color:var(--accent);margin-left:2px">Score ${x.compressionScore}</span>` : '';
+          const atrHtml = x.atrState ? `<span class="badge ${atrStateBadgeClass(x.atrState)}" style="font-size:9px">${atrStateLabel(x.atrState)}</span>` : '';
+          const volHtml = x.volumeState ? `<span class="badge ${volumeStateBadgeClass(x.volumeState)}" style="font-size:9px">${volumeStateLabel(x.volumeState)}</span>` : '';
+          const watchHtml = x.watchState ? `<span class="badge ${watchStateBadgeClass(x.watchState)}" style="font-size:9px">${watchStateLabel(x.watchState)}</span>` : '';
+          const posLabel = x.boxLocation==='near_high'?'Near High':x.boxLocation==='near_low'?'Near Low':'Middle';
           return `<div class="result-card" style="animation-delay:${i*40}ms" onclick="this.classList.toggle('expanded')">
             <div class="result-header">
               <span class="symbol">${coinIcon(x.symbol)}${displaySymbol(x.symbol)}<a href="https://www.tradingview.com/chart/?symbol=BINANCE:${x.symbol}.P" target="${tvTarget()}" class="tv-link" rel="noopener" onclick="event.stopPropagation()">📊</a><span class="expand-icon">▼</span></span>
               <span style="display:flex;align-items:center;gap:4px">
                 <span class="price-tag">${x.timeframe}${renderSparkline(x.sparkline, x.sparklineMarkers)}</span>
+                ${scoreHtml}
                 <span class="star-btn ${starred?'starred':''}" onclick="event.stopPropagation();toggleWatchlistStar(this,'${x.symbol}')">${starred?'★':'☆'}</span>
               </span>
             </div>
-            <div class="badges"><span class="badge neutral">COMPRESSED</span></div>
+            <div class="badges">
+              <span class="badge neutral">COMPRESSED</span>
+              ${gradeHtml}${atrHtml}${volHtml}${watchHtml}
+            </div>
             <div class="result-details">
-              <div class="result-detail">Range ${x.rangePct}% | Zone ${typeof x.low==='number'?x.low.toFixed(6):x.low} – ${typeof x.high==='number'?x.high.toFixed(6):x.high}</div>
+              <div class="result-detail">Range ${fmtP(x.rangePct)}% | Close Range ${fmtP(x.closeRangePct)}%</div>
+              <div class="result-detail">Box ${typeof x.boxLow==='number'?x.boxLow.toFixed(6):x.boxLow} – ${typeof x.boxHigh==='number'?x.boxHigh.toFixed(6):x.boxHigh} | Mid ${typeof x.boxMid==='number'?x.boxMid.toFixed(6):x.boxMid}</div>
+              <div class="result-detail">Position ${fmtP(x.pricePositionPct,1)}% · ${posLabel} | ↑ ${fmtP(x.distanceToHighPct)}% ↓ ${fmtP(x.distanceToLowPct)}%</div>
               <div class="scan-time">Scanned: ${scanTime}</div>
             </div>
           </div>`;
