@@ -10,7 +10,7 @@ build/
 .venv/
 venv/
 
-# Ruflo runtime artifacts
+# Ruflo runtime artifacts (regenerated each session — do not track)
 .swarm/
 ruvector.db
 .claude-flow/data/
@@ -21,3 +21,8 @@ ruvector.db
 .claude-flow/daemon.log
 .claude-flow/swarm/
 .claude-flow/metrics/codebase-map.json
+.claude-flow/metrics/security-audit.json
+.claude-flow/metrics/performance-*.json
+.claude-flow/security/*.log
+.claude-flow/*.sock
+.claude-flow/tmp/
