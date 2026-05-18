@@ -5458,43 +5458,98 @@ def get_klines_paginated(symbol: str, interval: str, total_limit: int,
     return get_binance_klines_paginated_latest(symbol, interval, total_limit, market)
 
 
-def get_all_daily_klines(symbol: str) -> List[Dict[str, float]]:
-    """Paginate through Binance 1D history from 2017-01-01 to get all candles."""
+def get_all_daily_klines_exchange(symbol: str, exchange: str = "binance",
+                                   market: str = "perpetual") -> List[Dict[str, float]]:
+    """Full 1D history for ATH/ATL, sourced per exchange + market.
+
+    Phase 2 supports Binance only:
+
+      binance + spot       → Binance Spot   /api/v3/klines  (limit 1000)
+      binance + perpetual  → Binance USDT-M /fapi/v1/klines (limit 1500)
+
+    Spot history is NEVER used for perpetual and futures history is NEVER
+    used for spot — the two can legitimately differ for the same symbol.
+
+    Non-Binance exchanges return [] here (the ATH/ATL endpoint surfaces a
+    clear warning). We deliberately do NOT fall back to Binance history for
+    Bybit/OKX/MEXC, so their ATH/ATL is never silently wrong.
+    """
+    exchange = (exchange or "binance").lower()
+    if exchange != "binance":
+        return []
+
+    is_spot = (market == "spot")
+    if is_spot:
+        base_url   = f"{SPOT_API}/api/v3/klines"
+        page_limit = 1000
+        start_ms   = 1483228800000   # 2017-01-01 UTC (pre-dates any spot listing)
+        source     = "binance_spot"
+    else:
+        base_url   = f"{BINANCE_FUTURES_API}/fapi/v1/klines"
+        page_limit = 1500
+        start_ms   = 1546300800000   # 2019-01-01 UTC (pre-dates USDT-M launch)
+        source     = "binance_futures"
+
     all_klines: List[Dict[str, float]] = []
-    start_ms = 1483228800000  # 2017-01-01 UTC
-    max_iters = 15  # safety cap (~41 years max)
+    max_iters = 15  # safety cap
     for _ in range(max_iters):
-        url = (
-            f"{SPOT_API}/api/v3/klines"
-            f"?symbol={symbol}&interval=1d&limit=1000&startTime={start_ms}"
-        )
         try:
-            resp = req.get(url, timeout=30).json()
+            r = req.get(
+                base_url,
+                params={"symbol": symbol, "interval": "1d",
+                        "limit": page_limit, "startTime": start_ms},
+                timeout=30,
+            )
+            if r.status_code != 200:
+                break
+            update_api_weight("binance", r)
+            resp = r.json()
         except Exception:
             break
         if not resp or not isinstance(resp, list) or len(resp) == 0:
             break
         for k in resp:
-            all_klines.append({
-                "openTime": int(k[0]),
-                "high": float(k[2]),
-                "low": float(k[3]),
-                "close": float(k[4]),
-            })
-        if len(resp) < 1000:
+            try:
+                all_klines.append({
+                    "openTime": int(k[0]),
+                    "high": float(k[2]),
+                    "low": float(k[3]),
+                    "close": float(k[4]),
+                })
+            except (TypeError, ValueError, IndexError):
+                continue
+        if len(resp) < page_limit:
             break
         start_ms = int(resp[-1][0]) + 86_400_000  # next day
+
+    print(f"[ATH-HIST] {symbol} exchange={exchange} market={market} "
+          f"source={source} bars={len(all_klines)}")
     return all_klines
 
 
-def detect_true_ath_atl(symbol: str, market: str = "perpetual") -> Optional[Dict[str, Any]]:
-    """Return true ATH/ATL using full 1D history. Cached for 4 h."""
-    cache_key = f"{symbol}:{market}"
+def get_all_daily_klines(symbol: str) -> List[Dict[str, float]]:
+    """Backward-compatible spot-only daily history.
+
+    DEPRECATED for ATH/ATL: callers that care about spot vs perpetual must
+    use get_all_daily_klines_exchange(symbol, exchange, market). Kept as a
+    thin Binance-Spot wrapper so any legacy call site behaves exactly as
+    before (spot 1D since 2017)."""
+    return get_all_daily_klines_exchange(symbol, "binance", "spot")
+
+
+def detect_true_ath_atl(symbol: str, market: str = "perpetual",
+                        exchange: str = "binance") -> Optional[Dict[str, Any]]:
+    """DEPRECATED — superseded by compute_window_ath_atl() which is the
+    exchange + market aware ATH/ATL path used by /api/ath_atl_scan. Retained
+    only for backward safety (no live callers). Now routes through the
+    exchange-aware daily history and an exchange:market:symbol cache key so
+    it can no longer mislead future ATH/ATL work with spot-only data."""
+    cache_key = f"{exchange}:{market}:{symbol}"
     now = time.time()
     cached = ATH_ATL_CACHE.get(cache_key)
     if cached and now - cached["ts"] < ATH_ATL_CACHE_TTL:
         return cached["data"]
-    klines = get_all_daily_klines(symbol)
+    klines = get_all_daily_klines_exchange(symbol, exchange, market)
     if not klines:
         return None
     ath = max(k["high"] for k in klines)
@@ -5504,22 +5559,28 @@ def detect_true_ath_atl(symbol: str, market: str = "perpetual") -> Optional[Dict
     return data
 
 
-def _get_daily_klines_cached(symbol: str) -> List[Dict[str, float]]:
-    """Full 1D history for `symbol`, cached 4 h. Wraps get_all_daily_klines so
-    the windowed ATH/ATL scan can be called batch-after-batch without
-    re-paginating the entire daily history each time."""
+def _get_daily_klines_cached(symbol: str, exchange: str = "binance",
+                             market: str = "perpetual") -> List[Dict[str, float]]:
+    """Full 1D history for `symbol`, cached 4 h, keyed by
+    exchange:market:symbol so Binance Spot and Binance Perpetual keep
+    separate histories (e.g. binance:spot:ETHUSDT vs
+    binance:perpetual:ETHUSDT). Lets the windowed ATH/ATL scan run
+    batch-after-batch without re-paginating full daily history."""
+    cache_key = f"{exchange}:{market}:{symbol}"
     now = time.time()
-    cached = ATH_ATL_DAILY_CACHE.get(symbol)
+    cached = ATH_ATL_DAILY_CACHE.get(cache_key)
     if cached and now - cached["ts"] < ATH_ATL_DAILY_CACHE_TTL:
         return cached["data"]
-    klines = get_all_daily_klines(symbol)
+    klines = get_all_daily_klines_exchange(symbol, exchange, market)
     if klines:
-        ATH_ATL_DAILY_CACHE[symbol] = {"ts": now, "data": klines}
+        ATH_ATL_DAILY_CACHE[cache_key] = {"ts": now, "data": klines}
     return klines
 
 
 def compute_window_ath_atl(symbol: str, window_hours: int,
-                           kl_1h: List[Dict[str, float]]) -> Optional[Dict[str, float]]:
+                           kl_1h: List[Dict[str, float]],
+                           exchange: str = "binance",
+                           market: str = "perpetual") -> Optional[Dict[str, float]]:
     """Split history into BEFORE-window vs INSIDE-window and return:
 
         previous_ath  — highest high strictly BEFORE the selected window
@@ -5560,7 +5621,7 @@ def compute_window_ath_atl(symbol: str, window_hours: int,
     # daily candle that overlaps the window keeps window highs/lows out of the
     # "previous" level. The 1h pre-window bars above bridge the daily->window
     # gap so a pre-window same-day high is not lost.
-    daily = _get_daily_klines_cached(symbol)
+    daily = _get_daily_klines_cached(symbol, exchange, market)
     for d in daily or []:
         if int(d["openTime"]) + 86_400_000 <= cutoff_ms:
             prev_highs.append(d["high"])
@@ -7446,6 +7507,24 @@ def api_ath_atl_scan():
             "reset": True,
         })
 
+    # ── Phase 2: only Binance has accurate full daily history. Never
+    # silently use Binance history for Bybit/OKX/MEXC ATH/ATL. ──
+    if exchange != "binance":
+        return jsonify({
+            "totalPairs": 0, "scannedCount": 0,
+            "currentBatchStart": 0, "currentBatchEnd": 0, "nextBatchStart": 0,
+            "cursor": 0, "completedCycle": False,
+            "results": [], "accumulatedResults": [], "found": 0,
+            "exchange": exchange, "market": market, "windowHours": window_hours,
+            "windowLabel": _ath_window_label(window_hours),
+            "status": status, "mode": mode,
+            "breakTolerancePct": break_tol_pct, "nearPct": near_pct,
+            "unsupportedExchange": True,
+            "warning": ("ATH/ATL full-history support for this exchange will be "
+                        "added in the next phase. Please use Binance Spot or "
+                        "Binance Perpetual for accurate ATH/ATL."),
+        })
+
     pairs = get_pairs_exchange(exchange, market)
     total_pairs = len(pairs)
     if total_pairs == 0:
@@ -7486,7 +7565,7 @@ def api_ath_atl_scan():
             if not kl:
                 return None
 
-            lv = compute_window_ath_atl(sym, window_hours, kl)
+            lv = compute_window_ath_atl(sym, window_hours, kl, exchange, market)
             if not lv:
                 return None
             previous_ath = lv["previous_ath"]
