@@ -22,7 +22,11 @@ ruvector.db
 .claude-flow/swarm/
 .claude-flow/metrics/codebase-map.json
 .claude-flow/metrics/security-audit.json
-.claude-flow/metrics/performance-*.json
+.claude-flow/metrics/performance*.json
 .claude-flow/security/*.log
 .claude-flow/*.sock
 .claude-flow/tmp/
+.claude-flow/metrics/consolidation.json
+
+# Template backups
+templates/*.backup-*.html
