@@ -2931,10 +2931,48 @@ function toggleAutoScan(){
 
 // ── Compressed ──
 // ── Compressed scan helpers ──
+function tvSymbolFor(exchange, market, symbol){
+  const ex=(exchange||currentExchange()||'binance').toUpperCase();
+  const clean=String(symbol||'').replace('.P','').toUpperCase();
+  return (market||marketType())==='spot'?`${ex}:${clean}`:`${ex}:${clean}.P`;
+}
 function compressedGradeClass(grade){
-  if(grade==='A+' || grade==='A') return 'bull';
+  if(grade==='A+'||grade==='A') return 'bull';
   if(grade==='B') return 'warn';
   return 'neutral';
+}
+function confluenceGradeClass(g){
+  if(g==='Strong') return 'bull';
+  if(g==='Moderate') return 'warn';
+  if(g==='Weak') return 'neutral';
+  return 'neutral';
+}
+function actionStateClass(s){
+  if(s==='upside_breakout_ready'||s==='bullish_rejection_watch') return 'bull';
+  if(s==='downside_breakout_ready'||s==='bearish_rejection_watch') return 'bear';
+  if(s==='compression_wait') return 'neutral';
+  return 'neutral';
+}
+function actionStateLabel(s){
+  const m={
+    'upside_breakout_ready':'↑ Upside Breakout Ready',
+    'downside_breakout_ready':'↓ Downside Breakout Ready',
+    'bullish_rejection_watch':'↑ Bullish Rejection Watch',
+    'bearish_rejection_watch':'↓ Bearish Rejection Watch',
+    'compression_wait':'⬛ Compression Wait',
+    'avoid_weak_compression':'· Weak — Skip',
+  };
+  return m[s]||s||'—';
+}
+function biasClass(b){
+  if(b==='bullish') return 'bull';
+  if(b==='bearish') return 'bear';
+  return 'neutral';
+}
+function yesNoBadge(has, label){
+  return has
+    ?`<span class="badge bull" style="font-size:9px">${label} ✓</span>`
+    :`<span class="badge neutral" style="font-size:9px;opacity:.5">${label} —</span>`;
 }
 function watchStateLabel(ws){
   const m={'upside_breakout_watch':'↑ Upside Watch','downside_breakout_watch':'↓ Downside Watch','compression_building':'⬛ Building','weak_compression':'· Weak'};
@@ -2943,7 +2981,6 @@ function watchStateLabel(ws){
 function watchStateBadgeClass(ws){
   if(ws==='upside_breakout_watch') return 'bull';
   if(ws==='downside_breakout_watch') return 'bear';
-  if(ws==='compression_building') return 'neutral';
   return 'neutral';
 }
 function atrStateLabel(s){
@@ -2965,6 +3002,7 @@ function volumeStateBadgeClass(s){
   return 'neutral';
 }
 function fmtP(n,d=2){ return (typeof n==='number')?n.toFixed(d):'—'; }
+function fmtPx(n){ return (typeof n==='number')?n.toFixed(6):'—'; }
 
 async function scanCompressed(){
   showScanPopup('SCANNING COMPRESSED');
@@ -2980,34 +3018,71 @@ async function scanCompressed(){
     // Support both legacy raw-array response and new structured response
     const rows = Array.isArray(data) ? data : (data.results || []);
     const scanTime = new Date().toLocaleTimeString();
-    const summaryHtml = data?.scanned != null ? `<div style="font-size:11px;color:var(--muted);margin-bottom:6px">Scanned ${data.scanned} pairs · ${data.errors || 0} errors · ${data.timeframe || ''}</div>` : '';
+    const exch = data?.exchange || payload.exchange;
+    const mkt = data?.market || payload.market;
+    const summaryHtml = data?.scanned != null ? `<div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">Scanned ${data.scanned} pairs · ${data.errors || 0} errors · ${data.timeframe || ''}</div>` : '';
     $('compressedResults').innerHTML = rows.length
       ? summaryHtml + rows.map((x,i) => {
           const starred = isStarred(x.symbol);
-          const hasScore = typeof x.compressionScore === 'number';
-          const gradeHtml = x.compressionGrade ? `<span class="badge ${compressedGradeClass(x.compressionGrade)}" style="font-size:9px">${x.compressionGrade}</span>` : '';
-          const scoreHtml = hasScore ? `<span style="font-size:10px;font-weight:700;color:var(--accent);margin-left:2px">Score ${x.compressionScore}</span>` : '';
+          const tvSym = tvSymbolFor(exch, mkt, x.symbol);
+          // Scores
+          const hasTradeScore = typeof x.tradeScore === 'number';
+          const hasCmpScore = typeof x.compressionScore === 'number';
+          const tradeScoreHtml = hasTradeScore ? `<span style="font-size:10px;font-weight:700;color:var(--accent);margin-left:2px">T${x.tradeScore}</span>` : '';
+          const cmpScoreHtml = hasCmpScore ? `<span style="font-size:9px;color:var(--text-muted);margin-left:1px">C${x.compressionScore}</span>` : '';
+          // Grades
+          const tradeGradeHtml = x.tradeGrade ? `<span class="badge ${compressedGradeClass(x.tradeGrade)}" style="font-size:9px">${x.tradeGrade}</span>` : '';
+          // ATR / Volume / Action badges
           const atrHtml = x.atrState ? `<span class="badge ${atrStateBadgeClass(x.atrState)}" style="font-size:9px">${atrStateLabel(x.atrState)}</span>` : '';
           const volHtml = x.volumeState ? `<span class="badge ${volumeStateBadgeClass(x.volumeState)}" style="font-size:9px">${volumeStateLabel(x.volumeState)}</span>` : '';
-          const watchHtml = x.watchState ? `<span class="badge ${watchStateBadgeClass(x.watchState)}" style="font-size:9px">${watchStateLabel(x.watchState)}</span>` : '';
+          const ap = x.actionPlan || {};
+          const actionHtml = ap.state ? `<span class="badge ${actionStateClass(ap.state)}" style="font-size:9px">${actionStateLabel(ap.state)}</span>` : '';
+          // Confluence badges
+          const obHtml = yesNoBadge(x.obConfluence?.has, 'OB');
+          const fvgHtml = yesNoBadge(x.fvgConfluence?.has, 'FVG');
+          const fibHtml = yesNoBadge(x.fibConfluence?.has, 'FIB');
+          const cfGradeHtml = x.confluenceGrade && x.confluenceGrade!=='None'
+            ? `<span class="badge ${confluenceGradeClass(x.confluenceGrade)}" style="font-size:9px">${x.confluenceGrade}</span>` : '';
+          // Box position
           const posLabel = x.boxLocation==='near_high'?'Near High':x.boxLocation==='near_low'?'Near Low':'Middle';
+          // Confluence detail lines
+          const ob = x.obConfluence?.nearest;
+          const fvg = x.fvgConfluence?.nearest;
+          const fib = x.fibConfluence;
+          let cfDetailLines = '';
+          if(ob){ cfDetailLines += `<div class="result-detail" style="font-size:10px">OB ${ob.direction==='bullish'?'▲':'▼'} ${fmtPx(ob.zoneLow)}–${fmtPx(ob.zoneHigh)} · ${ob.relation.replace(/_/g,' ')}${ob.isVirgin?' · virgin':ob.touches!=null?' · '+ob.touches+' touch':''}</div>`; }
+          if(fvg){ cfDetailLines += `<div class="result-detail" style="font-size:10px">FVG ${fvg.direction==='bullish'?'▲':'▼'} ${fmtPx(fvg.zoneLow)}–${fmtPx(fvg.zoneHigh)} · ${fvg.status||''}${fvg.age!=null?' · age '+fvg.age:''}</div>`; }
+          if(fib?.has){ cfDetailLines += `<div class="result-detail" style="font-size:10px">FIB ${fib.level} @ ${fmtPx(fib.price)} · ${(fib.relation||'').replace(/_/g,' ')} · ${fib.legDirection||''}</div>`; }
+          if(!cfDetailLines) cfDetailLines = '<div class="result-detail" style="font-size:10px;opacity:.5">No SMC confluence near compression box</div>';
+          // Action plan block
+          const apHtml = ap.state ? `<div style="margin-top:6px;padding:6px 8px;border-radius:6px;background:var(--bg-input);border:1px solid var(--border2)">
+            <div style="font-size:9px;font-weight:700;letter-spacing:.8px;color:var(--text-muted);margin-bottom:4px">ACTION PLAN</div>
+            <div style="font-size:10px"><span class="badge ${actionStateClass(ap.state)}" style="font-size:9px">${actionStateLabel(ap.state)}</span> <span class="badge ${biasClass(ap.bias)}" style="font-size:9px">${(ap.bias||'neutral').toUpperCase()}</span></div>
+            <div style="font-size:10px;margin-top:4px;color:var(--text-secondary)">⚡ ${ap.entryTrigger||'—'}</div>
+            <div style="font-size:10px;color:var(--text-muted)">✕ ${ap.invalidation||'—'}</div>
+          </div>` : '';
           return `<div class="result-card" style="animation-delay:${i*40}ms" onclick="this.classList.toggle('expanded')">
             <div class="result-header">
-              <span class="symbol">${coinIcon(x.symbol)}${displaySymbol(x.symbol)}<a href="https://www.tradingview.com/chart/?symbol=BINANCE:${x.symbol}.P" target="${tvTarget()}" class="tv-link" rel="noopener" onclick="event.stopPropagation()">📊</a><span class="expand-icon">▼</span></span>
+              <span class="symbol">${coinIcon(x.symbol)}${displaySymbol(x.symbol)}<a href="https://www.tradingview.com/chart/?symbol=${tvSym}" target="${tvTarget()}" class="tv-link" rel="noopener" onclick="event.stopPropagation()">📊</a><span class="expand-icon">▼</span></span>
               <span style="display:flex;align-items:center;gap:4px">
                 <span class="price-tag">${x.timeframe}${renderSparkline(x.sparkline, x.sparklineMarkers)}</span>
-                ${scoreHtml}
+                ${tradeScoreHtml}${cmpScoreHtml}
                 <span class="star-btn ${starred?'starred':''}" onclick="event.stopPropagation();toggleWatchlistStar(this,'${x.symbol}')">${starred?'★':'☆'}</span>
               </span>
             </div>
             <div class="badges">
               <span class="badge neutral">COMPRESSED</span>
-              ${gradeHtml}${atrHtml}${volHtml}${watchHtml}
+              ${tradeGradeHtml}${atrHtml}${volHtml}${actionHtml}
+            </div>
+            <div class="badges" style="margin-top:3px">
+              ${obHtml}${fvgHtml}${fibHtml}${cfGradeHtml}
             </div>
             <div class="result-details">
               <div class="result-detail">Range ${fmtP(x.rangePct)}% | Close Range ${fmtP(x.closeRangePct)}%</div>
-              <div class="result-detail">Box ${typeof x.boxLow==='number'?x.boxLow.toFixed(6):x.boxLow} – ${typeof x.boxHigh==='number'?x.boxHigh.toFixed(6):x.boxHigh} | Mid ${typeof x.boxMid==='number'?x.boxMid.toFixed(6):x.boxMid}</div>
+              <div class="result-detail">Box ${fmtPx(x.boxLow)} – ${fmtPx(x.boxHigh)} | Mid ${fmtPx(x.boxMid)}</div>
               <div class="result-detail">Position ${fmtP(x.pricePositionPct,1)}% · ${posLabel} | ↑ ${fmtP(x.distanceToHighPct)}% ↓ ${fmtP(x.distanceToLowPct)}%</div>
+              ${cfDetailLines}
+              ${apHtml}
               <div class="scan-time">Scanned: ${scanTime}</div>
             </div>
           </div>`;

@@ -7528,6 +7528,170 @@ def api_scan():
     })
 
 
+# ─── Compressed scan confluence helpers ────────────────────────────────────
+
+def _box_zone_relation(zone_lo, zone_hi, box_low, box_high, price, near_pct=0.50):
+    """Return (relation_str, dist_pct) for zone vs compression box, or (None, None) if irrelevant."""
+    if zone_lo >= box_low and zone_hi <= box_high:
+        return "inside_box", 0.0
+    if zone_lo < box_high and zone_hi > box_low:
+        return "overlaps_box", 0.0
+    gap = (box_low - zone_hi) if zone_hi < box_low else (zone_lo - box_high)
+    dist_pct = (gap / max(price, 1e-10)) * 100.0
+    if dist_pct <= near_pct:
+        return "near_box", round(dist_pct, 3)
+    return None, None
+
+
+def _box_ob_confluence(obs_list, box_low, box_high, price):
+    relevant = []
+    for ob in (obs_list or []):
+        rel, dist = _box_zone_relation(ob["bottom"], ob["top"], box_low, box_high, price)
+        if rel is None:
+            continue
+        entry = {
+            "direction": ob.get("type", "bullish"),
+            "zoneLow": round(ob["bottom"], 6),
+            "zoneHigh": round(ob["top"], 6),
+            "distancePct": dist,
+            "relation": rel,
+            "touches": ob.get("touches"),
+            "isVirgin": ob.get("isVirgin"),
+            "strengthPct": round(
+                (ob.get("buyVolume", 0) / max(ob.get("volume", 1e-10), 1e-10)) * 100, 1
+            ) if ob.get("volume") else None,
+        }
+        relevant.append((dist, entry))
+    if not relevant:
+        return {"has": False, "count": 0, "nearest": None}
+    relevant.sort(key=lambda x: x[0])
+    return {"has": True, "count": len(relevant), "nearest": relevant[0][1]}
+
+
+def _box_fvg_confluence(fvgs_list, box_low, box_high, price):
+    relevant = []
+    for fvg in (fvgs_list or []):
+        rel, dist = _box_zone_relation(fvg["bottom"], fvg["top"], box_low, box_high, price)
+        if rel is None:
+            continue
+        if fvg.get("untouched"):
+            status = "UNTOUCHED"
+        elif fvg.get("mitigated"):
+            status = "FILLED"
+        elif fvg.get("touches", 0) > 0:
+            status = "TOUCHED"
+        else:
+            status = "UNKNOWN"
+        entry = {
+            "direction": fvg.get("direction", "bullish"),
+            "zoneLow": round(fvg["bottom"], 6),
+            "zoneHigh": round(fvg["top"], 6),
+            "distancePct": dist,
+            "relation": rel,
+            "status": status,
+            "age": fvg.get("age"),
+        }
+        relevant.append((dist, entry))
+    if not relevant:
+        return {"has": False, "count": 0, "nearest": None}
+    relevant.sort(key=lambda x: x[0])
+    return {"has": True, "count": len(relevant), "nearest": relevant[0][1]}
+
+
+def _box_fib_confluence(o, h, l, c, v, tf, box_low, box_high):
+    price = c[-1]
+    fib = find_active_fib_leg_v2(o, h, l, c, v, tf=tf)
+    if not fib or "levels" not in fib:
+        return {"has": False}
+    atr_vals = calc_atr(h, l, c, 14)
+    active_names = get_single_active_fib_level(fib, h, l, c, tf, tolerance_pct=0.5, atr_values=atr_vals)
+    check_names = active_names if active_names else list(fib["levels"].keys())
+    target = {"0.5", "0.618", "0.705", "0.786"}
+    best = None
+    best_dist = float("inf")
+    for name in check_names:
+        if name not in target or name not in fib["levels"]:
+            continue
+        lp = fib["levels"][name]
+        rel, dist = _box_zone_relation(lp, lp, box_low, box_high, price)
+        if rel is None:
+            continue
+        if dist < best_dist:
+            best_dist = dist
+            best = {
+                "level": name,
+                "price": round(lp, 6),
+                "distancePct": round(dist, 3),
+                "relation": rel,
+                "legDirection": "bullish" if fib.get("bullish") else "bearish",
+                "legA": round(fib.get("a", 0), 6),
+                "legB": round(fib.get("b", 0), 6),
+            }
+    if best is None:
+        return {"has": False}
+    return {"has": True, **best}
+
+
+def _compressed_action_plan(box_location, trade_score, compression_score,
+                             atr_state, vol_state, ob_conf, fvg_conf, box_low, box_high):
+    atr_ok = atr_state in ("strong_contraction", "normal")
+    vol_ok = vol_state in ("drying", "normal")
+    nearest_ob = ob_conf.get("nearest") or {}
+    nearest_fvg = fvg_conf.get("nearest") or {}
+    has_bull_ob = ob_conf.get("has") and nearest_ob.get("direction") == "bullish"
+    has_bear_ob = ob_conf.get("has") and nearest_ob.get("direction") == "bearish"
+    has_bull_fvg = fvg_conf.get("has") and nearest_fvg.get("direction") == "bullish"
+    has_bear_fvg = fvg_conf.get("has") and nearest_fvg.get("direction") == "bearish"
+
+    if box_location == "near_high" and trade_score >= 75 and atr_ok and vol_ok:
+        return {
+            "state": "upside_breakout_ready",
+            "bias": "bullish",
+            "entryTrigger": f"Wait for closed candle above {round(box_high, 6)}",
+            "invalidation": "Invalid if candle closes back inside box after breakout",
+            "notes": ["Price compressed near box high", "Watch for volume expansion on breakout"],
+        }
+    if box_location == "near_low" and trade_score >= 75 and atr_ok and vol_ok:
+        return {
+            "state": "downside_breakout_ready",
+            "bias": "bearish",
+            "entryTrigger": f"Wait for closed candle below {round(box_low, 6)}",
+            "invalidation": "Invalid if candle closes back inside box after breakdown",
+            "notes": ["Price compressed near box low", "Watch for volume expansion on breakdown"],
+        }
+    if box_location == "near_low" and (has_bull_ob or has_bull_fvg) and trade_score >= 65:
+        return {
+            "state": "bullish_rejection_watch",
+            "bias": "bullish",
+            "entryTrigger": "Wait for bullish rejection candle from box low / demand zone",
+            "invalidation": "Invalid if candle closes below demand zone",
+            "notes": ["Bullish confluence near box low", "Look for rejection wick or engulfing"],
+        }
+    if box_location == "near_high" and (has_bear_ob or has_bear_fvg) and trade_score >= 65:
+        return {
+            "state": "bearish_rejection_watch",
+            "bias": "bearish",
+            "entryTrigger": "Wait for bearish rejection candle from box high / supply zone",
+            "invalidation": "Invalid if candle closes above supply zone",
+            "notes": ["Bearish confluence near box high", "Look for rejection wick or bearish engulfing"],
+        }
+    if compression_score >= 60:
+        return {
+            "state": "compression_wait",
+            "bias": "neutral",
+            "entryTrigger": "Wait for directional breakout or rejection confirmation",
+            "invalidation": "N/A — no active trigger yet",
+            "notes": ["Compression building", "Monitor for directional commitment"],
+        }
+    return {
+        "state": "avoid_weak_compression",
+        "bias": "neutral",
+        "entryTrigger": "Skip — compression quality insufficient",
+        "invalidation": "N/A",
+        "notes": ["Low compression quality score"],
+    }
+
+
 @app.route("/api/compressed_scan", methods=["POST"])
 @login_required
 def api_compressed_scan():
@@ -7568,7 +7732,14 @@ def api_compressed_scan():
     # Use passed symbols if provided; never overwrite them with fallback
     raw_symbols = payload.get("symbols") or []
     if raw_symbols:
-        symbols = list(dict.fromkeys(str(s).strip() for s in raw_symbols if str(s).strip()))
+        normed = []
+        for _s in raw_symbols:
+            _s = str(_s).strip().upper().replace("/", "").replace("-", "").replace("_", "")
+            if _s and not _s.endswith("USDT"):
+                _s += "USDT"
+            if _s:
+                normed.append(_s)
+        symbols = list(dict.fromkeys(normed))
     else:
         symbols = [p["symbol"] for p in get_pairs_exchange(exchange, market)[:80]]
 
@@ -7588,6 +7759,7 @@ def api_compressed_scan():
             l = [x["low"] for x in closed_kl]
             c = [x["close"] for x in closed_kl]
             v = [x["volume"] for x in closed_kl]
+            o = [x["open"] for x in closed_kl]
             ok, info = detect_compression(h, l, c, lookback, max_pct)
             if not ok:
                 continue
@@ -7698,6 +7870,67 @@ def api_compressed_scan():
             else:
                 watch_state = "weak_compression"
 
+            # OB confluence — wrapped individually so one failure never stops the scan
+            try:
+                _obs_list, _ = detect_obs(o, h, l, c, v, 5, 10, max_ob=8)
+                ob_conf = _box_ob_confluence(_obs_list, box_low, box_high, price)
+            except Exception:
+                ob_conf = {"has": False, "count": 0, "nearest": None}
+
+            try:
+                _fvgs_list = detect_fvgs(o, h, l, c, v, tf)
+                fvg_conf = _box_fvg_confluence(_fvgs_list, box_low, box_high, price)
+            except Exception:
+                fvg_conf = {"has": False, "count": 0, "nearest": None}
+
+            try:
+                fib_conf = _box_fib_confluence(o, h, l, c, v, tf, box_low, box_high)
+            except Exception:
+                fib_conf = {"has": False}
+
+            # Confluence score (0–30)
+            confluence_score = 0
+            if ob_conf["has"]:
+                confluence_score += 12
+            if fvg_conf["has"]:
+                confluence_score += 10
+            if fib_conf["has"]:
+                confluence_score += 8
+            # Bonus: OB + FVG both overlap the box
+            if ob_conf["has"] and fvg_conf["has"]:
+                ob_rel = (ob_conf.get("nearest") or {}).get("relation", "")
+                fvg_rel = (fvg_conf.get("nearest") or {}).get("relation", "")
+                if ob_rel in ("inside_box", "overlaps_box") and fvg_rel in ("inside_box", "overlaps_box"):
+                    confluence_score += 5
+            # Bonus: all three confluences present
+            if ob_conf["has"] and fvg_conf["has"] and fib_conf["has"]:
+                confluence_score += 5
+            confluence_score = min(confluence_score, 30)
+
+            if confluence_score >= 22:
+                confluence_grade = "Strong"
+            elif confluence_score >= 12:
+                confluence_grade = "Moderate"
+            elif confluence_score > 0:
+                confluence_grade = "Weak"
+            else:
+                confluence_grade = "None"
+
+            trade_score = min(100, compression_score + confluence_score)
+            if trade_score >= 90:
+                trade_grade = "A+"
+            elif trade_score >= 80:
+                trade_grade = "A"
+            elif trade_score >= 65:
+                trade_grade = "B"
+            else:
+                trade_grade = "C"
+
+            action_plan = _compressed_action_plan(
+                box_location, trade_score, compression_score,
+                atr_state, vol_state, ob_conf, fvg_conf, box_low, box_high,
+            )
+
             sparkline = [float(c[i]) for i in range(max(0, len(c) - 24), len(c))]
             results.append({
                 "symbol": sym,
@@ -7725,14 +7958,22 @@ def api_compressed_scan():
                 "compressionScore": compression_score,
                 "compressionGrade": compression_grade,
                 "watchState": watch_state,
+                "obConfluence": ob_conf,
+                "fvgConfluence": fvg_conf,
+                "fibConfluence": fib_conf,
+                "confluenceScore": confluence_score,
+                "confluenceGrade": confluence_grade,
+                "tradeScore": trade_score,
+                "tradeGrade": trade_grade,
+                "actionPlan": action_plan,
             })
         except Exception as e:
             errors += 1
             print(f"[DEBUG] compressed_scan {sym} error: {e}")
             continue
 
-    # Best compression first: highest score, then tightest range
-    results.sort(key=lambda x: (-x["compressionScore"], x["rangePct"]))
+    # Sort: best trade quality first
+    results.sort(key=lambda x: (-x["tradeScore"], -x["compressionScore"], x["rangePct"]))
     print(f"[DEBUG] compressed_scan results={len(results)} errors={errors}")
 
     if _tok_uid:
