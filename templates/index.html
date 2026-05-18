@@ -1774,11 +1774,11 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
   <!-- ATH / ATL PAGE -->
   <div id="page-athatl" class="page">
     <div class="card">
-      <div class="card-title">TRUE ATH / ATL SCANNER
-        <span style="font-size:9px;color:var(--text-secondary);font-weight:400;letter-spacing:.5px">· Full history since listing</span>
+      <div class="card-title">ATH / ATL Breakout Scanner
+        <span style="font-size:9px;color:var(--text-secondary);font-weight:400;letter-spacing:.5px">· Previous level vs window vs live price</span>
       </div>
       <div style="font-size:10px;color:var(--text-secondary);margin-bottom:10px;line-height:1.5">
-        True ATH &amp; ATL use full 1D history since listing. Window only controls status detection.
+        Previous ATH/ATL = highest/lowest BEFORE the selected window. Detects pairs breaking it now, that made it within the window, or sitting near it.
       </div>
       <div class="row3">
         <div class="field">
@@ -1792,9 +1792,9 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
         <div class="field">
           <label>Status Filter <span class="tip-icon" onclick="toggleTip('tip-ath-status')">ⓘ</span></label>
           <select id="athStatus">
-            <option value="current">At Level Now</option>
-            <option value="recent">Hit Within Window</option>
-            <option value="near">Near Level</option>
+            <option value="breaking_now">Breaking Now</option>
+            <option value="made_within_window">Made Within Window</option>
+            <option value="near_level">Near ATH / ATL</option>
           </select>
         </div>
         <div class="field">
@@ -1808,20 +1808,34 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
           </select>
         </div>
       </div>
-      <div class="tip-box" id="tip-ath-mode">Choose what to scan for. <b>ATH Only</b> = pairs near or at their All-Time High. <b>ATL Only</b> = pairs near or at their All-Time Low. <b>Both</b> = show either. ATH can signal extreme strength or exhaustion. ATL can signal capitulation or a historic buy zone.</div>
-      <div class="tip-box" id="tip-ath-status"><b>At Level Now</b> — price is currently touching the true ATH or ATL (within the Near % threshold). <b>Hit Within Window</b> — the true ATH or ATL was touched recently within the time window you set. <b>Near Level</b> — price is close to the level but may not have touched it yet.</div>
-      <div class="tip-box" id="tip-ath-window">This does NOT recalculate the ATH or ATL — those always use full history since listing. The window only controls how far back to look when checking if the level was <i>recently hit</i>. Only used with "Hit Within Window" status.</div>
+      <div class="tip-box" id="tip-ath-mode">Choose what to scan for. <b>ATH Only</b> = breakouts/levels at the previous All-Time High. <b>ATL Only</b> = previous All-Time Low. <b>Both</b> = either side.</div>
+      <div class="tip-box" id="tip-ath-status"><b>Breaking Now</b> — live price is breaking the previous ATH/ATL within break tolerance right now. <b>Made Within Window</b> — the window high/low broke the previous ATH/ATL (compared against the level BEFORE the window). <b>Near ATH / ATL</b> — price is close to the previous level but has NOT broken it (uses Near Distance %).</div>
+      <div class="tip-box" id="tip-ath-window">"Previous" ATH/ATL = highest high / lowest low BEFORE this window. The window high/low is measured INSIDE it. Used by Made Within Window, and to date a Breaking Now move.</div>
       <div class="row3">
         <div class="field">
-          <label>Near % <span class="tip-icon" onclick="toggleTip('tip-ath-near')">ⓘ</span></label>
+          <label>Break Tolerance % <span class="tip-icon" onclick="toggleTip('tip-ath-tol')">ⓘ</span></label>
+          <input id="athBreakTolPct" type="number" step="0.01" value="0.10">
+        </div>
+        <div class="field">
+          <label>Near Distance % <span class="tip-icon" onclick="toggleTip('tip-ath-near')">ⓘ</span></label>
           <input id="athNearPct" type="number" step="0.1" value="3.0">
         </div>
-        <div class="field"><label>Pairs to Scan</label><input id="athLimit" type="number" value="20"></div>
+        <div class="field"><label>Pairs Per Batch</label><input id="athLimit" type="number" value="50"></div>
       </div>
-      <div class="tip-box" id="tip-ath-near">How close (in %) current price must be to the true ATH or ATL to be included. <b>1%</b> = very close to the level. <b>3–5%</b> = near the level with some room. Higher values will find more results. Used for "At Level Now" and "Near Level" status filters.</div>
-      <button class="btn-primary" onclick="scanAthAtl()" style="margin-top:4px">▶ SCAN TRUE ATH / ATL</button>
-      <div id="athScanNote" style="display:none;font-size:10px;color:var(--text-secondary);margin-top:8px">⏳ First scan fetches full history per pair — may take ~30s. Results cache for 4 hours.</div>
-      <div id="athResults" class="results" style="margin-top:12px"><div class="empty">Click Scan ATH / ATL to begin</div></div>
+      <div class="tip-box" id="tip-ath-tol">How far inside the previous level still counts as a break. <b>0.10</b> = within 0.10% of the level counts as breaking. Used by Breaking Now and Made Within Window only — never for Near.</div>
+      <div class="tip-box" id="tip-ath-near">How close (in %) live price must be to the previous ATH/ATL to count as Near. <b>3.0</b> = within 3%. Used by <b>Near ATH / ATL</b> only.</div>
+      <div style="display:flex;gap:8px;margin-top:4px;flex-wrap:wrap">
+        <button class="btn-primary" onclick="scanAthAtl()" style="flex:1;min-width:160px">▶ SCAN NEXT BATCH</button>
+        <button class="btn-secondary" onclick="resetAthAtl()" style="min-width:140px">↺ RESET SCAN</button>
+      </div>
+      <div id="athProgress" style="display:none;font-size:10px;color:var(--text-secondary);margin-top:10px;line-height:1.7;padding:8px 10px;background:var(--bg-input);border:1px solid var(--border2);border-radius:8px">
+        <div>Total Market Pairs: <b id="athProgTotal">0</b></div>
+        <div>Scanned: <b id="athProgScanned">0</b> / <b id="athProgTotal2">0</b></div>
+        <div>Current Batch: <b id="athProgBatch">–</b></div>
+        <div>Found: <b id="athProgFound">0</b> setups</div>
+      </div>
+      <div id="athScanNote" style="display:none;font-size:10px;color:var(--text-secondary);margin-top:8px">⏳ First scan fetches full daily history per pair — may take ~30s. History caches for 4 hours.</div>
+      <div id="athResults" class="results" style="margin-top:12px"><div class="empty">Click Scan Next Batch to begin. Results accumulate until you Reset.</div></div>
     </div>
   </div>
 
@@ -2984,56 +2998,97 @@ async function scanTrending(){
 }
 
 // ── ATH / ATL ──
-async function scanAthAtl(){
-  showScanPopup('SCANNING ATH / ATL');
-  $('athResults').innerHTML = '<div class="empty">Scanning… fetching full history. Please wait.</div>';
-  if($('athScanNote')) $('athScanNote').style.display = 'block';
-  const payload = {
+function _athUpdateProgress(data){
+  const box = $('athProgress'); if(!box) return;
+  box.style.display = 'block';
+  const total = data.totalPairs || 0;
+  if($('athProgTotal'))   $('athProgTotal').textContent   = total;
+  if($('athProgTotal2'))  $('athProgTotal2').textContent  = total;
+  if($('athProgScanned')) $('athProgScanned').textContent = data.scannedCount || 0;
+  if($('athProgBatch'))   $('athProgBatch').textContent   =
+    (data.currentBatchStart && data.currentBatchEnd)
+      ? `${data.currentBatchStart}–${data.currentBatchEnd}${data.completedCycle ? ' (cycle complete)' : ''}`
+      : '–';
+  if($('athProgFound'))   $('athProgFound').textContent   = data.found || 0;
+}
+
+function _athRenderResults(list){
+  const scanTime = new Date().toLocaleTimeString();
+  if(!list || !list.length){
+    $('athResults').innerHTML = '<div class="empty">No setups yet — scan more batches, widen Break Tolerance / Near Distance, or change status.</div>';
+    return;
+  }
+  $('athResults').innerHTML = list.map((x,i) => {
+    const tagBadges = (x.tags || []).map(t => {
+      const cls = t.includes('ATH') ? 'warn' : t.includes('ATL') ? 'bull' : 'neutral';
+      return `<span class="badge ${cls}">${t}</span>`;
+    }).join('');
+    const starred = isStarred(x.symbol);
+    const isNear = x.statusKind === 'near_level';
+    const metricLine = isNear
+      ? `Distance: <b>${x.distancePct}%</b>`
+      : `Break: <b>${x.breakPct}%</b>`;
+    const vol = x.volumeFmt ? ` &nbsp;|&nbsp; Vol: ${x.volumeFmt}` : '';
+    return `<div class="result-card" style="animation-delay:${i*40}ms" onclick="this.classList.toggle('expanded')">
+      <div class="result-header">
+        <span class="symbol">${coinIcon(x.symbol)}${displaySymbol(x.symbol)}<a href="https://www.tradingview.com/chart/?symbol=BINANCE:${x.symbol}.P" target="${tvTarget()}" class="tv-link" rel="noopener" onclick="event.stopPropagation()">📊</a><span class="expand-icon">▼</span></span>
+        <span style="display:flex;align-items:center;gap:4px">
+          <span class="price-tag">$${x.price}</span>
+          <span class="star-btn ${starred?'starred':''}" onclick="event.stopPropagation();toggleWatchlistStar(this,'${x.symbol}')">${starred?'★':'☆'}</span>
+        </span>
+      </div>
+      <div class="badges">${tagBadges}</div>
+      <div class="result-details">
+        <div class="result-detail">Prev ATH: <span style="color:#f97316">$${x.previousAth}</span> &nbsp;|&nbsp; Prev ATL: <span style="color:#22d3ee">$${x.previousAtl}</span></div>
+        <div class="result-detail">Window High: <span style="color:#f97316">$${x.windowHigh}</span> &nbsp;|&nbsp; Window Low: <span style="color:#22d3ee">$${x.windowLow}</span></div>
+        <div class="result-detail" style="opacity:.85">${metricLine} &nbsp;|&nbsp; Window: ${x.windowSelected} &nbsp;|&nbsp; ${x.marketType} &nbsp;|&nbsp; ${x.exchange}${vol}</div>
+        <div class="scan-time">Scanned: ${scanTime}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function _athPayload(action){
+  return {
+    action: action || 'scan',
     mode: $('athMode').value,
     status: $('athStatus').value,
     windowHours: +$('athWindowHours').value,
+    breakTolerancePct: +$('athBreakTolPct').value,
     nearPct: +$('athNearPct').value,
-    limit: +$('athLimit').value,
+    pairsPerBatch: +$('athLimit').value,
     market: marketType(),
     exchange: currentExchange()
   };
+}
+
+async function scanAthAtl(){
+  showScanPopup('SCANNING ATH / ATL');
+  if($('athScanNote')) $('athScanNote').style.display = 'block';
   try {
-    const res = await fetch('/api/ath_atl_scan', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    const res = await fetch('/api/ath_atl_scan', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:JSON.stringify(_athPayload('scan'))});
     if($('athScanNote')) $('athScanNote').style.display = 'none';
     if(!res.ok){ $('athResults').innerHTML = `<div class="empty">Error: HTTP ${res.status}</div>`; return; }
     const data = await res.json();
     if(data && data.error === 'daily_limit_reached'){ if(window.showTokenLimitPopup) window.showTokenLimitPopup(); return; }
     if(window.refreshTokensAfterScan) window.refreshTokensAfterScan(60);
-    const scanTime = new Date().toLocaleTimeString();
-    $('athResults').innerHTML = data.length
-      ? data.map((x,i) => {
-          const tagBadges = (x.tags || []).map(t => {
-            const cls = t.includes('ATH') ? 'warn' : t.includes('ATL') ? 'bull' : 'neutral';
-            return `<span class="badge ${cls}">${t}</span>`;
-          }).join('');
-          const hist = x.daysHistory ? `<span style="color:#475569">${x.daysHistory}d history</span>` : '';
-          const starred = isStarred(x.symbol);
-          return `<div class="result-card" style="animation-delay:${i*40}ms" onclick="this.classList.toggle('expanded')">
-            <div class="result-header">
-              <span class="symbol">${coinIcon(x.symbol)}${displaySymbol(x.symbol)}<a href="https://www.tradingview.com/chart/?symbol=BINANCE:${x.symbol}.P" target="${tvTarget()}" class="tv-link" rel="noopener" onclick="event.stopPropagation()">📊</a><span class="expand-icon">▼</span></span>
-              <span style="display:flex;align-items:center;gap:4px">
-                <span class="price-tag">$${x.price}</span>
-                <span class="star-btn ${starred?'starred':''}" onclick="event.stopPropagation();toggleWatchlistStar(this,'${x.symbol}')">${starred?'★':'☆'}</span>
-              </span>
-            </div>
-            <div class="badges">${tagBadges}</div>
-            <div class="result-details">
-              <div class="result-detail">True ATH: <span style="color:#f97316">$${x.trueAth}</span> &nbsp;|&nbsp; True ATL: <span style="color:#22d3ee">$${x.trueAtl}</span></div>
-              <div class="result-detail" style="opacity:.75">From ATH: ${x.distAthPct}% &nbsp;|&nbsp; From ATL: ${x.distAtlPct}% &nbsp;|&nbsp; ${hist}</div>
-              <div class="scan-time">Scanned: ${scanTime}</div>
-            </div>
-          </div>`;
-        }).join('')
-      : '<div class="empty">No pairs matched — try a wider Near % or different status</div>';
+    _athUpdateProgress(data);
+    _athRenderResults(data.accumulatedResults || []);
   } catch(e) {
     if($('athScanNote')) $('athScanNote').style.display = 'none';
     $('athResults').innerHTML = `<div class="empty">Scan failed: ${e.message}</div>`;
   } finally { hideScanPopup(); }
+}
+
+async function resetAthAtl(){
+  try {
+    const res = await fetch('/api/ath_atl_scan', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:JSON.stringify(_athPayload('reset'))});
+    if(res.ok){
+      const data = await res.json();
+      _athUpdateProgress(data);
+    }
+  } catch(e) {}
+  $('athResults').innerHTML = '<div class="empty">Scan reset. Cursor back to start — click Scan Next Batch to begin.</div>';
 }
 
 // ── Help tooltip toggle ──
@@ -3057,7 +3112,7 @@ const SAVE_IDS_VAL = [
   'scanSource','pairsPerCycle','autoInterval','marketType',
   'compressedTf','compressedLookback','compressedMaxPct',
   'trendingTf','trendingMode','trendingLimit',
-  'athMode','athStatus','athWindowHours','athNearPct','athLimit',
+  'athMode','athStatus','athWindowHours','athBreakTolPct','athNearPct','athLimit',
   'tvLinkTarget',
   // ── Bias tab settings ──
   'biasScanSource','biasPairsPerCycle',

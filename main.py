@@ -1870,6 +1870,18 @@ def homepage():
 ATH_ATL_CACHE: Dict[str, Any] = {}
 ATH_ATL_CACHE_TTL = 4 * 3600
 
+# Raw 1D history cache for ATH/ATL window math — keyed by symbol, TTL 4 hours.
+# Lets the windowed ATH/ATL endpoint compute "previous level BEFORE window"
+# without re-paginating full daily history on every batch.
+ATH_ATL_DAILY_CACHE: Dict[str, Any] = {}
+ATH_ATL_DAILY_CACHE_TTL = 4 * 3600
+
+# ATH/ATL batch-scan state — keyed by "user:exchange:market".
+# Holds the rolling cursor + accumulated results so "Scan Next Batch"
+# walks the full market step by step and results survive until reset.
+ATH_ATL_SCAN_STATE: Dict[str, Any] = {}
+_ath_atl_scan_lock = threading.Lock()
+
 # ============================================================
 # Utilities
 # ============================================================
@@ -5492,6 +5504,80 @@ def detect_true_ath_atl(symbol: str, market: str = "perpetual") -> Optional[Dict
     return data
 
 
+def _get_daily_klines_cached(symbol: str) -> List[Dict[str, float]]:
+    """Full 1D history for `symbol`, cached 4 h. Wraps get_all_daily_klines so
+    the windowed ATH/ATL scan can be called batch-after-batch without
+    re-paginating the entire daily history each time."""
+    now = time.time()
+    cached = ATH_ATL_DAILY_CACHE.get(symbol)
+    if cached and now - cached["ts"] < ATH_ATL_DAILY_CACHE_TTL:
+        return cached["data"]
+    klines = get_all_daily_klines(symbol)
+    if klines:
+        ATH_ATL_DAILY_CACHE[symbol] = {"ts": now, "data": klines}
+    return klines
+
+
+def compute_window_ath_atl(symbol: str, window_hours: int,
+                           kl_1h: List[Dict[str, float]]) -> Optional[Dict[str, float]]:
+    """Split history into BEFORE-window vs INSIDE-window and return:
+
+        previous_ath  — highest high strictly BEFORE the selected window
+        previous_atl  — lowest  low  strictly BEFORE the selected window
+        window_high   — highest high INSIDE the selected window
+        window_low    — lowest  low  INSIDE the selected window
+
+    Deep history (older than the 1h fetch covers) comes from cached daily
+    candles that fully close before the window starts; the gap between the
+    last such daily candle and the window is filled at 1h resolution from
+    `kl_1h`, so a high made in the hours just before the window is still
+    counted as "previous" (not leaked into the window).
+    """
+    if not kl_1h:
+        return None
+    window_hours = max(1, int(window_hours))
+    L = len(kl_1h)
+    win_start_idx = max(0, L - window_hours)
+    window_kl = kl_1h[win_start_idx:]
+    if not window_kl:
+        return None
+    pre_kl = kl_1h[:win_start_idx]                       # 1h bars before window
+    cutoff_ms = int(window_kl[0]["openTime"])            # window opens here
+
+    window_high = max(x["high"] for x in window_kl)
+    window_low = min(x["low"] for x in window_kl)
+
+    prev_highs: List[float] = []
+    prev_lows: List[float] = []
+
+    # 1h bars before the window (precise recent pre-window coverage)
+    for x in pre_kl:
+        if int(x["openTime"]) < cutoff_ms:
+            prev_highs.append(x["high"])
+            prev_lows.append(x["low"])
+
+    # Daily candles that fully close on/before the window start. Excluding any
+    # daily candle that overlaps the window keeps window highs/lows out of the
+    # "previous" level. The 1h pre-window bars above bridge the daily->window
+    # gap so a pre-window same-day high is not lost.
+    daily = _get_daily_klines_cached(symbol)
+    for d in daily or []:
+        if int(d["openTime"]) + 86_400_000 <= cutoff_ms:
+            prev_highs.append(d["high"])
+            prev_lows.append(d["low"])
+
+    if not prev_highs or not prev_lows:
+        return None
+
+    return {
+        "previous_ath": max(prev_highs),
+        "previous_atl": min(prev_lows),
+        "window_high": window_high,
+        "window_low": window_low,
+        "daily_bars": len(daily or []),
+    }
+
+
 def parse_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
     # Phase 1B hardening: safe int/float casts with min-0 clamping for the
     # new OB touch settings. Invalid / empty / missing values fall back to
@@ -7288,6 +7374,29 @@ def api_trending_scan():
     return jsonify(out[:limit])
 
 
+# Legacy status values still sent by old/cached frontends → new 3-status model.
+_ATH_STATUS_ALIASES = {
+    "current": "breaking_now",
+    "recent": "made_within_window",
+    "near": "near_level",
+    "at_level_now": "breaking_now",
+    "hit_within_window": "made_within_window",
+}
+_ATH_VALID_STATUS = {"breaking_now", "made_within_window", "near_level"}
+_ATH_STATUS_RANK = {"breaking_now": 0, "made_within_window": 1, "near_level": 2}
+
+
+def _ath_scan_state_key(exchange: str, market: str) -> str:
+    user = session.get("username", "anon") or "anon"
+    return f"{user}:{exchange}:{market}"
+
+
+def _ath_window_label(window_hours: int) -> str:
+    if window_hours >= 24 and window_hours % 24 == 0:
+        return f"{window_hours // 24}D"
+    return f"{window_hours}H"
+
+
 @app.route("/api/ath_atl_scan", methods=["POST"])
 @login_required
 def api_ath_atl_scan():
@@ -7296,98 +7405,242 @@ def api_ath_atl_scan():
     _tok_user, _tok_uid = _check_and_get_token_user()
     if _tok_user == "limit":
         return jsonify({"error": "daily_limit_reached", "message": "Daily scan tokens exhausted. Resets at midnight UTC."}), 429
+
     payload = request.get_json(force=True) or {}
-    mode = payload.get("mode", "both")          # ath | atl | both
-    status = payload.get("status", "current")   # current | recent | near
+    action = str(payload.get("action", "scan")).lower()
+    mode = payload.get("mode", "both")                       # ath | atl | both
+    status = str(payload.get("status", "breaking_now"))
+    status = _ATH_STATUS_ALIASES.get(status, status)
+    if status not in _ATH_VALID_STATUS:
+        status = "breaking_now"
     market = payload.get("market", "perpetual")
-    window_hours = int(payload.get("windowHours", 24))
-    near_pct = float(payload.get("nearPct", 1.0))
-    limit = int(payload.get("limit", 30))
+    window_hours = max(1, int(payload.get("windowHours", 24)))
+    # breakTolerancePct: how far inside the level still counts as a break.
+    # nearPct: only used by near_level. They are kept strictly separate.
+    break_tol_pct = float(payload.get("breakTolerancePct", 0.10))
+    break_tol = max(0.0, break_tol_pct) / 100.0
+    near_pct = float(payload.get("nearPct", 3.0))
+    batch_size = int(payload.get("pairsPerBatch", payload.get("batchSize", payload.get("limit", 50))) or 50)
+    batch_size = max(1, batch_size)
     exchange = payload.get("exchange", "binance").lower()
-    symbols = [p["symbol"] for p in get_pairs_exchange(exchange, market)[:60]]
 
-    def process_symbol(sym: str):
+    state_key = _ath_scan_state_key(exchange, market)
+
+    # ── Reset: clear cursor + accumulated results, start from the top ──
+    if action == "reset":
+        with _ath_atl_scan_lock:
+            ATH_ATL_SCAN_STATE.pop(state_key, None)
         try:
-            # ── Part A: TRUE ATH/ATL from full 1D history ──
-            true_levels = detect_true_ath_atl(sym, market)
-            if not true_levels:
-                return None
-            true_ath = true_levels["ath"]
-            true_atl = true_levels["atl"]
-            days_history = true_levels["bars"]
+            total_pairs = len(get_pairs_exchange(exchange, market))
+        except Exception:
+            total_pairs = 0
+        return jsonify({
+            "totalPairs": total_pairs, "scannedCount": 0,
+            "currentBatchStart": 0, "currentBatchEnd": 0, "nextBatchStart": 0,
+            "cursor": 0, "completedCycle": False,
+            "results": [], "accumulatedResults": [], "found": 0,
+            "exchange": exchange, "market": market, "windowHours": window_hours,
+            "windowLabel": _ath_window_label(window_hours),
+            "status": status, "mode": mode,
+            "breakTolerancePct": break_tol_pct, "nearPct": near_pct,
+            "reset": True,
+        })
 
-            # ── Part B: Current price + recency via 1h candles ──
-            recent_bars = max(1, window_hours)   # one 1h bar per hour
-            fetch_bars = min(recent_bars + 5, 300)
+    pairs = get_pairs_exchange(exchange, market)
+    total_pairs = len(pairs)
+    if total_pairs == 0:
+        return jsonify({
+            "totalPairs": 0, "scannedCount": 0,
+            "currentBatchStart": 0, "currentBatchEnd": 0, "nextBatchStart": 0,
+            "cursor": 0, "completedCycle": True,
+            "results": [], "accumulatedResults": [], "found": 0,
+            "exchange": exchange, "market": market, "windowHours": window_hours,
+            "windowLabel": _ath_window_label(window_hours),
+            "status": status, "mode": mode,
+            "breakTolerancePct": break_tol_pct, "nearPct": near_pct,
+        })
+
+    with _ath_atl_scan_lock:
+        st = ATH_ATL_SCAN_STATE.get(state_key)
+        if not st:
+            st = {"cursor": 0, "accumulated": {}}
+            ATH_ATL_SCAN_STATE[state_key] = st
+        start = int(st.get("cursor", 0))
+        if start >= total_pairs:          # finished a full pass → loop around
+            start = 0
+        end = min(start + batch_size, total_pairs)
+        st["cursor"] = end
+        accumulated: Dict[str, Any] = st["accumulated"]
+
+    batch_pairs = pairs[start:end]
+    win_label = _ath_window_label(window_hours)
+
+    def process_pair(p: Dict[str, Any]):
+        sym = p.get("symbol")
+        if not sym:
+            return None
+        try:
+            recent_bars = window_hours                 # one 1h bar per hour
+            fetch_bars = min(recent_bars + 30, 300)    # +buffer to bridge daily gap
             kl = get_klines_exchange(sym, "1h", fetch_bars, market, exchange)
             if not kl:
                 return None
-            current = kl[-1]["close"]
-            window_kl = kl[-recent_bars:]
-            recent_high = max(x["high"] for x in window_kl)
-            recent_low = min(x["low"] for x in window_kl)
 
-            dist_ath = pct(current, true_ath)
-            dist_atl = pct(current, true_atl)
-            near_ath = dist_ath <= near_pct
-            near_atl = dist_atl <= near_pct
-            # "Hit within period" = recent window touched within 0.05% of true level
-            hit_ath = recent_high >= true_ath * (1 - 0.0005)
-            hit_atl = recent_low <= true_atl * (1 + 0.0005)
+            lv = compute_window_ath_atl(sym, window_hours, kl)
+            if not lv:
+                return None
+            previous_ath = lv["previous_ath"]
+            previous_atl = lv["previous_atl"]
+            window_high = lv["window_high"]
+            window_low = lv["window_low"]
+            days_history = lv["daily_bars"]
+            if previous_ath <= 0 or previous_atl <= 0:
+                return None
+
+            # Live/current price from the 24h ticker (already fetched for the
+            # pair list). Falls back to the last 1h close only if missing.
+            live_price = safe_float(p.get("price"), 0.0)
+            if live_price <= 0:
+                live_price = kl[-1]["close"]
+            volume = safe_float(p.get("quoteVolume"), 0.0)
+
+            do_ath = mode in ("ath", "both")
+            do_atl = mode in ("atl", "both")
 
             tags: List[str] = []
             include = False
+            break_pct = 0.0
+            dist_pct = 0.0
 
-            if status == "current":
-                if mode in ["ath", "both"] and near_ath:
-                    include = True; tags.append("ATH NOW")
-                if mode in ["atl", "both"] and near_atl:
-                    include = True; tags.append("ATL NOW")
-            elif status == "recent":
-                if mode in ["ath", "both"] and hit_ath:
-                    include = True; tags.append(f"ATH HIT <{window_hours}h")
-                if mode in ["atl", "both"] and hit_atl:
-                    include = True; tags.append(f"ATL HIT <{window_hours}h")
-            else:  # near
-                if mode in ["ath", "both"] and near_ath:
-                    include = True; tags.append(f"NEAR ATH {dist_ath:.2f}%")
-                if mode in ["atl", "both"] and near_atl:
-                    include = True; tags.append(f"NEAR ATL {dist_atl:.2f}%")
+            if status == "breaking_now":
+                if do_ath and live_price >= previous_ath * (1 - break_tol):
+                    include = True
+                    tags.append("ATH BREAKING NOW")
+                    break_pct = (live_price - previous_ath) / previous_ath * 100.0
+                if do_atl and live_price <= previous_atl * (1 + break_tol):
+                    include = True
+                    tags.append("ATL BREAKING NOW")
+                    b = (previous_atl - live_price) / previous_atl * 100.0
+                    break_pct = max(break_pct, b)
+
+            elif status == "made_within_window":
+                if do_ath and window_high >= previous_ath * (1 - break_tol):
+                    include = True
+                    tags.append(f"ATH MADE IN {win_label}")
+                    break_pct = (window_high - previous_ath) / previous_ath * 100.0
+                if do_atl and window_low <= previous_atl * (1 + break_tol):
+                    include = True
+                    tags.append(f"ATL MADE IN {win_label}")
+                    b = (previous_atl - window_low) / previous_atl * 100.0
+                    break_pct = max(break_pct, b)
+
+            else:  # near_level — close to level but NOT broken. nearPct only.
+                if do_ath:
+                    broke_ath = live_price >= previous_ath * (1 - break_tol)
+                    d = (previous_ath - live_price) / previous_ath * 100.0
+                    if (not broke_ath) and 0 <= d <= near_pct:
+                        include = True
+                        tags.append("NEAR ATH")
+                        dist_pct = d
+                if do_atl:
+                    broke_atl = live_price <= previous_atl * (1 + break_tol)
+                    d = (live_price - previous_atl) / previous_atl * 100.0
+                    if (not broke_atl) and 0 <= d <= near_pct:
+                        include = True
+                        tags.append("NEAR ATL")
+                        dist_pct = d if dist_pct == 0 else min(dist_pct, d)
 
             if not include:
                 return None
+
             c_all = [x["close"] for x in kl]
-            sparkline = [float(c_all[i]) for i in range(max(0, len(c_all)-24), len(c_all))]
+            sparkline = [float(c_all[i]) for i in range(max(0, len(c_all) - 24), len(c_all))]
             return {
                 "symbol": sym,
-                "price": fmt_price(current),
-                "trueAth": fmt_price(true_ath),
-                "trueAtl": fmt_price(true_atl),
-                "distAthPct": round(dist_ath, 2),
-                "distAtlPct": round(dist_atl, 2),
+                "price": fmt_price(live_price),
+                "previousAth": fmt_price(previous_ath),
+                "previousAtl": fmt_price(previous_atl),
+                "windowHigh": fmt_price(window_high),
+                "windowLow": fmt_price(window_low),
+                "breakPct": round(break_pct, 3),
+                "distancePct": round(dist_pct, 3),
                 "tags": tags,
-                "daysHistory": days_history,
+                "statusKind": status,
+                "statusRank": _ATH_STATUS_RANK.get(status, 9),
                 "windowHours": window_hours,
+                "windowSelected": win_label,
+                "marketType": market,
+                "exchange": exchange,
+                "volume": volume,
+                "volumeFmt": fmt_vol(volume),
+                "daysHistory": days_history,
                 "sparkline": sparkline,
             }
         except Exception:
             traceback.print_exc()
             return None
 
-    results = []
-    workers = min(8, len(symbols)) if symbols else 1
+    batch_results: List[Dict[str, Any]] = []
+    workers = min(8, len(batch_pairs)) if batch_pairs else 1
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = [pool.submit(process_symbol, sym) for sym in symbols]
+        futures = [pool.submit(process_pair, p) for p in batch_pairs]
         for fut in as_completed(futures):
             r = fut.result()
             if r:
-                results.append(r)
+                batch_results.append(r)
 
-    results.sort(key=lambda x: min(x["distAthPct"], x["distAtlPct"]))
+    # ── Accumulate until reset (newest wins on dup symbol) ──
+    with _ath_atl_scan_lock:
+        st = ATH_ATL_SCAN_STATE.get(state_key)
+        if st is None:
+            st = {"cursor": end, "accumulated": {}}
+            ATH_ATL_SCAN_STATE[state_key] = st
+        acc: Dict[str, Any] = st["accumulated"]
+        for r in batch_results:
+            acc[r["symbol"]] = r
+        cursor = int(st.get("cursor", end))
+        accumulated_list = list(acc.values())
+
+    completed_cycle = end >= total_pairs
+
+    def _sort_key(x: Dict[str, Any]):
+        # 1) status priority  2) bigger break %  3) smaller distance %
+        # 4) higher volume
+        return (
+            x.get("statusRank", 9),
+            -float(x.get("breakPct", 0.0)),
+            float(x.get("distancePct", 0.0)),
+            -float(x.get("volume", 0.0)),
+        )
+
+    batch_results.sort(key=_sort_key)
+    accumulated_list.sort(key=_sort_key)
+
     if _tok_uid:
-        try: consume_tokens(_tok_uid, len(symbols))
+        try: consume_tokens(_tok_uid, len(batch_pairs))
         except Exception as _te: print(f"[Tokens] ath_atl: {_te}")
-    return jsonify(results[:limit])
+
+    return jsonify({
+        "totalPairs": total_pairs,
+        "scannedCount": end,
+        "currentBatchStart": start + 1 if batch_pairs else 0,
+        "currentBatchEnd": end,
+        "nextBatchStart": 0 if completed_cycle else end,
+        "cursor": cursor,
+        "completedCycle": completed_cycle,
+        "results": batch_results,
+        "accumulatedResults": accumulated_list,
+        "found": len(accumulated_list),
+        "batchFound": len(batch_results),
+        "exchange": exchange,
+        "market": market,
+        "windowHours": window_hours,
+        "windowLabel": win_label,
+        "status": status,
+        "mode": mode,
+        "breakTolerancePct": break_tol_pct,
+        "nearPct": near_pct,
+    })
 
 
 # ── Bias Shift Phase 2 helpers ────────────────────────────────────────────────
