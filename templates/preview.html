@@ -305,6 +305,75 @@ svg{display:block}
 ::-webkit-scrollbar{width:9px;height:9px}
 ::-webkit-scrollbar-thumb{background:var(--border-2);border-radius:5px;border:2px solid var(--bg-panel)}
 ::-webkit-scrollbar-track{background:transparent}
+
+/* ════════ MOBILE RESPONSIVE (≤820px) — desktop view untouched ════════ */
+@media (max-width:820px){
+  html,body{height:auto;font-size:14px}
+  .viewport{position:static;display:block;overflow:visible;background:var(--bg-window);padding:0}
+  .frame{width:100%!important;height:auto!important}
+  .window{position:static;transform:none!important;width:100%!important;height:auto!important;
+    min-height:100vh;border:0;border-radius:0;overflow:visible}
+
+  .topbar{height:auto;flex-wrap:wrap;padding:10px 12px;gap:8px}
+  .brand{width:auto;flex:1}
+  .topright{width:auto;margin-left:auto}
+  .win-ctrls{display:none}
+  .topnav{order:3;width:100%;overflow-x:auto;justify-content:flex-start;gap:2px;padding-bottom:2px}
+  .topnav a{padding:7px 11px;white-space:nowrap;font-size:13px}
+  .topnav a.active::after{display:none}
+  .topnav a.active{background:var(--accent-soft);border-radius:7px}
+
+  .body{display:block;min-height:0}
+
+  /* sidebar -> horizontal scrolling tab strip */
+  .side{flex-direction:row;overflow-x:auto;border-right:0;border-bottom:1px solid var(--border);
+    padding:8px 10px;gap:6px}
+  .side-label,.side-spacer,.side-div,.side-row,.side-foot{display:none}
+  .side .nav-item{flex:0 0 auto;border-left:0;border-bottom:2px solid transparent;
+    white-space:nowrap;padding:8px 12px;margin:0;border-radius:8px 8px 0 0}
+  .side .nav-item.active{border-left:0;border-bottom-color:var(--accent)}
+  .side .nav-item .ns{display:none}
+
+  .main{min-height:0}
+  .main-scroll{overflow:visible;padding:14px}
+  .main-head{flex-direction:column;align-items:stretch;gap:10px}
+  .main-title{font-size:20px}
+  .head-ctrls{margin-left:0;flex-wrap:wrap;gap:8px}
+  .seg{flex:1;min-width:0}
+  .seg button{flex:1;padding:8px 6px}
+  .kpi-row{grid-template-columns:repeat(2,1fr);gap:10px}
+  .kpi-v{font-size:22px}
+  .chips{overflow-x:auto;flex-wrap:nowrap;padding-bottom:4px}
+  .chip,.chip-clear{flex:0 0 auto;white-space:nowrap}
+
+  /* results table -> stacked cards */
+  .tbl,.tbl tbody,.tbl tbody tr,.tbl tbody td{display:block;width:100%}
+  .tbl colgroup,.tbl thead{display:none}
+  .tbl tbody tr{background:var(--bg-card);border:1px solid var(--border);border-radius:11px;
+    margin-bottom:10px;padding:10px 14px}
+  .tbl tbody tr.sel{border-color:var(--accent);background:var(--accent-soft)}
+  .tbl tbody td{border:0;padding:5px 0;display:flex;justify-content:space-between;
+    align-items:center;white-space:normal;overflow:visible;text-overflow:clip;font-size:13.5px}
+  .tbl tbody td::before{content:attr(data-label);color:var(--text-3);font-size:11px;
+    font-weight:600;letter-spacing:.3px;margin-right:12px}
+  .tbl tbody td[data-star]{display:none}
+  .tbl tbody td.sym{font-size:16px;padding-bottom:8px;border-bottom:1px solid var(--border);margin-bottom:4px}
+  .tbl tbody td.sym::before{align-self:center}
+  .dir{justify-content:flex-end}
+
+  .pager{flex-wrap:wrap;gap:10px;padding:12px 14px}
+  .pager .pg-btns{margin-left:0}
+
+  /* insight panel -> full-width section below results */
+  .insight{border-left:0;border-top:1px solid var(--border);height:auto}
+  .ins-scroll{overflow:visible;padding:16px}
+  .ins-foot{position:static}
+  .zd{flex-direction:column}
+  .zd-list{gap:8px}
+  .kv{font-size:14px}
+  .spark{width:100%;min-height:170px;align-self:auto}
+  .conf-wrap{gap:14px}
+}
 </style>
 </head>
 <body>
@@ -548,8 +617,13 @@ svg{display:block}
 (function fitApp(){
   var W=1280,H=930;
   function fit(){
-    var s=innerWidth/W;
     var win=document.querySelector('.window'),fr=document.querySelector('.frame');
+    if(innerWidth<=820){            // mobile: natural fluid layout, no scaling
+      win.style.transform='none';
+      fr.style.width='100%';fr.style.height='auto';
+      return;
+    }
+    var s=innerWidth/W;
     win.style.transform='scale('+s+')';
     fr.style.width=(W*s)+'px';fr.style.height=(H*s)+'px';
   }
@@ -759,18 +833,18 @@ svg{display:block}
       var dl = d==="bull"?"Bullish":d==="bear"?"Bearish":"Neutral";
       var hl = h==="bull"?"Bullish":h==="bear"?"Bearish":"Neutral";
       return '<tr data-i="'+i+'" class="'+(i===ST.sel?"sel":"")+'">'+
-        '<td data-star="'+i+'">'+(ST.stars[r.symbol]?IC.starOn:IC.starOff)+'</td>'+
-        '<td class="idx">'+(i+1)+'</td>'+
-        '<td class="sym">'+esc(r.symbol)+'</td>'+
-        '<td class="mkt">'+esc(r.market||mkt)+'</td>'+
-        '<td><span class="dir '+d+'">'+(d==="bull"?IC.up:d==="bear"?IC.dn:"")+dl+'</span></td>'+
-        '<td class="setup">'+esc(setupLabel(a))+'</td>'+
-        '<td class="zone">'+zs+'</td>'+
-        '<td class="conf '+confClass(sc)+'">'+Math.round(sc)+'%</td>'+
-        '<td class="htf '+h+'">'+hl+'</td>'+
-        '<td class="rr">'+(r.rr!=null?(+r.rr).toFixed(2):"—")+'</td>'+
-        '<td class="age">'+esc(r.ageText||ageOf(a))+'</td>'+
-        '<td class="upd">'+rel(ST.scannedAt)+'</td>'+
+        '<td data-star="'+i+'" data-label="">'+(ST.stars[r.symbol]?IC.starOn:IC.starOff)+'</td>'+
+        '<td class="idx" data-label="#">'+(i+1)+'</td>'+
+        '<td class="sym" data-label="Symbol">'+esc(r.symbol)+'</td>'+
+        '<td class="mkt" data-label="Market">'+esc(r.market||mkt)+'</td>'+
+        '<td data-label="Direction"><span class="dir '+d+'">'+(d==="bull"?IC.up:d==="bear"?IC.dn:"")+dl+'</span></td>'+
+        '<td class="setup" data-label="Setup">'+esc(setupLabel(a))+'</td>'+
+        '<td class="zone" data-label="Zone (Price)">'+zs+'</td>'+
+        '<td class="conf '+confClass(sc)+'" data-label="Confidence">'+Math.round(sc)+'%</td>'+
+        '<td class="htf '+h+'" data-label="HTF Bias">'+hl+'</td>'+
+        '<td class="rr" data-label="RR (TP1/SL)">'+(r.rr!=null?(+r.rr).toFixed(2):"—")+'</td>'+
+        '<td class="age" data-label="Age">'+esc(r.ageText||ageOf(a))+'</td>'+
+        '<td class="upd" data-label="Updated">'+rel(ST.scannedAt)+'</td>'+
       '</tr>';
     }).join('');
   }
