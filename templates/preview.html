@@ -372,12 +372,12 @@ svg{display:block}
       </div>
       <div class="side-row">
         <svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-        Last Scan <span class="sv">2m ago</span>
+        Last Scan <span class="sv" id="lastScan">—</span>
       </div>
       <div class="side-row">
         <svg class="ico" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>
         Auto-Refresh <span class="sv" style="margin-left:auto">30s</span>
-        <div class="toggle on" style="margin-left:9px"></div>
+        <div class="toggle on" id="arToggle" style="margin-left:9px"></div>
       </div>
 
       <div class="side-foot"><span class="live-dot"></span>ZyNi Screener v3.0.0&nbsp;&nbsp;•&nbsp;&nbsp;Connected</div>
@@ -391,23 +391,16 @@ svg{display:block}
             <div class="main-title">Main Scan
               <svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>
             </div>
-            <div class="main-sub">All instruments across selected markets</div>
+            <div class="main-sub" id="mainSub">All instruments across selected markets</div>
           </div>
           <div class="head-ctrls">
-            <div class="seg"><button class="on">Spot</button><button>Perpetual</button></div>
-            <div class="seg"><button class="on">OB</button><button>Breaker</button><button>Fib</button><button>All</button></div>
-            <button class="btn"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg>Filters <span class="badge-n">3</span></button>
+            <div class="seg" id="segMarket"><button data-mkt="spot" class="on">Spot</button><button data-mkt="perpetual">Perpetual</button></div>
+            <div class="seg" id="segSignal"><button data-sig="OB" class="on">OB</button><button data-sig="BREAKER">Breaker</button><button data-sig="FIB">Fib</button><button data-sig="ALL">All</button></div>
+            <button class="btn" id="btnRescan"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>Rescan</button>
           </div>
         </div>
 
-        <div class="kpi-row">
-          <div class="kpi"><div class="kpi-l">TOTAL SETUPS</div><div class="kpi-v">352</div><div class="kpi-d up"><svg class="ico" viewBox="0 0 24 24"><path d="M5 15l7-7 7 7"/></svg>18% vs last scan</div></div>
-          <div class="kpi"><div class="kpi-l">HIGH CONVICTION</div><div class="kpi-v">87</div><div class="kpi-d">24.7% of total</div></div>
-          <div class="kpi"><div class="kpi-l">AVG. CONFIDENCE</div><div class="kpi-v">72.3%</div><div class="kpi-d up"><svg class="ico" viewBox="0 0 24 24"><path d="M5 15l7-7 7 7"/></svg>4.6% vs last scan</div></div>
-          <div class="kpi"><div class="kpi-l">BULLISH SETUPS</div><div class="kpi-v g">212</div><div class="kpi-d">60.2%</div></div>
-          <div class="kpi"><div class="kpi-l">BEARISH SETUPS</div><div class="kpi-v r">140</div><div class="kpi-d">39.8%</div></div>
-          <div class="kpi"><div class="kpi-l">MARKETS SCANNED</div><div class="kpi-v">128</div><div class="kpi-d">Spot: 86&nbsp;&nbsp;Perp: 42</div></div>
-        </div>
+        <div class="kpi-row" id="kpiRow"></div>
 
         <div class="chips">
           <div class="chip">Trend: All <span class="x"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></span></div>
@@ -428,7 +421,7 @@ svg{display:block}
       </div>
 
       <div class="pager">
-        <span>Showing 1 to 10 of 352 results</span>
+        <span id="pagerInfo">Loading…</span>
         <div class="pg-btns">
           <div class="pg"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></div>
           <div class="pg on">1</div><div class="pg">2</div><div class="pg">3</div>
@@ -443,7 +436,7 @@ svg{display:block}
 
     <!-- ═══ RIGHT INSIGHT PANEL ═══ -->
     <aside class="insight">
-      <div class="ins-scroll">
+      <div class="ins-scroll" id="insScroll">
         <div class="ins-head">
           <h3>SETUP INSIGHT</h3>
           <button class="ic-btn"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
@@ -532,8 +525,8 @@ svg{display:block}
       </div>
 
       <div class="ins-foot">
-        <button class="btn"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 4-6"/></svg>View Chart</button>
-        <button class="btn btn-primary"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add to Live Monitor</button>
+        <a class="btn" id="btnChart" href="#" target="_blank" rel="noopener" style="text-decoration:none"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 4-6"/></svg>View Chart</a>
+        <button class="btn btn-primary" id="btnLM"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add to Live Monitor</button>
         <button class="btn btn-ico"><svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
       </div>
     </aside>
@@ -553,37 +546,339 @@ svg{display:block}
   }
   addEventListener('resize',fit);fit();
 })();
-const ROWS=[
-  {s:1, sym:"BTCUSDT",  mkt:"Perp", dir:"bull", setup:"OB",      zone:"61,240.0 – 59,850.0", conf:82, htf:"bull", rr:"2.35", age:"1h 12m", upd:"1m ago", star:false, sel:true},
-  {s:2, sym:"ETHUSDT",  mkt:"Perp", dir:"bull", setup:"OB",      zone:"2,965.30 – 2,882.10", conf:78, htf:"bull", rr:"2.18", age:"45m",   upd:"2m ago", star:true},
-  {s:3, sym:"SOLUSDT",  mkt:"Perp", dir:"bull", setup:"Breaker", zone:"161.45 – 155.20",     conf:73, htf:"bull", rr:"2.05", age:"32m",   upd:"1m ago"},
-  {s:4, sym:"BNBUSDT",  mkt:"Spot", dir:"bull", setup:"Fib (0.618)", zone:"574.30 – 561.80", conf:69, htf:"bull", rr:"1.86", age:"2h 05m", upd:"3m ago"},
-  {s:5, sym:"XRPUSDT",  mkt:"Perp", dir:"bear", setup:"OB",      zone:"0.5402 – 0.5251",     conf:76, htf:"bear", rr:"2.21", age:"1h 08m", upd:"2m ago"},
-  {s:6, sym:"ADAUSDT",  mkt:"Spot", dir:"bear", setup:"Breaker", zone:"0.4681 – 0.4550",     conf:65, htf:"bear", rr:"1.79", age:"50m",   upd:"5m ago"},
-  {s:7, sym:"DOGEUSDT", mkt:"Perp", dir:"bear", setup:"Fib (0.618)", zone:"0.15632 – 0.14970", conf:63, htf:"bear", rr:"1.68", age:"40m", upd:"1m ago"},
-  {s:8, sym:"AVAXUSDT", mkt:"Spot", dir:"bull", setup:"OB",      zone:"37.45 – 35.80",       conf:71, htf:"bull", rr:"1.97", age:"1h 33m", upd:"2m ago"},
-  {s:9, sym:"MATICUSDT",mkt:"Perp", dir:"bull", setup:"Breaker", zone:"0.7120 – 0.6815",     conf:61, htf:"bull", rr:"1.62", age:"28m",   upd:"4m ago"},
-  {s:10,sym:"LINKUSDT", mkt:"Spot", dir:"bear", setup:"OB",      zone:"14.82 – 14.10",       conf:68, htf:"bear", rr:"1.84", age:"1h 15m", upd:"3m ago"},
-];
-const starOn  = '<span class="star on"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9 6.8 19.1l1-5.8L3.5 9.2l5.9-.9z"/></svg></span>';
-const starOff = '<span class="star"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9 6.8 19.1l1-5.8L3.5 9.2l5.9-.9z"/></svg></span>';
-const arrUp   = '<svg class="ico" viewBox="0 0 24 24"><path d="M7 17L17 7M9 7h8v8"/></svg>';
-const arrDn   = '<svg class="ico" viewBox="0 0 24 24"><path d="M7 7l10 10M15 17H7V9"/></svg>';
-document.getElementById('tbody').innerHTML = ROWS.map(r=>`
-  <tr class="${r.sel?'sel':''}">
-    <td>${r.star?starOn:starOff}</td>
-    <td class="idx">${r.s}</td>
-    <td class="sym">${r.sym}</td>
-    <td class="mkt">${r.mkt}</td>
-    <td><span class="dir ${r.dir}">${r.dir==='bull'?arrUp:arrDn}${r.dir==='bull'?'Bullish':'Bearish'}</span></td>
-    <td class="setup">${r.setup}</td>
-    <td class="zone">${r.zone}</td>
-    <td class="conf">${r.conf}%</td>
-    <td class="htf ${r.htf}">${r.htf==='bull'?'Bullish':'Bearish'}</td>
-    <td class="rr">${r.rr}</td>
-    <td class="age">${r.age}</td>
-    <td class="upd">${r.upd}</td>
-  </tr>`).join('');
+/* ───────── ZyNi Screener — live /api/scan integration ───────── */
+(function(){
+  "use strict";
+  var E=function(id){return document.getElementById(id);};
+  var ST={market:"spot",signal:"OB",results:[],sel:-1,scannedAt:0,scanned:0,
+          prev:null,stars:{},auto:true,timer:null,busy:false};
+
+  // runtime CSS for states not in the base stylesheet
+  var st=document.createElement("style");
+  st.textContent=
+    ".tag.bear{background:rgba(239,68,68,.14);color:var(--red-2);border:1px solid rgba(239,68,68,.32)}"+
+    ".tag.neutral{background:var(--bg-card-2);color:var(--text-2);border:1px solid var(--border)}"+
+    ".conf.lo{color:var(--yellow)}.conf.mid{color:var(--accent)}.conf.hi{color:var(--green-2)}"+
+    ".htf.neutral,.dir.neutral{color:var(--text-3)}"+
+    ".row-msg{padding:46px 20px;text-align:center;color:var(--text-3);font-size:13px}"+
+    ".row-msg.err{color:var(--red-2)}";
+  document.head.appendChild(st);
+
+  var IC={
+    starOn:'<span class="star on"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9 6.8 19.1l1-5.8L3.5 9.2l5.9-.9z"/></svg></span>',
+    starOff:'<span class="star"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9 6.8 19.1l1-5.8L3.5 9.2l5.9-.9z"/></svg></span>',
+    up:'<svg class="ico" viewBox="0 0 24 24"><path d="M7 17L17 7M9 7h8v8"/></svg>',
+    dn:'<svg class="ico" viewBox="0 0 24 24"><path d="M7 7l10 10M15 17H7V9"/></svg>',
+    chk:'<svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>'
+  };
+
+  function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
+  function fmt(n){
+    if(n==null||n===""||isNaN(n))return "—";
+    n=+n; var a=Math.abs(n);
+    var d=a>=1000?2:a>=1?4:a>=0.01?5:8;
+    return n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:d});
+  }
+  function pct(n){return (n==null||isNaN(n))?"—":(Math.round(n*10)/10)+"%";}
+  function rel(ms){
+    if(!ms)return "—";
+    var s=Math.max(0,Math.floor((Date.now()-ms)/1000));
+    if(s<10)return "just now";
+    if(s<60)return s+"s ago";
+    var m=Math.floor(s/60); if(m<60)return m+"m ago";
+    var h=Math.floor(m/60); return h+"h "+(m%60)+"m ago";
+  }
+  function dirOf(r){var d=r&&r.topAlert&&r.topAlert.direction;return d==="bullish"?"bull":d==="bearish"?"bear":"neutral";}
+  function htfOf(r){var t=(r&&(r.itrend!=null?r.itrend:r.trend));return t>0?"bull":t<0?"bear":"neutral";}
+  function setupLabel(a){
+    var s=(a&&a.setup)||"";
+    if(s.indexOf("OB")===0)return "OB";
+    if(s.indexOf("BREAKER")===0)return "Breaker";
+    if(s.indexOf("FIB")===0){var lv=a&&a.meta&&a.meta.fibLevel;return lv?("Fib "+lv):"Fib";}
+    if(s==="FVG")return "FVG";
+    if(s==="RSI")return "RSI";
+    return s||"—";
+  }
+  function zoneOf(a){
+    var m=(a&&a.meta)||{},s=(a&&a.setup)||"",hi,lo;
+    if(s.indexOf("OB")===0){hi=m.obTop;lo=m.obBottom;}
+    else if(s==="FVG"){hi=m.fvgTop;lo=m.fvgBottom;}
+    else if(s.indexOf("BREAKER")===0){hi=m.breakerTop;lo=m.breakerBottom;}
+    else if(s.indexOf("FIB")===0){if(m.fibPrice==null)return null;return{hi:+m.fibPrice,lo:+m.fibPrice,single:true};}
+    else return null;
+    if(hi==null||lo==null)return null;
+    hi=+hi;lo=+lo; return {hi:Math.max(hi,lo),lo:Math.min(hi,lo)};
+  }
+  function ageOf(a){
+    var m=(a&&a.meta)||{};
+    if(m.fvgAge)return String(m.fvgAge);
+    if(m.breakerAge!=null)return m.breakerAge+" bars";
+    if(m.consolCandles!=null)return m.consolCandles+" bars";
+    return "—";
+  }
+  function confClass(s){return s>=80?"hi":s>=65?"mid":"lo";}
+
+  /* ── data fetch ── */
+  function buildPayload(){
+    var sig=ST.signal, checked = sig==="ALL"?[]:[sig];
+    return {
+      settings:{tf:"4h",useFibModule:true,useBreakerModule:true},
+      market:ST.market, exchange:"binance",
+      scanMode:"market", roundRobin:true, pairsPerCycle:24,
+      filterMode:"match", checkedSignals:checked, requiredSignals:[]
+    };
+  }
+  function scan(){
+    if(ST.busy)return;
+    if(location.protocol==="file:"){
+      msg("Open this page at <b>/preview</b> on the running ZyNi app to load live data (file:// can't reach the API).");
+      E("pagerInfo").textContent="Not connected — open via /preview";
+      return;
+    }
+    ST.busy=true;
+    E("pagerInfo").textContent="Scanning…";
+    if(!ST.results.length)msg("Scanning markets…");
+    fetch("/api/scan",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(buildPayload())})
+      .then(function(r){
+        if(r.status===429)throw new Error("Daily scan limit reached. Resets at midnight UTC.");
+        if(r.status===401||r.status===403)throw new Error("Session expired — reload and log in again.");
+        if(!r.ok)throw new Error("Scan failed ("+r.status+")");
+        return r.json();
+      })
+      .then(function(d){
+        ST.prev = ST.results.length?{total:ST.results.length,avg:avgScore(ST.results)}:ST.prev;
+        ST.results=(d&&d.results)||[];
+        ST.scanned=(d&&d.scanned)||ST.results.length;
+        ST.scannedAt=Date.now();
+        ST.sel=ST.results.length?0:-1;
+        renderAll();
+      })
+      .catch(function(e){
+        msg(esc(e.message||"Scan failed"),true);
+        E("pagerInfo").textContent="Error";
+      })
+      .finally(function(){ST.busy=false;});
+  }
+  function avgScore(rs){if(!rs.length)return 0;var t=0;rs.forEach(function(r){t+=(+r.score||0);});return t/rs.length;}
+  function msg(html,err){E("tbody").innerHTML='<tr><td colspan="12"><div class="row-msg'+(err?" err":"")+'">'+html+'</div></td></tr>';}
+
+  /* ── renderers ── */
+  function renderAll(){renderKPI();renderTable();renderInsight();renderMeta();}
+
+  function renderMeta(){
+    var mk=ST.market==="perpetual"?"Perpetual":"Spot";
+    var sg=ST.signal==="ALL"?"all setups":ST.signal+" setups";
+    E("mainSub").textContent="All instruments • "+mk+" • "+sg;
+    E("lastScan").textContent=ST.scannedAt?rel(ST.scannedAt):"—";
+    E("pagerInfo").textContent= ST.results.length
+      ? ("Showing "+ST.results.length+" setups • "+ST.scanned+" markets scanned")
+      : "No setups found";
+  }
+
+  function kpi(label,val,sub,cls){
+    return '<div class="kpi"><div class="kpi-l">'+label+'</div>'+
+      '<div class="kpi-v '+(cls||"")+'">'+val+'</div>'+
+      '<div class="kpi-d">'+sub+'</div></div>';
+  }
+  function renderKPI(){
+    var rs=ST.results,n=rs.length;
+    var hi=rs.filter(function(r){return r.confidence==="High";}).length;
+    var bu=rs.filter(function(r){return dirOf(r)==="bull";}).length;
+    var be=rs.filter(function(r){return dirOf(r)==="bear";}).length;
+    var av=avgScore(rs);
+    var dT="—setups",dA="";
+    if(ST.prev){
+      var dt=n-ST.prev.total, da=av-ST.prev.avg;
+      dT=(dt>=0?"+":"")+dt+" vs last scan";
+      dA=(da>=0?"+":"")+(Math.round(da*10)/10)+"% vs last scan";
+    }else{dT="this scan";dA="this scan";}
+    E("kpiRow").innerHTML=
+      kpi("TOTAL SETUPS",n,dT)+
+      kpi("HIGH CONVICTION",hi,(n?Math.round(hi/n*1000)/10:0)+"% of total")+
+      kpi("AVG. CONFIDENCE",pct(av),dA)+
+      kpi("BULLISH SETUPS",bu,(n?Math.round(bu/n*1000)/10:0)+"%","g")+
+      kpi("BEARISH SETUPS",be,(n?Math.round(be/n*1000)/10:0)+"%","r")+
+      kpi("MARKETS SCANNED",ST.scanned,ST.market==="perpetual"?"Perpetual":"Spot");
+  }
+
+  function renderTable(){
+    var rs=ST.results;
+    if(!rs.length){msg("No setups match the current filter. Try a different signal or market.");return;}
+    var mkt=ST.market==="perpetual"?"Perp":"Spot";
+    E("tbody").innerHTML=rs.map(function(r,i){
+      var a=r.topAlert||{}, z=zoneOf(a), d=dirOf(r), h=htfOf(r);
+      var sc=+r.score||0;
+      var zs = z ? (z.single?fmt(z.hi):(fmt(z.hi)+" – "+fmt(z.lo))) : "—";
+      var dl = d==="bull"?"Bullish":d==="bear"?"Bearish":"Neutral";
+      var hl = h==="bull"?"Bullish":h==="bear"?"Bearish":"Neutral";
+      return '<tr data-i="'+i+'" class="'+(i===ST.sel?"sel":"")+'">'+
+        '<td data-star="'+i+'">'+(ST.stars[r.symbol]?IC.starOn:IC.starOff)+'</td>'+
+        '<td class="idx">'+(i+1)+'</td>'+
+        '<td class="sym">'+esc(r.symbol)+'</td>'+
+        '<td class="mkt">'+mkt+'</td>'+
+        '<td><span class="dir '+d+'">'+(d==="bull"?IC.up:d==="bear"?IC.dn:"")+dl+'</span></td>'+
+        '<td class="setup">'+esc(setupLabel(a))+'</td>'+
+        '<td class="zone">'+zs+'</td>'+
+        '<td class="conf '+confClass(sc)+'">'+Math.round(sc)+'%</td>'+
+        '<td class="htf '+h+'">'+hl+'</td>'+
+        '<td class="rr">—</td>'+
+        '<td class="age">'+esc(ageOf(a))+'</td>'+
+        '<td class="upd">'+rel(ST.scannedAt)+'</td>'+
+      '</tr>';
+    }).join('');
+  }
+
+  function sparkSVG(r,z){
+    var sp=(r&&r.sparkline)||[];
+    if(sp.length<2)return '<div style="color:var(--text-3);font-size:11px;padding:20px 0;text-align:center">no chart data</div>';
+    var mn=Math.min.apply(null,sp),mx=Math.max.apply(null,sp);
+    if(z){mn=Math.min(mn,z.lo);mx=Math.max(mx,z.hi);}
+    if(r.price!=null){mn=Math.min(mn,r.price);mx=Math.max(mx,r.price);}
+    var pad=(mx-mn)*0.06||1; mn-=pad; mx+=pad;
+    var H=140,W=96, Y=function(v){return H-((v-mn)/(mx-mn))*H;};
+    var pts=sp.map(function(v,i){return (i/(sp.length-1)*W).toFixed(1)+","+Y(v).toFixed(1);}).join(" ");
+    var band="",lines="";
+    if(z){var yt=Y(z.hi),yb=Y(z.lo);
+      band='<rect x="0" y="'+yt.toFixed(1)+'" width="96" height="'+Math.max(1,(yb-yt)).toFixed(1)+'" fill="rgba(34,211,238,.13)"/>'+
+        '<line x1="0" y1="'+yt.toFixed(1)+'" x2="96" y2="'+yt.toFixed(1)+'" stroke="rgba(34,211,238,.4)" stroke-width="1" stroke-dasharray="3 3"/>'+
+        '<line x1="0" y1="'+yb.toFixed(1)+'" x2="96" y2="'+yb.toFixed(1)+'" stroke="rgba(34,211,238,.4)" stroke-width="1" stroke-dasharray="3 3"/>';
+    }
+    (r.sparklineMarkers||[]).forEach(function(m){
+      if(m.price>=mn&&m.price<=mx){var y=Y(m.price).toFixed(1);
+        lines+='<line x1="0" y1="'+y+'" x2="96" y2="'+y+'" stroke="rgba(167,139,250,.5)" stroke-width="1" stroke-dasharray="2 2"/>';}
+    });
+    var cy=r.price!=null?Y(r.price):Y(sp[sp.length-1]);
+    var labs="";
+    for(var k=0;k<5;k++){var v=mx-(mx-mn)*k/4;var top=(k/4*(H-12));
+      labs+='<span class="lbl" style="top:'+top.toFixed(0)+'px">'+fmt(v)+'</span>';}
+    return labs+
+      '<svg viewBox="0 0 96 140" preserveAspectRatio="none">'+band+lines+
+      '<polyline points="'+pts+'" fill="none" stroke="#22d3ee" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'+
+      '<circle cx="96" cy="'+cy.toFixed(1)+'" r="3" fill="#22d3ee"/></svg>'+
+      (r.price!=null?'<span class="price-pill" style="top:'+Math.max(0,Math.min(H-14,cy-7)).toFixed(0)+'px">'+fmt(r.price)+'</span>':"");
+  }
+
+  function bar(lbl,v){v=Math.max(0,Math.min(100,Math.round(v||0)));
+    return '<div class="bar-row"><div class="bt"><span>'+lbl+'</span><b>'+v+'%</b></div>'+
+      '<div class="bar-tr"><div class="bar-fl" style="width:'+v+'%"></div></div></div>';}
+
+  function confluenceList(r,a){
+    var m=a.meta||{},out=[];
+    var setups={}; (r.alerts||[]).forEach(function(x){setups[setupLabel(x)]=1;});
+    var sk=Object.keys(setups); if(sk.length>1)out.push(sk.join(" + ")+" multi-signal confluence");
+    if(m.highProb)out.push("High-probability zone (filter passed)");
+    if(m.obQualityLabel)out.push("Order block quality: "+m.obQualityLabel);
+    if(m.absorptionPass)out.push("Order-flow absorption confirmed");
+    if(m.fvgConfluence||m.fvgOverlap)out.push("FVG confluence at the zone");
+    if(m.fvgUntouched)out.push("Untouched FVG (fresh imbalance)");
+    if(m.rejectionStrength)out.push("Rejection strength: "+fmt(m.rejectionStrength));
+    if(r.correlationLabel)out.push("BTC correlation: "+r.correlationLabel);
+    var h=htfOf(r),d=dirOf(r);
+    if(h!=="neutral"&&h===d)out.push("HTF trend aligned with setup direction");
+    if(!out.length)out.push("Single-signal setup — confirm on lower timeframe");
+    return out.map(function(t){return '<div class="cf">'+IC.chk+esc(t)+'</div>';}).join("");
+  }
+
+  function renderInsight(){
+    var box=E("insScroll"), head=
+      '<div class="ins-head"><h3>SETUP INSIGHT</h3>'+
+      '<button class="ic-btn" type="button"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>';
+    var r=ST.results[ST.sel];
+    if(!r){box.innerHTML=head+'<div class="row-msg">Select a setup to see details.</div>';setFoot(null);return;}
+    var a=r.topAlert||{}, z=zoneOf(a), d=dirOf(r), m=a.meta||{};
+    var dTag=d==="bull"?'<span class="tag bull">Bullish</span>':d==="bear"?'<span class="tag bear">Bearish</span>':'<span class="tag neutral">Neutral</span>';
+    var mk=ST.market==="perpetual"?"Perp":"Spot";
+    var ztype=setupLabel(a)+(d!=="neutral"?(" ("+(d==="bull"?"Bullish":"Bearish")+")"):"");
+    var mid = z&&!z.single ? (z.hi+z.lo)/2 : (z?z.hi:null);
+    var touches = m.obTouches!=null?m.obTouches : m.fvgTouches!=null?m.fvgTouches : null;
+    var sc=+r.score||0;
+    var qual = m.obQuality!=null?+m.obQuality : null;
+    var strengthPct = a.strength!=null?Math.round((+a.strength)/8*100):0;
+    var rsiV = r.rsi!=null?Math.round(r.rsi):null;
+    var trendAlign = (htfOf(r)===d&&d!=="neutral")?100:(htfOf(r)==="neutral"?50:20);
+    box.innerHTML=head+
+      '<div class="ins-title">'+(ST.stars[r.symbol]?IC.starOn:IC.starOff)+
+        '<span class="ins-sym">'+esc(r.symbol)+'</span>'+
+        '<span class="tag mkt">'+mk+'</span>'+dTag+'</div>'+
+      '<div class="ins-meta"><span>Main Scan • '+esc(setupLabel(a))+'</span><span>'+rel(ST.scannedAt)+'</span></div>'+
+      '<div class="sec"><div class="sec-h">ZONE DETAILS <svg class="ico" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></div>'+
+        '<div class="sec-b"><div class="zd"><div class="zd-list">'+
+          kv("Zone Type",ztype)+
+          kv("Price Range",z?(z.single?fmt(z.hi):fmt(z.hi)+" – "+fmt(z.lo)):"—")+
+          kv("Mid Price",mid!=null?fmt(mid):"—")+
+          kv("Current Price",r.price!=null?fmt(r.price):"—",true)+
+          kv("RSI",rsiV!=null?rsiV:"—")+
+          kv("Touches",touches!=null?touches:"—")+
+          kv("Age",ageOf(a))+
+          kv("Timeframe",(a.timeframe||r.timeframe||"—"))+
+        '</div><div class="spark">'+sparkSVG(r,z)+'</div></div></div></div>'+
+      '<div class="sec"><div class="sec-h">CONFIDENCE</div><div class="sec-b"><div class="conf-wrap">'+
+        '<div class="gauge"><svg width="96" height="96" viewBox="0 0 96 96">'+
+          '<circle cx="48" cy="48" r="40" stroke="var(--bg-card-2)" stroke-width="8" fill="none"/>'+
+          '<circle cx="48" cy="48" r="40" stroke="var(--accent)" stroke-width="8" fill="none" stroke-linecap="round" '+
+            'stroke-dasharray="251.2" stroke-dashoffset="'+(251.2*(1-sc/100)).toFixed(1)+'"/></svg>'+
+          '<div class="c"><div class="pct">'+Math.round(sc)+'%</div><div class="lv">'+esc(r.confidence||"")+'</div></div></div>'+
+        '<div class="bars">'+
+          bar("Overall Score",sc)+
+          bar("Setup Strength",strengthPct)+
+          (qual!=null?bar("Zone Quality",qual):bar("Signal Diversity",Math.min(100,(r.alerts||[]).length*33)))+
+          bar("RSI",rsiV!=null?rsiV:0)+
+          bar("Trend Alignment",trendAlign)+
+        '</div></div></div></div>'+
+      '<div class="sec"><div class="sec-h">CONFLUENCE</div><div class="sec-b">'+confluenceList(r,a)+'</div></div>'+
+      '<div class="sec"><div class="sec-h">NOTES</div><div class="sec-b"><div class="notes">'+
+        esc(a.detail||"No additional notes for this setup.")+'</div></div></div>';
+    box.querySelector(".ic-btn").addEventListener("click",function(){ST.sel=-1;renderInsight();renderTable();});
+    setFoot(r);
+  }
+  function kv(k,v,teal){return '<div class="kv"><span class="k">'+k+'</span><span class="v'+(teal?" teal":"")+'">'+esc(v)+'</span></div>';}
+  function setFoot(r){
+    var c=E("btnChart");
+    if(r){var suf=ST.market==="perpetual"?".P":"";
+      c.href="https://www.tradingview.com/chart/?symbol=BINANCE:"+encodeURIComponent(r.symbol)+suf;
+      c.style.pointerEvents="";c.style.opacity="";}
+    else{c.href="#";c.style.pointerEvents="none";c.style.opacity=".5";}
+  }
+
+  /* ── interactions ── */
+  document.getElementById("tbody").addEventListener("click",function(e){
+    var s=e.target.closest("[data-star]");
+    if(s){var i=+s.getAttribute("data-star");var r=ST.results[i];if(r){ST.stars[r.symbol]=!ST.stars[r.symbol];renderTable();if(i===ST.sel)renderInsight();}e.stopPropagation();return;}
+    var tr=e.target.closest("tr[data-i]");
+    if(tr){ST.sel=+tr.getAttribute("data-i");renderTable();renderInsight();}
+  });
+  function seg(id,attr,key,after){
+    var box=E(id); if(!box)return;
+    box.addEventListener("click",function(e){
+      var b=e.target.closest("button["+attr+"]"); if(!b)return;
+      [].forEach.call(box.querySelectorAll("button"),function(x){x.classList.remove("on");});
+      b.classList.add("on"); ST[key]=b.getAttribute(attr); after&&after();
+    });
+  }
+  seg("segMarket","data-mkt","market",scan);
+  seg("segSignal","data-sig","signal",scan);
+  E("btnRescan").addEventListener("click",scan);
+  E("arToggle").addEventListener("click",function(){
+    ST.auto=!ST.auto; this.classList.toggle("on",ST.auto);
+    if(ST.auto){ST.timer=setInterval(scan,30000);}else{clearInterval(ST.timer);ST.timer=null;}
+  });
+  E("btnLM").addEventListener("click",function(){
+    var r=ST.results[ST.sel]; if(!r)return;
+    var o=this.innerHTML; this.innerHTML='<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>Added';
+    var self=this; setTimeout(function(){self.innerHTML=o;},1600);
+  });
+
+  // live "updated" ticker
+  setInterval(function(){
+    if(!ST.scannedAt)return;
+    E("lastScan").textContent=rel(ST.scannedAt);
+    [].forEach.call(document.querySelectorAll("#tbody .upd"),function(td){td.textContent=rel(ST.scannedAt);});
+  },1000);
+
+  if(ST.auto)ST.timer=setInterval(scan,30000);
+  scan();
+})();
 </script>
 </body>
 </html>

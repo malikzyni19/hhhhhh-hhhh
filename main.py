@@ -7236,6 +7236,16 @@ def index():
     return render_template("homepage.html")
 
 
+@app.route("/preview")
+def preview():
+    # Login-gated preview of the rebuilt screener UI (live /api/scan data).
+    if session.get("logged_in"):
+        username = session.get("username", "Trader")
+        display_name = " ".join(w.capitalize() for w in username.strip().split())
+        return render_template("preview.html", username=display_name)
+    return redirect(url_for("index"))
+
+
 @app.route("/api/pairs")
 @login_required
 def api_pairs():
