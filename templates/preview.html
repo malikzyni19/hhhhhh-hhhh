@@ -50,7 +50,7 @@ body{
 .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
 .window{
   position:absolute;top:0;left:0;transform-origin:top left;
-  width:1280px;height:720px;
+  width:1280px;height:930px;
   background:var(--bg-window);
   border:1px solid var(--border);
   border-radius:14px;
@@ -240,8 +240,8 @@ svg{display:block}
   background:var(--bg-panel);border-left:1px solid var(--border);
   display:flex;flex-direction:column;min-height:0;
 }
-.ins-scroll{flex:1;overflow:auto;padding:16px}
-.ins-head{display:flex;align-items:center;margin-bottom:14px}
+.ins-scroll{flex:1;overflow:auto;padding:12px 14px}
+.ins-head{display:flex;align-items:center;margin-bottom:8px}
 .ins-head h3{font-size:11px;font-weight:700;letter-spacing:1.2px;color:var(--text-2)}
 .ins-head .ic-btn{margin-left:auto}
 .ins-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:5px}
@@ -251,45 +251,45 @@ svg{display:block}
 .tag{font-size:10px;font-weight:700;padding:3px 8px;border-radius:5px;letter-spacing:.4px}
 .tag.mkt{background:var(--bg-card-2);color:var(--text-2);border:1px solid var(--border)}
 .tag.bull{background:rgba(34,197,94,.14);color:var(--green-2);border:1px solid rgba(34,197,94,.3)}
-.ins-meta{font-size:11px;color:var(--text-3);display:flex;justify-content:space-between;margin-bottom:14px}
-.sec{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;margin-bottom:12px;overflow:hidden}
+.ins-meta{font-size:11px;color:var(--text-3);display:flex;justify-content:space-between;margin-bottom:8px}
+.sec{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;margin-bottom:7px;overflow:hidden}
 .sec-h{
-  display:flex;align-items:center;padding:11px 13px;font-size:10px;font-weight:700;
+  display:flex;align-items:center;padding:7px 13px;font-size:10px;font-weight:700;
   letter-spacing:1px;color:var(--text-2);cursor:pointer;
 }
 .sec-h .ico{margin-left:auto;color:var(--text-3);width:14px;height:14px}
-.sec-b{padding:0 13px 13px}
+.sec-b{padding:0 13px 9px}
 .zd{display:flex;gap:12px}
-.zd-list{flex:1;display:flex;flex-direction:column;gap:8px;min-width:0}
+.zd-list{flex:1;display:flex;flex-direction:column;gap:4px;min-width:0}
 .kv{display:flex;justify-content:space-between;font-size:12px;gap:8px}
 .kv .k{color:var(--text-3)}
 .kv .v{font-family:var(--mono);color:var(--text);text-align:right}
 .kv .v.teal{color:var(--accent)}
 .spark{width:96px;flex-shrink:0;position:relative}
-.spark svg{width:100%;height:140px}
+.spark svg{width:100%;height:112px}
 .spark .lbl{position:absolute;right:0;font-size:9px;font-family:var(--mono);color:var(--text-3)}
 .price-pill{
   position:absolute;background:var(--accent);color:#04121a;font-size:9px;font-weight:700;
   font-family:var(--mono);padding:2px 5px;border-radius:4px;right:30px;
 }
 /* confidence */
-.conf-wrap{display:flex;gap:16px;align-items:center}
+.conf-wrap{display:flex;gap:14px;align-items:center}
 .gauge{position:relative;width:96px;height:96px;flex-shrink:0}
 .gauge svg{transform:rotate(-90deg)}
 .gauge .c{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
 .gauge .pct{font-size:21px;font-weight:700;font-family:var(--mono);color:var(--accent)}
 .gauge .lv{font-size:10px;color:var(--text-3);font-weight:600;letter-spacing:.5px}
-.bars{flex:1;display:flex;flex-direction:column;gap:9px;min-width:0}
+.bars{flex:1;display:flex;flex-direction:column;gap:5px;min-width:0}
 .bar-row{font-size:11px}
-.bar-row .bt{display:flex;justify-content:space-between;color:var(--text-2);margin-bottom:4px}
+.bar-row .bt{display:flex;justify-content:space-between;color:var(--text-2);margin-bottom:2px}
 .bar-row .bt b{font-family:var(--mono);color:var(--text)}
 .bar-tr{height:5px;border-radius:3px;background:var(--bg-card-2);overflow:hidden}
 .bar-fl{height:100%;border-radius:3px;background:linear-gradient(90deg,var(--accent-teal),var(--accent))}
 /* confluence */
-.cf{display:flex;gap:9px;font-size:12px;color:var(--text-2);padding:6px 0;align-items:flex-start;line-height:1.45}
+.cf{display:flex;gap:8px;font-size:12px;color:var(--text-2);padding:3px 0;align-items:flex-start;line-height:1.3}
 .cf .ico{color:var(--green-2);width:15px;height:15px;margin-top:1px;flex-shrink:0}
 /* notes */
-.notes{font-size:12px;color:var(--text-2);line-height:1.6}
+.notes{font-size:12px;color:var(--text-2);line-height:1.45}
 /* footer */
 .ins-foot{display:flex;gap:8px;padding:13px 16px;border-top:1px solid var(--border);background:var(--bg-panel);flex-shrink:0}
 .ins-foot .btn{flex:1;justify-content:center}
@@ -537,7 +537,7 @@ svg{display:block}
 
 <script>
 (function fitApp(){
-  var W=1280,H=720,PAD=24;
+  var W=1280,H=930,PAD=24;
   function fit(){
     var s=Math.min((innerWidth-PAD)/W,(innerHeight-PAD)/H,1);
     var win=document.querySelector('.window'),fr=document.querySelector('.frame');
@@ -777,14 +777,15 @@ svg{display:block}
         lines+='<line x1="0" y1="'+y+'" x2="96" y2="'+y+'" stroke="rgba(167,139,250,.5)" stroke-width="1" stroke-dasharray="2 2"/>';}
     });
     var cy=r.price!=null?Y(r.price):Y(sp[sp.length-1]);
+    var RH=112;
     var labs="";
-    for(var k=0;k<5;k++){var v=mx-(mx-mn)*k/4;var top=(k/4*(H-12));
+    for(var k=0;k<5;k++){var v=mx-(mx-mn)*k/4;var top=(k/4*(RH-12));
       labs+='<span class="lbl" style="top:'+top.toFixed(0)+'px">'+fmt(v)+'</span>';}
     return labs+
       '<svg viewBox="0 0 96 140" preserveAspectRatio="none">'+band+lines+
       '<polyline points="'+pts+'" fill="none" stroke="#22d3ee" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'+
       '<circle cx="96" cy="'+cy.toFixed(1)+'" r="3" fill="#22d3ee"/></svg>'+
-      (r.price!=null?'<span class="price-pill" style="top:'+Math.max(0,Math.min(H-14,cy-7)).toFixed(0)+'px">'+fmt(r.price)+'</span>':"");
+      (r.price!=null?'<span class="price-pill" style="top:'+Math.max(0,Math.min(RH-14,cy*RH/140-7)).toFixed(0)+'px">'+fmt(r.price)+'</span>':"");
   }
 
   function bar(lbl,v){v=Math.max(0,Math.min(100,Math.round(v||0)));
@@ -805,7 +806,7 @@ svg{display:block}
     var h=htfOf(r),d=dirOf(r);
     if(h!=="neutral"&&h===d)out.push("HTF trend aligned with setup direction");
     if(!out.length)out.push("Single-signal setup — confirm on lower timeframe");
-    return out.map(function(t){return '<div class="cf">'+IC.chk+esc(t)+'</div>';}).join("");
+    return out.slice(0,5).map(function(t){return '<div class="cf">'+IC.chk+esc(t)+'</div>';}).join("");
   }
 
   function renderInsight(){
