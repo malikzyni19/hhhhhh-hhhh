@@ -265,12 +265,14 @@ svg{display:block}
 .kv .k{color:var(--text-3)}
 .kv .v{font-family:var(--mono);color:var(--text);text-align:right}
 .kv .v.teal{color:var(--accent)}
-.spark{width:96px;flex-shrink:0;position:relative}
-.spark svg{width:100%;height:112px}
-.spark .lbl{position:absolute;right:0;font-size:9px;font-family:var(--mono);color:var(--text-3)}
+.spark{width:104px;flex-shrink:0;position:relative;align-self:stretch;min-height:150px}
+.spark svg{width:100%;height:100%;display:block;border-radius:6px;background:rgba(255,255,255,.015)}
+.spark svg text.sx{fill:var(--text-3);font-size:6px;font-family:var(--mono);paint-order:stroke;stroke:rgba(5,8,14,.75);stroke-width:2px}
+.spark-empty{color:var(--text-3);font-size:11px;text-align:center;padding:50px 0}
 .price-pill{
-  position:absolute;background:var(--accent);color:#04121a;font-size:9px;font-weight:700;
-  font-family:var(--mono);padding:2px 5px;border-radius:4px;right:30px;
+  position:absolute;background:var(--accent);color:#04121a;font-size:8.5px;font-weight:700;
+  font-family:var(--mono);padding:1px 4px;border-radius:3px;right:6px;
+  transform:translateY(-50%);box-shadow:0 1px 4px rgba(0,0,0,.4);pointer-events:none;
 }
 /* confidence */
 .conf-wrap{display:flex;gap:14px;align-items:center}
@@ -552,6 +554,7 @@ svg{display:block}
   var E=function(id){return document.getElementById(id);};
   var ST={market:"spot",signal:"OB",results:[],sel:-1,scannedAt:0,scanned:0,
           prev:null,stars:{},auto:true,timer:null,busy:false};
+  var SK=0;
 
   // runtime CSS for states not in the base stylesheet
   var st=document.createElement("style");
@@ -630,15 +633,23 @@ svg{display:block}
   }
   /* sample data — lets the full design render in any browser (file:// or
      when /api/scan is unreachable). Live data is used whenever available. */
-  function spark(base,dir){var a=[],v=base*0.985;for(var i=0;i<24;i++){
-    v+=base*((((i*73)%7)-3)/900)+dir*base*0.0016; a.push(+v.toFixed(base<1?6:2));}return a;}
+  function _seed(s){var h=2166136261;s=String(s);for(var i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619);}return h>>>0;}
+  function spark(base,dir,seed){
+    var s=(seed||123457)>>>0;
+    function rnd(){s=(Math.imul(s,1664525)+1013904223)>>>0;return s/4294967296;}
+    var n=46,a=[],v=base*(1-dir*0.04),vol=base*0.0055;
+    for(var i=0;i<n;i++){ v+=dir*base*0.0011+(rnd()-0.5)*2*vol; a.push(v); }
+    var adj=base-a[n-1];
+    for(var j=0;j<n;j++){ a[j]=+(a[j]+adj*(j/(n-1))).toFixed(base<1?6:2); }
+    return a;
+  }
   function sm(o){
     var t=o.dir==="bullish"?1:-1, str=Math.max(1,Math.round(o.score/12.5));
     var al={setup:o.setup,direction:o.dir,timeframe:o.tf,detail:o.detail,strength:str,meta:o.meta||{}};
     var cb=o.cb||[];
     return {symbol:o.sym,market:o.mkt,price:o.price,timeframe:o.tf,trend:t,itrend:t,
       rsi:o.rsi,atr:o.price*0.01,correlation:null,correlationLabel:null,
-      score:o.score,confidence:o.conf,sparkline:spark(o.price,t),sparklineMarkers:[],
+      score:o.score,confidence:o.conf,sparkline:spark(o.price,t,_seed(o.sym)),sparklineMarkers:[],
       alerts:[al],topAlert:al,rr:o.rr,ageText:o.age,zoneSizeText:o.size,
       confBreakdown:{htfAlignment:cb[0],zoneQuality:cb[1],structureConfluence:cb[2],momentum:cb[3],volume:cb[4]}};
   }
@@ -759,33 +770,56 @@ svg{display:block}
 
   function sparkSVG(r,z){
     var sp=(r&&r.sparkline)||[];
-    if(sp.length<2)return '<div style="color:var(--text-3);font-size:11px;padding:20px 0;text-align:center">no chart data</div>';
+    if(sp.length<2)return '<div class="spark-empty">no chart data</div>';
+    var W=96,Hh=150,P=8;
     var mn=Math.min.apply(null,sp),mx=Math.max.apply(null,sp);
     if(z){mn=Math.min(mn,z.lo);mx=Math.max(mx,z.hi);}
     if(r.price!=null){mn=Math.min(mn,r.price);mx=Math.max(mx,r.price);}
-    var pad=(mx-mn)*0.06||1; mn-=pad; mx+=pad;
-    var H=140,W=96, Y=function(v){return H-((v-mn)/(mx-mn))*H;};
-    var pts=sp.map(function(v,i){return (i/(sp.length-1)*W).toFixed(1)+","+Y(v).toFixed(1);}).join(" ");
-    var band="",lines="";
-    if(z){var yt=Y(z.hi),yb=Y(z.lo);
-      band='<rect x="0" y="'+yt.toFixed(1)+'" width="96" height="'+Math.max(1,(yb-yt)).toFixed(1)+'" fill="rgba(34,211,238,.13)"/>'+
-        '<line x1="0" y1="'+yt.toFixed(1)+'" x2="96" y2="'+yt.toFixed(1)+'" stroke="rgba(34,211,238,.4)" stroke-width="1" stroke-dasharray="3 3"/>'+
-        '<line x1="0" y1="'+yb.toFixed(1)+'" x2="96" y2="'+yb.toFixed(1)+'" stroke="rgba(34,211,238,.4)" stroke-width="1" stroke-dasharray="3 3"/>';
+    var rng=(mx-mn)||(mx||1); mn-=rng*0.10; mx+=rng*0.10; rng=(mx-mn)||1;
+    var X=function(i){return P+i/(sp.length-1)*(W-P-1);};
+    var Y=function(v){return P+(1-(v-mn)/rng)*(Hh-2*P);};
+    var id=++SK;
+    var pt=sp.map(function(v,i){return [X(i),Y(v)];});
+    function dpath(close){
+      var d="M"+pt[0][0].toFixed(2)+" "+pt[0][1].toFixed(2);
+      for(var i=0;i<pt.length-1;i++){
+        var p0=pt[i-1]||pt[i],p1=pt[i],p2=pt[i+1],p3=pt[i+2]||p2;
+        var c1x=p1[0]+(p2[0]-p0[0])/6,c1y=p1[1]+(p2[1]-p0[1])/6;
+        var c2x=p2[0]-(p3[0]-p1[0])/6,c2y=p2[1]-(p3[1]-p1[1])/6;
+        d+="C"+c1x.toFixed(2)+" "+c1y.toFixed(2)+","+c2x.toFixed(2)+" "+c2y.toFixed(2)+","+p2[0].toFixed(2)+" "+p2[1].toFixed(2);
+      }
+      if(close) d+="L"+X(sp.length-1).toFixed(2)+" "+(Hh-P).toFixed(2)+"L"+X(0).toFixed(2)+" "+(Hh-P).toFixed(2)+"Z";
+      return d;
     }
-    (r.sparklineMarkers||[]).forEach(function(m){
-      if(m.price>=mn&&m.price<=mx){var y=Y(m.price).toFixed(1);
-        lines+='<line x1="0" y1="'+y+'" x2="96" y2="'+y+'" stroke="rgba(167,139,250,.5)" stroke-width="1" stroke-dasharray="2 2"/>';}
-    });
-    var cy=r.price!=null?Y(r.price):Y(sp[sp.length-1]);
-    var RH=112;
+    var grid="";
+    for(var g=1;g<=3;g++){var gy=(P+(Hh-2*P)*g/4).toFixed(1);
+      grid+='<line x1="'+P+'" y1="'+gy+'" x2="'+(W-1)+'" y2="'+gy+'" stroke="rgba(255,255,255,.045)" stroke-width="1"/>';}
+    var band="";
+    if(z){var yt=Y(z.hi),yb=Y(z.lo),by=Math.min(yt,yb),bh=Math.max(2,Math.abs(yb-yt));
+      band='<rect x="'+P+'" y="'+by.toFixed(1)+'" width="'+(W-P-1)+'" height="'+bh.toFixed(1)+'" fill="url(#zb'+id+')"/>'+
+        '<line x1="'+P+'" y1="'+yt.toFixed(1)+'" x2="'+(W-1)+'" y2="'+yt.toFixed(1)+'" stroke="rgba(34,211,238,.4)" stroke-width="1" stroke-dasharray="2 2"/>'+
+        '<line x1="'+P+'" y1="'+yb.toFixed(1)+'" x2="'+(W-1)+'" y2="'+yb.toFixed(1)+'" stroke="rgba(34,211,238,.4)" stroke-width="1" stroke-dasharray="2 2"/>';
+    }
+    var cx=X(sp.length-1), cy=(r.price!=null?Y(r.price):pt[pt.length-1][1]);
+    var guide='<line x1="'+P+'" y1="'+cy.toFixed(1)+'" x2="'+(W-1)+'" y2="'+cy.toFixed(1)+'" stroke="rgba(34,211,238,.3)" stroke-width="1" stroke-dasharray="3 2"/>';
+    var dot='<circle cx="'+cx.toFixed(1)+'" cy="'+cy.toFixed(1)+'" r="5.5" fill="rgba(34,211,238,.18)"/>'+
+      '<circle cx="'+cx.toFixed(1)+'" cy="'+cy.toFixed(1)+'" r="2.4" fill="#22d3ee" stroke="#04121a" stroke-width="1"/>';
     var labs="";
-    for(var k=0;k<5;k++){var v=mx-(mx-mn)*k/4;var top=(k/4*(RH-12));
-      labs+='<span class="lbl" style="top:'+top.toFixed(0)+'px">'+fmt(v)+'</span>';}
-    return labs+
-      '<svg viewBox="0 0 96 140" preserveAspectRatio="none">'+band+lines+
-      '<polyline points="'+pts+'" fill="none" stroke="#22d3ee" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'+
-      '<circle cx="96" cy="'+cy.toFixed(1)+'" r="3" fill="#22d3ee"/></svg>'+
-      (r.price!=null?'<span class="price-pill" style="top:'+Math.max(0,Math.min(RH-14,cy*RH/140-7)).toFixed(0)+'px">'+fmt(r.price)+'</span>':"");
+    [[0,7],[1,-3]].forEach(function(f){var val=mx-(mx-mn)*f[0];var ly=(P+(Hh-2*P)*f[0]+f[1]);
+      labs+='<text x="'+(W-2)+'" y="'+ly.toFixed(1)+'" text-anchor="end" class="sx">'+fmt(val)+'</text>';});
+    var svg='<svg viewBox="0 0 '+W+' '+Hh+'" width="100%" height="100%" preserveAspectRatio="none">'+
+      '<defs><linearGradient id="ar'+id+'" x1="0" y1="0" x2="0" y2="1">'+
+        '<stop offset="0" stop-color="#22d3ee" stop-opacity=".28"/>'+
+        '<stop offset=".55" stop-color="#22d3ee" stop-opacity=".07"/>'+
+        '<stop offset="1" stop-color="#22d3ee" stop-opacity="0"/></linearGradient>'+
+      '<linearGradient id="zb'+id+'" x1="0" y1="0" x2="0" y2="1">'+
+        '<stop offset="0" stop-color="#22d3ee" stop-opacity=".15"/>'+
+        '<stop offset="1" stop-color="#22d3ee" stop-opacity=".05"/></linearGradient></defs>'+
+      grid+band+
+      '<path d="'+dpath(true)+'" fill="url(#ar'+id+')" stroke="none"/>'+
+      '<path d="'+dpath(false)+'" fill="none" stroke="#22d3ee" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>'+
+      guide+dot+labs+'</svg>';
+    return svg+(r.price!=null?'<span class="price-pill" style="top:'+Math.max(4,Math.min(96,cy/Hh*100)).toFixed(2)+'%">'+fmt(r.price)+'</span>':"");
   }
 
   function bar(lbl,v){v=Math.max(0,Math.min(100,Math.round(v||0)));
