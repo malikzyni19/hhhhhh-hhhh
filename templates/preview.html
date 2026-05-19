@@ -274,8 +274,8 @@ svg{display:block}
 .spark-empty{color:var(--text-3);font-size:11px;text-align:center;padding:50px 0}
 .price-pill{
   position:absolute;background:var(--accent);color:#04121a;font-size:8.5px;font-weight:700;
-  font-family:var(--mono);padding:1px 4px;border-radius:3px;right:6px;
-  transform:translateY(-50%);box-shadow:0 1px 4px rgba(0,0,0,.4);pointer-events:none;
+  font-family:var(--mono);padding:1px 4px;border-radius:3px;left:50%;
+  transform:translate(-50%,-50%);box-shadow:0 1px 5px rgba(0,0,0,.5);pointer-events:none;white-space:nowrap;
 }
 /* confidence */
 .conf-wrap{display:flex;gap:14px;align-items:center}
@@ -338,9 +338,10 @@ svg{display:block}
   .main-scroll{overflow:visible;padding:14px}
   .main-head{flex-direction:column;align-items:stretch;gap:10px}
   .main-title{font-size:20px}
-  .head-ctrls{margin-left:0;flex-wrap:wrap;gap:8px}
-  .seg{flex:1;min-width:0}
-  .seg button{flex:1;padding:8px 6px}
+  .head-ctrls{margin-left:0;flex-wrap:nowrap;overflow-x:auto;gap:8px;padding-bottom:4px;-webkit-overflow-scrolling:touch}
+  .head-ctrls .btn{flex:0 0 auto;white-space:nowrap}
+  .seg{flex:0 0 auto;min-width:0}
+  .seg button{flex:0 0 auto;padding:8px 14px;white-space:nowrap}
   .kpi-row{grid-template-columns:repeat(2,1fr);gap:10px}
   .kpi-v{font-size:22px}
   .chips{overflow-x:auto;flex-wrap:nowrap;padding-bottom:4px}
@@ -884,10 +885,10 @@ svg{display:block}
         '<line x1="'+P+'" y1="'+yt.toFixed(1)+'" x2="'+(W-1)+'" y2="'+yt.toFixed(1)+'" stroke="rgba(34,211,238,.4)" stroke-width="1" stroke-dasharray="2 2"/>'+
         '<line x1="'+P+'" y1="'+yb.toFixed(1)+'" x2="'+(W-1)+'" y2="'+yb.toFixed(1)+'" stroke="rgba(34,211,238,.4)" stroke-width="1" stroke-dasharray="2 2"/>';
     }
-    var cx=X(sp.length-1), cy=(r.price!=null?Y(r.price):pt[pt.length-1][1]);
-    var guide='<line x1="'+P+'" y1="'+cy.toFixed(1)+'" x2="'+(W-1)+'" y2="'+cy.toFixed(1)+'" stroke="rgba(34,211,238,.3)" stroke-width="1" stroke-dasharray="3 2"/>';
-    var dot='<circle cx="'+cx.toFixed(1)+'" cy="'+cy.toFixed(1)+'" r="5.5" fill="rgba(34,211,238,.18)"/>'+
-      '<circle cx="'+cx.toFixed(1)+'" cy="'+cy.toFixed(1)+'" r="2.4" fill="#22d3ee" stroke="#04121a" stroke-width="1"/>';
+    var cy=(r.price!=null?Y(r.price):pt[pt.length-1][1]), ccx=W/2;
+    var guide='<line x1="'+P+'" y1="'+cy.toFixed(1)+'" x2="'+(W-1)+'" y2="'+cy.toFixed(1)+'" stroke="rgba(34,211,238,.32)" stroke-width="1" stroke-dasharray="3 2"/>';
+    var dot='<circle cx="'+ccx+'" cy="'+cy.toFixed(1)+'" r="6.5" fill="rgba(34,211,238,.16)"/>'+
+      '<circle cx="'+ccx+'" cy="'+cy.toFixed(1)+'" r="2.7" fill="#22d3ee" stroke="#04121a" stroke-width="1"/>';
     var labs="";
     [[0,7],[1,-3]].forEach(function(f){var val=mx-(mx-mn)*f[0];var ly=(P+(Hh-2*P)*f[0]+f[1]);
       labs+='<text x="'+(W-2)+'" y="'+ly.toFixed(1)+'" text-anchor="end" class="sx">'+fmt(val)+'</text>';});
