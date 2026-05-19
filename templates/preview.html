@@ -396,7 +396,7 @@ svg{display:block}
           <div class="head-ctrls">
             <div class="seg" id="segMarket"><button data-mkt="spot" class="on">Spot</button><button data-mkt="perpetual">Perpetual</button></div>
             <div class="seg" id="segSignal"><button data-sig="OB" class="on">OB</button><button data-sig="BREAKER">Breaker</button><button data-sig="FIB">Fib</button><button data-sig="ALL">All</button></div>
-            <button class="btn" id="btnRescan"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>Rescan</button>
+            <button class="btn" id="btnFilters"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg>Filters <span class="badge-n">3</span></button>
           </div>
         </div>
 
@@ -632,28 +632,31 @@ svg{display:block}
      when /api/scan is unreachable). Live data is used whenever available. */
   function spark(base,dir){var a=[],v=base*0.985;for(var i=0;i<24;i++){
     v+=base*((((i*73)%7)-3)/900)+dir*base*0.0016; a.push(+v.toFixed(base<1?6:2));}return a;}
-  function sm(symbol,price,setup,direction,score,confidence,rsi,tf,meta,detail){
-    var t=direction==="bullish"?1:-1, str=Math.max(1,Math.round(score/12.5));
-    var al={setup:setup,direction:direction,timeframe:tf,detail:detail,strength:str,meta:meta};
-    return {symbol:symbol,price:price,timeframe:tf,trend:t,itrend:t,rsi:rsi,atr:price*0.01,
-      correlation:null,correlationLabel:null,score:score,confidence:confidence,
-      sparkline:spark(price,t),sparklineMarkers:[],alerts:[al],topAlert:al};
+  function sm(o){
+    var t=o.dir==="bullish"?1:-1, str=Math.max(1,Math.round(o.score/12.5));
+    var al={setup:o.setup,direction:o.dir,timeframe:o.tf,detail:o.detail,strength:str,meta:o.meta||{}};
+    var cb=o.cb||[];
+    return {symbol:o.sym,market:o.mkt,price:o.price,timeframe:o.tf,trend:t,itrend:t,
+      rsi:o.rsi,atr:o.price*0.01,correlation:null,correlationLabel:null,
+      score:o.score,confidence:o.conf,sparkline:spark(o.price,t),sparklineMarkers:[],
+      alerts:[al],topAlert:al,rr:o.rr,ageText:o.age,zoneSizeText:o.size,
+      confBreakdown:{htfAlignment:cb[0],zoneQuality:cb[1],structureConfluence:cb[2],momentum:cb[3],volume:cb[4]}};
   }
   var SAMPLE=[
-    sm("BTCUSDT",60812.3,"OB","bullish",82,"High",62,"4H",{obTop:61240,obBottom:59850,obQuality:85,obQualityLabel:"High",obTouches:1,highProb:true,absorptionPass:true},"Clean bullish OB on 4H. Price reclaiming mid-range. Watch for confirmation on lower timeframe."),
-    sm("ETHUSDT",2931.4,"OB","bullish",78,"High",58,"4H",{obTop:2965.3,obBottom:2882.1,obQuality:80,obQualityLabel:"High",obTouches:1,highProb:true},"Bullish order block holding; HTF trend up."),
-    sm("SOLUSDT",158.9,"BREAKER_INSIDE","bullish",73,"Medium",55,"4H",{breakerTop:161.45,breakerBottom:155.2,breakerDir:"bullish",breakerState:"inside",breakerAge:6},"Price inside bullish breaker block."),
-    sm("BNBUSDT",568.2,"FIB_APPROACH","bullish",69,"Medium",51,"4H",{fibLevel:"0.618",fibPrice:567.1},"Approaching 0.618 retracement of prior leg."),
-    sm("XRPUSDT",0.5318,"OB","bearish",76,"High",44,"4H",{obTop:0.5402,obBottom:0.5251,obQuality:78,obQualityLabel:"High",obTouches:2},"Bearish OB; HTF bias down."),
-    sm("ADAUSDT",0.4612,"BREAKER_APPROACH","bearish",65,"Medium",47,"4H",{breakerTop:0.4681,breakerBottom:0.455,breakerDir:"bearish",breakerState:"approaching",breakerAge:9},"Approaching bearish breaker."),
-    sm("DOGEUSDT",0.15290,"FIB_REACTION","bearish",63,"Medium",40,"4H",{fibLevel:"0.618",fibPrice:0.15410,rejectionStrength:1.8,fvgConfluence:true},"Rejection at 0.618 with FVG confluence."),
-    sm("AVAXUSDT",36.55,"OB","bullish",71,"Medium",53,"4H",{obTop:37.45,obBottom:35.8,obQuality:72,obQualityLabel:"Medium",obTouches:1},"Bullish OB forming on 4H."),
-    sm("LINKUSDT",14.42,"OB","bearish",68,"Medium",46,"4H",{obTop:14.82,obBottom:14.1,obQuality:70,obQualityLabel:"Medium",obTouches:1},"Bearish OB; watch lower timeframe."),
-    sm("LTCUSDT",92.4,"BREAKER_INSIDE","bullish",61,"Medium",50,"4H",{breakerTop:94.2,breakerBottom:90.1,breakerDir:"bullish",breakerState:"inside",breakerAge:4},"Inside bullish breaker zone."),
+    sm({sym:"BTCUSDT",mkt:"Perp",price:60812.3,setup:"OB",dir:"bullish",score:82,conf:"High",rsi:62,tf:"4H",rr:2.35,age:"1h 12m",size:"~1.39B",cb:[90,85,80,75,78],meta:{obTop:61240,obBottom:59850,obQuality:85,obQualityLabel:"High",obTouches:1,highProb:true,absorptionPass:true},detail:"HTF (1D/4H) bullish bias and structure support. Clean bullish OB on 4H reclaiming mid-range; watch for lower-timeframe confirmation."}),
+    sm({sym:"ETHUSDT",mkt:"Perp",price:2931.4,setup:"OB",dir:"bullish",score:78,conf:"High",rsi:58,tf:"4H",rr:2.18,age:"45m",size:"~842.5M",cb:[88,82,76,70,74],meta:{obTop:2965.3,obBottom:2882.1,obQuality:82,obQualityLabel:"High",obTouches:1,highProb:true},detail:"Bullish order block holding; HTF trend up."}),
+    sm({sym:"SOLUSDT",mkt:"Perp",price:158.9,setup:"BREAKER_INSIDE",dir:"bullish",score:73,conf:"Medium",rsi:55,tf:"4H",rr:2.05,age:"32m",size:"~318.7M",cb:[80,74,70,66,68],meta:{breakerTop:161.45,breakerBottom:155.2,breakerDir:"bullish",breakerState:"inside",breakerAge:6},detail:"Price inside bullish breaker block."}),
+    sm({sym:"BNBUSDT",mkt:"Spot",price:568.2,setup:"FIB_APPROACH",dir:"bullish",score:69,conf:"Medium",rsi:51,tf:"4H",rr:1.86,age:"2h 05m",size:"~191.2M",cb:[74,70,66,60,62],meta:{fibLevel:"0.618",fibPrice:567.1,barsCount:31,legScore:0.7},detail:"Approaching 0.618 retracement of prior leg."}),
+    sm({sym:"XRPUSDT",mkt:"Perp",price:0.5318,setup:"OB",dir:"bearish",score:76,conf:"High",rsi:44,tf:"4H",rr:2.21,age:"1h 08m",size:"~402.9M",cb:[86,80,74,72,70],meta:{obTop:0.5402,obBottom:0.5251,obQuality:80,obQualityLabel:"High",obTouches:2},detail:"Bearish OB; HTF bias down."}),
+    sm({sym:"ADAUSDT",mkt:"Spot",price:0.4612,setup:"BREAKER_APPROACH",dir:"bearish",score:65,conf:"Medium",rsi:47,tf:"4H",rr:1.79,age:"50m",size:"~88.4M",cb:[72,66,62,58,60],meta:{breakerTop:0.4681,breakerBottom:0.455,breakerDir:"bearish",breakerState:"approaching",breakerAge:9},detail:"Approaching bearish breaker."}),
+    sm({sym:"DOGEUSDT",mkt:"Perp",price:0.15290,setup:"FIB_REACTION",dir:"bearish",score:63,conf:"Medium",rsi:40,tf:"4H",rr:1.68,age:"40m",size:"~64.1M",cb:[70,64,68,56,58],meta:{fibLevel:"0.618",fibPrice:0.15410,barsCount:22,legScore:0.66,rejectionStrength:1.8,fvgConfluence:true},detail:"Rejection at 0.618 with FVG confluence."}),
+    sm({sym:"AVAXUSDT",mkt:"Spot",price:36.55,setup:"OB",dir:"bullish",score:71,conf:"Medium",rsi:53,tf:"4H",rr:1.97,age:"1h 33m",size:"~129.6M",cb:[78,72,68,64,66],meta:{obTop:37.45,obBottom:35.8,obQuality:72,obQualityLabel:"Medium",obTouches:1},detail:"Bullish OB forming on 4H."}),
+    sm({sym:"MATICUSDT",mkt:"Perp",price:0.6968,setup:"BREAKER_INSIDE",dir:"bullish",score:61,conf:"Medium",rsi:50,tf:"4H",rr:1.62,age:"28m",size:"~47.3M",cb:[68,62,60,56,58],meta:{breakerTop:0.7120,breakerBottom:0.6815,breakerDir:"bullish",breakerState:"inside",breakerAge:4},detail:"Inside bullish breaker zone."}),
+    sm({sym:"LINKUSDT",mkt:"Spot",price:14.42,setup:"OB",dir:"bearish",score:68,conf:"Medium",rsi:46,tf:"4H",rr:1.84,age:"1h 15m",size:"~73.8M",cb:[74,70,66,62,64],meta:{obTop:14.82,obBottom:14.1,obQuality:70,obQualityLabel:"Medium",obTouches:1},detail:"Bearish OB; watch lower timeframe."}),
   ];
   function useSample(note){
     ST.results=SAMPLE.slice(); ST.scanned=128; ST.scannedAt=Date.now(); ST.sel=0;
-    renderAll(); E("mainSub").textContent=note;
+    renderAll();
   }
   function scan(){
     if(ST.busy)return;
@@ -693,12 +696,11 @@ svg{display:block}
   function renderAll(){renderKPI();renderTable();renderInsight();renderMeta();}
 
   function renderMeta(){
-    var mk=ST.market==="perpetual"?"Perpetual":"Spot";
-    var sg=ST.signal==="ALL"?"all setups":ST.signal+" setups";
-    E("mainSub").textContent="All instruments • "+mk+" • "+sg;
+    E("mainSub").textContent="All instruments across selected markets";
     E("lastScan").textContent=ST.scannedAt?rel(ST.scannedAt):"—";
-    E("pagerInfo").textContent= ST.results.length
-      ? ("Showing "+ST.results.length+" setups • "+ST.scanned+" markets scanned")
+    var n=ST.results.length;
+    E("pagerInfo").textContent= n
+      ? ("Showing 1 to "+n+" of "+n+" results")
       : "No setups found";
   }
 
@@ -742,14 +744,14 @@ svg{display:block}
         '<td data-star="'+i+'">'+(ST.stars[r.symbol]?IC.starOn:IC.starOff)+'</td>'+
         '<td class="idx">'+(i+1)+'</td>'+
         '<td class="sym">'+esc(r.symbol)+'</td>'+
-        '<td class="mkt">'+mkt+'</td>'+
+        '<td class="mkt">'+esc(r.market||mkt)+'</td>'+
         '<td><span class="dir '+d+'">'+(d==="bull"?IC.up:d==="bear"?IC.dn:"")+dl+'</span></td>'+
         '<td class="setup">'+esc(setupLabel(a))+'</td>'+
         '<td class="zone">'+zs+'</td>'+
         '<td class="conf '+confClass(sc)+'">'+Math.round(sc)+'%</td>'+
         '<td class="htf '+h+'">'+hl+'</td>'+
-        '<td class="rr">—</td>'+
-        '<td class="age">'+esc(ageOf(a))+'</td>'+
+        '<td class="rr">'+(r.rr!=null?(+r.rr).toFixed(2):"—")+'</td>'+
+        '<td class="age">'+esc(r.ageText||ageOf(a))+'</td>'+
         '<td class="upd">'+rel(ST.scannedAt)+'</td>'+
       '</tr>';
     }).join('');
@@ -823,10 +825,11 @@ svg{display:block}
     var strengthPct = a.strength!=null?Math.round((+a.strength)/8*100):0;
     var rsiV = r.rsi!=null?Math.round(r.rsi):null;
     var trendAlign = (htfOf(r)===d&&d!=="neutral")?100:(htfOf(r)==="neutral"?50:20);
+    var cb = r.confBreakdown||{};
     box.innerHTML=head+
       '<div class="ins-title">'+(ST.stars[r.symbol]?IC.starOn:IC.starOff)+
         '<span class="ins-sym">'+esc(r.symbol)+'</span>'+
-        '<span class="tag mkt">'+mk+'</span>'+dTag+'</div>'+
+        '<span class="tag mkt">'+esc(r.market||mk)+'</span>'+dTag+'</div>'+
       '<div class="ins-meta"><span>Main Scan • '+esc(setupLabel(a))+'</span><span>'+rel(ST.scannedAt)+'</span></div>'+
       '<div class="sec"><div class="sec-h">ZONE DETAILS <svg class="ico" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></div>'+
         '<div class="sec-b"><div class="zd"><div class="zd-list">'+
@@ -834,9 +837,9 @@ svg{display:block}
           kv("Price Range",z?(z.single?fmt(z.hi):fmt(z.hi)+" – "+fmt(z.lo)):"—")+
           kv("Mid Price",mid!=null?fmt(mid):"—")+
           kv("Current Price",r.price!=null?fmt(r.price):"—",true)+
-          kv("RSI",rsiV!=null?rsiV:"—")+
+          kv("Size (USD)",r.zoneSizeText||"—")+
           kv("Touches",touches!=null?touches:"—")+
-          kv("Age",ageOf(a))+
+          kv("Age",r.ageText||ageOf(a))+
           kv("Timeframe",(a.timeframe||r.timeframe||"—"))+
         '</div><div class="spark">'+sparkSVG(r,z)+'</div></div></div></div>'+
       '<div class="sec"><div class="sec-h">CONFIDENCE</div><div class="sec-b"><div class="conf-wrap">'+
@@ -846,11 +849,11 @@ svg{display:block}
             'stroke-dasharray="251.2" stroke-dashoffset="'+(251.2*(1-sc/100)).toFixed(1)+'"/></svg>'+
           '<div class="c"><div class="pct">'+Math.round(sc)+'%</div><div class="lv">'+esc(r.confidence||"")+'</div></div></div>'+
         '<div class="bars">'+
-          bar("Overall Score",sc)+
-          bar("Setup Strength",strengthPct)+
-          (qual!=null?bar("Zone Quality",qual):bar("Signal Diversity",Math.min(100,(r.alerts||[]).length*33)))+
-          bar("RSI",rsiV!=null?rsiV:0)+
-          bar("Trend Alignment",trendAlign)+
+          bar("HTF Alignment",cb.htfAlignment!=null?cb.htfAlignment:trendAlign)+
+          bar("Zone Quality",cb.zoneQuality!=null?cb.zoneQuality:(qual!=null?qual:strengthPct))+
+          bar("Structure Confluence",cb.structureConfluence!=null?cb.structureConfluence:Math.min(100,(r.alerts||[]).length*33))+
+          bar("Momentum",cb.momentum!=null?cb.momentum:(rsiV!=null?rsiV:50))+
+          bar("Volume",cb.volume!=null?cb.volume:50)+
         '</div></div></div></div>'+
       '<div class="sec"><div class="sec-h">CONFLUENCE</div><div class="sec-b">'+confluenceList(r,a)+'</div></div>'+
       '<div class="sec"><div class="sec-h">NOTES</div><div class="sec-b"><div class="notes">'+
@@ -861,7 +864,7 @@ svg{display:block}
   function kv(k,v,teal){return '<div class="kv"><span class="k">'+k+'</span><span class="v'+(teal?" teal":"")+'">'+esc(v)+'</span></div>';}
   function setFoot(r){
     var c=E("btnChart");
-    if(r){var suf=ST.market==="perpetual"?".P":"";
+    if(r){var suf=((r.market||(ST.market==="perpetual"?"Perp":"Spot"))==="Perp")?".P":"";
       c.href="https://www.tradingview.com/chart/?symbol=BINANCE:"+encodeURIComponent(r.symbol)+suf;
       c.style.pointerEvents="";c.style.opacity="";}
     else{c.href="#";c.style.pointerEvents="none";c.style.opacity=".5";}
@@ -884,7 +887,7 @@ svg{display:block}
   }
   seg("segMarket","data-mkt","market",scan);
   seg("segSignal","data-sig","signal",scan);
-  E("btnRescan").addEventListener("click",scan);
+  E("btnFilters").addEventListener("click",scan);
   E("arToggle").addEventListener("click",function(){
     ST.auto=!ST.auto; this.classList.toggle("on",ST.auto);
     if(ST.auto){ST.timer=setInterval(scan,30000);}else{clearInterval(ST.timer);ST.timer=null;}
