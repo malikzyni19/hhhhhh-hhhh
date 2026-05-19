@@ -43,8 +43,8 @@ body{
 }
 .viewport{
   position:fixed;inset:0;
-  display:flex;align-items:center;justify-content:center;
-  overflow:hidden;background:var(--bg-app);padding:12px;
+  display:flex;align-items:flex-start;justify-content:center;
+  overflow:auto;background:var(--bg-window);padding:0;
 }
 .frame{position:relative;flex:0 0 auto}
 .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
@@ -52,11 +52,10 @@ body{
   position:absolute;top:0;left:0;transform-origin:top left;
   width:1280px;height:930px;
   background:var(--bg-window);
-  border:1px solid var(--border);
-  border-radius:14px;
+  border:none;
+  border-radius:0;
   overflow:hidden;
   display:flex;flex-direction:column;
-  box-shadow:0 24px 80px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.02) inset;
 }
 svg{display:block}
 .ico{width:16px;height:16px;stroke:currentColor;stroke-width:2;fill:none;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
@@ -143,7 +142,7 @@ svg{display:block}
 
 /* ───── MAIN ───── */
 .main{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--bg-window)}
-.main-scroll{flex:1;overflow:auto;padding:18px 20px}
+.main-scroll{flex:1;overflow-y:auto;overflow-x:hidden;padding:18px 20px}
 .main-head{display:flex;align-items:flex-start;gap:16px;margin-bottom:18px}
 .main-title{font-size:19px;font-weight:700;display:flex;align-items:center;gap:7px}
 .main-title .ico{color:var(--text-3);width:15px;height:15px}
@@ -187,13 +186,17 @@ svg{display:block}
 .chip-clear:hover{text-decoration:underline}
 
 /* table */
-.tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+.tbl{width:100%;border-collapse:collapse;font-size:11px;table-layout:fixed}
 .tbl thead th{
-  text-align:left;font-size:10px;font-weight:700;letter-spacing:.7px;color:var(--text-3);
-  padding:9px 10px;border-bottom:1px solid var(--border);white-space:nowrap;
+  text-align:left;font-size:9px;font-weight:700;letter-spacing:.4px;color:var(--text-3);
+  padding:7px 5px;border-bottom:1px solid var(--border);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;
 }
 .tbl thead th.r{text-align:right}
-.tbl tbody td{padding:11px 10px;border-bottom:1px solid rgba(27,38,54,.55);white-space:nowrap}
+.tbl tbody td{padding:8px 5px;border-bottom:1px solid rgba(27,38,54,.55);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tbl col.c1{width:3%}.tbl col.c2{width:3.5%}.tbl col.c3{width:11%}.tbl col.c4{width:6%}
+.tbl col.c5{width:10%}.tbl col.c6{width:9%}.tbl col.c7{width:16.5%}.tbl col.c8{width:8.5%}
+.tbl col.c9{width:9%}.tbl col.c10{width:6.5%}.tbl col.c11{width:7.5%}.tbl col.c12{width:9%}
 .tbl tbody tr{transition:background .14s;cursor:pointer}
 .tbl tbody tr:hover{background:var(--bg-hover)}
 .tbl tbody tr.sel{background:var(--accent-soft)}
@@ -414,6 +417,10 @@ svg{display:block}
         </div>
 
         <table class="tbl">
+          <colgroup>
+            <col class="c1"><col class="c2"><col class="c3"><col class="c4"><col class="c5"><col class="c6">
+            <col class="c7"><col class="c8"><col class="c9"><col class="c10"><col class="c11"><col class="c12">
+          </colgroup>
           <thead><tr>
             <th></th><th>#</th><th>SYMBOL</th><th>MARKET</th><th>DIRECTION</th><th>SETUP TYPE</th>
             <th>ZONE (PRICE)</th><th>CONFIDENCE</th><th>HTF BIAS</th><th>RR (TP1/SL)</th><th>AGE</th><th>UPDATED</th>
@@ -539,9 +546,9 @@ svg{display:block}
 
 <script>
 (function fitApp(){
-  var W=1280,H=930,PAD=24;
+  var W=1280,H=930;
   function fit(){
-    var s=Math.min((innerWidth-PAD)/W,(innerHeight-PAD)/H,1);
+    var s=innerWidth/W;
     var win=document.querySelector('.window'),fr=document.querySelector('.frame');
     win.style.transform='scale('+s+')';
     fr.style.width=(W*s)+'px';fr.style.height=(H*s)+'px';
@@ -772,10 +779,13 @@ svg{display:block}
     var sp=(r&&r.sparkline)||[];
     if(sp.length<2)return '<div class="spark-empty">no chart data</div>';
     var W=96,Hh=150,P=8;
-    var mn=Math.min.apply(null,sp),mx=Math.max.apply(null,sp);
-    if(z){mn=Math.min(mn,z.lo);mx=Math.max(mx,z.hi);}
-    if(r.price!=null){mn=Math.min(mn,r.price);mx=Math.max(mx,r.price);}
-    var rng=(mx-mn)||(mx||1); mn-=rng*0.10; mx+=rng*0.10; rng=(mx-mn)||1;
+    var lo=Math.min.apply(null,sp),hi=Math.max.apply(null,sp);
+    if(z){lo=Math.min(lo,z.lo);hi=Math.max(hi,z.hi);}
+    var px=(r.price!=null?r.price:sp[sp.length-1]);
+    // symmetric range around current price -> price sits at vertical centre
+    var dev=Math.max(hi-px,px-lo,(hi-lo)*0.5,Math.abs(px)*0.012)||1;
+    dev*=1.2;
+    var mn=px-dev,mx=px+dev,rng=mx-mn;
     var X=function(i){return P+i/(sp.length-1)*(W-P-1);};
     var Y=function(v){return P+(1-(v-mn)/rng)*(Hh-2*P);};
     var id=++SK;
