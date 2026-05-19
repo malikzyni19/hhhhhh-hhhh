@@ -628,11 +628,37 @@ svg{display:block}
       filterMode:"match", checkedSignals:checked, requiredSignals:[]
     };
   }
+  /* sample data — lets the full design render in any browser (file:// or
+     when /api/scan is unreachable). Live data is used whenever available. */
+  function spark(base,dir){var a=[],v=base*0.985;for(var i=0;i<24;i++){
+    v+=base*((((i*73)%7)-3)/900)+dir*base*0.0016; a.push(+v.toFixed(base<1?6:2));}return a;}
+  function sm(symbol,price,setup,direction,score,confidence,rsi,tf,meta,detail){
+    var t=direction==="bullish"?1:-1, str=Math.max(1,Math.round(score/12.5));
+    var al={setup:setup,direction:direction,timeframe:tf,detail:detail,strength:str,meta:meta};
+    return {symbol:symbol,price:price,timeframe:tf,trend:t,itrend:t,rsi:rsi,atr:price*0.01,
+      correlation:null,correlationLabel:null,score:score,confidence:confidence,
+      sparkline:spark(price,t),sparklineMarkers:[],alerts:[al],topAlert:al};
+  }
+  var SAMPLE=[
+    sm("BTCUSDT",60812.3,"OB","bullish",82,"High",62,"4H",{obTop:61240,obBottom:59850,obQuality:85,obQualityLabel:"High",obTouches:1,highProb:true,absorptionPass:true},"Clean bullish OB on 4H. Price reclaiming mid-range. Watch for confirmation on lower timeframe."),
+    sm("ETHUSDT",2931.4,"OB","bullish",78,"High",58,"4H",{obTop:2965.3,obBottom:2882.1,obQuality:80,obQualityLabel:"High",obTouches:1,highProb:true},"Bullish order block holding; HTF trend up."),
+    sm("SOLUSDT",158.9,"BREAKER_INSIDE","bullish",73,"Medium",55,"4H",{breakerTop:161.45,breakerBottom:155.2,breakerDir:"bullish",breakerState:"inside",breakerAge:6},"Price inside bullish breaker block."),
+    sm("BNBUSDT",568.2,"FIB_APPROACH","bullish",69,"Medium",51,"4H",{fibLevel:"0.618",fibPrice:567.1},"Approaching 0.618 retracement of prior leg."),
+    sm("XRPUSDT",0.5318,"OB","bearish",76,"High",44,"4H",{obTop:0.5402,obBottom:0.5251,obQuality:78,obQualityLabel:"High",obTouches:2},"Bearish OB; HTF bias down."),
+    sm("ADAUSDT",0.4612,"BREAKER_APPROACH","bearish",65,"Medium",47,"4H",{breakerTop:0.4681,breakerBottom:0.455,breakerDir:"bearish",breakerState:"approaching",breakerAge:9},"Approaching bearish breaker."),
+    sm("DOGEUSDT",0.15290,"FIB_REACTION","bearish",63,"Medium",40,"4H",{fibLevel:"0.618",fibPrice:0.15410,rejectionStrength:1.8,fvgConfluence:true},"Rejection at 0.618 with FVG confluence."),
+    sm("AVAXUSDT",36.55,"OB","bullish",71,"Medium",53,"4H",{obTop:37.45,obBottom:35.8,obQuality:72,obQualityLabel:"Medium",obTouches:1},"Bullish OB forming on 4H."),
+    sm("LINKUSDT",14.42,"OB","bearish",68,"Medium",46,"4H",{obTop:14.82,obBottom:14.1,obQuality:70,obQualityLabel:"Medium",obTouches:1},"Bearish OB; watch lower timeframe."),
+    sm("LTCUSDT",92.4,"BREAKER_INSIDE","bullish",61,"Medium",50,"4H",{breakerTop:94.2,breakerBottom:90.1,breakerDir:"bullish",breakerState:"inside",breakerAge:4},"Inside bullish breaker zone."),
+  ];
+  function useSample(note){
+    ST.results=SAMPLE.slice(); ST.scanned=128; ST.scannedAt=Date.now(); ST.sel=0;
+    renderAll(); E("mainSub").textContent=note;
+  }
   function scan(){
     if(ST.busy)return;
     if(location.protocol==="file:"){
-      msg("Open this page at <b>/preview</b> on the running ZyNi app to load live data (file:// can't reach the API).");
-      E("pagerInfo").textContent="Not connected — open via /preview";
+      useSample("Sample data — open at /preview on your running app for live results");
       return;
     }
     ST.busy=true;
@@ -641,9 +667,9 @@ svg{display:block}
     fetch("/api/scan",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify(buildPayload())})
       .then(function(r){
-        if(r.status===429)throw new Error("Daily scan limit reached. Resets at midnight UTC.");
-        if(r.status===401||r.status===403)throw new Error("Session expired — reload and log in again.");
-        if(!r.ok)throw new Error("Scan failed ("+r.status+")");
+        if(r.status===429)throw new Error("daily scan limit reached");
+        if(r.status===401||r.status===403)throw new Error("session expired — log in");
+        if(!r.ok)throw new Error("HTTP "+r.status);
         return r.json();
       })
       .then(function(d){
@@ -653,10 +679,10 @@ svg{display:block}
         ST.scannedAt=Date.now();
         ST.sel=ST.results.length?0:-1;
         renderAll();
+        if(!ST.results.length)E("mainSub").textContent="Live — no setups match the current filter";
       })
       .catch(function(e){
-        msg(esc(e.message||"Scan failed"),true);
-        E("pagerInfo").textContent="Error";
+        useSample("Sample data — couldn't reach /api/scan ("+esc(e.message)+"). Live data loads when served at /preview while logged in.");
       })
       .finally(function(){ST.busy=false;});
   }
