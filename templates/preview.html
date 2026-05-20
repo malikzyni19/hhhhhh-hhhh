@@ -409,6 +409,89 @@ svg{display:block}
 .lm-kv{display:flex;justify-content:space-between;font-size:11.5px;color:var(--text-3)}
 .lm-kv b{color:var(--text);font-family:var(--mono);font-weight:600}
 
+/* Dashboard (Wave 8) */
+.db-wrap{display:flex;flex-direction:column;gap:14px}
+.db-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.db-ctrls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.db-status{font-size:11px;color:var(--text-3);font-family:var(--mono);padding:3px 8px;border:1px solid var(--border);border-radius:6px}
+.db-grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}
+.db-card{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:14px;min-height:120px}
+.db-h{font-size:10px;font-weight:700;letter-spacing:1.1px;color:var(--accent);margin-bottom:10px}
+.db-b{font-size:12.5px;color:var(--text-2)}
+.db-mktpulse{grid-column:span 12}
+.db-tile{grid-column:span 6}
+.db-wl{grid-column:span 12}
+.db-budget{grid-column:span 12}
+.db-mp{display:flex;align-items:center;gap:24px;flex-wrap:wrap}
+.db-mp-l{display:flex;flex-direction:column;gap:4px;min-width:180px}
+.db-mp-sym{font-family:var(--mono);font-size:13px;color:var(--text-3);letter-spacing:.6px;font-weight:700}
+.db-mp-px{font-size:30px;font-weight:700;font-family:var(--mono);color:var(--text);line-height:1}
+.db-mp-d{font-size:12px;font-family:var(--mono);font-weight:600}
+.db-mp-d.g{color:var(--green-2)}
+.db-mp-d.r{color:var(--red-2)}
+.db-mp-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px 18px;flex:1;min-width:280px}
+.db-mp-stats .kv{display:flex;justify-content:space-between;font-size:12px}
+.db-mp-stats .k{color:var(--text-3)}
+.db-mp-stats .v{font-family:var(--mono);color:var(--text);text-align:right}
+.db-item{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:7px 0;border-bottom:1px solid rgba(27,38,54,.5);font-size:12.5px}
+.db-item:last-child{border-bottom:0}
+.db-i-sym{font-family:var(--mono);font-weight:700;color:var(--text);min-width:80px}
+.db-i-meta{color:var(--text-3);font-size:11.5px;flex:1;text-align:left;padding:0 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.db-i-tail{font-family:var(--mono);font-weight:600;color:var(--text);text-align:right;font-size:12px;white-space:nowrap}
+.db-i-tail.g{color:var(--green-2)}
+.db-i-tail.r{color:var(--red-2)}
+.db-i-tail.conf.hi{color:var(--green-2)}
+.db-i-tail.conf.mid{color:var(--accent)}
+.db-i-tail.conf.lo{color:var(--yellow)}
+.db-half{padding:2px 0}
+.db-half-h{font-size:10px;font-weight:700;letter-spacing:.7px;margin-bottom:4px}
+.db-half-h.g{color:var(--green-2)}
+.db-half-h.r{color:var(--red-2)}
+.db-wlrow{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.db-wlcard{background:var(--bg-card-2);border:1px solid var(--border);border-radius:9px;padding:10px 12px;font-size:11.5px}
+.db-wlc-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+.db-wlc-top b{font-family:var(--mono);font-weight:700;color:var(--text)}
+.db-wlc-top span{font-family:var(--mono);color:var(--accent)}
+.db-wlc-bot{display:flex;justify-content:space-between;color:var(--text-3);font-size:11px}
+.db-budget .db-b{display:flex;gap:24px;flex-wrap:wrap}
+.db-budget .kv{display:flex;gap:8px}
+.db-budget .k{color:var(--text-3)}
+.db-budget .v{color:var(--text);font-family:var(--mono);font-weight:600}
+
+/* Market Tools (Wave 9) */
+.mt-wrap{display:flex;flex-direction:column;gap:14px}
+.mt-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+.mt-card{padding:14px 16px}
+.mt-form{display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;margin-bottom:10px}
+.mt-form label{display:flex;flex-direction:column;gap:4px;font-size:11.5px;color:var(--text-3)}
+.mt-form input,.mt-form select,.mt-form-h input,.mt-form-h select{
+  background:var(--bg-card-2);border:1px solid var(--border);color:var(--text);
+  border-radius:7px;padding:6px 9px;font-family:var(--mono);font-size:12.5px;outline:none}
+.mt-form input:focus,.mt-form select:focus,.mt-form-h input:focus,.mt-form-h select:focus{border-color:var(--accent)}
+.mt-form-h{display:flex;gap:8px;margin-bottom:10px}
+.mt-form-h input,.mt-form-h select{flex:1;min-width:0}
+.mt-out{background:var(--bg-card-2);border:1px solid var(--border);border-radius:8px;padding:10px;min-height:60px;font-size:12px}
+.mt-out .kv{display:flex;justify-content:space-between;padding:3px 0;font-size:12px}
+.mt-out .kv .k{color:var(--text-3)}
+.mt-out .kv .v{font-family:var(--mono);color:var(--text);text-align:right}
+.mt-out .v.conf.hi{color:var(--green-2)}
+.mt-out .v.conf.mid{color:var(--accent)}
+.mt-out .v.conf.lo{color:var(--yellow)}
+.mt-notes{font-size:11.5px;color:var(--text-2);margin-top:8px;line-height:1.45}
+.mt-tbl{width:100%;border-collapse:collapse;font-size:11.5px}
+.mt-tbl th{text-align:left;color:var(--text-3);font-weight:700;letter-spacing:.4px;font-size:10px;padding:5px 6px;border-bottom:1px solid var(--border)}
+.mt-tbl th.r,.mt-tbl td.r{text-align:right}
+.mt-tbl td{padding:6px;border-bottom:1px solid rgba(27,38,54,.5);font-family:var(--mono);color:var(--text)}
+.mt-tbl td.g{color:var(--green-2)}
+.mt-tbl td.r{color:var(--text)}
+.mt-tvgrid{grid-column:span 2}
+.mt-tvgrid-in{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.mt-tv-cell{position:relative;background:var(--bg-card-2);border:1px solid var(--border);border-radius:8px;overflow:hidden;min-height:280px}
+.mt-tv-cell iframe{width:100%;height:280px;border:0;display:block}
+.mt-tv-sym{position:absolute;top:6px;left:8px;font-size:10px;font-weight:700;letter-spacing:.4px;color:var(--accent);background:rgba(2,6,14,.7);padding:2px 6px;border-radius:4px;z-index:5}
+.mt-tv-note{font-size:11px;color:var(--text-3);margin-top:8px;text-align:right}
+
 /* ════════ MOBILE-FIRST DESIGN (≤820px) — desktop view untouched ════════ */
 @media (max-width:820px){
   html,body{height:auto;font-size:14px;background:var(--bg-window)}
@@ -1760,9 +1843,14 @@ svg{display:block}
     dashboard:"Dashboard", scanner:"Main Scan", live:"Live Monitor",
     backtest:"Backtest", watchlist:"Live Monitor", tools:"Market Tools", settings:"Settings"
   };
+  function _stopAllViewPolling(){
+    try{ stopLiveMonitorPolling(); }catch(_){}
+    try{ stopDashboardPolling(); }catch(_){}
+  }
   function switchView(v){
     if(!v) v="scanner";
     ST.view=v;
+    _stopAllViewPolling();
     [].forEach.call(document.querySelectorAll("#topnav a[data-view]"),function(a){
       a.classList.toggle("active",a.getAttribute("data-view")===v);
     });
@@ -1791,7 +1879,17 @@ svg{display:block}
       startLiveMonitorPolling();
       return;
     }
+    if(v==="dashboard"){
+      renderDashboardInto(scroll);
+      startDashboardPolling();
+      return;
+    }
+    if(v==="tools"){
+      renderMarketToolsInto(scroll);
+      return;
+    }
     stopLiveMonitorPolling();
+    stopDashboardPolling();
     scroll.innerHTML='<div class="view-soon"><h2>'+VIEW_TITLE[v]+'</h2>'+
       '<p>This view is not yet implemented.</p></div>';
   }
@@ -1897,6 +1995,397 @@ svg{display:block}
   function stopLiveMonitorPolling(){
     if(_lmPollT){ clearInterval(_lmPollT); _lmPollT=null; }
   }
+
+  /* ── Dashboard (Wave 8) ── */
+  var _dbPollT=null, _dbPaused=false, _dbRefreshSec=60, _dbLastCycle=0;
+  function renderDashboardInto(scroll){
+    scroll.innerHTML=
+      '<div class="db-wrap">'+
+        '<div class="db-head">'+
+          '<div><div class="main-title">Dashboard</div>'+
+          '<div class="main-sub">Live screener snapshot — auto-refresh every '+_dbRefreshSec+'s</div></div>'+
+          '<div class="db-ctrls">'+
+            '<span class="db-status" id="dbStatus">—</span>'+
+            '<button class="btn" id="dbPause" type="button"><svg class="ico ico-sm" viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>Pause</button>'+
+            '<button class="btn" id="dbRefresh" type="button"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>Refresh now</button>'+
+          '</div>'+
+        '</div>'+
+        '<div class="db-grid">'+
+          '<div class="db-card db-mktpulse" id="dbMktPulse"><div class="db-h">MARKET PULSE</div><div class="db-b">Loading…</div></div>'+
+          '<div class="db-card db-tile" id="dbHotSetups"><div class="db-h">HOT SETUPS</div><div class="db-b">Loading…</div></div>'+
+          '<div class="db-card db-tile" id="dbTrendLeaders"><div class="db-h">TREND LEADERS</div><div class="db-b">Loading…</div></div>'+
+          '<div class="db-card db-tile" id="dbBreaking"><div class="db-h">BREAKING ATH / ATL</div><div class="db-b">Loading…</div></div>'+
+          '<div class="db-card db-tile" id="dbBiasShifts"><div class="db-h">BIAS SHIFTS (last scan)</div><div class="db-b">Loading…</div></div>'+
+          '<div class="db-card db-wl" id="dbWatchlist"><div class="db-h">YOUR WATCHLIST</div><div class="db-b">Loading…</div></div>'+
+          '<div class="db-card db-budget" id="dbBudget"><div class="db-h">SCAN BUDGET</div><div class="db-b">—</div></div>'+
+        '</div>'+
+      '</div>';
+    E("dbPause").addEventListener("click",function(){
+      _dbPaused=!_dbPaused;
+      this.innerHTML = _dbPaused
+        ? '<svg class="ico ico-sm" viewBox="0 0 24 24"><polygon points="6 4 20 12 6 20 6 4"/></svg>Resume'
+        : '<svg class="ico ico-sm" viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>Pause';
+      _dbSetStatus(_dbPaused?"paused":("refreshing in "+_dbRefreshSec+"s"));
+    });
+    E("dbRefresh").addEventListener("click",function(){ _dbRunCycle(); });
+    _dbRunCycle();
+  }
+  function _dbSetStatus(s){ var el=E("dbStatus"); if(el) el.textContent=s; }
+  function _dbFmtSym(s){ return esc(String(s||"").replace(/USDT$/,"")); }
+  function _dbScoreColour(s){ return s>=80?"hi":s>=65?"mid":"lo"; }
+  function _dbPaint(elId,html){ var el=E(elId); if(!el) return; var b=el.querySelector(".db-b"); if(b) b.innerHTML=html; }
+
+  function _dbRunCycle(){
+    if(location.protocol==="file:"){
+      // demo fallback for static rendering
+      _dbPaint("dbMktPulse",'<div class="row-msg">Open at /preview while logged in for live data.</div>');
+      _dbPaint("dbHotSetups",'<div class="row-msg">—</div>');
+      _dbPaint("dbTrendLeaders",'<div class="row-msg">—</div>');
+      _dbPaint("dbBreaking",'<div class="row-msg">—</div>');
+      _dbPaint("dbBiasShifts",'<div class="row-msg">—</div>');
+      _dbPaint("dbWatchlist",'<div class="row-msg">—</div>');
+      _dbPaint("dbBudget",'<div class="row-msg">—</div>');
+      _dbSetStatus("offline preview");
+      return;
+    }
+    _dbLastCycle=Date.now();
+    _dbSetStatus("scanning…");
+    _dbLoadMktPulse();
+    _dbLoadHotSetups();
+    _dbLoadTrendLeaders();
+    _dbLoadBreaking();
+    _dbLoadBiasShifts();
+    _dbLoadWatchlist();
+    _dbLoadBudget();
+    setTimeout(function(){ _dbSetStatus(_dbPaused?"paused":("auto-refresh "+_dbRefreshSec+"s")); }, 1500);
+  }
+
+  function _dbScanSelected(symbols, extra){
+    return fetch("/api/scan",{method:"POST",credentials:"same-origin",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(Object.assign({
+        settings:Object.assign({},ST.settings),
+        market:ST.market, exchange:"binance",
+        scanMode:"selected", roundRobin:false, pairsPerCycle:symbols.length,
+        symbols:symbols, filterMode:"match", checkedSignals:[], requiredSignals:[]
+      },extra||{}))}).then(function(r){return r.ok?r.json():null;});
+  }
+  function _dbLoadMktPulse(){
+    _dbScanSelected(["BTCUSDT"]).then(function(d){
+      if(!d||!(d.results||[]).length){ _dbPaint("dbMktPulse",'<div class="row-msg">No BTC data.</div>'); return; }
+      var r=d.results[0], a=r.topAlert||{}, dir=dirOf(r), sc=+r.score||0;
+      var sp=r.sparkline||[];
+      var d24 = sp.length>=2 ? ((sp[sp.length-1]-sp[0])/sp[0]*100) : null;
+      var changeCls = d24>=0?"g":"r";
+      _dbPaint("dbMktPulse",
+        '<div class="db-mp">'+
+          '<div class="db-mp-l">'+
+            '<div class="db-mp-sym">BTCUSDT</div>'+
+            '<div class="db-mp-px">'+fmt(r.price)+'</div>'+
+            (d24!=null?'<div class="db-mp-d '+changeCls+'">'+(d24>=0?"+":"")+d24.toFixed(2)+'% (window)</div>':'')+
+          '</div>'+
+          '<div class="db-mp-stats">'+
+            '<div class="kv"><span class="k">Score</span><span class="v conf '+_dbScoreColour(sc)+'">'+Math.round(sc)+'%</span></div>'+
+            '<div class="kv"><span class="k">Confidence</span><span class="v">'+esc(r.confidence||"—")+'</span></div>'+
+            '<div class="kv"><span class="k">Trend</span><span class="v '+(r.itrend>0?"htf bull":r.itrend<0?"htf bear":"")+'">'+(r.itrend>0?"Bullish":r.itrend<0?"Bearish":"Neutral")+'</span></div>'+
+            '<div class="kv"><span class="k">RSI</span><span class="v">'+(r.rsi!=null?Math.round(r.rsi):"—")+'</span></div>'+
+            '<div class="kv"><span class="k">ATR</span><span class="v">'+(r.atr!=null?fmt(r.atr):"—")+'</span></div>'+
+            '<div class="kv"><span class="k">Top setup</span><span class="v">'+esc(setupLabel(a))+'</span></div>'+
+          '</div>'+
+        '</div>'
+      );
+    }).catch(function(){ _dbPaint("dbMktPulse",'<div class="row-msg err">Market pulse fetch failed.</div>'); });
+  }
+  function _dbLoadHotSetups(){
+    fetch("/api/scan",{method:"POST",credentials:"same-origin",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        settings:Object.assign({},ST.settings),
+        market:ST.market, exchange:"binance",
+        scanMode:"market", roundRobin:true, pairsPerCycle:24,
+        filterMode:"match", checkedSignals:[], requiredSignals:[]
+      })})
+      .then(function(r){return r.ok?r.json():null;})
+      .then(function(d){
+        var rs=((d&&d.results)||[]).slice().sort(function(a,b){return (+b.score||0)-(+a.score||0);}).slice(0,5);
+        if(!rs.length){ _dbPaint("dbHotSetups",'<div class="row-msg">No setups in this batch.</div>'); return; }
+        _dbPaint("dbHotSetups", _dbItemList(rs));
+      }).catch(function(){ _dbPaint("dbHotSetups",'<div class="row-msg err">Hot setups fetch failed.</div>'); });
+  }
+  function _dbLoadTrendLeaders(){
+    Promise.all([
+      fetch("/api/trending_scan",{method:"POST",credentials:"same-origin",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({tf:ST.settings.tf||"4h",market:ST.market,exchange:"binance",mode:"bullish",limit:5})}).then(function(r){return r.ok?r.json():[];}),
+      fetch("/api/trending_scan",{method:"POST",credentials:"same-origin",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({tf:ST.settings.tf||"4h",market:ST.market,exchange:"binance",mode:"bearish",limit:5})}).then(function(r){return r.ok?r.json():[];})
+    ]).then(function(both){
+      var bu=both[0]||[], be=both[1]||[];
+      var rows=function(arr,cls){
+        return arr.slice(0,3).map(function(it){
+          var ch=(+it.changePct||0).toFixed(2);
+          return '<div class="db-item"><span class="db-i-sym">'+_dbFmtSym(it.symbol)+'</span>'+
+            '<span class="db-i-meta">relVol '+(+it.relVol||0).toFixed(2)+'</span>'+
+            '<span class="db-i-tail '+cls+'">'+(ch>=0?"+":"")+ch+'%</span></div>';
+        }).join("");
+      };
+      var html=
+        '<div class="db-half"><div class="db-half-h g">Bullish</div>'+(bu.length?rows(bu,"g"):'<div class="row-msg">none</div>')+'</div>'+
+        '<div class="db-half"><div class="db-half-h r">Bearish</div>'+(be.length?rows(be,"r"):'<div class="row-msg">none</div>')+'</div>';
+      _dbPaint("dbTrendLeaders",html);
+    }).catch(function(){ _dbPaint("dbTrendLeaders",'<div class="row-msg err">Trend leaders fetch failed.</div>'); });
+  }
+  function _dbLoadBreaking(){
+    fetch("/api/ath_atl_scan",{method:"POST",credentials:"same-origin",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({action:"scan",market:ST.market,exchange:"binance",
+        mode:"both",window:"all_time",status:"breaking_now",limit:10})})
+      .then(function(r){return r.ok?r.json():null;})
+      .then(function(d){
+        var ar=(d&&(d.results||d.accumulatedResults))||[];
+        if(!ar.length){ _dbPaint("dbBreaking",'<div class="row-msg">No ATH/ATL breaks right now.</div>'); return; }
+        var html=ar.slice(0,5).map(function(it){
+          var tag=(it.tags&&it.tags[0])||"";
+          var cls=String(tag).indexOf("ATH")>=0?"g":"r";
+          var bp=it.breakPct!=null?(+it.breakPct).toFixed(2)+"%":"—";
+          return '<div class="db-item"><span class="db-i-sym">'+_dbFmtSym(it.symbol||it.pair)+'</span>'+
+            '<span class="db-i-meta">'+esc(tag)+'</span>'+
+            '<span class="db-i-tail '+cls+'">'+bp+'</span></div>';
+        }).join("");
+        _dbPaint("dbBreaking",html);
+      }).catch(function(){ _dbPaint("dbBreaking",'<div class="row-msg err">ATH/ATL fetch failed.</div>'); });
+  }
+  function _dbLoadBiasShifts(){
+    fetch("/api/bias_scan",{method:"POST",credentials:"same-origin",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({tf:ST.settings.tf||"4h",market:ST.market,exchange:"binance",
+        pairsPerCycle:24, roundRobin:true})})
+      .then(function(r){return r.ok?r.json():null;})
+      .then(function(d){
+        var rs=(d&&(d.results||d.shifts))||[];
+        // keep only items that actually shifted bias
+        rs=rs.filter(function(it){
+          var ev=(it.event||"").toString().toUpperCase();
+          if(ev.indexOf("BOS")>=0||ev.indexOf("CHOCH")>=0||ev.indexOf("SHIFT")>=0) return true;
+          if(it.bias||it.direction) return true;
+          if(it.shifts && it.shifts.length) return true;
+          return false;
+        });
+        if(!rs.length){ _dbPaint("dbBiasShifts",'<div class="row-msg">No bias shifts detected this scan.</div>'); return; }
+        var html=rs.slice(0,6).map(function(it){
+          var b=(it.bias||it.direction||"").toString().toLowerCase();
+          var cls=b.indexOf("bull")>=0?"g":b.indexOf("bear")>=0?"r":"";
+          var ev=(it.event||"shift").toString().toUpperCase();
+          return '<div class="db-item"><span class="db-i-sym">'+_dbFmtSym(it.symbol||it.pair)+'</span>'+
+            '<span class="db-i-meta">'+esc(ev)+'</span>'+
+            '<span class="db-i-tail '+cls+'">'+esc(b||"—")+'</span></div>';
+        }).join("");
+        _dbPaint("dbBiasShifts",html);
+      }).catch(function(){ _dbPaint("dbBiasShifts",'<div class="row-msg err">Bias scan failed.</div>'); });
+  }
+  function _dbLoadWatchlist(){
+    var pairs=Object.keys(ST.stars).filter(function(s){return ST.stars[s];});
+    if(!pairs.length){ _dbPaint("dbWatchlist",'<div class="row-msg">Star pairs on the Scanner to populate your watchlist.</div>'); return; }
+    fetch("/api/watchlist/cache",{credentials:"same-origin"})
+      .then(function(r){return r.ok?r.json():{};})
+      .then(function(d){
+        var html='<div class="db-wlrow">'+pairs.slice(0,8).map(function(sym){
+          var c=d[sym]||{}, price=c.price!=null?fmt(c.price):"—";
+          var of=c.orderflow||c.order_flow||{};
+          var ab=esc(of.absorption||c.absorption||"—");
+          var delta=(of.delta!=null)?(+of.delta).toFixed(2):(c.delta!=null?(+c.delta).toFixed(2):"—");
+          return '<div class="db-wlcard"><div class="db-wlc-top"><b>'+_dbFmtSym(sym)+'</b><span>'+price+'</span></div>'+
+            '<div class="db-wlc-bot"><span>Δ '+delta+'</span><span>'+ab+'</span></div></div>';
+        }).join("")+'</div>';
+        _dbPaint("dbWatchlist",html);
+      }).catch(function(){ _dbPaint("dbWatchlist",'<div class="row-msg err">Watchlist cache fetch failed.</div>'); });
+  }
+  function _dbLoadBudget(){
+    Promise.all([
+      fetch("/api/my-permissions",{credentials:"same-origin"}).then(function(r){return r.ok?r.json():null;}).catch(function(){return null;}),
+      fetch("/api/weight_status",{credentials:"same-origin"}).then(function(r){return r.ok?r.json():null;}).catch(function(){return null;})
+    ]).then(function(both){
+      var perm=both[0]||{}, w=both[1]||{};
+      var tokens=(perm.tokens!=null)?perm.tokens : (perm.scan_tokens_left!=null?perm.scan_tokens_left:null);
+      var cap=(perm.daily_cap!=null)?perm.daily_cap : (perm.max_tokens!=null?perm.max_tokens:null);
+      var used=(w.used!=null)?w.used:null, limit=(w.limit!=null)?w.limit:null;
+      var bits=[];
+      if(tokens!=null && cap!=null) bits.push('<div class="kv"><span class="k">Scan tokens</span><span class="v">'+tokens+' / '+cap+'</span></div>');
+      else if(tokens!=null) bits.push('<div class="kv"><span class="k">Scan tokens</span><span class="v">'+tokens+'</span></div>');
+      if(used!=null && limit!=null) bits.push('<div class="kv"><span class="k">API weight</span><span class="v">'+used+' / '+limit+'</span></div>');
+      _dbPaint("dbBudget", bits.length?bits.join(""):'<div class="row-msg">Budget data not available.</div>');
+    });
+  }
+  function _dbItemList(rs){
+    return rs.map(function(r){
+      var a=r.topAlert||{},d=dirOf(r);
+      var setup=esc(setupLabel(a));
+      var sc=+r.score||0;
+      return '<div class="db-item"><span class="db-i-sym">'+_dbFmtSym(r.symbol)+'</span>'+
+        '<span class="db-i-meta">'+setup+' · '+(d==="bull"?"Bull":d==="bear"?"Bear":"—")+'</span>'+
+        '<span class="db-i-tail conf '+_dbScoreColour(sc)+'">'+Math.round(sc)+'%</span></div>';
+    }).join("");
+  }
+  function startDashboardPolling(){
+    stopDashboardPolling();
+    if(location.protocol==="file:") return;
+    _dbPollT=setInterval(function(){ if(!_dbPaused && ST.view==="dashboard") _dbRunCycle(); }, _dbRefreshSec*1000);
+  }
+  function stopDashboardPolling(){
+    if(_dbPollT){ clearInterval(_dbPollT); _dbPollT=null; }
+  }
+
+  /* ── Market Tools (Wave 9) ── */
+  function renderMarketToolsInto(scroll){
+    scroll.innerHTML=
+      '<div class="mt-wrap">'+
+        '<div class="db-head"><div><div class="main-title">Market Tools</div>'+
+        '<div class="main-sub">Utilities and quick lookups — none of these consume scan tokens</div></div></div>'+
+        '<div class="mt-grid">'+
+          '<div class="db-card mt-card" id="mtCalc"><div class="db-h">POSITION SIZE &amp; RISK</div><div class="db-b">'+_mtCalcHTML()+'</div></div>'+
+          '<div class="db-card mt-card" id="mtLookup"><div class="db-h">PAIR QUICK SCAN</div><div class="db-b">'+_mtLookupHTML()+'</div></div>'+
+          '<div class="db-card mt-card" id="mtFunding"><div class="db-h">FUNDING / OI SCANNER</div><div class="db-b">'+_mtFundingHTML()+'</div></div>'+
+          '<div class="db-card mt-card mt-tvgrid" id="mtTv"><div class="db-h">TRADINGVIEW MULTI-CHART</div><div class="db-b">'+_mtTvHTML()+'</div></div>'+
+        '</div>'+
+      '</div>';
+    _mtBindCalc(); _mtBindLookup(); _mtBindFunding(); _mtBindTv();
+  }
+  function _mtCalcHTML(){
+    return '<div class="mt-form">'+
+      '<label>Account size (USD)<input type="number" id="mtAcct" value="1000" min="0"></label>'+
+      '<label>Risk %<input type="number" id="mtRisk" value="1" min="0" step="0.1"></label>'+
+      '<label>Entry<input type="number" id="mtEntry" step="any"></label>'+
+      '<label>Stop<input type="number" id="mtStop" step="any"></label>'+
+      '<label>TP1<input type="number" id="mtTp1" step="any"></label>'+
+      '<label>Leverage (max)<input type="number" id="mtLev" value="10" min="1" max="125"></label>'+
+      '</div>'+
+      '<div class="mt-out" id="mtCalcOut">Enter Entry / Stop / TP1 to compute</div>';
+  }
+  function _mtBindCalc(){
+    var inputs=["mtAcct","mtRisk","mtEntry","mtStop","mtTp1","mtLev"];
+    function compute(){
+      var acct=parseFloat(E("mtAcct").value)||0;
+      var risk=parseFloat(E("mtRisk").value)||0;
+      var entry=parseFloat(E("mtEntry").value);
+      var stop=parseFloat(E("mtStop").value);
+      var tp=parseFloat(E("mtTp1").value);
+      var lev=parseFloat(E("mtLev").value)||1;
+      if(!entry||!stop||!isFinite(entry)||!isFinite(stop)){
+        E("mtCalcOut").innerHTML='<span style="color:var(--text-3)">Enter Entry / Stop to compute</span>'; return;
+      }
+      var riskUSD=acct*(risk/100);
+      var perUnit=Math.abs(entry-stop);
+      var qty = perUnit>0 ? riskUSD/perUnit : 0;
+      var notional=qty*entry;
+      var rr = tp&&isFinite(tp) ? Math.abs(tp-entry)/perUnit : null;
+      var leverageReq=acct>0 ? notional/acct : 0;
+      var safe = leverageReq<=lev;
+      var html='<div class="kv"><span class="k">Risk $</span><span class="v">'+riskUSD.toFixed(2)+'</span></div>'+
+        '<div class="kv"><span class="k">Position size</span><span class="v">'+qty.toFixed(qty<1?6:4)+' units</span></div>'+
+        '<div class="kv"><span class="k">Notional</span><span class="v">'+notional.toFixed(2)+'</span></div>'+
+        '<div class="kv"><span class="k">Leverage req.</span><span class="v" style="color:'+(safe?"var(--green-2)":"var(--red-2)")+'">'+leverageReq.toFixed(2)+'×</span></div>'+
+        (rr!=null?'<div class="kv"><span class="k">RR (TP1)</span><span class="v">'+rr.toFixed(2)+'</span></div>':'');
+      E("mtCalcOut").innerHTML=html;
+    }
+    inputs.forEach(function(id){ var el=E(id); if(el) el.addEventListener("input",compute); });
+    compute();
+  }
+  function _mtLookupHTML(){
+    return '<div class="mt-form-h"><input type="text" id="mtLookSym" placeholder="Symbol, e.g. ETHUSDT" autocomplete="off">'+
+      '<button class="btn" id="mtLookBtn" type="button">Scan</button></div>'+
+      '<div class="mt-out" id="mtLookOut">Enter a symbol to fetch a full Setup Insight.</div>';
+  }
+  function _mtBindLookup(){
+    function go(){
+      var sym=(E("mtLookSym").value||"").trim().toUpperCase();
+      if(!sym) return;
+      if(!sym.endsWith("USDT")) sym+="USDT";
+      E("mtLookOut").innerHTML='<span style="color:var(--text-3)">Scanning '+esc(sym)+'…</span>';
+      _dbScanSelected([sym]).then(function(d){
+        var r=(d&&d.results||[])[0];
+        if(!r){ E("mtLookOut").innerHTML='<span class="row-msg">No setups for '+esc(sym)+'.</span>'; return; }
+        var a=r.topAlert||{}, d2=dirOf(r);
+        E("mtLookOut").innerHTML=
+          '<div class="kv"><span class="k">Symbol</span><span class="v">'+esc(r.symbol)+'</span></div>'+
+          '<div class="kv"><span class="k">Price</span><span class="v">'+fmt(r.price)+'</span></div>'+
+          '<div class="kv"><span class="k">Score</span><span class="v conf '+_dbScoreColour(+r.score||0)+'">'+Math.round(+r.score||0)+'%</span></div>'+
+          '<div class="kv"><span class="k">Confidence</span><span class="v">'+esc(r.confidence||"—")+'</span></div>'+
+          '<div class="kv"><span class="k">Top setup</span><span class="v">'+esc(setupLabel(a))+'</span></div>'+
+          '<div class="kv"><span class="k">Direction</span><span class="v '+(d2==="bull"?"htf bull":d2==="bear"?"htf bear":"")+'">'+(d2==="bull"?"Bullish":d2==="bear"?"Bearish":"Neutral")+'</span></div>'+
+          '<div class="kv"><span class="k">RR (TP1/SL)</span><span class="v">'+(r.rr!=null?(+r.rr).toFixed(2):"—")+'</span></div>'+
+          '<div class="kv"><span class="k">Age</span><span class="v">'+esc(r.ageText||"—")+'</span></div>'+
+          '<div class="mt-notes">'+esc(a.detail||"")+'</div>';
+      }).catch(function(){ E("mtLookOut").innerHTML='<span class="row-msg err">Lookup failed.</span>'; });
+    }
+    E("mtLookBtn").addEventListener("click",go);
+    E("mtLookSym").addEventListener("keydown",function(e){ if(e.key==="Enter") go(); });
+  }
+  function _mtFundingHTML(){
+    return '<div class="mt-form-h">'+
+      '<select id="mtFundSort">'+
+        '<option value="funding">Sort: Funding rate</option>'+
+        '<option value="oi">Sort: OI change</option>'+
+        '<option value="abs">Sort: Absorption</option>'+
+      '</select>'+
+      '<button class="btn" id="mtFundBtn" type="button">Load</button></div>'+
+      '<div class="mt-out" id="mtFundOut">Loads top pairs by funding rate using /api/order-flow. May take a moment.</div>';
+  }
+  function _mtBindFunding(){
+    function go(){
+      var sort=E("mtFundSort").value;
+      E("mtFundOut").innerHTML='<span style="color:var(--text-3)">Loading…</span>';
+      fetch("/api/pairs?limit=30",{credentials:"same-origin"})
+        .then(function(r){return r.ok?r.json():null;})
+        .then(function(d){
+          var list=(d&&(d.pairs||d.results||d))||[];
+          if(!Array.isArray(list)) list=Object.values(list);
+          var syms=list.slice(0,18).map(function(it){return typeof it==="string"?it:(it.symbol||it.pair);}).filter(Boolean);
+          var fetches=syms.map(function(sym){
+            return fetch("/api/order-flow?exchange=binance&symbol="+encodeURIComponent(sym)+"&timeframe=1h",{credentials:"same-origin"})
+              .then(function(r){return r.ok?r.json():null;}).then(function(of){ return of?{sym:sym,of:of}:null; }).catch(function(){return null;});
+          });
+          return Promise.all(fetches);
+        }).then(function(arr){
+          var rows=(arr||[]).filter(Boolean).map(function(x){
+            var of=x.of||{};
+            return {sym:x.sym, funding:+of.funding||0, oi:+of.oiDelta||0, abs:of.absorption||""};
+          });
+          rows.sort(function(a,b){
+            if(sort==="funding") return Math.abs(b.funding)-Math.abs(a.funding);
+            if(sort==="oi") return Math.abs(b.oi)-Math.abs(a.oi);
+            return String(b.abs).localeCompare(String(a.abs));
+          });
+          if(!rows.length){ E("mtFundOut").innerHTML='<span class="row-msg">No data returned.</span>'; return; }
+          E("mtFundOut").innerHTML=
+            '<table class="mt-tbl"><thead><tr><th>Symbol</th><th class="r">Funding %</th><th class="r">OI Δ</th><th class="r">Absorption</th></tr></thead><tbody>'+
+            rows.slice(0,12).map(function(r){
+              var fc=r.funding>=0?"g":"r";
+              var oc=r.oi>=0?"g":"r";
+              return '<tr><td>'+_dbFmtSym(r.sym)+'</td>'+
+                '<td class="r '+fc+'">'+(r.funding*100).toFixed(4)+'</td>'+
+                '<td class="r '+oc+'">'+(r.oi>=0?"+":"")+r.oi.toFixed(2)+'</td>'+
+                '<td class="r">'+esc(r.abs||"—")+'</td></tr>';
+            }).join("")+'</tbody></table>';
+        }).catch(function(){ E("mtFundOut").innerHTML='<span class="row-msg err">Funding scanner failed.</span>'; });
+    }
+    E("mtFundBtn").addEventListener("click",go);
+  }
+  function _mtTvHTML(){
+    var pairs=Object.keys(ST.stars).filter(function(s){return ST.stars[s];}).slice(0,4);
+    if(!pairs.length) pairs=["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT"];
+    var ex=ST.settings.tvExchange||"BINANCE";
+    var suf=ST.settings.tvPerpSuffix===false?"":".P";
+    return '<div class="mt-tvgrid-in">'+
+      pairs.map(function(s){
+        var sym=encodeURIComponent(s)+suf;
+        var url="https://s.tradingview.com/widgetembed/?frameElementId=tv_"+s+"&symbol="+ex+"%3A"+sym+"&interval=60&theme=dark&style=1&toolbarbg=ffffff&allow_symbol_change=1&studies=%5B%5D";
+        return '<div class="mt-tv-cell"><div class="mt-tv-sym">'+esc(s)+'</div><iframe src="'+url+'" loading="lazy"></iframe></div>';
+      }).join("")+
+      '</div><div class="mt-tv-note">Pulled from your watchlist (or top 4 majors when empty).</div>';
+  }
+  function _mtBindTv(){ /* iframes are declarative; no JS needed yet */ }
+
   var _origScannerHTML = document.querySelector(".main-scroll") ? document.querySelector(".main-scroll").innerHTML : "";
   [].forEach.call(document.querySelectorAll("#topnav a[data-view]"),function(a){
     a.addEventListener("click",function(e){
