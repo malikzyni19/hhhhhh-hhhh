@@ -475,23 +475,23 @@ svg{display:block}
     <aside class="side">
       <div class="side-label">SCANNER</div>
 
-      <div class="nav-item active">
+      <div class="nav-item active" data-mode="main" role="button" tabindex="0">
         <svg class="ico" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
         <div><div class="nt">Main Scan</div><div class="ns">All instruments scan</div></div>
       </div>
-      <div class="nav-item">
+      <div class="nav-item" data-mode="compressed" role="button" tabindex="0">
         <svg class="ico" viewBox="0 0 24 24"><path d="M4 7h16M7 12h10M10 17h4"/></svg>
         <div><div class="nt">Compressed</div><div class="ns">High probability zones</div></div>
       </div>
-      <div class="nav-item">
+      <div class="nav-item" data-mode="trending" role="button" tabindex="0">
         <svg class="ico" viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 8-8"/><path d="M17 7h4v4"/></svg>
         <div><div class="nt">Trending</div><div class="ns">Trend aligned setups</div></div>
       </div>
-      <div class="nav-item">
+      <div class="nav-item" data-mode="ath_atl" role="button" tabindex="0">
         <svg class="ico" viewBox="0 0 24 24"><path d="M5 20V10M12 20V4M19 20v-7"/></svg>
         <div><div class="nt">ATH / ATL</div><div class="ns">Near extremes</div></div>
       </div>
-      <div class="nav-item">
+      <div class="nav-item" data-mode="bias" role="button" tabindex="0">
         <svg class="ico" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M6 8.5v7M8.3 6.8 15.7 11M15.7 13 8.3 17.2"/></svg>
         <div><div class="nt">Structure / Bias</div><div class="ns">Market structure scan</div></div>
       </div>
@@ -522,7 +522,7 @@ svg{display:block}
       <div class="main-scroll">
         <div class="main-head">
           <div>
-            <div class="main-title">Main Scan
+            <div class="main-title" id="mainTitle">Main Scan
               <svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>
             </div>
             <div class="main-sub" id="mainSub">All instruments across selected markets</div>
@@ -696,7 +696,7 @@ svg{display:block}
 (function(){
   "use strict";
   var E=function(id){return document.getElementById(id);};
-  var ST={market:"spot",signal:"OB",results:[],sel:-1,scannedAt:0,scanned:0,
+  var ST={market:"spot",signal:"OB",mode:"main",results:[],sel:-1,scannedAt:0,scanned:0,
           prev:null,stars:{},auto:true,timer:null,busy:false};
   var SK=0;
 
@@ -766,14 +766,118 @@ svg{display:block}
   function confClass(s){return s>=80?"hi":s>=65?"mid":"lo";}
 
   /* ── data fetch ── */
-  function buildPayload(){
-    var sig=ST.signal, checked = sig==="ALL"?[]:[sig];
-    return {
-      settings:{tf:"4h",useFibModule:true,useBreakerModule:true},
-      market:ST.market, exchange:"binance",
-      scanMode:"market", roundRobin:true, pairsPerCycle:24,
-      filterMode:"match", checkedSignals:checked, requiredSignals:[]
-    };
+  var MODE_LABEL = {main:"Main Scan",compressed:"Compressed",trending:"Trending",ath_atl:"ATH / ATL",bias:"Structure / Bias"};
+  var MODE_SUB = {
+    main:"All instruments across selected markets",
+    compressed:"High-probability compressed zones",
+    trending:"Trend-aligned movers with volume",
+    ath_atl:"Pairs near all-time highs / lows",
+    bias:"Market-structure shifts (BOS / CHoCH)"
+  };
+
+  function buildPayloadForMode(){
+    var market=ST.market, tf="4h";
+    if(ST.mode==="main"){
+      var sig=ST.signal, checked=sig==="ALL"?[]:[sig];
+      return {url:"/api/scan", body:{
+        settings:{tf:tf,useFibModule:true,useBreakerModule:true},
+        market:market, exchange:"binance",
+        scanMode:"market", roundRobin:true, pairsPerCycle:24,
+        filterMode:"match", checkedSignals:checked, requiredSignals:[]
+      }};
+    }
+    if(ST.mode==="compressed"){
+      return {url:"/api/compressed_scan", body:{
+        tf:tf, market:market, exchange:"binance",
+        lookback:30, maxPct:5.0, roundRobin:true, pairsPerCycle:24
+      }};
+    }
+    if(ST.mode==="trending"){
+      return {url:"/api/trending_scan", body:{
+        tf:tf, market:market, exchange:"binance", mode:"bullish", limit:24
+      }};
+    }
+    if(ST.mode==="ath_atl"){
+      return {url:"/api/ath_atl_scan", body:{
+        action:"scan", market:market, exchange:"binance",
+        mode:"both", window:"all_time", status:"near_level", nearPct:5.0, limit:24
+      }};
+    }
+    if(ST.mode==="bias"){
+      return {url:"/api/bias_scan", body:{
+        tf:tf, market:market, exchange:"binance",
+        pairsPerCycle:24, roundRobin:true
+      }};
+    }
+    return null;
+  }
+  /* legacy alias kept for callers expecting buildPayload() */
+  function buildPayload(){ var p=buildPayloadForMode(); return p?p.body:{}; }
+
+  function normalizeResults(mode, d){
+    if(!d) return {scanned:0,results:[]};
+    // trending_scan returns a bare array
+    if(Array.isArray(d)){
+      var rs=d.map(function(it){
+        var dir = (+it.changePct||0)>=0?"bullish":"bearish";
+        var ta = {setup:"TREND",direction:dir,timeframe:"4H",
+          detail:"Trending "+dir+" mover · ΔPx "+(it.changePct!=null?(+it.changePct).toFixed(2)+"%":"—")+
+                 " · relVol "+(it.relVol!=null?(+it.relVol).toFixed(2):"—"),
+          strength:Math.max(1,Math.min(8,Math.round(Math.abs(+it.relVol||1)*2))),meta:{}};
+        return {symbol:it.symbol,market:(ST.market==="perpetual"?"Perp":"Spot"),
+          price:+it.price||null,timeframe:"4H",
+          trend:dir==="bullish"?1:-1,itrend:dir==="bullish"?1:-1,
+          rsi:null,atr:null,correlation:null,correlationLabel:null,
+          score:Math.min(100,Math.max(0,Math.round(50+(+it.relVol||1)*8))),
+          confidence:(+it.relVol||0)>=2?"High":(+it.relVol||0)>=1.2?"Medium":"Low",
+          alerts:[ta],topAlert:ta,sparkline:it.sparkline||[],sparklineMarkers:[],
+          rr:null,ageText:"—",zoneSizeText:null,confBreakdown:null};
+      });
+      return {scanned:rs.length,results:rs};
+    }
+    // ath_atl: results / accumulatedResults
+    if(mode==="ath_atl"){
+      var ar=d.results||d.accumulatedResults||[];
+      var rs2=ar.map(function(it){
+        var tag=(it.tags&&it.tags[0])||(it.status||"ATH/ATL");
+        var dir=String(tag).toUpperCase().indexOf("ATH")>=0?"bullish":"bearish";
+        var ta={setup:String(tag).toUpperCase().replace(/\s+/g,"_"),direction:dir,timeframe:"4H",
+          detail:(it.tags||[]).join(" · ")+
+            (it.breakPct!=null?(" · break "+(+it.breakPct).toFixed(2)+"%"):"")+
+            (it.distPct!=null?(" · dist "+(+it.distPct).toFixed(2)+"%"):""),
+          strength:5,meta:{athTags:it.tags||[]}};
+        return {symbol:it.symbol||it.pair,market:(ST.market==="perpetual"?"Perp":"Spot"),
+          price:+it.price||+it.live_price||null,timeframe:"4H",
+          trend:dir==="bullish"?1:-1,itrend:dir==="bullish"?1:-1,
+          rsi:null,atr:null,correlation:null,correlationLabel:null,
+          score:Math.min(100,Math.max(40,Math.round(70+(+it.breakPct||0)*2))),
+          confidence:(+it.breakPct||0)>=2?"High":(+it.breakPct||0)>=0.5?"Medium":"Low",
+          alerts:[ta],topAlert:ta,sparkline:it.sparkline||[],sparklineMarkers:[],
+          rr:null,ageText:"—",zoneSizeText:null,confBreakdown:null};
+      });
+      return {scanned:d.scanned||rs2.length,results:rs2};
+    }
+    // bias_scan: pass-through if results array present, else best-effort
+    if(mode==="bias"){
+      var br=d.results||d.shifts||[];
+      var rs3=br.map(function(it){
+        var dir=(it.bias||it.direction||"").toLowerCase().indexOf("bull")>=0?"bullish":
+                (it.bias||it.direction||"").toLowerCase().indexOf("bear")>=0?"bearish":"neutral";
+        var ta={setup:(it.event||"BIAS_SHIFT").toString().toUpperCase(),direction:dir,timeframe:it.tf||"4H",
+          detail:(it.detail||it.note||((it.bias||"")+" "+(it.event||"")).trim()||"Bias shift"),
+          strength:Math.max(1,Math.min(8,(+it.strength||4))),meta:it.meta||{}};
+        return {symbol:it.symbol||it.pair,market:(ST.market==="perpetual"?"Perp":"Spot"),
+          price:+it.price||null,timeframe:it.tf||"4H",
+          trend:dir==="bullish"?1:dir==="bearish"?-1:0,itrend:dir==="bullish"?1:dir==="bearish"?-1:0,
+          rsi:it.rsi||null,atr:it.atr||null,correlation:null,correlationLabel:null,
+          score:+it.score||60,confidence:it.confidence||"Medium",
+          alerts:[ta],topAlert:ta,sparkline:it.sparkline||[],sparklineMarkers:[],
+          rr:null,ageText:it.ageText||"—",zoneSizeText:null,confBreakdown:null};
+      });
+      return {scanned:d.scanned||rs3.length,results:rs3};
+    }
+    // main / compressed: already in the expected shape
+    return {scanned:d.scanned||(d.results||[]).length,results:d.results||[]};
   }
   /* sample data — lets the full design render in any browser (file:// or
      when /api/scan is unreachable). Live data is used whenever available. */
@@ -819,11 +923,13 @@ svg{display:block}
       useSample("Sample data — open at /preview on your running app for live results");
       return;
     }
+    var p=buildPayloadForMode();
+    if(!p){ ST.results=[]; renderAll(); return; }
     ST.busy=true;
     E("pagerInfo").textContent="Scanning…";
     if(!ST.results.length)msg("Scanning markets…");
-    fetch("/api/scan",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify(buildPayload())})
+    fetch(p.url,{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(p.body)})
       .then(function(r){
         if(r.status===429)throw new Error("daily scan limit reached");
         if(r.status===401||r.status===403)throw new Error("session expired — log in");
@@ -832,15 +938,16 @@ svg{display:block}
       })
       .then(function(d){
         ST.prev = ST.results.length?{total:ST.results.length,avg:avgScore(ST.results)}:ST.prev;
-        ST.results=(d&&d.results)||[];
-        ST.scanned=(d&&d.scanned)||ST.results.length;
+        var norm=normalizeResults(ST.mode,d);
+        ST.results=norm.results||[];
+        ST.scanned=norm.scanned||ST.results.length;
         ST.scannedAt=Date.now();
         ST.sel=ST.results.length?0:-1;
         renderAll();
-        if(!ST.results.length)E("mainSub").textContent="Live — no setups match the current filter";
+        if(!ST.results.length)E("mainSub").textContent="Live — no results for "+MODE_LABEL[ST.mode];
       })
       .catch(function(e){
-        useSample("Sample data — couldn't reach /api/scan ("+esc(e.message)+"). Live data loads when served at /preview while logged in.");
+        useSample("Sample data — couldn't reach "+p.url+" ("+esc(e.message)+"). Live data loads when served at /preview while logged in.");
       })
       .finally(function(){ST.busy=false;});
   }
@@ -851,7 +958,14 @@ svg{display:block}
   function renderAll(){renderKPI();renderTable();renderMobileCards();renderInsight();renderMeta();}
 
   function renderMeta(){
-    E("mainSub").textContent="All instruments across selected markets";
+    var tEl=E("mainTitle");
+    if(tEl){
+      // preserve the trailing info icon
+      var ico = tEl.querySelector("svg");
+      tEl.textContent = MODE_LABEL[ST.mode]||"Main Scan";
+      if(ico) tEl.appendChild(document.createTextNode(" ")), tEl.appendChild(ico);
+    }
+    E("mainSub").textContent = MODE_SUB[ST.mode]||"All instruments across selected markets";
     E("lastScan").textContent=ST.scannedAt?rel(ST.scannedAt):"—";
     var n=ST.results.length;
     E("pagerInfo").textContent= n
@@ -1250,6 +1364,20 @@ svg{display:block}
   }
   seg("segMarket","data-mkt","market",scan);
   seg("segSignal","data-sig","signal",scan);
+  /* sidebar scanner-mode tabs */
+  [].forEach.call(document.querySelectorAll('.side .nav-item[data-mode]'),function(el){
+    el.addEventListener('click',function(){
+      var m=el.getAttribute('data-mode');
+      if(m===ST.mode) return;
+      [].forEach.call(document.querySelectorAll('.side .nav-item[data-mode]'),function(x){x.classList.remove('active');});
+      el.classList.add('active');
+      ST.mode=m; ST.results=[]; ST.sel=-1;
+      // hide the OB/Breaker/Fib/All segment for modes that don't accept it
+      var seg=document.getElementById('segSignal');
+      if(seg) seg.style.display = (m==='main'||m==='compressed')?'':'none';
+      scan();
+    });
+  });
   E("btnFilters").addEventListener("click",scan);
   E("arToggle").addEventListener("click",function(){
     ST.auto=!ST.auto; this.classList.toggle("on",ST.auto);
