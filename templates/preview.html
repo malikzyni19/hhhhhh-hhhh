@@ -329,6 +329,14 @@ svg{display:block}
 .cf .ico{color:var(--green-2);width:15px;height:15px;margin-top:1px;flex-shrink:0}
 /* notes */
 .notes{font-size:12px;color:var(--text-2);line-height:1.45}
+/* deep-dive (Wave 5) */
+.dd-btns{display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+.dd-btns .btn{flex:1;justify-content:center;padding:7px 10px;font-size:11.5px;min-width:0}
+.dd-out{font-size:11.5px;color:var(--text-2)}
+.dd-out .dd-result{background:var(--bg-card-2);border:1px solid var(--border);border-radius:8px;padding:10px;max-height:240px;overflow:auto}
+.dd-out .kv{font-size:11.5px;padding:3px 0;border:0}
+.dd-out .kv .k{color:var(--text-3);font-size:11px}
+.dd-out .kv .v{color:var(--text);font-family:var(--mono);font-size:11px}
 /* footer */
 .ins-foot{display:flex;gap:8px;padding:13px 16px;border-top:1px solid var(--border);background:var(--bg-panel);flex-shrink:0}
 .ins-foot .btn{flex:1;justify-content:center}
@@ -1398,8 +1406,16 @@ svg{display:block}
         '</div></div></div></div>'+
       '<div class="sec"><div class="sec-h">CONFLUENCE</div><div class="sec-b">'+confluenceList(r,a)+'</div></div>'+
       '<div class="sec"><div class="sec-h">NOTES</div><div class="sec-b"><div class="notes">'+
-        esc(a.detail||"No additional notes for this setup.")+'</div></div></div>';
+        esc(a.detail||"No additional notes for this setup.")+'</div></div></div>'+
+      '<div class="sec" id="ddSec"><div class="sec-h">DEEP DIVE</div><div class="sec-b">'+
+        '<div class="dd-btns">'+
+          '<button class="btn" data-dd="orderflow" type="button"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 12h6l3-8 3 16 3-8h3"/></svg>Order Flow</button>'+
+          '<button class="btn" data-dd="zoneliq" type="button"><svg class="ico ico-sm" viewBox="0 0 24 24"><rect x="3" y="10" width="4" height="10"/><rect x="10" y="6" width="4" height="14"/><rect x="17" y="13" width="4" height="7"/></svg>Zone Liquidity</button>'+
+        '</div>'+
+        '<div class="dd-out" id="ddOut"></div>'+
+      '</div></div>';
     box.querySelector(".ic-btn").addEventListener("click",function(){ST.sel=-1;closeSheet();renderInsight();renderTable();renderMobileCards();});
+    bindDeepDive(r,a,z);
     setFoot(r);
   }
   function kv(k,v,teal){return '<div class="kv"><span class="k">'+k+'</span><span class="v'+(teal?" teal":"")+'">'+esc(v)+'</span></div>';}
@@ -1409,6 +1425,43 @@ svg{display:block}
       c.href="https://www.tradingview.com/chart/?symbol=BINANCE:"+encodeURIComponent(r.symbol)+suf;
       c.style.pointerEvents="";c.style.opacity="";}
     else{c.href="#";c.style.pointerEvents="none";c.style.opacity=".5";}
+  }
+
+  /* ── deep-dive (Wave 5) ── */
+  function _ddPretty(d,maxLines){
+    if(!d||typeof d!=="object") return esc(String(d));
+    var rows=[],cnt=0;
+    for(var k in d){ if(!d.hasOwnProperty(k)) continue;
+      var v=d[k]; if(v===null||v===undefined) continue;
+      if(typeof v==="object"){ if(Array.isArray(v) && v.length===0) continue; v=JSON.stringify(v).slice(0,80); }
+      else if(typeof v==="number") v = (Math.abs(v)>=1000||Math.abs(v)<0.01&&v!==0) ? v.toExponential(2) : (Math.round(v*100)/100);
+      rows.push('<div class="kv"><span class="k">'+esc(k)+'</span><span class="v">'+esc(v)+'</span></div>');
+      if(++cnt>=(maxLines||10)) break;
+    }
+    return rows.join("")||'<div class="row-msg">No data returned.</div>';
+  }
+  function bindDeepDive(r,a,z){
+    var sec=E("ddSec"); if(!sec) return;
+    var out=E("ddOut");
+    [].forEach.call(sec.querySelectorAll('button[data-dd]'),function(b){
+      b.addEventListener('click',function(){
+        var kind=b.getAttribute('data-dd');
+        var tf=(a.timeframe||r.timeframe||"4H").toLowerCase();
+        out.innerHTML='<div class="row-msg">Loading '+esc(kind)+'…</div>';
+        var url,opts={credentials:"same-origin"};
+        if(kind==="orderflow"){
+          url="/api/order-flow?exchange=binance&symbol="+encodeURIComponent(r.symbol)+"&timeframe="+encodeURIComponent(tf);
+        } else if(kind==="zoneliq"){
+          if(!z){ out.innerHTML='<div class="row-msg err">No zone bounds for this setup.</div>'; return; }
+          var dir=(dirOf(r)==="bull")?"bullish":"bearish";
+          url="/api/zone_liquidity?symbol="+encodeURIComponent(r.symbol)+"&zone_top="+z.hi+"&zone_bottom="+z.lo+"&ob_type="+dir;
+        } else { out.innerHTML='<div class="row-msg err">Unknown deep-dive '+esc(kind)+'.</div>'; return; }
+        fetch(url,opts)
+          .then(function(rr){if(!rr.ok) throw new Error("HTTP "+rr.status); return rr.json();})
+          .then(function(d){ out.innerHTML='<div class="dd-result">'+_ddPretty(d,14)+'</div>'; })
+          .catch(function(e){ out.innerHTML='<div class="row-msg err">'+esc(kind)+' failed: '+esc(e.message)+'</div>'; });
+      });
+    });
   }
 
   /* ── interactions ── */
