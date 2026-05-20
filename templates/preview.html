@@ -318,7 +318,6 @@ svg{display:block}
   .window{position:static;transform:none!important;width:100%!important;height:auto!important;
     min-height:100vh;border:0;border-radius:0;overflow:visible;box-shadow:none}
 
-  /* Sticky compact top bar */
   .topbar{height:50px;flex-wrap:nowrap;padding:0 14px;gap:10px;position:sticky;top:0;z-index:60;
     background:var(--bg-topbar);border-bottom:1px solid var(--border)}
   .brand{width:auto;flex:0 0 auto}
@@ -333,7 +332,6 @@ svg{display:block}
 
   .main{min-height:0}
   .main-scroll{overflow:visible;padding:14px 14px 24px}
-
   .main-head{flex-direction:column;align-items:stretch;gap:10px;margin-bottom:12px}
   .main-title{font-size:19px}
   .main-sub{font-size:11.5px}
@@ -345,7 +343,6 @@ svg{display:block}
   .seg{flex:0 0 auto;min-width:0}
   .seg button{flex:0 0 auto;padding:8px 14px;white-space:nowrap;font-size:12px}
 
-  /* KPI row -> horizontal scroll strip */
   .kpi-row{display:flex;grid-template-columns:none;gap:10px;overflow-x:auto;
     padding-bottom:6px;margin-bottom:12px;scrollbar-width:none}
   .kpi-row::-webkit-scrollbar{display:none}
@@ -356,61 +353,86 @@ svg{display:block}
   .chips::-webkit-scrollbar{display:none}
   .chip,.chip-clear{flex:0 0 auto;white-space:nowrap}
 
-  /* Hide desktop table + pager; show cards */
+  /* hide desktop table + pager; show new compact accordion cards */
   .tbl,table.tbl,.pager{display:none}
-  .mcards{display:flex;flex-direction:column;gap:11px}
+  /* hide desktop insight panel on mobile — insight lives inside each expanded card */
+  .insight{display:none!important}
 
-  .mcard{background:var(--bg-card);border:1px solid var(--border);border-radius:13px;
-    padding:12px 14px;cursor:pointer;transition:border-color .15s,transform .08s,background .15s;
-    -webkit-tap-highlight-color:transparent}
-  .mcard:active{transform:scale(.992)}
-  .mcard.sel{border-color:var(--accent);
-    background:linear-gradient(180deg,var(--accent-soft) 0%,transparent 60%),var(--bg-card)}
-  .mc-row1{display:flex;align-items:center;gap:8px;margin-bottom:9px}
-  .mc-sym{font-family:var(--mono);font-size:15.5px;font-weight:700;letter-spacing:.3px;color:var(--text)}
-  .mc-price{font-family:var(--mono);font-size:11.5px;color:var(--text-3);margin-left:2px}
-  .mc-tag{font-size:9.5px;font-weight:700;padding:3px 7px;border-radius:5px;letter-spacing:.4px;flex-shrink:0}
-  .mc-tag.mkt{background:var(--bg-card-2);color:var(--text-2);border:1px solid var(--border)}
-  .mc-dir{margin-left:auto;display:flex;align-items:center;gap:4px;font-weight:600;font-size:13px;white-space:nowrap}
+  .mcards{display:flex;flex-direction:column;gap:8px}
+
+  .mcard{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;overflow:hidden;
+    transition:border-color .2s,background .2s}
+  .mcard.open{border-color:var(--accent)}
+
+  /* compact head row — always visible */
+  .mc-head{display:flex;align-items:center;gap:10px;padding:13px 16px;cursor:pointer;
+    -webkit-tap-highlight-color:transparent;user-select:none}
+  .mc-head .mc-sym{font-family:var(--mono);font-size:15.5px;font-weight:700;letter-spacing:.3px;color:var(--text)}
+  .mc-head .mc-price{margin-left:auto;font-family:var(--mono);font-size:15px;font-weight:600;color:var(--text);
+    font-variant-numeric:tabular-nums}
+  .mc-caret{width:16px;height:16px;color:var(--text-3);stroke:currentColor;stroke-width:2;fill:none;
+    stroke-linecap:round;stroke-linejoin:round;transition:transform .25s}
+  .mcard.open .mc-caret{transform:rotate(180deg);color:var(--accent)}
+
+  /* expandable body (grid trick for smooth height animation) */
+  .mc-body{display:grid;grid-template-rows:0fr;transition:grid-template-rows .28s ease}
+  .mcard.open .mc-body{grid-template-rows:1fr}
+  .mc-body > .mc-inner{overflow:hidden;min-height:0}
+  .mc-inner-pad{border-top:1px solid var(--border);background:rgba(255,255,255,.012)}
+
+  /* horizontal pager: scroll-snap pages side by side */
+  .mc-pages{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;
+    -webkit-overflow-scrolling:touch;scrollbar-width:none;scroll-behavior:smooth}
+  .mc-pages::-webkit-scrollbar{display:none}
+  .mc-page{flex:0 0 100%;min-width:0;scroll-snap-align:start;padding:14px 16px 12px;box-sizing:border-box}
+  .mc-page-h{font-size:10px;font-weight:700;letter-spacing:1.2px;color:var(--accent);margin-bottom:10px}
+
+  .mc-kv{display:flex;justify-content:space-between;align-items:center;gap:10px;
+    padding:8px 0;border-bottom:1px solid rgba(27,38,54,.5);font-size:13.5px}
+  .mc-kv:last-child{border-bottom:0}
+  .mc-kv .k{color:var(--text-3)}
+  .mc-kv .v{color:var(--text);font-family:var(--mono);text-align:right}
+  .mc-kv .v.teal,.mc-kv .v b.teal{color:var(--accent)}
+  .mc-kv .v b{font-weight:600}
+  .mc-dir{display:inline-flex;align-items:center;gap:5px;font-weight:600;font-family:'Inter',system-ui,sans-serif}
   .mc-dir .ico{width:13px;height:13px}
   .mc-dir.bull{color:var(--green-2)}
   .mc-dir.bear{color:var(--red-2)}
-  .mc-row2{display:grid;grid-template-columns:1fr 80px;gap:12px;align-items:center;margin-bottom:10px}
-  .mc-spark{position:relative;height:56px;border-radius:8px;background:rgba(255,255,255,.02);
+  .mc-htf.bull{color:var(--green-2)}
+  .mc-htf.bear{color:var(--red-2)}
+  .mc-setup{display:inline-block;background:var(--bg-card-2);color:var(--accent);
+    padding:3px 9px;border-radius:5px;font-size:11px;font-weight:700;letter-spacing:.3px;
+    border:1px solid rgba(34,211,238,.2);font-family:'Inter',system-ui,sans-serif}
+
+  /* chart page */
+  .mc-bigspark{position:relative;height:200px;border-radius:8px;background:rgba(255,255,255,.02);
     overflow:hidden;border:1px solid rgba(255,255,255,.04)}
-  .mc-spark svg{width:100%;height:100%;display:block}
-  .mc-score{text-align:right;display:flex;flex-direction:column;align-items:flex-end}
-  .mc-score .v{font-family:var(--mono);font-size:23px;font-weight:700;line-height:1;color:var(--accent)}
-  .mc-score .v.hi{color:var(--green-2)}
-  .mc-score .v.lo{color:var(--yellow)}
-  .mc-score .l{font-size:9.5px;color:var(--text-3);font-weight:700;letter-spacing:.6px;margin-top:4px}
-  .mc-row3{display:flex;gap:10px;flex-wrap:wrap;font-size:11.5px;color:var(--text-3);align-items:center}
-  .mc-row3 .item b{color:var(--text);font-family:var(--mono);font-weight:600;margin-left:3px}
-  .mc-setup{background:var(--bg-card-2);color:var(--accent);padding:3px 8px;border-radius:5px;
-    font-size:10.5px;font-weight:700;letter-spacing:.3px;border:1px solid rgba(34,211,238,.2)}
-  .mc-upd{margin-left:auto;font-family:var(--mono);color:var(--text-3);font-size:11px}
+  .mc-bigspark svg{width:100%;height:100%;display:block}
 
-  /* Insight -> bottom sheet */
-  .insight{position:fixed;bottom:0;left:0;right:0;height:88vh;border-left:0;
-    border-top:1px solid var(--border);border-top-left-radius:18px;border-top-right-radius:18px;
-    background:var(--bg-panel);transform:translateY(100%);transition:transform .3s cubic-bezier(.2,.7,.2,1);
-    z-index:200;box-shadow:0 -12px 40px rgba(0,0,0,.55);display:flex;flex-direction:column}
-  .insight.open{transform:translateY(0)}
-  .ins-scroll{overflow-y:auto;padding:0 14px 12px;flex:1}
-  .ins-scroll::before{content:"";display:block;width:42px;height:4px;background:var(--border-2);
-    border-radius:3px;margin:8px auto 6px;flex-shrink:0}
-  .ins-head{padding-top:2px;margin-bottom:8px}
-  .ins-foot{position:static;padding:12px 14px env(safe-area-inset-bottom);border-top:1px solid var(--border)}
-  .zd{flex-direction:column}
-  .zd-list{gap:8px;margin-bottom:10px}
-  .kv{font-size:13.5px}
-  .spark{width:100%;min-height:190px;align-self:auto}
-  .conf-wrap{gap:14px;align-items:flex-start}
+  /* confidence page */
+  .mc-conf-wrap{display:flex;align-items:flex-start;gap:14px}
+  .mc-conf-wrap .gauge{width:84px;height:84px;flex-shrink:0;position:relative}
+  .mc-conf-wrap .gauge svg{transform:rotate(-90deg)}
+  .mc-conf-wrap .gauge .c{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+  .mc-conf-wrap .gauge .pct{font-size:18px;font-weight:700;font-family:var(--mono);color:var(--accent)}
+  .mc-conf-wrap .gauge .lv{font-size:9px;color:var(--text-3);font-weight:600;letter-spacing:.5px}
+  .mc-conf-wrap .bars{flex:1;display:flex;flex-direction:column;gap:6px;min-width:0}
 
-  .sheet-bd{display:block;position:fixed;inset:0;background:rgba(2,6,14,.55);backdrop-filter:blur(2px);
-    -webkit-backdrop-filter:blur(2px);opacity:0;pointer-events:none;transition:opacity .26s;z-index:150}
-  .sheet-bd.open{opacity:1;pointer-events:auto}
-  body.sheet-open{overflow:hidden}
+  /* confluence + notes page */
+  .mc-page .cf{padding:5px 0}
+  .mc-page .notes{font-size:13.5px;color:var(--text-2);line-height:1.5}
+  .mc-actions{display:flex;gap:8px;margin-top:14px}
+  .mc-actions .btn{flex:1;justify-content:center;padding:10px 12px;font-size:13px;text-decoration:none}
+
+  /* pagination dots */
+  .mc-dots{display:flex;justify-content:center;gap:6px;padding:6px 0 10px}
+  .mc-dots .dot{width:6px;height:6px;border-radius:50%;background:var(--border-2);transition:background .18s,width .18s}
+  .mc-dots .dot.active{background:var(--accent);width:18px;border-radius:3px}
+
+  /* swipe hint chevron on first page */
+  .mc-page.mc-summary{position:relative}
+  .mc-page.mc-summary::after{content:"› insight";position:absolute;right:10px;top:12px;
+    font-size:9.5px;font-weight:700;letter-spacing:.6px;color:var(--accent);opacity:.7}
 }
 </style>
 </head>
@@ -985,45 +1007,124 @@ svg{display:block}
     '</svg>';
   }
 
+  function mcKV(k,v,teal){
+    return '<div class="mc-kv"><span class="k">'+k+'</span>'+
+      '<span class="v'+(teal?" teal":"")+'">'+v+'</span></div>';
+  }
+
+  function buildMobileCardPages(r){
+    var a=r.topAlert||{}, z=zoneOf(a), d=dirOf(r), m=a.meta||{};
+    var sc=+r.score||0;
+    var dl=d==="bull"?"Bullish":d==="bear"?"Bearish":"Neutral";
+    var h=htfOf(r), hl=h==="bull"?"Bullish":h==="bear"?"Bearish":"Neutral";
+    var mkt0=ST.market==="perpetual"?"Perp":"Spot", mk=r.market||mkt0;
+    var rrV=r.rr!=null?(+r.rr).toFixed(2):"—";
+    var ztype=setupLabel(a)+(d!=="neutral"?(" ("+(d==="bull"?"Bullish":"Bearish")+")"):"");
+    var mid=z&&!z.single?(z.hi+z.lo)/2:(z?z.hi:null);
+    var touches=m.obTouches!=null?m.obTouches : m.fvgTouches!=null?m.fvgTouches : null;
+    var qual=m.obQuality!=null?+m.obQuality : null;
+    var strengthPct=a.strength!=null?Math.round((+a.strength)/8*100):0;
+    var trendAlign=(h===d&&d!=="neutral")?100:(h==="neutral"?50:20);
+    var cb=r.confBreakdown||{};
+    var zoneStr=z?(z.single?fmt(z.hi):fmt(z.hi)+" – "+fmt(z.lo)):"—";
+
+    // Page 1: Summary (the "main expanded setup table")
+    var p1='<div class="mc-page mc-summary">'+
+      mcKV("Direction",'<span class="mc-dir '+d+'">'+(d==="bull"?IC.up:d==="bear"?IC.dn:"")+dl+'</span>')+
+      mcKV("Setup",'<span class="mc-setup">'+esc(setupLabel(a))+'</span>')+
+      mcKV("Market",'<span class="mc-setup" style="background:var(--bg-card-2);color:var(--text-2);border-color:var(--border)">'+esc(mk)+'</span>')+
+      mcKV("Zone (Price)",zoneStr)+
+      mcKV("Confidence",'<b style="color:var(--accent);font-size:15px">'+Math.round(sc)+'%</b> <span style="color:var(--text-3);font-size:11px">'+esc(r.confidence||"")+'</span>')+
+      mcKV("HTF Bias",'<span class="mc-htf '+h+'">'+hl+'</span>')+
+      mcKV("RR (TP1/SL)",rrV)+
+      mcKV("Age",esc(r.ageText||ageOf(a)))+
+      mcKV("Timeframe",esc(a.timeframe||r.timeframe||"—"))+
+    '</div>';
+
+    // Page 2: Zone Details
+    var p2='<div class="mc-page"><div class="mc-page-h">ZONE DETAILS</div>'+
+      mcKV("Zone Type",esc(ztype))+
+      mcKV("Price Range",zoneStr)+
+      mcKV("Mid Price",mid!=null?fmt(mid):"—")+
+      mcKV("Current Price",'<b class="teal">'+(r.price!=null?fmt(r.price):"—")+'</b>')+
+      mcKV("Size (USD)",esc(r.zoneSizeText||"—"))+
+      mcKV("Touches",touches!=null?touches:"—")+
+      mcKV("Age",esc(r.ageText||ageOf(a)))+
+      mcKV("Timeframe",esc(a.timeframe||r.timeframe||"—"))+
+    '</div>';
+
+    // Page 3: Chart
+    var p3='<div class="mc-page"><div class="mc-page-h">CHART</div>'+
+      '<div class="mc-bigspark">'+sparkSVG(r,z)+'</div></div>';
+
+    // Page 4: Confidence
+    var p4='<div class="mc-page"><div class="mc-page-h">CONFIDENCE</div>'+
+      '<div class="mc-conf-wrap">'+
+        '<div class="gauge"><svg width="84" height="84" viewBox="0 0 96 96">'+
+          '<circle cx="48" cy="48" r="40" stroke="var(--bg-card-2)" stroke-width="8" fill="none"/>'+
+          '<circle cx="48" cy="48" r="40" stroke="var(--accent)" stroke-width="8" fill="none" stroke-linecap="round" '+
+            'stroke-dasharray="251.2" stroke-dashoffset="'+(251.2*(1-sc/100)).toFixed(1)+'"/></svg>'+
+          '<div class="c"><div class="pct">'+Math.round(sc)+'%</div><div class="lv">'+esc(r.confidence||"")+'</div></div></div>'+
+        '<div class="bars">'+
+          bar("HTF Alignment",cb.htfAlignment!=null?cb.htfAlignment:trendAlign)+
+          bar("Zone Quality",cb.zoneQuality!=null?cb.zoneQuality:(qual!=null?qual:strengthPct))+
+          bar("Structure Confluence",cb.structureConfluence!=null?cb.structureConfluence:Math.min(100,(r.alerts||[]).length*33))+
+          bar("Momentum",cb.momentum!=null?cb.momentum:(r.rsi!=null?Math.round(r.rsi):50))+
+          bar("Volume",cb.volume!=null?cb.volume:50)+
+        '</div></div></div>';
+
+    // Page 5: Confluence + Notes + Actions
+    var tvSuf=(mk==="Perp")?".P":"";
+    var tvUrl='https://www.tradingview.com/chart/?symbol=BINANCE:'+encodeURIComponent(r.symbol)+tvSuf;
+    var p5='<div class="mc-page">'+
+      '<div class="mc-page-h">CONFLUENCE</div>'+confluenceList(r,a)+
+      '<div class="mc-page-h" style="margin-top:12px">NOTES</div>'+
+      '<div class="notes">'+esc(a.detail||"No additional notes for this setup.")+'</div>'+
+      '<div class="mc-actions">'+
+        '<a class="btn" target="_blank" rel="noopener" href="'+tvUrl+'">'+
+          '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 4-6"/></svg>View Chart</a>'+
+        '<button class="btn btn-primary" type="button">'+
+          '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add to Live Monitor</button>'+
+      '</div>'+
+    '</div>';
+
+    return p1+p2+p3+p4+p5;
+  }
+
   function renderMobileCards(){
     var box=E("mcards"); if(!box) return;
     var rs=ST.results;
     if(!rs.length){box.innerHTML='<div class="row-msg">No setups match the current filter.</div>';return;}
-    var mkt0=ST.market==="perpetual"?"Perp":"Spot";
     box.innerHTML=rs.map(function(r,i){
-      var a=r.topAlert||{},z=zoneOf(a),d=dirOf(r);
-      var sc=+r.score||0;
-      var dl=d==="bull"?"Bullish":d==="bear"?"Bearish":"Neutral";
-      var mk=r.market||mkt0;
-      var rrV=r.rr!=null?(+r.rr).toFixed(2):"—";
-      return '<div class="mcard'+(i===ST.sel?" sel":"")+'" data-i="'+i+'">'+
-        '<div class="mc-row1">'+
+      var pages = buildMobileCardPages(r);          // always build so accordion animates
+      var dots='';
+      for(var k=0;k<5;k++) dots+='<span class="dot'+(k===0?' active':'')+'"></span>';
+      return '<div class="mcard'+(i===ST.sel?" open":"")+'" data-i="'+i+'">'+
+        '<div class="mc-head" data-i="'+i+'">'+
           '<span class="mc-sym">'+esc(r.symbol)+'</span>'+
-          '<span class="mc-tag mkt">'+esc(mk)+'</span>'+
-          '<span class="mc-price">'+fmt(r.price)+'</span>'+
-          '<span class="mc-dir '+d+'">'+(d==="bull"?IC.up:d==="bear"?IC.dn:"")+dl+'</span>'+
+          '<span class="mc-price">'+(r.price!=null?fmt(r.price):"—")+'</span>'+
+          '<svg class="mc-caret" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>'+
         '</div>'+
-        '<div class="mc-row2">'+
-          '<div class="mc-spark">'+miniSparkSVG(r,z)+'</div>'+
-          '<div class="mc-score"><div class="v '+confClass(sc)+'">'+Math.round(sc)+'%</div>'+
-            '<div class="l">'+esc(r.confidence||"")+'</div></div>'+
-        '</div>'+
-        '<div class="mc-row3">'+
-          '<span class="mc-setup">'+esc(setupLabel(a))+'</span>'+
-          '<span class="item">RR<b>'+rrV+'</b></span>'+
-          '<span class="item">Age<b>'+esc(r.ageText||ageOf(a))+'</b></span>'+
-          '<span class="mc-upd">'+rel(ST.scannedAt)+'</span>'+
-        '</div>'+
+        '<div class="mc-body"><div class="mc-inner"><div class="mc-inner-pad">'+
+          '<div class="mc-pages">'+pages+'</div>'+
+          '<div class="mc-dots">'+dots+'</div>'+
+        '</div></div></div>'+
       '</div>';
     }).join('');
+    // bind horizontal pager scroll -> active dot
+    [].forEach.call(box.querySelectorAll('.mcard'),function(card){
+      var pages=card.querySelector('.mc-pages');
+      var dots=card.querySelectorAll('.mc-dots .dot');
+      if(!pages||!dots.length)return;
+      pages.addEventListener('scroll',function(){
+        var idx=Math.round(pages.scrollLeft/Math.max(1,pages.clientWidth));
+        [].forEach.call(dots,function(d,j){d.classList.toggle('active',j===idx);});
+      },{passive:true});
+    });
   }
 
-  function openSheet(){
-    if(innerWidth>820)return;
-    var p=document.querySelector('.insight'); if(p)p.classList.add('open');
-    var bd=E("sheetBd"); if(bd)bd.classList.add('open');
-    document.body.classList.add('sheet-open');
-  }
+  // legacy bottom-sheet (no longer used on mobile, kept as no-op for backdrop click)
+  function openSheet(){}
   function closeSheet(){
     var p=document.querySelector('.insight'); if(p)p.classList.remove('open');
     var bd=E("sheetBd"); if(bd)bd.classList.remove('open');
@@ -1121,13 +1222,23 @@ svg{display:block}
     if(tr){ST.sel=+tr.getAttribute("data-i");renderTable();renderInsight();}
   });
   document.getElementById("mcards").addEventListener("click",function(e){
-    var c=e.target.closest(".mcard[data-i]"); if(!c)return;
-    ST.sel=+c.getAttribute("data-i");
-    renderTable();renderMobileCards();renderInsight();
-    openSheet();
+    if(e.target.closest(".mc-body")) return;   // ignore clicks inside expanded body
+    var head=e.target.closest(".mc-head[data-i]"); if(!head) return;
+    var card=head.parentElement, idx=+head.getAttribute("data-i");
+    var wasOpen=card.classList.contains("open");
+    [].forEach.call(document.querySelectorAll(".mcard.open"),function(c){c.classList.remove("open");});
+    if(!wasOpen){
+      card.classList.add("open");
+      ST.sel=idx;
+      // reset pager position + dots
+      var pgs=card.querySelector('.mc-pages');
+      if(pgs){pgs.scrollLeft=0;}
+      var dts=card.querySelectorAll('.mc-dots .dot');
+      [].forEach.call(dts,function(d,j){d.classList.toggle('active',j===0);});
+    } else { ST.sel=-1; }
+    renderTable(); renderInsight();           // keep desktop state in sync
   });
   document.getElementById("sheetBd").addEventListener("click",closeSheet);
-  addEventListener("resize",function(){ if(innerWidth>820) closeSheet(); });
   addEventListener("keydown",function(e){ if(e.key==="Escape") closeSheet(); });
   function seg(id,attr,key,after){
     var box=E(id); if(!box)return;
