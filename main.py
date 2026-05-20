@@ -4737,6 +4737,190 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
     else:
         confidence = "Low"
 
+    # ── Row extras: RR (TP1/SL) · Age · Zone size (USD) · Confidence breakdown ──
+    def _tf_minutes(tfs):
+        try:
+            num = int("".join(ch for ch in str(tfs) if ch.isdigit()) or 1)
+            unit = ("".join(ch for ch in str(tfs) if ch.isalpha()).lower() or "m")
+        except Exception:
+            return 60
+        return num * {"m": 1, "h": 60, "d": 1440, "w": 10080}.get(unit, 60)
+
+    def _fmt_age(bars):
+        if bars is None:
+            return "—"
+        try:
+            mins = max(0, int(bars)) * _tf_minutes(tf)
+        except Exception:
+            return "—"
+        if mins < 60:
+            return f"{mins}m"
+        if mins < 1440:
+            hh, mm = divmod(mins, 60)
+            return f"{hh}h {mm:02d}m" if mm else f"{hh}h"
+        dd, rem = divmod(mins, 1440)
+        hh = rem // 60
+        return f"{dd}d {hh:02d}h" if hh else f"{dd}d"
+
+    def _fmt_usd(val):
+        try:
+            val = float(val)
+        except Exception:
+            return None
+        a = abs(val)
+        if a >= 1e9:
+            return f"~{round(val / 1e9, 2)}B"
+        if a >= 1e6:
+            return f"~{round(val / 1e6, 2)}M"
+        if a >= 1e3:
+            return f"~{round(val / 1e3, 2)}K"
+        return f"~{round(val, 2)}"
+
+    def _row_extras():
+        ta = alerts[0]
+        meta = ta.get("meta", {}) or {}
+        setup = ta.get("setup", "")
+        is_bull = ta.get("direction", "") == "bullish"
+        z_hi = z_lo = None
+        if setup.startswith("OB"):
+            z_hi, z_lo = meta.get("obTop"), meta.get("obBottom")
+        elif setup == "FVG":
+            z_hi, z_lo = meta.get("fvgTop"), meta.get("fvgBottom")
+        elif setup.startswith("BREAKER"):
+            z_hi, z_lo = meta.get("breakerTop"), meta.get("breakerBottom")
+        elif setup.startswith("FIB"):
+            z_hi = z_lo = meta.get("fibPrice")
+        try:
+            if z_hi is not None and z_lo is not None and z_hi < z_lo:
+                z_hi, z_lo = z_lo, z_hi
+        except Exception:
+            pass
+
+        age_bars = None
+        ob_vol = None
+        if setup.startswith("OB") and z_hi is not None:
+            best, bestd = None, None
+            for ob in obs:
+                d = abs(ob["top"] - z_hi) + abs(ob["bottom"] - (z_lo if z_lo is not None else z_hi))
+                if bestd is None or d < bestd:
+                    bestd, best = d, ob
+            if best is not None:
+                age_bars = best.get("age")
+                ob_vol = best.get("volume")
+        elif setup == "FVG":
+            age_bars = meta.get("fvgAge")
+        elif setup.startswith("BREAKER"):
+            age_bars = meta.get("breakerAge")
+        elif setup.startswith("FIB"):
+            age_bars = meta.get("barsCount")
+
+        zone_size = None
+        if ob_vol is not None:
+            zone_size = float(ob_vol) * price
+        elif meta.get("tvObFormationVolume"):
+            try:
+                zone_size = float(meta["tvObFormationVolume"]) * price
+            except Exception:
+                zone_size = None
+        else:
+            try:
+                zone_size = sum(v[-3:]) * price
+            except Exception:
+                zone_size = None
+
+        rr = entry = stop = tp1 = None
+        try:
+            entry = price
+            buf = 0.25 * current_atr
+            lookN = min(60, n - 1) if n > 2 else n
+            win_h = h[-lookN:-1] if lookN > 1 else h[-lookN:]
+            win_l = l[-lookN:-1] if lookN > 1 else l[-lookN:]
+            zh = z_hi if z_hi is not None else entry
+            zl = z_lo if z_lo is not None else entry
+            if is_bull:
+                stop = zl - buf
+                if stop >= entry:
+                    stop = entry - max(current_atr, entry * 1e-4)
+                sw = max(win_h) if win_h else entry
+                tp1 = sw if sw > entry else entry + 2.0 * (entry - stop)
+                risk, reward = entry - stop, tp1 - entry
+            else:
+                stop = zh + buf
+                if stop <= entry:
+                    stop = entry + max(current_atr, entry * 1e-4)
+                sw = min(win_l) if win_l else entry
+                tp1 = sw if sw < entry else entry - 2.0 * (stop - entry)
+                risk, reward = stop - entry, entry - tp1
+            if risk > 0 and reward > 0:
+                rr = round(max(0.1, min(9.99, reward / risk)), 2)
+        except Exception:
+            rr = None
+
+        dsign = 1 if is_bull else -1
+        htf = 50
+        htf += 20 if itrend == dsign else (-15 if itrend == -dsign else 0)
+        htf += 20 if trend == dsign else (-15 if trend == -dsign else 0)
+        if (is_bull and current_rsi > 50) or ((not is_bull) and current_rsi < 50):
+            htf += 10
+        htf = int(max(0, min(100, htf)))
+
+        if meta.get("obQuality") is not None:
+            zq = float(meta["obQuality"])
+        elif meta.get("legScore") is not None:
+            ls = float(meta["legScore"])
+            zq = ls * 100.0 if ls <= 1 else ls
+        else:
+            zq = (ta.get("strength", 1) / 8.0) * 100.0
+        zq = int(max(0, min(100, round(zq))))
+
+        sig = set()
+        for a in alerts:
+            for k in ("FIB", "OB", "FVG", "RSI", "BREAKER"):
+                if k in a.get("setup", ""):
+                    sig.add(k)
+        sc = 35 + 22 * max(0, len(sig) - 1)
+        if meta.get("fvgConfluence") or meta.get("fvgOverlap"):
+            sc += 15
+        if meta.get("highProb"):
+            sc += 12
+        if meta.get("absorptionPass"):
+            sc += 10
+        if meta.get("fvgUntouched"):
+            sc += 8
+        sc = int(max(0, min(100, sc)))
+
+        try:
+            roc = ((c[-1] - c[-6]) / c[-6]) * 100.0 if len(c) > 6 and c[-6] else 0.0
+        except Exception:
+            roc = 0.0
+        mo = (50 + (current_rsi - 50) * 1.5 + roc * 4) if is_bull else (50 + (50 - current_rsi) * 1.5 - roc * 4)
+        mo = int(max(0, min(100, round(mo))))
+
+        try:
+            base = sum(v[-21:-1]) / 20.0 if len(v) > 21 else (sum(v) / max(1, len(v)))
+            relv = (v[-1] / base) if base else 1.0
+        except Exception:
+            relv = 1.0
+        vol = int(max(0, min(100, round(50 + (relv - 1.0) * 40))))
+
+        return {
+            "rr": rr,
+            "entry": round(entry, 8) if entry is not None else None,
+            "stop": round(stop, 8) if stop is not None else None,
+            "tp1": round(tp1, 8) if tp1 is not None else None,
+            "ageText": _fmt_age(age_bars),
+            "ageBars": age_bars,
+            "zoneSizeUsd": zone_size,
+            "zoneSizeText": _fmt_usd(zone_size) if zone_size else None,
+            "confBreakdown": {
+                "htfAlignment": htf,
+                "zoneQuality": zq,
+                "structureConfluence": sc,
+                "momentum": mo,
+                "volume": vol,
+            },
+        }
+
     return {
         "symbol": symbol,
         "price": price,
@@ -4751,6 +4935,7 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
         "topAlert": alerts[0],
         "score": score,
         "confidence": confidence,
+        **_row_extras(),
     }
 
 
@@ -7225,15 +7410,46 @@ def api_watchlist_refresh():
     return jsonify({"results": results, "scanned": len(pairs)})
 
 
+# mobile UA fragments — keep small, case-insensitive
+_MOBILE_UA_KEYS = (
+    "iphone", "ipod", "android", "blackberry", "opera mini",
+    "windows phone", "iemobile", "mobile safari", "mobile/",
+)
+
+
+def _is_mobile_ua(ua):
+    """Heuristic mobile detection. Modern iPadOS reports as desktop Mac — that's
+    intentional (an iPad has the screen for the desktop view)."""
+    ua = (ua or "").lower()
+    return any(k in ua for k in _MOBILE_UA_KEYS)
+
+
 @app.route("/")
 def index():
-    # If already logged in, serve screener directly
+    # If already logged in, serve the right UI per device class.
     if session.get("logged_in"):
         username = session.get("username", "Trader")
         display_name = " ".join(w.capitalize() for w in username.strip().split())
-        return render_template("index.html", username=display_name)
+        # ?view=mobile|desktop overrides UA sniffing (useful for testing).
+        forced = (request.args.get("view") or "").lower()
+        if forced in ("mobile", "desktop"):
+            mobile = forced == "mobile"
+        else:
+            mobile = _is_mobile_ua(request.headers.get("User-Agent"))
+        tmpl = "index.html" if mobile else "preview.html"
+        return render_template(tmpl, username=display_name)
     # Otherwise serve homepage (login happens via drop box)
     return render_template("homepage.html")
+
+
+@app.route("/preview")
+def preview():
+    # Login-gated preview of the rebuilt screener UI (live /api/scan data).
+    if session.get("logged_in"):
+        username = session.get("username", "Trader")
+        display_name = " ".join(w.capitalize() for w in username.strip().split())
+        return render_template("preview.html", username=display_name)
+    return redirect(url_for("index"))
 
 
 @app.route("/api/pairs")
