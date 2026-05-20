@@ -9,3 +9,8 @@ build/
 .DS_Store
 .venv/
 venv/
+
+# Agent / tooling runtime artifacts (Claude Code, Ruflo, MCP) — not project code
+.claude/
+.claude-flow/
+.mcp.json
