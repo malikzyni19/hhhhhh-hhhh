@@ -265,6 +265,7 @@ svg{display:block}
 .pg:hover{border-color:var(--border-2);color:var(--text)}
 .pg.on{background:var(--accent);border-color:var(--accent);color:#04121a;font-weight:700}
 .pg.dots{border:0;background:transparent;cursor:default}
+.pg.disabled{opacity:.4;pointer-events:none}
 .rpp{display:flex;align-items:center;gap:7px}
 .rpp select{
   background:var(--bg-card);border:1px solid var(--border);color:var(--text-2);
@@ -594,14 +595,18 @@ svg{display:block}
 
       <div class="pager">
         <span id="pagerInfo">Loading…</span>
-        <div class="pg-btns">
-          <div class="pg"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></div>
-          <div class="pg on">1</div><div class="pg">2</div><div class="pg">3</div>
-          <div class="pg dots">…</div><div class="pg">36</div>
-          <div class="pg"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
+        <div class="pg-btns" id="pgBtns">
+          <div class="pg" id="pgPrev" title="Previous batch"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></div>
+          <div class="pg on" id="pgCur">1</div>
+          <div class="pg" id="pgNext" title="Next batch"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
         </div>
         <div class="rpp">Rows per page:
-          <select><option>10</option><option>25</option><option>50</option></select>
+          <select id="rppSelect">
+            <option value="10">10</option>
+            <option value="24" selected>24</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
         </div>
       </div>
     </section>
@@ -745,7 +750,8 @@ svg{display:block}
     applyTheme(saved);
   })();
   var ST={market:"spot",signal:"OB",mode:"main",results:[],sel:-1,scannedAt:0,scanned:0,
-          prev:null,stars:{},auto:true,timer:null,busy:false};
+          prev:null,stars:{},auto:true,timer:null,busy:false,
+          pairsPerCycle:24,page:1,roundRobin:true};
   var SK=0;
 
   // runtime CSS for states not in the base stylesheet
@@ -830,31 +836,31 @@ svg{display:block}
       return {url:"/api/scan", body:{
         settings:{tf:tf,useFibModule:true,useBreakerModule:true},
         market:market, exchange:"binance",
-        scanMode:"market", roundRobin:true, pairsPerCycle:24,
+        scanMode:"market", roundRobin:ST.roundRobin, pairsPerCycle:ST.pairsPerCycle,
         filterMode:"match", checkedSignals:checked, requiredSignals:[]
       }};
     }
     if(ST.mode==="compressed"){
       return {url:"/api/compressed_scan", body:{
         tf:tf, market:market, exchange:"binance",
-        lookback:30, maxPct:5.0, roundRobin:true, pairsPerCycle:24
+        lookback:30, maxPct:5.0, roundRobin:ST.roundRobin, pairsPerCycle:ST.pairsPerCycle
       }};
     }
     if(ST.mode==="trending"){
       return {url:"/api/trending_scan", body:{
-        tf:tf, market:market, exchange:"binance", mode:"bullish", limit:24
+        tf:tf, market:market, exchange:"binance", mode:"bullish", limit:ST.pairsPerCycle
       }};
     }
     if(ST.mode==="ath_atl"){
       return {url:"/api/ath_atl_scan", body:{
         action:"scan", market:market, exchange:"binance",
-        mode:"both", window:"all_time", status:"near_level", nearPct:5.0, limit:24
+        mode:"both", window:"all_time", status:"near_level", nearPct:5.0, limit:ST.pairsPerCycle
       }};
     }
     if(ST.mode==="bias"){
       return {url:"/api/bias_scan", body:{
         tf:tf, market:market, exchange:"binance",
-        pairsPerCycle:24, roundRobin:true
+        pairsPerCycle:ST.pairsPerCycle, roundRobin:ST.roundRobin
       }};
     }
     return null;
@@ -1033,7 +1039,6 @@ svg{display:block}
   function renderMeta(){
     var tEl=E("mainTitle");
     if(tEl){
-      // preserve the trailing info icon
       var ico = tEl.querySelector("svg");
       tEl.textContent = MODE_LABEL[ST.mode]||"Main Scan";
       if(ico) tEl.appendChild(document.createTextNode(" ")), tEl.appendChild(ico);
@@ -1041,9 +1046,14 @@ svg{display:block}
     E("mainSub").textContent = MODE_SUB[ST.mode]||"All instruments across selected markets";
     E("lastScan").textContent=ST.scannedAt?rel(ST.scannedAt):"—";
     var n=ST.results.length;
-    E("pagerInfo").textContent= n
-      ? ("Showing 1 to "+n+" of "+n+" results")
+    var page=ST.page||1;
+    var start = n ? ((page-1)*ST.pairsPerCycle + 1) : 0;
+    var end   = n ? (start + n - 1) : 0;
+    E("pagerInfo").textContent = n
+      ? ("Showing "+start+"–"+end+" · page "+page+" · "+ST.pairsPerCycle+"/page")
       : "No setups found";
+    var cur=E("pgCur"); if(cur) cur.textContent=page;
+    var prev=E("pgPrev"); if(prev) prev.classList.toggle("disabled", page<=1);
   }
 
   function kpi(label,val,sub,cls){
@@ -1454,6 +1464,24 @@ svg{display:block}
   E("btnFilters").addEventListener("click",scan);
   if(E("btnThemeLight")) E("btnThemeLight").addEventListener("click",function(){applyTheme("light");});
   if(E("btnThemeDark"))  E("btnThemeDark").addEventListener("click",function(){applyTheme("dark");});
+  /* pagination (Wave 4) */
+  if(E("pgPrev")) E("pgPrev").addEventListener("click",function(){
+    if(ST.page<=1) return;
+    // server-side round-robin can't rewind a slice; reset cursor and reload page 1
+    ST.page=1; ST.roundRobin=false;
+    scan();
+    setTimeout(function(){ ST.roundRobin=true; },200);
+  });
+  if(E("pgNext")) E("pgNext").addEventListener("click",function(){
+    ST.page=(ST.page||1)+1; ST.roundRobin=true;
+    scan();
+  });
+  if(E("rppSelect")) E("rppSelect").addEventListener("change",function(){
+    var v=parseInt(this.value,10); if(!isFinite(v)||v<=0) v=24;
+    ST.pairsPerCycle=v; ST.page=1; ST.roundRobin=false;
+    scan();
+    setTimeout(function(){ ST.roundRobin=true; },200);
+  });
   E("arToggle").addEventListener("click",function(){
     ST.auto=!ST.auto; this.classList.toggle("on",ST.auto);
     if(ST.auto){ST.timer=setInterval(scan,30000);}else{clearInterval(ST.timer);ST.timer=null;}
