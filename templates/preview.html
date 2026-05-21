@@ -162,6 +162,10 @@ svg{display:block}
 .zmodal-reset b{color:var(--text);font-family:var(--mono);font-weight:600}
 .zmodal-actions{display:flex;gap:10px;justify-content:center}
 .zmodal-actions .btn{flex:1;justify-content:center}
+/* locked-feature affordances */
+.nav-item.locked{opacity:.5}
+.nav-item .lock-badge{margin-left:auto;color:var(--text-3);display:flex;align-items:center}
+.topnav a.locked{opacity:.45}
 .ic-btn{
   width:30px;height:30px;border-radius:7px;border:0;background:transparent;
   color:var(--text-2);display:flex;align-items:center;justify-content:center;
@@ -1303,6 +1307,22 @@ svg{display:block}
   </div>
 </div>
 
+<!-- ═══ Locked-feature modal (Task 5) ═══ -->
+<div class="zmodal-bd" id="lockModalBd"></div>
+<div class="zmodal" id="lockModal" role="dialog" aria-modal="true" aria-labelledby="lockModalTitle">
+  <div class="zmodal-card">
+    <button class="zmodal-x" id="lockModalX" type="button" aria-label="Close"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    <div class="zmodal-ico lock"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
+    <h3 class="zmodal-title" id="lockModalTitle">Feature locked</h3>
+    <div class="zmodal-feat" id="lockModalFeat"></div>
+    <p class="zmodal-msg" id="lockModalMsg">This feature isn't available on your current plan. Upgrade your plan or contact admin to unlock this module.</p>
+    <div class="zmodal-actions">
+      <button class="btn" id="lockModalClose" type="button">Close</button>
+      <a class="btn btn-primary" href="https://t.me/MalikZyNi" target="_blank" rel="noopener" style="text-decoration:none">Upgrade Plan</a>
+    </div>
+  </div>
+</div>
+
 <script>
 (function fitApp(){
   var W=1280,H=930;
@@ -1812,6 +1832,12 @@ svg{display:block}
       showTokenLimitPopup(ST.tokens.resetAt);
       return;
     }
+    // Permission gating — block scans on a locked tab / exchange / timeframe.
+    var _tab=TAB_OF_MODE[ST.mode];
+    if(_tab && !_featAllowed("allowed_tabs", _tab)){ showLockPopup(MODE_LABEL[ST.mode]||"This scanner"); return; }
+    if(!_featAllowed("allowed_exchanges", ST.exchange)){ showLockPopup((EXCH_NAME[ST.exchange]||ST.exchange)+" exchange"); return; }
+    var _tf=_currentTf();
+    if(_tf && ALL_TF_VOCAB.indexOf(_tf)>=0 && !_featAllowed("allowed_timeframes", _tf)){ showLockPopup(_tf.toUpperCase()+" timeframe"); return; }
     var p=buildPayloadForMode();
     if(!p){ ST.results=[]; renderAll(); return; }
     ST.busy=true;
@@ -1923,7 +1949,7 @@ svg{display:block}
     if(location.protocol==="file:"){ renderTokenPill(null); return; }
     fetch("/api/my-permissions",{credentials:"same-origin"})
       .then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); })
-      .then(function(d){ ST.perms=d; ST.tokens=_normalizeTokens(d); renderTokenPill(ST.tokens); })
+      .then(function(d){ ST.perms=d; ST.tokens=_normalizeTokens(d); renderTokenPill(ST.tokens); try{applyPermissionsUI();}catch(_){} })
       .catch(function(){ renderTokenPill(ST.tokens||null); });
   }
 
@@ -1964,6 +1990,74 @@ svg{display:block}
     var bd=E("tokenModalBd"), m=E("tokenModal");
     if(bd)bd.classList.remove("open"); if(m)m.classList.remove("open");
     document.body.classList.remove("sheet-open"); clearInterval(_tokModalT);
+  }
+
+  /* ── permission gating (Task 5) — real perms from /api/my-permissions ── */
+  var TAB_OF_MODE = {main:"scan", compressed:"compressed", trending:"trending", ath_atl:"athatl", bias:"bias"};
+  var TAB_OF_VIEW = {scanner:"scan", live:"watchlist", watchlist:"pairs", settings:"settings"};
+  var EXCH_NAME   = {binance:"Binance", bybit:"Bybit", okx:"OKX", mexc:"MEXC"};
+  var ALL_TF_VOCAB = ["15m","30m","1h","4h","1d"];
+  function _isAdmin(){ return !!(ST.perms && ST.perms.is_admin); }
+  // returns true when allowed; fail-safe (no perms loaded / field absent / admin) → allowed
+  function _featAllowed(key, value){
+    if(_isAdmin()) return true;
+    var list = ST.perms && ST.perms[key];
+    if(!Array.isArray(list)) return true;
+    return list.indexOf(value) >= 0;
+  }
+  function showLockPopup(featureName, customMsg){
+    var bd=E("lockModalBd"), m=E("lockModal"); if(!bd||!m) return;
+    var f=E("lockModalFeat"); if(f) f.textContent=featureName||"";
+    var msgEl=E("lockModalMsg");
+    if(msgEl) msgEl.textContent = customMsg ||
+      "This feature isn't available on your current plan. Upgrade your plan or contact admin to unlock this module.";
+    bd.classList.add("open"); m.classList.add("open"); document.body.classList.add("sheet-open");
+  }
+  function hideLockPopup(){
+    var bd=E("lockModalBd"), m=E("lockModal");
+    if(bd)bd.classList.remove("open"); if(m)m.classList.remove("open");
+    document.body.classList.remove("sheet-open");
+  }
+  function _setLockBadge(el, locked){
+    var b=el.querySelector(".lock-badge");
+    if(locked && !b){
+      b=document.createElement("span"); b.className="lock-badge";
+      b.innerHTML='<svg class="ico ico-sm" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';
+      el.appendChild(b);
+    } else if(!locked && b){ b.remove(); }
+  }
+  // Reflect current permissions in the UI (lock badges, disabled options).
+  function applyPermissionsUI(){
+    [].forEach.call(document.querySelectorAll('.side .nav-item[data-mode]'),function(el){
+      var tab=TAB_OF_MODE[el.getAttribute('data-mode')];
+      var locked = tab ? !_featAllowed("allowed_tabs", tab) : false;
+      el.classList.toggle('locked', locked);
+      _setLockBadge(el, locked);
+    });
+    [].forEach.call(document.querySelectorAll('#topnav a[data-view]'),function(a){
+      var tab=TAB_OF_VIEW[a.getAttribute('data-view')];
+      var locked = tab ? !_featAllowed("allowed_tabs", tab) : false;
+      a.classList.toggle('locked', locked);
+      if(locked) a.title="Locked — upgrade to unlock"; else a.removeAttribute('title');
+    });
+    var sel=E("exchSelect");
+    if(sel) [].forEach.call(sel.options,function(o){
+      if(!o.getAttribute('data-base')) o.setAttribute('data-base', o.textContent);
+      var locked=!_featAllowed("allowed_exchanges", o.value);
+      o.disabled=locked;
+      o.textContent = o.getAttribute('data-base') + (locked? " — locked":"");
+    });
+    // If a previously-saved exchange is no longer permitted, fall back to binance.
+    if(!_featAllowed("allowed_exchanges", ST.exchange)){
+      ST.exchange="binance";
+      try{ localStorage.setItem("zyni-exchange","binance"); }catch(_){}
+      if(sel) sel.value="binance";
+    }
+  }
+  function _currentTf(){
+    if(ST.mode==="main") return ST.settings.tf;
+    var o=ST.modeOptions[ST.mode]||{};
+    return o.tf;   // ath_atl has no timeframe control
   }
 
   /* ── watchlist persistence ── */
@@ -3059,6 +3153,11 @@ svg{display:block}
     el.addEventListener("change",function(){
       var v=String(el.value||"binance").toLowerCase();
       if(SUPPORTED_EXCHANGES.indexOf(v)<0) v="binance";
+      if(!_featAllowed("allowed_exchanges", v)){
+        showLockPopup((EXCH_NAME[v]||v)+" exchange");
+        el.value=ST.exchange;            // revert to last permitted selection
+        return;
+      }
       ST.exchange=v; el.value=v;
       try{ localStorage.setItem("zyni-exchange",v); }catch(_){}
       renderAll();
@@ -3069,6 +3168,8 @@ svg{display:block}
     el.addEventListener('click',function(){
       var m=el.getAttribute('data-mode');
       if(m===ST.mode) return;
+      var _tab=TAB_OF_MODE[m];
+      if(_tab && !_featAllowed("allowed_tabs", _tab)){ showLockPopup(MODE_LABEL[m]||"This scanner"); return; }
       [].forEach.call(document.querySelectorAll('.side .nav-item[data-mode]'),function(x){x.classList.remove('active');});
       el.classList.add('active');
       ST.mode=m; ST.sel=-1;
@@ -3091,6 +3192,11 @@ svg{display:block}
   if(E("tokenModalX")) E("tokenModalX").addEventListener("click",hideTokenLimitPopup);
   if(E("tokenModalBd")) E("tokenModalBd").addEventListener("click",hideTokenLimitPopup);
   addEventListener("keydown",function(e){ if(e.key==="Escape" && E("tokenModal") && E("tokenModal").classList.contains("open")) hideTokenLimitPopup(); });
+  /* locked-feature modal close bindings (Task 5) */
+  if(E("lockModalClose")) E("lockModalClose").addEventListener("click",hideLockPopup);
+  if(E("lockModalX")) E("lockModalX").addEventListener("click",hideLockPopup);
+  if(E("lockModalBd")) E("lockModalBd").addEventListener("click",hideLockPopup);
+  addEventListener("keydown",function(e){ if(e.key==="Escape" && E("lockModal") && E("lockModal").classList.contains("open")) hideLockPopup(); });
   if(E("btnClear")) E("btnClear").addEventListener("click",function(){
     var m=ST.mode;
     if(ST.tabData[m]){
@@ -3857,7 +3963,9 @@ svg{display:block}
   [].forEach.call(document.querySelectorAll("#topnav a[data-view]"),function(a){
     a.addEventListener("click",function(e){
       e.preventDefault();
-      switchView(a.getAttribute("data-view"));
+      var v=a.getAttribute("data-view"), tab=TAB_OF_VIEW[v];
+      if(tab && !_featAllowed("allowed_tabs", tab)){ showLockPopup(a.textContent.trim()||v); return; }
+      switchView(v);
     });
   });
 
