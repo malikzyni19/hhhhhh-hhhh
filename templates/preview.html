@@ -3283,7 +3283,7 @@ svg{display:block}
         out.innerHTML='<div class="row-msg">Loading '+esc(kind)+'…</div>';
         var url,opts={credentials:"same-origin"};
         if(kind==="orderflow"){
-          url="/api/order-flow?exchange=binance&symbol="+encodeURIComponent(r.symbol)+"&timeframe="+encodeURIComponent(tf);
+          url="/api/order-flow?exchange="+encodeURIComponent(ST.exchange)+"&symbol="+encodeURIComponent(r.symbol)+"&timeframe="+encodeURIComponent(tf);
         } else if(kind==="zoneliq"){
           if(!z){ out.innerHTML='<div class="row-msg err">No zone bounds for this setup.</div>'; return; }
           var dir=(dirOf(r)==="bull")?"bullish":"bearish";
@@ -4143,14 +4143,14 @@ svg{display:block}
     function go(){
       var sort=E("mtFundSort").value;
       E("mtFundOut").innerHTML='<span style="color:var(--text-3)">Loading…</span>';
-      fetch("/api/pairs?limit=30",{credentials:"same-origin"})
+      fetch("/api/pairs?limit=30&market="+encodeURIComponent(ST.market)+"&exchange="+encodeURIComponent(ST.exchange),{credentials:"same-origin"})
         .then(function(r){return r.ok?r.json():null;})
         .then(function(d){
           var list=(d&&(d.pairs||d.results||d))||[];
           if(!Array.isArray(list)) list=Object.values(list);
           var syms=list.slice(0,18).map(function(it){return typeof it==="string"?it:(it.symbol||it.pair);}).filter(Boolean);
           var fetches=syms.map(function(sym){
-            return fetch("/api/order-flow?exchange=binance&symbol="+encodeURIComponent(sym)+"&timeframe=1h",{credentials:"same-origin"})
+            return fetch("/api/order-flow?exchange="+encodeURIComponent(ST.exchange)+"&symbol="+encodeURIComponent(sym)+"&timeframe=1h",{credentials:"same-origin"})
               .then(function(r){return r.ok?r.json():null;}).then(function(of){ return of?{sym:sym,of:of}:null; }).catch(function(){return null;});
           });
           return Promise.all(fetches);
