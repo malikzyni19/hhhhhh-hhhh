@@ -398,6 +398,26 @@ svg{display:block}
 .cb-fl.sev-warn{background:var(--yellow)}
 .cb-fl.sev-fail{background:var(--red-2)}
 .cb-reason{font-size:10.5px;color:var(--text-3);margin-top:3px;line-height:1.4}
+/* embedded TradingView chart modal (Task 8) */
+.chart-modal-bd{position:fixed;inset:0;background:rgba(2,8,16,.8);z-index:9100;display:none}
+.chart-modal-bd.open{display:block}
+.chart-modal{position:fixed;inset:0;z-index:9101;display:none;align-items:center;justify-content:center;padding:24px}
+.chart-modal.open{display:flex}
+.chart-modal-card{background:var(--bg-panel);border:1px solid var(--border);border-radius:14px;
+  width:min(1100px,96vw);height:min(720px,90vh);display:flex;flex-direction:column;overflow:hidden;
+  box-shadow:0 24px 70px rgba(0,0,0,.55)}
+.cm-head{display:flex;align-items:center;gap:12px;padding:12px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.cm-title{display:flex;align-items:center;gap:10px;min-width:0;flex:1}
+.cm-sym{font-size:16px;font-weight:700;letter-spacing:.3px}
+.cm-tags{display:flex;gap:6px;flex-wrap:wrap}
+.cm-head-r{display:flex;align-items:center;gap:8px}
+.cm-tf{background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--text);
+  font-size:12px;font-weight:600;font-family:inherit;padding:7px 9px;cursor:pointer;outline:none}
+.cm-tf:focus{border-color:var(--accent)}
+.cm-body{flex:1;min-height:0;background:var(--bg-card)}
+.cm-body iframe{width:100%;height:100%;border:0;display:block}
+.cm-note{padding:8px 14px;font-size:11px;color:var(--text-3);border-top:1px solid var(--border);line-height:1.5}
+@media(max-width:640px){.chart-modal{padding:8px}.chart-modal-card{height:92vh}.cm-head-r .btn span{display:none}}
 /* notes */
 .notes{font-size:12px;color:var(--text-2);line-height:1.45}
 /* deep-dive (Wave 5) */
@@ -1343,6 +1363,28 @@ svg{display:block}
   </div>
 </div>
 
+<!-- ═══ Embedded TradingView chart modal (Task 8) ═══ -->
+<div class="chart-modal-bd" id="chartModalBd"></div>
+<div class="chart-modal" id="chartModal" role="dialog" aria-modal="true" aria-labelledby="cmSym">
+  <div class="chart-modal-card">
+    <div class="cm-head">
+      <div class="cm-title"><span class="cm-sym" id="cmSym">—</span><span class="cm-tags" id="cmTags"></span></div>
+      <div class="cm-head-r">
+        <label class="cm-tf-wrap" title="Chart timeframe"><select id="cmTf" class="cm-tf" aria-label="Timeframe">
+          <option value="15m">15m</option><option value="30m">30m</option>
+          <option value="1h">1H</option><option value="4h">4H</option>
+          <option value="6h">6H</option><option value="12h">12H</option>
+          <option value="1d">1D</option><option value="1w">1W</option>
+        </select></label>
+        <a class="btn" id="cmOpen" href="#" target="_blank" rel="noopener" style="text-decoration:none"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M14 3h7v7M21 3l-9 9M5 7v12h12"/></svg>Open in TradingView</a>
+        <button class="ic-btn" id="cmClose" type="button" aria-label="Close"><svg class="ico" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
+    </div>
+    <div class="cm-body"><iframe id="cmFrame" title="TradingView chart" frameborder="0" allowtransparency="true" scrolling="no" allowfullscreen></iframe></div>
+    <div class="cm-note">Live TradingView chart. Private / unpublished Pine indicators can't load in an embed — use “Open in TradingView” to view those.</div>
+  </div>
+</div>
+
 <script>
 (function fitApp(){
   var W=1280,H=930;
@@ -2080,6 +2122,54 @@ svg{display:block}
     return o.tf;   // ath_atl has no timeframe control
   }
 
+  /* ── embedded TradingView chart modal (Task 8) ── */
+  var _cmCtx=null;
+  function _tvInterval(tf){
+    tf=String(tf||"4h").toLowerCase();
+    return ({"15m":"15","30m":"30","1h":"60","4h":"240","6h":"360","12h":"720","1d":"D","1w":"W"})[tf]||"240";
+  }
+  function _cmIsPerp(mkt){ mkt=String(mkt||""); return mkt==="perpetual"||mkt==="Perp"||mkt==="perp"; }
+  function _cmSuffix(){ return (_cmIsPerp(_cmCtx.market) && ST.settings.tvPerpSuffix!==false) ? ".P" : ""; }
+  function _cmExch(){ var e=String(_cmCtx.exchange||ST.exchange||"binance").toLowerCase();
+    return (SUPPORTED_EXCHANGES.indexOf(e)>=0?e:"binance").toUpperCase(); }
+  function _cmEmbedUrl(){
+    var theme=(document.documentElement.getAttribute("data-theme")==="light")?"light":"dark";
+    var sym=encodeURIComponent(_cmCtx.symbol)+_cmSuffix();
+    return "https://s.tradingview.com/widgetembed/?frameElementId=cmFrame&symbol="+_cmExch()+"%3A"+sym+
+      "&interval="+_tvInterval(_cmCtx.tf)+"&theme="+theme+"&style=1&hideideas=1&hidesidetoolbar=0"+
+      "&toolbarbg=rgba(0,0,0,0)&allow_symbol_change=1&studies=%5B%5D&saveimage=0";
+  }
+  function _cmExtUrl(){
+    return "https://www.tradingview.com/chart/?symbol="+_cmExch()+":"+encodeURIComponent(_cmCtx.symbol)+_cmSuffix();
+  }
+  function _cmRender(){
+    if(!_cmCtx) return;
+    var symEl=E("cmSym"); if(symEl) symEl.textContent=_cmCtx.symbol;
+    var mkt=_cmIsPerp(_cmCtx.market)?"Perp":"Spot";
+    var tags=E("cmTags");
+    if(tags) tags.innerHTML='<span class="tag mkt">'+esc(mkt)+'</span>'+
+      '<span class="tag neutral">'+esc(_cmExch())+'</span>'+
+      '<span class="tag neutral">'+esc(String(_cmCtx.tf||"").toUpperCase())+'</span>';
+    var tfSel=E("cmTf"); if(tfSel) tfSel.value=String(_cmCtx.tf||"4h").toLowerCase();
+    var fr=E("cmFrame"); if(fr) fr.src=_cmEmbedUrl();
+    var op=E("cmOpen"); if(op) op.href=_cmExtUrl();
+  }
+  function openChartModal(symbol, market, exchange, timeframe){
+    if(!symbol) return;
+    _cmCtx={ symbol:String(symbol).toUpperCase(), market:market||ST.market,
+             exchange:exchange||ST.exchange||"binance", tf:(timeframe||_currentTf()||"4h") };
+    _cmRender();
+    E("chartModalBd").classList.add("open");
+    E("chartModal").classList.add("open");
+    document.body.classList.add("sheet-open");
+  }
+  function closeChartModal(){
+    E("chartModalBd").classList.remove("open");
+    E("chartModal").classList.remove("open");
+    document.body.classList.remove("sheet-open");
+    var fr=E("cmFrame"); if(fr) fr.src="about:blank";   // stop the stream when hidden
+  }
+
   /* ── watchlist persistence ── */
   function loadWatchlist(){
     if(location.protocol==="file:") return;
@@ -2197,21 +2287,14 @@ svg{display:block}
     var e=String(ST.exchange||"binance").toUpperCase();
     return (SUPPORTED_EXCHANGES.indexOf(e.toLowerCase())>=0) ? e : (ST.settings.tvExchange||"BINANCE");
   }
-  /* shared helper: TradingView URL for any symbol */
-  function _tvUrl(sym, marketHint){
-    var market = marketHint || ST.market;
-    var suf = (market==="perpetual" && ST.settings.tvPerpSuffix!==false) ? ".P" : "";
-    var ex = _tvExch();
-    return "https://www.tradingview.com/chart/?symbol="+ex+":"+encodeURIComponent(sym)+suf;
-  }
   function _addToLM(sym){
     if(!sym) return;
     ST.stars[sym] = true; syncWatchlist();
   }
   function _insFoot(sym, marketHint){
     return '<div class="ti-foot" style="display:flex;gap:8px;margin-top:14px">'+
-      '<a class="btn" href="'+_tvUrl(sym, marketHint)+'" target="_blank" rel="noopener" style="text-decoration:none">'+
-        '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 4-6"/></svg>View Chart</a>'+
+      '<button class="btn" type="button" data-chart="'+esc(sym)+'" data-chart-mkt="'+esc(marketHint||ST.market)+'">'+
+        '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 4-6"/></svg>View Chart</button>'+
       '<button class="btn btn-primary" type="button" data-add-lm="'+esc(sym)+'">'+
         '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add to Live Monitor</button>'+
     '</div>';
@@ -2956,16 +3039,14 @@ svg{display:block}
         '<div class="bars cb-bars">'+cbBars(cb)+'</div></div></div>';
 
     // Page 5: Confluence + Notes + Actions
-    var tvSuf=(mk==="Perp")?".P":"";
-    var tvUrl='https://www.tradingview.com/chart/?symbol='+_tvExch()+':'+encodeURIComponent(r.symbol)+tvSuf;
     var p5='<div class="mc-page">'+
       '<div class="mc-page-h">CONFLUENCE</div>'+confluenceList(r,a)+
       '<div class="mc-page-h" style="margin-top:12px">NOTES</div>'+
       '<div class="notes">'+esc(a.detail||"No additional notes for this setup.")+'</div>'+
       '<div class="mc-actions">'+
-        '<a class="btn" target="_blank" rel="noopener" href="'+tvUrl+'">'+
-          '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 4-6"/></svg>View Chart</a>'+
-        '<button class="btn btn-primary" type="button">'+
+        '<button class="btn" type="button" data-chart="'+esc(r.symbol)+'" data-chart-mkt="'+esc(r.market||ST.market)+'">'+
+          '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 4-6"/></svg>View Chart</button>'+
+        '<button class="btn btn-primary" type="button" data-add-lm="'+esc(r.symbol)+'">'+
           '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add to Live Monitor</button>'+
       '</div>'+
     '</div>';
@@ -3230,12 +3311,23 @@ svg{display:block}
     var tr=e.target.closest("tr[data-i]");
     if(tr){ openInsightForTab(ST.mode, +tr.getAttribute("data-i")); }
   });
-  /* "Add to Live Monitor" buttons inside the insight panel work for any tab */
+  /* "Add to Live Monitor" + "View Chart" buttons inside the insight panel work for any tab */
   document.getElementById("insScroll").addEventListener("click",function(e){
+    var ch=e.target.closest("[data-chart]");
+    if(ch){
+      var sym=ch.getAttribute("data-chart");
+      var mkt=ch.getAttribute("data-chart-mkt")||ST.market;
+      openChartModal(sym, mkt, ST.exchange, _currentTf());
+      e.stopPropagation(); return;
+    }
     var lm=e.target.closest("[data-add-lm]");
     if(lm){ _addToLM(lm.getAttribute("data-add-lm")); e.stopPropagation(); }
   });
   document.getElementById("mcards").addEventListener("click",function(e){
+    var ch=e.target.closest("[data-chart]");
+    if(ch){ openChartModal(ch.getAttribute("data-chart"), ch.getAttribute("data-chart-mkt")||ST.market, ST.exchange, ST.settings.tf||"4h"); e.stopPropagation(); return; }
+    var lm=e.target.closest("[data-add-lm]");
+    if(lm){ _addToLM(lm.getAttribute("data-add-lm")); e.stopPropagation(); return; }
     if(e.target.closest(".mc-body")) return;   // ignore clicks inside expanded body
     var head=e.target.closest(".mc-head[data-i]"); if(!head) return;
     var card=head.parentElement, idx=+head.getAttribute("data-i");
@@ -3359,6 +3451,20 @@ svg{display:block}
     var o=this.innerHTML; this.innerHTML='<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>Added';
     var self=this; setTimeout(function(){self.innerHTML=o;},1600);
   });
+  /* Main "View Chart" — open the in-app chart modal instead of a new tab (Task 8) */
+  if(E("btnChart")) E("btnChart").addEventListener("click",function(e){
+    e.preventDefault();
+    var r=ST.results[ST.sel]; if(!r) return;
+    var tf=(r.topAlert&&r.topAlert.timeframe)||r.timeframe||ST.settings.tf||"4h";
+    openChartModal(r.symbol, r.market||ST.market, ST.exchange, tf);
+  });
+  /* chart modal controls (Task 8) */
+  if(E("cmClose")) E("cmClose").addEventListener("click",closeChartModal);
+  if(E("chartModalBd")) E("chartModalBd").addEventListener("click",closeChartModal);
+  if(E("cmTf")) E("cmTf").addEventListener("change",function(){
+    if(_cmCtx){ _cmCtx.tf=this.value; _cmRender(); }
+  });
+  addEventListener("keydown",function(e){ if(e.key==="Escape" && E("chartModal") && E("chartModal").classList.contains("open")) closeChartModal(); });
 
   /* ── Settings panel (Wave 6) ── */
   function _populateSettingsForm(){
@@ -3562,10 +3668,19 @@ svg{display:block}
           '<div class="lm-kv"><span>OI</span><b>'+esc(oi)+'</b></div>'+
           '<div class="lm-kv"><span>Funding</span><b>'+esc(fund)+'</b></div>'+
         '</div>'+
+        '<div class="mc-actions" style="margin-top:10px">'+
+          '<button class="btn" type="button" data-chart="'+esc(sym)+'" data-chart-mkt="'+esc(ST.market)+'">'+
+            '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 4-6"/></svg>View Chart</button>'+
+        '</div>'+
       '</div>';
     }).join("");
     [].forEach.call(box.querySelectorAll("[data-rm]"),function(btn){
       btn.addEventListener("click",function(){ _lmRemove(btn.getAttribute("data-rm")); });
+    });
+    [].forEach.call(box.querySelectorAll("[data-chart]"),function(btn){
+      btn.addEventListener("click",function(){
+        openChartModal(btn.getAttribute("data-chart"), btn.getAttribute("data-chart-mkt")||ST.market, ST.exchange, ST.settings.tf||"4h");
+      });
     });
   }
   function startLiveMonitorPolling(){
