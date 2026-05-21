@@ -378,6 +378,13 @@ svg{display:block}
 /* confluence */
 .cf{display:flex;gap:8px;font-size:12px;color:var(--text-2);padding:3px 0;align-items:flex-start;line-height:1.3}
 .cf .ico{color:var(--green-2);width:15px;height:15px;margin-top:1px;flex-shrink:0}
+/* severity-aware insight icons (Task 6) */
+.sev{display:inline-flex;flex-shrink:0;margin-top:1px}
+.sev svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.sev.pass{color:var(--green-2)}
+.sev.info{color:var(--text-3)}
+.sev.warn{color:var(--yellow)}
+.sev.fail{color:var(--red-2)}
 /* notes */
 .notes{font-size:12px;color:var(--text-2);line-height:1.45}
 /* deep-dive (Wave 5) */
@@ -2326,6 +2333,15 @@ svg{display:block}
       _ti("Invalidation",  ap.invalidation||"—")+
       ((ap.notes&&ap.notes.length)?('<div class="ti-chain" style="margin-top:8px"><ul>'+ap.notes.map(function(n){return '<li>'+esc(n)+'</li>';}).join("")+'</ul></div>'):"")+
 
+      '<div class="ti-h">Assessment</div>'+
+      insightRow("Trade grade: "+(r.tradeGrade||"—"), gradeSev(r.tradeGrade))+
+      insightRow("Compression score: "+(r.compressionScore!=null?Math.round(+r.compressionScore):"—"), scoreSev(r.compressionScore))+
+      insightRow("Volume state: "+((r.volumeState||"—").replace(/_/g," ")), severityOf(r.volumeState))+
+      (((r.obConfluence&&r.obConfluence.has)||(r.fvgConfluence&&r.fvgConfluence.has)||(r.fibConfluence&&r.fibConfluence.has))
+        ? insightRow("OB / FVG / Fib confluence at the box","pass")
+        : insightRow("No OB / FVG / Fib confluence","warn"))+
+      insightRow("Action: "+_compActionLabel(ap.state), severityOf(ap.state))+
+
       _insFoot(sym);
     setFoot(null); // hide the legacy chart anchor; we use our own in-panel buttons now
   }
@@ -2421,6 +2437,13 @@ svg{display:block}
       ((r.sparkline&&r.sparkline.length)
         ? '<div class="ti-h">Sparkline (last 24)</div><div style="padding:8px 0">'+_miniSpark(r.sparkline,240,60)+'</div>'
         : "")+
+
+      '<div class="ti-h">Assessment</div>'+
+      insightRow("Relative volume: "+(r.relVol!=null?(+r.relVol).toFixed(2)+"×":"—"),
+        (r.relVol!=null?(+r.relVol>=2?"pass":+r.relVol>=1.2?"info":"warn"):"info"))+
+      insightRow("Move strength: "+(ch>=0?"+":"")+ch.toFixed(2)+"%",
+        (Math.abs(ch)>=5?"pass":Math.abs(ch)>=1?"info":"warn"))+
+      insightRow((dir==="bull"?"Bullish":"Bearish")+" momentum mover", (Math.abs(ch)>=1?"pass":"warn"))+
 
       _insFoot(sym);
   }
@@ -2531,6 +2554,17 @@ svg{display:block}
            _ti("Current batch", (raw.currentBatchStart!=null?(raw.currentBatchStart+"–"+raw.currentBatchEnd):"—"))+
            _ti("Found total", raw.found||"—"))
         : "")+
+
+      '<div class="ti-h">Assessment</div>'+
+      (function(){
+        var t=String(tag||"").toUpperCase();
+        var sev = /BREAK/.test(t)?"pass" : /NEAR/.test(t)?"warn" : /MADE/.test(t)?"info" : severityOf(tag);
+        return insightRow("Status: "+(tag||"—"), sev);
+      })()+
+      insightRow("Break %: "+(r.breakPct!=null?(+r.breakPct).toFixed(2)+"%":"—"),
+        (r.breakPct!=null?(+r.breakPct>=2?"pass":+r.breakPct>=0.5?"info":"warn"):"info"))+
+      insightRow("Distance to level: "+(r.distancePct!=null?(+r.distancePct).toFixed(2)+"%":"—"),
+        (r.distancePct!=null?(+r.distancePct<=1?"pass":+r.distancePct<=3?"info":"warn"):"info"))+
 
       _insFoot(sym, r.marketType||ST.market);
   }
@@ -2669,6 +2703,15 @@ svg{display:block}
         '<div class="ti-h">Score breakdown</div>'+
         Object.keys(b.scoreBreakdown).map(function(k){return _ti(k, b.scoreBreakdown[k]);}).join("")
       :"")+
+
+      '<div class="ti-h">Assessment</div>'+
+      insightRow("Confirmation: "+(b.confirmation||"—"), severityOf(b.confirmation))+
+      insightRow("Grade: "+(b.grade||"—")+(b.gradeLabel?(" ("+b.gradeLabel+")"):""), gradeSev(b.grade))+
+      (b.score!=null?insightRow("Bias score: "+Math.round(b.score), scoreSev(b.score)):"")+
+      (b.priorQuality?insightRow("Prior move quality: "+b.priorQuality, severityOf(b.priorQuality)):"")+
+      ((b.obConf||b.fvgConf||b.fibConf)
+        ? insightRow("OB / FVG / Fib confluence present","pass")
+        : insightRow("No OB / FVG / Fib confluence","warn"))+
 
       _insFoot(b.symbol);
   }
@@ -2970,21 +3013,69 @@ svg{display:block}
     return '<div class="bar-row"><div class="bt"><span>'+lbl+'</span><b>'+v+'%</b></div>'+
       '<div class="bar-tr"><div class="bar-fl" style="width:'+v+'%"></div></div></div>';}
 
+  /* ── severity-aware insight helpers (Task 6) ──
+     severity → icon/colour:
+       pass  green check  (strong / confirmed / passed / high / aligned / valid)
+       info  gray info    (medium / neutral / informational)
+       warn  yellow warn  (weak / caution / incomplete / early / unconfirmed)
+       fail  red cross    (failed / invalid / against the setup)                */
+  var SEV_IC={
+    pass:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8.4 12.4l2.6 2.6 4.6-5.2"/></svg>',
+    info:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>',
+    warn:'<svg viewBox="0 0 24 24"><path d="M12 3.2 22 20H2z"/><path d="M12 10v4.5M12 17.2h.01"/></svg>',
+    fail:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg>'
+  };
+  function _normSev(sev){
+    sev=String(sev||"info").toLowerCase();
+    if(sev==="pass"||sev==="warn"||sev==="fail"||sev==="info") return sev;
+    if(sev==="good"||sev==="strong"||sev==="green"||sev==="ok"||sev==="high") return "pass";
+    if(sev==="caution"||sev==="weak"||sev==="yellow"||sev==="incomplete"||sev==="early"||sev==="medium-low") return "warn";
+    if(sev==="bad"||sev==="red"||sev==="invalid"||sev==="error"||sev==="against") return "fail";
+    return "info";
+  }
+  function severityIcon(sev){ sev=_normSev(sev); return '<span class="sev '+sev+'">'+(SEV_IC[sev]||SEV_IC.info)+'</span>'; }
+  function insightRow(text, sev){ sev=_normSev(sev); return '<div class="cf sev-row '+sev+'">'+severityIcon(sev)+'<span>'+esc(text)+'</span></div>'; }
+  /* Infer severity from free-text status when the backend gives no explicit one. */
+  function severityOf(text){
+    var s=String(text||"").toLowerCase();
+    if(/invalid|invalidated|failed|\bfail\b|against (the )?setup|violated|broken|rejected setup|conflict|opposes/.test(s)) return "fail";
+    if(/weak|caution|incomplete|early|unconfirmed|pending|\blow\b|thin|dry|declin|missing|no confluence|\bwatch\b|approach/.test(s)) return "warn";
+    if(/strong|confirmed|passed|\bpass\b|\bhigh\b|elite|premium|excellent|aligned|fresh|untouched|valid|absorption|ready|breaking|expanding/.test(s)) return "pass";
+    if(/medium|moderate|neutral|fair|average|single-signal|\binfo\b|balanced/.test(s)) return "info";
+    return "info";
+  }
+  function gradeSev(g){ var l=String(g||"").toUpperCase();
+    if(/^A/.test(l)) return "pass"; if(/^B/.test(l)) return "info"; if(/^[CDEF]/.test(l)) return "warn"; return "info"; }
+  function scoreSev(n){ n=+n; if(isNaN(n)) return "info"; return n>=75?"pass":n>=50?"info":n>=1?"warn":"fail"; }
+  function qualSev(label, score){ var l=String(label||"").toLowerCase();
+    if(/elite|high|strong|excellent|premium|a\+/.test(l)) return "pass";
+    if(/weak|poor|low/.test(l)) return "warn";
+    if(/medium|moderate|fair|average/.test(l)) return "info";
+    if(score!=null) return scoreSev(score); return "info"; }
+
   function confluenceList(r,a){
-    var m=a.meta||{},out=[];
+    var m=a.meta||{},out=[]; // [text, severity]
     var setups={}; (r.alerts||[]).forEach(function(x){setups[setupLabel(x)]=1;});
-    var sk=Object.keys(setups); if(sk.length>1)out.push(sk.join(" + ")+" multi-signal confluence");
-    if(m.highProb)out.push("High-probability zone (filter passed)");
-    if(m.obQualityLabel)out.push("Order block quality: "+m.obQualityLabel);
-    if(m.absorptionPass)out.push("Order-flow absorption confirmed");
-    if(m.fvgConfluence||m.fvgOverlap)out.push("FVG confluence at the zone");
-    if(m.fvgUntouched)out.push("Untouched FVG (fresh imbalance)");
-    if(m.rejectionStrength)out.push("Rejection strength: "+fmt(m.rejectionStrength));
-    if(r.correlationLabel)out.push("BTC correlation: "+r.correlationLabel);
+    var sk=Object.keys(setups); if(sk.length>1)out.push([sk.join(" + ")+" multi-signal confluence","pass"]);
+    if(m.highProb)out.push(["High-probability zone (filter passed)","pass"]);
+    if(m.obQualityLabel)out.push(["Order block quality: "+m.obQualityLabel, qualSev(m.obQualityLabel, m.obQuality)]);
+    if(m.absorptionPass)out.push(["Order-flow absorption confirmed","pass"]);
+    if(m.fvgConfluence||m.fvgOverlap)out.push(["FVG confluence at the zone","pass"]);
+    if(m.fvgUntouched)out.push(["Untouched FVG (fresh imbalance)","pass"]);
+    if(m.rejectionStrength)out.push(["Rejection strength: "+fmt(m.rejectionStrength),
+      (+m.rejectionStrength>=1.5?"pass":+m.rejectionStrength>=0.8?"info":"warn")]);
+    if(r.correlationLabel){
+      var clab=String(r.correlationLabel).toLowerCase();
+      out.push(["BTC correlation: "+r.correlationLabel,
+        /against|inverse|negativ/.test(clab)?"fail":/weak|low/.test(clab)?"warn":"info"]);
+    }
     var h=htfOf(r),d=dirOf(r);
-    if(h!=="neutral"&&h===d)out.push("HTF trend aligned with setup direction");
-    if(!out.length)out.push("Single-signal setup — confirm on lower timeframe");
-    return out.slice(0,5).map(function(t){return '<div class="cf">'+IC.chk+esc(t)+'</div>';}).join("");
+    if(h!=="neutral"&&d!=="neutral"){
+      if(h===d) out.push(["HTF trend aligned with setup direction","pass"]);
+      else      out.push(["HTF trend against setup direction","fail"]);
+    }
+    if(!out.length)out.push(["Single-signal setup — confirm on lower timeframe","warn"]);
+    return out.slice(0,6).map(function(t){return insightRow(t[0],t[1]);}).join("");
   }
 
   function renderInsight(){
