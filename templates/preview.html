@@ -138,6 +138,30 @@ svg{display:block}
 .token-pill.low .tp-val{color:var(--red-2)}
 .token-pill.na .tp-val{color:var(--text-3)}
 @media(max-width:1100px){.token-pill .tp-label{display:none}}
+/* shared modal (token-limit / locked-feature) */
+.zmodal-bd{position:fixed;inset:0;background:rgba(2,8,16,.78);z-index:9000;display:none}
+.zmodal-bd.open{display:block}
+.zmodal{position:fixed;inset:0;z-index:9001;display:none;align-items:center;justify-content:center;padding:20px}
+.zmodal.open{display:flex}
+.zmodal-card{background:var(--bg-panel);border:1px solid var(--border);border-radius:16px;
+  padding:30px 28px;max-width:410px;width:100%;text-align:center;position:relative;box-shadow:0 24px 60px rgba(0,0,0,.5)}
+.zmodal-x{position:absolute;top:12px;right:12px;width:28px;height:28px;background:none;border:0;
+  color:var(--text-3);cursor:pointer;display:flex;align-items:center;justify-content:center;border-radius:7px}
+.zmodal-x:hover{background:rgba(255,255,255,.06);color:var(--text)}
+.zmodal-ico{width:62px;height:62px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:4px auto 16px}
+.zmodal-ico svg{width:28px;height:28px}
+.zmodal-ico.low{background:rgba(251,113,133,.13);color:var(--red-2)}
+.zmodal-ico.lock{background:rgba(34,211,238,.1);color:var(--accent)}
+.zmodal-title{font-size:17px;font-weight:700;margin:0 0 10px}
+.zmodal-feat{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--accent);letter-spacing:.4px;margin:0 0 8px}
+.zmodal-msg{font-size:13px;color:var(--text-2);line-height:1.6;margin:0 0 18px}
+.zmodal-reset{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;
+  padding:12px 14px;margin-bottom:18px;font-size:12px;display:flex;flex-direction:column;gap:7px}
+.zmodal-reset > div{display:flex;justify-content:space-between;gap:12px;align-items:center}
+.zmodal-reset span{color:var(--text-3)}
+.zmodal-reset b{color:var(--text);font-family:var(--mono);font-weight:600}
+.zmodal-actions{display:flex;gap:10px;justify-content:center}
+.zmodal-actions .btn{flex:1;justify-content:center}
 .ic-btn{
   width:30px;height:30px;border-radius:7px;border:0;background:transparent;
   color:var(--text-2);display:flex;align-items:center;justify-content:center;
@@ -1259,6 +1283,26 @@ svg{display:block}
 </div>
 </div></div>
 
+<!-- ═══ Token-limit modal (Task 4) ═══ -->
+<div class="zmodal-bd" id="tokenModalBd"></div>
+<div class="zmodal" id="tokenModal" role="dialog" aria-modal="true" aria-labelledby="tokenModalTitle">
+  <div class="zmodal-card">
+    <button class="zmodal-x" id="tokenModalX" type="button" aria-label="Close"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    <div class="zmodal-ico low"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg></div>
+    <h3 class="zmodal-title" id="tokenModalTitle">You're out of scan tokens</h3>
+    <p class="zmodal-msg">You've used all your scan tokens for today. Upgrade your plan or contact admin to increase your token limit.</p>
+    <div class="zmodal-reset">
+      <div><span>Resets (UTC)</span><b id="tokenModalUtc">—</b></div>
+      <div><span>Your local time</span><b id="tokenModalLocal">—</b></div>
+      <div><span>Resets in</span><b id="tokenModalCountdown">—</b></div>
+    </div>
+    <div class="zmodal-actions">
+      <button class="btn" id="tokenModalClose" type="button">Close</button>
+      <a class="btn btn-primary" href="https://t.me/MalikZyNi" target="_blank" rel="noopener" style="text-decoration:none">Contact Admin</a>
+    </div>
+  </div>
+</div>
+
 <script>
 (function fitApp(){
   var W=1280,H=930;
@@ -1763,6 +1807,11 @@ svg{display:block}
       useSample("Sample data — open at /preview on your running app for live results");
       return;
     }
+    // Block scanning when the user has no tokens left (admins exempt).
+    if(ST.tokens && !ST.tokens.isAdmin && ST.tokens.remaining!=null && ST.tokens.remaining<=0){
+      showTokenLimitPopup(ST.tokens.resetAt);
+      return;
+    }
     var p=buildPayloadForMode();
     if(!p){ ST.results=[]; renderAll(); return; }
     ST.busy=true;
@@ -1771,7 +1820,7 @@ svg{display:block}
     fetch(p.url,{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify(p.body)})
       .then(function(r){
-        if(r.status===429)throw new Error("daily scan limit reached");
+        if(r.status===429){var er=new Error("daily scan limit reached");er.tokenLimit=true;throw er;}
         if(r.status===401||r.status===403)throw new Error("session expired — log in");
         if(!r.ok)throw new Error("HTTP "+r.status);
         return r.json();
@@ -1832,7 +1881,13 @@ svg{display:block}
         if(modeAtScan === "main" && !ST.results.length) E("mainSub").textContent="Live — no results for "+MODE_LABEL[modeAtScan];
       })
       .catch(function(e){
-        useSample("Sample data — couldn't reach "+p.url+" ("+esc(e.message)+"). Live data loads when served at /preview while logged in.");
+        if(e && e.tokenLimit){
+          showTokenLimitPopup(ST.tokens && ST.tokens.resetAt);
+          if(!ST.results.length){ msg("Daily scan limit reached. Your tokens reset at midnight UTC.", true); }
+          E("pagerInfo").textContent = ST.results.length ? E("pagerInfo").textContent : "Daily scan limit reached";
+        } else {
+          useSample("Sample data — couldn't reach "+p.url+" ("+esc(e.message)+"). Live data loads when served at /preview while logged in.");
+        }
       })
       .finally(function(){ST.busy=false; loadTokens();});
   }
@@ -1870,6 +1925,45 @@ svg{display:block}
       .then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); })
       .then(function(d){ ST.perms=d; ST.tokens=_normalizeTokens(d); renderTokenPill(ST.tokens); })
       .catch(function(){ renderTokenPill(ST.tokens||null); });
+  }
+
+  /* ── out-of-token modal (Task 4) — reset time in UTC + local ── */
+  function _resetDate(resetAt){
+    var reset;
+    if(resetAt!=null){ reset=(typeof resetAt==="number")?new Date(resetAt<1e12?resetAt*1000:resetAt):new Date(resetAt); }
+    if(!reset||isNaN(reset.getTime())){ var n=new Date(); reset=new Date(Date.UTC(n.getUTCFullYear(),n.getUTCMonth(),n.getUTCDate()+1)); }
+    return reset;
+  }
+  function _fmtResetUTC(d){
+    try{ return new Intl.DateTimeFormat('en-GB',{timeZone:'UTC',weekday:'short',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}).format(d)+' UTC'; }
+    catch(_){ return d.toUTCString(); }
+  }
+  function _fmtResetLocal(d){
+    try{ var tz=(Intl.DateTimeFormat().resolvedOptions().timeZone)||'local';
+      return new Intl.DateTimeFormat(undefined,{weekday:'short',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}).format(d)+' ('+tz+')'; }
+    catch(_){ return d.toString(); }
+  }
+  var _tokModalT=null;
+  function showTokenLimitPopup(resetAt){
+    var bd=E("tokenModalBd"), m=E("tokenModal"); if(!bd||!m) return;
+    var reset=_resetDate(resetAt!=null?resetAt:(ST.tokens&&ST.tokens.resetAt));
+    var u=E("tokenModalUtc"), l=E("tokenModalLocal");
+    if(u) u.textContent=_fmtResetUTC(reset);
+    if(l) l.textContent=_fmtResetLocal(reset);
+    function tick(){
+      var diff=reset-new Date(), c=E("tokenModalCountdown");
+      if(diff<=0){ if(c)c.textContent="now"; return; }
+      var h=Math.floor(diff/3600000),mi=Math.floor((diff%3600000)/60000),s=Math.floor((diff%60000)/1000);
+      if(c)c.textContent=String(h).padStart(2,'0')+':'+String(mi).padStart(2,'0')+':'+String(s).padStart(2,'0');
+    }
+    tick(); clearInterval(_tokModalT);
+    _tokModalT=setInterval(function(){ if(m.classList.contains('open')) tick(); else clearInterval(_tokModalT); },1000);
+    bd.classList.add("open"); m.classList.add("open"); document.body.classList.add("sheet-open");
+  }
+  function hideTokenLimitPopup(){
+    var bd=E("tokenModalBd"), m=E("tokenModal");
+    if(bd)bd.classList.remove("open"); if(m)m.classList.remove("open");
+    document.body.classList.remove("sheet-open"); clearInterval(_tokModalT);
   }
 
   /* ── watchlist persistence ── */
@@ -2992,6 +3086,11 @@ svg{display:block}
   E("btnFilters").addEventListener("click",scan);
   if(E("btnScan"))  E("btnScan").addEventListener("click",scan);
   if(E("btnScanNow")) E("btnScanNow").addEventListener("click",scan);
+  /* token-limit modal close bindings (Task 4) */
+  if(E("tokenModalClose")) E("tokenModalClose").addEventListener("click",hideTokenLimitPopup);
+  if(E("tokenModalX")) E("tokenModalX").addEventListener("click",hideTokenLimitPopup);
+  if(E("tokenModalBd")) E("tokenModalBd").addEventListener("click",hideTokenLimitPopup);
+  addEventListener("keydown",function(e){ if(e.key==="Escape" && E("tokenModal") && E("tokenModal").classList.contains("open")) hideTokenLimitPopup(); });
   if(E("btnClear")) E("btnClear").addEventListener("click",function(){
     var m=ST.mode;
     if(ST.tabData[m]){
