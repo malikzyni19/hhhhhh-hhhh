@@ -189,6 +189,14 @@ svg{display:block}
 }
 .seg button:hover{color:var(--text)}
 .seg button.on{background:var(--accent-soft-2);color:var(--accent)}
+.exch-sel{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-3)}
+.exch-sel select{
+  background:var(--bg-card);border:1px solid var(--border);border-radius:8px;
+  color:var(--text);font-size:12px;font-weight:600;font-family:inherit;
+  padding:7px 9px;cursor:pointer;outline:none;
+}
+.exch-sel select:focus{border-color:var(--accent)}
+.exch-sel select option[disabled]{color:var(--text-3)}
 .btn{
   display:flex;align-items:center;gap:7px;border:1px solid var(--border);background:var(--bg-card);
   color:var(--text-2);font-size:12px;font-weight:600;padding:8px 13px;border-radius:8px;
@@ -866,6 +874,15 @@ svg{display:block}
             <div class="main-sub" id="mainSub">All instruments across selected markets</div>
           </div>
           <div class="head-ctrls">
+            <label class="exch-sel" title="Exchange used for all scans, pairs and charts">
+              <svg class="ico ico-sm" viewBox="0 0 24 24" style="color:var(--text-3)"><path d="M3 7h18M3 12h18M3 17h18"/></svg>
+              <select id="exchSelect" aria-label="Exchange">
+                <option value="binance">Binance</option>
+                <option value="bybit">Bybit</option>
+                <option value="okx">OKX</option>
+                <option value="mexc">MEXC</option>
+              </select>
+            </label>
             <div class="seg" id="segMarket"><button data-mkt="spot" class="on">Spot</button><button data-mkt="perpetual">Perpetual</button></div>
             <div class="seg" id="segSignal"><button data-sig="OB" class="on">OB</button><button data-sig="FVG">FVG</button><button data-sig="BREAKER">Breaker</button><button data-sig="FIB">Fib</button><button data-sig="ALL">All</button></div>
             <button class="btn btn-primary" id="btnScan" type="button"><svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>Scan Now</button>
@@ -1277,7 +1294,13 @@ svg{display:block}
     try{ var s=localStorage.getItem("zyni-settings"); if(s) return Object.assign({},DEFAULT_SETTINGS,JSON.parse(s)); }catch(_){}
     return Object.assign({},DEFAULT_SETTINGS);
   }
+  var SUPPORTED_EXCHANGES=["binance","bybit","okx","mexc"];
+  function _loadExchange(){
+    try{ var v=(localStorage.getItem("zyni-exchange")||"binance").toLowerCase();
+      return SUPPORTED_EXCHANGES.indexOf(v)>=0?v:"binance"; }catch(_){ return "binance"; }
+  }
   var ST={market:"spot",signal:"OB",mode:"main",view:"scanner",
+          exchange:_loadExchange(),
           scanMode:(function(){try{return localStorage.getItem("zyni-scanMode")||"market";}catch(_){return "market";}})(),
           results:[],sel:-1,scannedAt:0,scanned:0,
           prev:null,stars:{},auto:false,timer:null,busy:false,
@@ -1517,7 +1540,7 @@ svg{display:block}
       if(ST.mode!=="ath_atl") return;
       fetch("/api/ath_atl_scan",{method:"POST",credentials:"same-origin",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify(Object.assign({action:"reset",market:ST.market,exchange:"binance"},
+        body:JSON.stringify(Object.assign({action:"reset",market:ST.market,exchange:ST.exchange},
                                           ST.modeOptions.ath_atl))})
         .then(function(){ ST.results=[]; renderAll(); });
     });
@@ -1559,7 +1582,7 @@ svg{display:block}
       if(sMode==="selected" && !watch.length) sMode="market";
       return {url:"/api/scan", body:{
         settings: Object.assign({}, ST.settings, _modulesForSignal(), {tf:ST.settings.tf||tf}),
-        market:market, exchange:"binance",
+        market:market, exchange:ST.exchange,
         scanMode: sMode,
         symbols: sMode==="selected" ? watch : [],
         roundRobin:ST.roundRobin, pairsPerCycle:ST.pairsPerCycle,
@@ -1570,7 +1593,7 @@ svg{display:block}
     if(ST.mode==="compressed"){
       var c=ST.modeOptions.compressed||{};
       return {url:"/api/compressed_scan", body:{
-        tf:c.tf||tf, market:market, exchange:"binance",
+        tf:c.tf||tf, market:market, exchange:ST.exchange,
         lookback:+c.lookback||30, maxPct:+c.maxPct||5.0,
         roundRobin:ST.roundRobin, pairsPerCycle:ST.pairsPerCycle
       }};
@@ -1578,14 +1601,14 @@ svg{display:block}
     if(ST.mode==="trending"){
       var t=ST.modeOptions.trending||{};
       return {url:"/api/trending_scan", body:{
-        tf:t.tf||tf, market:market, exchange:"binance",
+        tf:t.tf||tf, market:market, exchange:ST.exchange,
         mode:t.mode||"bullish", limit:ST.pairsPerCycle
       }};
     }
     if(ST.mode==="ath_atl"){
       var aa=ST.modeOptions.ath_atl||{};
       return {url:"/api/ath_atl_scan", body:{
-        action:"scan", market:market, exchange:"binance",
+        action:"scan", market:market, exchange:ST.exchange,
         mode:aa.mode||"both", status:aa.status||"near_level",
         windowHours:+aa.windowHours||24,
         breakTolPct:+aa.breakTolPct||0.10,
@@ -1596,7 +1619,7 @@ svg{display:block}
     if(ST.mode==="bias"){
       var bo=ST.modeOptions.bias||{};
       return {url:"/api/bias_scan", body:{
-        tf:bo.tf||tf, market:market, exchange:"binance",
+        tf:bo.tf||tf, market:market, exchange:ST.exchange,
         pairsPerCycle:ST.pairsPerCycle, roundRobin:ST.roundRobin,
         strength:bo.strength||"balanced",
         detectionMode:bo.detectionMode||"early",
@@ -1908,11 +1931,16 @@ svg{display:block}
     renderInsightForTab(mode);
   }
 
+  /* TradingView exchange prefix derived from the selected exchange. */
+  function _tvExch(){
+    var e=String(ST.exchange||"binance").toUpperCase();
+    return (SUPPORTED_EXCHANGES.indexOf(e.toLowerCase())>=0) ? e : (ST.settings.tvExchange||"BINANCE");
+  }
   /* shared helper: TradingView URL for any symbol */
   function _tvUrl(sym, marketHint){
     var market = marketHint || ST.market;
     var suf = (market==="perpetual" && ST.settings.tvPerpSuffix!==false) ? ".P" : "";
-    var ex = ST.settings.tvExchange || "BINANCE";
+    var ex = _tvExch();
     return "https://www.tradingview.com/chart/?symbol="+ex+":"+encodeURIComponent(sym)+suf;
   }
   function _addToLM(sym){
@@ -2641,7 +2669,7 @@ svg{display:block}
 
     // Page 5: Confluence + Notes + Actions
     var tvSuf=(mk==="Perp")?".P":"";
-    var tvUrl='https://www.tradingview.com/chart/?symbol=BINANCE:'+encodeURIComponent(r.symbol)+tvSuf;
+    var tvUrl='https://www.tradingview.com/chart/?symbol='+_tvExch()+':'+encodeURIComponent(r.symbol)+tvSuf;
     var p5='<div class="mc-page">'+
       '<div class="mc-page-h">CONFLUENCE</div>'+confluenceList(r,a)+
       '<div class="mc-page-h" style="margin-top:12px">NOTES</div>'+
@@ -2784,7 +2812,7 @@ svg{display:block}
     var c=E("btnChart");
     if(r){var isPerp=((r.market||(ST.market==="perpetual"?"Perp":"Spot"))==="Perp");
       var suf=(isPerp && ST.settings.tvPerpSuffix!==false)?".P":"";
-      var ex=ST.settings.tvExchange||"BINANCE";
+      var ex=_tvExch();
       c.href="https://www.tradingview.com/chart/?symbol="+ex+":"+encodeURIComponent(r.symbol)+suf;
       c.style.pointerEvents="";c.style.opacity="";}
     else{c.href="#";c.style.pointerEvents="none";c.style.opacity=".5";}
@@ -2877,6 +2905,18 @@ svg{display:block}
   // a scan token. The user applies the new params with Scan Now.
   seg("segMarket","data-mkt","market",renderAll);
   seg("segSignal","data-sig","signal",renderAll);
+  /* exchange selector — persisted, payload-only (applied on next Scan Now) */
+  (function _initExch(){
+    var el=E("exchSelect"); if(!el) return;
+    el.value=ST.exchange;
+    el.addEventListener("change",function(){
+      var v=String(el.value||"binance").toLowerCase();
+      if(SUPPORTED_EXCHANGES.indexOf(v)<0) v="binance";
+      ST.exchange=v; el.value=v;
+      try{ localStorage.setItem("zyni-exchange",v); }catch(_){}
+      renderAll();
+    });
+  })();
   /* sidebar scanner-mode tabs */
   [].forEach.call(document.querySelectorAll('.side .nav-item[data-mode]'),function(el){
     el.addEventListener('click',function(){
@@ -3235,7 +3275,7 @@ svg{display:block}
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify(Object.assign({
         settings:Object.assign({},ST.settings),
-        market:ST.market, exchange:"binance",
+        market:ST.market, exchange:ST.exchange,
         scanMode:"selected", roundRobin:false, pairsPerCycle:symbols.length,
         symbols:symbols, filterMode:"match", checkedSignals:[], requiredSignals:[]
       },extra||{}))}).then(function(r){return r.ok?r.json():null;});
@@ -3271,7 +3311,7 @@ svg{display:block}
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
         settings:Object.assign({},ST.settings),
-        market:ST.market, exchange:"binance",
+        market:ST.market, exchange:ST.exchange,
         scanMode:"market", roundRobin:true, pairsPerCycle:24,
         filterMode:"match", checkedSignals:[], requiredSignals:[]
       })})
@@ -3286,10 +3326,10 @@ svg{display:block}
     Promise.all([
       fetch("/api/trending_scan",{method:"POST",credentials:"same-origin",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({tf:ST.settings.tf||"4h",market:ST.market,exchange:"binance",mode:"bullish",limit:5})}).then(function(r){return r.ok?r.json():[];}),
+        body:JSON.stringify({tf:ST.settings.tf||"4h",market:ST.market,exchange:ST.exchange,mode:"bullish",limit:5})}).then(function(r){return r.ok?r.json():[];}),
       fetch("/api/trending_scan",{method:"POST",credentials:"same-origin",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({tf:ST.settings.tf||"4h",market:ST.market,exchange:"binance",mode:"bearish",limit:5})}).then(function(r){return r.ok?r.json():[];})
+        body:JSON.stringify({tf:ST.settings.tf||"4h",market:ST.market,exchange:ST.exchange,mode:"bearish",limit:5})}).then(function(r){return r.ok?r.json():[];})
     ]).then(function(both){
       var bu=both[0]||[], be=both[1]||[];
       var rows=function(arr,cls){
@@ -3309,7 +3349,7 @@ svg{display:block}
   function _dbLoadBreaking(){
     fetch("/api/ath_atl_scan",{method:"POST",credentials:"same-origin",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({action:"scan",market:ST.market,exchange:"binance",
+      body:JSON.stringify({action:"scan",market:ST.market,exchange:ST.exchange,
         mode:"both",window:"all_time",status:"breaking_now",limit:10})})
       .then(function(r){return r.ok?r.json():null;})
       .then(function(d){
@@ -3329,7 +3369,7 @@ svg{display:block}
   function _dbLoadBiasShifts(){
     fetch("/api/bias_scan",{method:"POST",credentials:"same-origin",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({tf:ST.settings.tf||"4h",market:ST.market,exchange:"binance",
+      body:JSON.stringify({tf:ST.settings.tf||"4h",market:ST.market,exchange:ST.exchange,
         pairsPerCycle:24, roundRobin:true})})
       .then(function(r){return r.ok?r.json():null;})
       .then(function(d){
@@ -3649,7 +3689,7 @@ svg{display:block}
   function _mtTvHTML(){
     var pairs=Object.keys(ST.stars).filter(function(s){return ST.stars[s];}).slice(0,4);
     if(!pairs.length) pairs=["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT"];
-    var ex=ST.settings.tvExchange||"BINANCE";
+    var ex=_tvExch();
     var suf=ST.settings.tvPerpSuffix===false?"":".P";
     return '<div class="mt-tvgrid-in">'+
       pairs.map(function(s){
