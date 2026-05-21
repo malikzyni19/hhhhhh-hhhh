@@ -595,16 +595,34 @@ svg{display:block}
   border:1px solid var(--border);border-radius:8px;font-size:11.5px;color:var(--text-3);margin-bottom:10px}
 .tv-progress b{color:var(--text);font-family:var(--mono)}
 
-/* Hide Setup Insight & mobile cards on tabs that don't apply */
-.body[data-mode="trending"] .insight,
-.body[data-mode="ath_atl"] .insight,
-.body[data-mode="bias"] .insight{display:none}
-.body[data-mode="trending"]{grid-template-columns:210px 1fr}
-.body[data-mode="ath_atl"]{grid-template-columns:210px 1fr}
-.body[data-mode="bias"]{grid-template-columns:210px 1fr}
+/* Right insight panel stays visible on every tab; per-tab renderer fills it.
+   Mobile cards are setup-style only and hide on non-setup tabs. */
 .body[data-mode="trending"] #mcards,
 .body[data-mode="ath_atl"] #mcards,
 .body[data-mode="bias"] #mcards{display:none!important}
+/* per-tab insight body extras */
+.ti-h{font-size:9.5px;font-weight:700;letter-spacing:1.1px;color:var(--accent);margin:14px 0 8px;text-transform:uppercase}
+.ti-h:first-child{margin-top:4px}
+.ti-row{display:flex;justify-content:space-between;gap:8px;padding:5px 0;font-size:12px;border-bottom:1px solid rgba(27,38,54,.5)}
+.ti-row:last-child{border-bottom:0}
+.ti-row .k{color:var(--text-3)}
+.ti-row .v{color:var(--text);font-family:var(--mono);text-align:right;max-width:60%;word-break:break-word}
+.ti-row .v .g{color:var(--green-2)}
+.ti-row .v .r2{color:var(--red-2)}
+.ti-pill{display:inline-block;font-size:10px;font-weight:700;padding:2px 7px;border-radius:5px;background:var(--bg-card-2);border:1px solid var(--border);color:var(--text-2)}
+.ti-pill.bull{background:rgba(34,197,94,.14);color:var(--green-2);border-color:rgba(34,197,94,.32)}
+.ti-pill.bear{background:rgba(239,68,68,.14);color:var(--red-2);border-color:rgba(239,68,68,.32)}
+.ti-pill.warn{background:rgba(251,191,36,.14);color:var(--yellow);border-color:rgba(251,191,36,.3)}
+.ti-pill.cyan{background:var(--accent-soft);color:var(--accent);border-color:rgba(34,211,238,.28)}
+.ti-chain{font-size:11px;color:var(--text-2);line-height:1.45;padding:8px 10px;background:var(--bg-card-2);border-radius:7px;border:1px solid var(--border)}
+.ti-chain li{margin-left:14px}
+.ti-confl{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
+.ti-confl span{font-size:9.5px;font-weight:700;padding:2px 6px;border-radius:4px;background:var(--bg-card-2);
+  border:1px solid var(--border);color:var(--text-3)}
+.ti-confl span.on{color:var(--accent);border-color:rgba(34,211,238,.36);background:var(--accent-soft)}
+
+.tv-tbl tbody tr.sel{background:var(--accent-soft);cursor:pointer}
+.tv-tbl tbody tr{cursor:pointer}
 
 @media (max-width:820px){
   .tab-ctrls{display:none}    /* mobile already has its own tab settings */
@@ -1806,32 +1824,239 @@ svg{display:block}
      - trending/ath_atl/bias each have their own response shape; raw is
        kept here and a tab-specific renderer reads it directly. */
   ST.tabData = {
-    main:       {results:[], scanned:0, raw:null},
-    compressed: {results:[], scanned:0, raw:null},
-    trending:   {items:[],   scanned:0, raw:null},
-    ath_atl:    {items:[],   scanned:0, raw:null, found:0, totalScanned:0},
-    bias:       {items:[],   scanned:0, raw:null}
+    main:       {results:[], scanned:0, raw:null, sel:-1},
+    compressed: {results:[], scanned:0, raw:null, sel:-1},
+    trending:   {items:[],   scanned:0, raw:null, sel:-1},
+    ath_atl:    {items:[],   scanned:0, raw:null, sel:-1, found:0, totalScanned:0},
+    bias:       {items:[],   scanned:0, raw:null, sel:-1}
+  };
+
+  var INSIGHT_TITLES = {
+    main:"Setup Insight", compressed:"Compression Insight",
+    trending:"Market Mover Insight", ath_atl:"Level Breakout Insight",
+    bias:"Bias & Structure Insight"
   };
 
   function renderAll(){
     var bodyEl=document.querySelector('.body');
     if(bodyEl) bodyEl.setAttribute('data-mode', ST.mode);
     var m=ST.mode;
-    if(m==="main" || m==="compressed"){
-      E("tblHost").hidden=false;
-      E("tabView").hidden=true;
-      renderKPI(); renderTable(); renderMobileCards(); renderInsight();
-    } else {
-      E("tblHost").hidden=true;
-      E("tabView").hidden=false;
-      if(m==="trending") { renderTrendingKPI(); renderTrendingTable(); }
-      else if(m==="ath_atl") { renderAthKPI(); renderAthTable(); }
-      else if(m==="bias") { renderBiasKPI(); renderBiasCards(); }
+    if(m==="main"){
+      E("tblHost").hidden=false; E("tabView").hidden=true;
+      renderKPI(); renderTable(); renderMobileCards();
+    } else if(m==="compressed"){
+      E("tblHost").hidden=true; E("tabView").hidden=false;
+      renderCompressedKPI(); renderCompressedTable();
+    } else if(m==="trending"){
+      E("tblHost").hidden=true; E("tabView").hidden=false;
+      renderTrendingKPI(); renderTrendingTable();
+    } else if(m==="ath_atl"){
+      E("tblHost").hidden=true; E("tabView").hidden=false;
+      renderAthKPI(); renderAthTable();
+    } else if(m==="bias"){
+      E("tblHost").hidden=true; E("tabView").hidden=false;
+      renderBiasKPI(); renderBiasTable();
     }
+    renderInsightForTab(m);
     renderMeta();
   }
 
-  /* ── Trending tab renderer ── */
+  /* ── tab-aware right insight panel ── */
+  function _insHead(mode){
+    return '<div class="ins-head"><h3>'+esc((INSIGHT_TITLES[mode]||"Insight").toUpperCase())+'</h3>'+
+      '<button class="ic-btn" id="insCloseBtn" type="button" aria-label="Close"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>';
+  }
+  function _bindInsClose(){
+    var c=document.getElementById('insCloseBtn');
+    if(c) c.addEventListener('click', function(){
+      var m=ST.mode;
+      if(ST.tabData[m]) ST.tabData[m].sel=-1;
+      if(m==="main") ST.sel=-1;
+      renderAll();
+    });
+  }
+  function renderInsightForTab(mode){
+    var box=E("insScroll"); if(!box) return;
+    if(mode==="main"){ renderInsight(); return; }                          // existing setup insight
+    var td=ST.tabData[mode]||{};
+    var rows = td.results || td.items || [];
+    var row  = (td.sel>=0) ? rows[td.sel] : null;
+    if(mode==="compressed") renderCompressedInsight(row);
+    else if(mode==="trending") renderTrendingInsight(row);
+    else if(mode==="ath_atl") renderAthAtlInsight(row);
+    else if(mode==="bias") renderBiasInsight(row);
+    _bindInsClose();
+  }
+  function openInsightForTab(mode, idx){
+    if(mode==="main"){
+      ST.sel = idx;
+      renderTable(); renderInsight();
+      return;
+    }
+    if(!ST.tabData[mode]) return;
+    ST.tabData[mode].sel = idx;
+    // refresh row highlight
+    var host=E("tabView");
+    if(host) [].forEach.call(host.querySelectorAll('tbody tr[data-i]'),function(tr){
+      tr.classList.toggle('sel', +tr.getAttribute('data-i')===idx);
+    });
+    renderInsightForTab(mode);
+  }
+
+  /* shared helper: TradingView URL for any symbol */
+  function _tvUrl(sym, marketHint){
+    var market = marketHint || ST.market;
+    var suf = (market==="perpetual" && ST.settings.tvPerpSuffix!==false) ? ".P" : "";
+    var ex = ST.settings.tvExchange || "BINANCE";
+    return "https://www.tradingview.com/chart/?symbol="+ex+":"+encodeURIComponent(sym)+suf;
+  }
+  function _addToLM(sym){
+    if(!sym) return;
+    ST.stars[sym] = true; syncWatchlist();
+  }
+  function _insFoot(sym, marketHint){
+    return '<div class="ti-foot" style="display:flex;gap:8px;margin-top:14px">'+
+      '<a class="btn" href="'+_tvUrl(sym, marketHint)+'" target="_blank" rel="noopener" style="text-decoration:none">'+
+        '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 4-6"/></svg>View Chart</a>'+
+      '<button class="btn btn-primary" type="button" data-add-lm="'+esc(sym)+'">'+
+        '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add to Live Monitor</button>'+
+    '</div>';
+  }
+  function _ti(k,v){return '<div class="ti-row"><span class="k">'+esc(k)+'</span><span class="v">'+v+'</span></div>';}
+  function _tiB(k,html){return '<div class="ti-row"><span class="k">'+esc(k)+'</span><span class="v">'+html+'</span></div>';}
+  function _fmtPct(n,d){if(n==null||!isFinite(+n))return "—";var s=(+n).toFixed(d!=null?d:2);return (n>=0?"+":"")+s+"%";}
+  function _confluencePills(spec){ // spec = [{k:"OB", on:bool, nearest:obj?}, ...]
+    return '<div class="ti-confl">'+spec.map(function(c){return '<span'+(c.on?' class="on"':'')+'>'+esc(c.k)+'</span>';}).join("")+'</div>';
+  }
+
+  /* ─────────────────────────── COMPRESSED ─────────────────────────── */
+  function renderCompressedKPI(){
+    var items = (ST.tabData.compressed.results)||[];
+    var aPlus = items.filter(function(x){var g=(x.tradeGrade||"").toString();return g.indexOf("A")===0;}).length;
+    var ready = items.filter(function(x){var a=(x.actionPlan||{});return /breakout_ready|rejection_watch/.test(String(a.state||""));}).length;
+    var avg   = items.length ? items.reduce(function(a,x){return a+(+x.rangePct||0);},0)/items.length : 0;
+    E("kpiRow").innerHTML=
+      kpi("COMPRESSED FOUND", items.length, "")+
+      kpi("A / A+ GRADE", aPlus, items.length?Math.round(aPlus/items.length*100)+"% of found":"", "g")+
+      kpi("BREAKOUT READY", ready, items.length?Math.round(ready/items.length*100)+"% ready":"", "")+
+      kpi("AVG RANGE", (avg).toFixed(2)+"%", "")+
+      kpi("PAIRS SCANNED", ST.tabData.compressed.scanned||items.length, "")+
+      kpi("ERRORS", (ST.tabData.compressed.raw&&ST.tabData.compressed.raw.errors)||0, "");
+  }
+  function _compConflBadges(it){
+    return [
+      {k:"OB",  on: !!(it.obConfluence  && it.obConfluence.has)},
+      {k:"FVG", on: !!(it.fvgConfluence && it.fvgConfluence.has)},
+      {k:"FIB", on: !!(it.fibConfluence && it.fibConfluence.has)},
+    ];
+  }
+  function _compActionLabel(s){
+    return ({
+      upside_breakout_ready:"Upside breakout ready",
+      downside_breakout_ready:"Downside breakout ready",
+      bullish_rejection_watch:"Bullish rejection watch",
+      bearish_rejection_watch:"Bearish rejection watch",
+      compression_wait:"Compression — waiting",
+      avoid_weak_compression:"Avoid — weak"
+    })[s] || (s||"—");
+  }
+  function _compBiasClass(b){return b==="bullish"?"bull":b==="bearish"?"bear":"warn";}
+  function renderCompressedTable(){
+    var items = (ST.tabData.compressed.results)||[];
+    var host = E("tabView");
+    if(!items.length){ host.innerHTML='<div class="tv-empty">No compressed boxes found. Try a different Timeframe or higher Max range %.</div>'; return; }
+    var sel = ST.tabData.compressed.sel;
+    var rows = items.map(function(it,i){
+      var sym=String(it.symbol||"");
+      var tf =esc(it.timeframe||"—");
+      var rng=(it.rangePct!=null)?(+it.rangePct).toFixed(2)+"%":"—";
+      var box=(it.boxLow!=null&&it.boxHigh!=null)?(fmt(it.boxLow)+" – "+fmt(it.boxHigh)):"—";
+      var loc=(it.boxLocation||"middle").replace(/_/g," ");
+      var pos=(it.pricePositionPct!=null)?Math.round(+it.pricePositionPct)+"% "+esc(loc):esc(loc);
+      var atr=esc(it.atrState||"—").replace(/_/g," ");
+      var vol=esc(it.volumeState||"—").replace(/_/g," ");
+      var confl=_confluencePills(_compConflBadges(it));
+      var g=(it.tradeGrade||"—").toString();
+      var sc=(it.tradeScore!=null)?Math.round(+it.tradeScore):"—";
+      var grade='<span class="tv-grade" data-g="'+esc(g)+'">'+esc(g)+'</span> <span style="color:var(--text-3);font-size:10.5px">'+sc+'</span>';
+      var ap=it.actionPlan||{};
+      var bias=String(ap.bias||"").toLowerCase();
+      var act='<span class="tv-pill '+_compBiasClass(bias)+'">'+esc(_compActionLabel(ap.state))+'</span>';
+      return '<tr data-i="'+i+'"'+(i===sel?' class="sel"':'')+'>'+
+        '<td class="sym">'+esc(sym)+'</td>'+
+        '<td>'+tf+'</td>'+
+        '<td class="r">'+rng+'</td>'+
+        '<td class="r">'+esc(box)+'</td>'+
+        '<td class="r">'+pos+'</td>'+
+        '<td>'+atr+'</td>'+
+        '<td>'+vol+'</td>'+
+        '<td>'+confl+'</td>'+
+        '<td>'+grade+'</td>'+
+        '<td>'+act+'</td>'+
+      '</tr>';
+    }).join("");
+    host.innerHTML=
+      '<table class="tv-tbl"><thead><tr>'+
+        '<th>SYMBOL</th><th>TF</th><th class="r">RANGE %</th>'+
+        '<th class="r">BOX (low–high)</th><th class="r">POSITION</th>'+
+        '<th>ATR</th><th>VOLUME</th><th>CONFLUENCE</th><th>GRADE</th><th>ACTION</th>'+
+      '</tr></thead><tbody>'+rows+'</tbody></table>';
+  }
+  function renderCompressedInsight(r){
+    var box=E("insScroll");
+    if(!r){ box.innerHTML=_insHead("compressed")+'<div class="row-msg">Pick a compressed box to see details.</div>'; setFoot(null); return; }
+    var sym=String(r.symbol||"");
+    var ap=r.actionPlan||{};
+    var bias=String(ap.bias||"").toLowerCase();
+    var nOB =(r.obConfluence&&r.obConfluence.nearest)||{};
+    var nFVG=(r.fvgConfluence&&r.fvgConfluence.nearest)||{};
+    var fib =r.fibConfluence||{};
+    box.innerHTML = _insHead("compressed")+
+      '<div class="ins-title"><span class="ins-sym">'+esc(sym)+'</span>'+
+        '<span class="tag mkt">'+esc(ST.market==="perpetual"?"Perp":"Spot")+'</span>'+
+        '<span class="tag '+_compBiasClass(bias)+'">'+esc(bias?bias[0].toUpperCase()+bias.slice(1):"Neutral")+'</span></div>'+
+      '<div class="ins-meta"><span>'+esc(r.timeframe||"—")+' · '+esc(_compActionLabel(ap.state))+'</span><span>'+rel(ST.scannedAt)+'</span></div>'+
+
+      '<div class="ti-h">Box</div>'+
+      _ti("Box Low",  r.boxLow!=null?fmt(r.boxLow):"—")+
+      _ti("Box High", r.boxHigh!=null?fmt(r.boxHigh):"—")+
+      _ti("Box Mid",  r.boxMid!=null?fmt(r.boxMid):"—")+
+      _ti("Range %",  r.rangePct!=null?(+r.rangePct).toFixed(2)+"%":"—")+
+      _ti("Close range %", r.closeRangePct!=null?(+r.closeRangePct).toFixed(2)+"%":"—")+
+      _ti("Price position", (r.pricePositionPct!=null?Math.round(+r.pricePositionPct)+"% · ":"")+(r.boxLocation||"middle").replace(/_/g," "))+
+      _ti("Distance to high", r.distanceToHighPct!=null?(+r.distanceToHighPct).toFixed(2)+"%":"—")+
+      _ti("Distance to low",  r.distanceToLowPct!=null?(+r.distanceToLowPct).toFixed(2)+"%":"—")+
+
+      '<div class="ti-h">Volatility &amp; flow</div>'+
+      _ti("ATR state",   (r.atrState||"—").replace(/_/g," "))+
+      _ti("Volume state",(r.volumeState||"—").replace(/_/g," "))+
+      _ti("Candles inside box", (r.candlesInsideBox!=null?r.candlesInsideBox:"—")+(r.candlesInsideBoxPct!=null?(" · "+Math.round(+r.candlesInsideBoxPct)+"%"):""))+
+
+      '<div class="ti-h">Scoring</div>'+
+      _ti("Compression score", r.compressionScore!=null?Math.round(+r.compressionScore):"—")+
+      _ti("Compression grade", r.compressionGrade||"—")+
+      _ti("Trade score",       r.tradeScore!=null?Math.round(+r.tradeScore):"—")+
+      _tiB("Trade grade",      '<span class="tv-grade" data-g="'+esc(r.tradeGrade||"")+'">'+esc(r.tradeGrade||"—")+'</span>')+
+      _ti("Confluence grade",  r.confluenceGrade||"—")+
+
+      '<div class="ti-h">Confluence</div>'+
+      _tiB("Detected", _confluencePills(_compConflBadges(r)))+
+      ((r.obConfluence&&r.obConfluence.has)?_ti("Nearest OB",  (nOB.direction||"")+" @ "+(nOB.top!=null?fmt(nOB.top):"—")):"")+
+      ((r.fvgConfluence&&r.fvgConfluence.has)?_ti("Nearest FVG", (nFVG.direction||"")+" @ "+(nFVG.top!=null?fmt(nFVG.top):"—")):"")+
+      ((fib.has)?_ti("Fib", (fib.level||"")+" @ "+(fib.price!=null?fmt(fib.price):"—")+(fib.relation?(" · "+fib.relation):"")):"")+
+
+      '<div class="ti-h">Action plan</div>'+
+      _tiB("State", '<span class="tv-pill '+_compBiasClass(bias)+'">'+esc(_compActionLabel(ap.state))+'</span>')+
+      _ti("Bias",          bias?bias[0].toUpperCase()+bias.slice(1):"—")+
+      _ti("Entry trigger", ap.entryTrigger||"—")+
+      _ti("Invalidation",  ap.invalidation||"—")+
+      ((ap.notes&&ap.notes.length)?('<div class="ti-chain" style="margin-top:8px"><ul>'+ap.notes.map(function(n){return '<li>'+esc(n)+'</li>';}).join("")+'</ul></div>'):"")+
+
+      _insFoot(sym);
+    setFoot(null); // hide the legacy chart anchor; we use our own in-panel buttons now
+  }
+
+  /* ─────────────────────────── TRENDING ─────────────────────────── */
   function renderTrendingKPI(){
     var items = (ST.tabData.trending.items)||[];
     var bull = items.filter(function(x){return (+x.changePct||0)>=0;}).length;
@@ -1843,24 +2068,41 @@ svg{display:block}
       kpi("BULLISH MOVERS", bull, items.length?Math.round(bull/items.length*100)+"%":"", "g")+
       kpi("BEARISH MOVERS", bear, items.length?Math.round(bear/items.length*100)+"%":"", "r")+
       kpi("AVG CHANGE", (avg>=0?"+":"")+(Math.round(avg*100)/100)+"%", "")+
-      kpi("HIGH VOLUME", hiV, items.length?Math.round(hiV/items.length*100)+"%":"")+
+      kpi("HIGH VOLUME", hiV, items.length?Math.round(hiV/items.length*100)+"% ≥ 2.0":"")+
       kpi("PAIRS SCANNED", ST.tabData.trending.scanned||items.length, "");
+  }
+  function _fmtVol(v){
+    if(v==null||!isFinite(+v)) return "—";
+    var n=+v;
+    if(n>=1e9) return (n/1e9).toFixed(2)+"B";
+    if(n>=1e6) return (n/1e6).toFixed(2)+"M";
+    if(n>=1e3) return (n/1e3).toFixed(1)+"K";
+    return n.toFixed(0);
+  }
+  function _miniSpark(sp, w, h){
+    if(!sp||sp.length<2) return "";
+    w=w||80;h=h||22;
+    var mn=Math.min.apply(null,sp), mx=Math.max.apply(null,sp), rng=(mx-mn)||1;
+    var pts=sp.map(function(v,i){return (i/(sp.length-1)*w).toFixed(1)+","+(h-((v-mn)/rng)*h).toFixed(1);}).join(" ");
+    var up=sp[sp.length-1]>=sp[0];
+    return '<svg viewBox="0 0 '+w+' '+h+'" width="'+w+'" height="'+h+'" preserveAspectRatio="none">'+
+      '<polyline points="'+pts+'" fill="none" stroke="'+(up?"#34d399":"#fb7185")+'" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>'+
+    '</svg>';
   }
   function renderTrendingTable(){
     var items = (ST.tabData.trending.items)||[];
     var host = E("tabView");
     if(!items.length){ host.innerHTML='<div class="tv-empty">No trending movers yet. Adjust the controls above and tap Scan.</div>'; return; }
-    var rows = items.map(function(it){
-      var ch = +it.changePct||0;
+    var sel = ST.tabData.trending.sel;
+    var rows = items.map(function(it,i){
+      var ch=+it.changePct||0;
       var dir = ch>=0 ? "bull" : "bear";
       var price = it.price!=null?fmt(it.price):"—";
       var rv = it.relVol!=null?(+it.relVol).toFixed(2):"—";
-      var qv = it.quoteVolume!=null?(+it.quoteVolume>=1e9?(+it.quoteVolume/1e9).toFixed(2)+"B":+it.quoteVolume>=1e6?(+it.quoteVolume/1e6).toFixed(2)+"M":(+it.quoteVolume/1e3).toFixed(1)+"K"):"—";
+      var qv = _fmtVol(it.quoteVolume);
       var modeLbl = (it.mode||"trending").replace(/_/g," ");
       var sym = String(it.symbol||"");
-      var tvSuf = (ST.market==="perpetual" && ST.settings.tvPerpSuffix!==false) ? ".P" : "";
-      var tvUrl = "https://www.tradingview.com/chart/?symbol="+(ST.settings.tvExchange||"BINANCE")+":"+encodeURIComponent(sym)+tvSuf;
-      return '<tr>'+
+      return '<tr data-i="'+i+'"'+(i===sel?' class="sel"':'')+'>'+
         '<td class="sym">'+esc(sym)+'</td>'+
         '<td><span class="tv-pill cyan">'+esc(modeLbl)+'</span></td>'+
         '<td class="r '+(ch>=0?"g":"r2")+'">'+(ch>=0?"+":"")+ch.toFixed(2)+'%</td>'+
@@ -1868,58 +2110,94 @@ svg{display:block}
         '<td class="r">'+rv+'</td>'+
         '<td><span class="tv-pill '+dir+'">'+(dir==="bull"?"Bullish":"Bearish")+'</span></td>'+
         '<td class="r">'+price+'</td>'+
-        '<td class="tv-actions"><a href="'+tvUrl+'" target="_blank" rel="noopener">Chart →</a></td>'+
+        '<td>'+_miniSpark(it.sparkline)+'</td>'+
       '</tr>';
     }).join("");
     host.innerHTML=
       '<table class="tv-tbl"><thead><tr>'+
         '<th>SYMBOL</th><th>MODE</th><th class="r">CHANGE %</th>'+
         '<th class="r">QUOTE VOL</th><th class="r">REL VOL</th>'+
-        '<th>TREND</th><th class="r">PRICE</th><th>CHART</th>'+
+        '<th>TREND</th><th class="r">PRICE</th><th>SPARKLINE</th>'+
       '</tr></thead><tbody>'+rows+'</tbody></table>';
   }
+  function renderTrendingInsight(r){
+    var box=E("insScroll");
+    if(!r){ box.innerHTML=_insHead("trending")+'<div class="row-msg">Pick a mover to see its details.</div>'; return; }
+    var sym=String(r.symbol||"");
+    var ch=+r.changePct||0;
+    var dir=ch>=0?"bull":"bear";
+    box.innerHTML = _insHead("trending")+
+      '<div class="ins-title"><span class="ins-sym">'+esc(sym)+'</span>'+
+        '<span class="tag mkt">'+esc(ST.market==="perpetual"?"Perp":"Spot")+'</span>'+
+        '<span class="tag '+dir+'">'+(dir==="bull"?"Bullish":"Bearish")+'</span></div>'+
+      '<div class="ins-meta"><span>'+esc((r.mode||"trending").replace(/_/g," "))+' · '+esc((ST.modeOptions.trending||{}).tf||"4h")+'</span><span>'+rel(ST.scannedAt)+'</span></div>'+
 
-  /* ── ATH / ATL tab renderer ── */
+      '<div class="ti-h">Price</div>'+
+      _ti("Current price", r.price!=null?fmt(r.price):"—")+
+      _tiB("Change %", '<span class="'+(ch>=0?"g":"r2")+'">'+(ch>=0?"+":"")+ch.toFixed(2)+'%</span>')+
+
+      '<div class="ti-h">Volume</div>'+
+      _ti("Quote volume",  _fmtVol(r.quoteVolume))+
+      _ti("Relative volume", r.relVol!=null?(+r.relVol).toFixed(2)+"×":"—")+
+
+      '<div class="ti-h">Trend</div>'+
+      _ti("Mode",      (r.mode||"trending").replace(/_/g," "))+
+      _ti("Direction", (ch>=0?"Bullish":"Bearish"))+
+
+      ((r.sparkline&&r.sparkline.length)
+        ? '<div class="ti-h">Sparkline (last 24)</div><div style="padding:8px 0">'+_miniSpark(r.sparkline,240,60)+'</div>'
+        : "")+
+
+      _insFoot(sym);
+  }
+
+  /* ─────────────────────────── ATH / ATL ─────────────────────────── */
   function renderAthKPI(){
     var items = (ST.tabData.ath_atl.items)||[];
     var raw   = ST.tabData.ath_atl.raw||{};
-    var ath = items.filter(function(x){return (x.tags||[]).some(function(t){return /ATH/.test(t);});}).length;
-    var atl = items.filter(function(x){return (x.tags||[]).some(function(t){return /ATL/.test(t);});}).length;
-    var near= items.filter(function(x){var t=(x.tags||[])[0]||"";return /NEAR/i.test(t);}).length;
+    function tags(x){return (x.tags||[]).join("|").toUpperCase();}
+    var ath = items.filter(function(x){return /ATH/.test(tags(x));}).length;
+    var atl = items.filter(function(x){return /ATL/.test(tags(x));}).length;
+    var near= items.filter(function(x){return /NEAR/.test(tags(x))||x.statusKind==="near_level";}).length;
     E("kpiRow").innerHTML=
-      kpi("LEVELS FOUND", items.length, "")+
+      kpi("LEVELS FOUND", items.length, raw.found?("total found "+raw.found):"")+
       kpi("ATH BREAKS", ath, ath?"breaking/made":"", "g")+
       kpi("ATL BREAKS", atl, atl?"breaking/made":"", "r")+
       kpi("NEAR LEVELS", near, "")+
-      kpi("CURRENT BATCH", raw.batch || raw.cursor || "—", "")+
-      kpi("TOTAL SCANNED", raw.totalScanned || raw.scanned || items.length, "");
+      kpi("CURRENT BATCH", (raw.currentBatchStart!=null?raw.currentBatchStart+"–"+raw.currentBatchEnd:"—"), "")+
+      kpi("TOTAL SCANNED", raw.scannedCount||raw.totalPairs||items.length, "");
   }
   function renderAthTable(){
     var items = (ST.tabData.ath_atl.items)||[];
     var raw   = ST.tabData.ath_atl.raw||{};
-    var host = E("tabView");
-    var bar = "";
-    if(raw.totalMarketPairs || raw.totalScanned){
-      bar = '<div class="tv-progress">'+
-        '<span>Total market: <b>'+(raw.totalMarketPairs||"—")+'</b></span>'+
-        '<span>Scanned: <b>'+(raw.totalScanned||raw.scanned||0)+'</b></span>'+
-        '<span>Current batch: <b>'+(raw.batch||raw.cursor||"—")+'</b></span>'+
+    var host  = E("tabView");
+    var bar="";
+    if(raw.totalPairs!=null || raw.scannedCount!=null){
+      bar='<div class="tv-progress">'+
+        '<span>Total market: <b>'+(raw.totalPairs||"—")+'</b></span>'+
+        '<span>Scanned: <b>'+(raw.scannedCount||0)+'</b></span>'+
+        '<span>Current batch: <b>'+(raw.currentBatchStart!=null?(raw.currentBatchStart+"–"+raw.currentBatchEnd):"—")+'</b></span>'+
         '<span>Found: <b>'+(raw.found||items.length)+'</b></span>'+
+        '<span>Window: <b>'+esc(raw.windowLabel||raw.windowHours+"h")+'</b></span>'+
       '</div>';
     }
     if(!items.length){ host.innerHTML=bar+'<div class="tv-empty">No ATH/ATL pairs match the current filter. Try a different Status or wider Window.</div>'; return; }
-    var rows = items.map(function(it){
-      var sym = String(it.symbol||it.pair||"");
-      var tag = (it.tags||[])[0]||"";
-      var dir = /ATH/.test(tag)?"bull":"bear";
-      var price = (it.price!=null?fmt(it.price):(it.live_price!=null?fmt(it.live_price):"—"));
-      var pAth = it.previous_ath!=null?fmt(it.previous_ath):(it.previousAth!=null?fmt(it.previousAth):"—");
-      var pAtl = it.previous_atl!=null?fmt(it.previous_atl):(it.previousAtl!=null?fmt(it.previousAtl):"—");
-      var wHi  = it.window_high!=null?fmt(it.window_high):(it.windowHigh!=null?fmt(it.windowHigh):"—");
-      var wLo  = it.window_low!=null?fmt(it.window_low):(it.windowLow!=null?fmt(it.windowLow):"—");
+    var sel = ST.tabData.ath_atl.sel;
+    var rows = items.map(function(it,i){
+      var sym=String(it.symbol||"");
+      var tag=(it.tags||[])[0]||(it.statusKind||"");
+      var dir = /ATH/.test(tag)?"bull": /ATL/.test(tag)?"bear":"warn";
+      var price = it.price!=null?fmt(it.price):"—";
+      var pAth = it.previousAth!=null?fmt(it.previousAth):"—";
+      var pAtl = it.previousAtl!=null?fmt(it.previousAtl):"—";
+      var wHi  = it.windowHigh!=null?fmt(it.windowHigh):"—";
+      var wLo  = it.windowLow!=null?fmt(it.windowLow):"—";
       var br   = it.breakPct!=null?(+it.breakPct).toFixed(2)+"%":"—";
-      var di   = it.distPct!=null?(+it.distPct).toFixed(2)+"%":"—";
-      return '<tr>'+
+      var di   = it.distancePct!=null?(+it.distancePct).toFixed(2)+"%":"—";
+      var win  = esc(raw.windowLabel || (it.windowHours!=null?it.windowHours+"h":((ST.modeOptions.ath_atl||{}).windowHours||"")+"h"));
+      var mk   = esc(it.marketType||ST.market);
+      var ex   = esc(it.exchange||"binance");
+      return '<tr data-i="'+i+'"'+(i===sel?' class="sel"':'')+'>'+
         '<td class="sym">'+esc(sym)+'</td>'+
         '<td><span class="tv-pill '+dir+'">'+esc(tag||"—")+'</span></td>'+
         '<td class="r">'+price+'</td>'+
@@ -1927,8 +2205,9 @@ svg{display:block}
         '<td class="r">'+pAtl+'</td>'+
         '<td class="r">'+wHi+' / '+wLo+'</td>'+
         '<td class="r">'+br+' / '+di+'</td>'+
-        '<td>'+esc(((ST.modeOptions.ath_atl||{}).windowHours||"")+"h")+'</td>'+
-        '<td>'+esc(ST.market)+'</td>'+
+        '<td>'+win+'</td>'+
+        '<td>'+mk+'</td>'+
+        '<td>'+ex+'</td>'+
       '</tr>';
     }).join("");
     host.innerHTML = bar +
@@ -1936,68 +2215,190 @@ svg{display:block}
         '<th>SYMBOL</th><th>STATUS</th><th class="r">PRICE</th>'+
         '<th class="r">PREV ATH</th><th class="r">PREV ATL</th>'+
         '<th class="r">WIN HIGH/LOW</th><th class="r">BREAK / DIST %</th>'+
-        '<th>WINDOW</th><th>MARKET</th>'+
+        '<th>WINDOW</th><th>MARKET</th><th>EXCHANGE</th>'+
       '</tr></thead><tbody>'+rows+'</tbody></table>';
   }
+  function renderAthAtlInsight(r){
+    var box=E("insScroll");
+    if(!r){ box.innerHTML=_insHead("ath_atl")+'<div class="row-msg">Pick a row to see breakout details.</div>'; return; }
+    var sym=String(r.symbol||"");
+    var tags=r.tags||[];
+    var tag = tags[0]||(r.statusKind||"");
+    var dir = /ATH/.test(tag)?"bull": /ATL/.test(tag)?"bear":"warn";
+    var raw = ST.tabData.ath_atl.raw||{};
+    box.innerHTML = _insHead("ath_atl")+
+      '<div class="ins-title"><span class="ins-sym">'+esc(sym)+'</span>'+
+        '<span class="tag mkt">'+esc(r.marketType||ST.market)+'</span>'+
+        '<span class="tag '+(dir==="bull"?"bull":dir==="bear"?"bear":"neutral")+'">'+esc(tag||"—")+'</span></div>'+
+      '<div class="ins-meta"><span>'+esc(r.exchange||"binance")+' · '+esc(r.windowHours||((ST.modeOptions.ath_atl||{}).windowHours||""))+'h</span><span>'+rel(ST.scannedAt)+'</span></div>'+
 
-  /* ── Bias Shift tab renderer ── */
+      ((tags.length>1)?'<div class="ti-h">Tags</div><div class="ti-confl">'+tags.map(function(t){return '<span class="on">'+esc(t)+'</span>';}).join("")+'</div>':"")+
+
+      '<div class="ti-h">Price &amp; levels</div>'+
+      _ti("Current price", r.price!=null?fmt(r.price):"—")+
+      _ti("Previous ATH",  r.previousAth!=null?fmt(r.previousAth):"—")+
+      _ti("Previous ATL",  r.previousAtl!=null?fmt(r.previousAtl):"—")+
+      _ti("Window high",   r.windowHigh!=null?fmt(r.windowHigh):"—")+
+      _ti("Window low",    r.windowLow!=null?fmt(r.windowLow):"—")+
+      _tiB("Break %",      '<span class="'+(dir==="bull"?"g":"r2")+'">'+(r.breakPct!=null?(+r.breakPct).toFixed(2)+"%":"—")+'</span>')+
+      _ti("Distance %",    r.distancePct!=null?(+r.distancePct).toFixed(2)+"%":"—")+
+
+      '<div class="ti-h">Window &amp; market</div>'+
+      _ti("Window",        r.windowSelected||r.windowHours+"h"||"—")+
+      _ti("Market",        r.marketType||ST.market)+
+      _ti("Exchange",      r.exchange||"binance")+
+      _ti("Volume (24h)",  r.volumeFmt||_fmtVol(r.volume))+
+      _ti("Days of history", r.daysHistory||"—")+
+
+      ((raw.totalPairs!=null||raw.scannedCount!=null)
+        ? ('<div class="ti-h">Scan progress</div>'+
+           _ti("Total pairs", raw.totalPairs||"—")+
+           _ti("Scanned",     raw.scannedCount||0)+
+           _ti("Current batch", (raw.currentBatchStart!=null?(raw.currentBatchStart+"–"+raw.currentBatchEnd):"—"))+
+           _ti("Found total", raw.found||"—"))
+        : "")+
+
+      _insFoot(sym, r.marketType||ST.market);
+  }
+
+  /* ─────────────────────────── BIAS SHIFT ─────────────────────────── */
+  function normalizeBiasRow(x){
+    if(!x) return null;
+    var bias = String(x.biasDirection||x.bias||x.direction||"").toLowerCase();
+    return {
+      raw:x,
+      symbol: x.symbol||x.pair||"",
+      tf:     x.timeframe||x.tf||(ST.modeOptions.bias||{}).tf||"—",
+      bias:   bias,
+      setupType: x.setupType||x.pattern||"BIAS_SHIFT",
+      confirmation: x.confirmationStatus||x.status||"—",
+      grade:  x.grade||"—",
+      gradeLabel: x.gradeLabel||"",
+      score:  x.score!=null?+x.score:(x.bias_score!=null?+x.bias_score:null),
+      confidence: x.confidence,
+      priorDirection: x.priorMoveDirection||"",
+      priorCandles:   x.priorMoveCandles!=null?+x.priorMoveCandles:null,
+      priorNetPct:    x.priorMoveNetPct!=null?+x.priorMoveNetPct:null,
+      priorQuality:   x.priorMoveQuality||(x.priorDrive&&x.priorDrive.quality)||"",
+      pattern: x.pattern||"",
+      detail:  x.detail||"",
+      invalidationLevel: x.invalidationLevel,
+      invalidationText:  x.invalidationText||x.invalidation||"",
+      suggestedConfirmationTf: x.suggestedConfirmationTf||"",
+      reasonChain: x.reasonChain||x.gates||[],
+      scoreBreakdown: x.scoreBreakdown||{},
+      obConf:  !!(x.obConf  && (x.obConf.has  || x.obConf.matched  || x.obConf.found)),
+      fvgConf: !!(x.fvgConf && (x.fvgConf.has || x.fvgConf.matched || x.fvgConf.found)),
+      fibConf: !!(x.fibConf && (x.fibConf.has || x.fibConf.matched || x.fibConf.found)),
+      rejectionWick: { up:x.rejectionUpperWickPct, dn:x.rejectionLowerWickPct, body:x.rejectionBodyPct },
+      rejectionPrice:{ open:x.rejectionOpen, high:x.rejectionHigh, low:x.rejectionLow, close:x.rejectionClose },
+    };
+  }
   function renderBiasKPI(){
-    var items = (ST.tabData.bias.items)||[];
-    function isBull(x){var s=String((x.bias||x.direction||x.event||"")).toLowerCase();return s.indexOf("bull")>=0;}
-    function isBear(x){var s=String((x.bias||x.direction||x.event||"")).toLowerCase();return s.indexOf("bear")>=0;}
-    var bull = items.filter(isBull).length;
-    var bear = items.filter(isBear).length;
-    var conf = items.filter(function(x){return /confirm/i.test(String(x.detectionMode||x.status||""));}).length;
-    var early= items.filter(function(x){return /early/i.test(String(x.detectionMode||x.status||""));}).length;
-    var grades = items.map(function(x){return (x.grade||x.minGrade||"").toString().replace(/[^A-D+]/g,"");}).filter(Boolean);
-    var avgG = grades.length ? grades[Math.floor(grades.length/2)] : "—";
+    var items = ((ST.tabData.bias.items)||[]).map(normalizeBiasRow).filter(Boolean);
+    var bull = items.filter(function(x){return x.bias.indexOf("bull")>=0;}).length;
+    var bear = items.filter(function(x){return x.bias.indexOf("bear")>=0;}).length;
+    var conf = items.filter(function(x){return /confirm/i.test(x.confirmation);}).length;
+    var early= items.filter(function(x){return /early|unconfirmed|pending/i.test(x.confirmation);}).length;
+    var scores=items.map(function(x){return x.score;}).filter(function(s){return s!=null;});
+    var avgS = scores.length ? Math.round(scores.reduce(function(a,s){return a+s;},0)/scores.length) : "—";
     E("kpiRow").innerHTML=
       kpi("BIAS SETUPS", items.length, "")+
       kpi("BULLISH BIAS", bull, items.length?Math.round(bull/items.length*100)+"%":"", "g")+
       kpi("BEARISH BIAS", bear, items.length?Math.round(bear/items.length*100)+"%":"", "r")+
-      kpi("CONFIRMED", conf, "")+
-      kpi("EARLY", early, "")+
-      kpi("MEDIAN GRADE", avgG, "");
+      kpi("CONFIRMED", conf, items.length?Math.round(conf/items.length*100)+"%":"")+
+      kpi("EARLY / UNCONFIRMED", early, "")+
+      kpi("AVG SCORE", avgS, "");
   }
-  function renderBiasCards(){
-    var items = (ST.tabData.bias.items)||[];
-    var host = E("tabView");
-    if(!items.length){ host.innerHTML='<div class="tv-empty">No bias shifts found yet. Try Early strength or a lower min grade.</div>'; return; }
-    var rows = items.map(function(it){
-      var sym  = String(it.symbol||it.pair||"");
-      var tf   = esc(it.tf || it.timeframe || (ST.modeOptions.bias||{}).tf || "—");
-      var bias = String(it.bias||it.direction||"").toLowerCase();
-      var dir  = bias.indexOf("bull")>=0?"bull":bias.indexOf("bear")>=0?"bear":"";
-      var status = it.detectionMode || it.status || "—";
-      var grade = (it.grade||"—").toString();
-      var score = it.score!=null?Math.round(+it.score):(it.bias_score!=null?Math.round(+it.bias_score):"—");
-      var prior = it.priorMove || it.prior_move || (it.priorMovePct!=null?(+it.priorMovePct).toFixed(2)+"%":"—");
-      var invalid = it.invalidation || it.invalidationLevel || (it.invalidPrice!=null?fmt(it.invalidPrice):"—");
-      var confl = [
-        {key:"OB",  on: it.obConfluence  || (it.confluence&&it.confluence.ob)},
-        {key:"FVG", on: it.fvgConfluence || (it.confluence&&it.confluence.fvg)},
-        {key:"FIB", on: it.fibConfluence || (it.confluence&&it.confluence.fib)},
-      ];
-      var conHtml='<div class="tv-confl">'+confl.map(function(c){return '<span'+(c.on?' class="on"':'')+'>'+c.key+'</span>';}).join("")+'</div>';
-      return '<tr>'+
-        '<td class="sym">'+esc(sym)+'</td>'+
-        '<td>'+tf+'</td>'+
-        '<td><span class="tv-pill '+(dir||"warn")+'">'+(dir==="bull"?"Bullish":dir==="bear"?"Bearish":esc(bias||"—"))+'</span></td>'+
-        '<td>'+esc(status)+'</td>'+
-        '<td><span class="tv-grade" data-g="'+esc(grade)+'">'+esc(grade)+'</span></td>'+
-        '<td class="r">'+esc(score)+'</td>'+
-        '<td class="r">'+esc(prior)+'</td>'+
-        '<td class="r">'+esc(invalid)+'</td>'+
-        '<td>'+conHtml+'</td>'+
+  function _biasConflSpec(b){
+    return [{k:"OB",on:b.obConf},{k:"FVG",on:b.fvgConf},{k:"FIB",on:b.fibConf}];
+  }
+  function renderBiasTable(){
+    var raw=(ST.tabData.bias.items)||[];
+    var items=raw.map(normalizeBiasRow).filter(Boolean);
+    var host=E("tabView");
+    if(!items.length){ host.innerHTML='<div class="tv-empty">No bias shifts found. Try Early strength or a lower min grade.</div>'; return; }
+    var sel=ST.tabData.bias.sel;
+    var rows = items.map(function(b,i){
+      var dir = b.bias.indexOf("bull")>=0?"bull":b.bias.indexOf("bear")>=0?"bear":"warn";
+      var prior = (b.priorDirection?b.priorDirection:"—") + (b.priorNetPct!=null?(" · "+(b.priorNetPct>=0?"+":"")+b.priorNetPct.toFixed(2)+"%"):"") +
+                  (b.priorCandles!=null?(" · "+b.priorCandles+"c"):"");
+      var invalid = b.invalidationLevel!=null?fmt(b.invalidationLevel):(b.invalidationText?esc(b.invalidationText):"—");
+      var confl=_confluencePills(_biasConflSpec(b));
+      return '<tr data-i="'+i+'"'+(i===sel?' class="sel"':'')+'>'+
+        '<td class="sym">'+esc(b.symbol)+'</td>'+
+        '<td>'+esc(b.tf)+'</td>'+
+        '<td><span class="tv-pill '+dir+'">'+esc(b.bias?b.bias[0].toUpperCase()+b.bias.slice(1):"—")+'</span></td>'+
+        '<td>'+esc(b.confirmation)+'</td>'+
+        '<td><span class="tv-grade" data-g="'+esc(b.grade)+'">'+esc(b.grade)+'</span>'+(b.gradeLabel?' <span style="color:var(--text-3);font-size:10.5px">'+esc(b.gradeLabel)+'</span>':"")+'</td>'+
+        '<td class="r">'+(b.score!=null?Math.round(b.score):"—")+'</td>'+
+        '<td>'+esc(prior)+'</td>'+
+        '<td class="r">'+invalid+'</td>'+
+        '<td>'+confl+'</td>'+
+        '<td>'+esc(b.suggestedConfirmationTf||"—")+'</td>'+
       '</tr>';
     }).join("");
     host.innerHTML=
       '<table class="tv-tbl"><thead><tr>'+
         '<th>SYMBOL</th><th>TF</th><th>BIAS</th><th>STATUS</th>'+
-        '<th>GRADE</th><th class="r">SCORE</th><th class="r">PRIOR MOVE</th>'+
-        '<th class="r">INVALIDATION</th><th>CONFLUENCE</th>'+
+        '<th>GRADE</th><th class="r">SCORE</th>'+
+        '<th>PRIOR MOVE</th><th class="r">INVALIDATION</th>'+
+        '<th>CONFLUENCE</th><th>CONFIRM TF</th>'+
       '</tr></thead><tbody>'+rows+'</tbody></table>';
   }
+  function renderBiasInsight(rRaw){
+    var box=E("insScroll");
+    var b=normalizeBiasRow(rRaw);
+    if(!b){ box.innerHTML=_insHead("bias")+'<div class="row-msg">Pick a bias setup to see details.</div>'; return; }
+    var dir = b.bias.indexOf("bull")>=0?"bull":b.bias.indexOf("bear")>=0?"bear":"warn";
+    box.innerHTML = _insHead("bias")+
+      '<div class="ins-title"><span class="ins-sym">'+esc(b.symbol)+'</span>'+
+        '<span class="tag mkt">'+esc(b.tf)+'</span>'+
+        '<span class="tag '+dir+'">'+esc(b.bias?b.bias[0].toUpperCase()+b.bias.slice(1):"Neutral")+'</span></div>'+
+      '<div class="ins-meta"><span>'+esc(b.setupType||"BIAS_SHIFT")+' · '+esc(b.confirmation)+'</span><span>'+rel(ST.scannedAt)+'</span></div>'+
+
+      '<div class="ti-h">Scoring</div>'+
+      _ti("Score", b.score!=null?Math.round(b.score):"—")+
+      _tiB("Grade", '<span class="tv-grade" data-g="'+esc(b.grade)+'">'+esc(b.grade||"—")+'</span>'+(b.gradeLabel?'  <span style="color:var(--text-3);font-size:10.5px">'+esc(b.gradeLabel)+'</span>':""))+
+      _ti("Confidence", b.confidence!=null?(""+b.confidence):"—")+
+
+      '<div class="ti-h">Prior move</div>'+
+      _ti("Direction", b.priorDirection||"—")+
+      _ti("Candles",   b.priorCandles!=null?b.priorCandles:"—")+
+      _ti("Net %",     b.priorNetPct!=null?_fmtPct(b.priorNetPct):"—")+
+      _ti("Quality",   b.priorQuality||"—")+
+
+      '<div class="ti-h">Rejection candle</div>'+
+      _ti("Pattern",   b.pattern||"—")+
+      _ti("Open",  b.rejectionPrice.open!=null?fmt(b.rejectionPrice.open):"—")+
+      _ti("High",  b.rejectionPrice.high!=null?fmt(b.rejectionPrice.high):"—")+
+      _ti("Low",   b.rejectionPrice.low!=null?fmt(b.rejectionPrice.low):"—")+
+      _ti("Close", b.rejectionPrice.close!=null?fmt(b.rejectionPrice.close):"—")+
+      _ti("Upper wick %", b.rejectionWick.up!=null?(+b.rejectionWick.up).toFixed(2)+"%":"—")+
+      _ti("Lower wick %", b.rejectionWick.dn!=null?(+b.rejectionWick.dn).toFixed(2)+"%":"—")+
+      _ti("Body %",       b.rejectionWick.body!=null?(+b.rejectionWick.body).toFixed(2)+"%":"—")+
+
+      '<div class="ti-h">Invalidation</div>'+
+      _ti("Level", b.invalidationLevel!=null?fmt(b.invalidationLevel):"—")+
+      _ti("Note",  b.invalidationText||"—")+
+      _ti("Suggested confirmation TF", b.suggestedConfirmationTf||"—")+
+
+      '<div class="ti-h">Confluence</div>'+
+      _tiB("Detected", _confluencePills(_biasConflSpec(b)))+
+
+      ((b.reasonChain&&b.reasonChain.length)?
+        '<div class="ti-h">Reason chain</div>'+
+        '<ul class="ti-chain">'+b.reasonChain.map(function(s){return '<li>'+esc(s)+'</li>';}).join("")+'</ul>'
+      :"")+
+
+      ((b.scoreBreakdown&&Object.keys(b.scoreBreakdown).length)?
+        '<div class="ti-h">Score breakdown</div>'+
+        Object.keys(b.scoreBreakdown).map(function(k){return _ti(k, b.scoreBreakdown[k]);}).join("")
+      :"")+
+
+      _insFoot(b.symbol);
+  }
+
 
   function renderMeta(){
     var tEl=E("mainTitle");
@@ -2427,6 +2828,18 @@ svg{display:block}
     if(s){var i=+s.getAttribute("data-star");var r=ST.results[i];if(r){ST.stars[r.symbol]=!ST.stars[r.symbol];syncWatchlist();renderTable();if(i===ST.sel)renderInsight();}e.stopPropagation();return;}
     var tr=e.target.closest("tr[data-i]");
     if(tr){ST.sel=+tr.getAttribute("data-i");renderTable();renderInsight();}
+  });
+  /* tab-aware row click for non-main views */
+  document.getElementById("tabView").addEventListener("click",function(e){
+    var lm=e.target.closest("[data-add-lm]");
+    if(lm){ _addToLM(lm.getAttribute("data-add-lm")); e.stopPropagation(); return; }
+    var tr=e.target.closest("tr[data-i]");
+    if(tr){ openInsightForTab(ST.mode, +tr.getAttribute("data-i")); }
+  });
+  /* "Add to Live Monitor" buttons inside the insight panel work for any tab */
+  document.getElementById("insScroll").addEventListener("click",function(e){
+    var lm=e.target.closest("[data-add-lm]");
+    if(lm){ _addToLM(lm.getAttribute("data-add-lm")); e.stopPropagation(); }
   });
   document.getElementById("mcards").addEventListener("click",function(e){
     if(e.target.closest(".mc-body")) return;   // ignore clicks inside expanded body
