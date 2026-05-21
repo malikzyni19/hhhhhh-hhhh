@@ -356,21 +356,67 @@ svg{display:block}
 .settings-bd{position:fixed;inset:0;background:rgba(2,6,14,.55);backdrop-filter:blur(2px);
   -webkit-backdrop-filter:blur(2px);opacity:0;pointer-events:none;transition:opacity .25s;z-index:240}
 .settings-bd.open{opacity:1;pointer-events:auto}
-.settings-panel{position:fixed;top:0;right:0;bottom:0;width:420px;max-width:96vw;
-  background:var(--bg-panel);border-left:1px solid var(--border);
-  transform:translateX(100%);transition:transform .28s cubic-bezier(.2,.7,.2,1);
-  z-index:250;box-shadow:-12px 0 36px rgba(0,0,0,.55);display:flex;flex-direction:column}
+.settings-panel{position:fixed;top:0;left:0;bottom:0;width:96vw;max-width:1100px;
+  background:var(--bg-panel);border-right:1px solid var(--border);
+  transform:translateX(-100%);transition:transform .28s cubic-bezier(.2,.7,.2,1);
+  z-index:250;box-shadow:12px 0 36px rgba(0,0,0,.55);display:flex;flex-direction:column}
 .settings-panel.open{transform:translateX(0)}
-.sp-head{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;
-  border-bottom:1px solid var(--border);background:var(--bg-topbar)}
-.sp-head h3{font-size:12px;font-weight:700;letter-spacing:1.4px;color:var(--text-2)}
-.sp-body{flex:1;overflow-y:auto;padding:14px 16px}
-.sp-foot{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--border);background:var(--bg-panel)}
-.sp-foot .btn{flex:1;justify-content:center}
-.sp-group{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:10px}
-.sp-group-h{font-size:10px;font-weight:700;letter-spacing:1px;color:var(--accent);margin-bottom:8px}
-.sp-field{display:flex;align-items:center;justify-content:space-between;gap:10px;
-  padding:6px 0;font-size:12.5px;color:var(--text-2)}
+.sp-head{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;
+  border-bottom:1px solid var(--border);background:var(--bg-topbar);flex-shrink:0}
+.sp-head h3{font-size:13px;font-weight:700;letter-spacing:1.4px;color:var(--text-2)}
+.sp-main{flex:1;display:grid;grid-template-columns:240px 1fr;min-height:0;overflow:hidden}
+.sp-side{background:var(--bg-card);border-right:1px solid var(--border);padding:14px 8px;
+  overflow-y:auto}
+.sp-side-h{font-size:9.5px;font-weight:700;letter-spacing:1.2px;color:var(--text-3);
+  padding:4px 10px 8px}
+.sp-tab{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;cursor:pointer;
+  color:var(--text-2);transition:background .15s,color .15s;font-size:13px;font-weight:600;
+  border-left:2px solid transparent}
+.sp-tab .ico{width:15px;height:15px;color:var(--text-3)}
+.sp-tab:hover{background:rgba(255,255,255,.03);color:var(--text)}
+.sp-tab.active{background:var(--accent-soft);color:var(--accent);border-left-color:var(--accent)}
+.sp-tab.active .ico{color:var(--accent)}
+.sp-tab-sub{font-size:11px;color:var(--text-3);font-weight:400;margin-top:2px;line-height:1.3}
+.sp-tab.active .sp-tab-sub{color:rgba(34,211,238,.6)}
+.sp-content{overflow-y:auto;padding:24px 32px}
+.sp-content-h{font-size:18px;font-weight:700;color:var(--text);margin-bottom:4px}
+.sp-content-sub{font-size:13px;color:var(--text-3);margin-bottom:18px}
+.sp-section{display:none}
+.sp-section.active{display:block}
+.sp-body{flex:1;overflow-y:auto;padding:14px 16px}  /* legacy — kept for safety */
+.sp-foot{display:flex;gap:10px;padding:14px 20px;border-top:1px solid var(--border);background:var(--bg-panel);flex-shrink:0;justify-content:flex-end}
+.sp-foot .btn{padding:9px 18px}
+.sp-group{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:12px}
+.sp-group-h{font-size:11px;font-weight:700;letter-spacing:1px;color:var(--accent);margin-bottom:12px}
+.sp-field{display:flex;align-items:center;justify-content:space-between;gap:14px;
+  padding:9px 0;font-size:13px;color:var(--text-2);border-bottom:1px solid rgba(27,38,54,.4)}
+.sp-field:last-child{border-bottom:0}
+.sp-field label{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;color:var(--text);font-weight:500;cursor:pointer}
+.sp-field label input[type="checkbox"]{width:14px;height:14px;accent-color:var(--accent);cursor:pointer;margin-right:8px;flex:0 0 auto;display:inline-block}
+.sp-field > label > input[type="checkbox"]{display:inline-block;vertical-align:middle}
+.sp-field label > input[type="number"],
+.sp-field label > input[type="text"],
+.sp-field label > select{
+  width:140px;background:var(--bg-card-2);border:1px solid var(--border);
+  color:var(--text);border-radius:7px;padding:6px 10px;font-family:var(--mono);font-size:12.5px;outline:none;align-self:flex-start}
+.sp-field > input[type="number"],
+.sp-field > input[type="text"],
+.sp-field > select{
+  width:140px;background:var(--bg-card-2);border:1px solid var(--border);
+  color:var(--text);border-radius:7px;padding:6px 10px;font-family:var(--mono);font-size:12.5px;outline:none}
+.sp-field input[type="number"]:focus,.sp-field input[type="text"]:focus,.sp-field select:focus{border-color:var(--accent)}
+.sp-help{font-size:11.5px;color:var(--text-3);font-weight:400;line-height:1.4;max-width:520px}
+.sp-field code{font-size:11px;color:var(--accent);font-family:var(--mono)}
+@media (max-width:820px){
+  .sp-main{grid-template-columns:1fr;grid-template-rows:auto 1fr}
+  .sp-side{border-right:0;border-bottom:1px solid var(--border);padding:8px 6px;display:flex;gap:6px;overflow-x:auto}
+  .sp-side-h{display:none}
+  .sp-tab{flex:0 0 auto;padding:7px 11px;border-left:0;border-bottom:2px solid transparent}
+  .sp-tab.active{border-left:0;border-bottom-color:var(--accent)}
+  .sp-tab .ico{display:none}
+  .sp-tab-sub{display:none}
+  .sp-content{padding:14px 18px}
+}
 .sp-field label{flex:1;min-width:0;display:flex;align-items:center;gap:8px;cursor:pointer}
 .sp-field input[type="number"],.sp-field input[type="text"],.sp-field select{
   width:120px;background:var(--bg-input,var(--bg-card-2));border:1px solid var(--border);
@@ -726,7 +772,9 @@ svg{display:block}
           </div>
           <div class="head-ctrls">
             <div class="seg" id="segMarket"><button data-mkt="spot" class="on">Spot</button><button data-mkt="perpetual">Perpetual</button></div>
-            <div class="seg" id="segSignal"><button data-sig="OB" class="on">OB</button><button data-sig="BREAKER">Breaker</button><button data-sig="FIB">Fib</button><button data-sig="ALL">All</button></div>
+            <div class="seg" id="segSignal"><button data-sig="OB" class="on">OB</button><button data-sig="FVG">FVG</button><button data-sig="BREAKER">Breaker</button><button data-sig="FIB">Fib</button><button data-sig="ALL">All</button></div>
+            <button class="btn btn-primary" id="btnScan" type="button"><svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>Scan</button>
+            <button class="btn" id="btnClear" type="button" title="Clear results"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>Clear</button>
             <button class="btn" id="btnFilters"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg>Filters <span class="badge-n">3</span></button>
           </div>
         </div>
@@ -921,76 +969,150 @@ svg{display:block}
         <h3>SETTINGS</h3>
         <button class="ic-btn" id="spClose" type="button" aria-label="Close settings"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
       </div>
-      <div class="sp-body" id="spBody">
-        <div class="sp-group">
-          <div class="sp-group-h">Scan</div>
-          <div class="sp-field"><label>Timeframe</label>
-            <select data-s="tf">
-              <option value="15m">15m</option><option value="1h">1h</option>
-              <option value="4h" selected>4h</option><option value="1d">1d</option>
-            </select></div>
-          <div class="sp-field"><label>Swing lookback (sLen)</label><input type="number" data-s="sLen" value="30" min="5" max="120"></div>
-          <div class="sp-field"><label>Internal lookback (iLen)</label><input type="number" data-s="iLen" value="5" min="2" max="40"></div>
-          <div class="sp-field"><label>Consolidation candles</label><input type="number" data-s="consolCandles" value="5" min="2" max="40"></div>
-        </div>
-        <div class="sp-group">
-          <div class="sp-group-h">Order Block</div>
-          <div class="sp-field"><label>OB approach %</label><input type="number" data-s="obDistancePct" value="2.0" step="0.1" min="0" max="20"></div>
-          <div class="sp-field"><label>OB min quality (0-100)</label><input type="number" data-s="obMinQuality" value="0" min="0" max="100"></div>
-          <div class="sp-field"><label>OB max touches</label><input type="number" data-s="obMaxTouches" value="2" min="0" max="10"></div>
-          <div class="sp-field"><label><input type="checkbox" data-s="useObStrengthFilter">Use OB strength filter</label></div>
-          <div class="sp-field"><label>OB min strength %</label><input type="number" data-s="obMinStrengthPct" value="0" step="0.1" min="0" max="100"></div>
-          <div class="sp-field"><label><input type="checkbox" data-s="useHighProbOB">High-probability OBs only</label></div>
-          <div class="sp-field"><label><input type="checkbox" data-s="useObTouchState">Apply touch-state filter</label></div>
-        </div>
-        <div class="sp-group">
-          <div class="sp-group-h">Fair Value Gap (FVG)</div>
-          <div class="sp-field"><label><input type="checkbox" data-s="useFvgValidOnly">Valid FVGs only</label></div>
-          <div class="sp-field"><label><input type="checkbox" data-s="useFvgState">Filter by FVG state</label></div>
-          <div class="sp-field"><label>FVG state</label>
-            <select data-s="fvgState"><option value="all">all</option><option value="valid">valid</option><option value="bag">bag</option></select></div>
-          <div class="sp-field"><label>Min FVG age (bars)</label><input type="number" data-s="fvgAgeMin" value="0" min="0" max="500"></div>
-          <div class="sp-field"><label>Max FVG age (bars)</label><input type="number" data-s="fvgAgeMax" value="200" min="1" max="2000"></div>
-          <div class="sp-field"><label>FVG max distance %</label><input type="number" data-s="fvgMaxDistancePct" value="3.0" step="0.1" min="0" max="20"></div>
-          <div class="sp-field"><label>FVG touch depth</label><input type="text" data-s="fvgTouchDepth" value="any"></div>
-        </div>
-        <div class="sp-group">
-          <div class="sp-group-h">Breaker Block</div>
-          <div class="sp-field"><label><input type="checkbox" data-s="useBreakerModule" checked>Enable breaker module</label></div>
-          <div class="sp-field"><label>Breaker approach %</label><input type="number" data-s="breakerApproachPct" value="2.0" step="0.1" min="0" max="20"></div>
-          <div class="sp-field"><label>Breaker max age (bars)</label><input type="number" data-s="breakerMaxAge" value="200" min="1" max="2000"></div>
-          <div class="sp-field"><label><input type="checkbox" data-s="breakerRequireFvg">Require FVG overlap</label></div>
-        </div>
-        <div class="sp-group">
-          <div class="sp-group-h">Fibonacci</div>
-          <div class="sp-field"><label><input type="checkbox" data-s="useFibModule" checked>Enable Fib module</label></div>
-          <div class="sp-field"><label>Fib timeframe</label>
-            <select data-s="fibTf"><option value="15m">15m</option><option value="1h">1h</option><option value="4h" selected>4h</option><option value="1d">1d</option></select></div>
-          <div class="sp-field"><label>Fib tolerance %</label><input type="number" data-s="fibTolerancePct" value="0.5" step="0.05" min="0" max="5"></div>
-          <div class="sp-field"><label>Fib ATR multiplier</label><input type="number" data-s="fibAtrMultiplier" value="0.5" step="0.05" min="0" max="5"></div>
-          <div class="sp-field"><label>Fib approach %</label><input type="number" data-s="fibApproachPct" value="2.0" step="0.1" min="0" max="20"></div>
-          <div class="sp-field"><label><input type="checkbox" data-s="useFibRequireFvg">Require FVG confluence</label></div>
-          <div class="sp-field"><label><input type="checkbox" data-s="useFibRequireOb">Require OB confluence</label></div>
-        </div>
-        <div class="sp-group">
-          <div class="sp-group-h">BTC Correlation</div>
-          <div class="sp-field"><label><input type="checkbox" data-s="useBtcCorrelation">Enable correlation filter</label></div>
-          <div class="sp-field"><label>Mode</label>
-            <select data-s="btcCorrelationMode"><option value="all">all</option><option value="correlated">correlated</option><option value="non_correlated">non-correlated</option></select></div>
-          <div class="sp-field"><label>Lookback (bars)</label><input type="number" data-s="btcLookback" value="60" min="10" max="500"></div>
-        </div>
-        <div class="sp-group">
-          <div class="sp-group-h">RSI</div>
-          <div class="sp-field"><label>Overbought</label><input type="number" data-s="rsiOB" value="70" min="50" max="100"></div>
-          <div class="sp-field"><label>Oversold</label><input type="number" data-s="rsiOS" value="30" min="0" max="50"></div>
-        </div>
-        <div class="sp-group">
-          <div class="sp-group-h">TradingView</div>
-          <div class="sp-field"><label>Exchange prefix</label>
-            <select data-s="tvExchange"><option value="BINANCE" selected>BINANCE</option><option value="BYBIT">BYBIT</option><option value="OKX">OKX</option></select></div>
-          <div class="sp-field"><label><input type="checkbox" data-s="tvPerpSuffix" checked>Append <code>.P</code> for perp</label></div>
+      <div class="sp-main">
+        <nav class="sp-side" id="spSide">
+          <div class="sp-side-h">SCANNER MODULES</div>
+          <div class="sp-tab active" data-section="scan">
+            <svg class="ico" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+            <div><div>Scan engine</div><div class="sp-tab-sub">Timeframe &amp; structure window</div></div>
+          </div>
+          <div class="sp-tab" data-section="ob">
+            <svg class="ico" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+            <div><div>Order Block</div><div class="sp-tab-sub">Approach, quality, strength</div></div>
+          </div>
+          <div class="sp-tab" data-section="fvg">
+            <svg class="ico" viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+            <div><div>Fair Value Gap</div><div class="sp-tab-sub">Validity, age &amp; distance</div></div>
+          </div>
+          <div class="sp-tab" data-section="breaker">
+            <svg class="ico" viewBox="0 0 24 24"><path d="M3 12h7l3-9 3 18 3-9h2"/></svg>
+            <div><div>Breaker Block</div><div class="sp-tab-sub">Approach, age &amp; FVG overlap</div></div>
+          </div>
+          <div class="sp-tab" data-section="fib">
+            <svg class="ico" viewBox="0 0 24 24"><path d="M3 5h18M3 10h12M3 15h7M3 20h4"/></svg>
+            <div><div>Fibonacci</div><div class="sp-tab-sub">Levels, tolerance &amp; confluence</div></div>
+          </div>
+          <div class="sp-tab" data-section="btc">
+            <svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9 8h5a2 2 0 0 1 0 4H9V8z"/><path d="M9 12h6a2 2 0 0 1 0 4H9v-4z"/></svg>
+            <div><div>BTC Correlation</div><div class="sp-tab-sub">Filter by alignment with BTC</div></div>
+          </div>
+          <div class="sp-tab" data-section="rsi">
+            <svg class="ico" viewBox="0 0 24 24"><path d="M3 17l4-4 4 4 6-8 4 4"/></svg>
+            <div><div>RSI</div><div class="sp-tab-sub">Overbought / Oversold</div></div>
+          </div>
+          <div class="sp-tab" data-section="tv">
+            <svg class="ico" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 4-6"/></svg>
+            <div><div>TradingView</div><div class="sp-tab-sub">Chart link format</div></div>
+          </div>
+        </nav>
+
+        <div class="sp-content" id="spContent">
+          <section class="sp-section active" data-section="scan">
+            <div class="sp-content-h">Scan engine</div>
+            <div class="sp-content-sub">How the screener carves the chart into structure. Affects every module.</div>
+            <div class="sp-group">
+              <div class="sp-field"><label>Timeframe<div class="sp-help">Candle interval used for all detections.</div></label>
+                <select data-s="tf"><option value="15m">15m</option><option value="1h">1h</option><option value="4h" selected>4h</option><option value="1d">1d</option></select></div>
+              <div class="sp-field"><label>Swing lookback (sLen)<div class="sp-help">Bars used to define swing highs / lows. Bigger = fewer, stronger swings.</div></label>
+                <input type="number" data-s="sLen" value="30" min="5" max="120"></div>
+              <div class="sp-field"><label>Internal lookback (iLen)<div class="sp-help">Bars for short-term structure (used by OB detection).</div></label>
+                <input type="number" data-s="iLen" value="5" min="2" max="40"></div>
+              <div class="sp-field"><label>Consolidation candles<div class="sp-help">How many flat candles count as a consolidation before an OB.</div></label>
+                <input type="number" data-s="consolCandles" value="5" min="2" max="40"></div>
+            </div>
+          </section>
+
+          <section class="sp-section" data-section="ob">
+            <div class="sp-content-h">Order Block</div>
+            <div class="sp-content-sub">Demand / supply zones formed before the move that breaks structure. Selecting the <b>OB</b> module on the main page also activates these rules.</div>
+            <div class="sp-group">
+              <div class="sp-field"><label><input type="checkbox" data-s="useObModule" checked>Enable OB module<div class="sp-help">Turn OB detection on or off.</div></label></div>
+              <div class="sp-field"><label>Approach distance %<div class="sp-help">How close the price has to come to the OB before it's listed (in % of price).</div></label>
+                <input type="number" data-s="obDistancePct" value="2.0" step="0.1" min="0" max="20"></div>
+              <div class="sp-field"><label>Min quality (0-100)<div class="sp-help">Hide OBs below this quality score. 0 = show all.</div></label>
+                <input type="number" data-s="obMinQuality" value="0" min="0" max="100"></div>
+              <div class="sp-field"><label>Max touches<div class="sp-help">Skip OBs that have been touched too many times (often "used up").</div></label>
+                <input type="number" data-s="obMaxTouches" value="2" min="0" max="10"></div>
+              <div class="sp-field"><label><input type="checkbox" data-s="useObStrengthFilter">Use strength filter<div class="sp-help">Hide OBs whose volume strength is below the threshold below.</div></label></div>
+              <div class="sp-field"><label>Min strength %<input type="number" data-s="obMinStrengthPct" value="0" step="0.1" min="0" max="100"></label></div>
+              <div class="sp-field"><label><input type="checkbox" data-s="useHighProbOB">High-probability only<div class="sp-help">Strict mode — only OBs that pass the multi-factor checklist.</div></label></div>
+              <div class="sp-field"><label><input type="checkbox" data-s="useObTouchState">Apply touch-state filter</label></div>
+            </div>
+          </section>
+
+          <section class="sp-section" data-section="fvg">
+            <div class="sp-content-h">Fair Value Gap (FVG)</div>
+            <div class="sp-content-sub">Inefficiency between three candles. These show up <b>only when the FVG module is selected</b> on the main page (or All).</div>
+            <div class="sp-group">
+              <div class="sp-field"><label><input type="checkbox" data-s="useFvgModule" checked>Enable FVG module</label></div>
+              <div class="sp-field"><label><input type="checkbox" data-s="useFvgValidOnly">Valid FVGs only<div class="sp-help">Drop "stale" FVGs that have already been fully filled.</div></label></div>
+              <div class="sp-field"><label><input type="checkbox" data-s="useFvgState">Filter by state</label></div>
+              <div class="sp-field"><label>State<div class="sp-help">all / valid (unfilled) / bag (oversized).</div></label>
+                <select data-s="fvgState"><option value="all">all</option><option value="valid">valid</option><option value="bag">bag</option></select></div>
+              <div class="sp-field"><label>Min age (bars)<input type="number" data-s="fvgAgeMin" value="0" min="0" max="500"></label></div>
+              <div class="sp-field"><label>Max age (bars)<input type="number" data-s="fvgAgeMax" value="200" min="1" max="2000"></label></div>
+              <div class="sp-field"><label>Max distance %<input type="number" data-s="fvgMaxDistancePct" value="3.0" step="0.1" min="0" max="20"></label></div>
+              <div class="sp-field"><label>Touch depth<div class="sp-help">"any" / "shallow" / "deep" — how far price must enter the gap.</div></label>
+                <input type="text" data-s="fvgTouchDepth" value="any"></div>
+            </div>
+          </section>
+
+          <section class="sp-section" data-section="breaker">
+            <div class="sp-content-h">Breaker Block</div>
+            <div class="sp-content-sub">Failed OBs that flipped polarity. Selecting <b>Breaker</b> on the main page activates these.</div>
+            <div class="sp-group">
+              <div class="sp-field"><label><input type="checkbox" data-s="useBreakerModule" checked>Enable breaker module</label></div>
+              <div class="sp-field"><label>Approach %<input type="number" data-s="breakerApproachPct" value="2.0" step="0.1" min="0" max="20"></label></div>
+              <div class="sp-field"><label>Max age (bars)<input type="number" data-s="breakerMaxAge" value="200" min="1" max="2000"></label></div>
+              <div class="sp-field"><label><input type="checkbox" data-s="breakerRequireFvg">Require FVG overlap<div class="sp-help">Only show breakers that sit on top of an FVG.</div></label></div>
+            </div>
+          </section>
+
+          <section class="sp-section" data-section="fib">
+            <div class="sp-content-h">Fibonacci</div>
+            <div class="sp-content-sub">Retracement levels from the most recent swing leg. Selecting <b>Fib</b> on the main page activates these.</div>
+            <div class="sp-group">
+              <div class="sp-field"><label><input type="checkbox" data-s="useFibModule" checked>Enable Fib module</label></div>
+              <div class="sp-field"><label>Timeframe<select data-s="fibTf"><option value="15m">15m</option><option value="1h">1h</option><option value="4h" selected>4h</option><option value="1d">1d</option></select></label></div>
+              <div class="sp-field"><label>Tolerance %<input type="number" data-s="fibTolerancePct" value="0.5" step="0.05" min="0" max="5"></label></div>
+              <div class="sp-field"><label>ATR multiplier<input type="number" data-s="fibAtrMultiplier" value="0.5" step="0.05" min="0" max="5"></label></div>
+              <div class="sp-field"><label>Approach %<input type="number" data-s="fibApproachPct" value="2.0" step="0.1" min="0" max="20"></label></div>
+              <div class="sp-field"><label><input type="checkbox" data-s="useFibRequireFvg">Require FVG confluence</label></div>
+              <div class="sp-field"><label><input type="checkbox" data-s="useFibRequireOb">Require OB confluence</label></div>
+            </div>
+          </section>
+
+          <section class="sp-section" data-section="btc">
+            <div class="sp-content-h">BTC Correlation</div>
+            <div class="sp-content-sub">Optionally filter results by how a pair moves relative to BTC.</div>
+            <div class="sp-group">
+              <div class="sp-field"><label><input type="checkbox" data-s="useBtcCorrelation">Enable filter</label></div>
+              <div class="sp-field"><label>Mode<select data-s="btcCorrelationMode"><option value="all">all</option><option value="correlated">correlated</option><option value="non_correlated">non-correlated</option></select></label></div>
+              <div class="sp-field"><label>Lookback (bars)<input type="number" data-s="btcLookback" value="60" min="10" max="500"></label></div>
+            </div>
+          </section>
+
+          <section class="sp-section" data-section="rsi">
+            <div class="sp-content-h">RSI thresholds</div>
+            <div class="sp-content-sub">Levels used by the RSI alert and by the Momentum score in the Setup Insight panel.</div>
+            <div class="sp-group">
+              <div class="sp-field"><label>Overbought<input type="number" data-s="rsiOB" value="70" min="50" max="100"></label></div>
+              <div class="sp-field"><label>Oversold<input type="number" data-s="rsiOS" value="30" min="0" max="50"></label></div>
+            </div>
+          </section>
+
+          <section class="sp-section" data-section="tv">
+            <div class="sp-content-h">TradingView chart link</div>
+            <div class="sp-content-sub">Used by the <b>View Chart</b> button on every setup row.</div>
+            <div class="sp-group">
+              <div class="sp-field"><label>Exchange prefix<select data-s="tvExchange"><option value="BINANCE" selected>BINANCE</option><option value="BYBIT">BYBIT</option><option value="OKX">OKX</option></select></label></div>
+              <div class="sp-field"><label><input type="checkbox" data-s="tvPerpSuffix" checked>Append <code>.P</code> for perp</label></div>
+            </div>
+          </section>
         </div>
       </div>
+      <!-- legacy hidden body to satisfy any code expecting #spBody -->
+      <div class="sp-body" id="spBody" style="display:none"></div>
       <div class="sp-foot">
         <button class="btn" id="spReset" type="button">Reset to defaults</button>
         <button class="btn btn-primary" id="spApply" type="button">Apply &amp; Scan</button>
@@ -1038,6 +1160,7 @@ svg{display:block}
   })();
   var DEFAULT_SETTINGS={
     tf:"4h", iLen:5, sLen:30, consolCandles:5,
+    useObModule:true, useFvgModule:true,
     obDistancePct:2.0, obMinQuality:0, obMaxTouches:2,
     useObStrengthFilter:false, obMinStrengthPct:0,
     useHighProbOB:false, useObTouchState:false,
@@ -1136,15 +1259,46 @@ svg{display:block}
     bias:"Market-structure shifts (BOS / CHoCH)"
   };
 
+  /* Module gating — mirrors the master checkboxes the mobile UI sends.
+     When a single signal is picked on the segment we narrow what the backend
+     even computes so other modules' alerts can't leak through. ALL uses the
+     user's own saved toggles. */
+  function _modulesForSignal(){
+    if(ST.signal === "ALL"){
+      return {
+        useObModule:      ST.settings.useObModule      !== false,
+        useFvgModule:     ST.settings.useFvgModule     !== false,
+        useBreakerModule: ST.settings.useBreakerModule !== false,
+        useFibModule:     ST.settings.useFibModule     !== false,
+      };
+    }
+    return {
+      useObModule:      ST.signal === "OB",
+      useFvgModule:     ST.signal === "FVG",
+      useBreakerModule: ST.signal === "BREAKER",
+      useFibModule:     ST.signal === "FIB",
+    };
+  }
+  function _signalMatches(setup, signal){
+    setup = String(setup||"").toUpperCase();
+    signal = String(signal||"").toUpperCase();
+    if(signal==="OB")       return setup.indexOf("OB")===0;
+    if(signal==="FVG")      return setup==="FVG";
+    if(signal==="BREAKER")  return setup.indexOf("BREAKER")===0;
+    if(signal==="FIB")      return setup.indexOf("FIB")===0;
+    return true;
+  }
+
   function buildPayloadForMode(){
     var market=ST.market, tf="4h";
     if(ST.mode==="main"){
-      var sig=ST.signal, checked=sig==="ALL"?[]:[sig];
+      var sig=ST.signal, checked = sig==="ALL"?["OB","FVG","BREAKER","FIB"]:[sig];
       return {url:"/api/scan", body:{
-        settings:Object.assign({},ST.settings,{tf:ST.settings.tf||tf}),
+        settings: Object.assign({}, ST.settings, _modulesForSignal(), {tf:ST.settings.tf||tf}),
         market:market, exchange:"binance",
         scanMode:"market", roundRobin:ST.roundRobin, pairsPerCycle:ST.pairsPerCycle,
-        filterMode:"match", checkedSignals:checked, requiredSignals:[]
+        filterMode:"match", checkedSignals:checked,
+        requiredSignals: (sig!=="ALL" ? [sig] : [])
       }};
     }
     if(ST.mode==="compressed"){
@@ -1300,8 +1454,27 @@ svg{display:block}
       .then(function(d){
         ST.prev = ST.results.length?{total:ST.results.length,avg:avgScore(ST.results)}:ST.prev;
         var norm=normalizeResults(ST.mode,d);
-        ST.results=norm.results||[];
-        ST.scanned=norm.scanned||ST.results.length;
+        var fresh = (norm.results||[]);
+        // Client-side signal filter (safety-net): if a specific module is
+        // selected, only keep alerts of that family and pairs that have one.
+        if(ST.mode==="main" && ST.signal!=="ALL"){
+          var sigSel = ST.signal;
+          fresh = fresh.map(function(r){
+            var keep = (r.alerts||[]).filter(function(a){return _signalMatches(a.setup, sigSel);});
+            if(!keep.length) return null;
+            var top = keep.reduce(function(b,a){return (a.strength||0)>(b.strength||0)?a:b;}, keep[0]);
+            return Object.assign({}, r, {alerts:keep, topAlert:top});
+          }).filter(Boolean);
+        }
+        // Merge with existing instead of wiping — results persist until user
+        // hits Clear. Same symbol from a newer scan replaces the older row.
+        var byKey={};
+        fresh.forEach(function(r){ byKey[r.symbol+"|"+(r.topAlert&&r.topAlert.setup)] = r; });
+        var merged = ST.results.filter(function(r){
+          return !byKey[r.symbol+"|"+(r.topAlert&&r.topAlert.setup)];
+        }).concat(fresh);
+        ST.results = merged;
+        ST.scanned=norm.scanned||fresh.length;
         ST.scannedAt=Date.now();
         try{ evaluateAlerts(ST.results); }catch(_){}
         ST.sel=ST.results.length?0:-1;
@@ -1817,6 +1990,11 @@ svg{display:block}
     });
   });
   E("btnFilters").addEventListener("click",scan);
+  if(E("btnScan"))  E("btnScan").addEventListener("click",scan);
+  if(E("btnClear")) E("btnClear").addEventListener("click",function(){
+    ST.results=[]; ST.sel=-1; ST.page=1; ST.scannedAt=0;
+    renderAll();
+  });
   if(E("btnThemeLight")) E("btnThemeLight").addEventListener("click",function(){applyTheme("light");});
   if(E("btnThemeDark"))  E("btnThemeDark").addEventListener("click",function(){applyTheme("dark");});
   /* pagination (Wave 4) */
@@ -1851,7 +2029,7 @@ svg{display:block}
 
   /* ── Settings panel (Wave 6) ── */
   function _populateSettingsForm(){
-    var box=E("spBody"); if(!box) return;
+    var box=E("settingsPanel"); if(!box) return;
     [].forEach.call(box.querySelectorAll("[data-s]"),function(el){
       var k=el.getAttribute("data-s"); var v=ST.settings[k];
       if(v===undefined||v===null) return;
@@ -1860,7 +2038,7 @@ svg{display:block}
     });
   }
   function _readSettingsForm(){
-    var box=E("spBody"); if(!box) return ST.settings;
+    var box=E("settingsPanel"); if(!box) return ST.settings;
     var s=Object.assign({},ST.settings);
     [].forEach.call(box.querySelectorAll("[data-s]"),function(el){
       var k=el.getAttribute("data-s");
@@ -1870,6 +2048,19 @@ svg{display:block}
     });
     return s;
   }
+  /* Settings tab switcher (Wave 11) */
+  function _spSwitchSection(name){
+    [].forEach.call(document.querySelectorAll("#spSide .sp-tab"),function(t){
+      t.classList.toggle("active", t.getAttribute("data-section")===name);
+    });
+    [].forEach.call(document.querySelectorAll("#spContent .sp-section"),function(s){
+      s.classList.toggle("active", s.getAttribute("data-section")===name);
+    });
+  }
+  document.addEventListener("click", function(e){
+    var t=e.target.closest("#spSide .sp-tab[data-section]");
+    if(t){ _spSwitchSection(t.getAttribute("data-section")); }
+  });
   function openSettings(){
     _populateSettingsForm();
     E("settingsPanel").classList.add("open");
