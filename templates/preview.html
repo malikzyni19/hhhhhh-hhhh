@@ -123,7 +123,49 @@ svg{display:block}
   content:"";position:absolute;left:14px;right:14px;bottom:-15px;height:2px;
   background:var(--accent);border-radius:2px;box-shadow:0 0 8px rgba(34,211,238,.6);
 }
-.topright{display:flex;align-items:center;gap:6px;width:210px;justify-content:flex-end;flex-shrink:0}
+.topright{display:flex;align-items:center;gap:6px;width:auto;justify-content:flex-end;flex-shrink:0}
+.token-pill{display:flex;align-items:center;gap:7px;padding:6px 11px;border-radius:9px;
+  border:1px solid var(--border);background:var(--bg-card);font-size:12px;font-weight:600;
+  color:var(--text-2);white-space:nowrap;margin-right:4px}
+.token-pill .ico{color:inherit;opacity:.85}
+.token-pill .tp-label{color:var(--text-3);font-weight:600}
+.token-pill .tp-val{font-family:var(--mono);font-weight:700}
+.token-pill.ok{border-color:rgba(52,211,153,.42);color:var(--green-2)}
+.token-pill.ok .tp-val{color:var(--green-2)}
+.token-pill.warn{border-color:rgba(251,191,36,.5);color:var(--yellow)}
+.token-pill.warn .tp-val{color:var(--yellow)}
+.token-pill.low{border-color:rgba(251,113,133,.5);color:var(--red-2)}
+.token-pill.low .tp-val{color:var(--red-2)}
+.token-pill.na .tp-val{color:var(--text-3)}
+@media(max-width:1100px){.token-pill .tp-label{display:none}}
+/* shared modal (token-limit / locked-feature) */
+.zmodal-bd{position:fixed;inset:0;background:rgba(2,8,16,.78);z-index:9000;display:none}
+.zmodal-bd.open{display:block}
+.zmodal{position:fixed;inset:0;z-index:9001;display:none;align-items:center;justify-content:center;padding:20px}
+.zmodal.open{display:flex}
+.zmodal-card{background:var(--bg-panel);border:1px solid var(--border);border-radius:16px;
+  padding:30px 28px;max-width:410px;width:100%;text-align:center;position:relative;box-shadow:0 24px 60px rgba(0,0,0,.5)}
+.zmodal-x{position:absolute;top:12px;right:12px;width:28px;height:28px;background:none;border:0;
+  color:var(--text-3);cursor:pointer;display:flex;align-items:center;justify-content:center;border-radius:7px}
+.zmodal-x:hover{background:rgba(255,255,255,.06);color:var(--text)}
+.zmodal-ico{width:62px;height:62px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:4px auto 16px}
+.zmodal-ico svg{width:28px;height:28px}
+.zmodal-ico.low{background:rgba(251,113,133,.13);color:var(--red-2)}
+.zmodal-ico.lock{background:rgba(34,211,238,.1);color:var(--accent)}
+.zmodal-title{font-size:17px;font-weight:700;margin:0 0 10px}
+.zmodal-feat{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--accent);letter-spacing:.4px;margin:0 0 8px}
+.zmodal-msg{font-size:13px;color:var(--text-2);line-height:1.6;margin:0 0 18px}
+.zmodal-reset{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;
+  padding:12px 14px;margin-bottom:18px;font-size:12px;display:flex;flex-direction:column;gap:7px}
+.zmodal-reset > div{display:flex;justify-content:space-between;gap:12px;align-items:center}
+.zmodal-reset span{color:var(--text-3)}
+.zmodal-reset b{color:var(--text);font-family:var(--mono);font-weight:600}
+.zmodal-actions{display:flex;gap:10px;justify-content:center}
+.zmodal-actions .btn{flex:1;justify-content:center}
+/* locked-feature affordances */
+.nav-item.locked{opacity:.5}
+.nav-item .lock-badge{margin-left:auto;color:var(--text-3);display:flex;align-items:center}
+.topnav a.locked{opacity:.45}
 .ic-btn{
   width:30px;height:30px;border-radius:7px;border:0;background:transparent;
   color:var(--text-2);display:flex;align-items:center;justify-content:center;
@@ -159,6 +201,7 @@ svg{display:block}
 .nav-item.active .ns{color:rgba(34,211,238,.6)}
 .side-spacer{flex:1}
 .side-div{height:1px;background:var(--border);margin:12px 4px}
+.side-scan-now{width:100%;justify-content:center;margin:0 0 8px;font-weight:700}
 .side-row{
   display:flex;align-items:center;gap:9px;padding:9px 8px;border-radius:8px;
   color:var(--text-2);font-size:12px;font-weight:500;cursor:pointer;transition:background .18s;
@@ -188,6 +231,14 @@ svg{display:block}
 }
 .seg button:hover{color:var(--text)}
 .seg button.on{background:var(--accent-soft-2);color:var(--accent)}
+.exch-sel{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-3)}
+.exch-sel select{
+  background:var(--bg-card);border:1px solid var(--border);border-radius:8px;
+  color:var(--text);font-size:12px;font-weight:600;font-family:inherit;
+  padding:7px 9px;cursor:pointer;outline:none;
+}
+.exch-sel select:focus{border-color:var(--accent)}
+.exch-sel select option[disabled]{color:var(--text-3)}
 .btn{
   display:flex;align-items:center;gap:7px;border:1px solid var(--border);background:var(--bg-card);
   color:var(--text-2);font-size:12px;font-weight:600;padding:8px 13px;border-radius:8px;
@@ -327,6 +378,46 @@ svg{display:block}
 /* confluence */
 .cf{display:flex;gap:8px;font-size:12px;color:var(--text-2);padding:3px 0;align-items:flex-start;line-height:1.3}
 .cf .ico{color:var(--green-2);width:15px;height:15px;margin-top:1px;flex-shrink:0}
+/* severity-aware insight icons (Task 6) */
+.sev{display:inline-flex;flex-shrink:0;margin-top:1px}
+.sev svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.sev.pass{color:var(--green-2)}
+.sev.info{color:var(--text-3)}
+.sev.warn{color:var(--yellow)}
+.sev.fail{color:var(--red-2)}
+/* strict confidence breakdown rows (Task 7) */
+.cb-row{margin:9px 0}
+.cb-top{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text-2)}
+.cb-l{flex:1}
+.cb-v{font-family:var(--mono);font-weight:700;color:var(--text)}
+.cb-v.na{color:var(--text-3);font-weight:600;font-size:11px}
+.cb-tr{height:5px;border-radius:3px;background:var(--bg-card-2);margin-top:5px;overflow:hidden}
+.cb-fl{height:100%;border-radius:3px;background:var(--accent);transition:width .25s}
+.cb-fl.sev-pass{background:var(--green-2)}
+.cb-fl.sev-info{background:var(--accent)}
+.cb-fl.sev-warn{background:var(--yellow)}
+.cb-fl.sev-fail{background:var(--red-2)}
+.cb-reason{font-size:10.5px;color:var(--text-3);margin-top:3px;line-height:1.4}
+/* embedded TradingView chart modal (Task 8) */
+.chart-modal-bd{position:fixed;inset:0;background:rgba(2,8,16,.8);z-index:9100;display:none}
+.chart-modal-bd.open{display:block}
+.chart-modal{position:fixed;inset:0;z-index:9101;display:none;align-items:center;justify-content:center;padding:24px}
+.chart-modal.open{display:flex}
+.chart-modal-card{background:var(--bg-panel);border:1px solid var(--border);border-radius:14px;
+  width:min(1100px,96vw);height:min(720px,90vh);display:flex;flex-direction:column;overflow:hidden;
+  box-shadow:0 24px 70px rgba(0,0,0,.55)}
+.cm-head{display:flex;align-items:center;gap:12px;padding:12px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.cm-title{display:flex;align-items:center;gap:10px;min-width:0;flex:1}
+.cm-sym{font-size:16px;font-weight:700;letter-spacing:.3px}
+.cm-tags{display:flex;gap:6px;flex-wrap:wrap}
+.cm-head-r{display:flex;align-items:center;gap:8px}
+.cm-tf{background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--text);
+  font-size:12px;font-weight:600;font-family:inherit;padding:7px 9px;cursor:pointer;outline:none}
+.cm-tf:focus{border-color:var(--accent)}
+.cm-body{flex:1;min-height:0;background:var(--bg-card)}
+.cm-body iframe{width:100%;height:100%;border:0;display:block}
+.cm-note{padding:8px 14px;font-size:11px;color:var(--text-3);border-top:1px solid var(--border);line-height:1.5}
+@media(max-width:640px){.chart-modal{padding:8px}.chart-modal-card{height:92vh}.cm-head-r .btn span{display:none}}
 /* notes */
 .notes{font-size:12px;color:var(--text-2);line-height:1.45}
 /* deep-dive (Wave 5) */
@@ -791,6 +882,11 @@ svg{display:block}
       <a href="#" data-view="settings">Settings</a>
     </nav>
     <div class="topright">
+      <div class="token-pill na" id="tokenPill" title="Daily scan tokens — set by admin, resets at midnight UTC">
+        <svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg>
+        <span class="tp-label">Scan Tokens</span>
+        <span class="tp-val" id="tokenVal">…</span>
+      </div>
       <button class="ic-btn" id="btnThemeLight" type="button" aria-label="Light mode"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button>
       <button class="ic-btn" id="btnThemeDark" type="button" aria-label="Dark mode"><svg class="ico" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg></button>
       <button class="ic-btn" id="btnBell" type="button" aria-label="Notifications"><span class="dot" id="bellDot" style="display:none"></span><svg class="ico" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></button>
@@ -832,19 +928,23 @@ svg{display:block}
       <div class="side-spacer"></div>
       <div class="side-div"></div>
 
+      <!-- Scan controls: Scan Now → Auto Scan → Last Scan -->
+      <button class="btn btn-primary side-scan-now" id="btnScanNow" type="button" title="Run a scan on the active tab now">
+        <svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>Scan Now
+      </button>
       <div class="side-row">
-        <svg class="ico" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h10"/></svg>
-        Scan Presets
-        <svg class="ico ico-sm" viewBox="0 0 24 24" style="margin-left:auto;color:var(--text-3)"><path d="M9 6l6 6-6 6"/></svg>
+        <svg class="ico" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>
+        Auto Scan <span class="sv" id="autoScanStatus" style="margin-left:auto">Off</span>
+        <div class="toggle" id="arToggle" style="margin-left:9px" title="When ON, re-scans the active tab every 30s"></div>
       </div>
       <div class="side-row">
         <svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
         Last Scan <span class="sv" id="lastScan">—</span>
       </div>
       <div class="side-row">
-        <svg class="ico" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>
-        Auto-Refresh <span class="sv" style="margin-left:auto">30s</span>
-        <div class="toggle on" id="arToggle" style="margin-left:9px"></div>
+        <svg class="ico" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h10"/></svg>
+        Scan Presets
+        <svg class="ico ico-sm" viewBox="0 0 24 24" style="margin-left:auto;color:var(--text-3)"><path d="M9 6l6 6-6 6"/></svg>
       </div>
 
       <div class="side-foot"><span class="live-dot"></span>ZyNi Screener v3.0.0&nbsp;&nbsp;•&nbsp;&nbsp;Connected</div>
@@ -861,9 +961,18 @@ svg{display:block}
             <div class="main-sub" id="mainSub">All instruments across selected markets</div>
           </div>
           <div class="head-ctrls">
+            <label class="exch-sel" title="Exchange used for all scans, pairs and charts">
+              <svg class="ico ico-sm" viewBox="0 0 24 24" style="color:var(--text-3)"><path d="M3 7h18M3 12h18M3 17h18"/></svg>
+              <select id="exchSelect" aria-label="Exchange">
+                <option value="binance">Binance</option>
+                <option value="bybit">Bybit</option>
+                <option value="okx">OKX</option>
+                <option value="mexc">MEXC</option>
+              </select>
+            </label>
             <div class="seg" id="segMarket"><button data-mkt="spot" class="on">Spot</button><button data-mkt="perpetual">Perpetual</button></div>
             <div class="seg" id="segSignal"><button data-sig="OB" class="on">OB</button><button data-sig="FVG">FVG</button><button data-sig="BREAKER">Breaker</button><button data-sig="FIB">Fib</button><button data-sig="ALL">All</button></div>
-            <button class="btn btn-primary" id="btnScan" type="button"><svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>Scan</button>
+            <button class="btn btn-primary" id="btnScan" type="button"><svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>Scan Now</button>
             <button class="btn" id="btnClear" type="button" title="Clear results"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>Clear</button>
             <button class="btn" id="btnFilters"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg>Filters <span class="badge-n">3</span></button>
           </div>
@@ -1218,6 +1327,64 @@ svg{display:block}
 </div>
 </div></div>
 
+<!-- ═══ Token-limit modal (Task 4) ═══ -->
+<div class="zmodal-bd" id="tokenModalBd"></div>
+<div class="zmodal" id="tokenModal" role="dialog" aria-modal="true" aria-labelledby="tokenModalTitle">
+  <div class="zmodal-card">
+    <button class="zmodal-x" id="tokenModalX" type="button" aria-label="Close"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    <div class="zmodal-ico low"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg></div>
+    <h3 class="zmodal-title" id="tokenModalTitle">You're out of scan tokens</h3>
+    <p class="zmodal-msg">You've used all your scan tokens for today. Upgrade your plan or contact admin to increase your token limit.</p>
+    <div class="zmodal-reset">
+      <div><span>Resets (UTC)</span><b id="tokenModalUtc">—</b></div>
+      <div><span>Your local time</span><b id="tokenModalLocal">—</b></div>
+      <div><span>Resets in</span><b id="tokenModalCountdown">—</b></div>
+    </div>
+    <div class="zmodal-actions">
+      <button class="btn" id="tokenModalClose" type="button">Close</button>
+      <a class="btn btn-primary" href="https://t.me/MalikZyNi" target="_blank" rel="noopener" style="text-decoration:none">Contact Admin</a>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Locked-feature modal (Task 5) ═══ -->
+<div class="zmodal-bd" id="lockModalBd"></div>
+<div class="zmodal" id="lockModal" role="dialog" aria-modal="true" aria-labelledby="lockModalTitle">
+  <div class="zmodal-card">
+    <button class="zmodal-x" id="lockModalX" type="button" aria-label="Close"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    <div class="zmodal-ico lock"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
+    <h3 class="zmodal-title" id="lockModalTitle">Feature locked</h3>
+    <div class="zmodal-feat" id="lockModalFeat"></div>
+    <p class="zmodal-msg" id="lockModalMsg">This feature isn't available on your current plan. Upgrade your plan or contact admin to unlock this module.</p>
+    <div class="zmodal-actions">
+      <button class="btn" id="lockModalClose" type="button">Close</button>
+      <a class="btn btn-primary" href="https://t.me/MalikZyNi" target="_blank" rel="noopener" style="text-decoration:none">Upgrade Plan</a>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Embedded TradingView chart modal (Task 8) ═══ -->
+<div class="chart-modal-bd" id="chartModalBd"></div>
+<div class="chart-modal" id="chartModal" role="dialog" aria-modal="true" aria-labelledby="cmSym">
+  <div class="chart-modal-card">
+    <div class="cm-head">
+      <div class="cm-title"><span class="cm-sym" id="cmSym">—</span><span class="cm-tags" id="cmTags"></span></div>
+      <div class="cm-head-r">
+        <label class="cm-tf-wrap" title="Chart timeframe"><select id="cmTf" class="cm-tf" aria-label="Timeframe">
+          <option value="15m">15m</option><option value="30m">30m</option>
+          <option value="1h">1H</option><option value="4h">4H</option>
+          <option value="6h">6H</option><option value="12h">12H</option>
+          <option value="1d">1D</option><option value="1w">1W</option>
+        </select></label>
+        <a class="btn" id="cmOpen" href="#" target="_blank" rel="noopener" style="text-decoration:none"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M14 3h7v7M21 3l-9 9M5 7v12h12"/></svg>Open in TradingView</a>
+        <button class="ic-btn" id="cmClose" type="button" aria-label="Close"><svg class="ico" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
+    </div>
+    <div class="cm-body"><iframe id="cmFrame" title="TradingView chart" frameborder="0" allowtransparency="true" scrolling="no" allowfullscreen></iframe></div>
+    <div class="cm-note">Live TradingView chart. Private / unpublished Pine indicators can't load in an embed — use “Open in TradingView” to view those.</div>
+  </div>
+</div>
+
 <script>
 (function fitApp(){
   var W=1280,H=930;
@@ -1272,10 +1439,16 @@ svg{display:block}
     try{ var s=localStorage.getItem("zyni-settings"); if(s) return Object.assign({},DEFAULT_SETTINGS,JSON.parse(s)); }catch(_){}
     return Object.assign({},DEFAULT_SETTINGS);
   }
+  var SUPPORTED_EXCHANGES=["binance","bybit","okx","mexc"];
+  function _loadExchange(){
+    try{ var v=(localStorage.getItem("zyni-exchange")||"binance").toLowerCase();
+      return SUPPORTED_EXCHANGES.indexOf(v)>=0?v:"binance"; }catch(_){ return "binance"; }
+  }
   var ST={market:"spot",signal:"OB",mode:"main",view:"scanner",
+          exchange:_loadExchange(),
           scanMode:(function(){try{return localStorage.getItem("zyni-scanMode")||"market";}catch(_){return "market";}})(),
           results:[],sel:-1,scannedAt:0,scanned:0,
-          prev:null,stars:{},auto:true,timer:null,busy:false,
+          prev:null,stars:{},auto:false,timer:null,busy:false,
           pairsPerCycle:(function(){try{var v=parseInt(localStorage.getItem("zyni-ppc"),10);return isFinite(v)&&v>0?v:24;}catch(_){return 24;}})(),
           page:1,roundRobin:true,
           settings:_loadSettings()};
@@ -1512,7 +1685,7 @@ svg{display:block}
       if(ST.mode!=="ath_atl") return;
       fetch("/api/ath_atl_scan",{method:"POST",credentials:"same-origin",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify(Object.assign({action:"reset",market:ST.market,exchange:"binance"},
+        body:JSON.stringify(Object.assign({action:"reset",market:ST.market,exchange:ST.exchange},
                                           ST.modeOptions.ath_atl))})
         .then(function(){ ST.results=[]; renderAll(); });
     });
@@ -1554,7 +1727,7 @@ svg{display:block}
       if(sMode==="selected" && !watch.length) sMode="market";
       return {url:"/api/scan", body:{
         settings: Object.assign({}, ST.settings, _modulesForSignal(), {tf:ST.settings.tf||tf}),
-        market:market, exchange:"binance",
+        market:market, exchange:ST.exchange,
         scanMode: sMode,
         symbols: sMode==="selected" ? watch : [],
         roundRobin:ST.roundRobin, pairsPerCycle:ST.pairsPerCycle,
@@ -1565,7 +1738,7 @@ svg{display:block}
     if(ST.mode==="compressed"){
       var c=ST.modeOptions.compressed||{};
       return {url:"/api/compressed_scan", body:{
-        tf:c.tf||tf, market:market, exchange:"binance",
+        tf:c.tf||tf, market:market, exchange:ST.exchange,
         lookback:+c.lookback||30, maxPct:+c.maxPct||5.0,
         roundRobin:ST.roundRobin, pairsPerCycle:ST.pairsPerCycle
       }};
@@ -1573,14 +1746,14 @@ svg{display:block}
     if(ST.mode==="trending"){
       var t=ST.modeOptions.trending||{};
       return {url:"/api/trending_scan", body:{
-        tf:t.tf||tf, market:market, exchange:"binance",
+        tf:t.tf||tf, market:market, exchange:ST.exchange,
         mode:t.mode||"bullish", limit:ST.pairsPerCycle
       }};
     }
     if(ST.mode==="ath_atl"){
       var aa=ST.modeOptions.ath_atl||{};
       return {url:"/api/ath_atl_scan", body:{
-        action:"scan", market:market, exchange:"binance",
+        action:"scan", market:market, exchange:ST.exchange,
         mode:aa.mode||"both", status:aa.status||"near_level",
         windowHours:+aa.windowHours||24,
         breakTolPct:+aa.breakTolPct||0.10,
@@ -1591,7 +1764,7 @@ svg{display:block}
     if(ST.mode==="bias"){
       var bo=ST.modeOptions.bias||{};
       return {url:"/api/bias_scan", body:{
-        tf:bo.tf||tf, market:market, exchange:"binance",
+        tf:bo.tf||tf, market:market, exchange:ST.exchange,
         pairsPerCycle:ST.pairsPerCycle, roundRobin:ST.roundRobin,
         strength:bo.strength||"balanced",
         detectionMode:bo.detectionMode||"early",
@@ -1716,6 +1889,17 @@ svg{display:block}
       useSample("Sample data — open at /preview on your running app for live results");
       return;
     }
+    // Block scanning when the user has no tokens left (admins exempt).
+    if(ST.tokens && !ST.tokens.isAdmin && ST.tokens.remaining!=null && ST.tokens.remaining<=0){
+      showTokenLimitPopup(ST.tokens.resetAt);
+      return;
+    }
+    // Permission gating — block scans on a locked tab / exchange / timeframe.
+    var _tab=TAB_OF_MODE[ST.mode];
+    if(_tab && !_featAllowed("allowed_tabs", _tab)){ showLockPopup(MODE_LABEL[ST.mode]||"This scanner"); return; }
+    if(!_featAllowed("allowed_exchanges", ST.exchange)){ showLockPopup((EXCH_NAME[ST.exchange]||ST.exchange)+" exchange"); return; }
+    var _tf=_currentTf();
+    if(_tf && ALL_TF_VOCAB.indexOf(_tf)>=0 && !_featAllowed("allowed_timeframes", _tf)){ showLockPopup(_tf.toUpperCase()+" timeframe"); return; }
     var p=buildPayloadForMode();
     if(!p){ ST.results=[]; renderAll(); return; }
     ST.busy=true;
@@ -1724,7 +1908,7 @@ svg{display:block}
     fetch(p.url,{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify(p.body)})
       .then(function(r){
-        if(r.status===429)throw new Error("daily scan limit reached");
+        if(r.status===429){var er=new Error("daily scan limit reached");er.tokenLimit=true;throw er;}
         if(r.status===401||r.status===403)throw new Error("session expired — log in");
         if(!r.ok)throw new Error("HTTP "+r.status);
         return r.json();
@@ -1785,11 +1969,206 @@ svg{display:block}
         if(modeAtScan === "main" && !ST.results.length) E("mainSub").textContent="Live — no results for "+MODE_LABEL[modeAtScan];
       })
       .catch(function(e){
-        useSample("Sample data — couldn't reach "+p.url+" ("+esc(e.message)+"). Live data loads when served at /preview while logged in.");
+        if(e && e.tokenLimit){
+          showTokenLimitPopup(ST.tokens && ST.tokens.resetAt);
+          if(!ST.results.length){ msg("Daily scan limit reached. Your tokens reset at midnight UTC.", true); }
+          E("pagerInfo").textContent = ST.results.length ? E("pagerInfo").textContent : "Daily scan limit reached";
+        } else {
+          useSample("Sample data — couldn't reach "+p.url+" ("+esc(e.message)+"). Live data loads when served at /preview while logged in.");
+        }
       })
-      .finally(function(){ST.busy=false;});
+      .finally(function(){ST.busy=false; loadTokens();});
   }
   function avgScore(rs){if(!rs.length)return 0;var t=0;rs.forEach(function(r){t+=(+r.score||0);});return t/rs.length;}
+
+  /* ── scan-token counter (Task 3) — real data from /api/my-permissions ── */
+  function _tokInt(n){ return (n==null||isNaN(n))?"—":Math.round(+n).toLocaleString("en-US"); }
+  /* Normalize the many possible backend field names into {remaining,total,used}. */
+  function _normalizeTokens(d){
+    if(!d || typeof d!=="object") return null;
+    var pick=function(keys){ for(var i=0;i<keys.length;i++){ var v=d[keys[i]]; if(v!=null && !isNaN(+v)) return +v; } return null; };
+    var remaining=pick(["tokens_remaining","tokens_left","scan_tokens_left"]);
+    var total=pick(["daily_tokens","daily_cap","max_tokens","tokens_total"]);
+    var used=pick(["tokens_used","tokens_used_today"]);
+    if(remaining==null && total!=null && used!=null) remaining=Math.max(0,total-used);
+    if(total==null && remaining!=null && used!=null) total=remaining+used;
+    if(used==null && total!=null && remaining!=null) used=Math.max(0,total-remaining);
+    var resetAt = d.reset_at || d.tokens_reset_at || d.reset_at_utc || d.resetAt || null;
+    return {remaining:remaining, total:total, used:used, isAdmin:!!d.is_admin, resetAt:resetAt};
+  }
+  function renderTokenPill(t){
+    var pill=E("tokenPill"), val=E("tokenVal"); if(!pill||!val) return;
+    pill.classList.remove("ok","warn","low","na");
+    if(!t){ val.textContent="Unavailable"; pill.classList.add("na"); return; }
+    if(t.isAdmin || (t.total!=null && t.total>=999999)){ val.textContent="Unlimited"; pill.classList.add("ok"); return; }
+    if(t.remaining==null || t.total==null || t.total<=0){ val.textContent="Unavailable"; pill.classList.add("na"); return; }
+    var pctRem=Math.max(0,Math.min(100,Math.round(t.remaining/t.total*100)));
+    val.textContent=_tokInt(t.remaining)+" / "+_tokInt(t.total)+" · "+pctRem+"%";
+    var cls = (t.remaining<=0) ? "low" : (pctRem>=70) ? "ok" : (pctRem>=30) ? "warn" : "low";
+    pill.classList.add(cls);
+  }
+  function loadTokens(){
+    if(location.protocol==="file:"){ renderTokenPill(null); return; }
+    fetch("/api/my-permissions",{credentials:"same-origin"})
+      .then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); })
+      .then(function(d){ ST.perms=d; ST.tokens=_normalizeTokens(d); renderTokenPill(ST.tokens); try{applyPermissionsUI();}catch(_){} })
+      .catch(function(){ renderTokenPill(ST.tokens||null); });
+  }
+
+  /* ── out-of-token modal (Task 4) — reset time in UTC + local ── */
+  function _resetDate(resetAt){
+    var reset;
+    if(resetAt!=null){ reset=(typeof resetAt==="number")?new Date(resetAt<1e12?resetAt*1000:resetAt):new Date(resetAt); }
+    if(!reset||isNaN(reset.getTime())){ var n=new Date(); reset=new Date(Date.UTC(n.getUTCFullYear(),n.getUTCMonth(),n.getUTCDate()+1)); }
+    return reset;
+  }
+  function _fmtResetUTC(d){
+    try{ return new Intl.DateTimeFormat('en-GB',{timeZone:'UTC',weekday:'short',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}).format(d)+' UTC'; }
+    catch(_){ return d.toUTCString(); }
+  }
+  function _fmtResetLocal(d){
+    try{ var tz=(Intl.DateTimeFormat().resolvedOptions().timeZone)||'local';
+      return new Intl.DateTimeFormat(undefined,{weekday:'short',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}).format(d)+' ('+tz+')'; }
+    catch(_){ return d.toString(); }
+  }
+  var _tokModalT=null;
+  function showTokenLimitPopup(resetAt){
+    var bd=E("tokenModalBd"), m=E("tokenModal"); if(!bd||!m) return;
+    var reset=_resetDate(resetAt!=null?resetAt:(ST.tokens&&ST.tokens.resetAt));
+    var u=E("tokenModalUtc"), l=E("tokenModalLocal");
+    if(u) u.textContent=_fmtResetUTC(reset);
+    if(l) l.textContent=_fmtResetLocal(reset);
+    function tick(){
+      var diff=reset-new Date(), c=E("tokenModalCountdown");
+      if(diff<=0){ if(c)c.textContent="now"; return; }
+      var h=Math.floor(diff/3600000),mi=Math.floor((diff%3600000)/60000),s=Math.floor((diff%60000)/1000);
+      if(c)c.textContent=String(h).padStart(2,'0')+':'+String(mi).padStart(2,'0')+':'+String(s).padStart(2,'0');
+    }
+    tick(); clearInterval(_tokModalT);
+    _tokModalT=setInterval(function(){ if(m.classList.contains('open')) tick(); else clearInterval(_tokModalT); },1000);
+    bd.classList.add("open"); m.classList.add("open"); document.body.classList.add("sheet-open");
+  }
+  function hideTokenLimitPopup(){
+    var bd=E("tokenModalBd"), m=E("tokenModal");
+    if(bd)bd.classList.remove("open"); if(m)m.classList.remove("open");
+    document.body.classList.remove("sheet-open"); clearInterval(_tokModalT);
+  }
+
+  /* ── permission gating (Task 5) — real perms from /api/my-permissions ── */
+  var TAB_OF_MODE = {main:"scan", compressed:"compressed", trending:"trending", ath_atl:"athatl", bias:"bias"};
+  var TAB_OF_VIEW = {scanner:"scan", live:"watchlist", watchlist:"pairs", settings:"settings"};
+  var EXCH_NAME   = {binance:"Binance", bybit:"Bybit", okx:"OKX", mexc:"MEXC"};
+  var ALL_TF_VOCAB = ["15m","30m","1h","4h","1d"];
+  function _isAdmin(){ return !!(ST.perms && ST.perms.is_admin); }
+  // returns true when allowed; fail-safe (no perms loaded / field absent / admin) → allowed
+  function _featAllowed(key, value){
+    if(_isAdmin()) return true;
+    var list = ST.perms && ST.perms[key];
+    if(!Array.isArray(list)) return true;
+    return list.indexOf(value) >= 0;
+  }
+  function showLockPopup(featureName, customMsg){
+    var bd=E("lockModalBd"), m=E("lockModal"); if(!bd||!m) return;
+    var f=E("lockModalFeat"); if(f) f.textContent=featureName||"";
+    var msgEl=E("lockModalMsg");
+    if(msgEl) msgEl.textContent = customMsg ||
+      "This feature isn't available on your current plan. Upgrade your plan or contact admin to unlock this module.";
+    bd.classList.add("open"); m.classList.add("open"); document.body.classList.add("sheet-open");
+  }
+  function hideLockPopup(){
+    var bd=E("lockModalBd"), m=E("lockModal");
+    if(bd)bd.classList.remove("open"); if(m)m.classList.remove("open");
+    document.body.classList.remove("sheet-open");
+  }
+  function _setLockBadge(el, locked){
+    var b=el.querySelector(".lock-badge");
+    if(locked && !b){
+      b=document.createElement("span"); b.className="lock-badge";
+      b.innerHTML='<svg class="ico ico-sm" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';
+      el.appendChild(b);
+    } else if(!locked && b){ b.remove(); }
+  }
+  // Reflect current permissions in the UI (lock badges, disabled options).
+  function applyPermissionsUI(){
+    [].forEach.call(document.querySelectorAll('.side .nav-item[data-mode]'),function(el){
+      var tab=TAB_OF_MODE[el.getAttribute('data-mode')];
+      var locked = tab ? !_featAllowed("allowed_tabs", tab) : false;
+      el.classList.toggle('locked', locked);
+      _setLockBadge(el, locked);
+    });
+    [].forEach.call(document.querySelectorAll('#topnav a[data-view]'),function(a){
+      var tab=TAB_OF_VIEW[a.getAttribute('data-view')];
+      var locked = tab ? !_featAllowed("allowed_tabs", tab) : false;
+      a.classList.toggle('locked', locked);
+      if(locked) a.title="Locked — upgrade to unlock"; else a.removeAttribute('title');
+    });
+    var sel=E("exchSelect");
+    if(sel) [].forEach.call(sel.options,function(o){
+      if(!o.getAttribute('data-base')) o.setAttribute('data-base', o.textContent);
+      var locked=!_featAllowed("allowed_exchanges", o.value);
+      o.disabled=locked;
+      o.textContent = o.getAttribute('data-base') + (locked? " — locked":"");
+    });
+    // If a previously-saved exchange is no longer permitted, fall back to binance.
+    if(!_featAllowed("allowed_exchanges", ST.exchange)){
+      ST.exchange="binance";
+      try{ localStorage.setItem("zyni-exchange","binance"); }catch(_){}
+      if(sel) sel.value="binance";
+    }
+  }
+  function _currentTf(){
+    if(ST.mode==="main") return ST.settings.tf;
+    var o=ST.modeOptions[ST.mode]||{};
+    return o.tf;   // ath_atl has no timeframe control
+  }
+
+  /* ── embedded TradingView chart modal (Task 8) ── */
+  var _cmCtx=null;
+  function _tvInterval(tf){
+    tf=String(tf||"4h").toLowerCase();
+    return ({"15m":"15","30m":"30","1h":"60","4h":"240","6h":"360","12h":"720","1d":"D","1w":"W"})[tf]||"240";
+  }
+  function _cmIsPerp(mkt){ mkt=String(mkt||""); return mkt==="perpetual"||mkt==="Perp"||mkt==="perp"; }
+  function _cmSuffix(){ return (_cmIsPerp(_cmCtx.market) && ST.settings.tvPerpSuffix!==false) ? ".P" : ""; }
+  function _cmExch(){ var e=String(_cmCtx.exchange||ST.exchange||"binance").toLowerCase();
+    return (SUPPORTED_EXCHANGES.indexOf(e)>=0?e:"binance").toUpperCase(); }
+  function _cmEmbedUrl(){
+    var theme=(document.documentElement.getAttribute("data-theme")==="light")?"light":"dark";
+    var sym=encodeURIComponent(_cmCtx.symbol)+_cmSuffix();
+    return "https://s.tradingview.com/widgetembed/?frameElementId=cmFrame&symbol="+_cmExch()+"%3A"+sym+
+      "&interval="+_tvInterval(_cmCtx.tf)+"&theme="+theme+"&style=1&hideideas=1&hidesidetoolbar=0"+
+      "&toolbarbg=rgba(0,0,0,0)&allow_symbol_change=1&studies=%5B%5D&saveimage=0";
+  }
+  function _cmExtUrl(){
+    return "https://www.tradingview.com/chart/?symbol="+_cmExch()+":"+encodeURIComponent(_cmCtx.symbol)+_cmSuffix();
+  }
+  function _cmRender(){
+    if(!_cmCtx) return;
+    var symEl=E("cmSym"); if(symEl) symEl.textContent=_cmCtx.symbol;
+    var mkt=_cmIsPerp(_cmCtx.market)?"Perp":"Spot";
+    var tags=E("cmTags");
+    if(tags) tags.innerHTML='<span class="tag mkt">'+esc(mkt)+'</span>'+
+      '<span class="tag neutral">'+esc(_cmExch())+'</span>'+
+      '<span class="tag neutral">'+esc(String(_cmCtx.tf||"").toUpperCase())+'</span>';
+    var tfSel=E("cmTf"); if(tfSel) tfSel.value=String(_cmCtx.tf||"4h").toLowerCase();
+    var fr=E("cmFrame"); if(fr) fr.src=_cmEmbedUrl();
+    var op=E("cmOpen"); if(op) op.href=_cmExtUrl();
+  }
+  function openChartModal(symbol, market, exchange, timeframe){
+    if(!symbol) return;
+    _cmCtx={ symbol:String(symbol).toUpperCase(), market:market||ST.market,
+             exchange:exchange||ST.exchange||"binance", tf:(timeframe||_currentTf()||"4h") };
+    _cmRender();
+    E("chartModalBd").classList.add("open");
+    E("chartModal").classList.add("open");
+    document.body.classList.add("sheet-open");
+  }
+  function closeChartModal(){
+    E("chartModalBd").classList.remove("open");
+    E("chartModal").classList.remove("open");
+    document.body.classList.remove("sheet-open");
+    var fr=E("cmFrame"); if(fr) fr.src="about:blank";   // stop the stream when hidden
+  }
 
   /* ── watchlist persistence ── */
   function loadWatchlist(){
@@ -1903,12 +2282,10 @@ svg{display:block}
     renderInsightForTab(mode);
   }
 
-  /* shared helper: TradingView URL for any symbol */
-  function _tvUrl(sym, marketHint){
-    var market = marketHint || ST.market;
-    var suf = (market==="perpetual" && ST.settings.tvPerpSuffix!==false) ? ".P" : "";
-    var ex = ST.settings.tvExchange || "BINANCE";
-    return "https://www.tradingview.com/chart/?symbol="+ex+":"+encodeURIComponent(sym)+suf;
+  /* TradingView exchange prefix derived from the selected exchange. */
+  function _tvExch(){
+    var e=String(ST.exchange||"binance").toUpperCase();
+    return (SUPPORTED_EXCHANGES.indexOf(e.toLowerCase())>=0) ? e : (ST.settings.tvExchange||"BINANCE");
   }
   function _addToLM(sym){
     if(!sym) return;
@@ -1916,8 +2293,8 @@ svg{display:block}
   }
   function _insFoot(sym, marketHint){
     return '<div class="ti-foot" style="display:flex;gap:8px;margin-top:14px">'+
-      '<a class="btn" href="'+_tvUrl(sym, marketHint)+'" target="_blank" rel="noopener" style="text-decoration:none">'+
-        '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 4-6"/></svg>View Chart</a>'+
+      '<button class="btn" type="button" data-chart="'+esc(sym)+'" data-chart-mkt="'+esc(marketHint||ST.market)+'">'+
+        '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 4-6"/></svg>View Chart</button>'+
       '<button class="btn btn-primary" type="button" data-add-lm="'+esc(sym)+'">'+
         '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add to Live Monitor</button>'+
     '</div>';
@@ -2052,6 +2429,15 @@ svg{display:block}
       _ti("Invalidation",  ap.invalidation||"—")+
       ((ap.notes&&ap.notes.length)?('<div class="ti-chain" style="margin-top:8px"><ul>'+ap.notes.map(function(n){return '<li>'+esc(n)+'</li>';}).join("")+'</ul></div>'):"")+
 
+      '<div class="ti-h">Assessment</div>'+
+      insightRow("Trade grade: "+(r.tradeGrade||"—"), gradeSev(r.tradeGrade))+
+      insightRow("Compression score: "+(r.compressionScore!=null?Math.round(+r.compressionScore):"—"), scoreSev(r.compressionScore))+
+      insightRow("Volume state: "+((r.volumeState||"—").replace(/_/g," ")), severityOf(r.volumeState))+
+      (((r.obConfluence&&r.obConfluence.has)||(r.fvgConfluence&&r.fvgConfluence.has)||(r.fibConfluence&&r.fibConfluence.has))
+        ? insightRow("OB / FVG / Fib confluence at the box","pass")
+        : insightRow("No OB / FVG / Fib confluence","warn"))+
+      insightRow("Action: "+_compActionLabel(ap.state), severityOf(ap.state))+
+
       _insFoot(sym);
     setFoot(null); // hide the legacy chart anchor; we use our own in-panel buttons now
   }
@@ -2147,6 +2533,13 @@ svg{display:block}
       ((r.sparkline&&r.sparkline.length)
         ? '<div class="ti-h">Sparkline (last 24)</div><div style="padding:8px 0">'+_miniSpark(r.sparkline,240,60)+'</div>'
         : "")+
+
+      '<div class="ti-h">Assessment</div>'+
+      insightRow("Relative volume: "+(r.relVol!=null?(+r.relVol).toFixed(2)+"×":"—"),
+        (r.relVol!=null?(+r.relVol>=2?"pass":+r.relVol>=1.2?"info":"warn"):"info"))+
+      insightRow("Move strength: "+(ch>=0?"+":"")+ch.toFixed(2)+"%",
+        (Math.abs(ch)>=5?"pass":Math.abs(ch)>=1?"info":"warn"))+
+      insightRow((dir==="bull"?"Bullish":"Bearish")+" momentum mover", (Math.abs(ch)>=1?"pass":"warn"))+
 
       _insFoot(sym);
   }
@@ -2257,6 +2650,17 @@ svg{display:block}
            _ti("Current batch", (raw.currentBatchStart!=null?(raw.currentBatchStart+"–"+raw.currentBatchEnd):"—"))+
            _ti("Found total", raw.found||"—"))
         : "")+
+
+      '<div class="ti-h">Assessment</div>'+
+      (function(){
+        var t=String(tag||"").toUpperCase();
+        var sev = /BREAK/.test(t)?"pass" : /NEAR/.test(t)?"warn" : /MADE/.test(t)?"info" : severityOf(tag);
+        return insightRow("Status: "+(tag||"—"), sev);
+      })()+
+      insightRow("Break %: "+(r.breakPct!=null?(+r.breakPct).toFixed(2)+"%":"—"),
+        (r.breakPct!=null?(+r.breakPct>=2?"pass":+r.breakPct>=0.5?"info":"warn"):"info"))+
+      insightRow("Distance to level: "+(r.distancePct!=null?(+r.distancePct).toFixed(2)+"%":"—"),
+        (r.distancePct!=null?(+r.distancePct<=1?"pass":+r.distancePct<=3?"info":"warn"):"info"))+
 
       _insFoot(sym, r.marketType||ST.market);
   }
@@ -2395,6 +2799,15 @@ svg{display:block}
         '<div class="ti-h">Score breakdown</div>'+
         Object.keys(b.scoreBreakdown).map(function(k){return _ti(k, b.scoreBreakdown[k]);}).join("")
       :"")+
+
+      '<div class="ti-h">Assessment</div>'+
+      insightRow("Confirmation: "+(b.confirmation||"—"), severityOf(b.confirmation))+
+      insightRow("Grade: "+(b.grade||"—")+(b.gradeLabel?(" ("+b.gradeLabel+")"):""), gradeSev(b.grade))+
+      (b.score!=null?insightRow("Bias score: "+Math.round(b.score), scoreSev(b.score)):"")+
+      (b.priorQuality?insightRow("Prior move quality: "+b.priorQuality, severityOf(b.priorQuality)):"")+
+      ((b.obConf||b.fvgConf||b.fibConf)
+        ? insightRow("OB / FVG / Fib confluence present","pass")
+        : insightRow("No OB / FVG / Fib confluence","warn"))+
 
       _insFoot(b.symbol);
   }
@@ -2583,9 +2996,6 @@ svg{display:block}
     var ztype=setupLabel(a)+(d!=="neutral"?(" ("+(d==="bull"?"Bullish":"Bearish")+")"):"");
     var mid=z&&!z.single?(z.hi+z.lo)/2:(z?z.hi:null);
     var touches=m.obTouches!=null?m.obTouches : m.fvgTouches!=null?m.fvgTouches : null;
-    var qual=m.obQuality!=null?+m.obQuality : null;
-    var strengthPct=a.strength!=null?Math.round((+a.strength)/8*100):0;
-    var trendAlign=(h===d&&d!=="neutral")?100:(h==="neutral"?50:20);
     var cb=r.confBreakdown||{};
     var zoneStr=z?(z.single?fmt(z.hi):fmt(z.hi)+" – "+fmt(z.lo)):"—";
 
@@ -2626,25 +3036,17 @@ svg{display:block}
           '<circle cx="48" cy="48" r="40" stroke="var(--accent)" stroke-width="8" fill="none" stroke-linecap="round" '+
             'stroke-dasharray="251.2" stroke-dashoffset="'+(251.2*(1-sc/100)).toFixed(1)+'"/></svg>'+
           '<div class="c"><div class="pct">'+Math.round(sc)+'%</div><div class="lv">'+esc(r.confidence||"")+'</div></div></div>'+
-        '<div class="bars">'+
-          bar("HTF Alignment",cb.htfAlignment!=null?cb.htfAlignment:trendAlign)+
-          bar("Zone Quality",cb.zoneQuality!=null?cb.zoneQuality:(qual!=null?qual:strengthPct))+
-          bar("Structure Confluence",cb.structureConfluence!=null?cb.structureConfluence:Math.min(100,(r.alerts||[]).length*33))+
-          bar("Momentum",cb.momentum!=null?cb.momentum:(r.rsi!=null?Math.round(r.rsi):50))+
-          bar("Volume",cb.volume!=null?cb.volume:50)+
-        '</div></div></div>';
+        '<div class="bars cb-bars">'+cbBars(cb)+'</div></div></div>';
 
     // Page 5: Confluence + Notes + Actions
-    var tvSuf=(mk==="Perp")?".P":"";
-    var tvUrl='https://www.tradingview.com/chart/?symbol=BINANCE:'+encodeURIComponent(r.symbol)+tvSuf;
     var p5='<div class="mc-page">'+
       '<div class="mc-page-h">CONFLUENCE</div>'+confluenceList(r,a)+
       '<div class="mc-page-h" style="margin-top:12px">NOTES</div>'+
       '<div class="notes">'+esc(a.detail||"No additional notes for this setup.")+'</div>'+
       '<div class="mc-actions">'+
-        '<a class="btn" target="_blank" rel="noopener" href="'+tvUrl+'">'+
-          '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 4-6"/></svg>View Chart</a>'+
-        '<button class="btn btn-primary" type="button">'+
+        '<button class="btn" type="button" data-chart="'+esc(r.symbol)+'" data-chart-mkt="'+esc(r.market||ST.market)+'">'+
+          '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 4-6"/></svg>View Chart</button>'+
+        '<button class="btn btn-primary" type="button" data-add-lm="'+esc(r.symbol)+'">'+
           '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add to Live Monitor</button>'+
       '</div>'+
     '</div>';
@@ -2696,21 +3098,104 @@ svg{display:block}
     return '<div class="bar-row"><div class="bt"><span>'+lbl+'</span><b>'+v+'%</b></div>'+
       '<div class="bar-tr"><div class="bar-fl" style="width:'+v+'%"></div></div></div>';}
 
+  /* ── strict confidence breakdown (Task 7) — backend-only, no fake fallbacks ── */
+  function _statusFromScore(s){ s=+s; if(isNaN(s))return "unavailable";
+    return s>=75?"pass":s>=55?"medium":s>=35?"weak":"fail"; }
+  // Accepts the backend {score,status,reason} object, a legacy flat number, or null.
+  function _cbCell(v){
+    if(v==null) return {score:null,status:"unavailable",reason:"Required data not available"};
+    if(typeof v==="number") return {score:v,status:_statusFromScore(v),reason:""};
+    var sc=(v.score!=null&&!isNaN(+v.score))?+v.score:null;
+    var st=v.status||(sc!=null?_statusFromScore(sc):"unavailable");
+    return {score:sc,status:st,reason:v.reason||""};
+  }
+  function _cbStatusSev(st){ st=String(st||"").toLowerCase();
+    return st==="pass"?"pass":st==="medium"?"info":st==="weak"?"warn":st==="fail"?"fail":"info"; }
+  function cbRow(label, cell){
+    var sev=_cbStatusSev(cell.status);
+    var has=cell.score!=null;
+    var val=has?Math.round(cell.score)+"%":"Unavailable";
+    var w=has?Math.max(0,Math.min(100,Math.round(cell.score))):0;
+    var tip=cell.reason?(' title="'+esc(cell.reason)+'"'):'';
+    return '<div class="cb-row"'+tip+'>'+
+      '<div class="cb-top">'+severityIcon(sev)+'<span class="cb-l">'+esc(label)+'</span>'+
+        '<b class="cb-v'+(has?"":" na")+'">'+val+'</b></div>'+
+      '<div class="cb-tr"><div class="cb-fl sev-'+sev+'" style="width:'+w+'%"></div></div>'+
+      (cell.reason?('<div class="cb-reason">'+esc(cell.reason)+'</div>'):'')+
+    '</div>';
+  }
+  function cbBars(cbRaw){
+    var cb=cbRaw||{};
+    return cbRow("HTF Alignment",        _cbCell(cb.htfAlignment))+
+           cbRow("Zone Quality",         _cbCell(cb.zoneQuality))+
+           cbRow("Structure Confluence", _cbCell(cb.structureConfluence))+
+           cbRow("Momentum",             _cbCell(cb.momentum))+
+           cbRow("Volume",               _cbCell(cb.volume));
+  }
+
+  /* ── severity-aware insight helpers (Task 6) ──
+     severity → icon/colour:
+       pass  green check  (strong / confirmed / passed / high / aligned / valid)
+       info  gray info    (medium / neutral / informational)
+       warn  yellow warn  (weak / caution / incomplete / early / unconfirmed)
+       fail  red cross    (failed / invalid / against the setup)                */
+  var SEV_IC={
+    pass:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8.4 12.4l2.6 2.6 4.6-5.2"/></svg>',
+    info:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>',
+    warn:'<svg viewBox="0 0 24 24"><path d="M12 3.2 22 20H2z"/><path d="M12 10v4.5M12 17.2h.01"/></svg>',
+    fail:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg>'
+  };
+  function _normSev(sev){
+    sev=String(sev||"info").toLowerCase();
+    if(sev==="pass"||sev==="warn"||sev==="fail"||sev==="info") return sev;
+    if(sev==="good"||sev==="strong"||sev==="green"||sev==="ok"||sev==="high") return "pass";
+    if(sev==="caution"||sev==="weak"||sev==="yellow"||sev==="incomplete"||sev==="early"||sev==="medium-low") return "warn";
+    if(sev==="bad"||sev==="red"||sev==="invalid"||sev==="error"||sev==="against") return "fail";
+    return "info";
+  }
+  function severityIcon(sev){ sev=_normSev(sev); return '<span class="sev '+sev+'">'+(SEV_IC[sev]||SEV_IC.info)+'</span>'; }
+  function insightRow(text, sev){ sev=_normSev(sev); return '<div class="cf sev-row '+sev+'">'+severityIcon(sev)+'<span>'+esc(text)+'</span></div>'; }
+  /* Infer severity from free-text status when the backend gives no explicit one. */
+  function severityOf(text){
+    var s=String(text||"").toLowerCase();
+    if(/invalid|invalidated|failed|\bfail\b|against (the )?setup|violated|broken|rejected setup|conflict|opposes/.test(s)) return "fail";
+    if(/weak|caution|incomplete|early|unconfirmed|pending|\blow\b|thin|dry|declin|missing|no confluence|\bwatch\b|approach/.test(s)) return "warn";
+    if(/strong|confirmed|passed|\bpass\b|\bhigh\b|elite|premium|excellent|aligned|fresh|untouched|valid|absorption|ready|breaking|expanding/.test(s)) return "pass";
+    if(/medium|moderate|neutral|fair|average|single-signal|\binfo\b|balanced/.test(s)) return "info";
+    return "info";
+  }
+  function gradeSev(g){ var l=String(g||"").toUpperCase();
+    if(/^A/.test(l)) return "pass"; if(/^B/.test(l)) return "info"; if(/^[CDEF]/.test(l)) return "warn"; return "info"; }
+  function scoreSev(n){ n=+n; if(isNaN(n)) return "info"; return n>=75?"pass":n>=50?"info":n>=1?"warn":"fail"; }
+  function qualSev(label, score){ var l=String(label||"").toLowerCase();
+    if(/elite|high|strong|excellent|premium|a\+/.test(l)) return "pass";
+    if(/weak|poor|low/.test(l)) return "warn";
+    if(/medium|moderate|fair|average/.test(l)) return "info";
+    if(score!=null) return scoreSev(score); return "info"; }
+
   function confluenceList(r,a){
-    var m=a.meta||{},out=[];
+    var m=a.meta||{},out=[]; // [text, severity]
     var setups={}; (r.alerts||[]).forEach(function(x){setups[setupLabel(x)]=1;});
-    var sk=Object.keys(setups); if(sk.length>1)out.push(sk.join(" + ")+" multi-signal confluence");
-    if(m.highProb)out.push("High-probability zone (filter passed)");
-    if(m.obQualityLabel)out.push("Order block quality: "+m.obQualityLabel);
-    if(m.absorptionPass)out.push("Order-flow absorption confirmed");
-    if(m.fvgConfluence||m.fvgOverlap)out.push("FVG confluence at the zone");
-    if(m.fvgUntouched)out.push("Untouched FVG (fresh imbalance)");
-    if(m.rejectionStrength)out.push("Rejection strength: "+fmt(m.rejectionStrength));
-    if(r.correlationLabel)out.push("BTC correlation: "+r.correlationLabel);
+    var sk=Object.keys(setups); if(sk.length>1)out.push([sk.join(" + ")+" multi-signal confluence","pass"]);
+    if(m.highProb)out.push(["High-probability zone (filter passed)","pass"]);
+    if(m.obQualityLabel)out.push(["Order block quality: "+m.obQualityLabel, qualSev(m.obQualityLabel, m.obQuality)]);
+    if(m.absorptionPass)out.push(["Order-flow absorption confirmed","pass"]);
+    if(m.fvgConfluence||m.fvgOverlap)out.push(["FVG confluence at the zone","pass"]);
+    if(m.fvgUntouched)out.push(["Untouched FVG (fresh imbalance)","pass"]);
+    if(m.rejectionStrength)out.push(["Rejection strength: "+fmt(m.rejectionStrength),
+      (+m.rejectionStrength>=1.5?"pass":+m.rejectionStrength>=0.8?"info":"warn")]);
+    if(r.correlationLabel){
+      var clab=String(r.correlationLabel).toLowerCase();
+      out.push(["BTC correlation: "+r.correlationLabel,
+        /against|inverse|negativ/.test(clab)?"fail":/weak|low/.test(clab)?"warn":"info"]);
+    }
     var h=htfOf(r),d=dirOf(r);
-    if(h!=="neutral"&&h===d)out.push("HTF trend aligned with setup direction");
-    if(!out.length)out.push("Single-signal setup — confirm on lower timeframe");
-    return out.slice(0,5).map(function(t){return '<div class="cf">'+IC.chk+esc(t)+'</div>';}).join("");
+    if(h!=="neutral"&&d!=="neutral"){
+      if(h===d) out.push(["HTF trend aligned with setup direction","pass"]);
+      else      out.push(["HTF trend against setup direction","fail"]);
+    }
+    if(!out.length)out.push(["Single-signal setup — confirm on lower timeframe","warn"]);
+    return out.slice(0,6).map(function(t){return insightRow(t[0],t[1]);}).join("");
   }
 
   function renderInsight(){
@@ -2726,10 +3211,6 @@ svg{display:block}
     var mid = z&&!z.single ? (z.hi+z.lo)/2 : (z?z.hi:null);
     var touches = m.obTouches!=null?m.obTouches : m.fvgTouches!=null?m.fvgTouches : null;
     var sc=+r.score||0;
-    var qual = m.obQuality!=null?+m.obQuality : null;
-    var strengthPct = a.strength!=null?Math.round((+a.strength)/8*100):0;
-    var rsiV = r.rsi!=null?Math.round(r.rsi):null;
-    var trendAlign = (htfOf(r)===d&&d!=="neutral")?100:(htfOf(r)==="neutral"?50:20);
     var cb = r.confBreakdown||{};
     box.innerHTML=head+
       '<div class="ins-title">'+(ST.stars[r.symbol]?IC.starOn:IC.starOff)+
@@ -2753,13 +3234,7 @@ svg{display:block}
           '<circle cx="48" cy="48" r="40" stroke="var(--accent)" stroke-width="8" fill="none" stroke-linecap="round" '+
             'stroke-dasharray="251.2" stroke-dashoffset="'+(251.2*(1-sc/100)).toFixed(1)+'"/></svg>'+
           '<div class="c"><div class="pct">'+Math.round(sc)+'%</div><div class="lv">'+esc(r.confidence||"")+'</div></div></div>'+
-        '<div class="bars">'+
-          bar("HTF Alignment",cb.htfAlignment!=null?cb.htfAlignment:trendAlign)+
-          bar("Zone Quality",cb.zoneQuality!=null?cb.zoneQuality:(qual!=null?qual:strengthPct))+
-          bar("Structure Confluence",cb.structureConfluence!=null?cb.structureConfluence:Math.min(100,(r.alerts||[]).length*33))+
-          bar("Momentum",cb.momentum!=null?cb.momentum:(rsiV!=null?rsiV:50))+
-          bar("Volume",cb.volume!=null?cb.volume:50)+
-        '</div></div></div></div>'+
+        '<div class="bars cb-bars">'+cbBars(cb)+'</div></div></div></div>'+
       '<div class="sec"><div class="sec-h">CONFLUENCE</div><div class="sec-b">'+confluenceList(r,a)+'</div></div>'+
       '<div class="sec"><div class="sec-h">NOTES</div><div class="sec-b"><div class="notes">'+
         esc(a.detail||"No additional notes for this setup.")+'</div></div></div>'+
@@ -2779,7 +3254,7 @@ svg{display:block}
     var c=E("btnChart");
     if(r){var isPerp=((r.market||(ST.market==="perpetual"?"Perp":"Spot"))==="Perp");
       var suf=(isPerp && ST.settings.tvPerpSuffix!==false)?".P":"";
-      var ex=ST.settings.tvExchange||"BINANCE";
+      var ex=_tvExch();
       c.href="https://www.tradingview.com/chart/?symbol="+ex+":"+encodeURIComponent(r.symbol)+suf;
       c.style.pointerEvents="";c.style.opacity="";}
     else{c.href="#";c.style.pointerEvents="none";c.style.opacity=".5";}
@@ -2836,12 +3311,23 @@ svg{display:block}
     var tr=e.target.closest("tr[data-i]");
     if(tr){ openInsightForTab(ST.mode, +tr.getAttribute("data-i")); }
   });
-  /* "Add to Live Monitor" buttons inside the insight panel work for any tab */
+  /* "Add to Live Monitor" + "View Chart" buttons inside the insight panel work for any tab */
   document.getElementById("insScroll").addEventListener("click",function(e){
+    var ch=e.target.closest("[data-chart]");
+    if(ch){
+      var sym=ch.getAttribute("data-chart");
+      var mkt=ch.getAttribute("data-chart-mkt")||ST.market;
+      openChartModal(sym, mkt, ST.exchange, _currentTf());
+      e.stopPropagation(); return;
+    }
     var lm=e.target.closest("[data-add-lm]");
     if(lm){ _addToLM(lm.getAttribute("data-add-lm")); e.stopPropagation(); }
   });
   document.getElementById("mcards").addEventListener("click",function(e){
+    var ch=e.target.closest("[data-chart]");
+    if(ch){ openChartModal(ch.getAttribute("data-chart"), ch.getAttribute("data-chart-mkt")||ST.market, ST.exchange, ST.settings.tf||"4h"); e.stopPropagation(); return; }
+    var lm=e.target.closest("[data-add-lm]");
+    if(lm){ _addToLM(lm.getAttribute("data-add-lm")); e.stopPropagation(); return; }
     if(e.target.closest(".mc-body")) return;   // ignore clicks inside expanded body
     var head=e.target.closest(".mc-head[data-i]"); if(!head) return;
     var card=head.parentElement, idx=+head.getAttribute("data-i");
@@ -2868,25 +3354,61 @@ svg{display:block}
       b.classList.add("on"); ST[key]=b.getAttribute(attr); after&&after();
     });
   }
-  seg("segMarket","data-mkt","market",scan);
-  seg("segSignal","data-sig","signal",scan);
+  // Market / signal are payload-only; changing them re-renders but never spends
+  // a scan token. The user applies the new params with Scan Now.
+  seg("segMarket","data-mkt","market",renderAll);
+  seg("segSignal","data-sig","signal",renderAll);
+  /* exchange selector — persisted, payload-only (applied on next Scan Now) */
+  (function _initExch(){
+    var el=E("exchSelect"); if(!el) return;
+    el.value=ST.exchange;
+    el.addEventListener("change",function(){
+      var v=String(el.value||"binance").toLowerCase();
+      if(SUPPORTED_EXCHANGES.indexOf(v)<0) v="binance";
+      if(!_featAllowed("allowed_exchanges", v)){
+        showLockPopup((EXCH_NAME[v]||v)+" exchange");
+        el.value=ST.exchange;            // revert to last permitted selection
+        return;
+      }
+      ST.exchange=v; el.value=v;
+      try{ localStorage.setItem("zyni-exchange",v); }catch(_){}
+      renderAll();
+    });
+  })();
   /* sidebar scanner-mode tabs */
   [].forEach.call(document.querySelectorAll('.side .nav-item[data-mode]'),function(el){
     el.addEventListener('click',function(){
       var m=el.getAttribute('data-mode');
       if(m===ST.mode) return;
+      var _tab=TAB_OF_MODE[m];
+      if(_tab && !_featAllowed("allowed_tabs", _tab)){ showLockPopup(MODE_LABEL[m]||"This scanner"); return; }
       [].forEach.call(document.querySelectorAll('.side .nav-item[data-mode]'),function(x){x.classList.remove('active');});
       el.classList.add('active');
-      ST.mode=m; ST.results=[]; ST.sel=-1;
+      ST.mode=m; ST.sel=-1;
+      // Restore this tab's own persisted results (do NOT auto-scan / spend tokens).
+      var td=ST.tabData[m]||{};
+      ST.results = ("results" in td) ? (td.results||[]) : [];
+      ST.scanned = td.scanned||0;
       // hide the OB/Breaker/Fib/All segment for modes that don't accept it
       var seg=document.getElementById('segSignal');
       if(seg) seg.style.display = (m==='main'||m==='compressed')?'':'none';
       _renderTabCtrls();
-      scan();
+      renderAll();
     });
   });
   E("btnFilters").addEventListener("click",scan);
   if(E("btnScan"))  E("btnScan").addEventListener("click",scan);
+  if(E("btnScanNow")) E("btnScanNow").addEventListener("click",scan);
+  /* token-limit modal close bindings (Task 4) */
+  if(E("tokenModalClose")) E("tokenModalClose").addEventListener("click",hideTokenLimitPopup);
+  if(E("tokenModalX")) E("tokenModalX").addEventListener("click",hideTokenLimitPopup);
+  if(E("tokenModalBd")) E("tokenModalBd").addEventListener("click",hideTokenLimitPopup);
+  addEventListener("keydown",function(e){ if(e.key==="Escape" && E("tokenModal") && E("tokenModal").classList.contains("open")) hideTokenLimitPopup(); });
+  /* locked-feature modal close bindings (Task 5) */
+  if(E("lockModalClose")) E("lockModalClose").addEventListener("click",hideLockPopup);
+  if(E("lockModalX")) E("lockModalX").addEventListener("click",hideLockPopup);
+  if(E("lockModalBd")) E("lockModalBd").addEventListener("click",hideLockPopup);
+  addEventListener("keydown",function(e){ if(e.key==="Escape" && E("lockModal") && E("lockModal").classList.contains("open")) hideLockPopup(); });
   if(E("btnClear")) E("btnClear").addEventListener("click",function(){
     var m=ST.mode;
     if(ST.tabData[m]){
@@ -2919,6 +3441,7 @@ svg{display:block}
   });
   E("arToggle").addEventListener("click",function(){
     ST.auto=!ST.auto; this.classList.toggle("on",ST.auto);
+    var st=E("autoScanStatus"); if(st) st.textContent=ST.auto?"On · 30s":"Off";
     if(ST.auto){ST.timer=setInterval(scan,30000);}else{clearInterval(ST.timer);ST.timer=null;}
   });
   E("btnLM").addEventListener("click",function(){
@@ -2928,6 +3451,20 @@ svg{display:block}
     var o=this.innerHTML; this.innerHTML='<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>Added';
     var self=this; setTimeout(function(){self.innerHTML=o;},1600);
   });
+  /* Main "View Chart" — open the in-app chart modal instead of a new tab (Task 8) */
+  if(E("btnChart")) E("btnChart").addEventListener("click",function(e){
+    e.preventDefault();
+    var r=ST.results[ST.sel]; if(!r) return;
+    var tf=(r.topAlert&&r.topAlert.timeframe)||r.timeframe||ST.settings.tf||"4h";
+    openChartModal(r.symbol, r.market||ST.market, ST.exchange, tf);
+  });
+  /* chart modal controls (Task 8) */
+  if(E("cmClose")) E("cmClose").addEventListener("click",closeChartModal);
+  if(E("chartModalBd")) E("chartModalBd").addEventListener("click",closeChartModal);
+  if(E("cmTf")) E("cmTf").addEventListener("change",function(){
+    if(_cmCtx){ _cmCtx.tf=this.value; _cmRender(); }
+  });
+  addEventListener("keydown",function(e){ if(e.key==="Escape" && E("chartModal") && E("chartModal").classList.contains("open")) closeChartModal(); });
 
   /* ── Settings panel (Wave 6) ── */
   function _populateSettingsForm(){
@@ -3131,10 +3668,19 @@ svg{display:block}
           '<div class="lm-kv"><span>OI</span><b>'+esc(oi)+'</b></div>'+
           '<div class="lm-kv"><span>Funding</span><b>'+esc(fund)+'</b></div>'+
         '</div>'+
+        '<div class="mc-actions" style="margin-top:10px">'+
+          '<button class="btn" type="button" data-chart="'+esc(sym)+'" data-chart-mkt="'+esc(ST.market)+'">'+
+            '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 4-6"/></svg>View Chart</button>'+
+        '</div>'+
       '</div>';
     }).join("");
     [].forEach.call(box.querySelectorAll("[data-rm]"),function(btn){
       btn.addEventListener("click",function(){ _lmRemove(btn.getAttribute("data-rm")); });
+    });
+    [].forEach.call(box.querySelectorAll("[data-chart]"),function(btn){
+      btn.addEventListener("click",function(){
+        openChartModal(btn.getAttribute("data-chart"), btn.getAttribute("data-chart-mkt")||ST.market, ST.exchange, ST.settings.tf||"4h");
+      });
     });
   }
   function startLiveMonitorPolling(){
@@ -3222,7 +3768,7 @@ svg{display:block}
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify(Object.assign({
         settings:Object.assign({},ST.settings),
-        market:ST.market, exchange:"binance",
+        market:ST.market, exchange:ST.exchange,
         scanMode:"selected", roundRobin:false, pairsPerCycle:symbols.length,
         symbols:symbols, filterMode:"match", checkedSignals:[], requiredSignals:[]
       },extra||{}))}).then(function(r){return r.ok?r.json():null;});
@@ -3258,7 +3804,7 @@ svg{display:block}
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
         settings:Object.assign({},ST.settings),
-        market:ST.market, exchange:"binance",
+        market:ST.market, exchange:ST.exchange,
         scanMode:"market", roundRobin:true, pairsPerCycle:24,
         filterMode:"match", checkedSignals:[], requiredSignals:[]
       })})
@@ -3273,10 +3819,10 @@ svg{display:block}
     Promise.all([
       fetch("/api/trending_scan",{method:"POST",credentials:"same-origin",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({tf:ST.settings.tf||"4h",market:ST.market,exchange:"binance",mode:"bullish",limit:5})}).then(function(r){return r.ok?r.json():[];}),
+        body:JSON.stringify({tf:ST.settings.tf||"4h",market:ST.market,exchange:ST.exchange,mode:"bullish",limit:5})}).then(function(r){return r.ok?r.json():[];}),
       fetch("/api/trending_scan",{method:"POST",credentials:"same-origin",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({tf:ST.settings.tf||"4h",market:ST.market,exchange:"binance",mode:"bearish",limit:5})}).then(function(r){return r.ok?r.json():[];})
+        body:JSON.stringify({tf:ST.settings.tf||"4h",market:ST.market,exchange:ST.exchange,mode:"bearish",limit:5})}).then(function(r){return r.ok?r.json():[];})
     ]).then(function(both){
       var bu=both[0]||[], be=both[1]||[];
       var rows=function(arr,cls){
@@ -3296,7 +3842,7 @@ svg{display:block}
   function _dbLoadBreaking(){
     fetch("/api/ath_atl_scan",{method:"POST",credentials:"same-origin",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({action:"scan",market:ST.market,exchange:"binance",
+      body:JSON.stringify({action:"scan",market:ST.market,exchange:ST.exchange,
         mode:"both",window:"all_time",status:"breaking_now",limit:10})})
       .then(function(r){return r.ok?r.json():null;})
       .then(function(d){
@@ -3316,7 +3862,7 @@ svg{display:block}
   function _dbLoadBiasShifts(){
     fetch("/api/bias_scan",{method:"POST",credentials:"same-origin",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({tf:ST.settings.tf||"4h",market:ST.market,exchange:"binance",
+      body:JSON.stringify({tf:ST.settings.tf||"4h",market:ST.market,exchange:ST.exchange,
         pairsPerCycle:24, roundRobin:true})})
       .then(function(r){return r.ok?r.json():null;})
       .then(function(d){
@@ -3636,7 +4182,7 @@ svg{display:block}
   function _mtTvHTML(){
     var pairs=Object.keys(ST.stars).filter(function(s){return ST.stars[s];}).slice(0,4);
     if(!pairs.length) pairs=["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT"];
-    var ex=ST.settings.tvExchange||"BINANCE";
+    var ex=_tvExch();
     var suf=ST.settings.tvPerpSuffix===false?"":".P";
     return '<div class="mt-tvgrid-in">'+
       pairs.map(function(s){
@@ -3652,7 +4198,9 @@ svg{display:block}
   [].forEach.call(document.querySelectorAll("#topnav a[data-view]"),function(a){
     a.addEventListener("click",function(e){
       e.preventDefault();
-      switchView(a.getAttribute("data-view"));
+      var v=a.getAttribute("data-view"), tab=TAB_OF_VIEW[v];
+      if(tab && !_featAllowed("allowed_tabs", tab)){ showLockPopup(a.textContent.trim()||v); return; }
+      switchView(v);
     });
   });
 
@@ -3664,9 +4212,12 @@ svg{display:block}
   },1000);
 
   loadWatchlist();
+  loadTokens();                 // load token counter without triggering a scan
   _renderTabCtrls();
+  // No auto-scan on page load — scanning only happens when the user clicks
+  // Scan Now or explicitly turns Auto Scan ON. Render the empty state instead.
   if(ST.auto)ST.timer=setInterval(scan,30000);
-  scan();
+  renderAll();
 })();
 </script>
 </body>
