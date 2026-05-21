@@ -21,7 +21,7 @@ from datetime import datetime, timezone, timedelta
 
 import numpy as np
 import requests as req
-from flask import Flask, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, jsonify, make_response, redirect, render_template, request, session, url_for
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "zyni-fallback-secret")
@@ -7424,22 +7424,41 @@ def _is_mobile_ua(ua):
     return any(k in ua for k in _MOBILE_UA_KEYS)
 
 
+_VIEW_COOKIE = "zyni-view"
+_VIEW_COOKIE_MAX_AGE = 60 * 60 * 24 * 365   # 1 year
+
+
 @app.route("/")
 def index():
-    # If already logged in, serve the right UI per device class.
-    if session.get("logged_in"):
-        username = session.get("username", "Trader")
-        display_name = " ".join(w.capitalize() for w in username.strip().split())
-        # ?view=mobile|desktop overrides UA sniffing (useful for testing).
-        forced = (request.args.get("view") or "").lower()
-        if forced in ("mobile", "desktop"):
-            mobile = forced == "mobile"
+    # Anonymous → homepage (login screen). No cookies needed here.
+    if not session.get("logged_in"):
+        return render_template("homepage.html")
+
+    username = session.get("username", "Trader")
+    display_name = " ".join(w.capitalize() for w in username.strip().split())
+
+    # Priority: explicit ?view= (and remember it via cookie) →
+    # cookie set by a previous ?view= → UA sniff.
+    forced = (request.args.get("view") or "").lower()
+    set_cookie_to = None
+    if forced in ("mobile", "desktop"):
+        mobile = forced == "mobile"
+        set_cookie_to = forced
+    else:
+        cookie_v = (request.cookies.get(_VIEW_COOKIE) or "").lower()
+        if cookie_v in ("mobile", "desktop"):
+            mobile = cookie_v == "mobile"
         else:
             mobile = _is_mobile_ua(request.headers.get("User-Agent"))
-        tmpl = "index.html" if mobile else "preview.html"
-        return render_template(tmpl, username=display_name)
-    # Otherwise serve homepage (login happens via drop box)
-    return render_template("homepage.html")
+
+    tmpl = "index.html" if mobile else "preview.html"
+    resp = make_response(render_template(tmpl, username=display_name))
+    if set_cookie_to:
+        resp.set_cookie(
+            _VIEW_COOKIE, set_cookie_to,
+            max_age=_VIEW_COOKIE_MAX_AGE, samesite="Lax", path="/",
+        )
+    return resp
 
 
 @app.route("/preview")
