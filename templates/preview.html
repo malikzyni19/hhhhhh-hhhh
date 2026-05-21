@@ -1200,9 +1200,11 @@ svg{display:block}
     return Object.assign({},DEFAULT_SETTINGS);
   }
   var ST={market:"spot",signal:"OB",mode:"main",view:"scanner",
+          scanMode:(function(){try{return localStorage.getItem("zyni-scanMode")||"market";}catch(_){return "market";}})(),
           results:[],sel:-1,scannedAt:0,scanned:0,
           prev:null,stars:{},auto:true,timer:null,busy:false,
-          pairsPerCycle:24,page:1,roundRobin:true,
+          pairsPerCycle:(function(){try{var v=parseInt(localStorage.getItem("zyni-ppc"),10);return isFinite(v)&&v>0?v:24;}catch(_){return 24;}})(),
+          page:1,roundRobin:true,
           settings:_loadSettings()};
   var SK=0;
 
@@ -1315,6 +1317,16 @@ svg{display:block}
 
   /* one schema per tab; each entry renders into the inline tab-ctrls bar */
   var TAB_CTRLS_SCHEMA = {
+    main: [
+      { type:"select", bind:"settings", key:"tf", label:"Timeframe",
+        options:[["15m","15m"],["1h","1H"],["4h","4H"],["1d","1D"]],
+        help:"Candle interval used by every detector." },
+      { type:"select", bind:"state", key:"scanMode", label:"Scope",
+        options:[["market","Full market"],["selected","Selected (watchlist)"]],
+        help:"Full market = scan every USDT pair. Selected = scan only the symbols you've starred." },
+      { type:"num", bind:"state", key:"pairsPerCycle", label:"Pairs / cycle",
+        help:"How many symbols are checked per scan request. Bigger batches = more results but more API weight." },
+    ],
     ath_atl: [
       { type:"select", key:"mode", label:"Mode",
         options:[["both","Both ATH & ATL"],["ath","ATH Only"],["atl","ATL Only"]],
@@ -1362,8 +1374,27 @@ svg{display:block}
     ],
   };
 
+  function _ctrlRead(mode,f){
+    if(f.bind==="state")    return ST[f.key];
+    if(f.bind==="settings") return ST.settings[f.key];
+    return (ST.modeOptions[mode]||{})[f.key];
+  }
+  function _ctrlWrite(mode,f,val){
+    if(f.bind==="state"){
+      ST[f.key]=val;
+      if(f.key==="pairsPerCycle"){ try{localStorage.setItem("zyni-ppc",String(val));}catch(_){}
+        var rpp=E("rppSelect"); if(rpp) rpp.value=String(val); }
+      if(f.key==="scanMode"){ try{localStorage.setItem("zyni-scanMode",String(val));}catch(_){} }
+    } else if(f.bind==="settings"){
+      ST.settings[f.key]=val;
+      try{ localStorage.setItem("zyni-settings",JSON.stringify(ST.settings)); }catch(_){}
+    } else {
+      ST.modeOptions[mode][f.key]=val;
+      _saveModeOptions();
+    }
+  }
   function _ctrlField(mode,f){
-    var v = (ST.modeOptions[mode]||{})[f.key];
+    var v=_ctrlRead(mode,f);
     var help = f.help?(' title="'+esc(f.help)+'"'):'';
     if(f.type==="reset"){
       return '<button class="btn" id="tcReset" type="button" title="Reset ATH/ATL cursor to start"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>Reset cursor</button>';
@@ -1391,14 +1422,16 @@ svg{display:block}
     host.hidden=false;
     host.innerHTML='<div class="tc-h">'+esc(MODE_LABEL[ST.mode]||"")+' settings</div>'+
       '<div class="tc-row">'+schema.map(function(f){return _ctrlField(ST.mode,f);}).join("")+'</div>';
-    // bind change handler
+    var byKey={};
+    schema.forEach(function(f){ if(f.key) byKey[f.key]=f; });
     [].forEach.call(host.querySelectorAll('[data-opt]'),function(el){
       el.addEventListener("change",function(){
-        var k=el.getAttribute("data-opt");
-        if(el.type==="checkbox") ST.modeOptions[ST.mode][k]=!!el.checked;
-        else if(el.type==="number"){ var n=parseFloat(el.value); ST.modeOptions[ST.mode][k]=isFinite(n)?n:el.value; }
-        else ST.modeOptions[ST.mode][k]=el.value;
-        _saveModeOptions();
+        var k=el.getAttribute("data-opt"); var f=byKey[k]; if(!f) return;
+        var val;
+        if(el.type==="checkbox") val=!!el.checked;
+        else if(el.type==="number"){ var n=parseFloat(el.value); val=isFinite(n)?n:el.value; }
+        else val=el.value;
+        _ctrlWrite(ST.mode,f,val);
       });
     });
     var rst=E("tcReset");
@@ -1442,10 +1475,16 @@ svg{display:block}
     var market=ST.market, tf="4h";
     if(ST.mode==="main"){
       var sig=ST.signal, checked = sig==="ALL"?["OB","FVG","BREAKER","FIB"]:[sig];
+      var watch=Object.keys(ST.stars).filter(function(s){return ST.stars[s];});
+      var sMode = ST.scanMode||"market";
+      // If user picked "selected" but starred nothing, fall back to market scope.
+      if(sMode==="selected" && !watch.length) sMode="market";
       return {url:"/api/scan", body:{
         settings: Object.assign({}, ST.settings, _modulesForSignal(), {tf:ST.settings.tf||tf}),
         market:market, exchange:"binance",
-        scanMode:"market", roundRobin:ST.roundRobin, pairsPerCycle:ST.pairsPerCycle,
+        scanMode: sMode,
+        symbols: sMode==="selected" ? watch : [],
+        roundRobin:ST.roundRobin, pairsPerCycle:ST.pairsPerCycle,
         filterMode:"match", checkedSignals:checked,
         requiredSignals: (sig!=="ALL" ? [sig] : [])
       }};
