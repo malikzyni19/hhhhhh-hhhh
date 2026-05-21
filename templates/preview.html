@@ -538,6 +538,26 @@ svg{display:block}
 .mt-tv-sym{position:absolute;top:6px;left:8px;font-size:10px;font-weight:700;letter-spacing:.4px;color:var(--accent);background:rgba(2,6,14,.7);padding:2px 6px;border-radius:4px;z-index:5}
 .mt-tv-note{font-size:11px;color:var(--text-3);margin-top:8px;text-align:right}
 
+/* Per-tab inline controls (Wave 12) */
+.tab-ctrls{background:var(--bg-card);border:1px solid var(--border);border-radius:11px;
+  padding:10px 14px 12px;margin-bottom:14px}
+.tab-ctrls[hidden]{display:none}
+.tc-h{font-size:10px;font-weight:700;letter-spacing:1px;color:var(--accent);margin-bottom:10px;text-transform:uppercase}
+.tc-row{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:flex-end}
+.tc-field{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text-3);cursor:help}
+.tc-field span{letter-spacing:.3px}
+.tc-field select,.tc-field input[type="number"]{
+  background:var(--bg-card-2);border:1px solid var(--border);color:var(--text);
+  border-radius:7px;padding:6px 9px;font-family:var(--mono);font-size:12px;outline:none;min-width:120px}
+.tc-field select:focus,.tc-field input:focus{border-color:var(--accent)}
+.tc-check{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-2);cursor:help;
+  padding:7px 11px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:7px;align-self:stretch}
+.tc-check input{width:14px;height:14px;accent-color:var(--accent);cursor:pointer}
+.tab-ctrls .btn{padding:7px 12px;font-size:12px}
+@media (max-width:820px){
+  .tab-ctrls{display:none}    /* mobile already has its own tab settings */
+}
+
 /* Notifications (Wave 10) */
 .al-list,.al-fires{display:flex;flex-direction:column;gap:6px}
 .al-row{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg-card-2);
@@ -778,6 +798,8 @@ svg{display:block}
             <button class="btn" id="btnFilters"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg>Filters <span class="badge-n">3</span></button>
           </div>
         </div>
+
+        <div class="tab-ctrls" id="tabCtrls" hidden></div>
 
         <div class="kpi-row" id="kpiRow"></div>
 
@@ -1263,6 +1285,133 @@ svg{display:block}
      When a single signal is picked on the segment we narrow what the backend
      even computes so other modules' alerts can't leak through. ALL uses the
      user's own saved toggles. */
+  /* ── Per-tab controls (Wave 12) ── */
+  var DEFAULT_MODE_OPTIONS = {
+    ath_atl: { mode:"both", status:"near_level", windowHours:24, breakTolPct:0.10, nearPct:3.0 },
+    compressed: { tf:"4h", lookback:30, maxPct:5.0 },
+    trending: { tf:"4h", mode:"bullish" },
+    bias: {
+      tf:"1d", strength:"balanced", detectionMode:"early",
+      confluenceMode:"optional", minGrade:"B+",
+      useObConf:true, useFvgConf:true, useFibConf:true
+    },
+  };
+  function _loadModeOptions(){
+    try{
+      var raw=localStorage.getItem("zyni-mode-opts");
+      if(!raw) return JSON.parse(JSON.stringify(DEFAULT_MODE_OPTIONS));
+      var saved=JSON.parse(raw)||{};
+      var out={};
+      Object.keys(DEFAULT_MODE_OPTIONS).forEach(function(k){
+        out[k]=Object.assign({},DEFAULT_MODE_OPTIONS[k],saved[k]||{});
+      });
+      return out;
+    }catch(_){ return JSON.parse(JSON.stringify(DEFAULT_MODE_OPTIONS)); }
+  }
+  function _saveModeOptions(){
+    try{ localStorage.setItem("zyni-mode-opts", JSON.stringify(ST.modeOptions||{})); }catch(_){}
+  }
+  ST.modeOptions = _loadModeOptions();
+
+  /* one schema per tab; each entry renders into the inline tab-ctrls bar */
+  var TAB_CTRLS_SCHEMA = {
+    ath_atl: [
+      { type:"select", key:"mode", label:"Mode",
+        options:[["both","Both ATH & ATL"],["ath","ATH Only"],["atl","ATL Only"]],
+        help:"What to scan for — All-Time Highs, Lows, or both." },
+      { type:"select", key:"status", label:"Status filter",
+        options:[["breaking_now","Breaking now"],["made_within_window","Made within window"],["near_level","Near level"]],
+        help:"Breaking now = price is breaking the previous level. Made within window = the window high/low broke it. Near = within Near %." },
+      { type:"select", key:"windowHours", label:"Window",
+        options:[[6,"6 hours"],[12,"12 hours"],[24,"1 day"],[48,"2 days"],[168,"7 days"]],
+        help:"\"Previous\" ATH/ATL = highest/lowest BEFORE this window." },
+      { type:"num", key:"breakTolPct", label:"Break tol %", step:0.01, help:"How close to the level still counts as breaking (Breaking Now / Made Within only)." },
+      { type:"num", key:"nearPct", label:"Near %", step:0.1, help:"How close (in %) price must be to count as Near (Near Level only)." },
+      { type:"reset" }
+    ],
+    compressed: [
+      { type:"select", key:"tf", label:"Timeframe",
+        options:[["15m","15m"],["1h","1h"],["4h","4h"],["1d","1d"]] },
+      { type:"num", key:"lookback", label:"Lookback bars", help:"Window of candles to measure compression." },
+      { type:"num", key:"maxPct", label:"Max range %", step:0.1, help:"Maximum high-low range (in %) within the window. Smaller = tighter compression." },
+    ],
+    trending: [
+      { type:"select", key:"tf", label:"Timeframe",
+        options:[["15m","15m"],["1h","1h"],["4h","4h"],["1d","1d"]] },
+      { type:"select", key:"mode", label:"Direction",
+        options:[["bullish","Bullish"],["bearish","Bearish"],["high_volume","High volume"]] },
+    ],
+    bias: [
+      { type:"select", key:"tf", label:"Timeframe",
+        options:[["1h","1H"],["4h","4H"],["6h","6H"],["12h","12H"],["1d","1D"]] },
+      { type:"select", key:"strength", label:"Bias strength",
+        options:[["early","Early"],["balanced","Balanced"],["strong","Strong only"]],
+        help:"Early = more results. Balanced = recommended. Strong = cleaner, fewer." },
+      { type:"select", key:"detectionMode", label:"Detection",
+        options:[["early","Early (rejection close)"],["confirmed","Confirmed (follow-up)"]],
+        help:"Early fires once the rejection candle closes; Confirmed waits for a follow-up candle." },
+      { type:"select", key:"confluenceMode", label:"Confluence",
+        options:[["optional","Optional"],["required","Required"]],
+        help:"Optional grades higher with OB/FVG/Fib nearby. Required hides setups without any confluence." },
+      { type:"select", key:"minGrade", label:"Min grade",
+        options:[["C+","C+"],["B+","B+"],["A","A only"]],
+        help:"Hide setups below this quality grade." },
+      { type:"check", key:"useObConf", label:"OB confluence",  help:"Boost grade when the rejection is near an Order Block." },
+      { type:"check", key:"useFvgConf", label:"FVG confluence", help:"Boost grade when the rejection is near a Fair Value Gap." },
+      { type:"check", key:"useFibConf", label:"Fib confluence", help:"Boost grade when the rejection is near a Fibonacci level." },
+    ],
+  };
+
+  function _ctrlField(mode,f){
+    var v = (ST.modeOptions[mode]||{})[f.key];
+    var help = f.help?(' title="'+esc(f.help)+'"'):'';
+    if(f.type==="reset"){
+      return '<button class="btn" id="tcReset" type="button" title="Reset ATH/ATL cursor to start"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>Reset cursor</button>';
+    }
+    if(f.type==="select"){
+      var opts=f.options.map(function(o){
+        var val=o[0],lbl=o[1];
+        return '<option value="'+esc(val)+'"'+(String(v)===String(val)?" selected":"")+'>'+esc(lbl)+'</option>';
+      }).join("");
+      return '<label class="tc-field"'+help+'><span>'+esc(f.label)+'</span><select data-opt="'+esc(f.key)+'">'+opts+'</select></label>';
+    }
+    if(f.type==="num"){
+      var step=f.step!=null?(' step="'+f.step+'"'):"";
+      return '<label class="tc-field"'+help+'><span>'+esc(f.label)+'</span><input type="number" data-opt="'+esc(f.key)+'"'+step+' value="'+esc(v)+'"></label>';
+    }
+    if(f.type==="check"){
+      return '<label class="tc-check"'+help+'><input type="checkbox" data-opt="'+esc(f.key)+'"'+(v?" checked":"")+'><span>'+esc(f.label)+'</span></label>';
+    }
+    return "";
+  }
+  function _renderTabCtrls(){
+    var host=E("tabCtrls"); if(!host) return;
+    var schema=TAB_CTRLS_SCHEMA[ST.mode];
+    if(!schema){ host.hidden=true; host.innerHTML=""; return; }
+    host.hidden=false;
+    host.innerHTML='<div class="tc-h">'+esc(MODE_LABEL[ST.mode]||"")+' settings</div>'+
+      '<div class="tc-row">'+schema.map(function(f){return _ctrlField(ST.mode,f);}).join("")+'</div>';
+    // bind change handler
+    [].forEach.call(host.querySelectorAll('[data-opt]'),function(el){
+      el.addEventListener("change",function(){
+        var k=el.getAttribute("data-opt");
+        if(el.type==="checkbox") ST.modeOptions[ST.mode][k]=!!el.checked;
+        else if(el.type==="number"){ var n=parseFloat(el.value); ST.modeOptions[ST.mode][k]=isFinite(n)?n:el.value; }
+        else ST.modeOptions[ST.mode][k]=el.value;
+        _saveModeOptions();
+      });
+    });
+    var rst=E("tcReset");
+    if(rst) rst.addEventListener("click",function(){
+      if(ST.mode!=="ath_atl") return;
+      fetch("/api/ath_atl_scan",{method:"POST",credentials:"same-origin",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(Object.assign({action:"reset",market:ST.market,exchange:"binance"},
+                                          ST.modeOptions.ath_atl))})
+        .then(function(){ ST.results=[]; renderAll(); });
+    });
+  }
+
   function _modulesForSignal(){
     if(ST.signal === "ALL"){
       return {
@@ -1302,26 +1451,43 @@ svg{display:block}
       }};
     }
     if(ST.mode==="compressed"){
+      var c=ST.modeOptions.compressed||{};
       return {url:"/api/compressed_scan", body:{
-        tf:tf, market:market, exchange:"binance",
-        lookback:30, maxPct:5.0, roundRobin:ST.roundRobin, pairsPerCycle:ST.pairsPerCycle
+        tf:c.tf||tf, market:market, exchange:"binance",
+        lookback:+c.lookback||30, maxPct:+c.maxPct||5.0,
+        roundRobin:ST.roundRobin, pairsPerCycle:ST.pairsPerCycle
       }};
     }
     if(ST.mode==="trending"){
+      var t=ST.modeOptions.trending||{};
       return {url:"/api/trending_scan", body:{
-        tf:tf, market:market, exchange:"binance", mode:"bullish", limit:ST.pairsPerCycle
+        tf:t.tf||tf, market:market, exchange:"binance",
+        mode:t.mode||"bullish", limit:ST.pairsPerCycle
       }};
     }
     if(ST.mode==="ath_atl"){
+      var aa=ST.modeOptions.ath_atl||{};
       return {url:"/api/ath_atl_scan", body:{
         action:"scan", market:market, exchange:"binance",
-        mode:"both", window:"all_time", status:"near_level", nearPct:5.0, limit:ST.pairsPerCycle
+        mode:aa.mode||"both", status:aa.status||"near_level",
+        windowHours:+aa.windowHours||24,
+        breakTolPct:+aa.breakTolPct||0.10,
+        nearPct:+aa.nearPct||3.0,
+        limit:ST.pairsPerCycle
       }};
     }
     if(ST.mode==="bias"){
+      var bo=ST.modeOptions.bias||{};
       return {url:"/api/bias_scan", body:{
-        tf:tf, market:market, exchange:"binance",
-        pairsPerCycle:ST.pairsPerCycle, roundRobin:ST.roundRobin
+        tf:bo.tf||tf, market:market, exchange:"binance",
+        pairsPerCycle:ST.pairsPerCycle, roundRobin:ST.roundRobin,
+        strength:bo.strength||"balanced",
+        detectionMode:bo.detectionMode||"early",
+        confluenceMode:bo.confluenceMode||"optional",
+        minGrade:bo.minGrade||"B+",
+        useObConf: bo.useObConf!==false,
+        useFvgConf: bo.useFvgConf!==false,
+        useFibConf: bo.useFibConf!==false
       }};
     }
     return null;
@@ -1986,6 +2152,7 @@ svg{display:block}
       // hide the OB/Breaker/Fib/All segment for modes that don't accept it
       var seg=document.getElementById('segSignal');
       if(seg) seg.style.display = (m==='main'||m==='compressed')?'':'none';
+      _renderTabCtrls();
       scan();
     });
   });
@@ -2762,6 +2929,7 @@ svg{display:block}
   },1000);
 
   loadWatchlist();
+  _renderTabCtrls();
   if(ST.auto)ST.timer=setInterval(scan,30000);
   scan();
 })();
