@@ -554,6 +554,58 @@ svg{display:block}
   padding:7px 11px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:7px;align-self:stretch}
 .tc-check input{width:14px;height:14px;accent-color:var(--accent);cursor:pointer}
 .tab-ctrls .btn{padding:7px 12px;font-size:12px}
+
+/* Per-tab result containers (Wave 14) */
+.tbl-host[hidden]{display:none}
+.tab-view{margin-top:4px}
+.tab-view[hidden]{display:none}
+.tab-view .tv-empty{padding:60px 24px;text-align:center;color:var(--text-3);font-size:13px}
+.tv-tbl{width:100%;border-collapse:collapse;font-size:12px;table-layout:auto}
+.tv-tbl thead th{
+  text-align:left;font-size:9.5px;font-weight:700;letter-spacing:.5px;color:var(--text-3);
+  padding:8px 9px;border-bottom:1px solid var(--border);white-space:nowrap}
+.tv-tbl thead th.r{text-align:right}
+.tv-tbl tbody td{padding:9px;border-bottom:1px solid rgba(27,38,54,.55);
+  white-space:nowrap;color:var(--text-2)}
+.tv-tbl tbody tr{cursor:default;transition:background .14s}
+.tv-tbl tbody tr:hover{background:var(--bg-hover)}
+.tv-tbl tbody td.sym{font-family:var(--mono);font-weight:700;color:var(--text)}
+.tv-tbl tbody td.r{text-align:right;font-family:var(--mono)}
+.tv-tbl tbody td .g{color:var(--green-2)}
+.tv-tbl tbody td .r2{color:var(--red-2)}
+.tv-pill{display:inline-block;font-size:10px;font-weight:700;padding:2px 7px;border-radius:5px;
+  letter-spacing:.3px;border:1px solid var(--border);background:var(--bg-card-2);color:var(--text-2)}
+.tv-pill.bull{background:rgba(34,197,94,.14);color:var(--green-2);border-color:rgba(34,197,94,.32)}
+.tv-pill.bear{background:rgba(239,68,68,.14);color:var(--red-2);border-color:rgba(239,68,68,.32)}
+.tv-pill.warn{background:rgba(251,191,36,.14);color:var(--yellow);border-color:rgba(251,191,36,.3)}
+.tv-pill.cyan{background:var(--accent-soft);color:var(--accent);border-color:rgba(34,211,238,.28)}
+.tv-grade{display:inline-block;font-family:var(--mono);font-weight:700;font-size:11px;
+  padding:2px 8px;border-radius:5px;background:var(--bg-card-2);border:1px solid var(--border);color:var(--text)}
+.tv-grade.A,.tv-grade[data-g="A"],.tv-grade[data-g="A+"]{color:var(--green-2);border-color:rgba(34,197,94,.36)}
+.tv-grade[data-g="B"],.tv-grade[data-g="B+"]{color:var(--accent);border-color:rgba(34,211,238,.36)}
+.tv-grade[data-g="C"],.tv-grade[data-g="C+"]{color:var(--yellow);border-color:rgba(251,191,36,.36)}
+.tv-grade[data-g="D"]{color:var(--red-2);border-color:rgba(239,68,68,.36)}
+.tv-confl{display:flex;gap:4px;flex-wrap:wrap}
+.tv-confl span{font-size:9.5px;font-weight:700;padding:1.5px 5px;border-radius:3px;background:var(--bg-card-2);
+  color:var(--text-3);border:1px solid var(--border)}
+.tv-confl span.on{color:var(--accent);border-color:rgba(34,211,238,.36);background:var(--accent-soft)}
+.tv-actions a{color:var(--accent);font-size:11px;text-decoration:none;font-weight:600}
+.tv-actions a:hover{text-decoration:underline}
+.tv-progress{display:flex;gap:14px;align-items:center;padding:8px 12px;background:var(--bg-card-2);
+  border:1px solid var(--border);border-radius:8px;font-size:11.5px;color:var(--text-3);margin-bottom:10px}
+.tv-progress b{color:var(--text);font-family:var(--mono)}
+
+/* Hide Setup Insight & mobile cards on tabs that don't apply */
+.body[data-mode="trending"] .insight,
+.body[data-mode="ath_atl"] .insight,
+.body[data-mode="bias"] .insight{display:none}
+.body[data-mode="trending"]{grid-template-columns:210px 1fr}
+.body[data-mode="ath_atl"]{grid-template-columns:210px 1fr}
+.body[data-mode="bias"]{grid-template-columns:210px 1fr}
+.body[data-mode="trending"] #mcards,
+.body[data-mode="ath_atl"] #mcards,
+.body[data-mode="bias"] #mcards{display:none!important}
+
 @media (max-width:820px){
   .tab-ctrls{display:none}    /* mobile already has its own tab settings */
 }
@@ -812,17 +864,20 @@ svg{display:block}
           <span class="chip-clear">Clear all</span>
         </div>
 
-        <table class="tbl">
-          <colgroup>
-            <col class="c1"><col class="c2"><col class="c3"><col class="c4"><col class="c5"><col class="c6">
-            <col class="c7"><col class="c8"><col class="c9"><col class="c10"><col class="c11"><col class="c12">
-          </colgroup>
-          <thead><tr>
-            <th></th><th>#</th><th>SYMBOL</th><th>MARKET</th><th>DIRECTION</th><th>SETUP TYPE</th>
-            <th>ZONE (PRICE)</th><th>CONFIDENCE</th><th>HTF BIAS</th><th>RR (TP1/SL)</th><th>AGE</th><th>UPDATED</th>
-          </tr></thead>
-          <tbody id="tbody"></tbody>
-        </table>
+        <div class="tbl-host" id="tblHost">
+          <table class="tbl">
+            <colgroup>
+              <col class="c1"><col class="c2"><col class="c3"><col class="c4"><col class="c5"><col class="c6">
+              <col class="c7"><col class="c8"><col class="c9"><col class="c10"><col class="c11"><col class="c12">
+            </colgroup>
+            <thead><tr>
+              <th></th><th>#</th><th>SYMBOL</th><th>MARKET</th><th>DIRECTION</th><th>SETUP TYPE</th>
+              <th>ZONE (PRICE)</th><th>CONFIDENCE</th><th>HTF BIAS</th><th>RR (TP1/SL)</th><th>AGE</th><th>UPDATED</th>
+            </tr></thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+        <div id="tabView" class="tab-view" hidden></div>
         <div id="mcards" class="mcards"></div>
       </div>
 
@@ -1658,33 +1713,58 @@ svg{display:block}
       })
       .then(function(d){
         ST.prev = ST.results.length?{total:ST.results.length,avg:avgScore(ST.results)}:ST.prev;
-        var norm=normalizeResults(ST.mode,d);
-        var fresh = (norm.results||[]);
-        // Client-side signal filter (safety-net): if a specific module is
-        // selected, only keep alerts of that family and pairs that have one.
-        if(ST.mode==="main" && ST.signal!=="ALL"){
-          var sigSel = ST.signal;
-          fresh = fresh.map(function(r){
-            var keep = (r.alerts||[]).filter(function(a){return _signalMatches(a.setup, sigSel);});
-            if(!keep.length) return null;
-            var top = keep.reduce(function(b,a){return (a.strength||0)>(b.strength||0)?a:b;}, keep[0]);
-            return Object.assign({}, r, {alerts:keep, topAlert:top});
-          }).filter(Boolean);
+        var modeAtScan = ST.mode;
+        ST.scannedAt = Date.now();
+        if(modeAtScan === "main" || modeAtScan === "compressed"){
+          var norm = normalizeResults(modeAtScan, d);
+          var fresh = (norm.results||[]);
+          // Client-side signal filter (safety-net) for Main only.
+          if(modeAtScan==="main" && ST.signal!=="ALL"){
+            var sigSel = ST.signal;
+            fresh = fresh.map(function(r){
+              var keep = (r.alerts||[]).filter(function(a){return _signalMatches(a.setup, sigSel);});
+              if(!keep.length) return null;
+              var top = keep.reduce(function(b,a){return (a.strength||0)>(b.strength||0)?a:b;}, keep[0]);
+              return Object.assign({}, r, {alerts:keep, topAlert:top});
+            }).filter(Boolean);
+          }
+          // Merge with existing instead of wiping — results persist until user
+          // hits Clear. Same symbol from a newer scan replaces the older row.
+          var existing = ST.tabData[modeAtScan].results || [];
+          var byKey={};
+          fresh.forEach(function(r){ byKey[r.symbol+"|"+(r.topAlert&&r.topAlert.setup)] = r; });
+          var merged = existing.filter(function(r){
+            return !byKey[r.symbol+"|"+(r.topAlert&&r.topAlert.setup)];
+          }).concat(fresh);
+          ST.tabData[modeAtScan].results = merged;
+          ST.tabData[modeAtScan].scanned = norm.scanned || fresh.length;
+          ST.tabData[modeAtScan].raw = d;
+          ST.results = merged;                     // setup-style tabs share this
+          ST.scanned = ST.tabData[modeAtScan].scanned;
+          try{ evaluateAlerts(ST.results); }catch(_){}
+          ST.sel = ST.results.length ? 0 : -1;
+        } else if(modeAtScan === "trending"){
+          var arr = Array.isArray(d) ? d : (d && (d.results || d.items) || []);
+          ST.tabData.trending.items = arr;
+          ST.tabData.trending.scanned = arr.length;
+          ST.tabData.trending.raw = d;
+          ST.results = []; ST.sel = -1; ST.scanned = arr.length;
+        } else if(modeAtScan === "ath_atl"){
+          var ar = (d && (d.results || d.accumulatedResults)) || [];
+          ST.tabData.ath_atl.items = ar;
+          ST.tabData.ath_atl.raw = d || {};
+          ST.tabData.ath_atl.scanned = (d && (d.scanned||d.totalScanned)) || ar.length;
+          ST.tabData.ath_atl.found = (d && d.found) || ar.length;
+          ST.results = []; ST.sel = -1; ST.scanned = ST.tabData.ath_atl.scanned;
+        } else if(modeAtScan === "bias"){
+          var br = (d && (d.results || d.shifts)) || [];
+          ST.tabData.bias.items = br;
+          ST.tabData.bias.raw = d;
+          ST.tabData.bias.scanned = (d && d.scanned) || br.length;
+          ST.results = []; ST.sel = -1; ST.scanned = ST.tabData.bias.scanned;
         }
-        // Merge with existing instead of wiping — results persist until user
-        // hits Clear. Same symbol from a newer scan replaces the older row.
-        var byKey={};
-        fresh.forEach(function(r){ byKey[r.symbol+"|"+(r.topAlert&&r.topAlert.setup)] = r; });
-        var merged = ST.results.filter(function(r){
-          return !byKey[r.symbol+"|"+(r.topAlert&&r.topAlert.setup)];
-        }).concat(fresh);
-        ST.results = merged;
-        ST.scanned=norm.scanned||fresh.length;
-        ST.scannedAt=Date.now();
-        try{ evaluateAlerts(ST.results); }catch(_){}
-        ST.sel=ST.results.length?0:-1;
         renderAll();
-        if(!ST.results.length)E("mainSub").textContent="Live — no results for "+MODE_LABEL[ST.mode];
+        if(modeAtScan === "main" && !ST.results.length) E("mainSub").textContent="Live — no results for "+MODE_LABEL[modeAtScan];
       })
       .catch(function(e){
         useSample("Sample data — couldn't reach "+p.url+" ("+esc(e.message)+"). Live data loads when served at /preview while logged in.");
@@ -1720,7 +1800,204 @@ svg{display:block}
   function msg(html,err){E("tbody").innerHTML='<tr><td colspan="12"><div class="row-msg'+(err?" err":"")+'">'+html+'</div></td></tr>';}
 
   /* ── renderers ── */
-  function renderAll(){renderKPI();renderTable();renderMobileCards();renderInsight();renderMeta();}
+  /* Tab-scoped result storage (Wave 14).
+     - main/compressed share the analyze_pair result shape; they use the
+       existing setup table + Setup Insight panel + mobile cards.
+     - trending/ath_atl/bias each have their own response shape; raw is
+       kept here and a tab-specific renderer reads it directly. */
+  ST.tabData = {
+    main:       {results:[], scanned:0, raw:null},
+    compressed: {results:[], scanned:0, raw:null},
+    trending:   {items:[],   scanned:0, raw:null},
+    ath_atl:    {items:[],   scanned:0, raw:null, found:0, totalScanned:0},
+    bias:       {items:[],   scanned:0, raw:null}
+  };
+
+  function renderAll(){
+    var bodyEl=document.querySelector('.body');
+    if(bodyEl) bodyEl.setAttribute('data-mode', ST.mode);
+    var m=ST.mode;
+    if(m==="main" || m==="compressed"){
+      E("tblHost").hidden=false;
+      E("tabView").hidden=true;
+      renderKPI(); renderTable(); renderMobileCards(); renderInsight();
+    } else {
+      E("tblHost").hidden=true;
+      E("tabView").hidden=false;
+      if(m==="trending") { renderTrendingKPI(); renderTrendingTable(); }
+      else if(m==="ath_atl") { renderAthKPI(); renderAthTable(); }
+      else if(m==="bias") { renderBiasKPI(); renderBiasCards(); }
+    }
+    renderMeta();
+  }
+
+  /* ── Trending tab renderer ── */
+  function renderTrendingKPI(){
+    var items = (ST.tabData.trending.items)||[];
+    var bull = items.filter(function(x){return (+x.changePct||0)>=0;}).length;
+    var bear = items.filter(function(x){return (+x.changePct||0)<0;}).length;
+    var avg  = items.length ? items.reduce(function(a,x){return a+(+x.changePct||0);},0)/items.length : 0;
+    var hiV  = items.filter(function(x){return (+x.relVol||0)>=2;}).length;
+    E("kpiRow").innerHTML=
+      kpi("MOVERS FOUND", items.length, "")+
+      kpi("BULLISH MOVERS", bull, items.length?Math.round(bull/items.length*100)+"%":"", "g")+
+      kpi("BEARISH MOVERS", bear, items.length?Math.round(bear/items.length*100)+"%":"", "r")+
+      kpi("AVG CHANGE", (avg>=0?"+":"")+(Math.round(avg*100)/100)+"%", "")+
+      kpi("HIGH VOLUME", hiV, items.length?Math.round(hiV/items.length*100)+"%":"")+
+      kpi("PAIRS SCANNED", ST.tabData.trending.scanned||items.length, "");
+  }
+  function renderTrendingTable(){
+    var items = (ST.tabData.trending.items)||[];
+    var host = E("tabView");
+    if(!items.length){ host.innerHTML='<div class="tv-empty">No trending movers yet. Adjust the controls above and tap Scan.</div>'; return; }
+    var rows = items.map(function(it){
+      var ch = +it.changePct||0;
+      var dir = ch>=0 ? "bull" : "bear";
+      var price = it.price!=null?fmt(it.price):"—";
+      var rv = it.relVol!=null?(+it.relVol).toFixed(2):"—";
+      var qv = it.quoteVolume!=null?(+it.quoteVolume>=1e9?(+it.quoteVolume/1e9).toFixed(2)+"B":+it.quoteVolume>=1e6?(+it.quoteVolume/1e6).toFixed(2)+"M":(+it.quoteVolume/1e3).toFixed(1)+"K"):"—";
+      var modeLbl = (it.mode||"trending").replace(/_/g," ");
+      var sym = String(it.symbol||"");
+      var tvSuf = (ST.market==="perpetual" && ST.settings.tvPerpSuffix!==false) ? ".P" : "";
+      var tvUrl = "https://www.tradingview.com/chart/?symbol="+(ST.settings.tvExchange||"BINANCE")+":"+encodeURIComponent(sym)+tvSuf;
+      return '<tr>'+
+        '<td class="sym">'+esc(sym)+'</td>'+
+        '<td><span class="tv-pill cyan">'+esc(modeLbl)+'</span></td>'+
+        '<td class="r '+(ch>=0?"g":"r2")+'">'+(ch>=0?"+":"")+ch.toFixed(2)+'%</td>'+
+        '<td class="r">'+qv+'</td>'+
+        '<td class="r">'+rv+'</td>'+
+        '<td><span class="tv-pill '+dir+'">'+(dir==="bull"?"Bullish":"Bearish")+'</span></td>'+
+        '<td class="r">'+price+'</td>'+
+        '<td class="tv-actions"><a href="'+tvUrl+'" target="_blank" rel="noopener">Chart →</a></td>'+
+      '</tr>';
+    }).join("");
+    host.innerHTML=
+      '<table class="tv-tbl"><thead><tr>'+
+        '<th>SYMBOL</th><th>MODE</th><th class="r">CHANGE %</th>'+
+        '<th class="r">QUOTE VOL</th><th class="r">REL VOL</th>'+
+        '<th>TREND</th><th class="r">PRICE</th><th>CHART</th>'+
+      '</tr></thead><tbody>'+rows+'</tbody></table>';
+  }
+
+  /* ── ATH / ATL tab renderer ── */
+  function renderAthKPI(){
+    var items = (ST.tabData.ath_atl.items)||[];
+    var raw   = ST.tabData.ath_atl.raw||{};
+    var ath = items.filter(function(x){return (x.tags||[]).some(function(t){return /ATH/.test(t);});}).length;
+    var atl = items.filter(function(x){return (x.tags||[]).some(function(t){return /ATL/.test(t);});}).length;
+    var near= items.filter(function(x){var t=(x.tags||[])[0]||"";return /NEAR/i.test(t);}).length;
+    E("kpiRow").innerHTML=
+      kpi("LEVELS FOUND", items.length, "")+
+      kpi("ATH BREAKS", ath, ath?"breaking/made":"", "g")+
+      kpi("ATL BREAKS", atl, atl?"breaking/made":"", "r")+
+      kpi("NEAR LEVELS", near, "")+
+      kpi("CURRENT BATCH", raw.batch || raw.cursor || "—", "")+
+      kpi("TOTAL SCANNED", raw.totalScanned || raw.scanned || items.length, "");
+  }
+  function renderAthTable(){
+    var items = (ST.tabData.ath_atl.items)||[];
+    var raw   = ST.tabData.ath_atl.raw||{};
+    var host = E("tabView");
+    var bar = "";
+    if(raw.totalMarketPairs || raw.totalScanned){
+      bar = '<div class="tv-progress">'+
+        '<span>Total market: <b>'+(raw.totalMarketPairs||"—")+'</b></span>'+
+        '<span>Scanned: <b>'+(raw.totalScanned||raw.scanned||0)+'</b></span>'+
+        '<span>Current batch: <b>'+(raw.batch||raw.cursor||"—")+'</b></span>'+
+        '<span>Found: <b>'+(raw.found||items.length)+'</b></span>'+
+      '</div>';
+    }
+    if(!items.length){ host.innerHTML=bar+'<div class="tv-empty">No ATH/ATL pairs match the current filter. Try a different Status or wider Window.</div>'; return; }
+    var rows = items.map(function(it){
+      var sym = String(it.symbol||it.pair||"");
+      var tag = (it.tags||[])[0]||"";
+      var dir = /ATH/.test(tag)?"bull":"bear";
+      var price = (it.price!=null?fmt(it.price):(it.live_price!=null?fmt(it.live_price):"—"));
+      var pAth = it.previous_ath!=null?fmt(it.previous_ath):(it.previousAth!=null?fmt(it.previousAth):"—");
+      var pAtl = it.previous_atl!=null?fmt(it.previous_atl):(it.previousAtl!=null?fmt(it.previousAtl):"—");
+      var wHi  = it.window_high!=null?fmt(it.window_high):(it.windowHigh!=null?fmt(it.windowHigh):"—");
+      var wLo  = it.window_low!=null?fmt(it.window_low):(it.windowLow!=null?fmt(it.windowLow):"—");
+      var br   = it.breakPct!=null?(+it.breakPct).toFixed(2)+"%":"—";
+      var di   = it.distPct!=null?(+it.distPct).toFixed(2)+"%":"—";
+      return '<tr>'+
+        '<td class="sym">'+esc(sym)+'</td>'+
+        '<td><span class="tv-pill '+dir+'">'+esc(tag||"—")+'</span></td>'+
+        '<td class="r">'+price+'</td>'+
+        '<td class="r">'+pAth+'</td>'+
+        '<td class="r">'+pAtl+'</td>'+
+        '<td class="r">'+wHi+' / '+wLo+'</td>'+
+        '<td class="r">'+br+' / '+di+'</td>'+
+        '<td>'+esc(((ST.modeOptions.ath_atl||{}).windowHours||"")+"h")+'</td>'+
+        '<td>'+esc(ST.market)+'</td>'+
+      '</tr>';
+    }).join("");
+    host.innerHTML = bar +
+      '<table class="tv-tbl"><thead><tr>'+
+        '<th>SYMBOL</th><th>STATUS</th><th class="r">PRICE</th>'+
+        '<th class="r">PREV ATH</th><th class="r">PREV ATL</th>'+
+        '<th class="r">WIN HIGH/LOW</th><th class="r">BREAK / DIST %</th>'+
+        '<th>WINDOW</th><th>MARKET</th>'+
+      '</tr></thead><tbody>'+rows+'</tbody></table>';
+  }
+
+  /* ── Bias Shift tab renderer ── */
+  function renderBiasKPI(){
+    var items = (ST.tabData.bias.items)||[];
+    function isBull(x){var s=String((x.bias||x.direction||x.event||"")).toLowerCase();return s.indexOf("bull")>=0;}
+    function isBear(x){var s=String((x.bias||x.direction||x.event||"")).toLowerCase();return s.indexOf("bear")>=0;}
+    var bull = items.filter(isBull).length;
+    var bear = items.filter(isBear).length;
+    var conf = items.filter(function(x){return /confirm/i.test(String(x.detectionMode||x.status||""));}).length;
+    var early= items.filter(function(x){return /early/i.test(String(x.detectionMode||x.status||""));}).length;
+    var grades = items.map(function(x){return (x.grade||x.minGrade||"").toString().replace(/[^A-D+]/g,"");}).filter(Boolean);
+    var avgG = grades.length ? grades[Math.floor(grades.length/2)] : "—";
+    E("kpiRow").innerHTML=
+      kpi("BIAS SETUPS", items.length, "")+
+      kpi("BULLISH BIAS", bull, items.length?Math.round(bull/items.length*100)+"%":"", "g")+
+      kpi("BEARISH BIAS", bear, items.length?Math.round(bear/items.length*100)+"%":"", "r")+
+      kpi("CONFIRMED", conf, "")+
+      kpi("EARLY", early, "")+
+      kpi("MEDIAN GRADE", avgG, "");
+  }
+  function renderBiasCards(){
+    var items = (ST.tabData.bias.items)||[];
+    var host = E("tabView");
+    if(!items.length){ host.innerHTML='<div class="tv-empty">No bias shifts found yet. Try Early strength or a lower min grade.</div>'; return; }
+    var rows = items.map(function(it){
+      var sym  = String(it.symbol||it.pair||"");
+      var tf   = esc(it.tf || it.timeframe || (ST.modeOptions.bias||{}).tf || "—");
+      var bias = String(it.bias||it.direction||"").toLowerCase();
+      var dir  = bias.indexOf("bull")>=0?"bull":bias.indexOf("bear")>=0?"bear":"";
+      var status = it.detectionMode || it.status || "—";
+      var grade = (it.grade||"—").toString();
+      var score = it.score!=null?Math.round(+it.score):(it.bias_score!=null?Math.round(+it.bias_score):"—");
+      var prior = it.priorMove || it.prior_move || (it.priorMovePct!=null?(+it.priorMovePct).toFixed(2)+"%":"—");
+      var invalid = it.invalidation || it.invalidationLevel || (it.invalidPrice!=null?fmt(it.invalidPrice):"—");
+      var confl = [
+        {key:"OB",  on: it.obConfluence  || (it.confluence&&it.confluence.ob)},
+        {key:"FVG", on: it.fvgConfluence || (it.confluence&&it.confluence.fvg)},
+        {key:"FIB", on: it.fibConfluence || (it.confluence&&it.confluence.fib)},
+      ];
+      var conHtml='<div class="tv-confl">'+confl.map(function(c){return '<span'+(c.on?' class="on"':'')+'>'+c.key+'</span>';}).join("")+'</div>';
+      return '<tr>'+
+        '<td class="sym">'+esc(sym)+'</td>'+
+        '<td>'+tf+'</td>'+
+        '<td><span class="tv-pill '+(dir||"warn")+'">'+(dir==="bull"?"Bullish":dir==="bear"?"Bearish":esc(bias||"—"))+'</span></td>'+
+        '<td>'+esc(status)+'</td>'+
+        '<td><span class="tv-grade" data-g="'+esc(grade)+'">'+esc(grade)+'</span></td>'+
+        '<td class="r">'+esc(score)+'</td>'+
+        '<td class="r">'+esc(prior)+'</td>'+
+        '<td class="r">'+esc(invalid)+'</td>'+
+        '<td>'+conHtml+'</td>'+
+      '</tr>';
+    }).join("");
+    host.innerHTML=
+      '<table class="tv-tbl"><thead><tr>'+
+        '<th>SYMBOL</th><th>TF</th><th>BIAS</th><th>STATUS</th>'+
+        '<th>GRADE</th><th class="r">SCORE</th><th class="r">PRIOR MOVE</th>'+
+        '<th class="r">INVALIDATION</th><th>CONFLUENCE</th>'+
+      '</tr></thead><tbody>'+rows+'</tbody></table>';
+  }
 
   function renderMeta(){
     var tEl=E("mainTitle");
@@ -2198,6 +2475,12 @@ svg{display:block}
   E("btnFilters").addEventListener("click",scan);
   if(E("btnScan"))  E("btnScan").addEventListener("click",scan);
   if(E("btnClear")) E("btnClear").addEventListener("click",function(){
+    var m=ST.mode;
+    if(ST.tabData[m]){
+      if("results" in ST.tabData[m]) ST.tabData[m].results=[];
+      if("items"   in ST.tabData[m]) ST.tabData[m].items=[];
+      ST.tabData[m].scanned=0; ST.tabData[m].raw=null;
+    }
     ST.results=[]; ST.sel=-1; ST.page=1; ST.scannedAt=0;
     renderAll();
   });
