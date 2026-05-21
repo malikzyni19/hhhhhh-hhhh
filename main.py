@@ -4896,12 +4896,71 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
         mo = (50 + (current_rsi - 50) * 1.5 + roc * 4) if is_bull else (50 + (50 - current_rsi) * 1.5 - roc * 4)
         mo = int(max(0, min(100, round(mo))))
 
+        # ── Volume sub-score (Task 7): real relative volume — never default to 50 ──
+        vol_available = True
+        relv = None
         try:
-            base = sum(v[-21:-1]) / 20.0 if len(v) > 21 else (sum(v) / max(1, len(v)))
-            relv = (v[-1] / base) if base else 1.0
+            if not v or len(v) < 2 or v[-1] is None:
+                vol_available = False
+            else:
+                base = sum(v[-21:-1]) / 20.0 if len(v) > 21 else (sum(v) / max(1, len(v)))
+                relv = (v[-1] / base) if base else None
+                if relv is None:
+                    vol_available = False
         except Exception:
-            relv = 1.0
-        vol = int(max(0, min(100, round(50 + (relv - 1.0) * 40))))
+            vol_available = False
+
+        # ── strict {score, status, reason} confidence breakdown (Task 7) ──
+        def _cb_status(s):
+            if s is None:
+                return "unavailable"
+            if s >= 75:
+                return "pass"
+            if s >= 55:
+                return "medium"
+            if s >= 35:
+                return "weak"
+            return "fail"
+
+        def _cell(s, reason):
+            return {"score": (int(s) if s is not None else None), "status": _cb_status(s), "reason": reason}
+
+        def _dirw(x):
+            return "up" if x > 0 else ("down" if x < 0 else "flat")
+
+        _setdir = "bullish" if is_bull else "bearish"
+        htf_reason = "HTF trend {}, internal trend {} vs {} setup; RSI {}".format(
+            _dirw(trend), _dirw(itrend), _setdir, int(round(current_rsi)))
+
+        if meta.get("obQuality") is not None:
+            zq_reason = "OB quality {}{}".format(
+                int(round(float(meta["obQuality"]))),
+                (" (" + str(meta.get("obQualityLabel")) + ")") if meta.get("obQualityLabel") else "")
+        elif meta.get("legScore") is not None:
+            zq_reason = "Fib leg score {}".format(round(float(meta["legScore"]), 2))
+        else:
+            zq_reason = "Derived from signal strength (no OB/Fib quality available)"
+
+        sc_reason = "{} confluent signal(s): {}".format(len(sig), ", ".join(sorted(sig)) if sig else "single")
+        _sc_extra = []
+        if meta.get("fvgConfluence") or meta.get("fvgOverlap"):
+            _sc_extra.append("FVG confluence")
+        if meta.get("highProb"):
+            _sc_extra.append("high-prob filter")
+        if meta.get("absorptionPass"):
+            _sc_extra.append("absorption")
+        if meta.get("fvgUntouched"):
+            _sc_extra.append("untouched FVG")
+        if _sc_extra:
+            sc_reason += " + " + ", ".join(_sc_extra)
+
+        mo_reason = "RSI {}, 5-bar ROC {:.2f}% ({} context)".format(int(round(current_rsi)), roc, _setdir)
+
+        if vol_available and relv is not None:
+            vol = int(max(0, min(100, round(50 + (relv - 1.0) * 40))))
+            vol_cell = _cell(vol, "Relative volume {:.2f}x vs 20-bar average".format(relv))
+        else:
+            vol_cell = {"score": None, "status": "unavailable", "reason": "Volume data not available"}
 
         return {
             "rr": rr,
@@ -4913,11 +4972,11 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
             "zoneSizeUsd": zone_size,
             "zoneSizeText": _fmt_usd(zone_size) if zone_size else None,
             "confBreakdown": {
-                "htfAlignment": htf,
-                "zoneQuality": zq,
-                "structureConfluence": sc,
-                "momentum": mo,
-                "volume": vol,
+                "htfAlignment":        _cell(htf, htf_reason),
+                "zoneQuality":         _cell(zq, zq_reason),
+                "structureConfluence": _cell(sc, sc_reason),
+                "momentum":            _cell(mo, mo_reason),
+                "volume":              vol_cell,
             },
         }
 

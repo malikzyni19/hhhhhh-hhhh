@@ -385,6 +385,19 @@ svg{display:block}
 .sev.info{color:var(--text-3)}
 .sev.warn{color:var(--yellow)}
 .sev.fail{color:var(--red-2)}
+/* strict confidence breakdown rows (Task 7) */
+.cb-row{margin:9px 0}
+.cb-top{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text-2)}
+.cb-l{flex:1}
+.cb-v{font-family:var(--mono);font-weight:700;color:var(--text)}
+.cb-v.na{color:var(--text-3);font-weight:600;font-size:11px}
+.cb-tr{height:5px;border-radius:3px;background:var(--bg-card-2);margin-top:5px;overflow:hidden}
+.cb-fl{height:100%;border-radius:3px;background:var(--accent);transition:width .25s}
+.cb-fl.sev-pass{background:var(--green-2)}
+.cb-fl.sev-info{background:var(--accent)}
+.cb-fl.sev-warn{background:var(--yellow)}
+.cb-fl.sev-fail{background:var(--red-2)}
+.cb-reason{font-size:10.5px;color:var(--text-3);margin-top:3px;line-height:1.4}
 /* notes */
 .notes{font-size:12px;color:var(--text-2);line-height:1.45}
 /* deep-dive (Wave 5) */
@@ -2900,9 +2913,6 @@ svg{display:block}
     var ztype=setupLabel(a)+(d!=="neutral"?(" ("+(d==="bull"?"Bullish":"Bearish")+")"):"");
     var mid=z&&!z.single?(z.hi+z.lo)/2:(z?z.hi:null);
     var touches=m.obTouches!=null?m.obTouches : m.fvgTouches!=null?m.fvgTouches : null;
-    var qual=m.obQuality!=null?+m.obQuality : null;
-    var strengthPct=a.strength!=null?Math.round((+a.strength)/8*100):0;
-    var trendAlign=(h===d&&d!=="neutral")?100:(h==="neutral"?50:20);
     var cb=r.confBreakdown||{};
     var zoneStr=z?(z.single?fmt(z.hi):fmt(z.hi)+" – "+fmt(z.lo)):"—";
 
@@ -2943,13 +2953,7 @@ svg{display:block}
           '<circle cx="48" cy="48" r="40" stroke="var(--accent)" stroke-width="8" fill="none" stroke-linecap="round" '+
             'stroke-dasharray="251.2" stroke-dashoffset="'+(251.2*(1-sc/100)).toFixed(1)+'"/></svg>'+
           '<div class="c"><div class="pct">'+Math.round(sc)+'%</div><div class="lv">'+esc(r.confidence||"")+'</div></div></div>'+
-        '<div class="bars">'+
-          bar("HTF Alignment",cb.htfAlignment!=null?cb.htfAlignment:trendAlign)+
-          bar("Zone Quality",cb.zoneQuality!=null?cb.zoneQuality:(qual!=null?qual:strengthPct))+
-          bar("Structure Confluence",cb.structureConfluence!=null?cb.structureConfluence:Math.min(100,(r.alerts||[]).length*33))+
-          bar("Momentum",cb.momentum!=null?cb.momentum:(r.rsi!=null?Math.round(r.rsi):50))+
-          bar("Volume",cb.volume!=null?cb.volume:50)+
-        '</div></div></div>';
+        '<div class="bars cb-bars">'+cbBars(cb)+'</div></div></div>';
 
     // Page 5: Confluence + Notes + Actions
     var tvSuf=(mk==="Perp")?".P":"";
@@ -3012,6 +3016,41 @@ svg{display:block}
   function bar(lbl,v){v=Math.max(0,Math.min(100,Math.round(v||0)));
     return '<div class="bar-row"><div class="bt"><span>'+lbl+'</span><b>'+v+'%</b></div>'+
       '<div class="bar-tr"><div class="bar-fl" style="width:'+v+'%"></div></div></div>';}
+
+  /* ── strict confidence breakdown (Task 7) — backend-only, no fake fallbacks ── */
+  function _statusFromScore(s){ s=+s; if(isNaN(s))return "unavailable";
+    return s>=75?"pass":s>=55?"medium":s>=35?"weak":"fail"; }
+  // Accepts the backend {score,status,reason} object, a legacy flat number, or null.
+  function _cbCell(v){
+    if(v==null) return {score:null,status:"unavailable",reason:"Required data not available"};
+    if(typeof v==="number") return {score:v,status:_statusFromScore(v),reason:""};
+    var sc=(v.score!=null&&!isNaN(+v.score))?+v.score:null;
+    var st=v.status||(sc!=null?_statusFromScore(sc):"unavailable");
+    return {score:sc,status:st,reason:v.reason||""};
+  }
+  function _cbStatusSev(st){ st=String(st||"").toLowerCase();
+    return st==="pass"?"pass":st==="medium"?"info":st==="weak"?"warn":st==="fail"?"fail":"info"; }
+  function cbRow(label, cell){
+    var sev=_cbStatusSev(cell.status);
+    var has=cell.score!=null;
+    var val=has?Math.round(cell.score)+"%":"Unavailable";
+    var w=has?Math.max(0,Math.min(100,Math.round(cell.score))):0;
+    var tip=cell.reason?(' title="'+esc(cell.reason)+'"'):'';
+    return '<div class="cb-row"'+tip+'>'+
+      '<div class="cb-top">'+severityIcon(sev)+'<span class="cb-l">'+esc(label)+'</span>'+
+        '<b class="cb-v'+(has?"":" na")+'">'+val+'</b></div>'+
+      '<div class="cb-tr"><div class="cb-fl sev-'+sev+'" style="width:'+w+'%"></div></div>'+
+      (cell.reason?('<div class="cb-reason">'+esc(cell.reason)+'</div>'):'')+
+    '</div>';
+  }
+  function cbBars(cbRaw){
+    var cb=cbRaw||{};
+    return cbRow("HTF Alignment",        _cbCell(cb.htfAlignment))+
+           cbRow("Zone Quality",         _cbCell(cb.zoneQuality))+
+           cbRow("Structure Confluence", _cbCell(cb.structureConfluence))+
+           cbRow("Momentum",             _cbCell(cb.momentum))+
+           cbRow("Volume",               _cbCell(cb.volume));
+  }
 
   /* ── severity-aware insight helpers (Task 6) ──
      severity → icon/colour:
@@ -3091,10 +3130,6 @@ svg{display:block}
     var mid = z&&!z.single ? (z.hi+z.lo)/2 : (z?z.hi:null);
     var touches = m.obTouches!=null?m.obTouches : m.fvgTouches!=null?m.fvgTouches : null;
     var sc=+r.score||0;
-    var qual = m.obQuality!=null?+m.obQuality : null;
-    var strengthPct = a.strength!=null?Math.round((+a.strength)/8*100):0;
-    var rsiV = r.rsi!=null?Math.round(r.rsi):null;
-    var trendAlign = (htfOf(r)===d&&d!=="neutral")?100:(htfOf(r)==="neutral"?50:20);
     var cb = r.confBreakdown||{};
     box.innerHTML=head+
       '<div class="ins-title">'+(ST.stars[r.symbol]?IC.starOn:IC.starOff)+
@@ -3118,13 +3153,7 @@ svg{display:block}
           '<circle cx="48" cy="48" r="40" stroke="var(--accent)" stroke-width="8" fill="none" stroke-linecap="round" '+
             'stroke-dasharray="251.2" stroke-dashoffset="'+(251.2*(1-sc/100)).toFixed(1)+'"/></svg>'+
           '<div class="c"><div class="pct">'+Math.round(sc)+'%</div><div class="lv">'+esc(r.confidence||"")+'</div></div></div>'+
-        '<div class="bars">'+
-          bar("HTF Alignment",cb.htfAlignment!=null?cb.htfAlignment:trendAlign)+
-          bar("Zone Quality",cb.zoneQuality!=null?cb.zoneQuality:(qual!=null?qual:strengthPct))+
-          bar("Structure Confluence",cb.structureConfluence!=null?cb.structureConfluence:Math.min(100,(r.alerts||[]).length*33))+
-          bar("Momentum",cb.momentum!=null?cb.momentum:(rsiV!=null?rsiV:50))+
-          bar("Volume",cb.volume!=null?cb.volume:50)+
-        '</div></div></div></div>'+
+        '<div class="bars cb-bars">'+cbBars(cb)+'</div></div></div></div>'+
       '<div class="sec"><div class="sec-h">CONFLUENCE</div><div class="sec-b">'+confluenceList(r,a)+'</div></div>'+
       '<div class="sec"><div class="sec-h">NOTES</div><div class="sec-b"><div class="notes">'+
         esc(a.detail||"No additional notes for this setup.")+'</div></div></div>'+
