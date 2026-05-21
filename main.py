@@ -7418,10 +7418,29 @@ _MOBILE_UA_KEYS = (
 
 
 def _is_mobile_ua(ua):
-    """Heuristic mobile detection. Modern iPadOS reports as desktop Mac — that's
-    intentional (an iPad has the screen for the desktop view)."""
+    """Heuristic mobile detection by User-Agent string. Modern iPadOS reports
+    as desktop Mac — that's intentional (an iPad has the screen for the
+    desktop view)."""
     ua = (ua or "").lower()
     return any(k in ua for k in _MOBILE_UA_KEYS)
+
+
+def _detect_mobile(req):
+    """Decide if a request should get the mobile UI.
+
+    Priority:
+      1. Sec-CH-UA-Mobile Client Hint (the reliable signal). Chrome &
+         Edge — including Android Chrome in "Desktop site" mode —
+         flip this from "?1" (mobile) to "?0" (desktop). Safari /
+         Firefox don't send it, so we fall back.
+      2. User-Agent sniff.
+    """
+    ch = (req.headers.get("Sec-CH-UA-Mobile") or "").strip().lower()
+    if ch == "?0":
+        return False     # explicit desktop request
+    if ch == "?1":
+        return True      # explicit mobile request
+    return _is_mobile_ua(req.headers.get("User-Agent"))
 
 
 _VIEW_COOKIE = "zyni-view"
@@ -7449,7 +7468,7 @@ def index():
         if cookie_v in ("mobile", "desktop"):
             mobile = cookie_v == "mobile"
         else:
-            mobile = _is_mobile_ua(request.headers.get("User-Agent"))
+            mobile = _detect_mobile(request)
 
     tmpl = "index.html" if mobile else "preview.html"
     resp = make_response(render_template(tmpl, username=display_name))
