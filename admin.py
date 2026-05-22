@@ -1458,6 +1458,23 @@ def debug_ob_tv_parity():
         trace_from = (request.args.get("trace_from") or "").strip() or None
         trace_to   = (request.args.get("trace_to")   or "").strip() or None
 
+        # ── Debug-only OB search-anchor variant ──
+        _ANCHOR_MODES = ["baseline", "latest_opposite_pivot"]
+        ob_anchor_variant = (request.args.get("ob_anchor_variant") or "").strip().lower() or None
+        if ob_anchor_variant is None:
+            _anchors_to_run = None          # not requested → endpoint unchanged
+        elif ob_anchor_variant == "all":
+            _anchors_to_run = list(_ANCHOR_MODES)
+        elif ob_anchor_variant in _ANCHOR_MODES:
+            _anchors_to_run = (["baseline"] if ob_anchor_variant == "baseline"
+                               else ["baseline", "latest_opposite_pivot"])
+        else:
+            return jsonify({
+                "ok": False,
+                "error": f"invalid ob_anchor_variant '{ob_anchor_variant}'",
+                "allowed": ["baseline", "latest_opposite_pivot", "all"],
+            }), 200
+
         try:
             kline_limit = min(max(int(request.args.get("kline_limit") or 300), 50), 10000)
         except (TypeError, ValueError):
@@ -1480,7 +1497,8 @@ def debug_ob_tv_parity():
                 return str(ms)
 
         # ── Core analysis helper — runs on any candle slice ───────────────────
-        def _analyse(cnd, mit_closed=False, eff_overlap=False, bear_eff_bottom=False):
+        def _analyse(cnd, mit_closed=False, eff_overlap=False, bear_eff_bottom=False,
+                     anchor_mode="baseline"):
             _o = [x["open"]   for x in cnd]
             _h = [x["high"]   for x in cnd]
             _l = [x["low"]    for x in cnd]
@@ -1491,7 +1509,8 @@ def debug_ob_tv_parity():
             _normal_result = detect_obs(_o, _h, _l, _c, _v, I_LEN, S_LEN, max_ob=5,
                                         mitigation_closed_only=mit_closed,
                                         overlap_effective_zone=eff_overlap,
-                                        bearish_effective_bottom_overlap=bear_eff_bottom)
+                                        bearish_effective_bottom_overlap=bear_eff_bottom,
+                                        anchor_mode=anchor_mode)
             if isinstance(_normal_result, tuple):
                 _normal, _bos_trace = _normal_result
             else:
@@ -1499,7 +1518,8 @@ def debug_ob_tv_parity():
             _all, _ = detect_obs(_o, _h, _l, _c, _v, I_LEN, S_LEN, max_ob=None,
                                  mitigation_closed_only=mit_closed,
                                  overlap_effective_zone=eff_overlap,
-                                 bearish_effective_bottom_overlap=bear_eff_bottom)
+                                 bearish_effective_bottom_overlap=bear_eff_bottom,
+                                 anchor_mode=anchor_mode)
 
             _bull_src = _copy.deepcopy([ob for ob in _all if ob["type"] == "bullish"])
             _bear_src = _copy.deepcopy([ob for ob in _all if ob["type"] == "bearish"])
@@ -1785,11 +1805,21 @@ def debug_ob_tv_parity():
             _tv       = [x["volume"] for x in main_candles]
             _tn       = len(_tc_close)
 
-            # BOS detection / search window / extreme selection are
-            # variant-independent → trace once with baseline flags.
+            # BOS detection is overlap/mitigation-variant-independent →
+            # trace once with baseline anchor + baseline flags.
             _trace_coll = {"events": [], "mitigations": []}
             detect_obs(_to, _th, _tl, _tc_close, _tv, I_LEN, S_LEN, max_ob=None,
-                       trace=_trace_coll)
+                       trace=_trace_coll, anchor_mode="baseline")
+
+            # When an anchor variant is requested, also trace the
+            # latest_opposite_pivot anchor for side-by-side comparison.
+            _lop_by_key = {}
+            if _anchors_to_run is not None:
+                _trace_coll_lop = {"events": [], "mitigations": []}
+                detect_obs(_to, _th, _tl, _tc_close, _tv, I_LEN, S_LEN, max_ob=None,
+                           trace=_trace_coll_lop, anchor_mode="latest_opposite_pivot")
+                _lop_by_key = {(e["side"], e["bos_bar"]): e
+                               for e in _trace_coll_lop["events"]}
 
             def _parse_trace_dt(s):
                 if not s:
@@ -1816,6 +1846,34 @@ def debug_ob_tv_parity():
 
             def _wt(bar):
                 return _ts(times[bar]) if (bar is not None and 0 <= bar < _tn) else None
+
+            def _anchor_search_block(ev):
+                # Compact per-event search summary, built from one trace event
+                # (baseline or latest_opposite_pivot run).
+                if ev is None:
+                    return None
+                _b = ev["side"] == "bullish"
+                _sel = ev.get("min_idx" if _b else "max_idx")
+                _se2 = ev["search_end"]
+                if "ob_top" in ev:
+                    _disp = ({"bottom": ev["ob_bottom"], "top": ev["ob_top"]} if _b
+                             else {"bottom": ev["ob_avg"], "top": ev["ob_top"]})
+                else:
+                    _disp = None
+                return {
+                    "search_start_bar":      ev["search_start"],
+                    "search_start_time_utc": _wt(ev["search_start"]),
+                    "search_end_bar":        _se2,
+                    "search_end_time_utc":   _wt(min(_se2 - 1, _tn - 1)),
+                    "selected_bar":          _sel,
+                    "selected_time_utc":     _wt(_sel),
+                    "selected_low_or_high":  (ev.get("ob_bottom") if _b
+                                              else ev.get("ob_top")),
+                    "sourceBar":             ev.get("ob_source"),
+                    "source_time_utc":       _wt(ev.get("ob_source")),
+                    "volume":                ev.get("volume"),
+                    "displayed_zone":        _disp,
+                }
 
             _MAX_WIN = 1500  # cap per-event window candle list
 
@@ -1959,13 +2017,41 @@ def debug_ob_tv_parity():
                         "; OB source candle = extreme_bar - 1 (Pine +1 offset)."),
                 }
 
-                detail.append({
+                _dentry = {
                     "bos_event":               _bos_event,
                     "search_window_candles":   _win_cands,
                     "search_window_truncated": _truncated,
                     "selected_ob":             _selected_ob,
                     "post_creation_decisions": _post,
-                })
+                }
+
+                # Side-by-side anchor comparison (only when ob_anchor_variant
+                # is passed) — baseline vs latest_opposite_pivot search window.
+                if _anchors_to_run is not None:
+                    _base_blk = _anchor_search_block(_ev)
+                    _lop_ev   = _lop_by_key.get((_ev["side"], _ev["bos_bar"]))
+                    _lop_blk  = _anchor_search_block(_lop_ev)
+                    if _lop_blk is not None:
+                        _ap = _lop_ev.get("anchor_pivot_bar")
+                        _lop_blk["opposite_pivot_bar"]      = _ap
+                        _lop_blk["opposite_pivot_time_utc"] = _wt(_ap)
+                        _lop_blk["opposite_pivot_price"]    = (
+                            (_tl[_ap] if _is_bull else _th[_ap])
+                            if (_ap is not None and 0 <= _ap < _tn) else None)
+                        _lop_blk["opposite_pivot_confirmed_at_bar"] = \
+                            _lop_ev.get("anchor_confirmed_at_bar")
+                        _lop_blk["anchor_fallback_to_baseline"] = bool(
+                            _lop_ev.get("anchor_fallback"))
+                        _lop_blk["did_result_change"] = bool(
+                            _base_blk is not None and
+                            _base_blk["selected_bar"] != _lop_blk["selected_bar"])
+                        _lop_blk["expected_match_hint"] = (
+                            "For LINKUSDT 15m old trace, latest_opposite_pivot "
+                            "should ideally select 2026-05-04 23:30 UTC")
+                    _dentry["baseline_search"] = _base_blk
+                    _dentry["latest_opposite_pivot_search"] = _lop_blk
+
+                detail.append(_dentry)
 
             ob_trace_detail = {
                 "trace_run_variant": "baseline",
@@ -2033,6 +2119,39 @@ def debug_ob_tv_parity():
                     "never covered it."),
             }
 
+        # ── Debug-only anchor variant diagnostics (only when ob_anchor_variant
+        #    is passed). Each anchor variant runs with baseline overlap /
+        #    mitigation flags so the search-anchor effect is isolated. ─────────
+        anchor_variant_diagnostics = None
+        if _anchors_to_run is not None:
+            anchor_variant_diagnostics = {}
+            for _am in _anchors_to_run:
+                _ax  = a if _am == "baseline" else _analyse(main_candles,
+                                                            anchor_mode=_am)
+                _abv = [_ob_visible(ob) for ob in _ax["bull_vis"]]
+                _arv = [_ob_visible(ob) for ob in _ax["bear_vis"]]
+                anchor_variant_diagnostics[_am] = {
+                    "variant":              _am,
+                    "bullish_source_pool":  [_ob_base(ob) for ob in _ax["bull_src"][-20:]],
+                    "bearish_source_pool":  [_ob_base(ob) for ob in _ax["bear_src"][-20:]],
+                    "bullish_visible_pool": _abv,
+                    "bearish_visible_pool": _arv,
+                    "bullish_visible_total_volume": _ax["bull_vtot"],
+                    "bearish_visible_total_volume": _ax["bear_vtot"],
+                    "source_counts":  {"bullish": len(_ax["bull_src"]),
+                                       "bearish": len(_ax["bear_src"])},
+                    "visible_counts": {"bullish": len(_ax["bull_vis"]),
+                                       "bearish": len(_ax["bear_vis"])},
+                    "variant_summary": {
+                        "bull_times":        [d["time"] for d in _abv],
+                        "bear_times":        [d["time"] for d in _arv],
+                        "bull_pct_list":     [d.get("tvObVolumeSharePct") for d in _abv],
+                        "bear_pct_list":     [d.get("tvObVolumeSharePct") for d in _arv],
+                        "bull_total_volume": _ax["bull_vtot"],
+                        "bear_total_volume": _ax["bear_vtot"],
+                    },
+                }
+
         _resp = {
             "ok":                           True,
             "phase":                        "1A",
@@ -2075,6 +2194,13 @@ def debug_ob_tv_parity():
         if trace_ob:
             _resp["ob_trace_detail"] = ob_trace_detail
             _resp["trace_summary"]   = trace_summary
+
+        # Anchor-variant keys are added ONLY when ob_anchor_variant is passed,
+        # so the response is byte-identical when the param is absent.
+        if _anchors_to_run is not None:
+            _resp["ob_anchor_variant"]          = ob_anchor_variant
+            _resp["ob_anchor_variant_allowed"]  = ["baseline", "latest_opposite_pivot", "all"]
+            _resp["anchor_variant_diagnostics"] = anchor_variant_diagnostics
 
         return jsonify(_resp)
 

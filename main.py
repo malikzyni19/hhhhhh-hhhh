@@ -2484,7 +2484,7 @@ def _compute_ob_touch_meta(ob, h, l, c, n, ob_mitigation="Absolute",
 
 def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", ob_mitigation="Absolute",
                mitigation_closed_only=False, overlap_effective_zone=False,
-               bearish_effective_bottom_overlap=False, trace=None):
+               bearish_effective_bottom_overlap=False, trace=None, anchor_mode="baseline"):
     """
     Order Block detection — audited line-by-line against Pine Script drawVOB().
 
@@ -2503,6 +2503,13 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
       trace: optional dict {"events": [], "mitigations": []}. When provided,
         every BOS event and every per-bar mitigation is recorded into it.
         Pure observation — does not alter detection. Default None = no-op.
+      anchor_mode: OB search-window anchor.
+        "baseline" (default) — search_start = broken pivot_bar + 1.
+        "latest_opposite_pivot" — search_start = the latest confirmed
+        opposite pivot (pivot LOW for bullish / pivot HIGH for bearish)
+        strictly after the broken pivot and confirmed on/before the BOS
+        bar; the pivot candle itself, no +1. Falls back to baseline when
+        no such pivot exists.
 
     Pine search window:
       search_start = pivot_bar + 1 (Pine loc = hN/lN.first() = absolute pivot bar).
@@ -2557,6 +2564,19 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
             # Pine: loc = hN.first() = absolute pivot bar. Loop covers (BOS - pivot)
             # bars, accessing [pivot+1, BOS]. Window size is independent of iLen.
             search_start = max(0, pivot_bar + 1)
+
+            # ── Debug-only OB search anchor (anchor_mode) ──
+            _anchor_pivot_bar = None
+            if anchor_mode == "latest_opposite_pivot":
+                # Latest confirmed pivot LOW strictly after the broken-high
+                # pivot, confirmed on/before the BOS bar (pl[b] confirms at
+                # b + i_len). search_start = the pivot candle itself (no +1).
+                for _b in range(min(i - i_len, i), pivot_bar, -1):
+                    if 0 <= _b < n and pl[_b]:
+                        _anchor_pivot_bar = _b
+                        search_start = _b
+                        break
+
             search_end   = i + 1  # include break bar
 
             _tev = None
@@ -2565,6 +2585,12 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
                     "side": "bullish", "bos_bar": i, "pivot_bar": pivot_bar,
                     "broken_level": upP[0], "prev_break_level": prev_upP_first,
                     "close_prev": c[i - 1], "close_curr": c[i],
+                    "anchor_mode": anchor_mode,
+                    "anchor_pivot_bar": _anchor_pivot_bar,
+                    "anchor_confirmed_at_bar": (_anchor_pivot_bar + i_len
+                                                if _anchor_pivot_bar is not None else None),
+                    "anchor_fallback": (anchor_mode == "latest_opposite_pivot"
+                                        and _anchor_pivot_bar is None),
                     "search_start": search_start, "search_end": search_end,
                     "window_empty": search_end <= search_start, "created": False,
                 }
@@ -2678,6 +2704,19 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
             # Pine: loc = lN.first() = absolute pivot bar. Loop covers (BOS - pivot)
             # bars, accessing [pivot+1, BOS]. Window size is independent of iLen.
             search_start = max(0, pivot_bar + 1)
+
+            # ── Debug-only OB search anchor (anchor_mode) ──
+            _anchor_pivot_bar = None
+            if anchor_mode == "latest_opposite_pivot":
+                # Latest confirmed pivot HIGH strictly after the broken-low
+                # pivot, confirmed on/before the BOS bar (ph[b] confirms at
+                # b + i_len). search_start = the pivot candle itself (no +1).
+                for _b in range(min(i - i_len, i), pivot_bar, -1):
+                    if 0 <= _b < n and ph[_b]:
+                        _anchor_pivot_bar = _b
+                        search_start = _b
+                        break
+
             search_end   = i + 1
 
             _tev = None
@@ -2686,6 +2725,12 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
                     "side": "bearish", "bos_bar": i, "pivot_bar": pivot_bar,
                     "broken_level": dnP[0], "prev_break_level": prev_dnP_first,
                     "close_prev": c[i - 1], "close_curr": c[i],
+                    "anchor_mode": anchor_mode,
+                    "anchor_pivot_bar": _anchor_pivot_bar,
+                    "anchor_confirmed_at_bar": (_anchor_pivot_bar + i_len
+                                                if _anchor_pivot_bar is not None else None),
+                    "anchor_fallback": (anchor_mode == "latest_opposite_pivot"
+                                        and _anchor_pivot_bar is None),
                     "search_start": search_start, "search_end": search_end,
                     "window_empty": search_end <= search_start, "created": False,
                 }
