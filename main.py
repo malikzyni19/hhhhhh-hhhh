@@ -2229,6 +2229,24 @@ def detect_pivots(high: List[float], low: List[float], left: int, right: int) ->
     return ph, pl
 
 
+def _detect_pivots_relaxed(high: List[float], low: List[float], left: int, right: int) -> Tuple[List[bool], List[bool]]:
+    """
+    Debug-only plateau-tolerant pivots. A bar is a pivot high when it is
+    >= every left neighbour and > every right neighbour, so the last bar of
+    an equal-high plateau becomes the confirmed pivot (strict detect_pivots
+    rejects every bar of a plateau). Mirror logic for pivot lows.
+    """
+    n = len(high)
+    ph = [False] * n
+    pl = [False] * n
+    for i in range(left, n - right):
+        ph[i] = (all(high[i] >= high[j] for j in range(i - left, i)) and
+                 all(high[i] >  high[j] for j in range(i + 1, i + right + 1)))
+        pl[i] = (all(low[i] <= low[j] for j in range(i - left, i)) and
+                 all(low[i] <  low[j] for j in range(i + 1, i + right + 1)))
+    return ph, pl
+
+
 def detect_structure(high: List[float], low: List[float], close: List[float], i_len: int, s_len: int) -> Tuple[int, int]:
     ph_i, pl_i = detect_pivots(high, low, i_len, i_len)
     ph_s, pl_s = detect_pivots(high, low, s_len, s_len)
@@ -2485,7 +2503,7 @@ def _compute_ob_touch_meta(ob, h, l, c, n, ob_mitigation="Absolute",
 def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", ob_mitigation="Absolute",
                mitigation_closed_only=None, overlap_effective_zone=False,
                bearish_effective_bottom_overlap=None, trace=None, anchor_mode=None,
-               extreme_tie_mode=None, ob_logic_mode="tv_parity_v2"):
+               extreme_tie_mode=None, ob_logic_mode="tv_parity_v2", structure_candidate="current"):
     """
     Order Block detection — audited line-by-line against Pine Script drawVOB().
 
@@ -2524,6 +2542,14 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         bearish_effective_bottom_overlap, anchor_mode, extreme_tie_mode.
         tv_parity_v2 = closed mitigation + bearish effective-bottom overlap
         + latest_opposite_pivot anchor + last equal-extreme tie.
+      structure_candidate: DEBUG-ONLY structure-lifecycle variant.
+        "current" (default) — production behavior, byte-identical.
+        "retain_broken_upP" — on a BOS, keep the broken level instead of
+        clearing the whole stack (until a newer pivot replaces it).
+        "promote_bos_high_to_upP" — on a BOS, replace the stack with the
+        BOS candle extreme as the new structure level.
+        "equal_high_pivot_relaxed" — use plateau-tolerant pivot detection.
+        Production callers must NOT pass this.
 
     Pine search window:
       search_start = pivot_bar + 1 (Pine loc = hN/lN.first() = absolute pivot bar).
@@ -2557,7 +2583,10 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         extreme_tie_mode = "last" if _v2 else "first"
 
     n = len(c)
-    ph, pl = detect_pivots(h, l, i_len, i_len)
+    if structure_candidate == "equal_high_pivot_relaxed":
+        ph, pl = _detect_pivots_relaxed(h, l, i_len, i_len)
+    else:
+        ph, pl = detect_pivots(h, l, i_len, i_len)
     obs = []
 
     upP, upB, upL = [], [], []
@@ -2745,8 +2774,17 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
             if trace is not None and _tev is not None:
                 trace["events"].append(_tev)
 
-            upP.clear()
-            upB.clear()
+            # Structure lifecycle on bullish BOS — structure_candidate variants
+            # (debug-only; "current" clears the stack as in production).
+            if structure_candidate == "retain_broken_upP":
+                upP[:] = [upP[0]]
+                upB[:] = [upB[0]]
+            elif structure_candidate == "promote_bos_high_to_upP":
+                upP[:] = [h[i]]
+                upB[:] = [i]
+            else:
+                upP.clear()
+                upB.clear()
 
         # ── INTERNAL BEARISH BREAK → Create Bearish OB ──
         # Pine: ta.crossunder(b.c, dn.p.first()) → c[i] < dnP[0] AND c[i-1] >= prev value
@@ -2897,8 +2935,17 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
             if trace is not None and _tev is not None:
                 trace["events"].append(_tev)
 
-            dnP.clear()
-            dnB.clear()
+            # Structure lifecycle on bearish BOS — structure_candidate mirror
+            # (debug-only; "current" clears the stack as in production).
+            if structure_candidate == "retain_broken_upP":
+                dnP[:] = [dnP[0]]
+                dnB[:] = [dnB[0]]
+            elif structure_candidate == "promote_bos_high_to_upP":
+                dnP[:] = [l[i]]
+                dnB[:] = [i]
+            else:
+                dnP.clear()
+                dnB.clear()
 
         # ── Pine line 1298-1321: per-bar mitigation (barstate.isconfirmed) ──
         # ob_mitigation defaults to "Absolute": bull→ob.bottom, bear→ob.top

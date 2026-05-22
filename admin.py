@@ -1503,6 +1503,23 @@ def debug_ob_tv_parity():
         lifecycle_to   = (request.args.get("lifecycle_to")   or "").strip() or None
         _variant_explicitly_requested = request.args.get("ob_debug_variant") is not None
 
+        # ── Debug-only structure-candidate trace params ──
+        structure_candidate_trace = request.args.get(
+            "structure_candidate_trace", "false").strip().lower() in ("1", "true", "yes")
+        _SC_VARIANTS = ["current", "retain_broken_upP",
+                        "promote_bos_high_to_upP", "equal_high_pivot_relaxed"]
+        _scv_raw = (request.args.get("structure_candidate_variant") or "all").strip()
+        _scv_map = {x.lower(): x for x in _SC_VARIANTS}
+        _scv = _scv_map.get(_scv_raw.lower())
+        if _scv == "current":
+            _sc_to_run = ["current"]
+        elif _scv is not None:
+            _sc_to_run = ["current", _scv]
+        else:                                   # "all" or invalid → all
+            _sc_to_run = list(_SC_VARIANTS)
+        candidate_from = (request.args.get("candidate_from") or "").strip() or None
+        candidate_to   = (request.args.get("candidate_to")   or "").strip() or None
+
         try:
             kline_limit = min(max(int(request.args.get("kline_limit") or 300), 50), 10000)
         except (TypeError, ValueError):
@@ -3210,6 +3227,197 @@ def debug_ob_tv_parity():
                 "lifecycle_trace_summary":   lifecycle_trace_summary,
             }
 
+        # ── Debug-only structure-candidate simulation (only when
+        #    structure_candidate_trace=true → endpoint byte-identical otherwise).
+        #    Each variant runs detect_obs with the production tv_parity_v2 OB
+        #    logic + the candidate structure_candidate, then checks whether the
+        #    target OB appears.
+        structure_candidate_trace_detail = None
+        if structure_candidate_trace:
+            from main import detect_pivots, _detect_pivots_relaxed
+
+            _cco = [x["open"]   for x in main_candles]
+            _cch = [x["high"]   for x in main_candles]
+            _ccl = [x["low"]    for x in main_candles]
+            _ccc = [x["close"]  for x in main_candles]
+            _ccv = [x["volume"] for x in main_candles]
+            _ccn = len(_ccc)
+
+            def _ctw(bar):
+                return _ts(times[bar]) if (bar is not None and 0 <= bar < _ccn) else None
+
+            def _cparse(s):
+                if not s:
+                    return None
+                for _fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S"):
+                    try:
+                        return int(_dt.datetime.strptime(s, _fmt)
+                                   .replace(tzinfo=_dt.timezone.utc).timestamp() * 1000)
+                    except ValueError:
+                        continue
+                return None
+
+            def _cbar_at(ms):
+                if ms is None or not times:
+                    return None
+                _best = None; _bd = None
+                for _idx, _t in enumerate(times):
+                    _d = abs(_t - ms)
+                    if _bd is None or _d < _bd:
+                        _bd = _d; _best = _idx
+                return _best
+
+            _ctgt   = _cbar_at(_cparse(target_ob_time))
+            _cf_ms  = _cparse(candidate_from)
+            _ct_ms  = _cparse(candidate_to)
+            _LOH, _HIH, _VOLH = 0.1594, 0.1602, 200003
+            _SRC = {"current": "current",
+                    "retain_broken_upP": "retained_upP",
+                    "promote_bos_high_to_upP": "promoted_bos_high",
+                    "equal_high_pivot_relaxed": "relaxed_pivot_high"}
+
+            _variants_out = []
+            for _var in _sc_to_run:
+                _ccoll = {"events": [], "mitigations": []}
+                _cobs, _ = detect_obs(_cco, _cch, _ccl, _ccc, _ccv, I_LEN, S_LEN,
+                                      max_ob=None, ob_logic_mode="tv_parity_v2",
+                                      structure_candidate=_var, trace=_ccoll)
+                _tob = next((ob for ob in _cobs
+                             if ob["type"] == "bullish" and ob.get("bar") == _ctgt), None)
+                _bev = [e for e in _ccoll["events"] if e["side"] == "bullish"]
+                _sel_ev = next((e for e in _bev if e.get("min_idx") == _ctgt), None)
+                _win_ev = next((e for e in _bev
+                                if _ctgt is not None and e.get("search_start") is not None
+                                and e["search_start"] <= _ctgt < e["search_end"]), None)
+                _ev = _sel_ev or _win_ev
+
+                _win_inc = None; _tgt_low = None
+                if _ev is not None and _ctgt is not None:
+                    _ss, _se = _ev["search_start"], _ev["search_end"]
+                    _win_inc = bool(_ss <= _ctgt < _se)
+                    if _win_inc and _se > _ss:
+                        _wlo = min(_ccl[_ss:_se])
+                        _tgt_low = bool(_ccl[_ctgt] == _wlo)
+
+                _so_bar = (_tob.get("bar") if _tob else (_ev.get("min_idx") if _ev else None))
+                _so_src = (_tob.get("sourceBar") if _tob else (_ev.get("ob_source") if _ev else None))
+                _so_vol = (_tob.get("volume") if _tob else (_ev.get("volume") if _ev else None))
+                _so_bot = (_tob.get("bottom") if _tob else (_ev.get("ob_bottom") if _ev else None))
+                _so_top = (_tob.get("top") if _tob else (_ev.get("ob_top") if _ev else None))
+                _so_avg = (_tob.get("avg") if _tob else (_ev.get("ob_avg") if _ev else None))
+                _matched = bool(_tob is not None and _so_bot is not None and _so_top is not None
+                                and abs(_so_bot - _LOH) <= 0.01 * _LOH
+                                and abs(_so_top - _HIH) <= 0.01 * _HIH)
+
+                _upP_after = None
+                if _ev is not None:
+                    if _var == "retain_broken_upP":
+                        _upP_after = _ev.get("broken_level")
+                    elif _var == "promote_bos_high_to_upP":
+                        _bb = _ev.get("bos_bar")
+                        _upP_after = _cch[_bb] if (_bb is not None and 0 <= _bb < _ccn) else None
+
+                if _ctgt is None:
+                    _not_sel = "target_ob_time not found in candle stream"
+                elif _tob is not None:
+                    _not_sel = None
+                elif _sel_ev is not None:
+                    _not_sel = (f"target selected as OB extreme at BOS bar {_sel_ev.get('bos_bar')} "
+                                f"but the OB did not survive (mitigation / overlap)")
+                elif _ev is None:
+                    _not_sel = "no bullish BOS search window includes the target bar"
+                elif not _win_inc:
+                    _not_sel = "nearest bullish BOS window does not include the target bar"
+                else:
+                    _osel = _ev.get("min_idx")
+                    _not_sel = (f"window includes target but candle {_osel} "
+                                f"({_ctw(_osel)}) is the window extreme, not the target")
+
+                _variants_out.append({
+                    "variant_name": _var,
+                    "did_create_target_ob": _tob is not None,
+                    "selected_ob_time": _ctw(_so_bar),
+                    "selected_ob_bar": _so_bar,
+                    "selected_sourceBar": _so_src,
+                    "selected_source_time": _ctw(_so_src),
+                    "selected_source_volume": _so_vol,
+                    "selected_zone_bottom": _so_bot,
+                    "selected_zone_top": _so_top,
+                    "selected_avg": _so_avg,
+                    "matched_tv_target": _matched,
+                    "bos_bar": _ev.get("bos_bar") if _ev else None,
+                    "bos_time_utc": _ctw(_ev.get("bos_bar")) if _ev else None,
+                    "broken_level": _ev.get("broken_level") if _ev else None,
+                    "broken_level_source": _SRC.get(_var, "current"),
+                    "upP_level_before_bos": _ev.get("broken_level") if _ev else None,
+                    "upP_level_after_bos": _upP_after,
+                    "search_start_bar": _ev.get("search_start") if _ev else None,
+                    "search_start_time_utc": _ctw(_ev.get("search_start")) if _ev else None,
+                    "search_end_bar": _ev.get("search_end") if _ev else None,
+                    "search_end_time_utc": (_ctw(_ev["search_end"] - 1)
+                                            if _ev and _ev.get("search_end") else None),
+                    "anchor_mode_used": "latest_opposite_pivot",
+                    "latest_opposite_pivot_used": _ev.get("anchor_pivot_bar") if _ev else None,
+                    "latest_opposite_pivot_time": (_ctw(_ev.get("anchor_pivot_bar"))
+                                                   if _ev else None),
+                    "did_search_window_include_target": _win_inc,
+                    "was_target_lowest_low_in_actual_v2_anchor_window": _tgt_low,
+                    "target_not_selected_reason": _not_sel,
+                })
+
+            # equal-high relaxed: pivot highs the relaxed rule finds that the
+            # strict rule rejects (the "after 21:00 plateau" question).
+            _ph_strict, _ = detect_pivots(_cch, _ccl, I_LEN, I_LEN)
+            _ph_relax, _  = _detect_pivots_relaxed(_cch, _ccl, I_LEN, I_LEN)
+            _relax_extra = []
+            for b in range(_ccn):
+                if _ph_relax[b] and not _ph_strict[b]:
+                    if ((_cf_ms is None or times[b] >= _cf_ms)
+                            and (_ct_ms is None or times[b] <= _ct_ms)):
+                        _relax_extra.append({"pivot_bar": b, "pivot_time_utc": _ctw(b),
+                                             "high": _cch[b]})
+
+            _creates = [v["variant_name"] for v in _variants_out if v["did_create_target_ob"]]
+            _matches = [v["variant_name"] for v in _variants_out if v["matched_tv_target"]]
+            _retain = next((v for v in _variants_out
+                            if v["variant_name"] == "retain_broken_upP"), None)
+            candidate_variant_summary = {
+                "variants_compared": _sc_to_run,
+                "variants_that_create_target_ob": _creates,
+                "variants_that_match_tv_target": _matches,
+                "current_creates_target_ob": any(
+                    v["variant_name"] == "current" and v["did_create_target_ob"]
+                    for v in _variants_out),
+                "retain_broken_upP_creates_target_ob": bool(
+                    _retain and _retain["did_create_target_ob"]),
+                "equal_high_relaxed_extra_pivot_highs_count": len(_relax_extra),
+                "equal_high_relaxed_extra_pivot_highs": _relax_extra[:50],
+                "closest_to_tradingview": (_matches[0] if _matches
+                                           else (_creates[0] if _creates else "none")),
+                "would_affect_prior_confirmed_cases_theory": (
+                    "Retaining / promoting structure levels or relaxing pivots changes "
+                    "BOS frequency globally — ETHUSDT 4H, LINKUSDT 15m and SOONUSDT 15m "
+                    "bear MUST be re-verified before any production change."),
+                "recommended_next_fix_direction": (
+                    "If retain_broken_upP creates the 2026-05-22 07:00 OB and the prior "
+                    "confirmed cases stay green, the upP-clear lifecycle is the likely fix "
+                    "area. If only equal_high_pivot_relaxed creates it, the divergence is "
+                    "in strict pivot-high detection. DIAGNOSTIC ONLY — do not implement."),
+            }
+
+            structure_candidate_trace_detail = {
+                "target_side":    target_side,
+                "target_ob_time": target_ob_time,
+                "target_bar":     _ctgt,
+                "candidate_from": candidate_from,
+                "candidate_to":   candidate_to,
+                "expected_tv_zone_low_hint":  _LOH,
+                "expected_tv_zone_high_hint": _HIH,
+                "expected_tv_volume_hint":    _VOLH,
+                "variants": _variants_out,
+                "candidate_variant_summary": candidate_variant_summary,
+            }
+
         _resp = {
             "ok":                           True,
             "phase":                        "1A",
@@ -3278,6 +3486,10 @@ def debug_ob_tv_parity():
             _resp["structure_lifecycle_trace_detail"] = structure_lifecycle_trace_detail
             _resp["lifecycle_trace_summary"]          = lifecycle_trace_summary
 
+        # Structure-candidate key added ONLY when structure_candidate_trace=true.
+        if structure_candidate_trace:
+            _resp["structure_candidate_trace_detail"] = structure_candidate_trace_detail
+
         # ── debug_profile response shaping (default "full" = unchanged) ──────
         if debug_profile == "lifecycle_only":
             _resp = {
@@ -3306,7 +3518,8 @@ def debug_ob_tv_parity():
             }
             # Requested trace blocks only.
             for _k in ("ob_trace_detail", "trace_summary", "structure_trace_detail",
-                       "structure_lifecycle_trace_detail", "lifecycle_trace_summary"):
+                       "structure_lifecycle_trace_detail", "lifecycle_trace_summary",
+                       "structure_candidate_trace_detail"):
                 if _k in _resp:
                     _compact[_k] = _resp[_k]
             # variant_summary only when ob_debug_variant was explicitly passed.
