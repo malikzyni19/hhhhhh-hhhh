@@ -432,6 +432,8 @@ svg{display:block}
 .ins-foot{display:flex;gap:8px;padding:13px 16px;border-top:1px solid var(--border);background:var(--bg-panel);flex-shrink:0}
 .ins-foot .btn{flex:1;justify-content:center}
 .btn-primary{background:var(--accent);border-color:var(--accent);color:#04121a}
+.btn-stale{background:var(--accent);border-color:var(--accent);color:#04121a;animation:bp .9s ease-in-out infinite}
+@keyframes bp{50%{box-shadow:0 0 0 6px rgba(34,211,238,0)}0%,100%{box-shadow:0 0 0 0 rgba(34,211,238,.4)}}
 .btn-primary:hover{background:#3ddbf2;color:#04121a}
 .btn-ico{flex:0 0 auto !important;padding:8px 10px}
 
@@ -1213,10 +1215,8 @@ svg{display:block}
         <div class="sp-content" id="spContent">
           <section class="sp-section active" data-section="scan">
             <div class="sp-content-h">Scan engine</div>
-            <div class="sp-content-sub">How the screener carves the chart into structure. Affects every module.</div>
+            <div class="sp-content-sub">How the screener carves the chart into structure. Timeframe lives on the Main Scan controls so you can change it without opening this drawer.</div>
             <div class="sp-group">
-              <div class="sp-field"><label>Timeframe<div class="sp-help">Candle interval used for all detections.</div></label>
-                <select data-s="tf"><option value="15m">15m</option><option value="1h">1h</option><option value="4h" selected>4h</option><option value="1d">1d</option></select></div>
               <div class="sp-field"><label>Swing lookback (sLen)<div class="sp-help">Bars used to define swing highs / lows. Bigger = fewer, stronger swings.</div></label>
                 <input type="number" data-s="sLen" value="30" min="5" max="120"></div>
               <div class="sp-field"><label>Internal lookback (iLen)<div class="sp-help">Bars for short-term structure (used by OB detection).</div></label>
@@ -1439,19 +1439,37 @@ svg{display:block}
     try{ var s=localStorage.getItem("zyni-settings"); if(s) return Object.assign({},DEFAULT_SETTINGS,JSON.parse(s)); }catch(_){}
     return Object.assign({},DEFAULT_SETTINGS);
   }
+  /* persistent-state helpers (Wave 16) */
+  function _ls_get(k,d){try{var v=localStorage.getItem(k);return v==null?d:v;}catch(_){return d;}}
+  function _ls_set(k,v){try{localStorage.setItem(k,String(v));}catch(_){ }}
+  function _ls_getInt(k,d){var v=parseInt(_ls_get(k,""),10);return isFinite(v)?v:d;}
+  function _ls_getBool(k,d){var v=_ls_get(k,null);return v==null?d:(v==="1"||v==="true");}
+  function _ls_setBool(k,v){_ls_set(k,v?"1":"0");}
+
+  /* exchange picker (Queue PR #195) */
   var SUPPORTED_EXCHANGES=["binance","bybit","okx","mexc"];
   function _loadExchange(){
-    try{ var v=(localStorage.getItem("zyni-exchange")||"binance").toLowerCase();
-      return SUPPORTED_EXCHANGES.indexOf(v)>=0?v:"binance"; }catch(_){ return "binance"; }
+    var v=(_ls_get("zyni-exchange","binance")||"binance").toLowerCase();
+    return SUPPORTED_EXCHANGES.indexOf(v)>=0?v:"binance";
   }
-  var ST={market:"spot",signal:"OB",mode:"main",view:"scanner",
-          exchange:_loadExchange(),
-          scanMode:(function(){try{return localStorage.getItem("zyni-scanMode")||"market";}catch(_){return "market";}})(),
-          results:[],sel:-1,scannedAt:0,scanned:0,
-          prev:null,stars:{},auto:false,timer:null,busy:false,
-          pairsPerCycle:(function(){try{var v=parseInt(localStorage.getItem("zyni-ppc"),10);return isFinite(v)&&v>0?v:24;}catch(_){return 24;}})(),
-          page:1,roundRobin:true,
-          settings:_loadSettings()};
+
+  var ST={
+    market:    _ls_get("zyni-market","perpetual"),
+    signal:    _ls_get("zyni-signal","OB"),
+    mode:      "main",
+    view:      "scanner",
+    exchange:  _loadExchange(),
+    scanMode:  _ls_get("zyni-scanMode","market"),
+    results:[], sel:-1, scannedAt:0, scanned:0,
+    prev:null, stars:{},
+    auto:      _ls_getBool("zyni-auto-scan-enabled", false),   // OFF by default
+    timer:     null,
+    busy:      false,
+    pairsPerCycle: _ls_getInt("zyni-ppc", 24),
+    page:      1,
+    roundRobin:_ls_getBool("zyni-roundRobin", true),
+    settings:  _loadSettings()
+  };
   var SK=0;
 
   // runtime CSS for states not in the base stylesheet
@@ -1638,6 +1656,7 @@ svg{display:block}
       ST.modeOptions[mode][f.key]=val;
       _saveModeOptions();
     }
+    if(typeof _markStale==="function") _markStale();
   }
   function _ctrlField(mode,f){
     var v=_ctrlRead(mode,f);
@@ -1966,6 +1985,8 @@ svg{display:block}
           ST.results = []; ST.sel = -1; ST.scanned = ST.tabData.bias.scanned;
         }
         renderAll();
+        _saveTabData();
+        _clearStale();
         if(modeAtScan === "main" && !ST.results.length) E("mainSub").textContent="Live — no results for "+MODE_LABEL[modeAtScan];
       })
       .catch(function(e){
@@ -2215,6 +2236,71 @@ svg{display:block}
     trending:"Market Mover Insight", ath_atl:"Level Breakout Insight",
     bias:"Bias & Structure Insight"
   };
+
+  /* sessionStorage cache so refresh keeps the last visible results (Wave 16) */
+  var _SS_KEY = "zyni-preview-tab-data";
+  var _SS_MAX = 1.5 * 1024 * 1024;    // ~1.5MB cap; sessionStorage limit is ~5MB
+  var _saveTabDataT = null;
+  function _saveTabData(){
+    if(_saveTabDataT) clearTimeout(_saveTabDataT);
+    _saveTabDataT = setTimeout(function(){
+      try{
+        var snap = {};
+        Object.keys(ST.tabData).forEach(function(k){
+          var d = ST.tabData[k] || {};
+          snap[k] = { results:d.results||null, items:d.items||null, raw:d.raw||null,
+                      scanned:d.scanned||0, sel:typeof d.sel==="number"?d.sel:-1 };
+        });
+        snap.__market = ST.market; snap.__signal = ST.signal; snap.__mode = ST.mode;
+        snap.__scannedAt = ST.scannedAt; snap.__stars = ST.stars;
+        var s = JSON.stringify(snap);
+        if(s.length <= _SS_MAX) sessionStorage.setItem(_SS_KEY, s);
+      }catch(_){ /* quota or serialization issue — silently skip */ }
+    }, 200);
+  }
+  function _restoreTabData(){
+    try{
+      var raw = sessionStorage.getItem(_SS_KEY);
+      if(!raw) return;
+      var snap = JSON.parse(raw)||{};
+      Object.keys(ST.tabData).forEach(function(k){
+        if(snap[k]){
+          var d=ST.tabData[k], s=snap[k];
+          if(s.results) d.results=s.results;
+          if(s.items)   d.items=s.items;
+          if(s.raw)     d.raw=s.raw;
+          d.scanned = s.scanned||0;
+          d.sel = (typeof s.sel==="number") ? s.sel : -1;
+        }
+      });
+      if(snap.__stars && typeof snap.__stars==="object") ST.stars = snap.__stars;
+      if(snap.__scannedAt) ST.scannedAt = snap.__scannedAt;
+      if(snap.__mode === "main" || snap.__mode === "compressed" ||
+         snap.__mode === "trending" || snap.__mode === "ath_atl" || snap.__mode === "bias"){
+        ST.mode = snap.__mode;
+        [].forEach.call(document.querySelectorAll('.side .nav-item[data-mode]'),function(x){
+          x.classList.toggle('active', x.getAttribute('data-mode')===ST.mode);
+        });
+      }
+      // mirror main scan results
+      if(ST.mode === "main" || ST.mode === "compressed"){
+        ST.results = ST.tabData[ST.mode].results || [];
+        ST.sel = ST.tabData[ST.mode].sel;
+      }
+    }catch(_){ /* ignore */ }
+  }
+
+  /* "Results may be stale" indicator on the Scan button (Wave 16).
+     Flips the Scan button into an "accent" state when the user
+     changes a filter without re-scanning. Resets after a successful scan. */
+  function _markStale(){
+    var b = E("btnScan"); if(!b) return;
+    b.classList.add("btn-stale");
+  }
+  function _clearStale(){
+    var b = E("btnScan"); if(!b) return;
+    b.classList.remove("btn-stale");
+  }
 
   function renderAll(){
     var bodyEl=document.querySelector('.body');
@@ -3351,9 +3437,23 @@ svg{display:block}
     box.addEventListener("click",function(e){
       var b=e.target.closest("button["+attr+"]"); if(!b)return;
       [].forEach.call(box.querySelectorAll("button"),function(x){x.classList.remove("on");});
-      b.classList.add("on"); ST[key]=b.getAttribute(attr); after&&after();
+      b.classList.add("on"); ST[key]=b.getAttribute(attr);
+      // persist (no auto-scan — user presses Scan to apply)
+      if(key==="market") _ls_set("zyni-market", ST[key]);
+      if(key==="signal") _ls_set("zyni-signal", ST[key]);
+      _markStale();
+      after&&after();
     });
   }
+  /* Sync segment button .on state to ST values restored from localStorage */
+  function _syncSegTo(id, attr, val){
+    var box=E(id); if(!box) return;
+    [].forEach.call(box.querySelectorAll("button"),function(x){
+      x.classList.toggle("on", x.getAttribute(attr)===val);
+    });
+  }
+  _syncSegTo("segMarket","data-mkt",ST.market);
+  _syncSegTo("segSignal","data-sig",ST.signal);
   // Market / signal are payload-only; changing them re-renders but never spends
   // a scan token. The user applies the new params with Scan Now.
   seg("segMarket","data-mkt","market",renderAll);
@@ -3371,11 +3471,12 @@ svg{display:block}
         return;
       }
       ST.exchange=v; el.value=v;
-      try{ localStorage.setItem("zyni-exchange",v); }catch(_){}
+      _ls_set("zyni-exchange", v);
+      _markStale();
       renderAll();
     });
   })();
-  /* sidebar scanner-mode tabs */
+  /* sidebar scanner-mode tabs — switch view only; user presses Scan to fetch */
   [].forEach.call(document.querySelectorAll('.side .nav-item[data-mode]'),function(el){
     el.addEventListener('click',function(){
       var m=el.getAttribute('data-mode');
@@ -3393,7 +3494,7 @@ svg{display:block}
       var seg=document.getElementById('segSignal');
       if(seg) seg.style.display = (m==='main'||m==='compressed')?'':'none';
       _renderTabCtrls();
-      renderAll();
+      renderAll();           // show whatever was previously cached for this tab
     });
   });
   E("btnFilters").addEventListener("click",scan);
@@ -3439,11 +3540,18 @@ svg{display:block}
     scan();
     setTimeout(function(){ ST.roundRobin=true; },200);
   });
-  E("arToggle").addEventListener("click",function(){
-    ST.auto=!ST.auto; this.classList.toggle("on",ST.auto);
-    var st=E("autoScanStatus"); if(st) st.textContent=ST.auto?"On · 30s":"Off";
-    if(ST.auto){ST.timer=setInterval(scan,30000);}else{clearInterval(ST.timer);ST.timer=null;}
-  });
+  /* Auto Scan toggle — OFF by default; persisted; only this starts a timer */
+  function _setAutoScan(on){
+    ST.auto = !!on;
+    var t = E("arToggle"); if(t) t.classList.toggle("on", ST.auto);
+    var st = E("autoScanStatus"); if(st) st.textContent = ST.auto ? "On · 30s" : "Off";
+    _ls_setBool("zyni-auto-scan-enabled", ST.auto);
+    clearInterval(ST.timer); ST.timer = null;
+    if(ST.auto) ST.timer = setInterval(scan, 30000);
+  }
+  // Reflect persisted state on load (also updates the status label)
+  _setAutoScan(ST.auto);
+  E("arToggle").addEventListener("click",function(){ _setAutoScan(!ST.auto); });
   E("btnLM").addEventListener("click",function(){
     var r=ST.results[ST.sel]; if(!r)return;
     // also add to watchlist server-side
@@ -4215,9 +4323,11 @@ svg{display:block}
   loadTokens();                 // load token counter without triggering a scan
   _renderTabCtrls();
   // No auto-scan on page load — scanning only happens when the user clicks
-  // Scan Now or explicitly turns Auto Scan ON. Render the empty state instead.
-  if(ST.auto)ST.timer=setInterval(scan,30000);
-  renderAll();
+  // Scan Now or explicitly turns Auto Scan ON.
+  _restoreTabData();      // sessionStorage cache — show whatever was last seen
+  renderAll();            // render the empty / cached state
+  // Auto Scan interval is owned by _setAutoScan() above when the persisted
+  // flag is true. We never call scan() on page load.
 })();
 </script>
 </body>
