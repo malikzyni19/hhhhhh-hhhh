@@ -1493,6 +1493,16 @@ def debug_ob_tv_parity():
         structure_from  = (request.args.get("structure_from") or "").strip() or None
         structure_to    = (request.args.get("structure_to")   or "").strip() or None
 
+        # ── Debug-only response profile + structure-lifecycle trace params ──
+        debug_profile = (request.args.get("debug_profile") or "full").strip().lower()
+        if debug_profile not in ("full", "compact", "lifecycle_only"):
+            debug_profile = "full"
+        structure_lifecycle_trace = request.args.get(
+            "structure_lifecycle_trace", "false").strip().lower() in ("1", "true", "yes")
+        lifecycle_from = (request.args.get("lifecycle_from") or "").strip() or None
+        lifecycle_to   = (request.args.get("lifecycle_to")   or "").strip() or None
+        _variant_explicitly_requested = request.args.get("ob_debug_variant") is not None
+
         try:
             kline_limit = min(max(int(request.args.get("kline_limit") or 300), 50), 10000)
         except (TypeError, ValueError):
@@ -2720,6 +2730,486 @@ def debug_ob_tv_parity():
                 "structure_trace_summary":   structure_trace_summary,
             }
 
+        # ── Debug-only structure-lifecycle trace (only when
+        #    structure_lifecycle_trace=true → endpoint byte-identical otherwise).
+        #    Re-simulates the upP/upB/dnP/dnB stacks from the pivot arrays and
+        #    the authoritative BOS-event bars; no production logic is touched.
+        structure_lifecycle_trace_detail = None
+        lifecycle_trace_summary          = None
+        if structure_lifecycle_trace:
+            from main import detect_pivots
+
+            _lo = [x["open"]   for x in main_candles]
+            _lh = [x["high"]   for x in main_candles]
+            _ll = [x["low"]    for x in main_candles]
+            _lc = [x["close"]  for x in main_candles]
+            _lv = [x["volume"] for x in main_candles]
+            _ln = len(_lc)
+            _is_bull = target_side == "bullish"
+
+            def _lw(bar):
+                return _ts(times[bar]) if (bar is not None and 0 <= bar < _ln) else None
+
+            def _lparse(s):
+                if not s:
+                    return None
+                for _fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S"):
+                    try:
+                        return int(_dt.datetime.strptime(s, _fmt)
+                                   .replace(tzinfo=_dt.timezone.utc).timestamp() * 1000)
+                    except ValueError:
+                        continue
+                return None
+
+            def _lbar_at(ms):
+                if ms is None or not times:
+                    return None
+                _best = None; _bd = None
+                for _idx, _t in enumerate(times):
+                    _d = abs(_t - ms)
+                    if _bd is None or _d < _bd:
+                        _bd = _d; _best = _idx
+                return _best
+
+            _ltgt_ms = _lparse(target_ob_time)
+            _lf_ms   = _lparse(lifecycle_from)
+            _lt_ms   = _lparse(lifecycle_to)
+            _tgt     = _lbar_at(_ltgt_ms)
+
+            _ph, _pl   = detect_pivots(_lh, _ll, I_LEN, I_LEN)
+            _phs, _pls = detect_pivots(_lh, _ll, S_LEN, S_LEN)
+
+            # Authoritative BOS events (legacy mode — BOS detection is
+            # logic-mode-independent) + opt-in per-bar structure recorder.
+            _lc_coll = {"events": [], "mitigations": [], "bars": []}
+            detect_obs(_lo, _lh, _ll, _lc, _lv, I_LEN, S_LEN, max_ob=None,
+                       trace=_lc_coll, ob_logic_mode="legacy_baseline")
+            _bos_bull = {e["bos_bar"] for e in _lc_coll["events"] if e["side"] == "bullish"}
+            _bos_bear = {e["bos_bar"] for e in _lc_coll["events"] if e["side"] == "bearish"}
+            _rec_bars = {b["bar"]: b for b in _lc_coll["bars"]}
+
+            # Re-simulate upP/upB/dnP/dnB. Pushes come from the pivot arrays;
+            # clears use the authoritative BOS-event bars (the BOS *condition*
+            # is never re-implemented).
+            _start = max(I_LEN * 2 + 2, S_LEN + 2)
+            _lcs = {}
+            _uP = []; _uB = []; _dP = []; _dB = []
+            _dnL_n = 0; _upL_n = 0
+            _p_uPf = None; _p_dPf = None
+            for i in range(_start, _ln):
+                _uP_bef = _uP[0] if _uP else None
+                _uB_bef = _uB[0] if _uB else None
+                _dP_bef = _dP[0] if _dP else None
+                _dB_bef = _dB[0] if _dB else None
+                _phx = i - I_LEN >= 0 and _ph[i - I_LEN]
+                _plx = i - I_LEN >= 0 and _pl[i - I_LEN]
+                if _phx:
+                    _uP.insert(0, _lh[i - I_LEN]); _uB.insert(0, i - I_LEN); _upL_n += 1
+                if _plx:
+                    _dP.insert(0, _ll[i - I_LEN]); _dB.insert(0, i - I_LEN); _dnL_n += 1
+                _uPf = _uP[0] if _uP else None
+                _uBf = _uB[0] if _uB else None
+                _dPf = _dP[0] if _dP else None
+                _dBf = _dB[0] if _dB else None
+                _uPl = len(_uP); _dPl = len(_dP)
+                _bull = i in _bos_bull; _bear = i in _bos_bear
+                if _bull:
+                    _uP = []; _uB = []
+                if _bear:
+                    _dP = []; _dB = []
+                _lcs[i] = {
+                    "bar": i,
+                    "upP_before": _uP_bef, "upB_before": _uB_bef,
+                    "dnP_before": _dP_bef, "dnB_before": _dB_bef,
+                    "upP_first": _uPf, "upB_first": _uBf,
+                    "dnP_first": _dPf, "dnB_first": _dBf,
+                    "upP_len": _uPl, "dnP_len": _dPl,
+                    "upP_after": (_uP[0] if _uP else None),
+                    "upB_after": (_uB[0] if _uB else None),
+                    "dnP_after": (_dP[0] if _dP else None),
+                    "dnB_after": (_dB[0] if _dB else None),
+                    "upP_len_after": len(_uP), "dnP_len_after": len(_dP),
+                    "upL_len": _upL_n, "dnL_len": _dnL_n,
+                    "prev_upP_first": _p_uPf, "prev_dnP_first": _p_dPf,
+                    "bull_bos": _bull, "bear_bos": _bear,
+                    "pivot_high_pushed": bool(_phx), "pivot_low_pushed": bool(_plx),
+                }
+                _p_uPf = _uP[0] if _uP else None
+                _p_dPf = _dP[0] if _dP else None
+
+            # Cross-check the re-sim against the recorded per-bar snapshot.
+            _resim_mismatch = 0
+            for i, st in _lcs.items():
+                rb = _rec_bars.get(i)
+                if rb is not None and (rb.get("upP_first") != st["upP_first"]
+                                       or rb.get("dnP_first") != st["dnP_first"]
+                                       or rb.get("upP_len") != st["upP_len"]):
+                    _resim_mismatch += 1
+
+            _lrange = [b for b in range(_ln)
+                       if (_lf_ms is None or times[b] >= _lf_ms)
+                       and (_lt_ms is None or times[b] <= _lt_ms)][:1500]
+
+            # ── 1. target_context ──
+            target_context = None
+            if _tgt is not None:
+                _src = _tgt - 1
+                _hl2 = ((_lh[_src] + _ll[_src]) / 2.0) if _src >= 0 else None
+                _fs_bottom = _ll[_tgt]
+                _fs_top    = _hl2
+                _loh, _hih, _volh = 0.1594, 0.1602, 200003
+                _fs_vol = _lv[_src] if _src >= 0 else None
+                _match = bool(_fs_top is not None and _fs_vol is not None
+                              and abs(_fs_bottom - _loh) <= 0.01 * _loh
+                              and abs(_fs_top - _hih) <= 0.01 * _hih
+                              and abs(_fs_vol - _volh) <= 0.10 * _volh)
+                target_context = {
+                    "target_side": target_side, "target_ob_time": target_ob_time,
+                    "target_bar": _tgt,
+                    "open": _lo[_tgt], "high": _lh[_tgt], "low": _ll[_tgt],
+                    "close": _lc[_tgt], "volume": _lv[_tgt],
+                    "previous_bar": _src if _src >= 0 else None,
+                    "previous_bar_time_utc": _lw(_src),
+                    "previous_bar_open":   _lo[_src] if _src >= 0 else None,
+                    "previous_bar_high":   _lh[_src] if _src >= 0 else None,
+                    "previous_bar_low":    _ll[_src] if _src >= 0 else None,
+                    "previous_bar_close":  _lc[_src] if _src >= 0 else None,
+                    "previous_bar_volume": _lv[_src] if _src >= 0 else None,
+                    "expected_tv_zone_low_hint":  _loh,
+                    "expected_tv_zone_high_hint": _hih,
+                    "expected_tv_volume_hint":    _volh,
+                    "force_simulated_sourceBar":  _src if _src >= 0 else None,
+                    "force_simulated_source_volume": _fs_vol,
+                    "force_simulated_zone": {"bottom": _fs_bottom, "top": _fs_top},
+                    "would_force_sim_match_tv": _match,
+                }
+
+            # last internal pivot HIGH pushed on/before the target bar
+            _last_ph_b = None
+            if _tgt is not None:
+                for b in range(min(_tgt - I_LEN, _ln - 1), -1, -1):
+                    if 0 <= b < _ln and _ph[b]:
+                        _last_ph_b = b
+                        break
+            _last_ph_push  = (_last_ph_b + I_LEN) if _last_ph_b is not None else None
+            _last_ph_price = _lh[_last_ph_b] if _last_ph_b is not None else None
+            # first bullish BOS at/after that push → the clear
+            _last_ph_clear = None
+            if _last_ph_push is not None:
+                _later = sorted(x for x in _bos_bull if x >= _last_ph_push)
+                _last_ph_clear = _later[0] if _later else None
+            # pivot highs pushed after that clear and on/before target
+            _ph_after_clear = []
+            if _last_ph_clear is not None and _tgt is not None:
+                for b in range(_ln):
+                    if _ph[b] and (b + I_LEN) > _last_ph_clear and (b + I_LEN) <= _tgt:
+                        _ph_after_clear.append({"pivot_bar": b, "pivot_time_utc": _lw(b),
+                                                "push_bar": b + I_LEN,
+                                                "push_time_utc": _lw(b + I_LEN),
+                                                "price": _lh[b]})
+
+            _tgt_st = _lcs.get(_tgt, {})
+            _upP_empty_at_target = (_tgt_st.get("upP_len", 0) == 0)
+            _empty_after = True
+            _to_bar = _lbar_at(_lt_ms) if _lt_ms is not None else (_ln - 1)
+            if _tgt is not None:
+                for b in range(_tgt + 1, min((_to_bar or _ln - 1) + 1, _ln)):
+                    if _lcs.get(b, {}).get("upP_len_after", 0) > 0:
+                        _empty_after = False
+                        break
+
+            # ── 5. last_active_bullish_level_before_target ──
+            last_active_bullish_level_before_target = None
+            if _tgt is not None:
+                _lvl = None; _lvl_bar = None
+                for b in range(_tgt, _start - 1, -1):
+                    st = _lcs.get(b)
+                    if st and st.get("upP_len", 0) > 0:
+                        _lvl = st["upP_first"]; _lvl_bar = st["upB_first"]
+                        break
+                if _lvl is not None:
+                    _conf = (_lvl_bar + I_LEN) if _lvl_bar is not None else None
+                    # active_until: first bullish BOS clear at/after the push
+                    _au = None
+                    if _conf is not None:
+                        _later = sorted(x for x in _bos_bull if x >= _conf)
+                        _au = _later[0] if _later else None
+                    # would price close above this level after target?
+                    _first_above = None
+                    for j in range(_tgt + 1, _ln):
+                        if _lc[j] > _lvl:
+                            _first_above = j
+                            break
+                    # would BOS trigger if level kept active (close crossover)?
+                    _would_bos_bar = None
+                    for j in range(max(_tgt, (_conf or 0) + 1), _ln):
+                        if j >= 1 and _lc[j] > _lvl and _lc[j - 1] <= _lvl:
+                            _would_bos_bar = j
+                            break
+                    # would the OB search window include the target bar?
+                    _win_inc = None; _tgt_is_low = None
+                    if _would_bos_bar is not None and _lvl_bar is not None:
+                        _ss = _lvl_bar + 1
+                        _se = _would_bos_bar + 1
+                        _win_inc = bool(_ss <= _tgt < _se)
+                        if _win_inc:
+                            _wlo = min(_ll[_ss:_se]) if _se > _ss else None
+                            _tgt_is_low = bool(_wlo is not None and _ll[_tgt] == _wlo)
+                    last_active_bullish_level_before_target = {
+                        "level": _lvl,
+                        "pivot_bar": _lvl_bar,
+                        "pivot_time_utc": _lw(_lvl_bar),
+                        "confirmed_at_bar": _conf,
+                        "confirmed_at_time_utc": _lw(_conf),
+                        "active_from_bar": _conf,
+                        "active_until_bar": _au,
+                        "active_until_time_utc": _lw(_au),
+                        "cleared_reason": ("bullish BOS close-crossover cleared upP"
+                                           if _au is not None else "not cleared in range"),
+                        "did_price_close_above_this_level_after_target": _first_above is not None,
+                        "first_close_above_after_target_bar": _first_above,
+                        "first_close_above_after_target_time_utc": _lw(_first_above),
+                        "if_level_stayed_active_would_bullish_bos_trigger": _would_bos_bar is not None,
+                        "would_bullish_bos_bar": _would_bos_bar,
+                        "would_bullish_bos_time_utc": _lw(_would_bos_bar),
+                        "if_bos_triggered_would_window_include_target": _win_inc,
+                        "target_is_window_lowest_low": _tgt_is_low,
+                    }
+
+            # ── 6. candidate_tv_level_probe ──
+            candidate_tv_level_probe = []
+            for b in _lrange:
+                if not _ph[b]:
+                    continue
+                _lvlb = _lh[b]
+                _conf = b + I_LEN
+                _cross = None
+                _scan0 = _tgt + 1 if _tgt is not None else _conf + 1
+                for j in range(max(_scan0, _conf + 1), _ln):
+                    if j >= 1 and _lc[j] > _lvlb and _lc[j - 1] <= _lvlb:
+                        _cross = j
+                        break
+                _would_win = None; _would_sel = None
+                if _cross is not None and _tgt is not None:
+                    _ss = b + 1; _se = _cross + 1
+                    _would_win = bool(_ss <= _tgt < _se)
+                    if _would_win:
+                        _wlo = min(_ll[_ss:_se]) if _se > _ss else None
+                        _would_sel = bool(_wlo is not None and _ll[_tgt] == _wlo)
+                candidate_tv_level_probe.append({
+                    "pivot_bar": b, "pivot_time_utc": _lw(b),
+                    "level": _lvlb,
+                    "confirmed_at_bar": _conf, "confirmed_at_time_utc": _lw(_conf),
+                    "did_close_cross_after_target": _cross is not None,
+                    "cross_bar": _cross, "cross_time_utc": _lw(_cross),
+                    "would_create_ob_from_target_window": _would_win,
+                    "would_select_target_as_lowest_low": _would_sel,
+                })
+            _likely = next((p for p in candidate_tv_level_probe
+                            if p["would_select_target_as_lowest_low"]), None)
+            for p in candidate_tv_level_probe:
+                p["most_likely_tv_broken_level"] = (p is _likely)
+
+            # ── 3. upP_lifecycle_events ──
+            _EVT_TYPES_NOTE = "pivot_high_pushed|pivot_low_pushed|bullish_bos_triggered|bearish_bos_triggered|upP_cleared|dnP_cleared|upP_empty|dnP_empty"
+            upP_lifecycle_events = []
+            _prev_uPla = None; _prev_dPla = None
+            for b in _lrange:
+                st = _lcs.get(b)
+                if st is None:
+                    continue
+                _cp = _lc[b - 1] if b > 0 else None
+                _cc = _lc[b]
+                _common = {
+                    "bar": b, "time_utc": _lw(b),
+                    "upP_before": st["upP_before"], "upP_after": st["upP_after"],
+                    "upB_before": st["upB_before"], "upB_after": st["upB_after"],
+                    "dnP_before": st["dnP_before"], "dnP_after": st["dnP_after"],
+                    "dnB_before": st["dnB_before"], "dnB_after": st["dnB_after"],
+                    "prev_upP_first_before": st["prev_upP_first"],
+                    "prev_upP_first_after":  st["upP_after"],
+                    "prev_dnP_first_before": st["prev_dnP_first"],
+                    "prev_dnP_first_after":  st["dnP_after"],
+                    "close_prev": _cp, "close_curr": _cc,
+                }
+                if st["pivot_high_pushed"]:
+                    _e = dict(_common); _e.update({
+                        "event_type": "pivot_high_pushed",
+                        "reason": f"internal pivot high confirmed (bar {b-I_LEN}) pushed to upP",
+                        "cleared_by_event_bar": None, "cleared_by_event_time_utc": None})
+                    upP_lifecycle_events.append(_e)
+                if st["pivot_low_pushed"]:
+                    _e = dict(_common); _e.update({
+                        "event_type": "pivot_low_pushed",
+                        "reason": f"internal pivot low confirmed (bar {b-I_LEN}) pushed to dnP",
+                        "cleared_by_event_bar": None, "cleared_by_event_time_utc": None})
+                    upP_lifecycle_events.append(_e)
+                if st["bull_bos"]:
+                    _e = dict(_common); _e.update({
+                        "event_type": "bullish_bos_triggered",
+                        "reason": "close crossover of upP[0] — bullish BOS",
+                        "cleared_by_event_bar": None, "cleared_by_event_time_utc": None})
+                    upP_lifecycle_events.append(_e)
+                    if st["upP_len"] > 0:
+                        _e2 = dict(_common); _e2.update({
+                            "event_type": "upP_cleared",
+                            "reason": "bullish BOS cleared upP / upB",
+                            "cleared_by_event_bar": b, "cleared_by_event_time_utc": _lw(b)})
+                        upP_lifecycle_events.append(_e2)
+                if st["bear_bos"]:
+                    _e = dict(_common); _e.update({
+                        "event_type": "bearish_bos_triggered",
+                        "reason": "close crossunder of dnP[0] — bearish BOS",
+                        "cleared_by_event_bar": None, "cleared_by_event_time_utc": None})
+                    upP_lifecycle_events.append(_e)
+                    if st["dnP_len"] > 0:
+                        _e2 = dict(_common); _e2.update({
+                            "event_type": "dnP_cleared",
+                            "reason": "bearish BOS cleared dnP / dnB",
+                            "cleared_by_event_bar": b, "cleared_by_event_time_utc": _lw(b)})
+                        upP_lifecycle_events.append(_e2)
+                if st["upP_len_after"] == 0 and _prev_uPla not in (None, 0):
+                    _e = dict(_common); _e.update({
+                        "event_type": "upP_empty",
+                        "reason": "upP is empty (no active bullish structure level)",
+                        "cleared_by_event_bar": None, "cleared_by_event_time_utc": None})
+                    upP_lifecycle_events.append(_e)
+                if st["dnP_len_after"] == 0 and _prev_dPla not in (None, 0):
+                    _e = dict(_common); _e.update({
+                        "event_type": "dnP_empty",
+                        "reason": "dnP is empty (no active bearish structure level)",
+                        "cleared_by_event_bar": None, "cleared_by_event_time_utc": None})
+                    upP_lifecycle_events.append(_e)
+                _prev_uPla = st["upP_len_after"]
+                _prev_dPla = st["dnP_len_after"]
+
+            # ── 4. structure_state_table ──
+            structure_state_table = []
+            for b in _lrange:
+                st = _lcs.get(b, {})
+                _cp = _lc[b - 1] if b > 0 else None
+                _cc = _lc[b]
+                _lvl = st.get("upP_first")
+                _plvl = st.get("prev_upP_first")
+                _cpp = (_plvl is not None and _cp is not None and _cp <= _plvl)
+                _ccp = (_lvl is not None and _cc > _lvl)
+                _bull = st.get("bull_bos", False)
+                if _bull:
+                    _rn = None
+                elif _lvl is None:
+                    _rn = "upP empty — no active bullish structure level"
+                elif not _ccp:
+                    _rn = f"close_curr {_cc} did not exceed upP[0] {_lvl}"
+                elif _plvl is None:
+                    _rn = "prev_upP_first is None (upP empty on previous bar)"
+                elif not _cpp:
+                    _rn = f"no crossover — prev close {_cp} already above prev upP[0] {_plvl}"
+                elif st.get("dnL_len", 0) <= 1:
+                    _rn = "len(dnL) <= 1 guard"
+                else:
+                    _rn = "condition components met (see bullish_bos_triggered)"
+                structure_state_table.append({
+                    "bar": b, "time_utc": _lw(b),
+                    "open": _lo[b], "high": _lh[b], "low": _ll[b], "close": _cc,
+                    "upP_before_bar": st.get("upP_before"),
+                    "upP_after_bar":  st.get("upP_after"),
+                    "dnP_before_bar": st.get("dnP_before"),
+                    "dnP_after_bar":  st.get("dnP_after"),
+                    "upP_len": st.get("upP_len"), "dnP_len": st.get("dnP_len"),
+                    "upL_len": st.get("upL_len"), "dnL_len": st.get("dnL_len"),
+                    "prev_upP_first_before": _plvl,
+                    "prev_upP_first_after":  st.get("upP_after"),
+                    "bullish_bos_condition_level": _lvl,
+                    "bullish_bos_close_prev_pass": bool(_cpp),
+                    "bullish_bos_close_curr_pass": bool(_ccp),
+                    "bullish_bos_triggered": bool(_bull),
+                    "bearish_bos_triggered": bool(st.get("bear_bos", False)),
+                    "reason_no_bullish_bos": _rn,
+                })
+
+            # ── 2. lifecycle_summary ──
+            _dnl_at_tgt = _tgt_st.get("dnL_len")
+            lifecycle_summary = {
+                "upP_empty_at_target": _upP_empty_at_target,
+                "upP_empty_after_target_until_to": _empty_after,
+                "last_upP_pivot_high_pushed_before_target_bar": _last_ph_push,
+                "last_upP_pivot_high_pushed_before_target_time_utc": _lw(_last_ph_push),
+                "last_upP_price": _last_ph_price,
+                "last_upP_cleared_at_bar": _last_ph_clear,
+                "last_upP_cleared_at_time_utc": _lw(_last_ph_clear),
+                "cleared_by_event": ("bullish_bos" if _last_ph_clear is not None else None),
+                "cleared_by_bullish_bos": _last_ph_clear is not None,
+                "cleared_by_bearish_bos": False,
+                "pivot_highs_after_last_clear_before_target": _ph_after_clear,
+                "any_pivot_high_after_last_clear_before_target": len(_ph_after_clear) > 0,
+                "why_not_active_upP": (
+                    "a later bullish BOS cleared upP again"
+                    if (_ph_after_clear and _upP_empty_at_target)
+                    else ("upP holds the pushed pivot(s)" if not _upP_empty_at_target
+                          else "no pivot high pushed after the last clear")),
+                "dnL_len_at_target": _dnl_at_tgt,
+                "dnL_guard_satisfied_at_target": (_dnl_at_tgt or 0) > 1,
+                "dnL_guard_blocks_bullish_bos": False if (_dnl_at_tgt or 0) > 1 else None,
+                "cause_classification": {
+                    "a_no_pivot_high_created": _last_ph_b is None,
+                    "b_pivot_high_created_but_cleared_too_early":
+                        (_last_ph_b is not None and _upP_empty_at_target),
+                    "c_upP_clear_logic_mismatch": _resim_mismatch > 0,
+                    "d_previous_bar_crossover_state_mismatch": _resim_mismatch > 0,
+                    "e_internal_vs_swing_level_mismatch":
+                        "Python OB BOS uses internal iLen pivots only; swing sLen levels are not used",
+                    "f_dnL_or_upL_guard_mismatch": (_dnl_at_tgt or 0) <= 1,
+                },
+            }
+
+            # ── 7. lifecycle_trace_summary ──
+            if _tgt is None:
+                _concl = "target_ob_time not found in the candle stream"
+            elif _upP_empty_at_target:
+                _concl = (f"Python has NO active bullish structure level (upP empty) at the "
+                          f"target bar {_tgt} ({_lw(_tgt)}), so no bullish BOS can fire and no "
+                          f"OB is created. Last upP high was pushed at bar {_last_ph_push} "
+                          f"({_lw(_last_ph_push)}, level {_last_ph_price}) and cleared by a "
+                          f"bullish BOS at bar {_last_ph_clear} ({_lw(_last_ph_clear)}).")
+            else:
+                _concl = (f"upP is NOT empty at the target bar (level "
+                          f"{_tgt_st.get('upP_first')}); the missing OB is not a bare "
+                          f"upP-empty issue — inspect structure_state_table for the BOS "
+                          f"condition components.")
+            lifecycle_trace_summary = {
+                "conclusion": _concl,
+                "problem_is_upP_not_created": _last_ph_b is None,
+                "problem_is_upP_cleared_too_early":
+                    (_last_ph_b is not None and _upP_empty_at_target),
+                "bad_state_caused_by_bar": _last_ph_clear,
+                "bad_state_caused_by_time_utc": _lw(_last_ph_clear),
+                "bad_state_caused_by_event": ("bullish_bos that cleared upP"
+                                              if _last_ph_clear is not None else None),
+                "suggested_fix_direction": (
+                    "Investigate the upP clear/lifecycle: after a bullish BOS clears upP, a "
+                    "subsequently confirmed pivot high should re-populate upP before the next "
+                    "BOS. If TradingView keeps an active level here, Python's upP clear or "
+                    "pivot re-population timing is the likely divergence. DIAGNOSTIC ONLY — "
+                    "do not implement yet."),
+                "resim_vs_recorded_mismatch_count": _resim_mismatch,
+            }
+
+            structure_lifecycle_trace_detail = {
+                "target_side":    target_side,
+                "target_ob_time": target_ob_time,
+                "lifecycle_from": lifecycle_from,
+                "lifecycle_to":   lifecycle_to,
+                "event_type_legend": _EVT_TYPES_NOTE,
+                "resim_vs_recorded_mismatch_count": _resim_mismatch,
+                "target_context":            target_context,
+                "lifecycle_summary":         lifecycle_summary,
+                "upP_lifecycle_events":      upP_lifecycle_events,
+                "structure_state_table":     structure_state_table,
+                "last_active_bullish_level_before_target": last_active_bullish_level_before_target,
+                "candidate_tv_level_probe":  candidate_tv_level_probe,
+                "lifecycle_trace_summary":   lifecycle_trace_summary,
+            }
+
         _resp = {
             "ok":                           True,
             "phase":                        "1A",
@@ -2782,6 +3272,47 @@ def debug_ob_tv_parity():
         # so the response is byte-identical when the param is absent.
         if structure_trace:
             _resp["structure_trace_detail"] = structure_trace_detail
+
+        # Structure-lifecycle keys added ONLY when structure_lifecycle_trace=true.
+        if structure_lifecycle_trace:
+            _resp["structure_lifecycle_trace_detail"] = structure_lifecycle_trace_detail
+            _resp["lifecycle_trace_summary"]          = lifecycle_trace_summary
+
+        # ── debug_profile response shaping (default "full" = unchanged) ──────
+        if debug_profile == "lifecycle_only":
+            _resp = {
+                "ok":                              _resp["ok"],
+                "debug_profile":                   "lifecycle_only",
+                "candle_info":                     _resp["candle_info"],
+                "production_ob_logic_mode":        "tv_parity_v2",
+                "structure_lifecycle_trace_detail": _resp.get("structure_lifecycle_trace_detail"),
+                "lifecycle_trace_summary":         _resp.get("lifecycle_trace_summary"),
+            }
+        elif debug_profile == "compact":
+            def _vis_summary(pool):
+                return [{"time": ob.get("time"), "top": ob.get("top"),
+                         "bottom": ob.get("bottom"), "volume": ob.get("volume"),
+                         "tvObVolumeSharePct": ob.get("tvObVolumeSharePct")}
+                        for ob in (pool or [])]
+            _compact = {
+                "ok":                           _resp["ok"],
+                "debug_profile":                "compact",
+                "candle_info":                  _resp["candle_info"],
+                "detection_counts":             _resp["detection_counts"],
+                "bullish_visible_pool_summary": _vis_summary(_resp.get("bullish_visible_pool")),
+                "bearish_visible_pool_summary": _vis_summary(_resp.get("bearish_visible_pool")),
+                "bullish_visible_total_volume": _resp.get("bullish_visible_total_volume"),
+                "bearish_visible_total_volume": _resp.get("bearish_visible_total_volume"),
+            }
+            # Requested trace blocks only.
+            for _k in ("ob_trace_detail", "trace_summary", "structure_trace_detail",
+                       "structure_lifecycle_trace_detail", "lifecycle_trace_summary"):
+                if _k in _resp:
+                    _compact[_k] = _resp[_k]
+            # variant_summary only when ob_debug_variant was explicitly passed.
+            if _variant_explicitly_requested:
+                _compact["variant_summary"] = _resp.get("variant_summary")
+            _resp = _compact
 
         return jsonify(_resp)
 
