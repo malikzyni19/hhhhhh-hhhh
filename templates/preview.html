@@ -1557,9 +1557,13 @@ svg{display:block}
     compressed: { tf:"4h", lookback:30, maxPct:5.0 },
     trending: { tf:"4h", mode:"bullish" },
     bias: {
-      tf:"1d", strength:"balanced", detectionMode:"early",
-      confluenceMode:"optional", minGrade:"B+",
-      useObConf:true, useFvgConf:true, useFibConf:true
+      tf:"1d", mode:"normal",
+      biasStrength:"balanced", detectionMode:"early",
+      confluenceMode:"optional", minimumGrade:"B+",
+      priorMoveCandles:4, signalSearchCandles:1,
+      minWickPct:35, minBodyPct:20, requireCloseBeyondMidpoint:true,
+      volumeFilter:"optional", volumeMultiplier:1.5,
+      useObConfluence:true, useFvgConfluence:true, useFibConfluence:true
     },
   };
   function _loadModeOptions(){
@@ -1620,21 +1624,40 @@ svg{display:block}
     bias: [
       { type:"select", key:"tf", label:"Timeframe",
         options:[["1h","1H"],["4h","4H"],["6h","6H"],["12h","12H"],["1d","1D"]] },
-      { type:"select", key:"strength", label:"Bias strength",
+      { type:"select", key:"mode", label:"Mode", rerender:true,
+        options:[["normal","Normal"],["expert","Expert"]],
+        help:"Normal uses tuned presets. Expert exposes the raw candle-quality controls below." },
+      { type:"select", key:"biasStrength", label:"Bias strength",
         options:[["early","Early"],["balanced","Balanced"],["strong","Strong only"]],
-        help:"Early = more results. Balanced = recommended. Strong = cleaner, fewer." },
+        help:"Early = more results. Balanced = recommended. Strong = cleaner, fewer. (Normal mode presets.)" },
       { type:"select", key:"detectionMode", label:"Detection",
         options:[["early","Early (rejection close)"],["confirmed","Confirmed (follow-up)"]],
         help:"Early fires once the rejection candle closes; Confirmed waits for a follow-up candle." },
       { type:"select", key:"confluenceMode", label:"Confluence",
         options:[["optional","Optional"],["required","Required"]],
         help:"Optional grades higher with OB/FVG/Fib nearby. Required hides setups without any confluence." },
-      { type:"select", key:"minGrade", label:"Min grade",
+      { type:"select", key:"minimumGrade", label:"Min grade",
         options:[["C+","C+"],["B+","B+"],["A","A only"]],
         help:"Hide setups below this quality grade." },
-      { type:"check", key:"useObConf", label:"OB confluence",  help:"Boost grade when the rejection is near an Order Block." },
-      { type:"check", key:"useFvgConf", label:"FVG confluence", help:"Boost grade when the rejection is near a Fair Value Gap." },
-      { type:"check", key:"useFibConf", label:"Fib confluence", help:"Boost grade when the rejection is near a Fibonacci level." },
+      // ── Expert-only candle-quality controls (visible when Mode = Expert) ──
+      { type:"num", key:"priorMoveCandles", label:"Prior move candles", expert:true,
+        help:"How many candles back to require a clean directional drive." },
+      { type:"num", key:"signalSearchCandles", label:"Signal search candles", expert:true,
+        help:"How many recent candles to scan for the rejection." },
+      { type:"num", key:"minWickPct", label:"Min wick %", step:1, expert:true,
+        help:"Minimum rejection-wick size as % of candle range." },
+      { type:"num", key:"minBodyPct", label:"Min body %", step:1, expert:true,
+        help:"Minimum candle body as % of candle range." },
+      { type:"check", key:"requireCloseBeyondMidpoint", label:"Close beyond midpoint", expert:true,
+        help:"Require the candle to close past the prior-move midpoint." },
+      { type:"select", key:"volumeFilter", label:"Volume filter", expert:true,
+        options:[["optional","Optional"],["required","Required"]],
+        help:"Required hides signals whose volume is below the multiplier." },
+      { type:"num", key:"volumeMultiplier", label:"Volume ×", step:0.1, expert:true,
+        help:"Latest volume must be at least this × the average (when Volume filter = Required)." },
+      { type:"check", key:"useObConfluence", label:"OB confluence",  help:"Boost grade when the rejection is near an Order Block." },
+      { type:"check", key:"useFvgConfluence", label:"FVG confluence", help:"Boost grade when the rejection is near a Fair Value Gap." },
+      { type:"check", key:"useFibConfluence", label:"Fib confluence", help:"Boost grade when the rejection is near a Fibonacci level." },
     ],
   };
 
@@ -1685,8 +1708,11 @@ svg{display:block}
     var schema=TAB_CTRLS_SCHEMA[ST.mode];
     if(!schema){ host.hidden=true; host.innerHTML=""; return; }
     host.hidden=false;
+    // Expert-only fields are hidden unless the bias tab is in Expert mode.
+    var expertOn = (ST.mode==="bias") && ((ST.modeOptions.bias||{}).mode==="expert");
+    var visible = schema.filter(function(f){ return !f.expert || expertOn; });
     host.innerHTML='<div class="tc-h">'+esc(MODE_LABEL[ST.mode]||"")+' settings</div>'+
-      '<div class="tc-row">'+schema.map(function(f){return _ctrlField(ST.mode,f);}).join("")+'</div>';
+      '<div class="tc-row">'+visible.map(function(f){return _ctrlField(ST.mode,f);}).join("")+'</div>';
     var byKey={};
     schema.forEach(function(f){ if(f.key) byKey[f.key]=f; });
     [].forEach.call(host.querySelectorAll('[data-opt]'),function(el){
@@ -1697,6 +1723,7 @@ svg{display:block}
         else if(el.type==="number"){ var n=parseFloat(el.value); val=isFinite(n)?n:el.value; }
         else val=el.value;
         _ctrlWrite(ST.mode,f,val);
+        if(f.rerender) _renderTabCtrls();   // e.g. toggling Normal/Expert
       });
     });
     var rst=E("tcReset");
@@ -1704,7 +1731,8 @@ svg{display:block}
       if(ST.mode!=="ath_atl") return;
       fetch("/api/ath_atl_scan",{method:"POST",credentials:"same-origin",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify(Object.assign({action:"reset",market:ST.market,exchange:ST.exchange},
+        body:JSON.stringify(Object.assign({action:"reset",market:ST.market,exchange:ST.exchange,
+                                          breakTolerancePct:+((ST.modeOptions.ath_atl||{}).breakTolPct)||0.10},
                                           ST.modeOptions.ath_atl))})
         .then(function(){ ST.results=[]; renderAll(); });
     });
@@ -1757,7 +1785,7 @@ svg{display:block}
     if(ST.mode==="compressed"){
       var c=ST.modeOptions.compressed||{};
       return {url:"/api/compressed_scan", body:{
-        tf:c.tf||tf, market:market, exchange:ST.exchange,
+        timeframe:c.tf||tf, tf:c.tf||tf, market:market, exchange:ST.exchange,
         lookback:+c.lookback||30, maxPct:+c.maxPct||5.0,
         roundRobin:ST.roundRobin, pairsPerCycle:ST.pairsPerCycle
       }};
@@ -1765,7 +1793,7 @@ svg{display:block}
     if(ST.mode==="trending"){
       var t=ST.modeOptions.trending||{};
       return {url:"/api/trending_scan", body:{
-        tf:t.tf||tf, market:market, exchange:ST.exchange,
+        timeframe:t.tf||tf, tf:t.tf||tf, market:market, exchange:ST.exchange,
         mode:t.mode||"bullish", limit:ST.pairsPerCycle
       }};
     }
@@ -1775,6 +1803,7 @@ svg{display:block}
         action:"scan", market:market, exchange:ST.exchange,
         mode:aa.mode||"both", status:aa.status||"near_level",
         windowHours:+aa.windowHours||24,
+        breakTolerancePct:+aa.breakTolPct||0.10,
         breakTolPct:+aa.breakTolPct||0.10,
         nearPct:+aa.nearPct||3.0,
         limit:ST.pairsPerCycle
@@ -1782,16 +1811,34 @@ svg{display:block}
     }
     if(ST.mode==="bias"){
       var bo=ST.modeOptions.bias||{};
+      // Desktop Bias scans full market by default so the backend never returns
+      // no_selected_pairs (it defaults scanMode to "selected").
+      var biasScanMode="market";
+      var biasWatch=Object.keys(ST.stars).filter(function(s){return ST.stars[s];});
       return {url:"/api/bias_scan", body:{
-        tf:bo.tf||tf, market:market, exchange:ST.exchange,
+        timeframe:bo.tf||"1d", tf:bo.tf||"1d", market:market, exchange:ST.exchange,
+        scanMode:biasScanMode,
+        symbols: biasScanMode==="selected" ? biasWatch : [],
         pairsPerCycle:ST.pairsPerCycle, roundRobin:ST.roundRobin,
-        strength:bo.strength||"balanced",
+        mode:bo.mode||"normal", biasMode:bo.mode||"normal",
+        biasStrength:bo.biasStrength||"balanced",
         detectionMode:bo.detectionMode||"early",
         confluenceMode:bo.confluenceMode||"optional",
-        minGrade:bo.minGrade||"B+",
-        useObConf: bo.useObConf!==false,
-        useFvgConf: bo.useFvgConf!==false,
-        useFibConf: bo.useFibConf!==false
+        minimumGrade:bo.minimumGrade||"B+",
+        priorMoveCandles:+bo.priorMoveCandles||4,
+        signalSearchCandles:+bo.signalSearchCandles||1,
+        minWickPct:+bo.minWickPct||35,
+        minBodyPct:+bo.minBodyPct||20,
+        requireCloseBeyondMidpoint: bo.requireCloseBeyondMidpoint!==false,
+        volumeFilter:bo.volumeFilter||"optional",
+        volumeMultiplier:+bo.volumeMultiplier||1.5,
+        useObConfluence: bo.useObConfluence!==false,
+        useFvgConfluence: bo.useFvgConfluence!==false,
+        useFibConfluence: bo.useFibConfluence!==false,
+        // legacy aliases (harmless if backend ignores them)
+        useObConf: bo.useObConfluence!==false,
+        useFvgConf: bo.useFvgConfluence!==false,
+        useFibConf: bo.useFibConfluence!==false
       }};
     }
     return null;
@@ -3734,6 +3781,25 @@ svg{display:block}
     delete _lmCache[sym];
     _lmPaint();
   }
+  // Per-TF watchlist config the backend (_scan_pair_multitf) understands.
+  function getDesktopWatchlistConfig(){
+    var s=ST.settings||{};
+    var tf=s.tf||"4h";
+    return {
+      scan_ob: s.useObModule!==false,
+      scan_fvg: s.useFvgModule!==false,
+      scan_fib: s.useFibModule!==false,
+      scan_breaker: s.useBreakerModule!==false,
+      fib_tf: s.fibTf||tf,
+      timeframes: [tf],
+      ob_approach: { "15m": s.obDistancePct||0.8, "1h": s.obDistancePct||1.5, "4h": s.obDistancePct||2.5 },
+      fvg_age_min: { "15m": s.fvgAgeMin||0, "1h": s.fvgAgeMin||0, "4h": s.fvgAgeMin||0 },
+      fvg_age_max: { "15m": s.fvgAgeMax||5, "1h": s.fvgAgeMax||10, "4h": s.fvgAgeMax||15 },
+      breaker_approach_pct: s.breakerApproachPct||2.0,
+      breaker_max_age: s.breakerMaxAge||200,
+      breaker_require_fvg: !!s.breakerRequireFvg
+    };
+  }
   function _lmRefresh(){
     if(location.protocol==="file:") return;
     var pairs=_lmCurrentPairs();
@@ -3741,10 +3807,19 @@ svg{display:block}
     var btn=E("lmRefresh"); if(btn){ btn.disabled=true; btn.classList.add("spinning"); }
     fetch("/api/watchlist/refresh",{method:"POST",credentials:"same-origin",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({pairs:pairs})})
-      .then(function(r){return r.ok?r.json():null;})
+      body:JSON.stringify({pairs:pairs, market:ST.market, exchange:ST.exchange, config:getDesktopWatchlistConfig()})})
+      .then(function(r){
+        if(r.status===429){
+          return r.json().catch(function(){return {};}).then(function(data){
+            if(typeof showTokenLimitPopup==="function") showTokenLimitPopup(data.resetAt||data.reset_at||data.tokens_reset_at, data.message||data.error);
+            var er=new Error("daily_limit_reached"); er.tokenLimit=true; throw er;
+          });
+        }
+        if(!r.ok) throw new Error("HTTP "+r.status);
+        return r.json();
+      })
       .then(function(d){ if(d){ _lmCache=Object.assign(_lmCache,d.results||d||{}); _lmPaint(); } })
-      .catch(function(){})
+      .catch(function(e){ if(!(e&&e.tokenLimit)){/* normal refresh failure — leave existing cache */} })
       .finally(function(){ if(btn){btn.disabled=false; btn.classList.remove("spinning");} });
   }
   function _lmPaint(){
@@ -3927,10 +4002,10 @@ svg{display:block}
     Promise.all([
       fetch("/api/trending_scan",{method:"POST",credentials:"same-origin",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({tf:ST.settings.tf||"4h",market:ST.market,exchange:ST.exchange,mode:"bullish",limit:5})}).then(function(r){return r.ok?r.json():[];}),
+        body:JSON.stringify({timeframe:ST.settings.tf||"4h",tf:ST.settings.tf||"4h",market:ST.market,exchange:ST.exchange,mode:"bullish",limit:5})}).then(function(r){return r.ok?r.json():[];}),
       fetch("/api/trending_scan",{method:"POST",credentials:"same-origin",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({tf:ST.settings.tf||"4h",market:ST.market,exchange:ST.exchange,mode:"bearish",limit:5})}).then(function(r){return r.ok?r.json():[];})
+        body:JSON.stringify({timeframe:ST.settings.tf||"4h",tf:ST.settings.tf||"4h",market:ST.market,exchange:ST.exchange,mode:"bearish",limit:5})}).then(function(r){return r.ok?r.json():[];})
     ]).then(function(both){
       var bu=both[0]||[], be=both[1]||[];
       var rows=function(arr,cls){
@@ -3970,8 +4045,12 @@ svg{display:block}
   function _dbLoadBiasShifts(){
     fetch("/api/bias_scan",{method:"POST",credentials:"same-origin",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({tf:ST.settings.tf||"4h",market:ST.market,exchange:ST.exchange,
-        pairsPerCycle:24, roundRobin:true})})
+      body:JSON.stringify({timeframe:ST.settings.tf||"4h",tf:ST.settings.tf||"4h",
+        market:ST.market,exchange:ST.exchange,
+        scanMode:"market", symbols:[], pairsPerCycle:24, roundRobin:true,
+        mode:"normal", biasStrength:"balanced", detectionMode:"early",
+        confluenceMode:"optional", minimumGrade:"B+",
+        useObConfluence:true, useFvgConfluence:true, useFibConfluence:true})})
       .then(function(r){return r.ok?r.json():null;})
       .then(function(d){
         var rs=(d&&(d.results||d.shifts))||[];
@@ -4015,15 +4094,21 @@ svg{display:block}
   function _dbLoadBudget(){
     Promise.all([
       fetch("/api/my-permissions",{credentials:"same-origin"}).then(function(r){return r.ok?r.json():null;}).catch(function(){return null;}),
-      fetch("/api/weight_status",{credentials:"same-origin"}).then(function(r){return r.ok?r.json():null;}).catch(function(){return null;})
+      fetch("/api/weight_status?exchange="+encodeURIComponent(ST.exchange),{credentials:"same-origin"}).then(function(r){return r.ok?r.json():null;}).catch(function(){return null;})
     ]).then(function(both){
       var perm=both[0]||{}, w=both[1]||{};
-      var tokens=(perm.tokens!=null)?perm.tokens : (perm.scan_tokens_left!=null?perm.scan_tokens_left:null);
-      var cap=(perm.daily_cap!=null)?perm.daily_cap : (perm.max_tokens!=null?perm.max_tokens:null);
-      var used=(w.used!=null)?w.used:null, limit=(w.limit!=null)?w.limit:null;
+      var t=_normalizeTokens(perm);   // same normalizer as the top token pill
       var bits=[];
-      if(tokens!=null && cap!=null) bits.push('<div class="kv"><span class="k">Scan tokens</span><span class="v">'+tokens+' / '+cap+'</span></div>');
-      else if(tokens!=null) bits.push('<div class="kv"><span class="k">Scan tokens</span><span class="v">'+tokens+'</span></div>');
+      if(t && (t.isAdmin || (t.total!=null && t.total>=999999))){
+        bits.push('<div class="kv"><span class="k">Scan tokens</span><span class="v">Unlimited</span></div>');
+      } else if(t && t.remaining!=null && t.total!=null && t.total>0){
+        var pctRem=Math.max(0,Math.min(100,Math.round(t.remaining/t.total*100)));
+        bits.push('<div class="kv"><span class="k">Scan tokens</span><span class="v">'+
+          Math.round(t.remaining)+' / '+Math.round(t.total)+' · '+pctRem+'%</span></div>');
+      } else if(t && t.remaining!=null){
+        bits.push('<div class="kv"><span class="k">Scan tokens</span><span class="v">'+Math.round(t.remaining)+'</span></div>');
+      }
+      var used=(w.used!=null)?w.used:null, limit=(w.limit!=null)?w.limit:null;
       if(used!=null && limit!=null) bits.push('<div class="kv"><span class="k">API weight</span><span class="v">'+used+' / '+limit+'</span></div>');
       _dbPaint("dbBudget", bits.length?bits.join(""):'<div class="row-msg">Budget data not available.</div>');
     });
