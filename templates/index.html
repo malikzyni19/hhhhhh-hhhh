@@ -2293,7 +2293,13 @@ setTimeout(() => typeWelcomeName(_welcomeUsername), 400);
 
 // Market type helpers
 function marketType(){ return $('marketType') ? $('marketType').value : 'perpetual'; }
-function currentExchange(){ return $('exchangeSelect') ? $('exchangeSelect').value : 'binance'; }
+function currentExchange(){
+  var v = $('exchangeSelect') ? $('exchangeSelect').value : 'binance';
+  // Never silently return a locked exchange — fall back to an allowed one.
+  var allowed = window._allowedExchanges;
+  if(allowed && allowed.length && allowed.indexOf(v) < 0){ return allowed[0] || 'binance'; }
+  return v || 'binance';
+}
 function getOrderFlowExchangeForPair(pairObjOrSymbol){
   if(pairObjOrSymbol && typeof pairObjOrSymbol === 'object' && pairObjOrSymbol.exchange)
     return pairObjOrSymbol.exchange;
@@ -2358,6 +2364,12 @@ function toggleSignalChip(label, inputId, activeClass){
 }
 
 function showPage(id, btn){
+  // Permission gate — locked tabs show the upgrade popup and do not switch.
+  if(window.mobileAllowed && !window.mobileAllowed('tab', id)){
+    var lbl = (window.TAB_LABELS && window.TAB_LABELS[id]) || id;
+    if(window.showLockPopup) window.showLockPopup(lbl);
+    return;
+  }
   document.querySelectorAll('.page').forEach(p => { p.classList.remove('active'); p.style.opacity = ''; p.style.transition = ''; });
   document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
   const target = $('page-' + id);
@@ -2858,6 +2870,7 @@ function initMatrixRain(){
 
 // ── Scan ──
 async function runScan(){
+  if(window.mobileTfGuard && !window.mobileTfGuard($('tf').value, 'Timeframe ' + $('tf').value)) return;
   const _scanSrc = $('scanSource') ? $('scanSource').value : 'selected';
   const _popupPairs = _scanSrc === 'market' ? [] : [...selectedPairs];
   showScanPopup('SCANNING MARKET', _popupPairs);
@@ -2899,9 +2912,10 @@ async function runScan(){
     pb.style.width = '60%';
     const res = await fetch('/api/scan', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
     incrementApiCounter(payload.pairsPerCycle || 20);
+    if(await window.handleTokenLimitResponse(res)){ pw.classList.remove('active'); pb.style.width='0'; st.className='status-text'; st.textContent='Daily scan limit reached'; return; }
     if(!res.ok){ throw new Error(`HTTP ${res.status}`); }
     const data = await res.json();
-    if(data.error === 'daily_limit_reached'){ if(window.showTokenLimitPopup) window.showTokenLimitPopup(); return; }
+    if(data.error === 'daily_limit_reached'){ if(window.showTokenLimitPopup) window.showTokenLimitPopup(data.resetAt||data.reset_at||data.tokens_reset_at, data.message||data.error); pw.classList.remove('active'); pb.style.width='0'; st.className='status-text'; st.textContent='Daily scan limit reached'; return; }
     pb.style.width = '100%';
     setTimeout(()=>{ pw.classList.remove('active'); pb.style.width='0'; }, 500);
     st.className = 'status-text done';
@@ -3005,13 +3019,15 @@ function fmtP(n,d=2){ return (typeof n==='number')?n.toFixed(d):'—'; }
 function fmtPx(n){ return (typeof n==='number')?n.toFixed(6):'—'; }
 
 async function scanCompressed(){
+  if(window.mobileTfGuard && !window.mobileTfGuard($('compressedTf').value, 'Timeframe ' + $('compressedTf').value)) return;
   showScanPopup('SCANNING COMPRESSED');
   $('compressedResults').innerHTML = '<div class="empty">Scanning...</div>';
   const payload = { timeframe: $('compressedTf').value, lookback:+$('compressedLookback').value, maxPct:+$('compressedMaxPct').value, symbols:[...selectedPairs], market: marketType(), exchange: currentExchange() };
   try {
     const res = await fetch('/api/compressed_scan', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    if(await window.handleTokenLimitResponse(res)){ return; }
     const data = await res.json();
-    if(data && data.error === 'daily_limit_reached'){ if(window.showTokenLimitPopup) window.showTokenLimitPopup(); return; }
+    if(data && data.error === 'daily_limit_reached'){ if(window.showTokenLimitPopup) window.showTokenLimitPopup(data.resetAt||data.reset_at||data.tokens_reset_at, data.message||data.error); return; }
     if(data && data.error){ $('compressedResults').innerHTML = `<div class="empty">Scan error: ${data.message || data.error}</div>`; return; }
     const attemptedCount = data?.scanned || (payload.symbols?.length || 80);
     if(window.refreshTokensAfterScan) window.refreshTokensAfterScan(attemptedCount);
@@ -3095,14 +3111,16 @@ async function scanCompressed(){
 
 // ── Trending ──
 async function scanTrending(){
+  if(window.mobileTfGuard && !window.mobileTfGuard($('trendingTf').value, 'Timeframe ' + $('trendingTf').value)) return;
   showScanPopup('SCANNING TRENDS');
   $('trendingResults').innerHTML = '<div class="empty">Scanning...</div>';
   const payload = { timeframe:$('trendingTf').value, mode:$('trendingMode').value, limit:+$('trendingLimit').value, market: marketType() };
   try {
     const res = await fetch('/api/trending_scan', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    if(await window.handleTokenLimitResponse(res)){ return; }
     const data = await res.json();
-    if(Array.isArray(data) && data[0] && data[0].error === 'daily_limit_reached'){ if(window.showTokenLimitPopup) window.showTokenLimitPopup(); return; }
-    if(!Array.isArray(data) && data.error === 'daily_limit_reached'){ if(window.showTokenLimitPopup) window.showTokenLimitPopup(); return; }
+    if(Array.isArray(data) && data[0] && data[0].error === 'daily_limit_reached'){ if(window.showTokenLimitPopup) window.showTokenLimitPopup(data[0].resetAt||data[0].reset_at, data[0].message||data[0].error); return; }
+    if(!Array.isArray(data) && data.error === 'daily_limit_reached'){ if(window.showTokenLimitPopup) window.showTokenLimitPopup(data.resetAt||data.reset_at||data.tokens_reset_at, data.message||data.error); return; }
     if(window.refreshTokensAfterScan) window.refreshTokensAfterScan(payload.limit || 30);
     const scanTime = new Date().toLocaleTimeString();
     $('trendingResults').innerHTML = data.length
@@ -3199,9 +3217,10 @@ async function scanAthAtl(){
   try {
     const res = await fetch('/api/ath_atl_scan', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:JSON.stringify(_athPayload('scan'))});
     if($('athScanNote')) $('athScanNote').style.display = 'none';
+    if(await window.handleTokenLimitResponse(res)){ return; }
     if(!res.ok){ $('athResults').innerHTML = `<div class="empty">Error: HTTP ${res.status}</div>`; return; }
     const data = await res.json();
-    if(data && data.error === 'daily_limit_reached'){ if(window.showTokenLimitPopup) window.showTokenLimitPopup(); return; }
+    if(data && data.error === 'daily_limit_reached'){ if(window.showTokenLimitPopup) window.showTokenLimitPopup(data.resetAt||data.reset_at||data.tokens_reset_at, data.message||data.error); return; }
     if(window.refreshTokensAfterScan) window.refreshTokensAfterScan(60);
     if(data && data.warning){
       _athUpdateProgress(data);
@@ -3866,6 +3885,7 @@ async function scanBias(){
   // ── Frontend validation ──
   const validTfs = ['1h','4h','6h','12h','1d'];
   const tfVal = $('biasTf') ? $('biasTf').value : '1d';
+  if(window.mobileTfGuard && !window.mobileTfGuard(tfVal, 'Timeframe ' + tfVal)) return;
   if(!validTfs.includes(tfVal.toLowerCase())){
     if(st) st.textContent = 'Invalid timeframe selected.';
     if(res_div) res_div.innerHTML = '<div class="empty">Select a valid timeframe: 1H, 4H, 6H, 12H, 1D.</div>';
@@ -3966,9 +3986,10 @@ async function scanBias(){
       if(res_div) res_div.innerHTML = `<div class="empty">${msg}</div>`;
       return;
     }
+    if(await window.handleTokenLimitResponse(r)){ return; }
     if(!r.ok) throw new Error('HTTP ' + r.status);
     const resp = await r.json();
-    if(resp && resp.error === 'daily_limit_reached'){ if(window.showTokenLimitPopup) window.showTokenLimitPopup(); return; }
+    if(resp && resp.error === 'daily_limit_reached'){ if(window.showTokenLimitPopup) window.showTokenLimitPopup(resp.resetAt||resp.reset_at||resp.tokens_reset_at, resp.message||resp.error); return; }
     if(window.refreshTokensAfterScan) window.refreshTokensAfterScan(resp.scanned || 20);
     const data    = Array.isArray(resp) ? resp : (resp.results || []);
     const scanned = resp.scanned || data.length;
@@ -4558,6 +4579,7 @@ async function fetchWatchlistPairData(symbol){
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify(payload)
     });
+    if(await window.handleTokenLimitResponse(res)){ return null; }
     if(!res.ok) return null;
     const data = await res.json();
     return (data.results && data.results.length) ? data.results[0] : null;
@@ -6713,7 +6735,7 @@ document.addEventListener('DOMContentLoaded', function(){
     <button onclick="document.getElementById('tokenLimitOverlay').style.display='none'" style="position:absolute;top:12px;right:14px;background:none;border:none;color:#64748b;font-size:18px;cursor:pointer;line-height:1">✕</button>
     <div style="font-size:52px;margin-bottom:16px;animation:tknPulse 1.2s ease-in-out infinite">⚡</div>
     <div style="font-family:'JetBrains Mono',monospace;font-size:15px;font-weight:700;color:#f87171;margin-bottom:10px;letter-spacing:1px">Daily Limit Reached</div>
-    <div style="font-size:13px;color:#64748b;line-height:1.65;margin-bottom:8px">You've used all your scan tokens for today. Your tokens reset at midnight UTC.</div>
+    <div id="tokenLimitMsg" style="font-size:13px;color:#64748b;line-height:1.65;margin-bottom:8px">You've used all your scan tokens for today. Your tokens reset at midnight UTC.</div>
     <div style="font-size:12px;color:#64748b;margin-bottom:20px">Need more tokens? Contact the developer to upgrade your access.</div>
     <div style="font-family:'JetBrains Mono',monospace;font-size:13px;color:#f59e0b;margin-bottom:10px">Resets in: <span id="tokenResetCountdown">--:--:--</span></div>
     <div style="font-size:11px;color:#64748b;line-height:1.8;margin-bottom:22px">
@@ -6748,6 +6770,63 @@ document.addEventListener('DOMContentLoaded', function(){
     if(msg) msg.textContent = 'The "' + label + '" tab is not available on your current plan. Contact @MalikZyNi to upgrade.';
     var ov = document.getElementById('lockedOverlay');
     if(ov){ ov.style.display = 'flex'; }
+  };
+
+  // Generic locked-feature popup (parity with desktop preview).
+  window.showLockPopup = function(featureName, message){
+    var msg = document.getElementById('lockedMsg');
+    if(msg){
+      msg.textContent = message || ('The "' + (featureName || 'feature') +
+        '" feature isn\'t available on your current plan. Upgrade your plan or contact admin to unlock it.');
+    }
+    var ov = document.getElementById('lockedOverlay');
+    if(ov){ ov.style.display = 'flex'; }
+  };
+
+  // Shared 429 / token-limit response handler for every mobile scan call.
+  // Returns true (and shows the token modal) when the response is a token limit,
+  // so the caller can stop cleanly without throwing a plain "HTTP 429".
+  window.handleTokenLimitResponse = async function(res){
+    if(!res || res.status !== 429) return false;
+    var data = {};
+    try { data = await res.clone().json(); } catch(_){}
+    if(window.showTokenLimitPopup){
+      window.showTokenLimitPopup(
+        data.resetAt || data.reset_at || data.tokens_reset_at,
+        data.message || data.error
+      );
+    }
+    return true;
+  };
+
+  // Expose tab labels so page-level gating can name the locked feature.
+  window.TAB_LABELS = TAB_LABELS;
+  // Real permission check. Fail-open: missing perms / missing category => allowed.
+  // Admin always bypasses. Timeframe only gates the controlled vocabulary.
+  window.mobileAllowed = function(kind, value){
+    var p = window.ZYNI_PERMS;
+    if(!p) return true;
+    if(p.is_admin) return true;
+    if(kind === 'timeframe'){
+      var ALL_TF = ['15m','30m','1h','4h','1d'];
+      if(ALL_TF.indexOf(value) < 0) return true; // e.g. 6h/12h are not gated
+    }
+    var key = kind === 'tab' ? 'allowed_tabs'
+            : kind === 'exchange' ? 'allowed_exchanges'
+            : kind === 'timeframe' ? 'allowed_timeframes'
+            : kind === 'module' ? 'allowed_modules' : null;
+    if(!key) return true;
+    var list = p[key];
+    if(!Array.isArray(list)) return true;
+    return list.indexOf(value) >= 0;
+  };
+  // Pre-scan timeframe guard — show lock popup and cancel when TF is locked.
+  window.mobileTfGuard = function(tf, label){
+    if(!window.mobileAllowed('timeframe', tf)){
+      if(window.showLockPopup) window.showLockPopup(label || ('Timeframe ' + tf));
+      return false;
+    }
+    return true;
   };
 
   function updateTokenCounter(perms){
@@ -6869,9 +6948,11 @@ document.addEventListener('DOMContentLoaded', function(){
   document.head.appendChild(_tknStyle);
 
   // ── CHANGE 5: showTokenLimitPopup ──
-  window.showTokenLimitPopup = function(resetAt){
+  window.showTokenLimitPopup = function(resetAt, message){
     var ov = document.getElementById('tokenLimitOverlay');
     if(ov) ov.style.display = 'flex';
+    var msgEl = document.getElementById('tokenLimitMsg');
+    if(msgEl && message){ msgEl.textContent = String(message); }
     // Reset time: use backend value when supplied, else next midnight UTC.
     (function(){
       var reset;
@@ -6948,11 +7029,13 @@ document.addEventListener('DOMContentLoaded', function(){
     });
   }
 
-  document.addEventListener('DOMContentLoaded', function(){
-    fetch('/api/my-permissions')
+  window.ZYNI_PERMS = window.ZYNI_PERMS || null;
+  window.loadMobilePermissions = function(){
+    return fetch('/api/my-permissions')
       .then(function(r){ return r.ok ? r.json() : null; })
       .then(function(perms){
-        if(!perms) return;
+        if(!perms) return;            // fail-open: keep app usable
+        window.ZYNI_PERMS = perms;
         updateTokenCounter(perms);
         applyExchangeFilter(perms);
         applyTimeframeFilter(perms);
@@ -6963,6 +7046,16 @@ document.addEventListener('DOMContentLoaded', function(){
         window._lockedTabs.forEach(lockTabButton);
       })
       .catch(function(){});
+  };
+  document.addEventListener('DOMContentLoaded', function(){ window.loadMobilePermissions(); });
+
+  // Escape closes the token-limit / locked-feature overlays.
+  document.addEventListener('keydown', function(e){
+    if(e.key !== 'Escape') return;
+    var t = document.getElementById('tokenLimitOverlay');
+    if(t && t.style.display === 'flex') t.style.display = 'none';
+    var l = document.getElementById('lockedOverlay');
+    if(l && l.style.display === 'flex') l.style.display = 'none';
   });
 })();
 </script>
