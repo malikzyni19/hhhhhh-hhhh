@@ -1475,6 +1475,15 @@ def debug_ob_tv_parity():
                 "allowed": ["baseline", "latest_opposite_pivot", "all"],
             }), 200
 
+        # ── Debug-only OB extreme-tie variant ──
+        ob_extreme_tie_mode = (request.args.get("ob_extreme_tie_mode") or "").strip().lower() or None
+        if ob_extreme_tie_mode is not None and ob_extreme_tie_mode not in ("first", "last", "all"):
+            return jsonify({
+                "ok": False,
+                "error": f"invalid ob_extreme_tie_mode '{ob_extreme_tie_mode}'",
+                "allowed": ["first", "last", "all"],
+            }), 200
+
         try:
             kline_limit = min(max(int(request.args.get("kline_limit") or 300), 50), 10000)
         except (TypeError, ValueError):
@@ -1498,7 +1507,7 @@ def debug_ob_tv_parity():
 
         # ── Core analysis helper — runs on any candle slice ───────────────────
         def _analyse(cnd, mit_closed=False, eff_overlap=False, bear_eff_bottom=False,
-                     anchor_mode="baseline"):
+                     anchor_mode="baseline", tie_mode="first"):
             _o = [x["open"]   for x in cnd]
             _h = [x["high"]   for x in cnd]
             _l = [x["low"]    for x in cnd]
@@ -1510,7 +1519,8 @@ def debug_ob_tv_parity():
                                         mitigation_closed_only=mit_closed,
                                         overlap_effective_zone=eff_overlap,
                                         bearish_effective_bottom_overlap=bear_eff_bottom,
-                                        anchor_mode=anchor_mode)
+                                        anchor_mode=anchor_mode,
+                                        extreme_tie_mode=tie_mode)
             if isinstance(_normal_result, tuple):
                 _normal, _bos_trace = _normal_result
             else:
@@ -1519,7 +1529,8 @@ def debug_ob_tv_parity():
                                  mitigation_closed_only=mit_closed,
                                  overlap_effective_zone=eff_overlap,
                                  bearish_effective_bottom_overlap=bear_eff_bottom,
-                                 anchor_mode=anchor_mode)
+                                 anchor_mode=anchor_mode,
+                                 extreme_tie_mode=tie_mode)
 
             _bull_src = _copy.deepcopy([ob for ob in _all if ob["type"] == "bullish"])
             _bear_src = _copy.deepcopy([ob for ob in _all if ob["type"] == "bearish"])
@@ -2152,6 +2163,180 @@ def debug_ob_tv_parity():
                     },
                 }
 
+        # ── Debug-only extreme-tie diagnostics + tv_parity_candidate_v2 ───────
+        #    (only when ob_extreme_tie_mode is passed → endpoint byte-identical
+        #     otherwise). first-tie = baseline; last-tie = latest equal extreme.
+        extreme_tie_diagnostics = None
+        tv_parity_candidate_v2  = None
+        if ob_extreme_tie_mode is not None:
+            _tie_modes_to_run = (["first"] if ob_extreme_tie_mode == "first"
+                                 else ["first", "last"])
+
+            _eo2 = [x["open"]   for x in main_candles]
+            _eh2 = [x["high"]   for x in main_candles]
+            _el2 = [x["low"]    for x in main_candles]
+            _ec2 = [x["close"]  for x in main_candles]
+            _ev2 = [x["volume"] for x in main_candles]
+            _en2 = len(_ec2)
+
+            def _etw(bar):
+                return _ts(times[bar]) if (bar is not None and 0 <= bar < _en2) else None
+
+            def _eparse(s):
+                if not s:
+                    return None
+                for _fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S"):
+                    try:
+                        return int(_dt.datetime.strptime(s, _fmt)
+                                   .replace(tzinfo=_dt.timezone.utc).timestamp() * 1000)
+                    except ValueError:
+                        continue
+                return None
+            _efrom = _eparse(trace_from)
+            _eto_  = _eparse(trace_to)
+
+            # Trace first-tie and last-tie (baseline anchor) for comparison.
+            _tc_first = {"events": [], "mitigations": []}
+            detect_obs(_eo2, _eh2, _el2, _ec2, _ev2, I_LEN, S_LEN, max_ob=None,
+                       trace=_tc_first, anchor_mode="baseline", extreme_tie_mode="first")
+            _tc_last = {"events": [], "mitigations": []}
+            detect_obs(_eo2, _eh2, _el2, _ec2, _ev2, I_LEN, S_LEN, max_ob=None,
+                       trace=_tc_last, anchor_mode="baseline", extreme_tie_mode="last")
+            _first_by_key = {(e["side"], e["bos_bar"]): e for e in _tc_first["events"]}
+            _last_by_key  = {(e["side"], e["bos_bar"]): e for e in _tc_last["events"]}
+
+            def _tie_in_range(ev):
+                if trace_side and ev["side"] != trace_side:
+                    return False
+                _ss = ev["search_start"]; _se = ev["search_end"]
+                _ws = times[_ss] if 0 <= _ss < _en2 else None
+                _wl = min(_se - 1, _en2 - 1)
+                _we = times[_wl] if 0 <= _wl < _en2 else None
+                if _efrom is not None and _we is not None and _we < _efrom:
+                    return False
+                if _eto_ is not None and _ws is not None and _ws > _eto_:
+                    return False
+                return True
+
+            def _tie_sel(ev):
+                if ev is None:
+                    return None
+                _b = ev["side"] == "bullish"
+                _sel = ev.get("min_idx" if _b else "max_idx")
+                _disp = None
+                if "ob_top" in ev:
+                    _disp = ({"bottom": ev["ob_bottom"], "top": ev["ob_top"]} if _b
+                             else {"bottom": ev["ob_avg"], "top": ev["ob_top"]})
+                return {
+                    "selected_bar":         _sel,
+                    "selected_time_utc":    _etw(_sel),
+                    "selected_low_or_high": (ev.get("ob_bottom") if _b else ev.get("ob_top")),
+                    "sourceBar":            ev.get("ob_source"),
+                    "source_time_utc":      _etw(ev.get("ob_source")),
+                    "source_volume":        ev.get("volume"),
+                    "displayed_zone":       _disp,
+                }
+
+            # extreme_tie_diagnostics — per tie mode, list of per-BOS-event records
+            extreme_tie_diagnostics = {}
+            for _tm in _tie_modes_to_run:
+                _src_events = (_tc_first if _tm == "first" else _tc_last)["events"]
+                _recs = []
+                for ev in _src_events:
+                    if not _tie_in_range(ev):
+                        continue
+                    _sel  = _tie_sel(ev)
+                    _fsel = _tie_sel(_first_by_key.get((ev["side"], ev["bos_bar"])))
+                    _changed = bool(_tm == "last" and _sel and _fsel and
+                                    _sel["selected_bar"] != _fsel["selected_bar"])
+                    if _tm == "first":
+                        _reason = ("first equal extreme wins (strict < / >) — current "
+                                   "baseline behavior")
+                    elif _changed:
+                        _reason = (f"last equal extreme wins (<= / >=): a later bar tied "
+                                   f"the extreme; selection moved from bar "
+                                   f"{_fsel['selected_bar']} to bar {_sel['selected_bar']}")
+                    else:
+                        _reason = ("last equal extreme rule applied; no later tie in the "
+                                   "search window — selection unchanged")
+                    _rec = {
+                        "tie_mode":     _tm,
+                        "side":         ev["side"],
+                        "bos_bar":      ev["bos_bar"],
+                        "bos_time_utc": _etw(ev["bos_bar"]),
+                        "did_result_change_from_first": _changed,
+                        "reason":       _reason,
+                    }
+                    if _sel:
+                        _rec.update(_sel)
+                    _recs.append(_rec)
+                extreme_tie_diagnostics[_tm] = _recs
+
+            # Inject side-by-side tie selection into ob_trace_detail events.
+            if ob_trace_detail is not None:
+                for _d in ob_trace_detail["events"]:
+                    _bb = _d["bos_event"]["bos_bar"]
+                    _sd = _d["bos_event"]["side"]
+                    _fe = _first_by_key.get((_sd, _bb))
+                    _le = _last_by_key.get((_sd, _bb))
+                    _d["first_tie_selection"] = _tie_sel(_fe)
+                    _d["last_tie_selection"]  = _tie_sel(_le)
+                    _eb = []
+                    if _fe is not None:
+                        _ss = _fe["search_start"]; _se = _fe["search_end"]
+                        _isb = _sd == "bullish"
+                        if _se > _ss:
+                            _vals = (_el2 if _isb else _eh2)[_ss:_se]
+                            _ext  = min(_vals) if _isb else max(_vals)
+                            _fsb  = _fe.get("min_idx" if _isb else "max_idx")
+                            _lsb  = _le.get("min_idx" if _isb else "max_idx") if _le else None
+                            for _b in range(_ss, _se):
+                                _val = _el2[_b] if _isb else _eh2[_b]
+                                if _val == _ext:
+                                    _eb.append({
+                                        "bar": _b, "time_utc": _etw(_b),
+                                        "low_or_high": _val, "volume": _ev2[_b],
+                                        "is_first_tie_pick": _b == _fsb,
+                                        "is_last_tie_pick":  _b == _lsb,
+                                    })
+                    _d["equal_extreme_bars"] = _eb
+
+            # tv_parity_candidate_v2 — combined DEBUG candidate (NOT production)
+            _cand = _analyse(main_candles, mit_closed=True, bear_eff_bottom=True,
+                             anchor_mode="latest_opposite_pivot", tie_mode="last")
+            _cbv = [_ob_visible(ob) for ob in _cand["bull_vis"]]
+            _crv = [_ob_visible(ob) for ob in _cand["bear_vis"]]
+            tv_parity_candidate_v2 = {
+                "variant": "tv_parity_candidate_v2",
+                "note": ("Combined DEBUG candidate — NOT production. "
+                         "mitigation_closed_only + bearish_effective_bottom_overlap "
+                         "+ latest_opposite_pivot anchor + last extreme-tie."),
+                "rules": {
+                    "mitigation_closed_only":           True,
+                    "bearish_effective_bottom_overlap": True,
+                    "ob_anchor_variant":                "latest_opposite_pivot",
+                    "ob_extreme_tie_mode":              "last",
+                },
+                "bullish_source_pool":  [_ob_base(ob) for ob in _cand["bull_src"][-20:]],
+                "bearish_source_pool":  [_ob_base(ob) for ob in _cand["bear_src"][-20:]],
+                "bullish_visible_pool": _cbv,
+                "bearish_visible_pool": _crv,
+                "bullish_visible_total_volume": _cand["bull_vtot"],
+                "bearish_visible_total_volume": _cand["bear_vtot"],
+                "source_counts":  {"bullish": len(_cand["bull_src"]),
+                                   "bearish": len(_cand["bear_src"])},
+                "visible_counts": {"bullish": len(_cand["bull_vis"]),
+                                   "bearish": len(_cand["bear_vis"])},
+                "variant_summary": {
+                    "bull_times":        [d["time"] for d in _cbv],
+                    "bear_times":        [d["time"] for d in _crv],
+                    "bull_pct_list":     [d.get("tvObVolumeSharePct") for d in _cbv],
+                    "bear_pct_list":     [d.get("tvObVolumeSharePct") for d in _crv],
+                    "bull_total_volume": _cand["bull_vtot"],
+                    "bear_total_volume": _cand["bear_vtot"],
+                },
+            }
+
         _resp = {
             "ok":                           True,
             "phase":                        "1A",
@@ -2201,6 +2386,14 @@ def debug_ob_tv_parity():
             _resp["ob_anchor_variant"]          = ob_anchor_variant
             _resp["ob_anchor_variant_allowed"]  = ["baseline", "latest_opposite_pivot", "all"]
             _resp["anchor_variant_diagnostics"] = anchor_variant_diagnostics
+
+        # Extreme-tie keys are added ONLY when ob_extreme_tie_mode is passed,
+        # so the response is byte-identical when the param is absent.
+        if ob_extreme_tie_mode is not None:
+            _resp["ob_extreme_tie_mode"]         = ob_extreme_tie_mode
+            _resp["ob_extreme_tie_mode_allowed"] = ["first", "last", "all"]
+            _resp["extreme_tie_diagnostics"]     = extreme_tie_diagnostics
+            _resp["tv_parity_candidate_v2"]      = tv_parity_candidate_v2
 
         return jsonify(_resp)
 

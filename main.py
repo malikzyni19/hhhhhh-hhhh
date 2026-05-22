@@ -2484,7 +2484,8 @@ def _compute_ob_touch_meta(ob, h, l, c, n, ob_mitigation="Absolute",
 
 def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", ob_mitigation="Absolute",
                mitigation_closed_only=False, overlap_effective_zone=False,
-               bearish_effective_bottom_overlap=False, trace=None, anchor_mode="baseline"):
+               bearish_effective_bottom_overlap=False, trace=None, anchor_mode="baseline",
+               extreme_tie_mode="first"):
     """
     Order Block detection — audited line-by-line against Pine Script drawVOB().
 
@@ -2510,6 +2511,10 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         strictly after the broken pivot and confirmed on/before the BOS
         bar; the pivot candle itself, no +1. Falls back to baseline when
         no such pivot exists.
+      extreme_tie_mode: tie-break when several bars share the extreme.
+        "first" (default) — earliest extreme wins (strict < / >).
+        "last" — latest equal extreme wins (<= / >=). The Pine +1
+        sourceBar offset is unchanged; only the chosen extreme bar moves.
 
     Pine search window:
       search_start = pivot_bar + 1 (Pine loc = hN/lN.first() = absolute pivot bar).
@@ -2586,6 +2591,7 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
                     "broken_level": upP[0], "prev_break_level": prev_upP_first,
                     "close_prev": c[i - 1], "close_curr": c[i],
                     "anchor_mode": anchor_mode,
+                    "extreme_tie_mode": extreme_tie_mode,
                     "anchor_pivot_bar": _anchor_pivot_bar,
                     "anchor_confirmed_at_bar": (_anchor_pivot_bar + i_len
                                                 if _anchor_pivot_bar is not None else None),
@@ -2597,9 +2603,12 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
 
             if search_end > search_start:
                 # Step 1: Find candle with lowest low
+                # extreme_tie_mode: "first" → strict < (earliest wins);
+                #                   "last"  → <= (latest equal low wins).
                 min_idx = search_start
+                _tie_last = extreme_tie_mode == "last"
                 for j in range(search_start, search_end):
-                    if l[j] < l[min_idx]:
+                    if (l[j] <= l[min_idx]) if _tie_last else (l[j] < l[min_idx]):
                         min_idx = j
 
                 # Step 2: +1 offset — Pine uses the candle ONE BAR EARLIER for hl2/volume
@@ -2726,6 +2735,7 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
                     "broken_level": dnP[0], "prev_break_level": prev_dnP_first,
                     "close_prev": c[i - 1], "close_curr": c[i],
                     "anchor_mode": anchor_mode,
+                    "extreme_tie_mode": extreme_tie_mode,
                     "anchor_pivot_bar": _anchor_pivot_bar,
                     "anchor_confirmed_at_bar": (_anchor_pivot_bar + i_len
                                                 if _anchor_pivot_bar is not None else None),
@@ -2737,9 +2747,12 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
 
             if search_end > search_start:
                 # Step 1: Find candle with highest high
+                # extreme_tie_mode: "first" → strict > (earliest wins);
+                #                   "last"  → >= (latest equal high wins).
                 max_idx = search_start
+                _tie_last = extreme_tie_mode == "last"
                 for j in range(search_start, search_end):
-                    if h[j] > h[max_idx]:
+                    if (h[j] >= h[max_idx]) if _tie_last else (h[j] > h[max_idx]):
                         max_idx = j
 
                 # Step 2: +1 offset — floor is 0, NOT search_start (Pine's offset is unconditional)
