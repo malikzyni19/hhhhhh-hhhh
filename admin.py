@@ -1450,6 +1450,14 @@ def debug_ob_tv_parity():
                 "allowed": _ALLOWED_VARIANTS,
             }), 200
 
+        # ── Debug-only OB trace params (diagnostic; only active when trace_ob) ──
+        trace_ob   = request.args.get("trace_ob", "false").strip().lower() in ("1", "true", "yes")
+        trace_side = (request.args.get("trace_side") or "").strip().lower() or None
+        if trace_side not in (None, "bullish", "bearish"):
+            trace_side = None
+        trace_from = (request.args.get("trace_from") or "").strip() or None
+        trace_to   = (request.args.get("trace_to")   or "").strip() or None
+
         try:
             kline_limit = min(max(int(request.args.get("kline_limit") or 300), 50), 10000)
         except (TypeError, ValueError):
@@ -1766,7 +1774,266 @@ def debug_ob_tv_parity():
                 "bear_pct_list":     [d.get("tvObVolumeSharePct") for d in _rv],
             }
 
-        return jsonify({
+        # ── Debug-only OB trace (diagnostic; only built when trace_ob=true) ───
+        ob_trace_detail = None
+        trace_summary   = None
+        if trace_ob:
+            _to       = [x["open"]   for x in main_candles]
+            _th       = [x["high"]   for x in main_candles]
+            _tl       = [x["low"]    for x in main_candles]
+            _tc_close = [x["close"]  for x in main_candles]
+            _tv       = [x["volume"] for x in main_candles]
+            _tn       = len(_tc_close)
+
+            # BOS detection / search window / extreme selection are
+            # variant-independent → trace once with baseline flags.
+            _trace_coll = {"events": [], "mitigations": []}
+            detect_obs(_to, _th, _tl, _tc_close, _tv, I_LEN, S_LEN, max_ob=None,
+                       trace=_trace_coll)
+
+            def _parse_trace_dt(s):
+                if not s:
+                    return None
+                for _fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S"):
+                    try:
+                        return int(_dt.datetime.strptime(s, _fmt)
+                                   .replace(tzinfo=_dt.timezone.utc).timestamp() * 1000)
+                    except ValueError:
+                        continue
+                return None
+
+            _from_ms = _parse_trace_dt(trace_from)
+            _to_ms   = _parse_trace_dt(trace_to)
+
+            # Baseline pool membership (trace run uses baseline flags, so its
+            # survivors == baseline `a` pools).
+            _src_bars = {(ob["type"], ob["bar"]) for ob in a["all"]}
+            _vis_bull = {ob["bar"]: idx for idx, ob in enumerate(a["bull_vis"])}
+            _vis_bear = {ob["bar"]: idx for idx, ob in enumerate(a["bear_vis"])}
+            _mit_by_ob = {}
+            for _m in _trace_coll["mitigations"]:
+                _mit_by_ob.setdefault((_m["ob_type"], _m["ob_bar"]), _m)
+
+            def _wt(bar):
+                return _ts(times[bar]) if (bar is not None and 0 <= bar < _tn) else None
+
+            _MAX_WIN = 1500  # cap per-event window candle list
+
+            detail = []
+            for _ev in _trace_coll["events"]:
+                if trace_side and _ev["side"] != trace_side:
+                    continue
+                _ss = _ev["search_start"]
+                _se = _ev["search_end"]            # exclusive
+                _last_bar = min(_se - 1, _tn - 1)
+                _win_start_ms = times[_ss]       if 0 <= _ss < _tn else None
+                _win_end_ms   = times[_last_bar] if 0 <= _last_bar < _tn else None
+                # Window-overlap filter against [trace_from, trace_to]
+                if _from_ms is not None and _win_end_ms is not None and _win_end_ms < _from_ms:
+                    continue
+                if _to_ms is not None and _win_start_ms is not None and _win_start_ms > _to_ms:
+                    continue
+
+                _is_bull = _ev["side"] == "bullish"
+                _sel_bar = _ev.get("min_idx" if _is_bull else "max_idx")
+
+                _win_cands = []
+                _truncated = (_last_bar - _ss + 1) > _MAX_WIN
+                for _b in range(_ss, min(_se, _ss + _MAX_WIN)):
+                    if not (0 <= _b < _tn):
+                        continue
+                    _metric = _tl[_b] if _is_bull else _th[_b]
+                    _sel    = (_b == _sel_bar)
+                    _dir    = 1 if _tc_close[_b] > _to[_b] else -1
+                    if _sel:
+                        _reason = ("selected: " +
+                                   ("lowest low" if _is_bull else "highest high") +
+                                   " in search window")
+                    else:
+                        _reason = ("rejected: " +
+                                   ("low" if _is_bull else "high") +
+                                   f" {_metric:.8f} is not the window " +
+                                   ("min" if _is_bull else "max"))
+                    _win_cands.append({
+                        "bar": _b, "time_utc": _wt(_b),
+                        "open": _to[_b], "high": _th[_b], "low": _tl[_b],
+                        "close": _tc_close[_b], "volume": _tv[_b],
+                        "candle_dir": _dir,
+                        "is_bullish": _dir == 1, "is_bearish": _dir == -1,
+                        "is_candidate_for_ob": True,
+                        "selection_metric_used": "lowest_low" if _is_bull else "highest_high",
+                        "selection_metric_value": _metric,
+                        "selected_by_python": _sel,
+                        "reason_selected_or_rejected": _reason,
+                    })
+
+                _selected_ob = None
+                if "ob_top" in _ev:
+                    _src_bar = _ev.get("ob_source")
+                    if _is_bull:
+                        _disp_bottom, _disp_top = _ev["ob_bottom"], _ev["ob_top"]
+                    else:
+                        # TV displays the bearish lower boundary at avg
+                        _disp_bottom, _disp_top = _ev["ob_avg"], _ev["ob_top"]
+                    _selected_ob = {
+                        "selected_bar":      _sel_bar,
+                        "selected_time_utc": _wt(_sel_bar),
+                        "sourceBar":         _src_bar,
+                        "source_time_utc":   _wt(_src_bar),
+                        "raw_bottom":        _ev["ob_bottom"],
+                        "raw_top":           _ev["ob_top"],
+                        "avg":               _ev["ob_avg"],
+                        "displayed_bottom":  _disp_bottom,
+                        "displayed_top":     _disp_top,
+                        "volume":            _ev.get("volume"),
+                        "precise_adjustment_notes": (
+                            "precise adjustment applied (zone edge collapsed to avg)"
+                            if _ev.get("precise_applied") else "no precise adjustment"),
+                    }
+
+                _co       = _ev.get("creation_overlap") or {}
+                _mit      = _mit_by_ob.get((_ev["side"], _sel_bar)) if _sel_bar is not None else None
+                _in_src   = (_ev["side"], _sel_bar) in _src_bars
+                _vis_map  = _vis_bull if _is_bull else _vis_bear
+                _vis_rank = _vis_map.get(_sel_bar)
+                _in_vis   = _vis_rank is not None
+                if not _ev.get("created"):
+                    _nv_reason = "ob_not_created (" + _ev.get(
+                        "not_created_reason", "search window empty") + ")"
+                elif _co.get("deleted_by_creation_overlap"):
+                    _nv_reason = "deleted_by_creation_overlap"
+                elif _mit is not None:
+                    _nv_reason = f"mitigated_at_bar_{_mit['mitigated_at_bar']}"
+                elif not _in_src:
+                    _nv_reason = "not_in_source_pool (removed during bar loop)"
+                elif not _in_vis:
+                    _nv_reason = "hidden_in_visible_pool (overlap_previous or beyond_show_last)"
+                else:
+                    _nv_reason = None
+                _post = {
+                    "creation_overlap_checked":    _co.get("checked", False),
+                    "overlap_with_previous":       bool(_co.get("deleted_by_creation_overlap")),
+                    "overlap_previous_ob_time":    _wt(_co.get("prev_ob_bar")),
+                    "overlap_rule_used":           _co.get("rule"),
+                    "deleted_by_creation_overlap": bool(_co.get("deleted_by_creation_overlap")),
+                    "mitigation_checked":          True,
+                    "mitigated":                   _mit is not None,
+                    "mitigation_bar":              _mit["mitigated_at_bar"] if _mit else None,
+                    "mitigation_time_utc":         _wt(_mit["mitigated_at_bar"]) if _mit else None,
+                    "added_to_source_pool":        _in_src,
+                    "included_in_visible_pool":    _in_vis,
+                    "not_visible_reason":          _nv_reason,
+                    "showLast_rank":               _vis_rank,
+                }
+
+                _pivot_bar   = _ev["pivot_bar"]
+                _pivot_price = ((_th[_pivot_bar] if _is_bull else _tl[_pivot_bar])
+                                if 0 <= _pivot_bar < _tn else None)
+                _bos_event = {
+                    "side":                  _ev["side"],
+                    "bos_bar":               _ev["bos_bar"],
+                    "bos_time_utc":          _wt(_ev["bos_bar"]),
+                    "close_prev":            _ev["close_prev"],
+                    "close_curr":            _ev["close_curr"],
+                    "broken_level_value":    _ev["broken_level"],
+                    "pivot_bar":             _pivot_bar,
+                    "pivot_time_utc":        _wt(_pivot_bar),
+                    "pivot_price":           _pivot_price,
+                    "internal_trend_before": None,
+                    "internal_trend_after":  None,
+                    "choch":                 None,
+                    "chochplus":             None,
+                    "internal_trend_note":   ("Python detect_obs has no separate "
+                                              "CHoCH / internal-trend state — it uses "
+                                              "pivot-cross BOS detection only."),
+                    "search_start_bar":            _ss,
+                    "search_start_time_utc":       _wt(_ss),
+                    "search_end_bar":              _se,
+                    "search_end_exclusive":        True,
+                    "search_window_last_bar":      _last_bar,
+                    "search_window_last_time_utc": _wt(_last_bar),
+                    "search_rule_description": (
+                        "search_start = max(0, pivot_bar + 1); search_end = bos_bar + 1 "
+                        "(exclusive). Window = bars [pivot_bar+1 .. bos_bar]. Extreme = " +
+                        ("lowest low" if _is_bull else "highest high") +
+                        "; OB source candle = extreme_bar - 1 (Pine +1 offset)."),
+                }
+
+                detail.append({
+                    "bos_event":               _bos_event,
+                    "search_window_candles":   _win_cands,
+                    "search_window_truncated": _truncated,
+                    "selected_ob":             _selected_ob,
+                    "post_creation_decisions": _post,
+                })
+
+            ob_trace_detail = {
+                "trace_run_variant": "baseline",
+                "trace_run_note": ("BOS detection, search window and extreme "
+                                   "selection are variant-independent; mitigation "
+                                   "shown here is baseline (runs through the last "
+                                   "candle)."),
+                "trace_side":           trace_side or "both",
+                "trace_from":           trace_from,
+                "trace_to":             trace_to,
+                "trace_from_parsed_ms": _from_ms,
+                "trace_to_parsed_ms":   _to_ms,
+                "events_total":         len(_trace_coll["events"]),
+                "events_in_range":      len(detail),
+                "events":               detail,
+            }
+
+            _sel_obs = []
+            _union   = {}
+            for _d in detail:
+                _so = _d["selected_ob"]
+                if _so and _so["selected_bar"] is not None:
+                    _pcd = _d["post_creation_decisions"]
+                    _sel_obs.append({
+                        "time":               _so["selected_time_utc"],
+                        "bar":                _so["selected_bar"],
+                        "sourceBar":          _so["sourceBar"],
+                        "source_time":        _so["source_time_utc"],
+                        "raw_top":            _so["raw_top"],
+                        "raw_bottom":         _so["raw_bottom"],
+                        "volume":             _so["volume"],
+                        "in_source_pool":     _pcd["added_to_source_pool"],
+                        "in_visible_pool":    _pcd["included_in_visible_pool"],
+                        "not_visible_reason": _pcd["not_visible_reason"],
+                        "bos_bar":            _d["bos_event"]["bos_bar"],
+                        "bos_time":           _d["bos_event"]["bos_time_utc"],
+                    })
+                for _wc in _d["search_window_candles"]:
+                    _u = _union.setdefault(_wc["bar"], {
+                        "bar": _wc["bar"], "time": _wc["time_utc"],
+                        "low": _wc["low"], "high": _wc["high"],
+                        "selected_by_python": False,
+                        "in_search_window_of_bos_bars": [],
+                    })
+                    if _wc["selected_by_python"]:
+                        _u["selected_by_python"] = True
+                    _u["in_search_window_of_bos_bars"].append(_d["bos_event"]["bos_bar"])
+            _union_list = [_union[k] for k in sorted(_union)]
+
+            trace_summary = {
+                "side":                trace_side or "both",
+                "trace_from":          trace_from,
+                "trace_to":            trace_to,
+                "bos_events_in_range": len(detail),
+                "python_selected_obs": _sel_obs,
+                "search_window_union": _union_list,
+                "notes": (
+                    f"{len(detail)} {trace_side or 'bull+bear'} BOS event(s) have a "
+                    "search window overlapping the trace range. Every candle that "
+                    "appeared in any of those search windows is listed in "
+                    "search_window_union. A candle is the Python-selected OB anchor "
+                    "ONLY if it is the window extreme (lowest low for bullish / "
+                    "highest high for bearish) — see selected_by_python. If a candle "
+                    "is absent from search_window_union, Python's OB search window "
+                    "never covered it."),
+            }
+
+        _resp = {
             "ok":                           True,
             "phase":                        "1A",
             "ob_debug_variant":             ob_debug_variant,
@@ -1801,7 +2068,15 @@ def debug_ob_tv_parity():
                 "breaker_included":         False,
                 "formula":                  "floor(source_volume / visible_same_direction_total_volume * 100)",
             },
-        })
+        }
+
+        # Trace keys are added ONLY when trace_ob=true, so the response is
+        # byte-identical to the non-trace output when trace_ob is absent.
+        if trace_ob:
+            _resp["ob_trace_detail"] = ob_trace_detail
+            _resp["trace_summary"]   = trace_summary
+
+        return jsonify(_resp)
 
     except Exception as _e:
         import traceback

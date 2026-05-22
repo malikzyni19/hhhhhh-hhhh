@@ -2484,7 +2484,7 @@ def _compute_ob_touch_meta(ob, h, l, c, n, ob_mitigation="Absolute",
 
 def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", ob_mitigation="Absolute",
                mitigation_closed_only=False, overlap_effective_zone=False,
-               bearish_effective_bottom_overlap=False):
+               bearish_effective_bottom_overlap=False, trace=None):
     """
     Order Block detection — audited line-by-line against Pine Script drawVOB().
 
@@ -2500,6 +2500,9 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         overlap only, the *previous* OB's effective bottom is its avg (TV
         displays the bearish lower boundary at avg, not the raw extreme). The
         new OB's top stays raw. Bullish overlap stays raw/unchanged.
+      trace: optional dict {"events": [], "mitigations": []}. When provided,
+        every BOS event and every per-bar mitigation is recorded into it.
+        Pure observation — does not alter detection. Default None = no-op.
 
     Pine search window:
       search_start = pivot_bar + 1 (Pine loc = hN/lN.first() = absolute pivot bar).
@@ -2556,6 +2559,16 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
             search_start = max(0, pivot_bar + 1)
             search_end   = i + 1  # include break bar
 
+            _tev = None
+            if trace is not None:
+                _tev = {
+                    "side": "bullish", "bos_bar": i, "pivot_bar": pivot_bar,
+                    "broken_level": upP[0], "prev_break_level": prev_upP_first,
+                    "close_prev": c[i - 1], "close_curr": c[i],
+                    "search_start": search_start, "search_end": search_end,
+                    "window_empty": search_end <= search_start, "created": False,
+                }
+
             if search_end > search_start:
                 # Step 1: Find candle with lowest low
                 min_idx = search_start
@@ -2584,11 +2597,13 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
                 ob_avg    = (ob_top + ob_bottom) / 2.0
 
                 # Step 4: Precise adjustment
+                _precise_applied = False
                 if ob_positioning == "Precise":
                     body_low = min(c[ob_source], o[ob_source])
                     if ob_avg < body_low and ob_top > hlcc4_val:
                         ob_top = ob_avg
                         ob_avg = (ob_top + ob_bottom) / 2.0
+                        _precise_applied = True
 
                 # Step 5: Volume and direction from SOURCE candle (the +1 offset candle)
                 candle_dir = 1 if c[ob_source] > o[ob_source] else -1
@@ -2602,6 +2617,13 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
                     "close_curr": c[i], "close_prev": c[i - 1],
                     "ob_top": ob_top, "ob_bottom": ob_bottom, "ob_source_bar": ob_source,
                 })
+                if trace is not None and _tev is not None:
+                    _tev.update({
+                        "min_idx": min_idx, "ob_source": ob_source,
+                        "ob_top": ob_top, "ob_bottom": ob_bottom, "ob_avg": ob_avg,
+                        "precise_applied": _precise_applied,
+                        "candle_dir": candle_dir, "volume": total_v,
+                    })
                 if ob_top > ob_bottom:
                     _new_payload = {
                         "top": ob_top,
@@ -2620,10 +2642,30 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
                     # Pine line 1282-1296: overlap deletion (mode="Previous",
                     # rmP=0 → drop the newly-appended OB)
                     _prev = next((x for x in reversed(obs[:-1]) if x["type"] == "bullish"), None)
+                    _dropped = False
                     if _prev is not None:
                         _new_lo = _new_payload["avg"] if overlap_effective_zone else _new_payload["bottom"]
                         if _new_lo < _prev["top"]:
                             obs.pop()
+                            _dropped = True
+                    if trace is not None and _tev is not None:
+                        _tev["created"] = True
+                        _tev["creation_overlap"] = {
+                            "checked": _prev is not None,
+                            "prev_ob_bar":    _prev["bar"]        if _prev is not None else None,
+                            "prev_ob_top":    _prev["top"]        if _prev is not None else None,
+                            "prev_ob_bottom": _prev["bottom"]     if _prev is not None else None,
+                            "prev_ob_avg":    _prev.get("avg")    if _prev is not None else None,
+                            "rule": ("effective_zone_new_avg" if overlap_effective_zone
+                                     else "raw_extreme"),
+                            "deleted_by_creation_overlap": _dropped,
+                        }
+                elif trace is not None and _tev is not None:
+                    _tev["created"] = False
+                    _tev["not_created_reason"] = "ob_top <= ob_bottom"
+
+            if trace is not None and _tev is not None:
+                trace["events"].append(_tev)
 
             upP.clear()
             upB.clear()
@@ -2637,6 +2679,16 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
             # bars, accessing [pivot+1, BOS]. Window size is independent of iLen.
             search_start = max(0, pivot_bar + 1)
             search_end   = i + 1
+
+            _tev = None
+            if trace is not None:
+                _tev = {
+                    "side": "bearish", "bos_bar": i, "pivot_bar": pivot_bar,
+                    "broken_level": dnP[0], "prev_break_level": prev_dnP_first,
+                    "close_prev": c[i - 1], "close_curr": c[i],
+                    "search_start": search_start, "search_end": search_end,
+                    "window_empty": search_end <= search_start, "created": False,
+                }
 
             if search_end > search_start:
                 # Step 1: Find candle with highest high
@@ -2665,11 +2717,13 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
                 ob_avg = (ob_top + ob_bottom) / 2.0
 
                 # Step 4: Precise adjustment
+                _precise_applied = False
                 if ob_positioning == "Precise":
                     body_high = max(c[ob_source], o[ob_source])
                     if ob_avg > body_high and ob_bottom < hlcc4_val:
                         ob_bottom = ob_avg
                         ob_avg    = (ob_top + ob_bottom) / 2.0
+                        _precise_applied = True
 
                 # Step 5: Volume and direction from SOURCE candle
                 candle_dir = 1 if c[ob_source] > o[ob_source] else -1
@@ -2683,6 +2737,13 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
                     "close_curr": c[i], "close_prev": c[i - 1],
                     "ob_top": ob_top, "ob_bottom": ob_bottom, "ob_source_bar": ob_source,
                 })
+                if trace is not None and _tev is not None:
+                    _tev.update({
+                        "max_idx": max_idx, "ob_source": ob_source,
+                        "ob_top": ob_top, "ob_bottom": ob_bottom, "ob_avg": ob_avg,
+                        "precise_applied": _precise_applied,
+                        "candle_dir": candle_dir, "volume": total_v,
+                    })
                 if ob_top > ob_bottom:
                     _new_payload = {
                         "top": ob_top,
@@ -2701,16 +2762,39 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
                     # Pine line 1282-1296: overlap deletion (mode="Previous",
                     # rmP=0 → drop the newly-appended OB)
                     _prev = next((x for x in reversed(obs[:-1]) if x["type"] == "bearish"), None)
+                    _dropped = False
                     if _prev is not None:
                         if bearish_effective_bottom_overlap:
                             # CORRECT: prev OB effective bottom = its avg;
                             # new OB top stays raw.
                             if _new_payload["top"] > _prev.get("avg", _prev["bottom"]):
                                 obs.pop()
+                                _dropped = True
                         else:
                             _new_hi = _new_payload["avg"] if overlap_effective_zone else _new_payload["top"]
                             if _new_hi > _prev["bottom"]:
                                 obs.pop()
+                                _dropped = True
+                    if trace is not None and _tev is not None:
+                        _tev["created"] = True
+                        _tev["creation_overlap"] = {
+                            "checked": _prev is not None,
+                            "prev_ob_bar":    _prev["bar"]        if _prev is not None else None,
+                            "prev_ob_top":    _prev["top"]        if _prev is not None else None,
+                            "prev_ob_bottom": _prev["bottom"]     if _prev is not None else None,
+                            "prev_ob_avg":    _prev.get("avg")    if _prev is not None else None,
+                            "rule": ("bearish_effective_bottom_prev_avg"
+                                     if bearish_effective_bottom_overlap
+                                     else ("effective_zone_new_avg" if overlap_effective_zone
+                                           else "raw_extreme")),
+                            "deleted_by_creation_overlap": _dropped,
+                        }
+                elif trace is not None and _tev is not None:
+                    _tev["created"] = False
+                    _tev["not_created_reason"] = "ob_top <= ob_bottom"
+
+            if trace is not None and _tev is not None:
+                trace["events"].append(_tev)
 
             dnP.clear()
             dnB.clear()
@@ -2735,6 +2819,14 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
                        (_ob["type"] == "bearish" and _close_i > _trigger)
                 if not _mit:
                     _kept.append(_ob)
+                elif trace is not None:
+                    trace["mitigations"].append({
+                        "ob_bar": _ob["bar"], "ob_type": _ob["type"],
+                        "ob_top": _ob["top"], "ob_bottom": _ob["bottom"],
+                        "ob_avg": _ob.get("avg"),
+                        "mitigated_at_bar": i, "trigger": _trigger,
+                        "close_at_mitigation": _close_i,
+                    })
             if len(_kept) != len(obs):
                 obs[:] = _kept
 
