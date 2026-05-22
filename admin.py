@@ -1484,6 +1484,15 @@ def debug_ob_tv_parity():
                 "allowed": ["first", "last", "all"],
             }), 200
 
+        # ── Debug-only structure / BOS-method trace params ──
+        structure_trace = request.args.get("structure_trace", "false").strip().lower() in ("1", "true", "yes")
+        target_side     = (request.args.get("target_side") or "bullish").strip().lower()
+        if target_side not in ("bullish", "bearish"):
+            target_side = "bullish"
+        target_ob_time  = (request.args.get("target_ob_time") or "").strip() or None
+        structure_from  = (request.args.get("structure_from") or "").strip() or None
+        structure_to    = (request.args.get("structure_to")   or "").strip() or None
+
         try:
             kline_limit = min(max(int(request.args.get("kline_limit") or 300), 50), 10000)
         except (TypeError, ValueError):
@@ -2337,6 +2346,369 @@ def debug_ob_tv_parity():
                 },
             }
 
+        # ── Debug-only structure / BOS-method trace ──────────────────────────
+        #    (only when structure_trace=true → endpoint byte-identical otherwise)
+        structure_trace_detail = None
+        if structure_trace:
+            from main import detect_pivots
+
+            _so = [x["open"]   for x in main_candles]
+            _sh = [x["high"]   for x in main_candles]
+            _sl = [x["low"]    for x in main_candles]
+            _sc = [x["close"]  for x in main_candles]
+            _sv = [x["volume"] for x in main_candles]
+            _sn = len(_sc)
+            _is_bull = target_side == "bullish"
+
+            def _stw(bar):
+                return _ts(times[bar]) if (bar is not None and 0 <= bar < _sn) else None
+
+            def _sparse(s):
+                if not s:
+                    return None
+                for _fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S"):
+                    try:
+                        return int(_dt.datetime.strptime(s, _fmt)
+                                   .replace(tzinfo=_dt.timezone.utc).timestamp() * 1000)
+                    except ValueError:
+                        continue
+                return None
+
+            def _bar_at(ms):
+                if ms is None or not times:
+                    return None
+                _best = None; _bd = None
+                for _idx, _t in enumerate(times):
+                    _d = abs(_t - ms)
+                    if _bd is None or _d < _bd:
+                        _bd = _d; _best = _idx
+                return _best
+
+            _tgt_ms  = _sparse(target_ob_time)
+            _sf_ms   = _sparse(structure_from)
+            _st_ms   = _sparse(structure_to)
+            _tgt_bar = _bar_at(_tgt_ms)
+
+            # internal (iLen) + swing (sLen) pivots
+            _phi, _pli = detect_pivots(_sh, _sl, I_LEN, I_LEN)
+            _phs, _pls = detect_pivots(_sh, _sl, S_LEN, S_LEN)
+
+            # running latest confirmed swing levels per bar (right=S_LEN)
+            _lat_sh = [None] * _sn; _lat_sl = [None] * _sn
+            _csh = None; _csl = None
+            for _i in range(_sn):
+                _cb = _i - S_LEN
+                if _cb >= 0 and _phs[_cb]:
+                    _csh = _sh[_cb]
+                if _cb >= 0 and _pls[_cb]:
+                    _csl = _sl[_cb]
+                _lat_sh[_i] = _csh; _lat_sl[_i] = _csl
+
+            # structure trace run — BOS detection is variant-independent;
+            # opt into per-bar recording via the "bars" key.
+            _struct_coll = {"events": [], "mitigations": [], "bars": []}
+            detect_obs(_so, _sh, _sl, _sc, _sv, I_LEN, S_LEN, max_ob=None,
+                       trace=_struct_coll)
+            _bars_by_idx = {b["bar"]: b for b in _struct_coll["bars"]}
+            _bos_by_bar  = {}
+            for _e in _struct_coll["events"]:
+                _bos_by_bar.setdefault((_e["side"], _e["bos_bar"]), _e)
+
+            _PYCOND = ("bullish: upP and len(dnL) > 1 and c[i] > upP[0] and "
+                       "prev_upP_first is not None and c[i-1] <= prev_upP_first"
+                       if _is_bull else
+                       "bearish: dnP and len(upL) > 1 and c[i] < dnP[0] and "
+                       "prev_dnP_first is not None and c[i-1] >= prev_dnP_first")
+
+            def _bos_method_rec(b):
+                bi = _bars_by_idx.get(b, {})
+                cp = _sc[b - 1] if b > 0 else None
+                cc = _sc[b]
+                hp = _sh[b - 1] if b > 0 else None
+                lp = _sl[b - 1] if b > 0 else None
+                py_trig = (target_side, b) in _bos_by_bar
+                if _is_bull:
+                    stored  = bi.get("upP_first")
+                    pstored = bi.get("prev_upP_first")
+                    mb_cross = (stored is not None and cp is not None
+                                and cp <= stored and cc > stored)
+                    mb_above = (stored is not None and cc > stored)
+                    wick     = (stored is not None and _sh[b] > stored)
+                    ma       = (stored is not None and hp is not None
+                                and hp > stored and cp is not None and cp <= stored
+                                and cc > hp)
+                    close_prev_wick = (hp is not None and cc > hp)
+                else:
+                    stored  = bi.get("dnP_first")
+                    pstored = bi.get("prev_dnP_first")
+                    mb_cross = (stored is not None and cp is not None
+                                and cp >= stored and cc < stored)
+                    mb_above = (stored is not None and cc < stored)
+                    wick     = (stored is not None and _sl[b] < stored)
+                    ma       = (stored is not None and lp is not None
+                                and lp < stored and cp is not None and cp >= stored
+                                and cc < lp)
+                    close_prev_wick = (lp is not None and cc < lp)
+                wick_only = bool(wick and not mb_above)
+                _dnl = bi.get("dnL_len") if _is_bull else bi.get("upL_len")
+                if py_trig:
+                    reason = None
+                elif stored is None:
+                    reason = ("no internal pivot level active ("
+                              + ("upP" if _is_bull else "dnP") + " empty)")
+                elif (_dnl or 0) <= 1:
+                    reason = ("len(" + ("dnL" if _is_bull else "upL")
+                              + ") <= 1 — need >1 prior opposite internal pivots")
+                elif _is_bull and (cc is None or cc <= stored):
+                    reason = f"close_curr ({cc}) did not exceed stored high level ({stored})"
+                elif (not _is_bull) and (cc is None or cc >= stored):
+                    reason = f"close_curr ({cc}) did not break below stored low level ({stored})"
+                elif pstored is None:
+                    reason = ("prev_" + ("upP" if _is_bull else "dnP")
+                              + "_first is None (list empty on previous bar)")
+                elif _is_bull and cp is not None and cp > pstored:
+                    reason = f"no crossover — previous close ({cp}) already above stored level ({pstored})"
+                elif (not _is_bull) and cp is not None and cp < pstored:
+                    reason = f"no crossunder — previous close ({cp}) already below stored level ({pstored})"
+                else:
+                    reason = "python condition components met (see python_current_triggered)"
+                return {
+                    "bar": b, "time_utc": _stw(b),
+                    "open": _so[b], "high": _sh[b], "low": _sl[b], "close": _sc[b],
+                    "close_prev": cp, "close_curr": cc,
+                    "stored_level": stored,
+                    "method_b_close_cross_stored_level":  bool(mb_cross),
+                    "method_b_close_above_stored_level":  bool(mb_above),
+                    "wick_break_stored_level":            bool(wick),
+                    "method_a_wick_then_next_close":      bool(ma),
+                    "close_above_previous_wick":          bool(close_prev_wick),
+                    "python_current_triggered":           bool(py_trig),
+                    "method_a_triggered":                 bool(ma),
+                    "method_b_triggered":                 bool(mb_cross),
+                    "wick_only_triggered":                wick_only,
+                    "reason_python_did_not_trigger":      reason,
+                }
+
+            # 1. target_candle
+            target_candle = None
+            if _tgt_bar is not None:
+                _pb = _tgt_bar - 1
+                target_candle = {
+                    "bar": _tgt_bar, "time_utc": _stw(_tgt_bar),
+                    "open": _so[_tgt_bar], "high": _sh[_tgt_bar],
+                    "low": _sl[_tgt_bar], "close": _sc[_tgt_bar],
+                    "volume": _sv[_tgt_bar],
+                    "previous_bar": _pb if _pb >= 0 else None,
+                    "previous_bar_time_utc": _stw(_pb),
+                    "previous_bar_open":   _so[_pb] if _pb >= 0 else None,
+                    "previous_bar_high":   _sh[_pb] if _pb >= 0 else None,
+                    "previous_bar_low":    _sl[_pb] if _pb >= 0 else None,
+                    "previous_bar_close":  _sc[_pb] if _pb >= 0 else None,
+                    "previous_bar_volume": _sv[_pb] if _pb >= 0 else None,
+                    "expected_source_volume_if_selected": _sv[_pb] if _pb >= 0 else None,
+                    "expected_tv_zone_low_hint":  0.1594,
+                    "expected_tv_zone_high_hint": 0.1602,
+                    "expected_tv_volume_hint":    200003,
+                }
+
+            # 2. python_current_bos_method
+            _tbi = _bars_by_idx.get(_tgt_bar, {}) if _tgt_bar is not None else {}
+            python_current_bos_method = {
+                "side": target_side,
+                "condition_expression": _PYCOND,
+                "close_prev": _sc[_tgt_bar - 1] if (_tgt_bar is not None and _tgt_bar > 0) else None,
+                "close_curr": _sc[_tgt_bar] if _tgt_bar is not None else None,
+                "active_structure_level_used": _tbi.get("upP_first" if _is_bull else "dnP_first"),
+                "uses_close_crossover_of_stored_level": True,
+                "requires_next_candle_close_beyond_prior_wick": False,
+                "uses_wick_break": False,
+                "uses_internal_or_swing": f"internal (detect_pivots with iLen={I_LEN} both sides; sLen swing pivots are NOT used for OB BOS)",
+                "method_classification": "Method B (close crossover of the stored internal pivot level)",
+                "function_file": "detect_obs() in main.py — bullish: 'c[i] > upP[0]' crossover; bearish: 'c[i] < dnP[0]' crossunder",
+            }
+
+            # 3. pivot_status
+            def _near_piv(arr, kind, R, around, before, k=3):
+                out = []
+                rng = range(around - 1, -1, -1) if before else range(around + 1, _sn)
+                for b in rng:
+                    if arr[b]:
+                        out.append({
+                            "bar": b, "time_utc": _stw(b),
+                            "price": _sh[b] if kind == "high" else _sl[b],
+                            "confirmed_at_bar": b + R,
+                            "confirmed_at_time_utc": _stw(b + R),
+                        })
+                        if len(out) >= k:
+                            break
+                return out
+
+            pivot_status = None
+            if _tgt_bar is not None:
+                _is_pl = bool(_pli[_tgt_bar]); _is_ph = bool(_phi[_tgt_bar])
+                pivot_status = {
+                    "target_bar": _tgt_bar, "target_time_utc": _stw(_tgt_bar),
+                    "is_target_confirmed_pivot_low":  _is_pl,
+                    "is_target_confirmed_pivot_high": _is_ph,
+                    "is_target_confirmed_swing_low":  bool(_pls[_tgt_bar]),
+                    "is_target_confirmed_swing_high": bool(_phs[_tgt_bar]),
+                    "pivot_confirmed_at_bar":     (_tgt_bar + I_LEN) if (_is_pl or _is_ph) else None,
+                    "pivot_confirmed_at_time_utc": _stw(_tgt_bar + I_LEN) if (_is_pl or _is_ph) else None,
+                    "pivot_left_right_length": {"internal": I_LEN, "swing": S_LEN},
+                    "nearest_internal_pivot_lows_before":  _near_piv(_pli, "low",  I_LEN, _tgt_bar, True),
+                    "nearest_internal_pivot_lows_after":   _near_piv(_pli, "low",  I_LEN, _tgt_bar, False),
+                    "nearest_internal_pivot_highs_before": _near_piv(_phi, "high", I_LEN, _tgt_bar, True),
+                    "nearest_internal_pivot_highs_after":  _near_piv(_phi, "high", I_LEN, _tgt_bar, False),
+                }
+
+            # 4 & 5. per-bar structure state + BOS-method comparison
+            _range_bars = [b for b in range(_sn)
+                           if (_sf_ms is None or times[b] >= _sf_ms)
+                           and (_st_ms is None or times[b] <= _st_ms)][:1000]
+            structure_state_by_bar = []
+            bos_method_comparison_by_bar = []
+            for b in _range_bars:
+                bi = _bars_by_idx.get(b, {})
+                structure_state_by_bar.append({
+                    "bar": b, "time_utc": _stw(b),
+                    "open": _so[b], "high": _sh[b], "low": _sl[b], "close": _sc[b],
+                    "active_upP_before_bar": bi.get("active_upP_before_bar"),
+                    "active_dnP_before_bar": bi.get("active_dnP_before_bar"),
+                    "upP_first": bi.get("upP_first"),
+                    "dnP_first": bi.get("dnP_first"),
+                    "previous_upP_first": bi.get("prev_upP_first"),
+                    "previous_dnP_first": bi.get("prev_dnP_first"),
+                    "latest_internal_high_level": bi.get("upP_first"),
+                    "latest_internal_low_level":  bi.get("dnP_first"),
+                    "latest_swing_high_level": _lat_sh[b],
+                    "latest_swing_low_level":  _lat_sl[b],
+                    "internal_trend_before": None,
+                    "internal_trend_after":  None,
+                })
+                bos_method_comparison_by_bar.append(_bos_method_rec(b))
+
+            # 6. bos_after_target
+            bos_after_target = []
+            if _tgt_bar is not None:
+                for b in range(_tgt_bar, min(_sn, _tgt_bar + 600)):
+                    r = _bos_method_rec(b)
+                    if (r["python_current_triggered"] or r["method_a_triggered"]
+                            or r["method_b_triggered"] or r["wick_break_stored_level"]):
+                        bos_after_target.append({
+                            "bos_bar": b, "bos_time_utc": _stw(b),
+                            "close_prev": r["close_prev"], "close_curr": r["close_curr"],
+                            "high_curr": _sh[b], "low_curr": _sl[b],
+                            "broken_level": r["stored_level"],
+                            "condition_used_by_python": _PYCOND,
+                            "python_triggered": r["python_current_triggered"],
+                            "method_a_would_trigger": r["method_a_triggered"],
+                            "method_b_would_trigger": r["method_b_triggered"],
+                            "wick_break_would_trigger": r["wick_break_stored_level"],
+                            "reason": r["reason_python_did_not_trigger"],
+                        })
+
+            # 7. potential_ob_from_target
+            potential_ob_from_target = None
+            if _tgt_bar is not None and _tgt_bar > 0:
+                _src = _tgt_bar - 1
+                _hl2 = (_sh[_src] + _sl[_src]) / 2.0
+                _hlcc4 = (_sh[_src] + _sl[_src] + _sc[_src] + _sc[_src]) / 4.0
+                if _is_bull:
+                    _raw_bottom = _sl[_tgt_bar]; _raw_top = _hl2
+                else:
+                    _raw_top = _sh[_tgt_bar];    _raw_bottom = _hl2
+                _ob_avg = (_raw_top + _raw_bottom) / 2.0
+                _disp_top, _disp_bottom = _raw_top, _raw_bottom
+                _pnote = "no precise adjustment"
+                if _is_bull:
+                    _body_low = min(_sc[_src], _so[_src])
+                    if _ob_avg < _body_low and _raw_top > _hlcc4:
+                        _disp_top = _ob_avg
+                        _pnote = "precise: top collapsed to avg"
+                else:
+                    _body_high = max(_sc[_src], _so[_src])
+                    if _ob_avg > _body_high and _raw_bottom < _hlcc4:
+                        _disp_bottom = _ob_avg
+                        _pnote = "precise: bottom collapsed to avg"
+                _loh, _hih, _volh = 0.1594, 0.1602, 200003
+                _mz = (abs(_disp_bottom - _loh) <= 0.01 * _loh
+                       and abs(_disp_top - _hih) <= 0.01 * _hih)
+                _mv = abs((_sv[_src] or 0) - _volh) <= max(0.05 * _volh, 1)
+                potential_ob_from_target = {
+                    "target_bar": _tgt_bar, "target_time_utc": _stw(_tgt_bar),
+                    "sourceBar": _src, "source_time_utc": _stw(_src),
+                    "source_volume": _sv[_src],
+                    "raw_bottom": _raw_bottom, "raw_top": _raw_top,
+                    "displayed_bottom": _disp_bottom, "displayed_top": _disp_top,
+                    "would_match_tv_zone": bool(_mz),
+                    "would_match_tv_volume": bool(_mv),
+                    "notes": ("Force-simulated: target bar treated as the OB extreme; "
+                              "sourceBar = target_bar - 1 (Pine +1 offset). " + _pnote),
+                }
+
+            # 8. structure_trace_summary
+            _pybos_after = [r for r in bos_after_target if r["python_triggered"]]
+            _mb_only = [r for r in bos_method_comparison_by_bar
+                        if r["method_b_triggered"] and not r["python_current_triggered"]]
+            _ma_only = [r for r in bos_method_comparison_by_bar
+                        if r["method_a_triggered"] and not r["method_b_triggered"]]
+            _wonly   = [r for r in bos_method_comparison_by_bar if r["wick_only_triggered"]]
+            _tgt_is_pl = bool(_pli[_tgt_bar]) if _tgt_bar is not None else None
+            _tgt_is_ph = bool(_phi[_tgt_bar]) if _tgt_bar is not None else None
+            if _tgt_bar is None:
+                _cause = "target_ob_time not found in candle stream"
+            elif _is_bull and not _tgt_is_pl:
+                _cause = "(a) target candle is NOT a confirmed internal pivot low — Python never anchors structure there"
+            elif (not _is_bull) and not _tgt_is_ph:
+                _cause = "(a) target candle is NOT a confirmed internal pivot high"
+            elif not _pybos_after:
+                _cause = "(b) target IS a pivot, but Python detects no BOS after it (no close crossover of the stored level)"
+            elif _mb_only:
+                _cause = "(c/e) Method B (close-cross of stored level) triggers on bars where Python's current condition does not — inspect bos_method_comparison_by_bar"
+            else:
+                _cause = "BOS after target IS detected by Python — missing OB likely from OB selection/overlap/mitigation, not structure"
+            structure_trace_summary = {
+                "target_is_confirmed_pivot_low":  _tgt_is_pl,
+                "target_is_confirmed_pivot_high": _tgt_is_ph,
+                "target_pivot_confirmed_at_time_utc": (
+                    _stw(_tgt_bar + I_LEN) if (_tgt_bar is not None
+                                               and (_tgt_is_pl or _tgt_is_ph)) else None),
+                "python_detects_bos_after_target": len(_pybos_after) > 0,
+                "first_python_bos_after_target": (_pybos_after[0]["bos_time_utc"]
+                                                  if _pybos_after else None),
+                "structure_level_python_watches": f"internal iLen={I_LEN} pivot {'highs (upP)' if _is_bull else 'lows (dnP)'}",
+                "python_uses_internal_or_swing": "internal",
+                "method_b_triggers_where_python_does_not": len(_mb_only) > 0,
+                "method_a_triggers_where_method_b_does_not": len(_ma_only) > 0,
+                "wick_only_break_without_body_close": len(_wonly) > 0,
+                "python_current_method_classification": "Method B (close crossover of stored internal pivot level)",
+                "likely_cause": _cause,
+                "answers": {
+                    "a_no_pivot_low_at_target": bool(_is_bull and _tgt_bar is not None and not _tgt_is_pl),
+                    "b_no_bos_after_target": (_tgt_bar is not None and len(_pybos_after) == 0),
+                    "c_wrong_stored_structure_level": len(_mb_only) > 0,
+                    "d_internal_vs_swing_mismatch": "Python uses internal (iLen) only; compare latest_swing_* in structure_state_by_bar",
+                    "e_method_a_vs_method_b_mismatch": (len(_ma_only) > 0 or len(_mb_only) > 0),
+                    "f_close_vs_wick_mismatch": len(_wonly) > 0,
+                    "g_ob_selection_after_bos": (len(_pybos_after) > 0),
+                },
+            }
+
+            structure_trace_detail = {
+                "target_side":    target_side,
+                "target_ob_time": target_ob_time,
+                "structure_from": structure_from,
+                "structure_to":   structure_to,
+                "target_candle":             target_candle,
+                "python_current_bos_method": python_current_bos_method,
+                "pivot_status":              pivot_status,
+                "structure_state_by_bar":    structure_state_by_bar,
+                "bos_method_comparison_by_bar": bos_method_comparison_by_bar,
+                "bos_after_target":          bos_after_target,
+                "potential_ob_from_target":  potential_ob_from_target,
+                "structure_trace_summary":   structure_trace_summary,
+            }
+
         _resp = {
             "ok":                           True,
             "phase":                        "1A",
@@ -2394,6 +2766,11 @@ def debug_ob_tv_parity():
             _resp["ob_extreme_tie_mode_allowed"] = ["first", "last", "all"]
             _resp["extreme_tie_diagnostics"]     = extreme_tie_diagnostics
             _resp["tv_parity_candidate_v2"]      = tv_parity_candidate_v2
+
+        # Structure-trace key is added ONLY when structure_trace=true,
+        # so the response is byte-identical when the param is absent.
+        if structure_trace:
+            _resp["structure_trace_detail"] = structure_trace_detail
 
         return jsonify(_resp)
 

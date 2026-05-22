@@ -2549,6 +2549,12 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
     # OB is confirmed by BOS (break of structure) — the BOS candle can be current.
     # Unlike FVG which needs 3 closed candles, OB only needs the BOS to occur.
     for i in range(start, n):
+        # Debug-only per-bar structure snapshot (opt-in: caller passes a
+        # trace dict that already contains a "bars" list). Pure observation.
+        _bars_rec    = trace is not None and trace.get("bars") is not None
+        _upP0_before = (upP[0] if upP else None) if _bars_rec else None
+        _dnP0_before = (dnP[0] if dnP else None) if _bars_rec else None
+
         if i - i_len >= 0 and ph[i - i_len]:
             upP.insert(0, h[i - i_len])
             upB.insert(0, i - i_len)
@@ -2559,6 +2565,19 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
             dnB.insert(0, i - i_len)
             dnL.insert(0, l[i - i_len])
             _trace["pivot_low"].append({"bar": i - i_len, "i_at_push": i, "price": l[i - i_len]})
+
+        if _bars_rec:
+            trace["bars"].append({
+                "bar": i,
+                "active_upP_before_bar": _upP0_before,
+                "active_dnP_before_bar": _dnP0_before,
+                "upP_first": upP[0] if upP else None,
+                "dnP_first": dnP[0] if dnP else None,
+                "prev_upP_first": prev_upP_first,
+                "prev_dnP_first": prev_dnP_first,
+                "upP_len": len(upP), "dnP_len": len(dnP),
+                "upL_len": len(upL), "dnL_len": len(dnL),
+            })
 
         # ── INTERNAL BULLISH BREAK → Create Bullish OB ──
         # Pine: ta.crossover(b.c, up.p.first()) → c[i] > upP[0] AND c[i-1] <= prev value
