@@ -7438,7 +7438,7 @@ def _scan_pair_multitf(symbol: str, market: str = "perpetual", wl_config: Option
 def api_watchlist_refresh():
     _tok_user, _tok_uid = _check_and_get_token_user()
     if _tok_user == "limit":
-        return jsonify({"error": "daily_limit_reached", "message": "Daily scan tokens exhausted. Resets at midnight UTC."}), 429
+        return _daily_limit_response()
     data      = request.get_json(force=True) or {}
     pairs     = [str(p).strip().upper() for p in data.get("pairs", []) if str(p).strip()]
     pairs     = [p for p in pairs if p.endswith("USDT")][:30]
@@ -7650,6 +7650,17 @@ def _get_scan_user_id():
     return uid
 
 
+def _daily_limit_response():
+    """Standardized token-limit response consumed by the mobile/desktop popups.
+    Always HTTP 429 with a machine code, human message and next-reset ISO."""
+    nxt = (datetime.now(timezone.utc) + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return jsonify({
+        "error": "daily_limit_reached",
+        "message": "Daily scan tokens exhausted. Resets at midnight UTC.",
+        "resetAt": nxt.isoformat(),
+    }), 429
+
+
 def _check_and_get_token_user():
     """Return (db_user, user_id) if token check passes, or (None, None) to skip, raises 429 on limit."""
     uid = _get_scan_user_id()
@@ -7678,7 +7689,7 @@ def api_scan():
         _scan_db_user = _DBUser.query.filter_by(username=session.get("username", "")).first()
         if _scan_db_user and not _scan_db_user.is_admin:
             if not check_tokens(_scan_db_user):
-                return jsonify({"error": "Daily scan limit reached. Resets at midnight UTC."}), 429
+                return _daily_limit_response()
             _scan_user_id = _scan_db_user.id
     except Exception:
         pass
@@ -8012,7 +8023,7 @@ def api_compressed_scan():
     if err is not None: return err
     _tok_user, _tok_uid = _check_and_get_token_user()
     if _tok_user == "limit":
-        return jsonify({"error": "daily_limit_reached", "message": "Daily scan tokens exhausted. Resets at midnight UTC."}), 429
+        return _daily_limit_response()
     payload = request.get_json(force=True) or {}
 
     # Always define exchange first so it is available regardless of symbol path
@@ -8312,7 +8323,7 @@ def api_trending_scan():
     if err is not None: return err
     _tok_user, _tok_uid = _check_and_get_token_user()
     if _tok_user == "limit":
-        return jsonify({"error": "daily_limit_reached", "message": "Daily scan tokens exhausted. Resets at midnight UTC."}), 429
+        return _daily_limit_response()
     payload = request.get_json(force=True) or {}
     tf = payload.get("timeframe", "1h")
     market = payload.get("market", "perpetual")
@@ -8389,7 +8400,7 @@ def api_ath_atl_scan():
     if err is not None: return err
     _tok_user, _tok_uid = _check_and_get_token_user()
     if _tok_user == "limit":
-        return jsonify({"error": "daily_limit_reached", "message": "Daily scan tokens exhausted. Resets at midnight UTC."}), 429
+        return _daily_limit_response()
 
     payload = request.get_json(force=True) or {}
     action = str(payload.get("action", "scan")).lower()
@@ -9377,7 +9388,7 @@ def api_bias_scan():
     if err is not None: return err
     _tok_user, _tok_uid = _check_and_get_token_user()
     if _tok_user == "limit":
-        return jsonify({"error": "daily_limit_reached", "message": "Daily scan tokens exhausted. Resets at midnight UTC."}), 429
+        return _daily_limit_response()
     payload = request.get_json(force=True) or {}
     tf = payload.get("timeframe", "1d")
     market = payload.get("market", "perpetual")
