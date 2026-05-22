@@ -1524,7 +1524,11 @@ def debug_ob_tv_parity():
             _v = [x["volume"] for x in cnd]
             _t = [x.get("time", x.get("openTime", 0)) for x in cnd]
 
+            # Debug endpoint pins logic mode to legacy and drives every rule
+            # explicitly, so variant outputs stay byte-identical regardless of
+            # the production default.
             _normal_result = detect_obs(_o, _h, _l, _c, _v, I_LEN, S_LEN, max_ob=5,
+                                        ob_logic_mode="legacy_baseline",
                                         mitigation_closed_only=mit_closed,
                                         overlap_effective_zone=eff_overlap,
                                         bearish_effective_bottom_overlap=bear_eff_bottom,
@@ -1535,6 +1539,7 @@ def debug_ob_tv_parity():
             else:
                 _normal, _bos_trace = _normal_result, None
             _all, _ = detect_obs(_o, _h, _l, _c, _v, I_LEN, S_LEN, max_ob=None,
+                                 ob_logic_mode="legacy_baseline",
                                  mitigation_closed_only=mit_closed,
                                  overlap_effective_zone=eff_overlap,
                                  bearish_effective_bottom_overlap=bear_eff_bottom,
@@ -1544,9 +1549,11 @@ def debug_ob_tv_parity():
             _bull_src = _copy.deepcopy([ob for ob in _all if ob["type"] == "bullish"])
             _bear_src = _copy.deepcopy([ob for ob in _all if ob["type"] == "bearish"])
             _bull_vis = _tv_visible_pool(_bull_src, overlap_effective_zone=eff_overlap,
-                                         bearish_effective_bottom_overlap=bear_eff_bottom)
+                                         bearish_effective_bottom_overlap=bear_eff_bottom,
+                                         ob_logic_mode="legacy_baseline")
             _bear_vis = _tv_visible_pool(_bear_src, overlap_effective_zone=eff_overlap,
-                                         bearish_effective_bottom_overlap=bear_eff_bottom)
+                                         bearish_effective_bottom_overlap=bear_eff_bottom,
+                                         ob_logic_mode="legacy_baseline")
             calculate_tv_ob_volume_share(_bull_vis, pool_name="bullish",
                                          source_pool_count=len(_bull_src))
             calculate_tv_ob_volume_share(_bear_vis, pool_name="bearish",
@@ -1826,10 +1833,11 @@ def debug_ob_tv_parity():
             _tn       = len(_tc_close)
 
             # BOS detection is overlap/mitigation-variant-independent →
-            # trace once with baseline anchor + baseline flags.
+            # trace once with baseline anchor + legacy flags.
             _trace_coll = {"events": [], "mitigations": []}
             detect_obs(_to, _th, _tl, _tc_close, _tv, I_LEN, S_LEN, max_ob=None,
-                       trace=_trace_coll, anchor_mode="baseline")
+                       trace=_trace_coll, ob_logic_mode="legacy_baseline",
+                       anchor_mode="baseline")
 
             # When an anchor variant is requested, also trace the
             # latest_opposite_pivot anchor for side-by-side comparison.
@@ -1837,7 +1845,8 @@ def debug_ob_tv_parity():
             if _anchors_to_run is not None:
                 _trace_coll_lop = {"events": [], "mitigations": []}
                 detect_obs(_to, _th, _tl, _tc_close, _tv, I_LEN, S_LEN, max_ob=None,
-                           trace=_trace_coll_lop, anchor_mode="latest_opposite_pivot")
+                           trace=_trace_coll_lop, ob_logic_mode="legacy_baseline",
+                           anchor_mode="latest_opposite_pivot")
                 _lop_by_key = {(e["side"], e["bos_bar"]): e
                                for e in _trace_coll_lop["events"]}
 
@@ -2204,13 +2213,15 @@ def debug_ob_tv_parity():
             _efrom = _eparse(trace_from)
             _eto_  = _eparse(trace_to)
 
-            # Trace first-tie and last-tie (baseline anchor) for comparison.
+            # Trace first-tie and last-tie (baseline anchor, legacy flags).
             _tc_first = {"events": [], "mitigations": []}
             detect_obs(_eo2, _eh2, _el2, _ec2, _ev2, I_LEN, S_LEN, max_ob=None,
-                       trace=_tc_first, anchor_mode="baseline", extreme_tie_mode="first")
+                       trace=_tc_first, ob_logic_mode="legacy_baseline",
+                       anchor_mode="baseline", extreme_tie_mode="first")
             _tc_last = {"events": [], "mitigations": []}
             detect_obs(_eo2, _eh2, _el2, _ec2, _ev2, I_LEN, S_LEN, max_ob=None,
-                       trace=_tc_last, anchor_mode="baseline", extreme_tie_mode="last")
+                       trace=_tc_last, ob_logic_mode="legacy_baseline",
+                       anchor_mode="baseline", extreme_tie_mode="last")
             _first_by_key = {(e["side"], e["bos_bar"]): e for e in _tc_first["events"]}
             _last_by_key  = {(e["side"], e["bos_bar"]): e for e in _tc_last["events"]}
 
@@ -2404,11 +2415,11 @@ def debug_ob_tv_parity():
                     _csl = _sl[_cb]
                 _lat_sh[_i] = _csh; _lat_sl[_i] = _csl
 
-            # structure trace run — BOS detection is variant-independent;
-            # opt into per-bar recording via the "bars" key.
+            # structure trace run — legacy logic mode (raw structure
+            # observation); opt into per-bar recording via the "bars" key.
             _struct_coll = {"events": [], "mitigations": [], "bars": []}
             detect_obs(_so, _sh, _sl, _sc, _sv, I_LEN, S_LEN, max_ob=None,
-                       trace=_struct_coll)
+                       trace=_struct_coll, ob_logic_mode="legacy_baseline")
             _bars_by_idx = {b["bar"]: b for b in _struct_coll["bars"]}
             _bos_by_bar  = {}
             for _e in _struct_coll["events"]:
