@@ -14,3 +14,10 @@ venv/
 .claude/
 .claude-flow/
 .mcp.json
+.swarm/
+ruvector.db
+
+# Backup files
+*.backup-*.html
+*.backup-*.py
+*.backup-*.js
