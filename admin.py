@@ -3492,13 +3492,19 @@ def debug_ob_tv_parity():
 
         # ── debug_profile response shaping (default "full" = unchanged) ──────
         if debug_profile == "lifecycle_only":
+            _sctd = _resp.get("structure_candidate_trace_detail")
             _resp = {
-                "ok":                              _resp["ok"],
-                "debug_profile":                   "lifecycle_only",
-                "candle_info":                     _resp["candle_info"],
-                "production_ob_logic_mode":        "tv_parity_v2",
+                "ok":                               _resp["ok"],
+                "debug_profile":                    "lifecycle_only",
+                "candle_info":                      _resp["candle_info"],
+                "production_ob_logic_mode":         "tv_parity_v2",
                 "structure_lifecycle_trace_detail": _resp.get("structure_lifecycle_trace_detail"),
-                "lifecycle_trace_summary":         _resp.get("lifecycle_trace_summary"),
+                "lifecycle_trace_summary":          _resp.get("lifecycle_trace_summary"),
+                # Candidate-trace fields work independently — included when
+                # structure_candidate_trace=true, regardless of lifecycle trace.
+                "structure_candidate_trace_detail": _sctd,
+                "candidate_variant_summary":        (_sctd.get("candidate_variant_summary")
+                                                     if _sctd else None),
             }
         elif debug_profile == "compact":
             def _vis_summary(pool):
