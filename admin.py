@@ -1519,6 +1519,8 @@ def debug_ob_tv_parity():
             _sc_to_run = list(_SC_VARIANTS)
         candidate_from = (request.args.get("candidate_from") or "").strip() or None
         candidate_to   = (request.args.get("candidate_to")   or "").strip() or None
+        structure_candidate_global = request.args.get(
+            "structure_candidate_global", "false").strip().lower() in ("1", "true", "yes")
 
         # ── Debug-only "as-of" snapshot slicing (admin-only) ──
         debug_as_of    = (request.args.get("debug_as_of") or "").strip() or None
@@ -1557,7 +1559,7 @@ def debug_ob_tv_parity():
 
         # ── Core analysis helper — runs on any candle slice ───────────────────
         def _analyse(cnd, mit_closed=False, eff_overlap=False, bear_eff_bottom=False,
-                     anchor_mode="baseline", tie_mode="first"):
+                     anchor_mode="baseline", tie_mode="first", structure_candidate="current"):
             _o = [x["open"]   for x in cnd]
             _h = [x["high"]   for x in cnd]
             _l = [x["low"]    for x in cnd]
@@ -1574,7 +1576,8 @@ def debug_ob_tv_parity():
                                         overlap_effective_zone=eff_overlap,
                                         bearish_effective_bottom_overlap=bear_eff_bottom,
                                         anchor_mode=anchor_mode,
-                                        extreme_tie_mode=tie_mode)
+                                        extreme_tie_mode=tie_mode,
+                                        structure_candidate=structure_candidate)
             if isinstance(_normal_result, tuple):
                 _normal, _bos_trace = _normal_result
             else:
@@ -1585,7 +1588,8 @@ def debug_ob_tv_parity():
                                  overlap_effective_zone=eff_overlap,
                                  bearish_effective_bottom_overlap=bear_eff_bottom,
                                  anchor_mode=anchor_mode,
-                                 extreme_tie_mode=tie_mode)
+                                 extreme_tie_mode=tie_mode,
+                                 structure_candidate=structure_candidate)
 
             _bull_src = _copy.deepcopy([ob for ob in _all if ob["type"] == "bullish"])
             _bear_src = _copy.deepcopy([ob for ob in _all if ob["type"] == "bearish"])
@@ -3577,6 +3581,116 @@ def debug_ob_tv_parity():
                 "candidate_variant_summary": candidate_variant_summary,
             }
 
+        # ── Debug-only structure-candidate GLOBAL visible-pool comparison ────
+        #    Runs the full _analyse pipeline (tv_parity_v2 OB rules) per
+        #    structure_candidate variant and returns the resulting visible
+        #    pools so the candidate's effect on the WHOLE table is visible.
+        structure_candidate_global_detail = None
+        if structure_candidate_global:
+            # variants to run — reuse _sc_to_run if already chosen by the
+            # candidate-trace param, else default to "all" (all four).
+            _sc_global_run = list(_sc_to_run) if _sc_to_run else list(_SC_VARIANTS)
+
+            _SOON_EXP_BULL = ["2026-05-25 03:15 UTC", "2026-05-24 21:45 UTC",
+                              "2026-05-23 14:00 UTC", "2026-05-23 12:15 UTC",
+                              "2026-04-15 14:00 UTC"]
+            _SOON_EXP_BEAR = ["2026-05-25 20:45 UTC", "2026-05-25 13:00 UTC",
+                              "2026-05-12 20:00 UTC", "2026-05-09 10:30 UTC",
+                              "2026-05-09 07:45 UTC"]
+
+            def _ob_summary(ob):
+                _bar = ob.get("bar")
+                _src = ob.get("sourceBar")
+                return {
+                    "time":               _ts_i(_bar) if _bar is not None else None,
+                    "bottom":             ob.get("bottom"),
+                    "top":                ob.get("top"),
+                    "avg":                ob.get("avg"),
+                    "volume":             ob.get("volume"),
+                    "tvObVolumeSharePct": ob.get("tvObVolumeSharePct"),
+                    "sourceBar":          _src,
+                    "source_time_utc":    (_ts_i(_src) if (_src is not None
+                                                            and 0 <= _src < len(times)) else None),
+                    "touches":            ob.get("touches"),
+                    "isVirgin":           ob.get("isVirgin"),
+                    "mitigated":          ob.get("mitigated"),
+                    "hidden_reason":      None,
+                }
+
+            _variants_global = []
+            for _gvar in _sc_global_run:
+                _gx = _analyse(main_candles,
+                               mit_closed=True, bear_eff_bottom=True,
+                               anchor_mode="latest_opposite_pivot", tie_mode="last",
+                               structure_candidate=_gvar)
+                _gb = [_ob_summary(ob) for ob in _gx["bull_vis"]]
+                _gr = [_ob_summary(ob) for ob in _gx["bear_vis"]]
+                _bull_times = [x["time"] for x in _gb]
+                _bear_times = [x["time"] for x in _gr]
+                _bull_set   = set(_bull_times)
+                _bear_set   = set(_bear_times)
+                _exp_bull   = set(_SOON_EXP_BULL)
+                _exp_bear   = set(_SOON_EXP_BEAR)
+                _bull_missing = [t for t in _SOON_EXP_BULL if t not in _bull_set]
+                _bull_extra   = [t for t in _bull_times if t not in _exp_bull]
+                _bear_missing = [t for t in _SOON_EXP_BEAR if t not in _bear_set]
+                _bear_extra   = [t for t in _bear_times if t not in _exp_bear]
+                _score = ((len(_SOON_EXP_BULL) - len(_bull_missing))
+                          + (len(_SOON_EXP_BEAR) - len(_bear_missing)))
+                _variants_global.append({
+                    "variant_name": _gvar,
+                    "bullish_visible_pool_summary": _gb,
+                    "bearish_visible_pool_summary": _gr,
+                    "bullish_visible_total_volume": _gx["bull_vtot"],
+                    "bearish_visible_total_volume": _gx["bear_vtot"],
+                    "counts": {
+                        "bullish_source_count":  len(_gx["bull_src"]),
+                        "bearish_source_count":  len(_gx["bear_src"]),
+                        "bullish_visible_count": len(_gx["bull_vis"]),
+                        "bearish_visible_count": len(_gx["bear_vis"]),
+                    },
+                    "comparison_helpers": {
+                        "bull_times":       _bull_times,
+                        "bear_times":       _bear_times,
+                        "bull_pct_list":    [x["tvObVolumeSharePct"] for x in _gb],
+                        "bear_pct_list":    [x["tvObVolumeSharePct"] for x in _gr],
+                        "bull_volume_list": [x["volume"] for x in _gb],
+                        "bear_volume_list": [x["volume"] for x in _gr],
+                    },
+                    "candidate_vs_expected_soon15m": {
+                        "applies_to": "SOONUSDT 15m only — hint hard-coded for this debug route",
+                        "bull_missing_expected_times": _bull_missing,
+                        "bull_extra_times":            _bull_extra,
+                        "bear_missing_expected_times": _bear_missing,
+                        "bear_extra_times":            _bear_extra,
+                        "exact_time_match_score":      _score,
+                        "exact_time_match_max":        10,
+                    },
+                })
+
+            _best = max(_variants_global,
+                        key=lambda v: v["candidate_vs_expected_soon15m"]["exact_time_match_score"],
+                        default=None)
+            structure_candidate_global_detail = {
+                "variants_compared": _sc_global_run,
+                "ob_rules_used": ("production tv_parity_v2 (closed mitigation + "
+                                  "bearish effective-bottom overlap + latest_opposite_pivot "
+                                  "anchor + last equal-extreme tie)"),
+                "structure_candidate_under_test": "varies per variant block below",
+                "expected_soon15m_bull_times": _SOON_EXP_BULL,
+                "expected_soon15m_bear_times": _SOON_EXP_BEAR,
+                "variants": _variants_global,
+                "best_match_variant": (_best["variant_name"] if _best else None),
+                "best_match_score":   (_best["candidate_vs_expected_soon15m"]
+                                       ["exact_time_match_score"] if _best else None),
+                "best_match_score_max": 10,
+                "note": ("DIAGNOSTIC ONLY — production is unchanged. Volume / OB %% "
+                         "fields use the production formula "
+                         "floor(source_volume / visible_same_direction_total_volume * 100). "
+                         "The hard-coded SOON 15m expected lists are TradingView snapshot "
+                         "hints; they may shift as the live candle window advances."),
+            }
+
         _resp = {
             "ok":                           True,
             "phase":                        "1A",
@@ -3649,6 +3763,10 @@ def debug_ob_tv_parity():
         if structure_candidate_trace:
             _resp["structure_candidate_trace_detail"] = structure_candidate_trace_detail
 
+        # Structure-candidate GLOBAL key added ONLY when structure_candidate_global=true.
+        if structure_candidate_global:
+            _resp["structure_candidate_global_detail"] = structure_candidate_global_detail
+
         # ── debug_profile response shaping (default "full" = unchanged) ──────
         if debug_profile == "lifecycle_only":
             _sctd = _resp.get("structure_candidate_trace_detail")
@@ -3661,9 +3779,10 @@ def debug_ob_tv_parity():
                 "lifecycle_trace_summary":          _resp.get("lifecycle_trace_summary"),
                 # Candidate-trace fields work independently — included when
                 # structure_candidate_trace=true, regardless of lifecycle trace.
-                "structure_candidate_trace_detail": _sctd,
-                "candidate_variant_summary":        (_sctd.get("candidate_variant_summary")
-                                                     if _sctd else None),
+                "structure_candidate_trace_detail":  _sctd,
+                "candidate_variant_summary":         (_sctd.get("candidate_variant_summary")
+                                                      if _sctd else None),
+                "structure_candidate_global_detail": _resp.get("structure_candidate_global_detail"),
             }
         elif debug_profile == "compact":
             def _vis_summary(pool):
@@ -3684,7 +3803,8 @@ def debug_ob_tv_parity():
             # Requested trace blocks only.
             for _k in ("ob_trace_detail", "trace_summary", "structure_trace_detail",
                        "structure_lifecycle_trace_detail", "lifecycle_trace_summary",
-                       "structure_candidate_trace_detail"):
+                       "structure_candidate_trace_detail",
+                       "structure_candidate_global_detail"):
                 if _k in _resp:
                     _compact[_k] = _resp[_k]
             # variant_summary only when ob_debug_variant was explicitly passed.
