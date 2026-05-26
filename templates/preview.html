@@ -229,6 +229,9 @@ svg{display:block}
 .main{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--bg-window)}
 .main-scroll{flex:1;overflow-y:auto;overflow-x:hidden;padding:18px 20px}
 .main-head{display:flex;align-items:flex-start;gap:16px;margin-bottom:18px}
+.main-head-tight{align-items:center;margin-bottom:12px;flex-wrap:wrap}
+.main-head-titles{flex:0 0 auto}
+.main-head-tight .head-ctrls{margin-left:auto}
 .main-title{font-size:17px;font-weight:700;display:flex;align-items:center;gap:7px;letter-spacing:.1px}
 .main-title .ico{color:var(--text-3);width:15px;height:15px}
 .main-sub{font-size:11px;color:var(--text-3);margin-top:2px}
@@ -705,9 +708,17 @@ svg{display:block}
   padding:10px 14px 12px;margin-bottom:14px}
 .tab-ctrls[hidden]{display:none}
 .tc-h{font-size:10px;font-weight:700;letter-spacing:1px;color:var(--accent);margin-bottom:10px;text-transform:uppercase}
-.tc-row{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:flex-end}
-.tc-field{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text-3);cursor:help}
+.tc-row{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:flex-start}
+.tc-field{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text-3);cursor:help;max-width:220px}
+.tc-field span.tc-l,.tc-check span.tc-l{display:inline-flex;align-items:center;gap:6px;letter-spacing:.3px}
 .tc-field span{letter-spacing:.3px}
+.tc-info{display:inline-flex;width:13px;height:13px;border-radius:50%;border:1px solid var(--border);
+  align-items:center;justify-content:center;color:var(--text-3);font-size:9px;font-weight:700;
+  background:transparent;cursor:pointer;padding:0;font-family:var(--mono);line-height:1;flex:0 0 auto}
+.tc-info:hover{color:var(--accent);border-color:rgba(34,211,238,.5)}
+.tc-help{font-size:11px;color:var(--text-3);font-weight:400;line-height:1.4;max-width:220px;margin-top:4px;
+  padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:rgba(255,255,255,.02)}
+.tc-help.collapsed{display:none}
 .tc-field select,.tc-field input[type="number"]{
   background:var(--bg-card-2);border:1px solid var(--border);color:var(--text);
   border-radius:7px;padding:6px 9px;font-family:var(--mono);font-size:12px;outline:none;min-width:120px}
@@ -1040,12 +1051,10 @@ svg{display:block}
     <!-- ═══ MAIN ═══ -->
     <section class="main">
       <div class="main-scroll">
-        <div class="main-head">
-          <div>
-            <div class="main-title" id="mainTitle">Main Scan
-              <svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>
-            </div>
-            <div class="main-sub" id="mainSub">All instruments across selected markets</div>
+        <div class="main-head main-head-tight">
+          <div class="main-head-titles">
+            <div class="main-title" id="mainTitle" hidden></div>
+            <div class="main-sub" id="mainSub" hidden></div>
           </div>
           <div class="head-ctrls">
             <label class="exch-sel" title="Exchange used for all scans, pairs and charts">
@@ -1061,22 +1070,12 @@ svg{display:block}
             <div class="seg" id="segSignal"><button data-sig="OB" class="on">OB</button><button data-sig="FVG">FVG</button><button data-sig="BREAKER">Breaker</button><button data-sig="FIB">Fib</button><button data-sig="ALL">All</button></div>
             <button class="btn btn-primary" id="btnScan" type="button" hidden><svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>Scan Now</button>
             <button class="btn" id="btnClear" type="button" title="Clear results"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>Clear</button>
-            <button class="btn" id="btnFilters"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg>Filters <span class="badge-n">3</span></button>
           </div>
         </div>
 
         <div class="tab-ctrls" id="tabCtrls" hidden></div>
 
         <div class="kpi-row" id="kpiRow"></div>
-
-        <div class="chips">
-          <div class="chip">Trend: All <span class="x"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></span></div>
-          <div class="chip">HTF Bias: All <span class="x"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></span></div>
-          <div class="chip">Min Confidence: 60% <span class="x"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></span></div>
-          <div class="chip">Zone Type: All <span class="x"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></span></div>
-          <div class="chip">Volatility: Normal+ <span class="x"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></span></div>
-          <span class="chip-clear">Clear all</span>
-        </div>
 
         <div class="tbl-host" id="tblHost">
           <table class="tbl">
@@ -1135,12 +1134,13 @@ svg{display:block}
             <div class="zd">
               <div class="zd-list">
                 <div class="kv"><span class="k">Zone Type</span><span class="v">Order Block (Bullish)</span></div>
-                <div class="kv"><span class="k">Price Range</span><span class="v">61,240.0 – 59,850.0</span></div>
+                <div class="kv kv-pr"><span class="k">Price Range</span><span class="v"><div class="pr-range"><span class="pr-v">61,240.0</span><span class="pr-a g">&uarr;</span><span class="pr-v">59,850.0</span></div></span></div>
                 <div class="kv"><span class="k">Mid Price</span><span class="v">60,545.0</span></div>
                 <div class="kv"><span class="k">Current Price</span><span class="v teal">60,812.3</span></div>
                 <div class="kv"><span class="k">Size (USD)</span><span class="v">~1.39B</span></div>
                 <div class="kv"><span class="k">Touches</span><span class="v">1</span></div>
                 <div class="kv"><span class="k">Age</span><span class="v">1h 12m</span></div>
+                <div class="kv"><span class="k">Bars</span><span class="v">18</span></div>
                 <div class="kv"><span class="k">Timeframe</span><span class="v">4H</span></div>
               </div>
               <div class="spark">
@@ -1732,19 +1732,23 @@ svg{display:block}
     ],
     compressed: [
       { type:"select", key:"tf", label:"Timeframe",
-        options:[["15m","15m"],["1h","1h"],["4h","4h"],["1d","1d"]] },
+        options:[["15m","15m"],["1h","1h"],["4h","4h"],["1d","1d"]],
+        help:"Candle interval used to detect compression boxes." },
       { type:"num", key:"lookback", label:"Lookback bars", help:"Window of candles to measure compression." },
       { type:"num", key:"maxPct", label:"Max range %", step:0.1, help:"Maximum high-low range (in %) within the window. Smaller = tighter compression." },
     ],
     trending: [
       { type:"select", key:"tf", label:"Timeframe",
-        options:[["15m","15m"],["1h","1h"],["4h","4h"],["1d","1d"]] },
+        options:[["15m","15m"],["1h","1h"],["4h","4h"],["1d","1d"]],
+        help:"Candle interval used to evaluate the trend / momentum." },
       { type:"select", key:"mode", label:"Direction",
-        options:[["bullish","Bullish"],["bearish","Bearish"],["high_volume","High volume"]] },
+        options:[["bullish","Bullish"],["bearish","Bearish"],["high_volume","High volume"]],
+        help:"Bullish/Bearish movers by % change, or High Volume by quote-volume surge." },
     ],
     bias: [
       { type:"select", key:"tf", label:"Timeframe",
-        options:[["1h","1H"],["4h","4H"],["6h","6H"],["12h","12H"],["1d","1D"]] },
+        options:[["1h","1H"],["4h","4H"],["6h","6H"],["12h","12H"],["1d","1D"]],
+        help:"Candle interval used to detect bias-shift rejections." },
       { type:"select", key:"mode", label:"Mode", rerender:true,
         options:[["normal","Normal"],["expert","Expert"]],
         help:"Normal uses tuned presets. Expert exposes the raw candle-quality controls below." },
@@ -1805,6 +1809,15 @@ svg{display:block}
   function _ctrlField(mode,f){
     var v=_ctrlRead(mode,f);
     var help = f.help?(' title="'+esc(f.help)+'"'):'';
+    /* Reusable (i) info chip + hidden helper text. */
+    function _ii(){
+      if(!f.help) return "";
+      return ' <button type="button" class="info-i tc-info" data-helpfor="'+esc(f.key)+'" title="What does this do?">i</button>';
+    }
+    function _hh(){
+      if(!f.help) return "";
+      return '<div class="tc-help collapsed" data-helpid="'+esc(f.key)+'">'+esc(f.help)+'</div>';
+    }
     if(f.type==="reset"){
       return '<button class="btn" id="tcReset" type="button" title="Reset ATH/ATL cursor to start"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>Reset cursor</button>';
     }
@@ -1813,14 +1826,14 @@ svg{display:block}
         var val=o[0],lbl=o[1];
         return '<option value="'+esc(val)+'"'+(String(v)===String(val)?" selected":"")+'>'+esc(lbl)+'</option>';
       }).join("");
-      return '<label class="tc-field"'+help+'><span>'+esc(f.label)+'</span><select data-opt="'+esc(f.key)+'">'+opts+'</select></label>';
+      return '<label class="tc-field"'+help+'><span class="tc-l">'+esc(f.label)+_ii()+'</span><select data-opt="'+esc(f.key)+'">'+opts+'</select>'+_hh()+'</label>';
     }
     if(f.type==="num"){
       var step=f.step!=null?(' step="'+f.step+'"'):"";
-      return '<label class="tc-field"'+help+'><span>'+esc(f.label)+'</span><input type="number" data-opt="'+esc(f.key)+'"'+step+' value="'+esc(v)+'"></label>';
+      return '<label class="tc-field"'+help+'><span class="tc-l">'+esc(f.label)+_ii()+'</span><input type="number" data-opt="'+esc(f.key)+'"'+step+' value="'+esc(v)+'">'+_hh()+'</label>';
     }
     if(f.type==="check"){
-      return '<label class="tc-check"'+help+'><input type="checkbox" data-opt="'+esc(f.key)+'"'+(v?" checked":"")+'><span>'+esc(f.label)+'</span></label>';
+      return '<label class="tc-check"'+help+'><input type="checkbox" data-opt="'+esc(f.key)+'"'+(v?" checked":"")+'><span class="tc-l">'+esc(f.label)+_ii()+'</span>'+_hh()+'</label>';
     }
     return "";
   }
@@ -1845,6 +1858,16 @@ svg{display:block}
         else val=el.value;
         _ctrlWrite(ST.mode,f,val);
         if(f.rerender) _renderTabCtrls();   // e.g. toggling Normal/Expert
+      });
+    });
+    /* Inline (i) info buttons. Clicking must NOT toggle the host label
+       (would focus the control) or mark results stale. */
+    [].forEach.call(host.querySelectorAll(".tc-info"),function(btn){
+      btn.addEventListener("click",function(e){
+        e.preventDefault(); e.stopPropagation();
+        var k = btn.getAttribute("data-helpfor");
+        var help = host.querySelector('.tc-help[data-helpid="'+(k||"").replace(/"/g,'\\"')+'"]');
+        if(help) help.classList.toggle("collapsed");
       });
     });
     var rst=E("tcReset");
@@ -2185,7 +2208,7 @@ svg{display:block}
         renderAll();
         _saveTabData();
         _clearStale();
-        if(modeAtScan === "main" && !ST.results.length) E("mainSub").textContent="Live — no results for "+MODE_LABEL[modeAtScan];
+        if(modeAtScan === "main" && !ST.results.length && E("mainSub")) E("mainSub").textContent="Live — no results for "+MODE_LABEL[modeAtScan];
       })
       .catch(function(e){
         if(e && e.tokenLimit){
@@ -3141,8 +3164,8 @@ svg{display:block}
       tEl.textContent = MODE_LABEL[ST.mode]||"Main Scan";
       if(ico) tEl.appendChild(document.createTextNode(" ")), tEl.appendChild(ico);
     }
-    E("mainSub").textContent = MODE_SUB[ST.mode]||"All instruments across selected markets";
-    E("lastScan").textContent=ST.scannedAt?rel(ST.scannedAt):"—";
+    var sEl=E("mainSub"); if(sEl) sEl.textContent = MODE_SUB[ST.mode]||"All instruments across selected markets";
+    if(E("lastScan")) E("lastScan").textContent=ST.scannedAt?rel(ST.scannedAt):"—";
     var n=ST.results.length;
     var page=ST.page||1;
     var start = n ? ((page-1)*ST.pairsPerCycle + 1) : 0;
@@ -3524,7 +3547,33 @@ svg{display:block}
       '<div class="ins-head"><h3>SETUP INSIGHT</h3>'+
       '<button class="ic-btn" type="button"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>';
     var r=ST.results[ST.sel];
-    if(!r){box.innerHTML=head+'<div class="row-msg">Select a setup to see details.</div>';setFoot(null);return;}
+    if(!r){
+      /* Placeholder that mirrors the runtime layout (vertical Price Range,
+         Bars row, etc.) so the panel doesn't look broken before the first
+         scan or before the user clicks a row. Sample values only. */
+      box.innerHTML = head+
+        '<div class="ins-title">'+IC.starOff+
+          '<span class="ins-sym">BTCUSDT</span>'+
+          '<span class="tag mkt">Perp</span>'+
+          '<span class="tag bull">Bullish</span></div>'+
+        '<div class="ins-meta"><span>Main Scan • OB</span><span>Sample preview</span></div>'+
+        '<div class="sec"><div class="sec-h">ZONE DETAILS <svg class="ico" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></div>'+
+          '<div class="sec-b"><div class="zd"><div class="zd-list">'+
+            '<div class="kv"><span class="k">Zone Type</span><span class="v">Order Block (Bullish)</span></div>'+
+            '<div class="kv kv-pr"><span class="k">Price Range</span><span class="v"><div class="pr-range"><span class="pr-v">61,240.0</span><span class="pr-a g">&uarr;</span><span class="pr-v">59,850.0</span></div></span></div>'+
+            '<div class="kv"><span class="k">Mid Price</span><span class="v">60,545.0</span></div>'+
+            '<div class="kv"><span class="k">Current Price</span><span class="v teal">60,812.3</span></div>'+
+            '<div class="kv"><span class="k">Size (USD)</span><span class="v">~1.39B</span></div>'+
+            '<div class="kv"><span class="k">Touches</span><span class="v">1</span></div>'+
+            '<div class="kv"><span class="k">Age</span><span class="v">1h 12m</span></div>'+
+            '<div class="kv"><span class="k">Bars</span><span class="v">18</span></div>'+
+            '<div class="kv"><span class="k">Timeframe</span><span class="v">4H</span></div>'+
+          '</div></div></div></div>'+
+        '<div class="row-msg" style="margin-top:14px;text-align:center;color:var(--text-3);font-size:11.5px">Select a setup from the table to see real data.</div>';
+      var closeBtn = box.querySelector(".ic-btn");
+      if(closeBtn) closeBtn.addEventListener("click", function(){ /* no-op when no selection */ });
+      setFoot(null); return;
+    }
     var a=r.topAlert||{}, z=zoneOf(a), d=dirOf(r), m=a.meta||{};
     var dTag=d==="bull"?'<span class="tag bull">Bullish</span>':d==="bear"?'<span class="tag bear">Bearish</span>':'<span class="tag neutral">Neutral</span>';
     var mk=ST.market==="perpetual"?"Perp":"Spot";
@@ -3764,7 +3813,7 @@ svg{display:block}
   /* Settings sidebar entry (Queue 8) */
   if(E("sideSettings")) E("sideSettings").addEventListener("click", function(){ openSettings(); });
 
-  E("btnFilters").addEventListener("click",scan);
+  if(E("btnFilters")) E("btnFilters").addEventListener("click",scan);
   if(E("btnScan"))  E("btnScan").addEventListener("click",scan);
   if(E("btnScanNow")) E("btnScanNow").addEventListener("click",scan);
   /* token-limit modal close bindings (Task 4) */
@@ -4802,18 +4851,83 @@ svg{display:block}
     });
   })();
 
-  /* ── Settings (i) info buttons (Queue 16) ───────────────────────── */
+  /* ── Settings (i) info buttons (Queue 16, completed in Round 17) ──
+     Every .sp-field gets exactly one (i) button beside its label. If
+     the field already has a .sp-help block we improve / keep its text;
+     otherwise we inject one from SETTINGS_INFO_TEXT keyed by data-s. */
+  var SETTINGS_INFO_TEXT = {
+    /* Scan engine */
+    sLen: "Bars used to define major swing highs/lows. Higher value means fewer but stronger structure points.",
+    iLen: "Short-term structure window used for internal trend and OB detection.",
+    consolCandles: "Minimum flat/sideways candles needed before detecting a consolidation-based OB.",
+    /* Order Block */
+    obDistancePct: "How close current price must be to an OB zone before the setup is shown.",
+    obMinQuality: "Minimum OB quality score required. Higher value gives fewer but cleaner OBs.",
+    obMaxTouches: "Maximum allowed touches before an OB is considered weaker or used.",
+    useObStrengthFilter: "Filters OBs using volume/strength score.",
+    obMinStrengthPct: "Minimum OB volume strength percentage.",
+    useHighProbOB: "Only show OBs that pass stricter quality checks.",
+    useObTouchState: "Use touch/virgin state to filter OBs.",
+    /* FVG */
+    useFvgValidOnly: "Only show FVGs that are still valid / not fully filled.",
+    useFvgState: "Filter FVGs by untouched, valid, filled, or bag state if supported.",
+    fvgState: "Choose which FVG state to include.",
+    fvgAgeMin: "Minimum candles since the FVG formed.",
+    fvgAgeMax: "Maximum candles allowed since the FVG formed.",
+    fvgMaxDistancePct: "How far price can be from the FVG.",
+    fvgTouchDepth: "Controls how deep price must enter the FVG to count as touched.",
+    /* Breaker */
+    breakerApproachPct: "How close price must be to the breaker block.",
+    breakerMaxAge: "Maximum candles since the breaker formed.",
+    breakerRequireFvg: "Only show breaker setups that overlap / confirm with an FVG.",
+    /* Fibonacci */
+    fibTf: "Timeframe used for Fibonacci leg detection.",
+    fibTolerancePct: "How close price must be to a Fib level to count.",
+    fibAtrMultiplier: "ATR-based tolerance buffer around Fib levels.",
+    fibApproachPct: "Distance window for Fib approach setups.",
+    useFibRequireFvg: "Only show Fib setups that also have FVG confluence.",
+    useFibRequireOb: "Only show Fib setups that also have OB confluence.",
+    /* BTC correlation */
+    useBtcCorrelation: "Filter setups based on correlation with BTC.",
+    btcCorrelationMode: "Choose all, correlated, or non-correlated pairs.",
+    btcLookback: "Number of candles used to calculate BTC correlation.",
+    /* RSI */
+    rsiOB: "RSI level considered overbought.",
+    rsiOS: "RSI level considered oversold.",
+    /* TradingView */
+    tvExchange: "Exchange symbol prefix used when opening a TradingView chart.",
+    tvPerpSuffix: "Adds .P suffix for TradingView perpetual futures symbols."
+  };
   (function _wireInfoButtons(){
-    [].forEach.call(document.querySelectorAll('#settingsPanel .sp-help'), function(h){
-      // mark help text collapsed by default and add (i) toggle next to label
-      h.classList.add("collapsed");
-      var label = h.parentElement; if(!label || label.tagName!=="LABEL") return;
+    var panel = document.getElementById("settingsPanel"); if(!panel) return;
+    [].forEach.call(panel.querySelectorAll(".sp-field"), function(field){
+      // Find the label and the data-s control inside this field.
+      var label = field.querySelector("label"); if(!label) return;
+      // Idempotency: if we already added an (i) for this field, skip.
+      if(label.querySelector(".info-i")) return;
+      var ctl = field.querySelector("[data-s]");
+      var key = ctl ? ctl.getAttribute("data-s") : null;
+      // Resolve help text: existing .sp-help (preferred — author-authored) overrides the map.
+      var helpEl = label.querySelector(".sp-help");
+      var text = (helpEl && helpEl.textContent && helpEl.textContent.trim())
+        || (key && SETTINGS_INFO_TEXT[key])
+        || "";
+      if(!text) return; // skip fields we have nothing to say about (none in current drawer)
+      // Make sure there's a .sp-help node, collapsed by default.
+      if(!helpEl){
+        helpEl = document.createElement("div");
+        helpEl.className = "sp-help";
+        helpEl.textContent = text;
+        label.appendChild(helpEl);
+      }
+      helpEl.classList.add("collapsed");
+      // Insert the (i) button.
       var btn = document.createElement("button");
-      btn.type="button"; btn.className="info-i"; btn.textContent="i";
-      btn.title="What does this do?";
+      btn.type = "button"; btn.className = "info-i"; btn.textContent = "i";
+      btn.title = "What does this do?";
       btn.addEventListener("click", function(e){
         e.preventDefault(); e.stopPropagation();
-        h.classList.toggle("collapsed");
+        helpEl.classList.toggle("collapsed");
       });
       label.appendChild(btn);
     });
@@ -4831,6 +4945,8 @@ svg{display:block}
       text:"Pick one or more setup modules. OB + FIB will show setups that are OB or FIB (OR)." },
     { sel:"#tabCtrls", title:"Timeframe, scope, pairs/cycle",
       text:"Each tab's most-used controls live inline here. Changes are saved between visits." },
+    { sel:"#tabCtrls", title:"Info buttons (i)",
+      text:"Every scanner control has a small (i) button. Press it to understand what that setting does before scanning — works on Main Scan, Compressed, Trending, ATH/ATL, Bias Shift Normal & Expert, and inside the Settings drawer." },
     { sel:"#btnScanNow", title:"Scan Now / Auto Scan",
       text:"Scanning never happens automatically on page load. Use Scan Now, or turn Auto Scan ON for a 30s timer." },
     { sel:"#tblHost", title:"Setup table",
