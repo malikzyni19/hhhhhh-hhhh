@@ -1522,6 +1522,16 @@ def debug_ob_tv_parity():
         structure_candidate_global = request.args.get(
             "structure_candidate_global", "false").strip().lower() in ("1", "true", "yes")
 
+        # ── Debug-only ob_logic_mode comparison (admin) ──
+        _OB_LOGIC_MODES = ["legacy_baseline", "tv_parity_v2", "tv_parity_v3"]
+        ob_logic_mode_debug = (request.args.get("ob_logic_mode") or "").strip() or None
+        if ob_logic_mode_debug is not None and ob_logic_mode_debug not in _OB_LOGIC_MODES:
+            return jsonify({
+                "ok": False,
+                "error": f"invalid ob_logic_mode '{ob_logic_mode_debug}'",
+                "allowed": _OB_LOGIC_MODES,
+            }), 200
+
         # ── Debug-only "as-of" snapshot slicing (admin-only) ──
         debug_as_of    = (request.args.get("debug_as_of") or "").strip() or None
         def _parse_as_of(s):
@@ -3691,6 +3701,66 @@ def debug_ob_tv_parity():
                          "hints; they may shift as the live candle window advances."),
             }
 
+        # ── Debug-only ob_logic_mode (legacy / v2 / v3) comparison ───────────
+        ob_logic_mode_debug_detail = None
+        if ob_logic_mode_debug is not None:
+            _MODE_FLAGS = {
+                "legacy_baseline": dict(mit_closed=False, bear_eff_bottom=False,
+                                        anchor_mode="baseline", tie_mode="first",
+                                        structure_candidate="current"),
+                "tv_parity_v2":    dict(mit_closed=True,  bear_eff_bottom=True,
+                                        anchor_mode="latest_opposite_pivot",
+                                        tie_mode="last", structure_candidate="current"),
+                "tv_parity_v3":    dict(mit_closed=True,  bear_eff_bottom=True,
+                                        anchor_mode="latest_opposite_pivot",
+                                        tie_mode="last",
+                                        structure_candidate="equal_high_pivot_relaxed"),
+            }
+            _mx = _analyse(main_candles, **_MODE_FLAGS[ob_logic_mode_debug])
+            def _logic_pool_summary(pool):
+                _rows = []
+                for ob in pool:
+                    _bar = ob.get("bar"); _src = ob.get("sourceBar")
+                    _rows.append({
+                        "time":               _ts_i(_bar) if _bar is not None else None,
+                        "bottom":             ob.get("bottom"),
+                        "top":                ob.get("top"),
+                        "avg":                ob.get("avg"),
+                        "volume":             ob.get("volume"),
+                        "tvObVolumeSharePct": ob.get("tvObVolumeSharePct"),
+                        "sourceBar":          _src,
+                        "source_time_utc":    (_ts_i(_src) if (_src is not None
+                                                                and 0 <= _src < len(times))
+                                               else None),
+                        "touches":            ob.get("touches"),
+                        "isVirgin":           ob.get("isVirgin"),
+                        "mitigated":          ob.get("mitigated"),
+                    })
+                return _rows
+            _lb = _logic_pool_summary(_mx["bull_vis"])
+            _lr = _logic_pool_summary(_mx["bear_vis"])
+            ob_logic_mode_debug_detail = {
+                "logic_mode_used":              ob_logic_mode_debug,
+                "logic_mode_allowed":           _OB_LOGIC_MODES,
+                "production_default_logic_mode": "tv_parity_v3",
+                "bullish_visible_pool_summary": _lb,
+                "bearish_visible_pool_summary": _lr,
+                "bullish_visible_total_volume": _mx["bull_vtot"],
+                "bearish_visible_total_volume": _mx["bear_vtot"],
+                "counts": {
+                    "bullish_source_count":  len(_mx["bull_src"]),
+                    "bearish_source_count":  len(_mx["bear_src"]),
+                    "bullish_visible_count": len(_mx["bull_vis"]),
+                    "bearish_visible_count": len(_mx["bear_vis"]),
+                },
+                "bull_times":       [x["time"]               for x in _lb],
+                "bear_times":       [x["time"]               for x in _lr],
+                "bull_pct_list":    [x["tvObVolumeSharePct"] for x in _lb],
+                "bear_pct_list":    [x["tvObVolumeSharePct"] for x in _lr],
+                "bull_volume_list": [x["volume"]             for x in _lb],
+                "bear_volume_list": [x["volume"]             for x in _lr],
+            }
+
         _resp = {
             "ok":                           True,
             "phase":                        "1A",
@@ -3767,6 +3837,10 @@ def debug_ob_tv_parity():
         if structure_candidate_global:
             _resp["structure_candidate_global_detail"] = structure_candidate_global_detail
 
+        # ob_logic_mode debug key added ONLY when ob_logic_mode query param is passed.
+        if ob_logic_mode_debug is not None:
+            _resp["ob_logic_mode_debug_detail"] = ob_logic_mode_debug_detail
+
         # ── debug_profile response shaping (default "full" = unchanged) ──────
         if debug_profile == "lifecycle_only":
             _sctd = _resp.get("structure_candidate_trace_detail")
@@ -3783,6 +3857,7 @@ def debug_ob_tv_parity():
                 "candidate_variant_summary":         (_sctd.get("candidate_variant_summary")
                                                       if _sctd else None),
                 "structure_candidate_global_detail": _resp.get("structure_candidate_global_detail"),
+                "ob_logic_mode_debug_detail":        _resp.get("ob_logic_mode_debug_detail"),
             }
         elif debug_profile == "compact":
             def _vis_summary(pool):
@@ -3804,7 +3879,8 @@ def debug_ob_tv_parity():
             for _k in ("ob_trace_detail", "trace_summary", "structure_trace_detail",
                        "structure_lifecycle_trace_detail", "lifecycle_trace_summary",
                        "structure_candidate_trace_detail",
-                       "structure_candidate_global_detail"):
+                       "structure_candidate_global_detail",
+                       "ob_logic_mode_debug_detail"):
                 if _k in _resp:
                     _compact[_k] = _resp[_k]
             # variant_summary only when ob_debug_variant was explicitly passed.

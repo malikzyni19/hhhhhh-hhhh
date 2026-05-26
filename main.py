@@ -2503,7 +2503,7 @@ def _compute_ob_touch_meta(ob, h, l, c, n, ob_mitigation="Absolute",
 def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", ob_mitigation="Absolute",
                mitigation_closed_only=None, overlap_effective_zone=False,
                bearish_effective_bottom_overlap=None, trace=None, anchor_mode=None,
-               extreme_tie_mode=None, ob_logic_mode="tv_parity_v2", structure_candidate="current"):
+               extreme_tie_mode=None, ob_logic_mode="tv_parity_v3", structure_candidate="current"):
     """
     Order Block detection — audited line-by-line against Pine Script drawVOB().
 
@@ -2534,13 +2534,17 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         "last" — latest equal extreme wins (<= / >=). The Pine +1
         sourceBar offset is unchanged; only the chosen extreme bar moves.
       ob_logic_mode: production logic mode.
-        "tv_parity_v2" (default) — confirmed TV-parity behavior. Any rule
-        argument left as None is resolved from this mode.
-        "legacy_baseline" — original pre-parity behavior.
-        An explicit per-rule argument (not None) always overrides the mode.
+        "tv_parity_v3" (default) — v2 rules + Pine-style relaxed equal-pivot
+        detection (plateau highs/lows confirm as pivots).
+        "tv_parity_v2" — confirmed TV-parity behavior (strict pivots).
+        Kept available for rollback / debug comparison.
+        "legacy_baseline" — original pre-parity behavior (deepest rollback).
+        Any rule argument left as None is resolved from this mode; an
+        explicit per-rule argument (not None) always overrides.
         Mode-resolved rules: mitigation_closed_only,
-        bearish_effective_bottom_overlap, anchor_mode, extreme_tie_mode.
-        tv_parity_v2 = closed mitigation + bearish effective-bottom overlap
+        bearish_effective_bottom_overlap, anchor_mode, extreme_tie_mode,
+        plus pivot-detection (relaxed for v3, strict for v2 / legacy).
+        v2 / v3 share: closed mitigation + bearish effective-bottom overlap
         + latest_opposite_pivot anchor + last equal-extreme tie.
       structure_candidate: DEBUG-ONLY structure-lifecycle variant.
         "current" (default) — production behavior, byte-identical.
@@ -2569,10 +2573,15 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
     """
     # ── Production logic mode resolution ──────────────────────────────────
     # A rule left as None inherits from ob_logic_mode; an explicit argument
-    # always wins (used by the debug endpoint). "tv_parity_v2" is the
-    # confirmed TV-parity production default; "legacy_baseline" is the
-    # original behavior, kept for rollback / debug comparison.
-    _v2 = ob_logic_mode == "tv_parity_v2"
+    # always wins (used by the debug endpoint). Modes:
+    #   "tv_parity_v3" — v2 rules + Pine-style relaxed equal-pivot detection
+    #                    (the current production default).
+    #   "tv_parity_v2" — closed mitigation + bearish effective-bottom overlap
+    #                    + latest_opposite_pivot anchor + last equal-extreme
+    #                    tie (kept available for rollback / debug comparison).
+    #   "legacy_baseline" — original pre-parity behavior (deepest rollback).
+    _v2 = ob_logic_mode in ("tv_parity_v2", "tv_parity_v3")
+    _v3 = ob_logic_mode == "tv_parity_v3"
     if mitigation_closed_only is None:
         mitigation_closed_only = _v2
     if bearish_effective_bottom_overlap is None:
@@ -2583,7 +2592,10 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         extreme_tie_mode = "last" if _v2 else "first"
 
     n = len(c)
-    if structure_candidate == "equal_high_pivot_relaxed":
+    # Pivot detection — v3 uses Pine-style relaxed (plateau-tolerant) pivots;
+    # v2 / legacy keep strict pivots. structure_candidate can force relaxed
+    # explicitly (debug diagnostics).
+    if _v3 or structure_candidate == "equal_high_pivot_relaxed":
         ph, pl = _detect_pivots_relaxed(h, l, i_len, i_len)
     else:
         ph, pl = detect_pivots(h, l, i_len, i_len)
@@ -4155,7 +4167,7 @@ _TV_OB_PARITY_SETTINGS: Dict[str, Any] = {
 def _tv_visible_pool(obs_by_dir: List[Dict[str, Any]], max_ob: int = 5,
                      overlap_effective_zone: bool = False,
                      bearish_effective_bottom_overlap=None,
-                     ob_logic_mode: str = "tv_parity_v2") -> List[Dict[str, Any]]:
+                     ob_logic_mode: str = "tv_parity_v3") -> List[Dict[str, Any]]:
     """
     Build the Pine-style visible OB pool for a single direction.
 
@@ -4177,11 +4189,12 @@ def _tv_visible_pool(obs_by_dir: List[Dict[str, Any]], max_ob: int = 5,
       (TV displays the bearish lower boundary at avg); new OB top stays raw,
       bullish stays raw. None inherits from ob_logic_mode; an explicit
       argument overrides.
-    ob_logic_mode: "tv_parity_v2" (default) enables the confirmed TV-parity
-      rules; "legacy_baseline" keeps the original raw-overlap behavior.
+    ob_logic_mode: "tv_parity_v3" / "tv_parity_v2" both enable the
+      confirmed TV-parity overlap rule (v3 inherits v2 here);
+      "legacy_baseline" keeps the original raw-overlap behavior.
     """
     if bearish_effective_bottom_overlap is None:
-        bearish_effective_bottom_overlap = (ob_logic_mode == "tv_parity_v2")
+        bearish_effective_bottom_overlap = ob_logic_mode in ("tv_parity_v2", "tv_parity_v3")
 
     input_count = len(obs_by_dir)
 
