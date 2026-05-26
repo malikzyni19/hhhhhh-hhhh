@@ -124,6 +124,15 @@ svg{display:block}
   background:var(--accent);border-radius:2px;box-shadow:0 0 8px rgba(34,211,238,.6);
 }
 .topright{display:flex;align-items:center;gap:6px;width:auto;justify-content:flex-end;flex-shrink:0}
+.hdr-clock{display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:8px;
+  background:var(--bg-card-2);border:1px solid var(--border);
+  font-family:var(--mono);font-size:11.5px;color:var(--text-2);letter-spacing:.3px;font-variant-numeric:tabular-nums}
+.hdr-clock .hc-utc{color:var(--text)}
+.hdr-clock .hc-sep{color:var(--text-3)}
+.hdr-clock .hc-cd{color:var(--accent)}
+.ic-support{color:var(--text-2)}
+.ic-support:hover{color:var(--accent)}
+@media (max-width:1100px){ .hdr-clock .hc-cd, .hdr-clock .hc-sep{display:none} }
 .token-pill{display:flex;align-items:center;gap:7px;padding:6px 11px;border-radius:9px;
   border:1px solid var(--border);background:var(--bg-card);font-size:12px;font-weight:600;
   color:var(--text-2);white-space:nowrap;margin-right:4px}
@@ -220,9 +229,9 @@ svg{display:block}
 .main{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--bg-window)}
 .main-scroll{flex:1;overflow-y:auto;overflow-x:hidden;padding:18px 20px}
 .main-head{display:flex;align-items:flex-start;gap:16px;margin-bottom:18px}
-.main-title{font-size:19px;font-weight:700;display:flex;align-items:center;gap:7px}
+.main-title{font-size:17px;font-weight:700;display:flex;align-items:center;gap:7px;letter-spacing:.1px}
 .main-title .ico{color:var(--text-3);width:15px;height:15px}
-.main-sub{font-size:12px;color:var(--text-3);margin-top:3px}
+.main-sub{font-size:11px;color:var(--text-3);margin-top:2px}
 .head-ctrls{margin-left:auto;display:flex;align-items:center;gap:10px}
 .seg{display:flex;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:3px}
 .seg button{
@@ -249,9 +258,9 @@ svg{display:block}
 
 /* KPI */
 .kpi-row{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:16px}
-.kpi{background:var(--bg-card);border:1px solid var(--border);border-radius:11px;padding:13px 14px}
+.kpi{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
 .kpi-l{font-size:10px;font-weight:700;letter-spacing:.8px;color:var(--text-3)}
-.kpi-v{font-size:24px;font-weight:700;font-family:var(--mono);margin:8px 0 6px;color:var(--text)}
+.kpi-v{font-size:20px;font-weight:700;font-family:var(--mono);margin:5px 0 3px;color:var(--text);line-height:1.1}
 .kpi-v.g{color:var(--green-2)}
 .kpi-v.r{color:var(--red-2)}
 .kpi-d{font-size:11px;color:var(--text-3);display:flex;align-items:center;gap:5px}
@@ -353,6 +362,13 @@ svg{display:block}
 .kv .k{color:var(--text-3)}
 .kv .v{font-family:var(--mono);color:var(--text);text-align:right}
 .kv .v.teal{color:var(--accent)}
+.kv.kv-pr{align-items:center}
+.pr-range{display:inline-flex;flex-direction:column;align-items:flex-end;line-height:1.1;font-family:var(--mono);font-variant-numeric:tabular-nums}
+.pr-range .pr-v{color:var(--text);font-size:12px}
+.pr-range .pr-a{font-size:11px;line-height:1;margin:1px 0;color:var(--text-3)}
+.pr-range .pr-a.g{color:var(--green-2)}
+.pr-range .pr-a.r2{color:var(--red-2)}
+.pr-range .pr-a.n{color:var(--text-3)}
 .spark{width:104px;flex-shrink:0;position:relative;align-self:stretch;min-height:150px}
 .spark svg{width:100%;height:100%;display:block;border-radius:6px;background:rgba(255,255,255,.015)}
 .spark svg text.sx{fill:var(--text-3);font-size:6px;font-family:var(--mono);paint-order:stroke;stroke:rgba(5,8,14,.75);stroke-width:2px}
@@ -445,6 +461,56 @@ svg{display:block}
 .mcards{display:none}
 .sheet-bd{display:none}
 
+/* Scan presets modal (Queue 15) */
+.preset-panel{position:fixed;top:0;right:0;bottom:0;width:420px;max-width:96vw;
+  background:var(--bg-panel);border-left:1px solid var(--border);
+  transform:translateX(100%);transition:transform .25s ease;z-index:260;
+  box-shadow:-12px 0 36px rgba(0,0,0,.55);display:flex;flex-direction:column}
+.preset-panel.open{transform:translateX(0)}
+.pp-body{flex:1;overflow-y:auto;padding:16px 18px;display:flex;flex-direction:column;gap:16px}
+.pp-section{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:14px}
+.pp-save{display:flex;gap:8px;margin-top:8px}
+.pp-save input{flex:1;background:var(--bg-card-2);border:1px solid var(--border);color:var(--text);
+  border-radius:7px;padding:7px 10px;font-size:12.5px;outline:none}
+.pp-save input:focus{border-color:var(--accent)}
+.pp-list{display:flex;flex-direction:column;gap:8px}
+.pp-row{background:var(--bg-card-2);border:1px solid var(--border);border-radius:9px;padding:10px 12px}
+.pp-row.is-default{border-color:rgba(34,211,238,.4)}
+.pp-row-top{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.pp-row-top .pp-name{font-weight:700;color:var(--text);font-size:13px;flex:1;min-width:0;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pp-row-top input.pp-rename{flex:1;min-width:0;background:var(--bg-card);border:1px solid var(--border);
+  color:var(--text);border-radius:6px;padding:5px 8px;font-size:12.5px;outline:none}
+.pp-default-pill{font-size:9px;font-weight:700;letter-spacing:.5px;color:var(--accent);
+  background:var(--accent-soft);border:1px solid rgba(34,211,238,.32);padding:2px 6px;border-radius:4px}
+.pp-row-actions{display:flex;gap:6px;flex-wrap:wrap}
+.pp-row-actions .btn{padding:5px 10px;font-size:11px}
+
+/* Tutorial overlay (Queue 16) */
+.tut-overlay{position:fixed;inset:0;z-index:400;pointer-events:auto}
+.tut-overlay[hidden]{display:none}
+.tut-mask{position:absolute;inset:0;background:rgba(2,6,14,.7);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}
+.tut-spot{position:absolute;border:2px solid var(--accent);border-radius:10px;
+  box-shadow:0 0 0 9999px rgba(2,6,14,.7);pointer-events:none;transition:all .25s ease;
+  background:transparent}
+.tut-card{position:absolute;width:340px;max-width:92vw;background:var(--bg-card);
+  border:1px solid var(--border-2);border-radius:12px;padding:16px 18px;
+  box-shadow:0 12px 36px rgba(0,0,0,.55);color:var(--text)}
+.tut-step{font-size:10px;font-weight:700;letter-spacing:.6px;color:var(--accent);margin-bottom:6px}
+.tut-title{font-size:15px;font-weight:700;margin-bottom:6px}
+.tut-text{font-size:12.5px;color:var(--text-2);line-height:1.5;margin-bottom:12px}
+.tut-never{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--text-3);margin-bottom:10px;cursor:pointer}
+.tut-never input{width:14px;height:14px;accent-color:var(--accent);cursor:pointer}
+.tut-actions{display:flex;gap:8px;justify-content:flex-end}
+.tut-actions .btn{padding:6px 14px;font-size:12px}
+
+/* Settings (i) info buttons (Queue 16) */
+.info-i{display:inline-flex;width:14px;height:14px;border-radius:50%;border:1px solid var(--border);
+  background:var(--bg-card-2);color:var(--text-3);font-size:9.5px;font-weight:700;
+  align-items:center;justify-content:center;margin-left:6px;cursor:pointer;padding:0;line-height:1}
+.info-i:hover{color:var(--accent);border-color:rgba(34,211,238,.5)}
+.sp-help.collapsed{display:none}
+
 /* Settings drawer (Wave 6) */
 .settings-bd{position:fixed;inset:0;background:rgba(2,6,14,.55);backdrop-filter:blur(2px);
   -webkit-backdrop-filter:blur(2px);opacity:0;pointer-events:none;transition:opacity .25s;z-index:240}
@@ -472,8 +538,11 @@ svg{display:block}
 .sp-tab-sub{font-size:11px;color:var(--text-3);font-weight:400;margin-top:2px;line-height:1.3}
 .sp-tab.active .sp-tab-sub{color:rgba(34,211,238,.6)}
 .sp-content{overflow-y:auto;padding:24px 32px}
-.sp-content-h{font-size:18px;font-weight:700;color:var(--text);margin-bottom:4px}
-.sp-content-sub{font-size:13px;color:var(--text-3);margin-bottom:18px}
+.sp-content-h{font-size:17px;font-weight:700;color:var(--text);margin-bottom:6px;letter-spacing:.2px}
+.sp-content-sub{font-size:12.5px;color:var(--text-3);margin-bottom:18px;line-height:1.45;max-width:640px}
+.sp-group{box-shadow:0 1px 0 rgba(255,255,255,.02) inset}
+.sp-field label{font-weight:500}
+.sp-help{margin-top:2px}
 .sp-section{display:none}
 .sp-section.active{display:block}
 .sp-body{flex:1;overflow-y:auto;padding:14px 16px}  /* legacy — kept for safety */
@@ -650,6 +719,11 @@ svg{display:block}
 
 /* Per-tab result containers (Wave 14) */
 .tbl-host[hidden]{display:none}
+.tbl-host{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.tbl-host .tbl{min-width:860px}
+.tbl-host::-webkit-scrollbar{height:8px}
+.tbl-host::-webkit-scrollbar-thumb{background:var(--border-2);border-radius:4px}
+.tbl-host::-webkit-scrollbar-track{background:transparent}
 .tab-view{margin-top:4px}
 .tab-view[hidden]{display:none}
 .tab-view .tv-empty{padding:60px 24px;text-align:center;color:var(--text-3);font-size:13px}
@@ -881,12 +955,17 @@ svg{display:block}
       <a href="#" data-view="backtest">Backtest</a>
       <a href="#" data-view="watchlist">Watchlist</a>
       <a href="#" data-view="tools">Market Tools</a>
-      <a href="#" data-view="settings">Settings</a>
     </nav>
     <div class="topright">
+      <div class="hdr-clock" id="hdrClock" title="Current UTC time">
+        <span class="hc-utc" id="hdrUtcTime">—</span>
+        <span class="hc-sep">·</span>
+        <span class="hc-cd" id="hdrCandleCd" title="Candle close countdown">—</span>
+      </div>
+      <a class="ic-btn ic-support" id="btnSupport" href="https://t.me/MalikZyNi" target="_blank" rel="noopener" title="Contact support" aria-label="Contact support"><svg class="ico" viewBox="0 0 24 24"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></a>
       <div class="token-pill na" id="tokenPill" title="Daily scan tokens — set by admin, resets at midnight UTC">
         <svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg>
-        <span class="tp-label">Scan Tokens</span>
+        <span class="tp-label">Tokens:</span>
         <span class="tp-val" id="tokenVal">…</span>
       </div>
       <button class="ic-btn" id="btnThemeLight" type="button" aria-label="Light mode"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button>
@@ -925,6 +1004,12 @@ svg{display:block}
       <div class="nav-item" data-mode="bias" role="button" tabindex="0">
         <svg class="ico" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M6 8.5v7M8.3 6.8 15.7 11M15.7 13 8.3 17.2"/></svg>
         <div><div class="nt">Structure / Bias</div><div class="ns">Market structure scan</div></div>
+      </div>
+
+      <div class="side-div"></div>
+      <div class="nav-item nav-utility" id="sideSettings" role="button" tabindex="0" title="Open settings drawer">
+        <svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <div><div class="nt">Settings</div><div class="ns">Module config &amp; presets</div></div>
       </div>
 
       <div class="side-spacer"></div>
@@ -974,7 +1059,7 @@ svg{display:block}
             </label>
             <div class="seg" id="segMarket"><button data-mkt="spot" class="on">Spot</button><button data-mkt="perpetual">Perpetual</button></div>
             <div class="seg" id="segSignal"><button data-sig="OB" class="on">OB</button><button data-sig="FVG">FVG</button><button data-sig="BREAKER">Breaker</button><button data-sig="FIB">Fib</button><button data-sig="ALL">All</button></div>
-            <button class="btn btn-primary" id="btnScan" type="button"><svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>Scan Now</button>
+            <button class="btn btn-primary" id="btnScan" type="button" hidden><svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>Scan Now</button>
             <button class="btn" id="btnClear" type="button" title="Clear results"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>Clear</button>
             <button class="btn" id="btnFilters"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg>Filters <span class="badge-n">3</span></button>
           </div>
@@ -1127,6 +1212,46 @@ svg{display:block}
 
     <div id="sheetBd" class="sheet-bd"></div>
 
+    <!-- Scan Presets modal (Queue 15) -->
+    <div id="presetBd" class="settings-bd"></div>
+    <aside id="presetPanel" class="preset-panel">
+      <div class="sp-head">
+        <h3>SCAN PRESETS</h3>
+        <button class="ic-btn" id="presetClose" type="button" aria-label="Close"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
+      <div class="pp-body">
+        <div class="pp-section">
+          <div class="sp-group-h">Save current setup</div>
+          <div class="pp-save">
+            <input type="text" id="presetName" placeholder="Preset name (e.g. 4H OB scalp)" maxlength="80">
+            <button class="btn btn-primary" id="presetSaveBtn" type="button">Save</button>
+          </div>
+          <div class="sp-help" style="margin-top:4px">Captures market, exchange, scan modules, timeframe, scope, pairs per cycle and module settings. Applying a preset never spends scan tokens.</div>
+        </div>
+        <div class="pp-section">
+          <div class="sp-group-h">Saved presets <span id="presetCount" style="color:var(--text-3);font-weight:normal;margin-left:4px"></span></div>
+          <div id="presetList" class="pp-list"><div class="row-msg">Loading…</div></div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Tutorial overlay (Queue 16) -->
+    <div id="tutOverlay" class="tut-overlay" hidden>
+      <div class="tut-mask" id="tutMask"></div>
+      <div class="tut-spot" id="tutSpot"></div>
+      <div class="tut-card" id="tutCard">
+        <div class="tut-step" id="tutStep">1 / 1</div>
+        <div class="tut-title" id="tutTitle">—</div>
+        <div class="tut-text" id="tutText">—</div>
+        <label class="tut-never"><input type="checkbox" id="tutNever"><span>Never show again</span></label>
+        <div class="tut-actions">
+          <button class="btn" id="tutBack" type="button">Back</button>
+          <button class="btn" id="tutSkip" type="button">Skip</button>
+          <button class="btn btn-primary" id="tutNext" type="button">Next</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Settings drawer (Wave 6) -->
     <!-- Notifications drawer (Wave 10) -->
     <div id="notifBd" class="settings-bd"></div>
@@ -1230,7 +1355,6 @@ svg{display:block}
             <div class="sp-content-h">Order Block</div>
             <div class="sp-content-sub">Demand / supply zones formed before the move that breaks structure. Selecting the <b>OB</b> module on the main page also activates these rules.</div>
             <div class="sp-group">
-              <div class="sp-field"><label><input type="checkbox" data-s="useObModule" checked>Enable OB module<div class="sp-help">Turn OB detection on or off.</div></label></div>
               <div class="sp-field"><label>Approach distance %<div class="sp-help">How close the price has to come to the OB before it's listed (in % of price).</div></label>
                 <input type="number" data-s="obDistancePct" value="2.0" step="0.1" min="0" max="20"></div>
               <div class="sp-field"><label>Min quality (0-100)<div class="sp-help">Hide OBs below this quality score. 0 = show all.</div></label>
@@ -1248,7 +1372,6 @@ svg{display:block}
             <div class="sp-content-h">Fair Value Gap (FVG)</div>
             <div class="sp-content-sub">Inefficiency between three candles. These show up <b>only when the FVG module is selected</b> on the main page (or All).</div>
             <div class="sp-group">
-              <div class="sp-field"><label><input type="checkbox" data-s="useFvgModule" checked>Enable FVG module</label></div>
               <div class="sp-field"><label><input type="checkbox" data-s="useFvgValidOnly">Valid FVGs only<div class="sp-help">Drop "stale" FVGs that have already been fully filled.</div></label></div>
               <div class="sp-field"><label><input type="checkbox" data-s="useFvgState">Filter by state</label></div>
               <div class="sp-field"><label>State<div class="sp-help">all / valid (unfilled) / bag (oversized).</div></label>
@@ -1265,7 +1388,6 @@ svg{display:block}
             <div class="sp-content-h">Breaker Block</div>
             <div class="sp-content-sub">Failed OBs that flipped polarity. Selecting <b>Breaker</b> on the main page activates these.</div>
             <div class="sp-group">
-              <div class="sp-field"><label><input type="checkbox" data-s="useBreakerModule" checked>Enable breaker module</label></div>
               <div class="sp-field"><label>Approach %<input type="number" data-s="breakerApproachPct" value="2.0" step="0.1" min="0" max="20"></label></div>
               <div class="sp-field"><label>Max age (bars)<input type="number" data-s="breakerMaxAge" value="200" min="1" max="2000"></label></div>
               <div class="sp-field"><label><input type="checkbox" data-s="breakerRequireFvg">Require FVG overlap<div class="sp-help">Only show breakers that sit on top of an FVG.</div></label></div>
@@ -1276,7 +1398,6 @@ svg{display:block}
             <div class="sp-content-h">Fibonacci</div>
             <div class="sp-content-sub">Retracement levels from the most recent swing leg. Selecting <b>Fib</b> on the main page activates these.</div>
             <div class="sp-group">
-              <div class="sp-field"><label><input type="checkbox" data-s="useFibModule" checked>Enable Fib module</label></div>
               <div class="sp-field"><label>Timeframe<select data-s="fibTf"><option value="15m">15m</option><option value="1h">1h</option><option value="4h" selected>4h</option><option value="1d">1d</option></select></label></div>
               <div class="sp-field"><label>Tolerance %<input type="number" data-s="fibTolerancePct" value="0.5" step="0.05" min="0" max="5"></label></div>
               <div class="sp-field"><label>ATR multiplier<input type="number" data-s="fibAtrMultiplier" value="0.5" step="0.05" min="0" max="5"></label></div>
@@ -1738,36 +1859,65 @@ svg{display:block}
     });
   }
 
-  function _modulesForSignal(){
-    if(ST.signal === "ALL"){
-      return {
-        useObModule:      ST.settings.useObModule      !== false,
-        useFvgModule:     ST.settings.useFvgModule     !== false,
-        useBreakerModule: ST.settings.useBreakerModule !== false,
-        useFibModule:     ST.settings.useFibModule     !== false,
-      };
+  /* Module multi-select (Queue 11). ST.signal is either "ALL" or a
+     comma-joined uppercase list like "OB,FIB". An empty selection
+     auto-promotes to "ALL". */
+  var _SIG_ALL = ["OB","FVG","BREAKER","FIB"];
+  function _activeSignals(){
+    var v = String(ST.signal||"").toUpperCase().trim();
+    if(!v || v==="ALL") return _SIG_ALL.slice();
+    return v.split(",").map(function(x){return x.trim();}).filter(function(x){return _SIG_ALL.indexOf(x)>=0;});
+  }
+  function _isAllSignals(list){
+    list = list || _activeSignals();
+    return _SIG_ALL.every(function(k){return list.indexOf(k)>=0;});
+  }
+  function _setSignals(list){
+    var arr = (list||[]).filter(function(x){return _SIG_ALL.indexOf(x)>=0;});
+    if(!arr.length || _SIG_ALL.every(function(k){return arr.indexOf(k)>=0;})){
+      ST.signal = "ALL";
+    } else {
+      ST.signal = arr.join(",");
     }
+    _ls_set("zyni-signal", ST.signal);
+    _syncSegSignalChips();
+    _markStale();
+  }
+  function _syncSegSignalChips(){
+    var active = _activeSignals();
+    var allOn  = _isAllSignals(active);
+    [].forEach.call(document.querySelectorAll('#segSignal button[data-sig]'),function(b){
+      var key = b.getAttribute('data-sig');
+      var on  = (key==="ALL") ? allOn : (active.indexOf(key)>=0);
+      b.classList.toggle('on', on);
+    });
+  }
+  function _modulesForSignal(){
+    var active = _activeSignals();
     return {
-      useObModule:      ST.signal === "OB",
-      useFvgModule:     ST.signal === "FVG",
-      useBreakerModule: ST.signal === "BREAKER",
-      useFibModule:     ST.signal === "FIB",
+      useObModule:      active.indexOf("OB")>=0,
+      useFvgModule:     active.indexOf("FVG")>=0,
+      useBreakerModule: active.indexOf("BREAKER")>=0,
+      useFibModule:     active.indexOf("FIB")>=0,
     };
   }
   function _signalMatches(setup, signal){
     setup = String(setup||"").toUpperCase();
-    signal = String(signal||"").toUpperCase();
-    if(signal==="OB")       return setup.indexOf("OB")===0;
-    if(signal==="FVG")      return setup==="FVG";
-    if(signal==="BREAKER")  return setup.indexOf("BREAKER")===0;
-    if(signal==="FIB")      return setup.indexOf("FIB")===0;
-    return true;
+    var active = _activeSignals();
+    if(active.length === _SIG_ALL.length) return true;
+    return active.some(function(s){
+      if(s==="OB")       return setup.indexOf("OB")===0;
+      if(s==="FVG")      return setup==="FVG";
+      if(s==="BREAKER")  return setup.indexOf("BREAKER")===0;
+      if(s==="FIB")      return setup.indexOf("FIB")===0;
+      return false;
+    });
   }
 
   function buildPayloadForMode(){
     var market=ST.market, tf="4h";
     if(ST.mode==="main"){
-      var sig=ST.signal, checked = sig==="ALL"?["OB","FVG","BREAKER","FIB"]:[sig];
+      var checked = _activeSignals();                // OR-list, max 4
       var watch=Object.keys(ST.stars).filter(function(s){return ST.stars[s];});
       var sMode = ST.scanMode||"market";
       // If user picked "selected" but starred nothing, fall back to market scope.
@@ -1779,7 +1929,8 @@ svg{display:block}
         symbols: sMode==="selected" ? watch : [],
         roundRobin:ST.roundRobin, pairsPerCycle:ST.pairsPerCycle,
         filterMode:"match", checkedSignals:checked,
-        requiredSignals: (sig!=="ALL" ? [sig] : [])
+        // OR logic: never require all simultaneously.
+        requiredSignals: []
       }};
     }
     if(ST.mode==="compressed"){
@@ -2371,6 +2522,7 @@ svg{display:block}
     }
     renderInsightForTab(m);
     renderMeta();
+    _refreshFooterButtons();
   }
 
   /* ── tab-aware right insight panel ── */
@@ -2424,13 +2576,49 @@ svg{display:block}
     if(!sym) return;
     ST.stars[sym] = true; syncWatchlist();
   }
-  function _insFoot(sym, marketHint){
-    return '<div class="ti-foot" style="display:flex;gap:8px;margin-top:14px">'+
-      '<button class="btn" type="button" data-chart="'+esc(sym)+'" data-chart-mkt="'+esc(marketHint||ST.market)+'">'+
-        '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 4-6"/></svg>View Chart</button>'+
-      '<button class="btn btn-primary" type="button" data-add-lm="'+esc(sym)+'">'+
-        '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add to Live Monitor</button>'+
-    '</div>';
+  /* In-body action buttons are removed (Queue 2). The shared fixed footer
+     (#btnChart + #btnLM) handles the actions for every tab. _insFoot() kept
+     as a stub so callers don't crash. */
+  function _insFoot(sym, marketHint){ return ""; }
+
+  /* Active row across any tab (Queue 2 helpers) */
+  function getActiveInsightRow(){
+    var m = ST.mode;
+    if(m === "main") return ST.results[ST.sel]||null;
+    var td = ST.tabData && ST.tabData[m];
+    if(!td) return null;
+    var arr = td.results || td.items || [];
+    var sel = (typeof td.sel==="number") ? td.sel : -1;
+    return (sel>=0 && sel<arr.length) ? arr[sel] : null;
+  }
+  function _activeRowSymbol(r){ if(!r) return ""; return String(r.symbol||r.pair||""); }
+  function _activeRowMarket(r){ if(!r) return ST.market; return r.market||r.marketType||ST.market; }
+  function openActiveChart(){
+    var r = getActiveInsightRow(); if(!r) return;
+    var sym = _activeRowSymbol(r); if(!sym) return;
+    var mkt = _activeRowMarket(r);
+    var tf  = (r.topAlert && r.topAlert.timeframe) || r.timeframe || ST.settings.tf || "4h";
+    if(typeof openChartModal === "function"){
+      try{ openChartModal(sym, mkt, ST.exchange, tf); return; }catch(_){}
+    }
+    // Fallback: open TradingView in a new tab
+    try{ window.open(_tvUrl(sym, mkt), "_blank", "noopener"); }catch(_){}
+  }
+  function addActiveToLiveMonitor(btn){
+    var r = getActiveInsightRow(); if(!r) return;
+    var sym = _activeRowSymbol(r); if(!sym) return;
+    ST.stars[sym]=true; syncWatchlist();
+    if(btn){
+      var o = btn.innerHTML;
+      btn.innerHTML = '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>Added';
+      setTimeout(function(){ btn.innerHTML = o; }, 1600);
+    }
+  }
+  function _refreshFooterButtons(){
+    var r = getActiveInsightRow();
+    var ok = !!r;
+    var c = E("btnChart"); if(c){ c.classList.toggle("disabled", !ok); c.setAttribute("aria-disabled", ok?"false":"true"); }
+    var l = E("btnLM"); if(l){ l.disabled = !ok; l.classList.toggle("disabled", !ok); }
   }
   function _ti(k,v){return '<div class="ti-row"><span class="k">'+esc(k)+'</span><span class="v">'+v+'</span></div>';}
   function _tiB(k,html){return '<div class="ti-row"><span class="k">'+esc(k)+'</span><span class="v">'+html+'</span></div>';}
@@ -3128,7 +3316,7 @@ svg{display:block}
     var rrV=r.rr!=null?(+r.rr).toFixed(2):"—";
     var ztype=setupLabel(a)+(d!=="neutral"?(" ("+(d==="bull"?"Bullish":"Bearish")+")"):"");
     var mid=z&&!z.single?(z.hi+z.lo)/2:(z?z.hi:null);
-    var touches=m.obTouches!=null?m.obTouches : m.fvgTouches!=null?m.fvgTouches : null;
+    var touches = (m.obTouches!=null?m.obTouches : (m.touches!=null?m.touches : (m.touchCount!=null?m.touchCount : (m.fvgTouches!=null?m.fvgTouches : (m.breakerTouches!=null?m.breakerTouches : (r.touches!=null?r.touches : null))))));
     var cb=r.confBreakdown||{};
     var zoneStr=z?(z.single?fmt(z.hi):fmt(z.hi)+" – "+fmt(z.lo)):"—";
 
@@ -3342,7 +3530,7 @@ svg{display:block}
     var mk=ST.market==="perpetual"?"Perp":"Spot";
     var ztype=setupLabel(a)+(d!=="neutral"?(" ("+(d==="bull"?"Bullish":"Bearish")+")"):"");
     var mid = z&&!z.single ? (z.hi+z.lo)/2 : (z?z.hi:null);
-    var touches = m.obTouches!=null?m.obTouches : m.fvgTouches!=null?m.fvgTouches : null;
+    var touches = (m.obTouches!=null?m.obTouches : (m.touches!=null?m.touches : (m.touchCount!=null?m.touchCount : (m.fvgTouches!=null?m.fvgTouches : (m.breakerTouches!=null?m.breakerTouches : (r.touches!=null?r.touches : null))))));
     var sc=+r.score||0;
     var cb = r.confBreakdown||{};
     box.innerHTML=head+
@@ -3353,12 +3541,13 @@ svg{display:block}
       '<div class="sec"><div class="sec-h">ZONE DETAILS <svg class="ico" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></div>'+
         '<div class="sec-b"><div class="zd"><div class="zd-list">'+
           kv("Zone Type",ztype)+
-          kv("Price Range",z?(z.single?fmt(z.hi):fmt(z.hi)+" – "+fmt(z.lo)):"—")+
+          kvHtml("Price Range", _priceRangeHtml(z, d), "kv-pr")+
           kv("Mid Price",mid!=null?fmt(mid):"—")+
           kv("Current Price",r.price!=null?fmt(r.price):"—",true)+
           kv("Size (USD)",r.zoneSizeText||"—")+
           kv("Touches",touches!=null?touches:"—")+
           kv("Age",r.ageText||ageOf(a))+
+          kv("Bars", (m.obAgeBars!=null?m.obAgeBars : (m.ageBars!=null?m.ageBars : (m.bars!=null?m.bars : (r.ageBars!=null?r.ageBars : (m.fvgAge!=null?m.fvgAge : (m.breakerAge!=null?m.breakerAge : "—")))))))+
           kv("Timeframe",(a.timeframe||r.timeframe||"—"))+
         '</div><div class="spark">'+sparkSVG(r,z)+'</div></div></div></div>'+
       '<div class="sec"><div class="sec-h">CONFIDENCE</div><div class="sec-b"><div class="conf-wrap">'+
@@ -3383,6 +3572,19 @@ svg{display:block}
     setFoot(r);
   }
   function kv(k,v,teal){return '<div class="kv"><span class="k">'+k+'</span><span class="v'+(teal?" teal":"")+'">'+esc(v)+'</span></div>';}
+  /* HTML value variant for vertical price range (Queue 13) */
+  function kvHtml(k,htmlV,extraCls){return '<div class="kv'+(extraCls?(' '+extraCls):'')+'"><span class="k">'+k+'</span><span class="v">'+htmlV+'</span></div>';}
+  function _priceRangeHtml(z, dir){
+    if(!z) return '<span style="color:var(--text-3)">—</span>';
+    if(z.single) return esc(fmt(z.hi));
+    var arrowCls = dir==="bull" ? "g" : dir==="bear" ? "r2" : "n";
+    var arrow = dir==="bear" ? "↓" : "↑";
+    return '<div class="pr-range">'+
+      '<span class="pr-v">'+esc(fmt(z.hi))+'</span>'+
+      '<span class="pr-a '+arrowCls+'">'+arrow+'</span>'+
+      '<span class="pr-v">'+esc(fmt(z.lo))+'</span>'+
+    '</div>';
+  }
   function setFoot(r){
     var c=E("btnChart");
     if(r){var isPerp=((r.market||(ST.market==="perpetual"?"Perp":"Spot"))==="Perp");
@@ -3500,11 +3702,26 @@ svg{display:block}
     });
   }
   _syncSegTo("segMarket","data-mkt",ST.market);
-  _syncSegTo("segSignal","data-sig",ST.signal);
-  // Market / signal are payload-only; changing them re-renders but never spends
-  // a scan token. The user applies the new params with Scan Now.
+  _syncSegSignalChips();
+  // Market is payload-only — changing it re-renders but doesn't spend a token.
   seg("segMarket","data-mkt","market",renderAll);
-  seg("segSignal","data-sig","signal",renderAll);
+  /* Signal segment is multi-select with OR logic (Queue 11) */
+  var _segSig = E("segSignal");
+  if(_segSig) _segSig.addEventListener("click", function(e){
+    var b = e.target.closest("button[data-sig]"); if(!b) return;
+    var key = b.getAttribute("data-sig");
+    var active = _activeSignals();
+    if(key === "ALL"){
+      // Toggle: if everything is on, going to "OB only"; if not all, switch to ALL.
+      _setSignals(_isAllSignals(active) ? ["OB"] : _SIG_ALL.slice());
+    } else {
+      // toggle this module in/out of the set
+      var i = active.indexOf(key);
+      if(i>=0) active.splice(i,1); else active.push(key);
+      _setSignals(active);
+    }
+    renderAll();
+  });
   /* exchange selector — persisted, payload-only (applied on next Scan Now) */
   (function _initExch(){
     var el=E("exchSelect"); if(!el) return;
@@ -3544,6 +3761,9 @@ svg{display:block}
       renderAll();           // show whatever was previously cached for this tab
     });
   });
+  /* Settings sidebar entry (Queue 8) */
+  if(E("sideSettings")) E("sideSettings").addEventListener("click", function(){ openSettings(); });
+
   E("btnFilters").addEventListener("click",scan);
   if(E("btnScan"))  E("btnScan").addEventListener("click",scan);
   if(E("btnScanNow")) E("btnScanNow").addEventListener("click",scan);
@@ -3599,19 +3819,12 @@ svg{display:block}
   // Reflect persisted state on load (also updates the status label)
   _setAutoScan(ST.auto);
   E("arToggle").addEventListener("click",function(){ _setAutoScan(!ST.auto); });
-  E("btnLM").addEventListener("click",function(){
-    var r=ST.results[ST.sel]; if(!r)return;
-    // also add to watchlist server-side
-    ST.stars[r.symbol]=true; syncWatchlist();
-    var o=this.innerHTML; this.innerHTML='<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>Added';
-    var self=this; setTimeout(function(){self.innerHTML=o;},1600);
-  });
-  /* Main "View Chart" — open the in-app chart modal instead of a new tab (Task 8) */
+  /* Fixed footer buttons — work for any active tab's selected row (Queue 2) */
+  E("btnLM").addEventListener("click",function(){ addActiveToLiveMonitor(this); });
   if(E("btnChart")) E("btnChart").addEventListener("click",function(e){
     e.preventDefault();
-    var r=ST.results[ST.sel]; if(!r) return;
-    var tf=(r.topAlert&&r.topAlert.timeframe)||r.timeframe||ST.settings.tf||"4h";
-    openChartModal(r.symbol, r.market||ST.market, ST.exchange, tf);
+    if(this.classList.contains("disabled")) return;
+    openActiveChart();
   });
   /* chart modal controls (Task 8) */
   if(E("cmClose")) E("cmClose").addEventListener("click",closeChartModal);
@@ -4403,6 +4616,315 @@ svg{display:block}
     E("lastScan").textContent=rel(ST.scannedAt);
     [].forEach.call(document.querySelectorAll("#tbody .upd"),function(td){td.textContent=rel(ST.scannedAt);});
   },1000);
+
+  /* UTC clock + candle countdown (Queues 5 & 6) */
+  var _TF_MIN = {"15m":15,"30m":30,"1h":60,"4h":240,"6h":360,"12h":720,"1d":1440};
+  function _activeTfMinutes(){
+    var m = ST.mode;
+    if(m === "ath_atl") return null;
+    if(m === "main")       return _TF_MIN[(ST.settings.tf||"4h")];
+    if(m === "compressed") return _TF_MIN[((ST.modeOptions.compressed||{}).tf || ST.settings.tf || "4h")];
+    if(m === "trending")   return _TF_MIN[((ST.modeOptions.trending||{}).tf   || ST.settings.tf || "4h")];
+    if(m === "bias")       return _TF_MIN[((ST.modeOptions.bias||{}).tf       || ST.settings.tf || "1d")];
+    return _TF_MIN[(ST.settings.tf||"4h")];
+  }
+  function _activeTfLabel(){
+    var m = ST.mode;
+    if(m === "ath_atl") return "Window";
+    if(m === "main")       return ST.settings.tf||"4h";
+    if(m === "compressed") return (ST.modeOptions.compressed||{}).tf || ST.settings.tf || "4h";
+    if(m === "trending")   return (ST.modeOptions.trending||{}).tf   || ST.settings.tf || "4h";
+    if(m === "bias")       return (ST.modeOptions.bias||{}).tf       || ST.settings.tf || "1d";
+    return ST.settings.tf||"4h";
+  }
+  function _tickHeaderClock(){
+    var u = E("hdrUtcTime");
+    if(u){
+      var n = new Date();
+      var p = function(x){return x<10?"0"+x:""+x;};
+      u.textContent = "UTC " + p(n.getUTCHours())+":"+p(n.getUTCMinutes())+":"+p(n.getUTCSeconds());
+    }
+    var cd = E("hdrCandleCd");
+    if(cd){
+      var mins = _activeTfMinutes();
+      if(mins == null){ cd.textContent = "Window scan"; return; }
+      var now = new Date();
+      var nowMs = now.getTime();
+      var dayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+      var sinceDay = (nowMs - dayStart) / 60000;          // minutes since UTC midnight
+      var msToClose = (mins - (sinceDay % mins)) * 60000;
+      var secs = Math.max(0, Math.floor(msToClose/1000));
+      var h = Math.floor(secs/3600), m2 = Math.floor((secs%3600)/60), s = secs%60;
+      var p = function(x){return x<10?"0"+x:""+x;};
+      var t = (mins >= 60) ? (p(h)+":"+p(m2)+":"+p(s)) : (p(m2)+":"+p(s));
+      cd.textContent = _activeTfLabel()+" closes in "+t;
+    }
+  }
+  _tickHeaderClock();
+  setInterval(_tickHeaderClock, 1000);
+
+  /* ── Scan Presets (Queue 15) ─────────────────────────────────────── */
+  function _snapshotPresetPayload(){
+    return {
+      mode:       ST.mode,
+      market:     ST.market,
+      exchange:   ST.exchange,
+      signal:     ST.signal,
+      scanMode:   ST.scanMode,
+      pairsPerCycle: ST.pairsPerCycle,
+      roundRobin: ST.roundRobin,
+      settings:   ST.settings,
+      modeOptions:ST.modeOptions
+    };
+  }
+  function _applyPresetPayload(p){
+    if(!p) return;
+    if(p.market)   { ST.market   = p.market;   _ls_set("zyni-market",   p.market); }
+    if(p.exchange) { ST.exchange = p.exchange; _ls_set("zyni-exchange", p.exchange); }
+    if(p.signal!=null){ ST.signal = p.signal; _ls_set("zyni-signal", p.signal); }
+    if(p.scanMode) { ST.scanMode = p.scanMode; _ls_set("zyni-scanMode", p.scanMode); }
+    if(p.pairsPerCycle!=null){ ST.pairsPerCycle = +p.pairsPerCycle||24; _ls_set("zyni-ppc", String(ST.pairsPerCycle)); }
+    if(typeof p.roundRobin === "boolean"){ ST.roundRobin = p.roundRobin; _ls_setBool("zyni-roundRobin", p.roundRobin); }
+    if(p.settings && typeof p.settings==="object"){
+      ST.settings = Object.assign({}, ST.settings, p.settings);
+      try{ localStorage.setItem("zyni-settings", JSON.stringify(ST.settings)); }catch(_){}
+    }
+    if(p.modeOptions && typeof p.modeOptions==="object"){
+      Object.keys(p.modeOptions).forEach(function(k){
+        ST.modeOptions[k] = Object.assign({}, ST.modeOptions[k]||{}, p.modeOptions[k]||{});
+      });
+      _saveModeOptions();
+    }
+    if(p.mode && ST.tabData[p.mode]){
+      ST.mode = p.mode;
+      [].forEach.call(document.querySelectorAll('.side .nav-item[data-mode]'),function(x){
+        x.classList.toggle('active', x.getAttribute('data-mode')===ST.mode);
+      });
+    }
+    _syncSegTo("segMarket","data-mkt",ST.market);
+    _syncSegSignalChips();
+    var ex = E("exchSelect"); if(ex) ex.value = ST.exchange;
+    _renderTabCtrls();
+    _markStale();
+    renderAll();
+  }
+  var _presetCache = [];
+  function _renderPresetList(){
+    var box = E("presetList"); if(!box) return;
+    if(!_presetCache.length){
+      box.innerHTML = '<div class="row-msg">No presets yet. Save your current setup above.</div>';
+      E("presetCount").textContent = "";
+      return;
+    }
+    E("presetCount").textContent = "("+_presetCache.length+")";
+    box.innerHTML = _presetCache.map(function(p,i){
+      return '<div class="pp-row'+(p.isDefault?' is-default':'')+'" data-i="'+i+'">'+
+        '<div class="pp-row-top">'+
+          '<span class="pp-name">'+esc(p.name)+'</span>'+
+          (p.isDefault?'<span class="pp-default-pill">default</span>':'')+
+        '</div>'+
+        '<div class="pp-row-actions">'+
+          '<button class="btn btn-primary" data-act="apply"   data-id="'+p.id+'" type="button">Apply</button>'+
+          '<button class="btn"             data-act="rename"  data-id="'+p.id+'" type="button">Rename</button>'+
+          '<button class="btn"             data-act="default" data-id="'+p.id+'" type="button">'+(p.isDefault?"Unset":"Set default")+'</button>'+
+          '<button class="btn"             data-act="delete"  data-id="'+p.id+'" type="button">Delete</button>'+
+        '</div>'+
+      '</div>';
+    }).join("");
+  }
+  function _loadPresets(){
+    if(location.protocol==="file:") { _presetCache=[]; _renderPresetList(); return; }
+    fetch("/api/scan-presets",{credentials:"same-origin"})
+      .then(function(r){ return r.ok?r.json():null; })
+      .then(function(d){ _presetCache=(d&&d.presets)||[]; _renderPresetList(); })
+      .catch(function(){ _presetCache=[]; _renderPresetList(); });
+  }
+  function _openPresetModal(){
+    var p=E("presetPanel"), bd=E("presetBd"); if(!p||!bd) return;
+    p.classList.add("open"); bd.classList.add("open");
+    document.body.classList.add("sheet-open");
+    _loadPresets();
+  }
+  function _closePresetModal(){
+    var p=E("presetPanel"), bd=E("presetBd");
+    if(p) p.classList.remove("open"); if(bd) bd.classList.remove("open");
+    document.body.classList.remove("sheet-open");
+  }
+  if(E("presetClose")) E("presetClose").addEventListener("click", _closePresetModal);
+  if(E("presetBd"))    E("presetBd").addEventListener("click", _closePresetModal);
+  if(E("presetSaveBtn")) E("presetSaveBtn").addEventListener("click", function(){
+    if(location.protocol==="file:") return;
+    var name = (E("presetName").value||"").trim();
+    if(!name){ E("presetName").focus(); return; }
+    fetch("/api/scan-presets",{method:"POST",credentials:"same-origin",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({name:name, payload:_snapshotPresetPayload()})})
+      .then(function(r){ return r.ok?r.json():null; })
+      .then(function(d){ if(d){ E("presetName").value=""; _loadPresets(); } });
+  });
+  if(E("presetList")) E("presetList").addEventListener("click", function(e){
+    var b=e.target.closest("button[data-act]"); if(!b) return;
+    var act=b.getAttribute("data-act"); var id=+b.getAttribute("data-id");
+    var preset=_presetCache.find(function(x){return x.id===id;});
+    if(!preset) return;
+    if(act==="apply"){ _applyPresetPayload(preset.payload); _closePresetModal(); return; }
+    if(act==="rename"){
+      var nn = prompt("Rename preset:", preset.name);
+      if(!nn || !nn.trim()) return;
+      fetch("/api/scan-presets/"+id,{method:"PUT",credentials:"same-origin",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({name:nn.trim()})})
+        .then(function(){ _loadPresets(); });
+      return;
+    }
+    if(act==="delete"){
+      if(!confirm("Delete preset \""+preset.name+"\"?")) return;
+      fetch("/api/scan-presets/"+id,{method:"DELETE",credentials:"same-origin"})
+        .then(function(){ _loadPresets(); });
+      return;
+    }
+    if(act==="default"){
+      fetch("/api/scan-presets/"+id,{method:"PUT",credentials:"same-origin",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({isDefault: !preset.isDefault})})
+        .then(function(){ _loadPresets(); });
+      return;
+    }
+  });
+  // Wire the existing "Scan Presets" sidebar row
+  (function(){
+    var rows = document.querySelectorAll(".side .side-row");
+    [].forEach.call(rows, function(row){
+      if(/Scan\s*Presets/i.test(row.textContent)){
+        row.style.cursor="pointer";
+        row.addEventListener("click", _openPresetModal);
+      }
+    });
+  })();
+
+  /* ── Settings (i) info buttons (Queue 16) ───────────────────────── */
+  (function _wireInfoButtons(){
+    [].forEach.call(document.querySelectorAll('#settingsPanel .sp-help'), function(h){
+      // mark help text collapsed by default and add (i) toggle next to label
+      h.classList.add("collapsed");
+      var label = h.parentElement; if(!label || label.tagName!=="LABEL") return;
+      var btn = document.createElement("button");
+      btn.type="button"; btn.className="info-i"; btn.textContent="i";
+      btn.title="What does this do?";
+      btn.addEventListener("click", function(e){
+        e.preventDefault(); e.stopPropagation();
+        h.classList.toggle("collapsed");
+      });
+      label.appendChild(btn);
+    });
+  })();
+
+  /* ── Desktop tutorial overlay (Queue 16) ────────────────────────── */
+  var TUT_STEPS = [
+    { sel:".brand-name", title:"Welcome to ZyNi Screener",
+      text:"Quick tour of the desktop. You can skip any time and the choice is saved to your account." },
+    { sel:".side", title:"Scanner sidebar",
+      text:"Switch between Main Scan, Compressed, Trending, ATH/ATL, Bias and Settings here." },
+    { sel:"#segMarket", title:"Market & exchange",
+      text:"Toggle Spot vs Perpetual. The exchange picker (below) selects which exchange to scan." },
+    { sel:"#segSignal", title:"Module selector — OR logic",
+      text:"Pick one or more setup modules. OB + FIB will show setups that are OB or FIB (OR)." },
+    { sel:"#tabCtrls", title:"Timeframe, scope, pairs/cycle",
+      text:"Each tab's most-used controls live inline here. Changes are saved between visits." },
+    { sel:"#btnScanNow", title:"Scan Now / Auto Scan",
+      text:"Scanning never happens automatically on page load. Use Scan Now, or turn Auto Scan ON for a 30s timer." },
+    { sel:"#tblHost", title:"Setup table",
+      text:"Click a row to see its Setup Insight on the right panel." },
+    { sel:".insight",   title:"Setup Insight",
+      text:"Zone details, scoring, confluence and the View Chart / Add to Live Monitor actions." },
+    { sel:"#sideSettings", title:"Settings & presets",
+      text:"Open Settings from the sidebar. The little (i) next to a field explains what it does. Use Scan Presets to save and reuse your scanner setup." },
+  ];
+  var _tutIdx = 0, _tutPrefs = {desktopTutorialNeverShow:false};
+  function _tutFetchPrefs(){
+    if(location.protocol==="file:") return Promise.resolve(_tutPrefs);
+    return fetch("/api/user-preferences",{credentials:"same-origin"})
+      .then(function(r){ return r.ok?r.json():null; })
+      .then(function(d){ if(d) _tutPrefs=d; return _tutPrefs; })
+      .catch(function(){ return _tutPrefs; });
+  }
+  function _tutSavePrefs(extra){
+    if(location.protocol==="file:") return;
+    var body = Object.assign({desktopTutorialNeverShow: E("tutNever") && E("tutNever").checked}, extra||{});
+    fetch("/api/user-preferences",{method:"POST",credentials:"same-origin",
+      headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)}).catch(function(){});
+  }
+  function _tutClampRect(r){
+    var pad=6, vw=innerWidth, vh=innerHeight;
+    var x=Math.max(0,r.left-pad), y=Math.max(0,r.top-pad);
+    var w=Math.min(vw-x, r.width+pad*2), h=Math.min(vh-y, r.height+pad*2);
+    return {x:x,y:y,w:w,h:h};
+  }
+  function _tutGoTo(i){
+    var step = TUT_STEPS[i]; if(!step) return _tutFinish();
+    _tutIdx = i;
+    var tgt = document.querySelector(step.sel);
+    var spot = E("tutSpot"), card = E("tutCard");
+    if(!tgt){
+      // fallback: hide spotlight, center card
+      spot.style.display="none";
+      card.style.left="50%"; card.style.top="50%"; card.style.transform="translate(-50%,-50%)";
+    } else {
+      var rect = _tutClampRect(tgt.getBoundingClientRect());
+      spot.style.display=""; spot.style.transform="";
+      spot.style.left = rect.x + "px";
+      spot.style.top  = rect.y + "px";
+      spot.style.width  = rect.w + "px";
+      spot.style.height = rect.h + "px";
+      // place card to the right of the spotlight when possible, else below
+      var cw=340, ch=180;
+      var cx = rect.x + rect.w + 14;
+      var cy = rect.y;
+      if(cx + cw > innerWidth - 12){ cx = Math.max(12, rect.x); cy = rect.y + rect.h + 14; }
+      if(cy + ch > innerHeight - 12){ cy = Math.max(12, innerHeight - ch - 12); }
+      card.style.left = cx + "px";
+      card.style.top  = cy + "px";
+      card.style.transform = "";
+    }
+    E("tutStep").textContent  = (i+1)+" / "+TUT_STEPS.length;
+    E("tutTitle").textContent = step.title;
+    E("tutText").textContent  = step.text;
+    E("tutBack").disabled = (i===0);
+    E("tutNext").textContent = (i===TUT_STEPS.length-1) ? "Finish" : "Next";
+  }
+  function _tutShow(){
+    E("tutOverlay").hidden = false;
+    _tutGoTo(0);
+  }
+  function _tutHide(){ E("tutOverlay").hidden = true; }
+  function _tutFinish(){
+    _tutSavePrefs({markCompleted:true});
+    _tutHide();
+  }
+  function _tutSkip(){
+    _tutSavePrefs({markSkipped:true});
+    _tutHide();
+  }
+  if(E("tutNext")) E("tutNext").addEventListener("click", function(){
+    if(_tutIdx >= TUT_STEPS.length-1) _tutFinish(); else _tutGoTo(_tutIdx+1);
+  });
+  if(E("tutBack")) E("tutBack").addEventListener("click", function(){
+    if(_tutIdx>0) _tutGoTo(_tutIdx-1);
+  });
+  if(E("tutSkip")) E("tutSkip").addEventListener("click", _tutSkip);
+  addEventListener("resize", function(){
+    if(!E("tutOverlay") || E("tutOverlay").hidden) return;
+    _tutGoTo(_tutIdx);
+  });
+  // On desktop load, decide whether to show tutorial after a tiny delay so the
+  // layout is settled. Mobile is unaffected (this script only runs on desktop).
+  setTimeout(function(){
+    if(innerWidth <= 820) return;
+    _tutFetchPrefs().then(function(p){
+      if(p && p.desktopTutorialNeverShow) return;
+      _tutShow();
+    });
+  }, 700);
 
   loadWatchlist();
   loadTokens();                 // load token counter without triggering a scan

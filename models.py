@@ -309,3 +309,42 @@ class IntelligenceSettings(db.Model):
 
     def __repr__(self) -> str:
         return f"<IntelligenceSettings enabled={self.auto_resolver_enabled} mode={self.auto_resolver_mode}>"
+
+
+class ScanPreset(db.Model):
+    """Per-user saved scanner configurations (Queue 15)."""
+    __tablename__ = "scan_presets"
+
+    id         = db.Column(db.Integer, primary_key=True)
+    user_id    = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    name       = db.Column(db.String(80), nullable=False)
+    payload    = db.Column(db.Text, nullable=False)             # JSON blob — controls snapshot
+    is_default = db.Column(db.Boolean, default=False, nullable=False, server_default="false")
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
+                            onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        db.UniqueConstraint("user_id", "name", name="uq_scan_preset_user_name"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ScanPreset {self.name} user={self.user_id}>"
+
+
+class UserPreference(db.Model):
+    """Per-user UI preferences — desktop tutorial state etc. (Queue 16)."""
+    __tablename__ = "user_preferences"
+
+    id      = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), unique=True, nullable=False, index=True)
+
+    desktop_tutorial_never_show  = db.Column(db.Boolean, default=False, nullable=False, server_default="false")
+    desktop_tutorial_completed_at = db.Column(db.DateTime, nullable=True)
+    desktop_tutorial_skipped_at   = db.Column(db.DateTime, nullable=True)
+
+    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
+                            onupdate=lambda: datetime.now(timezone.utc))
+
+    def __repr__(self) -> str:
+        return f"<UserPreference user={self.user_id} tutorial_off={self.desktop_tutorial_never_show}>"

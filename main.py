@@ -5058,6 +5058,7 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
 
         age_bars = None
         ob_vol = None
+        ob_extras = {}
         if setup.startswith("OB") and z_hi is not None:
             best, bestd = None, None
             for ob in obs:
@@ -5067,6 +5068,18 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
             if best is not None:
                 age_bars = best.get("age")
                 ob_vol = best.get("volume")
+                # Expose touch / virgin / bar fields so the desktop Zone Details
+                # panel can read them (Queue 12).
+                ob_extras = {
+                    "obTouches":      best.get("touches"),
+                    "isVirginOb":     best.get("isVirgin"),
+                    "obBar":          best.get("bar"),
+                    "obAgeBars":      best.get("age"),
+                    "obMitigated":    best.get("mitigated"),
+                    "obUntouched":    best.get("untouched"),
+                    "obOnceTouched":  best.get("onceTouched"),
+                    "obCurrentlyInside": best.get("currentlyInside"),
+                }
         elif setup == "FVG":
             age_bars = meta.get("fvgAge")
         elif setup.startswith("BREAKER"):
@@ -5221,6 +5234,17 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
             vol_cell = _cell(vol, "Relative volume {:.2f}x vs 20-bar average".format(relv))
         else:
             vol_cell = {"score": None, "status": "unavailable", "reason": "Volume data not available"}
+
+        # Inject OB extras (touches / virgin / bar / age) into the topAlert
+        # meta so the desktop Zone Details panel can show real values.
+        if ob_extras:
+            try:
+                ta.setdefault("meta", {})
+                for _k, _v in ob_extras.items():
+                    if _v is not None and _k not in ta["meta"]:
+                        ta["meta"][_k] = _v
+            except Exception:
+                pass
 
         return {
             "rr": rr,
@@ -7339,6 +7363,183 @@ def api_watchlist_get():
     username = session.get("username", "default")
     pairs    = load_user_watchlist(username)
     return jsonify({"pairs": pairs, "user": username})
+
+
+# ─── Scan presets (Queue 15) ────────────────────────────────────────────────
+def _current_user_id():
+    """Resolve the SQLAlchemy User.id for the logged-in session, or None."""
+    try:
+        from models import db as _db, User as _U
+        uname = (session.get("username") or "").strip().lower()
+        if not uname:
+            return None
+        u = _U.query.filter(_db.func.lower(_U.username) == uname).first()
+        return u.id if u else None
+    except Exception:
+        return None
+
+
+def _preset_to_dict(p):
+    try:
+        payload = json.loads(p.payload) if p.payload else {}
+    except Exception:
+        payload = {}
+    return {
+        "id": p.id,
+        "name": p.name,
+        "payload": payload,
+        "isDefault": bool(p.is_default),
+        "createdAt": p.created_at.isoformat() if p.created_at else None,
+        "updatedAt": p.updated_at.isoformat() if p.updated_at else None,
+    }
+
+
+@app.route("/api/scan-presets", methods=["GET"])
+@login_required
+def api_scan_presets_list():
+    uid = _current_user_id()
+    if not uid:
+        return jsonify({"presets": []})
+    from models import db as _db, ScanPreset as _P
+    rows = (_P.query.filter_by(user_id=uid).order_by(_P.is_default.desc(), _P.name.asc()).all())
+    return jsonify({"presets": [_preset_to_dict(r) for r in rows]})
+
+
+@app.route("/api/scan-presets", methods=["POST"])
+@login_required
+def api_scan_presets_create():
+    uid = _current_user_id()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    data = request.get_json(force=True) or {}
+    name = (data.get("name") or "").strip()[:80]
+    if not name:
+        return jsonify({"error": "name_required"}), 400
+    payload = data.get("payload")
+    try:
+        payload_str = json.dumps(payload if payload is not None else {})
+    except Exception:
+        return jsonify({"error": "bad_payload"}), 400
+    from models import db as _db, ScanPreset as _P
+    is_def = bool(data.get("isDefault"))
+    if is_def:
+        _P.query.filter_by(user_id=uid, is_default=True).update({"is_default": False})
+    existing = _P.query.filter_by(user_id=uid, name=name).first()
+    if existing:
+        existing.payload    = payload_str
+        existing.is_default = is_def
+        row = existing
+    else:
+        row = _P(user_id=uid, name=name, payload=payload_str, is_default=is_def)
+        _db.session.add(row)
+    try:
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": "db", "message": str(e)}), 500
+    return jsonify(_preset_to_dict(row))
+
+
+@app.route("/api/scan-presets/<int:preset_id>", methods=["PUT", "PATCH"])
+@login_required
+def api_scan_presets_update(preset_id):
+    uid = _current_user_id()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    data = request.get_json(force=True) or {}
+    from models import db as _db, ScanPreset as _P
+    row = _P.query.filter_by(id=preset_id, user_id=uid).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if "name" in data:
+        n = (data.get("name") or "").strip()[:80]
+        if n:
+            row.name = n
+    if "payload" in data:
+        try:
+            row.payload = json.dumps(data.get("payload") or {})
+        except Exception:
+            return jsonify({"error": "bad_payload"}), 400
+    if "isDefault" in data:
+        v = bool(data["isDefault"])
+        if v:
+            _P.query.filter_by(user_id=uid, is_default=True).update({"is_default": False})
+        row.is_default = v
+    try:
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": "db", "message": str(e)}), 500
+    return jsonify(_preset_to_dict(row))
+
+
+@app.route("/api/scan-presets/<int:preset_id>", methods=["DELETE"])
+@login_required
+def api_scan_presets_delete(preset_id):
+    uid = _current_user_id()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    from models import db as _db, ScanPreset as _P
+    row = _P.query.filter_by(id=preset_id, user_id=uid).first()
+    if not row:
+        return jsonify({"ok": True})
+    _db.session.delete(row)
+    try:
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": "db", "message": str(e)}), 500
+    return jsonify({"ok": True, "id": preset_id})
+
+
+# ─── User preferences (Queue 16) ────────────────────────────────────────────
+@app.route("/api/user-preferences", methods=["GET"])
+@login_required
+def api_user_prefs_get():
+    uid = _current_user_id()
+    out = {"desktopTutorialNeverShow": False,
+           "desktopTutorialCompletedAt": None, "desktopTutorialSkippedAt": None}
+    if not uid:
+        return jsonify(out)
+    from models import db as _db, UserPreference as _UP
+    row = _UP.query.filter_by(user_id=uid).first()
+    if not row:
+        return jsonify(out)
+    out["desktopTutorialNeverShow"] = bool(row.desktop_tutorial_never_show)
+    out["desktopTutorialCompletedAt"] = row.desktop_tutorial_completed_at.isoformat() if row.desktop_tutorial_completed_at else None
+    out["desktopTutorialSkippedAt"]   = row.desktop_tutorial_skipped_at.isoformat()   if row.desktop_tutorial_skipped_at   else None
+    return jsonify(out)
+
+
+@app.route("/api/user-preferences", methods=["POST", "PUT", "PATCH"])
+@login_required
+def api_user_prefs_set():
+    uid = _current_user_id()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    data = request.get_json(force=True) or {}
+    from models import db as _db, UserPreference as _UP
+    row = _UP.query.filter_by(user_id=uid).first()
+    if not row:
+        row = _UP(user_id=uid)
+        _db.session.add(row)
+    now = datetime.now(timezone.utc)
+    if "desktopTutorialNeverShow" in data:
+        row.desktop_tutorial_never_show = bool(data["desktopTutorialNeverShow"])
+    if data.get("markCompleted"):
+        row.desktop_tutorial_completed_at = now
+    if data.get("markSkipped"):
+        row.desktop_tutorial_skipped_at = now
+    try:
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": "db", "message": str(e)}), 500
+    return jsonify({
+        "desktopTutorialNeverShow": bool(row.desktop_tutorial_never_show),
+        "desktopTutorialCompletedAt": row.desktop_tutorial_completed_at.isoformat() if row.desktop_tutorial_completed_at else None,
+        "desktopTutorialSkippedAt":   row.desktop_tutorial_skipped_at.isoformat()   if row.desktop_tutorial_skipped_at   else None,
+    })
 
 
 @app.route("/api/watchlist/cache")
