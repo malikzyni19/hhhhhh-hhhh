@@ -1520,6 +1520,20 @@ def debug_ob_tv_parity():
         candidate_from = (request.args.get("candidate_from") or "").strip() or None
         candidate_to   = (request.args.get("candidate_to")   or "").strip() or None
 
+        # ── Debug-only "as-of" snapshot slicing (admin-only) ──
+        debug_as_of    = (request.args.get("debug_as_of") or "").strip() or None
+        def _parse_as_of(s):
+            if not s:
+                return None
+            for _fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S"):
+                try:
+                    return int(_dt.datetime.strptime(s, _fmt)
+                               .replace(tzinfo=_dt.timezone.utc).timestamp() * 1000)
+                except ValueError:
+                    continue
+            return None
+        _as_of_ms = _parse_as_of(debug_as_of)
+
         try:
             kline_limit = min(max(int(request.args.get("kline_limit") or 300), 50), 10000)
         except (TypeError, ValueError):
@@ -1616,6 +1630,14 @@ def debug_ob_tv_parity():
             }
 
         # ── Main analysis with chosen kline_limit ─────────────────────────────
+        # debug_as_of (admin-only): drop candles strictly after the snapshot
+        # time first, then take the last kline_limit candles of what remains.
+        _orig_newest_ms = (candles[-1].get("time") if candles else None)
+        _orig_total     = len(candles)
+        if _as_of_ms is not None:
+            candles = [x for x in candles
+                       if (x.get("time", x.get("openTime", 0)) or 0) <= _as_of_ms]
+        _removed_after_as_of = _orig_total - len(candles)
         main_candles = candles[-kline_limit:] if len(candles) >= kline_limit else candles[:]
         a = _analyse(main_candles)
 
@@ -1642,6 +1664,13 @@ def debug_ob_tv_parity():
             "newest_candle_time":    _ts(times[-1]) if times else None,
             "current_price":         price,
         }
+        if debug_as_of is not None:
+            candle_info["debug_as_of"]                      = debug_as_of
+            candle_info["debug_as_of_parsed_ms"]            = _as_of_ms
+            candle_info["original_newest_candle_time"]      = _ts(_orig_newest_ms)
+            candle_info["sliced_newest_candle_time"]        = (_ts(main_candles[-1].get("time"))
+                                                               if main_candles else None)
+            candle_info["candles_after_as_of_removed_count"] = _removed_after_as_of
 
         detection_counts = {
             "normal_obs_count":      len(a["normal"]),
@@ -3317,13 +3346,114 @@ def debug_ob_tv_parity():
                         _bb = _ev.get("bos_bar")
                         _upP_after = _cch[_bb] if (_bb is not None and 0 <= _bb < _ccn) else None
 
+                # ── Target survival trace ─────────────────────────────────
+                # Re-run the bullish visible-pool overlap+showLast filter on
+                # the candidate's surviving source pool to classify why the
+                # target OB (if selected) might be hidden.
+                _bull_src = [ob for ob in _cobs if ob["type"] == "bullish"]
+                _accepted_b = []; _tgt_in_accepted = False
+                _overlap_prev_bar = None; _overlap_prev_top = None
+                for _o in _bull_src:
+                    _ov = bool(_accepted_b and _o["bottom"] < _accepted_b[-1]["top"])
+                    if not _ov:
+                        _accepted_b.append(_o)
+                        if _o.get("bar") == _ctgt:
+                            _tgt_in_accepted = True
+                    elif _o.get("bar") == _ctgt:
+                        _overlap_prev_bar = _accepted_b[-1].get("bar")
+                        _overlap_prev_top = _accepted_b[-1].get("top")
+                _visible_b = _accepted_b[-5:] if len(_accepted_b) > 5 else list(_accepted_b)
+                _tgt_in_visible = any(ob.get("bar") == _ctgt for ob in _visible_b)
+                _show_rank = next((idx for idx, ob in enumerate(_visible_b)
+                                   if ob.get("bar") == _ctgt), None)
+
+                _mit = next((m for m in _ccoll["mitigations"]
+                             if m.get("ob_type") == "bullish"
+                             and m.get("ob_bar") == _ctgt), None)
+
+                _co = (_sel_ev or {}).get("creation_overlap") or {}
+                _co_deleted = bool(_co.get("deleted_by_creation_overlap"))
+                _co_prev_bar = _co.get("prev_ob_bar")
+
+                if _ctgt is None or _sel_ev is None:
+                    _hidden_reason = None
+                elif _co_deleted:
+                    _hidden_reason = "creation_overlap_deleted"
+                elif _mit is not None:
+                    _hidden_reason = "mitigated"
+                elif not _tgt_in_accepted:
+                    _hidden_reason = "overlap_previous"
+                elif not _tgt_in_visible:
+                    _hidden_reason = "beyond_showLast"
+                else:
+                    _hidden_reason = "none"
+
+                target_survival_trace = None
+                if _sel_ev is not None:
+                    target_survival_trace = {
+                        "selected_as_ob_extreme": True,
+                        "selected_bar":       _sel_ev.get("min_idx"),
+                        "selected_time_utc":  _ctw(_sel_ev.get("min_idx")),
+                        "sourceBar":          _sel_ev.get("ob_source"),
+                        "source_time_utc":    _ctw(_sel_ev.get("ob_source")),
+                        "source_volume":      _sel_ev.get("volume"),
+                        "zone_bottom":        _sel_ev.get("ob_bottom"),
+                        "zone_top":           _sel_ev.get("ob_top"),
+                        "bos_bar":            _sel_ev.get("bos_bar"),
+                        "bos_time_utc":       _ctw(_sel_ev.get("bos_bar")),
+                        "creation_overlap_decision": {
+                            "checked": _co.get("checked", False),
+                            "previous_same_direction_ob_bar":  _co_prev_bar,
+                            "previous_same_direction_ob_time": _ctw(_co_prev_bar),
+                            "previous_same_direction_ob_zone": (
+                                {"bottom": _co.get("prev_ob_bottom"),
+                                 "top":    _co.get("prev_ob_top"),
+                                 "avg":    _co.get("prev_ob_avg")}
+                                if _co_prev_bar is not None else None),
+                            "overlap_rule_used":           _co.get("rule"),
+                            "deleted_by_creation_overlap": _co_deleted,
+                            "reason": (
+                                f"bullish overlap (raw): new bottom {_sel_ev.get('ob_bottom')} "
+                                f"< prev top {_co.get('prev_ob_top')}"
+                                if _co_deleted else "not deleted by creation overlap"),
+                        },
+                        "mitigation_decision": {
+                            "checked":   True,
+                            "mitigated": _mit is not None,
+                            "mitigation_bar":          (_mit.get("mitigated_at_bar") if _mit else None),
+                            "mitigation_time_utc":     (_ctw(_mit.get("mitigated_at_bar")) if _mit else None),
+                            "mitigation_close":        (_mit.get("close_at_mitigation") if _mit else None),
+                            "mitigation_trigger_price": (_mit.get("trigger") if _mit else None),
+                            "mitigation_rule_used": (
+                                "Absolute closed-only — bullish trigger = ob.bottom; "
+                                "close < trigger ⇒ mitigated (last possibly-open candle skipped)"
+                                if _mit else None),
+                            "reason": (
+                                f"close {_mit.get('close_at_mitigation')} < trigger "
+                                f"{_mit.get('trigger')} at bar {_mit.get('mitigated_at_bar')}"
+                                if _mit else "not mitigated"),
+                        },
+                        "visible_pool_decision": {
+                            "added_to_source_pool":     _tob is not None,
+                            "included_in_visible_pool": _tgt_in_visible,
+                            "hidden_reason":            _hidden_reason,
+                            "showLast_rank":            _show_rank,
+                            "overlap_previous_bar":     _overlap_prev_bar,
+                            "overlap_previous_time":    _ctw(_overlap_prev_bar),
+                            "accepted_after_overlap_count": len(_accepted_b),
+                            "visible_count":            len(_visible_b),
+                        },
+                    }
+
+                # target_not_selected_reason — refined using survival info
                 if _ctgt is None:
                     _not_sel = "target_ob_time not found in candle stream"
                 elif _tob is not None:
                     _not_sel = None
                 elif _sel_ev is not None:
-                    _not_sel = (f"target selected as OB extreme at BOS bar {_sel_ev.get('bos_bar')} "
-                                f"but the OB did not survive (mitigation / overlap)")
+                    _not_sel = (f"target selected as OB extreme at BOS bar "
+                                f"{_sel_ev.get('bos_bar')} but the OB did not survive — "
+                                f"hidden_reason={_hidden_reason}")
                 elif _ev is None:
                     _not_sel = "no bullish BOS search window includes the target bar"
                 elif not _win_inc:
@@ -3336,6 +3466,9 @@ def debug_ob_tv_parity():
                 _variants_out.append({
                     "variant_name": _var,
                     "did_create_target_ob": _tob is not None,
+                    "selected_target_ob":   _sel_ev is not None,
+                    "survived_active_pool": _tob is not None,
+                    "visible_at_debug_as_of": _tgt_in_visible,
                     "selected_ob_time": _ctw(_so_bar),
                     "selected_ob_bar": _so_bar,
                     "selected_sourceBar": _so_src,
@@ -3363,6 +3496,7 @@ def debug_ob_tv_parity():
                     "did_search_window_include_target": _win_inc,
                     "was_target_lowest_low_in_actual_v2_anchor_window": _tgt_low,
                     "target_not_selected_reason": _not_sel,
+                    "target_survival_trace": target_survival_trace,
                 })
 
             # equal-high relaxed: pivot highs the relaxed rule finds that the
@@ -3381,15 +3515,37 @@ def debug_ob_tv_parity():
             _matches = [v["variant_name"] for v in _variants_out if v["matched_tv_target"]]
             _retain = next((v for v in _variants_out
                             if v["variant_name"] == "retain_broken_upP"), None)
+            # Per-variant survival summary for quick scanning
+            _per_variant_survival = [{
+                "variant_name":           v["variant_name"],
+                "selected_target_ob":     v["selected_target_ob"],
+                "survived_active_pool":   v["survived_active_pool"],
+                "visible_at_debug_as_of": v["visible_at_debug_as_of"],
+                "hidden_reason":          ((v["target_survival_trace"] or {})
+                                            .get("visible_pool_decision", {})
+                                            .get("hidden_reason")
+                                           if v.get("target_survival_trace") else None),
+            } for v in _variants_out]
+            _selects   = [v["variant_name"] for v in _variants_out if v["selected_target_ob"]]
+            _survives  = [v["variant_name"] for v in _variants_out if v["survived_active_pool"]]
+            _visibles  = [v["variant_name"] for v in _variants_out if v["visible_at_debug_as_of"]]
             candidate_variant_summary = {
                 "variants_compared": _sc_to_run,
+                "variants_that_select_target_ob":   _selects,
+                "variants_that_survive_active_pool": _survives,
+                "variants_visible_at_debug_as_of":   _visibles,
                 "variants_that_create_target_ob": _creates,
-                "variants_that_match_tv_target": _matches,
+                "variants_that_match_tv_target":  _matches,
+                "per_variant_survival": _per_variant_survival,
                 "current_creates_target_ob": any(
                     v["variant_name"] == "current" and v["did_create_target_ob"]
                     for v in _variants_out),
                 "retain_broken_upP_creates_target_ob": bool(
                     _retain and _retain["did_create_target_ob"]),
+                "retain_broken_upP_selects_target_ob": bool(
+                    _retain and _retain["selected_target_ob"]),
+                "retain_broken_upP_visible_at_debug_as_of": bool(
+                    _retain and _retain["visible_at_debug_as_of"]),
                 "equal_high_relaxed_extra_pivot_highs_count": len(_relax_extra),
                 "equal_high_relaxed_extra_pivot_highs": _relax_extra[:50],
                 "closest_to_tradingview": (_matches[0] if _matches
@@ -3411,6 +3567,9 @@ def debug_ob_tv_parity():
                 "target_bar":     _ctgt,
                 "candidate_from": candidate_from,
                 "candidate_to":   candidate_to,
+                "debug_as_of":               debug_as_of,
+                "sliced_newest_candle_time": (_ts(main_candles[-1].get("time"))
+                                              if main_candles else None),
                 "expected_tv_zone_low_hint":  _LOH,
                 "expected_tv_zone_high_hint": _HIH,
                 "expected_tv_volume_hint":    _VOLH,
