@@ -7414,6 +7414,40 @@ def _json_loads_safe(text, fallback=None):
         return fallback
 
 
+_LM_NULL_STRINGS = {"", "—", "n/a", "null", "undefined", "none", "-"}
+
+def _lm_float_or_none(value):
+    """Safely convert a frontend value to float; returns None on bad/empty input."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    s = str(value).strip().lower()
+    if s in _LM_NULL_STRINGS:
+        return None
+    try:
+        return float(s)
+    except (ValueError, TypeError):
+        return None
+
+
+def _lm_int_or_zero(value) -> int:
+    """Safely convert a frontend value to int; returns 0 on bad/empty input."""
+    if value is None:
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    s = str(value).strip().lower()
+    if s in _LM_NULL_STRINGS:
+        return 0
+    try:
+        return int(float(s))
+    except (ValueError, TypeError):
+        return 0
+
+
 def _live_monitor_item_to_dict(item) -> dict:
     """Serialize a LiveMonitorItem row to a JSON-friendly dict."""
     return {
@@ -8043,6 +8077,9 @@ def api_lm_items_post():
     symbol = (str(data.get("symbol") or "")).strip().upper()
     if not symbol:
         return jsonify({"error": "symbol_required"}), 400
+    if not symbol.endswith("USDT"):
+        return jsonify({"error": "invalid_symbol",
+                        "message": "Only USDT pairs are supported for Live Monitor right now."}), 400
 
     exchange    = (str(data.get("exchange") or "binance")).strip().lower()
     market      = (str(data.get("market")   or "perpetual")).strip().lower()
@@ -8050,11 +8087,13 @@ def api_lm_items_post():
     setup_type  = (str(data.get("setup_type") or "")).strip()[:40] or None
     direction   = (str(data.get("direction")  or "")).strip()[:10]  or None
     timeframe   = (str(data.get("timeframe")  or "")).strip()[:10]  or None
-    zone_high   = data.get("zone_high")
-    zone_low    = data.get("zone_low")
-    confidence  = int(data.get("confidence") or data.get("score") or 0)
-    score       = int(data.get("score") or 0)
-    current_price = data.get("current_price") or data.get("price")
+
+    # Safe numeric parsing — never crashes on bad/empty/null frontend values
+    zone_high     = _lm_float_or_none(data.get("zone_high"))
+    zone_low      = _lm_float_or_none(data.get("zone_low"))
+    confidence    = _lm_int_or_zero(data.get("confidence") or data.get("score"))
+    score         = _lm_int_or_zero(data.get("score"))
+    current_price = _lm_float_or_none(data.get("current_price") or data.get("price"))
 
     # Build the snapshot blob — include topAlert/meta if provided
     snap_src = data.get("snapshot") or {}
@@ -8081,8 +8120,8 @@ def api_lm_items_post():
             user_id=uid, symbol=symbol, setup_type=setup_type,
             timeframe=timeframe, is_active=True
         ).filter(
-            _LMI.zone_high == float(zone_high),
-            _LMI.zone_low  == float(zone_low)
+            _LMI.zone_high == zone_high,
+            _LMI.zone_low  == zone_low
         ).first()
     if not existing and setup_type and timeframe:
         existing = _LMI.query.filter_by(
@@ -8091,20 +8130,20 @@ def api_lm_items_post():
         ).first()
 
     if existing:
-        existing.exchange           = exchange
-        existing.market             = market
-        existing.source_tab         = source_tab
-        existing.direction          = direction
-        existing.zone_high          = float(zone_high)  if zone_high  is not None else existing.zone_high
-        existing.zone_low           = float(zone_low)   if zone_low   is not None else existing.zone_low
-        existing.confidence         = confidence
-        existing.score              = score
-        existing.current_price      = float(current_price) if current_price is not None else existing.current_price
-        existing.snapshot_json      = snapshot_json
+        existing.exchange            = exchange
+        existing.market              = market
+        existing.source_tab          = source_tab
+        existing.direction           = direction
+        existing.zone_high           = zone_high if zone_high is not None else existing.zone_high
+        existing.zone_low            = zone_low  if zone_low  is not None else existing.zone_low
+        existing.confidence          = confidence
+        existing.score               = score
+        existing.current_price       = current_price if current_price is not None else existing.current_price
+        existing.snapshot_json       = snapshot_json
         existing.selected_timeframes = _json_dumps_safe(sel_tf)
-        existing.selected_modules   = _json_dumps_safe(sel_mod)
+        existing.selected_modules    = _json_dumps_safe(sel_mod)
         existing.alert_settings_json = _json_dumps_safe(alert_s)
-        existing.status             = "watching"
+        existing.status              = "watching"
         row = existing
         created = False
     else:
@@ -8117,11 +8156,11 @@ def api_lm_items_post():
             setup_type          = setup_type,
             direction           = direction,
             timeframe           = timeframe,
-            zone_high           = float(zone_high)  if zone_high  is not None else None,
-            zone_low            = float(zone_low)   if zone_low   is not None else None,
+            zone_high           = zone_high,
+            zone_low            = zone_low,
             confidence          = confidence,
             score               = score,
-            current_price       = float(current_price) if current_price is not None else None,
+            current_price       = current_price,
             status              = "watching",
             snapshot_json       = snapshot_json,
             selected_timeframes = _json_dumps_safe(sel_tf),
@@ -8144,7 +8183,7 @@ def api_lm_items_post():
                 "setup_type": setup_type,
                 "timeframe":  timeframe,
             }),
-            price_at_event    = float(current_price) if current_price is not None else None,
+            price_at_event    = current_price,
         )
         _db.session.add(ev)
         _db.session.commit()
