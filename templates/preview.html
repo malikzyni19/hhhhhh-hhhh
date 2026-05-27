@@ -2630,13 +2630,87 @@ svg{display:block}
   function addActiveToLiveMonitor(btn){
     var r = getActiveInsightRow(); if(!r) return;
     var sym = _activeRowSymbol(r); if(!sym) return;
+    // Legacy: keep symbol in watchlist stars (old /api/watchlist/register flow)
     ST.stars[sym]=true; syncWatchlist();
-    if(btn){
-      var o = btn.innerHTML;
-      btn.innerHTML = '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>Added';
-      setTimeout(function(){ btn.innerHTML = o; }, 1600);
-    }
+    // Phase 1: also POST full setup snapshot to /api/live-monitor/items
+    var a   = r.topAlert || {};
+    var m   = a.meta    || {};
+    var z   = (typeof zoneOf==="function") ? (zoneOf(a)||{}) : {};
+    var dir = a.direction || (typeof dirOf==="function" ? (dirOf(r)==="bull"?"bullish":dirOf(r)==="bear"?"bearish":"") : "") || "";
+    var tf  = a.timeframe || r.timeframe || ST.settings.tf || "4h";
+    var src = ST.mode || "main";
+    var btnOrig = btn ? btn.innerHTML : null;
+    if(btn){ btn.disabled=true; btn.innerHTML='<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>Adding…'; }
+    var payload = {
+      symbol:      sym,
+      exchange:    r.exchange || ST.exchange || "binance",
+      market:      _activeRowMarket(r) || ST.market || "perpetual",
+      source_tab:  src,
+      setup_type:  a.setup || r.setup_type || "",
+      direction:   dir,
+      timeframe:   tf,
+      zone_high:   z.hi != null ? z.hi : (m.obTop    || m.fvgTop    || m.breakerTop    || null),
+      zone_low:    z.lo != null ? z.lo : (m.obBottom || m.fvgBottom || m.breakerBottom || null),
+      confidence:  +r.score || 0,
+      score:       +r.score || 0,
+      current_price: r.price != null ? r.price : null,
+      topAlert:    a,
+      meta:        m,
+      snapshot: {
+        row:        r,
+        topAlert:   a,
+        meta:       m,
+        addedFrom:  src
+      },
+      selected_timeframes: ["15m","1h","4h"],
+      selected_modules:    ["OB","FVG","FIB","Bias"],
+      alert_settings:      {}
+    };
+    fetch("/api/live-monitor/items",{
+      method:"POST", credentials:"same-origin",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(payload)
+    }).then(function(res){ return res.json(); }).then(function(d){
+      if(btn){
+        btn.disabled=false;
+        btn.innerHTML = (d && d.ok)
+          ? '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>Added'
+          : '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>Error';
+        setTimeout(function(){ if(btnOrig) btn.innerHTML=btnOrig; }, 1800);
+      }
+      if(d && d.ok){ loadLiveMonitorItems(); }
+    }).catch(function(){
+      if(btn){
+        btn.disabled=false;
+        btn.innerHTML='<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>Error';
+        setTimeout(function(){ if(btnOrig) btn.innerHTML=btnOrig; }, 1800);
+      }
+    });
   }
+  // ── Phase 1: Live Monitor DB-backed items ──────────────────────────────────
+  var liveMonitorItems = [];   // in-memory state for current user's LM items
+
+  function loadLiveMonitorItems(){
+    if(location.protocol==="file:") return;
+    fetch("/api/live-monitor/items?active_only=1",{credentials:"same-origin"})
+      .then(function(res){ if(!res.ok) throw new Error("HTTP "+res.status); return res.json(); })
+      .then(function(d){
+        liveMonitorItems = (d && d.items) ? d.items : [];
+      })
+      .catch(function(){ /* silently keep last known state */ });
+  }
+
+  function removeLiveMonitorItem(itemId){
+    if(!itemId) return;
+    fetch("/api/live-monitor/items/"+itemId,{
+      method:"DELETE", credentials:"same-origin"
+    })
+    .then(function(res){ return res.json(); })
+    .then(function(d){ if(d && d.ok){ loadLiveMonitorItems(); } })
+    .catch(function(){ /* ignore */ });
+  }
+  // ── end Phase 1 Live Monitor helpers ───────────────────────────────────────
+
   function _refreshFooterButtons(){
     var r = getActiveInsightRow();
     var ok = !!r;
@@ -3988,6 +4062,7 @@ svg{display:block}
     if(v==="live"||v==="watchlist"){
       renderLiveMonitorInto(scroll);
       startLiveMonitorPolling();
+      loadLiveMonitorItems();   // Phase 1: load DB-backed items
       return;
     }
     if(v==="dashboard"){
@@ -5043,6 +5118,7 @@ svg{display:block}
   }, 700);
 
   loadWatchlist();
+  loadLiveMonitorItems();       // Phase 1: pre-load DB-backed Live Monitor items
   loadTokens();                 // load token counter without triggering a scan
   _renderTabCtrls();
   // No auto-scan on page load — scanning only happens when the user clicks
