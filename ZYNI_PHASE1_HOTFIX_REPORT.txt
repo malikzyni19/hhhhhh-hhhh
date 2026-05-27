@@ -1,0 +1,200 @@
+================================================================================
+   ZYNI SMC SCREENER — PHASE 1 HOTFIX REPORT
+   Date: 2026-05-27
+   Branch: claude/zyni-phase-0-audit-dwTl0
+   Commit: 9db11af
+   Status: COMPLETE — COMMITTED AND PUSHED
+================================================================================
+
+
+================================================================================
+1. FILES CHANGED
+================================================================================
+
+  main.py — +62 lines inserted, -23 lines replaced
+  (Only file changed. models.py and preview.html were not modified.)
+
+
+================================================================================
+2. EXACT HELPERS ADDED
+================================================================================
+
+FILE: main.py — inserted after _json_loads_safe()
+
+--- _LM_NULL_STRINGS (constant, line 7417) ---
+  _LM_NULL_STRINGS = {"", "—", "n/a", "null", "undefined", "none", "-"}
+  Shared lookup set used by both safe parsers.
+
+--- _lm_float_or_none(value) (line 7419) ---
+  Returns float(value) if value is a valid number.
+  Returns None for: None, "", "—", "N/A", "null", "undefined", "none", "-",
+  or any string that cannot be converted to float.
+  Handles native int/float inputs directly without string conversion.
+
+--- _lm_int_or_zero(value) -> int (line 7434) ---
+  Returns int(float(value)) if value is valid.
+  Returns 0 for: None, "", "—", "N/A", "null", "undefined", "none", "-",
+  or any non-numeric string.
+  Handles float truncation correctly (e.g. "75.9" → 75).
+
+All 20 parser test cases pass (None, "", "—", "N/A", "null", "undefined",
+"none", "-", valid float string, valid int string, native float, native int,
+"bad_str" — all produce expected output).
+
+
+================================================================================
+3. EXACT ENDPOINT LOGIC CHANGED
+================================================================================
+
+FILE: main.py — POST /api/live-monitor/items (api_lm_items_post)
+
+BEFORE (unsafe, would crash on bad frontend data):
+  zone_high   = data.get("zone_high")          ← raw, no conversion guard
+  zone_low    = data.get("zone_low")            ← raw, no conversion guard
+  confidence  = int(data.get("confidence") or data.get("score") or 0)   ← CRASH risk
+  score       = int(data.get("score") or 0)                              ← CRASH risk
+  current_price = data.get("current_price") or data.get("price")        ← raw
+  ...
+  zone_high = float(zone_high) if zone_high is not None else ...         ← CRASH on ""
+  zone_low  = float(zone_low)  if zone_low  is not None else ...         ← CRASH on ""
+  current_price = float(current_price) if current_price is not None else ... ← CRASH on ""
+  price_at_event = float(current_price) if current_price is not None else ... ← CRASH on ""
+
+AFTER (safe — all numeric fields protected):
+  zone_high     = _lm_float_or_none(data.get("zone_high"))
+  zone_low      = _lm_float_or_none(data.get("zone_low"))
+  confidence    = _lm_int_or_zero(data.get("confidence") or data.get("score"))
+  score         = _lm_int_or_zero(data.get("score"))
+  current_price = _lm_float_or_none(data.get("current_price") or data.get("price"))
+  ...
+  existing.zone_high    = zone_high if zone_high is not None else existing.zone_high
+  existing.zone_low     = zone_low  if zone_low  is not None else existing.zone_low
+  existing.current_price = current_price if current_price is not None else ...
+  zone_high  = zone_high        ← already float or None, no cast needed
+  zone_low   = zone_low         ← already float or None, no cast needed
+  current_price = current_price ← already float or None, no cast needed
+  price_at_event = current_price ← already float or None, no cast needed
+
+Also removed the raw float() casts in the duplicate-check filter:
+  BEFORE: _LMI.zone_high == float(zone_high)
+  AFTER:  _LMI.zone_high == zone_high   ← zone_high already float or None
+
+
+================================================================================
+4. USDT VALIDATION CONFIRMED
+================================================================================
+
+Added immediately after the symbol_required check in POST /api/live-monitor/items:
+
+  if not symbol.endswith("USDT"):
+      return jsonify({
+          "error": "invalid_symbol",
+          "message": "Only USDT pairs are supported for Live Monitor right now."
+      }), 400
+
+Validation flow for symbol field:
+  "" or None     → 400 {"error": "symbol_required"}
+  "BTCUSD"       → 400 {"error": "invalid_symbol", "message": "Only USDT pairs..."}
+  "BTC"          → 400 {"error": "invalid_symbol", "message": "Only USDT pairs..."}
+  "BTCUSDT"      → passes, continues to DB
+  "ETHUSDT"      → passes, continues to DB
+  "SOLUSDT"      → passes, continues to DB
+
+The old /api/watchlist/* endpoints are NOT affected — USDT policy only applies
+to /api/live-monitor/items POST.
+
+All 7 USDT policy test cases pass (BTCUSDT, ETHUSDT, SOLUSDT pass;
+BTCUSD, BTC rejected; "" returns symbol_required).
+
+
+================================================================================
+5. LIVE MONITOR TAB SWITCH RELOAD — CONFIRMED ALREADY CORRECT
+================================================================================
+
+Hotfix 3 was confirmed as already correctly implemented in Phase 1.
+No code change was needed.
+
+Verified locations of loadLiveMonitorItems() calls:
+  Page load    — templates/preview.html line 5121:
+    loadLiveMonitorItems();       // Phase 1: pre-load DB-backed Live Monitor items
+
+  Tab switch   — templates/preview.html line 4065 (inside switchView, v==="live" block):
+    loadLiveMonitorItems();   // Phase 1: load DB-backed items
+
+Both confirmed present. Function defined exactly once (line 2693). No duplicates.
+
+
+================================================================================
+6. VERIFICATION RESULTS
+================================================================================
+
+SYNTAX:
+  [PASS] main.py — valid Python syntax
+  [PASS] models.py — valid Python syntax (unchanged)
+
+HELPERS:
+  [PASS] _LM_NULL_STRINGS defined
+  [PASS] _lm_float_or_none defined
+  [PASS] _lm_int_or_zero defined
+  [PASS] 20/20 parser unit tests pass
+
+ENDPOINT — POST /api/live-monitor/items:
+  [PASS] No unsafe direct int(data.get...) in POST body
+  [PASS] No unsafe direct float(data.get...) in POST body
+  [PASS] No unsafe float(zone_high) or float(zone_low) casts remaining
+  [PASS] No unsafe float(current_price) cast remaining
+  [PASS] _lm_float_or_none used for zone_high, zone_low, current_price
+  [PASS] _lm_int_or_zero used for confidence, score
+  [PASS] USDT symbol validation present (returns 400 + "invalid_symbol")
+  [PASS] symbol_required check still present (returns 400 + "symbol_required")
+  [PASS] Ownership check present in DELETE endpoint
+  [PASS] Ownership check present in events GET endpoint
+  [PASS] 7/7 USDT policy test cases pass
+
+OLD ENDPOINTS UNTOUCHED:
+  [PASS] /api/watchlist/register preserved
+  [PASS] /api/watchlist/get preserved
+  [PASS] /api/watchlist/cache preserved
+  [PASS] /api/watchlist/refresh preserved
+
+FRONTEND:
+  [PASS] loadLiveMonitorItems defined once (no duplicates)
+  [PASS] removeLiveMonitorItem defined once
+  [PASS] loadLiveMonitorItems called at page load
+  [PASS] loadLiveMonitorItems called on Live Monitor tab switch
+  [PASS] legacy syncWatchlist() preserved in addActiveToLiveMonitor
+  [PASS] /api/live-monitor/items fetch present in addActiveToLiveMonitor
+  [PASS] No UI visual changes
+
+
+================================================================================
+7. IS PHASE 1 NOW FULLY ACCEPTABLE FOR PHASE 2?
+================================================================================
+
+YES — Phase 1 is now fully acceptable.
+
+Summary of what is solid:
+  ✓ LiveMonitorItem + LiveMonitorEvent models — all 21 / 10 fields correct
+  ✓ POST endpoint — safe numeric parsing, USDT validation, duplicate upsert
+  ✓ GET endpoint — per-user, active_only filter, correct serialization
+  ✓ DELETE endpoint — soft delete, ownership verified, event logged
+  ✓ Events endpoint — ownership verified, newest first
+  ✓ addActiveToLiveMonitor — full snapshot POST + legacy watchlist flow preserved
+  ✓ loadLiveMonitorItems — called at page load AND on tab switch
+  ✓ removeLiveMonitorItem — wired and ready for Phase 2 UI
+  ✓ No existing scan, watchlist, or mobile functionality broken
+
+Remaining known items for Phase 2 (not hotfix concerns):
+  - "watchlist" tab permission not in default "user" role allowed_tabs
+  - Locked UI file (zyni_live_monitor_preview.html) not yet in repo
+  - liveMonitorItems[] state populated but not yet rendered in locked UI panels
+  - Phase 2 will wire left setup cards, right panel, zone tracker, MTF matrix
+
+
+================================================================================
+END OF PHASE 1 HOTFIX REPORT
+================================================================================
+HOTFIX COMPLETE — COMMITTED AND PUSHED TO branch: claude/zyni-phase-0-audit-dwTl0
+COMMIT: 9db11af
+STOPPING HERE. AWAITING PHASE 2 APPROVAL.
+================================================================================
