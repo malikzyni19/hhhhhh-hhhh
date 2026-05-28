@@ -1,0 +1,981 @@
+================================================================================
+   ZYNI SMC SCREENER — PHASE 0 AUDIT REPORT
+   Live Monitor Rebuild — Implementation Map
+   Date: 2026-05-27
+   Status: READ-ONLY AUDIT — NO CODE MODIFIED
+================================================================================
+
+
+================================================================================
+A. FILES INSPECTED
+================================================================================
+
+ROOT LEVEL PYTHON FILES:
+  - main.py               (11,521 lines) — Core Flask application, all routes
+  - models.py             (350 lines)    — SQLAlchemy models
+  - permissions.py        (199 lines)    — Role/token permission engine
+  - admin.py              (3,896 lines)  — Admin blueprint
+  - breaker_quality.py                  — Breaker detection logic
+  - signal_extractor.py                 — Signal extraction helpers
+  - signal_logger.py                    — Signal logging helpers
+  - outcome_resolver.py                 — Backtest outcome resolution
+  - backtest_ob.py                      — OB backtest engine
+  - ob_candidates.py                    — OB candidate detection
+  - migrate.py                          — DB migration helper
+  - check_schema.py                     — Schema validator
+  - auto_resolver_runner.py             — Automated outcome resolver
+
+TEMPLATE FILES:
+  - templates/preview.html              — Desktop UI (all JS/CSS embedded inline)
+  - templates/index.html                — Mobile UI (all JS/CSS embedded inline)
+  - templates/homepage.html             — Public landing page
+  - templates/login.html                — User login form
+  - templates/maintenance.html          — Maintenance page
+  - templates/reset_password.html       — Password reset
+  - templates/verify.html               — Email verification
+  - templates/admin.html                — Legacy admin interface
+  - templates/admin/base.html           — Admin base layout
+  - templates/admin/dashboard.html      — Admin dashboard
+  - templates/admin/intelligence.html   — Intelligence settings
+  - templates/admin/login.html          — Admin login
+  - templates/admin/role.html           — Role permission editor
+  - templates/admin/settings.html       — Global settings
+  - templates/admin/users.html          — User management
+  - templates/admin/users/create.html   — Create user
+  - templates/admin/users/edit.html     — Edit user
+
+STATIC FILES:
+  - static/service-worker.js            — PWA service worker
+  - static/manifest.json                — PWA manifest
+  - static/offline.html                 — Offline page
+  - static/icons/                       — PWA icons (5 PNG sizes)
+  - static/images/                      — App images (4 PNG files)
+
+NOTE: There are NO separate .js or .css files.
+      All JavaScript and CSS are embedded inline inside preview.html and index.html.
+
+LOCKED UI FILE (not in repo yet):
+  - zyni_live_monitor_preview.html      — Referenced as locked UI direction.
+                                          NOT found in repo. Must be sourced separately.
+
+
+================================================================================
+B. EXISTING WATCHLIST / LIVE MONITOR LOGIC FOUND
+================================================================================
+
+--- NAMING CONFUSION (IMPORTANT) ---
+The current codebase uses "watchlist" and "Live Monitor" as the same concept.
+The desktop preview.html maps: live:"watchlist" and watchlist:"pairs" in TAB_OF_VIEW.
+The mobile index.html labels the tab as "LIVE MONITOR" but backs it with id="page-watchlist".
+There is NO separate "Live Monitor" model or data structure. Everything is the watchlist.
+
+--- SERVER-SIDE WATCHLIST STORAGE ---
+Location: main.py lines 255–278
+
+Storage mechanism: /tmp/zyni_wl_{username}.json
+  - Flat JSON file per user containing only a list of pair symbols (strings)
+  - Example: ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+  - Persists until server restart (Koyeb ephemeral storage)
+  - NOT stored in the database
+  - NOT associated with User model via foreign key
+  - Max 10 pairs per user (enforced at register endpoint)
+
+Functions:
+  _wl_file(username) -> str          — line 262 — builds safe file path
+  load_user_watchlist(username)      — line 268 — reads JSON file, returns list
+  save_user_watchlist(username, pairs) — line 275 — writes JSON file
+
+--- LIVE ORDERFLOW CACHE ---
+Location: main.py lines 643–737
+
+Global in-memory structures (shared across all users, NOT per-user):
+  _wl_lock    — threading.Lock()
+  _wl_pairs   — List[str], current active watchlist pairs
+  _wl_cache   — Dict[str, Any], symbol → latest orderflow result
+  _wl_thread  — Optional[threading.Thread], background polling thread
+
+Background thread:
+  _ensure_wl_thread()         — starts thread if not running
+  _wl_background_loop()       — continuous orderflow polling loop
+
+WebSocket management:
+  start_ob_ws(symbol)         — starts orderbook WebSocket for a pair
+  stop_ob_ws(symbol)          — stops WebSocket for a removed pair
+
+CRITICAL RISK: _wl_pairs and _wl_cache are GLOBAL (single shared state).
+  If two users have different watchlists, they will overwrite each other.
+  The last user to call /api/watchlist/register wins the global state.
+
+--- MULTI-TIMEFRAME SCAN SETTINGS ---
+Location: main.py lines 7575–7603
+
+_WL_SCAN_SETTINGS dict — large default config for OB/FVG/FIB/FIB detection
+WL_TIMEFRAMES = ["15m", "1h", "4h"]
+
+_scan_pair_multitf(symbol, market, config, exchange)
+  — Scans one symbol across all timeframes simultaneously
+  — Returns tfs: {"15m": {...}, "1h": {...}, "4h": {...}}
+
+--- "ADD TO LIVE MONITOR" BUTTON — DESKTOP (preview.html) ---
+Button found:
+  <button class="btn btn-primary" id="btnLM">
+    <svg ...><path d="M12 5v14M5 12h14"/></svg>
+    Add to Live Monitor
+  </button>
+
+Current behavior (from JS analysis):
+  - Reads selected symbol from the scan result table (insight panel)
+  - Adds only the SYMBOL STRING to the watchlist list
+  - Calls syncWatchlist() which POSTs to /api/watchlist/register
+  - Does NOT save any setup context (no direction, no zone, no timeframe, no OB/FVG data)
+  - MISSING: full setup snapshot
+
+--- "ADD TO LIVE MONITOR" BUTTON — MOBILE (index.html) ---
+Mobile uses:
+  - addToWatchlistManual() — manual text input, adds symbol only
+  - toggleWatchlistStar(el, symbol) — star icon on scan rows, adds symbol only
+  - Both save only the symbol string to localStorage quickWatchlist
+
+--- DESKTOP LIVE MONITOR VIEW ---
+Location: preview.html
+
+View is triggered by:
+  TAB_OF_VIEW mapping: live:"watchlist"
+
+JS functions found:
+  loadWatchlist()           — GET /api/watchlist/get on page load
+  syncWatchlist()           — POST /api/watchlist/register after any change
+  refreshWatchlistData()    — POST /api/watchlist/refresh with timeframe config
+  _lmPaint()                — Renders the live monitor view/cards
+  _wl_poll()                — Polls /api/watchlist/cache every 5 seconds
+
+--- MOBILE LIVE MONITOR TAB ---
+Location: index.html
+
+Tab button:
+  <button class="tab" onclick="showPage('watchlist',this);renderWatchlistTab()">
+    📡 LIVE MONITOR
+  </button>
+
+Container:
+  <div id="page-watchlist" class="page">
+
+UI elements:
+  - watchlistName input
+  - Save/Load/Delete named watchlists (saved to localStorage)
+  - wlManualInput + addToWatchlistManual() button
+  - wlRefreshBtn → refreshWatchlistData()
+  - clearWatchlist() button
+
+
+================================================================================
+C. EXISTING BACKEND ENDPOINTS FOUND
+================================================================================
+
+--- WATCHLIST ENDPOINTS (all @login_required) ---
+
+POST /api/watchlist/register         — main.py line 7320
+  Request:  { "pairs": ["BTCUSDT", "ETHUSDT"] }
+  Response: { "registered": [...], "count": N, "user": "username" }
+  Action:   Saves pairs to /tmp file, updates global _wl_pairs cache,
+            manages WebSocket connections per symbol.
+  Limit:    Max 10 pairs, USDT only.
+
+GET  /api/watchlist/get              — main.py line 7359
+  Response: { "pairs": [...], "user": "username" }
+  Action:   Reads user's saved watchlist from /tmp file.
+
+GET  /api/watchlist/cache            — main.py line 7545
+  Response: { "BTCUSDT": {...orderflow...}, "ETHUSDT": {...} }
+  Action:   Returns live in-memory orderflow cache.
+  Polling:  Called every 5 seconds by frontend.
+
+GET  /api/watchlist/status           — main.py line 7556
+  Response: { "running": bool, "pairs": [...], "cache_count": N }
+  Action:   Health check for background streaming thread.
+
+POST /api/watchlist/refresh          — main.py line 7897
+  Request:  { "pairs": [...], "market": "perpetual", "exchange": "binance", "config": {} }
+  Response: { "results": [...], "scanned": N }
+  Action:   Multi-timeframe SMC scan (15m+1h+4h) for listed pairs.
+  Tokens:   Consumes tokens per pair scanned.
+  Limit:    Max 30 pairs, USDT only, 5 parallel workers.
+
+--- SCAN ENDPOINTS (all @login_required) ---
+
+POST /api/scan                       — main.py line 8141
+  Main scanner — OB, FVG, FIB detection across selected pairs/TFs.
+
+POST /api/compressed_scan            — main.py line 8480
+  Compressed/consolidation pattern scanner.
+
+POST /api/trending_scan              — main.py line 8780
+  Trending setup scanner.
+
+POST /api/ath_atl_scan               — main.py line 8857
+  ATH/ATL scanner.
+
+POST /api/bias_scan                  — main.py line 9845
+  Multi-timeframe bias scanner.
+
+POST /api/fvg_imbalance              — main.py line 11249
+  FVG imbalance scanner.
+
+POST /api/unified_liquidity          — main.py line 11184
+  Unified liquidity analysis.
+
+GET  /api/zone_liquidity             — main.py line 11009
+  Zone liquidity levels.
+
+GET  /api/order-flow                 — main.py line 10893
+  Order flow (alias).
+
+GET  /api/orderflow                  — main.py line 10936
+  Order flow data.
+
+--- USER / PREFERENCES ENDPOINTS ---
+
+GET       /api/my-permissions        — main.py line 8022
+  Returns full permissions object for current user.
+
+GET       /api/scan-presets          — main.py line 7397
+POST      /api/scan-presets          — main.py line 7408
+PUT/PATCH /api/scan-presets/<id>     — main.py line 7443
+DELETE    /api/scan-presets/<id>     — main.py line 7476
+  Per-user saved scanner configurations.
+
+GET       /api/user-preferences      — main.py line 7496
+POST/PUT  /api/user-preferences      — main.py line 7514
+  Per-user UI preferences (tutorial state, etc.)
+
+GET  /api/pairs                      — main.py line 8013
+  Returns available trading pairs list.
+
+--- ADMIN ENDPOINTS (admin.py) ---
+/api/admin/users, /api/admin/sessions, /api/admin/logs,
+/api/admin/stats, /api/admin/controls/tabs, /api/admin/controls/tab,
+/api/admin/guest/controls, /api/admin/guest/sessions
+(All are admin-only — not relevant for Phase 1)
+
+--- HOMEPAGE ENDPOINTS (public) ---
+/api/homepage/feargreed, /api/homepage/ticker,
+/api/homepage/gainers, /api/homepage/volume, /api/homepage/marketcap
+(Public, cached — not relevant for Phase 1)
+
+
+================================================================================
+D. EXISTING FRONTEND FUNCTIONS / BUTTONS FOUND
+================================================================================
+
+--- DESKTOP (preview.html) — Watchlist/Live Monitor Functions ---
+
+loadWatchlist()
+  — Called on page load
+  — GET /api/watchlist/get
+  — Populates global watchlist pair list
+
+syncWatchlist()
+  — Called after any watchlist change
+  — POST /api/watchlist/register with current pairs array
+
+refreshWatchlistData()
+  — Called by "Refresh" button click
+  — POST /api/watchlist/refresh with pairs + config
+  — Updates live monitor cards with MTF scan results
+
+_lmPaint(results)
+  — Renders live monitor view cards
+  — Takes scan results array, renders each pair's MTF data
+
+_wl_poll()
+  — Called every 5 seconds via setInterval
+  — GET /api/watchlist/cache
+  — Updates orderflow data in cards without full re-render
+
+btnLM (id="btnLM")
+  — "Add to Live Monitor" button in insight panel
+  — Adds currently selected pair to watchlist
+  — ONLY adds symbol string — no setup context saved
+
+toggleWatchlistStar(el, symbol)
+  — Star icon on scan result rows
+  — Adds/removes symbol from quickWatchlist localStorage
+  — Does NOT sync to server automatically
+
+TAB_OF_VIEW mapping:
+  { scanner:"scan", live:"watchlist", watchlist:"pairs", settings:"settings" }
+
+--- MOBILE (index.html) — Watchlist/Live Monitor Functions ---
+
+showPage('watchlist', this)
+  — Switches to Live Monitor tab view
+  — Triggers renderWatchlistTab()
+
+renderWatchlistTab()
+  — Main render function for mobile Live Monitor tab
+
+addToWatchlistManual()
+  — Reads wlManualInput value
+  — Adds to quickWatchlist localStorage
+  — Syncs to server via /api/watchlist/register
+
+toggleWatchlistStar(el, symbol)
+  — Star icon on mobile scan rows
+  — Same localStorage logic as desktop star
+
+saveWatchlist()
+  — Saves current watchlist with a name to localStorage (zyni_watchlists key)
+
+loadWatchlist(name)
+  — Restores named watchlist from localStorage
+
+deleteWatchlist()
+  — Deletes named watchlist from localStorage
+
+clearWatchlist()
+  — Clears all pairs from current watchlist
+
+refreshWatchlistData()
+  — POST /api/watchlist/refresh
+  — Shared function or duplicate of desktop version (both UIs use same endpoint)
+
+wlRefreshBtn (id="wlRefreshBtn")
+  — "↻ REFRESH ALL" button
+  — Triggers refreshWatchlistData()
+
+--- SCAN ROW RENDERING (BOTH UIs) ---
+Scan result rows are rendered by JS functions (render functions vary per tab).
+Each row contains:
+  - symbol
+  - star button (toggleWatchlistStar)
+  - topAlert badge
+  - direction indicator
+  - timeframe tag
+  - confidence/score
+  - zone_high / zone_low
+  - Add to Live Monitor button (btnLM on desktop, varies on mobile)
+
+--- INSIGHT PANEL (DESKTOP ONLY) ---
+When a scan row is clicked, a selected setup insight panel appears on the right.
+The "Add to Live Monitor" button (btnLM) is inside this panel.
+The insight panel shows:
+  - Symbol, exchange, market
+  - topAlert.type, topAlert.meta
+  - OB details (zone_high, zone_low, strength, age, virginOB)
+  - FVG details (level, state, age, touches)
+  - FIB level if active
+  - RSI, ATR, volume
+  - Confidence score
+
+
+================================================================================
+E. EXISTING SCAN DATA FIELDS AVAILABLE FOR SETUP SNAPSHOT
+================================================================================
+
+--- FROM /api/scan RESPONSE (per alert row) ---
+Each scan alert row contains at minimum:
+  symbol          — trading pair (e.g. "BTCUSDT")
+  exchange        — "binance", "bybit", "okx", "mexc"
+  market          — "perpetual", "spot"
+  timeframe       — "15m", "30m", "1h", "4h", "1d"
+  direction       — "bullish" or "bearish"
+  score           — integer confidence score (0-100)
+  zone_high       — float, top of OB/FVG/FIB zone
+  zone_low        — float, bottom of OB/FVG/FIB zone
+  current_price   — float, price at scan time
+  setup_type      — "OB_APPROACH", "OB_CONSOL", "FVG_FILL", etc.
+  topAlert        — object with type and meta
+
+--- FROM topAlert.meta (OB-specific fields) ---
+  obQuality       — integer 0-100, OB quality score
+  obAgeBars       — integer, how many bars since OB formed
+  obBar           — integer, bar index of OB formation
+  isVirginOb      — boolean, whether OB has been tested
+  tvObVolumeSharePct    — float, TradingView OB volume share
+  tvObFormationVolume   — float, OB formation candle volume
+  tvObVisibleCount      — integer, visible OB count at time of scan
+  touches         — integer, number of OB touches
+
+--- FROM topAlert.meta (FVG-specific fields) ---
+  fvg_level       — float, FVG midpoint
+  fvg_state       — "open", "closed", "partially_filled"
+  fvg_age         — integer bars
+  fvg_is_valid    — boolean
+  fvg_is_bag      — boolean (bag FVG)
+  fvg_touch_depth — "none", "touched", "half", "full"
+
+--- FROM topAlert.meta (FIB-specific fields) ---
+  fib_level       — string e.g. "0.618", "0.786"
+  fib_tf          — timeframe for leg detection
+  fib_leg_high    — float
+  fib_leg_low     — float
+  fib_progression — float, how far price has retraced
+
+--- FROM analyze_pair() return (available for watchlist refresh) ---
+  rsi             — float, RSI value
+  atr             — float, ATR value
+  volume          — float, current bar volume
+  bias            — "bullish", "bearish", "neutral"
+  structure       — trend/structure state
+
+--- FROM /api/watchlist/refresh RESPONSE (per pair result) ---
+  symbol
+  tfs: {
+    "15m": { score, direction, topAlert, zone_high, zone_low, ... },
+    "1h":  { score, direction, topAlert, zone_high, zone_low, ... },
+    "4h":  { score, direction, topAlert, zone_high, zone_low, ... }
+  }
+
+--- FROM SignalEvent MODEL (db — already saved fields for signals) ---
+  signal_id, pair, module, timeframe, direction, score,
+  zone_high, zone_low, detected_price, detected_at, exchange,
+  setup_type, raw_setup, raw_meta_json (JSON blob with full meta)
+
+--- SOURCE TAB FIELD ---
+  NOT currently tracked in scan response.
+  The source tab (Main Scan vs Compressed vs Bias Shift etc.) is known
+  client-side at click time but is NOT included in server scan results.
+  Must be added as a field when saving the LiveMonitorItem.
+
+--- MISSING FIELDS FOR FULL SETUP SNAPSHOT ---
+  source_tab      — which scanner tab produced this setup (client-side only)
+  added_at        — timestamp when user added to Live Monitor
+  user_id         — for per-user DB persistence (currently only /tmp files)
+  health_score    — computed Live Monitor health metric (does not exist yet)
+  notes           — user annotation (does not exist yet)
+
+
+================================================================================
+F. EXISTING USER / SESSION / TOKEN LOGIC FOUND
+================================================================================
+
+--- AUTHENTICATION ---
+
+Custom login decorator (main.py line 6442):
+  def login_required(f):
+    Checks: session.get("logged_in")
+    Force-logout check against _force_logout_users set
+    Returns redirect to index if not logged in
+
+Session keys used:
+  session["logged_in"]    — boolean
+  session["username"]     — string username
+  session["is_admin"]     — boolean
+  session["is_guest"]     — boolean
+
+Flask-Login also initialized (main.py line 52–60):
+  Used for admin blueprint routes
+  User model extends UserMixin
+  _login_manager.user_loader registered
+
+Getting current username in any route:
+  username = session.get("username", "default")
+
+Getting current user object:
+  user = _DBUser.query.filter_by(username=username).first()
+  (No helper function — done inline per route)
+
+--- USER MODEL ---
+Location: models.py line 14
+
+Fields:
+  id, username, email, password_hash, role, status,
+  email_verified, created_at, last_login_at, last_login_ip, notes
+
+Methods:
+  set_password(password), check_password(password)
+  is_admin property
+
+--- TOKEN SYSTEM ---
+Location: permissions.py, models.py
+
+DailyTokenUsage model (models.py line 118):
+  user_id, date, tokens_used, scan_count, last_scan_at
+  Unique constraint: (user_id, date)
+
+Permissions functions (permissions.py):
+  get_user_permissions(user) -> dict
+    Returns: daily_tokens, tokens_used_today, tokens_remaining,
+             max_pairs_per_scan, max_pairs_per_cycle,
+             allowed_modules, allowed_tabs, allowed_exchanges,
+             allowed_timeframes, is_admin
+    Cache: 60-second TTL per user_id in memory
+
+  check_tokens(user) -> bool
+    Returns True if user has tokens remaining
+
+  consume_tokens(user_id, count)
+    Deducts N tokens from today's usage
+
+  check_tab_access(user, tab) -> bool
+  check_module_access(user, module) -> bool
+
+Role defaults (permissions.py lines 19–47):
+  admin: 999,999 tokens, all modules/tabs/exchanges/timeframes
+  user:  500 tokens, ob/fvg/fib/bias modules, scan/pairs/settings/bias tabs
+  guest: 50 tokens, ob only, scan tab only, binance only
+
+Route-level token helper (main.py):
+  _check_and_get_token_user() -> (db_user, user_id)
+  _daily_limit_response() -> 429 JSON response
+
+Token consumption in watchlist refresh:
+  consume_tokens(_tok_uid, len(pairs))  — per pair scanned
+
+--- "watchlist" TAB PERMISSION ---
+  "watchlist" tab is in ALL_TABS (models.py line 9)
+  BUT "watchlist" is only in admin's allowed_tabs by default.
+  Regular "user" role does NOT have "watchlist" in allowed_tabs by default.
+  This means Live Monitor tab may be locked for standard users unless admin overrides.
+  RISK: New live-monitor tab permission may need to be added or "watchlist" opened to users.
+
+
+================================================================================
+G. REUSABLE CODE
+================================================================================
+
+--- BACKEND REUSABLE ---
+
+1. login_required decorator (main.py line 6442)
+   Fully reusable as-is for all new /api/live-monitor/* endpoints.
+
+2. Session username getter pattern:
+   username = session.get("username", "default")
+   user = _DBUser.query.filter_by(username=username).first()
+   Reuse this exact pattern in new endpoints.
+
+3. _check_and_get_token_user() + consume_tokens()
+   Reuse for token-gating the live monitor refresh/scan if needed.
+   Already used in /api/watchlist/refresh — can copy that pattern.
+
+4. _scan_pair_multitf(symbol, market, config, exchange)
+   Core multi-timeframe scan function. Reuse directly for Live Monitor refresh.
+   Returns per-symbol tfs dict with 15m/1h/4h results.
+
+5. save_user_watchlist() / load_user_watchlist()
+   These are reusable BUT should be REPLACED by DB-backed LiveMonitorItem model.
+   Keep as fallback if DB fails, but new endpoints should use DB.
+
+6. /api/watchlist/refresh endpoint (main.py line 7897)
+   Can be reused or extended for Live Monitor refresh.
+   Already does: multi-pair, multi-TF scan, token consumption, parallel workers.
+   New endpoint can either call this internally or mirror its pattern.
+
+7. /api/watchlist/cache polling architecture (GET, lightweight, 5s poll)
+   The poll-cache pattern is reusable for Live Monitor real-time updates.
+   New /api/live-monitor/cache endpoint can mirror this pattern.
+
+8. db.create_all() pattern (main.py line 77)
+   New models added to models.py will be auto-created on next startup via existing
+   db.create_all() call. No migration script needed for net-new tables.
+   RISK: For ALTER TABLE on existing tables, need idempotent SQL (see section I).
+
+9. ScanPreset CRUD pattern (main.py lines 7397–7493)
+   Clean GET/POST/PUT/DELETE with user_id ownership check.
+   Mirror this exact pattern for LiveMonitorItem CRUD.
+
+10. permissions.py get_user_permissions() cache
+    Reuse as-is — no changes needed for Phase 1.
+
+--- FRONTEND REUSABLE ---
+
+11. btnLM "Add to Live Monitor" button (preview.html)
+    Already exists and is clickable. Need to EXTEND its click handler to:
+    - Collect full setup snapshot from current insight panel
+    - POST to new /api/live-monitor/items endpoint
+    - NOT just call syncWatchlist()
+
+12. Scan row star button / toggleWatchlistStar() (index.html)
+    Can be extended to trigger Live Monitor add on mobile.
+    Or replaced with a dedicated "Add to LM" icon on each scan row.
+
+13. _lmPaint() render function (preview.html)
+    Renders live monitor view. Will need extension for new data fields
+    (health score, zone tracker, MTF matrix, etc.) but foundation is there.
+
+14. _wl_poll() 5-second polling interval (preview.html)
+    Reuse pattern for polling new /api/live-monitor/* endpoints.
+
+15. refreshWatchlistData() (both UIs)
+    Calls /api/watchlist/refresh. Can be updated to call new endpoint
+    or extended to pass live-monitor item IDs instead of raw pairs.
+
+
+================================================================================
+H. MISSING PIECES FOR PHASE 1
+================================================================================
+
+--- DATABASE MODELS (DO NOT EXIST YET) ---
+
+1. LiveMonitorItem model
+   Required fields:
+     id              — Integer PK
+     user_id         — FK → users.id  (per-user ownership)
+     symbol          — String(20)
+     exchange        — String(20)
+     market          — String(20)
+     source_tab      — String(40) e.g. "main_scan", "bias_shift", "compressed"
+     setup_type      — String(40) e.g. "OB_APPROACH", "FVG_FILL"
+     direction       — String(10) "bullish"/"bearish"
+     timeframe       — String(10)
+     zone_high       — Float
+     zone_low        — Float
+     confidence      — Integer
+     score           — Integer
+     current_price   — Float (price at time of add)
+     snapshot_json   — Text (full JSON blob of topAlert.meta)
+     added_at        — DateTime
+
+2. LiveMonitorEvent model
+   Required fields:
+     id              — Integer PK
+     item_id         — FK → live_monitor_items.id
+     event_type      — String(40) e.g. "price_alert", "zone_tap", "confirmation"
+     details_json    — Text (JSON blob)
+     created_at      — DateTime
+
+--- BACKEND ENDPOINTS (DO NOT EXIST YET) ---
+
+3. GET  /api/live-monitor/items
+   — Returns all LiveMonitorItems for current user
+   — Ordered by added_at DESC
+
+4. POST /api/live-monitor/items
+   — Receives full setup snapshot from frontend
+   — Creates LiveMonitorItem in DB
+   — Validates required fields
+   — Per-user, @login_required
+
+5. DELETE /api/live-monitor/items/<id>
+   — Soft or hard delete
+   — Must verify item.user_id == current user_id
+   — @login_required
+
+6. GET /api/live-monitor/events/<item_id>
+   — Returns LiveMonitorEvents for a specific item
+   — @login_required
+   — Verify item ownership before returning events
+
+--- FRONTEND CHANGES (DO NOT EXIST YET) ---
+
+7. Extended "Add to Live Monitor" click handler (preview.html)
+   — Must collect full setup snapshot at click time:
+     symbol, exchange, market, source_tab, setup_type, direction,
+     timeframe, zone_high, zone_low, confidence, score, current_price,
+     topAlert.meta JSON blob
+   — POST to /api/live-monitor/items
+   — Show success/error toast
+
+8. Remove item from Live Monitor
+   — "X" or trash button per item card in left panel
+   — DELETE /api/live-monitor/items/<id>
+   — Remove card from UI without full reload
+
+9. Load Live Monitor items on page load
+   — GET /api/live-monitor/items
+   — Render left Active Setups list from DB (not localStorage)
+   — Replace current behavior that re-reads /api/watchlist/get
+
+10. MTF Module Matrix rendering (preview.html — right panel)
+    — Per-item MTF scan results display
+    — New render function needed for the locked UI's matrix table
+
+11. Zone Tracker rendering (preview.html — right panel)
+    — Per-item zone_high/zone_low with current price proximity indicator
+
+12. Health Score computation + display
+    — Server-side or client-side calculation
+    — Based on: zone proximity, MTF confluence, confirmation count
+
+13. Aggregate Market Context section
+    — May reuse /api/homepage/feargreed and bias_scan data
+    — Needs integration in right panel
+
+14. Confirmation Checklist + Event Timeline
+    — Reads from LiveMonitorEvents per item
+    — Needs render function
+
+15. DeepSeek chatbox in hero section
+    — Needs DeepSeek API integration (not currently in repo)
+    — One chatbox only, context-aware of selected setup
+
+16. Mobile "Add to Live Monitor" button
+    — Mobile must also send full snapshot, not just symbol
+    — Or reuse same /api/live-monitor/items endpoint from mobile JS
+
+--- INFRASTRUCTURE MISSING ---
+
+17. Persistent LiveMonitorItem storage
+    Current: /tmp JSON files (lost on restart, shared risk)
+    Required: DB-backed per-user items that survive restarts
+
+18. source_tab tracking in scan results
+    Current: scan API responses do NOT include which tab generated the result
+    Required: frontend must inject source_tab at the time user clicks "Add"
+    Solution: Each scan tab's row render function should tag results with tab name
+
+19. DeepSeek API key / integration
+    Not present anywhere in repo. Must be added to environment + backend.
+
+
+================================================================================
+I. RISKS / DO-NOT-BREAK AREAS
+================================================================================
+
+RISK 1: GLOBAL WATCHLIST CACHE CONFLICT
+  The _wl_pairs and _wl_cache globals (main.py ~line 643) are shared across ALL users.
+  When User A registers their watchlist, it overwrites User B's active pairs.
+  The new LiveMonitorItem system MUST use per-user DB storage, not these globals.
+  DO NOT extend the global cache for per-user Live Monitor.
+  The existing /api/watchlist/* endpoints can remain as-is for legacy use,
+  but new /api/live-monitor/* must use DB, not the global cache.
+
+RISK 2: db.create_all() vs EXISTING TABLES
+  db.create_all() is safe for NEW tables — it will create LiveMonitorItem and
+  LiveMonitorEvent without touching existing tables.
+  DO NOT add columns to existing tables using db.create_all() alone —
+  it will NOT apply ALTER TABLE changes to already-existing tables.
+  For any additions to existing models (if needed), add idempotent SQL in the
+  existing migration block already in main.py (lines 81–103+).
+
+RISK 3: MOBILE UI BREAK RISK
+  The mobile index.html is a completely separate UI with its own watchlist logic.
+  Any changes to /api/watchlist/* endpoint contracts will break mobile.
+  Solution: New /api/live-monitor/* endpoints are SEPARATE from existing
+  /api/watchlist/* endpoints. Keep watchlist endpoints untouched.
+  Mobile can have a separate "Add to LM" button/flow calling new endpoints.
+
+RISK 4: DUPLICATE JS ID RISK
+  preview.html uses inline JS with many global variable names and element IDs.
+  Adding new Live Monitor HTML sections could conflict with existing IDs.
+  Check: page-watchlist, btnLM, wlRefreshBtn, etc. before adding new elements.
+  New LM items panel must use unique IDs (e.g., lm-items-list, lm-selected-panel).
+
+RISK 5: "Add to Live Monitor" MISSING FULL SETUP DATA
+  Current btnLM click handler only captures the symbol.
+  The full setup snapshot (zone, direction, OB meta) is displayed in the insight
+  panel at click time but NOT serialized or sent to server.
+  Risk: If insight panel state is stale or symbol was de-selected, snapshot is wrong.
+  Solution: At click time, serialize the currently displayed insight panel's full data
+  object (the same JS object used to render the panel) into the POST body.
+
+RISK 6: ENDPOINT NAMING CONFLICT
+  /api/watchlist/* endpoints all exist and are used by both desktop and mobile.
+  New endpoints MUST use /api/live-monitor/* prefix to avoid collisions.
+  DO NOT rename or repurpose any /api/watchlist/* endpoint.
+
+RISK 7: TOKEN / PERMISSION SIDE EFFECTS
+  "watchlist" tab is NOT in default "user" role allowed_tabs.
+  If Live Monitor becomes a new tab (or stays as "watchlist" tab), standard users
+  may not have access without admin granting permission.
+  Decision needed: Should Live Monitor use the existing "watchlist" tab permission
+  or a new "live_monitor" tab permission?
+  Either way, do not change permission checks for existing scan tabs.
+
+RISK 8: LOCALSTORAGE CONFLICT
+  Mobile watchlist is partially saved to localStorage keys:
+    "quickWatchlist" — array of symbols
+    "zyni_watchlists" — named watchlist map
+  New LiveMonitorItem DB system must not conflict with these keys.
+  Keep localStorage as a client-side cache/fallback only — source of truth is DB.
+
+RISK 9: /tmp FILE STORAGE OBSOLESCENCE
+  load_user_watchlist() and save_user_watchlist() use /tmp files.
+  These will be obsolete once DB-backed LiveMonitorItem is live.
+  Do NOT delete them in Phase 1 — they are still used by /api/watchlist/register
+  and /api/watchlist/get which support the existing watchlist flow.
+  Only retire them when the entire watchlist system is migrated.
+
+RISK 10: DEEPSEEK CHATBOX INTEGRATION
+  No DeepSeek API key, client library, or endpoint exists in the repo.
+  The hero section chatbox requires a new backend proxy endpoint and API key.
+  This is a new dependency with cost implications (API calls per message).
+  Risk: Rate limiting, key exposure in frontend, context size management.
+  The chatbox must be scope-limited to the selected setup context only.
+
+RISK 11: LOCKED UI REFERENCE FILE NOT IN REPO
+  zyni_live_monitor_preview.html is referenced as the locked UI direction
+  but was NOT found in the repo. Phase 1 frontend work cannot begin without it.
+  Must be added to repo or shared separately before frontend implementation.
+
+RISK 12: MONOLITHIC TEMPLATE FILE SIZE
+  preview.html is extremely large (thousands of lines, all inline).
+  Adding Live Monitor right-panel HTML and JS sections increases this further.
+  Risk: Browser parse time, accidental JS scope collisions, hard to debug.
+  Recommendation: Use template {% block %} or at minimum add clear section comments.
+
+
+================================================================================
+J. EXACT PHASE 1 IMPLEMENTATION PLAN
+================================================================================
+
+PHASE 1 SCOPE: Backend data layer + "Add to Live Monitor" full snapshot save.
+Goal: LiveMonitorItem stored in DB per user with full setup context.
+No UI redesign. Keep all existing watchlist endpoints untouched.
+
+--- STEP 1: Add Models to models.py ---
+
+Add LiveMonitorItem class:
+  - Fields: id, user_id (FK→users), symbol, exchange, market, source_tab,
+            setup_type, direction, timeframe, zone_high, zone_low,
+            confidence, score, current_price, snapshot_json, added_at
+  - Relationship: user = db.relationship("User")
+
+Add LiveMonitorEvent class:
+  - Fields: id, item_id (FK→live_monitor_items), event_type, details_json, created_at
+  - Relationship: item = db.relationship("LiveMonitorItem")
+
+These will be auto-created by the existing db.create_all() call on next startup.
+
+--- STEP 2: Add API Endpoints to main.py ---
+
+Add after the existing /api/watchlist/* block (~line 7900):
+
+  GET  /api/live-monitor/items
+    - @login_required
+    - username = session.get("username")
+    - user = _DBUser.query.filter_by(username=username).first()
+    - items = LiveMonitorItem.query.filter_by(user_id=user.id).order_by(added_at.desc()).all()
+    - Return JSON array of items
+
+  POST /api/live-monitor/items
+    - @login_required
+    - Parse JSON body: symbol, exchange, market, source_tab, setup_type,
+      direction, timeframe, zone_high, zone_low, confidence, score,
+      current_price, snapshot_json
+    - Validate required fields
+    - Create LiveMonitorItem, db.session.add(), db.session.commit()
+    - Return new item as JSON
+
+  DELETE /api/live-monitor/items/<int:item_id>
+    - @login_required
+    - Fetch item by id
+    - Verify item.user_id == current user id (ownership check)
+    - db.session.delete(item), db.session.commit()
+    - Return {"deleted": item_id}
+
+  GET /api/live-monitor/events/<int:item_id>
+    - @login_required
+    - Verify item ownership
+    - events = LiveMonitorEvent.query.filter_by(item_id=item_id).order_by(created_at.desc()).all()
+    - Return JSON array
+
+--- STEP 3: Extend "Add to Live Monitor" in preview.html ---
+
+Extend btnLM click handler:
+  - At click time, read the currently rendered insight panel JS object
+  - Collect: symbol, exchange, market, direction, timeframe, zone_high, zone_low,
+             confidence, score, current_price, topAlert.meta
+  - Inject source_tab from the currently active scan tab (TAB_OF_VIEW)
+  - POST all fields to /api/live-monitor/items
+  - On success: show toast "Added to Live Monitor", update left panel
+  - On error: show toast with error message
+
+NOTE: Do NOT remove the existing syncWatchlist() call — keep legacy watchlist behavior.
+      The new "Add to LM" should be additive, not replacing the old system yet.
+
+--- STEP 4: Load Live Monitor Items on Page Load (preview.html) ---
+
+Modify the Live Monitor view initialization:
+  - On view switch to "live" / "watchlist":
+    GET /api/live-monitor/items
+    Render left Active Setups list from DB response
+  - Each card shows: symbol, setup_type, direction, timeframe, zone_high/low, added_at
+  - Each card has a remove button (calls DELETE /api/live-monitor/items/<id>)
+
+--- STEP 5: Extend Mobile "Add to LM" (index.html) ---
+
+Extend toggleWatchlistStar() or add new icon button on mobile scan rows:
+  - On mobile "Add to LM": collect same snapshot fields from row data object
+  - POST to /api/live-monitor/items (same endpoint as desktop)
+  - Show brief toast on mobile
+
+--- STEP 6: Right Panel Render (preview.html — skeleton only in Phase 1) ---
+
+When a Live Monitor item is selected from the left list:
+  - Display hero section with setup info (symbol, direction, zone, added_at)
+  - Placeholder for health score (calculate from zone proximity to current price)
+  - Placeholder for DeepSeek chatbox (wired but may not have API key yet)
+  - Trigger GET /api/live-monitor/events/<item_id> for event timeline
+  - Trigger /api/watchlist/refresh for MTF scan of selected pair
+
+NOTE: Full MTF Matrix, Zone Tracker, Checklist renders = Phase 1B or Phase 2.
+      Phase 1 goal is: data flows correctly in and out of DB.
+
+--- STEP 7: Test and Verify ---
+
+Verify:
+  - Item persists after page refresh (check DB via /api/live-monitor/items)
+  - Item is per-user (User A cannot see User B's items)
+  - Remove item works
+  - Mobile does not break (existing /api/watchlist/* still work)
+  - Token consumption unchanged for scan endpoints
+  - No existing scan tab behavior changes
+
+
+================================================================================
+K. FILES THAT WILL LIKELY NEED CHANGES IN PHASE 1
+================================================================================
+
+1. models.py
+   ADD: LiveMonitorItem class
+   ADD: LiveMonitorEvent class
+   NO changes to existing models
+
+2. main.py
+   ADD: 4 new route handlers (~50-80 lines each)
+     GET  /api/live-monitor/items
+     POST /api/live-monitor/items
+     DELETE /api/live-monitor/items/<id>
+     GET  /api/live-monitor/events/<item_id>
+   ADD: Import LiveMonitorItem, LiveMonitorEvent from models
+   NO changes to existing watchlist endpoints
+   NO changes to existing scan endpoints
+
+3. templates/preview.html
+   MODIFY: btnLM click handler — extend to collect + POST full snapshot
+   MODIFY: Live Monitor view init — load items from DB on view switch
+   ADD: Remove button per item card
+   ADD: Right panel hero section render function
+   ADD: GET /api/live-monitor/items call on page load
+   ADD: DELETE /api/live-monitor/items/<id> call on remove
+   NO changes to existing scan tab renders
+   NO changes to existing insight panel rendering
+   NO changes to existing /api/watchlist/* calls
+
+4. templates/index.html
+   MODIFY: Mobile scan row "Add" logic — extend to POST full snapshot
+   ADD: GET /api/live-monitor/items call to load items
+   ADD: Mobile item card render (minimal, matches existing mobile card style)
+   NO changes to existing page-watchlist structure
+   NO changes to existing tab buttons
+
+5. templates/admin/role.html (POSSIBLY)
+   ADD: "live_monitor" tab to the tab permission selector
+   Or ensure "watchlist" tab is available to "user" role
+   ONLY if tab permission blocking is confirmed as an issue
+
+6. permissions.py (POSSIBLY)
+   ADD: "live_monitor" to role defaults if new tab permission is needed
+   Only if "watchlist" tab permission is not sufficient
+
+--- FILES THAT MUST NOT BE MODIFIED IN PHASE 1 ---
+  - breaker_quality.py
+  - signal_extractor.py
+  - signal_logger.py
+  - outcome_resolver.py
+  - backtest_ob.py
+  - ob_candidates.py
+  - admin.py (admin routes)
+  - All homepage endpoints
+  - All scan endpoints (/api/scan, /api/compressed_scan, etc.)
+  - Existing /api/watchlist/* endpoints
+  - static/service-worker.js
+
+
+================================================================================
+END OF PHASE 0 AUDIT REPORT
+================================================================================
+AUDIT COMPLETE — NO CODE MODIFIED — NO FILES CREATED (EXCEPT THIS REPORT)
+AWAITING PHASE 1 APPROVAL BEFORE ANY IMPLEMENTATION.
+================================================================================

@@ -124,6 +124,15 @@ svg{display:block}
   background:var(--accent);border-radius:2px;box-shadow:0 0 8px rgba(34,211,238,.6);
 }
 .topright{display:flex;align-items:center;gap:6px;width:auto;justify-content:flex-end;flex-shrink:0}
+.hdr-clock{display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:8px;
+  background:var(--bg-card-2);border:1px solid var(--border);
+  font-family:var(--mono);font-size:11.5px;color:var(--text-2);letter-spacing:.3px;font-variant-numeric:tabular-nums}
+.hdr-clock .hc-utc{color:var(--text)}
+.hdr-clock .hc-sep{color:var(--text-3)}
+.hdr-clock .hc-cd{color:var(--accent)}
+.ic-support{color:var(--text-2)}
+.ic-support:hover{color:var(--accent)}
+@media (max-width:1100px){ .hdr-clock .hc-cd, .hdr-clock .hc-sep{display:none} }
 .token-pill{display:flex;align-items:center;gap:7px;padding:6px 11px;border-radius:9px;
   border:1px solid var(--border);background:var(--bg-card);font-size:12px;font-weight:600;
   color:var(--text-2);white-space:nowrap;margin-right:4px}
@@ -220,9 +229,12 @@ svg{display:block}
 .main{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--bg-window)}
 .main-scroll{flex:1;overflow-y:auto;overflow-x:hidden;padding:18px 20px}
 .main-head{display:flex;align-items:flex-start;gap:16px;margin-bottom:18px}
-.main-title{font-size:19px;font-weight:700;display:flex;align-items:center;gap:7px}
+.main-head-tight{align-items:center;margin-bottom:12px;flex-wrap:wrap}
+.main-head-titles{flex:0 0 auto}
+.main-head-tight .head-ctrls{margin-left:auto}
+.main-title{font-size:17px;font-weight:700;display:flex;align-items:center;gap:7px;letter-spacing:.1px}
 .main-title .ico{color:var(--text-3);width:15px;height:15px}
-.main-sub{font-size:12px;color:var(--text-3);margin-top:3px}
+.main-sub{font-size:11px;color:var(--text-3);margin-top:2px}
 .head-ctrls{margin-left:auto;display:flex;align-items:center;gap:10px}
 .seg{display:flex;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:3px}
 .seg button{
@@ -249,9 +261,9 @@ svg{display:block}
 
 /* KPI */
 .kpi-row{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:16px}
-.kpi{background:var(--bg-card);border:1px solid var(--border);border-radius:11px;padding:13px 14px}
+.kpi{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
 .kpi-l{font-size:10px;font-weight:700;letter-spacing:.8px;color:var(--text-3)}
-.kpi-v{font-size:24px;font-weight:700;font-family:var(--mono);margin:8px 0 6px;color:var(--text)}
+.kpi-v{font-size:20px;font-weight:700;font-family:var(--mono);margin:5px 0 3px;color:var(--text);line-height:1.1}
 .kpi-v.g{color:var(--green-2)}
 .kpi-v.r{color:var(--red-2)}
 .kpi-d{font-size:11px;color:var(--text-3);display:flex;align-items:center;gap:5px}
@@ -353,6 +365,13 @@ svg{display:block}
 .kv .k{color:var(--text-3)}
 .kv .v{font-family:var(--mono);color:var(--text);text-align:right}
 .kv .v.teal{color:var(--accent)}
+.kv.kv-pr{align-items:center}
+.pr-range{display:inline-flex;flex-direction:column;align-items:flex-end;line-height:1.1;font-family:var(--mono);font-variant-numeric:tabular-nums}
+.pr-range .pr-v{color:var(--text);font-size:12px}
+.pr-range .pr-a{font-size:11px;line-height:1;margin:1px 0;color:var(--text-3)}
+.pr-range .pr-a.g{color:var(--green-2)}
+.pr-range .pr-a.r2{color:var(--red-2)}
+.pr-range .pr-a.n{color:var(--text-3)}
 .spark{width:104px;flex-shrink:0;position:relative;align-self:stretch;min-height:150px}
 .spark svg{width:100%;height:100%;display:block;border-radius:6px;background:rgba(255,255,255,.015)}
 .spark svg text.sx{fill:var(--text-3);font-size:6px;font-family:var(--mono);paint-order:stroke;stroke:rgba(5,8,14,.75);stroke-width:2px}
@@ -445,6 +464,56 @@ svg{display:block}
 .mcards{display:none}
 .sheet-bd{display:none}
 
+/* Scan presets modal (Queue 15) */
+.preset-panel{position:fixed;top:0;right:0;bottom:0;width:420px;max-width:96vw;
+  background:var(--bg-panel);border-left:1px solid var(--border);
+  transform:translateX(100%);transition:transform .25s ease;z-index:260;
+  box-shadow:-12px 0 36px rgba(0,0,0,.55);display:flex;flex-direction:column}
+.preset-panel.open{transform:translateX(0)}
+.pp-body{flex:1;overflow-y:auto;padding:16px 18px;display:flex;flex-direction:column;gap:16px}
+.pp-section{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:14px}
+.pp-save{display:flex;gap:8px;margin-top:8px}
+.pp-save input{flex:1;background:var(--bg-card-2);border:1px solid var(--border);color:var(--text);
+  border-radius:7px;padding:7px 10px;font-size:12.5px;outline:none}
+.pp-save input:focus{border-color:var(--accent)}
+.pp-list{display:flex;flex-direction:column;gap:8px}
+.pp-row{background:var(--bg-card-2);border:1px solid var(--border);border-radius:9px;padding:10px 12px}
+.pp-row.is-default{border-color:rgba(34,211,238,.4)}
+.pp-row-top{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.pp-row-top .pp-name{font-weight:700;color:var(--text);font-size:13px;flex:1;min-width:0;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pp-row-top input.pp-rename{flex:1;min-width:0;background:var(--bg-card);border:1px solid var(--border);
+  color:var(--text);border-radius:6px;padding:5px 8px;font-size:12.5px;outline:none}
+.pp-default-pill{font-size:9px;font-weight:700;letter-spacing:.5px;color:var(--accent);
+  background:var(--accent-soft);border:1px solid rgba(34,211,238,.32);padding:2px 6px;border-radius:4px}
+.pp-row-actions{display:flex;gap:6px;flex-wrap:wrap}
+.pp-row-actions .btn{padding:5px 10px;font-size:11px}
+
+/* Tutorial overlay (Queue 16) */
+.tut-overlay{position:fixed;inset:0;z-index:400;pointer-events:auto}
+.tut-overlay[hidden]{display:none}
+.tut-mask{position:absolute;inset:0;background:rgba(2,6,14,.7);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}
+.tut-spot{position:absolute;border:2px solid var(--accent);border-radius:10px;
+  box-shadow:0 0 0 9999px rgba(2,6,14,.7);pointer-events:none;transition:all .25s ease;
+  background:transparent}
+.tut-card{position:absolute;width:340px;max-width:92vw;background:var(--bg-card);
+  border:1px solid var(--border-2);border-radius:12px;padding:16px 18px;
+  box-shadow:0 12px 36px rgba(0,0,0,.55);color:var(--text)}
+.tut-step{font-size:10px;font-weight:700;letter-spacing:.6px;color:var(--accent);margin-bottom:6px}
+.tut-title{font-size:15px;font-weight:700;margin-bottom:6px}
+.tut-text{font-size:12.5px;color:var(--text-2);line-height:1.5;margin-bottom:12px}
+.tut-never{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--text-3);margin-bottom:10px;cursor:pointer}
+.tut-never input{width:14px;height:14px;accent-color:var(--accent);cursor:pointer}
+.tut-actions{display:flex;gap:8px;justify-content:flex-end}
+.tut-actions .btn{padding:6px 14px;font-size:12px}
+
+/* Settings (i) info buttons (Queue 16) */
+.info-i{display:inline-flex;width:14px;height:14px;border-radius:50%;border:1px solid var(--border);
+  background:var(--bg-card-2);color:var(--text-3);font-size:9.5px;font-weight:700;
+  align-items:center;justify-content:center;margin-left:6px;cursor:pointer;padding:0;line-height:1}
+.info-i:hover{color:var(--accent);border-color:rgba(34,211,238,.5)}
+.sp-help.collapsed{display:none}
+
 /* Settings drawer (Wave 6) */
 .settings-bd{position:fixed;inset:0;background:rgba(2,6,14,.55);backdrop-filter:blur(2px);
   -webkit-backdrop-filter:blur(2px);opacity:0;pointer-events:none;transition:opacity .25s;z-index:240}
@@ -472,8 +541,11 @@ svg{display:block}
 .sp-tab-sub{font-size:11px;color:var(--text-3);font-weight:400;margin-top:2px;line-height:1.3}
 .sp-tab.active .sp-tab-sub{color:rgba(34,211,238,.6)}
 .sp-content{overflow-y:auto;padding:24px 32px}
-.sp-content-h{font-size:18px;font-weight:700;color:var(--text);margin-bottom:4px}
-.sp-content-sub{font-size:13px;color:var(--text-3);margin-bottom:18px}
+.sp-content-h{font-size:17px;font-weight:700;color:var(--text);margin-bottom:6px;letter-spacing:.2px}
+.sp-content-sub{font-size:12.5px;color:var(--text-3);margin-bottom:18px;line-height:1.45;max-width:640px}
+.sp-group{box-shadow:0 1px 0 rgba(255,255,255,.02) inset}
+.sp-field label{font-weight:500}
+.sp-help{margin-top:2px}
 .sp-section{display:none}
 .sp-section.active{display:block}
 .sp-body{flex:1;overflow-y:auto;padding:14px 16px}  /* legacy — kept for safety */
@@ -525,28 +597,168 @@ svg{display:block}
 .view-soon h2{font-size:20px;font-weight:700;color:var(--text-2)}
 .view-soon p{font-size:13px;color:var(--text-3)}
 
-/* Live Monitor view (Wave 7) */
-.lm-wrap{display:flex;flex-direction:column;gap:16px}
-.lm-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap}
-.lm-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.lm-controls input{background:var(--bg-card-2);border:1px solid var(--border);color:var(--text);
-  border-radius:8px;padding:7px 11px;font-family:var(--mono);font-size:12.5px;min-width:200px;outline:none}
-.lm-controls input:focus{border-color:var(--accent)}
-.lm-controls .btn{padding:8px 13px}
-.lm-controls .btn.spinning svg{animation:lm-spin 1s linear infinite}
+/* Live Monitor view (Phase 2) */
+.main-scroll.lm-active{padding:0;overflow:hidden;display:flex;flex-direction:column}
+.tag-bull{background:rgba(34,197,94,.14);color:var(--green-2);border:1px solid rgba(34,197,94,.3)}
+.tag-bear{background:rgba(239,68,68,.12);color:var(--red-2);border:1px solid rgba(239,68,68,.28)}
+.tag-blue{background:rgba(34,211,238,.1);color:var(--accent);border:1px solid rgba(34,211,238,.25)}
+.tag-muted{background:var(--bg-card-2);color:var(--text-3);border:1px solid var(--border)}
+.seg-label{font-size:10px;font-weight:700;letter-spacing:.8px;color:var(--text-3)}
+.fchip{padding:5px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-card);font-size:11px;font-weight:600;color:var(--text-2);cursor:pointer}
+.fchip.on{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 @keyframes lm-spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
-.lm-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
-.lm-card{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:14px 14px 12px}
-.lm-card:hover{border-color:var(--border-2)}
-.lm-top{display:flex;align-items:center;gap:8px;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--border)}
-.lm-sym{font-family:var(--mono);font-size:14px;font-weight:700;letter-spacing:.3px;color:var(--text)}
-.lm-px{margin-left:auto;font-family:var(--mono);font-size:14px;font-weight:600;color:var(--accent)}
-.lm-x{background:transparent;border:0;color:var(--text-3);cursor:pointer;padding:3px;border-radius:4px;
-  display:flex;align-items:center}
-.lm-x:hover{color:var(--red-2);background:rgba(239,68,68,.08)}
-.lm-stats{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px}
-.lm-kv{display:flex;justify-content:space-between;font-size:11.5px;color:var(--text-3)}
-.lm-kv b{color:var(--text);font-family:var(--mono);font-weight:600}
+.btn.spinning svg{animation:lm-spin 1s linear infinite}
+.lm-outer{display:flex;flex-direction:column;height:100%;overflow:hidden;flex:1}
+.lm-topbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--border);background:var(--bg-panel);flex-shrink:0}
+.lm-topbar-left{display:flex;align-items:center;gap:8px;flex:1;flex-wrap:wrap}
+.lm-topbar-right{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.lm-title{font-size:14px;font-weight:700;letter-spacing:.1px;display:flex;align-items:center;gap:7px}
+.lm-sub{font-size:11px;color:var(--text-3);margin-top:1px}
+.session-pill{display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:8px;border:1px solid rgba(34,211,238,.3);background:rgba(34,211,238,.07);font-size:11px;font-weight:700;color:var(--accent);letter-spacing:.3px}
+.session-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 6px var(--accent);animation:pulse 2s ease-in-out infinite}
+.lm-body{display:grid;grid-template-columns:290px 1fr;flex:1;min-height:0;overflow:hidden;height:0}
+.lm-left{border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0;background:var(--bg-panel)}
+.lm-left-head{display:flex;align-items:center;justify-content:space-between;padding:10px 12px 8px;border-bottom:1px solid var(--border);flex-shrink:0}
+.lm-left-head span{font-size:10px;font-weight:700;letter-spacing:1px;color:var(--text-3)}
+.lm-cards{overflow-y:auto;flex:1;padding:8px}
+.setup-card{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:11px 12px;margin-bottom:7px;cursor:pointer;transition:border-color .18s,background .18s;position:relative}
+.setup-card:hover{border-color:var(--border-2);background:var(--bg-hover)}
+.setup-card.active{border-color:var(--accent);background:rgba(34,211,238,.04)}
+.setup-card.active::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:0 3px 3px 0;background:var(--accent)}
+.sc-top{display:flex;align-items:center;gap:7px;margin-bottom:8px}
+.sc-sym{font-family:var(--mono);font-size:13px;font-weight:700;letter-spacing:.2px;color:var(--text)}
+.sc-tf{font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;background:var(--bg-card-2);color:var(--text-2);font-family:var(--mono);border:1px solid var(--border)}
+.sc-age{margin-left:auto;font-size:10.5px;color:var(--text-3);font-family:var(--mono)}
+.sc-age.live{color:var(--green-2)}
+.sc-dir{font-size:11.5px;font-weight:700;display:flex;align-items:center;gap:4px;margin-bottom:8px}
+.sc-dir.bull{color:var(--green-2)}.sc-dir.bear{color:var(--red-2)}
+.sc-health-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:3px}
+.sc-health-label{font-size:10px;color:var(--text-3);font-weight:600}
+.sc-health-val{font-size:11px;font-weight:700;font-family:var(--mono);color:var(--accent)}
+.sc-health-bar{height:4px;border-radius:2px;background:var(--bg-card-2);overflow:hidden;margin-bottom:8px}
+.sc-health-fill{height:100%;border-radius:2px}
+.sc-health-fill.hi{background:linear-gradient(90deg,#22c55e,#34d399)}
+.sc-health-fill.mid{background:linear-gradient(90deg,var(--accent-teal),var(--accent))}
+.sc-health-fill.lo{background:linear-gradient(90deg,var(--orange),var(--yellow))}
+.sc-bot{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.sc-status{font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px;letter-spacing:.3px}
+.sc-status.watching{background:rgba(139,92,246,.12);color:#a78bfa;border:1px solid rgba(139,92,246,.25)}
+.sc-status.near{background:rgba(251,191,36,.12);color:var(--yellow);border:1px solid rgba(251,191,36,.28)}
+.sc-status.inzone{background:rgba(34,211,238,.1);color:var(--accent);border:1px solid rgba(34,211,238,.25)}
+.sc-status.invalid{background:rgba(239,68,68,.1);color:var(--red-2);border:1px solid rgba(239,68,68,.25)}
+.sc-mtf{display:flex;align-items:center;gap:3px;margin-left:auto}
+.mtf-dot{width:6px;height:6px;border-radius:50%}
+.mtf-dot.strong{background:var(--green-2)}.mtf-dot.warn{background:var(--yellow)}.mtf-dot.none{background:var(--border-2)}
+.lm-right{display:flex;flex-direction:column;min-height:0;height:100%}
+.lm-right-scroll{flex:1;overflow-y:auto;padding:14px 16px 10px;display:flex;flex-direction:column;gap:12px}
+.lm-hero{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
+.lm-hero-top{display:flex;align-items:flex-start;gap:10px;margin-bottom:12px}
+.lm-hero-sym{font-size:20px;font-weight:700;font-family:var(--mono);letter-spacing:.2px;color:var(--text)}
+.lm-hero-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:3px}
+.lm-hero-price{margin-left:auto;text-align:right;flex-shrink:0}
+.lm-hero-price .px{font-size:18px;font-weight:700;font-family:var(--mono);color:var(--accent)}
+.lm-hero-price .px-sub{font-size:10.5px;color:var(--text-3);font-family:var(--mono)}
+.hero-inner{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+.health-col{display:flex;flex-direction:column;gap:0}
+.health-top{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.health-circle{position:relative;width:60px;height:60px;flex-shrink:0}
+.health-circle svg{transform:rotate(-90deg)}
+.health-circle .hc-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.health-circle .hc-val{font-size:16px;font-weight:700;font-family:var(--mono);color:var(--accent)}
+.health-circle .hc-label{font-size:7.5px;font-weight:700;letter-spacing:.5px;color:var(--text-3)}
+.health-bars{flex:1;display:flex;flex-direction:column;gap:5px}
+.hb-row .hb-top{display:flex;justify-content:space-between;color:var(--text-2);margin-bottom:2px;font-size:11px}
+.hb-row .hb-top b{font-family:var(--mono);color:var(--text);font-size:11px}
+.hb-track{height:4px;border-radius:2px;background:var(--bg-card-2);overflow:hidden}
+.hb-fill{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--accent-teal),var(--accent))}
+.hb-fill.warn{background:linear-gradient(90deg,var(--orange),var(--yellow))}
+.ds-chat{display:flex;flex-direction:column;background:var(--bg-panel);border:1px solid rgba(34,211,238,.2);border-radius:10px;overflow:hidden;min-height:0}
+.ds-head{display:flex;align-items:center;gap:7px;padding:7px 10px;background:rgba(34,211,238,.05);border-bottom:1px solid rgba(34,211,238,.15);flex-shrink:0}
+.ds-name{font-size:12px;font-weight:700;color:var(--accent);letter-spacing:.2px}
+.ds-sub{font-size:9.5px;color:var(--text-3);margin-top:0}
+.ds-status{display:flex;align-items:center;gap:4px;font-size:9.5px;color:var(--green-2);font-weight:700;margin-left:auto}
+.ds-status-dot{width:5px;height:5px;border-radius:50%;background:var(--green-2);box-shadow:0 0 5px rgba(34,197,94,.7);animation:pulse 2s ease-in-out infinite}
+.ds-sug{display:flex;flex-wrap:wrap;gap:4px;padding:6px 8px;border-bottom:1px solid rgba(27,38,54,.5);flex-shrink:0}
+.ds-chip{font-size:10px;padding:3px 8px;border-radius:12px;border:1px solid rgba(34,211,238,.2);color:var(--accent);background:rgba(34,211,238,.05);cursor:pointer;transition:background .15s;font-weight:500}
+.ds-chip:hover{background:rgba(34,211,238,.12);border-color:rgba(34,211,238,.4)}
+.ds-msgs{flex:1;overflow-y:auto;padding:7px 9px;display:flex;flex-direction:column;gap:6px;min-height:80px;max-height:140px}
+.ds-msg{display:flex;gap:5px;align-items:flex-start}
+.ds-msg.user{flex-direction:row-reverse}
+.ds-av{width:18px;height:18px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;margin-top:1px}
+.ds-av.ai{background:rgba(34,211,238,.15);border:1px solid rgba(34,211,238,.3);color:var(--accent)}
+.ds-av.user{background:rgba(139,92,246,.15);border:1px solid rgba(139,92,246,.3);color:#a78bfa}
+.ds-bubble{max-width:88%;padding:6px 9px;border-radius:8px;font-size:11px;line-height:1.5}
+.ds-msg.ai .ds-bubble{background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.12);color:var(--text-2);border-radius:3px 8px 8px 8px}
+.ds-msg.user .ds-bubble{background:rgba(139,92,246,.1);border:1px solid rgba(139,92,246,.2);color:var(--text);border-radius:8px 3px 8px 8px}
+.ds-typing{display:flex;gap:3px;align-items:center;padding:8px 10px}
+.ds-typing span{width:4px;height:4px;border-radius:50%;background:var(--accent);opacity:.4;animation:typing 1.2s ease-in-out infinite}
+.ds-typing span:nth-child(2){animation-delay:.2s}
+.ds-typing span:nth-child(3){animation-delay:.4s}
+@keyframes typing{0%,60%,100%{opacity:.2;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
+.ds-input{display:flex;gap:6px;padding:6px 8px;border-top:1px solid var(--border);background:var(--bg-panel);flex-shrink:0}
+.ds-input input{flex:1;background:var(--bg-card-2);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:11px;font-family:inherit;padding:6px 9px;outline:none;transition:border-color .15s}
+.ds-input input:focus{border-color:rgba(34,211,238,.5)}
+.ds-input input::placeholder{color:var(--text-3)}
+.ds-send{width:28px;height:28px;border-radius:7px;background:var(--accent);border:none;color:#04121a;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background .15s}
+.ds-send:hover{background:#38e8ff}
+.ds-send svg{width:12px;height:12px;stroke:#04121a;stroke-width:2.5;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.lm-hero-actions{display:flex;gap:7px}
+.lm-hero-actions .btn{flex:1;justify-content:center;padding:9px 12px}
+.sec-card{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.sec-card-head{display:flex;align-items:center;gap:7px;padding:9px 13px;border-bottom:1px solid var(--border)}
+.sec-card-head .sch-title{font-size:10px;font-weight:700;letter-spacing:1px;color:var(--text-2);flex:1}
+.sec-card-body{padding:11px 13px}
+.mtf-matrix{width:100%;border-collapse:collapse;font-size:11.5px}
+.mtf-matrix th{font-size:9px;font-weight:700;letter-spacing:.6px;color:var(--text-3);padding:5px 8px;text-align:center;border-bottom:1px solid var(--border)}
+.mtf-matrix th:first-child{text-align:left}
+.mtf-matrix td{padding:6px 8px;text-align:center;border-bottom:1px solid rgba(27,38,54,.4);font-weight:600;font-size:11px}
+.mtf-matrix td:first-child{text-align:left;font-size:10px;font-weight:700;letter-spacing:.5px;color:var(--text-3)}
+.mtf-matrix tr:last-child td{border-bottom:0}
+.mc{display:inline-flex;align-items:center;justify-content:center;font-size:10.5px;font-weight:700;padding:2px 6px;border-radius:4px}
+.mc.strong{color:var(--green-2);background:rgba(34,197,94,.1)}
+.mc.yes{color:var(--accent);background:rgba(34,211,238,.08)}
+.mc.warn{color:var(--yellow);background:rgba(251,191,36,.1)}
+.mc.none{color:var(--text-3)}
+.zone-nums{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px}
+.zn-item .zn-l{font-size:10px;font-weight:700;letter-spacing:.6px;color:var(--text-3);margin-bottom:3px}
+.zn-item .zn-v{font-size:13px;font-weight:700;font-family:var(--mono);color:var(--text)}
+.zn-item .zn-v.hi{color:var(--red-2)}.zn-item .zn-v.cur{color:var(--accent)}.zn-item .zn-v.lo{color:var(--green-2)}
+.zone-bar-labels{display:flex;justify-content:space-between;font-size:10px;font-family:var(--mono);color:var(--text-3);margin-bottom:4px}
+.zone-bar-track{height:8px;border-radius:4px;background:var(--bg-card-2);border:1px solid var(--border);position:relative;margin:0 4px 10px}
+.zone-bar-zone{position:absolute;inset:0;background:rgba(34,211,238,.12);border:1px solid rgba(34,211,238,.25);border-radius:3px}
+.zone-bar-price{position:absolute;top:50%;width:12px;height:12px;border-radius:50%;background:var(--accent);border:2px solid var(--bg-card);transform:translate(-50%,-50%);box-shadow:0 0 8px rgba(34,211,238,.7);z-index:2}
+.zone-stats{display:flex;gap:14px}
+.zs-l{font-size:10px;color:var(--text-3);font-weight:600;margin-bottom:2px}
+.zs-v{font-size:12px;font-weight:700;font-family:var(--mono);color:var(--text)}
+.zs-v.good{color:var(--green-2)}
+.checklist{display:flex;flex-direction:column;gap:5px}
+.cl-item{display:flex;align-items:center;gap:9px;font-size:12px;padding:5px 8px;border-radius:7px;background:var(--bg-card-2)}
+.cl-ico{width:16px;height:16px;flex-shrink:0;display:flex;align-items:center;justify-content:center;border-radius:50%}
+.cl-ico.pass{background:rgba(34,197,94,.15);color:var(--green-2)}
+.cl-ico.warn{background:rgba(251,191,36,.12);color:var(--yellow)}
+.cl-ico.pend{background:rgba(139,92,246,.1);color:#a78bfa}
+.cl-label{color:var(--text-2);flex:1}
+.cl-val{font-size:10.5px;font-weight:600;font-family:var(--mono);color:var(--text-3);margin-left:auto}
+.evt-list{display:flex;flex-direction:column}
+.evt-item{display:flex;gap:10px;padding:7px 0;position:relative}
+.evt-item:not(:last-child)::before{content:"";position:absolute;left:7px;top:22px;bottom:-2px;width:1px;background:var(--border)}
+.evt-dot{width:15px;height:15px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;margin-top:1px}
+.evt-dot.agent{background:rgba(34,211,238,.15);border:1px solid rgba(34,211,238,.35)}
+.evt-dot.alert{background:rgba(251,191,36,.12);border:1px solid rgba(251,191,36,.3)}
+.evt-dot.added{background:rgba(139,92,246,.1);border:1px solid rgba(139,92,246,.28)}
+.evt-dot svg{width:7px;height:7px;stroke-width:2.5}
+.evt-dot.agent svg{stroke:var(--accent)}.evt-dot.alert svg{stroke:var(--yellow)}.evt-dot.added svg{stroke:#a78bfa}
+.evt-time{font-size:10px;font-family:var(--mono);color:var(--text-3)}
+.evt-text{font-size:11.5px;color:var(--text-2);line-height:1.4}
+.evt-text b{color:var(--text);font-weight:600}
+.mkt-ctx-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.mct-item{background:var(--bg-card-2);border:1px solid var(--border);border-radius:8px;padding:9px 10px}
+.mct-label{font-size:9.5px;font-weight:700;letter-spacing:.6px;color:var(--text-3);margin-bottom:4px}
+.mct-val{font-size:12px;font-weight:700;font-family:var(--mono);color:var(--text-3)}
+.mct-sub{font-size:10px;color:var(--text-3);margin-top:2px;font-style:italic}
+.lm-ai-toggle{display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:8px;border:1px solid rgba(34,211,238,.3);background:rgba(34,211,238,.07);font-size:11px;font-weight:700;color:var(--accent);cursor:pointer;white-space:nowrap;user-select:none}
+.lm-ai-toggle.off{border-color:var(--border);background:transparent;color:var(--text-3)}
 
 /* Dashboard (Wave 8) */
 .db-wrap{display:flex;flex-direction:column;gap:14px}
@@ -636,9 +848,17 @@ svg{display:block}
   padding:10px 14px 12px;margin-bottom:14px}
 .tab-ctrls[hidden]{display:none}
 .tc-h{font-size:10px;font-weight:700;letter-spacing:1px;color:var(--accent);margin-bottom:10px;text-transform:uppercase}
-.tc-row{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:flex-end}
-.tc-field{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text-3);cursor:help}
+.tc-row{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:flex-start}
+.tc-field{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text-3);cursor:help;max-width:220px}
+.tc-field span.tc-l,.tc-check span.tc-l{display:inline-flex;align-items:center;gap:6px;letter-spacing:.3px}
 .tc-field span{letter-spacing:.3px}
+.tc-info{display:inline-flex;width:13px;height:13px;border-radius:50%;border:1px solid var(--border);
+  align-items:center;justify-content:center;color:var(--text-3);font-size:9px;font-weight:700;
+  background:transparent;cursor:pointer;padding:0;font-family:var(--mono);line-height:1;flex:0 0 auto}
+.tc-info:hover{color:var(--accent);border-color:rgba(34,211,238,.5)}
+.tc-help{font-size:11px;color:var(--text-3);font-weight:400;line-height:1.4;max-width:220px;margin-top:4px;
+  padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:rgba(255,255,255,.02)}
+.tc-help.collapsed{display:none}
 .tc-field select,.tc-field input[type="number"]{
   background:var(--bg-card-2);border:1px solid var(--border);color:var(--text);
   border-radius:7px;padding:6px 9px;font-family:var(--mono);font-size:12px;outline:none;min-width:120px}
@@ -650,6 +870,11 @@ svg{display:block}
 
 /* Per-tab result containers (Wave 14) */
 .tbl-host[hidden]{display:none}
+.tbl-host{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.tbl-host .tbl{min-width:860px}
+.tbl-host::-webkit-scrollbar{height:8px}
+.tbl-host::-webkit-scrollbar-thumb{background:var(--border-2);border-radius:4px}
+.tbl-host::-webkit-scrollbar-track{background:transparent}
 .tab-view{margin-top:4px}
 .tab-view[hidden]{display:none}
 .tab-view .tv-empty{padding:60px 24px;text-align:center;color:var(--text-3);font-size:13px}
@@ -881,12 +1106,17 @@ svg{display:block}
       <a href="#" data-view="backtest">Backtest</a>
       <a href="#" data-view="watchlist">Watchlist</a>
       <a href="#" data-view="tools">Market Tools</a>
-      <a href="#" data-view="settings">Settings</a>
     </nav>
     <div class="topright">
+      <div class="hdr-clock" id="hdrClock" title="Current UTC time">
+        <span class="hc-utc" id="hdrUtcTime">—</span>
+        <span class="hc-sep">·</span>
+        <span class="hc-cd" id="hdrCandleCd" title="Candle close countdown">—</span>
+      </div>
+      <a class="ic-btn ic-support" id="btnSupport" href="https://t.me/MalikZyNi" target="_blank" rel="noopener" title="Contact support" aria-label="Contact support"><svg class="ico" viewBox="0 0 24 24"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></a>
       <div class="token-pill na" id="tokenPill" title="Daily scan tokens — set by admin, resets at midnight UTC">
         <svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg>
-        <span class="tp-label">Scan Tokens</span>
+        <span class="tp-label">Tokens:</span>
         <span class="tp-val" id="tokenVal">…</span>
       </div>
       <button class="ic-btn" id="btnThemeLight" type="button" aria-label="Light mode"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button>
@@ -927,6 +1157,12 @@ svg{display:block}
         <div><div class="nt">Structure / Bias</div><div class="ns">Market structure scan</div></div>
       </div>
 
+      <div class="side-div"></div>
+      <div class="nav-item nav-utility" id="sideSettings" role="button" tabindex="0" title="Open settings drawer">
+        <svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <div><div class="nt">Settings</div><div class="ns">Module config &amp; presets</div></div>
+      </div>
+
       <div class="side-spacer"></div>
       <div class="side-div"></div>
 
@@ -955,12 +1191,10 @@ svg{display:block}
     <!-- ═══ MAIN ═══ -->
     <section class="main">
       <div class="main-scroll">
-        <div class="main-head">
-          <div>
-            <div class="main-title" id="mainTitle">Main Scan
-              <svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>
-            </div>
-            <div class="main-sub" id="mainSub">All instruments across selected markets</div>
+        <div class="main-head main-head-tight">
+          <div class="main-head-titles">
+            <div class="main-title" id="mainTitle" hidden></div>
+            <div class="main-sub" id="mainSub" hidden></div>
           </div>
           <div class="head-ctrls">
             <label class="exch-sel" title="Exchange used for all scans, pairs and charts">
@@ -974,24 +1208,14 @@ svg{display:block}
             </label>
             <div class="seg" id="segMarket"><button data-mkt="spot" class="on">Spot</button><button data-mkt="perpetual">Perpetual</button></div>
             <div class="seg" id="segSignal"><button data-sig="OB" class="on">OB</button><button data-sig="FVG">FVG</button><button data-sig="BREAKER">Breaker</button><button data-sig="FIB">Fib</button><button data-sig="ALL">All</button></div>
-            <button class="btn btn-primary" id="btnScan" type="button"><svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>Scan Now</button>
+            <button class="btn btn-primary" id="btnScan" type="button" hidden><svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>Scan Now</button>
             <button class="btn" id="btnClear" type="button" title="Clear results"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>Clear</button>
-            <button class="btn" id="btnFilters"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg>Filters <span class="badge-n">3</span></button>
           </div>
         </div>
 
         <div class="tab-ctrls" id="tabCtrls" hidden></div>
 
         <div class="kpi-row" id="kpiRow"></div>
-
-        <div class="chips">
-          <div class="chip">Trend: All <span class="x"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></span></div>
-          <div class="chip">HTF Bias: All <span class="x"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></span></div>
-          <div class="chip">Min Confidence: 60% <span class="x"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></span></div>
-          <div class="chip">Zone Type: All <span class="x"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></span></div>
-          <div class="chip">Volatility: Normal+ <span class="x"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></span></div>
-          <span class="chip-clear">Clear all</span>
-        </div>
 
         <div class="tbl-host" id="tblHost">
           <table class="tbl">
@@ -1050,12 +1274,13 @@ svg{display:block}
             <div class="zd">
               <div class="zd-list">
                 <div class="kv"><span class="k">Zone Type</span><span class="v">Order Block (Bullish)</span></div>
-                <div class="kv"><span class="k">Price Range</span><span class="v">61,240.0 – 59,850.0</span></div>
+                <div class="kv kv-pr"><span class="k">Price Range</span><span class="v"><div class="pr-range"><span class="pr-v">61,240.0</span><span class="pr-a g">&uarr;</span><span class="pr-v">59,850.0</span></div></span></div>
                 <div class="kv"><span class="k">Mid Price</span><span class="v">60,545.0</span></div>
                 <div class="kv"><span class="k">Current Price</span><span class="v teal">60,812.3</span></div>
                 <div class="kv"><span class="k">Size (USD)</span><span class="v">~1.39B</span></div>
                 <div class="kv"><span class="k">Touches</span><span class="v">1</span></div>
                 <div class="kv"><span class="k">Age</span><span class="v">1h 12m</span></div>
+                <div class="kv"><span class="k">Bars</span><span class="v">18</span></div>
                 <div class="kv"><span class="k">Timeframe</span><span class="v">4H</span></div>
               </div>
               <div class="spark">
@@ -1126,6 +1351,46 @@ svg{display:block}
     </aside>
 
     <div id="sheetBd" class="sheet-bd"></div>
+
+    <!-- Scan Presets modal (Queue 15) -->
+    <div id="presetBd" class="settings-bd"></div>
+    <aside id="presetPanel" class="preset-panel">
+      <div class="sp-head">
+        <h3>SCAN PRESETS</h3>
+        <button class="ic-btn" id="presetClose" type="button" aria-label="Close"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
+      <div class="pp-body">
+        <div class="pp-section">
+          <div class="sp-group-h">Save current setup</div>
+          <div class="pp-save">
+            <input type="text" id="presetName" placeholder="Preset name (e.g. 4H OB scalp)" maxlength="80">
+            <button class="btn btn-primary" id="presetSaveBtn" type="button">Save</button>
+          </div>
+          <div class="sp-help" style="margin-top:4px">Captures market, exchange, scan modules, timeframe, scope, pairs per cycle and module settings. Applying a preset never spends scan tokens.</div>
+        </div>
+        <div class="pp-section">
+          <div class="sp-group-h">Saved presets <span id="presetCount" style="color:var(--text-3);font-weight:normal;margin-left:4px"></span></div>
+          <div id="presetList" class="pp-list"><div class="row-msg">Loading…</div></div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Tutorial overlay (Queue 16) -->
+    <div id="tutOverlay" class="tut-overlay" hidden>
+      <div class="tut-mask" id="tutMask"></div>
+      <div class="tut-spot" id="tutSpot"></div>
+      <div class="tut-card" id="tutCard">
+        <div class="tut-step" id="tutStep">1 / 1</div>
+        <div class="tut-title" id="tutTitle">—</div>
+        <div class="tut-text" id="tutText">—</div>
+        <label class="tut-never"><input type="checkbox" id="tutNever"><span>Never show again</span></label>
+        <div class="tut-actions">
+          <button class="btn" id="tutBack" type="button">Back</button>
+          <button class="btn" id="tutSkip" type="button">Skip</button>
+          <button class="btn btn-primary" id="tutNext" type="button">Next</button>
+        </div>
+      </div>
+    </div>
 
     <!-- Settings drawer (Wave 6) -->
     <!-- Notifications drawer (Wave 10) -->
@@ -1230,7 +1495,6 @@ svg{display:block}
             <div class="sp-content-h">Order Block</div>
             <div class="sp-content-sub">Demand / supply zones formed before the move that breaks structure. Selecting the <b>OB</b> module on the main page also activates these rules.</div>
             <div class="sp-group">
-              <div class="sp-field"><label><input type="checkbox" data-s="useObModule" checked>Enable OB module<div class="sp-help">Turn OB detection on or off.</div></label></div>
               <div class="sp-field"><label>Approach distance %<div class="sp-help">How close the price has to come to the OB before it's listed (in % of price).</div></label>
                 <input type="number" data-s="obDistancePct" value="2.0" step="0.1" min="0" max="20"></div>
               <div class="sp-field"><label>Min quality (0-100)<div class="sp-help">Hide OBs below this quality score. 0 = show all.</div></label>
@@ -1248,7 +1512,6 @@ svg{display:block}
             <div class="sp-content-h">Fair Value Gap (FVG)</div>
             <div class="sp-content-sub">Inefficiency between three candles. These show up <b>only when the FVG module is selected</b> on the main page (or All).</div>
             <div class="sp-group">
-              <div class="sp-field"><label><input type="checkbox" data-s="useFvgModule" checked>Enable FVG module</label></div>
               <div class="sp-field"><label><input type="checkbox" data-s="useFvgValidOnly">Valid FVGs only<div class="sp-help">Drop "stale" FVGs that have already been fully filled.</div></label></div>
               <div class="sp-field"><label><input type="checkbox" data-s="useFvgState">Filter by state</label></div>
               <div class="sp-field"><label>State<div class="sp-help">all / valid (unfilled) / bag (oversized).</div></label>
@@ -1265,7 +1528,6 @@ svg{display:block}
             <div class="sp-content-h">Breaker Block</div>
             <div class="sp-content-sub">Failed OBs that flipped polarity. Selecting <b>Breaker</b> on the main page activates these.</div>
             <div class="sp-group">
-              <div class="sp-field"><label><input type="checkbox" data-s="useBreakerModule" checked>Enable breaker module</label></div>
               <div class="sp-field"><label>Approach %<input type="number" data-s="breakerApproachPct" value="2.0" step="0.1" min="0" max="20"></label></div>
               <div class="sp-field"><label>Max age (bars)<input type="number" data-s="breakerMaxAge" value="200" min="1" max="2000"></label></div>
               <div class="sp-field"><label><input type="checkbox" data-s="breakerRequireFvg">Require FVG overlap<div class="sp-help">Only show breakers that sit on top of an FVG.</div></label></div>
@@ -1276,7 +1538,6 @@ svg{display:block}
             <div class="sp-content-h">Fibonacci</div>
             <div class="sp-content-sub">Retracement levels from the most recent swing leg. Selecting <b>Fib</b> on the main page activates these.</div>
             <div class="sp-group">
-              <div class="sp-field"><label><input type="checkbox" data-s="useFibModule" checked>Enable Fib module</label></div>
               <div class="sp-field"><label>Timeframe<select data-s="fibTf"><option value="15m">15m</option><option value="1h">1h</option><option value="4h" selected>4h</option><option value="1d">1d</option></select></label></div>
               <div class="sp-field"><label>Tolerance %<input type="number" data-s="fibTolerancePct" value="0.5" step="0.05" min="0" max="5"></label></div>
               <div class="sp-field"><label>ATR multiplier<input type="number" data-s="fibAtrMultiplier" value="0.5" step="0.05" min="0" max="5"></label></div>
@@ -1611,19 +1872,23 @@ svg{display:block}
     ],
     compressed: [
       { type:"select", key:"tf", label:"Timeframe",
-        options:[["15m","15m"],["1h","1h"],["4h","4h"],["1d","1d"]] },
+        options:[["15m","15m"],["1h","1h"],["4h","4h"],["1d","1d"]],
+        help:"Candle interval used to detect compression boxes." },
       { type:"num", key:"lookback", label:"Lookback bars", help:"Window of candles to measure compression." },
       { type:"num", key:"maxPct", label:"Max range %", step:0.1, help:"Maximum high-low range (in %) within the window. Smaller = tighter compression." },
     ],
     trending: [
       { type:"select", key:"tf", label:"Timeframe",
-        options:[["15m","15m"],["1h","1h"],["4h","4h"],["1d","1d"]] },
+        options:[["15m","15m"],["1h","1h"],["4h","4h"],["1d","1d"]],
+        help:"Candle interval used to evaluate the trend / momentum." },
       { type:"select", key:"mode", label:"Direction",
-        options:[["bullish","Bullish"],["bearish","Bearish"],["high_volume","High volume"]] },
+        options:[["bullish","Bullish"],["bearish","Bearish"],["high_volume","High volume"]],
+        help:"Bullish/Bearish movers by % change, or High Volume by quote-volume surge." },
     ],
     bias: [
       { type:"select", key:"tf", label:"Timeframe",
-        options:[["1h","1H"],["4h","4H"],["6h","6H"],["12h","12H"],["1d","1D"]] },
+        options:[["1h","1H"],["4h","4H"],["6h","6H"],["12h","12H"],["1d","1D"]],
+        help:"Candle interval used to detect bias-shift rejections." },
       { type:"select", key:"mode", label:"Mode", rerender:true,
         options:[["normal","Normal"],["expert","Expert"]],
         help:"Normal uses tuned presets. Expert exposes the raw candle-quality controls below." },
@@ -1684,6 +1949,15 @@ svg{display:block}
   function _ctrlField(mode,f){
     var v=_ctrlRead(mode,f);
     var help = f.help?(' title="'+esc(f.help)+'"'):'';
+    /* Reusable (i) info chip + hidden helper text. */
+    function _ii(){
+      if(!f.help) return "";
+      return ' <button type="button" class="info-i tc-info" data-helpfor="'+esc(f.key)+'" title="What does this do?">i</button>';
+    }
+    function _hh(){
+      if(!f.help) return "";
+      return '<div class="tc-help collapsed" data-helpid="'+esc(f.key)+'">'+esc(f.help)+'</div>';
+    }
     if(f.type==="reset"){
       return '<button class="btn" id="tcReset" type="button" title="Reset ATH/ATL cursor to start"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>Reset cursor</button>';
     }
@@ -1692,14 +1966,14 @@ svg{display:block}
         var val=o[0],lbl=o[1];
         return '<option value="'+esc(val)+'"'+(String(v)===String(val)?" selected":"")+'>'+esc(lbl)+'</option>';
       }).join("");
-      return '<label class="tc-field"'+help+'><span>'+esc(f.label)+'</span><select data-opt="'+esc(f.key)+'">'+opts+'</select></label>';
+      return '<label class="tc-field"'+help+'><span class="tc-l">'+esc(f.label)+_ii()+'</span><select data-opt="'+esc(f.key)+'">'+opts+'</select>'+_hh()+'</label>';
     }
     if(f.type==="num"){
       var step=f.step!=null?(' step="'+f.step+'"'):"";
-      return '<label class="tc-field"'+help+'><span>'+esc(f.label)+'</span><input type="number" data-opt="'+esc(f.key)+'"'+step+' value="'+esc(v)+'"></label>';
+      return '<label class="tc-field"'+help+'><span class="tc-l">'+esc(f.label)+_ii()+'</span><input type="number" data-opt="'+esc(f.key)+'"'+step+' value="'+esc(v)+'">'+_hh()+'</label>';
     }
     if(f.type==="check"){
-      return '<label class="tc-check"'+help+'><input type="checkbox" data-opt="'+esc(f.key)+'"'+(v?" checked":"")+'><span>'+esc(f.label)+'</span></label>';
+      return '<label class="tc-check"'+help+'><input type="checkbox" data-opt="'+esc(f.key)+'"'+(v?" checked":"")+'><span class="tc-l">'+esc(f.label)+_ii()+'</span>'+_hh()+'</label>';
     }
     return "";
   }
@@ -1726,6 +2000,16 @@ svg{display:block}
         if(f.rerender) _renderTabCtrls();   // e.g. toggling Normal/Expert
       });
     });
+    /* Inline (i) info buttons. Clicking must NOT toggle the host label
+       (would focus the control) or mark results stale. */
+    [].forEach.call(host.querySelectorAll(".tc-info"),function(btn){
+      btn.addEventListener("click",function(e){
+        e.preventDefault(); e.stopPropagation();
+        var k = btn.getAttribute("data-helpfor");
+        var help = host.querySelector('.tc-help[data-helpid="'+(k||"").replace(/"/g,'\\"')+'"]');
+        if(help) help.classList.toggle("collapsed");
+      });
+    });
     var rst=E("tcReset");
     if(rst) rst.addEventListener("click",function(){
       if(ST.mode!=="ath_atl") return;
@@ -1738,36 +2022,65 @@ svg{display:block}
     });
   }
 
-  function _modulesForSignal(){
-    if(ST.signal === "ALL"){
-      return {
-        useObModule:      ST.settings.useObModule      !== false,
-        useFvgModule:     ST.settings.useFvgModule     !== false,
-        useBreakerModule: ST.settings.useBreakerModule !== false,
-        useFibModule:     ST.settings.useFibModule     !== false,
-      };
+  /* Module multi-select (Queue 11). ST.signal is either "ALL" or a
+     comma-joined uppercase list like "OB,FIB". An empty selection
+     auto-promotes to "ALL". */
+  var _SIG_ALL = ["OB","FVG","BREAKER","FIB"];
+  function _activeSignals(){
+    var v = String(ST.signal||"").toUpperCase().trim();
+    if(!v || v==="ALL") return _SIG_ALL.slice();
+    return v.split(",").map(function(x){return x.trim();}).filter(function(x){return _SIG_ALL.indexOf(x)>=0;});
+  }
+  function _isAllSignals(list){
+    list = list || _activeSignals();
+    return _SIG_ALL.every(function(k){return list.indexOf(k)>=0;});
+  }
+  function _setSignals(list){
+    var arr = (list||[]).filter(function(x){return _SIG_ALL.indexOf(x)>=0;});
+    if(!arr.length || _SIG_ALL.every(function(k){return arr.indexOf(k)>=0;})){
+      ST.signal = "ALL";
+    } else {
+      ST.signal = arr.join(",");
     }
+    _ls_set("zyni-signal", ST.signal);
+    _syncSegSignalChips();
+    _markStale();
+  }
+  function _syncSegSignalChips(){
+    var active = _activeSignals();
+    var allOn  = _isAllSignals(active);
+    [].forEach.call(document.querySelectorAll('#segSignal button[data-sig]'),function(b){
+      var key = b.getAttribute('data-sig');
+      var on  = (key==="ALL") ? allOn : (active.indexOf(key)>=0);
+      b.classList.toggle('on', on);
+    });
+  }
+  function _modulesForSignal(){
+    var active = _activeSignals();
     return {
-      useObModule:      ST.signal === "OB",
-      useFvgModule:     ST.signal === "FVG",
-      useBreakerModule: ST.signal === "BREAKER",
-      useFibModule:     ST.signal === "FIB",
+      useObModule:      active.indexOf("OB")>=0,
+      useFvgModule:     active.indexOf("FVG")>=0,
+      useBreakerModule: active.indexOf("BREAKER")>=0,
+      useFibModule:     active.indexOf("FIB")>=0,
     };
   }
   function _signalMatches(setup, signal){
     setup = String(setup||"").toUpperCase();
-    signal = String(signal||"").toUpperCase();
-    if(signal==="OB")       return setup.indexOf("OB")===0;
-    if(signal==="FVG")      return setup==="FVG";
-    if(signal==="BREAKER")  return setup.indexOf("BREAKER")===0;
-    if(signal==="FIB")      return setup.indexOf("FIB")===0;
-    return true;
+    var active = _activeSignals();
+    if(active.length === _SIG_ALL.length) return true;
+    return active.some(function(s){
+      if(s==="OB")       return setup.indexOf("OB")===0;
+      if(s==="FVG")      return setup==="FVG";
+      if(s==="BREAKER")  return setup.indexOf("BREAKER")===0;
+      if(s==="FIB")      return setup.indexOf("FIB")===0;
+      return false;
+    });
   }
 
   function buildPayloadForMode(){
     var market=ST.market, tf="4h";
     if(ST.mode==="main"){
-      var sig=ST.signal, checked = sig==="ALL"?["OB","FVG","BREAKER","FIB"]:[sig];
+      var checked = _activeSignals();                // OR-list, max 4
       var watch=Object.keys(ST.stars).filter(function(s){return ST.stars[s];});
       var sMode = ST.scanMode||"market";
       // If user picked "selected" but starred nothing, fall back to market scope.
@@ -1779,7 +2092,8 @@ svg{display:block}
         symbols: sMode==="selected" ? watch : [],
         roundRobin:ST.roundRobin, pairsPerCycle:ST.pairsPerCycle,
         filterMode:"match", checkedSignals:checked,
-        requiredSignals: (sig!=="ALL" ? [sig] : [])
+        // OR logic: never require all simultaneously.
+        requiredSignals: []
       }};
     }
     if(ST.mode==="compressed"){
@@ -2034,7 +2348,7 @@ svg{display:block}
         renderAll();
         _saveTabData();
         _clearStale();
-        if(modeAtScan === "main" && !ST.results.length) E("mainSub").textContent="Live — no results for "+MODE_LABEL[modeAtScan];
+        if(modeAtScan === "main" && !ST.results.length && E("mainSub")) E("mainSub").textContent="Live — no results for "+MODE_LABEL[modeAtScan];
       })
       .catch(function(e){
         if(e && e.tokenLimit){
@@ -2371,6 +2685,7 @@ svg{display:block}
     }
     renderInsightForTab(m);
     renderMeta();
+    _refreshFooterButtons();
   }
 
   /* ── tab-aware right insight panel ── */
@@ -2424,13 +2739,131 @@ svg{display:block}
     if(!sym) return;
     ST.stars[sym] = true; syncWatchlist();
   }
-  function _insFoot(sym, marketHint){
-    return '<div class="ti-foot" style="display:flex;gap:8px;margin-top:14px">'+
-      '<button class="btn" type="button" data-chart="'+esc(sym)+'" data-chart-mkt="'+esc(marketHint||ST.market)+'">'+
-        '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 4-6"/></svg>View Chart</button>'+
-      '<button class="btn btn-primary" type="button" data-add-lm="'+esc(sym)+'">'+
-        '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add to Live Monitor</button>'+
-    '</div>';
+  /* In-body action buttons are removed (Queue 2). The shared fixed footer
+     (#btnChart + #btnLM) handles the actions for every tab. _insFoot() kept
+     as a stub so callers don't crash. */
+  function _insFoot(sym, marketHint){ return ""; }
+
+  /* Active row across any tab (Queue 2 helpers) */
+  function getActiveInsightRow(){
+    var m = ST.mode;
+    if(m === "main") return ST.results[ST.sel]||null;
+    var td = ST.tabData && ST.tabData[m];
+    if(!td) return null;
+    var arr = td.results || td.items || [];
+    var sel = (typeof td.sel==="number") ? td.sel : -1;
+    return (sel>=0 && sel<arr.length) ? arr[sel] : null;
+  }
+  function _activeRowSymbol(r){ if(!r) return ""; return String(r.symbol||r.pair||""); }
+  function _activeRowMarket(r){ if(!r) return ST.market; return r.market||r.marketType||ST.market; }
+  function openActiveChart(){
+    var r = getActiveInsightRow(); if(!r) return;
+    var sym = _activeRowSymbol(r); if(!sym) return;
+    var mkt = _activeRowMarket(r);
+    var tf  = (r.topAlert && r.topAlert.timeframe) || r.timeframe || ST.settings.tf || "4h";
+    if(typeof openChartModal === "function"){
+      try{ openChartModal(sym, mkt, ST.exchange, tf); return; }catch(_){}
+    }
+    // Fallback: open TradingView in a new tab
+    try{ window.open(_tvUrl(sym, mkt), "_blank", "noopener"); }catch(_){}
+  }
+  function addActiveToLiveMonitor(btn){
+    var r = getActiveInsightRow(); if(!r) return;
+    var sym = _activeRowSymbol(r); if(!sym) return;
+    // Legacy: keep symbol in watchlist stars (old /api/watchlist/register flow)
+    ST.stars[sym]=true; syncWatchlist();
+    // Phase 1: also POST full setup snapshot to /api/live-monitor/items
+    var a   = r.topAlert || {};
+    var m   = a.meta    || {};
+    var z   = (typeof zoneOf==="function") ? (zoneOf(a)||{}) : {};
+    var dir = a.direction || (typeof dirOf==="function" ? (dirOf(r)==="bull"?"bullish":dirOf(r)==="bear"?"bearish":"") : "") || "";
+    var tf  = a.timeframe || r.timeframe || ST.settings.tf || "4h";
+    var src = ST.mode || "main";
+    var btnOrig = btn ? btn.innerHTML : null;
+    if(btn){ btn.disabled=true; btn.innerHTML='<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>Adding…'; }
+    var payload = {
+      symbol:      sym,
+      exchange:    r.exchange || ST.exchange || "binance",
+      market:      _activeRowMarket(r) || ST.market || "perpetual",
+      source_tab:  src,
+      setup_type:  a.setup || r.setup_type || "",
+      direction:   dir,
+      timeframe:   tf,
+      zone_high:   z.hi != null ? z.hi : (m.obTop    || m.fvgTop    || m.breakerTop    || null),
+      zone_low:    z.lo != null ? z.lo : (m.obBottom || m.fvgBottom || m.breakerBottom || null),
+      confidence:  +r.score || 0,
+      score:       +r.score || 0,
+      current_price: r.price != null ? r.price : null,
+      topAlert:    a,
+      meta:        m,
+      snapshot: {
+        row:        r,
+        topAlert:   a,
+        meta:       m,
+        addedFrom:  src,
+        timeframe_policy: {
+          visible_analysis_timeframes: ["15m","30m","1h","4h","1d"],
+          bias_min_timeframe:          "1h",
+          hidden_execution_timeframe:  "5m",
+          source_timeframe:            tf,
+          source_tab:                  src
+        }
+      },
+      selected_timeframes: ["15m","30m","1h","4h","1d"],
+      selected_modules:    ["OB","FVG","FIB","Bias"],
+      alert_settings:      {}
+    };
+    fetch("/api/live-monitor/items",{
+      method:"POST", credentials:"same-origin",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(payload)
+    }).then(function(res){ return res.json(); }).then(function(d){
+      if(btn){
+        btn.disabled=false;
+        btn.innerHTML = (d && d.ok)
+          ? '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>Added'
+          : '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>Error';
+        setTimeout(function(){ if(btnOrig) btn.innerHTML=btnOrig; }, 1800);
+      }
+      if(d && d.ok){ loadLiveMonitorItems(); }
+    }).catch(function(){
+      if(btn){
+        btn.disabled=false;
+        btn.innerHTML='<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>Error';
+        setTimeout(function(){ if(btnOrig) btn.innerHTML=btnOrig; }, 1800);
+      }
+    });
+  }
+  // ── Phase 1: Live Monitor DB-backed items ──────────────────────────────────
+  var liveMonitorItems = [];   // in-memory state for current user's LM items
+
+  function loadLiveMonitorItems(){
+    if(location.protocol==="file:") return;
+    fetch("/api/live-monitor/items?active_only=1",{credentials:"same-origin"})
+      .then(function(res){ if(!res.ok) throw new Error("HTTP "+res.status); return res.json(); })
+      .then(function(d){
+        liveMonitorItems = (d && d.items) ? d.items : [];
+        if(typeof _lmRenderCards === "function") _lmRenderCards();
+      })
+      .catch(function(){ /* silently keep last known state */ });
+  }
+
+  function removeLiveMonitorItem(itemId){
+    if(!itemId) return;
+    fetch("/api/live-monitor/items/"+itemId,{
+      method:"DELETE", credentials:"same-origin"
+    })
+    .then(function(res){ return res.json(); })
+    .then(function(d){ if(d && d.ok){ loadLiveMonitorItems(); } })
+    .catch(function(){ /* ignore */ });
+  }
+  // ── end Phase 1 Live Monitor helpers ───────────────────────────────────────
+
+  function _refreshFooterButtons(){
+    var r = getActiveInsightRow();
+    var ok = !!r;
+    var c = E("btnChart"); if(c){ c.classList.toggle("disabled", !ok); c.setAttribute("aria-disabled", ok?"false":"true"); }
+    var l = E("btnLM"); if(l){ l.disabled = !ok; l.classList.toggle("disabled", !ok); }
   }
   function _ti(k,v){return '<div class="ti-row"><span class="k">'+esc(k)+'</span><span class="v">'+v+'</span></div>';}
   function _tiB(k,html){return '<div class="ti-row"><span class="k">'+esc(k)+'</span><span class="v">'+html+'</span></div>';}
@@ -2953,8 +3386,8 @@ svg{display:block}
       tEl.textContent = MODE_LABEL[ST.mode]||"Main Scan";
       if(ico) tEl.appendChild(document.createTextNode(" ")), tEl.appendChild(ico);
     }
-    E("mainSub").textContent = MODE_SUB[ST.mode]||"All instruments across selected markets";
-    E("lastScan").textContent=ST.scannedAt?rel(ST.scannedAt):"—";
+    var sEl=E("mainSub"); if(sEl) sEl.textContent = MODE_SUB[ST.mode]||"All instruments across selected markets";
+    if(E("lastScan")) E("lastScan").textContent=ST.scannedAt?rel(ST.scannedAt):"—";
     var n=ST.results.length;
     var page=ST.page||1;
     var start = n ? ((page-1)*ST.pairsPerCycle + 1) : 0;
@@ -3128,7 +3561,7 @@ svg{display:block}
     var rrV=r.rr!=null?(+r.rr).toFixed(2):"—";
     var ztype=setupLabel(a)+(d!=="neutral"?(" ("+(d==="bull"?"Bullish":"Bearish")+")"):"");
     var mid=z&&!z.single?(z.hi+z.lo)/2:(z?z.hi:null);
-    var touches=m.obTouches!=null?m.obTouches : m.fvgTouches!=null?m.fvgTouches : null;
+    var touches = (m.obTouches!=null?m.obTouches : (m.touches!=null?m.touches : (m.touchCount!=null?m.touchCount : (m.fvgTouches!=null?m.fvgTouches : (m.breakerTouches!=null?m.breakerTouches : (r.touches!=null?r.touches : null))))));
     var cb=r.confBreakdown||{};
     var zoneStr=z?(z.single?fmt(z.hi):fmt(z.hi)+" – "+fmt(z.lo)):"—";
 
@@ -3336,13 +3769,39 @@ svg{display:block}
       '<div class="ins-head"><h3>SETUP INSIGHT</h3>'+
       '<button class="ic-btn" type="button"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>';
     var r=ST.results[ST.sel];
-    if(!r){box.innerHTML=head+'<div class="row-msg">Select a setup to see details.</div>';setFoot(null);return;}
+    if(!r){
+      /* Placeholder that mirrors the runtime layout (vertical Price Range,
+         Bars row, etc.) so the panel doesn't look broken before the first
+         scan or before the user clicks a row. Sample values only. */
+      box.innerHTML = head+
+        '<div class="ins-title">'+IC.starOff+
+          '<span class="ins-sym">BTCUSDT</span>'+
+          '<span class="tag mkt">Perp</span>'+
+          '<span class="tag bull">Bullish</span></div>'+
+        '<div class="ins-meta"><span>Main Scan • OB</span><span>Sample preview</span></div>'+
+        '<div class="sec"><div class="sec-h">ZONE DETAILS <svg class="ico" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></div>'+
+          '<div class="sec-b"><div class="zd"><div class="zd-list">'+
+            '<div class="kv"><span class="k">Zone Type</span><span class="v">Order Block (Bullish)</span></div>'+
+            '<div class="kv kv-pr"><span class="k">Price Range</span><span class="v"><div class="pr-range"><span class="pr-v">61,240.0</span><span class="pr-a g">&uarr;</span><span class="pr-v">59,850.0</span></div></span></div>'+
+            '<div class="kv"><span class="k">Mid Price</span><span class="v">60,545.0</span></div>'+
+            '<div class="kv"><span class="k">Current Price</span><span class="v teal">60,812.3</span></div>'+
+            '<div class="kv"><span class="k">Size (USD)</span><span class="v">~1.39B</span></div>'+
+            '<div class="kv"><span class="k">Touches</span><span class="v">1</span></div>'+
+            '<div class="kv"><span class="k">Age</span><span class="v">1h 12m</span></div>'+
+            '<div class="kv"><span class="k">Bars</span><span class="v">18</span></div>'+
+            '<div class="kv"><span class="k">Timeframe</span><span class="v">4H</span></div>'+
+          '</div></div></div></div>'+
+        '<div class="row-msg" style="margin-top:14px;text-align:center;color:var(--text-3);font-size:11.5px">Select a setup from the table to see real data.</div>';
+      var closeBtn = box.querySelector(".ic-btn");
+      if(closeBtn) closeBtn.addEventListener("click", function(){ /* no-op when no selection */ });
+      setFoot(null); return;
+    }
     var a=r.topAlert||{}, z=zoneOf(a), d=dirOf(r), m=a.meta||{};
     var dTag=d==="bull"?'<span class="tag bull">Bullish</span>':d==="bear"?'<span class="tag bear">Bearish</span>':'<span class="tag neutral">Neutral</span>';
     var mk=ST.market==="perpetual"?"Perp":"Spot";
     var ztype=setupLabel(a)+(d!=="neutral"?(" ("+(d==="bull"?"Bullish":"Bearish")+")"):"");
     var mid = z&&!z.single ? (z.hi+z.lo)/2 : (z?z.hi:null);
-    var touches = m.obTouches!=null?m.obTouches : m.fvgTouches!=null?m.fvgTouches : null;
+    var touches = (m.obTouches!=null?m.obTouches : (m.touches!=null?m.touches : (m.touchCount!=null?m.touchCount : (m.fvgTouches!=null?m.fvgTouches : (m.breakerTouches!=null?m.breakerTouches : (r.touches!=null?r.touches : null))))));
     var sc=+r.score||0;
     var cb = r.confBreakdown||{};
     box.innerHTML=head+
@@ -3353,12 +3812,13 @@ svg{display:block}
       '<div class="sec"><div class="sec-h">ZONE DETAILS <svg class="ico" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></div>'+
         '<div class="sec-b"><div class="zd"><div class="zd-list">'+
           kv("Zone Type",ztype)+
-          kv("Price Range",z?(z.single?fmt(z.hi):fmt(z.hi)+" – "+fmt(z.lo)):"—")+
+          kvHtml("Price Range", _priceRangeHtml(z, d), "kv-pr")+
           kv("Mid Price",mid!=null?fmt(mid):"—")+
           kv("Current Price",r.price!=null?fmt(r.price):"—",true)+
           kv("Size (USD)",r.zoneSizeText||"—")+
           kv("Touches",touches!=null?touches:"—")+
           kv("Age",r.ageText||ageOf(a))+
+          kv("Bars", (m.obAgeBars!=null?m.obAgeBars : (m.ageBars!=null?m.ageBars : (m.bars!=null?m.bars : (r.ageBars!=null?r.ageBars : (m.fvgAge!=null?m.fvgAge : (m.breakerAge!=null?m.breakerAge : "—")))))))+
           kv("Timeframe",(a.timeframe||r.timeframe||"—"))+
         '</div><div class="spark">'+sparkSVG(r,z)+'</div></div></div></div>'+
       '<div class="sec"><div class="sec-h">CONFIDENCE</div><div class="sec-b"><div class="conf-wrap">'+
@@ -3383,6 +3843,19 @@ svg{display:block}
     setFoot(r);
   }
   function kv(k,v,teal){return '<div class="kv"><span class="k">'+k+'</span><span class="v'+(teal?" teal":"")+'">'+esc(v)+'</span></div>';}
+  /* HTML value variant for vertical price range (Queue 13) */
+  function kvHtml(k,htmlV,extraCls){return '<div class="kv'+(extraCls?(' '+extraCls):'')+'"><span class="k">'+k+'</span><span class="v">'+htmlV+'</span></div>';}
+  function _priceRangeHtml(z, dir){
+    if(!z) return '<span style="color:var(--text-3)">—</span>';
+    if(z.single) return esc(fmt(z.hi));
+    var arrowCls = dir==="bull" ? "g" : dir==="bear" ? "r2" : "n";
+    var arrow = dir==="bear" ? "↓" : "↑";
+    return '<div class="pr-range">'+
+      '<span class="pr-v">'+esc(fmt(z.hi))+'</span>'+
+      '<span class="pr-a '+arrowCls+'">'+arrow+'</span>'+
+      '<span class="pr-v">'+esc(fmt(z.lo))+'</span>'+
+    '</div>';
+  }
   function setFoot(r){
     var c=E("btnChart");
     if(r){var isPerp=((r.market||(ST.market==="perpetual"?"Perp":"Spot"))==="Perp");
@@ -3500,11 +3973,26 @@ svg{display:block}
     });
   }
   _syncSegTo("segMarket","data-mkt",ST.market);
-  _syncSegTo("segSignal","data-sig",ST.signal);
-  // Market / signal are payload-only; changing them re-renders but never spends
-  // a scan token. The user applies the new params with Scan Now.
+  _syncSegSignalChips();
+  // Market is payload-only — changing it re-renders but doesn't spend a token.
   seg("segMarket","data-mkt","market",renderAll);
-  seg("segSignal","data-sig","signal",renderAll);
+  /* Signal segment is multi-select with OR logic (Queue 11) */
+  var _segSig = E("segSignal");
+  if(_segSig) _segSig.addEventListener("click", function(e){
+    var b = e.target.closest("button[data-sig]"); if(!b) return;
+    var key = b.getAttribute("data-sig");
+    var active = _activeSignals();
+    if(key === "ALL"){
+      // Toggle: if everything is on, going to "OB only"; if not all, switch to ALL.
+      _setSignals(_isAllSignals(active) ? ["OB"] : _SIG_ALL.slice());
+    } else {
+      // toggle this module in/out of the set
+      var i = active.indexOf(key);
+      if(i>=0) active.splice(i,1); else active.push(key);
+      _setSignals(active);
+    }
+    renderAll();
+  });
   /* exchange selector — persisted, payload-only (applied on next Scan Now) */
   (function _initExch(){
     var el=E("exchSelect"); if(!el) return;
@@ -3544,7 +4032,10 @@ svg{display:block}
       renderAll();           // show whatever was previously cached for this tab
     });
   });
-  E("btnFilters").addEventListener("click",scan);
+  /* Settings sidebar entry (Queue 8) */
+  if(E("sideSettings")) E("sideSettings").addEventListener("click", function(){ openSettings(); });
+
+  if(E("btnFilters")) E("btnFilters").addEventListener("click",scan);
   if(E("btnScan"))  E("btnScan").addEventListener("click",scan);
   if(E("btnScanNow")) E("btnScanNow").addEventListener("click",scan);
   /* token-limit modal close bindings (Task 4) */
@@ -3599,19 +4090,12 @@ svg{display:block}
   // Reflect persisted state on load (also updates the status label)
   _setAutoScan(ST.auto);
   E("arToggle").addEventListener("click",function(){ _setAutoScan(!ST.auto); });
-  E("btnLM").addEventListener("click",function(){
-    var r=ST.results[ST.sel]; if(!r)return;
-    // also add to watchlist server-side
-    ST.stars[r.symbol]=true; syncWatchlist();
-    var o=this.innerHTML; this.innerHTML='<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>Added';
-    var self=this; setTimeout(function(){self.innerHTML=o;},1600);
-  });
-  /* Main "View Chart" — open the in-app chart modal instead of a new tab (Task 8) */
+  /* Fixed footer buttons — work for any active tab's selected row (Queue 2) */
+  E("btnLM").addEventListener("click",function(){ addActiveToLiveMonitor(this); });
   if(E("btnChart")) E("btnChart").addEventListener("click",function(e){
     e.preventDefault();
-    var r=ST.results[ST.sel]; if(!r) return;
-    var tf=(r.topAlert&&r.topAlert.timeframe)||r.timeframe||ST.settings.tf||"4h";
-    openChartModal(r.symbol, r.market||ST.market, ST.exchange, tf);
+    if(this.classList.contains("disabled")) return;
+    openActiveChart();
   });
   /* chart modal controls (Task 8) */
   if(E("cmClose")) E("cmClose").addEventListener("click",closeChartModal);
@@ -3726,6 +4210,7 @@ svg{display:block}
     if(v==="live"||v==="watchlist"){
       renderLiveMonitorInto(scroll);
       startLiveMonitorPolling();
+      loadLiveMonitorItems();   // Phase 1: load DB-backed items
       return;
     }
     if(v==="dashboard"){
@@ -3743,44 +4228,565 @@ svg{display:block}
       '<p>This view is not yet implemented.</p></div>';
   }
 
-  /* ── Live Monitor (Wave 7) ── */
-  var _lmPollT=null, _lmCache={};
+  /* ── Live Monitor (Phase 2) ── */
+  var _lmPollT=null, _lmCache={}, _lmSelItem=null, _lmActiveFilter="all";
+  var _lmTfState=["15m","30m","1h","4h","1d"], _lmModuleState=["OB","FVG","FIB","Bias"];
+  var _lmRefreshState="manual", _lmAiPreview=true;
+
   function renderLiveMonitorInto(scroll){
+    scroll.classList.add("lm-active");
     scroll.innerHTML=
-      '<div class="lm-wrap">'+
-        '<div class="lm-head">'+
-          '<div><div class="main-title">Live Monitor</div>'+
-          '<div class="main-sub">Watchlist pairs with live order-flow cache (polls every 5s)</div></div>'+
-          '<div class="lm-controls">'+
-            '<input type="text" id="lmAdd" placeholder="Add pair, e.g. BTCUSDT" autocomplete="off">'+
-            '<button class="btn" id="lmAddBtn" type="button">'+
-              '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add</button>'+
-            '<button class="btn" id="lmRefresh" type="button">'+
-              '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>Refresh All</button>'+
+      '<div class="lm-outer">'+
+        '<div class="lm-topbar">'+
+          '<div class="lm-topbar-left">'+
+            '<div style="margin-right:6px">'+
+              '<div class="lm-title"><svg class="ico" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Live Monitor</div>'+
+              '<div class="lm-sub" id="lmSubLine">Loading…</div>'+
+            '</div>'+
+            '<div class="session-pill"><div class="session-dot"></div><span id="lmSession">—</span></div>'+
+            '<div style="display:flex;align-items:center;gap:5px">'+
+              '<span class="seg-label">TF</span>'+
+              '<div class="seg" id="lmTfSeg">'+
+                '<button data-lmtf="15m" class="on">15m</button>'+
+                '<button data-lmtf="30m" class="on">30m</button>'+
+                '<button data-lmtf="1h" class="on">1H</button>'+
+                '<button data-lmtf="4h" class="on">4H</button>'+
+                '<button data-lmtf="1d" class="on">1D</button>'+
+              '</div>'+
+              '<span style="font-size:9.5px;font-weight:700;padding:2px 7px;border-radius:4px;background:rgba(139,92,246,.1);color:#a78bfa;border:1px solid rgba(139,92,246,.25);letter-spacing:.3px;white-space:nowrap" title="5m is hidden execution timeframe — future AI Agent only">Exec: Auto 5m</span>'+
+              '<span style="font-size:9.5px;font-weight:700;padding:2px 7px;border-radius:4px;background:rgba(34,211,238,.08);color:var(--accent);border:1px solid rgba(34,211,238,.2);letter-spacing:.3px;white-space:nowrap" title="Bias detection minimum timeframe is 1H">Bias Min: 1H</span>'+
+            '</div>'+
+            '<div style="display:flex;align-items:center;gap:5px">'+
+              '<span class="seg-label">Modules</span>'+
+              '<div class="seg" id="lmModSeg">'+
+                '<button data-lmmod="OB" class="on">OB</button>'+
+                '<button data-lmmod="FVG" class="on">FVG</button>'+
+                '<button data-lmmod="FIB" class="on">FIB</button>'+
+                '<button data-lmmod="Breaker">Breaker</button>'+
+                '<button data-lmmod="Bias" class="on">Bias</button>'+
+              '</div>'+
+            '</div>'+
+            '<div style="display:flex;align-items:center;gap:5px">'+
+              '<span class="seg-label">Filter</span>'+
+              '<span class="fchip on" data-lmf="all">All</span>'+
+              '<span class="fchip" data-lmf="near">Near Zone</span>'+
+              '<span class="fchip" data-lmf="inzone">In Zone</span>'+
+            '</div>'+
+          '</div>'+
+          '<div class="lm-topbar-right">'+
+            '<div style="display:flex;align-items:center;gap:5px">'+
+              '<span class="seg-label">Refresh</span>'+
+              '<span class="fchip on" data-lmrefresh="manual">Manual</span>'+
+              '<span class="fchip" data-lmrefresh="15s">15s</span>'+
+              '<span class="fchip" data-lmrefresh="30s">30s</span>'+
+              '<span class="fchip" data-lmrefresh="60s">60s</span>'+
+            '</div>'+
+            '<div class="lm-ai-toggle" id="lmAiToggle">'+
+              '<svg class="ico" style="width:12px;height:12px" viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 1 7 7c0 3-1.6 5.5-4 6.7V17a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-1.3C6.6 14.5 5 12 5 9a7 7 0 0 1 7-7z"/><path d="M9 21h6"/></svg>'+
+              '<span id="lmAiLabel">AI Preview</span>'+
+            '</div>'+
+            '<button class="btn" id="lmRefresh" type="button"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>Refresh All</button>'+
           '</div>'+
         '</div>'+
-        '<div class="lm-grid" id="lmGrid"></div>'+
+        '<div class="lm-body">'+
+          '<div class="lm-left">'+
+            '<div class="lm-left-head"><span>ACTIVE SETUPS</span><span id="lmCount" style="font-size:11px;color:var(--accent);font-weight:700;font-family:var(--mono)">0</span></div>'+
+            '<div class="lm-cards" id="lmCards"></div>'+
+          '</div>'+
+          '<div class="lm-right"><div class="lm-right-scroll" id="lmRight"></div></div>'+
+        '</div>'+
       '</div>';
-    E("lmAddBtn").addEventListener("click",_lmAdd);
-    E("lmAdd").addEventListener("keydown",function(e){ if(e.key==="Enter") _lmAdd(); });
-    E("lmRefresh").addEventListener("click",_lmRefresh);
-    _lmPaint();
+    // Filter chips
+    [].forEach.call(scroll.querySelectorAll("[data-lmf]"),function(c){
+      c.addEventListener("click",function(){
+        [].forEach.call(scroll.querySelectorAll("[data-lmf]"),function(x){x.classList.remove("on");});
+        c.classList.add("on");
+        _lmActiveFilter=c.getAttribute("data-lmf");
+        _lmRenderCards();
+      });
+    });
+    // TF chips — toggle on/off, update _lmTfState (frontend-only, no scan triggered)
+    [].forEach.call(scroll.querySelectorAll("[data-lmtf]"),function(b){
+      b.addEventListener("click",function(){
+        b.classList.toggle("on");
+        var tf=b.getAttribute("data-lmtf");
+        var idx=_lmTfState.indexOf(tf);
+        if(idx===-1) _lmTfState.push(tf); else _lmTfState.splice(idx,1);
+      });
+    });
+    // Module chips — toggle on/off, update _lmModuleState (frontend-only, no scan triggered)
+    [].forEach.call(scroll.querySelectorAll("[data-lmmod]"),function(b){
+      b.addEventListener("click",function(){
+        b.classList.toggle("on");
+        var mod=b.getAttribute("data-lmmod");
+        var idx=_lmModuleState.indexOf(mod);
+        if(idx===-1) _lmModuleState.push(mod); else _lmModuleState.splice(idx,1);
+      });
+    });
+    // Refresh interval — exclusive select (frontend-only, no timer started)
+    [].forEach.call(scroll.querySelectorAll("[data-lmrefresh]"),function(c){
+      c.addEventListener("click",function(){
+        [].forEach.call(scroll.querySelectorAll("[data-lmrefresh]"),function(x){x.classList.remove("on");});
+        c.classList.add("on");
+        _lmRefreshState=c.getAttribute("data-lmrefresh");
+      });
+    });
+    // AI Preview toggle (frontend-only visual toggle, no API call)
+    var aiTog=document.getElementById("lmAiToggle");
+    var aiLbl=document.getElementById("lmAiLabel");
+    if(aiTog) aiTog.addEventListener("click",function(){
+      _lmAiPreview=!_lmAiPreview;
+      if(_lmAiPreview){ aiTog.classList.remove("off"); if(aiLbl) aiLbl.textContent="AI Preview"; }
+      else { aiTog.classList.add("off"); if(aiLbl) aiLbl.textContent="AI Off"; }
+    });
+    var rb=E("lmRefresh"); if(rb) rb.addEventListener("click",_lmRefresh);
+    _lmUpdateSession();
+    _lmRenderCards();
   }
-  function _lmCurrentPairs(){ return Object.keys(ST.stars).filter(function(s){return ST.stars[s];}).sort(); }
-  function _lmAdd(){
-    var inp=E("lmAdd"); if(!inp) return;
-    var sym=(inp.value||"").trim().toUpperCase();
-    if(!sym) return;
-    if(!sym.endsWith("USDT")) sym += "USDT";
-    ST.stars[sym]=true; syncWatchlist();
-    inp.value="";
-    _lmPaint();
+
+  function _lmUpdateSession(){
+    var el=document.getElementById("lmSession"); if(!el) return;
+    var h=new Date().getUTCHours();
+    var s;
+    if(h>=0&&h<7) s="Asia · Tokyo Session";
+    else if(h>=7&&h<8) s="Asia · Pre-London";
+    else if(h>=8&&h<12) s="London · Open";
+    else if(h>=12&&h<13) s="London · NY Pre-Overlap";
+    else if(h>=13&&h<17) s="London · NY Overlap — Prime Time";
+    else if(h>=17&&h<21) s="NY · Afternoon Session";
+    else s="Off-Hours · Low Volume";
+    el.textContent=s;
   }
-  function _lmRemove(sym){
-    delete ST.stars[sym]; syncWatchlist();
-    delete _lmCache[sym];
-    _lmPaint();
+
+  function _lmAgo(iso){
+    if(!iso) return "";
+    var diff=(Date.now()-new Date(iso).getTime())/1000;
+    if(diff<60) return Math.round(diff)+"s ago";
+    if(diff<3600) return Math.round(diff/60)+"m ago";
+    if(diff<86400) return Math.round(diff/3600)+"h ago";
+    return Math.round(diff/86400)+"d ago";
   }
+
+  function _lmRenderCards(){
+    var box=document.getElementById("lmCards"); if(!box) return;
+    var cnt=document.getElementById("lmCount");
+    var all=liveMonitorItems||[];
+    var items=all;
+    if(_lmActiveFilter==="near") items=all.filter(function(i){return i.status==="near";});
+    else if(_lmActiveFilter==="inzone") items=all.filter(function(i){return i.status==="inzone";});
+    if(cnt) cnt.textContent=items.length;
+    var sub=document.getElementById("lmSubLine");
+    if(sub) sub.textContent=items.length+" active setup"+(items.length!==1?"s":"")+" · DB-backed";
+    if(!items.length){
+      box.innerHTML='<div style="padding:30px 12px;text-align:center;color:var(--text-3);font-size:12px">'+
+        '<svg style="width:28px;height:28px;opacity:.25;margin-bottom:8px;stroke:currentColor;stroke-width:1.5;fill:none" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>'+
+        '<div style="font-weight:700;color:var(--text-2);margin-bottom:4px">No active setups</div>'+
+        '<div>Star a setup in the Scanner<br>then click "Add to Live Monitor"</div></div>';
+      if(!_lmSelItem) _lmRenderRight(null);
+      return;
+    }
+    box.innerHTML=items.map(function(item,idx){
+      var health=item.score||item.confidence||0;
+      var hClass=health>=70?"hi":health>=45?"mid":"lo";
+      var hColor=health>=70?"var(--accent)":health>=45?"var(--accent-teal)":"var(--yellow)";
+      if(health>0&&health<20) hColor="var(--red-2)";
+      var dir=(item.direction||"").toLowerCase();
+      var isBull=dir.indexOf("bull")!==-1, isBear=dir.indexOf("bear")!==-1;
+      var dirClass=isBull?"bull":isBear?"bear":"";
+      var setupLbl=item.setup_type?(item.setup_type.replace(/_/g," ")):(isBull?"Bullish":isBear?"Bearish":"Setup");
+      var dirArrow=isBull
+        ?'<svg class="ico" style="width:11px;height:11px" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>'
+        :isBear?'<svg class="ico" style="width:11px;height:11px" viewBox="0 0 24 24"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>':'';
+      var tf=item.timeframe||"—";
+      var status=item.status||"watching";
+      var statusLbl=status==="near"?"Near Zone":status==="inzone"?"In Zone":status==="invalid"?"Invalidated":"Watching";
+      var ago=_lmAgo(item.added_at);
+      var isActive=_lmSelItem&&_lmSelItem.id===item.id;
+      var opacity=(status==="invalid"||!item.is_active)?"opacity:.5;":"";
+      var setupTag=item.setup_type?'<span class="tag tag-blue" style="font-size:9.5px">'+esc(item.setup_type.split("_")[0])+'</span>':"";
+      return '<div class="setup-card'+(isActive?" active":"")+'" data-lmidx="'+idx+'" style="'+opacity+'">'+
+        '<div class="sc-top">'+
+          '<span class="sc-sym">'+esc(item.symbol)+'</span>'+
+          '<span class="sc-tf">'+esc(tf)+'</span>'+
+          '<span class="sc-age'+(ago.indexOf("s ago")!==-1?" live":"")+'">'+(ago||"—")+'</span>'+
+        '</div>'+
+        '<div class="sc-dir '+(dirClass||"")+'">'+dirArrow+esc(setupLbl)+'</div>'+
+        '<div class="sc-health-row"><span class="sc-health-label">Score</span><span class="sc-health-val" style="color:'+hColor+'">'+health+'%</span></div>'+
+        '<div class="sc-health-bar"><div class="sc-health-fill '+hClass+'" style="width:'+health+'%"></div></div>'+
+        '<div class="sc-bot"><span class="sc-status '+status+'">'+statusLbl+'</span>'+setupTag+'</div>'+
+      '</div>';
+    }).join("");
+    [].forEach.call(box.querySelectorAll(".setup-card"),function(card){
+      card.addEventListener("click",function(){
+        var idx=parseInt(card.getAttribute("data-lmidx"),10);
+        _lmSelItem=items[idx]||null;  // fix: use filtered items[], not liveMonitorItems[]
+        [].forEach.call(box.querySelectorAll(".setup-card"),function(c){c.classList.remove("active");});
+        card.classList.add("active");
+        _lmRenderRight(_lmSelItem);
+      });
+    });
+    // auto-select: keep selection if still valid, else pick first
+    var stillValid=_lmSelItem&&items.some(function(i){return i.id===_lmSelItem.id;});
+    if(!stillValid){
+      _lmSelItem=items.length?items[0]:null;
+      _lmRenderRight(_lmSelItem);
+    }
+    // mark active card
+    if(_lmSelItem){
+      var selIdx=-1;
+      for(var k=0;k<items.length;k++){if(items[k].id===_lmSelItem.id){selIdx=k;break;}}
+      var cards=box.querySelectorAll(".setup-card");
+      if(selIdx>=0&&cards[selIdx]) cards[selIdx].classList.add("active");
+    }
+  }
+
+  function _lmRenderRight(item){
+    var box=document.getElementById("lmRight"); if(!box) return;
+    if(!item){
+      box.innerHTML='<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--text-3);gap:8px;padding:40px 20px;text-align:center">'+
+        '<svg style="width:32px;height:32px;opacity:.2;stroke:currentColor;stroke-width:1.5;fill:none" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>'+
+        '<div style="font-size:14px;font-weight:700;color:var(--text-2)">Select a setup</div>'+
+        '<div style="font-size:12px">Click a card on the left to view details</div></div>';
+      return;
+    }
+    var health=item.score||item.confidence||0;
+    var circ=144.51, dashoff=(circ*(1-health/100)).toFixed(2);
+    var hColor=health>=70?"var(--accent)":health>=45?"var(--accent-teal)":"var(--yellow)";
+    if(health>0&&health<20) hColor="var(--red-2)";
+    var dir=(item.direction||"").toLowerCase();
+    var isBull=dir.indexOf("bull")!==-1, isBear=dir.indexOf("bear")!==-1;
+    var status=item.status||"watching";
+    var statusLbl=status==="near"?"Near Zone":status==="inzone"?"In Zone":status==="invalid"?"Invalidated":"Watching";
+    var tf=item.timeframe||"—";
+    var setupType=item.setup_type||"";
+    var zHi=item.zone_high, zLo=item.zone_low, price=item.current_price;
+    var hasZone=zHi!=null&&zLo!=null;
+    var priceStr=price!=null?fmt(price):"—";
+    var proxPct="—";
+    if(hasZone&&price!=null){
+      if(price>zHi) proxPct=((price-zHi)/price*100).toFixed(2)+"% above zone";
+      else if(price<zLo) proxPct=((zLo-price)/price*100).toFixed(2)+"% below zone";
+      else proxPct="In Zone";
+    }
+    var html=
+      '<div class="lm-hero">'+
+        '<div class="lm-hero-top">'+
+          '<div>'+
+            '<div style="display:flex;align-items:center;gap:9px;margin-bottom:5px">'+
+              '<span class="lm-hero-sym">'+esc(item.symbol)+'</span>'+
+              '<span class="sc-status '+esc(status)+'" style="font-size:11px;padding:3px 9px">'+esc(statusLbl)+'</span>'+
+            '</div>'+
+            '<div class="lm-hero-meta">'+
+              (isBull?'<span class="tag tag-bull">Bullish</span>':isBear?'<span class="tag tag-bear">Bearish</span>':'')+
+              (setupType?'<span class="tag tag-blue">'+esc(tf)+' '+esc(setupType.replace(/_/g," "))+'</span>':'')+
+              '<span class="tag tag-muted">'+esc(item.source_tab||"scanner")+'</span>'+
+            '</div>'+
+          '</div>'+
+          '<div class="lm-hero-price">'+
+            '<div class="px">'+priceStr+'</div>'+
+            '<div class="px-sub">'+esc(proxPct)+'</div>'+
+          '</div>'+
+        '</div>'+
+        '<div class="hero-inner">'+
+          '<div class="health-col">'+
+            '<div class="health-top">'+
+              '<div class="health-circle">'+
+                '<svg width="60" height="60" viewBox="0 0 60 60">'+
+                  '<circle cx="30" cy="30" r="23" fill="none" stroke="rgba(27,38,54,.8)" stroke-width="5"/>'+
+                  '<circle cx="30" cy="30" r="23" fill="none" stroke="'+hColor+'" stroke-width="5" stroke-dasharray="'+circ+'" stroke-dashoffset="'+dashoff+'" stroke-linecap="round"/>'+
+                '</svg>'+
+                '<div class="hc-center"><div class="hc-val">'+health+'%</div><div class="hc-label">SCORE</div></div>'+
+              '</div>'+
+              '<div class="health-bars" style="flex:1">'+
+                '<div class="hb-row"><div class="hb-top"><span>Direction</span><b>'+(isBull?'<span style="color:var(--green-2)">Bullish</span>':isBear?'<span style="color:var(--red-2)">Bearish</span>':'<span>—</span>')+'</b></div><div class="hb-track"><div class="hb-fill" style="width:100%"></div></div></div>'+
+                '<div class="hb-row"><div class="hb-top"><span>Zone Defined</span><b>'+(hasZone?'<span style="color:var(--green-2)">Yes</span>':'<span style="color:var(--text-3)">No</span>')+'</b></div><div class="hb-track"><div class="hb-fill" style="width:'+(hasZone?100:15)+'%"></div></div></div>'+
+                '<div class="hb-row"><div class="hb-top"><span>Confidence</span><b>'+item.confidence+'</b></div><div class="hb-track"><div class="hb-fill'+(item.confidence<50?" warn":"")+'" style="width:'+item.confidence+'%"></div></div></div>'+
+                '<div class="hb-row"><div class="hb-top"><span>Timeframe</span><b>'+esc(tf)+'</b></div><div class="hb-track"><div class="hb-fill" style="width:80%"></div></div></div>'+
+              '</div>'+
+            '</div>'+
+          '</div>'+
+          '<div class="ds-chat">'+
+            '<div class="ds-head">'+
+              '<svg class="ico" style="width:13px;height:13px;color:var(--accent)" viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 1 7 7c0 3-1.6 5.5-4 6.7V17a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-1.3C6.6 14.5 5 12 5 9a7 7 0 0 1 7-7z"/><path d="M9 21h6"/></svg>'+
+              '<div><div class="ds-name">DeepSeek</div><div class="ds-sub">Chat about this setup</div></div>'+
+              '<div class="ds-status"><div class="ds-status-dot"></div>Ready</div>'+
+            '</div>'+
+            '<div class="ds-sug" id="dsSug">'+
+              '<span class="ds-chip" data-q="Should I enter now?">Enter now?</span>'+
+              '<span class="ds-chip" data-q="What are the risks?">Risks?</span>'+
+              '<span class="ds-chip" data-q="Where is my stop loss?">Stop loss?</span>'+
+              '<span class="ds-chip" data-q="What confirmation do I wait for?">Confirmation?</span>'+
+            '</div>'+
+            '<div class="ds-msgs" id="dsMsgs">'+
+              '<div class="ds-msg ai"><div class="ds-av ai">DS</div>'+
+              '<div class="ds-bubble">I have context on <b>'+esc(item.symbol)+'</b> — '+esc(tf)+' '+esc(setupType||"setup")+', score '+health+'%. Ask me anything.</div></div>'+
+            '</div>'+
+            '<div class="ds-input">'+
+              '<input type="text" id="dsInput" placeholder="Ask DeepSeek about this setup…"/>'+
+              '<button class="ds-send" id="dsSend"><svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2L15 22l-4-9-9-4 20-7z"/></svg></button>'+
+            '</div>'+
+          '</div>'+
+        '</div>'+
+        '<div class="lm-hero-actions">'+
+          '<button class="btn" type="button" data-chart="'+esc(item.symbol)+'" data-chart-mkt="'+esc(ST.market)+'">'+
+            '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 4-6"/></svg>View Chart</button>'+
+          '<button class="btn" type="button" style="color:var(--red-2);border-color:rgba(239,68,68,.25)" data-rmitem="'+item.id+'">'+
+            '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 6h18M19 6l-1 14H6L5 6M10 11v6M14 11v6M9 6V4h6v2"/></svg>Remove</button>'+
+        '</div>'+
+      '</div>'+
+
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'+
+        '<div class="sec-card">'+
+          '<div class="sec-card-head">'+
+            '<svg class="ico" style="width:13px;height:13px;color:var(--text-3)" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></svg>'+
+            '<span class="sch-title">MTF MODULE MATRIX</span>'+
+          '</div>'+
+          '<div class="sec-card-body" style="padding:10px">'+_lmMtfMatrix(item)+'</div>'+
+        '</div>'+
+        '<div class="sec-card">'+
+          '<div class="sec-card-head">'+
+            '<svg class="ico" style="width:13px;height:13px;color:var(--text-3)" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>'+
+            '<span class="sch-title">ZONE TRACKER</span>'+
+          '</div>'+
+          '<div class="sec-card-body">'+_lmZoneCard(item)+'</div>'+
+        '</div>'+
+      '</div>'+
+
+      '<div class="sec-card">'+
+        '<div class="sec-card-head">'+
+          '<svg class="ico" style="width:13px;height:13px;color:var(--text-3)" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>'+
+          '<span class="sch-title">AGGREGATE MARKET CONTEXT</span>'+
+          '<span style="font-size:10px;color:var(--text-3);font-family:var(--mono);margin-left:auto">Phase 5</span>'+
+        '</div>'+
+        '<div class="sec-card-body">'+
+          '<div class="mkt-ctx-grid">'+
+            '<div class="mct-item"><div class="mct-label">FUNDING RATE</div><div class="mct-val">Awaiting</div><div class="mct-sub">Phase 5 — Binance feed</div></div>'+
+            '<div class="mct-item"><div class="mct-label">OPEN INTEREST</div><div class="mct-val">Awaiting</div><div class="mct-sub">Phase 5 — Binance feed</div></div>'+
+            '<div class="mct-item"><div class="mct-label">LONG / SHORT RATIO</div><div class="mct-val">Awaiting</div><div class="mct-sub">Phase 5 — Binance feed</div></div>'+
+            '<div class="mct-item"><div class="mct-label">TAKER PRESSURE</div><div class="mct-val">Awaiting</div><div class="mct-sub">Phase 5 — Binance feed</div></div>'+
+            '<div class="mct-item"><div class="mct-label">LIQUIDATIONS (15m)</div><div class="mct-val">Awaiting</div><div class="mct-sub">Phase 5 — Binance feed</div></div>'+
+            '<div class="mct-item"><div class="mct-label">SESSION CONTEXT</div>'+
+              '<div class="mct-val" id="lmMktSession" style="color:var(--accent)">—</div>'+
+              '<div class="mct-sub">UTC clock only — Phase 4.5 for full context</div></div>'+
+          '</div>'+
+        '</div>'+
+      '</div>'+
+
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'+
+        '<div class="sec-card">'+
+          '<div class="sec-card-head">'+
+            '<svg class="ico" style="width:13px;height:13px;color:var(--text-3)" viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>'+
+            '<span class="sch-title">CONFIRMATION CHECKLIST</span>'+
+          '</div>'+
+          '<div class="sec-card-body" style="padding:8px 10px">'+_lmChecklist(item)+'</div>'+
+        '</div>'+
+        '<div class="sec-card">'+
+          '<div class="sec-card-head">'+
+            '<svg class="ico" style="width:13px;height:13px;color:var(--text-3)" viewBox="0 0 24 24"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/></svg>'+
+            '<span class="sch-title">EVENT TIMELINE</span>'+
+          '</div>'+
+          '<div class="sec-card-body" style="padding:8px 10px" id="lmEvents">'+
+            '<div style="color:var(--text-3);font-size:11px">Loading events…</div>'+
+          '</div>'+
+        '</div>'+
+      '</div>';
+
+    box.innerHTML=html;
+
+    // Populate UTC session label in Market Context card
+    var mktSess=document.getElementById("lmMktSession");
+    if(mktSess){
+      var h=new Date().getUTCHours();
+      var sLabel;
+      if(h>=0&&h<7) sLabel="Asia · Tokyo";
+      else if(h>=7&&h<8) sLabel="Pre-London";
+      else if(h>=8&&h<12) sLabel="London Open";
+      else if(h>=12&&h<17) sLabel="London · NY Overlap";
+      else if(h>=17&&h<21) sLabel="NY Afternoon";
+      else sLabel="Off-Hours";
+      mktSess.textContent=sLabel+" (UTC "+new Date().getUTCHours()+"h)";
+    }
+
+    [].forEach.call(box.querySelectorAll("[data-chart]"),function(btn){
+      btn.addEventListener("click",function(){
+        openChartModal(btn.getAttribute("data-chart"),btn.getAttribute("data-chart-mkt")||ST.market,ST.exchange,(ST.settings&&ST.settings.tf)||"4h");
+      });
+    });
+    [].forEach.call(box.querySelectorAll("[data-rmitem]"),function(btn){
+      btn.addEventListener("click",function(){
+        var id=parseInt(btn.getAttribute("data-rmitem"),10); if(!id) return;
+        btn.disabled=true; btn.textContent="Removing…";
+        _lmSelItem=null;
+        removeLiveMonitorItem(id);
+      });
+    });
+    _lmBindChat(item);
+    _lmLoadEvents(item.id);
+  }
+
+  function _lmMtfMatrix(item){
+    var tfs=item.selected_timeframes||["15m","30m","1h","4h","1d"];
+    var mods=["OB","FVG","FIB","BIAS"];
+    var st=(item.setup_type||"").toUpperCase();
+    var dir=(item.direction||"").toLowerCase();
+    var isBull=dir.indexOf("bull")!==-1, isBear=dir.indexOf("bear")!==-1;
+    var html='<table class="mtf-matrix"><thead><tr><th></th>';
+    tfs.forEach(function(tf){html+='<th>'+esc(tf.toUpperCase())+'</th>';});
+    html+='</tr></thead><tbody>';
+    mods.forEach(function(mod){
+      html+='<tr><td>'+mod+'</td>';
+      tfs.forEach(function(tf){
+        var isTf=(item.timeframe||"").toLowerCase()===tf.toLowerCase();
+        var cell;
+        if(mod==="OB"){
+          cell=st.indexOf("OB")!==-1?(isTf?'<span class="mc strong">Strong</span>':'<span class="mc yes">Yes</span>'):'<span class="mc none">—</span>';
+        }else if(mod==="FVG"){
+          cell=st.indexOf("FVG")!==-1?(isTf?'<span class="mc strong">Strong</span>':'<span class="mc yes">Yes</span>'):'<span class="mc none">—</span>';
+        }else if(mod==="FIB"){
+          cell=st.indexOf("FIB")!==-1&&isTf?'<span class="mc yes">Yes</span>':'<span class="mc none">—</span>';
+        }else{
+          cell=isBull?'<span class="mc strong" style="color:var(--green-2)">Bull</span>':isBear?'<span class="mc strong" style="color:var(--red-2)">Bear</span>':'<span class="mc none">—</span>';
+        }
+        html+='<td>'+cell+'</td>';
+      });
+      html+='</tr>';
+    });
+    html+='</tbody></table><div style="font-size:10px;color:var(--text-3);margin-top:6px;text-align:center">Snapshot-based · Live MTF scan Phase 3</div>';
+    return html;
+  }
+
+  function _lmZoneCard(item){
+    var zHi=item.zone_high, zLo=item.zone_low, price=item.current_price;
+    var hasZone=zHi!=null&&zLo!=null;
+    if(!hasZone) return '<div style="color:var(--text-3);font-size:11.5px;padding:4px 0">No zone data. Add from an OB, FVG or FIB alert to enable zone tracking.</div>';
+    var barLeft=50;
+    if(price!=null&&zHi!==zLo){
+      var pos=(price-zLo)/(zHi-zLo)*100;
+      barLeft=Math.max(2,Math.min(98,pos));
+    }
+    var sizeStr=zLo>0?((zHi-zLo)/zLo*100).toFixed(2)+"%":"—";
+    var priceStr=price!=null?fmt(price):"—";
+    var proxLbl="—";
+    if(price!=null){
+      if(price>zHi) proxLbl=((price-zHi)/price*100).toFixed(2)+"% above";
+      else if(price<zLo) proxLbl=((zLo-price)/price*100).toFixed(2)+"% below";
+      else proxLbl="In Zone";
+    }
+    return '<div class="zone-nums">'+
+      '<div class="zn-item"><div class="zn-l">ZONE HIGH</div><div class="zn-v hi">'+fmt(zHi)+'</div></div>'+
+      '<div class="zn-item"><div class="zn-l">CURRENT</div><div class="zn-v cur">'+priceStr+'</div></div>'+
+      '<div class="zn-item"><div class="zn-l">ZONE LOW</div><div class="zn-v lo">'+fmt(zLo)+'</div></div>'+
+    '</div>'+
+    '<div class="zone-bar-labels"><span>'+fmt(zLo)+'</span><span>'+esc(proxLbl)+'</span><span>'+fmt(zHi)+'</span></div>'+
+    '<div class="zone-bar-track"><div class="zone-bar-zone"></div>'+(price!=null?'<div class="zone-bar-price" style="left:'+barLeft+'%"></div>':'')+'</div>'+
+    '<div class="zone-stats">'+
+      '<div><div class="zs-l">Proximity</div><div class="zs-v">'+esc(proxLbl)+'</div></div>'+
+      '<div><div class="zs-l">TF</div><div class="zs-v">'+esc(item.timeframe||"—")+'</div></div>'+
+      '<div><div class="zs-l">Size</div><div class="zs-v good">'+sizeStr+'</div></div>'+
+    '</div>';
+  }
+
+  function _lmChecklist(item){
+    var dir=(item.direction||"").toLowerCase();
+    var isBull=dir.indexOf("bull")!==-1, isBear=dir.indexOf("bear")!==-1;
+    var hasZone=item.zone_high!=null&&item.zone_low!=null;
+    var score=item.score||item.confidence||0;
+    var ico={
+      pass:'<svg class="ico" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>',
+      warn:'<svg class="ico" viewBox="0 0 24 24"><path d="M10.3 4L2 20h20L13.7 4a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17v.01"/></svg>',
+      pend:'<svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>'
+    };
+    function row(cls,label,val,vc){
+      return '<div class="cl-item"><div class="cl-ico '+cls+'">'+ico[cls]+'</div>'+
+        '<span class="cl-label">'+esc(label)+'</span>'+
+        '<span class="cl-val" style="color:'+vc+'">'+esc(val)+'</span></div>';
+    }
+    return '<div class="checklist">'+
+      row(isBull||isBear?"pass":"pend","Direction Defined",isBull?"Bullish":isBear?"Bearish":"—",isBull||isBear?"var(--green-2)":"var(--text-3)")+
+      row(hasZone?"pass":"pend","Zone Defined",hasZone?"Yes":"No zone",hasZone?"var(--green-2)":"var(--text-3)")+
+      row(item.setup_type?"pass":"pend","Setup Type",item.setup_type?item.setup_type.replace(/_/g," "):"—",item.setup_type?"var(--text)":"var(--text-3)")+
+      row(item.timeframe?"pass":"pend","Timeframe",item.timeframe||"—",item.timeframe?"var(--text)":"var(--text-3)")+
+      row(score>=70?"pass":score>=40?"warn":"pend","Confidence Score",score+"%",score>=70?"var(--green-2)":score>=40?"var(--yellow)":"var(--text-3)")+
+      row("pend","Live Confirmation","Pending","var(--text-3)")+
+    '</div>';
+  }
+
+  function _lmLoadEvents(itemId){
+    if(!itemId||location.protocol==="file:") return;
+    fetch("/api/live-monitor/events/"+itemId,{credentials:"same-origin"})
+      .then(function(r){return r.ok?r.json():null;})
+      .then(function(d){
+        var box=document.getElementById("lmEvents"); if(!box) return;
+        if(!d||!d.events||!d.events.length){
+          box.innerHTML='<div style="color:var(--text-3);font-size:11px">No events yet.</div>'; return;
+        }
+        var dotIco={
+          added:'<svg class="ico" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
+          updated:'<svg class="ico" viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 1 7 7c0 3-1.6 5.5-4 6.7V17a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-1.3C6.6 14.5 5 12 5 9a7 7 0 0 1 7-7z"/></svg>',
+          removed:'<svg class="ico" viewBox="0 0 24 24"><path d="M10.3 4L2 20h20L13.7 4a2 2 0 0 0-3.4 0z"/></svg>'
+        };
+        box.innerHTML='<div class="evt-list">'+d.events.map(function(ev){
+          var dc=ev.event_type==="updated"?"agent":ev.event_type==="removed"?"alert":"added";
+          var t=ev.created_at?_lmAgo(ev.created_at):"—";
+          var desc=ev.event_description||ev.event_type;
+          return '<div class="evt-item">'+
+            '<div class="evt-dot '+dc+'">'+(dotIco[ev.event_type]||dotIco.added)+'</div>'+
+            '<div><div class="evt-time">'+esc(t)+'</div><div class="evt-text">'+esc(desc)+'</div></div>'+
+          '</div>';
+        }).join("")+'</div>';
+      })
+      .catch(function(){
+        var box=document.getElementById("lmEvents"); if(!box) return;
+        box.innerHTML='<div style="color:var(--text-3);font-size:11px">Could not load events.</div>';
+      });
+  }
+
+  function _lmBindChat(item){
+    var sym=item.symbol,tf=item.timeframe||"",st=item.setup_type||"",score=item.score||item.confidence||0;
+    var zLbl=item.zone_low!=null?fmt(item.zone_low)+"–"+fmt(item.zone_high):"no zone data";
+    var R={
+      enter:"Price is approaching the "+esc(st||"zone")+" zone. Wait for a 15m bullish close inside the zone before entering. Score "+score+"%.",
+      risk:"Key risks: 1) No live 15m confirmation yet. 2) Score at "+score+"% — watch for zone invalidation. 3) Always stop below zone low.",
+      stop:"Stop loss goes below zone low at "+(item.zone_low!=null?fmt(item.zone_low):"zone low")+". Place 0.3% below. If a "+esc(tf)+" candle closes below — setup is invalidated.",
+      confirm:"Wait for: 1) Price enters the zone "+zLbl+". 2) 15m bullish close. 3) Volume confirmation. All three = entry signal.",
+      dflt:"Setup: <b>"+esc(sym)+"</b> — "+esc(tf)+" "+esc(st)+" — score "+score+"%. Zone "+zLbl+". Wait for zone approach and 15m confirmation."
+    };
+    function getReply(q){
+      var l=(q||"").toLowerCase();
+      if(l.indexOf("enter")!==-1||l.indexOf("buy")!==-1||l.indexOf("now")!==-1) return R.enter;
+      if(l.indexOf("risk")!==-1||l.indexOf("danger")!==-1) return R.risk;
+      if(l.indexOf("stop")!==-1||l.indexOf("sl")!==-1) return R.stop;
+      if(l.indexOf("confirm")!==-1||l.indexOf("wait")!==-1) return R.confirm;
+      return R.dflt;
+    }
+    function addMsg(role,text){
+      var b=document.getElementById("dsMsgs"); if(!b) return;
+      var d=document.createElement("div"); d.className="ds-msg "+role;
+      d.innerHTML='<div class="ds-av '+role+'">'+(role==="ai"?"DS":"You")+'</div><div class="ds-bubble">'+text+'</div>';
+      b.appendChild(d); b.scrollTop=b.scrollHeight;
+    }
+    function sendMsg(q){
+      if(!q||!q.trim()) return;
+      var sg=document.getElementById("dsSug"); if(sg) sg.style.display="none";
+      addMsg("user",esc(q));
+      var inp=document.getElementById("dsInput"); if(inp) inp.value="";
+      var b=document.getElementById("dsMsgs");
+      var ty=document.createElement("div"); ty.className="ds-msg ai"; ty.id="dsTyping";
+      ty.innerHTML='<div class="ds-av ai">DS</div><div class="ds-typing"><span></span><span></span><span></span></div>';
+      if(b){b.appendChild(ty);b.scrollTop=b.scrollHeight;}
+      setTimeout(function(){
+        var t=document.getElementById("dsTyping"); if(t) t.remove();
+        addMsg("ai",getReply(q));
+      },800+Math.random()*500);
+    }
+    var sb=document.getElementById("dsSend"),si=document.getElementById("dsInput");
+    if(sb) sb.addEventListener("click",function(){sendMsg(si?si.value:"");});
+    if(si) si.addEventListener("keydown",function(e){if(e.key==="Enter")sendMsg(si.value);});
+    [].forEach.call(document.querySelectorAll(".ds-chip"),function(c){
+      c.addEventListener("click",function(){sendMsg(c.getAttribute("data-q"));});
+    });
+  }
+
   // Per-TF watchlist config the backend (_scan_pair_multitf) understands.
   function getDesktopWatchlistConfig(){
     var s=ST.settings||{};
@@ -3800,6 +4806,7 @@ svg{display:block}
       breaker_require_fvg: !!s.breakerRequireFvg
     };
   }
+  function _lmCurrentPairs(){ return Object.keys(ST.stars).filter(function(s){return ST.stars[s];}).sort(); }
   function _lmRefresh(){
     if(location.protocol==="file:") return;
     var pairs=_lmCurrentPairs();
@@ -3818,61 +4825,18 @@ svg{display:block}
         if(!r.ok) throw new Error("HTTP "+r.status);
         return r.json();
       })
-      .then(function(d){ if(d){ _lmCache=Object.assign(_lmCache,d.results||d||{}); _lmPaint(); } })
+      .then(function(d){ if(d){ _lmCache=Object.assign(_lmCache,d.results||d||{}); } })
       .catch(function(e){ if(!(e&&e.tokenLimit)){/* normal refresh failure — leave existing cache */} })
       .finally(function(){ if(btn){btn.disabled=false; btn.classList.remove("spinning");} });
   }
-  function _lmPaint(){
-    var box=E("lmGrid"); if(!box) return;
-    var pairs=_lmCurrentPairs();
-    if(!pairs.length){
-      box.innerHTML='<div class="view-soon" style="padding:40px 20px"><h2>No pairs in Live Monitor</h2>'+
-        '<p>Star a setup on the Scanner tab, or type a symbol above and press <b>Add</b>.</p></div>';
-      return;
-    }
-    box.innerHTML=pairs.map(function(sym){
-      var c=_lmCache[sym]||{};
-      var price=c.price!=null?fmt(c.price):"—";
-      var of=c.orderflow||c.order_flow||{};
-      var absorb = of.absorption || c.absorption || "";
-      var delta  = (of.delta!=null)?(+of.delta).toFixed(2):(c.delta!=null?(+c.delta).toFixed(2):"—");
-      var oi     = of.oiSignal || c.oi_signal || c.oiSignal || "—";
-      var fund   = of.fundingContext || c.funding_context || "—";
-      return '<div class="lm-card" data-sym="'+esc(sym)+'">'+
-        '<div class="lm-top">'+
-          '<span class="lm-sym">'+esc(sym)+'</span>'+
-          '<span class="lm-px">'+price+'</span>'+
-          '<button class="lm-x" data-rm="'+esc(sym)+'" type="button" aria-label="Remove">'+
-            '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>'+
-        '</div>'+
-        '<div class="lm-stats">'+
-          '<div class="lm-kv"><span>Delta</span><b>'+delta+'</b></div>'+
-          '<div class="lm-kv"><span>Absorption</span><b>'+esc(absorb||"—")+'</b></div>'+
-          '<div class="lm-kv"><span>OI</span><b>'+esc(oi)+'</b></div>'+
-          '<div class="lm-kv"><span>Funding</span><b>'+esc(fund)+'</b></div>'+
-        '</div>'+
-        '<div class="mc-actions" style="margin-top:10px">'+
-          '<button class="btn" type="button" data-chart="'+esc(sym)+'" data-chart-mkt="'+esc(ST.market)+'">'+
-            '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 4-6"/></svg>View Chart</button>'+
-        '</div>'+
-      '</div>';
-    }).join("");
-    [].forEach.call(box.querySelectorAll("[data-rm]"),function(btn){
-      btn.addEventListener("click",function(){ _lmRemove(btn.getAttribute("data-rm")); });
-    });
-    [].forEach.call(box.querySelectorAll("[data-chart]"),function(btn){
-      btn.addEventListener("click",function(){
-        openChartModal(btn.getAttribute("data-chart"), btn.getAttribute("data-chart-mkt")||ST.market, ST.exchange, ST.settings.tf||"4h");
-      });
-    });
-  }
+  function _lmPaint(){ _lmRenderCards(); }
   function startLiveMonitorPolling(){
     stopLiveMonitorPolling();
     if(location.protocol==="file:") return;
     var poll=function(){
       fetch("/api/watchlist/cache",{credentials:"same-origin"})
         .then(function(r){return r.ok?r.json():null;})
-        .then(function(d){ if(d){ _lmCache=d; if(ST.view==="live"||ST.view==="watchlist") _lmPaint(); } })
+        .then(function(d){ if(d){ _lmCache=d; } })
         .catch(function(){});
     };
     poll();
@@ -3880,6 +4844,7 @@ svg{display:block}
   }
   function stopLiveMonitorPolling(){
     if(_lmPollT){ clearInterval(_lmPollT); _lmPollT=null; }
+    var s=document.querySelector(".main-scroll"); if(s) s.classList.remove("lm-active");
   }
 
   /* ── Dashboard (Wave 8) ── */
@@ -4404,7 +5369,384 @@ svg{display:block}
     [].forEach.call(document.querySelectorAll("#tbody .upd"),function(td){td.textContent=rel(ST.scannedAt);});
   },1000);
 
+  /* UTC clock + candle countdown (Queues 5 & 6) */
+  var _TF_MIN = {"15m":15,"30m":30,"1h":60,"4h":240,"6h":360,"12h":720,"1d":1440};
+  function _activeTfMinutes(){
+    var m = ST.mode;
+    if(m === "ath_atl") return null;
+    if(m === "main")       return _TF_MIN[(ST.settings.tf||"4h")];
+    if(m === "compressed") return _TF_MIN[((ST.modeOptions.compressed||{}).tf || ST.settings.tf || "4h")];
+    if(m === "trending")   return _TF_MIN[((ST.modeOptions.trending||{}).tf   || ST.settings.tf || "4h")];
+    if(m === "bias")       return _TF_MIN[((ST.modeOptions.bias||{}).tf       || ST.settings.tf || "1d")];
+    return _TF_MIN[(ST.settings.tf||"4h")];
+  }
+  function _activeTfLabel(){
+    var m = ST.mode;
+    if(m === "ath_atl") return "Window";
+    if(m === "main")       return ST.settings.tf||"4h";
+    if(m === "compressed") return (ST.modeOptions.compressed||{}).tf || ST.settings.tf || "4h";
+    if(m === "trending")   return (ST.modeOptions.trending||{}).tf   || ST.settings.tf || "4h";
+    if(m === "bias")       return (ST.modeOptions.bias||{}).tf       || ST.settings.tf || "1d";
+    return ST.settings.tf||"4h";
+  }
+  function _tickHeaderClock(){
+    var u = E("hdrUtcTime");
+    if(u){
+      var n = new Date();
+      var p = function(x){return x<10?"0"+x:""+x;};
+      u.textContent = "UTC " + p(n.getUTCHours())+":"+p(n.getUTCMinutes())+":"+p(n.getUTCSeconds());
+    }
+    var cd = E("hdrCandleCd");
+    if(cd){
+      var mins = _activeTfMinutes();
+      if(mins == null){ cd.textContent = "Window scan"; return; }
+      var now = new Date();
+      var nowMs = now.getTime();
+      var dayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+      var sinceDay = (nowMs - dayStart) / 60000;          // minutes since UTC midnight
+      var msToClose = (mins - (sinceDay % mins)) * 60000;
+      var secs = Math.max(0, Math.floor(msToClose/1000));
+      var h = Math.floor(secs/3600), m2 = Math.floor((secs%3600)/60), s = secs%60;
+      var p = function(x){return x<10?"0"+x:""+x;};
+      var t = (mins >= 60) ? (p(h)+":"+p(m2)+":"+p(s)) : (p(m2)+":"+p(s));
+      cd.textContent = _activeTfLabel()+" closes in "+t;
+    }
+  }
+  _tickHeaderClock();
+  setInterval(_tickHeaderClock, 1000);
+
+  /* ── Scan Presets (Queue 15) ─────────────────────────────────────── */
+  function _snapshotPresetPayload(){
+    return {
+      mode:       ST.mode,
+      market:     ST.market,
+      exchange:   ST.exchange,
+      signal:     ST.signal,
+      scanMode:   ST.scanMode,
+      pairsPerCycle: ST.pairsPerCycle,
+      roundRobin: ST.roundRobin,
+      settings:   ST.settings,
+      modeOptions:ST.modeOptions
+    };
+  }
+  function _applyPresetPayload(p){
+    if(!p) return;
+    if(p.market)   { ST.market   = p.market;   _ls_set("zyni-market",   p.market); }
+    if(p.exchange) { ST.exchange = p.exchange; _ls_set("zyni-exchange", p.exchange); }
+    if(p.signal!=null){ ST.signal = p.signal; _ls_set("zyni-signal", p.signal); }
+    if(p.scanMode) { ST.scanMode = p.scanMode; _ls_set("zyni-scanMode", p.scanMode); }
+    if(p.pairsPerCycle!=null){ ST.pairsPerCycle = +p.pairsPerCycle||24; _ls_set("zyni-ppc", String(ST.pairsPerCycle)); }
+    if(typeof p.roundRobin === "boolean"){ ST.roundRobin = p.roundRobin; _ls_setBool("zyni-roundRobin", p.roundRobin); }
+    if(p.settings && typeof p.settings==="object"){
+      ST.settings = Object.assign({}, ST.settings, p.settings);
+      try{ localStorage.setItem("zyni-settings", JSON.stringify(ST.settings)); }catch(_){}
+    }
+    if(p.modeOptions && typeof p.modeOptions==="object"){
+      Object.keys(p.modeOptions).forEach(function(k){
+        ST.modeOptions[k] = Object.assign({}, ST.modeOptions[k]||{}, p.modeOptions[k]||{});
+      });
+      _saveModeOptions();
+    }
+    if(p.mode && ST.tabData[p.mode]){
+      ST.mode = p.mode;
+      [].forEach.call(document.querySelectorAll('.side .nav-item[data-mode]'),function(x){
+        x.classList.toggle('active', x.getAttribute('data-mode')===ST.mode);
+      });
+    }
+    _syncSegTo("segMarket","data-mkt",ST.market);
+    _syncSegSignalChips();
+    var ex = E("exchSelect"); if(ex) ex.value = ST.exchange;
+    _renderTabCtrls();
+    _markStale();
+    renderAll();
+  }
+  var _presetCache = [];
+  function _renderPresetList(){
+    var box = E("presetList"); if(!box) return;
+    if(!_presetCache.length){
+      box.innerHTML = '<div class="row-msg">No presets yet. Save your current setup above.</div>';
+      E("presetCount").textContent = "";
+      return;
+    }
+    E("presetCount").textContent = "("+_presetCache.length+")";
+    box.innerHTML = _presetCache.map(function(p,i){
+      return '<div class="pp-row'+(p.isDefault?' is-default':'')+'" data-i="'+i+'">'+
+        '<div class="pp-row-top">'+
+          '<span class="pp-name">'+esc(p.name)+'</span>'+
+          (p.isDefault?'<span class="pp-default-pill">default</span>':'')+
+        '</div>'+
+        '<div class="pp-row-actions">'+
+          '<button class="btn btn-primary" data-act="apply"   data-id="'+p.id+'" type="button">Apply</button>'+
+          '<button class="btn"             data-act="rename"  data-id="'+p.id+'" type="button">Rename</button>'+
+          '<button class="btn"             data-act="default" data-id="'+p.id+'" type="button">'+(p.isDefault?"Unset":"Set default")+'</button>'+
+          '<button class="btn"             data-act="delete"  data-id="'+p.id+'" type="button">Delete</button>'+
+        '</div>'+
+      '</div>';
+    }).join("");
+  }
+  function _loadPresets(){
+    if(location.protocol==="file:") { _presetCache=[]; _renderPresetList(); return; }
+    fetch("/api/scan-presets",{credentials:"same-origin"})
+      .then(function(r){ return r.ok?r.json():null; })
+      .then(function(d){ _presetCache=(d&&d.presets)||[]; _renderPresetList(); })
+      .catch(function(){ _presetCache=[]; _renderPresetList(); });
+  }
+  function _openPresetModal(){
+    var p=E("presetPanel"), bd=E("presetBd"); if(!p||!bd) return;
+    p.classList.add("open"); bd.classList.add("open");
+    document.body.classList.add("sheet-open");
+    _loadPresets();
+  }
+  function _closePresetModal(){
+    var p=E("presetPanel"), bd=E("presetBd");
+    if(p) p.classList.remove("open"); if(bd) bd.classList.remove("open");
+    document.body.classList.remove("sheet-open");
+  }
+  if(E("presetClose")) E("presetClose").addEventListener("click", _closePresetModal);
+  if(E("presetBd"))    E("presetBd").addEventListener("click", _closePresetModal);
+  if(E("presetSaveBtn")) E("presetSaveBtn").addEventListener("click", function(){
+    if(location.protocol==="file:") return;
+    var name = (E("presetName").value||"").trim();
+    if(!name){ E("presetName").focus(); return; }
+    fetch("/api/scan-presets",{method:"POST",credentials:"same-origin",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({name:name, payload:_snapshotPresetPayload()})})
+      .then(function(r){ return r.ok?r.json():null; })
+      .then(function(d){ if(d){ E("presetName").value=""; _loadPresets(); } });
+  });
+  if(E("presetList")) E("presetList").addEventListener("click", function(e){
+    var b=e.target.closest("button[data-act]"); if(!b) return;
+    var act=b.getAttribute("data-act"); var id=+b.getAttribute("data-id");
+    var preset=_presetCache.find(function(x){return x.id===id;});
+    if(!preset) return;
+    if(act==="apply"){ _applyPresetPayload(preset.payload); _closePresetModal(); return; }
+    if(act==="rename"){
+      var nn = prompt("Rename preset:", preset.name);
+      if(!nn || !nn.trim()) return;
+      fetch("/api/scan-presets/"+id,{method:"PUT",credentials:"same-origin",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({name:nn.trim()})})
+        .then(function(){ _loadPresets(); });
+      return;
+    }
+    if(act==="delete"){
+      if(!confirm("Delete preset \""+preset.name+"\"?")) return;
+      fetch("/api/scan-presets/"+id,{method:"DELETE",credentials:"same-origin"})
+        .then(function(){ _loadPresets(); });
+      return;
+    }
+    if(act==="default"){
+      fetch("/api/scan-presets/"+id,{method:"PUT",credentials:"same-origin",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({isDefault: !preset.isDefault})})
+        .then(function(){ _loadPresets(); });
+      return;
+    }
+  });
+  // Wire the existing "Scan Presets" sidebar row
+  (function(){
+    var rows = document.querySelectorAll(".side .side-row");
+    [].forEach.call(rows, function(row){
+      if(/Scan\s*Presets/i.test(row.textContent)){
+        row.style.cursor="pointer";
+        row.addEventListener("click", _openPresetModal);
+      }
+    });
+  })();
+
+  /* ── Settings (i) info buttons (Queue 16, completed in Round 17) ──
+     Every .sp-field gets exactly one (i) button beside its label. If
+     the field already has a .sp-help block we improve / keep its text;
+     otherwise we inject one from SETTINGS_INFO_TEXT keyed by data-s. */
+  var SETTINGS_INFO_TEXT = {
+    /* Scan engine */
+    sLen: "Bars used to define major swing highs/lows. Higher value means fewer but stronger structure points.",
+    iLen: "Short-term structure window used for internal trend and OB detection.",
+    consolCandles: "Minimum flat/sideways candles needed before detecting a consolidation-based OB.",
+    /* Order Block */
+    obDistancePct: "How close current price must be to an OB zone before the setup is shown.",
+    obMinQuality: "Minimum OB quality score required. Higher value gives fewer but cleaner OBs.",
+    obMaxTouches: "Maximum allowed touches before an OB is considered weaker or used.",
+    useObStrengthFilter: "Filters OBs using volume/strength score.",
+    obMinStrengthPct: "Minimum OB volume strength percentage.",
+    useHighProbOB: "Only show OBs that pass stricter quality checks.",
+    useObTouchState: "Use touch/virgin state to filter OBs.",
+    /* FVG */
+    useFvgValidOnly: "Only show FVGs that are still valid / not fully filled.",
+    useFvgState: "Filter FVGs by untouched, valid, filled, or bag state if supported.",
+    fvgState: "Choose which FVG state to include.",
+    fvgAgeMin: "Minimum candles since the FVG formed.",
+    fvgAgeMax: "Maximum candles allowed since the FVG formed.",
+    fvgMaxDistancePct: "How far price can be from the FVG.",
+    fvgTouchDepth: "Controls how deep price must enter the FVG to count as touched.",
+    /* Breaker */
+    breakerApproachPct: "How close price must be to the breaker block.",
+    breakerMaxAge: "Maximum candles since the breaker formed.",
+    breakerRequireFvg: "Only show breaker setups that overlap / confirm with an FVG.",
+    /* Fibonacci */
+    fibTf: "Timeframe used for Fibonacci leg detection.",
+    fibTolerancePct: "How close price must be to a Fib level to count.",
+    fibAtrMultiplier: "ATR-based tolerance buffer around Fib levels.",
+    fibApproachPct: "Distance window for Fib approach setups.",
+    useFibRequireFvg: "Only show Fib setups that also have FVG confluence.",
+    useFibRequireOb: "Only show Fib setups that also have OB confluence.",
+    /* BTC correlation */
+    useBtcCorrelation: "Filter setups based on correlation with BTC.",
+    btcCorrelationMode: "Choose all, correlated, or non-correlated pairs.",
+    btcLookback: "Number of candles used to calculate BTC correlation.",
+    /* RSI */
+    rsiOB: "RSI level considered overbought.",
+    rsiOS: "RSI level considered oversold.",
+    /* TradingView */
+    tvExchange: "Exchange symbol prefix used when opening a TradingView chart.",
+    tvPerpSuffix: "Adds .P suffix for TradingView perpetual futures symbols."
+  };
+  (function _wireInfoButtons(){
+    var panel = document.getElementById("settingsPanel"); if(!panel) return;
+    [].forEach.call(panel.querySelectorAll(".sp-field"), function(field){
+      // Find the label and the data-s control inside this field.
+      var label = field.querySelector("label"); if(!label) return;
+      // Idempotency: if we already added an (i) for this field, skip.
+      if(label.querySelector(".info-i")) return;
+      var ctl = field.querySelector("[data-s]");
+      var key = ctl ? ctl.getAttribute("data-s") : null;
+      // Resolve help text: existing .sp-help (preferred — author-authored) overrides the map.
+      var helpEl = label.querySelector(".sp-help");
+      var text = (helpEl && helpEl.textContent && helpEl.textContent.trim())
+        || (key && SETTINGS_INFO_TEXT[key])
+        || "";
+      if(!text) return; // skip fields we have nothing to say about (none in current drawer)
+      // Make sure there's a .sp-help node, collapsed by default.
+      if(!helpEl){
+        helpEl = document.createElement("div");
+        helpEl.className = "sp-help";
+        helpEl.textContent = text;
+        label.appendChild(helpEl);
+      }
+      helpEl.classList.add("collapsed");
+      // Insert the (i) button.
+      var btn = document.createElement("button");
+      btn.type = "button"; btn.className = "info-i"; btn.textContent = "i";
+      btn.title = "What does this do?";
+      btn.addEventListener("click", function(e){
+        e.preventDefault(); e.stopPropagation();
+        helpEl.classList.toggle("collapsed");
+      });
+      label.appendChild(btn);
+    });
+  })();
+
+  /* ── Desktop tutorial overlay (Queue 16) ────────────────────────── */
+  var TUT_STEPS = [
+    { sel:".brand-name", title:"Welcome to ZyNi Screener",
+      text:"Quick tour of the desktop. You can skip any time and the choice is saved to your account." },
+    { sel:".side", title:"Scanner sidebar",
+      text:"Switch between Main Scan, Compressed, Trending, ATH/ATL, Bias and Settings here." },
+    { sel:"#segMarket", title:"Market & exchange",
+      text:"Toggle Spot vs Perpetual. The exchange picker (below) selects which exchange to scan." },
+    { sel:"#segSignal", title:"Module selector — OR logic",
+      text:"Pick one or more setup modules. OB + FIB will show setups that are OB or FIB (OR)." },
+    { sel:"#tabCtrls", title:"Timeframe, scope, pairs/cycle",
+      text:"Each tab's most-used controls live inline here. Changes are saved between visits." },
+    { sel:"#tabCtrls", title:"Info buttons (i)",
+      text:"Every scanner control has a small (i) button. Press it to understand what that setting does before scanning — works on Main Scan, Compressed, Trending, ATH/ATL, Bias Shift Normal & Expert, and inside the Settings drawer." },
+    { sel:"#btnScanNow", title:"Scan Now / Auto Scan",
+      text:"Scanning never happens automatically on page load. Use Scan Now, or turn Auto Scan ON for a 30s timer." },
+    { sel:"#tblHost", title:"Setup table",
+      text:"Click a row to see its Setup Insight on the right panel." },
+    { sel:".insight",   title:"Setup Insight",
+      text:"Zone details, scoring, confluence and the View Chart / Add to Live Monitor actions." },
+    { sel:"#sideSettings", title:"Settings & presets",
+      text:"Open Settings from the sidebar. The little (i) next to a field explains what it does. Use Scan Presets to save and reuse your scanner setup." },
+  ];
+  var _tutIdx = 0, _tutPrefs = {desktopTutorialNeverShow:false};
+  function _tutFetchPrefs(){
+    if(location.protocol==="file:") return Promise.resolve(_tutPrefs);
+    return fetch("/api/user-preferences",{credentials:"same-origin"})
+      .then(function(r){ return r.ok?r.json():null; })
+      .then(function(d){ if(d) _tutPrefs=d; return _tutPrefs; })
+      .catch(function(){ return _tutPrefs; });
+  }
+  function _tutSavePrefs(extra){
+    if(location.protocol==="file:") return;
+    var body = Object.assign({desktopTutorialNeverShow: E("tutNever") && E("tutNever").checked}, extra||{});
+    fetch("/api/user-preferences",{method:"POST",credentials:"same-origin",
+      headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)}).catch(function(){});
+  }
+  function _tutClampRect(r){
+    var pad=6, vw=innerWidth, vh=innerHeight;
+    var x=Math.max(0,r.left-pad), y=Math.max(0,r.top-pad);
+    var w=Math.min(vw-x, r.width+pad*2), h=Math.min(vh-y, r.height+pad*2);
+    return {x:x,y:y,w:w,h:h};
+  }
+  function _tutGoTo(i){
+    var step = TUT_STEPS[i]; if(!step) return _tutFinish();
+    _tutIdx = i;
+    var tgt = document.querySelector(step.sel);
+    var spot = E("tutSpot"), card = E("tutCard");
+    if(!tgt){
+      // fallback: hide spotlight, center card
+      spot.style.display="none";
+      card.style.left="50%"; card.style.top="50%"; card.style.transform="translate(-50%,-50%)";
+    } else {
+      var rect = _tutClampRect(tgt.getBoundingClientRect());
+      spot.style.display=""; spot.style.transform="";
+      spot.style.left = rect.x + "px";
+      spot.style.top  = rect.y + "px";
+      spot.style.width  = rect.w + "px";
+      spot.style.height = rect.h + "px";
+      // place card to the right of the spotlight when possible, else below
+      var cw=340, ch=180;
+      var cx = rect.x + rect.w + 14;
+      var cy = rect.y;
+      if(cx + cw > innerWidth - 12){ cx = Math.max(12, rect.x); cy = rect.y + rect.h + 14; }
+      if(cy + ch > innerHeight - 12){ cy = Math.max(12, innerHeight - ch - 12); }
+      card.style.left = cx + "px";
+      card.style.top  = cy + "px";
+      card.style.transform = "";
+    }
+    E("tutStep").textContent  = (i+1)+" / "+TUT_STEPS.length;
+    E("tutTitle").textContent = step.title;
+    E("tutText").textContent  = step.text;
+    E("tutBack").disabled = (i===0);
+    E("tutNext").textContent = (i===TUT_STEPS.length-1) ? "Finish" : "Next";
+  }
+  function _tutShow(){
+    E("tutOverlay").hidden = false;
+    _tutGoTo(0);
+  }
+  function _tutHide(){ E("tutOverlay").hidden = true; }
+  function _tutFinish(){
+    _tutSavePrefs({markCompleted:true});
+    _tutHide();
+  }
+  function _tutSkip(){
+    _tutSavePrefs({markSkipped:true});
+    _tutHide();
+  }
+  if(E("tutNext")) E("tutNext").addEventListener("click", function(){
+    if(_tutIdx >= TUT_STEPS.length-1) _tutFinish(); else _tutGoTo(_tutIdx+1);
+  });
+  if(E("tutBack")) E("tutBack").addEventListener("click", function(){
+    if(_tutIdx>0) _tutGoTo(_tutIdx-1);
+  });
+  if(E("tutSkip")) E("tutSkip").addEventListener("click", _tutSkip);
+  addEventListener("resize", function(){
+    if(!E("tutOverlay") || E("tutOverlay").hidden) return;
+    _tutGoTo(_tutIdx);
+  });
+  // On desktop load, decide whether to show tutorial after a tiny delay so the
+  // layout is settled. Mobile is unaffected (this script only runs on desktop).
+  setTimeout(function(){
+    if(innerWidth <= 820) return;
+    _tutFetchPrefs().then(function(p){
+      if(p && p.desktopTutorialNeverShow) return;
+      _tutShow();
+    });
+  }, 700);
+
   loadWatchlist();
+  loadLiveMonitorItems();       // Phase 1: pre-load DB-backed Live Monitor items
   loadTokens();                 // load token counter without triggering a scan
   _renderTabCtrls();
   // No auto-scan on page load — scanning only happens when the user clicks

@@ -2503,7 +2503,7 @@ def _compute_ob_touch_meta(ob, h, l, c, n, ob_mitigation="Absolute",
 def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", ob_mitigation="Absolute",
                mitigation_closed_only=None, overlap_effective_zone=False,
                bearish_effective_bottom_overlap=None, trace=None, anchor_mode=None,
-               extreme_tie_mode=None, ob_logic_mode="tv_parity_v2", structure_candidate="current"):
+               extreme_tie_mode=None, ob_logic_mode="tv_parity_v3", structure_candidate="current"):
     """
     Order Block detection — audited line-by-line against Pine Script drawVOB().
 
@@ -2534,13 +2534,17 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         "last" — latest equal extreme wins (<= / >=). The Pine +1
         sourceBar offset is unchanged; only the chosen extreme bar moves.
       ob_logic_mode: production logic mode.
-        "tv_parity_v2" (default) — confirmed TV-parity behavior. Any rule
-        argument left as None is resolved from this mode.
-        "legacy_baseline" — original pre-parity behavior.
-        An explicit per-rule argument (not None) always overrides the mode.
+        "tv_parity_v3" (default) — v2 rules + Pine-style relaxed equal-pivot
+        detection (plateau highs/lows confirm as pivots).
+        "tv_parity_v2" — confirmed TV-parity behavior (strict pivots).
+        Kept available for rollback / debug comparison.
+        "legacy_baseline" — original pre-parity behavior (deepest rollback).
+        Any rule argument left as None is resolved from this mode; an
+        explicit per-rule argument (not None) always overrides.
         Mode-resolved rules: mitigation_closed_only,
-        bearish_effective_bottom_overlap, anchor_mode, extreme_tie_mode.
-        tv_parity_v2 = closed mitigation + bearish effective-bottom overlap
+        bearish_effective_bottom_overlap, anchor_mode, extreme_tie_mode,
+        plus pivot-detection (relaxed for v3, strict for v2 / legacy).
+        v2 / v3 share: closed mitigation + bearish effective-bottom overlap
         + latest_opposite_pivot anchor + last equal-extreme tie.
       structure_candidate: DEBUG-ONLY structure-lifecycle variant.
         "current" (default) — production behavior, byte-identical.
@@ -2569,10 +2573,15 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
     """
     # ── Production logic mode resolution ──────────────────────────────────
     # A rule left as None inherits from ob_logic_mode; an explicit argument
-    # always wins (used by the debug endpoint). "tv_parity_v2" is the
-    # confirmed TV-parity production default; "legacy_baseline" is the
-    # original behavior, kept for rollback / debug comparison.
-    _v2 = ob_logic_mode == "tv_parity_v2"
+    # always wins (used by the debug endpoint). Modes:
+    #   "tv_parity_v3" — v2 rules + Pine-style relaxed equal-pivot detection
+    #                    (the current production default).
+    #   "tv_parity_v2" — closed mitigation + bearish effective-bottom overlap
+    #                    + latest_opposite_pivot anchor + last equal-extreme
+    #                    tie (kept available for rollback / debug comparison).
+    #   "legacy_baseline" — original pre-parity behavior (deepest rollback).
+    _v2 = ob_logic_mode in ("tv_parity_v2", "tv_parity_v3")
+    _v3 = ob_logic_mode == "tv_parity_v3"
     if mitigation_closed_only is None:
         mitigation_closed_only = _v2
     if bearish_effective_bottom_overlap is None:
@@ -2583,7 +2592,10 @@ def detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5, ob_positioning="Precise", 
         extreme_tie_mode = "last" if _v2 else "first"
 
     n = len(c)
-    if structure_candidate == "equal_high_pivot_relaxed":
+    # Pivot detection — v3 uses Pine-style relaxed (plateau-tolerant) pivots;
+    # v2 / legacy keep strict pivots. structure_candidate can force relaxed
+    # explicitly (debug diagnostics).
+    if _v3 or structure_candidate == "equal_high_pivot_relaxed":
         ph, pl = _detect_pivots_relaxed(h, l, i_len, i_len)
     else:
         ph, pl = detect_pivots(h, l, i_len, i_len)
@@ -4155,7 +4167,7 @@ _TV_OB_PARITY_SETTINGS: Dict[str, Any] = {
 def _tv_visible_pool(obs_by_dir: List[Dict[str, Any]], max_ob: int = 5,
                      overlap_effective_zone: bool = False,
                      bearish_effective_bottom_overlap=None,
-                     ob_logic_mode: str = "tv_parity_v2") -> List[Dict[str, Any]]:
+                     ob_logic_mode: str = "tv_parity_v3") -> List[Dict[str, Any]]:
     """
     Build the Pine-style visible OB pool for a single direction.
 
@@ -4177,11 +4189,12 @@ def _tv_visible_pool(obs_by_dir: List[Dict[str, Any]], max_ob: int = 5,
       (TV displays the bearish lower boundary at avg); new OB top stays raw,
       bullish stays raw. None inherits from ob_logic_mode; an explicit
       argument overrides.
-    ob_logic_mode: "tv_parity_v2" (default) enables the confirmed TV-parity
-      rules; "legacy_baseline" keeps the original raw-overlap behavior.
+    ob_logic_mode: "tv_parity_v3" / "tv_parity_v2" both enable the
+      confirmed TV-parity overlap rule (v3 inherits v2 here);
+      "legacy_baseline" keeps the original raw-overlap behavior.
     """
     if bearish_effective_bottom_overlap is None:
-        bearish_effective_bottom_overlap = (ob_logic_mode == "tv_parity_v2")
+        bearish_effective_bottom_overlap = ob_logic_mode in ("tv_parity_v2", "tv_parity_v3")
 
     input_count = len(obs_by_dir)
 
@@ -5045,6 +5058,7 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
 
         age_bars = None
         ob_vol = None
+        ob_extras = {}
         if setup.startswith("OB") and z_hi is not None:
             best, bestd = None, None
             for ob in obs:
@@ -5054,6 +5068,18 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
             if best is not None:
                 age_bars = best.get("age")
                 ob_vol = best.get("volume")
+                # Expose touch / virgin / bar fields so the desktop Zone Details
+                # panel can read them (Queue 12).
+                ob_extras = {
+                    "obTouches":      best.get("touches"),
+                    "isVirginOb":     best.get("isVirgin"),
+                    "obBar":          best.get("bar"),
+                    "obAgeBars":      best.get("age"),
+                    "obMitigated":    best.get("mitigated"),
+                    "obUntouched":    best.get("untouched"),
+                    "obOnceTouched":  best.get("onceTouched"),
+                    "obCurrentlyInside": best.get("currentlyInside"),
+                }
         elif setup == "FVG":
             age_bars = meta.get("fvgAge")
         elif setup.startswith("BREAKER"):
@@ -5208,6 +5234,17 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
             vol_cell = _cell(vol, "Relative volume {:.2f}x vs 20-bar average".format(relv))
         else:
             vol_cell = {"score": None, "status": "unavailable", "reason": "Volume data not available"}
+
+        # Inject OB extras (touches / virgin / bar / age) into the topAlert
+        # meta so the desktop Zone Details panel can show real values.
+        if ob_extras:
+            try:
+                ta.setdefault("meta", {})
+                for _k, _v in ob_extras.items():
+                    if _v is not None and _k not in ta["meta"]:
+                        ta["meta"][_k] = _v
+            except Exception:
+                pass
 
         return {
             "rr": rr,
@@ -7328,6 +7365,296 @@ def api_watchlist_get():
     return jsonify({"pairs": pairs, "user": username})
 
 
+# ─── Scan presets (Queue 15) ────────────────────────────────────────────────
+def _current_user_id():
+    """Resolve the SQLAlchemy User.id for the logged-in session, or None."""
+    try:
+        from models import db as _db, User as _U
+        uname = (session.get("username") or "").strip().lower()
+        if not uname:
+            return None
+        u = _U.query.filter(_db.func.lower(_U.username) == uname).first()
+        return u.id if u else None
+    except Exception:
+        return None
+
+
+def _current_user_id_and_user():
+    """Return (user_id, user_obj) for the logged-in session, or (None, None)."""
+    try:
+        from models import db as _db, User as _U
+        uname = (session.get("username") or "").strip().lower()
+        if not uname:
+            return None, None
+        u = _U.query.filter(_db.func.lower(_U.username) == uname).first()
+        if not u:
+            return None, None
+        return u.id, u
+    except Exception:
+        return None, None
+
+
+def _json_dumps_safe(obj) -> str:
+    """Safely serialize a dict/list to a JSON string; returns '{}' on failure."""
+    try:
+        return json.dumps(obj, default=str)
+    except Exception:
+        return "{}"
+
+
+def _json_loads_safe(text, fallback=None):
+    """Safely parse a JSON Text field; returns fallback on bad input."""
+    if fallback is None:
+        fallback = {}
+    if not text:
+        return fallback
+    try:
+        return json.loads(text)
+    except Exception:
+        return fallback
+
+
+_LM_NULL_STRINGS = {"", "—", "n/a", "null", "undefined", "none", "-"}
+
+def _lm_float_or_none(value):
+    """Safely convert a frontend value to float; returns None on bad/empty input."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    s = str(value).strip().lower()
+    if s in _LM_NULL_STRINGS:
+        return None
+    try:
+        return float(s)
+    except (ValueError, TypeError):
+        return None
+
+
+def _lm_int_or_zero(value) -> int:
+    """Safely convert a frontend value to int; returns 0 on bad/empty input."""
+    if value is None:
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    s = str(value).strip().lower()
+    if s in _LM_NULL_STRINGS:
+        return 0
+    try:
+        return int(float(s))
+    except (ValueError, TypeError):
+        return 0
+
+
+def _live_monitor_item_to_dict(item) -> dict:
+    """Serialize a LiveMonitorItem row to a JSON-friendly dict."""
+    return {
+        "id":                 item.id,
+        "user_id":            item.user_id,
+        "symbol":             item.symbol,
+        "exchange":           item.exchange,
+        "market":             item.market,
+        "source_tab":         item.source_tab,
+        "setup_type":         item.setup_type,
+        "direction":          item.direction,
+        "timeframe":          item.timeframe,
+        "zone_high":          item.zone_high,
+        "zone_low":           item.zone_low,
+        "confidence":         item.confidence,
+        "score":              item.score,
+        "current_price":      item.current_price,
+        "status":             item.status,
+        "snapshot":           _json_loads_safe(item.snapshot_json, {}),
+        "selected_timeframes": _json_loads_safe(item.selected_timeframes, ["15m", "1h", "4h"]),
+        "selected_modules":   _json_loads_safe(item.selected_modules, ["OB", "FVG", "FIB", "Bias"]),
+        "alert_settings":     _json_loads_safe(item.alert_settings_json, {}),
+        "is_active":          bool(item.is_active),
+        "added_at":           item.added_at.isoformat() if item.added_at else None,
+        "updated_at":         item.updated_at.isoformat() if item.updated_at else None,
+    }
+
+
+def _live_monitor_event_to_dict(event) -> dict:
+    """Serialize a LiveMonitorEvent row to a JSON-friendly dict."""
+    return {
+        "id":                   event.id,
+        "item_id":              event.item_id,
+        "user_id":              event.user_id,
+        "symbol":               event.symbol,
+        "event_type":           event.event_type,
+        "event_description":    event.event_description,
+        "details":              _json_loads_safe(event.details_json, {}),
+        "health_score_at_event": event.health_score_at_event,
+        "price_at_event":       event.price_at_event,
+        "created_at":           event.created_at.isoformat() if event.created_at else None,
+    }
+
+
+def _preset_to_dict(p):
+    try:
+        payload = json.loads(p.payload) if p.payload else {}
+    except Exception:
+        payload = {}
+    return {
+        "id": p.id,
+        "name": p.name,
+        "payload": payload,
+        "isDefault": bool(p.is_default),
+        "createdAt": p.created_at.isoformat() if p.created_at else None,
+        "updatedAt": p.updated_at.isoformat() if p.updated_at else None,
+    }
+
+
+@app.route("/api/scan-presets", methods=["GET"])
+@login_required
+def api_scan_presets_list():
+    uid = _current_user_id()
+    if not uid:
+        return jsonify({"presets": []})
+    from models import db as _db, ScanPreset as _P
+    rows = (_P.query.filter_by(user_id=uid).order_by(_P.is_default.desc(), _P.name.asc()).all())
+    return jsonify({"presets": [_preset_to_dict(r) for r in rows]})
+
+
+@app.route("/api/scan-presets", methods=["POST"])
+@login_required
+def api_scan_presets_create():
+    uid = _current_user_id()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    data = request.get_json(force=True) or {}
+    name = (data.get("name") or "").strip()[:80]
+    if not name:
+        return jsonify({"error": "name_required"}), 400
+    payload = data.get("payload")
+    try:
+        payload_str = json.dumps(payload if payload is not None else {})
+    except Exception:
+        return jsonify({"error": "bad_payload"}), 400
+    from models import db as _db, ScanPreset as _P
+    is_def = bool(data.get("isDefault"))
+    if is_def:
+        _P.query.filter_by(user_id=uid, is_default=True).update({"is_default": False})
+    existing = _P.query.filter_by(user_id=uid, name=name).first()
+    if existing:
+        existing.payload    = payload_str
+        existing.is_default = is_def
+        row = existing
+    else:
+        row = _P(user_id=uid, name=name, payload=payload_str, is_default=is_def)
+        _db.session.add(row)
+    try:
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": "db", "message": str(e)}), 500
+    return jsonify(_preset_to_dict(row))
+
+
+@app.route("/api/scan-presets/<int:preset_id>", methods=["PUT", "PATCH"])
+@login_required
+def api_scan_presets_update(preset_id):
+    uid = _current_user_id()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    data = request.get_json(force=True) or {}
+    from models import db as _db, ScanPreset as _P
+    row = _P.query.filter_by(id=preset_id, user_id=uid).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if "name" in data:
+        n = (data.get("name") or "").strip()[:80]
+        if n:
+            row.name = n
+    if "payload" in data:
+        try:
+            row.payload = json.dumps(data.get("payload") or {})
+        except Exception:
+            return jsonify({"error": "bad_payload"}), 400
+    if "isDefault" in data:
+        v = bool(data["isDefault"])
+        if v:
+            _P.query.filter_by(user_id=uid, is_default=True).update({"is_default": False})
+        row.is_default = v
+    try:
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": "db", "message": str(e)}), 500
+    return jsonify(_preset_to_dict(row))
+
+
+@app.route("/api/scan-presets/<int:preset_id>", methods=["DELETE"])
+@login_required
+def api_scan_presets_delete(preset_id):
+    uid = _current_user_id()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    from models import db as _db, ScanPreset as _P
+    row = _P.query.filter_by(id=preset_id, user_id=uid).first()
+    if not row:
+        return jsonify({"ok": True})
+    _db.session.delete(row)
+    try:
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": "db", "message": str(e)}), 500
+    return jsonify({"ok": True, "id": preset_id})
+
+
+# ─── User preferences (Queue 16) ────────────────────────────────────────────
+@app.route("/api/user-preferences", methods=["GET"])
+@login_required
+def api_user_prefs_get():
+    uid = _current_user_id()
+    out = {"desktopTutorialNeverShow": False,
+           "desktopTutorialCompletedAt": None, "desktopTutorialSkippedAt": None}
+    if not uid:
+        return jsonify(out)
+    from models import db as _db, UserPreference as _UP
+    row = _UP.query.filter_by(user_id=uid).first()
+    if not row:
+        return jsonify(out)
+    out["desktopTutorialNeverShow"] = bool(row.desktop_tutorial_never_show)
+    out["desktopTutorialCompletedAt"] = row.desktop_tutorial_completed_at.isoformat() if row.desktop_tutorial_completed_at else None
+    out["desktopTutorialSkippedAt"]   = row.desktop_tutorial_skipped_at.isoformat()   if row.desktop_tutorial_skipped_at   else None
+    return jsonify(out)
+
+
+@app.route("/api/user-preferences", methods=["POST", "PUT", "PATCH"])
+@login_required
+def api_user_prefs_set():
+    uid = _current_user_id()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    data = request.get_json(force=True) or {}
+    from models import db as _db, UserPreference as _UP
+    row = _UP.query.filter_by(user_id=uid).first()
+    if not row:
+        row = _UP(user_id=uid)
+        _db.session.add(row)
+    now = datetime.now(timezone.utc)
+    if "desktopTutorialNeverShow" in data:
+        row.desktop_tutorial_never_show = bool(data["desktopTutorialNeverShow"])
+    if data.get("markCompleted"):
+        row.desktop_tutorial_completed_at = now
+    if data.get("markSkipped"):
+        row.desktop_tutorial_skipped_at = now
+    try:
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": "db", "message": str(e)}), 500
+    return jsonify({
+        "desktopTutorialNeverShow": bool(row.desktop_tutorial_never_show),
+        "desktopTutorialCompletedAt": row.desktop_tutorial_completed_at.isoformat() if row.desktop_tutorial_completed_at else None,
+        "desktopTutorialSkippedAt":   row.desktop_tutorial_skipped_at.isoformat()   if row.desktop_tutorial_skipped_at   else None,
+    })
+
+
 @app.route("/api/watchlist/cache")
 @login_required
 def api_watchlist_cache():
@@ -7714,6 +8041,212 @@ def api_watchlist_refresh():
         try: consume_tokens(_tok_uid, len(pairs))
         except Exception as _te: print(f"[Tokens] watchlist: {_te}")
     return jsonify({"results": results, "scanned": len(pairs)})
+
+
+# ============================================================
+# /api/live-monitor — Phase 1 Live Monitor (DB-backed, per-user)
+# Separate from /api/watchlist/* — old watchlist logic untouched.
+# ============================================================
+
+@app.route("/api/live-monitor/items", methods=["GET"])
+@login_required
+def api_lm_items_get():
+    """Return all Live Monitor items for the current user, newest first."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"items": [], "count": 0})
+    from models import db as _db, LiveMonitorItem as _LMI
+    q = _LMI.query.filter_by(user_id=uid)
+    if request.args.get("active_only") == "1":
+        q = q.filter_by(is_active=True)
+    rows = q.order_by(_LMI.added_at.desc()).all()
+    items = [_live_monitor_item_to_dict(r) for r in rows]
+    return jsonify({"items": items, "count": len(items)})
+
+
+@app.route("/api/live-monitor/items", methods=["POST"])
+@login_required
+def api_lm_items_post():
+    """Save a full setup snapshot to Live Monitor. Creates or updates if duplicate zone."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    data = request.get_json(force=True) or {}
+
+    symbol = (str(data.get("symbol") or "")).strip().upper()
+    if not symbol:
+        return jsonify({"error": "symbol_required"}), 400
+    if not symbol.endswith("USDT"):
+        return jsonify({"error": "invalid_symbol",
+                        "message": "Only USDT pairs are supported for Live Monitor right now."}), 400
+
+    exchange    = (str(data.get("exchange") or "binance")).strip().lower()
+    market      = (str(data.get("market")   or "perpetual")).strip().lower()
+    source_tab  = (str(data.get("source_tab") or "unknown")).strip()[:40]
+    setup_type  = (str(data.get("setup_type") or "")).strip()[:40] or None
+    direction   = (str(data.get("direction")  or "")).strip()[:10]  or None
+    timeframe   = (str(data.get("timeframe")  or "")).strip()[:10]  or None
+
+    # Safe numeric parsing — never crashes on bad/empty/null frontend values
+    zone_high     = _lm_float_or_none(data.get("zone_high"))
+    zone_low      = _lm_float_or_none(data.get("zone_low"))
+    confidence    = _lm_int_or_zero(data.get("confidence") or data.get("score"))
+    score         = _lm_int_or_zero(data.get("score"))
+    current_price = _lm_float_or_none(data.get("current_price") or data.get("price"))
+
+    # Build the snapshot blob — include topAlert/meta if provided
+    snap_src = data.get("snapshot") or {}
+    if not isinstance(snap_src, dict):
+        snap_src = {}
+    if data.get("topAlert"):
+        snap_src["topAlert"] = data["topAlert"]
+    if data.get("meta"):
+        snap_src["meta"] = data["meta"]
+    snap_src["addedFrom"] = source_tab
+    snapshot_json = _json_dumps_safe(snap_src)
+
+    sel_tf  = data.get("selected_timeframes") or ["15m", "1h", "4h"]
+    sel_mod = data.get("selected_modules")    or ["OB", "FVG", "FIB", "Bias"]
+    alert_s = data.get("alert_settings")      or {}
+
+    from models import db as _db, LiveMonitorItem as _LMI, LiveMonitorEvent as _LME
+
+    # Duplicate check: same user + symbol + setup_type + timeframe + zone (if present)
+    created = True
+    existing = None
+    if setup_type and timeframe and zone_high is not None and zone_low is not None:
+        existing = _LMI.query.filter_by(
+            user_id=uid, symbol=symbol, setup_type=setup_type,
+            timeframe=timeframe, is_active=True
+        ).filter(
+            _LMI.zone_high == zone_high,
+            _LMI.zone_low  == zone_low
+        ).first()
+    if not existing and setup_type and timeframe:
+        existing = _LMI.query.filter_by(
+            user_id=uid, symbol=symbol, setup_type=setup_type,
+            timeframe=timeframe, is_active=True
+        ).first()
+
+    if existing:
+        existing.exchange            = exchange
+        existing.market              = market
+        existing.source_tab          = source_tab
+        existing.direction           = direction
+        existing.zone_high           = zone_high if zone_high is not None else existing.zone_high
+        existing.zone_low            = zone_low  if zone_low  is not None else existing.zone_low
+        existing.confidence          = confidence
+        existing.score               = score
+        existing.current_price       = current_price if current_price is not None else existing.current_price
+        existing.snapshot_json       = snapshot_json
+        existing.selected_timeframes = _json_dumps_safe(sel_tf)
+        existing.selected_modules    = _json_dumps_safe(sel_mod)
+        existing.alert_settings_json = _json_dumps_safe(alert_s)
+        existing.status              = "watching"
+        row = existing
+        created = False
+    else:
+        row = _LMI(
+            user_id             = uid,
+            symbol              = symbol,
+            exchange            = exchange,
+            market              = market,
+            source_tab          = source_tab,
+            setup_type          = setup_type,
+            direction           = direction,
+            timeframe           = timeframe,
+            zone_high           = zone_high,
+            zone_low            = zone_low,
+            confidence          = confidence,
+            score               = score,
+            current_price       = current_price,
+            status              = "watching",
+            snapshot_json       = snapshot_json,
+            selected_timeframes = _json_dumps_safe(sel_tf),
+            selected_modules    = _json_dumps_safe(sel_mod),
+            alert_settings_json = _json_dumps_safe(alert_s),
+            is_active           = True,
+        )
+        _db.session.add(row)
+
+    try:
+        _db.session.flush()   # get row.id before event insert
+        ev = _LME(
+            item_id           = row.id,
+            user_id           = uid,
+            symbol            = symbol,
+            event_type        = "added" if created else "updated",
+            event_description = "Added to Live Monitor" if created else "Updated in Live Monitor",
+            details_json      = _json_dumps_safe({
+                "source_tab": source_tab,
+                "setup_type": setup_type,
+                "timeframe":  timeframe,
+            }),
+            price_at_event    = current_price,
+        )
+        _db.session.add(ev)
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": "db", "message": str(e)}), 500
+
+    return jsonify({"ok": True, "item": _live_monitor_item_to_dict(row), "created": created})
+
+
+@app.route("/api/live-monitor/items/<int:item_id>", methods=["DELETE"])
+@login_required
+def api_lm_items_delete(item_id):
+    """Soft-delete a Live Monitor item (sets is_active=False, status='removed')."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorItem as _LMI, LiveMonitorEvent as _LME
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"ok": True, "deleted": item_id})
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+
+    row.is_active = False
+    row.status    = "removed"
+    ev = _LME(
+        item_id           = row.id,
+        user_id           = uid,
+        symbol            = row.symbol,
+        event_type        = "removed",
+        event_description = "Removed from Live Monitor",
+        details_json      = _json_dumps_safe({"item_id": item_id}),
+    )
+    _db.session.add(ev)
+    try:
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": "db", "message": str(e)}), 500
+
+    return jsonify({"ok": True, "deleted": item_id})
+
+
+@app.route("/api/live-monitor/events/<int:item_id>", methods=["GET"])
+@login_required
+def api_lm_events_get(item_id):
+    """Return events for a Live Monitor item (ownership verified)."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"events": [], "count": 0})
+
+    from models import LiveMonitorItem as _LMI, LiveMonitorEvent as _LME
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+
+    evs = (_LME.query.filter_by(item_id=item_id)
+                     .order_by(_LME.created_at.desc()).all())
+    return jsonify({"events": [_live_monitor_event_to_dict(e) for e in evs], "count": len(evs)})
 
 
 # mobile UA fragments — keep small, case-insensitive

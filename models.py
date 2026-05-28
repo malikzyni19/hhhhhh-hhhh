@@ -309,3 +309,102 @@ class IntelligenceSettings(db.Model):
 
     def __repr__(self) -> str:
         return f"<IntelligenceSettings enabled={self.auto_resolver_enabled} mode={self.auto_resolver_mode}>"
+
+
+class ScanPreset(db.Model):
+    """Per-user saved scanner configurations (Queue 15)."""
+    __tablename__ = "scan_presets"
+
+    id         = db.Column(db.Integer, primary_key=True)
+    user_id    = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    name       = db.Column(db.String(80), nullable=False)
+    payload    = db.Column(db.Text, nullable=False)             # JSON blob — controls snapshot
+    is_default = db.Column(db.Boolean, default=False, nullable=False, server_default="false")
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
+                            onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        db.UniqueConstraint("user_id", "name", name="uq_scan_preset_user_name"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ScanPreset {self.name} user={self.user_id}>"
+
+
+class UserPreference(db.Model):
+    """Per-user UI preferences — desktop tutorial state etc. (Queue 16)."""
+    __tablename__ = "user_preferences"
+
+    id      = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), unique=True, nullable=False, index=True)
+
+    desktop_tutorial_never_show  = db.Column(db.Boolean, default=False, nullable=False, server_default="false")
+    desktop_tutorial_completed_at = db.Column(db.DateTime, nullable=True)
+    desktop_tutorial_skipped_at   = db.Column(db.DateTime, nullable=True)
+
+    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
+                            onupdate=lambda: datetime.now(timezone.utc))
+
+    def __repr__(self) -> str:
+        return f"<UserPreference user={self.user_id} tutorial_off={self.desktop_tutorial_never_show}>"
+
+
+# ─────────────────────────────────────────────────────────────
+# Live Monitor — Phase 1
+# ─────────────────────────────────────────────────────────────
+
+class LiveMonitorItem(db.Model):
+    """Per-user Live Monitor items — full setup snapshot saved from any scanner tab."""
+    __tablename__ = "live_monitor_items"
+
+    id                  = db.Column(db.Integer, primary_key=True)
+    user_id             = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    symbol              = db.Column(db.String(20), nullable=False, index=True)
+    exchange            = db.Column(db.String(20), default="binance", nullable=False)
+    market              = db.Column(db.String(20), default="perpetual", nullable=False)
+    source_tab          = db.Column(db.String(40), default="unknown", nullable=False)
+    setup_type          = db.Column(db.String(40), nullable=True)
+    direction           = db.Column(db.String(10), nullable=True)
+    timeframe           = db.Column(db.String(10), nullable=True)
+    zone_high           = db.Column(db.Float, nullable=True)
+    zone_low            = db.Column(db.Float, nullable=True)
+    confidence          = db.Column(db.Integer, default=0)
+    score               = db.Column(db.Integer, default=0)
+    current_price       = db.Column(db.Float, nullable=True)
+    status              = db.Column(db.String(20), default="watching", nullable=False)
+    snapshot_json       = db.Column(db.Text, nullable=True)          # full topAlert/meta JSON blob
+    selected_timeframes = db.Column(db.Text, nullable=True)          # JSON list  e.g. ["15m","1h","4h"]
+    selected_modules    = db.Column(db.Text, nullable=True)          # JSON list  e.g. ["OB","FVG","FIB","Bias"]
+    alert_settings_json = db.Column(db.Text, nullable=True)          # JSON dict for future alert config
+    is_active           = db.Column(db.Boolean, default=True, nullable=False, server_default="true")
+    added_at            = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    updated_at          = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
+                                    onupdate=lambda: datetime.now(timezone.utc))
+
+    user = db.relationship("User", foreign_keys=[user_id])
+
+    def __repr__(self) -> str:
+        return f"<LiveMonitorItem {self.symbol} {self.setup_type} user={self.user_id}>"
+
+
+class LiveMonitorEvent(db.Model):
+    """Events logged against a LiveMonitorItem (added, removed, zone_tap, etc.)."""
+    __tablename__ = "live_monitor_events"
+
+    id                    = db.Column(db.Integer, primary_key=True)
+    item_id               = db.Column(db.Integer, db.ForeignKey("live_monitor_items.id"), nullable=False, index=True)
+    user_id               = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    symbol                = db.Column(db.String(20), nullable=True)
+    event_type            = db.Column(db.String(40), nullable=False)
+    event_description     = db.Column(db.String(255), nullable=True)
+    details_json          = db.Column(db.Text, nullable=True)
+    health_score_at_event = db.Column(db.Integer, nullable=True)
+    price_at_event        = db.Column(db.Float, nullable=True)
+    created_at            = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+
+    item = db.relationship("LiveMonitorItem", foreign_keys=[item_id])
+    user = db.relationship("User", foreign_keys=[user_id])
+
+    def __repr__(self) -> str:
+        return f"<LiveMonitorEvent {self.event_type} item={self.item_id}>"
