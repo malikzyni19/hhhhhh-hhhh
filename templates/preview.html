@@ -2860,6 +2860,12 @@ svg{display:block}
       .then(function(d){
         if(d&&d.ok&&d.session_context){
           _lmGlobalSessionContext = d.session_context;
+          if(typeof _lmUpdateSession === "function"){
+            _lmUpdateSession();
+          }
+          if(typeof _lmRenderRight === "function" && _lmSelItem){
+            _lmRenderRight(_lmSelItem);
+          }
         }
       })
       .catch(function(){ /* silently keep last known state */ });
