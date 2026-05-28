@@ -647,6 +647,9 @@ svg{display:block}
 .sc-status.near{background:rgba(251,191,36,.12);color:var(--yellow);border:1px solid rgba(251,191,36,.28)}
 .sc-status.inzone{background:rgba(34,211,238,.1);color:var(--accent);border:1px solid rgba(34,211,238,.25)}
 .sc-status.invalid{background:rgba(239,68,68,.1);color:var(--red-2);border:1px solid rgba(239,68,68,.25)}
+.sc-status.confirmed{background:rgba(34,197,94,.12);color:var(--green-2);border:1px solid rgba(34,197,94,.28)}
+.sc-status.warning{background:rgba(239,68,68,.08);color:var(--red-2);border:1px solid rgba(239,68,68,.2)}
+.sc-status.breach_risk{background:rgba(239,68,68,.18);color:var(--red-2);border:1px solid rgba(239,68,68,.4)}
 .sc-mtf{display:flex;align-items:center;gap:3px;margin-left:auto}
 .mtf-dot{width:6px;height:6px;border-radius:50%}
 .mtf-dot.strong{background:var(--green-2)}.mtf-dot.warn{background:var(--yellow)}.mtf-dot.none{background:var(--border-2)}
@@ -738,6 +741,7 @@ svg{display:block}
 .cl-ico.pass{background:rgba(34,197,94,.15);color:var(--green-2)}
 .cl-ico.warn{background:rgba(251,191,36,.12);color:var(--yellow)}
 .cl-ico.pend{background:rgba(139,92,246,.1);color:#a78bfa}
+.cl-ico.fail{background:rgba(239,68,68,.12);color:var(--red-2)}
 .cl-label{color:var(--text-2);flex:1}
 .cl-val{font-size:10.5px;font-weight:600;font-family:var(--mono);color:var(--text-3);margin-left:auto}
 .evt-list{display:flex;flex-direction:column}
@@ -4367,6 +4371,23 @@ svg{display:block}
     return Math.round(diff/86400)+"d ago";
   }
 
+  function _lmHealth(item){
+    return (item&&item.snapshot&&item.snapshot.latest_health&&typeof item.snapshot.latest_health==="object")
+      ?item.snapshot.latest_health:null;
+  }
+  function _lmHealthScore(item){
+    var h=_lmHealth(item);
+    return h?h.health_score:(item?((item.score||item.confidence)||0):0);
+  }
+  function _lmStatusLabel(item){
+    var lh=_lmHealth(item);
+    if(lh&&lh.status_label) return lh.status_label;
+    var s=item?item.status||"watching":"watching";
+    var m={near:"Near Zone",inzone:"In Zone",invalid:"Invalidated",
+           confirmed:"Confirmed",warning:"Warning",breach_risk:"Breach Risk"};
+    return m[s]||"Watching";
+  }
+
   function _lmRenderCards(){
     var box=document.getElementById("lmCards"); if(!box) return;
     var cnt=document.getElementById("lmCount");
@@ -4386,7 +4407,7 @@ svg{display:block}
       return;
     }
     box.innerHTML=items.map(function(item,idx){
-      var health=item.score||item.confidence||0;
+      var health=_lmHealthScore(item);
       var hClass=health>=70?"hi":health>=45?"mid":"lo";
       var hColor=health>=70?"var(--accent)":health>=45?"var(--accent-teal)":"var(--yellow)";
       if(health>0&&health<20) hColor="var(--red-2)";
@@ -4398,8 +4419,9 @@ svg{display:block}
         ?'<svg class="ico" style="width:11px;height:11px" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>'
         :isBear?'<svg class="ico" style="width:11px;height:11px" viewBox="0 0 24 24"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>':'';
       var tf=item.timeframe||"—";
-      var status=item.status||"watching";
-      var statusLbl=status==="near"?"Near Zone":status==="inzone"?"In Zone":status==="invalid"?"Invalidated":"Watching";
+      var lhc=_lmHealth(item);
+      var status=(lhc?lhc.status:null)||item.status||"watching";
+      var statusLbl=_lmStatusLabel(item);
       var ago=_lmAgo(item.added_at);
       var isActive=_lmSelItem&&_lmSelItem.id===item.id;
       var opacity=(status==="invalid"||!item.is_active)?"opacity:.5;":"";
@@ -4449,14 +4471,15 @@ svg{display:block}
         '<div style="font-size:12px">Click a card on the left to view details</div></div>';
       return;
     }
-    var health=item.score||item.confidence||0;
+    var lh=_lmHealth(item);
+    var health=_lmHealthScore(item);
     var circ=144.51, dashoff=(circ*(1-health/100)).toFixed(2);
     var hColor=health>=70?"var(--accent)":health>=45?"var(--accent-teal)":"var(--yellow)";
     if(health>0&&health<20) hColor="var(--red-2)";
     var dir=(item.direction||"").toLowerCase();
     var isBull=dir.indexOf("bull")!==-1, isBear=dir.indexOf("bear")!==-1;
-    var status=item.status||"watching";
-    var statusLbl=status==="near"?"Near Zone":status==="inzone"?"In Zone":status==="invalid"?"Invalidated":"Watching";
+    var status=(lh?lh.status:null)||item.status||"watching";
+    var statusLbl=_lmStatusLabel(item);
     var tf=item.timeframe||"—";
     var setupType=item.setup_type||"";
     var zHi=item.zone_high, zLo=item.zone_low, price=item.current_price;
@@ -4495,12 +4518,12 @@ svg{display:block}
                   '<circle cx="30" cy="30" r="23" fill="none" stroke="rgba(27,38,54,.8)" stroke-width="5"/>'+
                   '<circle cx="30" cy="30" r="23" fill="none" stroke="'+hColor+'" stroke-width="5" stroke-dasharray="'+circ+'" stroke-dashoffset="'+dashoff+'" stroke-linecap="round"/>'+
                 '</svg>'+
-                '<div class="hc-center"><div class="hc-val">'+health+'%</div><div class="hc-label">SCORE</div></div>'+
+                '<div class="hc-center"><div class="hc-val">'+health+'</div><div class="hc-label">'+(lh?lh.grade:'SCORE')+'</div></div>'+
               '</div>'+
               '<div class="health-bars" style="flex:1">'+
                 '<div class="hb-row"><div class="hb-top"><span>Direction</span><b>'+(isBull?'<span style="color:var(--green-2)">Bullish</span>':isBear?'<span style="color:var(--red-2)">Bearish</span>':'<span>—</span>')+'</b></div><div class="hb-track"><div class="hb-fill" style="width:100%"></div></div></div>'+
                 '<div class="hb-row"><div class="hb-top"><span>Zone Defined</span><b>'+(hasZone?'<span style="color:var(--green-2)">Yes</span>':'<span style="color:var(--text-3)">No</span>')+'</b></div><div class="hb-track"><div class="hb-fill" style="width:'+(hasZone?100:15)+'%"></div></div></div>'+
-                '<div class="hb-row"><div class="hb-top"><span>Confidence</span><b>'+item.confidence+'</b></div><div class="hb-track"><div class="hb-fill'+(item.confidence<50?" warn":"")+'" style="width:'+item.confidence+'%"></div></div></div>'+
+                '<div class="hb-row"><div class="hb-top"><span>'+(lh?"Health Score":"Confidence")+'</span><b>'+health+'</b></div><div class="hb-track"><div class="hb-fill'+(health<50?" warn":"")+'" style="width:'+health+'%"></div></div></div>'+
                 '<div class="hb-row"><div class="hb-top"><span>Timeframe</span><b>'+esc(tf)+'</b></div><div class="hb-track"><div class="hb-fill" style="width:80%"></div></div></div>'+
               '</div>'+
             '</div>'+
@@ -4519,7 +4542,7 @@ svg{display:block}
             '</div>'+
             '<div class="ds-msgs" id="dsMsgs">'+
               '<div class="ds-msg ai"><div class="ds-av ai">DS</div>'+
-              '<div class="ds-bubble">I have context on <b>'+esc(item.symbol)+'</b> — '+esc(tf)+' '+esc(setupType||"setup")+', score '+health+'%. Ask me anything.</div></div>'+
+              '<div class="ds-bubble">I have context on <b>'+esc(item.symbol)+'</b> — '+esc(tf)+' '+esc(setupType||"setup")+', '+(lh?'health '+health+' ('+lh.grade+')':'score '+health+'%')+'. Ask me anything.</div></div>'+
             '</div>'+
             '<div class="ds-input">'+
               '<input type="text" id="dsInput" placeholder="Ask DeepSeek about this setup…"/>'+
@@ -4708,6 +4731,8 @@ svg{display:block}
   }
 
   function _lmZoneCard(item){
+    var lh=_lmHealth(item);
+    var hz=lh&&lh.zone?lh.zone:null;
     var zHi=item.zone_high, zLo=item.zone_low, price=item.current_price;
     var hasZone=zHi!=null&&zLo!=null;
     if(!hasZone) return '<div style="color:var(--text-3);font-size:11.5px;padding:4px 0">No zone data. Add from an OB, FVG or FIB alert to enable zone tracking.</div>';
@@ -4718,12 +4743,10 @@ svg{display:block}
     }
     var sizeStr=zLo>0?((zHi-zLo)/zLo*100).toFixed(2)+"%":"—";
     var priceStr=price!=null?fmt(price):"—";
-    var proxLbl="—";
-    if(price!=null){
-      if(price>zHi) proxLbl=((price-zHi)/price*100).toFixed(2)+"% above";
-      else if(price<zLo) proxLbl=((zLo-price)/price*100).toFixed(2)+"% below";
-      else proxLbl="In Zone";
-    }
+    var proxLbl=hz?hz.reason:(price==null?"—":price>zHi?((price-zHi)/price*100).toFixed(2)+"% above":price<zLo?((zLo-price)/price*100).toFixed(2)+"% below":"In Zone");
+    var breachWarn=hz&&hz.breach_risk
+      ?'<div style="margin-top:6px;padding:5px 8px;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);border-radius:5px;font-size:10.5px;color:var(--red-2);font-weight:600">Zone breach detected — price moved against setup</div>'
+      :"";
     return '<div class="zone-nums">'+
       '<div class="zn-item"><div class="zn-l">ZONE HIGH</div><div class="zn-v hi">'+fmt(zHi)+'</div></div>'+
       '<div class="zn-item"><div class="zn-l">CURRENT</div><div class="zn-v cur">'+priceStr+'</div></div>'+
@@ -4735,24 +4758,34 @@ svg{display:block}
       '<div><div class="zs-l">Proximity</div><div class="zs-v">'+esc(proxLbl)+'</div></div>'+
       '<div><div class="zs-l">TF</div><div class="zs-v">'+esc(item.timeframe||"—")+'</div></div>'+
       '<div><div class="zs-l">Size</div><div class="zs-v good">'+sizeStr+'</div></div>'+
-    '</div>';
+    '</div>'+
+    breachWarn;
   }
 
   function _lmChecklist(item){
+    var ico={
+      pass:'<svg class="ico" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>',
+      warn:'<svg class="ico" viewBox="0 0 24 24"><path d="M10.3 4L2 20h20L13.7 4a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17v.01"/></svg>',
+      pend:'<svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>',
+      fail:'<svg class="ico" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+    };
+    function row(cls,label,val,vc){
+      return '<div class="cl-item"><div class="cl-ico '+cls+'">'+(ico[cls]||ico.pend)+'</div>'+
+        '<span class="cl-label">'+esc(label)+'</span>'+
+        '<span class="cl-val" style="color:'+vc+'">'+esc(val)+'</span></div>';
+    }
+    var lh=_lmHealth(item);
+    if(lh&&lh.checklist&&lh.checklist.length){
+      return '<div class="checklist">'+lh.checklist.map(function(c){
+        var cls=c.pass===true?"pass":c.pass===false?"fail":"pend";
+        var vc=c.pass===true?"var(--green-2)":c.pass===false?"var(--red-2)":"var(--text-3)";
+        return row(cls,c.label,c.value||"—",vc);
+      }).join("")+'</div>';
+    }
     var dir=(item.direction||"").toLowerCase();
     var isBull=dir.indexOf("bull")!==-1, isBear=dir.indexOf("bear")!==-1;
     var hasZone=item.zone_high!=null&&item.zone_low!=null;
     var score=item.score||item.confidence||0;
-    var ico={
-      pass:'<svg class="ico" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>',
-      warn:'<svg class="ico" viewBox="0 0 24 24"><path d="M10.3 4L2 20h20L13.7 4a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17v.01"/></svg>',
-      pend:'<svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>'
-    };
-    function row(cls,label,val,vc){
-      return '<div class="cl-item"><div class="cl-ico '+cls+'">'+ico[cls]+'</div>'+
-        '<span class="cl-label">'+esc(label)+'</span>'+
-        '<span class="cl-val" style="color:'+vc+'">'+esc(val)+'</span></div>';
-    }
     return '<div class="checklist">'+
       row(isBull||isBear?"pass":"pend","Direction Defined",isBull?"Bullish":isBear?"Bearish":"—",isBull||isBear?"var(--green-2)":"var(--text-3)")+
       row(hasZone?"pass":"pend","Zone Defined",hasZone?"Yes":"No zone",hasZone?"var(--green-2)":"var(--text-3)")+

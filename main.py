@@ -7641,6 +7641,289 @@ def _lm_extract_mtf_summary(scan_result: dict, tfs: list, mods: list,
     }
 
 
+# ── Phase 4: Health / Status Engine helpers ──────────────────────────────────
+
+def _lm_latest_mtf_scan_from_snapshot(snapshot: dict) -> dict:
+    if not snapshot or not isinstance(snapshot, dict):
+        return {}
+    scan = snapshot.get("latest_mtf_scan")
+    if not scan or not isinstance(scan, dict):
+        return {}
+    return scan
+
+
+def _lm_get_tf_module(scan: dict, tf: str, module: str) -> dict:
+    tfs_data = scan.get("tfs", {}) if scan else {}
+    tf_data  = tfs_data.get(tf, {})
+    if tf_data.get("error"):
+        return {}
+    return tf_data.get("modules", {}).get(module, {})
+
+
+def _lm_direction_from_item(item) -> str:
+    d = (getattr(item, "direction", None) or "").lower().strip()
+    if d in ("bullish", "bull", "long", "up"):
+        return "bullish"
+    if d in ("bearish", "bear", "short", "down"):
+        return "bearish"
+    return "neutral"
+
+
+def _lm_zone_health(item, current_price) -> dict:
+    zh        = item.zone_high
+    zl        = item.zone_low
+    direction = _lm_direction_from_item(item)
+
+    if not zh or not zl or zh <= 0 or zl <= 0:
+        return {"zone_status": "no_zone", "distance_pct": None,
+                "inside_zone": False, "near_zone": False,
+                "breach_risk": False, "reason": "No zone set"}
+
+    price = current_price or 0.0
+    if price <= 0:
+        return {"zone_status": "no_zone", "distance_pct": None,
+                "inside_zone": False, "near_zone": False,
+                "breach_risk": False, "reason": "No current price"}
+
+    inside = zl <= price <= zh
+
+    if direction == "bullish":
+        breach_risk = price < zl
+        if inside:
+            zone_status, distance_pct = "inside", 0.0
+        elif breach_risk:
+            mid = (zh + zl) / 2.0
+            distance_pct = round((zl - price) / mid * 100, 2)
+            zone_status  = "breach_risk"
+        else:
+            distance_pct = round((price - zh) / zh * 100, 2)
+            zone_status  = "near" if distance_pct <= 2.0 else "watching"
+    elif direction == "bearish":
+        breach_risk = price > zh
+        if inside:
+            zone_status, distance_pct = "inside", 0.0
+        elif breach_risk:
+            mid = (zh + zl) / 2.0
+            distance_pct = round((price - zh) / mid * 100, 2)
+            zone_status  = "breach_risk"
+        else:
+            distance_pct = round((zl - price) / zl * 100, 2)
+            zone_status  = "near" if distance_pct <= 2.0 else "watching"
+    else:
+        breach_risk = False
+        if inside:
+            zone_status, distance_pct = "inside", 0.0
+        elif price < zl:
+            distance_pct = round((zl - price) / zl * 100, 2)
+            zone_status  = "near" if distance_pct <= 2.0 else "watching"
+        else:
+            distance_pct = round((price - zh) / zh * 100, 2)
+            zone_status  = "near" if distance_pct <= 2.0 else "watching"
+
+    return {
+        "zone_status":  zone_status,
+        "zone_high":    zh,
+        "zone_low":     zl,
+        "distance_pct": 0.0 if inside else distance_pct,
+        "inside_zone":  inside,
+        "near_zone":    zone_status == "near",
+        "breach_risk":  breach_risk,
+        "reason": (
+            "Price inside zone" if inside else
+            "Zone breached"     if breach_risk else
+            "Near zone (<2%)"   if zone_status == "near" else
+            "Watching zone"
+        ),
+    }
+
+
+def _lm_bias_alignment(scan: dict, direction: str) -> dict:
+    def _tf_dir(tf):
+        tfs_data = scan.get("tfs", {}) if scan else {}
+        tf_data  = tfs_data.get(tf, {})
+        if not tf_data or tf_data.get("error"):
+            return None
+        return tf_data.get("direction")
+
+    bias_1h = _tf_dir("1h")
+    bias_4h = _tf_dir("4h")
+    bias_1d = _tf_dir("1d")
+
+    if direction == "neutral" or bias_1h is None:
+        bias_aligned = None
+    else:
+        bias_aligned = (bias_1h == direction)
+
+    ctx_count = 0
+    if bias_4h == direction:
+        ctx_count += 1
+    if bias_1d == direction:
+        ctx_count += 1
+
+    return {
+        "bias_1h":               bias_1h,
+        "bias_4h":               bias_4h,
+        "bias_1d":               bias_1d,
+        "bias_aligned":          bias_aligned,
+        "context_aligned_count": ctx_count,
+        "reason": (
+            "1H bias aligned"   if bias_aligned is True  else
+            "1H bias opposing"  if bias_aligned is False else
+            "Bias undetermined"
+        ),
+    }
+
+
+def _lm_module_confluence(scan: dict, direction: str) -> dict:
+    if not scan:
+        return {"module_score": 0, "confirmations": 0, "warnings": 0, "tf_summary": {}}
+
+    tfs_data      = scan.get("tfs", {})
+    confirmations = 0
+    warnings      = 0
+    tf_summary    = {}
+    scored_tfs    = 0
+
+    for tf, tf_data in tfs_data.items():
+        if not tf_data or tf_data.get("error"):
+            continue
+        mods = tf_data.get("modules", {})
+        if not mods:
+            continue
+        scored_tfs += 1
+        tf_conf, tf_warn = 0, 0
+
+        for mod_name, mod_data in mods.items():
+            if mod_name == "Bias":
+                continue
+            state = (mod_data.get("state") or "none").lower()
+            if state in ("strong", "yes"):
+                tf_conf += 1
+            elif state == "warn":
+                tf_warn += 1
+
+        if tf_conf > 0:
+            confirmations += 1
+        if tf_warn > 0 and tf_conf == 0:
+            warnings += 1
+
+        tf_summary[tf] = {"confirmations": tf_conf, "warnings": tf_warn}
+
+    module_score = round(confirmations / scored_tfs * 100) if scored_tfs else 0
+
+    return {
+        "module_score":  module_score,
+        "confirmations": confirmations,
+        "warnings":      warnings,
+        "tf_summary":    tf_summary,
+    }
+
+
+def _lm_compute_health(item, _snap: dict = None) -> dict:
+    now_iso   = datetime.now(timezone.utc).isoformat()
+    snap      = _snap if _snap is not None else _json_loads_safe(item.snapshot_json, {})
+    scan      = _lm_latest_mtf_scan_from_snapshot(snap)
+    direction = _lm_direction_from_item(item)
+    price     = item.current_price or 0.0
+
+    zone = _lm_zone_health(item, price)
+    bias = _lm_bias_alignment(scan, direction)
+    conf = _lm_module_confluence(scan, direction)
+
+    raw_score = item.score or 0
+    base_pts  = min(20, round(raw_score / 100.0 * 20))
+
+    zs = zone["zone_status"]
+    zone_pts = {"inside": 25, "near": 18, "watching": 8, "breach_risk": 0}.get(zs, 5)
+
+    ba = bias["bias_aligned"]
+    bias_pts = 25 if ba is True else 10 if ba is None else 0
+
+    ctx_pts  = min(15, bias["context_aligned_count"] * 8)
+    mod_pts  = round(conf["module_score"] / 100.0 * 15)
+
+    health_score = max(0, min(100, base_pts + zone_pts + bias_pts + ctx_pts + mod_pts))
+
+    if health_score >= 80:
+        grade = "A"
+    elif health_score >= 65:
+        grade = "B"
+    elif health_score >= 50:
+        grade = "C"
+    elif health_score >= 35:
+        grade = "D"
+    else:
+        grade = "F"
+
+    if zone["breach_risk"]:
+        status = "breach_risk"
+    elif health_score >= 75 and ba is True and zs in ("inside", "near"):
+        status = "confirmed"
+    elif zs == "inside":
+        status = "inzone"
+    elif zs == "near":
+        status = "near"
+    elif ba is False or raw_score < 35:
+        status = "warning"
+    else:
+        status = "watching"
+
+    status_labels = {
+        "confirmed":   "Confirmed",
+        "inzone":      "In Zone",
+        "near":        "Near Zone",
+        "watching":    "Watching",
+        "warning":     "Warning",
+        "breach_risk": "Breach Risk",
+    }
+
+    checklist = [
+        {"label": "Score ≥ 35",      "pass": raw_score >= 35,
+         "value": str(raw_score)},
+        {"label": "Zone Active",           "pass": zs not in ("no_zone", "breach_risk"),
+         "value": zone.get("reason", "")},
+        {"label": "1H Bias Aligned",       "pass": ba is True,
+         "value": bias.get("bias_1h") or "—"},
+        {"label": "4H Context",            "pass": bias["bias_4h"] == direction,
+         "value": bias.get("bias_4h") or "—"},
+        {"label": "1D Context",            "pass": bias["bias_1d"] == direction,
+         "value": bias.get("bias_1d") or "—"},
+        {"label": "Module Confluence",     "pass": conf["confirmations"] >= 2,
+         "value": f"{conf['confirmations']} TF(s)"},
+    ]
+
+    health_warnings = []
+    if zone["breach_risk"]:
+        health_warnings.append("Zone breach detected — price moved against setup")
+    if ba is False:
+        health_warnings.append("1H bias opposing setup direction")
+    if conf["warnings"] > 0:
+        health_warnings.append(f"{conf['warnings']} timeframe(s) showing conflicting signals")
+
+    return {
+        "phase":        "phase4_health",
+        "computed_at":  now_iso,
+        "health_score": health_score,
+        "grade":        grade,
+        "status":       status,
+        "status_label": status_labels.get(status, "Watching"),
+        "direction":    direction,
+        "zone":         zone,
+        "bias":         bias,
+        "confluence":   conf,
+        "checklist":    checklist,
+        "reasons":      [zone["reason"], bias["reason"]],
+        "warnings":     health_warnings,
+        "scoring": {
+            "base_pts": base_pts,
+            "zone_pts": zone_pts,
+            "bias_pts": bias_pts,
+            "ctx_pts":  ctx_pts,
+            "mod_pts":  mod_pts,
+        },
+    }
+
+
 def _live_monitor_item_to_dict(item) -> dict:
     """Serialize a LiveMonitorItem row to a JSON-friendly dict."""
     return {
@@ -8499,8 +8782,16 @@ def api_lm_items_refresh(item_id):
     if new_price and new_price > 0:
         row.current_price = new_price
 
+    # Phase 4: compute health with fresh snap (latest_mtf_scan already merged)
+    health = _lm_compute_health(row, _snap=snap)
+    snap["latest_health"] = health
+
     row.snapshot_json = _json_dumps_safe(snap)
     row.updated_at    = datetime.now(timezone.utc)
+
+    prev_status = row.status
+    row.status  = health["status"]
+    row.score   = health["health_score"]
 
     ev = _LME(
         item_id           = row.id,
@@ -8509,13 +8800,34 @@ def api_lm_items_refresh(item_id):
         event_type        = "mtf_refreshed",
         event_description = "MTF scan refreshed",
         details_json      = _json_dumps_safe({
-            "timeframes": tfs,
-            "modules":    mods,
-            "phase":      "phase3_mtf_scan",
+            "timeframes":   tfs,
+            "modules":      mods,
+            "phase":        "phase3_mtf_scan",
+            "health_score": health["health_score"],
+            "grade":        health["grade"],
         }),
-        price_at_event = new_price if (new_price and new_price > 0) else row.current_price,
+        price_at_event        = new_price if (new_price and new_price > 0) else row.current_price,
+        health_score_at_event = health["health_score"],
     )
     _db.session.add(ev)
+
+    if prev_status != health["status"]:
+        ev_sc = _LME(
+            item_id           = row.id,
+            user_id           = uid,
+            symbol            = row.symbol,
+            event_type        = "status_changed",
+            event_description = f"Status changed: {prev_status} → {health['status']} (score {health['health_score']})",
+            details_json      = _json_dumps_safe({
+                "prev_status":  prev_status,
+                "new_status":   health["status"],
+                "health_score": health["health_score"],
+                "grade":        health["grade"],
+            }),
+            price_at_event        = new_price if (new_price and new_price > 0) else row.current_price,
+            health_score_at_event = health["health_score"],
+        )
+        _db.session.add(ev_sc)
 
     try:
         _db.session.commit()
@@ -8527,6 +8839,7 @@ def api_lm_items_refresh(item_id):
         "ok":             True,
         "item":           _live_monitor_item_to_dict(row),
         "latest_mtf_scan": mtf_summary,
+        "latest_health":  health,
     })
 
 
@@ -8538,7 +8851,7 @@ def api_lm_refresh_all():
     if not uid:
         return jsonify({"error": "no_user"}), 401
 
-    from models import db as _db, LiveMonitorItem as _LMI
+    from models import db as _db, LiveMonitorItem as _LMI, LiveMonitorEvent as _LME
 
     _MAX_ITEMS = 10
     rows = (_LMI.query
@@ -8589,8 +8902,35 @@ def api_lm_refresh_all():
             if new_price and new_price > 0:
                 row.current_price = new_price
 
+            # Phase 4: compute health with fresh snap
+            health = _lm_compute_health(row, _snap=snap)
+            snap["latest_health"] = health
+
             row.snapshot_json = _json_dumps_safe(snap)
             row.updated_at    = now
+
+            prev_status = row.status
+            row.status  = health["status"]
+            row.score   = health["health_score"]
+
+            if prev_status != health["status"]:
+                ev_sc = _LME(
+                    item_id           = row.id,
+                    user_id           = uid,
+                    symbol            = row.symbol,
+                    event_type        = "status_changed",
+                    event_description = f"Status changed: {prev_status} → {health['status']} (score {health['health_score']})",
+                    details_json      = _json_dumps_safe({
+                        "prev_status":  prev_status,
+                        "new_status":   health["status"],
+                        "health_score": health["health_score"],
+                        "grade":        health["grade"],
+                    }),
+                    price_at_event        = new_price if (new_price and new_price > 0) else row.current_price,
+                    health_score_at_event = health["health_score"],
+                )
+                _db.session.add(ev_sc)
+
             updated += 1
         except Exception as e:
             failed += 1
@@ -8613,6 +8953,65 @@ def api_lm_refresh_all():
         "failed":  failed,
         "items":   [_live_monitor_item_to_dict(r) for r in refreshed_rows],
         "errors":  errors,
+    })
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/recalc-health", methods=["POST"])
+@login_required
+def api_lm_items_recalc_health(item_id):
+    """Recompute health score from existing snapshot_json without running a new MTF scan."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorItem as _LMI, LiveMonitorEvent as _LME
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if not row.is_active:
+        return jsonify({"error": "inactive", "message": "Item is no longer active."}), 400
+
+    snap   = _json_loads_safe(row.snapshot_json, {})
+    health = _lm_compute_health(row, _snap=snap)
+    snap["latest_health"] = health
+
+    prev_status = row.status
+    row.status  = health["status"]
+    row.score   = health["health_score"]
+    row.snapshot_json = _json_dumps_safe(snap)
+    row.updated_at    = datetime.now(timezone.utc)
+
+    if prev_status != health["status"]:
+        ev_sc = _LME(
+            item_id           = row.id,
+            user_id           = uid,
+            symbol            = row.symbol,
+            event_type        = "status_changed",
+            event_description = f"Status changed: {prev_status} → {health['status']} (score {health['health_score']})",
+            details_json      = _json_dumps_safe({
+                "prev_status":  prev_status,
+                "new_status":   health["status"],
+                "health_score": health["health_score"],
+                "grade":        health["grade"],
+                "source":       "recalc",
+            }),
+            price_at_event        = row.current_price,
+            health_score_at_event = health["health_score"],
+        )
+        _db.session.add(ev_sc)
+
+    try:
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": "db", "message": str(e)}), 500
+
+    return jsonify({
+        "ok":            True,
+        "item":          _live_monitor_item_to_dict(row),
+        "latest_health": health,
     })
 
 
