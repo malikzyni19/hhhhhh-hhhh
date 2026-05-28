@@ -7527,7 +7527,8 @@ def _lm_build_scan_config(item) -> dict:
     }
 
 
-def _lm_extract_mtf_summary(scan_result: dict, tfs: list, mods: list) -> dict:
+def _lm_extract_mtf_summary(scan_result: dict, tfs: list, mods: list,
+                             exchange: str = None, market: str = None) -> dict:
     """Convert _scan_pair_multitf output to a clean per-TF summary for UI and storage."""
     now_iso   = datetime.now(timezone.utc).isoformat()
     raw_price = scan_result.get("price", 0) or 0
@@ -7630,8 +7631,8 @@ def _lm_extract_mtf_summary(scan_result: dict, tfs: list, mods: list) -> dict:
 
     return {
         "symbol":       scan_result.get("symbol", ""),
-        "market":       "perpetual",
-        "exchange":     "binance",
+        "market":       market   or scan_result.get("market")   or "perpetual",
+        "exchange":     exchange or scan_result.get("exchange") or "binance",
         "timeframes":   tfs,
         "modules":      mods,
         "tfs":          tfs_out,
@@ -7659,8 +7660,8 @@ def _live_monitor_item_to_dict(item) -> dict:
         "current_price":      item.current_price,
         "status":             item.status,
         "snapshot":           _json_loads_safe(item.snapshot_json, {}),
-        "selected_timeframes": _json_loads_safe(item.selected_timeframes, ["15m", "1h", "4h"]),
-        "selected_modules":   _json_loads_safe(item.selected_modules, ["OB", "FVG", "FIB", "Bias"]),
+        "selected_timeframes": _json_loads_safe(item.selected_timeframes, ["15m", "30m", "1h", "4h", "1d"]),
+        "selected_modules":   _json_loads_safe(item.selected_modules, ["OB", "FVG", "FIB", "Breaker", "Bias"]),
         "alert_settings":     _json_loads_safe(item.alert_settings_json, {}),
         "is_active":          bool(item.is_active),
         "added_at":           item.added_at.isoformat() if item.added_at else None,
@@ -8298,8 +8299,8 @@ def api_lm_items_post():
     snap_src["addedFrom"] = source_tab
     snapshot_json = _json_dumps_safe(snap_src)
 
-    sel_tf  = data.get("selected_timeframes") or ["15m", "1h", "4h"]
-    sel_mod = data.get("selected_modules")    or ["OB", "FVG", "FIB", "Bias"]
+    sel_tf  = data.get("selected_timeframes") or ["15m", "30m", "1h", "4h", "1d"]
+    sel_mod = data.get("selected_modules")    or ["OB", "FVG", "FIB", "Breaker", "Bias"]
     alert_s = data.get("alert_settings")      or {}
 
     from models import db as _db, LiveMonitorItem as _LMI, LiveMonitorEvent as _LME
@@ -8472,7 +8473,8 @@ def api_lm_items_refresh(item_id):
     except Exception as e:
         return jsonify({"error": "scan_failed", "message": str(e)}), 500
 
-    mtf_summary = _lm_extract_mtf_summary(scan_result, tfs, mods)
+    mtf_summary = _lm_extract_mtf_summary(scan_result, tfs, mods,
+                                          exchange=row.exchange, market=row.market)
 
     # Merge into existing snapshot_json, preserving old fields
     snap = _json_loads_safe(row.snapshot_json, {})
@@ -8483,7 +8485,15 @@ def api_lm_items_refresh(item_id):
             "visible_analysis_timeframes": ["15m", "30m", "1h", "4h", "1d"],
             "bias_min_timeframe":          "1h",
             "hidden_execution_timeframe":  "5m",
+            "source_exchange":             row.exchange or "binance",
+            "source_market":               row.market   or "perpetual",
         }
+    else:
+        tp = snap["timeframe_policy"]
+        if "source_exchange" not in tp:
+            tp["source_exchange"] = row.exchange or "binance"
+        if "source_market" not in tp:
+            tp["source_market"] = row.market or "perpetual"
 
     new_price = scan_result.get("price")
     if new_price and new_price > 0:
@@ -8554,7 +8564,8 @@ def api_lm_refresh_all():
                 cfg,
                 row.exchange or "binance",
             )
-            mtf_summary = _lm_extract_mtf_summary(scan_result, tfs, mods)
+            mtf_summary = _lm_extract_mtf_summary(scan_result, tfs, mods,
+                                                  exchange=row.exchange, market=row.market)
 
             snap = _json_loads_safe(row.snapshot_json, {})
             snap["latest_mtf_scan"]     = mtf_summary
@@ -8564,7 +8575,15 @@ def api_lm_refresh_all():
                     "visible_analysis_timeframes": ["15m", "30m", "1h", "4h", "1d"],
                     "bias_min_timeframe":          "1h",
                     "hidden_execution_timeframe":  "5m",
+                    "source_exchange":             row.exchange or "binance",
+                    "source_market":               row.market   or "perpetual",
                 }
+            else:
+                tp = snap["timeframe_policy"]
+                if "source_exchange" not in tp:
+                    tp["source_exchange"] = row.exchange or "binance"
+                if "source_market" not in tp:
+                    tp["source_market"] = row.market or "perpetual"
 
             new_price = scan_result.get("price")
             if new_price and new_price > 0:
