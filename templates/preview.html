@@ -752,6 +752,13 @@ svg{display:block}
 .evt-time{font-size:10px;font-family:var(--mono);color:var(--text-3)}
 .evt-text{font-size:11.5px;color:var(--text-2);line-height:1.4}
 .evt-text b{color:var(--text);font-weight:600}
+.mkt-ctx-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.mct-item{background:var(--bg-card-2);border:1px solid var(--border);border-radius:8px;padding:9px 10px}
+.mct-label{font-size:9.5px;font-weight:700;letter-spacing:.6px;color:var(--text-3);margin-bottom:4px}
+.mct-val{font-size:12px;font-weight:700;font-family:var(--mono);color:var(--text-3)}
+.mct-sub{font-size:10px;color:var(--text-3);margin-top:2px;font-style:italic}
+.lm-ai-toggle{display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:8px;border:1px solid rgba(34,211,238,.3);background:rgba(34,211,238,.07);font-size:11px;font-weight:700;color:var(--accent);cursor:pointer;white-space:nowrap;user-select:none}
+.lm-ai-toggle.off{border-color:var(--border);background:transparent;color:var(--text-3)}
 
 /* Dashboard (Wave 8) */
 .db-wrap{display:flex;flex-direction:column;gap:14px}
@@ -4216,6 +4223,8 @@ svg{display:block}
 
   /* ── Live Monitor (Phase 2) ── */
   var _lmPollT=null, _lmCache={}, _lmSelItem=null, _lmActiveFilter="all";
+  var _lmTfState=["15m","1h","4h"], _lmModuleState=["OB","FVG","FIB","Bias"];
+  var _lmRefreshState="manual", _lmAiPreview=true;
 
   function renderLiveMonitorInto(scroll){
     scroll.classList.add("lm-active");
@@ -4229,6 +4238,25 @@ svg{display:block}
             '</div>'+
             '<div class="session-pill"><div class="session-dot"></div><span id="lmSession">—</span></div>'+
             '<div style="display:flex;align-items:center;gap:5px">'+
+              '<span class="seg-label">TF</span>'+
+              '<div class="seg" id="lmTfSeg">'+
+                '<button data-lmtf="15m">15m</button>'+
+                '<button data-lmtf="1h" class="on">1H</button>'+
+                '<button data-lmtf="4h" class="on">4H</button>'+
+                '<button data-lmtf="1d">1D</button>'+
+              '</div>'+
+            '</div>'+
+            '<div style="display:flex;align-items:center;gap:5px">'+
+              '<span class="seg-label">Modules</span>'+
+              '<div class="seg" id="lmModSeg">'+
+                '<button data-lmmod="OB" class="on">OB</button>'+
+                '<button data-lmmod="FVG" class="on">FVG</button>'+
+                '<button data-lmmod="FIB" class="on">FIB</button>'+
+                '<button data-lmmod="Breaker">Breaker</button>'+
+                '<button data-lmmod="Bias" class="on">Bias</button>'+
+              '</div>'+
+            '</div>'+
+            '<div style="display:flex;align-items:center;gap:5px">'+
               '<span class="seg-label">Filter</span>'+
               '<span class="fchip on" data-lmf="all">All</span>'+
               '<span class="fchip" data-lmf="near">Near Zone</span>'+
@@ -4236,6 +4264,17 @@ svg{display:block}
             '</div>'+
           '</div>'+
           '<div class="lm-topbar-right">'+
+            '<div style="display:flex;align-items:center;gap:5px">'+
+              '<span class="seg-label">Refresh</span>'+
+              '<span class="fchip on" data-lmrefresh="manual">Manual</span>'+
+              '<span class="fchip" data-lmrefresh="15s">15s</span>'+
+              '<span class="fchip" data-lmrefresh="30s">30s</span>'+
+              '<span class="fchip" data-lmrefresh="60s">60s</span>'+
+            '</div>'+
+            '<div class="lm-ai-toggle" id="lmAiToggle">'+
+              '<svg class="ico" style="width:12px;height:12px" viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 1 7 7c0 3-1.6 5.5-4 6.7V17a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-1.3C6.6 14.5 5 12 5 9a7 7 0 0 1 7-7z"/><path d="M9 21h6"/></svg>'+
+              '<span id="lmAiLabel">AI Preview</span>'+
+            '</div>'+
             '<button class="btn" id="lmRefresh" type="button"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>Refresh All</button>'+
           '</div>'+
         '</div>'+
@@ -4247,6 +4286,7 @@ svg{display:block}
           '<div class="lm-right"><div class="lm-right-scroll" id="lmRight"></div></div>'+
         '</div>'+
       '</div>';
+    // Filter chips
     [].forEach.call(scroll.querySelectorAll("[data-lmf]"),function(c){
       c.addEventListener("click",function(){
         [].forEach.call(scroll.querySelectorAll("[data-lmf]"),function(x){x.classList.remove("on");});
@@ -4254,6 +4294,40 @@ svg{display:block}
         _lmActiveFilter=c.getAttribute("data-lmf");
         _lmRenderCards();
       });
+    });
+    // TF chips — toggle on/off, update _lmTfState (frontend-only, no scan triggered)
+    [].forEach.call(scroll.querySelectorAll("[data-lmtf]"),function(b){
+      b.addEventListener("click",function(){
+        b.classList.toggle("on");
+        var tf=b.getAttribute("data-lmtf");
+        var idx=_lmTfState.indexOf(tf);
+        if(idx===-1) _lmTfState.push(tf); else _lmTfState.splice(idx,1);
+      });
+    });
+    // Module chips — toggle on/off, update _lmModuleState (frontend-only, no scan triggered)
+    [].forEach.call(scroll.querySelectorAll("[data-lmmod]"),function(b){
+      b.addEventListener("click",function(){
+        b.classList.toggle("on");
+        var mod=b.getAttribute("data-lmmod");
+        var idx=_lmModuleState.indexOf(mod);
+        if(idx===-1) _lmModuleState.push(mod); else _lmModuleState.splice(idx,1);
+      });
+    });
+    // Refresh interval — exclusive select (frontend-only, no timer started)
+    [].forEach.call(scroll.querySelectorAll("[data-lmrefresh]"),function(c){
+      c.addEventListener("click",function(){
+        [].forEach.call(scroll.querySelectorAll("[data-lmrefresh]"),function(x){x.classList.remove("on");});
+        c.classList.add("on");
+        _lmRefreshState=c.getAttribute("data-lmrefresh");
+      });
+    });
+    // AI Preview toggle (frontend-only visual toggle, no API call)
+    var aiTog=document.getElementById("lmAiToggle");
+    var aiLbl=document.getElementById("lmAiLabel");
+    if(aiTog) aiTog.addEventListener("click",function(){
+      _lmAiPreview=!_lmAiPreview;
+      if(_lmAiPreview){ aiTog.classList.remove("off"); if(aiLbl) aiLbl.textContent="AI Preview"; }
+      else { aiTog.classList.add("off"); if(aiLbl) aiLbl.textContent="AI Off"; }
     });
     var rb=E("lmRefresh"); if(rb) rb.addEventListener("click",_lmRefresh);
     _lmUpdateSession();
@@ -4335,7 +4409,7 @@ svg{display:block}
     [].forEach.call(box.querySelectorAll(".setup-card"),function(card){
       card.addEventListener("click",function(){
         var idx=parseInt(card.getAttribute("data-lmidx"),10);
-        _lmSelItem=(liveMonitorItems||[])[idx]||null;
+        _lmSelItem=items[idx]||null;  // fix: use filtered items[], not liveMonitorItems[]
         [].forEach.call(box.querySelectorAll(".setup-card"),function(c){c.classList.remove("active");});
         card.classList.add("active");
         _lmRenderRight(_lmSelItem);
@@ -4468,6 +4542,26 @@ svg{display:block}
         '</div>'+
       '</div>'+
 
+      '<div class="sec-card">'+
+        '<div class="sec-card-head">'+
+          '<svg class="ico" style="width:13px;height:13px;color:var(--text-3)" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>'+
+          '<span class="sch-title">AGGREGATE MARKET CONTEXT</span>'+
+          '<span style="font-size:10px;color:var(--text-3);font-family:var(--mono);margin-left:auto">Phase 5</span>'+
+        '</div>'+
+        '<div class="sec-card-body">'+
+          '<div class="mkt-ctx-grid">'+
+            '<div class="mct-item"><div class="mct-label">FUNDING RATE</div><div class="mct-val">Awaiting</div><div class="mct-sub">Phase 5 — Binance feed</div></div>'+
+            '<div class="mct-item"><div class="mct-label">OPEN INTEREST</div><div class="mct-val">Awaiting</div><div class="mct-sub">Phase 5 — Binance feed</div></div>'+
+            '<div class="mct-item"><div class="mct-label">LONG / SHORT RATIO</div><div class="mct-val">Awaiting</div><div class="mct-sub">Phase 5 — Binance feed</div></div>'+
+            '<div class="mct-item"><div class="mct-label">TAKER PRESSURE</div><div class="mct-val">Awaiting</div><div class="mct-sub">Phase 5 — Binance feed</div></div>'+
+            '<div class="mct-item"><div class="mct-label">LIQUIDATIONS (15m)</div><div class="mct-val">Awaiting</div><div class="mct-sub">Phase 5 — Binance feed</div></div>'+
+            '<div class="mct-item"><div class="mct-label">SESSION CONTEXT</div>'+
+              '<div class="mct-val" id="lmMktSession" style="color:var(--accent)">—</div>'+
+              '<div class="mct-sub">UTC clock only — Phase 4.5 for full context</div></div>'+
+          '</div>'+
+        '</div>'+
+      '</div>'+
+
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'+
         '<div class="sec-card">'+
           '<div class="sec-card-head">'+
@@ -4488,6 +4582,20 @@ svg{display:block}
       '</div>';
 
     box.innerHTML=html;
+
+    // Populate UTC session label in Market Context card
+    var mktSess=document.getElementById("lmMktSession");
+    if(mktSess){
+      var h=new Date().getUTCHours();
+      var sLabel;
+      if(h>=0&&h<7) sLabel="Asia · Tokyo";
+      else if(h>=7&&h<8) sLabel="Pre-London";
+      else if(h>=8&&h<12) sLabel="London Open";
+      else if(h>=12&&h<17) sLabel="London · NY Overlap";
+      else if(h>=17&&h<21) sLabel="NY Afternoon";
+      else sLabel="Off-Hours";
+      mktSess.textContent=sLabel+" (UTC "+new Date().getUTCHours()+"h)";
+    }
 
     [].forEach.call(box.querySelectorAll("[data-chart]"),function(btn){
       btn.addEventListener("click",function(){
