@@ -8528,6 +8528,125 @@ def _lm_ai_is_configured() -> bool:
     return _lm_ai_config()["configured"]
 
 
+# ── Phase 6.5: Multi-Provider AI Router ──────────────────────────────────────
+
+def _lm_ai_agents_config() -> list:
+    """Return safe list of configured AI agents. Never returns actual API keys."""
+    agents = []
+
+    # ── Method A: JSON config from AI_AGENTS_JSON env var ────────────────────
+    raw_json = os.environ.get("AI_AGENTS_JSON", "").strip()
+    if raw_json:
+        try:
+            entries = json.loads(raw_json)
+            if isinstance(entries, list):
+                for entry in entries:
+                    if not isinstance(entry, dict):
+                        continue
+                    key_env   = entry.get("api_key_env", "")
+                    base_env  = entry.get("api_base_env", "")
+                    key_val   = os.environ.get(key_env, "").strip() if key_env else ""
+                    base_val  = os.environ.get(base_env, "").strip() if base_env else ""
+                    model     = (entry.get("model") or "").strip()
+                    has_key   = bool(key_val)
+                    configured = has_key and bool(model) and entry.get("enabled", True)
+                    agents.append({
+                        "id":         entry.get("id", "unknown"),
+                        "label":      entry.get("label", "Unknown"),
+                        "provider":   entry.get("provider", "openrouter"),
+                        "model":      model,
+                        "configured": configured,
+                        "has_key":    has_key,
+                        "enabled":    bool(entry.get("enabled", True)),
+                        "api_base":   base_val or "",
+                    })
+                if agents:
+                    return agents
+        except Exception:
+            pass  # Fall through to Method B
+
+    # ── Method B: Build from individual env vars ──────────────────────────────
+    # Default OpenRouter (Phase 6 backward compat)
+    or_key   = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    or_model = os.environ.get("OPENROUTER_MODEL", "").strip()
+    or_base  = os.environ.get("OPENROUTER_API_BASE",
+                               "https://openrouter.ai/api/v1/chat/completions").strip()
+    agents.append({
+        "id":         "default_openrouter",
+        "label":      "OpenRouter",
+        "provider":   "openrouter",
+        "model":      or_model,
+        "configured": bool(or_key and or_model),
+        "has_key":    bool(or_key),
+        "enabled":    True,
+        "api_base":   or_base,
+    })
+
+    # Optional simple additional agents
+    _SIMPLE_AGENTS = [
+        ("OPENAI_API_KEY",    "OPENAI_MODEL",    "OPENAI_API_BASE",    "openai_direct", "ChatGPT",   "openai",        "https://api.openai.com/v1/chat/completions"),
+        ("ANTHROPIC_API_KEY", "ANTHROPIC_MODEL", "ANTHROPIC_API_BASE", "anthropic",     "Claude",    "anthropic",     ""),
+        ("GEMINI_API_KEY",    "GEMINI_MODEL",     "GEMINI_API_BASE",   "gemini",        "Gemini",    "gemini",        ""),
+        ("DEEPSEEK_API_KEY",  "DEEPSEEK_MODEL",  "DEEPSEEK_API_BASE",  "deepseek",      "DeepSeek",  "deepseek",      "https://api.deepseek.com/v1/chat/completions"),
+        ("CUSTOM_AI_API_KEY", "CUSTOM_AI_MODEL", "CUSTOM_AI_API_BASE", "custom",        "Custom AI", "custom_openai", ""),
+    ]
+    for key_env, model_env, base_env, aid, label, provider, default_base in _SIMPLE_AGENTS:
+        k = os.environ.get(key_env, "").strip()
+        m = os.environ.get(model_env, "").strip()
+        b = os.environ.get(base_env, "").strip() or default_base
+        if k or m:  # include if any env is set
+            agents.append({
+                "id":         aid,
+                "label":      label,
+                "provider":   provider,
+                "model":      m,
+                "configured": bool(k and m),
+                "has_key":    bool(k),
+                "enabled":    True,
+                "api_base":   b,
+            })
+
+    # Always include local fallback at end
+    agents.append({
+        "id":         "local_fallback",
+        "label":      "Local Fallback",
+        "provider":   "local_fallback",
+        "model":      "rule_based",
+        "configured": True,
+        "has_key":    False,
+        "enabled":    True,
+        "api_base":   "",
+    })
+
+    return agents
+
+
+def _lm_get_ai_agent_config(agent_id: str = None) -> dict:
+    """Return a single agent config by id. Never returns actual API keys."""
+    agents = _lm_ai_agents_config()
+
+    # Find by id
+    if agent_id:
+        for a in agents:
+            if a["id"] == agent_id:
+                return a
+
+    # First configured (non-fallback) agent
+    for a in agents:
+        if a.get("configured") and a["id"] != "local_fallback":
+            return a
+
+    # Absolute fallback
+    for a in agents:
+        if a["id"] == "local_fallback":
+            return a
+
+    return {
+        "id": "local_fallback", "label": "Local Fallback", "provider": "local_fallback",
+        "model": "rule_based", "configured": True, "has_key": False, "enabled": True, "api_base": "",
+    }
+
+
 def _lm_build_ai_context(item) -> dict:
     """Build a compact, JSON-safe context dict from a LiveMonitorItem for the AI agent."""
     snap = _json_loads_safe(getattr(item, "snapshot_json", None), {})
@@ -8825,26 +8944,42 @@ def _lm_local_ai_fallback(context: dict, user_message: str = None) -> dict:
     }
 
 
-def _lm_call_ai_agent(context: dict, user_message: str = None) -> dict:
-    """Call the AI provider with setup context. Returns local fallback if not configured or on error."""
-    cfg = _lm_ai_config()
-    if not cfg["configured"]:
-        return {
-            "ok":         False,
-            "provider":   "local_fallback",
-            "configured": False,
-            "analysis":   _lm_local_ai_fallback(context, user_message),
-            "error":      "AI provider not configured",
-        }
+def _lm_call_openai_compatible_agent(agent: dict, context: dict,
+                                      user_message: str = None) -> dict:
+    """Call any OpenAI-compatible chat completions endpoint (OpenAI, DeepSeek, OpenRouter, custom)."""
+    key_env_map = {
+        "openrouter":   "OPENROUTER_API_KEY",
+        "openai":       "OPENAI_API_KEY",
+        "deepseek":     "DEEPSEEK_API_KEY",
+        "custom_openai": "CUSTOM_AI_API_KEY",
+    }
+    provider = agent.get("provider", "openrouter")
+    key_env  = key_env_map.get(provider, "OPENROUTER_API_KEY")
+    api_key  = os.environ.get(key_env, "").strip()
+    api_base = agent.get("api_base") or os.environ.get("OPENROUTER_API_BASE",
+                                                         "https://openrouter.ai/api/v1/chat/completions")
+    model    = agent.get("model", "")
 
     user_content = json.dumps({
         "context":      context,
         "user_message": user_message or "Analyze this setup and give your verdict.",
     }, ensure_ascii=False)
 
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type":  "application/json",
+    }
+    app_title = os.environ.get("OPENROUTER_APP_TITLE", "ZyNi SMC Screener")
+    http_ref  = os.environ.get("OPENROUTER_HTTP_REFERER", "")
+    if provider == "openrouter":
+        if http_ref:
+            headers["HTTP-Referer"] = http_ref
+        if app_title:
+            headers["X-Title"] = app_title
+
     payload = {
-        "model":       cfg["model"],
-        "messages": [
+        "model":       model,
+        "messages":    [
             {"role": "system", "content": _lm_ai_system_prompt()},
             {"role": "user",   "content": user_content},
         ],
@@ -8852,43 +8987,254 @@ def _lm_call_ai_agent(context: dict, user_message: str = None) -> dict:
         "max_tokens":  900,
     }
 
+    resp = req.post(api_base, json=payload, headers=headers, timeout=20)
+    if resp.status_code != 200:
+        raise RuntimeError(f"HTTP {resp.status_code}")
+    data = resp.json()
+    raw  = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
+    return _lm_parse_ai_json(raw)
+
+
+def _lm_call_anthropic_agent(agent: dict, context: dict,
+                               user_message: str = None) -> dict:
+    """Call Anthropic messages API. Falls back safely if env not configured."""
+    api_key  = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    api_base = agent.get("api_base") or os.environ.get(
+        "ANTHROPIC_API_BASE", "https://api.anthropic.com/v1/messages")
+    model    = agent.get("model", "")
+    if not api_key or not model:
+        raise RuntimeError("Anthropic key or model missing")
+
+    user_content = json.dumps({
+        "context":      context,
+        "user_message": user_message or "Analyze this setup and give your verdict.",
+    }, ensure_ascii=False)
+
     headers = {
-        "Authorization": f"Bearer {os.environ.get('OPENROUTER_API_KEY', '')}",
-        "Content-Type":  "application/json",
+        "x-api-key":         api_key,
+        "anthropic-version": "2023-06-01",
+        "content-type":      "application/json",
     }
-    if cfg.get("http_referer"):
-        headers["HTTP-Referer"] = cfg["http_referer"]
-    if cfg.get("app_title"):
-        headers["X-Title"] = cfg["app_title"]
+    payload = {
+        "model":      model,
+        "max_tokens": 900,
+        "system":     _lm_ai_system_prompt(),
+        "messages":   [{"role": "user", "content": user_content}],
+    }
+    resp = req.post(api_base, json=payload, headers=headers, timeout=20)
+    if resp.status_code != 200:
+        raise RuntimeError(f"HTTP {resp.status_code}")
+    data = resp.json()
+    raw  = (data.get("content") or [{}])[0].get("text", "")
+    return _lm_parse_ai_json(raw)
+
+
+def _lm_call_gemini_agent(agent: dict, context: dict,
+                            user_message: str = None) -> dict:
+    """Call Google Gemini generateContent API. Falls back safely if env not configured."""
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    model   = agent.get("model", "")
+    if not api_key or not model:
+        raise RuntimeError("Gemini key or model missing")
+
+    api_base = agent.get("api_base") or os.environ.get(
+        "GEMINI_API_BASE",
+        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent")
+    if not api_base:
+        api_base = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+
+    user_content = json.dumps({
+        "context":      context,
+        "user_message": user_message or "Analyze this setup and give your verdict.",
+    }, ensure_ascii=False)
+
+    combined = _lm_ai_system_prompt() + "\n\n" + user_content
+    payload  = {"contents": [{"parts": [{"text": combined}]}]}
+    url      = f"{api_base}?key={api_key}"
+    resp     = req.post(url, json=payload, timeout=20)
+    if resp.status_code != 200:
+        raise RuntimeError(f"HTTP {resp.status_code}")
+    data = resp.json()
+    raw  = ((data.get("candidates") or [{}])[0]
+            .get("content", {}).get("parts", [{}])[0].get("text", ""))
+    return _lm_parse_ai_json(raw)
+
+
+def _lm_call_ai_provider(context: dict, user_message: str = None,
+                           agent_id: str = None) -> dict:
+    """Route an AI call to the correct provider. Returns local fallback on any failure."""
+    agent    = _lm_get_ai_agent_config(agent_id)
+    provider = agent.get("provider", "local_fallback")
+    aid      = agent.get("id", "local_fallback")
+    label    = agent.get("label", "Local Fallback")
+    model    = agent.get("model", "")
+
+    base_result = {
+        "agent_id":    aid,
+        "agent_label": label,
+        "provider":    provider,
+        "model":       model,
+        "configured":  agent.get("configured", False),
+    }
+
+    if provider == "local_fallback" or not agent.get("configured"):
+        return {**base_result, "ok": False, "configured": False,
+                "analysis": _lm_local_ai_fallback(context, user_message),
+                "error": "AI provider not configured"}
 
     try:
-        resp = req.post(cfg["api_base"], json=payload, headers=headers, timeout=20)
-        if resp.status_code != 200:
-            return {
-                "ok":         False,
-                "provider":   "openrouter",
-                "configured": True,
-                "analysis":   _lm_local_ai_fallback(context, user_message),
-                "error":      f"Provider HTTP {resp.status_code}",
-            }
-        data        = resp.json()
-        raw_content = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
-        analysis    = _lm_parse_ai_json(raw_content)
-        return {
-            "ok":         True,
-            "provider":   "openrouter",
-            "configured": True,
-            "model":      cfg["model"],
-            "analysis":   analysis,
-        }
+        if provider in ("openrouter", "openai", "deepseek", "custom_openai"):
+            analysis = _lm_call_openai_compatible_agent(agent, context, user_message)
+        elif provider == "anthropic":
+            analysis = _lm_call_anthropic_agent(agent, context, user_message)
+        elif provider == "gemini":
+            analysis = _lm_call_gemini_agent(agent, context, user_message)
+        else:
+            # Unknown provider — use openai-compatible style as best-effort
+            analysis = _lm_call_openai_compatible_agent(agent, context, user_message)
+
+        return {**base_result, "ok": True, "analysis": analysis}
+
     except Exception as _e:
+        return {**base_result, "ok": False,
+                "analysis": _lm_local_ai_fallback(context, user_message),
+                "error": f"Provider error: {type(_e).__name__}"}
+
+
+def _lm_call_ai_agent(context: dict, user_message: str = None) -> dict:
+    """Backward-compatible wrapper — delegates to _lm_call_ai_provider with default agent."""
+    return _lm_call_ai_provider(context, user_message, agent_id=None)
+
+
+# ── Phase 6.5 Task 5: Consensus Engine ───────────────────────────────────────
+
+def _lm_consensus_from_agent_results(results: list) -> dict:
+    """
+    Aggregate multiple agent results into a single consensus verdict.
+
+    results: list of dicts from _lm_call_ai_provider (one per agent).
+    Returns a consensus dict:
+      {ok, verdict, confidence, summary, agent_count, ok_count,
+       agreement, agents, analysis}
+    """
+    if not results:
         return {
-            "ok":         False,
-            "provider":   "openrouter",
-            "configured": True,
-            "analysis":   _lm_local_ai_fallback(context, user_message),
-            "error":      f"Provider error: {type(_e).__name__}",
+            "ok": False, "verdict": "wait", "confidence": 0,
+            "summary": "No agent results.", "agent_count": 0,
+            "ok_count": 0, "agreement": 0.0, "agents": [], "analysis": {},
         }
+
+    _VERDICT_WEIGHT = {
+        "confirmed_watch": 5,
+        "watch":           4,
+        "wait":            3,
+        "high_risk":       2,
+        "avoid":           1,
+    }
+    _VERDICT_ORDER = ["confirmed_watch", "watch", "wait", "high_risk", "avoid"]
+
+    ok_results     = [r for r in results if r.get("ok") and r.get("analysis")]
+    agent_count    = len(results)
+    ok_count       = len(ok_results)
+
+    agent_summaries = []
+    for r in results:
+        an = r.get("analysis", {})
+        agent_summaries.append({
+            "agent_id":    r.get("agent_id", ""),
+            "agent_label": r.get("agent_label", ""),
+            "provider":    r.get("provider", ""),
+            "ok":          r.get("ok", False),
+            "verdict":     an.get("verdict", "wait"),
+            "confidence":  an.get("confidence", 0),
+            "summary":     an.get("summary", ""),
+        })
+
+    if not ok_results:
+        fallback = _lm_local_ai_fallback({}, None)
+        return {
+            "ok": False, "verdict": fallback.get("verdict", "wait"),
+            "confidence": 0, "summary": "All agents failed; local fallback used.",
+            "agent_count": agent_count, "ok_count": 0, "agreement": 0.0,
+            "agents": agent_summaries, "analysis": fallback,
+        }
+
+    # Weighted vote: collect verdicts from ok results
+    verdict_votes: dict = {}
+    total_confidence = 0
+    for r in ok_results:
+        an      = r.get("analysis", {})
+        verdict = an.get("verdict", "wait")
+        conf    = int(an.get("confidence") or 0)
+        verdict_votes[verdict] = verdict_votes.get(verdict, 0) + 1
+        total_confidence += conf
+
+    # Pick verdict with most votes; tie-break by weight (higher = more bullish/confirmed)
+    winner_verdict  = max(
+        verdict_votes,
+        key=lambda v: (verdict_votes[v], _VERDICT_WEIGHT.get(v, 3)),
+    )
+    winner_count    = verdict_votes[winner_verdict]
+    agreement       = round(winner_count / ok_count, 2) if ok_count else 0.0
+    avg_confidence  = round(total_confidence / ok_count) if ok_count else 0
+
+    # Build merged analysis: pick fields from the result whose verdict matches winner
+    # (first match), fall back to first ok result
+    winning_result = next(
+        (r for r in ok_results if r["analysis"].get("verdict") == winner_verdict),
+        ok_results[0],
+    )
+    merged_analysis = dict(winning_result.get("analysis", {}))
+    merged_analysis["confidence"] = avg_confidence
+
+    # Aggregate confirmations, risks, invalidations from all ok agents
+    all_confirmations: list = []
+    all_risks: list = []
+    all_invalidations: list = []
+    all_next_actions: list = []
+    seen_c: set = set()
+    seen_r: set = set()
+    seen_i: set = set()
+    seen_n: set = set()
+    for r in ok_results:
+        an = r.get("analysis", {})
+        for item in (an.get("confirmations_needed") or []):
+            if item not in seen_c:
+                seen_c.add(item); all_confirmations.append(item)
+        for item in (an.get("risks") or []):
+            if item not in seen_r:
+                seen_r.add(item); all_risks.append(item)
+        for item in (an.get("invalidations") or []):
+            if item not in seen_i:
+                seen_i.add(item); all_invalidations.append(item)
+        for item in (an.get("next_actions") or []):
+            if item not in seen_n:
+                seen_n.add(item); all_next_actions.append(item)
+
+    merged_analysis["confirmations_needed"] = all_confirmations[:6]
+    merged_analysis["risks"]                = all_risks[:6]
+    merged_analysis["invalidations"]        = all_invalidations[:6]
+    merged_analysis["next_actions"]         = all_next_actions[:4]
+
+    # Consensus summary line
+    labels_ok = [a["agent_label"] for a in agent_summaries if a["ok"]]
+    merged_analysis["agent_note"] = (
+        f"Consensus from {ok_count}/{agent_count} agents "
+        f"({', '.join(labels_ok[:3])}{'...' if len(labels_ok) > 3 else ''}): "
+        f"{winner_count}/{ok_count} agree → {winner_verdict}."
+    )
+
+    return {
+        "ok":          True,
+        "verdict":     winner_verdict,
+        "confidence":  avg_confidence,
+        "summary":     merged_analysis.get("summary", ""),
+        "agent_count": agent_count,
+        "ok_count":    ok_count,
+        "agreement":   agreement,
+        "agents":      agent_summaries,
+        "analysis":    merged_analysis,
+    }
 
 
 def _live_monitor_item_to_dict(item) -> dict:
@@ -10149,6 +10495,28 @@ def api_lm_refresh_market_context_all():
     })
 
 
+@app.route("/api/live-monitor/ai-providers", methods=["GET"])
+@login_required
+def api_lm_ai_providers():
+    """Return safe list of configured AI providers (no API keys)."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    agents = _lm_ai_agents_config()
+    safe = []
+    for a in agents:
+        safe.append({
+            "id":         a.get("id"),
+            "label":      a.get("label"),
+            "provider":   a.get("provider"),
+            "model":      a.get("model", ""),
+            "configured": a.get("configured", False),
+            "has_key":    a.get("has_key", False),
+            "enabled":    a.get("enabled", True),
+        })
+    return jsonify({"ok": True, "agents": safe, "count": len(safe)})
+
+
 @app.route("/api/live-monitor/items/<int:item_id>/ai-analyze", methods=["POST"])
 @login_required
 def api_lm_items_ai_analyze(item_id):
@@ -10169,6 +10537,10 @@ def api_lm_items_ai_analyze(item_id):
     body         = request.get_json(silent=True) or {}
     user_message = (body.get("message") or "")[:1000]
     force        = bool(body.get("force", False))
+    agent_id     = (body.get("agent_id") or "").strip() or None
+    mode         = (body.get("mode") or "single").strip()
+    if mode not in ("single", "all"):
+        mode = "single"
 
     snap = _json_loads_safe(row.snapshot_json, {})
 
@@ -10189,16 +10561,17 @@ def api_lm_items_ai_analyze(item_id):
             except Exception:
                 pass
 
-    context    = _lm_build_ai_context(row)
-    ai_result  = _lm_call_ai_agent(context, user_message or None)
-    cfg        = _lm_ai_config()
+    context     = _lm_build_ai_context(row)
+    ai_result   = _lm_call_ai_provider(context, user_message or None, agent_id=agent_id)
     computed_at = datetime.now(timezone.utc).isoformat()
 
     latest_ai = {
         "phase":       "phase6_ai_agent",
         "computed_at": computed_at,
+        "agent_id":    ai_result.get("agent_id", ""),
+        "agent_label": ai_result.get("agent_label", ""),
         "provider":    ai_result.get("provider", "local_fallback"),
-        "model":       ai_result.get("model") or cfg.get("model") or "",
+        "model":       ai_result.get("model", ""),
         "configured":  ai_result.get("configured", False),
         "ok":          ai_result.get("ok", False),
         "analysis":    ai_result.get("analysis", {}),
@@ -10226,6 +10599,7 @@ def api_lm_items_ai_analyze(item_id):
             "verdict":    analysis.get("verdict"),
             "confidence": analysis.get("confidence"),
             "provider":   ai_result.get("provider"),
+            "agent_id":   ai_result.get("agent_id"),
             "configured": ai_result.get("configured"),
         }),
         health_score_at_event = row.score,
@@ -10243,6 +10617,132 @@ def api_lm_items_ai_analyze(item_id):
         "ok":        True,
         "item":      _live_monitor_item_to_dict(row),
         "ai_result": latest_ai,
+    })
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/ai-consensus", methods=["POST"])
+@login_required
+def api_lm_items_ai_consensus(item_id):
+    """Run all configured AI agents and return a consensus verdict. Stores in snapshot_json."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorItem as _LMI, LiveMonitorEvent as _LME
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if not row.is_active:
+        return jsonify({"error": "inactive", "message": "Item is no longer active."}), 400
+
+    body         = request.get_json(silent=True) or {}
+    user_message = (body.get("message") or "")[:1000]
+    force        = bool(body.get("force", False))
+
+    snap = _json_loads_safe(row.snapshot_json, {})
+
+    # 15s cooldown for consensus (more expensive than single-agent)
+    if not force and snap.get("latest_ai_consensus"):
+        last_at = snap["latest_ai_consensus"].get("computed_at")
+        if last_at:
+            try:
+                from datetime import datetime, timezone as _tz
+                diff = (datetime.now(_tz.utc) - datetime.fromisoformat(last_at)).total_seconds()
+                if diff < 15:
+                    return jsonify({
+                        "ok":            True,
+                        "item":          _live_monitor_item_to_dict(row),
+                        "consensus":     snap["latest_ai_consensus"],
+                        "cached":        True,
+                    })
+            except Exception:
+                pass
+
+    context = _lm_build_ai_context(row)
+    agents  = _lm_ai_agents_config()
+
+    # Call every configured non-fallback agent, plus local_fallback as backstop
+    results     = []
+    used_agents = []
+    for agent in agents:
+        if agent.get("id") == "local_fallback":
+            continue
+        if not agent.get("configured") or not agent.get("enabled", True):
+            continue
+        r = _lm_call_ai_provider(context, user_message or None, agent_id=agent["id"])
+        results.append(r)
+        used_agents.append(agent["id"])
+
+    # Always include local fallback if no configured agents produced results
+    if not any(r.get("ok") for r in results):
+        fb_result = {
+            "agent_id":    "local_fallback",
+            "agent_label": "Local Fallback",
+            "provider":    "local_fallback",
+            "model":       "",
+            "configured":  False,
+            "ok":          True,
+            "analysis":    _lm_local_ai_fallback(context, user_message or None),
+        }
+        results.append(fb_result)
+
+    consensus   = _lm_consensus_from_agent_results(results)
+    computed_at = datetime.now(timezone.utc).isoformat()
+
+    latest_consensus = {
+        "phase":       "phase65_consensus",
+        "computed_at": computed_at,
+        "agent_count": consensus["agent_count"],
+        "ok_count":    consensus["ok_count"],
+        "agreement":   consensus["agreement"],
+        "verdict":     consensus["verdict"],
+        "confidence":  consensus["confidence"],
+        "summary":     consensus["summary"],
+        "agents":      consensus["agents"],
+        "analysis":    consensus["analysis"],
+        "source_context_at": {
+            "latest_mtf":     snap.get("last_mtf_refresh_at"),
+            "latest_health":  snap.get("last_health_at"),
+            "latest_session": snap.get("last_session_context_at"),
+            "latest_market":  snap.get("last_market_context_at"),
+        },
+    }
+
+    snap["latest_ai_consensus"]  = latest_consensus
+    snap["last_ai_consensus_at"] = computed_at
+    row.snapshot_json = _json_dumps_safe(snap)
+    row.updated_at    = datetime.now(timezone.utc)
+
+    ev = _LME(
+        item_id           = row.id,
+        user_id           = uid,
+        symbol            = row.symbol,
+        event_type        = "ai_consensus",
+        event_description = "AI consensus analysis generated",
+        details_json      = _json_dumps_safe({
+            "verdict":     consensus["verdict"],
+            "confidence":  consensus["confidence"],
+            "agent_count": consensus["agent_count"],
+            "ok_count":    consensus["ok_count"],
+            "agreement":   consensus["agreement"],
+        }),
+        health_score_at_event = row.score,
+        price_at_event        = row.current_price,
+    )
+    _db.session.add(ev)
+
+    try:
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": "db", "message": str(e)}), 500
+
+    return jsonify({
+        "ok":        True,
+        "item":      _live_monitor_item_to_dict(row),
+        "consensus": latest_consensus,
     })
 
 
@@ -10265,11 +10765,12 @@ def api_lm_items_ai_chat(item_id):
 
     body         = request.get_json(silent=True) or {}
     user_message = (body.get("message") or "")[:1000].strip()
+    agent_id     = (body.get("agent_id") or "").strip() or None
     if not user_message:
         return jsonify({"error": "no_message"}), 400
 
     context   = _lm_build_ai_context(row)
-    ai_result = _lm_call_ai_agent(context, user_message)
+    ai_result = _lm_call_ai_provider(context, user_message, agent_id=agent_id)
     analysis  = ai_result.get("analysis", {})
 
     # Build short chat reply from analysis
@@ -10285,11 +10786,13 @@ def api_lm_items_ai_chat(item_id):
     )
 
     return jsonify({
-        "ok":         True,
-        "reply":      reply,
-        "analysis":   analysis,
-        "provider":   ai_result.get("provider"),
-        "configured": ai_result.get("configured", False),
+        "ok":          True,
+        "reply":       reply,
+        "analysis":    analysis,
+        "provider":    ai_result.get("provider"),
+        "agent_id":    ai_result.get("agent_id"),
+        "agent_label": ai_result.get("agent_label"),
+        "configured":  ai_result.get("configured", False),
     })
 
 

@@ -4235,6 +4235,7 @@ svg{display:block}
       startLiveMonitorPolling();
       loadLiveMonitorItems();           // Phase 1: load DB-backed items
       loadLiveMonitorSessionContext();  // Phase 4.5: fetch session context once
+      loadLiveMonitorAiProviders();     // Phase 6.5: fetch AI provider list once
       return;
     }
     if(v==="dashboard"){
@@ -4437,7 +4438,29 @@ svg{display:block}
     }catch(e){ return "Unavailable"; }
   }
 
-  // Phase 6: AI Agent helpers
+  // Phase 6 / 6.5: AI Agent helpers
+  var _lmAiAgents = [];
+  var _lmSelectedAgentId = null;
+  var _lmAiMode = "single"; // "single" | "all"
+
+  function loadLiveMonitorAiProviders(){
+    fetch("/api/live-monitor/ai-providers",{credentials:"same-origin"})
+      .then(function(r){return r.json();})
+      .then(function(d){
+        if(d&&d.ok&&Array.isArray(d.agents)){
+          _lmAiAgents=d.agents;
+          // auto-select first configured non-fallback agent if none selected
+          if(!_lmSelectedAgentId){
+            var first=d.agents.find(function(a){return a.configured&&a.id!=="local_fallback";});
+            _lmSelectedAgentId=first?first.id:null;
+          }
+          // re-render chat header label if item is selected
+          if(_lmSelItem) _lmRenderRight(_lmSelItem);
+        }
+      })
+      .catch(function(){});
+  }
+
   function _lmAiAnalysis(item){
     try{
       if(item&&item.snapshot&&item.snapshot.latest_ai_analysis&&
@@ -4446,37 +4469,79 @@ svg{display:block}
     }catch(e){}
     return null;
   }
+  function _lmAiConsensus(item){
+    try{
+      if(item&&item.snapshot&&item.snapshot.latest_ai_consensus&&
+         typeof item.snapshot.latest_ai_consensus==="object")
+        return item.snapshot.latest_ai_consensus;
+    }catch(e){}
+    return null;
+  }
   function _lmAiConfiguredLabel(item){
+    if(_lmAiMode==="all"){
+      var cs=_lmAiConsensus(item);
+      if(!cs) return "All Agents";
+      return "Consensus ("+cs.ok_count+"/"+cs.agent_count+")";
+    }
     var ai=_lmAiAnalysis(item);
     if(!ai) return "AI Preview";
+    // show agent label if available
+    if(ai.agent_label) return ai.agent_label;
     if(ai.configured&&ai.ok) return "AI Connected";
     if(ai.configured&&!ai.ok) return "AI Error";
     return "Local Fallback";
   }
   function _lmRunAiAnalyze(itemId,force,cb){
-    var payload=JSON.stringify({force:!!force});
-    fetch("/api/live-monitor/items/"+itemId+"/ai-analyze",{
-      method:"POST",credentials:"same-origin",
-      headers:{"Content-Type":"application/json"},body:payload
-    }).then(function(r){return r.json();})
-      .then(function(d){
-        if(d&&d.ok&&d.item){
-          for(var k=0;k<liveMonitorItems.length;k++){
-            if(liveMonitorItems[k].id===d.item.id){liveMonitorItems[k]=d.item;break;}
+    var payload=JSON.stringify({
+      force:!!force,
+      agent_id:_lmAiMode==="single"?(_lmSelectedAgentId||null):null,
+      mode:_lmAiMode
+    });
+    if(_lmAiMode==="all"){
+      // consensus mode — call ai-consensus endpoint
+      fetch("/api/live-monitor/items/"+itemId+"/ai-consensus",{
+        method:"POST",credentials:"same-origin",
+        headers:{"Content-Type":"application/json"},body:payload
+      }).then(function(r){return r.json();})
+        .then(function(d){
+          if(d&&d.ok&&d.item){
+            for(var k=0;k<liveMonitorItems.length;k++){
+              if(liveMonitorItems[k].id===d.item.id){liveMonitorItems[k]=d.item;break;}
+            }
+            if(_lmSelItem&&_lmSelItem.id===d.item.id){
+              _lmSelItem=d.item; _lmRenderRight(d.item);
+            }
           }
-          if(_lmSelItem&&_lmSelItem.id===d.item.id){
-            _lmSelItem=d.item; _lmRenderRight(d.item);
+          if(cb) cb(d);
+        })
+        .catch(function(e){ if(cb) cb(null,e); });
+    } else {
+      fetch("/api/live-monitor/items/"+itemId+"/ai-analyze",{
+        method:"POST",credentials:"same-origin",
+        headers:{"Content-Type":"application/json"},body:payload
+      }).then(function(r){return r.json();})
+        .then(function(d){
+          if(d&&d.ok&&d.item){
+            for(var k=0;k<liveMonitorItems.length;k++){
+              if(liveMonitorItems[k].id===d.item.id){liveMonitorItems[k]=d.item;break;}
+            }
+            if(_lmSelItem&&_lmSelItem.id===d.item.id){
+              _lmSelItem=d.item; _lmRenderRight(d.item);
+            }
           }
-        }
-        if(cb) cb(d);
-      })
-      .catch(function(e){ if(cb) cb(null,e); });
+          if(cb) cb(d);
+        })
+        .catch(function(e){ if(cb) cb(null,e); });
+    }
   }
   function _lmAiChat(itemId,message,cb){
     fetch("/api/live-monitor/items/"+itemId+"/ai-chat",{
       method:"POST",credentials:"same-origin",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({message:message})
+      body:JSON.stringify({
+        message:message,
+        agent_id:_lmAiMode==="single"?(_lmSelectedAgentId||null):null
+      })
     }).then(function(r){return r.json();})
       .then(function(d){ if(cb) cb(d,null); })
       .catch(function(e){ if(cb) cb(null,e); });
@@ -4643,7 +4708,19 @@ svg{display:block}
             '<div class="ds-head">'+
               '<svg class="ico" style="width:13px;height:13px;color:var(--accent)" viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 1 7 7c0 3-1.6 5.5-4 6.7V17a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-1.3C6.6 14.5 5 12 5 9a7 7 0 0 1 7-7z"/><path d="M9 21h6"/></svg>'+
               '<div><div class="ds-name">ZyNi AI</div><div class="ds-sub" id="dsSubLabel">'+esc(_lmAiConfiguredLabel(item))+'</div></div>'+
-              '<button class="btn" type="button" id="dsAnalyzeBtn" data-lmaianalyze="'+item.id+'" style="margin-left:auto;padding:2px 7px;font-size:10px" title="Run AI analysis on this setup">'+
+              (function(){
+                // Agent selector dropdown — built from _lmAiAgents state
+                var opts='<option value="__single_default__"'+((!_lmSelectedAgentId&&_lmAiMode==="single")?' selected':'')+'>Auto</option>';
+                for(var ai65=0;ai65<_lmAiAgents.length;ai65++){
+                  var ag=_lmAiAgents[ai65];
+                  if(!ag.enabled) continue;
+                  var sel=(ag.id===_lmSelectedAgentId&&_lmAiMode==="single")?' selected':'';
+                  opts+='<option value="'+esc(ag.id)+'"'+sel+'>'+esc(ag.label)+(ag.configured?'':' ✗')+'</option>';
+                }
+                opts+='<option value="__all__"'+(_lmAiMode==="all"?' selected':'')+'>All Agents</option>';
+                return '<select id="dsAgentSel" style="margin-left:auto;font-size:10px;padding:2px 4px;background:var(--bg-2);border:1px solid var(--border);color:var(--text-2);border-radius:4px;max-width:110px" title="Select AI agent">'+opts+'</select>';
+              })()+
+              '<button class="btn" type="button" id="dsAnalyzeBtn" data-lmaianalyze="'+item.id+'" style="margin-left:6px;padding:2px 7px;font-size:10px" title="Run AI analysis on this setup">'+
                 '<svg class="ico ico-sm" viewBox="0 0 24 24" style="width:10px;height:10px"><path d="M12 2a7 7 0 0 1 7 7c0 3-1.6 5.5-4 6.7V17a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-1.3C6.6 14.5 5 12 5 9a7 7 0 0 1 7-7z"/><path d="M9 21h6"/></svg>Analyze</button>'+
             '</div>'+
             '<div class="ds-sug" id="dsSug">'+
@@ -4654,12 +4731,22 @@ svg{display:block}
             '</div>'+
             '<div class="ds-msgs" id="dsMsgs">'+
               (function(){
+                // Show consensus result if available and mode is all, else single analysis
+                var cs=_lmAiConsensus(item);
                 var ai=_lmAiAnalysis(item);
+                if(_lmAiMode==="all"&&cs&&cs.verdict){
+                  var vColor=cs.verdict==='confirmed_watch'?'var(--green-2)':cs.verdict==='high_risk'||cs.verdict==='avoid'?'var(--red-2)':'var(--yellow)';
+                  var agLine=cs.ok_count+'/'+cs.agent_count+' agents · '+(Math.round(cs.agreement*100)||0)+'% agree';
+                  return '<div class="ds-msg ai"><div class="ds-av ai">AI</div>'+
+                    '<div class="ds-bubble"><b style="color:'+vColor+'">CONSENSUS: '+esc((cs.verdict||'').replace(/_/g,' ').toUpperCase())+'</b> · '+esc(cs.confidence||0)+'% · '+
+                    esc(cs.summary||'')+'<br><span style="font-size:9px;opacity:.6">'+esc(agLine)+'</span></div></div>';
+                }
                 var an=ai&&ai.analysis;
                 if(an&&an.verdict){
-                  var vColor=an.verdict==='confirmed_watch'?'var(--green-2)':an.verdict==='high_risk'||an.verdict==='avoid'?'var(--red-2)':'var(--yellow)';
+                  var vColor2=an.verdict==='confirmed_watch'?'var(--green-2)':an.verdict==='high_risk'||an.verdict==='avoid'?'var(--red-2)':'var(--yellow)';
+                  var agLabel=ai.agent_label?(ai.agent_label+' · '):'';
                   return '<div class="ds-msg ai"><div class="ds-av ai">AI</div>'+
-                    '<div class="ds-bubble"><b style="color:'+vColor+'">'+esc((an.verdict||'').replace(/_/g,' ').toUpperCase())+'</b> · '+esc(an.confidence||0)+'% · '+
+                    '<div class="ds-bubble"><span style="font-size:9px;opacity:.6">'+esc(agLabel)+'</span><b style="color:'+vColor2+'">'+esc((an.verdict||'').replace(/_/g,' ').toUpperCase())+'</b> · '+esc(an.confidence||0)+'% · '+
                     esc(an.summary||'')+'</div></div>';
                 }
                 return '<div class="ds-msg ai"><div class="ds-av ai">DS</div>'+
@@ -4667,7 +4754,7 @@ svg{display:block}
               })()+
             '</div>'+
             '<div class="ds-input">'+
-              '<input type="text" id="dsInput" placeholder="Ask DeepSeek about this setup…"/>'+
+              '<input type="text" id="dsInput" placeholder="Ask ZyNi AI about this setup…"/>'+
               '<button class="ds-send" id="dsSend"><svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2L15 22l-4-9-9-4 20-7z"/></svg></button>'+
             '</div>'+
           '</div>'+
@@ -4886,13 +4973,31 @@ svg{display:block}
           .catch(function(){ mbtn.disabled=false; mbtn.innerHTML=origHtml; });
       });
     });
+    // Agent selector change handler
+    var agentSel=box.querySelector("#dsAgentSel");
+    if(agentSel){
+      agentSel.addEventListener("change",function(){
+        var val=agentSel.value;
+        if(val==="__all__"){
+          _lmAiMode="all"; _lmSelectedAgentId=null;
+        } else if(val==="__single_default__"){
+          _lmAiMode="single"; _lmSelectedAgentId=null;
+        } else {
+          _lmAiMode="single"; _lmSelectedAgentId=val;
+        }
+        // Update sub-label
+        var lbl=document.getElementById("dsSubLabel");
+        if(lbl) lbl.textContent=_lmAiConfiguredLabel(item);
+      });
+    }
     // Analyze button handler
     [].forEach.call(box.querySelectorAll("[data-lmaianalyze]"),function(abtn){
       abtn.addEventListener("click",function(){
         var id=parseInt(abtn.getAttribute("data-lmaianalyze"),10); if(!id) return;
         var origHtml=abtn.innerHTML;
         abtn.disabled=true;
-        abtn.innerHTML='<svg class="ico ico-sm" viewBox="0 0 24 24" style="width:10px;height:10px"><path d="M12 2a7 7 0 0 1 7 7c0 3-1.6 5.5-4 6.7V17a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-1.3C6.6 14.5 5 12 5 9a7 7 0 0 1 7-7z"/><path d="M9 21h6"/></svg>…';
+        var btnLabel=_lmAiMode==="all"?"All…":"…";
+        abtn.innerHTML='<svg class="ico ico-sm" viewBox="0 0 24 24" style="width:10px;height:10px"><path d="M12 2a7 7 0 0 1 7 7c0 3-1.6 5.5-4 6.7V17a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-1.3C6.6 14.5 5 12 5 9a7 7 0 0 1 7-7z"/><path d="M9 21h6"/></svg>'+btnLabel;
         _lmRunAiAnalyze(id,true,function(d,err){
           abtn.disabled=false; abtn.innerHTML=origHtml;
           // _lmRenderRight is already called inside _lmRunAiAnalyze on success
@@ -6099,6 +6204,7 @@ svg{display:block}
 
   loadWatchlist();
   loadLiveMonitorItems();       // Phase 1: pre-load DB-backed Live Monitor items
+  loadLiveMonitorAiProviders(); // Phase 6.5: pre-load AI provider list
   loadTokens();                 // load token counter without triggering a scan
   _renderTabCtrls();
   // No auto-scan on page load — scanning only happens when the user clicks
