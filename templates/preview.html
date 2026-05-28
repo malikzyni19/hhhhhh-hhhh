@@ -2800,9 +2800,16 @@ svg{display:block}
         row:        r,
         topAlert:   a,
         meta:       m,
-        addedFrom:  src
+        addedFrom:  src,
+        timeframe_policy: {
+          visible_analysis_timeframes: ["15m","30m","1h","4h","1d"],
+          bias_min_timeframe:          "1h",
+          hidden_execution_timeframe:  "5m",
+          source_timeframe:            tf,
+          source_tab:                  src
+        }
       },
-      selected_timeframes: ["15m","1h","4h"],
+      selected_timeframes: ["15m","30m","1h","4h","1d"],
       selected_modules:    ["OB","FVG","FIB","Bias"],
       alert_settings:      {}
     };
@@ -4223,7 +4230,7 @@ svg{display:block}
 
   /* ── Live Monitor (Phase 2) ── */
   var _lmPollT=null, _lmCache={}, _lmSelItem=null, _lmActiveFilter="all";
-  var _lmTfState=["15m","1h","4h"], _lmModuleState=["OB","FVG","FIB","Bias"];
+  var _lmTfState=["15m","30m","1h","4h","1d"], _lmModuleState=["OB","FVG","FIB","Bias"];
   var _lmRefreshState="manual", _lmAiPreview=true;
 
   function renderLiveMonitorInto(scroll){
@@ -4240,11 +4247,14 @@ svg{display:block}
             '<div style="display:flex;align-items:center;gap:5px">'+
               '<span class="seg-label">TF</span>'+
               '<div class="seg" id="lmTfSeg">'+
-                '<button data-lmtf="15m">15m</button>'+
+                '<button data-lmtf="15m" class="on">15m</button>'+
+                '<button data-lmtf="30m" class="on">30m</button>'+
                 '<button data-lmtf="1h" class="on">1H</button>'+
                 '<button data-lmtf="4h" class="on">4H</button>'+
-                '<button data-lmtf="1d">1D</button>'+
+                '<button data-lmtf="1d" class="on">1D</button>'+
               '</div>'+
+              '<span style="font-size:9.5px;font-weight:700;padding:2px 7px;border-radius:4px;background:rgba(139,92,246,.1);color:#a78bfa;border:1px solid rgba(139,92,246,.25);letter-spacing:.3px;white-space:nowrap" title="5m is hidden execution timeframe — future AI Agent only">Exec: Auto 5m</span>'+
+              '<span style="font-size:9.5px;font-weight:700;padding:2px 7px;border-radius:4px;background:rgba(34,211,238,.08);color:var(--accent);border:1px solid rgba(34,211,238,.2);letter-spacing:.3px;white-space:nowrap" title="Bias detection minimum timeframe is 1H">Bias Min: 1H</span>'+
             '</div>'+
             '<div style="display:flex;align-items:center;gap:5px">'+
               '<span class="seg-label">Modules</span>'+
@@ -4615,7 +4625,7 @@ svg{display:block}
   }
 
   function _lmMtfMatrix(item){
-    var tfs=item.selected_timeframes||["15m","1h","4h"];
+    var tfs=item.selected_timeframes||["15m","30m","1h","4h","1d"];
     var mods=["OB","FVG","FIB","BIAS"];
     var st=(item.setup_type||"").toUpperCase();
     var dir=(item.direction||"").toLowerCase();
