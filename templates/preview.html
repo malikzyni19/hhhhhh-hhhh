@@ -2852,6 +2852,19 @@ svg{display:block}
       .catch(function(){ /* silently keep last known state */ });
   }
 
+  // Phase 4.5: fetch current session context once on LM open
+  function loadLiveMonitorSessionContext(){
+    if(location.protocol==="file:") return;
+    fetch("/api/live-monitor/session-context",{credentials:"same-origin"})
+      .then(function(res){ return res.ok?res.json():null; })
+      .then(function(d){
+        if(d&&d.ok&&d.session_context){
+          _lmGlobalSessionContext = d.session_context;
+        }
+      })
+      .catch(function(){ /* silently keep last known state */ });
+  }
+
   function removeLiveMonitorItem(itemId){
     if(!itemId) return;
     fetch("/api/live-monitor/items/"+itemId,{
@@ -4214,7 +4227,8 @@ svg{display:block}
     if(v==="live"||v==="watchlist"){
       renderLiveMonitorInto(scroll);
       startLiveMonitorPolling();
-      loadLiveMonitorItems();   // Phase 1: load DB-backed items
+      loadLiveMonitorItems();           // Phase 1: load DB-backed items
+      loadLiveMonitorSessionContext();  // Phase 4.5: fetch session context once
       return;
     }
     if(v==="dashboard"){
@@ -4369,6 +4383,30 @@ svg{display:block}
     if(diff<3600) return Math.round(diff/60)+"m ago";
     if(diff<86400) return Math.round(diff/3600)+"h ago";
     return Math.round(diff/86400)+"d ago";
+  }
+
+  var _lmGlobalSessionContext = null;
+
+  function _lmSessionContext(item){
+    if(item&&item.snapshot){
+      if(item.snapshot.latest_session_context&&typeof item.snapshot.latest_session_context==="object")
+        return item.snapshot.latest_session_context;
+      var lh=item.snapshot.latest_health;
+      if(lh&&lh.session_context&&typeof lh.session_context==="object")
+        return lh.session_context;
+    }
+    return _lmGlobalSessionContext||null;
+  }
+  function _lmSessionLabel(item){
+    var sc=_lmSessionContext(item);
+    if(sc&&sc.session_label) return sc.session_label;
+    var h=new Date().getUTCHours();
+    if(h>=0&&h<7)   return "Asia / Tokyo";
+    if(h>=7&&h<8)   return "Pre-London";
+    if(h>=8&&h<12)  return "London Open";
+    if(h>=12&&h<17) return "London / NY Overlap";
+    if(h>=17&&h<21) return "New York Afternoon";
+    return "Off-Hours";
   }
 
   function _lmHealth(item){
@@ -4542,7 +4580,7 @@ svg{display:block}
             '</div>'+
             '<div class="ds-msgs" id="dsMsgs">'+
               '<div class="ds-msg ai"><div class="ds-av ai">DS</div>'+
-              '<div class="ds-bubble">I have context on <b>'+esc(item.symbol)+'</b> — '+esc(tf)+' '+esc(setupType||"setup")+', '+(lh?'health '+health+' ('+lh.grade+')':'score '+health+'%')+'. Ask me anything.</div></div>'+
+              '<div class="ds-bubble">I have context on <b>'+esc(item.symbol)+'</b> — '+esc(tf)+' '+esc(setupType||"setup")+', '+(lh?'health '+health+' ('+lh.grade+')':'score '+health+'%')+(function(){var sc2=_lmSessionContext(item);return sc2?', session '+esc(sc2.session_label)+'.':'.';})()+" Ask me anything.</div></div>"+
             '</div>'+
             '<div class="ds-input">'+
               '<input type="text" id="dsInput" placeholder="Ask DeepSeek about this setup…"/>'+
@@ -4555,6 +4593,8 @@ svg{display:block}
             '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 4-6"/></svg>View Chart</button>'+
           '<button class="btn" type="button" data-lmrefreshitem="'+item.id+'">'+
             '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.7 1 6.3 2.7L21 8"/><path d="M21 3v5h-5"/></svg>Refresh Setup</button>'+
+          '<button class="btn" type="button" data-lmrefreshsession="'+item.id+'" title="Refresh session context only">'+
+            '<svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>Session</button>'+
           '<button class="btn" type="button" style="color:var(--red-2);border-color:rgba(239,68,68,.25)" data-rmitem="'+item.id+'">'+
             '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 6h18M19 6l-1 14H6L5 6M10 11v6M14 11v6M9 6V4h6v2"/></svg>Remove</button>'+
         '</div>'+
@@ -4590,9 +4630,21 @@ svg{display:block}
             '<div class="mct-item"><div class="mct-label">LONG / SHORT RATIO</div><div class="mct-val">Awaiting</div><div class="mct-sub">Phase 5 — Binance feed</div></div>'+
             '<div class="mct-item"><div class="mct-label">TAKER PRESSURE</div><div class="mct-val">Awaiting</div><div class="mct-sub">Phase 5 — Binance feed</div></div>'+
             '<div class="mct-item"><div class="mct-label">LIQUIDATIONS (15m)</div><div class="mct-val">Awaiting</div><div class="mct-sub">Phase 5 — Binance feed</div></div>'+
-            '<div class="mct-item"><div class="mct-label">SESSION CONTEXT</div>'+
-              '<div class="mct-val" id="lmMktSession" style="color:var(--accent)">—</div>'+
-              '<div class="mct-sub">UTC clock only — Phase 4.5 for full context</div></div>'+
+            (function(){
+              var sc=_lmSessionContext(item);
+              var sLabel=sc?sc.session_label:_lmSessionLabel(item);
+              var liqLbl=sc?sc.liquidity_label:'—';
+              var volLbl=sc?sc.volatility_label:'—';
+              var scpLbl=sc?sc.scalp_quality:'—';
+              var note=sc?(sc.ai_context&&sc.ai_context.session_bias_hint?sc.ai_context.session_bias_hint:sc.setup_quality_note||''):'';
+              var caut=sc&&sc.ai_context?sc.ai_context.recommended_caution:'';
+              var cautColor=caut==='high'?'var(--red-2)':caut==='low'?'var(--green-2)':'var(--yellow)';
+              return '<div class="mct-item"><div class="mct-label">SESSION CONTEXT</div>'+
+                '<div class="mct-val" id="lmMktSession" style="color:var(--accent)">'+esc(sLabel)+'</div>'+
+                '<div class="mct-sub">Liq: '+esc(liqLbl)+' · Vol: '+esc(volLbl)+' · Scalp: '+esc(scpLbl)+'</div>'+
+                (note?'<div class="mct-sub" style="margin-top:2px;color:'+cautColor+'">'+esc(note)+'</div>':'')+
+              '</div>';
+            })()+
           '</div>'+
         '</div>'+
       '</div>'+
@@ -4618,20 +4670,6 @@ svg{display:block}
 
     box.innerHTML=html;
 
-    // Populate UTC session label in Market Context card
-    var mktSess=document.getElementById("lmMktSession");
-    if(mktSess){
-      var h=new Date().getUTCHours();
-      var sLabel;
-      if(h>=0&&h<7) sLabel="Asia · Tokyo";
-      else if(h>=7&&h<8) sLabel="Pre-London";
-      else if(h>=8&&h<12) sLabel="London Open";
-      else if(h>=12&&h<17) sLabel="London · NY Overlap";
-      else if(h>=17&&h<21) sLabel="NY Afternoon";
-      else sLabel="Off-Hours";
-      mktSess.textContent=sLabel+" (UTC "+new Date().getUTCHours()+"h)";
-    }
-
     [].forEach.call(box.querySelectorAll("[data-chart]"),function(btn){
       btn.addEventListener("click",function(){
         openChartModal(btn.getAttribute("data-chart"),btn.getAttribute("data-chart-mkt")||ST.market,ST.exchange,(ST.settings&&ST.settings.tf)||"4h");
@@ -4643,6 +4681,30 @@ svg{display:block}
         btn.disabled=true; btn.textContent="Removing…";
         _lmSelItem=null;
         removeLiveMonitorItem(id);
+      });
+    });
+    [].forEach.call(box.querySelectorAll("[data-lmrefreshsession]"),function(sbtn){
+      sbtn.addEventListener("click",function(){
+        var id=parseInt(sbtn.getAttribute("data-lmrefreshsession"),10); if(!id) return;
+        var origHtml=sbtn.innerHTML;
+        sbtn.disabled=true;
+        sbtn.innerHTML='<svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>…';
+        fetch("/api/live-monitor/items/"+id+"/refresh-session",{method:"POST",credentials:"same-origin",
+          headers:{"Content-Type":"application/json"},body:"{}"})
+          .then(function(r){ return r.json(); })
+          .then(function(d){
+            sbtn.disabled=false; sbtn.innerHTML=origHtml;
+            if(d&&d.ok&&d.item){
+              for(var k=0;k<liveMonitorItems.length;k++){
+                if(liveMonitorItems[k].id===d.item.id){ liveMonitorItems[k]=d.item; break; }
+              }
+              if(d.session_context) _lmGlobalSessionContext=d.session_context;
+              if(_lmSelItem&&_lmSelItem.id===d.item.id){
+                _lmSelItem=d.item; _lmRenderRight(d.item);
+              }
+            }
+          })
+          .catch(function(){ sbtn.disabled=false; sbtn.innerHTML=origHtml; });
       });
     });
     [].forEach.call(box.querySelectorAll("[data-lmrefreshitem]"),function(rbtn){
@@ -4829,12 +4891,15 @@ svg{display:block}
   function _lmBindChat(item){
     var sym=item.symbol,tf=item.timeframe||"",st=item.setup_type||"",score=item.score||item.confidence||0;
     var zLbl=item.zone_low!=null?fmt(item.zone_low)+"–"+fmt(item.zone_high):"no zone data";
+    var sc=_lmSessionContext(item);
+    var sessLine=sc?" Current session: "+esc(sc.session_label)+"."+
+      (sc.ai_context?" "+esc(sc.ai_context.session_bias_hint):""):"";
     var R={
-      enter:"Price is approaching the "+esc(st||"zone")+" zone. Wait for a 15m bullish close inside the zone before entering. Score "+score+"%.",
-      risk:"Key risks: 1) No live 15m confirmation yet. 2) Score at "+score+"% — watch for zone invalidation. 3) Always stop below zone low.",
+      enter:"Price is approaching the "+esc(st||"zone")+" zone. Wait for a 15m bullish close inside the zone before entering. Score "+score+"%."+sessLine,
+      risk:"Key risks: 1) No live 15m confirmation yet. 2) Score at "+score+"% — watch for zone invalidation. 3) Always stop below zone low."+sessLine,
       stop:"Stop loss goes below zone low at "+(item.zone_low!=null?fmt(item.zone_low):"zone low")+". Place 0.3% below. If a "+esc(tf)+" candle closes below — setup is invalidated.",
-      confirm:"Wait for: 1) Price enters the zone "+zLbl+". 2) 15m bullish close. 3) Volume confirmation. All three = entry signal.",
-      dflt:"Setup: <b>"+esc(sym)+"</b> — "+esc(tf)+" "+esc(st)+" — score "+score+"%. Zone "+zLbl+". Wait for zone approach and 15m confirmation."
+      confirm:"Wait for: 1) Price enters the zone "+zLbl+". 2) 15m bullish close. 3) Volume confirmation. All three = entry signal."+sessLine,
+      dflt:"Setup: <b>"+esc(sym)+"</b> — "+esc(tf)+" "+esc(st)+" — score "+score+"%. Zone "+zLbl+"."+sessLine+" Wait for zone approach and 15m confirmation."
     };
     function getReply(q){
       var l=(q||"").toLowerCase();
@@ -4910,6 +4975,7 @@ svg{display:block}
       .then(function(d){
         if(d&&d.items&&d.items.length){
           liveMonitorItems=d.items;
+          loadLiveMonitorSessionContext();  // Phase 4.5: refresh global session context
           _lmRenderCards();
           if(_lmSelItem){
             var upd=d.items.filter(function(i){return i.id===_lmSelItem.id;})[0]||null;

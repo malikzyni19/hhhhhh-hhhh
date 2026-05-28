@@ -8000,6 +8000,154 @@ def _lm_compute_health(item, _snap: dict = None) -> dict:
     }
 
 
+# ── Phase 4.5: Session Context Engine ────────────────────────────────────────
+
+_LM_SESSION_MAP = [
+    # (start_hour_inclusive, end_hour_exclusive, key, label, liquidity, volatility, scalp)
+    ( 0,  7, "asia",         "Asia / Tokyo",           "medium", "medium", "normal"),
+    ( 7,  8, "pre_london",   "Pre-London",             "medium", "medium", "normal"),
+    ( 8, 10, "london_open",  "London Open",            "high",   "high",   "good"),
+    (10, 12, "london",       "London Session",         "high",   "medium", "good"),
+    (12, 17, "ny_overlap",   "London / NY Overlap",    "high",   "high",   "good"),
+    (17, 21, "ny_afternoon", "New York Afternoon",     "medium", "medium", "normal"),
+    (21, 24, "off_hours",    "Off-Hours",              "low",    "low",    "poor"),
+]
+
+_LM_SESSION_NOTES = {
+    "asia": {
+        "setup_quality_note": "Asian range levels can be key targets for London",
+        "risk_note":          "Lower volatility — wider stops may be needed",
+        "caution":            "medium",
+        "ai_summary":         "Asia session active. Moderate context. Levels can respect SMC structure.",
+        "bias_hint":          "Watch for range building and liquidity grabs near extremes",
+    },
+    "pre_london": {
+        "setup_quality_note": "Be cautious — stop hunts likely before London open",
+        "risk_note":          "High risk of fake breakouts near London open time",
+        "caution":            "medium",
+        "ai_summary":         "Pre-London period. Watch for liquidity sweeps before real move begins.",
+        "bias_hint":          "Avoid entering at extremes — potential fakeout period",
+    },
+    "london_open": {
+        "setup_quality_note": "Strong momentum possible — watch for clean OB/FVG entries",
+        "risk_note":          "Fast moves can trigger stops quickly",
+        "caution":            "low",
+        "ai_summary":         "London open active. High volatility expansion window. Prime for OB/FVG setups.",
+        "bias_hint":          "Confirm direction before entering — momentum can be fast",
+    },
+    "london": {
+        "setup_quality_note": "London trend often continues from the open move",
+        "risk_note":          "Monitor for reversals as New York approaches",
+        "caution":            "low",
+        "ai_summary":         "London session active. Market showing trending behavior.",
+        "bias_hint":          "Ride existing trend, watch for New York liquidity setup",
+    },
+    "ny_overlap": {
+        "setup_quality_note": "Best session for confluent setups — highest probability",
+        "risk_note":          "Volatility spikes possible — use confirmation",
+        "caution":            "low",
+        "ai_summary":         "London/NY overlap active. Prime liquidity window. Best time for confirmed setups.",
+        "bias_hint":          "Highest probability window — wait for confirmation before entry",
+    },
+    "ny_afternoon": {
+        "setup_quality_note": "Watch for continuation or reversal of NY session trend",
+        "risk_note":          "Reduced volume in later NY — moves can be choppy",
+        "caution":            "medium",
+        "ai_summary":         "New York afternoon session. Medium liquidity. Can show trend continuation.",
+        "bias_hint":          "Check for momentum continuation — avoid new positions late session",
+    },
+    "off_hours": {
+        "setup_quality_note": "Low liquidity — best to avoid new positions",
+        "risk_note":          "Thin markets can cause erratic moves and wide spreads",
+        "caution":            "high",
+        "ai_summary":         "Off-hours period. Low liquidity. Not recommended for new entries.",
+        "bias_hint":          "Avoid new positions — wait for Asia open",
+    },
+    "weekend": {
+        "setup_quality_note": "Do not trade — weekend low liquidity",
+        "risk_note":          "Weekend gaps can cause unexpected price action on Monday open",
+        "caution":            "high",
+        "ai_summary":         "Weekend period. Very low liquidity. Market context unreliable.",
+        "bias_hint":          "Await Monday Asia session before assessing setups",
+    },
+}
+
+
+def _lm_session_context(now_utc=None) -> dict:
+    """Return current UTC-based market session context. Pure stdlib, no external calls."""
+    if now_utc is None:
+        now_utc = datetime.now(timezone.utc)
+    now_iso = now_utc.isoformat()
+    h       = now_utc.hour
+    m       = now_utc.minute
+    wd      = now_utc.weekday()   # 0=Mon … 5=Sat, 6=Sun
+    is_wknd = wd >= 5
+
+    if is_wknd:
+        key        = "weekend"
+        label      = "Weekend / Low Liquidity"
+        liquidity  = "low"
+        volatility = "low"
+        scalp      = "poor"
+        is_prime   = False
+        is_trans   = False
+        # minutes to Monday 00:00 UTC
+        days_to_mon = (7 - wd) % 7 or 7
+        mins_to_next = days_to_mon * 24 * 60 - h * 60 - m
+        next_label   = "Asia / Tokyo"
+    else:
+        key = label = liquidity = volatility = scalp = None
+        is_prime = is_trans = False
+        for (sh, eh, sk, sl, lq, vo, sc) in _LM_SESSION_MAP:
+            if sh <= h < eh:
+                key, label, liquidity, volatility, scalp = sk, sl, lq, vo, sc
+                break
+
+        is_prime = key == "ny_overlap"
+        is_trans = key == "london_open"
+
+        # minutes to next session boundary
+        next_sh = None
+        for i, (sh, eh, sk, sl, lq, vo, sc) in enumerate(_LM_SESSION_MAP):
+            if sh <= h < eh:
+                next_sh    = eh if eh < 24 else 0
+                next_label = _LM_SESSION_MAP[(i + 1) % len(_LM_SESSION_MAP)][3]
+                break
+        if next_sh is None:
+            next_sh, next_label = 0, "Asia / Tokyo"
+        if next_sh == 0:
+            mins_to_next = (24 - h) * 60 - m
+        else:
+            mins_to_next = (next_sh - h) * 60 - m
+
+    notes = _LM_SESSION_NOTES.get(key, _LM_SESSION_NOTES["off_hours"])
+
+    return {
+        "phase":                  "phase4_5_session_context",
+        "computed_at":            now_iso,
+        "utc_hour":               h,
+        "utc_minute":             m,
+        "utc_weekday":            wd,
+        "is_weekend":             is_wknd,
+        "session_key":            key,
+        "session_label":          label,
+        "liquidity_label":        liquidity,
+        "volatility_label":       volatility,
+        "scalp_quality":          scalp,
+        "setup_quality_note":     notes["setup_quality_note"],
+        "risk_note":              notes["risk_note"],
+        "is_prime_time":          is_prime,
+        "is_transition_window":   is_trans,
+        "minutes_to_next_session": mins_to_next,
+        "next_session_label":     next_label,
+        "ai_context": {
+            "summary":              notes["ai_summary"],
+            "session_bias_hint":    notes["bias_hint"],
+            "recommended_caution":  notes["caution"],
+        },
+    }
+
+
 def _live_monitor_item_to_dict(item) -> dict:
     """Serialize a LiveMonitorItem row to a JSON-friendly dict."""
     return {
@@ -8862,8 +9010,14 @@ def api_lm_items_refresh(item_id):
     if "original_setup_score" not in snap:
         snap["original_setup_score"] = _lm_original_setup_score(row, snap)
 
+    # Phase 4.5: session context (no score impact)
+    session_ctx = _lm_session_context()
+    snap["latest_session_context"]  = session_ctx
+    snap["last_session_context_at"] = session_ctx["computed_at"]
+
     # Phase 4: compute health with fresh snap (latest_mtf_scan already merged)
     health = _lm_compute_health(row, _snap=snap)
+    health["session_context"] = session_ctx
     snap["latest_health"] = health
 
     row.snapshot_json = _json_dumps_safe(snap)
@@ -8986,8 +9140,14 @@ def api_lm_refresh_all():
             if "original_setup_score" not in snap:
                 snap["original_setup_score"] = _lm_original_setup_score(row, snap)
 
+            # Phase 4.5: session context
+            session_ctx = _lm_session_context()
+            snap["latest_session_context"]  = session_ctx
+            snap["last_session_context_at"] = session_ctx["computed_at"]
+
             # Phase 4: compute health with fresh snap
             health = _lm_compute_health(row, _snap=snap)
+            health["session_context"] = session_ctx
             snap["latest_health"] = health
 
             row.snapshot_json = _json_dumps_safe(snap)
@@ -9063,7 +9223,13 @@ def api_lm_items_recalc_health(item_id):
     if "original_setup_score" not in snap:
         snap["original_setup_score"] = _lm_original_setup_score(row, snap)
 
+    # Phase 4.5: session context
+    session_ctx = _lm_session_context()
+    snap["latest_session_context"]  = session_ctx
+    snap["last_session_context_at"] = session_ctx["computed_at"]
+
     health = _lm_compute_health(row, _snap=snap)
+    health["session_context"] = session_ctx
     snap["latest_health"] = health
 
     prev_status = row.status
@@ -9101,6 +9267,53 @@ def api_lm_items_recalc_health(item_id):
         "ok":            True,
         "item":          _live_monitor_item_to_dict(row),
         "latest_health": health,
+    })
+
+
+@app.route("/api/live-monitor/session-context", methods=["GET"])
+@login_required
+def api_lm_session_context():
+    """Return current UTC-based session context. No DB reads or exchange calls."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    return jsonify({"ok": True, "session_context": _lm_session_context()})
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/refresh-session", methods=["POST"])
+@login_required
+def api_lm_items_refresh_session(item_id):
+    """Update only the session context in snapshot_json — no MTF scan, no health recompute."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorItem as _LMI
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if not row.is_active:
+        return jsonify({"error": "inactive", "message": "Item is no longer active."}), 400
+
+    session_ctx = _lm_session_context()
+    snap = _json_loads_safe(row.snapshot_json, {})
+    snap["latest_session_context"]  = session_ctx
+    snap["last_session_context_at"] = session_ctx["computed_at"]
+    row.snapshot_json = _json_dumps_safe(snap)
+    row.updated_at    = datetime.now(timezone.utc)
+
+    try:
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": "db", "message": str(e)}), 500
+
+    return jsonify({
+        "ok":             True,
+        "item":           _live_monitor_item_to_dict(row),
+        "session_context": session_ctx,
     })
 
 
