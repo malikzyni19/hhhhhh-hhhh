@@ -1,0 +1,389 @@
+================================================================================
+   ZYNI SMC SCREENER — PHASE 6.5 HOTFIX REPORT
+   5 Targeted Fixes for Multi-Provider AI Router
+   Date: 2026-05-28
+   Branch: main
+   Commit: 3f2d191
+   Status: COMPLETE — COMMITTED AND PUSHED
+================================================================================
+
+
+================================================================================
+1. FILES CHANGED
+================================================================================
+
+  main.py               — +152 lines inserted, -80 lines replaced
+  templates/preview.html — +84 lines inserted, -31 lines replaced
+
+  models.py              — NOT modified.
+  templates/index.html   — NOT modified (mobile untouched).
+  Database schema        — NOT changed.
+
+
+================================================================================
+2. ISSUE 1 — CONSERVATIVE CONSENSUS TIE LOGIC
+================================================================================
+
+  Problem:
+    Original tie-break used aggressive weights (confirmed_watch = 5 wins ties).
+    A tie between "watch" and "high_risk" would return "watch" — unsafe.
+
+  Fix:
+    Replaced _VERDICT_WEIGHT max() with conservative rank min():
+
+    Conservative rank (lower = more conservative, wins ties):
+      avoid           = 0
+      high_risk       = 1
+      wait            = 2
+      watch           = 3
+      confirmed_watch = 4
+
+    Tie-break logic:
+      max_votes = max(verdict_votes.values())
+      tied_verdicts = [v for v, cnt in verdict_votes.items() if cnt == max_votes]
+      winner_verdict = min(tied_verdicts, key=lambda v: _CONSERVATIVE_RANK.get(v, 2))
+
+    Positive/risk split detection:
+      If both positive_votes > 0 AND risk_votes > 0:
+        disagreement = True
+        disagreement_note = "Agents split between positive and risk verdicts..."
+        If winner is on positive side (watch or confirmed_watch):
+          If risk_votes >= positive_votes: winner = "high_risk"
+          Else:                           winner = "wait"
+
+    General disagreement (no positive/risk split but low agreement):
+      If unique_verdicts > 1 AND agreement < 0.67:
+        disagreement = True
+        disagreement_note = "Agents disagree on this setup."
+
+    New fields added to consensus return:
+      "disagreement": true/false
+      "disagreement_note": ""
+
+  Verification (8/8 test cases):
+    [PASS] watch vs high_risk (tie) -> high_risk
+    [PASS] confirmed_watch vs wait (tie) -> wait
+    [PASS] confirmed_watch vs avoid (tie) -> avoid
+    [PASS] confirmed_watch x2 vs high_risk x1 -> wait (split, positive > risk)
+    [PASS] confirmed_watch x1 vs high_risk x2 -> high_risk (split, risk >= positive)
+    [PASS] watch x2 vs avoid x1 -> wait (split, positive > risk)
+    [PASS] confirmed_watch x3 (unanimous) -> confirmed_watch (no downgrade)
+    [PASS] wait x2 vs watch x1 -> wait (majority, no split)
+
+
+================================================================================
+3. ISSUE 2 — agent_ids + MAX 4 IN ai-consensus
+================================================================================
+
+  Problem:
+    ai-consensus ignored body.agent_ids, always ran all configured agents.
+    No limit on number of agents per request.
+
+  Fix:
+    Body parsing:
+      requested_ids_raw = body.get("agent_ids") or []
+      requested_agent_ids = [str(x).strip() for x in requested_ids_raw if x]
+
+    Candidate selection:
+      If agent_ids provided:
+        - Filter to requested ids
+        - Skip local_fallback, disabled, unconfigured agents
+      If agent_ids missing/empty:
+        - All configured enabled non-fallback agents
+      Enforce: candidates = candidates[:4]  (max 4 per request)
+
+    Local fallback backstop:
+      If no candidates produced any ok result, one local_fallback result appended.
+
+    Stored in snapshot (latest_ai_consensus) and LiveMonitorEvent:
+      "requested_agent_ids": [...]
+      "used_agent_ids": [...]
+      "disagreement": ...
+      "disagreement_note": ...
+
+  Verification (6/6 test cases):
+    [PASS] agent_ids=["deepseek"] -> only DeepSeek called
+    [PASS] agent_ids=["deepseek","anthropic"] -> only those two called
+    [PASS] 5 valid ids -> first 4 used only
+    [PASS] Empty agent_ids -> all configured enabled non-fallback, capped at 4
+    [PASS] Unknown id -> empty candidates -> local fallback backstop
+    [PASS] local_fallback in request -> excluded from candidates
+
+
+================================================================================
+4. ISSUE 3 — AGENT-SPECIFIC COOLDOWN IN ai-analyze
+================================================================================
+
+  Problem:
+    Cooldown checked only time, not which agent produced the cached result.
+    Switching from DeepSeek to Claude within 10s returned DeepSeek cache.
+
+  Fix:
+    Resolve requested agent BEFORE cooldown check:
+      resolved_agent    = _lm_get_ai_agent_config(agent_id)
+      resolved_agent_id = resolved_agent.get("id", "local_fallback")
+
+    Cooldown only triggers if BOTH conditions met:
+      1. diff < 10 seconds
+      2. cached_agent_id == resolved_agent_id
+
+    Call uses resolved_agent_id (not raw body agent_id):
+      ai_result = _lm_call_ai_provider(context, ..., agent_id=resolved_agent_id)
+
+  Verification (6/6 test cases):
+    [PASS] Same agent within 10s -> CACHED
+    [PASS] Different agent within 10s -> RUN (bypass cooldown)
+    [PASS] Same agent after 10s -> RUN (expired)
+    [PASS] force=True -> always RUN
+    [PASS] No cached snapshot -> RUN
+    [PASS] auto-resolved (no body agent_id) within 10s -> CACHED for same default
+
+
+================================================================================
+5. ISSUE 4 — localStorage PERSISTENCE FOR AI SELECTOR
+================================================================================
+
+  Problem:
+    _lmSelectedAgentId and _lmAiMode were in-memory only; lost on page refresh.
+
+  Fix:
+    Initialization (reads localStorage at script load time):
+      var _lmSelectedAgentId = (function(){
+        try{ return localStorage.getItem("zyni_lm_ai_agent")||null; }catch(_){ return null; }
+      })();
+      var _lmAiMode = (function(){
+        try{
+          var m=localStorage.getItem("zyni_lm_ai_mode");
+          return (m==="all"||m==="single")?m:"single";
+        }catch(_){ return "single"; }
+      })();
+
+    On selector change (writes to localStorage):
+      "All Agents" -> mode="all", removes zyni_lm_ai_agent
+      "Auto"       -> mode="single", removes zyni_lm_ai_agent
+      Agent id     -> mode="single", sets zyni_lm_ai_agent = id
+
+    loadLiveMonitorAiProviders() validation:
+      After loading agents, checks if persisted id still exists in list.
+      If stale id: clears _lmSelectedAgentId + removes localStorage key.
+
+    All localStorage calls wrapped in try/catch — unavailable env doesn't crash.
+
+  Verification (5/5 test cases):
+    [PASS] Select DeepSeek, refresh -> DeepSeek persists
+    [PASS] Select All Agents, refresh -> All Agents mode persists
+    [PASS] Select Auto, refresh -> Auto persists
+    [PASS] Invalid mode in storage -> falls back to "single"
+    [PASS] Stale agent id -> cleared after provider list reload
+
+
+================================================================================
+6. ISSUE 5 — AI_AGENTS_JSON api_key_env SUPPORT IN PROVIDER CALLS
+================================================================================
+
+  Problem:
+    _lm_ai_agents_config() read api_key_env from AI_AGENTS_JSON but did not
+    preserve it in the returned agent dict. Provider helpers used hardcoded
+    env var names, ignoring the custom api_key_env.
+
+  Fix:
+    _lm_ai_agents_config() Method A now stores internal fields:
+      "_api_key_env":  key_env  (e.g. "MY_CUSTOM_KEY")
+      "_api_base_env": base_env (e.g. "MY_CUSTOM_BASE")
+
+    Provider helpers updated to use priority order:
+      API Key priority:
+        1. os.environ.get(agent._api_key_env) if present
+        2. os.environ.get(provider_hardcoded_env_name) fallback
+      API Base priority:
+        1. agent.api_base (already resolved from api_base_env at config time)
+        2. os.environ.get(agent._api_base_env) if present
+        3. provider default / env fallback
+
+    Updated helpers:
+      _lm_call_openai_compatible_agent()  ✓
+      _lm_call_anthropic_agent()          ✓
+      _lm_call_gemini_agent()             ✓
+
+    Security:
+      /api/live-monitor/ai-providers uses explicit allowlist of safe fields.
+      Fields _api_key_env and _api_base_env never returned to frontend.
+      Actual key value never returned anywhere.
+
+  Verification (5/5 checks):
+    [PASS] AI_AGENTS_JSON agent with api_key_env "MY_CUSTOM_KEY" -> provider
+           resolves os.environ["MY_CUSTOM_KEY"] at call time
+    [PASS] api_base_env "MY_CUSTOM_BASE" -> provider resolves correct base URL
+    [PASS] _api_key_env NOT in /ai-providers response
+    [PASS] _api_base_env NOT in /ai-providers response
+    [PASS] Actual key string NOT in /ai-providers response
+
+
+================================================================================
+7. VERIFICATION RESULTS
+================================================================================
+
+Backend:
+  [PASS] main.py syntax valid
+  [PASS] _lm_ai_agents_config defined (1 definition)
+  [PASS] _lm_get_ai_agent_config defined (1 definition)
+  [PASS] _lm_call_openai_compatible_agent defined (1 definition)
+  [PASS] _lm_call_anthropic_agent defined (1 definition)
+  [PASS] _lm_call_gemini_agent defined (1 definition)
+  [PASS] _lm_call_ai_provider defined (1 definition)
+  [PASS] _lm_call_ai_agent backward wrapper defined (1 definition)
+  [PASS] _lm_consensus_from_agent_results uses conservative tie logic
+  [PASS] _lm_consensus_from_agent_results returns disagreement + disagreement_note
+  [PASS] ai-consensus reads body.agent_ids
+  [PASS] ai-consensus enforces max 4 agents (candidates[:4])
+  [PASS] ai-consensus stores requested_agent_ids + used_agent_ids
+  [PASS] ai-analyze resolves agent before cooldown check
+  [PASS] ai-analyze cooldown checks same resolved_agent_id before returning cache
+  [PASS] AI_AGENTS_JSON _api_key_env stored in internal agent dict
+  [PASS] All 3 provider helpers use _api_key_env priority
+  [PASS] /api/live-monitor/ai-providers uses safe-field allowlist (no _api_key_env)
+  [PASS] API key never returned to client
+  [PASS] No DB schema change
+  [PASS] models.py not modified
+  [PASS] No auto trading / order placement
+  [PASS] 5m hidden_execution_timeframe note preserved
+  [PASS] Phase 3 MTF intact (_scan_pair_multitf × 6)
+  [PASS] Phase 4 health intact (_lm_compute_health × 4)
+  [PASS] Phase 4.5 session intact (_lm_session_context × 7)
+  [PASS] Phase 5 market context intact (_lm_fetch_binance_market_context × 2)
+  [PASS] Phase 6 local fallback intact (_lm_local_ai_fallback × 1)
+  [PASS] Total LM endpoints: 15 (unchanged)
+
+Frontend:
+  [PASS] _lmSelectedAgentId initialized from localStorage
+  [PASS] _lmAiMode initialized from localStorage with validation
+  [PASS] Selector change writes to localStorage (all 3 modes)
+  [PASS] loadLiveMonitorAiProviders validates persisted agent id
+  [PASS] Stale agent id cleared on provider reload
+  [PASS] localStorage unavailable does not crash (try/catch)
+  [PASS] Single chatbox only (ds-chat: 1 CSS + 1 render)
+  [PASS] No API key in frontend
+  [PASS] No external API call in JS
+  [PASS] Analyze single mode -> ai-analyze (unchanged)
+  [PASS] Analyze all mode -> ai-consensus (unchanged)
+  [PASS] Chat uses selected agent in single mode (unchanged)
+  [PASS] templates/index.html not modified
+
+Total: 42/42 checks passed.
+
+
+================================================================================
+8. CONFIRMATION — NO API KEY EXPOSURE
+================================================================================
+
+  ✓ OPENROUTER/OPENAI/ANTHROPIC/GEMINI/DEEPSEEK/CUSTOM_AI keys: env-only
+  ✓ AI_AGENTS_JSON api_key_env stored as _api_key_env (internal, underscore-prefixed)
+  ✓ /api/live-monitor/ai-providers uses explicit field allowlist
+  ✓ _api_key_env, _api_base_env excluded from all frontend responses
+  ✓ has_key (bool) returned instead of key string
+  ✓ No API key in templates/preview.html
+
+
+================================================================================
+9. CONFIRMATION — NO FORBIDDEN FEATURES
+================================================================================
+
+  ✓ No memory engine
+  ✓ No auto trading
+  ✓ No order placement
+  ✓ No exchange account API connection
+  ✓ No 5m execution logic
+  ✓ No trade journal
+  ✓ No DB schema change
+  ✓ No models.py change
+  ✓ No mobile index.html change
+  ✓ No UI redesign
+  ✓ No second chatbox
+
+
+================================================================================
+10. PHASE 6.5 ACCEPTABILITY
+================================================================================
+
+  Phase 6.5 is now fully acceptable.
+
+  All 5 reported issues have been fixed and individually verified:
+
+  Issue 1 (Conservative tie logic):
+    Tie-break now always prefers the more conservative verdict.
+    Positive/risk split causes downgrade of any positive winner.
+    disagreement and disagreement_note fields added.
+
+  Issue 2 (agent_ids + max 4):
+    Body.agent_ids respected. Max 4 enforced. requested/used IDs stored.
+
+  Issue 3 (Agent-specific cooldown):
+    Cooldown now agent-specific. Different agent bypasses 10s cache.
+
+  Issue 4 (localStorage persistence):
+    AI selector persists across page refresh. Stale ids cleared safely.
+
+  Issue 5 (api_key_env support):
+    Custom agents from AI_AGENTS_JSON can use their own api_key_env.
+    Internal field never reaches frontend.
+
+
+================================================================================
+11. ISSUE-BY-ISSUE VERIFICATION LOG
+================================================================================
+
+  Issue 1: PASSED
+    Before moving to Issue 2:
+    Verified conservative _CONSERVATIVE_RANK dict in main.py.
+    Verified min() tie-break replaces max().
+    Verified positive/risk split downgrade logic.
+    Verified disagreement field in all return paths.
+    Ran 8 in-memory test cases — all passed.
+    python3 -m py_compile main.py: SYNTAX OK.
+
+  Issue 2: PASSED
+    Before moving to Issue 3:
+    Verified requested_ids_raw and requested_agent_ids parsing in main.py.
+    Verified candidates[:4] enforcement.
+    Verified requested_agent_ids and used_agent_ids stored in snapshot and event.
+    Ran 6 candidate-filter test cases — all passed.
+    python3 -m py_compile main.py: SYNTAX OK.
+
+  Issue 3: PASSED
+    Before moving to Issue 4:
+    Verified resolved_agent and resolved_agent_id resolution before cooldown.
+    Verified cached_agent_id == resolved_agent_id gate condition.
+    Verified _lm_call_ai_provider uses resolved_agent_id not raw body agent_id.
+    Ran 6 cooldown test cases — all passed.
+    python3 -m py_compile main.py: SYNTAX OK.
+
+  Issue 4: PASSED
+    Before moving to Issue 5:
+    Verified zyni_lm_ai_agent / zyni_lm_ai_mode keys in preview.html.
+    Verified IIFE initialization with try/catch.
+    Verified selector change handler writes/removes localStorage keys.
+    Verified stale agent validation in loadLiveMonitorAiProviders.
+    Ran 5 localStorage simulation test cases — all passed.
+    (No Python compile needed — HTML/JS only.)
+
+  Issue 5: PASSED
+    Final issue, then Final QA:
+    Verified _api_key_env and _api_base_env stored in Method A agent dict.
+    Verified all 3 provider helpers read _api_key_env with priority over hardcoded map.
+    Verified /api/live-monitor/ai-providers safe-list does not include _api_key_env.
+    Ran 5 env-resolution test cases — all passed.
+    python3 -m py_compile main.py: SYNTAX OK.
+
+  Final QA: PASSED
+    42/42 checks passed.
+    All 5 issue fixes verified intact.
+    No forbidden changes detected.
+    main.py syntax valid.
+    Commit 3f2d191 pushed to main.
+
+================================================================================
+END OF PHASE 6.5 HOTFIX REPORT
+================================================================================
+PHASE 6.5 HOTFIX COMPLETE — COMMIT: 3f2d191 — BRANCH: main
+DO NOT START PHASE 7 WITHOUT EXPLICIT APPROVAL.
+================================================================================
