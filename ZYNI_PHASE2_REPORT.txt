@@ -1,10 +1,12 @@
 ================================================================================
-   ZYNI SMC SCREENER — PHASE 2 IMPLEMENTATION REPORT
+   ZYNI SMC SCREENER — PHASE 2 IMPLEMENTATION REPORT (FINAL — incl. all hotfixes)
    Live Monitor Locked UI + Phase 1 Backend Wiring
-   Date: 2026-05-27
+   Date: 2026-05-28
    Branch: claude/zyni-phase-0-audit-dwTl0
-   Commit: 3a09f84
-   Status: COMPLETE — COMMITTED AND PUSHED
+   Commits: 3a09f84  Phase 2 base implementation
+            07ee571  Phase 2 Hotfix 1 (market context, top controls, filter bug)
+            99e18ed  Phase 2 Final Hotfix (timeframe policy finalization)
+   Status: COMPLETE — ALL COMMITS PUSHED
 ================================================================================
 
 
@@ -12,25 +14,24 @@
 1. FILES CHANGED
 ================================================================================
 
-  templates/preview.html  — +607 lines inserted, -97 lines removed
-  (Only file changed. main.py and models.py were NOT modified.)
+  templates/preview.html  — Only file changed across all three commits.
+  main.py, models.py, index.html — NOT modified in any Phase 2 commit.
 
 
 ================================================================================
 2. CSS CHANGES
 ================================================================================
 
-REMOVED (old Wave 7 CSS, lines 600-621):
+REMOVED (old Wave 7 CSS):
   .lm-wrap, .lm-head, .lm-controls, .lm-controls input, .lm-grid,
   .lm-card, .lm-top, .lm-sym, .lm-px, .lm-x, .lm-stats, .lm-kv
 
-ADDED (new locked UI CSS — full locked design):
+ADDED (commit 3a09f84 — Phase 2 base):
 
   Layout override:
     .main-scroll.lm-active — removes padding, enables full-height flex layout
-    (applied when entering Live Monitor, removed when leaving)
 
-  Tag variants (hyphenated — complement existing .tag.bull/.tag.bear):
+  Tag variants:
     .tag-bull, .tag-bear, .tag-blue, .tag-muted
 
   Control chips:
@@ -39,8 +40,8 @@ ADDED (new locked UI CSS — full locked design):
   Animations:
     @keyframes pulse — session dot + DeepSeek status dot
     @keyframes typing — DeepSeek typing indicator dots
-    @keyframes lm-spin — Refresh All button spinner (was already used)
-    .btn.spinning svg — now uses lm-spin (moved from old .lm-controls .btn.spinning)
+    @keyframes lm-spin — Refresh All button spinner
+    .btn.spinning svg — uses lm-spin
 
   Live Monitor layout:
     .lm-outer, .lm-topbar, .lm-topbar-left, .lm-topbar-right
@@ -61,7 +62,7 @@ ADDED (new locked UI CSS — full locked design):
   Hero card (right panel):
     .lm-hero, .lm-hero-top, .lm-hero-sym
     .lm-hero-meta, .lm-hero-price, .px, .px-sub
-    .hero-inner (1fr | 1fr — health bars | DeepSeek chat)
+    .hero-inner (1fr | 1fr — health | DeepSeek)
     .health-col, .health-top, .health-circle, .hc-center, .hc-val, .hc-label
     .health-bars, .hb-row, .hb-top, .hb-track, .hb-fill, .hb-fill.warn
     .lm-hero-actions
@@ -77,7 +78,7 @@ ADDED (new locked UI CSS — full locked design):
     .sec-card, .sec-card-head, .sch-title, .sec-card-body
 
   MTF Module Matrix:
-    .mtf-matrix, th, td rules
+    .mtf-matrix, th/td rules
     .mc, .mc.strong/.yes/.warn/.none
 
   Zone Tracker:
@@ -95,322 +96,403 @@ ADDED (new locked UI CSS — full locked design):
     .evt-dot svg, stroke colors per type
     .evt-time, .evt-text, .evt-text b
 
+ADDED (commit 07ee571 — Phase 2 Hotfix 1):
+
+  Aggregate Market Context:
+    .mkt-ctx-grid — 2-column grid for placeholder metric cards
+    .mct-item     — individual metric card (bg-card-2, border, border-radius)
+    .mct-label    — uppercase metric name label (9.5px, letter-spacing .6px)
+    .mct-val      — metric value (12px, mono, text-3)
+    .mct-sub      — italic sub-label ("Awaiting · Phase 5 — Binance feed")
+
+  AI Toggle button:
+    .lm-ai-toggle     — enabled state (accent border + bg, accent text)
+    .lm-ai-toggle.off — disabled state (border var(--border), text-3)
+
 
 ================================================================================
-3. JS FUNCTIONS REPLACED
+3. JS STATE VARIABLES (FINAL STATE)
 ================================================================================
 
-REMOVED:
-  renderLiveMonitorInto  — old version (simple grid with lmAdd input + lmGrid div)
-  _lmAdd                 — added symbol to ST.stars via text input (no longer needed)
-  _lmRemove              — removed from ST.stars (legacy path, superseded by DB delete)
-  _lmPaint               — old card painter (rendered _lmCache pairs, not DB items)
-  (All 4 were only called from within the old LM system — no other callers)
+  Existing (Phase 1):
+    var liveMonitorItems = [];      // DB-backed LM items for current user
 
-ADDED:
+  Added (Phase 2 base, 3a09f84):
+    var _lmPollT = null;            // polling interval handle
+    var _lmCache = {};              // order-flow data cache (legacy watchlist)
+    var _lmSelItem = null;          // currently selected LM item in right panel
+    var _lmActiveFilter = "all";    // filter state: "all" / "near" / "inzone"
+
+  Added (Phase 2 base → finalized in 99e18ed):
+    var _lmTfState = ["15m","30m","1h","4h","1d"];   // visible analysis TF array
+    var _lmModuleState = ["OB","FVG","FIB","Bias"];  // active module chips
+    var _lmRefreshState = "manual";                  // refresh interval preference
+    var _lmAiPreview = true;                         // AI toggle state
+
+
+================================================================================
+4. JS FUNCTIONS — NEW (Phase 2 base, commit 3a09f84)
+================================================================================
+
   renderLiveMonitorInto(scroll)
-    - Adds .lm-active to scroll element (full-height layout)
-    - Sets scroll.innerHTML to locked UI shell:
-        .lm-outer > .lm-topbar + .lm-body
-        .lm-topbar: title, session pill, filter chips (All/Near Zone/In Zone),
-                    Refresh All button (id="lmRefresh")
-        .lm-body: .lm-left (card list) + .lm-right (detail panel)
-    - Binds filter chip clicks → _lmActiveFilter → re-render cards
-    - Binds Refresh All → _lmRefresh()
+    - Adds .lm-active to scroll (full-height layout override)
+    - Renders locked UI shell: .lm-outer > .lm-topbar + .lm-body
+    - Topbar: title line, session pill, TF chips, policy badges, module chips,
+              filter chips, refresh interval chips, AI toggle, Refresh All button
+    - Body: .lm-left (card list) + .lm-right (detail panel)
+    - Binds all topbar controls (see Section 6 below)
     - Calls _lmUpdateSession() and _lmRenderCards()
 
   _lmUpdateSession()
     - Computes current trading session from UTC hour
-    - Updates #lmSession span text
-    - Sessions: Asia, Pre-London, London Open, London/NY Pre-Overlap,
-                London/NY Overlap Prime Time, NY Afternoon, Off-Hours
+    - Updates #lmSession span: Asia / Pre-London / London Open /
+      London/NY Pre-Overlap / London/NY Overlap Prime Time / NY Afternoon / Off-Hours
 
   _lmAgo(iso)
-    - Converts ISO timestamp to relative label: "4s ago", "12m ago", "2h ago", "1d ago"
+    - ISO timestamp → relative label: "4s ago", "12m ago", "2h ago", "1d ago"
 
   _lmRenderCards()
-    - Reads from global liveMonitorItems[] (populated by Phase 1 GET endpoint)
-    - Applies _lmActiveFilter ("all" / "near" / "inzone")
-    - Updates #lmCount and #lmSubLine
-    - Renders each item as .setup-card with:
-        symbol, timeframe, age, direction+arrow, setup type label
-        score/confidence health bar (hi/mid/lo gradient classes)
-        status badge, setup type tag
-    - Binds card click → set _lmSelItem → call _lmRenderRight()
+    - Reads from global liveMonitorItems[] (from Phase 1 GET endpoint)
+    - Applies _lmActiveFilter ("all" / "near" / "inzone") to produce filtered items[]
+    - Renders each as .setup-card: symbol, timeframe, age, direction, setup type,
+      score health bar (hi/mid/lo classes), status badge
+    - Binds card click → _lmSelItem = items[idx]  ← FIXED in hotfix (uses filtered array)
     - Auto-selects: keeps selection if still valid, else selects first item
+    - Updates #lmCount + #lmSubLine
     - Shows empty-state SVG if no items
 
   _lmRenderRight(item)
-    - If item is null: shows "Select a setup" placeholder
-    - Builds full right-panel HTML in one pass:
-        Hero card: symbol, status badge, direction tags, price, proximity %
-        Health circle: SVG arc with dashoffset computed from score %
-        Health bars: Direction, Zone Defined, Confidence, Timeframe
-        DeepSeek chat: wired via _lmBindChat(item)
-        Hero actions: View Chart (opens openChartModal), Remove (calls removeLiveMonitorItem)
-        MTF Module Matrix: via _lmMtfMatrix(item)
-        Zone Tracker: via _lmZoneCard(item)
-        Confirmation Checklist: via _lmChecklist(item)
-        Event Timeline: placeholder div #lmEvents, filled by _lmLoadEvents(item.id)
-    - Binds [data-chart] buttons → openChartModal(...)
-    - Binds [data-rmitem] buttons → sets _lmSelItem=null, calls removeLiveMonitorItem(id)
+    - null item → "Select a setup" placeholder
+    - Hero card: symbol, status badge, direction tags, price, proximity %
+    - Health circle: SVG arc, circumference 144.51, dashoffset = 144.51*(1-score/100)
+    - Health bars: Direction, Zone Defined, Confidence, Timeframe
+    - DeepSeek chat panel: wired via _lmBindChat(item)
+    - Hero actions: View Chart (→ openChartModal), Remove (→ removeLiveMonitorItem)
+    - Below hero: MTF Matrix + Zone Tracker (2-column)
+    - Full-width: Aggregate Market Context (6 placeholder cards)
+    - Below: Confirmation Checklist + Event Timeline (2-column)
+    - Binds [data-chart] → openChartModal(...)
+    - Binds [data-rmitem] → _lmSelItem=null, removeLiveMonitorItem(id)
 
   _lmMtfMatrix(item)
-    - Reads item.selected_timeframes (default ["15m","1h","4h"]) for column headers
+    - Column headers: item.selected_timeframes || ["15m","30m","1h","4h","1d"]
     - Rows: OB, FVG, FIB, BIAS
-    - Derives cell values from item.setup_type (strong = matches item.timeframe, yes = present)
-    - BIAS row: bull/bear/— from item.direction
-    - Footer note: "Snapshot-based · Live MTF scan Phase 3"
+    - Cell values derived from item.setup_type + item.timeframe + item.direction
+    - Footer: "Snapshot-based · Live MTF scan Phase 3"
 
   _lmZoneCard(item)
-    - If no zone data: shows informational placeholder
-    - Shows ZONE HIGH / CURRENT / ZONE LOW values using existing fmt() helper
-    - Computes visual bar position: left% = (price - zone_low) / (zone_high - zone_low)
-    - Clamps 2%–98%, hides price dot if price is null
-    - Shows Proximity, TF, Size (zone width as %)
+    - No zone data → informational placeholder
+    - ZONE HIGH / CURRENT / ZONE LOW using fmt() helper
+    - Bar position: left% = clamp((price - zone_low)/(zone_high - zone_low)*100, 2, 98)
+    - Stats: Proximity, TF, Size (zone width as %)
 
   _lmChecklist(item)
-    - 6 checklist rows derived from item data:
-        Direction Defined   — pass if item.direction set
-        Zone Defined        — pass if zone_high + zone_low present
-        Setup Type          — pass if item.setup_type set
-        Timeframe           — pass if item.timeframe set
-        Confidence Score    — pass/warn/pend from score threshold (70/40/below)
-        Live Confirmation   — always pend (requires real-time MTF engine, Phase 3)
+    - 6 rows: Direction Defined, Zone Defined, Setup Type, Timeframe,
+              Confidence Score (pass ≥70 / warn ≥40 / pend <40),
+              Live Confirmation (always pend — requires Phase 3 MTF engine)
 
   _lmLoadEvents(itemId)
-    - GET /api/live-monitor/events/<itemId> (Phase 1 endpoint)
-    - Renders events in #lmEvents as .evt-list
-    - Event type → dot class: "added" → added (purple), "updated" → agent (teal),
-                               "removed" → alert (yellow)
-    - Timestamp shown as _lmAgo() relative label
-    - Graceful: shows "No events yet." or "Could not load events." on failure
+    - GET /api/live-monitor/events/<itemId>
+    - Renders events as .evt-list with type-coloured dots (added/agent/alert)
+    - Timestamp via _lmAgo()
+    - Graceful empty/error states
 
   _lmBindChat(item)
-    - Wires DeepSeek mock chat to the currently selected item context
-    - Chips: "Enter now?", "Risks?", "Stop loss?", "Confirmation?"
-    - Keyword routing: enter/buy/now → R.enter, risk/danger → R.risk,
-                       stop/sl → R.stop, confirm/wait → R.confirm, else → R.dflt
-    - Replies reference item.symbol, item.timeframe, item.setup_type, score, zone
-    - Typing indicator: 800-1300ms delay, then shows reply
-    - Chips hidden after first message
+    - Mock DeepSeek chat wired to selected item context
+    - Suggestion chips: "Enter now?", "Risks?", "Stop loss?", "Confirmation?"
+    - Keyword routing → canned replies referencing symbol, TF, setup_type, score, zone
+    - 800–1300ms typing indicator delay
+    - Chips hidden after first send
 
-  _lmPaint()          — now just delegates to _lmRenderCards() (backwards compat)
+  _lmPaint()
+    - Now a thin delegate to _lmRenderCards() (backwards compatibility)
 
 
 ================================================================================
-4. JS FUNCTIONS MODIFIED
+5. JS FUNCTIONS — MODIFIED (Phase 2 base + hotfixes)
 ================================================================================
 
-  loadLiveMonitorItems()  (Phase 1 function)
+  loadLiveMonitorItems()  [modified: 3a09f84]
     BEFORE: fetched items, stored in liveMonitorItems[], done.
     AFTER:  same fetch + store, then calls _lmRenderCards() if it exists.
-    WHY: ensures UI auto-updates whenever items are refreshed (after add, remove, tab switch)
 
-  stopLiveMonitorPolling()  (Phase 1 function)
-    BEFORE: just cleared the polling interval.
-    AFTER:  also removes .lm-active from .main-scroll.
-    WHY: restores normal padded scroll layout when navigating away from LM view.
+  stopLiveMonitorPolling()  [modified: 3a09f84]
+    BEFORE: cleared polling interval only.
+    AFTER:  also removes .lm-active from .main-scroll to restore normal layout.
 
-  _lmRefresh()  (kept from Phase 1 — minor simplification)
-    BEFORE: called _lmPaint() after refresh.
-    AFTER:  no longer calls _lmPaint() (loadLiveMonitorItems handles it).
-    NOTE: legacy /api/watchlist/refresh is still called for the old wl cache. Unchanged.
-
-
-================================================================================
-5. JS FUNCTIONS KEPT UNCHANGED
-================================================================================
-
-  addActiveToLiveMonitor    — Phase 1 (legacy syncWatchlist + POST /api/live-monitor/items)
-  syncWatchlist             — old watchlist flow preserved
-  loadWatchlist             — old watchlist flow preserved
-  removeLiveMonitorItem     — Phase 1 (DELETE /api/live-monitor/items/<id>)
-  getDesktopWatchlistConfig — config for /api/watchlist/refresh
-  _lmCurrentPairs           — still used by _lmRefresh()
-  startLiveMonitorPolling   — polls /api/watchlist/cache every 5s (stores in _lmCache)
-  loadLiveMonitorItems      — Phase 1 GET fetch (modified to call _lmRenderCards)
-  var liveMonitorItems = [] — Phase 1 state variable
-  var _lmSelItem = null     — NEW Phase 2 state variable
-  var _lmActiveFilter = "all" — NEW Phase 2 state variable
+  addActiveToLiveMonitor()  [modified: 99e18ed — timeframe policy]
+    selected_timeframes payload: updated to ["15m","30m","1h","4h","1d"]
+    snapshot.timeframe_policy object added (stored in existing snapshot_json TEXT column):
+      {
+        visible_analysis_timeframes: ["15m","30m","1h","4h","1d"],
+        bias_min_timeframe:          "1h",
+        hidden_execution_timeframe:  "5m",
+        source_timeframe:            tf,
+        source_tab:                  src
+      }
+    No DB schema change — timeframe_policy is a JSON field inside snapshot_json.
 
 
 ================================================================================
-6. WIRING SUMMARY
+6. TOPBAR CONTROLS (final state — commits 3a09f84 + 07ee571 + 99e18ed)
+================================================================================
+
+  TF CHIPS (id="lmTfSeg"):
+    Buttons: 15m (on), 30m (on), 1H (on), 4H (on), 1D (on)  — all default-active
+    Click → toggles .on class on chip → updates _lmTfState array
+    Policy badges (non-clickable):
+      "Exec: Auto 5m"  — purple badge, title: "5m is hidden execution timeframe — future AI Agent only"
+      "Bias Min: 1H"   — teal badge, title: "Bias detection minimum timeframe is 1H"
+
+  MODULE CHIPS (id="lmModSeg"):
+    Buttons: OB (on), FVG (on), FIB (on), Breaker (off), Bias (on)
+    Click → toggles .on class → updates _lmModuleState array
+
+  FILTER CHIPS (.fchip[data-lmf]):
+    All (on by default), Near Zone, In Zone
+    Click → _lmActiveFilter updated → _lmRenderCards() → filtered left panel
+
+  REFRESH INTERVAL CHIPS (.fchip[data-lmrefresh]):
+    Manual (on by default), 15s, 30s, 60s
+    Click → _lmRefreshState updated (UI preference only — no timer started; Phase 3)
+
+  AI TOGGLE (id="lmAiToggle"):
+    Default on (.lm-ai-toggle class), label "AI Preview ON"
+    Click → _lmAiPreview toggled → class swaps to .lm-ai-toggle.off → label "AI Preview OFF"
+    (Visual-only toggle — no API call)
+
+  REFRESH ALL (id="lmRefresh"):
+    Click → _lmRefresh() → POST /api/watchlist/refresh (legacy order-flow cache)
+    Button gains .spinning class while in-flight, removed on complete/error
+
+
+================================================================================
+7. AGGREGATE MARKET CONTEXT (right panel — full-width section)
+================================================================================
+
+  Added in: commit 07ee571 (Phase 2 Hotfix 1)
+
+  Layout: .mkt-ctx-grid — 2-column, 6 placeholder .mct-item cards
+  Cards:
+    1. Funding Rate  — "Awaiting · Phase 5 — Binance feed"
+    2. Open Interest — "Awaiting · Phase 5 — Binance feed"
+    3. Long/Short Ratio — "Awaiting · Phase 5 — Binance feed"
+    4. Taker Pressure — "Awaiting · Phase 5 — Binance feed"
+    5. Liquidations (1H) — "Awaiting · Phase 5 — Binance feed"
+    6. Session — UTC-derived session name (same logic as _lmUpdateSession)
+               + live UTC clock string (new Date().toUTCString() only — no Binance fetch)
+
+  These are placeholder UI elements. The Binance aggregate feed engine is
+  deferred to Phase 5 per standing constraints.
+
+
+================================================================================
+8. BUGS FIXED IN HOTFIXES
+================================================================================
+
+  [FIXED 07ee571] Aggregate Market Context section was missing entirely.
+    Cause: Phase 2 base _lmRenderRight() omitted the full-width mkt-ctx section.
+    Fix: Added .sec-card with .mkt-ctx-grid + 6 .mct-item placeholders to right panel.
+
+  [FIXED 07ee571] Top controls (TF chips, module chips, refresh, AI toggle) were missing.
+    Cause: Phase 2 base renderLiveMonitorInto() had only filter chips + Refresh All button.
+    Fix: Added TF seg, module seg, refresh interval chips, AI toggle to .lm-topbar.
+
+  [FIXED 07ee571] Filtered card click selected wrong item.
+    Cause: Card click used _lmSelItem = liveMonitorItems[idx] — global array index.
+           When filter is "near" or "inzone", items[] is a subset. idx is position in
+           the subset, not the global array. Result: wrong item or undefined.
+    Fix: _lmSelItem = items[idx] — uses filtered array captured by closure in _lmRenderCards.
+
+  [FIXED 99e18ed] Timeframe policy not recorded in addActiveToLiveMonitor payload.
+    Fix: Added snapshot.timeframe_policy object to addActiveToLiveMonitor payload.
+         Updated selected_timeframes to ["15m","30m","1h","4h","1d"].
+
+  [FIXED 99e18ed] _lmTfState was ["15m","1h","4h"] — missing 30m and 1d.
+    Fix: Updated to ["15m","30m","1h","4h","1d"].
+
+  [FIXED 99e18ed] TF chips had wrong default state (15m off, 1d off).
+    Fix: All 5 chips default-on. Added 30m chip. Removed old separate 1d chip.
+
+  [FIXED 99e18ed] _lmMtfMatrix fallback used old ["15m","1h","4h"].
+    Fix: Updated fallback to ["15m","30m","1h","4h","1d"].
+
+
+================================================================================
+9. WIRING SUMMARY
 ================================================================================
 
   PAGE LOAD:
-    loadLiveMonitorItems() called (line 5121) → liveMonitorItems filled → _lmRenderCards()
-    (no visible UI change at page load — lmCards div doesn't exist until tab is open)
+    loadLiveMonitorItems() → liveMonitorItems filled → _lmRenderCards()
+    (no visible effect until LM tab is opened — lmCards div doesn't exist yet)
 
   TAB SWITCH TO LIVE MONITOR:
-    switchView("live") → renderLiveMonitorInto(scroll) → creates UI skeleton
-    → startLiveMonitorPolling() → begins /api/watchlist/cache polling
+    switchView("live") → renderLiveMonitorInto(scroll) → UI skeleton created
+    → startLiveMonitorPolling() → /api/watchlist/cache polling begins
     → loadLiveMonitorItems() → GET /api/live-monitor/items?active_only=1
     → liveMonitorItems filled → _lmRenderCards() → left cards rendered
     → auto-select first item → _lmRenderRight(item) → right panel rendered
-    → _lmLoadEvents(item.id) → #lmEvents filled from DB events
+    → _lmLoadEvents(item.id) → #lmEvents filled from DB
 
   TAB SWITCH AWAY:
-    switchView(other) → stopLiveMonitorPolling() → removes .lm-active from scroll
+    switchView(other) → stopLiveMonitorPolling() → .lm-active removed from scroll
 
   CARD CLICK:
-    setup-card click → _lmSelItem = items[idx] → _lmRenderRight(item)
-    → right panel rebuilds with selected item data
-    → _lmLoadEvents(item.id) called → events loaded from DB
+    setup-card click → _lmSelItem = items[idx]  (filtered array, not global)
+    → _lmRenderRight(item) → right panel rebuilds
+    → _lmLoadEvents(item.id) → events loaded from DB
 
   ADD TO LIVE MONITOR (from Scanner):
     addActiveToLiveMonitor(btn) → syncWatchlist() (legacy) + POST /api/live-monitor/items
-    → on success: loadLiveMonitorItems() → liveMonitorItems updated → _lmRenderCards()
-    → new card appears in left panel; if in LM view, right panel updates
+    → on success: loadLiveMonitorItems() → _lmRenderCards() → new card visible
 
-  REMOVE BUTTON (hero card):
-    [data-rmitem] click → _lmSelItem = null → removeLiveMonitorItem(id)
-    → DELETE /api/live-monitor/items/<id> → loadLiveMonitorItems()
-    → _lmRenderCards() → removed item gone; "Select a setup" shown on right
+  REMOVE (hero card Remove button):
+    [data-rmitem] click → _lmSelItem=null → removeLiveMonitorItem(id)
+    → DELETE /api/live-monitor/items/<id> → loadLiveMonitorItems() → _lmRenderCards()
 
-  FILTER CHIPS (All / Near Zone / In Zone):
-    fchip click → _lmActiveFilter updated → _lmRenderCards() → filtered view
+  FILTER CHIPS:
+    click → _lmActiveFilter updated → _lmRenderCards() → filtered view
 
   REFRESH ALL:
-    #lmRefresh click → _lmRefresh() → POST /api/watchlist/refresh (legacy cache)
-    → _lmCache updated (order-flow data, not LM items)
+    click → _lmRefresh() → POST /api/watchlist/refresh (legacy order-flow cache)
 
 
 ================================================================================
-7. WHAT IS PLACEHOLDER / DEFERRED TO PHASE 3
+10. WHAT IS PLACEHOLDER / DEFERRED
 ================================================================================
 
   [PLACEHOLDER] MTF Module Matrix
-    Currently derived from item.setup_type + selected_timeframes.
-    Shows "Strong" for the item's own timeframe, "Yes" for other TFs if module matches.
-    Real cross-timeframe scanning deferred to Phase 3 (MTF scanner engine not implemented).
+    Derived from item.setup_type + selected_timeframes. Not a real cross-TF scan.
+    Real MTF scanner engine: Phase 3.
 
   [PLACEHOLDER] Health Score Circle
-    Currently shows item.score (or item.confidence) as the health %.
-    No live zone proximity calculation or MTF confluence weighting.
-    Real health engine deferred to Phase 3.
+    Uses item.score / item.confidence. No live zone proximity weighting.
+    Real health engine: Phase 3.
 
-  [PLACEHOLDER] Confirmation Checklist — "Live Confirmation" row
-    Always shows "Pending" — requires real-time 15m candle watch, deferred.
+  [PLACEHOLDER] "Live Confirmation" checklist row
+    Always shows "Pending". Requires real-time candle watch: Phase 3.
 
   [PLACEHOLDER] DeepSeek Chat
-    Keyword-matched mock replies using item context (no real API call).
-    Real DeepSeek API wiring deferred per constraints.
+    Keyword-matched mock replies. No real API call: deferred per constraints.
 
-  [NOT IMPLEMENTED] Market Context Section
-    No "Aggregate Market Context" section added.
-    Per Phase 2 constraints: do NOT implement Binance aggregate context engine.
+  [PLACEHOLDER] Aggregate Market Context (6 cards)
+    All show "Awaiting · Phase 5 — Binance feed".
+    Session card uses UTC clock only (no external fetch).
+    Binance aggregate feed engine: Phase 5.
 
-  [NOT IMPLEMENTED] Background Agent Runner
-    No background health refresh agent implemented.
-    Per Phase 2 constraints: do NOT implement background runner.
+  [PLACEHOLDER] Refresh Interval Timer
+    Chip selection stored in _lmRefreshState but no timer is started.
+    Background polling agent: Phase 3.
 
-  [NOT IMPLEMENTED] Zone Tracker Live Updates
-    Zone tracker reads from saved item.current_price (the price at add-time).
-    Real-time price updates via Binance WebSocket deferred to Phase 3.
+  [PLACEHOLDER] Zone Tracker live price
+    Reads item.current_price (price at add-time). No real-time update.
+    Binance WS / live price polling: Phase 3.
 
 
 ================================================================================
-8. VERIFICATION RESULTS
+11. VERIFICATION — FINAL STATE (commit 99e18ed)
 ================================================================================
 
 SYNTAX:
   [PASS] templates/preview.html — well-formed HTML structure
-  [PASS] main.py — valid Python syntax (unchanged)
-  [PASS] models.py — valid Python syntax (unchanged)
+  [PASS] main.py — unchanged, valid Python syntax
+  [PASS] models.py — unchanged, valid Python syntax
 
-CSS CHECKS:
-  [PASS] All old Wave 7 CSS classes removed (.lm-wrap, .lm-grid, .lm-card, etc.)
+CSS:
+  [PASS] Old Wave 7 LM classes removed
   [PASS] .main-scroll.lm-active override present
-  [PASS] .tag-bull, .tag-bear, .tag-blue, .tag-muted present
-  [PASS] .seg-label, .fchip, .fchip.on present
-  [PASS] @keyframes pulse present
-  [PASS] .lm-outer, .lm-topbar, .lm-body, .lm-left, .lm-right present
-  [PASS] .setup-card and all .sc-* variants present
-  [PASS] .lm-hero and all hero sub-classes present
-  [PASS] .health-circle and health bar classes present
-  [PASS] .ds-chat and all DeepSeek sub-classes present
-  [PASS] .sec-card, .mtf-matrix, .mc variants present
-  [PASS] .zone-bar-track and zone tracker classes present
-  [PASS] .checklist and .cl-* variants present
-  [PASS] .evt-list and event timeline classes present
+  [PASS] All Phase 2 base CSS classes present
+  [PASS] .mkt-ctx-grid, .mct-item, .mct-label, .mct-val, .mct-sub present
+  [PASS] .lm-ai-toggle, .lm-ai-toggle.off present
 
-JS FUNCTION CHECKS:
-  [PASS] renderLiveMonitorInto — defined once
-  [PASS] _lmRenderCards — defined once
-  [PASS] _lmRenderRight — defined once
-  [PASS] _lmMtfMatrix — defined once
-  [PASS] _lmZoneCard — defined once
-  [PASS] _lmChecklist — defined once
-  [PASS] _lmLoadEvents — defined once
-  [PASS] _lmBindChat — defined once
-  [PASS] _lmUpdateSession — defined once
-  [PASS] _lmAgo — defined once
-  [PASS] _lmPaint — defined once (delegates to _lmRenderCards)
-  [PASS] startLiveMonitorPolling — defined once
-  [PASS] stopLiveMonitorPolling — defined once
-  [PASS] getDesktopWatchlistConfig — defined once
-  [PASS] _lmCurrentPairs — defined once
-  [PASS] _lmSelItem state variable present
-  [PASS] _lmActiveFilter state variable present
+JS STATE:
+  [PASS] liveMonitorItems = [] (Phase 1)
+  [PASS] _lmTfState = ["15m","30m","1h","4h","1d"]
+  [PASS] _lmModuleState = ["OB","FVG","FIB","Bias"]
+  [PASS] _lmRefreshState = "manual"
+  [PASS] _lmAiPreview = true
+  [PASS] _lmSelItem = null
+  [PASS] _lmActiveFilter = "all"
 
-WIRING CHECKS:
-  [PASS] loadLiveMonitorItems called at page load
-  [PASS] loadLiveMonitorItems called on LM tab switch
-  [PASS] loadLiveMonitorItems auto-calls _lmRenderCards after fetch
-  [PASS] stopLiveMonitorPolling removes .lm-active from scroll
-  [PASS] scroll.classList.add("lm-active") in renderLiveMonitorInto
-  [PASS] addActiveToLiveMonitor still calls syncWatchlist (legacy preserved)
-  [PASS] removeLiveMonitorItem still calls loadLiveMonitorItems (Phase 1 preserved)
-  [PASS] GET /api/live-monitor/events/<id> called on card select
-  [PASS] openChartModal wired to View Chart button
-  [PASS] removeLiveMonitorItem wired to Remove button
+JS FUNCTIONS:
+  [PASS] renderLiveMonitorInto, _lmRenderCards, _lmRenderRight
+  [PASS] _lmMtfMatrix, _lmZoneCard, _lmChecklist, _lmLoadEvents, _lmBindChat
+  [PASS] _lmUpdateSession, _lmAgo, _lmPaint (delegate)
+  [PASS] startLiveMonitorPolling, stopLiveMonitorPolling
+
+TOPBAR CONTROLS:
+  [PASS] TF chips: 15m, 30m, 1H, 4H, 1D — all default-on
+  [PASS] Policy badge "Exec: Auto 5m" (non-clickable, purple)
+  [PASS] Policy badge "Bias Min: 1H" (non-clickable, teal)
+  [PASS] Module chips: OB, FVG, FIB, Breaker, Bias
+  [PASS] Refresh chips: Manual, 15s, 30s, 60s
+  [PASS] AI toggle (#lmAiToggle) present and bound
+  [PASS] Filter chips: All, Near Zone, In Zone
+  [PASS] Refresh All button (#lmRefresh)
+
+TIMEFRAME POLICY:
+  [PASS] _lmTfState = ["15m","30m","1h","4h","1d"]
+  [PASS] selected_timeframes payload = ["15m","30m","1h","4h","1d"]
+  [PASS] snapshot.timeframe_policy.visible_analysis_timeframes = ["15m","30m","1h","4h","1d"]
+  [PASS] snapshot.timeframe_policy.bias_min_timeframe = "1h"
+  [PASS] snapshot.timeframe_policy.hidden_execution_timeframe = "5m"
+  [PASS] _lmMtfMatrix fallback = ["15m","30m","1h","4h","1d"]
+
+MARKET CONTEXT:
+  [PASS] Full-width Aggregate Market Context section present in _lmRenderRight
+  [PASS] 6 placeholder .mct-item cards rendered
+  [PASS] No Binance fetch in market context — UTC clock only
+
+FILTER BUG FIX:
+  [PASS] Card click uses items[idx] (filtered array), not liveMonitorItems[idx]
 
 NO REGRESSIONS:
-  [PASS] Mobile index.html — not modified
+  [PASS] index.html (mobile) — not modified
   [PASS] /api/watchlist/* endpoints — not modified
   [PASS] /api/live-monitor/* endpoints — not modified
   [PASS] models.py — not modified
   [PASS] main.py — not modified
-  [PASS] Scanner tab logic — not modified
+  [PASS] Scanner tabs — not modified
   [PASS] Admin logic — not modified
-  [PASS] addActiveToLiveMonitor — unchanged (legacy flow + Phase 1 POST both preserved)
-  [PASS] Dashboard view — not modified
+  [PASS] addActiveToLiveMonitor legacy syncWatchlist path — preserved
 
 
 ================================================================================
-9. WHAT IS READY FOR PHASE 3
+12. WHAT IS READY FOR PHASE 3
 ================================================================================
 
-FRONTEND (fully wired):
-  ✓ Left Active Setups panel — renders from liveMonitorItems[] DB state
-  ✓ Filter chips — All / Near Zone / In Zone filter applied to card list
-  ✓ Card click → right panel updates (no page reload)
-  ✓ Hero card — symbol, direction tags, price, proximity, health circle, health bars
-  ✓ Remove button — calls DELETE /api/live-monitor/items/<id>, refreshes UI
-  ✓ View Chart button — opens chart modal via openChartModal()
-  ✓ MTF Matrix — snapshot-based placeholder table
-  ✓ Zone Tracker — visual bar with price dot position
-  ✓ Confirmation Checklist — 6 items derived from DB item data
-  ✓ Event Timeline — loaded from GET /api/live-monitor/events/<id>
-  ✓ DeepSeek chat mock — wired to selected item context
+FRONTEND FULLY WIRED:
+  ✓ Left panel — DB-backed card list from liveMonitorItems[]
+  ✓ Filter chips — All / Near Zone / In Zone
+  ✓ Card click → right panel update (no page reload), fixed index on filtered view
+  ✓ Hero card — symbol, direction, price, proximity, health circle (SVG arc), bars
+  ✓ Remove button → DELETE endpoint → UI refresh
+  ✓ View Chart button → openChartModal()
+  ✓ MTF Matrix — snapshot-based placeholder (Phase 3 slot ready)
+  ✓ Zone Tracker — visual bar with price dot
+  ✓ Market Context — 6 placeholder cards (Phase 5 slot ready)
+  ✓ Confirmation Checklist — 6 items from DB data
+  ✓ Event Timeline — GET /api/live-monitor/events/<id>
+  ✓ DeepSeek mock chat — item-context aware (Phase 3 API slot ready)
+  ✓ Timeframe policy stored in snapshot_json per item (no schema change)
+  ✓ TF chips (5: 15m/30m/1H/4H/1D), module chips, refresh chips, AI toggle
+  ✓ Non-clickable policy badges for execution TF (5m) and bias min (1H)
 
-PHASE 3 CAN IMPLEMENT:
-  - Real-time price updates (Binance WS or polling)
-  - Live health score engine (zone proximity + MTF confluence weighting)
+PHASE 3 CAN IMPLEMENT (pending explicit approval):
+  - Real-time price polling / Binance WS per item
+  - Live health score engine (zone proximity + MTF confluence)
   - Full MTF scanner pass per selected item
-  - Real DeepSeek API integration (inject selected item context)
-  - Market Context section (OI, funding, L/S ratio from Binance)
-  - Background agent runner (periodic health refresh + event logging)
-  - Zone status auto-update (near/inzone based on live price vs zone bounds)
-  - Alert triggers (price enters zone → notification)
+  - Real DeepSeek API integration
+  - Background agent runner (health refresh + event logging)
+  - Zone status auto-update (near/inzone from live price vs zone bounds)
+  - Alert triggers (zone entry notification)
+  - Market Context section live data (Phase 5 — Binance OI/funding/L:S)
 
 
 ================================================================================
-END OF PHASE 2 REPORT
+END OF PHASE 2 REPORT (FINAL — includes all hotfixes)
 ================================================================================
-PHASE 2 COMPLETE — COMMITTED AND PUSHED TO branch: claude/zyni-phase-0-audit-dwTl0
-COMMIT: 3a09f84
-STOPPING HERE. AWAITING PHASE 3 APPROVAL.
+PHASE 2 COMPLETE — FINAL COMMIT: 99e18ed
+BRANCH: claude/zyni-phase-0-audit-dwTl0
+STOPPING HERE. AWAITING EXPLICIT PHASE 3 APPROVAL.
 ================================================================================
