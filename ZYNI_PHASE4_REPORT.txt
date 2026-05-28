@@ -1,0 +1,425 @@
+================================================================================
+   ZYNI SMC SCREENER — PHASE 4 REPORT
+   Live Monitor Health / Status Engine
+   Date: 2026-05-28
+   Branch: main
+   Commit: 2418151
+   Status: COMPLETE — COMMITTED AND PUSHED
+================================================================================
+
+
+================================================================================
+1. FILES CHANGED
+================================================================================
+
+  main.py               — +409 lines inserted, -1 line replaced
+  templates/preview.html — +77 lines inserted, -27 lines replaced
+
+  models.py, index.html — NOT modified.
+
+
+================================================================================
+2. TASK 1 — 7 BACKEND HEALTH HELPERS
+================================================================================
+
+  File: main.py
+  Insertion point: after _lm_extract_mtf_summary, before _live_monitor_item_to_dict
+
+  Functions added:
+
+  _lm_latest_mtf_scan_from_snapshot(snapshot: dict) -> dict
+    Safely extracts snapshot["latest_mtf_scan"]; returns {} if absent or invalid.
+
+  _lm_get_tf_module(scan: dict, tf: str, module: str) -> dict
+    Safe accessor into scan["tfs"][tf]["modules"][module].
+    Returns {} on error keys or missing data.
+
+  _lm_direction_from_item(item) -> str
+    Normalizes item.direction → "bullish" | "bearish" | "neutral".
+    Accepts: bull/bullish/long/up, bear/bearish/short/down.
+
+  _lm_zone_health(item, current_price) -> dict
+    Computes zone status for bullish/bearish/neutral direction.
+    Returns: zone_status, zone_high, zone_low, distance_pct, inside_zone,
+             near_zone, breach_risk, reason.
+    zone_status values:
+      "inside"      — price between zone_low and zone_high
+      "near"        — within 2% outside zone (direction-aware)
+      "watching"    — more than 2% outside zone
+      "breach_risk" — price crossed through zone against setup direction
+      "no_zone"     — zone_high/zone_low not set or no current price
+
+  _lm_bias_alignment(scan: dict, direction: str) -> dict
+    Reads 1h, 4h, 1d direction from MTF scan.
+    bias_aligned = True if 1h matches direction (minimum requirement).
+    context_aligned_count = count of 4h + 1d that also match (0–2).
+    Returns: bias_1h, bias_4h, bias_1d, bias_aligned, context_aligned_count,
+             reason.
+
+  _lm_module_confluence(scan: dict, direction: str) -> dict
+    Counts TFs where OB/FVG/FIB/Breaker have state "strong" or "yes".
+    Bias module excluded (handled separately by bias_alignment).
+    module_score = round(confirming_tfs / total_tfs_with_data * 100).
+    Returns: module_score, confirmations, warnings, tf_summary.
+
+  _lm_compute_health(item, _snap: dict = None) -> dict
+    Main health computation. Accepts optional _snap override so refresh
+    endpoints can pass the in-memory snap (with latest_mtf_scan merged)
+    without requiring a DB commit first.
+
+    Scoring model (max 100):
+      base_pts = min(20, round(item.score / 100 * 20))
+      zone_pts: inside=25, near=18, watching=8, no_zone=5, breach_risk=0
+      bias_pts: aligned=25, neutral/None=10, opposite=0
+      ctx_pts  = min(15, context_aligned_count * 8)    [4h + 1d alignment]
+      mod_pts  = round(module_score / 100 * 15)
+      health_score = clamp(sum, 0, 100)
+
+    Grade:
+      A = 80+, B = 65+, C = 50+, D = 35+, F = <35
+
+    Status logic (priority order):
+      "breach_risk" — zone.breach_risk is True
+      "confirmed"   — score >= 75 AND bias_aligned AND zone in (inside, near)
+      "inzone"      — zone_status == "inside"
+      "near"        — zone_status == "near"
+      "warning"     — bias_aligned == False OR raw_score < 35
+      "watching"    — default
+
+    Returns: phase, computed_at, health_score, grade, status, status_label,
+             direction, zone, bias, confluence, checklist (6 rows), reasons,
+             warnings, scoring breakdown.
+
+  Verification:
+    [PASS] All 7 helpers present in main.py
+    [PASS] _lm_compute_health uses _snap override correctly
+    [PASS] 5m not referenced inside _lm_compute_health body
+    [PASS] Health score clamped 0–100
+    [PASS] Grade A/B/C/D/F assigned correctly
+    [PASS] 6 status values mapped to status_labels dict
+
+
+================================================================================
+3. TASK 2 — HEALTH APPLIED IN api_lm_items_refresh
+================================================================================
+
+  File: main.py — POST /api/live-monitor/items/<id>/refresh
+
+  BEFORE (Phase 3):
+    row.snapshot_json = _json_dumps_safe(snap)
+    row.updated_at = datetime.now(timezone.utc)
+    ev = _LME(event_type="mtf_refreshed", ...)
+    _db.session.add(ev)
+    → return {ok, item, latest_mtf_scan}
+
+  AFTER (Phase 4):
+    health = _lm_compute_health(row, _snap=snap)    ← uses fresh snap
+    snap["latest_health"] = health
+    row.snapshot_json = _json_dumps_safe(snap)
+    row.updated_at = datetime.now(timezone.utc)
+    prev_status = row.status
+    row.status = health["status"]
+    row.score  = health["health_score"]
+    ev = _LME(event_type="mtf_refreshed",
+              health_score_at_event=health["health_score"],
+              details includes health_score + grade)
+    _db.session.add(ev)
+    if prev_status != health["status"]:
+        ev_sc = _LME(event_type="status_changed",
+                     event_description="Status changed: X → Y (score N)",
+                     health_score_at_event=health["health_score"])
+        _db.session.add(ev_sc)
+    → return {ok, item, latest_mtf_scan, latest_health}
+
+  Verification:
+    [PASS] health computed after new_price updated on row
+    [PASS] latest_health stored in snapshot_json
+    [PASS] row.status and row.score updated
+    [PASS] mtf_refreshed event includes health_score_at_event
+    [PASS] status_changed event logged only when status transitions
+    [PASS] latest_health returned in API response
+
+
+================================================================================
+4. TASK 3 — HEALTH APPLIED IN api_lm_refresh_all
+================================================================================
+
+  File: main.py — POST /api/live-monitor/refresh-all
+
+  Import change:
+    BEFORE: from models import db as _db, LiveMonitorItem as _LMI
+    AFTER:  from models import db as _db, LiveMonitorItem as _LMI, LiveMonitorEvent as _LME
+
+  For loop additions (same pattern as Task 2):
+    health = _lm_compute_health(row, _snap=snap)
+    snap["latest_health"] = health
+    row.snapshot_json = _json_dumps_safe(snap)
+    row.updated_at = now
+    prev_status = row.status
+    row.status = health["status"]
+    row.score  = health["health_score"]
+    if prev_status != health["status"]:
+        _db.session.add(_LME(event_type="status_changed", ...))
+
+  Events are accumulated before the single db.session.commit() at end.
+
+  Verification:
+    [PASS] _LME imported in refresh-all
+    [PASS] health computed per item inside try block
+    [PASS] latest_health stored per item
+    [PASS] status_changed events logged on transition (only)
+    [PASS] All status changes committed in single transaction
+
+
+================================================================================
+5. TASK 4 — NEW ENDPOINT: recalc-health
+================================================================================
+
+  File: main.py
+  Route: POST /api/live-monitor/items/<id>/recalc-health
+  Function: api_lm_items_recalc_health
+
+  Purpose: Recompute health from existing snapshot_json without running
+           a new MTF exchange scan. Useful for recalculating after
+           item metadata changes (direction, zone adjustments).
+
+  Logic:
+    snap = _json_loads_safe(row.snapshot_json, {})
+    health = _lm_compute_health(row, _snap=snap)
+    snap["latest_health"] = health
+    row.status = health["status"]
+    row.score  = health["health_score"]
+    row.snapshot_json = _json_dumps_safe(snap)
+    if status changed → log status_changed event with source="recalc"
+
+  Response: {ok, item, latest_health}
+
+  Verification:
+    [PASS] Endpoint present at correct route
+    [PASS] Ownership check (user_id)
+    [PASS] is_active check
+    [PASS] status_changed event includes source="recalc"
+    [PASS] Returns latest_health in response
+
+
+================================================================================
+6. TASK 5 — FRONTEND HELPERS + RENDER UPDATES
+================================================================================
+
+  File: templates/preview.html
+  Insertion: before _lmRenderCards
+
+  New JS helpers:
+
+  _lmHealth(item) → object | null
+    Returns item.snapshot.latest_health if present and is an object, else null.
+
+  _lmHealthScore(item) → number
+    Returns lh.health_score if health available, else item.score || item.confidence || 0.
+
+  _lmStatusLabel(item) → string
+    Returns lh.status_label if health available, else derives from item.status.
+    Handles all 6 statuses: confirmed, inzone, near, watching, warning, breach_risk.
+
+  _lmRenderCards changes:
+    BEFORE: var health=item.score||item.confidence||0;
+            var status=item.status||"watching";
+            var statusLbl=status==="near"?...
+    AFTER:  var health=_lmHealthScore(item);
+            var lhc=_lmHealth(item);
+            var status=(lhc?lhc.status:null)||item.status||"watching";
+            var statusLbl=_lmStatusLabel(item);
+
+  _lmRenderRight changes:
+    BEFORE: var health=item.score||item.confidence||0;
+            var status=item.status||"watching";
+            var statusLbl=status==="near"?...
+    AFTER:  var lh=_lmHealth(item);
+            var health=_lmHealthScore(item);
+            var status=(lh?lh.status:null)||item.status||"watching";
+            var statusLbl=_lmStatusLabel(item);
+
+    Health circle: label now shows grade (A/B/C/D/F) instead of "SCORE"
+    Health bar row: label is "Health Score" (if lh) or "Confidence";
+                    value uses computed health score in both cases.
+    DeepSeek bubble: shows "health N (grade)" or "score N%"
+
+  Verification:
+    [PASS] _lmHealth, _lmHealthScore, _lmStatusLabel all present
+    [PASS] _lmRenderCards uses _lmHealthScore, _lmHealth, _lmStatusLabel
+    [PASS] _lmRenderRight uses lh, _lmHealthScore, _lmStatusLabel
+    [PASS] Grade shown in circle center when lh available
+    [PASS] Existing fallbacks preserved when lh is null
+
+
+================================================================================
+7. TASK 6 — CHECKLIST UPDATE
+================================================================================
+
+  File: templates/preview.html — _lmChecklist(item)
+
+  New behavior:
+    1. Get lh = _lmHealth(item)
+    2. If lh && lh.checklist && lh.checklist.length:
+         Render backend-computed checklist rows:
+           pass===true  → "pass" class (green)
+           pass===false → "fail" class (red)
+           else         → "pend" class (purple)
+    3. Else: fall back to existing 6-row static checklist (unchanged)
+
+  Backend checklist rows (from _lm_compute_health):
+    Score >= 35       — raw_score >= 35
+    Zone Active       — zone not no_zone or breach_risk
+    1H Bias Aligned   — bias_aligned is True
+    4H Context        — bias_4h matches direction
+    1D Context        — bias_1d matches direction
+    Module Confluence — confirmations >= 2 TFs
+
+  Added fail icon SVG (X shape) alongside existing pass/warn/pend icons.
+
+  Verification:
+    [PASS] lh.checklist used when available
+    [PASS] pass/fail/pend mapping correct
+    [PASS] fail icon (X) added to ico object
+    [PASS] Static fallback checklist intact
+
+
+================================================================================
+8. TASK 7 — ZONE CARD UPDATE
+================================================================================
+
+  File: templates/preview.html — _lmZoneCard(item)
+
+  New behavior:
+    var lh = _lmHealth(item);
+    var hz = lh && lh.zone ? lh.zone : null;
+
+  Proximity label:
+    BEFORE: manual % calc based on price vs zone bounds
+    AFTER:  hz ? hz.reason : (manual fallback)
+    Reason values: "Price inside zone", "Zone breached",
+                   "Near zone (<2%)", "Watching zone"
+
+  Breach risk banner (appended below zone stats):
+    If hz && hz.breach_risk:
+      Red bordered banner: "Zone breach detected — price moved against setup"
+
+  Zone numbers, bar track, stats — unchanged.
+
+  Verification:
+    [PASS] lh.zone used for proximity reason when available
+    [PASS] Breach risk banner present in DOM when hz.breach_risk
+    [PASS] Existing zone bar and stats preserved
+    [PASS] Fallback (manual calc) intact when lh is null
+
+
+================================================================================
+9. TASK 8 — CSS: NEW STATUS AND ICON CLASSES
+================================================================================
+
+  File: templates/preview.html
+
+  Added after .sc-status.invalid:
+    .sc-status.confirmed  — green-2 color, rgba(34,197,94,...) background
+    .sc-status.warning    — red-2 color, rgba(239,68,68,.08) background
+    .sc-status.breach_risk — red-2 color, rgba(239,68,68,.18) background
+
+  Added after .cl-ico.pend:
+    .cl-ico.fail          — red-2 color, rgba(239,68,68,.12) background
+
+  Verification:
+    [PASS] .sc-status.confirmed present
+    [PASS] .sc-status.warning present
+    [PASS] .sc-status.breach_risk present
+    [PASS] .cl-ico.fail present
+
+
+================================================================================
+10. FULL VERIFICATION RESULTS (39 CHECKS)
+================================================================================
+
+Backend (20/20):
+  [PASS] main.py — valid Python (ast.parse clean)
+  [PASS] Helper _lm_latest_mtf_scan_from_snapshot present
+  [PASS] Helper _lm_get_tf_module present
+  [PASS] Helper _lm_direction_from_item present
+  [PASS] Helper _lm_zone_health present
+  [PASS] Helper _lm_bias_alignment present
+  [PASS] Helper _lm_module_confluence present
+  [PASS] Helper _lm_compute_health present
+  [PASS] Task 2: health computed in individual refresh
+  [PASS] Task 2: latest_health stored in snap
+  [PASS] Task 2: row.status updated
+  [PASS] Task 2: row.score updated
+  [PASS] Task 2: health_score_at_event in mtf_refreshed event
+  [PASS] Task 2/3: status_changed event type present
+  [PASS] Task 3: _LME imported in refresh-all
+  [PASS] Task 4: recalc-health endpoint present
+  [PASS] Task 4: recalc-health function present
+  [PASS] Phase 3: individual refresh endpoint preserved
+  [PASS] Phase 3: refresh-all endpoint preserved
+  [PASS] Phase 3: _lm_extract_mtf_summary preserved
+  [PASS] 5m not in _lm_compute_health body
+
+Frontend (19/19):
+  [PASS] CSS: .sc-status.confirmed present
+  [PASS] CSS: .sc-status.warning present
+  [PASS] CSS: .sc-status.breach_risk present
+  [PASS] CSS: .cl-ico.fail present
+  [PASS] Task 5: _lmHealth helper present
+  [PASS] Task 5: _lmHealthScore helper present
+  [PASS] Task 5: _lmStatusLabel helper present
+  [PASS] Task 5: _lmRenderCards uses _lmHealthScore
+  [PASS] Task 5: _lmRenderCards uses _lmHealth
+  [PASS] Task 5: _lmRenderCards uses _lmStatusLabel
+  [PASS] Task 5: _lmRenderRight uses _lmHealth
+  [PASS] Task 5: _lmRenderRight uses _lmHealthScore
+  [PASS] Task 5: grade shown in health circle
+  [PASS] Task 6: checklist uses lh.checklist
+  [PASS] Task 6: checklist pass/fail/pend mapping
+  [PASS] Task 7: _lmZoneCard uses lh.zone
+  [PASS] Task 7: breach risk warning present
+  [PASS] Phase 3: _lmMtfMatrix preserved
+  [PASS] Phase 3: Refresh Setup button preserved
+
+
+================================================================================
+11. PHASE 4 CONSTRAINTS COMPLIANCE
+================================================================================
+
+  5m NOT scanned            — confirmed (not in _lm_compute_health)
+  5m NOT shown              — confirmed (no 5m in health UI)
+  5m remains hidden TF      — unchanged from Phase 3
+  1h minimum bias TF        — confirmed (bias_aligned uses 1h gate)
+  DB schema NOT changed     — confirmed (only snapshot_json used for health)
+  Phase 3 endpoints intact  — confirmed (all 3 Phase 3 endpoints preserved)
+  No Phase 5 started        — confirmed
+  DeepSeek NOT implemented  — confirmed (UI placeholder only, unchanged)
+  AI Agent NOT implemented  — confirmed
+  Mobile index.html intact  — NOT modified
+  Existing watchlist APIs    — NOT modified
+
+
+================================================================================
+12. PHASE 4 API SUMMARY
+================================================================================
+
+  Existing (Phase 3, unchanged):
+    POST /api/live-monitor/items/<id>/refresh   — now ALSO computes + stores health
+    POST /api/live-monitor/refresh-all          — now ALSO computes + stores health
+
+  New (Phase 4):
+    POST /api/live-monitor/items/<id>/recalc-health
+      — recomputes health from existing snapshot, no scan, logs status_changed
+
+  Health is stored in: item.snapshot.latest_health (inside snapshot_json TEXT column)
+  Status is stored in: row.status (LiveMonitorItem.status column)
+  Score is stored in:  row.score  (LiveMonitorItem.score column = health_score)
+
+
+================================================================================
+END OF PHASE 4 REPORT
+================================================================================
+PHASE 4 COMPLETE — COMMIT: 2418151 — BRANCH: main
+DO NOT START PHASE 5 WITHOUT EXPLICIT APPROVAL.
+================================================================================
