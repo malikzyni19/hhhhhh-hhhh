@@ -7452,6 +7452,8 @@ def _lm_int_or_zero(value) -> int:
 
 _LM_VALID_TIMEFRAMES = ["15m", "30m", "1h", "4h", "1d"]
 _LM_VALID_MODULES    = ["OB", "FVG", "FIB", "Breaker", "Bias"]
+_LM_ZONE_NEAR_PCT    = 2.0    # % outside zone edge to be considered "near"
+_LM_BREACH_RISK_PCT  = 0.25   # % against-zone move required to flag breach_risk
 
 
 def _lm_allowed_timeframes(value) -> list:
@@ -7670,68 +7672,95 @@ def _lm_direction_from_item(item) -> str:
 
 
 def _lm_zone_health(item, current_price) -> dict:
-    zh        = item.zone_high
-    zl        = item.zone_low
+    _no_zone = {"zone_status": "no_zone", "distance_pct": None,
+                "inside_zone": False, "near_zone": False,
+                "breach_risk": False}
+
+    # ── Normalize zone values (Fix 2) ────────────────────────────────────────
+    try:
+        raw_zh = float(item.zone_high)
+        raw_zl = float(item.zone_low)
+    except (TypeError, ValueError):
+        return {**_no_zone, "reason": "No zone set"}
+
+    if raw_zh <= 0 or raw_zl <= 0:
+        return {**_no_zone, "reason": "No zone set"}
+
+    zh = max(raw_zh, raw_zl)   # normalized high
+    zl = min(raw_zh, raw_zl)   # normalized low
+
     direction = _lm_direction_from_item(item)
 
-    if not zh or not zl or zh <= 0 or zl <= 0:
-        return {"zone_status": "no_zone", "distance_pct": None,
-                "inside_zone": False, "near_zone": False,
-                "breach_risk": False, "reason": "No zone set"}
-
-    price = current_price or 0.0
+    try:
+        price = float(current_price)
+    except (TypeError, ValueError):
+        price = 0.0
     if price <= 0:
-        return {"zone_status": "no_zone", "distance_pct": None,
-                "inside_zone": False, "near_zone": False,
-                "breach_risk": False, "reason": "No current price"}
+        return {**_no_zone, "reason": "No current price"}
 
     inside = zl <= price <= zh
 
+    # ── Zone status with breach risk threshold (Fix 3) ────────────────────────
     if direction == "bullish":
-        breach_risk = price < zl
+        breach_risk = False
         if inside:
             zone_status, distance_pct = "inside", 0.0
-        elif breach_risk:
-            mid = (zh + zl) / 2.0
-            distance_pct = round((zl - price) / mid * 100, 2)
-            zone_status  = "breach_risk"
-        else:
+        elif price > zh:
+            # price above zone — measuring how far above high
             distance_pct = round((price - zh) / zh * 100, 2)
-            zone_status  = "near" if distance_pct <= 2.0 else "watching"
+            zone_status  = "near" if distance_pct <= _LM_ZONE_NEAR_PCT else "watching"
+        else:
+            # price below zone_low — potential breach
+            distance_pct = round((zl - price) / zl * 100, 2)
+            if distance_pct > _LM_BREACH_RISK_PCT:
+                zone_status, breach_risk = "breach_risk", True
+            else:
+                zone_status = "near"
+
     elif direction == "bearish":
-        breach_risk = price > zh
+        breach_risk = False
         if inside:
             zone_status, distance_pct = "inside", 0.0
-        elif breach_risk:
-            mid = (zh + zl) / 2.0
-            distance_pct = round((price - zh) / mid * 100, 2)
-            zone_status  = "breach_risk"
-        else:
+        elif price < zl:
+            # price below zone — measuring how far below low
             distance_pct = round((zl - price) / zl * 100, 2)
-            zone_status  = "near" if distance_pct <= 2.0 else "watching"
+            zone_status  = "near" if distance_pct <= _LM_ZONE_NEAR_PCT else "watching"
+        else:
+            # price above zone_high — potential breach
+            distance_pct = round((price - zh) / zh * 100, 2)
+            if distance_pct > _LM_BREACH_RISK_PCT:
+                zone_status, breach_risk = "breach_risk", True
+            else:
+                zone_status = "near"
+
     else:
+        # neutral — no breach risk
         breach_risk = False
         if inside:
             zone_status, distance_pct = "inside", 0.0
         elif price < zl:
             distance_pct = round((zl - price) / zl * 100, 2)
-            zone_status  = "near" if distance_pct <= 2.0 else "watching"
+            zone_status  = "near" if distance_pct <= _LM_ZONE_NEAR_PCT else "watching"
         else:
             distance_pct = round((price - zh) / zh * 100, 2)
-            zone_status  = "near" if distance_pct <= 2.0 else "watching"
+            zone_status  = "near" if distance_pct <= _LM_ZONE_NEAR_PCT else "watching"
+
+    # distance_pct may be unset for inside; normalise
+    if inside:
+        distance_pct = 0.0
 
     return {
         "zone_status":  zone_status,
         "zone_high":    zh,
         "zone_low":     zl,
-        "distance_pct": 0.0 if inside else distance_pct,
+        "distance_pct": distance_pct,
         "inside_zone":  inside,
         "near_zone":    zone_status == "near",
         "breach_risk":  breach_risk,
         "reason": (
-            "Price inside zone" if inside else
-            "Zone breached"     if breach_risk else
-            "Near zone (<2%)"   if zone_status == "near" else
+            "Price inside zone"  if inside else
+            "Zone breach risk"   if breach_risk else
+            "Near zone (<2%)"    if zone_status == "near" else
             "Watching zone"
         ),
     }
@@ -7819,6 +7848,53 @@ def _lm_module_confluence(scan: dict, direction: str) -> dict:
     }
 
 
+def _lm_original_setup_score(item, snapshot: dict) -> int:
+    """Return the original signal/setup confidence score, never the previously-computed
+    health score.  Priority order mirrors the spec (see Phase 4 hotfix Fix 1)."""
+    def _safe_int(v):
+        try:
+            f = float(v)
+            return int(f) if 0 <= f <= 100 else None
+        except (TypeError, ValueError):
+            return None
+
+    # 1. Preserved in snapshot["original_setup_score"]
+    v = _safe_int(snapshot.get("original_setup_score"))
+    if v is not None:
+        return v
+
+    # 2–3. snapshot["row"]["score"] / ["confidence"]
+    snap_row = snapshot.get("row") or {}
+    v = _safe_int(snap_row.get("score"))
+    if v is not None:
+        return v
+    v = _safe_int(snap_row.get("confidence"))
+    if v is not None:
+        return v
+
+    # 4–5. snapshot["topAlert"]["score"] / ["confidence"]
+    top = snapshot.get("topAlert") or {}
+    v = _safe_int(top.get("score"))
+    if v is not None:
+        return v
+    v = _safe_int(top.get("confidence"))
+    if v is not None:
+        return v
+
+    # 6. item.confidence (never overwritten by health engine)
+    v = _safe_int(getattr(item, "confidence", None))
+    if v is not None:
+        return v
+
+    # 7. item.score only if no previous health run has set it yet
+    if not snapshot.get("latest_health"):
+        v = _safe_int(getattr(item, "score", None))
+        if v is not None:
+            return v
+
+    return 0
+
+
 def _lm_compute_health(item, _snap: dict = None) -> dict:
     now_iso   = datetime.now(timezone.utc).isoformat()
     snap      = _snap if _snap is not None else _json_loads_safe(item.snapshot_json, {})
@@ -7830,7 +7906,7 @@ def _lm_compute_health(item, _snap: dict = None) -> dict:
     bias = _lm_bias_alignment(scan, direction)
     conf = _lm_module_confluence(scan, direction)
 
-    raw_score = item.score or 0
+    raw_score = _lm_original_setup_score(item, snap)
     base_pts  = min(20, round(raw_score / 100.0 * 20))
 
     zs = zone["zone_status"]
@@ -7878,7 +7954,7 @@ def _lm_compute_health(item, _snap: dict = None) -> dict:
     }
 
     checklist = [
-        {"label": "Score ≥ 35",      "pass": raw_score >= 35,
+        {"label": "Original Score ≥ 35", "pass": raw_score >= 35,
          "value": str(raw_score)},
         {"label": "Zone Active",           "pass": zs not in ("no_zone", "breach_risk"),
          "value": zone.get("reason", "")},
@@ -8782,6 +8858,10 @@ def api_lm_items_refresh(item_id):
     if new_price and new_price > 0:
         row.current_price = new_price
 
+    # Phase 4: preserve original setup score before health overwrites row.score
+    if "original_setup_score" not in snap:
+        snap["original_setup_score"] = _lm_original_setup_score(row, snap)
+
     # Phase 4: compute health with fresh snap (latest_mtf_scan already merged)
     health = _lm_compute_health(row, _snap=snap)
     snap["latest_health"] = health
@@ -8902,6 +8982,10 @@ def api_lm_refresh_all():
             if new_price and new_price > 0:
                 row.current_price = new_price
 
+            # Phase 4: preserve original setup score before health overwrites row.score
+            if "original_setup_score" not in snap:
+                snap["original_setup_score"] = _lm_original_setup_score(row, snap)
+
             # Phase 4: compute health with fresh snap
             health = _lm_compute_health(row, _snap=snap)
             snap["latest_health"] = health
@@ -8973,7 +9057,12 @@ def api_lm_items_recalc_health(item_id):
     if not row.is_active:
         return jsonify({"error": "inactive", "message": "Item is no longer active."}), 400
 
-    snap   = _json_loads_safe(row.snapshot_json, {})
+    snap = _json_loads_safe(row.snapshot_json, {})
+
+    # Preserve original setup score before health overwrites row.score
+    if "original_setup_score" not in snap:
+        snap["original_setup_score"] = _lm_original_setup_score(row, snap)
+
     health = _lm_compute_health(row, _snap=snap)
     snap["latest_health"] = health
 
