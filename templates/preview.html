@@ -4437,6 +4437,51 @@ svg{display:block}
     }catch(e){ return "Unavailable"; }
   }
 
+  // Phase 6: AI Agent helpers
+  function _lmAiAnalysis(item){
+    try{
+      if(item&&item.snapshot&&item.snapshot.latest_ai_analysis&&
+         typeof item.snapshot.latest_ai_analysis==="object")
+        return item.snapshot.latest_ai_analysis;
+    }catch(e){}
+    return null;
+  }
+  function _lmAiConfiguredLabel(item){
+    var ai=_lmAiAnalysis(item);
+    if(!ai) return "AI Preview";
+    if(ai.configured&&ai.ok) return "AI Connected";
+    if(ai.configured&&!ai.ok) return "AI Error";
+    return "Local Fallback";
+  }
+  function _lmRunAiAnalyze(itemId,force,cb){
+    var payload=JSON.stringify({force:!!force});
+    fetch("/api/live-monitor/items/"+itemId+"/ai-analyze",{
+      method:"POST",credentials:"same-origin",
+      headers:{"Content-Type":"application/json"},body:payload
+    }).then(function(r){return r.json();})
+      .then(function(d){
+        if(d&&d.ok&&d.item){
+          for(var k=0;k<liveMonitorItems.length;k++){
+            if(liveMonitorItems[k].id===d.item.id){liveMonitorItems[k]=d.item;break;}
+          }
+          if(_lmSelItem&&_lmSelItem.id===d.item.id){
+            _lmSelItem=d.item; _lmRenderRight(d.item);
+          }
+        }
+        if(cb) cb(d);
+      })
+      .catch(function(e){ if(cb) cb(null,e); });
+  }
+  function _lmAiChat(itemId,message,cb){
+    fetch("/api/live-monitor/items/"+itemId+"/ai-chat",{
+      method:"POST",credentials:"same-origin",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({message:message})
+    }).then(function(r){return r.json();})
+      .then(function(d){ if(cb) cb(d,null); })
+      .catch(function(e){ if(cb) cb(null,e); });
+  }
+
   function _lmHealth(item){
     return (item&&item.snapshot&&item.snapshot.latest_health&&typeof item.snapshot.latest_health==="object")
       ?item.snapshot.latest_health:null;
@@ -4597,8 +4642,9 @@ svg{display:block}
           '<div class="ds-chat">'+
             '<div class="ds-head">'+
               '<svg class="ico" style="width:13px;height:13px;color:var(--accent)" viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 1 7 7c0 3-1.6 5.5-4 6.7V17a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-1.3C6.6 14.5 5 12 5 9a7 7 0 0 1 7-7z"/><path d="M9 21h6"/></svg>'+
-              '<div><div class="ds-name">DeepSeek</div><div class="ds-sub">Chat about this setup</div></div>'+
-              '<div class="ds-status"><div class="ds-status-dot"></div>Ready</div>'+
+              '<div><div class="ds-name">ZyNi AI</div><div class="ds-sub" id="dsSubLabel">'+esc(_lmAiConfiguredLabel(item))+'</div></div>'+
+              '<button class="btn" type="button" id="dsAnalyzeBtn" data-lmaianalyze="'+item.id+'" style="margin-left:auto;padding:2px 7px;font-size:10px" title="Run AI analysis on this setup">'+
+                '<svg class="ico ico-sm" viewBox="0 0 24 24" style="width:10px;height:10px"><path d="M12 2a7 7 0 0 1 7 7c0 3-1.6 5.5-4 6.7V17a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-1.3C6.6 14.5 5 12 5 9a7 7 0 0 1 7-7z"/><path d="M9 21h6"/></svg>Analyze</button>'+
             '</div>'+
             '<div class="ds-sug" id="dsSug">'+
               '<span class="ds-chip" data-q="Should I enter now?">Enter now?</span>'+
@@ -4607,8 +4653,18 @@ svg{display:block}
               '<span class="ds-chip" data-q="What confirmation do I wait for?">Confirmation?</span>'+
             '</div>'+
             '<div class="ds-msgs" id="dsMsgs">'+
-              '<div class="ds-msg ai"><div class="ds-av ai">DS</div>'+
-              '<div class="ds-bubble">I have context on <b>'+esc(item.symbol)+'</b> — '+esc(tf)+' '+esc(setupType||"setup")+', '+(lh?'health '+health+' ('+lh.grade+')':'score '+health+'%')+(function(){var sc2=_lmSessionContext(item);return sc2?', session '+esc(sc2.session_label)+'.':'.';})()+" Ask me anything.</div></div>"+
+              (function(){
+                var ai=_lmAiAnalysis(item);
+                var an=ai&&ai.analysis;
+                if(an&&an.verdict){
+                  var vColor=an.verdict==='confirmed_watch'?'var(--green-2)':an.verdict==='high_risk'||an.verdict==='avoid'?'var(--red-2)':'var(--yellow)';
+                  return '<div class="ds-msg ai"><div class="ds-av ai">AI</div>'+
+                    '<div class="ds-bubble"><b style="color:'+vColor+'">'+esc((an.verdict||'').replace(/_/g,' ').toUpperCase())+'</b> · '+esc(an.confidence||0)+'% · '+
+                    esc(an.summary||'')+'</div></div>';
+                }
+                return '<div class="ds-msg ai"><div class="ds-av ai">DS</div>'+
+                  '<div class="ds-bubble">I have context on <b>'+esc(item.symbol)+'</b> — '+esc(tf)+' '+esc(setupType||"setup")+', '+(lh?'health '+health+' ('+lh.grade+')':'score '+health+'%')+(function(){var sc2=_lmSessionContext(item);return sc2?', session '+esc(sc2.session_label)+'.':'.';})()+" Click Analyze for AI verdict, or ask me anything.</div></div>";
+              })()+
             '</div>'+
             '<div class="ds-input">'+
               '<input type="text" id="dsInput" placeholder="Ask DeepSeek about this setup…"/>'+
@@ -4830,6 +4886,28 @@ svg{display:block}
           .catch(function(){ mbtn.disabled=false; mbtn.innerHTML=origHtml; });
       });
     });
+    // Analyze button handler
+    [].forEach.call(box.querySelectorAll("[data-lmaianalyze]"),function(abtn){
+      abtn.addEventListener("click",function(){
+        var id=parseInt(abtn.getAttribute("data-lmaianalyze"),10); if(!id) return;
+        var origHtml=abtn.innerHTML;
+        abtn.disabled=true;
+        abtn.innerHTML='<svg class="ico ico-sm" viewBox="0 0 24 24" style="width:10px;height:10px"><path d="M12 2a7 7 0 0 1 7 7c0 3-1.6 5.5-4 6.7V17a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-1.3C6.6 14.5 5 12 5 9a7 7 0 0 1 7-7z"/><path d="M9 21h6"/></svg>…';
+        _lmRunAiAnalyze(id,true,function(d,err){
+          abtn.disabled=false; abtn.innerHTML=origHtml;
+          // _lmRenderRight is already called inside _lmRunAiAnalyze on success
+          if(err||!d||!d.ok){
+            var msgs=document.getElementById("dsMsgs");
+            if(msgs){
+              var errDiv=document.createElement("div");
+              errDiv.className="ds-msg ai";
+              errDiv.innerHTML='<div class="ds-av ai">AI</div><div class="ds-bubble" style="color:var(--red-2)">Analysis request failed. Try again.</div>';
+              msgs.appendChild(errDiv); msgs.scrollTop=msgs.scrollHeight;
+            }
+          }
+        });
+      });
+    });
     _lmBindChat(item);
     _lmLoadEvents(item.id);
   }
@@ -5031,12 +5109,18 @@ svg{display:block}
       var inp=document.getElementById("dsInput"); if(inp) inp.value="";
       var b=document.getElementById("dsMsgs");
       var ty=document.createElement("div"); ty.className="ds-msg ai"; ty.id="dsTyping";
-      ty.innerHTML='<div class="ds-av ai">DS</div><div class="ds-typing"><span></span><span></span><span></span></div>';
+      ty.innerHTML='<div class="ds-av ai">AI</div><div class="ds-typing"><span></span><span></span><span></span></div>';
       if(b){b.appendChild(ty);b.scrollTop=b.scrollHeight;}
-      setTimeout(function(){
+      // Try backend ai-chat first; fall back to local mock on error
+      _lmAiChat(item.id,q,function(d,err){
         var t=document.getElementById("dsTyping"); if(t) t.remove();
-        addMsg("ai",getReply(q));
-      },800+Math.random()*500);
+        if(d&&d.ok&&d.reply){
+          addMsg("ai",esc(d.reply));
+        } else {
+          // Local mock fallback
+          setTimeout(function(){ addMsg("ai",getReply(q)); },200);
+        }
+      });
     }
     var sb=document.getElementById("dsSend"),si=document.getElementById("dsInput");
     if(sb) sb.addEventListener("click",function(){sendMsg(si?si.value:"");});

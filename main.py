@@ -8500,6 +8500,397 @@ def _lm_attach_market_context(row, snapshot: dict = None,
     return snapshot, market_ctx
 
 
+# ── Phase 6: AI Agent / DeepSeek Intelligence Layer ──────────────────────────
+
+def _lm_ai_config() -> dict:
+    """Read AI provider config from environment. Never returns the actual API key."""
+    key      = os.environ.get("OPENROUTER_API_KEY", "")
+    model    = os.environ.get("OPENROUTER_MODEL", "")
+    api_base = os.environ.get("OPENROUTER_API_BASE",
+                               "https://openrouter.ai/api/v1/chat/completions")
+    app_title = os.environ.get("OPENROUTER_APP_TITLE", "ZyNi SMC Screener")
+    http_ref  = os.environ.get("OPENROUTER_HTTP_REFERER", "")
+    has_key   = bool(key and key.strip())
+    has_model = bool(model and model.strip())
+    return {
+        "configured":   has_key and has_model,
+        "provider":     "openrouter",
+        "api_base":     api_base,
+        "model":        model if has_model else "",
+        "app_title":    app_title,
+        "http_referer": http_ref,
+        "has_key":      has_key,
+    }
+
+
+def _lm_ai_is_configured() -> bool:
+    """Return True only if both API key and model are set in environment."""
+    return _lm_ai_config()["configured"]
+
+
+def _lm_build_ai_context(item) -> dict:
+    """Build a compact, JSON-safe context dict from a LiveMonitorItem for the AI agent."""
+    snap = _json_loads_safe(getattr(item, "snapshot_json", None), {})
+    lh   = snap.get("latest_health") or {}
+    mtf  = snap.get("latest_mtf_scan") or {}
+    sess = snap.get("latest_session_context") or {}
+    mktc = snap.get("latest_market_context") or {}
+    tp   = snap.get("timeframe_policy") or {
+        "visible_analysis_timeframes": ["15m", "30m", "1h", "4h", "1d"],
+        "bias_min_timeframe":          "1h",
+        "hidden_execution_timeframe":  "5m",
+    }
+
+    # Compact health: keep key fields only
+    health_compact = None
+    if lh:
+        health_compact = {
+            "health_score": lh.get("health_score"),
+            "grade":        lh.get("grade"),
+            "status":       lh.get("status"),
+            "status_label": lh.get("status_label"),
+            "direction":    lh.get("direction"),
+            "zone":         lh.get("zone"),
+            "bias":         lh.get("bias"),
+            "checklist":    lh.get("checklist"),
+            "reasons":      lh.get("reasons"),
+            "warnings":     lh.get("warnings"),
+        }
+
+    # Compact MTF: keep summary fields only
+    mtf_compact = None
+    if mtf:
+        mtf_compact = {
+            "exchange":    mtf.get("exchange"),
+            "market":      mtf.get("market"),
+            "refreshed_at": mtf.get("refreshed_at"),
+            "timeframes":  mtf.get("timeframes"),
+            "modules":     mtf.get("modules"),
+            "summary":     mtf.get("summary"),
+        }
+
+    # Compact session: keep key fields only
+    sess_compact = None
+    if sess:
+        sess_compact = {
+            "session_key":          sess.get("session_key"),
+            "session_label":        sess.get("session_label"),
+            "liquidity_label":      sess.get("liquidity_label"),
+            "volatility_label":     sess.get("volatility_label"),
+            "scalp_quality":        sess.get("scalp_quality"),
+            "is_prime_time":        sess.get("is_prime_time"),
+            "is_transition_window": sess.get("is_transition_window"),
+            "is_weekend":           sess.get("is_weekend"),
+            "ai_context":           sess.get("ai_context"),
+        }
+
+    # Compact market context: keep key fields only
+    mktc_compact = None
+    if mktc:
+        mktc_compact = {
+            "exchange":      mktc.get("exchange"),
+            "market":        mktc.get("market"),
+            "ok":            mktc.get("ok"),
+            "funding":       mktc.get("funding"),
+            "open_interest": mktc.get("open_interest"),
+            "long_short":    mktc.get("long_short"),
+            "taker_pressure": mktc.get("taker_pressure"),
+            "liquidations":  mktc.get("liquidations"),
+            "summary":       mktc.get("summary"),
+        }
+
+    return {
+        "symbol":   item.symbol,
+        "exchange": item.exchange or "binance",
+        "market":   item.market   or "perpetual",
+        "setup": {
+            "type":          item.setup_type,
+            "direction":     item.direction,
+            "timeframe":     item.timeframe,
+            "source_tab":    getattr(item, "source_tab", None),
+            "zone_high":     item.zone_high,
+            "zone_low":      item.zone_low,
+            "current_price": item.current_price,
+            "status":        item.status,
+            "score":         item.score,
+            "confidence":    item.confidence,
+        },
+        "timeframe_policy": {
+            "visible_analysis_timeframes": tp.get("visible_analysis_timeframes",
+                                                   ["15m", "30m", "1h", "4h", "1d"]),
+            "bias_min_timeframe":         tp.get("bias_min_timeframe", "1h"),
+            "hidden_execution_timeframe": tp.get("hidden_execution_timeframe", "5m"),
+            "note": "5m is future execution timeframe only. Do not use it for bias analysis.",
+        },
+        "health":          health_compact,
+        "mtf":             mtf_compact,
+        "session":         sess_compact,
+        "market_context":  mktc_compact,
+        "rules": {
+            "bias_min_timeframe":   "1h",
+            "do_not_use_5m_for_bias": True,
+            "no_trade_execution":   True,
+            "analysis_only":        True,
+        },
+    }
+
+
+def _lm_ai_system_prompt() -> str:
+    """Return the system prompt for the ZyNi Live Monitor AI Agent."""
+    return (
+        "You are the ZyNi Live Monitor AI Agent — a professional SMC (Smart Money Concepts) "
+        "setup analyst. Your job is to analyze trading setup facts provided by the backend "
+        "and give the user a clear, factual analysis.\n\n"
+        "STRICT RULES:\n"
+        "- Analyze ONLY the provided backend facts. Do not invent missing data.\n"
+        "- Do NOT claim any trade is guaranteed or risk-free.\n"
+        "- Do NOT give a direct order to buy or sell. Never say 'place buy now'.\n"
+        "- Do NOT ask for API keys, credentials, or personal account data.\n"
+        "- Do NOT call external tools or make external requests.\n"
+        "- Bias detection minimum timeframe is 1H. Never use 5m for bias.\n"
+        "- 5m is a FUTURE hidden execution timeframe only — do not reference it for analysis.\n"
+        "- Use 15m/30m for entry confirmation, 1H for bias lock, 4H/1D for context.\n"
+        "- If data is missing (null), state clearly what is missing.\n"
+        "- Keep explanations concise and factual.\n"
+        "- Your response must be valid JSON only — no prose outside the JSON object.\n\n"
+        "VERDICT OPTIONS:\n"
+        "- 'watch'           — setup is worth monitoring, no immediate action.\n"
+        "- 'wait'            — setup exists but key confirmations are missing.\n"
+        "- 'confirmed_watch' — setup has strong alignment; watch closely for entry signal.\n"
+        "- 'high_risk'       — notable warning signs; elevated caution required.\n"
+        "- 'avoid'           — setup has critical issues or invalidation conditions.\n\n"
+        "OUTPUT FORMAT — respond with ONLY this JSON object:\n"
+        "{\n"
+        "  \"verdict\": \"watch|wait|confirmed_watch|high_risk|avoid\",\n"
+        "  \"confidence\": <integer 0-100>,\n"
+        "  \"summary\": \"<1-2 sentence overall read>\",\n"
+        "  \"bias_read\": \"<what the 1H/4H/1D bias says>\",\n"
+        "  \"zone_read\": \"<zone status, distance, inside/near/breach risk>\",\n"
+        "  \"session_read\": \"<session context impact on setup>\",\n"
+        "  \"market_context_read\": \"<funding/taker/L-S ratio interpretation>\",\n"
+        "  \"confirmations_needed\": [\"<list of missing confirmations>\"],\n"
+        "  \"risks\": [\"<list of current risk factors>\"],\n"
+        "  \"invalidations\": [\"<list of conditions that would invalidate this setup>\"],\n"
+        "  \"next_actions\": [\"<list of what to watch or wait for>\"],\n"
+        "  \"agent_note\": \"<any important note not covered above>\",\n"
+        "  \"disclaimer\": \"Analysis only. Not financial advice.\"\n"
+        "}\n"
+        "Do not wrap the JSON in markdown code fences. Output raw JSON only."
+    )
+
+
+def _lm_parse_ai_json(text: str) -> dict:
+    """Parse AI provider output safely. Strips markdown fences if present."""
+    if not text:
+        return {"_parse_error": "empty response", "raw_text": ""}
+    t = text.strip()
+    # Strip markdown code fences
+    if t.startswith("```"):
+        lines = t.splitlines()
+        t = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+    t = t.strip()
+    try:
+        return json.loads(t)
+    except Exception:
+        return {
+            "_parse_error": "Invalid JSON from provider",
+            "raw_text":     t[:400],
+        }
+
+
+def _lm_local_ai_fallback(context: dict, user_message: str = None) -> dict:
+    """Rule-based analysis from snapshot facts — no external AI required."""
+    setup      = context.get("setup") or {}
+    health     = context.get("health") or {}
+    session    = context.get("session") or {}
+    mktc       = context.get("market_context") or {}
+    rules      = context.get("rules") or {}
+
+    status     = health.get("status") or setup.get("status") or "unknown"
+    score      = health.get("health_score") or setup.get("score") or 0
+    grade      = health.get("grade") or "?"
+    direction  = health.get("direction") or setup.get("direction") or "neutral"
+    zone       = health.get("zone") or {}
+    bias       = health.get("bias") or {}
+    checklist  = health.get("checklist") or {}
+    warnings   = health.get("warnings") or []
+
+    zone_status  = zone.get("zone_status", "unknown")
+    bias_aligned = bias.get("bias_aligned")
+    sess_label   = session.get("session_label", "Unknown session")
+    sess_caut    = (session.get("ai_context") or {}).get("recommended_caution", "medium")
+
+    # Determine verdict
+    if status == "confirmed_watch" or (score >= 75 and bias_aligned is True):
+        verdict    = "confirmed_watch"
+        confidence = min(score, 88)
+    elif status == "breach_risk":
+        verdict    = "high_risk"
+        confidence = 30
+    elif status in ("inzone", "near") and bias_aligned is True:
+        verdict    = "watch"
+        confidence = min(score, 72)
+    elif status == "warning" or bias_aligned is False:
+        verdict    = "high_risk"
+        confidence = 25
+    elif status == "watching":
+        verdict    = "wait"
+        confidence = min(score, 55)
+    else:
+        verdict    = "wait"
+        confidence = 40
+
+    # Bias read
+    ctx_count  = bias.get("context_aligned_count", 0)
+    bias_read  = (
+        f"Bias {'aligned' if bias_aligned else 'not aligned' if bias_aligned is False else 'unknown'}. "
+        f"{ctx_count} higher-TF(s) confirm direction."
+    )
+
+    # Zone read
+    dist_pct = zone.get("distance_pct")
+    dist_str = f" ({dist_pct:.2f}% from zone edge)" if dist_pct is not None else ""
+    zone_read = f"Zone status: {zone_status}{dist_str}."
+
+    # Session read
+    sess_read = f"Session: {sess_label}. Caution level: {sess_caut}."
+    if session.get("is_weekend"):
+        sess_read += " Weekend — low liquidity."
+
+    # Market context read
+    mc_parts = []
+    if mktc.get("funding", {}).get("available"):
+        mc_parts.append(f"Funding {mktc['funding'].get('bias','neutral')}")
+    if mktc.get("taker_pressure", {}).get("available"):
+        mc_parts.append(f"Taker {mktc['taker_pressure'].get('bias','neutral')}")
+    if mktc.get("long_short", {}).get("available"):
+        mc_parts.append(f"L/S ratio {mktc['long_short'].get('ratio')}")
+    mc_read = ", ".join(mc_parts) + "." if mc_parts else "Market context not yet fetched."
+
+    # Confirmations needed
+    confs = []
+    if not checklist.get("bias_aligned"):
+        confs.append("1H bias alignment missing")
+    if zone_status == "watching":
+        confs.append("Price needs to approach zone")
+    if zone_status not in ("inside", "near"):
+        confs.append("15m confirmation close inside zone")
+    if not checklist.get("volume_ok"):
+        confs.append("Volume confirmation")
+
+    # Risks
+    risks = list(warnings) if warnings else []
+    if sess_caut == "high":
+        risks.append(f"High caution session: {sess_label}")
+    if score < 35:
+        risks.append(f"Low health score ({score})")
+
+    # Invalidations
+    invs = []
+    if zone.get("zone_low") is not None:
+        invs.append(f"Close below zone low ({zone.get('zone_low')}) invalidates bullish setup")
+    if zone.get("zone_high") is not None:
+        invs.append(f"Close above zone high ({zone.get('zone_high')}) invalidates bearish setup")
+    invs.append("Health score drops below 35")
+
+    # Summary
+    sym    = context.get("symbol", "?")
+    tf     = setup.get("timeframe", "?")
+    summary = (
+        f"{sym} {direction} setup on {tf}. "
+        f"Health {score}/100 grade {grade}. "
+        f"Zone {zone_status}. "
+        f"{'Bias aligned' if bias_aligned else 'Bias not aligned' if bias_aligned is False else 'Bias unknown'}. "
+        f"Local fallback analysis (configure OpenRouter for AI)."
+    )
+
+    return {
+        "verdict":               verdict,
+        "confidence":            confidence,
+        "summary":               summary,
+        "bias_read":             bias_read,
+        "zone_read":             zone_read,
+        "session_read":          sess_read,
+        "market_context_read":   mc_read,
+        "confirmations_needed":  confs or ["No immediate confirmations required"],
+        "risks":                 risks or ["No critical risks detected"],
+        "invalidations":         invs,
+        "next_actions":          [
+            "Monitor zone approach",
+            "Wait for 1H candle close inside zone",
+            f"Configure OpenRouter to enable real AI analysis",
+        ],
+        "agent_note": f"This is a local rule-based fallback. Score: {score}, Status: {status}.",
+        "disclaimer": "Analysis only. Not financial advice.",
+    }
+
+
+def _lm_call_ai_agent(context: dict, user_message: str = None) -> dict:
+    """Call the AI provider with setup context. Returns local fallback if not configured or on error."""
+    cfg = _lm_ai_config()
+    if not cfg["configured"]:
+        return {
+            "ok":         False,
+            "provider":   "local_fallback",
+            "configured": False,
+            "analysis":   _lm_local_ai_fallback(context, user_message),
+            "error":      "AI provider not configured",
+        }
+
+    user_content = json.dumps({
+        "context":      context,
+        "user_message": user_message or "Analyze this setup and give your verdict.",
+    }, ensure_ascii=False)
+
+    payload = {
+        "model":       cfg["model"],
+        "messages": [
+            {"role": "system", "content": _lm_ai_system_prompt()},
+            {"role": "user",   "content": user_content},
+        ],
+        "temperature": 0.2,
+        "max_tokens":  900,
+    }
+
+    headers = {
+        "Authorization": f"Bearer {os.environ.get('OPENROUTER_API_KEY', '')}",
+        "Content-Type":  "application/json",
+    }
+    if cfg.get("http_referer"):
+        headers["HTTP-Referer"] = cfg["http_referer"]
+    if cfg.get("app_title"):
+        headers["X-Title"] = cfg["app_title"]
+
+    try:
+        resp = req.post(cfg["api_base"], json=payload, headers=headers, timeout=20)
+        if resp.status_code != 200:
+            return {
+                "ok":         False,
+                "provider":   "openrouter",
+                "configured": True,
+                "analysis":   _lm_local_ai_fallback(context, user_message),
+                "error":      f"Provider HTTP {resp.status_code}",
+            }
+        data        = resp.json()
+        raw_content = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
+        analysis    = _lm_parse_ai_json(raw_content)
+        return {
+            "ok":         True,
+            "provider":   "openrouter",
+            "configured": True,
+            "model":      cfg["model"],
+            "analysis":   analysis,
+        }
+    except Exception as _e:
+        return {
+            "ok":         False,
+            "provider":   "openrouter",
+            "configured": True,
+            "analysis":   _lm_local_ai_fallback(context, user_message),
+            "error":      f"Provider error: {type(_e).__name__}",
+        }
+
+
 def _live_monitor_item_to_dict(item) -> dict:
     """Serialize a LiveMonitorItem row to a JSON-friendly dict."""
     return {
@@ -9755,6 +10146,150 @@ def api_lm_refresh_market_context_all():
         "failed":  failed,
         "items":   result_items,
         "errors":  errors,
+    })
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/ai-analyze", methods=["POST"])
+@login_required
+def api_lm_items_ai_analyze(item_id):
+    """Run AI analysis on one Live Monitor item. Stores result in snapshot_json."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorItem as _LMI, LiveMonitorEvent as _LME
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if not row.is_active:
+        return jsonify({"error": "inactive", "message": "Item is no longer active."}), 400
+
+    body         = request.get_json(silent=True) or {}
+    user_message = (body.get("message") or "")[:1000]
+    force        = bool(body.get("force", False))
+
+    snap = _json_loads_safe(row.snapshot_json, {})
+
+    # Simple cooldown: if analyzed less than 10 seconds ago and not forcing, return cached
+    if not force and snap.get("latest_ai_analysis"):
+        last_at = snap["latest_ai_analysis"].get("computed_at")
+        if last_at:
+            try:
+                from datetime import datetime, timezone as _tz
+                diff = (datetime.now(_tz.utc) - datetime.fromisoformat(last_at)).total_seconds()
+                if diff < 10:
+                    return jsonify({
+                        "ok":        True,
+                        "item":      _live_monitor_item_to_dict(row),
+                        "ai_result": snap["latest_ai_analysis"],
+                        "cached":    True,
+                    })
+            except Exception:
+                pass
+
+    context    = _lm_build_ai_context(row)
+    ai_result  = _lm_call_ai_agent(context, user_message or None)
+    cfg        = _lm_ai_config()
+    computed_at = datetime.now(timezone.utc).isoformat()
+
+    latest_ai = {
+        "phase":       "phase6_ai_agent",
+        "computed_at": computed_at,
+        "provider":    ai_result.get("provider", "local_fallback"),
+        "model":       ai_result.get("model") or cfg.get("model") or "",
+        "configured":  ai_result.get("configured", False),
+        "ok":          ai_result.get("ok", False),
+        "analysis":    ai_result.get("analysis", {}),
+        "source_context_at": {
+            "latest_mtf":     snap.get("last_mtf_refresh_at"),
+            "latest_health":  snap.get("last_health_at"),
+            "latest_session": snap.get("last_session_context_at"),
+            "latest_market":  snap.get("last_market_context_at"),
+        },
+    }
+
+    snap["latest_ai_analysis"]  = latest_ai
+    snap["last_ai_analysis_at"] = computed_at
+    row.snapshot_json = _json_dumps_safe(snap)
+    row.updated_at    = datetime.now(timezone.utc)
+
+    analysis  = ai_result.get("analysis", {})
+    ev = _LME(
+        item_id           = row.id,
+        user_id           = uid,
+        symbol            = row.symbol,
+        event_type        = "ai_analysis",
+        event_description = "AI analysis generated",
+        details_json      = _json_dumps_safe({
+            "verdict":    analysis.get("verdict"),
+            "confidence": analysis.get("confidence"),
+            "provider":   ai_result.get("provider"),
+            "configured": ai_result.get("configured"),
+        }),
+        health_score_at_event = row.score,
+        price_at_event        = row.current_price,
+    )
+    _db.session.add(ev)
+
+    try:
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": "db", "message": str(e)}), 500
+
+    return jsonify({
+        "ok":        True,
+        "item":      _live_monitor_item_to_dict(row),
+        "ai_result": latest_ai,
+    })
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/ai-chat", methods=["POST"])
+@login_required
+def api_lm_items_ai_chat(item_id):
+    """Handle a live chat message about one item. Does not store message history in DB."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import LiveMonitorItem as _LMI
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if not row.is_active:
+        return jsonify({"error": "inactive", "message": "Item is no longer active."}), 400
+
+    body         = request.get_json(silent=True) or {}
+    user_message = (body.get("message") or "")[:1000].strip()
+    if not user_message:
+        return jsonify({"error": "no_message"}), 400
+
+    context   = _lm_build_ai_context(row)
+    ai_result = _lm_call_ai_agent(context, user_message)
+    analysis  = ai_result.get("analysis", {})
+
+    # Build short chat reply from analysis
+    parts = []
+    if analysis.get("summary"):
+        parts.append(analysis["summary"])
+    if analysis.get("agent_note") and analysis["agent_note"] != analysis.get("summary"):
+        parts.append(analysis["agent_note"])
+    if analysis.get("next_actions"):
+        parts.append("Next: " + "; ".join(analysis["next_actions"][:2]))
+    reply = " ".join(parts) if parts else (
+        analysis.get("summary") or "Unable to generate reply. Try again."
+    )
+
+    return jsonify({
+        "ok":         True,
+        "reply":      reply,
+        "analysis":   analysis,
+        "provider":   ai_result.get("provider"),
+        "configured": ai_result.get("configured", False),
     })
 
 
