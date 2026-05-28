@@ -1,0 +1,337 @@
+================================================================================
+   ZYNI SMC SCREENER — PHASE 4.5 REPORT
+   Session Context Engine
+   Date: 2026-05-28
+   Branch: main
+   Commit: 6d37fce
+   Status: COMPLETE — COMMITTED AND PUSHED
+================================================================================
+
+
+================================================================================
+1. FILES CHANGED
+================================================================================
+
+  main.py               — +213 lines inserted
+  templates/preview.html — +112 lines inserted, -23 lines replaced
+
+  models.py           — NOT modified.
+  templates/index.html — NOT modified (mobile untouched).
+  Database schema      — NOT changed.
+
+
+================================================================================
+2. BACKEND SESSION HELPER ADDED
+================================================================================
+
+  File: main.py
+  Functions added: _lm_session_context(now_utc=None) -> dict
+
+  Uses Python stdlib only: datetime, timezone.
+  Accepts now_utc override for testing.
+  Returns:
+    phase, computed_at, utc_hour, utc_minute, utc_weekday, is_weekend,
+    session_key, session_label, liquidity_label, volatility_label,
+    scalp_quality, setup_quality_note, risk_note,
+    is_prime_time, is_transition_window,
+    minutes_to_next_session, next_session_label,
+    ai_context { summary, session_bias_hint, recommended_caution }
+
+  Supporting data structures:
+    _LM_SESSION_MAP  — list of (start_h, end_h, key, label, liq, vol, scalp)
+    _LM_SESSION_NOTES — dict of per-session notes/hints/caution
+
+
+================================================================================
+3. SESSION MAP / RULES IMPLEMENTED
+================================================================================
+
+  Weekday sessions (all UTC):
+
+  00:00–06:59  asia           Asia / Tokyo           liq:medium vol:medium scalp:normal
+  07:00–07:59  pre_london     Pre-London             liq:medium vol:medium scalp:normal
+  08:00–09:59  london_open    London Open            liq:high   vol:high   scalp:good
+                              is_transition_window=True
+  10:00–11:59  london         London Session         liq:high   vol:medium scalp:good
+  12:00–16:59  ny_overlap     London / NY Overlap    liq:high   vol:high   scalp:good
+                              is_prime_time=True
+  17:00–20:59  ny_afternoon   New York Afternoon     liq:medium vol:medium scalp:normal
+  21:00–23:59  off_hours      Off-Hours              liq:low    vol:low    scalp:poor
+                              recommended_caution=high
+
+  Weekend (Saturday=5, Sunday=6):
+  All day      weekend        Weekend / Low Liquidity  liq:low  vol:low  scalp:poor
+                              recommended_caution=high
+
+  minutes_to_next_session: computed from nearest session boundary (int).
+  next_session_label: label of the next session.
+
+
+================================================================================
+4. NEW ENDPOINTS ADDED
+================================================================================
+
+  GET  /api/live-monitor/session-context
+    - @login_required
+    - No DB reads or writes
+    - Returns {ok: true, session_context: {...}}
+    - Calls _lm_session_context() directly
+
+  POST /api/live-monitor/items/<id>/refresh-session
+    - @login_required
+    - Ownership check (user_id)
+    - Active item check
+    - No MTF scan
+    - No health recompute
+    - No LiveMonitorEvent created
+    - Stores latest_session_context + last_session_context_at in snapshot_json
+    - Returns {ok: true, item: ..., session_context: {...}}
+
+
+================================================================================
+5. WHERE latest_session_context IS STORED
+================================================================================
+
+  Column:  snapshot_json TEXT (LiveMonitorItem.snapshot_json)
+  Keys:
+    snap["latest_session_context"]    — full session context object
+    snap["last_session_context_at"]   — ISO UTC timestamp of last update
+
+  Written by:
+    - POST /api/live-monitor/items/<id>/refresh       (before health compute)
+    - POST /api/live-monitor/refresh-all              (before health compute)
+    - POST /api/live-monitor/items/<id>/recalc-health (before health compute)
+    - POST /api/live-monitor/items/<id>/refresh-session (session only, no health)
+
+  Frontend reads from:
+    item.snapshot.latest_session_context   (priority 1)
+    item.snapshot.latest_health.session_context (priority 2)
+    _lmGlobalSessionContext               (priority 3)
+    UTC fallback label                    (priority 4)
+
+
+================================================================================
+6. HOW latest_health RECEIVES session_context
+================================================================================
+
+  In all 3 health refresh endpoints, after computing health:
+
+    session_ctx = _lm_session_context()
+    snap["latest_session_context"]  = session_ctx
+    snap["last_session_context_at"] = session_ctx["computed_at"]
+
+    health = _lm_compute_health(row, _snap=snap)
+    health["session_context"] = session_ctx   ← attached AFTER compute
+    snap["latest_health"] = health
+
+  Important: session_context is added to the health dict AFTER
+  _lm_compute_health returns. The health_score computation inside
+  _lm_compute_health is NOT affected by session context at all.
+  This phase is context-only. Score bonuses/penalties are Phase 5+.
+
+
+================================================================================
+7. FRONTEND SESSION TILE WIRING
+================================================================================
+
+  New JS helpers (added before _lmRenderCards):
+
+    _lmGlobalSessionContext = null
+      State variable populated by loadLiveMonitorSessionContext().
+
+    _lmSessionContext(item) -> object|null
+      Priority chain:
+        1. item.snapshot.latest_session_context
+        2. item.snapshot.latest_health.session_context
+        3. _lmGlobalSessionContext
+        4. null
+
+    _lmSessionLabel(item) -> string
+      Returns session_label if available, else UTC hour fallback.
+
+  SESSION CONTEXT tile in Aggregate Market Context card:
+    - Was: static placeholder "UTC clock only — Phase 4.5 for full context"
+    - Now: shows session_label (accent color), Liq/Vol/Scalp inline,
+           bias hint subtext (color-coded by recommended_caution)
+    - Other 5 tiles (Funding, OI, Long/Short, Taker, Liquidations):
+      UNCHANGED — still show "Awaiting / Phase 5 — Binance feed"
+
+  loadLiveMonitorSessionContext():
+    - Fetches GET /api/live-monitor/session-context once on LM open
+    - Also called after Refresh All success
+    - No polling loop, no setInterval
+
+  Session button in hero actions:
+    - Added between Refresh Setup and Remove buttons
+    - Label: "Session" with clock icon
+    - Calls POST /api/live-monitor/items/<id>/refresh-session
+    - On success: updates item in liveMonitorItems[], refreshes right panel,
+      updates _lmGlobalSessionContext
+
+
+================================================================================
+8. REFRESH SESSION BUTTON: IMPLEMENTED
+================================================================================
+
+  Status: IMPLEMENTED (Task 7 not skipped)
+
+  Button: '<svg clock> Session' in hero actions bar
+  Attribute: data-lmrefreshsession="{item.id}"
+  Handler: calls /refresh-session, no scan, no health recompute
+
+  Reasoning: button fits cleanly as a 4th action button alongside
+  View Chart, Refresh Setup, Remove. Clock icon is visually distinct
+  and the short label "Session" doesn't add clutter.
+
+
+================================================================================
+9. CONFIRMATION: NO EXCHANGE/AI/AUTOTRADING STARTED
+================================================================================
+
+  ✓ No exchange API calls (Binance/Bybit/OKX)
+  ✓ No Binance funding/OI/long-short/liquidation feed
+  ✓ No DeepSeek real API (chat remains local mock only)
+  ✓ No AI Agent
+  ✓ No auto trading
+  ✓ No OpenRouter key
+  ✓ No Anthropic key
+  ✓ 5m not scanned, not scored, not shown
+  ✓ 1h bias lock unchanged
+  ✓ Database schema unchanged
+  ✓ models.py not modified
+  ✓ mobile index.html not modified
+  ✓ Phase 5 not started
+
+
+================================================================================
+10. VERIFICATION RESULTS (29 CHECKS)
+================================================================================
+
+Backend (14 checks):
+  [PASS] main.py syntax clean (ast.parse)
+  [PASS] _lm_session_context defined
+  [PASS] GET session-context endpoint
+  [PASS] POST refresh-session endpoint
+  [PASS] latest_session_context stored in >= 3 endpoints (actually 4)
+  [PASS] session_context attached to health in 3 health endpoints
+  [PASS] Phase 4 _lm_compute_health intact
+  [PASS] Phase 4 _lm_zone_health intact
+  [PASS] Phase 4 hotfix _lm_original_setup_score intact
+  [PASS] Phase 3 individual refresh intact
+  [PASS] Phase 3 refresh-all intact
+  [PASS] Phase 4 recalc-health intact
+  [PASS] watchlist API untouched
+  [PASS] session does not affect health_score computation
+
+Frontend (15 checks):
+  [PASS] _lmGlobalSessionContext state var present
+  [PASS] _lmSessionContext helper defined
+  [PASS] loadLiveMonitorSessionContext defined
+  [PASS] session fetch called on LM open
+  [PASS] reads latest_session_context from snapshot
+  [PASS] session tile shows liquidity/volatility
+  [PASS] other tiles remain Phase 5 placeholder
+  [PASS] Session button present (data-lmrefreshsession)
+  [PASS] DeepSeek mock includes session
+  [PASS] no OpenRouter
+  [PASS] _lmHealth intact
+  [PASS] _lmChecklist intact
+  [PASS] Refresh Setup preserved
+  [PASS] Remove button preserved
+  [PASS] mobile index.html untouched
+
+29/29 checks passed.
+
+
+================================================================================
+11. RISKS / ISSUES FOUND
+================================================================================
+
+  None. The implementation is pure stdlib with no external dependencies.
+  Edge cases handled:
+  - Saturday/Sunday: weekday() >= 5 correctly detected as weekend
+  - Midnight edge (23:59→00:00): minutes_to_next_session handled correctly
+  - Minutes_to_next when crossing midnight uses (24-h)*60-m formula
+  - _lmSessionContext(null) returns null safely (no crash)
+  - Session tile renders correctly even with null session context (fallback)
+
+  Note on minutes_to_next_session for weekends:
+    Uses (7-wd)%7 or 7 to compute days to Monday, then converts to minutes.
+    This correctly handles both Saturday (2 days) and Sunday (1 day) to Monday.
+
+
+================================================================================
+12. PHASE 4.5 COMPLETE
+================================================================================
+
+Phase 4.5 is complete. All 9 tasks implemented and verified.
+
+  ✓ Session context engine: pure stdlib, UTC only, zero external deps
+  ✓ Snapshot stores latest_session_context on every health refresh
+  ✓ health["session_context"] available after every refresh
+  ✓ Score NOT affected by session (context-only phase)
+  ✓ New endpoints: GET session-context, POST refresh-session
+  ✓ Frontend reads session from snapshot → health → global → fallback
+  ✓ Session tile shows live session data (replaces UTC placeholder)
+  ✓ Other market context tiles remain Phase 5 placeholders
+  ✓ loadLiveMonitorSessionContext() fetches on open (no polling)
+  ✓ Session button in hero actions (no UI redesign)
+  ✓ DeepSeek mock includes session label and bias hint
+
+
+================================================================================
+13. TASK-BY-TASK VERIFICATION LOG
+================================================================================
+
+  Task 0 (Audit):       PASSED
+    Confirmed Phase 4 health logic intact. Confirmed latest_health used
+    in UI. Confirmed Session Context tile was a UTC placeholder. No code
+    changed during audit.
+
+  Task 1 (Backend helper): PASSED (8/8 checks)
+    _lm_session_context defined. Weekend/overlap/off-hours/london-open
+    detected correctly. minutes_to_next_session populated. All required
+    keys present. No external dependency.
+
+  Task 2 (Snapshot integration): PASSED (6/6 checks)
+    latest_session_context stored in all 3 endpoints. health["session_context"]
+    attached in all 3. health_score computation unchanged.
+
+  Task 3 (GET session-context endpoint): PASSED
+    Route present. @login_required. Calls _lm_session_context().
+    No DB modifications.
+
+  Task 4 (POST refresh-session endpoint): PASSED
+    Ownership check. Active item check. No scan. No health recompute.
+    No event created. latest_session_context stored.
+
+  Task 5 (Frontend session tile): PASSED (17/17 checks)
+    _lmSessionContext helper. _lmSessionLabel fallback. SESSION CONTEXT
+    tile shows session_label + liq/vol/scalp + bias hint subtext.
+    Other 5 market context tiles remain Phase 5 placeholders.
+    Old UTC-hardcoded update block removed.
+
+  Task 6 (loadLiveMonitorSessionContext): PASSED (7/7 checks)
+    Function defined. Fetches correct endpoint. Stores in global.
+    Called on LM open. Called after Refresh All. No polling loop.
+
+  Task 7 (Session button): PASSED (8/8 checks) — IMPLEMENTED
+    Button added to hero actions. Calls refresh-session. Updates
+    item + global context. No scan triggered. No health recompute.
+    Refresh Setup/Remove/View Chart all preserved.
+
+  Task 8 (DeepSeek mock with session): PASSED (7/7 checks)
+    _lmSessionContext used in _lmBindChat. Session label and bias hint
+    added to all reply templates. No external API calls. No OpenRouter.
+    Mock still uses setTimeout (local only).
+
+  Task 9 (Final QA): PASSED (29/29 checks)
+    All backend and frontend checks pass. No forbidden files modified.
+    No syntax errors. All Phase 3/4 endpoints preserved. No Phase 5 started.
+
+================================================================================
+END OF PHASE 4.5 REPORT
+================================================================================
+PHASE 4.5 COMPLETE — COMMIT: 6d37fce — BRANCH: main
+DO NOT START PHASE 5 WITHOUT EXPLICIT APPROVAL.
+================================================================================
