@@ -8551,14 +8551,17 @@ def _lm_ai_agents_config() -> list:
                     has_key   = bool(key_val)
                     configured = has_key and bool(model) and entry.get("enabled", True)
                     agents.append({
-                        "id":         entry.get("id", "unknown"),
-                        "label":      entry.get("label", "Unknown"),
-                        "provider":   entry.get("provider", "openrouter"),
-                        "model":      model,
-                        "configured": configured,
-                        "has_key":    has_key,
-                        "enabled":    bool(entry.get("enabled", True)),
-                        "api_base":   base_val or "",
+                        "id":          entry.get("id", "unknown"),
+                        "label":       entry.get("label", "Unknown"),
+                        "provider":    entry.get("provider", "openrouter"),
+                        "model":       model,
+                        "configured":  configured,
+                        "has_key":     has_key,
+                        "enabled":     bool(entry.get("enabled", True)),
+                        "api_base":    base_val or "",
+                        # Internal backend-only fields (never sent to frontend)
+                        "_api_key_env":  key_env,
+                        "_api_base_env": base_env,
                     })
                 if agents:
                     return agents
@@ -8948,16 +8951,26 @@ def _lm_call_openai_compatible_agent(agent: dict, context: dict,
                                       user_message: str = None) -> dict:
     """Call any OpenAI-compatible chat completions endpoint (OpenAI, DeepSeek, OpenRouter, custom)."""
     key_env_map = {
-        "openrouter":   "OPENROUTER_API_KEY",
-        "openai":       "OPENAI_API_KEY",
-        "deepseek":     "DEEPSEEK_API_KEY",
+        "openrouter":    "OPENROUTER_API_KEY",
+        "openai":        "OPENAI_API_KEY",
+        "deepseek":      "DEEPSEEK_API_KEY",
         "custom_openai": "CUSTOM_AI_API_KEY",
     }
     provider = agent.get("provider", "openrouter")
-    key_env  = key_env_map.get(provider, "OPENROUTER_API_KEY")
+    # Priority 1: agent-specific env name (from AI_AGENTS_JSON api_key_env)
+    # Priority 2: provider hardcoded map fallback
+    custom_key_env = agent.get("_api_key_env", "").strip()
+    key_env  = custom_key_env if custom_key_env else key_env_map.get(provider, "OPENROUTER_API_KEY")
     api_key  = os.environ.get(key_env, "").strip()
-    api_base = agent.get("api_base") or os.environ.get("OPENROUTER_API_BASE",
-                                                         "https://openrouter.ai/api/v1/chat/completions")
+    # Priority 1: agent.api_base (resolved from api_base_env at config time)
+    # Priority 2: env var from _api_base_env if present
+    # Priority 3: provider default
+    custom_base_env = agent.get("_api_base_env", "").strip()
+    api_base = (
+        agent.get("api_base")
+        or (os.environ.get(custom_base_env, "").strip() if custom_base_env else "")
+        or os.environ.get("OPENROUTER_API_BASE", "https://openrouter.ai/api/v1/chat/completions")
+    )
     model    = agent.get("model", "")
 
     user_content = json.dumps({
@@ -8998,9 +9011,17 @@ def _lm_call_openai_compatible_agent(agent: dict, context: dict,
 def _lm_call_anthropic_agent(agent: dict, context: dict,
                                user_message: str = None) -> dict:
     """Call Anthropic messages API. Falls back safely if env not configured."""
-    api_key  = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    api_base = agent.get("api_base") or os.environ.get(
-        "ANTHROPIC_API_BASE", "https://api.anthropic.com/v1/messages")
+    # Priority 1: agent-specific env name; Priority 2: ANTHROPIC_API_KEY
+    custom_key_env = agent.get("_api_key_env", "").strip()
+    key_env  = custom_key_env if custom_key_env else "ANTHROPIC_API_KEY"
+    api_key  = os.environ.get(key_env, "").strip()
+    # Priority 1: agent.api_base; Priority 2: _api_base_env; Priority 3: default
+    custom_base_env = agent.get("_api_base_env", "").strip()
+    api_base = (
+        agent.get("api_base")
+        or (os.environ.get(custom_base_env, "").strip() if custom_base_env else "")
+        or os.environ.get("ANTHROPIC_API_BASE", "https://api.anthropic.com/v1/messages")
+    )
     model    = agent.get("model", "")
     if not api_key or not model:
         raise RuntimeError("Anthropic key or model missing")
@@ -9032,16 +9053,22 @@ def _lm_call_anthropic_agent(agent: dict, context: dict,
 def _lm_call_gemini_agent(agent: dict, context: dict,
                             user_message: str = None) -> dict:
     """Call Google Gemini generateContent API. Falls back safely if env not configured."""
-    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
-    model   = agent.get("model", "")
+    # Priority 1: agent-specific env name; Priority 2: GEMINI_API_KEY
+    custom_key_env = agent.get("_api_key_env", "").strip()
+    key_env  = custom_key_env if custom_key_env else "GEMINI_API_KEY"
+    api_key  = os.environ.get(key_env, "").strip()
+    model    = agent.get("model", "")
     if not api_key or not model:
         raise RuntimeError("Gemini key or model missing")
 
-    api_base = agent.get("api_base") or os.environ.get(
-        "GEMINI_API_BASE",
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent")
-    if not api_base:
-        api_base = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    # Priority 1: agent.api_base; Priority 2: _api_base_env; Priority 3: default
+    custom_base_env = agent.get("_api_base_env", "").strip()
+    api_base = (
+        agent.get("api_base")
+        or (os.environ.get(custom_base_env, "").strip() if custom_base_env else "")
+        or os.environ.get("GEMINI_API_BASE", "")
+        or f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    )
 
     user_content = json.dumps({
         "context":      context,
@@ -9112,30 +9139,39 @@ def _lm_consensus_from_agent_results(results: list) -> dict:
     """
     Aggregate multiple agent results into a single consensus verdict.
 
+    Tie-break is CONSERVATIVE: when verdicts tie on vote count, the most
+    conservative verdict wins (avoid > high_risk > wait > watch > confirmed_watch).
+    If agents split between the positive side and the risk side, the winner is
+    downgraded to at most wait/high_risk.
+
     results: list of dicts from _lm_call_ai_provider (one per agent).
     Returns a consensus dict:
       {ok, verdict, confidence, summary, agent_count, ok_count,
-       agreement, agents, analysis}
+       agreement, disagreement, disagreement_note, agents, analysis}
     """
     if not results:
         return {
             "ok": False, "verdict": "wait", "confidence": 0,
             "summary": "No agent results.", "agent_count": 0,
-            "ok_count": 0, "agreement": 0.0, "agents": [], "analysis": {},
+            "ok_count": 0, "agreement": 0.0,
+            "disagreement": False, "disagreement_note": "",
+            "agents": [], "analysis": {},
         }
 
-    _VERDICT_WEIGHT = {
-        "confirmed_watch": 5,
-        "watch":           4,
-        "wait":            3,
-        "high_risk":       2,
-        "avoid":           1,
+    # Conservative rank: lower number = more conservative (preferred in ties)
+    _CONSERVATIVE_RANK = {
+        "avoid":           0,
+        "high_risk":       1,
+        "wait":            2,
+        "watch":           3,
+        "confirmed_watch": 4,
     }
-    _VERDICT_ORDER = ["confirmed_watch", "watch", "wait", "high_risk", "avoid"]
+    _POSITIVE_VERDICTS = {"watch", "confirmed_watch"}
+    _RISK_VERDICTS     = {"high_risk", "avoid"}
 
-    ok_results     = [r for r in results if r.get("ok") and r.get("analysis")]
-    agent_count    = len(results)
-    ok_count       = len(ok_results)
+    ok_results  = [r for r in results if r.get("ok") and r.get("analysis")]
+    agent_count = len(results)
+    ok_count    = len(ok_results)
 
     agent_summaries = []
     for r in results:
@@ -9156,11 +9192,12 @@ def _lm_consensus_from_agent_results(results: list) -> dict:
             "ok": False, "verdict": fallback.get("verdict", "wait"),
             "confidence": 0, "summary": "All agents failed; local fallback used.",
             "agent_count": agent_count, "ok_count": 0, "agreement": 0.0,
+            "disagreement": False, "disagreement_note": "",
             "agents": agent_summaries, "analysis": fallback,
         }
 
-    # Weighted vote: collect verdicts from ok results
-    verdict_votes: dict = {}
+    # Tally votes
+    verdict_votes:  dict = {}
     total_confidence = 0
     for r in ok_results:
         an      = r.get("analysis", {})
@@ -9169,17 +9206,38 @@ def _lm_consensus_from_agent_results(results: list) -> dict:
         verdict_votes[verdict] = verdict_votes.get(verdict, 0) + 1
         total_confidence += conf
 
-    # Pick verdict with most votes; tie-break by weight (higher = more bullish/confirmed)
-    winner_verdict  = max(
-        verdict_votes,
-        key=lambda v: (verdict_votes[v], _VERDICT_WEIGHT.get(v, 3)),
-    )
-    winner_count    = verdict_votes[winner_verdict]
-    agreement       = round(winner_count / ok_count, 2) if ok_count else 0.0
-    avg_confidence  = round(total_confidence / ok_count) if ok_count else 0
+    # Pick verdict: highest votes; ties broken by lowest conservative rank
+    max_votes      = max(verdict_votes.values())
+    tied_verdicts  = [v for v, cnt in verdict_votes.items() if cnt == max_votes]
+    winner_verdict = min(tied_verdicts, key=lambda v: _CONSERVATIVE_RANK.get(v, 2))
+    winner_count   = verdict_votes[winner_verdict]
+    agreement      = round(winner_count / ok_count, 2) if ok_count else 0.0
+    avg_confidence = round(total_confidence / ok_count) if ok_count else 0
 
-    # Build merged analysis: pick fields from the result whose verdict matches winner
-    # (first match), fall back to first ok result
+    # Disagreement detection
+    positive_votes = sum(verdict_votes.get(v, 0) for v in _POSITIVE_VERDICTS)
+    risk_votes     = sum(verdict_votes.get(v, 0) for v in _RISK_VERDICTS)
+    unique_verdicts = len(verdict_votes)
+    disagreement      = False
+    disagreement_note = ""
+
+    if unique_verdicts > 1 and agreement < 0.67:
+        disagreement      = True
+        disagreement_note = "Agents disagree on this setup."
+
+    if positive_votes > 0 and risk_votes > 0:
+        disagreement      = True
+        disagreement_note = (
+            "Agents split between positive and risk verdicts — treat as uncertain."
+        )
+        # Downgrade winner if it falls on the positive side
+        if _CONSERVATIVE_RANK.get(winner_verdict, 2) >= _CONSERVATIVE_RANK["watch"]:
+            winner_verdict = "high_risk" if risk_votes >= positive_votes else "wait"
+            # Recalculate agreement based on overridden verdict count
+            winner_count = verdict_votes.get(winner_verdict, 0)
+            agreement    = round(winner_count / ok_count, 2) if ok_count else 0.0
+
+    # Build merged analysis from first result whose verdict matches winner
     winning_result = next(
         (r for r in ok_results if r["analysis"].get("verdict") == winner_verdict),
         ok_results[0],
@@ -9187,7 +9245,7 @@ def _lm_consensus_from_agent_results(results: list) -> dict:
     merged_analysis = dict(winning_result.get("analysis", {}))
     merged_analysis["confidence"] = avg_confidence
 
-    # Aggregate confirmations, risks, invalidations from all ok agents
+    # Aggregate confirmations, risks, invalidations from all ok agents (deduped)
     all_confirmations: list = []
     all_risks: list = []
     all_invalidations: list = []
@@ -9222,18 +9280,21 @@ def _lm_consensus_from_agent_results(results: list) -> dict:
         f"Consensus from {ok_count}/{agent_count} agents "
         f"({', '.join(labels_ok[:3])}{'...' if len(labels_ok) > 3 else ''}): "
         f"{winner_count}/{ok_count} agree → {winner_verdict}."
+        + (f" [{disagreement_note}]" if disagreement else "")
     )
 
     return {
-        "ok":          True,
-        "verdict":     winner_verdict,
-        "confidence":  avg_confidence,
-        "summary":     merged_analysis.get("summary", ""),
-        "agent_count": agent_count,
-        "ok_count":    ok_count,
-        "agreement":   agreement,
-        "agents":      agent_summaries,
-        "analysis":    merged_analysis,
+        "ok":               True,
+        "verdict":          winner_verdict,
+        "confidence":       avg_confidence,
+        "summary":          merged_analysis.get("summary", ""),
+        "agent_count":      agent_count,
+        "ok_count":         ok_count,
+        "agreement":        agreement,
+        "disagreement":     disagreement,
+        "disagreement_note": disagreement_note,
+        "agents":           agent_summaries,
+        "analysis":         merged_analysis,
     }
 
 
@@ -10542,12 +10603,18 @@ def api_lm_items_ai_analyze(item_id):
     if mode not in ("single", "all"):
         mode = "single"
 
+    # Resolve the actual agent that will be used (so cooldown is agent-specific)
+    resolved_agent    = _lm_get_ai_agent_config(agent_id)
+    resolved_agent_id = resolved_agent.get("id", "local_fallback")
+
     snap = _json_loads_safe(row.snapshot_json, {})
 
-    # Simple cooldown: if analyzed less than 10 seconds ago and not forcing, return cached
+    # Cooldown: return cached only if same resolved agent was used within 10s
     if not force and snap.get("latest_ai_analysis"):
-        last_at = snap["latest_ai_analysis"].get("computed_at")
-        if last_at:
+        cached = snap["latest_ai_analysis"]
+        last_at         = cached.get("computed_at")
+        cached_agent_id = cached.get("agent_id", "")
+        if last_at and cached_agent_id == resolved_agent_id:
             try:
                 from datetime import datetime, timezone as _tz
                 diff = (datetime.now(_tz.utc) - datetime.fromisoformat(last_at)).total_seconds()
@@ -10555,14 +10622,14 @@ def api_lm_items_ai_analyze(item_id):
                     return jsonify({
                         "ok":        True,
                         "item":      _live_monitor_item_to_dict(row),
-                        "ai_result": snap["latest_ai_analysis"],
+                        "ai_result": cached,
                         "cached":    True,
                     })
             except Exception:
                 pass
 
     context     = _lm_build_ai_context(row)
-    ai_result   = _lm_call_ai_provider(context, user_message or None, agent_id=agent_id)
+    ai_result   = _lm_call_ai_provider(context, user_message or None, agent_id=resolved_agent_id)
     computed_at = datetime.now(timezone.utc).isoformat()
 
     latest_ai = {
@@ -10637,9 +10704,14 @@ def api_lm_items_ai_consensus(item_id):
     if not row.is_active:
         return jsonify({"error": "inactive", "message": "Item is no longer active."}), 400
 
-    body         = request.get_json(silent=True) or {}
-    user_message = (body.get("message") or "")[:1000]
-    force        = bool(body.get("force", False))
+    body              = request.get_json(silent=True) or {}
+    user_message      = (body.get("message") or "")[:1000]
+    force             = bool(body.get("force", False))
+    requested_ids_raw = body.get("agent_ids") or []
+    if not isinstance(requested_ids_raw, list):
+        requested_ids_raw = []
+    # sanitise: string ids only, strip whitespace
+    requested_agent_ids = [str(x).strip() for x in requested_ids_raw if x]
 
     snap = _json_loads_safe(row.snapshot_json, {})
 
@@ -10652,30 +10724,46 @@ def api_lm_items_ai_consensus(item_id):
                 diff = (datetime.now(_tz.utc) - datetime.fromisoformat(last_at)).total_seconds()
                 if diff < 15:
                     return jsonify({
-                        "ok":            True,
-                        "item":          _live_monitor_item_to_dict(row),
-                        "consensus":     snap["latest_ai_consensus"],
-                        "cached":        True,
+                        "ok":       True,
+                        "item":     _live_monitor_item_to_dict(row),
+                        "consensus": snap["latest_ai_consensus"],
+                        "cached":   True,
                     })
             except Exception:
                 pass
 
-    context = _lm_build_ai_context(row)
-    agents  = _lm_ai_agents_config()
+    context    = _lm_build_ai_context(row)
+    all_agents = _lm_ai_agents_config()
 
-    # Call every configured non-fallback agent, plus local_fallback as backstop
-    results     = []
-    used_agents = []
-    for agent in agents:
-        if agent.get("id") == "local_fallback":
-            continue
-        if not agent.get("configured") or not agent.get("enabled", True):
-            continue
+    # Build candidate list: filter to requested ids if provided
+    if requested_agent_ids:
+        id_set = set(requested_agent_ids)
+        candidates = [
+            a for a in all_agents
+            if a.get("id") in id_set
+            and a.get("id") != "local_fallback"
+            and a.get("configured", False)
+            and a.get("enabled", True)
+        ]
+    else:
+        candidates = [
+            a for a in all_agents
+            if a.get("id") != "local_fallback"
+            and a.get("configured", False)
+            and a.get("enabled", True)
+        ]
+
+    # Enforce max 4 agents per request
+    candidates = candidates[:4]
+
+    results         = []
+    used_agent_ids  = []
+    for agent in candidates:
         r = _lm_call_ai_provider(context, user_message or None, agent_id=agent["id"])
         results.append(r)
-        used_agents.append(agent["id"])
+        used_agent_ids.append(agent["id"])
 
-    # Always include local fallback if no configured agents produced results
+    # If no configured agents produced any ok result, use local_fallback as backstop
     if not any(r.get("ok") for r in results):
         fb_result = {
             "agent_id":    "local_fallback",
@@ -10687,21 +10775,26 @@ def api_lm_items_ai_consensus(item_id):
             "analysis":    _lm_local_ai_fallback(context, user_message or None),
         }
         results.append(fb_result)
+        used_agent_ids.append("local_fallback")
 
     consensus   = _lm_consensus_from_agent_results(results)
     computed_at = datetime.now(timezone.utc).isoformat()
 
     latest_consensus = {
-        "phase":       "phase65_consensus",
-        "computed_at": computed_at,
-        "agent_count": consensus["agent_count"],
-        "ok_count":    consensus["ok_count"],
-        "agreement":   consensus["agreement"],
-        "verdict":     consensus["verdict"],
-        "confidence":  consensus["confidence"],
-        "summary":     consensus["summary"],
-        "agents":      consensus["agents"],
-        "analysis":    consensus["analysis"],
+        "phase":               "phase65_consensus",
+        "computed_at":         computed_at,
+        "requested_agent_ids": requested_agent_ids,
+        "used_agent_ids":      used_agent_ids,
+        "agent_count":         consensus["agent_count"],
+        "ok_count":            consensus["ok_count"],
+        "agreement":           consensus["agreement"],
+        "disagreement":        consensus.get("disagreement", False),
+        "disagreement_note":   consensus.get("disagreement_note", ""),
+        "verdict":             consensus["verdict"],
+        "confidence":          consensus["confidence"],
+        "summary":             consensus["summary"],
+        "agents":              consensus["agents"],
+        "analysis":            consensus["analysis"],
         "source_context_at": {
             "latest_mtf":     snap.get("last_mtf_refresh_at"),
             "latest_health":  snap.get("last_health_at"),
@@ -10722,11 +10815,14 @@ def api_lm_items_ai_consensus(item_id):
         event_type        = "ai_consensus",
         event_description = "AI consensus analysis generated",
         details_json      = _json_dumps_safe({
-            "verdict":     consensus["verdict"],
-            "confidence":  consensus["confidence"],
-            "agent_count": consensus["agent_count"],
-            "ok_count":    consensus["ok_count"],
-            "agreement":   consensus["agreement"],
+            "verdict":             consensus["verdict"],
+            "confidence":          consensus["confidence"],
+            "agent_count":         consensus["agent_count"],
+            "ok_count":            consensus["ok_count"],
+            "agreement":           consensus["agreement"],
+            "disagreement":        consensus.get("disagreement", False),
+            "used_agent_ids":      used_agent_ids,
+            "requested_agent_ids": requested_agent_ids,
         }),
         health_score_at_event = row.score,
         price_at_event        = row.current_price,
@@ -10740,8 +10836,8 @@ def api_lm_items_ai_consensus(item_id):
         return jsonify({"error": "db", "message": str(e)}), 500
 
     return jsonify({
-        "ok":        True,
-        "item":      _live_monitor_item_to_dict(row),
+        "ok":       True,
+        "item":     _live_monitor_item_to_dict(row),
         "consensus": latest_consensus,
     })
 

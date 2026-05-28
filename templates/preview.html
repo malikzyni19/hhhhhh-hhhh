@@ -4440,8 +4440,16 @@ svg{display:block}
 
   // Phase 6 / 6.5: AI Agent helpers
   var _lmAiAgents = [];
-  var _lmSelectedAgentId = null;
-  var _lmAiMode = "single"; // "single" | "all"
+  // Restore persisted selection from localStorage (fallback safely if unavailable)
+  var _lmSelectedAgentId = (function(){
+    try{ return localStorage.getItem("zyni_lm_ai_agent")||null; }catch(_){ return null; }
+  })();
+  var _lmAiMode = (function(){
+    try{
+      var m=localStorage.getItem("zyni_lm_ai_mode");
+      return (m==="all"||m==="single")?m:"single";
+    }catch(_){ return "single"; }
+  })();
 
   function loadLiveMonitorAiProviders(){
     fetch("/api/live-monitor/ai-providers",{credentials:"same-origin"})
@@ -4449,8 +4457,16 @@ svg{display:block}
       .then(function(d){
         if(d&&d.ok&&Array.isArray(d.agents)){
           _lmAiAgents=d.agents;
-          // auto-select first configured non-fallback agent if none selected
-          if(!_lmSelectedAgentId){
+          // Validate persisted agent id; clear if it no longer exists in provider list
+          if(_lmSelectedAgentId){
+            var still_exists=d.agents.some(function(a){return a.id===_lmSelectedAgentId;});
+            if(!still_exists){
+              _lmSelectedAgentId=null;
+              try{ localStorage.removeItem("zyni_lm_ai_agent"); }catch(_){}
+            }
+          }
+          // Auto-select first configured non-fallback agent if none selected
+          if(!_lmSelectedAgentId&&_lmAiMode==="single"){
             var first=d.agents.find(function(a){return a.configured&&a.id!=="local_fallback";});
             _lmSelectedAgentId=first?first.id:null;
           }
@@ -4973,17 +4989,30 @@ svg{display:block}
           .catch(function(){ mbtn.disabled=false; mbtn.innerHTML=origHtml; });
       });
     });
-    // Agent selector change handler
+    // Agent selector change handler (persists to localStorage)
     var agentSel=box.querySelector("#dsAgentSel");
     if(agentSel){
       agentSel.addEventListener("change",function(){
         var val=agentSel.value;
-        if(val==="__all__"){
-          _lmAiMode="all"; _lmSelectedAgentId=null;
-        } else if(val==="__single_default__"){
-          _lmAiMode="single"; _lmSelectedAgentId=null;
-        } else {
-          _lmAiMode="single"; _lmSelectedAgentId=val;
+        try{
+          if(val==="__all__"){
+            _lmAiMode="all"; _lmSelectedAgentId=null;
+            localStorage.setItem("zyni_lm_ai_mode","all");
+            localStorage.removeItem("zyni_lm_ai_agent");
+          } else if(val==="__single_default__"){
+            _lmAiMode="single"; _lmSelectedAgentId=null;
+            localStorage.setItem("zyni_lm_ai_mode","single");
+            localStorage.removeItem("zyni_lm_ai_agent");
+          } else {
+            _lmAiMode="single"; _lmSelectedAgentId=val;
+            localStorage.setItem("zyni_lm_ai_mode","single");
+            localStorage.setItem("zyni_lm_ai_agent",val);
+          }
+        }catch(_){
+          // localStorage unavailable — memory-only update still happened above
+          if(val==="__all__"){ _lmAiMode="all"; _lmSelectedAgentId=null; }
+          else if(val==="__single_default__"){ _lmAiMode="single"; _lmSelectedAgentId=null; }
+          else { _lmAiMode="single"; _lmSelectedAgentId=val; }
         }
         // Update sub-label
         var lbl=document.getElementById("dsSubLabel");
