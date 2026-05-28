@@ -2810,7 +2810,7 @@ svg{display:block}
         }
       },
       selected_timeframes: ["15m","30m","1h","4h","1d"],
-      selected_modules:    ["OB","FVG","FIB","Bias"],
+      selected_modules:    ["OB","FVG","FIB","Breaker","Bias"],
       alert_settings:      {}
     };
     fetch("/api/live-monitor/items",{
@@ -4530,6 +4530,8 @@ svg{display:block}
         '<div class="lm-hero-actions">'+
           '<button class="btn" type="button" data-chart="'+esc(item.symbol)+'" data-chart-mkt="'+esc(ST.market)+'">'+
             '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 4-6"/></svg>View Chart</button>'+
+          '<button class="btn" type="button" data-lmrefreshitem="'+item.id+'">'+
+            '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.7 1 6.3 2.7L21 8"/><path d="M21 3v5h-5"/></svg>Refresh Setup</button>'+
           '<button class="btn" type="button" style="color:var(--red-2);border-color:rgba(239,68,68,.25)" data-rmitem="'+item.id+'">'+
             '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 6h18M19 6l-1 14H6L5 6M10 11v6M14 11v6M9 6V4h6v2"/></svg>Remove</button>'+
         '</div>'+
@@ -4620,38 +4622,89 @@ svg{display:block}
         removeLiveMonitorItem(id);
       });
     });
+    [].forEach.call(box.querySelectorAll("[data-lmrefreshitem]"),function(rbtn){
+      rbtn.addEventListener("click",function(){
+        var id=parseInt(rbtn.getAttribute("data-lmrefreshitem"),10); if(!id) return;
+        var origHtml=rbtn.innerHTML;
+        rbtn.disabled=true; rbtn.classList.add("spinning");
+        rbtn.innerHTML='<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.7 1 6.3 2.7L21 8"/><path d="M21 3v5h-5"/></svg>Refreshing…';
+        fetch("/api/live-monitor/items/"+id+"/refresh",{method:"POST",credentials:"same-origin",
+          headers:{"Content-Type":"application/json"},body:"{}"})
+          .then(function(r){ return r.json(); })
+          .then(function(d){
+            if(d&&d.ok&&d.item){
+              for(var k=0;k<liveMonitorItems.length;k++){
+                if(liveMonitorItems[k].id===d.item.id){ liveMonitorItems[k]=d.item; break; }
+              }
+              _lmSelItem=d.item;
+              _lmRenderCards();
+              _lmRenderRight(d.item);
+              _lmLoadEvents(d.item.id);
+            } else {
+              rbtn.disabled=false; rbtn.classList.remove("spinning"); rbtn.innerHTML=origHtml;
+            }
+          })
+          .catch(function(){
+            rbtn.disabled=false; rbtn.classList.remove("spinning"); rbtn.innerHTML=origHtml;
+          });
+      });
+    });
     _lmBindChat(item);
     _lmLoadEvents(item.id);
   }
 
   function _lmMtfMatrix(item){
+    var scan=(item.snapshot&&item.snapshot.latest_mtf_scan)||null;
     var tfs=item.selected_timeframes||["15m","30m","1h","4h","1d"];
-    var mods=["OB","FVG","FIB","BIAS"];
+    var mods=["OB","FVG","FIB","Breaker","Bias"];
     var st=(item.setup_type||"").toUpperCase();
     var dir=(item.direction||"").toLowerCase();
-    var isBull=dir.indexOf("bull")!==-1, isBear=dir.indexOf("bear")!==-1;
+    var isBull0=dir.indexOf("bull")!==-1, isBear0=dir.indexOf("bear")!==-1;
     var html='<table class="mtf-matrix"><thead><tr><th></th>';
     tfs.forEach(function(tf){html+='<th>'+esc(tf.toUpperCase())+'</th>';});
     html+='</tr></thead><tbody>';
     mods.forEach(function(mod){
-      html+='<tr><td>'+mod+'</td>';
+      html+='<tr><td>'+esc(mod)+'</td>';
       tfs.forEach(function(tf){
-        var isTf=(item.timeframe||"").toLowerCase()===tf.toLowerCase();
         var cell;
-        if(mod==="OB"){
-          cell=st.indexOf("OB")!==-1?(isTf?'<span class="mc strong">Strong</span>':'<span class="mc yes">Yes</span>'):'<span class="mc none">—</span>';
-        }else if(mod==="FVG"){
-          cell=st.indexOf("FVG")!==-1?(isTf?'<span class="mc strong">Strong</span>':'<span class="mc yes">Yes</span>'):'<span class="mc none">—</span>';
-        }else if(mod==="FIB"){
-          cell=st.indexOf("FIB")!==-1&&isTf?'<span class="mc yes">Yes</span>':'<span class="mc none">—</span>';
-        }else{
-          cell=isBull?'<span class="mc strong" style="color:var(--green-2)">Bull</span>':isBear?'<span class="mc strong" style="color:var(--red-2)">Bear</span>':'<span class="mc none">—</span>';
+        if(scan&&scan.tfs&&scan.tfs[tf]){
+          var tfRow=scan.tfs[tf];
+          if(tfRow.error){
+            cell='<span class="mc none" title="'+esc(tfRow.error)+'">Err</span>';
+          } else {
+            var mdata=(tfRow.modules||{})[mod];
+            if(mdata){
+              var s=mdata.state||"none", l=mdata.label||"—";
+              var col=(mod==="Bias"&&l==="Bull")?"color:var(--green-2)":(mod==="Bias"&&l==="Bear")?"color:var(--red-2)":"";
+              cell='<span class="mc '+esc(s)+'"'+(col?' style="'+col+'"':'')+'>'+esc(l)+'</span>';
+            } else {
+              cell='<span class="mc none">—</span>';
+            }
+          }
+        } else {
+          // Snapshot-based fallback
+          var isTf=(item.timeframe||"").toLowerCase()===tf.toLowerCase();
+          if(mod==="OB"){
+            cell=st.indexOf("OB")!==-1?(isTf?'<span class="mc strong">Strong</span>':'<span class="mc yes">Yes</span>'):'<span class="mc none">—</span>';
+          }else if(mod==="FVG"){
+            cell=st.indexOf("FVG")!==-1?(isTf?'<span class="mc strong">Strong</span>':'<span class="mc yes">Yes</span>'):'<span class="mc none">—</span>';
+          }else if(mod==="FIB"){
+            cell=st.indexOf("FIB")!==-1&&isTf?'<span class="mc yes">Yes</span>':'<span class="mc none">—</span>';
+          }else if(mod==="Breaker"){
+            cell='<span class="mc none">—</span>';
+          }else{
+            cell=isBull0?'<span class="mc strong" style="color:var(--green-2)">Bull</span>':isBear0?'<span class="mc strong" style="color:var(--red-2)">Bear</span>':'<span class="mc none">—</span>';
+          }
         }
         html+='<td>'+cell+'</td>';
       });
       html+='</tr>';
     });
-    html+='</tbody></table><div style="font-size:10px;color:var(--text-3);margin-top:6px;text-align:center">Snapshot-based · Live MTF scan Phase 3</div>';
+    html+='</tbody></table>';
+    var footer=scan&&scan.refreshed_at
+      ?'Live MTF scan · Last refreshed '+_lmAgo(scan.refreshed_at)
+      :'Snapshot-based · Refresh to run Phase 3 MTF scan';
+    html+='<div style="font-size:10px;color:var(--text-3);margin-top:6px;text-align:center">'+esc(footer)+'</div>';
     return html;
   }
 
@@ -4809,12 +4862,9 @@ svg{display:block}
   function _lmCurrentPairs(){ return Object.keys(ST.stars).filter(function(s){return ST.stars[s];}).sort(); }
   function _lmRefresh(){
     if(location.protocol==="file:") return;
-    var pairs=_lmCurrentPairs();
-    if(!pairs.length) return;
     var btn=E("lmRefresh"); if(btn){ btn.disabled=true; btn.classList.add("spinning"); }
-    fetch("/api/watchlist/refresh",{method:"POST",credentials:"same-origin",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({pairs:pairs, market:ST.market, exchange:ST.exchange, config:getDesktopWatchlistConfig()})})
+    fetch("/api/live-monitor/refresh-all",{method:"POST",credentials:"same-origin",
+      headers:{"Content-Type":"application/json"},body:"{}"})
       .then(function(r){
         if(r.status===429){
           return r.json().catch(function(){return {};}).then(function(data){
@@ -4825,8 +4875,19 @@ svg{display:block}
         if(!r.ok) throw new Error("HTTP "+r.status);
         return r.json();
       })
-      .then(function(d){ if(d){ _lmCache=Object.assign(_lmCache,d.results||d||{}); } })
-      .catch(function(e){ if(!(e&&e.tokenLimit)){/* normal refresh failure — leave existing cache */} })
+      .then(function(d){
+        if(d&&d.items&&d.items.length){
+          liveMonitorItems=d.items;
+          _lmRenderCards();
+          if(_lmSelItem){
+            var upd=d.items.filter(function(i){return i.id===_lmSelItem.id;})[0]||null;
+            if(upd){ _lmSelItem=upd; _lmRenderRight(upd); }
+          }
+        } else {
+          loadLiveMonitorItems();
+        }
+      })
+      .catch(function(e){ if(!(e&&e.tokenLimit)){ loadLiveMonitorItems(); } })
       .finally(function(){ if(btn){btn.disabled=false; btn.classList.remove("spinning");} });
   }
   function _lmPaint(){ _lmRenderCards(); }

@@ -7448,6 +7448,198 @@ def _lm_int_or_zero(value) -> int:
         return 0
 
 
+# ─── Phase 3: Live Monitor MTF Scanner helpers ────────────────────────────────
+
+_LM_VALID_TIMEFRAMES = ["15m", "30m", "1h", "4h", "1d"]
+_LM_VALID_MODULES    = ["OB", "FVG", "FIB", "Breaker", "Bias"]
+
+
+def _lm_allowed_timeframes(value) -> list:
+    """Return a clean list of visible analysis TFs. Always excludes 5m."""
+    default = ["15m", "30m", "1h", "4h", "1d"]
+    if value is None:
+        return default
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except Exception:
+            return default
+    if not isinstance(value, list):
+        return default
+    cleaned = [tf for tf in (str(t).strip().lower() for t in value)
+               if tf != "5m" and tf in _LM_VALID_TIMEFRAMES]
+    return cleaned if cleaned else default
+
+
+def _lm_allowed_modules(value) -> list:
+    """Return a clean module list normalized to canonical names."""
+    default = ["OB", "FVG", "FIB", "Breaker", "Bias"]
+    if value is None:
+        return default
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except Exception:
+            return default
+    if not isinstance(value, list):
+        return default
+    _alias = {
+        "ob": "OB", "fvg": "FVG", "fib": "FIB",
+        "breaker": "Breaker", "breakerblock": "Breaker",
+        "bias": "Bias",
+    }
+    seen: set = set()
+    cleaned: list = []
+    for m in value:
+        key = str(m).strip().lower().replace(" ", "").replace("_", "").replace("block", "")
+        canonical = _alias.get(key)
+        if canonical and canonical not in seen:
+            seen.add(canonical)
+            cleaned.append(canonical)
+    return cleaned if cleaned else default
+
+
+def _lm_build_scan_config(item) -> dict:
+    """Build a wl_config dict compatible with _scan_pair_multitf for a LiveMonitorItem."""
+    tfs  = _lm_allowed_timeframes(item.selected_timeframes)
+    mods = _lm_allowed_modules(item.selected_modules)
+    _ob_app  = {"15m": 0.8, "30m": 1.0, "1h": 1.5, "4h": 2.5, "1d": 3.0}
+    _fvg_max = {"15m": 5,   "30m": 8,   "1h": 10,  "4h": 15,  "1d": 20}
+    fib_pref = [t for t in ("1h", "4h", "30m", "1d", "15m") if t in tfs]
+    return {
+        "timeframes":           tfs,
+        "scan_ob":              "OB"      in mods,
+        "scan_fvg":             "FVG"     in mods,
+        "scan_fib":             "FIB"     in mods,
+        "scan_breaker":         "Breaker" in mods,
+        "bias_1d":              "Bias"    in mods,
+        "ob_approach":          {tf: _ob_app.get(tf, 2.0)  for tf in tfs},
+        "fvg_age_min":          {tf: 0                     for tf in tfs},
+        "fvg_age_max":          {tf: _fvg_max.get(tf, 15)  for tf in tfs},
+        "fib_tf":               fib_pref[0] if fib_pref else "1h",
+        "fib_tolerance":        0.5,
+        "fib_approach":         2.0,
+        "fib_atr_mult":         1.5,
+        "fib_levels":           ["0.5", "0.618", "0.705", "0.786"],
+        "breaker_approach_pct": 2.0,
+        "breaker_max_age":      200,
+        "breaker_require_fvg":  False,
+    }
+
+
+def _lm_extract_mtf_summary(scan_result: dict, tfs: list, mods: list) -> dict:
+    """Convert _scan_pair_multitf output to a clean per-TF summary for UI and storage."""
+    now_iso   = datetime.now(timezone.utc).isoformat()
+    raw_price = scan_result.get("price", 0) or 0
+    bias_1d   = scan_result.get("bias_1d")      # 1 / -1 / 0 / None
+    raw_tfs   = scan_result.get("tfs", {})
+
+    tfs_out: dict = {}
+    for tf in tfs:
+        tf_data = raw_tfs.get(tf, {})
+        if tf_data.get("error"):
+            tfs_out[tf] = {"error": tf_data["error"]}
+            continue
+
+        trend   = tf_data.get("trend",  0) or 0
+        itrend  = tf_data.get("itrend", 0) or 0
+        eff_dir = trend if trend != 0 else itrend
+        tf_dir  = "bullish" if eff_dir == 1 else "bearish" if eff_dir == -1 else "neutral"
+
+        obs      = tf_data.get("obs",      [])
+        fvgs     = tf_data.get("fvgs",     [])
+        fibs     = tf_data.get("fibs",     [])
+        breakers = tf_data.get("breakers", [])
+
+        # OB
+        if "OB" in mods:
+            inside_obs = [z for z in obs if z.get("state") == "inside"]
+            appr_obs   = [z for z in obs if z.get("state") == "approaching"]
+            if inside_obs:
+                ob_s, ob_l = "strong", "In Zone"
+            elif appr_obs:
+                best_q = max((z.get("quality", 0) for z in appr_obs), default=0)
+                ob_s   = "strong" if best_q >= 70 else "yes"
+                ob_l   = "Approach"
+            else:
+                ob_s, ob_l = "none", "—"
+        else:
+            ob_s, ob_l = "none", "—"
+
+        # FVG
+        if "FVG" in mods:
+            valid_fvgs = [f for f in fvgs if f.get("isValid") and f.get("status") == "UNTOUCHED"]
+            any_unt    = [f for f in fvgs if f.get("status") == "UNTOUCHED"]
+            if valid_fvgs:
+                fvg_s, fvg_l = "yes", "Untouched"
+            elif any_unt:
+                fvg_s, fvg_l = "warn", "Touched"
+            else:
+                fvg_s, fvg_l = "none", "—"
+        else:
+            fvg_s, fvg_l = "none", "—"
+
+        # FIB
+        if "FIB" in mods and fibs:
+            best_fib = min(fibs, key=lambda z: abs(z.get("dist", 999)))
+            fib_s = "yes"
+            fib_l = str(best_fib.get("level", "Yes") or "Yes")
+        else:
+            fib_s, fib_l = "none", "—"
+
+        # Breaker
+        if "Breaker" in mods:
+            inside_brk = [z for z in breakers if z.get("state") == "inside"]
+            appr_brk   = [z for z in breakers if z.get("state") == "approaching"]
+            if inside_brk:
+                brk_s, brk_l = "strong", "In Zone"
+            elif appr_brk:
+                has_hp = any(z.get("highProb") for z in appr_brk)
+                brk_s  = "yes" if has_hp else "warn"
+                brk_l  = "Approach"
+            else:
+                brk_s, brk_l = "none", "—"
+        else:
+            brk_s, brk_l = "none", "—"
+
+        # Bias — use per-TF trend; override with bias_1d on the 1d TF
+        if "Bias" in mods:
+            bias_eff = (bias_1d if (tf == "1d" and bias_1d is not None) else eff_dir)
+            if bias_eff == 1:
+                bias_s, bias_l = "strong", "Bull"
+            elif bias_eff == -1:
+                bias_s, bias_l = "strong", "Bear"
+            else:
+                bias_s, bias_l = "none", "—"
+        else:
+            bias_s, bias_l = "none", "—"
+
+        modules_out: dict = {}
+        if "OB"      in mods: modules_out["OB"]      = {"state": ob_s,   "label": ob_l}
+        if "FVG"     in mods: modules_out["FVG"]      = {"state": fvg_s,  "label": fvg_l}
+        if "FIB"     in mods: modules_out["FIB"]      = {"state": fib_s,  "label": fib_l}
+        if "Breaker" in mods: modules_out["Breaker"]  = {"state": brk_s,  "label": brk_l}
+        if "Bias"    in mods: modules_out["Bias"]     = {"state": bias_s, "label": bias_l}
+
+        tfs_out[tf] = {
+            "score":     tf_data.get("score", 0) or 0,
+            "direction": tf_dir,
+            "price":     raw_price,
+            "modules":   modules_out,
+        }
+
+    return {
+        "symbol":       scan_result.get("symbol", ""),
+        "market":       "perpetual",
+        "exchange":     "binance",
+        "timeframes":   tfs,
+        "modules":      mods,
+        "tfs":          tfs_out,
+        "refreshed_at": now_iso,
+        "phase":        "phase3_mtf_scan",
+    }
+
+
 def _live_monitor_item_to_dict(item) -> dict:
     """Serialize a LiveMonitorItem row to a JSON-friendly dict."""
     return {
@@ -8247,6 +8439,162 @@ def api_lm_events_get(item_id):
     evs = (_LME.query.filter_by(item_id=item_id)
                      .order_by(_LME.created_at.desc()).all())
     return jsonify({"events": [_live_monitor_event_to_dict(e) for e in evs], "count": len(evs)})
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/refresh", methods=["POST"])
+@login_required
+def api_lm_items_refresh(item_id):
+    """Run a Phase 3 MTF scan for one Live Monitor item and store the result in snapshot_json."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorItem as _LMI, LiveMonitorEvent as _LME
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if not row.is_active:
+        return jsonify({"error": "inactive", "message": "Item is no longer active."}), 400
+
+    tfs  = _lm_allowed_timeframes(row.selected_timeframes)
+    mods = _lm_allowed_modules(row.selected_modules)
+    cfg  = _lm_build_scan_config(row)
+
+    try:
+        scan_result = _scan_pair_multitf(
+            row.symbol,
+            row.market    or "perpetual",
+            cfg,
+            row.exchange  or "binance",
+        )
+    except Exception as e:
+        return jsonify({"error": "scan_failed", "message": str(e)}), 500
+
+    mtf_summary = _lm_extract_mtf_summary(scan_result, tfs, mods)
+
+    # Merge into existing snapshot_json, preserving old fields
+    snap = _json_loads_safe(row.snapshot_json, {})
+    snap["latest_mtf_scan"]     = mtf_summary
+    snap["last_mtf_refresh_at"] = mtf_summary["refreshed_at"]
+    if "timeframe_policy" not in snap:
+        snap["timeframe_policy"] = {
+            "visible_analysis_timeframes": ["15m", "30m", "1h", "4h", "1d"],
+            "bias_min_timeframe":          "1h",
+            "hidden_execution_timeframe":  "5m",
+        }
+
+    new_price = scan_result.get("price")
+    if new_price and new_price > 0:
+        row.current_price = new_price
+
+    row.snapshot_json = _json_dumps_safe(snap)
+    row.updated_at    = datetime.now(timezone.utc)
+
+    ev = _LME(
+        item_id           = row.id,
+        user_id           = uid,
+        symbol            = row.symbol,
+        event_type        = "mtf_refreshed",
+        event_description = "MTF scan refreshed",
+        details_json      = _json_dumps_safe({
+            "timeframes": tfs,
+            "modules":    mods,
+            "phase":      "phase3_mtf_scan",
+        }),
+        price_at_event = new_price if (new_price and new_price > 0) else row.current_price,
+    )
+    _db.session.add(ev)
+
+    try:
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": "db", "message": str(e)}), 500
+
+    return jsonify({
+        "ok":             True,
+        "item":           _live_monitor_item_to_dict(row),
+        "latest_mtf_scan": mtf_summary,
+    })
+
+
+@app.route("/api/live-monitor/refresh-all", methods=["POST"])
+@login_required
+def api_lm_refresh_all():
+    """Refresh MTF scans for all active Live Monitor items for the current user (max 10)."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorItem as _LMI
+
+    _MAX_ITEMS = 10
+    rows = (_LMI.query
+                .filter_by(user_id=uid, is_active=True)
+                .order_by(_LMI.added_at.desc())
+                .limit(_MAX_ITEMS)
+                .all())
+
+    if not rows:
+        return jsonify({"ok": True, "updated": 0, "failed": 0, "items": [], "errors": []})
+
+    updated, failed, errors = 0, 0, []
+    now = datetime.now(timezone.utc)
+
+    for row in rows:
+        try:
+            tfs  = _lm_allowed_timeframes(row.selected_timeframes)
+            mods = _lm_allowed_modules(row.selected_modules)
+            cfg  = _lm_build_scan_config(row)
+            scan_result  = _scan_pair_multitf(
+                row.symbol,
+                row.market   or "perpetual",
+                cfg,
+                row.exchange or "binance",
+            )
+            mtf_summary = _lm_extract_mtf_summary(scan_result, tfs, mods)
+
+            snap = _json_loads_safe(row.snapshot_json, {})
+            snap["latest_mtf_scan"]     = mtf_summary
+            snap["last_mtf_refresh_at"] = mtf_summary["refreshed_at"]
+            if "timeframe_policy" not in snap:
+                snap["timeframe_policy"] = {
+                    "visible_analysis_timeframes": ["15m", "30m", "1h", "4h", "1d"],
+                    "bias_min_timeframe":          "1h",
+                    "hidden_execution_timeframe":  "5m",
+                }
+
+            new_price = scan_result.get("price")
+            if new_price and new_price > 0:
+                row.current_price = new_price
+
+            row.snapshot_json = _json_dumps_safe(snap)
+            row.updated_at    = now
+            updated += 1
+        except Exception as e:
+            failed += 1
+            errors.append({"symbol": row.symbol, "error": str(e)})
+
+    try:
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": "db", "message": str(e)}), 500
+
+    refreshed_rows = (_LMI.query
+                         .filter_by(user_id=uid, is_active=True)
+                         .order_by(_LMI.added_at.desc())
+                         .limit(_MAX_ITEMS)
+                         .all())
+    return jsonify({
+        "ok":      True,
+        "updated": updated,
+        "failed":  failed,
+        "items":   [_live_monitor_item_to_dict(r) for r in refreshed_rows],
+        "errors":  errors,
+    })
 
 
 # mobile UA fragments — keep small, case-insensitive
