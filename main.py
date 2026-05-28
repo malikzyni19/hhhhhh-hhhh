@@ -8148,6 +8148,358 @@ def _lm_session_context(now_utc=None) -> dict:
     }
 
 
+# ── Phase 5: Aggregate Market Context Engine ─────────────────────────────────
+
+def _lm_market_context_default(symbol: str, exchange: str, market: str,
+                                reason: str = None, provider: str = "none") -> dict:
+    """Return a safe placeholder market context dict. Used when provider fails or exchange unsupported."""
+    from datetime import datetime, timezone as _tz
+    return {
+        "phase":      "phase5_market_context",
+        "computed_at": datetime.now(_tz.utc).isoformat(),
+        "symbol":     symbol,
+        "exchange":   exchange,
+        "market":     market,
+        "provider":   provider,
+        "ok":         False,
+        "reason":     reason or "Market context unavailable",
+        "funding": {
+            "available":        False,
+            "rate":             None,
+            "rate_pct":         None,
+            "next_funding_time": None,
+            "bias":             "neutral",
+            "label":            "Unavailable",
+        },
+        "open_interest": {
+            "available":  False,
+            "value":      None,
+            "value_usd":  None,
+            "change_pct": None,
+            "bias":       "neutral",
+            "label":      "Unavailable",
+        },
+        "long_short": {
+            "available":  False,
+            "ratio":      None,
+            "long_pct":   None,
+            "short_pct":  None,
+            "bias":       "neutral",
+            "label":      "Unavailable",
+        },
+        "taker_pressure": {
+            "available":      False,
+            "buy_sell_ratio": None,
+            "buy_volume":     None,
+            "sell_volume":    None,
+            "bias":           "neutral",
+            "label":          "Unavailable",
+        },
+        "liquidations": {
+            "available":      False,
+            "long_liq_usd":   None,
+            "short_liq_usd":  None,
+            "dominant_side":  "neutral",
+            "label":          "Awaiting liquidation feed",
+        },
+        "activity": {
+            "available":           False,
+            "volume_24h":          None,
+            "price_change_24h_pct": None,
+            "label":               "Unavailable",
+        },
+        "summary": {
+            "market_bias": "neutral",
+            "risk_level":  "unknown",
+            "notes":       [],
+            "ai_context":  "Market context unavailable.",
+        },
+    }
+
+
+def _lm_fetch_market_context(symbol: str, exchange: str = "binance",
+                              market: str = "perpetual") -> dict:
+    """Route market context fetch to the correct provider. Returns default on any failure."""
+    try:
+        exch = (exchange or "binance").lower().strip()
+        mkt  = (market   or "perpetual").lower().strip()
+        if exch == "binance":
+            return _lm_fetch_binance_market_context(symbol, market=mkt)
+        return _lm_market_context_default(symbol, exch, mkt,
+                                          reason="Unsupported exchange for Phase 5")
+    except Exception as _e:
+        try:
+            return _lm_market_context_default(symbol, exchange, market,
+                                              reason=f"Provider error: {_e}")
+        except Exception:
+            return _lm_market_context_default("UNKNOWN", "unknown", "unknown",
+                                              reason="Fatal provider error")
+
+
+def _lm_fetch_binance_market_context(symbol: str, market: str = "perpetual") -> dict:
+    """Fetch market context from Binance public endpoints. No API key required."""
+    from datetime import datetime, timezone as _tz
+    _sym   = (symbol or "").upper().strip()
+    _base  = BINANCE_FUTURES_API   # https://fapi.binance.com
+    _TOUT  = 5
+    ctx    = _lm_market_context_default(_sym, "binance", market, provider="binance")
+    ctx["ok"] = True   # optimistic; set False if all endpoints fail
+    errors = []
+
+    # ── 1. Premium index (funding rate + mark price) ──────────────────────────
+    try:
+        r = req.get(f"{_base}/fapi/v1/premiumIndex",
+                    params={"symbol": _sym}, timeout=_TOUT)
+        if r.status_code == 200:
+            d = r.json()
+            rate_raw = d.get("lastFundingRate")
+            if rate_raw is not None:
+                rate_f   = float(rate_raw)
+                rate_pct = round(rate_f * 100, 6)
+                if rate_pct > 0.03:
+                    bias  = "long_crowded"
+                    label = "Positive funding — longs pay"
+                elif rate_pct < -0.03:
+                    bias  = "short_crowded"
+                    label = "Negative funding — shorts pay"
+                else:
+                    bias  = "neutral"
+                    label = "Neutral funding"
+                nft = d.get("nextFundingTime")
+                ctx["funding"] = {
+                    "available":         True,
+                    "rate":              rate_f,
+                    "rate_pct":          rate_pct,
+                    "next_funding_time": int(nft) if nft else None,
+                    "bias":              bias,
+                    "label":             label,
+                }
+        else:
+            errors.append(f"premiumIndex HTTP {r.status_code}")
+    except Exception as _e:
+        errors.append(f"premiumIndex: {_e}")
+
+    # ── 2. Open interest ──────────────────────────────────────────────────────
+    try:
+        r = req.get(f"{_base}/fapi/v1/openInterest",
+                    params={"symbol": _sym}, timeout=_TOUT)
+        if r.status_code == 200:
+            d   = r.json()
+            oi  = d.get("openInterest")
+            lp  = None
+            try:
+                lp_r = req.get(f"{_base}/fapi/v1/premiumIndex",
+                               params={"symbol": _sym}, timeout=_TOUT)
+                if lp_r.status_code == 200:
+                    lp = float(lp_r.json().get("markPrice") or 0) or None
+            except Exception:
+                pass
+            oi_f   = float(oi) if oi is not None else None
+            oi_usd = round(oi_f * lp, 0) if (oi_f and lp) else None
+            ctx["open_interest"] = {
+                "available":  True,
+                "value":      oi_f,
+                "value_usd":  oi_usd,
+                "change_pct": None,
+                "bias":       "neutral",
+                "label":      f"OI: {oi_f:,.0f}" if oi_f else "OI available",
+            }
+        else:
+            errors.append(f"openInterest HTTP {r.status_code}")
+    except Exception as _e:
+        errors.append(f"openInterest: {_e}")
+
+    # ── 3. 24h ticker (volume + price change) ─────────────────────────────────
+    try:
+        r = req.get(f"{_base}/fapi/v1/ticker/24hr",
+                    params={"symbol": _sym}, timeout=_TOUT)
+        if r.status_code == 200:
+            d   = r.json()
+            qv  = d.get("quoteVolume")
+            pcp = d.get("priceChangePercent")
+            qv_f  = float(qv)  if qv  is not None else None
+            pcp_f = float(pcp) if pcp is not None else None
+            ctx["activity"] = {
+                "available":            True,
+                "volume_24h":           qv_f,
+                "price_change_24h_pct": pcp_f,
+                "label":                f"Vol 24h: {qv_f:,.0f} USDT" if qv_f else "Active",
+            }
+        else:
+            errors.append(f"ticker24hr HTTP {r.status_code}")
+    except Exception as _e:
+        errors.append(f"ticker24hr: {_e}")
+
+    # ── 4. Global long / short account ratio ──────────────────────────────────
+    try:
+        r = req.get(f"{_base}/futures/data/globalLongShortAccountRatio",
+                    params={"symbol": _sym, "period": "15m", "limit": 1}, timeout=_TOUT)
+        if r.status_code == 200:
+            data = r.json()
+            if data and isinstance(data, list):
+                d     = data[0]
+                ratio = d.get("longShortRatio")
+                lp_   = d.get("longAccount")
+                sp_   = d.get("shortAccount")
+                ratio_f = float(ratio) if ratio is not None else None
+                lp_f    = float(lp_)   if lp_   is not None else None
+                sp_f    = float(sp_)   if sp_   is not None else None
+                if ratio_f is not None:
+                    if ratio_f > 1.2:
+                        ls_bias  = "long_crowded"
+                        ls_label = f"Ratio {ratio_f:.2f} — Long heavy"
+                    elif ratio_f < 0.8:
+                        ls_bias  = "short_crowded"
+                        ls_label = f"Ratio {ratio_f:.2f} — Short heavy"
+                    else:
+                        ls_bias  = "neutral"
+                        ls_label = f"Ratio {ratio_f:.2f} — Balanced"
+                    ctx["long_short"] = {
+                        "available": True,
+                        "ratio":     round(ratio_f, 4),
+                        "long_pct":  round(lp_f * 100, 2) if lp_f is not None else None,
+                        "short_pct": round(sp_f * 100, 2) if sp_f is not None else None,
+                        "bias":      ls_bias,
+                        "label":     ls_label,
+                    }
+        else:
+            errors.append(f"globalLongShortRatio HTTP {r.status_code}")
+    except Exception as _e:
+        errors.append(f"globalLongShortRatio: {_e}")
+
+    # ── 5. Taker long / short ratio ───────────────────────────────────────────
+    try:
+        r = req.get(f"{_base}/futures/data/takerlongshortRatio",
+                    params={"symbol": _sym, "period": "15m", "limit": 1}, timeout=_TOUT)
+        if r.status_code == 200:
+            data = r.json()
+            if data and isinstance(data, list):
+                d      = data[0]
+                bsr    = d.get("buySellRatio")
+                bv     = d.get("buyVol")
+                sv     = d.get("sellVol")
+                bsr_f  = float(bsr) if bsr is not None else None
+                bv_f   = float(bv)  if bv  is not None else None
+                sv_f   = float(sv)  if sv  is not None else None
+                if bsr_f is not None:
+                    if bsr_f > 1.15:
+                        tk_bias  = "buy_pressure"
+                        tk_label = f"B/S {bsr_f:.3f} — Buy pressure"
+                    elif bsr_f < 0.85:
+                        tk_bias  = "sell_pressure"
+                        tk_label = f"B/S {bsr_f:.3f} — Sell pressure"
+                    else:
+                        tk_bias  = "neutral"
+                        tk_label = f"B/S {bsr_f:.3f} — Balanced"
+                    ctx["taker_pressure"] = {
+                        "available":      True,
+                        "buy_sell_ratio": round(bsr_f, 4),
+                        "buy_volume":     bv_f,
+                        "sell_volume":    sv_f,
+                        "bias":           tk_bias,
+                        "label":          tk_label,
+                    }
+        else:
+            errors.append(f"takerLongShortRatio HTTP {r.status_code}")
+    except Exception as _e:
+        errors.append(f"takerLongShortRatio: {_e}")
+
+    # ── 6. Liquidations: not faked — real-time liquidation stream not in public REST ─
+    ctx["liquidations"] = {
+        "available":     False,
+        "long_liq_usd":  None,
+        "short_liq_usd": None,
+        "dominant_side": "neutral",
+        "label":         "Awaiting liquidation feed",
+    }
+
+    # ── Summary / market bias ─────────────────────────────────────────────────
+    biases = []
+    if ctx["funding"]["available"]:
+        biases.append(ctx["funding"]["bias"])
+    if ctx["long_short"]["available"]:
+        biases.append(ctx["long_short"]["bias"])
+    if ctx["taker_pressure"]["available"]:
+        biases.append(ctx["taker_pressure"]["bias"])
+
+    bull_signals = biases.count("buy_pressure")
+    bear_signals = biases.count("sell_pressure")
+    long_heavy   = biases.count("long_crowded")
+    short_heavy  = biases.count("short_crowded")
+
+    if bull_signals > bear_signals and bull_signals > 0:
+        market_bias = "bullish"
+    elif bear_signals > bull_signals and bear_signals > 0:
+        market_bias = "bearish"
+    elif long_heavy > 0 or short_heavy > 0:
+        market_bias = "mixed"
+    else:
+        market_bias = "neutral"
+
+    risk_factors = 0
+    if ctx["funding"]["available"] and abs(ctx["funding"].get("rate_pct") or 0) > 0.05:
+        risk_factors += 1
+    if ctx["long_short"]["available"] and ctx["long_short"]["bias"] != "neutral":
+        risk_factors += 1
+    risk_level = "high" if risk_factors >= 2 else "medium" if risk_factors == 1 else "low"
+
+    notes = []
+    if ctx["funding"]["available"]:
+        notes.append(ctx["funding"]["label"])
+    if ctx["taker_pressure"]["available"]:
+        notes.append(ctx["taker_pressure"]["label"])
+    if ctx["long_short"]["available"]:
+        notes.append(ctx["long_short"]["label"])
+    if ctx["activity"]["available"] and ctx["activity"].get("price_change_24h_pct") is not None:
+        pcp = ctx["activity"]["price_change_24h_pct"]
+        notes.append(f"24h change: {pcp:+.2f}%")
+
+    if errors:
+        ctx["ok"] = False if not ctx["funding"]["available"] and not ctx["taker_pressure"]["available"] else True
+        notes.append(f"Partial data ({len(errors)} endpoint(s) failed)")
+
+    ai_parts = []
+    if ctx["funding"]["available"]:
+        ai_parts.append(f"Funding {ctx['funding']['rate_pct']:+.4f}% ({ctx['funding']['bias']})")
+    if ctx["taker_pressure"]["available"]:
+        ai_parts.append(f"taker {ctx['taker_pressure']['bias']}")
+    if ctx["long_short"]["available"]:
+        ai_parts.append(f"L/S ratio {ctx['long_short']['ratio']}")
+    ai_context = (", ".join(ai_parts) + ".") if ai_parts else "Market context partially unavailable."
+
+    ctx["summary"] = {
+        "market_bias": market_bias,
+        "risk_level":  risk_level,
+        "notes":       notes,
+        "ai_context":  ai_context,
+    }
+    ctx["computed_at"] = datetime.now(_tz.utc).isoformat()
+    return ctx
+
+
+def _lm_attach_market_context(row, snapshot: dict = None,
+                               force: bool = False) -> tuple:
+    """Fetch market context and store it in the snapshot dict. Does NOT commit."""
+    if snapshot is None:
+        snapshot = _json_loads_safe(row.snapshot_json, {})
+    try:
+        market_ctx = _lm_fetch_market_context(
+            row.symbol,
+            getattr(row, "exchange", None) or "binance",
+            getattr(row, "market",   None) or "perpetual",
+        )
+    except Exception as _e:
+        market_ctx = _lm_market_context_default(
+            row.symbol,
+            getattr(row, "exchange", None) or "binance",
+            getattr(row, "market",   None) or "perpetual",
+            reason=f"Attach error: {_e}",
+        )
+    snapshot["latest_market_context"]  = market_ctx
+    snapshot["last_market_context_at"] = market_ctx.get("computed_at")
+    return snapshot, market_ctx
+
+
 def _live_monitor_item_to_dict(item) -> dict:
     """Serialize a LiveMonitorItem row to a JSON-friendly dict."""
     return {
@@ -9314,6 +9666,95 @@ def api_lm_items_refresh_session(item_id):
         "ok":             True,
         "item":           _live_monitor_item_to_dict(row),
         "session_context": session_ctx,
+    })
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/refresh-market-context", methods=["POST"])
+@login_required
+def api_lm_items_refresh_market_context(item_id):
+    """Fetch and store market context for one Live Monitor item. No MTF scan, no health recompute."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorItem as _LMI
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if not row.is_active:
+        return jsonify({"error": "inactive", "message": "Item is no longer active."}), 400
+
+    snap = _json_loads_safe(row.snapshot_json, {})
+    snap, market_ctx = _lm_attach_market_context(row, snapshot=snap)
+    row.snapshot_json = _json_dumps_safe(snap)
+    row.updated_at    = datetime.now(timezone.utc)
+
+    try:
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": "db", "message": str(e)}), 500
+
+    return jsonify({
+        "ok":             True,
+        "item":           _live_monitor_item_to_dict(row),
+        "market_context": market_ctx,
+    })
+
+
+@app.route("/api/live-monitor/refresh-market-context-all", methods=["POST"])
+@login_required
+def api_lm_refresh_market_context_all():
+    """Fetch and store market context for all active Live Monitor items (max 10). No MTF scan."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorItem as _LMI
+    _MAX_ITEMS = 10
+    rows = (_LMI.query
+                .filter_by(user_id=uid, is_active=True)
+                .order_by(_LMI.added_at.desc())
+                .limit(_MAX_ITEMS)
+                .all())
+
+    if not rows:
+        return jsonify({"ok": True, "updated": 0, "failed": 0, "items": [], "errors": []})
+
+    updated, failed, errors, result_items = 0, 0, [], []
+    now = datetime.now(timezone.utc)
+
+    for row in rows:
+        try:
+            snap = _json_loads_safe(row.snapshot_json, {})
+            snap, _ = _lm_attach_market_context(row, snapshot=snap)
+            row.snapshot_json = _json_dumps_safe(snap)
+            row.updated_at    = now
+            updated += 1
+        except Exception as e:
+            failed += 1
+            errors.append({"id": row.id, "symbol": row.symbol, "error": str(e)})
+
+    try:
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": "db", "message": str(e)}), 500
+
+    for row in rows:
+        try:
+            result_items.append(_live_monitor_item_to_dict(row))
+        except Exception:
+            pass
+
+    return jsonify({
+        "ok":      True,
+        "updated": updated,
+        "failed":  failed,
+        "items":   result_items,
+        "errors":  errors,
     })
 
 

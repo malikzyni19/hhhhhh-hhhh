@@ -4415,6 +4415,28 @@ svg{display:block}
     return "Off-Hours";
   }
 
+  // Phase 5: market context helpers
+  function _lmMarketContext(item){
+    if(item&&item.snapshot&&item.snapshot.latest_market_context&&
+       typeof item.snapshot.latest_market_context==="object")
+      return item.snapshot.latest_market_context;
+    return null;
+  }
+  function _lmMarketVal(ctx,section,key,fallback){
+    try{
+      if(!ctx) return fallback!==undefined?fallback:null;
+      var sec=ctx[section]; if(!sec) return fallback!==undefined?fallback:null;
+      var v=sec[key]; return (v!==undefined&&v!==null)?v:(fallback!==undefined?fallback:null);
+    }catch(e){ return fallback!==undefined?fallback:null; }
+  }
+  function _lmMarketLabel(ctx,section){
+    try{
+      if(!ctx) return "Unavailable";
+      var sec=ctx[section]; if(!sec) return "Unavailable";
+      return sec.label||"Unavailable";
+    }catch(e){ return "Unavailable"; }
+  }
+
   function _lmHealth(item){
     return (item&&item.snapshot&&item.snapshot.latest_health&&typeof item.snapshot.latest_health==="object")
       ?item.snapshot.latest_health:null;
@@ -4627,15 +4649,61 @@ svg{display:block}
         '<div class="sec-card-head">'+
           '<svg class="ico" style="width:13px;height:13px;color:var(--text-3)" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>'+
           '<span class="sch-title">AGGREGATE MARKET CONTEXT</span>'+
-          '<span style="font-size:10px;color:var(--text-3);font-family:var(--mono);margin-left:auto">Phase 5</span>'+
+          '<button class="btn" type="button" data-lmrefreshmarket="'+item.id+'" title="Refresh market context" style="margin-left:auto;padding:2px 7px;font-size:10px">'+
+            '<svg class="ico ico-sm" viewBox="0 0 24 24" style="width:10px;height:10px"><path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.7 1 6.3 2.7L21 8"/><path d="M21 3v5h-5"/></svg>Market</button>'+
         '</div>'+
         '<div class="sec-card-body">'+
           '<div class="mkt-ctx-grid">'+
-            '<div class="mct-item"><div class="mct-label">FUNDING RATE</div><div class="mct-val">Awaiting</div><div class="mct-sub">Phase 5 — Binance feed</div></div>'+
-            '<div class="mct-item"><div class="mct-label">OPEN INTEREST</div><div class="mct-val">Awaiting</div><div class="mct-sub">Phase 5 — Binance feed</div></div>'+
-            '<div class="mct-item"><div class="mct-label">LONG / SHORT RATIO</div><div class="mct-val">Awaiting</div><div class="mct-sub">Phase 5 — Binance feed</div></div>'+
-            '<div class="mct-item"><div class="mct-label">TAKER PRESSURE</div><div class="mct-val">Awaiting</div><div class="mct-sub">Phase 5 — Binance feed</div></div>'+
-            '<div class="mct-item"><div class="mct-label">LIQUIDATIONS (15m)</div><div class="mct-val">Awaiting</div><div class="mct-sub">Phase 5 — Binance feed</div></div>'+
+            (function(){
+              var mc=_lmMarketContext(item);
+              var f=mc?mc.funding:null;
+              var fVal=f&&f.available?(f.rate_pct!=null?(f.rate_pct>=0?'+':'')+f.rate_pct.toFixed(4)+'%':'—'):'Awaiting';
+              var fSub=f&&f.available?(esc(f.label)+(f.next_funding_time?'<br><span style="font-size:9px">Next: '+new Date(f.next_funding_time).toUTCString().slice(17,22)+' UTC</span>':'')):'Phase 5 — Binance feed';
+              var fColor=f&&f.available?(f.bias==='long_crowded'?'var(--green-2)':f.bias==='short_crowded'?'var(--red-2)':'var(--text-2)'):'var(--text-3)';
+              return '<div class="mct-item"><div class="mct-label">FUNDING RATE</div>'+
+                '<div class="mct-val" style="color:'+fColor+'">'+fVal+'</div>'+
+                '<div class="mct-sub">'+fSub+'</div></div>';
+            })()+
+            (function(){
+              var mc=_lmMarketContext(item);
+              var oi=mc?mc.open_interest:null;
+              var oiVal=oi&&oi.available?(oi.value!=null?
+                (oi.value>=1e9?(oi.value/1e9).toFixed(2)+'B':oi.value>=1e6?(oi.value/1e6).toFixed(2)+'M':oi.value.toFixed(0)):
+                '—'):'Awaiting';
+              var oiSub=oi&&oi.available?esc(oi.label||'Open Interest'):'Phase 5 — Binance feed';
+              return '<div class="mct-item"><div class="mct-label">OPEN INTEREST</div>'+
+                '<div class="mct-val">'+oiVal+'</div>'+
+                '<div class="mct-sub">'+oiSub+'</div></div>';
+            })()+
+            (function(){
+              var mc=_lmMarketContext(item);
+              var ls=mc?mc.long_short:null;
+              var lsVal=ls&&ls.available?(ls.ratio!=null?ls.ratio.toFixed(3):'—'):'Awaiting';
+              var lsSub=ls&&ls.available?(ls.long_pct!=null?'Long '+ls.long_pct.toFixed(1)+'% / Short '+(ls.short_pct!=null?ls.short_pct.toFixed(1)+'%':'—'):esc(ls.label||'')):'Phase 5 — Binance feed';
+              var lsColor=ls&&ls.available?(ls.bias==='long_crowded'?'var(--green-2)':ls.bias==='short_crowded'?'var(--red-2)':'var(--text-2)'):'var(--text-3)';
+              return '<div class="mct-item"><div class="mct-label">LONG / SHORT RATIO</div>'+
+                '<div class="mct-val" style="color:'+lsColor+'">'+lsVal+'</div>'+
+                '<div class="mct-sub">'+lsSub+'</div></div>';
+            })()+
+            (function(){
+              var mc=_lmMarketContext(item);
+              var tk=mc?mc.taker_pressure:null;
+              var tkVal=tk&&tk.available?(tk.buy_sell_ratio!=null?tk.buy_sell_ratio.toFixed(3):'—'):'Awaiting';
+              var tkSub=tk&&tk.available?esc(tk.label||'Taker pressure'):'Phase 5 — Binance feed';
+              var tkColor=tk&&tk.available?(tk.bias==='buy_pressure'?'var(--green-2)':tk.bias==='sell_pressure'?'var(--red-2)':'var(--text-2)'):'var(--text-3)';
+              return '<div class="mct-item"><div class="mct-label">TAKER PRESSURE</div>'+
+                '<div class="mct-val" style="color:'+tkColor+'">'+tkVal+'</div>'+
+                '<div class="mct-sub">'+tkSub+'</div></div>';
+            })()+
+            (function(){
+              var mc=_lmMarketContext(item);
+              var lq=mc?mc.liquidations:null;
+              var lqVal=lq&&lq.available?(lq.dominant_side||'—'):'Awaiting';
+              var lqSub=lq&&lq.available?esc(lq.label||'Liquidation data'):'Awaiting liquidation feed';
+              return '<div class="mct-item"><div class="mct-label">LIQUIDATIONS (15m)</div>'+
+                '<div class="mct-val">'+lqVal+'</div>'+
+                '<div class="mct-sub">'+lqSub+'</div></div>';
+            })()+
             (function(){
               var sc=_lmSessionContext(item);
               var sLabel=sc?sc.session_label:_lmSessionLabel(item);
@@ -4737,6 +4805,29 @@ svg{display:block}
           .catch(function(){
             rbtn.disabled=false; rbtn.classList.remove("spinning"); rbtn.innerHTML=origHtml;
           });
+      });
+    });
+    [].forEach.call(box.querySelectorAll("[data-lmrefreshmarket]"),function(mbtn){
+      mbtn.addEventListener("click",function(){
+        var id=parseInt(mbtn.getAttribute("data-lmrefreshmarket"),10); if(!id) return;
+        var origHtml=mbtn.innerHTML;
+        mbtn.disabled=true;
+        mbtn.innerHTML='<svg class="ico ico-sm" viewBox="0 0 24 24" style="width:10px;height:10px"><path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.7 1 6.3 2.7L21 8"/><path d="M21 3v5h-5"/></svg>…';
+        fetch("/api/live-monitor/items/"+id+"/refresh-market-context",{method:"POST",credentials:"same-origin",
+          headers:{"Content-Type":"application/json"},body:"{}"})
+          .then(function(r){ return r.json(); })
+          .then(function(d){
+            mbtn.disabled=false; mbtn.innerHTML=origHtml;
+            if(d&&d.ok&&d.item){
+              for(var k=0;k<liveMonitorItems.length;k++){
+                if(liveMonitorItems[k].id===d.item.id){ liveMonitorItems[k]=d.item; break; }
+              }
+              if(_lmSelItem&&_lmSelItem.id===d.item.id){
+                _lmSelItem=d.item; _lmRenderRight(d.item);
+              }
+            }
+          })
+          .catch(function(){ mbtn.disabled=false; mbtn.innerHTML=origHtml; });
       });
     });
     _lmBindChat(item);
@@ -4900,12 +4991,24 @@ svg{display:block}
     var sc=_lmSessionContext(item);
     var sessLine=sc?" Current session: "+esc(sc.session_label)+"."+
       (sc.ai_context?" "+esc(sc.ai_context.session_bias_hint):""):"";
+    var mc=_lmMarketContext(item);
+    var mktLine=(function(){
+      if(!mc||!mc.ok) return "";
+      var parts=[];
+      if(mc.funding&&mc.funding.available&&mc.funding.rate_pct!=null)
+        parts.push("Funding: "+(mc.funding.rate_pct>=0?"+":"")+mc.funding.rate_pct.toFixed(4)+"% ("+mc.funding.bias+")");
+      if(mc.taker_pressure&&mc.taker_pressure.available)
+        parts.push("Taker: "+mc.taker_pressure.bias);
+      if(mc.long_short&&mc.long_short.available&&mc.long_short.ratio!=null)
+        parts.push("L/S ratio: "+mc.long_short.ratio.toFixed(2));
+      return parts.length?" "+parts.join(", ")+".":"";
+    })();
     var R={
-      enter:"Price is approaching the "+esc(st||"zone")+" zone. Wait for a 15m bullish close inside the zone before entering. Score "+score+"%."+sessLine,
-      risk:"Key risks: 1) No live 15m confirmation yet. 2) Score at "+score+"% — watch for zone invalidation. 3) Always stop below zone low."+sessLine,
+      enter:"Price is approaching the "+esc(st||"zone")+" zone. Wait for a 15m bullish close inside the zone before entering. Score "+score+"%."+sessLine+mktLine,
+      risk:"Key risks: 1) No live 15m confirmation yet. 2) Score at "+score+"% — watch for zone invalidation. 3) Always stop below zone low."+sessLine+mktLine,
       stop:"Stop loss goes below zone low at "+(item.zone_low!=null?fmt(item.zone_low):"zone low")+". Place 0.3% below. If a "+esc(tf)+" candle closes below — setup is invalidated.",
-      confirm:"Wait for: 1) Price enters the zone "+zLbl+". 2) 15m bullish close. 3) Volume confirmation. All three = entry signal."+sessLine,
-      dflt:"Setup: <b>"+esc(sym)+"</b> — "+esc(tf)+" "+esc(st)+" — score "+score+"%. Zone "+zLbl+"."+sessLine+" Wait for zone approach and 15m confirmation."
+      confirm:"Wait for: 1) Price enters the zone "+zLbl+". 2) 15m bullish close. 3) Volume confirmation. All three = entry signal."+sessLine+mktLine,
+      dflt:"Setup: <b>"+esc(sym)+"</b> — "+esc(tf)+" "+esc(st)+" — score "+score+"%. Zone "+zLbl+"."+sessLine+mktLine+" Wait for zone approach and 15m confirmation."
     };
     function getReply(q){
       var l=(q||"").toLowerCase();
