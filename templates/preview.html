@@ -4653,6 +4653,42 @@ svg{display:block}
     '</div>';
   }
 
+  // Phase 8.2: setup memory compact block
+  function _lmSetupMemoryHtml(item){
+    var summ=(item&&item.snapshot&&item.snapshot.setup_memory_summary)||null;
+    if(!summ||!summ.total_records) return '';
+    var recs=(item&&item.snapshot&&item.snapshot.setup_memory_records)||[];
+    var latest=recs.length?recs[recs.length-1]:null;
+    var acc=(item&&item.snapshot&&item.snapshot.setup_memory_accuracy)||null;
+    var wr=acc&&acc.win_rate!=null?(' &middot; win rate <b style="color:var(--green-2,#4ade80)">'+acc.win_rate+'%</b>'):'';
+    var when=summ.last_record_at?(' &middot; '+esc(_lmAgo(summ.last_record_at))):'';
+    var outcomeColor={won:'var(--green-2,#4ade80)',lost:'var(--red-2,#f87171)',invalidated:'var(--yellow-2,#f59e0b)',pending:'var(--text-3)'};
+    var latestHtml='';
+    if(latest){
+      var oc=latest.outcome_status||'pending';
+      var rs=latest.readiness_state||'wait';
+      latestHtml='<div style="font-size:9px;color:var(--text-3);margin-top:2px">'+
+        'Latest: <b style="color:var(--text-2)">'+esc((rs).replace(/_/g,' '))+'</b>'+
+        ' · src:<b style="color:var(--text-2)">'+esc(latest.source||'')+'</b>'+
+        ' · <span style="color:'+(outcomeColor[oc]||'var(--text-3)')+'">'+esc(oc)+'</span>'+
+        (latest.outcome_note?' — '+esc(latest.outcome_note.slice(0,60)):'')+
+      '</div>';
+    }
+    return '<div style="border-top:1px solid var(--border);padding:5px 0 3px;margin-top:4px">'+
+      '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'+
+        '<span style="font-size:9px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.04em">Memory</span>'+
+        '<span style="font-size:9px;color:var(--text-3)">'+summ.total_records+' records'+when+wr+'</span>'+
+        '<span style="font-size:9px;color:var(--text-3)">'+
+          '<b style="color:var(--green-2,#4ade80)">'+(summ.won_count||0)+'W</b> '+
+          '<b style="color:var(--red-2,#f87171)">'+(summ.lost_count||0)+'L</b> '+
+          '<b style="color:var(--yellow-2,#f59e0b)">'+(summ.invalidated_count||0)+'I</b> '+
+          '<b style="color:var(--text-3)">'+(summ.pending_count||0)+'P</b>'+
+        '</span>'+
+      '</div>'+
+      latestHtml+
+    '</div>';
+  }
+
   // Phase 7: candle features summary block
   function _lmCandleFeaturesHtml(item){
     var cf=(item&&item.snapshot&&item.snapshot.latest_candle_features)||null;
@@ -4727,7 +4763,7 @@ svg{display:block}
               _lmSelItem=d.item;
               var detBlock=document.getElementById("lmDetectedBlock");
               if(detBlock&&_lmInstructionView!=="instructions"){
-                detBlock.innerHTML=_lmSetupReadinessHtml(d.item)+_lmDetectedEventsHtml(d.item)+_lmCandleFeaturesHtml(d.item);
+                detBlock.innerHTML=_lmSetupReadinessHtml(d.item)+_lmDetectedEventsHtml(d.item)+_lmCandleFeaturesHtml(d.item)+_lmSetupMemoryHtml(d.item);
               }
               var ageEl=document.getElementById("lmDetectAge");
               if(ageEl) ageEl.innerHTML=_lmDetectAgeHtml(d.item);
@@ -5088,8 +5124,10 @@ svg{display:block}
             (function(){var sw=item&&item.snapshot&&item.snapshot.server_watch;var on=sw&&sw.enabled;return '<button class="btn" id="lmServerWatchBtn" type="button" title="Server-side watch: backend ticks detect+readiness at the configured interval" style="padding:2px 7px;font-size:10px'+(on?';color:var(--green-2,#4ade80);border-color:var(--green-2,#4ade80)':'')+'" data-lmserverwatch="'+item.id+'">'+(on?'SWatch ✓':'SWatch')+'</button>';})()+
             '<button class="btn" type="button" data-lmrefreshcandles="'+item.id+'" title="Fetch candle data and extract chart features" style="padding:2px 7px;font-size:10px">'+
               '<svg class="ico ico-sm" viewBox="0 0 24 24" style="width:10px;height:10px"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>Candles</button>'+
+            '<button class="btn" type="button" id="lmCaptureMemBtn" data-lmcapturememory="'+item.id+'" title="Capture current setup reasoning memory" style="padding:2px 7px;font-size:10px">Mem+</button>'+
+            '<button class="btn" type="button" id="lmUpdateOutcomesBtn" data-lmupdateoutcomes="'+item.id+'" title="Update outcome status for pending memory records" style="padding:2px 7px;font-size:10px">Out</button>'+
           '</div>'+
-          (_lmInstructionView!=="instructions"?'<div id="lmDetectedBlock" style="padding:6px 10px 0">'+_lmSetupReadinessHtml(item)+_lmDetectedEventsHtml(item)+_lmCandleFeaturesHtml(item)+'</div>':'<div id="lmDetectedBlock"></div>')+
+          (_lmInstructionView!=="instructions"?'<div id="lmDetectedBlock" style="padding:6px 10px 0">'+_lmSetupReadinessHtml(item)+_lmDetectedEventsHtml(item)+_lmCandleFeaturesHtml(item)+_lmSetupMemoryHtml(item)+'</div>':'<div id="lmDetectedBlock"></div>')+
           '<div class="sec-card-body" style="padding:8px 10px" id="lmEvents">'+
             (function(){
               if(_lmInstructionView==="instructions"){
@@ -5239,7 +5277,7 @@ svg{display:block}
         var evBox=document.getElementById("lmEvents"); if(!evBox) return;
         var detBlock=document.getElementById("lmDetectedBlock");
         if(_lmInstructionView==="events"){
-          if(detBlock){ var _si=_lmSelItem||item; detBlock.innerHTML=_lmSetupReadinessHtml(_si)+_lmDetectedEventsHtml(_si)+_lmCandleFeaturesHtml(_si); }
+          if(detBlock){ var _si=_lmSelItem||item; detBlock.innerHTML=_lmSetupReadinessHtml(_si)+_lmDetectedEventsHtml(_si)+_lmCandleFeaturesHtml(_si)+_lmSetupMemoryHtml(_si); }
           evBox.innerHTML='<div style="color:var(--text-3);font-size:11px">Loading events…</div>';
           _lmLoadEvents(item.id);
         } else {
@@ -5312,7 +5350,7 @@ svg{display:block}
                 _lmSelItem=d.item;
                 var detBlock=document.getElementById("lmDetectedBlock");
                 if(detBlock&&_lmInstructionView!=="instructions"){
-                  detBlock.innerHTML=_lmSetupReadinessHtml(d.item)+_lmDetectedEventsHtml(d.item)+_lmCandleFeaturesHtml(d.item);
+                  detBlock.innerHTML=_lmSetupReadinessHtml(d.item)+_lmDetectedEventsHtml(d.item)+_lmCandleFeaturesHtml(d.item)+_lmSetupMemoryHtml(d.item);
                 }
                 var ageEl=document.getElementById("lmDetectAge");
                 if(ageEl) ageEl.innerHTML=_lmDetectAgeHtml(d.item);
@@ -5347,7 +5385,7 @@ svg{display:block}
                 _lmSelItem=d.item;
                 var detBlock=document.getElementById("lmDetectedBlock");
                 if(detBlock&&_lmInstructionView!=="instructions"){
-                  detBlock.innerHTML=_lmSetupReadinessHtml(d.item)+_lmDetectedEventsHtml(d.item)+_lmCandleFeaturesHtml(d.item);
+                  detBlock.innerHTML=_lmSetupReadinessHtml(d.item)+_lmDetectedEventsHtml(d.item)+_lmCandleFeaturesHtml(d.item)+_lmSetupMemoryHtml(d.item);
                 }
               }
             }
@@ -5393,6 +5431,62 @@ svg{display:block}
             }
           })
           .catch(function(){ swBtn.disabled=false; });
+      });
+    }
+    // Capture Memory button handler (Phase 8.0)
+    var capMemBtn=box.querySelector("#lmCaptureMemBtn");
+    if(capMemBtn){
+      capMemBtn.addEventListener("click",function(){
+        var id=parseInt(capMemBtn.getAttribute("data-lmcapturememory"),10); if(!id) return;
+        var orig=capMemBtn.textContent; capMemBtn.disabled=true; capMemBtn.textContent="…";
+        fetch("/api/live-monitor/items/"+id+"/capture-memory",{method:"POST",credentials:"same-origin",
+          headers:{"Content-Type":"application/json"},body:"{}"})
+          .then(function(r){ return r.json(); })
+          .then(function(d){
+            capMemBtn.disabled=false; capMemBtn.textContent=d&&d.appended?"Mem✓":"Mem=";
+            setTimeout(function(){ capMemBtn.textContent=orig; },2000);
+            if(d&&d.ok&&d.item){
+              for(var k=0;k<liveMonitorItems.length;k++){
+                if(liveMonitorItems[k].id===d.item.id){liveMonitorItems[k]=d.item;break;}
+              }
+              if(_lmSelItem&&_lmSelItem.id===d.item.id){
+                _lmSelItem=d.item;
+                var detBlock=document.getElementById("lmDetectedBlock");
+                if(detBlock&&_lmInstructionView!=="instructions"){
+                  detBlock.innerHTML=_lmSetupReadinessHtml(d.item)+_lmDetectedEventsHtml(d.item)+_lmCandleFeaturesHtml(d.item)+_lmSetupMemoryHtml(d.item);
+                }
+              }
+            }
+          })
+          .catch(function(){ capMemBtn.disabled=false; capMemBtn.textContent=orig; });
+      });
+    }
+    // Update Outcomes button handler (Phase 8.1)
+    var updOutBtn=box.querySelector("#lmUpdateOutcomesBtn");
+    if(updOutBtn){
+      updOutBtn.addEventListener("click",function(){
+        var id=parseInt(updOutBtn.getAttribute("data-lmupdateoutcomes"),10); if(!id) return;
+        var orig=updOutBtn.textContent; updOutBtn.disabled=true; updOutBtn.textContent="…";
+        fetch("/api/live-monitor/items/"+id+"/update-memory-outcomes",{method:"POST",credentials:"same-origin",
+          headers:{"Content-Type":"application/json"},body:"{}"})
+          .then(function(r){ return r.json(); })
+          .then(function(d){
+            updOutBtn.disabled=false; updOutBtn.textContent=d&&d.updated_count>0?"Out✓":"Out=";
+            setTimeout(function(){ updOutBtn.textContent=orig; },2000);
+            if(d&&d.ok&&d.item){
+              for(var k=0;k<liveMonitorItems.length;k++){
+                if(liveMonitorItems[k].id===d.item.id){liveMonitorItems[k]=d.item;break;}
+              }
+              if(_lmSelItem&&_lmSelItem.id===d.item.id){
+                _lmSelItem=d.item;
+                var detBlock=document.getElementById("lmDetectedBlock");
+                if(detBlock&&_lmInstructionView!=="instructions"){
+                  detBlock.innerHTML=_lmSetupReadinessHtml(d.item)+_lmDetectedEventsHtml(d.item)+_lmCandleFeaturesHtml(d.item)+_lmSetupMemoryHtml(d.item);
+                }
+              }
+            }
+          })
+          .catch(function(){ updOutBtn.disabled=false; updOutBtn.textContent=orig; });
       });
     }
     // Analyze button handler

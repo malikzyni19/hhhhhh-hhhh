@@ -9726,8 +9726,21 @@ def _lm_server_watch_tick(item_id: int, uid: int) -> dict:
 
     snap = _json_loads_safe(row.snapshot_json, {})
     snap = _lm_maybe_refresh_candles(row, snap)
+
+    # Remember previous readiness state for change detection (Task 5)
+    prev_readiness_state = (snap.get("latest_setup_readiness") or {}).get("readiness_state")
+
     snap, detection = _lm_attach_event_detection(row, snapshot=snap)
     snap, readiness = _lm_attach_setup_readiness(row, snapshot=snap)
+
+    # Phase 8.0 Task 5: capture memory if state changed or is a capture-worthy state
+    new_readiness_state = readiness.get("readiness_state")
+    if (new_readiness_state in _LM_MEMORY_CAPTURE_STATES or
+            new_readiness_state != prev_readiness_state):
+        snap, _sw_mem, _sw_appended = _lm_append_setup_memory(row, snapshot=snap, source="server_watch")
+
+    # Phase 8.1 Task 8: auto update outcomes
+    snap, _sw_oc = _lm_update_memory_outcomes(row, snapshot=snap)
 
     seen_keys: list = snap.get("event_detection_keys") or []
     new_events: list = []
@@ -9987,6 +10000,326 @@ def _lm_attach_setup_readiness(row, snapshot=None) -> tuple:
     return snap, readiness
 
 
+# ── Phase 8.0: Reasoning Memory Foundation ───────────────────────────────────
+
+_LM_MEMORY_CAPTURE_STATES = {"active_watch", "strong_watch", "high_risk", "avoid"}
+
+
+def _lm_build_setup_memory_record(row, snapshot=None, source: str = "manual") -> dict:
+    """Build a compact reasoning-memory record from current snapshot.
+
+    No raw candles. No order/trade fields. Output is JSON-safe.
+    """
+    snap = snapshot if snapshot is not None else _json_loads_safe(getattr(row, "snapshot_json", None), {})
+
+    sr  = snap.get("latest_setup_readiness") or {}
+    evd = snap.get("latest_event_detection") or {}
+    cf  = snap.get("latest_candle_features") or {}
+    lh  = snap.get("latest_health") or {}
+    ai  = snap.get("latest_ai_analysis") or {}
+    con = snap.get("latest_ai_consensus") or {}
+
+    symbol    = (getattr(row, "symbol", None) or "").upper().strip()
+    direction = (getattr(row, "direction", None) or "").lower().strip()
+
+    readiness_state    = sr.get("readiness_state") or "wait"
+    confirmation_score = sr.get("confirmation_score") or 0
+    risk_score         = sr.get("risk_score") or 0
+    zone_high          = getattr(row, "zone_high", None) or 0
+    zone_low           = getattr(row, "zone_low", None) or 0
+
+    # Deterministic dedup signature — does not include timestamp or price
+    sig_str = (
+        f"{symbol}:{direction}:{readiness_state}:"
+        f"{int(confirmation_score)}:{int(risk_score)}:"
+        f"{round(zone_high, 4)}:{round(zone_low, 4)}"
+    )
+    memory_signature = hashlib.sha256(sig_str.encode()).hexdigest()[:16]
+
+    # Candle summary — no raw candles
+    feat = cf.get("features") or {}
+    candle_summary = None
+    if feat:
+        candle_summary = {
+            "interval":           cf.get("interval"),
+            "candle_count":       feat.get("candle_count"),
+            "last_close":         feat.get("last_close"),
+            "atr_14":             feat.get("atr_14"),
+            "strong_rejection":   feat.get("strong_rejection"),
+            "compression":        feat.get("compression"),
+            "breakout_context":   feat.get("breakout_context"),
+            "price_position_50":  feat.get("price_position_50"),
+            "trend_slope_20":     feat.get("trend_slope_20"),
+            "volume_spike_ratio": feat.get("volume_spike_ratio"),
+        }
+
+    # Compact event lists — max 8 each, labels only
+    supporting = (sr.get("supporting_events") or [])[:8]
+    risk_evs   = (sr.get("risk_events") or [])[:8]
+    all_evs    = evd.get("events") or []
+    event_types = list(dict.fromkeys(
+        e.get("type") for e in all_evs if e.get("type")
+    ))[:12]
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    rec_id  = hashlib.sha256(f"{symbol}:{now_iso}:{source}".encode()).hexdigest()[:12]
+
+    return {
+        "id":                   rec_id,
+        "phase":                "phase8_reasoning_memory",
+        "created_at":           now_iso,
+        "source":               source,
+        "symbol":               symbol,
+        "exchange":             (getattr(row, "exchange", None) or "binance"),
+        "market":               (getattr(row, "market",   None) or "perpetual"),
+        "setup_type":           getattr(row, "setup_type", None),
+        "direction":            direction,
+        "timeframe":            getattr(row, "timeframe", None),
+        "zone_high":            zone_high,
+        "zone_low":             zone_low,
+        "current_price":        getattr(row, "current_price", None),
+        "readiness_state":      readiness_state,
+        "confirmation_score":   confirmation_score,
+        "risk_score":           risk_score,
+        "supporting_events":    supporting,
+        "risk_events":          risk_evs,
+        "missing_confirmations": sr.get("missing_confirmations"),
+        "event_types":          event_types,
+        "candle_summary":       candle_summary,
+        "ai_verdict":           ai.get("verdict"),
+        "ai_confidence":        ai.get("confidence_score"),
+        "consensus_verdict":    con.get("consensus_verdict"),
+        "consensus_confidence": con.get("consensus_confidence"),
+        "outcome_status":       "pending",
+        "outcome_note":         "",
+        "outcome_checked_at":   None,
+        "max_favorable_pct":    None,
+        "max_adverse_pct":      None,
+        "memory_signature":     memory_signature,
+    }
+
+
+def _lm_build_memory_summary(records: list) -> dict:
+    """Compute summary dict from a list of memory records."""
+    total     = len(records)
+    by_status = {}
+    by_stype  = {}
+    by_rstate = {}
+    last_at   = None
+    for r in records:
+        st = r.get("outcome_status") or "pending"
+        by_status[st]  = by_status.get(st, 0) + 1
+        stype = r.get("setup_type") or "unknown"
+        by_stype[stype] = by_stype.get(stype, 0) + 1
+        rs = r.get("readiness_state") or "wait"
+        by_rstate[rs]   = by_rstate.get(rs, 0) + 1
+        cat = r.get("created_at")
+        if cat and (last_at is None or cat > last_at):
+            last_at = cat
+    return {
+        "total_records":     total,
+        "pending_count":     by_status.get("pending", 0),
+        "won_count":         by_status.get("won", 0),
+        "lost_count":        by_status.get("lost", 0),
+        "invalidated_count": by_status.get("invalidated", 0),
+        "neutral_count":     by_status.get("neutral", 0),
+        "by_setup_type":     by_stype,
+        "by_readiness_state": by_rstate,
+        "by_outcome_status": by_status,
+        "last_record_at":    last_at,
+    }
+
+
+def _lm_append_setup_memory(row, snapshot=None, source: str = "manual") -> tuple:
+    """Build and append a memory record to snapshot["setup_memory_records"] (max 50).
+
+    Dedup: if same memory_signature appears in last 10 records, skip.
+    Does NOT commit. Returns (snap, record, appended: bool).
+    """
+    snap    = snapshot if snapshot is not None else _json_loads_safe(getattr(row, "snapshot_json", None), {})
+    records = list(snap.get("setup_memory_records") or [])
+
+    record = _lm_build_setup_memory_record(row, snapshot=snap, source=source)
+    sig    = record["memory_signature"]
+
+    # Dedup against last 10 records
+    recent_sigs = [r.get("memory_signature") for r in records[-10:]]
+    if sig in recent_sigs:
+        summary = _lm_build_memory_summary(records)
+        snap["setup_memory_summary"] = summary
+        row.snapshot_json = _json_dumps_safe(snap)
+        return snap, record, False
+
+    records.append(record)
+    records = records[-50:]  # keep last 50
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    summary = _lm_build_memory_summary(records)
+
+    snap["setup_memory_records"]   = records
+    snap["setup_memory_summary"]   = summary
+    snap["last_setup_memory_at"]   = now_iso
+    row.snapshot_json = _json_dumps_safe(snap)
+    return snap, record, True
+
+
+# ── Phase 8.1: Outcome Tracker ───────────────────────────────────────────────
+
+_LM_WIN_PCT   = 1.0   # +1.0% from record price → win (bullish) / -1.0% → win (bearish)
+_LM_LOSS_PCT  = 0.6   # -0.6% from record price → loss (bullish) / +0.6% → loss (bearish)
+
+
+def _lm_update_memory_outcomes(row, snapshot=None) -> tuple:
+    """Update outcome_status for pending memory records using current row price.
+
+    No raw candles. No entry/SL/TP simulation. No paper trading.
+    Uses only the price at capture time vs current price.
+    Returns (snap, updated_count).
+    """
+    snap    = snapshot if snapshot is not None else _json_loads_safe(getattr(row, "snapshot_json", None), {})
+    records = list(snap.get("setup_memory_records") or [])
+    if not records:
+        return snap, 0
+
+    current_price = getattr(row, "current_price", None)
+    if not current_price:
+        return snap, 0
+
+    zone_high    = getattr(row, "zone_high", None) or 0
+    zone_low     = getattr(row, "zone_low", None) or 0
+    now_iso      = datetime.now(timezone.utc).isoformat()
+    updated      = 0
+
+    for rec in records:
+        if rec.get("outcome_status") != "pending":
+            continue
+        cap_price = rec.get("current_price")
+        if not cap_price or cap_price <= 0:
+            continue
+        direction = (rec.get("direction") or "").lower()
+
+        pct_move = ((current_price - cap_price) / cap_price) * 100.0
+
+        # Favorable / adverse from direction perspective
+        if "bull" in direction or direction in ("long", "buy"):
+            favorable_pct = pct_move
+            adverse_pct   = -pct_move
+        elif "bear" in direction or direction in ("short", "sell"):
+            favorable_pct = -pct_move
+            adverse_pct   = pct_move
+        else:
+            # No clear direction — skip outcome resolution
+            continue
+
+        # Update running extremes (use current snapshot values as running max)
+        prev_fav = rec.get("max_favorable_pct")
+        prev_adv = rec.get("max_adverse_pct")
+        rec["max_favorable_pct"] = max(favorable_pct, prev_fav) if prev_fav is not None else favorable_pct
+        rec["max_adverse_pct"]   = max(adverse_pct,   prev_adv) if prev_adv is not None else adverse_pct
+        rec["outcome_checked_at"] = now_iso
+
+        # Zone breach / invalidation check (direction-specific)
+        zone_invalidated = False
+        if zone_high > 0 and zone_low > 0:
+            if "bull" in direction or direction in ("long", "buy"):
+                # Bullish: zone invalidated if price closes below zone_low
+                if current_price < zone_low * 0.998:
+                    zone_invalidated = True
+            else:
+                # Bearish: zone invalidated if price closes above zone_high
+                if current_price > zone_high * 1.002:
+                    zone_invalidated = True
+
+        if zone_invalidated:
+            rec["outcome_status"] = "invalidated"
+            rec["outcome_note"]   = f"Zone breached — price {current_price:.4f} invalidated zone"
+            updated += 1
+        elif favorable_pct >= _LM_WIN_PCT:
+            rec["outcome_status"] = "won"
+            rec["outcome_note"]   = f"Moved +{favorable_pct:.2f}% in favor (threshold {_LM_WIN_PCT}%)"
+            updated += 1
+        elif adverse_pct >= _LM_LOSS_PCT:
+            rec["outcome_status"] = "lost"
+            rec["outcome_note"]   = f"Moved -{adverse_pct:.2f}% against (threshold {_LM_LOSS_PCT}%)"
+            updated += 1
+
+    if updated > 0:
+        summary = _lm_build_memory_summary(records)
+        snap["setup_memory_records"] = records
+        snap["setup_memory_summary"] = summary
+        row.snapshot_json = _json_dumps_safe(snap)
+
+    return snap, updated
+
+
+# ── Phase 8.2: Accuracy Dashboard ────────────────────────────────────────────
+
+def _lm_compute_memory_accuracy(snapshot) -> dict:
+    """Compute accuracy stats from setup_memory_records. Stores result in snapshot.
+
+    Only counts closed records (won/lost/invalidated) toward win_rate.
+    Returns compact accuracy dict.
+    """
+    records = list(snapshot.get("setup_memory_records") or [])
+
+    closed      = [r for r in records if r.get("outcome_status") in ("won", "lost", "invalidated")]
+    pending     = [r for r in records if r.get("outcome_status") == "pending"]
+    won         = [r for r in closed  if r.get("outcome_status") == "won"]
+    lost        = [r for r in closed  if r.get("outcome_status") == "lost"]
+    inv         = [r for r in closed  if r.get("outcome_status") == "invalidated"]
+
+    total_closed = len(closed)
+    win_rate = round(len(won) / total_closed * 100, 1) if total_closed > 0 else None
+
+    def _group_by(field: str, recs: list) -> dict:
+        out: Dict[str, Dict] = {}
+        for r in recs:
+            k = r.get(field) or "unknown"
+            if k not in out:
+                out[k] = {"total": 0, "won": 0, "lost": 0, "invalidated": 0}
+            out[k]["total"] += 1
+            st = r.get("outcome_status") or "pending"
+            if st in out[k]:
+                out[k][st] += 1
+        return out
+
+    by_setup    = _group_by("setup_type", closed)
+    by_rstate   = _group_by("readiness_state", closed)
+    by_source   = _group_by("source", closed)
+
+    # Best and worst patterns by setup_type (min 2 closed records)
+    best_patterns  = sorted(
+        [{"setup_type": k, **v, "win_rate": round(v["won"] / v["total"] * 100, 1)}
+         for k, v in by_setup.items() if v["total"] >= 2],
+        key=lambda x: x["win_rate"], reverse=True
+    )[:3]
+    worst_patterns = sorted(
+        [{"setup_type": k, **v, "win_rate": round(v["won"] / v["total"] * 100, 1)}
+         for k, v in by_setup.items() if v["total"] >= 2],
+        key=lambda x: x["win_rate"]
+    )[:3]
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    accuracy = {
+        "computed_at":       now_iso,
+        "total_closed":      total_closed,
+        "total_pending":     len(pending),
+        "win_count":         len(won),
+        "loss_count":        len(lost),
+        "invalidated_count": len(inv),
+        "win_rate":          win_rate,
+        "by_setup_type":     by_setup,
+        "by_readiness_state": by_rstate,
+        "by_source":         by_source,
+        "best_patterns":     best_patterns,
+        "worst_patterns":    worst_patterns,
+    }
+
+    snapshot["setup_memory_accuracy"]          = accuracy
+    snapshot["last_setup_memory_accuracy_at"]  = now_iso
+    return accuracy
+
+
 def _lm_build_ai_context(item) -> dict:
     """Build a compact, JSON-safe context dict from a LiveMonitorItem for the AI agent."""
     snap = _json_loads_safe(getattr(item, "snapshot_json", None), {})
@@ -10126,6 +10459,36 @@ def _lm_build_ai_context(item) -> dict:
             "missing_confirmations": sr.get("missing_confirmations"),
             "summary":              sr.get("summary"),
         } if sr and isinstance(sr, dict) else None)(snap.get("latest_setup_readiness")),
+        "reasoning_memory":       (lambda mem_recs, summ, acc: {
+            "summary": summ,
+            "accuracy": {
+                "total_closed":  acc.get("total_closed"),
+                "win_count":     acc.get("win_count"),
+                "loss_count":    acc.get("loss_count"),
+                "win_rate":      acc.get("win_rate"),
+            } if acc else None,
+            "latest_records": [
+                {
+                    "created_at":         r.get("created_at"),
+                    "source":             r.get("source"),
+                    "setup_type":         r.get("setup_type"),
+                    "direction":          r.get("direction"),
+                    "timeframe":          r.get("timeframe"),
+                    "readiness_state":    r.get("readiness_state"),
+                    "confirmation_score": r.get("confirmation_score"),
+                    "risk_score":         r.get("risk_score"),
+                    "supporting_events":  (r.get("supporting_events") or [])[:5],
+                    "risk_events":        (r.get("risk_events") or [])[:5],
+                    "outcome_status":     r.get("outcome_status"),
+                    "outcome_note":       r.get("outcome_note"),
+                }
+                for r in (mem_recs or [])[-5:]
+            ],
+        } if mem_recs or summ else None)(
+            snap.get("setup_memory_records"),
+            snap.get("setup_memory_summary"),
+            snap.get("setup_memory_accuracy"),
+        ),
     }
 
 
@@ -10210,6 +10573,18 @@ def _lm_ai_system_prompt() -> str:
         "- Do NOT override readiness state. If state is high_risk, do not call it active_watch.\n"
         "- If setup_readiness is null, analyze from other context fields only.\n"
         "- Do NOT use setup_readiness as trade permission under any circumstances.\n\n"
+
+        "REASONING MEMORY (Phase 8.2):\n"
+        "The context may include a reasoning_memory block — historical setup records and accuracy stats.\n"
+        "USE RULES:\n"
+        "- reasoning_memory is historical context only. Use it to note repeated patterns or behaviors.\n"
+        "- Do NOT change strategy rules based on memory records.\n"
+        "- Do NOT claim the system 'learned' or 'improved' based on past records.\n"
+        "- outcome_status 'pending' means no result is known yet — do NOT assume won or lost.\n"
+        "- win_rate is an observation from a small sample only — it is NOT a statistical guarantee.\n"
+        "- Do NOT use past win/loss records as permission to enter a trade.\n"
+        "- memory is context clues only — not trade permission, not strategy modification.\n"
+        "- If reasoning_memory is null, analyze from other context fields only.\n\n"
 
         "STRICT RULES:\n"
         "- Analyze ONLY the provided backend facts. Do not invent missing data.\n"
@@ -12469,6 +12844,13 @@ def api_lm_items_detect_events(item_id):
     snap, detection = _lm_attach_event_detection(row, snapshot=snap)
     snap, readiness = _lm_attach_setup_readiness(row, snapshot=snap)
 
+    # Phase 8.0 Task 4: auto-capture memory for capture-worthy states
+    memory_appended = False
+    if readiness.get("readiness_state") in _LM_MEMORY_CAPTURE_STATES:
+        snap, _mem_rec, memory_appended = _lm_append_setup_memory(row, snapshot=snap, source="detect_events")
+    # Phase 8.1 Task 8: auto update outcomes after memory append
+    snap, _outcomes_updated = _lm_update_memory_outcomes(row, snapshot=snap)
+
     # Deduplication: track which event_keys have already produced a LiveMonitorEvent
     seen_keys: list = snap.get("event_detection_keys") or []
 
@@ -12508,6 +12890,7 @@ def api_lm_items_detect_events(item_id):
         "event_detection": detection,
         "setup_readiness": readiness,
         "new_events_logged": len(new_events_to_create),
+        "memory_appended": memory_appended,
     })
 
 
@@ -12531,6 +12914,13 @@ def api_lm_detect_events_all():
             snap = _lm_maybe_refresh_candles(row, snap)
             snap, detection = _lm_attach_event_detection(row, snapshot=snap)
             snap, readiness = _lm_attach_setup_readiness(row, snapshot=snap)
+
+            # Phase 8.0 Task 4: auto-capture memory for capture-worthy states
+            mem_appended = False
+            if readiness.get("readiness_state") in _LM_MEMORY_CAPTURE_STATES:
+                snap, _mr, mem_appended = _lm_append_setup_memory(row, snapshot=snap, source="detect_events")
+            # Phase 8.1 Task 8: auto update outcomes
+            snap, _oc = _lm_update_memory_outcomes(row, snapshot=snap)
 
             seen_keys: list = snap.get("event_detection_keys") or []
             important_types = {"zone_touch", "zone_breach_risk", "session_warning", "market_pressure"}
@@ -12564,6 +12954,7 @@ def api_lm_detect_events_all():
                 "event_detection": detection,
                 "setup_readiness": readiness,
                 "new_events_logged": len(new_events_to_create),
+                "memory_appended": mem_appended,
             })
         except Exception as e:
             _db.session.rollback()
@@ -12748,6 +13139,136 @@ def api_lm_watch_loop_tick():
             errors.append({"id": row.id, "symbol": row.symbol, "error": result.get("error")})
 
     return jsonify({"ok": True, "ticked": len(results), "results": results, "errors": errors})
+
+
+# ── Phase 8.0 Task 3: capture-memory endpoint ─────────────────────────────────
+
+@app.route("/api/live-monitor/items/<int:item_id>/capture-memory", methods=["POST"])
+@login_required
+def api_lm_items_capture_memory(item_id):
+    """Manually capture a setup reasoning-memory record into snapshot_json."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorItem as _LMI, LiveMonitorEvent as _LME
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if not row.is_active:
+        return jsonify({"error": "inactive"}), 400
+
+    snap = _json_loads_safe(row.snapshot_json, {})
+    snap, record, appended = _lm_append_setup_memory(row, snapshot=snap, source="manual")
+    row.snapshot_json = _json_dumps_safe(snap)
+    row.updated_at    = datetime.now(timezone.utc)
+
+    try:
+        _db.session.flush()
+        if appended:
+            lme = _LME(
+                item_id           = row.id,
+                user_id           = uid,
+                symbol            = row.symbol,
+                event_type        = "setup_memory_captured",
+                event_description = "Setup reasoning memory captured",
+                details_json      = _json_dumps_safe({"record_id": record["id"], "readiness_state": record["readiness_state"]}),
+                price_at_event    = row.current_price,
+            )
+            _db.session.add(lme)
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+    return jsonify({
+        "ok":             True,
+        "item":           _live_monitor_item_to_dict(row),
+        "memory_record":  record,
+        "memory_summary": snap.get("setup_memory_summary"),
+        "appended":       appended,
+    })
+
+
+# ── Phase 8.1 Task 7: update-memory-outcomes endpoint ─────────────────────────
+
+@app.route("/api/live-monitor/items/<int:item_id>/update-memory-outcomes", methods=["POST"])
+@login_required
+def api_lm_items_update_memory_outcomes(item_id):
+    """Update outcome status for pending setup memory records using current price."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorItem as _LMI, LiveMonitorEvent as _LME
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if not row.is_active:
+        return jsonify({"error": "inactive"}), 400
+
+    snap = _json_loads_safe(row.snapshot_json, {})
+    snap, updated_count = _lm_update_memory_outcomes(row, snapshot=snap)
+    row.snapshot_json = _json_dumps_safe(snap)
+    row.updated_at    = datetime.now(timezone.utc)
+
+    try:
+        _db.session.flush()
+        if updated_count > 0:
+            lme = _LME(
+                item_id           = row.id,
+                user_id           = uid,
+                symbol            = row.symbol,
+                event_type        = "setup_memory_outcomes_updated",
+                event_description = f"Setup memory outcomes updated: {updated_count} record(s) resolved",
+                details_json      = _json_dumps_safe({"updated_count": updated_count}),
+                price_at_event    = row.current_price,
+            )
+            _db.session.add(lme)
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+    return jsonify({
+        "ok":             True,
+        "item":           _live_monitor_item_to_dict(row),
+        "memory_summary": snap.get("setup_memory_summary"),
+        "updated_count":  updated_count,
+    })
+
+
+# ── Phase 8.2 Task 10: memory-accuracy endpoint ───────────────────────────────
+
+@app.route("/api/live-monitor/items/<int:item_id>/memory-accuracy", methods=["GET"])
+@login_required
+def api_lm_items_memory_accuracy(item_id):
+    """Compute and return setup memory accuracy stats from snapshot."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import LiveMonitorItem as _LMI
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if not row.is_active:
+        return jsonify({"error": "inactive"}), 400
+
+    snap     = _json_loads_safe(row.snapshot_json, {})
+    accuracy = _lm_compute_memory_accuracy(snap)
+
+    return jsonify({
+        "ok":             True,
+        "accuracy":       accuracy,
+        "memory_summary": snap.get("setup_memory_summary"),
+    })
 
 
 @app.route("/api/live-monitor/items/<int:item_id>/ai-chat", methods=["POST"])
