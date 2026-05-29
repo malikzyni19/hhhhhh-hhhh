@@ -4629,6 +4629,30 @@ svg{display:block}
     '</div>';
   }
 
+  // Phase 7.2: setup readiness block
+  function _lmSetupReadinessHtml(item){
+    var sr=(item&&item.snapshot&&item.snapshot.latest_setup_readiness)||null;
+    if(!sr||!sr.readiness_state) return '';
+    var stateColor={
+      strong_watch:'var(--green-2,#4ade80)',
+      active_watch:'var(--accent,#38bdf8)',
+      wait:'var(--text-3)',
+      high_risk:'var(--yellow-2,#f59e0b)',
+      avoid:'var(--red-2,#f87171)'
+    };
+    var sc=stateColor[sr.readiness_state]||'var(--text-3)';
+    var when=sr.computed_at?(' &middot; '+esc(_lmAgo(sr.computed_at))):'';
+    var stateLabel=esc((sr.readiness_state||'').replace(/_/g,' ').toUpperCase());
+    return '<div style="border:1px solid var(--border);border-radius:5px;padding:5px 8px;margin-bottom:6px;background:var(--bg-2)">'+
+      '<div style="font-size:9px;font-weight:700;letter-spacing:.6px;color:var(--text-3);margin-bottom:3px">SETUP READINESS'+when+'</div>'+
+      '<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">'+
+        '<span style="font-size:11px;font-weight:700;color:'+sc+'">'+stateLabel+'</span>'+
+        '<span style="font-size:9px;color:var(--text-3)">conf <b style="color:var(--text-2)">'+(sr.confirmation_score||0)+'</b> / risk <b style="color:var(--text-2)">'+(sr.risk_score||0)+'</b></span>'+
+      '</div>'+
+      (sr.summary?'<div style="font-size:9px;color:var(--text-3);line-height:1.4">'+esc(sr.summary)+'</div>':'')+
+    '</div>';
+  }
+
   // Phase 7: candle features summary block
   function _lmCandleFeaturesHtml(item){
     var cf=(item&&item.snapshot&&item.snapshot.latest_candle_features)||null;
@@ -4703,7 +4727,7 @@ svg{display:block}
               _lmSelItem=d.item;
               var detBlock=document.getElementById("lmDetectedBlock");
               if(detBlock&&_lmInstructionView!=="instructions"){
-                detBlock.innerHTML=_lmDetectedEventsHtml(d.item);
+                detBlock.innerHTML=_lmSetupReadinessHtml(d.item)+_lmDetectedEventsHtml(d.item)+_lmCandleFeaturesHtml(d.item);
               }
               var ageEl=document.getElementById("lmDetectAge");
               if(ageEl) ageEl.innerHTML=_lmDetectAgeHtml(d.item);
@@ -5064,7 +5088,7 @@ svg{display:block}
             '<button class="btn" type="button" data-lmrefreshcandles="'+item.id+'" title="Fetch candle data and extract chart features" style="padding:2px 7px;font-size:10px">'+
               '<svg class="ico ico-sm" viewBox="0 0 24 24" style="width:10px;height:10px"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>Candles</button>'+
           '</div>'+
-          (_lmInstructionView!=="instructions"?'<div id="lmDetectedBlock" style="padding:6px 10px 0">'+_lmDetectedEventsHtml(item)+_lmCandleFeaturesHtml(item)+'</div>':'<div id="lmDetectedBlock"></div>')+
+          (_lmInstructionView!=="instructions"?'<div id="lmDetectedBlock" style="padding:6px 10px 0">'+_lmSetupReadinessHtml(item)+_lmDetectedEventsHtml(item)+_lmCandleFeaturesHtml(item)+'</div>':'<div id="lmDetectedBlock"></div>')+
           '<div class="sec-card-body" style="padding:8px 10px" id="lmEvents">'+
             (function(){
               if(_lmInstructionView==="instructions"){
@@ -5214,7 +5238,7 @@ svg{display:block}
         var evBox=document.getElementById("lmEvents"); if(!evBox) return;
         var detBlock=document.getElementById("lmDetectedBlock");
         if(_lmInstructionView==="events"){
-          if(detBlock){ var _si=_lmSelItem||item; detBlock.innerHTML=_lmDetectedEventsHtml(_si)+_lmCandleFeaturesHtml(_si); }
+          if(detBlock){ var _si=_lmSelItem||item; detBlock.innerHTML=_lmSetupReadinessHtml(_si)+_lmDetectedEventsHtml(_si)+_lmCandleFeaturesHtml(_si); }
           evBox.innerHTML='<div style="color:var(--text-3);font-size:11px">Loading events…</div>';
           _lmLoadEvents(item.id);
         } else {
@@ -5287,7 +5311,7 @@ svg{display:block}
                 _lmSelItem=d.item;
                 var detBlock=document.getElementById("lmDetectedBlock");
                 if(detBlock&&_lmInstructionView!=="instructions"){
-                  detBlock.innerHTML=_lmDetectedEventsHtml(d.item);
+                  detBlock.innerHTML=_lmSetupReadinessHtml(d.item)+_lmDetectedEventsHtml(d.item)+_lmCandleFeaturesHtml(d.item);
                 }
                 var ageEl=document.getElementById("lmDetectAge");
                 if(ageEl) ageEl.innerHTML=_lmDetectAgeHtml(d.item);
@@ -5322,7 +5346,7 @@ svg{display:block}
                 _lmSelItem=d.item;
                 var detBlock=document.getElementById("lmDetectedBlock");
                 if(detBlock&&_lmInstructionView!=="instructions"){
-                  detBlock.innerHTML=_lmDetectedEventsHtml(d.item)+_lmCandleFeaturesHtml(d.item);
+                  detBlock.innerHTML=_lmSetupReadinessHtml(d.item)+_lmDetectedEventsHtml(d.item)+_lmCandleFeaturesHtml(d.item);
                 }
               }
             }
