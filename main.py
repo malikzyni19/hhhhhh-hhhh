@@ -9684,6 +9684,133 @@ def _lm_maybe_refresh_candles(row, snap: dict, stale_seconds: int = 120) -> dict
     return snap
 
 
+# ── Phase 7.5: Server-side Watch Loop ────────────────────────────────────────
+
+_lm_watch_thread: Optional[threading.Thread] = None
+_lm_watch_running = False
+_LM_WATCH_IMPORTANT_TYPES = {
+    "zone_touch", "zone_breach_risk", "session_warning", "market_pressure",
+    "candle_breakout", "candle_rejection", "candle_volume_spike",
+}
+
+
+def _lm_server_watch_tick(item_id: int, uid: int) -> dict:
+    """Full pipeline tick for one Live Monitor item: candle refresh + event detection + readiness.
+
+    Creates LiveMonitorEvents for new detections. Updates server_watch.last_tick_at.
+    Safe to call from background thread (uses app context if needed).
+    """
+    from models import db as _db, LiveMonitorItem as _LMI, LiveMonitorEvent as _LME
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return {"ok": False, "error": "not_found"}
+    if row.user_id != uid:
+        return {"ok": False, "error": "forbidden"}
+    if not row.is_active:
+        return {"ok": False, "error": "inactive"}
+
+    snap = _json_loads_safe(row.snapshot_json, {})
+    snap = _lm_maybe_refresh_candles(row, snap)
+    snap, detection = _lm_attach_event_detection(row, snapshot=snap)
+    snap, readiness = _lm_attach_setup_readiness(row, snapshot=snap)
+
+    seen_keys: list = snap.get("event_detection_keys") or []
+    new_events: list = []
+    for ev in (detection.get("events") or []):
+        ek = ev.get("event_key")
+        if ev.get("type") in _LM_WATCH_IMPORTANT_TYPES and ek and ek not in seen_keys:
+            new_events.append(ev)
+            seen_keys.append(ek)
+    snap["event_detection_keys"] = seen_keys[-100:]
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    sw = snap.get("server_watch") or {}
+    sw["last_tick_at"] = now_iso
+    snap["server_watch"] = sw
+
+    row.snapshot_json = _json_dumps_safe(snap)
+    row.updated_at    = datetime.now(timezone.utc)
+
+    try:
+        _db.session.flush()
+        for ev in new_events:
+            lme = _LME(
+                item_id           = row.id,
+                user_id           = uid,
+                symbol            = row.symbol,
+                event_type        = ev.get("type", "updated"),
+                event_description = ev.get("label", "Server watch event"),
+                details_json      = _json_dumps_safe(ev.get("details", {})),
+                price_at_event    = row.current_price,
+            )
+            _db.session.add(lme)
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return {"ok": False, "error": str(e)}
+
+    return {
+        "ok":               True,
+        "item_id":          item_id,
+        "symbol":           row.symbol,
+        "readiness_state":  readiness.get("readiness_state"),
+        "new_events_logged": len(new_events),
+        "ticked_at":        now_iso,
+    }
+
+
+def _lm_watch_background_loop():
+    """Background thread: tick server-watch items at their configured interval."""
+    global _lm_watch_running
+    print("[LM-WATCH] Background thread started")
+    while _lm_watch_running:
+        try:
+            with app.app_context():
+                from models import LiveMonitorItem as _LMI
+                from datetime import datetime as _dt2, timezone as _tz2
+                now = _dt2.now(_tz2.utc)
+                active_rows = _LMI.query.filter_by(is_active=True).all()
+                for row in active_rows:
+                    if not _lm_watch_running:
+                        break
+                    snap = _json_loads_safe(row.snapshot_json, {})
+                    sw = snap.get("server_watch") or {}
+                    if not sw.get("enabled"):
+                        continue
+                    interval_s = max(60, int(sw.get("interval_seconds") or 300))
+                    last_tick_raw = sw.get("last_tick_at")
+                    needs_tick = True
+                    if last_tick_raw:
+                        try:
+                            lt = _dt2.fromisoformat(last_tick_raw.replace("Z", "+00:00"))
+                            needs_tick = (now - lt).total_seconds() >= interval_s
+                        except Exception:
+                            needs_tick = True
+                    if needs_tick:
+                        try:
+                            _lm_server_watch_tick(row.id, row.user_id)
+                        except Exception as e:
+                            print(f"[LM-WATCH] Error ticking item {row.id} ({row.symbol}): {e}")
+        except Exception as e:
+            print(f"[LM-WATCH] Loop error: {e}")
+        time.sleep(60)
+    print("[LM-WATCH] Background thread stopped")
+
+
+def _ensure_lm_watch_thread():
+    """Start the LM server-watch background thread if not already running."""
+    global _lm_watch_thread, _lm_watch_running
+    if _lm_watch_thread and _lm_watch_thread.is_alive():
+        return
+    _lm_watch_running = True
+    _lm_watch_thread = threading.Thread(target=_lm_watch_background_loop, daemon=True, name="lm-watch")
+    _lm_watch_thread.start()
+
+
+if os.environ.get("ZYNI_LM_SERVER_WATCH_ENABLED") == "1":
+    _ensure_lm_watch_thread()
+
+
 # ── Phase 7.2: Setup Readiness Engine ────────────────────────────────────────
 
 def _lm_compute_setup_readiness(row, snapshot=None) -> dict:
@@ -12452,6 +12579,91 @@ def api_lm_items_refresh_candles(item_id):
         "item":            _live_monitor_item_to_dict(row),
         "candle_features": snap.get("latest_candle_features"),
     })
+
+
+# ── Phase 7.5: Server-watch toggle + manual tick endpoints ───────────────────
+
+@app.route("/api/live-monitor/items/<int:item_id>/server-watch", methods=["POST"])
+@login_required
+def api_lm_items_server_watch(item_id):
+    """Toggle / configure server-side watch for one Live Monitor item.
+
+    Body (all optional):
+      { "enabled": true|false, "interval_seconds": 300 }
+    Stores config in snapshot_json["server_watch"].
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorItem as _LMI
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+
+    body = request.get_json(silent=True) or {}
+    enabled = bool(body.get("enabled", True))
+    try:
+        interval_seconds = max(60, min(int(body.get("interval_seconds") or 300), 3600))
+    except (TypeError, ValueError):
+        interval_seconds = 300
+
+    snap = _json_loads_safe(row.snapshot_json, {})
+    sw = snap.get("server_watch") or {}
+    sw["enabled"]          = enabled
+    sw["interval_seconds"] = interval_seconds
+    if "last_tick_at" not in sw:
+        sw["last_tick_at"] = None
+    snap["server_watch"] = sw
+    row.snapshot_json = _json_dumps_safe(snap)
+    row.updated_at    = datetime.now(timezone.utc)
+
+    try:
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+    if enabled:
+        _ensure_lm_watch_thread()
+
+    return jsonify({
+        "ok":          True,
+        "item":        _live_monitor_item_to_dict(row),
+        "server_watch": sw,
+    })
+
+
+@app.route("/api/live-monitor/watch-loop/tick", methods=["POST"])
+@login_required
+def api_lm_watch_loop_tick():
+    """Manually trigger one server-watch tick for all enabled items belonging to the current user.
+
+    Useful from the frontend "Server Watch" button or for testing.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import LiveMonitorItem as _LMI
+    active_rows = _LMI.query.filter_by(user_id=uid, is_active=True).all()
+
+    results = []
+    errors  = []
+    for row in active_rows:
+        snap = _json_loads_safe(row.snapshot_json, {})
+        sw   = snap.get("server_watch") or {}
+        if not sw.get("enabled"):
+            continue
+        result = _lm_server_watch_tick(row.id, uid)
+        if result.get("ok"):
+            results.append(result)
+        else:
+            errors.append({"id": row.id, "symbol": row.symbol, "error": result.get("error")})
+
+    return jsonify({"ok": True, "ticked": len(results), "results": results, "errors": errors})
 
 
 @app.route("/api/live-monitor/items/<int:item_id>/ai-chat", methods=["POST"])
