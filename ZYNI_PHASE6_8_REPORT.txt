@@ -1,0 +1,258 @@
+================================================================================
+   ZYNI SMC SCREENER — PHASE 6.8 REPORT
+   Event-Aware AI + Light Watch Loop
+   Date: 2026-05-29
+   Branch: main
+   Commit: 89b2cee
+   Status: COMPLETE — COMMITTED AND PUSHED
+================================================================================
+
+
+================================================================================
+1. FILES CHANGED
+================================================================================
+
+  main.py                — +43 lines inserted, 0 replaced
+  templates/preview.html — +82 lines inserted, -2 lines replaced
+
+  models.py              — NOT modified.
+  templates/index.html   — NOT modified (mobile untouched).
+  Database schema        — NOT changed.
+
+
+================================================================================
+2. AI CONTEXT event_detection DETAILS
+================================================================================
+
+  Updated: _lm_build_ai_context(item)
+
+  New key added to return dict:
+    "event_detection": <compact dict or None>
+
+  Structure:
+    {
+      "computed_at": "<ISO UTC>",
+      "summary": {
+        "total_events":  N,
+        "risk_count":    N,
+        "warning_count": N,
+        "watch_count":   N,
+        "info_count":    N,
+        "top_severity":  "risk|warning|watch|info",
+      },
+      "events": [
+        {
+          "event_key": "<key>",
+          "type":      "<type>",
+          "label":     "<human label>",
+          "severity":  "risk|warning|watch|info",
+          "direction": "<direction>",
+          "source":    "<source>",
+          "details":   {...},
+        },
+        ...  (max 8 events)
+      ],
+    }
+
+  If snapshot["latest_event_detection"] is missing → event_detection = None.
+  Events list capped at 8 to keep context payload compact.
+
+
+================================================================================
+3. ANALYZE / CONSENSUS EVENT REFRESH DETAILS
+================================================================================
+
+  POST /api/live-monitor/items/<id>/ai-analyze (Task 2):
+    - After cooldown check passes (not cached), before building AI context:
+        snap, _ = _lm_attach_event_detection(row, snapshot=snap)
+        row.snapshot_json = _json_dumps_safe(snap)
+    - Context then reads fresh latest_event_detection from updated snap.
+    - No LiveMonitorEvent created (detect-events endpoint handles logging).
+    - source_context_at now includes:
+        "latest_events": snap.get("last_event_detection_at")
+
+  POST /api/live-monitor/items/<id>/ai-consensus (Task 3):
+    - Same pattern: auto-refresh before context build.
+    - No LiveMonitorEvent.
+    - source_context_at:
+        "latest_events": snap.get("last_event_detection_at")
+
+  Both: AI will always see the most current event_detection when it runs.
+
+
+================================================================================
+4. CHAT EVENT AWARENESS (Task 4)
+================================================================================
+
+  POST /api/live-monitor/items/<id>/ai-chat:
+    - Before building AI context for normal chat (after instruction check):
+        snap_chat = _json_loads_safe(row.snapshot_json, {})
+        if not snap_chat.get("latest_event_detection"):
+            snap_chat, _ = _lm_attach_event_detection(row, snapshot=snap_chat)
+            row.snapshot_json = _json_dumps_safe(snap_chat)  # in-memory only
+    - One-time lazy init: runs detection only if no existing detection in snapshot.
+    - NO DB commit from this path (committed only if instruction saved separately).
+    - NO LiveMonitorEvent created.
+    - AI chat will always have event_detection in context once initialized.
+
+
+================================================================================
+5. STALE LABEL BEHAVIOR (Task 6)
+================================================================================
+
+  Location: Event Timeline card header, between dropdown and Detect button.
+  Element:  <span id="lmDetectAge">
+
+  Helper: _lmDetectAgeHtml(item)
+    - No detection at all  → "No detection"  (grey, text-3)
+    - Age < 120 seconds    → "Fresh"         (green, --green-2)
+    - Age >= 120 seconds   → "Stale"         (grey, text-3)
+    - Parse error          → "—"             (grey)
+
+  Updated by:
+    1. _lmRenderRight on every panel render (synchronous)
+    2. Detect Events button handler on success
+    3. Auto Detect loop on each successful detection
+
+
+================================================================================
+6. AUTO DETECT BEHAVIOR (Task 7)
+================================================================================
+
+  Button:    Auto (id="lmAutoDetectBtn") — in Event Timeline card header.
+  State var: _lmAutoDetect (bool) — initialized from localStorage.
+  Key:       localStorage["zyni_lm_auto_detect"] = "1" / "0"
+  Default:   OFF
+
+  When ON:
+    - Calls _lmStartAutoDetect(item.id)
+    - Runs detect-events every 60 seconds for the currently selected item only
+    - Skips tick if previous request is still in-flight (_lmAutoDetectRunning flag)
+    - Self-stops if _lmSelItem changes or is cleared
+    - Updates #lmDetectedBlock (if events view)
+    - Updates #lmDetectAge (Fresh/Stale label)
+    - Calls _lmLoadEvents to refresh timeline (if events view)
+
+  When OFF:
+    - Calls _lmStopAutoDetect() — clears interval, resets flags
+
+  Safety constraints:
+    - Does NOT call ai-analyze
+    - Does NOT call ai-consensus
+    - Does NOT run for all items — selected item only
+    - Does NOT overwrite #lmEvents when AI Instructions view is active
+    - Only one interval timer at a time (clearInterval before new setInterval)
+
+  Timer lifecycle:
+    - _lmRenderRight(null) → _lmStopAutoDetect() always
+    - _lmRenderRight(item) → if auto-detect ON and item ID changed → _lmStartAutoDetect(item.id)
+    - _lmRenderRight(item) → if same item ID → timer not interrupted
+    - Toggle OFF → _lmStopAutoDetect()
+
+
+================================================================================
+7. WHAT WAS NOT ADDED
+================================================================================
+
+  ✓ No auto trading
+  ✓ No order placement
+  ✓ No exchange account API connection
+  ✓ No memory / trade journal
+  ✓ No paper trading
+  ✓ No candle / 4000-candle engine
+  ✓ No fake candle rejection / liquidity sweep / liquidation spike
+  ✓ No DB schema change
+  ✓ No models.py change
+  ✓ No mobile index.html change
+  ✓ No UI redesign
+  ✓ No second chatbox
+  ✓ Auto Detect loop does NOT call AI analyze or consensus
+  ✓ Event detection does NOT log timeline events from ai-analyze / ai-consensus / ai-chat
+
+
+================================================================================
+8. VERIFICATION RESULTS
+================================================================================
+
+Backend (24/24):
+  [PASS] main.py syntax valid
+  [PASS] event_detection key in _lm_build_ai_context return
+  [PASS] event_detection capped at 8 events
+  [PASS] event_detection is None if missing
+  [PASS] ai-analyze auto-refreshes event_detection
+  [PASS] ai-analyze source_context_at has latest_events
+  [PASS] ai-analyze does NOT create LiveMonitorEvent for detect
+  [PASS] ai-consensus auto-refreshes event_detection
+  [PASS] ai-consensus source_context_at has latest_events
+  [PASS] ai-chat lazy-inits event_detection if missing
+  [PASS] ai-chat no commit for event detection
+  [PASS] System prompt has EVENT DETECTION section
+  [PASS] System prompt warns no candle invention
+  [PASS] System prompt: no trade on detected event
+  [PASS] System prompt: risk severity reduces confidence
+  [PASS] _lm_detect_setup_events intact
+  [PASS] _lm_attach_event_detection intact
+  [PASS] detect-events endpoint intact
+  [PASS] detect-events-all intact
+  [PASS] event_detection_keys dedup intact
+  [PASS] No DB schema change
+  [PASS] No auto trading
+  [PASS] No fake candle events
+  [PASS] Phase 6.6 + 6.5 intact
+
+Frontend (25/25):
+  [PASS] _lmDetectAgeHtml helper defined
+  [PASS] #lmDetectAge span rendered in card header
+  [PASS] Stale label: Fresh if < 120s
+  [PASS] Stale label: Stale if >= 120s
+  [PASS] Stale label: No detection if missing
+  [PASS] Detect handler updates age label on success
+  [PASS] Auto-detect loop updates age label
+  [PASS] _lmAutoDetect state var initialized from localStorage
+  [PASS] _lmAutoDetectTimer var defined
+  [PASS] _lmAutoDetectRunning var defined
+  [PASS] _lmStartAutoDetect function defined
+  [PASS] _lmStopAutoDetect function defined
+  [PASS] Auto Detect button rendered (#lmAutoDetectBtn)
+  [PASS] Auto Detect button data attribute
+  [PASS] Auto toggle handler wired
+  [PASS] Toggle persists to localStorage
+  [PASS] Auto loop calls detect-events only (not ai-analyze)
+  [PASS] Auto loop skips if already running
+  [PASS] Timer cleared when item changes
+  [PASS] _lmRenderRight stops timer on null item
+  [PASS] Auto-detect respects instructions view
+  [PASS] Auto-detect 60s interval
+  [PASS] No API key in frontend
+  [PASS] No second chatbox
+  [PASS] templates/index.html not modified
+
+Total: 49/49 checks passed.
+
+
+================================================================================
+9. PHASE 6.8 COMPLETE
+================================================================================
+
+  Phase 6.8 Event-Aware AI + Light Watch Loop is complete.
+
+  All 8 tasks verified:
+
+  Task 0  — Audit (no code change)
+  Task 1  — event_detection in AI context (compact, max 8 events, None-safe)
+  Task 2  — ai-analyze auto-refreshes event_detection + latest_events field
+  Task 3  — ai-consensus auto-refreshes event_detection + latest_events field
+  Task 4  — ai-chat lazy-init event_detection (in-memory, no commit)
+  Task 5  — AI system prompt EVENT DETECTION section
+  Task 6  — Stale/Fresh label near Detect button
+  Task 7  — Auto Detect toggle (60s, selected item only, localStorage, safe)
+  Task 8  — Final QA: 49/49 checks passed
+
+  Commit: 89b2cee — pushed to main.
+
+
+================================================================================
+END OF PHASE 6.8 REPORT
+================================================================================
+PHASE 6.8 COMPLETE — COMMIT: 89b2cee — BRANCH: main
+================================================================================
