@@ -9548,10 +9548,11 @@ def _lm_extract_candle_features(candles: list) -> dict:
         compression   = bool(raw_atr_price < span_50 * 0.05)
 
     # ── Breakout context ───────────────────────────────────────────────────
+    # Use prev range (excluding last candle) so last_close can exceed the boundary
     breakout_context = "inside_range"
-    if last_close > range_high_50:
+    if last_close > prev_range_high_50:
         breakout_context = "above_range"
-    elif last_close < range_low_50:
+    elif last_close < prev_range_low_50:
         breakout_context = "below_range"
 
     return {
