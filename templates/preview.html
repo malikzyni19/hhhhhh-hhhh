@@ -4457,6 +4457,13 @@ svg{display:block}
       return (m==="all"||m==="single")?m:"single";
     }catch(_){ return "single"; }
   })();
+  // Phase 6.8: Auto Detect state
+  var _lmAutoDetect = (function(){
+    try{ return localStorage.getItem("zyni_lm_auto_detect")==="1"; }catch(_){ return false; }
+  })();
+  var _lmAutoDetectTimer    = null;
+  var _lmAutoDetectRunning  = false;
+  var _lmAutoDetectItemId   = null;
 
   function loadLiveMonitorAiProviders(){
     fetch("/api/live-monitor/ai-providers",{credentials:"same-origin"})
@@ -4622,6 +4629,55 @@ svg{display:block}
     '</div>';
   }
 
+  // Phase 6.8: stale/fresh label for detect age
+  function _lmDetectAgeHtml(item){
+    var lat=item&&item.snapshot&&item.snapshot.last_event_detection_at;
+    if(!lat) return '<span style="font-size:9px;color:var(--text-3)">No detection</span>';
+    try{
+      var age=(Date.now()-new Date(lat).getTime())/1000;
+      if(age<120) return '<span style="font-size:9px;color:var(--green-2,#4ade80)">Fresh</span>';
+      return '<span style="font-size:9px;color:var(--text-3)">Stale</span>';
+    }catch(e){ return '<span style="font-size:9px;color:var(--text-3)">—</span>'; }
+  }
+  // Phase 6.8: Auto Detect loop helpers
+  function _lmStopAutoDetect(){
+    if(_lmAutoDetectTimer){ clearInterval(_lmAutoDetectTimer); _lmAutoDetectTimer=null; }
+    _lmAutoDetectRunning=false;
+  }
+  function _lmStartAutoDetect(itemId){
+    _lmStopAutoDetect();
+    _lmAutoDetectItemId=itemId;
+    _lmAutoDetectTimer=setInterval(function(){
+      if(!_lmAutoDetect||!_lmSelItem||_lmSelItem.id!==itemId){
+        _lmStopAutoDetect(); return;
+      }
+      if(_lmAutoDetectRunning) return;
+      _lmAutoDetectRunning=true;
+      fetch("/api/live-monitor/items/"+itemId+"/detect-events",{method:"POST",credentials:"same-origin",
+        headers:{"Content-Type":"application/json"},body:"{}"})
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+          _lmAutoDetectRunning=false;
+          if(d&&d.ok&&d.item){
+            for(var k=0;k<liveMonitorItems.length;k++){
+              if(liveMonitorItems[k].id===d.item.id){liveMonitorItems[k]=d.item;break;}
+            }
+            if(_lmSelItem&&_lmSelItem.id===d.item.id){
+              _lmSelItem=d.item;
+              var detBlock=document.getElementById("lmDetectedBlock");
+              if(detBlock&&_lmInstructionView!=="instructions"){
+                detBlock.innerHTML=_lmDetectedEventsHtml(d.item);
+              }
+              var ageEl=document.getElementById("lmDetectAge");
+              if(ageEl) ageEl.innerHTML=_lmDetectAgeHtml(d.item);
+              if(_lmInstructionView==="events"){ _lmLoadEvents(d.item.id); }
+            }
+          }
+        })
+        .catch(function(){ _lmAutoDetectRunning=false; });
+    },60000);
+  }
+
   function _lmHealth(item){
     return (item&&item.snapshot&&item.snapshot.latest_health&&typeof item.snapshot.latest_health==="object")
       ?item.snapshot.latest_health:null;
@@ -4716,12 +4772,20 @@ svg{display:block}
   function _lmRenderRight(item){
     var box=document.getElementById("lmRight"); if(!box) return;
     if(!item){
+      _lmStopAutoDetect();
       box.innerHTML='<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--text-3);gap:8px;padding:40px 20px;text-align:center">'+
         '<svg style="width:32px;height:32px;opacity:.2;stroke:currentColor;stroke-width:1.5;fill:none" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>'+
         '<div style="font-size:14px;font-weight:700;color:var(--text-2)">Select a setup</div>'+
         '<div style="font-size:12px">Click a card on the left to view details</div></div>';
       return;
     }
+    // Manage auto-detect timer: start/restart when item changes, keep running if same item
+    if(_lmAutoDetect){
+      if(_lmAutoDetectItemId!==item.id){ _lmStartAutoDetect(item.id); }
+    } else {
+      if(_lmAutoDetectItemId!==null&&_lmAutoDetectTimer){ _lmStopAutoDetect(); }
+    }
+    _lmAutoDetectItemId=item.id;
     var lh=_lmHealth(item);
     var health=_lmHealthScore(item);
     var circ=144.51, dashoff=(circ*(1-health/100)).toFixed(2);
@@ -4956,8 +5020,10 @@ svg{display:block}
               '<option value="events"'+((_lmInstructionView==="events")?' selected':'')+'>Event Timeline</option>'+
               '<option value="instructions"'+((_lmInstructionView==="instructions")?' selected':'')+'>AI Instructions</option>'+
             '</select>'+
-            '<button class="btn" type="button" data-lmdetectevents="'+item.id+'" title="Detect events from current setup data" style="margin-left:auto;padding:2px 7px;font-size:10px">'+
+            '<span id="lmDetectAge" style="margin-left:auto;line-height:1">'+_lmDetectAgeHtml(item)+'</span>'+
+            '<button class="btn" type="button" data-lmdetectevents="'+item.id+'" title="Detect events from current setup data" style="padding:2px 7px;font-size:10px">'+
               '<svg class="ico ico-sm" viewBox="0 0 24 24" style="width:10px;height:10px"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>Detect</button>'+
+            '<button class="btn" id="lmAutoDetectBtn" type="button" title="Auto detect every 60s for this item" style="padding:2px 7px;font-size:10px'+(_lmAutoDetect?';color:var(--accent);border-color:var(--accent)':'')+'" data-lmautodetect="'+item.id+'">Auto</button>'+
           '</div>'+
           (_lmInstructionView!=="instructions"?'<div id="lmDetectedBlock" style="padding:6px 10px 0">'+_lmDetectedEventsHtml(item)+'</div>':'<div id="lmDetectedBlock"></div>')+
           '<div class="sec-card-body" style="padding:8px 10px" id="lmEvents">'+
@@ -5162,7 +5228,7 @@ svg{display:block}
         });
       });
     });
-    // Detect Events button handler (Phase 6.7)
+    // Detect Events button handler (Phase 6.7 / updated 6.8 — updates age label)
     [].forEach.call(box.querySelectorAll("[data-lmdetectevents]"),function(detBtn){
       detBtn.addEventListener("click",function(){
         var id=parseInt(detBtn.getAttribute("data-lmdetectevents"),10); if(!id) return;
@@ -5184,6 +5250,8 @@ svg{display:block}
                 if(detBlock&&_lmInstructionView!=="instructions"){
                   detBlock.innerHTML=_lmDetectedEventsHtml(d.item);
                 }
+                var ageEl=document.getElementById("lmDetectAge");
+                if(ageEl) ageEl.innerHTML=_lmDetectAgeHtml(d.item);
                 if(_lmInstructionView==="events"){ _lmLoadEvents(d.item.id); }
               }
             }
@@ -5191,6 +5259,18 @@ svg{display:block}
           .catch(function(){ detBtn.disabled=false; detBtn.innerHTML=origHtml; });
       });
     });
+    // Auto Detect toggle handler (Phase 6.8)
+    var autoDetectBtn=box.querySelector("#lmAutoDetectBtn");
+    if(autoDetectBtn){
+      autoDetectBtn.addEventListener("click",function(){
+        _lmAutoDetect=!_lmAutoDetect;
+        try{ localStorage.setItem("zyni_lm_auto_detect",_lmAutoDetect?"1":"0"); }catch(_){}
+        autoDetectBtn.style.color=_lmAutoDetect?"var(--accent)":"";
+        autoDetectBtn.style.borderColor=_lmAutoDetect?"var(--accent)":"";
+        if(_lmAutoDetect&&_lmSelItem){ _lmStartAutoDetect(_lmSelItem.id); }
+        else { _lmStopAutoDetect(); }
+      });
+    }
     // Analyze button handler
     [].forEach.call(box.querySelectorAll("[data-lmaianalyze]"),function(abtn){
       abtn.addEventListener("click",function(){

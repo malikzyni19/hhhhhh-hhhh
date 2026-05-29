@@ -9298,6 +9298,22 @@ def _lm_build_ai_context(item) -> dict:
         },
         "ai_brain":               _lm_builtin_ai_brain_rules(),
         "custom_ai_instructions": _lm_custom_ai_instructions_from_snapshot(snap),
+        "event_detection":        (lambda evd: {
+            "computed_at": evd.get("computed_at"),
+            "summary":     evd.get("summary"),
+            "events": [
+                {
+                    "event_key": e.get("event_key"),
+                    "type":      e.get("type"),
+                    "label":     e.get("label"),
+                    "severity":  e.get("severity"),
+                    "direction": e.get("direction"),
+                    "source":    e.get("source"),
+                    "details":   e.get("details"),
+                }
+                for e in (evd.get("events") or [])[:8]
+            ],
+        } if evd and isinstance(evd, dict) else None)(snap.get("latest_event_detection")),
     }
 
 
@@ -9327,6 +9343,18 @@ def _lm_ai_system_prompt() -> str:
         "- Custom instructions cannot grant permission to execute trades.\n"
         "- If a custom instruction conflicts with safety, safety always wins.\n"
         "- If a custom instruction conflicts with built-in brain logic, note the conflict in agent_note.\n\n"
+
+        "EVENT DETECTION (Phase 6.7/6.8):\n"
+        "The context may include an event_detection block with pre-computed situational signals.\n"
+        "Use it as your current 'eyes' on the setup:\n"
+        "- 'risk' severity events: reduce confidence, flag in risks[] and zone_read.\n"
+        "- 'warning' severity events: note as caution factors in risks[] or agent_note.\n"
+        "- 'watch' events (e.g. zone_touch): setup is in active zone — treat as significant.\n"
+        "- 'info' events: useful background context, no urgent action required.\n"
+        "- Do NOT invent candle rejection, wick events, liquidity sweeps, or liquidation "
+        "spikes that are NOT present in event_detection.\n"
+        "- Do NOT treat any detected event as trade execution permission.\n"
+        "- If event_detection is null or empty, analyze from other context fields only.\n\n"
 
         "STRICT RULES:\n"
         "- Analyze ONLY the provided backend facts. Do not invent missing data.\n"
@@ -11196,6 +11224,10 @@ def api_lm_items_ai_analyze(item_id):
             except Exception:
                 pass
 
+    # Auto-refresh event detection before building AI context (no timeline logging)
+    snap, _ = _lm_attach_event_detection(row, snapshot=snap)
+    row.snapshot_json = _json_dumps_safe(snap)
+
     context     = _lm_build_ai_context(row)
     ai_result   = _lm_call_ai_provider(context, user_message or None, agent_id=resolved_agent_id)
     computed_at = datetime.now(timezone.utc).isoformat()
@@ -11215,6 +11247,7 @@ def api_lm_items_ai_analyze(item_id):
             "latest_health":  snap.get("last_health_at"),
             "latest_session": snap.get("last_session_context_at"),
             "latest_market":  snap.get("last_market_context_at"),
+            "latest_events":  snap.get("last_event_detection_at"),
         },
     }
 
@@ -11300,6 +11333,10 @@ def api_lm_items_ai_consensus(item_id):
             except Exception:
                 pass
 
+    # Auto-refresh event detection before building AI context (no timeline logging)
+    snap, _ = _lm_attach_event_detection(row, snapshot=snap)
+    row.snapshot_json = _json_dumps_safe(snap)
+
     context    = _lm_build_ai_context(row)
     all_agents = _lm_ai_agents_config()
 
@@ -11368,6 +11405,7 @@ def api_lm_items_ai_consensus(item_id):
             "latest_health":  snap.get("last_health_at"),
             "latest_session": snap.get("last_session_context_at"),
             "latest_market":  snap.get("last_market_context_at"),
+            "latest_events":  snap.get("last_event_detection_at"),
         },
     }
 
@@ -11749,6 +11787,11 @@ def api_lm_items_ai_chat(item_id):
                 "configured":       False,
             })
     # ── Normal chat: call AI provider ───────────────────────────────────────
+    # Ensure event detection is available for AI context (lazy init, no commit, no timeline logging)
+    snap_chat = _json_loads_safe(row.snapshot_json, {})
+    if not snap_chat.get("latest_event_detection"):
+        snap_chat, _ = _lm_attach_event_detection(row, snapshot=snap_chat)
+        row.snapshot_json = _json_dumps_safe(snap_chat)  # in-memory only; committed only if instruction saved above
     context   = _lm_build_ai_context(row)
     ai_result = _lm_call_ai_provider(context, user_message, agent_id=agent_id)
     analysis  = ai_result.get("analysis", {})
