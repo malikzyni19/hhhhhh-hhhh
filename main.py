@@ -9350,8 +9350,14 @@ def _lm_extract_candle_features(candles: list) -> dict:
             trend_slope_20 = round(slope / y_mean * 100, 4)  # % per candle
 
     # ── Strong rejection candle ────────────────────────────────────────────
-    # Wick > 60% of range on either side and body < 30%
-    strong_rejection = bool(body_pct < 30 and (upper_wick_pct > 60 or lower_wick_pct > 60))
+    # bullish = strong lower wick (buyers rejected lower prices)
+    # bearish = strong upper wick (sellers rejected higher prices)
+    if body_pct < 30 and lower_wick_pct > 60:
+        strong_rejection = "bullish"
+    elif body_pct < 30 and upper_wick_pct > 60:
+        strong_rejection = "bearish"
+    else:
+        strong_rejection = "none"
 
     # ── Compression (low ATR relative to 50-candle span) ──────────────────
     compression = False
@@ -9360,31 +9366,29 @@ def _lm_extract_candle_features(candles: list) -> dict:
         compression   = bool(raw_atr_price < span_50 * 0.05)
 
     # ── Breakout context ───────────────────────────────────────────────────
-    breakout_context = "none"
-    if n >= 3:
-        prev_high = max(c["high"] for c in candles[-4:-1])
-        prev_low  = min(c["low"]  for c in candles[-4:-1])
-        if last_close > prev_high:
-            breakout_context = "bullish_breakout"
-        elif last_close < prev_low:
-            breakout_context = "bearish_breakout"
+    breakout_context = "inside_range"
+    if last_close > range_high_50:
+        breakout_context = "above_range"
+    elif last_close < range_low_50:
+        breakout_context = "below_range"
 
     return {
-        "candle_count":       n,
-        "last_close":         round(last_close, 6),
-        "body_pct":           body_pct,
-        "upper_wick_pct":     upper_wick_pct,
-        "lower_wick_pct":     lower_wick_pct,
-        "vol_ratio_vs_20":    vol_ratio,
-        "vol_avg_20":         round(vol_avg_20, 4),
-        "atr_14_pct":         atr_14,
-        "range_high_50":      round(range_high_50, 6),
-        "range_low_50":       round(range_low_50, 6),
-        "price_position_50":  price_position_50,
-        "trend_slope_20_pct": trend_slope_20,
-        "strong_rejection":   strong_rejection,
-        "compression":        compression,
-        "breakout_context":   breakout_context,
+        "candle_count":         n,
+        "last_close":           round(last_close, 6),
+        "last_candle_body_pct": body_pct,
+        "last_upper_wick_pct":  upper_wick_pct,
+        "last_lower_wick_pct":  lower_wick_pct,
+        "last_volume":          round(vols[-1], 4),
+        "avg_volume_20":        round(vol_avg_20, 4),
+        "volume_spike_ratio":   vol_ratio,
+        "atr_14":               atr_14,
+        "range_high_50":        round(range_high_50, 6),
+        "range_low_50":         round(range_low_50, 6),
+        "price_position_50":    price_position_50,
+        "trend_slope_20":       trend_slope_20,
+        "strong_rejection":     strong_rejection,
+        "compression":          compression,
+        "breakout_context":     breakout_context,
     }
 
 
@@ -9397,11 +9401,10 @@ def _lm_attach_candle_features(row, interval: str = None, limit: int = 1000) -> 
     """
     snap = _json_loads_safe(getattr(row, "snapshot_json", None), {})
 
-    # Resolve interval: param → snapshot default → fallback "1h"
+    # Resolve interval: param → row.timeframe → fallback "15m"
     if not interval or interval not in _LM_ALLOWED_CANDLE_INTERVALS:
-        interval = snap.get("candle_interval_default") or "1h"
-    if interval not in _LM_ALLOWED_CANDLE_INTERVALS:
-        interval = "1h"
+        tf = (getattr(row, "timeframe", None) or "").strip()
+        interval = tf if tf in _LM_ALLOWED_CANDLE_INTERVALS else "15m"
 
     limit  = max(5, min(limit, 4000))
     symbol = (getattr(row, "symbol", None) or "").upper().strip()
@@ -11985,7 +11988,7 @@ def api_lm_items_refresh_candles(item_id):
     seen_key   = "candle_refresh_first_logged"
     first_time = not snap.get(seen_key)
     if first_time and features:
-        used_interval = snap.get("latest_candle_features", {}).get("interval", interval or "1h")
+        used_interval = snap.get("latest_candle_features", {}).get("interval", interval or "15m")
         evt = LiveMonitorEvent(
             item_id=row.id,
             event_type="candle_refresh",
@@ -11994,13 +11997,14 @@ def api_lm_items_refresh_candles(item_id):
             details_json=_json_dumps_safe({
                 "interval":     used_interval,
                 "candle_count": features.get("candle_count"),
-                "atr_14_pct":   features.get("atr_14_pct"),
+                "atr_14":       features.get("atr_14"),
             }),
         )
         _db.session.add(evt)
         snap[seen_key] = True
         row.snapshot_json = _json_dumps_safe(snap)
 
+    row.updated_at = datetime.utcnow()
     _db.session.flush()
     _db.session.commit()
 

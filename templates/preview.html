@@ -4636,16 +4636,20 @@ svg{display:block}
     var f=cf.features;
     var when=cf.computed_at?(' &middot; '+esc(_lmAgo(cf.computed_at))):'';
     var intv=cf.interval?(' &middot; <b>'+esc(cf.interval)+'</b>'):'';
+    var _rejColor={'bullish':'var(--green-2,#4ade80)','bearish':'var(--red-2,#f87171)'};
+    var _rejHtml=f.strong_rejection&&f.strong_rejection!=='none'
+      ?'<span style="color:'+(_rejColor[f.strong_rejection]||'var(--accent)')+'">'+esc(f.strong_rejection)+'</span>'
+      :'<span style="color:var(--text-3)">none</span>';
     var rows=[
       ['Candles',f.candle_count],
       ['Last close',f.last_close],
-      ['ATR-14 %',f.atr_14_pct+'%'],
-      ['Body/Wick',f.body_pct+'% body | '+f.upper_wick_pct+'% up-wick | '+f.lower_wick_pct+'% lo-wick'],
-      ['Vol ratio',f.vol_ratio_vs_20+'&times; avg-20'],
-      ['Price pos-50',Math.round(f.price_position_50*100)+'% of 50c range'],
-      ['Trend slope',f.trend_slope_20_pct+'% / candle'],
-      ['Breakout',f.breakout_context||'none'],
-      ['Rejection',f.strong_rejection?'<span style="color:var(--accent)">Yes</span>':'No'],
+      ['ATR-14 %',(f.atr_14||0)+'%'],
+      ['Body/Wick',(f.last_candle_body_pct||0)+'% body | '+(f.last_upper_wick_pct||0)+'% up | '+(f.last_lower_wick_pct||0)+'% lo'],
+      ['Vol spike',(f.volume_spike_ratio||0)+'&times; avg-20'],
+      ['Price pos-50',Math.round((f.price_position_50||0)*100)+'% of 50c range'],
+      ['Trend slope',(f.trend_slope_20||0)+'% / candle'],
+      ['Breakout',esc(f.breakout_context||'inside_range')],
+      ['Rejection',_rejHtml],
       ['Compression',f.compression?'<span style="color:var(--yellow-2,#f59e0b)">Yes</span>':'No'],
     ];
     var rowsHtml=rows.map(function(r){
@@ -5299,8 +5303,12 @@ svg{display:block}
         var origHtml=cBtn.innerHTML;
         cBtn.disabled=true;
         cBtn.innerHTML='<svg class="ico ico-sm" viewBox="0 0 24 24" style="width:10px;height:10px"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>…';
+        var _cAllowedIntv=["5m","15m","30m","1h","4h","1d"];
+        var _cItem=null;
+        for(var ci=0;ci<liveMonitorItems.length;ci++){ if(liveMonitorItems[ci].id===id){_cItem=liveMonitorItems[ci];break;} }
+        var _cTf=_cItem&&_cItem.timeframe&&_cAllowedIntv.indexOf(_cItem.timeframe)>=0?_cItem.timeframe:"15m";
         fetch("/api/live-monitor/items/"+id+"/refresh-candles",{method:"POST",credentials:"same-origin",
-          headers:{"Content-Type":"application/json"},body:"{}"})
+          headers:{"Content-Type":"application/json"},body:JSON.stringify({interval:_cTf,limit:1000})})
           .then(function(r){ return r.json(); })
           .then(function(d){
             cBtn.disabled=false; cBtn.innerHTML=origHtml;
