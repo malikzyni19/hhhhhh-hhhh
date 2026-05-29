@@ -9385,6 +9385,37 @@ def _lm_attach_event_detection(row, snapshot=None) -> tuple:
 _LM_ALLOWED_CANDLE_INTERVALS = {"5m", "15m", "30m", "1h", "4h", "1d"}
 _BINANCE_KLINE_MAX            = 1500   # Binance hard limit per request
 
+# Process-level TTL cache: "symbol:interval" → {"ts": float, "candles": list}
+_lm_candle_ttl_cache: Dict[str, Any] = {}
+_lm_candle_ttl_lock  = threading.Lock()
+
+
+def _lm_get_candles_for_features(symbol: str, interval: str, limit: int = 1000, ttl: int = 60) -> list:
+    """Return candles from process-level TTL cache; fetch only when stale or missing.
+
+    TTL default 60s so batch detect-all loops share one fetch per symbol.
+    Returns at most *limit* candles (the most recent ones).
+    """
+    key = f"{symbol}:{interval}"
+    now = time.time()
+    with _lm_candle_ttl_lock:
+        entry = _lm_candle_ttl_cache.get(key)
+        if entry and (now - entry["ts"]) < ttl:
+            cached = entry["candles"]
+            return cached[-limit:] if len(cached) >= limit else cached
+    candles = _lm_fetch_futures_candles(symbol, interval, limit=limit)
+    if candles:
+        with _lm_candle_ttl_lock:
+            _lm_candle_ttl_cache[key] = {"ts": time.time(), "candles": candles}
+    return candles
+
+
+def _lm_candle_cache_bust(symbol: str, interval: str) -> None:
+    """Remove a symbol:interval entry from the TTL cache (forces next call to re-fetch)."""
+    key = f"{symbol}:{interval}"
+    with _lm_candle_ttl_lock:
+        _lm_candle_ttl_cache.pop(key, None)
+
 
 def _lm_fetch_futures_candles(symbol: str, interval: str, limit: int = 4000) -> list:
     """Fetch Binance Futures klines for *symbol* / *interval*.
@@ -9616,7 +9647,7 @@ def _lm_attach_candle_features(row, interval: str = None, limit: int = 1000) -> 
     if not symbol:
         return snap, {}
 
-    candles  = _lm_fetch_futures_candles(symbol, interval, limit=limit)
+    candles  = _lm_get_candles_for_features(symbol, interval, limit=limit)
     features = _lm_extract_candle_features(candles)
 
     now_iso = datetime.utcnow().isoformat() + "Z"
@@ -12397,6 +12428,14 @@ def api_lm_items_refresh_candles(item_id):
     except (TypeError, ValueError):
         limit = 1000
     limit = max(5, min(limit, 4000))
+
+    # Bust the TTL cache so the user gets truly fresh candles on manual refresh
+    resolved_interval = interval if interval else (
+        (getattr(row, "timeframe", None) or "").strip() or "15m"
+    )
+    if resolved_interval not in _LM_ALLOWED_CANDLE_INTERVALS:
+        resolved_interval = "15m"
+    _lm_candle_cache_bust((getattr(row, "symbol", "") or "").upper().strip(), resolved_interval)
 
     try:
         snap, features = _lm_attach_candle_features(row, interval=interval, limit=limit)
