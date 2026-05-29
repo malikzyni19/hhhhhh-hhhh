@@ -4645,6 +4645,8 @@ svg{display:block}
       ['Last close',f.last_close],
       ['ATR-14 %',(f.atr_14||0)+'%'],
       ['Body/Wick',(f.last_candle_body_pct||0)+'% body | '+(f.last_upper_wick_pct||0)+'% up | '+(f.last_lower_wick_pct||0)+'% lo'],
+      ['Last vol',(f.last_volume||0)],
+      ['Avg vol-20',(f.avg_volume_20||0)],
       ['Vol spike',(f.volume_spike_ratio||0)+'&times; avg-20'],
       ['Price pos-50',Math.round((f.price_position_50||0)*100)+'% of 50c range'],
       ['Trend slope',(f.trend_slope_20||0)+'% / candle'],

@@ -9149,6 +9149,179 @@ def _lm_detect_setup_events(row, snapshot=None) -> dict:
             },
         })
 
+    # ── 7. Candle-feature events (Phase 7.1) ─────────────────────────────────
+    cf_block   = snap.get("latest_candle_features") or {}
+    cf         = cf_block.get("features") or {}
+    if cf:
+        rej      = (cf.get("strong_rejection") or "none").lower()
+        vol_rat  = cf.get("volume_spike_ratio") or 0.0
+        compress = cf.get("compression", False)
+        bk_ctx   = (cf.get("breakout_context") or "inside_range").lower()
+        last_lo  = cf.get("last_low")
+        last_hi  = cf.get("last_high")
+        last_cl  = cf.get("last_close")
+        p_hi50   = cf.get("prev_range_high_50")
+        p_lo50   = cf.get("prev_range_low_50")
+
+        # 7a. Wick rejection event
+        if rej in ("bullish", "bearish"):
+            aligns = (rej == "bullish" and "bull" in direction) or \
+                     (rej == "bearish" and "bear" in direction)
+            events.append({
+                "event_key": f"candle_wick_rejection_{rej}",
+                "type":      "candle_wick_rejection",
+                "label":     f"{'Bullish' if rej=='bullish' else 'Bearish'} wick rejection on last candle",
+                "severity":  "watch" if aligns else "warning",
+                "direction": direction,
+                "source":    "candle_features",
+                "details": {
+                    "rejection_type":   rej,
+                    "aligns_with_setup": aligns,
+                    "body_pct":         cf.get("last_candle_body_pct"),
+                    "upper_wick_pct":   cf.get("last_upper_wick_pct"),
+                    "lower_wick_pct":   cf.get("last_lower_wick_pct"),
+                },
+            })
+
+        # 7b. Volume spike event
+        if vol_rat >= 1.5:
+            events.append({
+                "event_key": "candle_volume_spike",
+                "type":      "candle_volume_spike",
+                "label":     f"Volume spike — {vol_rat:.1f}× 20-candle average",
+                "severity":  "watch" if vol_rat >= 2.0 else "info",
+                "direction": direction,
+                "source":    "candle_features",
+                "details": {
+                    "volume_spike_ratio": vol_rat,
+                    "last_volume":        cf.get("last_volume"),
+                    "avg_volume_20":      cf.get("avg_volume_20"),
+                },
+            })
+
+        # 7c. Compression event
+        if compress:
+            events.append({
+                "event_key": "candle_compression",
+                "type":      "candle_compression",
+                "label":     "Price compressed — ATR below 5% of 50-candle range",
+                "severity":  "watch",
+                "direction": direction,
+                "source":    "candle_features",
+                "details": {
+                    "atr_14":        cf.get("atr_14"),
+                    "range_high_50": cf.get("range_high_50"),
+                    "range_low_50":  cf.get("range_low_50"),
+                },
+            })
+
+        # 7d. Breakout context event
+        if bk_ctx in ("above_range", "below_range"):
+            aligns_bk = (bk_ctx == "above_range" and "bull" in direction) or \
+                        (bk_ctx == "below_range" and "bear" in direction)
+            events.append({
+                "event_key": f"candle_breakout_{bk_ctx}",
+                "type":      "candle_breakout_context",
+                "label":     f"Price {'above' if bk_ctx=='above_range' else 'below'} 50-candle range",
+                "severity":  "watch" if aligns_bk else "warning",
+                "direction": direction,
+                "source":    "candle_features",
+                "details": {
+                    "breakout_context": bk_ctx,
+                    "aligns_with_setup": aligns_bk,
+                    "range_high_50":    cf.get("range_high_50"),
+                    "range_low_50":     cf.get("range_low_50"),
+                },
+            })
+
+        # ── 8. OB/FIB reaction near zone (Task 4) ────────────────────────────
+        is_ob_fib = any(k in (setup_type or "").lower()
+                        for k in ("ob", "order_block", "order block",
+                                  "fib", "fibonacci"))
+        price_in_zone = (z_hi is not None and z_lo is not None and
+                         price is not None and z_lo <= price <= z_hi)
+        price_near_zone = False
+        if not price_in_zone and z_hi is not None and z_lo is not None and price is not None:
+            zone_mid  = (z_hi + z_lo) / 2.0
+            zone_size = max(z_hi - z_lo, 0.0001)
+            dist_pct  = (min(abs(price - z_hi), abs(price - z_lo)) / zone_mid * 100.0
+                         if zone_mid else None)
+            price_near_zone = dist_pct is not None and dist_pct <= 1.5
+
+        if is_ob_fib and (price_in_zone or price_near_zone) and rej in ("bullish", "bearish"):
+            zone_lbl = "OB" if any(k in (setup_type or "").lower()
+                                   for k in ("ob", "order_block", "order block")) else "FIB"
+            aligns_rej = (rej == "bullish" and "bull" in direction) or \
+                         (rej == "bearish" and "bear" in direction)
+            if aligns_rej:
+                events.append({
+                    "event_key": f"setup_reaction_near_zone_{rej}",
+                    "type":      "setup_reaction_near_zone",
+                    "label":     f"{'Bullish' if rej=='bullish' else 'Bearish'} rejection near {zone_lbl} zone",
+                    "severity":  "watch",
+                    "direction": direction,
+                    "source":    "candle_features",
+                    "details": {
+                        "setup_type":     setup_type,
+                        "zone_label":     zone_lbl,
+                        "rejection_type": rej,
+                        "price_in_zone":  price_in_zone,
+                    },
+                })
+            else:
+                events.append({
+                    "event_key": f"candle_rejection_against_setup_{rej}",
+                    "type":      "candle_rejection_against_setup",
+                    "label":     f"Rejection against setup direction near {zone_lbl} zone",
+                    "severity":  "warning",
+                    "direction": direction,
+                    "source":    "candle_features",
+                    "details": {
+                        "setup_type":     setup_type,
+                        "zone_label":     zone_lbl,
+                        "rejection_type": rej,
+                        "price_in_zone":  price_in_zone,
+                    },
+                })
+
+        # ── 9. Sweep-style rejection detector (Task 5) ───────────────────────
+        if (last_lo is not None and last_cl is not None and
+                last_hi is not None and p_hi50 is not None and p_lo50 is not None):
+            bullish_sweep_style = (last_lo < p_lo50 and last_cl > p_lo50 and rej == "bullish")
+            bearish_sweep_style = (last_hi > p_hi50 and last_cl < p_hi50 and rej == "bearish")
+            if bullish_sweep_style:
+                events.append({
+                    "event_key": "range_sweep_style_rejection_bullish",
+                    "type":      "range_sweep_style_rejection",
+                    "label":     "Sweep-style bullish rejection below prev range low (not confirmed sweep)",
+                    "severity":  "watch",
+                    "direction": direction,
+                    "source":    "candle_features",
+                    "details": {
+                        "last_low":          last_lo,
+                        "last_close":        last_cl,
+                        "prev_range_low_50": p_lo50,
+                        "strong_rejection":  rej,
+                        "note": "Wick dipped below prev range low and closed back above — sweep-style only",
+                    },
+                })
+            elif bearish_sweep_style:
+                events.append({
+                    "event_key": "range_sweep_style_rejection_bearish",
+                    "type":      "range_sweep_style_rejection",
+                    "label":     "Sweep-style bearish rejection above prev range high (not confirmed sweep)",
+                    "severity":  "watch",
+                    "direction": direction,
+                    "source":    "candle_features",
+                    "details": {
+                        "last_high":          last_hi,
+                        "last_close":         last_cl,
+                        "prev_range_high_50": p_hi50,
+                        "strong_rejection":   rej,
+                        "note": "Wick pushed above prev range high and closed back below — sweep-style only",
+                    },
+                })
+
     now_iso = _dt.datetime.now(_tz.utc).isoformat()
     severity_order = {"risk": 0, "warning": 1, "watch": 2, "info": 3}
     events.sort(key=lambda e: severity_order.get(e.get("severity", "info"), 3))
@@ -9336,6 +9509,15 @@ def _lm_extract_candle_features(candles: list) -> dict:
     if span_50 > 0:
         price_position_50 = round((last_close - range_low_50) / span_50, 3)
 
+    # ── Previous 50-candle range (excluding last candle) ──────────────────
+    if n >= 2:
+        prev_window = candles[-51:-1] if n >= 51 else candles[:-1]
+        prev_range_high_50 = round(max(c["high"] for c in prev_window), 6)
+        prev_range_low_50  = round(min(c["low"]  for c in prev_window), 6)
+    else:
+        prev_range_high_50 = range_high_50
+        prev_range_low_50  = range_low_50
+
     # ── Trend slope (20-candle linear regression slope, normalised) ────────
     trend_slope_20 = 0.0
     if n >= 20:
@@ -9375,6 +9557,9 @@ def _lm_extract_candle_features(candles: list) -> dict:
     return {
         "candle_count":         n,
         "last_close":           round(last_close, 6),
+        "last_open":            round(opens[-1], 6),
+        "last_high":            round(highs[-1], 6),
+        "last_low":             round(lows[-1], 6),
         "last_candle_body_pct": body_pct,
         "last_upper_wick_pct":  upper_wick_pct,
         "last_lower_wick_pct":  lower_wick_pct,
@@ -9384,6 +9569,8 @@ def _lm_extract_candle_features(candles: list) -> dict:
         "atr_14":               atr_14,
         "range_high_50":        round(range_high_50, 6),
         "range_low_50":         round(range_low_50, 6),
+        "prev_range_high_50":   prev_range_high_50,
+        "prev_range_low_50":    prev_range_low_50,
         "price_position_50":    price_position_50,
         "trend_slope_20":       trend_slope_20,
         "strong_rejection":     strong_rejection,
@@ -9424,6 +9611,28 @@ def _lm_attach_candle_features(row, interval: str = None, limit: int = 1000) -> 
     snap["last_candle_features_at"] = now_iso
     row.snapshot_json = _json_dumps_safe(snap)
     return snap, features
+
+
+def _lm_maybe_refresh_candles(row, snap: dict, stale_seconds: int = 120) -> dict:
+    """Refresh candle features into snap if missing or older than stale_seconds.
+
+    Does NOT commit. Returns updated snap dict.
+    No LiveMonitorEvent created here.
+    """
+    from datetime import datetime as _dt2, timezone as _tz2
+    last_at = snap.get("last_candle_features_at")
+    needs_refresh = True
+    if last_at:
+        try:
+            age = (_dt2.now(_tz2.utc) - _dt2.fromisoformat(last_at.replace("Z", "+00:00"))).total_seconds()
+            needs_refresh = age >= stale_seconds
+        except Exception:
+            needs_refresh = True
+    if needs_refresh:
+        tf = (getattr(row, "timeframe", None) or "").strip()
+        interval = tf if tf in _LM_ALLOWED_CANDLE_INTERVALS else "15m"
+        snap, _ = _lm_attach_candle_features(row, interval=interval, limit=1000)
+    return snap
 
 
 def _lm_build_ai_context(item) -> dict:
@@ -9597,22 +9806,31 @@ def _lm_ai_system_prompt() -> str:
         "- Do NOT treat any detected event as trade execution permission.\n"
         "- If event_detection is null or empty, analyze from other context fields only.\n\n"
 
-        "CANDLE FEATURES (Phase 7):\n"
+        "CANDLE FEATURES (Phase 7.1):\n"
         "The context may include a candle_features block with compact extracted chart statistics.\n"
         "Use these as chart behavior evidence when reasoning:\n"
-        "- atr_14_pct: volatility level as % of price (high = volatile, low = compressed).\n"
-        "- body_pct / upper_wick_pct / lower_wick_pct: last candle structure.\n"
-        "- strong_rejection (true/false): large wick, small body — reversal signal candidate.\n"
-        "- compression (true/false): ATR < 5% of 50-candle range — potential breakout setup.\n"
-        "- price_position_50: 0 = at 50-candle low, 1 = at 50-candle high, 0.5 = mid-range.\n"
-        "- trend_slope_20_pct: positive = uptrend, negative = downtrend, near 0 = ranging.\n"
-        "- breakout_context: 'bullish_breakout', 'bearish_breakout', or 'none'.\n"
-        "- vol_ratio_vs_20: volume relative to 20-candle average (>1.5 = elevated volume).\n"
-        "CANDLE FEATURE RULES:\n"
-        "- Do NOT invent candle patterns not derivable from these features.\n"
-        "- Do NOT reference raw candle data — only the extracted features above.\n"
+        "- atr_14: volatility as % of price.\n"
+        "- last_candle_body_pct / last_upper_wick_pct / last_lower_wick_pct: last candle structure.\n"
+        "- strong_rejection: 'bullish' (large lower wick), 'bearish' (large upper wick), or 'none'.\n"
+        "- compression: true = ATR < 5% of 50-candle range — potential breakout setup.\n"
+        "- price_position_50: 0 = 50c low, 1 = 50c high, 0.5 = mid-range.\n"
+        "- trend_slope_20: % per candle, positive = uptrend, negative = downtrend.\n"
+        "- breakout_context: 'above_range', 'below_range', or 'inside_range'.\n"
+        "- volume_spike_ratio: last volume vs 20-candle average (>1.5 = elevated).\n"
+        "CANDLE-BASED EVENT RULES (Phase 7.1):\n"
+        "- Candle-based events (candle_wick_rejection, candle_volume_spike, candle_compression,\n"
+        "  candle_breakout_context, setup_reaction_near_zone, range_sweep_style_rejection)\n"
+        "  are EVIDENCE ONLY. They are NOT trade permission.\n"
+        "- 'range_sweep_style_rejection' means the wick dipped outside the previous range and closed\n"
+        "  back inside. This is sweep-STYLE behavior. It is NOT a confirmed liquidity sweep.\n"
+        "  Do NOT claim liquidity was swept. Do NOT use it as an entry signal.\n"
+        "- 'setup_reaction_near_zone' means a candle rejection occurred near the OB/FIB zone.\n"
+        "  This is a watch/confirmation signal only. Do NOT say 'entry confirmed'.\n"
+        "- OB/FIB reaction events mean watch closely — not trade now.\n"
+        "- Do NOT invent candle patterns not derivable from the provided features.\n"
+        "- Do NOT reference raw candle data — only use the extracted scalar features.\n"
         "- If candle_features is null, do not speculate about chart structure.\n"
-        "- Features are statistical summaries only — do not treat them as trade signals.\n"
+        "- Features are statistical summaries only. Never treat them as guaranteed signals.\n"
         "- Do NOT use candle features as permission to recommend trade execution.\n\n"
 
         "STRICT RULES:\n"
@@ -11863,7 +12081,10 @@ def api_lm_items_detect_events(item_id):
     if not row.is_active:
         return jsonify({"error": "inactive", "message": "Item is no longer active."}), 400
 
-    snap, detection = _lm_attach_event_detection(row)
+    # Auto-refresh candle features if missing or stale (>120s)
+    snap = _json_loads_safe(row.snapshot_json, {})
+    snap = _lm_maybe_refresh_candles(row, snap)
+    snap, detection = _lm_attach_event_detection(row, snapshot=snap)
 
     # Deduplication: track which event_keys have already produced a LiveMonitorEvent
     seen_keys: list = snap.get("event_detection_keys") or []
@@ -11921,7 +12142,10 @@ def api_lm_detect_events_all():
     results, errors = [], []
     for row in rows:
         try:
-            snap, detection = _lm_attach_event_detection(row)
+            # Auto-refresh candle features if missing or stale (>120s)
+            snap = _json_loads_safe(row.snapshot_json, {})
+            snap = _lm_maybe_refresh_candles(row, snap)
+            snap, detection = _lm_attach_event_detection(row, snapshot=snap)
 
             seen_keys: list = snap.get("event_detection_keys") or []
             important_types = {"zone_touch", "zone_breach_risk", "session_warning", "market_pressure"}
