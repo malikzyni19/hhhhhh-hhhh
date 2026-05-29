@@ -8897,6 +8897,282 @@ def _lm_extract_instruction_from_chat(message: str) -> dict:
     return {"text": msg[:300], "confidence": best_conf}
 
 
+# ── Phase 6.7: Event Detection Engine ────────────────────────────────────────
+
+def _lm_detect_setup_events(row, snapshot=None) -> dict:
+    """Detect important setup events from already-computed backend facts.
+    No candle data, no exchange calls, no trading logic.
+    Returns a structured detection dict with events list + summary.
+    """
+    from datetime import timezone as _tz
+    import datetime as _dt
+
+    snap  = snapshot if snapshot is not None else _json_loads_safe(getattr(row, "snapshot_json", None), {})
+    lh    = snap.get("latest_health")    or {}
+    sess  = snap.get("latest_session_context") or {}
+    mktc  = snap.get("latest_market_context")  or {}
+    ins   = _lm_custom_ai_instructions_from_snapshot(snap)
+
+    price      = row.current_price
+    zone_high  = row.zone_high
+    zone_low   = row.zone_low
+    direction  = (row.direction  or "").lower()
+    setup_type = (row.setup_type or "")
+
+    events: list = []
+
+    # ── 1. Price-to-zone proximity ────────────────────────────────────────────
+    if price is not None and zone_high is not None and zone_low is not None:
+        zone_mid  = (zone_high + zone_low) / 2.0
+        zone_size = max(zone_high - zone_low, 0.0001)
+
+        if zone_low <= price <= zone_high:
+            events.append({
+                "event_key": "zone_touch",
+                "type":      "zone_touch",
+                "label":     "Price inside zone",
+                "severity":  "watch",
+                "direction": direction,
+                "source":    "built_in",
+                "details": {
+                    "price":      price,
+                    "zone_low":   zone_low,
+                    "zone_high":  zone_high,
+                    "setup_type": setup_type,
+                },
+            })
+        else:
+            dist_pct = (min(abs(price - zone_high), abs(price - zone_low)) / zone_mid * 100.0
+                        if zone_mid else None)
+            if dist_pct is not None and dist_pct <= 1.5:
+                events.append({
+                    "event_key": "zone_near",
+                    "type":      "zone_near",
+                    "label":     f"Price near zone ({dist_pct:.2f}% away)",
+                    "severity":  "info",
+                    "direction": direction,
+                    "source":    "built_in",
+                    "details": {
+                        "price":      price,
+                        "zone_low":   zone_low,
+                        "zone_high":  zone_high,
+                        "dist_pct":   round(dist_pct, 3),
+                    },
+                })
+
+    # ── 2. Zone breach risk from health ──────────────────────────────────────
+    zone_info  = lh.get("zone") or {}
+    zone_state = (zone_info.get("state") or "").lower()
+    if zone_state in ("breach_risk", "breached", "invalidated"):
+        events.append({
+            "event_key": "zone_breach_risk",
+            "type":      "zone_breach_risk",
+            "label":     f"Zone breach risk — health: {zone_state}",
+            "severity":  "risk",
+            "direction": direction,
+            "source":    "health",
+            "details": {
+                "zone_state":    zone_state,
+                "health_score":  lh.get("health_score"),
+                "grade":         lh.get("grade"),
+            },
+        })
+
+    # ── 3. Bias warning from health ───────────────────────────────────────────
+    bias_info = lh.get("bias") or {}
+    bias_dir  = (bias_info.get("direction") or bias_info.get("bias") or "").lower()
+    bias_str  = (bias_info.get("strength")  or bias_info.get("label") or "").lower()
+    if bias_dir and direction:
+        is_bull = "bull" in direction
+        is_bear = "bear" in direction
+        bias_bull = "bull" in bias_dir
+        bias_bear = "bear" in bias_dir
+        if (is_bull and bias_bear) or (is_bear and bias_bull):
+            events.append({
+                "event_key": "bias_warning_conflict",
+                "type":      "bias_warning",
+                "label":     f"Bias conflict — setup {direction}, bias {bias_dir}",
+                "severity":  "warning",
+                "direction": direction,
+                "source":    "health",
+                "details": {
+                    "setup_direction": direction,
+                    "bias_direction":  bias_dir,
+                    "bias_strength":   bias_str,
+                },
+            })
+        elif "weak" in bias_str:
+            events.append({
+                "event_key": "bias_warning_weak",
+                "type":      "bias_warning",
+                "label":     "Weak bias — setup may lack momentum",
+                "severity":  "info",
+                "direction": direction,
+                "source":    "health",
+                "details": {
+                    "bias_direction": bias_dir,
+                    "bias_strength":  bias_str,
+                },
+            })
+
+    # ── 4. High-risk session warning ──────────────────────────────────────────
+    if sess:
+        liq_label  = (sess.get("liquidity_label") or "").lower()
+        vol_label  = (sess.get("volatility_label") or "").lower()
+        is_weekend = sess.get("is_weekend", False)
+        is_trans   = sess.get("is_transition_window", False)
+
+        if "low" in liq_label or is_weekend:
+            events.append({
+                "event_key": "session_low_liquidity",
+                "type":      "session_warning",
+                "label":     "Low-liquidity session — wider spreads risk",
+                "severity":  "warning",
+                "direction": direction,
+                "source":    "session",
+                "details": {
+                    "session":         sess.get("session_label"),
+                    "liquidity_label": liq_label,
+                    "is_weekend":      is_weekend,
+                },
+            })
+        if "extreme" in vol_label or "high" in vol_label:
+            events.append({
+                "event_key": "session_high_volatility",
+                "type":      "session_warning",
+                "label":     "High-volatility session — increased slippage risk",
+                "severity":  "warning",
+                "direction": direction,
+                "source":    "session",
+                "details": {
+                    "session":          sess.get("session_label"),
+                    "volatility_label": vol_label,
+                    "is_transition":    is_trans,
+                },
+            })
+
+    # ── 5. Market pressure events ─────────────────────────────────────────────
+    if mktc and mktc.get("ok"):
+        funding = mktc.get("funding") or {}
+        taker   = mktc.get("taker_pressure") or {}
+        ls      = mktc.get("long_short") or {}
+
+        if funding.get("available"):
+            rate  = funding.get("rate_pct")
+            bias  = (funding.get("bias") or "").lower()
+            if rate is not None and abs(rate) >= 0.05:
+                is_against = (
+                    ("bull" in direction and "bearish" in bias) or
+                    ("bear" in direction and "bullish" in bias)
+                )
+                events.append({
+                    "event_key": "market_funding_pressure",
+                    "type":      "market_pressure",
+                    "label":     f"High funding rate {rate:+.4f}% ({bias})",
+                    "severity":  "warning" if is_against else "info",
+                    "direction": direction,
+                    "source":    "market_context",
+                    "details": {
+                        "funding_rate_pct": rate,
+                        "funding_bias":     bias,
+                        "against_direction": is_against,
+                    },
+                })
+
+        if taker.get("available"):
+            taker_bias = (taker.get("bias") or "").lower()
+            is_against = (
+                ("bull" in direction and "bearish" in taker_bias) or
+                ("bear" in direction and "bullish" in taker_bias)
+            )
+            if is_against:
+                events.append({
+                    "event_key": "market_taker_pressure_against",
+                    "type":      "market_pressure",
+                    "label":     f"Taker pressure against setup ({taker_bias})",
+                    "severity":  "warning",
+                    "direction": direction,
+                    "source":    "market_context",
+                    "details": {
+                        "taker_bias": taker_bias,
+                        "against_direction": True,
+                    },
+                })
+
+        if ls.get("available"):
+            ratio = ls.get("ratio")
+            if ratio is not None:
+                if ratio > 2.5 or ratio < 0.4:
+                    extreme_side = "long-heavy" if ratio > 2.5 else "short-heavy"
+                    events.append({
+                        "event_key": "market_ls_extreme",
+                        "type":      "market_pressure",
+                        "label":     f"Extreme L/S ratio {ratio:.2f} ({extreme_side})",
+                        "severity":  "info",
+                        "direction": direction,
+                        "source":    "market_context",
+                        "details": {
+                            "ls_ratio":    ratio,
+                            "extreme_side": extreme_side,
+                        },
+                    })
+
+    # ── 6. Custom instruction watch note ─────────────────────────────────────
+    if ins:
+        events.append({
+            "event_key": "instruction_watch_active",
+            "type":      "instruction_watch",
+            "label":     f"{len(ins)} active custom instruction(s) applied",
+            "severity":  "info",
+            "direction": direction,
+            "source":    "custom_instruction",
+            "details": {
+                "instruction_count": len(ins),
+                "instructions": [i.get("text", "")[:80] for i in ins],
+            },
+        })
+
+    now_iso = _dt.datetime.now(_tz.utc).isoformat()
+    severity_order = {"risk": 0, "warning": 1, "watch": 2, "info": 3}
+    events.sort(key=lambda e: severity_order.get(e.get("severity", "info"), 3))
+
+    risk_count    = sum(1 for e in events if e.get("severity") == "risk")
+    warning_count = sum(1 for e in events if e.get("severity") == "warning")
+    watch_count   = sum(1 for e in events if e.get("severity") == "watch")
+    info_count    = sum(1 for e in events if e.get("severity") == "info")
+
+    top_severity = "info"
+    if risk_count:    top_severity = "risk"
+    elif warning_count: top_severity = "warning"
+    elif watch_count:   top_severity = "watch"
+
+    return {
+        "phase":        "phase6_7_event_detection",
+        "computed_at":  now_iso,
+        "symbol":       row.symbol,
+        "events":       events,
+        "summary": {
+            "total_events":   len(events),
+            "risk_count":     risk_count,
+            "warning_count":  warning_count,
+            "watch_count":    watch_count,
+            "info_count":     info_count,
+            "top_severity":   top_severity,
+        },
+    }
+
+
+def _lm_attach_event_detection(row, snapshot=None) -> tuple:
+    """Run event detector and store results in snapshot dict.
+    Does NOT commit. Returns (snap, detection_dict).
+    """
+    snap      = snapshot if snapshot is not None else _json_loads_safe(getattr(row, "snapshot_json", None), {})
+    detection = _lm_detect_setup_events(row, snapshot=snap)
+    snap["latest_event_detection"]    = detection
+    snap["last_event_detection_at"]   = detection["computed_at"]
+    return snap, detection
+
+
 def _lm_build_ai_context(item) -> dict:
     """Build a compact, JSON-safe context dict from a LiveMonitorItem for the AI agent."""
     snap = _json_loads_safe(getattr(item, "snapshot_json", None), {})
@@ -11248,6 +11524,132 @@ def api_lm_items_ai_instructions_delete(item_id, instruction_id):
         "removed": True,
         "item":    _live_monitor_item_to_dict(row),
     })
+
+
+# ── Phase 6.7: detect-events endpoint ─────────────────────────────────────────
+
+@app.route("/api/live-monitor/items/<int:item_id>/detect-events", methods=["POST"])
+@login_required
+def api_lm_items_detect_events(item_id):
+    """Run the Phase 6.7 event detector for one Live Monitor item.
+    Stores latest_event_detection in snapshot_json. Creates LiveMonitorEvents
+    for important detections (zone_touch, zone_breach_risk, session_warning,
+    market_pressure). Deduplicates by event_key within current snapshot.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorItem as _LMI, LiveMonitorEvent as _LME
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if not row.is_active:
+        return jsonify({"error": "inactive", "message": "Item is no longer active."}), 400
+
+    snap, detection = _lm_attach_event_detection(row)
+
+    # Deduplication: track which event_keys have already produced a LiveMonitorEvent
+    seen_keys: list = snap.get("event_detection_keys") or []
+
+    important_types = {"zone_touch", "zone_breach_risk", "session_warning", "market_pressure"}
+    new_events_to_create = []
+    for ev in detection.get("events", []):
+        ek = ev.get("event_key", "")
+        if ev.get("type") in important_types and ek and ek not in seen_keys:
+            new_events_to_create.append(ev)
+            seen_keys.append(ek)
+
+    # Keep dedup list bounded to last 100 keys
+    snap["event_detection_keys"] = seen_keys[-100:]
+    row.snapshot_json = _json_dumps_safe(snap)
+
+    try:
+        _db.session.flush()
+        for ev in new_events_to_create:
+            lme = _LME(
+                item_id           = row.id,
+                user_id           = uid,
+                symbol            = row.symbol,
+                event_type        = ev.get("type", "updated"),
+                event_description = ev.get("label", "Detected event"),
+                details_json      = _json_dumps_safe(ev.get("details", {})),
+                price_at_event    = row.current_price,
+            )
+            _db.session.add(lme)
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": "db", "message": str(e)}), 500
+
+    return jsonify({
+        "ok":              True,
+        "item":            _live_monitor_item_to_dict(row),
+        "event_detection": detection,
+        "new_events_logged": len(new_events_to_create),
+    })
+
+
+@app.route("/api/live-monitor/detect-events-all", methods=["POST"])
+@login_required
+def api_lm_detect_events_all():
+    """Run event detection across all active items for the current user (max 10)."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorItem as _LMI, LiveMonitorEvent as _LME
+    rows = (_LMI.query.filter_by(user_id=uid, is_active=True)
+                      .order_by(_LMI.updated_at.desc()).limit(10).all())
+
+    results, errors = [], []
+    for row in rows:
+        try:
+            snap, detection = _lm_attach_event_detection(row)
+
+            seen_keys: list = snap.get("event_detection_keys") or []
+            important_types = {"zone_touch", "zone_breach_risk", "session_warning", "market_pressure"}
+            new_events_to_create = []
+            for ev in detection.get("events", []):
+                ek = ev.get("event_key", "")
+                if ev.get("type") in important_types and ek and ek not in seen_keys:
+                    new_events_to_create.append(ev)
+                    seen_keys.append(ek)
+
+            snap["event_detection_keys"] = seen_keys[-100:]
+            row.snapshot_json = _json_dumps_safe(snap)
+
+            _db.session.flush()
+            for ev in new_events_to_create:
+                lme = _LME(
+                    item_id           = row.id,
+                    user_id           = uid,
+                    symbol            = row.symbol,
+                    event_type        = ev.get("type", "updated"),
+                    event_description = ev.get("label", "Detected event"),
+                    details_json      = _json_dumps_safe(ev.get("details", {})),
+                    price_at_event    = row.current_price,
+                )
+                _db.session.add(lme)
+            results.append({
+                "id":              row.id,
+                "symbol":          row.symbol,
+                "event_detection": detection,
+                "new_events_logged": len(new_events_to_create),
+            })
+        except Exception as e:
+            _db.session.rollback()
+            errors.append({"id": row.id, "symbol": row.symbol, "error": str(e)})
+
+    try:
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": "db", "message": str(e)}), 500
+
+    return jsonify({"ok": True, "results": results, "errors": errors})
 
 
 @app.route("/api/live-monitor/items/<int:item_id>/ai-chat", methods=["POST"])

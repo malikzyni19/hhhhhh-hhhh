@@ -4601,6 +4601,27 @@ svg{display:block}
       .catch(function(e){ if(cb) cb(null,e); });
   }
 
+  // Phase 6.7: compact detected-events block renderer (events view only)
+  function _lmDetectedEventsHtml(item){
+    var det=(item&&item.snapshot&&item.snapshot.latest_event_detection)||null;
+    if(!det||!det.events||!det.events.length) return '';
+    var sevColor={risk:'var(--red-2)',warning:'var(--yellow-2,#f59e0b)',watch:'var(--accent)',info:'var(--text-3)'};
+    var when=det.computed_at?(' &middot; '+esc(_lmAgo(det.computed_at))):'';
+    var evHtml=det.events.slice(0,5).map(function(e){
+      var c=sevColor[e.severity]||'var(--text-3)';
+      return '<div style="display:flex;align-items:center;gap:5px;padding:2px 0">'+
+        '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:'+c+';flex-shrink:0"></span>'+
+        '<span style="font-size:10px;color:var(--text-2);flex:1;line-height:1.3">'+esc(e.label||'')+'</span>'+
+        '<span style="font-size:9px;color:'+c+';font-weight:700;text-transform:uppercase;flex-shrink:0">'+esc(e.severity||'')+'</span>'+
+      '</div>';
+    }).join('');
+    var more=det.events.length>5?'<div style="font-size:9px;color:var(--text-3);margin-top:2px">+'+( det.events.length-5)+' more</div>':'';
+    return '<div style="border:1px solid var(--border);border-radius:5px;padding:5px 8px;margin-bottom:6px;background:var(--bg-2)">'+
+      '<div style="font-size:9px;font-weight:700;letter-spacing:.6px;color:var(--text-3);margin-bottom:3px">DETECTED EVENTS'+when+'</div>'+
+      evHtml+more+
+    '</div>';
+  }
+
   function _lmHealth(item){
     return (item&&item.snapshot&&item.snapshot.latest_health&&typeof item.snapshot.latest_health==="object")
       ?item.snapshot.latest_health:null;
@@ -4935,7 +4956,10 @@ svg{display:block}
               '<option value="events"'+((_lmInstructionView==="events")?' selected':'')+'>Event Timeline</option>'+
               '<option value="instructions"'+((_lmInstructionView==="instructions")?' selected':'')+'>AI Instructions</option>'+
             '</select>'+
+            '<button class="btn" type="button" data-lmdetectevents="'+item.id+'" title="Detect events from current setup data" style="margin-left:auto;padding:2px 7px;font-size:10px">'+
+              '<svg class="ico ico-sm" viewBox="0 0 24 24" style="width:10px;height:10px"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>Detect</button>'+
           '</div>'+
+          (_lmInstructionView!=="instructions"?'<div id="lmDetectedBlock" style="padding:6px 10px 0">'+_lmDetectedEventsHtml(item)+'</div>':'<div id="lmDetectedBlock"></div>')+
           '<div class="sec-card-body" style="padding:8px 10px" id="lmEvents">'+
             (function(){
               if(_lmInstructionView==="instructions"){
@@ -5083,10 +5107,13 @@ svg{display:block}
         _lmInstructionView=(val==="instructions"||val==="events")?val:"events";
         try{ localStorage.setItem("zyni_lm_side_panel",_lmInstructionView); }catch(_){}
         var evBox=document.getElementById("lmEvents"); if(!evBox) return;
+        var detBlock=document.getElementById("lmDetectedBlock");
         if(_lmInstructionView==="events"){
+          if(detBlock) detBlock.innerHTML=_lmDetectedEventsHtml(_lmSelItem||item);
           evBox.innerHTML='<div style="color:var(--text-3);font-size:11px">Loading events…</div>';
           _lmLoadEvents(item.id);
         } else {
+          if(detBlock) detBlock.innerHTML='';
           var ins=_lmCustomInstructions(_lmSelItem||item);
           if(!ins.length){
             evBox.innerHTML='<div style="color:var(--text-3);font-size:11px;padding:6px 0">No custom AI instructions yet. Add one through the AI chat.</div>';
@@ -5133,6 +5160,35 @@ svg{display:block}
             }
           } else { rmBtn.disabled=false; }
         });
+      });
+    });
+    // Detect Events button handler (Phase 6.7)
+    [].forEach.call(box.querySelectorAll("[data-lmdetectevents]"),function(detBtn){
+      detBtn.addEventListener("click",function(){
+        var id=parseInt(detBtn.getAttribute("data-lmdetectevents"),10); if(!id) return;
+        var origHtml=detBtn.innerHTML;
+        detBtn.disabled=true;
+        detBtn.innerHTML='<svg class="ico ico-sm" viewBox="0 0 24 24" style="width:10px;height:10px"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>…';
+        fetch("/api/live-monitor/items/"+id+"/detect-events",{method:"POST",credentials:"same-origin",
+          headers:{"Content-Type":"application/json"},body:"{}"})
+          .then(function(r){ return r.json(); })
+          .then(function(d){
+            detBtn.disabled=false; detBtn.innerHTML=origHtml;
+            if(d&&d.ok&&d.item){
+              for(var k=0;k<liveMonitorItems.length;k++){
+                if(liveMonitorItems[k].id===d.item.id){liveMonitorItems[k]=d.item;break;}
+              }
+              if(_lmSelItem&&_lmSelItem.id===d.item.id){
+                _lmSelItem=d.item;
+                var detBlock=document.getElementById("lmDetectedBlock");
+                if(detBlock&&_lmInstructionView!=="instructions"){
+                  detBlock.innerHTML=_lmDetectedEventsHtml(d.item);
+                }
+                if(_lmInstructionView==="events"){ _lmLoadEvents(d.item.id); }
+              }
+            }
+          })
+          .catch(function(){ detBtn.disabled=false; detBtn.innerHTML=origHtml; });
       });
     });
     // Analyze button handler
