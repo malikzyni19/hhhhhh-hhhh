@@ -5085,6 +5085,7 @@ svg{display:block}
             '<button class="btn" type="button" data-lmdetectevents="'+item.id+'" title="Detect events from current setup data" style="padding:2px 7px;font-size:10px">'+
               '<svg class="ico ico-sm" viewBox="0 0 24 24" style="width:10px;height:10px"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>Detect</button>'+
             '<button class="btn" id="lmAutoDetectBtn" type="button" title="Auto detect every 60s for this item" style="padding:2px 7px;font-size:10px'+(_lmAutoDetect?';color:var(--accent);border-color:var(--accent)':'')+'" data-lmautodetect="'+item.id+'">Auto</button>'+
+            (function(){var sw=item&&item.snapshot&&item.snapshot.server_watch;var on=sw&&sw.enabled;return '<button class="btn" id="lmServerWatchBtn" type="button" title="Server-side watch: backend ticks detect+readiness at the configured interval" style="padding:2px 7px;font-size:10px'+(on?';color:var(--green-2,#4ade80);border-color:var(--green-2,#4ade80)':'')+'" data-lmserverwatch="'+item.id+'">'+(on?'SWatch ✓':'SWatch')+'</button>';})()+
             '<button class="btn" type="button" data-lmrefreshcandles="'+item.id+'" title="Fetch candle data and extract chart features" style="padding:2px 7px;font-size:10px">'+
               '<svg class="ico ico-sm" viewBox="0 0 24 24" style="width:10px;height:10px"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>Candles</button>'+
           '</div>'+
@@ -5364,6 +5365,34 @@ svg{display:block}
         autoDetectBtn.style.borderColor=_lmAutoDetect?"var(--accent)":"";
         if(_lmAutoDetect&&_lmSelItem){ _lmStartAutoDetect(_lmSelItem.id); }
         else { _lmStopAutoDetect(); }
+      });
+    }
+    // Server Watch toggle handler (Phase 7.5)
+    var swBtn=box.querySelector("#lmServerWatchBtn");
+    if(swBtn){
+      swBtn.addEventListener("click",function(){
+        var id=parseInt(swBtn.getAttribute("data-lmserverwatch"),10); if(!id) return;
+        var curSw=(_lmSelItem&&_lmSelItem.snapshot&&_lmSelItem.snapshot.server_watch)||{};
+        var newEnabled=!curSw.enabled;
+        swBtn.disabled=true;
+        fetch("/api/live-monitor/items/"+id+"/server-watch",{method:"POST",credentials:"same-origin",
+          headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({enabled:newEnabled,interval_seconds:curSw.interval_seconds||300})})
+          .then(function(r){ return r.json(); })
+          .then(function(d){
+            swBtn.disabled=false;
+            if(d&&d.ok&&d.item){
+              for(var k=0;k<liveMonitorItems.length;k++){
+                if(liveMonitorItems[k].id===d.item.id){liveMonitorItems[k]=d.item;break;}
+              }
+              if(_lmSelItem&&_lmSelItem.id===d.item.id){ _lmSelItem=d.item; }
+              var on=d.server_watch&&d.server_watch.enabled;
+              swBtn.style.color=on?"var(--green-2,#4ade80)":"";
+              swBtn.style.borderColor=on?"var(--green-2,#4ade80)":"";
+              swBtn.textContent=on?"SWatch ✓":"SWatch";
+            }
+          })
+          .catch(function(){ swBtn.disabled=false; });
       });
     }
     // Analyze button handler
