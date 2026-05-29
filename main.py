@@ -10061,6 +10061,19 @@ def _lm_build_setup_memory_record(row, snapshot=None, source: str = "manual") ->
         e.get("type") for e in all_evs if e.get("type")
     ))[:12]
 
+    # AI verdict — latest_ai_analysis["analysis"]["verdict/confidence"]
+    # with fallback to top-level keys for older snapshots
+    ai_analysis_block = ai.get("analysis") or {}
+    ai_verdict     = (ai_analysis_block.get("verdict")
+                      or ai.get("verdict"))
+    ai_confidence  = (ai_analysis_block.get("confidence")
+                      or ai.get("confidence_score")
+                      or ai.get("confidence"))
+
+    # Consensus — latest_ai_consensus["verdict/confidence"]
+    consensus_verdict    = con.get("verdict") or con.get("consensus_verdict")
+    consensus_confidence = con.get("confidence") or con.get("consensus_confidence")
+
     now_iso = datetime.now(timezone.utc).isoformat()
     rec_id  = hashlib.sha256(f"{symbol}:{now_iso}:{source}".encode()).hexdigest()[:12]
 
@@ -10086,10 +10099,10 @@ def _lm_build_setup_memory_record(row, snapshot=None, source: str = "manual") ->
         "missing_confirmations": sr.get("missing_confirmations"),
         "event_types":          event_types,
         "candle_summary":       candle_summary,
-        "ai_verdict":           ai.get("verdict"),
-        "ai_confidence":        ai.get("confidence_score"),
-        "consensus_verdict":    con.get("consensus_verdict"),
-        "consensus_confidence": con.get("consensus_confidence"),
+        "ai_verdict":           ai_verdict,
+        "ai_confidence":        ai_confidence,
+        "consensus_verdict":    consensus_verdict,
+        "consensus_confidence": consensus_confidence,
         "outcome_status":       "pending",
         "outcome_note":         "",
         "outcome_checked_at":   None,
@@ -10142,13 +10155,15 @@ def _lm_append_setup_memory(row, snapshot=None, source: str = "manual") -> tuple
     record = _lm_build_setup_memory_record(row, snapshot=snap, source=source)
     sig    = record["memory_signature"]
 
-    # Dedup against last 10 records
-    recent_sigs = [r.get("memory_signature") for r in records[-10:]]
-    if sig in recent_sigs:
-        summary = _lm_build_memory_summary(records)
-        snap["setup_memory_summary"] = summary
-        row.snapshot_json = _json_dumps_safe(snap)
-        return snap, record, False
+    # Dedup against last 10 records — return the existing persisted record
+    recent = records[-10:]
+    for existing in reversed(recent):
+        if existing.get("memory_signature") == sig:
+            # Refresh summary without touching last_setup_memory_at
+            summary = _lm_build_memory_summary(records)
+            snap["setup_memory_summary"] = summary
+            row.snapshot_json = _json_dumps_safe(snap)
+            return snap, existing, False
 
     records.append(record)
     records = records[-50:]  # keep last 50
@@ -10185,10 +10200,11 @@ def _lm_update_memory_outcomes(row, snapshot=None) -> tuple:
     if not current_price:
         return snap, 0
 
-    zone_high    = getattr(row, "zone_high", None) or 0
-    zone_low     = getattr(row, "zone_low", None) or 0
-    now_iso      = datetime.now(timezone.utc).isoformat()
-    updated      = 0
+    zone_high        = getattr(row, "zone_high", None) or 0
+    zone_low         = getattr(row, "zone_low", None) or 0
+    now_iso          = datetime.now(timezone.utc).isoformat()
+    updated          = 0   # records that transitioned to won/lost/invalidated
+    progress_changed = False  # pending records whose progress fields changed
 
     for rec in records:
         if rec.get("outcome_status") != "pending":
@@ -10211,22 +10227,24 @@ def _lm_update_memory_outcomes(row, snapshot=None) -> tuple:
             # No clear direction — skip outcome resolution
             continue
 
-        # Update running extremes (use current snapshot values as running max)
+        # Update running extremes and check-time (always, even if still pending)
         prev_fav = rec.get("max_favorable_pct")
         prev_adv = rec.get("max_adverse_pct")
-        rec["max_favorable_pct"] = max(favorable_pct, prev_fav) if prev_fav is not None else favorable_pct
-        rec["max_adverse_pct"]   = max(adverse_pct,   prev_adv) if prev_adv is not None else adverse_pct
+        new_fav  = max(favorable_pct, prev_fav) if prev_fav is not None else favorable_pct
+        new_adv  = max(adverse_pct,   prev_adv) if prev_adv is not None else adverse_pct
+        if new_fav != prev_fav or new_adv != prev_adv or rec.get("outcome_checked_at") is None:
+            progress_changed = True
+        rec["max_favorable_pct"]  = new_fav
+        rec["max_adverse_pct"]    = new_adv
         rec["outcome_checked_at"] = now_iso
 
         # Zone breach / invalidation check (direction-specific)
         zone_invalidated = False
         if zone_high > 0 and zone_low > 0:
             if "bull" in direction or direction in ("long", "buy"):
-                # Bullish: zone invalidated if price closes below zone_low
                 if current_price < zone_low * 0.998:
                     zone_invalidated = True
             else:
-                # Bearish: zone invalidated if price closes above zone_high
                 if current_price > zone_high * 1.002:
                     zone_invalidated = True
 
@@ -10243,7 +10261,8 @@ def _lm_update_memory_outcomes(row, snapshot=None) -> tuple:
             rec["outcome_note"]   = f"Moved -{adverse_pct:.2f}% against (threshold {_LM_LOSS_PCT}%)"
             updated += 1
 
-    if updated > 0:
+    # Save whenever resolved outcomes changed OR pending progress fields updated
+    if updated > 0 or progress_changed:
         summary = _lm_build_memory_summary(records)
         snap["setup_memory_records"] = records
         snap["setup_memory_summary"] = summary
@@ -13247,12 +13266,12 @@ def api_lm_items_update_memory_outcomes(item_id):
 @app.route("/api/live-monitor/items/<int:item_id>/memory-accuracy", methods=["GET"])
 @login_required
 def api_lm_items_memory_accuracy(item_id):
-    """Compute and return setup memory accuracy stats from snapshot."""
+    """Compute and return setup memory accuracy stats from snapshot. Persists result."""
     uid, _ = _current_user_id_and_user()
     if not uid:
         return jsonify({"error": "no_user"}), 401
 
-    from models import LiveMonitorItem as _LMI
+    from models import db as _db, LiveMonitorItem as _LMI
     row = _LMI.query.filter_by(id=item_id).first()
     if not row:
         return jsonify({"error": "not_found"}), 404
@@ -13264,8 +13283,18 @@ def api_lm_items_memory_accuracy(item_id):
     snap     = _json_loads_safe(row.snapshot_json, {})
     accuracy = _lm_compute_memory_accuracy(snap)
 
+    # Persist so AI context can see setup_memory_accuracy later
+    row.snapshot_json = _json_dumps_safe(snap)
+    row.updated_at    = datetime.now(timezone.utc)
+    try:
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
     return jsonify({
         "ok":             True,
+        "item":           _live_monitor_item_to_dict(row),
         "accuracy":       accuracy,
         "memory_summary": snap.get("setup_memory_summary"),
     })
