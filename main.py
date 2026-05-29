@@ -9385,24 +9385,31 @@ def _lm_attach_event_detection(row, snapshot=None) -> tuple:
 _LM_ALLOWED_CANDLE_INTERVALS = {"5m", "15m", "30m", "1h", "4h", "1d"}
 _BINANCE_KLINE_MAX            = 1500   # Binance hard limit per request
 
-# Process-level TTL cache: "symbol:interval" → {"ts": float, "candles": list}
+# Process-level TTL cache: "exchange:market:symbol:interval:limit" → {"ts": float, "candles": list}
 _lm_candle_ttl_cache: Dict[str, Any] = {}
 _lm_candle_ttl_lock  = threading.Lock()
 
 
-def _lm_get_candles_for_features(symbol: str, interval: str, limit: int = 1000, ttl: int = 60) -> list:
+def _lm_get_candles_for_features(
+    symbol: str,
+    interval: str,
+    limit: int = 1000,
+    ttl: int = 60,
+    exchange: str = "binance",
+    market: str = "perpetual",
+) -> list:
     """Return candles from process-level TTL cache; fetch only when stale or missing.
 
-    TTL default 60s so batch detect-all loops share one fetch per symbol.
-    Returns at most *limit* candles (the most recent ones).
+    Key includes exchange, market, symbol, interval, and limit so different
+    request shapes never alias. TTL default 60s so batch detect-all loops
+    share one fetch per unique combination.
     """
-    key = f"{symbol}:{interval}"
+    key = f"{exchange.lower()}:{market.lower()}:{symbol.upper()}:{interval}:{limit}"
     now = time.time()
     with _lm_candle_ttl_lock:
         entry = _lm_candle_ttl_cache.get(key)
         if entry and (now - entry["ts"]) < ttl:
-            cached = entry["candles"]
-            return cached[-limit:] if len(cached) >= limit else cached
+            return entry["candles"]
     candles = _lm_fetch_futures_candles(symbol, interval, limit=limit)
     if candles:
         with _lm_candle_ttl_lock:
@@ -9410,9 +9417,15 @@ def _lm_get_candles_for_features(symbol: str, interval: str, limit: int = 1000, 
     return candles
 
 
-def _lm_candle_cache_bust(symbol: str, interval: str) -> None:
-    """Remove a symbol:interval entry from the TTL cache (forces next call to re-fetch)."""
-    key = f"{symbol}:{interval}"
+def _lm_candle_cache_bust(
+    symbol: str,
+    interval: str,
+    limit: int = 1000,
+    exchange: str = "binance",
+    market: str = "perpetual",
+) -> None:
+    """Remove the exact cache entry for this combination (forces next call to re-fetch)."""
+    key = f"{exchange.lower()}:{market.lower()}:{symbol.upper()}:{interval}:{limit}"
     with _lm_candle_ttl_lock:
         _lm_candle_ttl_cache.pop(key, None)
 
@@ -9642,12 +9655,14 @@ def _lm_attach_candle_features(row, interval: str = None, limit: int = 1000) -> 
         tf = (getattr(row, "timeframe", None) or "").strip()
         interval = tf if tf in _LM_ALLOWED_CANDLE_INTERVALS else "15m"
 
-    limit  = max(5, min(limit, 4000))
-    symbol = (getattr(row, "symbol", None) or "").upper().strip()
+    limit    = max(5, min(limit, 4000))
+    symbol   = (getattr(row, "symbol", None) or "").upper().strip()
     if not symbol:
         return snap, {}
+    exchange = (getattr(row, "exchange", None) or "binance").lower().strip() or "binance"
+    market   = (getattr(row, "market",   None) or "perpetual").lower().strip() or "perpetual"
 
-    candles  = _lm_get_candles_for_features(symbol, interval, limit=limit)
+    candles  = _lm_get_candles_for_features(symbol, interval, limit=limit, exchange=exchange, market=market)
     features = _lm_extract_candle_features(candles)
 
     now_iso = datetime.utcnow().isoformat() + "Z"
@@ -9723,10 +9738,11 @@ def _lm_server_watch_tick(item_id: int, uid: int) -> dict:
             seen_keys.append(ek)
     snap["event_detection_keys"] = seen_keys[-100:]
 
-    now_iso = datetime.now(timezone.utc).isoformat()
-    sw = snap.get("server_watch") or {}
-    sw["last_tick_at"] = now_iso
-    snap["server_watch"] = sw
+    now_iso      = datetime.now(timezone.utc).isoformat()
+    sw           = snap.get("server_watch") or {}
+    interval_s   = max(30, min(int(sw.get("interval_seconds") or 60), 300))
+    from datetime import datetime as _dt2, timezone as _tz2, timedelta as _td
+    next_due_iso = (_dt2.now(_tz2.utc) + _td(seconds=interval_s)).isoformat()
 
     row.snapshot_json = _json_dumps_safe(snap)
     row.updated_at    = datetime.now(timezone.utc)
@@ -9745,8 +9761,32 @@ def _lm_server_watch_tick(item_id: int, uid: int) -> dict:
             )
             _db.session.add(lme)
         _db.session.commit()
+        # Update server_watch schema fields after successful commit
+        snap2 = _json_loads_safe(row.snapshot_json, {})
+        sw2   = snap2.get("server_watch") or {}
+        sw2["last_tick_at"]    = now_iso
+        sw2["next_due_at"]     = next_due_iso
+        sw2["last_status"]     = "ok"
+        sw2["last_error"]      = ""
+        sw2["interval_seconds"] = interval_s
+        snap2["server_watch"]  = sw2
+        row.snapshot_json      = _json_dumps_safe(snap2)
+        row.updated_at         = datetime.now(timezone.utc)
+        _db.session.commit()
     except Exception as e:
         _db.session.rollback()
+        # Best-effort: record error state in snapshot
+        try:
+            snap_e = _json_loads_safe(row.snapshot_json, {})
+            sw_e   = snap_e.get("server_watch") or {}
+            sw_e["last_status"]  = "error"
+            sw_e["last_error"]   = str(e)[:200]
+            sw_e["next_due_at"]  = next_due_iso
+            snap_e["server_watch"] = sw_e
+            row.snapshot_json = _json_dumps_safe(snap_e)
+            _db.session.commit()
+        except Exception:
+            pass
         return {"ok": False, "error": str(e)}
 
     return {
@@ -9756,6 +9796,7 @@ def _lm_server_watch_tick(item_id: int, uid: int) -> dict:
         "readiness_state":  readiness.get("readiness_state"),
         "new_events_logged": len(new_events),
         "ticked_at":        now_iso,
+        "next_due_at":      next_due_iso,
     }
 
 
@@ -9770,14 +9811,15 @@ def _lm_watch_background_loop():
                 from datetime import datetime as _dt2, timezone as _tz2
                 now = _dt2.now(_tz2.utc)
                 active_rows = _LMI.query.filter_by(is_active=True).all()
+                ticked_this_cycle = 0
                 for row in active_rows:
-                    if not _lm_watch_running:
+                    if not _lm_watch_running or ticked_this_cycle >= 20:
                         break
                     snap = _json_loads_safe(row.snapshot_json, {})
                     sw = snap.get("server_watch") or {}
                     if not sw.get("enabled"):
                         continue
-                    interval_s = max(60, int(sw.get("interval_seconds") or 300))
+                    interval_s = max(30, min(int(sw.get("interval_seconds") or 60), 300))
                     last_tick_raw = sw.get("last_tick_at")
                     needs_tick = True
                     if last_tick_raw:
@@ -9789,6 +9831,7 @@ def _lm_watch_background_loop():
                     if needs_tick:
                         try:
                             _lm_server_watch_tick(row.id, row.user_id)
+                            ticked_this_cycle += 1
                         except Exception as e:
                             print(f"[LM-WATCH] Error ticking item {row.id} ({row.symbol}): {e}")
         except Exception as e:
@@ -12562,7 +12605,13 @@ def api_lm_items_refresh_candles(item_id):
     )
     if resolved_interval not in _LM_ALLOWED_CANDLE_INTERVALS:
         resolved_interval = "15m"
-    _lm_candle_cache_bust((getattr(row, "symbol", "") or "").upper().strip(), resolved_interval)
+    _lm_candle_cache_bust(
+        (getattr(row, "symbol",   "") or "").upper().strip(),
+        resolved_interval,
+        limit=limit,
+        exchange=(getattr(row, "exchange", None) or "binance").lower().strip() or "binance",
+        market=(getattr(row, "market",   None) or "perpetual").lower().strip() or "perpetual",
+    )
 
     try:
         snap, features = _lm_attach_candle_features(row, interval=interval, limit=limit)
@@ -12602,23 +12651,53 @@ def api_lm_items_server_watch(item_id):
         return jsonify({"error": "not_found"}), 404
     if row.user_id != uid:
         return jsonify({"error": "forbidden"}), 403
+    if not row.is_active:
+        return jsonify({"error": "inactive"}), 400
 
     body = request.get_json(silent=True) or {}
     enabled = bool(body.get("enabled", True))
     try:
-        interval_seconds = max(60, min(int(body.get("interval_seconds") or 300), 3600))
+        interval_seconds = max(30, min(int(body.get("interval_seconds") or 60), 300))
     except (TypeError, ValueError):
-        interval_seconds = 300
+        interval_seconds = 60
+
+    now_iso = datetime.now(timezone.utc).isoformat()
 
     snap = _json_loads_safe(row.snapshot_json, {})
-    sw = snap.get("server_watch") or {}
+    sw   = snap.get("server_watch") or {}
+
     sw["enabled"]          = enabled
     sw["interval_seconds"] = interval_seconds
-    if "last_tick_at" not in sw:
-        sw["last_tick_at"] = None
+
+    # Preserve existing last_tick_at; default to None
+    last_tick_at = sw.get("last_tick_at")
+
+    if enabled:
+        # next_due_at: immediately if never ticked, else last_tick + interval
+        if last_tick_at:
+            try:
+                from datetime import datetime as _dt2, timezone as _tz2, timedelta as _td
+                lt = _dt2.fromisoformat(last_tick_at.replace("Z", "+00:00"))
+                sw["next_due_at"] = (lt + _td(seconds=interval_seconds)).isoformat()
+            except Exception:
+                sw["next_due_at"] = now_iso
+        else:
+            sw["next_due_at"] = now_iso
+        if "last_status" not in sw:
+            sw["last_status"] = "idle"
+        if "last_error" not in sw:
+            sw["last_error"] = ""
+    else:
+        sw["next_due_at"] = None
+        sw["last_status"] = "idle"
+        if "last_error" not in sw:
+            sw["last_error"] = ""
+
+    sw["last_tick_at"] = last_tick_at  # unchanged
+
     snap["server_watch"] = sw
-    row.snapshot_json = _json_dumps_safe(snap)
-    row.updated_at    = datetime.now(timezone.utc)
+    row.snapshot_json    = _json_dumps_safe(snap)
+    row.updated_at       = datetime.now(timezone.utc)
 
     try:
         _db.session.commit()
@@ -12626,7 +12705,9 @@ def api_lm_items_server_watch(item_id):
         _db.session.rollback()
         return jsonify({"error": str(e)}), 500
 
-    if enabled:
+    # Background thread only starts if explicitly enabled via environment variable.
+    # Saving the config here does NOT start the thread.
+    if enabled and os.environ.get("ZYNI_LM_SERVER_WATCH_ENABLED") == "1":
         _ensure_lm_watch_thread()
 
     return jsonify({
@@ -12650,9 +12731,12 @@ def api_lm_watch_loop_tick():
     from models import LiveMonitorItem as _LMI
     active_rows = _LMI.query.filter_by(user_id=uid, is_active=True).all()
 
-    results = []
-    errors  = []
+    results  = []
+    errors   = []
+    tick_cap = 20  # max items per manual tick to prevent runaway latency
     for row in active_rows:
+        if len(results) + len(errors) >= tick_cap:
+            break
         snap = _json_loads_safe(row.snapshot_json, {})
         sw   = snap.get("server_watch") or {}
         if not sw.get("enabled"):
