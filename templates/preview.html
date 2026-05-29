@@ -4629,6 +4629,37 @@ svg{display:block}
     '</div>';
   }
 
+  // Phase 7: candle features summary block
+  function _lmCandleFeaturesHtml(item){
+    var cf=(item&&item.snapshot&&item.snapshot.latest_candle_features)||null;
+    if(!cf||!cf.features||!Object.keys(cf.features).length) return '';
+    var f=cf.features;
+    var when=cf.computed_at?(' &middot; '+esc(_lmAgo(cf.computed_at))):'';
+    var intv=cf.interval?(' &middot; <b>'+esc(cf.interval)+'</b>'):'';
+    var rows=[
+      ['Candles',f.candle_count],
+      ['Last close',f.last_close],
+      ['ATR-14 %',f.atr_14_pct+'%'],
+      ['Body/Wick',f.body_pct+'% body | '+f.upper_wick_pct+'% up-wick | '+f.lower_wick_pct+'% lo-wick'],
+      ['Vol ratio',f.vol_ratio_vs_20+'&times; avg-20'],
+      ['Price pos-50',Math.round(f.price_position_50*100)+'% of 50c range'],
+      ['Trend slope',f.trend_slope_20_pct+'% / candle'],
+      ['Breakout',f.breakout_context||'none'],
+      ['Rejection',f.strong_rejection?'<span style="color:var(--accent)">Yes</span>':'No'],
+      ['Compression',f.compression?'<span style="color:var(--yellow-2,#f59e0b)">Yes</span>':'No'],
+    ];
+    var rowsHtml=rows.map(function(r){
+      return '<div style="display:flex;gap:5px;padding:1px 0">'+
+        '<span style="font-size:9px;color:var(--text-3);min-width:74px;flex-shrink:0">'+esc(String(r[0]))+'</span>'+
+        '<span style="font-size:10px;color:var(--text-2)">'+String(r[1])+'</span>'+
+      '</div>';
+    }).join('');
+    return '<div style="border:1px solid var(--border);border-radius:5px;padding:5px 8px;margin-bottom:6px;background:var(--bg-2)">'+
+      '<div style="font-size:9px;font-weight:700;letter-spacing:.6px;color:var(--text-3);margin-bottom:3px">CANDLE FEATURES'+intv+when+'</div>'+
+      rowsHtml+
+    '</div>';
+  }
+
   // Phase 6.8: stale/fresh label for detect age
   function _lmDetectAgeHtml(item){
     var lat=item&&item.snapshot&&item.snapshot.last_event_detection_at;
@@ -5024,8 +5055,10 @@ svg{display:block}
             '<button class="btn" type="button" data-lmdetectevents="'+item.id+'" title="Detect events from current setup data" style="padding:2px 7px;font-size:10px">'+
               '<svg class="ico ico-sm" viewBox="0 0 24 24" style="width:10px;height:10px"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>Detect</button>'+
             '<button class="btn" id="lmAutoDetectBtn" type="button" title="Auto detect every 60s for this item" style="padding:2px 7px;font-size:10px'+(_lmAutoDetect?';color:var(--accent);border-color:var(--accent)':'')+'" data-lmautodetect="'+item.id+'">Auto</button>'+
+            '<button class="btn" type="button" data-lmrefreshcandles="'+item.id+'" title="Fetch candle data and extract chart features" style="padding:2px 7px;font-size:10px">'+
+              '<svg class="ico ico-sm" viewBox="0 0 24 24" style="width:10px;height:10px"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>Candles</button>'+
           '</div>'+
-          (_lmInstructionView!=="instructions"?'<div id="lmDetectedBlock" style="padding:6px 10px 0">'+_lmDetectedEventsHtml(item)+'</div>':'<div id="lmDetectedBlock"></div>')+
+          (_lmInstructionView!=="instructions"?'<div id="lmDetectedBlock" style="padding:6px 10px 0">'+_lmDetectedEventsHtml(item)+_lmCandleFeaturesHtml(item)+'</div>':'<div id="lmDetectedBlock"></div>')+
           '<div class="sec-card-body" style="padding:8px 10px" id="lmEvents">'+
             (function(){
               if(_lmInstructionView==="instructions"){
@@ -5175,7 +5208,7 @@ svg{display:block}
         var evBox=document.getElementById("lmEvents"); if(!evBox) return;
         var detBlock=document.getElementById("lmDetectedBlock");
         if(_lmInstructionView==="events"){
-          if(detBlock) detBlock.innerHTML=_lmDetectedEventsHtml(_lmSelItem||item);
+          if(detBlock){ var _si=_lmSelItem||item; detBlock.innerHTML=_lmDetectedEventsHtml(_si)+_lmCandleFeaturesHtml(_si); }
           evBox.innerHTML='<div style="color:var(--text-3);font-size:11px">Loading events…</div>';
           _lmLoadEvents(item.id);
         } else {
@@ -5257,6 +5290,34 @@ svg{display:block}
             }
           })
           .catch(function(){ detBtn.disabled=false; detBtn.innerHTML=origHtml; });
+      });
+    });
+    // Candles button handler (Phase 7)
+    [].forEach.call(box.querySelectorAll("[data-lmrefreshcandles]"),function(cBtn){
+      cBtn.addEventListener("click",function(){
+        var id=parseInt(cBtn.getAttribute("data-lmrefreshcandles"),10); if(!id) return;
+        var origHtml=cBtn.innerHTML;
+        cBtn.disabled=true;
+        cBtn.innerHTML='<svg class="ico ico-sm" viewBox="0 0 24 24" style="width:10px;height:10px"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>…';
+        fetch("/api/live-monitor/items/"+id+"/refresh-candles",{method:"POST",credentials:"same-origin",
+          headers:{"Content-Type":"application/json"},body:"{}"})
+          .then(function(r){ return r.json(); })
+          .then(function(d){
+            cBtn.disabled=false; cBtn.innerHTML=origHtml;
+            if(d&&d.ok&&d.item){
+              for(var k=0;k<liveMonitorItems.length;k++){
+                if(liveMonitorItems[k].id===d.item.id){liveMonitorItems[k]=d.item;break;}
+              }
+              if(_lmSelItem&&_lmSelItem.id===d.item.id){
+                _lmSelItem=d.item;
+                var detBlock=document.getElementById("lmDetectedBlock");
+                if(detBlock&&_lmInstructionView!=="instructions"){
+                  detBlock.innerHTML=_lmDetectedEventsHtml(d.item)+_lmCandleFeaturesHtml(d.item);
+                }
+              }
+            }
+          })
+          .catch(function(){ cBtn.disabled=false; cBtn.innerHTML=origHtml; });
       });
     });
     // Auto Detect toggle handler (Phase 6.8)

@@ -9190,6 +9190,239 @@ def _lm_attach_event_detection(row, snapshot=None) -> tuple:
     return snap, detection
 
 
+# ── Phase 7: Candle Feature Engine ───────────────────────────────────────────
+
+_LM_ALLOWED_CANDLE_INTERVALS = {"5m", "15m", "30m", "1h", "4h", "1d"}
+_BINANCE_KLINE_MAX            = 1500   # Binance hard limit per request
+
+
+def _lm_fetch_futures_candles(symbol: str, interval: str, limit: int = 4000) -> list:
+    """Fetch Binance Futures klines for *symbol* / *interval*.
+
+    Paginates backwards when limit > _BINANCE_KLINE_MAX.
+    Returns a list of dicts with keys:
+        open_time, open, high, low, close, volume, close_time  (all normalised).
+    Returns [] on any error.
+    No API key required.
+    """
+    if interval not in _LM_ALLOWED_CANDLE_INTERVALS:
+        return []
+    limit = max(1, min(limit, 4000))
+    url   = f"{BINANCE_FUTURES_API}/fapi/v1/klines"
+
+    def _parse(batch):
+        out = []
+        for k in batch:
+            try:
+                out.append({
+                    "open_time":  int(k[0]),
+                    "open":       float(k[1]),
+                    "high":       float(k[2]),
+                    "low":        float(k[3]),
+                    "close":      float(k[4]),
+                    "volume":     float(k[5]),
+                    "close_time": int(k[6]),
+                })
+            except (IndexError, TypeError, ValueError):
+                pass
+        return out
+
+    try:
+        all_candles = []
+        remaining   = limit
+        end_time    = None  # None → use current time (Binance default)
+
+        while remaining > 0:
+            batch_size = min(remaining, _BINANCE_KLINE_MAX)
+            params = {"symbol": symbol, "interval": interval, "limit": batch_size}
+            if end_time is not None:
+                params["endTime"] = end_time
+
+            resp = req.get(url, params=params, timeout=10)
+            if resp.status_code != 200:
+                break
+            data = resp.json()
+            if not isinstance(data, list) or len(data) == 0:
+                break
+
+            batch = _parse(data)
+            if not batch:
+                break
+
+            # Prepend so final list is chronologically ascending
+            all_candles = batch + all_candles
+            remaining  -= len(batch)
+
+            if len(data) < batch_size:
+                # Binance returned fewer than requested → we have all available
+                break
+
+            # Move end_time backwards to just before the oldest candle we got
+            end_time = int(data[0][0]) - 1
+            if end_time <= 0:
+                break
+
+        # Deduplicate by open_time (keep last occurrence — newest wins on overlap)
+        seen  = {}
+        for c in all_candles:
+            seen[c["open_time"]] = c
+        deduped = sorted(seen.values(), key=lambda x: x["open_time"])
+        return deduped[-limit:] if len(deduped) > limit else deduped
+
+    except Exception:
+        return []
+
+
+def _lm_extract_candle_features(candles: list) -> dict:
+    """Extract compact scalar features from a list of normalised candle dicts.
+
+    Input is the output of _lm_fetch_futures_candles.
+    Returns a dict of plain numbers / booleans — no raw candle data.
+    Returns {} if candles is empty or too short.
+    """
+    if not candles or len(candles) < 5:
+        return {}
+
+    n      = len(candles)
+    closes = [c["close"]  for c in candles]
+    highs  = [c["high"]   for c in candles]
+    lows   = [c["low"]    for c in candles]
+    opens  = [c["open"]   for c in candles]
+    vols   = [c["volume"] for c in candles]
+
+    last_close = closes[-1]
+    if last_close == 0:
+        return {}
+
+    # ── Body / wick percentages (last candle) ──────────────────────────────
+    lc = candles[-1]
+    c_range = lc["high"] - lc["low"]
+    body_pct = 0.0
+    upper_wick_pct = 0.0
+    lower_wick_pct = 0.0
+    if c_range > 0:
+        body    = abs(lc["close"] - lc["open"])
+        upper_w = lc["high"] - max(lc["close"], lc["open"])
+        lower_w = min(lc["close"], lc["open"]) - lc["low"]
+        body_pct       = round(body    / c_range * 100, 1)
+        upper_wick_pct = round(upper_w / c_range * 100, 1)
+        lower_wick_pct = round(lower_w / c_range * 100, 1)
+
+    # ── Volume metrics ─────────────────────────────────────────────────────
+    vol_20 = vols[-20:] if n >= 20 else vols
+    vol_avg_20 = sum(vol_20) / len(vol_20) if vol_20 else 0.0
+    vol_ratio  = round(vols[-1] / vol_avg_20, 2) if vol_avg_20 > 0 else 0.0
+
+    # ── ATR-14 (simple, close-to-close true range approx) ──────────────────
+    atr_14 = 0.0
+    if n >= 15:
+        trs = []
+        for i in range(n - 14, n):
+            tr = max(
+                highs[i] - lows[i],
+                abs(highs[i] - closes[i - 1]),
+                abs(lows[i]  - closes[i - 1]),
+            )
+            trs.append(tr)
+        raw_atr = sum(trs) / len(trs)
+        atr_14  = round(raw_atr / last_close * 100, 3)   # % of price
+
+    # ── 50-candle range & price position ──────────────────────────────────
+    window_50 = candles[-50:] if n >= 50 else candles
+    range_high_50 = max(c["high"]  for c in window_50)
+    range_low_50  = min(c["low"]   for c in window_50)
+    span_50       = range_high_50 - range_low_50
+    price_position_50 = 0.5
+    if span_50 > 0:
+        price_position_50 = round((last_close - range_low_50) / span_50, 3)
+
+    # ── Trend slope (20-candle linear regression slope, normalised) ────────
+    trend_slope_20 = 0.0
+    if n >= 20:
+        xs = list(range(20))
+        ys = closes[-20:]
+        x_mean = 9.5
+        y_mean = sum(ys) / 20
+        num    = sum((xs[i] - x_mean) * (ys[i] - y_mean) for i in range(20))
+        den    = sum((xs[i] - x_mean) ** 2              for i in range(20))
+        if den > 0 and y_mean > 0:
+            slope = num / den
+            trend_slope_20 = round(slope / y_mean * 100, 4)  # % per candle
+
+    # ── Strong rejection candle ────────────────────────────────────────────
+    # Wick > 60% of range on either side and body < 30%
+    strong_rejection = bool(body_pct < 30 and (upper_wick_pct > 60 or lower_wick_pct > 60))
+
+    # ── Compression (low ATR relative to 50-candle span) ──────────────────
+    compression = False
+    if span_50 > 0 and n >= 15:
+        raw_atr_price = atr_14 / 100 * last_close
+        compression   = bool(raw_atr_price < span_50 * 0.05)
+
+    # ── Breakout context ───────────────────────────────────────────────────
+    breakout_context = "none"
+    if n >= 3:
+        prev_high = max(c["high"] for c in candles[-4:-1])
+        prev_low  = min(c["low"]  for c in candles[-4:-1])
+        if last_close > prev_high:
+            breakout_context = "bullish_breakout"
+        elif last_close < prev_low:
+            breakout_context = "bearish_breakout"
+
+    return {
+        "candle_count":       n,
+        "last_close":         round(last_close, 6),
+        "body_pct":           body_pct,
+        "upper_wick_pct":     upper_wick_pct,
+        "lower_wick_pct":     lower_wick_pct,
+        "vol_ratio_vs_20":    vol_ratio,
+        "vol_avg_20":         round(vol_avg_20, 4),
+        "atr_14_pct":         atr_14,
+        "range_high_50":      round(range_high_50, 6),
+        "range_low_50":       round(range_low_50, 6),
+        "price_position_50":  price_position_50,
+        "trend_slope_20_pct": trend_slope_20,
+        "strong_rejection":   strong_rejection,
+        "compression":        compression,
+        "breakout_context":   breakout_context,
+    }
+
+
+def _lm_attach_candle_features(row, interval: str = None, limit: int = 1000) -> tuple:
+    """Fetch candles for *row*, extract features, store in snapshot.
+
+    Does NOT commit.
+    Returns (snap, candle_features_dict).
+    candle_features_dict will be {} if fetch/extraction fails.
+    """
+    snap = _json_loads_safe(getattr(row, "snapshot_json", None), {})
+
+    # Resolve interval: param → snapshot default → fallback "1h"
+    if not interval or interval not in _LM_ALLOWED_CANDLE_INTERVALS:
+        interval = snap.get("candle_interval_default") or "1h"
+    if interval not in _LM_ALLOWED_CANDLE_INTERVALS:
+        interval = "1h"
+
+    limit  = max(5, min(limit, 4000))
+    symbol = (getattr(row, "symbol", None) or "").upper().strip()
+    if not symbol:
+        return snap, {}
+
+    candles  = _lm_fetch_futures_candles(symbol, interval, limit=limit)
+    features = _lm_extract_candle_features(candles)
+
+    now_iso = datetime.utcnow().isoformat() + "Z"
+    snap["latest_candle_features"] = {
+        "phase":       "phase7_candle_features",
+        "computed_at": now_iso,
+        "interval":    interval,
+        "features":    features,
+    }
+    snap["last_candle_features_at"] = now_iso
+    row.snapshot_json = _json_dumps_safe(snap)
+    return snap, features
+
+
 def _lm_build_ai_context(item) -> dict:
     """Build a compact, JSON-safe context dict from a LiveMonitorItem for the AI agent."""
     snap = _json_loads_safe(getattr(item, "snapshot_json", None), {})
@@ -9314,6 +9547,11 @@ def _lm_build_ai_context(item) -> dict:
                 for e in (evd.get("events") or [])[:8]
             ],
         } if evd and isinstance(evd, dict) else None)(snap.get("latest_event_detection")),
+        "candle_features":        (lambda cf: {
+            "computed_at": cf.get("computed_at"),
+            "interval":    cf.get("interval"),
+            "features":    cf.get("features"),
+        } if cf and isinstance(cf, dict) else None)(snap.get("latest_candle_features")),
     }
 
 
@@ -9355,6 +9593,24 @@ def _lm_ai_system_prompt() -> str:
         "spikes that are NOT present in event_detection.\n"
         "- Do NOT treat any detected event as trade execution permission.\n"
         "- If event_detection is null or empty, analyze from other context fields only.\n\n"
+
+        "CANDLE FEATURES (Phase 7):\n"
+        "The context may include a candle_features block with compact extracted chart statistics.\n"
+        "Use these as chart behavior evidence when reasoning:\n"
+        "- atr_14_pct: volatility level as % of price (high = volatile, low = compressed).\n"
+        "- body_pct / upper_wick_pct / lower_wick_pct: last candle structure.\n"
+        "- strong_rejection (true/false): large wick, small body — reversal signal candidate.\n"
+        "- compression (true/false): ATR < 5% of 50-candle range — potential breakout setup.\n"
+        "- price_position_50: 0 = at 50-candle low, 1 = at 50-candle high, 0.5 = mid-range.\n"
+        "- trend_slope_20_pct: positive = uptrend, negative = downtrend, near 0 = ranging.\n"
+        "- breakout_context: 'bullish_breakout', 'bearish_breakout', or 'none'.\n"
+        "- vol_ratio_vs_20: volume relative to 20-candle average (>1.5 = elevated volume).\n"
+        "CANDLE FEATURE RULES:\n"
+        "- Do NOT invent candle patterns not derivable from these features.\n"
+        "- Do NOT reference raw candle data — only the extracted features above.\n"
+        "- If candle_features is null, do not speculate about chart structure.\n"
+        "- Features are statistical summaries only — do not treat them as trade signals.\n"
+        "- Do NOT use candle features as permission to recommend trade execution.\n\n"
 
         "STRICT RULES:\n"
         "- Analyze ONLY the provided backend facts. Do not invent missing data.\n"
@@ -11701,6 +11957,58 @@ def api_lm_detect_events_all():
             errors.append({"id": row.id, "symbol": row.symbol, "error": str(e)})
 
     return jsonify({"ok": True, "results": results, "errors": errors})
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/refresh-candles", methods=["POST"])
+@login_required
+def api_lm_items_refresh_candles(item_id):
+    row = _db.session.get(LiveMonitorItem, item_id)
+    if not row or row.user_id != current_user.id:
+        return jsonify({"error": "Not found"}), 404
+    if not row.is_active:
+        return jsonify({"error": "Item is not active"}), 400
+
+    body     = request.get_json(silent=True) or {}
+    interval = (body.get("interval") or "").strip() or None
+    try:
+        limit = int(body.get("limit") or 1000)
+    except (TypeError, ValueError):
+        limit = 1000
+    limit = max(5, min(limit, 4000))
+
+    if interval and interval not in _LM_ALLOWED_CANDLE_INTERVALS:
+        return jsonify({"error": f"Invalid interval. Allowed: {sorted(_LM_ALLOWED_CANDLE_INTERVALS)}"}), 400
+
+    snap, features = _lm_attach_candle_features(row, interval=interval, limit=limit)
+
+    # One LiveMonitorEvent on first-ever candle refresh only
+    seen_key   = "candle_refresh_first_logged"
+    first_time = not snap.get(seen_key)
+    if first_time and features:
+        used_interval = snap.get("latest_candle_features", {}).get("interval", interval or "1h")
+        evt = LiveMonitorEvent(
+            item_id=row.id,
+            event_type="candle_refresh",
+            severity="info",
+            label=f"Candle features loaded ({used_interval})",
+            details_json=_json_dumps_safe({
+                "interval":     used_interval,
+                "candle_count": features.get("candle_count"),
+                "atr_14_pct":   features.get("atr_14_pct"),
+            }),
+        )
+        _db.session.add(evt)
+        snap[seen_key] = True
+        row.snapshot_json = _json_dumps_safe(snap)
+
+    _db.session.flush()
+    _db.session.commit()
+
+    return jsonify({
+        "ok":              True,
+        "item":            _live_monitor_item_to_dict(row),
+        "candle_features": snap.get("latest_candle_features"),
+    })
 
 
 @app.route("/api/live-monitor/items/<int:item_id>/ai-chat", methods=["POST"])
