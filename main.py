@@ -10148,6 +10148,12 @@ def _lm_append_setup_memory(row, snapshot=None, source: str = "manual") -> tuple
 
     Dedup: if same memory_signature appears in last 10 records, skip.
     Does NOT commit. Returns (snap, record, appended: bool).
+
+    PHASE 9 SAFETY NOTE (Phase 8.3 audit):
+    snapshot_json is appropriate for compact latest-state (max-50 rolling window here).
+    Phase 9 trade records MUST NOT be stored fully in snapshot_json.
+    Phase 9.3 will create a dedicated LiveMonitorTrade DB table for all trade records.
+    snapshot_json may only hold active_trade_id / latest_trade_summary in Phase 9+.
     """
     snap    = snapshot if snapshot is not None else _json_loads_safe(getattr(row, "snapshot_json", None), {})
     records = list(snap.get("setup_memory_records") or [])
