@@ -8913,20 +8913,27 @@ def _lm_detect_setup_events(row, snapshot=None) -> dict:
     mktc  = snap.get("latest_market_context")  or {}
     ins   = _lm_custom_ai_instructions_from_snapshot(snap)
 
-    price      = row.current_price
-    zone_high  = row.zone_high
-    zone_low   = row.zone_low
+    price     = row.current_price
+    raw_high  = row.zone_high
+    raw_low   = row.zone_low
+    # Normalize so z_hi >= z_lo regardless of how the zone was stored
+    if raw_high is not None and raw_low is not None:
+        z_hi = max(raw_high, raw_low)
+        z_lo = min(raw_high, raw_low)
+    else:
+        z_hi = raw_high
+        z_lo = raw_low
     direction  = (row.direction  or "").lower()
     setup_type = (row.setup_type or "")
 
     events: list = []
 
     # ── 1. Price-to-zone proximity ────────────────────────────────────────────
-    if price is not None and zone_high is not None and zone_low is not None:
-        zone_mid  = (zone_high + zone_low) / 2.0
-        zone_size = max(zone_high - zone_low, 0.0001)
+    if price is not None and z_hi is not None and z_lo is not None:
+        zone_mid  = (z_hi + z_lo) / 2.0
+        zone_size = max(z_hi - z_lo, 0.0001)
 
-        if zone_low <= price <= zone_high:
+        if z_lo <= price <= z_hi:
             events.append({
                 "event_key": "zone_touch",
                 "type":      "zone_touch",
@@ -8936,13 +8943,13 @@ def _lm_detect_setup_events(row, snapshot=None) -> dict:
                 "source":    "built_in",
                 "details": {
                     "price":      price,
-                    "zone_low":   zone_low,
-                    "zone_high":  zone_high,
+                    "zone_low":   z_lo,
+                    "zone_high":  z_hi,
                     "setup_type": setup_type,
                 },
             })
         else:
-            dist_pct = (min(abs(price - zone_high), abs(price - zone_low)) / zone_mid * 100.0
+            dist_pct = (min(abs(price - z_hi), abs(price - z_lo)) / zone_mid * 100.0
                         if zone_mid else None)
             if dist_pct is not None and dist_pct <= 1.5:
                 events.append({
@@ -8954,8 +8961,8 @@ def _lm_detect_setup_events(row, snapshot=None) -> dict:
                     "source":    "built_in",
                     "details": {
                         "price":      price,
-                        "zone_low":   zone_low,
-                        "zone_high":  zone_high,
+                        "zone_low":   z_lo,
+                        "zone_high":  z_hi,
                         "dist_pct":   round(dist_pct, 3),
                     },
                 })
@@ -9058,32 +9065,35 @@ def _lm_detect_setup_events(row, snapshot=None) -> dict:
         ls      = mktc.get("long_short") or {}
 
         if funding.get("available"):
-            rate  = funding.get("rate_pct")
-            bias  = (funding.get("bias") or "").lower()
+            rate      = funding.get("rate_pct")
+            fund_bias = (funding.get("bias") or "").lower()
             if rate is not None and abs(rate) >= 0.05:
-                is_against = (
-                    ("bull" in direction and "bearish" in bias) or
-                    ("bear" in direction and "bullish" in bias)
+                # Crowded same-side = caution (over-positioning reversal risk)
+                # Actual bias values: long_crowded / short_crowded / neutral
+                is_caution = (
+                    ("bull" in direction and fund_bias == "long_crowded") or
+                    ("bear" in direction and fund_bias == "short_crowded")
                 )
                 events.append({
                     "event_key": "market_funding_pressure",
                     "type":      "market_pressure",
-                    "label":     f"High funding rate {rate:+.4f}% ({bias})",
-                    "severity":  "warning" if is_against else "info",
+                    "label":     f"High funding rate {rate:+.4f}% ({fund_bias})",
+                    "severity":  "warning" if is_caution else "info",
                     "direction": direction,
                     "source":    "market_context",
                     "details": {
                         "funding_rate_pct": rate,
-                        "funding_bias":     bias,
-                        "against_direction": is_against,
+                        "funding_bias":     fund_bias,
+                        "is_caution":       is_caution,
                     },
                 })
 
         if taker.get("available"):
             taker_bias = (taker.get("bias") or "").lower()
+            # Actual bias values: buy_pressure / sell_pressure / neutral
             is_against = (
-                ("bull" in direction and "bearish" in taker_bias) or
-                ("bear" in direction and "bullish" in taker_bias)
+                ("bull" in direction and taker_bias == "sell_pressure") or
+                ("bear" in direction and taker_bias == "buy_pressure")
             )
             if is_against:
                 events.append({
@@ -9094,26 +9104,33 @@ def _lm_detect_setup_events(row, snapshot=None) -> dict:
                     "direction": direction,
                     "source":    "market_context",
                     "details": {
-                        "taker_bias": taker_bias,
+                        "taker_bias":        taker_bias,
                         "against_direction": True,
                     },
                 })
 
         if ls.get("available"):
-            ratio = ls.get("ratio")
+            ratio   = ls.get("ratio")
+            ls_bias = (ls.get("bias") or "").lower()
             if ratio is not None:
                 if ratio > 2.5 or ratio < 0.4:
                     extreme_side = "long-heavy" if ratio > 2.5 else "short-heavy"
+                    # Crowded same-side = caution
+                    is_caution = (
+                        ("bull" in direction and extreme_side == "long-heavy") or
+                        ("bear" in direction and extreme_side == "short-heavy")
+                    )
                     events.append({
                         "event_key": "market_ls_extreme",
                         "type":      "market_pressure",
                         "label":     f"Extreme L/S ratio {ratio:.2f} ({extreme_side})",
-                        "severity":  "info",
+                        "severity":  "warning" if is_caution else "info",
                         "direction": direction,
                         "source":    "market_context",
                         "details": {
                             "ls_ratio":    ratio,
                             "extreme_side": extreme_side,
+                            "is_caution":  is_caution,
                         },
                     })
 
@@ -11633,6 +11650,8 @@ def api_lm_detect_events_all():
                     price_at_event    = row.current_price,
                 )
                 _db.session.add(lme)
+            # Commit immediately so a later row failure cannot roll back this row
+            _db.session.commit()
             results.append({
                 "id":              row.id,
                 "symbol":          row.symbol,
@@ -11642,12 +11661,6 @@ def api_lm_detect_events_all():
         except Exception as e:
             _db.session.rollback()
             errors.append({"id": row.id, "symbol": row.symbol, "error": str(e)})
-
-    try:
-        _db.session.commit()
-    except Exception as e:
-        _db.session.rollback()
-        return jsonify({"error": "db", "message": str(e)}), 500
 
     return jsonify({"ok": True, "results": results, "errors": errors})
 
