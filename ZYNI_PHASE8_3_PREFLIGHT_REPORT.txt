@@ -1,0 +1,201 @@
+================================================================================
+ZyNi SMC Screener — Phase 8.3 Pre-Phase-9 Safety Audit Report
+Generated: Phase 8.3 preflight
+================================================================================
+
+PURPOSE
+-------
+This report documents the safety audit performed before Phase 9 (demo/exchange
+trading features). Each section records the finding and disposition.
+
+================================================================================
+SECTION 1 — Global Watchlist Cache Audit (Task 1)
+================================================================================
+
+STATUS: SAFE — NO CODE CHANGE REQUIRED
+
+Finding:
+  The watchlist global state was fixed in Phase 7.3 (commit 628a060).
+
+Architecture after Phase 7.3:
+  _wl_user_pairs : Dict[str, List[str]]   # username → their registered pairs
+  _wl_pairs      : List[str]              # UNION of all users' pairs (thread reads only)
+  _wl_cache      : Dict[str, Any]         # symbol → public OF result (keyed by symbol)
+
+Why safe:
+  1. api_watchlist_register   — updates _wl_user_pairs[username], then rebuilds union.
+                                 One user cannot overwrite another user's pairs list.
+  2. api_watchlist_cache      — filters _wl_cache by _wl_user_pairs.get(username, []).
+                                 User A cannot see User B's pairs in the response.
+  3. api_watchlist_status     — same filter.
+  4. _wl_cache values         — public market order-flow data (exchange price/OF result).
+                                 Sharing the raw symbol→OF entry between users who both
+                                 watch the same symbol is acceptable (public data).
+  5. All access is protected by _wl_lock (threading.Lock).
+
+Candle TTL cache:
+  Key: {exchange}:{market}:{symbol}:{interval}:{limit}
+  This is a public market data cache. No user-specific data is stored.
+  Key includes exchange+market+symbol+interval+limit — no aliasing risk.
+  Safe for multi-user sharing.
+
+Server watch loop:
+  Gated by ZYNI_LM_SERVER_WATCH_ENABLED=1 env var.
+  Background loop and manual /watch-loop/tick both cap at 20 items per cycle.
+  Per-user ownership checked inside _lm_server_watch_tick (row.user_id != uid).
+
+Recommendation: No changes required before Phase 9.
+
+================================================================================
+SECTION 2 — snapshot_json Size and Phase 9 Safety Warning (Task 2)
+================================================================================
+
+STATUS: RISK NOTED — PHASE 9 MUST NOT USE snapshot_json FOR TRADE RECORDS
+
+Current snapshot_json usage:
+  Column   : db.Column(db.Text, nullable=True)   [models.py line 376]
+  Keys stored (Phase 6-8):
+    latest_event_detection      latest_setup_readiness
+    latest_candle_features      latest_health
+    latest_mtf_scan             latest_session_context
+    latest_ai_analysis          latest_ai_consensus
+    custom_ai_instructions      event_detection_keys
+    server_watch                setup_memory_records (max 50)
+    setup_memory_summary        setup_memory_accuracy
+    last_* timestamps
+
+Why snapshot_json is acceptable for current usage:
+  - All values are "latest state" — older values are overwritten.
+  - setup_memory_records is capped at 50 rolling records.
+  - No unbounded lists.
+  - Text column in PostgreSQL can hold large values but we stay compact.
+
+Phase 9 MUST follow these rules:
+  RULE 1:  Trade records MUST NOT be stored in snapshot_json.
+           Even 100 compact trade dicts would make the column grow unbounded.
+  RULE 2:  Phase 9.3 must create a dedicated LiveMonitorTrade DB table.
+           Columns: id, item_id, user_id, symbol, direction, setup_type,
+           timeframe, zone_high, zone_low, entry_price, sl_price, tp_price,
+           size, status, source (demo/real), created_at, closed_at,
+           pnl_pct, pnl_usd, notes, details_json.
+  RULE 3:  snapshot_json may store ONLY:
+           - active_trade_id   (FK to LiveMonitorTrade.id)
+           - latest_trade_summary  (single compact dict, latest closed trade)
+  RULE 4:  If no LiveMonitorTrade table exists, Phase 9.4-9.7 must not proceed.
+
+Code comment location:
+  main.py: _lm_append_setup_memory docstring contains this warning.
+
+================================================================================
+SECTION 3 — MEXC API Capability Audit (Task 3)
+================================================================================
+
+STATUS: AUDIT SCRIPT CREATED
+
+File: scripts/mexc_capability_audit.py
+
+Usage:
+  python scripts/mexc_capability_audit.py [--symbol BTCUSDT]
+
+Environment variables:
+  MEXC_API_KEY      (optional — private checks skipped if absent)
+  MEXC_API_SECRET   (optional — private checks skipped if absent)
+  MEXC_DEMO_MODE    (informational — "true" or "false")
+
+What it checks:
+  PUBLIC (no keys needed):
+    public_spot_candles   — GET /api/v3/klines (spot)
+    public_perp_candles   — GET /contract/kline/:symbol (perpetual)
+    public_spot_ticker    — GET /api/v3/ticker/24hr
+    public_perp_ticker    — GET /contract/detail
+
+  PRIVATE (read-only GET, skipped if keys absent):
+    account_info          — GET /api/v3/account (balance list, no modification)
+    open_orders           — GET /api/v3/openOrders (read-only)
+
+  ALWAYS NOT TESTED:
+    demo_order_submit_supported  = "not_tested"
+    real_order_submit_supported  = "not_tested"
+
+Safety contract:
+  - Script NEVER calls order-submit, order-cancel, or batch-order endpoints.
+  - API keys are NEVER logged or stored to disk.
+  - No account state is modified.
+  - Demo order execution is Phase 9.6 only, after Risk Guard + DB table exist.
+
+Recommended run timing:
+  Run this script BEFORE starting Phase 9.05 (MEXC API Capability Audit phase).
+  Results inform whether MEXC can be used as a live candle/price source.
+
+================================================================================
+SECTION 4 — Recommended Phase 9 Order (Task 4)
+================================================================================
+
+Phase 9 must be implemented strictly in this order. Do NOT jump phases.
+
+  9.0   Exchange Data Source Abstraction
+        Add ExchangeDataSource interface. Binance remains default.
+        MEXC plugged in as secondary. No order code yet.
+
+  9.05  MEXC API Capability Audit (run scripts/mexc_capability_audit.py)
+        Confirm public_candles_ok + public_ticker_ok before proceeding.
+        Confirm private_auth_possible if private features needed.
+        DO NOT proceed to 9.1 if public candles fail.
+
+  9.1   MEXC Candle + Live Price Source
+        Route candle/ticker requests through ExchangeDataSource.
+        MEXC candles stored in _lm_candle_ttl_cache with mexc:perpetual:... key.
+        No order logic. No account connection.
+
+  9.2   Aggregated Context (Binance-first, MEXC supplement)
+        Merge candle features from multiple exchanges where available.
+        AI context receives exchange-labelled candle_features block.
+        No order logic.
+
+  9.3   LiveMonitorTrade DB table (REQUIRES models.py change)
+        Create LiveMonitorTrade table (see Section 2 schema above).
+        DB migration must run BEFORE any Phase 9.4+ code is deployed.
+        snapshot_json trade fields: active_trade_id + latest_trade_summary only.
+
+  9.4   AI Trade Proposal
+        AI returns structured trade_proposal block (not a free-text recommendation).
+        Fields: direction, entry_zone, sl_zone, tp_zone, confidence, notes.
+        MUST be labelled as proposal only — NOT executable.
+        MUST include risk_guard_passed: false by default.
+
+  9.5   Risk Guard
+        Backend validates AI proposal against hard rules before any execution:
+        max_risk_pct, max_position_size, zone_validity, session_filter.
+        risk_guard_passed set to true only when all checks pass.
+        NO execution in this phase — validation only.
+
+  9.6   Demo Execution
+        Only after 9.3 DB table + 9.5 Risk Guard are live.
+        Uses MEXC demo endpoint (if supported — see 9.05 audit).
+        Creates LiveMonitorTrade row with source="demo".
+        NEVER touches real funds. MEXC_DEMO_MODE=true required.
+        Order size always the minimum allowed by exchange.
+
+  9.7   Demo Sync + Post-Trade Review
+        Poll demo order status. Update LiveMonitorTrade closed_at / pnl.
+        AI post-trade analysis stored in LiveMonitorTrade.notes.
+        Review UI: show trade outcome vs AI proposal.
+
+HARD STOPS between phases:
+  - Do NOT start 9.4 if 9.3 DB table does not exist.
+  - Do NOT start 9.6 if 9.5 Risk Guard has not passed a full test run.
+  - Do NOT connect real account API in Phase 9 at all.
+  - Real execution is Phase 10+ only, after extended demo validation.
+
+================================================================================
+SECTION 5 — API Key Safety Rules (standing)
+================================================================================
+
+  - API keys MUST NEVER be returned to the frontend.
+  - Keys are backend-only via os.environ.
+  - Keys are NEVER stored in snapshot_json, DB columns, or log files.
+  - scripts/mexc_capability_audit.py: keys read from env only, never printed.
+
+================================================================================
+END OF PHASE 8.3 PREFLIGHT REPORT
+================================================================================
