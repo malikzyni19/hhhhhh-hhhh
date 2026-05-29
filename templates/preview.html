@@ -5159,7 +5159,7 @@ svg{display:block}
       });
     });
     _lmBindChat(item);
-    _lmLoadEvents(item.id);
+    if(_lmInstructionView!=="instructions"){ _lmLoadEvents(item.id); }
   }
 
   function _lmMtfMatrix(item){
@@ -5285,9 +5285,11 @@ svg{display:block}
 
   function _lmLoadEvents(itemId){
     if(!itemId||location.protocol==="file:") return;
+    if(_lmInstructionView==="instructions") return;
     fetch("/api/live-monitor/events/"+itemId,{credentials:"same-origin"})
       .then(function(r){return r.ok?r.json():null;})
       .then(function(d){
+        if(_lmInstructionView==="instructions") return;
         var box=document.getElementById("lmEvents"); if(!box) return;
         if(!d||!d.events||!d.events.length){
           box.innerHTML='<div style="color:var(--text-3);font-size:11px">No events yet.</div>'; return;
@@ -5308,6 +5310,7 @@ svg{display:block}
         }).join("")+'</div>';
       })
       .catch(function(){
+        if(_lmInstructionView==="instructions") return;
         var box=document.getElementById("lmEvents"); if(!box) return;
         box.innerHTML='<div style="color:var(--text-3);font-size:11px">Could not load events.</div>';
       });
