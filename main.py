@@ -645,10 +645,23 @@ threading.Thread(target=_log_smtp_config, daemon=True).start()
 
 # Shared state — thread-safe via lock
 _wl_lock          = threading.Lock()
-_wl_pairs: List[str]          = []          # current watchlist pairs
+_wl_pairs: List[str]          = []          # union of all users' pairs (background thread reads this)
+_wl_user_pairs: Dict[str, List[str]] = {}   # username → their registered pairs (user isolation)
 _wl_cache: Dict[str, Any]     = {}          # symbol → latest OF result
 _wl_thread: Optional[threading.Thread] = None
 _wl_running       = False
+
+
+def _wl_rebuild_union() -> None:
+    """Rebuild _wl_pairs from the union of all users' pairs. Caller must hold _wl_lock."""
+    seen: set = set()
+    result: List[str] = []
+    for up in _wl_user_pairs.values():
+        for sym in up:
+            if sym not in seen:
+                seen.add(sym)
+                result.append(sym)
+    _wl_pairs[:] = result
 
 
 def _wl_background_loop():
@@ -6568,7 +6581,8 @@ def login():
 
         saved_pairs = load_user_watchlist(username)
         with _wl_lock:
-            _wl_pairs[:] = saved_pairs
+            _wl_user_pairs[username] = saved_pairs
+            _wl_rebuild_union()
         if saved_pairs:
             _ensure_wl_thread()
 
@@ -7320,7 +7334,6 @@ def guest_login():
 @app.route("/api/watchlist/register", methods=["POST"])
 @login_required
 def api_watchlist_register():
-    global _wl_pairs
     username = session.get("username", "default")
     data  = request.get_json(force=True) or {}
     pairs = [str(p).strip().upper() for p in data.get("pairs", []) if str(p).strip()]
@@ -7330,23 +7343,27 @@ def api_watchlist_register():
     save_user_watchlist(username, pairs)
 
     with _wl_lock:
-        old_pairs = set(_wl_pairs)
-        _wl_pairs[:] = pairs
+        old_user_pairs = set(_wl_user_pairs.get(username, []))
+        _wl_user_pairs[username] = pairs
+        _wl_rebuild_union()
+        global_pairs_after = set(_wl_pairs)
+        # Evict cache only for symbols no longer needed by any user
         for sym in list(_wl_cache.keys()):
-            if sym not in pairs:
+            if sym not in global_pairs_after:
                 del _wl_cache[sym]
 
-    new_pairs = set(pairs)
+    new_user_pairs = set(pairs)
 
-    # Stop WebSocket for removed pairs
-    for sym in old_pairs - new_pairs:
-        stop_ob_ws(sym)
+    # Stop WebSocket only for pairs no user needs anymore
+    for sym in old_user_pairs - new_user_pairs:
+        if sym not in global_pairs_after:
+            stop_ob_ws(sym)
 
-    # Start WebSocket for new pairs
-    for sym in new_pairs - old_pairs:
+    # Start WebSocket for new pairs added by this user
+    for sym in new_user_pairs - old_user_pairs:
         start_ob_ws(sym)
 
-    # Ensure streams running for all pairs
+    # Ensure streams running for this user's pairs
     for sym in pairs:
         start_ob_ws(sym)
 
@@ -9636,6 +9653,139 @@ def _lm_maybe_refresh_candles(row, snap: dict, stale_seconds: int = 120) -> dict
     return snap
 
 
+# ── Phase 7.2: Setup Readiness Engine ────────────────────────────────────────
+
+def _lm_compute_setup_readiness(row, snapshot=None) -> dict:
+    """Score detected events into a deterministic readiness verdict.
+
+    Reads from snapshot: latest_event_detection, latest_candle_features,
+    latest_health, latest_session_context, latest_market_context.
+    Returns a structured readiness dict. Does NOT commit.
+    """
+    from datetime import datetime as _dt3, timezone as _tz3
+
+    snap      = snapshot if snapshot is not None else _json_loads_safe(getattr(row, "snapshot_json", None), {})
+    detection = snap.get("latest_event_detection") or {}
+    events    = detection.get("events") or []
+    lh        = snap.get("latest_health") or {}
+    zone_info = lh.get("zone") or {}
+    zone_state = (zone_info.get("state") or "").lower()
+
+    confirmation_score = 0
+    risk_score         = 0
+    supporting_events  = []
+    risk_events        = []
+    missing_confirms   = []
+
+    # Per-event scoring
+    _confirmation_weights = {
+        "zone_touch":                    15,
+        "candle_wick_rejection":         15,
+        "candle_volume_spike":           10,
+        "setup_reaction_near_zone":      25,
+        "range_sweep_style_rejection":   20,
+        "candle_breakout_context":       10,
+    }
+    _risk_weights = {
+        "zone_breach_risk":                  40,
+        "candle_rejection_against_setup":    20,
+        "market_taker_pressure_against":     20,
+        "session_warning":                    10,
+        "bias_warning":                       15,
+        "candle_breakout_context":            10,  # breakout against direction
+        "market_pressure":                    10,
+    }
+
+    direction = (getattr(row, "direction", "") or "").lower()
+
+    for ev in events:
+        ev_type  = ev.get("type", "")
+        ev_sev   = ev.get("severity", "")
+        ev_label = ev.get("label", "")
+
+        # Confirmation events
+        if ev_sev == "watch":
+            w = _confirmation_weights.get(ev_type, 10)
+            # Breakout against direction counts as risk not confirmation
+            if ev_type == "candle_breakout_context":
+                bk = (ev.get("details") or {}).get("breakout_context", "")
+                aligns = (bk == "above_range" and "bull" in direction) or \
+                         (bk == "below_range" and "bear" in direction)
+                if not aligns:
+                    risk_score += 10
+                    risk_events.append(ev_label)
+                    continue
+            confirmation_score += w
+            supporting_events.append(ev_label)
+
+        elif ev_sev in ("warning", "risk"):
+            w = _risk_weights.get(ev_type, 15 if ev_sev == "warning" else 30)
+            if ev_sev == "risk":
+                w = max(w, 30)
+            risk_score += w
+            risk_events.append(ev_label)
+
+        elif ev_sev == "info":
+            # info events: small confirmation boost
+            confirmation_score += 5
+            supporting_events.append(ev_label)
+
+    # Cap scores at 100
+    confirmation_score = min(100, confirmation_score)
+    risk_score         = min(100, risk_score)
+
+    # Check for key confirmations
+    event_types_present = {ev.get("type") for ev in events}
+    if "zone_touch" not in event_types_present and "zone_near" not in event_types_present:
+        missing_confirms.append("Price not near zone")
+    if "candle_wick_rejection" not in event_types_present and "setup_reaction_near_zone" not in event_types_present:
+        missing_confirms.append("No candle rejection signal")
+    if not snap.get("latest_candle_features"):
+        missing_confirms.append("Candle features not loaded")
+
+    # Determine readiness_state
+    if zone_state in ("breached", "invalidated"):
+        readiness_state = "avoid"
+    elif zone_state == "breach_risk" or risk_score >= 70:
+        readiness_state = "high_risk"
+    elif confirmation_score >= 55 and risk_score < 35:
+        readiness_state = "strong_watch"
+    elif confirmation_score >= 25 and risk_score < 60:
+        readiness_state = "active_watch"
+    else:
+        readiness_state = "wait"
+
+    # Compact summary
+    summary = (
+        f"{readiness_state.replace('_',' ').title()} — "
+        f"conf {confirmation_score}/100, risk {risk_score}/100. "
+        f"{len(supporting_events)} supporting, {len(risk_events)} risk signal(s)."
+    )
+
+    return {
+        "phase":               "phase7_2_setup_readiness",
+        "computed_at":         _dt3.now(_tz3.utc).isoformat(),
+        "symbol":              getattr(row, "symbol", ""),
+        "readiness_state":     readiness_state,
+        "confirmation_score":  confirmation_score,
+        "risk_score":          risk_score,
+        "supporting_events":   supporting_events[:10],
+        "risk_events":         risk_events[:10],
+        "missing_confirmations": missing_confirms,
+        "summary":             summary,
+    }
+
+
+def _lm_attach_setup_readiness(row, snapshot=None) -> tuple:
+    """Compute readiness and store in snapshot. Does NOT commit."""
+    snap      = snapshot if snapshot is not None else _json_loads_safe(getattr(row, "snapshot_json", None), {})
+    readiness = _lm_compute_setup_readiness(row, snapshot=snap)
+    snap["latest_setup_readiness"]  = readiness
+    snap["last_setup_readiness_at"] = readiness["computed_at"]
+    row.snapshot_json = _json_dumps_safe(snap)
+    return snap, readiness
+
+
 def _lm_build_ai_context(item) -> dict:
     """Build a compact, JSON-safe context dict from a LiveMonitorItem for the AI agent."""
     snap = _json_loads_safe(getattr(item, "snapshot_json", None), {})
@@ -9765,6 +9915,16 @@ def _lm_build_ai_context(item) -> dict:
             "interval":    cf.get("interval"),
             "features":    cf.get("features"),
         } if cf and isinstance(cf, dict) else None)(snap.get("latest_candle_features")),
+        "setup_readiness":        (lambda sr: {
+            "computed_at":          sr.get("computed_at"),
+            "readiness_state":      sr.get("readiness_state"),
+            "confirmation_score":   sr.get("confirmation_score"),
+            "risk_score":           sr.get("risk_score"),
+            "supporting_events":    (sr.get("supporting_events") or [])[:5],
+            "risk_events":          (sr.get("risk_events") or [])[:5],
+            "missing_confirmations": sr.get("missing_confirmations"),
+            "summary":              sr.get("summary"),
+        } if sr and isinstance(sr, dict) else None)(snap.get("latest_setup_readiness")),
     }
 
 
@@ -9833,6 +9993,22 @@ def _lm_ai_system_prompt() -> str:
         "- If candle_features is null, do not speculate about chart structure.\n"
         "- Features are statistical summaries only. Never treat them as guaranteed signals.\n"
         "- Do NOT use candle features as permission to recommend trade execution.\n\n"
+
+        "SETUP READINESS (Phase 7.2):\n"
+        "The context may include a setup_readiness block — a deterministic backend score.\n"
+        "- readiness_state values: wait | active_watch | strong_watch | high_risk | avoid\n"
+        "- confirmation_score (0-100): how many watch-level signals support the setup.\n"
+        "- risk_score (0-100): how many risk/warning-level signals oppose the setup.\n"
+        "- supporting_events / risk_events: event labels that drove the score.\n"
+        "- missing_confirmations: what is still absent before the setup is considered ready.\n"
+        "USE RULES:\n"
+        "- setup_readiness is a deterministic backend scoring system. Use it as guidance only.\n"
+        "- strong_watch means 'watch closely' — NOT 'enter now'. Do NOT say 'enter now'.\n"
+        "- active_watch means 'monitor' — NOT 'buy' or 'sell'.\n"
+        "- high_risk or avoid: always reduce your confidence score and flag risks[]. Never say 'safe'.\n"
+        "- Do NOT override readiness state. If state is high_risk, do not call it active_watch.\n"
+        "- If setup_readiness is null, analyze from other context fields only.\n"
+        "- Do NOT use setup_readiness as trade permission under any circumstances.\n\n"
 
         "STRICT RULES:\n"
         "- Analyze ONLY the provided backend facts. Do not invent missing data.\n"
@@ -10584,21 +10760,25 @@ def api_user_prefs_set():
 def api_watchlist_cache():
     """
     Browser polls this every 5s to get latest cached orderflow.
-    Returns all pairs at once — one lightweight request.
+    Returns only pairs registered by the current user.
     """
+    username = session.get("username", "default")
     with _wl_lock:
-        return jsonify(dict(_wl_cache))
+        user_syms = set(_wl_user_pairs.get(username, []))
+        return jsonify({k: v for k, v in _wl_cache.items() if k in user_syms})
 
 
 @app.route("/api/watchlist/status")
 @login_required
 def api_watchlist_status():
-    """Health check for streaming thread."""
+    """Health check for streaming thread — scoped to current user's pairs."""
+    username = session.get("username", "default")
     with _wl_lock:
+        user_syms = set(_wl_user_pairs.get(username, []))
         return jsonify({
             "running":  _wl_thread is not None and _wl_thread.is_alive(),
-            "pairs":    list(_wl_pairs),
-            "cached":   list(_wl_cache.keys()),
+            "pairs":    [p for p in _wl_pairs if p in user_syms],
+            "cached":   [k for k in _wl_cache.keys() if k in user_syms],
         })
 
 
@@ -12086,6 +12266,7 @@ def api_lm_items_detect_events(item_id):
     snap = _json_loads_safe(row.snapshot_json, {})
     snap = _lm_maybe_refresh_candles(row, snap)
     snap, detection = _lm_attach_event_detection(row, snapshot=snap)
+    snap, readiness = _lm_attach_setup_readiness(row, snapshot=snap)
 
     # Deduplication: track which event_keys have already produced a LiveMonitorEvent
     seen_keys: list = snap.get("event_detection_keys") or []
@@ -12124,6 +12305,7 @@ def api_lm_items_detect_events(item_id):
         "ok":              True,
         "item":            _live_monitor_item_to_dict(row),
         "event_detection": detection,
+        "setup_readiness": readiness,
         "new_events_logged": len(new_events_to_create),
     })
 
@@ -12147,6 +12329,7 @@ def api_lm_detect_events_all():
             snap = _json_loads_safe(row.snapshot_json, {})
             snap = _lm_maybe_refresh_candles(row, snap)
             snap, detection = _lm_attach_event_detection(row, snapshot=snap)
+            snap, readiness = _lm_attach_setup_readiness(row, snapshot=snap)
 
             seen_keys: list = snap.get("event_detection_keys") or []
             important_types = {"zone_touch", "zone_breach_risk", "session_warning", "market_pressure"}
@@ -12178,6 +12361,7 @@ def api_lm_detect_events_all():
                 "id":              row.id,
                 "symbol":          row.symbol,
                 "event_detection": detection,
+                "setup_readiness": readiness,
                 "new_events_logged": len(new_events_to_create),
             })
         except Exception as e:
