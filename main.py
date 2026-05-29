@@ -8650,6 +8650,253 @@ def _lm_get_ai_agent_config(agent_id: str = None) -> dict:
     }
 
 
+# ── Phase 6.6: AI Brain Rules + Custom Instructions Layer ─────────────────────
+
+def _lm_builtin_ai_brain_rules() -> dict:
+    """
+    Return the built-in AI Brain rules for the Live Monitor AI Agent.
+
+    This is NOT user custom instructions.
+    This is core AI reasoning intelligence — always present, not removable.
+    The user should NOT need to instruct the AI on basic OB/FIB/order-flow logic.
+    """
+    return {
+        "phase": "phase6_6_builtin_ai_brain",
+        "principle": (
+            "Built-in AI Brain handles core trading reasoning. "
+            "Custom instructions are only extra user preferences layered on top."
+        ),
+        "primary_entry_modules": [
+            {
+                "key":   "order_block",
+                "label": "Order Block",
+                "role":  "Can be a primary setup/trade zone.",
+                "notes": [
+                    "Use OB zone context, touch/reaction quality, zone validity, "
+                    "liquidity around zone, and confirmation quality.",
+                    "Do not require user to instruct basic OB logic.",
+                    "Do not assume entry from OB alone without context/risk.",
+                ],
+            },
+            {
+                "key":   "fibonacci",
+                "label": "Fibonacci",
+                "role":  "Can be a primary setup/trade zone.",
+                "notes": [
+                    "Use FIB reaction/rejection quality, key levels, trend leg context, "
+                    "liquidity around FIB, wick/close behavior, and confirmation quality.",
+                    "Do not require user to instruct basic FIB logic.",
+                    "FIB can be primary logic, not only confirmation.",
+                ],
+            },
+            {
+                "key":   "order_flow",
+                "label": "Order Flow",
+                "role":  "Future independent scalp mode and current confirmation layer.",
+                "notes": [
+                    "Use order-flow facts when available: taker pressure, OI, funding, "
+                    "liquidations, volume, sweep/rejection context.",
+                    "Order-flow-only trading is more dangerous and must be treated as "
+                    "scalp/watch candidate until Risk Guard exists.",
+                ],
+            },
+        ],
+        "confirmation_modules": [
+            "FVG", "Breaker", "Bias", "Session", "Liquidity",
+            "Open Interest", "Funding", "Taker Pressure", "Liquidations",
+            "Wick Rejection", "Volume", "Market Context",
+        ],
+        "reasoning_modes": {
+            "setup_mode": "OB or FIB can be primary setup; other modules confirm.",
+            "hybrid_mode": "OB/FIB primary setup plus order-flow confirmation.",
+            "order_flow_mode_future": (
+                "Order-flow can become independent scalp mode later after event "
+                "detection, memory, paper trading, and Risk Guard."
+            ),
+        },
+        "safety_rules": [
+            "Analysis only. Not financial advice.",
+            "Do not place trades.",
+            "Do not claim guaranteed outcome.",
+            "Do not change strategy rules automatically.",
+            "Do not treat custom instructions as permission to bypass risk.",
+            "If data is missing, say what is missing.",
+        ],
+    }
+
+
+# Blocked phrase fragments (lower-case match) for _lm_instruction_is_safe
+_LM_BLOCKED_INSTRUCTION_PHRASES = [
+    "place trade", "place order", "place buy", "place sell",
+    "buy always", "sell always", "buy now", "sell now",
+    "ignore stop loss", "ignore sl", "remove stop loss", "remove sl",
+    "bypass risk", "override risk", "bypass risk guard", "override risk guard",
+    "change strategy code", "change strategy rules", "modify strategy",
+    "use exchange account", "connect exchange", "use api key",
+    "revenge trade", "martingale",
+    "execute trade", "execute order", "open position", "close position automatically",
+]
+
+_LM_INSTRUCTION_TRIGGER_PHRASES = [
+    "from now", "remember", "watch for", "alert me", "ignore",
+    "only consider", "be stricter", "do not mark", "require confirmation",
+    "save this instruction", "add instruction", "only alert", "filter",
+    "consider stronger", "consider weaker",
+]
+
+
+def _lm_instruction_is_safe(text: str) -> tuple:
+    """
+    Check if a custom AI instruction text is safe to store.
+
+    Returns (True, "") if safe, or (False, reason) if blocked.
+    Custom instructions must be extra preferences/filters, not execution permissions.
+    """
+    if not text or not text.strip():
+        return False, "Instruction text is empty."
+    t = text.strip().lower()
+    for phrase in _LM_BLOCKED_INSTRUCTION_PHRASES:
+        if phrase in t:
+            return False, (
+                f"Instruction blocked: contains forbidden phrase '{phrase}'. "
+                "Custom instructions must be analysis preferences only, "
+                "not execution or risk-bypass commands."
+            )
+    return True, ""
+
+
+def _lm_custom_ai_instructions_from_snapshot(snapshot: dict) -> list:
+    """Read active custom AI instructions from a snapshot dict."""
+    raw = snapshot.get("custom_ai_instructions") if snapshot else None
+    if not isinstance(raw, list):
+        return []
+    return [i for i in raw if isinstance(i, dict) and i.get("is_active", True)]
+
+
+def _lm_add_custom_ai_instruction(row, text: str, source: str = "chat") -> tuple:
+    """
+    Add a custom AI instruction to a LiveMonitorItem snapshot.
+    Validates safety, max-length, and max-count.
+    Does NOT commit — caller must commit.
+    Returns (snapshot_dict, new_instruction_dict).
+    """
+    import uuid as _uuid
+    from datetime import datetime, timezone as _tz
+
+    snap = _json_loads_safe(getattr(row, "snapshot_json", None), {})
+    if not isinstance(snap.get("custom_ai_instructions"), list):
+        snap["custom_ai_instructions"] = []
+
+    # Validate
+    text = (text or "").strip()[:300]
+    if not text:
+        return snap, None
+
+    safe, reason = _lm_instruction_is_safe(text)
+    if not safe:
+        return snap, {"blocked": True, "reason": reason}
+
+    # Max 20 active instructions per item
+    active_count = sum(
+        1 for i in snap["custom_ai_instructions"]
+        if isinstance(i, dict) and i.get("is_active", True)
+    )
+    if active_count >= 20:
+        return snap, {"blocked": True, "reason": "Max 20 active instructions reached. Remove one first."}
+
+    ins_id  = "ins_" + _uuid.uuid4().hex[:8]
+    new_ins = {
+        "id":         ins_id,
+        "text":       text,
+        "scope":      "item",
+        "source":     source if source in ("chat", "manual") else "manual",
+        "created_at": datetime.now(_tz.utc).isoformat(),
+        "is_active":  True,
+    }
+    snap["custom_ai_instructions"].append(new_ins)
+    row.snapshot_json = _json_dumps_safe(snap)
+    return snap, new_ins
+
+
+def _lm_remove_custom_ai_instruction(row, instruction_id: str) -> tuple:
+    """
+    Mark a custom AI instruction as inactive.
+    Does NOT commit — caller must commit.
+    Returns (snapshot_dict, removed_instruction_dict | None).
+    """
+    snap = _json_loads_safe(getattr(row, "snapshot_json", None), {})
+    if not isinstance(snap.get("custom_ai_instructions"), list):
+        return snap, None
+
+    removed = None
+    for ins in snap["custom_ai_instructions"]:
+        if isinstance(ins, dict) and ins.get("id") == instruction_id and ins.get("is_active", True):
+            ins["is_active"] = False
+            removed = ins
+            break
+
+    if removed:
+        row.snapshot_json = _json_dumps_safe(snap)
+    return snap, removed
+
+
+def _lm_extract_instruction_from_chat(message: str) -> dict:
+    """
+    Detect whether a user chat message is meant as a custom AI instruction.
+
+    Returns {"text": cleaned_text, "confidence": 0-100} if instruction-like,
+    or {"text": "", "confidence": 0} if it is a normal question.
+
+    Rules:
+    - High-confidence (>= 70) trigger phrases cause a save attempt.
+    - Vague questions or single-word messages return low confidence.
+    - Questions ending in "?" are treated as normal chat unless they also
+      contain a strong instruction phrase.
+    """
+    if not message or not message.strip():
+        return {"text": "", "confidence": 0}
+
+    msg   = message.strip()
+    lower = msg.lower()
+
+    # Strong instruction trigger phrases (each adds to confidence)
+    _STRONG_TRIGGERS = [
+        ("save this instruction", 90),
+        ("add instruction",       90),
+        ("from now on",           85),
+        ("remember this",         85),
+        ("remember that",         80),
+        ("from now",              75),
+        ("do not mark",           75),
+        ("only consider",         75),
+        ("require confirmation",  75),
+        ("be stricter",           75),
+        ("alert me when",         75),
+        ("alert me only",         75),
+        ("only alert",            75),
+        ("watch for",             70),
+        ("ignore weak",           70),
+        ("filter weak",           70),
+        ("consider stronger",     70),
+        ("consider weaker",       70),
+    ]
+
+    best_conf = 0
+    for phrase, conf in _STRONG_TRIGGERS:
+        if phrase in lower:
+            best_conf = max(best_conf, conf)
+
+    # Penalty: ends with question mark and no strong trigger already dominated
+    if lower.rstrip().endswith("?") and best_conf < 80:
+        best_conf = max(0, best_conf - 30)
+
+    # Penalty: very short messages are likely questions not instructions
+    if len(msg) < 15 and best_conf < 90:
+        best_conf = max(0, best_conf - 20)
+
+    return {"text": msg[:300], "confidence": best_conf}
+
+
 def _lm_build_ai_context(item) -> dict:
     """Build a compact, JSON-safe context dict from a LiveMonitorItem for the AI agent."""
     snap = _json_loads_safe(getattr(item, "snapshot_json", None), {})
@@ -8753,34 +9000,62 @@ def _lm_build_ai_context(item) -> dict:
             "do_not_use_5m_for_bias": True,
             "no_trade_execution":   True,
             "analysis_only":        True,
+            "built_in_brain_not_user_instructions": True,
+            "custom_instructions_are_extra_preferences_only": True,
         },
+        "ai_brain":               _lm_builtin_ai_brain_rules(),
+        "custom_ai_instructions": _lm_custom_ai_instructions_from_snapshot(snap),
     }
 
 
 def _lm_ai_system_prompt() -> str:
-    """Return the system prompt for the ZyNi Live Monitor AI Agent."""
+    """Return the system prompt for the ZyNi Live Monitor AI Agent (Phase 6.6 updated)."""
     return (
         "You are the ZyNi Live Monitor AI Agent — a professional SMC (Smart Money Concepts) "
         "setup analyst. Your job is to analyze trading setup facts provided by the backend "
         "and give the user a clear, factual analysis.\n\n"
+
+        "BUILT-IN AI BRAIN (Phase 6.6):\n"
+        "You already have built-in trading intelligence. The user does NOT need to teach you:\n"
+        "- Order Block (OB): OB zones can be PRIMARY setup modules — use OB touch/reaction quality, "
+        "zone validity, liquidity context, and confirmation quality automatically.\n"
+        "- Fibonacci (FIB): FIB zones can be PRIMARY setup modules — use FIB reaction quality, "
+        "key levels, trend context, wick/close behavior, and confirmation quality automatically.\n"
+        "- Order Flow: Use taker pressure, OI, funding, liquidations, volume, and sweep/rejection "
+        "context as confirmation when available.\n"
+        "- Session context, bias context, liquidity sweeps, wick rejection, FVG, Breaker — "
+        "all handled automatically from context data.\n"
+        "Do not wait for the user to explain basic OB/FIB/order-flow logic.\n\n"
+
+        "CUSTOM AI INSTRUCTIONS (Phase 6.6):\n"
+        "If custom_ai_instructions are provided in the context, apply them as EXTRA FILTERS only.\n"
+        "- Custom instructions are user preferences layered ON TOP of built-in brain.\n"
+        "- Custom instructions cannot override safety rules or risk management.\n"
+        "- Custom instructions cannot grant permission to execute trades.\n"
+        "- If a custom instruction conflicts with safety, safety always wins.\n"
+        "- If a custom instruction conflicts with built-in brain logic, note the conflict in agent_note.\n\n"
+
         "STRICT RULES:\n"
         "- Analyze ONLY the provided backend facts. Do not invent missing data.\n"
         "- Do NOT claim any trade is guaranteed or risk-free.\n"
         "- Do NOT give a direct order to buy or sell. Never say 'place buy now'.\n"
         "- Do NOT ask for API keys, credentials, or personal account data.\n"
         "- Do NOT call external tools or make external requests.\n"
+        "- Do NOT change or override strategy rules.\n"
         "- Bias detection minimum timeframe is 1H. Never use 5m for bias.\n"
         "- 5m is a FUTURE hidden execution timeframe only — do not reference it for analysis.\n"
         "- Use 15m/30m for entry confirmation, 1H for bias lock, 4H/1D for context.\n"
         "- If data is missing (null), state clearly what is missing.\n"
         "- Keep explanations concise and factual.\n"
         "- Your response must be valid JSON only — no prose outside the JSON object.\n\n"
+
         "VERDICT OPTIONS:\n"
         "- 'watch'           — setup is worth monitoring, no immediate action.\n"
         "- 'wait'            — setup exists but key confirmations are missing.\n"
         "- 'confirmed_watch' — setup has strong alignment; watch closely for entry signal.\n"
         "- 'high_risk'       — notable warning signs; elevated caution required.\n"
         "- 'avoid'           — setup has critical issues or invalidation conditions.\n\n"
+
         "OUTPUT FORMAT — respond with ONLY this JSON object:\n"
         "{\n"
         "  \"verdict\": \"watch|wait|confirmed_watch|high_risk|avoid\",\n"
@@ -8794,7 +9069,7 @@ def _lm_ai_system_prompt() -> str:
         "  \"risks\": [\"<list of current risk factors>\"],\n"
         "  \"invalidations\": [\"<list of conditions that would invalidate this setup>\"],\n"
         "  \"next_actions\": [\"<list of what to watch or wait for>\"],\n"
-        "  \"agent_note\": \"<any important note not covered above>\",\n"
+        "  \"agent_note\": \"<any important note; mention applied custom instructions here>\",\n"
         "  \"disclaimer\": \"Analysis only. Not financial advice.\"\n"
         "}\n"
         "Do not wrap the JSON in markdown code fences. Output raw JSON only."
@@ -10842,6 +11117,139 @@ def api_lm_items_ai_consensus(item_id):
     })
 
 
+# ── Phase 6.6: Custom AI Instruction Endpoints ───────────────────────────────
+
+@app.route("/api/live-monitor/items/<int:item_id>/ai-instructions", methods=["GET"])
+@login_required
+def api_lm_items_ai_instructions_get(item_id):
+    """Return active custom AI instructions for one Live Monitor item."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import LiveMonitorItem as _LMI
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if not row.is_active:
+        return jsonify({"error": "inactive"}), 400
+
+    snap = _json_loads_safe(row.snapshot_json, {})
+    return jsonify({
+        "ok":           True,
+        "instructions": _lm_custom_ai_instructions_from_snapshot(snap),
+    })
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/ai-instructions", methods=["POST"])
+@login_required
+def api_lm_items_ai_instructions_add(item_id):
+    """Add a custom AI instruction to one Live Monitor item."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorItem as _LMI, LiveMonitorEvent as _LME
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if not row.is_active:
+        return jsonify({"error": "inactive"}), 400
+
+    body   = request.get_json(silent=True) or {}
+    text   = (body.get("text") or "").strip()
+    source = body.get("source", "manual")
+
+    if not text:
+        return jsonify({"error": "no_text", "message": "Instruction text is required."}), 400
+
+    safe, reason = _lm_instruction_is_safe(text)
+    if not safe:
+        return jsonify({"ok": False, "blocked": True, "reason": reason}), 400
+
+    snap, ins = _lm_add_custom_ai_instruction(row, text, source=source)
+    if ins and ins.get("blocked"):
+        return jsonify({"ok": False, "blocked": True, "reason": ins.get("reason")}), 400
+
+    row.updated_at = datetime.now(timezone.utc)
+    ev = _LME(
+        item_id           = row.id,
+        user_id           = uid,
+        symbol            = row.symbol,
+        event_type        = "ai_instruction_added",
+        event_description = "AI custom instruction added",
+        details_json      = _json_dumps_safe({
+            "instruction_id": ins.get("id") if ins else None,
+            "text":           (text or "")[:80],
+        }),
+        health_score_at_event = row.score,
+        price_at_event        = row.current_price,
+    )
+    _db.session.add(ev)
+    try:
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": "db", "message": str(e)}), 500
+
+    return jsonify({
+        "ok":          True,
+        "instruction": ins,
+        "item":        _live_monitor_item_to_dict(row),
+    })
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/ai-instructions/<instruction_id>",
+           methods=["DELETE"])
+@login_required
+def api_lm_items_ai_instructions_delete(item_id, instruction_id):
+    """Mark a custom AI instruction as inactive for one Live Monitor item."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorItem as _LMI, LiveMonitorEvent as _LME
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if not row.is_active:
+        return jsonify({"error": "inactive"}), 400
+
+    snap, removed = _lm_remove_custom_ai_instruction(row, instruction_id)
+    if not removed:
+        return jsonify({"ok": False, "error": "not_found", "message": "Instruction not found or already removed."}), 404
+
+    row.updated_at = datetime.now(timezone.utc)
+    ev = _LME(
+        item_id           = row.id,
+        user_id           = uid,
+        symbol            = row.symbol,
+        event_type        = "ai_instruction_removed",
+        event_description = "AI custom instruction removed",
+        details_json      = _json_dumps_safe({"instruction_id": instruction_id}),
+        health_score_at_event = row.score,
+        price_at_event        = row.current_price,
+    )
+    _db.session.add(ev)
+    try:
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": "db", "message": str(e)}), 500
+
+    return jsonify({
+        "ok":      True,
+        "removed": True,
+        "item":    _live_monitor_item_to_dict(row),
+    })
+
+
 @app.route("/api/live-monitor/items/<int:item_id>/ai-chat", methods=["POST"])
 @login_required
 def api_lm_items_ai_chat(item_id):
@@ -10865,6 +11273,67 @@ def api_lm_items_ai_chat(item_id):
     if not user_message:
         return jsonify({"error": "no_message"}), 400
 
+    # ── Phase 6.6: Detect and save custom AI instruction from chat ───────────
+    extracted = _lm_extract_instruction_from_chat(user_message)
+    if extracted.get("confidence", 0) >= 70:
+        ins_text = extracted["text"]
+        safe, block_reason = _lm_instruction_is_safe(ins_text)
+        if not safe:
+            # Blocked — reply with reason, do not call AI
+            return jsonify({
+                "ok":               False,
+                "reply":            f"Instruction blocked: {block_reason}",
+                "instruction_saved": False,
+                "blocked":          True,
+                "reason":           block_reason,
+                "provider":         "local",
+                "configured":       False,
+            })
+        from models import db as _db2, LiveMonitorEvent as _LME2
+        snap, ins = _lm_add_custom_ai_instruction(row, ins_text, source="chat")
+        if ins and not ins.get("blocked"):
+            row.updated_at = datetime.now(timezone.utc)
+            ev = _LME2(
+                item_id           = row.id,
+                user_id           = uid,
+                symbol            = row.symbol,
+                event_type        = "ai_instruction_added",
+                event_description = "AI custom instruction added via chat",
+                details_json      = _json_dumps_safe({
+                    "instruction_id": ins.get("id"),
+                    "text":           (ins_text or "")[:80],
+                    "source":         "chat",
+                }),
+                health_score_at_event = row.score,
+                price_at_event        = row.current_price,
+            )
+            _db2.session.add(ev)
+            try:
+                _db2.session.commit()
+            except Exception:
+                _db2.session.rollback()
+                ins = None
+            if ins:
+                return jsonify({
+                    "ok":                True,
+                    "reply":             f"Saved as a custom AI instruction: \"{ins_text[:120]}\"",
+                    "instruction_saved": True,
+                    "instruction":       ins,
+                    "item":              _live_monitor_item_to_dict(row),
+                    "provider":          "local",
+                    "configured":        False,
+                })
+        if ins and ins.get("blocked"):
+            return jsonify({
+                "ok":               False,
+                "reply":            ins.get("reason", "Could not save instruction."),
+                "instruction_saved": False,
+                "blocked":          True,
+                "reason":           ins.get("reason"),
+                "provider":         "local",
+                "configured":       False,
+            })
+    # ── Normal chat: call AI provider ───────────────────────────────────────
     context   = _lm_build_ai_context(row)
     ai_result = _lm_call_ai_provider(context, user_message, agent_id=agent_id)
     analysis  = ai_result.get("analysis", {})
@@ -10882,13 +11351,14 @@ def api_lm_items_ai_chat(item_id):
     )
 
     return jsonify({
-        "ok":          True,
-        "reply":       reply,
-        "analysis":    analysis,
-        "provider":    ai_result.get("provider"),
-        "agent_id":    ai_result.get("agent_id"),
-        "agent_label": ai_result.get("agent_label"),
-        "configured":  ai_result.get("configured", False),
+        "ok":               True,
+        "reply":            reply,
+        "instruction_saved": False,
+        "analysis":         analysis,
+        "provider":         ai_result.get("provider"),
+        "agent_id":         ai_result.get("agent_id"),
+        "agent_label":      ai_result.get("agent_label"),
+        "configured":       ai_result.get("configured", False),
     })
 
 

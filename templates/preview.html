@@ -4440,6 +4440,13 @@ svg{display:block}
 
   // Phase 6 / 6.5: AI Agent helpers
   var _lmAiAgents = [];
+  // Phase 6.6: side panel view state (persisted)
+  var _lmInstructionView = (function(){
+    try{
+      var v=localStorage.getItem("zyni_lm_side_panel");
+      return (v==="instructions"||v==="events")?v:"events";
+    }catch(_){ return "events"; }
+  })();
   // Restore persisted selection from localStorage (fallback safely if unavailable)
   var _lmSelectedAgentId = (function(){
     try{ return localStorage.getItem("zyni_lm_ai_agent")||null; }catch(_){ return null; }
@@ -4559,6 +4566,37 @@ svg{display:block}
         agent_id:_lmAiMode==="single"?(_lmSelectedAgentId||null):null
       })
     }).then(function(r){return r.json();})
+      .then(function(d){ if(cb) cb(d,null); })
+      .catch(function(e){ if(cb) cb(null,e); });
+  }
+
+  // Phase 6.6: Custom AI Instruction helpers
+  function _lmCustomInstructions(item){
+    try{
+      var ins=(item&&item.snapshot&&item.snapshot.custom_ai_instructions)||[];
+      return Array.isArray(ins)?ins.filter(function(i){return i&&i.is_active!==false;}):[];
+    }catch(e){ return []; }
+  }
+  function _lmAddInstruction(itemId,text,cb){
+    fetch("/api/live-monitor/items/"+itemId+"/ai-instructions",{
+      method:"POST",credentials:"same-origin",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({text:text,source:"manual"})
+    }).then(function(r){return r.json();})
+      .then(function(d){ if(cb) cb(d,null); })
+      .catch(function(e){ if(cb) cb(null,e); });
+  }
+  function _lmRemoveInstruction(itemId,instructionId,cb){
+    fetch("/api/live-monitor/items/"+itemId+"/ai-instructions/"+instructionId,{
+      method:"DELETE",credentials:"same-origin"
+    }).then(function(r){return r.json();})
+      .then(function(d){ if(cb) cb(d,null); })
+      .catch(function(e){ if(cb) cb(null,e); });
+  }
+  // _lmLoadInstructions: snapshot usually has current data; this refreshes from backend if needed
+  function _lmLoadInstructions(itemId,cb){
+    fetch("/api/live-monitor/items/"+itemId+"/ai-instructions",{credentials:"same-origin"})
+      .then(function(r){return r.json();})
       .then(function(d){ if(cb) cb(d,null); })
       .catch(function(e){ if(cb) cb(null,e); });
   }
@@ -4893,10 +4931,28 @@ svg{display:block}
         '<div class="sec-card">'+
           '<div class="sec-card-head">'+
             '<svg class="ico" style="width:13px;height:13px;color:var(--text-3)" viewBox="0 0 24 24"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/></svg>'+
-            '<span class="sch-title">EVENT TIMELINE</span>'+
+            '<select id="lmSidePanelSel" style="margin-left:4px;font-size:10px;padding:2px 4px;background:var(--bg-2);border:1px solid var(--border);color:var(--text-2);border-radius:4px" title="Switch panel view">'+
+              '<option value="events"'+((_lmInstructionView==="events")?' selected':'')+'>Event Timeline</option>'+
+              '<option value="instructions"'+((_lmInstructionView==="instructions")?' selected':'')+'>AI Instructions</option>'+
+            '</select>'+
           '</div>'+
           '<div class="sec-card-body" style="padding:8px 10px" id="lmEvents">'+
-            '<div style="color:var(--text-3);font-size:11px">Loading events…</div>'+
+            (function(){
+              if(_lmInstructionView==="instructions"){
+                var ins=_lmCustomInstructions(item);
+                if(!ins.length){
+                  return '<div style="color:var(--text-3);font-size:11px">No custom AI instructions yet. Add one through the AI chat — for example: \'Only consider FIB rejection strong if liquidity was swept first.\'</div>';
+                }
+                return '<div class="ins-list">'+ins.map(function(i){
+                  var ts=i.created_at?(' <span style="opacity:.45">'+esc(_lmAgo(i.created_at))+'</span>'):'';
+                  return '<div class="ins-row" style="display:flex;align-items:flex-start;gap:6px;padding:4px 0;border-bottom:1px solid var(--border)">'+
+                    '<div style="flex:1;font-size:11px;color:var(--text-1);line-height:1.4">'+esc(i.text)+ts+'</div>'+
+                    '<button class="btn ins-rm-btn" type="button" data-insrm="'+esc(i.id)+'" style="padding:1px 5px;font-size:10px;color:var(--red-2);border-color:rgba(239,68,68,.25);flex-shrink:0" title="Remove instruction">×</button>'+
+                  '</div>';
+                }).join("")+'</div>';
+              }
+              return '<div style="color:var(--text-3);font-size:11px">Loading events…</div>';
+            })()+
           '</div>'+
         '</div>'+
       '</div>';
@@ -5019,6 +5075,66 @@ svg{display:block}
         if(lbl) lbl.textContent=_lmAiConfiguredLabel(item);
       });
     }
+    // Side panel dropdown handler (events / AI instructions)
+    var sideSel=box.querySelector("#lmSidePanelSel");
+    if(sideSel){
+      sideSel.addEventListener("change",function(){
+        var val=sideSel.value;
+        _lmInstructionView=(val==="instructions"||val==="events")?val:"events";
+        try{ localStorage.setItem("zyni_lm_side_panel",_lmInstructionView); }catch(_){}
+        var evBox=document.getElementById("lmEvents"); if(!evBox) return;
+        if(_lmInstructionView==="events"){
+          evBox.innerHTML='<div style="color:var(--text-3);font-size:11px">Loading events…</div>';
+          _lmLoadEvents(item.id);
+        } else {
+          var ins=_lmCustomInstructions(_lmSelItem||item);
+          if(!ins.length){
+            evBox.innerHTML='<div style="color:var(--text-3);font-size:11px;padding:6px 0">No custom AI instructions yet. Add one through the AI chat.</div>';
+          } else {
+            evBox.innerHTML='<div class="ins-list">'+ins.map(function(i){
+              var ts=i.created_at?new Date(i.created_at).toLocaleString():"";
+              return '<div class="ins-row" style="display:flex;align-items:flex-start;gap:6px;padding:5px 0;border-bottom:1px solid var(--border-1)">'+
+                '<div style="flex:1;font-size:12px;color:var(--text-1)">'+esc(i.text||'')+'<span style="display:block;font-size:10px;color:var(--text-3);margin-top:2px">'+esc(ts)+'</span></div>'+
+                '<button class="btn ins-rm-btn" data-insrm="'+esc(i.id||'')+'" title="Remove" style="flex-shrink:0;padding:1px 5px;font-size:11px;color:var(--red-2);background:none;border:1px solid var(--red-2);border-radius:3px;cursor:pointer">×</button>'+
+              '</div>';
+            }).join('')+'</div>';
+            [].forEach.call(evBox.querySelectorAll(".ins-rm-btn"),function(rmBtn2){
+              rmBtn2.addEventListener("click",function(){
+                var iid2=rmBtn2.getAttribute("data-insrm"); if(!iid2) return;
+                rmBtn2.disabled=true;
+                _lmRemoveInstruction(item.id,iid2,function(d2){
+                  if(d2&&d2.ok&&d2.item){
+                    for(var k=0;k<liveMonitorItems.length;k++){
+                      if(liveMonitorItems[k].id===d2.item.id){liveMonitorItems[k]=d2.item;break;}
+                    }
+                    if(_lmSelItem&&_lmSelItem.id===d2.item.id){
+                      _lmSelItem=d2.item; _lmInstructionView="instructions"; _lmRenderRight(d2.item);
+                    }
+                  } else { rmBtn2.disabled=false; }
+                });
+              });
+            });
+          }
+        }
+      });
+    }
+    // Remove instruction buttons (initial render — instructions view)
+    [].forEach.call(box.querySelectorAll(".ins-rm-btn"),function(rmBtn){
+      rmBtn.addEventListener("click",function(){
+        var iid=rmBtn.getAttribute("data-insrm"); if(!iid) return;
+        rmBtn.disabled=true;
+        _lmRemoveInstruction(item.id,iid,function(d){
+          if(d&&d.ok&&d.item){
+            for(var k=0;k<liveMonitorItems.length;k++){
+              if(liveMonitorItems[k].id===d.item.id){liveMonitorItems[k]=d.item;break;}
+            }
+            if(_lmSelItem&&_lmSelItem.id===d.item.id){
+              _lmSelItem=d.item; _lmInstructionView="instructions"; _lmRenderRight(d.item);
+            }
+          } else { rmBtn.disabled=false; }
+        });
+      });
+    });
     // Analyze button handler
     [].forEach.call(box.querySelectorAll("[data-lmaianalyze]"),function(abtn){
       abtn.addEventListener("click",function(){
@@ -5248,10 +5364,23 @@ svg{display:block}
       // Try backend ai-chat first; fall back to local mock on error
       _lmAiChat(item.id,q,function(d,err){
         var t=document.getElementById("dsTyping"); if(t) t.remove();
-        if(d&&d.ok&&d.reply){
+        if(d&&d.reply){
           addMsg("ai",esc(d.reply));
+          // Update item state if backend returned updated item (instruction saved/blocked)
+          if(d.item){
+            for(var k=0;k<liveMonitorItems.length;k++){
+              if(liveMonitorItems[k].id===d.item.id){liveMonitorItems[k]=d.item;break;}
+            }
+            if(_lmSelItem&&_lmSelItem.id===d.item.id){
+              _lmSelItem=d.item;
+              // Re-render instructions panel so new instruction appears immediately
+              if(d.instruction_saved&&_lmInstructionView==="instructions"){
+                _lmRenderRight(d.item);
+              }
+            }
+          }
         } else {
-          // Local mock fallback
+          // Local mock fallback (no backend reply)
           setTimeout(function(){ addMsg("ai",getReply(q)); },200);
         }
       });
