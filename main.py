@@ -11965,13 +11965,18 @@ def api_lm_detect_events_all():
 @app.route("/api/live-monitor/items/<int:item_id>/refresh-candles", methods=["POST"])
 @login_required
 def api_lm_items_refresh_candles(item_id):
-    row = _db.session.get(LiveMonitorItem, item_id)
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorItem as _LMI
+    row = _LMI.query.filter_by(id=item_id).first()
     if not row:
-        return jsonify({"error": "Not found"}), 404
-    if row.user_id != current_user.id:
-        return jsonify({"error": "Forbidden"}), 403
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
     if not row.is_active:
-        return jsonify({"error": "Item is not active"}), 400
+        return jsonify({"error": "inactive"}), 400
 
     body = request.get_json(silent=True) or {}
     interval = (body.get("interval") or "").strip() or None
