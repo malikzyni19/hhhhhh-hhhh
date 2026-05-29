@@ -11966,47 +11966,33 @@ def api_lm_detect_events_all():
 @login_required
 def api_lm_items_refresh_candles(item_id):
     row = _db.session.get(LiveMonitorItem, item_id)
-    if not row or row.user_id != current_user.id:
+    if not row:
         return jsonify({"error": "Not found"}), 404
+    if row.user_id != current_user.id:
+        return jsonify({"error": "Forbidden"}), 403
     if not row.is_active:
         return jsonify({"error": "Item is not active"}), 400
 
-    body     = request.get_json(silent=True) or {}
+    body = request.get_json(silent=True) or {}
     interval = (body.get("interval") or "").strip() or None
+    # Invalid interval → None so _lm_attach_candle_features falls back to row.timeframe then 15m
+    if interval and interval not in _LM_ALLOWED_CANDLE_INTERVALS:
+        interval = None
     try:
         limit = int(body.get("limit") or 1000)
     except (TypeError, ValueError):
         limit = 1000
     limit = max(5, min(limit, 4000))
 
-    if interval and interval not in _LM_ALLOWED_CANDLE_INTERVALS:
-        return jsonify({"error": f"Invalid interval. Allowed: {sorted(_LM_ALLOWED_CANDLE_INTERVALS)}"}), 400
-
-    snap, features = _lm_attach_candle_features(row, interval=interval, limit=limit)
-
-    # One LiveMonitorEvent on first-ever candle refresh only
-    seen_key   = "candle_refresh_first_logged"
-    first_time = not snap.get(seen_key)
-    if first_time and features:
-        used_interval = snap.get("latest_candle_features", {}).get("interval", interval or "15m")
-        evt = LiveMonitorEvent(
-            item_id=row.id,
-            event_type="candle_refresh",
-            severity="info",
-            label=f"Candle features loaded ({used_interval})",
-            details_json=_json_dumps_safe({
-                "interval":     used_interval,
-                "candle_count": features.get("candle_count"),
-                "atr_14":       features.get("atr_14"),
-            }),
-        )
-        _db.session.add(evt)
-        snap[seen_key] = True
+    try:
+        snap, features = _lm_attach_candle_features(row, interval=interval, limit=limit)
         row.snapshot_json = _json_dumps_safe(snap)
-
-    row.updated_at = datetime.utcnow()
-    _db.session.flush()
-    _db.session.commit()
+        row.updated_at    = datetime.now(timezone.utc)
+        _db.session.flush()
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": str(e)}), 500
 
     return jsonify({
         "ok":              True,
