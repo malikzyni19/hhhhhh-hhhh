@@ -1,0 +1,334 @@
+================================================================================
+   ZYNI SMC SCREENER — PHASE 6.7 REPORT
+   Event Detection Engine Base
+   Date: 2026-05-29
+   Branch: main
+   Commit: 96e0a75
+   Status: COMPLETE — COMMITTED AND PUSHED
+================================================================================
+
+
+================================================================================
+1. FILES CHANGED
+================================================================================
+
+  main.py                — +402 lines inserted, 0 replaced
+  templates/preview.html — +56 lines inserted, 0 replaced
+
+  models.py              — NOT modified.
+  templates/index.html   — NOT modified (mobile untouched).
+  Database schema        — NOT changed.
+
+
+================================================================================
+2. HELPERS ADDED (main.py)
+================================================================================
+
+  _lm_detect_setup_events(row, snapshot=None) -> dict
+  ─────────────────────────────────────────────────────
+  Detects important setup events from already-computed backend facts only.
+  No candle fetching, no exchange API calls, no trading logic.
+
+  Input facts used:
+    row.current_price      — current price
+    row.zone_high/zone_low — setup zone boundaries
+    row.direction          — setup direction
+    row.setup_type         — setup type
+    snapshot["latest_health"]          — health score + zone state + bias
+    snapshot["latest_session_context"] — session liquidity/volatility
+    snapshot["latest_market_context"]  — funding, taker pressure, L/S ratio
+    snapshot["custom_ai_instructions"] — active custom instructions count
+
+  Returns:
+    {
+      "phase":       "phase6_7_event_detection",
+      "computed_at": "<ISO UTC>",
+      "symbol":      "<symbol>",
+      "events":      [...],   // sorted by severity desc (risk first)
+      "summary": {
+        "total_events":   N,
+        "risk_count":     N,
+        "warning_count":  N,
+        "watch_count":    N,
+        "info_count":     N,
+        "top_severity":   "risk|warning|watch|info",
+      }
+    }
+
+  Each event:
+    {
+      "event_key": "<stable_unique_key>",
+      "type":      "<event_type>",
+      "label":     "<human readable label>",
+      "severity":  "risk|warning|watch|info",
+      "direction": "<setup direction>",
+      "source":    "<source>",
+      "details":   {...},
+    }
+
+  ─────────────────────────────────────────────────────
+  _lm_attach_event_detection(row, snapshot=None) -> tuple
+  ─────────────────────────────────────────────────────
+  Runs _lm_detect_setup_events. Stores result in snapshot dict.
+  Does NOT commit. Returns (snap, detection_dict).
+
+  Snapshot keys written:
+    snapshot["latest_event_detection"]  — full detection dict
+    snapshot["last_event_detection_at"] — ISO UTC timestamp
+
+
+================================================================================
+3. EVENT TYPES DETECTED
+================================================================================
+
+  TYPE               EVENT_KEY                       SEVERITY   SOURCE
+  ────────────────── ─────────────────────────────── ─────────  ──────────────
+  zone_touch         zone_touch                      watch      built_in
+  zone_near          zone_near                       info       built_in
+  zone_breach_risk   zone_breach_risk                risk       health
+  bias_warning       bias_warning_conflict           warning    health
+  bias_warning       bias_warning_weak               info       health
+  session_warning    session_low_liquidity           warning    session
+  session_warning    session_high_volatility         warning    session
+  market_pressure    market_funding_pressure         info/warn  market_context
+  market_pressure    market_taker_pressure_against   warning    market_context
+  market_pressure    market_ls_extreme               info       market_context
+  instruction_watch  instruction_watch_active        info       custom_instruction
+
+  Detection rules:
+    zone_touch       : zone_low <= price <= zone_high
+    zone_near        : price within 1.5% of zone boundary
+    zone_breach_risk : health["zone"]["state"] in (breach_risk, breached, invalidated)
+    bias_warning     : setup direction vs health bias direction conflict or weak bias
+    session_warning  : low liquidity session OR weekend OR extreme/high volatility
+    market_pressure  : funding rate abs >= 0.05%, taker pressure against setup, L/S ratio > 2.5 or < 0.4
+    instruction_watch: any active custom instructions present
+
+  What is NOT faked:
+    ✓ No candle rejection events (no candle data available)
+    ✓ No liquidity sweep events (no order book data)
+    ✓ No liquidation spike events (no liquidation candle data)
+    ✓ All detections based only on already-computed backend facts
+
+
+================================================================================
+4. ENDPOINTS ADDED
+================================================================================
+
+  POST /api/live-monitor/items/<item_id>/detect-events
+  ─────────────────────────────────────────────────────
+    Auth:    @login_required
+    Guards:  ownership check, active item only
+    Action:
+      1. _lm_attach_event_detection(row) -> snap, detection
+      2. Deduplication: read snap["event_detection_keys"] (list of event_keys)
+      3. For each detected event of important types (zone_touch, zone_breach_risk,
+         session_warning, market_pressure):
+         - If event_key NOT already in seen_keys: create LiveMonitorEvent, add key to list
+      4. Trim event_detection_keys to last 100 entries
+      5. Save row.snapshot_json, flush, commit
+    Returns:
+      {"ok": true, "item": {...}, "event_detection": {...}, "new_events_logged": N}
+
+  POST /api/live-monitor/detect-events-all
+  ─────────────────────────────────────────
+    Auth:    @login_required
+    Scope:   Current user active items, max 10 (by updated_at desc)
+    Action:  Same as above per item, continues on individual failure
+    Returns: {"ok": true, "results": [...], "errors": [...]}
+
+
+================================================================================
+5. SNAPSHOT STORAGE KEYS
+================================================================================
+
+  snapshot["latest_event_detection"]    — full detection result dict
+  snapshot["last_event_detection_at"]   — ISO UTC timestamp of last run
+  snapshot["event_detection_keys"]      — list of event_keys that have already
+                                          produced a LiveMonitorEvent (dedup list,
+                                          bounded to last 100 entries)
+
+  No other snapshot keys modified.
+  Health score unchanged.
+  AI result unchanged.
+
+
+================================================================================
+6. DUPLICATE EVENT SPAM PROTECTION
+================================================================================
+
+  Problem:
+    Calling detect-events multiple times could spam the Event Timeline with
+    identical events (e.g. "Price inside zone" every 30 seconds).
+
+  Solution:
+    Each LiveMonitorEvent creation for important event types is gated by
+    event_detection_keys stored in snapshot:
+
+      seen_keys = snap.get("event_detection_keys") or []
+      If event_key NOT in seen_keys:
+        → create LiveMonitorEvent
+        → append event_key to seen_keys
+      snap["event_detection_keys"] = seen_keys[-100:]
+
+  Important types that create LiveMonitorEvents:
+    zone_touch, zone_breach_risk, session_warning, market_pressure
+
+  Info-only types (zone_near, bias_warning weak, instruction_watch):
+    Stored in latest_event_detection but do NOT create LiveMonitorEvents.
+
+  Result:
+    Each unique event is logged at most once per item lifetime (until key list
+    would be pruned or snapshot cleared).
+
+
+================================================================================
+7. FRONTEND WIRING (templates/preview.html)
+================================================================================
+
+  New helper: _lmDetectedEventsHtml(item)
+    Reads item.snapshot.latest_event_detection.
+    Renders compact block: severity dot + label + severity badge.
+    Shows up to 5 events + "+N more" overflow note.
+    Includes computed_at timestamp via _lmAgo().
+    Returns empty string if no detection data.
+
+  New element: #lmDetectedBlock
+    Added above #lmEvents inside the Event Timeline card.
+    In events view: populated with _lmDetectedEventsHtml(item) on render.
+    In instructions view: rendered empty (hidden).
+    Not affected by _lmLoadEvents (separate div).
+
+  New button: Detect (data-lmdetectevents="<item.id>")
+    Added to Event Timeline card header, right side.
+    Small 10px compact button matching existing card header button style.
+    Shows lightning bolt SVG icon + "Detect" label.
+
+  Detect button handler:
+    - Disables button during fetch, shows "…" spinner text.
+    - POST /api/live-monitor/items/<id>/detect-events
+    - On success:
+        Update liveMonitorItems[]
+        Update _lmSelItem
+        Update #lmDetectedBlock (if events view)
+        Call _lmLoadEvents (if events view) to refresh Event Timeline
+    - On failure: re-enables button.
+    - If instructions view active: does not overwrite #lmEvents.
+
+  Side panel switch update:
+    - Switch to "events":
+        Restore #lmDetectedBlock with _lmDetectedEventsHtml(_lmSelItem||item)
+        Load events via _lmLoadEvents
+    - Switch to "instructions":
+        Clear #lmDetectedBlock (detBlock.innerHTML='')
+        Show instruction list in #lmEvents
+
+  All Phase 6.6 hotfix guards preserved:
+    - _lmLoadEvents: early return if instructions view
+    - _lmLoadEvents .then: guard before writing #lmEvents
+    - _lmLoadEvents .catch: guard before writing #lmEvents
+    - _lmRenderRight: conditional _lmLoadEvents call
+
+
+================================================================================
+8. WHAT WAS NOT ADDED
+================================================================================
+
+  ✓ No auto trading
+  ✓ No order placement
+  ✓ No exchange account API connection
+  ✓ No memory / trade journal
+  ✓ No paper trading
+  ✓ No full candle / order-flow engine
+  ✓ No 4000-candle logic
+  ✓ No DB schema change
+  ✓ No models.py change
+  ✓ No mobile index.html change
+  ✓ No UI redesign
+  ✓ No second chatbox
+  ✓ No hidden 5m execution
+  ✓ No built-in brain rules stored as user instructions
+  ✓ No fake candle rejection / liquidity sweep / liquidation spike events
+  ✓ No AI verdict change
+  ✓ No health score change
+
+
+================================================================================
+9. VERIFICATION RESULTS
+================================================================================
+
+Backend (25/25):
+  [PASS] main.py syntax valid
+  [PASS] _lm_detect_setup_events defined
+  [PASS] _lm_attach_event_detection defined
+  [PASS] detect-events endpoint defined
+  [PASS] detect-events-all endpoint defined
+  [PASS] zone_touch event type
+  [PASS] zone_near event type
+  [PASS] zone_breach_risk event type
+  [PASS] bias_warning event type
+  [PASS] session_warning event type
+  [PASS] market_pressure event type
+  [PASS] instruction_watch event type
+  [PASS] event_key deduplication (event_detection_keys)
+  [PASS] important_types gate before creating LiveMonitorEvent
+  [PASS] snapshot stores latest_event_detection
+  [PASS] snapshot stores last_event_detection_at
+  [PASS] detect-events-all max 10
+  [PASS] detect-events-all continues on failure
+  [PASS] severity ordering in detector
+  [PASS] summary block in detection result
+  [PASS] login_required on detect-events
+  [PASS] ownership check on detect-events
+  [PASS] No DB schema change
+  [PASS] No auto trading
+  [PASS] Phase 6.6 helpers intact (_lm_builtin_ai_brain_rules, _lm_instruction_is_safe)
+
+Frontend (18/18):
+  [PASS] Detect Events button rendered (data-lmdetectevents)
+  [PASS] _lmDetectedEventsHtml helper defined
+  [PASS] #lmDetectedBlock div rendered in card
+  [PASS] Detected block hidden in instructions view
+  [PASS] data-lmdetectevents handler wired
+  [PASS] Handler updates liveMonitorItems[] on success
+  [PASS] Handler updates _lmSelItem on success
+  [PASS] Handler updates #lmDetectedBlock content
+  [PASS] Handler calls _lmLoadEvents if events view
+  [PASS] AI Instructions view not overwritten by detect
+  [PASS] Side panel switch clears detected block in instructions
+  [PASS] Side panel switch restores detected block in events
+  [PASS] _lmLoadEvents guard for instructions view intact (Phase 6.6 hotfix)
+  [PASS] _lmRenderRight guard for instructions view intact (Phase 6.6 hotfix)
+  [PASS] No API key in frontend
+  [PASS] No external API calls in JS
+  [PASS] Single chatbox only (1 CSS + 1 render)
+  [PASS] templates/index.html not modified
+
+Total: 43/43 checks passed.
+
+
+================================================================================
+10. PHASE 6.7 COMPLETE
+================================================================================
+
+  Phase 6.7 Event Detection Engine Base is complete.
+
+  All 7 tasks verified:
+
+  Task 0  — Audit (no code change)
+  Task 1  — _lm_detect_setup_events() helper (7 detection categories, 11 event types)
+  Task 2  — _lm_attach_event_detection() snapshot storage helper
+  Task 3  — POST /api/live-monitor/items/<id>/detect-events endpoint + dedup
+  Task 4  — POST /api/live-monitor/detect-events-all endpoint (max 10, continue on fail)
+  Task 5  — Frontend Detect button + handler wired
+  Task 6  — #lmDetectedBlock compact panel above Event Timeline
+  Task 7  — Final QA — 43/43 checks passed
+
+  Commit: 96e0a75 — pushed to main.
+
+
+================================================================================
+END OF PHASE 6.7 REPORT
+================================================================================
+PHASE 6.7 COMPLETE — COMMIT: 96e0a75 — BRANCH: main
+================================================================================
