@@ -9,6 +9,7 @@ import ssl
 import socket
 import struct
 import hashlib
+import hmac
 import secrets
 import base64
 from collections import deque
@@ -11543,9 +11544,19 @@ def _lm_prepare_demo_order_payload(trade, row=None, snapshot=None) -> dict:
 def _lm_sync_mexc_demo_trade(trade) -> dict:
     """Sync demo trade status from MEXC. Read-only — never places or cancels orders.
 
+    Requires trade.mode == 'demo_exchange' and trade.status in ('submitted', 'open').
     Updates trade.status, opened_at, closed_at, pnl, fees, outcome in-memory.
     Caller must db.session.commit(). Returns {ok, synced, status, changes, error}.
     """
+    # Mode gate: only demo_exchange trades may be synced
+    if (getattr(trade, "mode", "") or "") != "demo_exchange":
+        return {
+            "ok":             False,
+            "blocked":        True,
+            "blocked_reason": f"trade_mode_not_demo_exchange:{getattr(trade, 'mode', None)}",
+            "synced":         False,
+        }
+
     gate = _lm_demo_trading_enabled()
     if gate["blocked"]:
         return {"ok": False, "blocked": True, "blocked_reason": gate["blocked_reason"],
@@ -15638,6 +15649,22 @@ def api_lm_trade_demo_sync(trade_uid):
     if trade.user_id != uid:
         return jsonify({"error": "forbidden"}), 403
 
+    # Endpoint-level safety: only demo_exchange trades may be synced
+    if (getattr(trade, "mode", "") or "") != "demo_exchange":
+        return jsonify({
+            "ok":             False,
+            "blocked":        True,
+            "blocked_reason": f"trade_mode_not_demo_exchange:{trade.mode}",
+        }), 400
+
+    # Endpoint-level safety: only submitted/open trades are syncable
+    if trade.status not in ("submitted", "open"):
+        return jsonify({
+            "ok":             False,
+            "blocked":        True,
+            "blocked_reason": f"trade_status_{trade.status}_not_syncable",
+        }), 400
+
     sync_r = _lm_sync_mexc_demo_trade(trade)
     if sync_r.get("blocked"):
         return jsonify({
@@ -15682,6 +15709,14 @@ def api_lm_trade_post_trade_review(trade_uid):
         return jsonify({"error": "not_found"}), 404
     if trade.user_id != uid:
         return jsonify({"error": "forbidden"}), 403
+
+    _LM_REVIEWABLE_STATUSES = {"closed", "failed", "risk_rejected", "cancelled"}
+    if trade.status not in _LM_REVIEWABLE_STATUSES:
+        return jsonify({
+            "ok":             False,
+            "blocked":        True,
+            "blocked_reason": f"trade_status_not_reviewable:{trade.status}",
+        }), 400
 
     review = _lm_build_post_trade_review(trade)
 
