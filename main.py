@@ -10858,7 +10858,7 @@ def _lm_build_trade_setup_context(row, snapshot=None) -> dict:
     if mem_records:
         lmr = mem_records[-1]
         latest_mem = {
-            "record_id":      lmr.get("record_id"),
+            "record_id":      lmr.get("id") or lmr.get("record_id"),
             "outcome_status": lmr.get("outcome_status"),
             "readiness_state": lmr.get("readiness_state"),
         }
@@ -10917,7 +10917,7 @@ def _lm_create_trade_record_from_proposal(row, proposal: dict, snapshot=None):
 
     # Link to latest memory record if available
     mem_records = snap.get("setup_memory_records") or []
-    linked_mem_id = mem_records[-1].get("record_id") if mem_records else None
+    linked_mem_id = (mem_records[-1].get("id") or mem_records[-1].get("record_id")) if mem_records else None
 
     trade = _LMT(
         trade_uid              = uuid.uuid4().hex[:20],
@@ -11214,9 +11214,12 @@ def _lm_run_risk_guard(trade, row=None, snapshot=None) -> dict:
             )
             score -= 20
 
-    # ── HARD BLOCK 7: no_trade action should not be approved ─────────────────
-    if action == "no_trade":
-        hard_blocks.append("AI action=no_trade — nothing to approve")
+    # ── HARD BLOCK 7: only propose_long/propose_short are executable proposals ──
+    if action not in ("propose_long", "propose_short"):
+        hard_blocks.append(
+            f"AI action='{action}' is not an executable proposal — "
+            "only propose_long/propose_short can be risk_approved"
+        )
         score -= 50
 
     # ── Soft checks: duplicate symbol ────────────────────────────────────────
