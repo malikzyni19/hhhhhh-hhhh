@@ -11313,6 +11313,409 @@ def _lm_run_risk_guard(trade, row=None, snapshot=None) -> dict:
     }
 
 
+# ── Phase 9.6: MEXC Demo Execution Connector ──────────────────────────────────
+
+_LM_DEMO_ORDER_SIZE_USDT_ENV = "DEMO_ORDER_SIZE_USDT"
+_LM_DEMO_ORDER_SIZE_DEFAULT  = 5.0   # USDT notional
+_LM_DEMO_MAX_LEVERAGE        = 5
+
+
+def _lm_demo_trading_enabled() -> dict:
+    """Return demo-trading gate status from environment. Never returns secrets.
+
+    All execution endpoints must check this first and return blocked if not fully enabled.
+    Required: DEMO_TRADING_ENABLED=true, MEXC_DEMO_MODE=true, MEXC_API_KEY, MEXC_API_SECRET.
+    """
+    import os as _os
+    demo_flag      = _os.environ.get("DEMO_TRADING_ENABLED",  "false").strip().lower()
+    mexc_demo_flag = _os.environ.get("MEXC_DEMO_MODE",        "false").strip().lower()
+    key_present    = bool(_os.environ.get("MEXC_API_KEY",    "").strip())
+    secret_present = bool(_os.environ.get("MEXC_API_SECRET", "").strip())
+    keys_present   = key_present and secret_present
+
+    enabled   = demo_flag      == "true"
+    demo_mode = mexc_demo_flag == "true"
+
+    blocked_reason = None
+    if not enabled:
+        blocked_reason = "DEMO_TRADING_ENABLED is not true"
+    elif not demo_mode:
+        blocked_reason = "MEXC_DEMO_MODE is not true"
+    elif not keys_present:
+        blocked_reason = "MEXC API keys not configured"
+
+    return {
+        "enabled":           enabled,
+        "demo_mode":         demo_mode,
+        "mexc_keys_present": keys_present,
+        "blocked":           blocked_reason is not None,
+        "blocked_reason":    blocked_reason,
+        "warnings":          [],
+    }
+
+
+def _lm_mexc_private_request(method: str, path: str,
+                              params: dict = None, body: dict = None) -> dict:
+    """Sign and send a private MEXC contract API request.
+
+    Keys read from env only — never logged or returned.
+    HMAC-SHA256 per scripts/mexc_capability_audit.py. 15s timeout.
+    Returns {ok, status_code, data, error}.
+    """
+    import os as _os, time as _time
+    api_key    = _os.environ.get("MEXC_API_KEY",    "").strip()
+    api_secret = _os.environ.get("MEXC_API_SECRET", "").strip()
+    if not api_key or not api_secret:
+        return {"ok": False, "error": "mexc_keys_missing", "data": None, "status_code": None}
+
+    ts_ms = str(int(_time.time() * 1000))
+
+    sign_params = dict(params or {})
+    sign_params["timestamp"]  = ts_ms
+    sign_params["recvWindow"] = "5000"
+
+    qs  = "&".join(f"{k}={v}" for k, v in sorted(sign_params.items()))
+    sig = hmac.new(api_secret.encode(), qs.encode(), hashlib.sha256).hexdigest()
+    sign_params["signature"] = sig
+
+    url     = MEXC_PERP_API.rstrip("/") + "/" + path.lstrip("/")
+    headers = {"X-MEXC-APIKEY": api_key, "Content-Type": "application/json"}
+
+    try:
+        if method.upper() == "GET":
+            resp = req.get(url,  params=sign_params,              headers=headers, timeout=15)
+        elif method.upper() == "POST":
+            resp = req.post(url, params=sign_params, json=body or {}, headers=headers, timeout=15)
+        else:
+            return {"ok": False, "error": f"unsupported_method:{method}",
+                    "data": None, "status_code": None}
+        try:
+            data = resp.json()
+        except Exception:
+            data = {"raw": resp.text[:500]}
+        ok = resp.status_code < 400
+        return {
+            "ok":          ok,
+            "status_code": resp.status_code,
+            "data":        data,
+            "error":       None if ok else (data.get("msg") or resp.text[:200]),
+        }
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)[:200], "data": None, "status_code": None}
+
+
+def _lm_mexc_demo_health_check() -> dict:
+    """Read-only MEXC account connectivity check. Never submits or cancels orders.
+
+    Returns {ok, account_reachable, balance_usdt, warnings, error}.
+    """
+    gate = _lm_demo_trading_enabled()
+    if gate["blocked"]:
+        return {
+            "ok":               False,
+            "blocked":          True,
+            "blocked_reason":   gate["blocked_reason"],
+            "account_reachable": False,
+        }
+    result = _lm_mexc_private_request("GET", "account/asset")
+    if not result["ok"]:
+        return {
+            "ok":               False,
+            "account_reachable": False,
+            "error":            result.get("error"),
+            "status_code":      result.get("status_code"),
+            "warnings":         gate.get("warnings", []),
+        }
+    data    = result.get("data") or {}
+    assets  = data.get("data") or []
+    usdt_bal = None
+    if isinstance(assets, list):
+        for a in assets:
+            if isinstance(a, dict) and a.get("currency", "").upper() == "USDT":
+                usdt_bal = (
+                    a.get("availableBalance") or a.get("available") or a.get("balance")
+                )
+                break
+    return {
+        "ok":               True,
+        "account_reachable": True,
+        "balance_usdt":     usdt_bal,
+        "warnings":         gate.get("warnings", []),
+        "error":            None,
+    }
+
+
+def _lm_prepare_demo_order_payload(trade, row=None, snapshot=None) -> dict:
+    """Build MEXC perpetual demo order payload from a risk_approved trade.
+
+    Notional capped 1–50 USDT (DEMO_ORDER_SIZE_USDT env, default 5).
+    Leverage capped at _LM_DEMO_MAX_LEVERAGE (5).
+    Returns {ok, payload, blocked, blocked_reason, notional_usdt, leverage, mx_symbol}.
+    """
+    import os as _os
+
+    if trade.status != "risk_approved":
+        return {
+            "ok":             False,
+            "blocked":        True,
+            "blocked_reason": f"trade_status_not_risk_approved:{trade.status}",
+        }
+
+    ex_ex  = (getattr(trade, "execution_exchange", "") or "").lower()
+    ex_mkt = (getattr(trade, "execution_market",   "") or "").lower()
+    if ex_ex != "mexc" or ex_mkt != "perpetual":
+        return {
+            "ok":             False,
+            "blocked":        True,
+            "blocked_reason": f"execution_exchange_not_mexc_perpetual:{ex_ex}/{ex_mkt}",
+        }
+
+    # Action from ai_proposal_json (no dedicated column); fall back to direction
+    proposal = _json_loads_safe(getattr(trade, "ai_proposal_json", None), {})
+    action   = (proposal.get("action") or "").lower()
+    if action not in ("propose_long", "propose_short"):
+        dir_col = (getattr(trade, "direction", "") or "").lower()
+        if dir_col == "long":
+            action = "propose_long"
+        elif dir_col == "short":
+            action = "propose_short"
+
+    if action == "propose_long":
+        order_side = 1   # MEXC: 1=open long, 3=open short
+    elif action == "propose_short":
+        order_side = 3
+    else:
+        return {"ok": False, "blocked": True, "blocked_reason": f"unknown_action:{action}"}
+
+    try:
+        notional = float(_os.environ.get(_LM_DEMO_ORDER_SIZE_USDT_ENV,
+                                         str(_LM_DEMO_ORDER_SIZE_DEFAULT)))
+    except (ValueError, TypeError):
+        notional = _LM_DEMO_ORDER_SIZE_DEFAULT
+    notional = max(1.0, min(notional, 50.0))
+
+    leverage = 1
+    prop_lev = proposal.get("leverage") or proposal.get("suggested_leverage")
+    if prop_lev:
+        try:
+            leverage = min(int(prop_lev), _LM_DEMO_MAX_LEVERAGE)
+        except (ValueError, TypeError):
+            leverage = 1
+    leverage = max(1, min(leverage, _LM_DEMO_MAX_LEVERAGE))
+
+    raw_sym = (getattr(trade, "symbol", "") or "").upper()
+    raw_sym = raw_sym.replace("USDT", "").replace("_", "").replace("-", "").strip()
+    if not raw_sym:
+        return {"ok": False, "blocked": True, "blocked_reason": "missing_symbol"}
+    mx_sym = f"{raw_sym}_USDT"
+
+    entry_price = None
+    if row is not None:
+        entry_price = getattr(row, "current_price", None)
+    if not entry_price:
+        t_r = _lm_fetch_mexc_perp_ticker(mx_sym)
+        if t_r.get("ok"):
+            entry_price = t_r.get("last_price")
+
+    return {
+        "ok":             True,
+        "blocked":        False,
+        "blocked_reason": None,
+        "payload": {
+            "symbol":   mx_sym,
+            "side":     order_side,
+            "openType": 1,        # 1=isolated margin
+            "type":     5,        # 5=market order
+            "vol":      notional,
+            "leverage": leverage,
+            "price":    entry_price,
+        },
+        "notional_usdt": notional,
+        "leverage":      leverage,
+        "mx_symbol":     mx_sym,
+        "order_side":    order_side,
+    }
+
+
+# ── Phase 9.7: Demo Trade Sync + Post-Trade Review Foundation ─────────────────
+
+
+def _lm_sync_mexc_demo_trade(trade) -> dict:
+    """Sync demo trade status from MEXC. Read-only — never places or cancels orders.
+
+    Updates trade.status, opened_at, closed_at, pnl, fees, outcome in-memory.
+    Caller must db.session.commit(). Returns {ok, synced, status, changes, error}.
+    """
+    gate = _lm_demo_trading_enabled()
+    if gate["blocked"]:
+        return {"ok": False, "blocked": True, "blocked_reason": gate["blocked_reason"],
+                "synced": False}
+
+    order_id = getattr(trade, "exchange_order_id", None)
+    if not order_id:
+        return {"ok": False, "error": "no_exchange_order_id", "synced": False}
+
+    if trade.status not in ("submitted", "open"):
+        return {
+            "ok":     True,
+            "synced": False,
+            "status": trade.status,
+            "note":   f"trade_status_{trade.status}_not_syncable",
+        }
+
+    result = _lm_mexc_private_request(
+        "GET", "order/external/query_order_by_order_id",
+        params={"orderId": str(order_id)},
+    )
+    if not result["ok"]:
+        return {
+            "ok":          False,
+            "synced":      False,
+            "error":       result.get("error"),
+            "status_code": result.get("status_code"),
+        }
+
+    data      = result.get("data") or {}
+    order     = data.get("data") or data
+    changes   = {}
+    now_utc   = datetime.now(timezone.utc)
+
+    # MEXC order state: 3=partially_filled, 4=filled, 5=cancelled, 6=invalid
+    mexc_state = order.get("state") or order.get("status")
+    if mexc_state in (4, "4", "FILLED", "filled"):
+        if trade.status != "open":
+            trade.status    = "open"
+            trade.opened_at = trade.opened_at or now_utc
+            changes["status"] = "open"
+    elif mexc_state in (5, "5", 6, "6", "CANCELED", "CANCELLED", "cancelled", "INVALID"):
+        if trade.status not in ("closed", "cancelled", "failed"):
+            trade.status  = "failed"
+            changes["status"] = "failed"
+
+    # Check for closed position when order is open
+    pos_id = getattr(trade, "exchange_position_id", None)
+    if pos_id and trade.status == "open":
+        pos_r = _lm_mexc_private_request(
+            "GET", "position/list/history_positions",
+            params={"positionId": str(pos_id)},
+        )
+        if pos_r.get("ok"):
+            pos_data  = pos_r.get("data") or {}
+            positions = pos_data.get("data") or pos_data.get("resultList") or []
+            for p in (positions if isinstance(positions, list) else [positions]):
+                if not isinstance(p, dict):
+                    continue
+                if str(p.get("positionId", "")) == str(pos_id):
+                    if p.get("closeType") or p.get("closeOrderId"):
+                        trade.status    = "closed"
+                        trade.closed_at = trade.closed_at or now_utc
+                        raw_pnl = (
+                            p.get("realised") or p.get("realisedPnl") or p.get("profit")
+                        )
+                        if raw_pnl is not None:
+                            try:
+                                trade.pnl = float(raw_pnl)
+                            except (ValueError, TypeError):
+                                pass
+                        changes["status"] = "closed"
+                    break
+
+    if changes:
+        trade.updated_at = now_utc
+
+    return {
+        "ok":      True,
+        "synced":  bool(changes),
+        "status":  trade.status,
+        "changes": changes,
+        "error":   None,
+    }
+
+
+def _lm_build_post_trade_review(trade) -> dict:
+    """Deterministic post-trade review. No AI, no exchange calls.
+
+    Returns compact review dict for storage in post_trade_review_json.
+    """
+    now_utc  = datetime.now(timezone.utc)
+    proposal = _json_loads_safe(getattr(trade, "ai_proposal_json", None), {})
+    rg       = _json_loads_safe(getattr(trade, "risk_guard_json",   None), {})
+
+    duration_seconds = None
+    if trade.opened_at and trade.closed_at:
+        try:
+            duration_seconds = (trade.closed_at - trade.opened_at).total_seconds()
+        except Exception:
+            pass
+    elif trade.opened_at:
+        try:
+            duration_seconds = (now_utc - trade.opened_at).total_seconds()
+        except Exception:
+            pass
+
+    pnl     = getattr(trade, "pnl", None)
+    outcome = getattr(trade, "outcome", None) or "unknown"
+    if pnl is not None:
+        try:
+            pnl_f = float(pnl)
+            if pnl_f > 0:
+                outcome = "win"
+            elif pnl_f < 0:
+                outcome = "loss"
+            else:
+                outcome = "breakeven"
+        except (ValueError, TypeError):
+            pass
+
+    entry = getattr(trade, "entry_price", None)
+    sl    = getattr(trade, "stop_loss",   None)
+    tp    = getattr(trade, "take_profit", None)
+    rr_actual = None
+    if pnl is not None and entry and sl:
+        try:
+            risk = abs(float(entry) - float(sl))
+            if risk > 0:
+                rr_actual = round(float(pnl) / risk, 2)
+        except (ValueError, TypeError):
+            pass
+
+    notes = []
+    if outcome == "win":
+        notes.append("Trade closed in profit.")
+    elif outcome == "loss":
+        notes.append("Trade closed at a loss.")
+    elif outcome == "breakeven":
+        notes.append("Trade closed near breakeven.")
+    if duration_seconds is not None:
+        notes.append(f"Duration: ~{int(duration_seconds / 60)} minutes.")
+    if getattr(trade, "risk_reward", None):
+        notes.append(f"Planned R:R was {trade.risk_reward}.")
+    if rr_actual is not None:
+        notes.append(f"Actual R:R was {rr_actual}.")
+    rg_score = rg.get("score") if rg else None
+    if rg_score is not None:
+        notes.append(f"Risk Guard score at entry: {rg_score}.")
+
+    return {
+        "reviewed_at":         now_utc.isoformat(),
+        "outcome":             outcome,
+        "pnl":                 pnl,
+        "fees":                getattr(trade, "fees",        None),
+        "duration_seconds":    duration_seconds,
+        "rr_planned":          getattr(trade, "risk_reward", None),
+        "rr_actual":           rr_actual,
+        "entry_price":         entry,
+        "stop_loss":           sl,
+        "take_profit":         tp,
+        "direction":           getattr(trade, "direction",   None),
+        "symbol":              getattr(trade, "symbol",      None),
+        "rg_score":            rg_score,
+        "proposal_confidence": proposal.get("confidence"),
+        "notes":               notes,
+        "ai_review":           None,
+    }
+
+
 def _lm_build_ai_context(item) -> dict:
     """Build a compact, JSON-safe context dict from a LiveMonitorItem for the AI agent."""
     snap = _json_loads_safe(getattr(item, "snapshot_json", None), {})
@@ -11498,7 +11901,43 @@ def _lm_build_ai_context(item) -> dict:
             "warnings":        amc.get("warnings"),
             "summary":         amc.get("summary"),
         } if amc and isinstance(amc, dict) else None)(snap.get("latest_aggregated_market_context")),
+        # Phase 9.7: compact summary of up to 3 most recent demo trades (no raw candles, no API keys)
+        "latest_trade_summary": (lambda item_id: (
+            lambda trades: [
+                {
+                    "trade_uid":         t.trade_uid,
+                    "status":            t.status,
+                    "direction":         t.direction,
+                    "symbol":            t.symbol,
+                    "outcome":           t.outcome,
+                    "pnl":               t.pnl,
+                    "risk_guard_status": t.risk_guard_status,
+                    "created_at":        t.created_at.isoformat() if t.created_at else None,
+                    "closed_at":         t.closed_at.isoformat()  if t.closed_at  else None,
+                    "post_trade_review": _json_loads_safe(t.post_trade_review_json, None),
+                }
+                for t in trades
+            ] if trades else None
+        )(_lm_ai_context_recent_trades(item_id))
+        )(getattr(item, "id", None)),
     }
+
+
+def _lm_ai_context_recent_trades(item_id) -> list:
+    """Return up to 3 most recent LiveMonitorTrade rows for item_id. Used by _lm_build_ai_context."""
+    if not item_id:
+        return []
+    try:
+        from models import LiveMonitorTrade as _LMT
+        return (
+            _LMT.query
+            .filter_by(live_monitor_item_id=item_id)
+            .order_by(_LMT.created_at.desc())
+            .limit(3)
+            .all()
+        )
+    except Exception:
+        return []
 
 
 def _lm_ai_system_prompt() -> str:
@@ -15058,6 +15497,209 @@ def api_lm_items_ai_chat(item_id):
         "agent_id":         ai_result.get("agent_id"),
         "agent_label":      ai_result.get("agent_label"),
         "configured":       ai_result.get("configured", False),
+    })
+
+
+# ── Phase 9.6: Demo Execution Endpoints ──────────────────────────────────────
+
+
+@app.route("/api/live-monitor/demo-execution/status", methods=["GET"])
+@login_required
+def api_lm_demo_execution_status():
+    """Return demo execution gate status and MEXC account health. Read-only."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    gate   = _lm_demo_trading_enabled()
+    health = None
+    if not gate["blocked"]:
+        health = _lm_mexc_demo_health_check()
+
+    return jsonify({
+        "ok":     True,
+        "gate":   gate,
+        "health": health,
+    })
+
+
+@app.route("/api/live-monitor/trades/<trade_uid>/demo-submit", methods=["POST"])
+@login_required
+def api_lm_trade_demo_submit(trade_uid):
+    """Safety-gated demo order submission for a risk_approved trade.
+
+    Phase 9.6: All safety gates are checked. Since MEXC demo order submission
+    endpoint is not confirmed, this endpoint defaults to returning blocked with
+    reason 'mexc_demo_submit_not_confirmed'. No real or demo orders are placed.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    # Gate 1: demo trading env flags
+    gate = _lm_demo_trading_enabled()
+    if gate["blocked"]:
+        return jsonify({
+            "ok":             False,
+            "blocked":        True,
+            "blocked_reason": gate["blocked_reason"],
+        }), 400
+
+    from models import db as _db, LiveMonitorTrade as _LMT, LiveMonitorItem as _LMI
+    trade = _LMT.query.filter_by(trade_uid=trade_uid).first()
+    if not trade:
+        return jsonify({"error": "not_found"}), 404
+    if trade.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+
+    # Gate 2: trade must be risk_approved
+    if trade.status != "risk_approved":
+        return jsonify({
+            "ok":             False,
+            "blocked":        True,
+            "blocked_reason": f"trade_status_not_risk_approved:{trade.status}",
+        }), 400
+
+    # Gate 3: execution exchange must be mexc perpetual
+    ex_ex  = (getattr(trade, "execution_exchange", "") or "").lower()
+    ex_mkt = (getattr(trade, "execution_market",   "") or "").lower()
+    if ex_ex != "mexc" or ex_mkt != "perpetual":
+        return jsonify({
+            "ok":             False,
+            "blocked":        True,
+            "blocked_reason": f"execution_exchange_not_mexc_perpetual:{ex_ex}/{ex_mkt}",
+        }), 400
+
+    # Gate 4: Risk Guard must have approved
+    rg = _json_loads_safe(getattr(trade, "risk_guard_json", None), {})
+    if not rg.get("approved"):
+        return jsonify({
+            "ok":             False,
+            "blocked":        True,
+            "blocked_reason": "risk_guard_not_approved",
+            "risk_guard":     rg,
+        }), 400
+
+    # Gate 5: mode must be demo
+    if (getattr(trade, "mode", "") or "").lower() not in ("demo", "proposal_only"):
+        return jsonify({
+            "ok":             False,
+            "blocked":        True,
+            "blocked_reason": "trade_mode_not_demo",
+        }), 400
+
+    # Gate 6: validate order payload can be built
+    row = _LMI.query.filter_by(id=trade.live_monitor_item_id).first()
+    payload_r = _lm_prepare_demo_order_payload(trade, row=row)
+    if not payload_r["ok"]:
+        return jsonify({
+            "ok":             False,
+            "blocked":        True,
+            "blocked_reason": payload_r.get("blocked_reason", "payload_build_failed"),
+        }), 400
+
+    # Gate 7 (terminal safety gate): MEXC demo order submit endpoint not confirmed.
+    # Per Phase 9.6 spec: if MEXC demo order submission is uncertain, do not submit.
+    # Return blocked — payload is valid but submission is not attempted.
+    return jsonify({
+        "ok":             False,
+        "blocked":        True,
+        "blocked_reason": "mexc_demo_submit_not_confirmed",
+        "message": (
+            "MEXC demo perpetual order submission endpoint is not confirmed. "
+            "All safety gates passed. Payload is ready but no order was placed. "
+            "This block will be lifted when MEXC demo order submit is verified."
+        ),
+        "payload_preview": {
+            "symbol":        payload_r.get("mx_symbol"),
+            "order_side":    payload_r.get("order_side"),
+            "notional_usdt": payload_r.get("notional_usdt"),
+            "leverage":      payload_r.get("leverage"),
+        },
+        "trade": _lm_trade_to_dict(trade),
+    })
+
+
+# ── Phase 9.7: Demo Trade Sync + Post-Trade Review Endpoints ──────────────────
+
+
+@app.route("/api/live-monitor/trades/<trade_uid>/demo-sync", methods=["POST"])
+@login_required
+def api_lm_trade_demo_sync(trade_uid):
+    """Sync demo trade status from MEXC. Read-only — never places or cancels orders."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorTrade as _LMT
+    trade = _LMT.query.filter_by(trade_uid=trade_uid).first()
+    if not trade:
+        return jsonify({"error": "not_found"}), 404
+    if trade.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+
+    sync_r = _lm_sync_mexc_demo_trade(trade)
+    if sync_r.get("blocked"):
+        return jsonify({
+            "ok":             False,
+            "blocked":        True,
+            "blocked_reason": sync_r.get("blocked_reason"),
+        }), 400
+    if not sync_r.get("ok"):
+        return jsonify({
+            "ok":    False,
+            "error": sync_r.get("error"),
+            "synced": False,
+        }), 502
+
+    if sync_r.get("synced"):
+        try:
+            _db.session.commit()
+        except Exception as e:
+            _db.session.rollback()
+            return jsonify({"error": str(e)}), 500
+
+    return jsonify({
+        "ok":      True,
+        "synced":  sync_r.get("synced"),
+        "changes": sync_r.get("changes"),
+        "note":    sync_r.get("note"),
+        "trade":   _lm_trade_to_dict(trade),
+    })
+
+
+@app.route("/api/live-monitor/trades/<trade_uid>/post-trade-review", methods=["POST"])
+@login_required
+def api_lm_trade_post_trade_review(trade_uid):
+    """Build and store deterministic post-trade review. No AI, no exchange calls."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorTrade as _LMT
+    trade = _LMT.query.filter_by(trade_uid=trade_uid).first()
+    if not trade:
+        return jsonify({"error": "not_found"}), 404
+    if trade.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+
+    review = _lm_build_post_trade_review(trade)
+
+    trade.post_trade_review_json = _json_dumps_safe(review)
+    if review.get("outcome") and review["outcome"] != "unknown":
+        trade.outcome = review["outcome"]
+    trade.updated_at = datetime.now(timezone.utc)
+
+    try:
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+    return jsonify({
+        "ok":     True,
+        "review": review,
+        "trade":  _lm_trade_to_dict(trade),
     })
 
 
