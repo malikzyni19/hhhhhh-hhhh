@@ -4726,6 +4726,47 @@ svg{display:block}
     '</div>';
   }
 
+  // Phase 9.2: aggregated market context compact line
+  function _lmAggregatedContextHtml(item){
+    var amc=(item&&item.snapshot&&item.snapshot.latest_aggregated_market_context)||null;
+    if(!amc) return '';
+    var srcs=(amc.sources_used||[]).join(', ')||'—';
+    var bias=amc.bias||'neutral';
+    var biasColor={bullish:'var(--green-2,#4ade80)',bearish:'var(--red-2,#f87171)',neutral:'var(--text-3)'};
+    var bc=biasColor[bias]||'var(--text-3)';
+    var warn=(amc.warnings||[]).length?
+      '<span style="color:var(--yellow-2,#f59e0b);font-size:9px"> ⚠ '+(amc.warnings||[]).length+'w</span>':'';
+    var when=amc.computed_at?(' &middot; '+esc(_lmAgo(amc.computed_at))):'';
+    return '<div style="border-top:1px solid var(--border);padding:4px 0 2px;margin-top:4px">'+
+      '<span style="font-size:9px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.04em">Agg.Ctx</span>'+
+      '<span style="font-size:9px;color:var(--text-3);margin-left:6px">src:<b style="color:var(--text-2)">'+esc(srcs)+'</b>'+
+      ' &middot; bias:<b style="color:'+bc+'">'+esc(bias)+'</b>'+warn+when+'</span>'+
+    '</div>';
+  }
+
+  // Phase 9.3-9.5: latest trade/proposal compact line (loaded async, shown if available)
+  function _lmLatestTradeHtml(tradeList){
+    if(!tradeList||!tradeList.length) return '';
+    var t=tradeList[0];
+    var sColor={draft:'var(--text-3)',proposed:'var(--accent)',
+      risk_approved:'var(--green-2,#4ade80)',risk_rejected:'var(--red-2,#f87171)',
+      cancelled:'var(--text-3)'};
+    var sc=sColor[t.status]||'var(--text-3)';
+    var rgStatus=t.risk_guard_status||'—';
+    var rgColor={approved:'var(--green-2,#4ade80)',rejected:'var(--red-2,#f87171)',not_checked:'var(--text-3)'};
+    var rgc=rgColor[rgStatus]||'var(--text-3)';
+    var act=t.ai_proposal&&t.ai_proposal.action?(' · '+esc(t.ai_proposal.action)):'';
+    var conf=t.ai_proposal&&t.ai_proposal.confidence!=null?(' · conf:'+t.ai_proposal.confidence):'';
+    return '<div style="border-top:1px solid var(--border);padding:4px 0 2px;margin-top:4px">'+
+      '<span style="font-size:9px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.04em">Proposal</span>'+
+      '<span style="font-size:9px;color:var(--text-3);margin-left:6px">'+
+        '<b style="color:'+sc+'">'+esc(t.status)+'</b>'+
+        ' · rg:<b style="color:'+rgc+'">'+esc(rgStatus)+'</b>'+
+        act+conf+
+      '</span>'+
+    '</div>';
+  }
+
   // Phase 6.8: stale/fresh label for detect age
   function _lmDetectAgeHtml(item){
     var lat=item&&item.snapshot&&item.snapshot.last_event_detection_at;
@@ -4763,7 +4804,7 @@ svg{display:block}
               _lmSelItem=d.item;
               var detBlock=document.getElementById("lmDetectedBlock");
               if(detBlock&&_lmInstructionView!=="instructions"){
-                detBlock.innerHTML=_lmSetupReadinessHtml(d.item)+_lmDetectedEventsHtml(d.item)+_lmCandleFeaturesHtml(d.item)+_lmSetupMemoryHtml(d.item);
+                detBlock.innerHTML=_lmSetupReadinessHtml(d.item)+_lmDetectedEventsHtml(d.item)+_lmCandleFeaturesHtml(d.item)+_lmSetupMemoryHtml(d.item)+_lmAggregatedContextHtml(d.item);
               }
               var ageEl=document.getElementById("lmDetectAge");
               if(ageEl) ageEl.innerHTML=_lmDetectAgeHtml(d.item);
@@ -5127,7 +5168,7 @@ svg{display:block}
             '<button class="btn" type="button" id="lmCaptureMemBtn" data-lmcapturememory="'+item.id+'" title="Capture current setup reasoning memory" style="padding:2px 7px;font-size:10px">Mem+</button>'+
             '<button class="btn" type="button" id="lmUpdateOutcomesBtn" data-lmupdateoutcomes="'+item.id+'" title="Update outcome status for pending memory records" style="padding:2px 7px;font-size:10px">Out</button>'+
           '</div>'+
-          (_lmInstructionView!=="instructions"?'<div id="lmDetectedBlock" style="padding:6px 10px 0">'+_lmSetupReadinessHtml(item)+_lmDetectedEventsHtml(item)+_lmCandleFeaturesHtml(item)+_lmSetupMemoryHtml(item)+'</div>':'<div id="lmDetectedBlock"></div>')+
+          (_lmInstructionView!=="instructions"?'<div id="lmDetectedBlock" style="padding:6px 10px 0">'+_lmSetupReadinessHtml(item)+_lmDetectedEventsHtml(item)+_lmCandleFeaturesHtml(item)+_lmSetupMemoryHtml(item)+_lmAggregatedContextHtml(item)+'</div>':'<div id="lmDetectedBlock"></div>')+
           '<div class="sec-card-body" style="padding:8px 10px" id="lmEvents">'+
             (function(){
               if(_lmInstructionView==="instructions"){
@@ -5277,7 +5318,7 @@ svg{display:block}
         var evBox=document.getElementById("lmEvents"); if(!evBox) return;
         var detBlock=document.getElementById("lmDetectedBlock");
         if(_lmInstructionView==="events"){
-          if(detBlock){ var _si=_lmSelItem||item; detBlock.innerHTML=_lmSetupReadinessHtml(_si)+_lmDetectedEventsHtml(_si)+_lmCandleFeaturesHtml(_si)+_lmSetupMemoryHtml(_si); }
+          if(detBlock){ var _si=_lmSelItem||item; detBlock.innerHTML=_lmSetupReadinessHtml(_si)+_lmDetectedEventsHtml(_si)+_lmCandleFeaturesHtml(_si)+_lmSetupMemoryHtml(_si)+_lmAggregatedContextHtml(_si); }
           evBox.innerHTML='<div style="color:var(--text-3);font-size:11px">Loading events…</div>';
           _lmLoadEvents(item.id);
         } else {
@@ -5350,7 +5391,7 @@ svg{display:block}
                 _lmSelItem=d.item;
                 var detBlock=document.getElementById("lmDetectedBlock");
                 if(detBlock&&_lmInstructionView!=="instructions"){
-                  detBlock.innerHTML=_lmSetupReadinessHtml(d.item)+_lmDetectedEventsHtml(d.item)+_lmCandleFeaturesHtml(d.item)+_lmSetupMemoryHtml(d.item);
+                  detBlock.innerHTML=_lmSetupReadinessHtml(d.item)+_lmDetectedEventsHtml(d.item)+_lmCandleFeaturesHtml(d.item)+_lmSetupMemoryHtml(d.item)+_lmAggregatedContextHtml(d.item);
                 }
                 var ageEl=document.getElementById("lmDetectAge");
                 if(ageEl) ageEl.innerHTML=_lmDetectAgeHtml(d.item);
@@ -5385,7 +5426,7 @@ svg{display:block}
                 _lmSelItem=d.item;
                 var detBlock=document.getElementById("lmDetectedBlock");
                 if(detBlock&&_lmInstructionView!=="instructions"){
-                  detBlock.innerHTML=_lmSetupReadinessHtml(d.item)+_lmDetectedEventsHtml(d.item)+_lmCandleFeaturesHtml(d.item)+_lmSetupMemoryHtml(d.item);
+                  detBlock.innerHTML=_lmSetupReadinessHtml(d.item)+_lmDetectedEventsHtml(d.item)+_lmCandleFeaturesHtml(d.item)+_lmSetupMemoryHtml(d.item)+_lmAggregatedContextHtml(d.item);
                 }
               }
             }
@@ -5453,7 +5494,7 @@ svg{display:block}
                 _lmSelItem=d.item;
                 var detBlock=document.getElementById("lmDetectedBlock");
                 if(detBlock&&_lmInstructionView!=="instructions"){
-                  detBlock.innerHTML=_lmSetupReadinessHtml(d.item)+_lmDetectedEventsHtml(d.item)+_lmCandleFeaturesHtml(d.item)+_lmSetupMemoryHtml(d.item);
+                  detBlock.innerHTML=_lmSetupReadinessHtml(d.item)+_lmDetectedEventsHtml(d.item)+_lmCandleFeaturesHtml(d.item)+_lmSetupMemoryHtml(d.item)+_lmAggregatedContextHtml(d.item);
                 }
               }
             }
@@ -5481,7 +5522,7 @@ svg{display:block}
                 _lmSelItem=d.item;
                 var detBlock=document.getElementById("lmDetectedBlock");
                 if(detBlock&&_lmInstructionView!=="instructions"){
-                  detBlock.innerHTML=_lmSetupReadinessHtml(d.item)+_lmDetectedEventsHtml(d.item)+_lmCandleFeaturesHtml(d.item)+_lmSetupMemoryHtml(d.item);
+                  detBlock.innerHTML=_lmSetupReadinessHtml(d.item)+_lmDetectedEventsHtml(d.item)+_lmCandleFeaturesHtml(d.item)+_lmSetupMemoryHtml(d.item)+_lmAggregatedContextHtml(d.item);
                 }
               }
             }

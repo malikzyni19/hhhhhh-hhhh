@@ -408,3 +408,61 @@ class LiveMonitorEvent(db.Model):
 
     def __repr__(self) -> str:
         return f"<LiveMonitorEvent {self.event_type} item={self.item_id}>"
+
+
+class LiveMonitorTrade(db.Model):
+    """AI trade proposals and their risk / execution status. Phase 9.3.
+
+    Phase 9.3-9.5 only uses statuses: draft, proposed, risk_approved,
+    risk_rejected, cancelled.
+    Execution statuses (submitted/open/closed/failed) are Phase 9.6+.
+    Full trade records live here — NOT in snapshot_json.
+    snapshot_json may only reference active_trade_id / latest_trade_summary.
+    """
+    __tablename__ = "live_monitor_trades"
+
+    id                     = db.Column(db.Integer, primary_key=True)
+    trade_uid              = db.Column(db.String(40), unique=True, nullable=False, index=True)
+    user_id                = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    live_monitor_item_id   = db.Column(db.Integer, db.ForeignKey("live_monitor_items.id"), nullable=True, index=True)
+    linked_memory_record_id = db.Column(db.String(64), nullable=True)
+    mode                   = db.Column(db.String(20), default="proposal_only", nullable=False)
+    execution_exchange     = db.Column(db.String(20), default="none", nullable=False)
+    execution_market       = db.Column(db.String(20), default="perpetual", nullable=False)
+    symbol                 = db.Column(db.String(20), nullable=False, index=True)
+    direction              = db.Column(db.String(10), nullable=True)
+    setup_type             = db.Column(db.String(40), nullable=True)
+    timeframe              = db.Column(db.String(10), nullable=True)
+    status                 = db.Column(db.String(20), default="draft", nullable=False, index=True)
+    entry_price            = db.Column(db.Float, nullable=True)
+    stop_loss              = db.Column(db.Float, nullable=True)
+    take_profit            = db.Column(db.Float, nullable=True)
+    risk_reward            = db.Column(db.Float, nullable=True)
+    position_size          = db.Column(db.Float, nullable=True)
+    leverage               = db.Column(db.Float, nullable=True)
+    ai_proposal_json       = db.Column(db.Text, nullable=True)
+    ai_reasoning_summary   = db.Column(db.Text, nullable=True)
+    setup_context_json     = db.Column(db.Text, nullable=True)
+    risk_guard_json        = db.Column(db.Text, nullable=True)
+    risk_guard_status      = db.Column(db.String(20), default="not_checked", nullable=False)
+    rejection_reason       = db.Column(db.Text, nullable=True)
+    exchange_order_id      = db.Column(db.String(80), nullable=True)
+    exchange_position_id   = db.Column(db.String(80), nullable=True)
+    opened_at              = db.Column(db.DateTime, nullable=True)
+    closed_at              = db.Column(db.DateTime, nullable=True)
+    pnl                    = db.Column(db.Float, nullable=True)
+    fees                   = db.Column(db.Float, nullable=True)
+    outcome                = db.Column(db.String(20), nullable=True)
+    post_trade_review_json = db.Column(db.Text, nullable=True)
+    created_at             = db.Column(db.DateTime,
+                                       default=lambda: datetime.now(timezone.utc),
+                                       nullable=False, index=True)
+    updated_at             = db.Column(db.DateTime,
+                                       default=lambda: datetime.now(timezone.utc),
+                                       onupdate=lambda: datetime.now(timezone.utc))
+
+    user = db.relationship("User", foreign_keys=[user_id])
+    item = db.relationship("LiveMonitorItem", foreign_keys=[live_monitor_item_id])
+
+    def __repr__(self) -> str:
+        return f"<LiveMonitorTrade {self.trade_uid} {self.symbol} {self.status}>"

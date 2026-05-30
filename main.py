@@ -9380,6 +9380,112 @@ def _lm_attach_event_detection(row, snapshot=None) -> tuple:
     return snap, detection
 
 
+# ── Phase 9.0: Exchange Data Source Abstraction ──────────────────────────────
+
+_LM_ALLOWED_EXCHANGES = {"binance", "mexc"}
+_LM_ALLOWED_MARKETS   = {"perpetual", "spot"}
+
+
+def _lm_normalize_exchange(value) -> str:
+    """Normalize exchange name to lowercase known value. Fallback: 'binance'."""
+    v = (value or "").lower().strip()
+    return v if v in _LM_ALLOWED_EXCHANGES else "binance"
+
+
+def _lm_normalize_market(value) -> str:
+    """Normalize market name to lowercase known value. Fallback: 'perpetual'."""
+    v = (value or "").lower().strip()
+    return v if v in _LM_ALLOWED_MARKETS else "perpetual"
+
+
+def _lm_normalize_symbol(symbol: str, exchange: str = "binance", market: str = "perpetual") -> str:
+    """Normalize symbol for internal use: uppercase, no dashes/underscores.
+
+    e.g. 'btc_usdt' → 'BTCUSDT', 'BTC-USDT' → 'BTCUSDT'
+    """
+    return (symbol or "").upper().replace("-", "").replace("_", "").strip()
+
+
+def _lm_data_source_config(row, snapshot=None) -> dict:
+    """Build data_source_config dict for a Live Monitor item.
+
+    Describes which exchange/market/source is used for candles, live price,
+    and market context. Reads persisted overrides from snapshot["data_sources"]
+    then falls back to row.exchange/market. No DB write. No trading.
+    """
+    snap   = snapshot if snapshot is not None else _json_loads_safe(getattr(row, "snapshot_json", None), {})
+    stored = snap.get("data_sources") or {}
+
+    exec_exchange = _lm_normalize_exchange(
+        stored.get("execution_exchange") or getattr(row, "exchange", None) or "binance"
+    )
+    exec_market = _lm_normalize_market(
+        stored.get("execution_market") or getattr(row, "market", None) or "perpetual"
+    )
+    exec_symbol = _lm_normalize_symbol(
+        getattr(row, "symbol", None) or "",
+        exec_exchange, exec_market,
+    )
+    candle_src     = _lm_normalize_exchange(stored.get("candle_source")     or exec_exchange)
+    live_price_src = _lm_normalize_exchange(stored.get("live_price_source") or exec_exchange)
+
+    raw_mcs = stored.get("market_context_sources")
+    if isinstance(raw_mcs, list):
+        mcs = [s for s in [_lm_normalize_exchange(x) for x in raw_mcs] if s in _LM_ALLOWED_EXCHANGES]
+    else:
+        mcs = ["binance"]
+    if not mcs:
+        mcs = ["binance"]
+
+    agg             = bool(stored.get("aggregation_enabled", False))
+    fallback_policy = stored.get("fallback_policy") or "warn_no_fallback"
+
+    warnings = []
+    if exec_exchange == "mexc":
+        warnings.append("MEXC execution exchange — candle/price data uses MEXC public API only.")
+    if agg and len(mcs) < 2:
+        warnings.append("aggregation_enabled=true but only one market_context_source configured.")
+
+    return {
+        "phase":                  "phase9_data_sources",
+        "execution_exchange":     exec_exchange,
+        "execution_market":       exec_market,
+        "execution_symbol":       exec_symbol,
+        "candle_source":          candle_src,
+        "live_price_source":      live_price_src,
+        "market_context_sources": mcs,
+        "aggregation_enabled":    agg,
+        "fallback_policy":        fallback_policy,
+        "warnings":               warnings,
+    }
+
+
+def _lm_mexc_capability_status_from_env() -> dict:
+    """Return MEXC capability status from environment only — no API calls, no secrets returned.
+
+    Phase 9.05: used by GET /api/live-monitor/mexc-capability-status.
+    scripts/mexc_capability_audit.py is the full audit tool; this is a quick env check only.
+    """
+    import os as _os
+    keys_present = bool(_os.environ.get("MEXC_API_KEY") and _os.environ.get("MEXC_API_SECRET"))
+    demo_mode    = _os.environ.get("MEXC_DEMO_MODE", "false").lower()
+    script_path  = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                                 "scripts", "mexc_capability_audit.py")
+    script_exists = _os.path.isfile(script_path)
+    return {
+        "script_exists":           script_exists,
+        "keys_present":            keys_present,
+        "demo_mode_env":           demo_mode,
+        "safe_to_run_public_audit": True,
+        "order_submit_tested":     False,
+        "warning": (
+            "demo_order_submit_supported is always untested — "
+            "this helper never calls order-submit endpoints. "
+            "Run scripts/mexc_capability_audit.py for the full public candle/ticker audit."
+        ),
+    }
+
+
 # ── Phase 7: Candle Feature Engine ───────────────────────────────────────────
 
 _LM_ALLOWED_CANDLE_INTERVALS = {"5m", "15m", "30m", "1h", "4h", "1d"}
@@ -9410,7 +9516,11 @@ def _lm_get_candles_for_features(
         entry = _lm_candle_ttl_cache.get(key)
         if entry and (now - entry["ts"]) < ttl:
             return entry["candles"]
-    candles = _lm_fetch_futures_candles(symbol, interval, limit=limit)
+    # Phase 9.1: route to MEXC public candles if exchange == mexc
+    if exchange.lower() == "mexc":
+        candles = _lm_fetch_mexc_perp_candles(symbol, interval, limit=limit)
+    else:
+        candles = _lm_fetch_futures_candles(symbol, interval, limit=limit)
     if candles:
         with _lm_candle_ttl_lock:
             _lm_candle_ttl_cache[key] = {"ts": time.time(), "candles": candles}
@@ -9505,6 +9615,157 @@ def _lm_fetch_futures_candles(symbol: str, interval: str, limit: int = 4000) -> 
 
     except Exception:
         return []
+
+
+# ── Phase 9.1: MEXC Candle + Live Price Helpers ───────────────────────────────
+
+_LM_MEXC_INTERVAL_MAP = {
+    "5m":  "Min5",
+    "15m": "Min15",
+    "30m": "Min30",
+    "1h":  "Min60",
+    "4h":  "Hour4",
+    "1d":  "Day1",
+}
+_LM_MEXC_INTERVAL_MS = {
+    "Min5":  300_000,
+    "Min15": 900_000,
+    "Min30": 1_800_000,
+    "Min60": 3_600_000,
+    "Hour4": 14_400_000,
+    "Day1":  86_400_000,
+}
+
+
+def _lm_fetch_mexc_perp_candles(symbol: str, interval: str, limit: int = 1000) -> list:
+    """Fetch MEXC perpetual klines and normalise to the same shape as _lm_fetch_futures_candles.
+
+    symbol   : canonical form BTCUSDT  → converted to BTC_USDT for MEXC
+    interval : ZyNi standard (5m/15m/30m/1h/4h/1d)
+    Returns list of dicts: open_time, open, high, low, close, volume, close_time
+    Returns [] on any error. No API key. No order logic.
+    """
+    mx_iv = _LM_MEXC_INTERVAL_MAP.get(interval)
+    if not mx_iv:
+        return []
+    # MEXC perpetual symbol format: BTCUSDT → BTC_USDT
+    sym = symbol.upper().replace("_", "")
+    if sym.endswith("USDT"):
+        mx_sym = sym[:-4] + "_USDT"
+    else:
+        mx_sym = sym
+    limit = max(1, min(limit, 2000))
+    try:
+        r = req.get(
+            f"{MEXC_PERP_API}/kline/{mx_sym}",
+            params={"interval": mx_iv, "limit": limit},
+            timeout=12,
+        )
+        if r.status_code != 200:
+            return []
+        data = r.json().get("data") or {}
+        times  = data.get("time",  [])
+        opens  = data.get("open",  [])
+        highs  = data.get("high",  [])
+        lows   = data.get("low",   [])
+        closes = data.get("close", [])
+        vols   = data.get("vol",   [])
+        if not times:
+            return []
+        iv_ms = _LM_MEXC_INTERVAL_MS.get(mx_iv, 900_000)
+        out = []
+        for i in range(len(times)):
+            try:
+                open_ms = int(times[i]) * 1000
+                out.append({
+                    "open_time":  open_ms,
+                    "open":       float(opens[i])  if i < len(opens)  else 0.0,
+                    "high":       float(highs[i])  if i < len(highs)  else 0.0,
+                    "low":        float(lows[i])   if i < len(lows)   else 0.0,
+                    "close":      float(closes[i]) if i < len(closes) else 0.0,
+                    "volume":     float(vols[i])   if i < len(vols)   else 0.0,
+                    "close_time": open_ms + iv_ms - 1,
+                })
+            except (IndexError, TypeError, ValueError):
+                pass
+        # MEXC returns oldest-first; sort ascending by open_time
+        out.sort(key=lambda x: x["open_time"])
+        return out[-limit:] if len(out) > limit else out
+    except Exception:
+        return []
+
+
+def _lm_fetch_mexc_perp_ticker(symbol: str) -> dict:
+    """Fetch MEXC perpetual ticker for symbol. Returns compact dict or {} on error.
+
+    No API key. No order logic. Public endpoint only.
+    Returns: {ok, symbol, last_price, volume_24h, funding_rate}
+    """
+    sym = symbol.upper().replace("_", "")
+    if sym.endswith("USDT"):
+        mx_sym = sym[:-4] + "_USDT"
+    else:
+        mx_sym = sym
+    try:
+        r = req.get(f"{MEXC_PERP_API}/ticker", params={"symbol": mx_sym}, timeout=8)
+        if r.status_code != 200:
+            return {"ok": False, "error": f"status {r.status_code}"}
+        body = r.json().get("data") or {}
+        # API may return list or dict
+        ticker = None
+        if isinstance(body, list):
+            for t in body:
+                if (t.get("symbol") or "").replace("_", "").upper() == sym:
+                    ticker = t
+                    break
+        elif isinstance(body, dict):
+            ticker = body
+        if not ticker:
+            return {"ok": False, "error": "symbol_not_found"}
+        return {
+            "ok":          True,
+            "symbol":      sym,
+            "last_price":  float(ticker.get("lastPrice") or ticker.get("last") or 0),
+            "volume_24h":  float(ticker.get("amount24")  or ticker.get("volume24") or 0),
+            "funding_rate": float(ticker.get("fundingRate") or 0),
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:100]}
+
+
+def _lm_get_live_price_for_item(row, snapshot=None) -> dict:
+    """Return current live price for a Live Monitor item based on data_sources.live_price_source.
+
+    Returns {ok, price, source_exchange, source_market} or {ok: False, error}.
+    No API key. No order logic. Reads public ticker only.
+    """
+    snap   = snapshot if snapshot is not None else _json_loads_safe(getattr(row, "snapshot_json", None), {})
+    config = _lm_data_source_config(row, snapshot=snap)
+    symbol = config["execution_symbol"]
+    src    = config["live_price_source"]
+
+    if src == "mexc":
+        ticker = _lm_fetch_mexc_perp_ticker(symbol)
+        if ticker.get("ok"):
+            return {
+                "ok":             True,
+                "price":          ticker["last_price"],
+                "source_exchange": "mexc",
+                "source_market":  "perpetual",
+            }
+        return {"ok": False, "error": ticker.get("error", "mexc_ticker_failed"),
+                "source_exchange": "mexc"}
+
+    # Default: return item.current_price (already updated by existing refresh pipeline)
+    cp = getattr(row, "current_price", None)
+    if cp is not None:
+        return {
+            "ok":             True,
+            "price":          float(cp),
+            "source_exchange": "binance",
+            "source_market":  "perpetual",
+        }
+    return {"ok": False, "error": "no_current_price", "source_exchange": "binance"}
 
 
 def _lm_extract_candle_features(candles: list) -> dict:
@@ -9655,22 +9916,48 @@ def _lm_attach_candle_features(row, interval: str = None, limit: int = 1000) -> 
         tf = (getattr(row, "timeframe", None) or "").strip()
         interval = tf if tf in _LM_ALLOWED_CANDLE_INTERVALS else "15m"
 
-    limit    = max(5, min(limit, 4000))
-    symbol   = (getattr(row, "symbol", None) or "").upper().strip()
+    limit  = max(5, min(limit, 4000))
+
+    # Phase 9.1: resolve candle source from data_source_config. Use the same
+    # normalized execution_symbol the cache bust uses so keys always match.
+    config         = _lm_data_source_config(row, snapshot=snap)
+    symbol         = config["execution_symbol"]
     if not symbol:
         return snap, {}
-    exchange = (getattr(row, "exchange", None) or "binance").lower().strip() or "binance"
-    market   = (getattr(row, "market",   None) or "perpetual").lower().strip() or "perpetual"
+    candle_src     = config["candle_source"]          # "binance" or "mexc"
+    source_market  = config["execution_market"]       # "perpetual" or "spot"
+    fallback_policy = config["fallback_policy"]
 
-    candles  = _lm_get_candles_for_features(symbol, interval, limit=limit, exchange=exchange, market=market)
+    warnings: list = []
+    candles = _lm_get_candles_for_features(
+        symbol, interval, limit=limit,
+        exchange=candle_src, market=source_market,
+    )
+
+    # If MEXC fetch failed and fallback is allowed, try Binance with a warning
+    if not candles and candle_src == "mexc":
+        if fallback_policy == "warn_fallback_binance":
+            candles = _lm_get_candles_for_features(
+                symbol, interval, limit=limit,
+                exchange="binance", market=source_market,
+            )
+            if candles:
+                warnings.append("MEXC candles unavailable; fell back to Binance.")
+                candle_src = "binance"
+        else:
+            warnings.append("MEXC candles unavailable; no fallback (warn_no_fallback policy).")
+
     features = _lm_extract_candle_features(candles)
 
     now_iso = datetime.utcnow().isoformat() + "Z"
     snap["latest_candle_features"] = {
-        "phase":       "phase7_candle_features",
-        "computed_at": now_iso,
-        "interval":    interval,
-        "features":    features,
+        "phase":           "phase9_candle_features",
+        "computed_at":     now_iso,
+        "interval":        interval,
+        "source_exchange": candle_src,
+        "source_market":   source_market,
+        "features":        features,
+        "warnings":        warnings,
     }
     snap["last_candle_features_at"] = now_iso
     row.snapshot_json = _json_dumps_safe(snap)
@@ -10345,6 +10632,687 @@ def _lm_compute_memory_accuracy(snapshot) -> dict:
     return accuracy
 
 
+# ── Phase 9.2: Aggregated Market Context Engine ───────────────────────────────
+
+def _lm_compute_aggregated_market_context(row, snapshot=None) -> dict:
+    """Compute aggregated market context, Binance-first.
+
+    Wraps the existing per-exchange market context in an aggregated envelope.
+    MEXC may supply ticker supplement only (funding/OI via public ticker).
+    Does NOT fake unavailable fields. Does NOT claim multi-exchange if only
+    Binance is available. No trading. No order logic.
+    Returns a dict stored as snapshot["latest_aggregated_market_context"].
+    """
+    snap    = snapshot if snapshot is not None else _json_loads_safe(getattr(row, "snapshot_json", None), {})
+    config  = _lm_data_source_config(row, snapshot=snap)
+    symbol  = config["execution_symbol"]
+    mcs     = config["market_context_sources"]  # e.g. ["binance"] or ["binance","mexc"]
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    sources_requested = list(mcs)
+    sources_used: list  = []
+    sources_failed: list = []
+    warnings: list = []
+
+    # ── Primary source: Binance ───────────────────────────────────────────────
+    binance_ctx = None
+    if "binance" in sources_requested:
+        try:
+            binance_ctx = _lm_fetch_market_context(symbol, exchange="binance", market="perpetual")
+            if binance_ctx.get("ok"):
+                sources_used.append("binance")
+            else:
+                sources_failed.append("binance")
+                warnings.append(f"Binance market context unavailable: {binance_ctx.get('reason','')}")
+        except Exception as _e:
+            sources_failed.append("binance")
+            warnings.append(f"Binance market context error: {_e}")
+
+    # ── Supplement: MEXC ticker (public) ─────────────────────────────────────
+    mexc_ticker = None
+    if "mexc" in sources_requested:
+        try:
+            t = _lm_fetch_mexc_perp_ticker(symbol)
+            if t.get("ok"):
+                mexc_ticker = t
+                sources_used.append("mexc")
+            else:
+                sources_failed.append("mexc")
+                warnings.append(f"MEXC ticker unavailable: {t.get('error','')}")
+        except Exception as _e:
+            sources_failed.append("mexc")
+            warnings.append(f"MEXC ticker error: {_e}")
+
+    # ── Agreement / conflict scoring ─────────────────────────────────────────
+    only_one_source = len(sources_used) <= 1
+    agreement_score = None if only_one_source else None  # placeholder for multi-source
+    conflict_score  = None if only_one_source else None
+    agreement_note  = "single_source" if only_one_source else None
+
+    # ── Build output from Binance primary ────────────────────────────────────
+    b = binance_ctx or {}
+    funding       = b.get("funding")       or {"available": False}
+    open_interest = b.get("open_interest") or {"available": False}
+    taker_pressure = b.get("taker_pressure") or {"available": False}
+    long_short    = b.get("long_short")    or {"available": False}
+    liquidations  = b.get("liquidations")  or {"available": False}
+    volume_ctx    = b.get("activity")      or {"available": False}
+    b_summary     = b.get("summary")       or {}
+    bias          = b_summary.get("market_bias") or "neutral"
+    summary_notes = b_summary.get("notes") or []
+
+    if mexc_ticker and mexc_ticker.get("ok"):
+        if mexc_ticker.get("funding_rate") is not None:
+            warnings.append(
+                f"MEXC funding rate (supplement only): {mexc_ticker['funding_rate']:.6f}. "
+                "Binance data is primary source."
+            )
+
+    if only_one_source and "binance" in sources_used:
+        warnings.append("Single source (Binance only) — agreement_score not applicable.")
+    if "binance" in sources_failed:
+        warnings.append("Primary source (Binance) failed — context may be incomplete.")
+
+    return {
+        "phase":           "phase9_aggregated_context",
+        "computed_at":     now_iso,
+        "symbol":          symbol,
+        "sources_requested": sources_requested,
+        "sources_used":    sources_used,
+        "sources_failed":  sources_failed,
+        "primary_source":  "binance",
+        "funding":         funding,
+        "open_interest":   open_interest,
+        "taker_pressure":  taker_pressure,
+        "long_short":      long_short,
+        "liquidations":    liquidations,
+        "volume_context":  volume_ctx,
+        "agreement_score": agreement_score,
+        "conflict_score":  conflict_score,
+        "agreement_note":  agreement_note,
+        "bias":            bias,
+        "summary_notes":   summary_notes,
+        "warnings":        warnings,
+        "summary":         b_summary.get("ai_context") or "Binance-first aggregated context.",
+    }
+
+
+# ── Phase 9.3: LiveMonitorTrade helpers ───────────────────────────────────────
+
+_LM_TRADE_ALLOWED_STATUSES = {
+    "draft", "proposed", "risk_approved", "risk_rejected", "cancelled",
+    # Phase 9.6+ only — not created by Phase 9.3-9.5:
+    "submitted", "open", "closed", "failed",
+}
+_LM_TRADE_CANCELLABLE_STATUSES = {"draft", "proposed", "risk_rejected"}
+
+
+def _lm_trade_to_dict(trade) -> dict:
+    """Serialize a LiveMonitorTrade row to a JSON-friendly dict."""
+    return {
+        "id":                      trade.id,
+        "trade_uid":               trade.trade_uid,
+        "user_id":                 trade.user_id,
+        "live_monitor_item_id":    trade.live_monitor_item_id,
+        "linked_memory_record_id": trade.linked_memory_record_id,
+        "mode":                    trade.mode,
+        "execution_exchange":      trade.execution_exchange,
+        "execution_market":        trade.execution_market,
+        "symbol":                  trade.symbol,
+        "direction":               trade.direction,
+        "setup_type":              trade.setup_type,
+        "timeframe":               trade.timeframe,
+        "status":                  trade.status,
+        "entry_price":             trade.entry_price,
+        "stop_loss":               trade.stop_loss,
+        "take_profit":             trade.take_profit,
+        "risk_reward":             trade.risk_reward,
+        "position_size":           trade.position_size,
+        "leverage":                trade.leverage,
+        "ai_proposal":             _json_loads_safe(trade.ai_proposal_json, None),
+        "ai_reasoning_summary":    trade.ai_reasoning_summary,
+        "setup_context":           _json_loads_safe(trade.setup_context_json, None),
+        "risk_guard":              _json_loads_safe(trade.risk_guard_json, None),
+        "risk_guard_status":       trade.risk_guard_status,
+        "rejection_reason":        trade.rejection_reason,
+        "exchange_order_id":       trade.exchange_order_id,
+        "exchange_position_id":    trade.exchange_position_id,
+        "opened_at":               trade.opened_at.isoformat() if trade.opened_at else None,
+        "closed_at":               trade.closed_at.isoformat() if trade.closed_at else None,
+        "pnl":                     trade.pnl,
+        "fees":                    trade.fees,
+        "outcome":                 trade.outcome,
+        "created_at":              trade.created_at.isoformat() if trade.created_at else None,
+        "updated_at":              trade.updated_at.isoformat() if trade.updated_at else None,
+    }
+
+
+def _lm_build_trade_setup_context(row, snapshot=None) -> dict:
+    """Build compact setup context stored in LiveMonitorTrade.setup_context_json.
+
+    No raw candles. No API keys. No order fields.
+    """
+    snap = snapshot if snapshot is not None else _json_loads_safe(getattr(row, "snapshot_json", None), {})
+
+    ds  = snap.get("data_sources") or {}
+    sr  = snap.get("latest_setup_readiness") or {}
+    evd = snap.get("latest_event_detection") or {}
+    cf  = snap.get("latest_candle_features") or {}
+    amc = snap.get("latest_aggregated_market_context") or {}
+    lh  = snap.get("latest_health") or {}
+
+    # Compact candle features — no raw candles
+    cf_compact = None
+    feat = cf.get("features") or {}
+    if feat:
+        cf_compact = {
+            "interval":          cf.get("interval"),
+            "source_exchange":   cf.get("source_exchange"),
+            "computed_at":       cf.get("computed_at"),
+            "atr_14":            feat.get("atr_14"),
+            "strong_rejection":  feat.get("strong_rejection"),
+            "compression":       feat.get("compression"),
+            "breakout_context":  feat.get("breakout_context"),
+            "trend_slope_20":    feat.get("trend_slope_20"),
+            "volume_spike_ratio": feat.get("volume_spike_ratio"),
+        }
+
+    # Compact event detection — max 8 events, no raw candles
+    evd_compact = None
+    if evd:
+        evd_compact = {
+            "computed_at": evd.get("computed_at"),
+            "summary":     evd.get("summary"),
+            "events": [
+                {"type": e.get("type"), "severity": e.get("severity"),
+                 "label": e.get("label"), "direction": e.get("direction")}
+                for e in (evd.get("events") or [])[:8]
+            ],
+        }
+
+    # Compact aggregated context — no raw data
+    amc_compact = None
+    if amc:
+        amc_compact = {
+            "computed_at":     amc.get("computed_at"),
+            "sources_used":    amc.get("sources_used"),
+            "bias":            amc.get("bias"),
+            "funding":         (amc.get("funding") or {}).get("bias"),
+            "taker_pressure":  (amc.get("taker_pressure") or {}).get("bias"),
+            "agreement_note":  amc.get("agreement_note"),
+        }
+
+    # Compact health
+    lh_compact = None
+    if lh:
+        lh_compact = {
+            "health_score": lh.get("health_score"),
+            "grade":        lh.get("grade"),
+            "direction":    lh.get("direction"),
+            "bias":         lh.get("bias"),
+        }
+
+    # Latest memory record id/status (not full record)
+    mem_records = snap.get("setup_memory_records") or []
+    latest_mem  = None
+    if mem_records:
+        lmr = mem_records[-1]
+        latest_mem = {
+            "record_id":      lmr.get("id") or lmr.get("record_id"),
+            "outcome_status": lmr.get("outcome_status"),
+            "readiness_state": lmr.get("readiness_state"),
+        }
+
+    return {
+        "captured_at":      datetime.now(timezone.utc).isoformat(),
+        "symbol":           (getattr(row, "symbol", None) or "").upper(),
+        "direction":        getattr(row, "direction", None),
+        "setup_type":       getattr(row, "setup_type", None),
+        "timeframe":        getattr(row, "timeframe", None),
+        "zone_high":        getattr(row, "zone_high", None),
+        "zone_low":         getattr(row, "zone_low", None),
+        "current_price":    getattr(row, "current_price", None),
+        "data_sources":     {k: v for k, v in ds.items() if k != "warnings"},
+        "setup_readiness":  {
+            "readiness_state":    sr.get("readiness_state"),
+            "confirmation_score": sr.get("confirmation_score"),
+            "risk_score":         sr.get("risk_score"),
+            "supporting_events":  (sr.get("supporting_events") or [])[:8],
+            "risk_events":        (sr.get("risk_events") or [])[:8],
+        } if sr else None,
+        "event_detection":  evd_compact,
+        "candle_features":  cf_compact,
+        "aggregated_market_context": amc_compact,
+        "health":           lh_compact,
+        "latest_memory":    latest_mem,
+    }
+
+
+def _lm_create_trade_record_from_proposal(row, proposal: dict, snapshot=None):
+    """Build and return (unsaved) LiveMonitorTrade from AI proposal dict.
+
+    Caller must db.session.add() and db.session.commit().
+    No order execution. No API keys. No raw candles.
+    Returns LiveMonitorTrade instance.
+    """
+    import uuid
+    from models import LiveMonitorTrade as _LMT
+
+    snap    = snapshot if snapshot is not None else _json_loads_safe(getattr(row, "snapshot_json", None), {})
+    config  = _lm_data_source_config(row, snapshot=snap)
+    action  = (proposal.get("action") or "no_trade").lower()
+    symbol  = config["execution_symbol"] or (getattr(row, "symbol", None) or "").upper()
+
+    direction = None
+    if action == "propose_long":
+        direction = "long"
+    elif action == "propose_short":
+        direction = "short"
+    else:
+        direction = (getattr(row, "direction", None) or "").lower() or None
+
+    status = "proposed" if action in ("propose_long", "propose_short") else "draft"
+
+    setup_ctx = _lm_build_trade_setup_context(row, snapshot=snap)
+
+    # Link to latest memory record if available
+    mem_records = snap.get("setup_memory_records") or []
+    linked_mem_id = (mem_records[-1].get("id") or mem_records[-1].get("record_id")) if mem_records else None
+
+    trade = _LMT(
+        trade_uid              = uuid.uuid4().hex[:20],
+        user_id                = row.user_id,
+        live_monitor_item_id   = row.id,
+        linked_memory_record_id = linked_mem_id,
+        mode                   = "proposal_only",
+        execution_exchange     = config.get("execution_exchange", "none"),
+        execution_market       = config.get("execution_market", "perpetual"),
+        symbol                 = symbol,
+        direction              = direction,
+        setup_type             = getattr(row, "setup_type", None),
+        timeframe              = getattr(row, "timeframe", None),
+        status                 = status,
+        ai_proposal_json       = _json_dumps_safe(proposal),
+        ai_reasoning_summary   = (proposal.get("reasoning_summary") or "")[:500],
+        setup_context_json     = _json_dumps_safe(setup_ctx),
+        risk_guard_status      = "not_checked",
+    )
+    return trade
+
+
+# ── Phase 9.4: AI Trade Proposal helpers ─────────────────────────────────────
+
+def _lm_ai_trade_proposal_prompt() -> str:
+    """System prompt for the AI trade proposal endpoint.
+
+    AI may only propose — never execute, never place orders.
+    Returns raw JSON only. No prose outside JSON.
+    """
+    return (
+        "You are the ZyNi Trade Proposal AI — a professional SMC setup analyst.\n"
+        "Your job is to evaluate the provided setup context and produce a structured "
+        "trade PROPOSAL only. You cannot execute trades, place orders, or access APIs.\n\n"
+
+        "OUTPUT FORMAT — respond with ONLY this JSON object:\n"
+        "{\n"
+        "  \"action\": \"no_trade\" | \"wait\" | \"propose_long\" | \"propose_short\",\n"
+        "  \"setup_type\": \"<OB|FIB|FVG|Breaker|...>\",\n"
+        "  \"direction\": \"long\" | \"short\" | null,\n"
+        "  \"confidence\": <integer 0-100>,\n"
+        "  \"entry_logic\": \"<brief entry rationale>\",\n"
+        "  \"invalidation_logic\": \"<what invalidates this proposal>\",\n"
+        "  \"take_profit_logic\": \"<brief TP rationale>\",\n"
+        "  \"required_confirmations\": [\"<list of still-needed confirmations>\"],\n"
+        "  \"risk_notes\": [\"<list of current risk factors>\"],\n"
+        "  \"reasoning_summary\": \"<1-2 sentence summary>\"\n"
+        "}\n\n"
+
+        "STRICT RULES:\n"
+        "- This is a PROPOSAL only. Risk Guard must approve before any execution.\n"
+        "- NEVER say 'place order', 'enter now', 'execute', or imply any trade is placed.\n"
+        "- NEVER request or use API keys, credentials, or account data.\n"
+        "- NEVER invent data that is not present in the provided context.\n"
+        "- If action is 'no_trade' or 'wait', still fill the JSON — use null/empty where not applicable.\n\n"
+
+        "READINESS RULES:\n"
+        "- strong_watch: may propose_long or propose_short.\n"
+        "- active_watch: must use 'wait' — proposal is premature.\n"
+        "- high_risk or avoid: must use 'no_trade'. Never propose in these states.\n"
+        "- confirmation_score < 65: prefer 'wait'. Must explain in required_confirmations.\n"
+        "- risk_score > 35: reduce confidence. If > 60, use 'no_trade'.\n\n"
+
+        "MODULE RULES:\n"
+        "- OB and FIB zones are PRIMARY setup modules — they can be the basis of a proposal.\n"
+        "- FVG, Breaker, Bias, Session, OI, Funding, Taker, Liquidations, Wick = "
+        "CONFIRMATIONS only. They cannot be the sole basis of a proposal.\n"
+        "- aggregated_market_context is confirmation only — Binance context is NOT "
+        "MEXC execution price or level.\n"
+        "- execution_exchange candle/price data is the truth for entry/SL/TP levels.\n\n"
+
+        "RISK GUARD NOTE:\n"
+        "- Your proposal is NOT approval. Risk Guard will independently validate.\n"
+        "- Do NOT claim your proposal is approved, safe, or executable.\n"
+        "- Do not output a disclaimer field — the rules above cover it.\n\n"
+
+        "Do not wrap the JSON in markdown code fences. Output raw JSON only."
+    )
+
+
+def _lm_build_trade_proposal_context(row, snapshot=None) -> dict:
+    """Build compact context dict for AI trade proposal. No raw candles. No API keys."""
+    snap    = snapshot if snapshot is not None else _json_loads_safe(getattr(row, "snapshot_json", None), {})
+    config  = _lm_data_source_config(row, snapshot=snap)
+    sr      = snap.get("latest_setup_readiness") or {}
+    evd     = snap.get("latest_event_detection") or {}
+    cf      = snap.get("latest_candle_features") or {}
+    amc     = snap.get("latest_aggregated_market_context") or {}
+    lh      = snap.get("latest_health") or {}
+
+    live_price = _lm_get_live_price_for_item(row, snapshot=snap)
+
+    # Compact candle features — no raw data
+    feat = cf.get("features") or {}
+    cf_compact = {
+        "interval":          cf.get("interval"),
+        "source_exchange":   cf.get("source_exchange"),
+        "atr_14":            feat.get("atr_14"),
+        "strong_rejection":  feat.get("strong_rejection"),
+        "compression":       feat.get("compression"),
+        "breakout_context":  feat.get("breakout_context"),
+        "trend_slope_20":    feat.get("trend_slope_20"),
+        "volume_spike_ratio": feat.get("volume_spike_ratio"),
+        "price_position_50": feat.get("price_position_50"),
+        "last_close":        feat.get("last_close"),
+    } if feat else None
+
+    # Compact aggregated context
+    amc_compact = {
+        "sources_used":    amc.get("sources_used"),
+        "bias":            amc.get("bias"),
+        "funding":         amc.get("funding"),
+        "open_interest":   amc.get("open_interest"),
+        "taker_pressure":  amc.get("taker_pressure"),
+        "long_short":      amc.get("long_short"),
+        "agreement_note":  amc.get("agreement_note"),
+        "warnings":        (amc.get("warnings") or [])[:5],
+        "summary":         amc.get("summary"),
+    } if amc else None
+
+    # Latest 3 memory records — compact, no raw candles
+    mem_records = snap.get("setup_memory_records") or []
+    mem_compact = [
+        {
+            "created_at":         r.get("created_at"),
+            "readiness_state":    r.get("readiness_state"),
+            "direction":          r.get("direction"),
+            "confirmation_score": r.get("confirmation_score"),
+            "risk_score":         r.get("risk_score"),
+            "outcome_status":     r.get("outcome_status"),
+        }
+        for r in mem_records[-3:]
+    ] if mem_records else []
+
+    custom_instr = None
+    try:
+        custom_instr = _lm_custom_ai_instructions_from_snapshot(snap)
+    except Exception:
+        pass
+
+    return {
+        "setup": {
+            "symbol":       (getattr(row, "symbol", None) or "").upper(),
+            "direction":    getattr(row, "direction", None),
+            "setup_type":   getattr(row, "setup_type", None),
+            "timeframe":    getattr(row, "timeframe", None),
+            "zone_high":    getattr(row, "zone_high", None),
+            "zone_low":     getattr(row, "zone_low", None),
+            "status":       getattr(row, "status", None),
+            "score":        getattr(row, "score", None),
+            "confidence":   getattr(row, "confidence", None),
+        },
+        "data_sources": {k: v for k, v in config.items() if k != "warnings"},
+        "live_price":   live_price,
+        "setup_readiness": {
+            "readiness_state":    sr.get("readiness_state"),
+            "confirmation_score": sr.get("confirmation_score"),
+            "risk_score":         sr.get("risk_score"),
+            "supporting_events":  (sr.get("supporting_events") or [])[:8],
+            "risk_events":        (sr.get("risk_events") or [])[:8],
+            "missing_confirmations": sr.get("missing_confirmations"),
+            "summary":            sr.get("summary"),
+        } if sr else None,
+        "event_detection": {
+            "computed_at": evd.get("computed_at"),
+            "summary":     evd.get("summary"),
+            "events": [
+                {"type": e.get("type"), "severity": e.get("severity"),
+                 "label": e.get("label"), "direction": e.get("direction"),
+                 "details": e.get("details")}
+                for e in (evd.get("events") or [])[:8]
+            ],
+        } if evd else None,
+        "candle_features":           cf_compact,
+        "aggregated_market_context": amc_compact,
+        "health": {
+            "health_score": lh.get("health_score"),
+            "grade":        lh.get("grade"),
+            "direction":    lh.get("direction"),
+            "bias":         lh.get("bias"),
+            "warnings":     (lh.get("warnings") or [])[:5],
+        } if lh else None,
+        "reasoning_memory_latest": mem_compact,
+        "custom_ai_instructions":  custom_instr,
+        "rules": {
+            "proposal_only":        True,
+            "no_execution":         True,
+            "no_order_placement":   True,
+            "no_api_keys":          True,
+            "risk_guard_required_for_approval": True,
+            "execution_exchange_price_is_truth": True,
+            "binance_context_is_confirmation_only": True,
+        },
+    }
+
+
+# ── Phase 9.5: Risk Guard ─────────────────────────────────────────────────────
+
+_LM_RG_MAX_ACTIVE_TRADES     = 3   # max proposed/risk_approved per user
+_LM_RG_MAX_DAILY_PROPOSALS   = 20  # max AI proposals per user per day
+_LM_RG_MIN_CONFIRMATION      = 65
+_LM_RG_MAX_RISK_SCORE        = 35
+_LM_RG_RULES_VERSION         = "phase9_5_v1"
+_LM_RG_HARD_BLOCK_STATES     = {"high_risk", "avoid"}
+_LM_RG_EXECUTABLE_STATES     = {"strong_watch"}
+_LM_RG_PREVIEW_ONLY_STATES   = {"active_watch", "wait"}
+
+
+def _lm_run_risk_guard(trade, row=None, snapshot=None) -> dict:
+    """Run Risk Guard hard-safety checks against a LiveMonitorTrade proposal.
+
+    No execution. No exchange call. No API keys.
+    Returns {status, approved, score, reasons, warnings, hard_blocks, checked_at, rules_version}.
+    """
+    from models import LiveMonitorTrade as _LMT
+    from datetime import datetime as _dt_rg, timezone as _tz_rg
+
+    checked_at  = _dt_rg.now(_tz_rg.utc).isoformat()
+    hard_blocks = []
+    reasons     = []
+    warnings    = []
+    score       = 100  # start perfect, deduct per issue
+
+    # ── Load setup context from trade ────────────────────────────────────────
+    ctx  = _json_loads_safe(trade.setup_context_json, {})
+    sr   = ctx.get("setup_readiness") or {}
+    ds   = ctx.get("data_sources") or {}
+    proposal = _json_loads_safe(trade.ai_proposal_json, {})
+
+    readiness_state    = (sr.get("readiness_state") or "wait").lower()
+    confirmation_score = int(sr.get("confirmation_score") or 0)
+    risk_score_val     = int(sr.get("risk_score") or 0)
+    action             = (proposal.get("action") or "no_trade").lower()
+    direction          = (trade.direction or "").lower()
+    symbol             = (trade.symbol or "").upper()
+    candle_src         = (ds.get("candle_source") or "binance").lower()
+    live_price_src     = (ds.get("live_price_source") or "binance").lower()
+    exec_exchange      = (ds.get("execution_exchange") or trade.execution_exchange or "none").lower()
+
+    # ── HARD BLOCK 1: forbidden readiness states ──────────────────────────────
+    if readiness_state in _LM_RG_HARD_BLOCK_STATES:
+        hard_blocks.append(f"readiness_state={readiness_state} — proposal blocked (high_risk/avoid)")
+        score -= 60
+
+    # ── HARD BLOCK 2: active_watch is preview-only ────────────────────────────
+    if readiness_state in _LM_RG_PREVIEW_ONLY_STATES and action in ("propose_long", "propose_short"):
+        hard_blocks.append(
+            f"readiness_state={readiness_state} — only strong_watch allows executable approval"
+        )
+        score -= 40
+
+    # ── HARD BLOCK 3: confirmation score too low ──────────────────────────────
+    if confirmation_score < _LM_RG_MIN_CONFIRMATION:
+        hard_blocks.append(
+            f"confirmation_score={confirmation_score} < {_LM_RG_MIN_CONFIRMATION} required"
+        )
+        score -= 20
+
+    # ── HARD BLOCK 4: risk score too high ─────────────────────────────────────
+    if risk_score_val > _LM_RG_MAX_RISK_SCORE:
+        hard_blocks.append(
+            f"risk_score={risk_score_val} > {_LM_RG_MAX_RISK_SCORE} allowed"
+        )
+        score -= 20
+
+    # ── HARD BLOCK 5: missing required context ────────────────────────────────
+    if not ds:
+        hard_blocks.append("data_sources missing — cannot verify execution source")
+        score -= 15
+    if not sr:
+        hard_blocks.append("setup_readiness missing — cannot evaluate readiness")
+        score -= 15
+    evd_ctx = ctx.get("event_detection")
+    if not evd_ctx:
+        hard_blocks.append("event_detection missing — cannot evaluate events")
+        score -= 10
+    cf_ctx = ctx.get("candle_features")
+    if not cf_ctx:
+        reasons.append("candle_features missing — entry levels cannot be verified")
+        score -= 10
+
+    # ── HARD BLOCK 6: MEXC execution source consistency ───────────────────────
+    if exec_exchange == "mexc":
+        if candle_src != "mexc":
+            hard_blocks.append(
+                "execution_exchange=mexc but candle_source is not mexc — "
+                "candles must match execution exchange"
+            )
+            score -= 20
+        if live_price_src != "mexc":
+            hard_blocks.append(
+                "execution_exchange=mexc but live_price_source is not mexc — "
+                "live price must match execution exchange"
+            )
+            score -= 20
+
+    # ── HARD BLOCK 7: only propose_long/propose_short are executable proposals ──
+    if action not in ("propose_long", "propose_short"):
+        hard_blocks.append(
+            f"AI action='{action}' is not an executable proposal — "
+            "only propose_long/propose_short can be risk_approved"
+        )
+        score -= 50
+
+    # ── Soft checks: duplicate symbol ────────────────────────────────────────
+    try:
+        existing_active = _LMT.query.filter(
+            _LMT.user_id == trade.user_id,
+            _LMT.symbol  == symbol,
+            _LMT.status.in_(["proposed", "risk_approved"]),
+            _LMT.id      != trade.id,
+        ).count()
+        if existing_active > 0:
+            hard_blocks.append(
+                f"duplicate active proposal/trade for {symbol} already exists"
+            )
+            score -= 30
+    except Exception:
+        warnings.append("Could not check for duplicate symbol proposals")
+
+    # ── Soft checks: max active trades per user ───────────────────────────────
+    try:
+        active_count = _LMT.query.filter(
+            _LMT.user_id == trade.user_id,
+            _LMT.status.in_(["proposed", "risk_approved"]),
+            _LMT.id      != trade.id,
+        ).count()
+        if active_count >= _LM_RG_MAX_ACTIVE_TRADES:
+            hard_blocks.append(
+                f"max {_LM_RG_MAX_ACTIVE_TRADES} active proposals/approved trades reached "
+                f"({active_count} existing)"
+            )
+            score -= 30
+    except Exception:
+        warnings.append("Could not check active trade count")
+
+    # ── Soft checks: max daily proposals ─────────────────────────────────────
+    try:
+        from datetime import datetime as _dt_rg2, timezone as _tz_rg2, timedelta as _td_rg
+        day_start = _dt_rg2.now(_tz_rg2.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        daily_count = _LMT.query.filter(
+            _LMT.user_id    == trade.user_id,
+            _LMT.created_at >= day_start,
+        ).count()
+        if daily_count > _LM_RG_MAX_DAILY_PROPOSALS:
+            hard_blocks.append(
+                f"daily AI proposal limit {_LM_RG_MAX_DAILY_PROPOSALS} reached ({daily_count} today)"
+            )
+            score -= 25
+    except Exception:
+        warnings.append("Could not check daily proposal count")
+
+    # ── Funding / taker / session warnings ───────────────────────────────────
+    amc_ctx = ctx.get("aggregated_market_context") or {}
+    funding_bias  = amc_ctx.get("funding") or ""
+    taker_bias    = amc_ctx.get("taker_pressure") or ""
+
+    if direction == "long" and isinstance(funding_bias, str) and "bearish" in funding_bias.lower():
+        warnings.append("Funding rate bias opposes long direction — caution")
+        score -= 5
+    if direction == "short" and isinstance(funding_bias, str) and "bullish" in funding_bias.lower():
+        warnings.append("Funding rate bias opposes short direction — caution")
+        score -= 5
+    if direction == "long" and isinstance(taker_bias, str) and "bearish" in taker_bias.lower():
+        warnings.append("Taker pressure opposes long direction — caution")
+        score -= 5
+    if direction == "short" and isinstance(taker_bias, str) and "bullish" in taker_bias.lower():
+        warnings.append("Taker pressure opposes short direction — caution")
+        score -= 5
+
+    # ── Proposal quality checks ───────────────────────────────────────────────
+    if not proposal.get("invalidation_logic"):
+        reasons.append("AI proposal missing invalidation_logic — required for Risk Guard")
+        score -= 10
+    if not proposal.get("take_profit_logic"):
+        reasons.append("AI proposal missing take_profit_logic — required for Risk Guard")
+        score -= 5
+
+    score = max(0, score)
+
+    # ── Final verdict ─────────────────────────────────────────────────────────
+    approved = len(hard_blocks) == 0 and score >= 60
+
+    return {
+        "status":       "approved" if approved else "rejected",
+        "approved":     approved,
+        "score":        score,
+        "reasons":      reasons,
+        "warnings":     warnings,
+        "hard_blocks":  hard_blocks,
+        "checked_at":   checked_at,
+        "rules_version": _LM_RG_RULES_VERSION,
+    }
+
+
 def _lm_build_ai_context(item) -> dict:
     """Build a compact, JSON-safe context dict from a LiveMonitorItem for the AI agent."""
     snap = _json_loads_safe(getattr(item, "snapshot_json", None), {})
@@ -10514,6 +11482,22 @@ def _lm_build_ai_context(item) -> dict:
             snap.get("setup_memory_summary"),
             snap.get("setup_memory_accuracy"),
         ),
+        "aggregated_market_context": (lambda amc: {
+            "computed_at":     amc.get("computed_at"),
+            "sources_used":    amc.get("sources_used"),
+            "sources_failed":  amc.get("sources_failed"),
+            "primary_source":  amc.get("primary_source"),
+            "funding":         amc.get("funding"),
+            "open_interest":   amc.get("open_interest"),
+            "taker_pressure":  amc.get("taker_pressure"),
+            "long_short":      amc.get("long_short"),
+            "bias":            amc.get("bias"),
+            "agreement_score": amc.get("agreement_score"),
+            "agreement_note":  amc.get("agreement_note"),
+            "conflict_score":  amc.get("conflict_score"),
+            "warnings":        amc.get("warnings"),
+            "summary":         amc.get("summary"),
+        } if amc and isinstance(amc, dict) else None)(snap.get("latest_aggregated_market_context")),
     }
 
 
@@ -10610,6 +11594,28 @@ def _lm_ai_system_prompt() -> str:
         "- Do NOT use past win/loss records as permission to enter a trade.\n"
         "- memory is context clues only — not trade permission, not strategy modification.\n"
         "- If reasoning_memory is null, analyze from other context fields only.\n\n"
+
+        "AGGREGATED MARKET CONTEXT (Phase 9.2):\n"
+        "The context may include an aggregated_market_context block — a Binance-first market view.\n"
+        "USE RULES:\n"
+        "- primary_source is always 'binance' in Phase 9.2. Binance data is the authoritative source.\n"
+        "- If sources_used contains only 'binance', this is a single-source context — "
+        "do NOT claim multi-exchange agreement.\n"
+        "- agreement_score/conflict_score will be null when only one source is used — do not invent values.\n"
+        "- MEXC funding/OI fields (if present in warnings) are supplemental and informational only.\n"
+        "- Do NOT use Binance market context as an exact MEXC execution price or level.\n"
+        "- Do NOT treat market bias from aggregated context as trade execution permission.\n"
+        "- If aggregated_market_context is null, use market_context if available, or note it is missing.\n"
+        "- Do NOT invent exchange data that is not present in sources_used.\n\n"
+
+        "RISK GUARD (Phase 9.5):\n"
+        "A backend Risk Guard independently validates all AI proposals before any approval.\n"
+        "USE RULES:\n"
+        "- Your analysis is NEVER approval to execute a trade.\n"
+        "- Risk Guard approval is NEVER execution — it is only a safety pass.\n"
+        "- No trade or order can be placed in Phase 9.5. Execution is Phase 9.6+ only.\n"
+        "- Do NOT imply that a 'confirmed_watch' or 'strong_watch' verdict means enter now.\n"
+        "- If you are asked for a trade proposal (separate endpoint), output proposal JSON only.\n\n"
 
         "STRICT RULES:\n"
         "- Analyze ONLY the provided backend facts. Do not invent missing data.\n"
@@ -13015,18 +14021,22 @@ def api_lm_items_refresh_candles(item_id):
         limit = 1000
     limit = max(5, min(limit, 4000))
 
-    # Bust the TTL cache so the user gets truly fresh candles on manual refresh
+    # Bust the TTL cache so the user gets truly fresh candles on manual refresh.
+    # Phase 9.1 fix: bust the key that the fetcher actually uses — candle_source
+    # from data_sources, not row.exchange (which may differ when MEXC is selected).
     resolved_interval = interval if interval else (
         (getattr(row, "timeframe", None) or "").strip() or "15m"
     )
     if resolved_interval not in _LM_ALLOWED_CANDLE_INTERVALS:
         resolved_interval = "15m"
+    snap   = _json_loads_safe(row.snapshot_json, {})
+    config = _lm_data_source_config(row, snapshot=snap)
     _lm_candle_cache_bust(
-        (getattr(row, "symbol",   "") or "").upper().strip(),
+        config["execution_symbol"],
         resolved_interval,
         limit=limit,
-        exchange=(getattr(row, "exchange", None) or "binance").lower().strip() or "binance",
-        market=(getattr(row, "market",   None) or "perpetual").lower().strip() or "perpetual",
+        exchange=config["candle_source"],
+        market=config["execution_market"],
     )
 
     try:
@@ -13303,6 +14313,634 @@ def api_lm_items_memory_accuracy(item_id):
         "item":           _live_monitor_item_to_dict(row),
         "accuracy":       accuracy,
         "memory_summary": snap.get("setup_memory_summary"),
+    })
+
+
+# ── Phase 9.0: Data Source Config Endpoints ──────────────────────────────────
+
+@app.route("/api/live-monitor/items/<int:item_id>/data-sources", methods=["GET"])
+@login_required
+def api_lm_items_data_sources_get(item_id):
+    """Return current data_source_config for a Live Monitor item.
+
+    If missing or not yet computed, builds from defaults and saves to snapshot.
+    No trading. No order logic.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorItem as _LMI
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if not row.is_active:
+        return jsonify({"error": "inactive"}), 400
+
+    snap   = _json_loads_safe(row.snapshot_json, {})
+    config = _lm_data_source_config(row, snapshot=snap)
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    saved   = snap.get("data_sources") or {}
+    stale   = not saved or snap.get("last_data_sources_at") is None
+
+    if stale:
+        snap["data_sources"]         = {k: v for k, v in config.items()
+                                         if k != "warnings"}
+        snap["last_data_sources_at"] = now_iso
+        row.snapshot_json = _json_dumps_safe(snap)
+        row.updated_at    = datetime.now(timezone.utc)
+        try:
+            _db.session.commit()
+        except Exception:
+            _db.session.rollback()
+
+    return jsonify({"ok": True, "item": _live_monitor_item_to_dict(row), "data_sources": config})
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/data-sources", methods=["POST"])
+@login_required
+def api_lm_items_data_sources_post(item_id):
+    """Update data source configuration for a Live Monitor item.
+
+    Body (all optional):
+      execution_exchange, execution_market, candle_source,
+      live_price_source, market_context_sources, aggregation_enabled
+
+    Unknown or invalid values fall back to safe defaults.
+    No API keys. No trading. No order logic.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorItem as _LMI
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if not row.is_active:
+        return jsonify({"error": "inactive"}), 400
+
+    body = (request.get_json(silent=True) or {})
+    snap = _json_loads_safe(row.snapshot_json, {})
+
+    existing = snap.get("data_sources") or {}
+    if "execution_exchange" in body:
+        existing["execution_exchange"]     = _lm_normalize_exchange(body["execution_exchange"])
+    if "execution_market" in body:
+        existing["execution_market"]       = _lm_normalize_market(body["execution_market"])
+    if "candle_source" in body:
+        existing["candle_source"]          = _lm_normalize_exchange(body["candle_source"])
+    if "live_price_source" in body:
+        existing["live_price_source"]      = _lm_normalize_exchange(body["live_price_source"])
+    if "market_context_sources" in body:
+        raw = body["market_context_sources"]
+        if isinstance(raw, list):
+            mcs = [s for s in [_lm_normalize_exchange(x) for x in raw]
+                   if s in _LM_ALLOWED_EXCHANGES]
+            existing["market_context_sources"] = mcs or ["binance"]
+    if "aggregation_enabled" in body:
+        existing["aggregation_enabled"]    = bool(body["aggregation_enabled"])
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    snap["data_sources"]         = existing
+    snap["last_data_sources_at"] = now_iso
+    row.snapshot_json = _json_dumps_safe(snap)
+    row.updated_at    = datetime.now(timezone.utc)
+
+    try:
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+    config = _lm_data_source_config(row, snapshot=snap)
+    return jsonify({"ok": True, "item": _live_monitor_item_to_dict(row), "data_sources": config})
+
+
+# ── Phase 9.05: MEXC Capability Status Endpoint ───────────────────────────────
+
+@app.route("/api/live-monitor/mexc-capability-status", methods=["GET"])
+@login_required
+def api_lm_mexc_capability_status():
+    """Return MEXC capability status (env check only).
+
+    Never calls order endpoints. Never returns API keys.
+    For the full public candle/ticker audit, run scripts/mexc_capability_audit.py.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    status = _lm_mexc_capability_status_from_env()
+    return jsonify({"ok": True, "mexc_capability": status})
+
+
+# ── Phase 9.2: Aggregated Market Context Endpoint ────────────────────────────
+
+@app.route("/api/live-monitor/items/<int:item_id>/refresh-aggregated-context", methods=["POST"])
+@login_required
+def api_lm_items_refresh_aggregated_context(item_id):
+    """Compute and store aggregated market context (Binance-first).
+
+    No trading. No order logic. No API key returned.
+    Saves to snapshot["latest_aggregated_market_context"].
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorItem as _LMI
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if not row.is_active:
+        return jsonify({"error": "inactive"}), 400
+
+    snap = _json_loads_safe(row.snapshot_json, {})
+    amc  = _lm_compute_aggregated_market_context(row, snapshot=snap)
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    snap["latest_aggregated_market_context"]    = amc
+    snap["last_aggregated_market_context_at"]   = now_iso
+    row.snapshot_json = _json_dumps_safe(snap)
+    row.updated_at    = datetime.now(timezone.utc)
+
+    try:
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+    return jsonify({
+        "ok":                        True,
+        "item":                      _live_monitor_item_to_dict(row),
+        "aggregated_market_context": amc,
+    })
+
+
+# ── Phase 9.3: LiveMonitorTrade Endpoints ─────────────────────────────────────
+
+@app.route("/api/live-monitor/items/<int:item_id>/trades", methods=["GET"])
+@login_required
+def api_lm_items_trades_list(item_id):
+    """List trades for a specific Live Monitor item. Max 50."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import LiveMonitorItem as _LMI, LiveMonitorTrade as _LMT
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+
+    trades = (_LMT.query
+                  .filter_by(live_monitor_item_id=item_id, user_id=uid)
+                  .order_by(_LMT.created_at.desc())
+                  .limit(50)
+                  .all())
+    return jsonify({
+        "ok":     True,
+        "trades": [_lm_trade_to_dict(t) for t in trades],
+        "count":  len(trades),
+    })
+
+
+@app.route("/api/live-monitor/trades", methods=["GET"])
+@login_required
+def api_lm_trades_list():
+    """List all trades for the current user. Max 50."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import LiveMonitorTrade as _LMT
+    trades = (_LMT.query
+                  .filter_by(user_id=uid)
+                  .order_by(_LMT.created_at.desc())
+                  .limit(50)
+                  .all())
+    return jsonify({
+        "ok":     True,
+        "trades": [_lm_trade_to_dict(t) for t in trades],
+        "count":  len(trades),
+    })
+
+
+@app.route("/api/live-monitor/trades/<trade_uid>/cancel", methods=["POST"])
+@login_required
+def api_lm_trade_cancel(trade_uid):
+    """Cancel a draft/proposed/risk_rejected trade. No exchange call."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorTrade as _LMT
+    trade = _LMT.query.filter_by(trade_uid=trade_uid).first()
+    if not trade:
+        return jsonify({"error": "not_found"}), 404
+    if trade.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if trade.status not in _LM_TRADE_CANCELLABLE_STATUSES:
+        return jsonify({
+            "error":   "not_cancellable",
+            "message": f"Trade status '{trade.status}' cannot be cancelled.",
+        }), 400
+
+    trade.status     = "cancelled"
+    trade.updated_at = datetime.now(timezone.utc)
+    try:
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+    return jsonify({"ok": True, "trade": _lm_trade_to_dict(trade)})
+
+
+# ── Phase 9.4: AI Trade Proposal Endpoint ─────────────────────────────────────
+
+@app.route("/api/live-monitor/items/<int:item_id>/ai-trade-proposal", methods=["POST"])
+@login_required
+def api_lm_items_ai_trade_proposal(item_id):
+    """Generate AI trade proposal for a Live Monitor item.
+
+    Refreshes stale data if needed, calls AI with proposal prompt, creates
+    LiveMonitorTrade record (status=proposed or draft). No execution.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorItem as _LMI, LiveMonitorTrade as _LMT
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if not row.is_active:
+        return jsonify({"error": "inactive"}), 400
+
+    snap = _json_loads_safe(row.snapshot_json, {})
+
+    # Ensure data_sources exist
+    if not snap.get("data_sources"):
+        config = _lm_data_source_config(row, snapshot=snap)
+        snap["data_sources"]         = {k: v for k, v in config.items() if k != "warnings"}
+        snap["last_data_sources_at"] = datetime.now(timezone.utc).isoformat()
+
+    # Refresh candle features if missing/stale
+    from datetime import datetime as _dt_p, timezone as _tz_p
+    cf_at = snap.get("last_candle_features_at")
+    cf_stale = True
+    if cf_at:
+        try:
+            age = (_dt_p.now(_tz_p.utc) - _dt_p.fromisoformat(cf_at.replace("Z","+00:00"))).total_seconds()
+            cf_stale = age > 180
+        except Exception:
+            cf_stale = True
+    if cf_stale or not snap.get("latest_candle_features"):
+        snap, _ = _lm_attach_candle_features(row, limit=1000)
+
+    # Refresh event detection if missing
+    if not snap.get("latest_event_detection"):
+        snap, _ = _lm_attach_event_detection(row, snapshot=snap)
+
+    # Refresh setup readiness if missing
+    if not snap.get("latest_setup_readiness"):
+        snap, _ = _lm_attach_setup_readiness(row, snapshot=snap)
+
+    # Refresh aggregated context if missing/stale
+    amc_at = snap.get("last_aggregated_market_context_at")
+    amc_stale = True
+    if amc_at:
+        try:
+            age = (_dt_p.now(_tz_p.utc) - _dt_p.fromisoformat(amc_at.replace("Z","+00:00"))).total_seconds()
+            amc_stale = age > 300
+        except Exception:
+            amc_stale = True
+    if amc_stale or not snap.get("latest_aggregated_market_context"):
+        amc = _lm_compute_aggregated_market_context(row, snapshot=snap)
+        snap["latest_aggregated_market_context"]  = amc
+        snap["last_aggregated_market_context_at"] = datetime.now(timezone.utc).isoformat()
+
+    # Save refreshed snapshot
+    row.snapshot_json = _json_dumps_safe(snap)
+    row.updated_at    = datetime.now(timezone.utc)
+
+    # Build proposal context (no raw candles, no API keys)
+    proposal_ctx = _lm_build_trade_proposal_context(row, snapshot=snap)
+
+    # Call AI with proposal system prompt
+    agent    = _lm_get_ai_agent_config(None)
+    proposal_raw = {}
+    ai_ok        = False
+    ai_error     = None
+
+    if agent.get("configured"):
+        try:
+            # Use proposal-specific system prompt instead of main system prompt
+            proposal_agent = dict(agent)
+            user_content   = json.dumps({
+                "context":      proposal_ctx,
+                "user_message": "Evaluate this setup and produce a trade proposal JSON.",
+            }, ensure_ascii=False)
+
+            provider = agent.get("provider", "local_fallback")
+            api_key  = os.environ.get(
+                agent.get("_api_key_env", "") or {
+                    "openrouter": "OPENROUTER_API_KEY",
+                    "openai": "OPENAI_API_KEY",
+                    "deepseek": "DEEPSEEK_API_KEY",
+                    "custom_openai": "CUSTOM_AI_API_KEY",
+                }.get(provider, "OPENROUTER_API_KEY"),
+                ""
+            ).strip()
+            api_base = (
+                agent.get("api_base")
+                or os.environ.get(agent.get("_api_base_env", "") or "", "").strip()
+                or os.environ.get("OPENROUTER_API_BASE", "https://openrouter.ai/api/v1/chat/completions")
+            )
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            if provider == "openrouter":
+                app_title = os.environ.get("OPENROUTER_APP_TITLE", "ZyNi SMC Screener")
+                http_ref  = os.environ.get("OPENROUTER_HTTP_REFERER", "")
+                if http_ref:
+                    headers["HTTP-Referer"] = http_ref
+                if app_title:
+                    headers["X-Title"] = app_title
+
+            payload = {
+                "model":       agent.get("model", ""),
+                "messages":    [
+                    {"role": "system", "content": _lm_ai_trade_proposal_prompt()},
+                    {"role": "user",   "content": user_content},
+                ],
+                "temperature": 0.2,
+                "max_tokens":  800,
+            }
+            resp = req.post(api_base, headers=headers, json=payload, timeout=30)
+            if resp.status_code == 200:
+                data   = resp.json()
+                text   = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
+                proposal_raw = _lm_parse_ai_json(text)
+                ai_ok = True
+            else:
+                ai_error = f"AI provider {resp.status_code}"
+        except Exception as _e:
+            ai_error = f"AI call error: {type(_e).__name__}"
+    else:
+        ai_error = "AI provider not configured"
+
+    if not ai_ok or not proposal_raw or "_parse_error" in proposal_raw:
+        proposal_raw = {
+            "action":                 "wait",
+            "setup_type":             getattr(row, "setup_type", None),
+            "direction":              getattr(row, "direction", None),
+            "confidence":             0,
+            "entry_logic":            "AI unavailable",
+            "invalidation_logic":     "AI unavailable",
+            "take_profit_logic":      "AI unavailable",
+            "required_confirmations": [],
+            "risk_notes":             [ai_error or "AI not configured"],
+            "reasoning_summary":      "AI provider unavailable or parse error.",
+        }
+
+    # Create trade record
+    trade = _lm_create_trade_record_from_proposal(row, proposal_raw, snapshot=snap)
+
+    try:
+        _db.session.add(trade)
+        _db.session.flush()
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+    # Save updated snapshot
+    try:
+        _db.session.add(row)
+        _db.session.commit()
+    except Exception:
+        _db.session.rollback()
+
+    return jsonify({
+        "ok":       True,
+        "item":     _live_monitor_item_to_dict(row),
+        "proposal": proposal_raw,
+        "trade":    _lm_trade_to_dict(trade),
+        "ai_ok":    ai_ok,
+        "ai_error": ai_error,
+    })
+
+
+# ── Phase 9.5: Risk Guard Endpoints ───────────────────────────────────────────
+
+@app.route("/api/live-monitor/trades/<trade_uid>/risk-check", methods=["POST"])
+@login_required
+def api_lm_trade_risk_check(trade_uid):
+    """Run Risk Guard on an existing trade record. No execution."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorTrade as _LMT, LiveMonitorItem as _LMI
+    trade = _LMT.query.filter_by(trade_uid=trade_uid).first()
+    if not trade:
+        return jsonify({"error": "not_found"}), 404
+    if trade.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if trade.status in ("cancelled", "closed", "failed"):
+        return jsonify({
+            "error":   "not_checkable",
+            "message": f"Trade status '{trade.status}' cannot be risk-checked.",
+        }), 400
+
+    row = None
+    if trade.live_monitor_item_id:
+        row = _LMI.query.filter_by(id=trade.live_monitor_item_id).first()
+
+    snap = None
+    if row:
+        snap = _json_loads_safe(row.snapshot_json, {})
+
+    rg = _lm_run_risk_guard(trade, row=row, snapshot=snap)
+
+    trade.risk_guard_json   = _json_dumps_safe(rg)
+    trade.risk_guard_status = rg["status"]
+    trade.updated_at        = datetime.now(timezone.utc)
+
+    if rg["approved"]:
+        trade.status = "risk_approved"
+    else:
+        trade.status           = "risk_rejected"
+        trade.rejection_reason = "; ".join(rg.get("hard_blocks") or rg.get("reasons") or ["rejected"])
+
+    try:
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+    return jsonify({
+        "ok":         True,
+        "trade":      _lm_trade_to_dict(trade),
+        "risk_guard": rg,
+    })
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/ai-trade-proposal-and-risk-check",
+           methods=["POST"])
+@login_required
+def api_lm_items_proposal_and_risk_check(item_id):
+    """Generate AI trade proposal and immediately run Risk Guard. No execution.
+
+    Convenience endpoint: calls ai-trade-proposal then risk-check in one request.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorItem as _LMI, LiveMonitorTrade as _LMT
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if not row.is_active:
+        return jsonify({"error": "inactive"}), 400
+
+    # ── Step 1: delegate to proposal endpoint logic (inline to avoid HTTP round-trip)
+    snap = _json_loads_safe(row.snapshot_json, {})
+
+    if not snap.get("data_sources"):
+        config = _lm_data_source_config(row, snapshot=snap)
+        snap["data_sources"]         = {k: v for k, v in config.items() if k != "warnings"}
+        snap["last_data_sources_at"] = datetime.now(timezone.utc).isoformat()
+
+    from datetime import datetime as _dt_c, timezone as _tz_c
+    def _stale(key, secs):
+        at = snap.get(key)
+        if not at:
+            return True
+        try:
+            return (_dt_c.now(_tz_c.utc) - _dt_c.fromisoformat(at.replace("Z","+00:00"))).total_seconds() > secs
+        except Exception:
+            return True
+
+    if _stale("last_candle_features_at", 180) or not snap.get("latest_candle_features"):
+        snap, _ = _lm_attach_candle_features(row, limit=1000)
+    if not snap.get("latest_event_detection"):
+        snap, _ = _lm_attach_event_detection(row, snapshot=snap)
+    if not snap.get("latest_setup_readiness"):
+        snap, _ = _lm_attach_setup_readiness(row, snapshot=snap)
+    if _stale("last_aggregated_market_context_at", 300) or not snap.get("latest_aggregated_market_context"):
+        amc = _lm_compute_aggregated_market_context(row, snapshot=snap)
+        snap["latest_aggregated_market_context"]  = amc
+        snap["last_aggregated_market_context_at"] = datetime.now(timezone.utc).isoformat()
+
+    row.snapshot_json = _json_dumps_safe(snap)
+    row.updated_at    = datetime.now(timezone.utc)
+
+    proposal_ctx = _lm_build_trade_proposal_context(row, snapshot=snap)
+    agent        = _lm_get_ai_agent_config(None)
+    proposal_raw = {}
+    ai_ok        = False
+    ai_error     = None
+
+    if agent.get("configured"):
+        try:
+            provider = agent.get("provider", "local_fallback")
+            api_key  = os.environ.get(
+                agent.get("_api_key_env", "") or {
+                    "openrouter": "OPENROUTER_API_KEY", "openai": "OPENAI_API_KEY",
+                    "deepseek": "DEEPSEEK_API_KEY", "custom_openai": "CUSTOM_AI_API_KEY",
+                }.get(provider, "OPENROUTER_API_KEY"), ""
+            ).strip()
+            api_base = (
+                agent.get("api_base")
+                or os.environ.get(agent.get("_api_base_env","") or "", "").strip()
+                or os.environ.get("OPENROUTER_API_BASE","https://openrouter.ai/api/v1/chat/completions")
+            )
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            if provider == "openrouter":
+                ht = os.environ.get("OPENROUTER_HTTP_REFERER","")
+                at = os.environ.get("OPENROUTER_APP_TITLE","ZyNi SMC Screener")
+                if ht: headers["HTTP-Referer"] = ht
+                if at: headers["X-Title"] = at
+            payload = {
+                "model":       agent.get("model",""),
+                "messages":    [
+                    {"role": "system", "content": _lm_ai_trade_proposal_prompt()},
+                    {"role": "user",   "content": json.dumps({
+                        "context": proposal_ctx,
+                        "user_message": "Evaluate this setup and produce a trade proposal JSON.",
+                    }, ensure_ascii=False)},
+                ],
+                "temperature": 0.2, "max_tokens": 800,
+            }
+            resp = req.post(api_base, headers=headers, json=payload, timeout=30)
+            if resp.status_code == 200:
+                text         = (resp.json().get("choices") or [{}])[0].get("message",{}).get("content","")
+                proposal_raw = _lm_parse_ai_json(text)
+                ai_ok        = True
+            else:
+                ai_error = f"AI provider {resp.status_code}"
+        except Exception as _e:
+            ai_error = f"AI call error: {type(_e).__name__}"
+    else:
+        ai_error = "AI provider not configured"
+
+    if not ai_ok or not proposal_raw or "_parse_error" in proposal_raw:
+        proposal_raw = {
+            "action": "wait", "setup_type": getattr(row,"setup_type",None),
+            "direction": getattr(row,"direction",None), "confidence": 0,
+            "entry_logic": "AI unavailable", "invalidation_logic": "AI unavailable",
+            "take_profit_logic": "AI unavailable", "required_confirmations": [],
+            "risk_notes": [ai_error or "AI not configured"],
+            "reasoning_summary": "AI provider unavailable or parse error.",
+        }
+
+    trade = _lm_create_trade_record_from_proposal(row, proposal_raw, snapshot=snap)
+    try:
+        _db.session.add(trade)
+        _db.session.flush()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+    # ── Step 2: run Risk Guard immediately ───────────────────────────────────
+    rg = _lm_run_risk_guard(trade, row=row, snapshot=snap)
+    trade.risk_guard_json   = _json_dumps_safe(rg)
+    trade.risk_guard_status = rg["status"]
+    trade.status = "risk_approved" if rg["approved"] else "risk_rejected"
+    if not rg["approved"]:
+        trade.rejection_reason = "; ".join(rg.get("hard_blocks") or rg.get("reasons") or ["rejected"])
+    trade.updated_at = datetime.now(timezone.utc)
+
+    try:
+        _db.session.add(row)
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+    return jsonify({
+        "ok":         True,
+        "item":       _live_monitor_item_to_dict(row),
+        "proposal":   proposal_raw,
+        "trade":      _lm_trade_to_dict(trade),
+        "risk_guard": rg,
+        "ai_ok":      ai_ok,
+        "ai_error":   ai_error,
     })
 
 
