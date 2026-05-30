@@ -9380,6 +9380,112 @@ def _lm_attach_event_detection(row, snapshot=None) -> tuple:
     return snap, detection
 
 
+# ── Phase 9.0: Exchange Data Source Abstraction ──────────────────────────────
+
+_LM_ALLOWED_EXCHANGES = {"binance", "mexc"}
+_LM_ALLOWED_MARKETS   = {"perpetual", "spot"}
+
+
+def _lm_normalize_exchange(value) -> str:
+    """Normalize exchange name to lowercase known value. Fallback: 'binance'."""
+    v = (value or "").lower().strip()
+    return v if v in _LM_ALLOWED_EXCHANGES else "binance"
+
+
+def _lm_normalize_market(value) -> str:
+    """Normalize market name to lowercase known value. Fallback: 'perpetual'."""
+    v = (value or "").lower().strip()
+    return v if v in _LM_ALLOWED_MARKETS else "perpetual"
+
+
+def _lm_normalize_symbol(symbol: str, exchange: str = "binance", market: str = "perpetual") -> str:
+    """Normalize symbol for internal use: uppercase, no dashes/underscores.
+
+    e.g. 'btc_usdt' → 'BTCUSDT', 'BTC-USDT' → 'BTCUSDT'
+    """
+    return (symbol or "").upper().replace("-", "").replace("_", "").strip()
+
+
+def _lm_data_source_config(row, snapshot=None) -> dict:
+    """Build data_source_config dict for a Live Monitor item.
+
+    Describes which exchange/market/source is used for candles, live price,
+    and market context. Reads persisted overrides from snapshot["data_sources"]
+    then falls back to row.exchange/market. No DB write. No trading.
+    """
+    snap   = snapshot if snapshot is not None else _json_loads_safe(getattr(row, "snapshot_json", None), {})
+    stored = snap.get("data_sources") or {}
+
+    exec_exchange = _lm_normalize_exchange(
+        stored.get("execution_exchange") or getattr(row, "exchange", None) or "binance"
+    )
+    exec_market = _lm_normalize_market(
+        stored.get("execution_market") or getattr(row, "market", None) or "perpetual"
+    )
+    exec_symbol = _lm_normalize_symbol(
+        getattr(row, "symbol", None) or "",
+        exec_exchange, exec_market,
+    )
+    candle_src     = _lm_normalize_exchange(stored.get("candle_source")     or exec_exchange)
+    live_price_src = _lm_normalize_exchange(stored.get("live_price_source") or exec_exchange)
+
+    raw_mcs = stored.get("market_context_sources")
+    if isinstance(raw_mcs, list):
+        mcs = [s for s in [_lm_normalize_exchange(x) for x in raw_mcs] if s in _LM_ALLOWED_EXCHANGES]
+    else:
+        mcs = ["binance"]
+    if not mcs:
+        mcs = ["binance"]
+
+    agg             = bool(stored.get("aggregation_enabled", False))
+    fallback_policy = stored.get("fallback_policy") or "warn_no_fallback"
+
+    warnings = []
+    if exec_exchange == "mexc":
+        warnings.append("MEXC execution exchange — candle/price data uses MEXC public API only.")
+    if agg and len(mcs) < 2:
+        warnings.append("aggregation_enabled=true but only one market_context_source configured.")
+
+    return {
+        "phase":                  "phase9_data_sources",
+        "execution_exchange":     exec_exchange,
+        "execution_market":       exec_market,
+        "execution_symbol":       exec_symbol,
+        "candle_source":          candle_src,
+        "live_price_source":      live_price_src,
+        "market_context_sources": mcs,
+        "aggregation_enabled":    agg,
+        "fallback_policy":        fallback_policy,
+        "warnings":               warnings,
+    }
+
+
+def _lm_mexc_capability_status_from_env() -> dict:
+    """Return MEXC capability status from environment only — no API calls, no secrets returned.
+
+    Phase 9.05: used by GET /api/live-monitor/mexc-capability-status.
+    scripts/mexc_capability_audit.py is the full audit tool; this is a quick env check only.
+    """
+    import os as _os
+    keys_present = bool(_os.environ.get("MEXC_API_KEY") and _os.environ.get("MEXC_API_SECRET"))
+    demo_mode    = _os.environ.get("MEXC_DEMO_MODE", "false").lower()
+    script_path  = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                                 "scripts", "mexc_capability_audit.py")
+    script_exists = _os.path.isfile(script_path)
+    return {
+        "script_exists":           script_exists,
+        "keys_present":            keys_present,
+        "demo_mode_env":           demo_mode,
+        "safe_to_run_public_audit": True,
+        "order_submit_tested":     False,
+        "warning": (
+            "demo_order_submit_supported is always untested — "
+            "this helper never calls order-submit endpoints. "
+            "Run scripts/mexc_capability_audit.py for the full public candle/ticker audit."
+        ),
+    }
+
+
 # ── Phase 7: Candle Feature Engine ───────────────────────────────────────────
 
 _LM_ALLOWED_CANDLE_INTERVALS = {"5m", "15m", "30m", "1h", "4h", "1d"}
@@ -9410,7 +9516,11 @@ def _lm_get_candles_for_features(
         entry = _lm_candle_ttl_cache.get(key)
         if entry and (now - entry["ts"]) < ttl:
             return entry["candles"]
-    candles = _lm_fetch_futures_candles(symbol, interval, limit=limit)
+    # Phase 9.1: route to MEXC public candles if exchange == mexc
+    if exchange.lower() == "mexc":
+        candles = _lm_fetch_mexc_perp_candles(symbol, interval, limit=limit)
+    else:
+        candles = _lm_fetch_futures_candles(symbol, interval, limit=limit)
     if candles:
         with _lm_candle_ttl_lock:
             _lm_candle_ttl_cache[key] = {"ts": time.time(), "candles": candles}
@@ -9505,6 +9615,157 @@ def _lm_fetch_futures_candles(symbol: str, interval: str, limit: int = 4000) -> 
 
     except Exception:
         return []
+
+
+# ── Phase 9.1: MEXC Candle + Live Price Helpers ───────────────────────────────
+
+_LM_MEXC_INTERVAL_MAP = {
+    "5m":  "Min5",
+    "15m": "Min15",
+    "30m": "Min30",
+    "1h":  "Min60",
+    "4h":  "Hour4",
+    "1d":  "Day1",
+}
+_LM_MEXC_INTERVAL_MS = {
+    "Min5":  300_000,
+    "Min15": 900_000,
+    "Min30": 1_800_000,
+    "Min60": 3_600_000,
+    "Hour4": 14_400_000,
+    "Day1":  86_400_000,
+}
+
+
+def _lm_fetch_mexc_perp_candles(symbol: str, interval: str, limit: int = 1000) -> list:
+    """Fetch MEXC perpetual klines and normalise to the same shape as _lm_fetch_futures_candles.
+
+    symbol   : canonical form BTCUSDT  → converted to BTC_USDT for MEXC
+    interval : ZyNi standard (5m/15m/30m/1h/4h/1d)
+    Returns list of dicts: open_time, open, high, low, close, volume, close_time
+    Returns [] on any error. No API key. No order logic.
+    """
+    mx_iv = _LM_MEXC_INTERVAL_MAP.get(interval)
+    if not mx_iv:
+        return []
+    # MEXC perpetual symbol format: BTCUSDT → BTC_USDT
+    sym = symbol.upper().replace("_", "")
+    if sym.endswith("USDT"):
+        mx_sym = sym[:-4] + "_USDT"
+    else:
+        mx_sym = sym
+    limit = max(1, min(limit, 2000))
+    try:
+        r = req.get(
+            f"{MEXC_PERP_API}/kline",
+            params={"symbol": mx_sym, "interval": mx_iv, "limit": limit},
+            timeout=12,
+        )
+        if r.status_code != 200:
+            return []
+        data = r.json().get("data") or {}
+        times  = data.get("time",  [])
+        opens  = data.get("open",  [])
+        highs  = data.get("high",  [])
+        lows   = data.get("low",   [])
+        closes = data.get("close", [])
+        vols   = data.get("vol",   [])
+        if not times:
+            return []
+        iv_ms = _LM_MEXC_INTERVAL_MS.get(mx_iv, 900_000)
+        out = []
+        for i in range(len(times)):
+            try:
+                open_ms = int(times[i]) * 1000
+                out.append({
+                    "open_time":  open_ms,
+                    "open":       float(opens[i])  if i < len(opens)  else 0.0,
+                    "high":       float(highs[i])  if i < len(highs)  else 0.0,
+                    "low":        float(lows[i])   if i < len(lows)   else 0.0,
+                    "close":      float(closes[i]) if i < len(closes) else 0.0,
+                    "volume":     float(vols[i])   if i < len(vols)   else 0.0,
+                    "close_time": open_ms + iv_ms - 1,
+                })
+            except (IndexError, TypeError, ValueError):
+                pass
+        # MEXC returns oldest-first; sort ascending by open_time
+        out.sort(key=lambda x: x["open_time"])
+        return out[-limit:] if len(out) > limit else out
+    except Exception:
+        return []
+
+
+def _lm_fetch_mexc_perp_ticker(symbol: str) -> dict:
+    """Fetch MEXC perpetual ticker for symbol. Returns compact dict or {} on error.
+
+    No API key. No order logic. Public endpoint only.
+    Returns: {ok, symbol, last_price, volume_24h, funding_rate}
+    """
+    sym = symbol.upper().replace("_", "")
+    if sym.endswith("USDT"):
+        mx_sym = sym[:-4] + "_USDT"
+    else:
+        mx_sym = sym
+    try:
+        r = req.get(f"{MEXC_PERP_API}/ticker", params={"symbol": mx_sym}, timeout=8)
+        if r.status_code != 200:
+            return {"ok": False, "error": f"status {r.status_code}"}
+        body = r.json().get("data") or {}
+        # API may return list or dict
+        ticker = None
+        if isinstance(body, list):
+            for t in body:
+                if (t.get("symbol") or "").replace("_", "").upper() == sym:
+                    ticker = t
+                    break
+        elif isinstance(body, dict):
+            ticker = body
+        if not ticker:
+            return {"ok": False, "error": "symbol_not_found"}
+        return {
+            "ok":          True,
+            "symbol":      sym,
+            "last_price":  float(ticker.get("lastPrice") or ticker.get("last") or 0),
+            "volume_24h":  float(ticker.get("amount24")  or ticker.get("volume24") or 0),
+            "funding_rate": float(ticker.get("fundingRate") or 0),
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:100]}
+
+
+def _lm_get_live_price_for_item(row, snapshot=None) -> dict:
+    """Return current live price for a Live Monitor item based on data_sources.live_price_source.
+
+    Returns {ok, price, source_exchange, source_market} or {ok: False, error}.
+    No API key. No order logic. Reads public ticker only.
+    """
+    snap   = snapshot if snapshot is not None else _json_loads_safe(getattr(row, "snapshot_json", None), {})
+    config = _lm_data_source_config(row, snapshot=snap)
+    symbol = config["execution_symbol"]
+    src    = config["live_price_source"]
+
+    if src == "mexc":
+        ticker = _lm_fetch_mexc_perp_ticker(symbol)
+        if ticker.get("ok"):
+            return {
+                "ok":             True,
+                "price":          ticker["last_price"],
+                "source_exchange": "mexc",
+                "source_market":  "perpetual",
+            }
+        return {"ok": False, "error": ticker.get("error", "mexc_ticker_failed"),
+                "source_exchange": "mexc"}
+
+    # Default: return item.current_price (already updated by existing refresh pipeline)
+    cp = getattr(row, "current_price", None)
+    if cp is not None:
+        return {
+            "ok":             True,
+            "price":          float(cp),
+            "source_exchange": "binance",
+            "source_market":  "perpetual",
+        }
+    return {"ok": False, "error": "no_current_price", "source_exchange": "binance"}
 
 
 def _lm_extract_candle_features(candles: list) -> dict:
@@ -9655,22 +9916,47 @@ def _lm_attach_candle_features(row, interval: str = None, limit: int = 1000) -> 
         tf = (getattr(row, "timeframe", None) or "").strip()
         interval = tf if tf in _LM_ALLOWED_CANDLE_INTERVALS else "15m"
 
-    limit    = max(5, min(limit, 4000))
-    symbol   = (getattr(row, "symbol", None) or "").upper().strip()
+    limit  = max(5, min(limit, 4000))
+    symbol = (getattr(row, "symbol", None) or "").upper().strip()
     if not symbol:
         return snap, {}
-    exchange = (getattr(row, "exchange", None) or "binance").lower().strip() or "binance"
-    market   = (getattr(row, "market",   None) or "perpetual").lower().strip() or "perpetual"
 
-    candles  = _lm_get_candles_for_features(symbol, interval, limit=limit, exchange=exchange, market=market)
+    # Phase 9.1: resolve candle source from data_source_config
+    config         = _lm_data_source_config(row, snapshot=snap)
+    candle_src     = config["candle_source"]          # "binance" or "mexc"
+    source_market  = config["execution_market"]       # "perpetual" or "spot"
+    fallback_policy = config["fallback_policy"]
+
+    warnings: list = []
+    candles = _lm_get_candles_for_features(
+        symbol, interval, limit=limit,
+        exchange=candle_src, market=source_market,
+    )
+
+    # If MEXC fetch failed and fallback is allowed, try Binance with a warning
+    if not candles and candle_src == "mexc":
+        if fallback_policy == "warn_fallback_binance":
+            candles = _lm_get_candles_for_features(
+                symbol, interval, limit=limit,
+                exchange="binance", market=source_market,
+            )
+            if candles:
+                warnings.append("MEXC candles unavailable; fell back to Binance.")
+                candle_src = "binance"
+        else:
+            warnings.append("MEXC candles unavailable; no fallback (warn_no_fallback policy).")
+
     features = _lm_extract_candle_features(candles)
 
     now_iso = datetime.utcnow().isoformat() + "Z"
     snap["latest_candle_features"] = {
-        "phase":       "phase7_candle_features",
-        "computed_at": now_iso,
-        "interval":    interval,
-        "features":    features,
+        "phase":           "phase9_candle_features",
+        "computed_at":     now_iso,
+        "interval":        interval,
+        "source_exchange": candle_src,
+        "source_market":   source_market,
+        "features":        features,
+        "warnings":        warnings,
     }
     snap["last_candle_features_at"] = now_iso
     row.snapshot_json = _json_dumps_safe(snap)
@@ -10345,6 +10631,111 @@ def _lm_compute_memory_accuracy(snapshot) -> dict:
     return accuracy
 
 
+# ── Phase 9.2: Aggregated Market Context Engine ───────────────────────────────
+
+def _lm_compute_aggregated_market_context(row, snapshot=None) -> dict:
+    """Compute aggregated market context, Binance-first.
+
+    Wraps the existing per-exchange market context in an aggregated envelope.
+    MEXC may supply ticker supplement only (funding/OI via public ticker).
+    Does NOT fake unavailable fields. Does NOT claim multi-exchange if only
+    Binance is available. No trading. No order logic.
+    Returns a dict stored as snapshot["latest_aggregated_market_context"].
+    """
+    snap    = snapshot if snapshot is not None else _json_loads_safe(getattr(row, "snapshot_json", None), {})
+    config  = _lm_data_source_config(row, snapshot=snap)
+    symbol  = config["execution_symbol"]
+    mcs     = config["market_context_sources"]  # e.g. ["binance"] or ["binance","mexc"]
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    sources_requested = list(mcs)
+    sources_used: list  = []
+    sources_failed: list = []
+    warnings: list = []
+
+    # ── Primary source: Binance ───────────────────────────────────────────────
+    binance_ctx = None
+    if "binance" in sources_requested:
+        try:
+            binance_ctx = _lm_fetch_market_context(symbol, exchange="binance", market="perpetual")
+            if binance_ctx.get("ok"):
+                sources_used.append("binance")
+            else:
+                sources_failed.append("binance")
+                warnings.append(f"Binance market context unavailable: {binance_ctx.get('reason','')}")
+        except Exception as _e:
+            sources_failed.append("binance")
+            warnings.append(f"Binance market context error: {_e}")
+
+    # ── Supplement: MEXC ticker (public) ─────────────────────────────────────
+    mexc_ticker = None
+    if "mexc" in sources_requested:
+        try:
+            t = _lm_fetch_mexc_perp_ticker(symbol)
+            if t.get("ok"):
+                mexc_ticker = t
+                sources_used.append("mexc")
+            else:
+                sources_failed.append("mexc")
+                warnings.append(f"MEXC ticker unavailable: {t.get('error','')}")
+        except Exception as _e:
+            sources_failed.append("mexc")
+            warnings.append(f"MEXC ticker error: {_e}")
+
+    # ── Agreement / conflict scoring ─────────────────────────────────────────
+    only_one_source = len(sources_used) <= 1
+    agreement_score = None if only_one_source else None  # placeholder for multi-source
+    conflict_score  = None if only_one_source else None
+    agreement_note  = "single_source" if only_one_source else None
+
+    # ── Build output from Binance primary ────────────────────────────────────
+    b = binance_ctx or {}
+    funding       = b.get("funding")       or {"available": False}
+    open_interest = b.get("open_interest") or {"available": False}
+    taker_pressure = b.get("taker_pressure") or {"available": False}
+    long_short    = b.get("long_short")    or {"available": False}
+    liquidations  = b.get("liquidations")  or {"available": False}
+    volume_ctx    = b.get("activity")      or {"available": False}
+    b_summary     = b.get("summary")       or {}
+    bias          = b_summary.get("market_bias") or "neutral"
+    summary_notes = b_summary.get("notes") or []
+
+    if mexc_ticker and mexc_ticker.get("ok"):
+        if mexc_ticker.get("funding_rate") is not None:
+            warnings.append(
+                f"MEXC funding rate (supplement only): {mexc_ticker['funding_rate']:.6f}. "
+                "Binance data is primary source."
+            )
+
+    if only_one_source and "binance" in sources_used:
+        warnings.append("Single source (Binance only) — agreement_score not applicable.")
+    if "binance" in sources_failed:
+        warnings.append("Primary source (Binance) failed — context may be incomplete.")
+
+    return {
+        "phase":           "phase9_aggregated_context",
+        "computed_at":     now_iso,
+        "symbol":          symbol,
+        "sources_requested": sources_requested,
+        "sources_used":    sources_used,
+        "sources_failed":  sources_failed,
+        "primary_source":  "binance",
+        "funding":         funding,
+        "open_interest":   open_interest,
+        "taker_pressure":  taker_pressure,
+        "long_short":      long_short,
+        "liquidations":    liquidations,
+        "volume_context":  volume_ctx,
+        "agreement_score": agreement_score,
+        "conflict_score":  conflict_score,
+        "agreement_note":  agreement_note,
+        "bias":            bias,
+        "summary_notes":   summary_notes,
+        "warnings":        warnings,
+        "summary":         b_summary.get("ai_context") or "Binance-first aggregated context.",
+    }
+
+
 def _lm_build_ai_context(item) -> dict:
     """Build a compact, JSON-safe context dict from a LiveMonitorItem for the AI agent."""
     snap = _json_loads_safe(getattr(item, "snapshot_json", None), {})
@@ -10514,6 +10905,22 @@ def _lm_build_ai_context(item) -> dict:
             snap.get("setup_memory_summary"),
             snap.get("setup_memory_accuracy"),
         ),
+        "aggregated_market_context": (lambda amc: {
+            "computed_at":     amc.get("computed_at"),
+            "sources_used":    amc.get("sources_used"),
+            "sources_failed":  amc.get("sources_failed"),
+            "primary_source":  amc.get("primary_source"),
+            "funding":         amc.get("funding"),
+            "open_interest":   amc.get("open_interest"),
+            "taker_pressure":  amc.get("taker_pressure"),
+            "long_short":      amc.get("long_short"),
+            "bias":            amc.get("bias"),
+            "agreement_score": amc.get("agreement_score"),
+            "agreement_note":  amc.get("agreement_note"),
+            "conflict_score":  amc.get("conflict_score"),
+            "warnings":        amc.get("warnings"),
+            "summary":         amc.get("summary"),
+        } if amc and isinstance(amc, dict) else None)(snap.get("latest_aggregated_market_context")),
     }
 
 
@@ -10610,6 +11017,19 @@ def _lm_ai_system_prompt() -> str:
         "- Do NOT use past win/loss records as permission to enter a trade.\n"
         "- memory is context clues only — not trade permission, not strategy modification.\n"
         "- If reasoning_memory is null, analyze from other context fields only.\n\n"
+
+        "AGGREGATED MARKET CONTEXT (Phase 9.2):\n"
+        "The context may include an aggregated_market_context block — a Binance-first market view.\n"
+        "USE RULES:\n"
+        "- primary_source is always 'binance' in Phase 9.2. Binance data is the authoritative source.\n"
+        "- If sources_used contains only 'binance', this is a single-source context — "
+        "do NOT claim multi-exchange agreement.\n"
+        "- agreement_score/conflict_score will be null when only one source is used — do not invent values.\n"
+        "- MEXC funding/OI fields (if present in warnings) are supplemental and informational only.\n"
+        "- Do NOT use Binance market context as an exact MEXC execution price or level.\n"
+        "- Do NOT treat market bias from aggregated context as trade execution permission.\n"
+        "- If aggregated_market_context is null, use market_context if available, or note it is missing.\n"
+        "- Do NOT invent exchange data that is not present in sources_used.\n\n"
 
         "STRICT RULES:\n"
         "- Analyze ONLY the provided backend facts. Do not invent missing data.\n"
@@ -13303,6 +13723,175 @@ def api_lm_items_memory_accuracy(item_id):
         "item":           _live_monitor_item_to_dict(row),
         "accuracy":       accuracy,
         "memory_summary": snap.get("setup_memory_summary"),
+    })
+
+
+# ── Phase 9.0: Data Source Config Endpoints ──────────────────────────────────
+
+@app.route("/api/live-monitor/items/<int:item_id>/data-sources", methods=["GET"])
+@login_required
+def api_lm_items_data_sources_get(item_id):
+    """Return current data_source_config for a Live Monitor item.
+
+    If missing or not yet computed, builds from defaults and saves to snapshot.
+    No trading. No order logic.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorItem as _LMI
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if not row.is_active:
+        return jsonify({"error": "inactive"}), 400
+
+    snap   = _json_loads_safe(row.snapshot_json, {})
+    config = _lm_data_source_config(row, snapshot=snap)
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    saved   = snap.get("data_sources") or {}
+    stale   = not saved or snap.get("last_data_sources_at") is None
+
+    if stale:
+        snap["data_sources"]         = {k: v for k, v in config.items()
+                                         if k != "warnings"}
+        snap["last_data_sources_at"] = now_iso
+        row.snapshot_json = _json_dumps_safe(snap)
+        row.updated_at    = datetime.now(timezone.utc)
+        try:
+            _db.session.commit()
+        except Exception:
+            _db.session.rollback()
+
+    return jsonify({"ok": True, "item": _live_monitor_item_to_dict(row), "data_sources": config})
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/data-sources", methods=["POST"])
+@login_required
+def api_lm_items_data_sources_post(item_id):
+    """Update data source configuration for a Live Monitor item.
+
+    Body (all optional):
+      execution_exchange, execution_market, candle_source,
+      live_price_source, market_context_sources, aggregation_enabled
+
+    Unknown or invalid values fall back to safe defaults.
+    No API keys. No trading. No order logic.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorItem as _LMI
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if not row.is_active:
+        return jsonify({"error": "inactive"}), 400
+
+    body = (request.get_json(silent=True) or {})
+    snap = _json_loads_safe(row.snapshot_json, {})
+
+    existing = snap.get("data_sources") or {}
+    if "execution_exchange" in body:
+        existing["execution_exchange"]     = _lm_normalize_exchange(body["execution_exchange"])
+    if "execution_market" in body:
+        existing["execution_market"]       = _lm_normalize_market(body["execution_market"])
+    if "candle_source" in body:
+        existing["candle_source"]          = _lm_normalize_exchange(body["candle_source"])
+    if "live_price_source" in body:
+        existing["live_price_source"]      = _lm_normalize_exchange(body["live_price_source"])
+    if "market_context_sources" in body:
+        raw = body["market_context_sources"]
+        if isinstance(raw, list):
+            mcs = [s for s in [_lm_normalize_exchange(x) for x in raw]
+                   if s in _LM_ALLOWED_EXCHANGES]
+            existing["market_context_sources"] = mcs or ["binance"]
+    if "aggregation_enabled" in body:
+        existing["aggregation_enabled"]    = bool(body["aggregation_enabled"])
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    snap["data_sources"]         = existing
+    snap["last_data_sources_at"] = now_iso
+    row.snapshot_json = _json_dumps_safe(snap)
+    row.updated_at    = datetime.now(timezone.utc)
+
+    try:
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+    config = _lm_data_source_config(row, snapshot=snap)
+    return jsonify({"ok": True, "item": _live_monitor_item_to_dict(row), "data_sources": config})
+
+
+# ── Phase 9.05: MEXC Capability Status Endpoint ───────────────────────────────
+
+@app.route("/api/live-monitor/mexc-capability-status", methods=["GET"])
+@login_required
+def api_lm_mexc_capability_status():
+    """Return MEXC capability status (env check only).
+
+    Never calls order endpoints. Never returns API keys.
+    For the full public candle/ticker audit, run scripts/mexc_capability_audit.py.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    status = _lm_mexc_capability_status_from_env()
+    return jsonify({"ok": True, "mexc_capability": status})
+
+
+# ── Phase 9.2: Aggregated Market Context Endpoint ────────────────────────────
+
+@app.route("/api/live-monitor/items/<int:item_id>/refresh-aggregated-context", methods=["POST"])
+@login_required
+def api_lm_items_refresh_aggregated_context(item_id):
+    """Compute and store aggregated market context (Binance-first).
+
+    No trading. No order logic. No API key returned.
+    Saves to snapshot["latest_aggregated_market_context"].
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorItem as _LMI
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if not row.is_active:
+        return jsonify({"error": "inactive"}), 400
+
+    snap = _json_loads_safe(row.snapshot_json, {})
+    amc  = _lm_compute_aggregated_market_context(row, snapshot=snap)
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    snap["latest_aggregated_market_context"]    = amc
+    snap["last_aggregated_market_context_at"]   = now_iso
+    row.snapshot_json = _json_dumps_safe(snap)
+    row.updated_at    = datetime.now(timezone.utc)
+
+    try:
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+    return jsonify({
+        "ok":                        True,
+        "item":                      _live_monitor_item_to_dict(row),
+        "aggregated_market_context": amc,
     })
 
 
