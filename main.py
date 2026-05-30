@@ -11357,10 +11357,12 @@ def _lm_demo_trading_enabled() -> dict:
 
 def _lm_mexc_private_request(method: str, path: str,
                               params: dict = None, body: dict = None) -> dict:
-    """Sign and send a private MEXC contract API request.
+    """Sign and send a private MEXC Contract API v1 request.
 
-    Keys read from env only — never logged or returned.
-    HMAC-SHA256 per scripts/mexc_capability_audit.py. 15s timeout.
+    Keys read from env only — never logged or returned. 15s timeout.
+    Auth per https://mexcdevelop.github.io/apidocs/contract_v1_en/:
+      Headers: ApiKey, Request-Time, Signature, Content-Type
+      Signature = HMAC-SHA256(api_key + timestamp_ms + sorted_query_string)
     Returns {ok, status_code, data, error}.
     """
     import os as _os, time as _time
@@ -11371,22 +11373,27 @@ def _lm_mexc_private_request(method: str, path: str,
 
     ts_ms = str(int(_time.time() * 1000))
 
-    sign_params = dict(params or {})
-    sign_params["timestamp"]  = ts_ms
-    sign_params["recvWindow"] = "5000"
+    # Build sorted query string from caller params only (no extra sign_params injected)
+    qs = "&".join(f"{k}={v}" for k, v in sorted((params or {}).items()))
 
-    qs  = "&".join(f"{k}={v}" for k, v in sorted(sign_params.items()))
-    sig = hmac.new(api_secret.encode(), qs.encode(), hashlib.sha256).hexdigest()
-    sign_params["signature"] = sig
+    # Signature string: api_key + timestamp_ms + sorted_query_string
+    sign_str = api_key + ts_ms + qs
+    sig = hmac.new(api_secret.encode(), sign_str.encode(), hashlib.sha256).hexdigest()
 
-    url     = MEXC_PERP_API.rstrip("/") + "/" + path.lstrip("/")
-    headers = {"X-MEXC-APIKEY": api_key, "Content-Type": "application/json"}
+    headers = {
+        "ApiKey":       api_key,
+        "Request-Time": ts_ms,
+        "Signature":    sig,
+        "Content-Type": "application/json",
+    }
+
+    url = MEXC_PERP_API.rstrip("/") + "/" + path.lstrip("/")
 
     try:
         if method.upper() == "GET":
-            resp = req.get(url,  params=sign_params,              headers=headers, timeout=15)
+            resp = req.get(url,  params=params or {}, headers=headers, timeout=15)
         elif method.upper() == "POST":
-            resp = req.post(url, params=sign_params, json=body or {}, headers=headers, timeout=15)
+            resp = req.post(url, params=params or {}, json=body or {}, headers=headers, timeout=15)
         else:
             return {"ok": False, "error": f"unsupported_method:{method}",
                     "data": None, "status_code": None}
