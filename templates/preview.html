@@ -148,6 +148,20 @@ svg{display:block}
 .token-pill.na .tp-val{color:var(--text-3)}
 @media(max-width:1100px){.token-pill .tp-label{display:none}}
 /* shared modal (token-limit / locked-feature) */
+/* Scan progress popup (Task 6) — above page but below token-limit modal. */
+.scan-pop{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+  background:rgba(2,8,16,.55);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);
+  z-index:500;padding:20px}
+.scan-pop[hidden]{display:none}
+.scan-pop-card{background:var(--bg-card);border:1px solid var(--border-2);border-radius:14px;
+  padding:22px 28px;min-width:240px;max-width:360px;text-align:center;
+  box-shadow:0 16px 40px rgba(0,0,0,.5)}
+.scan-pop-spinner{width:38px;height:38px;margin:0 auto 14px;border-radius:50%;
+  border:3px solid rgba(34,211,238,.15);border-top-color:var(--accent);
+  animation:scan-pop-spin .85s linear infinite}
+@keyframes scan-pop-spin{to{transform:rotate(360deg)}}
+.scan-pop-t{font-size:14px;font-weight:700;color:var(--text);margin-bottom:6px;letter-spacing:.2px}
+.scan-pop-s{font-size:11.5px;color:var(--text-3);line-height:1.4}
 .zmodal-bd{position:fixed;inset:0;background:rgba(2,8,16,.78);z-index:9000;display:none}
 .zmodal-bd.open{display:block}
 .zmodal{position:fixed;inset:0;z-index:9001;display:none;align-items:center;justify-content:center;padding:20px}
@@ -340,7 +354,21 @@ svg{display:block}
   background:var(--bg-panel);border-left:1px solid var(--border);
   display:flex;flex-direction:column;min-height:0;
 }
+/* Hide Setup Insight panel everywhere except Scanner (Task 3). */
+body[data-view="live"] .insight,
+body[data-view="watchlist"] .insight,
+body[data-view="dashboard"] .insight,
+body[data-view="tools"] .insight,
+body[data-view="backtest"] .insight{display:none!important}
+body[data-view="live"]      .body,
+body[data-view="watchlist"] .body,
+body[data-view="dashboard"] .body,
+body[data-view="tools"]     .body,
+body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
 .ins-scroll{flex:1;overflow:auto;padding:12px 14px}
+.ins-empty{padding:40px 16px;text-align:center}
+.ins-empty-t{font-size:13.5px;font-weight:600;color:var(--text-2);margin-bottom:6px}
+.ins-empty-s{font-size:12px;color:var(--text-3);line-height:1.5}
 .ins-head{display:flex;align-items:center;margin-bottom:8px}
 .ins-head h3{font-size:11px;font-weight:700;letter-spacing:1.2px;color:var(--text-2)}
 .ins-head .ic-btn{margin-left:auto}
@@ -358,6 +386,13 @@ svg{display:block}
   letter-spacing:1px;color:var(--text-2);cursor:pointer;
 }
 .sec-h .ico{margin-left:auto;color:var(--text-3);width:14px;height:14px}
+/* Collapsible section header (Task 2). */
+.sec-h-toggle{cursor:pointer;user-select:none;display:flex;align-items:center;gap:8px}
+.sec-h-toggle .sec-h-meta{margin-left:auto;font-size:11px;font-weight:600;color:var(--text-2);letter-spacing:.3px;text-transform:none}
+.sec-h-toggle .sec-chev{color:var(--text-3);transition:transform .18s ease;flex:0 0 auto;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.sec-h-toggle:hover .sec-chev,.sec-h-toggle:focus .sec-chev{color:var(--accent)}
+.sec.sec-collapsible.collapsed .sec-b{display:none}
+.sec.sec-collapsible:not(.collapsed) .sec-chev{transform:rotate(180deg);color:var(--accent)}
 .sec-b{padding:0 13px 9px}
 .zd{display:flex;gap:12px}
 .zd-list{flex:1;display:flex;flex-direction:column;gap:4px;min-width:0}
@@ -490,15 +525,24 @@ svg{display:block}
 .pp-row-actions .btn{padding:5px 10px;font-size:11px}
 
 /* Tutorial overlay (Queue 16) */
-.tut-overlay{position:fixed;inset:0;z-index:400;pointer-events:auto}
+/* Tutorial overlay (Task 7 rework).
+   - .tut-overlay has NO z-index so it isn't a stacking context.
+   - .tut-mask is fully transparent (no blur) and pointer-events:none.
+   - Dimming + ring come from .tut-highlight applied directly to the
+     real target element via a spread box-shadow.
+   - .tut-card is position:fixed at z-index 8000 — above panels, below
+     the token-limit modal (9000+). */
+.tut-overlay{position:fixed;inset:0;pointer-events:none}
 .tut-overlay[hidden]{display:none}
-.tut-mask{position:absolute;inset:0;background:rgba(2,6,14,.7);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}
-.tut-spot{position:absolute;border:2px solid var(--accent);border-radius:10px;
-  box-shadow:0 0 0 9999px rgba(2,6,14,.7);pointer-events:none;transition:all .25s ease;
-  background:transparent}
-.tut-card{position:absolute;width:340px;max-width:92vw;background:var(--bg-card);
+.tut-mask{position:absolute;inset:0;background:transparent;pointer-events:none}
+.tut-highlight{position:relative;z-index:401 !important;
+  box-shadow:0 0 0 3px var(--accent), 0 0 0 9999px rgba(2,6,14,.72) !important;
+  border-radius:10px !important;transition:box-shadow .2s ease}
+.tut-spot{display:none !important}
+.tut-card{position:fixed;width:340px;max-width:92vw;background:var(--bg-card);
   border:1px solid var(--border-2);border-radius:12px;padding:16px 18px;
-  box-shadow:0 12px 36px rgba(0,0,0,.55);color:var(--text)}
+  box-shadow:0 12px 36px rgba(0,0,0,.55);color:var(--text);
+  z-index:8000;pointer-events:auto}
 .tut-step{font-size:10px;font-weight:700;letter-spacing:.6px;color:var(--accent);margin-bottom:6px}
 .tut-title{font-size:15px;font-weight:700;margin-bottom:6px}
 .tut-text{font-size:12.5px;color:var(--text-2);line-height:1.5;margin-bottom:12px}
@@ -617,6 +661,20 @@ svg{display:block}
 .lm-sub{font-size:11px;color:var(--text-3);margin-top:1px}
 .session-pill{display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:8px;border:1px solid rgba(34,211,238,.3);background:rgba(34,211,238,.07);font-size:11px;font-weight:700;color:var(--accent);letter-spacing:.3px}
 .session-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 6px var(--accent);animation:pulse 2s ease-in-out infinite}
+/* Manual Add Pair form (Task 4) */
+.lm-manual{background:var(--bg-card);border-bottom:1px solid var(--border);padding:10px 16px;flex-shrink:0}
+.lm-manual-h{font-size:11px;font-weight:700;letter-spacing:1px;color:var(--accent);margin-bottom:8px;text-transform:uppercase}
+.lm-manual-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.lm-manual-row input[type="text"]{background:var(--bg-card-2);border:1px solid var(--border);color:var(--text);
+  border-radius:6px;padding:7px 10px;font-family:var(--mono);font-size:12.5px;outline:none;flex:1;min-width:160px;max-width:260px}
+.lm-manual-row input[type="text"]:focus{border-color:var(--accent)}
+.lm-manual-row select{background:var(--bg-card-2);border:1px solid var(--border);color:var(--text);
+  border-radius:6px;padding:7px 9px;font-size:12px;outline:none;cursor:pointer}
+.lm-manual-row select:focus{border-color:var(--accent)}
+.lm-manual-row .btn{padding:7px 14px}
+.lm-manual-msg{font-size:11.5px;margin-top:6px;min-height:14px;color:var(--text-3)}
+.lm-manual-msg.ok{color:var(--green-2,#22d3ee)}
+.lm-manual-msg.err{color:var(--red-2,#ef4444)}
 .lm-body{display:grid;grid-template-columns:290px 1fr;flex:1;min-height:0;overflow:hidden;height:0}
 .lm-left{border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0;background:var(--bg-panel)}
 .lm-left-head{display:flex;align-items:center;justify-content:space-between;padding:10px 12px 8px;border-bottom:1px solid var(--border);flex-shrink:0}
@@ -1212,7 +1270,6 @@ svg{display:block}
             </label>
             <div class="seg" id="segMarket"><button data-mkt="spot" class="on">Spot</button><button data-mkt="perpetual">Perpetual</button></div>
             <div class="seg" id="segSignal"><button data-sig="OB" class="on">OB</button><button data-sig="FVG">FVG</button><button data-sig="BREAKER">Breaker</button><button data-sig="FIB">Fib</button><button data-sig="ALL">All</button></div>
-            <button class="btn btn-primary" id="btnScan" type="button" hidden><svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>Scan Now</button>
             <button class="btn" id="btnClear" type="button" title="Clear results"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>Clear</button>
           </div>
         </div>
@@ -1259,97 +1316,16 @@ svg{display:block}
     <!-- ═══ RIGHT INSIGHT PANEL ═══ -->
     <aside class="insight">
       <div class="ins-scroll" id="insScroll">
-        <div class="ins-head">
-          <h3>SETUP INSIGHT</h3>
-          <button class="ic-btn"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
-        </div>
-
-        <div class="ins-title">
-          <span class="star"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9 6.8 19.1l1-5.8L3.5 9.2l5.9-.9z"/></svg></span>
-          <span class="ins-sym">BTCUSDT</span>
-          <span class="tag mkt">Perp</span>
-          <span class="tag bull">Bullish</span>
-        </div>
-        <div class="ins-meta"><span>Main Scan • OB</span><span>1m ago</span></div>
-
-        <div class="sec">
-          <div class="sec-h">ZONE DETAILS <svg class="ico" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></div>
-          <div class="sec-b">
-            <div class="zd">
-              <div class="zd-list">
-                <div class="kv"><span class="k">Zone Type</span><span class="v">Order Block (Bullish)</span></div>
-                <div class="kv kv-pr"><span class="k">Price Range</span><span class="v"><div class="pr-range"><span class="pr-v">61,240.0</span><span class="pr-a g">&uarr;</span><span class="pr-v">59,850.0</span></div></span></div>
-                <div class="kv"><span class="k">Mid Price</span><span class="v">60,545.0</span></div>
-                <div class="kv"><span class="k">Current Price</span><span class="v teal">60,812.3</span></div>
-                <div class="kv"><span class="k">Size (USD)</span><span class="v">~1.39B</span></div>
-                <div class="kv"><span class="k">Touches</span><span class="v">1</span></div>
-                <div class="kv"><span class="k">Age</span><span class="v">1h 12m</span></div>
-                <div class="kv"><span class="k">Bars</span><span class="v">18</span></div>
-                <div class="kv"><span class="k">Timeframe</span><span class="v">4H</span></div>
-              </div>
-              <div class="spark">
-                <span class="lbl" style="top:2px">62,000</span>
-                <span class="lbl" style="top:35px">61,000</span>
-                <span class="lbl" style="top:68px">60,000</span>
-                <span class="lbl" style="top:101px">59,000</span>
-                <span class="lbl" style="bottom:0">58,000</span>
-                <svg viewBox="0 0 96 140" preserveAspectRatio="none">
-                  <rect x="0" y="20" width="96" height="46" fill="rgba(34,211,238,.13)"/>
-                  <line x1="0" y1="20" x2="96" y2="20" stroke="rgba(34,211,238,.4)" stroke-width="1" stroke-dasharray="3 3"/>
-                  <line x1="0" y1="66" x2="96" y2="66" stroke="rgba(34,211,238,.4)" stroke-width="1" stroke-dasharray="3 3"/>
-                  <polyline points="0,96 12,88 24,104 36,80 48,64 60,72 72,46 84,52 96,40"
-                    fill="none" stroke="#22d3ee" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                  <circle cx="96" cy="40" r="3" fill="#22d3ee"/>
-                </svg>
-                <span class="price-pill" style="top:33px">60,812</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="sec">
-          <div class="sec-h">CONFIDENCE</div>
-          <div class="sec-b">
-            <div class="conf-wrap">
-              <div class="gauge">
-                <svg width="96" height="96" viewBox="0 0 96 96">
-                  <circle cx="48" cy="48" r="40" stroke="var(--bg-card-2)" stroke-width="8" fill="none"/>
-                  <circle cx="48" cy="48" r="40" stroke="var(--accent)" stroke-width="8" fill="none"
-                    stroke-linecap="round" stroke-dasharray="251.2" stroke-dashoffset="45.2"/>
-                </svg>
-                <div class="c"><div class="pct">82%</div><div class="lv">High</div></div>
-              </div>
-              <div class="bars">
-                <div class="bar-row"><div class="bt"><span>HTF Alignment</span><b>90%</b></div><div class="bar-tr"><div class="bar-fl" style="width:90%"></div></div></div>
-                <div class="bar-row"><div class="bt"><span>Zone Quality</span><b>85%</b></div><div class="bar-tr"><div class="bar-fl" style="width:85%"></div></div></div>
-                <div class="bar-row"><div class="bt"><span>Structure Confluence</span><b>80%</b></div><div class="bar-tr"><div class="bar-fl" style="width:80%"></div></div></div>
-                <div class="bar-row"><div class="bt"><span>Momentum</span><b>75%</b></div><div class="bar-tr"><div class="bar-fl" style="width:75%"></div></div></div>
-                <div class="bar-row"><div class="bt"><span>Volume</span><b>78%</b></div><div class="bar-tr"><div class="bar-fl" style="width:78%"></div></div></div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="sec">
-          <div class="sec-h">CONFLUENCE</div>
-          <div class="sec-b">
-            <div class="cf"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>HTF (1D/4H) bullish bias and structure support</div>
-            <div class="cf"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>OB aligns with 0.618 – 0.705 Fib retracement</div>
-            <div class="cf"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>Equal lows liquidity below zone</div>
-            <div class="cf"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>Strong reaction on first touch</div>
-            <div class="cf"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>Above VWAP on 4H</div>
-          </div>
-        </div>
-
-        <div class="sec">
-          <div class="sec-h">NOTES</div>
-          <div class="sec-b"><div class="notes">Clean bullish OB on 4H. Price reclaiming mid-range. Watch for confirmation on lower timeframe.</div></div>
+        <div class="ins-head"><h3>SETUP INSIGHT</h3></div>
+        <div class="ins-empty">
+          <div class="ins-empty-t">No setup selected</div>
+          <div class="ins-empty-s">Run a scan and click a setup row or card to view insight.</div>
         </div>
       </div>
 
       <div class="ins-foot">
-        <a class="btn" id="btnChart" href="#" target="_blank" rel="noopener" style="text-decoration:none"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 4-6"/></svg>View Chart</a>
-        <button class="btn btn-primary" id="btnLM"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add to Live Monitor</button>
+        <a class="btn" id="btnChart" href="#" target="_blank" rel="noopener" style="text-decoration:none;pointer-events:none;opacity:.5"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 4-6"/></svg>View Chart</a>
+        <button class="btn btn-primary" id="btnLM" disabled><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add to Live Monitor</button>
         <button class="btn btn-ico"><svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
       </div>
     </aside>
@@ -1593,6 +1569,15 @@ svg{display:block}
 </div></div>
 
 <!-- ═══ Token-limit modal (Task 4) ═══ -->
+<!-- Scan progress popup (Task 6) -->
+<div class="scan-pop" id="scanPop" hidden role="status" aria-live="polite">
+  <div class="scan-pop-card">
+    <div class="scan-pop-spinner" aria-hidden="true"></div>
+    <div class="scan-pop-t">Scanning pairs…</div>
+    <div class="scan-pop-s">Checking OB / FVG / FIB / Breaker modules</div>
+  </div>
+</div>
+
 <div class="zmodal-bd" id="tokenModalBd"></div>
 <div class="zmodal" id="tokenModal" role="dialog" aria-modal="true" aria-labelledby="tokenModalTitle">
   <div class="zmodal-card">
@@ -2264,7 +2249,7 @@ svg{display:block}
     sm({sym:"LINKUSDT",mkt:"Spot",price:14.42,setup:"OB",dir:"bearish",score:68,conf:"Medium",rsi:46,tf:"4H",rr:1.84,age:"1h 15m",size:"~73.8M",cb:[74,70,66,62,64],meta:{obTop:14.82,obBottom:14.1,obQuality:70,obQualityLabel:"Medium",obTouches:1},detail:"Bearish OB; watch lower timeframe."}),
   ];
   function useSample(note){
-    ST.results=SAMPLE.slice(); ST.scanned=128; ST.scannedAt=Date.now(); ST.sel=0;
+    ST.results=SAMPLE.slice(); ST.scanned=128; ST.scannedAt=Date.now(); ST.sel=-1;
     renderAll();
   }
   function scan(){
@@ -2289,6 +2274,7 @@ svg{display:block}
     ST.busy=true;
     E("pagerInfo").textContent="Scanning…";
     if(!ST.results.length)msg("Scanning markets…");
+    _showScanPopup();
     fetch(p.url,{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify(p.body)})
       .then(function(r){
@@ -2328,7 +2314,8 @@ svg{display:block}
           ST.results = merged;                     // setup-style tabs share this
           ST.scanned = ST.tabData[modeAtScan].scanned;
           try{ evaluateAlerts(ST.results); }catch(_){}
-          ST.sel = ST.results.length ? 0 : -1;
+          /* User-driven selection only — no auto-open of first row (Task 1). */
+          ST.sel = -1;
         } else if(modeAtScan === "trending"){
           var arr = Array.isArray(d) ? d : (d && (d.results || d.items) || []);
           ST.tabData.trending.items = arr;
@@ -2363,8 +2350,10 @@ svg{display:block}
           useSample("Sample data — couldn't reach "+p.url+" ("+esc(e.message)+"). Live data loads when served at /preview while logged in.");
         }
       })
-      .finally(function(){ST.busy=false; loadTokens();});
+      .finally(function(){ST.busy=false; _hideScanPopup(); loadTokens();});
   }
+  function _showScanPopup(){ var p=E("scanPop"); if(p) p.hidden=false; }
+  function _hideScanPopup(){ var p=E("scanPop"); if(p) p.hidden=true; }
   function avgScore(rs){if(!rs.length)return 0;var t=0;rs.forEach(function(r){t+=(+r.score||0);});return t/rs.length;}
 
   /* ── scan-token counter (Task 3) — real data from /api/my-permissions ── */
@@ -2659,11 +2648,11 @@ svg{display:block}
      Flips the Scan button into an "accent" state when the user
      changes a filter without re-scanning. Resets after a successful scan. */
   function _markStale(){
-    var b = E("btnScan"); if(!b) return;
+    var b = E("btnScanNow") || E("btnScan"); if(!b) return;
     b.classList.add("btn-stale");
   }
   function _clearStale(){
-    var b = E("btnScan"); if(!b) return;
+    var b = E("btnScanNow") || E("btnScan"); if(!b) return;
     b.classList.remove("btn-stale");
   }
 
@@ -3788,37 +3777,18 @@ svg{display:block}
   }
 
   function renderInsight(){
-    var box=E("insScroll"), head=
-      '<div class="ins-head"><h3>SETUP INSIGHT</h3>'+
-      '<button class="ic-btn" type="button"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>';
+    var box=E("insScroll"), head='<div class="ins-head"><h3>SETUP INSIGHT</h3></div>';
     var r=ST.results[ST.sel];
     if(!r){
-      /* Placeholder that mirrors the runtime layout (vertical Price Range,
-         Bars row, etc.) so the panel doesn't look broken before the first
-         scan or before the user clicks a row. Sample values only. */
       box.innerHTML = head+
-        '<div class="ins-title">'+IC.starOff+
-          '<span class="ins-sym">BTCUSDT</span>'+
-          '<span class="tag mkt">Perp</span>'+
-          '<span class="tag bull">Bullish</span></div>'+
-        '<div class="ins-meta"><span>Main Scan • OB</span><span>Sample preview</span></div>'+
-        '<div class="sec"><div class="sec-h">ZONE DETAILS <svg class="ico" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></div>'+
-          '<div class="sec-b"><div class="zd"><div class="zd-list">'+
-            '<div class="kv"><span class="k">Zone Type</span><span class="v">Order Block (Bullish)</span></div>'+
-            '<div class="kv kv-pr"><span class="k">Price Range</span><span class="v"><div class="pr-range"><span class="pr-v">61,240.0</span><span class="pr-a g">&uarr;</span><span class="pr-v">59,850.0</span></div></span></div>'+
-            '<div class="kv"><span class="k">Mid Price</span><span class="v">60,545.0</span></div>'+
-            '<div class="kv"><span class="k">Current Price</span><span class="v teal">60,812.3</span></div>'+
-            '<div class="kv"><span class="k">Size (USD)</span><span class="v">~1.39B</span></div>'+
-            '<div class="kv"><span class="k">Touches</span><span class="v">1</span></div>'+
-            '<div class="kv"><span class="k">Age</span><span class="v">1h 12m</span></div>'+
-            '<div class="kv"><span class="k">Bars</span><span class="v">18</span></div>'+
-            '<div class="kv"><span class="k">Timeframe</span><span class="v">4H</span></div>'+
-          '</div></div></div></div>'+
-        '<div class="row-msg" style="margin-top:14px;text-align:center;color:var(--text-3);font-size:11.5px">Select a setup from the table to see real data.</div>';
-      var closeBtn = box.querySelector(".ic-btn");
-      if(closeBtn) closeBtn.addEventListener("click", function(){ /* no-op when no selection */ });
+        '<div class="ins-empty">'+
+          '<div class="ins-empty-t">No setup selected</div>'+
+          '<div class="ins-empty-s">Run a scan and click a setup row or card to view insight.</div>'+
+        '</div>';
       setFoot(null); return;
     }
+    head='<div class="ins-head"><h3>SETUP INSIGHT</h3>'+
+      '<button class="ic-btn" type="button"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>';
     var a=r.topAlert||{}, z=zoneOf(a), d=dirOf(r), m=a.meta||{};
     var dTag=d==="bull"?'<span class="tag bull">Bullish</span>':d==="bear"?'<span class="tag bear">Bearish</span>':'<span class="tag neutral">Neutral</span>';
     var mk=ST.market==="perpetual"?"Perp":"Spot";
@@ -3844,7 +3814,10 @@ svg{display:block}
           kv("Bars", (m.obAgeBars!=null?m.obAgeBars : (m.ageBars!=null?m.ageBars : (m.bars!=null?m.bars : (r.ageBars!=null?r.ageBars : (m.fvgAge!=null?m.fvgAge : (m.breakerAge!=null?m.breakerAge : "—")))))))+
           kv("Timeframe",(a.timeframe||r.timeframe||"—"))+
         '</div><div class="spark">'+sparkSVG(r,z)+'</div></div></div></div>'+
-      '<div class="sec"><div class="sec-h">CONFIDENCE</div><div class="sec-b"><div class="conf-wrap">'+
+      '<div class="sec sec-collapsible collapsed" data-sec="conf"><div class="sec-h sec-h-toggle" role="button" tabindex="0" aria-expanded="false">CONFIDENCE'+
+        '<span class="sec-h-meta">'+Math.round(sc)+'%'+(r.confidence?' &middot; '+esc(r.confidence):'')+'</span>'+
+        '<svg class="sec-chev" viewBox="0 0 24 24" width="14" height="14"><path d="M6 9l6 6 6-6"/></svg></div>'+
+        '<div class="sec-b"><div class="conf-wrap">'+
         '<div class="gauge"><svg width="96" height="96" viewBox="0 0 96 96">'+
           '<circle cx="48" cy="48" r="40" stroke="var(--bg-card-2)" stroke-width="8" fill="none"/>'+
           '<circle cx="48" cy="48" r="40" stroke="var(--accent)" stroke-width="8" fill="none" stroke-linecap="round" '+
@@ -3862,6 +3835,16 @@ svg{display:block}
         '<div class="dd-out" id="ddOut"></div>'+
       '</div></div>';
     box.querySelector(".ic-btn").addEventListener("click",function(){ST.sel=-1;closeSheet();renderInsight();renderTable();renderMobileCards();});
+    /* Collapsible Confidence section (Task 2). */
+    [].forEach.call(box.querySelectorAll(".sec-h-toggle"),function(h){
+      function toggle(){
+        var sec=h.parentElement; if(!sec) return;
+        sec.classList.toggle("collapsed");
+        h.setAttribute("aria-expanded", sec.classList.contains("collapsed") ? "false" : "true");
+      }
+      h.addEventListener("click", toggle);
+      h.addEventListener("keydown", function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); toggle(); } });
+    });
     bindDeepDive(r,a,z);
     setFoot(r);
   }
@@ -4059,7 +4042,6 @@ svg{display:block}
   if(E("sideSettings")) E("sideSettings").addEventListener("click", function(){ openSettings(); });
 
   if(E("btnFilters")) E("btnFilters").addEventListener("click",scan);
-  if(E("btnScan"))  E("btnScan").addEventListener("click",scan);
   if(E("btnScanNow")) E("btnScanNow").addEventListener("click",scan);
   /* token-limit modal close bindings (Task 4) */
   if(E("tokenModalClose")) E("tokenModalClose").addEventListener("click",hideTokenLimitPopup);
@@ -4207,6 +4189,8 @@ svg{display:block}
     if(!v) v="scanner";
     ST.view=v;
     _stopAllViewPolling();
+    /* Tag body so CSS can hide/restyle per view (Task 3). */
+    try{ document.body.setAttribute("data-view", v); }catch(_){ }
     [].forEach.call(document.querySelectorAll("#topnav a[data-view]"),function(a){
       a.classList.toggle("active",a.getAttribute("data-view")===v);
     });
@@ -4313,6 +4297,27 @@ svg{display:block}
             '<button class="btn" id="lmRefresh" type="button"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>Refresh All</button>'+
           '</div>'+
         '</div>'+
+        /* Manual Add Pair form (Task 4) — sits between the topbar and the
+           main left/right body so it never overlaps the chips. */
+        '<div class="lm-manual">'+
+          '<div class="lm-manual-h">Add a pair manually</div>'+
+          '<div class="lm-manual-row">'+
+            '<input type="text" id="lmAdd" placeholder="BTCUSDT" autocomplete="off" spellcheck="false">'+
+            '<select id="lmAddTf" aria-label="Timeframe">'+
+              '<option value="15m">15m</option><option value="30m">30m</option>'+
+              '<option value="1h">1h</option><option value="4h" selected>4h</option>'+
+              '<option value="1d">1d</option>'+
+            '</select>'+
+            '<select id="lmAddDir" aria-label="Direction">'+
+              '<option value="neutral" selected>Neutral</option>'+
+              '<option value="bullish">Bullish</option>'+
+              '<option value="bearish">Bearish</option>'+
+            '</select>'+
+            '<button class="btn btn-primary" id="lmAddBtn" type="button">'+
+              '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add Pair</button>'+
+          '</div>'+
+          '<div class="lm-manual-msg" id="lmAddMsg" aria-live="polite"></div>'+
+        '</div>'+
         '<div class="lm-body">'+
           '<div class="lm-left">'+
             '<div class="lm-left-head"><span>ACTIVE SETUPS</span><span id="lmCount" style="font-size:11px;color:var(--accent);font-weight:700;font-family:var(--mono)">0</span></div>'+
@@ -4365,8 +4370,71 @@ svg{display:block}
       else { aiTog.classList.add("off"); if(aiLbl) aiLbl.textContent="AI Off"; }
     });
     var rb=E("lmRefresh"); if(rb) rb.addEventListener("click",_lmRefresh);
+    /* Manual Add Pair wiring (Task 4). */
+    var ab=E("lmAddBtn"); if(ab) ab.addEventListener("click",_lmManualAdd);
+    var ai=E("lmAdd"); if(ai) ai.addEventListener("keydown",function(e){ if(e.key==="Enter") _lmManualAdd(); });
     _lmUpdateSession();
     _lmRenderCards();
+  }
+  function _lmShowAddMsg(text, isErr){
+    var el=E("lmAddMsg"); if(!el) return;
+    el.textContent = text || "";
+    el.className = "lm-manual-msg" + (text ? (isErr ? " err" : " ok") : "");
+    if(text){ setTimeout(function(){ if(el.textContent===text){ el.textContent=""; el.className="lm-manual-msg"; } }, 4000); }
+  }
+  function _lmManualAdd(){
+    var inp=E("lmAdd"); if(!inp) return;
+    var raw=(inp.value||"").trim().toUpperCase();
+    if(!raw){ _lmShowAddMsg("Type a symbol first (e.g. BTC or BTCUSDT).", true); return; }
+    var sym = raw.replace(/[^A-Z0-9]/g,"");
+    if(!sym){ _lmShowAddMsg("Invalid symbol.", true); return; }
+    if(!/USDT$/.test(sym)) sym += "USDT";
+    var tf  = (E("lmAddTf") && E("lmAddTf").value) || "4h";
+    var dir = (E("lmAddDir") && E("lmAddDir").value) || "neutral";
+    var btn = E("lmAddBtn");
+    if(btn) btn.disabled = true;
+    /* Legacy: keep symbol in watchlist stars so other features see it. */
+    ST.stars[sym] = true; syncWatchlist();
+    /* Minimal safe manual setup payload — no fake zone, score/confidence 0. */
+    var payload = {
+      symbol:       sym,
+      exchange:     ST.exchange || "binance",
+      market:       ST.market || "perpetual",
+      source_tab:   "manual",
+      setup_type:   "MANUAL",
+      direction:    dir,
+      timeframe:    tf,
+      confidence:   0,
+      score:        0,
+      current_price: null,
+      snapshot:     { manual_add: true, addedAt: Date.now() },
+      selected_timeframes: [tf],
+      selected_modules:    [],
+      alert_settings:      {}
+    };
+    if(location.protocol === "file:"){
+      _lmShowAddMsg("Added "+sym+" ("+tf.toUpperCase()+", "+dir+") — local only on file://", false);
+      if(btn) btn.disabled = false;
+      inp.value=""; return;
+    }
+    fetch("/api/live-monitor/items",{
+      method:"POST", credentials:"same-origin",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(payload)
+    }).then(function(res){ return res.json().catch(function(){return {};}); })
+      .then(function(d){
+        if(d && d.ok){
+          _lmShowAddMsg("Added "+sym+" ("+tf.toUpperCase()+", "+dir+")", false);
+          inp.value="";
+          loadLiveMonitorItems();
+        } else {
+          _lmShowAddMsg((d && d.error) || "Failed to add pair.", true);
+        }
+      }).catch(function(e){
+        _lmShowAddMsg("Network error adding pair.", true);
+      }).finally(function(){
+        if(btn) btn.disabled = false;
+      });
   }
 
   function _lmUpdateSession(){
@@ -6649,30 +6717,56 @@ svg{display:block}
     });
   })();
 
-  /* ── Desktop tutorial overlay (Queue 16) ────────────────────────── */
+  /* ── Desktop tutorial overlay (Task 7 rework) ─────────────────────
+     - Highlight applies .tut-highlight to the real target element
+       (no separate offset box, no blur).
+     - Steps may specify a `view` to switchView() first; we wait for
+       layout to settle before measuring / highlighting.
+     - Cross-view steps come last so the existing scanner-restore
+       reload never fires mid-tour. */
   var TUT_STEPS = [
     { sel:".brand-name", title:"Welcome to ZyNi Screener",
-      text:"Quick tour of the desktop. You can skip any time and the choice is saved to your account." },
+      text:"Quick tour of the desktop. You can skip any time and the choice is saved to your account.",
+      view:"scanner" },
     { sel:".side", title:"Scanner sidebar",
-      text:"Switch between Main Scan, Compressed, Trending, ATH/ATL, Bias and Settings here." },
+      text:"Switch between Main Scan, Compressed, Trending, ATH/ATL, Bias and Settings here.",
+      view:"scanner" },
     { sel:"#segMarket", title:"Market & exchange",
-      text:"Toggle Spot vs Perpetual. The exchange picker (below) selects which exchange to scan." },
+      text:"Toggle Spot vs Perpetual. The exchange picker (below) selects which exchange to scan.",
+      view:"scanner" },
     { sel:"#segSignal", title:"Module selector — OR logic",
-      text:"Pick one or more setup modules. OB + FIB will show setups that are OB or FIB (OR)." },
+      text:"Pick one or more setup modules. OB + FIB will show setups that are OB or FIB (OR).",
+      view:"scanner" },
     { sel:"#tabCtrls", title:"Timeframe, scope, pairs/cycle",
-      text:"Each tab's most-used controls live inline here. Changes are saved between visits." },
+      text:"Each tab's most-used controls live inline here. Changes are saved between visits.",
+      view:"scanner" },
     { sel:"#tabCtrls", title:"Info buttons (i)",
-      text:"Every scanner control has a small (i) button. Press it to understand what that setting does before scanning — works on Main Scan, Compressed, Trending, ATH/ATL, Bias Shift Normal & Expert, and inside the Settings drawer." },
+      text:"Every scanner control has a small (i) button. Press it to understand what that setting does before scanning — works on Main Scan, Compressed, Trending, ATH/ATL, Bias Shift Normal & Expert, and inside the Settings drawer.",
+      view:"scanner" },
     { sel:"#btnScanNow", title:"Scan Now / Auto Scan",
-      text:"Scanning never happens automatically on page load. Use Scan Now, or turn Auto Scan ON for a 30s timer." },
+      text:"Scanning never happens automatically on page load. Use Scan Now, or turn Auto Scan ON for a 30s timer.",
+      view:"scanner" },
     { sel:"#tblHost", title:"Setup table",
-      text:"Click a row to see its Setup Insight on the right panel." },
-    { sel:".insight",   title:"Setup Insight",
-      text:"Zone details, scoring, confluence and the View Chart / Add to Live Monitor actions." },
+      text:"Click a row to see its Setup Insight on the right panel.",
+      view:"scanner" },
+    { sel:".insight", title:"Setup Insight",
+      text:"Zone details, scoring, confluence and the View Chart / Add to Live Monitor actions.",
+      view:"scanner" },
     { sel:"#sideSettings", title:"Settings & presets",
       text:"Open Settings from the sidebar. The little (i) next to a field explains what it does. Use Scan Presets to save and reuse your scanner setup." },
+    /* Cross-view steps — last, in this order, so the tour finishes on
+       Tools and never reloads back to the scanner. */
+    { sel:".lm-manual, .lm-outer, .lm-topbar", title:"Live Monitor",
+      text:"Live Monitor shows your starred pairs with live order-flow data. Use the Add a pair form to drop in a symbol manually with a timeframe and direction.",
+      view:"live" },
+    { sel:".db-grid, .db-head, .main-scroll", title:"Dashboard",
+      text:"Dashboard gives you a live snapshot of the market — top movers, watchlist health and a refresh cycle you can pause.",
+      view:"dashboard" },
+    { sel:".mt-wrap, .mt-grid, .main-scroll", title:"Market Tools",
+      text:"Market Tools has utilities and quick lookups that don't consume scan tokens.",
+      view:"tools" },
   ];
-  var _tutIdx = 0, _tutPrefs = {desktopTutorialNeverShow:false};
+  var _tutIdx = 0, _tutPrefs = {desktopTutorialNeverShow:false}, _tutCurTgt = null;
   function _tutFetchPrefs(){
     if(location.protocol==="file:") return Promise.resolve(_tutPrefs);
     return fetch("/api/user-preferences",{credentials:"same-origin"})
@@ -6686,49 +6780,68 @@ svg{display:block}
     fetch("/api/user-preferences",{method:"POST",credentials:"same-origin",
       headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)}).catch(function(){});
   }
-  function _tutClampRect(r){
-    var pad=6, vw=innerWidth, vh=innerHeight;
-    var x=Math.max(0,r.left-pad), y=Math.max(0,r.top-pad);
-    var w=Math.min(vw-x, r.width+pad*2), h=Math.min(vh-y, r.height+pad*2);
-    return {x:x,y:y,w:w,h:h};
+  function _tutClearHighlight(){
+    if(_tutCurTgt && _tutCurTgt.classList) _tutCurTgt.classList.remove("tut-highlight");
+    _tutCurTgt = null;
+  }
+  function _tutPositionCard(){
+    if(!_tutCurTgt) return;
+    var card = E("tutCard"); if(!card) return;
+    var r = _tutCurTgt.getBoundingClientRect();
+    var cw = card.offsetWidth || 360, ch = card.offsetHeight || 200;
+    var cx = r.left + r.width + 14;
+    var cy = Math.max(12, r.top);
+    /* If card doesn't fit on the right of the target, try below it. */
+    if(cx + cw > innerWidth - 12){
+      cx = r.left;
+      cy = r.bottom + 14;
+    }
+    /* Final clamp so both edges stay inside the viewport. */
+    cx = Math.max(12, Math.min(innerWidth - cw - 12, cx));
+    cy = Math.max(12, Math.min(innerHeight - ch - 12, cy));
+    card.style.left = cx + "px"; card.style.top = cy + "px"; card.style.transform = "";
+  }
+  function _tutPaintStep(step){
+    var sels = (step.sel||"").split(",").map(function(s){return s.trim();}).filter(Boolean);
+    var tgt = null;
+    for(var i=0;i<sels.length && !tgt;i++){
+      try{ tgt = document.querySelector(sels[i]); }catch(_){ tgt = null; }
+    }
+    var card = E("tutCard");
+    _tutClearHighlight();
+    if(!tgt){
+      card.style.left="50%"; card.style.top="50%"; card.style.transform="translate(-50%,-50%)";
+    } else {
+      _tutCurTgt = tgt;
+      try{ tgt.scrollIntoView({block:"center", inline:"nearest", behavior:"instant"}); }catch(_){ try{ tgt.scrollIntoView(); }catch(__){} }
+      tgt.classList.add("tut-highlight");
+      _tutPositionCard();
+    }
+    E("tutStep").textContent  = (_tutIdx+1)+" / "+TUT_STEPS.length;
+    E("tutTitle").textContent = step.title;
+    E("tutText").textContent  = step.text;
+    E("tutBack").disabled = (_tutIdx===0);
+    E("tutNext").textContent = (_tutIdx===TUT_STEPS.length-1) ? "Finish" : "Next";
   }
   function _tutGoTo(i){
     var step = TUT_STEPS[i]; if(!step) return _tutFinish();
     _tutIdx = i;
-    var tgt = document.querySelector(step.sel);
-    var spot = E("tutSpot"), card = E("tutCard");
-    if(!tgt){
-      // fallback: hide spotlight, center card
-      spot.style.display="none";
-      card.style.left="50%"; card.style.top="50%"; card.style.transform="translate(-50%,-50%)";
+    var needSwitch = step.view && step.view !== ST.view;
+    if(needSwitch){
+      try{ switchView(step.view); }catch(_){ }
+      setTimeout(function(){ _tutPaintStep(step); }, 220);
     } else {
-      var rect = _tutClampRect(tgt.getBoundingClientRect());
-      spot.style.display=""; spot.style.transform="";
-      spot.style.left = rect.x + "px";
-      spot.style.top  = rect.y + "px";
-      spot.style.width  = rect.w + "px";
-      spot.style.height = rect.h + "px";
-      // place card to the right of the spotlight when possible, else below
-      var cw=340, ch=180;
-      var cx = rect.x + rect.w + 14;
-      var cy = rect.y;
-      if(cx + cw > innerWidth - 12){ cx = Math.max(12, rect.x); cy = rect.y + rect.h + 14; }
-      if(cy + ch > innerHeight - 12){ cy = Math.max(12, innerHeight - ch - 12); }
-      card.style.left = cx + "px";
-      card.style.top  = cy + "px";
-      card.style.transform = "";
+      _tutPaintStep(step);
     }
-    E("tutStep").textContent  = (i+1)+" / "+TUT_STEPS.length;
-    E("tutTitle").textContent = step.title;
-    E("tutText").textContent  = step.text;
-    E("tutBack").disabled = (i===0);
-    E("tutNext").textContent = (i===TUT_STEPS.length-1) ? "Finish" : "Next";
   }
   function _tutShow(){
     E("tutOverlay").hidden = false;
     _tutGoTo(0);
   }
-  function _tutHide(){ E("tutOverlay").hidden = true; }
+  function _tutHide(){
+    _tutClearHighlight();
+    if(E("tutOverlay")) E("tutOverlay").hidden = true;
+  }
   function _tutFinish(){
     _tutSavePrefs({markCompleted:true});
     _tutHide();
@@ -6746,8 +6859,12 @@ svg{display:block}
   if(E("tutSkip")) E("tutSkip").addEventListener("click", _tutSkip);
   addEventListener("resize", function(){
     if(!E("tutOverlay") || E("tutOverlay").hidden) return;
-    _tutGoTo(_tutIdx);
+    _tutPositionCard();
   });
+  addEventListener("scroll", function(){
+    if(!E("tutOverlay") || E("tutOverlay").hidden) return;
+    _tutPositionCard();
+  }, true);
   // On desktop load, decide whether to show tutorial after a tiny delay so the
   // layout is settled. Mobile is unaffected (this script only runs on desktop).
   setTimeout(function(){
@@ -6757,6 +6874,10 @@ svg{display:block}
       _tutShow();
     });
   }, 700);
+
+  /* Tag body with current view so per-view CSS (Task 3) applies before
+     the first switchView() call. */
+  try{ document.body.setAttribute("data-view", ST.view||"scanner"); }catch(_){ }
 
   loadWatchlist();
   loadLiveMonitorItems();       // Phase 1: pre-load DB-backed Live Monitor items
