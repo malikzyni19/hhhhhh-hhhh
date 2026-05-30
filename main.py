@@ -9657,8 +9657,8 @@ def _lm_fetch_mexc_perp_candles(symbol: str, interval: str, limit: int = 1000) -
     limit = max(1, min(limit, 2000))
     try:
         r = req.get(
-            f"{MEXC_PERP_API}/kline",
-            params={"symbol": mx_sym, "interval": mx_iv, "limit": limit},
+            f"{MEXC_PERP_API}/kline/{mx_sym}",
+            params={"interval": mx_iv, "limit": limit},
             timeout=12,
         )
         if r.status_code != 200:
@@ -9917,12 +9917,13 @@ def _lm_attach_candle_features(row, interval: str = None, limit: int = 1000) -> 
         interval = tf if tf in _LM_ALLOWED_CANDLE_INTERVALS else "15m"
 
     limit  = max(5, min(limit, 4000))
-    symbol = (getattr(row, "symbol", None) or "").upper().strip()
+
+    # Phase 9.1: resolve candle source from data_source_config. Use the same
+    # normalized execution_symbol the cache bust uses so keys always match.
+    config         = _lm_data_source_config(row, snapshot=snap)
+    symbol         = config["execution_symbol"]
     if not symbol:
         return snap, {}
-
-    # Phase 9.1: resolve candle source from data_source_config
-    config         = _lm_data_source_config(row, snapshot=snap)
     candle_src     = config["candle_source"]          # "binance" or "mexc"
     source_market  = config["execution_market"]       # "perpetual" or "spot"
     fallback_policy = config["fallback_policy"]
@@ -13435,18 +13436,22 @@ def api_lm_items_refresh_candles(item_id):
         limit = 1000
     limit = max(5, min(limit, 4000))
 
-    # Bust the TTL cache so the user gets truly fresh candles on manual refresh
+    # Bust the TTL cache so the user gets truly fresh candles on manual refresh.
+    # Phase 9.1 fix: bust the key that the fetcher actually uses — candle_source
+    # from data_sources, not row.exchange (which may differ when MEXC is selected).
     resolved_interval = interval if interval else (
         (getattr(row, "timeframe", None) or "").strip() or "15m"
     )
     if resolved_interval not in _LM_ALLOWED_CANDLE_INTERVALS:
         resolved_interval = "15m"
+    snap   = _json_loads_safe(row.snapshot_json, {})
+    config = _lm_data_source_config(row, snapshot=snap)
     _lm_candle_cache_bust(
-        (getattr(row, "symbol",   "") or "").upper().strip(),
+        config["execution_symbol"],
         resolved_interval,
         limit=limit,
-        exchange=(getattr(row, "exchange", None) or "binance").lower().strip() or "binance",
-        market=(getattr(row, "market",   None) or "perpetual").lower().strip() or "perpetual",
+        exchange=config["candle_source"],
+        market=config["execution_market"],
     )
 
     try:
