@@ -1472,7 +1472,8 @@ BYBIT_PERP_API      = "https://api.bybit.com/v5/market"
 OKX_SPOT_API        = "https://www.okx.com/api/v5/market"
 OKX_PERP_API        = "https://www.okx.com/api/v5/market"
 MEXC_SPOT_API       = "https://api.mexc.com/api/v3"
-MEXC_PERP_API       = "https://contract.mexc.com/api/v1/contract"
+MEXC_PERP_API       = "https://contract.mexc.com/api/v1/contract"   # public market endpoints
+MEXC_CONTRACT_PRIV  = "https://contract.mexc.com/api/v1/private"     # private account endpoints
 
 # Interval mapping per exchange
 # Binance: 1m 3m 5m 15m 30m 1h 2h 4h 6h 8h 12h 1d
@@ -11359,35 +11360,54 @@ def _lm_mexc_private_request(method: str, path: str,
                               params: dict = None, body: dict = None) -> dict:
     """Sign and send a private MEXC Contract API v1 request.
 
+    Base: MEXC_CONTRACT_PRIV (https://contract.mexc.com/api/v1/private)
     Keys read from env only — never logged or returned. 15s timeout.
+
     Auth per https://mexcdevelop.github.io/apidocs/contract_v1_en/:
-      Headers: ApiKey, Request-Time, Signature, Content-Type
+      Headers: ApiKey, Request-Time, Recv-Window, Signature, Content-Type
       Signature = HMAC-SHA256(api_key + timestamp_ms + sorted_query_string)
-    Returns {ok, status_code, data, error}.
+
+    Returns {ok, status_code, data, error, _debug}.
+    _debug contains masked diagnostics only — no keys or secrets.
     """
     import os as _os, time as _time
     api_key    = _os.environ.get("MEXC_API_KEY",    "").strip()
     api_secret = _os.environ.get("MEXC_API_SECRET", "").strip()
     if not api_key or not api_secret:
-        return {"ok": False, "error": "mexc_keys_missing", "data": None, "status_code": None}
+        return {"ok": False, "error": "mexc_keys_missing", "data": None, "status_code": None,
+                "_debug": {"auth_style": "contract_v1_header", "keys_present": False}}
 
-    ts_ms = str(int(_time.time() * 1000))
+    ts_ms   = str(int(_time.time() * 1000))
+    recv_win = "5000"
 
-    # Build sorted query string from caller params only (no extra sign_params injected)
+    # Sorted query string from caller params only
     qs = "&".join(f"{k}={v}" for k, v in sorted((params or {}).items()))
 
-    # Signature string: api_key + timestamp_ms + sorted_query_string
+    # Signature: HMAC-SHA256(api_key + timestamp_ms + sorted_query_string)
     sign_str = api_key + ts_ms + qs
     sig = hmac.new(api_secret.encode(), sign_str.encode(), hashlib.sha256).hexdigest()
 
     headers = {
         "ApiKey":       api_key,
         "Request-Time": ts_ms,
+        "Recv-Window":  recv_win,
         "Signature":    sig,
         "Content-Type": "application/json",
     }
 
-    url = MEXC_PERP_API.rstrip("/") + "/" + path.lstrip("/")
+    url = MEXC_CONTRACT_PRIV.rstrip("/") + "/" + path.lstrip("/")
+
+    _debug = {
+        "auth_style":          "contract_v1_header",
+        "base_url":            MEXC_CONTRACT_PRIV,
+        "endpoint_path":       path,
+        "full_url":            url,
+        "request_time_ms":     ts_ms,
+        "recv_window":         recv_win,
+        "signature_present":   True,
+        "api_key_tail":        api_key[-4:] if len(api_key) >= 4 else "****",
+        "query_string_length": len(qs),
+    }
 
     try:
         if method.upper() == "GET":
@@ -11396,46 +11416,84 @@ def _lm_mexc_private_request(method: str, path: str,
             resp = req.post(url, params=params or {}, json=body or {}, headers=headers, timeout=15)
         else:
             return {"ok": False, "error": f"unsupported_method:{method}",
-                    "data": None, "status_code": None}
+                    "data": None, "status_code": None, "_debug": _debug}
+
+        _debug["status_code"] = resp.status_code
+        _debug["response_content_type"] = resp.headers.get("Content-Type", "")
+
+        is_html = "text/html" in _debug["response_content_type"].lower()
+        _debug["response_type"] = "html" if is_html else (
+            "json" if "application/json" in _debug["response_content_type"].lower() else "text"
+        )
+
         try:
             data = resp.json()
+            if is_html:
+                data = {"html_response": True, "preview": resp.text[:120]}
         except Exception:
-            data = {"raw": resp.text[:500]}
+            data = {"raw": resp.text[:300]}
+
         ok = resp.status_code < 400
+        err = None
+        if not ok:
+            if is_html:
+                err = f"html_response_http{resp.status_code}_likely_auth_or_path_error"
+            else:
+                err = (data.get("msg") or data.get("message") or resp.text[:160])
+
         return {
             "ok":          ok,
             "status_code": resp.status_code,
             "data":        data,
-            "error":       None if ok else (data.get("msg") or resp.text[:200]),
+            "error":       err,
+            "_debug":      _debug,
         }
     except Exception as exc:
-        return {"ok": False, "error": str(exc)[:200], "data": None, "status_code": None}
+        _debug["exception"] = type(exc).__name__
+        return {"ok": False, "error": str(exc)[:200], "data": None,
+                "status_code": None, "_debug": _debug}
 
 
 def _lm_mexc_demo_health_check() -> dict:
-    """Read-only MEXC account connectivity check. Never submits or cancels orders.
+    """Read-only MEXC Contract account connectivity check. Never submits or cancels orders.
 
-    Returns {ok, account_reachable, balance_usdt, warnings, error}.
+    Calls GET /api/v1/private/account/assets (read-only, no order endpoint).
+    Returns {ok, account_reachable, private_account_assets_ok, balance_usdt,
+             status_code, error_summary, warnings, _debug}.
     """
     gate = _lm_demo_trading_enabled()
     if gate["blocked"]:
         return {
-            "ok":               False,
-            "blocked":          True,
-            "blocked_reason":   gate["blocked_reason"],
-            "account_reachable": False,
+            "ok":                        False,
+            "blocked":                   True,
+            "blocked_reason":            gate["blocked_reason"],
+            "account_reachable":         False,
+            "private_account_assets_ok": False,
         }
-    result = _lm_mexc_private_request("GET", "account/asset")
+
+    # Correct private path: /api/v1/private/account/assets
+    result = _lm_mexc_private_request("GET", "account/assets")
+    dbg    = result.get("_debug", {})
+
     if not result["ok"]:
+        raw_err = (result.get("error") or "")[:160]
+        # Classify HTML 403/401 as auth/path error, not IP block
+        if dbg.get("response_type") == "html" or (result.get("status_code") in (401, 403)):
+            err_summary = f"private_auth_or_path_error (HTTP {result.get('status_code')}): {raw_err}"
+        else:
+            err_summary = raw_err
         return {
-            "ok":               False,
-            "account_reachable": False,
-            "error":            result.get("error"),
-            "status_code":      result.get("status_code"),
-            "warnings":         gate.get("warnings", []),
+            "ok":                        False,
+            "account_reachable":         False,
+            "private_account_assets_ok": False,
+            "status_code":               result.get("status_code"),
+            "error_summary":             err_summary,
+            "warnings":                  gate.get("warnings", []),
+            "_debug":                    dbg,
         }
-    data    = result.get("data") or {}
-    assets  = data.get("data") or []
+
+    data     = result.get("data") or {}
+    assets   = data.get("data") or []
     usdt_bal = None
     if isinstance(assets, list):
         for a in assets:
@@ -11444,12 +11502,16 @@ def _lm_mexc_demo_health_check() -> dict:
                     a.get("availableBalance") or a.get("available") or a.get("balance")
                 )
                 break
+
     return {
-        "ok":               True,
-        "account_reachable": True,
-        "balance_usdt":     usdt_bal,
-        "warnings":         gate.get("warnings", []),
-        "error":            None,
+        "ok":                        True,
+        "account_reachable":         True,
+        "private_account_assets_ok": True,
+        "balance_usdt":              usdt_bal,
+        "status_code":               result.get("status_code"),
+        "error_summary":             None,
+        "warnings":                  gate.get("warnings", []),
+        "_debug":                    dbg,
     }
 
 
@@ -15524,7 +15586,7 @@ def api_lm_items_ai_chat(item_id):
 @app.route("/api/live-monitor/demo-execution/status", methods=["GET"])
 @login_required
 def api_lm_demo_execution_status():
-    """Return demo execution gate status and MEXC account health. Read-only."""
+    """Return demo execution gate status, MEXC account health, and safe diagnostics."""
     uid, _ = _current_user_id_and_user()
     if not uid:
         return jsonify({"error": "no_user"}), 401
@@ -15534,10 +15596,32 @@ def api_lm_demo_execution_status():
     if not gate["blocked"]:
         health = _lm_mexc_demo_health_check()
 
+    # Safe diagnostics — no keys, no secrets, no full signatures
+    priv_debug = (health or {}).get("_debug") or {}
+    mexc_private_debug = {
+        "base_url_used":         priv_debug.get("base_url"),
+        "endpoint_path_used":    priv_debug.get("endpoint_path"),
+        "full_url_used":         priv_debug.get("full_url"),
+        "auth_style":            priv_debug.get("auth_style"),
+        "request_time_present":  bool(priv_debug.get("request_time_ms")),
+        "signature_present":     bool(priv_debug.get("signature_present")),
+        "api_key_present":       gate.get("mexc_keys_present", False),
+        "api_key_tail":          priv_debug.get("api_key_tail"),
+        "status_code":           priv_debug.get("status_code"),
+        "response_type":         priv_debug.get("response_type"),
+        "error_summary":         ((health or {}).get("error_summary") or "")[:160] or None,
+    } if health is not None else None
+
+    # Strip internal _debug from health before returning to client
+    health_clean = None
+    if health is not None:
+        health_clean = {k: v for k, v in health.items() if k != "_debug"}
+
     return jsonify({
-        "ok":     True,
-        "gate":   gate,
-        "health": health,
+        "ok":                  True,
+        "gate":                gate,
+        "health":              health_clean,
+        "mexc_private_debug":  mexc_private_debug,
     })
 
 
