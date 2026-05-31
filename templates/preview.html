@@ -764,6 +764,70 @@ svg{display:block}
 .lm-ai-toggle{display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:8px;border:1px solid rgba(34,211,238,.3);background:rgba(34,211,238,.07);font-size:11px;font-weight:700;color:var(--accent);cursor:pointer;white-space:nowrap;user-select:none}
 .lm-ai-toggle.off{border-color:var(--border);background:transparent;color:var(--text-3)}
 
+/* Live Monitor 4-tab sidebar */
+.lm-stabs{display:flex;flex-shrink:0;border-bottom:1px solid var(--border);background:var(--bg-panel);overflow-x:auto}
+.lm-stabs::-webkit-scrollbar{height:0}
+.lm-stab{flex:1;min-width:0;padding:8px 4px;font-size:9.5px;font-weight:700;letter-spacing:.4px;color:var(--text-3);background:none;border:none;border-bottom:2px solid transparent;cursor:pointer;white-space:nowrap;transition:color .15s,border-color .15s;text-align:center;font-family:inherit}
+.lm-stab:hover{color:var(--text-2)}
+.lm-stab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.lm-stab-pane{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}
+.lm-stab-pane[hidden]{display:none!important}
+.lm-ds-row{display:flex;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg-card)}
+.lm-ds-lbl{font-size:9.5px;font-weight:700;letter-spacing:.6px;color:var(--text-3);white-space:nowrap}
+.lm-ds-sel{flex:1;background:var(--bg-card-2);border:1px solid var(--border);color:var(--text);border-radius:5px;padding:3px 6px;font-size:11px;outline:none;cursor:pointer;font-family:inherit}
+.lm-ds-sel:focus{border-color:var(--accent)}
+.lm-dh-wrap{flex-shrink:0;border-bottom:1px solid var(--border);background:var(--bg-panel)}
+.lm-dh-head{display:flex;align-items:center;gap:6px;padding:5px 10px;cursor:pointer;user-select:none}
+.lm-dh-lbl{font-size:9.5px;font-weight:700;letter-spacing:.6px;color:var(--text-3);flex:1}
+.lm-dh-ctl{font-size:9px;color:var(--text-3);transition:transform .15s;flex-shrink:0}
+.lm-dh-body{overflow-x:auto;max-height:180px;overflow-y:auto}
+.lm-dh-body.collapsed{display:none}
+.lm-dh-tbl{width:100%;border-collapse:collapse;font-size:10px;min-width:480px}
+.lm-dh-tbl th{padding:4px 7px;text-align:left;font-size:9px;font-weight:700;letter-spacing:.5px;color:var(--text-3);border-bottom:1px solid var(--border);white-space:nowrap;position:sticky;top:0;background:var(--bg-panel)}
+.lm-dh-tbl td{padding:4px 7px;border-bottom:1px solid rgba(27,38,54,.4);color:var(--text-2);font-size:10px;white-space:nowrap}
+.lm-dh-tbl tr:last-child td{border-bottom:0}
+.lm-dh-ok{color:var(--green-2)}
+.lm-dh-warn{color:var(--yellow)}
+.lm-dh-err{color:var(--red-2)}
+.lm-dh-na{color:var(--text-3)}
+.lm-pane-scroll{flex:1;overflow-y:auto}
+.lm-pane-head{font-size:9.5px;font-weight:700;letter-spacing:.8px;color:var(--accent);padding:8px 10px;border-bottom:1px solid var(--border);flex-shrink:0}
+.lm-pane-section{padding:10px}
+.lm-pane-sh{font-size:9.5px;font-weight:700;letter-spacing:.6px;color:var(--text-3);margin-bottom:7px}
+.lm-tbl-wrap{overflow-x:auto;overflow-y:auto;max-height:130px;border:1px solid var(--border);border-radius:6px}
+.lm-tbl-wrap::-webkit-scrollbar{height:5px;width:5px}
+.lm-tbl-wrap::-webkit-scrollbar-thumb{background:var(--border-2);border-radius:3px}
+.lm-tbl-wrap::-webkit-scrollbar-track{background:transparent}
+.lm-inner-tbl{width:100%;border-collapse:collapse;font-size:10px;min-width:340px}
+.lm-inner-tbl th{padding:5px 8px;text-align:left;font-size:9px;font-weight:700;letter-spacing:.4px;color:var(--text-3);border-bottom:1px solid var(--border);white-space:nowrap;position:sticky;top:0;background:var(--bg-panel);z-index:1}
+.lm-inner-tbl td{padding:5px 8px;border-bottom:1px solid rgba(27,38,54,.4);color:var(--text-2);white-space:nowrap;font-size:10px}
+.lm-inner-tbl tr:last-child td{border-bottom:0}
+.lm-rg-card{background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:6px}
+.lm-rg-card-top{display:flex;align-items:center;gap:6px;margin-bottom:3px}
+.lm-rg-ico{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.lm-rg-ico.ok{background:var(--green-2)}
+.lm-rg-ico.warn{background:var(--yellow)}
+.lm-rg-ico.err{background:var(--red-2)}
+.lm-rg-ico.off{background:var(--text-3)}
+.lm-rg-label{font-size:10px;font-weight:700;color:var(--text-2);flex:1}
+.lm-rg-val{font-size:10px;font-weight:700;font-family:var(--mono);color:var(--text-3)}
+.lm-rg-note{font-size:9.5px;color:var(--text-3);line-height:1.35}
+.lm-jn-cards{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px}
+.lm-jn-card{background:var(--bg-card);border:1px solid var(--border);border-radius:7px;padding:7px 9px}
+.lm-jn-card-l{font-size:9px;font-weight:700;letter-spacing:.5px;color:var(--text-3);margin-bottom:3px}
+.lm-jn-card-v{font-size:14px;font-weight:700;font-family:var(--mono);color:var(--text)}
+.lm-jn-card-v.g{color:var(--green-2)}
+.lm-jn-card-v.r{color:var(--red-2)}
+/* Event timeline table (enhanced) */
+.lm-evt-wrap{overflow-x:auto;overflow-y:auto}
+.lm-evt-wrap::-webkit-scrollbar{height:5px;width:5px}
+.lm-evt-wrap::-webkit-scrollbar-thumb{background:var(--border-2);border-radius:3px}
+.lm-evt-tbl{width:100%;border-collapse:collapse;font-size:10.5px;min-width:760px}
+.lm-evt-tbl th{padding:5px 8px;text-align:left;font-size:9px;font-weight:700;letter-spacing:.5px;color:var(--text-3);border-bottom:1px solid var(--border);white-space:nowrap;position:sticky;top:0;background:var(--bg-card);z-index:1}
+.lm-evt-tbl td{padding:5px 8px;border-bottom:1px solid rgba(27,38,54,.4);color:var(--text-2);white-space:nowrap;font-size:10.5px}
+.lm-evt-tbl tr:last-child td{border-bottom:0}
+.lm-evt-tbl td.notes{max-width:140px;overflow:hidden;text-overflow:ellipsis}
+
 /* Dashboard (Wave 8) */
 .db-wrap{display:flex;flex-direction:column;gap:14px}
 .db-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap}
@@ -4315,8 +4379,141 @@ svg{display:block}
         '</div>'+
         '<div class="lm-body">'+
           '<div class="lm-left">'+
-            '<div class="lm-left-head"><span>ACTIVE SETUPS</span><span id="lmCount" style="font-size:11px;color:var(--accent);font-weight:700;font-family:var(--mono)">0</span></div>'+
-            '<div class="lm-cards" id="lmCards"></div>'+
+            /* ── 4-tab sidebar header ── */
+            '<div class="lm-stabs">'+
+              '<button class="lm-stab active" data-lmstab="setups">Live Setups</button>'+
+              '<button class="lm-stab" data-lmstab="terminal">Terminal</button>'+
+              '<button class="lm-stab" data-lmstab="riskguard">Risk Guard</button>'+
+              '<button class="lm-stab" data-lmstab="journal">Journal</button>'+
+            '</div>'+
+            /* ── Live Setups pane ── */
+            '<div class="lm-stab-pane" id="lmPane-setups">'+
+              '<div class="lm-ds-row">'+
+                '<span class="lm-ds-lbl">DATA SOURCE</span>'+
+                '<select class="lm-ds-sel" id="lmDataSrc">'+
+                  '<option value="binance">Binance</option>'+
+                  '<option value="bybit">Bybit</option>'+
+                  '<option value="okx">OKX</option>'+
+                  '<option value="mexc">MEXC</option>'+
+                  '<option value="aggregated">Aggregated</option>'+
+                '</select>'+
+              '</div>'+
+              '<div class="lm-dh-wrap">'+
+                '<div class="lm-dh-head" id="lmDhHead">'+
+                  '<span class="lm-dh-lbl">DATA HEALTH</span>'+
+                  '<span class="lm-dh-ctl" id="lmDhCtl">&#9658;</span>'+
+                '</div>'+
+                '<div class="lm-dh-body collapsed" id="lmDhBody">'+
+                  '<table class="lm-dh-tbl">'+
+                    '<thead><tr><th>Metric</th><th>Value</th><th>Source</th><th>Status</th><th>Updated</th><th>Notes</th></tr></thead>'+
+                    '<tbody>'+
+                      '<tr><td>Live Price</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td><td class="lm-dh-na">Pending</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td></tr>'+
+                      '<tr><td>Mark Price</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td><td class="lm-dh-na">Pending</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td></tr>'+
+                      '<tr><td>Order Book</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td><td class="lm-dh-na">Pending</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td></tr>'+
+                      '<tr><td>Liquidations</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td><td class="lm-dh-na">Pending</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td></tr>'+
+                      '<tr><td>Open Interest</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td><td class="lm-dh-na">Pending</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td></tr>'+
+                      '<tr><td>OI Change</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td><td class="lm-dh-na">Pending</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td></tr>'+
+                      '<tr><td>Delta</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td><td class="lm-dh-na">Pending</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td></tr>'+
+                      '<tr><td>Long/Short Ratio</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td><td class="lm-dh-na">Pending</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td></tr>'+
+                      '<tr><td>Funding Rate</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td><td class="lm-dh-na">Pending</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td></tr>'+
+                      '<tr><td>Candle Status</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td><td class="lm-dh-na">Pending</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td></tr>'+
+                      '<tr><td>AI Entry Analysis</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td><td class="lm-dh-na">Pending</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td></tr>'+
+                    '</tbody>'+
+                  '</table>'+
+                '</div>'+
+              '</div>'+
+              '<div class="lm-left-head"><span>ACTIVE SETUPS</span><span id="lmCount" style="font-size:11px;color:var(--accent);font-weight:700;font-family:var(--mono)">0</span></div>'+
+              '<div class="lm-cards" id="lmCards"></div>'+
+            '</div>'+
+            /* ── Trading Terminal pane ── */
+            '<div class="lm-stab-pane" id="lmPane-terminal" hidden>'+
+              '<div class="lm-pane-head">TRADING TERMINAL</div>'+
+              '<div class="lm-pane-scroll" style="padding:10px">'+
+                '<div class="lm-pane-section">'+
+                  '<div class="lm-pane-sh">EXECUTION MODE</div>'+
+                  '<select style="width:100%;background:var(--bg-card-2);border:1px solid var(--border);color:var(--text-3);border-radius:6px;padding:6px 8px;font-size:11px;outline:none;cursor:not-allowed;margin-bottom:8px" disabled>'+
+                    '<option>Confirmation (Pending)</option>'+
+                    '<option>OB Touch</option>'+
+                    '<option>Deep OB</option>'+
+                    '<option>Manual Approval</option>'+
+                  '</select>'+
+                  '<div style="font-size:10px;color:var(--text-3);padding:5px 8px;background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.2);border-radius:5px;line-height:1.4">'+
+                    '<b style="color:var(--yellow)">Demo Only</b> — Execution disabled. Enable via DEMO_TRADING_ENABLED env flag.'+
+                  '</div>'+
+                '</div>'+
+                '<div class="lm-pane-section" style="margin-top:10px">'+
+                  '<div class="lm-pane-sh">PENDING ORDERS</div>'+
+                  '<div class="lm-tbl-wrap">'+
+                    '<table class="lm-inner-tbl">'+
+                      '<thead><tr><th>Symbol</th><th>Side</th><th>Type</th><th>Qty</th><th>Price</th><th>Status</th></tr></thead>'+
+                      '<tbody><tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:14px 0">No pending orders</td></tr></tbody>'+
+                    '</table>'+
+                  '</div>'+
+                '</div>'+
+                '<div class="lm-pane-section" style="margin-top:10px">'+
+                  '<div class="lm-pane-sh">OPEN POSITIONS</div>'+
+                  '<div class="lm-tbl-wrap">'+
+                    '<table class="lm-inner-tbl">'+
+                      '<thead><tr><th>Symbol</th><th>Side</th><th>Size</th><th>Entry</th><th>Mark</th><th>PnL</th></tr></thead>'+
+                      '<tbody><tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:14px 0">No open positions</td></tr></tbody>'+
+                    '</table>'+
+                  '</div>'+
+                '</div>'+
+                '<div style="display:flex;gap:6px;margin-top:12px">'+
+                  '<button class="btn" disabled style="flex:1;justify-content:center;opacity:.4;cursor:not-allowed">Buy / Long</button>'+
+                  '<button class="btn" disabled style="flex:1;justify-content:center;opacity:.4;cursor:not-allowed">Sell / Short</button>'+
+                '</div>'+
+              '</div>'+
+            '</div>'+
+            /* ── Risk Guard pane ── */
+            '<div class="lm-stab-pane" id="lmPane-riskguard" hidden>'+
+              '<div class="lm-pane-head">RISK GUARD</div>'+
+              '<div class="lm-pane-scroll" style="padding:10px">'+
+                '<div class="lm-rg-card">'+
+                  '<div class="lm-rg-card-top"><span class="lm-rg-ico off"></span><span class="lm-rg-label">Trading Status</span><span class="lm-rg-val">DISABLED</span></div>'+
+                  '<div class="lm-rg-note">Demo trading is off. Set DEMO_TRADING_ENABLED=true to enable.</div>'+
+                '</div>'+
+                '<div class="lm-rg-card">'+
+                  '<div class="lm-rg-card-top"><span class="lm-rg-ico ok"></span><span class="lm-rg-label">Max Concurrent Trades</span><span class="lm-rg-val">3</span></div>'+
+                  '<div class="lm-rg-note">Hard limit on simultaneous open positions.</div>'+
+                '</div>'+
+                '<div class="lm-rg-card">'+
+                  '<div class="lm-rg-card-top"><span class="lm-rg-ico ok"></span><span class="lm-rg-label">Max Loss / Trade</span><span class="lm-rg-val">1.0 %</span></div>'+
+                  '<div class="lm-rg-note">Risk Guard rejects proposals exceeding this threshold.</div>'+
+                '</div>'+
+                '<div class="lm-rg-card">'+
+                  '<div class="lm-rg-card-top"><span class="lm-rg-ico ok"></span><span class="lm-rg-label">Max Leverage</span><span class="lm-rg-val">5 ×</span></div>'+
+                  '<div class="lm-rg-note">Leverage cap enforced before any demo submission.</div>'+
+                '</div>'+
+                '<div class="lm-rg-card">'+
+                  '<div class="lm-rg-card-top"><span class="lm-rg-ico warn"></span><span class="lm-rg-label">Data Freshness</span><span class="lm-rg-val">UNKNOWN</span></div>'+
+                  '<div class="lm-rg-note">Stale or missing market data will block execution.</div>'+
+                '</div>'+
+                '<div class="lm-rg-card">'+
+                  '<div class="lm-rg-card-top"><span class="lm-rg-ico off"></span><span class="lm-rg-label">Last Decision</span><span class="lm-rg-val">—</span></div>'+
+                  '<div class="lm-rg-note">No proposals evaluated yet this session.</div>'+
+                '</div>'+
+              '</div>'+
+            '</div>'+
+            /* ── Trade Journal pane ── */
+            '<div class="lm-stab-pane" id="lmPane-journal" hidden>'+
+              '<div class="lm-pane-head">TRADE JOURNAL</div>'+
+              '<div class="lm-pane-scroll" style="padding:10px">'+
+                '<div class="lm-jn-cards">'+
+                  '<div class="lm-jn-card"><div class="lm-jn-card-l">TOTAL TRADES</div><div class="lm-jn-card-v">0</div></div>'+
+                  '<div class="lm-jn-card"><div class="lm-jn-card-l">WIN RATE</div><div class="lm-jn-card-v">—</div></div>'+
+                  '<div class="lm-jn-card"><div class="lm-jn-card-l">AVG R</div><div class="lm-jn-card-v">—</div></div>'+
+                  '<div class="lm-jn-card"><div class="lm-jn-card-l">NET PnL</div><div class="lm-jn-card-v">—</div></div>'+
+                '</div>'+
+                '<div class="lm-pane-sh">CLOSED TRADES</div>'+
+                '<div class="lm-tbl-wrap" style="max-height:160px">'+
+                  '<table class="lm-inner-tbl" style="min-width:400px">'+
+                    '<thead><tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL</th><th>R</th><th>Status</th></tr></thead>'+
+                    '<tbody><tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:14px 0">No closed trades</td></tr></tbody>'+
+                  '</table>'+
+                '</div>'+
+              '</div>'+
+            '</div>'+
           '</div>'+
           '<div class="lm-right"><div class="lm-right-scroll" id="lmRight"></div></div>'+
         '</div>'+
@@ -4365,6 +4562,38 @@ svg{display:block}
       else { aiTog.classList.add("off"); if(aiLbl) aiLbl.textContent="AI Off"; }
     });
     var rb=E("lmRefresh"); if(rb) rb.addEventListener("click",_lmRefresh);
+    /* Manual Add Pair wiring (Task 4). */
+    var ab=E("lmAddBtn"); if(ab) ab.addEventListener("click",_lmManualAdd);
+    var ai=E("lmAdd"); if(ai) ai.addEventListener("keydown",function(e){ if(e.key==="Enter") _lmManualAdd(); });
+    /* 4-tab sidebar switching */
+    [].forEach.call(scroll.querySelectorAll(".lm-stab"),function(tab){
+      tab.addEventListener("click",function(){
+        [].forEach.call(scroll.querySelectorAll(".lm-stab"),function(t){t.classList.remove("active");});
+        tab.classList.add("active");
+        var paneId="lmPane-"+tab.getAttribute("data-lmstab");
+        [].forEach.call(scroll.querySelectorAll(".lm-stab-pane"),function(p){p.hidden=true;});
+        var pane=document.getElementById(paneId);
+        if(pane) pane.hidden=false;
+      });
+    });
+    /* Data Health collapse toggle */
+    var _dhHead=document.getElementById("lmDhHead");
+    var _dhBody=document.getElementById("lmDhBody");
+    var _dhCtl=document.getElementById("lmDhCtl");
+    if(_dhHead&&_dhBody){
+      _dhHead.addEventListener("click",function(){
+        var collapsed=_dhBody.classList.toggle("collapsed");
+        if(_dhCtl) _dhCtl.innerHTML=collapsed?"&#9658;":"&#9660;";
+      });
+    }
+    /* Data Source selector — persist to localStorage */
+    var _dsSel=document.getElementById("lmDataSrc");
+    if(_dsSel){
+      try{ var _dsSaved=localStorage.getItem("zyni_lm_data_src"); if(_dsSaved) _dsSel.value=_dsSaved; }catch(_){}
+      _dsSel.addEventListener("change",function(){
+        try{ localStorage.setItem("zyni_lm_data_src",_dsSel.value); }catch(_){}
+      });
+    }
     _lmUpdateSession();
     _lmRenderCards();
   }
@@ -5167,6 +5396,7 @@ svg{display:block}
               '<svg class="ico ico-sm" viewBox="0 0 24 24" style="width:10px;height:10px"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>Candles</button>'+
             '<button class="btn" type="button" id="lmCaptureMemBtn" data-lmcapturememory="'+item.id+'" title="Capture current setup reasoning memory" style="padding:2px 7px;font-size:10px">Mem+</button>'+
             '<button class="btn" type="button" id="lmUpdateOutcomesBtn" data-lmupdateoutcomes="'+item.id+'" title="Update outcome status for pending memory records" style="padding:2px 7px;font-size:10px">Out</button>'+
+            '<button class="btn" type="button" id="lmClearEventsBtn" title="Clear displayed event timeline" style="padding:2px 7px;font-size:10px;color:var(--text-3)">Clear</button>'+
           '</div>'+
           (_lmInstructionView!=="instructions"?'<div id="lmDetectedBlock" style="padding:6px 10px 0">'+_lmSetupReadinessHtml(item)+_lmDetectedEventsHtml(item)+_lmCandleFeaturesHtml(item)+_lmSetupMemoryHtml(item)+_lmAggregatedContextHtml(item)+'</div>':'<div id="lmDetectedBlock"></div>')+
           '<div class="sec-card-body" style="padding:8px 10px" id="lmEvents">'+
@@ -5553,6 +5783,14 @@ svg{display:block}
         });
       });
     });
+    // Clear Timeline button (UI-only — clears displayed events without API call)
+    var clearEvBtn=box.querySelector("#lmClearEventsBtn");
+    if(clearEvBtn){
+      clearEvBtn.addEventListener("click",function(){
+        var evBox=document.getElementById("lmEvents");
+        if(evBox) evBox.innerHTML='<div style="color:var(--text-3);font-size:11px">Timeline cleared.</div>';
+      });
+    }
     _lmBindChat(item);
     if(_lmInstructionView!=="instructions"){ _lmLoadEvents(item.id); }
   }
@@ -5689,20 +5927,57 @@ svg{display:block}
         if(!d||!d.events||!d.events.length){
           box.innerHTML='<div style="color:var(--text-3);font-size:11px">No events yet.</div>'; return;
         }
-        var dotIco={
-          added:'<svg class="ico" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
-          updated:'<svg class="ico" viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 1 7 7c0 3-1.6 5.5-4 6.7V17a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-1.3C6.6 14.5 5 12 5 9a7 7 0 0 1 7-7z"/></svg>',
-          removed:'<svg class="ico" viewBox="0 0 24 24"><path d="M10.3 4L2 20h20L13.7 4a2 2 0 0 0-3.4 0z"/></svg>'
-        };
-        box.innerHTML='<div class="evt-list">'+d.events.map(function(ev){
-          var dc=ev.event_type==="updated"?"agent":ev.event_type==="removed"?"alert":"added";
-          var t=ev.created_at?_lmAgo(ev.created_at):"—";
-          var desc=ev.event_description||ev.event_type;
-          return '<div class="evt-item">'+
-            '<div class="evt-dot '+dc+'">'+(dotIco[ev.event_type]||dotIco.added)+'</div>'+
-            '<div><div class="evt-time">'+esc(t)+'</div><div class="evt-text">'+esc(desc)+'</div></div>'+
-          '</div>';
-        }).join("")+'</div>';
+        // Look up item context for symbol, zone, price columns
+        var _evItem=null;
+        for(var _ei=0;_ei<liveMonitorItems.length;_ei++){
+          if(liveMonitorItems[_ei].id===itemId){_evItem=liveMonitorItems[_ei];break;}
+        }
+        var _evSym=_evItem?esc(_evItem.symbol||'—'):'—';
+        var _evZone=_evItem&&_evItem.zone_high!=null&&_evItem.zone_low!=null
+          ?fmt(_evItem.zone_low)+'–'+fmt(_evItem.zone_high):'—';
+        var _evPrice=_evItem&&_evItem.current_price!=null?fmt(_evItem.current_price):'—';
+        box.innerHTML=
+          '<div class="lm-evt-wrap">'+
+          '<table class="lm-evt-tbl">'+
+          '<thead><tr>'+
+            '<th>Time</th><th>Imp.</th><th>Event Type</th><th>Symbol</th>'+
+            '<th>Side</th><th>Zone Range</th><th>Price</th>'+
+            '<th>Change</th><th>Source</th><th>Fresh</th><th>Notes</th>'+
+          '</tr></thead>'+
+          '<tbody>'+
+          d.events.map(function(ev){
+            var t=ev.created_at?_lmAgo(ev.created_at):'—';
+            var imp=ev.event_type==='updated'
+              ?'<span style="color:var(--red-2);font-weight:700">High</span>'
+              :ev.event_type==='added'
+              ?'<span style="color:var(--yellow);font-weight:700">Med</span>'
+              :'<span style="color:var(--text-3)">Low</span>';
+            var ageMs=ev.created_at?(Date.now()-new Date(ev.created_at).getTime()):Infinity;
+            var fresh=ageMs<120000
+              ?'<span class="lm-dh-ok">Fresh</span>'
+              :'<span class="lm-dh-na">Stale</span>';
+            var desc=ev.event_description||ev.event_type||'—';
+            var dLow=desc.toLowerCase();
+            var side='<span class="lm-dh-na">—</span>';
+            if(dLow.indexOf('bull')!==-1||dLow.indexOf('long')!==-1||dLow.indexOf('buy')!==-1)
+              side='<span style="color:var(--green-2)">Long</span>';
+            else if(dLow.indexOf('bear')!==-1||dLow.indexOf('short')!==-1||dLow.indexOf('sell')!==-1)
+              side='<span style="color:var(--red-2)">Short</span>';
+            return '<tr>'+
+              '<td>'+esc(t)+'</td>'+
+              '<td>'+imp+'</td>'+
+              '<td>'+esc(ev.event_type||'—')+'</td>'+
+              '<td>'+_evSym+'</td>'+
+              '<td>'+side+'</td>'+
+              '<td class="lm-dh-na">'+_evZone+'</td>'+
+              '<td class="lm-dh-na">'+_evPrice+'</td>'+
+              '<td class="lm-dh-na">—</td>'+
+              '<td class="lm-dh-na">Monitor</td>'+
+              '<td>'+fresh+'</td>'+
+              '<td class="notes">'+esc(desc)+'</td>'+
+            '</tr>';
+          }).join('')+
+          '</tbody></table></div>';
       })
       .catch(function(){
         if(_lmInstructionView==="instructions") return;
