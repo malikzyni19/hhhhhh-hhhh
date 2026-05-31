@@ -12366,14 +12366,19 @@ def _lm_call_openai_compatible_agent(agent: dict, context: dict,
                     f"agent.id={agent.get('id')!r} fallback_env={fallback_env!r}"
                 )
 
-    # Priority 1: agent.api_base (resolved from api_base_env at config time)
-    # Priority 2: env var from _api_base_env if present
-    # Priority 3: provider default
-    custom_base_env = agent.get("_api_base_env", "").strip()
+    # Priority 1: _api_base_env env var (from AI_AGENTS_JSON api_base_env)
+    # Priority 2: provider hardcoded URL map
+    # Priority 3: OpenRouter fallback
+    _PROVIDER_BASE_URLS = {
+        "openrouter": "https://openrouter.ai/api/v1/chat/completions",
+        "deepseek":   "https://api.deepseek.com/v1/chat/completions",
+        "openai":     "https://api.openai.com/v1/chat/completions",
+        "custom_openai": "",
+    }
     api_base = (
-        agent.get("api_base")
-        or (os.environ.get(custom_base_env, "").strip() if custom_base_env else "")
-        or os.environ.get("OPENROUTER_API_BASE", "https://openrouter.ai/api/v1/chat/completions")
+        os.environ.get(agent.get("_api_base_env", "") or "", "").strip()
+        or _PROVIDER_BASE_URLS.get(provider, "")
+        or "https://openrouter.ai/api/v1/chat/completions"
     )
     model    = agent.get("model", "")
 
