@@ -14027,8 +14027,8 @@ def api_lm_items_ai_analyze(item_id):
         cached_agent_id = cached.get("agent_id", "")
         if last_at and cached_agent_id == resolved_agent_id:
             try:
-                from datetime import datetime, timezone as _tz
-                diff = (datetime.now(_tz.utc) - datetime.fromisoformat(last_at)).total_seconds()
+                from datetime import datetime as _dt, timezone as _tz
+                diff = (_dt.now(_tz.utc) - _dt.fromisoformat(last_at)).total_seconds()
                 if diff < 10:
                     return jsonify({
                         "ok":        True,
@@ -14136,8 +14136,8 @@ def api_lm_items_ai_consensus(item_id):
         last_at = snap["latest_ai_consensus"].get("computed_at")
         if last_at:
             try:
-                from datetime import datetime, timezone as _tz
-                diff = (datetime.now(_tz.utc) - datetime.fromisoformat(last_at)).total_seconds()
+                from datetime import datetime as _dt, timezone as _tz
+                diff = (_dt.now(_tz.utc) - _dt.fromisoformat(last_at)).total_seconds()
                 if diff < 15:
                     return jsonify({
                         "ok":       True,
