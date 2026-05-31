@@ -12403,6 +12403,9 @@ def _lm_call_openai_compatible_agent(agent: dict, context: dict,
     }
 
     resp = req.post(api_base, json=payload, headers=headers, timeout=20)
+    print(f"[_lm_call_openai_compatible_agent] HTTP status={resp.status_code} model={model} api_base={api_base[:60]}", flush=True)
+    if resp.status_code != 200:
+        print(f"[_lm_call_openai_compatible_agent] ERROR body={resp.text[:400]}", flush=True)
     if resp.status_code != 200:
         raise RuntimeError(f"HTTP {resp.status_code}")
     data = resp.json()
@@ -15233,6 +15236,9 @@ def api_lm_items_ai_trade_proposal(item_id):
                 "max_tokens":  800,
             }
             resp = req.post(api_base, headers=headers, json=payload, timeout=30)
+            print(f"[_lm_call_openai_compatible_agent] HTTP status={resp.status_code} model={model} api_base={api_base[:60]}", flush=True)
+            if resp.status_code != 200:
+                print(f"[_lm_call_openai_compatible_agent] ERROR body={resp.text[:400]}", flush=True)
             if resp.status_code == 200:
                 data   = resp.json()
                 text   = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
@@ -15433,6 +15439,9 @@ def api_lm_items_proposal_and_risk_check(item_id):
                 "temperature": 0.2, "max_tokens": 800,
             }
             resp = req.post(api_base, headers=headers, json=payload, timeout=30)
+            print(f"[_lm_call_openai_compatible_agent] HTTP status={resp.status_code} model={model} api_base={api_base[:60]}", flush=True)
+            if resp.status_code != 200:
+                print(f"[_lm_call_openai_compatible_agent] ERROR body={resp.text[:400]}", flush=True)
             if resp.status_code == 200:
                 text         = (resp.json().get("choices") or [{}])[0].get("message",{}).get("content","")
                 proposal_raw = _lm_parse_ai_json(text)
