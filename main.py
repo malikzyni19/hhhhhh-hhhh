@@ -12211,6 +12211,8 @@ def _lm_local_ai_fallback(context: dict, user_message: str = None) -> dict:
     zone       = health.get("zone") or {}
     bias       = health.get("bias") or {}
     checklist  = health.get("checklist") or {}
+    if isinstance(checklist, list):
+        checklist = {}
     warnings   = health.get("warnings") or []
 
     zone_status  = zone.get("zone_status", "unknown")
