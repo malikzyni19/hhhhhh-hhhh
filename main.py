@@ -12336,8 +12336,34 @@ def _lm_call_openai_compatible_agent(agent: dict, context: dict,
     # Priority 1: agent-specific env name (from AI_AGENTS_JSON api_key_env)
     # Priority 2: provider hardcoded map fallback
     custom_key_env = agent.get("_api_key_env", "").strip()
-    key_env  = custom_key_env if custom_key_env else key_env_map.get(provider, "OPENROUTER_API_KEY")
-    api_key  = os.environ.get(key_env, "").strip()
+
+    # Debug: log what the agent dict contains at call time (env name only, never key value)
+    print(
+        f"[_lm_call_openai_compatible_agent] agent.id={agent.get('id')!r} "
+        f"agent.keys={sorted(agent.keys())} "
+        f"_api_key_env={custom_key_env!r} provider={provider!r}"
+    )
+
+    key_env = custom_key_env if custom_key_env else key_env_map.get(provider, "OPENROUTER_API_KEY")
+    api_key = os.environ.get(key_env, "").strip()
+
+    # Fallback: if key still empty, try well-known env names keyed by agent id.
+    # Safety net for cases where _api_key_env is missing or the env var is unset.
+    if not api_key:
+        _id_to_env = {
+            "deepseek": "OPENROUTER_KEY_DEEPSEEK",
+            "llama":    "OPENROUTER_KEY_LLAMA",
+            "qwen":     "OPENROUTER_KEY_QWEN",
+        }
+        fallback_env = _id_to_env.get(agent.get("id", ""), "")
+        if fallback_env:
+            api_key = os.environ.get(fallback_env, "").strip()
+            if api_key:
+                print(
+                    f"[_lm_call_openai_compatible_agent] used id→env fallback "
+                    f"agent.id={agent.get('id')!r} fallback_env={fallback_env!r}"
+                )
+
     # Priority 1: agent.api_base (resolved from api_base_env at config time)
     # Priority 2: env var from _api_base_env if present
     # Priority 3: provider default
