@@ -5100,6 +5100,104 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     '</div>';
   }
 
+  // Phase 10.6: Smart Entry Plan HTML helper
+  function _lmSmartEntryHtml(item){
+    var plan=(item&&item.snapshot&&item.snapshot.latest_smart_entry_plan)||null;
+    if(!plan) return '<div style="color:var(--text-3);font-size:11px;padding:4px 0">No plan yet — click Refresh Smart Entry.</div>';
+    var mode=plan.mode||'parent_default';
+    var modeColors={
+      parent_default:'var(--accent)',
+      refined_internal_entry:'var(--green-2,#4ade80)',
+      blocked:'var(--red-2,#f87171)',
+      invalidated:'var(--yellow-2,#f59e0b)'
+    };
+    var modeLabels={
+      parent_default:'Default Zone Entry',
+      refined_internal_entry:'Refined Internal Entry',
+      blocked:'Blocked',
+      invalidated:'Zone Invalidated'
+    };
+    var mc=modeColors[mode]||'var(--text-3)';
+    var ml=modeLabels[mode]||mode;
+    var dir=(plan.direction||'neutral');
+    var dirColor=dir==='bullish'?'var(--green-2,#4ade80)':dir==='bearish'?'var(--red-2,#f87171)':'var(--text-3)';
+    var conf=typeof plan.confidence==='number'?plan.confidence:0;
+    var confColor=conf>=70?'var(--green-2,#4ade80)':conf>=40?'var(--yellow-2,#f59e0b)':'var(--text-3)';
+    var ep=plan.entry_price?plan.entry_price.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:6}):'—';
+    var ip=plan.invalidation_price?plan.invalidation_price.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:6}):'—';
+    var el=esc(plan.entry_label||'');
+    var age=plan.computed_at?(' &middot; '+esc(_lmAgo(plan.computed_at))):'';
+    var warns=(plan.warnings||[]).filter(Boolean);
+    var html='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:4px 0 6px">'+
+      '<span style="font-size:11px;font-weight:700;color:'+mc+'">'+esc(ml)+'</span>'+
+      '<span style="font-size:10px;color:'+dirColor+'">'+esc(dir.toUpperCase())+'</span>'+
+      '<span style="font-size:10px;color:'+confColor+'">conf: '+conf+'</span>'+
+      '<span style="font-size:9px;color:var(--text-3)">'+esc(plan.parent_tf||'')+'</span>'+
+      age+
+    '</div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px">'+
+      '<div class="mct-item" style="padding:6px 8px">'+
+        '<div class="mct-label">ENTRY</div>'+
+        '<div style="font-size:12px;font-weight:600;color:var(--text-1)">'+ep+'</div>'+
+        '<div class="mct-sub">'+el+'</div>'+
+      '</div>'+
+      '<div class="mct-item" style="padding:6px 8px">'+
+        '<div class="mct-label">INVALIDATION</div>'+
+        '<div style="font-size:12px;font-weight:600;color:var(--red-2,#f87171)">'+ip+'</div>'+
+        '<div class="mct-sub">If breached, setup fails</div>'+
+      '</div>'+
+    '</div>';
+    if(warns.length){
+      html+='<div style="font-size:10px;color:var(--yellow-2,#f59e0b);margin-bottom:4px">'+
+        warns.map(function(w){return '⚠ '+esc(w);}).join(' &middot; ')+'</div>';
+    }
+    var best=plan.best_candidate;
+    if(best&&mode==='refined_internal_entry'){
+      var bType=(best.type||'ob').toUpperCase();
+      var bTf=(best.tf||'').toUpperCase();
+      var bQl=esc(best.quality_label||'');
+      var bScore=best.score||0;
+      var bSr=(best.strong_reasons||[]).slice(0,3).map(function(r){return esc(r);}).join(' · ')||'—';
+      var bOv=typeof best.overlap_pct==='number'?best.overlap_pct.toFixed(1)+'%':'—';
+      html+='<div style="background:rgba(74,222,128,.06);border:1px solid rgba(74,222,128,.15);'+
+        'border-radius:6px;padding:6px 8px;margin-bottom:4px">'+
+        '<div style="font-size:10px;font-weight:700;color:var(--green-2,#4ade80);margin-bottom:3px">'+
+          'BEST CANDIDATE</div>'+
+        '<div style="font-size:11px;color:var(--text-1)">'+bTf+' '+bQl+' '+bType+
+          ' &middot; score <b>'+bScore+'</b>/100 &middot; overlap '+bOv+'</div>'+
+        '<div style="font-size:9px;color:var(--text-3);margin-top:2px">Signals: '+bSr+'</div>'+
+      '</div>';
+    }
+    var cands=plan.candidates||[];
+    if(cands.length>0){
+      html+='<details style="margin-top:2px"><summary style="font-size:10px;color:var(--text-3);cursor:pointer;user-select:none">'+
+        cands.length+' candidate(s) — expand</summary>'+
+        '<table style="width:100%;border-collapse:collapse;font-size:10px;margin-top:4px">'+
+        '<tr style="color:var(--text-3);border-bottom:1px solid var(--border)">'+
+          '<th style="text-align:left;padding:2px 4px">TF</th>'+
+          '<th style="text-align:left;padding:2px 4px">Type</th>'+
+          '<th style="text-align:right;padding:2px 4px">Q</th>'+
+          '<th style="text-align:right;padding:2px 4px">Score</th>'+
+          '<th style="text-align:right;padding:2px 4px">Dist%</th>'+
+          '<th style="text-align:right;padding:2px 4px">Ovlp%</th>'+
+        '</tr>'+
+        cands.slice(0,5).map(function(c){
+          var sc=c.score||0;
+          var scColor=sc>=70?'var(--green-2,#4ade80)':sc>=40?'var(--yellow-2,#f59e0b)':'var(--text-3)';
+          return '<tr style="border-bottom:1px solid rgba(148,163,184,.08)">'+
+            '<td style="padding:2px 4px;color:var(--accent)">'+esc((c.tf||'').toUpperCase())+'</td>'+
+            '<td style="padding:2px 4px">'+esc((c.type||'').toUpperCase())+(c.fib_level?' '+esc(c.fib_level):'')+'</td>'+
+            '<td style="padding:2px 4px;text-align:right;color:var(--text-2)">'+esc(c.quality_label||'')+'</td>'+
+            '<td style="padding:2px 4px;text-align:right;color:'+scColor+';font-weight:600">'+sc+'</td>'+
+            '<td style="padding:2px 4px;text-align:right;color:var(--text-3)">'+(typeof c.dist==='number'?c.dist.toFixed(2):'—')+'</td>'+
+            '<td style="padding:2px 4px;text-align:right;color:var(--text-3)">'+(typeof c.overlap_pct==='number'?c.overlap_pct.toFixed(1):'—')+'</td>'+
+          '</tr>';
+        }).join('')+
+        '</table></details>';
+    }
+    return html;
+  }
+
   // Phase 9.3-9.5: latest trade/proposal compact line (loaded async, shown if available)
   function _lmLatestTradeHtml(tradeList){
     if(!tradeList||!tradeList.length) return '';
@@ -5502,6 +5600,18 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         '</div>'+
       '</div>'+
 
+      '<div class="sec-card" style="margin-bottom:12px" id="lmSmartEntryCard">'+
+        '<div class="sec-card-head">'+
+          '<svg class="ico" style="width:13px;height:13px;color:var(--text-3)" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'+
+          '<span class="sch-title">SMART ENTRY PLAN</span>'+
+          '<button class="btn" type="button" id="lmSmartEntryRefreshBtn" data-lmsmartentryrefresh="'+item.id+'" title="Run fresh scan and rebuild Smart Entry Plan" style="margin-left:auto;padding:2px 7px;font-size:10px">'+
+            '<svg class="ico ico-sm" viewBox="0 0 24 24" style="width:10px;height:10px"><path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.7 1 6.3 2.7L21 8"/><path d="M21 3v5h-5"/></svg>Refresh SE</button>'+
+        '</div>'+
+        '<div class="sec-card-body" id="lmSmartEntryBody" style="padding:10px 13px">'+
+          _lmSmartEntryHtml(item)+
+        '</div>'+
+      '</div>'+
+
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'+
         '<div class="sec-card">'+
           '<div class="sec-card-head">'+
@@ -5636,6 +5746,46 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
             }
           })
           .catch(function(){ mbtn.disabled=false; mbtn.innerHTML=origHtml; });
+      });
+    });
+    // Phase 10.6: Refresh Smart Entry button
+    [].forEach.call(box.querySelectorAll("[data-lmsmartentryrefresh]"),function(sebtn){
+      sebtn.addEventListener("click",function(){
+        var id=parseInt(sebtn.getAttribute("data-lmsmartentryrefresh"),10); if(!id) return;
+        var origHtml=sebtn.innerHTML;
+        sebtn.disabled=true;
+        sebtn.innerHTML='<svg class="ico ico-sm" viewBox="0 0 24 24" style="width:10px;height:10px"><path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.7 1 6.3 2.7L21 8"/><path d="M21 3v5h-5"/></svg>…';
+        fetch("/api/live-monitor/items/"+id+"/smart-entry/refresh",{method:"POST",credentials:"same-origin",
+          headers:{"Content-Type":"application/json"},body:"{}"})
+          .then(function(r){ return r.json(); })
+          .then(function(d){
+            sebtn.disabled=false; sebtn.innerHTML=origHtml;
+            if(d&&d.ok&&d.smart_entry_plan){
+              // Update the item snapshot in memory
+              var targetItem=null;
+              for(var k=0;k<liveMonitorItems.length;k++){
+                if(liveMonitorItems[k].id===id){ targetItem=liveMonitorItems[k]; break; }
+              }
+              if(targetItem){
+                if(!targetItem.snapshot) targetItem.snapshot={};
+                targetItem.snapshot.latest_smart_entry_plan=d.smart_entry_plan;
+                targetItem.snapshot.latest_execution_candidates=d.smart_entry_plan.candidates||[];
+                targetItem.snapshot.last_smart_entry_plan_at=d.smart_entry_plan.computed_at;
+              }
+              if(_lmSelItem&&_lmSelItem.id===id){
+                if(!_lmSelItem.snapshot) _lmSelItem.snapshot={};
+                _lmSelItem.snapshot.latest_smart_entry_plan=d.smart_entry_plan;
+                _lmSelItem.snapshot.latest_execution_candidates=d.smart_entry_plan.candidates||[];
+                _lmSelItem.snapshot.last_smart_entry_plan_at=d.smart_entry_plan.computed_at;
+                var sebody=document.getElementById("lmSmartEntryBody");
+                if(sebody) sebody.innerHTML=_lmSmartEntryHtml(_lmSelItem);
+              }
+            } else {
+              sebtn.style.color='var(--red-2,#f87171)';
+              setTimeout(function(){ sebtn.style.color=''; }, 2000);
+            }
+          })
+          .catch(function(){ sebtn.disabled=false; sebtn.innerHTML=origHtml; });
       });
     });
     // Agent selector change handler (persists to localStorage)

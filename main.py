@@ -10066,6 +10066,17 @@ def _lm_server_watch_tick(item_id: int, uid: int) -> dict:
     # Phase 8.1 Task 8: auto update outcomes
     snap, _sw_oc = _lm_update_memory_outcomes(row, snapshot=snap)
 
+    # Phase 10.6: Smart Entry re-evaluation (no fresh scan — mode/invalidation only)
+    try:
+        _se_old_sw = snap.get("latest_smart_entry_plan")
+        _se_new_sw = _lm_build_smart_entry_plan(row, snapshot=snap, scan_result=None)
+        snap["latest_smart_entry_plan"]  = _se_new_sw
+        snap["last_smart_entry_plan_at"] = _se_new_sw.get("computed_at")
+        _lm_maybe_post_smart_entry_chat_update(row.user_id, row, _se_old_sw, _se_new_sw)
+        _lm_maybe_log_smart_entry_event(row.user_id, row, _se_old_sw, _se_new_sw)
+    except Exception as _se_sw_err:
+        print(f"[SE-TICK] warn: {_se_sw_err}")
+
     seen_keys: list = snap.get("event_detection_keys") or []
     new_events: list = []
     for ev in (detection.get("events") or []):
@@ -11195,6 +11206,655 @@ def _lm_build_data_health_context(symbol: str, exchange: str,
             "warnings":       gate_warnings,
         },
     }
+
+
+# ── Phase 10.6: Smart Entry Refinement Engine ────────────────────────────────
+
+_LM_SE_TF_CHILDREN: dict = {
+    "1d":  ["4h", "1h"],
+    "4h":  ["1h", "30m", "15m"],
+    "1h":  ["30m", "15m"],
+    "30m": ["15m"],
+    "15m": [],
+}
+_LM_SE_ZONE_TOLERANCE_PCT = 0.35   # % of midprice for near-zone tolerance
+_LM_SE_MIN_SCORE          = 70     # minimum candidate score for refined mode
+_LM_SE_MIN_STRONG_REASONS = 2      # minimum strong reasons for refined mode
+_LM_SE_CHAT_COOLDOWN_S    = 300    # 5-min cooldown between smart-entry chat posts
+
+
+def _lm_score_orderbook_wall_for_zone(symbol: str, exchange: str, direction: str,
+                                       zone_low: float, zone_high: float) -> int:
+    """Score 0-100: how strong is the OB wall supporting this zone.
+
+    Bullish zone → large bid cluster = support.
+    Bearish zone → large ask cluster = resistance.
+    Only _ob_books (Binance) is used; non-Binance returns 0.
+    """
+    try:
+        with _ob_book_lock:
+            book = dict(_ob_books.get(symbol) or {})
+        if not book or not book.get("ready"):
+            return 0
+        side = book.get("bids" if direction == "bullish" else "asks") or {}
+        if not side:
+            return 0
+        lo        = zone_low  * (1.0 - 0.001)
+        hi        = zone_high * (1.0 + 0.001)
+        zone_vol  = sum(float(q) for p, q in side.items() if lo <= float(p) <= hi)
+        total_vol = sum(float(q) for q in side.values()) or 1.0
+        share = zone_vol / total_vol
+        if share >= 0.15:  return 90
+        if share >= 0.08:  return 70
+        if share >= 0.04:  return 50
+        if share >= 0.015: return 30
+        return 10
+    except Exception:
+        return 0
+
+
+def _lm_score_liquidation_for_zone(symbol: str, exchange: str, direction: str,
+                                    zone_low: float, zone_high: float,
+                                    data_health=None) -> int:
+    """Score 0-100: are recent liquidations supporting this zone's direction?
+
+    Bullish → short_liq_usd_5m dominant = shorts squeezed = demand support.
+    Bearish → long_liq_usd_5m dominant  = longs blown out = supply pressure.
+    """
+    try:
+        liq_data, liq_status = _lm_liq_get(exchange, symbol)
+        if not liq_data or liq_status not in ("fresh", "stale"):
+            return 0
+        total_liq = liq_data.get("total_liq_usd_5m") or 0
+        if total_liq < 10_000:
+            return 0
+        supporting = (liq_data.get("short_liq_usd_5m") or 0
+                      if direction == "bullish"
+                      else liq_data.get("long_liq_usd_5m") or 0)
+        ratio = supporting / max(total_liq, 1)
+        if supporting >= 500_000 and ratio >= 0.6: return 85
+        if supporting >= 100_000 and ratio >= 0.5: return 65
+        if supporting >= 30_000  and ratio >= 0.4: return 45
+        if supporting >= 10_000:                    return 25
+        return 0
+    except Exception:
+        return 0
+
+
+def _lm_score_flow_context_for_candidate(symbol: str, exchange: str,
+                                          direction: str, data_health=None) -> int:
+    """Score 0-100: does 60s taker delta confirm the candidate direction?
+
+    Bullish → positive delta_pct_60s aligned.
+    Bearish → negative delta_pct_60s aligned.
+    """
+    try:
+        delta_data, delta_status = _lm_delta_get(exchange, symbol)
+        if not delta_data or delta_status not in ("fresh", "stale"):
+            return 0
+        dpct  = delta_data.get("delta_pct_60s") or 0.0
+        dpct5 = delta_data.get("delta_pct_5m")  or 0.0
+        if direction == "bullish":
+            al60, al5m, mag = dpct > 0, dpct5 > 0, dpct
+        else:
+            al60, al5m, mag = dpct < 0, dpct5 < 0, -dpct
+        if not al60 and not al5m:
+            return 0
+        if abs(mag) >= 20 and al60 and al5m: return 80
+        if abs(mag) >= 10 and al60 and al5m: return 60
+        if abs(mag) >= 5  and al60:           return 40
+        if al60:                               return 20
+        return 0
+    except Exception:
+        return 0
+
+
+def _lm_extract_refinement_candidates(item, snapshot: dict,
+                                       scan_result=None) -> list:
+    """Extract lower-TF OBs/FIBs that overlap/are near the parent zone.
+
+    Only extracts when scan_result is provided (requires raw TF data).
+    Returns up to 5 candidates ordered by quality desc, then dist-to-mid.
+    """
+    zone_high = getattr(item, "zone_high", None)
+    zone_low  = getattr(item, "zone_low",  None)
+    direction = _lm_direction_from_item(item)
+    parent_tf = (getattr(item, "timeframe", None) or "4h").lower()
+
+    if not zone_high or not zone_low or zone_high <= zone_low:
+        return []
+    if not scan_result or not isinstance(scan_result, dict):
+        return []
+
+    raw_tfs   = scan_result.get("tfs") or {}
+    child_tfs = _LM_SE_TF_CHILDREN.get(parent_tf, [])
+    if not child_tfs:
+        return []
+
+    zone_range = zone_high - zone_low
+    mid        = (zone_high + zone_low) / 2.0
+    tol_abs    = mid * _LM_SE_ZONE_TOLERANCE_PCT / 100.0
+    search_lo  = zone_low  - tol_abs
+    search_hi  = zone_high + tol_abs
+
+    cands: list = []
+
+    for tf in child_tfs:
+        tf_data = raw_tfs.get(tf) or {}
+        if not tf_data or tf_data.get("error"):
+            continue
+
+        # ── OBs ──────────────────────────────────────────────────────────────
+        for ob in (tf_data.get("obs") or []):
+            ob_top = ob.get("top") or 0
+            ob_bot = ob.get("bottom") or 0
+            if ob_top <= 0 or ob_bot <= 0 or ob_top <= ob_bot:
+                continue
+            ob_dir = (ob.get("direction") or "").lower()
+            if direction == "bullish" and ob_dir == "bearish":
+                continue
+            if direction == "bearish" and ob_dir == "bullish":
+                continue
+            # Must overlap or be near parent zone
+            if ob_top < search_lo or ob_bot > search_hi:
+                continue
+            ob_mid = (ob_top + ob_bot) / 2.0
+            ov_lo  = max(ob_bot, zone_low)
+            ov_hi  = min(ob_top, zone_high)
+            ov_pct = (ov_hi - ov_lo) / zone_range * 100 if ov_hi > ov_lo else 0.0
+            quality = int(ob.get("quality") or 0)
+            qlabel  = (ob.get("qualityLabel") or
+                       ("Elite" if quality >= 85 else
+                        "High"  if quality >= 70 else
+                        "Medium" if quality >= 50 else "Weak"))
+            cands.append({
+                "type":          "ob",
+                "tf":            tf,
+                "direction":     ob_dir or direction,
+                "zone_high":     ob_top,
+                "zone_low":      ob_bot,
+                "mid_price":     round(ob_mid, 8),
+                "quality":       quality,
+                "quality_label": qlabel,
+                "touches":       int(ob.get("touches") or 0),
+                "dist":          float(ob.get("dist") or 0),
+                "overlap_pct":   round(ov_pct, 1),
+                "absorption":    bool(ob.get("absorption", False)),
+                "state":         ob.get("state") or "unknown",
+                "fib_level":     None,
+            })
+
+        # ── FIBs ─────────────────────────────────────────────────────────────
+        for fib in (tf_data.get("fibs") or []):
+            fp = fib.get("price") or 0
+            if fp <= 0 or not (search_lo <= fp <= search_hi):
+                continue
+            band    = fp * 0.0005
+            fib_top = fp + band
+            fib_bot = fp - band
+            ov_lo   = max(fib_bot, zone_low)
+            ov_hi   = min(fib_top, zone_high)
+            ov_pct  = (ov_hi - ov_lo) / zone_range * 100 if ov_hi > ov_lo else 0.0
+            flvl    = str(fib.get("level") or "")
+            fq_map  = {"0.786": 85, "0.705": 80, "0.618": 75, "0.5": 65, "0.382": 55}
+            fq      = fq_map.get(flvl, 60)
+            cands.append({
+                "type":          "fib",
+                "tf":            tf,
+                "direction":     direction,
+                "zone_high":     round(fib_top, 8),
+                "zone_low":      round(fib_bot, 8),
+                "mid_price":     round(fp, 8),
+                "quality":       fq,
+                "quality_label": "High" if fq >= 75 else "Medium",
+                "touches":       0,
+                "dist":          float(fib.get("dist") or 0),
+                "overlap_pct":   round(ov_pct, 1),
+                "absorption":    False,
+                "state":         "fib",
+                "fib_level":     flvl,
+            })
+
+    cands.sort(key=lambda c: (-c["quality"], abs(c["mid_price"] - mid)))
+    return cands[:5]
+
+
+def _lm_score_refinement_candidate(candidate: dict, parent_setup: dict,
+                                   live_context: dict) -> dict:
+    """Score one refinement candidate 0-100.
+
+    Returns {score, reasons, strong_reasons}.
+    Components: overlap(25) + quality(20) + touches(15) + distance(15)
+                + ob_wall(10) + liquidations(10) + flow(5) = 100 max.
+    """
+    sym       = live_context.get("symbol", "")
+    exchange  = live_context.get("exchange", "binance")
+    direction = candidate.get("direction") or parent_setup.get("direction", "bullish")
+    score     = 0
+    reasons: list        = []
+    strong_reasons: list = []
+
+    # 1. Parent overlap (0-25)
+    overlap = float(candidate.get("overlap_pct") or 0)
+    if overlap >= 50:
+        score += 25; strong_reasons.append("deep_parent_overlap")
+        reasons.append(f"deep parent overlap ({overlap:.0f}%)")
+    elif overlap >= 20:
+        score += 18; reasons.append(f"good parent overlap ({overlap:.0f}%)")
+    elif overlap >= 5:
+        score += 10; reasons.append(f"partial parent overlap ({overlap:.0f}%)")
+    else:
+        score += 5;  reasons.append("near parent zone")
+
+    # 2. Structural quality (0-20)
+    quality = int(candidate.get("quality") or 0)
+    ctype   = (candidate.get("type") or "OB").upper()
+    if quality >= 85:
+        score += 20; strong_reasons.append("elite_quality")
+        reasons.append(f"elite quality {ctype}")
+    elif quality >= 70:
+        score += 15; strong_reasons.append("high_quality")
+        reasons.append(f"high quality {ctype}")
+    elif quality >= 50:
+        score += 8;  reasons.append(f"medium quality {ctype}")
+    else:
+        score += 2;  reasons.append(f"weak quality {ctype}")
+
+    # 3. Touches and absorption (0-15)
+    touches    = int(candidate.get("touches") or 0)
+    absorption = bool(candidate.get("absorption", False))
+    if touches >= 2 and absorption:
+        score += 15; strong_reasons.append("touched_and_absorbed")
+        reasons.append(f"zone {touches}x touched with absorption")
+    elif touches >= 2:
+        score += 10; reasons.append(f"zone {touches}x touched")
+    elif absorption:
+        score += 8;  reasons.append("absorption confirmed")
+    elif touches == 1:
+        score += 5;  reasons.append("zone touched once")
+
+    # 4. Distance to current price (0-15)
+    dist = abs(float(candidate.get("dist") or 0))
+    if dist <= 0.3:
+        score += 15; strong_reasons.append("price_at_zone")
+        reasons.append(f"price at zone ({dist:.2f}%)")
+    elif dist <= 0.8:
+        score += 12; reasons.append(f"price approaching ({dist:.2f}%)")
+    elif dist <= 1.5:
+        score += 7;  reasons.append(f"price near zone ({dist:.2f}%)")
+    elif dist <= 3.0:
+        score += 3;  reasons.append(f"price {dist:.2f}% away")
+
+    # 5. OB wall (0-10)
+    zl = float(candidate.get("zone_low")  or 0)
+    zh = float(candidate.get("zone_high") or 0)
+    if sym and zl and zh:
+        wall_s = _lm_score_orderbook_wall_for_zone(sym, exchange, direction, zl, zh)
+        score += round(wall_s / 10)
+        if wall_s >= 70:
+            strong_reasons.append("strong_ob_wall")
+            reasons.append(f"strong OB wall (score {wall_s})")
+        elif wall_s >= 40:
+            reasons.append(f"moderate OB wall (score {wall_s})")
+
+    # 6. Liquidations (0-10)
+    if sym:
+        liq_s = _lm_score_liquidation_for_zone(
+            sym, exchange, direction, zl, zh,
+            data_health=live_context.get("data_health"))
+        score += round(liq_s / 10)
+        if liq_s >= 65:
+            strong_reasons.append("liquidation_support")
+            reasons.append(f"strong liq support (score {liq_s})")
+        elif liq_s >= 35:
+            reasons.append(f"moderate liq support (score {liq_s})")
+
+    # 7. Taker flow (0-5)
+    if sym:
+        flow_s = _lm_score_flow_context_for_candidate(
+            sym, exchange, direction,
+            data_health=live_context.get("data_health"))
+        score += round(flow_s / 20)
+        if flow_s >= 60:
+            strong_reasons.append("aligned_flow")
+            reasons.append(f"aligned taker flow (score {flow_s})")
+        elif flow_s >= 30:
+            reasons.append(f"partial flow alignment (score {flow_s})")
+
+    return {
+        "score":          min(100, max(0, score)),
+        "reasons":        reasons,
+        "strong_reasons": list(dict.fromkeys(strong_reasons)),
+    }
+
+
+def _lm_build_smart_entry_plan(item, snapshot: dict = None, scan_result=None,
+                                data_health=None) -> dict:
+    """Build Smart Entry Plan for one Live Monitor item.
+
+    Modes
+    ─────
+    parent_default         — use item zone as-is (always valid fallback)
+    refined_internal_entry — best candidate ≥70 score with ≥2 strong reasons
+    blocked                — live data gate is closed
+    invalidated            — live price has breached parent zone invalidation
+
+    Does NOT commit to DB.
+    """
+    from datetime import datetime as _dt_se, timezone as _tz_se
+    now_iso = _dt_se.now(_tz_se.utc).isoformat()
+
+    if snapshot is None:
+        snapshot = {}
+
+    symbol    = (getattr(item, "symbol",   None) or "").upper()
+    exchange  = getattr(item, "exchange",  None) or "binance"
+    direction = _lm_direction_from_item(item)
+    zone_high = getattr(item, "zone_high", None)
+    zone_low  = getattr(item, "zone_low",  None)
+    parent_tf = (getattr(item, "timeframe", None) or "4h").lower()
+
+    base: dict = {
+        "symbol":             symbol,
+        "exchange":           exchange,
+        "direction":          direction,
+        "parent_tf":          parent_tf,
+        "zone_high":          zone_high,
+        "zone_low":           zone_low,
+        "computed_at":        now_iso,
+        "mode":               "parent_default",
+        "entry_price":        None,
+        "entry_label":        "Zone Default",
+        "invalidation_price": None,
+        "confidence":         0,
+        "candidates":         [],
+        "best_candidate":     None,
+        "block_reason":       None,
+        "warnings":           [],
+    }
+
+    # 1. Data Health Gate ────────────────────────────────────────────────────
+    if data_health is None:
+        data_health = _lm_build_data_health_context(symbol, exchange, snap=snapshot)
+    gate = (data_health or {}).get("ai_data_gate") or {}
+    if not gate.get("allowed", True):
+        return {**base,
+                "mode":         "blocked",
+                "block_reason": "live_data_gate_blocked",
+                "warnings":     gate.get("reasons") or ["Live data gate blocked"]}
+
+    # 2. Valid zone check ────────────────────────────────────────────────────
+    if not zone_high or not zone_low or zone_high <= zone_low:
+        return {**base,
+                "mode":         "parent_default",
+                "block_reason": "no_valid_zone",
+                "warnings":     ["No valid parent zone on item"]}
+
+    zone_range = zone_high - zone_low
+
+    # 3. Live price ──────────────────────────────────────────────────────────
+    live_price = 0.0
+    try:
+        for _r in (data_health or {}).get("rows") or []:
+            if _r.get("label") == "Live Price":
+                live_price = float(
+                    str(_r.get("value") or "").replace(",", "").split()[0])
+                break
+    except Exception:
+        pass
+    if not live_price:
+        live_price = float(getattr(item, "current_price", None) or 0)
+
+    # 4. Default entry and invalidation ─────────────────────────────────────
+    inv_buf = zone_range * 0.05
+    if direction == "bullish":
+        invalidation_price = round(zone_low  - inv_buf, 8)
+        default_entry      = round(zone_low  + zone_range * 0.25, 8)
+        default_label      = f"{parent_tf.upper()} Zone Bottom 25%"
+    else:
+        invalidation_price = round(zone_high + inv_buf, 8)
+        default_entry      = round(zone_high - zone_range * 0.25, 8)
+        default_label      = f"{parent_tf.upper()} Zone Top 25%"
+
+    # 5. Invalidation check ──────────────────────────────────────────────────
+    if live_price > 0:
+        if direction == "bullish" and live_price < invalidation_price:
+            return {**base,
+                    "mode":               "invalidated",
+                    "entry_price":        default_entry,
+                    "entry_label":        default_label,
+                    "invalidation_price": invalidation_price,
+                    "block_reason":       (f"price_below_inv("
+                                           f"{live_price:.4f}<{invalidation_price:.4f})"),
+                    "warnings":           ["Live price breached parent zone invalidation"]}
+        if direction == "bearish" and live_price > invalidation_price:
+            return {**base,
+                    "mode":               "invalidated",
+                    "entry_price":        default_entry,
+                    "entry_label":        default_label,
+                    "invalidation_price": invalidation_price,
+                    "block_reason":       (f"price_above_inv("
+                                           f"{live_price:.4f}>{invalidation_price:.4f})"),
+                    "warnings":           ["Live price breached parent zone invalidation"]}
+
+    # 6. Extract or reuse candidates ─────────────────────────────────────────
+    live_ctx    = {"symbol": symbol, "exchange": exchange,
+                   "direction": direction, "data_health": data_health}
+    parent_setup = {"direction": direction,
+                    "zone_high": zone_high, "zone_low": zone_low, "tf": parent_tf}
+
+    if scan_result:
+        raw_cands = _lm_extract_refinement_candidates(
+            item, snapshot, scan_result=scan_result)
+    else:
+        raw_cands = [
+            {k: v for k, v in c.items() if k not in ("source_ob", "source_fib")}
+            for c in (snapshot.get("latest_execution_candidates") or [])
+        ]
+
+    # 7. Score candidates ────────────────────────────────────────────────────
+    scored: list = []
+    for cand in raw_cands:
+        res = _lm_score_refinement_candidate(cand, parent_setup, live_ctx)
+        scored.append({
+            "type":          cand.get("type", "ob"),
+            "tf":            cand.get("tf", ""),
+            "zone_high":     cand.get("zone_high"),
+            "zone_low":      cand.get("zone_low"),
+            "mid_price":     cand.get("mid_price"),
+            "quality":       cand.get("quality", 0),
+            "quality_label": cand.get("quality_label", ""),
+            "touches":       cand.get("touches", 0),
+            "dist":          cand.get("dist", 0),
+            "overlap_pct":   cand.get("overlap_pct", 0),
+            "absorption":    cand.get("absorption", False),
+            "state":         cand.get("state", ""),
+            "fib_level":     cand.get("fib_level"),
+            "score":         res["score"],
+            "reasons":       res["reasons"],
+            "strong_reasons": res["strong_reasons"],
+        })
+    scored.sort(key=lambda c: -c["score"])
+
+    # 8. Choose mode ─────────────────────────────────────────────────────────
+    best   = scored[0] if scored else None
+    warns: list = []
+
+    if (best and
+            best["score"] >= _LM_SE_MIN_SCORE and
+            len(best.get("strong_reasons") or []) >= _LM_SE_MIN_STRONG_REASONS):
+        mode        = "refined_internal_entry"
+        best_out    = best
+        r_range     = float((best["zone_high"] or 0) - (best["zone_low"] or 0))
+        entry_price = round(float(best["mid_price"] or 0), 8)
+        entry_label = (f"{best['tf'].upper()} {best['quality_label']} "
+                       f"{'FIB' if best['type'] == 'fib' else 'OB'}")
+        if direction == "bullish":
+            invalidation_price = round(float(best["zone_low"] or 0) - r_range * 0.1, 8)
+        else:
+            invalidation_price = round(float(best["zone_high"] or 0) + r_range * 0.1, 8)
+        confidence = best["score"]
+    else:
+        mode        = "parent_default"
+        best_out    = None
+        entry_price = default_entry
+        entry_label = default_label
+        confidence  = best["score"] if best else 0
+        if best:
+            warns.append(
+                f"Best candidate {best['score']}/100, "
+                f"{len(best.get('strong_reasons') or [])} strong reasons "
+                f"— below refinement threshold"
+            )
+
+    return {
+        **base,
+        "mode":               mode,
+        "entry_price":        entry_price,
+        "entry_label":        entry_label,
+        "invalidation_price": invalidation_price,
+        "confidence":         confidence,
+        "candidates":         scored,
+        "best_candidate":     best_out,
+        "block_reason":       None,
+        "warnings":           warns,
+    }
+
+
+def _lm_maybe_post_smart_entry_chat_update(uid: int, item, old_plan: dict,
+                                            new_plan: dict) -> bool:
+    """Post an assistant chat message when smart entry mode or entry changes.
+
+    Dedup by MD5(old_mode|new_mode|rounded_entry). Cooldown 5 min.
+    Returns True when a message was posted.
+    """
+    if not uid or not item:
+        return False
+    try:
+        import hashlib as _hs
+        from datetime import datetime as _dt3, timezone as _tz3
+
+        old_mode  = (old_plan or {}).get("mode")
+        new_mode  = new_plan.get("mode")
+        new_entry = float(new_plan.get("entry_price") or 0)
+
+        mode_chg   = bool(old_mode and old_mode != new_mode)
+        entry_chg  = bool(old_plan and
+                          abs(float((old_plan.get("entry_price") or 0)) - new_entry)
+                          > max(new_entry, 1) * 0.001)
+        if not mode_chg and not entry_chg:
+            return False
+
+        snap    = _json_loads_safe(getattr(item, "snapshot_json", None), {})
+        se_meta = snap.get("smart_entry_chat_meta") or {}
+        last_at = se_meta.get("last_chat_at")
+        if last_at:
+            try:
+                lt = _dt3.fromisoformat(last_at.replace("Z", "+00:00"))
+                if (_dt3.now(_tz3.utc) - lt).total_seconds() < _LM_SE_CHAT_COOLDOWN_S:
+                    return False
+            except Exception:
+                pass
+
+        dhash = _hs.md5(
+            f"{old_mode}|{new_mode}|{round(new_entry, 2)}".encode()
+        ).hexdigest()[:12]
+        if se_meta.get("last_hash") == dhash:
+            return False
+
+        sym     = getattr(item, "symbol", "?")
+        dir_cap = (new_plan.get("direction") or "bullish").capitalize()
+        _lbl    = {
+            "parent_default":         "Default Zone Entry",
+            "refined_internal_entry": "Refined Internal Entry",
+            "blocked":                "Blocked (Data Gate)",
+            "invalidated":            "Zone Invalidated",
+        }
+        nl = _lbl.get(new_mode, new_mode or "?")
+
+        if new_mode == "blocked":
+            msg = (f"Smart Entry ({sym}): plan **blocked** — "
+                   f"{', '.join(new_plan.get('warnings') or ['data gate closed'])}. "
+                   "Will update once live data is fresh.")
+        elif new_mode == "invalidated":
+            msg = (f"Smart Entry ({sym}): zone **invalidated** — price breached "
+                   f"level {new_plan.get('invalidation_price', '?')}. "
+                   "Please review setup validity.")
+        elif new_mode == "refined_internal_entry":
+            best = new_plan.get("best_candidate") or {}
+            srs  = ", ".join((best.get("strong_reasons") or [])[:3]) or "none"
+            msg  = (f"Smart Entry ({sym} {dir_cap}): updated to **{nl}**. "
+                    f"Candidate: {best.get('tf','?').upper()} "
+                    f"{best.get('quality_label','?')} "
+                    f"{'FIB' if best.get('type') == 'fib' else 'OB'} "
+                    f"near {new_entry}. Score {best.get('score',0)}/100. "
+                    f"Signals: {srs}. Not a trade signal.")
+        else:
+            prev = f" (was: {old_mode})" if old_mode else ""
+            msg  = (f"Smart Entry ({sym} {dir_cap}): using **{nl}**{prev}. "
+                    f"Default entry near {new_entry}. "
+                    "No candidate met refinement threshold.")
+
+        _lm_chat_save(uid, item, "assistant", msg,
+                     agent_id="smart_entry_watcher",
+                     agent_label="Smart Entry Engine")
+
+        now_s = _dt3.now(_tz3.utc).isoformat()
+        se_meta["last_chat_at"] = now_s
+        se_meta["last_hash"]    = dhash
+        snap["smart_entry_chat_meta"] = se_meta
+        try:
+            from models import db as _db_se2
+            item.snapshot_json = _json_dumps_safe(snap)
+            _db_se2.session.flush()
+        except Exception:
+            pass
+        return True
+    except Exception as _e:
+        print(f"[SE-CHAT] warn: {_e}")
+        return False
+
+
+def _lm_maybe_log_smart_entry_event(uid: int, item, old_plan: dict,
+                                     new_plan: dict) -> bool:
+    """Log LiveMonitorEvent for meaningful smart entry mode or confidence changes."""
+    if not uid or not item:
+        return False
+    try:
+        old_mode  = (old_plan or {}).get("mode")
+        new_mode  = new_plan.get("mode")
+        old_conf  = int((old_plan or {}).get("confidence") or 0)
+        new_conf  = int(new_plan.get("confidence") or 0)
+        mode_chg  = bool(old_mode and old_mode != new_mode)
+        conf_jump = abs(new_conf - old_conf) >= 15
+        if not mode_chg and not conf_jump:
+            return False
+
+        from models import db as _db_sev, LiveMonitorEvent as _LME_SE
+        ev = _LME_SE(
+            item_id           = getattr(item, "id", None),
+            user_id           = uid,
+            symbol            = getattr(item, "symbol", ""),
+            event_type        = "smart_entry_updated",
+            event_description = (
+                f"Smart Entry: {old_mode} → {new_mode}"
+                if mode_chg else
+                f"Smart Entry confidence: {old_conf} → {new_conf}"
+            ),
+            details_json      = _json_dumps_safe({
+                "old_mode":    old_mode,
+                "new_mode":    new_mode,
+                "entry_price": new_plan.get("entry_price"),
+                "confidence":  new_conf,
+                "phase":       "phase10.6",
+            }),
+            price_at_event = getattr(item, "current_price", None),
+        )
+        _db_sev.session.add(ev)
+        return True
+    except Exception as _e2:
+        print(f"[SE-EVENT] warn: {_e2}")
+        return False
 
 
 # ── Phase 7.2: Setup Readiness Engine ────────────────────────────────────────
@@ -13061,6 +13721,23 @@ def _lm_build_ai_context(item) -> dict:
         "live_data_health": _lm_build_data_health_context(
             item.symbol, item.exchange or "binance", snap=snap
         ),
+        # Phase 10.6: compact smart entry plan (no candidates list — just mode + best)
+        "smart_entry_plan": (lambda _p: {
+            "mode":               _p.get("mode"),
+            "entry_price":        _p.get("entry_price"),
+            "entry_label":        _p.get("entry_label"),
+            "invalidation_price": _p.get("invalidation_price"),
+            "confidence":         _p.get("confidence"),
+            "block_reason":       _p.get("block_reason"),
+            "warnings":           (_p.get("warnings") or [])[:3],
+            "best_candidate":     (lambda _b: {
+                "type":          _b.get("type"),
+                "tf":            _b.get("tf"),
+                "quality_label": _b.get("quality_label"),
+                "score":         _b.get("score"),
+                "strong_reasons": (_b.get("strong_reasons") or [])[:5],
+            } if _b else None)(_p.get("best_candidate")),
+        } if _p and isinstance(_p, dict) else None)(snap.get("latest_smart_entry_plan")),
         # Phase 9.7: compact summary of up to 3 most recent demo trades (no raw candles, no API keys)
         "latest_trade_summary": (lambda item_id: (
             lambda trades: [
@@ -13239,6 +13916,31 @@ def _lm_ai_system_prompt() -> str:
         "- Do NOT invent price, funding rate, or OI values not present in the live_data_health rows.\n"
         "- Do NOT use live_data_health data values as trade entry/exit levels.\n"
         "- If live_data_health is null or missing: note it in agent_note and reduce confidence.\n\n"
+
+        "SMART ENTRY PLAN (Phase 10.6):\n"
+        "The context may include a smart_entry_plan block — a deterministic backend entry analysis.\n"
+        "FIELD MEANINGS:\n"
+        "- mode: 'parent_default' = using parent zone as-is; "
+        "'refined_internal_entry' = lower-TF OB/FIB inside parent zone identified; "
+        "'blocked' = live data gate prevents analysis; "
+        "'invalidated' = live price breached parent zone invalidation.\n"
+        "- entry_price: the deterministic suggested entry level (NOT a trade order).\n"
+        "- invalidation_price: the level at which the parent setup is considered failed.\n"
+        "- confidence: 0-100 score from structural evidence.\n"
+        "- best_candidate: the highest-scored lower-TF zone (if refined mode).\n"
+        "- best_candidate.strong_reasons: evidence list that drove the refined mode.\n"
+        "USE RULES:\n"
+        "- smart_entry_plan is a deterministic backend analysis, NOT a trade signal.\n"
+        "- entry_price is a reference level only — do NOT say 'place order at entry_price'.\n"
+        "- If mode is 'blocked': do NOT provide entry analysis. State gate is blocked.\n"
+        "- If mode is 'invalidated': flag setup as potentially invalidated. Do NOT recommend entry.\n"
+        "- If mode is 'refined_internal_entry': note the tighter entry zone in zone_read. "
+        "Do NOT treat it as execution permission.\n"
+        "- If mode is 'parent_default': note that no strong lower-TF candidate was found. "
+        "Entry is at parent zone default levels.\n"
+        "- Do NOT invent smart entry levels not present in the plan.\n"
+        "- Do NOT use smart_entry_plan as permission to execute a trade.\n"
+        "- If smart_entry_plan is null or missing, analyze from other context fields only.\n\n"
 
         "STRICT RULES:\n"
         "- Analyze ONLY the provided backend facts. Do not invent missing data.\n"
@@ -14690,8 +15392,19 @@ def api_lm_items_refresh(item_id):
     health["session_context"] = session_ctx
     snap["latest_health"] = health
 
+    # Phase 10.6: Smart Entry Plan (fresh scan_result available)
+    _se_old = snap.get("latest_smart_entry_plan")
+    _se_new = _lm_build_smart_entry_plan(row, snapshot=snap, scan_result=scan_result)
+    snap["latest_smart_entry_plan"]     = _se_new
+    snap["latest_execution_candidates"] = _se_new.get("candidates") or []
+    snap["last_smart_entry_plan_at"]    = _se_new.get("computed_at")
+
     row.snapshot_json = _json_dumps_safe(snap)
     row.updated_at    = datetime.now(timezone.utc)
+
+    # Phase 10.6: post chat update and log event after DB flush (before commit)
+    _lm_maybe_post_smart_entry_chat_update(uid, row, _se_old, _se_new)
+    _lm_maybe_log_smart_entry_event(uid, row, _se_old, _se_new)
 
     prev_status = row.status
     row.status  = health["status"]
@@ -14820,8 +15533,19 @@ def api_lm_refresh_all():
             health["session_context"] = session_ctx
             snap["latest_health"] = health
 
+            # Phase 10.6: Smart Entry Plan (fresh scan_result available)
+            _se_old_ra = snap.get("latest_smart_entry_plan")
+            _se_new_ra = _lm_build_smart_entry_plan(
+                row, snapshot=snap, scan_result=scan_result)
+            snap["latest_smart_entry_plan"]     = _se_new_ra
+            snap["latest_execution_candidates"] = _se_new_ra.get("candidates") or []
+            snap["last_smart_entry_plan_at"]    = _se_new_ra.get("computed_at")
+
             row.snapshot_json = _json_dumps_safe(snap)
             row.updated_at    = now
+
+            _lm_maybe_post_smart_entry_chat_update(uid, row, _se_old_ra, _se_new_ra)
+            _lm_maybe_log_smart_entry_event(uid, row, _se_old_ra, _se_new_ra)
 
             prev_status = row.status
             row.status  = health["status"]
@@ -16917,6 +17641,95 @@ def api_lm_chat_history_delete(item_id):
         "deleted": deleted,
         "symbol":  row.symbol,
         "exchange": row.exchange,
+    })
+
+
+# ── Phase 10.6: Smart Entry Endpoints ────────────────────────────────────────
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/smart-entry", methods=["GET"])
+@login_required
+def api_lm_smart_entry_get(item_id):
+    """Return the latest Smart Entry Plan from snapshot_json. Phase 10.6."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import LiveMonitorItem as _LMI
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+
+    snap = _json_loads_safe(row.snapshot_json, {})
+    plan = snap.get("latest_smart_entry_plan")
+
+    if not plan:
+        # Build on-the-fly without scan (fallback)
+        plan = _lm_build_smart_entry_plan(row, snapshot=snap, scan_result=None)
+
+    return jsonify({
+        "ok":               True,
+        "smart_entry_plan": plan,
+        "symbol":           row.symbol,
+        "exchange":         row.exchange,
+    })
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/smart-entry/refresh", methods=["POST"])
+@login_required
+def api_lm_smart_entry_refresh(item_id):
+    """Run a fresh MTF scan and rebuild the Smart Entry Plan. Phase 10.6."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorItem as _LMI
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if not row.is_active:
+        return jsonify({"error": "inactive", "message": "Item is no longer active."}), 400
+
+    cfg = _lm_build_scan_config(row)
+    try:
+        scan_result = _scan_pair_multitf(
+            row.symbol,
+            row.market   or "perpetual",
+            cfg,
+            row.exchange or "binance",
+        )
+    except Exception as e:
+        return jsonify({"error": "scan_failed", "message": str(e)}), 500
+
+    snap     = _json_loads_safe(row.snapshot_json, {})
+    old_plan = snap.get("latest_smart_entry_plan")
+    new_plan = _lm_build_smart_entry_plan(row, snapshot=snap, scan_result=scan_result)
+
+    snap["latest_smart_entry_plan"]     = new_plan
+    snap["latest_execution_candidates"] = new_plan.get("candidates") or []
+    snap["last_smart_entry_plan_at"]    = new_plan.get("computed_at")
+
+    row.snapshot_json = _json_dumps_safe(snap)
+    row.updated_at    = datetime.now(timezone.utc)
+
+    _lm_maybe_post_smart_entry_chat_update(uid, row, old_plan, new_plan)
+    _lm_maybe_log_smart_entry_event(uid, row, old_plan, new_plan)
+
+    try:
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": "db", "message": str(e)}), 500
+
+    return jsonify({
+        "ok":               True,
+        "smart_entry_plan": new_plan,
+        "symbol":           row.symbol,
+        "exchange":         row.exchange,
     })
 
 
