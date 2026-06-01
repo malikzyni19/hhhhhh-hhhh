@@ -11217,104 +11217,312 @@ _LM_SE_TF_CHILDREN: dict = {
     "30m": ["15m"],
     "15m": [],
 }
-_LM_SE_ZONE_TOLERANCE_PCT = 0.35   # % of midprice for near-zone tolerance
-_LM_SE_MIN_SCORE          = 70     # minimum candidate score for refined mode
-_LM_SE_MIN_STRONG_REASONS = 2      # minimum strong reasons for refined mode
-_LM_SE_CHAT_COOLDOWN_S    = 300    # 5-min cooldown between smart-entry chat posts
+_LM_SE_ZONE_TOLERANCE_PCT  = 0.35   # % of midprice for near-zone tolerance
+_LM_SE_MIN_SCORE           = 70     # minimum candidate score for refined mode
+_LM_SE_MIN_STRONG_REASONS  = 2      # minimum strong reasons for refined mode
+_LM_SE_CHAT_COOLDOWN_S     = 300    # 5-min cooldown (critical events bypass)
+_LM_SE_CRITICAL_MODES      = {"invalidated", "blocked", "refined_internal_entry"}
 
+
+# ── TASK 4: OB wall → structured dict ────────────────────────────────────────
 
 def _lm_score_orderbook_wall_for_zone(symbol: str, exchange: str, direction: str,
-                                       zone_low: float, zone_high: float) -> int:
-    """Score 0-100: how strong is the OB wall supporting this zone.
+                                       zone_low: float, zone_high: float) -> dict:
+    """Return structured OB wall evidence for a zone.
 
-    Bullish zone → large bid cluster = support.
-    Bearish zone → large ask cluster = resistance.
-    Only _ob_books (Binance) is used; non-Binance returns 0.
+    {available, status, wall_side, wall_price, wall_strength, wall_score, notes}
+    Only _ob_books (Binance) is used; non-Binance returns unavailable.
     """
+    unavail = {
+        "available":     False,
+        "status":        "unavailable",
+        "wall_side":     "none",
+        "wall_price":    None,
+        "wall_strength": "none",
+        "wall_score":    0,
+        "notes":         "",
+    }
     try:
+        if exchange not in ("binance", ""):
+            return {**unavail, "notes": "OB wall only available for Binance"}
+
         with _ob_book_lock:
             book = dict(_ob_books.get(symbol) or {})
-        if not book or not book.get("ready"):
-            return 0
-        side = book.get("bids" if direction == "bullish" else "asks") or {}
+        if not book:
+            return {**unavail, "notes": "order book not loaded"}
+        if not book.get("ready"):
+            return {**unavail, "status": "not_connected_yet",
+                    "notes": "order book stream initialising"}
+
+        # Freshness
+        ob_age = time.time() - book.get("ts", time.time())
+        ob_status = "fresh" if ob_age <= 5 else "stale"
+
+        side_key = "bids" if direction == "bullish" else "asks"
+        side     = book.get(side_key) or {}
         if not side:
-            return 0
+            return {**unavail, "status": ob_status, "notes": f"no {side_key} data"}
+
         lo        = zone_low  * (1.0 - 0.001)
         hi        = zone_high * (1.0 + 0.001)
-        zone_vol  = sum(float(q) for p, q in side.items() if lo <= float(p) <= hi)
+        zone_items = [(float(p), float(q)) for p, q in side.items()
+                      if lo <= float(p) <= hi]
+        zone_vol  = sum(q for _, q in zone_items)
         total_vol = sum(float(q) for q in side.values()) or 1.0
-        share = zone_vol / total_vol
-        if share >= 0.15:  return 90
-        if share >= 0.08:  return 70
-        if share >= 0.04:  return 50
-        if share >= 0.015: return 30
-        return 10
-    except Exception:
-        return 0
+        share     = zone_vol / total_vol
 
+        # Best single price level inside zone
+        if zone_items:
+            best_p = max(zone_items, key=lambda x: x[1])[0]
+        else:
+            best_p = None
+
+        if share >= 0.15:   wall_score, wall_str = 90, "strong"
+        elif share >= 0.08: wall_score, wall_str = 70, "strong"
+        elif share >= 0.04: wall_score, wall_str = 50, "medium"
+        elif share >= 0.015: wall_score, wall_str = 30, "medium"
+        elif zone_vol > 0:  wall_score, wall_str = 10, "none"
+        else:               wall_score, wall_str = 0,  "none"
+
+        notes = (f"{share*100:.1f}% of total {side_key} depth in zone"
+                 if zone_vol > 0 else "no depth in zone")
+        if ob_status == "stale":
+            notes += " [stale OB — treat as weak evidence]"
+
+        return {
+            "available":     True,
+            "status":        ob_status,
+            "wall_side":     side_key[:3],  # "bid" or "ask"
+            "wall_price":    round(best_p, 6) if best_p else None,
+            "wall_strength": wall_str,
+            "wall_score":    wall_score,
+            "notes":         notes,
+        }
+    except Exception as _e:
+        return {**unavail, "notes": f"error: {_e}"}
+
+
+# ── TASK 5: Liquidation → structured dict ────────────────────────────────────
 
 def _lm_score_liquidation_for_zone(symbol: str, exchange: str, direction: str,
                                     zone_low: float, zone_high: float,
-                                    data_health=None) -> int:
-    """Score 0-100: are recent liquidations supporting this zone's direction?
+                                    data_health=None) -> dict:
+    """Return structured liquidation evidence for a zone.
 
-    Bullish → short_liq_usd_5m dominant = shorts squeezed = demand support.
-    Bearish → long_liq_usd_5m dominant  = longs blown out = supply pressure.
+    {available, status, near_zone, liq_score, last_liq_price, total_liq_usd_5m, notes}
     """
+    unavail = {
+        "available":        False,
+        "status":           "unavailable",
+        "near_zone":        False,
+        "liq_score":        0,
+        "last_liq_price":   None,
+        "total_liq_usd_5m": 0,
+        "notes":            "",
+    }
     try:
         liq_data, liq_status = _lm_liq_get(exchange, symbol)
-        if not liq_data or liq_status not in ("fresh", "stale"):
-            return 0
-        total_liq = liq_data.get("total_liq_usd_5m") or 0
-        if total_liq < 10_000:
-            return 0
-        supporting = (liq_data.get("short_liq_usd_5m") or 0
-                      if direction == "bullish"
-                      else liq_data.get("long_liq_usd_5m") or 0)
-        ratio = supporting / max(total_liq, 1)
-        if supporting >= 500_000 and ratio >= 0.6: return 85
-        if supporting >= 100_000 and ratio >= 0.5: return 65
-        if supporting >= 30_000  and ratio >= 0.4: return 45
-        if supporting >= 10_000:                    return 25
-        return 0
-    except Exception:
-        return 0
+        if not liq_data:
+            return {**unavail, "notes": "no liquidation data"}
+        if liq_status not in ("fresh", "stale"):
+            return {**unavail, "status": liq_status, "notes": "liq feed unavailable"}
 
+        total_liq = float(liq_data.get("total_liq_usd_5m") or 0)
+        last_liq_price = liq_data.get("last_liq_price")
+        last_liq_side  = liq_data.get("last_liq_side") or ""
+
+        # Near-zone check when price info is available
+        near_zone = False
+        if last_liq_price and zone_low and zone_high:
+            lp = float(last_liq_price)
+            band = (zone_high - zone_low) * 1.5   # 1.5× zone width tolerance
+            near_zone = (zone_low - band) <= lp <= (zone_high + band)
+
+        if total_liq < 10_000:
+            return {
+                "available": True, "status": liq_status, "near_zone": near_zone,
+                "liq_score": 0, "last_liq_price": last_liq_price,
+                "total_liq_usd_5m": total_liq,
+                "notes": "total liq < $10k — noise level",
+            }
+
+        supporting = (float(liq_data.get("short_liq_usd_5m") or 0)
+                      if direction == "bullish"
+                      else float(liq_data.get("long_liq_usd_5m") or 0))
+        ratio = supporting / max(total_liq, 1)
+
+        # Bonus for near-zone liq
+        near_bonus = 10 if near_zone else 0
+
+        if supporting >= 500_000 and ratio >= 0.6:   liq_score = min(85 + near_bonus, 100)
+        elif supporting >= 100_000 and ratio >= 0.5: liq_score = min(65 + near_bonus, 100)
+        elif supporting >= 30_000  and ratio >= 0.4: liq_score = min(45 + near_bonus, 85)
+        elif supporting >= 10_000:                    liq_score = min(25 + near_bonus, 60)
+        else:                                         liq_score = near_bonus
+
+        dir_side = "short" if direction == "bullish" else "long"
+        notes = (f"${supporting:,.0f} {dir_side} liq 5m ({ratio*100:.0f}% of total)"
+                 + (" [near zone]" if near_zone else ""))
+        if liq_status == "stale":
+            notes += " [stale feed]"
+
+        return {
+            "available":        True,
+            "status":           liq_status,
+            "near_zone":        near_zone,
+            "liq_score":        liq_score,
+            "last_liq_price":   last_liq_price,
+            "total_liq_usd_5m": round(total_liq, 0),
+            "notes":            notes,
+        }
+    except Exception as _e:
+        return {**unavail, "notes": f"error: {_e}"}
+
+
+# ── TASK 6: Flow → structured dict ───────────────────────────────────────────
 
 def _lm_score_flow_context_for_candidate(symbol: str, exchange: str,
-                                          direction: str, data_health=None) -> int:
-    """Score 0-100: does 60s taker delta confirm the candidate direction?
+                                          direction: str, data_health=None) -> dict:
+    """Return structured flow evidence.
 
-    Bullish → positive delta_pct_60s aligned.
-    Bearish → negative delta_pct_60s aligned.
+    {delta_score, oi_score, funding_score, flow_label, notes}
+    Uses _lm_delta_get for live delta; Data Health rows for OI/funding/L-S.
     """
+    result = {
+        "delta_score":   0,
+        "oi_score":      0,
+        "funding_score": 0,
+        "flow_label":    "unavailable",
+        "notes":         [],
+    }
     try:
+        # ── Live delta ───────────────────────────────────────────────────────
         delta_data, delta_status = _lm_delta_get(exchange, symbol)
-        if not delta_data or delta_status not in ("fresh", "stale"):
-            return 0
-        dpct  = delta_data.get("delta_pct_60s") or 0.0
-        dpct5 = delta_data.get("delta_pct_5m")  or 0.0
-        if direction == "bullish":
-            al60, al5m, mag = dpct > 0, dpct5 > 0, dpct
-        else:
-            al60, al5m, mag = dpct < 0, dpct5 < 0, -dpct
-        if not al60 and not al5m:
-            return 0
-        if abs(mag) >= 20 and al60 and al5m: return 80
-        if abs(mag) >= 10 and al60 and al5m: return 60
-        if abs(mag) >= 5  and al60:           return 40
-        if al60:                               return 20
-        return 0
-    except Exception:
-        return 0
+        if delta_data and delta_status in ("fresh", "stale"):
+            dpct  = float(delta_data.get("delta_pct_60s") or 0.0)
+            dpct5 = float(delta_data.get("delta_pct_5m")  or 0.0)
 
+            if direction == "bullish":
+                al60, al5m, mag = dpct > 0, dpct5 > 0, dpct
+            else:
+                al60, al5m, mag = dpct < 0, dpct5 < 0, -dpct
+
+            if abs(mag) >= 20 and al60 and al5m: delta_s = 80
+            elif abs(mag) >= 10 and al60 and al5m: delta_s = 60
+            elif abs(mag) >= 5  and al60:           delta_s = 40
+            elif al60:                               delta_s = 20
+            else:                                    delta_s = 0
+
+            result["delta_score"] = delta_s
+            lbl = "aligned" if al60 else "opposed"
+            result["notes"].append(
+                f"delta {dpct:+.1f}% (60s) / {dpct5:+.1f}% (5m) [{lbl}]"
+                + (" [stale]" if delta_status == "stale" else "")
+            )
+        else:
+            result["notes"].append("delta unavailable")
+
+        # ── Data Health rows: OI, Funding, L/S (interval/REST — context only) ─
+        dh_rows = (data_health or {}).get("rows") or []
+        for row_dh in dh_rows:
+            label  = row_dh.get("label") or ""
+            val    = row_dh.get("value") or ""
+            status = row_dh.get("status") or ""
+
+            if label == "Open Interest" and status in ("fresh", "interval"):
+                result["notes"].append(f"OI: {val} [interval/REST — context]")
+                result["oi_score"] = 10  # context only, not strong signal
+
+            elif label == "Funding Rate" and status in ("fresh", "interval"):
+                # Funding interpretation: negative = longs pay shorts (bearish pressure)
+                try:
+                    fr = float(str(val).replace("%", "").strip())
+                    if direction == "bullish" and fr < -0.005:
+                        result["funding_score"] = 15
+                        result["notes"].append(f"Funding {fr:+.4f}% — negative favours longs")
+                    elif direction == "bearish" and fr > 0.005:
+                        result["funding_score"] = 15
+                        result["notes"].append(f"Funding {fr:+.4f}% — positive favours shorts")
+                    else:
+                        result["notes"].append(f"Funding {fr:+.4f}% — neutral")
+                except Exception:
+                    result["notes"].append(f"Funding: {val} [parse error]")
+
+            elif label in ("Long/Short Ratio", "L/S Ratio") and status in ("fresh", "interval"):
+                result["notes"].append(f"L/S ratio: {val} [interval — context only]")
+
+        # ── Overall flow_label ───────────────────────────────────────────────
+        total = result["delta_score"] + result["oi_score"] + result["funding_score"]
+        if total >= 60:    result["flow_label"] = "supports"
+        elif total >= 25:  result["flow_label"] = "neutral"
+        elif total == 0 and not delta_data:
+            result["flow_label"] = "unavailable"
+        else:
+            result["flow_label"] = "contradicts" if result["delta_score"] == 0 else "neutral"
+
+    except Exception as _e:
+        result["notes"].append(f"flow error: {_e}")
+        result["flow_label"] = "unavailable"
+
+    return result
+
+
+# ── TASK 3: Candle-close invalidation helper ──────────────────────────────────
+
+def _lm_check_candle_close_invalidation(direction: str, zone_high: float,
+                                          zone_low: float, snapshot: dict) -> dict:
+    """Check candle-close based invalidation. Returns {invalidated, reason, close_price, notes}.
+
+    Rules:
+      - Bullish: close BELOW zone_low → invalidated.
+      - Bearish: close ABOVE zone_high → invalidated.
+      - Wick/live price alone does NOT invalidate.
+      - If candle data is unavailable: not invalidated but warning added.
+    """
+    result = {
+        "invalidated": False,
+        "reason":      None,
+        "close_price": None,
+        "notes":       [],
+    }
+    try:
+        cf_block  = snapshot.get("latest_candle_features") or {}
+        features  = cf_block.get("features") or {}
+        last_close = features.get("last_close")
+
+        if last_close is None:
+            result["notes"].append("candle close confirmation unavailable")
+            return result
+
+        result["close_price"] = float(last_close)
+        lc = float(last_close)
+
+        if direction == "bullish" and lc < zone_low:
+            result["invalidated"] = True
+            result["reason"]      = (f"candle_close_below_zone_low: "
+                                     f"close {lc:.4f} < zone_low {zone_low:.4f}")
+        elif direction == "bearish" and lc > zone_high:
+            result["invalidated"] = True
+            result["reason"]      = (f"candle_close_above_zone_high: "
+                                     f"close {lc:.4f} > zone_high {zone_high:.4f}")
+        else:
+            result["notes"].append(
+                f"close {lc:.4f} within zone [{zone_low:.4f} – {zone_high:.4f}]")
+
+    except Exception as _e:
+        result["notes"].append(f"invalidation check error: {_e}")
+
+    return result
+
+
+# ── Candidate extractor ───────────────────────────────────────────────────────
 
 def _lm_extract_refinement_candidates(item, snapshot: dict,
                                        scan_result=None) -> list:
-    """Extract lower-TF OBs/FIBs that overlap/are near the parent zone.
+    """Extract lower-TF OBs/FIBs overlapping/near the parent zone.
 
     Only extracts when scan_result is provided (requires raw TF data).
-    Returns up to 5 candidates ordered by quality desc, then dist-to-mid.
+    Returns up to 5 candidates ordered by quality desc.
     """
     zone_high = getattr(item, "zone_high", None)
     zone_low  = getattr(item, "zone_low",  None)
@@ -11355,7 +11563,6 @@ def _lm_extract_refinement_candidates(item, snapshot: dict,
                 continue
             if direction == "bearish" and ob_dir == "bullish":
                 continue
-            # Must overlap or be near parent zone
             if ob_top < search_lo or ob_bot > search_hi:
                 continue
             ob_mid = (ob_top + ob_bot) / 2.0
@@ -11419,11 +11626,13 @@ def _lm_extract_refinement_candidates(item, snapshot: dict,
     return cands[:5]
 
 
+# ── TASK 7: Candidate scorer with evidence dict ───────────────────────────────
+
 def _lm_score_refinement_candidate(candidate: dict, parent_setup: dict,
                                    live_context: dict) -> dict:
-    """Score one refinement candidate 0-100.
+    """Score one refinement candidate 0-100 with structured evidence.
 
-    Returns {score, reasons, strong_reasons}.
+    Returns {score, reasons, strong_reasons, reason_summary, evidence, decision_label}.
     Components: overlap(25) + quality(20) + touches(15) + distance(15)
                 + ob_wall(10) + liquidations(10) + flow(5) = 100 max.
     """
@@ -11485,60 +11694,103 @@ def _lm_score_refinement_candidate(candidate: dict, parent_setup: dict,
     elif dist <= 3.0:
         score += 3;  reasons.append(f"price {dist:.2f}% away")
 
-    # 5. OB wall (0-10)
+    # 5. OB wall (0-10) — structured evidence
     zl = float(candidate.get("zone_low")  or 0)
     zh = float(candidate.get("zone_high") or 0)
+    ob_wall_ev = {"available": False, "wall_score": 0, "wall_strength": "none", "notes": ""}
     if sym and zl and zh:
-        wall_s = _lm_score_orderbook_wall_for_zone(sym, exchange, direction, zl, zh)
-        score += round(wall_s / 10)
-        if wall_s >= 70:
-            strong_reasons.append("strong_ob_wall")
-            reasons.append(f"strong OB wall (score {wall_s})")
-        elif wall_s >= 40:
-            reasons.append(f"moderate OB wall (score {wall_s})")
+        ob_wall_ev = _lm_score_orderbook_wall_for_zone(sym, exchange, direction, zl, zh)
+        wall_s     = ob_wall_ev.get("wall_score", 0)
+        # Only use OB wall when it's fresh — stale OB is weak evidence
+        if ob_wall_ev.get("status") == "fresh":
+            score += round(wall_s / 10)
+            if wall_s >= 70:
+                strong_reasons.append("strong_ob_wall")
+                reasons.append(f"strong OB wall ({ob_wall_ev.get('wall_strength')})")
+            elif wall_s >= 40:
+                reasons.append(f"moderate OB wall ({ob_wall_ev.get('wall_strength')})")
+        elif ob_wall_ev.get("available"):
+            # Stale OB — add half weight
+            score += round(wall_s / 20)
+            reasons.append(f"stale OB wall data ({ob_wall_ev.get('wall_strength')})")
 
-    # 6. Liquidations (0-10)
+    # 6. Liquidations (0-10) — structured evidence
+    liq_ev = {"available": False, "liq_score": 0, "notes": ""}
     if sym:
-        liq_s = _lm_score_liquidation_for_zone(
+        liq_ev  = _lm_score_liquidation_for_zone(
             sym, exchange, direction, zl, zh,
             data_health=live_context.get("data_health"))
-        score += round(liq_s / 10)
+        liq_s   = liq_ev.get("liq_score", 0)
+        score  += round(liq_s / 10)
         if liq_s >= 65:
             strong_reasons.append("liquidation_support")
             reasons.append(f"strong liq support (score {liq_s})")
         elif liq_s >= 35:
             reasons.append(f"moderate liq support (score {liq_s})")
 
-    # 7. Taker flow (0-5)
+    # 7. Taker flow (0-5) — structured evidence
+    flow_ev = {"delta_score": 0, "flow_label": "unavailable", "notes": []}
     if sym:
-        flow_s = _lm_score_flow_context_for_candidate(
+        flow_ev    = _lm_score_flow_context_for_candidate(
             sym, exchange, direction,
             data_health=live_context.get("data_health"))
-        score += round(flow_s / 20)
-        if flow_s >= 60:
+        flow_total = (flow_ev.get("delta_score", 0) +
+                      flow_ev.get("oi_score", 0) +
+                      flow_ev.get("funding_score", 0))
+        score += round(flow_total / 20)
+        if flow_ev.get("flow_label") == "supports":
             strong_reasons.append("aligned_flow")
-            reasons.append(f"aligned taker flow (score {flow_s})")
-        elif flow_s >= 30:
-            reasons.append(f"partial flow alignment (score {flow_s})")
+            reasons.append(f"aligned market flow (delta+funding)")
+        elif flow_ev.get("flow_label") == "neutral":
+            reasons.append("neutral market flow")
+
+    # Candidate summary relative to parent
+    parent_zone_high = parent_setup.get("zone_high", zh)
+    parent_zone_low  = parent_setup.get("zone_low",  zl)
+    if zl >= parent_zone_low and zh <= parent_zone_high:
+        relation = "inside_parent"
+    elif overlap >= 5:
+        relation = "overlaps_parent"
+    else:
+        relation = "near_parent"
+
+    final_score = min(100, max(0, score))
+
+    if final_score >= 85:   decision_label = "entry_candidate"
+    elif final_score >= 70: decision_label = "prepare"
+    elif final_score >= 40: decision_label = "watch"
+    else:                   decision_label = "wait"
+
+    reason_summary = ("; ".join(reasons[:4]) if reasons else "no strong evidence") + "."
 
     return {
-        "score":          min(100, max(0, score)),
+        "score":          final_score,
         "reasons":        reasons,
         "strong_reasons": list(dict.fromkeys(strong_reasons)),
+        "reason_summary": reason_summary,
+        "relation_to_parent": relation,
+        "decision_label": decision_label,
+        "evidence": {
+            "orderbook":    ob_wall_ev,
+            "liquidations": liq_ev,
+            "flow":         flow_ev,
+        },
     }
 
+
+# ── TASK 1+2: Build Smart Entry Plan ─────────────────────────────────────────
 
 def _lm_build_smart_entry_plan(item, snapshot: dict = None, scan_result=None,
                                 data_health=None) -> dict:
     """Build Smart Entry Plan for one Live Monitor item.
 
-    Modes
-    ─────
-    parent_default         — use item zone as-is (always valid fallback)
-    refined_internal_entry — best candidate ≥70 score with ≥2 strong reasons
-    blocked                — live data gate is closed
-    invalidated            — live price has breached parent zone invalidation
+    Modes:
+      parent_default         — use item zone as-is (always valid fallback)
+      refined_internal_entry — best candidate ≥70 score with ≥2 strong reasons
+      blocked                — live data gate is closed
+      invalidated            — candle close beyond parent zone (Task 3)
 
+    Returns full structured plan dict (Tasks 1+2) with backward-compat keys.
     Does NOT commit to DB.
     """
     from datetime import datetime as _dt_se, timezone as _tz_se
@@ -11549,50 +11801,81 @@ def _lm_build_smart_entry_plan(item, snapshot: dict = None, scan_result=None,
 
     symbol    = (getattr(item, "symbol",   None) or "").upper()
     exchange  = getattr(item, "exchange",  None) or "binance"
+    market    = getattr(item, "market",    None) or "perpetual"
     direction = _lm_direction_from_item(item)
     zone_high = getattr(item, "zone_high", None)
     zone_low  = getattr(item, "zone_low",  None)
     parent_tf = (getattr(item, "timeframe", None) or "4h").lower()
 
-    base: dict = {
-        "symbol":             symbol,
-        "exchange":           exchange,
-        "direction":          direction,
-        "parent_tf":          parent_tf,
-        "zone_high":          zone_high,
-        "zone_low":           zone_low,
-        "computed_at":        now_iso,
-        "mode":               "parent_default",
-        "entry_price":        None,
-        "entry_label":        "Zone Default",
-        "invalidation_price": None,
-        "confidence":         0,
-        "candidates":         [],
-        "best_candidate":     None,
-        "block_reason":       None,
-        "warnings":           [],
-    }
+    # ── Base / blocked template ───────────────────────────────────────────────
+    def _make_base(mode="parent_default", decision="wait",
+                   block_reason=None, warnings=None):
+        return {
+            "phase":                "phase10_6_smart_entry_refinement",
+            "computed_at":          now_iso,
+            "symbol":               symbol,
+            "exchange":             exchange,
+            "market":               market,
+            "mode":                 mode,
+            "decision":             decision,
+            "parent_setup":         {},
+            "default_entry_plan":   {},
+            "refinement_candidates": [],
+            "best_refined_candidate": None,
+            "data_quality":         {},
+            "reason_summary":       "",
+            "invalidation":         {},
+            "message_summary":      "",
+            "event_summary":        "",
+            # Backward-compat keys
+            "direction":            direction,
+            "parent_tf":            parent_tf,
+            "zone_high":            zone_high,
+            "zone_low":             zone_low,
+            "entry_price":          None,
+            "entry_label":          "Zone Default",
+            "invalidation_price":   None,
+            "confidence":           0,
+            "candidates":           [],
+            "best_candidate":       None,
+            "block_reason":         block_reason,
+            "warnings":             warnings or [],
+        }
 
-    # 1. Data Health Gate ────────────────────────────────────────────────────
+    # ── 1. Data Health Gate ───────────────────────────────────────────────────
     if data_health is None:
         data_health = _lm_build_data_health_context(symbol, exchange, snap=snapshot)
-    gate = (data_health or {}).get("ai_data_gate") or {}
-    if not gate.get("allowed", True):
-        return {**base,
-                "mode":         "blocked",
-                "block_reason": "live_data_gate_blocked",
-                "warnings":     gate.get("reasons") or ["Live data gate blocked"]}
+    gate        = (data_health or {}).get("ai_data_gate") or {}
+    gate_allowed = gate.get("allowed", True)
+    dq           = {
+        "gate_allowed":   gate_allowed,
+        "gate_reasons":   gate.get("reasons") or [],
+        "gate_warnings":  gate.get("warnings") or [],
+        "critical_status": (data_health or {}).get("critical_status", "unavailable"),
+    }
 
-    # 2. Valid zone check ────────────────────────────────────────────────────
+    if not gate_allowed:
+        b = _make_base("blocked", "blocked",
+                       block_reason="live_data_gate_blocked",
+                       warnings=gate.get("reasons") or ["Live data gate blocked"])
+        b["data_quality"]    = dq
+        b["reason_summary"]  = "Live data gate blocked."
+        b["message_summary"] = f"Smart Entry blocked — {', '.join(dq['gate_reasons'])}."
+        b["event_summary"]   = "blocked"
+        return b
+
+    # ── 2. Valid zone ─────────────────────────────────────────────────────────
     if not zone_high or not zone_low or zone_high <= zone_low:
-        return {**base,
-                "mode":         "parent_default",
-                "block_reason": "no_valid_zone",
-                "warnings":     ["No valid parent zone on item"]}
+        b = _make_base("parent_default", "wait",
+                       block_reason="no_valid_zone",
+                       warnings=["No valid parent zone on item"])
+        b["data_quality"] = dq
+        b["reason_summary"] = "No valid parent zone."
+        return b
 
     zone_range = zone_high - zone_low
 
-    # 3. Live price ──────────────────────────────────────────────────────────
+    # ── 3. Live price (for display/distance, not invalidation) ───────────────
     live_price = 0.0
     try:
         for _r in (data_health or {}).get("rows") or []:
@@ -11605,127 +11888,260 @@ def _lm_build_smart_entry_plan(item, snapshot: dict = None, scan_result=None,
     if not live_price:
         live_price = float(getattr(item, "current_price", None) or 0)
 
-    # 4. Default entry and invalidation ─────────────────────────────────────
-    inv_buf = zone_range * 0.05
+    # ── 4. TASK 2: Parent setup and default entry plan ────────────────────────
+    # Official invalidation: candle close beyond parent zone boundary
+    parent_invalidation = zone_low  if direction == "bullish" else zone_high
+    # Soft buffer (reference only — not the official level)
+    soft_buffer          = zone_range * 0.05
+    soft_buffer_price    = round(zone_low - soft_buffer, 8) if direction == "bullish" \
+                           else round(zone_high + soft_buffer, 8)
+
+    # Default entry: near the zone edge favourable for the direction
+    # Bullish: entry near zone_high edge (inside zone, favour zone confluence)
+    # Bearish: entry near zone_low  edge
     if direction == "bullish":
-        invalidation_price = round(zone_low  - inv_buf, 8)
-        default_entry      = round(zone_low  + zone_range * 0.25, 8)
-        default_label      = f"{parent_tf.upper()} Zone Bottom 25%"
+        default_entry = round(zone_high - zone_range * 0.15, 8)   # 15% below zone top
+        default_label = f"{parent_tf.upper()} OB Zone Edge (Bull)"
     else:
-        invalidation_price = round(zone_high + inv_buf, 8)
-        default_entry      = round(zone_high - zone_range * 0.25, 8)
-        default_label      = f"{parent_tf.upper()} Zone Top 25%"
+        default_entry = round(zone_low  + zone_range * 0.15, 8)   # 15% above zone bottom
+        default_label = f"{parent_tf.upper()} OB Zone Edge (Bear)"
 
-    # 5. Invalidation check ──────────────────────────────────────────────────
-    if live_price > 0:
-        if direction == "bullish" and live_price < invalidation_price:
-            return {**base,
-                    "mode":               "invalidated",
-                    "entry_price":        default_entry,
-                    "entry_label":        default_label,
-                    "invalidation_price": invalidation_price,
-                    "block_reason":       (f"price_below_inv("
-                                           f"{live_price:.4f}<{invalidation_price:.4f})"),
-                    "warnings":           ["Live price breached parent zone invalidation"]}
-        if direction == "bearish" and live_price > invalidation_price:
-            return {**base,
-                    "mode":               "invalidated",
-                    "entry_price":        default_entry,
-                    "entry_label":        default_label,
-                    "invalidation_price": invalidation_price,
-                    "block_reason":       (f"price_above_inv("
-                                           f"{live_price:.4f}>{invalidation_price:.4f})"),
-                    "warnings":           ["Live price breached parent zone invalidation"]}
+    parent_setup_d = {
+        "tf":                     parent_tf,
+        "direction":              direction,
+        "zone_high":              zone_high,
+        "zone_low":               zone_low,
+        "zone_range":             round(zone_range, 8),
+        "official_invalidation":  parent_invalidation,
+        "soft_buffer_price":      soft_buffer_price,
+    }
+    default_entry_plan_d = {
+        "entry_price":            default_entry,
+        "entry_label":            default_label,
+        "invalidation_price":     parent_invalidation,
+        "invalidation_rule":      (f"candle close below {zone_low:.4f}"
+                                   if direction == "bullish"
+                                   else f"candle close above {zone_high:.4f}"),
+        "soft_buffer_price":      soft_buffer_price,
+    }
 
-    # 6. Extract or reuse candidates ─────────────────────────────────────────
-    live_ctx    = {"symbol": symbol, "exchange": exchange,
-                   "direction": direction, "data_health": data_health}
-    parent_setup = {"direction": direction,
-                    "zone_high": zone_high, "zone_low": zone_low, "tf": parent_tf}
+    # ── 5. TASK 3: Candle-close invalidation check ────────────────────────────
+    inv_check = _lm_check_candle_close_invalidation(
+        direction, zone_high, zone_low, snapshot)
+    inv_d = {
+        "invalidated":   inv_check["invalidated"],
+        "reason":        inv_check["reason"],
+        "close_price":   inv_check["close_price"],
+        "zone_low":      zone_low,
+        "zone_high":     zone_high,
+        "method":        "candle_close",
+        "notes":         inv_check["notes"],
+    }
+
+    if inv_check["invalidated"]:
+        b = _make_base("invalidated", "no_trade",
+                       block_reason=inv_check["reason"],
+                       warnings=["Candle closed beyond parent zone — setup invalidated"])
+        b.update({
+            "parent_setup":        parent_setup_d,
+            "default_entry_plan":  default_entry_plan_d,
+            "invalidation":        inv_d,
+            "data_quality":        dq,
+            "entry_price":         default_entry,
+            "entry_label":         default_label,
+            "invalidation_price":  parent_invalidation,
+            "reason_summary":      inv_check["reason"] or "invalidated",
+            "message_summary":     f"Zone invalidated — {inv_check['reason']}.",
+            "event_summary":       "invalidated",
+        })
+        return b
+
+    warnings_out: list = list(inv_check["notes"])  # e.g. "candle close unavailable"
+
+    # ── 6. Extract or reuse candidates ───────────────────────────────────────
+    live_ctx     = {"symbol": symbol, "exchange": exchange,
+                    "direction": direction, "data_health": data_health}
+    parent_setup_scoring = {"direction": direction,
+                            "zone_high": zone_high, "zone_low": zone_low,
+                            "tf": parent_tf}
 
     if scan_result:
         raw_cands = _lm_extract_refinement_candidates(
             item, snapshot, scan_result=scan_result)
     else:
         raw_cands = [
-            {k: v for k, v in c.items() if k not in ("source_ob", "source_fib")}
+            {k: v for k, v in c.items()
+             if k not in ("source_ob", "source_fib", "evidence")}
             for c in (snapshot.get("latest_execution_candidates") or [])
         ]
 
-    # 7. Score candidates ────────────────────────────────────────────────────
+    # ── 7. Score candidates ───────────────────────────────────────────────────
     scored: list = []
     for cand in raw_cands:
-        res = _lm_score_refinement_candidate(cand, parent_setup, live_ctx)
+        res = _lm_score_refinement_candidate(cand, parent_setup_scoring, live_ctx)
         scored.append({
-            "type":          cand.get("type", "ob"),
-            "tf":            cand.get("tf", ""),
-            "zone_high":     cand.get("zone_high"),
-            "zone_low":      cand.get("zone_low"),
-            "mid_price":     cand.get("mid_price"),
-            "quality":       cand.get("quality", 0),
-            "quality_label": cand.get("quality_label", ""),
-            "touches":       cand.get("touches", 0),
-            "dist":          cand.get("dist", 0),
-            "overlap_pct":   cand.get("overlap_pct", 0),
-            "absorption":    cand.get("absorption", False),
-            "state":         cand.get("state", ""),
-            "fib_level":     cand.get("fib_level"),
-            "score":         res["score"],
-            "reasons":       res["reasons"],
+            "type":           cand.get("type", "ob"),
+            "tf":             cand.get("tf", ""),
+            "zone_high":      cand.get("zone_high"),
+            "zone_low":       cand.get("zone_low"),
+            "mid_price":      cand.get("mid_price"),
+            "quality":        cand.get("quality", 0),
+            "quality_label":  cand.get("quality_label", ""),
+            "touches":        cand.get("touches", 0),
+            "dist":           cand.get("dist", 0),
+            "overlap_pct":    cand.get("overlap_pct", 0),
+            "absorption":     cand.get("absorption", False),
+            "state":          cand.get("state", ""),
+            "fib_level":      cand.get("fib_level"),
+            "score":          res["score"],
+            "reasons":        res["reasons"],
             "strong_reasons": res["strong_reasons"],
+            "reason_summary": res["reason_summary"],
+            "relation_to_parent": res["relation_to_parent"],
+            "decision_label": res["decision_label"],
+            "evidence":       res["evidence"],
         })
     scored.sort(key=lambda c: -c["score"])
 
-    # 8. Choose mode ─────────────────────────────────────────────────────────
-    best   = scored[0] if scored else None
-    warns: list = []
+    # ── 8. Choose mode ────────────────────────────────────────────────────────
+    best = scored[0] if scored else None
 
-    if (best and
-            best["score"] >= _LM_SE_MIN_SCORE and
-            len(best.get("strong_reasons") or []) >= _LM_SE_MIN_STRONG_REASONS):
+    # Refined mode: OB wall must be fresh if it's a strong reason
+    ob_wall_fresh_ok = True
+    if best:
+        ob_wall_ev = (best.get("evidence") or {}).get("orderbook") or {}
+        if "strong_ob_wall" in (best.get("strong_reasons") or []):
+            ob_wall_fresh_ok = (ob_wall_ev.get("status") == "fresh")
+
+    can_refine = (
+        best is not None and
+        best["score"] >= _LM_SE_MIN_SCORE and
+        len(best.get("strong_reasons") or []) >= _LM_SE_MIN_STRONG_REASONS and
+        ob_wall_fresh_ok and
+        gate_allowed
+    )
+
+    if can_refine:
         mode        = "refined_internal_entry"
+        decision    = best.get("decision_label", "prepare")
         best_out    = best
         r_range     = float((best["zone_high"] or 0) - (best["zone_low"] or 0))
-        entry_price = round(float(best["mid_price"] or 0), 8)
+        entry_price = round(float(best["mid_price"] or default_entry), 8)
         entry_label = (f"{best['tf'].upper()} {best['quality_label']} "
                        f"{'FIB' if best['type'] == 'fib' else 'OB'}")
+        # Refined invalidation: candle close beyond candidate zone
         if direction == "bullish":
-            invalidation_price = round(float(best["zone_low"] or 0) - r_range * 0.1, 8)
+            refined_inv = round(float(best["zone_low"] or 0) - r_range * 0.1, 8)
         else:
-            invalidation_price = round(float(best["zone_high"] or 0) + r_range * 0.1, 8)
-        confidence = best["score"]
+            refined_inv = round(float(best["zone_high"] or 0) + r_range * 0.1, 8)
+        invalidation_price = refined_inv
+        confidence  = best["score"]
+        reason_summary = f"Refined: {entry_label}. {best.get('reason_summary', '')}"
     else:
-        mode        = "parent_default"
-        best_out    = None
-        entry_price = default_entry
-        entry_label = default_label
-        confidence  = best["score"] if best else 0
+        mode           = "parent_default"
+        decision       = "wait" if not best else ("prepare" if best["score"] >= 50 else "wait")
+        best_out       = None
+        entry_price    = default_entry
+        entry_label    = default_label
+        invalidation_price = parent_invalidation
+        confidence     = best["score"] if best else 0
+        reason_summary = "No strong refinement candidate. Using parent zone default."
         if best:
-            warns.append(
+            warnings_out.append(
                 f"Best candidate {best['score']}/100, "
                 f"{len(best.get('strong_reasons') or [])} strong reasons "
                 f"— below refinement threshold"
             )
+        if not ob_wall_fresh_ok and best:
+            warnings_out.append("OB wall was strong reason but data is stale — threshold not met")
+
+    # ── Compose message/event summaries ──────────────────────────────────────
+    dir_str   = direction.capitalize()
+    mode_lbl  = {
+        "parent_default":         "Default Zone Entry",
+        "refined_internal_entry": "Refined Internal Entry",
+    }.get(mode, mode)
+
+    if can_refine:
+        msg_sum = (
+            f"AI Smart Entry Update — {symbol}\n\n"
+            f"Parent setup:\n{parent_tf.upper()} {dir_str} OB "
+            f"{zone_low} - {zone_high}\n\n"
+            f"Default plan:\nUse parent zone edge. "
+            f"Invalidation: {default_entry_plan_d['invalidation_rule']}.\n\n"
+            f"Refined candidate:\n{best['tf'].upper()} {best['quality_label']} "
+            f"{'FIB' if best.get('type')=='fib' else 'OB'} "
+            f"{best.get('zone_low')} - {best.get('zone_high')}\n"
+            f"Score: {best['score']}/100\n"
+            f"Signals: {', '.join((best.get('strong_reasons') or [])[:4]) or 'none'}\n"
+            f"Reason: {best.get('reason_summary','')}\n\n"
+            f"Decision: {decision.upper()}\n\n"
+            f"Note:\nThis is analysis only. Refined entry is valid only while "
+            f"live data remains fresh."
+        )
+    else:
+        msg_sum = (
+            f"AI Smart Entry Update — {symbol}\n\n"
+            f"Parent setup:\n{parent_tf.upper()} {dir_str} OB "
+            f"{zone_low} - {zone_high}\n\n"
+            f"Default plan:\nUse parent zone edge near {entry_price}. "
+            f"Invalidation: {default_entry_plan_d['invalidation_rule']}.\n\n"
+            f"Decision: {decision.upper()}\n\n"
+            f"Note:\n{reason_summary} This is analysis only."
+        )
+
+    event_sum = f"{mode}:{decision}:conf{confidence}"
 
     return {
-        **base,
-        "mode":               mode,
-        "entry_price":        entry_price,
-        "entry_label":        entry_label,
-        "invalidation_price": invalidation_price,
-        "confidence":         confidence,
-        "candidates":         scored,
-        "best_candidate":     best_out,
-        "block_reason":       None,
-        "warnings":           warns,
+        "phase":                    "phase10_6_smart_entry_refinement",
+        "computed_at":              now_iso,
+        "symbol":                   symbol,
+        "exchange":                 exchange,
+        "market":                   market,
+        "mode":                     mode,
+        "decision":                 decision,
+        "parent_setup":             parent_setup_d,
+        "default_entry_plan":       default_entry_plan_d,
+        "refinement_candidates":    scored,
+        "best_refined_candidate":   best_out,
+        "data_quality":             dq,
+        "reason_summary":           reason_summary,
+        "invalidation":             inv_d,
+        "message_summary":          msg_sum,
+        "event_summary":            event_sum,
+        # Backward-compat keys
+        "direction":                direction,
+        "parent_tf":                parent_tf,
+        "zone_high":                zone_high,
+        "zone_low":                 zone_low,
+        "entry_price":              entry_price,
+        "entry_label":              entry_label,
+        "invalidation_price":       invalidation_price,
+        "confidence":               confidence,
+        "candidates":               scored,
+        "best_candidate":           best_out,
+        "block_reason":             None,
+        "warnings":                 warnings_out,
     }
 
 
+# ── TASK 8: Expanded chat auto-message ───────────────────────────────────────
+
 def _lm_maybe_post_smart_entry_chat_update(uid: int, item, old_plan: dict,
                                             new_plan: dict) -> bool:
-    """Post an assistant chat message when smart entry mode or entry changes.
+    """Post detailed assistant chat when meaningful Smart Entry changes occur.
 
-    Dedup by MD5(old_mode|new_mode|rounded_entry). Cooldown 5 min.
+    Triggers (expanded per Task 8):
+      - mode changed
+      - decision changed
+      - best candidate changed (tf+zone)
+      - score crossed 70 or 85
+      - entry_candidate / invalidated / blocked (critical — bypass cooldown)
+      - gate unblocked after blocked
+
+    Dedup: MD5 hash of (mode, decision, best_cand_id, score_bucket, gate_status).
+    State stored in snapshot_json["smart_entry_chat_state"].
+    Critical events bypass the 5-min cooldown.
     Returns True when a message was posted.
     """
     if not uid or not item:
@@ -11734,75 +12150,111 @@ def _lm_maybe_post_smart_entry_chat_update(uid: int, item, old_plan: dict,
         import hashlib as _hs
         from datetime import datetime as _dt3, timezone as _tz3
 
-        old_mode  = (old_plan or {}).get("mode")
-        new_mode  = new_plan.get("mode")
-        new_entry = float(new_plan.get("entry_price") or 0)
+        old_mode     = (old_plan or {}).get("mode")
+        new_mode     = new_plan.get("mode")
+        old_decision = (old_plan or {}).get("decision")
+        new_decision = new_plan.get("decision")
+        old_best     = (old_plan or {}).get("best_candidate") or {}
+        new_best     = new_plan.get("best_candidate") or {}
+        old_conf     = int((old_plan or {}).get("confidence") or 0)
+        new_conf     = int(new_plan.get("confidence") or 0)
+        old_gate     = (old_plan or {}).get("data_quality", {}).get("gate_allowed", True)
+        new_gate     = new_plan.get("data_quality", {}).get("gate_allowed", True)
 
-        mode_chg   = bool(old_mode and old_mode != new_mode)
-        entry_chg  = bool(old_plan and
-                          abs(float((old_plan.get("entry_price") or 0)) - new_entry)
-                          > max(new_entry, 1) * 0.001)
-        if not mode_chg and not entry_chg:
+        # Build candidate ID from tf+zone_low
+        def _cand_id(c):
+            if not c:
+                return ""
+            return f"{c.get('tf','')}_{c.get('zone_low','')}"
+
+        old_cand_id = _cand_id(old_best)
+        new_cand_id = _cand_id(new_best)
+
+        mode_chg      = bool(old_mode and old_mode != new_mode)
+        decision_chg  = bool(old_decision and old_decision != new_decision)
+        cand_chg      = bool(old_cand_id and old_cand_id != new_cand_id)
+        gate_chg      = bool(old_gate != new_gate)
+        score_bucket_old = old_conf // 15
+        score_bucket_new = new_conf // 15
+        score_bucket_chg  = (score_bucket_old != score_bucket_new) and (new_conf >= 40)
+
+        is_critical = (new_mode in _LM_SE_CRITICAL_MODES or
+                       new_decision == "entry_candidate" or
+                       mode_chg or gate_chg)
+
+        significant = (mode_chg or decision_chg or cand_chg or
+                       gate_chg or score_bucket_chg)
+
+        if not significant:
             return False
 
-        snap    = _json_loads_safe(getattr(item, "snapshot_json", None), {})
-        se_meta = snap.get("smart_entry_chat_meta") or {}
-        last_at = se_meta.get("last_chat_at")
-        if last_at:
+        snap      = _json_loads_safe(getattr(item, "snapshot_json", None), {})
+        se_state  = snap.get("smart_entry_chat_state") or {}
+        last_at   = se_state.get("last_chat_at")
+
+        # Cooldown (critical events bypass)
+        if last_at and not is_critical:
             try:
                 lt = _dt3.fromisoformat(last_at.replace("Z", "+00:00"))
-                if (_dt3.now(_tz3.utc) - lt).total_seconds() < _LM_SE_CHAT_COOLDOWN_S:
+                age_s = (_dt3.now(_tz3.utc) - lt).total_seconds()
+                cooldown = 120 if score_bucket_chg else _LM_SE_CHAT_COOLDOWN_S
+                if age_s < cooldown:
                     return False
             except Exception:
                 pass
 
-        dhash = _hs.md5(
-            f"{old_mode}|{new_mode}|{round(new_entry, 2)}".encode()
+        # Dedup hash
+        score_bkt   = new_conf // 15
+        dhash       = _hs.md5(
+            f"{new_mode}|{new_decision}|{new_cand_id}|{score_bkt}|{new_gate}".encode()
         ).hexdigest()[:12]
-        if se_meta.get("last_hash") == dhash:
+        if se_state.get("last_hash") == dhash:
             return False
 
+        # Build message from plan's message_summary or inline
         sym     = getattr(item, "symbol", "?")
-        dir_cap = (new_plan.get("direction") or "bullish").capitalize()
-        _lbl    = {
-            "parent_default":         "Default Zone Entry",
-            "refined_internal_entry": "Refined Internal Entry",
-            "blocked":                "Blocked (Data Gate)",
-            "invalidated":            "Zone Invalidated",
-        }
-        nl = _lbl.get(new_mode, new_mode or "?")
+        msg_sum = new_plan.get("message_summary") or ""
 
-        if new_mode == "blocked":
-            msg = (f"Smart Entry ({sym}): plan **blocked** — "
-                   f"{', '.join(new_plan.get('warnings') or ['data gate closed'])}. "
-                   "Will update once live data is fresh.")
-        elif new_mode == "invalidated":
-            msg = (f"Smart Entry ({sym}): zone **invalidated** — price breached "
-                   f"level {new_plan.get('invalidation_price', '?')}. "
-                   "Please review setup validity.")
-        elif new_mode == "refined_internal_entry":
-            best = new_plan.get("best_candidate") or {}
-            srs  = ", ".join((best.get("strong_reasons") or [])[:3]) or "none"
-            msg  = (f"Smart Entry ({sym} {dir_cap}): updated to **{nl}**. "
-                    f"Candidate: {best.get('tf','?').upper()} "
-                    f"{best.get('quality_label','?')} "
-                    f"{'FIB' if best.get('type') == 'fib' else 'OB'} "
-                    f"near {new_entry}. Score {best.get('score',0)}/100. "
-                    f"Signals: {srs}. Not a trade signal.")
+        if msg_sum:
+            msg = msg_sum
         else:
-            prev = f" (was: {old_mode})" if old_mode else ""
-            msg  = (f"Smart Entry ({sym} {dir_cap}): using **{nl}**{prev}. "
-                    f"Default entry near {new_entry}. "
-                    "No candidate met refinement threshold.")
+            # Fallback inline message
+            nl  = {"parent_default": "Default Zone Entry",
+                   "refined_internal_entry": "Refined Internal Entry",
+                   "blocked": "Blocked (Data Gate)",
+                   "invalidated": "Zone Invalidated"}.get(new_mode, new_mode or "?")
+            new_entry = float(new_plan.get("entry_price") or 0)
+            if new_mode == "blocked":
+                msg = (f"Smart Entry ({sym}): plan **blocked** — "
+                       f"{', '.join(new_plan.get('warnings') or ['data gate closed'])}.")
+            elif new_mode == "invalidated":
+                msg = (f"Smart Entry ({sym}): zone **invalidated** — "
+                       f"{new_plan.get('block_reason','candle close beyond zone')}.")
+            elif new_mode == "refined_internal_entry":
+                best = new_plan.get("best_candidate") or {}
+                msg  = (f"Smart Entry ({sym}): **{nl}** updated. "
+                        f"Candidate: {best.get('tf','?').upper()} "
+                        f"{best.get('quality_label','?')} "
+                        f"{'FIB' if best.get('type')=='fib' else 'OB'} "
+                        f"near {new_entry}. Score {best.get('score',0)}/100. "
+                        f"Not a trade signal.")
+            else:
+                prev = f" (was: {old_mode})" if old_mode else ""
+                msg  = (f"Smart Entry ({sym}): **{nl}**{prev}. "
+                        f"Default entry near {new_entry}.")
 
         _lm_chat_save(uid, item, "assistant", msg,
                      agent_id="smart_entry_watcher",
                      agent_label="Smart Entry Engine")
 
         now_s = _dt3.now(_tz3.utc).isoformat()
-        se_meta["last_chat_at"] = now_s
-        se_meta["last_hash"]    = dhash
-        snap["smart_entry_chat_meta"] = se_meta
+        se_state["last_chat_at"] = now_s
+        se_state["last_hash"]    = dhash
+        se_state["last_mode"]    = new_mode
+        se_state["last_decision"] = new_decision
+        snap["smart_entry_chat_state"] = se_state
+        # Also keep legacy key for compatibility
+        snap["smart_entry_chat_meta"]  = se_state
         try:
             from models import db as _db_se2
             item.snapshot_json = _json_dumps_safe(snap)
@@ -11815,38 +12267,90 @@ def _lm_maybe_post_smart_entry_chat_update(uid: int, item, old_plan: dict,
         return False
 
 
+# ── TASK 9: Specific event types ─────────────────────────────────────────────
+
 def _lm_maybe_log_smart_entry_event(uid: int, item, old_plan: dict,
                                      new_plan: dict) -> bool:
-    """Log LiveMonitorEvent for meaningful smart entry mode or confidence changes."""
+    """Log LiveMonitorEvent with specific Smart Entry event types (Task 9).
+
+    Event types used (never just 'smart_entry_updated'):
+      smart_entry_refined          — mode became refined_internal_entry
+      smart_entry_decision_changed — decision changed (regardless of mode)
+      smart_entry_candidate_changed — best candidate tf+zone changed
+      smart_entry_invalidated       — mode became invalidated
+      smart_entry_blocked           — mode became blocked
+
+    Do not spam — only logs on meaningful changes.
+    """
     if not uid or not item:
         return False
     try:
-        old_mode  = (old_plan or {}).get("mode")
-        new_mode  = new_plan.get("mode")
-        old_conf  = int((old_plan or {}).get("confidence") or 0)
-        new_conf  = int(new_plan.get("confidence") or 0)
-        mode_chg  = bool(old_mode and old_mode != new_mode)
-        conf_jump = abs(new_conf - old_conf) >= 15
-        if not mode_chg and not conf_jump:
+        old_mode     = (old_plan or {}).get("mode")
+        new_mode     = new_plan.get("mode")
+        old_decision = (old_plan or {}).get("decision")
+        new_decision = new_plan.get("decision")
+        old_conf     = int((old_plan or {}).get("confidence") or 0)
+        new_conf     = int(new_plan.get("confidence") or 0)
+        old_best     = (old_plan or {}).get("best_candidate") or {}
+        new_best     = new_plan.get("best_candidate") or {}
+
+        mode_chg      = bool(old_mode and old_mode != new_mode)
+        decision_chg  = bool(old_decision and old_decision != new_decision)
+        conf_jump     = abs(new_conf - old_conf) >= 15
+        old_cand_id   = f"{old_best.get('tf','')}_{old_best.get('zone_low','')}"
+        new_cand_id   = f"{new_best.get('tf','')}_{new_best.get('zone_low','')}"
+        cand_chg      = bool(old_cand_id.strip("_") and old_cand_id != new_cand_id)
+
+        if not (mode_chg or decision_chg or conf_jump or cand_chg):
             return False
+
+        # Determine the most specific event type
+        if new_mode == "invalidated" and mode_chg:
+            ev_type = "smart_entry_invalidated"
+            ev_desc = f"Smart Entry invalidated — {new_plan.get('block_reason','zone close exceeded')}"
+        elif new_mode == "blocked" and mode_chg:
+            ev_type = "smart_entry_blocked"
+            ev_desc = f"Smart Entry blocked — live data gate closed"
+        elif new_mode == "refined_internal_entry" and mode_chg:
+            ev_type = "smart_entry_refined"
+            b       = new_best or {}
+            ev_desc = (f"Smart Entry refined — {b.get('tf','?').upper()} "
+                       f"{b.get('quality_label','?')} "
+                       f"{'FIB' if b.get('type')=='fib' else 'OB'} "
+                       f"score {b.get('score',0)}/100")
+        elif cand_chg:
+            ev_type = "smart_entry_candidate_changed"
+            b       = new_best or {}
+            ev_desc = (f"Best candidate changed → {b.get('tf','?').upper()} "
+                       f"{b.get('quality_label','?')} score {b.get('score',0)}/100")
+        elif decision_chg:
+            ev_type = "smart_entry_decision_changed"
+            ev_desc = f"Smart Entry decision: {old_decision} → {new_decision}"
+        else:
+            ev_type = "smart_entry_decision_changed"
+            ev_desc = f"Smart Entry confidence: {old_conf} → {new_conf}"
 
         from models import db as _db_sev, LiveMonitorEvent as _LME_SE
         ev = _LME_SE(
             item_id           = getattr(item, "id", None),
             user_id           = uid,
             symbol            = getattr(item, "symbol", ""),
-            event_type        = "smart_entry_updated",
-            event_description = (
-                f"Smart Entry: {old_mode} → {new_mode}"
-                if mode_chg else
-                f"Smart Entry confidence: {old_conf} → {new_conf}"
-            ),
+            event_type        = ev_type,
+            event_description = ev_desc,
             details_json      = _json_dumps_safe({
-                "old_mode":    old_mode,
-                "new_mode":    new_mode,
-                "entry_price": new_plan.get("entry_price"),
-                "confidence":  new_conf,
-                "phase":       "phase10.6",
+                "old_mode":      old_mode,
+                "new_mode":      new_mode,
+                "old_decision":  old_decision,
+                "new_decision":  new_decision,
+                "best_candidate": new_best,
+                "parent_zone":   {
+                    "zone_high": new_plan.get("zone_high"),
+                    "zone_low":  new_plan.get("zone_low"),
+                    "direction": new_plan.get("direction"),
+                },
+                "score":         new_conf,
+                "reason_summary": new_plan.get("reason_summary", ""),
+                "source":        "phase10_6_smart_entry",
             }),
             price_at_event = getattr(item, "current_price", None),
         )
@@ -16278,6 +16782,25 @@ def api_lm_items_detect_events(item_id):
 
     # Keep dedup list bounded to last 100 keys
     snap["event_detection_keys"] = seen_keys[-100:]
+
+    # Phase 10.6 Task 12: lightweight Smart Entry re-evaluation on detect-events.
+    # Uses current snapshot (which already has fresh detection + readiness data).
+    # No heavy MTF scan — just re-runs the plan builder with existing candidates.
+    se_chat_updated = False
+    try:
+        old_se_plan = snap.get("latest_smart_entry_plan") or {}
+        new_se_plan = _lm_build_smart_entry_plan(row, snapshot=snap,
+                                                  scan_result=None, data_health=None)
+        snap["latest_smart_entry_plan"]       = new_se_plan
+        snap["latest_execution_candidates"]   = new_se_plan.get("candidates") or []
+        snap["last_smart_entry_plan_at"]      = new_se_plan.get("computed_at", "")
+        se_chat_updated = _lm_maybe_post_smart_entry_chat_update(
+            uid, row, new_se_plan, old_se_plan)
+        _lm_maybe_log_smart_entry_event(uid, row, new_se_plan, old_se_plan)
+    except Exception as _se_ex:
+        import traceback as _tb
+        print(f"[SE-DETECT] warn: {_se_ex}")
+
     row.snapshot_json = _json_dumps_safe(snap)
 
     try:
@@ -16305,6 +16828,8 @@ def api_lm_items_detect_events(item_id):
         "setup_readiness": readiness,
         "new_events_logged": len(new_events_to_create),
         "memory_appended": memory_appended,
+        "smart_entry_updated": bool(snap.get("latest_smart_entry_plan")),
+        "smart_entry_chat_updated": se_chat_updated,
     })
 
 
@@ -17716,7 +18241,7 @@ def api_lm_smart_entry_refresh(item_id):
     row.snapshot_json = _json_dumps_safe(snap)
     row.updated_at    = datetime.now(timezone.utc)
 
-    _lm_maybe_post_smart_entry_chat_update(uid, row, old_plan, new_plan)
+    chat_updated = _lm_maybe_post_smart_entry_chat_update(uid, row, old_plan, new_plan)
     _lm_maybe_log_smart_entry_event(uid, row, old_plan, new_plan)
 
     try:
@@ -17728,6 +18253,7 @@ def api_lm_smart_entry_refresh(item_id):
     return jsonify({
         "ok":               True,
         "smart_entry_plan": new_plan,
+        "chat_updated":     bool(chat_updated),
         "symbol":           row.symbol,
         "exchange":         row.exchange,
     })

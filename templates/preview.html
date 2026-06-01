@@ -5172,16 +5172,17 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     if(cands.length>0){
       html+='<details style="margin-top:2px"><summary style="font-size:10px;color:var(--text-3);cursor:pointer;user-select:none">'+
         cands.length+' candidate(s) — expand</summary>'+
+        '<div class="lm-smart-entry-table-wrap" style="overflow:auto;max-height:240px;-webkit-overflow-scrolling:touch">'+
         '<table style="width:100%;border-collapse:collapse;font-size:10px;margin-top:4px">'+
         '<tr style="color:var(--text-3);border-bottom:1px solid var(--border)">'+
-          '<th style="text-align:left;padding:2px 4px">TF</th>'+
-          '<th style="text-align:left;padding:2px 4px">Type</th>'+
-          '<th style="text-align:right;padding:2px 4px">Q</th>'+
-          '<th style="text-align:right;padding:2px 4px">Score</th>'+
-          '<th style="text-align:right;padding:2px 4px">Dist%</th>'+
-          '<th style="text-align:right;padding:2px 4px">Ovlp%</th>'+
+          '<th style="text-align:left;padding:2px 4px;position:sticky;top:0;background:var(--surface,#1e293b)">TF</th>'+
+          '<th style="text-align:left;padding:2px 4px;position:sticky;top:0;background:var(--surface,#1e293b)">Type</th>'+
+          '<th style="text-align:right;padding:2px 4px;position:sticky;top:0;background:var(--surface,#1e293b)">Q</th>'+
+          '<th style="text-align:right;padding:2px 4px;position:sticky;top:0;background:var(--surface,#1e293b)">Score</th>'+
+          '<th style="text-align:right;padding:2px 4px;position:sticky;top:0;background:var(--surface,#1e293b)">Dist%</th>'+
+          '<th style="text-align:right;padding:2px 4px;position:sticky;top:0;background:var(--surface,#1e293b)">Ovlp%</th>'+
         '</tr>'+
-        cands.slice(0,5).map(function(c){
+        cands.map(function(c){
           var sc=c.score||0;
           var scColor=sc>=70?'var(--green-2,#4ade80)':sc>=40?'var(--yellow-2,#f59e0b)':'var(--text-3)';
           return '<tr style="border-bottom:1px solid rgba(148,163,184,.08)">'+
@@ -5193,7 +5194,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
             '<td style="padding:2px 4px;text-align:right;color:var(--text-3)">'+(typeof c.overlap_pct==='number'?c.overlap_pct.toFixed(1):'—')+'</td>'+
           '</tr>';
         }).join('')+
-        '</table></details>';
+        '</table></div></details>';
     }
     return html;
   }
@@ -5761,7 +5762,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
           .then(function(d){
             sebtn.disabled=false; sebtn.innerHTML=origHtml;
             if(d&&d.ok&&d.smart_entry_plan){
-              // Update the item snapshot in memory
+              // Update item snapshot in liveMonitorItems array
               var targetItem=null;
               for(var k=0;k<liveMonitorItems.length;k++){
                 if(liveMonitorItems[k].id===id){ targetItem=liveMonitorItems[k]; break; }
@@ -5779,13 +5780,60 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
                 _lmSelItem.snapshot.last_smart_entry_plan_at=d.smart_entry_plan.computed_at;
                 var sebody=document.getElementById("lmSmartEntryBody");
                 if(sebody) sebody.innerHTML=_lmSmartEntryHtml(_lmSelItem);
+                // Reload Event Timeline if currently visible
+                if(_lmInstructionView==="events"){ _lmLoadEvents(id); }
+                // Reload chat history if a chat auto-message was posted
+                if(d.chat_updated){
+                  _lmChatHistoryLoad(id,function(msgs){
+                    var chatBox=document.getElementById("lmChatMessages");
+                    if(chatBox&&msgs&&msgs.length){
+                      // Append only the last message if chat box is already rendered
+                      var last=msgs[msgs.length-1];
+                      if(last&&last.role==="assistant"){
+                        var existing=chatBox.querySelectorAll("[data-chat-msg]");
+                        var alreadyThere=false;
+                        if(existing.length){
+                          var lastEl=existing[existing.length-1];
+                          if(lastEl&&lastEl.getAttribute("data-chat-msg")===String(last.id||"")){
+                            alreadyThere=true;
+                          }
+                        }
+                        if(!alreadyThere){
+                          var msgDiv=document.createElement("div");
+                          msgDiv.setAttribute("data-chat-msg",String(last.id||""));
+                          msgDiv.style.cssText="padding:6px 10px;border-bottom:1px solid var(--border);font-size:11px;color:var(--text-2);background:rgba(74,222,128,.04)";
+                          msgDiv.textContent=last.content||"";
+                          chatBox.appendChild(msgDiv);
+                          chatBox.scrollTop=chatBox.scrollHeight;
+                        }
+                      }
+                    }
+                  });
+                }
               }
             } else {
-              sebtn.style.color='var(--red-2,#f87171)';
-              setTimeout(function(){ sebtn.style.color=''; }, 2000);
+              // Show error inside Smart Entry card body
+              var sebody2=document.getElementById("lmSmartEntryBody");
+              if(sebody2){
+                var errDiv=document.createElement("div");
+                errDiv.style.cssText="font-size:10px;color:var(--red-2,#f87171);padding:3px 0;margin-top:4px";
+                errDiv.textContent="Refresh failed — "+(d&&d.error?d.error:"server error");
+                sebody2.appendChild(errDiv);
+                setTimeout(function(){ if(errDiv.parentNode) errDiv.parentNode.removeChild(errDiv); },3000);
+              }
             }
           })
-          .catch(function(){ sebtn.disabled=false; sebtn.innerHTML=origHtml; });
+          .catch(function(){
+            sebtn.disabled=false; sebtn.innerHTML=origHtml;
+            var sebody3=document.getElementById("lmSmartEntryBody");
+            if(sebody3){
+              var errDiv=document.createElement("div");
+              errDiv.style.cssText="font-size:10px;color:var(--red-2,#f87171);padding:3px 0;margin-top:4px";
+              errDiv.textContent="Network error — Smart Entry refresh failed";
+              sebody3.appendChild(errDiv);
+              setTimeout(function(){ if(errDiv.parentNode) errDiv.parentNode.removeChild(errDiv); },3000);
+            }
+          });
       });
     });
     // Agent selector change handler (persists to localStorage)
