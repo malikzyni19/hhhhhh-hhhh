@@ -12032,6 +12032,23 @@ def _lm_ai_trade_proposal_prompt() -> str:
         "MEXC execution price or level.\n"
         "- execution_exchange candle/price data is the truth for entry/SL/TP levels.\n\n"
 
+        "LIVE DATA HEALTH RULES (Phase 10.4):\n"
+        "The context contains a live_data_health block. Always inspect it before producing a proposal.\n"
+        "- Check live_data_health.ai_data_gate.allowed before any other analysis.\n"
+        "- If allowed = false (gate BLOCKED): you MUST output\n"
+        "    action = 'wait', confidence = 0,\n"
+        "    entry_logic = 'Live data gate blocked',\n"
+        "    risk_notes = [the gate reasons from ai_data_gate.reasons],\n"
+        "    NEVER output 'propose_long' or 'propose_short' while the gate is blocked.\n"
+        "- Live Price and Mark Price are the two critical data sources. Both must be fresh.\n"
+        "- Rows with source='websocket' and status='fresh' are live — treat as current market state.\n"
+        "- Rows with source='interval' or 'rest' are delayed up to 5 minutes — use as background "
+        "context only, not as tick-level signals.\n"
+        "- Do NOT invent price, liquidation, OI, OI change, delta, long/short ratio, funding rate, "
+        "or order book values not present in live_data_health.rows.\n"
+        "- If Order Book, Delta, or Liquidations rows have status 'unavailable': lower confidence "
+        "by at least 10 points per missing source and list each in risk_notes.\n\n"
+
         "RISK GUARD NOTE:\n"
         "- Your proposal is NOT approval. Risk Guard will independently validate.\n"
         "- Do NOT claim your proposal is approved, safe, or executable.\n"
@@ -16359,6 +16376,39 @@ def api_lm_items_ai_trade_proposal(item_id):
             "reasoning_summary":      "AI provider unavailable or parse error.",
         }
 
+    # ── Live Data Gate override (Phase 10.4) ──────────────────────────────────
+    # Backend hard-block: AI cannot produce an executable proposal when Live Price
+    # or Mark Price is not fresh. This runs regardless of AI response or fallback.
+    try:
+        _p_dh_gate = (proposal_ctx.get("live_data_health") or {}).get("ai_data_gate") or {}
+    except Exception:
+        _p_dh_gate = {}
+    if not _p_dh_gate.get("allowed", True):
+        _p_dh_reasons = _p_dh_gate.get("reasons") or ["Live data gate blocked"]
+        _p_action     = (proposal_raw.get("action") or "wait").lower()
+        if _p_action in ("propose_long", "propose_short"):
+            proposal_raw = {
+                "action":                 "wait",
+                "setup_type":             proposal_raw.get("setup_type") or getattr(row, "setup_type", None),
+                "direction":              proposal_raw.get("direction")  or getattr(row, "direction", None),
+                "confidence":             0,
+                "entry_logic":            "Live data gate blocked",
+                "invalidation_logic":     "Waiting until Live Price and Mark Price are fresh.",
+                "take_profit_logic":      "No TP plan while live data gate is blocked.",
+                "required_confirmations": ["Live Price fresh", "Mark Price fresh"],
+                "risk_notes":             _p_dh_reasons,
+                "reasoning_summary":      "Waiting until Live Price and Mark Price are fresh.",
+            }
+        else:
+            _p_notes = list(proposal_raw.get("risk_notes") or [])
+            for _r in _p_dh_reasons:
+                if _r not in _p_notes:
+                    _p_notes.append(_r)
+            proposal_raw["risk_notes"]  = _p_notes
+            proposal_raw["confidence"]  = 0
+            if not proposal_raw.get("entry_logic"):
+                proposal_raw["entry_logic"] = "Live data gate blocked"
+
     # Create trade record
     trade = _lm_create_trade_record_from_proposal(row, proposal_raw, snapshot=snap)
 
@@ -16378,12 +16428,13 @@ def api_lm_items_ai_trade_proposal(item_id):
         _db.session.rollback()
 
     return jsonify({
-        "ok":       True,
-        "item":     _live_monitor_item_to_dict(row),
-        "proposal": proposal_raw,
-        "trade":    _lm_trade_to_dict(trade),
-        "ai_ok":    ai_ok,
-        "ai_error": ai_error,
+        "ok":             True,
+        "item":           _live_monitor_item_to_dict(row),
+        "proposal":       proposal_raw,
+        "trade":          _lm_trade_to_dict(trade),
+        "ai_ok":          ai_ok,
+        "ai_error":       ai_error,
+        "live_data_gate": _p_dh_gate,
     })
 
 
@@ -16557,6 +16608,37 @@ def api_lm_items_proposal_and_risk_check(item_id):
             "reasoning_summary": "AI provider unavailable or parse error.",
         }
 
+    # ── Live Data Gate override (Phase 10.4) ──────────────────────────────────
+    try:
+        _p_dh_gate = (proposal_ctx.get("live_data_health") or {}).get("ai_data_gate") or {}
+    except Exception:
+        _p_dh_gate = {}
+    if not _p_dh_gate.get("allowed", True):
+        _p_dh_reasons = _p_dh_gate.get("reasons") or ["Live data gate blocked"]
+        _p_action     = (proposal_raw.get("action") or "wait").lower()
+        if _p_action in ("propose_long", "propose_short"):
+            proposal_raw = {
+                "action":                 "wait",
+                "setup_type":             proposal_raw.get("setup_type") or getattr(row, "setup_type", None),
+                "direction":              proposal_raw.get("direction")  or getattr(row, "direction", None),
+                "confidence":             0,
+                "entry_logic":            "Live data gate blocked",
+                "invalidation_logic":     "Waiting until Live Price and Mark Price are fresh.",
+                "take_profit_logic":      "No TP plan while live data gate is blocked.",
+                "required_confirmations": ["Live Price fresh", "Mark Price fresh"],
+                "risk_notes":             _p_dh_reasons,
+                "reasoning_summary":      "Waiting until Live Price and Mark Price are fresh.",
+            }
+        else:
+            _p_notes = list(proposal_raw.get("risk_notes") or [])
+            for _r in _p_dh_reasons:
+                if _r not in _p_notes:
+                    _p_notes.append(_r)
+            proposal_raw["risk_notes"]  = _p_notes
+            proposal_raw["confidence"]  = 0
+            if not proposal_raw.get("entry_logic"):
+                proposal_raw["entry_logic"] = "Live data gate blocked"
+
     trade = _lm_create_trade_record_from_proposal(row, proposal_raw, snapshot=snap)
     try:
         _db.session.add(trade)
@@ -16582,13 +16664,14 @@ def api_lm_items_proposal_and_risk_check(item_id):
         return jsonify({"error": str(e)}), 500
 
     return jsonify({
-        "ok":         True,
-        "item":       _live_monitor_item_to_dict(row),
-        "proposal":   proposal_raw,
-        "trade":      _lm_trade_to_dict(trade),
-        "risk_guard": rg,
-        "ai_ok":      ai_ok,
-        "ai_error":   ai_error,
+        "ok":             True,
+        "item":           _live_monitor_item_to_dict(row),
+        "proposal":       proposal_raw,
+        "trade":          _lm_trade_to_dict(trade),
+        "risk_guard":     rg,
+        "ai_ok":          ai_ok,
+        "ai_error":       ai_error,
+        "live_data_gate": _p_dh_gate,
     })
 
 
