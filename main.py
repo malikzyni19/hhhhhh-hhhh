@@ -16619,17 +16619,23 @@ def api_lm_data_health():
         rows.append(_nc("Mark Price"))
 
     # ═════════════════════════════════════════════════════════════════════════
-    # ROW 3 — Order Book  (source: websocket, requires OB stream active)
+    # ROW 3 — Order Book  (source: websocket, auto-started via ensure_ob_stream)
     # ═════════════════════════════════════════════════════════════════════════
     if exchange == "binance":
+        if ws_enabled:
+            # Auto-start OB stream; non-blocking (wait_sec=0.2 so first response
+            # is fast; stream will be ready on the next 3s poll cycle)
+            ensure_ob_stream(symbol, wait_sec=0.2)
         with _ob_book_lock:
             ob_raw = dict(_ob_books.get(symbol) or {})
-        if ob_raw and ob_raw.get("ready"):
+        if ws_enabled and ob_raw and ob_raw.get("ready"):
             bids = ob_raw.get("bids", {})
             asks = ob_raw.get("asks", {})
             best_bid = max(bids.keys()) if bids else None
             best_ask = min(asks.keys()) if asks else None
             if best_bid and best_ask:
+                ob_age = round(time.time() - ob_raw.get("ts", time.time()), 1)
+                ob_status = "fresh" if ob_age <= 5 else "stale"
                 spread_pct = (best_ask - best_bid) / best_ask * 100
                 top_bids_usd = sum(p * q for p, q in sorted(bids.items(), reverse=True)[:20])
                 top_asks_usd = sum(p * q for p, q in sorted(asks.items())[:20])
@@ -16639,20 +16645,24 @@ def api_lm_data_health():
                     "metric": "Order Book",
                     "value":  f"Bid {best_bid:.2f} / Ask {best_ask:.2f}",
                     "source": "websocket",
-                    "status": "fresh",
-                    "updated": "live",
+                    "status": ob_status,
+                    "updated": f"{ob_age}s ago",
                     "notes": (f"Spread {spread_pct:.3f}% | "
                               f"Imbal {imb_pct:+.1f}% | "
                               f"Bid {_fmt_usd_lm(top_bids_usd)} Ask {_fmt_usd_lm(top_asks_usd)} (top-20)"),
                 })
             else:
                 rows.append({"metric": "Order Book", "value": "—",
-                             "source": "websocket", "status": "not_connected_yet",
-                             "updated": "—", "notes": "Start OB stream to enable"})
+                             "source": "websocket", "status": "unavailable",
+                             "updated": "—", "notes": "Book empty after snapshot"})
+        elif ws_enabled:
+            rows.append({"metric": "Order Book", "value": "—",
+                         "source": "websocket", "status": "unavailable",
+                         "updated": "—", "notes": "Connecting… (auto-started)"})
         else:
             rows.append({"metric": "Order Book", "value": "—",
-                         "source": "websocket", "status": "not_connected_yet",
-                         "updated": "—", "notes": "Start OB stream to enable"})
+                         "source": "websocket", "status": "unavailable",
+                         "updated": "—", "notes": "WebSocket disabled: set ZYNI_LM_WS_ENABLED=1"})
     else:
         rows.append(_nc("Order Book"))
 
