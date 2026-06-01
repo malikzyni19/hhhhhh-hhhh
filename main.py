@@ -11704,18 +11704,27 @@ def _lm_build_specific_exchange_data_with_fallback(
                           ("" if selected_exchange == "binance" else " or Binance fallback"),
                     updated=now_iso)
 
-    # AI gate
-    lp_m = metrics.get("live_price", {})
-    mp_m = metrics.get("mark_price", {})
-    lp_ok = lp_m.get("status") in ("fresh", "stale", "fallback_fresh", "partial")
-    mp_ok = mp_m.get("status") in ("fresh", "stale", "fallback_fresh", "partial")
+    # AI gate — Phase 10.7 Task 7: only fresh/fallback_fresh open the gate;
+    # stale and fallback_stale are NOT sufficient.
+    lp_m  = metrics.get("live_price", {})
+    mp_m  = metrics.get("mark_price", {})
+    lp_ok = lp_m.get("status") in ("fresh", "fallback_fresh")
+    mp_ok = mp_m.get("status") in ("fresh", "fallback_fresh")
     gate_allowed  = lp_ok and mp_ok
     gate_reasons  = []
     gate_warnings = []
     if not lp_ok:
-        gate_reasons.append(f"Live Price unavailable from {selected_exchange.title()} and Binance fallback")
+        _lp_st = lp_m.get("status", "unavailable")
+        gate_reasons.append(
+            f"Live Price is {_lp_st} from {selected_exchange.title()} "
+            "(and Binance fallback if applicable) — fresh price required"
+        )
     if not mp_ok:
-        gate_reasons.append(f"Mark Price unavailable from {selected_exchange.title()} and Binance fallback")
+        _mp_st = mp_m.get("status", "unavailable")
+        gate_reasons.append(
+            f"Mark Price is {_mp_st} from {selected_exchange.title()} "
+            "(and Binance fallback if applicable) — fresh price required"
+        )
     if fallback_used:
         gate_warnings.append(
             f"{selected_exchange.title()} missing: {', '.join(fallback_used[:3])}; Binance fallback used")
@@ -12559,31 +12568,39 @@ def _lm_score_flow_context_for_candidate(symbol: str, exchange: str,
 
         # ── Data Health rows: OI, Funding, L/S (interval/REST — context only) ─
         dh_rows = (data_health or {}).get("rows") or []
+        # Phase 10.7 Task 8: include fallback_fresh/partial as usable context statuses
+        _dh_ctx_statuses    = {"fresh", "interval", "partial", "fallback_fresh"}
+        _dh_strong_statuses = {"fresh", "fallback_fresh"}
         for row_dh in dh_rows:
-            label  = row_dh.get("label") or ""
+            # Phase 10.7 fix: health rows use "metric" key, not "label"
+            label  = row_dh.get("metric") or row_dh.get("label") or ""
             val    = row_dh.get("value") or ""
             status = row_dh.get("status") or ""
 
-            if label == "Open Interest" and status in ("fresh", "interval"):
-                result["notes"].append(f"OI: {val} [interval/REST — context]")
+            if label == "Open Interest" and status in _dh_ctx_statuses:
+                _fb_note = " [fallback]" if status == "fallback_fresh" else " [interval/REST — context]"
+                result["notes"].append(f"OI: {val}{_fb_note}")
                 result["oi_score"] = 10  # context only, not strong signal
 
-            elif label == "Funding Rate" and status in ("fresh", "interval"):
+            elif label == "Funding Rate" and status in _dh_ctx_statuses:
                 # Funding interpretation: negative = longs pay shorts (bearish pressure)
+                _fr_strength = 15 if status in _dh_strong_statuses else 8
                 try:
                     fr = float(str(val).replace("%", "").strip())
                     if direction == "bullish" and fr < -0.005:
-                        result["funding_score"] = 15
-                        result["notes"].append(f"Funding {fr:+.4f}% — negative favours longs")
+                        result["funding_score"] = _fr_strength
+                        result["notes"].append(f"Funding {fr:+.4f}% — negative favours longs"
+                                               + (" [fallback]" if status == "fallback_fresh" else ""))
                     elif direction == "bearish" and fr > 0.005:
-                        result["funding_score"] = 15
-                        result["notes"].append(f"Funding {fr:+.4f}% — positive favours shorts")
+                        result["funding_score"] = _fr_strength
+                        result["notes"].append(f"Funding {fr:+.4f}% — positive favours shorts"
+                                               + (" [fallback]" if status == "fallback_fresh" else ""))
                     else:
                         result["notes"].append(f"Funding {fr:+.4f}% — neutral")
                 except Exception:
                     result["notes"].append(f"Funding: {val} [parse error]")
 
-            elif label in ("Long/Short Ratio", "L/S Ratio") and status in ("fresh", "interval"):
+            elif label in ("Long/Short Ratio", "L/S Ratio") and status in _dh_ctx_statuses:
                 result["notes"].append(f"L/S ratio: {val} [interval — context only]")
 
         # ── Overall flow_label ───────────────────────────────────────────────
@@ -12771,9 +12788,10 @@ def _lm_score_refinement_candidate(candidate: dict, parent_setup: dict,
     Components: overlap(25) + quality(20) + touches(15) + distance(15)
                 + ob_wall(10) + liquidations(10) + flow(5) = 100 max.
     """
-    sym       = live_context.get("symbol", "")
-    exchange  = live_context.get("exchange", "binance")
-    direction = candidate.get("direction") or parent_setup.get("direction", "bullish")
+    sym             = live_context.get("symbol", "")
+    exchange        = live_context.get("exchange", "binance")
+    analysis_source = live_context.get("analysis_source", exchange)
+    direction       = candidate.get("direction") or parent_setup.get("direction", "bullish")
     score     = 0
     reasons: list        = []
     strong_reasons: list = []
@@ -12834,7 +12852,8 @@ def _lm_score_refinement_candidate(candidate: dict, parent_setup: dict,
     zh = float(candidate.get("zone_high") or 0)
     ob_wall_ev = {"available": False, "wall_score": 0, "wall_strength": "none", "notes": ""}
     if sym and zl and zh:
-        ob_wall_ev = _lm_score_orderbook_wall_for_zone(sym, exchange, direction, zl, zh)
+        ob_wall_ev = _lm_score_orderbook_wall_for_zone(sym, exchange, direction, zl, zh,
+                                                        analysis_source=analysis_source)
         wall_s     = ob_wall_ev.get("wall_score", 0)
         # Only use OB wall when it's fresh — stale OB is weak evidence
         if ob_wall_ev.get("status") == "fresh":
@@ -12854,7 +12873,8 @@ def _lm_score_refinement_candidate(candidate: dict, parent_setup: dict,
     if sym:
         liq_ev  = _lm_score_liquidation_for_zone(
             sym, exchange, direction, zl, zh,
-            data_health=live_context.get("data_health"))
+            data_health=live_context.get("data_health"),
+            analysis_source=analysis_source)
         liq_s   = liq_ev.get("liq_score", 0)
         score  += round(liq_s / 10)
         if liq_s >= 65:
@@ -12868,7 +12888,8 @@ def _lm_score_refinement_candidate(candidate: dict, parent_setup: dict,
     if sym:
         flow_ev    = _lm_score_flow_context_for_candidate(
             sym, exchange, direction,
-            data_health=live_context.get("data_health"))
+            data_health=live_context.get("data_health"),
+            analysis_source=analysis_source)
         flow_total = (flow_ev.get("delta_score", 0) +
                       flow_ev.get("oi_score", 0) +
                       flow_ev.get("funding_score", 0))
@@ -12934,13 +12955,18 @@ def _lm_build_smart_entry_plan(item, snapshot: dict = None, scan_result=None,
     if snapshot is None:
         snapshot = {}
 
-    symbol    = (getattr(item, "symbol",   None) or "").upper()
-    exchange  = getattr(item, "exchange",  None) or "binance"
-    market    = getattr(item, "market",    None) or "perpetual"
-    direction = _lm_direction_from_item(item)
-    zone_high = getattr(item, "zone_high", None)
-    zone_low  = getattr(item, "zone_low",  None)
-    parent_tf = (getattr(item, "timeframe", None) or "4h").lower()
+    symbol               = (getattr(item, "symbol",   None) or "").upper()
+    exchange             = getattr(item, "exchange",  None) or "binance"
+    market               = getattr(item, "market",    None) or "perpetual"
+    direction            = _lm_direction_from_item(item)
+    zone_high            = getattr(item, "zone_high", None)
+    zone_low             = getattr(item, "zone_low",  None)
+    parent_tf            = (getattr(item, "timeframe", None) or "4h").lower()
+
+    # Phase 10.7: resolve analysis source — never changes parent exchange/zone
+    _asc_se              = _lm_analysis_source_config(item, snapshot=snapshot)
+    analysis_source      = _asc_se["analysis_source"]
+    parent_setup_exchange = _asc_se["parent_setup_exchange"]
 
     # ── Base / blocked template ───────────────────────────────────────────────
     def _make_base(mode="parent_default", decision="wait",
@@ -12951,6 +12977,10 @@ def _lm_build_smart_entry_plan(item, snapshot: dict = None, scan_result=None,
             "symbol":               symbol,
             "exchange":             exchange,
             "market":               market,
+            "analysis_source":      analysis_source,
+            "parent_setup_exchange": parent_setup_exchange,
+            "price_levels_source":  "parent_setup_exchange",
+            "execution_exchange":   "not_in_scope_phase10_7",
             "mode":                 mode,
             "decision":             decision,
             "parent_setup":         {},
@@ -12977,9 +13007,9 @@ def _lm_build_smart_entry_plan(item, snapshot: dict = None, scan_result=None,
             "warnings":             warnings or [],
         }
 
-    # ── 1. Data Health Gate ───────────────────────────────────────────────────
+    # ── 1. Data Health Gate — Phase 10.7: use analysis_source, not parent exchange
     if data_health is None:
-        data_health = _lm_build_data_health_context(symbol, exchange, snap=snapshot)
+        data_health = _lm_build_data_health_context(symbol, analysis_source, snap=snapshot)
     gate        = (data_health or {}).get("ai_data_gate") or {}
     gate_allowed = gate.get("allowed", True)
     dq           = {
@@ -13014,7 +13044,8 @@ def _lm_build_smart_entry_plan(item, snapshot: dict = None, scan_result=None,
     live_price = 0.0
     try:
         for _r in (data_health or {}).get("rows") or []:
-            if _r.get("label") == "Live Price":
+            # Phase 10.7 fix: rows use "metric", not "label"
+            if (_r.get("metric") or _r.get("label")) == "Live Price":
                 live_price = float(
                     str(_r.get("value") or "").replace(",", "").split()[0])
                 break
@@ -13095,6 +13126,8 @@ def _lm_build_smart_entry_plan(item, snapshot: dict = None, scan_result=None,
 
     # ── 6. Extract or reuse candidates ───────────────────────────────────────
     live_ctx     = {"symbol": symbol, "exchange": exchange,
+                    "analysis_source": analysis_source,
+                    "parent_setup_exchange": parent_setup_exchange,
                     "direction": direction, "data_health": data_health}
     parent_setup_scoring = {"direction": direction,
                             "zone_high": zone_high, "zone_low": zone_low,
@@ -14047,13 +14080,13 @@ def _lm_compute_aggregated_market_context(row, snapshot=None) -> dict:
         if mexc_ticker.get("funding_rate") is not None:
             warnings.append(
                 f"MEXC funding rate (supplement only): {mexc_ticker['funding_rate']:.6f}. "
-                "Binance data is primary source."
+                "Phase 10.7 metrics are the authoritative source."
             )
 
     if only_one_source and "binance" in sources_used:
         warnings.append("Single source (Binance only) — agreement_score not applicable.")
     if "binance" in sources_failed:
-        warnings.append("Primary source (Binance) failed — context may be incomplete.")
+        warnings.append("Binance context fetch failed — legacy context may be incomplete.")
 
     # ── Phase 10.7: True aggregated exchange metrics layer ───────────────────
     asc          = _lm_analysis_source_config(row, snapshot=snap)
@@ -14074,6 +14107,23 @@ def _lm_compute_aggregated_market_context(row, snapshot=None) -> dict:
     except Exception as _p10e:
         warnings.append(f"Phase10.7 metrics fetch error: {_p10e}")
 
+    # Phase 10.7 Task 9: source_model clarifies which engine generated the metrics
+    _only_binance = (p10_used == ["binance"] or (not p10_used and "binance" in sources_used))
+    if analysis_src == "aggregated":
+        _src_model = "binance_only_partial" if _only_binance else "true_aggregated"
+        _summary = (
+            "Partial aggregated context: Binance only currently available."
+            if _only_binance
+            else (b_summary.get("ai_context") or "True aggregated context across multiple exchanges.")
+        )
+    else:
+        _fallback_used = (p10_metrics and any(
+            (p10_metrics.get(k) or {}).get("status") in ("fallback_fresh", "fallback_stale")
+            for k in p10_metrics
+        ))
+        _src_model = "specific_with_binance_fallback" if _fallback_used else "specific_exchange"
+        _summary = b_summary.get("ai_context") or f"{analysis_src.title()} exchange context."
+
     return {
         "phase":                "phase10_7_true_aggregated_exchange_data",
         "computed_at":          now_iso,
@@ -14082,11 +14132,12 @@ def _lm_compute_aggregated_market_context(row, snapshot=None) -> dict:
         "parent_setup_exchange": asc["parent_setup_exchange"],
         "price_levels_source":  asc["price_levels_source"],
         "execution_exchange":   asc["execution_exchange"],
+        "source_model":         _src_model,
+        "primary_source":       analysis_src,       # NOT hardcoded to "binance"
         "sources_requested":    sources_requested,
         "sources_used":         p10_used or sources_used,
         "sources_skipped":      p10_skipped,
         "sources_failed":       sources_failed,
-        "primary_source":       "binance",
         "funding":              funding,
         "open_interest":        open_interest,
         "taker_pressure":       taker_pressure,
@@ -14100,7 +14151,7 @@ def _lm_compute_aggregated_market_context(row, snapshot=None) -> dict:
         "summary_notes":        summary_notes,
         "metrics":              p10_metrics,
         "warnings":             warnings,
-        "summary":              b_summary.get("ai_context") or "Aggregated exchange context.",
+        "summary":              _summary,
     }
 
 
@@ -14352,9 +14403,21 @@ def _lm_ai_trade_proposal_prompt() -> str:
         "- OB and FIB zones are PRIMARY setup modules — they can be the basis of a proposal.\n"
         "- FVG, Breaker, Bias, Session, OI, Funding, Taker, Liquidations, Wick = "
         "CONFIRMATIONS only. They cannot be the sole basis of a proposal.\n"
-        "- aggregated_market_context is confirmation only — Binance context is NOT "
-        "MEXC execution price or level.\n"
-        "- execution_exchange candle/price data is the truth for entry/SL/TP levels.\n\n"
+        "- aggregated_market_context is confirmation only — NEVER use it to rewrite "
+        "parent setup zones, SL, TP, or entry levels.\n"
+        "- Parent setup exchange is the truth for OB/FIB zones, entry zone values, "
+        "SL/invalidation, and TP/RR calculations.\n\n"
+
+        "ANALYSIS SOURCE RULES (Phase 10.7):\n"
+        "- analysis_source in the context may be: aggregated, binance, bybit, okx, or mexc.\n"
+        "- Analysis source is for CONFIRMATION DATA ONLY (OI, funding, liquidations, delta, L/S, OB).\n"
+        "- Parent setup OB/FIB zones, SL, TP, invalidation, and entry-zone price levels "
+        "MUST come from parent_setup_exchange — never from analysis_source data.\n"
+        "- If source_model = 'binance_only_partial': aggregated mode but only Binance available. "
+        "Do NOT claim multi-exchange agreement.\n"
+        "- If a row has status 'fallback_fresh' or 'binance_fallback': state it clearly in reasoning.\n"
+        "- execution_exchange = 'not_in_scope_phase10_7' — do NOT reference it in proposals.\n"
+        "- Do NOT invent exchange data that is not in sources_used.\n\n"
 
         "LIVE DATA HEALTH RULES (Phase 10.4):\n"
         "The context contains a live_data_health block. Always inspect it before producing a proposal.\n"
@@ -14498,7 +14561,7 @@ def _lm_build_trade_proposal_context(row, snapshot=None) -> dict:
         "custom_ai_instructions":  custom_instr,
         "live_data_health": _lm_build_data_health_context(
             (getattr(row, "symbol", None) or "").upper(),
-            getattr(row, "exchange", "binance") or "binance",
+            asc["analysis_source"],      # Phase 10.7: use resolved analysis source
             snap=snap,
         ),
         "rules": {
@@ -14622,11 +14685,16 @@ def _lm_run_risk_guard(trade, row=None, snapshot=None) -> dict:
         )
         score -= 50
 
-    # ── HARD BLOCK 8: live data gate — Live Price + Mark Price must be fresh ──
+    # ── HARD BLOCK 8: live data gate — Phase 10.7: check using analysis_source ──
     try:
-        _dh_symbol   = (trade.symbol or "").upper()
-        _dh_exchange = (getattr(row, "exchange", None) or "binance") if row else "binance"
-        _dh_snap     = snapshot or {}
+        _dh_symbol = (trade.symbol or "").upper()
+        _dh_snap   = snapshot or {}
+        # Resolve analysis source from item snapshot (if row available), else binance
+        if row is not None:
+            _dh_asc = _lm_analysis_source_config(row, snapshot=_dh_snap)
+            _dh_exchange = _dh_asc["analysis_source"]
+        else:
+            _dh_exchange = "binance"
         _dh_ctx      = _lm_build_data_health_context(_dh_symbol, _dh_exchange, snap=_dh_snap)
         _dh_gate     = _dh_ctx.get("ai_data_gate") or {}
         if not _dh_gate.get("allowed", True):
@@ -15220,6 +15288,9 @@ def _lm_build_ai_context(item) -> dict:
         "bias_min_timeframe":          "1h",
         "hidden_execution_timeframe":  "5m",
     }
+    # Phase 10.7: resolve analysis source for data health — parent exchange/zones unchanged
+    _asc_ai      = _lm_analysis_source_config(item, snapshot=snap)
+    _ai_src      = _asc_ai["analysis_source"]
 
     # Compact health: keep key fields only
     health_compact = None
@@ -15400,7 +15471,7 @@ def _lm_build_ai_context(item) -> dict:
                                      "parent setup OB/FIB/SL/TP/invalidation zones are never rewritten.",
         } if amc and isinstance(amc, dict) else None)(snap.get("latest_aggregated_market_context")),
         "live_data_health": _lm_build_data_health_context(
-            item.symbol, item.exchange or "binance", snap=snap
+            item.symbol, _ai_src, snap=snap
         ),
         # Phase 10.6: compact smart entry plan (no candidates list — just mode + best)
         "smart_entry_plan": (lambda _p: {
@@ -15552,18 +15623,29 @@ def _lm_ai_system_prompt() -> str:
         "- memory is context clues only — not trade permission, not strategy modification.\n"
         "- If reasoning_memory is null, analyze from other context fields only.\n\n"
 
-        "AGGREGATED MARKET CONTEXT (Phase 9.2):\n"
-        "The context may include an aggregated_market_context block — a Binance-first market view.\n"
-        "USE RULES:\n"
-        "- primary_source is always 'binance' in Phase 9.2. Binance data is the authoritative source.\n"
-        "- If sources_used contains only 'binance', this is a single-source context — "
-        "do NOT claim multi-exchange agreement.\n"
-        "- agreement_score/conflict_score will be null when only one source is used — do not invent values.\n"
-        "- MEXC funding/OI fields (if present in warnings) are supplemental and informational only.\n"
-        "- Do NOT use Binance market context as an exact MEXC execution price or level.\n"
-        "- Do NOT treat market bias from aggregated context as trade execution permission.\n"
-        "- If aggregated_market_context is null, use market_context if available, or note it is missing.\n"
-        "- Do NOT invent exchange data that is not present in sources_used.\n\n"
+        "AGGREGATED MARKET CONTEXT — ANALYSIS SOURCE RULES (Phase 10.7):\n"
+        "The context includes an aggregated_market_context block. "
+        "analysis_source may be: aggregated, binance, bybit, okx, or mexc.\n"
+        "ANALYSIS SOURCE RULES:\n"
+        "1. analysis_source is CONFIRMATION DATA ONLY — it supports or questions the setup, "
+        "it is NOT the source of truth for price levels.\n"
+        "2. Aggregated/fallback data can be used to assess: order book walls, open interest, "
+        "OI change, delta/taker pressure, long/short ratio, liquidations, funding rate.\n"
+        "3. Parent setup exchange is the TRUTH for: OB/FIB zones, entry zone values, "
+        "SL/invalidation levels, TP/RR calculations, candle-close invalidation, "
+        "parent setup price levels. NEVER rewrite these from analysis source data.\n"
+        "4. If source_model is 'binance_only_partial', state: "
+        "'Aggregated mode: Binance is the only available source right now.'\n"
+        "5. If source_model is 'true_aggregated', you may reference multi-exchange agreement.\n"
+        "6. If a metric has status 'fallback_fresh' or 'binance_fallback', state clearly: "
+        "'Binance fallback used — selected exchange metric was unavailable.'\n"
+        "7. primary_source reflects the analysis_source. Do NOT assume it is always Binance.\n"
+        "8. execution_exchange is not_in_scope_phase10_7 — do NOT reference it.\n"
+        "9. If sources_used contains only one exchange, do NOT claim multi-exchange agreement.\n"
+        "10. Do NOT invent exchange data not present in sources_used.\n"
+        "11. Do NOT treat market bias from aggregated context as trade execution permission.\n"
+        "12. If aggregated_market_context is null, use market_context if available, "
+        "or note it is missing.\n\n"
 
         "RISK GUARD (Phase 9.5):\n"
         "A backend Risk Guard independently validates all AI proposals before any approval.\n"
@@ -18535,6 +18617,73 @@ def api_lm_items_data_sources_post(item_id):
     return jsonify({"ok": True, "item": _live_monitor_item_to_dict(row), "data_sources": config})
 
 
+@app.route("/api/live-monitor/items/<int:item_id>/analysis-source", methods=["POST"])
+@login_required
+def api_lm_items_analysis_source_post(item_id):
+    """Persist selected analysis data source for one Live Monitor item.
+
+    Phase 10.7 — analysis source is for confluence/confirmation only.
+    Never changes row.exchange, zone values, SL, TP, or parent setup levels.
+    No trading. No order logic. No API keys.
+
+    Body: {"analysis_source": "aggregated|binance|bybit|okx|mexc"}
+    Returns: {"ok": true, "item": {...}, "analysis_source": "..."}
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorItem as _LMI
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if not row.is_active:
+        return jsonify({"error": "inactive"}), 400
+
+    body = request.get_json(silent=True) or {}
+    raw_src = body.get("analysis_source") or ""
+    new_src = _lm_normalize_analysis_source(raw_src)   # unknown → "binance"
+
+    snap    = _json_loads_safe(row.snapshot_json, {})
+    old_src = _lm_analysis_source_config(row, snapshot=snap)["analysis_source"]
+
+    # Persist to both top-level and data_sources sub-dict
+    snap["analysis_source"] = new_src
+    ds = snap.get("data_sources") or {}
+    ds["analysis_source"]   = new_src
+    snap["data_sources"]    = ds
+    snap["last_analysis_source_set_at"] = datetime.now(timezone.utc).isoformat()
+
+    # row.exchange is NOT changed — parent setup exchange stays immutable
+    row.snapshot_json = _json_dumps_safe(snap)
+    row.updated_at    = datetime.now(timezone.utc)
+
+    try:
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+    # Phase 10.7 Tasks 13-14: fire chat + event log on source change (deduped inside helpers)
+    if new_src != old_src:
+        try:
+            _lm107_maybe_log_source_event(uid, row, new_src, old_src)
+            _lm107_maybe_post_source_chat(uid, row, new_src, old_src)
+        except Exception:
+            pass
+
+    return jsonify({
+        "ok":             True,
+        "item":           _live_monitor_item_to_dict(row),
+        "analysis_source": new_src,
+        "parent_setup_exchange": getattr(row, "exchange", "binance") or "binance",
+        "price_levels_source":   "parent_setup_exchange",
+        "changed": new_src != old_src,
+    })
+
+
 # ── Phase 9.05: MEXC Capability Status Endpoint ───────────────────────────────
 
 @app.route("/api/live-monitor/mexc-capability-status", methods=["GET"])
@@ -19424,6 +19573,18 @@ def api_lm_smart_entry_refresh(item_id):
     if not row.is_active:
         return jsonify({"error": "inactive", "message": "Item is no longer active."}), 400
 
+    body = request.get_json(silent=True) or {}
+
+    snap = _json_loads_safe(row.snapshot_json, {})
+
+    # Phase 10.7 Task 3: persist analysis_source from request body to snapshot
+    if "analysis_source" in body:
+        _req_src = _lm_normalize_analysis_source(body["analysis_source"])
+        snap["analysis_source"] = _req_src
+        ds = snap.get("data_sources") or {}
+        ds["analysis_source"]  = _req_src
+        snap["data_sources"]   = ds
+
     cfg = _lm_build_scan_config(row)
     try:
         scan_result = _scan_pair_multitf(
@@ -19435,7 +19596,6 @@ def api_lm_smart_entry_refresh(item_id):
     except Exception as e:
         return jsonify({"error": "scan_failed", "message": str(e)}), 500
 
-    snap     = _json_loads_safe(row.snapshot_json, {})
     old_plan = snap.get("latest_smart_entry_plan")
     new_plan = _lm_build_smart_entry_plan(row, snapshot=snap, scan_result=scan_result)
 

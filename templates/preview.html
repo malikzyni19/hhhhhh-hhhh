@@ -4641,13 +4641,61 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         if(_dhCtl) _dhCtl.innerHTML=collapsed?"&#9658;":"&#9660;";
       });
     }
-    /* Data Source selector — persist to localStorage */
+    /* Data Source selector — persist to localStorage + backend */
     var _dsSel=document.getElementById("lmDataSrc");
     if(_dsSel){
       try{ var _dsSaved=localStorage.getItem("zyni_lm_data_src"); if(_dsSaved) _dsSel.value=_dsSaved; }catch(_){}
       _dsSel.addEventListener("change",function(){
-        try{ localStorage.setItem("zyni_lm_data_src",_dsSel.value); }catch(_){}
+        var newSrc=_dsSel.value||"binance";
+        try{ localStorage.setItem("zyni_lm_data_src",newSrc); }catch(_){}
+        // Phase 10.7: persist to backend if an item is selected
+        if(_lmSelItem&&_lmSelItem.id){
+          fetch("/api/live-monitor/items/"+_lmSelItem.id+"/analysis-source",{
+            method:"POST",credentials:"same-origin",
+            headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({analysis_source:newSrc})
+          }).then(function(r){return r.json().catch(function(){return null;});})
+          .then(function(d){
+            if(!d||!d.ok) return;
+            // Update in-memory item state
+            for(var k=0;k<liveMonitorItems.length;k++){
+              if(liveMonitorItems[k].id===d.item.id){liveMonitorItems[k]=d.item;break;}
+            }
+            if(_lmSelItem&&_lmSelItem.id===d.item.id){ _lmSelItem=d.item; }
+            // Refresh Data Health with new source
+            _lmFetchDataHealth(_lmSelItem.symbol, newSrc);
+            // Reload Event Timeline if visible
+            if(_lmInstructionView==="events"){ _lmLoadEvents(_lmSelItem.id); }
+            // Reload chat if a source-change chat message was posted
+            if(d.changed){
+              _lmChatHistoryLoad(_lmSelItem.id,function(msgs){
+                var b=document.getElementById("dsMsgs"); if(!b||!msgs||!msgs.length) return;
+                var last=msgs[msgs.length-1]; if(!last||last.role!=="assistant") return;
+                var existing=b.querySelectorAll("[data-chat-msg]");
+                if(existing.length){
+                  var lastEl=existing[existing.length-1];
+                  if(lastEl&&lastEl.getAttribute("data-chat-msg")===String(last.id||"")) return;
+                }
+                var d2=document.createElement("div");
+                d2.className="ds-msg ai"; d2.setAttribute("data-chat-msg",String(last.id||""));
+                d2.innerHTML='<div class="ds-av ai">DS</div><div class="ds-bubble">'+esc(last.content||"")+'</div>';
+                b.appendChild(d2); b.scrollTop=b.scrollHeight;
+                var sg=document.getElementById("dsSug"); if(sg) sg.style.display="none";
+              });
+            }
+          }).catch(function(){});
+        }
       });
+    }
+    /* Sync selector value from item snapshot when item is selected */
+    function _lmSyncDataSrcSelector(item){
+      var sel=document.getElementById("lmDataSrc"); if(!sel) return;
+      var snap=(item&&item.snapshot)||{};
+      var src=snap.analysis_source||(snap.data_sources&&snap.data_sources.analysis_source)||null;
+      if(src&&src!==sel.value){
+        sel.value=src;
+        try{ localStorage.setItem("zyni_lm_data_src",src); }catch(_){}
+      }
     }
     _lmUpdateSession();
     _lmRenderCards();
@@ -5760,7 +5808,8 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         sebtn.disabled=true;
         sebtn.innerHTML='<svg class="ico ico-sm" viewBox="0 0 24 24" style="width:10px;height:10px"><path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.7 1 6.3 2.7L21 8"/><path d="M21 3v5h-5"/></svg>…';
         fetch("/api/live-monitor/items/"+id+"/smart-entry/refresh",{method:"POST",credentials:"same-origin",
-          headers:{"Content-Type":"application/json"},body:"{}"})
+          headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({analysis_source:_lmGetDataSrc()})})
           .then(function(r){ return r.json(); })
           .then(function(d){
             sebtn.disabled=false; sebtn.innerHTML=origHtml;
@@ -6119,6 +6168,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     }
     _lmBindChat(item);
     if(_lmInstructionView!=="instructions"){ _lmLoadEvents(item.id); }
+    _lmSyncDataSrcSelector(item);
   }
 
   function _lmMtfMatrix(item){
