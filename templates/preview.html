@@ -4918,6 +4918,20 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       .then(function(d){ if(cb) cb(d,null); })
       .catch(function(e){ if(cb) cb(null,e); });
   }
+  // Phase 10.5: Persistent chat history helpers
+  function _lmChatHistoryLoad(itemId,cb){
+    fetch("/api/live-monitor/items/"+itemId+"/ai-chat/history",{credentials:"same-origin"})
+      .then(function(r){return r.json();})
+      .then(function(d){ if(cb) cb(d.ok?(d.history||[]):[]); })
+      .catch(function(){ if(cb) cb([]); });
+  }
+  function _lmChatHistoryClear(itemId,cb){
+    fetch("/api/live-monitor/items/"+itemId+"/ai-chat/history",{
+      method:"DELETE",credentials:"same-origin"
+    }).then(function(r){return r.json();})
+      .then(function(d){ if(cb) cb(!!d.ok); })
+      .catch(function(){ if(cb) cb(false); });
+  }
 
   // Phase 6.6: Custom AI Instruction helpers
   function _lmCustomInstructions(item){
@@ -5343,6 +5357,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
               })()+
               '<button class="btn" type="button" id="dsAnalyzeBtn" data-lmaianalyze="'+item.id+'" style="margin-left:6px;padding:2px 7px;font-size:10px" title="Run AI analysis on this setup">'+
                 '<svg class="ico ico-sm" viewBox="0 0 24 24" style="width:10px;height:10px"><path d="M12 2a7 7 0 0 1 7 7c0 3-1.6 5.5-4 6.7V17a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-1.3C6.6 14.5 5 12 5 9a7 7 0 0 1 7-7z"/><path d="M9 21h6"/></svg>Analyze</button>'+
+              '<button class="btn" type="button" id="dsClearChatBtn" style="margin-left:4px;padding:2px 7px;font-size:10px;color:var(--text-3);border-color:rgba(148,163,184,.2)" title="Clear chat history for this pair">Clear Chat</button>'+
             '</div>'+
             '<div class="ds-sug" id="dsSug">'+
               '<span class="ds-chip" data-q="Should I enter now?">Enter now?</span>'+
@@ -6179,6 +6194,39 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     [].forEach.call(document.querySelectorAll(".ds-chip"),function(c){
       c.addEventListener("click",function(){sendMsg(c.getAttribute("data-q"));});
     });
+
+    // Phase 10.5: Load persistent chat history from backend
+    _lmChatHistoryLoad(item.id,function(msgs){
+      if(!msgs||!msgs.length) return; // keep the default welcome bubble
+      var b=document.getElementById("dsMsgs"); if(!b) return;
+      b.innerHTML=""; // clear snapshot-based welcome message
+      msgs.forEach(function(m){
+        var isUser=(m.role==="user");
+        var d=document.createElement("div");
+        d.className="ds-msg "+(isUser?"user":"ai");
+        d.innerHTML='<div class="ds-av '+(isUser?"user":"ai")+'">'+(isUser?"You":"DS")+'</div>'+
+          '<div class="ds-bubble">'+esc(m.content)+'</div>';
+        b.appendChild(d);
+      });
+      b.scrollTop=b.scrollHeight;
+      var sg=document.getElementById("dsSug"); if(sg) sg.style.display="none";
+    });
+
+    // Phase 10.5: Clear Chat button — only clears current pair/symbol
+    var ccb=document.getElementById("dsClearChatBtn");
+    if(ccb){
+      ccb.addEventListener("click",function(){
+        if(!confirm("Clear chat history for "+esc(item.symbol)+"? This cannot be undone.")) return;
+        _lmChatHistoryClear(item.id,function(ok){
+          var b=document.getElementById("dsMsgs");
+          if(b){
+            b.innerHTML='<div class="ds-msg ai"><div class="ds-av ai">DS</div>'+
+              '<div class="ds-bubble">Chat history cleared for <b>'+esc(item.symbol)+'</b>. Ask me anything.</div></div>';
+          }
+          var sg=document.getElementById("dsSug"); if(sg) sg.style.display="";
+        });
+      });
+    }
   }
 
   // Per-TF watchlist config the backend (_scan_pair_multitf) understands.

@@ -466,3 +466,37 @@ class LiveMonitorTrade(db.Model):
 
     def __repr__(self) -> str:
         return f"<LiveMonitorTrade {self.trade_uid} {self.symbol} {self.status}>"
+
+
+class LiveMonitorChatMessage(db.Model):
+    """Persistent AI chat messages per user + symbol + exchange. Phase 10.5.
+
+    Messages are stored per user + symbol + exchange so history survives
+    browser refresh and persists across sessions. Latest 100 messages are
+    returned per user+symbol+exchange pair.
+    No API keys, secrets, or raw candles stored here.
+    """
+    __tablename__ = "live_monitor_chat_messages"
+
+    id                   = db.Column(db.Integer, primary_key=True)
+    user_id              = db.Column(db.Integer, db.ForeignKey("users.id"),
+                                     nullable=False, index=True)
+    live_monitor_item_id = db.Column(db.Integer,
+                                     db.ForeignKey("live_monitor_items.id"),
+                                     nullable=True, index=True)
+    symbol               = db.Column(db.String(20), nullable=False, index=True)
+    exchange             = db.Column(db.String(20), nullable=False, default="binance")
+    role                 = db.Column(db.String(20), nullable=False)   # user / assistant / system
+    content              = db.Column(db.Text, nullable=False)
+    agent_id             = db.Column(db.String(80), nullable=True)
+    agent_label          = db.Column(db.String(80), nullable=True)
+    metadata_json        = db.Column(db.Text, nullable=True)
+    created_at           = db.Column(db.DateTime,
+                                     default=lambda: datetime.now(timezone.utc),
+                                     nullable=False, index=True)
+
+    user = db.relationship("User", foreign_keys=[user_id])
+
+    def __repr__(self) -> str:
+        return f"<LiveMonitorChatMessage {self.role} {self.symbol} user={self.user_id}>"
+

@@ -16675,10 +16675,40 @@ def api_lm_items_proposal_and_risk_check(item_id):
     })
 
 
+def _lm_chat_save(uid, row, role: str, content: str,
+                   agent_id=None, agent_label=None) -> None:
+    """Persist one chat message (user or assistant) to live_monitor_chat_messages.
+
+    Safe: swallows all exceptions so a DB hiccup never breaks the chat response.
+    Content is capped at 2000 chars. No API keys or secrets stored.
+    """
+    try:
+        from models import LiveMonitorChatMessage as _LMCM2, db as _db_cm
+        msg = _LMCM2(
+            user_id              = uid,
+            live_monitor_item_id = getattr(row, "id", None),
+            symbol               = (getattr(row, "symbol", None) or "").upper(),
+            exchange             = getattr(row, "exchange", None) or "binance",
+            role                 = role,
+            content              = (content or "")[:2000],
+            agent_id             = (agent_id or None),
+            agent_label          = (agent_label or None),
+        )
+        _db_cm.session.add(msg)
+        _db_cm.session.commit()
+    except Exception as _ce:
+        try:
+            from models import db as _db_cm2
+            _db_cm2.session.rollback()
+        except Exception:
+            pass
+        print(f"[LM-CHAT-SAVE] warn: {_ce}")
+
+
 @app.route("/api/live-monitor/items/<int:item_id>/ai-chat", methods=["POST"])
 @login_required
 def api_lm_items_ai_chat(item_id):
-    """Handle a live chat message about one item. Does not store message history in DB."""
+    """Handle a live chat message about one item. Saves history to DB (Phase 10.5)."""
     uid, _ = _current_user_id_and_user()
     if not uid:
         return jsonify({"error": "no_user"}), 401
@@ -16698,16 +16728,20 @@ def api_lm_items_ai_chat(item_id):
     if not user_message:
         return jsonify({"error": "no_message"}), 400
 
+    # Persist user message before any branch (Phase 10.5)
+    _lm_chat_save(uid, row, "user", user_message, agent_id=agent_id)
+
     # ── Phase 6.6: Detect and save custom AI instruction from chat ───────────
     extracted = _lm_extract_instruction_from_chat(user_message)
     if extracted.get("confidence", 0) >= 70:
         ins_text = extracted["text"]
         safe, block_reason = _lm_instruction_is_safe(ins_text)
         if not safe:
-            # Blocked — reply with reason, do not call AI
+            _reply = f"Instruction blocked: {block_reason}"
+            _lm_chat_save(uid, row, "assistant", _reply)
             return jsonify({
                 "ok":               False,
-                "reply":            f"Instruction blocked: {block_reason}",
+                "reply":            _reply,
                 "instruction_saved": False,
                 "blocked":          True,
                 "reason":           block_reason,
@@ -16739,9 +16773,11 @@ def api_lm_items_ai_chat(item_id):
                 _db2.session.rollback()
                 ins = None
             if ins:
+                _reply = f"Saved as a custom AI instruction: \"{ins_text[:120]}\""
+                _lm_chat_save(uid, row, "assistant", _reply)
                 return jsonify({
                     "ok":                True,
-                    "reply":             f"Saved as a custom AI instruction: \"{ins_text[:120]}\"",
+                    "reply":             _reply,
                     "instruction_saved": True,
                     "instruction":       ins,
                     "item":              _live_monitor_item_to_dict(row),
@@ -16749,9 +16785,11 @@ def api_lm_items_ai_chat(item_id):
                     "configured":        False,
                 })
         if ins and ins.get("blocked"):
+            _reply = ins.get("reason", "Could not save instruction.")
+            _lm_chat_save(uid, row, "assistant", _reply)
             return jsonify({
                 "ok":               False,
-                "reply":            ins.get("reason", "Could not save instruction."),
+                "reply":            _reply,
                 "instruction_saved": False,
                 "blocked":          True,
                 "reason":           ins.get("reason"),
@@ -16780,6 +16818,11 @@ def api_lm_items_ai_chat(item_id):
         analysis.get("summary") or "Unable to generate reply. Try again."
     )
 
+    # Persist assistant reply (Phase 10.5)
+    _lm_chat_save(uid, row, "assistant", reply,
+                  agent_id=ai_result.get("agent_id"),
+                  agent_label=ai_result.get("agent_label"))
+
     return jsonify({
         "ok":               True,
         "reply":            reply,
@@ -16789,6 +16832,91 @@ def api_lm_items_ai_chat(item_id):
         "agent_id":         ai_result.get("agent_id"),
         "agent_label":      ai_result.get("agent_label"),
         "configured":       ai_result.get("configured", False),
+    })
+
+
+# ── Phase 10.5: Chat History Endpoints ───────────────────────────────────────
+
+@app.route("/api/live-monitor/items/<int:item_id>/ai-chat/history", methods=["GET"])
+@login_required
+def api_lm_chat_history(item_id):
+    """Return persistent chat history for this user + symbol + exchange. Phase 10.5.
+
+    Returns latest 100 messages ordered oldest→newest.
+    Ownership check: user can only fetch their own item's history.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import LiveMonitorItem as _LMI, LiveMonitorChatMessage as _LMCM
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+
+    msgs = (
+        _LMCM.query
+        .filter_by(user_id=uid, symbol=row.symbol, exchange=row.exchange)
+        .order_by(_LMCM.created_at.asc())
+        .limit(100)
+        .all()
+    )
+
+    return jsonify({
+        "ok":      True,
+        "symbol":  row.symbol,
+        "exchange": row.exchange,
+        "history": [
+            {
+                "id":          m.id,
+                "role":        m.role,
+                "content":     m.content,
+                "agent_id":    m.agent_id,
+                "agent_label": m.agent_label,
+                "created_at":  m.created_at.isoformat() if m.created_at else None,
+            }
+            for m in msgs
+        ],
+    })
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/ai-chat/history", methods=["DELETE"])
+@login_required
+def api_lm_chat_history_delete(item_id):
+    """Delete this user's chat history for this item's symbol + exchange only. Phase 10.5.
+
+    Strictly scoped: only deletes current user's messages for this exact symbol+exchange pair.
+    Other users and other pairs are unaffected.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import LiveMonitorItem as _LMI, LiveMonitorChatMessage as _LMCM
+    row = _LMI.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+
+    try:
+        deleted = (
+            _LMCM.query
+            .filter_by(user_id=uid, symbol=row.symbol, exchange=row.exchange)
+            .delete()
+        )
+        _db.session.commit()
+    except Exception as e:
+        _db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+    return jsonify({
+        "ok":      True,
+        "deleted": deleted,
+        "symbol":  row.symbol,
+        "exchange": row.exchange,
     })
 
 
