@@ -16094,10 +16094,14 @@ def api_lm_data_health():
 
     rows = []
 
+    # resolve live-price status once — used by AI gate below
+    _live_price_status = "not_connected_yet"
+
     # 1. Live Price
     if exchange == "binance":
         ws_e, ws_s = _lm_ws_get("binance", symbol)
         if ws_e:
+            _live_price_status = ws_s
             rows.append({"metric": "Live Price",
                          "value":   f"{ws_e['live_price']:.4f}",
                          "source":  "Binance Futures WS",
@@ -16105,10 +16109,11 @@ def api_lm_data_health():
                          "updated": f"{ws_e['data_age_sec']}s ago",
                          "notes":   ""})
         else:
+            _live_price_status = "unavailable"
             rows.append({"metric": "Live Price", "value": "—",
                          "source": "Binance Futures WS", "status": "unavailable",
                          "updated": "—",
-                         "notes": "Connecting…" if ws_enabled else "Set ZYNI_LM_WS_ENABLED=1"})
+                         "notes": "Connecting…" if ws_enabled else "WebSocket disabled: set ZYNI_LM_WS_ENABLED=1"})
     else:
         rows.append({"metric": "Live Price", "value": "—", "source": exchange,
                      "status": "not_connected_yet", "updated": "—",
@@ -16128,7 +16133,7 @@ def api_lm_data_health():
             rows.append({"metric": "Mark Price", "value": "—",
                          "source": "Binance Futures WS", "status": "unavailable",
                          "updated": "—",
-                         "notes": "Connecting…" if ws_enabled else "Set ZYNI_LM_WS_ENABLED=1"})
+                         "notes": "Connecting…" if ws_enabled else "WebSocket disabled: set ZYNI_LM_WS_ENABLED=1"})
     else:
         rows.append({"metric": "Mark Price", "value": "—", "source": exchange,
                      "status": "not_connected_yet", "updated": "—",
@@ -16181,7 +16186,7 @@ def api_lm_data_health():
             rows.append({"metric": "Funding Rate", "value": "—",
                          "source": "Binance Futures WS", "status": "unavailable",
                          "updated": "—",
-                         "notes": "Connecting…" if ws_enabled else "Set ZYNI_LM_WS_ENABLED=1"})
+                         "notes": "Connecting…" if ws_enabled else "WebSocket disabled: set ZYNI_LM_WS_ENABLED=1"})
     else:
         rows.append({"metric": "Funding Rate", "value": "—", "source": exchange,
                      "status": "not_connected_yet", "updated": "—",
@@ -16202,23 +16207,29 @@ def api_lm_data_health():
                      "source": "DB Snapshot", "status": "unavailable",
                      "updated": "—", "notes": "No candle refresh yet"})
 
-    # 11. AI Entry Analysis
-    ai_at  = snap.get("last_ai_analysis_at") or ""
-    ai_con = snap.get("latest_ai_consensus") or {}
-    ai_dir = (ai_con.get("direction") or ai_con.get("bias") or "") if isinstance(ai_con, dict) else ""
-    if not ai_at and isinstance(ai_con, dict):
-        ai_at = ai_con.get("computed_at") or ""
-    if ai_at:
-        rows.append({"metric": "AI Entry Analysis",
-                     "value":   ai_dir.upper() if ai_dir else "computed",
-                     "source":  "AI Consensus",
-                     "status":  _age_status(ai_at, fresh_secs=600),
-                     "updated": _age_str(ai_at),
-                     "notes":   ""})
+    # 11. AI Entry Analysis — blocked unless live price is fresh
+    if _live_price_status != "fresh":
+        rows.append({"metric": "AI Entry Analysis", "value": "Blocked",
+                     "source": "AI Consensus", "status": "blocked",
+                     "updated": "—",
+                     "notes": f"Requires fresh live price (current: {_live_price_status})"})
     else:
-        rows.append({"metric": "AI Entry Analysis", "value": "—",
-                     "source": "AI Consensus", "status": "unavailable",
-                     "updated": "—", "notes": "No AI analysis yet"})
+        ai_at  = snap.get("last_ai_analysis_at") or ""
+        ai_con = snap.get("latest_ai_consensus") or {}
+        ai_dir = (ai_con.get("direction") or ai_con.get("bias") or "") if isinstance(ai_con, dict) else ""
+        if not ai_at and isinstance(ai_con, dict):
+            ai_at = ai_con.get("computed_at") or ""
+        if ai_at:
+            rows.append({"metric": "AI Entry Analysis",
+                         "value":   ai_dir.upper() if ai_dir else "computed",
+                         "source":  "AI Consensus",
+                         "status":  _age_status(ai_at, fresh_secs=600),
+                         "updated": _age_str(ai_at),
+                         "notes":   ""})
+        else:
+            rows.append({"metric": "AI Entry Analysis", "value": "—",
+                         "source": "AI Consensus", "status": "unavailable",
+                         "updated": "—", "notes": "No AI analysis yet"})
 
     return jsonify({
         "ok":         True,
