@@ -777,6 +777,35 @@ _lm_ws_lock  = threading.Lock()
 _lm_ws_manager_thread: Optional[threading.Thread] = None
 _lm_ws_running = False
 
+# ── Phase 10.3: LM liquidation + delta WS caches ─────────────────────────────
+_lm_liq_cache: dict = {}          # "binance:{SYM}" → {events: deque, last_liq_price, ...}
+_lm_liq_lock  = threading.Lock()
+_lm_liq_thread: Optional[threading.Thread] = None
+_lm_liq_running = False
+_lm_liq_last_logged: dict = {}    # symbol → ts, rate-limit for event logging
+
+_lm_delta_cache: dict = {}        # "binance:{SYM}" → {trades: deque, last_update_ts}
+_lm_delta_lock  = threading.Lock()
+_lm_delta_thread: Optional[threading.Thread] = None
+_lm_delta_running = False
+
+# REST TTL cache (OI, L/S ratio, etc.)
+_lm_rest_cache: dict = {}
+_lm_rest_lock  = threading.Lock()
+
+# Liquidation event-logging thresholds: (log_min_usd, highlight_min_usd)
+_LM_LIQ_LOG_THRESHOLDS = {
+    "BTCUSDT": (250_000, 1_000_000),
+    "ETHUSDT": (250_000, 1_000_000),
+    "_major":  (100_000,   500_000),
+    "_small":  ( 30_000,   150_000),
+}
+_LM_LIQ_MAJOR_ALTS = frozenset({
+    "BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT","DOGEUSDT",
+    "AVAXUSDT","DOTUSDT","MATICUSDT","LINKUSDT","TONUSDT",
+})
+_LM_LIQ_LOG_COOLDOWN = 30   # seconds between DB writes per symbol
+
 
 def _raw_ws_connect(host: str, path: str) -> socket.socket:
     """
@@ -10322,6 +10351,436 @@ if os.environ.get("ZYNI_LM_WS_ENABLED") == "1":
     _ensure_lm_ws_thread()
 
 
+# ── Phase 10.3: Market Data Health — REST cache + Liq + Delta WS ─────────────
+
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+def _lm_rest_cached(key: str, ttl: int, fetch_fn):
+    """Generic TTL cache for REST calls. Returns cached data or calls fetch_fn."""
+    now = time.time()
+    with _lm_rest_lock:
+        entry = _lm_rest_cache.get(key)
+        if entry and (now - entry["ts"]) < ttl:
+            return entry["data"]
+    try:
+        data = fetch_fn()
+        if data is not None:
+            with _lm_rest_lock:
+                _lm_rest_cache[key] = {"ts": now, "data": data}
+        return data
+    except Exception as e:
+        print(f"[LM-REST] {key}: {e}")
+        with _lm_rest_lock:
+            old = _lm_rest_cache.get(key)
+        return old["data"] if old else None
+
+
+def _lm_fetch_oi_rest(symbol: str):
+    r = req.get(f"{BINANCE_FUTURES_API}/fapi/v1/openInterest",
+                params={"symbol": symbol}, timeout=5)
+    if r.status_code == 200:
+        d = r.json()
+        return {"oi_contracts": float(d.get("openInterest", 0)), "symbol": symbol,
+                "ts": float(d.get("time", time.time() * 1000)) / 1000}
+    return None
+
+
+def _lm_fetch_oi_hist_rest(symbol: str):
+    r = req.get(f"{BINANCE_FUTURES_API}/futures/data/openInterestHist",
+                params={"symbol": symbol, "period": "5m", "limit": 4}, timeout=5)
+    if r.status_code == 200:
+        return r.json()
+    return None
+
+
+def _lm_fetch_ls_ratio_rest(symbol: str):
+    r = req.get(f"{BINANCE_FUTURES_API}/futures/data/globalLongShortAccountRatio",
+                params={"symbol": symbol, "period": "5m", "limit": 1}, timeout=5)
+    if r.status_code == 200:
+        data = r.json()
+        if data and isinstance(data, list):
+            item = data[0]
+            return {
+                "long_pct":  round(float(item.get("longAccount",    0.5)) * 100, 2),
+                "short_pct": round(float(item.get("shortAccount",   0.5)) * 100, 2),
+                "ls_ratio":  round(float(item.get("longShortRatio", 1.0)), 3),
+                "period":    "5m",
+                "ts":        float(item.get("timestamp", time.time() * 1000)) / 1000,
+            }
+    return None
+
+
+def _fmt_usd_lm(v: float) -> str:
+    if v >= 1_000_000_000: return f"${v/1e9:.2f}B"
+    if v >= 1_000_000:     return f"${v/1e6:.1f}M"
+    if v >= 1_000:         return f"${v/1e3:.0f}K"
+    return f"${v:.0f}"
+
+
+# ── liquidation cache ─────────────────────────────────────────────────────────
+
+def _lm_liq_update(exchange: str, symbol: str, side_liq: str, usd_amount: float, price: float):
+    """side_liq: 'long' = long was liquidated (SELL order), 'short' = short was liquidated."""
+    key = f"{exchange}:{symbol}"
+    now = time.time()
+    with _lm_liq_lock:
+        if key not in _lm_liq_cache:
+            _lm_liq_cache[key] = {
+                "events": deque(maxlen=500),
+                "last_liq_price": price,
+                "last_liq_side":  side_liq,
+                "last_update_ts": now,
+            }
+        entry = _lm_liq_cache[key]
+        entry["events"].append((now, side_liq, usd_amount, price))
+        entry["last_liq_price"] = price
+        entry["last_liq_side"]  = side_liq
+        entry["last_update_ts"] = now
+
+
+def _lm_liq_get(exchange: str, symbol: str):
+    key = f"{exchange}:{symbol}"
+    now = time.time()
+    with _lm_liq_lock:
+        entry = dict(_lm_liq_cache.get(key) or {})
+    if not entry:
+        return None, "unavailable"
+    events = list(entry.get("events") or [])
+    w5m = now - 300
+    long_5m  = sum(e[2] for e in events if e[0] >= w5m and e[1] == "long")
+    short_5m = sum(e[2] for e in events if e[0] >= w5m and e[1] == "short")
+    age = now - entry.get("last_update_ts", 0)
+    # Liq stream is healthy even with no recent liqs; mark stale only if no update for 120s
+    status = "fresh" if age <= 120 else "stale"
+    return {
+        "long_liq_usd_5m":  long_5m,
+        "short_liq_usd_5m": short_5m,
+        "total_liq_usd_5m": long_5m + short_5m,
+        "last_liq_price":   entry.get("last_liq_price"),
+        "last_liq_side":    entry.get("last_liq_side"),
+        "data_age_sec":     round(age, 1),
+        "status":           status,
+    }, status
+
+
+def _lm_maybe_log_liq_event(symbol: str, side_liq: str, usd_amount: float, price: float):
+    """Log a large liquidation to LiveMonitorEvent if symbol has active LM item.
+    Rate-limited per symbol to avoid timeline spam. Runs in a daemon thread."""
+    now = time.time()
+    if now - _lm_liq_last_logged.get(symbol, 0) < _LM_LIQ_LOG_COOLDOWN:
+        return
+    if symbol in ("BTCUSDT", "ETHUSDT"):
+        log_min, highlight_min = _LM_LIQ_LOG_THRESHOLDS[symbol]
+    elif symbol in _LM_LIQ_MAJOR_ALTS:
+        log_min, highlight_min = _LM_LIQ_LOG_THRESHOLDS["_major"]
+    else:
+        log_min, highlight_min = _LM_LIQ_LOG_THRESHOLDS["_small"]
+    if usd_amount < log_min:
+        return
+    _lm_liq_last_logged[symbol] = now
+    is_highlight = usd_amount >= highlight_min
+
+    def _do_log():
+        try:
+            with app.app_context():
+                from models import db as _dbliq, LiveMonitorItem as _LMILIQ, LiveMonitorEvent as _LMELIQ
+                lm_rows = _LMILIQ.query.filter_by(symbol=symbol, is_active=True).all()
+                if not lm_rows:
+                    return
+                side_label = "Long Liq" if side_liq == "long" else "Short Liq"
+                amt_label  = _fmt_usd_lm(usd_amount)
+                event_type = "liquidation_highlight" if is_highlight else "liquidation"
+                for lm_row in lm_rows:
+                    snap     = _json_loads_safe(lm_row.snapshot_json, {})
+                    lh       = snap.get("latest_health") or {}
+                    zone     = lh.get("zone") or {}
+                    zone_low = zone.get("zone_low") or zone.get("low")
+                    zone_hi  = zone.get("zone_high") or zone.get("high")
+                    if zone_low and zone_hi:
+                        zone_mid = (zone_low + zone_hi) / 2
+                        dist_pct = abs(price - zone_mid) / zone_mid * 100
+                        desc = (f"{side_label} {amt_label} @ {price:.2f} | "
+                                f"Zone {zone_low:.2f}-{zone_hi:.2f} | "
+                                f"Distance {dist_pct:.2f}%")
+                    else:
+                        desc = f"{side_label} {amt_label} @ {price:.2f}"
+                    lme = _LMELIQ(
+                        item_id=lm_row.id, user_id=lm_row.user_id, symbol=symbol,
+                        event_type=event_type, event_description=desc,
+                        details_json=_json_dumps_safe({
+                            "side_liq": side_liq, "usd_amount": usd_amount,
+                            "price": price, "is_highlight": is_highlight,
+                        }),
+                        price_at_event=price,
+                    )
+                    _dbliq.session.add(lme)
+                _dbliq.session.commit()
+        except Exception as e:
+            print(f"[LM-LIQ] Event log error: {e}")
+
+    threading.Thread(target=_do_log, daemon=True).start()
+
+
+def _lm_liq_background_loop():
+    """Subscribe to per-symbol forceOrder streams for active LM symbols."""
+    global _lm_liq_running
+    print("[LM-LIQ] Background thread started")
+    current_symbols: list = []
+    sock = None
+
+    while _lm_liq_running:
+        new_symbols = _lm_ws_active_binance_symbols()
+
+        if new_symbols != current_symbols or sock is None:
+            if sock:
+                try: sock.close()
+                except Exception: pass
+                sock = None
+            current_symbols = new_symbols
+            if not current_symbols:
+                time.sleep(10)
+                continue
+            streams = "/".join(s.lower() + "@forceOrder" for s in current_symbols)
+            path    = f"/stream?streams={streams}"
+            try:
+                print(f"[LM-LIQ] Connecting: {current_symbols}")
+                sock = _raw_ws_connect("fstream.binance.com", path)
+                sock.settimeout(60)
+                print("[LM-LIQ] Connected")
+                # Seed connected-flag per symbol so get() shows "fresh" not "unavailable"
+                now_seed = time.time()
+                for sym in current_symbols:
+                    key = f"binance:{sym}"
+                    with _lm_liq_lock:
+                        if key not in _lm_liq_cache:
+                            _lm_liq_cache[key] = {
+                                "events": deque(maxlen=500),
+                                "last_liq_price": None,
+                                "last_liq_side":  None,
+                                "last_update_ts": now_seed,
+                            }
+            except Exception as e:
+                print(f"[LM-LIQ] Connect error: {e}")
+                sock = None
+                time.sleep(5)
+                continue
+
+        try:
+            raw = _ws_recv_frame(sock)
+        except socket.timeout:
+            # heartbeat: refresh last_update_ts so status stays fresh
+            now_hb = time.time()
+            for sym in current_symbols:
+                key = f"binance:{sym}"
+                with _lm_liq_lock:
+                    if key in _lm_liq_cache:
+                        _lm_liq_cache[key]["last_update_ts"] = now_hb
+            continue
+        except Exception as e:
+            print(f"[LM-LIQ] Recv error: {e}")
+            try: sock.close()
+            except Exception: pass
+            sock = None
+            time.sleep(2)
+            continue
+
+        if raw is None:
+            print("[LM-LIQ] Connection dropped, reconnecting")
+            try: sock.close()
+            except Exception: pass
+            sock = None
+            time.sleep(2)
+            continue
+        if not raw:
+            continue
+
+        try:
+            msg = json.loads(raw.decode("utf-8"))
+        except Exception:
+            continue
+
+        data = msg.get("data") or msg
+        if data.get("e") == "forceOrder":
+            order = data.get("o") or {}
+            sym   = (order.get("s") or "").upper()
+            side  = order.get("S", "")
+            ap    = order.get("ap") or order.get("p") or 0
+            qty   = order.get("l")  or order.get("z") or 0
+            try:
+                avg_price  = float(ap)
+                filled_qty = float(qty)
+                usd_amount = avg_price * filled_qty
+                if sym and usd_amount > 0:
+                    side_liq = "short" if side == "BUY" else "long"
+                    _lm_liq_update("binance", sym, side_liq, usd_amount, avg_price)
+                    _lm_maybe_log_liq_event(sym, side_liq, usd_amount, avg_price)
+            except Exception:
+                pass
+
+    print("[LM-LIQ] Background thread stopped")
+    if sock:
+        try: sock.close()
+        except Exception: pass
+
+
+def _ensure_lm_liq_thread():
+    global _lm_liq_thread, _lm_liq_running
+    if _lm_liq_thread and _lm_liq_thread.is_alive():
+        return
+    _lm_liq_running = True
+    _lm_liq_thread  = threading.Thread(
+        target=_lm_liq_background_loop, daemon=True, name="lm-liq"
+    )
+    _lm_liq_thread.start()
+
+
+# ── delta / taker-pressure cache ─────────────────────────────────────────────
+
+def _lm_delta_update(exchange: str, symbol: str, is_buyer_maker: bool, qty: float, price: float):
+    """is_buyer_maker=True → seller is aggressor → SELL. False → buyer aggressor → BUY."""
+    key = f"{exchange}:{symbol}"
+    now = time.time()
+    usd_vol = qty * price
+    side    = "sell" if is_buyer_maker else "buy"
+    cutoff  = now - 310   # keep 5m + 10s buffer
+
+    with _lm_delta_lock:
+        if key not in _lm_delta_cache:
+            _lm_delta_cache[key] = {"trades": deque(), "last_update_ts": now}
+        entry = _lm_delta_cache[key]
+        entry["trades"].append((now, side, usd_vol))
+        # Prune old entries to keep memory bounded
+        while entry["trades"] and entry["trades"][0][0] < cutoff:
+            entry["trades"].popleft()
+        entry["last_update_ts"] = now
+
+
+def _lm_delta_get(exchange: str, symbol: str):
+    key = f"{exchange}:{symbol}"
+    now = time.time()
+    with _lm_delta_lock:
+        entry = dict(_lm_delta_cache.get(key) or {})
+    if not entry:
+        return None, "unavailable"
+    trades  = list(entry.get("trades") or [])
+    w60s    = now - 60
+    w5m     = now - 300
+    buy_60  = sum(t[2] for t in trades if t[0] >= w60s and t[1] == "buy")
+    sell_60 = sum(t[2] for t in trades if t[0] >= w60s and t[1] == "sell")
+    buy_5m  = sum(t[2] for t in trades if t[0] >= w5m  and t[1] == "buy")
+    sell_5m = sum(t[2] for t in trades if t[0] >= w5m  and t[1] == "sell")
+    tot60   = buy_60 + sell_60
+    tot5m   = buy_5m + sell_5m
+    dpct60  = round((buy_60 - sell_60) / tot60 * 100, 1) if tot60 > 0 else 0.0
+    dpct5m  = round((buy_5m - sell_5m) / tot5m * 100, 1) if tot5m > 0 else 0.0
+    age = now - entry.get("last_update_ts", 0)
+    return {
+        "buy_vol_60s":   buy_60,
+        "sell_vol_60s":  sell_60,
+        "delta_60s":     buy_60 - sell_60,
+        "delta_pct_60s": dpct60,
+        "buy_vol_5m":    buy_5m,
+        "sell_vol_5m":   sell_5m,
+        "delta_5m":      buy_5m - sell_5m,
+        "delta_pct_5m":  dpct5m,
+        "data_age_sec":  round(age, 1),
+        "status":        "fresh" if age <= 5 else "stale",
+    }, ("fresh" if age <= 5 else "stale")
+
+
+def _lm_delta_background_loop():
+    """Subscribe to aggTrade combined stream for active LM symbols."""
+    global _lm_delta_running
+    print("[LM-DELTA] Background thread started")
+    current_symbols: list = []
+    sock = None
+
+    while _lm_delta_running:
+        new_symbols = _lm_ws_active_binance_symbols()
+
+        if new_symbols != current_symbols or sock is None:
+            if sock:
+                try: sock.close()
+                except Exception: pass
+                sock = None
+            current_symbols = new_symbols
+            if not current_symbols:
+                time.sleep(10)
+                continue
+            streams = "/".join(s.lower() + "@aggTrade" for s in current_symbols)
+            path    = f"/stream?streams={streams}"
+            try:
+                print(f"[LM-DELTA] Connecting: {current_symbols}")
+                sock = _raw_ws_connect("fstream.binance.com", path)
+                sock.settimeout(30)
+                print("[LM-DELTA] Connected")
+            except Exception as e:
+                print(f"[LM-DELTA] Connect error: {e}")
+                sock = None
+                time.sleep(5)
+                continue
+
+        try:
+            raw = _ws_recv_frame(sock)
+        except socket.timeout:
+            continue
+        except Exception as e:
+            print(f"[LM-DELTA] Recv error: {e}")
+            try: sock.close()
+            except Exception: pass
+            sock = None
+            time.sleep(2)
+            continue
+
+        if raw is None:
+            print("[LM-DELTA] Connection dropped, reconnecting")
+            try: sock.close()
+            except Exception: pass
+            sock = None
+            time.sleep(2)
+            continue
+        if not raw:
+            continue
+
+        try:
+            msg = json.loads(raw.decode("utf-8"))
+        except Exception:
+            continue
+
+        data = msg.get("data") or msg
+        if data.get("e") == "aggTrade":
+            sym = (data.get("s") or "").upper()
+            p   = data.get("p")
+            q   = data.get("q")
+            m   = data.get("m", False)
+            if sym and p and q:
+                try:
+                    _lm_delta_update("binance", sym, bool(m), float(q), float(p))
+                except Exception:
+                    pass
+
+    print("[LM-DELTA] Background thread stopped")
+    if sock:
+        try: sock.close()
+        except Exception: pass
+
+
+def _ensure_lm_delta_thread():
+    global _lm_delta_thread, _lm_delta_running
+    if _lm_delta_thread and _lm_delta_thread.is_alive():
+        return
+    _lm_delta_running = True
+    _lm_delta_thread  = threading.Thread(
+        target=_lm_delta_background_loop, daemon=True, name="lm-delta"
+    )
+    _lm_delta_thread.start()
+
+
+if os.environ.get("ZYNI_LM_WS_ENABLED") == "1":
+    _ensure_lm_liq_thread()
+    _ensure_lm_delta_thread()
+
+
 # ── Phase 7.2: Setup Readiness Engine ────────────────────────────────────────
 
 def _lm_compute_setup_readiness(row, snapshot=None) -> dict:
@@ -16037,12 +16496,12 @@ def api_lm_trade_post_trade_review(trade_uid):
     })
 
 
-# ── Phase 10.2: Data Health endpoint ─────────────────────────────────────────
+# ── Phase 10.3: Data Health endpoint (full market data pack) ─────────────────
 
 @app.route("/api/live-monitor/data-health", methods=["GET"])
 @login_required
 def api_lm_data_health():
-    """Return 11-row Data Health snapshot for a given symbol+exchange. Read-only."""
+    """Return 11-row Data Health snapshot. Read-only. Phase 10.3 full market pack."""
     uid, _ = _current_user_id_and_user()
     if not uid:
         return jsonify({"error": "no_user"}), 401
@@ -16053,10 +16512,24 @@ def api_lm_data_health():
     if not symbol:
         return jsonify({"error": "symbol_required"}), 400
 
-    ws_enabled = os.environ.get("ZYNI_LM_WS_ENABLED") == "1"
-    if ws_enabled:
-        _ensure_lm_ws_thread()
+    if exchange == "aggregated":
+        # Aggregated not connected yet — return all rows as not_connected_yet
+        rows = [{"metric": m, "value": "—", "source": "Aggregated",
+                 "status": "not_connected_yet", "updated": "—",
+                 "notes": "Aggregated exchange data not connected yet"}
+                for m in ["Live Price","Mark Price","Order Book","Liquidations",
+                          "Open Interest","OI Change","Delta","Long/Short Ratio",
+                          "Funding Rate","Candle Status","AI Entry Analysis"]]
+        return jsonify({"ok": True, "symbol": symbol, "exchange": exchange,
+                        "ws_enabled": False, "rows": rows, "fetched_at": time.time()})
 
+    ws_enabled = os.environ.get("ZYNI_LM_WS_ENABLED") == "1"
+    if ws_enabled and exchange == "binance":
+        _ensure_lm_ws_thread()
+        _ensure_lm_liq_thread()
+        _ensure_lm_delta_thread()
+
+    # ── inner helpers ─────────────────────────────────────────────────────────
     def _age_str(ts_iso: str) -> str:
         if not ts_iso:
             return "—"
@@ -16064,10 +16537,8 @@ def api_lm_data_health():
             from datetime import datetime as _dh, timezone as _tzh
             ts    = _dh.fromisoformat(ts_iso.replace("Z", "+00:00"))
             age_s = int((_dh.now(_tzh.utc) - ts).total_seconds())
-            if age_s < 60:
-                return f"{age_s}s ago"
-            elif age_s < 3600:
-                return f"{age_s // 60}m ago"
+            if age_s < 60:   return f"{age_s}s ago"
+            if age_s < 3600: return f"{age_s // 60}m ago"
             return f"{age_s // 3600}h ago"
         except Exception:
             return ts_iso[:16]
@@ -16082,137 +16553,295 @@ def api_lm_data_health():
         except Exception:
             return "stale"
 
-    # Pull snapshot once
+    def _ws_disabled_note():
+        return "Connecting…" if ws_enabled else "WebSocket disabled: set ZYNI_LM_WS_ENABLED=1"
+
+    def _nc(metric):
+        return {"metric": metric, "value": "—", "source": exchange,
+                "status": "not_connected_yet", "updated": "—",
+                "notes": f"Live data available for Binance only"}
+
+    # ── pull snapshot once (candle + AI fields) ───────────────────────────────
     snap = {}
     try:
         from models import LiveMonitorItem as _LMIDH
-        lm_row = _LMIDH.query.filter_by(symbol=symbol, is_active=True, user_id=uid).first()
-        if lm_row:
-            snap = _json_loads_safe(lm_row.snapshot_json, {})
+        _lm_snap_row = _LMIDH.query.filter_by(
+            symbol=symbol, is_active=True, user_id=uid).first()
+        if _lm_snap_row:
+            snap = _json_loads_safe(_lm_snap_row.snapshot_json, {})
     except Exception as e:
         print(f"[LM-DH] snapshot error: {e}")
 
     rows = []
+    _live_price_status  = "not_connected_yet"
+    _mark_price_status  = "not_connected_yet"
 
-    # resolve live-price status once — used by AI gate below
-    _live_price_status = "not_connected_yet"
-
-    # 1. Live Price
+    # ═════════════════════════════════════════════════════════════════════════
+    # ROW 1 — Live Price  (source: websocket)
+    # ═════════════════════════════════════════════════════════════════════════
     if exchange == "binance":
         ws_e, ws_s = _lm_ws_get("binance", symbol)
         if ws_e:
             _live_price_status = ws_s
             rows.append({"metric": "Live Price",
                          "value":   f"{ws_e['live_price']:.4f}",
-                         "source":  "Binance Futures WS",
+                         "source":  "websocket",
                          "status":  ws_s,
                          "updated": f"{ws_e['data_age_sec']}s ago",
-                         "notes":   ""})
+                         "notes":   "Binance Futures markPrice stream"})
         else:
             _live_price_status = "unavailable"
             rows.append({"metric": "Live Price", "value": "—",
-                         "source": "Binance Futures WS", "status": "unavailable",
-                         "updated": "—",
-                         "notes": "Connecting…" if ws_enabled else "WebSocket disabled: set ZYNI_LM_WS_ENABLED=1"})
+                         "source": "websocket", "status": "unavailable",
+                         "updated": "—", "notes": _ws_disabled_note()})
     else:
-        rows.append({"metric": "Live Price", "value": "—", "source": exchange,
-                     "status": "not_connected_yet", "updated": "—",
-                     "notes": "Live WS available for Binance only"})
+        rows.append(_nc("Live Price"))
 
-    # 2. Mark Price
+    # ═════════════════════════════════════════════════════════════════════════
+    # ROW 2 — Mark Price  (source: websocket)
+    # ═════════════════════════════════════════════════════════════════════════
     if exchange == "binance":
         ws_e, ws_s = _lm_ws_get("binance", symbol)
         if ws_e and ws_e.get("mark_price") is not None:
+            _mark_price_status = ws_s
             rows.append({"metric": "Mark Price",
                          "value":   f"{ws_e['mark_price']:.4f}",
-                         "source":  "Binance Futures WS",
+                         "source":  "websocket",
                          "status":  ws_s,
                          "updated": f"{ws_e['data_age_sec']}s ago",
-                         "notes":   ""})
+                         "notes":   "Binance Futures markPrice stream"})
         else:
+            _mark_price_status = "unavailable"
             rows.append({"metric": "Mark Price", "value": "—",
-                         "source": "Binance Futures WS", "status": "unavailable",
-                         "updated": "—",
-                         "notes": "Connecting…" if ws_enabled else "WebSocket disabled: set ZYNI_LM_WS_ENABLED=1"})
+                         "source": "websocket", "status": "unavailable",
+                         "updated": "—", "notes": _ws_disabled_note()})
     else:
-        rows.append({"metric": "Mark Price", "value": "—", "source": exchange,
-                     "status": "not_connected_yet", "updated": "—",
-                     "notes": "Mark Price WS available for Binance only"})
+        rows.append(_nc("Mark Price"))
 
-    # 3. Order Book
+    # ═════════════════════════════════════════════════════════════════════════
+    # ROW 3 — Order Book  (source: websocket, requires OB stream active)
+    # ═════════════════════════════════════════════════════════════════════════
     if exchange == "binance":
         with _ob_book_lock:
-            ob = dict(_ob_books.get(symbol) or {})
-        if ob and ob.get("ready"):
-            n_levels = len(ob.get("bids", {})) + len(ob.get("asks", {}))
-            rows.append({"metric": "Order Book",
-                         "value":   f"{n_levels} levels",
-                         "source":  "Binance Futures WS",
-                         "status":  "fresh",
-                         "updated": "live",
-                         "notes":   f"lastUpdateId={ob.get('lastUpdateId', '?')}"})
+            ob_raw = dict(_ob_books.get(symbol) or {})
+        if ob_raw and ob_raw.get("ready"):
+            bids = ob_raw.get("bids", {})
+            asks = ob_raw.get("asks", {})
+            best_bid = max(bids.keys()) if bids else None
+            best_ask = min(asks.keys()) if asks else None
+            if best_bid and best_ask:
+                spread_pct = (best_ask - best_bid) / best_ask * 100
+                top_bids_usd = sum(p * q for p, q in sorted(bids.items(), reverse=True)[:20])
+                top_asks_usd = sum(p * q for p, q in sorted(asks.items())[:20])
+                tot_depth = top_bids_usd + top_asks_usd
+                imb_pct = (top_bids_usd - top_asks_usd) / tot_depth * 100 if tot_depth > 0 else 0
+                rows.append({
+                    "metric": "Order Book",
+                    "value":  f"Bid {best_bid:.2f} / Ask {best_ask:.2f}",
+                    "source": "websocket",
+                    "status": "fresh",
+                    "updated": "live",
+                    "notes": (f"Spread {spread_pct:.3f}% | "
+                              f"Imbal {imb_pct:+.1f}% | "
+                              f"Bid {_fmt_usd_lm(top_bids_usd)} Ask {_fmt_usd_lm(top_asks_usd)} (top-20)"),
+                })
+            else:
+                rows.append({"metric": "Order Book", "value": "—",
+                             "source": "websocket", "status": "not_connected_yet",
+                             "updated": "—", "notes": "Start OB stream to enable"})
         else:
             rows.append({"metric": "Order Book", "value": "—",
-                         "source": "Binance Futures WS", "status": "not_connected_yet",
+                         "source": "websocket", "status": "not_connected_yet",
                          "updated": "—", "notes": "Start OB stream to enable"})
     else:
-        rows.append({"metric": "Order Book", "value": "—", "source": exchange,
-                     "status": "not_connected_yet", "updated": "—",
-                     "notes": "OB stream available for Binance only"})
+        rows.append(_nc("Order Book"))
 
-    # 4–8. Future-phase metrics
-    for metric, note in [
-        ("Liquidations",     "Liq stream — future phase"),
-        ("Open Interest",    "OI endpoint — future phase"),
-        ("OI Change",        "OI delta — future phase"),
-        ("Delta",            "CVD stream — future phase"),
-        ("Long/Short Ratio", "L/S ratio — future phase"),
-    ]:
-        rows.append({"metric": metric, "value": "—", "source": "—",
-                     "status": "not_connected_yet", "updated": "—", "notes": note})
+    # ═════════════════════════════════════════════════════════════════════════
+    # ROW 4 — Liquidations  (source: websocket)
+    # ═════════════════════════════════════════════════════════════════════════
+    if exchange == "binance":
+        liq_e, liq_s = _lm_liq_get("binance", symbol)
+        if liq_e is not None:
+            total   = liq_e["total_liq_usd_5m"]
+            long_u  = liq_e["long_liq_usd_5m"]
+            short_u = liq_e["short_liq_usd_5m"]
+            last_p  = liq_e.get("last_liq_price")
+            last_s  = liq_e.get("last_liq_side", "")
+            if total == 0:
+                liq_val   = "None (5m)"
+                liq_notes = "Stream live — no liquidations in last 5 min"
+            else:
+                liq_val   = f"L {_fmt_usd_lm(long_u)} / S {_fmt_usd_lm(short_u)} (5m)"
+                liq_notes = (f"Total {_fmt_usd_lm(total)} | "
+                             + (f"Last: {last_s} @ {last_p:.2f}" if last_p else ""))
+            rows.append({"metric": "Liquidations",
+                         "value":   liq_val,
+                         "source":  "websocket",
+                         "status":  liq_s,
+                         "updated": f"{liq_e['data_age_sec']}s ago",
+                         "notes":   liq_notes})
+        else:
+            rows.append({"metric": "Liquidations", "value": "—",
+                         "source": "websocket", "status": "unavailable",
+                         "updated": "—", "notes": _ws_disabled_note()})
+    else:
+        rows.append(_nc("Liquidations"))
 
-    # 9. Funding Rate
+    # ═════════════════════════════════════════════════════════════════════════
+    # ROW 5 — Open Interest  (source: rest, TTL 30s)
+    # ═════════════════════════════════════════════════════════════════════════
+    if exchange == "binance":
+        oi_data = _lm_rest_cached(f"oi:{symbol}", 30,
+                                   lambda: _lm_fetch_oi_rest(symbol))
+        if oi_data:
+            oi_contracts = oi_data.get("oi_contracts", 0)
+            # multiply by mark price to get USD value
+            ws_e2, _ = _lm_ws_get("binance", symbol)
+            mp2 = ws_e2.get("mark_price") if ws_e2 else None
+            if mp2 and oi_contracts:
+                oi_usd = oi_contracts * mp2
+                oi_val = _fmt_usd_lm(oi_usd)
+            else:
+                oi_val = f"{oi_contracts:.0f} contracts"
+            rows.append({"metric": "Open Interest",
+                         "value":   oi_val,
+                         "source":  "rest",
+                         "status":  "fresh",
+                         "updated": "REST (30s TTL)",
+                         "notes":   f"{oi_contracts:.0f} contracts | /fapi/v1/openInterest"})
+        else:
+            rows.append({"metric": "Open Interest", "value": "—",
+                         "source": "rest", "status": "unavailable",
+                         "updated": "—", "notes": "REST fetch failed or WS off"})
+    else:
+        rows.append(_nc("Open Interest"))
+
+    # ═════════════════════════════════════════════════════════════════════════
+    # ROW 6 — OI Change  (source: rest/interval, TTL 60s)
+    # ═════════════════════════════════════════════════════════════════════════
+    if exchange == "binance":
+        oi_hist = _lm_rest_cached(f"oi_hist:{symbol}", 60,
+                                   lambda: _lm_fetch_oi_hist_rest(symbol))
+        if oi_hist and isinstance(oi_hist, list) and len(oi_hist) >= 2:
+            try:
+                newest_val = float(oi_hist[-1].get("sumOpenInterestValue", 0) or
+                                   oi_hist[-1].get("sumOpenInterest", 0))
+                oldest_val = float(oi_hist[0].get("sumOpenInterestValue", 0) or
+                                   oi_hist[0].get("sumOpenInterest", 0))
+                if oldest_val > 0:
+                    chg_pct = (newest_val - oldest_val) / oldest_val * 100
+                    arrow = "▲" if chg_pct >= 0 else "▼"
+                    rows.append({"metric": "OI Change",
+                                 "value":   f"{arrow} {abs(chg_pct):.2f}%",
+                                 "source":  "interval",
+                                 "status":  "interval",
+                                 "updated": "5m period (REST)",
+                                 "notes":   f"From {_fmt_usd_lm(oldest_val)} → {_fmt_usd_lm(newest_val)}"})
+                else:
+                    rows.append({"metric": "OI Change", "value": "—",
+                                 "source": "interval", "status": "unavailable",
+                                 "updated": "—", "notes": "OI history unavailable"})
+            except Exception:
+                rows.append({"metric": "OI Change", "value": "—",
+                             "source": "interval", "status": "unavailable",
+                             "updated": "—", "notes": "Parse error"})
+        else:
+            rows.append({"metric": "OI Change", "value": "—",
+                         "source": "interval", "status": "unavailable",
+                         "updated": "—", "notes": "OI history not available"})
+    else:
+        rows.append(_nc("OI Change"))
+
+    # ═════════════════════════════════════════════════════════════════════════
+    # ROW 7 — Delta / Taker Pressure  (source: websocket)
+    # ═════════════════════════════════════════════════════════════════════════
+    if exchange == "binance":
+        delta_e, delta_s = _lm_delta_get("binance", symbol)
+        if delta_e:
+            d60    = delta_e["delta_60s"]
+            dpct60 = delta_e["delta_pct_60s"]
+            buy60  = delta_e["buy_vol_60s"]
+            sell60 = delta_e["sell_vol_60s"]
+            side_lbl = "Buy" if d60 >= 0 else "Sell"
+            rows.append({"metric": "Delta",
+                         "value":  f"{'+' if d60>=0 else ''}{_fmt_usd_lm(abs(d60))} {side_lbl} ({dpct60:+.1f}%) 60s",
+                         "source": "websocket",
+                         "status": delta_s,
+                         "updated": f"{delta_e['data_age_sec']}s ago",
+                         "notes":  f"Buy {_fmt_usd_lm(buy60)} Sell {_fmt_usd_lm(sell60)} (60s) | aggTrade stream"})
+        else:
+            rows.append({"metric": "Delta", "value": "—",
+                         "source": "websocket", "status": "unavailable",
+                         "updated": "—", "notes": _ws_disabled_note()})
+    else:
+        rows.append(_nc("Delta"))
+
+    # ═════════════════════════════════════════════════════════════════════════
+    # ROW 8 — Long/Short Ratio  (source: interval/REST, TTL 5m)
+    # ═════════════════════════════════════════════════════════════════════════
+    if exchange == "binance":
+        ls_data = _lm_rest_cached(f"ls:{symbol}", 300,
+                                   lambda: _lm_fetch_ls_ratio_rest(symbol))
+        if ls_data:
+            rows.append({"metric": "Long/Short Ratio",
+                         "value":  f"L {ls_data['long_pct']:.1f}% / S {ls_data['short_pct']:.1f}%",
+                         "source": "interval",
+                         "status": "interval",
+                         "updated": "5m interval (REST)",
+                         "notes":  f"L/S ratio {ls_data['ls_ratio']:.3f} | globalLongShortAccountRatio"})
+        else:
+            rows.append({"metric": "Long/Short Ratio", "value": "—",
+                         "source": "interval", "status": "unavailable",
+                         "updated": "—", "notes": "REST fetch failed"})
+    else:
+        rows.append(_nc("Long/Short Ratio"))
+
+    # ═════════════════════════════════════════════════════════════════════════
+    # ROW 9 — Funding Rate  (source: websocket)
+    # ═════════════════════════════════════════════════════════════════════════
     if exchange == "binance":
         ws_e, ws_s = _lm_ws_get("binance", symbol)
         if ws_e and ws_e.get("funding_rate") is not None:
             fr_pct = ws_e["funding_rate"] * 100
             rows.append({"metric": "Funding Rate",
-                         "value":   f"{fr_pct:.4f}%",
-                         "source":  "Binance Futures WS",
-                         "status":  ws_s,
+                         "value":  f"{fr_pct:+.4f}%",
+                         "source": "websocket",
+                         "status": ws_s,
                          "updated": f"{ws_e['data_age_sec']}s ago",
-                         "notes":   "positive = longs pay shorts"})
+                         "notes":  "positive = longs pay shorts | markPrice stream"})
         else:
             rows.append({"metric": "Funding Rate", "value": "—",
-                         "source": "Binance Futures WS", "status": "unavailable",
-                         "updated": "—",
-                         "notes": "Connecting…" if ws_enabled else "WebSocket disabled: set ZYNI_LM_WS_ENABLED=1"})
+                         "source": "websocket", "status": "unavailable",
+                         "updated": "—", "notes": _ws_disabled_note()})
     else:
-        rows.append({"metric": "Funding Rate", "value": "—", "source": exchange,
-                     "status": "not_connected_yet", "updated": "—",
-                     "notes": "Funding rate WS available for Binance only"})
+        rows.append(_nc("Funding Rate"))
 
-    # 10. Candle Status
+    # ═════════════════════════════════════════════════════════════════════════
+    # ROW 10 — Candle Status  (source: db_snapshot)
+    # ═════════════════════════════════════════════════════════════════════════
     cf_at = snap.get("last_candle_features_at") or ""
     cf    = snap.get("latest_candle_features")  or {}
     if cf_at:
         rows.append({"metric": "Candle Status",
-                     "value":   "computed",
-                     "source":  "DB Snapshot",
-                     "status":  _age_status(cf_at, fresh_secs=300),
+                     "value":  "computed",
+                     "source": "db_snapshot",
+                     "status": _age_status(cf_at, fresh_secs=300),
                      "updated": _age_str(cf_at),
-                     "notes":   cf.get("dominant_tf", "") if isinstance(cf, dict) else ""})
+                     "notes":  cf.get("dominant_tf", "") if isinstance(cf, dict) else ""})
     else:
         rows.append({"metric": "Candle Status", "value": "—",
-                     "source": "DB Snapshot", "status": "unavailable",
+                     "source": "db_snapshot", "status": "unavailable",
                      "updated": "—", "notes": "No candle refresh yet"})
 
-    # 11. AI Entry Analysis — blocked unless live price is fresh
-    if _live_price_status != "fresh":
+    # ═════════════════════════════════════════════════════════════════════════
+    # ROW 11 — AI Entry Analysis  (gated: live + mark price must be fresh)
+    # ═════════════════════════════════════════════════════════════════════════
+    if _live_price_status != "fresh" or _mark_price_status != "fresh":
+        block_reason = (f"Requires fresh live price ({_live_price_status}) "
+                        f"and mark price ({_mark_price_status})")
         rows.append({"metric": "AI Entry Analysis", "value": "Blocked",
                      "source": "AI Consensus", "status": "blocked",
-                     "updated": "—",
-                     "notes": f"Requires fresh live price (current: {_live_price_status})"})
+                     "updated": "—", "notes": block_reason})
     else:
         ai_at  = snap.get("last_ai_analysis_at") or ""
         ai_con = snap.get("latest_ai_consensus") or {}
@@ -16221,15 +16850,15 @@ def api_lm_data_health():
             ai_at = ai_con.get("computed_at") or ""
         if ai_at:
             rows.append({"metric": "AI Entry Analysis",
-                         "value":   ai_dir.upper() if ai_dir else "computed",
-                         "source":  "AI Consensus",
-                         "status":  _age_status(ai_at, fresh_secs=600),
+                         "value":  ai_dir.upper() if ai_dir else "Allowed",
+                         "source": "AI Consensus",
+                         "status": _age_status(ai_at, fresh_secs=600),
                          "updated": _age_str(ai_at),
-                         "notes":   ""})
+                         "notes":  "Live price and mark price are fresh"})
         else:
-            rows.append({"metric": "AI Entry Analysis", "value": "—",
-                         "source": "AI Consensus", "status": "unavailable",
-                         "updated": "—", "notes": "No AI analysis yet"})
+            rows.append({"metric": "AI Entry Analysis", "value": "Allowed",
+                         "source": "AI Consensus", "status": "fresh",
+                         "updated": "—", "notes": "No prior AI analysis yet"})
 
     return jsonify({
         "ok":         True,

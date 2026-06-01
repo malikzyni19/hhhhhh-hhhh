@@ -6258,7 +6258,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
   }
   function _lmFetchDataHealth(symbol,exchange){
     if(!symbol) return;
-    if(!exchange||exchange==="aggregated") return;
+    if(!exchange) return;
     if(location.protocol==="file:") return;
     fetch("/api/live-monitor/data-health?symbol="+encodeURIComponent(symbol)+"&exchange="+encodeURIComponent(exchange),{
       credentials:"same-origin"
@@ -6267,20 +6267,26 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       if(d&&d.ok&&Array.isArray(d.rows)) _lmRenderDataHealth(d.rows);
     }).catch(function(){});
   }
+  function _lmDhStatusClass(st){
+    st=(st||"").toLowerCase();
+    if(st==="fresh")   return "lm-dh-ok";
+    if(st==="stale"||st==="interval"||st==="delayed") return "lm-dh-warn";
+    if(st==="blocked") return "lm-dh-err";
+    return "lm-dh-na";
+  }
   function _lmRenderDataHealth(rows){
     var wrap=document.getElementById("lmDhBody"); if(!wrap) return;
     var tbody=wrap.querySelector("tbody"); if(!tbody) return;
     if(!rows||!rows.length){ tbody.innerHTML=""; return; }
     tbody.innerHTML=rows.map(function(r){
-      var st=(r.status||"").toLowerCase();
-      var vc=st==="fresh"?"lm-dh-ok":st==="stale"?"lm-dh-warn":"lm-dh-na";
+      var vc=_lmDhStatusClass(r.status);
       return "<tr>"+
         "<td>"+esc(r.metric||"—")+"</td>"+
         "<td class='"+vc+"'>"+esc(r.value||"—")+"</td>"+
-        "<td class='lm-dh-na'>"+esc(r.source||"—")+"</td>"+
+        "<td class='lm-dh-na' style='font-size:9px'>"+esc(r.source||"—")+"</td>"+
         "<td class='"+vc+"'>"+esc(r.status||"—")+"</td>"+
         "<td class='lm-dh-na'>"+esc(r.updated||"—")+"</td>"+
-        "<td class='lm-dh-na'>"+esc(r.notes||"—")+"</td>"+
+        "<td class='lm-dh-na' style='max-width:220px;overflow:hidden;text-overflow:ellipsis' title='"+esc(r.notes||"")+"'>"+esc(r.notes||"—")+"</td>"+
       "</tr>";
     }).join("");
   }
@@ -6289,7 +6295,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     _lmDhTimer=setInterval(function(){
       if(_lmSelItem){
         var ex=_lmGetDataSrc();
-        if(ex!=="aggregated") _lmFetchDataHealth(_lmSelItem.symbol,ex);
+        _lmFetchDataHealth(_lmSelItem.symbol,ex);
       }
     },3000);
   }
