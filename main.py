@@ -1509,6 +1509,8 @@ OKX_PERP_API        = "https://www.okx.com/api/v5/market"
 MEXC_SPOT_API       = "https://api.mexc.com/api/v3"
 MEXC_PERP_API       = "https://contract.mexc.com/api/v1/contract"   # public market endpoints
 MEXC_CONTRACT_PRIV  = "https://contract.mexc.com/api/v1/private"     # private account endpoints
+BYBIT_API_V5        = "https://api.bybit.com"                         # Bybit V5 public endpoints
+OKX_API_V5          = "https://www.okx.com"                           # OKX V5 public endpoints
 
 # Interval mapping per exchange
 # Binance: 1m 3m 5m 15m 30m 1h 2h 4h 6h 8h 12h 1d
@@ -10792,6 +10794,1034 @@ if os.environ.get("ZYNI_LM_WS_ENABLED") == "1":
     _ensure_lm_delta_thread()
 
 
+# ── Phase 10.7: True Aggregated Exchange Data Engine ─────────────────────────
+
+_LM_ANALYSIS_SOURCES        = {"aggregated", "binance", "bybit", "okx", "mexc"}
+_LM_SPECIFIC_ANALYSIS_SRCS  = {"binance", "bybit", "okx", "mexc"}
+_LM_AGGREGATED_EXCHANGES    = ["binance", "bybit", "okx", "mexc"]
+_TOUT_EXCHANGE              = 4    # seconds — conservative REST timeout per exchange
+
+
+def _lm_normalize_analysis_source(value) -> str:
+    """Normalize analysis source string. Fallback: 'binance'."""
+    v = (value or "").lower().strip()
+    return v if v in _LM_ANALYSIS_SOURCES else "binance"
+
+
+def _lm_symbol_for_exchange(symbol: str, exchange: str, market: str = "perpetual") -> str:
+    """Convert internal BTCUSDT → exchange-specific format."""
+    s = (symbol or "").upper().replace("-", "").replace("_", "")
+    if exchange == "okx":
+        if s.endswith("USDT"):
+            return f"{s[:-4]}-USDT-SWAP" if market == "perpetual" else f"{s[:-4]}-USDT"
+        return s
+    if exchange == "mexc":
+        return (s[:-4] + "_USDT") if s.endswith("USDT") else s
+    return s   # binance, bybit: BTCUSDT as-is
+
+
+# ── Task 1: Central analysis source config ────────────────────────────────────
+
+def _lm_analysis_source_config(row=None, snapshot=None, selected_source=None) -> dict:
+    """Return canonical analysis source architecture config for one item.
+
+    Never modifies parent setup price levels.
+    analysis_source: from explicit param > snapshot > item exchange > 'binance'
+    """
+    snap = snapshot or {}
+    if row is not None and not snap:
+        snap = _json_loads_safe(getattr(row, "snapshot_json", None), {})
+    parent_exchange = _lm_normalize_exchange(
+        getattr(row, "exchange", None) if row else None
+    ) or "binance"
+    raw_src = (
+        selected_source
+        or snap.get("analysis_source")
+        or (snap.get("data_sources") or {}).get("analysis_source")
+        or parent_exchange
+    )
+    return {
+        "analysis_source":       _lm_normalize_analysis_source(raw_src),
+        "parent_setup_exchange": parent_exchange,
+        "fallback_exchange":     "binance",
+        "execution_exchange":    "not_in_scope_phase10_7",
+        "price_levels_source":   "parent_setup_exchange",
+        "rules": {
+            "analysis_data_only":                                     True,
+            "do_not_rewrite_parent_zone":                             True,
+            "binance_fallback_for_missing_specific_exchange_metrics": True,
+        },
+    }
+
+
+# ── Task 3: Canonical metric result schema ────────────────────────────────────
+
+def _lm_metric_result(metric: str, value=None, status: str = "unavailable",
+                       source: str = None, sources_used=None, sources_skipped=None,
+                       notes: str = None, updated: str = None, raw=None) -> dict:
+    """Standard metric result dict used by aggregated and fallback builders."""
+    return {
+        "metric":          metric,
+        "value":           value if value is not None else "—",
+        "status":          status,
+        "source":          source or "unavailable",
+        "sources_used":    list(sources_used  or []),
+        "sources_skipped": list(sources_skipped or []),
+        "updated":         updated or "—",
+        "notes":           notes or "",
+        "raw":             raw or {},
+    }
+
+
+# ── Task 4: Per-exchange public metric fetchers ───────────────────────────────
+
+def _lm_fetch_exchange_live_price(exchange: str, symbol: str) -> dict:
+    """Return {available, price, status, source, age_sec?} for live price."""
+    try:
+        if exchange == "binance":
+            ws_e, ws_s = _lm_ws_get("binance", symbol)
+            if ws_e and ws_e.get("live_price"):
+                return {"available": True, "price": float(ws_e["live_price"]),
+                        "status": ws_s, "source": "binance_ws",
+                        "age_sec": ws_e.get("data_age_sec", 0)}
+            return {"available": False, "status": "unavailable", "source": "binance_ws"}
+        if exchange == "bybit":
+            sym = _lm_symbol_for_exchange(symbol, "bybit")
+            r = req.get(f"{BYBIT_API_V5}/v5/market/tickers",
+                        params={"category": "linear", "symbol": sym}, timeout=_TOUT_EXCHANGE)
+            if r.status_code == 200:
+                items = (r.json().get("result") or {}).get("list") or []
+                if items:
+                    p = float(items[0].get("lastPrice") or 0)
+                    if p > 0:
+                        return {"available": True, "price": p,
+                                "status": "fresh", "source": "bybit_rest"}
+            return {"available": False, "status": "unavailable", "source": "bybit_rest"}
+        if exchange == "okx":
+            sym = _lm_symbol_for_exchange(symbol, "okx")
+            r = req.get(f"{OKX_API_V5}/api/v5/market/ticker",
+                        params={"instId": sym}, timeout=_TOUT_EXCHANGE)
+            if r.status_code == 200:
+                data = r.json().get("data") or []
+                if data:
+                    p = float(data[0].get("last") or 0)
+                    if p > 0:
+                        return {"available": True, "price": p,
+                                "status": "fresh", "source": "okx_rest"}
+            return {"available": False, "status": "unavailable", "source": "okx_rest"}
+        if exchange == "mexc":
+            t = _lm_rest_cached(f"mexc_tk:{symbol}", 10,
+                                 lambda: _lm_fetch_mexc_perp_ticker(symbol))
+            if t and t.get("ok") and t.get("last_price", 0) > 0:
+                return {"available": True, "price": float(t["last_price"]),
+                        "status": "fresh", "source": "mexc_rest"}
+            return {"available": False, "status": "unavailable", "source": "mexc_rest"}
+    except Exception as _e:
+        return {"available": False, "status": "error", "source": exchange,
+                "notes": str(_e)[:80]}
+    return {"available": False, "status": "unavailable", "source": exchange}
+
+
+def _lm_fetch_exchange_mark_price(exchange: str, symbol: str) -> dict:
+    """Return {available, price, status, source} for mark price."""
+    try:
+        if exchange == "binance":
+            ws_e, ws_s = _lm_ws_get("binance", symbol)
+            if ws_e and ws_e.get("mark_price") is not None:
+                return {"available": True, "price": float(ws_e["mark_price"]),
+                        "status": ws_s, "source": "binance_ws"}
+            return {"available": False, "status": "unavailable", "source": "binance_ws"}
+        if exchange == "bybit":
+            sym = _lm_symbol_for_exchange(symbol, "bybit")
+            r = req.get(f"{BYBIT_API_V5}/v5/market/tickers",
+                        params={"category": "linear", "symbol": sym}, timeout=_TOUT_EXCHANGE)
+            if r.status_code == 200:
+                items = (r.json().get("result") or {}).get("list") or []
+                if items:
+                    mp = float(items[0].get("markPrice") or 0)
+                    if mp > 0:
+                        return {"available": True, "price": mp,
+                                "status": "fresh", "source": "bybit_rest"}
+            return {"available": False, "status": "unavailable", "source": "bybit_rest"}
+        if exchange == "okx":
+            sym = _lm_symbol_for_exchange(symbol, "okx")
+            r = req.get(f"{OKX_API_V5}/api/v5/public/mark-price",
+                        params={"instType": "SWAP", "instId": sym}, timeout=_TOUT_EXCHANGE)
+            if r.status_code == 200:
+                data = r.json().get("data") or []
+                if data:
+                    mp = float(data[0].get("markPx") or 0)
+                    if mp > 0:
+                        return {"available": True, "price": mp,
+                                "status": "fresh", "source": "okx_rest"}
+            return {"available": False, "status": "unavailable", "source": "okx_rest"}
+        if exchange == "mexc":
+            # Use last_price as approximation for mark price (MEXC ticker doesn't separate them)
+            t = _lm_rest_cached(f"mexc_tk:{symbol}", 10,
+                                 lambda: _lm_fetch_mexc_perp_ticker(symbol))
+            if t and t.get("ok") and t.get("last_price", 0) > 0:
+                return {"available": True, "price": float(t["last_price"]),
+                        "status": "fresh", "source": "mexc_rest",
+                        "notes": "MEXC: last_price used as mark price approximation"}
+            return {"available": False, "status": "unavailable", "source": "mexc_rest"}
+    except Exception as _e:
+        return {"available": False, "status": "error", "source": exchange,
+                "notes": str(_e)[:80]}
+    return {"available": False, "status": "unavailable", "source": exchange}
+
+
+def _lm_fetch_exchange_orderbook(exchange: str, symbol: str) -> dict:
+    """Return {available, best_bid, best_ask, bids, asks, status, source}."""
+    try:
+        if exchange == "binance":
+            with _ob_book_lock:
+                ob_raw = dict(_ob_books.get(symbol) or {})
+            if ob_raw and ob_raw.get("ready"):
+                bids = ob_raw.get("bids", {})
+                asks = ob_raw.get("asks", {})
+                if bids and asks:
+                    best_bid = max((float(p) for p in bids), default=0)
+                    best_ask = min((float(p) for p in asks), default=0)
+                    ob_age = round(time.time() - ob_raw.get("ts", time.time()), 1)
+                    return {"available": True, "bids": bids, "asks": asks,
+                            "best_bid": best_bid, "best_ask": best_ask,
+                            "status": "fresh" if ob_age <= 5 else "stale",
+                            "age_sec": ob_age, "source": "binance_ws"}
+            return {"available": False, "status": "unavailable", "source": "binance_ws"}
+        if exchange == "bybit":
+            sym = _lm_symbol_for_exchange(symbol, "bybit")
+            r = req.get(f"{BYBIT_API_V5}/v5/market/orderbook",
+                        params={"category": "linear", "symbol": sym, "limit": 25},
+                        timeout=_TOUT_EXCHANGE)
+            if r.status_code == 200:
+                result = r.json().get("result") or {}
+                bids = {float(b[0]): float(b[1]) for b in (result.get("b") or []) if len(b) >= 2}
+                asks = {float(a[0]): float(a[1]) for a in (result.get("a") or []) if len(a) >= 2}
+                if bids and asks:
+                    return {"available": True, "bids": bids, "asks": asks,
+                            "best_bid": max(bids), "best_ask": min(asks),
+                            "status": "fresh", "source": "bybit_rest"}
+            return {"available": False, "status": "unavailable", "source": "bybit_rest"}
+        if exchange == "okx":
+            sym = _lm_symbol_for_exchange(symbol, "okx")
+            r = req.get(f"{OKX_API_V5}/api/v5/market/books",
+                        params={"instId": sym, "sz": 25}, timeout=_TOUT_EXCHANGE)
+            if r.status_code == 200:
+                data = r.json().get("data") or []
+                if data:
+                    bids = {float(b[0]): float(b[1]) for b in (data[0].get("bids") or []) if len(b) >= 2}
+                    asks = {float(a[0]): float(a[1]) for a in (data[0].get("asks") or []) if len(a) >= 2}
+                    if bids and asks:
+                        return {"available": True, "bids": bids, "asks": asks,
+                                "best_bid": max(bids), "best_ask": min(asks),
+                                "status": "fresh", "source": "okx_rest"}
+            return {"available": False, "status": "unavailable", "source": "okx_rest"}
+    except Exception as _e:
+        return {"available": False, "status": "error", "source": exchange,
+                "notes": str(_e)[:80]}
+    return {"available": False, "status": "unavailable",
+            "source": exchange, "notes": f"{exchange} OB not supported"}
+
+
+def _lm_fetch_exchange_open_interest(exchange: str, symbol: str) -> dict:
+    """Return {available, oi_contracts, oi_usd, status, source}."""
+    try:
+        if exchange == "binance":
+            d = _lm_rest_cached(f"oi:{symbol}", 30, lambda: _lm_fetch_oi_rest(symbol))
+            if d:
+                ws_e, _ = _lm_ws_get("binance", symbol)
+                mp = float((ws_e or {}).get("mark_price") or 0)
+                oi_c = float(d.get("oi_contracts", 0))
+                return {"available": True, "oi_contracts": oi_c,
+                        "oi_usd": oi_c * mp if mp > 0 else None,
+                        "status": "fresh", "source": "binance_rest"}
+            return {"available": False, "status": "unavailable", "source": "binance_rest"}
+        if exchange == "bybit":
+            d = _lm_rest_cached(f"bybit_oi:{symbol}", 30,
+                                 lambda: _lm107_bybit_oi(_lm_symbol_for_exchange(symbol, "bybit")))
+            if d:
+                return {"available": True, **d, "status": "fresh", "source": "bybit_rest"}
+            return {"available": False, "status": "unavailable", "source": "bybit_rest"}
+        if exchange == "okx":
+            d = _lm_rest_cached(f"okx_oi:{symbol}", 30,
+                                 lambda: _lm107_okx_oi(_lm_symbol_for_exchange(symbol, "okx")))
+            if d:
+                return {"available": True, **d, "status": "fresh", "source": "okx_rest"}
+            return {"available": False, "status": "unavailable", "source": "okx_rest"}
+        if exchange == "mexc":
+            t = _lm_rest_cached(f"mexc_tk:{symbol}", 10,
+                                 lambda: _lm_fetch_mexc_perp_ticker(symbol))
+            if t and t.get("ok") and t.get("volume_24h", 0) > 0:
+                # MEXC ticker has holdVol = open interest in contracts
+                return {"available": True, "oi_contracts": float(t.get("volume_24h", 0)),
+                        "oi_usd": None, "status": "fresh", "source": "mexc_rest",
+                        "notes": "MEXC: 24h volume used as OI proxy"}
+            return {"available": False, "status": "unavailable", "source": "mexc_rest"}
+    except Exception as _e:
+        return {"available": False, "status": "error", "source": exchange,
+                "notes": str(_e)[:80]}
+    return {"available": False, "status": "unavailable", "source": exchange}
+
+
+def _lm_fetch_exchange_funding(exchange: str, symbol: str) -> dict:
+    """Return {available, rate, rate_pct, bias, status, source}."""
+    def _bias(fr):
+        return "long_crowded" if fr > 0.0003 else "short_crowded" if fr < -0.0003 else "neutral"
+    try:
+        if exchange == "binance":
+            ws_e, ws_s = _lm_ws_get("binance", symbol)
+            if ws_e and ws_e.get("funding_rate") is not None:
+                fr = float(ws_e["funding_rate"])
+                return {"available": True, "rate": fr, "rate_pct": round(fr * 100, 6),
+                        "bias": _bias(fr), "status": ws_s, "source": "binance_ws"}
+            return {"available": False, "status": "unavailable", "source": "binance_ws"}
+        if exchange == "bybit":
+            sym = _lm_symbol_for_exchange(symbol, "bybit")
+            r = req.get(f"{BYBIT_API_V5}/v5/market/tickers",
+                        params={"category": "linear", "symbol": sym}, timeout=_TOUT_EXCHANGE)
+            if r.status_code == 200:
+                items = (r.json().get("result") or {}).get("list") or []
+                if items:
+                    fr = float(items[0].get("fundingRate") or 0)
+                    return {"available": True, "rate": fr, "rate_pct": round(fr * 100, 6),
+                            "bias": _bias(fr), "status": "fresh", "source": "bybit_rest"}
+            return {"available": False, "status": "unavailable", "source": "bybit_rest"}
+        if exchange == "okx":
+            sym = _lm_symbol_for_exchange(symbol, "okx")
+            r = req.get(f"{OKX_API_V5}/api/v5/public/funding-rate",
+                        params={"instId": sym}, timeout=_TOUT_EXCHANGE)
+            if r.status_code == 200:
+                data = r.json().get("data") or []
+                if data:
+                    fr = float(data[0].get("fundingRate") or 0)
+                    return {"available": True, "rate": fr, "rate_pct": round(fr * 100, 6),
+                            "bias": _bias(fr), "status": "fresh", "source": "okx_rest"}
+            return {"available": False, "status": "unavailable", "source": "okx_rest"}
+        if exchange == "mexc":
+            t = _lm_rest_cached(f"mexc_tk:{symbol}", 10,
+                                 lambda: _lm_fetch_mexc_perp_ticker(symbol))
+            if t and t.get("ok") and t.get("funding_rate") is not None:
+                fr = float(t["funding_rate"])
+                return {"available": True, "rate": fr, "rate_pct": round(fr * 100, 6),
+                        "bias": _bias(fr), "status": "fresh", "source": "mexc_rest"}
+            return {"available": False, "status": "unavailable", "source": "mexc_rest"}
+    except Exception as _e:
+        return {"available": False, "status": "error", "source": exchange,
+                "notes": str(_e)[:80]}
+    return {"available": False, "status": "unavailable", "source": exchange}
+
+
+def _lm_fetch_exchange_long_short(exchange: str, symbol: str) -> dict:
+    """Return {available, long_pct, short_pct, ls_ratio, status, source}."""
+    try:
+        if exchange == "binance":
+            d = _lm_rest_cached(f"ls:{symbol}", 300,
+                                 lambda: _lm_fetch_ls_ratio_rest(symbol))
+            if d:
+                return {"available": True, **d, "status": "interval", "source": "binance_rest"}
+            return {"available": False, "status": "unavailable", "source": "binance_rest"}
+        if exchange == "bybit":
+            sym = _lm_symbol_for_exchange(symbol, "bybit")
+            d = _lm_rest_cached(f"bybit_ls:{symbol}", 300,
+                                 lambda: _lm107_bybit_ls(sym))
+            if d:
+                return {"available": True, **d, "status": "interval", "source": "bybit_rest"}
+            return {"available": False, "status": "unavailable", "source": "bybit_rest"}
+        if exchange == "okx":
+            ccy = (symbol or "").upper().replace("USDT", "")
+            d = _lm_rest_cached(f"okx_ls:{symbol}", 300,
+                                 lambda: _lm107_okx_ls(ccy))
+            if d:
+                return {"available": True, **d, "status": "interval", "source": "okx_rest"}
+            return {"available": False, "status": "unavailable", "source": "okx_rest"}
+        # MEXC: no public L/S endpoint
+        return {"available": False, "status": "unavailable",
+                "source": "mexc", "notes": "MEXC L/S ratio not publicly available"}
+    except Exception as _e:
+        return {"available": False, "status": "error", "source": exchange,
+                "notes": str(_e)[:80]}
+    return {"available": False, "status": "unavailable", "source": exchange}
+
+
+def _lm_fetch_exchange_liquidations(exchange: str, symbol: str) -> dict:
+    """Return {available, long_liq_usd_5m, short_liq_usd_5m, total, status, source}.
+    Only Binance has a real-time liq stream."""
+    if exchange == "binance":
+        liq_e, liq_s = _lm_liq_get("binance", symbol)
+        if liq_e:
+            return {"available": True, **liq_e, "status": liq_s, "source": "binance_ws"}
+        return {"available": False, "status": "unavailable", "source": "binance_ws"}
+    return {"available": False, "status": "unavailable", "source": exchange,
+            "notes": f"{exchange} real-time liquidation stream not available"}
+
+
+def _lm_fetch_exchange_delta(exchange: str, symbol: str) -> dict:
+    """Return {available, delta_pct_60s, buy_vol_60s, sell_vol_60s, ...}.
+    Only Binance aggTrade delta is tracked in-process."""
+    if exchange == "binance":
+        d, ds = _lm_delta_get("binance", symbol)
+        if d:
+            return {"available": True, **d, "status": ds, "source": "binance_ws"}
+        return {"available": False, "status": "unavailable", "source": "binance_ws"}
+    return {"available": False, "status": "unavailable", "source": exchange,
+            "notes": f"{exchange} aggTrade delta not tracked in this version"}
+
+
+def _lm_fetch_exchange_oi_change(exchange: str, symbol: str) -> dict:
+    """Return {available, change_pct, direction, status, source}."""
+    try:
+        if exchange == "binance":
+            hist = _lm_rest_cached(f"oi_hist:{symbol}", 60,
+                                    lambda: _lm_fetch_oi_hist_rest(symbol))
+            if hist and isinstance(hist, list) and len(hist) >= 2:
+                old_oi = float(hist[-2].get("sumOpenInterest", 0))
+                new_oi = float(hist[-1].get("sumOpenInterest", 0))
+                if old_oi > 0:
+                    pct = round((new_oi - old_oi) / old_oi * 100, 3)
+                    return {"available": True, "change_pct": pct,
+                            "direction": "increasing" if pct > 0 else "decreasing",
+                            "status": "interval", "source": "binance_rest"}
+            return {"available": False, "status": "unavailable", "source": "binance_rest"}
+        if exchange == "bybit":
+            sym = _lm_symbol_for_exchange(symbol, "bybit")
+            d = _lm_rest_cached(f"bybit_oih:{symbol}", 60,
+                                 lambda: _lm107_bybit_oi_hist(sym))
+            if d:
+                return {"available": True, **d, "status": "interval", "source": "bybit_rest"}
+            return {"available": False, "status": "unavailable", "source": "bybit_rest"}
+        return {"available": False, "status": "unavailable", "source": exchange}
+    except Exception as _e:
+        return {"available": False, "status": "error", "source": exchange,
+                "notes": str(_e)[:80]}
+
+
+# ── Sub-helpers for Bybit/OKX public REST ────────────────────────────────────
+
+def _lm107_bybit_oi(bybit_sym: str):
+    try:
+        r = req.get(f"{BYBIT_API_V5}/v5/market/tickers",
+                    params={"category": "linear", "symbol": bybit_sym}, timeout=_TOUT_EXCHANGE)
+        if r.status_code == 200:
+            items = (r.json().get("result") or {}).get("list") or []
+            if items:
+                oi_v = float(items[0].get("openInterest") or 0)
+                mp   = float(items[0].get("markPrice") or 0)
+                if oi_v > 0:
+                    return {"oi_contracts": oi_v, "oi_usd": oi_v * mp if mp > 0 else None}
+    except Exception:
+        pass
+    return None
+
+
+def _lm107_bybit_ls(bybit_sym: str):
+    try:
+        r = req.get(f"{BYBIT_API_V5}/v5/market/account-ratio",
+                    params={"category": "linear", "symbol": bybit_sym, "period": "1h", "limit": 1},
+                    timeout=_TOUT_EXCHANGE)
+        if r.status_code == 200:
+            items = (r.json().get("result") or {}).get("list") or []
+            if items:
+                buy  = float(items[0].get("buyRatio",  0.5))
+                sell = float(items[0].get("sellRatio", 0.5))
+                ls_r = round(buy / sell, 3) if sell > 0 else 1.0
+                return {"long_pct": round(buy * 100, 2), "short_pct": round(sell * 100, 2),
+                        "ls_ratio": ls_r, "period": "1h"}
+    except Exception:
+        pass
+    return None
+
+
+def _lm107_bybit_oi_hist(bybit_sym: str):
+    try:
+        r = req.get(f"{BYBIT_API_V5}/v5/market/open-interest",
+                    params={"category": "linear", "symbol": bybit_sym,
+                            "intervalTime": "1h", "limit": 2}, timeout=_TOUT_EXCHANGE)
+        if r.status_code == 200:
+            items = (r.json().get("result") or {}).get("list") or []
+            if len(items) >= 2:
+                old_oi = float(items[-1].get("openInterest") or 0)
+                new_oi = float(items[0].get("openInterest")  or 0)
+                if old_oi > 0:
+                    pct = round((new_oi - old_oi) / old_oi * 100, 3)
+                    return {"change_pct": pct, "direction": "increasing" if pct > 0 else "decreasing"}
+    except Exception:
+        pass
+    return None
+
+
+def _lm107_okx_oi(okx_sym: str):
+    try:
+        r = req.get(f"{OKX_API_V5}/api/v5/public/open-interest",
+                    params={"instType": "SWAP", "instId": okx_sym}, timeout=_TOUT_EXCHANGE)
+        if r.status_code == 200:
+            data = r.json().get("data") or []
+            if data:
+                oi_v = float(data[0].get("oi") or data[0].get("oiCcy") or 0)
+                if oi_v > 0:
+                    return {"oi_contracts": oi_v, "oi_usd": None}
+    except Exception:
+        pass
+    return None
+
+
+def _lm107_okx_ls(ccy: str):
+    try:
+        r = req.get(f"{OKX_API_V5}/api/v5/rubik/stat/contracts/long-short-account-ratio",
+                    params={"ccy": ccy, "period": "1H", "limit": 1}, timeout=_TOUT_EXCHANGE)
+        if r.status_code == 200:
+            data = r.json().get("data") or []
+            if data:
+                ls_r = float(data[0][1]) if len(data[0]) > 1 else 1.0
+                long_pct  = round(ls_r / (1 + ls_r) * 100, 2) if ls_r > 0 else 50.0
+                short_pct = round(100 - long_pct, 2)
+                return {"long_pct": long_pct, "short_pct": short_pct,
+                        "ls_ratio": round(ls_r, 3), "period": "1h"}
+    except Exception:
+        pass
+    return None
+
+
+# ── Value formatter for metric result display ─────────────────────────────────
+
+def _lm107_format_metric(key: str, r: dict) -> str:
+    """Format a fetcher result dict to a human-readable display string."""
+    try:
+        if key in ("live_price", "mark_price"):
+            p = r.get("price")
+            return f"{p:.4f}" if p else "—"
+        if key == "order_book":
+            bb, ba = r.get("best_bid"), r.get("best_ask")
+            return f"Bid {bb:.4f} / Ask {ba:.4f}" if bb and ba else "—"
+        if key == "liquidations":
+            total = r.get("total_liq_usd_5m", 0)
+            if not total:
+                return "None (5m)"
+            lu = r.get("long_liq_usd_5m", 0)
+            su = r.get("short_liq_usd_5m", 0)
+            return f"L {_fmt_usd_lm(lu)} / S {_fmt_usd_lm(su)} (5m)"
+        if key == "open_interest":
+            usd = r.get("oi_usd")
+            c   = r.get("oi_contracts")
+            if usd and usd > 0:
+                return _fmt_usd_lm(usd)
+            if c and c > 0:
+                return f"{c:.0f} contracts"
+            return "—"
+        if key == "oi_change":
+            pct = r.get("change_pct")
+            d   = r.get("direction", "")
+            return f"{pct:+.3f}% ({d})" if pct is not None else "—"
+        if key == "delta":
+            d60  = r.get("delta_60s")
+            dpct = r.get("delta_pct_60s", 0.0)
+            if d60 is not None:
+                return f"{_fmt_usd_lm(abs(d60))} {'Buy' if d60>=0 else 'Sell'} ({dpct:+.1f}%) 60s"
+            return "—"
+        if key == "long_short":
+            lp = r.get("long_pct")
+            sp = r.get("short_pct")
+            return f"L {lp:.1f}% / S {sp:.1f}%" if lp is not None else "—"
+        if key == "funding_rate":
+            pct = r.get("rate_pct")
+            return f"{pct:+.4f}%" if pct is not None else "—"
+    except Exception:
+        pass
+    return "—"
+
+
+# ── Task 5: True Aggregated Exchange Data Builder ────────────────────────────
+
+def _lm_build_true_aggregated_exchange_data(symbol: str, snapshot=None) -> dict:
+    """Combine available metrics across Binance, Bybit, OKX, MEXC.
+
+    Pure read — no writes, no trade logic, never rewrites parent setup levels.
+    Returns {symbol, analysis_source, sources_used, sources_skipped, metrics,
+             warnings, fetched_at, ai_data_gate}
+    """
+    now_iso      = datetime.now(timezone.utc).isoformat()
+    sources_used:    list = []
+    sources_skipped: list = []
+    warnings:        list = []
+    metrics:         dict = {}
+
+    def _track(exch, available):
+        if available:
+            if exch not in sources_used: sources_used.append(exch)
+        else:
+            if exch not in sources_skipped and exch not in sources_used:
+                sources_skipped.append(exch)
+
+    # ── Live Price ─────────────────────────────────────────────────────────────
+    lp_r = {}
+    for _ex in _LM_AGGREGATED_EXCHANGES:
+        lp = _lm_rest_cached(f"agg_lp_{_ex}:{symbol}", 5,
+                              lambda e=_ex: _lm_fetch_exchange_live_price(e, symbol))
+        if lp and lp.get("available"):
+            lp_r[_ex] = lp
+    if lp_r:
+        prices = sorted([v["price"] for v in lp_r.values()])
+        med_p  = prices[len(prices) // 2]
+        srcs   = list(lp_r.keys())
+        for e in srcs: _track(e, True)
+        metrics["live_price"] = _lm_metric_result(
+            "Live Price", value=f"{med_p:.4f}",
+            status="fresh" if len(srcs) >= 2 else "partial",
+            source="Aggregated: " + ", ".join(s.title() for s in srcs),
+            sources_used=srcs,
+            sources_skipped=[e for e in _LM_AGGREGATED_EXCHANGES if e not in srcs],
+            notes="Median across exchanges. Per-exchange: " +
+                  "; ".join(f"{e}: {v['price']:.4f}" for e, v in lp_r.items()),
+            updated=now_iso, raw={e: v["price"] for e, v in lp_r.items()})
+    else:
+        for e in _LM_AGGREGATED_EXCHANGES: _track(e, False)
+        metrics["live_price"] = _lm_metric_result(
+            "Live Price", status="unavailable", source="Aggregated",
+            sources_skipped=list(_LM_AGGREGATED_EXCHANGES))
+
+    # ── Mark Price ─────────────────────────────────────────────────────────────
+    mp_r = {}
+    for _ex in _LM_AGGREGATED_EXCHANGES:
+        mp = _lm_rest_cached(f"agg_mp_{_ex}:{symbol}", 5,
+                              lambda e=_ex: _lm_fetch_exchange_mark_price(e, symbol))
+        if mp and mp.get("available"):
+            mp_r[_ex] = mp
+    if mp_r:
+        mps  = sorted([v["price"] for v in mp_r.values()])
+        med_m = mps[len(mps) // 2]
+        srcs  = list(mp_r.keys())
+        for e in srcs: _track(e, True)
+        metrics["mark_price"] = _lm_metric_result(
+            "Mark Price", value=f"{med_m:.4f}",
+            status="fresh" if len(srcs) >= 2 else "partial",
+            source="Aggregated: " + ", ".join(s.title() for s in srcs),
+            sources_used=srcs,
+            sources_skipped=[e for e in _LM_AGGREGATED_EXCHANGES if e not in srcs],
+            notes=f"Median of {len(mps)} exchange(s)",
+            updated=now_iso, raw={e: v["price"] for e, v in mp_r.items()})
+    else:
+        metrics["mark_price"] = _lm_metric_result(
+            "Mark Price", status="unavailable", source="Aggregated",
+            sources_skipped=list(_LM_AGGREGATED_EXCHANGES))
+
+    # ── Order Book ─────────────────────────────────────────────────────────────
+    ob_r = {}
+    for _ex in ["binance", "bybit", "okx"]:   # MEXC OB not available
+        ob = _lm_rest_cached(f"agg_ob_{_ex}:{symbol}", 5,
+                              lambda e=_ex: _lm_fetch_exchange_orderbook(e, symbol))
+        if ob and ob.get("available"):
+            ob_r[_ex] = ob
+    if ob_r:
+        srcs   = list(ob_r.keys())
+        b_vals = [v["best_bid"] for v in ob_r.values() if v.get("best_bid")]
+        a_vals = [v["best_ask"] for v in ob_r.values() if v.get("best_ask")]
+        ab  = round(sum(b_vals) / len(b_vals), 4) if b_vals else None
+        aa  = round(sum(a_vals) / len(a_vals), 4) if a_vals else None
+        for e in srcs: _track(e, True)
+        metrics["order_book"] = _lm_metric_result(
+            "Order Book", value=f"Bid {ab} / Ask {aa}" if ab and aa else "—",
+            status="fresh" if len(srcs) >= 2 else "partial",
+            source="Aggregated: " + ", ".join(s.title() for s in srcs),
+            sources_used=srcs, sources_skipped=["mexc"],
+            notes=f"Average best bid/ask from {len(srcs)} exchange(s)",
+            updated=now_iso)
+    else:
+        metrics["order_book"] = _lm_metric_result(
+            "Order Book", status="unavailable", source="Aggregated",
+            sources_skipped=["binance", "bybit", "okx", "mexc"])
+
+    # ── Liquidations ──────────────────────────────────────────────────────────
+    liq = _lm_fetch_exchange_liquidations("binance", symbol)
+    _track("binance", liq.get("available", False))
+    if liq.get("available"):
+        total  = liq.get("total_liq_usd_5m", 0)
+        long_u = liq.get("long_liq_usd_5m", 0)
+        short_u = liq.get("short_liq_usd_5m", 0)
+        metrics["liquidations"] = _lm_metric_result(
+            "Liquidations",
+            value=f"L {_fmt_usd_lm(long_u)} / S {_fmt_usd_lm(short_u)} (5m)" if total else "None (5m)",
+            status="partial", source="Binance (partial — Bybit/OKX/MEXC liq not available)",
+            sources_used=["binance"], sources_skipped=["bybit", "okx", "mexc"],
+            notes="Only Binance real-time liq stream is tracked in this version",
+            updated=now_iso)
+    else:
+        metrics["liquidations"] = _lm_metric_result(
+            "Liquidations", status="unavailable", source="Aggregated",
+            sources_skipped=list(_LM_AGGREGATED_EXCHANGES))
+
+    # ── Open Interest ──────────────────────────────────────────────────────────
+    oi_r = {}
+    for _ex in _LM_AGGREGATED_EXCHANGES:
+        oi = _lm_rest_cached(f"agg_oi_{_ex}:{symbol}", 30,
+                              lambda e=_ex: _lm_fetch_exchange_open_interest(e, symbol))
+        if oi and oi.get("available"):
+            oi_r[_ex] = oi
+    if oi_r:
+        srcs  = list(oi_r.keys())
+        for e in srcs: _track(e, True)
+        parts = []
+        for e, v in oi_r.items():
+            if v.get("oi_usd") is not None and v["oi_usd"] > 0:
+                parts.append(f"{e.title()}: {_fmt_usd_lm(v['oi_usd'])}")
+            else:
+                parts.append(f"{e.title()}: {v.get('oi_contracts', 0):.0f} contracts")
+        metrics["open_interest"] = _lm_metric_result(
+            "Open Interest",
+            value=parts[0] if len(parts) == 1 else "multi-exchange (see notes)",
+            status="partial" if len(srcs) < 4 else "fresh",
+            source="Aggregated: " + ", ".join(s.title() for s in srcs),
+            sources_used=srcs,
+            sources_skipped=[e for e in _LM_AGGREGATED_EXCHANGES if e not in srcs],
+            notes=" | ".join(parts), updated=now_iso)
+    else:
+        metrics["open_interest"] = _lm_metric_result(
+            "Open Interest", status="unavailable", source="Aggregated",
+            sources_skipped=list(_LM_AGGREGATED_EXCHANGES))
+
+    # ── OI Change ─────────────────────────────────────────────────────────────
+    oic_r = {}
+    for _ex in ["binance", "bybit"]:
+        oic = _lm_rest_cached(f"agg_oic_{_ex}:{symbol}", 60,
+                               lambda e=_ex: _lm_fetch_exchange_oi_change(e, symbol))
+        if oic and oic.get("available"):
+            oic_r[_ex] = oic
+    if oic_r:
+        srcs = list(oic_r.keys())
+        avg_pct = round(sum(v["change_pct"] for v in oic_r.values()) / len(oic_r), 3)
+        for e in srcs: _track(e, True)
+        metrics["oi_change"] = _lm_metric_result(
+            "OI Change",
+            value=f"{avg_pct:+.3f}% avg ({len(srcs)} src)",
+            status="interval",
+            source="Aggregated: " + ", ".join(s.title() for s in srcs),
+            sources_used=srcs,
+            sources_skipped=[e for e in _LM_AGGREGATED_EXCHANGES if e not in srcs],
+            notes=" | ".join(f"{e.title()}: {v['change_pct']:+.3f}%" for e, v in oic_r.items()),
+            updated=now_iso)
+    else:
+        metrics["oi_change"] = _lm_metric_result(
+            "OI Change", status="unavailable", source="Aggregated",
+            sources_skipped=list(_LM_AGGREGATED_EXCHANGES))
+
+    # ── Delta ──────────────────────────────────────────────────────────────────
+    delta = _lm_fetch_exchange_delta("binance", symbol)
+    _track("binance", delta.get("available", False))
+    if delta.get("available"):
+        d60  = delta.get("delta_60s", 0)
+        dpct = delta.get("delta_pct_60s", 0.0)
+        metrics["delta"] = _lm_metric_result(
+            "Delta",
+            value=f"{_fmt_usd_lm(abs(d60))} {'Buy' if d60>=0 else 'Sell'} ({dpct:+.1f}%) 60s",
+            status="partial",
+            source="Binance (partial — aggTrade delta WS; other exchanges not tracked)",
+            sources_used=["binance"], sources_skipped=["bybit", "okx", "mexc"],
+            notes="Only Binance real-time aggTrade delta is tracked",
+            updated=now_iso)
+    else:
+        metrics["delta"] = _lm_metric_result(
+            "Delta", status="unavailable", source="Aggregated",
+            sources_skipped=list(_LM_AGGREGATED_EXCHANGES))
+
+    # ── Long/Short Ratio ───────────────────────────────────────────────────────
+    ls_r = {}
+    for _ex in ["binance", "bybit", "okx"]:
+        ls = _lm_rest_cached(f"agg_ls_{_ex}:{symbol}", 300,
+                              lambda e=_ex: _lm_fetch_exchange_long_short(e, symbol))
+        if ls and ls.get("available"):
+            ls_r[_ex] = ls
+    if ls_r:
+        srcs  = list(ls_r.keys())
+        avg_l = round(sum(v["long_pct"]  for v in ls_r.values()) / len(ls_r), 2)
+        avg_s = round(sum(v["short_pct"] for v in ls_r.values()) / len(ls_r), 2)
+        for e in srcs: _track(e, True)
+        metrics["long_short"] = _lm_metric_result(
+            "Long/Short Ratio",
+            value=f"L {avg_l:.1f}% / S {avg_s:.1f}% (avg {len(srcs)} src)",
+            status="interval",
+            source="Aggregated: " + ", ".join(s.title() for s in srcs),
+            sources_used=srcs,
+            sources_skipped=[e for e in _LM_AGGREGATED_EXCHANGES if e not in srcs],
+            notes="Simple average across available exchanges",
+            updated=now_iso)
+    else:
+        metrics["long_short"] = _lm_metric_result(
+            "Long/Short Ratio", status="unavailable", source="Aggregated",
+            sources_skipped=list(_LM_AGGREGATED_EXCHANGES))
+
+    # ── Funding Rate ───────────────────────────────────────────────────────────
+    fr_r = {}
+    for _ex in _LM_AGGREGATED_EXCHANGES:
+        fr = _lm_rest_cached(f"agg_fr_{_ex}:{symbol}", 30,
+                              lambda e=_ex: _lm_fetch_exchange_funding(e, symbol))
+        if fr and fr.get("available"):
+            fr_r[_ex] = fr
+    if fr_r:
+        srcs     = list(fr_r.keys())
+        avg_rate = sum(v["rate"] for v in fr_r.values()) / len(fr_r)
+        avg_pct  = round(avg_rate * 100, 6)
+        biases   = [v.get("bias", "neutral") for v in fr_r.values()]
+        dominant = max(set(biases), key=biases.count) if biases else "neutral"
+        strongest = max(fr_r.items(), key=lambda x: abs(x[1]["rate"]))
+        for e in srcs: _track(e, True)
+        metrics["funding_rate"] = _lm_metric_result(
+            "Funding Rate",
+            value=f"{avg_pct:+.4f}% avg ({len(srcs)} src)",
+            status="fresh" if len(srcs) >= 2 else "partial",
+            source="Aggregated: " + ", ".join(s.title() for s in srcs),
+            sources_used=srcs,
+            sources_skipped=[e for e in _LM_AGGREGATED_EXCHANGES if e not in srcs],
+            notes=f"Dominant bias: {dominant}. Strongest: {strongest[0].title()} {strongest[1]['rate_pct']:+.4f}%",
+            updated=now_iso)
+    else:
+        metrics["funding_rate"] = _lm_metric_result(
+            "Funding Rate", status="unavailable", source="Aggregated",
+            sources_skipped=list(_LM_AGGREGATED_EXCHANGES))
+
+    # Mark residual skipped sources
+    for e in _LM_AGGREGATED_EXCHANGES:
+        if e not in sources_used and e not in sources_skipped:
+            sources_skipped.append(e)
+
+    # ── AI gate ────────────────────────────────────────────────────────────────
+    lp_m  = metrics.get("live_price", {})
+    mp_m  = metrics.get("mark_price", {})
+    lp_ok = lp_m.get("status") in ("fresh", "partial") and lp_m.get("sources_used")
+    mp_ok = mp_m.get("status") in ("fresh", "partial") and mp_m.get("sources_used")
+    gate_allowed  = lp_ok and mp_ok
+    gate_reasons  = []
+    gate_warnings = []
+    if not lp_ok:
+        gate_reasons.append("Aggregated Live Price unavailable — no exchange returned price")
+    if not mp_ok:
+        gate_reasons.append("Aggregated Mark Price unavailable — no exchange returned mark price")
+    if gate_allowed and len(sources_used) < 2:
+        gate_warnings.append(
+            f"Only {sources_used[0] if sources_used else 'unknown'} contributing — not true aggregated")
+
+    return {
+        "symbol":          symbol,
+        "analysis_source": "aggregated",
+        "sources_used":    sorted(set(sources_used)),
+        "sources_skipped": sorted(set(sources_skipped)),
+        "metrics":         metrics,
+        "warnings":        warnings,
+        "fetched_at":      time.time(),
+        "ai_data_gate": {
+            "allowed":        gate_allowed,
+            "reasons":        gate_reasons,
+            "warnings":       gate_warnings,
+        },
+    }
+
+
+# ── Task 6: Specific exchange + Binance fallback ──────────────────────────────
+
+_LM107_METRIC_KEYS = [
+    ("live_price",    "Live Price"),
+    ("mark_price",    "Mark Price"),
+    ("order_book",    "Order Book"),
+    ("liquidations",  "Liquidations"),
+    ("open_interest", "Open Interest"),
+    ("oi_change",     "OI Change"),
+    ("delta",         "Delta"),
+    ("long_short",    "Long/Short Ratio"),
+    ("funding_rate",  "Funding Rate"),
+]
+
+_LM107_FETCHERS = {
+    "live_price":    _lm_fetch_exchange_live_price,
+    "mark_price":    _lm_fetch_exchange_mark_price,
+    "order_book":    _lm_fetch_exchange_orderbook,
+    "liquidations":  _lm_fetch_exchange_liquidations,
+    "open_interest": _lm_fetch_exchange_open_interest,
+    "oi_change":     _lm_fetch_exchange_oi_change,
+    "delta":         _lm_fetch_exchange_delta,
+    "long_short":    _lm_fetch_exchange_long_short,
+    "funding_rate":  _lm_fetch_exchange_funding,
+}
+
+
+def _lm_build_specific_exchange_data_with_fallback(
+        symbol: str, selected_exchange: str, snapshot=None) -> dict:
+    """Fetch all metrics for selected_exchange with per-metric Binance fallback.
+
+    Status: fresh/stale = selected exchange; fallback_fresh/fallback_stale = Binance fallback;
+            unavailable = neither source available.
+    """
+    now_iso       = datetime.now(timezone.utc).isoformat()
+    metrics:       dict = {}
+    fallback_used: list = []
+    warnings:      list = []
+
+    for key, human in _LM107_METRIC_KEYS:
+        fetcher = _LM107_FETCHERS.get(key)
+        if not fetcher:
+            continue
+        # Try selected exchange
+        try:
+            result = _lm_rest_cached(f"spec_{selected_exchange}_{key}:{symbol}", 10,
+                                      lambda k=key, e=selected_exchange: _LM107_FETCHERS[k](e, symbol))
+        except Exception:
+            result = None
+
+        if result and result.get("available"):
+            status    = result.get("status", "fresh")
+            src_label = selected_exchange.title()
+            if selected_exchange == "binance":
+                src_label = "Binance"
+            metrics[key] = _lm_metric_result(
+                human, value=_lm107_format_metric(key, result),
+                status=status, source=src_label,
+                sources_used=[selected_exchange],
+                notes=result.get("notes", ""), updated=now_iso, raw=result)
+        else:
+            # Binance fallback (only if selected ≠ binance)
+            fb_result = None
+            if selected_exchange != "binance":
+                try:
+                    fb_result = _lm_rest_cached(f"spec_binance_{key}:{symbol}", 10,
+                                                 lambda k=key: _LM107_FETCHERS[k]("binance", symbol))
+                except Exception:
+                    fb_result = None
+
+            if fb_result and fb_result.get("available"):
+                fb_s     = fb_result.get("status", "fresh")
+                fb_label = f"fallback_{fb_s}" if fb_s in ("fresh", "stale") else "fallback_fresh"
+                note     = (f"{selected_exchange.title()} missing this metric; Binance fallback used."
+                            + (" " + fb_result.get("notes", "") if fb_result.get("notes") else ""))
+                fallback_used.append(human)
+                warnings.append(f"{human}: {selected_exchange.title()} unavailable → Binance fallback")
+                metrics[key] = _lm_metric_result(
+                    human, value=_lm107_format_metric(key, fb_result),
+                    status=fb_label, source="binance_fallback",
+                    sources_used=["binance"], sources_skipped=[selected_exchange],
+                    notes=note.strip(), updated=now_iso, raw=fb_result)
+            else:
+                metrics[key] = _lm_metric_result(
+                    human, status="unavailable",
+                    source=selected_exchange,
+                    sources_skipped=[selected_exchange] + (["binance"] if selected_exchange != "binance" else []),
+                    notes=f"Not available from {selected_exchange.title()}" +
+                          ("" if selected_exchange == "binance" else " or Binance fallback"),
+                    updated=now_iso)
+
+    # AI gate
+    lp_m = metrics.get("live_price", {})
+    mp_m = metrics.get("mark_price", {})
+    lp_ok = lp_m.get("status") in ("fresh", "stale", "fallback_fresh", "partial")
+    mp_ok = mp_m.get("status") in ("fresh", "stale", "fallback_fresh", "partial")
+    gate_allowed  = lp_ok and mp_ok
+    gate_reasons  = []
+    gate_warnings = []
+    if not lp_ok:
+        gate_reasons.append(f"Live Price unavailable from {selected_exchange.title()} and Binance fallback")
+    if not mp_ok:
+        gate_reasons.append(f"Mark Price unavailable from {selected_exchange.title()} and Binance fallback")
+    if fallback_used:
+        gate_warnings.append(
+            f"{selected_exchange.title()} missing: {', '.join(fallback_used[:3])}; Binance fallback used")
+
+    return {
+        "symbol":            symbol,
+        "analysis_source":   selected_exchange,
+        "selected_exchange": selected_exchange,
+        "fallback_used":     fallback_used,
+        "metrics":           metrics,
+        "warnings":          warnings,
+        "fetched_at":        time.time(),
+        "ai_data_gate": {
+            "allowed":        gate_allowed,
+            "reasons":        gate_reasons,
+            "warnings":       gate_warnings,
+        },
+    }
+
+
+# ── Tasks 13-14: Analysis source chat/event helpers ───────────────────────────
+
+_LM107_SOURCE_CHAT_COOLDOWN = 300   # 5 min dedup
+
+
+def _lm107_maybe_post_source_chat(uid: int, item, new_src: str, old_src: str,
+                                   data: dict = None) -> bool:
+    """Post one assistant chat when analysis source changes. Deduped per item."""
+    if not uid or not item or new_src == old_src:
+        return False
+    try:
+        symbol  = getattr(item, "symbol", "?")
+        snap    = _json_loads_safe(getattr(item, "snapshot_json", None), {})
+        state   = snap.get("analysis_source_chat_state") or {}
+        now     = time.time()
+        if state.get("last_source") == new_src and (now - state.get("last_ts", 0)) < _LM107_SOURCE_CHAT_COOLDOWN:
+            return False
+
+        used    = (data or {}).get("sources_used") or []
+        skipped = (data or {}).get("sources_skipped") or []
+        if new_src == "aggregated" and used:
+            src_line = f"Using {', '.join(s.title() for s in used)} where available."
+            if skipped:
+                src_line += f" Skipped: {', '.join(s.title() for s in skipped)} (metrics unavailable)."
+        elif new_src == "aggregated":
+            src_line = "Attempting to combine Binance, Bybit, OKX, MEXC."
+        else:
+            src_line = f"Using {new_src.title()} as primary analysis source."
+
+        content = (
+            f"AI Data Source Update — {symbol}\n\n"
+            f"Analysis source changed to: {new_src.title()}.\n"
+            f"{src_line}\n\n"
+            f"Important:\nThis affects analysis data only. "
+            f"Parent setup OB/FIB zone, SL, TP, and candle-close invalidation "
+            f"remain from the parent setup exchange."
+        )
+        _lm_chat_save(uid, item, "assistant", content,
+                      agent_id="smart_entry", agent_label="Smart Entry")
+        snap["analysis_source_chat_state"] = {"last_ts": now, "last_source": new_src}
+        from models import db as _db107, LiveMonitorItem as _LMI107
+        row107 = _LMI107.query.get(getattr(item, "id", None))
+        if row107:
+            row107.snapshot_json = _json_dumps_safe(snap)
+            try: _db107.session.commit()
+            except Exception: _db107.session.rollback()
+        return True
+    except Exception as _e:
+        print(f"[107-CHAT] {_e}")
+        return False
+
+
+def _lm107_maybe_log_source_event(uid: int, item, new_src: str, old_src: str,
+                                   data: dict = None) -> bool:
+    """Log LiveMonitorEvent for source changes and partial/fallback states."""
+    if not uid or not item:
+        return False
+    try:
+        used    = (data or {}).get("sources_used") or []
+        skipped = (data or {}).get("sources_skipped") or []
+        if new_src != old_src:
+            ev_type = "analysis_source_changed"
+            ev_desc = f"Analysis source changed: {(old_src or 'none').title()} → {new_src.title()}"
+        elif new_src == "aggregated" and skipped:
+            ev_type = "aggregated_source_partial"
+            active  = "+".join(s.title() for s in used)
+            missing = "/".join(s.title() for s in skipped)
+            ev_desc = f"Aggregated source partial: {active} active, {missing} unavailable"
+        else:
+            return False
+        from models import db as _dbev, LiveMonitorEvent as _LMEev
+        ev = _LMEev(
+            item_id=getattr(item, "id", None), user_id=uid,
+            symbol=getattr(item, "symbol", ""),
+            event_type=ev_type, event_description=ev_desc,
+            details_json=_json_dumps_safe({"old_source": old_src, "new_source": new_src,
+                                           "sources_used": used, "sources_skipped": skipped}),
+            price_at_event=getattr(item, "current_price", None),
+        )
+        _dbev.session.add(ev)
+        return True
+    except Exception as _e:
+        print(f"[107-EVENT] {_e}")
+        return False
+
+
 # ── Phase 10.4: Data Health Context Helper ────────────────────────────────────
 
 def _lm_build_data_health_context(symbol: str, exchange: str,
@@ -10844,29 +11874,106 @@ def _lm_build_data_health_context(symbol: str, exchange: str,
                 "status": "not_connected_yet", "updated": "—",
                 "notes": "Live data available for Binance only"}
 
+    def _metrics_to_rows(metrics_dict: dict, src_label: str) -> list:
+        """Convert Phase 10.7 metrics dict → health row list."""
+        out = []
+        for key, human in _LM107_METRIC_KEYS:
+            m = metrics_dict.get(key)
+            if m:
+                upd = m.get("updated", "—")
+                out.append({
+                    "metric":  m.get("metric", human),
+                    "value":   m.get("value", "—"),
+                    "source":  m.get("source", src_label),
+                    "status":  m.get("status", "unavailable"),
+                    "updated": _age_str(upd) if upd and upd != "—" else "—",
+                    "notes":   m.get("notes", ""),
+                })
+            else:
+                out.append({"metric": human, "value": "—", "source": src_label,
+                            "status": "unavailable", "updated": "—", "notes": "Not available"})
+        return out
+
+    def _append_snapshot_rows(rows_list: list, gate_allowed: bool,
+                               gate_reasons: list, src_label: str):
+        """Append Candle Status + AI Entry Analysis rows from snapshot."""
+        cf_at = snap.get("last_candle_features_at") or ""
+        cf    = snap.get("latest_candle_features")  or {}
+        if cf_at:
+            rows_list.append({"metric": "Candle Status", "value": "computed",
+                              "source": "db_snapshot", "status": _age_status(cf_at, 300),
+                              "updated": _age_str(cf_at),
+                              "notes": cf.get("dominant_tf", "") if isinstance(cf, dict) else ""})
+        else:
+            rows_list.append({"metric": "Candle Status", "value": "—", "source": "db_snapshot",
+                              "status": "unavailable", "updated": "—", "notes": "No candle refresh yet"})
+        if gate_allowed:
+            ai_at  = snap.get("last_ai_analysis_at") or ""
+            ai_con = snap.get("latest_ai_consensus") or {}
+            ai_dir = (ai_con.get("direction") or ai_con.get("bias") or "") if isinstance(ai_con, dict) else ""
+            if not ai_at and isinstance(ai_con, dict):
+                ai_at = ai_con.get("computed_at") or ""
+            if ai_at:
+                rows_list.append({"metric": "AI Entry Analysis",
+                                  "value":  ai_dir.upper() if ai_dir else "Allowed",
+                                  "source": "AI Consensus",
+                                  "status": _age_status(ai_at, 600),
+                                  "updated": _age_str(ai_at),
+                                  "notes":  f"{src_label} live/mark price available"})
+            else:
+                rows_list.append({"metric": "AI Entry Analysis", "value": "Allowed",
+                                  "source": "AI Consensus", "status": "fresh",
+                                  "updated": "—", "notes": "No prior AI analysis yet"})
+        else:
+            rows_list.append({"metric": "AI Entry Analysis", "value": "Blocked",
+                              "source": "AI Consensus", "status": "blocked",
+                              "updated": "—",
+                              "notes": "; ".join(gate_reasons or ["Data not ready"])})
+
+    def _critical_from_lp_mp(metrics_dict: dict) -> str:
+        lp_s = (metrics_dict.get("live_price") or {}).get("status", "unavailable")
+        mp_s = (metrics_dict.get("mark_price") or {}).get("status", "unavailable")
+        cs   = {lp_s, mp_s}
+        if "unavailable" in cs:                                  return "unavailable"
+        if "stale" in cs or "fallback_stale" in cs:             return "stale"
+        if "partial" in cs or "fallback_fresh" in cs:           return "partial"
+        return "fresh"
+
     # ── Aggregated exchange ───────────────────────────────────────────────────
     if exchange == "aggregated":
-        agg_rows = [
-            {"metric": m, "value": "—", "source": "Aggregated",
-             "status": "not_connected_yet", "updated": "—",
-             "notes": "Aggregated exchange data not connected yet"}
-            for m in ["Live Price", "Mark Price", "Order Book", "Liquidations",
-                      "Open Interest", "OI Change", "Delta", "Long/Short Ratio",
-                      "Funding Rate", "Candle Status", "AI Entry Analysis"]
-        ]
+        agg  = _lm_build_true_aggregated_exchange_data(symbol, snap)
+        rows = _metrics_to_rows(agg["metrics"], "Aggregated")
+        gate = agg.get("ai_data_gate", {})
+        _append_snapshot_rows(rows, gate.get("allowed", False),
+                              gate.get("reasons", []), "Aggregated")
         return {
             "symbol":          symbol,
             "exchange":        exchange,
             "ws_enabled":      False,
             "fetched_at":      time.time(),
-            "rows":            agg_rows,
-            "critical_status": "not_connected_yet",
-            "ai_data_gate": {
-                "allowed":        False,
-                "reasons":        ["Aggregated exchange data not connected yet"],
-                "fresh_required": ["Live Price", "Mark Price"],
-                "warnings":       [],
-            },
+            "rows":            rows,
+            "critical_status": _critical_from_lp_mp(agg["metrics"]),
+            "ai_data_gate":    gate,
+            "sources_used":    agg.get("sources_used", []),
+            "sources_skipped": agg.get("sources_skipped", []),
+        }
+
+    # ── Non-Binance single exchange (Bybit, OKX, MEXC) ───────────────────────
+    if exchange != "binance":
+        spec = _lm_build_specific_exchange_data_with_fallback(symbol, exchange, snap)
+        rows = _metrics_to_rows(spec["metrics"], exchange.title())
+        gate = spec.get("ai_data_gate", {})
+        _append_snapshot_rows(rows, gate.get("allowed", False),
+                              gate.get("reasons", []), exchange.title())
+        return {
+            "symbol":          symbol,
+            "exchange":        exchange,
+            "ws_enabled":      False,
+            "fetched_at":      time.time(),
+            "rows":            rows,
+            "critical_status": _critical_from_lp_mp(spec["metrics"]),
+            "ai_data_gate":    gate,
+            "fallback_used":   spec.get("fallback_used", []),
         }
 
     rows = []
@@ -11227,11 +12334,13 @@ _LM_SE_CRITICAL_MODES      = {"invalidated", "blocked", "refined_internal_entry"
 # ── TASK 4: OB wall → structured dict ────────────────────────────────────────
 
 def _lm_score_orderbook_wall_for_zone(symbol: str, exchange: str, direction: str,
-                                       zone_low: float, zone_high: float) -> dict:
+                                       zone_low: float, zone_high: float,
+                                       analysis_source: str = None) -> dict:
     """Return structured OB wall evidence for a zone.
 
     {available, status, wall_side, wall_price, wall_strength, wall_score, notes}
-    Only _ob_books (Binance) is used; non-Binance returns unavailable.
+    Only _ob_books (Binance) is used; non-Binance falls back to Binance stream.
+    zones/SL/TP are never modified by this function.
     """
     unavail = {
         "available":     False,
@@ -11243,8 +12352,13 @@ def _lm_score_orderbook_wall_for_zone(symbol: str, exchange: str, direction: str
         "notes":         "",
     }
     try:
-        if exchange not in ("binance", ""):
-            return {**unavail, "notes": "OB wall only available for Binance"}
+        # Phase 10.7: non-Binance or aggregated → try Binance fallback for OB stream
+        _ob_exchange = exchange if exchange in ("binance", "") else "binance"
+        _ob_fallback_note = ""
+        if _ob_exchange != exchange and exchange:
+            _ob_fallback_note = f" [Binance OB fallback — {exchange} OB not available]"
+        if not exchange:  # treat empty as binance
+            _ob_exchange = "binance"
 
         # Attempt to start/wake the OB stream on-demand (non-blocking, wait 0.1 s).
         # start_ob_ws guards against duplicate threads so this is safe to call repeatedly.
@@ -11295,6 +12409,7 @@ def _lm_score_orderbook_wall_for_zone(symbol: str, exchange: str, direction: str
                  if zone_vol > 0 else "no depth in zone")
         if ob_status == "stale":
             notes += " [stale OB — treat as weak evidence]"
+        notes += _ob_fallback_note
 
         return {
             "available":     True,
@@ -11313,10 +12428,13 @@ def _lm_score_orderbook_wall_for_zone(symbol: str, exchange: str, direction: str
 
 def _lm_score_liquidation_for_zone(symbol: str, exchange: str, direction: str,
                                     zone_low: float, zone_high: float,
-                                    data_health=None) -> dict:
+                                    data_health=None,
+                                    analysis_source: str = None) -> dict:
     """Return structured liquidation evidence for a zone.
 
     {available, status, near_zone, liq_score, last_liq_price, total_liq_usd_5m, notes}
+    Phase 10.7: non-Binance exchange → Binance fallback (only Binance liq stream available).
+    zones/SL/TP are never modified by this function.
     """
     unavail = {
         "available":        False,
@@ -11328,7 +12446,10 @@ def _lm_score_liquidation_for_zone(symbol: str, exchange: str, direction: str,
         "notes":            "",
     }
     try:
-        liq_data, liq_status = _lm_liq_get(exchange, symbol)
+        # Phase 10.7: only Binance has real-time liq stream — use as fallback
+        _liq_exchange  = "binance"
+        _liq_fallback  = exchange and exchange != "binance"
+        liq_data, liq_status = _lm_liq_get(_liq_exchange, symbol)
         if not liq_data:
             return {**unavail, "notes": "no liquidation data"}
         if liq_status not in ("fresh", "stale"):
@@ -11372,6 +12493,8 @@ def _lm_score_liquidation_for_zone(symbol: str, exchange: str, direction: str,
                  + (" [near zone]" if near_zone else ""))
         if liq_status == "stale":
             notes += " [stale feed]"
+        if _liq_fallback:
+            notes += f" [Binance liq fallback — {exchange} liq not available]"
 
         return {
             "available":        True,
@@ -11389,7 +12512,8 @@ def _lm_score_liquidation_for_zone(symbol: str, exchange: str, direction: str,
 # ── TASK 6: Flow → structured dict ───────────────────────────────────────────
 
 def _lm_score_flow_context_for_candidate(symbol: str, exchange: str,
-                                          direction: str, data_health=None) -> dict:
+                                          direction: str, data_health=None,
+                                          analysis_source: str = None) -> dict:
     """Return structured flow evidence.
 
     {delta_score, oi_score, funding_score, flow_label, notes}
@@ -11403,8 +12527,10 @@ def _lm_score_flow_context_for_candidate(symbol: str, exchange: str,
         "notes":         [],
     }
     try:
-        # ── Live delta ───────────────────────────────────────────────────────
-        delta_data, delta_status = _lm_delta_get(exchange, symbol)
+        # ── Live delta — Phase 10.7: only Binance has aggTrade delta stream ──
+        _delta_exchange = "binance"  # always use Binance for delta; other exchanges unavailable
+        _delta_fallback = exchange and exchange not in ("binance", "")
+        delta_data, delta_status = _lm_delta_get(_delta_exchange, symbol)
         if delta_data and delta_status in ("fresh", "stale"):
             dpct  = float(delta_data.get("delta_pct_60s") or 0.0)
             dpct5 = float(delta_data.get("delta_pct_5m")  or 0.0)
@@ -11422,9 +12548,11 @@ def _lm_score_flow_context_for_candidate(symbol: str, exchange: str,
 
             result["delta_score"] = delta_s
             lbl = "aligned" if al60 else "opposed"
+            _dfb = f" [Binance delta fallback — {exchange} delta not available]" if _delta_fallback else ""
             result["notes"].append(
                 f"delta {dpct:+.1f}% (60s) / {dpct5:+.1f}% (5m) [{lbl}]"
                 + (" [stale]" if delta_status == "stale" else "")
+                + _dfb
             )
         else:
             result["notes"].append("delta unavailable")
@@ -12927,27 +14055,52 @@ def _lm_compute_aggregated_market_context(row, snapshot=None) -> dict:
     if "binance" in sources_failed:
         warnings.append("Primary source (Binance) failed — context may be incomplete.")
 
+    # ── Phase 10.7: True aggregated exchange metrics layer ───────────────────
+    asc          = _lm_analysis_source_config(row, snapshot=snap)
+    analysis_src = asc["analysis_source"]
+    p10_metrics  = {}
+    p10_used:    list = []
+    p10_skipped: list = []
+    try:
+        if analysis_src == "aggregated":
+            p10_data = _lm_build_true_aggregated_exchange_data(symbol, snap)
+        else:
+            p10_data = _lm_build_specific_exchange_data_with_fallback(symbol, analysis_src, snap)
+        p10_metrics = p10_data.get("metrics") or {}
+        p10_used    = p10_data.get("sources_used") or []
+        p10_skipped = p10_data.get("sources_skipped") or []
+        if p10_data.get("warnings"):
+            warnings.extend(p10_data["warnings"][:3])
+    except Exception as _p10e:
+        warnings.append(f"Phase10.7 metrics fetch error: {_p10e}")
+
     return {
-        "phase":           "phase9_aggregated_context",
-        "computed_at":     now_iso,
-        "symbol":          symbol,
-        "sources_requested": sources_requested,
-        "sources_used":    sources_used,
-        "sources_failed":  sources_failed,
-        "primary_source":  "binance",
-        "funding":         funding,
-        "open_interest":   open_interest,
-        "taker_pressure":  taker_pressure,
-        "long_short":      long_short,
-        "liquidations":    liquidations,
-        "volume_context":  volume_ctx,
-        "agreement_score": agreement_score,
-        "conflict_score":  conflict_score,
-        "agreement_note":  agreement_note,
-        "bias":            bias,
-        "summary_notes":   summary_notes,
-        "warnings":        warnings,
-        "summary":         b_summary.get("ai_context") or "Binance-first aggregated context.",
+        "phase":                "phase10_7_true_aggregated_exchange_data",
+        "computed_at":          now_iso,
+        "symbol":               symbol,
+        "analysis_source":      analysis_src,
+        "parent_setup_exchange": asc["parent_setup_exchange"],
+        "price_levels_source":  asc["price_levels_source"],
+        "execution_exchange":   asc["execution_exchange"],
+        "sources_requested":    sources_requested,
+        "sources_used":         p10_used or sources_used,
+        "sources_skipped":      p10_skipped,
+        "sources_failed":       sources_failed,
+        "primary_source":       "binance",
+        "funding":              funding,
+        "open_interest":        open_interest,
+        "taker_pressure":       taker_pressure,
+        "long_short":           long_short,
+        "liquidations":         liquidations,
+        "volume_context":       volume_ctx,
+        "agreement_score":      agreement_score,
+        "conflict_score":       conflict_score,
+        "agreement_note":       agreement_note,
+        "bias":                 bias,
+        "summary_notes":        summary_notes,
+        "metrics":              p10_metrics,
+        "warnings":             warnings,
+        "summary":              b_summary.get("ai_context") or "Aggregated exchange context.",
     }
 
 
@@ -13233,6 +14386,7 @@ def _lm_build_trade_proposal_context(row, snapshot=None) -> dict:
     """Build compact context dict for AI trade proposal. No raw candles. No API keys."""
     snap    = snapshot if snapshot is not None else _json_loads_safe(getattr(row, "snapshot_json", None), {})
     config  = _lm_data_source_config(row, snapshot=snap)
+    asc     = _lm_analysis_source_config(row, snapshot=snap)
     sr      = snap.get("latest_setup_readiness") or {}
     evd     = snap.get("latest_event_detection") or {}
     cf      = snap.get("latest_candle_features") or {}
@@ -13256,17 +14410,21 @@ def _lm_build_trade_proposal_context(row, snapshot=None) -> dict:
         "last_close":        feat.get("last_close"),
     } if feat else None
 
-    # Compact aggregated context
+    # Compact aggregated context — Phase 10.7 analysis source enriched
     amc_compact = {
-        "sources_used":    amc.get("sources_used"),
-        "bias":            amc.get("bias"),
-        "funding":         amc.get("funding"),
-        "open_interest":   amc.get("open_interest"),
-        "taker_pressure":  amc.get("taker_pressure"),
-        "long_short":      amc.get("long_short"),
-        "agreement_note":  amc.get("agreement_note"),
-        "warnings":        (amc.get("warnings") or [])[:5],
-        "summary":         amc.get("summary"),
+        "analysis_source":       amc.get("analysis_source") or asc["analysis_source"],
+        "parent_setup_exchange": amc.get("parent_setup_exchange") or asc["parent_setup_exchange"],
+        "price_levels_source":   asc["price_levels_source"],
+        "execution_exchange":    asc["execution_exchange"],
+        "sources_used":          amc.get("sources_used"),
+        "bias":                  amc.get("bias"),
+        "funding":               amc.get("funding"),
+        "open_interest":         amc.get("open_interest"),
+        "taker_pressure":        amc.get("taker_pressure"),
+        "long_short":            amc.get("long_short"),
+        "agreement_note":        amc.get("agreement_note"),
+        "warnings":              (amc.get("warnings") or [])[:5],
+        "summary":               amc.get("summary"),
     } if amc else None
 
     # Latest 3 memory records — compact, no raw candles
@@ -13301,7 +14459,12 @@ def _lm_build_trade_proposal_context(row, snapshot=None) -> dict:
             "score":        getattr(row, "score", None),
             "confidence":   getattr(row, "confidence", None),
         },
-        "data_sources": {k: v for k, v in config.items() if k != "warnings"},
+        "data_sources": {
+            **{k: v for k, v in config.items() if k != "warnings"},
+            "analysis_source":       asc["analysis_source"],
+            "parent_setup_exchange": asc["parent_setup_exchange"],
+            "price_levels_source":   asc["price_levels_source"],
+        },
         "live_price":   live_price,
         "setup_readiness": {
             "readiness_state":    sr.get("readiness_state"),
@@ -13345,7 +14508,8 @@ def _lm_build_trade_proposal_context(row, snapshot=None) -> dict:
             "no_api_keys":          True,
             "risk_guard_required_for_approval": True,
             "execution_exchange_price_is_truth": True,
-            "binance_context_is_confirmation_only": True,
+            "analysis_data_confirmation_only":   True,
+            "parent_setup_zones_immutable":      True,
         },
     }
 
@@ -14214,20 +15378,26 @@ def _lm_build_ai_context(item) -> dict:
             snap.get("setup_memory_accuracy"),
         ),
         "aggregated_market_context": (lambda amc: {
-            "computed_at":     amc.get("computed_at"),
-            "sources_used":    amc.get("sources_used"),
-            "sources_failed":  amc.get("sources_failed"),
-            "primary_source":  amc.get("primary_source"),
-            "funding":         amc.get("funding"),
-            "open_interest":   amc.get("open_interest"),
-            "taker_pressure":  amc.get("taker_pressure"),
-            "long_short":      amc.get("long_short"),
-            "bias":            amc.get("bias"),
-            "agreement_score": amc.get("agreement_score"),
-            "agreement_note":  amc.get("agreement_note"),
-            "conflict_score":  amc.get("conflict_score"),
-            "warnings":        amc.get("warnings"),
-            "summary":         amc.get("summary"),
+            "computed_at":           amc.get("computed_at"),
+            "analysis_source":       amc.get("analysis_source"),
+            "parent_setup_exchange": amc.get("parent_setup_exchange"),
+            "price_levels_source":   "parent_setup_exchange",
+            "execution_exchange":    "not_in_scope_phase10_7",
+            "sources_used":          amc.get("sources_used"),
+            "sources_failed":        amc.get("sources_failed"),
+            "primary_source":        amc.get("primary_source"),
+            "funding":               amc.get("funding"),
+            "open_interest":         amc.get("open_interest"),
+            "taker_pressure":        amc.get("taker_pressure"),
+            "long_short":            amc.get("long_short"),
+            "bias":                  amc.get("bias"),
+            "agreement_score":       amc.get("agreement_score"),
+            "agreement_note":        amc.get("agreement_note"),
+            "conflict_score":        amc.get("conflict_score"),
+            "warnings":              amc.get("warnings"),
+            "summary":               amc.get("summary"),
+            "note":                  "analysis_source data is confirmation only — "
+                                     "parent setup OB/FIB/SL/TP/invalidation zones are never rewritten.",
         } if amc and isinstance(amc, dict) else None)(snap.get("latest_aggregated_market_context")),
         "live_data_health": _lm_build_data_health_context(
             item.symbol, item.exchange or "binance", snap=snap
@@ -16808,6 +17978,19 @@ def api_lm_items_detect_events(item_id):
         import traceback as _tb
         print(f"[SE-DETECT] warn: {_se_ex}")
 
+    # Phase 10.7 Tasks 13-14: analysis source event/chat on detect-events
+    # Only fires if analysis_source changed since last detect (deduped inside helper)
+    try:
+        _asc107 = _lm_analysis_source_config(row, snapshot=snap)
+        _new107 = _asc107["analysis_source"]
+        _old107 = snap.get("last_analysis_source_logged") or _new107
+        if _new107 != _old107:
+            _lm107_maybe_log_source_event(uid, row, _new107, _old107, data=snap.get("latest_aggregated_market_context"))
+            _lm107_maybe_post_source_chat(uid, row, _new107, _old107, data=snap.get("latest_aggregated_market_context"))
+        snap["last_analysis_source_logged"] = _new107
+    except Exception as _p107ex:
+        pass
+
     row.snapshot_json = _json_dumps_safe(snap)
 
     try:
@@ -17322,6 +18505,12 @@ def api_lm_items_data_sources_post(item_id):
         existing["aggregation_enabled"]    = bool(body["aggregation_enabled"])
 
     now_iso = datetime.now(timezone.utc).isoformat()
+
+    # Phase 10.7 Tasks 13-14: detect analysis_source change before saving
+    _asc_old = _lm_analysis_source_config(row, snapshot=snap)["analysis_source"]
+    if "analysis_source" in body:
+        existing["analysis_source"] = _lm_normalize_analysis_source(body["analysis_source"])
+
     snap["data_sources"]         = existing
     snap["last_data_sources_at"] = now_iso
     row.snapshot_json = _json_dumps_safe(snap)
@@ -17332,6 +18521,15 @@ def api_lm_items_data_sources_post(item_id):
     except Exception as e:
         _db.session.rollback()
         return jsonify({"error": str(e)}), 500
+
+    # Phase 10.7: log + chat if analysis source changed
+    try:
+        _asc_new = _lm_analysis_source_config(row, snapshot=snap)["analysis_source"]
+        if _asc_new != _asc_old:
+            _lm107_maybe_log_source_event(uid, row, _asc_new, _asc_old)
+            _lm107_maybe_post_source_chat(uid, row, _asc_new, _asc_old)
+    except Exception:
+        pass
 
     config = _lm_data_source_config(row, snapshot=snap)
     return jsonify({"ok": True, "item": _live_monitor_item_to_dict(row), "data_sources": config})
@@ -18552,6 +19750,58 @@ def api_lm_data_health():
 
     ctx = _lm_build_data_health_context(symbol, exchange, snap=snap, user_id=uid)
     return jsonify({"ok": True, **ctx})
+
+
+@app.route("/api/live-monitor/analysis-source/debug", methods=["GET"])
+@login_required
+def api_lm_analysis_source_debug():
+    """Debug endpoint — return raw Phase 10.7 aggregated/specific exchange metric data.
+
+    GET /api/live-monitor/analysis-source/debug?symbol=BTCUSDT&source=aggregated
+    Read-only. No trading. No order logic.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    symbol = (request.args.get("symbol") or "").upper().strip()
+    source = (request.args.get("source") or "aggregated").lower().strip()
+
+    if not symbol:
+        return jsonify({"error": "symbol_required"}), 400
+
+    source = _lm_normalize_analysis_source(source)
+
+    snap = {}
+    try:
+        from models import LiveMonitorItem as _LMIAS
+        _lm_as_row = _LMIAS.query.filter_by(
+            symbol=symbol, is_active=True, user_id=uid).first()
+        if _lm_as_row:
+            snap = _json_loads_safe(_lm_as_row.snapshot_json, {})
+    except Exception as _e:
+        pass
+
+    try:
+        if source == "aggregated":
+            data = _lm_build_true_aggregated_exchange_data(symbol, snap)
+        else:
+            data = _lm_build_specific_exchange_data_with_fallback(symbol, source, snap)
+    except Exception as _e:
+        return jsonify({"ok": False, "symbol": symbol, "analysis_source": source,
+                        "error": str(_e)}), 500
+
+    return jsonify({
+        "ok":              True,
+        "symbol":          symbol,
+        "analysis_source": data.get("analysis_source", source),
+        "sources_used":    data.get("sources_used", []),
+        "sources_skipped": data.get("sources_skipped", []),
+        "metrics":         data.get("metrics", {}),
+        "warnings":        data.get("warnings", []),
+        "ai_data_gate":    data.get("ai_data_gate", {}),
+        "fetched_at":      data.get("fetched_at"),
+    })
 
 
 # mobile UA fragments — keep small, case-insensitive

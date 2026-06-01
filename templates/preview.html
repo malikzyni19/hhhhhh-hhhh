@@ -834,6 +834,8 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
 .lm-ds-lbl{font-size:9.5px;font-weight:700;letter-spacing:.6px;color:var(--text-3);white-space:nowrap}
 .lm-ds-sel{flex:1;background:var(--bg-card-2);border:1px solid var(--border);color:var(--text);border-radius:5px;padding:3px 6px;font-size:11px;outline:none;cursor:pointer;font-family:inherit}
 .lm-ds-sel:focus{border-color:var(--accent)}
+.lm-ds-note{font-size:9px;color:var(--text-3);white-space:nowrap;cursor:help;opacity:0.75;flex-shrink:0}
+.lm-dh-src-row td{background:var(--bg-card-2,rgba(255,255,255,.03))!important}
 .lm-dh-wrap{flex-shrink:0;border-bottom:1px solid var(--border);background:var(--bg-panel)}
 .lm-dh-head{display:flex;align-items:center;gap:6px;padding:5px 10px;cursor:pointer;user-select:none}
 .lm-dh-lbl{font-size:9.5px;font-weight:700;letter-spacing:.6px;color:var(--text-3);flex:1}
@@ -4460,6 +4462,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
                   '<option value="mexc">MEXC</option>'+
                   '<option value="aggregated">Aggregated</option>'+
                 '</select>'+
+                '<span class="lm-ds-note" title="Analysis data only. Parent setup OB/FIB zones, SL, TP and invalidation levels are never changed by analysis source selection.">&#9432; Analysis only — setup levels unchanged</span>'+
               '</div>'+
               '<div class="lm-dh-wrap">'+
                 '<div class="lm-dh-head" id="lmDhHead">'+
@@ -6505,27 +6508,45 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       credentials:"same-origin"
     }).then(function(r){return r.json().catch(function(){return null;});})
     .then(function(d){
-      if(d&&d.ok&&Array.isArray(d.rows)) _lmRenderDataHealth(d.rows);
+      if(d&&d.ok&&Array.isArray(d.rows)){
+        var meta={sources_used:d.sources_used,sources_skipped:d.sources_skipped};
+        _lmRenderDataHealth(d.rows,meta);
+      }
     }).catch(function(){});
   }
   function _lmDhStatusClass(st){
     st=(st||"").toLowerCase();
-    if(st==="fresh")   return "lm-dh-ok";
-    if(st==="stale"||st==="interval"||st==="delayed") return "lm-dh-warn";
-    if(st==="blocked") return "lm-dh-err";
+    if(st==="fresh")                           return "lm-dh-ok";
+    if(st==="fallback_fresh"||st==="partial")  return "lm-dh-warn";
+    if(st==="stale"||st==="interval"||st==="delayed"||st==="fallback_stale") return "lm-dh-warn";
+    if(st==="blocked")                         return "lm-dh-err";
     return "lm-dh-na";
   }
-  function _lmRenderDataHealth(rows){
+  function _lmRenderDataHealth(rows, meta){
     var wrap=document.getElementById("lmDhBody"); if(!wrap) return;
     var tbody=wrap.querySelector("tbody"); if(!tbody) return;
     if(!rows||!rows.length){ tbody.innerHTML=""; return; }
-    tbody.innerHTML=rows.map(function(r){
+    // Phase 10.7: show sources_used/sources_skipped header when aggregated
+    var headerHtml="";
+    if(meta&&(meta.sources_used||meta.sources_skipped)){
+      var used=(meta.sources_used||[]).map(function(s){return s.charAt(0).toUpperCase()+s.slice(1);}).join(", ")||"—";
+      var skip=(meta.sources_skipped||[]).map(function(s){return s.charAt(0).toUpperCase()+s.slice(1);}).join(", ")||"none";
+      headerHtml="<tr class='lm-dh-src-row' style='font-size:9px;opacity:0.7'>"+
+        "<td colspan='6' style='padding:2px 4px'>"+
+          "Sources used: <b>"+esc(used)+"</b>"+(skip&&skip!=="none"?" &nbsp;|&nbsp; Skipped: <span style='color:var(--warn,#f59e0b)'>"+esc(skip)+"</span>":"")+" &nbsp;<span style='opacity:0.6'>(analysis only — setup levels unchanged)</span>"+
+        "</td>"+
+      "</tr>";
+    }
+    tbody.innerHTML=headerHtml+rows.map(function(r){
       var vc=_lmDhStatusClass(r.status);
+      var stLabel=r.status||"—";
+      if(stLabel==="fallback_fresh") stLabel="fallback";
+      if(stLabel==="fallback_stale") stLabel="fallback(stale)";
       return "<tr>"+
         "<td>"+esc(r.metric||"—")+"</td>"+
         "<td class='"+vc+"'>"+esc(r.value||"—")+"</td>"+
         "<td class='lm-dh-na' style='font-size:9px'>"+esc(r.source||"—")+"</td>"+
-        "<td class='"+vc+"'>"+esc(r.status||"—")+"</td>"+
+        "<td class='"+vc+"'>"+esc(stLabel)+"</td>"+
         "<td class='lm-dh-na'>"+esc(r.updated||"—")+"</td>"+
         "<td class='lm-dh-na' style='max-width:220px;overflow:hidden;text-overflow:ellipsis' title='"+esc(r.notes||"")+"'>"+esc(r.notes||"—")+"</td>"+
       "</tr>";
