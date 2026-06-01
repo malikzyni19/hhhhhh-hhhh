@@ -11246,6 +11246,13 @@ def _lm_score_orderbook_wall_for_zone(symbol: str, exchange: str, direction: str
         if exchange not in ("binance", ""):
             return {**unavail, "notes": "OB wall only available for Binance"}
 
+        # Attempt to start/wake the OB stream on-demand (non-blocking, wait 0.1 s).
+        # start_ob_ws guards against duplicate threads so this is safe to call repeatedly.
+        try:
+            ensure_ob_stream(symbol, wait_sec=0.1)
+        except Exception:
+            pass
+
         with _ob_book_lock:
             book = dict(_ob_books.get(symbol) or {})
         if not book:
@@ -16795,8 +16802,8 @@ def api_lm_items_detect_events(item_id):
         snap["latest_execution_candidates"]   = new_se_plan.get("candidates") or []
         snap["last_smart_entry_plan_at"]      = new_se_plan.get("computed_at", "")
         se_chat_updated = _lm_maybe_post_smart_entry_chat_update(
-            uid, row, new_se_plan, old_se_plan)
-        _lm_maybe_log_smart_entry_event(uid, row, new_se_plan, old_se_plan)
+            uid, row, old_se_plan, new_se_plan)
+        _lm_maybe_log_smart_entry_event(uid, row, old_se_plan, new_se_plan)
     except Exception as _se_ex:
         import traceback as _tb
         print(f"[SE-DETECT] warn: {_se_ex}")

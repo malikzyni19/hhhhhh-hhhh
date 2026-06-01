@@ -5785,29 +5785,24 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
                 // Reload chat history if a chat auto-message was posted
                 if(d.chat_updated){
                   _lmChatHistoryLoad(id,function(msgs){
-                    var chatBox=document.getElementById("lmChatMessages");
-                    if(chatBox&&msgs&&msgs.length){
-                      // Append only the last message if chat box is already rendered
-                      var last=msgs[msgs.length-1];
-                      if(last&&last.role==="assistant"){
-                        var existing=chatBox.querySelectorAll("[data-chat-msg]");
-                        var alreadyThere=false;
-                        if(existing.length){
-                          var lastEl=existing[existing.length-1];
-                          if(lastEl&&lastEl.getAttribute("data-chat-msg")===String(last.id||"")){
-                            alreadyThere=true;
-                          }
-                        }
-                        if(!alreadyThere){
-                          var msgDiv=document.createElement("div");
-                          msgDiv.setAttribute("data-chat-msg",String(last.id||""));
-                          msgDiv.style.cssText="padding:6px 10px;border-bottom:1px solid var(--border);font-size:11px;color:var(--text-2);background:rgba(74,222,128,.04)";
-                          msgDiv.textContent=last.content||"";
-                          chatBox.appendChild(msgDiv);
-                          chatBox.scrollTop=chatBox.scrollHeight;
-                        }
-                      }
+                    var b=document.getElementById("dsMsgs");
+                    if(!b||!msgs||!msgs.length) return;
+                    // Check last rendered message to avoid duplicates
+                    var last=msgs[msgs.length-1];
+                    if(!last||last.role!=="assistant") return;
+                    var existing=b.querySelectorAll("[data-chat-msg]");
+                    if(existing.length){
+                      var lastEl=existing[existing.length-1];
+                      if(lastEl&&lastEl.getAttribute("data-chat-msg")===String(last.id||"")) return;
                     }
+                    var d2=document.createElement("div");
+                    d2.className="ds-msg ai";
+                    d2.setAttribute("data-chat-msg",String(last.id||""));
+                    d2.innerHTML='<div class="ds-av ai">DS</div>'+
+                      '<div class="ds-bubble">'+esc(last.content||"")+'</div>';
+                    b.appendChild(d2);
+                    b.scrollTop=b.scrollHeight;
+                    var sg=document.getElementById("dsSug"); if(sg) sg.style.display="none";
                   });
                 }
               }
