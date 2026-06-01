@@ -771,6 +771,12 @@ _ob_books: Dict[str, Dict] = {}
 _ob_ws_threads: Dict[str, threading.Thread] = {}
 _ob_ws_running: Dict[str, bool] = {}
 
+# ── Phase 10.2: LM live-price WebSocket cache ─────────────────────────────────
+_lm_ws_cache: dict = {}
+_lm_ws_lock  = threading.Lock()
+_lm_ws_manager_thread: Optional[threading.Thread] = None
+_lm_ws_running = False
+
 
 def _raw_ws_connect(host: str, path: str) -> socket.socket:
     """
@@ -10156,6 +10162,166 @@ if os.environ.get("ZYNI_LM_SERVER_WATCH_ENABLED") == "1":
     _ensure_lm_watch_thread()
 
 
+# ── Phase 10.2: Live Monitor WebSocket price cache ────────────────────────────
+
+def _lm_ws_update(exchange: str, symbol: str, live_price, mark_price,
+                  funding_rate=None, index_price=None):
+    key = f"{exchange}:{symbol}"
+    with _lm_ws_lock:
+        _lm_ws_cache[key] = {
+            "symbol":        symbol,
+            "exchange":      exchange,
+            "live_price":    live_price,
+            "mark_price":    mark_price,
+            "funding_rate":  funding_rate,
+            "index_price":   index_price,
+            "source":        f"{exchange}_futures_ws",
+            "last_update_ts": time.time(),
+        }
+
+
+def _lm_ws_get(exchange: str, symbol: str):
+    key = f"{exchange}:{symbol}"
+    now = time.time()
+    with _lm_ws_lock:
+        entry = dict(_lm_ws_cache.get(key) or {})
+    if not entry:
+        return None, "unavailable"
+    age = now - entry.get("last_update_ts", 0)
+    entry["data_age_sec"] = round(age, 1)
+    entry["status"] = "fresh" if age <= 5 else "stale"
+    return entry, entry["status"]
+
+
+def _lm_ws_active_binance_symbols() -> list:
+    """Return sorted list of active Binance LM symbols from the DB."""
+    try:
+        with app.app_context():
+            from models import LiveMonitorItem as _LMIQ
+            rows = _LMIQ.query.filter_by(is_active=True).all()
+            syms = []
+            for r in rows:
+                ex  = (getattr(r, "exchange", "") or "").lower()
+                sym = (getattr(r, "symbol",   "") or "").upper()
+                if ex in ("binance", "") and sym and sym not in syms:
+                    syms.append(sym)
+            return sorted(syms)
+    except Exception as e:
+        print(f"[LM-WS] active_symbols error: {e}")
+        return []
+
+
+def _lm_ws_background_loop():
+    """Background thread: subscribe to Binance Futures markPrice combined stream."""
+    global _lm_ws_running
+    print("[LM-WS] Background thread started")
+    current_symbols: list = []
+    sock = None
+
+    while _lm_ws_running:
+        new_symbols = _lm_ws_active_binance_symbols()
+
+        if new_symbols != current_symbols or sock is None:
+            if sock:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+                sock = None
+            current_symbols = new_symbols
+
+            if not current_symbols:
+                time.sleep(10)
+                continue
+
+            streams = "/".join(s.lower() + "@markPrice" for s in current_symbols)
+            path    = f"/stream?streams={streams}"
+            try:
+                print(f"[LM-WS] Connecting: {current_symbols}")
+                sock = _raw_ws_connect("fstream.binance.com", path)
+                sock.settimeout(30)
+                print("[LM-WS] Connected")
+            except Exception as e:
+                print(f"[LM-WS] Connect error: {e}")
+                sock = None
+                time.sleep(5)
+                continue
+
+        try:
+            raw = _ws_recv_frame(sock)
+        except socket.timeout:
+            # 30 s idle — re-check symbol list then re-use the same socket
+            continue
+        except Exception as e:
+            print(f"[LM-WS] Recv error: {e}")
+            try:
+                sock.close()
+            except Exception:
+                pass
+            sock = None
+            time.sleep(2)
+            continue
+
+        if raw is None:
+            print("[LM-WS] Connection dropped, reconnecting")
+            try:
+                sock.close()
+            except Exception:
+                pass
+            sock = None
+            time.sleep(2)
+            continue
+        if not raw:
+            continue
+
+        try:
+            msg = json.loads(raw.decode("utf-8"))
+        except Exception:
+            continue
+
+        # Combined stream wraps payload: {"stream": "...", "data": {...}}
+        data = msg.get("data") or msg
+        if data.get("e") == "markPriceUpdate":
+            sym = (data.get("s") or "").upper()
+            mp  = data.get("p")   # mark price
+            ip  = data.get("i")   # index price
+            fr  = data.get("r")   # funding rate
+            if sym and mp:
+                try:
+                    _lm_ws_update(
+                        "binance", sym,
+                        live_price=float(mp),
+                        mark_price=float(mp),
+                        funding_rate=float(fr) if fr else None,
+                        index_price=float(ip) if ip else None,
+                    )
+                except Exception:
+                    pass
+
+    print("[LM-WS] Background thread stopped")
+    if sock:
+        try:
+            sock.close()
+        except Exception:
+            pass
+
+
+def _ensure_lm_ws_thread():
+    """Start the LM WebSocket price-cache thread if not already running."""
+    global _lm_ws_manager_thread, _lm_ws_running
+    if _lm_ws_manager_thread and _lm_ws_manager_thread.is_alive():
+        return
+    _lm_ws_running = True
+    _lm_ws_manager_thread = threading.Thread(
+        target=_lm_ws_background_loop, daemon=True, name="lm-ws"
+    )
+    _lm_ws_manager_thread.start()
+
+
+if os.environ.get("ZYNI_LM_WS_ENABLED") == "1":
+    _ensure_lm_ws_thread()
+
+
 # ── Phase 7.2: Setup Readiness Engine ────────────────────────────────────────
 
 def _lm_compute_setup_readiness(row, snapshot=None) -> dict:
@@ -15868,6 +16034,199 @@ def api_lm_trade_post_trade_review(trade_uid):
         "ok":     True,
         "review": review,
         "trade":  _lm_trade_to_dict(trade),
+    })
+
+
+# ── Phase 10.2: Data Health endpoint ─────────────────────────────────────────
+
+@app.route("/api/live-monitor/data-health", methods=["GET"])
+@login_required
+def api_lm_data_health():
+    """Return 11-row Data Health snapshot for a given symbol+exchange. Read-only."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    symbol   = (request.args.get("symbol")   or "").upper().strip()
+    exchange = (request.args.get("exchange") or "binance").lower().strip()
+
+    if not symbol:
+        return jsonify({"error": "symbol_required"}), 400
+
+    ws_enabled = os.environ.get("ZYNI_LM_WS_ENABLED") == "1"
+    if ws_enabled:
+        _ensure_lm_ws_thread()
+
+    def _age_str(ts_iso: str) -> str:
+        if not ts_iso:
+            return "—"
+        try:
+            from datetime import datetime as _dh, timezone as _tzh
+            ts    = _dh.fromisoformat(ts_iso.replace("Z", "+00:00"))
+            age_s = int((_dh.now(_tzh.utc) - ts).total_seconds())
+            if age_s < 60:
+                return f"{age_s}s ago"
+            elif age_s < 3600:
+                return f"{age_s // 60}m ago"
+            return f"{age_s // 3600}h ago"
+        except Exception:
+            return ts_iso[:16]
+
+    def _age_status(ts_iso: str, fresh_secs: int = 300) -> str:
+        if not ts_iso:
+            return "unavailable"
+        try:
+            from datetime import datetime as _dh, timezone as _tzh
+            ts = _dh.fromisoformat(ts_iso.replace("Z", "+00:00"))
+            return "fresh" if (_dh.now(_tzh.utc) - ts).total_seconds() < fresh_secs else "stale"
+        except Exception:
+            return "stale"
+
+    # Pull snapshot once
+    snap = {}
+    try:
+        from models import LiveMonitorItem as _LMIDH
+        lm_row = _LMIDH.query.filter_by(symbol=symbol, is_active=True, user_id=uid).first()
+        if lm_row:
+            snap = _json_loads_safe(lm_row.snapshot_json, {})
+    except Exception as e:
+        print(f"[LM-DH] snapshot error: {e}")
+
+    rows = []
+
+    # 1. Live Price
+    if exchange == "binance":
+        ws_e, ws_s = _lm_ws_get("binance", symbol)
+        if ws_e:
+            rows.append({"metric": "Live Price",
+                         "value":   f"{ws_e['live_price']:.4f}",
+                         "source":  "Binance Futures WS",
+                         "status":  ws_s,
+                         "updated": f"{ws_e['data_age_sec']}s ago",
+                         "notes":   ""})
+        else:
+            rows.append({"metric": "Live Price", "value": "—",
+                         "source": "Binance Futures WS", "status": "unavailable",
+                         "updated": "—",
+                         "notes": "Connecting…" if ws_enabled else "Set ZYNI_LM_WS_ENABLED=1"})
+    else:
+        rows.append({"metric": "Live Price", "value": "—", "source": exchange,
+                     "status": "not_connected_yet", "updated": "—",
+                     "notes": "Live WS available for Binance only"})
+
+    # 2. Mark Price
+    if exchange == "binance":
+        ws_e, ws_s = _lm_ws_get("binance", symbol)
+        if ws_e and ws_e.get("mark_price") is not None:
+            rows.append({"metric": "Mark Price",
+                         "value":   f"{ws_e['mark_price']:.4f}",
+                         "source":  "Binance Futures WS",
+                         "status":  ws_s,
+                         "updated": f"{ws_e['data_age_sec']}s ago",
+                         "notes":   ""})
+        else:
+            rows.append({"metric": "Mark Price", "value": "—",
+                         "source": "Binance Futures WS", "status": "unavailable",
+                         "updated": "—",
+                         "notes": "Connecting…" if ws_enabled else "Set ZYNI_LM_WS_ENABLED=1"})
+    else:
+        rows.append({"metric": "Mark Price", "value": "—", "source": exchange,
+                     "status": "not_connected_yet", "updated": "—",
+                     "notes": "Mark Price WS available for Binance only"})
+
+    # 3. Order Book
+    if exchange == "binance":
+        with _ob_book_lock:
+            ob = dict(_ob_books.get(symbol) or {})
+        if ob and ob.get("ready"):
+            n_levels = len(ob.get("bids", {})) + len(ob.get("asks", {}))
+            rows.append({"metric": "Order Book",
+                         "value":   f"{n_levels} levels",
+                         "source":  "Binance Futures WS",
+                         "status":  "fresh",
+                         "updated": "live",
+                         "notes":   f"lastUpdateId={ob.get('lastUpdateId', '?')}"})
+        else:
+            rows.append({"metric": "Order Book", "value": "—",
+                         "source": "Binance Futures WS", "status": "not_connected_yet",
+                         "updated": "—", "notes": "Start OB stream to enable"})
+    else:
+        rows.append({"metric": "Order Book", "value": "—", "source": exchange,
+                     "status": "not_connected_yet", "updated": "—",
+                     "notes": "OB stream available for Binance only"})
+
+    # 4–8. Future-phase metrics
+    for metric, note in [
+        ("Liquidations",     "Liq stream — future phase"),
+        ("Open Interest",    "OI endpoint — future phase"),
+        ("OI Change",        "OI delta — future phase"),
+        ("Delta",            "CVD stream — future phase"),
+        ("Long/Short Ratio", "L/S ratio — future phase"),
+    ]:
+        rows.append({"metric": metric, "value": "—", "source": "—",
+                     "status": "not_connected_yet", "updated": "—", "notes": note})
+
+    # 9. Funding Rate
+    if exchange == "binance":
+        ws_e, ws_s = _lm_ws_get("binance", symbol)
+        if ws_e and ws_e.get("funding_rate") is not None:
+            fr_pct = ws_e["funding_rate"] * 100
+            rows.append({"metric": "Funding Rate",
+                         "value":   f"{fr_pct:.4f}%",
+                         "source":  "Binance Futures WS",
+                         "status":  ws_s,
+                         "updated": f"{ws_e['data_age_sec']}s ago",
+                         "notes":   "positive = longs pay shorts"})
+        else:
+            rows.append({"metric": "Funding Rate", "value": "—",
+                         "source": "Binance Futures WS", "status": "unavailable",
+                         "updated": "—",
+                         "notes": "Connecting…" if ws_enabled else "Set ZYNI_LM_WS_ENABLED=1"})
+    else:
+        rows.append({"metric": "Funding Rate", "value": "—", "source": exchange,
+                     "status": "not_connected_yet", "updated": "—",
+                     "notes": "Funding rate WS available for Binance only"})
+
+    # 10. Candle Status
+    cf_at = snap.get("last_candle_features_at") or ""
+    cf    = snap.get("latest_candle_features")  or {}
+    if cf_at:
+        rows.append({"metric": "Candle Status",
+                     "value":   "computed",
+                     "source":  "DB Snapshot",
+                     "status":  _age_status(cf_at, fresh_secs=300),
+                     "updated": _age_str(cf_at),
+                     "notes":   cf.get("dominant_tf", "") if isinstance(cf, dict) else ""})
+    else:
+        rows.append({"metric": "Candle Status", "value": "—",
+                     "source": "DB Snapshot", "status": "unavailable",
+                     "updated": "—", "notes": "No candle refresh yet"})
+
+    # 11. AI Entry Analysis
+    ai_at  = snap.get("last_ai_analysis_at") or ""
+    ai_con = snap.get("latest_ai_consensus") or {}
+    ai_dir = (ai_con.get("direction") or ai_con.get("bias") or "") if isinstance(ai_con, dict) else ""
+    if not ai_at and isinstance(ai_con, dict):
+        ai_at = ai_con.get("computed_at") or ""
+    if ai_at:
+        rows.append({"metric": "AI Entry Analysis",
+                     "value":   ai_dir.upper() if ai_dir else "computed",
+                     "source":  "AI Consensus",
+                     "status":  _age_status(ai_at, fresh_secs=600),
+                     "updated": _age_str(ai_at),
+                     "notes":   ""})
+    else:
+        rows.append({"metric": "AI Entry Analysis", "value": "—",
+                     "source": "AI Consensus", "status": "unavailable",
+                     "updated": "—", "notes": "No AI analysis yet"})
+
+    return jsonify({
+        "ok":         True,
+        "symbol":     symbol,
+        "exchange":   exchange,
+        "ws_enabled": ws_enabled,
+        "rows":       rows,
+        "fetched_at": time.time(),
     })
 
 

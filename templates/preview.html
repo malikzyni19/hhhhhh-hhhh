@@ -4369,6 +4369,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
   var _lmPollT=null, _lmCache={}, _lmSelItem=null, _lmActiveFilter="all";
   var _lmTfState=["15m","30m","1h","4h","1d"], _lmModuleState=["OB","FVG","FIB","Bias"];
   var _lmRefreshState="manual", _lmAiPreview=true;
+  var _lmDhTimer=null;
 
   function renderLiveMonitorInto(scroll){
     scroll.classList.add("lm-active");
@@ -4647,6 +4648,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     }
     _lmUpdateSession();
     _lmRenderCards();
+    _lmStartDhPolling();
   }
   function _lmShowAddMsg(text, isErr){
     var el=E("lmAddMsg"); if(!el) return;
@@ -5230,6 +5232,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         [].forEach.call(box.querySelectorAll(".setup-card"),function(c){c.classList.remove("active");});
         card.classList.add("active");
         _lmRenderRight(_lmSelItem);
+        if(_lmSelItem){ _lmFetchDataHealth(_lmSelItem.symbol,_lmGetDataSrc()); }
       });
     });
     // auto-select: keep selection if still valid, else pick first
@@ -5237,6 +5240,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     if(!stillValid){
       _lmSelItem=items.length?items[0]:null;
       _lmRenderRight(_lmSelItem);
+      if(_lmSelItem){ _lmFetchDataHealth(_lmSelItem.symbol,_lmGetDataSrc()); }
     }
     // mark active card
     if(_lmSelItem){
@@ -6243,7 +6247,51 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
   }
   function stopLiveMonitorPolling(){
     if(_lmPollT){ clearInterval(_lmPollT); _lmPollT=null; }
+    if(_lmDhTimer){ clearInterval(_lmDhTimer); _lmDhTimer=null; }
     var s=document.querySelector(".main-scroll"); if(s) s.classList.remove("lm-active");
+  }
+
+  /* ── Data Health polling (Phase 10.2) ── */
+  function _lmGetDataSrc(){
+    var sel=document.getElementById("lmDataSrc");
+    return (sel&&sel.value)||"binance";
+  }
+  function _lmFetchDataHealth(symbol,exchange){
+    if(!symbol) return;
+    if(!exchange||exchange==="aggregated") return;
+    if(location.protocol==="file:") return;
+    fetch("/api/live-monitor/data-health?symbol="+encodeURIComponent(symbol)+"&exchange="+encodeURIComponent(exchange),{
+      credentials:"same-origin"
+    }).then(function(r){return r.json().catch(function(){return null;});})
+    .then(function(d){
+      if(d&&d.ok&&Array.isArray(d.rows)) _lmRenderDataHealth(d.rows);
+    }).catch(function(){});
+  }
+  function _lmRenderDataHealth(rows){
+    var wrap=document.getElementById("lmDhBody"); if(!wrap) return;
+    var tbody=wrap.querySelector("tbody"); if(!tbody) return;
+    if(!rows||!rows.length){ tbody.innerHTML=""; return; }
+    tbody.innerHTML=rows.map(function(r){
+      var st=(r.status||"").toLowerCase();
+      var vc=st==="fresh"?"lm-dh-ok":st==="stale"?"lm-dh-warn":"lm-dh-na";
+      return "<tr>"+
+        "<td>"+esc(r.metric||"—")+"</td>"+
+        "<td class='"+vc+"'>"+esc(r.value||"—")+"</td>"+
+        "<td class='lm-dh-na'>"+esc(r.source||"—")+"</td>"+
+        "<td class='"+vc+"'>"+esc(r.status||"—")+"</td>"+
+        "<td class='lm-dh-na'>"+esc(r.updated||"—")+"</td>"+
+        "<td class='lm-dh-na'>"+esc(r.notes||"—")+"</td>"+
+      "</tr>";
+    }).join("");
+  }
+  function _lmStartDhPolling(){
+    if(_lmDhTimer) clearInterval(_lmDhTimer);
+    _lmDhTimer=setInterval(function(){
+      if(_lmSelItem){
+        var ex=_lmGetDataSrc();
+        if(ex!=="aggregated") _lmFetchDataHealth(_lmSelItem.symbol,ex);
+      }
+    },3000);
   }
 
   /* ── Dashboard (Wave 8) ── */
