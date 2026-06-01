@@ -19915,52 +19915,89 @@ def api_lm_data_health():
 @app.route("/api/live-monitor/analysis-source/debug", methods=["GET"])
 @login_required
 def api_lm_analysis_source_debug():
-    """Debug endpoint — return raw Phase 10.7 aggregated/specific exchange metric data.
+    """Read-only debug endpoint — Phase 10.7 aggregated/specific exchange metric data.
 
     GET /api/live-monitor/analysis-source/debug?symbol=BTCUSDT&source=aggregated
-    Read-only. No trading. No order logic.
+    GET /api/live-monitor/analysis-source/debug?symbol=BTCUSDT&source=bybit&item_id=42
+
+    No DB mutation. No snapshot write. No trading. No order placement. No private API.
     """
     uid, _ = _current_user_id_and_user()
     if not uid:
         return jsonify({"error": "no_user"}), 401
 
+    # ── symbol: uppercase, must be non-empty USDT pair ──────────────────────
     symbol = (request.args.get("symbol") or "").upper().strip()
-    source = (request.args.get("source") or "aggregated").lower().strip()
-
     if not symbol:
-        return jsonify({"error": "symbol_required"}), 400
+        return jsonify({"error": "symbol_required",
+                        "detail": "Provide ?symbol=BTCUSDT"}), 400
+    if not symbol.endswith("USDT") or len(symbol) < 6:
+        return jsonify({"error": "invalid_symbol",
+                        "detail": "Symbol must be an uppercase USDT pair, e.g. BTCUSDT"}), 400
 
-    source = _lm_normalize_analysis_source(source)
+    # ── source: normalise; unknown → binance ────────────────────────────────
+    source = _lm_normalize_analysis_source(
+        (request.args.get("source") or "aggregated").lower().strip()
+    )
 
+    # ── optional item_id: ownership check, snapshot load ────────────────────
+    item_id_raw = request.args.get("item_id")
+    row  = None
     snap = {}
-    try:
-        from models import LiveMonitorItem as _LMIAS
-        _lm_as_row = _LMIAS.query.filter_by(
-            symbol=symbol, is_active=True, user_id=uid).first()
-        if _lm_as_row:
-            snap = _json_loads_safe(_lm_as_row.snapshot_json, {})
-    except Exception as _e:
-        pass
+    if item_id_raw is not None:
+        try:
+            item_id_int = int(item_id_raw)
+        except (ValueError, TypeError):
+            return jsonify({"error": "invalid_item_id"}), 400
+        try:
+            from models import LiveMonitorItem as _LMIDbg
+            row = _LMIDbg.query.filter_by(id=item_id_int, is_active=True).first()
+        except Exception:
+            row = None
+        if row is None:
+            return jsonify({"error": "item_not_found"}), 404
+        if getattr(row, "user_id", None) != uid:
+            return jsonify({"error": "forbidden"}), 403
+        snap = _json_loads_safe(getattr(row, "snapshot_json", None), {})
 
+    # ── resolve analysis source config (no DB write) ─────────────────────────
+    asc = _lm_analysis_source_config(row, snapshot=snap, selected_source=source)
+
+    # ── fetch exchange data (read-only) ──────────────────────────────────────
     try:
         if source == "aggregated":
             data = _lm_build_true_aggregated_exchange_data(symbol, snap)
         else:
             data = _lm_build_specific_exchange_data_with_fallback(symbol, source, snap)
-    except Exception as _e:
+    except Exception as _exc:
         return jsonify({"ok": False, "symbol": symbol, "analysis_source": source,
-                        "error": str(_e)}), 500
+                        "error": str(_exc)}), 500
+
+    # ── data health (read-only) ───────────────────────────────────────────────
+    try:
+        dh = _lm_build_data_health_context(symbol, source, snap=snap)
+    except Exception:
+        dh = {}
 
     return jsonify({
-        "ok":              True,
-        "symbol":          symbol,
-        "analysis_source": data.get("analysis_source", source),
-        "sources_used":    data.get("sources_used", []),
-        "sources_skipped": data.get("sources_skipped", []),
-        "metrics":         data.get("metrics", {}),
-        "warnings":        data.get("warnings", []),
-        "ai_data_gate":    data.get("ai_data_gate", {}),
-        "fetched_at":      data.get("fetched_at"),
+        "ok":                   True,
+        "phase":                "phase10_7_true_aggregated_exchange_data",
+        "symbol":               symbol,
+        "analysis_source":      data.get("analysis_source", source),
+        "parent_setup_exchange": asc["parent_setup_exchange"],
+        "price_levels_source":  "parent_setup_exchange",
+        "execution_exchange":   "not_in_scope_phase10_7",
+        "metrics":              data.get("metrics", {}),
+        "sources_used":         data.get("sources_used", []),
+        "sources_skipped":      data.get("sources_skipped", []),
+        "ai_data_gate":         data.get("ai_data_gate", {}),
+        "data_health":          dh,
+        "warnings":             data.get("warnings", []),
+        "fetched_at":           data.get("fetched_at"),
+        "debug_note":           (
+            "Read-only debug endpoint. Analysis source is confirmation only; "
+            "parent setup exchange remains source of truth for zones/SL/TP."
+        ),
     })
 
 
