@@ -4245,14 +4245,78 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     dashboard:"Dashboard", scanner:"Main Scan", live:"Live Monitor",
     backtest:"Backtest", watchlist:"Live Monitor", tools:"Market Tools", settings:"Settings"
   };
+  var _origSidebarHTML = null; // saved scanner sidebar HTML for restoration
   function _stopAllViewPolling(){
     try{ stopLiveMonitorPolling(); }catch(_){}
     try{ stopDashboardPolling(); }catch(_){}
   }
+
+  /* Switch which .lm-stab-pane is visible and sync sidebar active state */
+  function _lmSwitchPane(pane){
+    [].forEach.call(document.querySelectorAll(".lm-stab-pane"),function(p){p.hidden=true;});
+    var paneEl=document.getElementById("lmPane-"+pane);
+    if(paneEl) paneEl.hidden=false;
+    var aside=document.querySelector(".side");
+    if(aside){
+      [].forEach.call(aside.querySelectorAll("[data-lmpane]"),function(x){x.classList.remove("active");});
+      var ai=aside.querySelector("[data-lmpane='"+pane+"']");
+      if(ai) ai.classList.add("active");
+    }
+  }
+
+  /* Bind click/keyboard on LM sidebar items */
+  function _bindLmSidebarEvents(aside){
+    [].forEach.call(aside.querySelectorAll("[data-lmpane]"),function(item){
+      item.addEventListener("click",function(){
+        _lmSwitchPane(item.getAttribute("data-lmpane"));
+      });
+      item.addEventListener("keydown",function(e){
+        if(e.key==="Enter"||e.key===" "){ e.preventDefault(); item.click(); }
+      });
+    });
+  }
+
+  /* Replace global <aside class="side"> content based on active view */
+  function renderSidebarForView(v){
+    var aside=document.querySelector(".side");
+    if(!aside) return;
+    if(v==="live"||v==="watchlist"){
+      if(!_origSidebarHTML) _origSidebarHTML=aside.innerHTML;
+      aside.innerHTML=
+        '<div class="side-label">LIVE MONITOR</div>'+
+        '<div class="nav-item active" data-lmpane="setups" role="button" tabindex="0">'+
+          '<svg class="ico" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>'+
+          '<div><div class="nt">Live Setups</div><div class="ns">Active monitoring</div></div>'+
+        '</div>'+
+        '<div class="nav-item" data-lmpane="terminal" role="button" tabindex="0">'+
+          '<svg class="ico" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>'+
+          '<div><div class="nt">Trading Terminal</div><div class="ns">Demo execution</div></div>'+
+        '</div>'+
+        '<div class="nav-item" data-lmpane="riskguard" role="button" tabindex="0">'+
+          '<svg class="ico" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>'+
+          '<div><div class="nt">Risk Guard</div><div class="ns">Safety controls</div></div>'+
+        '</div>'+
+        '<div class="nav-item" data-lmpane="journal" role="button" tabindex="0">'+
+          '<svg class="ico" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>'+
+          '<div><div class="nt">Trade Journal</div><div class="ns">Closed trades</div></div>'+
+        '</div>'+
+        '<div class="side-spacer"></div>'+
+        '<div class="side-foot"><span class="live-dot"></span>Live Monitor Active</div>';
+      _bindLmSidebarEvents(aside);
+      return;
+    }
+    /* Scanner and all other views — restore original sidebar */
+    if(_origSidebarHTML){
+      aside.innerHTML=_origSidebarHTML;
+      /* Scanner switch triggers location.reload() so events are re-bound automatically */
+    }
+  }
+
   function switchView(v){
     if(!v) v="scanner";
     ST.view=v;
     _stopAllViewPolling();
+    renderSidebarForView(v);
     /* Tag body so CSS can hide/restyle per view (Task 3). */
     try{ document.body.setAttribute("data-view", v); }catch(_){ }
     [].forEach.call(document.querySelectorAll("#topnav a[data-view]"),function(a){
@@ -4384,14 +4448,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         '</div>'+
         '<div class="lm-body">'+
           '<div class="lm-left">'+
-            /* ── 4-tab sidebar header ── */
-            '<div class="lm-stabs">'+
-              '<button class="lm-stab active" data-lmstab="setups">Live Setups</button>'+
-              '<button class="lm-stab" data-lmstab="terminal">Terminal</button>'+
-              '<button class="lm-stab" data-lmstab="riskguard">Risk Guard</button>'+
-              '<button class="lm-stab" data-lmstab="journal">Journal</button>'+
-            '</div>'+
-            /* ── Live Setups pane ── */
+            /* ── Live Setups pane (tab controlled by global sidebar) ── */
             '<div class="lm-stab-pane" id="lmPane-setups">'+
               '<div class="lm-ds-row">'+
                 '<span class="lm-ds-lbl">DATA SOURCE</span>'+
@@ -4570,17 +4627,6 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     /* Manual Add Pair wiring (Task 4). */
     var ab=E("lmAddBtn"); if(ab) ab.addEventListener("click",_lmManualAdd);
     var ai=E("lmAdd"); if(ai) ai.addEventListener("keydown",function(e){ if(e.key==="Enter") _lmManualAdd(); });
-    /* 4-tab sidebar switching */
-    [].forEach.call(scroll.querySelectorAll(".lm-stab"),function(tab){
-      tab.addEventListener("click",function(){
-        [].forEach.call(scroll.querySelectorAll(".lm-stab"),function(t){t.classList.remove("active");});
-        tab.classList.add("active");
-        var paneId="lmPane-"+tab.getAttribute("data-lmstab");
-        [].forEach.call(scroll.querySelectorAll(".lm-stab-pane"),function(p){p.hidden=true;});
-        var pane=document.getElementById(paneId);
-        if(pane) pane.hidden=false;
-      });
-    });
     /* Data Health collapse toggle */
     var _dhHead=document.getElementById("lmDhHead");
     var _dhBody=document.getElementById("lmDhBody");
