@@ -15203,6 +15203,13 @@ def _lm_ai_trade_proposal_prompt() -> str:
         "- execution_exchange = 'not_in_scope_phase10_7' — do NOT reference it in proposals.\n"
         "- Do NOT invent exchange data that is not in sources_used.\n\n"
 
+        "PHASE 10.8 MULTI-EXCHANGE WS RULES:\n"
+        "1. multi_exchange_ws data is CONFIRMATION ONLY — never rewrite parent setup zones.\n"
+        "2. parent_setup_exchange is always truth for Live Price, Mark Price, OB zones, SL, TP.\n"
+        "3. distance_pct in ob_distance_approach_settings filters which OBs are tracked.\n"
+        "4. approach_pct in ob_distance_approach_settings triggers OB 'approaching' status.\n"
+        "5. If multi_exchange_ws.enabled is false, do not reference bybit/okx/mexc WS data.\n\n"
+
         "LIVE DATA HEALTH RULES (Phase 10.4):\n"
         "The context contains a live_data_health block. Always inspect it before producing a proposal.\n"
         "- Check live_data_health.ai_data_gate.allowed before any other analysis.\n"
@@ -16438,6 +16445,13 @@ def _lm_ai_system_prompt() -> str:
         "11. Do NOT treat market bias from aggregated context as trade execution permission.\n"
         "12. If aggregated_market_context is null, use market_context if available, "
         "or note it is missing.\n\n"
+
+        "PHASE 10.8 MULTI-EXCHANGE WS RULES:\n"
+        "1. multi_exchange_ws data is CONFIRMATION ONLY — never rewrite parent setup zones.\n"
+        "2. parent_setup_exchange is always truth for Live Price, Mark Price, OB zones, SL, TP.\n"
+        "3. distance_pct in ob_distance_approach_settings filters which OBs are tracked.\n"
+        "4. approach_pct in ob_distance_approach_settings triggers OB 'approaching' status.\n"
+        "5. If multi_exchange_ws.enabled is false, do not reference bybit/okx/mexc WS data.\n\n"
 
         "RISK GUARD (Phase 9.5):\n"
         "A backend Risk Guard independently validates all AI proposals before any approval.\n"
