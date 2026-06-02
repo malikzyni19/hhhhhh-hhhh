@@ -2845,47 +2845,106 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     var sym = _activeRowSymbol(r); if(!sym) return;
     // Legacy: keep symbol in watchlist stars (old /api/watchlist/register flow)
     ST.stars[sym]=true; syncWatchlist();
-    // Phase 1: also POST full setup snapshot to /api/live-monitor/items
-    var a   = r.topAlert || {};
-    var m   = a.meta    || {};
-    var z   = (typeof zoneOf==="function") ? (zoneOf(a)||{}) : {};
-    var dir = a.direction || (typeof dirOf==="function" ? (dirOf(r)==="bull"?"bullish":dirOf(r)==="bear"?"bearish":"") : "") || "";
-    var tf  = a.timeframe || r.timeframe || ST.settings.tf || "4h";
-    var src = ST.mode || "main";
     var btnOrig = btn ? btn.innerHTML : null;
     if(btn){ btn.disabled=true; btn.innerHTML='<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>Adding…'; }
-    var payload = {
-      symbol:      sym,
-      exchange:    r.exchange || ST.exchange || "binance",
-      market:      _activeRowMarket(r) || ST.market || "perpetual",
-      source_tab:  src,
-      setup_type:  a.setup || r.setup_type || "",
-      direction:   dir,
-      timeframe:   tf,
-      zone_high:   z.hi != null ? z.hi : (m.obTop    || m.fvgTop    || m.breakerTop    || null),
-      zone_low:    z.lo != null ? z.lo : (m.obBottom || m.fvgBottom || m.breakerBottom || null),
-      confidence:  +r.score || 0,
-      score:       +r.score || 0,
-      current_price: r.price != null ? r.price : null,
-      topAlert:    a,
-      meta:        m,
-      snapshot: {
-        row:        r,
-        topAlert:   a,
-        meta:       m,
-        addedFrom:  src,
-        timeframe_policy: {
-          visible_analysis_timeframes: ["15m","30m","1h","4h","1d"],
-          bias_min_timeframe:          "1h",
-          hidden_execution_timeframe:  "5m",
-          source_timeframe:            tf,
-          source_tab:                  src
-        }
-      },
-      selected_timeframes: ["15m","30m","1h","4h","1d"],
-      selected_modules:    ["OB","FVG","FIB","Breaker","Bias"],
-      alert_settings:      {}
-    };
+
+    var payload;
+    // Phase 10.9A: Bias Shift tab — build bias-specific payload
+    if(ST.mode === "bias"){
+      var b = (typeof normalizeBiasRow==="function") ? normalizeBiasRow(r) : null;
+      var bDir = b ? b.bias : (r.biasDirection||r.direction||"");
+      var bTf  = b ? b.tf   : (r.timeframe||r.tf||(ST.modeOptions.bias||{}).tf||"4h");
+      var bMeta = {
+        confirmation:      b ? b.confirmation      : (r.confirmationStatus||""),
+        grade:             b ? b.grade             : (r.grade||""),
+        score:             b ? b.score             : (r.score!=null?+r.score:0),
+        pattern:           b ? b.pattern           : (r.pattern||""),
+        prior_direction:   b ? b.priorDirection    : (r.priorMoveDirection||""),
+        prior_candles:     b ? b.priorCandles      : (r.priorMoveCandles!=null?+r.priorMoveCandles:null),
+        prior_net_pct:     b ? b.priorNetPct       : (r.priorMoveNetPct!=null?+r.priorMoveNetPct:null),
+        prior_quality:     b ? b.priorQuality      : (r.priorMoveQuality||""),
+        invalidation_level:b ? b.invalidationLevel : r.invalidationLevel,
+        invalidation_text: b ? b.invalidationText  : (r.invalidationText||""),
+        suggested_confirmation_tf: b ? b.suggestedConfirmationTf : (r.suggestedConfirmationTf||""),
+        reason_chain:      b ? b.reasonChain       : (r.reasonChain||[]),
+        score_breakdown:   b ? b.scoreBreakdown    : (r.scoreBreakdown||{}),
+        ob_conf: b ? b.obConf  : !!(r.obConf  && (r.obConf.has  || r.obConf.matched  || r.obConf.found)),
+        fvg_conf:b ? b.fvgConf : !!(r.fvgConf && (r.fvgConf.has || r.fvgConf.matched || r.fvgConf.found)),
+        fib_conf:b ? b.fibConf : !!(r.fibConf && (r.fibConf.has || r.fibConf.matched || r.fibConf.found)),
+        rejection_wick: b ? b.rejectionWick   : {up:r.rejectionUpperWickPct,dn:r.rejectionLowerWickPct,body:r.rejectionBodyPct},
+        rejection_price:b ? b.rejectionPrice  : {open:r.rejectionOpen,high:r.rejectionHigh,low:r.rejectionLow,close:r.rejectionClose},
+      };
+      payload = {
+        symbol:       sym,
+        exchange:     r.exchange || ST.exchange || "binance",
+        market:       _activeRowMarket(r) || ST.market || "perpetual",
+        source_tab:   "bias_shift",
+        setup_type:   "BIAS_SHIFT",
+        direction:    bDir,
+        timeframe:    bTf,
+        zone_high:    null,
+        zone_low:     null,
+        confidence:   bMeta.score || 0,
+        score:        bMeta.score || 0,
+        current_price: r.price != null ? r.price : null,
+        snapshot: {
+          addedFrom:       "bias_shift",
+          setup_category:  "bias_shift_watch",
+          monitor_mode:    "ai_precision_watch",
+          bias_shift_meta: bMeta,
+          timeframe_policy: {
+            visible_analysis_timeframes: ["15m","30m","1h","4h","1d"],
+            bias_min_timeframe:          "1h",
+            hidden_execution_timeframe:  "5m",
+            source_timeframe:            bTf,
+            source_tab:                  "bias_shift"
+          }
+        },
+        selected_timeframes: ["15m","30m","1h","4h","1d"],
+        selected_modules:    ["Bias"],
+        alert_settings:      {}
+      };
+    } else {
+      // Standard OB/FVG/FIB scanner tabs
+      var a   = r.topAlert || {};
+      var m   = a.meta    || {};
+      var z   = (typeof zoneOf==="function") ? (zoneOf(a)||{}) : {};
+      var dir = a.direction || (typeof dirOf==="function" ? (dirOf(r)==="bull"?"bullish":dirOf(r)==="bear"?"bearish":"") : "") || "";
+      var tf  = a.timeframe || r.timeframe || ST.settings.tf || "4h";
+      var src = ST.mode || "main";
+      payload = {
+        symbol:      sym,
+        exchange:    r.exchange || ST.exchange || "binance",
+        market:      _activeRowMarket(r) || ST.market || "perpetual",
+        source_tab:  src,
+        setup_type:  a.setup || r.setup_type || "",
+        direction:   dir,
+        timeframe:   tf,
+        zone_high:   z.hi != null ? z.hi : (m.obTop    || m.fvgTop    || m.breakerTop    || null),
+        zone_low:    z.lo != null ? z.lo : (m.obBottom || m.fvgBottom || m.breakerBottom || null),
+        confidence:  +r.score || 0,
+        score:       +r.score || 0,
+        current_price: r.price != null ? r.price : null,
+        topAlert:    a,
+        meta:        m,
+        snapshot: {
+          row:        r,
+          topAlert:   a,
+          meta:       m,
+          addedFrom:  src,
+          timeframe_policy: {
+            visible_analysis_timeframes: ["15m","30m","1h","4h","1d"],
+            bias_min_timeframe:          "1h",
+            hidden_execution_timeframe:  "5m",
+            source_timeframe:            tf,
+            source_tab:                  src
+          }
+        },
+        selected_timeframes: ["15m","30m","1h","4h","1d"],
+        selected_modules:    ["OB","FVG","FIB","Breaker","Bias"],
+        alert_settings:      {}
+      };
+    }
     fetch("/api/live-monitor/items",{
       method:"POST", credentials:"same-origin",
       headers:{"Content-Type":"application/json"},
@@ -5123,11 +5182,105 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     '</div>';
   }
 
+  // Phase 10.9A: Bias Shift helpers
+  function _lmIsBiasShift(item){
+    if(!item) return false;
+    var src=(item.source_tab||"").toLowerCase();
+    if(src==="bias_shift"||src==="bias") return true;
+    var snap=item.snapshot||{};
+    if(snap.setup_category==="bias_shift_watch") return true;
+    if((snap.addedFrom||"").toLowerCase()==="bias_shift"||(snap.addedFrom||"").toLowerCase()==="bias") return true;
+    return false;
+  }
+
+  function _lmBiasMtfMatrix(item){
+    var snap=item.snapshot||{};
+    var meta=snap.bias_shift_meta||{};
+    var dir=(item.direction||meta.prior_direction||"").toLowerCase();
+    var isBull=dir.indexOf("bull")>=0, isBear=dir.indexOf("bear")>=0;
+    var dirTag=isBull?'<span style="color:var(--green-2)">Bullish</span>':isBear?'<span style="color:var(--red-2)">Bearish</span>':'<span style="color:var(--text-3)">—</span>';
+    var conf=esc(meta.confirmation||"—");
+    var grade=esc(meta.grade||"—");
+    var pattern=esc(meta.pattern||"—");
+    var priorDir=esc(meta.prior_direction||"—");
+    var priorCandles=meta.prior_candles!=null?meta.prior_candles:"—";
+    var priorPct=meta.prior_net_pct!=null?((meta.prior_net_pct>=0?"+":"")+meta.prior_net_pct.toFixed(2)+"%"):"—";
+    var confTf=esc(meta.suggested_confirmation_tf||"—");
+    var score=meta.score!=null?Math.round(meta.score):"—";
+    function brow(label,val){ return '<tr><td style="color:var(--text-3);font-size:10px;padding:3px 6px">'+label+'</td><td style="font-size:10.5px;padding:3px 6px">'+val+'</td></tr>'; }
+    return '<table style="width:100%;border-collapse:collapse">'+
+      brow("BIAS DIRECTION",dirTag)+
+      brow("CONFIRMATION STATUS",conf)+
+      brow("GRADE",grade)+
+      brow("SCORE",score)+
+      brow("PATTERN",pattern)+
+      brow("PRIOR MOVE",esc(priorDir)+(priorCandles!=="—"?" · "+priorCandles+"c":"")+( priorPct!=="—"?" · "+priorPct:""))+
+      brow("CONFIRM TF",confTf)+
+    '</table>'+
+    '<div style="font-size:10px;color:var(--text-3);margin-top:6px;text-align:center">Bias Shift Watch · Candle/BOS/CHoCH detection pending</div>';
+  }
+
+  function _lmBiasZoneCard(item){
+    var snap=item.snapshot||{};
+    var meta=snap.bias_shift_meta||{};
+    var inv=meta.invalidation_level;
+    var invTxt=esc(meta.invalidation_text||"Invalidation from bias shift scanner");
+    var invStr=inv!=null?fmt(inv):"—";
+    var rejectOpen=meta.rejection_price&&meta.rejection_price.open!=null?fmt(meta.rejection_price.open):"—";
+    var rejectHigh=meta.rejection_price&&meta.rejection_price.high!=null?fmt(meta.rejection_price.high):"—";
+    var rejectLow =meta.rejection_price&&meta.rejection_price.low!=null?fmt(meta.rejection_price.low):"—";
+    var rejectClose=meta.rejection_price&&meta.rejection_price.close!=null?fmt(meta.rejection_price.close):"—";
+    var upWick=meta.rejection_wick&&meta.rejection_wick.up!=null?(+meta.rejection_wick.up).toFixed(2)+"%":"—";
+    var dnWick=meta.rejection_wick&&meta.rejection_wick.dn!=null?(+meta.rejection_wick.dn).toFixed(2)+"%":"—";
+    function zrow(l,v){ return '<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(148,163,184,.07)"><span style="color:var(--text-3);font-size:10px">'+l+'</span><span style="font-size:10.5px;font-weight:600">'+v+'</span></div>'; }
+    return '<div style="padding:6px 4px">'+
+      '<div style="font-size:10px;font-weight:700;color:var(--text-3);margin-bottom:6px;letter-spacing:.06em">CANDLE REACTION / STRUCTURE TRACKER</div>'+
+      zrow("INVALIDATION LEVEL", invStr)+
+      zrow("INVALIDATION NOTE", invTxt)+
+      zrow("REJECTION: OPEN", rejectOpen)+
+      zrow("REJECTION: HIGH", rejectHigh)+
+      zrow("REJECTION: LOW",  rejectLow)+
+      zrow("REJECTION: CLOSE",rejectClose)+
+      zrow("UPPER WICK %", upWick)+
+      zrow("LOWER WICK %", dnWick)+
+      '<div style="margin-top:6px;padding:4px 6px;background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.2);border-radius:4px;font-size:9.5px;color:var(--yellow-2,#f59e0b)">'+
+        'Candle detection engine pending — check rejection candle manually on your chart.'+
+      '</div>'+
+    '</div>';
+  }
+
   // Phase 10.6: Smart Entry Plan HTML helper
   function _lmSmartEntryHtml(item){
     var plan=(item&&item.snapshot&&item.snapshot.latest_smart_entry_plan)||null;
-    if(!plan) return '<div style="color:var(--text-3);font-size:11px;padding:4px 0">No plan yet — click Refresh Smart Entry.</div>';
+    if(!plan){
+      if(_lmIsBiasShift(item)){
+        return '<div style="color:var(--yellow-2,#f59e0b);font-size:11px;padding:4px 0">'+
+          'Bias Shift Watch mode — OB/FVG Smart Entry is not computed.<br>'+
+          '<span style="color:var(--text-3)">Click Refresh SE to load Precision Watch status.</span></div>';
+      }
+      return '<div style="color:var(--text-3);font-size:11px;padding:4px 0">No plan yet — click Refresh Smart Entry.</div>';
+    }
     var mode=plan.mode||'parent_default';
+    // Phase 10.9A: precision_watch mode for bias shift items
+    if(mode==='precision_watch'){
+      var bsMeta=plan.bias_shift_meta||{};
+      var bsDir=(plan.direction||"").toUpperCase();
+      var bsInv=plan.invalidation&&plan.invalidation.level!=null?fmt(plan.invalidation.level):(plan.invalidation_price!=null?fmt(plan.invalidation_price):"—");
+      var bsNote=plan.invalidation&&plan.invalidation.note?esc(plan.invalidation.note):"Invalidation from bias shift scanner";
+      var bsWarns=(plan.warnings||[]).filter(Boolean);
+      var bsTf=esc(plan.parent_tf||"");
+      var bsMsg=esc(plan.message_summary||"");
+      return '<div style="border-left:3px solid var(--yellow-2,#f59e0b);padding:6px 10px;background:rgba(251,191,36,.05);border-radius:0 6px 6px 0;margin-bottom:6px">'+
+        '<div style="font-size:11px;font-weight:700;color:var(--yellow-2,#f59e0b);margin-bottom:3px">PRECISION WATCH DECISION</div>'+
+        '<div style="font-size:10.5px;color:var(--text-1);margin-bottom:3px">'+
+          'Bias: <b style="color:'+(bsDir.indexOf("BULL")>=0?"var(--green-2)":bsDir.indexOf("BEAR")>=0?"var(--red-2)":"var(--text-2)")+'">'+(bsDir||"—")+'</b>'+
+          ' &middot; TF: <b>'+bsTf+'</b>'+
+        '</div>'+
+        (bsInv!=="—"?'<div style="font-size:10px;color:var(--text-2)">Invalidation: <b style="color:var(--red-2,#f87171)">'+bsInv+'</b> &middot; '+bsNote+'</div>':'')+
+        (bsMsg?'<div style="font-size:10px;color:var(--text-3);margin-top:4px">'+bsMsg+'</div>':'')+
+        (bsWarns.length?'<div style="font-size:9.5px;color:var(--yellow-2,#f59e0b);margin-top:4px">'+bsWarns.map(function(w){return '⚠ '+esc(w);}).join('<br>')+'</div>':'')+
+      '</div>';
+    }
     var modeColors={
       parent_default:'var(--accent)',
       refined_internal_entry:'var(--green-2,#4ade80)',
@@ -5337,7 +5490,8 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       var dir=(item.direction||"").toLowerCase();
       var isBull=dir.indexOf("bull")!==-1, isBear=dir.indexOf("bear")!==-1;
       var dirClass=isBull?"bull":isBear?"bear":"";
-      var setupLbl=item.setup_type?(item.setup_type.replace(/_/g," ")):(isBull?"Bullish":isBear?"Bearish":"Setup");
+      var isBsCard=_lmIsBiasShift(item);
+      var setupLbl=isBsCard?"Bias Shift Watch":(item.setup_type?(item.setup_type.replace(/_/g," ")):(isBull?"Bullish":isBear?"Bearish":"Setup"));
       var dirArrow=isBull
         ?'<svg class="ico" style="width:11px;height:11px" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>'
         :isBear?'<svg class="ico" style="width:11px;height:11px" viewBox="0 0 24 24"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>':'';
@@ -5348,7 +5502,9 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       var ago=_lmAgo(item.added_at);
       var isActive=_lmSelItem&&_lmSelItem.id===item.id;
       var opacity=(status==="invalid"||!item.is_active)?"opacity:.5;":"";
-      var setupTag=item.setup_type?'<span class="tag tag-blue" style="font-size:9.5px">'+esc(item.setup_type.split("_")[0])+'</span>':"";
+      var setupTag=isBsCard
+        ?'<span class="tag" style="font-size:9.5px;background:rgba(251,191,36,.12);color:var(--yellow-2,#f59e0b);border-color:rgba(251,191,36,.25)">BSW</span>'
+        :(item.setup_type?'<span class="tag tag-blue" style="font-size:9.5px">'+esc(item.setup_type.split("_")[0])+'</span>':"");
       return '<div class="setup-card'+(isActive?" active":"")+'" data-lmidx="'+idx+'" style="'+opacity+'">'+
         '<div class="sc-top">'+
           '<span class="sc-sym">'+esc(item.symbol)+'</span>'+
@@ -5424,7 +5580,15 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       else if(price<zLo) proxPct=((zLo-price)/price*100).toFixed(2)+"% below zone";
       else proxPct="In Zone";
     }
+    var isBiasShift=_lmIsBiasShift(item);
+    // Phase 10.9A: bias shift safety banner
+    var biasBanner=isBiasShift
+      ?'<div style="padding:7px 12px;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);border-radius:6px;margin-bottom:10px;font-size:10.5px;color:var(--yellow-2,#f59e0b);line-height:1.4">'+
+        '<b>Bias Shift Watch mode</b> · AI Precision Watch · No OB/FVG zone entry computed · '+
+        'Candle detection, BOS/CHoCH, and order-flow alignment engines are pending.</div>'
+      :'';
     var html=
+      biasBanner+
       '<div class="lm-hero">'+
         '<div class="lm-hero-top">'+
           '<div>'+
@@ -5434,7 +5598,8 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
             '</div>'+
             '<div class="lm-hero-meta">'+
               (isBull?'<span class="tag tag-bull">Bullish</span>':isBear?'<span class="tag tag-bear">Bearish</span>':'')+
-              (setupType?'<span class="tag tag-blue">'+esc(tf)+' '+esc(setupType.replace(/_/g," "))+'</span>':'')+
+              (isBiasShift?'<span class="tag" style="background:rgba(251,191,36,.15);color:var(--yellow-2,#f59e0b);border-color:rgba(251,191,36,.3)">Bias Shift Watch</span>':'')+
+              (!isBiasShift&&setupType?'<span class="tag tag-blue">'+esc(tf)+' '+esc(setupType.replace(/_/g," "))+'</span>':'')+
               '<span class="tag tag-muted">'+esc(item.source_tab||"scanner")+'</span>'+
             '</div>'+
           '</div>'+
@@ -5464,7 +5629,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
           '<div class="ds-chat">'+
             '<div class="ds-head">'+
               '<svg class="ico" style="width:13px;height:13px;color:var(--accent)" viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 1 7 7c0 3-1.6 5.5-4 6.7V17a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-1.3C6.6 14.5 5 12 5 9a7 7 0 0 1 7-7z"/><path d="M9 21h6"/></svg>'+
-              '<div><div class="ds-name">ZyNi AI</div><div class="ds-sub" id="dsSubLabel">'+esc(_lmAiConfiguredLabel(item))+'</div></div>'+
+              '<div><div class="ds-name">ZyNi AI</div><div class="ds-sub" id="dsSubLabel">'+(isBiasShift?'Bias Shift Watch · AI Precision Watch':esc(_lmAiConfiguredLabel(item)))+'</div></div>'+
               (function(){
                 // Agent selector dropdown — built from _lmAiAgents state
                 var opts='<option value="__single_default__"'+((!_lmSelectedAgentId&&_lmAiMode==="single")?' selected':'')+'>Auto</option>';
@@ -5507,6 +5672,14 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
                     '<div class="ds-bubble"><span style="font-size:9px;opacity:.6">'+esc(agLabel)+'</span><b style="color:'+vColor2+'">'+esc((an.verdict||'').replace(/_/g,' ').toUpperCase())+'</b> · '+esc(an.confidence||0)+'% · '+
                     esc(an.summary||'')+'</div></div>';
                 }
+                if(isBiasShift){
+                  var bsMeta2=(item.snapshot&&item.snapshot.bias_shift_meta)||{};
+                  return '<div class="ds-msg ai"><div class="ds-av ai">DS</div>'+
+                    '<div class="ds-bubble"><b style="color:var(--yellow-2,#f59e0b)">Bias Shift Watch</b> — '+
+                    esc(item.symbol)+' '+esc(tf)+' '+esc((item.direction||"").toUpperCase())+' bias detected. '+
+                    (bsMeta2.confirmation?'Status: '+esc(bsMeta2.confirmation)+'. ':'')+
+                    'Candle/BOS/CHoCH detection engines are pending. Click Analyze for AI guidance on what to watch for.</div></div>';
+                }
                 return '<div class="ds-msg ai"><div class="ds-av ai">DS</div>'+
                   '<div class="ds-bubble">I have context on <b>'+esc(item.symbol)+'</b> — '+esc(tf)+' '+esc(setupType||"setup")+', '+(lh?'health '+health+' ('+lh.grade+')':'score '+health+'%')+(function(){var sc2=_lmSessionContext(item);return sc2?', session '+esc(sc2.session_label)+'.':'.';})()+" Click Analyze for AI verdict, or ask me anything.</div></div>";
               })()+
@@ -5533,16 +5706,16 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         '<div class="sec-card">'+
           '<div class="sec-card-head">'+
             '<svg class="ico" style="width:13px;height:13px;color:var(--text-3)" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></svg>'+
-            '<span class="sch-title">MTF MODULE MATRIX</span>'+
+            '<span class="sch-title">'+(isBiasShift?"MTF BIAS MATRIX":"MTF MODULE MATRIX")+'</span>'+
           '</div>'+
-          '<div class="sec-card-body" style="padding:10px">'+_lmMtfMatrix(item)+'</div>'+
+          '<div class="sec-card-body" style="padding:10px">'+(isBiasShift?_lmBiasMtfMatrix(item):_lmMtfMatrix(item))+'</div>'+
         '</div>'+
         '<div class="sec-card">'+
           '<div class="sec-card-head">'+
             '<svg class="ico" style="width:13px;height:13px;color:var(--text-3)" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>'+
-            '<span class="sch-title">ZONE TRACKER</span>'+
+            '<span class="sch-title">'+(isBiasShift?"CANDLE REACTION TRACKER":"ZONE TRACKER")+'</span>'+
           '</div>'+
-          '<div class="sec-card-body">'+_lmZoneCard(item)+'</div>'+
+          '<div class="sec-card-body">'+(isBiasShift?_lmBiasZoneCard(item):_lmZoneCard(item))+'</div>'+
         '</div>'+
       '</div>'+
 
@@ -5627,9 +5800,9 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       '<div class="sec-card" style="margin-bottom:12px" id="lmSmartEntryCard">'+
         '<div class="sec-card-head">'+
           '<svg class="ico" style="width:13px;height:13px;color:var(--text-3)" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'+
-          '<span class="sch-title">SMART ENTRY PLAN</span>'+
-          '<button class="btn" type="button" id="lmSmartEntryRefreshBtn" data-lmsmartentryrefresh="'+item.id+'" title="Run fresh scan and rebuild Smart Entry Plan" style="margin-left:auto;padding:2px 7px;font-size:10px">'+
-            '<svg class="ico ico-sm" viewBox="0 0 24 24" style="width:10px;height:10px"><path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.7 1 6.3 2.7L21 8"/><path d="M21 3v5h-5"/></svg>Refresh SE</button>'+
+          '<span class="sch-title">'+(isBiasShift?"PRECISION WATCH DECISION":"SMART ENTRY PLAN")+'</span>'+
+          '<button class="btn" type="button" id="lmSmartEntryRefreshBtn" data-lmsmartentryrefresh="'+item.id+'" title="'+(isBiasShift?"Rebuild Precision Watch status":"Run fresh scan and rebuild Smart Entry Plan")+'" style="margin-left:auto;padding:2px 7px;font-size:10px">'+
+            '<svg class="ico ico-sm" viewBox="0 0 24 24" style="width:10px;height:10px"><path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.7 1 6.3 2.7L21 8"/><path d="M21 3v5h-5"/></svg>'+(isBiasShift?"Refresh PW":"Refresh SE")+'</button>'+
         '</div>'+
         '<div class="sec-card-body" id="lmSmartEntryBody" style="padding:10px 13px">'+
           _lmSmartEntryHtml(item)+
@@ -5688,8 +5861,10 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         '<div class="sec-card-head" id="lmDhHead" style="cursor:pointer" onclick="_lmToggleDh()">'+
           '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>'+
           '<span class="sch-title">DATA HEALTH</span>'+
+          (isBiasShift?'<span style="font-size:9px;color:var(--yellow-2,#f59e0b);margin-left:6px">Bias Shift Watch</span>':'')+
           '<span style="font-size:9px;color:var(--text-3)" id="lmDhCtl">▾ collapse</span>'+
         '</div>'+
+        (isBiasShift?'<div style="padding:5px 10px;font-size:9.5px;color:var(--text-3);border-bottom:1px solid var(--border)">Data Health shows live price feeds. OB/FVG zone proximity metrics are not applicable for Bias Shift Watch items.</div>':'')+
         '<div id="lmDhBody" style="overflow-x:auto;overflow-y:auto;max-height:320px">'+
           '<table class="lm-dh-tbl" style="width:100%;min-width:580px">'+
             '<thead><tr><th>Metric</th><th>Value</th><th>Source</th><th>Status</th><th>Updated</th><th>Notes</th></tr></thead>'+

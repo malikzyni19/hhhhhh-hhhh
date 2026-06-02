@@ -13760,6 +13760,31 @@ def _lm_score_refinement_candidate(candidate: dict, parent_setup: dict,
     }
 
 
+# ── Phase 10.9A: Bias Shift Router helpers ───────────────────────────────────
+
+def _lm_is_bias_shift_item(row) -> bool:
+    """Return True when item was added from the Bias Shift scanner tab."""
+    src = (getattr(row, "source_tab", None) or "").strip().lower()
+    if src in ("bias_shift", "bias"):
+        return True
+    try:
+        snap = _json_loads_safe(getattr(row, "snapshot_json", None), {})
+        if snap.get("setup_category") == "bias_shift_watch":
+            return True
+        if (snap.get("addedFrom") or "").strip().lower() in ("bias_shift", "bias"):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _lm_setup_category(row) -> str:
+    """Return setup_category string for a LiveMonitorItem."""
+    if _lm_is_bias_shift_item(row):
+        return "bias_shift_watch"
+    return "ob_fib_watch"
+
+
 # ── TASK 1+2: Build Smart Entry Plan ─────────────────────────────────────────
 
 def _lm_build_smart_entry_plan(item, snapshot: dict = None, scan_result=None,
@@ -13788,6 +13813,54 @@ def _lm_build_smart_entry_plan(item, snapshot: dict = None, scan_result=None,
     zone_high            = getattr(item, "zone_high", None)
     zone_low             = getattr(item, "zone_low",  None)
     parent_tf            = (getattr(item, "timeframe", None) or "4h").lower()
+
+    # Phase 10.9A: Bias Shift Watch — return precision_watch plan, no OB/zone logic
+    if _lm_is_bias_shift_item(item):
+        _bs_meta = snapshot.get("bias_shift_meta") or {}
+        return {
+            "phase":                "phase10_9a_bias_shift_watch",
+            "computed_at":          now_iso,
+            "symbol":               symbol,
+            "exchange":             exchange,
+            "market":               market,
+            "mode":                 "precision_watch",
+            "setup_category":       "bias_shift_watch",
+            "monitor_mode":         "ai_precision_watch",
+            "decision":             "watch_for_candle_confirmation",
+            "direction":            direction,
+            "parent_tf":            parent_tf,
+            "zone_high":            None,
+            "zone_low":             None,
+            "entry_price":          None,
+            "entry_label":          "Bias Shift Watch — no OB/FVG entry zone",
+            "invalidation_price":   _bs_meta.get("invalidation_level"),
+            "confidence":           0,
+            "candidates":           [],
+            "best_candidate":       None,
+            "block_reason":         None,
+            "warnings":             [
+                "Bias Shift Watch mode: OB/FVG/FIB entry zones are not applicable.",
+                "Candle detection engine is pending — watch for rejection candle manually.",
+                "No order-flow or BOS/CHoCH detection yet.",
+            ],
+            "bias_shift_meta":      _bs_meta,
+            "message_summary":      (
+                f"Bias Shift Watch — {direction} bias detected on {parent_tf}. "
+                "Wait for candle confirmation before considering any action. "
+                "Smart Entry OB/FVG candidates are not computed for Bias Shift items."
+            ),
+            "event_summary":        "precision_watch",
+            "reason_summary":       "Bias Shift Watch mode — precision watch, no OB/FIB entry.",
+            "parent_setup":         {},
+            "default_entry_plan":   {},
+            "refinement_candidates": [],
+            "best_refined_candidate": None,
+            "data_quality":         {},
+            "invalidation":         {
+                "level": _bs_meta.get("invalidation_level"),
+                "note":  _bs_meta.get("invalidation_text") or "Invalidation from bias shift data",
+            },
+        }
 
     # Phase 10.7: resolve analysis source — never changes parent exchange/zone
     _asc_se              = _lm_analysis_source_config(item, snapshot=snapshot)
@@ -16216,16 +16289,19 @@ def _lm_build_ai_context(item) -> dict:
         "exchange": item.exchange or "binance",
         "market":   item.market   or "perpetual",
         "setup": {
-            "type":          item.setup_type,
-            "direction":     item.direction,
-            "timeframe":     item.timeframe,
-            "source_tab":    getattr(item, "source_tab", None),
-            "zone_high":     item.zone_high,
-            "zone_low":      item.zone_low,
-            "current_price": item.current_price,
-            "status":        item.status,
-            "score":         item.score,
-            "confidence":    item.confidence,
+            "type":           item.setup_type,
+            "direction":      item.direction,
+            "timeframe":      item.timeframe,
+            "source_tab":     getattr(item, "source_tab", None),
+            "setup_category": _lm_setup_category(item),
+            "monitor_mode":   "ai_precision_watch" if _lm_is_bias_shift_item(item) else "ob_fib_watch",
+            "zone_high":      item.zone_high,
+            "zone_low":       item.zone_low,
+            "current_price":  item.current_price,
+            "status":         item.status,
+            "score":          item.score,
+            "confidence":     item.confidence,
+            "bias_shift_meta": snap.get("bias_shift_meta") if _lm_is_bias_shift_item(item) else None,
         },
         "timeframe_policy": {
             "visible_analysis_timeframes": tp.get("visible_analysis_timeframes",
@@ -16245,6 +16321,16 @@ def _lm_build_ai_context(item) -> dict:
             "analysis_only":        True,
             "built_in_brain_not_user_instructions": True,
             "custom_instructions_are_extra_preferences_only": True,
+            # Phase 10.9A: bias shift watch safety rules
+            "bias_shift_watch_no_ob_fvg_entry": True,
+            "bias_shift_watch_no_candle_detection_yet": True,
+            "bias_shift_watch_no_bos_choch_detection_yet": True,
+            "bias_shift_watch_no_order_flow_yet": True,
+            "bias_shift_watch_action": (
+                "DO NOT suggest OB/FVG zone entries for Bias Shift Watch items. "
+                "Only describe the bias direction and suggest waiting for candle confirmation. "
+                "Candle detection, BOS/CHoCH, and order-flow engines are pending."
+            ) if _lm_is_bias_shift_item(item) else None,
         },
         "ai_brain":               _lm_builtin_ai_brain_rules(),
         "custom_ai_instructions": _lm_custom_ai_instructions_from_snapshot(snap),
