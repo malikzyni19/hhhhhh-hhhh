@@ -503,3 +503,56 @@ class LiveMonitorChatMessage(db.Model):
     def __repr__(self) -> str:
         return f"<LiveMonitorChatMessage {self.role} {self.symbol} user={self.user_id}>"
 
+
+class LiveMonitorCandle(db.Model):
+    """Phase 10.9B: MTF candle history for Bias Shift Watch items.
+
+    Rows are shared by user+exchange+market+symbol+timeframe — multiple LM
+    items for the same symbol reuse the same candle rows. Upsert on the
+    unique constraint prevents duplicates on repeated refreshes.
+
+    No raw candle arrays are stored in LiveMonitorItem.snapshot_json;
+    only lightweight status metadata goes there.
+    No API keys, no order logic, no trading execution.
+    """
+    __tablename__ = "live_monitor_candles"
+
+    id              = db.Column(db.Integer, primary_key=True)
+    user_id         = db.Column(db.Integer, db.ForeignKey("users.id"),
+                                nullable=False, index=True)
+    exchange        = db.Column(db.String(20), nullable=False)
+    market          = db.Column(db.String(20), nullable=False, default="perpetual")
+    symbol          = db.Column(db.String(20), nullable=False)
+    timeframe       = db.Column(db.String(10), nullable=False)
+    open_time       = db.Column(db.BigInteger, nullable=False)   # ms epoch
+    open            = db.Column(db.Float,      nullable=False)
+    high            = db.Column(db.Float,      nullable=False)
+    low             = db.Column(db.Float,      nullable=False)
+    close           = db.Column(db.Float,      nullable=False)
+    volume          = db.Column(db.Float,      nullable=True)
+    close_time      = db.Column(db.BigInteger, nullable=True)    # ms epoch
+    quote_volume    = db.Column(db.Float,      nullable=True)
+    trade_count     = db.Column(db.Integer,    nullable=True)
+    taker_buy_base  = db.Column(db.Float,      nullable=True)
+    taker_buy_quote = db.Column(db.Float,      nullable=True)
+    raw_json        = db.Column(db.Text,       nullable=True)
+    created_at      = db.Column(db.DateTime,
+                                default=lambda: datetime.now(timezone.utc))
+    updated_at      = db.Column(db.DateTime,
+                                default=lambda: datetime.now(timezone.utc),
+                                onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "user_id", "exchange", "market", "symbol", "timeframe", "open_time",
+            name="uq_lm_candle_key",
+        ),
+        db.Index("ix_lm_candle_lookup",
+                 "user_id", "exchange", "market", "symbol", "timeframe", "open_time"),
+    )
+
+    user = db.relationship("User", foreign_keys=[user_id])
+
+    def __repr__(self) -> str:
+        return (f"<LiveMonitorCandle {self.symbol} {self.timeframe} "
+                f"open_time={self.open_time} user={self.user_id}>")

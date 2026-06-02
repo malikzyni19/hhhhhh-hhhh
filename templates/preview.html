@@ -5198,6 +5198,25 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     return false;
   }
 
+  // Phase 10.9B Task 8: Refresh Candles button handler
+  function _lmRefreshBiasCandles(itemId, force){
+    if(!itemId) return;
+    fetch('/api/live-monitor/items/'+itemId+'/bias-candles/refresh',{
+      method:'POST',credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({force:!!force})
+    }).then(function(r){return r.json();}).then(function(data){
+      if(!data.ok) return;
+      // Patch the selected item's snapshot.candle_store in place so the panel refreshes.
+      // The background thread will do the real fetch; user can click again after ~10s for final status.
+      if(_lmSelItem&&_lmSelItem.id===itemId){
+        if(!_lmSelItem.snapshot) _lmSelItem.snapshot={};
+        _lmSelItem.snapshot.candle_store=data.candle_store||_lmSelItem.snapshot.candle_store;
+        if(typeof _lmRenderRight==="function") _lmRenderRight(_lmSelItem);
+      }
+    }).catch(function(e){console.warn('[10.9B] bias candle refresh error',e);});
+  }
+
   function _lmBiasMtfMatrix(item){
     var snap=item.snapshot||{};
     var meta=snap.bias_shift_meta||{};
@@ -5213,7 +5232,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     var confTf=esc(meta.suggested_confirmation_tf||"—");
     var score=meta.score!=null?Math.round(meta.score):"—";
     function brow(label,val){ return '<tr><td style="color:var(--text-3);font-size:10px;padding:3px 6px">'+label+'</td><td style="font-size:10.5px;padding:3px 6px">'+val+'</td></tr>'; }
-    return '<table style="width:100%;border-collapse:collapse">'+
+    var table='<table style="width:100%;border-collapse:collapse">'+
       brow("BIAS DIRECTION",dirTag)+
       brow("CONFIRMATION STATUS",conf)+
       brow("GRADE",grade)+
@@ -5221,7 +5240,37 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       brow("PATTERN",pattern)+
       brow("PRIOR MOVE",esc(priorDir)+(priorCandles!=="—"?" · "+priorCandles+"c":"")+( priorPct!=="—"?" · "+priorPct:""))+
       brow("CONFIRM TF",confTf)+
-    '</table>'+
+    '</table>';
+
+    // Phase 10.9B: candle store status per TF
+    var cs=snap.candle_store||{};
+    var csStatus=cs.status||"";
+    var perTf=cs.per_tf||{};
+    var tfStack=cs.tf_stack||["1d","4h","1h","30m","15m","5m"];
+    var csHtml="";
+    if(csStatus){
+      var statusColors={ready:"var(--green-2,#4ade80)",refreshing:"var(--yellow-2,#f59e0b)",initializing:"var(--yellow-2,#f59e0b)",unavailable:"var(--red-2,#f87171)",error:"var(--red-2,#f87171)"};
+      var sColor=statusColors[csStatus]||"var(--text-3)";
+      csHtml='<div style="margin-top:8px;border-top:1px solid rgba(148,163,184,.1);padding-top:6px">'+
+        '<div style="font-size:9.5px;font-weight:700;color:var(--text-3);letter-spacing:.05em;margin-bottom:4px">MTF CANDLE STORE</div>'+
+        '<div style="display:flex;flex-wrap:wrap;gap:4px">';
+      for(var i=0;i<tfStack.length;i++){
+        var tf=tfStack[i];
+        var tfInfo=perTf[tf]||{};
+        var tfStatus=tfInfo.status||csStatus||"—";
+        var tfCount=tfInfo.count!=null?tfInfo.count:null;
+        var tfColor=statusColors[tfStatus]||"var(--text-3)";
+        var tfLabel=tfStatus==="ready"?"✓"+(tfCount!=null?" "+tfCount:""):tfStatus==="unavailable"?"✗":"⋯";
+        csHtml+='<div style="font-size:9px;padding:2px 5px;border-radius:3px;background:rgba(148,163,184,.08);border:1px solid rgba(148,163,184,.15)">'+
+          '<span style="color:var(--text-3)">'+esc(tf)+'</span> '+
+          '<span style="color:'+tfColor+'">'+tfLabel+'</span>'+
+        '</div>';
+      }
+      csHtml+='</div>'+
+        '<div style="font-size:9px;color:'+sColor+';margin-top:4px">Store: '+esc(csStatus)+'</div>'+
+      '</div>';
+    }
+    return table+csHtml+
     '<div style="font-size:10px;color:var(--text-3);margin-top:6px;text-align:center">Bias Shift Watch · Candle/BOS/CHoCH detection pending</div>';
   }
 
@@ -5275,6 +5324,19 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       var bsWarns=(plan.warnings||[]).filter(Boolean);
       var bsTf=esc(plan.parent_tf||"");
       var bsMsg=esc(plan.message_summary||"");
+      // Phase 10.9B: candle store status in precision_watch card
+      var bsSnap=item.snapshot||{};
+      var bsCs=bsSnap.candle_store||{};
+      var bsCsStatus=bsCs.status||"";
+      var bsCsColors={ready:"var(--green-2,#4ade80)",refreshing:"var(--yellow-2,#f59e0b)",initializing:"var(--yellow-2,#f59e0b)",unavailable:"var(--red-2,#f87171)",error:"var(--red-2,#f87171)"};
+      var bsCsColor=bsCsColors[bsCsStatus]||"var(--text-3)";
+      var bsCsLabel={ready:"Ready",refreshing:"Refreshing…",initializing:"Initializing…",unavailable:"Unavailable",error:"Error"}[bsCsStatus]||bsCsStatus||"—";
+      var bsItemId=item.id||"";
+      var csStatusHtml=bsCsStatus?
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid rgba(148,163,184,.1)">'+
+          '<span style="font-size:9.5px;color:var(--text-3)">MTF Candle Store: <b style="color:'+bsCsColor+'">'+esc(bsCsLabel)+'</b></span>'+
+          '<button onclick="_lmRefreshBiasCandles('+bsItemId+')" style="font-size:9px;padding:2px 7px;border-radius:3px;border:1px solid rgba(148,163,184,.3);background:rgba(148,163,184,.08);color:var(--text-2);cursor:pointer">Refresh Candles</button>'+
+        '</div>':'';
       return '<div style="border-left:3px solid var(--yellow-2,#f59e0b);padding:6px 10px;background:rgba(251,191,36,.05);border-radius:0 6px 6px 0;margin-bottom:6px">'+
         '<div style="font-size:11px;font-weight:700;color:var(--yellow-2,#f59e0b);margin-bottom:3px">PRECISION WATCH DECISION</div>'+
         '<div style="font-size:10.5px;color:var(--text-1);margin-bottom:3px">'+
@@ -5284,6 +5346,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         (bsInv!=="—"?'<div style="font-size:10px;color:var(--text-2)">Invalidation: <b style="color:var(--red-2,#f87171)">'+bsInv+'</b> &middot; '+bsNote+'</div>':'')+
         (bsMsg?'<div style="font-size:10px;color:var(--text-3);margin-top:4px">'+bsMsg+'</div>':'')+
         (bsWarns.length?'<div style="font-size:9.5px;color:var(--yellow-2,#f59e0b);margin-top:4px">'+bsWarns.map(function(w){return '⚠ '+esc(w);}).join('<br>')+'</div>':'')+
+        csStatusHtml+
       '</div>';
     }
     var modeColors={

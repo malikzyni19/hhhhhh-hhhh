@@ -13797,6 +13797,527 @@ def _lm_setup_category(row) -> str:
     return "ob_fib_setup"
 
 
+# ── Phase 10.9B: Bias Shift MTF Candle Fetch + Storage ───────────────────────
+
+# Standard TF stack for Bias Shift Watch items
+_LM_BIAS_TF_STACK_CONST = ["1d", "4h", "1h", "30m", "15m", "5m"]
+
+# Milliseconds per TF (for close_time computation)
+_LM_TF_MS = {
+    "1m":  60_000,      "3m":  180_000,    "5m":  300_000,
+    "15m": 900_000,     "30m": 1_800_000,  "1h":  3_600_000,
+    "2h":  7_200_000,   "4h":  14_400_000, "6h":  21_600_000,
+    "12h": 43_200_000,  "1d":  86_400_000,
+}
+
+# Freshness windows per TF (seconds before a re-fetch is allowed)
+_LM_CANDLE_FRESHNESS_S = {
+    "1d": 14_400, "4h": 7_200, "1h": 3_600,
+    "30m": 1_800, "15m": 900,  "5m": 300,
+}
+
+# Background thread tracker: item_id → thread (prevents parallel over-fetches)
+_lm_bias_candle_threads: dict = {}
+_lm_bias_candle_thread_lock = threading.Lock()
+
+
+def _lm_bias_tf_stack() -> list:
+    """Return the canonical MTF TF stack for Bias Shift Watch items."""
+    return list(_LM_BIAS_TF_STACK_CONST)
+
+
+def _lm_bias_candle_limit() -> int:
+    """Return target candle count per TF. Override via ZYNI_BIAS_CANDLE_LIMIT. Clamp 300–2000."""
+    try:
+        v = int(os.environ.get("ZYNI_BIAS_CANDLE_LIMIT", "1500"))
+    except (TypeError, ValueError):
+        v = 1500
+    return max(300, min(v, 2000))
+
+
+# ── Task 3: Public candle fetch adapter ──────────────────────────────────────
+
+def _lm_fetch_bybit_klines_paged(symbol: str, interval: str,
+                                  limit: int = 1500,
+                                  market: str = "perpetual") -> list:
+    """Fetch Bybit perpetual klines with pagination (200/page → up to 1500).
+
+    Returns list of dicts: {open_time, open, high, low, close, volume, close_time}.
+    Returns [] on error. No API key. No order logic.
+    """
+    iv = INTERVAL_MAP["bybit"].get(interval)
+    if not iv:
+        return []
+    category = "linear" if market == "perpetual" else "spot"
+    url = f"{BYBIT_PERP_API}/kline"
+    iv_ms = _LM_TF_MS.get(interval, 0)
+    all_candles: list = []
+    end_time = None
+    max_pages = min((limit // 200) + 3, 12)   # cap at 12 pages (~2400 candles max)
+
+    try:
+        for _ in range(max_pages):
+            if len(all_candles) >= limit:
+                break
+            batch_size = min(limit - len(all_candles), 200)
+            params: dict = {
+                "category": category, "symbol": symbol,
+                "interval": iv,       "limit": batch_size,
+            }
+            if end_time is not None:
+                params["end"] = end_time
+            resp = req.get(url, params=params, timeout=10)
+            if resp.status_code != 200:
+                break
+            data = resp.json().get("result", {}).get("list", [])
+            if not data:
+                break
+            batch = []
+            for k in data:
+                try:
+                    ot = int(k[0])
+                    batch.append({
+                        "open_time":  ot,
+                        "open":       float(k[1]),
+                        "high":       float(k[2]),
+                        "low":        float(k[3]),
+                        "close":      float(k[4]),
+                        "volume":     float(k[5]),
+                        "close_time": ot + iv_ms - 1 if iv_ms else ot,
+                    })
+                except (IndexError, TypeError, ValueError):
+                    pass
+            # Bybit returns newest-first; reverse to ascending
+            batch.reverse()
+            # Prepend (batch is older than what we have so far)
+            all_candles = batch + all_candles
+            if len(data) < batch_size:
+                break
+            # data[-1] is oldest (newest-first list) — move end backwards
+            end_time = int(data[-1][0]) - 1
+            if end_time <= 0:
+                break
+            time.sleep(0.15)   # soft rate-limit guard
+
+        # Deduplicate by open_time
+        seen: dict = {}
+        for c in all_candles:
+            seen[c["open_time"]] = c
+        result = sorted(seen.values(), key=lambda x: x["open_time"])
+        return result[-limit:] if len(result) > limit else result
+    except Exception:
+        return []
+
+
+def _lm_fetch_okx_klines_paged(symbol: str, interval: str,
+                                limit: int = 1500,
+                                market: str = "perpetual") -> list:
+    """Fetch OKX perpetual klines with pagination (300/page → up to 1500).
+
+    Uses /market/history-candles for wider history availability.
+    Returns list of dicts: {open_time, open, high, low, close, volume, close_time}.
+    Returns [] on error. No API key. No order logic.
+    """
+    iv = INTERVAL_MAP["okx"].get(interval)
+    if not iv:
+        return []
+    # OKX instId: BTCUSDT → BTC-USDT-SWAP (perpetual) or BTC-USDT (spot)
+    base = symbol.replace("USDT", "")
+    inst_id = f"{base}-USDT-SWAP" if market == "perpetual" else f"{base}-USDT"
+    iv_ms = _LM_TF_MS.get(interval, 0)
+    # Use history-candles for deeper history
+    hist_url = "https://www.okx.com/api/v5/market/history-candles"
+    all_candles: list = []
+    after_ts = None     # pagination cursor (exclusive end bound → older data)
+    max_pages = min((limit // 300) + 3, 8)
+
+    try:
+        for _ in range(max_pages):
+            if len(all_candles) >= limit:
+                break
+            batch_size = min(limit - len(all_candles), 300)
+            params: dict = {"instId": inst_id, "bar": iv, "limit": batch_size}
+            if after_ts is not None:
+                params["after"] = str(after_ts)   # OKX: after=ts gets data older than ts
+            resp = req.get(hist_url, params=params, timeout=12)
+            if resp.status_code != 200:
+                break
+            data = resp.json().get("data", [])
+            if not data:
+                break
+            batch = []
+            for k in data:
+                try:
+                    ot = int(k[0])
+                    batch.append({
+                        "open_time":  ot,
+                        "open":       float(k[1]),
+                        "high":       float(k[2]),
+                        "low":        float(k[3]),
+                        "close":      float(k[4]),
+                        "volume":     float(k[5]),
+                        "close_time": ot + iv_ms - 1 if iv_ms else ot,
+                    })
+                except (IndexError, TypeError, ValueError):
+                    pass
+            # OKX returns newest-first; reverse to ascending for prepend
+            batch.reverse()
+            all_candles = batch + all_candles
+            if len(data) < batch_size:
+                break
+            # data[-1] is oldest (newest-first); use its ts as next after cursor
+            after_ts = int(data[-1][0])
+            if after_ts <= 0:
+                break
+            time.sleep(0.15)
+
+        seen: dict = {}
+        for c in all_candles:
+            seen[c["open_time"]] = c
+        result = sorted(seen.values(), key=lambda x: x["open_time"])
+        return result[-limit:] if len(result) > limit else result
+    except Exception:
+        return []
+
+
+def _lm_fetch_public_klines(exchange: str, symbol: str, timeframe: str,
+                             limit: int = 1500,
+                             market: str = "perpetual") -> list:
+    """Fetch candles from public endpoint for the given exchange.
+
+    Normalises to: {open_time, open, high, low, close, volume, close_time}.
+    Does NOT fall back to another exchange — caller sees empty list and marks
+    that TF unavailable.
+    No API key. No order logic. No S/R flip. No candle pattern engine.
+    """
+    if timeframe not in _LM_ALLOWED_CANDLE_INTERVALS:
+        return []
+    ex = (exchange or "binance").lower()
+    sym = symbol.upper()
+    lim = max(1, min(limit, 2000))
+
+    if ex == "binance":
+        return _lm_fetch_futures_candles(sym, timeframe, limit=lim)
+    if ex == "mexc":
+        return _lm_fetch_mexc_perp_candles(sym, timeframe, limit=lim)
+    if ex == "bybit":
+        return _lm_fetch_bybit_klines_paged(sym, timeframe, limit=lim, market=market)
+    if ex == "okx":
+        return _lm_fetch_okx_klines_paged(sym, timeframe, limit=lim, market=market)
+    # Unknown exchange — return empty, caller marks unavailable
+    return []
+
+
+# ── Task 4: Candle store write / read helpers ─────────────────────────────────
+
+def _lm_store_candles(user_id: int, exchange: str, market: str,
+                       symbol: str, timeframe: str, candles: list) -> int:
+    """Upsert candle rows for one TF. Returns count of rows stored.
+
+    Uses PostgreSQL INSERT ... ON CONFLICT DO UPDATE (upsert) — safe to call
+    repeatedly; duplicate open_times are silently merged. No trading logic.
+    """
+    if not candles:
+        return 0
+    from models import db as _db, LiveMonitorCandle as _LMC
+    from sqlalchemy.dialects.postgresql import insert as _pg_insert
+    from datetime import datetime as _dt, timezone as _tz
+    now = _dt.now(_tz.utc)
+    rows = []
+    for c in candles:
+        ot = c.get("open_time")
+        if ot is None:
+            continue
+        rows.append({
+            "user_id":   user_id,
+            "exchange":  exchange.lower(),
+            "market":    market.lower(),
+            "symbol":    symbol.upper(),
+            "timeframe": timeframe,
+            "open_time": int(ot),
+            "open":      float(c.get("open",  0) or 0),
+            "high":      float(c.get("high",  0) or 0),
+            "low":       float(c.get("low",   0) or 0),
+            "close":     float(c.get("close", 0) or 0),
+            "volume":    float(c.get("volume", 0) or 0) if c.get("volume") is not None else None,
+            "close_time":int(c["close_time"]) if c.get("close_time") is not None else None,
+            "quote_volume":   None,
+            "trade_count":    None,
+            "taker_buy_base": None,
+            "taker_buy_quote":None,
+            "raw_json":  None,
+            "created_at":now,
+            "updated_at":now,
+        })
+    if not rows:
+        return 0
+    try:
+        stmt = _pg_insert(_LMC).values(rows)
+        stmt = stmt.on_conflict_do_update(
+            constraint="uq_lm_candle_key",
+            set_={
+                "open":       stmt.excluded.open,
+                "high":       stmt.excluded.high,
+                "low":        stmt.excluded.low,
+                "close":      stmt.excluded.close,
+                "volume":     stmt.excluded.volume,
+                "close_time": stmt.excluded.close_time,
+                "updated_at": stmt.excluded.updated_at,
+            },
+        )
+        _db.session.execute(stmt)
+        _db.session.commit()
+        return len(rows)
+    except Exception as exc:
+        _db.session.rollback()
+        print(f"[10.9B] _lm_store_candles error ({symbol}/{timeframe}): {exc}")
+        return 0
+
+
+def _lm_get_stored_candles(user_id: int, exchange: str, market: str,
+                            symbol: str, timeframe: str,
+                            limit: int = 1500) -> list:
+    """Return stored candles as list of dicts (ascending open_time), up to limit."""
+    from models import LiveMonitorCandle as _LMC
+    try:
+        rows = (_LMC.query
+                .filter_by(user_id=user_id, exchange=exchange.lower(),
+                           market=market.lower(), symbol=symbol.upper(),
+                           timeframe=timeframe)
+                .order_by(_LMC.open_time.asc())
+                .limit(limit)
+                .all())
+        return [
+            {
+                "open_time":  r.open_time,
+                "open":       r.open,
+                "high":       r.high,
+                "low":        r.low,
+                "close":      r.close,
+                "volume":     r.volume,
+                "close_time": r.close_time,
+            }
+            for r in rows
+        ]
+    except Exception:
+        return []
+
+
+def _lm_get_candle_store_status(user_id: int, exchange: str,
+                                 market: str, symbol: str) -> dict:
+    """Return candle store status dict for all TFs for this user/symbol.
+
+    Returns: {tf: {"count": N, "last_open_time": ms, "first_open_time": ms}}
+    """
+    from models import LiveMonitorCandle as _LMC
+    from sqlalchemy import func as _func
+    result: dict = {}
+    try:
+        for tf in _LM_BIAS_TF_STACK_CONST:
+            row = (_LMC.query
+                   .filter_by(user_id=user_id, exchange=exchange.lower(),
+                              market=market.lower(), symbol=symbol.upper(),
+                              timeframe=tf)
+                   .with_entities(
+                       _func.count(_LMC.id).label("cnt"),
+                       _func.min(_LMC.open_time).label("first_ot"),
+                       _func.max(_LMC.open_time).label("last_ot"),
+                   )
+                   .one())
+            result[tf] = {
+                "count":           int(row.cnt or 0),
+                "first_open_time": int(row.first_ot) if row.first_ot else None,
+                "last_open_time":  int(row.last_ot)  if row.last_ot  else None,
+            }
+    except Exception:
+        pass
+    return result
+
+
+def _lm_candle_tf_is_fresh(user_id: int, exchange: str, market: str,
+                            symbol: str, timeframe: str) -> bool:
+    """Return True if the most-recent stored candle is within the freshness window."""
+    from models import LiveMonitorCandle as _LMC
+    from sqlalchemy import func as _func
+    freshness = _LM_CANDLE_FRESHNESS_S.get(timeframe, 900)
+    try:
+        row = (_LMC.query
+               .filter_by(user_id=user_id, exchange=exchange.lower(),
+                          market=market.lower(), symbol=symbol.upper(),
+                          timeframe=timeframe)
+               .with_entities(_func.max(_LMC.updated_at).label("latest_upd"))
+               .one())
+        if not row.latest_upd:
+            return False
+        from datetime import datetime as _dt, timezone as _tz
+        age = (_dt.now(_tz.utc) - row.latest_upd.replace(tzinfo=_tz.utc)).total_seconds()
+        return age < freshness
+    except Exception:
+        return False
+
+
+def _lm_build_candle_store_status(user_id: int, exchange: str,
+                                   market: str, symbol: str,
+                                   target_limit: int = 1500) -> dict:
+    """Build the lightweight candle_store status dict for snapshot_json."""
+    from datetime import datetime as _dt, timezone as _tz
+    tf_status: dict = {}
+    raw = _lm_get_candle_store_status(user_id, exchange, market, symbol)
+    for tf in _LM_BIAS_TF_STACK_CONST:
+        info = raw.get(tf, {})
+        cnt = info.get("count", 0)
+        last_ot = info.get("last_open_time")
+        if cnt == 0:
+            st = "unavailable"
+        elif cnt >= target_limit * 0.9:
+            st = "ready"
+        else:
+            st = "partial"
+        last_iso = None
+        if last_ot:
+            try:
+                last_iso = _dt.utcfromtimestamp(last_ot / 1000).strftime("%Y-%m-%dT%H:%M:%SZ")
+            except Exception:
+                pass
+        tf_status[tf] = {"status": st, "count": cnt, "updated_at": last_iso}
+
+    counts = [v["count"] for v in tf_status.values()]
+    all_ready   = all(v["status"] == "ready"       for v in tf_status.values())
+    all_zero    = all(v["count"] == 0              for v in tf_status.values())
+    any_partial = any(v["status"] == "partial"     for v in tf_status.values())
+    if all_zero:
+        overall = "initializing"
+    elif all_ready:
+        overall = "ready"
+    elif any_partial or any(v["status"] == "ready" for v in tf_status.values()):
+        overall = "partial"
+    else:
+        overall = "unavailable"
+
+    return {
+        "enabled":      True,
+        "phase":        "phase10_9b_mtf_candle_storage",
+        "tf_stack":     _LM_BIAS_TF_STACK_CONST,
+        "target_limit": target_limit,
+        "status":       overall,
+        "per_tf":       tf_status,
+        "computed_at":  _dt.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+
+
+def _lm_refresh_bias_candles_for_item(item, force: bool = False) -> dict:
+    """Fetch and store MTF candles for one Bias Shift Watch item.
+
+    Only runs for bias_shift items. For non-bias items returns {"skipped": True}.
+    Updates snapshot_json.candle_store with lightweight status (no arrays).
+    Safe to call in a background thread — uses app.app_context().
+    No trading. No private API. No candle pattern engine.
+    """
+    if not _lm_is_bias_shift_item(item):
+        return {"skipped": True, "reason": "not_bias_shift"}
+
+    with app.app_context():
+        from models import db as _db, LiveMonitorItem as _LMI
+        uid      = getattr(item, "user_id",  None)
+        symbol   = (getattr(item, "symbol",   "") or "").upper()
+        exchange = (getattr(item, "exchange", "") or "binance").lower()
+        market   = (getattr(item, "market",   "") or "perpetual").lower()
+        item_id  = getattr(item, "id", None)
+        limit    = _lm_bias_candle_limit()
+
+        if not uid or not symbol:
+            return {"skipped": True, "reason": "missing_uid_or_symbol"}
+
+        tf_results: dict = {}
+        for tf in _LM_BIAS_TF_STACK_CONST:
+            # Freshness gate — skip if already fresh and not force
+            if not force and _lm_candle_tf_is_fresh(uid, exchange, market, symbol, tf):
+                count_info = _lm_get_candle_store_status(uid, exchange, market, symbol).get(tf, {})
+                tf_results[tf] = {
+                    "status":   "skipped_fresh",
+                    "count":    count_info.get("count", 0),
+                    "fetched":  0,
+                    "stored":   0,
+                }
+                continue
+
+            candles = _lm_fetch_public_klines(exchange, symbol, tf,
+                                               limit=limit, market=market)
+            fetched = len(candles)
+            stored  = 0
+            if candles:
+                stored = _lm_store_candles(uid, exchange, market, symbol, tf, candles)
+
+            tf_results[tf] = {
+                "status":  "ready" if stored > 0 else ("unavailable" if fetched == 0 else "partial"),
+                "fetched": fetched,
+                "stored":  stored,
+            }
+            print(f"[10.9B] {symbol}/{tf} ({exchange}): fetched={fetched} stored={stored}")
+
+        # Build lightweight status and write to snapshot_json
+        candle_store_status = _lm_build_candle_store_status(uid, exchange, market, symbol, limit)
+        try:
+            row = _LMI.query.filter_by(id=item_id).first()
+            if row:
+                snap = _json_loads_safe(row.snapshot_json, {})
+                snap["candle_store"] = candle_store_status
+                row.snapshot_json = _json_dumps_safe(snap)
+                _db.session.commit()
+        except Exception as exc:
+            _db.session.rollback()
+            print(f"[10.9B] snapshot update error: {exc}")
+
+        return {
+            "ok":           True,
+            "symbol":       symbol,
+            "exchange":     exchange,
+            "market":       market,
+            "candle_store": candle_store_status,
+            "per_tf":       tf_results,
+        }
+
+
+def _lm_ensure_bias_candles_bg(item_id: int, uid: int, exchange: str,
+                                market: str, symbol: str,
+                                source_tab: str, force: bool = False):
+    """Start background candle refresh for a Bias Shift item if not already running."""
+    if source_tab not in ("bias_shift", "bias"):
+        return
+    with _lm_bias_candle_thread_lock:
+        t = _lm_bias_candle_threads.get(item_id)
+        if t and t.is_alive():
+            return   # already fetching — don't double-start
+    # Build a lightweight proxy object for _lm_refresh_bias_candles_for_item
+    class _ItemProxy:
+        pass
+    proxy = _ItemProxy()
+    proxy.id         = item_id
+    proxy.user_id    = uid
+    proxy.symbol     = symbol
+    proxy.exchange   = exchange
+    proxy.market     = market
+    proxy.source_tab = source_tab
+    proxy.snapshot_json = None   # won't be read in _lm_refresh_bias_candles_for_item
+
+    def _run():
+        with _lm_bias_candle_thread_lock:
+            _lm_bias_candle_threads[item_id] = threading.current_thread()
+        try:
+            _lm_refresh_bias_candles_for_item(proxy, force=force)
+        except Exception as exc:
+            print(f"[10.9B] background candle refresh error item={item_id}: {exc}")
+        finally:
+            with _lm_bias_candle_thread_lock:
+                _lm_bias_candle_threads.pop(item_id, None)
+
+    t = threading.Thread(target=_run, daemon=True,
+                         name=f"lm-bias-candles-{item_id}")
+    with _lm_bias_candle_thread_lock:
+        _lm_bias_candle_threads[item_id] = t
+    t.start()
+
+
 # ── TASK 1+2: Build Smart Entry Plan ─────────────────────────────────────────
 
 def _lm_build_smart_entry_plan(item, snapshot: dict = None, scan_result=None,
@@ -16477,13 +16998,24 @@ def _lm_build_ai_context(item) -> dict:
         )(_lm_ai_context_recent_trades(item_id))
         )(getattr(item, "id", None)),
         # Phase 10.8: multi-exchange WS context
-        "phase": "phase10_8_multi_exchange_live_ui_cleanup",
+        "phase": "phase10_9b_mtf_candle_storage",
         "multi_exchange_ws": {
             "enabled":       _LM_MX_WS_ENABLED,
             "bybit_stream":  _lm_mx_stream_status("bybit"),
             "okx_stream":    _lm_mx_stream_status("okx"),
             "mexc_stream":   _lm_mx_stream_status("mexc"),
         },
+        # Phase 10.9B Task 9: candle_store status for Bias Shift items (no candle arrays)
+        "candle_store": (lambda _cs: {
+            "enabled":      _cs.get("enabled"),
+            "phase":        _cs.get("phase"),
+            "status":       _cs.get("status"),
+            "tf_stack":     _cs.get("tf_stack"),
+            "target_limit": _cs.get("target_limit"),
+            "per_tf":       _cs.get("per_tf"),
+            "note":         "Candle arrays are NOT included in AI context. "
+                            "Status only — pattern/BOS/CHoCH detection engines pending.",
+        } if _cs and isinstance(_cs, dict) else None)(snap.get("candle_store")),
     }
 
 
@@ -18008,7 +18540,147 @@ def api_lm_items_post():
         _db.session.rollback()
         return jsonify({"error": "db", "message": str(e)}), 500
 
+    # Phase 10.9B Task 5: For Bias Shift items, mark candle_store as initializing
+    # and start background MTF candle fetch immediately after commit.
+    _src_tab_norm = source_tab.strip().lower()
+    if _src_tab_norm in ("bias_shift", "bias"):
+        try:
+            _snap_cs = _json_loads_safe(row.snapshot_json, {})
+            _snap_cs["candle_store"] = {
+                "enabled":      True,
+                "phase":        "phase10_9b_mtf_candle_storage",
+                "tf_stack":     list(_LM_BIAS_TF_STACK_CONST),
+                "target_limit": _lm_bias_candle_limit(),
+                "status":       "initializing",
+                "per_tf":       {},
+            }
+            row.snapshot_json = _json_dumps_safe(_snap_cs)
+            _db.session.commit()
+        except Exception as _e:
+            _db.session.rollback()
+        _lm_ensure_bias_candles_bg(row.id, uid, exchange, market, symbol, source_tab)
+
     return jsonify({"ok": True, "item": _live_monitor_item_to_dict(row), "created": created})
+
+
+# ---------------------------------------------------------------------------
+# Phase 10.9B Task 6: Bias Shift candle refresh endpoint
+# ---------------------------------------------------------------------------
+@app.route("/api/live-monitor/items/<int:item_id>/bias-candles/refresh", methods=["POST"])
+@login_required
+def api_lm_bias_candles_refresh(item_id):
+    """Trigger (or force) a background MTF candle refresh for a Bias Shift Watch item."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorItem as _LMI
+    row = _LMI.query.filter_by(id=item_id, is_active=True).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if not _lm_is_bias_shift_item(row):
+        return jsonify({"error": "not_bias_shift",
+                        "message": "This endpoint is only for Bias Shift Watch items."}), 400
+
+    data  = request.get_json(force=True) or {}
+    force = bool(data.get("force", False))
+
+    # Mark snapshot as initializing / refreshing immediately
+    try:
+        snap = _json_loads_safe(row.snapshot_json, {})
+        existing_status = (snap.get("candle_store") or {}).get("status", "unknown")
+        snap["candle_store"] = {
+            "enabled":      True,
+            "phase":        "phase10_9b_mtf_candle_storage",
+            "tf_stack":     list(_LM_BIAS_TF_STACK_CONST),
+            "target_limit": _lm_bias_candle_limit(),
+            "status":       "refreshing" if existing_status == "ready" else "initializing",
+            "per_tf":       (snap.get("candle_store") or {}).get("per_tf", {}),
+        }
+        row.snapshot_json = _json_dumps_safe(snap)
+        _db.session.commit()
+    except Exception as _e:
+        _db.session.rollback()
+
+    _lm_ensure_bias_candles_bg(
+        row.id, uid, row.exchange, row.market, row.symbol, row.source_tab, force=force
+    )
+
+    status_now = (_json_loads_safe(row.snapshot_json, {}).get("candle_store") or {})
+    return jsonify({"ok": True, "item_id": item_id, "force": force, "candle_store": status_now})
+
+
+# ---------------------------------------------------------------------------
+# Phase 10.9B Task 7: Bias Shift candle debug endpoint
+# ---------------------------------------------------------------------------
+@app.route("/api/live-monitor/items/<int:item_id>/bias-candles/debug", methods=["GET"])
+@login_required
+def api_lm_bias_candles_debug(item_id):
+    """Return per-TF candle counts and sample candles for a Bias Shift Watch item."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import LiveMonitorItem as _LMI
+    row = _LMI.query.filter_by(id=item_id, is_active=True).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if not _lm_is_bias_shift_item(row):
+        return jsonify({"error": "not_bias_shift",
+                        "message": "This endpoint is only for Bias Shift Watch items."}), 400
+
+    tf_filter = (request.args.get("tf") or "").strip().lower() or None
+    try:
+        sample_limit = min(int(request.args.get("limit", 20)), 120)
+    except (TypeError, ValueError):
+        sample_limit = 20
+
+    allowed_tfs = set(_LM_BIAS_TF_STACK_CONST)
+    if tf_filter and tf_filter not in allowed_tfs:
+        return jsonify({"error": "invalid_tf",
+                        "allowed": list(allowed_tfs)}), 400
+
+    exchange = row.exchange or "binance"
+    market   = row.market   or "perpetual"
+    symbol   = row.symbol
+
+    store_status = _lm_get_candle_store_status(uid, exchange, market, symbol)
+
+    per_tf_debug = {}
+    tfs_to_show = [tf_filter] if tf_filter else list(_LM_BIAS_TF_STACK_CONST)
+    for tf in tfs_to_show:
+        candles = _lm_get_stored_candles(uid, exchange, market, symbol, tf, sample_limit)
+        tf_info = store_status.get(tf, {})
+        per_tf_debug[tf] = {
+            "stored_count": tf_info.get("count", 0),
+            "first_open_time": tf_info.get("first_open_time"),
+            "last_open_time":  tf_info.get("last_open_time"),
+            "is_fresh":        _lm_candle_tf_is_fresh(uid, exchange, market, symbol, tf),
+            "sample_candles":  [
+                {
+                    "open_time": c.open_time,
+                    "open": c.open, "high": c.high,
+                    "low":  c.low,  "close": c.close,
+                    "volume": c.volume,
+                }
+                for c in candles
+            ],
+        }
+
+    snap = _json_loads_safe(row.snapshot_json, {})
+    return jsonify({
+        "ok":          True,
+        "item_id":     item_id,
+        "symbol":      symbol,
+        "exchange":    exchange,
+        "market":      market,
+        "candle_store_snapshot": snap.get("candle_store", {}),
+        "per_tf":      per_tf_debug,
+    })
 
 
 @app.route("/api/live-monitor/items/<int:item_id>", methods=["DELETE"])
