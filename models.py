@@ -343,6 +343,9 @@ class UserPreference(db.Model):
     desktop_tutorial_completed_at = db.Column(db.DateTime, nullable=True)
     desktop_tutorial_skipped_at   = db.Column(db.DateTime, nullable=True)
 
+    # Phase 10.8: OB Distance/Approach settings JSON (per-user, persistent)
+    ob_da_settings_json = db.Column(db.Text, nullable=True)
+
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
                             onupdate=lambda: datetime.now(timezone.utc))
 

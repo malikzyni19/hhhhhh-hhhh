@@ -616,6 +616,13 @@ def _auto_migrate():
                 ))
                 conn.commit()
                 print("[MIGRATE] email_verified column ensured on users table")
+                # Phase 10.8: OB Distance/Approach settings column on user_preferences
+                conn.execute(text(
+                    "ALTER TABLE user_preferences ADD COLUMN IF NOT EXISTS "
+                    "ob_da_settings_json TEXT"
+                ))
+                conn.commit()
+                print("[MIGRATE] ob_da_settings_json column ensured on user_preferences table")
         except Exception as exc:
             print(f"[MIGRATE] Auto-migration warning: {exc}")
 
@@ -13087,13 +13094,16 @@ _LM_SE_CRITICAL_MODES      = {"invalidated", "blocked", "refined_internal_entry"
 def _lm_score_orderbook_wall_for_zone(symbol: str, exchange: str, direction: str,
                                        zone_low: float, zone_high: float,
                                        analysis_source: str = None,
-                                       ob_da_settings: dict = None) -> dict:
+                                       ob_da_settings: dict = None,
+                                       tf: str = None) -> dict:
     """Return structured OB wall evidence for a zone.
 
-    {available, status, wall_side, wall_price, wall_strength, wall_score, notes}
+    {available, status, wall_side, wall_price, wall_strength, wall_score, notes,
+     approaching, approach_threshold_pct}
     Only _ob_books (Binance) is used; non-Binance falls back to Binance stream.
     zones/SL/TP are never modified by this function.
-    ob_da_settings: optional Phase 10.8 OB distance/approach settings dict keyed by tf.
+    ob_da_settings: Phase 10.8 OB distance/approach settings dict keyed by tf.
+    tf: candidate timeframe — used to select the correct approach_pct.
     """
     unavail = {
         "available":     False,
@@ -13164,34 +13174,39 @@ def _lm_score_orderbook_wall_for_zone(symbol: str, exchange: str, direction: str
             notes += " [stale OB — treat as weak evidence]"
         notes += _ob_fallback_note
 
-        # Phase 10.8: determine approach status using ob_da_settings if provided
-        _approach_note = ""
+        # Phase 10.8: determine approach status using TF-specific approach_pct
+        _approach_note    = ""
+        _approach_pct_out = None
         if ob_da_settings and best_p and zone_high and zone_low:
-            _zone_mid  = (zone_high + zone_low) / 2.0
-            _zone_size = zone_high - zone_low
-            # Use the zone range to compute a representative "tf" approach key
-            # This is best-effort — caller may pass tf-specific settings
-            _approach_pct = None
-            for _tf_key in ("5m", "15m", "30m", "1h", "4h", "1d"):
-                _tf_cfg = ob_da_settings.get(_tf_key, {})
-                if _tf_cfg.get("approach_pct") is not None:
-                    _approach_pct = float(_tf_cfg["approach_pct"]) / 100.0
-                    break
-            if _approach_pct and _zone_mid > 0:
-                _dist_to_best = abs(best_p - _zone_mid) / _zone_mid
-                if _dist_to_best <= _approach_pct:
-                    _approach_note = " [OB APPROACHING — within approach threshold]"
+            _zone_mid = (zone_high + zone_low) / 2.0
+            # Use caller-provided tf for TF-specific threshold; fallback chain
+            _tf_norm = (tf or "").lower().replace(" ", "")
+            _tf_map  = {"5m": "5m", "15m": "15m", "30m": "30m",
+                        "1h": "1h", "1hour": "1h", "4h": "4h", "4hour": "4h",
+                        "1d": "1d", "1day": "1d"}
+            _tf_key  = _tf_map.get(_tf_norm)
+            _tf_cfg  = (ob_da_settings.get(_tf_key) or
+                        ob_da_settings.get("4h") or  # sensible fallback
+                        {}) if _tf_key else (ob_da_settings.get("4h") or {})
+            _approach_pct_val = _tf_cfg.get("approach_pct")
+            if _approach_pct_val is not None and _zone_mid > 0:
+                _approach_pct_out = float(_approach_pct_val)
+                _dist_to_best = abs(best_p - _zone_mid) / _zone_mid * 100.0
+                if _dist_to_best <= _approach_pct_out:
+                    _approach_note = (f" [OB APPROACHING — within {_approach_pct_out}%"
+                                      f" approach threshold for {_tf_key or 'default'}]")
                     notes += _approach_note
 
         return {
-            "available":     True,
-            "status":        ob_status,
-            "wall_side":     side_key[:3],  # "bid" or "ask"
-            "wall_price":    round(best_p, 6) if best_p else None,
-            "wall_strength": wall_str,
-            "wall_score":    wall_score,
-            "notes":         notes,
-            "approaching":   bool(_approach_note),
+            "available":            True,
+            "status":               ob_status,
+            "wall_side":            side_key[:3],  # "bid" or "ask"
+            "wall_price":           round(best_p, 6) if best_p else None,
+            "wall_strength":        wall_str,
+            "wall_score":           wall_score,
+            "notes":                notes,
+            "approaching":          bool(_approach_note),
+            "approach_threshold_pct": _approach_pct_out,
         }
     except Exception as _e:
         return {**unavail, "notes": f"error: {_e}"}
@@ -13434,11 +13449,17 @@ def _lm_check_candle_close_invalidation(direction: str, zone_high: float,
 # ── Candidate extractor ───────────────────────────────────────────────────────
 
 def _lm_extract_refinement_candidates(item, snapshot: dict,
-                                       scan_result=None) -> list:
+                                       scan_result=None,
+                                       ob_da_settings: dict = None,
+                                       current_price: float = 0.0) -> list:
     """Extract lower-TF OBs/FIBs overlapping/near the parent zone.
 
     Only extracts when scan_result is provided (requires raw TF data).
     Returns up to 5 candidates ordered by quality desc.
+
+    ob_da_settings: Phase 10.8 distance/approach settings dict {tf: {distance_pct, approach_pct}}.
+    current_price:  Live price for computing distance_pct_live.
+    Candidates where live distance > distance_pct[tf] are excluded (marked far).
     """
     zone_high = getattr(item, "zone_high", None)
     zone_low  = getattr(item, "zone_low",  None)
@@ -13538,6 +13559,42 @@ def _lm_extract_refinement_candidates(item, snapshot: dict,
                 "fib_level":     flvl,
             })
 
+    # ── Phase 10.8 Task 2: annotate and filter by distance_pct ──────────────
+    _tf_norm_map = {"5m": "5m", "15m": "15m", "30m": "30m",
+                    "1h": "1h", "1hour": "1h", "4h": "4h", "4hour": "4h",
+                    "1d": "1d", "1day": "1d"}
+    _price = float(current_price or 0)
+    filtered: list = []
+    for c in cands:
+        c_tf      = (c.get("tf") or "").lower().strip()
+        c_tf_key  = _tf_norm_map.get(c_tf)
+        da_cfg    = (ob_da_settings or {}).get(c_tf_key, {}) if c_tf_key else {}
+        dist_thr  = float(da_cfg.get("distance_pct") or 999.0)
+        appr_thr  = float(da_cfg.get("approach_pct") or 999.0)
+
+        # Compute live distance from current price to candidate mid
+        c_mid     = float(c.get("mid_price") or 0)
+        if _price > 0 and c_mid > 0:
+            live_dist = abs(_price - c_mid) / _price * 100.0
+        else:
+            live_dist = float(c.get("dist") or 0)
+
+        within_d  = (live_dist <= dist_thr)
+        approaching = (live_dist <= appr_thr) and within_d
+
+        # Annotate candidate with Phase 10.8 distance fields
+        c["distance_pct_live"]       = round(live_dist, 4)
+        c["distance_threshold_pct"]  = dist_thr if da_cfg else None
+        c["approach_threshold_pct"]  = appr_thr if da_cfg else None
+        c["within_distance"]         = within_d
+        c["approaching"]             = approaching
+
+        # Filter: exclude candidates beyond distance threshold (only when settings provided)
+        if ob_da_settings and c_tf_key and not within_d:
+            continue  # too far — not relevant for this TF's threshold
+        filtered.append(c)
+
+    cands = filtered
     cands.sort(key=lambda c: (-c["quality"], abs(c["mid_price"] - mid)))
     return cands[:5]
 
@@ -13615,9 +13672,14 @@ def _lm_score_refinement_candidate(candidate: dict, parent_setup: dict,
     zl = float(candidate.get("zone_low")  or 0)
     zh = float(candidate.get("zone_high") or 0)
     ob_wall_ev = {"available": False, "wall_score": 0, "wall_strength": "none", "notes": ""}
+    _cand_tf   = candidate.get("tf", "")
+    _ob_da_ctx = live_context.get("ob_distance_approach_settings")
     if sym and zl and zh:
-        ob_wall_ev = _lm_score_orderbook_wall_for_zone(sym, exchange, direction, zl, zh,
-                                                        analysis_source=analysis_source)
+        ob_wall_ev = _lm_score_orderbook_wall_for_zone(
+            sym, exchange, direction, zl, zh,
+            analysis_source=analysis_source,
+            ob_da_settings=_ob_da_ctx,
+            tf=_cand_tf)
         wall_s     = ob_wall_ev.get("wall_score", 0)
         # Only use OB wall when it's fresh — stale OB is weak evidence
         if ob_wall_ev.get("status") == "fresh":
@@ -13911,7 +13973,9 @@ def _lm_build_smart_entry_plan(item, snapshot: dict = None, scan_result=None,
 
     if scan_result:
         raw_cands = _lm_extract_refinement_candidates(
-            item, snapshot, scan_result=scan_result)
+            item, snapshot, scan_result=scan_result,
+            ob_da_settings=_ob_da_settings,
+            current_price=live_price)
     else:
         raw_cands = [
             {k: v for k, v in c.items()
@@ -13937,6 +14001,12 @@ def _lm_build_smart_entry_plan(item, snapshot: dict = None, scan_result=None,
             "absorption":     cand.get("absorption", False),
             "state":          cand.get("state", ""),
             "fib_level":      cand.get("fib_level"),
+            # Phase 10.8 Task 4: distance/approach fields
+            "distance_pct_live":      cand.get("distance_pct_live"),
+            "distance_threshold_pct": cand.get("distance_threshold_pct"),
+            "approach_threshold_pct": cand.get("approach_threshold_pct"),
+            "within_distance":        cand.get("within_distance"),
+            "approaching":            cand.get("approaching"),
             "score":          res["score"],
             "reasons":        res["reasons"],
             "strong_reasons": res["strong_reasons"],
@@ -20822,7 +20892,19 @@ _LM_OB_VALID_TFS = set(_LM_OB_SETTINGS_DEFAULTS.keys())
 
 
 def _lm_ob_settings_load(uid) -> dict:
-    """Load persisted OB distance/approach settings for uid from /tmp file."""
+    """Load persisted OB distance/approach settings for uid.
+
+    Primary: UserPreference.ob_da_settings_json (DB, survives redeploy).
+    Fallback: /tmp file (ephemeral, for local dev / DB unavailable).
+    """
+    try:
+        from models import UserPreference as _UP
+        row = _UP.query.filter_by(user_id=uid).first()
+        if row and row.ob_da_settings_json:
+            return _json_loads_safe(row.ob_da_settings_json, {})
+    except Exception:
+        pass
+    # Fallback: /tmp (ephemeral, not reliable on Koyeb but better than nothing)
     try:
         path = f"/tmp/zyni_ob_settings_{uid}.json"
         if os.path.exists(path):
@@ -20834,11 +20916,28 @@ def _lm_ob_settings_load(uid) -> dict:
 
 
 def _lm_ob_settings_save(uid, settings: dict):
-    """Persist OB distance/approach settings for uid to /tmp file."""
+    """Persist OB distance/approach settings for uid.
+
+    Primary: UserPreference.ob_da_settings_json (DB, survives redeploy).
+    Also writes /tmp as a local fallback.
+    """
+    raw = _json_dumps_safe(settings)
+    # Primary: DB
+    try:
+        from models import UserPreference as _UP, db as _db
+        row = _UP.query.filter_by(user_id=uid).first()
+        if row is None:
+            row = _UP(user_id=uid)
+            _db.session.add(row)
+        row.ob_da_settings_json = raw
+        _db.session.commit()
+    except Exception:
+        pass
+    # Also write /tmp as ephemeral fallback
     try:
         path = f"/tmp/zyni_ob_settings_{uid}.json"
         with open(path, "w") as f:
-            json.dump(settings, f)
+            f.write(raw)
     except Exception:
         pass
 
