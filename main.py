@@ -10794,6 +10794,606 @@ if os.environ.get("ZYNI_LM_WS_ENABLED") == "1":
     _ensure_lm_delta_thread()
 
 
+# ── Phase 10.8: Multi-Exchange Live WS Engine ────────────────────────────────
+# Public-only WS: Bybit linear, OKX public, MEXC contract
+# Gated on ZYNI_LM_MULTI_EXCHANGE_WS_ENABLED=1
+# No private API, no order logic.
+
+_LM_MX_WS_ENABLED = os.environ.get("ZYNI_LM_MULTI_EXCHANGE_WS_ENABLED") == "1"
+
+_lm_mx_books_lock  = threading.Lock()
+_lm_mx_delta_lock  = threading.Lock()
+_lm_mx_liq_lock    = threading.Lock()
+_lm_mx_thread_lock = threading.Lock()
+
+# "{exchange}:{symbol}" → {bids: dict, asks: dict, ts: float, ready: bool}
+_lm_mx_books: dict = {}
+# "{exchange}:{symbol}" → {trades: deque, last_update_ts: float}
+_lm_mx_delta: dict = {}
+# "{exchange}:{symbol}" → {events: deque, total_liq_usd_5m, last_liq_price, last_liq_side, last_update_ts}
+_lm_mx_liq:   dict = {}
+# "{exchange}" → Thread
+_lm_mx_threads: dict = {}
+# "{exchange}" → bool
+_lm_mx_running: dict = {}
+
+
+def _ws_send_text(sock, text: str):
+    """Send a text WebSocket frame (masked, as required for client→server)."""
+    data = text.encode("utf-8")
+    n    = len(data)
+    mask = os.urandom(4)
+    masked = bytes(b ^ mask[i % 4] for i, b in enumerate(data))
+    if n <= 125:
+        header = bytes([0x81, 0x80 | n]) + mask
+    elif n <= 65535:
+        header = bytes([0x81, 0xFE]) + struct.pack(">H", n) + mask
+    else:
+        header = bytes([0x81, 0xFF]) + struct.pack(">Q", n) + mask
+    sock.sendall(header + masked)
+
+
+def _raw_ws_connect_port(host: str, path: str, port: int = 443) -> socket.socket:
+    """Like _raw_ws_connect but with configurable port (e.g. OKX uses 8443)."""
+    ctx  = ssl.create_default_context()
+    sock = socket.create_connection((host, port), timeout=10)
+    sock = ctx.wrap_socket(sock, server_hostname=host)
+    key  = base64.b64encode(os.urandom(16)).decode()
+    hs   = (f"GET {path} HTTP/1.1\r\n"
+            f"Host: {host}\r\n"
+            f"Upgrade: websocket\r\n"
+            f"Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Key: {key}\r\n"
+            f"Sec-WebSocket-Version: 13\r\n"
+            f"\r\n")
+    sock.sendall(hs.encode())
+    resp = b""
+    while b"\r\n\r\n" not in resp:
+        resp += sock.recv(1024)
+    return sock
+
+
+# ── Symbol format converters ─────────────────────────────────────────────────
+
+def _mx_bybit_sym(symbol: str) -> str:
+    """BTCUSDT → BTCUSDT (Bybit linear perp — same format)"""
+    return symbol.upper()
+
+
+def _mx_okx_instid(symbol: str) -> str:
+    """BTCUSDT → BTC-USDT-SWAP (OKX perpetual futures)"""
+    base = symbol.upper()
+    if base.endswith("USDT"):
+        base = base[:-4]
+    return f"{base}-USDT-SWAP"
+
+
+def _mx_mexc_sym(symbol: str) -> str:
+    """BTCUSDT → BTC_USDT (MEXC contract)"""
+    base = symbol.upper()
+    if base.endswith("USDT"):
+        base = base[:-4]
+    return f"{base}_USDT"
+
+
+# ── Active multi-exchange symbols helper ─────────────────────────────────────
+
+def _lm_mx_active_symbols() -> list:
+    """Return sorted list of symbols from active Live Monitor items."""
+    try:
+        from models import LiveMonitorItem as _LMI
+        rows = _LMI.query.filter_by(is_active=True).with_entities(_LMI.symbol).all()
+        return sorted({r.symbol for r in rows})
+    except Exception:
+        return []
+
+
+# ── Cache updaters ───────────────────────────────────────────────────────────
+
+def _lm_mx_book_update(exchange: str, symbol: str, bids_raw, asks_raw,
+                       is_snapshot: bool = True):
+    key = f"{exchange}:{symbol}"
+    now = time.time()
+    with _lm_mx_books_lock:
+        if is_snapshot or key not in _lm_mx_books:
+            bids = {float(p): float(q) for p, q in bids_raw if float(q) > 0}
+            asks = {float(p): float(q) for p, q in asks_raw if float(q) > 0}
+            _lm_mx_books[key] = {"bids": bids, "asks": asks, "ts": now, "ready": True}
+        else:
+            book = _lm_mx_books[key]
+            for p, q in bids_raw:
+                fp, fq = float(p), float(q)
+                if fq == 0:
+                    book["bids"].pop(fp, None)
+                else:
+                    book["bids"][fp] = fq
+            for p, q in asks_raw:
+                fp, fq = float(p), float(q)
+                if fq == 0:
+                    book["asks"].pop(fp, None)
+                else:
+                    book["asks"][fp] = fq
+            book["ts"] = now
+            book["ready"] = True
+
+
+def _lm_mx_delta_update(exchange: str, symbol: str, side: str, qty: float, price: float):
+    """side: 'buy' or 'sell'"""
+    key    = f"{exchange}:{symbol}"
+    now    = time.time()
+    usd    = qty * price
+    cutoff = now - 310
+    with _lm_mx_delta_lock:
+        if key not in _lm_mx_delta:
+            _lm_mx_delta[key] = {"trades": deque(), "last_update_ts": now}
+        e = _lm_mx_delta[key]
+        e["trades"].append((now, side, usd))
+        while e["trades"] and e["trades"][0][0] < cutoff:
+            e["trades"].popleft()
+        e["last_update_ts"] = now
+
+
+def _lm_mx_liq_update(exchange: str, symbol: str, side: str, qty: float, price: float):
+    """Record a liquidation event. side: 'long' or 'short'"""
+    key    = f"{exchange}:{symbol}"
+    now    = time.time()
+    usd    = qty * price
+    cutoff = now - 310
+    with _lm_mx_liq_lock:
+        if key not in _lm_mx_liq:
+            _lm_mx_liq[key] = {"events": deque(), "last_update_ts": now,
+                                "last_liq_price": None, "last_liq_side": ""}
+        e = _lm_mx_liq[key]
+        e["events"].append((now, side, usd))
+        e["last_liq_price"] = price
+        e["last_liq_side"]  = side
+        e["last_update_ts"] = now
+        while e["events"] and e["events"][0][0] < cutoff:
+            e["events"].popleft()
+
+
+# ── Cache readers ─────────────────────────────────────────────────────────────
+
+def _lm_mx_get_book(exchange: str, symbol: str):
+    """Return (book_dict, status_str) or (None, 'unavailable')."""
+    key = f"{exchange}:{symbol}"
+    now = time.time()
+    with _lm_mx_books_lock:
+        entry = dict(_lm_mx_books.get(key) or {})
+    if not entry or not entry.get("ready"):
+        return None, "unavailable"
+    age = now - entry.get("ts", 0)
+    status = "fresh" if age <= 5 else "stale"
+    return entry, status
+
+
+def _lm_mx_get_delta(exchange: str, symbol: str):
+    """Return (delta_dict, status_str) or (None, 'unavailable')."""
+    key = f"{exchange}:{symbol}"
+    now = time.time()
+    with _lm_mx_delta_lock:
+        entry = dict(_lm_mx_delta.get(key) or {})
+    if not entry:
+        return None, "unavailable"
+    trades = list(entry.get("trades") or [])
+    w60 = now - 60
+    w5m = now - 300
+    buy_60  = sum(t[2] for t in trades if t[0] >= w60 and t[1] == "buy")
+    sell_60 = sum(t[2] for t in trades if t[0] >= w60 and t[1] == "sell")
+    buy_5m  = sum(t[2] for t in trades if t[0] >= w5m  and t[1] == "buy")
+    sell_5m = sum(t[2] for t in trades if t[0] >= w5m  and t[1] == "sell")
+    tot60   = buy_60 + sell_60
+    tot5m   = buy_5m + sell_5m
+    age     = now - entry.get("last_update_ts", 0)
+    return {
+        "buy_vol_60s":   buy_60,  "sell_vol_60s":  sell_60,
+        "delta_60s":     buy_60 - sell_60,
+        "delta_pct_60s": round((buy_60 - sell_60) / tot60 * 100, 1) if tot60 > 0 else 0.0,
+        "buy_vol_5m":    buy_5m,  "sell_vol_5m":   sell_5m,
+        "delta_5m":      buy_5m  - sell_5m,
+        "delta_pct_5m":  round((buy_5m - sell_5m) / tot5m * 100, 1) if tot5m > 0 else 0.0,
+        "data_age_sec":  round(age, 1),
+        "status":        "fresh" if age <= 5 else "stale",
+    }, ("fresh" if age <= 5 else "stale")
+
+
+def _lm_mx_get_liq(exchange: str, symbol: str):
+    """Return (liq_dict, status_str) or (None, 'unavailable')."""
+    key = f"{exchange}:{symbol}"
+    now = time.time()
+    with _lm_mx_liq_lock:
+        entry = dict(_lm_mx_liq.get(key) or {})
+    if not entry:
+        return None, "unavailable"
+    events = list(entry.get("events") or [])
+    w5m   = now - 300
+    long_u  = sum(e[2] for e in events if e[0] >= w5m and e[1] == "long")
+    short_u = sum(e[2] for e in events if e[0] >= w5m and e[1] == "short")
+    age     = now - entry.get("last_update_ts", 0)
+    return {
+        "total_liq_usd_5m": long_u + short_u,
+        "long_liq_usd_5m":  long_u,
+        "short_liq_usd_5m": short_u,
+        "last_liq_price":   entry.get("last_liq_price"),
+        "last_liq_side":    entry.get("last_liq_side", ""),
+        "data_age_sec":     round(age, 1),
+    }, ("fresh" if age <= 8 else "stale")
+
+
+def _lm_mx_stream_status(exchange: str) -> str:
+    """Return 'running', 'stopped', or 'disabled'."""
+    if not _LM_MX_WS_ENABLED:
+        return "disabled"
+    t = _lm_mx_threads.get(exchange)
+    return "running" if (t and t.is_alive()) else "stopped"
+
+
+# ── Bybit public WS thread ───────────────────────────────────────────────────
+
+def _lm_bybit_ws_loop():
+    """Bybit public linear WS: orderbook + publicTrade + liquidation."""
+    global _lm_mx_running
+    print("[MX-BYBIT] Background thread started")
+    current_symbols: list = []
+    sock = None
+
+    while _lm_mx_running.get("bybit", False):
+        new_symbols = _lm_mx_active_symbols()
+        if new_symbols != current_symbols or sock is None:
+            if sock:
+                try: sock.close()
+                except Exception: pass
+                sock = None
+            current_symbols = new_symbols
+            if not current_symbols:
+                time.sleep(10)
+                continue
+            try:
+                print(f"[MX-BYBIT] Connecting for {current_symbols}")
+                sock = _raw_ws_connect("stream.bybit.com", "/v5/public/linear")
+                sock.settimeout(30)
+                args = []
+                for sym in current_symbols:
+                    bs = _mx_bybit_sym(sym)
+                    args += [f"orderbook.1.{bs}", f"publicTrade.{bs}", f"liquidation.{bs}"]
+                _ws_send_text(sock, json.dumps({"op": "subscribe", "args": args}))
+                print("[MX-BYBIT] Subscribed")
+            except Exception as e:
+                print(f"[MX-BYBIT] Connect error: {e}")
+                sock = None
+                time.sleep(5)
+                continue
+
+        try:
+            raw = _ws_recv_frame(sock)
+        except socket.timeout:
+            try:
+                _ws_send_text(sock, json.dumps({"op": "ping"}))
+            except Exception:
+                sock = None
+            continue
+        except Exception as e:
+            print(f"[MX-BYBIT] Recv error: {e}")
+            try: sock.close()
+            except Exception: pass
+            sock = None
+            time.sleep(2)
+            continue
+
+        if raw is None:
+            try: sock.close()
+            except Exception: pass
+            sock = None
+            time.sleep(2)
+            continue
+        if not raw:
+            continue
+
+        try:
+            msg = json.loads(raw.decode("utf-8"))
+        except Exception:
+            continue
+
+        topic = msg.get("topic", "")
+        data  = msg.get("data")
+
+        if topic.startswith("orderbook") and data:
+            sym_raw = (data.get("s") or "").upper()
+            bids    = data.get("b", [])
+            asks    = data.get("a", [])
+            is_snap = msg.get("type") == "snapshot"
+            if sym_raw and (bids or asks):
+                try:
+                    _lm_mx_book_update("bybit", sym_raw, bids, asks, is_snapshot=is_snap)
+                except Exception:
+                    pass
+
+        elif topic.startswith("publicTrade") and isinstance(data, list):
+            for trade in data:
+                sym_raw = (trade.get("s") or "").upper()
+                side    = "buy" if trade.get("S") == "Buy" else "sell"
+                try:
+                    p = float(trade.get("p", 0))
+                    q = float(trade.get("v", 0))
+                    if sym_raw and p > 0 and q > 0:
+                        _lm_mx_delta_update("bybit", sym_raw, side, q, p)
+                except Exception:
+                    pass
+
+        elif topic.startswith("liquidation") and data:
+            sym_raw = (data.get("symbol") or "").upper()
+            side    = "long" if data.get("side") == "Sell" else "short"
+            try:
+                p = float(data.get("price", 0))
+                q = float(data.get("size", 0))
+                if sym_raw and p > 0 and q > 0:
+                    _lm_mx_liq_update("bybit", sym_raw, side, q, p)
+            except Exception:
+                pass
+
+    print("[MX-BYBIT] Thread stopped")
+    if sock:
+        try: sock.close()
+        except Exception: pass
+
+
+# ── OKX public WS thread ─────────────────────────────────────────────────────
+
+def _lm_okx_ws_loop():
+    """OKX public WS (wss://ws.okx.com:8443): books5 + trades + liquidation-orders."""
+    global _lm_mx_running
+    print("[MX-OKX] Background thread started")
+    current_symbols: list = []
+    sock = None
+
+    while _lm_mx_running.get("okx", False):
+        new_symbols = _lm_mx_active_symbols()
+        if new_symbols != current_symbols or sock is None:
+            if sock:
+                try: sock.close()
+                except Exception: pass
+                sock = None
+            current_symbols = new_symbols
+            if not current_symbols:
+                time.sleep(10)
+                continue
+            try:
+                print(f"[MX-OKX] Connecting for {current_symbols}")
+                sock = _raw_ws_connect_port("ws.okx.com", "/ws/v5/public", port=8443)
+                sock.settimeout(30)
+                args = []
+                for sym in current_symbols:
+                    inst = _mx_okx_instid(sym)
+                    args += [
+                        {"channel": "books5",           "instId": inst},
+                        {"channel": "trades",            "instId": inst},
+                        {"channel": "liquidation-orders","instId": inst},
+                    ]
+                _ws_send_text(sock, json.dumps({"op": "subscribe", "args": args}))
+                print("[MX-OKX] Subscribed")
+            except Exception as e:
+                print(f"[MX-OKX] Connect error: {e}")
+                sock = None
+                time.sleep(5)
+                continue
+
+        try:
+            raw = _ws_recv_frame(sock)
+        except socket.timeout:
+            try:
+                _ws_send_text(sock, "ping")
+            except Exception:
+                sock = None
+            continue
+        except Exception as e:
+            print(f"[MX-OKX] Recv error: {e}")
+            try: sock.close()
+            except Exception: pass
+            sock = None
+            time.sleep(2)
+            continue
+
+        if raw is None:
+            try: sock.close()
+            except Exception: pass
+            sock = None
+            time.sleep(2)
+            continue
+        if not raw:
+            continue
+
+        try:
+            raw_text = raw.decode("utf-8")
+            if raw_text == "pong":
+                continue
+            msg = json.loads(raw_text)
+        except Exception:
+            continue
+
+        ch   = (msg.get("arg") or {}).get("channel", "")
+        data_list = msg.get("data", [])
+        if not isinstance(data_list, list) or not data_list:
+            continue
+
+        if ch == "books5":
+            for d in data_list:
+                inst = d.get("instId", "")
+                sym_raw = inst.replace("-USDT-SWAP", "USDT").replace("-", "")
+                bids = d.get("bids", [])
+                asks = d.get("asks", [])
+                if sym_raw and (bids or asks):
+                    try:
+                        _lm_mx_book_update("okx", sym_raw.upper(), bids, asks, is_snapshot=True)
+                    except Exception:
+                        pass
+
+        elif ch == "trades":
+            for trade in data_list:
+                inst    = trade.get("instId", "")
+                sym_raw = inst.replace("-USDT-SWAP", "USDT").replace("-", "")
+                side    = "buy" if trade.get("side") == "buy" else "sell"
+                try:
+                    p = float(trade.get("px", 0))
+                    q = float(trade.get("sz", 0))
+                    if sym_raw and p > 0 and q > 0:
+                        _lm_mx_delta_update("okx", sym_raw.upper(), side, q, p)
+                except Exception:
+                    pass
+
+        elif ch == "liquidation-orders":
+            for item_d in data_list:
+                inst    = item_d.get("instId", "")
+                sym_raw = inst.replace("-USDT-SWAP", "USDT").replace("-", "")
+                for det in (item_d.get("details") or []):
+                    side = "short" if det.get("side") == "buy" else "long"
+                    try:
+                        p = float(det.get("bkPx", 0))
+                        q = float(det.get("sz", 0))
+                        if sym_raw and p > 0 and q > 0:
+                            _lm_mx_liq_update("okx", sym_raw.upper(), side, q, p)
+                    except Exception:
+                        pass
+
+
+    print("[MX-OKX] Thread stopped")
+    if sock:
+        try: sock.close()
+        except Exception: pass
+
+
+# ── MEXC public WS thread ────────────────────────────────────────────────────
+
+def _lm_mexc_ws_loop():
+    """MEXC public contract WS: depth + deals. No liquidation (unavailable public)."""
+    global _lm_mx_running
+    print("[MX-MEXC] Background thread started")
+    current_symbols: list = []
+    sock = None
+
+    while _lm_mx_running.get("mexc", False):
+        new_symbols = _lm_mx_active_symbols()
+        if new_symbols != current_symbols or sock is None:
+            if sock:
+                try: sock.close()
+                except Exception: pass
+                sock = None
+            current_symbols = new_symbols
+            if not current_symbols:
+                time.sleep(10)
+                continue
+            try:
+                print(f"[MX-MEXC] Connecting for {current_symbols}")
+                sock = _raw_ws_connect("contract.mexc.com", "/edge")
+                sock.settimeout(30)
+                for sym in current_symbols:
+                    ms = _mx_mexc_sym(sym)
+                    _ws_send_text(sock, json.dumps({"method": "sub.depth.step",
+                                                     "param": {"symbol": ms, "step": "step0"}}))
+                    _ws_send_text(sock, json.dumps({"method": "sub.deal",
+                                                     "param": {"symbol": ms}}))
+                print("[MX-MEXC] Subscribed")
+            except Exception as e:
+                print(f"[MX-MEXC] Connect error: {e}")
+                sock = None
+                time.sleep(5)
+                continue
+
+        try:
+            raw = _ws_recv_frame(sock)
+        except socket.timeout:
+            try:
+                _ws_send_text(sock, json.dumps({"method": "ping"}))
+            except Exception:
+                sock = None
+            continue
+        except Exception as e:
+            print(f"[MX-MEXC] Recv error: {e}")
+            try: sock.close()
+            except Exception: pass
+            sock = None
+            time.sleep(2)
+            continue
+
+        if raw is None:
+            try: sock.close()
+            except Exception: pass
+            sock = None
+            time.sleep(2)
+            continue
+        if not raw:
+            continue
+
+        try:
+            msg = json.loads(raw.decode("utf-8"))
+        except Exception:
+            continue
+
+        channel = msg.get("channel", "")
+        data    = msg.get("data") or {}
+        sym_raw = (msg.get("symbol") or "").upper().replace("_", "")
+
+        if channel == "push.depth.step0" and sym_raw:
+            bids_raw = data.get("bids", [])
+            asks_raw = data.get("asks", [])
+            if bids_raw or asks_raw:
+                try:
+                    bids = [[str(b[0]), str(b[1])] for b in bids_raw if len(b) >= 2]
+                    asks = [[str(a[0]), str(a[1])] for a in asks_raw if len(a) >= 2]
+                    _lm_mx_book_update("mexc", sym_raw + "USDT" if not sym_raw.endswith("USDT") else sym_raw,
+                                       bids, asks, is_snapshot=True)
+                except Exception:
+                    pass
+
+        elif channel == "push.deal" and sym_raw:
+            for trade in (data.get("list") or []):
+                try:
+                    p    = float(trade.get("p", 0))
+                    q    = float(trade.get("v", 0))
+                    side = "buy" if trade.get("T") == 1 else "sell"
+                    if p > 0 and q > 0:
+                        key_sym = sym_raw + "USDT" if not sym_raw.endswith("USDT") else sym_raw
+                        _lm_mx_delta_update("mexc", key_sym, side, q, p)
+                except Exception:
+                    pass
+
+    print("[MX-MEXC] Thread stopped")
+    if sock:
+        try: sock.close()
+        except Exception: pass
+
+
+# ── Start/stop helpers ───────────────────────────────────────────────────────
+
+def _ensure_lm_mx_exchange_stream(exchange: str):
+    """Start multi-exchange WS thread for exchange if not already running."""
+    if not _LM_MX_WS_ENABLED:
+        return
+    with _lm_mx_thread_lock:
+        existing = _lm_mx_threads.get(exchange)
+        if existing and existing.is_alive():
+            return
+        _lm_mx_running[exchange] = True
+        targets = {"bybit": _lm_bybit_ws_loop, "okx": _lm_okx_ws_loop, "mexc": _lm_mexc_ws_loop}
+        target = targets.get(exchange)
+        if not target:
+            return
+        t = threading.Thread(target=target, daemon=True, name=f"lm-mx-{exchange}")
+        _lm_mx_threads[exchange] = t
+        t.start()
+
+
+def _ensure_lm_mx_ws():
+    """Ensure all multi-exchange WS threads are running."""
+    if not _LM_MX_WS_ENABLED:
+        return
+    for ex in ("bybit", "okx", "mexc"):
+        _ensure_lm_mx_exchange_stream(ex)
+
+
+if _LM_MX_WS_ENABLED:
+    _ensure_lm_mx_ws()
+
+
 # ── Phase 10.7: True Aggregated Exchange Data Engine ─────────────────────────
 
 _LM_ANALYSIS_SOURCES        = {"aggregated", "binance", "bybit", "okx", "mexc"}
@@ -11405,11 +12005,31 @@ def _lm_build_true_aggregated_exchange_data(symbol: str, snapshot=None) -> dict:
 
     # ── Order Book ─────────────────────────────────────────────────────────────
     ob_r = {}
-    for _ex in ["binance", "bybit", "okx"]:   # MEXC OB not available
+    for _ex in ["binance", "bybit", "okx"]:   # MEXC OB REST not available
         ob = _lm_rest_cached(f"agg_ob_{_ex}:{symbol}", 5,
                               lambda e=_ex: _lm_fetch_exchange_orderbook(e, symbol))
         if ob and ob.get("available"):
             ob_r[_ex] = ob
+    # Phase 10.8: augment with MX WS order books for bybit/okx/mexc
+    _mx_ob_extra_notes = []
+    if _LM_MX_WS_ENABLED:
+        for _mx_ex in ("bybit", "okx", "mexc"):
+            _mx_bk, _mx_bk_st = _lm_mx_get_book(_mx_ex, symbol)
+            if _mx_bk and _mx_bk_st in ("fresh", "stale"):
+                _bids_mx = _mx_bk.get("bids", {})
+                _asks_mx = _mx_bk.get("asks", {})
+                _bb_mx = max(_bids_mx.keys()) if _bids_mx else None
+                _ba_mx = min(_asks_mx.keys()) if _asks_mx else None
+                if _bb_mx and _ba_mx:
+                    if _mx_ex not in ob_r:
+                        ob_r[_mx_ex] = {"available": True, "best_bid": _bb_mx,
+                                        "best_ask": _ba_mx, "status": _mx_bk_st,
+                                        "source": "mx_ws"}
+                    _mx_ob_extra_notes.append(
+                        f"{_mx_ex.title()} WS: Bid {_bb_mx:.4f} / Ask {_ba_mx:.4f} [{_mx_bk_st}]")
+                    _track(_mx_ex, True)
+    else:
+        _mx_ob_extra_notes = ["Multi-exchange WS disabled: set ZYNI_LM_MULTI_EXCHANGE_WS_ENABLED=1"]
     if ob_r:
         srcs   = list(ob_r.keys())
         b_vals = [v["best_bid"] for v in ob_r.values() if v.get("best_bid")]
@@ -11417,36 +12037,73 @@ def _lm_build_true_aggregated_exchange_data(symbol: str, snapshot=None) -> dict:
         ab  = round(sum(b_vals) / len(b_vals), 4) if b_vals else None
         aa  = round(sum(a_vals) / len(a_vals), 4) if a_vals else None
         for e in srcs: _track(e, True)
+        _ob_notes = f"Average best bid/ask from {len(srcs)} exchange(s)"
+        if _mx_ob_extra_notes:
+            _ob_notes += ". MX WS: " + "; ".join(_mx_ob_extra_notes)
         metrics["order_book"] = _lm_metric_result(
             "Order Book", value=f"Bid {ab} / Ask {aa}" if ab and aa else "—",
             status="fresh" if len(srcs) >= 2 else "partial",
             source="Aggregated: " + ", ".join(s.title() for s in srcs),
-            sources_used=srcs, sources_skipped=["mexc"],
-            notes=f"Average best bid/ask from {len(srcs)} exchange(s)",
+            sources_used=srcs,
+            sources_skipped=[e for e in _LM_AGGREGATED_EXCHANGES if e not in srcs],
+            notes=_ob_notes,
             updated=now_iso)
     else:
         metrics["order_book"] = _lm_metric_result(
             "Order Book", status="unavailable", source="Aggregated",
-            sources_skipped=["binance", "bybit", "okx", "mexc"])
+            sources_skipped=["binance", "bybit", "okx", "mexc"],
+            notes="; ".join(_mx_ob_extra_notes) if _mx_ob_extra_notes else "")
 
     # ── Liquidations ──────────────────────────────────────────────────────────
     liq = _lm_fetch_exchange_liquidations("binance", symbol)
     _track("binance", liq.get("available", False))
+    # Phase 10.8: also collect MX WS liq for bybit/okx
+    _mx_liq_parts = []
+    _mx_liq_srcs  = []
+    if _LM_MX_WS_ENABLED:
+        for _mx_ex in ("bybit", "okx"):
+            _mx_ld, _mx_ls = _lm_mx_get_liq(_mx_ex, symbol)
+            if _mx_ld:
+                _mx_liq_parts.append(
+                    f"{_mx_ex.title()}: L {_fmt_usd_lm(_mx_ld.get('long_liq_usd_5m',0))} "
+                    f"/ S {_fmt_usd_lm(_mx_ld.get('short_liq_usd_5m',0))}")
+                _mx_liq_srcs.append(_mx_ex)
+                _track(_mx_ex, True)
     if liq.get("available"):
         total  = liq.get("total_liq_usd_5m", 0)
         long_u = liq.get("long_liq_usd_5m", 0)
         short_u = liq.get("short_liq_usd_5m", 0)
+        _liq_src_note = ("Binance+MX WS" if _mx_liq_srcs
+                         else "Binance (partial — Bybit/OKX/MEXC liq not available)")
+        _liq_notes = ("Only Binance real-time liq stream is tracked in this version"
+                      if not _mx_liq_srcs
+                      else "Binance WS + Phase 10.8 MX WS: " + "; ".join(_mx_liq_parts))
         metrics["liquidations"] = _lm_metric_result(
             "Liquidations",
             value=f"L {_fmt_usd_lm(long_u)} / S {_fmt_usd_lm(short_u)} (5m)" if total else "None (5m)",
-            status="partial", source="Binance (partial — Bybit/OKX/MEXC liq not available)",
-            sources_used=["binance"], sources_skipped=["bybit", "okx", "mexc"],
-            notes="Only Binance real-time liq stream is tracked in this version",
+            status="partial" if not _mx_liq_srcs else "fresh",
+            source=_liq_src_note,
+            sources_used=["binance"] + _mx_liq_srcs,
+            sources_skipped=[e for e in _LM_AGGREGATED_EXCHANGES
+                             if e not in (["binance"] + _mx_liq_srcs)],
+            notes=_liq_notes,
+            updated=now_iso)
+    elif _mx_liq_parts:
+        metrics["liquidations"] = _lm_metric_result(
+            "Liquidations",
+            value="MX WS only (5m): " + "; ".join(_mx_liq_parts),
+            status="partial", source="Phase 10.8 MX WS",
+            sources_used=_mx_liq_srcs,
+            sources_skipped=[e for e in _LM_AGGREGATED_EXCHANGES if e not in _mx_liq_srcs],
+            notes="Binance liq unavailable; using Phase 10.8 MX WS liq data",
             updated=now_iso)
     else:
+        _liq_disabled_note = ("" if _LM_MX_WS_ENABLED
+                              else " Multi-exchange WS disabled: set ZYNI_LM_MULTI_EXCHANGE_WS_ENABLED=1")
         metrics["liquidations"] = _lm_metric_result(
             "Liquidations", status="unavailable", source="Aggregated",
-            sources_skipped=list(_LM_AGGREGATED_EXCHANGES))
+            sources_skipped=list(_LM_AGGREGATED_EXCHANGES),
+            notes=_liq_disabled_note.strip() if _liq_disabled_note else "")
 
     # ── Open Interest ──────────────────────────────────────────────────────────
     oi_r = {}
@@ -11505,21 +12162,54 @@ def _lm_build_true_aggregated_exchange_data(symbol: str, snapshot=None) -> dict:
     # ── Delta ──────────────────────────────────────────────────────────────────
     delta = _lm_fetch_exchange_delta("binance", symbol)
     _track("binance", delta.get("available", False))
+    # Phase 10.8: collect MX WS delta for bybit/okx/mexc
+    _mx_delta_parts = []
+    _mx_delta_srcs  = []
+    if _LM_MX_WS_ENABLED:
+        for _mx_ex in ("bybit", "okx", "mexc"):
+            _mx_dd, _mx_ds = _lm_mx_get_delta(_mx_ex, symbol)
+            if _mx_dd:
+                _d60_mx  = _mx_dd.get("delta_60s", 0)
+                _dp60_mx = _mx_dd.get("delta_pct_60s", 0.0)
+                _mx_delta_parts.append(
+                    f"{_mx_ex.title()}: {_fmt_usd_lm(abs(_d60_mx))} "
+                    f"{'Buy' if _d60_mx >= 0 else 'Sell'} ({_dp60_mx:+.1f}%)")
+                _mx_delta_srcs.append(_mx_ex)
+                _track(_mx_ex, True)
     if delta.get("available"):
         d60  = delta.get("delta_60s", 0)
         dpct = delta.get("delta_pct_60s", 0.0)
+        _delta_src = ("Binance+MX WS" if _mx_delta_srcs
+                      else "Binance (partial — aggTrade delta WS; other exchanges not tracked)")
+        _delta_notes = ("Only Binance real-time aggTrade delta is tracked"
+                        if not _mx_delta_srcs
+                        else "Binance aggTrade + Phase 10.8 MX WS: " + "; ".join(_mx_delta_parts))
         metrics["delta"] = _lm_metric_result(
             "Delta",
             value=f"{_fmt_usd_lm(abs(d60))} {'Buy' if d60>=0 else 'Sell'} ({dpct:+.1f}%) 60s",
-            status="partial",
-            source="Binance (partial — aggTrade delta WS; other exchanges not tracked)",
-            sources_used=["binance"], sources_skipped=["bybit", "okx", "mexc"],
-            notes="Only Binance real-time aggTrade delta is tracked",
+            status="partial" if not _mx_delta_srcs else "fresh",
+            source=_delta_src,
+            sources_used=["binance"] + _mx_delta_srcs,
+            sources_skipped=[e for e in _LM_AGGREGATED_EXCHANGES
+                             if e not in (["binance"] + _mx_delta_srcs)],
+            notes=_delta_notes,
+            updated=now_iso)
+    elif _mx_delta_parts:
+        metrics["delta"] = _lm_metric_result(
+            "Delta",
+            value="MX WS 60s: " + "; ".join(_mx_delta_parts),
+            status="partial", source="Phase 10.8 MX WS",
+            sources_used=_mx_delta_srcs,
+            sources_skipped=[e for e in _LM_AGGREGATED_EXCHANGES if e not in _mx_delta_srcs],
+            notes="Binance delta unavailable; using Phase 10.8 MX WS delta data",
             updated=now_iso)
     else:
+        _delta_disabled_note = ("" if _LM_MX_WS_ENABLED
+                                else " Multi-exchange WS disabled: set ZYNI_LM_MULTI_EXCHANGE_WS_ENABLED=1")
         metrics["delta"] = _lm_metric_result(
             "Delta", status="unavailable", source="Aggregated",
-            sources_skipped=list(_LM_AGGREGATED_EXCHANGES))
+            sources_skipped=list(_LM_AGGREGATED_EXCHANGES),
+            notes=_delta_disabled_note.strip() if _delta_disabled_note else "")
 
     # ── Long/Short Ratio ───────────────────────────────────────────────────────
     ls_r = {}

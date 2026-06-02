@@ -850,6 +850,20 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
 .lm-dh-warn{color:var(--yellow)}
 .lm-dh-err{color:var(--red-2)}
 .lm-dh-na{color:var(--text-3)}
+.lm-ob-da-wrap{border:1px solid var(--border);border-radius:7px;background:var(--bg-card);overflow:hidden;flex-shrink:0}
+.lm-ob-da-toggle{display:flex;align-items:center;gap:8px;padding:5px 10px;cursor:pointer;user-select:none;flex-wrap:wrap}
+.lm-ob-da-title{font-size:9.5px;font-weight:700;letter-spacing:.5px;color:var(--text-2);white-space:nowrap}
+.lm-ob-da-summary{font-size:9px;color:var(--accent);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lm-ob-da-expand{font-size:9px;color:var(--text-3);white-space:nowrap;cursor:pointer}
+.lm-ob-da-body{border-top:1px solid var(--border);padding:8px 10px}
+.lm-ob-da-help{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:6px}
+.lm-ob-da-help span{font-size:9px;color:var(--text-3)}
+.lm-ob-da-tbl{border-collapse:collapse;font-size:11px;width:auto}
+.lm-ob-da-tbl th{font-size:9px;font-weight:700;letter-spacing:.5px;color:var(--text-3);padding:3px 8px;text-align:left;border-bottom:1px solid var(--border)}
+.lm-ob-da-tbl td{padding:3px 8px}
+.lm-ob-da-tbl input{width:60px;background:var(--bg-card-2);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:2px 5px;font-size:11px;outline:none;text-align:right}
+.lm-ob-da-tbl input:focus{border-color:var(--accent)}
+.lm-ob-da-actions{display:flex;gap:6px;margin-top:7px}
 .lm-pane-scroll{flex:1;overflow-y:auto}
 .lm-pane-head{font-size:9.5px;font-weight:700;letter-spacing:.8px;color:var(--accent);padding:8px 10px;border-bottom:1px solid var(--border);flex-shrink:0}
 .lm-pane-section{padding:10px}
@@ -4384,26 +4398,27 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
               '<div class="lm-sub" id="lmSubLine">Loading…</div>'+
             '</div>'+
             '<div class="session-pill"><div class="session-dot"></div><span id="lmSession">—</span></div>'+
-            '<div style="display:flex;align-items:center;gap:5px">'+
-              '<span class="seg-label">TF</span>'+
-              '<div class="seg" id="lmTfSeg">'+
-                '<button data-lmtf="15m" class="on">15m</button>'+
-                '<button data-lmtf="30m" class="on">30m</button>'+
-                '<button data-lmtf="1h" class="on">1H</button>'+
-                '<button data-lmtf="4h" class="on">4H</button>'+
-                '<button data-lmtf="1d" class="on">1D</button>'+
+            '<div class="lm-ob-da-wrap" id="lmObDaWrap">'+
+              '<div class="lm-ob-da-toggle" id="lmObDaToggle">'+
+                '<span class="lm-ob-da-title">OB Distance &amp; Approach</span>'+
+                '<span class="lm-ob-da-summary" id="lmObDaSummary">15m: D 0.80% / A 0.25% · 1H: D 1.50% / A 0.50% · 4H: D 2.50% / A 0.80%</span>'+
+                '<span class="lm-ob-da-expand" id="lmObDaExpandLbl">&#9658; Tap to expand</span>'+
               '</div>'+
-              '<span style="font-size:9.5px;font-weight:700;padding:2px 7px;border-radius:4px;background:rgba(139,92,246,.1);color:#a78bfa;border:1px solid rgba(139,92,246,.25);letter-spacing:.3px;white-space:nowrap" title="5m is hidden execution timeframe — future AI Agent only">Exec: Auto 5m</span>'+
-              '<span style="font-size:9.5px;font-weight:700;padding:2px 7px;border-radius:4px;background:rgba(34,211,238,.08);color:var(--accent);border:1px solid rgba(34,211,238,.2);letter-spacing:.3px;white-space:nowrap" title="Bias detection minimum timeframe is 1H">Bias Min: 1H</span>'+
-            '</div>'+
-            '<div style="display:flex;align-items:center;gap:5px">'+
-              '<span class="seg-label">Modules</span>'+
-              '<div class="seg" id="lmModSeg">'+
-                '<button data-lmmod="OB" class="on">OB</button>'+
-                '<button data-lmmod="FVG" class="on">FVG</button>'+
-                '<button data-lmmod="FIB" class="on">FIB</button>'+
-                '<button data-lmmod="Breaker">Breaker</button>'+
-                '<button data-lmmod="Bias" class="on">Bias</button>'+
+              '<div class="lm-ob-da-body" id="lmObDaBody" style="display:none">'+
+                '<div class="lm-ob-da-help">'+
+                  '<span>Distance % = include OBs within this % from price</span>'+
+                  '<span>Approach % = trigger Approaching when price within this %</span>'+
+                '</div>'+
+                '<table class="lm-ob-da-tbl" id="lmObDaTbl">'+
+                  '<thead><tr><th>TF</th><th>Distance %</th><th>Approach %</th></tr></thead>'+
+                  '<tbody id="lmObDaBody2">'+
+                    '<!-- rows rendered by JS -->'+
+                  '</tbody>'+
+                '</table>'+
+                '<div class="lm-ob-da-actions">'+
+                  '<button class="btn" id="lmObDaSave" type="button">Save</button>'+
+                  '<button class="btn" id="lmObDaReset" type="button">Reset Defaults</button>'+
+                '</div>'+
               '</div>'+
             '</div>'+
             '<div style="display:flex;align-items:center;gap:5px">'+
@@ -4414,13 +4429,6 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
             '</div>'+
           '</div>'+
           '<div class="lm-topbar-right">'+
-            '<div style="display:flex;align-items:center;gap:5px">'+
-              '<span class="seg-label">Refresh</span>'+
-              '<span class="fchip on" data-lmrefresh="manual">Manual</span>'+
-              '<span class="fchip" data-lmrefresh="15s">15s</span>'+
-              '<span class="fchip" data-lmrefresh="30s">30s</span>'+
-              '<span class="fchip" data-lmrefresh="60s">60s</span>'+
-            '</div>'+
             '<div class="lm-ai-toggle" id="lmAiToggle">'+
               '<svg class="ico" style="width:12px;height:12px" viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 1 7 7c0 3-1.6 5.5-4 6.7V17a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-1.3C6.6 14.5 5 12 5 9a7 7 0 0 1 7-7z"/><path d="M9 21h6"/></svg>'+
               '<span id="lmAiLabel">AI Preview</span>'+
@@ -4463,30 +4471,6 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
                   '<option value="aggregated">Aggregated</option>'+
                 '</select>'+
                 '<span class="lm-ds-note" title="Analysis data only. Parent setup OB/FIB zones, SL, TP and invalidation levels are never changed by analysis source selection.">&#9432; Analysis only — setup levels unchanged</span>'+
-              '</div>'+
-              '<div class="lm-dh-wrap">'+
-                '<div class="lm-dh-head" id="lmDhHead">'+
-                  '<span class="lm-dh-lbl">DATA HEALTH</span>'+
-                  '<span class="lm-dh-ctl" id="lmDhCtl">&#9658;</span>'+
-                '</div>'+
-                '<div class="lm-dh-body collapsed" id="lmDhBody">'+
-                  '<table class="lm-dh-tbl">'+
-                    '<thead><tr><th>Metric</th><th>Value</th><th>Source</th><th>Status</th><th>Updated</th><th>Notes</th></tr></thead>'+
-                    '<tbody>'+
-                      '<tr><td>Live Price</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td><td class="lm-dh-na">Pending</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td></tr>'+
-                      '<tr><td>Mark Price</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td><td class="lm-dh-na">Pending</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td></tr>'+
-                      '<tr><td>Order Book</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td><td class="lm-dh-na">Pending</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td></tr>'+
-                      '<tr><td>Liquidations</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td><td class="lm-dh-na">Pending</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td></tr>'+
-                      '<tr><td>Open Interest</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td><td class="lm-dh-na">Pending</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td></tr>'+
-                      '<tr><td>OI Change</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td><td class="lm-dh-na">Pending</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td></tr>'+
-                      '<tr><td>Delta</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td><td class="lm-dh-na">Pending</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td></tr>'+
-                      '<tr><td>Long/Short Ratio</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td><td class="lm-dh-na">Pending</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td></tr>'+
-                      '<tr><td>Funding Rate</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td><td class="lm-dh-na">Pending</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td></tr>'+
-                      '<tr><td>Candle Status</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td><td class="lm-dh-na">Pending</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td></tr>'+
-                      '<tr><td>AI Entry Analysis</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td><td class="lm-dh-na">Pending</td><td class="lm-dh-na">—</td><td class="lm-dh-na">—</td></tr>'+
-                    '</tbody>'+
-                  '</table>'+
-                '</div>'+
               '</div>'+
               '<div class="lm-left-head"><span>ACTIVE SETUPS</span><span id="lmCount" style="font-size:11px;color:var(--accent);font-weight:700;font-family:var(--mono)">0</span></div>'+
               '<div class="lm-cards" id="lmCards"></div>'+
@@ -4593,32 +4577,6 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         _lmRenderCards();
       });
     });
-    // TF chips — toggle on/off, update _lmTfState (frontend-only, no scan triggered)
-    [].forEach.call(scroll.querySelectorAll("[data-lmtf]"),function(b){
-      b.addEventListener("click",function(){
-        b.classList.toggle("on");
-        var tf=b.getAttribute("data-lmtf");
-        var idx=_lmTfState.indexOf(tf);
-        if(idx===-1) _lmTfState.push(tf); else _lmTfState.splice(idx,1);
-      });
-    });
-    // Module chips — toggle on/off, update _lmModuleState (frontend-only, no scan triggered)
-    [].forEach.call(scroll.querySelectorAll("[data-lmmod]"),function(b){
-      b.addEventListener("click",function(){
-        b.classList.toggle("on");
-        var mod=b.getAttribute("data-lmmod");
-        var idx=_lmModuleState.indexOf(mod);
-        if(idx===-1) _lmModuleState.push(mod); else _lmModuleState.splice(idx,1);
-      });
-    });
-    // Refresh interval — exclusive select (frontend-only, no timer started)
-    [].forEach.call(scroll.querySelectorAll("[data-lmrefresh]"),function(c){
-      c.addEventListener("click",function(){
-        [].forEach.call(scroll.querySelectorAll("[data-lmrefresh]"),function(x){x.classList.remove("on");});
-        c.classList.add("on");
-        _lmRefreshState=c.getAttribute("data-lmrefresh");
-      });
-    });
     // AI Preview toggle (frontend-only visual toggle, no API call)
     var aiTog=document.getElementById("lmAiToggle");
     var aiLbl=document.getElementById("lmAiLabel");
@@ -4631,16 +4589,6 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     /* Manual Add Pair wiring (Task 4). */
     var ab=E("lmAddBtn"); if(ab) ab.addEventListener("click",_lmManualAdd);
     var ai=E("lmAdd"); if(ai) ai.addEventListener("keydown",function(e){ if(e.key==="Enter") _lmManualAdd(); });
-    /* Data Health collapse toggle */
-    var _dhHead=document.getElementById("lmDhHead");
-    var _dhBody=document.getElementById("lmDhBody");
-    var _dhCtl=document.getElementById("lmDhCtl");
-    if(_dhHead&&_dhBody){
-      _dhHead.addEventListener("click",function(){
-        var collapsed=_dhBody.classList.toggle("collapsed");
-        if(_dhCtl) _dhCtl.innerHTML=collapsed?"&#9658;":"&#9660;";
-      });
-    }
     /* Data Source selector — persist to localStorage + backend */
     var _dsSel=document.getElementById("lmDataSrc");
     if(_dsSel){
@@ -4697,6 +4645,21 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         try{ localStorage.setItem("zyni_lm_data_src",src); }catch(_){}
       }
     }
+    // OB Distance & Approach
+    var _obDaTog=document.getElementById("lmObDaToggle");
+    if(_obDaTog) _obDaTog.addEventListener("click",function(){
+      var body=document.getElementById("lmObDaBody");
+      var lbl=document.getElementById("lmObDaExpandLbl");
+      if(!body) return;
+      var isHidden=(body.style.display==="none");
+      body.style.display=isHidden?"":"none";
+      if(lbl) lbl.textContent=isHidden?"▾ Tap to collapse":"▸ Tap to expand";
+    });
+    var _obDaSaveBtn=document.getElementById("lmObDaSave");
+    if(_obDaSaveBtn) _obDaSaveBtn.addEventListener("click",_lmObDaSaveClick);
+    var _obDaResetBtn=document.getElementById("lmObDaReset");
+    if(_obDaResetBtn) _obDaResetBtn.addEventListener("click",_lmObDaResetClick);
+    _lmObDaLoad();
     _lmUpdateSession();
     _lmRenderCards();
     _lmStartDhPolling();
