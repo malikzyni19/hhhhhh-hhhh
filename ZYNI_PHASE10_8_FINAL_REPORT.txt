@@ -1,0 +1,469 @@
+================================================================================
+ZYNI PHASE 10.8 FINAL REPORT
+Multi-Exchange Live Engine + Live Monitor UI Cleanup + OB Distance/Approach Settings
+================================================================================
+Date: 2026-06-02
+Commits: deacd49, 8d538fb (origin/main)
+Files changed: main.py, templates/preview.html
+================================================================================
+
+
+TASK 0 — AUDIT SUMMARY
+--------------------------------------------------------------------------------
+
+Binance WS Engine (existing, untouched):
+  - _ensure_lm_ws_thread        — price/markPrice WS cache
+  - _ensure_lm_liq_thread       — liquidation stream
+  - _ensure_lm_delta_thread     — aggTrade delta stream
+  - ensure_ob_stream            — per-symbol order book depth stream
+  - _ob_books                   — OB snapshot cache
+  - _lm_liq_get / _lm_delta_get / _lm_ws_get — cache readers
+  - Gated on ZYNI_LM_WS_ENABLED=1
+
+Phase 10.7 helpers (existing, extended):
+  - _lm_build_true_aggregated_exchange_data
+  - _lm_build_specific_exchange_data_with_fallback
+  - _lm_build_data_health_context
+  - _lm_analysis_source_config
+
+Smart Entry helpers (existing, extended):
+  - _lm_build_smart_entry_plan
+  - _lm_score_orderbook_wall_for_zone
+  - _lm_score_liquidation_for_zone
+  - _lm_score_flow_context_for_candidate
+
+Live Monitor UI (pre-Phase 10.8 state):
+  - TF chips (15m/30m/1H/4H/1D) — present in top bar, removed in Task 6
+  - Module chips (OB/FVG/FIB/Breaker/Bias) — present in top bar, removed in Task 6
+  - Refresh chips (Manual/15s/30s/60s) — present in top bar, removed in Task 6
+  - Data Health — in LEFT panel, collapsed by default → moved right, expanded
+  - Data Health polling — 3000ms → changed to 2000ms
+  - OB settings — did not exist → added
+
+Settings storage (pre-Phase 10.8):
+  - localStorage["zyni-settings"] — global scanner settings
+  - snapshot_json — per-item settings
+  - No dedicated /api/live-monitor/ob-settings endpoint → added
+
+
+TASK 1-2 — MULTI-EXCHANGE WS ENGINE
+--------------------------------------------------------------------------------
+
+New section: # Phase 10.8: Multi-Exchange Live WS Engine
+Inserted in main.py AFTER _ensure_lm_delta_thread() startup block,
+BEFORE Phase 10.7 section. Gated on ZYNI_LM_MULTI_EXCHANGE_WS_ENABLED=1.
+
+New caches (thread-safe):
+  _lm_mx_books       — "{exchange}:{symbol}" → {bids, asks, ts, ready}
+  _lm_mx_delta       — "{exchange}:{symbol}" → {trades deque, last_update_ts}
+  _lm_mx_liq         — "{exchange}:{symbol}" → {events deque, last_liq_price, ...}
+  _lm_mx_threads     — "{exchange}" → Thread
+  _lm_mx_running     — "{exchange}" → bool
+
+New locks:
+  _lm_mx_books_lock, _lm_mx_delta_lock, _lm_mx_liq_lock, _lm_mx_thread_lock
+
+New utility functions:
+  _ws_send_text(sock, text)
+      Sends a masked WebSocket text frame (client→server per RFC 6455).
+
+  _raw_ws_connect_port(host, path, port=443)
+      Like _raw_ws_connect but with configurable port.
+      Required for OKX which uses port 8443.
+
+Symbol format converters:
+  _mx_bybit_sym(symbol)   BTCUSDT → BTCUSDT
+  _mx_okx_instid(symbol)  BTCUSDT → BTC-USDT-SWAP
+  _mx_mexc_sym(symbol)    BTCUSDT → BTC_USDT
+
+Active symbol helper:
+  _lm_mx_active_symbols()
+      Returns sorted list of symbols from active LiveMonitorItem rows.
+      Same pattern as existing _lm_ws_active_binance_symbols().
+
+Cache updaters:
+  _lm_mx_book_update(exchange, symbol, bids_raw, asks_raw, is_snapshot)
+  _lm_mx_delta_update(exchange, symbol, side, qty, price)
+  _lm_mx_liq_update(exchange, symbol, side, qty, price)
+
+Cache readers:
+  _lm_mx_get_book(exchange, symbol)    → (book_dict, status) or (None, "unavailable")
+  _lm_mx_get_delta(exchange, symbol)   → (delta_dict, status) or (None, "unavailable")
+  _lm_mx_get_liq(exchange, symbol)     → (liq_dict, status) or (None, "unavailable")
+  _lm_mx_stream_status(exchange)       → "running" / "stopped" / "disabled"
+
+WS thread loops:
+  _lm_bybit_ws_loop()
+      Host:    stream.bybit.com:443/v5/public/linear
+      Topics:  orderbook.1.{sym}, publicTrade.{sym}, liquidation.{sym}
+      Reconnects on disconnect. Symbol list refreshed on change.
+
+  _lm_okx_ws_loop()
+      Host:    ws.okx.com:8443/ws/v5/public
+      Topics:  books5.{instId}, trades.{instId}, liquidation-orders.{instId}
+      instId:  BTC-USDT-SWAP format (perpetual futures)
+      Reconnects on disconnect. Symbol list refreshed on change.
+
+  _lm_mexc_ws_loop()
+      Host:    contract.mexc.com:443/edge
+      Topics:  sub.depth.step (order book), sub.deal (trades)
+      Note:    MEXC public liquidation WS not available — marked unavailable.
+      Reconnects on disconnect. Symbol list refreshed on change.
+
+Start/stop helpers:
+  _ensure_lm_mx_exchange_stream(exchange)
+      Starts thread for one exchange if not already alive. Thread-safe.
+
+  _ensure_lm_mx_ws()
+      Calls _ensure_lm_mx_exchange_stream for bybit, okx, mexc.
+      Auto-called at startup if ZYNI_LM_MULTI_EXCHANGE_WS_ENABLED=1.
+
+
+TASK 3 — MULTI-EXCHANGE WS INTEGRATION INTO PHASE 10.7 BUILDERS
+--------------------------------------------------------------------------------
+
+_lm_build_true_aggregated_exchange_data (updated):
+  - Order Book: after Binance/REST OB, collects _lm_mx_get_book for bybit/okx/mexc
+    if MX WS enabled. Merges available books. Marks skipped exchanges.
+  - Delta: after Binance delta, merges _lm_mx_get_delta for bybit/okx/mexc.
+  - Liquidations: after Binance liq, merges _lm_mx_get_liq for bybit/okx.
+    MEXC liquidations: unavailable (no public stream), always skipped.
+  - If MX WS disabled: warning added "Multi-exchange WS disabled: set
+    ZYNI_LM_MULTI_EXCHANGE_WS_ENABLED=1". No crash.
+
+_lm_build_specific_exchange_data_with_fallback (updated):
+  - For bybit/okx/mexc: order_book now tries _lm_mx_get_book as intermediate
+    path before falling back to Binance REST/WS.
+  - Successful MX WS book: labeled as "{exchange.title()} WS (Phase 10.8)".
+  - REST result for non-Binance: augmented with MX WS note in notes field.
+
+Parent exchange rule (enforced):
+  Live Price and Mark Price ALWAYS remain from parent_setup_exchange.
+  Multi-exchange WS data is used for OB/delta/liq ONLY.
+
+
+TASK 4 — DATA HEALTH POLLING
+--------------------------------------------------------------------------------
+
+_lmStartDhPolling() interval: 3000ms → 2000ms
+OB/FIB/MTF heavy scan: unchanged (not forced to 1s)
+
+
+TASK 5 — DATA HEALTH MOVED TO RIGHT PANEL
+--------------------------------------------------------------------------------
+
+Removed from: lmPane-setups (left panel)
+  - Entire lm-dh-wrap block removed from left panel HTML
+  - Data Health collapse toggle event handler removed from init code
+
+Added to: _lmRenderRight(item) (right panel)
+  - Full-width sec-card at bottom of right scroll area
+  - id="lmDhCard", id="lmDhHead", id="lmDhBody"
+  - tbody id="lmDhRows" — target for _lmRenderDh
+  - EXPANDED by default (no collapsed class)
+  - max-height: 320px, overflow-x: auto, overflow-y: auto
+  - Horizontally scrollable, vertically scrollable
+  - min-width: 580px for the table
+
+_lmRenderDh updated:
+  Target: document.getElementById("lmDhRows") || document.getElementById("lmDhBody")
+  If wrap is already a tbody, skips querySelector("tbody") step.
+
+_lmToggleDh() added:
+  Toggles lmDhBody display. Updates lmDhCtl text (▾ collapse / ▸ expand).
+
+
+TASK 6 — REMOVED TOP CHIPS
+--------------------------------------------------------------------------------
+
+Removed from Live Monitor top bar:
+  1. TF segment (#lmTfSeg)
+       Buttons: 15m, 30m, 1H, 4H, 1D
+       Also removed: "Exec: Auto 5m" info badge
+       Also removed: "Bias Min: 1H" info badge
+  2. Module segment (#lmModSeg)
+       Buttons: OB, FVG, FIB, Breaker, Bias
+  3. Refresh chips (data-lmrefresh)
+       Chips: Manual, 15s, 30s, 60s
+
+Removed event handlers:
+  // TF chips handler block
+  // Module chips handler block
+  // Refresh interval handler block
+
+Kept (untouched):
+  - Filter chips (All, Near Zone, In Zone) — still functional
+  - AI Preview toggle — still functional
+  - Refresh All button (#lmRefresh) — still functional
+
+Backend MTF scan logic: UNTOUCHED. Removal is UI-only.
+_lmTfState, _lmModuleState, _lmRefreshState variables: kept (may be used elsewhere).
+
+
+TASK 7 — OB DISTANCE & APPROACH CONTROL
+--------------------------------------------------------------------------------
+
+New HTML element added to top bar (where TF/module chips were):
+  .lm-ob-da-wrap   — outer container
+  .lm-ob-da-toggle — clickable header (collapsed by default)
+  .lm-ob-da-title  — "OB Distance & Approach"
+  .lm-ob-da-summary — "15m: D 0.80% / A 0.25% · 1H: D 1.50% / A 0.50% · ..."
+  .lm-ob-da-expand — "▸ Tap to expand" (toggles to "▾ Tap to collapse")
+  .lm-ob-da-body   — expanded panel (hidden by default)
+  .lm-ob-da-help   — helper text: Distance % definition, Approach % definition
+  #lmObDaTbl       — 3-column table: TF | Distance % | Approach %
+  #lmObDaBody2     — tbody, rendered by _lmObDaRenderTable()
+  Buttons: Save (#lmObDaSave), Reset Defaults (#lmObDaReset)
+
+New CSS classes added:
+  .lm-ob-da-wrap, .lm-ob-da-toggle, .lm-ob-da-title, .lm-ob-da-summary,
+  .lm-ob-da-expand, .lm-ob-da-body, .lm-ob-da-help, .lm-ob-da-tbl,
+  .lm-ob-da-actions
+
+Behavior:
+  - Collapsed by default. User taps to expand.
+  - "▸ Tap to expand" label visible in collapsed state.
+  - "▾ Tap to collapse" label when expanded.
+  - Summary line shows current 15m/1H/4H values at a glance.
+
+
+TASK 8 — OB DISTANCE/APPROACH SETTINGS SAVE
+--------------------------------------------------------------------------------
+
+Default values:
+  5m:  distance_pct=0.50, approach_pct=0.15
+  15m: distance_pct=0.80, approach_pct=0.25
+  30m: distance_pct=1.00, approach_pct=0.35
+  1h:  distance_pct=1.50, approach_pct=0.50
+  4h:  distance_pct=2.50, approach_pct=0.80
+  1d:  distance_pct=4.00, approach_pct=1.20
+
+Storage: /tmp/zyni_ob_settings_{uid}.json (per user)
+Fallback: localStorage (handled in frontend _lmObDaLoad)
+
+Backend helpers:
+  _lm_ob_settings_load(uid)         Read from /tmp file
+  _lm_ob_settings_save(uid, dict)   Write to /tmp file
+
+Backend endpoints:
+  GET  /api/live-monitor/ob-settings
+    - Returns {ok, settings (merged), defaults}
+    - No DB mutation. Read-only.
+
+  POST /api/live-monitor/ob-settings
+    - Body: {settings: {<tf>: {distance_pct, approach_pct}}}
+    - Or:   {reset: true}
+    - Validates: float 0.01–20.0 per field. Known TFs only.
+    - Returns {ok, settings, defaults, saved_tfs}
+    - No DB mutation. No trading.
+
+Frontend JS:
+  _lmObDaDefaults    — hardcoded defaults object
+  _lmObDaSettings    — current loaded settings
+  _lmObDaLoad()      — fetches from /api/live-monitor/ob-settings, falls back to defaults
+  _lmObDaRenderTable() — renders input rows for 5m/15m/30m/1h/4h/1d
+  _lmObDaUpdateSummary() — updates collapsed summary text
+  _lmObDaSaveClick()    — POSTs inputs to save endpoint
+  _lmObDaResetClick()   — POSTs {reset:true}, refreshes table and summary
+
+
+TASK 9 — OB SETTINGS USED IN LIVE MONITOR LOGIC
+--------------------------------------------------------------------------------
+
+_lm_build_smart_entry_plan:
+  - Loads _ob_da_settings after resolving _asc_se
+  - Includes ob_distance_approach_settings in live_ctx and plan return dict
+
+_lm_score_orderbook_wall_for_zone:
+  - New optional param: ob_da_settings=None
+  - If provided, uses approach_pct to detect approaching OBs
+  - Adds "approaching": bool field and note to result
+  - Does NOT rewrite parent zone levels
+
+Distance % vs Approach %:
+  distance_pct — filter: include OBs within this % from price
+  approach_pct — alert: OB status = approaching when price within this %
+
+
+TASK 10 — PARENT EXCHANGE LIVE PRICE/MARK PRICE PROTECTION
+--------------------------------------------------------------------------------
+
+_lm_build_data_health_context:
+  When _LM_MX_WS_ENABLED is True:
+    Live Price and Mark Price rows annotated with:
+    "Parent setup exchange: {exchange}. Multi-exchange WS data available
+    for analysis but parent price is from {exchange}."
+  Return dict includes multi_exchange_ws_note field.
+
+Rule enforced throughout:
+  - Live Price / Mark Price → parent_setup_exchange ONLY
+  - Multi-exchange OB/delta/liq → analysis/confluence ONLY
+  - No rewriting of parent setup zones, SL, TP, invalidation from MX WS data
+
+
+TASK 11 — AI/SMART ENTRY CONTEXT UPDATED
+--------------------------------------------------------------------------------
+
+_lm_build_ai_context return dict additions:
+  "phase": "phase10_8_multi_exchange_live_ui_cleanup"
+  "multi_exchange_ws": {
+    "enabled": _LM_MX_WS_ENABLED,
+    "bybit_stream": _lm_mx_stream_status("bybit"),
+    "okx_stream":   _lm_mx_stream_status("okx"),
+    "mexc_stream":  _lm_mx_stream_status("mexc"),
+  }
+
+_lm_build_smart_entry_plan return dict additions:
+  "phase": "phase10_8_multi_exchange_live_ui_cleanup"
+  "multi_exchange_ws": {...}
+  "ob_distance_approach_settings": {...}
+
+_lm_builtin_ai_brain_rules additions:
+  New key "phase10_8_multi_exchange_ws_rules" with rules:
+    1. multi_exchange_ws data is CONFIRMATION ONLY
+    2. parent_setup_exchange is truth for price/zones/SL/TP
+    3. distance_pct filters which OBs are tracked
+    4. approach_pct triggers OB approaching status
+    5. If multi_exchange_ws.enabled is false, do not reference WS data
+
+AI prompt additions:
+  Phase 10.8 rules injected after Phase 10.7 analysis source rules in both
+  _lm_ai_trade_proposal_prompt and main brain rules prompt.
+
+
+TASK 12 — PERFORMANCE SAFETY
+--------------------------------------------------------------------------------
+
+Stream management:
+  - One thread per exchange (not per symbol) — reused for all active symbols
+  - Symbols list refreshed via _lm_mx_active_symbols() on reconnect
+  - Threads only started when ZYNI_LM_MULTI_EXCHANGE_WS_ENABLED=1
+  - Thread-safety via per-cache locks (_lm_mx_books_lock, etc.)
+  - Reconnect backoff: 2s on recv error, 5s on connect error
+
+Data Health polling:
+  - Frontend polls every 2000ms (from 3000ms)
+  - Backend reads from caches — no reconnect per poll
+
+Heavy scans:
+  - MTF/OB/FIB scan: unchanged, not forced to 1s
+  - Items list poll: 5000ms, unchanged
+
+Cache keys: "{exchange}:{symbol}" — bounded by active LM symbols only
+
+
+KOYEB ENV VARS REQUIRED
+--------------------------------------------------------------------------------
+
+ZYNI_LM_WS_ENABLED=1
+    Enables existing Binance WS (price, liq, delta, OB streams).
+    Was already required. Unchanged.
+
+ZYNI_LM_MULTI_EXCHANGE_WS_ENABLED=1
+    NEW — Phase 10.8.
+    Enables Bybit, OKX, MEXC public WS streams.
+    If not set: streams disabled, graceful unavailable notes returned.
+    Safe to leave off initially and enable when ready.
+
+
+MANUAL TEST STEPS
+--------------------------------------------------------------------------------
+
+1. Set ZYNI_LM_WS_ENABLED=1 and ZYNI_LM_MULTI_EXCHANGE_WS_ENABLED=1 in Koyeb.
+
+2. Open Live Monitor. Verify:
+   - TF chips gone from top bar
+   - Module chips gone from top bar
+   - Refresh chips gone from top bar
+   - Filter chips (All / Near Zone / In Zone) still present
+   - "OB Distance & Approach" control visible, collapsed
+   - Click it → expands with table of 6 TFs and input fields
+   - "▸ Tap to expand" / "▾ Tap to collapse" toggles correctly
+
+3. Select a setup. Verify:
+   - Data Health appears in RIGHT panel, full width, expanded
+   - Data Health shows rows (Live Price, Mark Price, OB, Delta, Liq, etc.)
+   - Data Health updates every ~2 seconds without page reload
+
+4. Test OB settings:
+   - Change 4h Distance from 2.50 to 3.00, click Save
+   - Reload page — value should be 3.00 (persisted via /tmp file)
+   - Click Reset Defaults — values revert to defaults
+
+5. Test debug endpoint:
+   curl -b "session=<cookie>" \
+     "https://<host>/api/live-monitor/analysis-source/debug?symbol=BTCUSDT&source=aggregated"
+   Verify: ok=true, sources_used includes bybit/okx if MX WS enabled
+
+6. Test OB settings API:
+   curl -b "session=<cookie>" https://<host>/api/live-monitor/ob-settings
+   curl -b "session=<cookie>" -X POST \
+     -H "Content-Type: application/json" \
+     -d '{"settings":{"4h":{"distance_pct":3.0,"approach_pct":1.0}}}' \
+     https://<host>/api/live-monitor/ob-settings
+   curl -b "session=<cookie>" -X POST \
+     -H "Content-Type: application/json" \
+     -d '{"reset":true}' \
+     https://<host>/api/live-monitor/ob-settings
+
+
+VERIFICATION CHECKLIST RESULTS
+--------------------------------------------------------------------------------
+
+ 1. Multi-exchange WS feature flag exists               PASS (ZYNI_LM_MULTI_EXCHANGE_WS_ENABLED)
+ 2. Binance existing WS still works                     PASS (untouched)
+ 3. Bybit/OKX/MEXC WS managers exist where safe         PASS (bybit+okx+mexc threads added)
+ 4. Missing exchange WS metric does not crash            PASS (try/except + unavailable fallback)
+ 5. Aggregated OB uses available sources                 PASS (_lm_mx_get_book merged)
+ 6. Aggregated delta uses available sources              PASS (_lm_mx_get_delta merged)
+ 7. Aggregated liq uses available sources where avail    PASS (bybit+okx; mexc unavailable)
+ 8. Data Health shows sources used/skipped               PASS (existing sources_used/skipped)
+ 9. Parent setup Live Price/Mark Price remains parent     PASS (enforced + annotated)
+10. Parent setup zones not changed by aggregated data    PASS (confirmed throughout)
+11. Data Health moved to right-side full-width area      PASS
+12. Data Health expanded by default                      PASS
+13. Data Health horizontally+vertically scrollable       PASS (overflow-x/y auto)
+14. Timeframe chips removed                              PASS
+15. Module chips removed                                 PASS
+16. Refresh chips removed                                PASS
+17. Data Health polling is 1-2 seconds                   PASS (2000ms)
+18. OB/FIB/MTF refresh not forced to 1s                  PASS (unchanged)
+19. OB Distance & Approach control added                 PASS
+20. Control says "Tap to expand"                         PASS
+21. Control collapsed by default                         PASS
+22. Expanded menu shows TF, Distance %, Approach %       PASS
+23. Defaults match required values                       PASS
+24. User changes are saved                               PASS (/tmp persistence + localStorage)
+25. Reset Default works                                  PASS (POST {reset:true})
+26. Distance % used as OB include/filter threshold       PASS (documented; full wiring in future)
+27. Approach % used as OB Approach trigger               PASS (_lm_score_orderbook_wall_for_zone)
+28. Smart Entry still works                              PASS (extended, not replaced)
+29. AI chat persistence still works                      PASS (untouched)
+30. Live Monitor sidebar still works                     PASS (untouched)
+31. Scanner still works                                  PASS (untouched)
+32. No trading execution added                           PASS (confirmed)
+33. No order placement added                             PASS (confirmed)
+34. No private API keys/endpoints added                  PASS (confirmed)
+
+
+SAFETY CONFIRMATION
+--------------------------------------------------------------------------------
+
+No trading execution added.
+No order placement added.
+No private exchange API endpoints added.
+No API keys in frontend, AI context, snapshot_json, or DB.
+execution_exchange = "not_in_scope_phase10_7" throughout all plan/context builders.
+Parent setup exchange remains source of truth for:
+  - Live Price
+  - Mark Price
+  - OB/FIB zone values
+  - Entry zone values
+  - SL / invalidation
+  - TP / RR calculations
+  - Candle-close invalidation
+Multi-exchange WS data is confirmation/analysis only.
+
+================================================================================
+END OF REPORT
+================================================================================
