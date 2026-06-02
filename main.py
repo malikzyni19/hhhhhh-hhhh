@@ -13779,10 +13779,22 @@ def _lm_is_bias_shift_item(row) -> bool:
 
 
 def _lm_setup_category(row) -> str:
-    """Return setup_category string for a LiveMonitorItem."""
+    """Return canonical setup_category for a LiveMonitorItem.
+
+    Canonical values:
+      "bias_shift_watch" — item added from Bias Shift tab
+      "ob_fib_setup"     — standard OB/FVG/FIB scanner item
+      "generic_watch"    — manual-add or unknown origin
+
+    Note: "ob_fib_watch" is the previous value; both are accepted by
+    _lm_is_bias_shift_item checks so nothing breaks.
+    """
     if _lm_is_bias_shift_item(row):
         return "bias_shift_watch"
-    return "ob_fib_watch"
+    src = (getattr(row, "source_tab", None) or "").strip().lower()
+    if src in ("manual", "unknown", ""):
+        return "generic_watch"
+    return "ob_fib_setup"
 
 
 # ── TASK 1+2: Build Smart Entry Plan ─────────────────────────────────────────
@@ -13826,6 +13838,10 @@ def _lm_build_smart_entry_plan(item, snapshot: dict = None, scan_result=None,
             "mode":                 "precision_watch",
             "setup_category":       "bias_shift_watch",
             "monitor_mode":         "ai_precision_watch",
+            "execution_allowed":    False,
+            "minimum_bias_tf":      "1h",
+            "tf_stack":             ["1d", "4h", "1h", "30m", "15m", "5m"],
+            "bias_state":           "Bias Watch",
             "decision":             "watch_for_candle_confirmation",
             "direction":            direction,
             "parent_tf":            parent_tf,
@@ -16289,19 +16305,23 @@ def _lm_build_ai_context(item) -> dict:
         "exchange": item.exchange or "binance",
         "market":   item.market   or "perpetual",
         "setup": {
-            "type":           item.setup_type,
-            "direction":      item.direction,
-            "timeframe":      item.timeframe,
-            "source_tab":     getattr(item, "source_tab", None),
-            "setup_category": _lm_setup_category(item),
-            "monitor_mode":   "ai_precision_watch" if _lm_is_bias_shift_item(item) else "ob_fib_watch",
-            "zone_high":      item.zone_high,
-            "zone_low":       item.zone_low,
-            "current_price":  item.current_price,
-            "status":         item.status,
-            "score":          item.score,
-            "confidence":     item.confidence,
-            "bias_shift_meta": snap.get("bias_shift_meta") if _lm_is_bias_shift_item(item) else None,
+            "type":             item.setup_type,
+            "direction":        item.direction,
+            "timeframe":        item.timeframe,
+            "source_tab":       getattr(item, "source_tab", None),
+            "setup_category":   _lm_setup_category(item),
+            "monitor_mode":     "ai_precision_watch" if _lm_is_bias_shift_item(item) else "ob_fib_watch",
+            "execution_allowed": False if _lm_is_bias_shift_item(item) else None,
+            "minimum_bias_tf":  "1h"                     if _lm_is_bias_shift_item(item) else None,
+            "tf_stack":         ["1d","4h","1h","30m","15m","5m"] if _lm_is_bias_shift_item(item) else None,
+            "bias_state":       snap.get("bias_state", "Bias Watch") if _lm_is_bias_shift_item(item) else None,
+            "zone_high":        item.zone_high,
+            "zone_low":         item.zone_low,
+            "current_price":    item.current_price,
+            "status":           item.status,
+            "score":            item.score,
+            "confidence":       item.confidence,
+            "bias_shift_meta":  snap.get("bias_shift_meta") if _lm_is_bias_shift_item(item) else None,
         },
         "timeframe_policy": {
             "visible_analysis_timeframes": tp.get("visible_analysis_timeframes",
