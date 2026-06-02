@@ -556,3 +556,62 @@ class LiveMonitorCandle(db.Model):
     def __repr__(self) -> str:
         return (f"<LiveMonitorCandle {self.symbol} {self.timeframe} "
                 f"open_time={self.open_time} user={self.user_id}>")
+
+
+class LiveMonitorCandleFeature(db.Model):
+    """Phase 10.9C: Per-candle pattern feature rows for Bias Shift Watch items.
+
+    One row per (user_id, exchange, market, symbol, timeframe, open_time).
+    Upsert on uq_lm_cfeature_key prevents duplicates on repeated feature runs.
+
+    No candle arrays in snapshot_json; only lightweight status goes there.
+    No trading execution. No order placement. No private API.
+    No BOS/CHoCH engine. No order-flow engine. No S/R Flip logic.
+    """
+    __tablename__ = "live_monitor_candle_features"
+
+    id                    = db.Column(db.Integer, primary_key=True)
+    user_id               = db.Column(db.Integer, db.ForeignKey("users.id"),
+                                      nullable=False, index=True)
+    exchange              = db.Column(db.String(20), nullable=False)
+    market                = db.Column(db.String(20), nullable=False, default="perpetual")
+    symbol                = db.Column(db.String(20), nullable=False)
+    timeframe             = db.Column(db.String(10), nullable=False)
+    open_time             = db.Column(db.BigInteger, nullable=False)   # ms epoch
+
+    # Raw candle snapshot (stored compactly — not a huge array)
+    candle_open           = db.Column(db.Float, nullable=False)
+    candle_high           = db.Column(db.Float, nullable=False)
+    candle_low            = db.Column(db.Float, nullable=False)
+    candle_close          = db.Column(db.Float, nullable=False)
+    candle_volume         = db.Column(db.Float, nullable=True)
+
+    # Computed candle math
+    body_pct              = db.Column(db.Float, nullable=True)   # 0-100
+    upper_wick_pct        = db.Column(db.Float, nullable=True)   # 0-100
+    lower_wick_pct        = db.Column(db.Float, nullable=True)   # 0-100
+    close_position_pct    = db.Column(db.Float, nullable=True)   # 0=at low, 100=at high
+    candle_direction      = db.Column(db.String(10), nullable=True)  # bullish/bearish/neutral
+
+    # Detected patterns and summary (compact JSON)
+    detected_patterns_json = db.Column(db.Text, nullable=True)   # list of pattern name strings
+    feature_summary_json   = db.Column(db.Text, nullable=True)   # {body_pct, wicks, patterns, ...}
+
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
+                           onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "user_id", "exchange", "market", "symbol", "timeframe", "open_time",
+            name="uq_lm_cfeature_key",
+        ),
+        db.Index("ix_lm_cfeature_lookup",
+                 "user_id", "exchange", "market", "symbol", "timeframe", "open_time"),
+    )
+
+    user = db.relationship("User", foreign_keys=[user_id])
+
+    def __repr__(self) -> str:
+        return (f"<LiveMonitorCandleFeature {self.symbol} {self.timeframe} "
+                f"open_time={self.open_time} user={self.user_id}>")

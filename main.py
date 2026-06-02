@@ -14268,6 +14268,21 @@ def _lm_refresh_bias_candles_for_item(item, force: bool = False) -> dict:
             _db.session.rollback()
             print(f"[10.9B] snapshot update error: {exc}")
 
+        # Task 7 (Phase 10.9C): Trigger feature engine after candle refresh.
+        # Works even if candle store is partial — feature engine will process
+        # whatever TFs have stored candles.
+        any_candles = any(
+            r.get("status") in ("ready", "skipped_fresh")
+            or r.get("fetched", 0) > 0
+            for r in tf_results.values()
+        )
+        if any_candles and item_id:
+            try:
+                _lm_ensure_bias_features_bg(item_id, uid, exchange, market,
+                                             symbol, "bias_shift")
+            except Exception as _fe:
+                print(f"[10.9C] feature trigger error after candle refresh: {_fe}")
+
         return {
             "ok":           True,
             "symbol":       symbol,
@@ -14315,6 +14330,667 @@ def _lm_ensure_bias_candles_bg(item_id: int, uid: int, exchange: str,
                          name=f"lm-bias-candles-{item_id}")
     with _lm_bias_candle_thread_lock:
         _lm_bias_candle_threads[item_id] = t
+    t.start()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Phase 10.9C — Bias Shift Candle Pattern Feature Engine
+# No trading execution. No order placement. No private API. No API keys.
+# No BOS/CHoCH engine. No liquidity sweep engine. No order-flow engine.
+# No S/R Flip logic. No AI decision engine.
+# Only detects and stores candle-level features from already-stored candles.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Task 2: Candle math helpers ───────────────────────────────────────────────
+
+def _lm_candle_range(candle) -> float:
+    """high - low; returns 0.0 if zero or invalid."""
+    try:
+        r = float(candle.get("high", 0)) - float(candle.get("low", 0))
+        return max(r, 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _lm_candle_body_pct(candle) -> float:
+    """abs(close-open)/range*100; 0.0 if range is zero."""
+    r = _lm_candle_range(candle)
+    if r == 0.0:
+        return 0.0
+    try:
+        return abs(float(candle.get("close", 0)) - float(candle.get("open", 0))) / r * 100.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _lm_candle_upper_wick_pct(candle) -> float:
+    """upper wick / range * 100; 0.0 if range is zero."""
+    r = _lm_candle_range(candle)
+    if r == 0.0:
+        return 0.0
+    try:
+        body_top = max(float(candle.get("open", 0)), float(candle.get("close", 0)))
+        upper_wick = float(candle.get("high", 0)) - body_top
+        return max(upper_wick, 0.0) / r * 100.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _lm_candle_lower_wick_pct(candle) -> float:
+    """lower wick / range * 100; 0.0 if range is zero."""
+    r = _lm_candle_range(candle)
+    if r == 0.0:
+        return 0.0
+    try:
+        body_bot = min(float(candle.get("open", 0)), float(candle.get("close", 0)))
+        lower_wick = body_bot - float(candle.get("low", 0))
+        return max(lower_wick, 0.0) / r * 100.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _lm_candle_close_position_pct(candle) -> float:
+    """Where close sits inside low-high range. 0=at low, 100=at high."""
+    r = _lm_candle_range(candle)
+    if r == 0.0:
+        return 50.0
+    try:
+        return (float(candle.get("close", 0)) - float(candle.get("low", 0))) / r * 100.0
+    except (TypeError, ValueError):
+        return 50.0
+
+
+def _lm_candle_direction(candle) -> str:
+    """bullish / bearish / neutral."""
+    try:
+        diff = float(candle.get("close", 0)) - float(candle.get("open", 0))
+        if diff > 0:
+            return "bullish"
+        if diff < 0:
+            return "bearish"
+        return "neutral"
+    except (TypeError, ValueError):
+        return "neutral"
+
+
+# ── Task 3: Pattern detector ──────────────────────────────────────────────────
+
+def _lm_detect_candle_patterns(candle: dict,
+                                prev_candle: dict = None,
+                                recent_context: dict = None) -> dict:
+    """Detect candle-level patterns from a single candle.
+
+    Returns a dict with:
+      patterns: list[str] — detected pattern names
+      evidence: dict      — per-pattern evidence values
+
+    No BOS/CHoCH. No S/R Flip. No liquidity sweep. No AI. No trading.
+    """
+    if recent_context is None:
+        recent_context = {}
+
+    body_pct         = _lm_candle_body_pct(candle)
+    upper_wick_pct   = _lm_candle_upper_wick_pct(candle)
+    lower_wick_pct   = _lm_candle_lower_wick_pct(candle)
+    close_pos_pct    = _lm_candle_close_position_pct(candle)
+    direction        = _lm_candle_direction(candle)
+    candle_range     = _lm_candle_range(candle)
+
+    avg_range        = recent_context.get("avg_range",  0.0) or 0.0
+    avg_volume       = recent_context.get("avg_volume", 0.0) or 0.0
+    recent_high      = recent_context.get("recent_high")
+    recent_low       = recent_context.get("recent_low")
+
+    try:
+        c_high  = float(candle.get("high",  0))
+        c_low   = float(candle.get("low",   0))
+        c_open  = float(candle.get("open",  0))
+        c_close = float(candle.get("close", 0))
+        c_vol   = float(candle.get("volume", 0) or 0)
+    except (TypeError, ValueError):
+        return {"patterns": [], "evidence": {}}
+
+    patterns: list = []
+    evidence: dict = {}
+
+    # 1. Bullish rejection
+    if (lower_wick_pct >= 45 and
+            close_pos_pct >= 60 and
+            (direction == "bullish" or close_pos_pct >= 60)):
+        patterns.append("bullish_rejection")
+        evidence["bullish_rejection"] = {
+            "lower_wick_pct": round(lower_wick_pct, 1),
+            "close_pos_pct":  round(close_pos_pct,  1),
+            "direction":      direction,
+        }
+
+    # 2. Bearish rejection
+    if (upper_wick_pct >= 45 and
+            close_pos_pct <= 40 and
+            (direction == "bearish" or close_pos_pct <= 40)):
+        patterns.append("bearish_rejection")
+        evidence["bearish_rejection"] = {
+            "upper_wick_pct": round(upper_wick_pct, 1),
+            "close_pos_pct":  round(close_pos_pct,  1),
+            "direction":      direction,
+        }
+
+    # 3. Pin bar
+    long_wick  = max(upper_wick_pct, lower_wick_pct)
+    short_wick = min(upper_wick_pct, lower_wick_pct)
+    if long_wick >= 55 and body_pct <= 35 and short_wick <= 25:
+        patterns.append("pin_bar")
+        evidence["pin_bar"] = {
+            "long_wick_pct":  round(long_wick,   1),
+            "short_wick_pct": round(short_wick,  1),
+            "body_pct":       round(body_pct,    1),
+        }
+
+    # 4. Bullish engulfing (requires prev_candle)
+    if prev_candle is not None and direction == "bullish":
+        prev_dir   = _lm_candle_direction(prev_candle)
+        try:
+            p_open  = float(prev_candle.get("open",  0))
+            p_close = float(prev_candle.get("close", 0))
+        except (TypeError, ValueError):
+            p_open = p_close = 0.0
+        if (prev_dir == "bearish" and
+                c_close > p_open and
+                c_open <= p_close + abs(p_open - p_close) * 0.1):
+            patterns.append("bullish_engulfing")
+            evidence["bullish_engulfing"] = {
+                "prev_open":  round(p_open,  5),
+                "prev_close": round(p_close, 5),
+                "curr_open":  round(c_open,  5),
+                "curr_close": round(c_close, 5),
+            }
+
+    # 5. Bearish engulfing (requires prev_candle)
+    if prev_candle is not None and direction == "bearish":
+        prev_dir = _lm_candle_direction(prev_candle)
+        try:
+            p_open  = float(prev_candle.get("open",  0))
+            p_close = float(prev_candle.get("close", 0))
+        except (TypeError, ValueError):
+            p_open = p_close = 0.0
+        if (prev_dir == "bullish" and
+                c_close < p_open and
+                c_open >= p_close - abs(p_open - p_close) * 0.1):
+            patterns.append("bearish_engulfing")
+            evidence["bearish_engulfing"] = {
+                "prev_open":  round(p_open,  5),
+                "prev_close": round(p_close, 5),
+                "curr_open":  round(c_open,  5),
+                "curr_close": round(c_close, 5),
+            }
+
+    # 6. Displacement candle
+    if (body_pct >= 60 and
+            avg_range > 0 and
+            candle_range > avg_range * 1.3):
+        if direction == "bullish" and close_pos_pct >= 70:
+            patterns.append("displacement_bullish")
+            evidence["displacement_bullish"] = {
+                "body_pct":       round(body_pct,       1),
+                "range_vs_avg":   round(candle_range / avg_range, 2),
+                "close_pos_pct":  round(close_pos_pct,  1),
+            }
+        elif direction == "bearish" and close_pos_pct <= 30:
+            patterns.append("displacement_bearish")
+            evidence["displacement_bearish"] = {
+                "body_pct":       round(body_pct,       1),
+                "range_vs_avg":   round(candle_range / avg_range, 2),
+                "close_pos_pct":  round(close_pos_pct,  1),
+            }
+
+    # 7. Failed breakout / failed breakdown (candle-level only; no S/R Flip, no BOS/CHoCH)
+    if recent_high is not None:
+        try:
+            rh = float(recent_high)
+            if c_high > rh and c_close < rh:
+                patterns.append("failed_breakout")
+                evidence["failed_breakout"] = {
+                    "candle_high":   round(c_high,  5),
+                    "recent_high":   round(rh,      5),
+                    "candle_close":  round(c_close, 5),
+                }
+        except (TypeError, ValueError):
+            pass
+    if recent_low is not None:
+        try:
+            rl = float(recent_low)
+            if c_low < rl and c_close > rl:
+                patterns.append("failed_breakdown")
+                evidence["failed_breakdown"] = {
+                    "candle_low":    round(c_low,   5),
+                    "recent_low":    round(rl,      5),
+                    "candle_close":  round(c_close, 5),
+                }
+        except (TypeError, ValueError):
+            pass
+
+    # 8. Strong close
+    if direction == "bullish" and close_pos_pct >= 75:
+        patterns.append("strong_close_bullish")
+        evidence["strong_close_bullish"] = {"close_pos_pct": round(close_pos_pct, 1)}
+    elif direction == "bearish" and close_pos_pct <= 25:
+        patterns.append("strong_close_bearish")
+        evidence["strong_close_bearish"] = {"close_pos_pct": round(close_pos_pct, 1)}
+
+    # 9. Weak close
+    if direction == "bullish" and close_pos_pct < 55:
+        patterns.append("weak_close_bullish")
+        evidence["weak_close_bullish"] = {"close_pos_pct": round(close_pos_pct, 1)}
+    elif direction == "bearish" and close_pos_pct > 45:
+        patterns.append("weak_close_bearish")
+        evidence["weak_close_bearish"] = {"close_pos_pct": round(close_pos_pct, 1)}
+
+    # 10. Volume strength
+    if avg_volume > 0:
+        try:
+            if c_vol > avg_volume * 1.5:
+                patterns.append("high_volume")
+                evidence["high_volume"] = {
+                    "volume":     round(c_vol,       2),
+                    "avg_volume": round(avg_volume,  2),
+                    "ratio":      round(c_vol / avg_volume, 2),
+                }
+            elif c_vol < avg_volume * 0.7:
+                patterns.append("low_volume")
+                evidence["low_volume"] = {
+                    "volume":     round(c_vol,       2),
+                    "avg_volume": round(avg_volume,  2),
+                    "ratio":      round(c_vol / avg_volume, 2),
+                }
+            else:
+                patterns.append("normal_volume")
+        except (TypeError, ValueError):
+            pass
+
+    return {"patterns": patterns, "evidence": evidence}
+
+
+# ── Task 4: Recent context builder ────────────────────────────────────────────
+
+def _lm_build_candle_recent_context(candles: list, index: int,
+                                     lookback: int = 20) -> dict:
+    """Build lookback context from candles *before* index.
+
+    Uses only past candles — no lookahead bias.
+    Returns safe partial context when not enough history.
+    """
+    start = max(0, index - lookback)
+    past  = candles[start:index]   # excludes current candle at 'index'
+
+    if not past:
+        return {
+            "avg_range":          None,
+            "avg_volume":         None,
+            "recent_high":        None,
+            "recent_low":         None,
+            "previous_candle":    None,
+            "recent_candle_count": 0,
+        }
+
+    ranges  = []
+    volumes = []
+    highs   = []
+    lows    = []
+    for c in past:
+        try:
+            ranges.append(_lm_candle_range(c))
+            h = float(c.get("high", 0))
+            l = float(c.get("low",  0))
+            highs.append(h)
+            lows.append(l)
+            v = float(c.get("volume", 0) or 0)
+            if v > 0:
+                volumes.append(v)
+        except (TypeError, ValueError):
+            pass
+
+    avg_range  = sum(ranges)  / len(ranges)  if ranges  else None
+    avg_volume = sum(volumes) / len(volumes) if volumes else None
+    recent_high = max(highs) if highs else None
+    recent_low  = min(lows)  if lows  else None
+
+    return {
+        "avg_range":           avg_range,
+        "avg_volume":          avg_volume,
+        "recent_high":         recent_high,
+        "recent_low":          recent_low,
+        "previous_candle":     past[-1] if past else None,
+        "recent_candle_count": len(past),
+    }
+
+
+# ── Task 5: Feature engine processor ─────────────────────────────────────────
+
+def _lm_compute_candle_features_for_tf(user_id: int, exchange: str, market: str,
+                                        symbol: str, timeframe: str,
+                                        limit: int = 1500) -> dict:
+    """Read stored candles, compute features, upsert into LiveMonitorCandleFeature.
+
+    Returns status dict: {status, candles_processed, features_count, error}.
+    No external API calls. Reads LiveMonitorCandle rows only.
+    """
+    from models import db as _db, LiveMonitorCandleFeature as _LMCF
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    try:
+        candle_rows = _lm_get_stored_candles(user_id, exchange, market, symbol,
+                                              timeframe, limit)
+        if not candle_rows:
+            return {"status": "unavailable", "candles_processed": 0,
+                    "features_count": 0, "timeframe": timeframe}
+
+        # Normalise to plain dicts sorted ascending by open_time
+        candles = sorted(
+            [
+                {
+                    "open_time": c.open_time,
+                    "open":      c.open,
+                    "high":      c.high,
+                    "low":       c.low,
+                    "close":     c.close,
+                    "volume":    c.volume or 0.0,
+                }
+                for c in candle_rows
+            ],
+            key=lambda x: x["open_time"],
+        )
+
+        upsert_rows = []
+        for i, candle in enumerate(candles):
+            ctx  = _lm_build_candle_recent_context(candles, i, lookback=20)
+            prev = ctx.get("previous_candle")
+
+            body_pct       = _lm_candle_body_pct(candle)
+            upper_wick_pct = _lm_candle_upper_wick_pct(candle)
+            lower_wick_pct = _lm_candle_lower_wick_pct(candle)
+            close_pos_pct  = _lm_candle_close_position_pct(candle)
+            direction      = _lm_candle_direction(candle)
+            result         = _lm_detect_candle_patterns(candle, prev_candle=prev,
+                                                         recent_context=ctx)
+            patterns       = result.get("patterns", [])
+            evidence       = result.get("evidence", {})
+
+            feature_summary = {
+                "body_pct":          round(body_pct,       2),
+                "upper_wick_pct":    round(upper_wick_pct, 2),
+                "lower_wick_pct":    round(lower_wick_pct, 2),
+                "close_pos_pct":     round(close_pos_pct,  2),
+                "direction":         direction,
+                "candle_range":      round(_lm_candle_range(candle), 8),
+                "avg_range_context": round(ctx["avg_range"], 8) if ctx.get("avg_range") else None,
+                "patterns":          patterns,
+                "evidence":          evidence,
+            }
+
+            upsert_rows.append({
+                "user_id":              user_id,
+                "exchange":             exchange,
+                "market":               market,
+                "symbol":               symbol,
+                "timeframe":            timeframe,
+                "open_time":            candle["open_time"],
+                "candle_open":          candle["open"],
+                "candle_high":          candle["high"],
+                "candle_low":           candle["low"],
+                "candle_close":         candle["close"],
+                "candle_volume":        candle["volume"],
+                "body_pct":             round(body_pct,       4),
+                "upper_wick_pct":       round(upper_wick_pct, 4),
+                "lower_wick_pct":       round(lower_wick_pct, 4),
+                "close_position_pct":   round(close_pos_pct,  4),
+                "candle_direction":     direction,
+                "detected_patterns_json": _json_dumps_safe(patterns),
+                "feature_summary_json":   _json_dumps_safe(feature_summary),
+            })
+
+        # Batch upsert using PostgreSQL ON CONFLICT DO UPDATE
+        if upsert_rows:
+            stmt = pg_insert(_LMCF.__table__).values(upsert_rows)
+            stmt = stmt.on_conflict_do_update(
+                constraint="uq_lm_cfeature_key",
+                set_={
+                    "candle_open":             stmt.excluded.candle_open,
+                    "candle_high":             stmt.excluded.candle_high,
+                    "candle_low":              stmt.excluded.candle_low,
+                    "candle_close":            stmt.excluded.candle_close,
+                    "candle_volume":           stmt.excluded.candle_volume,
+                    "body_pct":                stmt.excluded.body_pct,
+                    "upper_wick_pct":          stmt.excluded.upper_wick_pct,
+                    "lower_wick_pct":          stmt.excluded.lower_wick_pct,
+                    "close_position_pct":      stmt.excluded.close_position_pct,
+                    "candle_direction":        stmt.excluded.candle_direction,
+                    "detected_patterns_json":  stmt.excluded.detected_patterns_json,
+                    "feature_summary_json":    stmt.excluded.feature_summary_json,
+                    "updated_at":              _db.func.now(),
+                },
+            )
+            _db.session.execute(stmt)
+            _db.session.commit()
+
+        features_count = len(upsert_rows)
+        return {
+            "status":            "ready" if features_count > 0 else "unavailable",
+            "candles_processed": len(candles),
+            "features_count":    features_count,
+            "timeframe":         timeframe,
+        }
+
+    except Exception as exc:
+        try:
+            from models import db as _db2
+            _db2.session.rollback()
+        except Exception:
+            pass
+        print(f"[10.9C] feature compute error {symbol}/{timeframe}: {exc}")
+        return {"status": "error", "candles_processed": 0,
+                "features_count": 0, "timeframe": timeframe, "error": str(exc)}
+
+
+def _lm_get_latest_feature_summary(user_id: int, exchange: str, market: str,
+                                    symbol: str, timeframe: str,
+                                    limit: int = 5) -> list:
+    """Return the N most recent LiveMonitorCandleFeature rows as plain dicts."""
+    from models import LiveMonitorCandleFeature as _LMCF
+    try:
+        rows = (
+            _LMCF.query
+            .filter_by(user_id=user_id, exchange=exchange, market=market,
+                       symbol=symbol, timeframe=timeframe)
+            .order_by(_LMCF.open_time.desc())
+            .limit(limit)
+            .all()
+        )
+        result = []
+        for r in rows:
+            result.append({
+                "open_time":   r.open_time,
+                "direction":   r.candle_direction,
+                "body_pct":    r.body_pct,
+                "upper_wick":  r.upper_wick_pct,
+                "lower_wick":  r.lower_wick_pct,
+                "close_pos":   r.close_position_pct,
+                "patterns":    _json_loads_safe(r.detected_patterns_json, []),
+                "summary":     _json_loads_safe(r.feature_summary_json, {}),
+            })
+        return result
+    except Exception:
+        return []
+
+
+def _lm_get_feature_count(user_id: int, exchange: str, market: str,
+                           symbol: str, timeframe: str) -> int:
+    """Return total stored feature row count for one TF."""
+    from models import LiveMonitorCandleFeature as _LMCF
+    try:
+        return _LMCF.query.filter_by(
+            user_id=user_id, exchange=exchange, market=market,
+            symbol=symbol, timeframe=timeframe
+        ).count()
+    except Exception:
+        return 0
+
+
+# Task 6 helper: build lightweight feature engine status for snapshot_json
+def _lm_build_feature_engine_status(user_id: int, exchange: str, market: str,
+                                     symbol: str, per_tf_results: dict) -> dict:
+    """Build the lightweight candle_feature_engine status dict for snapshot_json.
+
+    Does NOT store feature arrays — only counts, status, and latest pattern names.
+    """
+    tf_stack = list(_LM_BIAS_TF_STACK_CONST)
+    per_tf_status = {}
+    overall_statuses = []
+
+    for tf in tf_stack:
+        tf_res = per_tf_results.get(tf, {})
+        tf_status = tf_res.get("status", "unavailable")
+        overall_statuses.append(tf_status)
+
+        # Latest patterns from most recent 3 feature rows
+        latest_rows   = _lm_get_latest_feature_summary(user_id, exchange, market,
+                                                         symbol, tf, limit=3)
+        latest_pats   = []
+        latest_time   = None
+        for row in latest_rows:
+            latest_pats.extend(row.get("patterns", []))
+            if latest_time is None and row.get("open_time"):
+                latest_time = row["open_time"]
+        # Deduplicate while preserving order
+        seen = set()
+        deduped = [p for p in latest_pats if not (p in seen or seen.add(p))]
+
+        per_tf_status[tf] = {
+            "status":               tf_status,
+            "candles_processed":    tf_res.get("candles_processed", 0),
+            "features_count":       tf_res.get("features_count",    0),
+            "latest_feature_time":  latest_time,
+            "latest_patterns":      deduped[:6],
+        }
+
+    # Overall status: ready if all ready, partial if some ready, else unavailable
+    if all(s == "ready" for s in overall_statuses):
+        overall = "ready"
+    elif any(s == "ready" for s in overall_statuses):
+        overall = "partial"
+    elif any(s == "error" for s in overall_statuses):
+        overall = "error"
+    else:
+        overall = "unavailable"
+
+    return {
+        "enabled": True,
+        "phase":   "phase10_9c_candle_pattern_features",
+        "status":  overall,
+        "per_tf":  per_tf_status,
+    }
+
+
+# ── Task 5 (cont.): Item-level feature refresh ────────────────────────────────
+
+# Thread registry — prevents parallel over-computation per item
+_lm_bias_feature_threads: dict = {}
+_lm_bias_feature_thread_lock   = threading.Lock()
+
+
+def _lm_refresh_bias_candle_features_for_item(item, force: bool = False) -> dict:
+    """Compute and store candle pattern features for all TFs of one Bias Shift item.
+
+    Reads stored LiveMonitorCandle rows only — no external API calls.
+    Updates snapshot_json.candle_feature_engine with lightweight status only.
+    Safe to call from background thread — uses app.app_context().
+    No trading. No private API. No BOS/CHoCH. No order-flow.
+    """
+    if not _lm_is_bias_shift_item(item):
+        return {"skipped": True, "reason": "not_bias_shift"}
+
+    with app.app_context():
+        from models import db as _db, LiveMonitorItem as _LMI
+
+        uid      = getattr(item, "user_id",  None)
+        symbol   = (getattr(item, "symbol",   "") or "").upper()
+        exchange = (getattr(item, "exchange", "") or "binance").lower()
+        market   = (getattr(item, "market",   "") or "perpetual").lower()
+        item_id  = getattr(item, "id", None)
+
+        if not uid or not symbol:
+            return {"skipped": True, "reason": "missing_uid_or_symbol"}
+
+        per_tf_results: dict = {}
+        for tf in _LM_BIAS_TF_STACK_CONST:
+            per_tf_results[tf] = _lm_compute_candle_features_for_tf(
+                uid, exchange, market, symbol, tf
+            )
+            print(f"[10.9C] features {symbol}/{tf} ({exchange}): "
+                  f"status={per_tf_results[tf]['status']} "
+                  f"count={per_tf_results[tf]['features_count']}")
+
+        # Task 6: build lightweight status and write to snapshot_json
+        feature_status = _lm_build_feature_engine_status(
+            uid, exchange, market, symbol, per_tf_results
+        )
+        try:
+            row = _LMI.query.filter_by(id=item_id).first()
+            if row:
+                snap = _json_loads_safe(row.snapshot_json, {})
+                snap["candle_feature_engine"] = feature_status
+                row.snapshot_json = _json_dumps_safe(snap)
+                _db.session.commit()
+        except Exception as exc:
+            _db.session.rollback()
+            print(f"[10.9C] snapshot update error: {exc}")
+
+        return {
+            "ok":                   True,
+            "symbol":               symbol,
+            "exchange":             exchange,
+            "market":               market,
+            "candle_feature_engine": feature_status,
+            "per_tf":               per_tf_results,
+        }
+
+
+def _lm_ensure_bias_features_bg(item_id: int, uid: int, exchange: str,
+                                  market: str, symbol: str,
+                                  source_tab: str, force: bool = False):
+    """Start background feature computation for a Bias Shift item if not already running."""
+    if source_tab not in ("bias_shift", "bias"):
+        return
+    with _lm_bias_feature_thread_lock:
+        t = _lm_bias_feature_threads.get(item_id)
+        if t and t.is_alive():
+            return   # already running
+
+    class _ItemProxy:
+        pass
+    proxy = _ItemProxy()
+    proxy.id         = item_id
+    proxy.user_id    = uid
+    proxy.symbol     = symbol
+    proxy.exchange   = exchange
+    proxy.market     = market
+    proxy.source_tab = source_tab
+    proxy.snapshot_json = None
+
+    def _run():
+        with _lm_bias_feature_thread_lock:
+            _lm_bias_feature_threads[item_id] = threading.current_thread()
+        try:
+            _lm_refresh_bias_candle_features_for_item(proxy, force=force)
+        except Exception as exc:
+            print(f"[10.9C] background feature error item={item_id}: {exc}")
+        finally:
+            with _lm_bias_feature_thread_lock:
+                _lm_bias_feature_threads.pop(item_id, None)
+
+    t = threading.Thread(target=_run, daemon=True,
+                         name=f"lm-bias-features-{item_id}")
+    with _lm_bias_feature_thread_lock:
+        _lm_bias_feature_threads[item_id] = t
     t.start()
 
 
@@ -17016,6 +17692,23 @@ def _lm_build_ai_context(item) -> dict:
             "note":         "Candle arrays are NOT included in AI context. "
                             "Status only — pattern/BOS/CHoCH detection engines pending.",
         } if _cs and isinstance(_cs, dict) else None)(snap.get("candle_store")),
+        # Phase 10.9C Task 11: candle_feature_engine status for Bias Shift items
+        # Feature row arrays are NOT sent to AI — status and latest patterns only.
+        "candle_feature_engine": (lambda _cfe: {
+            "phase":   _cfe.get("phase"),
+            "status":  _cfe.get("status"),
+            "per_tf":  {
+                tf: {
+                    "status":            info.get("status"),
+                    "features_count":    info.get("features_count"),
+                    "latest_patterns":   (info.get("latest_patterns") or [])[:6],
+                }
+                for tf, info in (_cfe.get("per_tf") or {}).items()
+            },
+            "note":    "Full feature rows are NOT included in AI context. "
+                       "Status and latest pattern names only. "
+                       "BOS/CHoCH/order-flow engines pending (Phase 10.9D+).",
+        } if _cfe and isinstance(_cfe, dict) else None)(snap.get("candle_feature_engine")),
     }
 
 
@@ -18680,6 +19373,174 @@ def api_lm_bias_candles_debug(item_id):
         "market":      market,
         "candle_store_snapshot": snap.get("candle_store", {}),
         "per_tf":      per_tf_debug,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Phase 10.9C Task 8: Bias Shift candle feature refresh endpoint
+# ---------------------------------------------------------------------------
+@app.route("/api/live-monitor/items/<int:item_id>/bias-candle-features/refresh",
+           methods=["POST"])
+@login_required
+def api_lm_bias_candle_features_refresh(item_id):
+    """Compute/store candle pattern features for a Bias Shift Watch item.
+
+    Reads stored candles from LiveMonitorCandle — no external API calls.
+    No trading. No private API. No BOS/CHoCH. No order-flow.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorItem as _LMI
+    row = _LMI.query.filter_by(id=item_id, is_active=True).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if not _lm_is_bias_shift_item(row):
+        return jsonify({"error": "not_bias_shift",
+                        "message": "This endpoint is only for Bias Shift Watch items."}), 400
+
+    data  = request.get_json(force=True) or {}
+    force = bool(data.get("force", False))
+
+    exchange = row.exchange or "binance"
+    market   = row.market   or "perpetual"
+    symbol   = row.symbol
+
+    # Mark status as initializing immediately
+    try:
+        snap = _json_loads_safe(row.snapshot_json, {})
+        existing_cfe = snap.get("candle_feature_engine") or {}
+        existing_cfe["status"] = "initializing" if not existing_cfe.get("status") else "refreshing"
+        snap["candle_feature_engine"] = existing_cfe
+        row.snapshot_json = _json_dumps_safe(snap)
+        _db.session.commit()
+    except Exception as _e:
+        _db.session.rollback()
+
+    _lm_ensure_bias_features_bg(
+        row.id, uid, exchange, market, symbol, row.source_tab or "bias_shift", force=force
+    )
+
+    snap_now = _json_loads_safe(row.snapshot_json, {})
+    cfe_now  = snap_now.get("candle_feature_engine") or {}
+    return jsonify({
+        "ok":                   True,
+        "item_id":              item_id,
+        "symbol":               symbol,
+        "setup_category":       _lm_setup_category(row),
+        "candle_feature_engine": cfe_now,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Phase 10.9C Task 9: Bias Shift candle feature debug endpoint
+# ---------------------------------------------------------------------------
+@app.route("/api/live-monitor/items/<int:item_id>/bias-candle-features/debug",
+           methods=["GET"])
+@login_required
+def api_lm_bias_candle_features_debug(item_id):
+    """Return per-TF feature summaries for a Bias Shift Watch item.
+
+    Optional query params:
+      tf      — filter to one timeframe
+      limit   — sample rows to return (default 20, max 120)
+      pattern — filter rows that contain this pattern name
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import LiveMonitorItem as _LMI, LiveMonitorCandleFeature as _LMCF
+    row = _LMI.query.filter_by(id=item_id, is_active=True).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if not _lm_is_bias_shift_item(row):
+        return jsonify({"error": "not_bias_shift",
+                        "message": "This endpoint is only for Bias Shift Watch items."}), 400
+
+    tf_filter      = (request.args.get("tf")      or "").strip().lower() or None
+    pattern_filter = (request.args.get("pattern") or "").strip().lower() or None
+    try:
+        sample_limit = min(int(request.args.get("limit", 20)), 120)
+    except (TypeError, ValueError):
+        sample_limit = 20
+
+    allowed_tfs = set(_LM_BIAS_TF_STACK_CONST)
+    if tf_filter and tf_filter not in allowed_tfs:
+        return jsonify({"error": "invalid_tf", "allowed": list(allowed_tfs)}), 400
+
+    exchange = row.exchange or "binance"
+    market   = row.market   or "perpetual"
+    symbol   = row.symbol
+
+    tfs_to_show = [tf_filter] if tf_filter else list(_LM_BIAS_TF_STACK_CONST)
+    per_tf_debug = {}
+
+    for tf in tfs_to_show:
+        q = (_LMCF.query
+             .filter_by(user_id=uid, exchange=exchange, market=market,
+                        symbol=symbol, timeframe=tf)
+             .order_by(_LMCF.open_time.desc()))
+
+        total = q.count()
+        rows  = q.limit(sample_limit * 3).all()   # fetch more, then filter by pattern
+
+        sample = []
+        for fr in rows:
+            pats = _json_loads_safe(fr.detected_patterns_json, [])
+            if pattern_filter and pattern_filter not in pats:
+                continue
+            summary = _json_loads_safe(fr.feature_summary_json, {})
+            sample.append({
+                "open_time":    fr.open_time,
+                "direction":    fr.candle_direction,
+                "body_pct":     fr.body_pct,
+                "upper_wick":   fr.upper_wick_pct,
+                "lower_wick":   fr.lower_wick_pct,
+                "close_pos":    fr.close_position_pct,
+                "patterns":     pats,
+                "open":         fr.candle_open,
+                "high":         fr.candle_high,
+                "low":          fr.candle_low,
+                "close":        fr.candle_close,
+                "volume":       fr.candle_volume,
+                "evidence":     summary.get("evidence", {}),
+            })
+            if len(sample) >= sample_limit:
+                break
+
+        latest_pats_rows = _lm_get_latest_feature_summary(
+            uid, exchange, market, symbol, tf, limit=3
+        )
+        latest_pats = []
+        for r in latest_pats_rows:
+            latest_pats.extend(r.get("patterns", []))
+        seen = set()
+        deduped = [p for p in latest_pats if not (p in seen or seen.add(p))]
+
+        per_tf_debug[tf] = {
+            "features_count": total,
+            "latest_patterns": deduped[:6],
+            "sample":          sample,
+        }
+
+    snap = _json_loads_safe(row.snapshot_json, {})
+    cfe  = snap.get("candle_feature_engine", {})
+    return jsonify({
+        "ok":           True,
+        "item_id":      item_id,
+        "symbol":       symbol,
+        "exchange":     exchange,
+        "market":       market,
+        "tf_stack":     list(_LM_BIAS_TF_STACK_CONST),
+        "status":       cfe.get("status", "unknown"),
+        "candle_feature_engine": cfe,
+        "per_tf":       per_tf_debug,
     })
 
 
