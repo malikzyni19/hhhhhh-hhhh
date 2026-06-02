@@ -4386,6 +4386,15 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
   var _lmTfState=["15m","30m","1h","4h","1d"], _lmModuleState=["OB","FVG","FIB","Bias"];
   var _lmRefreshState="manual", _lmAiPreview=true;
   var _lmDhTimer=null;
+  var _lmObDaDefaults = {
+    "5m":  {distance_pct:0.50, approach_pct:0.15},
+    "15m": {distance_pct:0.80, approach_pct:0.25},
+    "30m": {distance_pct:1.00, approach_pct:0.35},
+    "1h":  {distance_pct:1.50, approach_pct:0.50},
+    "4h":  {distance_pct:2.50, approach_pct:0.80},
+    "1d":  {distance_pct:4.00, approach_pct:1.20}
+  };
+  var _lmObDaSettings = {};
 
   function renderLiveMonitorInto(scroll){
     scroll.classList.add("lm-active");
@@ -5673,6 +5682,22 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
             })()+
           '</div>'+
         '</div>'+
+      '</div>'+
+
+      '<div class="sec-card" style="margin-top:0" id="lmDhCard">'+
+        '<div class="sec-card-head" id="lmDhHead" style="cursor:pointer" onclick="_lmToggleDh()">'+
+          '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>'+
+          '<span class="sch-title">DATA HEALTH</span>'+
+          '<span style="font-size:9px;color:var(--text-3)" id="lmDhCtl">▾ collapse</span>'+
+        '</div>'+
+        '<div id="lmDhBody" style="overflow-x:auto;overflow-y:auto;max-height:320px">'+
+          '<table class="lm-dh-tbl" style="width:100%;min-width:580px">'+
+            '<thead><tr><th>Metric</th><th>Value</th><th>Source</th><th>Status</th><th>Updated</th><th>Notes</th></tr></thead>'+
+            '<tbody id="lmDhRows">'+
+              '<tr><td colspan="6" style="color:var(--text-3);font-size:10px;padding:10px">Select a setup to view data health.</td></tr>'+
+            '</tbody>'+
+          '</table>'+
+        '</div>'+
       '</div>';
 
     box.innerHTML=html;
@@ -6536,8 +6561,8 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     return "lm-dh-na";
   }
   function _lmRenderDataHealth(rows, meta){
-    var wrap=document.getElementById("lmDhBody"); if(!wrap) return;
-    var tbody=wrap.querySelector("tbody"); if(!tbody) return;
+    var wrap=document.getElementById("lmDhRows")||document.getElementById("lmDhBody"); if(!wrap) return;
+    var tbody=(wrap.tagName==="TBODY")?wrap:wrap.querySelector("tbody"); if(!tbody) return;
     if(!rows||!rows.length){ tbody.innerHTML=""; return; }
     // Phase 10.7: show sources_used/sources_skipped header when aggregated
     var headerHtml="";
@@ -6565,6 +6590,68 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       "</tr>";
     }).join("");
   }
+  function _lmObDaLoad(){
+    fetch("/api/live-monitor/ob-settings",{credentials:"same-origin"})
+      .then(function(r){return r.json();})
+      .then(function(d){
+        if(d.ok){ _lmObDaSettings=d.settings||{}; _lmObDaRenderTable(); _lmObDaUpdateSummary(); }
+      }).catch(function(){
+        _lmObDaSettings=JSON.parse(JSON.stringify(_lmObDaDefaults));
+        _lmObDaRenderTable(); _lmObDaUpdateSummary();
+      });
+  }
+  function _lmObDaRenderTable(){
+    var tbody=document.getElementById("lmObDaBody2"); if(!tbody) return;
+    var tfs=["5m","15m","30m","1h","4h","1d"];
+    tbody.innerHTML=tfs.map(function(tf){
+      var s=_lmObDaSettings[tf]||_lmObDaDefaults[tf]||{};
+      return '<tr>'+
+        '<td style="font-weight:600;color:var(--text-2)">'+tf+'</td>'+
+        '<td><input type="number" step="0.01" min="0.01" max="20" data-tf="'+tf+'" data-key="distance_pct" value="'+(s.distance_pct||0)+'"></td>'+
+        '<td><input type="number" step="0.01" min="0.01" max="20" data-tf="'+tf+'" data-key="approach_pct" value="'+(s.approach_pct||0)+'"></td>'+
+      '</tr>';
+    }).join("");
+  }
+  function _lmObDaUpdateSummary(){
+    var el=document.getElementById("lmObDaSummary"); if(!el) return;
+    var s15=_lmObDaSettings["15m"]||_lmObDaDefaults["15m"];
+    var s1h=_lmObDaSettings["1h"]||_lmObDaDefaults["1h"];
+    var s4h=_lmObDaSettings["4h"]||_lmObDaDefaults["4h"];
+    el.textContent="15m: D "+s15.distance_pct+"% / A "+s15.approach_pct+"% · 1H: D "+s1h.distance_pct+"% / A "+s1h.approach_pct+"% · 4H: D "+s4h.distance_pct+"% / A "+s4h.approach_pct+"%";
+  }
+  function _lmObDaSaveClick(){
+    var tbl=document.getElementById("lmObDaTbl"); if(!tbl) return;
+    var inputs=tbl.querySelectorAll("input");
+    var settings={};
+    [].forEach.call(inputs,function(inp){
+      var tf=inp.getAttribute("data-tf");
+      var key=inp.getAttribute("data-key");
+      var val=parseFloat(inp.value);
+      if(!settings[tf]) settings[tf]={};
+      settings[tf][key]=isNaN(val)?_lmObDaDefaults[tf][key]:val;
+    });
+    fetch("/api/live-monitor/ob-settings",{method:"POST",headers:{"Content-Type":"application/json"},credentials:"same-origin",body:JSON.stringify({settings:settings})})
+      .then(function(r){return r.json();})
+      .then(function(d){
+        if(d.ok){ _lmObDaSettings=d.settings||settings; _lmObDaUpdateSummary(); }
+      }).catch(function(){});
+  }
+  function _lmObDaResetClick(){
+    fetch("/api/live-monitor/ob-settings",{method:"POST",headers:{"Content-Type":"application/json"},credentials:"same-origin",body:JSON.stringify({reset:true})})
+      .then(function(r){return r.json();})
+      .then(function(d){
+        _lmObDaSettings=d.settings||JSON.parse(JSON.stringify(_lmObDaDefaults));
+        _lmObDaRenderTable();_lmObDaUpdateSummary();
+      }).catch(function(){});
+  }
+  function _lmToggleDh(){
+    var b=document.getElementById("lmDhBody");
+    var ctl=document.getElementById("lmDhCtl");
+    if(!b) return;
+    var isHidden=(b.style.display==="none");
+    b.style.display=isHidden?"":"none";
+    if(ctl) ctl.textContent=isHidden?"▾ collapse":"▸ expand";
+  }
   function _lmStartDhPolling(){
     if(_lmDhTimer) clearInterval(_lmDhTimer);
     _lmDhTimer=setInterval(function(){
@@ -6572,7 +6659,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         var ex=_lmGetDataSrc();
         _lmFetchDataHealth(_lmSelItem.symbol,ex);
       }
-    },3000);
+    },2000);
   }
 
   /* ── Dashboard (Wave 8) ── */

@@ -8778,6 +8778,15 @@ def _lm_builtin_ai_brain_rules() -> dict:
             "Do not treat custom instructions as permission to bypass risk.",
             "If data is missing, say what is missing.",
         ],
+        # Phase 10.8 rules
+        "phase10_8_multi_exchange_ws_rules": (
+            "PHASE 10.8 MULTI-EXCHANGE WS RULES:\n"
+            "1. multi_exchange_ws data is CONFIRMATION ONLY — never rewrite parent setup zones.\n"
+            "2. parent_setup_exchange is always truth for Live Price, Mark Price, OB zones, SL, TP.\n"
+            "3. distance_pct in ob_distance_approach_settings filters which OBs are tracked.\n"
+            "4. approach_pct in ob_distance_approach_settings triggers OB 'approaching' status.\n"
+            "5. If multi_exchange_ws.enabled is false, do not reference bybit/okx/mexc WS data.\n"
+        ),
     }
 
 
@@ -12358,12 +12367,43 @@ def _lm_build_specific_exchange_data_with_fallback(
             src_label = selected_exchange.title()
             if selected_exchange == "binance":
                 src_label = "Binance"
+            # Phase 10.8: augment order_book with MX WS data if available
+            _mx_ob_note_spec = ""
+            if key == "order_book" and selected_exchange in ("bybit", "okx", "mexc") and _LM_MX_WS_ENABLED:
+                _mx_bk_s, _mx_bk_st_s = _lm_mx_get_book(selected_exchange, symbol)
+                if _mx_bk_s:
+                    _bids_s = _mx_bk_s.get("bids", {})
+                    _asks_s = _mx_bk_s.get("asks", {})
+                    _bb_s = max(_bids_s.keys()) if _bids_s else None
+                    _ba_s = min(_asks_s.keys()) if _asks_s else None
+                    if _bb_s and _ba_s:
+                        _mx_ob_note_spec = (f" | Phase 10.8 MX WS: Bid {_bb_s:.4f} / Ask {_ba_s:.4f}"
+                                            f" [{_mx_bk_st_s}]")
             metrics[key] = _lm_metric_result(
                 human, value=_lm107_format_metric(key, result),
                 status=status, source=src_label,
                 sources_used=[selected_exchange],
-                notes=result.get("notes", ""), updated=now_iso, raw=result)
+                notes=(result.get("notes", "") + _mx_ob_note_spec).strip(),
+                updated=now_iso, raw=result)
         else:
+            # Phase 10.8: for order_book on bybit/okx/mexc, try MX WS book before Binance fallback
+            if key == "order_book" and selected_exchange in ("bybit", "okx", "mexc") and _LM_MX_WS_ENABLED:
+                _mx_bk_fb, _mx_bk_fb_st = _lm_mx_get_book(selected_exchange, symbol)
+                if _mx_bk_fb:
+                    _bids_fb = _mx_bk_fb.get("bids", {})
+                    _asks_fb = _mx_bk_fb.get("asks", {})
+                    _bb_fb = max(_bids_fb.keys()) if _bids_fb else None
+                    _ba_fb = min(_asks_fb.keys()) if _asks_fb else None
+                    if _bb_fb and _ba_fb:
+                        metrics[key] = _lm_metric_result(
+                            human,
+                            value=f"Bid {_bb_fb:.4f} / Ask {_ba_fb:.4f}",
+                            status=_mx_bk_fb_st,
+                            source=f"{selected_exchange.title()} WS (Phase 10.8)",
+                            sources_used=[selected_exchange],
+                            notes=f"Phase 10.8 MX WS order book for {selected_exchange.title()}",
+                            updated=now_iso)
+                        continue
             # Binance fallback (only if selected ≠ binance)
             fb_result = None
             if selected_exchange != "binance":
@@ -12664,6 +12704,14 @@ def _lm_build_data_health_context(symbol: str, exchange: str,
         gate = spec.get("ai_data_gate", {})
         _append_snapshot_rows(rows, gate.get("allowed", False),
                               gate.get("reasons", []), exchange.title())
+        # Phase 10.8 Task 10: annotate Live Price and Mark Price rows with parent exchange note
+        if _LM_MX_WS_ENABLED:
+            _p108_note = (f"Parent setup exchange: {exchange.title()}. "
+                          f"Multi-exchange WS data available for analysis but parent price is "
+                          f"from {exchange.title()}.")
+            for _row in rows:
+                if _row.get("metric") in ("Live Price", "Mark Price"):
+                    _row["notes"] = ((_row.get("notes") or "") + " | " + _p108_note).strip(" |")
         return {
             "symbol":          symbol,
             "exchange":        exchange,
@@ -12673,6 +12721,10 @@ def _lm_build_data_health_context(symbol: str, exchange: str,
             "critical_status": _critical_from_lp_mp(spec["metrics"]),
             "ai_data_gate":    gate,
             "fallback_used":   spec.get("fallback_used", []),
+            "multi_exchange_ws_note": (
+                f"Parent setup exchange: {exchange.title()}. "
+                f"Multi-exchange WS data available for analysis only."
+            ) if _LM_MX_WS_ENABLED else None,
         }
 
     rows = []
@@ -13034,12 +13086,14 @@ _LM_SE_CRITICAL_MODES      = {"invalidated", "blocked", "refined_internal_entry"
 
 def _lm_score_orderbook_wall_for_zone(symbol: str, exchange: str, direction: str,
                                        zone_low: float, zone_high: float,
-                                       analysis_source: str = None) -> dict:
+                                       analysis_source: str = None,
+                                       ob_da_settings: dict = None) -> dict:
     """Return structured OB wall evidence for a zone.
 
     {available, status, wall_side, wall_price, wall_strength, wall_score, notes}
     Only _ob_books (Binance) is used; non-Binance falls back to Binance stream.
     zones/SL/TP are never modified by this function.
+    ob_da_settings: optional Phase 10.8 OB distance/approach settings dict keyed by tf.
     """
     unavail = {
         "available":     False,
@@ -13110,6 +13164,25 @@ def _lm_score_orderbook_wall_for_zone(symbol: str, exchange: str, direction: str
             notes += " [stale OB — treat as weak evidence]"
         notes += _ob_fallback_note
 
+        # Phase 10.8: determine approach status using ob_da_settings if provided
+        _approach_note = ""
+        if ob_da_settings and best_p and zone_high and zone_low:
+            _zone_mid  = (zone_high + zone_low) / 2.0
+            _zone_size = zone_high - zone_low
+            # Use the zone range to compute a representative "tf" approach key
+            # This is best-effort — caller may pass tf-specific settings
+            _approach_pct = None
+            for _tf_key in ("5m", "15m", "30m", "1h", "4h", "1d"):
+                _tf_cfg = ob_da_settings.get(_tf_key, {})
+                if _tf_cfg.get("approach_pct") is not None:
+                    _approach_pct = float(_tf_cfg["approach_pct"]) / 100.0
+                    break
+            if _approach_pct and _zone_mid > 0:
+                _dist_to_best = abs(best_p - _zone_mid) / _zone_mid
+                if _dist_to_best <= _approach_pct:
+                    _approach_note = " [OB APPROACHING — within approach threshold]"
+                    notes += _approach_note
+
         return {
             "available":     True,
             "status":        ob_status,
@@ -13118,6 +13191,7 @@ def _lm_score_orderbook_wall_for_zone(symbol: str, exchange: str, direction: str
             "wall_strength": wall_str,
             "wall_score":    wall_score,
             "notes":         notes,
+            "approaching":   bool(_approach_note),
         }
     except Exception as _e:
         return {**unavail, "notes": f"error: {_e}"}
@@ -13658,6 +13732,17 @@ def _lm_build_smart_entry_plan(item, snapshot: dict = None, scan_result=None,
     analysis_source      = _asc_se["analysis_source"]
     parent_setup_exchange = _asc_se["parent_setup_exchange"]
 
+    # Phase 10.8: Load OB distance/approach settings for this user
+    _ob_da_settings = {tf: dict(v) for tf, v in _LM_OB_SETTINGS_DEFAULTS.items()}
+    try:
+        uid_se, _ = _current_user_id_and_user()
+        if uid_se:
+            _saved_se = _lm_ob_settings_load(uid_se)
+            _ob_da_settings = {tf: {**_LM_OB_SETTINGS_DEFAULTS.get(tf, {}), **_saved_se.get(tf, {})}
+                               for tf in _LM_OB_SETTINGS_DEFAULTS}
+    except Exception:
+        pass
+
     # ── Base / blocked template ───────────────────────────────────────────────
     def _make_base(mode="parent_default", decision="wait",
                    block_reason=None, warnings=None):
@@ -13818,7 +13903,8 @@ def _lm_build_smart_entry_plan(item, snapshot: dict = None, scan_result=None,
     live_ctx     = {"symbol": symbol, "exchange": exchange,
                     "analysis_source": analysis_source,
                     "parent_setup_exchange": parent_setup_exchange,
-                    "direction": direction, "data_health": data_health}
+                    "direction": direction, "data_health": data_health,
+                    "ob_distance_approach_settings": _ob_da_settings}
     parent_setup_scoring = {"direction": direction,
                             "zone_high": zone_high, "zone_low": zone_low,
                             "tf": parent_tf}
@@ -13951,7 +14037,7 @@ def _lm_build_smart_entry_plan(item, snapshot: dict = None, scan_result=None,
     event_sum = f"{mode}:{decision}:conf{confidence}"
 
     return {
-        "phase":                    "phase10_6_smart_entry_refinement",
+        "phase":                    "phase10_8_multi_exchange_live_ui_cleanup",
         "computed_at":              now_iso,
         "symbol":                   symbol,
         "exchange":                 exchange,
@@ -13967,6 +14053,14 @@ def _lm_build_smart_entry_plan(item, snapshot: dict = None, scan_result=None,
         "invalidation":             inv_d,
         "message_summary":          msg_sum,
         "event_summary":            event_sum,
+        # Phase 10.8: multi-exchange WS context
+        "multi_exchange_ws": {
+            "enabled":       _LM_MX_WS_ENABLED,
+            "bybit_stream":  _lm_mx_stream_status("bybit"),
+            "okx_stream":    _lm_mx_stream_status("okx"),
+            "mexc_stream":   _lm_mx_stream_status("mexc"),
+        },
+        "ob_distance_approach_settings": _ob_da_settings,
         # Backward-compat keys
         "direction":                direction,
         "parent_tf":                parent_tf,
@@ -16199,6 +16293,14 @@ def _lm_build_ai_context(item) -> dict:
             ] if trades else None
         )(_lm_ai_context_recent_trades(item_id))
         )(getattr(item, "id", None)),
+        # Phase 10.8: multi-exchange WS context
+        "phase": "phase10_8_multi_exchange_live_ui_cleanup",
+        "multi_exchange_ws": {
+            "enabled":       _LM_MX_WS_ENABLED,
+            "bybit_stream":  _lm_mx_stream_status("bybit"),
+            "okx_stream":    _lm_mx_stream_status("okx"),
+            "mexc_stream":   _lm_mx_stream_status("mexc"),
+        },
     }
 
 
@@ -20689,6 +20791,118 @@ def api_lm_analysis_source_debug():
             "parent setup exchange remains source of truth for zones/SL/TP."
         ),
     })
+
+
+# ── Phase 10.8: OB Distance/Approach Settings ────────────────────────────────
+
+_LM_OB_SETTINGS_DEFAULTS = {
+    "5m":  {"distance_pct": 0.50, "approach_pct": 0.15},
+    "15m": {"distance_pct": 0.80, "approach_pct": 0.25},
+    "30m": {"distance_pct": 1.00, "approach_pct": 0.35},
+    "1h":  {"distance_pct": 1.50, "approach_pct": 0.50},
+    "4h":  {"distance_pct": 2.50, "approach_pct": 0.80},
+    "1d":  {"distance_pct": 4.00, "approach_pct": 1.20},
+}
+
+_LM_OB_VALID_TFS = set(_LM_OB_SETTINGS_DEFAULTS.keys())
+
+
+def _lm_ob_settings_load(uid) -> dict:
+    """Load persisted OB distance/approach settings for uid from /tmp file."""
+    try:
+        path = f"/tmp/zyni_ob_settings_{uid}.json"
+        if os.path.exists(path):
+            with open(path) as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
+def _lm_ob_settings_save(uid, settings: dict):
+    """Persist OB distance/approach settings for uid to /tmp file."""
+    try:
+        path = f"/tmp/zyni_ob_settings_{uid}.json"
+        with open(path, "w") as f:
+            json.dump(settings, f)
+    except Exception:
+        pass
+
+
+@app.route("/api/live-monitor/ob-settings", methods=["GET"])
+@login_required
+def api_lm_ob_settings_get():
+    """Return current OB distance/approach settings merged with defaults. Read-only."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    saved  = _lm_ob_settings_load(uid)
+    merged = {tf: {**_LM_OB_SETTINGS_DEFAULTS.get(tf, {}), **saved.get(tf, {})}
+              for tf in _LM_OB_SETTINGS_DEFAULTS}
+    return jsonify({"ok": True, "settings": merged, "defaults": _LM_OB_SETTINGS_DEFAULTS})
+
+
+@app.route("/api/live-monitor/ob-settings", methods=["POST"])
+@login_required
+def api_lm_ob_settings_post():
+    """Save OB distance/approach settings. Accepts {settings:{...}} or {reset:true}."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    body = request.get_json(force=True, silent=True) or {}
+
+    # Reset path
+    if body.get("reset"):
+        _lm_ob_settings_save(uid, {})
+        merged = {tf: dict(v) for tf, v in _LM_OB_SETTINGS_DEFAULTS.items()}
+        return jsonify({"ok": True, "reset": True, "settings": merged,
+                        "defaults": _LM_OB_SETTINGS_DEFAULTS})
+
+    incoming = body.get("settings")
+    if not isinstance(incoming, dict):
+        return jsonify({"error": "settings_required",
+                        "detail": "Provide {settings: {<tf>: {distance_pct, approach_pct}}}"}), 400
+
+    errors   = []
+    validated = {}
+    for tf, vals in incoming.items():
+        if tf not in _LM_OB_VALID_TFS:
+            errors.append(f"Unknown timeframe: {tf!r}. Valid: {sorted(_LM_OB_VALID_TFS)}")
+            continue
+        if not isinstance(vals, dict):
+            errors.append(f"{tf}: expected dict with distance_pct and approach_pct")
+            continue
+        entry = {}
+        for field in ("distance_pct", "approach_pct"):
+            v = vals.get(field)
+            if v is None:
+                continue
+            try:
+                fv = float(v)
+            except (TypeError, ValueError):
+                errors.append(f"{tf}.{field}: must be a float, got {v!r}")
+                continue
+            if not (0.01 <= fv <= 20.0):
+                errors.append(f"{tf}.{field}: must be between 0.01 and 20.0, got {fv}")
+                continue
+            entry[field] = fv
+        if entry:
+            validated[tf] = entry
+
+    if errors:
+        return jsonify({"error": "validation_failed", "detail": errors}), 400
+
+    # Merge with existing saved
+    current = _lm_ob_settings_load(uid)
+    for tf, entry in validated.items():
+        current.setdefault(tf, {}).update(entry)
+    _lm_ob_settings_save(uid, current)
+
+    merged = {tf: {**_LM_OB_SETTINGS_DEFAULTS.get(tf, {}), **current.get(tf, {})}
+              for tf in _LM_OB_SETTINGS_DEFAULTS}
+    return jsonify({"ok": True, "settings": merged, "defaults": _LM_OB_SETTINGS_DEFAULTS,
+                    "saved_tfs": sorted(validated.keys())})
 
 
 # mobile UA fragments — keep small, case-insensitive
