@@ -10529,6 +10529,100 @@ def _lm_fetch_agg_trades_delta_rest(symbol: str):
     return None
 
 
+def _lm_fetch_bybit_delta_rest(symbol: str):
+    """Compute buy/sell/delta from Bybit recent trades (public REST, linear perpetual)."""
+    try:
+        sym = _lm_symbol_for_exchange(symbol, "bybit")
+        r = req.get(f"{BYBIT_API_V5}/v5/market/recent-trade",
+                    params={"category": "linear", "symbol": sym, "limit": 1000},
+                    timeout=_TOUT_EXCHANGE)
+        if r.status_code != 200:
+            return None
+        trades = (r.json().get("result") or {}).get("list") or []
+        if not trades:
+            return None
+        now = time.time()
+        c60 = now - 60
+        c5m = now - 300
+        buy_60 = sell_60 = buy_5m = sell_5m = 0.0
+        for t in trades:
+            try:
+                ts_s = int(t.get("time", 0)) / 1000
+                side = t.get("side", "")
+                vol  = float(t.get("size", 0)) * float(t.get("price", 0))
+            except (TypeError, ValueError):
+                continue
+            if ts_s >= c5m:
+                if side == "Buy": buy_5m  += vol
+                else:             sell_5m += vol
+            if ts_s >= c60:
+                if side == "Buy": buy_60  += vol
+                else:             sell_60 += vol
+        tot60 = buy_60 + sell_60
+        tot5m = buy_5m + sell_5m
+        if not (tot60 > 0 or tot5m > 0):
+            return None
+        return {
+            "buy_vol_60s":   buy_60,  "sell_vol_60s":  sell_60,
+            "delta_60s":     buy_60 - sell_60,
+            "delta_pct_60s": round((buy_60 - sell_60) / tot60 * 100, 1) if tot60 > 0 else 0.0,
+            "buy_vol_5m":    buy_5m,  "sell_vol_5m":   sell_5m,
+            "delta_5m":      buy_5m  - sell_5m,
+            "delta_pct_5m":  round((buy_5m - sell_5m) / tot5m * 100, 1) if tot5m > 0 else 0.0,
+            "data_age_sec":  0.0, "status": "fresh", "fetched_at": now,
+        }
+    except Exception as e:
+        print(f"[LM-DELTA] bybit REST error {symbol}: {e}")
+    return None
+
+
+def _lm_fetch_okx_delta_rest(symbol: str):
+    """Compute buy/sell/delta from OKX recent trades (public REST, SWAP)."""
+    try:
+        sym = _lm_symbol_for_exchange(symbol, "okx")
+        r = req.get(f"{OKX_API_V5}/api/v5/market/trades",
+                    params={"instId": sym, "limit": 500},
+                    timeout=_TOUT_EXCHANGE)
+        if r.status_code != 200:
+            return None
+        trades = r.json().get("data") or []
+        if not trades:
+            return None
+        now = time.time()
+        c60 = now - 60
+        c5m = now - 300
+        buy_60 = sell_60 = buy_5m = sell_5m = 0.0
+        for t in trades:
+            try:
+                ts_s = int(t.get("ts", 0)) / 1000
+                side = t.get("side", "")  # "buy" or "sell"
+                vol  = float(t.get("sz", 0)) * float(t.get("px", 0))
+            except (TypeError, ValueError):
+                continue
+            if ts_s >= c5m:
+                if side == "buy": buy_5m  += vol
+                else:             sell_5m += vol
+            if ts_s >= c60:
+                if side == "buy": buy_60  += vol
+                else:             sell_60 += vol
+        tot60 = buy_60 + sell_60
+        tot5m = buy_5m + sell_5m
+        if not (tot60 > 0 or tot5m > 0):
+            return None
+        return {
+            "buy_vol_60s":   buy_60,  "sell_vol_60s":  sell_60,
+            "delta_60s":     buy_60 - sell_60,
+            "delta_pct_60s": round((buy_60 - sell_60) / tot60 * 100, 1) if tot60 > 0 else 0.0,
+            "buy_vol_5m":    buy_5m,  "sell_vol_5m":   sell_5m,
+            "delta_5m":      buy_5m  - sell_5m,
+            "delta_pct_5m":  round((buy_5m - sell_5m) / tot5m * 100, 1) if tot5m > 0 else 0.0,
+            "data_age_sec":  0.0, "status": "fresh", "fetched_at": now,
+        }
+    except Exception as e:
+        print(f"[LM-DELTA] okx REST error {symbol}: {e}")
+    return None
+
+
 def _lm_fetch_oi_hist_rest(symbol: str):
     r = req.get(f"{BINANCE_FUTURES_API}/futures/data/openInterestHist",
                 params={"symbol": symbol, "period": "5m", "limit": 4}, timeout=5)
@@ -12301,77 +12395,95 @@ def _lm_build_true_aggregated_exchange_data(symbol: str, snapshot=None) -> dict:
             "OI Change", status="unavailable", source="Aggregated",
             sources_skipped=list(_LM_AGGREGATED_EXCHANGES))
 
-    # ── Delta ──────────────────────────────────────────────────────────────────
-    delta = _lm_fetch_exchange_delta("binance", symbol)
-    _track("binance", delta.get("available", False))
-    # Phase 10.8: collect MX WS delta for bybit/okx/mexc
-    _mx_delta_parts = []
-    _mx_delta_srcs  = []
+    # ── Delta — true multi-exchange aggregation ────────────────────────────────
+    # Priority: WS cache (Binance aggTrade + MX WS) → REST per exchange → unavailable
+    _delta_pool: dict = {}  # exchange → {buy_vol_60s, sell_vol_60s, ..., _src}
+
+    # 1. Binance aggTrade WS cache
+    _bin_d, _bin_ds = _lm_delta_get("binance", symbol)
+    if _bin_d:
+        _delta_pool["binance"] = {**_bin_d, "_src": "binance_ws"}
+
+    # 2. MX WS cache for bybit/okx/mexc
     if _LM_MX_WS_ENABLED:
         for _mx_ex in ("bybit", "okx", "mexc"):
-            _mx_dd, _mx_ds = _lm_mx_get_delta(_mx_ex, symbol)
+            _mx_dd, _ = _lm_mx_get_delta(_mx_ex, symbol)
             if _mx_dd:
-                _d60_mx  = _mx_dd.get("delta_60s", 0)
-                _dp60_mx = _mx_dd.get("delta_pct_60s", 0.0)
-                _mx_delta_parts.append(
-                    f"{_mx_ex.title()}: {_fmt_usd_lm(abs(_d60_mx))} "
-                    f"{'Buy' if _d60_mx >= 0 else 'Sell'} ({_dp60_mx:+.1f}%)")
-                _mx_delta_srcs.append(_mx_ex)
-                _track(_mx_ex, True)
-    if delta.get("available"):
-        d60  = delta.get("delta_60s", 0)
-        dpct = delta.get("delta_pct_60s", 0.0)
-        _delta_src = ("Binance+MX WS" if _mx_delta_srcs
-                      else "Binance (partial — aggTrade delta WS; other exchanges not tracked)")
-        _delta_notes = ("Only Binance real-time aggTrade delta is tracked"
-                        if not _mx_delta_srcs
-                        else "Binance aggTrade + Phase 10.8 MX WS: " + "; ".join(_mx_delta_parts))
+                _delta_pool[_mx_ex] = {**_mx_dd, "_src": f"{_mx_ex}_ws"}
+
+    # 3. REST fallback per exchange (only when WS cache is empty for that exchange)
+    if "binance" not in _delta_pool:
+        _rb = _lm_rest_cached(f"delta:{symbol}", 30,
+                               lambda: _lm_fetch_agg_trades_delta_rest(symbol))
+        if _rb:
+            _delta_pool["binance"] = {**_rb, "_src": "binance_rest"}
+    if "bybit" not in _delta_pool:
+        _rby = _lm_rest_cached(f"delta_bybit:{symbol}", 30,
+                                lambda: _lm_fetch_bybit_delta_rest(symbol))
+        if _rby:
+            _delta_pool["bybit"] = {**_rby, "_src": "bybit_rest"}
+    if "okx" not in _delta_pool:
+        _rokx = _lm_rest_cached(f"delta_okx:{symbol}", 30,
+                                 lambda: _lm_fetch_okx_delta_rest(symbol))
+        if _rokx:
+            _delta_pool["okx"] = {**_rokx, "_src": "okx_rest"}
+
+    # Track sources
+    for _dx in _LM_AGGREGATED_EXCHANGES:
+        _track(_dx, _dx in _delta_pool)
+
+    if _delta_pool:
+        _tb60  = sum(v.get("buy_vol_60s",  0) for v in _delta_pool.values())
+        _ts60  = sum(v.get("sell_vol_60s", 0) for v in _delta_pool.values())
+        _tb5m  = sum(v.get("buy_vol_5m",   0) for v in _delta_pool.values())
+        _ts5m  = sum(v.get("sell_vol_5m",  0) for v in _delta_pool.values())
+        _d60   = _tb60 - _ts60
+        _d5m   = _tb5m - _ts5m
+        _tot60 = _tb60 + _ts60
+        _tot5m = _tb5m + _ts5m
+        _d_srcs   = list(_delta_pool.keys())
+        _d_skip   = [e for e in _LM_AGGREGATED_EXCHANGES if e not in _delta_pool]
+        _ws_srcs  = [e for e, v in _delta_pool.items() if "_ws"   in v.get("_src", "")]
+        _rest_srcs = [e for e, v in _delta_pool.items() if "_rest" in v.get("_src", "")]
+        _fallback_only = not _ws_srcs
+        _per_ex   = []
+        for _dx in _d_srcs:
+            _dv = _delta_pool[_dx].get("delta_60s", 0)
+            _per_ex.append(
+                f"{_dx.title()}: {'+' if _dv >= 0 else ''}{_fmt_usd_lm(abs(_dv))} {'Buy' if _dv >= 0 else 'Sell'}")
+        _src_label = ("Aggregated (REST): " if _fallback_only else "Aggregated: ") + \
+                     ", ".join(e.title() for e in _d_srcs)
+        _pct60 = round(_d60 / _tot60 * 100, 1) if _tot60 > 0 else 0.0
+        _pct5m = round(_d5m / _tot5m * 100, 1) if _tot5m > 0 else 0.0
+        _val   = (f"{_fmt_usd_lm(abs(_d60))} {'Buy' if _d60>=0 else 'Sell'} ({_pct60:+.1f}%) 60s"
+                  + (f" | {_fmt_usd_lm(abs(_d5m))} {'Buy' if _d5m>=0 else 'Sell'} ({_pct5m:+.1f}%) 5m"
+                     if _tot5m > 0 else ""))
+        _delta_status = "fresh" if (len(_d_srcs) >= 2 and not _fallback_only) else "partial"
         metrics["delta"] = _lm_metric_result(
-            "Delta",
-            value=f"{_fmt_usd_lm(abs(d60))} {'Buy' if d60>=0 else 'Sell'} ({dpct:+.1f}%) 60s",
-            status="partial" if not _mx_delta_srcs else "fresh",
-            source=_delta_src,
-            sources_used=["binance"] + _mx_delta_srcs,
-            sources_skipped=[e for e in _LM_AGGREGATED_EXCHANGES
-                             if e not in (["binance"] + _mx_delta_srcs)],
-            notes=_delta_notes,
+            "Delta", value=_val, status=_delta_status, source=_src_label,
+            sources_used=_d_srcs, sources_skipped=_d_skip,
+            notes="; ".join(_per_ex),
             updated=now_iso)
-    elif _mx_delta_parts:
-        metrics["delta"] = _lm_metric_result(
-            "Delta",
-            value="MX WS 60s: " + "; ".join(_mx_delta_parts),
-            status="partial", source="Phase 10.8 MX WS",
-            sources_used=_mx_delta_srcs,
-            sources_skipped=[e for e in _LM_AGGREGATED_EXCHANGES if e not in _mx_delta_srcs],
-            notes="Binance delta unavailable; using Phase 10.8 MX WS delta data",
-            updated=now_iso)
+        _delta_debug = {
+            "delta_sources_used":    _d_srcs,
+            "delta_sources_skipped": _d_skip,
+            "delta_mode":            ("binance_rest_fallback" if (_fallback_only and _d_srcs == ["binance"])
+                                      else "rest_fallback" if _fallback_only
+                                      else "multi_exchange_ws_or_rest"),
+            "delta_fallback_used":   bool(_rest_srcs),
+        }
     else:
-        # REST fallback: pull Binance aggTrades when neither WS nor MX WS has delta
-        _rest_agg_delta = _lm_rest_cached(
-            f"delta:{symbol}", 30,
-            lambda: _lm_fetch_agg_trades_delta_rest(symbol))
-        if _rest_agg_delta is not None:
-            _d60r  = _rest_agg_delta.get("delta_60s", 0)
-            _dp60r = _rest_agg_delta.get("delta_pct_60s", 0.0)
-            _d5mr  = _rest_agg_delta.get("delta_5m", 0)
-            _dp5mr = _rest_agg_delta.get("delta_pct_5m", 0.0)
-            metrics["delta"] = _lm_metric_result(
-                "Delta",
-                value=(f"{_fmt_usd_lm(abs(_d60r))} {'Buy' if _d60r>=0 else 'Sell'} ({_dp60r:+.1f}%) 60s"
-                       f" | {_fmt_usd_lm(abs(_d5mr))} {'Buy' if _d5mr>=0 else 'Sell'} ({_dp5mr:+.1f}%) 5m"),
-                status="partial",
-                source="Aggregated / Binance REST fallback",
-                sources_used=["binance"],
-                sources_skipped=[e for e in _LM_AGGREGATED_EXCHANGES if e != "binance"],
-                notes="MX WS unavailable; Binance aggTrades REST used for delta.",
-                updated=now_iso)
-        else:
-            _delta_disabled_note = ("" if _LM_MX_WS_ENABLED
-                                    else " Multi-exchange WS disabled: set ZYNI_LM_MULTI_EXCHANGE_WS_ENABLED=1 or ZYNI_LM_MX_WS_ENABLED=1")
-            metrics["delta"] = _lm_metric_result(
-                "Delta", status="unavailable", source="Aggregated",
-                sources_skipped=list(_LM_AGGREGATED_EXCHANGES),
-                notes=_delta_disabled_note.strip() if _delta_disabled_note else "")
+        metrics["delta"] = _lm_metric_result(
+            "Delta", status="unavailable", source="Aggregated",
+            sources_skipped=list(_LM_AGGREGATED_EXCHANGES),
+            notes="No delta data from any exchange. Enable multi-exchange WS: "
+                  "set ZYNI_LM_MULTI_EXCHANGE_WS_ENABLED=1 or ZYNI_LM_MX_WS_ENABLED=1")
+        _delta_debug = {
+            "delta_sources_used":    [],
+            "delta_sources_skipped": list(_LM_AGGREGATED_EXCHANGES),
+            "delta_mode":            "unavailable",
+            "delta_fallback_used":   False,
+        }
 
     # ── Long/Short Ratio ───────────────────────────────────────────────────────
     ls_r = {}
@@ -12449,18 +12561,23 @@ def _lm_build_true_aggregated_exchange_data(symbol: str, snapshot=None) -> dict:
         gate_warnings.append(
             f"Only {sources_used[0] if sources_used else 'unknown'} contributing — not true aggregated")
 
+    _su = sorted(set(sources_used))
+    _ss = sorted(set(sources_skipped))
     return {
         "symbol":          symbol,
         "analysis_source": "aggregated",
-        "sources_used":    sorted(set(sources_used)),
-        "sources_skipped": sorted(set(sources_skipped)),
+        "sources_used":    _su,
+        "sources_skipped": _ss,
         "metrics":         metrics,
         "warnings":        warnings,
         "fetched_at":      time.time(),
+        "delta_debug":     _delta_debug,
         "ai_data_gate": {
-            "allowed":        gate_allowed,
-            "reasons":        gate_reasons,
-            "warnings":       gate_warnings,
+            "allowed":         bool(gate_allowed),
+            "allowed_sources": _su,
+            "blocked_sources": _ss,
+            "reasons":         gate_reasons,
+            "warnings":        gate_warnings,
         },
     }
 
@@ -12791,11 +12908,25 @@ def _lm_build_data_health_context(symbol: str, exchange: str,
         """Append Candle Status + AI Entry Analysis rows from snapshot."""
         cf_at = snap.get("last_candle_features_at") or ""
         cf    = snap.get("latest_candle_features")  or {}
+        cs    = snap.get("candle_store")            or {}  # Phase 10.9B Bias Shift
         if cf_at:
             rows_list.append({"metric": "Candle Status", "value": "computed",
                               "source": "db_snapshot", "status": _age_status(cf_at, 300),
                               "updated": _age_str(cf_at),
                               "notes": cf.get("dominant_tf", "") if isinstance(cf, dict) else ""})
+        elif cs and cs.get("status"):
+            _cs_st   = cs.get("status", "unknown")
+            _dh_st   = ("fresh"       if _cs_st in ("ready", "refreshing")
+                        else "stale"  if _cs_st == "partial"
+                        else "unavailable")
+            _per_tf  = cs.get("per_tf") or {}
+            _tf_note = (", ".join(
+                f"{tf}:{v.get('count',0)}" for tf, v in sorted(_per_tf.items())
+                if isinstance(v, dict) and v.get("count", 0) > 0
+            ) or "") if _per_tf else ""
+            rows_list.append({"metric": "Candle Status", "value": _cs_st.title(),
+                              "source": "candle_store", "status": _dh_st, "updated": "—",
+                              "notes": "Phase 10.9B candle store" + (f" | {_tf_note}" if _tf_note else "")})
         else:
             rows_list.append({"metric": "Candle Status", "value": "—", "source": "db_snapshot",
                               "status": "unavailable", "updated": "—", "notes": "No candle refresh yet"})
@@ -12838,7 +12969,8 @@ def _lm_build_data_health_context(symbol: str, exchange: str,
         gate = agg.get("ai_data_gate", {})
         _append_snapshot_rows(rows, gate.get("allowed", False),
                               gate.get("reasons", []), "Aggregated")
-        _mx_ws_on = _lm_multi_exchange_ws_enabled()
+        _mx_ws_on  = _lm_multi_exchange_ws_enabled()
+        _dd        = agg.get("delta_debug", {})
         return {
             "symbol":                    symbol,
             "exchange":                  exchange,
@@ -12855,6 +12987,10 @@ def _lm_build_data_health_context(symbol: str, exchange: str,
             "ai_data_gate":              gate,
             "sources_used":              agg.get("sources_used", []),
             "sources_skipped":           agg.get("sources_skipped", []),
+            "delta_sources_used":        _dd.get("delta_sources_used", []),
+            "delta_sources_skipped":     _dd.get("delta_sources_skipped", []),
+            "delta_mode":                _dd.get("delta_mode", "unknown"),
+            "delta_fallback_used":       _dd.get("delta_fallback_used", False),
         }
 
     # ── Non-Binance single exchange (Bybit, OKX, MEXC) ───────────────────────
