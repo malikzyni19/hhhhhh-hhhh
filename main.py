@@ -796,6 +796,10 @@ _lm_delta_lock  = threading.Lock()
 _lm_delta_thread: Optional[threading.Thread] = None
 _lm_delta_running = False
 
+# Adhoc symbols added by data-health requests (no DB LiveMonitorItem required)
+_lm_ws_adhoc_syms: set = set()
+_lm_ws_adhoc_lock = threading.Lock()
+
 # REST TTL cache (OI, L/S ratio, etc.)
 _lm_rest_cache: dict = {}
 _lm_rest_lock  = threading.Lock()
@@ -10226,6 +10230,7 @@ def _lm_ws_update(exchange: str, symbol: str, live_price, mark_price,
                   funding_rate=None, index_price=None):
     key = f"{exchange}:{symbol}"
     with _lm_ws_lock:
+        first = key not in _lm_ws_cache
         _lm_ws_cache[key] = {
             "symbol":        symbol,
             "exchange":      exchange,
@@ -10236,6 +10241,9 @@ def _lm_ws_update(exchange: str, symbol: str, live_price, mark_price,
             "source":        f"{exchange}_futures_ws",
             "last_update_ts": time.time(),
         }
+    if first:
+        print(f"[LM-WS] {exchange} {symbol} live/mark price fresh (first update)"
+              + (f" funding={funding_rate:.6f}" if funding_rate is not None else ""))
 
 
 def _lm_ws_get(exchange: str, symbol: str):
@@ -10252,7 +10260,7 @@ def _lm_ws_get(exchange: str, symbol: str):
 
 
 def _lm_ws_active_binance_symbols() -> list:
-    """Return sorted list of active Binance LM symbols from the DB."""
+    """Return sorted list of active Binance LM symbols from the DB + adhoc set."""
     try:
         with app.app_context():
             from models import LiveMonitorItem as _LMIQ
@@ -10263,10 +10271,27 @@ def _lm_ws_active_binance_symbols() -> list:
                 sym = (getattr(r, "symbol",   "") or "").upper()
                 if ex in ("binance", "") and sym and sym not in syms:
                     syms.append(sym)
-            return sorted(syms)
     except Exception as e:
         print(f"[LM-WS] active_symbols error: {e}")
-        return []
+        syms = []
+    # Union with adhoc symbols (data-health requests without a DB LM item)
+    with _lm_ws_adhoc_lock:
+        for sym in _lm_ws_adhoc_syms:
+            if sym not in syms:
+                syms.append(sym)
+    return sorted(syms)
+
+
+def _lm_ws_ensure_adhoc(symbol: str):
+    """Register a symbol for WS subscription without needing a DB LiveMonitorItem.
+    The three background loops will pick it up on their next symbol-list check."""
+    sym = (symbol or "").upper().strip()
+    if not sym:
+        return
+    with _lm_ws_adhoc_lock:
+        if sym not in _lm_ws_adhoc_syms:
+            print(f"[LM-WS] adhoc subscription requested: {sym}")
+            _lm_ws_adhoc_syms.add(sym)
 
 
 def _lm_ws_background_loop():
@@ -10295,7 +10320,7 @@ def _lm_ws_background_loop():
             streams = "/".join(s.lower() + "@markPrice" for s in current_symbols)
             path    = f"/stream?streams={streams}"
             try:
-                print(f"[LM-WS] Connecting: {current_symbols}")
+                print(f"[LM-WS] binance subscribing {current_symbols} streams: price, mark, funding")
                 sock = _raw_ws_connect("fstream.binance.com", path)
                 sock.settimeout(30)
                 print("[LM-WS] Connected")
@@ -10572,7 +10597,7 @@ def _lm_liq_background_loop():
             streams = "/".join(s.lower() + "@forceOrder" for s in current_symbols)
             path    = f"/stream?streams={streams}"
             try:
-                print(f"[LM-LIQ] Connecting: {current_symbols}")
+                print(f"[LM-WS] binance subscribing {current_symbols} streams: liquidations/forceOrder")
                 sock = _raw_ws_connect("fstream.binance.com", path)
                 sock.settimeout(60)
                 print("[LM-LIQ] Connected")
@@ -10674,7 +10699,8 @@ def _lm_delta_update(exchange: str, symbol: str, is_buyer_maker: bool, qty: floa
     cutoff  = now - 310   # keep 5m + 10s buffer
 
     with _lm_delta_lock:
-        if key not in _lm_delta_cache:
+        first = key not in _lm_delta_cache
+        if first:
             _lm_delta_cache[key] = {"trades": deque(), "last_update_ts": now}
         entry = _lm_delta_cache[key]
         entry["trades"].append((now, side, usd_vol))
@@ -10682,6 +10708,8 @@ def _lm_delta_update(exchange: str, symbol: str, is_buyer_maker: bool, qty: floa
         while entry["trades"] and entry["trades"][0][0] < cutoff:
             entry["trades"].popleft()
         entry["last_update_ts"] = now
+    if first:
+        print(f"[LM-WS] binance {symbol} delta fresh (first aggTrade)")
 
 
 def _lm_delta_get(exchange: str, symbol: str):
@@ -10739,7 +10767,7 @@ def _lm_delta_background_loop():
             streams = "/".join(s.lower() + "@aggTrade" for s in current_symbols)
             path    = f"/stream?streams={streams}"
             try:
-                print(f"[LM-DELTA] Connecting: {current_symbols}")
+                print(f"[LM-WS] binance subscribing {current_symbols} streams: trade/delta/aggTrade")
                 sock = _raw_ws_connect("fstream.binance.com", path)
                 sock.settimeout(30)
                 print("[LM-DELTA] Connected")
@@ -24736,6 +24764,7 @@ def api_lm_data_health():
     # Start WS threads + OB stream (side effects — not in helper)
     ws_enabled = os.environ.get("ZYNI_LM_WS_ENABLED") == "1"
     if ws_enabled and exchange == "binance":
+        _lm_ws_ensure_adhoc(symbol)   # register symbol even without a DB LM item
         _ensure_lm_ws_thread()
         _ensure_lm_liq_thread()
         _ensure_lm_delta_thread()
@@ -24754,6 +24783,58 @@ def api_lm_data_health():
 
     ctx = _lm_build_data_health_context(symbol, exchange, snap=snap, user_id=uid)
     return jsonify({"ok": True, **ctx})
+
+
+@app.route("/api/live-monitor/ws-debug", methods=["GET"])
+@login_required
+def api_lm_ws_debug():
+    """Compact read-only WebSocket cache debug.
+    GET /api/live-monitor/ws-debug?symbol=WLDUSDT&exchange=binance
+    No DB mutation. No trading. No order placement. No private API."""
+    symbol   = (request.args.get("symbol")   or "").upper().strip()
+    exchange = (request.args.get("exchange") or "binance").lower().strip()
+
+    now = time.time()
+
+    def _age(ts):
+        if not ts:
+            return None
+        return round(now - ts, 1)
+
+    ws_entry, _ws_s = _lm_ws_get(exchange, symbol) if symbol else (None, None)
+    liq_entry, _liq_s = _lm_liq_get(exchange, symbol) if symbol else (None, None)
+    delta_entry, _delta_s = _lm_delta_get(exchange, symbol) if symbol else (None, None)
+
+    with _ob_book_lock:
+        ob_raw = dict(_ob_books.get(symbol) or {})
+
+    ws_enabled = os.environ.get("ZYNI_LM_WS_ENABLED") == "1"
+    with _lm_ws_adhoc_lock:
+        adhoc = sorted(_lm_ws_adhoc_syms)
+
+    return jsonify({
+        "ok": True,
+        "symbol": symbol,
+        "exchange": exchange,
+        "ws_enabled": ws_enabled,
+        "adhoc_symbols": adhoc,
+        "threads": {
+            "markprice_alive": bool(_lm_ws_manager_thread and _lm_ws_manager_thread.is_alive()),
+            "liq_alive":       bool(_lm_liq_thread and _lm_liq_thread.is_alive()),
+            "delta_alive":     bool(_lm_delta_thread and _lm_delta_thread.is_alive()),
+        },
+        "cache": {
+            "live_price_age_sec":  _age(ws_entry.get("last_update_ts")) if ws_entry else None,
+            "mark_price_age_sec":  _age(ws_entry.get("last_update_ts")) if ws_entry else None,
+            "live_price":          ws_entry.get("live_price") if ws_entry else None,
+            "mark_price":          ws_entry.get("mark_price") if ws_entry else None,
+            "funding_rate":        ws_entry.get("funding_rate") if ws_entry else None,
+            "delta_age_sec":       _age(delta_entry.get("last_update_ts")) if delta_entry else None,
+            "liq_age_sec":         _age(liq_entry.get("last_update_ts")) if liq_entry else None,
+            "orderbook_ready":     ob_raw.get("ready", False),
+            "orderbook_age_sec":   _age(ob_raw.get("ts")) if ob_raw else None,
+        },
+    })
 
 
 @app.route("/api/live-monitor/analysis-source/debug", methods=["GET"])
