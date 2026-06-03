@@ -10475,6 +10475,63 @@ def _lm_fetch_mark_price_rest(symbol: str):
     return None
 
 
+def _lm_fetch_agg_trades_delta_rest(symbol: str):
+    """Compute rolling buy/sell/delta from recent aggTrades via REST (Binance Futures).
+    Covers 60s and 5m windows. Used as fallback when WS aggTrade cache is empty.
+    """
+    try:
+        now_ms = int(time.time() * 1000)
+        r = req.get(f"{BINANCE_FUTURES_API}/fapi/v1/aggTrades",
+                    params={"symbol": symbol,
+                            "startTime": now_ms - 305_000,  # ~5m back
+                            "limit": 1000},
+                    timeout=6)
+        if r.status_code != 200:
+            return None
+        trades = r.json()
+        if not isinstance(trades, list) or not trades:
+            return None
+        now = time.time()
+        c60 = now - 60
+        c5m = now - 300
+        buy_60 = sell_60 = buy_5m = sell_5m = 0.0
+        for t in trades:
+            ts_s = t.get("T", 0) / 1000
+            is_buyer_maker = t.get("m", False)  # True = seller aggressor = SELL
+            try:
+                vol = float(t.get("p", 0)) * float(t.get("q", 0))
+            except (TypeError, ValueError):
+                continue
+            if ts_s >= c5m:
+                if is_buyer_maker:
+                    sell_5m += vol
+                else:
+                    buy_5m  += vol
+            if ts_s >= c60:
+                if is_buyer_maker:
+                    sell_60 += vol
+                else:
+                    buy_60  += vol
+        tot60 = buy_60 + sell_60
+        tot5m = buy_5m + sell_5m
+        return {
+            "buy_vol_60s":   buy_60,
+            "sell_vol_60s":  sell_60,
+            "delta_60s":     buy_60 - sell_60,
+            "delta_pct_60s": round((buy_60 - sell_60) / tot60 * 100, 1) if tot60 > 0 else 0.0,
+            "buy_vol_5m":    buy_5m,
+            "sell_vol_5m":   sell_5m,
+            "delta_5m":      buy_5m - sell_5m,
+            "delta_pct_5m":  round((buy_5m - sell_5m) / tot5m * 100, 1) if tot5m > 0 else 0.0,
+            "data_age_sec":  0.0,
+            "status":        "fresh",
+            "fetched_at":    now,
+        }
+    except Exception as e:
+        print(f"[LM-DELTA] aggTrades REST error {symbol}: {e}")
+    return None
+
+
 def _lm_fetch_oi_hist_rest(symbol: str):
     r = req.get(f"{BINANCE_FUTURES_API}/futures/data/openInterestHist",
                 params={"symbol": symbol, "period": "5m", "limit": 4}, timeout=5)
@@ -13035,6 +13092,25 @@ def _lm_build_data_health_context(symbol: str, exchange: str,
                          "status": delta_s,
                          "updated": f"{delta_e['data_age_sec']}s ago",
                          "notes":  f"Buy {_fmt_usd_lm(buy60)} Sell {_fmt_usd_lm(sell60)} (60s) | aggTrade stream"})
+        elif ws_enabled:
+            # REST fallback: compute delta from recent aggTrades (30s TTL)
+            _rest_dt = _lm_rest_cached(f"delta:{symbol}", 30,
+                                       lambda: _lm_fetch_agg_trades_delta_rest(symbol))
+            if _rest_dt and (_rest_dt.get("buy_vol_60s", 0) + _rest_dt.get("sell_vol_60s", 0)) > 0:
+                _d60    = _rest_dt["delta_60s"]
+                _dpct60 = _rest_dt["delta_pct_60s"]
+                _buy60  = _rest_dt["buy_vol_60s"]
+                _sell60 = _rest_dt["sell_vol_60s"]
+                rows.append({"metric": "Delta",
+                             "value":  f"{'+' if _d60>=0 else ''}{_fmt_usd_lm(abs(_d60))} {'Buy' if _d60>=0 else 'Sell'} ({_dpct60:+.1f}%) 60s",
+                             "source": "rest",
+                             "status": "fresh",
+                             "updated": "REST ~30s TTL",
+                             "notes":  f"Buy {_fmt_usd_lm(_buy60)} Sell {_fmt_usd_lm(_sell60)} (60s) | aggTrades REST fallback"})
+            else:
+                rows.append({"metric": "Delta", "value": "—",
+                             "source": "websocket", "status": "unavailable",
+                             "updated": "—", "notes": "Connecting… (REST also unavailable)"})
         else:
             rows.append({"metric": "Delta", "value": "—",
                          "source": "websocket", "status": "unavailable",
@@ -13098,10 +13174,11 @@ def _lm_build_data_health_context(symbol: str, exchange: str,
         rows.append(_nc("Funding Rate"))
 
     # ═════════════════════════════════════════════════════════════════════════
-    # ROW 10 — Candle Status  (source: db_snapshot)
+    # ROW 10 — Candle Status  (source: db_snapshot OR candle_store for Bias Shift)
     # ═════════════════════════════════════════════════════════════════════════
     cf_at = snap.get("last_candle_features_at") or ""
     cf    = snap.get("latest_candle_features")  or {}
+    cs    = snap.get("candle_store")            or {}  # Phase 10.9B Bias Shift candle store
     if cf_at:
         rows.append({"metric": "Candle Status",
                      "value":  "computed",
@@ -13109,6 +13186,23 @@ def _lm_build_data_health_context(symbol: str, exchange: str,
                      "status": _age_status(cf_at, fresh_secs=300),
                      "updated": _age_str(cf_at),
                      "notes":  cf.get("dominant_tf", "") if isinstance(cf, dict) else ""})
+    elif cs and cs.get("status"):
+        # Phase 10.9B: Bias Shift Watch item — candle_store not candle_features
+        _cs_status = cs.get("status", "unknown")
+        _dh_status = ("fresh" if _cs_status in ("ready", "refreshing")
+                      else "stale" if _cs_status == "partial"
+                      else "unavailable")
+        _per_tf = cs.get("per_tf") or {}
+        _tf_note = (", ".join(
+            f"{tf}:{v.get('count',0)}" for tf, v in sorted(_per_tf.items())
+            if isinstance(v, dict) and v.get("count", 0) > 0
+        ) or "") if _per_tf else ""
+        rows.append({"metric": "Candle Status",
+                     "value":  _cs_status.title(),
+                     "source": "candle_store",
+                     "status": _dh_status,
+                     "updated": "—",
+                     "notes":  "Phase 10.9B candle store" + (f" | {_tf_note}" if _tf_note else "")})
     else:
         rows.append({"metric": "Candle Status", "value": "—",
                      "source": "db_snapshot", "status": "unavailable",
@@ -24853,7 +24947,7 @@ def api_lm_data_health():
         _ensure_lm_ws_thread()
         _ensure_lm_liq_thread()
         _ensure_lm_delta_thread()
-        ensure_ob_stream(symbol, wait_sec=0.2)
+        ensure_ob_stream(symbol, wait_sec=3.0)
         # Log subscription state for every data-health request
         _ws_has  = f"binance:{symbol}" in _lm_ws_cache
         _liq_has = f"binance:{symbol}" in _lm_liq_cache
