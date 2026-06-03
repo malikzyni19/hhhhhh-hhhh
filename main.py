@@ -16191,8 +16191,9 @@ def _lm_build_aggregated_snapshot_from_structured(
         "raw_summary_json":   None,
     }
 
-    agg = _lm_rest_cached(f"agg_snap:{symbol}", 10,
-                           lambda: _lm_build_true_aggregated_exchange_data(symbol))
+    # Call directly — no intermediate TTL cache so we always see fresh sub-cache state.
+    # Sub-caches (agg_ob_*, delta:*, agg_oi_*, …) handle their own TTLs.
+    agg = _lm_build_true_aggregated_exchange_data(symbol)
     if not agg:
         return result
 
@@ -16201,12 +16202,14 @@ def _lm_build_aggregated_snapshot_from_structured(
     result["sources_skipped"] = list(agg.get("sources_skipped", []))
     status_notes: dict = {}
     _enrichment = {
-        "analysis_source":          "aggregated",
-        "used_structured_metrics":  True,
-        "orderbook_metric_found":   False,
-        "delta_metric_found":       False,
-        "snapshot_delta_written":   False,
+        "analysis_source":            "aggregated",
+        "used_structured_metrics":    True,
+        "orderbook_metric_found":     False,
+        "delta_metric_found":         False,
+        "snapshot_delta_written":     False,
         "snapshot_orderbook_written": False,
+        "delta_fallback_source":      None,
+        "orderbook_fallback_source":  None,
     }
 
     # ── Live / Mark Price ─────────────────────────────────────────────────────
@@ -16242,6 +16245,49 @@ def _lm_build_aggregated_snapshot_from_structured(
                 result.update(_lm_find_ob_walls(bids, asks, mid_price))
         _enrichment["snapshot_orderbook_written"] = True
 
+    # OB hard fallback: structured metric unavailable — read agg_ob_* caches directly
+    # (same keys _lm_build_true_aggregated_exchange_data uses, so no extra REST)
+    if result["orderbook_status"] == "unavailable":
+        for _ob_fb_ex in ("bybit", "okx", "binance"):
+            _ob_fb = _lm_rest_cached(
+                f"agg_ob_{_ob_fb_ex}:{symbol}", 5,
+                lambda e=_ob_fb_ex: _lm_fetch_exchange_orderbook(e, symbol))
+            if _ob_fb and _ob_fb.get("available"):
+                result["orderbook_status"] = _ob_fb.get("status", "fresh")
+                status_notes["orderbook"]  = result["orderbook_status"]
+                bids_fb = _ob_fb.get("bids", {})
+                asks_fb = _ob_fb.get("asks", {})
+                if bids_fb and asks_fb:
+                    tot_b = sum(float(v) for v in bids_fb.values())
+                    tot_a = sum(float(v) for v in asks_fb.values())
+                    if tot_b + tot_a > 0:
+                        result["orderbook_imbalance"] = round(
+                            (tot_b - tot_a) / (tot_b + tot_a), 4)
+                    if mid_price:
+                        result.update(_lm_find_ob_walls(bids_fb, asks_fb, mid_price))
+                _enrichment["orderbook_fallback_source"]  = f"agg_ob_{_ob_fb_ex}"
+                _enrichment["snapshot_orderbook_written"] = True
+                break
+    if result["orderbook_status"] == "unavailable" and _LM_MX_WS_ENABLED:
+        for _mx_ob_ex in ("bybit", "okx", "mexc"):
+            _mx_bk, _mx_bk_st = _lm_mx_get_book(_mx_ob_ex, symbol)
+            if _mx_bk and _mx_bk_st in ("fresh", "stale"):
+                result["orderbook_status"] = _mx_bk_st
+                status_notes["orderbook"]  = _mx_bk_st
+                bids_mx = _mx_bk.get("bids", {})
+                asks_mx = _mx_bk.get("asks", {})
+                if bids_mx and asks_mx:
+                    tot_b = sum(float(v) for v in bids_mx.values())
+                    tot_a = sum(float(v) for v in asks_mx.values())
+                    if tot_b + tot_a > 0:
+                        result["orderbook_imbalance"] = round(
+                            (tot_b - tot_a) / (tot_b + tot_a), 4)
+                    if mid_price:
+                        result.update(_lm_find_ob_walls(bids_mx, asks_mx, mid_price))
+                _enrichment["orderbook_fallback_source"]  = f"{_mx_ob_ex}_mx_ws"
+                _enrichment["snapshot_orderbook_written"] = True
+                break
+
     # ── Delta ─────────────────────────────────────────────────────────────────
     d_m      = metrics.get("delta", {})
     d_status = d_m.get("status", "unavailable")
@@ -16256,6 +16302,48 @@ def _lm_build_aggregated_snapshot_from_structured(
             result["sell_volume"]    = d_raw["sell_vol_60s"]
             result["taker_pressure"] = _lm_classify_taker_pressure(d_raw.get("delta_pct_60s"))
             status_notes["delta"]    = d_status
+            _enrichment["snapshot_delta_written"] = True
+
+    # Delta hard fallback: structured metric unavailable — read in-memory caches directly
+    if result["delta_net"] is None:
+        _fb_d, _ = _lm_delta_get("binance", symbol)
+        if _fb_d and _fb_d.get("delta_60s") is not None:
+            result["delta_status"]   = "partial"
+            result["delta_net"]      = _fb_d["delta_60s"]
+            result["delta_pct"]      = _fb_d.get("delta_pct_60s")
+            result["buy_volume"]     = _fb_d.get("buy_vol_60s")
+            result["sell_volume"]    = _fb_d.get("sell_vol_60s")
+            result["taker_pressure"] = _lm_classify_taker_pressure(_fb_d.get("delta_pct_60s"))
+            status_notes["delta"]    = "partial"
+            _enrichment["delta_fallback_source"]  = "binance_ws_direct"
+            _enrichment["snapshot_delta_written"] = True
+        elif _LM_MX_WS_ENABLED:
+            for _mx_fb_ex in ("bybit", "okx", "mexc"):
+                _mx_dd, _ = _lm_mx_get_delta(_mx_fb_ex, symbol)
+                if _mx_dd and _mx_dd.get("delta_60s") is not None:
+                    result["delta_status"]   = "partial"
+                    result["delta_net"]      = _mx_dd["delta_60s"]
+                    result["delta_pct"]      = _mx_dd.get("delta_pct_60s")
+                    result["buy_volume"]     = _mx_dd.get("buy_vol_60s")
+                    result["sell_volume"]    = _mx_dd.get("sell_vol_60s")
+                    result["taker_pressure"] = _lm_classify_taker_pressure(_mx_dd.get("delta_pct_60s"))
+                    status_notes["delta"]    = "partial"
+                    _enrichment["delta_fallback_source"]  = f"{_mx_fb_ex}_ws_direct"
+                    _enrichment["snapshot_delta_written"] = True
+                    break
+    # Binance REST fallback (shares cache key with Data Health's delta fetch)
+    if result["delta_net"] is None:
+        _rb = _lm_rest_cached(f"delta:{symbol}", 30,
+                               lambda: _lm_fetch_agg_trades_delta_rest(symbol))
+        if _rb and _rb.get("delta_60s") is not None:
+            result["delta_status"]   = "partial"
+            result["delta_net"]      = _rb["delta_60s"]
+            result["delta_pct"]      = _rb.get("delta_pct_60s")
+            result["buy_volume"]     = _rb.get("buy_vol_60s")
+            result["sell_volume"]    = _rb.get("sell_vol_60s")
+            result["taker_pressure"] = _lm_classify_taker_pressure(_rb.get("delta_pct_60s"))
+            status_notes["delta"]    = "partial"
+            _enrichment["delta_fallback_source"]  = "binance_rest"
             _enrichment["snapshot_delta_written"] = True
 
     # ── Open Interest ─────────────────────────────────────────────────────────
@@ -16313,11 +16401,22 @@ def _lm_build_aggregated_snapshot_from_structured(
         result["source_status"]      = "stale"
         result["data_health_status"] = "stale"
 
+    # Stamp exact written values into enrichment so the debug endpoint can verify
+    _enrichment.update({
+        "delta_net_source_value":            result["delta_net"],
+        "delta_pct_source_value":            result["delta_pct"],
+        "orderbook_status_source_value":     result["orderbook_status"],
+        "orderbook_imbalance_source_value":  result["orderbook_imbalance"],
+        "delta_written":          result["delta_net"] is not None,
+        "orderbook_written":      result["orderbook_status"] not in (None, "unavailable"),
+        "funding_written":        result["funding_rate"] is not None,
+        "open_interest_written":  result["open_interest"] is not None,
+    })
     result["raw_summary_json"] = _json_dumps_safe({
-        "status_notes":           status_notes,
-        "sources_used":           result["sources_used"],
-        "sources_skipped":        result["sources_skipped"],
-        "enrichment_debug":       _enrichment,
+        "status_notes":    status_notes,
+        "sources_used":    result["sources_used"],
+        "sources_skipped": result["sources_skipped"],
+        "enrichment_debug": _enrichment,
     })
     return result
 
@@ -22550,20 +22649,29 @@ def api_lm_bias_orderflow_debug(item_id):
                 "orderbook_imbalance": s.orderbook_imbalance,
                 "funding_rate":        s.funding_rate,
                 "open_interest":       s.open_interest,
+                "raw_summary_json":    s.raw_summary_json,
             }
             for s in snap_rows
         ]
 
-    # Compact debug: confirms whether structured metrics were used for aggregated snapshots
+    # Compact debug: shows whether structured metrics + fallbacks wrote delta/OB
     _snap_enrich_debug: dict = {"analysis_source": analysis_source}
     if inc_snaps and latest_snapshots and analysis_source == "aggregated":
         _first = latest_snapshots[0]
+        _raw_ed = _json_loads_safe(_first.get("raw_summary_json"), {}).get("enrichment_debug", {})
         _snap_enrich_debug.update({
             "used_structured_metrics":    True,
-            "orderbook_metric_found":     _first.get("orderbook_status") not in (None, "unavailable"),
-            "delta_metric_found":         _first.get("delta_net") is not None,
-            "snapshot_delta_written":     _first.get("delta_net") is not None,
-            "snapshot_orderbook_written": _first.get("orderbook_status") not in (None, "unavailable"),
+            "delta_written":              _first.get("delta_net") is not None,
+            "delta_net_source_value":     _first.get("delta_net"),
+            "delta_pct_source_value":     _first.get("delta_pct"),
+            "delta_fallback_source":      _raw_ed.get("delta_fallback_source"),
+            "orderbook_written":          _first.get("orderbook_status") not in (None, "unavailable"),
+            "orderbook_status_source_value":    _first.get("orderbook_status"),
+            "orderbook_imbalance_source_value": _first.get("orderbook_imbalance"),
+            "orderbook_fallback_source":  _raw_ed.get("orderbook_fallback_source"),
+            "funding_written":            _first.get("funding_rate") is not None,
+            "open_interest_written":      _first.get("open_interest") is not None,
+            "structured_metrics_found":   bool(_raw_ed),
         })
 
     of_status   = snap_raw.get("orderflow_alignment", {})
