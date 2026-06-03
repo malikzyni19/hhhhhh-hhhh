@@ -2790,7 +2790,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
   function openInsightForTab(mode, idx){
     if(mode==="main"){
       ST.sel = idx;
-      renderTable(); renderInsight();
+      renderTable(); renderInsight(); _refreshFooterButtons();
       return;
     }
     if(!ST.tabData[mode]) return;
@@ -2801,6 +2801,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       tr.classList.toggle('sel', +tr.getAttribute('data-i')===idx);
     });
     renderInsightForTab(mode);
+    _refreshFooterButtons();
   }
 
   /* TradingView exchange prefix derived from the selected exchange. */
@@ -4058,7 +4059,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     var s=e.target.closest("[data-star]");
     if(s){var i=+s.getAttribute("data-star");var r=ST.results[i];if(r){ST.stars[r.symbol]=!ST.stars[r.symbol];syncWatchlist();renderTable();if(i===ST.sel)renderInsight();}e.stopPropagation();return;}
     var tr=e.target.closest("tr[data-i]");
-    if(tr){ST.sel=+tr.getAttribute("data-i");renderTable();renderInsight();}
+    if(tr){ST.sel=+tr.getAttribute("data-i");renderTable();renderInsight();_refreshFooterButtons();}
   });
   /* tab-aware row click for non-main views */
   document.getElementById("tabView").addEventListener("click",function(e){
