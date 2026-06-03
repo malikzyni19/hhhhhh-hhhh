@@ -17137,7 +17137,18 @@ def _lm_refresh_bias_orderflow_alignment_for_item(item, force: bool = False) -> 
         if not uid or not symbol:
             return {"ok": False, "reason": "missing_uid_or_symbol"}
 
-        snap_raw        = _json_loads_safe(getattr(item, "snapshot_json", None), {})
+        snap_raw = _json_loads_safe(getattr(item, "snapshot_json", None), {})
+        # When called from a background proxy (snapshot_json=None), reload from DB
+        # so analysis_source ("aggregated", "bybit", etc.) is correctly resolved
+        # instead of falling back to parent_exchange.
+        if not snap_raw and item_id and uid:
+            try:
+                from models import LiveMonitorItem as _LMI_lr
+                _real = _LMI_lr.query.filter_by(id=item_id, user_id=uid).first()
+                if _real:
+                    snap_raw = _json_loads_safe(_real.snapshot_json, {})
+            except Exception:
+                pass
         src_cfg         = _lm_analysis_source_config(item, snap_raw)
         analysis_source = src_cfg["analysis_source"]
 
@@ -22234,7 +22245,32 @@ def api_lm_bias_orderflow_debug(item_id):
             for s in snap_rows
         ]
 
-    of_status = snap_raw.get("orderflow_alignment", {})
+    of_status   = snap_raw.get("orderflow_alignment", {})
+    _of_src     = (of_status.get("analysis_source") or "").lower()
+    _src_mismatch = bool(_of_src and _of_src != analysis_source)
+    if _src_mismatch:
+        # Stored alignment belongs to a different source.  Trigger background
+        # realignment for the current source (which now correctly reads analysis_source
+        # from DB) and return a clean collecting state instead of stale data.
+        _lm_ensure_bias_orderflow_alignment_bg(
+            item_id, uid, exchange, market, symbol,
+            getattr(row, "source_tab", "bias_shift") or "bias_shift",
+            force=True)
+        of_status = {
+            "enabled":             True,
+            "phase":               "phase10_9e_orderflow_alignment",
+            "status":              "collecting",
+            "context_only":        True,
+            "no_entry_candidate":  True,
+            "sample_interval_sec": _lm_bias_orderflow_sample_interval_sec(),
+            "analysis_source":     analysis_source,
+            "per_tf":              {},
+            "source_mismatch_cleared": True,
+            "gate": {
+                "entry_candidate_allowed": False,
+                "reason": "Phase 10.9E only stores evidence; decision engine comes later",
+            },
+        }
     return jsonify({
         "ok":                  True,
         "item_id":             item_id,
@@ -22243,6 +22279,7 @@ def api_lm_bias_orderflow_debug(item_id):
         "status":              of_status.get("status", "unknown"),
         "context_only":        True,
         "no_entry_candidate":  True,
+        "source_mismatch":     _src_mismatch,
         "per_tf":              per_tf_debug,
         "latest_snapshots":    latest_snapshots,
         "orderflow_alignment": of_status,
