@@ -10480,11 +10480,8 @@ def _lm_fetch_agg_trades_delta_rest(symbol: str):
     Covers 60s and 5m windows. Used as fallback when WS aggTrade cache is empty.
     """
     try:
-        now_ms = int(time.time() * 1000)
         r = req.get(f"{BINANCE_FUTURES_API}/fapi/v1/aggTrades",
-                    params={"symbol": symbol,
-                            "startTime": now_ms - 305_000,  # ~5m back
-                            "limit": 1000},
+                    params={"symbol": symbol, "limit": 1000},
                     timeout=6)
         if r.status_code != 200:
             return None
@@ -13096,21 +13093,22 @@ def _lm_build_data_health_context(symbol: str, exchange: str,
             # REST fallback: compute delta from recent aggTrades (30s TTL)
             _rest_dt = _lm_rest_cached(f"delta:{symbol}", 30,
                                        lambda: _lm_fetch_agg_trades_delta_rest(symbol))
-            if _rest_dt and (_rest_dt.get("buy_vol_60s", 0) + _rest_dt.get("sell_vol_60s", 0)) > 0:
+            if _rest_dt is not None:
                 _d60    = _rest_dt["delta_60s"]
                 _dpct60 = _rest_dt["delta_pct_60s"]
                 _buy60  = _rest_dt["buy_vol_60s"]
                 _sell60 = _rest_dt["sell_vol_60s"]
+                _side   = "Buy" if _d60 >= 0 else "Sell"
                 rows.append({"metric": "Delta",
-                             "value":  f"{'+' if _d60>=0 else ''}{_fmt_usd_lm(abs(_d60))} {'Buy' if _d60>=0 else 'Sell'} ({_dpct60:+.1f}%) 60s",
+                             "value":  f"{'+' if _d60>=0 else ''}{_fmt_usd_lm(abs(_d60))} {_side} ({_dpct60:+.1f}%) 60s",
                              "source": "rest",
                              "status": "fresh",
                              "updated": "REST ~30s TTL",
-                             "notes":  f"Buy {_fmt_usd_lm(_buy60)} Sell {_fmt_usd_lm(_sell60)} (60s) | aggTrades REST fallback"})
+                             "notes":  f"Buy {_fmt_usd_lm(_buy60)} Sell {_fmt_usd_lm(_sell60)} (60s) | aggTrades REST"})
             else:
                 rows.append({"metric": "Delta", "value": "—",
                              "source": "websocket", "status": "unavailable",
-                             "updated": "—", "notes": "Connecting… (REST also unavailable)"})
+                             "updated": "—", "notes": "Collecting… (aggTrade WS + REST starting)"})
         else:
             rows.append({"metric": "Delta", "value": "—",
                          "source": "websocket", "status": "unavailable",
