@@ -10322,7 +10322,7 @@ def _lm_ws_background_loop():
             try:
                 print(f"[LM-WS] binance subscribing {current_symbols} streams: price, mark, funding")
                 sock = _raw_ws_connect("fstream.binance.com", path)
-                sock.settimeout(30)
+                sock.settimeout(5)
                 print("[LM-WS] Connected")
             except Exception as e:
                 print(f"[LM-WS] Connect error: {e}")
@@ -10599,7 +10599,7 @@ def _lm_liq_background_loop():
             try:
                 print(f"[LM-WS] binance subscribing {current_symbols} streams: liquidations/forceOrder")
                 sock = _raw_ws_connect("fstream.binance.com", path)
-                sock.settimeout(60)
+                sock.settimeout(5)
                 print("[LM-LIQ] Connected")
                 # Seed connected-flag per symbol so get() shows "fresh" not "unavailable"
                 now_seed = time.time()
@@ -10769,7 +10769,7 @@ def _lm_delta_background_loop():
             try:
                 print(f"[LM-WS] binance subscribing {current_symbols} streams: trade/delta/aggTrade")
                 sock = _raw_ws_connect("fstream.binance.com", path)
-                sock.settimeout(30)
+                sock.settimeout(5)
                 print("[LM-DELTA] Connected")
             except Exception as e:
                 print(f"[LM-DELTA] Connect error: {e}")

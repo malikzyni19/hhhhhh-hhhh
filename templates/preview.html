@@ -6720,6 +6720,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     _lmBindChat(item);
     if(_lmInstructionView!=="instructions"){ _lmLoadEvents(item.id); }
     _lmSyncDataSrcSelector(item);
+    if(item&&item.symbol){ _lmFetchDataHealth(item.symbol,_lmGetDataSrc()); }
   }
 
   function _lmMtfMatrix(item){
