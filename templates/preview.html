@@ -5647,7 +5647,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
           var bsOfColor=bsOfColors[bsOfStatus]||"var(--text-3)";
           var bsOfLabel={ready:"Ready",partial:"Partial",collecting:"Collecting…",stale:"Stale",unavailable:"No Flow",error:"Error"}[bsOfStatus]||bsOfStatus||"—";
           var bsOfStaleBadge=(bsOfStatus==="stale"||bsOfStatus==="unavailable")
-            ?'<span style="font-size:8px;padding:1px 4px;border-radius:2px;background:rgba(248,113,113,.12);color:var(--red-2,#f87171);margin-left:4px">'+(bsOfStatus==="stale"?"DATA STALE":"NO FLOW")+'</span>':''
+            ?'<span style="font-size:8px;padding:1px 4px;border-radius:2px;background:rgba(248,113,113,.12);color:var(--red-2,#f87171);margin-left:4px">'+(bsOfStatus==="stale"?"DATA STALE":"NO FLOW")+'</span>'
             :'';
           return '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">'+
             '<span style="font-size:9.5px;color:var(--text-3)">Order-Flow Alignment: <b style="color:'+bsOfColor+'">'+esc(bsOfLabel)+'</b>'+bsOfStaleBadge+'</span>'+
