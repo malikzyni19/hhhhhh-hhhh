@@ -16211,13 +16211,10 @@ def _lm_build_orderflow_snapshot_direct(
     mid_price = result["live_price"] or result["mark_price"]
 
     # ── Order Book ────────────────────────────────────────────────────────────
-    ob_ex = primary_exchanges[0]
-    ob = _lm_rest_cached(f"of_ob_{ob_ex}:{symbol}", 5,
-                          lambda e=ob_ex: _lm_fetch_exchange_orderbook(e, symbol))
-    if ob and ob.get("available"):
-        bids = ob.get("bids", {})
-        asks = ob.get("asks", {})
-        ob_s = ob.get("status", "fresh")
+    def _fill_ob(ob_r, ex):
+        bids = ob_r.get("bids", {})
+        asks = ob_r.get("asks", {})
+        ob_s = ob_r.get("status", "fresh")
         result["orderbook_status"] = ob_s
         status_notes["orderbook"]  = ob_s
         if bids and asks:
@@ -16225,23 +16222,39 @@ def _lm_build_orderflow_snapshot_direct(
             tot_ask = sum(float(v) for v in asks.values())
             if tot_bid + tot_ask > 0:
                 result["orderbook_imbalance"] = round(
-                    (tot_bid - tot_ask) / (tot_bid + tot_ask), 4
-                )
+                    (tot_bid - tot_ask) / (tot_bid + tot_ask), 4)
             if mid_price:
                 walls = _lm_find_ob_walls(bids, asks, mid_price)
                 result.update(walls)
-        _track(ob_ex, True)
-    else:
-        if ob_ex in ("bybit", "okx", "mexc") and _LM_MX_WS_ENABLED:
-            _bk, _bk_st = _lm_mx_get_book(ob_ex, symbol)
+        _track(ex, True)
+
+    # For aggregated, try all primary exchanges in order until one has OB data.
+    # For single exchange, try only that exchange then MX WS book as fallback.
+    _ob_try_list = primary_exchanges if analysis_source == "aggregated" else [primary_exchanges[0]]
+    _ob_filled   = False
+    for _ob_ex in _ob_try_list:
+        _ob = _lm_rest_cached(f"of_ob_{_ob_ex}:{symbol}", 5,
+                               lambda e=_ob_ex: _lm_fetch_exchange_orderbook(e, symbol))
+        if _ob and _ob.get("available"):
+            _fill_ob(_ob, _ob_ex)
+            _ob_filled = True
+            break
+    if not _ob_filled and _LM_MX_WS_ENABLED:
+        _mx_ob_candidates = (
+            [e for e in ("bybit", "okx", "mexc") if e in _ob_try_list]
+            if analysis_source == "aggregated"
+            else ([_ob_try_list[0]] if _ob_try_list[0] in ("bybit", "okx", "mexc") else [])
+        )
+        for _mx_ob_ex in _mx_ob_candidates:
+            _bk, _bk_st = _lm_mx_get_book(_mx_ob_ex, symbol)
             if _bk and _bk_st in ("fresh", "stale"):
                 result["orderbook_status"] = _bk_st
                 status_notes["orderbook"]  = _bk_st
-                _track(ob_ex, True)
-            else:
-                _track(ob_ex, False)
-        else:
-            _track(ob_ex, False)
+                _track(_mx_ob_ex, True)
+                _ob_filled = True
+                break
+    if not _ob_filled:
+        _track(_ob_try_list[0] if _ob_try_list else "binance", False)
 
     # ── Delta / Taker ─────────────────────────────────────────────────────────
     if analysis_source in ("aggregated", "binance"):
@@ -16273,6 +16286,21 @@ def _lm_build_orderflow_snapshot_direct(
                 _track(mx_ex, True)
                 status_notes["delta"] = mx_ds
                 break
+
+    # REST fallback: Binance aggTrades when no WS delta available
+    if result["delta_net"] is None and analysis_source in ("aggregated", "binance"):
+        _rest_d = _lm_rest_cached(f"delta:{symbol}", 30,
+                                   lambda: _lm_fetch_agg_trades_delta_rest(symbol))
+        if _rest_d:
+            result["delta_status"]   = "partial"
+            result["buy_volume"]     = _rest_d.get("buy_vol_60s")
+            result["sell_volume"]    = _rest_d.get("sell_vol_60s")
+            result["delta_net"]      = _rest_d.get("delta_60s")
+            result["delta_pct"]      = _rest_d.get("delta_pct_60s")
+            result["taker_pressure"] = _lm_classify_taker_pressure(
+                _rest_d.get("delta_pct_60s"))
+            _track("binance", True)
+            status_notes["delta"] = "partial"
 
     # ── Open Interest ─────────────────────────────────────────────────────────
     for ex in primary_exchanges:
@@ -16704,6 +16732,12 @@ def _lm_align_orderflow_to_candles_for_tf(
         min_ot  = min(c.open_time for c in candle_rows)
         max_ct  = max((c.close_time or c.open_time + _LM_TF_MS.get(timeframe, 3_600_000))
                       for c in candle_rows)
+        now_ms  = int(time.time() * 1000)
+        tf_ms   = _LM_TF_MS.get(timeframe, 3_600_000)
+        # Extend snapshot query to cover the current in-progress candle window.
+        # Without this, snapshots created after the last stored candle's close_time
+        # fall outside the query range and produce sample_count=0 for every candle.
+        snap_query_max = max(max_ct, now_ms + tol_ms)
 
         snap_rows = (
             _LMOS9e_al.query.filter(
@@ -16713,7 +16747,7 @@ def _lm_align_orderflow_to_candles_for_tf(
                 _LMOS9e_al.symbol          == symbol,
                 _LMOS9e_al.analysis_source == analysis_source,
                 _LMOS9e_al.sample_time     >= min_ot  - tol_ms,
-                _LMOS9e_al.sample_time     <= max_ct  + tol_ms,
+                _LMOS9e_al.sample_time     <= snap_query_max,
             )
             .order_by(_LMOS9e_al.sample_time)
             .all()
@@ -16832,6 +16866,77 @@ def _lm_align_orderflow_to_candles_for_tf(
             )
             _db9e_al.session.execute(stmt)
             aligned_count += 1
+
+        # Synthetic entry for the current in-progress candle window.
+        # If the latest stored candle's open_time is before the current TF period,
+        # snapshots taken NOW fall in an unrepresented window → create one row.
+        max_stored_open = max(c.open_time for c in candle_rows)
+        cur_open = (now_ms // tf_ms) * tf_ms
+        if cur_open > max_stored_open:
+            cur_close  = cur_open + tf_ms
+            cur_window = [s for s in snap_dicts
+                          if cur_open <= s["sample_time"] < cur_close]
+            if cur_window:
+                cur_agg = _lm_aggregate_orderflow_window(cur_window, None)
+                cur_aln = _lm_classify_candle_flow_alignment(
+                    {"patterns": [], "direction": "unknown"}, cur_agg)
+                cur_row = {
+                    "user_id":          user_id,
+                    "exchange":         exchange,
+                    "market":           market,
+                    "symbol":           symbol,
+                    "timeframe":        timeframe,
+                    "open_time":        cur_open,
+                    "close_time":       cur_close,
+                    "analysis_source":  analysis_source,
+                    "sample_count":     len(cur_window),
+                    "first_sample_time": cur_window[0]["sample_time"],
+                    "last_sample_time":  cur_window[-1]["sample_time"],
+                    "flow_status":          cur_agg.get("flow_status", "partial"),
+                    "data_health_status":   cur_agg.get("data_health_status", "partial"),
+                    "orderbook_status":     cur_agg.get("orderbook_status"),
+                    "delta_status":         cur_agg.get("delta_status"),
+                    "oi_status":            cur_agg.get("oi_status"),
+                    "liquidation_status":   cur_agg.get("liquidation_status"),
+                    "long_short_status":    cur_agg.get("long_short_status"),
+                    "funding_status":       cur_agg.get("funding_status"),
+                    "buy_volume_sum":       cur_agg.get("buy_volume_sum"),
+                    "sell_volume_sum":      cur_agg.get("sell_volume_sum"),
+                    "delta_net_sum":        cur_agg.get("delta_net_sum"),
+                    "delta_pct_avg":        cur_agg.get("delta_pct_avg"),
+                    "taker_pressure_avg":   cur_agg.get("taker_pressure_avg"),
+                    "oi_first":             cur_agg.get("oi_first"),
+                    "oi_last":              cur_agg.get("oi_last"),
+                    "oi_change":            cur_agg.get("oi_change"),
+                    "oi_change_pct":        cur_agg.get("oi_change_pct"),
+                    "long_liq_usd_sum":     cur_agg.get("long_liq_usd_sum"),
+                    "short_liq_usd_sum":    cur_agg.get("short_liq_usd_sum"),
+                    "net_liq_usd_sum":      cur_agg.get("net_liq_usd_sum"),
+                    "avg_orderbook_imbalance": cur_agg.get("avg_orderbook_imbalance"),
+                    "nearest_bid_wall_price":  cur_agg.get("nearest_bid_wall_price"),
+                    "nearest_bid_wall_size":   cur_agg.get("nearest_bid_wall_size"),
+                    "nearest_ask_wall_price":  cur_agg.get("nearest_ask_wall_price"),
+                    "nearest_ask_wall_size":   cur_agg.get("nearest_ask_wall_size"),
+                    "bid_wall_near_candle_low":  None,
+                    "ask_wall_near_candle_high": None,
+                    "candle_direction":          "unknown",
+                    "candle_patterns_json":      "[]",
+                    "preliminary_flow_direction": cur_aln.get("preliminary_flow_direction"),
+                    "candle_flow_alignment":      cur_aln.get("alignment"),
+                    "alignment_reason_json":      _json_dumps_safe(cur_aln.get("reason", [])),
+                    "updated_at":                datetime.now(timezone.utc),
+                }
+                cur_stmt = _pg_ins(_LMCOF9e_al).values(**cur_row)
+                cur_stmt = cur_stmt.on_conflict_do_update(
+                    constraint="uq_lm_candle_orderflow",
+                    set_={k: cur_stmt.excluded[k]
+                          for k in cur_row if k not in ("user_id", "open_time",
+                                                          "exchange", "market",
+                                                          "symbol", "timeframe",
+                                                          "analysis_source")},
+                )
+                _db9e_al.session.execute(cur_stmt)
+                aligned_count += 1
 
         _db9e_al.session.commit()
         return {
