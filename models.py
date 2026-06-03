@@ -668,3 +668,188 @@ class LiveMonitorStructureEvent(db.Model):
     def __repr__(self) -> str:
         return (f"<LiveMonitorStructureEvent {self.symbol}/{self.timeframe} "
                 f"{self.event_type} t={self.event_time} user={self.user_id}>")
+
+
+class LiveMonitorOrderflowSnapshot(db.Model):
+    """Phase 10.9E: Point-in-time order-flow snapshot for Bias Shift Watch items.
+
+    Collected by a background sampler every N seconds for active Bias Shift items.
+    Each row = one sampled order-flow state: OB walls, delta, OI, liquidations,
+    L/S ratio, funding. Snapshots are the raw evidence used by the candle-window
+    alignment engine.
+
+    EVIDENCE ONLY. Not entry signals. No trading. No private API. No API keys.
+    No S/R Flip logic. No AI decision engine. No Entry Candidate state.
+    Data Health freshness is the source of truth for stale/unavailable status.
+    Rows older than retention window are automatically pruned.
+    Full snapshot arrays are never stored in LiveMonitorItem.snapshot_json.
+    """
+    __tablename__ = "live_monitor_orderflow_snapshots"
+
+    id              = db.Column(db.Integer, primary_key=True)
+    user_id         = db.Column(db.Integer, db.ForeignKey("users.id"),
+                                nullable=False, index=True)
+    exchange        = db.Column(db.String(20), nullable=False)
+    market          = db.Column(db.String(20), nullable=False, default="perpetual")
+    symbol          = db.Column(db.String(20), nullable=False)
+    analysis_source = db.Column(db.String(20), nullable=False, default="binance")
+    sample_time     = db.Column(db.BigInteger, nullable=False)   # ms epoch
+    source_status   = db.Column(db.String(20), nullable=True)    # fresh/partial/stale/unavailable
+    sources_used_json    = db.Column(db.Text, nullable=True)
+    sources_skipped_json = db.Column(db.Text, nullable=True)
+
+    # Price
+    live_price   = db.Column(db.Float, nullable=True)
+    mark_price   = db.Column(db.Float, nullable=True)
+
+    # Order book
+    orderbook_status              = db.Column(db.String(20), nullable=True)
+    orderbook_imbalance           = db.Column(db.Float, nullable=True)
+    bid_wall_price                = db.Column(db.Float, nullable=True)
+    bid_wall_size                 = db.Column(db.Float, nullable=True)
+    ask_wall_price                = db.Column(db.Float, nullable=True)
+    ask_wall_size                 = db.Column(db.Float, nullable=True)
+    nearest_bid_wall_distance_pct = db.Column(db.Float, nullable=True)
+    nearest_ask_wall_distance_pct = db.Column(db.Float, nullable=True)
+
+    # Delta / taker flow
+    delta_status   = db.Column(db.String(20), nullable=True)
+    buy_volume     = db.Column(db.Float, nullable=True)
+    sell_volume    = db.Column(db.Float, nullable=True)
+    delta_net      = db.Column(db.Float, nullable=True)
+    delta_pct      = db.Column(db.Float, nullable=True)
+    taker_pressure = db.Column(db.String(20), nullable=True)   # bullish/bearish/neutral/missing
+
+    # Open interest
+    oi_status     = db.Column(db.String(20), nullable=True)
+    open_interest = db.Column(db.Float, nullable=True)
+    oi_change     = db.Column(db.Float, nullable=True)
+    oi_change_pct = db.Column(db.Float, nullable=True)
+
+    # Liquidations
+    liquidation_status = db.Column(db.String(20), nullable=True)
+    long_liq_usd       = db.Column(db.Float, nullable=True)
+    short_liq_usd      = db.Column(db.Float, nullable=True)
+    net_liq_usd        = db.Column(db.Float, nullable=True)
+
+    # Long/short + funding
+    long_short_status = db.Column(db.String(20), nullable=True)
+    long_short_ratio  = db.Column(db.Float, nullable=True)
+    funding_status    = db.Column(db.String(20), nullable=True)
+    funding_rate      = db.Column(db.Float, nullable=True)
+
+    # Data health
+    data_health_status = db.Column(db.String(20), nullable=True)
+    data_health_json   = db.Column(db.Text, nullable=True)
+    raw_summary_json   = db.Column(db.Text, nullable=True)
+
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
+                           onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        db.Index("ix_lm_of_snap_lookup",
+                 "user_id", "exchange", "market", "symbol", "sample_time"),
+        db.Index("ix_lm_of_snap_sym_time",
+                 "user_id", "symbol", "sample_time"),
+    )
+
+    user = db.relationship("User", foreign_keys=[user_id])
+
+    def __repr__(self) -> str:
+        return (f"<LiveMonitorOrderflowSnapshot {self.symbol} src={self.analysis_source} "
+                f"t={self.sample_time} status={self.source_status} user={self.user_id}>")
+
+
+class LiveMonitorCandleOrderflow(db.Model):
+    """Phase 10.9E: Per-candle order-flow alignment for Bias Shift Watch items.
+
+    One row per (user_id, exchange, market, symbol, timeframe, open_time, analysis_source).
+    Aggregates snapshots that fell inside the candle's time window and classifies
+    whether the observed order flow confirmed, contradicted, or is missing for that candle.
+
+    EVIDENCE ONLY. Not entry signals. No trading. No private API. No API keys.
+    No S/R Flip logic. No AI decision engine. No Entry Candidate state.
+    Upsert on uq_lm_candle_orderflow — repeated refresh is idempotent.
+    Compact summary only — no raw snapshot arrays stored here.
+    """
+    __tablename__ = "live_monitor_candle_orderflow"
+
+    id              = db.Column(db.Integer, primary_key=True)
+    user_id         = db.Column(db.Integer, db.ForeignKey("users.id"),
+                                nullable=False, index=True)
+    exchange        = db.Column(db.String(20), nullable=False)
+    market          = db.Column(db.String(20), nullable=False, default="perpetual")
+    symbol          = db.Column(db.String(20), nullable=False)
+    timeframe       = db.Column(db.String(10), nullable=False)
+    open_time       = db.Column(db.BigInteger, nullable=False)   # ms epoch candle open
+    close_time      = db.Column(db.BigInteger, nullable=True)    # ms epoch candle close
+    analysis_source = db.Column(db.String(20), nullable=False, default="binance")
+    sample_count    = db.Column(db.Integer, nullable=True, default=0)
+    first_sample_time = db.Column(db.BigInteger, nullable=True)
+    last_sample_time  = db.Column(db.BigInteger, nullable=True)
+
+    # Aggregated status fields
+    flow_status        = db.Column(db.String(30), nullable=True)   # ready/partial/no_samples/stale
+    data_health_status = db.Column(db.String(20), nullable=True)
+    orderbook_status   = db.Column(db.String(20), nullable=True)
+    delta_status       = db.Column(db.String(20), nullable=True)
+    oi_status          = db.Column(db.String(20), nullable=True)
+    liquidation_status = db.Column(db.String(20), nullable=True)
+    long_short_status  = db.Column(db.String(20), nullable=True)
+    funding_status     = db.Column(db.String(20), nullable=True)
+
+    # Delta / taker summary
+    buy_volume_sum     = db.Column(db.Float, nullable=True)
+    sell_volume_sum    = db.Column(db.Float, nullable=True)
+    delta_net_sum      = db.Column(db.Float, nullable=True)
+    delta_pct_avg      = db.Column(db.Float, nullable=True)
+    taker_pressure_avg = db.Column(db.String(20), nullable=True)
+
+    # OI summary
+    oi_first      = db.Column(db.Float, nullable=True)
+    oi_last       = db.Column(db.Float, nullable=True)
+    oi_change     = db.Column(db.Float, nullable=True)
+    oi_change_pct = db.Column(db.Float, nullable=True)
+
+    # Liquidation summary
+    long_liq_usd_sum  = db.Column(db.Float, nullable=True)
+    short_liq_usd_sum = db.Column(db.Float, nullable=True)
+    net_liq_usd_sum   = db.Column(db.Float, nullable=True)
+
+    # Order book summary
+    avg_orderbook_imbalance  = db.Column(db.Float, nullable=True)
+    nearest_bid_wall_price   = db.Column(db.Float, nullable=True)
+    nearest_bid_wall_size    = db.Column(db.Float, nullable=True)
+    nearest_ask_wall_price   = db.Column(db.Float, nullable=True)
+    nearest_ask_wall_size    = db.Column(db.Float, nullable=True)
+    bid_wall_near_candle_low  = db.Column(db.Boolean, nullable=True)
+    ask_wall_near_candle_high = db.Column(db.Boolean, nullable=True)
+
+    # Candle relation and alignment result
+    candle_direction           = db.Column(db.String(10), nullable=True)  # bullish/bearish/neutral
+    candle_patterns_json       = db.Column(db.Text, nullable=True)        # compact list
+    preliminary_flow_direction = db.Column(db.String(20), nullable=True)  # bullish/bearish/neutral/mixed/missing
+    candle_flow_alignment      = db.Column(db.String(20), nullable=True)  # confirmed/contradicted/neutral/missing/partial
+    alignment_reason_json      = db.Column(db.Text, nullable=True)        # compact reason list
+
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
+                           onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "user_id", "exchange", "market", "symbol", "timeframe",
+            "open_time", "analysis_source",
+            name="uq_lm_candle_orderflow",
+        ),
+        db.Index("ix_lm_cof_lookup",
+                 "user_id", "exchange", "market", "symbol", "timeframe", "open_time"),
+    )
+
+    user = db.relationship("User", foreign_keys=[user_id])
+
+    def __repr__(self) -> str:
+        return (f"<LiveMonitorCandleOrderflow {self.symbol}/{self.timeframe} "
+                f"open_time={self.open_time} align={self.candle_flow_alignment} "
+                f"user={self.user_id}>")

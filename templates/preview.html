@@ -5233,6 +5233,24 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     }).catch(function(e){console.warn('[10.9C] bias feature refresh error',e);});
   }
 
+  // Phase 10.9E Task 13: Refresh Order Flow button handler
+  function _lmRefreshBiasOrderflow(itemId, collectNow){
+    if(!itemId) return;
+    fetch('/api/live-monitor/items/'+itemId+'/bias-orderflow/refresh',{
+      method:'POST',credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({collect_now:collectNow!==false})
+    }).then(function(r){return r.json();}).then(function(data){
+      if(!data.ok) return;
+      if(_lmSelItem&&_lmSelItem.id===itemId){
+        if(!_lmSelItem.snapshot) _lmSelItem.snapshot={};
+        _lmSelItem.snapshot.orderflow_alignment=
+          data.orderflow_alignment||_lmSelItem.snapshot.orderflow_alignment;
+        if(typeof _lmRenderRight==="function") _lmRenderRight(_lmSelItem);
+      }
+    }).catch(function(e){console.warn('[10.9E] bias orderflow refresh error',e);});
+  }
+
   // Phase 10.9D Task 11: Refresh Structure button handler
   function _lmRefreshBiasStructure(itemId, force){
     if(!itemId) return;
@@ -5372,8 +5390,43 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       seHtml+='<div style="font-size:9px;color:'+seStatusColor+';margin-top:4px">Structure: '+esc(seStatus)+'</div>'+
       '</div>';
     }
-    return table+csHtml+cfeHtml+seHtml+
-    '<div style="font-size:10px;color:var(--text-3);margin-top:6px;text-align:center">Bias Shift Watch · order-flow detection pending</div>';
+    // Phase 10.9E: order-flow alignment status per TF
+    var of9e=snap.orderflow_alignment||{};
+    var ofStatus=of9e.status||"";
+    var ofPerTf=of9e.per_tf||{};
+    var ofHtml="";
+    if(ofStatus){
+      var ofStatusColors={ready:"var(--green-2,#4ade80)",partial:"var(--yellow-2,#f59e0b)",collecting:"var(--yellow-2,#f59e0b)",stale:"var(--yellow-2,#f59e0b)",unavailable:"var(--red-2,#f87171)",error:"var(--red-2,#f87171)"};
+      var ofAlignColors={confirmed:"var(--green-2,#4ade80)",contradicted:"var(--red-2,#f87171)",neutral:"var(--text-3)",partial:"var(--yellow-2,#f59e0b)",missing:"var(--text-3)"};
+      var ofDirArrow={bullish:"↑",bearish:"↓",neutral:"–",mixed:"~",missing:"?"};
+      var ofStatusColor=ofStatusColors[ofStatus]||"var(--text-3)";
+      ofHtml='<div style="margin-top:8px;border-top:1px solid rgba(148,163,184,.1);padding-top:6px">'+
+        '<div style="font-size:9.5px;font-weight:700;color:var(--text-3);letter-spacing:.05em;margin-bottom:4px">MTF ORDER FLOW <span style="font-weight:400;color:var(--text-3)">(evidence only)</span></div>'+
+        '<div style="display:flex;flex-wrap:wrap;gap:4px">';
+      for(var oi=0;oi<tfStack.length;oi++){
+        var otf=tfStack[oi];
+        var otfInfo=ofPerTf[otf]||{};
+        var otfStatus=otfInfo.status||"collecting";
+        var otfAlign=otfInfo.latest_alignment||"missing";
+        var otfDir=otfInfo.latest_flow_direction||"missing";
+        var otfColor=ofStatusColors[otfStatus]||"var(--text-3)";
+        var otfAlignColor=ofAlignColors[otfAlign]||"var(--text-3)";
+        var otfLabel=otfStatus==="ready"?"✓":otfStatus==="unavailable"?"✗":"⋯";
+        var otfDirShort=ofDirArrow[otfDir]||"?";
+        var otfAlignShort=otfAlign==="confirmed"?"C":otfAlign==="contradicted"?"X":otfAlign==="neutral"?"–":otfAlign==="partial"?"P":"?";
+        ofHtml+='<div title="'+esc(otf)+': '+esc(otfAlign)+' · '+esc(otfDir)+'" style="font-size:9px;padding:2px 5px;border-radius:3px;background:rgba(148,163,184,.08);border:1px solid rgba(148,163,184,.15)">'+
+          '<span style="color:var(--text-3)">'+esc(otf)+'</span> '+
+          '<span style="color:'+otfColor+'">'+otfLabel+'</span> '+
+          '<span style="color:'+otfAlignColor+'">'+otfAlignShort+'</span>'+
+          '<span style="color:'+(ofDirArrow[otfDir]?otfAlignColor:"var(--text-3)")+'">'+otfDirShort+'</span>'+
+        '</div>';
+      }
+      ofHtml+='</div>'+
+        '<div style="font-size:9px;color:'+ofStatusColor+';margin-top:4px">Flow: '+esc(ofStatus)+'</div>'+
+      '</div>';
+    }
+    return table+csHtml+cfeHtml+seHtml+ofHtml+
+    '<div style="font-size:10px;color:var(--text-3);margin-top:6px;text-align:center">Bias Shift Watch · Phase 10.9E order-flow evidence active</div>';
   }
 
   function _lmBiasZoneCard(item){
@@ -5490,6 +5543,45 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
           seRowsHtml+
         '</div>';
       }())+
+      (function(){
+        // Phase 10.9E: candle-flow alignment for latest patterns
+        var of9e=snap.orderflow_alignment||{};
+        var ofPerTf=of9e.per_tf||{};
+        var ofStatus=of9e.status||"";
+        if(!ofStatus) return '';
+        var ofAlignColors={confirmed:"var(--green-2,#4ade80)",contradicted:"var(--red-2,#f87171)",neutral:"var(--text-3)",partial:"var(--yellow-2,#f59e0b)",missing:"var(--text-3)"};
+        var ofDirColors={bullish:"var(--green-2,#4ade80)",bearish:"var(--red-2,#f87171)",neutral:"var(--text-3)",mixed:"var(--yellow-2,#f59e0b)",missing:"var(--text-3)"};
+        var ofTfOrder=["1h","30m","15m","5m","4h","1d"];
+        var ofRowsHtml=''; var ofCount=0;
+        for(var ofi=0;ofi<ofTfOrder.length&&ofCount<4;ofi++){
+          var oftf=ofTfOrder[ofi];
+          var ofInfo=ofPerTf[oftf]||{};
+          var ofAln=ofInfo.latest_alignment||"";
+          var ofDir=ofInfo.latest_flow_direction||"";
+          var ofSc=ofInfo.sample_count;
+          if(!ofAln||ofAln==="missing") continue;
+          var ofAlnColor=ofAlignColors[ofAln]||"var(--text-2)";
+          var ofDirColor=ofDirColors[ofDir]||"var(--text-3)";
+          var ofAlnLabel={confirmed:"Confirmed",contradicted:"Contradicted",neutral:"Neutral",partial:"Partial"}[ofAln]||ofAln;
+          var ofDirLabel={bullish:"Bullish↑",bearish:"Bearish↓",neutral:"Neutral",mixed:"Mixed",missing:"—"}[ofDir]||ofDir;
+          ofRowsHtml+='<div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid rgba(148,163,184,.07)">'+
+            '<span style="font-size:9px;color:var(--text-3);min-width:28px">'+esc(oftf)+'</span>'+
+            '<span style="font-size:9.5px;font-weight:600;color:'+ofAlnColor+'">'+esc(ofAlnLabel)+'</span>'+
+            '<span style="font-size:9px;color:'+ofDirColor+'">'+esc(ofDirLabel)+'</span>'+
+            (ofSc!=null?'<span style="font-size:9px;color:var(--text-3)">'+ofSc+'s</span>':'')+
+          '</div>';
+          ofCount++;
+        }
+        if(!ofRowsHtml){
+          return '<div style="margin-top:6px;padding:3px 6px;background:rgba(148,163,184,.04);border:1px solid rgba(148,163,184,.12);border-radius:3px;font-size:9px;color:var(--text-3)">'+
+            'Order flow: '+esc(ofStatus)+' — collecting snapshots…'+
+          '</div>';
+        }
+        return '<div style="margin-top:8px;border-top:1px solid rgba(148,163,184,.08);padding-top:6px">'+
+          '<div style="font-size:9.5px;font-weight:700;color:var(--text-3);letter-spacing:.05em;margin-bottom:4px">CANDLE FLOW ALIGNMENT <span style="font-weight:400">· evidence only</span></div>'+
+          ofRowsHtml+
+        '</div>';
+      }())+
     '</div>';
   }
 
@@ -5547,7 +5639,22 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
             '<button onclick="_lmRefreshBiasStructure('+bsItemId+')" style="font-size:9px;padding:2px 7px;border-radius:3px;border:1px solid rgba(148,163,184,.3);background:rgba(148,163,184,.08);color:var(--text-2);cursor:pointer">Refresh Structure</button>'+
           '</div>';
         }())+
-        '<div style="font-size:9px;color:var(--text-3);margin-top:4px">Structure context only · order-flow · AI decision engines pending</div>'+
+        // Phase 10.9E: order-flow alignment row + Refresh Order Flow button
+        (function(){
+          var bsOf=bsSnap.orderflow_alignment||{};
+          var bsOfStatus=bsOf.status||"";
+          var bsOfColors={ready:"var(--green-2,#4ade80)",partial:"var(--yellow-2,#f59e0b)",collecting:"var(--yellow-2,#f59e0b)",stale:"var(--yellow-2,#f59e0b)",unavailable:"var(--red-2,#f87171)",error:"var(--red-2,#f87171)"};
+          var bsOfColor=bsOfColors[bsOfStatus]||"var(--text-3)";
+          var bsOfLabel={ready:"Ready",partial:"Partial",collecting:"Collecting…",stale:"Stale",unavailable:"No Flow",error:"Error"}[bsOfStatus]||bsOfStatus||"—";
+          var bsOfStaleBadge=(bsOfStatus==="stale"||bsOfStatus==="unavailable")
+            ?'<span style="font-size:8px;padding:1px 4px;border-radius:2px;background:rgba(248,113,113,.12);color:var(--red-2,#f87171);margin-left:4px">'+(bsOfStatus==="stale"?"DATA STALE":"NO FLOW")+'</span>':''
+            :'';
+          return '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">'+
+            '<span style="font-size:9.5px;color:var(--text-3)">Order-Flow Alignment: <b style="color:'+bsOfColor+'">'+esc(bsOfLabel)+'</b>'+bsOfStaleBadge+'</span>'+
+            '<button onclick="_lmRefreshBiasOrderflow('+bsItemId+')" style="font-size:9px;padding:2px 7px;border-radius:3px;border:1px solid rgba(148,163,184,.3);background:rgba(148,163,184,.08);color:var(--text-2);cursor:pointer">Refresh Order Flow</button>'+
+          '</div>';
+        }())+
+        '<div style="font-size:9px;color:var(--text-3);margin-top:4px">Phase 10.9E aligns evidence only · Entry Candidate disabled until decision engine phase</div>'+
       '</div>';
       return '<div style="border-left:3px solid var(--yellow-2,#f59e0b);padding:6px 10px;background:rgba(251,191,36,.05);border-radius:0 6px 6px 0;margin-bottom:6px">'+
         '<div style="font-size:11px;font-weight:700;color:var(--yellow-2,#f59e0b);margin-bottom:3px">PRECISION WATCH DECISION</div>'+

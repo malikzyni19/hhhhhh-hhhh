@@ -15599,6 +15599,16 @@ def _lm_refresh_bias_structure_for_item(item, force: bool = False) -> dict:
             _db.session.rollback()
             print(f"[10.9D] snapshot update error: {exc}")
 
+        # Task 10 (Phase 10.9E): Trigger order-flow alignment after structure engine completes.
+        if item_id:
+            try:
+                _lm_ensure_bias_orderflow_alignment_bg(
+                    item_id, uid, exchange, market, symbol,
+                    getattr(item, "source_tab", "bias_shift") or "bias_shift",
+                )
+            except Exception as _ofe:
+                print(f"[10.9E] OF alignment trigger error after structure: {_ofe}")
+
         return {
             "ok":               True,
             "symbol":           symbol,
@@ -15646,6 +15656,1221 @@ def _lm_ensure_bias_structure_bg(item_id: int, uid: int, exchange: str,
                          name=f"lm-bias-structure-{item_id}")
     with _lm_bias_structure_thread_lock:
         _lm_bias_structure_threads[item_id] = t
+    t.start()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Phase 10.9E — Bias Shift Candle-by-Candle Order-Flow Alignment Engine
+# EVIDENCE ONLY. Order-flow snapshots and candle alignment are NOT entry signals.
+# No trading execution. No order placement. No private API. No API keys.
+# No S/R Flip logic. No AI decision engine. No Entry Candidate state.
+# No auto-convert to OB/FIB. Do not redesign Live Monitor UI.
+# Data Health freshness is the source of truth for stale/unavailable status.
+# Never fake unavailable data. Snapshot arrays never go into snapshot_json.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Task 3: Sampling settings and helpers ────────────────────────────────────
+
+def _lm_bias_orderflow_sample_interval_sec() -> int:
+    """Snapshot collection interval. Env: ZYNI_BIAS_OF_SAMPLE_SEC. Clamp 5-60."""
+    try:
+        v = int(os.environ.get("ZYNI_BIAS_OF_SAMPLE_SEC", "15"))
+    except (ValueError, TypeError):
+        v = 15
+    return max(5, min(60, v))
+
+
+def _lm_bias_orderflow_retention_hours() -> float:
+    """Snapshot retention window. Env: ZYNI_BIAS_OF_RETENTION_HOURS. Clamp 12-168."""
+    try:
+        v = float(os.environ.get("ZYNI_BIAS_OF_RETENTION_HOURS", "72"))
+    except (ValueError, TypeError):
+        v = 72.0
+    return max(12.0, min(168.0, v))
+
+
+def _lm_bias_orderflow_window_tolerance_sec() -> int:
+    """Tolerance added to candle window edges when querying snapshots (seconds)."""
+    return 30
+
+
+def _lm_bias_orderflow_enabled_for_item(item) -> bool:
+    """True only for active Bias Shift Watch items."""
+    return _lm_is_bias_shift_item(item)
+
+
+def _lm_bias_of_align_limit() -> int:
+    """Max candles to align per TF per run. Env: ZYNI_BIAS_OF_ALIGN_LIMIT. Clamp 50-500."""
+    try:
+        v = int(os.environ.get("ZYNI_BIAS_OF_ALIGN_LIMIT", "300"))
+    except (ValueError, TypeError):
+        v = 300
+    return max(50, min(500, v))
+
+
+# ── Task 4: Order-flow snapshot builder ──────────────────────────────────────
+
+def _lm_classify_taker_pressure(delta_pct) -> str:
+    """Classify taker pressure from delta_pct_60s. Returns bullish/bearish/neutral/missing."""
+    if delta_pct is None:
+        return "missing"
+    if delta_pct > 10:
+        return "bullish"
+    if delta_pct < -10:
+        return "bearish"
+    return "neutral"
+
+
+def _lm_find_ob_walls(bids: dict, asks: dict, mid_price: float) -> dict:
+    """Find largest bid/ask walls within 5% of mid_price.
+
+    Returns compact dict with bid_wall_price/size, ask_wall_price/size,
+    and distance_pct fields. Empty dict if inputs are insufficient.
+    """
+    if not bids or not asks or not mid_price or mid_price <= 0:
+        return {}
+    wall_range = 0.05
+    lower = mid_price * (1.0 - wall_range)
+    upper = mid_price * (1.0 + wall_range)
+    try:
+        near_bids = {float(p): float(q) for p, q in bids.items()
+                     if lower <= float(p) <= mid_price}
+        near_asks = {float(p): float(q) for p, q in asks.items()
+                     if mid_price <= float(p) <= upper}
+    except (ValueError, TypeError):
+        return {}
+    out: dict = {}
+    if near_bids:
+        wp = max(near_bids, key=lambda p: near_bids[p])
+        out["bid_wall_price"] = wp
+        out["bid_wall_size"]  = near_bids[wp]
+        out["nearest_bid_wall_distance_pct"] = round(abs(mid_price - wp) / mid_price * 100, 3)
+    if near_asks:
+        wp = max(near_asks, key=lambda p: near_asks[p])
+        out["ask_wall_price"] = wp
+        out["ask_wall_size"]  = near_asks[wp]
+        out["nearest_ask_wall_distance_pct"] = round(abs(wp - mid_price) / mid_price * 100, 3)
+    return out
+
+
+def _lm_build_orderflow_snapshot_direct(
+        symbol: str, exchange: str, market: str, analysis_source: str) -> dict:
+    """Build a compact order-flow snapshot from in-memory caches and REST fetchers.
+
+    Uses existing Phase 10.7/10.8 data helpers as the source of truth for
+    freshness/status.  Pure read — no writes, no trade logic, no private API.
+
+    Returns a flat dict suitable for storage in LiveMonitorOrderflowSnapshot.
+    Missing metrics are marked missing/unavailable — never faked.
+    """
+    now_ms = int(time.time() * 1000)
+    result: dict = {
+        "sample_time":     now_ms,
+        "analysis_source": analysis_source,
+        "sources_used":    [],
+        "sources_skipped": [],
+        "source_status":   "unavailable",
+        # Price
+        "live_price":  None, "mark_price": None,
+        # OB
+        "orderbook_status":               "unavailable",
+        "orderbook_imbalance":            None,
+        "bid_wall_price":                 None, "bid_wall_size":  None,
+        "ask_wall_price":                 None, "ask_wall_size":  None,
+        "nearest_bid_wall_distance_pct":  None,
+        "nearest_ask_wall_distance_pct":  None,
+        # Delta
+        "delta_status":   "unavailable",
+        "buy_volume":     None, "sell_volume": None,
+        "delta_net":      None, "delta_pct":   None,
+        "taker_pressure": "missing",
+        # OI
+        "oi_status":    "unavailable",
+        "open_interest": None, "oi_change": None, "oi_change_pct": None,
+        # Liquidations
+        "liquidation_status": "unavailable",
+        "long_liq_usd": None, "short_liq_usd": None, "net_liq_usd": None,
+        # L/S + funding
+        "long_short_status": "unavailable", "long_short_ratio": None,
+        "funding_status":    "unavailable", "funding_rate":    None,
+        # Data health summary
+        "data_health_status": "unavailable",
+        "data_health_json":   None,
+        "raw_summary_json":   None,
+    }
+    sources_used:    list = []
+    sources_skipped: list = []
+    status_notes:    dict = {}
+
+    primary_exchanges = (
+        list(_LM_AGGREGATED_EXCHANGES)
+        if analysis_source == "aggregated"
+        else [analysis_source]
+    )
+
+    def _track(ex, ok):
+        if ok:
+            if ex not in sources_used: sources_used.append(ex)
+        else:
+            if ex not in sources_skipped and ex not in sources_used:
+                sources_skipped.append(ex)
+
+    # ── Live / Mark Price ─────────────────────────────────────────────────────
+    for ex in primary_exchanges:
+        lp = _lm_rest_cached(f"of_lp_{ex}:{symbol}", 5,
+                              lambda e=ex: _lm_fetch_exchange_live_price(e, symbol))
+        if lp and lp.get("available") and (lp.get("price") or 0) > 0:
+            result["live_price"] = float(lp["price"])
+            _track(ex, True)
+            break
+        _track(ex, False)
+
+    for ex in primary_exchanges:
+        mp = _lm_rest_cached(f"of_mp_{ex}:{symbol}", 5,
+                              lambda e=ex: _lm_fetch_exchange_mark_price(e, symbol))
+        if mp and mp.get("available") and (mp.get("price") or 0) > 0:
+            result["mark_price"] = float(mp["price"])
+            break
+
+    mid_price = result["live_price"] or result["mark_price"]
+
+    # ── Order Book ────────────────────────────────────────────────────────────
+    ob_ex = primary_exchanges[0]
+    ob = _lm_rest_cached(f"of_ob_{ob_ex}:{symbol}", 5,
+                          lambda e=ob_ex: _lm_fetch_exchange_orderbook(e, symbol))
+    if ob and ob.get("available"):
+        bids = ob.get("bids", {})
+        asks = ob.get("asks", {})
+        ob_s = ob.get("status", "fresh")
+        result["orderbook_status"] = ob_s
+        status_notes["orderbook"]  = ob_s
+        if bids and asks:
+            tot_bid = sum(float(v) for v in bids.values())
+            tot_ask = sum(float(v) for v in asks.values())
+            if tot_bid + tot_ask > 0:
+                result["orderbook_imbalance"] = round(
+                    (tot_bid - tot_ask) / (tot_bid + tot_ask), 4
+                )
+            if mid_price:
+                walls = _lm_find_ob_walls(bids, asks, mid_price)
+                result.update(walls)
+        _track(ob_ex, True)
+    else:
+        if ob_ex in ("bybit", "okx", "mexc") and _LM_MX_WS_ENABLED:
+            _bk, _bk_st = _lm_mx_get_book(ob_ex, symbol)
+            if _bk and _bk_st in ("fresh", "stale"):
+                result["orderbook_status"] = _bk_st
+                status_notes["orderbook"]  = _bk_st
+                _track(ob_ex, True)
+            else:
+                _track(ob_ex, False)
+        else:
+            _track(ob_ex, False)
+
+    # ── Delta / Taker ─────────────────────────────────────────────────────────
+    if analysis_source in ("aggregated", "binance"):
+        delta, ds = _lm_delta_get("binance", symbol)
+        if delta:
+            result["delta_status"]   = ds
+            result["buy_volume"]     = delta.get("buy_vol_60s")
+            result["sell_volume"]    = delta.get("sell_vol_60s")
+            result["delta_net"]      = delta.get("delta_60s")
+            result["delta_pct"]      = delta.get("delta_pct_60s")
+            result["taker_pressure"] = _lm_classify_taker_pressure(
+                delta.get("delta_pct_60s"))
+            _track("binance", True)
+            status_notes["delta"] = ds
+
+    if result["delta_net"] is None and _LM_MX_WS_ENABLED:
+        for mx_ex in (["bybit", "okx", "mexc"]
+                      if analysis_source == "aggregated"
+                      else ([analysis_source] if analysis_source in ("bybit", "okx", "mexc") else [])):
+            mx_d, mx_ds = _lm_mx_get_delta(mx_ex, symbol)
+            if mx_d:
+                result["delta_status"]   = mx_ds
+                result["buy_volume"]     = mx_d.get("buy_vol_60s")
+                result["sell_volume"]    = mx_d.get("sell_vol_60s")
+                result["delta_net"]      = mx_d.get("delta_60s")
+                result["delta_pct"]      = mx_d.get("delta_pct_60s")
+                result["taker_pressure"] = _lm_classify_taker_pressure(
+                    mx_d.get("delta_pct_60s"))
+                _track(mx_ex, True)
+                status_notes["delta"] = mx_ds
+                break
+
+    # ── Open Interest ─────────────────────────────────────────────────────────
+    for ex in primary_exchanges:
+        oi = _lm_rest_cached(f"of_oi_{ex}:{symbol}", 30,
+                              lambda e=ex: _lm_fetch_exchange_open_interest(e, symbol))
+        if oi and oi.get("available"):
+            result["oi_status"]    = oi.get("status", "fresh")
+            result["open_interest"] = oi.get("oi_contracts")
+            _track(ex, True)
+            status_notes["oi"] = oi.get("status", "fresh")
+            break
+
+    for ex in primary_exchanges:
+        oic = _lm_rest_cached(f"of_oic_{ex}:{symbol}", 60,
+                               lambda e=ex: _lm_fetch_exchange_oi_change(e, symbol))
+        if oic and oic.get("available"):
+            result["oi_change_pct"] = oic.get("change_pct")
+            break
+
+    # ── Liquidations ──────────────────────────────────────────────────────────
+    liq, ls = _lm_liq_get("binance", symbol)
+    if liq:
+        result["liquidation_status"] = ls
+        result["long_liq_usd"]       = liq.get("long_liq_usd_5m")
+        result["short_liq_usd"]      = liq.get("short_liq_usd_5m")
+        net = (liq.get("short_liq_usd_5m") or 0) - (liq.get("long_liq_usd_5m") or 0)
+        result["net_liq_usd"]        = net
+        _track("binance", True)
+        status_notes["liquidations"] = ls
+    elif analysis_source in ("aggregated", "bybit", "okx") and _LM_MX_WS_ENABLED:
+        for mx_ex in (["bybit", "okx"]
+                      if analysis_source == "aggregated"
+                      else ([analysis_source] if analysis_source in ("bybit", "okx") else [])):
+            mx_l, mx_ls = _lm_mx_get_liq(mx_ex, symbol)
+            if mx_l:
+                result["liquidation_status"] = mx_ls
+                result["long_liq_usd"]       = mx_l.get("long_liq_usd_5m")
+                result["short_liq_usd"]      = mx_l.get("short_liq_usd_5m")
+                net = (mx_l.get("short_liq_usd_5m") or 0) - (mx_l.get("long_liq_usd_5m") or 0)
+                result["net_liq_usd"]        = net
+                _track(mx_ex, True)
+                status_notes["liquidations"] = mx_ls
+                break
+
+    # ── Long/Short Ratio ──────────────────────────────────────────────────────
+    for ex in primary_exchanges:
+        ls_r = _lm_rest_cached(f"of_ls_{ex}:{symbol}", 300,
+                                lambda e=ex: _lm_fetch_exchange_long_short(e, symbol))
+        if ls_r and ls_r.get("available"):
+            result["long_short_status"] = ls_r.get("status", "interval")
+            result["long_short_ratio"]  = ls_r.get("ls_ratio")
+            _track(ex, True)
+            status_notes["long_short"] = ls_r.get("status", "interval")
+            break
+
+    # ── Funding Rate ──────────────────────────────────────────────────────────
+    for ex in primary_exchanges:
+        fr = _lm_rest_cached(f"of_fr_{ex}:{symbol}", 30,
+                              lambda e=ex: _lm_fetch_exchange_funding(e, symbol))
+        if fr and fr.get("available"):
+            result["funding_status"] = fr.get("status", "fresh")
+            result["funding_rate"]   = fr.get("rate")
+            _track(ex, True)
+            status_notes["funding"] = fr.get("status", "fresh")
+            break
+
+    # ── Overall status ────────────────────────────────────────────────────────
+    for ex in primary_exchanges:
+        if ex not in sources_used and ex not in sources_skipped:
+            sources_skipped.append(ex)
+
+    result["sources_used"]    = sources_used
+    result["sources_skipped"] = sources_skipped
+
+    all_statuses = list(status_notes.values())
+    if not all_statuses or all(s in ("unavailable", "error") for s in all_statuses):
+        result["source_status"]      = "unavailable"
+        result["data_health_status"] = "unavailable"
+    elif any(s == "fresh" for s in all_statuses):
+        result["source_status"]      = "fresh"
+        result["data_health_status"] = "fresh"
+    elif any(s in ("partial", "stale", "fallback_fresh", "fallback_stale", "interval") for s in all_statuses):
+        result["source_status"]      = "partial"
+        result["data_health_status"] = "partial"
+    else:
+        result["source_status"]      = "stale"
+        result["data_health_status"] = "stale"
+
+    result["raw_summary_json"] = _json_dumps_safe({
+        "status_notes":    status_notes,
+        "sources_used":    sources_used,
+        "sources_skipped": result["sources_skipped"],
+    })
+    return result
+
+
+def _lm_build_orderflow_snapshot_for_item(item) -> dict | None:
+    """Build order-flow snapshot for a Bias Shift item. Resolves analysis_source from item."""
+    if not _lm_is_bias_shift_item(item):
+        return None
+    symbol          = getattr(item, "symbol", "") or ""
+    exchange        = (getattr(item, "exchange", "") or "binance").lower()
+    market          = (getattr(item, "market", "") or "perpetual").lower()
+    snap_raw        = _json_loads_safe(getattr(item, "snapshot_json", None), {})
+    src_cfg         = _lm_analysis_source_config(item, snap_raw)
+    analysis_source = src_cfg["analysis_source"]
+    return _lm_build_orderflow_snapshot_direct(symbol, exchange, market, analysis_source)
+
+
+# ── Task 5: Snapshot storage helper ──────────────────────────────────────────
+
+def _lm_store_orderflow_snapshot(
+        user_id: int, exchange: str, market: str,
+        symbol: str, analysis_source: str, snapshot: dict) -> bool:
+    """Insert one LiveMonitorOrderflowSnapshot row. Returns True on success."""
+    try:
+        from models import db as _db9e, LiveMonitorOrderflowSnapshot as _LMOS9e
+        row = _LMOS9e(
+            user_id          = user_id,
+            exchange         = exchange,
+            market           = market,
+            symbol           = symbol,
+            analysis_source  = analysis_source,
+            sample_time      = snapshot.get("sample_time") or int(time.time() * 1000),
+            source_status    = snapshot.get("source_status"),
+            sources_used_json    = _json_dumps_safe(snapshot.get("sources_used", [])),
+            sources_skipped_json = _json_dumps_safe(snapshot.get("sources_skipped", [])),
+            live_price       = snapshot.get("live_price"),
+            mark_price       = snapshot.get("mark_price"),
+            orderbook_status              = snapshot.get("orderbook_status"),
+            orderbook_imbalance           = snapshot.get("orderbook_imbalance"),
+            bid_wall_price                = snapshot.get("bid_wall_price"),
+            bid_wall_size                 = snapshot.get("bid_wall_size"),
+            ask_wall_price                = snapshot.get("ask_wall_price"),
+            ask_wall_size                 = snapshot.get("ask_wall_size"),
+            nearest_bid_wall_distance_pct = snapshot.get("nearest_bid_wall_distance_pct"),
+            nearest_ask_wall_distance_pct = snapshot.get("nearest_ask_wall_distance_pct"),
+            delta_status     = snapshot.get("delta_status"),
+            buy_volume       = snapshot.get("buy_volume"),
+            sell_volume      = snapshot.get("sell_volume"),
+            delta_net        = snapshot.get("delta_net"),
+            delta_pct        = snapshot.get("delta_pct"),
+            taker_pressure   = snapshot.get("taker_pressure"),
+            oi_status        = snapshot.get("oi_status"),
+            open_interest    = snapshot.get("open_interest"),
+            oi_change        = snapshot.get("oi_change"),
+            oi_change_pct    = snapshot.get("oi_change_pct"),
+            liquidation_status = snapshot.get("liquidation_status"),
+            long_liq_usd     = snapshot.get("long_liq_usd"),
+            short_liq_usd    = snapshot.get("short_liq_usd"),
+            net_liq_usd      = snapshot.get("net_liq_usd"),
+            long_short_status = snapshot.get("long_short_status"),
+            long_short_ratio  = snapshot.get("long_short_ratio"),
+            funding_status   = snapshot.get("funding_status"),
+            funding_rate     = snapshot.get("funding_rate"),
+            data_health_status = snapshot.get("data_health_status"),
+            data_health_json   = snapshot.get("data_health_json"),
+            raw_summary_json   = snapshot.get("raw_summary_json"),
+        )
+        _db9e.session.add(row)
+        _db9e.session.commit()
+        return True
+    except Exception as _e:
+        try:
+            from models import db as _rbl
+            _rbl.session.rollback()
+        except Exception:
+            pass
+        print(f"[10.9E] store_snapshot error: {_e}")
+        return False
+
+
+# ── Task 6: Background sampler ───────────────────────────────────────────────
+
+_lm_bias_of_samplers:    dict = {}   # "uid:exch:mkt:sym:src" → Thread
+_lm_bias_of_sampler_lock = threading.Lock()
+
+
+def _lm_clean_old_orderflow_snapshots(
+        user_id: int, exchange: str, market: str,
+        symbol: str, analysis_source: str, retention_hours: float):
+    """Delete order-flow snapshot rows older than retention_hours."""
+    try:
+        from models import db as _db9e_cl, LiveMonitorOrderflowSnapshot as _LMOS9e_cl
+        cutoff_ms = int((time.time() - retention_hours * 3600) * 1000)
+        _LMOS9e_cl.query.filter(
+            _LMOS9e_cl.user_id         == user_id,
+            _LMOS9e_cl.exchange        == exchange,
+            _LMOS9e_cl.market          == market,
+            _LMOS9e_cl.symbol          == symbol,
+            _LMOS9e_cl.analysis_source == analysis_source,
+            _LMOS9e_cl.sample_time     <  cutoff_ms,
+        ).delete(synchronize_session=False)
+        _db9e_cl.session.commit()
+    except Exception as _e:
+        try:
+            from models import db as _rbl_cl
+            _rbl_cl.session.rollback()
+        except Exception:
+            pass
+        print(f"[10.9E] clean_snapshots error: {_e}")
+
+
+def _lm_bias_orderflow_sampler_loop(
+        user_id: int, exchange: str, market: str,
+        symbol: str, analysis_source: str, reg_key: str):
+    """Persistent background sampler loop for Bias Shift order-flow snapshots.
+
+    Samples every _lm_bias_orderflow_sample_interval_sec() seconds.
+    Stops when no active Bias Shift item exists for this symbol.
+    Cleans old snapshots once per ~hour.
+    """
+    interval     = _lm_bias_orderflow_sample_interval_sec()
+    retention_h  = _lm_bias_orderflow_retention_hours()
+    clean_every  = max(10, 3600 // max(1, interval))
+    loop_count   = 0
+    print(f"[10.9E] sampler started: {reg_key} interval={interval}s")
+    try:
+        while True:
+            try:
+                with app.app_context():
+                    from models import LiveMonitorItem as _LMI9e_sl
+                    active = _LMI9e_sl.query.filter(
+                        _LMI9e_sl.user_id   == user_id,
+                        _LMI9e_sl.symbol    == symbol,
+                        _LMI9e_sl.exchange  == exchange,
+                        _LMI9e_sl.market    == market,
+                        _LMI9e_sl.is_active == True,
+                    ).first()
+                    if not active or not _lm_is_bias_shift_item(active):
+                        print(f"[10.9E] sampler stopping — no active bias item: {reg_key}")
+                        break
+                    snap = _lm_build_orderflow_snapshot_direct(
+                        symbol, exchange, market, analysis_source
+                    )
+                    if snap and snap.get("source_status") != "unavailable":
+                        _lm_store_orderflow_snapshot(
+                            user_id, exchange, market, symbol, analysis_source, snap
+                        )
+                    loop_count += 1
+                    if loop_count % clean_every == 0:
+                        _lm_clean_old_orderflow_snapshots(
+                            user_id, exchange, market, symbol,
+                            analysis_source, retention_h
+                        )
+            except Exception as _e:
+                print(f"[10.9E] sampler inner error {reg_key}: {_e}")
+            time.sleep(interval)
+    finally:
+        with _lm_bias_of_sampler_lock:
+            _lm_bias_of_samplers.pop(reg_key, None)
+        print(f"[10.9E] sampler stopped: {reg_key}")
+
+
+def _lm_ensure_bias_orderflow_sampler(
+        item_id: int, user_id: int, exchange: str,
+        market: str, symbol: str, analysis_source: str):
+    """Start background order-flow sampler for a Bias Shift item if not already running.
+
+    Registry key = uid:exchange:market:symbol:source — one sampler per key.
+    """
+    reg_key = f"{user_id}:{exchange}:{market}:{symbol}:{analysis_source}"
+    with _lm_bias_of_sampler_lock:
+        t = _lm_bias_of_samplers.get(reg_key)
+        if t and t.is_alive():
+            return
+
+    def _run():
+        _lm_bias_orderflow_sampler_loop(
+            user_id, exchange, market, symbol, analysis_source, reg_key
+        )
+
+    t = threading.Thread(
+        target=_run, daemon=True,
+        name=f"lm-of-{symbol[:6]}-{analysis_source[:4]}"
+    )
+    with _lm_bias_of_sampler_lock:
+        _lm_bias_of_samplers[reg_key] = t
+    t.start()
+
+
+# ── Task 7: Candle-window aggregation and alignment ───────────────────────────
+
+def _lm_aggregate_orderflow_window(snaps: list, candle) -> dict:
+    """Aggregate order-flow snapshots that fell inside one candle's time window.
+
+    snaps  — list of snapshot dicts (open_time <= sample_time < close_time).
+    candle — LiveMonitorCandle ORM row (for high/low proximity checks).
+    Returns compact aggregation dict used by the alignment classifier.
+    """
+    if not snaps:
+        return {
+            "flow_status": "no_samples", "data_health_status": "unavailable",
+            "buy_volume_sum": None, "sell_volume_sum": None,
+            "delta_net_sum": None, "delta_pct_avg": None,
+            "taker_pressure_avg": "missing",
+            "oi_first": None, "oi_last": None,
+            "oi_change": None, "oi_change_pct": None,
+            "long_liq_usd_sum": None, "short_liq_usd_sum": None, "net_liq_usd_sum": None,
+            "avg_orderbook_imbalance": None,
+            "nearest_bid_wall_price": None, "nearest_bid_wall_size": None,
+            "nearest_ask_wall_price": None, "nearest_ask_wall_size": None,
+            "bid_wall_near_candle_low": None, "ask_wall_near_candle_high": None,
+            "orderbook_status": "unavailable", "delta_status": "unavailable",
+            "oi_status": "unavailable", "liquidation_status": "unavailable",
+            "long_short_status": "unavailable", "funding_status": "unavailable",
+        }
+
+    def _vals(key):
+        return [s[key] for s in snaps if s.get(key) is not None]
+
+    def _agg_status(vals):
+        if not vals: return "unavailable"
+        if any(v == "fresh" for v in vals): return "fresh"
+        if any(v in ("stale", "partial", "interval") for v in vals): return "partial"
+        return "unavailable"
+
+    buy_vols    = _vals("buy_volume")
+    sell_vols   = _vals("sell_volume")
+    delta_nets  = _vals("delta_net")
+    delta_pcts  = _vals("delta_pct")
+    oi_vals     = _vals("open_interest")
+    long_liqs   = _vals("long_liq_usd")
+    short_liqs  = _vals("short_liq_usd")
+    ob_imbs     = _vals("orderbook_imbalance")
+    tp_vals     = [s.get("taker_pressure", "missing") for s in snaps]
+
+    oi_first    = oi_vals[0]  if oi_vals else None
+    oi_last     = oi_vals[-1] if oi_vals else None
+    oi_change   = (oi_last - oi_first) if (oi_first and oi_last) else None
+    oi_chg_pct  = (round(oi_change / oi_first * 100, 3)
+                   if (oi_change is not None and oi_first and oi_first > 0) else None)
+
+    # Latest OB walls (from most recent snap that has them)
+    bid_wp = bid_ws = ask_wp = ask_ws = None
+    for s in reversed(snaps):
+        if s.get("bid_wall_price") and bid_wp is None:
+            bid_wp, bid_ws = s["bid_wall_price"], s.get("bid_wall_size")
+        if s.get("ask_wall_price") and ask_wp is None:
+            ask_wp, ask_ws = s["ask_wall_price"], s.get("ask_wall_size")
+        if bid_wp and ask_wp:
+            break
+
+    # Wall proximity to candle high/low (within 0.5%)
+    c_low  = getattr(candle, "low",  None)
+    c_high = getattr(candle, "high", None)
+    bid_near_low  = (abs(bid_wp  - c_low)  / c_low  < 0.005) if (bid_wp  and c_low)  else None
+    ask_near_high = (abs(ask_wp  - c_high) / c_high < 0.005) if (ask_wp  and c_high) else None
+
+    tp_clean = [t for t in tp_vals if t not in ("missing", None)]
+    taker_avg = max(set(tp_clean), key=tp_clean.count) if tp_clean else "missing"
+
+    ob_statuses  = [s.get("orderbook_status")   for s in snaps if s.get("orderbook_status")]
+    dlt_statuses = [s.get("delta_status")        for s in snaps if s.get("delta_status")]
+    all_statuses = ob_statuses + dlt_statuses
+
+    sample_count = len(snaps)
+    if sample_count >= 3 and any(s == "fresh" for s in all_statuses):
+        flow_status = "ready"
+    elif sample_count >= 1:
+        flow_status = "partial"
+    else:
+        flow_status = "no_samples"
+
+    return {
+        "flow_status":        flow_status,
+        "data_health_status": "fresh" if flow_status == "ready" else
+                              ("partial" if flow_status == "partial" else "unavailable"),
+        "orderbook_status":   _agg_status(ob_statuses),
+        "delta_status":       _agg_status(dlt_statuses),
+        "oi_status":          _agg_status([s.get("oi_status") for s in snaps if s.get("oi_status")]),
+        "liquidation_status": _agg_status([s.get("liquidation_status") for s in snaps
+                                           if s.get("liquidation_status")]),
+        "long_short_status":  _agg_status([s.get("long_short_status") for s in snaps
+                                           if s.get("long_short_status")]),
+        "funding_status":     _agg_status([s.get("funding_status") for s in snaps
+                                           if s.get("funding_status")]),
+        "buy_volume_sum":     sum(buy_vols)  if buy_vols  else None,
+        "sell_volume_sum":    sum(sell_vols) if sell_vols else None,
+        "delta_net_sum":      sum(delta_nets) if delta_nets else None,
+        "delta_pct_avg":      round(sum(delta_pcts) / len(delta_pcts), 2) if delta_pcts else None,
+        "taker_pressure_avg": taker_avg,
+        "oi_first":           oi_first, "oi_last": oi_last,
+        "oi_change":          oi_change, "oi_change_pct": oi_chg_pct,
+        "long_liq_usd_sum":   sum(long_liqs)  if long_liqs  else None,
+        "short_liq_usd_sum":  sum(short_liqs) if short_liqs else None,
+        "net_liq_usd_sum":    (sum(short_liqs) - sum(long_liqs))
+                              if (short_liqs and long_liqs) else None,
+        "avg_orderbook_imbalance": round(sum(ob_imbs) / len(ob_imbs), 4) if ob_imbs else None,
+        "nearest_bid_wall_price":  bid_wp, "nearest_bid_wall_size":  bid_ws,
+        "nearest_ask_wall_price":  ask_wp, "nearest_ask_wall_size":  ask_ws,
+        "bid_wall_near_candle_low":  bid_near_low,
+        "ask_wall_near_candle_high": ask_near_high,
+    }
+
+
+def _lm_align_orderflow_to_candles_for_tf(
+        user_id: int, exchange: str, market: str,
+        symbol: str, timeframe: str, analysis_source: str,
+        limit: int = 300) -> dict:
+    """Aggregate snapshots into per-candle order-flow rows and upsert.
+
+    Reads LiveMonitorCandle + LiveMonitorOrderflowSnapshot rows only.
+    No external API calls. No AI. No entry signals.
+    """
+    try:
+        from models import (db as _db9e_al,
+                            LiveMonitorCandle       as _LMC9e_al,
+                            LiveMonitorCandleFeature as _LMCF9e_al,
+                            LiveMonitorCandleOrderflow as _LMCOF9e_al,
+                            LiveMonitorOrderflowSnapshot as _LMOS9e_al)
+        from sqlalchemy.dialects.postgresql import insert as _pg_ins
+
+        lim     = max(10, min(500, limit))
+        tol_ms  = _lm_bias_orderflow_window_tolerance_sec() * 1000
+
+        candle_rows = (
+            _LMC9e_al.query.filter_by(
+                user_id=user_id, exchange=exchange,
+                market=market, symbol=symbol, timeframe=timeframe
+            )
+            .order_by(_LMC9e_al.open_time.desc())
+            .limit(lim)
+            .all()
+        )
+        if not candle_rows:
+            return {"aligned": 0, "candles_read": 0, "status": "no_candles"}
+
+        min_ot  = min(c.open_time for c in candle_rows)
+        max_ct  = max((c.close_time or c.open_time + _LM_TF_MS.get(timeframe, 3_600_000))
+                      for c in candle_rows)
+
+        snap_rows = (
+            _LMOS9e_al.query.filter(
+                _LMOS9e_al.user_id         == user_id,
+                _LMOS9e_al.exchange        == exchange,
+                _LMOS9e_al.market          == market,
+                _LMOS9e_al.symbol          == symbol,
+                _LMOS9e_al.analysis_source == analysis_source,
+                _LMOS9e_al.sample_time     >= min_ot  - tol_ms,
+                _LMOS9e_al.sample_time     <= max_ct  + tol_ms,
+            )
+            .order_by(_LMOS9e_al.sample_time)
+            .all()
+        )
+
+        snap_dicts = [
+            {
+                "sample_time":        s.sample_time,
+                "buy_volume":         s.buy_volume,
+                "sell_volume":        s.sell_volume,
+                "delta_net":          s.delta_net,
+                "delta_pct":          s.delta_pct,
+                "taker_pressure":     s.taker_pressure,
+                "open_interest":      s.open_interest,
+                "long_liq_usd":       s.long_liq_usd,
+                "short_liq_usd":      s.short_liq_usd,
+                "net_liq_usd":        s.net_liq_usd,
+                "orderbook_imbalance": s.orderbook_imbalance,
+                "bid_wall_price":     s.bid_wall_price,
+                "bid_wall_size":      s.bid_wall_size,
+                "ask_wall_price":     s.ask_wall_price,
+                "ask_wall_size":      s.ask_wall_size,
+                "delta_status":       s.delta_status,
+                "oi_status":          s.oi_status,
+                "liquidation_status": s.liquidation_status,
+                "long_short_status":  s.long_short_status,
+                "funding_status":     s.funding_status,
+                "orderbook_status":   s.orderbook_status,
+                "source_status":      s.source_status,
+            }
+            for s in snap_rows
+        ]
+
+        aligned_count = 0
+        for candle in candle_rows:
+            open_ms  = candle.open_time
+            close_ms = candle.close_time or (open_ms + _LM_TF_MS.get(timeframe, 3_600_000))
+            window   = [s for s in snap_dicts
+                        if open_ms <= s["sample_time"] < close_ms]
+
+            feat_row = _LMCF9e_al.query.filter_by(
+                user_id=user_id, exchange=exchange, market=market,
+                symbol=symbol, timeframe=timeframe, open_time=open_ms
+            ).first()
+
+            patterns  = _json_loads_safe(
+                getattr(feat_row, "detected_patterns_json", None), []
+            ) if feat_row else []
+            candle_dir = (
+                feat_row.candle_direction
+                if feat_row and feat_row.candle_direction
+                else ("bullish" if candle.close > candle.open
+                      else ("bearish" if candle.close < candle.open else "neutral"))
+            )
+
+            agg  = _lm_aggregate_orderflow_window(window, candle)
+            aln  = _lm_classify_candle_flow_alignment(
+                {"patterns": patterns, "direction": candle_dir}, agg
+            )
+
+            row_data = {
+                "user_id":          user_id,
+                "exchange":         exchange,
+                "market":           market,
+                "symbol":           symbol,
+                "timeframe":        timeframe,
+                "open_time":        open_ms,
+                "close_time":       close_ms,
+                "analysis_source":  analysis_source,
+                "sample_count":     len(window),
+                "first_sample_time": window[0]["sample_time"]  if window else None,
+                "last_sample_time":  window[-1]["sample_time"] if window else None,
+                "flow_status":         agg.get("flow_status", "no_samples"),
+                "data_health_status":  agg.get("data_health_status", "unavailable"),
+                "orderbook_status":    agg.get("orderbook_status"),
+                "delta_status":        agg.get("delta_status"),
+                "oi_status":           agg.get("oi_status"),
+                "liquidation_status":  agg.get("liquidation_status"),
+                "long_short_status":   agg.get("long_short_status"),
+                "funding_status":      agg.get("funding_status"),
+                "buy_volume_sum":      agg.get("buy_volume_sum"),
+                "sell_volume_sum":     agg.get("sell_volume_sum"),
+                "delta_net_sum":       agg.get("delta_net_sum"),
+                "delta_pct_avg":       agg.get("delta_pct_avg"),
+                "taker_pressure_avg":  agg.get("taker_pressure_avg"),
+                "oi_first":            agg.get("oi_first"),
+                "oi_last":             agg.get("oi_last"),
+                "oi_change":           agg.get("oi_change"),
+                "oi_change_pct":       agg.get("oi_change_pct"),
+                "long_liq_usd_sum":    agg.get("long_liq_usd_sum"),
+                "short_liq_usd_sum":   agg.get("short_liq_usd_sum"),
+                "net_liq_usd_sum":     agg.get("net_liq_usd_sum"),
+                "avg_orderbook_imbalance": agg.get("avg_orderbook_imbalance"),
+                "nearest_bid_wall_price":  agg.get("nearest_bid_wall_price"),
+                "nearest_bid_wall_size":   agg.get("nearest_bid_wall_size"),
+                "nearest_ask_wall_price":  agg.get("nearest_ask_wall_price"),
+                "nearest_ask_wall_size":   agg.get("nearest_ask_wall_size"),
+                "bid_wall_near_candle_low":  agg.get("bid_wall_near_candle_low"),
+                "ask_wall_near_candle_high": agg.get("ask_wall_near_candle_high"),
+                "candle_direction":         candle_dir,
+                "candle_patterns_json":     _json_dumps_safe(patterns[:8]),
+                "preliminary_flow_direction": aln.get("preliminary_flow_direction"),
+                "candle_flow_alignment":    aln.get("alignment"),
+                "alignment_reason_json":    _json_dumps_safe(aln.get("reason", [])),
+                "updated_at":   datetime.now(timezone.utc),
+            }
+
+            stmt = _pg_ins(_LMCOF9e_al).values(**row_data)
+            stmt = stmt.on_conflict_do_update(
+                constraint="uq_lm_candle_orderflow",
+                set_={k: stmt.excluded[k]
+                      for k in row_data if k not in ("user_id", "open_time",
+                                                      "exchange", "market",
+                                                      "symbol", "timeframe",
+                                                      "analysis_source")},
+            )
+            _db9e_al.session.execute(stmt)
+            aligned_count += 1
+
+        _db9e_al.session.commit()
+        return {
+            "aligned":        aligned_count,
+            "candles_read":   len(candle_rows),
+            "snapshots_used": len(snap_dicts),
+            "status":         "ok" if aligned_count > 0 else "no_data",
+        }
+
+    except Exception as _e:
+        try:
+            from models import db as _rbl_al
+            _rbl_al.session.rollback()
+        except Exception:
+            pass
+        print(f"[10.9E] align_tf {timeframe} error: {_e}")
+        return {"aligned": 0, "candles_read": 0, "status": "error",
+                "error": str(_e)[:120]}
+
+
+# ── Task 8: Candle-flow alignment classifier ─────────────────────────────────
+
+_LM9E_BULLISH_PATS = frozenset({
+    "bullish_rejection", "bullish_engulfing", "displacement_bullish",
+    "strong_close_bullish", "pin_bar", "failed_breakdown",
+})
+_LM9E_BEARISH_PATS = frozenset({
+    "bearish_rejection", "bearish_engulfing", "displacement_bearish",
+    "strong_close_bearish", "failed_breakout",
+})
+
+
+def _lm_classify_candle_flow_alignment(
+        candle_feature: dict, aggregated_flow: dict) -> dict:
+    """Classify candle-flow alignment.
+
+    EVIDENCE ONLY — not an entry signal. No Entry Candidate. No S/R Flip.
+    Returns: {alignment, preliminary_flow_direction, reason, confidence}
+    alignment: confirmed | contradicted | neutral | missing | partial
+    """
+    flow_status  = aggregated_flow.get("flow_status", "no_samples")
+    if flow_status in ("no_samples", "unavailable") or not aggregated_flow:
+        return {
+            "alignment": "missing", "preliminary_flow_direction": "missing",
+            "reason": ["no_flow_samples"], "confidence": 0,
+        }
+
+    patterns    = (candle_feature or {}).get("patterns", [])
+    candle_dir  = (candle_feature or {}).get("direction", "neutral")
+    sample_cnt  = aggregated_flow.get("sample_count", len(aggregated_flow))
+    delta_net   = aggregated_flow.get("delta_net_sum")
+    delta_pct   = aggregated_flow.get("delta_pct_avg")
+    taker_p     = aggregated_flow.get("taker_pressure_avg", "missing")
+    long_liq    = aggregated_flow.get("long_liq_usd_sum")  or 0
+    short_liq   = aggregated_flow.get("short_liq_usd_sum") or 0
+    bid_near    = aggregated_flow.get("bid_wall_near_candle_low")
+    ask_near    = aggregated_flow.get("ask_wall_near_candle_high")
+    ob_imb      = aggregated_flow.get("avg_orderbook_imbalance")
+
+    # Base confidence on sample count (approximate from flow_status)
+    if flow_status == "ready":
+        base_conf = 65
+    elif flow_status == "partial":
+        base_conf = 40
+    else:
+        base_conf = 20
+
+    # Cap if critical metrics are missing
+    has_delta = delta_net is not None
+    has_liq   = long_liq > 0 or short_liq > 0
+    has_ob    = ob_imb is not None
+    if not has_delta and not has_liq and not has_ob:
+        base_conf = min(base_conf, 25)
+
+    # Determine raw flow direction from delta or taker
+    if delta_net is not None:
+        raw_dir = "bullish" if delta_net > 0 else ("bearish" if delta_net < 0 else "neutral")
+    elif taker_p in ("bullish", "bearish"):
+        raw_dir = taker_p
+    else:
+        raw_dir = "neutral"
+
+    reasons:   list = []
+    alignment  = "neutral"
+    flow_dir   = raw_dir
+    confidence = base_conf
+
+    pat_set    = set(patterns)
+    bull_pat   = bool(pat_set & _LM9E_BULLISH_PATS)
+    bear_pat   = bool(pat_set & _LM9E_BEARISH_PATS)
+
+    if bull_pat or candle_dir == "bullish":
+        bull_sig = bear_sig = 0
+
+        if has_delta:
+            if delta_net > 0:
+                bull_sig += 1; reasons.append("delta_net_positive")
+            elif delta_net < 0:
+                if bid_near:
+                    bull_sig += 1; reasons.append("sell_absorbed_at_bid_wall")
+                else:
+                    bear_sig += 1; reasons.append("delta_net_negative_no_bid_support")
+
+        if taker_p == "bullish":
+            bull_sig += 1; reasons.append("taker_pressure_bullish")
+        elif taker_p == "bearish":
+            bear_sig += 1; reasons.append("taker_pressure_bearish")
+
+        if short_liq > long_liq and short_liq > 1000:
+            bull_sig += 1; reasons.append("short_liquidations_dominant")
+
+        if bid_near:
+            bull_sig += 1; reasons.append("bid_wall_near_candle_low")
+
+        if ob_imb is not None:
+            if ob_imb > 0.1:
+                bull_sig += 1; reasons.append("orderbook_bid_heavy")
+            elif ob_imb < -0.1:
+                bear_sig += 1; reasons.append("orderbook_ask_heavy")
+
+        if bull_sig > 0 and bear_sig == 0:
+            alignment  = "confirmed"
+            confidence = min(85, base_conf + bull_sig * 8)
+        elif bull_sig > bear_sig:
+            alignment  = "confirmed"
+            confidence = min(72, base_conf + (bull_sig - bear_sig) * 5)
+        elif bear_sig > 0 and bull_sig == 0:
+            alignment  = "contradicted"
+            flow_dir   = "bearish"
+            confidence = min(80, base_conf + bear_sig * 7)
+        elif bull_sig == 0 and bear_sig == 0:
+            alignment  = "neutral"; confidence = min(40, base_conf)
+        else:
+            alignment  = "partial"; confidence = min(50, base_conf)
+
+    elif bear_pat or candle_dir == "bearish":
+        bull_sig = bear_sig = 0
+
+        if has_delta:
+            if delta_net < 0:
+                bear_sig += 1; reasons.append("delta_net_negative")
+            elif delta_net > 0:
+                if ask_near:
+                    bear_sig += 1; reasons.append("buy_absorbed_at_ask_wall")
+                else:
+                    bull_sig += 1; reasons.append("delta_net_positive_no_ask_resistance")
+
+        if taker_p == "bearish":
+            bear_sig += 1; reasons.append("taker_pressure_bearish")
+        elif taker_p == "bullish":
+            bull_sig += 1; reasons.append("taker_pressure_bullish")
+
+        if long_liq > short_liq and long_liq > 1000:
+            bear_sig += 1; reasons.append("long_liquidations_dominant")
+
+        if ask_near:
+            bear_sig += 1; reasons.append("ask_wall_near_candle_high")
+
+        if ob_imb is not None:
+            if ob_imb < -0.1:
+                bear_sig += 1; reasons.append("orderbook_ask_heavy")
+            elif ob_imb > 0.1:
+                bull_sig += 1; reasons.append("orderbook_bid_heavy")
+
+        if bear_sig > 0 and bull_sig == 0:
+            alignment  = "confirmed"
+            confidence = min(85, base_conf + bear_sig * 8)
+        elif bear_sig > bull_sig:
+            alignment  = "confirmed"
+            confidence = min(72, base_conf + (bear_sig - bull_sig) * 5)
+        elif bull_sig > 0 and bear_sig == 0:
+            alignment  = "contradicted"
+            flow_dir   = "bullish"
+            confidence = min(80, base_conf + bull_sig * 7)
+        elif bull_sig == 0 and bear_sig == 0:
+            alignment  = "neutral"; confidence = min(40, base_conf)
+        else:
+            alignment  = "partial"; confidence = min(50, base_conf)
+
+    else:
+        alignment  = "neutral"
+        flow_dir   = raw_dir if raw_dir != "missing" else "neutral"
+        confidence = min(40, base_conf)
+        reasons.append("neutral_candle")
+
+    return {
+        "alignment":                  alignment,
+        "preliminary_flow_direction": flow_dir,
+        "reason":                     reasons,
+        "confidence":                 confidence,
+    }
+
+
+# ── Task 9: All-TF refresh processor and status helpers ───────────────────────
+
+def _lm_build_orderflow_alignment_status(
+        user_id: int, exchange: str, market: str,
+        symbol: str, analysis_source: str,
+        per_tf_results: dict) -> dict:
+    """Build lightweight orderflow_alignment status dict for snapshot_json.
+
+    Queries LiveMonitorCandleOrderflow for the latest row per TF to get
+    alignment/direction/sample_count summaries. Stored as compact status only.
+    """
+    per_tf_summary: dict = {}
+    for tf, tf_result in per_tf_results.items():
+        if tf_result.get("status") in ("error", "no_candles"):
+            per_tf_summary[tf] = {"status": tf_result.get("status", "error")}
+            continue
+        try:
+            from models import LiveMonitorCandleOrderflow as _LMCOF_st
+            latest = (
+                _LMCOF_st.query.filter_by(
+                    user_id=user_id, exchange=exchange, market=market,
+                    symbol=symbol, timeframe=tf, analysis_source=analysis_source
+                )
+                .order_by(_LMCOF_st.open_time.desc())
+                .first()
+            )
+            if latest:
+                per_tf_summary[tf] = {
+                    "status":                latest.flow_status,
+                    "aligned_candles":       tf_result.get("aligned", 0),
+                    "latest_open_time":      latest.open_time,
+                    "latest_alignment":      latest.candle_flow_alignment,
+                    "latest_flow_direction": latest.preliminary_flow_direction,
+                    "sample_count":          latest.sample_count,
+                }
+            else:
+                per_tf_summary[tf] = {"status": "collecting", "aligned_candles": 0}
+        except Exception:
+            per_tf_summary[tf] = {"status": "error"}
+
+    tf_statuses = [s.get("status", "unavailable") for s in per_tf_summary.values()]
+    if not tf_statuses or all(s in ("collecting", "no_candles") for s in tf_statuses):
+        overall = "collecting"
+    elif all(s in ("no_candles", "error", "unavailable", "collecting") for s in tf_statuses):
+        overall = "unavailable"
+    elif any(s == "ready" for s in tf_statuses):
+        overall = "ready"
+    elif any(s == "partial" for s in tf_statuses):
+        overall = "partial"
+    else:
+        overall = "collecting"
+
+    return {
+        "enabled":             True,
+        "phase":               "phase10_9e_orderflow_alignment",
+        "status":              overall,
+        "context_only":        True,
+        "no_entry_candidate":  True,
+        "sample_interval_sec": _lm_bias_orderflow_sample_interval_sec(),
+        "analysis_source":     analysis_source,
+        "per_tf":              per_tf_summary,
+        "gate": {
+            "entry_candidate_allowed": False,
+            "reason": "Phase 10.9E only stores evidence; decision engine comes later",
+        },
+    }
+
+
+def _lm_save_orderflow_alignment_status(user_id: int, item_id, status_dict: dict):
+    """Save orderflow_alignment status dict into snapshot_json for the item."""
+    if not item_id:
+        return
+    try:
+        from models import db as _db9e_sv, LiveMonitorItem as _LMI9e_sv
+        row = _LMI9e_sv.query.filter_by(id=item_id, user_id=user_id).first()
+        if not row:
+            return
+        snap = _json_loads_safe(row.snapshot_json, {})
+        snap["orderflow_alignment"] = status_dict
+        row.snapshot_json = _json_dumps_safe(snap)
+        _db9e_sv.session.commit()
+    except Exception as _e:
+        try:
+            from models import db as _rbl_sv
+            _rbl_sv.session.rollback()
+        except Exception:
+            pass
+        print(f"[10.9E] save_alignment_status error: {_e}")
+
+
+def _lm_refresh_bias_orderflow_alignment_for_item(item, force: bool = False) -> dict:
+    """Run order-flow sampler start + candle alignment for all TFs.
+
+    Ensures sampler is running, stores one immediate snapshot, aligns
+    candles for all TFs, updates snapshot_json.orderflow_alignment.
+    EVIDENCE ONLY — no entry signals, no AI, no Entry Candidate.
+    """
+    if not _lm_is_bias_shift_item(item):
+        return {"ok": False, "reason": "not_bias_shift"}
+
+    with app.app_context():
+        from models import LiveMonitorOrderflowSnapshot as _LMOS_chk
+
+        uid      = getattr(item, "user_id",  None)
+        symbol   = (getattr(item, "symbol",   "") or "").upper()
+        exchange = (getattr(item, "exchange", "") or "binance").lower()
+        market   = (getattr(item, "market",   "") or "perpetual").lower()
+        item_id  = getattr(item, "id", None)
+
+        if not uid or not symbol:
+            return {"ok": False, "reason": "missing_uid_or_symbol"}
+
+        snap_raw        = _json_loads_safe(getattr(item, "snapshot_json", None), {})
+        src_cfg         = _lm_analysis_source_config(item, snap_raw)
+        analysis_source = src_cfg["analysis_source"]
+
+        # Start sampler (noop if already running)
+        _lm_ensure_bias_orderflow_sampler(
+            item_id, uid, exchange, market, symbol, analysis_source
+        )
+
+        # Store one immediate snapshot
+        immediate = _lm_build_orderflow_snapshot_direct(
+            symbol, exchange, market, analysis_source
+        )
+        if immediate and immediate.get("source_status") != "unavailable":
+            _lm_store_orderflow_snapshot(
+                uid, exchange, market, symbol, analysis_source, immediate
+            )
+
+        # Check if we have snapshots
+        snap_count = _LMOS_chk.query.filter_by(
+            user_id=uid, exchange=exchange, market=market,
+            symbol=symbol, analysis_source=analysis_source,
+        ).count()
+
+        if snap_count == 0:
+            status_result = {
+                "enabled": True, "phase": "phase10_9e_orderflow_alignment",
+                "status": "collecting", "context_only": True,
+                "no_entry_candidate": True,
+                "sample_interval_sec": _lm_bias_orderflow_sample_interval_sec(),
+                "analysis_source": analysis_source,
+                "per_tf": {},
+                "gate": {
+                    "entry_candidate_allowed": False,
+                    "reason": "Phase 10.9E only stores evidence; decision engine comes later",
+                },
+            }
+            _lm_save_orderflow_alignment_status(uid, item_id, status_result)
+            return {"ok": True, "status": "collecting", "snap_count": 0}
+
+        align_lim   = _lm_bias_of_align_limit()
+        per_tf_res  = {}
+        for tf in _LM_BIAS_TF_STACK_CONST:
+            try:
+                per_tf_res[tf] = _lm_align_orderflow_to_candles_for_tf(
+                    uid, exchange, market, symbol, tf, analysis_source, limit=align_lim
+                )
+            except Exception as _ae:
+                per_tf_res[tf] = {"status": "error", "error": str(_ae)[:80]}
+
+        status_result = _lm_build_orderflow_alignment_status(
+            uid, exchange, market, symbol, analysis_source, per_tf_res
+        )
+        _lm_save_orderflow_alignment_status(uid, item_id, status_result)
+
+        return {
+            "ok":              True,
+            "symbol":          symbol,
+            "exchange":        exchange,
+            "market":          market,
+            "analysis_source": analysis_source,
+            "status":          status_result.get("status"),
+            "per_tf":          per_tf_res,
+        }
+
+
+# ── Background alignment one-shot thread ─────────────────────────────────────
+
+_lm_bias_of_align_threads: dict = {}
+_lm_bias_of_align_lock = threading.Lock()
+
+
+def _lm_ensure_bias_orderflow_alignment_bg(
+        item_id: int, uid: int, exchange: str,
+        market: str, symbol: str,
+        source_tab: str, force: bool = False):
+    """Start background order-flow alignment run for a Bias Shift item if not running."""
+    if source_tab not in ("bias_shift", "bias"):
+        return
+    with _lm_bias_of_align_lock:
+        t = _lm_bias_of_align_threads.get(item_id)
+        if t and t.is_alive():
+            return
+
+    class _ItemProxy:
+        pass
+    proxy = _ItemProxy()
+    proxy.id            = item_id
+    proxy.user_id       = uid
+    proxy.symbol        = symbol
+    proxy.exchange      = exchange
+    proxy.market        = market
+    proxy.source_tab    = source_tab
+    proxy.snapshot_json = None
+
+    def _run():
+        with _lm_bias_of_align_lock:
+            _lm_bias_of_align_threads[item_id] = threading.current_thread()
+        try:
+            _lm_refresh_bias_orderflow_alignment_for_item(proxy, force=force)
+        except Exception as exc:
+            print(f"[10.9E] OF alignment error item={item_id}: {exc}")
+        finally:
+            with _lm_bias_of_align_lock:
+                _lm_bias_of_align_threads.pop(item_id, None)
+
+    t = threading.Thread(target=_run, daemon=True,
+                         name=f"lm-of-align-{item_id}")
+    with _lm_bias_of_align_lock:
+        _lm_bias_of_align_threads[item_id] = t
     t.start()
 
 
@@ -18393,6 +19618,39 @@ def _lm_build_ai_context(item) -> dict:
                     "No Entry Candidate state from structure in Phase 10.9D. "
                     "Full event arrays are NOT included in AI context.",
         } if _se and isinstance(_se, dict) else None)(snap.get("structure_engine")),
+        # Phase 10.9E Task 14: order-flow alignment status for Bias Shift items.
+        # Snapshot arrays and full alignment rows are NOT sent to AI.
+        # Status, per-TF summary, and safety rules only.
+        "orderflow_alignment": (lambda _of: {
+            "phase":              _of.get("phase"),
+            "status":             _of.get("status"),
+            "context_only":       True,
+            "no_entry_candidate": True,
+            "analysis_source":    _of.get("analysis_source"),
+            "sample_interval_sec": _of.get("sample_interval_sec"),
+            "per_tf": {
+                tf: {
+                    "status":                  info.get("status"),
+                    "latest_alignment":        info.get("latest_alignment"),
+                    "latest_flow_direction":   info.get("latest_flow_direction"),
+                    "sample_count":            info.get("sample_count"),
+                    "aligned_candles":         info.get("aligned_candles"),
+                }
+                for tf, info in (_of.get("per_tf") or {}).items()
+            },
+            "gate":               _of.get("gate"),
+            "safety_rules": {
+                "orderflow_alignment_is_evidence_only":        True,
+                "ai_must_not_create_entry_candidate":          True,
+                "ai_must_not_create_trade_signal":             True,
+                "ai_must_not_suggest_order_placement":         True,
+                "missing_or_no_flow_must_be_stated_clearly":   True,
+                "decision_engine_not_yet_implemented":         True,
+            },
+            "note": "Order-flow alignment is evidence only in Phase 10.9E. "
+                    "AI must NOT create Entry Candidate or trade signal from alignment. "
+                    "Full snapshot arrays and alignment rows are NOT in AI context.",
+        } if _of and isinstance(_of, dict) else None)(snap.get("orderflow_alignment")),
     }
 
 
@@ -19936,6 +21194,32 @@ def api_lm_items_post():
         except Exception as _e:
             _db.session.rollback()
         _lm_ensure_bias_candles_bg(row.id, uid, exchange, market, symbol, source_tab)
+        # Phase 10.9E Task 10: start order-flow sampler immediately on item creation.
+        try:
+            _of_snap_src = _lm_normalize_analysis_source(
+                (_json_loads_safe(row.snapshot_json, {}) or {}).get("analysis_source") or exchange
+            )
+            _lm_ensure_bias_orderflow_sampler(row.id, uid, exchange, market, symbol, _of_snap_src)
+            _snap_of = _json_loads_safe(row.snapshot_json, {})
+            _snap_of["orderflow_alignment"] = {
+                "enabled": True,
+                "phase":   "phase10_9e_orderflow_alignment",
+                "status":  "collecting",
+                "context_only":       True,
+                "no_entry_candidate": True,
+                "sample_interval_sec": _lm_bias_orderflow_sample_interval_sec(),
+                "analysis_source":    _of_snap_src,
+                "per_tf": {},
+                "gate": {
+                    "entry_candidate_allowed": False,
+                    "reason": "Phase 10.9E only stores evidence; decision engine comes later",
+                },
+            }
+            row.snapshot_json = _json_dumps_safe(_snap_of)
+            _db.session.commit()
+        except Exception as _ofe:
+            _db.session.rollback()
+            print(f"[10.9E] sampler init on create error: {_ofe}")
 
     return jsonify({"ok": True, "item": _live_monitor_item_to_dict(row), "created": created})
 
@@ -20369,6 +21653,223 @@ def api_lm_bias_structure_debug(item_id):
         "low_weight":   True,
         "structure_engine": se,
         "per_tf":       per_tf_debug,
+    })
+
+
+# ── Phase 10.9E Task 11: Bias Shift order-flow refresh endpoint ───────────────
+
+@app.route("/api/live-monitor/items/<int:item_id>/bias-orderflow/refresh",
+           methods=["POST"])
+@login_required
+def api_lm_bias_orderflow_refresh(item_id):
+    """Store immediate snapshot, align candles, return orderflow_alignment status.
+
+    No AI call. No trading. No entry signals. No Entry Candidate.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"ok": False, "error": "auth"}), 401
+
+    from models import (LiveMonitorItem as _LMI9e_ep,
+                        LiveMonitorOrderflowSnapshot as _LMOS9e_ep)
+    row = _LMI9e_ep.query.get(item_id)
+    if not row or row.user_id != uid:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    if not _lm_is_bias_shift_item(row):
+        return jsonify({"ok": False, "error": "not a bias shift item",
+                        "setup_category": _lm_setup_category(row)}), 400
+
+    body         = request.get_json(silent=True) or {}
+    collect_now  = bool(body.get("collect_now", True))
+
+    symbol          = row.symbol or ""
+    exchange        = (row.exchange or "binance").lower()
+    market          = (row.market or "perpetual").lower()
+    snap_raw        = _json_loads_safe(row.snapshot_json, {})
+    src_cfg         = _lm_analysis_source_config(row, snap_raw)
+    analysis_source = src_cfg["analysis_source"]
+
+    # Ensure sampler is running
+    _lm_ensure_bias_orderflow_sampler(
+        item_id, uid, exchange, market, symbol, analysis_source
+    )
+
+    # Immediate snapshot
+    if collect_now:
+        snap = _lm_build_orderflow_snapshot_direct(
+            symbol, exchange, market, analysis_source
+        )
+        if snap and snap.get("source_status") != "unavailable":
+            _lm_store_orderflow_snapshot(
+                uid, exchange, market, symbol, analysis_source, snap
+            )
+
+    # Check snapshot count
+    snap_count = _LMOS9e_ep.query.filter_by(
+        user_id=uid, exchange=exchange, market=market,
+        symbol=symbol, analysis_source=analysis_source,
+    ).count()
+
+    if snap_count == 0:
+        status_result = {
+            "enabled": True, "phase": "phase10_9e_orderflow_alignment",
+            "status": "collecting", "context_only": True,
+            "no_entry_candidate": True,
+            "sample_interval_sec": _lm_bias_orderflow_sample_interval_sec(),
+            "analysis_source": analysis_source,
+            "per_tf": {},
+            "gate": {
+                "entry_candidate_allowed": False,
+                "reason": "Phase 10.9E only stores evidence; decision engine comes later",
+            },
+        }
+        _lm_save_orderflow_alignment_status(uid, item_id, status_result)
+        return jsonify({
+            "ok": True, "item_id": item_id, "symbol": symbol,
+            "setup_category": "bias_shift_watch",
+            "analysis_source": analysis_source,
+            "orderflow_alignment": status_result,
+        })
+
+    # Fast alignment (reduced limit for endpoint)
+    per_tf_results: dict = {}
+    for tf in _LM_BIAS_TF_STACK_CONST:
+        try:
+            per_tf_results[tf] = _lm_align_orderflow_to_candles_for_tf(
+                uid, exchange, market, symbol, tf, analysis_source, limit=60
+            )
+        except Exception as _ae:
+            per_tf_results[tf] = {"status": "error", "error": str(_ae)[:80]}
+
+    status_result = _lm_build_orderflow_alignment_status(
+        uid, exchange, market, symbol, analysis_source, per_tf_results
+    )
+    _lm_save_orderflow_alignment_status(uid, item_id, status_result)
+
+    return jsonify({
+        "ok":                True,
+        "item_id":           item_id,
+        "symbol":            symbol,
+        "setup_category":    "bias_shift_watch",
+        "analysis_source":   analysis_source,
+        "orderflow_alignment": status_result,
+    })
+
+
+# ── Phase 10.9E Task 12: Bias Shift order-flow debug endpoint ─────────────────
+
+@app.route("/api/live-monitor/items/<int:item_id>/bias-orderflow/debug",
+           methods=["GET"])
+@login_required
+def api_lm_bias_orderflow_debug(item_id):
+    """Return compact candle-alignment rows + optional recent snapshots.
+
+    No AI call. No trading. No entry signals.
+    Query params: tf, limit (default 30 max 150), alignment, include_snapshots.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"ok": False, "error": "auth"}), 401
+
+    from models import (LiveMonitorItem as _LMI9e_db,
+                        LiveMonitorCandleOrderflow   as _LMCOF9e_db,
+                        LiveMonitorOrderflowSnapshot as _LMOS9e_db)
+    row = _LMI9e_db.query.get(item_id)
+    if not row or row.user_id != uid:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    if not _lm_is_bias_shift_item(row):
+        return jsonify({"ok": False, "error": "not a bias shift item"}), 400
+
+    symbol          = row.symbol or ""
+    exchange        = (row.exchange or "binance").lower()
+    market          = (row.market or "perpetual").lower()
+    snap_raw        = _json_loads_safe(row.snapshot_json, {})
+    src_cfg         = _lm_analysis_source_config(row, snap_raw)
+    analysis_source = src_cfg["analysis_source"]
+
+    tf_filter       = request.args.get("tf")
+    lim_raw         = request.args.get("limit", "30")
+    align_filter    = request.args.get("alignment")
+    inc_snaps       = request.args.get("include_snapshots", "false").lower() == "true"
+
+    try:
+        lim = max(1, min(150, int(lim_raw)))
+    except (ValueError, TypeError):
+        lim = 30
+
+    tf_stack     = _LM_BIAS_TF_STACK_CONST if not tf_filter else [tf_filter]
+    per_tf_debug: dict = {}
+
+    for tf in tf_stack:
+        q = _LMCOF9e_db.query.filter_by(
+            user_id=uid, exchange=exchange, market=market,
+            symbol=symbol, timeframe=tf, analysis_source=analysis_source,
+        ).order_by(_LMCOF9e_db.open_time.desc())
+        if align_filter:
+            q = q.filter(_LMCOF9e_db.candle_flow_alignment == align_filter)
+        rows9e = q.limit(lim).all()
+
+        sample = [
+            {
+                "open_time":          r.open_time,
+                "sample_count":       r.sample_count,
+                "flow_status":        r.flow_status,
+                "alignment":          r.candle_flow_alignment,
+                "flow_direction":     r.preliminary_flow_direction,
+                "delta_net_sum":      r.delta_net_sum,
+                "taker_pressure_avg": r.taker_pressure_avg,
+                "patterns":           _json_loads_safe(r.candle_patterns_json, []),
+                "reasons":            _json_loads_safe(r.alignment_reason_json, []),
+                "bid_wall_near_low":  r.bid_wall_near_candle_low,
+                "ask_wall_near_high": r.ask_wall_near_candle_high,
+                "candle_direction":   r.candle_direction,
+            }
+            for r in rows9e
+        ]
+
+        per_tf_debug[tf] = {
+            "aligned_count": len(sample),
+            "latest":        sample[0] if sample else None,
+            "sample":        sample,
+        }
+
+    latest_snapshots: list = []
+    if inc_snaps:
+        snap_rows = (
+            _LMOS9e_db.query.filter_by(
+                user_id=uid, exchange=exchange, market=market,
+                symbol=symbol, analysis_source=analysis_source,
+            )
+            .order_by(_LMOS9e_db.sample_time.desc())
+            .limit(20)
+            .all()
+        )
+        latest_snapshots = [
+            {
+                "sample_time":         s.sample_time,
+                "source_status":       s.source_status,
+                "live_price":          s.live_price,
+                "delta_net":           s.delta_net,
+                "delta_pct":           s.delta_pct,
+                "taker_pressure":      s.taker_pressure,
+                "orderbook_status":    s.orderbook_status,
+                "orderbook_imbalance": s.orderbook_imbalance,
+            }
+            for s in snap_rows
+        ]
+
+    of_status = snap_raw.get("orderflow_alignment", {})
+    return jsonify({
+        "ok":                  True,
+        "item_id":             item_id,
+        "symbol":              symbol,
+        "analysis_source":     analysis_source,
+        "status":              of_status.get("status", "unknown"),
+        "context_only":        True,
+        "no_entry_candidate":  True,
+        "per_tf":              per_tf_debug,
+        "latest_snapshots":    latest_snapshots,
+        "orderflow_alignment": of_status,
     })
 
 
