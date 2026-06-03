@@ -5233,6 +5233,24 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     }).catch(function(e){console.warn('[10.9C] bias feature refresh error',e);});
   }
 
+  // Phase 10.9D Task 11: Refresh Structure button handler
+  function _lmRefreshBiasStructure(itemId, force){
+    if(!itemId) return;
+    fetch('/api/live-monitor/items/'+itemId+'/bias-structure/refresh',{
+      method:'POST',credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({force:!!force})
+    }).then(function(r){return r.json();}).then(function(data){
+      if(!data.ok) return;
+      if(_lmSelItem&&_lmSelItem.id===itemId){
+        if(!_lmSelItem.snapshot) _lmSelItem.snapshot={};
+        _lmSelItem.snapshot.structure_engine=
+          data.structure_engine||_lmSelItem.snapshot.structure_engine;
+        if(typeof _lmRenderRight==="function") _lmRenderRight(_lmSelItem);
+      }
+    }).catch(function(e){console.warn('[10.9D] bias structure refresh error',e);});
+  }
+
   function _lmBiasMtfMatrix(item){
     var snap=item.snapshot||{};
     var meta=snap.bias_shift_meta||{};
@@ -5315,8 +5333,47 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         '<div style="font-size:9px;color:'+feStatusColor+';margin-top:4px">Features: '+esc(cfeStatus)+'</div>'+
       '</div>';
     }
-    return table+csHtml+cfeHtml+
-    '<div style="font-size:10px;color:var(--text-3);margin-top:6px;text-align:center">Bias Shift Watch · BOS/CHoCH/order-flow detection pending</div>';
+    // Phase 10.9D: structure engine status per TF
+    var se=snap.structure_engine||{};
+    var seStatus=se.status||"";
+    var sePerTf=se.per_tf||{};
+    var seContra=se.contradictions||{};
+    var seHtml="";
+    if(seStatus){
+      var seColors={ready:"var(--green-2,#4ade80)",partial:"var(--yellow-2,#f59e0b)",refreshing:"var(--yellow-2,#f59e0b)",initializing:"var(--yellow-2,#f59e0b)",unavailable:"var(--red-2,#f87171)",error:"var(--red-2,#f87171)"};
+      var seDirColors={bullish:"var(--green-2,#4ade80)",bearish:"var(--red-2,#f87171)",neutral:"var(--text-3)",mixed:"var(--yellow-2,#f59e0b)"};
+      var seStatusColor=seColors[seStatus]||"var(--text-3)";
+      seHtml='<div style="margin-top:8px;border-top:1px solid rgba(148,163,184,.1);padding-top:6px">'+
+        '<div style="font-size:9.5px;font-weight:700;color:var(--text-3);letter-spacing:.05em;margin-bottom:4px">MTF STRUCTURE ENGINE <span style="font-weight:400;color:var(--text-3)">(context only)</span></div>'+
+        '<div style="display:flex;flex-wrap:wrap;gap:4px">';
+      for(var si=0;si<tfStack.length;si++){
+        var stf=tfStack[si];
+        var stfInfo=sePerTf[stf]||{};
+        var stfStatus=stfInfo.status||"—";
+        var stfDir=stfInfo.structure_direction||"neutral";
+        var stfColor=seColors[stfStatus]||"var(--text-3)";
+        var stfDirColor=seDirColors[stfDir]||"var(--text-3)";
+        var stfLabel=stfStatus==="ready"?"✓":stfStatus==="unavailable"?"✗":"⋯";
+        var stfDirShort=stfDir==="bullish"?"↑":stfDir==="bearish"?"↓":stfDir==="neutral"?"–":"?";
+        seHtml+='<div style="font-size:9px;padding:2px 5px;border-radius:3px;background:rgba(148,163,184,.08);border:1px solid rgba(148,163,184,.15)">'+
+          '<span style="color:var(--text-3)">'+esc(stf)+'</span> '+
+          '<span style="color:'+stfColor+'">'+stfLabel+'</span> '+
+          '<span style="color:'+stfDirColor+'">'+stfDirShort+'</span>'+
+        '</div>';
+      }
+      seHtml+='</div>';
+      // Contradiction warning
+      var contra1h4h=seContra.one_h_vs_four_h||"none";
+      if(contra1h4h&&contra1h4h!=="none"){
+        seHtml+='<div style="margin-top:4px;padding:3px 5px;background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.2);border-radius:3px;font-size:9px;color:var(--yellow-2,#f59e0b)">'+
+          '⚠ Structure conflict: 1H vs 4H = '+esc(contra1h4h)+
+        '</div>';
+      }
+      seHtml+='<div style="font-size:9px;color:'+seStatusColor+';margin-top:4px">Structure: '+esc(seStatus)+'</div>'+
+      '</div>';
+    }
+    return table+csHtml+cfeHtml+seHtml+
+    '<div style="font-size:10px;color:var(--text-3);margin-top:6px;text-align:center">Bias Shift Watch · order-flow detection pending</div>';
   }
 
   function _lmBiasZoneCard(item){
@@ -5393,6 +5450,46 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
           'Candle detection engine initializing — check rejection candle manually on your chart.'+
         '</div>'
       )+
+      (function(){
+        // Phase 10.9D: latest structure events from structure_engine per_tf
+        var se=snap.structure_engine||{};
+        var sePerTf=se.per_tf||{};
+        var seStatus=se.status||"";
+        if(!seStatus) return '';
+        var seTfOrder=["1h","30m","4h","15m","5m","1d"];
+        var seEvtColors={bullish_bos:"var(--green-2,#4ade80)",bullish_choch:"var(--green-2,#4ade80)",
+                          bearish_bos:"var(--red-2,#f87171)",bearish_choch:"var(--red-2,#f87171)",
+                          sell_side_liquidity_sweep:"var(--green-2,#4ade80)",
+                          buy_side_liquidity_sweep:"var(--red-2,#f87171)"};
+        var seEvtLabel={bullish_bos:"Bullish BOS",bearish_bos:"Bearish BOS",
+                        bullish_choch:"Bullish CHoCH",bearish_choch:"Bearish CHoCH",
+                        sell_side_liquidity_sweep:"Sell-Side Sweep",
+                        buy_side_liquidity_sweep:"Buy-Side Sweep"};
+        var seRowsHtml=''; var seRowCount=0;
+        for(var sii=0;sii<seTfOrder.length&&seRowCount<5;sii++){
+          var sitf=seTfOrder[sii];
+          var siInfo=sePerTf[sitf]||{};
+          var lastBos=siInfo.last_bos||{}; var lastChoch=siInfo.last_choch||{}; var lastSweep=siInfo.last_sweep||{};
+          var siEvents=[lastBos,lastChoch,lastSweep].filter(function(ev){return ev&&ev.type;});
+          siEvents.sort(function(a,b){return (b.time||0)-(a.time||0);});
+          for(var sej=0;sej<siEvents.length&&seRowCount<5;sej++,seRowCount++){
+            var sev=siEvents[sej];
+            var seColor=seEvtColors[sev.type]||"var(--text-2)";
+            var seLbl=seEvtLabel[sev.type]||sev.type;
+            var seLevel=sev.level!=null?(" @ "+sev.level.toFixed(4)):"";
+            seRowsHtml+='<div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid rgba(148,163,184,.07)">'+
+              '<span style="font-size:9px;color:var(--text-3);min-width:28px">'+esc(sitf)+'</span>'+
+              '<span style="font-size:9.5px;font-weight:600;color:'+seColor+'">'+esc(seLbl)+'</span>'+
+              '<span style="font-size:9px;color:var(--text-3)">'+seLevel+'</span>'+
+            '</div>';
+          }
+        }
+        if(!seRowsHtml) return '';
+        return '<div style="margin-top:8px;border-top:1px solid rgba(148,163,184,.08);padding-top:6px">'+
+          '<div style="font-size:9.5px;font-weight:700;color:var(--text-3);letter-spacing:.05em;margin-bottom:4px">STRUCTURE EVENTS (Phase 10.9D) <span style="font-weight:400">· context only</span></div>'+
+          seRowsHtml+
+        '</div>';
+      }())+
     '</div>';
   }
 
@@ -5438,7 +5535,19 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
           '<span style="font-size:9.5px;color:var(--text-3)">Candle Feature Engine: <b style="color:'+bsCfeColor+'">'+(bsCfeStatus?esc(bsCfeLabel):"—")+'</b></span>'+
           '<button onclick="_lmRefreshBiasFeatures('+bsItemId+')" style="font-size:9px;padding:2px 7px;border-radius:3px;border:1px solid rgba(148,163,184,.3);background:rgba(148,163,184,.08);color:var(--text-2);cursor:pointer">Refresh Features</button>'+
         '</div>'+
-        '<div style="font-size:9px;color:var(--text-3);margin-top:4px">BOS/CHoCH · order-flow · AI decision engines pending</div>'+
+        // Phase 10.9D: structure engine status row
+        (function(){
+          var bsSe=bsSnap.structure_engine||{};
+          var bsSeStatus=bsSe.status||"";
+          if(!bsSeStatus) return '';
+          var bsSeColor=bsStatusColors[bsSeStatus]||"var(--text-3)";
+          var bsSeLabel={ready:"Ready",partial:"Partial",refreshing:"Refreshing…",initializing:"Initializing…",unavailable:"Unavailable",error:"Error"}[bsSeStatus]||bsSeStatus;
+          return '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">'+
+            '<span style="font-size:9.5px;color:var(--text-3)">Structure Engine: <b style="color:'+bsSeColor+'">'+esc(bsSeLabel)+'</b> <span style="color:var(--text-3)">(context only)</span></span>'+
+            '<button onclick="_lmRefreshBiasStructure('+bsItemId+')" style="font-size:9px;padding:2px 7px;border-radius:3px;border:1px solid rgba(148,163,184,.3);background:rgba(148,163,184,.08);color:var(--text-2);cursor:pointer">Refresh Structure</button>'+
+          '</div>';
+        }())+
+        '<div style="font-size:9px;color:var(--text-3);margin-top:4px">Structure context only · order-flow · AI decision engines pending</div>'+
       '</div>';
       return '<div style="border-left:3px solid var(--yellow-2,#f59e0b);padding:6px 10px;background:rgba(251,191,36,.05);border-radius:0 6px 6px 0;margin-bottom:6px">'+
         '<div style="font-size:11px;font-weight:700;color:var(--yellow-2,#f59e0b);margin-bottom:3px">PRECISION WATCH DECISION</div>'+

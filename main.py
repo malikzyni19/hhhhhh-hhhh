@@ -14944,6 +14944,17 @@ def _lm_refresh_bias_candle_features_for_item(item, force: bool = False) -> dict
             _db.session.rollback()
             print(f"[10.9C] snapshot update error: {exc}")
 
+        # Task 8 (Phase 10.9D): Trigger structure engine after feature engine completes.
+        # Works even if some TFs have no features — structure reads raw candles.
+        if item_id:
+            try:
+                _lm_ensure_bias_structure_bg(
+                    item_id, uid, exchange, market, symbol,
+                    getattr(item, "source_tab", "bias_shift") or "bias_shift"
+                )
+            except Exception as _se:
+                print(f"[10.9D] structure trigger error after feature refresh: {_se}")
+
         return {
             "ok":                   True,
             "symbol":               symbol,
@@ -14991,6 +15002,650 @@ def _lm_ensure_bias_features_bg(item_id: int, uid: int, exchange: str,
                          name=f"lm-bias-features-{item_id}")
     with _lm_bias_feature_thread_lock:
         _lm_bias_feature_threads[item_id] = t
+    t.start()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Phase 10.9D — Bias Shift Structure Context Engine
+# CONTEXT ONLY. BOS/CHoCH/sweep are NOT entry signals.
+# No trading execution. No order placement. No private API. No API keys.
+# No S/R Flip logic. No order-flow alignment. No AI decision engine.
+# No Entry Candidate state. No auto-convert to OB/FIB.
+# Structure engine reads stored candles only — no external exchange API calls.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Task 2: Structure settings / constants ────────────────────────────────────
+
+_LM_STRUCT_PIVOT_SETTINGS: dict = {
+    "1d":  {"left": 3, "right": 3},
+    "4h":  {"left": 4, "right": 4},
+    "1h":  {"left": 5, "right": 5},
+    "30m": {"left": 5, "right": 5},
+    "15m": {"left": 5, "right": 5},
+    "5m":  {"left": 6, "right": 6},
+}
+
+# BOS/CHoCH: candle CLOSE must exceed swing by this % to confirm break.
+# Wick-only breaks do NOT count.
+_LM_STRUCT_BREAK_THRESHOLD_PCT: dict = {
+    "1d":  0.20,
+    "4h":  0.15,
+    "1h":  0.10,
+    "30m": 0.08,
+    "15m": 0.06,
+    "5m":  0.05,
+}
+
+# Sweep: wick must exceed swing by this % AND close must return inside.
+_LM_STRUCT_SWEEP_THRESHOLD_PCT: dict = {
+    "1d":  0.10,
+    "4h":  0.08,
+    "1h":  0.06,
+    "30m": 0.05,
+    "15m": 0.04,
+    "5m":  0.03,
+}
+
+
+def _lm_structure_pivot_settings(tf: str) -> dict:
+    return _LM_STRUCT_PIVOT_SETTINGS.get(tf, {"left": 5, "right": 5})
+
+
+def _lm_structure_break_threshold_pct(tf: str) -> float:
+    return _LM_STRUCT_BREAK_THRESHOLD_PCT.get(tf, 0.10)
+
+
+def _lm_structure_sweep_threshold_pct(tf: str) -> float:
+    return _LM_STRUCT_SWEEP_THRESHOLD_PCT.get(tf, 0.06)
+
+
+# ── Task 3: Swing detection helpers ──────────────────────────────────────────
+
+def _lm_is_swing_high(candles: list, index: int, left: int, right: int) -> bool:
+    """True if candles[index].high is a confirmed pivot high.
+
+    Requires `left` lower highs before and `right` lower highs after.
+    Right-side confirmation is used for historical labelling; the most
+    recent `right` candles in the series cannot be confirmed swings.
+    """
+    if index < left or index + right >= len(candles):
+        return False
+    pivot = candles[index]["high"]
+    for j in range(index - left, index):
+        if candles[j]["high"] >= pivot:
+            return False
+    for j in range(index + 1, index + right + 1):
+        if candles[j]["high"] >= pivot:
+            return False
+    return True
+
+
+def _lm_is_swing_low(candles: list, index: int, left: int, right: int) -> bool:
+    """True if candles[index].low is a confirmed pivot low."""
+    if index < left or index + right >= len(candles):
+        return False
+    pivot = candles[index]["low"]
+    for j in range(index - left, index):
+        if candles[j]["low"] <= pivot:
+            return False
+    for j in range(index + 1, index + right + 1):
+        if candles[j]["low"] <= pivot:
+            return False
+    return True
+
+
+def _lm_find_swing_points(candles: list, left: int = 5, right: int = 5) -> dict:
+    """Find all confirmed swing highs and lows in a sorted candle series.
+
+    The `confirmed_at` field is the open_time of the candle that is `right`
+    bars after the pivot — i.e., when the swing became confirmed.
+    Returns {"swing_highs": [...], "swing_lows": [...]}.
+    """
+    swing_highs: list = []
+    swing_lows:  list = []
+
+    for i in range(len(candles)):
+        if _lm_is_swing_high(candles, i, left, right):
+            conf_idx = min(i + right, len(candles) - 1)
+            swing_highs.append({
+                "open_time":    candles[i]["open_time"],
+                "confirmed_at": candles[conf_idx]["open_time"],
+                "level":        candles[i]["high"],
+                "type":         "swing_high",
+                "index":        i,
+            })
+        if _lm_is_swing_low(candles, i, left, right):
+            conf_idx = min(i + right, len(candles) - 1)
+            swing_lows.append({
+                "open_time":    candles[i]["open_time"],
+                "confirmed_at": candles[conf_idx]["open_time"],
+                "level":        candles[i]["low"],
+                "type":         "swing_low",
+                "index":        i,
+            })
+
+    return {"swing_highs": swing_highs, "swing_lows": swing_lows}
+
+
+# ── Task 4: BOS / CHoCH detector ─────────────────────────────────────────────
+
+def _lm_detect_structure_events_for_tf(candles: list, timeframe: str,
+                                        features=None) -> dict:
+    """Detect BOS/CHoCH structure events from a sorted candle series.
+
+    Rules:
+    - BOS/CHoCH requires candle CLOSE beyond swing level by break_threshold_pct.
+    - Wick-only breaks are NOT BOS/CHoCH.
+    - CHoCH occurs when direction flips; BOS when it continues.
+    - Once a swing level is broken (consumed), it is not re-used.
+    - Avoids generating duplicate events for the same broken level.
+
+    Context only — no entry signals. No S/R flip. No order-flow.
+    """
+    if not candles or len(candles) < 10:
+        return {"events": [], "swings": {"swing_highs": [], "swing_lows": []},
+                "structure_direction": "neutral"}
+
+    pivot      = _lm_structure_pivot_settings(timeframe)
+    left, right = pivot["left"], pivot["right"]
+    break_frac = _lm_structure_break_threshold_pct(timeframe) / 100.0
+
+    swings      = _lm_find_swing_points(candles, left=left, right=right)
+    highs_sorted = sorted(swings["swing_highs"], key=lambda x: x["confirmed_at"])
+    lows_sorted  = sorted(swings["swing_lows"],  key=lambda x: x["confirmed_at"])
+
+    events: list = []
+    structure_direction = "neutral"
+
+    consumed_high_times: set = set()
+    consumed_low_times:  set = set()
+
+    h_ptr = 0  # next index into highs_sorted to add to available
+    l_ptr = 0
+    avail_highs: list = []
+    avail_lows:  list = []
+
+    for candle in candles:
+        c_time  = candle["open_time"]
+        c_close = float(candle.get("close", 0))
+
+        # Advance: include swings confirmed at or before this candle's open_time
+        while h_ptr < len(highs_sorted) and highs_sorted[h_ptr]["confirmed_at"] <= c_time:
+            avail_highs.append(highs_sorted[h_ptr])
+            h_ptr += 1
+        while l_ptr < len(lows_sorted) and lows_sorted[l_ptr]["confirmed_at"] <= c_time:
+            avail_lows.append(lows_sorted[l_ptr])
+            l_ptr += 1
+
+        # --- Bullish break: close above swing high ---
+        for sh in reversed(avail_highs[-6:]):
+            if sh["open_time"] in consumed_high_times:
+                continue
+            lvl = sh["level"]
+            if lvl <= 0:
+                continue
+            if c_close >= lvl * (1.0 + break_frac):
+                etype = "bullish_choch" if structure_direction == "bearish" else "bullish_bos"
+                events.append({
+                    "event_time":         c_time,
+                    "event_type":         etype,
+                    "direction":          "bullish",
+                    "level":              lvl,
+                    "candle_open_time":   c_time,
+                    "confirmation_close": c_close,
+                    "swing_left":         left,
+                    "swing_right":        right,
+                    "threshold_pct":      _lm_structure_break_threshold_pct(timeframe),
+                    "context":            "context_only_not_entry_signal",
+                })
+                consumed_high_times.add(sh["open_time"])
+                structure_direction = "bullish"
+                break
+
+        # --- Bearish break: close below swing low ---
+        for sl in reversed(avail_lows[-6:]):
+            if sl["open_time"] in consumed_low_times:
+                continue
+            lvl = sl["level"]
+            if lvl <= 0:
+                continue
+            if c_close <= lvl * (1.0 - break_frac):
+                etype = "bearish_choch" if structure_direction == "bullish" else "bearish_bos"
+                events.append({
+                    "event_time":         c_time,
+                    "event_type":         etype,
+                    "direction":          "bearish",
+                    "level":              lvl,
+                    "candle_open_time":   c_time,
+                    "confirmation_close": c_close,
+                    "swing_left":         left,
+                    "swing_right":        right,
+                    "threshold_pct":      _lm_structure_break_threshold_pct(timeframe),
+                    "context":            "context_only_not_entry_signal",
+                })
+                consumed_low_times.add(sl["open_time"])
+                structure_direction = "bearish"
+                break
+
+    return {
+        "events":              events,
+        "swings":              swings,
+        "structure_direction": structure_direction,
+    }
+
+
+# ── Task 5: Liquidity sweep detector ─────────────────────────────────────────
+
+def _lm_detect_liquidity_sweeps_for_tf(candles: list, timeframe: str,
+                                         swings: dict = None) -> list:
+    """Detect buy-side / sell-side liquidity sweeps from a sorted candle series.
+
+    Sweep = wick extends beyond swing by sweep_threshold_pct AND close
+    returns inside the swing level. This is sweep CONTEXT only:
+    - No entry signal.
+    - No S/R flip logic.
+    - No order-flow alignment.
+    """
+    if not candles or len(candles) < 10:
+        return []
+
+    if swings is None:
+        piv    = _lm_structure_pivot_settings(timeframe)
+        swings = _lm_find_swing_points(candles, left=piv["left"], right=piv["right"])
+
+    sweep_frac  = _lm_structure_sweep_threshold_pct(timeframe) / 100.0
+    piv_s       = _lm_structure_pivot_settings(timeframe)
+
+    highs_sorted = sorted(swings.get("swing_highs", []), key=lambda x: x["confirmed_at"])
+    lows_sorted  = sorted(swings.get("swing_lows",  []), key=lambda x: x["confirmed_at"])
+
+    sweeps: list = []
+    h_ptr = 0
+    l_ptr = 0
+    avail_highs: list = []
+    avail_lows:  list = []
+
+    for candle in candles:
+        c_time  = candle["open_time"]
+        c_high  = float(candle.get("high",  0))
+        c_low   = float(candle.get("low",   0))
+        c_close = float(candle.get("close", 0))
+
+        while h_ptr < len(highs_sorted) and highs_sorted[h_ptr]["confirmed_at"] <= c_time:
+            avail_highs.append(highs_sorted[h_ptr])
+            h_ptr += 1
+        while l_ptr < len(lows_sorted) and lows_sorted[l_ptr]["confirmed_at"] <= c_time:
+            avail_lows.append(lows_sorted[l_ptr])
+            l_ptr += 1
+
+        # Buy-side sweep: wick above swing high, close back below it
+        for sh in reversed(avail_highs[-6:]):
+            lvl = sh["level"]
+            if lvl <= 0:
+                continue
+            if c_high >= lvl * (1.0 + sweep_frac) and c_close < lvl:
+                sweeps.append({
+                    "event_time":         c_time,
+                    "event_type":         "buy_side_liquidity_sweep",
+                    "direction":          "bearish",
+                    "level":              lvl,
+                    "candle_open_time":   c_time,
+                    "confirmation_close": c_close,
+                    "swing_left":         piv_s["left"],
+                    "swing_right":        piv_s["right"],
+                    "threshold_pct":      _lm_structure_sweep_threshold_pct(timeframe),
+                    "context":            "sweep_context_only_not_entry_signal",
+                })
+                break
+
+        # Sell-side sweep: wick below swing low, close back above it
+        for sl in reversed(avail_lows[-6:]):
+            lvl = sl["level"]
+            if lvl <= 0:
+                continue
+            if c_low <= lvl * (1.0 - sweep_frac) and c_close > lvl:
+                sweeps.append({
+                    "event_time":         c_time,
+                    "event_type":         "sell_side_liquidity_sweep",
+                    "direction":          "bullish",
+                    "level":              lvl,
+                    "candle_open_time":   c_time,
+                    "confirmation_close": c_close,
+                    "swing_left":         piv_s["left"],
+                    "swing_right":        piv_s["right"],
+                    "threshold_pct":      _lm_structure_sweep_threshold_pct(timeframe),
+                    "context":            "sweep_context_only_not_entry_signal",
+                })
+                break
+
+    return sweeps
+
+
+# ── Task 6: Structure summary builder ────────────────────────────────────────
+
+def _lm_build_structure_summary_for_tf(events: list, timeframe: str) -> dict:
+    """Build a lightweight structure summary for one TF from detected events.
+
+    context_weight is always 'low' in Phase 10.9D.
+    No entry signal. No S/R flip.
+    """
+    all_events   = sorted(events, key=lambda x: x.get("event_time", 0))
+    bos_events   = [e for e in all_events if "bos"   in e.get("event_type", "")]
+    choch_events = [e for e in all_events if "choch" in e.get("event_type", "")]
+    sweep_events = [e for e in all_events if "sweep" in e.get("event_type", "")]
+
+    # Structure direction from most recent directional event
+    struct_dir = "neutral"
+    for e in reversed(all_events):
+        if e.get("direction") in ("bullish", "bearish"):
+            struct_dir = e["direction"]
+            break
+
+    return {
+        "timeframe":           timeframe,
+        "structure_direction": struct_dir,
+        "last_bos":            bos_events[-1]   if bos_events   else {},
+        "last_choch":          choch_events[-1] if choch_events else {},
+        "last_sweep":          sweep_events[-1] if sweep_events else {},
+        "event_count":         len(all_events),
+        "context_weight":      "low",
+        "notes": [
+            "Structure is context only; candle/order-flow agreement required in later phases.",
+            "BOS/CHoCH/sweep do NOT create entry signals in Phase 10.9D.",
+        ],
+    }
+
+
+# ── Task 7: All-TF structure processor + status builder ──────────────────────
+
+def _lm_store_structure_events(user_id: int, exchange: str, market: str,
+                                 symbol: str, timeframe: str,
+                                 events: list) -> int:
+    """Upsert structure events into LiveMonitorStructureEvent. Returns count stored."""
+    from models import db as _db, LiveMonitorStructureEvent as _LMSE
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    if not events:
+        return 0
+
+    rows = [
+        {
+            "user_id":            user_id,
+            "exchange":           exchange,
+            "market":             market,
+            "symbol":             symbol,
+            "timeframe":          timeframe,
+            "event_time":         e["event_time"],
+            "event_type":         e["event_type"],
+            "direction":          e.get("direction"),
+            "level":              e.get("level"),
+            "candle_open_time":   e.get("candle_open_time"),
+            "confirmation_close": e.get("confirmation_close"),
+            "swing_left":         e.get("swing_left"),
+            "swing_right":        e.get("swing_right"),
+            "threshold_pct":      e.get("threshold_pct"),
+            "strength_score":     e.get("strength_score"),
+            "context_json":       _json_dumps_safe({"context": e.get("context", "")}),
+        }
+        for e in events
+    ]
+
+    stmt = pg_insert(_LMSE.__table__).values(rows)
+    stmt = stmt.on_conflict_do_update(
+        constraint="uq_lm_struct_event",
+        set_={
+            "direction":          stmt.excluded.direction,
+            "level":              stmt.excluded.level,
+            "candle_open_time":   stmt.excluded.candle_open_time,
+            "confirmation_close": stmt.excluded.confirmation_close,
+            "threshold_pct":      stmt.excluded.threshold_pct,
+            "strength_score":     stmt.excluded.strength_score,
+            "context_json":       stmt.excluded.context_json,
+            "updated_at":         _db.func.now(),
+        },
+    )
+    _db.session.execute(stmt)
+    _db.session.commit()
+    return len(rows)
+
+
+def _lm_get_structure_events(user_id: int, exchange: str, market: str,
+                               symbol: str, timeframe: str,
+                               event_type: str = None, limit: int = 50) -> list:
+    """Return recent structure events for one TF as plain dicts."""
+    from models import LiveMonitorStructureEvent as _LMSE
+    try:
+        q = _LMSE.query.filter_by(
+            user_id=user_id, exchange=exchange, market=market,
+            symbol=symbol, timeframe=timeframe,
+        )
+        if event_type:
+            q = q.filter(_LMSE.event_type == event_type)
+        rows = q.order_by(_LMSE.event_time.desc()).limit(limit).all()
+        return [
+            {
+                "event_time":         r.event_time,
+                "event_type":         r.event_type,
+                "direction":          r.direction,
+                "level":              r.level,
+                "confirmation_close": r.confirmation_close,
+                "threshold_pct":      r.threshold_pct,
+                "context":            _json_loads_safe(r.context_json, {}),
+            }
+            for r in rows
+        ]
+    except Exception:
+        return []
+
+
+def _lm_build_structure_engine_status(user_id: int, exchange: str, market: str,
+                                        symbol: str, per_tf_summaries: dict) -> dict:
+    """Build the lightweight structure_engine status dict for snapshot_json.
+
+    Stores only status/count/latest summary per TF — no full event arrays.
+    """
+    tf_stack     = list(_LM_BIAS_TF_STACK_CONST)
+    per_tf_status = {}
+    all_statuses  = []
+
+    for tf in tf_stack:
+        summary    = per_tf_summaries.get(tf, {})
+        tf_status  = summary.get("status", "unavailable")
+        all_statuses.append(tf_status)
+        last_bos   = summary.get("last_bos",   {})
+        last_choch = summary.get("last_choch", {})
+        last_sweep = summary.get("last_sweep", {})
+
+        per_tf_status[tf] = {
+            "status":              tf_status,
+            "event_count":         summary.get("event_count", 0),
+            "structure_direction": summary.get("structure_direction", "neutral"),
+            "last_bos": {
+                "type":  last_bos.get("event_type"),
+                "level": last_bos.get("level"),
+                "time":  last_bos.get("event_time"),
+            } if last_bos else {},
+            "last_choch": {
+                "type":  last_choch.get("event_type"),
+                "level": last_choch.get("level"),
+                "time":  last_choch.get("event_time"),
+            } if last_choch else {},
+            "last_sweep": {
+                "type":  last_sweep.get("event_type"),
+                "level": last_sweep.get("level"),
+                "time":  last_sweep.get("event_time"),
+            } if last_sweep else {},
+            "notes": summary.get("notes", []),
+        }
+
+    # Overall status
+    ready_count = sum(1 for s in all_statuses if s == "ready")
+    if ready_count == len(tf_stack):
+        overall = "ready"
+    elif ready_count > 0:
+        overall = "partial"
+    elif any(s == "error" for s in all_statuses):
+        overall = "error"
+    else:
+        overall = "unavailable"
+
+    # Cross-TF contradiction: 1H vs 4H
+    dir_1h = per_tf_status.get("1h",  {}).get("structure_direction", "neutral")
+    dir_4h = per_tf_status.get("4h",  {}).get("structure_direction", "neutral")
+    if dir_1h in ("bullish", "bearish") and dir_4h in ("bullish", "bearish") and dir_1h != dir_4h:
+        contradiction_1h4h = f"{dir_1h}_vs_{dir_4h}"
+    else:
+        contradiction_1h4h = "none"
+
+    return {
+        "enabled":      True,
+        "phase":        "phase10_9d_structure_context",
+        "status":       overall,
+        "context_only": True,
+        "low_weight":   True,
+        "per_tf":       per_tf_status,
+        "contradictions": {
+            "one_h_vs_four_h": contradiction_1h4h,
+        },
+    }
+
+
+# Thread registry for structure engine
+_lm_bias_structure_threads: dict = {}
+_lm_bias_structure_thread_lock   = threading.Lock()
+
+
+def _lm_refresh_bias_structure_for_item(item, force: bool = False) -> dict:
+    """Detect and store structure events (BOS/CHoCH/sweep) for all TFs.
+
+    Reads stored LiveMonitorCandle rows only — no external API calls.
+    Updates snapshot_json.structure_engine with lightweight status only.
+    Safe to call from background thread — uses app.app_context().
+
+    CONTEXT ONLY. No entry signals. No S/R Flip. No order-flow. No trading.
+    """
+    if not _lm_is_bias_shift_item(item):
+        return {"skipped": True, "reason": "not_bias_shift"}
+
+    with app.app_context():
+        from models import db as _db, LiveMonitorItem as _LMI
+
+        uid      = getattr(item, "user_id",  None)
+        symbol   = (getattr(item, "symbol",   "") or "").upper()
+        exchange = (getattr(item, "exchange", "") or "binance").lower()
+        market   = (getattr(item, "market",   "") or "perpetual").lower()
+        item_id  = getattr(item, "id", None)
+
+        if not uid or not symbol:
+            return {"skipped": True, "reason": "missing_uid_or_symbol"}
+
+        per_tf_summaries: dict = {}
+
+        for tf in _LM_BIAS_TF_STACK_CONST:
+            try:
+                candle_rows = _lm_get_stored_candles(uid, exchange, market, symbol, tf, 1500)
+                if not candle_rows:
+                    per_tf_summaries[tf] = {
+                        "status": "unavailable", "event_count": 0,
+                        "structure_direction": "neutral",
+                    }
+                    continue
+
+                candles = sorted(
+                    [{"open_time": c.open_time, "open": c.open, "high": c.high,
+                      "low": c.low, "close": c.close, "volume": c.volume or 0.0}
+                     for c in candle_rows],
+                    key=lambda x: x["open_time"],
+                )
+
+                bos_result    = _lm_detect_structure_events_for_tf(candles, tf)
+                struct_events = bos_result.get("events", [])
+                swings        = bos_result.get("swings", {})
+                struct_dir    = bos_result.get("structure_direction", "neutral")
+                sweep_events  = _lm_detect_liquidity_sweeps_for_tf(candles, tf, swings=swings)
+                all_events    = struct_events + sweep_events
+
+                if all_events:
+                    try:
+                        _lm_store_structure_events(uid, exchange, market, symbol, tf, all_events)
+                    except Exception as se:
+                        print(f"[10.9D] store error {symbol}/{tf}: {se}")
+
+                summary = _lm_build_structure_summary_for_tf(all_events, tf)
+                summary["status"] = "ready" if all_events else "partial"
+                per_tf_summaries[tf] = summary
+
+                print(f"[10.9D] structure {symbol}/{tf}: dir={struct_dir} "
+                      f"bos/choch={len(struct_events)} sweeps={len(sweep_events)}")
+
+            except Exception as exc:
+                print(f"[10.9D] structure error {symbol}/{tf}: {exc}")
+                per_tf_summaries[tf] = {
+                    "status": "error", "event_count": 0,
+                    "structure_direction": "neutral",
+                }
+
+        struct_status = _lm_build_structure_engine_status(
+            uid, exchange, market, symbol, per_tf_summaries
+        )
+        try:
+            row = _LMI.query.filter_by(id=item_id).first()
+            if row:
+                snap = _json_loads_safe(row.snapshot_json, {})
+                snap["structure_engine"] = struct_status
+                row.snapshot_json = _json_dumps_safe(snap)
+                _db.session.commit()
+        except Exception as exc:
+            _db.session.rollback()
+            print(f"[10.9D] snapshot update error: {exc}")
+
+        return {
+            "ok":               True,
+            "symbol":           symbol,
+            "exchange":         exchange,
+            "market":           market,
+            "structure_engine": struct_status,
+            "per_tf":           per_tf_summaries,
+        }
+
+
+def _lm_ensure_bias_structure_bg(item_id: int, uid: int, exchange: str,
+                                   market: str, symbol: str,
+                                   source_tab: str, force: bool = False):
+    """Start background structure engine for a Bias Shift item if not already running."""
+    if source_tab not in ("bias_shift", "bias"):
+        return
+    with _lm_bias_structure_thread_lock:
+        t = _lm_bias_structure_threads.get(item_id)
+        if t and t.is_alive():
+            return
+
+    class _ItemProxy:
+        pass
+    proxy = _ItemProxy()
+    proxy.id            = item_id
+    proxy.user_id       = uid
+    proxy.symbol        = symbol
+    proxy.exchange      = exchange
+    proxy.market        = market
+    proxy.source_tab    = source_tab
+    proxy.snapshot_json = None
+
+    def _run():
+        with _lm_bias_structure_thread_lock:
+            _lm_bias_structure_threads[item_id] = threading.current_thread()
+        try:
+            _lm_refresh_bias_structure_for_item(proxy, force=force)
+        except Exception as exc:
+            print(f"[10.9D] background structure error item={item_id}: {exc}")
+        finally:
+            with _lm_bias_structure_thread_lock:
+                _lm_bias_structure_threads.pop(item_id, None)
+
+    t = threading.Thread(target=_run, daemon=True,
+                         name=f"lm-bias-structure-{item_id}")
+    with _lm_bias_structure_thread_lock:
+        _lm_bias_structure_threads[item_id] = t
     t.start()
 
 
@@ -17706,9 +18361,38 @@ def _lm_build_ai_context(item) -> dict:
                 for tf, info in (_cfe.get("per_tf") or {}).items()
             },
             "note":    "Full feature rows are NOT included in AI context. "
-                       "Status and latest pattern names only. "
-                       "BOS/CHoCH/order-flow engines pending (Phase 10.9D+).",
+                       "Status and latest pattern names only.",
         } if _cfe and isinstance(_cfe, dict) else None)(snap.get("candle_feature_engine")),
+        # Phase 10.9D Task 12: structure_engine status for Bias Shift items.
+        # Full event arrays are NOT sent to AI — status/direction/latest summary only.
+        "structure_engine": (lambda _se: {
+            "phase":        _se.get("phase"),
+            "status":       _se.get("status"),
+            "context_only": True,
+            "low_weight":   True,
+            "per_tf": {
+                tf: {
+                    "status":              info.get("status"),
+                    "event_count":         info.get("event_count"),
+                    "structure_direction": info.get("structure_direction"),
+                    "last_bos":            info.get("last_bos"),
+                    "last_choch":          info.get("last_choch"),
+                    "last_sweep":          info.get("last_sweep"),
+                }
+                for tf, info in (_se.get("per_tf") or {}).items()
+            },
+            "contradictions": _se.get("contradictions"),
+            "safety_rules": {
+                "bos_choch_sweep_are_context_only": True,
+                "no_entry_candidate_from_structure": True,
+                "ai_must_not_call_bos_choch_as_entry_signal": True,
+                "order_flow_agreement_required_for_entry_in_later_phases": True,
+            },
+            "note": "Structure events are context only. "
+                    "AI must NOT treat BOS/CHoCH/sweep as entry signals. "
+                    "No Entry Candidate state from structure in Phase 10.9D. "
+                    "Full event arrays are NOT included in AI context.",
+        } if _se and isinstance(_se, dict) else None)(snap.get("structure_engine")),
     }
 
 
@@ -19540,6 +20224,150 @@ def api_lm_bias_candle_features_debug(item_id):
         "tf_stack":     list(_LM_BIAS_TF_STACK_CONST),
         "status":       cfe.get("status", "unknown"),
         "candle_feature_engine": cfe,
+        "per_tf":       per_tf_debug,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Phase 10.9D Task 9: Bias Shift structure refresh endpoint
+# ---------------------------------------------------------------------------
+@app.route("/api/live-monitor/items/<int:item_id>/bias-structure/refresh",
+           methods=["POST"])
+@login_required
+def api_lm_bias_structure_refresh(item_id):
+    """Trigger structure context engine for a Bias Shift Watch item.
+
+    Reads stored candles only — no external API calls.
+    Context only. No entry signals. No S/R flip. No trading.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import db as _db, LiveMonitorItem as _LMI
+    row = _LMI.query.filter_by(id=item_id, is_active=True).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if not _lm_is_bias_shift_item(row):
+        return jsonify({"error": "not_bias_shift",
+                        "message": "This endpoint is only for Bias Shift Watch items."}), 400
+
+    data  = request.get_json(force=True) or {}
+    force = bool(data.get("force", False))
+
+    # Mark as initializing immediately
+    try:
+        snap = _json_loads_safe(row.snapshot_json, {})
+        existing_se = snap.get("structure_engine") or {}
+        existing_se["status"] = "initializing" if not existing_se.get("status") else "refreshing"
+        existing_se["context_only"] = True
+        existing_se["low_weight"]   = True
+        snap["structure_engine"] = existing_se
+        row.snapshot_json = _json_dumps_safe(snap)
+        _db.session.commit()
+    except Exception:
+        _db.session.rollback()
+
+    _lm_ensure_bias_structure_bg(
+        row.id, uid, row.exchange or "binance", row.market or "perpetual",
+        row.symbol, row.source_tab or "bias_shift", force=force
+    )
+
+    snap_now = _json_loads_safe(row.snapshot_json, {})
+    se_now   = snap_now.get("structure_engine") or {}
+    return jsonify({
+        "ok":               True,
+        "item_id":          item_id,
+        "symbol":           row.symbol,
+        "setup_category":   _lm_setup_category(row),
+        "structure_engine": se_now,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Phase 10.9D Task 10: Bias Shift structure debug endpoint
+# ---------------------------------------------------------------------------
+@app.route("/api/live-monitor/items/<int:item_id>/bias-structure/debug",
+           methods=["GET"])
+@login_required
+def api_lm_bias_structure_debug(item_id):
+    """Return per-TF structure event summaries for a Bias Shift Watch item.
+
+    Optional query params:
+      tf         — filter to one timeframe
+      event_type — filter by event type (bullish_bos, bearish_choch, etc.)
+      limit      — rows per TF (default 30, max 150)
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import LiveMonitorItem as _LMI
+    row = _LMI.query.filter_by(id=item_id, is_active=True).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+    if not _lm_is_bias_shift_item(row):
+        return jsonify({"error": "not_bias_shift",
+                        "message": "This endpoint is only for Bias Shift Watch items."}), 400
+
+    tf_filter    = (request.args.get("tf")         or "").strip().lower() or None
+    etype_filter = (request.args.get("event_type") or "").strip().lower() or None
+    try:
+        lim = min(int(request.args.get("limit", 30)), 150)
+    except (TypeError, ValueError):
+        lim = 30
+
+    allowed_tfs = set(_LM_BIAS_TF_STACK_CONST)
+    if tf_filter and tf_filter not in allowed_tfs:
+        return jsonify({"error": "invalid_tf", "allowed": list(allowed_tfs)}), 400
+
+    exchange = row.exchange or "binance"
+    market   = row.market   or "perpetual"
+    symbol   = row.symbol
+
+    tfs_to_show = [tf_filter] if tf_filter else list(_LM_BIAS_TF_STACK_CONST)
+    per_tf_debug = {}
+
+    for tf in tfs_to_show:
+        events = _lm_get_structure_events(uid, exchange, market, symbol, tf,
+                                           event_type=etype_filter, limit=lim)
+        # Count by event type
+        type_counts: dict = {}
+        for e in events:
+            k = e.get("event_type", "unknown")
+            type_counts[k] = type_counts.get(k, 0) + 1
+
+        # Direction from most recent directional event
+        struct_dir = "neutral"
+        for e in events:   # events are ordered desc by event_time
+            if e.get("direction") in ("bullish", "bearish"):
+                struct_dir = e["direction"]
+                break
+
+        per_tf_debug[tf] = {
+            "structure_direction": struct_dir,
+            "event_count":         len(events),
+            "event_type_counts":   type_counts,
+            "latest_events":       events[:lim],
+        }
+
+    snap = _json_loads_safe(row.snapshot_json, {})
+    se   = snap.get("structure_engine", {})
+    return jsonify({
+        "ok":           True,
+        "item_id":      item_id,
+        "symbol":       symbol,
+        "exchange":     exchange,
+        "market":       market,
+        "tf_stack":     list(_LM_BIAS_TF_STACK_CONST),
+        "status":       se.get("status", "unknown"),
+        "context_only": True,
+        "low_weight":   True,
+        "structure_engine": se,
         "per_tf":       per_tf_debug,
     })
 

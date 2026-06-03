@@ -615,3 +615,56 @@ class LiveMonitorCandleFeature(db.Model):
     def __repr__(self) -> str:
         return (f"<LiveMonitorCandleFeature {self.symbol} {self.timeframe} "
                 f"open_time={self.open_time} user={self.user_id}>")
+
+
+class LiveMonitorStructureEvent(db.Model):
+    """Phase 10.9D: Structure context events for Bias Shift Watch items.
+
+    Stores swing-based BOS, CHoCH, and liquidity sweep events per TF.
+    CONTEXT ONLY — these events are NOT entry signals.
+    BOS/CHoCH do NOT create Entry Candidate state.
+    No S/R Flip logic. No order-flow. No trading execution. No private API.
+
+    Upsert on uq_lm_struct_event prevents duplicates on repeated runs.
+    Full event arrays are never stored in LiveMonitorItem.snapshot_json.
+    """
+    __tablename__ = "live_monitor_structure_events"
+
+    id               = db.Column(db.Integer, primary_key=True)
+    user_id          = db.Column(db.Integer, db.ForeignKey("users.id"),
+                                 nullable=False, index=True)
+    exchange         = db.Column(db.String(20), nullable=False)
+    market           = db.Column(db.String(20), nullable=False, default="perpetual")
+    symbol           = db.Column(db.String(20), nullable=False)
+    timeframe        = db.Column(db.String(10), nullable=False)
+    event_time       = db.Column(db.BigInteger, nullable=False)   # ms epoch of confirming candle
+    event_type       = db.Column(db.String(40), nullable=False)   # bullish_bos / bearish_bos / etc.
+    direction        = db.Column(db.String(10), nullable=True)    # bullish / bearish / neutral
+    level            = db.Column(db.Float,      nullable=True)    # broken/swept swing level price
+    candle_open_time = db.Column(db.BigInteger, nullable=True)    # open_time of confirming candle
+    confirmation_close = db.Column(db.Float,   nullable=True)     # close of confirming candle
+    swing_left       = db.Column(db.Integer,   nullable=True)     # bars left used in detection
+    swing_right      = db.Column(db.Integer,   nullable=True)     # bars right used in detection
+    threshold_pct    = db.Column(db.Float,     nullable=True)     # break/sweep threshold %
+    strength_score   = db.Column(db.Float,     nullable=True)     # 0-100 context weight (reserved)
+    context_json     = db.Column(db.Text,      nullable=True)     # additional context
+
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
+                           onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "user_id", "exchange", "market", "symbol", "timeframe",
+            "event_time", "event_type",
+            name="uq_lm_struct_event",
+        ),
+        db.Index("ix_lm_struct_lookup",
+                 "user_id", "exchange", "market", "symbol", "timeframe", "event_time"),
+    )
+
+    user = db.relationship("User", foreign_keys=[user_id])
+
+    def __repr__(self) -> str:
+        return (f"<LiveMonitorStructureEvent {self.symbol}/{self.timeframe} "
+                f"{self.event_type} t={self.event_time} user={self.user_id}>")
