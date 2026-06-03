@@ -10933,7 +10933,15 @@ if os.environ.get("ZYNI_LM_WS_ENABLED") == "1":
 # Gated on ZYNI_LM_MULTI_EXCHANGE_WS_ENABLED=1
 # No private API, no order logic.
 
-_LM_MX_WS_ENABLED = os.environ.get("ZYNI_LM_MULTI_EXCHANGE_WS_ENABLED") == "1"
+def _lm_multi_exchange_ws_enabled() -> bool:
+    """Return True if either multi-exchange WS env var is set to a truthy value."""
+    _TRUTHY = {"1", "true", "yes", "on"}
+    return (
+        (os.environ.get("ZYNI_LM_MULTI_EXCHANGE_WS_ENABLED") or "").strip().lower() in _TRUTHY
+        or (os.environ.get("ZYNI_LM_MX_WS_ENABLED") or "").strip().lower() in _TRUTHY
+    )
+
+_LM_MX_WS_ENABLED = _lm_multi_exchange_ws_enabled()
 
 _lm_mx_books_lock  = threading.Lock()
 _lm_mx_delta_lock  = threading.Lock()
@@ -12338,12 +12346,32 @@ def _lm_build_true_aggregated_exchange_data(symbol: str, snapshot=None) -> dict:
             notes="Binance delta unavailable; using Phase 10.8 MX WS delta data",
             updated=now_iso)
     else:
-        _delta_disabled_note = ("" if _LM_MX_WS_ENABLED
-                                else " Multi-exchange WS disabled: set ZYNI_LM_MULTI_EXCHANGE_WS_ENABLED=1")
-        metrics["delta"] = _lm_metric_result(
-            "Delta", status="unavailable", source="Aggregated",
-            sources_skipped=list(_LM_AGGREGATED_EXCHANGES),
-            notes=_delta_disabled_note.strip() if _delta_disabled_note else "")
+        # REST fallback: pull Binance aggTrades when neither WS nor MX WS has delta
+        _rest_agg_delta = _lm_rest_cached(
+            f"delta:{symbol}", 30,
+            lambda: _lm_fetch_agg_trades_delta_rest(symbol))
+        if _rest_agg_delta is not None:
+            _d60r  = _rest_agg_delta.get("delta_60s", 0)
+            _dp60r = _rest_agg_delta.get("delta_pct_60s", 0.0)
+            _d5mr  = _rest_agg_delta.get("delta_5m", 0)
+            _dp5mr = _rest_agg_delta.get("delta_pct_5m", 0.0)
+            metrics["delta"] = _lm_metric_result(
+                "Delta",
+                value=(f"{_fmt_usd_lm(abs(_d60r))} {'Buy' if _d60r>=0 else 'Sell'} ({_dp60r:+.1f}%) 60s"
+                       f" | {_fmt_usd_lm(abs(_d5mr))} {'Buy' if _d5mr>=0 else 'Sell'} ({_dp5mr:+.1f}%) 5m"),
+                status="partial",
+                source="Aggregated / Binance REST fallback",
+                sources_used=["binance"],
+                sources_skipped=[e for e in _LM_AGGREGATED_EXCHANGES if e != "binance"],
+                notes="MX WS unavailable; Binance aggTrades REST used for delta.",
+                updated=now_iso)
+        else:
+            _delta_disabled_note = ("" if _LM_MX_WS_ENABLED
+                                    else " Multi-exchange WS disabled: set ZYNI_LM_MULTI_EXCHANGE_WS_ENABLED=1 or ZYNI_LM_MX_WS_ENABLED=1")
+            metrics["delta"] = _lm_metric_result(
+                "Delta", status="unavailable", source="Aggregated",
+                sources_skipped=list(_LM_AGGREGATED_EXCHANGES),
+                notes=_delta_disabled_note.strip() if _delta_disabled_note else "")
 
     # ── Long/Short Ratio ───────────────────────────────────────────────────────
     ls_r = {}
@@ -12810,16 +12838,23 @@ def _lm_build_data_health_context(symbol: str, exchange: str,
         gate = agg.get("ai_data_gate", {})
         _append_snapshot_rows(rows, gate.get("allowed", False),
                               gate.get("reasons", []), "Aggregated")
+        _mx_ws_on = _lm_multi_exchange_ws_enabled()
         return {
-            "symbol":          symbol,
-            "exchange":        exchange,
-            "ws_enabled":      False,
-            "fetched_at":      time.time(),
-            "rows":            rows,
-            "critical_status": _critical_from_lp_mp(agg["metrics"]),
-            "ai_data_gate":    gate,
-            "sources_used":    agg.get("sources_used", []),
-            "sources_skipped": agg.get("sources_skipped", []),
+            "symbol":                    symbol,
+            "exchange":                  exchange,
+            "ws_enabled":                _mx_ws_on,
+            "single_ws_enabled":         os.environ.get("ZYNI_LM_WS_ENABLED", "").strip().lower() in {"1","true","yes","on"},
+            "multi_exchange_ws_enabled": _mx_ws_on,
+            "multi_exchange_ws_env": {
+                "ZYNI_LM_MULTI_EXCHANGE_WS_ENABLED": (os.environ.get("ZYNI_LM_MULTI_EXCHANGE_WS_ENABLED") or "").strip().lower() in {"1","true","yes","on"},
+                "ZYNI_LM_MX_WS_ENABLED":             (os.environ.get("ZYNI_LM_MX_WS_ENABLED") or "").strip().lower() in {"1","true","yes","on"},
+            },
+            "fetched_at":                time.time(),
+            "rows":                      rows,
+            "critical_status":           _critical_from_lp_mp(agg["metrics"]),
+            "ai_data_gate":              gate,
+            "sources_used":              agg.get("sources_used", []),
+            "sources_skipped":           agg.get("sources_skipped", []),
         }
 
     # ── Non-Binance single exchange (Bybit, OKX, MEXC) ───────────────────────
