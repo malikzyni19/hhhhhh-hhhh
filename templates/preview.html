@@ -6264,6 +6264,10 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       '</div>';
 
     box.innerHTML=html;
+    (function(){
+      var _c=document.getElementById("lmDhCard"),_r=document.getElementById("lmDhRows");
+      console.log("[LM-DH] right panel rendered for "+(item?item.symbol:"null")+" lmDhCard="+(!!_c)+" lmDhRows="+(!!_r));
+    })();
 
     [].forEach.call(box.querySelectorAll("[data-chart]"),function(btn){
       btn.addEventListener("click",function(){
@@ -7106,15 +7110,33 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     if(!symbol) return;
     if(!exchange) return;
     if(location.protocol==="file:") return;
+    console.log("[LM-DH] fetching Data Health",symbol,exchange);
     fetch("/api/live-monitor/data-health?symbol="+encodeURIComponent(symbol)+"&exchange="+encodeURIComponent(exchange),{
       credentials:"same-origin"
     }).then(function(r){return r.json().catch(function(){return null;});})
     .then(function(d){
       if(d&&d.ok&&Array.isArray(d.rows)){
+        if(d.build_commit) console.log("[LM-DH] build_commit="+d.build_commit+" rows="+d.rows.length);
         var meta={sources_used:d.sources_used,sources_skipped:d.sources_skipped};
         _lmRenderDataHealth(d.rows,meta);
+      } else {
+        var _wrap=document.getElementById("lmDhRows")||document.getElementById("lmDhBody");
+        if(_wrap){
+          var _tb=(_wrap.tagName==="TBODY")?_wrap:_wrap.querySelector("tbody");
+          if(_tb) _tb.innerHTML=d===null
+            ?"<tr><td colspan='6' style='color:var(--yellow-2,#f59e0b);font-size:10px;padding:10px'>Session expired — please refresh the page.</td></tr>"
+            :"<tr><td colspan='6' style='color:var(--red-2,#ef4444);font-size:10px;padding:10px'>Data Health unavailable — will retry.</td></tr>";
+        }
+        console.log("[LM-DH] fetch result not ok",d);
       }
-    }).catch(function(){});
+    }).catch(function(e){
+      console.log("[LM-DH] fetch error:",e);
+      var _wrap=document.getElementById("lmDhRows")||document.getElementById("lmDhBody");
+      if(_wrap){
+        var _tb=(_wrap.tagName==="TBODY")?_wrap:_wrap.querySelector("tbody");
+        if(_tb) _tb.innerHTML="<tr><td colspan='6' style='color:var(--red-2,#ef4444);font-size:10px;padding:10px'>Data Health unavailable — will retry.</td></tr>";
+      }
+    });
   }
   function _lmDhStatusClass(st){
     st=(st||"").toLowerCase();

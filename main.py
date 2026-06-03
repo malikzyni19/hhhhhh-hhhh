@@ -29,6 +29,18 @@ app.secret_key = os.environ.get("SECRET_KEY", "zyni-fallback-secret")
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', '')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+# Build commit — read once at startup so every API response can include it
+_BUILD_COMMIT = "unknown"
+try:
+    import subprocess as _sp
+    _BUILD_COMMIT = _sp.check_output(
+        ["git", "rev-parse", "--short", "HEAD"],
+        stderr=_sp.DEVNULL, timeout=3,
+        cwd=os.path.dirname(os.path.abspath(__file__)) or "."
+    ).decode().strip()
+except Exception:
+    pass
+
 @app.after_request
 def no_cache(r):
     path = request.path
@@ -10439,6 +10451,30 @@ def _lm_fetch_oi_rest(symbol: str):
     return None
 
 
+def _lm_fetch_mark_price_rest(symbol: str):
+    """Fetch mark price, index price, and funding rate via REST premiumIndex (Binance Futures).
+    Used as fallback when WS cache is not yet populated.
+    """
+    try:
+        r = req.get(f"{BINANCE_FUTURES_API}/fapi/v1/premiumIndex",
+                    params={"symbol": symbol}, timeout=5)
+        if r.status_code == 200:
+            d = r.json()
+            mp = d.get("markPrice")
+            ip = d.get("indexPrice")
+            fr = d.get("lastFundingRate")
+            if mp:
+                return {
+                    "mark_price":   float(mp),
+                    "index_price":  float(ip) if ip else None,
+                    "funding_rate": float(fr) if fr else None,
+                    "fetched_at":   time.time(),
+                }
+    except Exception as e:
+        print(f"[LM-WS] mark_price REST error {symbol}: {e}")
+    return None
+
+
 def _lm_fetch_oi_hist_rest(symbol: str):
     r = req.get(f"{BINANCE_FUTURES_API}/futures/data/openInterestHist",
                 params={"symbol": symbol, "period": "5m", "limit": 4}, timeout=5)
@@ -12767,7 +12803,7 @@ def _lm_build_data_health_context(symbol: str, exchange: str,
     _mark_price_status = "not_connected_yet"
 
     # ═════════════════════════════════════════════════════════════════════════
-    # ROW 1 — Live Price  (source: websocket)
+    # ROW 1 — Live Price  (source: websocket, fallback: REST premiumIndex)
     # ═════════════════════════════════════════════════════════════════════════
     if exchange == "binance":
         ws_e, ws_s = _lm_ws_get("binance", symbol)
@@ -12779,6 +12815,23 @@ def _lm_build_data_health_context(symbol: str, exchange: str,
                          "status":  ws_s,
                          "updated": f"{ws_e['data_age_sec']}s ago",
                          "notes":   "Binance Futures markPrice stream"})
+        elif ws_enabled:
+            # WS not yet populated — use REST premiumIndex as fallback (10s TTL)
+            _rest_m = _lm_rest_cached(f"mark:{symbol}", 10,
+                                      lambda: _lm_fetch_mark_price_rest(symbol))
+            if _rest_m and _rest_m.get("mark_price"):
+                _live_price_status = "fresh"
+                rows.append({"metric": "Live Price",
+                             "value":  f"{_rest_m['mark_price']:.4f}",
+                             "source": "rest",
+                             "status": "fresh",
+                             "updated": "REST ~10s TTL",
+                             "notes":  "premiumIndex REST fallback (WS connecting)"})
+            else:
+                _live_price_status = "unavailable"
+                rows.append({"metric": "Live Price", "value": "—",
+                             "source": "websocket", "status": "unavailable",
+                             "updated": "—", "notes": "Connecting… (REST also unavailable)"})
         else:
             _live_price_status = "unavailable"
             rows.append({"metric": "Live Price", "value": "—",
@@ -12788,7 +12841,7 @@ def _lm_build_data_health_context(symbol: str, exchange: str,
         rows.append(_nc("Live Price"))
 
     # ═════════════════════════════════════════════════════════════════════════
-    # ROW 2 — Mark Price  (source: websocket)
+    # ROW 2 — Mark Price  (source: websocket, fallback: REST premiumIndex)
     # ═════════════════════════════════════════════════════════════════════════
     if exchange == "binance":
         ws_e, ws_s = _lm_ws_get("binance", symbol)
@@ -12800,6 +12853,23 @@ def _lm_build_data_health_context(symbol: str, exchange: str,
                          "status":  ws_s,
                          "updated": f"{ws_e['data_age_sec']}s ago",
                          "notes":   "Binance Futures markPrice stream"})
+        elif ws_enabled:
+            # REST fallback shares the same cached result as Live Price above
+            _rest_m2 = _lm_rest_cached(f"mark:{symbol}", 10,
+                                       lambda: _lm_fetch_mark_price_rest(symbol))
+            if _rest_m2 and _rest_m2.get("mark_price"):
+                _mark_price_status = "fresh"
+                rows.append({"metric": "Mark Price",
+                             "value":  f"{_rest_m2['mark_price']:.4f}",
+                             "source": "rest",
+                             "status": "fresh",
+                             "updated": "REST ~10s TTL",
+                             "notes":  "premiumIndex REST fallback (WS connecting)"})
+            else:
+                _mark_price_status = "unavailable"
+                rows.append({"metric": "Mark Price", "value": "—",
+                             "source": "websocket", "status": "unavailable",
+                             "updated": "—", "notes": "Connecting… (REST also unavailable)"})
         else:
             _mark_price_status = "unavailable"
             rows.append({"metric": "Mark Price", "value": "—",
@@ -12993,7 +13063,7 @@ def _lm_build_data_health_context(symbol: str, exchange: str,
         rows.append(_nc("Long/Short Ratio"))
 
     # ═════════════════════════════════════════════════════════════════════════
-    # ROW 9 — Funding Rate  (source: websocket)
+    # ROW 9 — Funding Rate  (source: websocket, fallback: REST premiumIndex)
     # ═════════════════════════════════════════════════════════════════════════
     if exchange == "binance":
         ws_e, ws_s = _lm_ws_get("binance", symbol)
@@ -13005,6 +13075,21 @@ def _lm_build_data_health_context(symbol: str, exchange: str,
                          "status": ws_s,
                          "updated": f"{ws_e['data_age_sec']}s ago",
                          "notes":  "positive = longs pay shorts | markPrice stream"})
+        elif ws_enabled:
+            _rest_fr = _lm_rest_cached(f"mark:{symbol}", 10,
+                                       lambda: _lm_fetch_mark_price_rest(symbol))
+            if _rest_fr and _rest_fr.get("funding_rate") is not None:
+                fr_pct2 = _rest_fr["funding_rate"] * 100
+                rows.append({"metric": "Funding Rate",
+                             "value":  f"{fr_pct2:+.4f}%",
+                             "source": "rest",
+                             "status": "interval",
+                             "updated": "REST ~10s TTL",
+                             "notes":  "premiumIndex REST fallback (WS connecting)"})
+            else:
+                rows.append({"metric": "Funding Rate", "value": "—",
+                             "source": "websocket", "status": "unavailable",
+                             "updated": "—", "notes": "Connecting… (REST also unavailable)"})
         else:
             rows.append({"metric": "Funding Rate", "value": "—",
                          "source": "websocket", "status": "unavailable",
@@ -24769,6 +24854,14 @@ def api_lm_data_health():
         _ensure_lm_liq_thread()
         _ensure_lm_delta_thread()
         ensure_ob_stream(symbol, wait_sec=0.2)
+        # Log subscription state for every data-health request
+        _ws_has  = f"binance:{symbol}" in _lm_ws_cache
+        _liq_has = f"binance:{symbol}" in _lm_liq_cache
+        _dlt_has = f"binance:{symbol}" in _lm_delta_cache
+        _ob_has  = bool((_ob_books.get(symbol) or {}).get("ready"))
+        print(f"[LM-WS] ensure {symbol}/binance subscriptions: "
+              f"price={_ws_has} liq={_liq_has} delta={_dlt_has} ob={_ob_has} "
+              f"adhoc={sorted(_lm_ws_adhoc_syms)} build={_BUILD_COMMIT}")
 
     # Load snapshot (needed for rows 10+11)
     snap = {}
@@ -24782,7 +24875,7 @@ def api_lm_data_health():
         print(f"[LM-DH] snapshot error: {e}")
 
     ctx = _lm_build_data_health_context(symbol, exchange, snap=snap, user_id=uid)
-    return jsonify({"ok": True, **ctx})
+    return jsonify({"ok": True, "build_commit": _BUILD_COMMIT, **ctx})
 
 
 @app.route("/api/live-monitor/ws-debug", methods=["GET"])
