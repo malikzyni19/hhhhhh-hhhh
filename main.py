@@ -12276,6 +12276,14 @@ def _lm_build_true_aggregated_exchange_data(symbol: str, snapshot=None) -> dict:
         _ob_notes = f"Average best bid/ask from {len(srcs)} exchange(s)"
         if _mx_ob_extra_notes:
             _ob_notes += ". MX WS: " + "; ".join(_mx_ob_extra_notes)
+        # Find first OB entry with full bids/asks for imbalance / wall data
+        _ob_full = next((v for v in ob_r.values() if v.get("bids") and v.get("asks")), None)
+        _ob_raw  = ({"bids": _ob_full["bids"], "asks": _ob_full["asks"],
+                     "best_bid": _ob_full.get("best_bid"), "best_ask": _ob_full.get("best_ask"),
+                     "status": _ob_full.get("status", "fresh")}
+                    if _ob_full
+                    else {"best_bid": ab, "best_ask": aa,
+                          "status": "fresh" if len(srcs) >= 2 else "partial"})
         metrics["order_book"] = _lm_metric_result(
             "Order Book", value=f"Bid {ab} / Ask {aa}" if ab and aa else "—",
             status="fresh" if len(srcs) >= 2 else "partial",
@@ -12283,7 +12291,7 @@ def _lm_build_true_aggregated_exchange_data(symbol: str, snapshot=None) -> dict:
             sources_used=srcs,
             sources_skipped=[e for e in _LM_AGGREGATED_EXCHANGES if e not in srcs],
             notes=_ob_notes,
-            updated=now_iso)
+            updated=now_iso, raw=_ob_raw)
     else:
         metrics["order_book"] = _lm_metric_result(
             "Order Book", status="unavailable", source="Aggregated",
@@ -12323,7 +12331,9 @@ def _lm_build_true_aggregated_exchange_data(symbol: str, snapshot=None) -> dict:
             sources_skipped=[e for e in _LM_AGGREGATED_EXCHANGES
                              if e not in (["binance"] + _mx_liq_srcs)],
             notes=_liq_notes,
-            updated=now_iso)
+            updated=now_iso,
+            raw={"long_liq_usd_5m": long_u, "short_liq_usd_5m": short_u,
+                 "total_liq_usd_5m": total})
     elif _mx_liq_parts:
         metrics["liquidations"] = _lm_metric_result(
             "Liquidations",
@@ -12357,6 +12367,8 @@ def _lm_build_true_aggregated_exchange_data(symbol: str, snapshot=None) -> dict:
                 parts.append(f"{e.title()}: {_fmt_usd_lm(v['oi_usd'])}")
             else:
                 parts.append(f"{e.title()}: {v.get('oi_contracts', 0):.0f} contracts")
+        _oi_contracts = [v["oi_contracts"] for v in oi_r.values()
+                         if v.get("oi_contracts") is not None]
         metrics["open_interest"] = _lm_metric_result(
             "Open Interest",
             value=parts[0] if len(parts) == 1 else "multi-exchange (see notes)",
@@ -12364,7 +12376,9 @@ def _lm_build_true_aggregated_exchange_data(symbol: str, snapshot=None) -> dict:
             source="Aggregated: " + ", ".join(s.title() for s in srcs),
             sources_used=srcs,
             sources_skipped=[e for e in _LM_AGGREGATED_EXCHANGES if e not in srcs],
-            notes=" | ".join(parts), updated=now_iso)
+            notes=" | ".join(parts), updated=now_iso,
+            raw={"total_contracts": sum(_oi_contracts) if _oi_contracts else None,
+                 "per_exchange": {e: v.get("oi_contracts") for e, v in oi_r.items()}})
     else:
         metrics["open_interest"] = _lm_metric_result(
             "Open Interest", status="unavailable", source="Aggregated",
@@ -12463,7 +12477,13 @@ def _lm_build_true_aggregated_exchange_data(symbol: str, snapshot=None) -> dict:
             "Delta", value=_val, status=_delta_status, source=_src_label,
             sources_used=_d_srcs, sources_skipped=_d_skip,
             notes="; ".join(_per_ex),
-            updated=now_iso)
+            updated=now_iso,
+            raw={"delta_60s":     _d60,
+                 "delta_pct_60s": _pct60,
+                 "buy_vol_60s":   _tb60,
+                 "sell_vol_60s":  _ts60,
+                 "delta_5m":      _d5m,
+                 "delta_pct_5m":  _pct5m})
         _delta_debug = {
             "delta_sources_used":    _d_srcs,
             "delta_sources_skipped": _d_skip,
@@ -12505,7 +12525,9 @@ def _lm_build_true_aggregated_exchange_data(symbol: str, snapshot=None) -> dict:
             sources_used=srcs,
             sources_skipped=[e for e in _LM_AGGREGATED_EXCHANGES if e not in srcs],
             notes="Simple average across available exchanges",
-            updated=now_iso)
+            updated=now_iso,
+            raw={"long_pct": avg_l, "short_pct": avg_s,
+                 "ls_ratio": round(avg_l / avg_s, 3) if avg_s > 0 else None})
     else:
         metrics["long_short"] = _lm_metric_result(
             "Long/Short Ratio", status="unavailable", source="Aggregated",
@@ -12534,7 +12556,8 @@ def _lm_build_true_aggregated_exchange_data(symbol: str, snapshot=None) -> dict:
             sources_used=srcs,
             sources_skipped=[e for e in _LM_AGGREGATED_EXCHANGES if e not in srcs],
             notes=f"Dominant bias: {dominant}. Strongest: {strongest[0].title()} {strongest[1]['rate_pct']:+.4f}%",
-            updated=now_iso)
+            updated=now_iso,
+            raw={"rate": avg_rate, "rate_pct": avg_pct, "bias": dominant})
     else:
         metrics["funding_rate"] = _lm_metric_result(
             "Funding Rate", status="unavailable", source="Aggregated",
@@ -16129,6 +16152,176 @@ def _lm_find_ob_walls(bids: dict, asks: dict, mid_price: float) -> dict:
     return out
 
 
+def _lm_build_aggregated_snapshot_from_structured(
+        symbol: str, exchange: str, market: str) -> dict:
+    """Build order-flow snapshot for analysis_source=aggregated using the same
+    structured metrics that Aggregated Data Health uses as its source of truth.
+
+    Calls _lm_build_true_aggregated_exchange_data (10s TTL cache) and maps
+    its structured metrics to the flat snapshot dict.  No independent REST calls —
+    all data comes from the already-running Data Health pipeline.
+    EVIDENCE ONLY. No AI. No entry signals. No trade execution.
+    """
+    now_ms  = int(time.time() * 1000)
+    result: dict = {
+        "sample_time":     now_ms,
+        "analysis_source": "aggregated",
+        "sources_used":    [],
+        "sources_skipped": [],
+        "source_status":   "unavailable",
+        "live_price":  None, "mark_price": None,
+        "orderbook_status":               "unavailable",
+        "orderbook_imbalance":            None,
+        "bid_wall_price":                 None, "bid_wall_size":  None,
+        "ask_wall_price":                 None, "ask_wall_size":  None,
+        "nearest_bid_wall_distance_pct":  None,
+        "nearest_ask_wall_distance_pct":  None,
+        "delta_status":   "unavailable",
+        "buy_volume":     None, "sell_volume": None,
+        "delta_net":      None, "delta_pct":   None,
+        "taker_pressure": "missing",
+        "oi_status":    "unavailable",
+        "open_interest": None, "oi_change": None, "oi_change_pct": None,
+        "liquidation_status": "unavailable",
+        "long_liq_usd": None, "short_liq_usd": None, "net_liq_usd": None,
+        "long_short_status": "unavailable", "long_short_ratio": None,
+        "funding_status":    "unavailable", "funding_rate":    None,
+        "data_health_status": "unavailable",
+        "data_health_json":   None,
+        "raw_summary_json":   None,
+    }
+
+    agg = _lm_rest_cached(f"agg_snap:{symbol}", 10,
+                           lambda: _lm_build_true_aggregated_exchange_data(symbol))
+    if not agg:
+        return result
+
+    metrics         = agg.get("metrics", {})
+    result["sources_used"]    = list(agg.get("sources_used",    []))
+    result["sources_skipped"] = list(agg.get("sources_skipped", []))
+    status_notes: dict = {}
+    _enrichment = {
+        "analysis_source":          "aggregated",
+        "used_structured_metrics":  True,
+        "orderbook_metric_found":   False,
+        "delta_metric_found":       False,
+        "snapshot_delta_written":   False,
+        "snapshot_orderbook_written": False,
+    }
+
+    # ── Live / Mark Price ─────────────────────────────────────────────────────
+    lp_raw = metrics.get("live_price", {}).get("raw", {})
+    if lp_raw:
+        prices = [float(v) for v in lp_raw.values() if v]
+        if prices:
+            result["live_price"] = round(sum(prices) / len(prices), 4)
+    mp_raw = metrics.get("mark_price", {}).get("raw", {})
+    if mp_raw:
+        prices = [float(v) for v in mp_raw.values() if v]
+        if prices:
+            result["mark_price"] = round(sum(prices) / len(prices), 4)
+    mid_price = result["live_price"] or result["mark_price"]
+
+    # ── Order Book ────────────────────────────────────────────────────────────
+    ob_m      = metrics.get("order_book", {})
+    ob_status = ob_m.get("status", "unavailable")
+    if ob_status not in ("unavailable", "error"):
+        _enrichment["orderbook_metric_found"] = True
+        result["orderbook_status"] = ob_status
+        status_notes["orderbook"]  = ob_status
+        ob_raw = ob_m.get("raw", {})
+        bids   = ob_raw.get("bids", {})
+        asks   = ob_raw.get("asks", {})
+        if bids and asks:
+            tot_bid = sum(float(v) for v in bids.values())
+            tot_ask = sum(float(v) for v in asks.values())
+            if tot_bid + tot_ask > 0:
+                result["orderbook_imbalance"] = round(
+                    (tot_bid - tot_ask) / (tot_bid + tot_ask), 4)
+            if mid_price:
+                result.update(_lm_find_ob_walls(bids, asks, mid_price))
+        _enrichment["snapshot_orderbook_written"] = True
+
+    # ── Delta ─────────────────────────────────────────────────────────────────
+    d_m      = metrics.get("delta", {})
+    d_status = d_m.get("status", "unavailable")
+    if d_status not in ("unavailable",):
+        _enrichment["delta_metric_found"] = True
+        d_raw = d_m.get("raw", {})
+        if d_raw.get("delta_60s") is not None:
+            result["delta_status"]   = d_status
+            result["delta_net"]      = d_raw["delta_60s"]
+            result["delta_pct"]      = d_raw["delta_pct_60s"]
+            result["buy_volume"]     = d_raw["buy_vol_60s"]
+            result["sell_volume"]    = d_raw["sell_vol_60s"]
+            result["taker_pressure"] = _lm_classify_taker_pressure(d_raw.get("delta_pct_60s"))
+            status_notes["delta"]    = d_status
+            _enrichment["snapshot_delta_written"] = True
+
+    # ── Open Interest ─────────────────────────────────────────────────────────
+    oi_m = metrics.get("open_interest", {})
+    if oi_m.get("status") not in ("unavailable",):
+        oi_raw = oi_m.get("raw", {})
+        result["oi_status"]     = oi_m.get("status", "fresh")
+        result["open_interest"] = oi_raw.get("total_contracts")
+        status_notes["oi"]      = oi_m.get("status", "fresh")
+    oi_c_m = metrics.get("oi_change", {})
+    if oi_c_m.get("status") not in ("unavailable",):
+        result["oi_change_pct"] = oi_c_m.get("raw", {}).get("change_pct")
+
+    # ── Liquidations ──────────────────────────────────────────────────────────
+    liq_m = metrics.get("liquidations", {})
+    if liq_m.get("status") not in ("unavailable",):
+        liq_raw = liq_m.get("raw", {})
+        result["liquidation_status"] = liq_m.get("status", "partial")
+        result["long_liq_usd"]       = liq_raw.get("long_liq_usd_5m")
+        result["short_liq_usd"]      = liq_raw.get("short_liq_usd_5m")
+        if liq_raw.get("long_liq_usd_5m") is not None:
+            result["net_liq_usd"] = ((liq_raw.get("short_liq_usd_5m") or 0) -
+                                     (liq_raw.get("long_liq_usd_5m") or 0))
+        status_notes["liquidations"] = liq_m.get("status", "partial")
+
+    # ── Long/Short ────────────────────────────────────────────────────────────
+    ls_m = metrics.get("long_short", {})
+    if ls_m.get("status") not in ("unavailable",):
+        ls_raw = ls_m.get("raw", {})
+        result["long_short_status"] = ls_m.get("status", "interval")
+        result["long_short_ratio"]  = ls_raw.get("ls_ratio")
+        status_notes["long_short"]  = ls_m.get("status", "interval")
+
+    # ── Funding Rate ──────────────────────────────────────────────────────────
+    fr_m = metrics.get("funding_rate", {})
+    if fr_m.get("status") not in ("unavailable",):
+        fr_raw = fr_m.get("raw", {})
+        result["funding_status"] = fr_m.get("status", "fresh")
+        result["funding_rate"]   = fr_raw.get("rate")
+        status_notes["funding"]  = fr_m.get("status", "fresh")
+
+    # ── Overall status ────────────────────────────────────────────────────────
+    all_statuses = list(status_notes.values())
+    if not all_statuses or all(s in ("unavailable", "error") for s in all_statuses):
+        result["source_status"]      = "unavailable"
+        result["data_health_status"] = "unavailable"
+    elif any(s == "fresh" for s in all_statuses):
+        result["source_status"]      = "fresh"
+        result["data_health_status"] = "fresh"
+    elif any(s in ("partial", "stale", "fallback_fresh", "fallback_stale", "interval")
+             for s in all_statuses):
+        result["source_status"]      = "partial"
+        result["data_health_status"] = "partial"
+    else:
+        result["source_status"]      = "stale"
+        result["data_health_status"] = "stale"
+
+    result["raw_summary_json"] = _json_dumps_safe({
+        "status_notes":           status_notes,
+        "sources_used":           result["sources_used"],
+        "sources_skipped":        result["sources_skipped"],
+        "enrichment_debug":       _enrichment,
+    })
+    return result
+
+
 def _lm_build_orderflow_snapshot_direct(
         symbol: str, exchange: str, market: str, analysis_source: str) -> dict:
     """Build a compact order-flow snapshot from in-memory caches and REST fetchers.
@@ -16139,6 +16332,11 @@ def _lm_build_orderflow_snapshot_direct(
     Returns a flat dict suitable for storage in LiveMonitorOrderflowSnapshot.
     Missing metrics are marked missing/unavailable — never faked.
     """
+    # For aggregated, use the single structured call used by Data Health —
+    # this ensures snapshot values are identical to what Data Health reports.
+    if analysis_source == "aggregated":
+        return _lm_build_aggregated_snapshot_from_structured(symbol, exchange, market)
+
     now_ms = int(time.time() * 1000)
     result: dict = {
         "sample_time":     now_ms,
@@ -16784,9 +16982,13 @@ def _lm_align_orderflow_to_candles_for_tf(
         aligned_count = 0
         for candle in candle_rows:
             open_ms  = candle.open_time
-            close_ms = candle.close_time or (open_ms + _LM_TF_MS.get(timeframe, 3_600_000))
+            # close_time is stored as open + interval_ms - 1 (inclusive).
+            # Use close_ms + 1 so snapshots at exactly close_time are included;
+            # effectively the window is [open_ms, open_ms + interval_ms).
+            close_ms  = candle.close_time or (open_ms + _LM_TF_MS.get(timeframe, 3_600_000) - 1)
+            close_ms1 = close_ms + 1
             window   = [s for s in snap_dicts
-                        if open_ms <= s["sample_time"] < close_ms]
+                        if open_ms <= s["sample_time"] < close_ms1]
 
             feat_row = _LMCF9e_al.query.filter_by(
                 user_id=user_id, exchange=exchange, market=market,
@@ -22346,9 +22548,23 @@ def api_lm_bias_orderflow_debug(item_id):
                 "taker_pressure":      s.taker_pressure,
                 "orderbook_status":    s.orderbook_status,
                 "orderbook_imbalance": s.orderbook_imbalance,
+                "funding_rate":        s.funding_rate,
+                "open_interest":       s.open_interest,
             }
             for s in snap_rows
         ]
+
+    # Compact debug: confirms whether structured metrics were used for aggregated snapshots
+    _snap_enrich_debug: dict = {"analysis_source": analysis_source}
+    if inc_snaps and latest_snapshots and analysis_source == "aggregated":
+        _first = latest_snapshots[0]
+        _snap_enrich_debug.update({
+            "used_structured_metrics":    True,
+            "orderbook_metric_found":     _first.get("orderbook_status") not in (None, "unavailable"),
+            "delta_metric_found":         _first.get("delta_net") is not None,
+            "snapshot_delta_written":     _first.get("delta_net") is not None,
+            "snapshot_orderbook_written": _first.get("orderbook_status") not in (None, "unavailable"),
+        })
 
     of_status   = snap_raw.get("orderflow_alignment", {})
     _of_src     = (of_status.get("analysis_source") or "").lower()
@@ -22377,17 +22593,18 @@ def api_lm_bias_orderflow_debug(item_id):
             },
         }
     return jsonify({
-        "ok":                  True,
-        "item_id":             item_id,
-        "symbol":              symbol,
-        "analysis_source":     analysis_source,
-        "status":              of_status.get("status", "unknown"),
-        "context_only":        True,
-        "no_entry_candidate":  True,
-        "source_mismatch":     _src_mismatch,
-        "per_tf":              per_tf_debug,
-        "latest_snapshots":    latest_snapshots,
-        "orderflow_alignment": of_status,
+        "ok":                       True,
+        "item_id":                  item_id,
+        "symbol":                   symbol,
+        "analysis_source":          analysis_source,
+        "status":                   of_status.get("status", "unknown"),
+        "context_only":             True,
+        "no_entry_candidate":       True,
+        "source_mismatch":          _src_mismatch,
+        "per_tf":                   per_tf_debug,
+        "latest_snapshots":         latest_snapshots,
+        "snapshot_enrichment_debug": _snap_enrich_debug,
+        "orderflow_alignment":      of_status,
     })
 
 
