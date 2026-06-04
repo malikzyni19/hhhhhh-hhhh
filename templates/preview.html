@@ -690,7 +690,8 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
 .sc-tf{font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;background:var(--bg-card-2);color:var(--text-2);font-family:var(--mono);border:1px solid var(--border)}
 .sc-age{margin-left:auto;font-size:10.5px;color:var(--text-3);font-family:var(--mono)}
 .sc-age.live{color:var(--green-2)}
-.sc-dir{font-size:11.5px;font-weight:700;display:flex;align-items:center;gap:4px;margin-bottom:8px}
+.sc-dir{font-size:11.5px;font-weight:700;display:flex;align-items:center;gap:4px;margin-bottom:5px}
+.sc-price{font-size:11px;font-weight:700;font-family:var(--mono);color:var(--text-2);margin-bottom:6px;letter-spacing:.2px}
 .sc-dir.bull{color:var(--green-2)}.sc-dir.bear{color:var(--red-2)}
 .sc-health-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:3px}
 .sc-health-label{font-size:10px;color:var(--text-3);font-weight:600}
@@ -5917,6 +5918,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
           '<span class="sc-age'+(ago.indexOf("s ago")!==-1?" live":"")+'">'+(ago||"—")+'</span>'+
         '</div>'+
         '<div class="sc-dir '+(dirClass||"")+'">'+dirArrow+esc(setupLbl)+'</div>'+
+        '<div class="sc-price" data-lm-live-price-symbol="'+esc(item.symbol)+'" data-lm-item-id="'+item.id+'" data-lm-price-role="card">'+(item.current_price!=null?fmt(item.current_price):"—")+'</div>'+
         '<div class="sc-health-row"><span class="sc-health-label">Score</span><span class="sc-health-val" style="color:'+hColor+'">'+health+'%</span></div>'+
         '<div class="sc-health-bar"><div class="sc-health-fill '+hClass+'" style="width:'+health+'%"></div></div>'+
         '<div class="sc-bot"><span class="sc-status '+status+'">'+statusLbl+'</span>'+setupTag+'</div>'+
@@ -6014,7 +6016,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
             '</div>'+
           '</div>'+
           '<div class="lm-hero-price">'+
-            '<div class="px" id="lmLivePx">'+priceStr+'</div>'+
+            '<div class="px" id="lmLivePx" data-lm-live-price-symbol="'+esc(item.symbol)+'" data-lm-item-id="'+item.id+'" data-lm-price-role="header">'+priceStr+'</div>'+
             '<div class="px-sub" id="lmPxSub">'+esc(proxPct)+'</div>'+
             '<div style="font-size:8.5px;letter-spacing:.3px;margin-top:2px" id="lmPxStatus"></div>'+
           '</div>'+
@@ -6726,11 +6728,13 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     if(_lmInstructionView!=="instructions"){ _lmLoadEvents(item.id); }
     _lmSyncDataSrcSelector(item);
     if(item&&item.symbol){
+      var _dhSrc=_lmGetDataSrc();
+      console.log("[LM-LIVE] selected item "+item.symbol+" source="+_dhSrc);
       // Update DH section header label
       var _dhLbl=document.getElementById("lmDhItemLabel");
       if(_dhLbl) _dhLbl.textContent=esc(item.symbol)+(isBiasShift?" · Bias Shift Watch":"");
       // Immediate DH fetch + restart both timers for new item
-      _lmFetchDataHealth(item.symbol,_lmGetDataSrc());
+      _lmFetchDataHealth(item.symbol,_dhSrc);
       _lmStartDhPolling();
     }
   }
@@ -7125,7 +7129,8 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     }).then(function(r){return r.json().catch(function(){return null;});})
     .then(function(d){
       if(d&&d.ok&&Array.isArray(d.rows)){
-        if(d.build_commit) console.log("[LM-DH] build_commit="+d.build_commit+" rows="+d.rows.length);
+        console.log("[LM-DH] rendered rows count="+d.rows.length+" symbol="+symbol+" exchange="+exchange);
+        if(d.build_commit) console.log("[LM-DH] build_commit="+d.build_commit);
         var meta={sources_used:d.sources_used,sources_skipped:d.sources_skipped};
         _lmRenderDataHealth(d.rows,meta);
         _lmUpdateLivePriceFromRows(d.rows,exchange);
@@ -7250,16 +7255,26 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
   }
   function _lmUpdateLivePriceFromRows(rows, source){
     if(!Array.isArray(rows)) return;
+    var _liveVal=null, _markVal=null;
     for(var _lpi=0;_lpi<rows.length;_lpi++){
       var _lpr=rows[_lpi], _lpm=(_lpr.metric||"").toLowerCase();
-      if(_lpm==="live price"||_lpm==="last price"||_lpm==="price"){
-        var _lpEl=document.getElementById("lmLivePx");
-        if(_lpEl&&_lpr.value&&_lpr.value!=="—"&&_lpr.value!=="null") _lpEl.textContent=_lpr.value;
+      if(!_liveVal&&(_lpm==="live price"||_lpm==="last price"||_lpm==="price")){
+        if(_lpr.value&&_lpr.value!=="—"&&_lpr.value!=="null") _liveVal=_lpr.value;
       }
-      if(_lpm==="mark price"){
-        var _mpEl=document.getElementById("lmMarkPx");
-        if(_mpEl&&_lpr.value&&_lpr.value!=="—") _mpEl.textContent=_lpr.value;
+      if(!_markVal&&_lpm==="mark price"){
+        if(_lpr.value&&_lpr.value!=="—") _markVal=_lpr.value;
       }
+    }
+    var _sym=_lmSelItem?_lmSelItem.symbol:null;
+    if(_liveVal&&_sym){
+      console.log("[LM-LIVE] price update "+_sym+" live="+_liveVal+(_markVal?" mark="+_markVal:""));
+      // Update ALL elements tagged for this symbol (card + header)
+      var _pEls=document.querySelectorAll('[data-lm-live-price-symbol="'+_sym+'"]');
+      [].forEach.call(_pEls,function(el){ el.textContent=_liveVal; });
+    }
+    if(_markVal){
+      var _mpEl=document.getElementById("lmMarkPx");
+      if(_mpEl) _mpEl.textContent=_markVal;
     }
     var _stEl=document.getElementById("lmPxStatus");
     if(_stEl){
@@ -7272,12 +7287,17 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
   function _lmStartDhPolling(){
     if(_lmDhTimer) clearInterval(_lmDhTimer);
     if(_lmPriceTimer) clearInterval(_lmPriceTimer);
-    // Full Data Health table refresh: every 8 seconds
+    // Safety-net immediate DH fetch (in case caller did not already fetch)
+    if(_lmSelItem&&_lmSelItem.symbol&&location.protocol!=="file:"){
+      var _imEx=_lmGetDataSrc();
+      if(_imEx) _lmFetchDataHealth(_lmSelItem.symbol,_imEx);
+    }
+    // Full Data Health table refresh: every 5 seconds
     _lmDhTimer=setInterval(function(){
       if(!_lmSelItem) return;
       var ex=_lmGetDataSrc();
       _lmFetchDataHealth(_lmSelItem.symbol,ex);
-    },8000);
+    },5000);
     // Live price update only: every 1.5 seconds (no full table re-render)
     _lmPriceTimer=setInterval(function(){
       if(!_lmSelItem||location.protocol==="file:") return;
