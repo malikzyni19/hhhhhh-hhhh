@@ -675,8 +675,8 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
 .lm-manual-msg{font-size:11.5px;margin-top:6px;min-height:14px;color:var(--text-3)}
 .lm-manual-msg.ok{color:var(--green-2,#22d3ee)}
 .lm-manual-msg.err{color:var(--red-2,#ef4444)}
-.lm-body{display:grid;grid-template-columns:290px 1fr;grid-template-rows:1fr auto;flex:1;min-height:0;overflow:hidden;height:0}
-#lmDhWrap{grid-column:1/-1;border-top:1px solid var(--border);background:var(--bg-panel);flex-shrink:0}
+.lm-body{display:grid;grid-template-columns:290px 1fr;flex:1;min-height:0;overflow:hidden;height:0}
+#lmDhWrap{margin-top:12px}
 .lm-left{border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0;background:var(--bg-panel)}
 .lm-left-head{display:flex;align-items:center;justify-content:space-between;padding:10px 12px 8px;border-bottom:1px solid var(--border);flex-shrink:0}
 .lm-left-head span{font-size:10px;font-weight:700;letter-spacing:1px;color:var(--text-3)}
@@ -4642,22 +4642,6 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
             '</div>'+
           '</div>'+
           '<div class="lm-right"><div class="lm-right-scroll" id="lmRight"></div></div>'+
-          '<div id="lmDhWrap">'+
-            '<div class="sec-card-head" id="lmDhHead" style="cursor:pointer;border-radius:0;border:none;background:transparent;border-bottom:1px solid var(--border)" onclick="_lmToggleDh()">'+
-              '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>'+
-              '<span class="sch-title">DATA HEALTH</span>'+
-              '<span id="lmDhItemLabel" style="font-size:9px;color:var(--accent);margin-left:8px"></span>'+
-              '<span style="font-size:9px;color:var(--text-3);margin-left:auto" id="lmDhCtl">▾ collapse</span>'+
-            '</div>'+
-            '<div id="lmDhBody" style="overflow-x:auto;overflow-y:auto;max-height:240px">'+
-              '<table class="lm-dh-tbl" style="width:100%;min-width:580px">'+
-                '<thead><tr><th>Metric</th><th>Value</th><th>Source</th><th>Status</th><th>Updated</th><th>Notes</th></tr></thead>'+
-                '<tbody id="lmDhRows">'+
-                  '<tr><td colspan="6" style="color:var(--text-3);font-size:10px;padding:10px">Select a setup to view Data Health.</td></tr>'+
-                '</tbody>'+
-              '</table>'+
-            '</div>'+
-          '</div>'+
         '</div>'+
       '</div>';
     // Filter chips
@@ -4702,8 +4686,9 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
               if(liveMonitorItems[k].id===d.item.id){liveMonitorItems[k]=d.item;break;}
             }
             if(_lmSelItem&&_lmSelItem.id===d.item.id){ _lmSelItem=d.item; }
-            // Refresh Data Health with new source
+            // Refresh Data Health + restart live polling with new source
             _lmFetchDataHealth(_lmSelItem.symbol, newSrc);
+            _lmStartDhPolling();
             // Reload Event Timeline if visible
             if(_lmInstructionView==="events"){ _lmLoadEvents(_lmSelItem.id); }
             // Reload chat if a source-change chat message was posted
@@ -5958,11 +5943,6 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         '<svg style="width:32px;height:32px;opacity:.2;stroke:currentColor;stroke-width:1.5;fill:none" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>'+
         '<div style="font-size:14px;font-weight:700;color:var(--text-2)">Select a setup</div>'+
         '<div style="font-size:12px">Click a card on the left to view details</div></div>';
-      // Reset DH section when no item selected
-      var _dhR=document.getElementById("lmDhRows");
-      if(_dhR) _dhR.innerHTML='<tr><td colspan="6" style="color:var(--text-3);font-size:10px;padding:10px">Select a setup to view Data Health.</td></tr>';
-      var _dhL=document.getElementById("lmDhItemLabel");
-      if(_dhL) _dhL.textContent="";
       return;
     }
     // Manage auto-detect timer: start/restart when item changes, keep running if same item
@@ -6267,6 +6247,24 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
               return '<div style="color:var(--text-3);font-size:11px">Loading events…</div>';
             })()+
           '</div>'+
+        '</div>'+
+      '</div>'+
+
+      '<div id="lmDhWrap" class="sec-card">'+
+        '<div class="sec-card-head" style="cursor:pointer" onclick="_lmToggleDh()">'+
+          '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>'+
+          '<span class="sch-title">DATA HEALTH</span>'+
+          '<span id="lmDhItemLabel" style="font-size:9px;color:var(--accent);margin-left:8px">'+esc(item.symbol)+(isBiasShift?" · Bias Shift Watch":"")+'</span>'+
+          '<span id="lmDhSrcLabel" style="font-size:9px;color:var(--text-3);margin-left:6px"></span>'+
+          '<span style="font-size:9px;color:var(--text-3);margin-left:auto" id="lmDhCtl">▾ collapse</span>'+
+        '</div>'+
+        '<div id="lmDhBody" style="overflow-x:auto;overflow-y:auto;max-height:280px">'+
+          '<table class="lm-dh-tbl" style="width:100%;min-width:600px">'+
+            '<thead><tr><th>Metric</th><th>Value</th><th>Source</th><th>Status</th><th>Updated</th><th>Notes</th></tr></thead>'+
+            '<tbody id="lmDhRows">'+
+              '<tr><td colspan="6" style="color:var(--text-3);font-size:10px;padding:10px">Loading Data Health…</td></tr>'+
+            '</tbody>'+
+          '</table>'+
         '</div>'+
       '</div>';
 
@@ -6730,10 +6728,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     if(item&&item.symbol){
       var _dhSrc=_lmGetDataSrc();
       console.log("[LM-LIVE] selected item "+item.symbol+" source="+_dhSrc);
-      // Update DH section header label
-      var _dhLbl=document.getElementById("lmDhItemLabel");
-      if(_dhLbl) _dhLbl.textContent=esc(item.symbol)+(isBiasShift?" · Bias Shift Watch":"");
-      // Immediate DH fetch + restart both timers for new item
+      // DH section is now inside #lmRight — fetch immediately + start polling
       _lmFetchDataHealth(item.symbol,_dhSrc);
       _lmStartDhPolling();
     }
@@ -7129,11 +7124,20 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     }).then(function(r){return r.json().catch(function(){return null;});})
     .then(function(d){
       if(d&&d.ok&&Array.isArray(d.rows)){
-        console.log("[LM-DH] rendered rows count="+d.rows.length+" symbol="+symbol+" exchange="+exchange);
+        console.log("[LM-DH] rendered rows count="+d.rows.length+" symbol="+symbol+" exchange="+exchange+(d.price_source_exchange&&d.price_source_exchange!==exchange?" price_from="+d.price_source_exchange:""));
         if(d.build_commit) console.log("[LM-DH] build_commit="+d.build_commit);
         var meta={sources_used:d.sources_used,sources_skipped:d.sources_skipped};
         _lmRenderDataHealth(d.rows,meta);
-        _lmUpdateLivePriceFromRows(d.rows,exchange);
+        _lmUpdateLivePriceFromRows(d.rows,d.price_source_exchange||exchange);
+        // Show split-source contract label
+        var _srcLbl=document.getElementById("lmDhSrcLabel");
+        if(_srcLbl){
+          var _pe=(d.price_source_exchange||exchange||"");
+          var _as=(d.market_context_source||exchange||"");
+          var _peT=_pe.charAt(0).toUpperCase()+_pe.slice(1);
+          var _asT=_as.charAt(0).toUpperCase()+_as.slice(1);
+          _srcLbl.textContent=(_pe.toLowerCase()!==_as.toLowerCase())?"· Price: "+_peT+" | Analysis: "+_asT:"";
+        }
       } else {
         var _wrap=document.getElementById("lmDhRows")||document.getElementById("lmDhBody");
         if(_wrap){

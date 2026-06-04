@@ -25688,10 +25688,72 @@ def api_lm_trade_post_trade_review(trade_uid):
 
 # ── Phase 10.3: Data Health endpoint (full market data pack) ─────────────────
 
+def _lm_inject_parent_price_rows(symbol: str, parent_exchange: str,
+                                  analysis_source: str, rows: list) -> list:
+    """Replace Live Price / Mark Price rows with parent setup exchange data.
+
+    Split-source contract: price rows always come from parent_setup_exchange,
+    market context rows come from selected analysis_source.
+    Never changes parent zone values. No trading. No order placement.
+    """
+    ws_enabled = os.environ.get("ZYNI_LM_WS_ENABLED") == "1"
+    lp_row = mp_row = None
+    _note = f"Parent setup: {parent_exchange.title()} | Analysis: {analysis_source.title()}"
+
+    if parent_exchange == "binance":
+        ws_e, ws_s = _lm_ws_get("binance", symbol)
+        if ws_e:
+            lp_row = {
+                "metric": "Live Price", "value": f"{ws_e['live_price']:.4f}",
+                "source": "binance (parent setup)", "status": ws_s,
+                "updated": f"{ws_e['data_age_sec']}s ago", "notes": _note,
+            }
+            if ws_e.get("mark_price") is not None:
+                mp_row = {
+                    "metric": "Mark Price", "value": f"{ws_e['mark_price']:.4f}",
+                    "source": "binance (parent setup)", "status": ws_s,
+                    "updated": f"{ws_e['data_age_sec']}s ago", "notes": _note,
+                }
+        elif ws_enabled:
+            _rest_m = _lm_rest_cached(f"mark:{symbol}", 10,
+                                      lambda: _lm_fetch_mark_price_rest(symbol))
+            if _rest_m and _rest_m.get("mark_price"):
+                _rv = f"{_rest_m['mark_price']:.4f}"
+                lp_row = {"metric": "Live Price", "value": _rv,
+                          "source": "binance-rest (parent setup)", "status": "fresh",
+                          "updated": "REST ~10s TTL", "notes": _note + " (REST fallback)"}
+                mp_row = {"metric": "Mark Price", "value": _rv,
+                          "source": "binance-rest (parent setup)", "status": "fresh",
+                          "updated": "REST ~10s TTL", "notes": _note + " (REST fallback)"}
+
+    if not lp_row and not mp_row:
+        # No override data — annotate existing rows with source note
+        for _r in rows:
+            _m = (_r.get("metric") or "").lower()
+            if _m in ("live price", "mark price"):
+                _r = dict(_r)
+                _r["notes"] = ((_r.get("notes") or "") + f" | {_note}").strip(" |")
+        return rows
+
+    new_rows = []
+    for _r in rows:
+        _m = (_r.get("metric") or "").lower()
+        if _m == "live price" and lp_row:
+            new_rows.append(lp_row)
+        elif _m == "mark price" and mp_row:
+            new_rows.append(mp_row)
+        else:
+            new_rows.append(_r)
+    return new_rows
+
+
 @app.route("/api/live-monitor/data-health", methods=["GET"])
 @login_required
 def api_lm_data_health():
-    """Return 11-row Data Health snapshot. Read-only. Phase 10.4 refactored."""
+    """Return 11-row Data Health snapshot. Read-only. Phase 10.4 refactored.
+    Split-source contract: Live/Mark Price from parent_setup_exchange,
+    market context (OB/Delta/OI/Funding/etc.) from selected analysis_source.
+    """
     uid, _ = _current_user_id_and_user()
     if not uid:
         return jsonify({"error": "no_user"}), 401
@@ -25702,35 +25764,53 @@ def api_lm_data_health():
     if not symbol:
         return jsonify({"error": "symbol_required"}), 400
 
-    # Start WS threads + OB stream (side effects — not in helper)
-    ws_enabled = os.environ.get("ZYNI_LM_WS_ENABLED") == "1"
-    if ws_enabled and exchange == "binance":
-        _lm_ws_ensure_adhoc(symbol)   # register symbol even without a DB LM item
-        _ensure_lm_ws_thread()
-        _ensure_lm_liq_thread()
-        _ensure_lm_delta_thread()
-        ensure_ob_stream(symbol, wait_sec=3.0)
-        # Log subscription state for every data-health request
-        _ws_has  = f"binance:{symbol}" in _lm_ws_cache
-        _liq_has = f"binance:{symbol}" in _lm_liq_cache
-        _dlt_has = f"binance:{symbol}" in _lm_delta_cache
-        _ob_has  = bool((_ob_books.get(symbol) or {}).get("ready"))
-        print(f"[LM-WS] ensure {symbol}/binance subscriptions: "
-              f"price={_ws_has} liq={_liq_has} delta={_dlt_has} ob={_ob_has} "
-              f"adhoc={sorted(_lm_ws_adhoc_syms)} build={_BUILD_COMMIT}")
-
-    # Load snapshot (needed for rows 10+11)
+    # Load snapshot + resolve parent setup exchange
     snap = {}
+    parent_exchange = exchange  # default same as analysis source
     try:
         from models import LiveMonitorItem as _LMIDH
         _lm_snap_row = _LMIDH.query.filter_by(
             symbol=symbol, is_active=True, user_id=uid).first()
         if _lm_snap_row:
             snap = _json_loads_safe(_lm_snap_row.snapshot_json, {})
+            parent_exchange = _lm_normalize_exchange(
+                getattr(_lm_snap_row, "exchange", None)
+            ) or exchange
     except Exception as e:
         print(f"[LM-DH] snapshot error: {e}")
 
+    # Start WS for parent exchange (needed for price rows regardless of analysis source)
+    ws_enabled = os.environ.get("ZYNI_LM_WS_ENABLED") == "1"
+    if ws_enabled and parent_exchange == "binance":
+        _lm_ws_ensure_adhoc(symbol)
+        _ensure_lm_ws_thread()
+        _ensure_lm_liq_thread()
+        _ensure_lm_delta_thread()
+        _ob_wait = 3.0 if exchange == "binance" else 0.5
+        ensure_ob_stream(symbol, wait_sec=_ob_wait)
+        _ws_has  = f"binance:{symbol}" in _lm_ws_cache
+        _liq_has = f"binance:{symbol}" in _lm_liq_cache
+        _dlt_has = f"binance:{symbol}" in _lm_delta_cache
+        _ob_has  = bool((_ob_books.get(symbol) or {}).get("ready"))
+        print(f"[LM-WS] ensure {symbol}/{parent_exchange} subscriptions "
+              f"(analysis={exchange}): "
+              f"price={_ws_has} liq={_liq_has} delta={_dlt_has} ob={_ob_has} "
+              f"adhoc={sorted(_lm_ws_adhoc_syms)} build={_BUILD_COMMIT}")
+
     ctx = _lm_build_data_health_context(symbol, exchange, snap=snap, user_id=uid)
+
+    # Split-source: override price rows with parent exchange data when sources differ
+    if parent_exchange and parent_exchange != exchange:
+        ctx["rows"] = _lm_inject_parent_price_rows(
+            symbol, parent_exchange, exchange, list(ctx.get("rows", []))
+        )
+
+    # Add source contract metadata
+    ctx["parent_setup_exchange"] = parent_exchange
+    ctx["analysis_source"]       = exchange
+    ctx["price_source_exchange"] = parent_exchange
+    ctx["market_context_source"] = exchange
+
     return jsonify({"ok": True, "build_commit": _BUILD_COMMIT, **ctx})
 
 
