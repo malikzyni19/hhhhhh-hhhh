@@ -25814,6 +25814,63 @@ def api_lm_data_health():
     return jsonify({"ok": True, "build_commit": _BUILD_COMMIT, **ctx})
 
 
+@app.route("/api/live-monitor/price", methods=["GET"])
+@login_required
+def api_lm_price():
+    """Lightweight live-price endpoint — WS cache only, no DB, no heavy computation.
+    Used by the 1-second UI price timer. Pass exchange=parent_setup_exchange for
+    correct split-source price. Responds in < 100ms.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    symbol   = (request.args.get("symbol")   or "").upper().strip()
+    exchange = (request.args.get("exchange") or "binance").lower().strip()
+
+    if not symbol:
+        return jsonify({"error": "symbol_required"}), 400
+
+    # Fast path: Binance WS cache (in-memory, < 1ms)
+    if exchange == "binance":
+        ws_e, ws_s = _lm_ws_get("binance", symbol)
+        if ws_e and ws_e.get("live_price"):
+            mp = ws_e.get("mark_price")
+            return jsonify({
+                "ok":         True,
+                "symbol":     symbol,
+                "exchange":   "binance",
+                "live_price": f"{ws_e['live_price']:.4f}",
+                "mark_price": f"{mp:.4f}" if mp is not None else None,
+                "status":     ws_s,
+                "age_sec":    ws_e.get("data_age_sec", 0),
+                "source":     "binance_ws",
+            })
+
+    # Fallback: REST mark-price cache (TTL=10s, fast)
+    rest_m = _lm_rest_cached(
+        f"mark:{symbol}", 10, lambda: _lm_fetch_mark_price_rest(symbol)
+    )
+    if rest_m and rest_m.get("mark_price"):
+        rv = f"{rest_m['mark_price']:.4f}"
+        return jsonify({
+            "ok":         True,
+            "symbol":     symbol,
+            "exchange":   exchange,
+            "live_price": rv,
+            "mark_price": rv,
+            "status":     "fresh",
+            "age_sec":    0,
+            "source":     f"{exchange}_rest",
+        })
+
+    return jsonify({
+        "ok": True, "symbol": symbol, "exchange": exchange,
+        "live_price": None, "mark_price": None,
+        "status": "unavailable", "source": "none",
+    })
+
+
 @app.route("/api/live-monitor/ws-debug", methods=["GET"])
 @login_required
 def api_lm_ws_debug():
