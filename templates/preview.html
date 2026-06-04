@@ -675,7 +675,8 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
 .lm-manual-msg{font-size:11.5px;margin-top:6px;min-height:14px;color:var(--text-3)}
 .lm-manual-msg.ok{color:var(--green-2,#22d3ee)}
 .lm-manual-msg.err{color:var(--red-2,#ef4444)}
-.lm-body{display:grid;grid-template-columns:290px 1fr;flex:1;min-height:0;overflow:hidden;height:0}
+.lm-body{display:grid;grid-template-columns:290px 1fr;grid-template-rows:1fr auto;flex:1;min-height:0;overflow:hidden;height:0}
+#lmDhWrap{grid-column:1/-1;border-top:1px solid var(--border);background:var(--bg-panel);flex-shrink:0}
 .lm-left{border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0;background:var(--bg-panel)}
 .lm-left-head{display:flex;align-items:center;justify-content:space-between;padding:10px 12px 8px;border-bottom:1px solid var(--border);flex-shrink:0}
 .lm-left-head span{font-size:10px;font-weight:700;letter-spacing:1px;color:var(--text-3)}
@@ -4450,7 +4451,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
   var _lmPollT=null, _lmCache={}, _lmSelItem=null, _lmActiveFilter="all";
   var _lmTfState=["15m","30m","1h","4h","1d"], _lmModuleState=["OB","FVG","FIB","Bias"];
   var _lmRefreshState="manual", _lmAiPreview=true;
-  var _lmDhTimer=null;
+  var _lmDhTimer=null, _lmPriceTimer=null;
   var _lmObDaDefaults = {
     "5m":  {distance_pct:0.50, approach_pct:0.15},
     "15m": {distance_pct:0.80, approach_pct:0.25},
@@ -4640,6 +4641,22 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
             '</div>'+
           '</div>'+
           '<div class="lm-right"><div class="lm-right-scroll" id="lmRight"></div></div>'+
+          '<div id="lmDhWrap">'+
+            '<div class="sec-card-head" id="lmDhHead" style="cursor:pointer;border-radius:0;border:none;background:transparent;border-bottom:1px solid var(--border)" onclick="_lmToggleDh()">'+
+              '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>'+
+              '<span class="sch-title">DATA HEALTH</span>'+
+              '<span id="lmDhItemLabel" style="font-size:9px;color:var(--accent);margin-left:8px"></span>'+
+              '<span style="font-size:9px;color:var(--text-3);margin-left:auto" id="lmDhCtl">▾ collapse</span>'+
+            '</div>'+
+            '<div id="lmDhBody" style="overflow-x:auto;overflow-y:auto;max-height:240px">'+
+              '<table class="lm-dh-tbl" style="width:100%;min-width:580px">'+
+                '<thead><tr><th>Metric</th><th>Value</th><th>Source</th><th>Status</th><th>Updated</th><th>Notes</th></tr></thead>'+
+                '<tbody id="lmDhRows">'+
+                  '<tr><td colspan="6" style="color:var(--text-3);font-size:10px;padding:10px">Select a setup to view Data Health.</td></tr>'+
+                '</tbody>'+
+              '</table>'+
+            '</div>'+
+          '</div>'+
         '</div>'+
       '</div>';
     // Filter chips
@@ -5939,6 +5956,11 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         '<svg style="width:32px;height:32px;opacity:.2;stroke:currentColor;stroke-width:1.5;fill:none" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>'+
         '<div style="font-size:14px;font-weight:700;color:var(--text-2)">Select a setup</div>'+
         '<div style="font-size:12px">Click a card on the left to view details</div></div>';
+      // Reset DH section when no item selected
+      var _dhR=document.getElementById("lmDhRows");
+      if(_dhR) _dhR.innerHTML='<tr><td colspan="6" style="color:var(--text-3);font-size:10px;padding:10px">Select a setup to view Data Health.</td></tr>';
+      var _dhL=document.getElementById("lmDhItemLabel");
+      if(_dhL) _dhL.textContent="";
       return;
     }
     // Manage auto-detect timer: start/restart when item changes, keep running if same item
@@ -5992,8 +6014,9 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
             '</div>'+
           '</div>'+
           '<div class="lm-hero-price">'+
-            '<div class="px">'+priceStr+'</div>'+
-            '<div class="px-sub">'+esc(proxPct)+'</div>'+
+            '<div class="px" id="lmLivePx">'+priceStr+'</div>'+
+            '<div class="px-sub" id="lmPxSub">'+esc(proxPct)+'</div>'+
+            '<div style="font-size:8.5px;letter-spacing:.3px;margin-top:2px" id="lmPxStatus"></div>'+
           '</div>'+
         '</div>'+
         '<div class="hero-inner">'+
@@ -6243,31 +6266,9 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
             })()+
           '</div>'+
         '</div>'+
-      '</div>'+
-
-      '<div class="sec-card" style="margin-top:0" id="lmDhCard">'+
-        '<div class="sec-card-head" id="lmDhHead" style="cursor:pointer" onclick="_lmToggleDh()">'+
-          '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>'+
-          '<span class="sch-title">DATA HEALTH</span>'+
-          (isBiasShift?'<span style="font-size:9px;color:var(--yellow-2,#f59e0b);margin-left:6px">Bias Shift Watch</span>':'')+
-          '<span style="font-size:9px;color:var(--text-3)" id="lmDhCtl">▾ collapse</span>'+
-        '</div>'+
-        (isBiasShift?'<div style="padding:5px 10px;font-size:9.5px;color:var(--text-3);border-bottom:1px solid var(--border)">Data Health shows live price feeds. OB/FVG zone proximity metrics are not applicable for Bias Shift Watch items.</div>':'')+
-        '<div id="lmDhBody" style="overflow-x:auto;overflow-y:auto;max-height:320px">'+
-          '<table class="lm-dh-tbl" style="width:100%;min-width:580px">'+
-            '<thead><tr><th>Metric</th><th>Value</th><th>Source</th><th>Status</th><th>Updated</th><th>Notes</th></tr></thead>'+
-            '<tbody id="lmDhRows">'+
-              '<tr><td colspan="6" style="color:var(--text-3);font-size:10px;padding:10px">Select a setup to view data health.</td></tr>'+
-            '</tbody>'+
-          '</table>'+
-        '</div>'+
       '</div>';
 
     box.innerHTML=html;
-    (function(){
-      var _c=document.getElementById("lmDhCard"),_r=document.getElementById("lmDhRows");
-      console.log("[LM-DH] right panel rendered for "+(item?item.symbol:"null")+" lmDhCard="+(!!_c)+" lmDhRows="+(!!_r));
-    })();
 
     [].forEach.call(box.querySelectorAll("[data-chart]"),function(btn){
       btn.addEventListener("click",function(){
@@ -6724,7 +6725,14 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     _lmBindChat(item);
     if(_lmInstructionView!=="instructions"){ _lmLoadEvents(item.id); }
     _lmSyncDataSrcSelector(item);
-    if(item&&item.symbol){ _lmFetchDataHealth(item.symbol,_lmGetDataSrc()); }
+    if(item&&item.symbol){
+      // Update DH section header label
+      var _dhLbl=document.getElementById("lmDhItemLabel");
+      if(_dhLbl) _dhLbl.textContent=esc(item.symbol)+(isBiasShift?" · Bias Shift Watch":"");
+      // Immediate DH fetch + restart both timers for new item
+      _lmFetchDataHealth(item.symbol,_lmGetDataSrc());
+      _lmStartDhPolling();
+    }
   }
 
   function _lmMtfMatrix(item){
@@ -7098,6 +7106,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
   function stopLiveMonitorPolling(){
     if(_lmPollT){ clearInterval(_lmPollT); _lmPollT=null; }
     if(_lmDhTimer){ clearInterval(_lmDhTimer); _lmDhTimer=null; }
+    if(_lmPriceTimer){ clearInterval(_lmPriceTimer); _lmPriceTimer=null; }
     var s=document.querySelector(".main-scroll"); if(s) s.classList.remove("lm-active");
   }
 
@@ -7119,6 +7128,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         if(d.build_commit) console.log("[LM-DH] build_commit="+d.build_commit+" rows="+d.rows.length);
         var meta={sources_used:d.sources_used,sources_skipped:d.sources_skipped};
         _lmRenderDataHealth(d.rows,meta);
+        _lmUpdateLivePriceFromRows(d.rows,exchange);
       } else {
         var _wrap=document.getElementById("lmDhRows")||document.getElementById("lmDhBody");
         if(_wrap){
@@ -7238,14 +7248,46 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     b.style.display=isHidden?"":"none";
     if(ctl) ctl.textContent=isHidden?"▾ collapse":"▸ expand";
   }
+  function _lmUpdateLivePriceFromRows(rows, source){
+    if(!Array.isArray(rows)) return;
+    for(var _lpi=0;_lpi<rows.length;_lpi++){
+      var _lpr=rows[_lpi], _lpm=(_lpr.metric||"").toLowerCase();
+      if(_lpm==="live price"||_lpm==="last price"||_lpm==="price"){
+        var _lpEl=document.getElementById("lmLivePx");
+        if(_lpEl&&_lpr.value&&_lpr.value!=="—"&&_lpr.value!=="null") _lpEl.textContent=_lpr.value;
+      }
+      if(_lpm==="mark price"){
+        var _mpEl=document.getElementById("lmMarkPx");
+        if(_mpEl&&_lpr.value&&_lpr.value!=="—") _mpEl.textContent=_lpr.value;
+      }
+    }
+    var _stEl=document.getElementById("lmPxStatus");
+    if(_stEl){
+      var _src=(source||_lmGetDataSrc()||"");
+      _src=_src.charAt(0).toUpperCase()+_src.slice(1);
+      _stEl.innerHTML='<span style="color:var(--green-2)">●</span> LIVE · '+esc(_src);
+      _stEl.title="Updated "+new Date().toLocaleTimeString();
+    }
+  }
   function _lmStartDhPolling(){
     if(_lmDhTimer) clearInterval(_lmDhTimer);
+    if(_lmPriceTimer) clearInterval(_lmPriceTimer);
+    // Full Data Health table refresh: every 8 seconds
     _lmDhTimer=setInterval(function(){
-      if(_lmSelItem){
-        var ex=_lmGetDataSrc();
-        _lmFetchDataHealth(_lmSelItem.symbol,ex);
-      }
-    },2000);
+      if(!_lmSelItem) return;
+      var ex=_lmGetDataSrc();
+      _lmFetchDataHealth(_lmSelItem.symbol,ex);
+    },8000);
+    // Live price update only: every 1.5 seconds (no full table re-render)
+    _lmPriceTimer=setInterval(function(){
+      if(!_lmSelItem||location.protocol==="file:") return;
+      var sym=_lmSelItem.symbol, ex=_lmGetDataSrc();
+      if(!sym||!ex) return;
+      fetch("/api/live-monitor/data-health?symbol="+encodeURIComponent(sym)+"&exchange="+encodeURIComponent(ex),{credentials:"same-origin"})
+        .then(function(r){return r.json().catch(function(){return null;});})
+        .then(function(d){if(d&&d.ok&&Array.isArray(d.rows)) _lmUpdateLivePriceFromRows(d.rows,ex);})
+        .catch(function(){});
+    },1500);
   }
 
   /* ── Dashboard (Wave 8) ── */
