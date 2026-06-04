@@ -22647,6 +22647,7 @@ def api_lm_bias_orderflow_debug(item_id):
 
     # ── force_refresh: build+store one snapshot NOW, run alignment ────────────
     _force_refresh_result: dict = {}
+    _fr_of_status: dict = {}
     if force_refresh:
         try:
             _fr_snap = _lm_build_orderflow_snapshot_direct(
@@ -22666,6 +22667,11 @@ def api_lm_bias_orderflow_debug(item_id):
                 _fr_align_results[_fr_tf] = _lm_align_orderflow_to_candles_for_tf(
                     uid, exchange, market, symbol, _fr_tf, analysis_source
                 )
+            # Rebuild and persist orderflow_alignment so both sections agree
+            _fr_of_status = _lm_build_orderflow_alignment_status(
+                uid, exchange, market, symbol, analysis_source, _fr_align_results
+            )
+            _lm_save_orderflow_alignment_status(uid, item_id, _fr_of_status)
             _force_refresh_result = {
                 "done":          True,
                 "stored":        _fr_stored,
@@ -22785,6 +22791,9 @@ def api_lm_bias_orderflow_debug(item_id):
         })
 
     of_status   = snap_raw.get("orderflow_alignment", {})
+    # After force_refresh, use the freshly rebuilt alignment status, not the stale snap_raw value
+    if force_refresh and _fr_of_status:
+        of_status = _fr_of_status
     _of_src     = (of_status.get("analysis_source") or "").lower()
     _src_mismatch = bool(_of_src and _of_src != analysis_source)
     if _src_mismatch:
