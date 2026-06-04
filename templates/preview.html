@@ -5947,18 +5947,6 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       for(var k=0;k<items.length;k++){if(items[k].id===_lmSelItem.id){selIdx=k;break;}}
       var cards=box.querySelectorAll(".setup-card");
       if(selIdx>=0&&cards[selIdx]) cards[selIdx].classList.add("active");
-      // Re-render right panel if it was wiped by a fresh renderLiveMonitorInto (empty scroll div)
-      var _rightScroll=document.getElementById("lmRight");
-      if(_rightScroll&&!_rightScroll.firstChild){
-        _lmRenderRight(_lmSelItem);
-      } else if(_rightScroll){
-        // Right panel has content but DH may have been reset — ensure DH is current
-        var _dhRowsEl=document.getElementById("lmDhRows");
-        var _dhTd=_dhRowsEl&&_dhRowsEl.querySelector("td[colspan='6']");
-        if(_dhTd&&_dhTd.textContent.indexOf("Select a setup")!==-1){
-          _lmFetchDataHealth(_lmSelItem.symbol,_lmGetDataSrc());
-        }
-      }
     }
   }
 
