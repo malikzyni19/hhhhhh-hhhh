@@ -861,7 +861,10 @@ def _raw_ws_connect(host: str, path: str) -> socket.socket:
 
 
 def _ws_recv_frame(sock: socket.socket) -> Optional[bytes]:
-    """Read one WebSocket frame."""
+    """Read one WebSocket frame.
+    Raises socket.timeout on idle so callers can continue without reconnecting.
+    Returns None only on genuine close/error.
+    """
     try:
         # Read first 2 bytes
         header = b""
@@ -879,8 +882,11 @@ def _ws_recv_frame(sock: socket.socket) -> Optional[bytes]:
         if opcode == 8:  # Close frame
             return None
         if opcode == 9:  # Ping — send pong
-            pong = bytes([0x8A, 0x00])
-            sock.sendall(pong)
+            try:
+                pong = bytes([0x8A, 0x00])
+                sock.sendall(pong)
+            except Exception:
+                pass  # pong send failure is non-fatal; keep reading
             return b""
 
         if payload_len == 126:
@@ -902,6 +908,8 @@ def _ws_recv_frame(sock: socket.socket) -> Optional[bytes]:
             data += chunk
 
         return data
+    except socket.timeout:
+        raise  # let the calling loop decide — idle timeout is never a close
     except Exception:
         return None
 
@@ -10334,7 +10342,7 @@ def _lm_ws_background_loop():
             try:
                 print(f"[LM-WS] binance subscribing {current_symbols} streams: price, mark, funding")
                 sock = _raw_ws_connect("fstream.binance.com", path)
-                sock.settimeout(5)
+                sock.settimeout(30)
                 print("[LM-WS] Connected")
             except Exception as e:
                 print(f"[LM-WS] Connect error: {e}")
@@ -10345,26 +10353,26 @@ def _lm_ws_background_loop():
         try:
             raw = _ws_recv_frame(sock)
         except socket.timeout:
-            # 30 s idle — re-check symbol list then re-use the same socket
+            # Idle window — markPrice@arr streams are tolerant; keep the socket
             continue
         except Exception as e:
-            print(f"[LM-WS] Recv error: {e}")
+            print(f"[LM-WS] Recv error ({type(e).__name__}): {e}")
             try:
                 sock.close()
             except Exception:
                 pass
             sock = None
-            time.sleep(2)
+            time.sleep(5)
             continue
 
         if raw is None:
-            print("[LM-WS] Connection dropped, reconnecting")
+            print("[LM-WS] Connection dropped, reconnecting in 5s")
             try:
                 sock.close()
             except Exception:
                 pass
             sock = None
-            time.sleep(2)
+            time.sleep(5)
             continue
         if not raw:
             continue
@@ -10783,7 +10791,7 @@ def _lm_liq_background_loop():
             try:
                 print(f"[LM-WS] binance subscribing {current_symbols} streams: liquidations/forceOrder")
                 sock = _raw_ws_connect("fstream.binance.com", path)
-                sock.settimeout(5)
+                sock.settimeout(30)
                 print("[LM-LIQ] Connected")
                 # Seed connected-flag per symbol so get() shows "fresh" not "unavailable"
                 now_seed = time.time()
@@ -10815,19 +10823,19 @@ def _lm_liq_background_loop():
                         _lm_liq_cache[key]["last_update_ts"] = now_hb
             continue
         except Exception as e:
-            print(f"[LM-LIQ] Recv error: {e}")
+            print(f"[LM-LIQ] Recv error ({type(e).__name__}): {e}")
             try: sock.close()
             except Exception: pass
             sock = None
-            time.sleep(2)
+            time.sleep(5)
             continue
 
         if raw is None:
-            print("[LM-LIQ] Connection dropped, reconnecting")
+            print("[LM-LIQ] Connection dropped, reconnecting in 5s")
             try: sock.close()
             except Exception: pass
             sock = None
-            time.sleep(2)
+            time.sleep(5)
             continue
         if not raw:
             continue
@@ -10953,7 +10961,7 @@ def _lm_delta_background_loop():
             try:
                 print(f"[LM-WS] binance subscribing {current_symbols} streams: trade/delta/aggTrade")
                 sock = _raw_ws_connect("fstream.binance.com", path)
-                sock.settimeout(5)
+                sock.settimeout(30)
                 print("[LM-DELTA] Connected")
             except Exception as e:
                 print(f"[LM-DELTA] Connect error: {e}")
@@ -10966,19 +10974,19 @@ def _lm_delta_background_loop():
         except socket.timeout:
             continue
         except Exception as e:
-            print(f"[LM-DELTA] Recv error: {e}")
+            print(f"[LM-DELTA] Recv error ({type(e).__name__}): {e}")
             try: sock.close()
             except Exception: pass
             sock = None
-            time.sleep(2)
+            time.sleep(5)
             continue
 
         if raw is None:
-            print("[LM-DELTA] Connection dropped, reconnecting")
+            print("[LM-DELTA] Connection dropped, reconnecting in 5s")
             try: sock.close()
             except Exception: pass
             sock = None
-            time.sleep(2)
+            time.sleep(5)
             continue
         if not raw:
             continue
