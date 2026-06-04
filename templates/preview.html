@@ -2999,7 +2999,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
           if(typeof _lmUpdateSession === "function"){
             _lmUpdateSession();
           }
-          if(typeof _lmRenderRight === "function" && _lmSelItem){
+          if(typeof _lmRenderRight === "function" && _lmSelItem && !document.getElementById("lmLivePx")){
             _lmRenderRight(_lmSelItem);
           }
         }
@@ -7173,7 +7173,12 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     var wrap=document.getElementById("lmDhRows")||document.getElementById("lmDhBody");
     if(!wrap){ console.log("[LM-DH] container missing — lmDhRows/lmDhBody not in DOM"); return; }
     console.log("[LM-DH] container exists=true rows="+(rows?rows.length:0));
-    var tbody=(wrap.tagName==="TBODY")?wrap:wrap.querySelector("tbody"); if(!tbody) return;
+    var tbody=(wrap.tagName==="TBODY")?wrap:wrap.querySelector("tbody");
+    if(!tbody){
+      var tbl=(wrap.tagName==="TABLE")?wrap:(wrap.querySelector("table"));
+      if(tbl){ tbody=document.createElement("tbody"); tbl.appendChild(tbody); console.log("[LM-DH] tbody missing — restored"); }
+      else { console.log("[LM-DH] tbody missing and no table — cannot render"); return; }
+    }
     if(!rows||!rows.length){ tbody.innerHTML=""; return; }
     // Phase 10.7: show sources_used/sources_skipped header when aggregated
     var headerHtml="";
@@ -7310,15 +7315,19 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
   }
   // Lightweight price update from /api/live-monitor/price (fast endpoint)
   function _lmUpdateLivePriceFromPriceApi(d, sym){
-    if(!d||!d.ok) return;
-    if(d.live_price&&d.live_price!=="—"){
+    if(!d||!d.ok){ console.log("[LM-PRICE] no data or not ok sym="+sym+" d="+JSON.stringify(d)); return; }
+    var lp=d.live_price||d.price||d.last_price||null;
+    if(lp&&lp!=="—"&&lp!=="null"){
+      console.log("[LM-PRICE] got price sym="+sym+" lp="+lp+" src="+(d.source||d.exchange));
       _lmUpdateLivePriceFromRows([
-        {metric:"Live Price",  value:d.live_price, status:d.status||"fresh"},
-        {metric:"Mark Price",  value:d.mark_price||d.live_price, status:d.status||"fresh"}
+        {metric:"Live Price",  value:lp, status:d.status||"fresh"},
+        {metric:"Mark Price",  value:d.mark_price||lp, status:d.status||"fresh"}
       ], d.exchange||d.source||"binance");
-    } else if(sym&&_lmLastKnownPrices[sym]){
-      // Use stale fallback - reuse the rows-based logic with empty rows
-      _lmUpdateLivePriceFromRows([], d.exchange||"binance");
+    } else {
+      console.log("[LM-PRICE] null price sym="+sym+" status="+d.status+" src="+d.source);
+      if(sym&&_lmLastKnownPrices[sym]){
+        _lmUpdateLivePriceFromRows([], d.exchange||"binance");
+      }
     }
   }
   function _lmStartDhPolling(){
@@ -7331,17 +7340,18 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       _lmFetchDataHealth(_lmSelItem.symbol,ex);
     },4000);
     // Fast visible price update: every 1 second via lightweight /price endpoint.
-    // Uses _lmPriceExchange (parent setup exchange) so price stays stable even
-    // when analysis source is switched to Aggregated or another exchange.
+    // Uses selected Data Source so price follows the user's chosen analysis exchange.
     _lmPriceTimer=setInterval(function(){
       if(!_lmSelItem||location.protocol==="file:") return;
       var sym=_lmSelItem.symbol;
-      var priceEx=_lmPriceExchange||"binance";  // parent setup exchange, NOT analysis source
+      var selectedSrc=_lmGetDataSrc();
+      var priceEx=selectedSrc||_lmPriceExchange||"binance";
       if(!sym) return;
+      console.log("[LM-PRICE] tick sym="+sym+" selectedSrc="+selectedSrc+" priceEx="+priceEx);
       fetch("/api/live-monitor/price?symbol="+encodeURIComponent(sym)+"&exchange="+encodeURIComponent(priceEx),{credentials:"same-origin"})
         .then(function(r){return r.json().catch(function(){return null;});})
         .then(function(d){ _lmUpdateLivePriceFromPriceApi(d,sym); })
-        .catch(function(){});
+        .catch(function(e){ console.log("[LM-PRICE] fetch error sym="+sym+" err="+e); });
     },1000);
   }
 
