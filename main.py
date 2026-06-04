@@ -16208,6 +16208,7 @@ def _lm_build_aggregated_snapshot_from_structured(
     # ── Step 1: call the same structured builder Data Health uses ─────────────
     # Wrapped in try/except so any sub-call failure degrades to fallbacks below.
     metrics: dict = {}
+    _snap_err_key = f"{symbol}:aggregated"
     try:
         agg = _lm_build_true_aggregated_exchange_data(symbol)
         metrics = agg.get("metrics", {})
@@ -16217,10 +16218,17 @@ def _lm_build_aggregated_snapshot_from_structured(
         result["sources_used"]    = _agg_su
         result["sources_skipped"] = [e for e in _agg_ss if e not in _agg_su]
         _enrichment["structured_metrics_found"] = bool(metrics)
+        _lm_snap_build_errors.pop(_snap_err_key, None)   # clear any previous error
     except Exception as _agg_err:
-        print(f"[10.9E] snap: _lm_build_true_aggregated failed {symbol}: {_agg_err}")
+        import traceback as _tb
+        _err_str = str(_agg_err)[:200]
+        _tb_str  = _tb.format_exc()[-400:]
+        print(f"[10.9E] snap: _lm_build_true_aggregated failed {symbol}: {_err_str}")
         _enrichment["structured_metrics_found"] = False
-        _enrichment["agg_error"] = str(_agg_err)[:120]
+        _enrichment["agg_error"] = _err_str
+        _lm_snap_build_errors[_snap_err_key] = {
+            "error": _err_str, "traceback": _tb_str, "ts": time.time()
+        }
 
     # ── Step 2: Extract metrics from structured result ─────────────────────────
 
@@ -16804,6 +16812,20 @@ def _lm_store_orderflow_snapshot(
 
 _lm_bias_of_samplers:    dict = {}   # "uid:exch:mkt:sym:src" → Thread
 _lm_bias_of_sampler_lock = threading.Lock()
+
+# Per-symbol snapshot-build error tracking (cleared on success)
+_lm_snap_build_errors: dict = {}   # "symbol:analysis_source" → {error, ts, traceback}
+
+# Build commit hash (resolved once at startup; used by debug endpoint)
+_LM_BUILD_COMMIT = "unknown"
+try:
+    import subprocess as _sp_bc
+    _LM_BUILD_COMMIT = _sp_bc.check_output(
+        ["git", "rev-parse", "--short", "HEAD"],
+        stderr=_sp_bc.DEVNULL, timeout=3
+    ).decode().strip()
+except Exception:
+    pass
 
 
 def _lm_clean_old_orderflow_snapshots(
@@ -22588,7 +22610,9 @@ def api_lm_bias_orderflow_debug(item_id):
     """Return compact candle-alignment rows + optional recent snapshots.
 
     No AI call. No trading. No entry signals.
-    Query params: tf, limit (default 30 max 150), alignment, include_snapshots.
+    Query params:
+      tf, limit (default 30 max 150), alignment, include_snapshots,
+      force_refresh=1  — build+store one snapshot immediately, then return debug.
     """
     uid, _ = _current_user_id_and_user()
     if not uid:
@@ -22614,12 +22638,52 @@ def api_lm_bias_orderflow_debug(item_id):
     lim_raw         = request.args.get("limit", "30")
     align_filter    = request.args.get("alignment")
     inc_snaps       = request.args.get("include_snapshots", "false").lower() == "true"
+    force_refresh   = request.args.get("force_refresh", "0").strip() == "1"
 
     try:
         lim = max(1, min(150, int(lim_raw)))
     except (ValueError, TypeError):
         lim = 30
 
+    # ── force_refresh: build+store one snapshot NOW, run alignment ────────────
+    _force_refresh_result: dict = {}
+    if force_refresh:
+        try:
+            _fr_snap = _lm_build_orderflow_snapshot_direct(
+                symbol, exchange, market, analysis_source
+            )
+            _fr_stored = False
+            if _fr_snap:
+                # Always attempt to store, regardless of source_status, so we can
+                # observe what the builder actually returned.
+                _fr_stored = _lm_store_orderflow_snapshot(
+                    uid, exchange, market, symbol, analysis_source, _fr_snap
+                )
+            # Run alignment for requested TF (or all TFs)
+            _fr_tfs = [tf_filter] if tf_filter else list(_LM_BIAS_TF_STACK_CONST)
+            _fr_align_results = {}
+            for _fr_tf in _fr_tfs:
+                _fr_align_results[_fr_tf] = _lm_align_orderflow_to_candles_for_tf(
+                    uid, exchange, market, symbol, _fr_tf, analysis_source
+                )
+            _force_refresh_result = {
+                "done":          True,
+                "stored":        _fr_stored,
+                "source_status": (_fr_snap or {}).get("source_status", "unknown"),
+                "delta_net":     (_fr_snap or {}).get("delta_net"),
+                "orderbook_status": (_fr_snap or {}).get("orderbook_status"),
+                "taker_pressure":   (_fr_snap or {}).get("taker_pressure"),
+                "funding_rate":     (_fr_snap or {}).get("funding_rate"),
+                "open_interest":    (_fr_snap or {}).get("open_interest"),
+                "raw_enrichment":   _json_loads_safe(
+                    (_fr_snap or {}).get("raw_summary_json"), {}
+                ).get("enrichment_debug", {}),
+                "alignment":     _fr_align_results,
+            }
+        except Exception as _fr_e:
+            _force_refresh_result = {"done": False, "error": str(_fr_e)[:200]}
+
+    # ── Per-TF candle alignment rows ──────────────────────────────────────────
     tf_stack     = _LM_BIAS_TF_STACK_CONST if not tf_filter else [tf_filter]
     per_tf_debug: dict = {}
 
@@ -22656,8 +22720,9 @@ def api_lm_bias_orderflow_debug(item_id):
             "sample":        sample,
         }
 
+    # ── Latest snapshots ──────────────────────────────────────────────────────
     latest_snapshots: list = []
-    if inc_snaps:
+    if inc_snaps or force_refresh:
         snap_rows = (
             _LMOS9e_db.query.filter_by(
                 user_id=uid, exchange=exchange, market=market,
@@ -22684,39 +22749,45 @@ def api_lm_bias_orderflow_debug(item_id):
             for s in snap_rows
         ]
 
-    # Compact debug: confirms structured metrics retrieval + fallback path for delta/OB
+    # ── Snapshot diagnostics ──────────────────────────────────────────────────
+    now_sec = time.time()
+    _first_snap     = latest_snapshots[0] if latest_snapshots else {}
+    _first_rsj      = _json_loads_safe(_first_snap.get("raw_summary_json"), {})
+    _first_ed       = _first_rsj.get("enrichment_debug", {})
+    _snap_age_sec   = (round((now_sec * 1000 - _first_snap["sample_time"]) / 1000, 1)
+                       if _first_snap.get("sample_time") else None)
+    # stale_snapshots_only = DB has snapshots but NONE of the recent ones have enrichment_debug
+    _stale_only     = (bool(latest_snapshots) and not any(
+        _json_loads_safe(s.get("raw_summary_json"), {}).get("enrichment_debug")
+        for s in latest_snapshots[:5]
+    ))
+    _snap_err_key   = f"{symbol}:aggregated"
+    _snap_err_info  = _lm_snap_build_errors.get(_snap_err_key)
+
+    # ── Structured metrics enrichment summary ────────────────────────────────
     _snap_enrich_debug: dict = {"analysis_source": analysis_source}
-    if inc_snaps and latest_snapshots and analysis_source == "aggregated":
-        _first  = latest_snapshots[0]
-        _raw_ed = _json_loads_safe(
-            _first.get("raw_summary_json"), {}
-        ).get("enrichment_debug", {})
+    if (inc_snaps or force_refresh) and analysis_source == "aggregated":
         _snap_enrich_debug.update({
             "used_structured_metrics":          True,
-            # structured_metrics_found is stamped into enrichment_debug by the builder
-            "structured_metrics_found":         _raw_ed.get("structured_metrics_found", False),
-            "delta_metric_found":               _raw_ed.get("delta_metric_found", False),
-            "orderbook_metric_found":           _raw_ed.get("orderbook_metric_found", False),
-            # Exact source values from the most recent snapshot
-            "delta_written":                    _first.get("delta_net") is not None,
-            "delta_net_source_value":           _first.get("delta_net"),
-            "delta_pct_source_value":           _first.get("delta_pct"),
-            "delta_fallback_source":            _raw_ed.get("delta_fallback_source"),
-            "orderbook_written":                _first.get("orderbook_status") not in (None, "unavailable"),
-            "orderbook_status_source_value":    _first.get("orderbook_status"),
-            "orderbook_imbalance_source_value": _first.get("orderbook_imbalance"),
-            "orderbook_fallback_source":        _raw_ed.get("orderbook_fallback_source"),
-            "funding_written":                  _first.get("funding_rate") is not None,
-            "open_interest_written":            _first.get("open_interest") is not None,
+            "structured_metrics_found":         _first_ed.get("structured_metrics_found", False),
+            "delta_metric_found":               _first_ed.get("delta_metric_found", False),
+            "orderbook_metric_found":           _first_ed.get("orderbook_metric_found", False),
+            "delta_written":                    _first_snap.get("delta_net") is not None,
+            "delta_net_source_value":           _first_snap.get("delta_net"),
+            "delta_pct_source_value":           _first_snap.get("delta_pct"),
+            "delta_fallback_source":            _first_ed.get("delta_fallback_source"),
+            "orderbook_written":                _first_snap.get("orderbook_status") not in (None, "unavailable"),
+            "orderbook_status_source_value":    _first_snap.get("orderbook_status"),
+            "orderbook_imbalance_source_value": _first_snap.get("orderbook_imbalance"),
+            "orderbook_fallback_source":        _first_ed.get("orderbook_fallback_source"),
+            "funding_written":                  _first_snap.get("funding_rate") is not None,
+            "open_interest_written":            _first_snap.get("open_interest") is not None,
         })
 
     of_status   = snap_raw.get("orderflow_alignment", {})
     _of_src     = (of_status.get("analysis_source") or "").lower()
     _src_mismatch = bool(_of_src and _of_src != analysis_source)
     if _src_mismatch:
-        # Stored alignment belongs to a different source.  Trigger background
-        # realignment for the current source (which now correctly reads analysis_source
-        # from DB) and return a clean collecting state instead of stale data.
         _lm_ensure_bias_orderflow_alignment_bg(
             item_id, uid, exchange, market, symbol,
             getattr(row, "source_tab", "bias_shift") or "bias_shift",
@@ -22745,10 +22816,20 @@ def api_lm_bias_orderflow_debug(item_id):
         "context_only":             True,
         "no_entry_candidate":       True,
         "source_mismatch":          _src_mismatch,
+        # ── Diagnostics ──────────────────────────────────────────────────────
+        "build_commit":                      _LM_BUILD_COMMIT,
+        "latest_snapshot_age_sec":           _snap_age_sec,
+        "latest_snapshot_has_enrichment_debug": bool(_first_ed),
+        "latest_snapshot_raw_summary_keys":  list(_first_ed.keys()) if _first_ed else [],
+        "stale_snapshots_only":              _stale_only,
+        "aggregated_snapshot_build_error":   (_snap_err_info or {}).get("error"),
+        "aggregated_snapshot_build_error_ts": (_snap_err_info or {}).get("ts"),
+        # ── Core data ────────────────────────────────────────────────────────
         "per_tf":                   per_tf_debug,
         "latest_snapshots":         latest_snapshots,
         "snapshot_enrichment_debug": _snap_enrich_debug,
         "orderflow_alignment":      of_status,
+        "force_refresh":            _force_refresh_result if force_refresh else None,
     })
 
 
