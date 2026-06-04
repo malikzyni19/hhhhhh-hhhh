@@ -25825,22 +25825,32 @@ def api_lm_data_health():
 @app.route("/api/live-monitor/price", methods=["GET"])
 @login_required
 def api_lm_price():
-    """Lightweight live-price endpoint for 1s UI timer.
-    Supports exchange=binance|bybit|okx|mexc|aggregated.
-    Reuses agg_lp_* cache from aggregated builder (TTL=5s). < 100ms.
+    """Lightweight live-price endpoint for the 1s UI timer.
+    Price always comes from the item's parent setup exchange regardless of
+    the exchange param — the exchange param is ignored for price routing.
     """
     uid, _ = _current_user_id_and_user()
     if not uid:
         return jsonify({"error": "no_user"}), 401
 
-    symbol   = (request.args.get("symbol")   or "").upper().strip()
-    exchange = (request.args.get("exchange") or "binance").lower().strip()
-
+    symbol = (request.args.get("symbol") or "").upper().strip()
     if not symbol:
         return jsonify({"error": "symbol_required"}), 400
 
-    # Fast path: Binance WS cache (in-memory, < 1ms)
-    if exchange == "binance":
+    # Resolve parent exchange from DB — same logic as api_lm_data_health
+    parent_exchange = "binance"
+    try:
+        from models import LiveMonitorItem as _LMIP
+        _row = _LMIP.query.filter_by(symbol=symbol, is_active=True, user_id=uid).first()
+        if _row:
+            parent_exchange = _lm_normalize_exchange(
+                getattr(_row, "exchange", None)
+            ) or "binance"
+    except Exception as _pe:
+        print(f"[LM-PRICE] parent exchange lookup error: {_pe}")
+
+    # Binance: WS cache fast path (< 1ms)
+    if parent_exchange == "binance":
         ws_e, ws_s = _lm_ws_get("binance", symbol)
         if ws_e and ws_e.get("live_price"):
             mp = ws_e.get("mark_price")
@@ -25855,52 +25865,26 @@ def api_lm_price():
                 "source":     "binance_ws",
             })
 
-    # Aggregated: median of available prices across all four exchanges
-    if exchange == "aggregated":
-        prices = []
-        for _ex in _LM_AGGREGATED_EXCHANGES:
-            lp = _lm_rest_cached(
-                f"agg_lp_{_ex}:{symbol}", 5,
-                lambda e=_ex: _lm_fetch_exchange_live_price(e, symbol)
-            )
-            if lp and lp.get("available") and lp.get("price", 0) > 0:
-                prices.append(float(lp["price"]))
-        if prices:
-            prices.sort()
-            mid = len(prices) // 2
-            agg_price = prices[mid] if len(prices) % 2 else (prices[mid - 1] + prices[mid]) / 2
-            pf = f"{agg_price:.4f}"
-            return jsonify({
-                "ok":         True,
-                "symbol":     symbol,
-                "exchange":   "aggregated",
-                "live_price": pf,
-                "mark_price": pf,
-                "status":     "fresh",
-                "age_sec":    0,
-                "source":     "aggregated_median",
-            })
-
-    # Single non-Binance exchange: reuse agg_lp_* cache (TTL=5s, shared with aggregated builder)
-    if exchange in ("bybit", "okx", "mexc"):
+    # Non-Binance parent: reuse agg_lp_* REST cache (TTL=5s)
+    if parent_exchange in ("bybit", "okx", "mexc"):
         lp = _lm_rest_cached(
-            f"agg_lp_{exchange}:{symbol}", 5,
-            lambda: _lm_fetch_exchange_live_price(exchange, symbol)
+            f"agg_lp_{parent_exchange}:{symbol}", 5,
+            lambda: _lm_fetch_exchange_live_price(parent_exchange, symbol)
         )
         if lp and lp.get("available") and lp.get("price", 0) > 0:
             pf = f"{float(lp['price']):.4f}"
             return jsonify({
                 "ok":         True,
                 "symbol":     symbol,
-                "exchange":   exchange,
+                "exchange":   parent_exchange,
                 "live_price": pf,
                 "mark_price": pf,
                 "status":     lp.get("status", "fresh"),
                 "age_sec":    0,
-                "source":     lp.get("source", f"{exchange}_rest"),
+                "source":     lp.get("source", f"{parent_exchange}_rest"),
             })
 
-    # Final fallback: Binance REST mark-price cache
+    # Fallback: Binance REST mark-price cache
     rest_m = _lm_rest_cached(
         f"mark:{symbol}", 10, lambda: _lm_fetch_mark_price_rest(symbol)
     )
@@ -25909,7 +25893,7 @@ def api_lm_price():
         return jsonify({
             "ok":         True,
             "symbol":     symbol,
-            "exchange":   exchange,
+            "exchange":   parent_exchange,
             "live_price": rv,
             "mark_price": rv,
             "status":     "fresh",
@@ -25918,7 +25902,7 @@ def api_lm_price():
         })
 
     return jsonify({
-        "ok": True, "symbol": symbol, "exchange": exchange,
+        "ok": True, "symbol": symbol, "exchange": parent_exchange,
         "live_price": None, "mark_price": None,
         "status": "unavailable", "source": "none",
     })
