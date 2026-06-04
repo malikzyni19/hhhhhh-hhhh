@@ -4455,6 +4455,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
   var _lmDhTimer=null, _lmPriceTimer=null;
   var _lmPriceExchange=null;        // parent setup exchange for price (cached from DH response)
   var _lmLastKnownPrices={};        // {symbol: {live_price, mark_price, ts}} — stale fallback
+  var _lmPendingDhData=null;        // {rows, meta} — DH rows queued until DOM card is ready
   var _lmObDaDefaults = {
     "5m":  {distance_pct:0.50, approach_pct:0.15},
     "15m": {distance_pct:0.80, approach_pct:0.25},
@@ -6098,24 +6099,6 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         '</div>'+
       '</div>'+
 
-      '<div id="lmDhWrap" class="sec-card">'+
-        '<div class="sec-card-head" style="cursor:pointer" onclick="_lmToggleDh()">'+
-          '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>'+
-          '<span class="sch-title">DATA HEALTH</span>'+
-          '<span id="lmDhItemLabel" style="font-size:9px;color:var(--accent);margin-left:8px">'+esc(item.symbol)+(isBiasShift?" · Bias Shift Watch":"")+'</span>'+
-          '<span id="lmDhSrcLabel" style="font-size:9px;color:var(--text-3);margin-left:6px"></span>'+
-          '<span style="font-size:9px;color:var(--text-3);margin-left:auto" id="lmDhCtl">▾ collapse</span>'+
-        '</div>'+
-        '<div id="lmDhBody" style="overflow-x:auto;overflow-y:auto;max-height:260px">'+
-          '<table class="lm-dh-tbl" style="width:100%;min-width:600px">'+
-            '<thead><tr><th>Metric</th><th>Value</th><th>Source</th><th>Status</th><th>Updated</th><th>Notes</th></tr></thead>'+
-            '<tbody id="lmDhRows">'+
-              '<tr><td colspan="6" style="color:var(--text-3);font-size:10px;padding:10px">Loading Data Health…</td></tr>'+
-            '</tbody>'+
-          '</table>'+
-        '</div>'+
-      '</div>'+
-
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'+
         '<div class="sec-card">'+
           '<div class="sec-card-head">'+
@@ -6269,9 +6252,29 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
             })()+
           '</div>'+
         '</div>'+
+      '</div>'+
+
+      '<div id="lmDhWrap" class="sec-card" style="margin-top:12px">'+
+        '<div class="sec-card-head" style="cursor:pointer" onclick="_lmToggleDh()">'+
+          '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>'+
+          '<span class="sch-title">DATA HEALTH</span>'+
+          '<span id="lmDhItemLabel" style="font-size:9px;color:var(--accent);margin-left:8px">'+esc(item.symbol)+(isBiasShift?" · Bias Shift Watch":"")+'</span>'+
+          '<span id="lmDhSrcLabel" style="font-size:9px;color:var(--text-3);margin-left:6px"></span>'+
+          '<span style="font-size:9px;color:var(--text-3);margin-left:auto" id="lmDhCtl">▾ collapse</span>'+
+        '</div>'+
+        '<div id="lmDhBody" style="overflow-x:auto;overflow-y:auto;max-height:300px">'+
+          '<table class="lm-dh-tbl" style="width:100%;min-width:600px">'+
+            '<thead><tr><th>Metric</th><th>Value</th><th>Source</th><th>Status</th><th>Updated</th><th>Notes</th></tr></thead>'+
+            '<tbody id="lmDhRows">'+
+              '<tr><td colspan="6" style="color:var(--text-3);font-size:10px;padding:10px">Loading Data Health…</td></tr>'+
+            '</tbody>'+
+          '</table>'+
+        '</div>'+
       '</div>';
 
     box.innerHTML=html;
+    // Flush any queued DH rows that arrived before the card was in the DOM
+    if(_lmPendingDhData){ var _pd=_lmPendingDhData; _lmPendingDhData=null; _lmRenderDataHealth(_pd.rows,_pd.meta); }
 
     [].forEach.call(box.querySelectorAll("[data-chart]"),function(btn){
       btn.addEventListener("click",function(){
@@ -7171,7 +7174,11 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
   }
   function _lmRenderDataHealth(rows, meta){
     var wrap=document.getElementById("lmDhRows")||document.getElementById("lmDhBody");
-    if(!wrap){ console.log("[LM-DH] container missing — lmDhRows/lmDhBody not in DOM"); return; }
+    if(!wrap){
+      console.log("[LM-DH] container missing — queuing for after DOM render rows="+(rows?rows.length:0));
+      _lmPendingDhData={rows:rows,meta:meta};
+      return;
+    }
     console.log("[LM-DH] container exists=true rows="+(rows?rows.length:0));
     var tbody=(wrap.tagName==="TBODY")?wrap:wrap.querySelector("tbody");
     if(!tbody){
@@ -7301,38 +7308,56 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       var _mpEl=document.getElementById("lmMarkPx");
       if(_mpEl) _mpEl.textContent=_markVal;
     }
-    var _stEl=document.getElementById("lmPxStatus");
-    if(_stEl){
-      var _src=(source||_lmGetDataSrc()||"");
-      _src=_src.charAt(0).toUpperCase()+_src.slice(1);
-      if(_liveVal){
+    // Only update label when we have a live price — never blank it or set stale from empty rows
+    if(_liveVal){
+      var _stEl=document.getElementById("lmPxStatus");
+      if(_stEl){
+        var _src=(source||_lmGetDataSrc()||"");
+        _src=_src.charAt(0).toUpperCase()+_src.slice(1);
         _stEl.innerHTML='<span style="color:var(--green-2)">●</span> LIVE · '+esc(_src);
-      } else if(_sym&&_lmLastKnownPrices[_sym]&&Math.round((Date.now()-_lmLastKnownPrices[_sym].ts)/1000)<30){
-        _stEl.innerHTML='<span style="color:var(--yellow)">●</span> Stale · '+esc(_src);
+        _stEl.title="Updated "+new Date().toLocaleTimeString();
       }
-      _stEl.title="Updated "+new Date().toLocaleTimeString();
     }
   }
   // Lightweight price update from /api/live-monitor/price (fast endpoint)
   function _lmUpdateLivePriceFromPriceApi(d, sym){
-    if(!d||!d.ok){ console.log("[LM-PRICE] no data or not ok sym="+sym+" d="+JSON.stringify(d)); return; }
+    if(!d||!d.ok){
+      console.log("[LM-PRICE] /price response not ok sym="+sym);
+      return;
+    }
+    // Log build commit once on first receipt for cache/deploy verification
+    if(d.build_commit&&!window._lmBuildLogged){
+      window._lmBuildLogged=true;
+      console.log("[LM-FRONTEND] build "+d.build_commit);
+    }
     var lp=d.live_price||d.price||d.last_price||null;
     if(lp&&lp!=="—"&&lp!=="null"){
-      console.log("[LM-PRICE] got price sym="+sym+" lp="+lp+" src="+(d.source||d.exchange));
+      console.log("[LM-PRICE] /price ok sym="+sym+" lp="+lp+" src="+(d.source||d.exchange));
       _lmUpdateLivePriceFromRows([
         {metric:"Live Price",  value:lp, status:d.status||"fresh"},
         {metric:"Mark Price",  value:d.mark_price||lp, status:d.status||"fresh"}
       ], d.exchange||d.source||"binance");
     } else {
-      console.log("[LM-PRICE] null price sym="+sym+" status="+d.status+" src="+d.source);
-      if(sym&&_lmLastKnownPrices[sym]){
-        _lmUpdateLivePriceFromRows([], d.exchange||"binance");
+      // No live price from /price — do NOT call _lmUpdateLivePriceFromRows with empty rows
+      // (that would show "Stale" label, overwriting a valid "LIVE" set by the 4s DH timer)
+      console.log("[LM-PRICE] /price null price sym="+sym+" status="+(d.status||"—")+" src="+(d.source||"—"));
+      // Only downgrade label to Stale if truly old (> 8s since last successful price)
+      var _stEl=document.getElementById("lmPxStatus");
+      if(_stEl&&sym&&_lmLastKnownPrices[sym]){
+        var _ageMs=Date.now()-_lmLastKnownPrices[sym].ts;
+        if(_ageMs>=8000&&_ageMs<30000){
+          var _src2=(d.exchange||_lmGetDataSrc()||"");
+          _src2=_src2.charAt(0).toUpperCase()+_src2.slice(1);
+          _stEl.innerHTML='<span style="color:var(--yellow)">●</span> Stale · '+esc(_src2);
+        }
+        // < 8s: last price is fresh enough — keep existing LIVE label
       }
     }
   }
   function _lmStartDhPolling(){
     if(_lmDhTimer) clearInterval(_lmDhTimer);
     if(_lmPriceTimer) clearInterval(_lmPriceTimer);
+    console.log("[LM-PRICE] timer started sym="+((_lmSelItem&&_lmSelItem.symbol)||"?")+" src="+(_lmGetDataSrc()||"binance"));
     // Full Data Health table refresh: every 4 seconds
     _lmDhTimer=setInterval(function(){
       if(!_lmSelItem) return;

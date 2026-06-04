@@ -25839,12 +25839,27 @@ def api_lm_price():
     if not symbol:
         return jsonify({"error": "symbol_required"}), 400
 
+    # Ensure Binance WS is subscribed for this symbol regardless of exchange param.
+    # The WS subscription is normally triggered by api_lm_data_health, but the 1s
+    # price timer may fire before the first DH response returns.
+    ws_enabled = os.environ.get("ZYNI_LM_WS_ENABLED") == "1"
+    if ws_enabled:
+        _lm_ws_ensure_adhoc(symbol)
+        _ensure_lm_ws_thread()
+
+    def _ret(payload: dict):
+        payload["build_commit"] = _BUILD_COMMIT
+        print(f"[LM-PRICE-API] symbol={symbol} exchange={exchange} "
+              f"ok={bool(payload.get('live_price'))} "
+              f"price={payload.get('live_price')} source={payload.get('source')}")
+        return jsonify(payload)
+
     # Fast path: Binance WS cache (in-memory, < 1ms)
     if exchange == "binance":
         ws_e, ws_s = _lm_ws_get("binance", symbol)
         if ws_e and ws_e.get("live_price"):
             mp = ws_e.get("mark_price")
-            return jsonify({
+            return _ret({
                 "ok":         True,
                 "symbol":     symbol,
                 "exchange":   "binance",
@@ -25855,7 +25870,7 @@ def api_lm_price():
                 "source":     "binance_ws",
             })
 
-    # Aggregated: median of available prices across all four exchanges
+    # Aggregated: median of cached prices across all four exchanges (uses agg_lp_* cache)
     if exchange == "aggregated":
         prices = []
         for _ex in _LM_AGGREGATED_EXCHANGES:
@@ -25870,7 +25885,7 @@ def api_lm_price():
             mid = len(prices) // 2
             agg_price = prices[mid] if len(prices) % 2 else (prices[mid - 1] + prices[mid]) / 2
             pf = f"{agg_price:.4f}"
-            return jsonify({
+            return _ret({
                 "ok":         True,
                 "symbol":     symbol,
                 "exchange":   "aggregated",
@@ -25889,7 +25904,7 @@ def api_lm_price():
         )
         if lp and lp.get("available") and lp.get("price", 0) > 0:
             pf = f"{float(lp['price']):.4f}"
-            return jsonify({
+            return _ret({
                 "ok":         True,
                 "symbol":     symbol,
                 "exchange":   exchange,
@@ -25900,13 +25915,13 @@ def api_lm_price():
                 "source":     lp.get("source", f"{exchange}_rest"),
             })
 
-    # Final fallback: Binance REST mark-price cache
+    # Final fallback: Binance REST mark-price cache (works even without WS)
     rest_m = _lm_rest_cached(
         f"mark:{symbol}", 10, lambda: _lm_fetch_mark_price_rest(symbol)
     )
     if rest_m and rest_m.get("mark_price"):
         rv = f"{rest_m['mark_price']:.4f}"
-        return jsonify({
+        return _ret({
             "ok":         True,
             "symbol":     symbol,
             "exchange":   exchange,
@@ -25917,7 +25932,7 @@ def api_lm_price():
             "source":     "binance_mark_rest",
         })
 
-    return jsonify({
+    return _ret({
         "ok": True, "symbol": symbol, "exchange": exchange,
         "live_price": None, "mark_price": None,
         "status": "unavailable", "source": "none",
