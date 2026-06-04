@@ -7340,14 +7340,14 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       _lmFetchDataHealth(_lmSelItem.symbol,ex);
     },4000);
     // Fast visible price update: every 1 second via lightweight /price endpoint.
-    // Uses selected Data Source so price follows the user's chosen analysis exchange.
+    // ALWAYS uses parent setup exchange (item.exchange) — never the Data Source dropdown.
+    // The dropdown only affects order-flow / market-context data, not price source.
     _lmPriceTimer=setInterval(function(){
       if(!_lmSelItem||location.protocol==="file:") return;
       var sym=_lmSelItem.symbol;
-      var selectedSrc=_lmGetDataSrc();
-      var priceEx=selectedSrc||_lmPriceExchange||"binance";
+      var priceEx=(_lmSelItem&&_lmSelItem.exchange)||_lmPriceExchange||"binance";
       if(!sym) return;
-      console.log("[LM-PRICE] tick sym="+sym+" selectedSrc="+selectedSrc+" priceEx="+priceEx);
+      console.log("[LM-PRICE] tick sym="+sym+" priceEx="+priceEx+" (parent exchange)");
       fetch("/api/live-monitor/price?symbol="+encodeURIComponent(sym)+"&exchange="+encodeURIComponent(priceEx),{credentials:"same-origin"})
         .then(function(r){return r.json().catch(function(){return null;});})
         .then(function(d){ _lmUpdateLivePriceFromPriceApi(d,sym); })
