@@ -6019,7 +6019,6 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         'Candle detection, BOS/CHoCH, and order-flow alignment engines are pending.</div>'
       :'';
     var html=
-      '<div id="lmRenderMarker" style="font-size:9px;color:#22d3ee;padding:2px 0">RENDER PATH: _lmRenderRight · DH expected here</div>'+
       biasBanner+
       '<div class="lm-hero">'+
         '<div class="lm-hero-top">'+
@@ -6135,16 +6134,17 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         '</div>'+
       '</div>'+
 
-      '<div id="lmDhWrap" class="sec-card" data-lm-dh-wrap-for="'+item.id+'" style="display:block;position:static;z-index:auto;overflow:hidden;margin-top:8px;margin-bottom:12px;width:100%;max-width:100%;box-sizing:border-box;border:1px solid rgba(34,211,238,.45);background:var(--bg-card)">'+
-        '<div class="sec-card-head">'+
+      '<div id="lmDhWrap" data-lm-dh-wrap-for="'+item.id+'" style="display:block!important;visibility:visible!important;opacity:1!important;position:static!important;z-index:auto!important;overflow:hidden!important;margin-top:10px!important;margin-bottom:14px!important;width:100%!important;max-width:100%!important;box-sizing:border-box!important;border:2px solid rgba(34,211,238,.75)!important;border-radius:12px!important;background:rgba(8,18,30,.98)!important;color:var(--text-1)!important;min-height:120px!important">'+
+        '<div style="display:flex!important;align-items:center!important;min-height:34px!important;padding:9px 13px!important;border-bottom:1px solid rgba(34,211,238,.35)!important;background:rgba(34,211,238,.08)!important;gap:7px">'+
           '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>'+
-          '<span class="sch-title">DATA HEALTH</span>'+
-          '<span id="lmDhItemLabel" style="font-size:9px;color:var(--accent);margin-left:8px">'+esc(item.symbol)+(isBiasShift?" · Bias Shift Watch":"")+'</span>'+
+          '<span style="font-size:11px!important;font-weight:700!important;letter-spacing:1px!important;color:#22d3ee!important;flex:1">DATA HEALTH</span>'+
+          '<span id="lmDhItemLabel" style="font-size:9px;color:var(--accent);margin-left:4px">'+esc(item.symbol)+(isBiasShift?" · Bias Shift Watch":"")+'</span>'+
           '<span id="lmDhMountBadge" style="font-size:9px;color:var(--text-3);margin-left:4px">'+esc(item.symbol)+' · '+esc(_lmGetDataSrc()||"binance")+'</span>'+
           '<span id="lmDhSrcLabel" style="font-size:9px;color:var(--text-3);margin-left:6px"></span>'+
           '<span id="lmDhCtl" style="font-size:9px;color:var(--text-3);margin-left:auto">▾ collapse</span>'+
         '</div>'+
-        '<div id="lmDhBody" style="display:block;max-height:260px;overflow-y:auto;overflow-x:auto;max-width:100%;box-sizing:border-box;-webkit-overflow-scrolling:touch">'+
+        '<div id="lmDhBody" style="display:block!important;visibility:visible!important;opacity:1!important;max-height:260px!important;min-height:90px!important;overflow-y:auto!important;overflow-x:auto!important;max-width:100%!important;box-sizing:border-box!important;-webkit-overflow-scrolling:touch!important">'+
+          '<div id="lmDhStatusLine" style="font-size:10px;color:#22d3ee;padding:6px 8px;border-bottom:1px solid rgba(34,211,238,.18)">Data Health active · waiting for rows…</div>'+
           '<table class="lm-dh-tbl" style="width:100%;min-width:600px">'+
             '<thead><tr><th>Metric</th><th>Value</th><th>Source</th><th>Status</th><th>Updated</th><th>Notes</th></tr></thead>'+
             '<tbody id="lmDhRows" data-lm-dh-rows-for="'+item.id+'">'+
@@ -6334,10 +6334,19 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     console.log("[LM-BOOT] renderRight bootstrap start",item&&item.id,item&&item.symbol);
     _lmSelItem=item;
     _lmStartLiveDataForSelectedItem("renderRight");
-    // Post-render sanity check — logs if DH card disappears (another render wiped it)
-    (function(_b){ setTimeout(function(){
-      if(!_b.querySelector("#lmDhWrap")) console.error("[LM-DH] #lmDhWrap missing 500ms after render — check for second renderRight call");
-    },500); })(box);
+    // Post-render visibility check — restores card if CSS collapsed it
+    setTimeout(function(){
+      var dh=document.getElementById("lmDhWrap");
+      if(!dh){ console.error("[LM-DH] #lmDhWrap missing 500ms after render"); return; }
+      var r=dh.getBoundingClientRect(), cs=getComputedStyle(dh);
+      console.log("[LM-DH-VIS]",{w:Math.round(r.width),h:Math.round(r.height),display:cs.display,visibility:cs.visibility,opacity:cs.opacity});
+      if(r.height<80||cs.display==="none"||cs.visibility==="hidden"||cs.opacity==="0"){
+        console.warn("[LM-DH-VIS] card suppressed — applying visibility fallback");
+        dh.style.cssText+=";display:block!important;visibility:visible!important;opacity:1!important;min-height:140px!important;border:3px solid #f59e0b!important;background:rgba(245,158,11,.12)!important;";
+        var sl=document.getElementById("lmDhStatusLine");
+        if(sl) sl.textContent="Data Health visibility fallback applied";
+      }
+    },500);
 
     [].forEach.call(box.querySelectorAll("[data-chart]"),function(btn){
       btn.addEventListener("click",function(){
@@ -7318,9 +7327,10 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         "<td class='lm-dh-na' style='max-width:220px;overflow:hidden;text-overflow:ellipsis' title='"+esc(r.notes||"")+"'>"+esc(r.notes||"—")+"</td>"+
       "</tr>";
     }).join("");
-    // Update debug badge in DH header so a visible proof exists even if table is off-screen
     var _badge=document.getElementById("lmDhMountBadge");
-    if(_badge) _badge.textContent="DH rows rendered: "+rows.length+(symbol?" · "+symbol:"")+(pollKey?" · "+(_lmGetDataSrc()||"?"):"");
+    if(_badge) _badge.textContent=rows.length+" rows · "+(_lmGetDataSrc()||"?");
+    var _statusLine=document.getElementById("lmDhStatusLine");
+    if(_statusLine) _statusLine.textContent="Data Health active · "+rows.length+" rows · aggregated";
   }
   function _lmObDaLoad(){
     fetch("/api/live-monitor/ob-settings",{credentials:"same-origin"})
