@@ -4706,12 +4706,9 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
               if(liveMonitorItems[k].id===d.item.id){liveMonitorItems[k]=d.item;break;}
             }
             if(_lmSelItem&&_lmSelItem.id===d.item.id){ _lmSelItem=d.item; }
-            // Stamp new pollKey — any in-flight DH/price responses for old source are stale
-            _lmActivePollKey=(_lmSelItem.id+":"+_lmSelItem.symbol+":"+Date.now());
-            var _dsPollKey=_lmActivePollKey;
-            // Refresh Data Health + restart live polling with new source
-            _lmFetchDataHealth(_lmSelItem.symbol, newSrc, _lmSelItem.id, _dsPollKey);
-            _lmStartDhPolling(_lmSelItem.id, _lmSelItem.symbol, _dsPollKey);
+            // Sync dropdown to persisted source then bootstrap live data with unified helper
+            try{ _lmSyncDataSrcSelector(_lmSelItem); }catch(e){}
+            _lmStartLiveDataForSelectedItem("dsChange");
             // Reload Event Timeline if visible
             if(_lmInstructionView==="events"){ _lmLoadEvents(_lmSelItem.id); }
             // Reload chat if a source-change chat message was posted
@@ -5992,9 +5989,8 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       if(_lmAutoDetectItemId!==null&&_lmAutoDetectTimer){ _lmStopAutoDetect(); }
     }
     _lmAutoDetectItemId=item.id;
-    // Stamp a new poll key — every in-flight response for older renders/sources is stale
-    _lmActivePollKey=item.id+":"+item.symbol+":"+Date.now();
-    var _pollKey=_lmActivePollKey;
+    // pollKey is stamped inside _lmStartLiveDataForSelectedItem after dropdown is synced
+    var _pollKey=_lmActivePollKey; // kept for legacy references below — will be overwritten
     var lh=_lmHealth(item);
     var health=_lmHealthScore(item);
     var circ=144.51, dashoff=(circ*(1-health/100)).toFixed(2);
@@ -6369,12 +6365,12 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     }
     // Flush queued DH rows (no pollKey guard — pending data pre-dates this render cycle)
     if(_lmPendingDhData){ var _pd=_lmPendingDhData; _lmPendingDhData=null; _lmRenderDataHealth(_pd.rows,_pd.meta,null,null,null); }
-    // Immediately fetch DH + start polling — BEFORE any handler binding
-    if(item&&item.symbol){
-      var _dhSrcImm=_lmGetDataSrc();
-      _lmFetchDataHealth(item.symbol,_dhSrcImm,item.id,null);
-      _lmStartDhPolling(item.id,item.symbol,_pollKey);
-    }
+    // Sync dropdown FIRST so _lmGetDataSrc() returns the correct source for this item
+    try{ _lmSyncDataSrcSelector(item); }catch(e){ console.error("[LM-DS] sync failed",e); }
+    // Bootstrap live data with a single consistent pollKey — BEFORE handler binding
+    console.log("[LM-BOOT] renderRight bootstrap start",item&&item.id,item&&item.symbol);
+    _lmSelItem=item;
+    _lmStartLiveDataForSelectedItem("renderRight");
 
     [].forEach.call(box.querySelectorAll("[data-chart]"),function(btn){
       btn.addEventListener("click",function(){
@@ -6830,7 +6826,6 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     }
     _lmBindChat(item);
     if(_lmInstructionView!=="instructions"){ _lmLoadEvents(item.id); }
-    try{ _lmSyncDataSrcSelector(item); }catch(e){ console.error("[LM-DS] sync failed",e); }
     console.log("[LM-LIVE] selected item "+(item&&item.symbol)+" source="+_lmGetDataSrc());
     // TASK 7 — layout clipping diagnostic (runs after browser layout pass)
     setTimeout(function(){
@@ -7518,6 +7513,15 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         }
       }
     }
+  }
+  function _lmStartLiveDataForSelectedItem(reason){
+    if(!_lmSelItem||!_lmSelItem.id||!_lmSelItem.symbol) return;
+    var src=_lmGetDataSrc()||"binance";
+    _lmActivePollKey=_lmSelItem.id+":"+_lmSelItem.symbol+":"+src+":"+Date.now();
+    var key=_lmActivePollKey;
+    console.log("[LM-LIVE-BOOT]",reason,_lmSelItem.id,_lmSelItem.symbol,src,key);
+    _lmFetchDataHealth(_lmSelItem.symbol,src,_lmSelItem.id,key);
+    _lmStartDhPolling(_lmSelItem.id,_lmSelItem.symbol,key);
   }
   function _lmStartDhPolling(itemId, symbol, pollKey){
     if(_lmDhTimer){ clearInterval(_lmDhTimer); _lmDhTimer=null; }
