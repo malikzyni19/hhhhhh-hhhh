@@ -6136,16 +6136,17 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       '</div>'+
 
       '<div id="lmDhPlainMarker" style="padding:4px 8px;margin-top:8px;border:1px solid #22d3ee;color:#22d3ee;font-size:9px">DATA HEALTH SLOT HERE</div>'+
-      '<div id="lmDhWrap" class="sec-card" style="margin-top:8px;border-color:rgba(34,211,238,.45)" data-lm-dh-wrap-for="'+item.id+'">'+
-        '<div class="sec-card-head">'+
-          '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>'+
-          '<span class="sch-title">DATA HEALTH</span>'+
+      '<div id="lmDhWrap" class="sec-card" data-lm-dh-wrap-for="'+item.id+'" style="display:block!important;visibility:visible!important;opacity:1!important;height:auto!important;min-height:160px!important;max-height:none!important;margin-top:8px!important;padding:8px!important;border:2px solid #22d3ee!important;background:rgba(34,211,238,.12)!important;color:#e6faff!important;position:relative!important;z-index:50!important;overflow:visible!important">'+
+        '<div id="lmDhHardVisibleText" style="font-size:13px;color:#22d3ee;font-weight:700;padding:6px;border:1px dashed #22d3ee;margin-bottom:6px">DATA HEALTH CARD IS HERE — HARD VISIBLE TEXT</div>'+
+        '<div class="sec-card-head" style="padding:4px 0 4px 0">'+
+          '<span class="sch-title" style="color:#22d3ee">DATA HEALTH</span>'+
           '<span id="lmDhItemLabel" style="font-size:9px;color:var(--accent);margin-left:8px">'+esc(item.symbol)+(isBiasShift?" · Bias Shift Watch":"")+'</span>'+
-          '<span id="lmDhMountBadge" style="font-size:9px;color:var(--text-3);margin-left:4px">DH mounted · '+esc(item.symbol)+' · '+esc(_lmGetDataSrc()||"binance")+'</span>'+
+          '<span id="lmDhMountBadge" style="font-size:9px;color:#a0e8ff;margin-left:4px">DH mounted · '+esc(item.symbol)+' · '+esc(_lmGetDataSrc()||"binance")+'</span>'+
           '<span id="lmDhSrcLabel" style="font-size:9px;color:var(--text-3);margin-left:6px"></span>'+
           '<span id="lmDhCtl" style="font-size:9px;color:var(--text-3);margin-left:auto">▾ collapse</span>'+
         '</div>'+
-        '<div id="lmDhBody" style="overflow-x:auto;overflow-y:auto;max-height:300px;max-width:100%;box-sizing:border-box">'+
+        '<div id="lmDhBody" style="display:block!important;visibility:visible!important;opacity:1!important;min-height:120px!important;max-height:300px!important;overflow:auto!important;max-width:100%!important;box-sizing:border-box!important;background:rgba(15,23,42,.75)!important">'+
+          '<div id="lmDhNonTableFallback" style="font-size:11px;color:#fff;padding:6px;background:rgba(0,0,0,.35);margin-bottom:6px">Loading Data Health rows… If you see this, card/body is visible.</div>'+
           '<table class="lm-dh-tbl" style="width:100%;min-width:600px">'+
             '<thead><tr><th>Metric</th><th>Value</th><th>Source</th><th>Status</th><th>Updated</th><th>Notes</th></tr></thead>'+
             '<tbody id="lmDhRows" data-lm-dh-rows-for="'+item.id+'">'+
@@ -6335,21 +6336,42 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     console.log("[LM-BOOT] renderRight bootstrap start",item&&item.id,item&&item.symbol);
     _lmSelItem=item;
     _lmStartLiveDataForSelectedItem("renderRight");
-    // TASK 6 — detect post-mount wipe: another re-render would remove the DH card
+    // TASK 5+6 — post-render measurement + emergency injection
     (function(_checkBox,_checkItemId,_checkSym){
       setTimeout(function(){
-        var _dh=_checkBox&&_checkBox.querySelector("#lmDhWrap");
-        console.log("[LM-DH-VISIBLE-CHECK]",!!_dh,"itemId="+_checkItemId,"sym="+_checkSym);
-        if(!_dh){
-          console.error("[LM-DH-VISIBLE-CHECK] Data Health disappeared after render — another render likely wiped the panel");
-          var _right2=document.getElementById("lmRight");
-          if(_right2){
-            var _emg=document.createElement("div");
-            _emg.style.cssText="padding:6px 10px;margin:8px 0;border:1px solid rgba(239,68,68,.4);color:var(--red-2);font-size:10px;background:rgba(239,68,68,.06)";
-            _emg.textContent="[LM-DH] Emergency: Data Health was wiped after initial render. Check console for second renderRight call.";
-            var _heroEmg=_right2.querySelector(".lm-hero");
-            if(_heroEmg&&_heroEmg.nextSibling) _right2.insertBefore(_emg,_heroEmg.nextSibling);
-            else _right2.appendChild(_emg);
+        var dh=document.getElementById("lmDhWrap");
+        var body=document.getElementById("lmDhBody");
+        var rows=document.getElementById("lmDhRows");
+        var marker=document.getElementById("lmDhPlainMarker");
+        function _rect(el){
+          if(!el) return null;
+          var r=el.getBoundingClientRect();
+          var cs=getComputedStyle(el);
+          return {x:Math.round(r.x),y:Math.round(r.y),w:Math.round(r.width),h:Math.round(r.height),display:cs.display,visibility:cs.visibility,opacity:cs.opacity,overflow:cs.overflow};
+        }
+        console.log("[LM-DH-MEASURE]",{
+          marker:_rect(marker),
+          wrap:_rect(dh),
+          body:_rect(body),
+          rows:_rect(rows),
+          wrapHtml:dh?dh.innerHTML.slice(0,300):null
+        });
+        if(dh){
+          var badge=document.createElement("div");
+          badge.id="lmDhMeasureBadge";
+          badge.style.cssText="font-size:10px;color:#22d3ee;padding:4px;border:1px solid #22d3ee;margin-top:4px;background:#001018";
+          var rr=dh.getBoundingClientRect();
+          badge.textContent="DH measured: w="+Math.round(rr.width)+" h="+Math.round(rr.height);
+          dh.insertBefore(badge,dh.firstChild);
+        } else {
+          console.error("[LM-DH-MEASURE] #lmDhWrap missing after 500ms — injecting emergency card");
+          var mkr=document.getElementById("lmDhPlainMarker");
+          if(mkr){
+            var emg=document.createElement("div");
+            emg.id="lmDhWrap";
+            emg.style.cssText="display:block!important;min-height:160px!important;border:2px solid red!important;background:rgba(255,0,0,.15)!important;color:white!important;padding:10px!important;margin-top:8px!important;z-index:999!important;position:relative!important";
+            emg.innerHTML="<b>EMERGENCY DATA HEALTH CARD INJECTED</b><br>lmDhWrap was missing after render.";
+            mkr.insertAdjacentElement("afterend",emg);
           }
         }
       },500);
