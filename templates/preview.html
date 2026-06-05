@@ -6136,14 +6136,14 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       '</div>'+
 
       '<div id="lmDhPlainMarker" style="padding:4px 8px;margin-top:8px;border:1px solid #22d3ee;color:#22d3ee;font-size:9px">DATA HEALTH SLOT HERE</div>'+
-      '<div id="lmDhWrap" class="sec-card" data-lm-dh-wrap-for="'+item.id+'" style="margin-top:12px">'+
-        '<div class="sec-card-head" style="cursor:pointer" onclick="_lmToggleDh()">'+
+      '<div id="lmDhWrap" class="sec-card" style="margin-top:8px;border-color:rgba(34,211,238,.45)" data-lm-dh-wrap-for="'+item.id+'">'+
+        '<div class="sec-card-head">'+
           '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>'+
           '<span class="sch-title">DATA HEALTH</span>'+
           '<span id="lmDhItemLabel" style="font-size:9px;color:var(--accent);margin-left:8px">'+esc(item.symbol)+(isBiasShift?" · Bias Shift Watch":"")+'</span>'+
-          '<span id="lmDhMountBadge" style="font-size:9px;color:var(--text-3);margin-left:4px">DH mounted · '+esc(item.symbol)+'</span>'+
+          '<span id="lmDhMountBadge" style="font-size:9px;color:var(--text-3);margin-left:4px">DH mounted · '+esc(item.symbol)+' · '+esc(_lmGetDataSrc()||"binance")+'</span>'+
           '<span id="lmDhSrcLabel" style="font-size:9px;color:var(--text-3);margin-left:6px"></span>'+
-          '<span style="font-size:9px;color:var(--text-3);margin-left:auto" id="lmDhCtl">▾ collapse</span>'+
+          '<span id="lmDhCtl" style="font-size:9px;color:var(--text-3);margin-left:auto">▾ collapse</span>'+
         '</div>'+
         '<div id="lmDhBody" style="overflow-x:auto;overflow-y:auto;max-height:300px;max-width:100%;box-sizing:border-box">'+
           '<table class="lm-dh-tbl" style="width:100%;min-width:600px">'+
