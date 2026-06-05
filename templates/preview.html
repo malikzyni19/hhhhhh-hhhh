@@ -4925,8 +4925,17 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
             var first=d.agents.find(function(a){return a.configured&&a.id!=="local_fallback";});
             _lmSelectedAgentId=first?first.id:null;
           }
-          // re-render chat header label if item is selected
-          if(_lmSelItem) _lmRenderRight(_lmSelItem);
+          // Update agent dropdown in-place.
+          // Do NOT call _lmRenderRight here: full re-render kills DH table/polling.
+          var _agSel = document.getElementById("dsAgentSel");
+          if (_agSel) {
+            var _agCur = _agSel.value || _lmSelectedAgentId || "";
+            var _opts = d.agents.filter(function(a){ return a.configured; }).map(function(a){
+              return '<option value="'+esc(a.id)+'"'+(a.id===_agCur?' selected':'')+'>'+esc(a.label||a.id)+'</option>';
+            }).join("");
+            _agSel.innerHTML = _opts;
+            if (_agCur) _agSel.value = _agCur;
+          }
         }
       })
       .catch(function(){});
@@ -5222,7 +5231,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       if(_lmSelItem&&_lmSelItem.id===itemId){
         if(!_lmSelItem.snapshot) _lmSelItem.snapshot={};
         _lmSelItem.snapshot.candle_store=data.candle_store||_lmSelItem.snapshot.candle_store;
-        if(typeof _lmRenderRight==="function") _lmRenderRight(_lmSelItem);
+        if(typeof _lmRenderRight==="function") _lmRenderRightWithReason(_lmSelItem,"bias-candle-refresh");
       }
     }).catch(function(e){console.warn('[10.9B] bias candle refresh error',e);});
   }
@@ -5240,7 +5249,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         if(!_lmSelItem.snapshot) _lmSelItem.snapshot={};
         _lmSelItem.snapshot.candle_feature_engine=
           data.candle_feature_engine||_lmSelItem.snapshot.candle_feature_engine;
-        if(typeof _lmRenderRight==="function") _lmRenderRight(_lmSelItem);
+        if(typeof _lmRenderRight==="function") _lmRenderRightWithReason(_lmSelItem,"bias-feature-refresh");
       }
     }).catch(function(e){console.warn('[10.9C] bias feature refresh error',e);});
   }
@@ -5258,7 +5267,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         if(!_lmSelItem.snapshot) _lmSelItem.snapshot={};
         _lmSelItem.snapshot.orderflow_alignment=
           data.orderflow_alignment||_lmSelItem.snapshot.orderflow_alignment;
-        if(typeof _lmRenderRight==="function") _lmRenderRight(_lmSelItem);
+        if(typeof _lmRenderRight==="function") _lmRenderRightWithReason(_lmSelItem,"bias-orderflow-refresh");
       }
     }).catch(function(e){console.warn('[10.9E] bias orderflow refresh error',e);});
   }
@@ -5276,7 +5285,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         if(!_lmSelItem.snapshot) _lmSelItem.snapshot={};
         _lmSelItem.snapshot.structure_engine=
           data.structure_engine||_lmSelItem.snapshot.structure_engine;
-        if(typeof _lmRenderRight==="function") _lmRenderRight(_lmSelItem);
+        if(typeof _lmRenderRight==="function") _lmRenderRightWithReason(_lmSelItem,"bias-structure-refresh");
       }
     }).catch(function(e){console.warn('[10.9D] bias structure refresh error',e);});
   }
@@ -5942,6 +5951,11 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       var cards=box.querySelectorAll(".setup-card");
       if(selIdx>=0&&cards[selIdx]) cards[selIdx].classList.add("active");
     }
+  }
+
+  function _lmRenderRightWithReason(item, reason){
+    console.warn("[LM-RERENDER] reason=", reason, "item=", item && item.id, item && item.symbol);
+    return _lmRenderRight(item);
   }
 
   function _lmRenderRight(item){
@@ -7390,8 +7404,12 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       return;
     }
     if(pollKey&&_lmActivePollKey&&_lmActivePollKey!==pollKey){
-      console.log("[LM-POLL] stale price api pollKey mismatch sym="+sym);
-      return;
+      var _sameItemP=_lmSelItem&&_lmSelItem.id===itemId&&_lmSelItem.symbol===sym;
+      if(!_sameItemP){
+        console.log("[LM-POLL] stale pollKey rejected", sym, itemId, pollKey, _lmActivePollKey);
+        return;
+      }
+      console.log("[LM-POLL] same-item pollKey rollover accepted", sym, itemId);
     }
     if(d.build_commit&&!window._lmBuildLogged){
       window._lmBuildLogged=true;
@@ -7425,14 +7443,26 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     console.log("[LM-POLL] start", itemId, symbol, _lmGetDataSrc(), pollKey);
     _lmDhTimer=setInterval(function(){
       if(!_lmSelItem) return;
-      if(pollKey&&_lmActivePollKey!==pollKey){ clearInterval(_lmDhTimer); _lmDhTimer=null; return; }
+      if(pollKey&&_lmActivePollKey!==pollKey){
+        if(!_lmSelItem||_lmSelItem.id!==itemId||_lmSelItem.symbol!==symbol){
+          console.log("[LM-POLL] stale pollKey rejected", symbol, itemId, pollKey, _lmActivePollKey);
+          clearInterval(_lmDhTimer); _lmDhTimer=null; return;
+        }
+        console.log("[LM-POLL] same-item pollKey rollover accepted", symbol, itemId);
+      }
       var ex=_lmGetDataSrc();
       // Use captured symbol/itemId — not _lmSelItem at response time
       _lmFetchDataHealth(symbol,ex,itemId,pollKey);
     },4000);
     _lmPriceTimer=setInterval(function(){
       if(!_lmSelItem||location.protocol==="file:") return;
-      if(pollKey&&_lmActivePollKey!==pollKey){ clearInterval(_lmPriceTimer); _lmPriceTimer=null; return; }
+      if(pollKey&&_lmActivePollKey!==pollKey){
+        if(!_lmSelItem||_lmSelItem.id!==itemId||_lmSelItem.symbol!==symbol){
+          console.log("[LM-POLL] stale pollKey rejected", symbol, itemId, pollKey, _lmActivePollKey);
+          clearInterval(_lmPriceTimer); _lmPriceTimer=null; return;
+        }
+        console.log("[LM-POLL] same-item pollKey rollover accepted", symbol, itemId);
+      }
       var priceEx=(_lmSelItem&&_lmSelItem.exchange)||_lmPriceExchange||"binance";
       if(!symbol) return;
       console.log("[LM-PRICE] tick sym="+symbol+" priceEx="+priceEx+" pollKey="+pollKey);
