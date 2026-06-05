@@ -5940,6 +5940,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
   }
 
   function _lmRenderRight(item){
+    console.log("[LM-DH-FLOW] renderRight start", item && item.symbol);
     var box=document.getElementById("lmRight"); if(!box) return;
     if(!item){
       _lmStopAutoDetect();
@@ -6273,8 +6274,34 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       '</div>';
 
     box.innerHTML=html;
+    console.log("[LM-DH-FLOW] lmDhWrap exists after render", !!document.getElementById("lmDhWrap"));
+    console.log("[LM-DH-FLOW] lmDhRows exists after render", !!document.getElementById("lmDhRows"));
     // Flush any queued DH rows that arrived before the card was in the DOM
     if(_lmPendingDhData){ var _pd=_lmPendingDhData; _lmPendingDhData=null; _lmRenderDataHealth(_pd.rows,_pd.meta); }
+    // Safety: if DH container is still missing after flush, inject a visible error card
+    if(!document.getElementById("lmDhWrap")){
+      console.error("[LM-DH-FLOW] lmDhWrap not in DOM after innerHTML — injecting fallback card");
+      var _dhErrWrap=document.createElement("div");
+      _dhErrWrap.id="lmDhWrap"; _dhErrWrap.className="sec-card";
+      _dhErrWrap.style.marginTop="12px";
+      _dhErrWrap.innerHTML=
+        '<div class="sec-card-head"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>'+
+        '<span class="sch-title">DATA HEALTH</span></div>'+
+        '<div id="lmDhBody" style="overflow-x:auto;overflow-y:auto;max-height:300px">'+
+          '<table class="lm-dh-tbl" style="width:100%;min-width:600px">'+
+            '<thead><tr><th>Metric</th><th>Value</th><th>Source</th><th>Status</th><th>Updated</th><th>Notes</th></tr></thead>'+
+            '<tbody id="lmDhRows"><tr><td colspan="6" style="color:var(--red-2,#ef4444);font-size:10px;padding:10px">Data Health container missing — render failed.</td></tr></tbody>'+
+          '</table>'+
+        '</div>';
+      box.appendChild(_dhErrWrap);
+    }
+    // Force DH fetch + polling IMMEDIATELY after DOM insert — before any handler binding
+    if(item&&item.symbol){
+      var _dhSrcImm=_lmGetDataSrc();
+      console.log("[LM-DH-FLOW] fetch start (immediate)", item.symbol, _dhSrcImm);
+      _lmFetchDataHealth(item.symbol,_dhSrcImm);
+      _lmStartDhPolling();
+    }
 
     [].forEach.call(box.querySelectorAll("[data-chart]"),function(btn){
       btn.addEventListener("click",function(){
@@ -6730,14 +6757,8 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     }
     _lmBindChat(item);
     if(_lmInstructionView!=="instructions"){ _lmLoadEvents(item.id); }
-    _lmSyncDataSrcSelector(item);
-    if(item&&item.symbol){
-      var _dhSrc=_lmGetDataSrc();
-      console.log("[LM-LIVE] selected item "+item.symbol+" source="+_dhSrc);
-      // DH section is now inside #lmRight — fetch immediately + start polling
-      _lmFetchDataHealth(item.symbol,_dhSrc);
-      _lmStartDhPolling();
-    }
+    try{ _lmSyncDataSrcSelector(item); }catch(e){ console.error("[LM-DS] sync failed",e); }
+    console.log("[LM-LIVE] selected item "+(item&&item.symbol)+" source="+_lmGetDataSrc());
   }
 
   function _lmMtfMatrix(item){
@@ -7124,11 +7145,13 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     if(!symbol) return;
     if(!exchange) return;
     if(location.protocol==="file:") return;
+    console.log("[LM-DH-FLOW] fetch start", symbol, exchange);
     console.log("[LM-DH] fetching Data Health",symbol,exchange);
     fetch("/api/live-monitor/data-health?symbol="+encodeURIComponent(symbol)+"&exchange="+encodeURIComponent(exchange),{
       credentials:"same-origin"
     }).then(function(r){return r.json().catch(function(){return null;});})
     .then(function(d){
+      console.log("[LM-DH-FLOW] fetch response", d&&d.ok, d&&d.rows&&d.rows.length);
       if(d&&d.ok&&Array.isArray(d.rows)){
         // Cache parent exchange for the fast price timer
         if(d.price_source_exchange) _lmPriceExchange=d.price_source_exchange;
@@ -7156,6 +7179,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         console.log("[LM-DH] fetch result not ok",d);
       }
     }).catch(function(e){
+      console.error("[LM-DH-FLOW] failed", e);
       console.log("[LM-DH] fetch error:",e);
       var _wrap=document.getElementById("lmDhRows")||document.getElementById("lmDhBody");
       if(_wrap){
@@ -7173,6 +7197,8 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     return "lm-dh-na";
   }
   function _lmRenderDataHealth(rows, meta){
+    console.log("[LM-DH-FLOW] render rows", rows&&rows.length);
+    console.log("[LM-DH-FLOW] render container found", !!document.getElementById("lmDhRows"));
     var wrap=document.getElementById("lmDhRows")||document.getElementById("lmDhBody");
     if(!wrap){
       console.log("[LM-DH] container missing — queuing for after DOM render rows="+(rows?rows.length:0));
