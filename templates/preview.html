@@ -6303,7 +6303,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     // Immediately fetch DH + start polling — BEFORE any handler binding
     if(item&&item.symbol){
       var _dhSrcImm=_lmGetDataSrc();
-      _lmFetchDataHealth(item.symbol,_dhSrcImm,item.id,_pollKey);
+      _lmFetchDataHealth(item.symbol,_dhSrcImm,item.id,null);
       _lmStartDhPolling(item.id,item.symbol,_pollKey);
     }
 
@@ -7433,7 +7433,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     _lmPriceTimer=setInterval(function(){
       if(!_lmSelItem||location.protocol==="file:") return;
       if(pollKey&&_lmActivePollKey!==pollKey){ clearInterval(_lmPriceTimer); _lmPriceTimer=null; return; }
-      var priceEx=_lmGetDataSrc()||_lmPriceExchange||"binance";
+      var priceEx=(_lmSelItem&&_lmSelItem.exchange)||_lmPriceExchange||"binance";
       if(!symbol) return;
       console.log("[LM-PRICE] tick sym="+symbol+" priceEx="+priceEx+" pollKey="+pollKey);
       fetch("/api/live-monitor/price?symbol="+encodeURIComponent(symbol)+"&exchange="+encodeURIComponent(priceEx),{credentials:"same-origin"})
