@@ -6138,7 +6138,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         '</div>'+
       '</div>'+
 
-      '<div id="lmDhSlot" style="margin-top:12px"></div>'+
+      '<div id="lmDhSlot" data-lm-dh-slot-for="'+item.id+'" style="margin-top:12px"></div>'+
 
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'+
         '<div class="sec-card">'+
@@ -6296,8 +6296,8 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       '</div>';
 
     box.innerHTML=html;
-    // Mount Data Health into dedicated slot (prevents DH from being buried in a broken html string)
-    var _dhSlot=document.getElementById("lmDhSlot");
+    // Mount Data Health — scoped to current box (FIX 1: avoid stale global getElementById)
+    var _dhSlot=box.querySelector("#lmDhSlot");
     console.log("[LM-DH-FLOW] slot", !!_dhSlot);
     var _dhSrcNow=_lmGetDataSrc();
     var _dhCardInner=
@@ -6312,22 +6312,61 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       '<div id="lmDhBody" style="overflow-x:auto;overflow-y:auto;max-height:300px;max-width:100%;box-sizing:border-box">'+
         '<table class="lm-dh-tbl" style="width:100%;min-width:600px">'+
           '<thead><tr><th>Metric</th><th>Value</th><th>Source</th><th>Status</th><th>Updated</th><th>Notes</th></tr></thead>'+
-          '<tbody id="lmDhRows">'+
+          '<tbody id="lmDhRows" data-lm-dh-rows-for="'+item.id+'">'+
             '<tr><td colspan="6" style="color:var(--text-3);font-size:10px;padding:10px">Loading Data Health…</td></tr>'+
           '</tbody>'+
         '</table>'+
       '</div>';
     if(_dhSlot){
-      _dhSlot.id="lmDhWrap"; _dhSlot.className="sec-card"; _dhSlot.innerHTML=_dhCardInner;
+      _dhSlot.id="lmDhWrap";
+      _dhSlot.setAttribute("data-lm-dh-wrap-for",String(item.id));
+      _dhSlot.className="sec-card";
+      _dhSlot.innerHTML=_dhCardInner;
     } else {
-      console.error("[LM-DH-FLOW] lmDhSlot missing — appending fallback to box");
+      // Slot not found in current box — insert fallback directly after hero (FIX 4: visible failure path)
+      console.error("[LM-DH-FLOW] lmDhSlot missing in box — inserting fallback after hero");
       var _dhFallback=document.createElement("div");
-      _dhFallback.id="lmDhWrap"; _dhFallback.className="sec-card"; _dhFallback.style.marginTop="12px";
+      _dhFallback.id="lmDhWrap";
+      _dhFallback.setAttribute("data-lm-dh-wrap-for",String(item.id));
+      _dhFallback.className="sec-card";
+      _dhFallback.style.marginTop="12px";
       _dhFallback.innerHTML=_dhCardInner;
-      box.appendChild(_dhFallback);
+      var _heroEl=box.querySelector(".lm-hero");
+      if(_heroEl&&_heroEl.nextSibling) box.insertBefore(_dhFallback,_heroEl.nextSibling);
+      else box.appendChild(_dhFallback);
     }
-    console.log("[LM-DH-FLOW] wrap", !!document.getElementById("lmDhWrap"));
-    console.log("[LM-DH-FLOW] rows", !!document.getElementById("lmDhRows"));
+    console.log("[LM-DH-FLOW] wrap", !!box.querySelector("#lmDhWrap"));
+    console.log("[LM-DH-FLOW] rows", !!box.querySelector("#lmDhRows"));
+    // FIX 6: diagnostic log + remove stale duplicate IDs outside current box
+    var _gwc=document.querySelectorAll("#lmDhWrap").length;
+    var _grc=document.querySelectorAll("#lmDhRows").length;
+    console.log("[LM-DH-MOUNT]",{
+      itemId:item.id,symbol:item.symbol,
+      slotInBox:!!box.querySelector("[data-lm-dh-slot-for]"),
+      wrapInBox:!!box.querySelector("#lmDhWrap"),
+      rowsInBox:!!box.querySelector("#lmDhRows"),
+      globalWrapCount:_gwc,globalRowsCount:_grc
+    });
+    if(_gwc>1||_grc>1){
+      console.warn("[LM-DH-MOUNT] duplicate IDs found — removing stale nodes outside current panel");
+      [].forEach.call(document.querySelectorAll("#lmDhWrap"),function(el){
+        if(!box.contains(el)&&el.parentNode) el.parentNode.removeChild(el);
+      });
+      [].forEach.call(document.querySelectorAll("#lmDhRows"),function(el){
+        if(!box.contains(el)&&el.parentNode) el.parentNode.removeChild(el);
+      });
+    }
+    // FIX 4: inject visible error card if mount still failed after all attempts
+    if(!box.querySelector("#lmDhWrap")){
+      console.error("[LM-DH-MOUNT] FAILED — #lmDhWrap not in box");
+      var _failCard=document.createElement("div");
+      _failCard.id="lmDhWrap"; _failCard.className="sec-card";
+      _failCard.style.cssText="margin-top:12px;border-color:rgba(239,68,68,.4);background:rgba(239,68,68,.06)";
+      _failCard.innerHTML='<div class="sec-card-head"><span class="sch-title" style="color:var(--red-2)">DATA HEALTH MOUNT FAILED</span><span style="font-size:9px;color:var(--red-2);margin-left:8px">slot not found for '+esc(item.symbol)+'</span></div>';
+      var _heroFail=box.querySelector(".lm-hero");
+      if(_heroFail&&_heroFail.nextSibling) box.insertBefore(_failCard,_heroFail.nextSibling);
+      else box.appendChild(_failCard);
+    }
     // Flush queued DH rows (no pollKey guard — pending data pre-dates this render cycle)
     if(_lmPendingDhData){ var _pd=_lmPendingDhData; _lmPendingDhData=null; _lmRenderDataHealth(_pd.rows,_pd.meta,null,null,null); }
     // Immediately fetch DH + start polling — BEFORE any handler binding
@@ -7225,7 +7264,8 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
           _srcLbl.textContent=(_pe.toLowerCase()!==_as.toLowerCase())?"· Price: "+_pe.charAt(0).toUpperCase()+_pe.slice(1)+" | Analysis: "+_as.charAt(0).toUpperCase()+_as.slice(1):"";
         }
       } else {
-        var _wrap=document.getElementById("lmDhRows")||document.getElementById("lmDhBody");
+        var _errBox=document.getElementById("lmRight");
+        var _wrap=(_errBox&&(_errBox.querySelector('#lmDhRows[data-lm-dh-rows-for="'+itemId+'"]')||_errBox.querySelector("#lmDhRows")||_errBox.querySelector("#lmDhBody")))||document.getElementById("lmDhRows")||document.getElementById("lmDhBody");
         if(_wrap){
           var _tb=(_wrap.tagName==="TBODY")?_wrap:_wrap.querySelector("tbody");
           if(_tb) _tb.innerHTML=d===null
@@ -7236,7 +7276,8 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       }
     }).catch(function(e){
       console.error("[LM-DH-FLOW] failed", e);
-      var _wrap=document.getElementById("lmDhRows")||document.getElementById("lmDhBody");
+      var _errBox2=document.getElementById("lmRight");
+      var _wrap=(_errBox2&&(_errBox2.querySelector("#lmDhRows")||_errBox2.querySelector("#lmDhBody")))||document.getElementById("lmDhRows")||document.getElementById("lmDhBody");
       if(_wrap){
         var _tb=(_wrap.tagName==="TBODY")?_wrap:_wrap.querySelector("tbody");
         if(_tb) _tb.innerHTML="<tr><td colspan='6' style='color:var(--red-2,#ef4444);font-size:10px;padding:10px'>Data Health unavailable — will retry.</td></tr>";
@@ -7258,8 +7299,16 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       console.log("[LM-POLL] stale render ignored symbol="+symbol+" pollKey="+pollKey);
       return;
     }
-    console.log("[LM-DH-FLOW] render container found", !!document.getElementById("lmDhRows"));
-    var wrap=document.getElementById("lmDhRows")||document.getElementById("lmDhBody");
+    // FIX 3: prefer scoped lookup inside #lmRight to avoid selecting stale nodes
+    var _lmRightBox=document.getElementById("lmRight");
+    var _rItemId=itemId||(_lmSelItem&&_lmSelItem.id);
+    var wrap=null;
+    if(_lmRightBox){
+      if(_rItemId) wrap=_lmRightBox.querySelector('#lmDhRows[data-lm-dh-rows-for="'+_rItemId+'"]');
+      if(!wrap) wrap=_lmRightBox.querySelector("#lmDhRows")||_lmRightBox.querySelector("#lmDhBody");
+    }
+    if(!wrap) wrap=document.getElementById("lmDhRows")||document.getElementById("lmDhBody");
+    console.log("[LM-DH-FLOW] render container found", !!wrap, "scoped="+!!_lmRightBox);
     if(!wrap){
       console.log("[LM-DH] container missing — queuing for after DOM render rows="+(rows?rows.length:0));
       _lmPendingDhData={rows:rows,meta:meta};
