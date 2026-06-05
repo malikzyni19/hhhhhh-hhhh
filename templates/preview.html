@@ -713,13 +713,13 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
 .sc-mtf{display:flex;align-items:center;gap:3px;margin-left:auto}
 .mtf-dot{width:6px;height:6px;border-radius:50%}
 .mtf-dot.strong{background:var(--green-2)}.mtf-dot.warn{background:var(--yellow)}.mtf-dot.none{background:var(--border-2)}
-.lm-right{display:flex;flex-direction:column;min-height:0;height:100%}
-.lm-right-scroll{flex:1;overflow-y:auto;padding:14px 16px 10px;display:flex;flex-direction:column;gap:12px}
+.lm-right{display:flex;flex-direction:column;min-height:0;height:100%;min-width:0;max-width:100%}
+.lm-right-scroll{flex:1;overflow-y:auto;padding:14px 16px 10px;display:flex;flex-direction:column;gap:12px;min-width:0;max-width:100%;box-sizing:border-box;overflow-x:hidden}
 .lm-hero{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
 .lm-hero-top{display:flex;align-items:flex-start;gap:10px;margin-bottom:12px}
 .lm-hero-sym{font-size:20px;font-weight:700;font-family:var(--mono);letter-spacing:.2px;color:var(--text)}
 .lm-hero-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:3px}
-.lm-hero-price{margin-left:auto;text-align:right;flex-shrink:0}
+.lm-hero-price{margin-left:auto;text-align:right;flex-shrink:1;min-width:0}
 .lm-hero-price .px{font-size:18px;font-weight:700;font-family:var(--mono);color:var(--accent)}
 .lm-hero-price .px-sub{font-size:10.5px;color:var(--text-3);font-family:var(--mono)}
 .hero-inner{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
@@ -768,7 +768,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
 .ds-send svg{width:12px;height:12px;stroke:#04121a;stroke-width:2.5;fill:none;stroke-linecap:round;stroke-linejoin:round}
 .lm-hero-actions{display:flex;gap:7px}
 .lm-hero-actions .btn{flex:1;justify-content:center;padding:9px 12px}
-.sec-card{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.sec-card{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;overflow:hidden;min-width:0;max-width:100%;box-sizing:border-box}
 .sec-card-head{display:flex;align-items:center;gap:7px;padding:9px 13px;border-bottom:1px solid var(--border)}
 .sec-card-head .sch-title{font-size:10px;font-weight:700;letter-spacing:1px;color:var(--text-2);flex:1}
 .sec-card-body{padding:11px 13px}
@@ -852,6 +852,22 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
 .lm-dh-warn{color:var(--yellow)}
 .lm-dh-err{color:var(--red-2)}
 .lm-dh-na{color:var(--text-3)}
+/* ── Live Monitor responsive layout (mobile/tablet ≤900px) ── */
+@media(max-width:900px){
+  .lm-body{grid-template-columns:1fr;grid-template-rows:auto 1fr;height:auto;overflow-y:auto}
+  .lm-left{max-height:200px;border-right:none;border-bottom:1px solid var(--border)}
+  .lm-right{height:auto;overflow-x:hidden}
+  .lm-right-scroll{overflow-x:hidden;padding:10px 12px 8px}
+  .lm-hero-top{flex-wrap:wrap}
+  .lm-hero-price{margin-left:0;flex-basis:100%;text-align:left;padding-top:4px}
+  .hero-inner{grid-template-columns:1fr}
+  .lm-hero-actions{flex-wrap:wrap}
+  .mkt-ctx-grid{grid-template-columns:1fr}
+  .lm-jn-cards{grid-template-columns:1fr}
+  #lmDhWrap,#lmDhBody{max-width:100%;box-sizing:border-box}
+  /* Force single-column for inline 2-col grids inside right panel */
+  #lmRight [style*="grid-template-columns:1fr 1fr"]{grid-template-columns:1fr!important}
+}
 .lm-ob-da-wrap{border:1px solid var(--border);border-radius:7px;background:var(--bg-card);overflow:hidden;flex-shrink:0}
 .lm-ob-da-toggle{display:flex;align-items:center;gap:8px;padding:5px 10px;cursor:pointer;user-select:none;flex-wrap:wrap}
 .lm-ob-da-title{font-size:9.5px;font-weight:700;letter-spacing:.5px;color:var(--text-2);white-space:nowrap}
@@ -6293,7 +6309,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         '<span id="lmDhSrcLabel" style="font-size:9px;color:var(--text-3);margin-left:6px"></span>'+
         '<span style="font-size:9px;color:var(--text-3);margin-left:auto" id="lmDhCtl">▾ collapse</span>'+
       '</div>'+
-      '<div id="lmDhBody" style="overflow-x:auto;overflow-y:auto;max-height:300px">'+
+      '<div id="lmDhBody" style="overflow-x:auto;overflow-y:auto;max-height:300px;max-width:100%;box-sizing:border-box">'+
         '<table class="lm-dh-tbl" style="width:100%;min-width:600px">'+
           '<thead><tr><th>Metric</th><th>Value</th><th>Source</th><th>Status</th><th>Updated</th><th>Notes</th></tr></thead>'+
           '<tbody id="lmDhRows">'+
@@ -6777,6 +6793,25 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     if(_lmInstructionView!=="instructions"){ _lmLoadEvents(item.id); }
     try{ _lmSyncDataSrcSelector(item); }catch(e){ console.error("[LM-DS] sync failed",e); }
     console.log("[LM-LIVE] selected item "+(item&&item.symbol)+" source="+_lmGetDataSrc());
+    // TASK 7 — layout clipping diagnostic (runs after browser layout pass)
+    setTimeout(function(){
+      var _rp=document.getElementById("lmRight");
+      if(!_rp) return;
+      console.log("[LM-LAYOUT] viewport",window.innerWidth);
+      console.log("[LM-LAYOUT] right panel scrollWidth/clientWidth",_rp.scrollWidth,_rp.clientWidth);
+      var _dw=document.getElementById("lmDhWrap");
+      if(_dw){
+        var _dr=_dw.getBoundingClientRect();
+        console.log("[LM-LAYOUT] dh wrap",{l:Math.round(_dr.left),r:Math.round(_dr.right),w:Math.round(_dr.width)});
+        if(_dr.right>window.innerWidth+2) console.warn("[LM-LAYOUT] clipped element","lmDhWrap",Math.round(_dr.right),window.innerWidth);
+      }
+      var _lpEl=document.getElementById("lmLivePx");
+      if(_lpEl){
+        var _lr=_lpEl.getBoundingClientRect();
+        console.log("[LM-LAYOUT] live px",{l:Math.round(_lr.left),r:Math.round(_lr.right),w:Math.round(_lr.width)});
+        if(_lr.right>window.innerWidth+2) console.warn("[LM-LAYOUT] clipped element","lmLivePx",Math.round(_lr.right),window.innerWidth);
+      }
+    },100);
   }
 
   function _lmMtfMatrix(item){
