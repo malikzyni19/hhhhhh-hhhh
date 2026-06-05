@@ -6206,7 +6206,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         '</div>'+
       '</div>'+
 
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'+
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start">'+
         '<div class="sec-card">'+
           '<div class="sec-card-head">'+
             '<svg class="ico" style="width:13px;height:13px;color:var(--text-3)" viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>'+
@@ -6233,7 +6233,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
             '<button class="btn" type="button" id="lmClearEventsBtn" title="Clear displayed event timeline" style="padding:2px 7px;font-size:10px;color:var(--text-3)">Clear</button>'+
           '</div>'+
           (_lmInstructionView!=="instructions"?'<div id="lmDetectedBlock" style="padding:6px 10px 0">'+_lmSetupReadinessHtml(item)+_lmDetectedEventsHtml(item)+_lmCandleFeaturesHtml(item)+_lmSetupMemoryHtml(item)+_lmAggregatedContextHtml(item)+'</div>':'<div id="lmDetectedBlock"></div>')+
-          '<div class="sec-card-body" style="padding:8px 10px" id="lmEvents">'+
+          '<div class="sec-card-body" style="padding:8px 10px;max-height:280px;overflow-y:auto;-webkit-overflow-scrolling:touch" id="lmEvents">'+
             (function(){
               if(_lmInstructionView==="instructions"){
                 var ins=_lmCustomInstructions(item);

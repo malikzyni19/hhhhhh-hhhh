@@ -25870,31 +25870,52 @@ def api_lm_price():
                 "source":     "binance_ws",
             })
 
-    # Aggregated: median of cached prices across all four exchanges (uses agg_lp_* cache)
+    # Aggregated: read-only cache pass — NEVER block on REST calls from the 1s timer.
+    # The DH 4s timer pre-warms agg_lp_* cache; this endpoint only reads what's warm.
+    # Sequential REST calls across 4 exchanges (4s×4 = 16s) would hang the worker.
     if exchange == "aggregated":
-        prices = []
-        for _ex in _LM_AGGREGATED_EXCHANGES:
-            lp = _lm_rest_cached(
-                f"agg_lp_{_ex}:{symbol}", 5,
-                lambda e=_ex: _lm_fetch_exchange_live_price(e, symbol)
-            )
-            if lp and lp.get("available") and lp.get("price", 0) > 0:
-                prices.append(float(lp["price"]))
-        if prices:
-            prices.sort()
-            mid = len(prices) // 2
-            agg_price = prices[mid] if len(prices) % 2 else (prices[mid - 1] + prices[mid]) / 2
-            pf = f"{agg_price:.4f}"
+        agg_prices  = []
+        agg_srcs    = []
+        _now_agg    = time.time()
+
+        # Binance WS direct: in-memory, instant
+        _ws_a, _ = _lm_ws_get("binance", symbol)
+        if _ws_a and _ws_a.get("live_price"):
+            agg_prices.append(float(_ws_a["live_price"]))
+            agg_srcs.append("binance")
+
+        # Non-Binance: read existing cache entries only (no fetch_fn call)
+        with _lm_rest_lock:
+            for _ex_a in ("bybit", "okx", "mexc"):
+                _e = _lm_rest_cache.get(f"agg_lp_{_ex_a}:{symbol}")
+                if _e and (_now_agg - _e["ts"]) < 10:
+                    _lp_a = _e["data"]
+                    if _lp_a and _lp_a.get("available") and _lp_a.get("price", 0) > 0:
+                        agg_prices.append(float(_lp_a["price"]))
+                        agg_srcs.append(_ex_a)
+
+        agg_skip = [e for e in _LM_AGGREGATED_EXCHANGES if e not in agg_srcs]
+
+        if agg_prices:
+            agg_prices.sort()
+            _mid = len(agg_prices) // 2
+            agg_val = (agg_prices[_mid] if len(agg_prices) % 2
+                       else (agg_prices[_mid - 1] + agg_prices[_mid]) / 2)
+            pf = f"{agg_val:.4f}"
             return _ret({
-                "ok":         True,
-                "symbol":     symbol,
-                "exchange":   "aggregated",
-                "live_price": pf,
-                "mark_price": pf,
-                "status":     "fresh",
-                "age_sec":    0,
-                "source":     "aggregated_median",
+                "ok":              True,
+                "symbol":          symbol,
+                "exchange":        "aggregated",
+                "live_price":      pf,
+                "mark_price":      pf,
+                "status":          "fresh" if len(agg_srcs) >= 2 else "partial",
+                "age_sec":         0,
+                "source":          "aggregated",
+                "sources_used":    agg_srcs,
+                "sources_skipped": agg_skip,
             })
+        # Cache cold — fall through to Binance REST fallback below
+        # (DH 4s timer will warm the agg_lp_* cache within seconds)
 
     # Single non-Binance exchange: reuse agg_lp_* cache (TTL=5s, shared with aggregated builder)
     if exchange in ("bybit", "okx", "mexc"):
