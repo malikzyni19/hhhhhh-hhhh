@@ -4456,6 +4456,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
   var _lmPriceExchange=null;        // parent setup exchange for price (cached from DH response)
   var _lmLastKnownPrices={};        // {symbol: {live_price, mark_price, ts}} — stale fallback
   var _lmPendingDhData=null;        // {rows, meta} — DH rows queued until DOM card is ready
+  var _lmActivePollKey=null;        // "itemId:symbol:ts" — invalidates stale async responses
   var _lmObDaDefaults = {
     "5m":  {distance_pct:0.50, approach_pct:0.15},
     "15m": {distance_pct:0.80, approach_pct:0.25},
@@ -4689,9 +4690,12 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
               if(liveMonitorItems[k].id===d.item.id){liveMonitorItems[k]=d.item;break;}
             }
             if(_lmSelItem&&_lmSelItem.id===d.item.id){ _lmSelItem=d.item; }
+            // Stamp new pollKey — any in-flight DH/price responses for old source are stale
+            _lmActivePollKey=(_lmSelItem.id+":"+_lmSelItem.symbol+":"+Date.now());
+            var _dsPollKey=_lmActivePollKey;
             // Refresh Data Health + restart live polling with new source
-            _lmFetchDataHealth(_lmSelItem.symbol, newSrc);
-            _lmStartDhPolling();
+            _lmFetchDataHealth(_lmSelItem.symbol, newSrc, _lmSelItem.id, _dsPollKey);
+            _lmStartDhPolling(_lmSelItem.id, _lmSelItem.symbol, _dsPollKey);
             // Reload Event Timeline if visible
             if(_lmInstructionView==="events"){ _lmLoadEvents(_lmSelItem.id); }
             // Reload chat if a source-change chat message was posted
@@ -4742,7 +4746,8 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     _lmObDaLoad();
     _lmUpdateSession();
     _lmRenderCards();
-    _lmStartDhPolling();
+    // _lmStartDhPolling() is called inside _lmRenderRight when an item is selected.
+    // Calling it here again would clear the timers _lmRenderRight just started.
   }
   function _lmShowAddMsg(text, isErr){
     var el=E("lmAddMsg"); if(!el) return;
@@ -5957,6 +5962,9 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       if(_lmAutoDetectItemId!==null&&_lmAutoDetectTimer){ _lmStopAutoDetect(); }
     }
     _lmAutoDetectItemId=item.id;
+    // Stamp a new poll key — every in-flight response for older renders/sources is stale
+    _lmActivePollKey=item.id+":"+item.symbol+":"+Date.now();
+    var _pollKey=_lmActivePollKey;
     var lh=_lmHealth(item);
     var health=_lmHealthScore(item);
     var circ=144.51, dashoff=(circ*(1-health/100)).toFixed(2);
@@ -6255,52 +6263,48 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         '</div>'+
       '</div>'+
 
-      '<div id="lmDhWrap" class="sec-card" style="margin-top:12px">'+
-        '<div class="sec-card-head" style="cursor:pointer" onclick="_lmToggleDh()">'+
-          '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>'+
-          '<span class="sch-title">DATA HEALTH</span>'+
-          '<span id="lmDhItemLabel" style="font-size:9px;color:var(--accent);margin-left:8px">'+esc(item.symbol)+(isBiasShift?" · Bias Shift Watch":"")+'</span>'+
-          '<span id="lmDhSrcLabel" style="font-size:9px;color:var(--text-3);margin-left:6px"></span>'+
-          '<span style="font-size:9px;color:var(--text-3);margin-left:auto" id="lmDhCtl">▾ collapse</span>'+
-        '</div>'+
-        '<div id="lmDhBody" style="overflow-x:auto;overflow-y:auto;max-height:300px">'+
-          '<table class="lm-dh-tbl" style="width:100%;min-width:600px">'+
-            '<thead><tr><th>Metric</th><th>Value</th><th>Source</th><th>Status</th><th>Updated</th><th>Notes</th></tr></thead>'+
-            '<tbody id="lmDhRows">'+
-              '<tr><td colspan="6" style="color:var(--text-3);font-size:10px;padding:10px">Loading Data Health…</td></tr>'+
-            '</tbody>'+
-          '</table>'+
-        '</div>'+
-      '</div>';
+      '<div id="lmDhSlot" style="margin-top:12px"></div>';
 
     box.innerHTML=html;
-    console.log("[LM-DH-FLOW] lmDhWrap exists after render", !!document.getElementById("lmDhWrap"));
-    console.log("[LM-DH-FLOW] lmDhRows exists after render", !!document.getElementById("lmDhRows"));
-    // Flush any queued DH rows that arrived before the card was in the DOM
-    if(_lmPendingDhData){ var _pd=_lmPendingDhData; _lmPendingDhData=null; _lmRenderDataHealth(_pd.rows,_pd.meta); }
-    // Safety: if DH container is still missing after flush, inject a visible error card
-    if(!document.getElementById("lmDhWrap")){
-      console.error("[LM-DH-FLOW] lmDhWrap not in DOM after innerHTML — injecting fallback card");
-      var _dhErrWrap=document.createElement("div");
-      _dhErrWrap.id="lmDhWrap"; _dhErrWrap.className="sec-card";
-      _dhErrWrap.style.marginTop="12px";
-      _dhErrWrap.innerHTML=
-        '<div class="sec-card-head"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>'+
-        '<span class="sch-title">DATA HEALTH</span></div>'+
-        '<div id="lmDhBody" style="overflow-x:auto;overflow-y:auto;max-height:300px">'+
-          '<table class="lm-dh-tbl" style="width:100%;min-width:600px">'+
-            '<thead><tr><th>Metric</th><th>Value</th><th>Source</th><th>Status</th><th>Updated</th><th>Notes</th></tr></thead>'+
-            '<tbody id="lmDhRows"><tr><td colspan="6" style="color:var(--red-2,#ef4444);font-size:10px;padding:10px">Data Health container missing — render failed.</td></tr></tbody>'+
-          '</table>'+
-        '</div>';
-      box.appendChild(_dhErrWrap);
+    // Mount Data Health into dedicated slot (prevents DH from being buried in a broken html string)
+    var _dhSlot=document.getElementById("lmDhSlot");
+    console.log("[LM-DH-FLOW] slot", !!_dhSlot);
+    var _dhSrcNow=_lmGetDataSrc();
+    var _dhCardInner=
+      '<div class="sec-card-head" style="cursor:pointer" onclick="_lmToggleDh()">'+
+        '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>'+
+        '<span class="sch-title">DATA HEALTH</span>'+
+        '<span id="lmDhItemLabel" style="font-size:9px;color:var(--accent);margin-left:8px">'+esc(item.symbol)+(isBiasShift?" · Bias Shift Watch":"")+'</span>'+
+        ' <span id="lmDhMountBadge" style="font-size:9px;color:var(--text-3);margin-left:4px">DH mounted · '+esc(item.symbol)+' · '+esc(_dhSrcNow)+'</span>'+
+        '<span id="lmDhSrcLabel" style="font-size:9px;color:var(--text-3);margin-left:6px"></span>'+
+        '<span style="font-size:9px;color:var(--text-3);margin-left:auto" id="lmDhCtl">▾ collapse</span>'+
+      '</div>'+
+      '<div id="lmDhBody" style="overflow-x:auto;overflow-y:auto;max-height:300px">'+
+        '<table class="lm-dh-tbl" style="width:100%;min-width:600px">'+
+          '<thead><tr><th>Metric</th><th>Value</th><th>Source</th><th>Status</th><th>Updated</th><th>Notes</th></tr></thead>'+
+          '<tbody id="lmDhRows">'+
+            '<tr><td colspan="6" style="color:var(--text-3);font-size:10px;padding:10px">Loading Data Health…</td></tr>'+
+          '</tbody>'+
+        '</table>'+
+      '</div>';
+    if(_dhSlot){
+      _dhSlot.id="lmDhWrap"; _dhSlot.className="sec-card"; _dhSlot.innerHTML=_dhCardInner;
+    } else {
+      console.error("[LM-DH-FLOW] lmDhSlot missing — appending fallback to box");
+      var _dhFallback=document.createElement("div");
+      _dhFallback.id="lmDhWrap"; _dhFallback.className="sec-card"; _dhFallback.style.marginTop="12px";
+      _dhFallback.innerHTML=_dhCardInner;
+      box.appendChild(_dhFallback);
     }
-    // Force DH fetch + polling IMMEDIATELY after DOM insert — before any handler binding
+    console.log("[LM-DH-FLOW] wrap", !!document.getElementById("lmDhWrap"));
+    console.log("[LM-DH-FLOW] rows", !!document.getElementById("lmDhRows"));
+    // Flush queued DH rows (no pollKey guard — pending data pre-dates this render cycle)
+    if(_lmPendingDhData){ var _pd=_lmPendingDhData; _lmPendingDhData=null; _lmRenderDataHealth(_pd.rows,_pd.meta,null,null,null); }
+    // Immediately fetch DH + start polling — BEFORE any handler binding
     if(item&&item.symbol){
       var _dhSrcImm=_lmGetDataSrc();
-      console.log("[LM-DH-FLOW] fetch start (immediate)", item.symbol, _dhSrcImm);
-      _lmFetchDataHealth(item.symbol,_dhSrcImm);
-      _lmStartDhPolling();
+      _lmFetchDataHealth(item.symbol,_dhSrcImm,item.id,_pollKey);
+      _lmStartDhPolling(item.id,item.symbol,_pollKey);
     }
 
     [].forEach.call(box.querySelectorAll("[data-chart]"),function(btn){
@@ -7141,32 +7145,35 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     var sel=document.getElementById("lmDataSrc");
     return (sel&&sel.value)||"binance";
   }
-  function _lmFetchDataHealth(symbol,exchange){
-    if(!symbol) return;
-    if(!exchange) return;
+  function _lmFetchDataHealth(symbol,exchange,itemId,pollKey){
+    if(!symbol||!exchange) return;
     if(location.protocol==="file:") return;
-    console.log("[LM-DH-FLOW] fetch start", symbol, exchange);
-    console.log("[LM-DH] fetching Data Health",symbol,exchange);
+    console.log("[LM-DH-FLOW] fetch start", symbol, exchange, itemId, pollKey);
     fetch("/api/live-monitor/data-health?symbol="+encodeURIComponent(symbol)+"&exchange="+encodeURIComponent(exchange),{
       credentials:"same-origin"
     }).then(function(r){return r.json().catch(function(){return null;});})
     .then(function(d){
       console.log("[LM-DH-FLOW] fetch response", d&&d.ok, d&&d.rows&&d.rows.length);
+      // Stale guard — discard if item or poll cycle changed since request was made
+      if(!_lmSelItem||_lmSelItem.id!==itemId||_lmSelItem.symbol!==symbol){
+        console.log("[LM-POLL] stale DH response ignored symbol="+symbol+" itemId="+itemId+" current="+(_lmSelItem&&_lmSelItem.symbol));
+        return;
+      }
+      if(pollKey&&_lmActivePollKey!==pollKey){
+        console.log("[LM-POLL] stale DH pollKey ignored symbol="+symbol+" pollKey="+pollKey);
+        return;
+      }
       if(d&&d.ok&&Array.isArray(d.rows)){
-        // Cache parent exchange for the fast price timer
         if(d.price_source_exchange) _lmPriceExchange=d.price_source_exchange;
         console.log("[LM-DH] rows="+d.rows.length+" sym="+symbol+" analysis="+exchange+(d.price_source_exchange&&d.price_source_exchange!==exchange?" price_from="+d.price_source_exchange:"")+(d.build_commit?" build="+d.build_commit:""));
         var meta={sources_used:d.sources_used,sources_skipped:d.sources_skipped};
-        _lmRenderDataHealth(d.rows,meta);
-        _lmUpdateLivePriceFromRows(d.rows,d.price_source_exchange||exchange);
-        // Show split-source contract label
+        _lmRenderDataHealth(d.rows,meta,symbol,itemId,pollKey);
+        _lmUpdateLivePriceFromRows(d.rows,d.price_source_exchange||exchange,symbol,itemId,pollKey);
         var _srcLbl=document.getElementById("lmDhSrcLabel");
         if(_srcLbl){
           var _pe=(d.price_source_exchange||exchange||"");
           var _as=(d.market_context_source||exchange||"");
-          var _peT=_pe.charAt(0).toUpperCase()+_pe.slice(1);
-          var _asT=_as.charAt(0).toUpperCase()+_as.slice(1);
-          _srcLbl.textContent=(_pe.toLowerCase()!==_as.toLowerCase())?"· Price: "+_peT+" | Analysis: "+_asT:"";
+          _srcLbl.textContent=(_pe.toLowerCase()!==_as.toLowerCase())?"· Price: "+_pe.charAt(0).toUpperCase()+_pe.slice(1)+" | Analysis: "+_as.charAt(0).toUpperCase()+_as.slice(1):"";
         }
       } else {
         var _wrap=document.getElementById("lmDhRows")||document.getElementById("lmDhBody");
@@ -7180,7 +7187,6 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       }
     }).catch(function(e){
       console.error("[LM-DH-FLOW] failed", e);
-      console.log("[LM-DH] fetch error:",e);
       var _wrap=document.getElementById("lmDhRows")||document.getElementById("lmDhBody");
       if(_wrap){
         var _tb=(_wrap.tagName==="TBODY")?_wrap:_wrap.querySelector("tbody");
@@ -7196,8 +7202,13 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     if(st==="blocked")                         return "lm-dh-err";
     return "lm-dh-na";
   }
-  function _lmRenderDataHealth(rows, meta){
-    console.log("[LM-DH-FLOW] render rows", rows&&rows.length);
+  function _lmRenderDataHealth(rows, meta, symbol, itemId, pollKey){
+    console.log("[LM-DH-FLOW] render rows", rows&&rows.length, symbol, itemId, pollKey);
+    // Stale guard — skip if poll cycle changed (but allow null pollKey from pending-queue flush)
+    if(pollKey&&_lmActivePollKey&&_lmActivePollKey!==pollKey){
+      console.log("[LM-POLL] stale render ignored symbol="+symbol+" pollKey="+pollKey);
+      return;
+    }
     console.log("[LM-DH-FLOW] render container found", !!document.getElementById("lmDhRows"));
     var wrap=document.getElementById("lmDhRows")||document.getElementById("lmDhBody");
     if(!wrap){
@@ -7301,8 +7312,17 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     b.style.display=isHidden?"":"none";
     if(ctl) ctl.textContent=isHidden?"▾ collapse":"▸ expand";
   }
-  function _lmUpdateLivePriceFromRows(rows, source){
+  function _lmUpdateLivePriceFromRows(rows, source, symbol, itemId, pollKey){
     if(!Array.isArray(rows)) return;
+    // Stale guard — only apply when itemId provided (allows pending-queue flush with null)
+    if(itemId&&(!_lmSelItem||_lmSelItem.id!==itemId)){
+      console.log("[LM-POLL] stale price update ignored itemId="+itemId+" current="+(_lmSelItem&&_lmSelItem.id));
+      return;
+    }
+    if(pollKey&&_lmActivePollKey&&_lmActivePollKey!==pollKey){
+      console.log("[LM-POLL] stale price pollKey ignored symbol="+symbol);
+      return;
+    }
     var _liveVal=null, _markVal=null;
     for(var _lpi=0;_lpi<rows.length;_lpi++){
       var _lpr=rows[_lpi], _lpm=(_lpr.metric||"").toLowerCase();
@@ -7313,15 +7333,14 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         if(_lpr.value&&_lpr.value!=="—") _markVal=_lpr.value;
       }
     }
-    var _sym=_lmSelItem?_lmSelItem.symbol:null;
+    // Use the symbol from the request (not _lmSelItem.symbol) to target the right DOM elements
+    var _sym=symbol||(_lmSelItem?_lmSelItem.symbol:null);
     if(_liveVal&&_sym){
-      // Cache last known price — used as stale fallback when source changes
       _lmLastKnownPrices[_sym]={live_price:_liveVal,mark_price:_markVal||null,ts:Date.now()};
       console.log("[LM-PRICE] "+_sym+" live="+_liveVal+(_markVal?" mark="+_markVal:"")+" src="+(source||"?"));
       var _pEls=document.querySelectorAll('[data-lm-live-price-symbol="'+_sym+'"]');
       [].forEach.call(_pEls,function(el){ el.textContent=_liveVal; });
     } else if(_sym&&_lmLastKnownPrices[_sym]){
-      // Source temporarily unavailable — show last known price with stale badge
       var _lkp=_lmLastKnownPrices[_sym];
       var _ageS=Math.round((Date.now()-_lkp.ts)/1000);
       if(_ageS<30){
@@ -7345,13 +7364,22 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       }
     }
   }
-  // Lightweight price update from /api/live-monitor/price (fast endpoint)
-  function _lmUpdateLivePriceFromPriceApi(d, sym){
-    if(!d||!d.ok){
-      console.log("[LM-PRICE] /price response not ok sym="+sym);
+  // Lightweight price update from /api/live-monitor/price (1s timer)
+  function _lmUpdateLivePriceFromPriceApi(d, sym, itemId, pollKey){
+    if(!d||!d.ok){ console.log("[LM-PRICE] /price response not ok sym="+sym); return; }
+    // Stale guard
+    if(!_lmSelItem||_lmSelItem.symbol!==sym){
+      console.log("[LM-POLL] stale price api response ignored sym="+sym+" current="+(_lmSelItem&&_lmSelItem.symbol));
       return;
     }
-    // Log build commit once on first receipt for cache/deploy verification
+    if(itemId&&_lmSelItem.id!==itemId){
+      console.log("[LM-POLL] stale price api itemId mismatch sym="+sym);
+      return;
+    }
+    if(pollKey&&_lmActivePollKey&&_lmActivePollKey!==pollKey){
+      console.log("[LM-POLL] stale price api pollKey mismatch sym="+sym);
+      return;
+    }
     if(d.build_commit&&!window._lmBuildLogged){
       window._lmBuildLogged=true;
       console.log("[LM-FRONTEND] build "+d.build_commit);
@@ -7360,14 +7388,11 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     if(lp&&lp!=="—"&&lp!=="null"){
       console.log("[LM-PRICE] /price ok sym="+sym+" lp="+lp+" src="+(d.source||d.exchange));
       _lmUpdateLivePriceFromRows([
-        {metric:"Live Price",  value:lp, status:d.status||"fresh"},
-        {metric:"Mark Price",  value:d.mark_price||lp, status:d.status||"fresh"}
-      ], d.exchange||d.source||"binance");
+        {metric:"Live Price", value:lp, status:d.status||"fresh"},
+        {metric:"Mark Price", value:d.mark_price||lp, status:d.status||"fresh"}
+      ], d.exchange||d.source||"binance", sym, itemId, pollKey);
     } else {
-      // No live price from /price — do NOT call _lmUpdateLivePriceFromRows with empty rows
-      // (that would show "Stale" label, overwriting a valid "LIVE" set by the 4s DH timer)
       console.log("[LM-PRICE] /price null price sym="+sym+" status="+(d.status||"—")+" src="+(d.source||"—"));
-      // Only downgrade label to Stale if truly old (> 8s since last successful price)
       var _stEl=document.getElementById("lmPxStatus");
       if(_stEl&&sym&&_lmLastKnownPrices[sym]){
         var _ageMs=Date.now()-_lmLastKnownPrices[sym].ts;
@@ -7376,32 +7401,32 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
           _src2=_src2.charAt(0).toUpperCase()+_src2.slice(1);
           _stEl.innerHTML='<span style="color:var(--yellow)">●</span> Stale · '+esc(_src2);
         }
-        // < 8s: last price is fresh enough — keep existing LIVE label
       }
     }
   }
-  function _lmStartDhPolling(){
-    if(_lmDhTimer) clearInterval(_lmDhTimer);
-    if(_lmPriceTimer) clearInterval(_lmPriceTimer);
-    console.log("[LM-PRICE] timer started sym="+((_lmSelItem&&_lmSelItem.symbol)||"?")+" src="+(_lmGetDataSrc()||"binance"));
-    // Full Data Health table refresh: every 4 seconds
+  function _lmStartDhPolling(itemId, symbol, pollKey){
+    if(_lmDhTimer){ clearInterval(_lmDhTimer); _lmDhTimer=null; }
+    if(_lmPriceTimer){ clearInterval(_lmPriceTimer); _lmPriceTimer=null; }
+    console.log("[LM-POLL] stop old timers");
+    if(!symbol) return; // no item selected — don't start timers
+    console.log("[LM-POLL] start", itemId, symbol, _lmGetDataSrc(), pollKey);
     _lmDhTimer=setInterval(function(){
       if(!_lmSelItem) return;
+      // Stale guard: stop firing if a newer render cycle has taken over
+      if(pollKey&&_lmActivePollKey!==pollKey){ clearInterval(_lmDhTimer); _lmDhTimer=null; return; }
       var ex=_lmGetDataSrc();
-      _lmFetchDataHealth(_lmSelItem.symbol,ex);
+      _lmFetchDataHealth(_lmSelItem.symbol,ex,_lmSelItem.id,pollKey);
     },4000);
-    // Fast visible price update: every 1 second via lightweight /price endpoint.
-    // Uses selected Data Source so price follows the user's chosen analysis exchange.
     _lmPriceTimer=setInterval(function(){
       if(!_lmSelItem||location.protocol==="file:") return;
+      if(pollKey&&_lmActivePollKey!==pollKey){ clearInterval(_lmPriceTimer); _lmPriceTimer=null; return; }
       var sym=_lmSelItem.symbol;
-      var selectedSrc=_lmGetDataSrc();
-      var priceEx=selectedSrc||_lmPriceExchange||"binance";
+      var priceEx=_lmGetDataSrc()||_lmPriceExchange||"binance";
       if(!sym) return;
-      console.log("[LM-PRICE] tick sym="+sym+" selectedSrc="+selectedSrc+" priceEx="+priceEx);
+      console.log("[LM-PRICE] tick sym="+sym+" priceEx="+priceEx+" pollKey="+pollKey);
       fetch("/api/live-monitor/price?symbol="+encodeURIComponent(sym)+"&exchange="+encodeURIComponent(priceEx),{credentials:"same-origin"})
         .then(function(r){return r.json().catch(function(){return null;});})
-        .then(function(d){ _lmUpdateLivePriceFromPriceApi(d,sym); })
+        .then(function(d){ _lmUpdateLivePriceFromPriceApi(d,sym,_lmSelItem?_lmSelItem.id:null,pollKey); })
         .catch(function(e){ console.log("[LM-PRICE] fetch error sym="+sym+" err="+e); });
     },1000);
   }
