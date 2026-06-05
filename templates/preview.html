@@ -6019,6 +6019,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         'Candle detection, BOS/CHoCH, and order-flow alignment engines are pending.</div>'
       :'';
     var html=
+      '<div id="lmRenderMarker" style="font-size:9px;color:#22d3ee;padding:2px 0">RENDER PATH: _lmRenderRight · DH expected here</div>'+
       biasBanner+
       '<div class="lm-hero">'+
         '<div class="lm-hero-top">'+
@@ -6134,7 +6135,25 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         '</div>'+
       '</div>'+
 
-      '<div id="lmDhSlot" data-lm-dh-slot-for="'+item.id+'" style="margin-top:12px"></div>'+
+      '<div id="lmDhPlainMarker" style="padding:4px 8px;margin-top:8px;border:1px solid #22d3ee;color:#22d3ee;font-size:9px">DATA HEALTH SLOT HERE</div>'+
+      '<div id="lmDhWrap" class="sec-card" data-lm-dh-wrap-for="'+item.id+'" style="margin-top:12px">'+
+        '<div class="sec-card-head" style="cursor:pointer" onclick="_lmToggleDh()">'+
+          '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>'+
+          '<span class="sch-title">DATA HEALTH</span>'+
+          '<span id="lmDhItemLabel" style="font-size:9px;color:var(--accent);margin-left:8px">'+esc(item.symbol)+(isBiasShift?" · Bias Shift Watch":"")+'</span>'+
+          '<span id="lmDhMountBadge" style="font-size:9px;color:var(--text-3);margin-left:4px">DH mounted · '+esc(item.symbol)+'</span>'+
+          '<span id="lmDhSrcLabel" style="font-size:9px;color:var(--text-3);margin-left:6px"></span>'+
+          '<span style="font-size:9px;color:var(--text-3);margin-left:auto" id="lmDhCtl">▾ collapse</span>'+
+        '</div>'+
+        '<div id="lmDhBody" style="overflow-x:auto;overflow-y:auto;max-height:300px;max-width:100%;box-sizing:border-box">'+
+          '<table class="lm-dh-tbl" style="width:100%;min-width:600px">'+
+            '<thead><tr><th>Metric</th><th>Value</th><th>Source</th><th>Status</th><th>Updated</th><th>Notes</th></tr></thead>'+
+            '<tbody id="lmDhRows" data-lm-dh-rows-for="'+item.id+'">'+
+              '<tr><td colspan="6" style="color:var(--text-3);font-size:10px;padding:10px">Loading Data Health…</td></tr>'+
+            '</tbody>'+
+          '</table>'+
+        '</div>'+
+      '</div>'+
 
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'+
         '<div class="sec-card">'+
@@ -6292,59 +6311,12 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       '</div>';
 
     box.innerHTML=html;
-    // Mount Data Health — scoped to current box (FIX 1: avoid stale global getElementById)
-    var _dhSlot=box.querySelector("#lmDhSlot");
-    console.log("[LM-DH-FLOW] slot", !!_dhSlot);
-    var _dhSrcNow=_lmGetDataSrc();
-    var _dhCardInner=
-      '<div class="sec-card-head" style="cursor:pointer" onclick="_lmToggleDh()">'+
-        '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>'+
-        '<span class="sch-title">DATA HEALTH</span>'+
-        '<span id="lmDhItemLabel" style="font-size:9px;color:var(--accent);margin-left:8px">'+esc(item.symbol)+(isBiasShift?" · Bias Shift Watch":"")+'</span>'+
-        ' <span id="lmDhMountBadge" style="font-size:9px;color:var(--text-3);margin-left:4px">DH mounted · '+esc(item.symbol)+' · '+esc(_dhSrcNow)+'</span>'+
-        '<span id="lmDhSrcLabel" style="font-size:9px;color:var(--text-3);margin-left:6px"></span>'+
-        '<span style="font-size:9px;color:var(--text-3);margin-left:auto" id="lmDhCtl">▾ collapse</span>'+
-      '</div>'+
-      '<div id="lmDhBody" style="overflow-x:auto;overflow-y:auto;max-height:300px;max-width:100%;box-sizing:border-box">'+
-        '<table class="lm-dh-tbl" style="width:100%;min-width:600px">'+
-          '<thead><tr><th>Metric</th><th>Value</th><th>Source</th><th>Status</th><th>Updated</th><th>Notes</th></tr></thead>'+
-          '<tbody id="lmDhRows" data-lm-dh-rows-for="'+item.id+'">'+
-            '<tr><td colspan="6" style="color:var(--text-3);font-size:10px;padding:10px">Loading Data Health…</td></tr>'+
-          '</tbody>'+
-        '</table>'+
-      '</div>';
-    if(_dhSlot){
-      _dhSlot.id="lmDhWrap";
-      _dhSlot.setAttribute("data-lm-dh-wrap-for",String(item.id));
-      _dhSlot.className="sec-card";
-      _dhSlot.innerHTML=_dhCardInner;
-    } else {
-      // Slot not found in current box — insert fallback directly after hero (FIX 4: visible failure path)
-      console.error("[LM-DH-FLOW] lmDhSlot missing in box — inserting fallback after hero");
-      var _dhFallback=document.createElement("div");
-      _dhFallback.id="lmDhWrap";
-      _dhFallback.setAttribute("data-lm-dh-wrap-for",String(item.id));
-      _dhFallback.className="sec-card";
-      _dhFallback.style.marginTop="12px";
-      _dhFallback.innerHTML=_dhCardInner;
-      var _heroEl=box.querySelector(".lm-hero");
-      if(_heroEl&&_heroEl.nextSibling) box.insertBefore(_dhFallback,_heroEl.nextSibling);
-      else box.appendChild(_dhFallback);
-    }
-    console.log("[LM-DH-FLOW] wrap", !!box.querySelector("#lmDhWrap"));
-    console.log("[LM-DH-FLOW] rows", !!box.querySelector("#lmDhRows"));
-    // FIX 6: diagnostic log + remove stale duplicate IDs outside current box
+    // DH card is rendered directly in HTML string — no JS slot conversion needed
+    console.log("[LM-DH-FLOW] inline wrap", !!box.querySelector("#lmDhWrap"), "rows", !!box.querySelector("#lmDhRows"));
     var _gwc=document.querySelectorAll("#lmDhWrap").length;
     var _grc=document.querySelectorAll("#lmDhRows").length;
-    console.log("[LM-DH-MOUNT]",{
-      itemId:item.id,symbol:item.symbol,
-      slotInBox:!!box.querySelector("[data-lm-dh-slot-for]"),
-      wrapInBox:!!box.querySelector("#lmDhWrap"),
-      rowsInBox:!!box.querySelector("#lmDhRows"),
-      globalWrapCount:_gwc,globalRowsCount:_grc
-    });
     if(_gwc>1||_grc>1){
-      console.warn("[LM-DH-MOUNT] duplicate IDs found — removing stale nodes outside current panel");
+      console.warn("[LM-DH-MOUNT] duplicate IDs — removing stale nodes outside current panel");
       [].forEach.call(document.querySelectorAll("#lmDhWrap"),function(el){
         if(!box.contains(el)&&el.parentNode) el.parentNode.removeChild(el);
       });
@@ -6352,16 +6324,8 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         if(!box.contains(el)&&el.parentNode) el.parentNode.removeChild(el);
       });
     }
-    // FIX 4: inject visible error card if mount still failed after all attempts
     if(!box.querySelector("#lmDhWrap")){
-      console.error("[LM-DH-MOUNT] FAILED — #lmDhWrap not in box");
-      var _failCard=document.createElement("div");
-      _failCard.id="lmDhWrap"; _failCard.className="sec-card";
-      _failCard.style.cssText="margin-top:12px;border-color:rgba(239,68,68,.4);background:rgba(239,68,68,.06)";
-      _failCard.innerHTML='<div class="sec-card-head"><span class="sch-title" style="color:var(--red-2)">DATA HEALTH MOUNT FAILED</span><span style="font-size:9px;color:var(--red-2);margin-left:8px">slot not found for '+esc(item.symbol)+'</span></div>';
-      var _heroFail=box.querySelector(".lm-hero");
-      if(_heroFail&&_heroFail.nextSibling) box.insertBefore(_failCard,_heroFail.nextSibling);
-      else box.appendChild(_failCard);
+      console.error("[LM-DH-MOUNT] FAILED — #lmDhWrap not found in box after innerHTML set");
     }
     // Flush queued DH rows (no pollKey guard — pending data pre-dates this render cycle)
     if(_lmPendingDhData){ var _pd=_lmPendingDhData; _lmPendingDhData=null; _lmRenderDataHealth(_pd.rows,_pd.meta,null,null,null); }
@@ -6371,6 +6335,25 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     console.log("[LM-BOOT] renderRight bootstrap start",item&&item.id,item&&item.symbol);
     _lmSelItem=item;
     _lmStartLiveDataForSelectedItem("renderRight");
+    // TASK 6 — detect post-mount wipe: another re-render would remove the DH card
+    (function(_checkBox,_checkItemId,_checkSym){
+      setTimeout(function(){
+        var _dh=_checkBox&&_checkBox.querySelector("#lmDhWrap");
+        console.log("[LM-DH-VISIBLE-CHECK]",!!_dh,"itemId="+_checkItemId,"sym="+_checkSym);
+        if(!_dh){
+          console.error("[LM-DH-VISIBLE-CHECK] Data Health disappeared after render — another render likely wiped the panel");
+          var _right2=document.getElementById("lmRight");
+          if(_right2){
+            var _emg=document.createElement("div");
+            _emg.style.cssText="padding:6px 10px;margin:8px 0;border:1px solid rgba(239,68,68,.4);color:var(--red-2);font-size:10px;background:rgba(239,68,68,.06)";
+            _emg.textContent="[LM-DH] Emergency: Data Health was wiped after initial render. Check console for second renderRight call.";
+            var _heroEmg=_right2.querySelector(".lm-hero");
+            if(_heroEmg&&_heroEmg.nextSibling) _right2.insertBefore(_emg,_heroEmg.nextSibling);
+            else _right2.appendChild(_emg);
+          }
+        }
+      },500);
+    })(box,item.id,item.symbol);
 
     [].forEach.call(box.querySelectorAll("[data-chart]"),function(btn){
       btn.addEventListener("click",function(){
@@ -7305,7 +7288,16 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     if(!wrap) wrap=document.getElementById("lmDhRows")||document.getElementById("lmDhBody");
     console.log("[LM-DH-FLOW] render container found", !!wrap, "scoped="+!!_lmRightBox);
     if(!wrap){
-      console.log("[LM-DH] container missing — queuing for after DOM render rows="+(rows?rows.length:0));
+      console.error("[LM-DH] #lmDhRows not found in visible panel — rows="+( rows?rows.length:0)+" itemId="+itemId);
+      var _lmRight2=document.getElementById("lmRight");
+      if(_lmRight2){
+        var _errInj=document.createElement("div");
+        _errInj.style.cssText="padding:6px 10px;margin:8px 0;border:1px solid rgba(239,68,68,.4);color:var(--red-2);font-size:10px;background:rgba(239,68,68,.06)";
+        _errInj.textContent="DATA HEALTH ROW TARGET MISSING — rows received but #lmDhRows not found in visible panel";
+        var _heroInj=_lmRight2.querySelector(".lm-hero");
+        if(_heroInj&&_heroInj.nextSibling) _lmRight2.insertBefore(_errInj,_heroInj.nextSibling);
+        else _lmRight2.appendChild(_errInj);
+      }
       _lmPendingDhData={rows:rows,meta:meta};
       return;
     }
