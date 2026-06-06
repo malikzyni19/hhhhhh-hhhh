@@ -2,13 +2,24 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 
   <url>
-    <loc>https://www.smcsetups.com/</loc>
+    <loc>https://smcsetups.com/</loc>
+    <lastmod>2026-06-06</lastmod>
+    <changefreq>daily</changefreq>
     <priority>1.0</priority>
   </url>
 
   <url>
-    <loc>https://www.smcsetups.com/login</loc>
-    <priority>0.8</priority>
+    <loc>https://smcsetups.com/login</loc>
+    <lastmod>2026-06-06</lastmod>
+    <changefreq>never</changefreq>
+    <priority>0.3</priority>
+  </url>
+
+  <url>
+    <loc>https://smcsetups.com/register</loc>
+    <lastmod>2026-06-06</lastmod>
+    <changefreq>never</changefreq>
+    <priority>0.3</priority>
   </url>
 
 </urlset>
