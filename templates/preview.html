@@ -7415,10 +7415,33 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
   }
   window._lmDhToggle=_lmDhToggle;
   function _lmDhObPanelHtml(uid,sym,obRow){
-    var val=obRow?esc(obRow.value||"—"):"—";
+    var rawVal=obRow?(obRow.value||""):"";
     var src=obRow?esc(obRow.source||"—"):"—";
     var st=obRow?esc(obRow.status||"—"):"—";
     var upd=obRow?esc(obRow.updated||"—"):"—";
+    // Parse "Bid 92.0633 / Ask 92.0733" from backend value
+    var bm=rawVal.match(/Bid\s*([\d.]+)/i);
+    var am=rawVal.match(/Ask\s*([\d.]+)/i);
+    var bid=bm?parseFloat(bm[1]):null;
+    var ask=am?parseFloat(am[1]):null;
+    var spread=(bid&&ask)?(ask-bid):null;
+    var spreadPct=(bid&&ask&&bid>0)?((ask-bid)/bid*100):null;
+    var bidHtml=bid?
+      '<div style="text-align:center;padding:24px 12px">'+
+        '<div style="font-size:10px;color:#71869b;text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px">Best Bid Price</div>'+
+        '<div style="font-size:26px;font-weight:900;color:#22c55e">'+bid.toFixed(4)+'</div>'+
+        (spread!==null?'<div style="font-size:10px;color:#71869b;margin-top:6px">Spread: '+spread.toFixed(4)+' ('+spreadPct.toFixed(4)+'%)</div>':'')+
+        '<div style="margin-top:16px;padding:8px;border:1px dashed rgba(34,197,94,.2);border-radius:8px;font-size:10px;color:#9eb3c7">Wall-level depth (size, stability) requires extended OB endpoint</div>'+
+      '</div>':
+      '<div class="lm-dh-empty">No bid data from backend</div>';
+    var askHtml=ask?
+      '<div style="text-align:center;padding:24px 12px">'+
+        '<div style="font-size:10px;color:#71869b;text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px">Best Ask Price</div>'+
+        '<div style="font-size:26px;font-weight:900;color:#ef4444">'+ask.toFixed(4)+'</div>'+
+        (spread!==null?'<div style="font-size:10px;color:#71869b;margin-top:6px">Spread: '+spread.toFixed(4)+' ('+spreadPct.toFixed(4)+'%)</div>':'')+
+        '<div style="margin-top:16px;padding:8px;border:1px dashed rgba(239,68,68,.2);border-radius:8px;font-size:10px;color:#9eb3c7">Wall-level depth (size, stability) requires extended OB endpoint</div>'+
+      '</div>':
+      '<div class="lm-dh-empty">No ask data from backend</div>';
     return '<div class="lm-dh-panel" id="'+uid+'Panel">'+
       '<div class="lm-dh-panel-top">'+
         '<span class="lm-dh-ptitle">Expanded Order Book Window</span>'+
@@ -7444,25 +7467,66 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         '</select>'+
       '</div>'+
       '<div class="lm-dh-summary">'+
-        '<div class="lm-dh-stat"><div class="k">Best Bid/Ask</div><div class="v" style="font-size:11px">'+val+'</div></div>'+
-        '<div class="lm-dh-stat"><div class="k">Source</div><div class="v" style="font-size:11px">'+src+'</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Source</div><div class="v" style="font-size:10px">'+src+'</div></div>'+
         '<div class="lm-dh-stat"><div class="k">Status</div><div class="v" style="font-size:11px">'+st+'</div></div>'+
         '<div class="lm-dh-stat"><div class="k">Updated</div><div class="v" style="font-size:11px">'+upd+'</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Spread</div><div class="v lm-dh-yellow" style="font-size:12px">'+(spreadPct!==null?spreadPct.toFixed(4)+'%':'—')+'</div></div>'+
         '<div class="lm-dh-stat"><div class="k">Symbol</div><div class="v" style="font-size:11px">'+esc(sym)+'</div></div>'+
       '</div>'+
-      '<div style="padding:16px;text-align:center;border:1px dashed rgba(34,211,238,.25);border-radius:10px;color:#9eb3c7;font-size:11px">'+
-        '<div style="color:#22d3ee;font-weight:700;margin-bottom:6px">Detailed Wall Map — Needs Backend Support</div>'+
-        'Full bid/ask wall ladder (sorted by size, distance, stability) requires extended order book endpoint. '+
-        'Current backend provides best bid/ask summary only.'+
-        '<br><span style="color:#f59e0b">To enable: add wall-level OB data to the data-health API response.</span>'+
+      '<div class="lm-dh-cols">'+
+        '<div class="lm-dh-side">'+
+          '<div class="lm-dh-side-head"><span class="lm-dh-side-title lm-dh-green">BID WALLS / SUPPORT</span><span class="lm-dh-badge lm-dh-b-green">best bid</span></div>'+
+          bidHtml+
+        '</div>'+
+        '<div class="lm-dh-side">'+
+          '<div class="lm-dh-side-head"><span class="lm-dh-side-title lm-dh-red">ASK WALLS / RESISTANCE</span><span class="lm-dh-badge lm-dh-b-red">best ask</span></div>'+
+          askHtml+
+        '</div>'+
+      '</div>'+
+      '<div style="margin-top:10px;padding:10px;text-align:center;border:1px dashed rgba(34,211,238,.18);border-radius:8px;font-size:10px;color:#71869b">'+
+        '<span style="color:#22d3ee">Wall Ladder</span> — Full wall levels (size, distance, stability per price) need extended OB endpoint added to the data-health API.'+
       '</div>'+
     '</div>';
   }
   function _lmDhLiqPanelHtml(uid,sym,liqRow){
-    var val=liqRow?esc(liqRow.value||"—"):"—";
+    var rawVal=liqRow?(liqRow.value||""):"";
     var src=liqRow?esc(liqRow.source||"—"):"—";
     var st=liqRow?esc(liqRow.status||"—"):"—";
     var upd=liqRow?esc(liqRow.updated||"—"):"—";
+    // Parse "L $420K / S $180K (5m)" or "None (5m)"
+    var isNone=/^none/i.test(rawVal.trim());
+    var lm=rawVal.match(/L\s*\$?([\d.,]+\s*[KMBkmb]?)/);
+    var sm=rawVal.match(/S\s*\$?([\d.,]+\s*[KMBkmb]?)/);
+    var longStr=lm?('$'+lm[1].trim()):null;
+    var shortStr=sm?('$'+sm[1].trim().split(/[\s/(]/)[0]):null;
+    var liqBodyHtml;
+    if(isNone){
+      liqBodyHtml='<div style="padding:28px;text-align:center">'+
+        '<div style="font-size:18px;font-weight:900;color:#71869b;margin-bottom:8px">No Liquidations (5m)</div>'+
+        '<div style="font-size:11px;color:#9eb3c7">No significant liquidation events detected in the last 5 minutes. Market is calm on this window.</div>'+
+      '</div>';
+    } else if(longStr||shortStr){
+      liqBodyHtml='<div class="lm-dh-cols">'+
+        '<div class="lm-dh-side">'+
+          '<div class="lm-dh-side-head"><span class="lm-dh-side-title lm-dh-red">LONGS REKT</span><span class="lm-dh-badge lm-dh-b-red">liquidated</span></div>'+
+          '<div style="text-align:center;padding:24px 12px">'+
+            '<div style="font-size:10px;color:#71869b;text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px">Long Liquidations (5m)</div>'+
+            '<div style="font-size:26px;font-weight:900;color:#ef4444">'+(longStr||'—')+'</div>'+
+            '<div style="margin-top:16px;padding:8px;border:1px dashed rgba(239,68,68,.2);border-radius:8px;font-size:10px;color:#9eb3c7">Per-sweep event breakdown needs extended endpoint</div>'+
+          '</div>'+
+        '</div>'+
+        '<div class="lm-dh-side">'+
+          '<div class="lm-dh-side-head"><span class="lm-dh-side-title lm-dh-green">SHORTS REKT</span><span class="lm-dh-badge lm-dh-b-green">liquidated</span></div>'+
+          '<div style="text-align:center;padding:24px 12px">'+
+            '<div style="font-size:10px;color:#71869b;text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px">Short Liquidations (5m)</div>'+
+            '<div style="font-size:26px;font-weight:900;color:#22c55e">'+(shortStr||'—')+'</div>'+
+            '<div style="margin-top:16px;padding:8px;border:1px dashed rgba(34,197,94,.2);border-radius:8px;font-size:10px;color:#9eb3c7">Per-sweep event breakdown needs extended endpoint</div>'+
+          '</div>'+
+        '</div>'+
+      '</div>';
+    } else {
+      liqBodyHtml='<div class="lm-dh-empty">'+esc(rawVal||"—")+'</div>';
+    }
     return '<div class="lm-dh-panel" id="'+uid+'Panel">'+
       '<div class="lm-dh-panel-top">'+
         '<span class="lm-dh-ptitle">Expanded Sweep Rekt Map</span>'+
@@ -7481,17 +7545,15 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         '</select>'+
       '</div>'+
       '<div class="lm-dh-summary">'+
-        '<div class="lm-dh-stat"><div class="k">5m Liquidations</div><div class="v" style="font-size:11px">'+val+'</div></div>'+
-        '<div class="lm-dh-stat"><div class="k">Source</div><div class="v" style="font-size:11px">'+src+'</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Long Liq (5m)</div><div class="v lm-dh-red" style="font-size:12px">'+(longStr||'None')+'</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Short Liq (5m)</div><div class="v lm-dh-green" style="font-size:12px">'+(shortStr||'None')+'</div></div>'+
         '<div class="lm-dh-stat"><div class="k">Status</div><div class="v" style="font-size:11px">'+st+'</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Source</div><div class="v" style="font-size:10px">'+src+'</div></div>'+
         '<div class="lm-dh-stat"><div class="k">Updated</div><div class="v" style="font-size:11px">'+upd+'</div></div>'+
-        '<div class="lm-dh-stat"><div class="k">Symbol</div><div class="v" style="font-size:11px">'+esc(sym)+'</div></div>'+
       '</div>'+
-      '<div style="padding:16px;text-align:center;border:1px dashed rgba(245,158,11,.25);border-radius:10px;color:#9eb3c7;font-size:11px">'+
-        '<div style="color:#f59e0b;font-weight:700;margin-bottom:6px">Sweep Rekt History — Needs Backend Support</div>'+
-        'Per-sweep liquidation event history requires the forceOrder/Binance liquidation aggregator endpoint. '+
-        'Current backend provides 5m liquidation totals only.'+
-        '<br><span style="color:#22d3ee">To enable: add sweep rekt event stream to the data-health API response.</span>'+
+      liqBodyHtml+
+      '<div style="margin-top:10px;padding:10px;text-align:center;border:1px dashed rgba(245,158,11,.18);border-radius:8px;font-size:10px;color:#71869b">'+
+        '<span style="color:#f59e0b">Sweep History</span> — Per-sweep events (swing level, reaction, vs-avg) need extended endpoint added to the data-health API.'+
       '</div>'+
     '</div>';
   }
