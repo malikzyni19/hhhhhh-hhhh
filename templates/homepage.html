@@ -3,7 +3,265 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>ZyNi SMC — Smart Money Screener</title>
+<title>ZyNi SMC — Smart Money Concepts Screener | Order Blocks, FVGs & Breaker Blocks</title>
+
+<!-- SEO & GEO Meta -->
+<meta name="description" content="Zyni SMC is a professional Smart Money Concepts platform with 5 scanner modes and multi-model AI auto trading. Scan 400+ crypto pairs for Order Blocks, Fair Value Gaps, Breaker Blocks, Fibonacci, Compressed Zones, ATH/ATL breaks, Trending setups and Candle Bias across timeframes. AI agents — ChatGPT, Claude, Gemini — analyse order flow, reach multi-model consensus and execute trades with automated risk checks.">
+<meta name="keywords" content="Smart Money Concepts, SMC trading, Order Blocks, Fair Value Gaps, Breaker Blocks, Fibonacci, compressed pairs, ATH ATL scan, all time high all time low crypto, candle bias, candle bias detection, multi-timeframe bias, bias scanner, rejection candle, bias direction, trending pairs, trade grade, confluence trading, HTF bias, smart entry, bias shift watch, AI trading, AI agents, multi-model AI, auto trade, order flow, institutional trading, SMC scanner, FVG detector, AI trade proposal, crypto screener, perpetual futures">
+<meta name="author" content="Zyni SMC">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://smcsetups.com/">
+
+<!-- Open Graph -->
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://smcsetups.com/">
+<meta property="og:title" content="Zyni SMC — SMC Scanner + AI Auto Trading | Order Blocks, ATH/ATL, Candle Bias">
+<meta property="og:description" content="5 scanner modes (Main, Compressed, ATH/ATL, Trending, Candle Bias) across 400+ crypto pairs. Multi-model AI agents analyse setups and order flow, reach consensus, then propose and execute trades with automated risk checks.">
+<meta property="og:site_name" content="Zyni SMC">
+<meta property="og:image" content="https://smcsetups.com/static/images/z-logo.png">
+<meta property="og:image:alt" content="Zyni SMC — Smart Money Concepts Trading Platform">
+
+<!-- Twitter / X Card -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Zyni SMC — SMC Scanner + AI Auto Trading | Order Blocks, ATH/ATL, Candle Bias">
+<meta name="twitter:description" content="5 scanner modes (Main, Compressed, ATH/ATL, Trending, Candle Bias) across 400+ crypto pairs. Multi-model AI agents analyse setups and order flow, then propose and execute trades with risk checks.">
+<meta name="twitter:image" content="https://smcsetups.com/static/images/z-logo.png">
+
+<!-- JSON-LD Structured Data -->
+<script type="application/ld+json">
+[
+  {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    "name": "Zyni SMC",
+    "url": "https://smcsetups.com",
+    "logo": "https://smcsetups.com/static/images/z-logo.png",
+    "description": "Professional Smart Money Concepts (SMC) trading platform providing real-time Order Block, Fair Value Gap, Breaker Block and Fibonacci analysis across 400+ crypto pairs."
+  },
+  {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "name": "Zyni SMC",
+    "url": "https://smcsetups.com",
+    "description": "Smart Money Concepts screener for serious crypto traders. Scan 400+ pairs for Order Blocks, Fair Value Gaps, Breaker Blocks and Fibonacci setups in real time."
+  },
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Zyni SMC",
+    "alternateName": "ZyNi SMC",
+    "applicationCategory": "FinanceApplication",
+    "operatingSystem": "Web",
+    "url": "https://smcsetups.com",
+    "description": "Professional Smart Money Concepts (SMC) platform with five scanner modes and AI-powered auto trading. Scans 400+ cryptocurrency pairs across Binance, Bybit, OKX and MEXC (spot and perpetual) for Order Blocks, Fair Value Gaps, Breaker Blocks, Fibonacci, Compressed Zones, ATH/ATL breakouts, Trending setups and Bias Structure (BOS/CHoCH). Grades every setup A+ to B with a confluence engine that stacks OB, FVG and Fibonacci signals. Multiple AI agents — ChatGPT, Claude and Gemini — analyse setups and live order flow, produce a multi-model consensus signal, generate a full AI trade proposal with entry, stop loss, take profit and RR ratio, then execute with automated risk checks.",
+    "featureList": [
+      "Main Scan — Order Block Detection across 400+ crypto pairs (15m, 1H, 4H)",
+      "Fair Value Gap and Imbalance analysis with live impulse scoring (0–100)",
+      "Breaker Block Detection — flipped Order Blocks with FVG overlap alerts",
+      "Fibonacci Retracement auto-detection at 0.618, 0.705 and 0.786",
+      "Compressed Pairs Scanner — high-probability compression zone setups",
+      "ATH/ATL Scanner — all-time high and all-time low breakout detection",
+      "Trending Pairs Scanner — trend-aligned setup detection with delta price filters",
+      "Bias Scanner — candle-based directional bias detection across timeframes; analyses rejection candle patterns and prior directional moves to score Bullish, Bearish or Neutral bias per pair with grade, invalidation level and a suggested confirmation timeframe",
+      "Trade Grade system — every setup graded A+, A, B+, B by quality and confluence",
+      "Confluence engine — stacks Order Block, Fair Value Gap and Fibonacci signals on the same zone",
+      "HTF Bias alignment — filters setups by high-timeframe directional bias",
+      "Live Monitor Dashboard — all SMC zones across three timeframes with zero manual work",
+      "Multi-timeframe (MTF) engine — candle store, feature engine, structure engine and order flow per pair",
+      "Smart Entry Plan — precise entry zones with invalidation level and risk-reward ratio",
+      "Precision Bias Shift Watch — real-time monitoring for structure changes and CHoCH events",
+      "Session Context — active trading session detection (Tokyo, New York, London)",
+      "Multi-model AI Agents — ChatGPT, Claude and Gemini independently analyse each setup",
+      "AI consensus engine — combines multiple model outputs into one high-confidence signal",
+      "AI-generated trade proposals — full entry, stop loss, take profit and RR calculation",
+      "Automated risk check before every trade execution",
+      "Trading Terminal — demo trade execution and live order management",
+      "Risk Guard — configurable safety controls and position size limits",
+      "Trade Journal — closed trade history with post-trade review and outcome tracking",
+      "Order flow analysis — live buy/sell pressure overlaid on SMC zones",
+      "AI chat per pair — on-demand SMC analysis and questions for any monitored setup",
+      "Setup Memory — historical outcome tracking for AI pattern learning",
+      "Scan Presets — save and reuse scanner configurations",
+      "Multi-exchange support — Binance, Bybit, OKX and MEXC (spot and perpetual markets)",
+      "Watchlist — star and track selected pairs with live health scores",
+      "Dashboard — real-time ATH/ATL break counters, bias shifts and watchlist health overview"
+    ],
+    "about": [
+      {
+        "@type": "Thing",
+        "name": "Smart Money Concepts Trading",
+        "description": "Smart Money Concepts (SMC) is a trading methodology that follows institutional traders — banks, hedge funds and market makers — by identifying Order Blocks, Fair Value Gaps and liquidity zones."
+      },
+      {
+        "@type": "Thing",
+        "name": "AI-Powered Algorithmic Trading",
+        "description": "Automated trading driven by multiple AI models (ChatGPT, Claude, Gemini) that analyse SMC setups, order flow and market structure to generate and execute trade proposals with risk management."
+      }
+    ]
+  },
+  {
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    "name": "Zyni SMC — Smart Money Concepts Screener",
+    "url": "https://smcsetups.com/",
+    "description": "Professional Smart Money Concepts screener for crypto traders. Detect Order Blocks, Fair Value Gaps, Breaker Blocks and Fibonacci across 400+ pairs in real time.",
+    "about": [
+      { "@type": "Thing", "name": "Smart Money Concepts" },
+      { "@type": "Thing", "name": "Order Blocks" },
+      { "@type": "Thing", "name": "Fair Value Gaps" },
+      { "@type": "Thing", "name": "Breaker Blocks" },
+      { "@type": "Thing", "name": "Fibonacci Retracement" },
+      { "@type": "Thing", "name": "Cryptocurrency Trading" },
+      { "@type": "Thing", "name": "Compressed Pairs Trading" },
+      { "@type": "Thing", "name": "ATH ATL Breakout Detection" },
+      { "@type": "Thing", "name": "Candle Bias Detection" },
+      { "@type": "Thing", "name": "Multi-Timeframe Candle Bias" },
+      { "@type": "Thing", "name": "Rejection Candle Analysis" },
+      { "@type": "Thing", "name": "HTF Bias Alignment" },
+      { "@type": "Thing", "name": "Trade Confluence" },
+      { "@type": "Thing", "name": "Multi-timeframe Analysis" },
+      { "@type": "Thing", "name": "Smart Entry Planning" },
+      { "@type": "Thing", "name": "AI Trading Agents" },
+      { "@type": "Thing", "name": "Multi-Model AI Consensus" },
+      { "@type": "Thing", "name": "Order Flow Analysis" },
+      { "@type": "Thing", "name": "Automated Trade Execution" },
+      { "@type": "Thing", "name": "Crypto Perpetual Futures" }
+    ],
+    "isPartOf": {
+      "@type": "WebSite",
+      "name": "Zyni SMC",
+      "url": "https://smcsetups.com"
+    }
+  },
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "What is Zyni SMC?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Zyni SMC is a professional Smart Money Concepts (SMC) trading platform with five scanner modes and multi-model AI auto trading. It scans 400+ cryptocurrency pairs across Binance, Bybit, OKX and MEXC for Order Blocks, Fair Value Gaps, Breaker Blocks, Fibonacci levels, Compressed Zones, ATH/ATL breakouts, Trending setups and Bias Structure (BOS/CHoCH). Every setup is graded A+ to B by a confluence engine, then AI agents (ChatGPT, Claude, Gemini) analyse order flow, reach consensus and can generate and execute a full trade proposal with stop loss and take profit."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "How does Zyni SMC work?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Zyni SMC continuously scans 400+ cryptocurrency pairs across multiple timeframes (15m, 1H, 4H) and automatically detects Smart Money Concepts setups. It scores Order Blocks by strength, measures buy/sell pressure inside Fair Value Gaps, identifies flipped Breaker Blocks, and alerts on key Fibonacci levels (0.618, 0.705, 0.786) — all in real time with zero manual work."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What are SMC setups?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "SMC (Smart Money Concepts) setups are trading patterns that follow institutional trading footprints — banks, hedge funds and market makers. Key SMC setups include Order Blocks (institutional supply and demand zones), Fair Value Gaps (price imbalances that tend to fill), Breaker Blocks (flipped Order Blocks that signal reversals) and Fibonacci retracements at institutional reaction levels (0.618, 0.705, 0.786)."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What are Order Blocks?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Order Blocks are price zones where institutional traders — smart money such as banks and hedge funds — have placed large orders. They represent areas of significant supply or demand and often act as strong support or resistance levels. Zyni SMC automatically detects, scores and monitors Order Blocks across 400+ cryptocurrency pairs."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What are Fair Value Gaps?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Fair Value Gaps (FVGs) are price imbalances created when price moves too quickly, leaving an unfilled gap between candles. They represent areas where price is likely to return to rebalance. Zyni SMC measures live buy and sell pressure inside every FVG with an impulse score from 0 to 100, indicating whether the gap will hold or fill before you enter."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Who is Zyni SMC for?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Zyni SMC is designed for traders already familiar with Smart Money Concepts methods — not beginners. It is ideal for professional and semi-professional crypto traders who want to scan 400+ pairs instantly, trade alongside institutional money, and act on high-probability setups using Order Blocks, Fair Value Gaps, Fibonacci and Breaker Block analysis."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What is the Compressed Pairs scanner in Zyni SMC?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "The Compressed Pairs scanner identifies high-probability trading zones where price has compressed (consolidated) near a key SMC level such as an Order Block or Fair Value Gap. Compression before a move is a strong institutional signature — Zyni SMC detects and scores these zones automatically across 400+ pairs, grading each by compression quality so traders can identify the tightest, most explosive setups before the breakout."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What is the ATH/ATL scanner in Zyni SMC?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "The ATH/ATL scanner detects cryptocurrency pairs that are trading near or breaking their All-Time High (ATH) or All-Time Low (ATL). These are high-momentum, high-significance price events. Zyni SMC monitors 400+ pairs in real time, counts ATH and ATL breaks live on the dashboard, and surfaces pairs at extremes so traders can act on breakout or reversal setups the moment they form."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What is the Candle Bias scanner in Zyni SMC?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "The Candle Bias scanner detects the directional bias of cryptocurrency pairs by analysing rejection candle patterns and prior directional moves across timeframes. For each pair it identifies the bias direction (Bullish, Bearish or Neutral), scores and grades the setup quality (A+ to B), shows the rejection candle details (open, high, low, close), prior move statistics (candle count, net percentage, quality), an invalidation level, confluence with nearby Order Blocks or Fair Value Gaps, and a suggested lower timeframe to confirm the entry. This gives traders a clear, candle-based read of market sentiment across multiple timeframes before committing to a trade."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What is the Trending Pairs scanner in Zyni SMC?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "The Trending Pairs scanner surfaces cryptocurrency pairs with strong directional momentum — pairs where price is making clear trend-aligned moves. Zyni SMC filters setups by delta price percentage and structure alignment, ensuring that Order Block and Fair Value Gap setups are only shown when the broader trend supports the trade direction. This significantly improves setup quality and win-rate consistency."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "How does the Trade Grade and Confluence system work?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Every setup in Zyni SMC is automatically graded from A+ down to B based on a multi-factor confluence engine. The engine stacks signals: an Order Block overlapping a Fair Value Gap near a Fibonacci level with high-timeframe bias alignment and volume confirmation scores highest. Grades reflect confluence quality — A+ setups have the maximum stack of confirming signals, making them the highest-probability entries. Traders can filter results by minimum grade to see only their preferred quality level."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Does Zyni SMC have AI agents for auto trading?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. Zyni SMC includes a multi-model AI agent system where multiple AI models — including ChatGPT, Claude and Gemini — independently analyse each SMC setup and order flow in real time. The platform combines their outputs into an AI consensus signal, then generates a full trade proposal with entry price, stop loss and take profit. An automated risk check runs before any trade is submitted, and trades can be executed directly from the platform."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "How does Zyni SMC combine SMC analysis with order flow?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Zyni SMC overlays real-time order flow data — live buy and sell volume, imbalance scoring and market structure — directly onto SMC zones such as Order Blocks and Fair Value Gaps. This lets AI agents evaluate not just where a zone is, but whether active order flow confirms or invalidates the setup before proposing a trade."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What AI models does Zyni SMC use for trading analysis?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Zyni SMC supports multiple AI model providers simultaneously. Each model analyses the same SMC setup independently, and the platform's consensus engine combines their outputs into a single high-confidence signal. This multi-model approach reduces single-model bias and increases the reliability of AI-generated trade proposals."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What exchanges does Zyni SMC support?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Zyni SMC supports major cryptocurrency exchanges including Binance, Bybit, OKX and MEXC, covering 400+ trading pairs across these platforms."
+        }
+      }
+    ]
+  }
+]
+</script>
+
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=Inter:wght@300;400;500;600;700&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&display=swap');
 
@@ -1209,6 +1467,17 @@ footer{position:relative;z-index:1;border-top:1px solid var(--border);background
         <div class="about-mod"><div class="about-mod-name" style="color:#a78bfa">📐 Fibonacci</div><div class="about-mod-desc" data-i18n="mod_fib_desc">Auto-detect swing legs and scan for 0.618, 0.705 and 0.786 retracement levels.</div></div>
         <div class="about-mod"><div class="about-mod-name" style="color:#ec4899">📈 Live Monitor</div><div class="about-mod-desc" data-i18n="mod_mon_desc">Watch all your pairs across 3 timeframes with auto-refresh every 30 seconds.</div></div>
         <div class="about-mod"><div class="about-mod-name" style="color:#f59e0b">🎯 Bias Detection</div><div class="about-mod-desc" data-i18n="mod_bias_desc">Multi-gate signal engine — only momentum-confirmed, volume-backed signals pass.</div></div>
+      </div>
+    </div>
+    <div class="about-section">
+      <div class="about-section-title"><span>🔍</span> <span>5 Scanner Modes</span></div>
+      <div class="about-modules">
+        <div class="about-mod"><div class="about-mod-name" style="color:#22d3ee">📊 Main Scan</div><div class="about-mod-desc">Scan 400+ pairs for Order Blocks, Fair Value Gaps, Breaker Blocks and Fibonacci across 15m, 1H and 4H — every setup graded A+ to B by a multi-signal confluence engine.</div></div>
+        <div class="about-mod"><div class="about-mod-name" style="color:#6366f1">⚡ Compressed Pairs</div><div class="about-mod-desc">High-probability zones where price has coiled near a key SMC level before a breakout. Scored by compression quality — the tightest setups, found automatically.</div></div>
+        <div class="about-mod"><div class="about-mod-name" style="color:#f59e0b">🚀 ATH / ATL</div><div class="about-mod-desc">Real-time detection of pairs near or breaking their All-Time High or All-Time Low. Live break counters on the dashboard — the most significant price events, the moment they happen.</div></div>
+        <div class="about-mod"><div class="about-mod-name" style="color:#22c55e">📈 Trending Pairs</div><div class="about-mod-desc">Trend-aligned setups only. Filters by delta price percentage and structure direction so every result has momentum behind it — no counter-trend noise.</div></div>
+        <div class="about-mod"><div class="about-mod-name" style="color:#a78bfa">🔮 Candle Bias</div><div class="about-mod-desc">Multi-timeframe candle bias detection. Analyses rejection candle patterns and prior move quality to score Bullish, Bearish or Neutral per pair — with grade, invalidation level and a suggested confirmation timeframe.</div></div>
+        <div class="about-mod"><div class="about-mod-name" style="color:#ec4899">🤖 AI Agents</div><div class="about-mod-desc">ChatGPT, Claude and Gemini independently analyse each setup and live order flow, reach multi-model consensus, then generate and execute a full trade proposal with entry, stop loss, take profit and automated risk check.</div></div>
       </div>
     </div>
     <div class="about-section">
