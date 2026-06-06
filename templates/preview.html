@@ -7413,6 +7413,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     var isOpen=panel.classList.toggle("lm-dh-open");
     if(icon) icon.textContent=isOpen?"−":"+";
   }
+  window._lmDhToggle=_lmDhToggle;
   function _lmDhObPanelHtml(uid,sym,obRow){
     var val=obRow?esc(obRow.value||"—"):"—";
     var src=obRow?esc(obRow.source||"—"):"—";
