@@ -1,7 +1,47 @@
+# Allow all standard crawlers
 User-agent: *
 Allow: /
-
 Disallow: /admin/
 Disallow: /api/
+
+# Google (Search & AI Overviews)
+User-agent: Googlebot
+Allow: /
+
+# Google AI (Gemini / SGE)
+User-agent: Google-Extended
+Allow: /
+
+# OpenAI / ChatGPT
+User-agent: GPTBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+# Anthropic / Claude
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: anthropic-ai
+Allow: /
+
+# Perplexity
+User-agent: PerplexityBot
+Allow: /
+
+# Microsoft Copilot / Bing
+User-agent: Bingbot
+Allow: /
+
+User-agent: msnbot
+Allow: /
+
+# Common AI research crawlers
+User-agent: cohere-ai
+Allow: /
+
+User-agent: Omgilibot
+Allow: /
 
 Sitemap: https://smcsetups.com/sitemap.xml
