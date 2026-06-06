@@ -22,7 +22,7 @@ from datetime import datetime, timezone, timedelta
 
 import numpy as np
 import requests as req
-from flask import Flask, jsonify, make_response, redirect, render_template, request, session, url_for
+from flask import Flask, jsonify, make_response, redirect, render_template, request, send_from_directory, session, url_for
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "zyni-fallback-secret")
@@ -46,7 +46,8 @@ def no_cache(r):
     path = request.path
     # Allow proper caching for PWA static assets — do not override
     if (path.startswith('/static/icons/') or path.startswith('/static/images/')
-            or path in ('/service-worker.js', '/manifest.json', '/offline')):
+            or path in ('/service-worker.js', '/manifest.json', '/offline',
+                        '/sitemap.xml', '/robots.txt')):
         return r
     r.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     r.headers["Pragma"] = "no-cache"
@@ -1702,7 +1703,19 @@ def pwa_offline():
     response.headers['Cache-Control'] = 'public, max-age=86400'
     return response
 
-# ── End PWA routes ────────────────────────────────────────────────────────────
+# ── SEO routes ───────────────────────────────────────────────────────────────
+@app.route('/sitemap.xml')
+def sitemap_xml():
+    response = send_from_directory(app.root_path, 'sitemap.xml', mimetype='application/xml')
+    response.headers['Cache-Control'] = 'public, max-age=86400'
+    return response
+
+@app.route('/robots.txt')
+def robots_txt():
+    response = send_from_directory(app.root_path, 'robots.txt', mimetype='text/plain')
+    response.headers['Cache-Control'] = 'public, max-age=86400'
+    return response
+# ── End SEO routes ────────────────────────────────────────────────────────────
 
 @app.route("/api/weight_status")
 def api_weight_status():
