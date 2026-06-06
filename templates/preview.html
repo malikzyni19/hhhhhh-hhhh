@@ -1245,6 +1245,47 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
   .mc-page.mc-summary::after{content:"› insight";position:absolute;right:10px;top:12px;
     font-size:9.5px;font-weight:700;letter-spacing:.6px;color:var(--accent);opacity:.7}
 }
+/* ── Data Health professional table (Phase 10.7) ── */
+.lm-dh-section td{background:rgba(34,211,238,.08)!important;color:#22d3ee;font-weight:900;text-transform:uppercase;letter-spacing:.08em;font-size:10px}
+.lm-dh-metric{color:#dbeafe;font-weight:700;white-space:nowrap}
+.lm-dh-value{color:#e5f3ff;font-weight:700}
+.lm-dh-source{font-size:11px;color:#91a6ba}
+.lm-dh-notes{font-size:11px;line-height:1.45;color:#9eb3c7;white-space:normal;max-width:220px}
+.lm-dh-mini{display:block;color:#71869b;font-size:10px;margin-top:2px;font-weight:400}
+.lm-dh-click{cursor:pointer}
+.lm-dh-click:hover td{background:rgba(34,211,238,.04)!important}
+.lm-dh-exp{display:inline-flex;width:17px;height:17px;align-items:center;justify-content:center;border:1px solid rgba(34,211,238,.45);border-radius:5px;color:#22d3ee;margin-left:7px;font-style:normal;vertical-align:middle}
+.lm-dh-expand-row td{padding:0!important;background:#06111f}
+.lm-dh-panel{display:none;padding:13px;background:#06111f;border-top:1px solid rgba(34,211,238,.2)}
+.lm-dh-panel.lm-dh-open{display:block}
+.lm-dh-panel-top{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.lm-dh-ptitle{color:#22d3ee;font-weight:900;text-transform:uppercase;letter-spacing:.07em;font-size:11px}
+.lm-dh-lab{color:#91a6ba;font-size:11px}
+.lm-dh-sel{background:#07101c;color:#dbeafe;border:1px solid rgba(34,211,238,.38);border-radius:8px;padding:6px 9px;font-weight:700;font-size:11px}
+.lm-dh-summary{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:10px}
+.lm-dh-stat{border:1px solid rgba(148,163,184,.12);border-radius:10px;background:rgba(15,27,43,.82);padding:9px}
+.lm-dh-stat .k{color:#71869b;font-size:10px;text-transform:uppercase}
+.lm-dh-stat .v{font-size:13px;font-weight:900;margin-top:4px;color:#e5f3ff}
+.lm-dh-cols{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.lm-dh-side{border:1px solid rgba(34,211,238,.2);border-radius:12px;overflow:hidden;background:rgba(0,0,0,.15)}
+.lm-dh-side-head{display:flex;justify-content:space-between;align-items:center;padding:9px 10px;background:rgba(34,211,238,.06)}
+.lm-dh-side-title{font-weight:900;text-transform:uppercase;letter-spacing:.07em;font-size:11px}
+.lm-dh-scroll{max-height:360px;overflow:auto}
+.lm-dh-inner{min-width:680px}
+.lm-dh-bar{width:92px;height:8px;border-radius:999px;background:rgba(148,163,184,.16);overflow:hidden}
+.lm-dh-fill-bid{height:100%;border-radius:999px;background:linear-gradient(90deg,rgba(34,197,94,.35),#22c55e)}
+.lm-dh-fill-ask{height:100%;border-radius:999px;background:linear-gradient(90deg,rgba(239,68,68,.35),#ef4444)}
+.lm-dh-empty{padding:18px;color:#9eb3c7;text-align:center}
+.lm-dh-badge{display:inline-block;border-radius:999px;padding:3px 7px;font-size:10px;font-weight:900}
+.lm-dh-b-green{color:#22c55e;border:1px solid rgba(34,197,94,.35);background:rgba(34,197,94,.12)}
+.lm-dh-b-red{color:#ef4444;border:1px solid rgba(239,68,68,.35);background:rgba(239,68,68,.12)}
+.lm-dh-b-yellow{color:#f59e0b;border:1px solid rgba(245,158,11,.35);background:rgba(245,158,11,.12)}
+.lm-dh-b-cyan{color:#22d3ee;border:1px solid rgba(34,211,238,.35);background:rgba(34,211,238,.10)}
+.lm-dh-green{color:#22c55e!important}
+.lm-dh-red{color:#ef4444!important}
+.lm-dh-yellow{color:#f59e0b!important}
+#lmDhBody .lm-dh-tbl th{background:#0a1422;color:#8294aa;text-transform:uppercase;font-size:10px;letter-spacing:.08em}
+#lmDhBody .lm-dh-tbl td{color:#a9bdd2;white-space:normal;vertical-align:top}
 </style>
 </head>
 <body>
@@ -6298,7 +6339,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
           '<span id="lmDhSrcLabel" style="font-size:9px;color:var(--text-3);margin-left:6px"></span>'+
           '<span id="lmDhCtl" style="font-size:9px;color:var(--text-3);margin-left:auto">▾ collapse</span>'+
         '</div>'+
-        '<div id="lmDhBody" style="display:block!important;visibility:visible!important;opacity:1!important;height:auto!important;max-height:none!important;overflow-y:visible!important;overflow-x:auto!important;max-width:100%!important;box-sizing:border-box!important;-webkit-overflow-scrolling:touch!important">'+
+        '<div id="lmDhBody" style="display:block!important;visibility:visible!important;opacity:1!important;height:620px!important;max-height:620px!important;min-height:460px!important;overflow-y:auto!important;overflow-x:auto!important;max-width:100%!important;box-sizing:border-box!important;-webkit-overflow-scrolling:touch!important">'+
           '<div id="lmDhStatusLine" style="font-size:10px;color:#22d3ee;padding:6px 8px;border-bottom:1px solid rgba(34,211,238,.18)">Data Health active · waiting for rows…</div>'+
           '<table class="lm-dh-tbl" style="width:100%;min-width:900px">'+
             '<thead><tr><th>Metric</th><th>Value</th><th>Source</th><th>Status</th><th>Updated</th><th>Notes</th></tr></thead>'+
@@ -7302,35 +7343,156 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       else { console.log("[LM-DH] tbody missing and no table — cannot render"); return; }
     }
     if(!rows||!rows.length){ tbody.innerHTML=""; return; }
-    // Phase 10.7: show sources_used/sources_skipped header when aggregated
-    var headerHtml="";
-    if(meta&&(meta.sources_used||meta.sources_skipped)){
-      var used=(meta.sources_used||[]).map(function(s){return s.charAt(0).toUpperCase()+s.slice(1);}).join(", ")||"—";
-      var skip=(meta.sources_skipped||[]).map(function(s){return s.charAt(0).toUpperCase()+s.slice(1);}).join(", ")||"none";
-      headerHtml="<tr class='lm-dh-src-row' style='font-size:9px;opacity:0.7'>"+
-        "<td colspan='6' style='padding:2px 4px'>"+
-          "Sources used: <b>"+esc(used)+"</b>"+(skip&&skip!=="none"?" &nbsp;|&nbsp; Skipped: <span style='color:var(--warn,#f59e0b)'>"+esc(skip)+"</span>":"")+" &nbsp;<span style='opacity:0.6'>(analysis only — setup levels unchanged)</span>"+
-        "</td>"+
-      "</tr>";
+    // Build row map and render sectioned professional DH table
+    var rowMap={};
+    for(var _ri=0;_ri<rows.length;_ri++){ rowMap[rows[_ri].metric]=rows[_ri]; }
+    var sym=symbol||(_lmSelItem&&_lmSelItem.symbol)||"x";
+    var uid=sym.replace(/[^a-zA-Z0-9]/g,"");
+    function _bc(st){ if(st==="fresh") return "lm-dh-b-green"; if(st==="blocked"||st==="unavailable") return "lm-dh-b-red"; if(st==="partial"||st==="mixed") return "lm-dh-b-cyan"; return "lm-dh-b-yellow"; }
+    function _sl(st){ if(!st||st==="—") return "—"; if(st==="fallback_fresh") return "fallback"; if(st==="fallback_stale") return "fallback(stale)"; return st; }
+    function _sec(label){ return "<tr class='lm-dh-section'><td colspan='6'>"+label+"</td></tr>"; }
+    function _row(r,valHtmlOvr,notesOvr){
+      var st=r.status||"—";
+      var val=valHtmlOvr!==undefined?valHtmlOvr:esc(r.value||"—");
+      var notes=notesOvr!==undefined?notesOvr:esc(r.notes||"—");
+      return "<tr><td class='lm-dh-metric'>"+esc(r.metric||"—")+"</td><td class='lm-dh-value'>"+val+"</td><td class='lm-dh-source'>"+esc(r.source||"—")+"</td><td><span class='lm-dh-badge "+_bc(st)+"'>"+esc(_sl(st))+"</span></td><td class='lm-dh-na'>"+esc(r.updated||"—")+"</td><td class='lm-dh-notes'>"+notes+"</td></tr>";
     }
-    tbody.innerHTML=headerHtml+rows.map(function(r){
-      var vc=_lmDhStatusClass(r.status);
-      var stLabel=r.status||"—";
-      if(stLabel==="fallback_fresh") stLabel="fallback";
-      if(stLabel==="fallback_stale") stLabel="fallback(stale)";
-      return "<tr>"+
-        "<td>"+esc(r.metric||"—")+"</td>"+
-        "<td class='"+vc+"'>"+esc(r.value||"—")+"</td>"+
-        "<td class='lm-dh-na' style='font-size:9px'>"+esc(r.source||"—")+"</td>"+
-        "<td class='"+vc+"'>"+esc(stLabel)+"</td>"+
-        "<td class='lm-dh-na'>"+esc(r.updated||"—")+"</td>"+
-        "<td class='lm-dh-na' style='max-width:220px;overflow:hidden;text-overflow:ellipsis' title='"+esc(r.notes||"")+"'>"+esc(r.notes||"—")+"</td>"+
-      "</tr>";
-    }).join("");
+    var t="";
+    // Section 1: Source readiness
+    t+=_sec("Source readiness");
+    if(meta&&(meta.sources_used||meta.sources_skipped)){
+      var _used=(meta.sources_used||[]).map(function(s){return s.charAt(0).toUpperCase()+s.slice(1);}).join(", ")||"—";
+      var _skip=(meta.sources_skipped||[]).map(function(s){return s.charAt(0).toUpperCase()+s.slice(1);}).join(", ")||"";
+      var _srcSt=_skip?"partial":"fresh";
+      t+="<tr><td class='lm-dh-metric'>Sources Used / Skipped</td><td class='lm-dh-value'>Used: "+esc(_used)+(_skip?"<br><span class='lm-dh-yellow'>Skipped: "+esc(_skip)+"</span>":"")+"</td><td class='lm-dh-source'>Aggregated source gate</td><td><span class='lm-dh-badge "+_bc(_srcSt)+"'>"+_sl(_srcSt)+"</span></td><td class='lm-dh-na'>—</td><td class='lm-dh-notes'>Shows which exchanges are included. Skipped sources do not affect analysis.</td></tr>";
+    }
+    var lpR=rowMap["Live Price"];
+    if(lpR){ var lpV=lpR.value||"—"; var lpC=lpV.indexOf("▲")>=0?"lm-dh-green":lpV.indexOf("▼")>=0?"lm-dh-red":""; t+=_row(lpR,lpC?"<span class='"+lpC+"'>"+esc(lpV)+"</span>":esc(lpV),"Color shows last tick direction only, not entry signal."); }
+    // Section 2: Order book
+    t+=_sec("Order book — expandable large window");
+    var obR=rowMap["Order Book"];
+    if(obR){
+      t+="<tr class='lm-dh-click' onclick=\"_lmDhToggle('ob"+uid+"Panel','ob"+uid+"Icon')\"><td class='lm-dh-metric'>Order Book Wall Map <span class='lm-dh-exp' id='ob"+uid+"Icon'>+</span></td><td class='lm-dh-value'>"+esc(obR.value||"—")+"<span class='lm-dh-mini'>Click to expand bid/ask split view.</span></td><td class='lm-dh-source'>"+esc(obR.source||"—")+"</td><td><span class='lm-dh-badge "+_bc(obR.status)+"'>"+esc(_sl(obR.status))+"</span></td><td class='lm-dh-na'>"+esc(obR.updated||"—")+"</td><td class='lm-dh-notes'>Expanded view separates BID support and ASK resistance, sorted by price ladder.</td></tr>"+
+      "<tr class='lm-dh-expand-row'><td colspan='6'>"+_lmDhObPanelHtml("ob"+uid,sym,obR)+"</td></tr>";
+    }
+    // Section 3: Liquidations
+    t+=_sec("Liquidations / Sweep Rekt Map");
+    var liqR=rowMap["Liquidations"];
+    if(liqR){
+      t+="<tr class='lm-dh-click' onclick=\"_lmDhToggle('liq"+uid+"Panel','liq"+uid+"Icon')\"><td class='lm-dh-metric'>Liquidations / Rekt Map <span class='lm-dh-exp' id='liq"+uid+"Icon'>+</span></td><td class='lm-dh-value'>"+esc(liqR.value||"—")+"<span class='lm-dh-mini'>Click to expand sweep rekt history.</span></td><td class='lm-dh-source'>"+esc(liqR.source||"—")+"</td><td><span class='lm-dh-badge "+_bc(liqR.status)+"'>"+esc(_sl(liqR.status))+"</span></td><td class='lm-dh-na'>"+esc(liqR.updated||"—")+"</td><td class='lm-dh-notes'>Shows whether a swing sweep produced liquidations. Click to expand sweep rekt history.</td></tr>"+
+      "<tr class='lm-dh-expand-row'><td colspan='6'>"+_lmDhLiqPanelHtml("liq"+uid,sym,liqR)+"</td></tr>";
+    }
+    // Section 4: Open interest
+    t+=_sec("Open interest — compare now vs past");
+    var oiR=rowMap["Open Interest"]; if(oiR) t+=_row(oiR,undefined,"Raw OI alone is not useful; decision comes from change vs price.");
+    var oiCR=rowMap["OI Change"]; if(oiCR) t+=_row(oiCR);
+    // Section 5: Delta
+    t+=_sec("Delta — pressure and absorption");
+    var dR=rowMap["Delta"]; if(dR) t+=_row(dR,undefined,"Sell pressure during OB approach may signal absorption if price holds.");
+    // Section 6: Crowd and funding
+    t+=_sec("Crowd and funding conflict");
+    var lsR=rowMap["Long/Short Ratio"]; if(lsR) t+=_row(lsR,undefined,"Long-heavy can be support or crowd risk; not automatic bullishness.");
+    var frR=rowMap["Funding Rate"]; if(frR) t+=_row(frR,undefined,"Negative funding means bearish perp pressure despite long-heavy ratio.");
+    // Section 7: Candle and final OB context
+    t+=_sec("Candle and final OB context");
+    var csR=rowMap["Candle Status"]; if(csR) t+=_row(csR,undefined,"No final OB judgment without fresh candle close/rejection.");
+    var aiR=rowMap["AI Entry Analysis"]; if(aiR) t+=_row(aiR,undefined,"Allowed means data gate passed. It does not mean buy/sell.");
+    // Remaining rows (skip Mark Price)
+    var _dhShown={"Live Price":1,"Mark Price":1,"Order Book":1,"Liquidations":1,"Open Interest":1,"OI Change":1,"Delta":1,"Long/Short Ratio":1,"Funding Rate":1,"Candle Status":1,"AI Entry Analysis":1};
+    for(var _rj=0;_rj<rows.length;_rj++){ if(!_dhShown[rows[_rj].metric]) t+=_row(rows[_rj]); }
+    tbody.innerHTML=t;
     var _badge=document.getElementById("lmDhMountBadge");
-    if(_badge) _badge.textContent=rows.length+" rows · "+(_lmGetDataSrc()||"?");
+    if(_badge) _badge.textContent=rows.length+" rows \xb7 "+(_lmGetDataSrc()||"?");
     var _statusLine=document.getElementById("lmDhStatusLine");
-    if(_statusLine) _statusLine.textContent="Data Health active · "+rows.length+" rows · aggregated";
+    if(_statusLine) _statusLine.textContent="Data Health active \xb7 "+rows.length+" rows \xb7 aggregated";
+  }
+  function _lmDhToggle(panelId,iconId){
+    var panel=document.getElementById(panelId);
+    var icon=document.getElementById(iconId);
+    if(!panel) return;
+    var isOpen=panel.classList.toggle("lm-dh-open");
+    if(icon) icon.textContent=isOpen?"−":"+";
+  }
+  function _lmDhObPanelHtml(uid,sym,obRow){
+    var val=obRow?esc(obRow.value||"—"):"—";
+    var src=obRow?esc(obRow.source||"—"):"—";
+    var st=obRow?esc(obRow.status||"—"):"—";
+    var upd=obRow?esc(obRow.updated||"—"):"—";
+    return '<div class="lm-dh-panel" id="'+uid+'Panel">'+
+      '<div class="lm-dh-panel-top">'+
+        '<span class="lm-dh-ptitle">Expanded Order Book Window</span>'+
+        '<span class="lm-dh-badge lm-dh-b-cyan">BID / ASK split</span>'+
+        '<span class="lm-dh-badge lm-dh-b-yellow">price sorted</span>'+
+        '<span class="lm-dh-lab">Window:</span>'+
+        '<select class="lm-dh-sel" id="'+uid+'Win">'+
+          '<option value=".25">\xb10.25%</option>'+
+          '<option value=".5">\xb10.50%</option>'+
+          '<option value="1" selected>\xb11.00%</option>'+
+          '<option value="2">\xb12.00%</option>'+
+          '<option value="3">\xb13.00%</option>'+
+          '<option value="5">\xb15.00%</option>'+
+          '<option value="7.5">\xb17.50%</option>'+
+          '<option value="10">\xb110.00%</option>'+
+        '</select>'+
+        '<span class="lm-dh-lab">Min Wall:</span>'+
+        '<select class="lm-dh-sel" id="'+uid+'MinW">'+
+          '<option value=".25">$250K+</option>'+
+          '<option value=".45" selected>$450K+</option>'+
+          '<option value="1">$1M+</option>'+
+          '<option value="2">$2M+</option>'+
+        '</select>'+
+      '</div>'+
+      '<div class="lm-dh-summary">'+
+        '<div class="lm-dh-stat"><div class="k">Best Bid/Ask</div><div class="v" style="font-size:11px">'+val+'</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Source</div><div class="v" style="font-size:11px">'+src+'</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Status</div><div class="v" style="font-size:11px">'+st+'</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Updated</div><div class="v" style="font-size:11px">'+upd+'</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Symbol</div><div class="v" style="font-size:11px">'+esc(sym)+'</div></div>'+
+      '</div>'+
+      '<div style="padding:16px;text-align:center;border:1px dashed rgba(34,211,238,.25);border-radius:10px;color:#9eb3c7;font-size:11px">'+
+        '<div style="color:#22d3ee;font-weight:700;margin-bottom:6px">Detailed Wall Map — Needs Backend Support</div>'+
+        'Full bid/ask wall ladder (sorted by size, distance, stability) requires extended order book endpoint. '+
+        'Current backend provides best bid/ask summary only.'+
+        '<br><span style="color:#f59e0b">To enable: add wall-level OB data to the data-health API response.</span>'+
+      '</div>'+
+    '</div>';
+  }
+  function _lmDhLiqPanelHtml(uid,sym,liqRow){
+    var val=liqRow?esc(liqRow.value||"—"):"—";
+    var src=liqRow?esc(liqRow.source||"—"):"—";
+    var st=liqRow?esc(liqRow.status||"—"):"—";
+    var upd=liqRow?esc(liqRow.updated||"—"):"—";
+    return '<div class="lm-dh-panel" id="'+uid+'Panel">'+
+      '<div class="lm-dh-panel-top">'+
+        '<span class="lm-dh-ptitle">Expanded Sweep Rekt Map</span>'+
+        '<span class="lm-dh-badge lm-dh-b-yellow">swing sweep linked</span>'+
+        '<span class="lm-dh-lab">Lookback:</span>'+
+        '<select class="lm-dh-sel" id="'+uid+'Look">'+
+          '<option>5m</option><option selected>15m</option><option>1h</option><option>4h</option>'+
+        '</select>'+
+        '<span class="lm-dh-lab">Min Liq:</span>'+
+        '<select class="lm-dh-sel" id="'+uid+'MinL">'+
+          '<option value="0">Auto</option>'+
+          '<option value="50000">$50K+</option>'+
+          '<option value="100000" selected>$100K+</option>'+
+          '<option value="250000">$250K+</option>'+
+          '<option value="500000">$500K+</option>'+
+        '</select>'+
+      '</div>'+
+      '<div class="lm-dh-summary">'+
+        '<div class="lm-dh-stat"><div class="k">5m Liquidations</div><div class="v" style="font-size:11px">'+val+'</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Source</div><div class="v" style="font-size:11px">'+src+'</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Status</div><div class="v" style="font-size:11px">'+st+'</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Updated</div><div class="v" style="font-size:11px">'+upd+'</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Symbol</div><div class="v" style="font-size:11px">'+esc(sym)+'</div></div>'+
+      '</div>'+
+      '<div style="padding:16px;text-align:center;border:1px dashed rgba(245,158,11,.25);border-radius:10px;color:#9eb3c7;font-size:11px">'+
+        '<div style="color:#f59e0b;font-weight:700;margin-bottom:6px">Sweep Rekt History — Needs Backend Support</div>'+
+        'Per-sweep liquidation event history requires the forceOrder/Binance liquidation aggregator endpoint. '+
+        'Current backend provides 5m liquidation totals only.'+
+        '<br><span style="color:#22d3ee">To enable: add sweep rekt event stream to the data-health API response.</span>'+
+      '</div>'+
+    '</div>';
   }
   function _lmObDaLoad(){
     fetch("/api/live-monitor/ob-settings",{credentials:"same-origin"})
