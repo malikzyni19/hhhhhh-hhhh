@@ -1,0 +1,352 @@
+================================================================================
+PHASE 10.9F + LIQUIDATION PIPELINE — FINAL REPORT
+Session: 2026-06-07
+Repository: malikzyni19/hhhhhh-hhhh (branch: main)
+================================================================================
+
+
+────────────────────────────────────────────────────────────────────────────────
+SECTION 1 — COMMITS PUSHED TO MAIN
+────────────────────────────────────────────────────────────────────────────────
+
+Commit 1: 22a3f99
+  Fix Phase 10.9F 500 error: taker_pressure is a String not a float
+  - LiveMonitorOrderflowSnapshot.taker_pressure is db.Column(db.String(20))
+    storing "bullish"/"bearish"/"neutral"/"missing"
+  - Code was doing tp > 0.5, tp < 0.4 float comparisons → TypeError → 500
+  - Fixed: tp_str = taker_pressure.lower()
+           tp_bull = tp_str == "bullish"
+           tp_bear = tp_str == "bearish"
+
+Commit 2: ee166f7
+  Fix remaining tp NameError in Phase 10.9F result builder
+  - Two more references to old variable name `tp` remained:
+    * event_timeline f-string: f"Delta Δ={delta_net} TP={tp}"
+    * delta debug dict: "taker_pressure": tp
+  - Both replaced with tp_str
+
+Commit 3: 9bd1f67
+  Fix Phase 10.9F semantic value-mapping bugs
+  - Bug 1: orderflow_agreement.value always said "Aligned (source)"
+    regardless of actual direction. Fixed to compute:
+    * "Against Bias / Bearish Conflict (6/6 TFs bearish)"
+    * "Partial / Mixed (N/M TFs bullish)"
+    * "Aligned / Bullish (N/M TFs)"
+  - Bug 2: Sweep mismatch (wrong direction for setup bias) was adding
+    5pts and going into positive_reasons. Fixed: moved to missing_reasons,
+    no score bump.
+  - Bug 3: sweep_rekt_confirmation.status = "confirm" whenever reaction
+    was Reclaimed/Rejected, regardless of liq_usd or direction.
+    Fixed: "confirm" only when direction + reaction + liq >= $50k all match.
+    "watch" if liq low, "conflict" if direction wrong, "neutral" otherwise.
+  - Bug 4: data_quality = "fresh" based on source_status string regardless
+    of actual snapshot age. Fixed age-based thresholds:
+    <60s = fresh, <300s = acceptable, <900s = stale, >=900s = very_stale
+    Stale snapshots append a source_warnings entry.
+
+Commit 4: ba52286
+  Fix Phase 10.9F freshness/status mapping
+  - Top-level "status" field now reflects snapshot age:
+    <300s   → ready
+    300-899s → stale
+    >=900s  → needs_fresh_orderflow
+    (was always "ready" unless _critical_missing)
+  - orderflow_agreement.status becomes "needs_refresh" when data is stale
+    or very_stale
+  - orderflow_agreement.note includes age when stale:
+    "Phase 10.9E source is very_stale (~Nh old). Refresh before trusting."
+  - context_only, no_entry_candidate, and verdict remain visible
+    regardless of freshness status
+
+Commit 5: bd84085
+  Fix liquidation/rekt pipeline: multi-source, debug endpoint, honest labeling
+  - See Section 3 for full details
+
+
+────────────────────────────────────────────────────────────────────────────────
+SECTION 2 — PHASE 10.9F BEHAVIOR AFTER ALL FIXES
+────────────────────────────────────────────────────────────────────────────────
+
+Endpoint: GET /api/live-monitor/items/7/phase10-9f/debug?analysis_source=aggregated&force_refresh=1
+
+Expected response shape for item 7 (SUIUSDT, bullish, 6/6 bearish TFs, very stale):
+
+{
+  "phase": "phase10_9f_bias_shift_values",
+  "context_only": true,
+  "no_entry_candidate": true,
+  "status": "needs_fresh_orderflow",
+  "bias_shift_verdict": "weak",
+  "bias_shift_label": "Weak Bias Shift",
+  "score": ~20-25,
+  "direction": "bullish",
+  "analysis_source": "aggregated",
+  "snapshot_age_sec": ~21730,
+  "existing_table_values": {
+    "confirmation_checklist": {
+      "setup_validity": {
+        "label": "Bias Shift Status",
+        "value": "Weak Bias Shift",
+        "status": "caution"
+      },
+      "orderflow_agreement": {
+        "label": "Orderflow Agreement",
+        "value": "Against Bias / Bearish Conflict (6/6 TFs bearish)",
+        "status": "needs_refresh",
+        "note": "Phase 10.9E source is very_stale (~6h old). Refresh orderflow before trusting verdict."
+      },
+      "sweep_rekt_confirmation": {
+        "label": "Sweep + Rekt",
+        "value": "Sweep without meaningful rekt",
+        "status": "conflict",
+        "note": "Swing High Sweep — does not confirm setup bias; liq=$0."
+      },
+      "invalidation_risk": {
+        "label": "Invalidation Risk",
+        "value": "High",
+        "status": "invalid"
+      }
+    },
+    "data_health_context": {
+      "data_quality": "very_stale",
+      "snapshot_age_sec": ~21730,
+      "analysis_source": "aggregated"
+    }
+  }
+}
+
+Constraints confirmed:
+  - context_only: true                  ✓
+  - no_entry_candidate: true            ✓
+  - No Entry Candidate logic            ✓
+  - No order placement                  ✓
+  - No trading execution changes        ✓
+  - No UI layout changes                ✓
+  - No safety gate changes              ✓
+
+
+────────────────────────────────────────────────────────────────────────────────
+SECTION 3 — LIQUIDATION/REKT PIPELINE AUDIT & FIXES
+────────────────────────────────────────────────────────────────────────────────
+
+AUDIT FINDINGS
+--------------
+
+1. Exchanges with liquidation data:
+   - Binance: YES — forceOrder WebSocket via _lm_liq_background_loop()
+   - Bybit:   YES — liquidation.{symbol} WS via _lm_bybit_ws_loop()
+   - OKX:     YES — liquidation-orders WS via _lm_okx_ws_loop()
+   - MEXC:    NO  — no public liquidation stream (documented in code)
+
+2. Binance liquidation collection:
+   - Thread: _lm_liq_background_loop()
+   - Stream: fstream.binance.com multi-stream forceOrder
+   - Symbols: all active LiveMonitorItem symbols + adhoc set
+   - Handler normalizes: avg_price * filled_qty = notional_usd
+   - Side: forceOrder SELL → side="long" (longs rekt)
+            forceOrder BUY  → side="short" (shorts rekt)
+   - Stored: _lm_liq_cache["binance:SYMBOL"]
+
+3. Bybit liquidation:
+   - Thread: _lm_bybit_ws_loop()
+   - Stream: stream.bybit.com/v5/public/linear → liquidation.{SYMBOL}
+   - Side: Bybit "Sell" side → long liquidated → side="long"
+   - Stored: _lm_mx_liq["bybit:SYMBOL"]
+
+4. OKX liquidation:
+   - Thread: _lm_okx_ws_loop()
+   - Stream: ws.okx.com:8443 → liquidation-orders
+   - Stored: _lm_mx_liq["okx:SYMBOL"]
+
+5. MEXC: No liquidation stream. Documented.
+
+6. Storage variables:
+   - Binance:    _lm_liq_cache  (global dict)
+   - Bybit/OKX:  _lm_mx_liq    (global dict)
+
+7. Cache key format: "{exchange}:{SYMBOL}" e.g. "binance:SUIUSDT"
+
+8. Retention windows BEFORE fix:
+   - Binance:    deque(maxlen=500), NO time prune → good historical coverage
+   - Bybit/OKX:  deque() (unbounded) WITH 310s time prune → events gone after 5min
+
+9. Event shapes:
+   - Binance: 4-tuple (ts_seconds, side_str, usd_float, price_float)
+   - Bybit/OKX: 3-tuple (ts_seconds, side_str, usd_float)
+
+10. Root cause of always-$0:
+    _lm_build_sweep_rekt_map only read _lm_liq_cache["binance:SYMBOL"]
+    and ignored Bybit/OKX entirely — even in aggregated mode.
+    Additionally, Bybit/OKX events were pruned after 310s, making them
+    useless for historical sweep matching (4h lookback window).
+
+FIXES APPLIED
+-------------
+
+Fix A — _lm_mx_liq_update retention:
+  Old: deque() + while-prune cutoff = now - 310 (5min prune)
+  New: deque(maxlen=500) + no time prune
+  Result: Bybit/OKX events now retained same as Binance (up to 500 events)
+
+Fix B — _lm_build_sweep_rekt_map rewrite:
+  Old: Only read Binance cache. No debug info. ±30s matching window.
+       "Longs Rekt"/"Shorts Rekt" regardless of liq_usd value.
+       Status: only "no_meaningful_rekt" or "ready".
+  New:
+    - Merges Binance + Bybit + OKX events for aggregated mode
+    - Reports liq_sources_used and liq_sources_skipped
+    - Matching window: candle_open - 60s → candle_close + 60s (was ±30s)
+    - rekt_side: "No Captured Rekt" when liq_usd == 0
+    - meaning: explicit no-capture message when liq_usd == 0
+    - liq_label: "$0" (not formatted) when liq_usd == 0
+    - source label: "Binance-only (partial)" when only Binance connected
+    - Adds debug block to every response
+    - Adds match_debug to every event
+
+Fix C — Status values (Task 10):
+  liq_source_unavailable       — no sources connected
+  sweep_only_no_liq_source     — sweeps exist but cache is empty
+  no_matched_rekt              — cache has events, none matched sweep windows
+  rekt_detected                — real liq matched to a sweep
+  no_recent_sweeps             — no sweeps in last 4h
+
+Fix D — New debug endpoint (Task 2):
+  GET /api/live-monitor/liquidations/debug?symbol=SUIUSDT&exchange=aggregated&lookback_min=240
+
+  Response shape:
+  {
+    "ok": true,
+    "symbol": "SUIUSDT",
+    "exchange": "aggregated",
+    "lookback_min": 240,
+    "sources": {
+      "binance": {
+        "enabled": true,
+        "connected": true/false,
+        "events_seen": N,
+        "events_in_lookback": N,
+        "latest_event_time": ms_or_null,
+        "latest_event": { "ts_ms": ..., "side": "long", "usd": 0 } or null,
+        "reason_if_empty": "no_forceOrder_events_received" or null
+      },
+      "bybit": { ... same shape ... },
+      "okx":   { ... same shape ... },
+      "mexc":  {
+        "enabled": false,
+        "connected": false,
+        "events_seen": 0,
+        "reason_if_empty": "adapter_not_implemented"
+      }
+    },
+    "total_events_in_lookback": N,
+    "total_long_liq_usd": 0,
+    "total_short_liq_usd": 0,
+    "latest_events": [
+      { "ts_ms": ..., "side": "long", "usd": 0, "age_s": ... }
+    ]
+  }
+
+  Read-only. No effect on trading, safety gates, or execution.
+
+
+────────────────────────────────────────────────────────────────────────────────
+SECTION 4 — DATA HEALTH SWEEP REKT MAP EXAMPLE (after fix)
+────────────────────────────────────────────────────────────────────────────────
+
+GET /api/live-monitor/data-health?symbol=SUIUSDT&exchange=aggregated
+
+sweep_rekt_map field (when sweeps exist but no liq matched):
+{
+  "ok": true,
+  "symbol": "SUIUSDT",
+  "exchange": "aggregated",
+  "source": "Binance-only (partial)",
+  "status": "sweep_only_no_liq_source",
+  "has_liq_stream": true,
+  "liq_sources_used": [],
+  "liq_sources_skipped": ["bybit", "okx", "mexc"],
+  "events": [
+    {
+      "sweep_type": "Swing High Sweep",
+      "rekt_side": "No Captured Rekt",
+      "liq_usd": 0,
+      "liq_label": "$0",
+      "reaction": "Rejected",
+      "meaning": "Sweep occurred, but no liquidation event was captured near the sweep window...",
+      "match_debug": {
+        "match_start": ...,
+        "match_end": ...,
+        "events_seen_for_symbol": 0,
+        "matched_events_count": 0,
+        "matched_long_liq_usd": 0,
+        "matched_short_liq_usd": 0
+      }
+    }
+  ],
+  "debug": {
+    "liq_sources_used": [],
+    "liq_sources_skipped": ["bybit", "okx", "mexc"],
+    "liq_events_in_cache": 0,
+    "sweep_match_window_sec": 60,
+    "matched_liq_events_count": 0,
+    "reason_if_zero": "no_liquidation_events_in_cache"
+  }
+}
+
+
+────────────────────────────────────────────────────────────────────────────────
+SECTION 5 — EVENT TIMELINE STATUS
+────────────────────────────────────────────────────────────────────────────────
+
+Event Timeline reads from:
+  existing_table_values.event_timeline.latest_sweep
+  → _sweep_lbl = "{sweep_type} — {reaction}" or "No recent sweep"
+
+When liq is $0 and sweep exists, timeline will show:
+  "Swing High Sweep — Rejected"  (sweep event without rekt label)
+
+When real liq is matched in future, timeline will show:
+  "Swing Low Sweep — Reclaimed"  (with liq_usd > 0 in the event)
+
+The Event Timeline was NOT changed in layout or structure.
+It reads existing fields — no new table added.
+
+
+────────────────────────────────────────────────────────────────────────────────
+SECTION 6 — FILES CHANGED
+────────────────────────────────────────────────────────────────────────────────
+
+main.py — All changes in this session
+  - _lm_build_phase10_9f_bias_shift_values: taker_pressure type fix,
+    semantic mapping fixes, freshness/status fixes
+  - _lm_mx_liq_update: retention window fix (deque maxlen=500)
+  - _lm_build_sweep_rekt_map: full rewrite (multi-source, debug, status)
+  - api_lm_liq_debug: new debug route added
+
+templates/preview.html — NOT changed in this session's commits
+models.py — NOT changed
+
+
+────────────────────────────────────────────────────────────────────────────────
+SECTION 7 — ABSOLUTE CONSTRAINTS CONFIRMED
+────────────────────────────────────────────────────────────────────────────────
+
+  UI layout unchanged                    ✓
+  Data Health table layout unchanged     ✓
+  Order Book Wall Map UI unchanged       ✓
+  Sweep Rekt Map UI unchanged            ✓
+  Live price polling unchanged           ✓
+  Trading execution unchanged            ✓
+  Entry Candidate not added              ✓
+  Order placement unchanged              ✓
+  Safety gates unchanged                 ✓
+  No force-push used                     ✓
+  No fake data                           ✓
+  Public REST/WS/cache data only         ✓
+  context_only: true on all 10.9F output ✓
+  no_entry_candidate: true on all output ✓
+
+
+────────────────────────────────────────────────────────────────────────────────
+END OF REPORT
+================================================================================
