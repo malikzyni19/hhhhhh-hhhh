@@ -23425,9 +23425,8 @@ def _lm_build_phase10_9f_bias_shift_values(  # noqa: C901
         elif is_bearish and "high" in _stype:
             negative_reasons.append("Swing High Sweep without rejection — shorts rekt, price continued higher.")
         else:
-            score += 5
-            positive_reasons.append(
-                f"Sweep detected ({recent_sweep.get('sweep_type','—')}) — does not match expected bias direction."
+            missing_reasons.append(
+                f"Sweep detected ({recent_sweep.get('sweep_type','—')}) — direction does not match setup bias."
             )
 
     # 4. OB wall context (up to 15 pts)
@@ -23561,21 +23560,97 @@ def _lm_build_phase10_9f_bias_shift_values(  # noqa: C901
         )
 
     # ── existing_table_values ─────────────────────────────────────────────────
-    _of_label  = (
-        f"Aligned ({of_src})" if of_status == "ready" and _tf_directions
-        else "Collecting samples" if of_status == "collecting"
-        else "Unavailable"
-    )
+    # Orderflow label — reflect actual alignment vs bias direction
+    _of_total  = len(_tf_directions)
+    _of_bull_c = sum(1 for d in _tf_directions if any(w in d for w in ("bull", "buy", "long")))
+    _of_bear_c = sum(1 for d in _tf_directions if any(w in d for w in ("bear", "sell", "short")))
+    if of_status not in ("ready",) or not _tf_directions:
+        _of_label  = "Collecting samples" if of_status in ("collecting", "initializing") else "Unavailable"
+        _of_status = "watch"
+    elif is_bullish:
+        if _of_bull_c >= _of_total * 0.7:
+            _of_label  = f"Aligned / Bullish ({_of_bull_c}/{_of_total} TFs)"
+            _of_status = "confirm" if score >= 55 else "watch"
+        elif _of_bull_c >= _of_total * 0.4:
+            _of_label  = f"Partial / Mixed ({_of_bull_c}/{_of_total} TFs bullish)"
+            _of_status = "watch"
+        else:
+            _of_label  = f"Against Bias / Bearish Conflict ({_of_bear_c}/{_of_total} TFs bearish)"
+            _of_status = "conflict"
+    elif is_bearish:
+        if _of_bear_c >= _of_total * 0.7:
+            _of_label  = f"Aligned / Bearish ({_of_bear_c}/{_of_total} TFs)"
+            _of_status = "confirm" if score >= 55 else "watch"
+        elif _of_bear_c >= _of_total * 0.4:
+            _of_label  = f"Partial / Mixed ({_of_bear_c}/{_of_total} TFs bearish)"
+            _of_status = "watch"
+        else:
+            _of_label  = f"Against Bias / Bullish Conflict ({_of_bull_c}/{_of_total} TFs bullish)"
+            _of_status = "conflict"
+    else:
+        _of_label  = "Unavailable"
+        _of_status = "watch"
+
+    # Sweep label and structured status — only "confirm" when direction + reaction + liq all match
     _sweep_lbl = (
         f"{recent_sweep.get('sweep_type','—')} — {recent_sweep.get('reaction','—')}"
         if recent_sweep else "No recent sweep"
     )
+    if recent_sweep:
+        _rs_stype  = (recent_sweep.get("sweep_type") or "").lower()
+        _rs_react  = (recent_sweep.get("reaction")   or "").lower()
+        _rs_liqu   = recent_sweep.get("liq_usd", 0) or 0
+        _rs_llbl   = recent_sweep.get("liq_label", "$0")
+        _rs_dir_ok = (is_bullish and "low" in _rs_stype) or (is_bearish and "high" in _rs_stype)
+        _rs_rct_ok = _rs_react in ("reclaimed", "rejected")
+        _rs_liq_ok = _rs_liqu >= 50_000
+        if _rs_dir_ok and _rs_rct_ok and _rs_liq_ok:
+            _sweep_sr_status = "confirm"
+            _sweep_sr_value  = _sweep_lbl
+            _sweep_sr_note   = f"{_sweep_lbl} | {_rs_llbl} rekt — confirms setup bias."
+        elif _rs_dir_ok and _rs_rct_ok:
+            _sweep_sr_status = "watch"
+            _sweep_sr_value  = _sweep_lbl
+            _sweep_sr_note   = (
+                f"{_sweep_lbl} | Liq {_rs_llbl} — reaction OK but rekt too small to confirm."
+            )
+        elif not _rs_dir_ok:
+            _sweep_sr_status = "conflict"
+            _sweep_sr_value  = "Sweep without meaningful rekt"
+            _sweep_sr_note   = (
+                f"{recent_sweep.get('sweep_type','—')} — does not confirm setup bias; "
+                f"liq={_rs_llbl}."
+            )
+        else:
+            _sweep_sr_status = "neutral"
+            _sweep_sr_value  = _sweep_lbl
+            _sweep_sr_note   = f"{_sweep_lbl} | No confirming reaction."
+    else:
+        _sweep_sr_status = "neutral"
+        _sweep_sr_value  = "No recent sweep"
+        _sweep_sr_note   = "No sweep event in last 4h."
+
     _risk_lbl  = "Low" if score >= 75 else "Medium" if score >= 40 else "High"
-    _dq_lbl    = (
-        "fresh"       if recent_snap.get("source_status") == "fresh" and not missing_reasons
-        else "partial" if recent_snap
-        else "unavailable"
-    )
+
+    # Data quality — age-based thresholds, not source_status string
+    if snap_age_sec is None or not recent_snap:
+        _dq_lbl = "unavailable"
+    elif snap_age_sec < 60:
+        _dq_lbl = "fresh"
+    elif snap_age_sec < 300:
+        _dq_lbl = "acceptable"
+    elif snap_age_sec < 900:
+        _dq_lbl = "stale"
+        source_warnings.append(
+            f"Latest OF snapshot is {int(snap_age_sec)}s old (stale); "
+            "refresh orderflow before trusting verdict."
+        )
+    else:
+        _dq_lbl = "very_stale"
+        source_warnings.append(
+            f"Latest OF snapshot is {int(snap_age_sec)}s old (very stale); "
+            "data may be significantly outdated."
+        )
 
     existing_table_values = {
         "confirmation_checklist": {
@@ -23592,21 +23667,14 @@ def _lm_build_phase10_9f_bias_shift_values(  # noqa: C901
             "orderflow_agreement": {
                 "label":  "Orderflow Agreement",
                 "value":  _of_label,
-                "status": "confirm" if of_status == "ready" and score >= 55 else "watch",
+                "status": _of_status,
                 "note":   f"Phase 10.9E: {of_status} on {len(_tf_directions)} TFs.",
             },
             "sweep_rekt_confirmation": {
                 "label":  "Sweep + Rekt",
-                "value":  _sweep_lbl,
-                "status": (
-                    "confirm" if recent_sweep and recent_sweep.get("reaction") in ("Reclaimed", "Rejected")
-                    else "wait"
-                ),
-                "note": (
-                    f"{recent_sweep.get('sweep_type','—')} | {recent_sweep.get('reaction','—')} | "
-                    f"{recent_sweep.get('liq_label','—')}"
-                    if recent_sweep else "No sweep event in last 4h."
-                ),
+                "value":  _sweep_sr_value,
+                "status": _sweep_sr_status,
+                "note":   _sweep_sr_note,
             },
             "invalidation_risk": {
                 "label":  "Invalidation Risk",
