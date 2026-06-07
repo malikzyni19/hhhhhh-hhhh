@@ -7268,8 +7268,14 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       if(d&&d.ok&&Array.isArray(d.rows)){
         if(d.price_source_exchange) _lmPriceExchange=d.price_source_exchange;
         console.log("[LM-DH] rows="+d.rows.length+" sym="+symbol+" analysis="+exchange+(d.price_source_exchange&&d.price_source_exchange!==exchange?" price_from="+d.price_source_exchange:"")+(d.build_commit?" build="+d.build_commit:""));
-        if(d.order_book_wall_map) _lmDhObRaw=d.order_book_wall_map;
-        if(d.sweep_rekt_map) _lmDhLiqRaw=d.sweep_rekt_map;
+        // Store per-key so symbol change doesn't leave stale data
+        window._lmDhStructByKey=window._lmDhStructByKey||{};
+        var _dhKey=String(itemId||symbol||"default");
+        window._lmDhStructByKey[_dhKey]={order_book_wall_map:d.order_book_wall_map||null,sweep_rekt_map:d.sweep_rekt_map||null,symbol:symbol,itemId:itemId,fetchedAt:Date.now()};
+        // Always set globals immediately before render so render functions see current data
+        _lmDhObRaw=d.order_book_wall_map||null;
+        _lmDhLiqRaw=d.sweep_rekt_map||null;
+        console.log("[LM-DH-STRUCT] ob=",_lmDhObRaw&&_lmDhObRaw.ok,"bids=",_lmDhObRaw&&(_lmDhObRaw.bids||[]).length,"asks=",_lmDhObRaw&&(_lmDhObRaw.asks||[]).length,"liq=",_lmDhLiqRaw&&_lmDhLiqRaw.ok);
         var meta={sources_used:d.sources_used,sources_skipped:d.sources_skipped};
         _lmRenderDataHealth(d.rows,meta,symbol,itemId,pollKey);
         _lmUpdateLivePriceFromRows(d.rows,d.price_source_exchange||exchange,symbol,itemId,pollKey);
@@ -7404,9 +7410,30 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     // Remaining rows (skip Mark Price)
     var _dhShown={"Live Price":1,"Mark Price":1,"Order Book":1,"Liquidations":1,"Open Interest":1,"OI Change":1,"Delta":1,"Long/Short Ratio":1,"Funding Rate":1,"Candle Status":1,"AI Entry Analysis":1};
     for(var _rj=0;_rj<rows.length;_rj++){ if(!_dhShown[rows[_rj].metric]) t+=_row(rows[_rj]); }
+    // Capture expanded state BEFORE destroying DOM
+    var _wasObOpen=false, _wasLiqOpen=false;
+    try{
+      var _oldOb=document.getElementById("ob"+uid+"Panel");
+      var _oldLiq=document.getElementById("liq"+uid+"Panel");
+      _wasObOpen=!!(_oldOb&&_oldOb.classList.contains("lm-dh-open"));
+      _wasLiqOpen=!!(_oldLiq&&_oldLiq.classList.contains("lm-dh-open"));
+    }catch(_e2){}
     tbody.innerHTML=t;
-    // Populate OB and Liq panel tables now that DOM nodes exist
-    setTimeout(function(){ _lmDhRenderOBTable(uid); _lmDhRenderLiqTable(uid); }, 0);
+    // Restore expanded state after DOM rebuild
+    if(_wasObOpen){
+      var _obP=document.getElementById("ob"+uid+"Panel");
+      var _obI=document.getElementById("ob"+uid+"Icon");
+      if(_obP) _obP.classList.add("lm-dh-open");
+      if(_obI) _obI.textContent="−";
+    }
+    if(_wasLiqOpen){
+      var _liqP=document.getElementById("liq"+uid+"Panel");
+      var _liqI=document.getElementById("liq"+uid+"Icon");
+      if(_liqP) _liqP.classList.add("lm-dh-open");
+      if(_liqI) _liqI.textContent="−";
+    }
+    // Populate OB and Liq panel tables — use prefixed uids matching _lmDhObPanelHtml("ob"+uid) and _lmDhLiqPanelHtml("liq"+uid)
+    setTimeout(function(){ _lmDhRenderOBTable("ob"+uid); _lmDhRenderLiqTable("liq"+uid); }, 0);
     var _badge=document.getElementById("lmDhMountBadge");
     if(_badge) _badge.textContent=rows.length+" rows \xb7 "+(_lmGetDataSrc()||"?");
     var _statusLine=document.getElementById("lmDhStatusLine");
@@ -7418,10 +7445,18 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     if(!panel) return;
     var isOpen=panel.classList.toggle("lm-dh-open");
     if(icon) icon.textContent=isOpen?"−":"+";
+    if(isOpen){
+      // panelId is e.g. "obCLUSDTPanel" or "liqCLUSDTPanel"
+      // strip "Panel" suffix to get the uid used inside the panel HTML
+      var _puid=panelId.replace(/Panel$/,"");
+      if(panelId.indexOf("ob")===0 && window._lmDhRenderOBTable) window._lmDhRenderOBTable(_puid);
+      if(panelId.indexOf("liq")===0 && window._lmDhRenderLiqTable) window._lmDhRenderLiqTable(_puid);
+    }
   }
   window._lmDhToggle=_lmDhToggle;
   function _lmDhRenderOBTable(uid){
     var data=_lmDhObRaw;
+    console.log("[LM-DH-OB-RENDER]",{uid:uid,hasData:!!data,ok:data&&data.ok,bidCount:data&&data.bids&&data.bids.length,askCount:data&&data.asks&&data.asks.length});
     var bidBody=document.getElementById(uid+"BidBody");
     var askBody=document.getElementById(uid+"AskBody");
     var bidCount=document.getElementById(uid+"BidCount");
@@ -7431,7 +7466,10 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     var sumAsk=document.getElementById(uid+"SumAsk");
     var sumBias=document.getElementById(uid+"SumBias");
     var sumGap=document.getElementById(uid+"SumGap");
-    if(!bidBody||!askBody) return;
+    if(!bidBody||!askBody){
+      console.warn("[LM-DH-OB] table body missing for uid="+uid+", bidBody="+!!bidBody+", askBody="+!!askBody);
+      return;
+    }
     if(!data||!data.ok){
       var noData="<tr><td colspan='7' style='padding:18px;color:#9eb3c7;font-size:11px;text-align:center'>"+(data&&data.message?esc(data.message):"Order book wall data not yet available. Data loads on next refresh.")+"</td></tr>";
       bidBody.innerHTML=noData; askBody.innerHTML=noData;
@@ -7489,6 +7527,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
   window._lmDhRenderOBTable=_lmDhRenderOBTable;
   function _lmDhRenderLiqTable(uid){
     var data=_lmDhLiqRaw;
+    console.log("[LM-DH-LIQ-RENDER]",{uid:uid,hasData:!!data,ok:data&&data.ok,events:data&&data.events&&data.events.length});
     var liqBody=document.getElementById(uid+"LiqBody");
     var liqCount=document.getElementById(uid+"LiqCount");
     var lastSweep=document.getElementById(uid+"LastSweep");
@@ -7496,7 +7535,10 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     var sweepLiq=document.getElementById(uid+"SweepLiq");
     var sweepVs=document.getElementById(uid+"SweepVs");
     var sweepOutcome=document.getElementById(uid+"SweepOutcome");
-    if(!liqBody) return;
+    if(!liqBody){
+      console.warn("[LM-DH-LIQ] table body missing for uid="+uid);
+      return;
+    }
     if(!data||!data.ok||!data.events||!data.events.length){
       var msg=data&&data.message?esc(data.message):"Sweep-linked liquidation history needs backend support. Swing detection correlated with forceOrder events is not yet implemented.";
       liqBody.innerHTML="<tr><td colspan='8' style='padding:18px;color:#9eb3c7;font-size:11px;text-align:center'>"+
