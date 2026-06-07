@@ -10835,28 +10835,190 @@ def _lm_build_ob_wall_map(symbol: str, exchange: str) -> dict:
     }
 
 
-def _lm_build_sweep_rekt_map(symbol: str, exchange: str) -> dict:
+def _lm_build_sweep_rekt_map(symbol: str, exchange: str) -> dict:  # noqa: C901
     """Build sweep rekt map for the DH expanded panel.
 
-    Full swing-linked sweep detection is not yet implemented.
-    Returns ok=False with honest status; no fake events.
+    Uses:
+    - _lm_get_candles_for_features for recent 5m candles via TTL cache
+    - _lm_find_swing_points + _lm_detect_liquidity_sweeps_for_tf for sweep detection
+    - _lm_liq_cache (Binance forceOrder deque) for liquidation event matching
+
+    Side mapping (from _lm_liq_update):
+      side="long"  → long position liquidated (forced SELL order)
+      side="short" → short position liquidated (forced BUY order)
+
+    No fake data. If data is unavailable, returns honest status.
     """
-    key = f"binance:{symbol}"
+    _TF           = "5m"
+    _LOOKBACK     = 300          # 300 × 5m = 25 h of candle history
+    _RECENT_SEC   = 4 * 3600    # only show sweeps from last 4 h
+    _LIQ_WIN_SEC  = 30          # ±30 s around candle open/close for liq matching
+    _MIN_LIQ_USD  = 0           # no floor — honest even if zero
+    now_s         = time.time()
+
+    # ── 1. Candles ──────────────────────────────────────────────────────────────
+    try:
+        candles = _lm_get_candles_for_features(
+            symbol, _TF, limit=_LOOKBACK, ttl=60,
+            exchange="binance", market="perpetual",
+        )
+    except Exception:
+        candles = []
+
+    if not candles or len(candles) < 20:
+        return {
+            "ok":      False,
+            "status":  "needs_data",
+            "events":  [],
+            "message": (
+                "Sweep-linked liquidation history needs fresh candle data. "
+                f"Got {len(candles)} candles for {symbol} {_TF}."
+            ),
+        }
+
+    # ── 2. Liquidation events from forceOrder stream ─────────────────────────
+    _liq_key = f"binance:{symbol}"
     with _lm_liq_lock:
-        entry = dict(_lm_liq_cache.get(key) or {})
-    has_stream = bool(entry)
+        _liq_entry = dict(_lm_liq_cache.get(_liq_key) or {})
+    # events deque → list of (ts_seconds, side, usd, price)
+    liq_events: list = list(_liq_entry.get("events") or [])
+    has_liq_stream   = bool(_liq_entry)
+
+    # ── 3. Swing + sweep detection ───────────────────────────────────────────
+    piv    = _lm_structure_pivot_settings(_TF)
+    swings = _lm_find_swing_points(candles, left=piv["left"], right=piv["right"])
+    raw_sweeps = _lm_detect_liquidity_sweeps_for_tf(candles, _TF, swings=swings)
+
+    # Filter to last _RECENT_SEC
+    cutoff_ms = (now_s - _RECENT_SEC) * 1000.0
+    recent_sweeps = [s for s in raw_sweeps if s.get("event_time", 0) >= cutoff_ms]
+
+    if not recent_sweeps:
+        return {
+            "ok":              True,
+            "status":          "no_recent_sweeps",
+            "symbol":          symbol,
+            "exchange":        exchange,
+            "source":          "Binance forceOrder + swing detector",
+            "has_liq_stream":  has_liq_stream,
+            "latest":          None,
+            "events":          [],
+            "message":         "No recent swing sweep found in last 4 hours.",
+        }
+
+    # ── 4. Helpers ───────────────────────────────────────────────────────────
+    def _time_ago(ts_ms: float) -> str:
+        diff = now_s - ts_ms / 1000.0
+        if diff < 60:
+            return f"{int(diff)}s ago"
+        if diff < 3600:
+            return f"{int(diff / 60)}m ago"
+        return f"{diff / 3600:.1f}h ago"
+
+    def _match_liq(candle_open_ms: float, is_low_sweep: bool) -> tuple:
+        """Sum long and short liq USD within candle window ± buffer.
+        Returns (long_liq, short_liq, primary_liq)."""
+        c_open_s  = candle_open_ms / 1000.0
+        win_start = c_open_s - _LIQ_WIN_SEC
+        win_end   = c_open_s + 300 + _LIQ_WIN_SEC  # 5m candle + buffer
+        long_liq  = sum(e[2] for e in liq_events
+                        if win_start <= e[0] <= win_end and e[1] == "long")
+        short_liq = sum(e[2] for e in liq_events
+                        if win_start <= e[0] <= win_end and e[1] == "short")
+        primary   = long_liq if is_low_sweep else short_liq
+        return long_liq, short_liq, primary
+
+    def _meaning_text(sweep_type: str, reaction: str, liq_usd: float) -> str:
+        if liq_usd < 10_000:
+            return (
+                "Sweep occurred but liquidation amount is low. "
+                "This may be wick noise, not a strong rekt event."
+            )
+        if sweep_type == "Swing Low Sweep":
+            if reaction == "Reclaimed":
+                return (
+                    "Longs liquidated below swing low, then price reclaimed. "
+                    "Possible bullish absorption if OB holds."
+                )
+            return (
+                "Longs liquidated below swing low and price continued lower. "
+                "OB defense is weak."
+            )
+        # Swing High Sweep
+        if reaction == "Rejected":
+            return (
+                "Shorts liquidated above swing high, then price rejected. "
+                "Possible bearish sweep/trap."
+            )
+        return (
+            "Shorts liquidated above swing high and price continued higher. "
+            "Bearish OB may be weak."
+        )
+
+    # ── 5. Build event list ──────────────────────────────────────────────────
+    # First pass: collect primary liq amounts per event for vs_avg calculation
+    interim: list = []  # (sweep_dict, is_low_sweep, long_liq, short_liq, primary)
+    for sweep in recent_sweeps:
+        etype        = sweep.get("event_type", "")
+        is_low       = (etype == "sell_side_liquidity_sweep")
+        copen_ms     = float(sweep.get("candle_open_time", 0))
+        lg, sh, prim = _match_liq(copen_ms, is_low)
+        interim.append((sweep, is_low, lg, sh, prim))
+
+    # Build vs_avg: compare each event's primary_liq against avg of earlier
+    # same-type events in this result set (oldest first by event_time)
+    interim_sorted = sorted(interim, key=lambda x: x[0].get("event_time", 0))
+    prev_by_type: dict = {}   # etype → list of previous primary amounts
+
+    events: list = []
+    for sweep, is_low, lg, sh, primary in interim_sorted:
+        etype        = sweep.get("event_type", "")
+        event_ms     = float(sweep.get("event_time", 0))
+        level        = float(sweep.get("level", 0))
+        c_close      = float(sweep.get("confirmation_close", 0))
+
+        sweep_type   = "Swing Low Sweep" if is_low else "Swing High Sweep"
+        rekt_side    = "Longs Rekt"       if is_low else "Shorts Rekt"
+        # Detector guarantees close returns inside level so reaction is deterministic
+        reaction     = "Reclaimed"        if is_low else "Rejected"
+
+        # vs_avg
+        prev_list = prev_by_type.get(etype, [])
+        if prev_list and primary > 0:
+            avg_prev  = sum(prev_list) / len(prev_list)
+            vs_avg    = round(primary / avg_prev, 2) if avg_prev > 0 else None
+        else:
+            vs_avg    = None
+        prev_by_type.setdefault(etype, []).append(primary)
+
+        events.append({
+            "time":        _time_ago(event_ms),
+            "timestamp":   int(event_ms),
+            "sweep_type":  sweep_type,
+            "sweep_level": round(level, 4),
+            "rekt_side":   rekt_side,
+            "liq_usd":     round(primary),
+            "liq_label":   _fmt_usd_lm(float(primary)),
+            "vs_avg":      vs_avg,
+            "reaction":    reaction,
+            "meaning":     _meaning_text(sweep_type, reaction, primary),
+        })
+
+    # Most-recent first for the frontend table
+    events.sort(key=lambda e: e["timestamp"], reverse=True)
+
+    all_zero = all(e["liq_usd"] == 0 for e in events)
+    status   = "no_meaningful_rekt" if all_zero else "ready"
+
     return {
-        "ok":     False,
-        "status": "needs_backend_support",
-        "events": [],
-        "source": "Binance forceOrder + swing detector (not yet wired)",
-        "message": (
-            "Sweep-linked liquidation history requires swing detection "
-            "correlated with forceOrder events. Not yet implemented. "
-            + ("Binance liq stream is active for this symbol."
-               if has_stream else
-               "Binance liq stream has no data for this symbol yet.")
-        ),
+        "ok":             True,
+        "symbol":         symbol,
+        "exchange":       exchange,
+        "source":         "Binance forceOrder + swing detector",
+        "status":         status,
+        "has_liq_stream": has_liq_stream,
+        "latest":         events[0] if events else None,
+        "events":         events,
     }
 
 
