@@ -23621,7 +23621,7 @@ def _lm_build_phase10_9f_bias_shift_values(  # noqa: C901
         "event_timeline": {
             "latest_bias_event": f"Phase 10.9F: {verdict_label}",
             "latest_flow_event": (
-                f"Delta Δ={delta_net} TP={tp}" if delta_net is not None
+                f"Delta Δ={delta_net} TP={tp_str}" if delta_net is not None
                 else "Delta not yet available"
             ),
             "latest_sweep":  _sweep_lbl,
@@ -23673,7 +23673,7 @@ def _lm_build_phase10_9f_bias_shift_values(  # noqa: C901
             "delta": {
                 "delta_net":      delta_net,
                 "delta_pct":      recent_snap.get("delta_pct"),
-                "taker_pressure": tp,
+                "taker_pressure": tp_str,
             },
             "ob_wall": {
                 "ok":          ob_ok,
