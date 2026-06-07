@@ -4514,6 +4514,8 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
   var _lmLastKnownPrices={};        // {symbol: {live_price, mark_price, ts}} — stale fallback
   var _lmPendingDhData=null;        // {rows, meta} — DH rows queued until DOM card is ready
   var _lmActivePollKey=null;        // "itemId:symbol:ts" — invalidates stale async responses
+  var _lmDhObRaw=null;              // latest order_book_wall_map from data-health API
+  var _lmDhLiqRaw=null;             // latest sweep_rekt_map from data-health API
   var _lmObDaDefaults = {
     "5m":  {distance_pct:0.50, approach_pct:0.15},
     "15m": {distance_pct:0.80, approach_pct:0.25},
@@ -7266,6 +7268,8 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       if(d&&d.ok&&Array.isArray(d.rows)){
         if(d.price_source_exchange) _lmPriceExchange=d.price_source_exchange;
         console.log("[LM-DH] rows="+d.rows.length+" sym="+symbol+" analysis="+exchange+(d.price_source_exchange&&d.price_source_exchange!==exchange?" price_from="+d.price_source_exchange:"")+(d.build_commit?" build="+d.build_commit:""));
+        if(d.order_book_wall_map) _lmDhObRaw=d.order_book_wall_map;
+        if(d.sweep_rekt_map) _lmDhLiqRaw=d.sweep_rekt_map;
         var meta={sources_used:d.sources_used,sources_skipped:d.sources_skipped};
         _lmRenderDataHealth(d.rows,meta,symbol,itemId,pollKey);
         _lmUpdateLivePriceFromRows(d.rows,d.price_source_exchange||exchange,symbol,itemId,pollKey);
@@ -7401,6 +7405,8 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     var _dhShown={"Live Price":1,"Mark Price":1,"Order Book":1,"Liquidations":1,"Open Interest":1,"OI Change":1,"Delta":1,"Long/Short Ratio":1,"Funding Rate":1,"Candle Status":1,"AI Entry Analysis":1};
     for(var _rj=0;_rj<rows.length;_rj++){ if(!_dhShown[rows[_rj].metric]) t+=_row(rows[_rj]); }
     tbody.innerHTML=t;
+    // Populate OB and Liq panel tables now that DOM nodes exist
+    setTimeout(function(){ _lmDhRenderOBTable(uid); _lmDhRenderLiqTable(uid); }, 0);
     var _badge=document.getElementById("lmDhMountBadge");
     if(_badge) _badge.textContent=rows.length+" rows \xb7 "+(_lmGetDataSrc()||"?");
     var _statusLine=document.getElementById("lmDhStatusLine");
@@ -7414,43 +7420,138 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     if(icon) icon.textContent=isOpen?"−":"+";
   }
   window._lmDhToggle=_lmDhToggle;
+  function _lmDhRenderOBTable(uid){
+    var data=_lmDhObRaw;
+    var bidBody=document.getElementById(uid+"BidBody");
+    var askBody=document.getElementById(uid+"AskBody");
+    var bidCount=document.getElementById(uid+"BidCount");
+    var askCount=document.getElementById(uid+"AskCount");
+    var sumWin=document.getElementById(uid+"SumWin");
+    var sumBid=document.getElementById(uid+"SumBid");
+    var sumAsk=document.getElementById(uid+"SumAsk");
+    var sumBias=document.getElementById(uid+"SumBias");
+    var sumGap=document.getElementById(uid+"SumGap");
+    if(!bidBody||!askBody) return;
+    if(!data||!data.ok){
+      var noData="<tr><td colspan='7' style='padding:18px;color:#9eb3c7;font-size:11px;text-align:center'>"+(data&&data.message?esc(data.message):"Order book wall data not yet available. Data loads on next refresh.")+"</td></tr>";
+      bidBody.innerHTML=noData; askBody.innerHTML=noData;
+      if(bidCount) bidCount.textContent="0 levels";
+      if(askCount) askCount.textContent="0 levels";
+      return;
+    }
+    var winSel=document.getElementById(uid+"Win");
+    var minWSel=document.getElementById(uid+"MinW");
+    var winPct=winSel?parseFloat(winSel.value):1.0;
+    var minWall=minWSel?parseFloat(minWSel.value):0;
+    function fmtU(v){if(v>=1e9)return"$"+(v/1e9).toFixed(2)+"B";if(v>=1e6)return"$"+(v/1e6).toFixed(1)+"M";if(v>=1e3)return"$"+Math.round(v/1e3)+"K";return"$"+Math.round(v);}
+    var bids=(data.bids||[]).filter(function(l){return l.distance_pct<=winPct&&l.size_usd>=minWall;});
+    var asks=(data.asks||[]).filter(function(l){return l.distance_pct<=winPct&&l.size_usd>=minWall;});
+    var bidLiq=bids.reduce(function(s,l){return s+l.size_usd;},0);
+    var askLiq=asks.reduce(function(s,l){return s+l.size_usd;},0);
+    var dominant="Mixed";
+    if(bidLiq>askLiq*1.2) dominant="Bid Support";
+    else if(askLiq>bidLiq*1.2) dominant="Ask Pressure";
+    if(sumWin) sumWin.textContent="\xb1"+winPct.toFixed(2)+"%";
+    if(sumBid) sumBid.textContent=fmtU(bidLiq);
+    if(sumAsk) sumAsk.textContent=fmtU(askLiq);
+    if(sumBias){sumBias.textContent=dominant;sumBias.className="v "+(dominant==="Bid Support"?"lm-dh-green":dominant==="Ask Pressure"?"lm-dh-red":"lm-dh-yellow");}
+    if(bidCount) bidCount.textContent=bids.length+" level"+(bids.length!==1?"s":"");
+    if(askCount) askCount.textContent=asks.length+" level"+(asks.length!==1?"s":"");
+    var nb=bids[0],na=asks[0];
+    if(sumGap) sumGap.textContent=(nb?"Bid "+nb.distance_pct.toFixed(2)+"%":"No bid")+" / "+(na?"Ask "+na.distance_pct.toFixed(2)+"%":"No ask");
+    var emptyBid="<tr><td colspan='7' style='padding:18px;color:#9eb3c7;font-size:11px;text-align:center'>No major BID wall found inside \xb1"+winPct.toFixed(2)+"% with current minimum filter. This side is thin inside selected window, or lower the Min Wall filter.</td></tr>";
+    var emptyAsk="<tr><td colspan='7' style='padding:18px;color:#9eb3c7;font-size:11px;text-align:center'>No major ASK wall found inside \xb1"+winPct.toFixed(2)+"% with current minimum filter. This side is thin inside selected window, or lower the Min Wall filter.</td></tr>";
+    bidBody.innerHTML=bids.length?bids.map(function(l,i){
+      var w=Math.max(5,l.strength_pct);
+      return "<tr style='border-bottom:1px solid rgba(148,163,184,.08)'>"+
+        "<td style='padding:6px;color:#9eb3c7;font-size:10px'>#"+(i+1)+"</td>"+
+        "<td style='padding:6px;color:#22c55e;font-weight:700;font-size:11px'>"+l.price.toFixed(4)+"</td>"+
+        "<td style='padding:6px;color:#a9bdd2;font-size:10px'>"+l.distance_pct.toFixed(2)+"%</td>"+
+        "<td style='padding:6px;color:#e5f3ff;font-weight:700;font-size:11px'>"+esc(l.size_label)+"</td>"+
+        "<td style='padding:6px'><div style='width:80px;height:7px;background:rgba(148,163,184,.16);border-radius:999px;overflow:hidden'><div style='height:100%;border-radius:999px;background:linear-gradient(90deg,rgba(34,197,94,.35),#22c55e);width:"+w+"%'></div></div></td>"+
+        "<td style='padding:6px;color:#9eb3c7;font-size:10px'>"+esc(l.stability)+"</td>"+
+        "<td style='padding:6px;color:#9eb3c7;font-size:10px;white-space:normal;max-width:180px'>"+esc(l.meaning)+"</td>"+
+      "</tr>";
+    }).join(""):emptyBid;
+    askBody.innerHTML=asks.length?asks.map(function(l,i){
+      var w=Math.max(5,l.strength_pct);
+      return "<tr style='border-bottom:1px solid rgba(148,163,184,.08)'>"+
+        "<td style='padding:6px;color:#9eb3c7;font-size:10px'>#"+(i+1)+"</td>"+
+        "<td style='padding:6px;color:#ef4444;font-weight:700;font-size:11px'>"+l.price.toFixed(4)+"</td>"+
+        "<td style='padding:6px;color:#a9bdd2;font-size:10px'>"+l.distance_pct.toFixed(2)+"%</td>"+
+        "<td style='padding:6px;color:#e5f3ff;font-weight:700;font-size:11px'>"+esc(l.size_label)+"</td>"+
+        "<td style='padding:6px'><div style='width:80px;height:7px;background:rgba(148,163,184,.16);border-radius:999px;overflow:hidden'><div style='height:100%;border-radius:999px;background:linear-gradient(90deg,rgba(239,68,68,.35),#ef4444);width:"+w+"%'></div></div></td>"+
+        "<td style='padding:6px;color:#9eb3c7;font-size:10px'>"+esc(l.stability)+"</td>"+
+        "<td style='padding:6px;color:#9eb3c7;font-size:10px;white-space:normal;max-width:180px'>"+esc(l.meaning)+"</td>"+
+      "</tr>";
+    }).join(""):emptyAsk;
+  }
+  window._lmDhRenderOBTable=_lmDhRenderOBTable;
+  function _lmDhRenderLiqTable(uid){
+    var data=_lmDhLiqRaw;
+    var liqBody=document.getElementById(uid+"LiqBody");
+    var liqCount=document.getElementById(uid+"LiqCount");
+    var lastSweep=document.getElementById(uid+"LastSweep");
+    var rektSide=document.getElementById(uid+"RektSide");
+    var sweepLiq=document.getElementById(uid+"SweepLiq");
+    var sweepVs=document.getElementById(uid+"SweepVs");
+    var sweepOutcome=document.getElementById(uid+"SweepOutcome");
+    if(!liqBody) return;
+    if(!data||!data.ok||!data.events||!data.events.length){
+      var msg=data&&data.message?esc(data.message):"Sweep-linked liquidation history needs backend support. Swing detection correlated with forceOrder events is not yet implemented.";
+      liqBody.innerHTML="<tr><td colspan='8' style='padding:18px;color:#9eb3c7;font-size:11px;text-align:center'>"+
+        "<div style='color:#f59e0b;font-weight:700;margin-bottom:6px'>Sweep Rekt History — Needs Backend Support</div>"+
+        msg+"</td></tr>";
+      if(liqCount) liqCount.textContent="0 events";
+      return;
+    }
+    var lookSel=document.getElementById(uid+"Look");
+    var minLSel=document.getElementById(uid+"MinL");
+    var lookback=lookSel?parseFloat(lookSel.value):900;
+    var minLiq=minLSel?parseFloat(minLSel.value):0;
+    var now=Date.now()/1000;
+    var events=(data.events||[]).filter(function(e){
+      return (now-(e.timestamp/1000))<=lookback && e.liq_usd>=minLiq;
+    });
+    if(liqCount) liqCount.textContent=events.length+" event"+(events.length!==1?"s":"");
+    var latest=events[0]||data.latest||null;
+    if(latest){
+      if(lastSweep) lastSweep.textContent=(latest.sweep_type||"—").replace(" Sweep","");
+      if(rektSide) rektSide.textContent=latest.rekt_side||"—";
+      if(sweepLiq) sweepLiq.textContent=latest.liq_label||"—";
+      if(sweepVs) sweepVs.textContent=latest.vs_avg!=null?(latest.vs_avg.toFixed(1)+"x"):"—";
+      if(sweepOutcome) sweepOutcome.textContent=latest.reaction||"—";
+    }
+    liqBody.innerHTML=events.length?events.map(function(e){
+      var sideC=e.rekt_side&&e.rekt_side.toLowerCase().includes("long")?"lm-dh-red":"lm-dh-yellow";
+      var reactC=e.reaction==="Reclaimed"?"lm-dh-green":e.reaction==="Rejected"?"lm-dh-yellow":"lm-dh-red";
+      return "<tr style='border-bottom:1px solid rgba(148,163,184,.08)'>"+
+        "<td style='padding:6px;color:#9eb3c7;font-size:10px'>"+esc(e.time||"—")+"</td>"+
+        "<td style='padding:6px;color:#e5f3ff;font-weight:700;font-size:10px'>"+esc(e.sweep_type||"—")+"</td>"+
+        "<td style='padding:6px;color:#a9bdd2;font-size:10px'>"+(e.sweep_level!=null?e.sweep_level.toFixed(2):"—")+"</td>"+
+        "<td style='padding:6px;font-size:10px' class='"+sideC+"'>"+esc(e.rekt_side||"—")+"</td>"+
+        "<td style='padding:6px;color:#e5f3ff;font-weight:700;font-size:10px'>"+esc(e.liq_label||"—")+"</td>"+
+        "<td style='padding:6px;color:#a9bdd2;font-size:10px'>"+(e.vs_avg!=null?e.vs_avg.toFixed(1)+"x":"—")+"</td>"+
+        "<td style='padding:6px;font-size:10px' class='"+reactC+"'>"+esc(e.reaction||"—")+"</td>"+
+        "<td style='padding:6px;color:#9eb3c7;font-size:10px;white-space:normal;max-width:180px'>"+esc(e.meaning||"—")+"</td>"+
+      "</tr>";
+    }).join(""):
+    "<tr><td colspan='8' style='padding:18px;color:#9eb3c7;font-size:11px;text-align:center'>No sweep liquidation events above selected minimum. Lower Min Liq filter or expand lookback.</td></tr>";
+  }
+  window._lmDhRenderLiqTable=_lmDhRenderLiqTable;
   function _lmDhObPanelHtml(uid,sym,obRow){
-    var rawVal=obRow?(obRow.value||""):"";
     var src=obRow?esc(obRow.source||"—"):"—";
     var st=obRow?esc(obRow.status||"—"):"—";
     var upd=obRow?esc(obRow.updated||"—"):"—";
-    // Parse "Bid 92.0633 / Ask 92.0733" from backend value
-    var bm=rawVal.match(/Bid\s*([\d.]+)/i);
-    var am=rawVal.match(/Ask\s*([\d.]+)/i);
-    var bid=bm?parseFloat(bm[1]):null;
-    var ask=am?parseFloat(am[1]):null;
-    var spread=(bid&&ask)?(ask-bid):null;
-    var spreadPct=(bid&&ask&&bid>0)?((ask-bid)/bid*100):null;
-    var bidHtml=bid?
-      '<div style="text-align:center;padding:24px 12px">'+
-        '<div style="font-size:10px;color:#71869b;text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px">Best Bid Price</div>'+
-        '<div style="font-size:26px;font-weight:900;color:#22c55e">'+bid.toFixed(4)+'</div>'+
-        (spread!==null?'<div style="font-size:10px;color:#71869b;margin-top:6px">Spread: '+spread.toFixed(4)+' ('+spreadPct.toFixed(4)+'%)</div>':'')+
-        '<div style="margin-top:16px;padding:8px;border:1px dashed rgba(34,197,94,.2);border-radius:8px;font-size:10px;color:#9eb3c7">Wall-level depth (size, stability) requires extended OB endpoint</div>'+
-      '</div>':
-      '<div class="lm-dh-empty">No bid data from backend</div>';
-    var askHtml=ask?
-      '<div style="text-align:center;padding:24px 12px">'+
-        '<div style="font-size:10px;color:#71869b;text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px">Best Ask Price</div>'+
-        '<div style="font-size:26px;font-weight:900;color:#ef4444">'+ask.toFixed(4)+'</div>'+
-        (spread!==null?'<div style="font-size:10px;color:#71869b;margin-top:6px">Spread: '+spread.toFixed(4)+' ('+spreadPct.toFixed(4)+'%)</div>':'')+
-        '<div style="margin-top:16px;padding:8px;border:1px dashed rgba(239,68,68,.2);border-radius:8px;font-size:10px;color:#9eb3c7">Wall-level depth (size, stability) requires extended OB endpoint</div>'+
-      '</div>':
-      '<div class="lm-dh-empty">No ask data from backend</div>';
     return '<div class="lm-dh-panel" id="'+uid+'Panel">'+
       '<div class="lm-dh-panel-top">'+
         '<span class="lm-dh-ptitle">Expanded Order Book Window</span>'+
         '<span class="lm-dh-badge lm-dh-b-cyan">BID / ASK split</span>'+
         '<span class="lm-dh-badge lm-dh-b-yellow">price sorted</span>'+
         '<span class="lm-dh-lab">Window:</span>'+
-        '<select class="lm-dh-sel" id="'+uid+'Win">'+
-          '<option value=".25">\xb10.25%</option>'+
-          '<option value=".5">\xb10.50%</option>'+
+        '<select class="lm-dh-sel" id="'+uid+'Win" onchange="window._lmDhRenderOBTable(\''+uid+'\')">'+
+          '<option value="0.25">\xb10.25%</option>'+
+          '<option value="0.5">\xb10.50%</option>'+
           '<option value="1" selected>\xb11.00%</option>'+
           '<option value="2">\xb12.00%</option>'+
           '<option value="3">\xb13.00%</option>'+
@@ -7459,84 +7560,90 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
           '<option value="10">\xb110.00%</option>'+
         '</select>'+
         '<span class="lm-dh-lab">Min Wall:</span>'+
-        '<select class="lm-dh-sel" id="'+uid+'MinW">'+
-          '<option value=".25">$250K+</option>'+
-          '<option value=".45" selected>$450K+</option>'+
-          '<option value="1">$1M+</option>'+
-          '<option value="2">$2M+</option>'+
+        '<select class="lm-dh-sel" id="'+uid+'MinW" onchange="window._lmDhRenderOBTable(\''+uid+'\')">'+
+          '<option value="0">Auto</option>'+
+          '<option value="250000">$250K+</option>'+
+          '<option value="450000" selected>$450K+</option>'+
+          '<option value="1000000">$1M+</option>'+
+          '<option value="2000000">$2M+</option>'+
         '</select>'+
       '</div>'+
-      '<div class="lm-dh-summary">'+
-        '<div class="lm-dh-stat"><div class="k">Source</div><div class="v" style="font-size:10px">'+src+'</div></div>'+
-        '<div class="lm-dh-stat"><div class="k">Status</div><div class="v" style="font-size:11px">'+st+'</div></div>'+
-        '<div class="lm-dh-stat"><div class="k">Updated</div><div class="v" style="font-size:11px">'+upd+'</div></div>'+
-        '<div class="lm-dh-stat"><div class="k">Spread</div><div class="v lm-dh-yellow" style="font-size:12px">'+(spreadPct!==null?spreadPct.toFixed(4)+'%':'—')+'</div></div>'+
-        '<div class="lm-dh-stat"><div class="k">Symbol</div><div class="v" style="font-size:11px">'+esc(sym)+'</div></div>'+
+      '<div class="lm-dh-summary" id="'+uid+'Summary">'+
+        '<div class="lm-dh-stat"><div class="k">Selected Window</div><div class="v" id="'+uid+'SumWin">\xb11.00%</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Bid Liquidity</div><div class="v lm-dh-green" id="'+uid+'SumBid">—</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Ask Liquidity</div><div class="v lm-dh-red" id="'+uid+'SumAsk">—</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Dominant Side</div><div class="v lm-dh-yellow" id="'+uid+'SumBias">Mixed</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Thin-Zone</div><div class="v lm-dh-yellow" id="'+uid+'SumGap">—</div></div>'+
       '</div>'+
       '<div class="lm-dh-cols">'+
         '<div class="lm-dh-side">'+
-          '<div class="lm-dh-side-head"><span class="lm-dh-side-title lm-dh-green">BID WALLS / SUPPORT</span><span class="lm-dh-badge lm-dh-b-green">best bid</span></div>'+
-          bidHtml+
+          '<div class="lm-dh-side-head">'+
+            '<span class="lm-dh-side-title lm-dh-green">BID WALLS / SUPPORT</span>'+
+            '<span class="lm-dh-badge lm-dh-b-green" id="'+uid+'BidCount">loading…</span>'+
+          '</div>'+
+          '<div class="lm-dh-scroll">'+
+            '<table style="width:100%;border-collapse:collapse;min-width:580px">'+
+              '<thead><tr>'+
+                '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">#</th>'+
+                '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Price</th>'+
+                '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Distance</th>'+
+                '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Size</th>'+
+                '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Strength</th>'+
+                '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Stability</th>'+
+                '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Meaning</th>'+
+              '</tr></thead>'+
+              '<tbody id="'+uid+'BidBody"><tr><td colspan="7" style="padding:14px;color:#71869b;font-size:10px">Loading…</td></tr></tbody>'+
+            '</table>'+
+          '</div>'+
         '</div>'+
         '<div class="lm-dh-side">'+
-          '<div class="lm-dh-side-head"><span class="lm-dh-side-title lm-dh-red">ASK WALLS / RESISTANCE</span><span class="lm-dh-badge lm-dh-b-red">best ask</span></div>'+
-          askHtml+
+          '<div class="lm-dh-side-head">'+
+            '<span class="lm-dh-side-title lm-dh-red">ASK WALLS / RESISTANCE</span>'+
+            '<span class="lm-dh-badge lm-dh-b-red" id="'+uid+'AskCount">loading…</span>'+
+          '</div>'+
+          '<div class="lm-dh-scroll">'+
+            '<table style="width:100%;border-collapse:collapse;min-width:580px">'+
+              '<thead><tr>'+
+                '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">#</th>'+
+                '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Price</th>'+
+                '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Distance</th>'+
+                '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Size</th>'+
+                '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Strength</th>'+
+                '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Stability</th>'+
+                '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Meaning</th>'+
+              '</tr></thead>'+
+              '<tbody id="'+uid+'AskBody"><tr><td colspan="7" style="padding:14px;color:#71869b;font-size:10px">Loading…</td></tr></tbody>'+
+            '</table>'+
+          '</div>'+
         '</div>'+
       '</div>'+
-      '<div style="margin-top:10px;padding:10px;text-align:center;border:1px dashed rgba(34,211,238,.18);border-radius:8px;font-size:10px;color:#71869b">'+
-        '<span style="color:#22d3ee">Wall Ladder</span> — Full wall levels (size, distance, stability per price) need extended OB endpoint added to the data-health API.'+
+      '<div style="padding:6px 10px;font-size:9px;color:#71869b;border-top:1px solid rgba(34,211,238,.1);margin-top:8px">'+
+        'Source: '+src+' \xb7 Status: '+st+' \xb7 Updated: '+upd+
+        ' \xb7 <span style="color:#f59e0b">Wall-level OB depth. Wall ladder detail (per-level size, stability) is aggregated from available exchange order books.</span>'+
       '</div>'+
     '</div>';
   }
   function _lmDhLiqPanelHtml(uid,sym,liqRow){
-    var rawVal=liqRow?(liqRow.value||""):"";
     var src=liqRow?esc(liqRow.source||"—"):"—";
     var st=liqRow?esc(liqRow.status||"—"):"—";
     var upd=liqRow?esc(liqRow.updated||"—"):"—";
-    // Parse "L $420K / S $180K (5m)" or "None (5m)"
-    var isNone=/^none/i.test(rawVal.trim());
-    var lm=rawVal.match(/L\s*\$?([\d.,]+\s*[KMBkmb]?)/);
-    var sm=rawVal.match(/S\s*\$?([\d.,]+\s*[KMBkmb]?)/);
-    var longStr=lm?('$'+lm[1].trim()):null;
-    var shortStr=sm?('$'+sm[1].trim().split(/[\s/(]/)[0]):null;
-    var liqBodyHtml;
-    if(isNone){
-      liqBodyHtml='<div style="padding:28px;text-align:center">'+
-        '<div style="font-size:18px;font-weight:900;color:#71869b;margin-bottom:8px">No Liquidations (5m)</div>'+
-        '<div style="font-size:11px;color:#9eb3c7">No significant liquidation events detected in the last 5 minutes. Market is calm on this window.</div>'+
-      '</div>';
-    } else if(longStr||shortStr){
-      liqBodyHtml='<div class="lm-dh-cols">'+
-        '<div class="lm-dh-side">'+
-          '<div class="lm-dh-side-head"><span class="lm-dh-side-title lm-dh-red">LONGS REKT</span><span class="lm-dh-badge lm-dh-b-red">liquidated</span></div>'+
-          '<div style="text-align:center;padding:24px 12px">'+
-            '<div style="font-size:10px;color:#71869b;text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px">Long Liquidations (5m)</div>'+
-            '<div style="font-size:26px;font-weight:900;color:#ef4444">'+(longStr||'—')+'</div>'+
-            '<div style="margin-top:16px;padding:8px;border:1px dashed rgba(239,68,68,.2);border-radius:8px;font-size:10px;color:#9eb3c7">Per-sweep event breakdown needs extended endpoint</div>'+
-          '</div>'+
-        '</div>'+
-        '<div class="lm-dh-side">'+
-          '<div class="lm-dh-side-head"><span class="lm-dh-side-title lm-dh-green">SHORTS REKT</span><span class="lm-dh-badge lm-dh-b-green">liquidated</span></div>'+
-          '<div style="text-align:center;padding:24px 12px">'+
-            '<div style="font-size:10px;color:#71869b;text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px">Short Liquidations (5m)</div>'+
-            '<div style="font-size:26px;font-weight:900;color:#22c55e">'+(shortStr||'—')+'</div>'+
-            '<div style="margin-top:16px;padding:8px;border:1px dashed rgba(34,197,94,.2);border-radius:8px;font-size:10px;color:#9eb3c7">Per-sweep event breakdown needs extended endpoint</div>'+
-          '</div>'+
-        '</div>'+
-      '</div>';
-    } else {
-      liqBodyHtml='<div class="lm-dh-empty">'+esc(rawVal||"—")+'</div>';
-    }
     return '<div class="lm-dh-panel" id="'+uid+'Panel">'+
       '<div class="lm-dh-panel-top">'+
         '<span class="lm-dh-ptitle">Expanded Sweep Rekt Map</span>'+
         '<span class="lm-dh-badge lm-dh-b-yellow">swing sweep linked</span>'+
         '<span class="lm-dh-lab">Lookback:</span>'+
-        '<select class="lm-dh-sel" id="'+uid+'Look">'+
-          '<option>5m</option><option selected>15m</option><option>1h</option><option>4h</option>'+
+        '<select class="lm-dh-sel" id="'+uid+'Look" onchange="window._lmDhRenderLiqTable(\''+uid+'\')">'+
+          '<option value="300">5m</option>'+
+          '<option value="900" selected>15m</option>'+
+          '<option value="3600">1h</option>'+
+          '<option value="14400">4h</option>'+
+        '</select>'+
+        '<span class="lm-dh-lab">Swing:</span>'+
+        '<select class="lm-dh-sel" id="'+uid+'SwingSrc">'+
+          '<option>Internal</option><option selected>External</option><option>Both</option>'+
         '</select>'+
         '<span class="lm-dh-lab">Min Liq:</span>'+
-        '<select class="lm-dh-sel" id="'+uid+'MinL">'+
+        '<select class="lm-dh-sel" id="'+uid+'MinL" onchange="window._lmDhRenderLiqTable(\''+uid+'\')">'+
           '<option value="0">Auto</option>'+
           '<option value="50000">$50K+</option>'+
           '<option value="100000" selected>$100K+</option>'+
@@ -7544,16 +7651,36 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
           '<option value="500000">$500K+</option>'+
         '</select>'+
       '</div>'+
-      '<div class="lm-dh-summary">'+
-        '<div class="lm-dh-stat"><div class="k">Long Liq (5m)</div><div class="v lm-dh-red" style="font-size:12px">'+(longStr||'None')+'</div></div>'+
-        '<div class="lm-dh-stat"><div class="k">Short Liq (5m)</div><div class="v lm-dh-green" style="font-size:12px">'+(shortStr||'None')+'</div></div>'+
-        '<div class="lm-dh-stat"><div class="k">Status</div><div class="v" style="font-size:11px">'+st+'</div></div>'+
-        '<div class="lm-dh-stat"><div class="k">Source</div><div class="v" style="font-size:10px">'+src+'</div></div>'+
-        '<div class="lm-dh-stat"><div class="k">Updated</div><div class="v" style="font-size:11px">'+upd+'</div></div>'+
+      '<div class="lm-dh-summary" id="'+uid+'LiqSummary">'+
+        '<div class="lm-dh-stat"><div class="k">Last Sweep</div><div class="v lm-dh-yellow" id="'+uid+'LastSweep">—</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Rekt Side</div><div class="v lm-dh-red" id="'+uid+'RektSide">—</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Sweep Liq</div><div class="v lm-dh-red" id="'+uid+'SweepLiq">—</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Vs Previous Avg</div><div class="v lm-dh-yellow" id="'+uid+'SweepVs">—</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Outcome</div><div class="v lm-dh-green" id="'+uid+'SweepOutcome">—</div></div>'+
       '</div>'+
-      liqBodyHtml+
-      '<div style="margin-top:10px;padding:10px;text-align:center;border:1px dashed rgba(245,158,11,.18);border-radius:8px;font-size:10px;color:#71869b">'+
-        '<span style="color:#f59e0b">Sweep History</span> — Per-sweep events (swing level, reaction, vs-avg) need extended endpoint added to the data-health API.'+
+      '<div class="lm-dh-side" style="margin-top:8px">'+
+        '<div class="lm-dh-side-head">'+
+          '<span class="lm-dh-side-title lm-dh-yellow">SWEEP LIQUIDATION HISTORY / REKT EVENTS</span>'+
+          '<span class="lm-dh-badge lm-dh-b-yellow" id="'+uid+'LiqCount">0 events</span>'+
+        '</div>'+
+        '<div class="lm-dh-scroll">'+
+          '<table style="width:100%;border-collapse:collapse;min-width:760px">'+
+            '<thead><tr>'+
+              '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Time</th>'+
+              '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Sweep Type</th>'+
+              '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Level</th>'+
+              '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Rekt Side</th>'+
+              '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Liq $</th>'+
+              '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Vs Avg</th>'+
+              '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Reaction</th>'+
+              '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Meaning</th>'+
+            '</tr></thead>'+
+            '<tbody id="'+uid+'LiqBody"><tr><td colspan="8" style="padding:14px;color:#71869b;font-size:10px">Loading…</td></tr></tbody>'+
+          '</table>'+
+        '</div>'+
+      '</div>'+
+      '<div style="padding:6px 10px;font-size:9px;color:#71869b;border-top:1px solid rgba(245,158,11,.1);margin-top:8px">'+
+        'Source: '+src+' \xb7 Status: '+st+' \xb7 Updated: '+upd+
       '</div>'+
     '</div>';
   }

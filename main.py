@@ -10676,6 +10676,190 @@ def _fmt_usd_lm(v: float) -> str:
     return f"${v:.0f}"
 
 
+# ── Order Book Wall Map builder ───────────────────────────────────────────────
+
+def _lm_build_ob_wall_map(symbol: str, exchange: str) -> dict:
+    """Build order book wall map for the DH expanded panel.
+
+    Returns structured bids/asks with USD notional, distance, strength.
+    Frontend applies window/min-wall filtering interactively.
+    Covers all levels within ±10% of current price.
+    """
+    now = time.time()
+    _try_exchanges = (
+        ["binance", "bybit", "okx"] if exchange == "aggregated" else [exchange]
+    )
+
+    raw_bids: dict = {}   # price_float -> agg_qty_float
+    raw_asks: dict = {}
+    sources_used:    list = []
+    sources_skipped: list = []
+    best_bid_px: list = []
+    best_ask_px: list = []
+
+    for exch in _try_exchanges:
+        try:
+            ob = _lm_fetch_exchange_orderbook(exch, symbol)
+            if ob.get("available") and ob.get("bids") and ob.get("asks"):
+                sources_used.append(exch)
+                for p, q in (ob.get("bids") or {}).items():
+                    pf, qf = float(p), float(q)
+                    raw_bids[pf] = raw_bids.get(pf, 0.0) + qf
+                for p, q in (ob.get("asks") or {}).items():
+                    pf, qf = float(p), float(q)
+                    raw_asks[pf] = raw_asks.get(pf, 0.0) + qf
+                if ob.get("best_bid"):
+                    best_bid_px.append(float(ob["best_bid"]))
+                if ob.get("best_ask"):
+                    best_ask_px.append(float(ob["best_ask"]))
+            else:
+                sources_skipped.append(exch)
+        except Exception:
+            sources_skipped.append(exch)
+
+    if not raw_bids or not raw_asks:
+        return {"ok": False, "status": "unavailable",
+                "bids": [], "asks": [], "summary": {},
+                "sources_used": sources_used, "sources_skipped": sources_skipped}
+
+    best_bid = max(best_bid_px) if best_bid_px else (max(raw_bids) if raw_bids else 0)
+    best_ask = min(best_ask_px) if best_ask_px else (min(raw_asks) if raw_asks else 0)
+    current_price = (best_bid + best_ask) / 2.0
+    if current_price <= 0:
+        return {"ok": False, "status": "no_price", "bids": [], "asks": [], "summary": {}}
+
+    MAX_WIN_PCT = 10.0   # ±10% max window to keep
+
+    def _filter_levels(levels_dict: dict, is_bid: bool) -> list:
+        result = []
+        for p, q in levels_dict.items():
+            dist = abs(p - current_price) / current_price * 100.0
+            if dist > MAX_WIN_PCT:
+                continue
+            if is_bid and p >= current_price:
+                continue
+            if not is_bid and p <= current_price:
+                continue
+            usd = p * q
+            if usd < 1000:          # skip dust
+                continue
+            result.append({"price": float(p), "qty": float(q),
+                            "distance_pct": round(dist, 3), "size_usd": round(usd)})
+        key = (lambda x: -x["price"]) if is_bid else (lambda x: x["price"])
+        result.sort(key=key)
+        return result
+
+    def _cluster(levels: list, cluster_pct: float = 0.05) -> list:
+        """Merge levels within cluster_pct% of current_price into one bucket."""
+        if not levels:
+            return []
+        clustered = []
+        cur = dict(levels[0])
+        for lv in levels[1:]:
+            diff = abs(lv["price"] - cur["price"]) / current_price * 100.0
+            if diff < cluster_pct:
+                cur["qty"]      += lv["qty"]
+                cur["size_usd"] += lv["size_usd"]
+            else:
+                clustered.append(cur)
+                cur = dict(lv)
+        clustered.append(cur)
+        return clustered
+
+    def _annotate(levels: list, side_label: str) -> list:
+        if not levels:
+            return []
+        usds   = [l["size_usd"] for l in levels]
+        max_u  = max(usds) if usds else 1
+        mdn_u  = sorted(usds)[len(usds) // 2] if usds else 1
+        result = []
+        for lv in levels:
+            u = lv["size_usd"]
+            strength = round(u / max_u * 100) if max_u > 0 else 0
+            if   u >= mdn_u * 3:   stab = "5/5 stable"
+            elif u >= mdn_u * 2:   stab = "4/5 stable"
+            elif u >= mdn_u:       stab = "3/5 stable"
+            elif u >= mdn_u * 0.5: stab = "2/5 stable"
+            else:                  stab = "1/5 stable"
+            d = lv["distance_pct"]
+            if   d < 0.3: meaning = f"Very close; {side_label} may be tested immediately."
+            elif d < 1.0: meaning = f"Near price; short-term {side_label} level."
+            elif d < 3.0: meaning = f"Mid-range {side_label}; relevant for swing moves."
+            else:         meaning = f"Far {side_label}; significant only on large moves."
+            result.append({
+                "price":        lv["price"],
+                "distance_pct": lv["distance_pct"],
+                "size_usd":     u,
+                "size_label":   _fmt_usd_lm(float(u)),
+                "strength_pct": strength,
+                "stability":    stab,
+                "meaning":      meaning,
+            })
+        return result
+
+    bid_final = _annotate(_cluster(_filter_levels(raw_bids, True)),  "support")
+    ask_final = _annotate(_cluster(_filter_levels(raw_asks, False)), "resistance")
+
+    def _liq_in_win(levels: list, win_pct: float) -> float:
+        return sum(l["size_usd"] for l in levels if l["distance_pct"] <= win_pct)
+
+    bid_liq = _liq_in_win(bid_final, 10.0)
+    ask_liq = _liq_in_win(ask_final, 10.0)
+    dominant = "Mixed"
+    if   bid_liq > ask_liq * 1.2: dominant = "Bid Support"
+    elif ask_liq > bid_liq * 1.2: dominant = "Ask Pressure"
+
+    nb = bid_final[0] if bid_final else None
+    na = ask_final[0] if ask_final else None
+    thin_zone = (
+        f"Bid {nb['distance_pct']:.2f}% / Ask {na['distance_pct']:.2f}%"
+        if nb and na else "No walls found"
+    )
+
+    return {
+        "ok":              True,
+        "symbol":          symbol,
+        "exchange":        exchange,
+        "current_price":   round(current_price, 6),
+        "sources_used":    sources_used,
+        "sources_skipped": sources_skipped,
+        "bids":            bid_final,
+        "asks":            ask_final,
+        "summary": {
+            "bid_liquidity_label": _fmt_usd_lm(bid_liq),
+            "ask_liquidity_label": _fmt_usd_lm(ask_liq),
+            "dominant_side":       dominant,
+            "thin_zone_warning":   thin_zone,
+        },
+        "fetched_at": now,
+    }
+
+
+def _lm_build_sweep_rekt_map(symbol: str, exchange: str) -> dict:
+    """Build sweep rekt map for the DH expanded panel.
+
+    Full swing-linked sweep detection is not yet implemented.
+    Returns ok=False with honest status; no fake events.
+    """
+    key = f"binance:{symbol}"
+    with _lm_liq_lock:
+        entry = dict(_lm_liq_cache.get(key) or {})
+    has_stream = bool(entry)
+    return {
+        "ok":     False,
+        "status": "needs_backend_support",
+        "events": [],
+        "source": "Binance forceOrder + swing detector (not yet wired)",
+        "message": (
+            "Sweep-linked liquidation history requires swing detection "
+            "correlated with forceOrder events. Not yet implemented. "
+            + ("Binance liq stream is active for this symbol."
+               if has_stream else
+               "Binance liq stream has no data for this symbol yet.")
+        ),
+    }
+
+
 # ── liquidation cache ─────────────────────────────────────────────────────────
 
 def _lm_liq_update(exchange: str, symbol: str, side_liq: str, usd_amount: float, price: float):
@@ -25832,7 +26016,21 @@ def api_lm_data_health():
     ctx["price_source_exchange"] = parent_exchange
     ctx["market_context_source"] = exchange
 
-    return jsonify({"ok": True, "build_commit": _BUILD_COMMIT, **ctx})
+    # Build structured panels (non-blocking; errors return ok=False)
+    try:
+        _ob_wall = _lm_build_ob_wall_map(symbol, exchange)
+    except Exception as _e:
+        _ob_wall = {"ok": False, "status": "error", "bids": [], "asks": [], "summary": {},
+                    "message": str(_e)[:120]}
+    try:
+        _sweep_rekt = _lm_build_sweep_rekt_map(symbol, exchange)
+    except Exception as _e:
+        _sweep_rekt = {"ok": False, "status": "error", "events": [], "message": str(_e)[:120]}
+
+    return jsonify({"ok": True, "build_commit": _BUILD_COMMIT,
+                    "order_book_wall_map": _ob_wall,
+                    "sweep_rekt_map": _sweep_rekt,
+                    **ctx})
 
 
 @app.route("/api/live-monitor/price", methods=["GET"])
