@@ -10838,23 +10838,23 @@ def _lm_build_ob_wall_map(symbol: str, exchange: str) -> dict:
 def _lm_build_sweep_rekt_map(symbol: str, exchange: str) -> dict:  # noqa: C901
     """Build sweep rekt map for the DH expanded panel.
 
-    Uses:
-    - _lm_get_candles_for_features for recent 5m candles via TTL cache
-    - _lm_find_swing_points + _lm_detect_liquidity_sweeps_for_tf for sweep detection
-    - _lm_liq_cache (Binance forceOrder deque) for liquidation event matching
+    Reads liquidation events from all available sources and matches them to
+    detected swing sweeps on the 5m timeframe.
 
-    Side mapping (from _lm_liq_update):
-      side="long"  → long position liquidated (forced SELL order)
-      side="short" → short position liquidated (forced BUY order)
+    For aggregated mode: combines Binance (forceOrder) + Bybit (liquidation.*)
+    + OKX (liquidation-orders). MEXC has no public liquidation stream.
 
-    No fake data. If data is unavailable, returns honest status.
+    Side mapping:
+      Binance forceOrder SELL → long liq → side="long"
+      Binance forceOrder BUY  → short liq → side="short"
+      Bybit liquidation Sell  → long liq → side="long"
+      OKX liq liqSide sell    → long liq → side="long"
     """
-    _TF           = "5m"
-    _LOOKBACK     = 300          # 300 × 5m = 25 h of candle history
-    _RECENT_SEC   = 4 * 3600    # only show sweeps from last 4 h
-    _LIQ_WIN_SEC  = 30          # ±30 s around candle open/close for liq matching
-    _MIN_LIQ_USD  = 0           # no floor — honest even if zero
-    now_s         = time.time()
+    _TF          = "5m"
+    _LOOKBACK    = 300       # 300 × 5m = 25 h of candle history
+    _RECENT_SEC  = 4 * 3600  # only show sweeps from last 4 h
+    _LIQ_WIN_SEC = 60        # buffer: candle_open-60s → candle_close+60s
+    now_s        = time.time()
 
     # ── 1. Candles ──────────────────────────────────────────────────────────────
     try:
@@ -10876,34 +10876,97 @@ def _lm_build_sweep_rekt_map(symbol: str, exchange: str) -> dict:  # noqa: C901
             ),
         }
 
-    # ── 2. Liquidation events from forceOrder stream ─────────────────────────
-    _liq_key = f"binance:{symbol}"
+    # ── 2. Collect liquidation events from all available sources ─────────────
+    # Normalized events: (ts_seconds, side, usd)
+    liq_events:          list = []
+    liq_sources_used:    list = []
+    liq_sources_skipped: list = []
+    liq_stream_statuses: dict = {}
+
+    # Binance: primary cache, deque(maxlen=500), no time prune — best historical coverage
+    _bin_key = f"binance:{symbol}"
     with _lm_liq_lock:
-        _liq_entry = dict(_lm_liq_cache.get(_liq_key) or {})
-    # events deque → list of (ts_seconds, side, usd, price)
-    liq_events: list = list(_liq_entry.get("events") or [])
-    has_liq_stream   = bool(_liq_entry)
+        _bin_entry = dict(_lm_liq_cache.get(_bin_key) or {})
+    _bin_raw   = list(_bin_entry.get("events") or [])   # 4-tuples (ts, side, usd, price)
+    has_liq_stream = bool(_bin_entry)
+    if _bin_raw:
+        liq_sources_used.append("binance")
+        liq_events.extend((e[0], e[1], e[2]) for e in _bin_raw)
+        liq_stream_statuses["binance"] = {"status": "ok", "event_count": len(_bin_raw)}
+    else:
+        liq_stream_statuses["binance"] = {
+            "status": "no_events",
+            "reason": "no_forceOrder_events_received" if has_liq_stream else "cache_empty",
+        }
+
+    # Bybit + OKX: included when aggregated or specifically requested
+    for _mx_exch in ("bybit", "okx"):
+        if exchange not in ("aggregated", _mx_exch):
+            liq_sources_skipped.append(_mx_exch)
+            liq_stream_statuses[_mx_exch] = {"status": "not_requested"}
+            continue
+        _mx_key = f"{_mx_exch}:{symbol}"
+        with _lm_mx_liq_lock:
+            _mx_entry = dict(_lm_mx_liq.get(_mx_key) or {})
+        _mx_raw = list(_mx_entry.get("events") or [])   # 3-tuples (ts, side, usd)
+        if _mx_raw:
+            liq_sources_used.append(_mx_exch)
+            liq_events.extend(_mx_raw)
+            liq_stream_statuses[_mx_exch] = {"status": "ok", "event_count": len(_mx_raw)}
+        else:
+            liq_sources_skipped.append(_mx_exch)
+            liq_stream_statuses[_mx_exch] = {
+                "status": "no_events",
+                "reason": "no_liq_events_received",
+            }
+
+    # MEXC has no public liquidation stream
+    liq_sources_skipped.append("mexc")
+    liq_stream_statuses["mexc"] = {"status": "not_implemented",
+                                    "reason": "adapter_not_implemented"}
+
+    liq_total_events = len(liq_events)
 
     # ── 3. Swing + sweep detection ───────────────────────────────────────────
-    piv    = _lm_structure_pivot_settings(_TF)
-    swings = _lm_find_swing_points(candles, left=piv["left"], right=piv["right"])
+    piv        = _lm_structure_pivot_settings(_TF)
+    swings     = _lm_find_swing_points(candles, left=piv["left"], right=piv["right"])
     raw_sweeps = _lm_detect_liquidity_sweeps_for_tf(candles, _TF, swings=swings)
 
-    # Filter to last _RECENT_SEC
-    cutoff_ms = (now_s - _RECENT_SEC) * 1000.0
+    cutoff_ms     = (now_s - _RECENT_SEC) * 1000.0
     recent_sweeps = [s for s in raw_sweeps if s.get("event_time", 0) >= cutoff_ms]
 
+    _debug_base: dict = {
+        "liq_sources_used":        liq_sources_used,
+        "liq_sources_skipped":     liq_sources_skipped,
+        "liq_events_in_cache":     liq_total_events,
+        "latest_liq_event_time":   (max((e[0] for e in liq_events), default=None)),
+        "sweep_match_window_sec":  _LIQ_WIN_SEC,
+        "matched_liq_events_count": 0,
+        "matched_long_liq_usd":    0,
+        "matched_short_liq_usd":   0,
+        "reason_if_zero":          None,
+    }
+
     if not recent_sweeps:
+        _debug_base["reason_if_zero"] = "no_recent_sweeps"
+        _src_lbl = (
+            "Binance-only (partial)" if liq_sources_used == ["binance"]
+            else f"{', '.join(liq_sources_used)} aggregated" if liq_sources_used
+            else "No liq source"
+        )
         return {
             "ok":              True,
             "status":          "no_recent_sweeps",
             "symbol":          symbol,
             "exchange":        exchange,
-            "source":          "Binance forceOrder + swing detector",
+            "source":          _src_lbl,
             "has_liq_stream":  has_liq_stream,
             "latest":          None,
             "events":          [],
             "message":         "No recent swing sweep found in last 4 hours.",
+            "liq_sources_used":    liq_sources_used,
+            "liq_sources_skipped": liq_sources_skipped,
+            "debug":           _debug_base,
         }
 
     # ── 4. Helpers ───────────────────────────────────────────────────────────
@@ -10916,19 +10979,31 @@ def _lm_build_sweep_rekt_map(symbol: str, exchange: str) -> dict:  # noqa: C901
         return f"{diff / 3600:.1f}h ago"
 
     def _match_liq(candle_open_ms: float, is_low_sweep: bool) -> tuple:
-        """Sum long and short liq USD within candle window ± buffer.
-        Returns (long_liq, short_liq, primary_liq)."""
+        """Sum liq USD from (candle_open - buf) to (candle_close + buf).
+        Returns (long_liq, short_liq, primary_liq, match_debug_dict)."""
         c_open_s  = candle_open_ms / 1000.0
         win_start = c_open_s - _LIQ_WIN_SEC
-        win_end   = c_open_s + 300 + _LIQ_WIN_SEC  # 5m candle + buffer
-        long_liq  = sum(e[2] for e in liq_events
-                        if win_start <= e[0] <= win_end and e[1] == "long")
-        short_liq = sum(e[2] for e in liq_events
-                        if win_start <= e[0] <= win_end and e[1] == "short")
+        win_end   = c_open_s + 300.0 + _LIQ_WIN_SEC
+        matched   = [e for e in liq_events if win_start <= e[0] <= win_end]
+        long_liq  = sum(e[2] for e in matched if e[1] == "long")
+        short_liq = sum(e[2] for e in matched if e[1] == "short")
         primary   = long_liq if is_low_sweep else short_liq
-        return long_liq, short_liq, primary
+        return long_liq, short_liq, primary, {
+            "match_start":            int(win_start * 1000),
+            "match_end":              int(win_end   * 1000),
+            "events_seen_for_symbol": liq_total_events,
+            "matched_events_count":   len(matched),
+            "matched_long_liq_usd":   round(long_liq),
+            "matched_short_liq_usd":  round(short_liq),
+        }
 
     def _meaning_text(sweep_type: str, reaction: str, liq_usd: float) -> str:
+        if liq_usd == 0:
+            return (
+                "Sweep occurred, but no liquidation event was captured near the sweep window. "
+                "This may be a wick sweep with no forced close, or the liq stream has no "
+                "events yet for this symbol."
+            )
         if liq_usd < 10_000:
             return (
                 "Sweep occurred but liquidation amount is low. "
@@ -10944,7 +11019,6 @@ def _lm_build_sweep_rekt_map(symbol: str, exchange: str) -> dict:  # noqa: C901
                 "Longs liquidated below swing low and price continued lower. "
                 "OB defense is weak."
             )
-        # Swing High Sweep
         if reaction == "Rejected":
             return (
                 "Shorts liquidated above swing high, then price rejected. "
@@ -10956,40 +11030,46 @@ def _lm_build_sweep_rekt_map(symbol: str, exchange: str) -> dict:  # noqa: C901
         )
 
     # ── 5. Build event list ──────────────────────────────────────────────────
-    # First pass: collect primary liq amounts per event for vs_avg calculation
-    interim: list = []  # (sweep_dict, is_low_sweep, long_liq, short_liq, primary)
+    interim: list = []
     for sweep in recent_sweeps:
-        etype        = sweep.get("event_type", "")
-        is_low       = (etype == "sell_side_liquidity_sweep")
-        copen_ms     = float(sweep.get("candle_open_time", 0))
-        lg, sh, prim = _match_liq(copen_ms, is_low)
-        interim.append((sweep, is_low, lg, sh, prim))
+        etype    = sweep.get("event_type", "")
+        is_low   = (etype == "sell_side_liquidity_sweep")
+        copen_ms = float(sweep.get("candle_open_time", 0))
+        lg, sh, prim, mdbg = _match_liq(copen_ms, is_low)
+        interim.append((sweep, is_low, lg, sh, prim, mdbg))
 
-    # Build vs_avg: compare each event's primary_liq against avg of earlier
-    # same-type events in this result set (oldest first by event_time)
     interim_sorted = sorted(interim, key=lambda x: x[0].get("event_time", 0))
-    prev_by_type: dict = {}   # etype → list of previous primary amounts
-
+    prev_by_type: dict = {}
     events: list = []
-    for sweep, is_low, lg, sh, primary in interim_sorted:
-        etype        = sweep.get("event_type", "")
-        event_ms     = float(sweep.get("event_time", 0))
-        level        = float(sweep.get("level", 0))
-        c_close      = float(sweep.get("confirmation_close", 0))
+    total_matched_long  = 0.0
+    total_matched_short = 0.0
+    total_matched_count = 0
 
-        sweep_type   = "Swing Low Sweep" if is_low else "Swing High Sweep"
-        rekt_side    = "Longs Rekt"       if is_low else "Shorts Rekt"
-        # Detector guarantees close returns inside level so reaction is deterministic
-        reaction     = "Reclaimed"        if is_low else "Rejected"
+    for sweep, is_low, lg, sh, primary, mdbg in interim_sorted:
+        etype    = sweep.get("event_type", "")
+        event_ms = float(sweep.get("event_time", 0))
+        level    = float(sweep.get("level", 0))
 
-        # vs_avg
+        sweep_type = "Swing Low Sweep" if is_low else "Swing High Sweep"
+        # Only label rekt side if liquidation was actually captured
+        rekt_side  = (
+            "Longs Rekt"       if (is_low     and primary > 0)
+            else "Shorts Rekt" if (not is_low and primary > 0)
+            else "No Captured Rekt"
+        )
+        reaction = "Reclaimed" if is_low else "Rejected"
+
         prev_list = prev_by_type.get(etype, [])
         if prev_list and primary > 0:
-            avg_prev  = sum(prev_list) / len(prev_list)
-            vs_avg    = round(primary / avg_prev, 2) if avg_prev > 0 else None
+            avg_prev = sum(prev_list) / len(prev_list)
+            vs_avg   = round(primary / avg_prev, 2) if avg_prev > 0 else None
         else:
-            vs_avg    = None
+            vs_avg = None
         prev_by_type.setdefault(etype, []).append(primary)
+
+        total_matched_long  += lg
+        total_matched_short += sh
+        total_matched_count += mdbg["matched_events_count"]
 
         events.append({
             "time":        _time_ago(event_ms),
@@ -10998,27 +11078,55 @@ def _lm_build_sweep_rekt_map(symbol: str, exchange: str) -> dict:  # noqa: C901
             "sweep_level": round(level, 4),
             "rekt_side":   rekt_side,
             "liq_usd":     round(primary),
-            "liq_label":   _fmt_usd_lm(float(primary)),
+            "liq_label":   _fmt_usd_lm(float(primary)) if primary > 0 else "$0",
             "vs_avg":      vs_avg,
             "reaction":    reaction,
             "meaning":     _meaning_text(sweep_type, reaction, primary),
+            "match_debug": mdbg,
         })
 
-    # Most-recent first for the frontend table
     events.sort(key=lambda e: e["timestamp"], reverse=True)
 
+    # ── 6. Status ────────────────────────────────────────────────────────────
     all_zero = all(e["liq_usd"] == 0 for e in events)
-    status   = "no_meaningful_rekt" if all_zero else "ready"
+    if not liq_sources_used:
+        status        = "liq_source_unavailable"
+        reason_if_zero = "no_liq_sources_available"
+    elif all_zero and liq_total_events == 0:
+        status        = "sweep_only_no_liq_source"
+        reason_if_zero = "no_liquidation_events_in_cache"
+    elif all_zero:
+        status        = "no_matched_rekt"
+        reason_if_zero = "no_liquidation_events_matched_sweep_windows"
+    else:
+        status        = "rekt_detected"
+        reason_if_zero = None
+
+    _debug_base.update({
+        "matched_liq_events_count": total_matched_count,
+        "matched_long_liq_usd":     round(total_matched_long),
+        "matched_short_liq_usd":    round(total_matched_short),
+        "reason_if_zero":           reason_if_zero,
+    })
+
+    _src_lbl = (
+        "Binance-only (partial)" if liq_sources_used == ["binance"]
+        else f"{', '.join(liq_sources_used)} aggregated" if len(liq_sources_used) > 1
+        else "No live liq source"
+    )
 
     return {
         "ok":             True,
         "symbol":         symbol,
         "exchange":       exchange,
-        "source":         "Binance forceOrder + swing detector",
+        "source":         _src_lbl,
         "status":         status,
         "has_liq_stream": has_liq_stream,
         "latest":         events[0] if events else None,
         "events":         events,
+        "liq_sources_used":    liq_sources_used,
+        "liq_sources_skipped": liq_sources_skipped,
+        "debug":          _debug_base,
     }
 
 
@@ -11538,21 +11646,18 @@ def _lm_mx_delta_update(exchange: str, symbol: str, side: str, qty: float, price
 
 def _lm_mx_liq_update(exchange: str, symbol: str, side: str, qty: float, price: float):
     """Record a liquidation event. side: 'long' or 'short'"""
-    key    = f"{exchange}:{symbol}"
-    now    = time.time()
-    usd    = qty * price
-    cutoff = now - 310
+    key = f"{exchange}:{symbol}"
+    now = time.time()
+    usd = qty * price
     with _lm_mx_liq_lock:
         if key not in _lm_mx_liq:
-            _lm_mx_liq[key] = {"events": deque(), "last_update_ts": now,
+            _lm_mx_liq[key] = {"events": deque(maxlen=500), "last_update_ts": now,
                                 "last_liq_price": None, "last_liq_side": ""}
         e = _lm_mx_liq[key]
         e["events"].append((now, side, usd))
         e["last_liq_price"] = price
         e["last_liq_side"]  = side
         e["last_update_ts"] = now
-        while e["events"] and e["events"][0][0] < cutoff:
-            e["events"].popleft()
 
 
 # ── Cache readers ─────────────────────────────────────────────────────────────
@@ -26768,6 +26873,129 @@ def _lm_inject_parent_price_rows(symbol: str, parent_exchange: str,
         else:
             new_rows.append(_r)
     return new_rows
+
+
+@app.route("/api/live-monitor/liquidations/debug", methods=["GET"])
+@login_required
+def api_lm_liq_debug():
+    """Debug endpoint: inspect liquidation cache for a symbol across all sources.
+    Read-only. Does not affect trading, safety gates, or any execution path.
+
+    Query params:
+      symbol       — e.g. SUIUSDT (required)
+      exchange     — aggregated|binance|bybit|okx (default: aggregated)
+      lookback_min — minutes to filter events for (default: 240)
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    symbol      = (request.args.get("symbol")   or "").upper().strip()
+    exchange    = (request.args.get("exchange") or "aggregated").lower().strip()
+    try:
+        lookback_min = int(request.args.get("lookback_min") or 240)
+    except ValueError:
+        lookback_min = 240
+
+    if not symbol:
+        return jsonify({"error": "symbol_required"}), 400
+
+    now_s       = time.time()
+    cutoff_s    = now_s - lookback_min * 60.0
+
+    def _exch_info(exch_name: str, raw_events, not_impl: bool = False) -> dict:
+        if not_impl:
+            return {
+                "enabled": False, "connected": False,
+                "events_seen": 0, "events_in_lookback": 0,
+                "latest_event_time": None, "latest_event": None,
+                "reason_if_empty": "adapter_not_implemented",
+            }
+        if not raw_events:
+            with _lm_liq_lock if exch_name == "binance" else _lm_mx_liq_lock:
+                pass  # just checking
+            return {
+                "enabled": True, "connected": False,
+                "events_seen": 0, "events_in_lookback": 0,
+                "latest_event_time": None, "latest_event": None,
+                "reason_if_empty": "no_forceOrder_events_received" if exch_name == "binance"
+                                   else "no_liq_events_received",
+            }
+        in_lb = [e for e in raw_events if e[0] >= cutoff_s]
+        latest = max(raw_events, key=lambda e: e[0], default=None)
+        return {
+            "enabled": True,
+            "connected": True,
+            "events_seen": len(raw_events),
+            "events_in_lookback": len(in_lb),
+            "latest_event_time": int(latest[0] * 1000) if latest else None,
+            "latest_event": {
+                "ts_ms": int(latest[0] * 1000),
+                "side":  latest[1],
+                "usd":   round(latest[2]),
+            } if latest else None,
+            "reason_if_empty": None if in_lb else "no_events_in_lookback_window",
+        }
+
+    # --- Binance ---
+    _bin_key = f"binance:{symbol}"
+    with _lm_liq_lock:
+        _bin_entry = dict(_lm_liq_cache.get(_bin_key) or {})
+    _bin_raw = list(_bin_entry.get("events") or [])   # 4-tuples (ts, side, usd, price)
+    _bin_norm = [(e[0], e[1], e[2]) for e in _bin_raw]
+
+    # --- Bybit ---
+    _bybit_key = f"bybit:{symbol}"
+    with _lm_mx_liq_lock:
+        _bybit_entry = dict(_lm_mx_liq.get(_bybit_key) or {})
+    _bybit_raw = list(_bybit_entry.get("events") or [])   # 3-tuples
+
+    # --- OKX ---
+    _okx_key = f"okx:{symbol}"
+    with _lm_mx_liq_lock:
+        _okx_entry = dict(_lm_mx_liq.get(_okx_key) or {})
+    _okx_raw = list(_okx_entry.get("events") or [])   # 3-tuples
+
+    sources_info = {
+        "binance": _exch_info("binance", _bin_norm),
+        "bybit":   _exch_info("bybit",   _bybit_raw),
+        "okx":     _exch_info("okx",     _okx_raw),
+        "mexc":    _exch_info("mexc",    [], not_impl=True),
+    }
+
+    # Aggregate all events for lookback totals
+    all_events: list = []
+    if exchange in ("aggregated", "binance"):
+        all_events.extend(_bin_norm)
+    if exchange in ("aggregated", "bybit"):
+        all_events.extend(_bybit_raw)
+    if exchange in ("aggregated", "okx"):
+        all_events.extend(_okx_raw)
+
+    in_lb        = [e for e in all_events if e[0] >= cutoff_s]
+    total_long   = sum(e[2] for e in in_lb if e[1] == "long")
+    total_short  = sum(e[2] for e in in_lb if e[1] == "short")
+    latest_events = sorted(in_lb, key=lambda e: e[0], reverse=True)[:10]
+
+    return jsonify({
+        "ok":                   True,
+        "symbol":               symbol,
+        "exchange":             exchange,
+        "lookback_min":         lookback_min,
+        "sources":              sources_info,
+        "total_events_in_lookback": len(in_lb),
+        "total_long_liq_usd":   round(total_long),
+        "total_short_liq_usd":  round(total_short),
+        "latest_events": [
+            {
+                "ts_ms":  int(e[0] * 1000),
+                "side":   e[1],
+                "usd":    round(e[2]),
+                "age_s":  round(now_s - e[0], 1),
+            }
+            for e in latest_events
+        ],
+    })
 
 
 @app.route("/api/live-monitor/data-health", methods=["GET"])
