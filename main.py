@@ -23364,25 +23364,28 @@ def _lm_build_phase10_9f_bias_shift_values(  # noqa: C901
 
     # 2. Delta / taker pressure (up to 20 pts)
     delta_net = recent_snap.get("delta_net")
-    tp        = recent_snap.get("taker_pressure")
-    if delta_net is None and tp is None:
+    tp_str    = (recent_snap.get("taker_pressure") or "").lower()
+    tp_bull   = tp_str == "bullish"
+    tp_bear   = tp_str == "bearish"
+    tp_known  = tp_str in ("bullish", "bearish", "neutral")
+    if delta_net is None and not tp_known:
         missing_reasons.append("Delta/taker pressure data not yet available.")
     elif is_bullish:
-        if (delta_net is not None and delta_net > 0) or (tp is not None and tp > 0.5):
+        if (delta_net is not None and delta_net > 0) or tp_bull:
             score += 20
             positive_reasons.append(
-                f"Buy pressure supporting bullish bias (Δ={delta_net}, TP={tp}).")
-        elif (delta_net is not None and delta_net < 0) and (tp is not None and tp < 0.4):
+                f"Buy pressure supporting bullish bias (Δ={delta_net}, TP={tp_str}).")
+        elif (delta_net is not None and delta_net < 0) and tp_bear:
             negative_reasons.append("Sell delta and taker pressure against bullish bias.")
         else:
             score += 8
             positive_reasons.append("Delta mixed; bias not strongly contradicted.")
     elif is_bearish:
-        if (delta_net is not None and delta_net < 0) or (tp is not None and tp < 0.4):
+        if (delta_net is not None and delta_net < 0) or tp_bear:
             score += 20
             positive_reasons.append(
-                f"Sell pressure supporting bearish bias (Δ={delta_net}, TP={tp}).")
-        elif (delta_net is not None and delta_net > 0) and (tp is not None and tp > 0.6):
+                f"Sell pressure supporting bearish bias (Δ={delta_net}, TP={tp_str}).")
+        elif (delta_net is not None and delta_net > 0) and tp_bull:
             negative_reasons.append("Buy delta and taker pressure against bearish bias.")
         else:
             score += 8
