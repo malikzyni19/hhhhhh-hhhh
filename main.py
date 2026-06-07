@@ -23652,6 +23652,16 @@ def _lm_build_phase10_9f_bias_shift_values(  # noqa: C901
             "data may be significantly outdated."
         )
 
+    # Top-level freshness status (separate from _critical_missing / verdict)
+    if snap_age_sec is None or not recent_snap:
+        _freshness_status = "collecting" if _critical_missing else "ready"
+    elif snap_age_sec < 300:
+        _freshness_status = "ready"
+    elif snap_age_sec < 900:
+        _freshness_status = "stale"
+    else:
+        _freshness_status = "needs_fresh_orderflow"
+
     existing_table_values = {
         "confirmation_checklist": {
             "setup_validity": {
@@ -23667,8 +23677,17 @@ def _lm_build_phase10_9f_bias_shift_values(  # noqa: C901
             "orderflow_agreement": {
                 "label":  "Orderflow Agreement",
                 "value":  _of_label,
-                "status": _of_status,
-                "note":   f"Phase 10.9E: {of_status} on {len(_tf_directions)} TFs.",
+                "status": (
+                    "needs_refresh" if _dq_lbl in ("stale", "very_stale")
+                    else _of_status
+                ),
+                "note": (
+                    f"Phase 10.9E source is {_dq_lbl} "
+                    f"(~{int((snap_age_sec or 0)/60)}h old). "
+                    "Refresh orderflow before trusting verdict."
+                    if _dq_lbl in ("stale", "very_stale")
+                    else f"Phase 10.9E: {of_status} on {len(_tf_directions)} TFs."
+                ),
             },
             "sweep_rekt_confirmation": {
                 "label":  "Sweep + Rekt",
@@ -23722,7 +23741,7 @@ def _lm_build_phase10_9f_bias_shift_values(  # noqa: C901
         "setup_source":        "bias_shift",
         "setup_category":      setup_cat,
         "direction":           raw_dir,
-        "status":              "collecting" if _critical_missing else "ready",
+        "status":              "collecting" if _critical_missing else _freshness_status,
         "bias_shift_verdict":  verdict,
         "bias_shift_label":    verdict_label,
         "score":               score,
