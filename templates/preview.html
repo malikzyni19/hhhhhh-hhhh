@@ -5316,7 +5316,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     fetch('/api/live-monitor/items/'+itemId+'/bias-orderflow/refresh',{
       method:'POST',credentials:'same-origin',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({collect_now:collectNow!==false})
+      body:JSON.stringify({collect_now:collectNow!==false,analysis_source:_lmGetDataSrc()||'binance'})
     }).then(function(r){return r.json();}).then(function(data){
       if(!data.ok) return;
       if(_lmSelItem&&_lmSelItem.id===itemId){

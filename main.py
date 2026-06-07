@@ -22893,12 +22893,15 @@ def api_lm_bias_orderflow_refresh(item_id):
 
     body         = request.get_json(silent=True) or {}
     collect_now  = bool(body.get("collect_now", True))
+    # Allow caller to override analysis_source (e.g. UI sending "aggregated")
+    _req_src     = (body.get("analysis_source") or body.get("exchange") or
+                    body.get("data_source") or "").strip().lower() or None
 
     symbol          = row.symbol or ""
     exchange        = (row.exchange or "binance").lower()
     market          = (row.market or "perpetual").lower()
     snap_raw        = _json_loads_safe(row.snapshot_json, {})
-    src_cfg         = _lm_analysis_source_config(row, snap_raw)
+    src_cfg         = _lm_analysis_source_config(row, snap_raw, selected_source=_req_src)
     analysis_source = src_cfg["analysis_source"]
 
     # Ensure sampler is running
@@ -22998,7 +23001,10 @@ def api_lm_bias_orderflow_debug(item_id):
     exchange        = (row.exchange or "binance").lower()
     market          = (row.market or "perpetual").lower()
     snap_raw        = _json_loads_safe(row.snapshot_json, {})
-    src_cfg         = _lm_analysis_source_config(row, snap_raw)
+    # Allow query param override so ?analysis_source=aggregated works
+    _req_src        = (request.args.get("analysis_source") or request.args.get("exchange") or
+                       request.args.get("data_source") or "").strip().lower() or None
+    src_cfg         = _lm_analysis_source_config(row, snap_raw, selected_source=_req_src)
     analysis_source = src_cfg["analysis_source"]
 
     tf_filter       = request.args.get("tf")
