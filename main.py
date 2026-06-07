@@ -23215,6 +23215,566 @@ def api_lm_bias_orderflow_debug(item_id):
     })
 
 
+# ── Phase 10.9F — Bias Shift Evidence / Value Fusion ─────────────────────────
+
+def _lm_build_phase10_9f_bias_shift_values(  # noqa: C901
+        item, analysis_source: str = "aggregated") -> dict:
+    """Build context-only Bias Shift evidence/value object for Phase 10.9F.
+
+    Reads:
+    - snapshot_json["orderflow_alignment"] from Phase 10.9E
+    - Most-recent LiveMonitorOrderflowSnapshot row for this source
+    - _lm_build_ob_wall_map and _lm_build_sweep_rekt_map (both TTL-cached)
+    - item.direction, zone_high, zone_low
+
+    No trade signals. No entry candidate. No AI calls. No UI changes.
+    """
+    now_s = time.time()
+
+    symbol   = (getattr(item, "symbol",   None) or "").upper()
+    item_id  = getattr(item, "id",        None)
+    exchange = (getattr(item, "exchange", None) or "binance").lower()
+    uid      = getattr(item, "user_id",   None)
+    market   = (getattr(item, "market",   None) or "perpetual").lower()
+
+    snap_raw  = _json_loads_safe(getattr(item, "snapshot_json", None), {})
+    setup_cat = _lm_setup_category(item)
+
+    # ── Direction (bias) ──────────────────────────────────────────────────────
+    raw_dir = (
+        getattr(item, "direction", None)
+        or snap_raw.get("bias_direction")
+        or snap_raw.get("direction")
+        or ""
+    ).lower().strip()
+    is_bullish = raw_dir in ("bull", "bullish", "long", "buy", "up")
+    is_bearish = raw_dir in ("bear", "bearish", "short", "sell", "down")
+    if not is_bullish and not is_bearish:
+        raw_dir = "unknown"
+
+    # ── Phase 10.9E orderflow alignment ───────────────────────────────────────
+    of_align  = snap_raw.get("orderflow_alignment", {}) or {}
+    of_status = (of_align.get("status") or "collecting").lower()
+    of_per_tf = of_align.get("per_tf", {}) or {}
+    of_src    = (of_align.get("analysis_source") or "").lower()
+
+    source_warnings: list = []
+    if of_src and of_src != analysis_source:
+        source_warnings.append(
+            f"Orderflow alignment stored as '{of_src}'; requested '{analysis_source}'. "
+            "Rebuild with bias-orderflow/refresh?analysis_source=" + analysis_source
+        )
+
+    _tf_directions: list = []
+    for _tf_key, tfv in of_per_tf.items():
+        fd = (tfv.get("latest_flow_direction") or "").lower()
+        al = (tfv.get("latest_alignment")      or "").lower()
+        if fd or al:
+            _tf_directions.append(fd or al)
+
+    # ── Recent orderflow snapshot ──────────────────────────────────────────────
+    recent_snap: dict = {}
+    try:
+        from models import LiveMonitorOrderflowSnapshot as _LMOS9f
+        _rs = (_LMOS9f.query
+               .filter_by(user_id=uid, exchange=exchange, market=market,
+                          symbol=symbol, analysis_source=analysis_source)
+               .order_by(_LMOS9f.sample_time.desc())
+               .first())
+        if _rs:
+            recent_snap = {
+                "delta_net":           _rs.delta_net,
+                "delta_pct":           _rs.delta_pct,
+                "taker_pressure":      _rs.taker_pressure,
+                "orderbook_status":    _rs.orderbook_status,
+                "orderbook_imbalance": _rs.orderbook_imbalance,
+                "bid_wall_price":      _rs.bid_wall_price,
+                "bid_wall_size":       _rs.bid_wall_size,
+                "ask_wall_price":      _rs.ask_wall_price,
+                "ask_wall_size":       _rs.ask_wall_size,
+                "oi_change_pct":       _rs.oi_change_pct,
+                "long_short_ratio":    _rs.long_short_ratio,
+                "funding_rate":        _rs.funding_rate,
+                "long_liq_usd":        _rs.long_liq_usd,
+                "short_liq_usd":       _rs.short_liq_usd,
+                "live_price":          _rs.live_price,
+                "sources_used":        _json_loads_safe(_rs.sources_used_json, []),
+                "sources_skipped":     _json_loads_safe(_rs.sources_skipped_json, []),
+                "source_status":       _rs.source_status,
+                "sample_time_ms":      _rs.sample_time,
+            }
+    except Exception as _re:
+        source_warnings.append(f"Could not read OF snapshot: {str(_re)[:80]}")
+
+    snap_age_sec = None
+    if recent_snap.get("sample_time_ms"):
+        snap_age_sec = round(now_s - recent_snap["sample_time_ms"] / 1000.0, 1)
+
+    # ── OB wall map (TTL-cached) ───────────────────────────────────────────────
+    ob_wall: dict = {}
+    try:
+        ob_wall = _lm_build_ob_wall_map(symbol, analysis_source)
+    except Exception as _oe:
+        source_warnings.append(f"OB wall map error: {str(_oe)[:60]}")
+
+    # ── Sweep rekt map (TTL-cached) ───────────────────────────────────────────
+    sweep_rekt: dict = {}
+    try:
+        sweep_rekt = _lm_build_sweep_rekt_map(symbol, analysis_source)
+    except Exception as _se:
+        source_warnings.append(f"Sweep rekt map error: {str(_se)[:60]}")
+
+    zone_high     = getattr(item, "zone_high", None)
+    zone_low      = getattr(item, "zone_low",  None)
+    current_price = recent_snap.get("live_price")
+
+    # ── Evidence scoring ──────────────────────────────────────────────────────
+    score            = 0
+    positive_reasons: list = []
+    negative_reasons: list = []
+    missing_reasons:  list = []
+
+    # 1. Orderflow alignment (up to 30 pts)
+    if of_status in ("collecting", "initializing"):
+        missing_reasons.append("Phase 10.9E orderflow alignment still collecting samples.")
+    elif of_status == "ready" and _tf_directions:
+        bull_c = sum(1 for d in _tf_directions if any(w in d for w in ("bull", "buy", "long")))
+        bear_c = sum(1 for d in _tf_directions if any(w in d for w in ("bear", "sell", "short")))
+        total  = len(_tf_directions)
+        if is_bullish:
+            if bull_c >= total * 0.7:
+                score += 30
+                positive_reasons.append(f"Orderflow aligned bullish on {bull_c}/{total} TFs.")
+            elif bull_c >= total * 0.4:
+                score += 15
+                positive_reasons.append(f"Orderflow partially bullish ({bull_c}/{total} TFs).")
+            else:
+                negative_reasons.append(f"Orderflow bearish on {bear_c}/{total} TFs — against bullish bias.")
+        elif is_bearish:
+            if bear_c >= total * 0.7:
+                score += 30
+                positive_reasons.append(f"Orderflow aligned bearish on {bear_c}/{total} TFs.")
+            elif bear_c >= total * 0.4:
+                score += 15
+                positive_reasons.append(f"Orderflow partially bearish ({bear_c}/{total} TFs).")
+            else:
+                negative_reasons.append(f"Orderflow bullish on {bull_c}/{total} TFs — against bearish bias.")
+    else:
+        missing_reasons.append("Orderflow alignment status unknown or no TF data yet.")
+
+    # 2. Delta / taker pressure (up to 20 pts)
+    delta_net = recent_snap.get("delta_net")
+    tp        = recent_snap.get("taker_pressure")
+    if delta_net is None and tp is None:
+        missing_reasons.append("Delta/taker pressure data not yet available.")
+    elif is_bullish:
+        if (delta_net is not None and delta_net > 0) or (tp is not None and tp > 0.5):
+            score += 20
+            positive_reasons.append(
+                f"Buy pressure supporting bullish bias (Δ={delta_net}, TP={tp}).")
+        elif (delta_net is not None and delta_net < 0) and (tp is not None and tp < 0.4):
+            negative_reasons.append("Sell delta and taker pressure against bullish bias.")
+        else:
+            score += 8
+            positive_reasons.append("Delta mixed; bias not strongly contradicted.")
+    elif is_bearish:
+        if (delta_net is not None and delta_net < 0) or (tp is not None and tp < 0.4):
+            score += 20
+            positive_reasons.append(
+                f"Sell pressure supporting bearish bias (Δ={delta_net}, TP={tp}).")
+        elif (delta_net is not None and delta_net > 0) and (tp is not None and tp > 0.6):
+            negative_reasons.append("Buy delta and taker pressure against bearish bias.")
+        else:
+            score += 8
+            positive_reasons.append("Delta mixed; bias not strongly contradicted.")
+
+    # 3. Sweep rekt (up to 20 pts)
+    sweep_ok     = sweep_rekt.get("ok", False)
+    sweep_events = sweep_rekt.get("events", []) or []
+    recent_sweep = sweep_events[0] if sweep_events else None
+    if not sweep_ok or not recent_sweep:
+        _srstat = sweep_rekt.get("status", "")
+        if _srstat == "no_recent_sweeps":
+            missing_reasons.append("No recent swing sweep detected in last 4h.")
+        else:
+            missing_reasons.append("Sweep rekt map needs data.")
+    else:
+        _stype  = (recent_sweep.get("sweep_type") or "").lower()
+        _react  = (recent_sweep.get("reaction")   or "").lower()
+        _liqu   = recent_sweep.get("liq_usd", 0) or 0
+        _llbl   = recent_sweep.get("liq_label", "$0")
+        if is_bullish and "low" in _stype and _react == "reclaimed":
+            _pts = 20 if _liqu >= 50_000 else 10
+            score += _pts
+            positive_reasons.append(
+                f"Swing Low Sweep + Reclaim | {_llbl} rekt | "
+                + ("Strong bullish absorption." if _pts == 20 else "Weak rekt — watch for wick noise.")
+            )
+        elif is_bullish and "low" in _stype:
+            negative_reasons.append("Swing Low Sweep without reclaim — longs rekt, price continued lower.")
+        elif is_bearish and "high" in _stype and _react == "rejected":
+            _pts = 20 if _liqu >= 50_000 else 10
+            score += _pts
+            positive_reasons.append(
+                f"Swing High Sweep + Rejection | {_llbl} rekt | "
+                + ("Strong bearish trap." if _pts == 20 else "Weak rekt — watch for wick noise.")
+            )
+        elif is_bearish and "high" in _stype:
+            negative_reasons.append("Swing High Sweep without rejection — shorts rekt, price continued higher.")
+        else:
+            score += 5
+            positive_reasons.append(
+                f"Sweep detected ({recent_sweep.get('sweep_type','—')}) — does not match expected bias direction."
+            )
+
+    # 4. OB wall context (up to 15 pts)
+    ob_ok   = ob_wall.get("ok", False)
+    ob_bids = ob_wall.get("bids", []) or []
+    ob_asks = ob_wall.get("asks", []) or []
+    if not ob_ok:
+        missing_reasons.append("OB wall map data not available.")
+    else:
+        _near_bids = [b for b in ob_bids if b.get("distance_pct", 999) <= 1.5]
+        _near_asks = [a for a in ob_asks if a.get("distance_pct", 999) <= 1.5]
+        if is_bullish:
+            if _near_bids:
+                score += 15
+                positive_reasons.append(
+                    f"Bid wall {_near_bids[0].get('size_label','?')} at "
+                    f"{_near_bids[0].get('distance_pct',0):.2f}% below — supporting bullish bias."
+                )
+            if _near_asks:
+                negative_reasons.append(
+                    f"Ask wall {_near_asks[0].get('size_label','?')} at "
+                    f"{_near_asks[0].get('distance_pct',0):.2f}% above — resistance."
+                )
+            if not _near_bids and not _near_asks:
+                missing_reasons.append("No significant walls within 1.5% of current price.")
+        elif is_bearish:
+            if _near_asks:
+                score += 15
+                positive_reasons.append(
+                    f"Ask wall {_near_asks[0].get('size_label','?')} at "
+                    f"{_near_asks[0].get('distance_pct',0):.2f}% above — resistance supporting bearish bias."
+                )
+            if _near_bids:
+                negative_reasons.append(
+                    f"Bid wall {_near_bids[0].get('size_label','?')} at "
+                    f"{_near_bids[0].get('distance_pct',0):.2f}% below — support against bearish bias."
+                )
+            if not _near_bids and not _near_asks:
+                missing_reasons.append("No significant walls within 1.5% of current price.")
+
+    # 5. Funding + Long/Short + OI change (up to 15 pts)
+    funding    = recent_snap.get("funding_rate")
+    ls_ratio   = recent_snap.get("long_short_ratio")
+    oi_chg_pct = recent_snap.get("oi_change_pct")
+    if funding is None and ls_ratio is None:
+        missing_reasons.append("Funding/Long-Short ratio data not yet available.")
+    else:
+        _pts_fl = 0
+        if is_bullish:
+            if funding is not None and funding < 0:
+                _pts_fl += 5
+                positive_reasons.append(
+                    f"Negative funding ({funding:.4f}%) — shorts paying, favors bullish reset.")
+            elif funding is not None and funding > 0.02:
+                negative_reasons.append(
+                    f"High positive funding ({funding:.4f}%) — crowd long-heavy, flush risk.")
+            if ls_ratio is not None and ls_ratio < 1.0:
+                _pts_fl += 5
+                positive_reasons.append(
+                    f"L/S ratio {ls_ratio:.2f} — shorts dominant, potential squeeze fuel.")
+            if oi_chg_pct is not None and oi_chg_pct > 0:
+                _pts_fl += 5
+                positive_reasons.append(f"OI +{oi_chg_pct:.1f}% — new longs opening.")
+        elif is_bearish:
+            if funding is not None and funding > 0:
+                _pts_fl += 5
+                positive_reasons.append(
+                    f"Positive funding ({funding:.4f}%) — longs paying, favors bearish continuation.")
+            elif funding is not None and funding < -0.02:
+                negative_reasons.append(
+                    f"Heavily negative funding ({funding:.4f}%) — short side crowded, squeeze risk.")
+            if ls_ratio is not None and ls_ratio > 1.5:
+                _pts_fl += 5
+                positive_reasons.append(
+                    f"L/S ratio {ls_ratio:.2f} — longs dominant, potential trap fuel.")
+            if oi_chg_pct is not None and oi_chg_pct > 0:
+                _pts_fl += 5
+                positive_reasons.append(f"OI +{oi_chg_pct:.1f}% — new positions, possible long trap.")
+        score += min(_pts_fl, 15)
+
+    score = max(0, min(100, score))
+
+    # ── Verdict ───────────────────────────────────────────────────────────────
+    _critical_missing = (
+        "Phase 10.9E orderflow alignment still collecting samples." in missing_reasons
+        and delta_net is None
+        and not ob_ok
+    )
+    if _critical_missing or raw_dir == "unknown":
+        verdict       = "needs_more_data"
+        verdict_label = "Needs More Data"
+        manual_read   = (
+            "Bias direction not set or critical data still loading. "
+            "Check item direction and wait for orderflow samples."
+        )
+    elif score >= 75:
+        verdict       = "confirmed"
+        verdict_label = "Confirmed Bias Shift"
+        _dlbl         = "Bullish" if is_bullish else "Bearish"
+        manual_read   = (
+            f"{_dlbl} bias shift is strongly confirmed by multiple evidence sources. "
+            "Orderflow, delta, sweep, and OB context are aligned."
+        )
+    elif score >= 55:
+        verdict       = "developing_strong"
+        verdict_label = "Developing Bias Shift"
+        manual_read   = (
+            "Bias shift is developing with good evidence. Most signals align. "
+            "Watch for further confirmation."
+        )
+    elif score >= 40:
+        verdict       = "developing_mixed"
+        verdict_label = "Developing / Mixed"
+        manual_read   = (
+            "Bias shift is developing but evidence is mixed. Keep watching. "
+            "Wait for stronger orderflow or sweep confirmation."
+        )
+    elif score >= 20:
+        verdict       = "weak"
+        verdict_label = "Weak Bias Shift"
+        manual_read   = (
+            "Bias shift evidence is weak. Multiple negative signals present. "
+            "Do not act until evidence improves."
+        )
+    else:
+        verdict       = "invalid"
+        verdict_label = "Invalid / Avoid"
+        manual_read   = (
+            "Setup is producing predominantly negative signals. "
+            "Bias shift may be failing. Do not force this trade."
+        )
+
+    # ── existing_table_values ─────────────────────────────────────────────────
+    _of_label  = (
+        f"Aligned ({of_src})" if of_status == "ready" and _tf_directions
+        else "Collecting samples" if of_status == "collecting"
+        else "Unavailable"
+    )
+    _sweep_lbl = (
+        f"{recent_sweep.get('sweep_type','—')} — {recent_sweep.get('reaction','—')}"
+        if recent_sweep else "No recent sweep"
+    )
+    _risk_lbl  = "Low" if score >= 75 else "Medium" if score >= 40 else "High"
+    _dq_lbl    = (
+        "fresh"       if recent_snap.get("source_status") == "fresh" and not missing_reasons
+        else "partial" if recent_snap
+        else "unavailable"
+    )
+
+    existing_table_values = {
+        "confirmation_checklist": {
+            "setup_validity": {
+                "label":  "Bias Shift Status",
+                "value":  verdict_label,
+                "status": (
+                    "confirm" if score >= 75 else
+                    "watch"   if score >= 40 else
+                    "caution" if score >= 20 else "invalid"
+                ),
+                "note": manual_read[:140],
+            },
+            "orderflow_agreement": {
+                "label":  "Orderflow Agreement",
+                "value":  _of_label,
+                "status": "confirm" if of_status == "ready" and score >= 55 else "watch",
+                "note":   f"Phase 10.9E: {of_status} on {len(_tf_directions)} TFs.",
+            },
+            "sweep_rekt_confirmation": {
+                "label":  "Sweep + Rekt",
+                "value":  _sweep_lbl,
+                "status": (
+                    "confirm" if recent_sweep and recent_sweep.get("reaction") in ("Reclaimed", "Rejected")
+                    else "wait"
+                ),
+                "note": (
+                    f"{recent_sweep.get('sweep_type','—')} | {recent_sweep.get('reaction','—')} | "
+                    f"{recent_sweep.get('liq_label','—')}"
+                    if recent_sweep else "No sweep event in last 4h."
+                ),
+            },
+            "invalidation_risk": {
+                "label":  "Invalidation Risk",
+                "value":  _risk_lbl,
+                "status": "confirm" if score >= 75 else "caution" if score >= 40 else "invalid",
+                "note":   (
+                    f"{len(negative_reasons)} negative signal(s) active."
+                    if negative_reasons else "No major negative signals."
+                ),
+            },
+        },
+        "event_timeline": {
+            "latest_bias_event": f"Phase 10.9F: {verdict_label}",
+            "latest_flow_event": (
+                f"Delta Δ={delta_net} TP={tp}" if delta_net is not None
+                else "Delta not yet available"
+            ),
+            "latest_sweep":  _sweep_lbl,
+            "latest_warning": source_warnings[0] if source_warnings else None,
+        },
+        "data_health_context": {
+            "manual_read":      manual_read,
+            "data_quality":     _dq_lbl,
+            "analysis_source":  analysis_source,
+            "snapshot_age_sec": snap_age_sec,
+        },
+        "ai_context": {
+            "bias_shift_label":  verdict_label,
+            "score":             score,
+            "manual_read":       manual_read,
+            "direction":         raw_dir,
+            "analysis_source":   analysis_source,
+            "context_only":      True,
+            "no_entry_candidate": True,
+        },
+    }
+
+    return {
+        "phase":               "phase10_9f_bias_shift_values",
+        "context_only":        True,
+        "no_entry_candidate":  True,
+        "symbol":              symbol,
+        "item_id":             item_id,
+        "analysis_source":     analysis_source,
+        "setup_source":        "bias_shift",
+        "setup_category":      setup_cat,
+        "direction":           raw_dir,
+        "status":              "collecting" if _critical_missing else "ready",
+        "bias_shift_verdict":  verdict,
+        "bias_shift_label":    verdict_label,
+        "score":               score,
+        "manual_read":         manual_read,
+        "sources_used":        ob_wall.get("sources_used") or recent_snap.get("sources_used") or [],
+        "sources_skipped":     ob_wall.get("sources_skipped") or recent_snap.get("sources_skipped") or [],
+        "snapshot_age_sec":    snap_age_sec,
+        "existing_table_values": existing_table_values,
+        "evidence": {
+            "orderflow": {
+                "status":         of_status,
+                "analysis_source": of_src,
+                "tf_count":       len(_tf_directions),
+                "tf_directions":  _tf_directions,
+            },
+            "delta": {
+                "delta_net":      delta_net,
+                "delta_pct":      recent_snap.get("delta_pct"),
+                "taker_pressure": tp,
+            },
+            "ob_wall": {
+                "ok":          ob_ok,
+                "bid_count":   len(ob_bids),
+                "ask_count":   len(ob_asks),
+                "nearest_bid": ob_bids[0] if ob_bids else None,
+                "nearest_ask": ob_asks[0] if ob_asks else None,
+            },
+            "sweep_rekt": {
+                "ok":           sweep_ok,
+                "event_count":  len(sweep_events),
+                "latest_event": recent_sweep,
+            },
+            "funding_crowd": {
+                "funding_rate":     funding,
+                "long_short_ratio": ls_ratio,
+                "oi_change_pct":    oi_chg_pct,
+            },
+            "zone": {
+                "zone_high":    zone_high,
+                "zone_low":     zone_low,
+                "current_price": current_price,
+            },
+        },
+        "positive_reasons":  positive_reasons,
+        "negative_reasons":  negative_reasons,
+        "missing_reasons":   missing_reasons,
+        "warnings":          source_warnings,
+        "computed_at":       int(now_s),
+    }
+
+
+def _lm_save_phase10_9f_values(uid: int, item_id: int, values: dict) -> bool:
+    """Persist Phase 10.9F values into snapshot_json without overwriting 10.9E data."""
+    try:
+        from models import db as _db9f, LiveMonitorItem as _LMI9f
+        row = _LMI9f.query.filter_by(id=item_id, user_id=uid).first()
+        if not row:
+            return False
+        snap = _json_loads_safe(row.snapshot_json, {})
+        snap["phase10_9f_bias_shift_values"] = values
+        row.snapshot_json = _json_dumps_safe(snap)
+        _db9f.session.commit()
+        return True
+    except Exception as _e9f:
+        print(f"[10.9F] save error item={item_id}: {_e9f}")
+        return False
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/phase10-9f/debug",
+           methods=["GET"])
+@login_required
+def api_lm_phase10_9f_debug(item_id):
+    """Phase 10.9F: build + optionally store Bias Shift evidence/value object.
+
+    No AI call. No trading. No entry signals. No Entry Candidate.
+    No UI changes — backend evidence object only.
+    Query params:
+      analysis_source   — override source (default: from item config)
+      force_refresh=1   — recompute and persist to snapshot_json
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"ok": False, "error": "auth"}), 401
+
+    from models import LiveMonitorItem as _LMI9f_ep
+    row = _LMI9f_ep.query.get(item_id)
+    if not row or row.user_id != uid:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    if not _lm_is_bias_shift_item(row):
+        return jsonify({"ok": False, "error": "not a bias shift item",
+                        "setup_category": _lm_setup_category(row)}), 400
+
+    snap_raw       = _json_loads_safe(row.snapshot_json, {})
+    _req_src       = (
+        request.args.get("analysis_source") or
+        request.args.get("exchange") or ""
+    ).strip().lower() or None
+    src_cfg        = _lm_analysis_source_config(row, snap_raw, selected_source=_req_src)
+    analysis_source = src_cfg["analysis_source"]
+    force_refresh  = request.args.get("force_refresh", "0").strip() == "1"
+
+    values  = _lm_build_phase10_9f_bias_shift_values(row, analysis_source=analysis_source)
+
+    stored = False
+    if force_refresh:
+        stored = _lm_save_phase10_9f_values(uid, item_id, values)
+
+    of_align_src  = (snap_raw.get("orderflow_alignment", {}).get("analysis_source") or "").lower()
+    source_mismatch = bool(of_align_src and of_align_src != analysis_source)
+
+    return jsonify({
+        "ok":                           True,
+        "item_id":                      item_id,
+        "symbol":                       row.symbol,
+        "analysis_source":              analysis_source,
+        "source_mismatch":              source_mismatch,
+        "context_only":                 True,
+        "no_entry_candidate":           True,
+        "stored":                       stored,
+        "phase10_9f_bias_shift_values": values,
+    })
+
+
 @app.route("/api/live-monitor/items/<int:item_id>", methods=["DELETE"])
 @login_required
 def api_lm_items_delete(item_id):
