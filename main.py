@@ -802,6 +802,11 @@ _lm_liq_cache: dict = {}          # "binance:{SYM}" → {events: deque, last_liq
 _lm_liq_lock  = threading.Lock()
 _lm_liq_thread: Optional[threading.Thread] = None
 _lm_liq_running = False
+_lm_liq_ws_state: dict = {   # updated by _lm_liq_background_loop
+    "thread_started_at": None, "last_connect_attempt": None,
+    "last_connected_at": None, "last_message_at": None,
+    "last_error": None,        "subscribed_symbols": [],
+}
 _lm_liq_last_logged: dict = {}    # symbol → ts, rate-limit for event logging
 
 _lm_delta_cache: dict = {}        # "binance:{SYM}" → {trades: deque, last_update_ts}
@@ -11238,6 +11243,7 @@ def _lm_liq_background_loop():
     """Subscribe to per-symbol forceOrder streams for active LM symbols."""
     global _lm_liq_running
     print("[LM-LIQ] Background thread started")
+    _lm_liq_ws_state["thread_started_at"] = time.time()
     current_symbols: list = []
     sock = None
 
@@ -11257,8 +11263,11 @@ def _lm_liq_background_loop():
             path    = f"/stream?streams={streams}"
             try:
                 print(f"[LM-WS] binance subscribing {current_symbols} streams: liquidations/forceOrder")
+                _lm_liq_ws_state["last_connect_attempt"] = time.time()
                 sock = _raw_ws_connect("fstream.binance.com", path)
                 sock.settimeout(30)
+                _lm_liq_ws_state["last_connected_at"]  = time.time()
+                _lm_liq_ws_state["subscribed_symbols"] = list(current_symbols)
                 print("[LM-LIQ] Connected")
                 # Seed connected-flag per symbol so get() shows "fresh" not "unavailable"
                 now_seed = time.time()
@@ -11274,6 +11283,7 @@ def _lm_liq_background_loop():
                             }
             except Exception as e:
                 print(f"[LM-LIQ] Connect error: {e}")
+                _lm_liq_ws_state["last_error"] = f"{type(e).__name__}: {e}"[:120]
                 sock = None
                 time.sleep(5)
                 continue
@@ -11313,6 +11323,7 @@ def _lm_liq_background_loop():
             continue
 
         data = msg.get("data") or msg
+        _lm_liq_ws_state["last_message_at"] = time.time()
         if data.get("e") == "forceOrder":
             order = data.get("o") or {}
             sym   = (order.get("s") or "").upper()
@@ -11516,6 +11527,14 @@ _lm_mx_books_lock  = threading.Lock()
 _lm_mx_delta_lock  = threading.Lock()
 _lm_mx_liq_lock    = threading.Lock()
 _lm_mx_thread_lock = threading.Lock()
+_lm_mx_ws_state: dict = {   # updated by each exchange WS loop
+    "bybit": {"thread_started_at": None, "last_connect_attempt": None,
+              "last_connected_at": None, "last_message_at": None,
+              "last_error": None, "subscribed_symbols": []},
+    "okx":   {"thread_started_at": None, "last_connect_attempt": None,
+              "last_connected_at": None, "last_message_at": None,
+              "last_error": None, "subscribed_symbols": []},
+}
 
 # "{exchange}:{symbol}" → {bids: dict, asks: dict, ts: float, ready: bool}
 _lm_mx_books: dict = {}
@@ -11742,6 +11761,7 @@ def _lm_bybit_ws_loop():
     """Bybit public linear WS: orderbook + publicTrade + liquidation."""
     global _lm_mx_running
     print("[MX-BYBIT] Background thread started")
+    _lm_mx_ws_state["bybit"]["thread_started_at"] = time.time()
     current_symbols: list = []
     sock = None
 
@@ -11758,6 +11778,7 @@ def _lm_bybit_ws_loop():
                 continue
             try:
                 print(f"[MX-BYBIT] Connecting for {current_symbols}")
+                _lm_mx_ws_state["bybit"]["last_connect_attempt"] = time.time()
                 sock = _raw_ws_connect("stream.bybit.com", "/v5/public/linear")
                 sock.settimeout(30)
                 args = []
@@ -11765,9 +11786,12 @@ def _lm_bybit_ws_loop():
                     bs = _mx_bybit_sym(sym)
                     args += [f"orderbook.1.{bs}", f"publicTrade.{bs}", f"liquidation.{bs}"]
                 _ws_send_text(sock, json.dumps({"op": "subscribe", "args": args}))
+                _lm_mx_ws_state["bybit"]["last_connected_at"]  = time.time()
+                _lm_mx_ws_state["bybit"]["subscribed_symbols"] = list(current_symbols)
                 print("[MX-BYBIT] Subscribed")
             except Exception as e:
                 print(f"[MX-BYBIT] Connect error: {e}")
+                _lm_mx_ws_state["bybit"]["last_error"] = f"{type(e).__name__}: {e}"[:120]
                 sock = None
                 time.sleep(5)
                 continue
@@ -11804,6 +11828,7 @@ def _lm_bybit_ws_loop():
 
         topic = msg.get("topic", "")
         data  = msg.get("data")
+        _lm_mx_ws_state["bybit"]["last_message_at"] = time.time()
 
         if topic.startswith("orderbook") and data:
             sym_raw = (data.get("s") or "").upper()
@@ -11851,6 +11876,7 @@ def _lm_okx_ws_loop():
     """OKX public WS (wss://ws.okx.com:8443): books5 + trades + liquidation-orders."""
     global _lm_mx_running
     print("[MX-OKX] Background thread started")
+    _lm_mx_ws_state["okx"]["thread_started_at"] = time.time()
     current_symbols: list = []
     sock = None
 
@@ -11867,6 +11893,7 @@ def _lm_okx_ws_loop():
                 continue
             try:
                 print(f"[MX-OKX] Connecting for {current_symbols}")
+                _lm_mx_ws_state["okx"]["last_connect_attempt"] = time.time()
                 sock = _raw_ws_connect_port("ws.okx.com", "/ws/v5/public", port=8443)
                 sock.settimeout(30)
                 args = []
@@ -11878,9 +11905,12 @@ def _lm_okx_ws_loop():
                         {"channel": "liquidation-orders","instId": inst},
                     ]
                 _ws_send_text(sock, json.dumps({"op": "subscribe", "args": args}))
+                _lm_mx_ws_state["okx"]["last_connected_at"]  = time.time()
+                _lm_mx_ws_state["okx"]["subscribed_symbols"] = list(current_symbols)
                 print("[MX-OKX] Subscribed")
             except Exception as e:
                 print(f"[MX-OKX] Connect error: {e}")
+                _lm_mx_ws_state["okx"]["last_error"] = f"{type(e).__name__}: {e}"[:120]
                 sock = None
                 time.sleep(5)
                 continue
@@ -11920,6 +11950,7 @@ def _lm_okx_ws_loop():
 
         ch   = (msg.get("arg") or {}).get("channel", "")
         data_list = msg.get("data", [])
+        _lm_mx_ws_state["okx"]["last_message_at"] = time.time()
         if not isinstance(data_list, list) or not data_list:
             continue
 
@@ -23788,7 +23819,7 @@ def _lm_build_phase10_9f_bias_shift_values(  # noqa: C901
                 ),
                 "note": (
                     f"Phase 10.9E source is {_dq_lbl} "
-                    f"(~{int((snap_age_sec or 0)/60)}h old). "
+                    f"(~{round((snap_age_sec or 0)/3600, 1)}h old). "
                     "Refresh orderflow before trusting verdict."
                     if _dq_lbl in ("stale", "very_stale")
                     else f"Phase 10.9E: {of_status} on {len(_tf_directions)} TFs."
@@ -26878,13 +26909,11 @@ def _lm_inject_parent_price_rows(symbol: str, parent_exchange: str,
 @app.route("/api/live-monitor/liquidations/debug", methods=["GET"])
 @login_required
 def api_lm_liq_debug():
-    """Debug endpoint: inspect liquidation cache for a symbol across all sources.
+    """Debug endpoint: inspect liquidation WS state and cache for a symbol.
     Read-only. Does not affect trading, safety gates, or any execution path.
 
-    Query params:
-      symbol       — e.g. SUIUSDT (required)
-      exchange     — aggregated|binance|bybit|okx (default: aggregated)
-      lookback_min — minutes to filter events for (default: 240)
+    connected = WS thread is alive AND has successfully connected at least once.
+    Events in cache can be 0 even when connected (no liquidations happened yet).
     """
     uid, _ = _current_user_id_and_user()
     if not uid:
@@ -26900,70 +26929,119 @@ def api_lm_liq_debug():
     if not symbol:
         return jsonify({"error": "symbol_required"}), 400
 
-    now_s       = time.time()
-    cutoff_s    = now_s - lookback_min * 60.0
+    now_s    = time.time()
+    cutoff_s = now_s - lookback_min * 60.0
 
-    def _exch_info(exch_name: str, raw_events, not_impl: bool = False) -> dict:
+    # ── Env var / enablement state ────────────────────────────────────────────
+    _bin_ws_enabled = os.environ.get("ZYNI_LM_WS_ENABLED") == "1"
+    _mx_ws_enabled  = _LM_MX_WS_ENABLED
+
+    def _fmt_age(ts):
+        if ts is None:
+            return None
+        diff = now_s - ts
+        if diff < 60:   return f"{int(diff)}s ago"
+        if diff < 3600: return f"{int(diff/60)}m ago"
+        return f"{diff/3600:.1f}h ago"
+
+    def _exch_info(exch_name: str, raw_events, ws_state: dict,
+                   thread_obj, enabled: bool, not_impl: bool = False) -> dict:
         if not_impl:
             return {
-                "enabled": False, "connected": False,
+                "enabled": False, "ws_enabled_env": False,
+                "ws_thread_started": False, "connected": False,
                 "events_seen": 0, "events_in_lookback": 0,
                 "latest_event_time": None, "latest_event": None,
                 "reason_if_empty": "adapter_not_implemented",
             }
-        if not raw_events:
-            with _lm_liq_lock if exch_name == "binance" else _lm_mx_liq_lock:
-                pass  # just checking
-            return {
-                "enabled": True, "connected": False,
-                "events_seen": 0, "events_in_lookback": 0,
-                "latest_event_time": None, "latest_event": None,
-                "reason_if_empty": "no_forceOrder_events_received" if exch_name == "binance"
-                                   else "no_liq_events_received",
-            }
-        in_lb = [e for e in raw_events if e[0] >= cutoff_s]
-        latest = max(raw_events, key=lambda e: e[0], default=None)
+
+        thread_alive = bool(thread_obj and thread_obj.is_alive())
+        # Binance seeds the cache entry on WS connect; Bybit/OKX don't seed.
+        cache_seeded = (exch_name == "binance" and bool(raw_events is not None))
+
+        # connected = thread is alive AND has produced a last_connected_at timestamp
+        connected = thread_alive and (ws_state.get("last_connected_at") is not None)
+
+        in_lb  = [e for e in raw_events if e[0] >= cutoff_s] if raw_events else []
+        latest = max(raw_events, key=lambda e: e[0]) if raw_events else None
+
+        if not enabled:
+            reason = (
+                "ZYNI_LM_WS_ENABLED not set to 1"
+                if exch_name == "binance"
+                else "ZYNI_LM_MULTI_EXCHANGE_WS_ENABLED not set to 1"
+            )
+        elif not thread_alive:
+            reason = "thread_not_running"
+        elif not connected:
+            reason = "thread_running_but_not_yet_connected"
+        elif not raw_events:
+            reason = "connected_no_events_yet"
+        elif not in_lb:
+            reason = "no_events_in_lookback_window"
+        else:
+            reason = None
+
         return {
-            "enabled": True,
-            "connected": True,
-            "events_seen": len(raw_events),
+            "enabled":           enabled,
+            "ws_enabled_env":    enabled,
+            "ws_thread_started": thread_alive,
+            "connected":         connected,
+            "events_seen":       len(raw_events) if raw_events else 0,
             "events_in_lookback": len(in_lb),
             "latest_event_time": int(latest[0] * 1000) if latest else None,
-            "latest_event": {
+            "latest_event":      {
                 "ts_ms": int(latest[0] * 1000),
                 "side":  latest[1],
                 "usd":   round(latest[2]),
+                "age":   _fmt_age(latest[0]),
             } if latest else None,
-            "reason_if_empty": None if in_lb else "no_events_in_lookback_window",
+            "reason_if_empty":   reason,
+            "ws_state": {
+                "thread_started_at":    _fmt_age(ws_state.get("thread_started_at")),
+                "last_connect_attempt": _fmt_age(ws_state.get("last_connect_attempt")),
+                "last_connected_at":    _fmt_age(ws_state.get("last_connected_at")),
+                "last_message_at":      _fmt_age(ws_state.get("last_message_at")),
+                "last_error":           ws_state.get("last_error"),
+                "subscribed_symbols_count":  len(ws_state.get("subscribed_symbols") or []),
+                "subscribed_symbols_sample": (ws_state.get("subscribed_symbols") or [])[:5],
+            },
         }
 
-    # --- Binance ---
+    # ── Read caches ───────────────────────────────────────────────────────────
     _bin_key = f"binance:{symbol}"
     with _lm_liq_lock:
         _bin_entry = dict(_lm_liq_cache.get(_bin_key) or {})
-    _bin_raw = list(_bin_entry.get("events") or [])   # 4-tuples (ts, side, usd, price)
+    _bin_raw  = list(_bin_entry.get("events") or [])    # 4-tuples (ts, side, usd, price)
     _bin_norm = [(e[0], e[1], e[2]) for e in _bin_raw]
 
-    # --- Bybit ---
     _bybit_key = f"bybit:{symbol}"
     with _lm_mx_liq_lock:
         _bybit_entry = dict(_lm_mx_liq.get(_bybit_key) or {})
-    _bybit_raw = list(_bybit_entry.get("events") or [])   # 3-tuples
+    _bybit_raw = list(_bybit_entry.get("events") or [])  # 3-tuples
 
-    # --- OKX ---
     _okx_key = f"okx:{symbol}"
     with _lm_mx_liq_lock:
         _okx_entry = dict(_lm_mx_liq.get(_okx_key) or {})
-    _okx_raw = list(_okx_entry.get("events") or [])   # 3-tuples
+    _okx_raw = list(_okx_entry.get("events") or [])      # 3-tuples
 
     sources_info = {
-        "binance": _exch_info("binance", _bin_norm),
-        "bybit":   _exch_info("bybit",   _bybit_raw),
-        "okx":     _exch_info("okx",     _okx_raw),
-        "mexc":    _exch_info("mexc",    [], not_impl=True),
+        "binance": _exch_info(
+            "binance", _bin_norm, _lm_liq_ws_state,
+            _lm_liq_thread, _bin_ws_enabled,
+        ),
+        "bybit": _exch_info(
+            "bybit", _bybit_raw, _lm_mx_ws_state.get("bybit", {}),
+            _lm_mx_threads.get("bybit"), _mx_ws_enabled,
+        ),
+        "okx": _exch_info(
+            "okx", _okx_raw, _lm_mx_ws_state.get("okx", {}),
+            _lm_mx_threads.get("okx"), _mx_ws_enabled,
+        ),
+        "mexc": _exch_info("mexc", [], {}, None, False, not_impl=True),
     }
 
-    # Aggregate all events for lookback totals
+    # ── Aggregate for lookback totals ────────────────────────────────────────
     all_events: list = []
     if exchange in ("aggregated", "binance"):
         all_events.extend(_bin_norm)
@@ -26978,20 +27056,24 @@ def api_lm_liq_debug():
     latest_events = sorted(in_lb, key=lambda e: e[0], reverse=True)[:10]
 
     return jsonify({
-        "ok":                   True,
-        "symbol":               symbol,
-        "exchange":             exchange,
-        "lookback_min":         lookback_min,
-        "sources":              sources_info,
+        "ok":           True,
+        "symbol":       symbol,
+        "exchange":     exchange,
+        "lookback_min": lookback_min,
+        "env_vars": {
+            "ZYNI_LM_WS_ENABLED":                  _bin_ws_enabled,
+            "ZYNI_LM_MULTI_EXCHANGE_WS_ENABLED":   _mx_ws_enabled,
+        },
+        "sources":      sources_info,
         "total_events_in_lookback": len(in_lb),
-        "total_long_liq_usd":   round(total_long),
-        "total_short_liq_usd":  round(total_short),
+        "total_long_liq_usd":  round(total_long),
+        "total_short_liq_usd": round(total_short),
         "latest_events": [
             {
-                "ts_ms":  int(e[0] * 1000),
-                "side":   e[1],
-                "usd":    round(e[2]),
-                "age_s":  round(now_s - e[0], 1),
+                "ts_ms": int(e[0] * 1000),
+                "side":  e[1],
+                "usd":   round(e[2]),
+                "age_s": round(now_s - e[0], 1),
             }
             for e in latest_events
         ],
