@@ -802,6 +802,11 @@ _lm_liq_cache: dict = {}          # "binance:{SYM}" → {events: deque, last_liq
 _lm_liq_lock  = threading.Lock()
 _lm_liq_thread: Optional[threading.Thread] = None
 _lm_liq_running = False
+_lm_liq_ws_state: dict = {   # updated by _lm_liq_background_loop
+    "thread_started_at": None, "last_connect_attempt": None,
+    "last_connected_at": None, "last_message_at": None,
+    "last_error": None,        "subscribed_symbols": [],
+}
 _lm_liq_last_logged: dict = {}    # symbol → ts, rate-limit for event logging
 
 _lm_delta_cache: dict = {}        # "binance:{SYM}" → {trades: deque, last_update_ts}
@@ -10676,6 +10681,460 @@ def _fmt_usd_lm(v: float) -> str:
     return f"${v:.0f}"
 
 
+# ── Order Book Wall Map builder ───────────────────────────────────────────────
+
+def _lm_build_ob_wall_map(symbol: str, exchange: str) -> dict:
+    """Build order book wall map for the DH expanded panel.
+
+    Returns structured bids/asks with USD notional, distance, strength.
+    Frontend applies window/min-wall filtering interactively.
+    Covers all levels within ±10% of current price.
+    """
+    now = time.time()
+    _try_exchanges = (
+        ["binance", "bybit", "okx"] if exchange == "aggregated" else [exchange]
+    )
+
+    raw_bids: dict = {}   # price_float -> agg_qty_float
+    raw_asks: dict = {}
+    sources_used:    list = []
+    sources_skipped: list = []
+    best_bid_px: list = []
+    best_ask_px: list = []
+
+    for exch in _try_exchanges:
+        try:
+            ob = _lm_fetch_exchange_orderbook(exch, symbol)
+            if ob.get("available") and ob.get("bids") and ob.get("asks"):
+                sources_used.append(exch)
+                for p, q in (ob.get("bids") or {}).items():
+                    pf, qf = float(p), float(q)
+                    raw_bids[pf] = raw_bids.get(pf, 0.0) + qf
+                for p, q in (ob.get("asks") or {}).items():
+                    pf, qf = float(p), float(q)
+                    raw_asks[pf] = raw_asks.get(pf, 0.0) + qf
+                if ob.get("best_bid"):
+                    best_bid_px.append(float(ob["best_bid"]))
+                if ob.get("best_ask"):
+                    best_ask_px.append(float(ob["best_ask"]))
+            else:
+                sources_skipped.append(exch)
+        except Exception:
+            sources_skipped.append(exch)
+
+    if not raw_bids or not raw_asks:
+        return {"ok": False, "status": "unavailable",
+                "bids": [], "asks": [], "summary": {},
+                "sources_used": sources_used, "sources_skipped": sources_skipped}
+
+    best_bid = max(best_bid_px) if best_bid_px else (max(raw_bids) if raw_bids else 0)
+    best_ask = min(best_ask_px) if best_ask_px else (min(raw_asks) if raw_asks else 0)
+    current_price = (best_bid + best_ask) / 2.0
+    if current_price <= 0:
+        return {"ok": False, "status": "no_price", "bids": [], "asks": [], "summary": {}}
+
+    MAX_WIN_PCT = 10.0   # ±10% max window to keep
+
+    def _filter_levels(levels_dict: dict, is_bid: bool) -> list:
+        result = []
+        for p, q in levels_dict.items():
+            dist = abs(p - current_price) / current_price * 100.0
+            if dist > MAX_WIN_PCT:
+                continue
+            if is_bid and p >= current_price:
+                continue
+            if not is_bid and p <= current_price:
+                continue
+            usd = p * q
+            if usd < 1000:          # skip dust
+                continue
+            result.append({"price": float(p), "qty": float(q),
+                            "distance_pct": round(dist, 3), "size_usd": round(usd)})
+        key = (lambda x: -x["price"]) if is_bid else (lambda x: x["price"])
+        result.sort(key=key)
+        return result
+
+    def _cluster(levels: list, cluster_pct: float = 0.05) -> list:
+        """Merge levels within cluster_pct% of current_price into one bucket."""
+        if not levels:
+            return []
+        clustered = []
+        cur = dict(levels[0])
+        for lv in levels[1:]:
+            diff = abs(lv["price"] - cur["price"]) / current_price * 100.0
+            if diff < cluster_pct:
+                cur["qty"]      += lv["qty"]
+                cur["size_usd"] += lv["size_usd"]
+            else:
+                clustered.append(cur)
+                cur = dict(lv)
+        clustered.append(cur)
+        return clustered
+
+    def _annotate(levels: list, side_label: str) -> list:
+        if not levels:
+            return []
+        usds   = [l["size_usd"] for l in levels]
+        max_u  = max(usds) if usds else 1
+        mdn_u  = sorted(usds)[len(usds) // 2] if usds else 1
+        result = []
+        for lv in levels:
+            u = lv["size_usd"]
+            strength = round(u / max_u * 100) if max_u > 0 else 0
+            if   u >= mdn_u * 3:   stab = "5/5 stable"
+            elif u >= mdn_u * 2:   stab = "4/5 stable"
+            elif u >= mdn_u:       stab = "3/5 stable"
+            elif u >= mdn_u * 0.5: stab = "2/5 stable"
+            else:                  stab = "1/5 stable"
+            d = lv["distance_pct"]
+            if   d < 0.3: meaning = f"Very close; {side_label} may be tested immediately."
+            elif d < 1.0: meaning = f"Near price; short-term {side_label} level."
+            elif d < 3.0: meaning = f"Mid-range {side_label}; relevant for swing moves."
+            else:         meaning = f"Far {side_label}; significant only on large moves."
+            result.append({
+                "price":        lv["price"],
+                "distance_pct": lv["distance_pct"],
+                "size_usd":     u,
+                "size_label":   _fmt_usd_lm(float(u)),
+                "strength_pct": strength,
+                "stability":    stab,
+                "meaning":      meaning,
+            })
+        return result
+
+    bid_final = _annotate(_cluster(_filter_levels(raw_bids, True)),  "support")
+    ask_final = _annotate(_cluster(_filter_levels(raw_asks, False)), "resistance")
+
+    def _liq_in_win(levels: list, win_pct: float) -> float:
+        return sum(l["size_usd"] for l in levels if l["distance_pct"] <= win_pct)
+
+    bid_liq = _liq_in_win(bid_final, 10.0)
+    ask_liq = _liq_in_win(ask_final, 10.0)
+    dominant = "Mixed"
+    if   bid_liq > ask_liq * 1.2: dominant = "Bid Support"
+    elif ask_liq > bid_liq * 1.2: dominant = "Ask Pressure"
+
+    nb = bid_final[0] if bid_final else None
+    na = ask_final[0] if ask_final else None
+    thin_zone = (
+        f"Bid {nb['distance_pct']:.2f}% / Ask {na['distance_pct']:.2f}%"
+        if nb and na else "No walls found"
+    )
+
+    return {
+        "ok":              True,
+        "symbol":          symbol,
+        "exchange":        exchange,
+        "current_price":   round(current_price, 6),
+        "sources_used":    sources_used,
+        "sources_skipped": sources_skipped,
+        "bids":            bid_final,
+        "asks":            ask_final,
+        "summary": {
+            "bid_liquidity_label": _fmt_usd_lm(bid_liq),
+            "ask_liquidity_label": _fmt_usd_lm(ask_liq),
+            "dominant_side":       dominant,
+            "thin_zone_warning":   thin_zone,
+        },
+        "fetched_at": now,
+    }
+
+
+def _lm_build_sweep_rekt_map(symbol: str, exchange: str) -> dict:  # noqa: C901
+    """Build sweep rekt map for the DH expanded panel.
+
+    Reads liquidation events from all available sources and matches them to
+    detected swing sweeps on the 5m timeframe.
+
+    For aggregated mode: combines Binance (forceOrder) + Bybit (liquidation.*)
+    + OKX (liquidation-orders). MEXC has no public liquidation stream.
+
+    Side mapping:
+      Binance forceOrder SELL → long liq → side="long"
+      Binance forceOrder BUY  → short liq → side="short"
+      Bybit liquidation Sell  → long liq → side="long"
+      OKX liq liqSide sell    → long liq → side="long"
+    """
+    _TF          = "5m"
+    _LOOKBACK    = 300       # 300 × 5m = 25 h of candle history
+    _RECENT_SEC  = 4 * 3600  # only show sweeps from last 4 h
+    _LIQ_WIN_SEC = 60        # buffer: candle_open-60s → candle_close+60s
+    now_s        = time.time()
+
+    # ── 1. Candles ──────────────────────────────────────────────────────────────
+    try:
+        candles = _lm_get_candles_for_features(
+            symbol, _TF, limit=_LOOKBACK, ttl=60,
+            exchange="binance", market="perpetual",
+        )
+    except Exception:
+        candles = []
+
+    if not candles or len(candles) < 20:
+        return {
+            "ok":      False,
+            "status":  "needs_data",
+            "events":  [],
+            "message": (
+                "Sweep-linked liquidation history needs fresh candle data. "
+                f"Got {len(candles)} candles for {symbol} {_TF}."
+            ),
+        }
+
+    # ── 2. Collect liquidation events from all available sources ─────────────
+    # Normalized events: (ts_seconds, side, usd)
+    liq_events:          list = []
+    liq_sources_used:    list = []
+    liq_sources_skipped: list = []
+    liq_stream_statuses: dict = {}
+
+    # Binance: primary cache, deque(maxlen=500), no time prune — best historical coverage
+    _bin_key = f"binance:{symbol}"
+    with _lm_liq_lock:
+        _bin_entry = dict(_lm_liq_cache.get(_bin_key) or {})
+    _bin_raw   = list(_bin_entry.get("events") or [])   # 4-tuples (ts, side, usd, price)
+    has_liq_stream = bool(_bin_entry)
+    if _bin_raw:
+        liq_sources_used.append("binance")
+        liq_events.extend((e[0], e[1], e[2]) for e in _bin_raw)
+        liq_stream_statuses["binance"] = {"status": "ok", "event_count": len(_bin_raw)}
+    else:
+        liq_stream_statuses["binance"] = {
+            "status": "no_events",
+            "reason": "no_forceOrder_events_received" if has_liq_stream else "cache_empty",
+        }
+
+    # Bybit + OKX: included when aggregated or specifically requested
+    for _mx_exch in ("bybit", "okx"):
+        if exchange not in ("aggregated", _mx_exch):
+            liq_sources_skipped.append(_mx_exch)
+            liq_stream_statuses[_mx_exch] = {"status": "not_requested"}
+            continue
+        _mx_key = f"{_mx_exch}:{symbol}"
+        with _lm_mx_liq_lock:
+            _mx_entry = dict(_lm_mx_liq.get(_mx_key) or {})
+        _mx_raw = list(_mx_entry.get("events") or [])   # 3-tuples (ts, side, usd)
+        if _mx_raw:
+            liq_sources_used.append(_mx_exch)
+            liq_events.extend(_mx_raw)
+            liq_stream_statuses[_mx_exch] = {"status": "ok", "event_count": len(_mx_raw)}
+        else:
+            liq_sources_skipped.append(_mx_exch)
+            liq_stream_statuses[_mx_exch] = {
+                "status": "no_events",
+                "reason": "no_liq_events_received",
+            }
+
+    # MEXC has no public liquidation stream
+    liq_sources_skipped.append("mexc")
+    liq_stream_statuses["mexc"] = {"status": "not_implemented",
+                                    "reason": "adapter_not_implemented"}
+
+    liq_total_events = len(liq_events)
+
+    # ── 3. Swing + sweep detection ───────────────────────────────────────────
+    piv        = _lm_structure_pivot_settings(_TF)
+    swings     = _lm_find_swing_points(candles, left=piv["left"], right=piv["right"])
+    raw_sweeps = _lm_detect_liquidity_sweeps_for_tf(candles, _TF, swings=swings)
+
+    cutoff_ms     = (now_s - _RECENT_SEC) * 1000.0
+    recent_sweeps = [s for s in raw_sweeps if s.get("event_time", 0) >= cutoff_ms]
+
+    _debug_base: dict = {
+        "liq_sources_used":        liq_sources_used,
+        "liq_sources_skipped":     liq_sources_skipped,
+        "liq_events_in_cache":     liq_total_events,
+        "latest_liq_event_time":   (max((e[0] for e in liq_events), default=None)),
+        "sweep_match_window_sec":  _LIQ_WIN_SEC,
+        "matched_liq_events_count": 0,
+        "matched_long_liq_usd":    0,
+        "matched_short_liq_usd":   0,
+        "reason_if_zero":          None,
+    }
+
+    if not recent_sweeps:
+        _debug_base["reason_if_zero"] = "no_recent_sweeps"
+        _src_lbl = (
+            "Binance-only (partial)" if liq_sources_used == ["binance"]
+            else f"{', '.join(liq_sources_used)} aggregated" if liq_sources_used
+            else "No liq source"
+        )
+        return {
+            "ok":              True,
+            "status":          "no_recent_sweeps",
+            "symbol":          symbol,
+            "exchange":        exchange,
+            "source":          _src_lbl,
+            "has_liq_stream":  has_liq_stream,
+            "latest":          None,
+            "events":          [],
+            "message":         "No recent swing sweep found in last 4 hours.",
+            "liq_sources_used":    liq_sources_used,
+            "liq_sources_skipped": liq_sources_skipped,
+            "debug":           _debug_base,
+        }
+
+    # ── 4. Helpers ───────────────────────────────────────────────────────────
+    def _time_ago(ts_ms: float) -> str:
+        diff = now_s - ts_ms / 1000.0
+        if diff < 60:
+            return f"{int(diff)}s ago"
+        if diff < 3600:
+            return f"{int(diff / 60)}m ago"
+        return f"{diff / 3600:.1f}h ago"
+
+    def _match_liq(candle_open_ms: float, is_low_sweep: bool) -> tuple:
+        """Sum liq USD from (candle_open - buf) to (candle_close + buf).
+        Returns (long_liq, short_liq, primary_liq, match_debug_dict)."""
+        c_open_s  = candle_open_ms / 1000.0
+        win_start = c_open_s - _LIQ_WIN_SEC
+        win_end   = c_open_s + 300.0 + _LIQ_WIN_SEC
+        matched   = [e for e in liq_events if win_start <= e[0] <= win_end]
+        long_liq  = sum(e[2] for e in matched if e[1] == "long")
+        short_liq = sum(e[2] for e in matched if e[1] == "short")
+        primary   = long_liq if is_low_sweep else short_liq
+        return long_liq, short_liq, primary, {
+            "match_start":            int(win_start * 1000),
+            "match_end":              int(win_end   * 1000),
+            "events_seen_for_symbol": liq_total_events,
+            "matched_events_count":   len(matched),
+            "matched_long_liq_usd":   round(long_liq),
+            "matched_short_liq_usd":  round(short_liq),
+        }
+
+    def _meaning_text(sweep_type: str, reaction: str, liq_usd: float) -> str:
+        if liq_usd == 0:
+            return (
+                "Sweep occurred, but no liquidation event was captured near the sweep window. "
+                "This may be a wick sweep with no forced close, or the liq stream has no "
+                "events yet for this symbol."
+            )
+        if liq_usd < 10_000:
+            return (
+                "Sweep occurred but liquidation amount is low. "
+                "This may be wick noise, not a strong rekt event."
+            )
+        if sweep_type == "Swing Low Sweep":
+            if reaction == "Reclaimed":
+                return (
+                    "Longs liquidated below swing low, then price reclaimed. "
+                    "Possible bullish absorption if OB holds."
+                )
+            return (
+                "Longs liquidated below swing low and price continued lower. "
+                "OB defense is weak."
+            )
+        if reaction == "Rejected":
+            return (
+                "Shorts liquidated above swing high, then price rejected. "
+                "Possible bearish sweep/trap."
+            )
+        return (
+            "Shorts liquidated above swing high and price continued higher. "
+            "Bearish OB may be weak."
+        )
+
+    # ── 5. Build event list ──────────────────────────────────────────────────
+    interim: list = []
+    for sweep in recent_sweeps:
+        etype    = sweep.get("event_type", "")
+        is_low   = (etype == "sell_side_liquidity_sweep")
+        copen_ms = float(sweep.get("candle_open_time", 0))
+        lg, sh, prim, mdbg = _match_liq(copen_ms, is_low)
+        interim.append((sweep, is_low, lg, sh, prim, mdbg))
+
+    interim_sorted = sorted(interim, key=lambda x: x[0].get("event_time", 0))
+    prev_by_type: dict = {}
+    events: list = []
+    total_matched_long  = 0.0
+    total_matched_short = 0.0
+    total_matched_count = 0
+
+    for sweep, is_low, lg, sh, primary, mdbg in interim_sorted:
+        etype    = sweep.get("event_type", "")
+        event_ms = float(sweep.get("event_time", 0))
+        level    = float(sweep.get("level", 0))
+
+        sweep_type = "Swing Low Sweep" if is_low else "Swing High Sweep"
+        # Only label rekt side if liquidation was actually captured
+        rekt_side  = (
+            "Longs Rekt"       if (is_low     and primary > 0)
+            else "Shorts Rekt" if (not is_low and primary > 0)
+            else "No Captured Rekt"
+        )
+        reaction = "Reclaimed" if is_low else "Rejected"
+
+        prev_list = prev_by_type.get(etype, [])
+        if prev_list and primary > 0:
+            avg_prev = sum(prev_list) / len(prev_list)
+            vs_avg   = round(primary / avg_prev, 2) if avg_prev > 0 else None
+        else:
+            vs_avg = None
+        prev_by_type.setdefault(etype, []).append(primary)
+
+        total_matched_long  += lg
+        total_matched_short += sh
+        total_matched_count += mdbg["matched_events_count"]
+
+        events.append({
+            "time":        _time_ago(event_ms),
+            "timestamp":   int(event_ms),
+            "sweep_type":  sweep_type,
+            "sweep_level": round(level, 4),
+            "rekt_side":   rekt_side,
+            "liq_usd":     round(primary),
+            "liq_label":   _fmt_usd_lm(float(primary)) if primary > 0 else "$0",
+            "vs_avg":      vs_avg,
+            "reaction":    reaction,
+            "meaning":     _meaning_text(sweep_type, reaction, primary),
+            "match_debug": mdbg,
+        })
+
+    events.sort(key=lambda e: e["timestamp"], reverse=True)
+
+    # ── 6. Status ────────────────────────────────────────────────────────────
+    all_zero = all(e["liq_usd"] == 0 for e in events)
+    if not liq_sources_used:
+        status        = "liq_source_unavailable"
+        reason_if_zero = "no_liq_sources_available"
+    elif all_zero and liq_total_events == 0:
+        status        = "sweep_only_no_liq_source"
+        reason_if_zero = "no_liquidation_events_in_cache"
+    elif all_zero:
+        status        = "no_matched_rekt"
+        reason_if_zero = "no_liquidation_events_matched_sweep_windows"
+    else:
+        status        = "rekt_detected"
+        reason_if_zero = None
+
+    _debug_base.update({
+        "matched_liq_events_count": total_matched_count,
+        "matched_long_liq_usd":     round(total_matched_long),
+        "matched_short_liq_usd":    round(total_matched_short),
+        "reason_if_zero":           reason_if_zero,
+    })
+
+    _src_lbl = (
+        "Binance-only (partial)" if liq_sources_used == ["binance"]
+        else f"{', '.join(liq_sources_used)} aggregated" if len(liq_sources_used) > 1
+        else "No live liq source"
+    )
+
+    return {
+        "ok":             True,
+        "symbol":         symbol,
+        "exchange":       exchange,
+        "source":         _src_lbl,
+        "status":         status,
+        "has_liq_stream": has_liq_stream,
+        "latest":         events[0] if events else None,
+        "events":         events,
+        "liq_sources_used":    liq_sources_used,
+        "liq_sources_skipped": liq_sources_skipped,
+        "debug":          _debug_base,
+    }
+
+
 # ── liquidation cache ─────────────────────────────────────────────────────────
 
 def _lm_liq_update(exchange: str, symbol: str, side_liq: str, usd_amount: float, price: float):
@@ -10784,6 +11243,7 @@ def _lm_liq_background_loop():
     """Subscribe to per-symbol forceOrder streams for active LM symbols."""
     global _lm_liq_running
     print("[LM-LIQ] Background thread started")
+    _lm_liq_ws_state["thread_started_at"] = time.time()
     current_symbols: list = []
     sock = None
 
@@ -10803,8 +11263,11 @@ def _lm_liq_background_loop():
             path    = f"/stream?streams={streams}"
             try:
                 print(f"[LM-WS] binance subscribing {current_symbols} streams: liquidations/forceOrder")
+                _lm_liq_ws_state["last_connect_attempt"] = time.time()
                 sock = _raw_ws_connect("fstream.binance.com", path)
                 sock.settimeout(30)
+                _lm_liq_ws_state["last_connected_at"]  = time.time()
+                _lm_liq_ws_state["subscribed_symbols"] = list(current_symbols)
                 print("[LM-LIQ] Connected")
                 # Seed connected-flag per symbol so get() shows "fresh" not "unavailable"
                 now_seed = time.time()
@@ -10820,6 +11283,7 @@ def _lm_liq_background_loop():
                             }
             except Exception as e:
                 print(f"[LM-LIQ] Connect error: {e}")
+                _lm_liq_ws_state["last_error"] = f"{type(e).__name__}: {e}"[:120]
                 sock = None
                 time.sleep(5)
                 continue
@@ -10859,6 +11323,7 @@ def _lm_liq_background_loop():
             continue
 
         data = msg.get("data") or msg
+        _lm_liq_ws_state["last_message_at"] = time.time()
         if data.get("e") == "forceOrder":
             order = data.get("o") or {}
             sym   = (order.get("s") or "").upper()
@@ -11062,6 +11527,14 @@ _lm_mx_books_lock  = threading.Lock()
 _lm_mx_delta_lock  = threading.Lock()
 _lm_mx_liq_lock    = threading.Lock()
 _lm_mx_thread_lock = threading.Lock()
+_lm_mx_ws_state: dict = {   # updated by each exchange WS loop
+    "bybit": {"thread_started_at": None, "last_connect_attempt": None,
+              "last_connected_at": None, "last_message_at": None,
+              "last_error": None, "subscribed_symbols": []},
+    "okx":   {"thread_started_at": None, "last_connect_attempt": None,
+              "last_connected_at": None, "last_message_at": None,
+              "last_error": None, "subscribed_symbols": []},
+}
 
 # "{exchange}:{symbol}" → {bids: dict, asks: dict, ts: float, ready: bool}
 _lm_mx_books: dict = {}
@@ -11138,10 +11611,12 @@ def _mx_mexc_sym(symbol: str) -> str:
 def _lm_mx_active_symbols() -> list:
     """Return sorted list of symbols from active Live Monitor items."""
     try:
-        from models import LiveMonitorItem as _LMI
-        rows = _LMI.query.filter_by(is_active=True).with_entities(_LMI.symbol).all()
-        return sorted({r.symbol for r in rows})
-    except Exception:
+        with app.app_context():
+            from models import LiveMonitorItem as _LMI
+            rows = _LMI.query.filter_by(is_active=True).with_entities(_LMI.symbol).all()
+            return sorted({r.symbol for r in rows})
+    except Exception as e:
+        print(f"[MX-WS] active_symbols error: {e}")
         return []
 
 
@@ -11192,21 +11667,18 @@ def _lm_mx_delta_update(exchange: str, symbol: str, side: str, qty: float, price
 
 def _lm_mx_liq_update(exchange: str, symbol: str, side: str, qty: float, price: float):
     """Record a liquidation event. side: 'long' or 'short'"""
-    key    = f"{exchange}:{symbol}"
-    now    = time.time()
-    usd    = qty * price
-    cutoff = now - 310
+    key = f"{exchange}:{symbol}"
+    now = time.time()
+    usd = qty * price
     with _lm_mx_liq_lock:
         if key not in _lm_mx_liq:
-            _lm_mx_liq[key] = {"events": deque(), "last_update_ts": now,
+            _lm_mx_liq[key] = {"events": deque(maxlen=500), "last_update_ts": now,
                                 "last_liq_price": None, "last_liq_side": ""}
         e = _lm_mx_liq[key]
         e["events"].append((now, side, usd))
         e["last_liq_price"] = price
         e["last_liq_side"]  = side
         e["last_update_ts"] = now
-        while e["events"] and e["events"][0][0] < cutoff:
-            e["events"].popleft()
 
 
 # ── Cache readers ─────────────────────────────────────────────────────────────
@@ -11291,6 +11763,7 @@ def _lm_bybit_ws_loop():
     """Bybit public linear WS: orderbook + publicTrade + liquidation."""
     global _lm_mx_running
     print("[MX-BYBIT] Background thread started")
+    _lm_mx_ws_state["bybit"]["thread_started_at"] = time.time()
     current_symbols: list = []
     sock = None
 
@@ -11307,6 +11780,7 @@ def _lm_bybit_ws_loop():
                 continue
             try:
                 print(f"[MX-BYBIT] Connecting for {current_symbols}")
+                _lm_mx_ws_state["bybit"]["last_connect_attempt"] = time.time()
                 sock = _raw_ws_connect("stream.bybit.com", "/v5/public/linear")
                 sock.settimeout(30)
                 args = []
@@ -11314,9 +11788,12 @@ def _lm_bybit_ws_loop():
                     bs = _mx_bybit_sym(sym)
                     args += [f"orderbook.1.{bs}", f"publicTrade.{bs}", f"liquidation.{bs}"]
                 _ws_send_text(sock, json.dumps({"op": "subscribe", "args": args}))
+                _lm_mx_ws_state["bybit"]["last_connected_at"]  = time.time()
+                _lm_mx_ws_state["bybit"]["subscribed_symbols"] = list(current_symbols)
                 print("[MX-BYBIT] Subscribed")
             except Exception as e:
                 print(f"[MX-BYBIT] Connect error: {e}")
+                _lm_mx_ws_state["bybit"]["last_error"] = f"{type(e).__name__}: {e}"[:120]
                 sock = None
                 time.sleep(5)
                 continue
@@ -11353,6 +11830,7 @@ def _lm_bybit_ws_loop():
 
         topic = msg.get("topic", "")
         data  = msg.get("data")
+        _lm_mx_ws_state["bybit"]["last_message_at"] = time.time()
 
         if topic.startswith("orderbook") and data:
             sym_raw = (data.get("s") or "").upper()
@@ -11400,6 +11878,7 @@ def _lm_okx_ws_loop():
     """OKX public WS (wss://ws.okx.com:8443): books5 + trades + liquidation-orders."""
     global _lm_mx_running
     print("[MX-OKX] Background thread started")
+    _lm_mx_ws_state["okx"]["thread_started_at"] = time.time()
     current_symbols: list = []
     sock = None
 
@@ -11416,6 +11895,7 @@ def _lm_okx_ws_loop():
                 continue
             try:
                 print(f"[MX-OKX] Connecting for {current_symbols}")
+                _lm_mx_ws_state["okx"]["last_connect_attempt"] = time.time()
                 sock = _raw_ws_connect_port("ws.okx.com", "/ws/v5/public", port=8443)
                 sock.settimeout(30)
                 args = []
@@ -11427,9 +11907,12 @@ def _lm_okx_ws_loop():
                         {"channel": "liquidation-orders","instId": inst},
                     ]
                 _ws_send_text(sock, json.dumps({"op": "subscribe", "args": args}))
+                _lm_mx_ws_state["okx"]["last_connected_at"]  = time.time()
+                _lm_mx_ws_state["okx"]["subscribed_symbols"] = list(current_symbols)
                 print("[MX-OKX] Subscribed")
             except Exception as e:
                 print(f"[MX-OKX] Connect error: {e}")
+                _lm_mx_ws_state["okx"]["last_error"] = f"{type(e).__name__}: {e}"[:120]
                 sock = None
                 time.sleep(5)
                 continue
@@ -11469,6 +11952,7 @@ def _lm_okx_ws_loop():
 
         ch   = (msg.get("arg") or {}).get("channel", "")
         data_list = msg.get("data", [])
+        _lm_mx_ws_state["okx"]["last_message_at"] = time.time()
         if not isinstance(data_list, list) or not data_list:
             continue
 
@@ -22547,12 +23031,15 @@ def api_lm_bias_orderflow_refresh(item_id):
 
     body         = request.get_json(silent=True) or {}
     collect_now  = bool(body.get("collect_now", True))
+    # Allow caller to override analysis_source (e.g. UI sending "aggregated")
+    _req_src     = (body.get("analysis_source") or body.get("exchange") or
+                    body.get("data_source") or "").strip().lower() or None
 
     symbol          = row.symbol or ""
     exchange        = (row.exchange or "binance").lower()
     market          = (row.market or "perpetual").lower()
     snap_raw        = _json_loads_safe(row.snapshot_json, {})
-    src_cfg         = _lm_analysis_source_config(row, snap_raw)
+    src_cfg         = _lm_analysis_source_config(row, snap_raw, selected_source=_req_src)
     analysis_source = src_cfg["analysis_source"]
 
     # Ensure sampler is running
@@ -22652,7 +23139,10 @@ def api_lm_bias_orderflow_debug(item_id):
     exchange        = (row.exchange or "binance").lower()
     market          = (row.market or "perpetual").lower()
     snap_raw        = _json_loads_safe(row.snapshot_json, {})
-    src_cfg         = _lm_analysis_source_config(row, snap_raw)
+    # Allow query param override so ?analysis_source=aggregated works
+    _req_src        = (request.args.get("analysis_source") or request.args.get("exchange") or
+                       request.args.get("data_source") or "").strip().lower() or None
+    src_cfg         = _lm_analysis_source_config(row, snap_raw, selected_source=_req_src)
     analysis_source = src_cfg["analysis_source"]
 
     tf_filter       = request.args.get("tf")
@@ -22860,6 +23350,656 @@ def api_lm_bias_orderflow_debug(item_id):
         "snapshot_enrichment_debug": _snap_enrich_debug,
         "orderflow_alignment":      of_status,
         "force_refresh":            _force_refresh_result if force_refresh else None,
+    })
+
+
+# ── Phase 10.9F — Bias Shift Evidence / Value Fusion ─────────────────────────
+
+def _lm_build_phase10_9f_bias_shift_values(  # noqa: C901
+        item, analysis_source: str = "aggregated") -> dict:
+    """Build context-only Bias Shift evidence/value object for Phase 10.9F.
+
+    Reads:
+    - snapshot_json["orderflow_alignment"] from Phase 10.9E
+    - Most-recent LiveMonitorOrderflowSnapshot row for this source
+    - _lm_build_ob_wall_map and _lm_build_sweep_rekt_map (both TTL-cached)
+    - item.direction, zone_high, zone_low
+
+    No trade signals. No entry candidate. No AI calls. No UI changes.
+    """
+    now_s = time.time()
+
+    symbol   = (getattr(item, "symbol",   None) or "").upper()
+    item_id  = getattr(item, "id",        None)
+    exchange = (getattr(item, "exchange", None) or "binance").lower()
+    uid      = getattr(item, "user_id",   None)
+    market   = (getattr(item, "market",   None) or "perpetual").lower()
+
+    snap_raw  = _json_loads_safe(getattr(item, "snapshot_json", None), {})
+    setup_cat = _lm_setup_category(item)
+
+    # ── Direction (bias) ──────────────────────────────────────────────────────
+    raw_dir = (
+        getattr(item, "direction", None)
+        or snap_raw.get("bias_direction")
+        or snap_raw.get("direction")
+        or ""
+    ).lower().strip()
+    is_bullish = raw_dir in ("bull", "bullish", "long", "buy", "up")
+    is_bearish = raw_dir in ("bear", "bearish", "short", "sell", "down")
+    if not is_bullish and not is_bearish:
+        raw_dir = "unknown"
+
+    # ── Phase 10.9E orderflow alignment ───────────────────────────────────────
+    of_align  = snap_raw.get("orderflow_alignment", {}) or {}
+    of_status = (of_align.get("status") or "collecting").lower()
+    of_per_tf = of_align.get("per_tf", {}) or {}
+    of_src    = (of_align.get("analysis_source") or "").lower()
+
+    source_warnings: list = []
+    if of_src and of_src != analysis_source:
+        source_warnings.append(
+            f"Orderflow alignment stored as '{of_src}'; requested '{analysis_source}'. "
+            "Rebuild with bias-orderflow/refresh?analysis_source=" + analysis_source
+        )
+
+    _tf_directions: list = []
+    for _tf_key, tfv in of_per_tf.items():
+        fd = (tfv.get("latest_flow_direction") or "").lower()
+        al = (tfv.get("latest_alignment")      or "").lower()
+        if fd or al:
+            _tf_directions.append(fd or al)
+
+    # ── Recent orderflow snapshot ──────────────────────────────────────────────
+    recent_snap: dict = {}
+    try:
+        from models import LiveMonitorOrderflowSnapshot as _LMOS9f
+        _rs = (_LMOS9f.query
+               .filter_by(user_id=uid, exchange=exchange, market=market,
+                          symbol=symbol, analysis_source=analysis_source)
+               .order_by(_LMOS9f.sample_time.desc())
+               .first())
+        if _rs:
+            recent_snap = {
+                "delta_net":           _rs.delta_net,
+                "delta_pct":           _rs.delta_pct,
+                "taker_pressure":      _rs.taker_pressure,
+                "orderbook_status":    _rs.orderbook_status,
+                "orderbook_imbalance": _rs.orderbook_imbalance,
+                "bid_wall_price":      _rs.bid_wall_price,
+                "bid_wall_size":       _rs.bid_wall_size,
+                "ask_wall_price":      _rs.ask_wall_price,
+                "ask_wall_size":       _rs.ask_wall_size,
+                "oi_change_pct":       _rs.oi_change_pct,
+                "long_short_ratio":    _rs.long_short_ratio,
+                "funding_rate":        _rs.funding_rate,
+                "long_liq_usd":        _rs.long_liq_usd,
+                "short_liq_usd":       _rs.short_liq_usd,
+                "live_price":          _rs.live_price,
+                "sources_used":        _json_loads_safe(_rs.sources_used_json, []),
+                "sources_skipped":     _json_loads_safe(_rs.sources_skipped_json, []),
+                "source_status":       _rs.source_status,
+                "sample_time_ms":      _rs.sample_time,
+            }
+    except Exception as _re:
+        source_warnings.append(f"Could not read OF snapshot: {str(_re)[:80]}")
+
+    snap_age_sec = None
+    if recent_snap.get("sample_time_ms"):
+        snap_age_sec = round(now_s - recent_snap["sample_time_ms"] / 1000.0, 1)
+
+    # ── OB wall map (TTL-cached) ───────────────────────────────────────────────
+    ob_wall: dict = {}
+    try:
+        ob_wall = _lm_build_ob_wall_map(symbol, analysis_source)
+    except Exception as _oe:
+        source_warnings.append(f"OB wall map error: {str(_oe)[:60]}")
+
+    # ── Sweep rekt map (TTL-cached) ───────────────────────────────────────────
+    sweep_rekt: dict = {}
+    try:
+        sweep_rekt = _lm_build_sweep_rekt_map(symbol, analysis_source)
+    except Exception as _se:
+        source_warnings.append(f"Sweep rekt map error: {str(_se)[:60]}")
+
+    zone_high     = getattr(item, "zone_high", None)
+    zone_low      = getattr(item, "zone_low",  None)
+    current_price = recent_snap.get("live_price")
+
+    # ── Evidence scoring ──────────────────────────────────────────────────────
+    score            = 0
+    positive_reasons: list = []
+    negative_reasons: list = []
+    missing_reasons:  list = []
+
+    # 1. Orderflow alignment (up to 30 pts)
+    if of_status in ("collecting", "initializing"):
+        missing_reasons.append("Phase 10.9E orderflow alignment still collecting samples.")
+    elif of_status == "ready" and _tf_directions:
+        bull_c = sum(1 for d in _tf_directions if any(w in d for w in ("bull", "buy", "long")))
+        bear_c = sum(1 for d in _tf_directions if any(w in d for w in ("bear", "sell", "short")))
+        total  = len(_tf_directions)
+        if is_bullish:
+            if bull_c >= total * 0.7:
+                score += 30
+                positive_reasons.append(f"Orderflow aligned bullish on {bull_c}/{total} TFs.")
+            elif bull_c >= total * 0.4:
+                score += 15
+                positive_reasons.append(f"Orderflow partially bullish ({bull_c}/{total} TFs).")
+            else:
+                negative_reasons.append(f"Orderflow bearish on {bear_c}/{total} TFs — against bullish bias.")
+        elif is_bearish:
+            if bear_c >= total * 0.7:
+                score += 30
+                positive_reasons.append(f"Orderflow aligned bearish on {bear_c}/{total} TFs.")
+            elif bear_c >= total * 0.4:
+                score += 15
+                positive_reasons.append(f"Orderflow partially bearish ({bear_c}/{total} TFs).")
+            else:
+                negative_reasons.append(f"Orderflow bullish on {bull_c}/{total} TFs — against bearish bias.")
+    else:
+        missing_reasons.append("Orderflow alignment status unknown or no TF data yet.")
+
+    # 2. Delta / taker pressure (up to 20 pts)
+    delta_net = recent_snap.get("delta_net")
+    tp_str    = (recent_snap.get("taker_pressure") or "").lower()
+    tp_bull   = tp_str == "bullish"
+    tp_bear   = tp_str == "bearish"
+    tp_known  = tp_str in ("bullish", "bearish", "neutral")
+    if delta_net is None and not tp_known:
+        missing_reasons.append("Delta/taker pressure data not yet available.")
+    elif is_bullish:
+        if (delta_net is not None and delta_net > 0) or tp_bull:
+            score += 20
+            positive_reasons.append(
+                f"Buy pressure supporting bullish bias (Δ={delta_net}, TP={tp_str}).")
+        elif (delta_net is not None and delta_net < 0) and tp_bear:
+            negative_reasons.append("Sell delta and taker pressure against bullish bias.")
+        else:
+            score += 8
+            positive_reasons.append("Delta mixed; bias not strongly contradicted.")
+    elif is_bearish:
+        if (delta_net is not None and delta_net < 0) or tp_bear:
+            score += 20
+            positive_reasons.append(
+                f"Sell pressure supporting bearish bias (Δ={delta_net}, TP={tp_str}).")
+        elif (delta_net is not None and delta_net > 0) and tp_bull:
+            negative_reasons.append("Buy delta and taker pressure against bearish bias.")
+        else:
+            score += 8
+            positive_reasons.append("Delta mixed; bias not strongly contradicted.")
+
+    # 3. Sweep rekt (up to 20 pts)
+    sweep_ok     = sweep_rekt.get("ok", False)
+    sweep_events = sweep_rekt.get("events", []) or []
+    recent_sweep = sweep_events[0] if sweep_events else None
+    if not sweep_ok or not recent_sweep:
+        _srstat = sweep_rekt.get("status", "")
+        if _srstat == "no_recent_sweeps":
+            missing_reasons.append("No recent swing sweep detected in last 4h.")
+        else:
+            missing_reasons.append("Sweep rekt map needs data.")
+    else:
+        _stype  = (recent_sweep.get("sweep_type") or "").lower()
+        _react  = (recent_sweep.get("reaction")   or "").lower()
+        _liqu   = recent_sweep.get("liq_usd", 0) or 0
+        _llbl   = recent_sweep.get("liq_label", "$0")
+        if is_bullish and "low" in _stype and _react == "reclaimed":
+            _pts = 20 if _liqu >= 50_000 else 10
+            score += _pts
+            positive_reasons.append(
+                f"Swing Low Sweep + Reclaim | {_llbl} rekt | "
+                + ("Strong bullish absorption." if _pts == 20 else "Weak rekt — watch for wick noise.")
+            )
+        elif is_bullish and "low" in _stype:
+            negative_reasons.append("Swing Low Sweep without reclaim — longs rekt, price continued lower.")
+        elif is_bearish and "high" in _stype and _react == "rejected":
+            _pts = 20 if _liqu >= 50_000 else 10
+            score += _pts
+            positive_reasons.append(
+                f"Swing High Sweep + Rejection | {_llbl} rekt | "
+                + ("Strong bearish trap." if _pts == 20 else "Weak rekt — watch for wick noise.")
+            )
+        elif is_bearish and "high" in _stype:
+            negative_reasons.append("Swing High Sweep without rejection — shorts rekt, price continued higher.")
+        else:
+            missing_reasons.append(
+                f"Sweep detected ({recent_sweep.get('sweep_type','—')}) — direction does not match setup bias."
+            )
+
+    # 4. OB wall context (up to 15 pts)
+    ob_ok   = ob_wall.get("ok", False)
+    ob_bids = ob_wall.get("bids", []) or []
+    ob_asks = ob_wall.get("asks", []) or []
+    if not ob_ok:
+        missing_reasons.append("OB wall map data not available.")
+    else:
+        _near_bids = [b for b in ob_bids if b.get("distance_pct", 999) <= 1.5]
+        _near_asks = [a for a in ob_asks if a.get("distance_pct", 999) <= 1.5]
+        if is_bullish:
+            if _near_bids:
+                score += 15
+                positive_reasons.append(
+                    f"Bid wall {_near_bids[0].get('size_label','?')} at "
+                    f"{_near_bids[0].get('distance_pct',0):.2f}% below — supporting bullish bias."
+                )
+            if _near_asks:
+                negative_reasons.append(
+                    f"Ask wall {_near_asks[0].get('size_label','?')} at "
+                    f"{_near_asks[0].get('distance_pct',0):.2f}% above — resistance."
+                )
+            if not _near_bids and not _near_asks:
+                missing_reasons.append("No significant walls within 1.5% of current price.")
+        elif is_bearish:
+            if _near_asks:
+                score += 15
+                positive_reasons.append(
+                    f"Ask wall {_near_asks[0].get('size_label','?')} at "
+                    f"{_near_asks[0].get('distance_pct',0):.2f}% above — resistance supporting bearish bias."
+                )
+            if _near_bids:
+                negative_reasons.append(
+                    f"Bid wall {_near_bids[0].get('size_label','?')} at "
+                    f"{_near_bids[0].get('distance_pct',0):.2f}% below — support against bearish bias."
+                )
+            if not _near_bids and not _near_asks:
+                missing_reasons.append("No significant walls within 1.5% of current price.")
+
+    # 5. Funding + Long/Short + OI change (up to 15 pts)
+    funding    = recent_snap.get("funding_rate")
+    ls_ratio   = recent_snap.get("long_short_ratio")
+    oi_chg_pct = recent_snap.get("oi_change_pct")
+    if funding is None and ls_ratio is None:
+        missing_reasons.append("Funding/Long-Short ratio data not yet available.")
+    else:
+        _pts_fl = 0
+        if is_bullish:
+            if funding is not None and funding < 0:
+                _pts_fl += 5
+                positive_reasons.append(
+                    f"Negative funding ({funding:.4f}%) — shorts paying, favors bullish reset.")
+            elif funding is not None and funding > 0.02:
+                negative_reasons.append(
+                    f"High positive funding ({funding:.4f}%) — crowd long-heavy, flush risk.")
+            if ls_ratio is not None and ls_ratio < 1.0:
+                _pts_fl += 5
+                positive_reasons.append(
+                    f"L/S ratio {ls_ratio:.2f} — shorts dominant, potential squeeze fuel.")
+            if oi_chg_pct is not None and oi_chg_pct > 0:
+                _pts_fl += 5
+                positive_reasons.append(f"OI +{oi_chg_pct:.1f}% — new longs opening.")
+        elif is_bearish:
+            if funding is not None and funding > 0:
+                _pts_fl += 5
+                positive_reasons.append(
+                    f"Positive funding ({funding:.4f}%) — longs paying, favors bearish continuation.")
+            elif funding is not None and funding < -0.02:
+                negative_reasons.append(
+                    f"Heavily negative funding ({funding:.4f}%) — short side crowded, squeeze risk.")
+            if ls_ratio is not None and ls_ratio > 1.5:
+                _pts_fl += 5
+                positive_reasons.append(
+                    f"L/S ratio {ls_ratio:.2f} — longs dominant, potential trap fuel.")
+            if oi_chg_pct is not None and oi_chg_pct > 0:
+                _pts_fl += 5
+                positive_reasons.append(f"OI +{oi_chg_pct:.1f}% — new positions, possible long trap.")
+        score += min(_pts_fl, 15)
+
+    score = max(0, min(100, score))
+
+    # ── Verdict ───────────────────────────────────────────────────────────────
+    _critical_missing = (
+        "Phase 10.9E orderflow alignment still collecting samples." in missing_reasons
+        and delta_net is None
+        and not ob_ok
+    )
+    if _critical_missing or raw_dir == "unknown":
+        verdict       = "needs_more_data"
+        verdict_label = "Needs More Data"
+        manual_read   = (
+            "Bias direction not set or critical data still loading. "
+            "Check item direction and wait for orderflow samples."
+        )
+    elif score >= 75:
+        verdict       = "confirmed"
+        verdict_label = "Confirmed Bias Shift"
+        _dlbl         = "Bullish" if is_bullish else "Bearish"
+        manual_read   = (
+            f"{_dlbl} bias shift is strongly confirmed by multiple evidence sources. "
+            "Orderflow, delta, sweep, and OB context are aligned."
+        )
+    elif score >= 55:
+        verdict       = "developing_strong"
+        verdict_label = "Developing Bias Shift"
+        manual_read   = (
+            "Bias shift is developing with good evidence. Most signals align. "
+            "Watch for further confirmation."
+        )
+    elif score >= 40:
+        verdict       = "developing_mixed"
+        verdict_label = "Developing / Mixed"
+        manual_read   = (
+            "Bias shift is developing but evidence is mixed. Keep watching. "
+            "Wait for stronger orderflow or sweep confirmation."
+        )
+    elif score >= 20:
+        verdict       = "weak"
+        verdict_label = "Weak Bias Shift"
+        manual_read   = (
+            "Bias shift evidence is weak. Multiple negative signals present. "
+            "Do not act until evidence improves."
+        )
+    else:
+        verdict       = "invalid"
+        verdict_label = "Invalid / Avoid"
+        manual_read   = (
+            "Setup is producing predominantly negative signals. "
+            "Bias shift may be failing. Do not force this trade."
+        )
+
+    # ── existing_table_values ─────────────────────────────────────────────────
+    # Orderflow label — reflect actual alignment vs bias direction
+    _of_total  = len(_tf_directions)
+    _of_bull_c = sum(1 for d in _tf_directions if any(w in d for w in ("bull", "buy", "long")))
+    _of_bear_c = sum(1 for d in _tf_directions if any(w in d for w in ("bear", "sell", "short")))
+    if of_status not in ("ready",) or not _tf_directions:
+        _of_label  = "Collecting samples" if of_status in ("collecting", "initializing") else "Unavailable"
+        _of_status = "watch"
+    elif is_bullish:
+        if _of_bull_c >= _of_total * 0.7:
+            _of_label  = f"Aligned / Bullish ({_of_bull_c}/{_of_total} TFs)"
+            _of_status = "confirm" if score >= 55 else "watch"
+        elif _of_bull_c >= _of_total * 0.4:
+            _of_label  = f"Partial / Mixed ({_of_bull_c}/{_of_total} TFs bullish)"
+            _of_status = "watch"
+        else:
+            _of_label  = f"Against Bias / Bearish Conflict ({_of_bear_c}/{_of_total} TFs bearish)"
+            _of_status = "conflict"
+    elif is_bearish:
+        if _of_bear_c >= _of_total * 0.7:
+            _of_label  = f"Aligned / Bearish ({_of_bear_c}/{_of_total} TFs)"
+            _of_status = "confirm" if score >= 55 else "watch"
+        elif _of_bear_c >= _of_total * 0.4:
+            _of_label  = f"Partial / Mixed ({_of_bear_c}/{_of_total} TFs bearish)"
+            _of_status = "watch"
+        else:
+            _of_label  = f"Against Bias / Bullish Conflict ({_of_bull_c}/{_of_total} TFs bullish)"
+            _of_status = "conflict"
+    else:
+        _of_label  = "Unavailable"
+        _of_status = "watch"
+
+    # Sweep label and structured status — only "confirm" when direction + reaction + liq all match
+    _sweep_lbl = (
+        f"{recent_sweep.get('sweep_type','—')} — {recent_sweep.get('reaction','—')}"
+        if recent_sweep else "No recent sweep"
+    )
+    if recent_sweep:
+        _rs_stype  = (recent_sweep.get("sweep_type") or "").lower()
+        _rs_react  = (recent_sweep.get("reaction")   or "").lower()
+        _rs_liqu   = recent_sweep.get("liq_usd", 0) or 0
+        _rs_llbl   = recent_sweep.get("liq_label", "$0")
+        _rs_dir_ok = (is_bullish and "low" in _rs_stype) or (is_bearish and "high" in _rs_stype)
+        _rs_rct_ok = _rs_react in ("reclaimed", "rejected")
+        _rs_liq_ok = _rs_liqu >= 50_000
+        if _rs_dir_ok and _rs_rct_ok and _rs_liq_ok:
+            _sweep_sr_status = "confirm"
+            _sweep_sr_value  = _sweep_lbl
+            _sweep_sr_note   = f"{_sweep_lbl} | {_rs_llbl} rekt — confirms setup bias."
+        elif _rs_dir_ok and _rs_rct_ok:
+            _sweep_sr_status = "watch"
+            _sweep_sr_value  = _sweep_lbl
+            _sweep_sr_note   = (
+                f"{_sweep_lbl} | Liq {_rs_llbl} — reaction OK but rekt too small to confirm."
+            )
+        elif not _rs_dir_ok:
+            _sweep_sr_status = "conflict"
+            _sweep_sr_value  = "Sweep without meaningful rekt"
+            _sweep_sr_note   = (
+                f"{recent_sweep.get('sweep_type','—')} — does not confirm setup bias; "
+                f"liq={_rs_llbl}."
+            )
+        else:
+            _sweep_sr_status = "neutral"
+            _sweep_sr_value  = _sweep_lbl
+            _sweep_sr_note   = f"{_sweep_lbl} | No confirming reaction."
+    else:
+        _sweep_sr_status = "neutral"
+        _sweep_sr_value  = "No recent sweep"
+        _sweep_sr_note   = "No sweep event in last 4h."
+
+    _risk_lbl  = "Low" if score >= 75 else "Medium" if score >= 40 else "High"
+
+    # Data quality — age-based thresholds, not source_status string
+    if snap_age_sec is None or not recent_snap:
+        _dq_lbl = "unavailable"
+    elif snap_age_sec < 60:
+        _dq_lbl = "fresh"
+    elif snap_age_sec < 300:
+        _dq_lbl = "acceptable"
+    elif snap_age_sec < 900:
+        _dq_lbl = "stale"
+        source_warnings.append(
+            f"Latest OF snapshot is {int(snap_age_sec)}s old (stale); "
+            "refresh orderflow before trusting verdict."
+        )
+    else:
+        _dq_lbl = "very_stale"
+        source_warnings.append(
+            f"Latest OF snapshot is {int(snap_age_sec)}s old (very stale); "
+            "data may be significantly outdated."
+        )
+
+    # Top-level freshness status (separate from _critical_missing / verdict)
+    if snap_age_sec is None or not recent_snap:
+        _freshness_status = "collecting" if _critical_missing else "ready"
+    elif snap_age_sec < 300:
+        _freshness_status = "ready"
+    elif snap_age_sec < 900:
+        _freshness_status = "stale"
+    else:
+        _freshness_status = "needs_fresh_orderflow"
+
+    existing_table_values = {
+        "confirmation_checklist": {
+            "setup_validity": {
+                "label":  "Bias Shift Status",
+                "value":  verdict_label,
+                "status": (
+                    "confirm" if score >= 75 else
+                    "watch"   if score >= 40 else
+                    "caution" if score >= 20 else "invalid"
+                ),
+                "note": manual_read[:140],
+            },
+            "orderflow_agreement": {
+                "label":  "Orderflow Agreement",
+                "value":  _of_label,
+                "status": (
+                    "needs_refresh" if _dq_lbl in ("stale", "very_stale")
+                    else _of_status
+                ),
+                "note": (
+                    f"Phase 10.9E source is {_dq_lbl} "
+                    f"(~{round((snap_age_sec or 0)/3600, 1)}h old). "
+                    "Refresh orderflow before trusting verdict."
+                    if _dq_lbl in ("stale", "very_stale")
+                    else f"Phase 10.9E: {of_status} on {len(_tf_directions)} TFs."
+                ),
+            },
+            "sweep_rekt_confirmation": {
+                "label":  "Sweep + Rekt",
+                "value":  _sweep_sr_value,
+                "status": _sweep_sr_status,
+                "note":   _sweep_sr_note,
+            },
+            "invalidation_risk": {
+                "label":  "Invalidation Risk",
+                "value":  _risk_lbl,
+                "status": "confirm" if score >= 75 else "caution" if score >= 40 else "invalid",
+                "note":   (
+                    f"{len(negative_reasons)} negative signal(s) active."
+                    if negative_reasons else "No major negative signals."
+                ),
+            },
+        },
+        "event_timeline": {
+            "latest_bias_event": f"Phase 10.9F: {verdict_label}",
+            "latest_flow_event": (
+                f"Delta Δ={delta_net} TP={tp_str}" if delta_net is not None
+                else "Delta not yet available"
+            ),
+            "latest_sweep":  _sweep_lbl,
+            "latest_warning": source_warnings[0] if source_warnings else None,
+        },
+        "data_health_context": {
+            "manual_read":      manual_read,
+            "data_quality":     _dq_lbl,
+            "analysis_source":  analysis_source,
+            "snapshot_age_sec": snap_age_sec,
+        },
+        "ai_context": {
+            "bias_shift_label":  verdict_label,
+            "score":             score,
+            "manual_read":       manual_read,
+            "direction":         raw_dir,
+            "analysis_source":   analysis_source,
+            "context_only":      True,
+            "no_entry_candidate": True,
+        },
+    }
+
+    return {
+        "phase":               "phase10_9f_bias_shift_values",
+        "context_only":        True,
+        "no_entry_candidate":  True,
+        "symbol":              symbol,
+        "item_id":             item_id,
+        "analysis_source":     analysis_source,
+        "setup_source":        "bias_shift",
+        "setup_category":      setup_cat,
+        "direction":           raw_dir,
+        "status":              "collecting" if _critical_missing else _freshness_status,
+        "bias_shift_verdict":  verdict,
+        "bias_shift_label":    verdict_label,
+        "score":               score,
+        "manual_read":         manual_read,
+        "sources_used":        ob_wall.get("sources_used") or recent_snap.get("sources_used") or [],
+        "sources_skipped":     ob_wall.get("sources_skipped") or recent_snap.get("sources_skipped") or [],
+        "snapshot_age_sec":    snap_age_sec,
+        "existing_table_values": existing_table_values,
+        "evidence": {
+            "orderflow": {
+                "status":         of_status,
+                "analysis_source": of_src,
+                "tf_count":       len(_tf_directions),
+                "tf_directions":  _tf_directions,
+            },
+            "delta": {
+                "delta_net":      delta_net,
+                "delta_pct":      recent_snap.get("delta_pct"),
+                "taker_pressure": tp_str,
+            },
+            "ob_wall": {
+                "ok":          ob_ok,
+                "bid_count":   len(ob_bids),
+                "ask_count":   len(ob_asks),
+                "nearest_bid": ob_bids[0] if ob_bids else None,
+                "nearest_ask": ob_asks[0] if ob_asks else None,
+            },
+            "sweep_rekt": {
+                "ok":           sweep_ok,
+                "event_count":  len(sweep_events),
+                "latest_event": recent_sweep,
+            },
+            "funding_crowd": {
+                "funding_rate":     funding,
+                "long_short_ratio": ls_ratio,
+                "oi_change_pct":    oi_chg_pct,
+            },
+            "zone": {
+                "zone_high":    zone_high,
+                "zone_low":     zone_low,
+                "current_price": current_price,
+            },
+        },
+        "positive_reasons":  positive_reasons,
+        "negative_reasons":  negative_reasons,
+        "missing_reasons":   missing_reasons,
+        "warnings":          source_warnings,
+        "computed_at":       int(now_s),
+    }
+
+
+def _lm_save_phase10_9f_values(uid: int, item_id: int, values: dict) -> bool:
+    """Persist Phase 10.9F values into snapshot_json without overwriting 10.9E data."""
+    try:
+        from models import db as _db9f, LiveMonitorItem as _LMI9f
+        row = _LMI9f.query.filter_by(id=item_id, user_id=uid).first()
+        if not row:
+            return False
+        snap = _json_loads_safe(row.snapshot_json, {})
+        snap["phase10_9f_bias_shift_values"] = values
+        row.snapshot_json = _json_dumps_safe(snap)
+        _db9f.session.commit()
+        return True
+    except Exception as _e9f:
+        print(f"[10.9F] save error item={item_id}: {_e9f}")
+        return False
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/phase10-9f/debug",
+           methods=["GET"])
+@login_required
+def api_lm_phase10_9f_debug(item_id):
+    """Phase 10.9F: build + optionally store Bias Shift evidence/value object.
+
+    No AI call. No trading. No entry signals. No Entry Candidate.
+    No UI changes — backend evidence object only.
+    Query params:
+      analysis_source   — override source (default: from item config)
+      force_refresh=1   — recompute and persist to snapshot_json
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"ok": False, "error": "auth"}), 401
+
+    from models import LiveMonitorItem as _LMI9f_ep
+    row = _LMI9f_ep.query.get(item_id)
+    if not row or row.user_id != uid:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    if not _lm_is_bias_shift_item(row):
+        return jsonify({"ok": False, "error": "not a bias shift item",
+                        "setup_category": _lm_setup_category(row)}), 400
+
+    snap_raw       = _json_loads_safe(row.snapshot_json, {})
+    _req_src       = (
+        request.args.get("analysis_source") or
+        request.args.get("exchange") or ""
+    ).strip().lower() or None
+    src_cfg        = _lm_analysis_source_config(row, snap_raw, selected_source=_req_src)
+    analysis_source = src_cfg["analysis_source"]
+    force_refresh  = request.args.get("force_refresh", "0").strip() == "1"
+
+    values  = _lm_build_phase10_9f_bias_shift_values(row, analysis_source=analysis_source)
+
+    stored = False
+    if force_refresh:
+        stored = _lm_save_phase10_9f_values(uid, item_id, values)
+
+    of_align_src  = (snap_raw.get("orderflow_alignment", {}).get("analysis_source") or "").lower()
+    source_mismatch = bool(of_align_src and of_align_src != analysis_source)
+
+    return jsonify({
+        "ok":                           True,
+        "item_id":                      item_id,
+        "symbol":                       row.symbol,
+        "analysis_source":              analysis_source,
+        "source_mismatch":              source_mismatch,
+        "context_only":                 True,
+        "no_entry_candidate":           True,
+        "stored":                       stored,
+        "phase10_9f_bias_shift_values": values,
     })
 
 
@@ -25768,6 +26908,180 @@ def _lm_inject_parent_price_rows(symbol: str, parent_exchange: str,
     return new_rows
 
 
+@app.route("/api/live-monitor/liquidations/debug", methods=["GET"])
+@login_required
+def api_lm_liq_debug():
+    """Debug endpoint: inspect liquidation WS state and cache for a symbol.
+    Read-only. Does not affect trading, safety gates, or any execution path.
+
+    connected = WS thread is alive AND has successfully connected at least once.
+    Events in cache can be 0 even when connected (no liquidations happened yet).
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    symbol      = (request.args.get("symbol")   or "").upper().strip()
+    exchange    = (request.args.get("exchange") or "aggregated").lower().strip()
+    try:
+        lookback_min = int(request.args.get("lookback_min") or 240)
+    except ValueError:
+        lookback_min = 240
+
+    if not symbol:
+        return jsonify({"error": "symbol_required"}), 400
+
+    now_s    = time.time()
+    cutoff_s = now_s - lookback_min * 60.0
+
+    # ── Env var / enablement state ────────────────────────────────────────────
+    _bin_ws_enabled = os.environ.get("ZYNI_LM_WS_ENABLED") == "1"
+    _mx_ws_enabled  = _LM_MX_WS_ENABLED
+
+    def _fmt_age(ts):
+        if ts is None:
+            return None
+        diff = now_s - ts
+        if diff < 60:   return f"{int(diff)}s ago"
+        if diff < 3600: return f"{int(diff/60)}m ago"
+        return f"{diff/3600:.1f}h ago"
+
+    def _exch_info(exch_name: str, raw_events, ws_state: dict,
+                   thread_obj, enabled: bool, not_impl: bool = False) -> dict:
+        if not_impl:
+            return {
+                "enabled": False, "ws_enabled_env": False,
+                "ws_thread_started": False, "connected": False,
+                "events_seen": 0, "events_in_lookback": 0,
+                "latest_event_time": None, "latest_event": None,
+                "reason_if_empty": "adapter_not_implemented",
+            }
+
+        thread_alive = bool(thread_obj and thread_obj.is_alive())
+        # Binance seeds the cache entry on WS connect; Bybit/OKX don't seed.
+        cache_seeded = (exch_name == "binance" and bool(raw_events is not None))
+
+        # connected = thread is alive AND has produced a last_connected_at timestamp
+        connected = thread_alive and (ws_state.get("last_connected_at") is not None)
+
+        in_lb  = [e for e in raw_events if e[0] >= cutoff_s] if raw_events else []
+        latest = max(raw_events, key=lambda e: e[0]) if raw_events else None
+
+        if not enabled:
+            reason = (
+                "ZYNI_LM_WS_ENABLED not set to 1"
+                if exch_name == "binance"
+                else "ZYNI_LM_MULTI_EXCHANGE_WS_ENABLED not set to 1"
+            )
+        elif not thread_alive:
+            reason = "thread_not_running"
+        elif not connected:
+            reason = "thread_running_but_not_yet_connected"
+        elif not raw_events:
+            reason = "connected_no_events_yet"
+        elif not in_lb:
+            reason = "no_events_in_lookback_window"
+        else:
+            reason = None
+
+        return {
+            "enabled":           enabled,
+            "ws_enabled_env":    enabled,
+            "ws_thread_started": thread_alive,
+            "connected":         connected,
+            "events_seen":       len(raw_events) if raw_events else 0,
+            "events_in_lookback": len(in_lb),
+            "latest_event_time": int(latest[0] * 1000) if latest else None,
+            "latest_event":      {
+                "ts_ms": int(latest[0] * 1000),
+                "side":  latest[1],
+                "usd":   round(latest[2]),
+                "age":   _fmt_age(latest[0]),
+            } if latest else None,
+            "reason_if_empty":   reason,
+            "ws_state": {
+                "thread_started_at":    _fmt_age(ws_state.get("thread_started_at")),
+                "last_connect_attempt": _fmt_age(ws_state.get("last_connect_attempt")),
+                "last_connected_at":    _fmt_age(ws_state.get("last_connected_at")),
+                "last_message_at":      _fmt_age(ws_state.get("last_message_at")),
+                "last_error":           ws_state.get("last_error"),
+                "subscribed_symbols_count":  len(ws_state.get("subscribed_symbols") or []),
+                "subscribed_symbols_sample": (ws_state.get("subscribed_symbols") or [])[:5],
+            },
+        }
+
+    # ── Read caches ───────────────────────────────────────────────────────────
+    _bin_key = f"binance:{symbol}"
+    with _lm_liq_lock:
+        _bin_entry = dict(_lm_liq_cache.get(_bin_key) or {})
+    _bin_raw  = list(_bin_entry.get("events") or [])    # 4-tuples (ts, side, usd, price)
+    _bin_norm = [(e[0], e[1], e[2]) for e in _bin_raw]
+
+    _bybit_key = f"bybit:{symbol}"
+    with _lm_mx_liq_lock:
+        _bybit_entry = dict(_lm_mx_liq.get(_bybit_key) or {})
+    _bybit_raw = list(_bybit_entry.get("events") or [])  # 3-tuples
+
+    _okx_key = f"okx:{symbol}"
+    with _lm_mx_liq_lock:
+        _okx_entry = dict(_lm_mx_liq.get(_okx_key) or {})
+    _okx_raw = list(_okx_entry.get("events") or [])      # 3-tuples
+
+    sources_info = {
+        "binance": _exch_info(
+            "binance", _bin_norm, _lm_liq_ws_state,
+            _lm_liq_thread, _bin_ws_enabled,
+        ),
+        "bybit": _exch_info(
+            "bybit", _bybit_raw, _lm_mx_ws_state.get("bybit", {}),
+            _lm_mx_threads.get("bybit"), _mx_ws_enabled,
+        ),
+        "okx": _exch_info(
+            "okx", _okx_raw, _lm_mx_ws_state.get("okx", {}),
+            _lm_mx_threads.get("okx"), _mx_ws_enabled,
+        ),
+        "mexc": _exch_info("mexc", [], {}, None, False, not_impl=True),
+    }
+
+    # ── Aggregate for lookback totals ────────────────────────────────────────
+    all_events: list = []
+    if exchange in ("aggregated", "binance"):
+        all_events.extend(_bin_norm)
+    if exchange in ("aggregated", "bybit"):
+        all_events.extend(_bybit_raw)
+    if exchange in ("aggregated", "okx"):
+        all_events.extend(_okx_raw)
+
+    in_lb        = [e for e in all_events if e[0] >= cutoff_s]
+    total_long   = sum(e[2] for e in in_lb if e[1] == "long")
+    total_short  = sum(e[2] for e in in_lb if e[1] == "short")
+    latest_events = sorted(in_lb, key=lambda e: e[0], reverse=True)[:10]
+
+    return jsonify({
+        "ok":           True,
+        "symbol":       symbol,
+        "exchange":     exchange,
+        "lookback_min": lookback_min,
+        "env_vars": {
+            "ZYNI_LM_WS_ENABLED":                  _bin_ws_enabled,
+            "ZYNI_LM_MULTI_EXCHANGE_WS_ENABLED":   _mx_ws_enabled,
+        },
+        "sources":      sources_info,
+        "total_events_in_lookback": len(in_lb),
+        "total_long_liq_usd":  round(total_long),
+        "total_short_liq_usd": round(total_short),
+        "latest_events": [
+            {
+                "ts_ms": int(e[0] * 1000),
+                "side":  e[1],
+                "usd":   round(e[2]),
+                "age_s": round(now_s - e[0], 1),
+            }
+            for e in latest_events
+        ],
+    })
+
+
 @app.route("/api/live-monitor/data-health", methods=["GET"])
 @login_required
 def api_lm_data_health():
@@ -25832,7 +27146,21 @@ def api_lm_data_health():
     ctx["price_source_exchange"] = parent_exchange
     ctx["market_context_source"] = exchange
 
-    return jsonify({"ok": True, "build_commit": _BUILD_COMMIT, **ctx})
+    # Build structured panels (non-blocking; errors return ok=False)
+    try:
+        _ob_wall = _lm_build_ob_wall_map(symbol, exchange)
+    except Exception as _e:
+        _ob_wall = {"ok": False, "status": "error", "bids": [], "asks": [], "summary": {},
+                    "message": str(_e)[:120]}
+    try:
+        _sweep_rekt = _lm_build_sweep_rekt_map(symbol, exchange)
+    except Exception as _e:
+        _sweep_rekt = {"ok": False, "status": "error", "events": [], "message": str(_e)[:120]}
+
+    return jsonify({"ok": True, "build_commit": _BUILD_COMMIT,
+                    "order_book_wall_map": _ob_wall,
+                    "sweep_rekt_map": _sweep_rekt,
+                    **ctx})
 
 
 @app.route("/api/live-monitor/price", methods=["GET"])

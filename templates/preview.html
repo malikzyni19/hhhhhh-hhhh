@@ -524,6 +524,99 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
 .pp-row-actions{display:flex;gap:6px;flex-wrap:wrap}
 .pp-row-actions .btn{padding:5px 10px;font-size:11px}
 
+/* ───── Custom dropdown system (Round 19 — Task 5) ─────
+   Native <select> elements are replaced by .cdd wrappers. The wrapper
+   exposes the same .value getter/setter and dispatches 'change' so
+   existing scan-payload / Live Monitor / Settings code keeps working. */
+.cdd{position:relative;display:inline-flex;font-size:12px;color:var(--text);outline:none}
+.cdd-btn{display:inline-flex;align-items:center;gap:6px;background:var(--bg-card-2);
+  border:1px solid var(--border);color:var(--text);border-radius:6px;padding:5px 10px;
+  font-family:inherit;font-size:inherit;cursor:pointer;line-height:1.2;min-width:80px;
+  transition:border-color .15s,background .15s}
+.cdd-btn:hover{border-color:var(--border-2)}
+.cdd:focus .cdd-btn,.cdd.cdd-open .cdd-btn{border-color:var(--accent);outline:none}
+.cdd-val{flex:1;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cdd-chev{font-size:8px;color:var(--text-3);transition:transform .15s;flex:0 0 auto;margin-left:4px}
+.cdd.cdd-open .cdd-chev{transform:rotate(180deg);color:var(--accent)}
+.cdd-list{position:absolute;left:0;top:100%;margin-top:4px;min-width:100%;
+  background:var(--bg-card);border:1px solid var(--border-2);border-radius:7px;
+  box-shadow:0 8px 24px rgba(0,0,0,.45);padding:4px 0;z-index:600;max-height:280px;
+  overflow-y:auto;white-space:nowrap}
+.cdd-list[hidden]{display:none}
+.cdd.cdd-open-up .cdd-list{top:auto;bottom:100%;margin-top:0;margin-bottom:4px}
+.cdd-opt{padding:7px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;
+  color:var(--text-2);font-size:12px;line-height:1.3}
+.cdd-opt:hover,.cdd-opt.cdd-active{background:rgba(34,211,238,.08);color:var(--text)}
+.cdd-opt.on{color:var(--accent);font-weight:600}
+.cdd-opt.cdd-disabled{opacity:.45;cursor:not-allowed;color:var(--text-3)}
+.cdd-opt.cdd-disabled:hover{background:transparent}
+.cdd-opt.on::before{content:"✓";font-size:11px;width:10px;flex:0 0 auto}
+.cdd-opt:not(.on)::before{content:"";width:10px;flex:0 0 auto}
+.cdd-opt-help{display:block;font-size:10.5px;color:var(--text-3);font-weight:400;
+  margin-top:2px;white-space:normal;max-width:280px;line-height:1.4}
+
+/* Inline tab control overrides — keep matching size */
+.tc-field .cdd,.tc-check .cdd{display:flex;width:100%}
+.tc-field .cdd-btn{padding:4px 8px;width:100%;font-size:11px}
+
+/* Make the LM topbar selects look the same as their old siblings */
+.lm-manual-row .cdd-btn{padding:7px 9px;font-size:12px}
+
+/* ───── Tutorial intro modal (Round 19 — Task 1) ───── */
+.tut-intro-bd{position:fixed;inset:0;background:rgba(2,8,16,.78);z-index:7900;
+  display:flex;align-items:center;justify-content:center;padding:20px}
+.tut-intro-bd[hidden]{display:none}
+.tut-intro-card{background:var(--bg-card);border:1px solid var(--border-2);
+  border-radius:14px;padding:22px 26px;width:420px;max-width:96vw;
+  box-shadow:0 18px 50px rgba(0,0,0,.6);color:var(--text);text-align:center}
+.tut-intro-ico{width:46px;height:46px;border-radius:50%;background:rgba(34,211,238,.12);
+  border:1px solid rgba(34,211,238,.35);display:flex;align-items:center;justify-content:center;
+  margin:0 auto 12px;color:var(--accent)}
+.tut-intro-ico svg{width:22px;height:22px;stroke-width:2;fill:none;stroke:currentColor}
+.tut-intro-t{font-size:17px;font-weight:700;letter-spacing:.2px;margin-bottom:6px}
+.tut-intro-s{font-size:13px;color:var(--text-3);line-height:1.55;margin-bottom:18px}
+.tut-intro-never{display:flex;align-items:center;justify-content:center;gap:8px;
+  font-size:12px;color:var(--text-3);margin-bottom:16px;cursor:pointer;user-select:none}
+.tut-intro-never input{width:14px;height:14px;accent-color:var(--accent);cursor:pointer}
+.tut-intro-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+.tut-intro-actions .btn{padding:8px 18px;font-size:13px}
+
+/* ───── Tutorial-open background lock (Round 19 — Task 2) ───── */
+body.tutorial-open{overflow:hidden}
+/* Hide-from-pointer mask sits behind the tutorial card and absorbs clicks
+   on the background. The active highlighted target sits ABOVE it (via
+   .tut-highlight z-index 401) so the visual rect is still visible but
+   the rest of the page is locked. */
+.tut-lock{position:fixed;inset:0;z-index:399;background:transparent;
+  pointer-events:auto;display:none}
+body.tutorial-open .tut-lock{display:block}
+body.tutorial-open .tut-overlay{pointer-events:none}
+
+/* Per-step interactive carve-out: when the step requires interacting
+   with a real target (e.g. opening a dropdown), the highlighted target
+   stays clickable. Otherwise it's a visual-only ring. */
+body.tutorial-open .tut-highlight{pointer-events:none}
+body.tutorial-open .tut-highlight *{pointer-events:none}
+body.tutorial-open .tut-highlight.tut-interactive{pointer-events:auto}
+body.tutorial-open .tut-highlight.tut-interactive *{pointer-events:auto}
+
+/* ───── Tutorial card mobile / centered fallback (Round 19 — Task 3) ───── */
+.tut-card.tut-card-centered{left:50% !important;top:50% !important;
+  transform:translate(-50%,-50%) !important}
+.tut-card.tut-card-bottom{left:50% !important;top:auto !important;bottom:14px !important;
+  transform:translateX(-50%) !important;width:96vw;max-width:520px}
+.tut-card .tut-actions{flex-wrap:wrap;justify-content:flex-end}
+.tut-card .tut-actions .btn{flex:0 0 auto}
+.tut-card .tut-opts{margin:8px 0 12px;display:none;flex-direction:column;gap:6px;
+  max-height:260px;overflow-y:auto;padding-right:4px}
+.tut-card .tut-opts.on{display:flex}
+.tut-card .tut-opt{padding:8px 10px;border:1px solid var(--border);border-radius:7px;
+  background:rgba(34,211,238,.04);font-size:12px;color:var(--text-2);line-height:1.45}
+.tut-card .tut-opt b{color:var(--accent);font-weight:700;display:block;margin-bottom:2px;font-size:11.5px;letter-spacing:.3px}
+.tut-card .tut-hint{font-size:11.5px;color:var(--accent);font-weight:600;margin:8px 0 4px;
+  letter-spacing:.2px}
+.tut-card .tut-actions .btn:disabled{opacity:.45;cursor:not-allowed}
+
 /* Tutorial overlay (Queue 16) */
 /* Tutorial overlay (Task 7 rework).
    - .tut-overlay has NO z-index so it isn't a stacking context.
@@ -1245,6 +1338,47 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
   .mc-page.mc-summary::after{content:"› insight";position:absolute;right:10px;top:12px;
     font-size:9.5px;font-weight:700;letter-spacing:.6px;color:var(--accent);opacity:.7}
 }
+/* ── Data Health professional table (Phase 10.7) ── */
+.lm-dh-section td{background:rgba(34,211,238,.08)!important;color:#22d3ee;font-weight:900;text-transform:uppercase;letter-spacing:.08em;font-size:10px}
+.lm-dh-metric{color:#dbeafe;font-weight:700;white-space:nowrap}
+.lm-dh-value{color:#e5f3ff;font-weight:700}
+.lm-dh-source{font-size:11px;color:#91a6ba}
+.lm-dh-notes{font-size:11px;line-height:1.45;color:#9eb3c7;white-space:normal;max-width:220px}
+.lm-dh-mini{display:block;color:#71869b;font-size:10px;margin-top:2px;font-weight:400}
+.lm-dh-click{cursor:pointer}
+.lm-dh-click:hover td{background:rgba(34,211,238,.04)!important}
+.lm-dh-exp{display:inline-flex;width:17px;height:17px;align-items:center;justify-content:center;border:1px solid rgba(34,211,238,.45);border-radius:5px;color:#22d3ee;margin-left:7px;font-style:normal;vertical-align:middle}
+.lm-dh-expand-row td{padding:0!important;background:#06111f}
+.lm-dh-panel{display:none;padding:13px;background:#06111f;border-top:1px solid rgba(34,211,238,.2)}
+.lm-dh-panel.lm-dh-open{display:block}
+.lm-dh-panel-top{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.lm-dh-ptitle{color:#22d3ee;font-weight:900;text-transform:uppercase;letter-spacing:.07em;font-size:11px}
+.lm-dh-lab{color:#91a6ba;font-size:11px}
+.lm-dh-sel{background:#07101c;color:#dbeafe;border:1px solid rgba(34,211,238,.38);border-radius:8px;padding:6px 9px;font-weight:700;font-size:11px}
+.lm-dh-summary{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:10px}
+.lm-dh-stat{border:1px solid rgba(148,163,184,.12);border-radius:10px;background:rgba(15,27,43,.82);padding:9px}
+.lm-dh-stat .k{color:#71869b;font-size:10px;text-transform:uppercase}
+.lm-dh-stat .v{font-size:13px;font-weight:900;margin-top:4px;color:#e5f3ff}
+.lm-dh-cols{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.lm-dh-side{border:1px solid rgba(34,211,238,.2);border-radius:12px;overflow:hidden;background:rgba(0,0,0,.15)}
+.lm-dh-side-head{display:flex;justify-content:space-between;align-items:center;padding:9px 10px;background:rgba(34,211,238,.06)}
+.lm-dh-side-title{font-weight:900;text-transform:uppercase;letter-spacing:.07em;font-size:11px}
+.lm-dh-scroll{max-height:360px;overflow:auto}
+.lm-dh-inner{min-width:680px}
+.lm-dh-bar{width:92px;height:8px;border-radius:999px;background:rgba(148,163,184,.16);overflow:hidden}
+.lm-dh-fill-bid{height:100%;border-radius:999px;background:linear-gradient(90deg,rgba(34,197,94,.35),#22c55e)}
+.lm-dh-fill-ask{height:100%;border-radius:999px;background:linear-gradient(90deg,rgba(239,68,68,.35),#ef4444)}
+.lm-dh-empty{padding:18px;color:#9eb3c7;text-align:center}
+.lm-dh-badge{display:inline-block;border-radius:999px;padding:3px 7px;font-size:10px;font-weight:900}
+.lm-dh-b-green{color:#22c55e;border:1px solid rgba(34,197,94,.35);background:rgba(34,197,94,.12)}
+.lm-dh-b-red{color:#ef4444;border:1px solid rgba(239,68,68,.35);background:rgba(239,68,68,.12)}
+.lm-dh-b-yellow{color:#f59e0b;border:1px solid rgba(245,158,11,.35);background:rgba(245,158,11,.12)}
+.lm-dh-b-cyan{color:#22d3ee;border:1px solid rgba(34,211,238,.35);background:rgba(34,211,238,.10)}
+.lm-dh-green{color:#22c55e!important}
+.lm-dh-red{color:#ef4444!important}
+.lm-dh-yellow{color:#f59e0b!important}
+#lmDhBody .lm-dh-tbl th{background:#0a1422;color:#8294aa;text-transform:uppercase;font-size:10px;letter-spacing:.08em}
+#lmDhBody .lm-dh-tbl td{color:#a9bdd2;white-space:normal;vertical-align:top}
 </style>
 </head>
 <body>
@@ -1453,7 +1587,26 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       </div>
     </aside>
 
-    <!-- Tutorial overlay (Queue 16) -->
+    <!-- Tutorial intro modal (Round 19 — Task 1) -->
+    <div id="tutIntro" class="tut-intro-bd" hidden role="dialog" aria-modal="true">
+      <div class="tut-intro-card">
+        <div class="tut-intro-ico" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M9 11l3 3 7-7"/><path d="M21 12a9 9 0 1 1-3-6.7"/></svg>
+        </div>
+        <div class="tut-intro-t">Quick tutorial?</div>
+        <div class="tut-intro-s">Want a quick tutorial to use this next-gen screener properly?</div>
+        <label class="tut-intro-never"><input type="checkbox" id="tutIntroNever"><span>Do not show again</span></label>
+        <div class="tut-intro-actions">
+          <button class="btn" id="tutIntroNo" type="button">No, not now</button>
+          <button class="btn btn-primary" id="tutIntroYes" type="button">Yes, show tutorial</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Background lock (Task 2) — absorbs pointer events while tutorial is open -->
+    <div id="tutLock" class="tut-lock" aria-hidden="true"></div>
+
+    <!-- Tutorial overlay (Queue 16 + Round 19 rework) -->
     <div id="tutOverlay" class="tut-overlay" hidden>
       <div class="tut-mask" id="tutMask"></div>
       <div class="tut-spot" id="tutSpot"></div>
@@ -1461,7 +1614,9 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
         <div class="tut-step" id="tutStep">1 / 1</div>
         <div class="tut-title" id="tutTitle">—</div>
         <div class="tut-text" id="tutText">—</div>
-        <label class="tut-never"><input type="checkbox" id="tutNever"><span>Never show again</span></label>
+        <div class="tut-hint" id="tutHint" hidden></div>
+        <div class="tut-opts" id="tutOpts"></div>
+        <label class="tut-never"><input type="checkbox" id="tutNever"><span>Do not show again</span></label>
         <div class="tut-actions">
           <button class="btn" id="tutBack" type="button">Back</button>
           <button class="btn" id="tutSkip" type="button">Skip</button>
@@ -4473,6 +4628,8 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
   var _lmLastKnownPrices={};        // {symbol: {live_price, mark_price, ts}} — stale fallback
   var _lmPendingDhData=null;        // {rows, meta} — DH rows queued until DOM card is ready
   var _lmActivePollKey=null;        // "itemId:symbol:ts" — invalidates stale async responses
+  var _lmDhObRaw=null;              // latest order_book_wall_map from data-health API
+  var _lmDhLiqRaw=null;             // latest sweep_rekt_map from data-health API
   var _lmObDaDefaults = {
     "5m":  {distance_pct:0.50, approach_pct:0.15},
     "15m": {distance_pct:0.80, approach_pct:0.25},
@@ -5273,7 +5430,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     fetch('/api/live-monitor/items/'+itemId+'/bias-orderflow/refresh',{
       method:'POST',credentials:'same-origin',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({collect_now:collectNow!==false})
+      body:JSON.stringify({collect_now:collectNow!==false,analysis_source:_lmGetDataSrc()||'binance'})
     }).then(function(r){return r.json();}).then(function(data){
       if(!data.ok) return;
       if(_lmSelItem&&_lmSelItem.id===itemId){
@@ -6298,7 +6455,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
           '<span id="lmDhSrcLabel" style="font-size:9px;color:var(--text-3);margin-left:6px"></span>'+
           '<span id="lmDhCtl" style="font-size:9px;color:var(--text-3);margin-left:auto">▾ collapse</span>'+
         '</div>'+
-        '<div id="lmDhBody" style="display:block!important;visibility:visible!important;opacity:1!important;height:auto!important;max-height:none!important;overflow-y:visible!important;overflow-x:auto!important;max-width:100%!important;box-sizing:border-box!important;-webkit-overflow-scrolling:touch!important">'+
+        '<div id="lmDhBody" style="display:block!important;visibility:visible!important;opacity:1!important;height:620px!important;max-height:620px!important;min-height:460px!important;overflow-y:auto!important;overflow-x:auto!important;max-width:100%!important;box-sizing:border-box!important;-webkit-overflow-scrolling:touch!important">'+
           '<div id="lmDhStatusLine" style="font-size:10px;color:#22d3ee;padding:6px 8px;border-bottom:1px solid rgba(34,211,238,.18)">Data Health active · waiting for rows…</div>'+
           '<table class="lm-dh-tbl" style="width:100%;min-width:900px">'+
             '<thead><tr><th>Metric</th><th>Value</th><th>Source</th><th>Status</th><th>Updated</th><th>Notes</th></tr></thead>'+
@@ -7225,6 +7382,14 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       if(d&&d.ok&&Array.isArray(d.rows)){
         if(d.price_source_exchange) _lmPriceExchange=d.price_source_exchange;
         console.log("[LM-DH] rows="+d.rows.length+" sym="+symbol+" analysis="+exchange+(d.price_source_exchange&&d.price_source_exchange!==exchange?" price_from="+d.price_source_exchange:"")+(d.build_commit?" build="+d.build_commit:""));
+        // Store per-key so symbol change doesn't leave stale data
+        window._lmDhStructByKey=window._lmDhStructByKey||{};
+        var _dhKey=String(itemId||symbol||"default");
+        window._lmDhStructByKey[_dhKey]={order_book_wall_map:d.order_book_wall_map||null,sweep_rekt_map:d.sweep_rekt_map||null,symbol:symbol,itemId:itemId,fetchedAt:Date.now()};
+        // Always set globals immediately before render so render functions see current data
+        _lmDhObRaw=d.order_book_wall_map||null;
+        _lmDhLiqRaw=d.sweep_rekt_map||null;
+        console.log("[LM-DH-STRUCT] ob=",_lmDhObRaw&&_lmDhObRaw.ok,"bids=",_lmDhObRaw&&(_lmDhObRaw.bids||[]).length,"asks=",_lmDhObRaw&&(_lmDhObRaw.asks||[]).length,"liq=",_lmDhLiqRaw&&_lmDhLiqRaw.ok);
         var meta={sources_used:d.sources_used,sources_skipped:d.sources_skipped};
         _lmRenderDataHealth(d.rows,meta,symbol,itemId,pollKey);
         _lmUpdateLivePriceFromRows(d.rows,d.price_source_exchange||exchange,symbol,itemId,pollKey);
@@ -7302,35 +7467,378 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       else { console.log("[LM-DH] tbody missing and no table — cannot render"); return; }
     }
     if(!rows||!rows.length){ tbody.innerHTML=""; return; }
-    // Phase 10.7: show sources_used/sources_skipped header when aggregated
-    var headerHtml="";
-    if(meta&&(meta.sources_used||meta.sources_skipped)){
-      var used=(meta.sources_used||[]).map(function(s){return s.charAt(0).toUpperCase()+s.slice(1);}).join(", ")||"—";
-      var skip=(meta.sources_skipped||[]).map(function(s){return s.charAt(0).toUpperCase()+s.slice(1);}).join(", ")||"none";
-      headerHtml="<tr class='lm-dh-src-row' style='font-size:9px;opacity:0.7'>"+
-        "<td colspan='6' style='padding:2px 4px'>"+
-          "Sources used: <b>"+esc(used)+"</b>"+(skip&&skip!=="none"?" &nbsp;|&nbsp; Skipped: <span style='color:var(--warn,#f59e0b)'>"+esc(skip)+"</span>":"")+" &nbsp;<span style='opacity:0.6'>(analysis only — setup levels unchanged)</span>"+
-        "</td>"+
-      "</tr>";
+    // Build row map and render sectioned professional DH table
+    var rowMap={};
+    for(var _ri=0;_ri<rows.length;_ri++){ rowMap[rows[_ri].metric]=rows[_ri]; }
+    var sym=symbol||(_lmSelItem&&_lmSelItem.symbol)||"x";
+    var uid=sym.replace(/[^a-zA-Z0-9]/g,"");
+    function _bc(st){ if(st==="fresh") return "lm-dh-b-green"; if(st==="blocked"||st==="unavailable") return "lm-dh-b-red"; if(st==="partial"||st==="mixed") return "lm-dh-b-cyan"; return "lm-dh-b-yellow"; }
+    function _sl(st){ if(!st||st==="—") return "—"; if(st==="fallback_fresh") return "fallback"; if(st==="fallback_stale") return "fallback(stale)"; return st; }
+    function _sec(label){ return "<tr class='lm-dh-section'><td colspan='6'>"+label+"</td></tr>"; }
+    function _row(r,valHtmlOvr,notesOvr){
+      var st=r.status||"—";
+      var val=valHtmlOvr!==undefined?valHtmlOvr:esc(r.value||"—");
+      var notes=notesOvr!==undefined?notesOvr:esc(r.notes||"—");
+      return "<tr><td class='lm-dh-metric'>"+esc(r.metric||"—")+"</td><td class='lm-dh-value'>"+val+"</td><td class='lm-dh-source'>"+esc(r.source||"—")+"</td><td><span class='lm-dh-badge "+_bc(st)+"'>"+esc(_sl(st))+"</span></td><td class='lm-dh-na'>"+esc(r.updated||"—")+"</td><td class='lm-dh-notes'>"+notes+"</td></tr>";
     }
-    tbody.innerHTML=headerHtml+rows.map(function(r){
-      var vc=_lmDhStatusClass(r.status);
-      var stLabel=r.status||"—";
-      if(stLabel==="fallback_fresh") stLabel="fallback";
-      if(stLabel==="fallback_stale") stLabel="fallback(stale)";
-      return "<tr>"+
-        "<td>"+esc(r.metric||"—")+"</td>"+
-        "<td class='"+vc+"'>"+esc(r.value||"—")+"</td>"+
-        "<td class='lm-dh-na' style='font-size:9px'>"+esc(r.source||"—")+"</td>"+
-        "<td class='"+vc+"'>"+esc(stLabel)+"</td>"+
-        "<td class='lm-dh-na'>"+esc(r.updated||"—")+"</td>"+
-        "<td class='lm-dh-na' style='max-width:220px;overflow:hidden;text-overflow:ellipsis' title='"+esc(r.notes||"")+"'>"+esc(r.notes||"—")+"</td>"+
-      "</tr>";
-    }).join("");
+    var t="";
+    // Section 1: Source readiness
+    t+=_sec("Source readiness");
+    if(meta&&(meta.sources_used||meta.sources_skipped)){
+      var _used=(meta.sources_used||[]).map(function(s){return s.charAt(0).toUpperCase()+s.slice(1);}).join(", ")||"—";
+      var _skip=(meta.sources_skipped||[]).map(function(s){return s.charAt(0).toUpperCase()+s.slice(1);}).join(", ")||"";
+      var _srcSt=_skip?"partial":"fresh";
+      t+="<tr><td class='lm-dh-metric'>Sources Used / Skipped</td><td class='lm-dh-value'>Used: "+esc(_used)+(_skip?"<br><span class='lm-dh-yellow'>Skipped: "+esc(_skip)+"</span>":"")+"</td><td class='lm-dh-source'>Aggregated source gate</td><td><span class='lm-dh-badge "+_bc(_srcSt)+"'>"+_sl(_srcSt)+"</span></td><td class='lm-dh-na'>—</td><td class='lm-dh-notes'>Shows which exchanges are included. Skipped sources do not affect analysis.</td></tr>";
+    }
+    var lpR=rowMap["Live Price"];
+    if(lpR){ var lpV=lpR.value||"—"; var lpC=lpV.indexOf("▲")>=0?"lm-dh-green":lpV.indexOf("▼")>=0?"lm-dh-red":""; t+=_row(lpR,lpC?"<span class='"+lpC+"'>"+esc(lpV)+"</span>":esc(lpV),"Color shows last tick direction only, not entry signal."); }
+    // Section 2: Order book
+    t+=_sec("Order book — expandable large window");
+    var obR=rowMap["Order Book"];
+    if(obR){
+      t+="<tr class='lm-dh-click' onclick=\"_lmDhToggle('ob"+uid+"Panel','ob"+uid+"Icon')\"><td class='lm-dh-metric'>Order Book Wall Map <span class='lm-dh-exp' id='ob"+uid+"Icon'>+</span></td><td class='lm-dh-value'>"+esc(obR.value||"—")+"<span class='lm-dh-mini'>Click to expand bid/ask split view.</span></td><td class='lm-dh-source'>"+esc(obR.source||"—")+"</td><td><span class='lm-dh-badge "+_bc(obR.status)+"'>"+esc(_sl(obR.status))+"</span></td><td class='lm-dh-na'>"+esc(obR.updated||"—")+"</td><td class='lm-dh-notes'>Expanded view separates BID support and ASK resistance, sorted by price ladder.</td></tr>"+
+      "<tr class='lm-dh-expand-row'><td colspan='6'>"+_lmDhObPanelHtml("ob"+uid,sym,obR)+"</td></tr>";
+    }
+    // Section 3: Liquidations
+    t+=_sec("Liquidations / Sweep Rekt Map");
+    var liqR=rowMap["Liquidations"];
+    if(liqR){
+      t+="<tr class='lm-dh-click' onclick=\"_lmDhToggle('liq"+uid+"Panel','liq"+uid+"Icon')\"><td class='lm-dh-metric'>Liquidations / Rekt Map <span class='lm-dh-exp' id='liq"+uid+"Icon'>+</span></td><td class='lm-dh-value'>"+esc(liqR.value||"—")+"<span class='lm-dh-mini'>Click to expand sweep rekt history.</span></td><td class='lm-dh-source'>"+esc(liqR.source||"—")+"</td><td><span class='lm-dh-badge "+_bc(liqR.status)+"'>"+esc(_sl(liqR.status))+"</span></td><td class='lm-dh-na'>"+esc(liqR.updated||"—")+"</td><td class='lm-dh-notes'>Shows whether a swing sweep produced liquidations. Click to expand sweep rekt history.</td></tr>"+
+      "<tr class='lm-dh-expand-row'><td colspan='6'>"+_lmDhLiqPanelHtml("liq"+uid,sym,liqR)+"</td></tr>";
+    }
+    // Section 4: Open interest
+    t+=_sec("Open interest — compare now vs past");
+    var oiR=rowMap["Open Interest"]; if(oiR) t+=_row(oiR,undefined,"Raw OI alone is not useful; decision comes from change vs price.");
+    var oiCR=rowMap["OI Change"]; if(oiCR) t+=_row(oiCR);
+    // Section 5: Delta
+    t+=_sec("Delta — pressure and absorption");
+    var dR=rowMap["Delta"]; if(dR) t+=_row(dR,undefined,"Sell pressure during OB approach may signal absorption if price holds.");
+    // Section 6: Crowd and funding
+    t+=_sec("Crowd and funding conflict");
+    var lsR=rowMap["Long/Short Ratio"]; if(lsR) t+=_row(lsR,undefined,"Long-heavy can be support or crowd risk; not automatic bullishness.");
+    var frR=rowMap["Funding Rate"]; if(frR) t+=_row(frR,undefined,"Negative funding means bearish perp pressure despite long-heavy ratio.");
+    // Section 7: Candle and final OB context
+    t+=_sec("Candle and final OB context");
+    var csR=rowMap["Candle Status"]; if(csR) t+=_row(csR,undefined,"No final OB judgment without fresh candle close/rejection.");
+    var aiR=rowMap["AI Entry Analysis"]; if(aiR) t+=_row(aiR,undefined,"Allowed means data gate passed. It does not mean buy/sell.");
+    // Remaining rows (skip Mark Price)
+    var _dhShown={"Live Price":1,"Mark Price":1,"Order Book":1,"Liquidations":1,"Open Interest":1,"OI Change":1,"Delta":1,"Long/Short Ratio":1,"Funding Rate":1,"Candle Status":1,"AI Entry Analysis":1};
+    for(var _rj=0;_rj<rows.length;_rj++){ if(!_dhShown[rows[_rj].metric]) t+=_row(rows[_rj]); }
+    // Capture expanded state BEFORE destroying DOM
+    var _wasObOpen=false, _wasLiqOpen=false;
+    try{
+      var _oldOb=document.getElementById("ob"+uid+"Panel");
+      var _oldLiq=document.getElementById("liq"+uid+"Panel");
+      _wasObOpen=!!(_oldOb&&_oldOb.classList.contains("lm-dh-open"));
+      _wasLiqOpen=!!(_oldLiq&&_oldLiq.classList.contains("lm-dh-open"));
+    }catch(_e2){}
+    tbody.innerHTML=t;
+    // Restore expanded state after DOM rebuild
+    if(_wasObOpen){
+      var _obP=document.getElementById("ob"+uid+"Panel");
+      var _obI=document.getElementById("ob"+uid+"Icon");
+      if(_obP) _obP.classList.add("lm-dh-open");
+      if(_obI) _obI.textContent="−";
+    }
+    if(_wasLiqOpen){
+      var _liqP=document.getElementById("liq"+uid+"Panel");
+      var _liqI=document.getElementById("liq"+uid+"Icon");
+      if(_liqP) _liqP.classList.add("lm-dh-open");
+      if(_liqI) _liqI.textContent="−";
+    }
+    // Populate OB and Liq panel tables — use prefixed uids matching _lmDhObPanelHtml("ob"+uid) and _lmDhLiqPanelHtml("liq"+uid)
+    setTimeout(function(){ _lmDhRenderOBTable("ob"+uid); _lmDhRenderLiqTable("liq"+uid); }, 0);
     var _badge=document.getElementById("lmDhMountBadge");
-    if(_badge) _badge.textContent=rows.length+" rows · "+(_lmGetDataSrc()||"?");
+    if(_badge) _badge.textContent=rows.length+" rows \xb7 "+(_lmGetDataSrc()||"?");
     var _statusLine=document.getElementById("lmDhStatusLine");
-    if(_statusLine) _statusLine.textContent="Data Health active · "+rows.length+" rows · aggregated";
+    if(_statusLine) _statusLine.textContent="Data Health active \xb7 "+rows.length+" rows \xb7 aggregated";
+  }
+  function _lmDhToggle(panelId,iconId){
+    var panel=document.getElementById(panelId);
+    var icon=document.getElementById(iconId);
+    if(!panel) return;
+    var isOpen=panel.classList.toggle("lm-dh-open");
+    if(icon) icon.textContent=isOpen?"−":"+";
+    if(isOpen){
+      // panelId is e.g. "obCLUSDTPanel" or "liqCLUSDTPanel"
+      // strip "Panel" suffix to get the uid used inside the panel HTML
+      var _puid=panelId.replace(/Panel$/,"");
+      if(panelId.indexOf("ob")===0 && window._lmDhRenderOBTable) window._lmDhRenderOBTable(_puid);
+      if(panelId.indexOf("liq")===0 && window._lmDhRenderLiqTable) window._lmDhRenderLiqTable(_puid);
+    }
+  }
+  window._lmDhToggle=_lmDhToggle;
+  function _lmDhRenderOBTable(uid){
+    var data=_lmDhObRaw;
+    console.log("[LM-DH-OB-RENDER]",{uid:uid,hasData:!!data,ok:data&&data.ok,bidCount:data&&data.bids&&data.bids.length,askCount:data&&data.asks&&data.asks.length});
+    var bidBody=document.getElementById(uid+"BidBody");
+    var askBody=document.getElementById(uid+"AskBody");
+    var bidCount=document.getElementById(uid+"BidCount");
+    var askCount=document.getElementById(uid+"AskCount");
+    var sumWin=document.getElementById(uid+"SumWin");
+    var sumBid=document.getElementById(uid+"SumBid");
+    var sumAsk=document.getElementById(uid+"SumAsk");
+    var sumBias=document.getElementById(uid+"SumBias");
+    var sumGap=document.getElementById(uid+"SumGap");
+    if(!bidBody||!askBody){
+      console.warn("[LM-DH-OB] table body missing for uid="+uid+", bidBody="+!!bidBody+", askBody="+!!askBody);
+      return;
+    }
+    if(!data||!data.ok){
+      var noData="<tr><td colspan='7' style='padding:18px;color:#9eb3c7;font-size:11px;text-align:center'>"+(data&&data.message?esc(data.message):"Order book wall data not yet available. Data loads on next refresh.")+"</td></tr>";
+      bidBody.innerHTML=noData; askBody.innerHTML=noData;
+      if(bidCount) bidCount.textContent="0 levels";
+      if(askCount) askCount.textContent="0 levels";
+      return;
+    }
+    var winSel=document.getElementById(uid+"Win");
+    var minWSel=document.getElementById(uid+"MinW");
+    var winPct=winSel?parseFloat(winSel.value):1.0;
+    var minWall=minWSel?parseFloat(minWSel.value):0;
+    function fmtU(v){if(v>=1e9)return"$"+(v/1e9).toFixed(2)+"B";if(v>=1e6)return"$"+(v/1e6).toFixed(1)+"M";if(v>=1e3)return"$"+Math.round(v/1e3)+"K";return"$"+Math.round(v);}
+    var bids=(data.bids||[]).filter(function(l){return l.distance_pct<=winPct&&l.size_usd>=minWall;});
+    var asks=(data.asks||[]).filter(function(l){return l.distance_pct<=winPct&&l.size_usd>=minWall;});
+    var bidLiq=bids.reduce(function(s,l){return s+l.size_usd;},0);
+    var askLiq=asks.reduce(function(s,l){return s+l.size_usd;},0);
+    var dominant="Mixed";
+    if(bidLiq>askLiq*1.2) dominant="Bid Support";
+    else if(askLiq>bidLiq*1.2) dominant="Ask Pressure";
+    if(sumWin) sumWin.textContent="\xb1"+winPct.toFixed(2)+"%";
+    if(sumBid) sumBid.textContent=fmtU(bidLiq);
+    if(sumAsk) sumAsk.textContent=fmtU(askLiq);
+    if(sumBias){sumBias.textContent=dominant;sumBias.className="v "+(dominant==="Bid Support"?"lm-dh-green":dominant==="Ask Pressure"?"lm-dh-red":"lm-dh-yellow");}
+    if(bidCount) bidCount.textContent=bids.length+" level"+(bids.length!==1?"s":"");
+    if(askCount) askCount.textContent=asks.length+" level"+(asks.length!==1?"s":"");
+    var nb=bids[0],na=asks[0];
+    if(sumGap) sumGap.textContent=(nb?"Bid "+nb.distance_pct.toFixed(2)+"%":"No bid")+" / "+(na?"Ask "+na.distance_pct.toFixed(2)+"%":"No ask");
+    var emptyBid="<tr><td colspan='7' style='padding:18px;color:#9eb3c7;font-size:11px;text-align:center'>No major BID wall found inside \xb1"+winPct.toFixed(2)+"% with current minimum filter. This side is thin inside selected window, or lower the Min Wall filter.</td></tr>";
+    var emptyAsk="<tr><td colspan='7' style='padding:18px;color:#9eb3c7;font-size:11px;text-align:center'>No major ASK wall found inside \xb1"+winPct.toFixed(2)+"% with current minimum filter. This side is thin inside selected window, or lower the Min Wall filter.</td></tr>";
+    bidBody.innerHTML=bids.length?bids.map(function(l,i){
+      var w=Math.max(5,l.strength_pct);
+      return "<tr style='border-bottom:1px solid rgba(148,163,184,.08)'>"+
+        "<td style='padding:6px;color:#9eb3c7;font-size:10px'>#"+(i+1)+"</td>"+
+        "<td style='padding:6px;color:#22c55e;font-weight:700;font-size:11px'>"+l.price.toFixed(4)+"</td>"+
+        "<td style='padding:6px;color:#a9bdd2;font-size:10px'>"+l.distance_pct.toFixed(2)+"%</td>"+
+        "<td style='padding:6px;color:#e5f3ff;font-weight:700;font-size:11px'>"+esc(l.size_label)+"</td>"+
+        "<td style='padding:6px'><div style='width:80px;height:7px;background:rgba(148,163,184,.16);border-radius:999px;overflow:hidden'><div style='height:100%;border-radius:999px;background:linear-gradient(90deg,rgba(34,197,94,.35),#22c55e);width:"+w+"%'></div></div></td>"+
+        "<td style='padding:6px;color:#9eb3c7;font-size:10px'>"+esc(l.stability)+"</td>"+
+        "<td style='padding:6px;color:#9eb3c7;font-size:10px;white-space:normal;max-width:180px'>"+esc(l.meaning)+"</td>"+
+      "</tr>";
+    }).join(""):emptyBid;
+    askBody.innerHTML=asks.length?asks.map(function(l,i){
+      var w=Math.max(5,l.strength_pct);
+      return "<tr style='border-bottom:1px solid rgba(148,163,184,.08)'>"+
+        "<td style='padding:6px;color:#9eb3c7;font-size:10px'>#"+(i+1)+"</td>"+
+        "<td style='padding:6px;color:#ef4444;font-weight:700;font-size:11px'>"+l.price.toFixed(4)+"</td>"+
+        "<td style='padding:6px;color:#a9bdd2;font-size:10px'>"+l.distance_pct.toFixed(2)+"%</td>"+
+        "<td style='padding:6px;color:#e5f3ff;font-weight:700;font-size:11px'>"+esc(l.size_label)+"</td>"+
+        "<td style='padding:6px'><div style='width:80px;height:7px;background:rgba(148,163,184,.16);border-radius:999px;overflow:hidden'><div style='height:100%;border-radius:999px;background:linear-gradient(90deg,rgba(239,68,68,.35),#ef4444);width:"+w+"%'></div></div></td>"+
+        "<td style='padding:6px;color:#9eb3c7;font-size:10px'>"+esc(l.stability)+"</td>"+
+        "<td style='padding:6px;color:#9eb3c7;font-size:10px;white-space:normal;max-width:180px'>"+esc(l.meaning)+"</td>"+
+      "</tr>";
+    }).join(""):emptyAsk;
+  }
+  window._lmDhRenderOBTable=_lmDhRenderOBTable;
+  function _lmDhRenderLiqTable(uid){
+    var data=_lmDhLiqRaw;
+    console.log("[LM-DH-LIQ-RENDER]",{uid:uid,hasData:!!data,ok:data&&data.ok,events:data&&data.events&&data.events.length});
+    var liqBody=document.getElementById(uid+"LiqBody");
+    var liqCount=document.getElementById(uid+"LiqCount");
+    var lastSweep=document.getElementById(uid+"LastSweep");
+    var rektSide=document.getElementById(uid+"RektSide");
+    var sweepLiq=document.getElementById(uid+"SweepLiq");
+    var sweepVs=document.getElementById(uid+"SweepVs");
+    var sweepOutcome=document.getElementById(uid+"SweepOutcome");
+    if(!liqBody){
+      console.warn("[LM-DH-LIQ] table body missing for uid="+uid);
+      return;
+    }
+    if(!data||!data.ok||!data.events||!data.events.length){
+      var msg=data&&data.message?esc(data.message):"Sweep-linked liquidation history needs backend support. Swing detection correlated with forceOrder events is not yet implemented.";
+      liqBody.innerHTML="<tr><td colspan='8' style='padding:18px;color:#9eb3c7;font-size:11px;text-align:center'>"+
+        "<div style='color:#f59e0b;font-weight:700;margin-bottom:6px'>Sweep Rekt History — Needs Backend Support</div>"+
+        msg+"</td></tr>";
+      if(liqCount) liqCount.textContent="0 events";
+      return;
+    }
+    var lookSel=document.getElementById(uid+"Look");
+    var minLSel=document.getElementById(uid+"MinL");
+    var lookback=lookSel?parseFloat(lookSel.value):900;
+    var minLiq=minLSel?parseFloat(minLSel.value):0;
+    var now=Date.now()/1000;
+    var events=(data.events||[]).filter(function(e){
+      return (now-(e.timestamp/1000))<=lookback && e.liq_usd>=minLiq;
+    });
+    if(liqCount) liqCount.textContent=events.length+" event"+(events.length!==1?"s":"");
+    var latest=events[0]||data.latest||null;
+    if(latest){
+      if(lastSweep) lastSweep.textContent=(latest.sweep_type||"—").replace(" Sweep","");
+      if(rektSide) rektSide.textContent=latest.rekt_side||"—";
+      if(sweepLiq) sweepLiq.textContent=latest.liq_label||"—";
+      if(sweepVs) sweepVs.textContent=latest.vs_avg!=null?(latest.vs_avg.toFixed(1)+"x"):"—";
+      if(sweepOutcome) sweepOutcome.textContent=latest.reaction||"—";
+    }
+    liqBody.innerHTML=events.length?events.map(function(e){
+      var sideC=e.rekt_side&&e.rekt_side.toLowerCase().includes("long")?"lm-dh-red":"lm-dh-yellow";
+      var reactC=e.reaction==="Reclaimed"?"lm-dh-green":e.reaction==="Rejected"?"lm-dh-yellow":"lm-dh-red";
+      return "<tr style='border-bottom:1px solid rgba(148,163,184,.08)'>"+
+        "<td style='padding:6px;color:#9eb3c7;font-size:10px'>"+esc(e.time||"—")+"</td>"+
+        "<td style='padding:6px;color:#e5f3ff;font-weight:700;font-size:10px'>"+esc(e.sweep_type||"—")+"</td>"+
+        "<td style='padding:6px;color:#a9bdd2;font-size:10px'>"+(e.sweep_level!=null?e.sweep_level.toFixed(2):"—")+"</td>"+
+        "<td style='padding:6px;font-size:10px' class='"+sideC+"'>"+esc(e.rekt_side||"—")+"</td>"+
+        "<td style='padding:6px;color:#e5f3ff;font-weight:700;font-size:10px'>"+esc(e.liq_label||"—")+"</td>"+
+        "<td style='padding:6px;color:#a9bdd2;font-size:10px'>"+(e.vs_avg!=null?e.vs_avg.toFixed(1)+"x":"—")+"</td>"+
+        "<td style='padding:6px;font-size:10px' class='"+reactC+"'>"+esc(e.reaction||"—")+"</td>"+
+        "<td style='padding:6px;color:#9eb3c7;font-size:10px;white-space:normal;max-width:180px'>"+esc(e.meaning||"—")+"</td>"+
+      "</tr>";
+    }).join(""):
+    "<tr><td colspan='8' style='padding:18px;color:#9eb3c7;font-size:11px;text-align:center'>No sweep liquidation events above selected minimum. Lower Min Liq filter or expand lookback.</td></tr>";
+  }
+  window._lmDhRenderLiqTable=_lmDhRenderLiqTable;
+  function _lmDhObPanelHtml(uid,sym,obRow){
+    var src=obRow?esc(obRow.source||"—"):"—";
+    var st=obRow?esc(obRow.status||"—"):"—";
+    var upd=obRow?esc(obRow.updated||"—"):"—";
+    return '<div class="lm-dh-panel" id="'+uid+'Panel">'+
+      '<div class="lm-dh-panel-top">'+
+        '<span class="lm-dh-ptitle">Expanded Order Book Window</span>'+
+        '<span class="lm-dh-badge lm-dh-b-cyan">BID / ASK split</span>'+
+        '<span class="lm-dh-badge lm-dh-b-yellow">price sorted</span>'+
+        '<span class="lm-dh-lab">Window:</span>'+
+        '<select class="lm-dh-sel" id="'+uid+'Win" onchange="window._lmDhRenderOBTable(\''+uid+'\')">'+
+          '<option value="0.25">\xb10.25%</option>'+
+          '<option value="0.5">\xb10.50%</option>'+
+          '<option value="1" selected>\xb11.00%</option>'+
+          '<option value="2">\xb12.00%</option>'+
+          '<option value="3">\xb13.00%</option>'+
+          '<option value="5">\xb15.00%</option>'+
+          '<option value="7.5">\xb17.50%</option>'+
+          '<option value="10">\xb110.00%</option>'+
+        '</select>'+
+        '<span class="lm-dh-lab">Min Wall:</span>'+
+        '<select class="lm-dh-sel" id="'+uid+'MinW" onchange="window._lmDhRenderOBTable(\''+uid+'\')">'+
+          '<option value="0">Auto</option>'+
+          '<option value="250000">$250K+</option>'+
+          '<option value="450000" selected>$450K+</option>'+
+          '<option value="1000000">$1M+</option>'+
+          '<option value="2000000">$2M+</option>'+
+        '</select>'+
+      '</div>'+
+      '<div class="lm-dh-summary" id="'+uid+'Summary">'+
+        '<div class="lm-dh-stat"><div class="k">Selected Window</div><div class="v" id="'+uid+'SumWin">\xb11.00%</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Bid Liquidity</div><div class="v lm-dh-green" id="'+uid+'SumBid">—</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Ask Liquidity</div><div class="v lm-dh-red" id="'+uid+'SumAsk">—</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Dominant Side</div><div class="v lm-dh-yellow" id="'+uid+'SumBias">Mixed</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Thin-Zone</div><div class="v lm-dh-yellow" id="'+uid+'SumGap">—</div></div>'+
+      '</div>'+
+      '<div class="lm-dh-cols">'+
+        '<div class="lm-dh-side">'+
+          '<div class="lm-dh-side-head">'+
+            '<span class="lm-dh-side-title lm-dh-green">BID WALLS / SUPPORT</span>'+
+            '<span class="lm-dh-badge lm-dh-b-green" id="'+uid+'BidCount">loading…</span>'+
+          '</div>'+
+          '<div class="lm-dh-scroll">'+
+            '<table style="width:100%;border-collapse:collapse;min-width:580px">'+
+              '<thead><tr>'+
+                '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">#</th>'+
+                '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Price</th>'+
+                '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Distance</th>'+
+                '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Size</th>'+
+                '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Strength</th>'+
+                '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Stability</th>'+
+                '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Meaning</th>'+
+              '</tr></thead>'+
+              '<tbody id="'+uid+'BidBody"><tr><td colspan="7" style="padding:14px;color:#71869b;font-size:10px">Loading…</td></tr></tbody>'+
+            '</table>'+
+          '</div>'+
+        '</div>'+
+        '<div class="lm-dh-side">'+
+          '<div class="lm-dh-side-head">'+
+            '<span class="lm-dh-side-title lm-dh-red">ASK WALLS / RESISTANCE</span>'+
+            '<span class="lm-dh-badge lm-dh-b-red" id="'+uid+'AskCount">loading…</span>'+
+          '</div>'+
+          '<div class="lm-dh-scroll">'+
+            '<table style="width:100%;border-collapse:collapse;min-width:580px">'+
+              '<thead><tr>'+
+                '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">#</th>'+
+                '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Price</th>'+
+                '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Distance</th>'+
+                '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Size</th>'+
+                '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Strength</th>'+
+                '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Stability</th>'+
+                '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Meaning</th>'+
+              '</tr></thead>'+
+              '<tbody id="'+uid+'AskBody"><tr><td colspan="7" style="padding:14px;color:#71869b;font-size:10px">Loading…</td></tr></tbody>'+
+            '</table>'+
+          '</div>'+
+        '</div>'+
+      '</div>'+
+      '<div style="padding:6px 10px;font-size:9px;color:#71869b;border-top:1px solid rgba(34,211,238,.1);margin-top:8px">'+
+        'Source: '+src+' \xb7 Status: '+st+' \xb7 Updated: '+upd+
+        ' \xb7 <span style="color:#f59e0b">Wall-level OB depth. Wall ladder detail (per-level size, stability) is aggregated from available exchange order books.</span>'+
+      '</div>'+
+    '</div>';
+  }
+  function _lmDhLiqPanelHtml(uid,sym,liqRow){
+    var src=liqRow?esc(liqRow.source||"—"):"—";
+    var st=liqRow?esc(liqRow.status||"—"):"—";
+    var upd=liqRow?esc(liqRow.updated||"—"):"—";
+    return '<div class="lm-dh-panel" id="'+uid+'Panel">'+
+      '<div class="lm-dh-panel-top">'+
+        '<span class="lm-dh-ptitle">Expanded Sweep Rekt Map</span>'+
+        '<span class="lm-dh-badge lm-dh-b-yellow">swing sweep linked</span>'+
+        '<span class="lm-dh-lab">Lookback:</span>'+
+        '<select class="lm-dh-sel" id="'+uid+'Look" onchange="window._lmDhRenderLiqTable(\''+uid+'\')">'+
+          '<option value="300">5m</option>'+
+          '<option value="900" selected>15m</option>'+
+          '<option value="3600">1h</option>'+
+          '<option value="14400">4h</option>'+
+        '</select>'+
+        '<span class="lm-dh-lab">Swing:</span>'+
+        '<select class="lm-dh-sel" id="'+uid+'SwingSrc">'+
+          '<option>Internal</option><option selected>External</option><option>Both</option>'+
+        '</select>'+
+        '<span class="lm-dh-lab">Min Liq:</span>'+
+        '<select class="lm-dh-sel" id="'+uid+'MinL" onchange="window._lmDhRenderLiqTable(\''+uid+'\')">'+
+          '<option value="0">Auto</option>'+
+          '<option value="50000">$50K+</option>'+
+          '<option value="100000" selected>$100K+</option>'+
+          '<option value="250000">$250K+</option>'+
+          '<option value="500000">$500K+</option>'+
+        '</select>'+
+      '</div>'+
+      '<div class="lm-dh-summary" id="'+uid+'LiqSummary">'+
+        '<div class="lm-dh-stat"><div class="k">Last Sweep</div><div class="v lm-dh-yellow" id="'+uid+'LastSweep">—</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Rekt Side</div><div class="v lm-dh-red" id="'+uid+'RektSide">—</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Sweep Liq</div><div class="v lm-dh-red" id="'+uid+'SweepLiq">—</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Vs Previous Avg</div><div class="v lm-dh-yellow" id="'+uid+'SweepVs">—</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Outcome</div><div class="v lm-dh-green" id="'+uid+'SweepOutcome">—</div></div>'+
+      '</div>'+
+      '<div class="lm-dh-side" style="margin-top:8px">'+
+        '<div class="lm-dh-side-head">'+
+          '<span class="lm-dh-side-title lm-dh-yellow">SWEEP LIQUIDATION HISTORY / REKT EVENTS</span>'+
+          '<span class="lm-dh-badge lm-dh-b-yellow" id="'+uid+'LiqCount">0 events</span>'+
+        '</div>'+
+        '<div class="lm-dh-scroll">'+
+          '<table style="width:100%;border-collapse:collapse;min-width:760px">'+
+            '<thead><tr>'+
+              '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Time</th>'+
+              '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Sweep Type</th>'+
+              '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Level</th>'+
+              '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Rekt Side</th>'+
+              '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Liq $</th>'+
+              '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Vs Avg</th>'+
+              '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Reaction</th>'+
+              '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Meaning</th>'+
+            '</tr></thead>'+
+            '<tbody id="'+uid+'LiqBody"><tr><td colspan="8" style="padding:14px;color:#71869b;font-size:10px">Loading…</td></tr></tbody>'+
+          '</table>'+
+        '</div>'+
+      '</div>'+
+      '<div style="padding:6px 10px;font-size:9px;color:#71869b;border-top:1px solid rgba(245,158,11,.1);margin-top:8px">'+
+        'Source: '+src+' \xb7 Status: '+st+' \xb7 Updated: '+upd+
+      '</div>'+
+    '</div>';
   }
   function _lmObDaLoad(){
     fetch("/api/live-monitor/ob-settings",{credentials:"same-origin"})
@@ -8336,56 +8844,362 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     });
   })();
 
-  /* ── Desktop tutorial overlay (Task 7 rework) ─────────────────────
-     - Highlight applies .tut-highlight to the real target element
-       (no separate offset box, no blur).
-     - Steps may specify a `view` to switchView() first; we wait for
-       layout to settle before measuring / highlighting.
-     - Cross-view steps come last so the existing scanner-restore
-       reload never fires mid-tour. */
-  var TUT_STEPS = [
-    { sel:".brand-name", title:"Welcome to ZyNi Screener",
-      text:"Quick tour of the desktop. You can skip any time and the choice is saved to your account.",
-      view:"scanner" },
-    { sel:".side", title:"Scanner sidebar",
-      text:"Switch between Main Scan, Compressed, Trending, ATH/ATL, Bias and Settings here.",
-      view:"scanner" },
-    { sel:"#segMarket", title:"Market & exchange",
-      text:"Toggle Spot vs Perpetual. The exchange picker (below) selects which exchange to scan.",
-      view:"scanner" },
-    { sel:"#segSignal", title:"Module selector — OR logic",
-      text:"Pick one or more setup modules. OB + FIB will show setups that are OB or FIB (OR).",
-      view:"scanner" },
-    { sel:"#tabCtrls", title:"Timeframe, scope, pairs/cycle",
-      text:"Each tab's most-used controls live inline here. Changes are saved between visits.",
-      view:"scanner" },
-    { sel:"#tabCtrls", title:"Info buttons (i)",
-      text:"Every scanner control has a small (i) button. Press it to understand what that setting does before scanning — works on Main Scan, Compressed, Trending, ATH/ATL, Bias Shift Normal & Expert, and inside the Settings drawer.",
-      view:"scanner" },
-    { sel:"#btnScanNow", title:"Scan Now / Auto Scan",
-      text:"Scanning never happens automatically on page load. Use Scan Now, or turn Auto Scan ON for a 30s timer.",
-      view:"scanner" },
-    { sel:"#tblHost", title:"Setup table",
-      text:"Click a row to see its Setup Insight on the right panel.",
-      view:"scanner" },
-    { sel:".insight", title:"Setup Insight",
-      text:"Zone details, scoring, confluence and the View Chart / Add to Live Monitor actions.",
-      view:"scanner" },
-    { sel:"#sideSettings", title:"Settings & presets",
-      text:"Open Settings from the sidebar. The little (i) next to a field explains what it does. Use Scan Presets to save and reuse your scanner setup." },
-    /* Cross-view steps — last, in this order, so the tour finishes on
-       Tools and never reloads back to the scanner. */
-    { sel:".lm-manual, .lm-outer, .lm-topbar", title:"Live Monitor",
-      text:"Live Monitor shows your starred pairs with live order-flow data. Use the Add a pair form to drop in a symbol manually with a timeframe and direction.",
-      view:"live" },
-    { sel:".db-grid, .db-head, .main-scroll", title:"Dashboard",
-      text:"Dashboard gives you a live snapshot of the market — top movers, watchlist health and a refresh cycle you can pause.",
-      view:"dashboard" },
-    { sel:".mt-wrap, .mt-grid, .main-scroll", title:"Market Tools",
-      text:"Market Tools has utilities and quick lookups that don't consume scan tokens.",
-      view:"tools" },
-  ];
-  var _tutIdx = 0, _tutPrefs = {desktopTutorialNeverShow:false}, _tutCurTgt = null;
+  /* ═══════════════════════════════════════════════════════════════════
+     CUSTOM DROPDOWN SYSTEM (Round 19 — Task 5)
+     Replaces every <select> in the page with a .cdd <div> that exposes
+     the same .value getter/setter and dispatches 'change'.
+     ═══════════════════════════════════════════════════════════════════ */
+  var _cddOpenDropdown = null;
+  function _cddCloseOpen(){
+    if(_cddOpenDropdown){
+      _cddOpenDropdown.classList.remove("cdd-open","cdd-open-up");
+      var l = _cddOpenDropdown.querySelector(".cdd-list");
+      if(l) l.hidden = true;
+      _cddOpenDropdown = null;
+    }
+  }
+  function _cddPositionList(wrap){
+    /* Only reposition if the dropdown is currently meant to be open.
+       Avoids the rAF callback from a previous open() bleeding into
+       a closed state and forcing the list to re-show. */
+    if(!wrap.classList.contains("cdd-open")) return;
+    var list = wrap.querySelector(".cdd-list"); if(!list) return;
+    wrap.classList.remove("cdd-open-up");
+    var wr = wrap.getBoundingClientRect();
+    var lh = list.offsetHeight || 0;
+    if(wr.bottom + lh + 8 > innerHeight){
+      wrap.classList.add("cdd-open-up");
+    }
+  }
+  function _cddUpgrade(selectEl){
+    if(!selectEl || selectEl.tagName !== "SELECT") return null;
+    if(selectEl.dataset && selectEl.dataset.cddSkip === "1") return null;
+    /* Collect options */
+    var opts = [];
+    for(var i=0;i<selectEl.options.length;i++){
+      var o = selectEl.options[i];
+      opts.push({value:o.value, label:(o.textContent||"").trim(), disabled:o.disabled});
+    }
+    var initial = selectEl.value;
+    /* Build wrapper div, inherit attributes from the original select. */
+    var wrap = document.createElement("div");
+    wrap.className = "cdd";
+    wrap.tabIndex = 0;
+    for(var k=0;k<selectEl.attributes.length;k++){
+      var a = selectEl.attributes[k];
+      if(a.name==="class"||a.name==="tabindex"||a.name==="type") continue;
+      try{ wrap.setAttribute(a.name, a.value); }catch(_){}
+    }
+    /* Preserve the original tagName for any "is this a SELECT" checks: we
+       can't change the wrapper's tagName but ALL of our code only reads
+       .value / dispatches 'change' so it doesn't matter. */
+    var btn = document.createElement("button");
+    btn.type = "button"; btn.className = "cdd-btn";
+    var valSpan = document.createElement("span"); valSpan.className = "cdd-val";
+    var chev = document.createElement("span"); chev.className = "cdd-chev"; chev.textContent = "▾";
+    btn.appendChild(valSpan); btn.appendChild(chev);
+    var list = document.createElement("div"); list.className = "cdd-list"; list.hidden = true;
+    opts.forEach(function(o){
+      var item = document.createElement("div");
+      item.className = "cdd-opt" + (o.disabled?" cdd-disabled":"");
+      item.setAttribute("data-val", o.value);
+      item.textContent = o.label || o.value;
+      list.appendChild(item);
+    });
+    wrap.appendChild(btn);
+    wrap.appendChild(list);
+
+    var _val = initial;
+    function _findLabel(v){
+      for(var i=0;i<opts.length;i++){
+        if(String(opts[i].value)===String(v)) return opts[i].label || opts[i].value;
+      }
+      return String(v||"");
+    }
+    function _setVal(v, fireChange){
+      _val = String(v==null?"":v);
+      valSpan.textContent = _findLabel(_val);
+      var items = list.querySelectorAll(".cdd-opt");
+      for(var i=0;i<items.length;i++){
+        items[i].classList.toggle("on", items[i].getAttribute("data-val")===_val);
+      }
+      if(fireChange){
+        try{ wrap.dispatchEvent(new Event("change", {bubbles:true})); }catch(_){}
+        try{ wrap.dispatchEvent(new Event("input",  {bubbles:true})); }catch(_){}
+      }
+    }
+    _setVal(initial, false);
+
+    Object.defineProperty(wrap, "value", {
+      get: function(){ return _val; },
+      set: function(v){ _setVal(v, false); },
+      configurable: true
+    });
+    /* Also mirror .selectedIndex for code that uses it. */
+    Object.defineProperty(wrap, "selectedIndex", {
+      get: function(){
+        for(var i=0;i<opts.length;i++){ if(String(opts[i].value)===String(_val)) return i; }
+        return -1;
+      },
+      set: function(i){
+        if(opts[i]) _setVal(opts[i].value, false);
+      },
+      configurable: true
+    });
+    /* options[] passthrough — return the actual .cdd-opt DOM nodes so
+       legacy code that does sel.options[i].setAttribute / textContent
+       still works. Each opt div also exposes a .value getter that reads
+       its data-val. */
+    [].forEach.call(list.querySelectorAll(".cdd-opt"), function(opt){
+      try{
+        Object.defineProperty(opt, "value", {
+          get: function(){ return opt.getAttribute("data-val") || ""; },
+          set: function(v){ opt.setAttribute("data-val", v); },
+          configurable: true
+        });
+        Object.defineProperty(opt, "text", {
+          get: function(){ return opt.textContent || ""; },
+          set: function(t){
+            /* When existing code overrides option text (e.g. locked
+               badge), keep the dropdown value in sync. */
+            opt.textContent = t;
+            if(opt.classList.contains("on")) valSpan.textContent = t;
+          },
+          configurable: true
+        });
+        Object.defineProperty(opt, "disabled", {
+          get: function(){ return opt.classList.contains("cdd-disabled"); },
+          set: function(d){ opt.classList.toggle("cdd-disabled", !!d); },
+          configurable: true
+        });
+      }catch(_){}
+    });
+    Object.defineProperty(wrap, "options", { get: function(){
+      return list.querySelectorAll(".cdd-opt");
+    }, configurable: true });
+
+    /* Click handlers */
+    btn.addEventListener("click", function(e){
+      e.preventDefault(); e.stopPropagation();
+      var wasOpen = wrap.classList.contains("cdd-open");
+      _cddCloseOpen();
+      if(!wasOpen){
+        wrap.classList.add("cdd-open");
+        list.hidden = false;
+        _cddOpenDropdown = wrap;
+        requestAnimationFrame(function(){ _cddPositionList(wrap); });
+        try{ wrap.dispatchEvent(new Event("cdd-open",{bubbles:true})); }catch(_){}
+      }
+    });
+    list.addEventListener("click", function(e){
+      e.stopPropagation();
+      e.preventDefault();
+      var opt = e.target.closest(".cdd-opt");
+      if(!opt || opt.classList.contains("cdd-disabled")) return;
+      var v = opt.getAttribute("data-val");
+      wrap.classList.remove("cdd-open","cdd-open-up");
+      list.hidden = true;
+      _cddOpenDropdown = null;
+      /* Defer the value update one tick so any change-handler that
+         re-renders / re-applies state does so AFTER the dropdown is
+         visually closed, and so subsequent clicks during the same
+         microtask can't reopen the menu. */
+      setTimeout(function(){ _setVal(v, true); }, 0);
+    });
+    wrap.addEventListener("keydown", function(e){
+      if(e.key==="Enter"||e.key===" "){
+        e.preventDefault(); btn.click();
+      } else if(e.key==="Escape"){
+        _cddCloseOpen();
+      }
+    });
+
+    /* Swap in the new wrapper */
+    selectEl.parentNode.replaceChild(wrap, selectEl);
+    return wrap;
+  }
+  function _cddUpgradeAll(container){
+    container = container || document;
+    var sels;
+    try{ sels = container.querySelectorAll("select"); }catch(_){ return; }
+    for(var i=0;i<sels.length;i++){ try{ _cddUpgrade(sels[i]); }catch(_){} }
+  }
+  /* Outside click + Escape close the open dropdown */
+  document.addEventListener("click", function(e){
+    if(!_cddOpenDropdown) return;
+    if(!e.target.closest(".cdd")) _cddCloseOpen();
+  });
+  document.addEventListener("keydown", function(e){
+    if(e.key==="Escape" && _cddOpenDropdown) _cddCloseOpen();
+  });
+  /* MutationObserver — auto-upgrade any new <select> added later
+     (Live Monitor / Market Tools / Dashboard rebuild their UI). */
+  try{
+    var _cddObs = new MutationObserver(function(records){
+      for(var i=0;i<records.length;i++){
+        var added = records[i].addedNodes;
+        for(var j=0;j<added.length;j++){
+          var n = added[j];
+          if(!n || n.nodeType!==1) continue;
+          if(n.tagName==="SELECT") _cddUpgrade(n);
+          else if(n.querySelectorAll){
+            var s = n.querySelectorAll("select");
+            for(var k=0;k<s.length;k++) _cddUpgrade(s[k]);
+          }
+        }
+      }
+    });
+    _cddObs.observe(document.body || document.documentElement, {childList:true, subtree:true});
+  }catch(_){}
+  /* Initial sweep */
+  _cddUpgradeAll(document);
+
+  /* ═══════════════════════════════════════════════════════════════════
+     TUTORIAL SYSTEM (Round 19 — Tasks 1-4, 6-8)
+     ═══════════════════════════════════════════════════════════════════ */
+  /* Per-tab tutorial groups. Each group is a list of steps. A step may
+     be:
+       - { kind:"info", title, text }                       (centered card)
+       - { kind:"highlight", sel, title, text, view? }      (ring on target)
+       - { kind:"dropdown", sel, title, text, options:[{label,text}], view? }
+         (forces user to open the dropdown; Next stays disabled until
+         the dropdown opens, then per-option explanations appear)
+       - { kind:"required_click", sel, title, text, view? } (must click
+         the highlighted target before Next is enabled) */
+  var TUT_GROUPS = {
+    scanner_main: [
+      { kind:"info", title:"Main Scan tutorial",
+        text:"This tab scans the whole market and surfaces high-confidence setups. Walk through the controls quickly." },
+      { kind:"highlight", sel:"#exchSelect, .exch-sel", title:"Exchange",
+        text:"Pick the exchange you want to scan (Binance, Bybit, OKX, MEXC)." },
+      { kind:"highlight", sel:"#segMarket", title:"Spot or Perpetual",
+        text:"Choose which market you want to scan." },
+      { kind:"highlight", sel:"#segSignal", title:"Module selector",
+        text:"Pick one or more setup modules — OB, FVG, Breaker, Fib. Multiple modules use OR logic." },
+      { kind:"highlight", sel:"#tabCtrls", title:"Timeframe, scope, pairs / cycle",
+        text:"Timeframe sets the candle interval. Scope toggles full-market vs. watchlist-only. Pairs / cycle controls batch size." },
+      { kind:"required_click", sel:"#btnScanNow", title:"Scan Now",
+        text:"Click Scan Now to run a scan. Nothing runs on page load." },
+      { kind:"highlight", sel:"#tblHost", title:"Results table",
+        text:"Each row is a detected setup. Click a row to view its insight." },
+      { kind:"highlight", sel:".insight", title:"Setup Insight",
+        text:"Zone details, scoring, confluence and the View Chart / Add to Live Monitor actions live here." }
+    ],
+    scanner_compressed: [
+      { kind:"info", title:"Compressed scanner",
+        text:"Finds pairs trading inside a tight range — pre-breakout candidates." },
+      { kind:"highlight", sel:"#tabCtrls", title:"Compressed controls",
+        text:"Timeframe + Lookback bars + Max range % — keep ranges tight to find clean compressions." },
+      { kind:"highlight", sel:"#tblHost,#tabView", title:"Compressed results",
+        text:"Lower range % means tighter compression. Higher trade-grade + confluence is what you want." }
+    ],
+    scanner_trending: [
+      { kind:"info", title:"Trending movers",
+        text:"Top movers by % change or volume on the chosen timeframe." },
+      { kind:"highlight", sel:"#tabCtrls", title:"Trending controls",
+        text:"Set the timeframe, then pick direction — Bullish, Bearish or High Volume." },
+      { kind:"highlight", sel:"#tblHost,#tabView", title:"Movers table",
+        text:"Bullish / Bearish use % change. High Volume uses quote-volume surge." }
+    ],
+    scanner_ath_atl: [
+      { kind:"info", title:"ATH / ATL scanner",
+        text:"Finds pairs near or breaking all-time / window highs and lows." },
+      { kind:"highlight", sel:"[data-opt='mode']", title:"Mode",
+        text:"Pick ATH only, ATL only or Both." },
+      { kind:"dropdown", sel:"[data-opt='status']", title:"Status filter",
+        text:"Different status filters surface different setups. Open the menu to see what each one means.",
+        options:[
+          { label:"Breaking now",        text:"Price is breaking the previous ATH/ATL right now." },
+          { label:"Made within window",  text:"The ATH/ATL was made inside the selected window (window high/low broke the previous level)." },
+          { label:"Near level",          text:"Price is close to the previous ATH/ATL but not yet breaking it (within Near %)." }
+        ] },
+      { kind:"highlight", sel:"[data-opt='windowHours']", title:"Window",
+        text:"Defines what \"previous\" means — the previous ATH/ATL is the highest / lowest BEFORE this window." },
+      { kind:"highlight", sel:"[data-opt='nearPct']", title:"Near %",
+        text:"How close (in %) price has to be to count as \"Near\"." },
+      { kind:"highlight", sel:"#tblHost,#tabView", title:"ATH/ATL results",
+        text:"Each row shows the symbol, price, previous level and break / distance." }
+    ],
+    scanner_bias: [
+      { kind:"info", title:"Structure / Bias",
+        text:"Detects bias-shift rejections and structure shifts (BOS / CHoCH)." },
+      { kind:"highlight", sel:"[data-opt='tf']", title:"Timeframe",
+        text:"Bias detection works on 1H and higher — pick 1H, 4H, 6H, 12H or 1D." },
+      { kind:"highlight", sel:"[data-opt='mode']", title:"Normal vs. Expert",
+        text:"Normal uses tuned presets. Expert exposes the raw candle-quality knobs (wick %, body %, volume × etc.)." },
+      { kind:"highlight", sel:"[data-opt='biasStrength']", title:"Bias strength",
+        text:"Early = more results. Balanced = recommended. Strong = cleaner, fewer." },
+      { kind:"highlight", sel:"[data-opt='detectionMode']", title:"Detection",
+        text:"Early fires once the rejection candle closes; Confirmed waits for a follow-up candle." },
+      { kind:"highlight", sel:"[data-opt='confluenceMode']", title:"Confluence",
+        text:"Optional grades higher with OB / FVG / Fib nearby. Required hides setups without any confluence." },
+      { kind:"highlight", sel:"[data-opt='minimumGrade']", title:"Min grade",
+        text:"Hide setups below this quality grade." },
+      { kind:"highlight", sel:"#tblHost,#tabView", title:"Bias results & insight",
+        text:"Click a row to see the rejection candle, prior move, score breakdown and bias-shift insight." }
+    ],
+    live_monitor: [
+      { kind:"info", title:"Live Monitor",
+        text:"Real-time watch of starred pairs with order-flow, structure-readiness and per-pair AI insights." },
+      { kind:"highlight", sel:".lm-manual", title:"Manual Add Pair",
+        text:"Type a symbol + pick a timeframe and direction, then press Add Pair." },
+      { kind:"highlight", sel:".lm-left, .lm-cards", title:"Active setup cards",
+        text:"Each card is a live setup. Click one to load its details on the right." },
+      { kind:"highlight", sel:"#lmTfSeg", title:"TF filters",
+        text:"Multi-select timeframes — turn the ones you don't want off." },
+      { kind:"highlight", sel:"#lmModSeg", title:"Module filters",
+        text:"Filter the active setups by detection module." },
+      { kind:"highlight", sel:"[data-lmrefresh='manual'], .lm-topbar-right", title:"Refresh controls",
+        text:"Manual or auto-refresh every 15 / 30 / 60 seconds." },
+      { kind:"highlight", sel:".lm-right, .lm-right-scroll", title:"Right panel",
+        text:"Detected events, setup readiness, candle features and the per-pair AI chatbox live here." }
+    ],
+    dashboard: [
+      { kind:"info", title:"Dashboard",
+        text:"Live snapshot of the market — pulse, hot setups, trend leaders and watchlist health." },
+      { kind:"highlight", sel:".db-grid, .db-head, .main-scroll", title:"Dashboard layout",
+        text:"Refresh cycle runs in the background and can be paused. Sections refresh independently." }
+    ],
+    market_tools: [
+      { kind:"info", title:"Market Tools",
+        text:"Utilities and quick lookups that don't consume scan tokens." },
+      { kind:"highlight", sel:".mt-wrap, .mt-grid, .main-scroll", title:"Tools",
+        text:"Position size calculator, pair quick scan, funding / OI scanner and TradingView multi-chart all live here." }
+    ],
+    settings: [
+      { kind:"info", title:"Settings drawer",
+        text:"Tune every detector module — OB, FVG, Breaker, Fib, BTC correlation, RSI, TradingView." },
+      { kind:"highlight", sel:"#settingsPanel .sp-group:first-child", title:"Scan engine",
+        text:"Swing / internal lookback + consolidation candles." },
+      { kind:"highlight", sel:"#settingsPanel .sp-group", title:"Module sections",
+        text:"Each detector module has its own quality / approach / age controls." },
+      { kind:"highlight", sel:"#settingsPanel .info-i", title:"(i) info buttons",
+        text:"Every field has a small (i) — click it for a plain-English explanation." }
+    ]
+  };
+  /* The current ST.view / ST.mode → group key. */
+  function _tutGroupKey(){
+    var v = (ST && ST.view) || "scanner";
+    if(v==="scanner"){
+      var m = (ST && ST.mode) || "main";
+      if(m==="main")        return "scanner_main";
+      if(m==="compressed")  return "scanner_compressed";
+      if(m==="trending")    return "scanner_trending";
+      if(m==="ath_atl")     return "scanner_ath_atl";
+      if(m==="bias")        return "scanner_bias";
+      return "scanner_main";
+    }
+    if(v==="live"||v==="watchlist") return "live_monitor";
+    if(v==="dashboard")             return "dashboard";
+    if(v==="tools")                 return "market_tools";
+    return null;
+  }
+
+  var _tutIdx = 0, _tutSteps = [], _tutPrefs = {desktopTutorialNeverShow:false}, _tutCurTgt = null;
+  var _tutSessionGroups = {};       // groups already shown this session
+  var _tutSessionSkipped = false;   // user clicked "No, not now" on intro this session
+  var _tutDdSeen = false;           // for kind:dropdown step — has the user opened it yet?
+
   function _tutFetchPrefs(){
     if(location.protocol==="file:") return Promise.resolve(_tutPrefs);
     return fetch("/api/user-preferences",{credentials:"same-origin"})
@@ -8395,55 +9209,123 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
   }
   function _tutSavePrefs(extra){
     if(location.protocol==="file:") return;
-    var body = Object.assign({desktopTutorialNeverShow: E("tutNever") && E("tutNever").checked}, extra||{});
+    var body = Object.assign({desktopTutorialNeverShow: !!(E("tutNever") && E("tutNever").checked)}, extra||{});
     fetch("/api/user-preferences",{method:"POST",credentials:"same-origin",
       headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)}).catch(function(){});
   }
   function _tutClearHighlight(){
-    if(_tutCurTgt && _tutCurTgt.classList) _tutCurTgt.classList.remove("tut-highlight");
+    if(_tutCurTgt && _tutCurTgt.classList){
+      _tutCurTgt.classList.remove("tut-highlight","tut-interactive");
+    }
     _tutCurTgt = null;
   }
+  function _tutIsMobile(){ return innerWidth <= 820; }
   function _tutPositionCard(){
-    if(!_tutCurTgt) return;
     var card = E("tutCard"); if(!card) return;
+    card.classList.remove("tut-card-centered","tut-card-bottom");
+    if(!_tutCurTgt || _tutIsMobile()){
+      /* mobile or no target → bottom sheet on mobile, centered on desktop */
+      card.classList.add(_tutIsMobile() ? "tut-card-bottom" : "tut-card-centered");
+      return;
+    }
     var r = _tutCurTgt.getBoundingClientRect();
-    var cw = card.offsetWidth || 360, ch = card.offsetHeight || 200;
+    var cw = card.offsetWidth || 360, ch = card.offsetHeight || 220;
     var cx = r.left + r.width + 14;
     var cy = Math.max(12, r.top);
-    /* If card doesn't fit on the right of the target, try below it. */
-    if(cx + cw > innerWidth - 12){
-      cx = r.left;
-      cy = r.bottom + 14;
-    }
-    /* Final clamp so both edges stay inside the viewport. */
+    if(cx + cw > innerWidth - 12){ cx = r.left; cy = r.bottom + 14; }
     cx = Math.max(12, Math.min(innerWidth - cw - 12, cx));
     cy = Math.max(12, Math.min(innerHeight - ch - 12, cy));
     card.style.left = cx + "px"; card.style.top = cy + "px"; card.style.transform = "";
   }
+  function _tutSetNextDisabled(disabled){
+    var n = E("tutNext"); if(n) n.disabled = !!disabled;
+  }
+  function _tutShowOpts(opts){
+    var box = E("tutOpts");
+    if(!box) return;
+    if(!opts || !opts.length){ box.innerHTML = ""; box.classList.remove("on"); return; }
+    box.innerHTML = opts.map(function(o){
+      return '<div class="tut-opt"><b>'+esc(o.label||"")+'</b>'+esc(o.text||"")+'</div>';
+    }).join("");
+    box.classList.add("on");
+  }
+  function _tutHideOpts(){
+    var box = E("tutOpts");
+    if(box){ box.classList.remove("on"); box.innerHTML = ""; }
+  }
+  function _tutShowHint(text){
+    var h = E("tutHint");
+    if(!h) return;
+    if(text){ h.textContent = text; h.hidden = false; } else { h.hidden = true; h.textContent = ""; }
+  }
   function _tutPaintStep(step){
-    var sels = (step.sel||"").split(",").map(function(s){return s.trim();}).filter(Boolean);
-    var tgt = null;
-    for(var i=0;i<sels.length && !tgt;i++){
-      try{ tgt = document.querySelector(sels[i]); }catch(_){ tgt = null; }
-    }
     var card = E("tutCard");
     _tutClearHighlight();
-    if(!tgt){
-      card.style.left="50%"; card.style.top="50%"; card.style.transform="translate(-50%,-50%)";
+    _tutHideOpts();
+    _tutShowHint("");
+    var kind = step.kind || "highlight";
+    /* Centered, no-highlight info step */
+    if(kind === "info" || !step.sel){
+      _tutPositionCard();   // centered/bottom because _tutCurTgt is null
+      _tutSetNextDisabled(false);
     } else {
-      _tutCurTgt = tgt;
-      try{ tgt.scrollIntoView({block:"center", inline:"nearest", behavior:"instant"}); }catch(_){ try{ tgt.scrollIntoView(); }catch(__){} }
-      tgt.classList.add("tut-highlight");
-      _tutPositionCard();
+      var sels = (step.sel||"").split(",").map(function(s){return s.trim();}).filter(Boolean);
+      var tgt = null;
+      for(var i=0;i<sels.length && !tgt;i++){
+        try{ tgt = document.querySelector(sels[i]); }catch(_){ tgt = null; }
+      }
+      if(tgt){
+        _tutCurTgt = tgt;
+        try{ tgt.scrollIntoView({block:"center", inline:"nearest", behavior:"instant"}); }catch(_){ try{ tgt.scrollIntoView(); }catch(__){} }
+        tgt.classList.add("tut-highlight");
+        if(kind === "dropdown" || kind === "required_click"){
+          tgt.classList.add("tut-interactive");
+        }
+        _tutPositionCard();
+      } else {
+        /* Missing target — center card and move on automatically */
+        _tutPositionCard();
+      }
+
+      if(kind === "dropdown" && tgt){
+        _tutDdSeen = false;
+        _tutShowHint("Open the dropdown to see what each option does.");
+        _tutSetNextDisabled(true);
+        var onceOpen = function(){
+          _tutDdSeen = true;
+          _tutShowHint("");
+          _tutShowOpts(step.options||[]);
+          _tutSetNextDisabled(false);
+          tgt.removeEventListener("cdd-open", onceOpen);
+          tgt.removeEventListener("click", onceOpen);
+        };
+        /* .cdd-open custom event fires when user actually opens the menu */
+        tgt.addEventListener("cdd-open", onceOpen, {once:true});
+        tgt.addEventListener("click", function(e){
+          /* Click anywhere inside the cdd counts as "opened" too */
+          if(tgt.classList.contains("cdd-open")) onceOpen();
+        }, {once:true});
+      } else if(kind === "required_click" && tgt){
+        _tutShowHint("Click the highlighted control to continue.");
+        _tutSetNextDisabled(true);
+        var onceClick = function(){
+          _tutShowHint("");
+          _tutSetNextDisabled(false);
+          tgt.removeEventListener("click", onceClick);
+        };
+        tgt.addEventListener("click", onceClick, {once:true});
+      } else {
+        _tutSetNextDisabled(false);
+      }
     }
-    E("tutStep").textContent  = (_tutIdx+1)+" / "+TUT_STEPS.length;
-    E("tutTitle").textContent = step.title;
-    E("tutText").textContent  = step.text;
+    E("tutStep").textContent  = (_tutIdx+1)+" / "+_tutSteps.length;
+    E("tutTitle").textContent = step.title || "";
+    E("tutText").textContent  = step.text  || "";
     E("tutBack").disabled = (_tutIdx===0);
-    E("tutNext").textContent = (_tutIdx===TUT_STEPS.length-1) ? "Finish" : "Next";
+    E("tutNext").textContent = (_tutIdx===_tutSteps.length-1) ? "Finish" : "Next";
   }
   function _tutGoTo(i){
-    var step = TUT_STEPS[i]; if(!step) return _tutFinish();
+    var step = _tutSteps[i]; if(!step) return _tutFinish();
     _tutIdx = i;
     var needSwitch = step.view && step.view !== ST.view;
     if(needSwitch){
@@ -8453,24 +9335,70 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
       _tutPaintStep(step);
     }
   }
-  function _tutShow(){
+  function _tutShowGroup(groupKey){
+    var steps = TUT_GROUPS[groupKey];
+    if(!steps || !steps.length) return false;
+    _tutSteps = steps.slice();
+    _tutIdx = 0;
+    _tutSessionGroups[groupKey] = true;
+    document.body.classList.add("tutorial-open");
     E("tutOverlay").hidden = false;
     _tutGoTo(0);
+    return true;
   }
   function _tutHide(){
     _tutClearHighlight();
+    _tutHideOpts();
+    _tutShowHint("");
+    document.body.classList.remove("tutorial-open");
     if(E("tutOverlay")) E("tutOverlay").hidden = true;
   }
-  function _tutFinish(){
-    _tutSavePrefs({markCompleted:true});
-    _tutHide();
+  function _tutFinish(){ _tutSavePrefs({markCompleted:true}); _tutHide(); }
+  function _tutSkip(){   _tutSavePrefs({markSkipped:true});   _tutHide(); }
+
+  /* Intro modal flow (Task 1) */
+  function _tutShowIntro(){
+    var bd = E("tutIntro"); if(!bd) return;
+    document.body.classList.add("tutorial-open");
+    bd.hidden = false;
   }
-  function _tutSkip(){
-    _tutSavePrefs({markSkipped:true});
-    _tutHide();
+  function _tutHideIntro(){
+    var bd = E("tutIntro"); if(!bd) return;
+    bd.hidden = true;
+    /* Keep tutorial-open class only if the tutorial itself is now open */
+    if(E("tutOverlay") && E("tutOverlay").hidden) document.body.classList.remove("tutorial-open");
   }
+  function _tutMaybeOfferGroup(){
+    /* Don't pester if the user already saw it / dismissed this session
+       or globally disabled. */
+    if(_tutPrefs && _tutPrefs.desktopTutorialNeverShow) return;
+    if(_tutSessionSkipped) return;
+    var key = _tutGroupKey(); if(!key) return;
+    if(_tutSessionGroups[key]) return;
+    _tutShowGroup(key);
+  }
+
+  if(E("tutIntroYes")) E("tutIntroYes").addEventListener("click", function(){
+    if(E("tutIntroNever") && E("tutIntroNever").checked){
+      _tutPrefs.desktopTutorialNeverShow = true;
+      _tutSavePrefs({});
+    }
+    _tutHideIntro();
+    var key = _tutGroupKey() || "scanner_main";
+    _tutShowGroup(key);
+  });
+  if(E("tutIntroNo")) E("tutIntroNo").addEventListener("click", function(){
+    _tutSessionSkipped = true;
+    if(E("tutIntroNever") && E("tutIntroNever").checked){
+      _tutPrefs.desktopTutorialNeverShow = true;
+      _tutSavePrefs({});
+    }
+    _tutHideIntro();
+  });
+
   if(E("tutNext")) E("tutNext").addEventListener("click", function(){
-    if(_tutIdx >= TUT_STEPS.length-1) _tutFinish(); else _tutGoTo(_tutIdx+1);
+    if(E("tutNext").disabled) return;
+    if(_tutIdx >= _tutSteps.length-1) _tutFinish(); else _tutGoTo(_tutIdx+1);
   });
   if(E("tutBack")) E("tutBack").addEventListener("click", function(){
     if(_tutIdx>0) _tutGoTo(_tutIdx-1);
@@ -8484,15 +9412,46 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
     if(!E("tutOverlay") || E("tutOverlay").hidden) return;
     _tutPositionCard();
   }, true);
-  // On desktop load, decide whether to show tutorial after a tiny delay so the
-  // layout is settled. Mobile is unaffected (this script only runs on desktop).
+
+  /* On load: prefer the intro modal over auto-tutorial (Task 1). */
   setTimeout(function(){
-    if(innerWidth <= 820) return;
+    if(_tutIsMobile() && innerWidth < 600){
+      /* small phones — still allow intro but use bottom sheet */
+    }
     _tutFetchPrefs().then(function(p){
       if(p && p.desktopTutorialNeverShow) return;
-      _tutShow();
+      _tutShowIntro();
     });
   }, 700);
+
+  /* Hook into view / mode switching so per-tab tutorials get offered. */
+  (function _tutWireViewSwitch(){
+    function _maybeOffer(){
+      if(_tutPrefs && _tutPrefs.desktopTutorialNeverShow) return;
+      if(_tutSessionSkipped) return;
+      var ovl = E("tutOverlay");
+      var intro = E("tutIntro");
+      if((ovl && !ovl.hidden) || (intro && !intro.hidden)) return;
+      setTimeout(function(){ _tutMaybeOfferGroup(); }, 280);
+    }
+    /* Wrap switchView for top-nav-driven view changes. */
+    var oldSwitch = (typeof switchView === "function") ? switchView : null;
+    if(oldSwitch){
+      window.switchView = function(v){
+        var res = oldSwitch.apply(this, arguments);
+        _maybeOffer();
+        return res;
+      };
+    }
+    /* Wrap sidebar mode switches (Main Scan / Compressed / Trending /
+       ATH-ATL / Bias). These don't go through switchView. */
+    document.addEventListener("click", function(e){
+      var item = e.target && e.target.closest && e.target.closest('.side .nav-item[data-mode]');
+      if(!item) return;
+      /* The existing handler runs first (same tick); offer a tick later. */
+      _maybeOffer();
+    }, true);
+  })();
 
   /* Tag body with current view so per-view CSS (Task 3) applies before
      the first switchView() call. */
