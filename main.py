@@ -11611,10 +11611,12 @@ def _mx_mexc_sym(symbol: str) -> str:
 def _lm_mx_active_symbols() -> list:
     """Return sorted list of symbols from active Live Monitor items."""
     try:
-        from models import LiveMonitorItem as _LMI
-        rows = _LMI.query.filter_by(is_active=True).with_entities(_LMI.symbol).all()
-        return sorted({r.symbol for r in rows})
-    except Exception:
+        with app.app_context():
+            from models import LiveMonitorItem as _LMI
+            rows = _LMI.query.filter_by(is_active=True).with_entities(_LMI.symbol).all()
+            return sorted({r.symbol for r in rows})
+    except Exception as e:
+        print(f"[MX-WS] active_symbols error: {e}")
         return []
 
 
