@@ -6404,7 +6404,7 @@ body.tutorial-open .tut-highlight.tut-interactive *{pointer-events:auto}
             '<svg class="ico" style="width:13px;height:13px;color:var(--text-3)" viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>'+
             '<span class="sch-title">CONFIRMATION CHECKLIST</span>'+
           '</div>'+
-          '<div class="sec-card-body" style="padding:8px 10px">'+_lmChecklist(item)+'</div>'+
+          '<div class="sec-card-body" id="lmChecklistBody" style="padding:8px 10px">'+_lmChecklist(item)+'</div>'+
         '</div>'+
         '<div class="sec-card">'+
           '<div class="sec-card-head">'+
@@ -6959,6 +6959,7 @@ body.tutorial-open .tut-highlight.tut-interactive *{pointer-events:auto}
     }
     _lmBindChat(item);
     if(_lmInstructionView!=="instructions"){ _lmLoadEvents(item.id); }
+    if(isBiasShift){ _lmLoad109f(item); }
     console.log("[LM-LIVE] selected item "+(item&&item.symbol)+" source="+_lmGetDataSrc());
     // TASK 7 — layout clipping diagnostic (runs after browser layout pass)
     setTimeout(function(){
@@ -7075,10 +7076,21 @@ body.tutorial-open .tut-highlight.tut-interactive *{pointer-events:auto}
       pend:'<svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>',
       fail:'<svg class="ico" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>'
     };
-    function row(cls,label,val,vc){
+    function row(cls,label,val,vc,note){
       return '<div class="cl-item"><div class="cl-ico '+cls+'">'+(ico[cls]||ico.pend)+'</div>'+
         '<span class="cl-label">'+esc(label)+'</span>'+
-        '<span class="cl-val" style="color:'+vc+'">'+esc(val)+'</span></div>';
+        '<span class="cl-val" style="color:'+vc+'">'+esc(val)+'</span>'+
+        (note?'<span class="cl-note" style="display:block;font-size:9.5px;color:var(--text-3);padding-left:24px;margin-top:1px">'+esc(note)+'</span>':'')+
+        '</div>';
+    }
+    // Phase 10.9G: Bias Shift items — render 10.9F checklist rows if data is available
+    if(_lmIsBiasShift(item)){
+      var _bsv=(item.snapshot&&item.snapshot.phase10_9f_bias_shift_values)||null;
+      var _cl=_bsv&&_bsv.existing_table_values&&_bsv.existing_table_values.confirmation_checklist;
+      if(_cl){
+        return _lm109fChecklistHtml(_cl,row);
+      }
+      return '<div class="checklist"><div style="color:var(--text-3);font-size:11px;padding:6px 0">Fetching 10.9F analysis…</div></div>';
     }
     var lh=_lmHealth(item);
     if(lh&&lh.checklist&&lh.checklist.length){
@@ -7102,6 +7114,34 @@ body.tutorial-open .tut-highlight.tut-interactive *{pointer-events:auto}
     '</div>';
   }
 
+  function _lm109fStatusCls(st){
+    st=(st||"").toLowerCase();
+    if(st==="confirm")  return "pass";
+    if(st==="watch"||st==="caution"||st==="stale"||st==="needs_refresh"||st==="collecting") return "warn";
+    if(st==="conflict"||st==="invalid") return "fail";
+    return "pend";
+  }
+  function _lm109fStatusColor(st){
+    var c=_lm109fStatusCls(st);
+    if(c==="pass") return "var(--green-2)";
+    if(c==="warn") return "var(--yellow)";
+    if(c==="fail") return "var(--red-2)";
+    return "var(--text-3)";
+  }
+  function _lm109fChecklistHtml(cl,rowFn){
+    var keys=["setup_validity","orderflow_agreement","sweep_rekt_confirmation","invalidation_risk"];
+    var html='<div class="checklist">';
+    for(var ki=0;ki<keys.length;ki++){
+      var k=keys[ki];
+      var entry=cl[k]; if(!entry) continue;
+      var cls=_lm109fStatusCls(entry.status);
+      var vc=_lm109fStatusColor(entry.status);
+      html+=rowFn(cls,entry.label||k,entry.value||"—",vc,entry.note||null);
+    }
+    html+='</div>';
+    return html;
+  }
+
   function _lmLoadEvents(itemId){
     if(!itemId||location.protocol==="file:") return;
     if(_lmInstructionView==="instructions") return;
@@ -7110,8 +7150,11 @@ body.tutorial-open .tut-highlight.tut-interactive *{pointer-events:auto}
       .then(function(d){
         if(_lmInstructionView==="instructions") return;
         var box=document.getElementById("lmEvents"); if(!box) return;
+        // Preserve any 10.9F context block prepended by _lmLoad109f
+        var _109fBlock=box.querySelector("#lm109fEvtBlock");
+        var _109fHtml=_109fBlock?_109fBlock.outerHTML:"";
         if(!d||!d.events||!d.events.length){
-          box.innerHTML='<div style="color:var(--text-3);font-size:11px">No events yet.</div>'; return;
+          box.innerHTML=_109fHtml+'<div style="color:var(--text-3);font-size:11px">No events yet.</div>'; return;
         }
         // Look up item context for symbol, zone, price columns
         var _evItem=null;
@@ -7123,6 +7166,7 @@ body.tutorial-open .tut-highlight.tut-interactive *{pointer-events:auto}
           ?fmt(_evItem.zone_low)+'–'+fmt(_evItem.zone_high):'—';
         var _evPrice=_evItem&&_evItem.current_price!=null?fmt(_evItem.current_price):'—';
         box.innerHTML=
+          _109fHtml+
           '<div class="lm-evt-wrap">'+
           '<table class="lm-evt-tbl">'+
           '<thead><tr>'+
@@ -7168,8 +7212,150 @@ body.tutorial-open .tut-highlight.tut-interactive *{pointer-events:auto}
       .catch(function(){
         if(_lmInstructionView==="instructions") return;
         var box=document.getElementById("lmEvents"); if(!box) return;
-        box.innerHTML='<div style="color:var(--text-3);font-size:11px">Could not load events.</div>';
+        var _109fBlock2=box.querySelector("#lm109fEvtBlock");
+        var _109fHtml2=_109fBlock2?_109fBlock2.outerHTML:"";
+        box.innerHTML=_109fHtml2+'<div style="color:var(--text-3);font-size:11px">Could not load events.</div>';
       });
+  }
+
+  function _lmLoad109f(item){
+    if(!item||!_lmIsBiasShift(item)) return;
+    var itemId=item.id;
+    var src=_lmGetDataSrc()||"binance";
+    // Use cached snapshot values if available (skip fetch)
+    var _cached=(item.snapshot&&item.snapshot.phase10_9f_bias_shift_values)||null;
+    if(_cached&&_cached.existing_table_values){
+      console.log("[LM-10.9G] bias shift values loaded (cached)",{itemId:itemId,src:src,status:_cached.status,score:_cached.score});
+      _lmApply109f(item,_cached);
+      return;
+    }
+    // Fetch fresh from backend
+    var url="/api/live-monitor/items/"+itemId+"/phase10-9f/debug?analysis_source="+encodeURIComponent(src)+"&force_refresh=1";
+    fetch(url,{credentials:"same-origin"})
+      .then(function(r){return r.ok?r.json():null;})
+      .then(function(d){
+        if(!d||!d.ok) return;
+        var vals=d.phase10_9f_bias_shift_values;
+        if(!vals||!vals.existing_table_values) return;
+        console.log("[LM-10.9G] bias shift values loaded",{itemId:itemId,src:src,status:vals.status,score:vals.score,verdict:vals.bias_shift_label});
+        // Cache into item snapshot so checklist can use it on next render
+        if(item.snapshot) item.snapshot.phase10_9f_bias_shift_values=vals;
+        // Update item in liveMonitorItems array
+        for(var ki=0;ki<liveMonitorItems.length;ki++){
+          if(liveMonitorItems[ki].id===itemId){
+            if(liveMonitorItems[ki].snapshot) liveMonitorItems[ki].snapshot.phase10_9f_bias_shift_values=vals;
+            break;
+          }
+        }
+        _lmApply109f(item,vals);
+      })
+      .catch(function(e){ console.warn("[LM-10.9G] fetch failed",e); });
+  }
+
+  function _lmApply109f(item,vals){
+    var etv=vals.existing_table_values||{};
+    var cl=etv.confirmation_checklist||null;
+    var tl=etv.event_timeline||null;
+    var ai=etv.ai_context||null;
+    var dh=etv.data_health_context||null;
+    // --- Update Confirmation Checklist ---
+    var clBox=document.getElementById("lmChecklistBody");
+    if(clBox&&cl){
+      var ico={
+        pass:'<svg class="ico" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>',
+        warn:'<svg class="ico" viewBox="0 0 24 24"><path d="M10.3 4L2 20h20L13.7 4a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17v.01"/></svg>',
+        pend:'<svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>',
+        fail:'<svg class="ico" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+      };
+      function _row109f(cls,label,val,vc,note){
+        return '<div class="cl-item"><div class="cl-ico '+cls+'">'+(ico[cls]||ico.pend)+'</div>'+
+          '<span class="cl-label">'+esc(label)+'</span>'+
+          '<span class="cl-val" style="color:'+vc+'">'+esc(val)+'</span>'+
+          (note?'<span class="cl-note" style="display:block;font-size:9.5px;color:var(--text-3);padding-left:24px;margin-top:1px">'+esc(note)+'</span>':'')+
+          '</div>';
+      }
+      clBox.innerHTML=_lm109fChecklistHtml(cl,_row109f);
+    }
+    // --- Prepend 10.9F events into Event Timeline ---
+    var evBox=document.getElementById("lmEvents");
+    if(evBox&&tl){
+      var _evts=[
+        {key:"latest_bias_event",  imp:'<span style="color:var(--red-2);font-weight:700">High</span>',  label:"Bias Shift"},
+        {key:"latest_flow_event",  imp:'<span style="color:var(--yellow);font-weight:700">Med</span>',  label:"Order Flow"},
+        {key:"latest_sweep",       imp:'<span style="color:var(--yellow);font-weight:700">Med</span>',  label:"Sweep"},
+        {key:"latest_warning",     imp:'<span style="color:var(--text-3)">Low</span>',                  label:"Warning"}
+      ];
+      var sym=esc(item.symbol||"—");
+      var _rows="";
+      for(var ei=0;ei<_evts.length;ei++){
+        var ev=_evts[ei];
+        var val=tl[ev.key];
+        if(!val) continue;
+        var vl=val.toLowerCase();
+        var side='<span class="lm-dh-na">—</span>';
+        if(vl.indexOf("bull")!==-1||vl.indexOf("long")!==-1) side='<span style="color:var(--green-2)">Long</span>';
+        else if(vl.indexOf("bear")!==-1||vl.indexOf("short")!==-1) side='<span style="color:var(--red-2)">Short</span>';
+        _rows+='<tr style="background:rgba(251,191,36,.04)">'+
+          '<td>now</td>'+
+          '<td>'+ev.imp+'</td>'+
+          '<td>10.9F: '+esc(ev.label)+'</td>'+
+          '<td>'+sym+'</td>'+
+          '<td>'+side+'</td>'+
+          '<td class="lm-dh-na">—</td>'+
+          '<td class="lm-dh-na">—</td>'+
+          '<td class="lm-dh-na">—</td>'+
+          '<td class="lm-dh-na">10.9F</td>'+
+          '<td><span class="lm-dh-ok">Live</span></td>'+
+          '<td class="notes">'+esc(val)+'</td>'+
+        '</tr>';
+      }
+      // Add AI context as a status note row if available
+      if(ai&&ai.manual_read){
+        var aiSrc=esc(ai.analysis_source||"—");
+        var aiScore=ai.score!=null?(" · score "+ai.score):"";
+        _rows+='<tr style="background:rgba(99,102,241,.04)">'+
+          '<td>now</td>'+
+          '<td><span style="color:var(--text-3)">Low</span></td>'+
+          '<td>10.9F: AI Context</td>'+
+          '<td>'+sym+'</td>'+
+          '<td><span class="lm-dh-na">—</span></td>'+
+          '<td class="lm-dh-na">—</td>'+
+          '<td class="lm-dh-na">—</td>'+
+          '<td class="lm-dh-na">—</td>'+
+          '<td class="lm-dh-na">'+aiSrc+'</td>'+
+          '<td><span class="lm-dh-ok">Live</span></td>'+
+          '<td class="notes">'+esc(ai.manual_read)+(ai.no_entry_candidate?' · No Entry Candidate':'')+aiScore+'</td>'+
+        '</tr>';
+      }
+      if(_rows){
+        var _block=document.getElementById("lm109fEvtBlock");
+        if(!_block){
+          _block=document.createElement("div");
+          _block.id="lm109fEvtBlock";
+          _block.style.cssText="margin-bottom:4px";
+          evBox.insertBefore(_block,evBox.firstChild);
+        }
+        _block.innerHTML=
+          '<div class="lm-evt-wrap">'+
+          '<table class="lm-evt-tbl">'+
+          '<thead><tr>'+
+            '<th>Time</th><th>Imp.</th><th>Event Type</th><th>Symbol</th>'+
+            '<th>Side</th><th>Zone Range</th><th>Price</th>'+
+            '<th>Change</th><th>Source</th><th>Fresh</th><th>Notes</th>'+
+          '</tr></thead>'+
+          '<tbody>'+_rows+'</tbody></table></div>';
+      }
+    }
+    // Data Health context note (non-layout: append as status text only if slot exists)
+    if(dh){
+      var dhLine=document.getElementById("lmDhStatusLine");
+      if(dhLine){
+        var _ageStr=dh.snapshot_age_sec!=null?(Math.round(dh.snapshot_age_sec)+"s ago"):"unknown age";
+        var _srcStr=dh.analysis_source||"—";
+        var _dqStr=dh.data_quality||"—";
+        dhLine.textContent="10.9F · "+_srcStr+" · OF data: "+_dqStr+" ("+_ageStr+") · "+esc(dh.manual_read||"");
+      }
+    }
   }
 
   function _lmBindChat(item){
