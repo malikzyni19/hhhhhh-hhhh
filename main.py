@@ -17321,6 +17321,20 @@ _lm_bias_of_sampler_lock = threading.Lock()
 # Per-symbol snapshot-build error tracking (cleared on success)
 _lm_snap_build_errors: dict = {}   # "symbol:analysis_source" → {error, ts, traceback}
 
+# Phase 10.9I: Auto-refresh scheduler state
+_lm_bias_ar_thread: Optional[threading.Thread] = None
+_lm_bias_ar_lock   = threading.Lock()
+_lm_bias_ar_state: dict = {
+    "enabled":                    False,
+    "thread_started":             False,
+    "last_cycle_at":              None,
+    "last_error":                 None,
+    "items_checked_last_cycle":   0,
+    "items_refreshed_last_cycle": 0,
+}
+_lm_bias_ar_cooldowns:   dict = {}  # item_id → last_attempt_at (float epoch)
+_lm_bias_ar_item_state:  dict = {}  # item_id → {last_attempt_at, last_success_at, last_error, next_allowed_at, refresh_reason}
+
 # Build commit hash (resolved once at startup; used by debug endpoint)
 _LM_BUILD_COMMIT = "unknown"
 try:
@@ -24009,6 +24023,187 @@ def _lm_save_phase10_9f_values(uid: int, item_id: int, values: dict) -> bool:
         return False
 
 
+# ── Phase 10.9I: Auto-refresh scheduler ─────────────────────────────────────
+
+_TRUTHY_10_9I = {"1", "true", "yes", "on"}
+
+
+def _lm_bias_shift_auto_refresh_enabled() -> bool:
+    """Return True when auto-refresh is enabled via env (default: True)."""
+    raw = (os.environ.get("ZYNI_LM_BIAS_SHIFT_AUTO_REFRESH_ENABLED") or "true").strip().lower()
+    return raw in _TRUTHY_10_9I
+
+
+def _lm_bias_shift_auto_refresh_loop():  # noqa: C901
+    """Background scheduler: keeps every active Bias Shift item's orderflow fresh.
+
+    Cycle every CYCLE_SEC seconds:
+      1. Scan all active Bias Shift items (all users).
+      2. Restart per-symbol sampler thread if it died (e.g. after server restart).
+      3. If snapshot is stale (>= STALE_THRESH), trigger 10.9E refresh.
+      4. After 10.9E, rebuild and persist 10.9F values.
+
+    Evidence only — no entry signals, no AI, no trading, no Entry Candidate.
+    """
+    CYCLE_SEC     = max(60,  int(os.environ.get("ZYNI_LM_AR_CYCLE_SEC",     "120")))
+    STALE_THRESH  = max(60,  int(os.environ.get("ZYNI_LM_AR_STALE_SEC",     "300")))
+    ITEM_COOLDOWN = max(30,  int(os.environ.get("ZYNI_LM_AR_COOLDOWN_SEC",  "90")))
+    MAX_PER_CYCLE = max(1,   int(os.environ.get("ZYNI_LM_AR_MAX_PER_CYCLE", "10")))
+
+    print(f"[10.9I] auto-refresh started cycle={CYCLE_SEC}s stale_thresh={STALE_THRESH}s "
+          f"item_cooldown={ITEM_COOLDOWN}s max_per_cycle={MAX_PER_CYCLE}")
+
+    while True:
+        cycle_start = time.time()
+        checked = 0
+        refreshed = 0
+        last_error_str = None
+
+        try:
+            # ── Phase 1: collect item IDs in a short-lived context ────────────
+            bias_item_ids: list = []
+            try:
+                with app.app_context():
+                    from models import LiveMonitorItem as _LMI9i_scan
+                    rows = _LMI9i_scan.query.filter_by(is_active=True).all()
+                    bias_item_ids = [r.id for r in rows if _lm_is_bias_shift_item(r)]
+            except Exception as _scan_e:
+                last_error_str = f"scan: {str(_scan_e)[:120]}"
+                print(f"[10.9I] scan error: {last_error_str}")
+
+            # ── Phase 2: process each item in its own context ─────────────────
+            for item_id in bias_item_ids[:MAX_PER_CYCLE]:
+                if time.time() - cycle_start > CYCLE_SEC * 0.9:
+                    break  # Budget exceeded — defer rest to next cycle
+
+                try:
+                    with app.app_context():
+                        from models import (LiveMonitorItem as _LMI9i_p,
+                                            LiveMonitorOrderflowSnapshot as _LMOS9i_p)
+
+                        row = _LMI9i_p.query.filter_by(id=item_id, is_active=True).first()
+                        if not row or not _lm_is_bias_shift_item(row):
+                            continue
+                        checked += 1
+                        uid = row.user_id
+                        exchange = (row.exchange or "binance").lower()
+                        market   = (row.market   or "perpetual").lower()
+                        symbol   = row.symbol or ""
+
+                        # Resolve analysis_source (prefer stored, default aggregated)
+                        snap_raw = _json_loads_safe(row.snapshot_json, {})
+                        src_cfg  = _lm_analysis_source_config(row, snap_raw)
+                        analysis_source = src_cfg.get("analysis_source") or "aggregated"
+
+                        # Always restart sampler if it died (server restart recovery)
+                        try:
+                            _lm_ensure_bias_orderflow_sampler(
+                                item_id, uid, exchange, market, symbol, analysis_source
+                            )
+                        except Exception as _se:
+                            print(f"[10.9I] sampler ensure error item={item_id}: {_se}")
+
+                        # Check freshness of latest snapshot
+                        now = time.time()
+                        latest_snap = (_LMOS9i_p.query
+                                       .filter_by(user_id=uid, exchange=exchange,
+                                                  market=market, symbol=symbol,
+                                                  analysis_source=analysis_source)
+                                       .order_by(_LMOS9i_p.sample_time.desc())
+                                       .first())
+                        snap_age_sec = None
+                        if latest_snap and latest_snap.sample_time:
+                            snap_age_sec = round(now - latest_snap.sample_time / 1000.0, 1)
+
+                        # Per-item cooldown guard
+                        with _lm_bias_ar_lock:
+                            last_attempt = _lm_bias_ar_cooldowns.get(item_id, 0)
+                        if now - last_attempt < ITEM_COOLDOWN:
+                            continue
+
+                        needs_refresh = (snap_age_sec is None or snap_age_sec >= STALE_THRESH)
+                        if not needs_refresh:
+                            continue
+
+                        # ── Refresh 10.9E ─────────────────────────────────────
+                        refresh_reason = (
+                            "no_snapshots" if snap_age_sec is None
+                            else f"stale_{int(snap_age_sec)}s"
+                        )
+                        now_ts = int(now)
+                        with _lm_bias_ar_lock:
+                            _lm_bias_ar_cooldowns[item_id] = now
+                            _lm_bias_ar_item_state.setdefault(item_id, {})
+                            _lm_bias_ar_item_state[item_id]["last_attempt_at"] = now_ts
+                            _lm_bias_ar_item_state[item_id]["refresh_reason"]  = refresh_reason
+                            _lm_bias_ar_item_state[item_id]["next_allowed_at"] = now_ts + ITEM_COOLDOWN
+
+                        result = _lm_refresh_bias_orderflow_alignment_for_item(row, force=True)
+
+                        # ── Rebuild + save 10.9F ──────────────────────────────
+                        if result.get("ok"):
+                            fresh_row = _LMI9i_p.query.filter_by(id=item_id).first()
+                            if fresh_row:
+                                vals = _lm_build_phase10_9f_bias_shift_values(
+                                    fresh_row, analysis_source=analysis_source
+                                )
+                                _lm_save_phase10_9f_values(uid, item_id, vals)
+
+                        with _lm_bias_ar_lock:
+                            _lm_bias_ar_item_state[item_id]["last_success_at"] = int(time.time())
+                            _lm_bias_ar_item_state[item_id]["last_error"] = None
+
+                        refreshed += 1
+                        print(f"[10.9I] refreshed item={item_id} ({symbol}) "
+                              f"src={analysis_source} age={snap_age_sec}s → fresh")
+
+                except Exception as _item_e:
+                    err = str(_item_e)[:120]
+                    last_error_str = err
+                    with _lm_bias_ar_lock:
+                        _lm_bias_ar_item_state.setdefault(item_id, {})
+                        _lm_bias_ar_item_state[item_id]["last_error"] = err
+                    print(f"[10.9I] item error id={item_id}: {err}")
+
+        except Exception as _outer_e:
+            last_error_str = str(_outer_e)[:120]
+            print(f"[10.9I] outer loop error: {last_error_str}")
+
+        with _lm_bias_ar_lock:
+            _lm_bias_ar_state["last_cycle_at"]              = int(cycle_start)
+            _lm_bias_ar_state["last_error"]                 = last_error_str
+            _lm_bias_ar_state["items_checked_last_cycle"]   = checked
+            _lm_bias_ar_state["items_refreshed_last_cycle"] = refreshed
+
+        elapsed   = time.time() - cycle_start
+        sleep_for = max(10.0, CYCLE_SEC - elapsed)
+        time.sleep(sleep_for)
+
+
+def _ensure_lm_bias_shift_auto_refresh():
+    """Start the Phase 10.9I auto-refresh scheduler if not already running."""
+    global _lm_bias_ar_thread
+    if _lm_bias_ar_thread and _lm_bias_ar_thread.is_alive():
+        return
+    _lm_bias_ar_thread = threading.Thread(
+        target=_lm_bias_shift_auto_refresh_loop,
+        daemon=True,
+        name="lm-bias-ar",
+    )
+    with _lm_bias_ar_lock:
+        _lm_bias_ar_state["enabled"]        = True
+        _lm_bias_ar_state["thread_started"] = True
+    _lm_bias_ar_thread.start()
+    print("[10.9I] auto-refresh scheduler thread started")
+
+
+# Start on module load (gated by env; default enabled)
+if _lm_bias_shift_auto_refresh_enabled():
+    _ensure_lm_bias_shift_auto_refresh()
+else:
+    print("[10.9I] auto-refresh DISABLED (ZYNI_LM_BIAS_SHIFT_AUTO_REFRESH_ENABLED not truthy)")
+
+
 @app.route("/api/live-monitor/items/<int:item_id>/phase10-9f/debug",
            methods=["GET"])
 @login_required
@@ -24068,7 +24263,7 @@ def api_lm_phase10_9f_debug(item_id):
            methods=["GET"])
 @login_required
 def api_lm_phase10_9h_audit():
-    """Phase 10.9H: read-only audit of all active Bias Shift Live Monitor items.
+    """Phase 10.9H/10.9I: read-only audit of active Bias Shift items + auto-refresh state.
 
     No AI call. No trading. No entry signals. No UI changes.
     Query params:
@@ -24086,9 +24281,9 @@ def api_lm_phase10_9h_audit():
     from models import LiveMonitorItem as _LMI9h
     import time as _t9h
 
-    items = _LMI9h.query.filter_by(user_id=uid, is_active=True).all()
+    items   = _LMI9h.query.filter_by(user_id=uid, is_active=True).all()
     rows_out = []
-    now_s = _t9h.time()
+    now_s    = _t9h.time()
 
     for row in items:
         if not _lm_is_bias_shift_item(row):
@@ -24099,7 +24294,7 @@ def api_lm_phase10_9h_audit():
         of_status = (of_align.get("status") or "collecting").lower()
 
         # Cached 10.9F values if stored
-        cached_109f = snap_raw.get("phase10_9f_bias_shift_values") or {}
+        cached_109f    = snap_raw.get("phase10_9f_bias_shift_values") or {}
         cached_status  = cached_109f.get("status", "—")
         cached_verdict = cached_109f.get("bias_shift_label", "—")
         cached_score   = cached_109f.get("score")
@@ -24108,7 +24303,7 @@ def api_lm_phase10_9h_audit():
         snap_age_sec   = cached_109f.get("snapshot_age_sec")
 
         source_mismatch = bool(of_src and of_src != analysis_source and of_status == "ready")
-        warnings_out    = cached_109f.get("warnings") or []
+        warnings_out    = list(cached_109f.get("warnings") or [])
         if source_mismatch:
             warnings_out = [
                 f"Orderflow stored as '{of_src}'; audit source is '{analysis_source}'."
@@ -24124,6 +24319,21 @@ def api_lm_phase10_9h_audit():
                 freshness = "stale"
             else:
                 freshness = "very_stale"
+
+        # Per-item auto-refresh state (Phase 10.9I)
+        with _lm_bias_ar_lock:
+            _iar = dict(_lm_bias_ar_item_state.get(row.id) or {})
+        _next_allowed = _iar.get("next_allowed_at")
+        _ar_item = {
+            "last_attempt_at":  _iar.get("last_attempt_at"),
+            "last_success_at":  _iar.get("last_success_at"),
+            "last_error":       _iar.get("last_error"),
+            "next_allowed_at":  _next_allowed,
+            "next_allowed_in_sec": (
+                max(0, int(_next_allowed - now_s)) if _next_allowed else None
+            ),
+            "refresh_reason":   _iar.get("refresh_reason"),
+        }
 
         rows_out.append({
             "item_id":         row.id,
@@ -24141,17 +24351,44 @@ def api_lm_phase10_9h_audit():
             "snapshot_age_sec":    snap_age_sec,
             "freshness":           freshness,
             "warnings":            warnings_out,
+            "auto_refresh":        _ar_item,
         })
 
+    # Global auto-refresh state (Phase 10.9I)
+    with _lm_bias_ar_lock:
+        _gar = dict(_lm_bias_ar_state)
+    _last_cycle = _gar.get("last_cycle_at")
+    if not _lm_bias_shift_auto_refresh_enabled():
+        _ar_global = {
+            "enabled": False,
+            "reason":  "env_disabled",
+            "env_var": "ZYNI_LM_BIAS_SHIFT_AUTO_REFRESH_ENABLED",
+        }
+    else:
+        _ar_global = {
+            "enabled":                    True,
+            "thread_started":             _gar.get("thread_started", False),
+            "thread_alive":               bool(_lm_bias_ar_thread and _lm_bias_ar_thread.is_alive()),
+            "last_cycle_at":              _last_cycle,
+            "last_cycle_age_sec":         (round(now_s - _last_cycle, 0) if _last_cycle else None),
+            "last_error":                 _gar.get("last_error"),
+            "items_checked_last_cycle":   _gar.get("items_checked_last_cycle", 0),
+            "items_refreshed_last_cycle": _gar.get("items_refreshed_last_cycle", 0),
+            "cycle_sec":                  int(os.environ.get("ZYNI_LM_AR_CYCLE_SEC", "120")),
+            "stale_thresh_sec":           int(os.environ.get("ZYNI_LM_AR_STALE_SEC", "300")),
+            "item_cooldown_sec":          int(os.environ.get("ZYNI_LM_AR_COOLDOWN_SEC", "90")),
+        }
+
     return jsonify({
-        "ok":             True,
-        "phase":          "phase10_9h_audit",
-        "analysis_source": analysis_source,
-        "context_only":   True,
+        "ok":                 True,
+        "phase":              "phase10_9h_audit",
+        "analysis_source":    analysis_source,
+        "context_only":       True,
         "no_entry_candidate": True,
-        "item_count":     len(rows_out),
-        "items":          rows_out,
-        "audited_at":     int(now_s),
+        "item_count":         len(rows_out),
+        "items":              rows_out,
+        "auto_refresh":       _ar_global,
+        "audited_at":         int(now_s),
     })
 
 

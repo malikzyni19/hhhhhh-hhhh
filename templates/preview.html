@@ -7281,6 +7281,32 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
           }
         }
         _lmApply109f(item,vals);
+        // Phase 10.9I frontend fallback: if still needs_fresh_orderflow, trigger one OF refresh
+        // Cooldown key prevents infinite loop — one attempt per item per session per 5min
+        if(vals.status==="needs_fresh_orderflow"||vals.status==="collecting"){
+          var _fbKey="lm109i_of_fb_"+itemId;
+          var _fbLast=parseInt(sessionStorage.getItem(_fbKey)||"0",10);
+          var _fbAge=Math.floor(Date.now()/1000)-_fbLast;
+          if(_fbAge>300){
+            sessionStorage.setItem(_fbKey,String(Math.floor(Date.now()/1000)));
+            console.log("[LM-10.9I] status="+vals.status+" — triggering frontend orderflow refresh fallback");
+            fetch("/api/live-monitor/items/"+itemId+"/bias-orderflow/refresh",{
+              method:"POST",credentials:"same-origin",
+              headers:{"Content-Type":"application/json"},
+              body:JSON.stringify({analysis_source:src,collect_now:true})
+            }).then(function(r){return r.ok?r.json():null;})
+            .then(function(dr){
+              if(!dr||!dr.ok) return;
+              console.log("[LM-10.9I] OF refresh triggered, reloading 10.9F in 8s");
+              // Delay re-fetch so sampler has time to collect ≥1 snapshot
+              setTimeout(function(){
+                if(!_lmSelItem||_lmSelItem.id!==itemId) return;
+                if(item.snapshot) delete item.snapshot.phase10_9f_bias_shift_values;
+                _lmLoad109f(item);
+              }, 8000);
+            }).catch(function(){});
+          }
+        }
       })
       .catch(function(e){ console.warn("[LM-10.9G] fetch failed",e); });
   }
