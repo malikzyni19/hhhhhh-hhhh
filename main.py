@@ -18092,12 +18092,16 @@ def _lm_save_orderflow_alignment_status(user_id: int, item_id, status_dict: dict
         print(f"[10.9E] save_alignment_status error: {_e}")
 
 
-def _lm_refresh_bias_orderflow_alignment_for_item(item, force: bool = False) -> dict:
+def _lm_refresh_bias_orderflow_alignment_for_item(
+        item, force: bool = False, analysis_source: str = None) -> dict:
     """Run order-flow sampler start + candle alignment for all TFs.
 
     Ensures sampler is running, stores one immediate snapshot, aligns
     candles for all TFs, updates snapshot_json.orderflow_alignment.
     EVIDENCE ONLY — no entry signals, no AI, no Entry Candidate.
+
+    analysis_source: when provided by caller, bypasses internal config
+    resolution (avoids falling back to parent_exchange for Bias Shift items).
     """
     if not _lm_is_bias_shift_item(item):
         return {"ok": False, "reason": "not_bias_shift"}
@@ -18114,20 +18118,24 @@ def _lm_refresh_bias_orderflow_alignment_for_item(item, force: bool = False) -> 
         if not uid or not symbol:
             return {"ok": False, "reason": "missing_uid_or_symbol"}
 
-        snap_raw = _json_loads_safe(getattr(item, "snapshot_json", None), {})
-        # When called from a background proxy (snapshot_json=None), reload from DB
-        # so analysis_source ("aggregated", "bybit", etc.) is correctly resolved
-        # instead of falling back to parent_exchange.
-        if not snap_raw and item_id and uid:
-            try:
-                from models import LiveMonitorItem as _LMI_lr
-                _real = _LMI_lr.query.filter_by(id=item_id, user_id=uid).first()
-                if _real:
-                    snap_raw = _json_loads_safe(_real.snapshot_json, {})
-            except Exception:
-                pass
-        src_cfg         = _lm_analysis_source_config(item, snap_raw)
-        analysis_source = src_cfg["analysis_source"]
+        if analysis_source:
+            # Caller supplied explicit source — normalize and use directly
+            analysis_source = _lm_normalize_analysis_source(analysis_source)
+        else:
+            snap_raw = _json_loads_safe(getattr(item, "snapshot_json", None), {})
+            # When called from a background proxy (snapshot_json=None), reload from DB
+            # so analysis_source ("aggregated", "bybit", etc.) is correctly resolved
+            # instead of falling back to parent_exchange.
+            if not snap_raw and item_id and uid:
+                try:
+                    from models import LiveMonitorItem as _LMI_lr
+                    _real = _LMI_lr.query.filter_by(id=item_id, user_id=uid).first()
+                    if _real:
+                        snap_raw = _json_loads_safe(_real.snapshot_json, {})
+                except Exception:
+                    pass
+            src_cfg         = _lm_analysis_source_config(item, snap_raw)
+            analysis_source = src_cfg["analysis_source"]
 
         # Start sampler (noop if already running)
         _lm_ensure_bias_orderflow_sampler(
@@ -24090,10 +24098,19 @@ def _lm_bias_shift_auto_refresh_loop():  # noqa: C901
                         market   = (row.market   or "perpetual").lower()
                         symbol   = row.symbol or ""
 
-                        # Resolve analysis_source (prefer stored, default aggregated)
+                        # Resolve analysis_source: prefer what is stored in snapshot,
+                        # then default to "aggregated" for Bias Shift items.
+                        # Do NOT fall through to parent_exchange (which is "binance")
+                        # — that would write binance-keyed rows that 10.9E/10.9F
+                        # never find when queried with analysis_source=aggregated.
                         snap_raw = _json_loads_safe(row.snapshot_json, {})
-                        src_cfg  = _lm_analysis_source_config(row, snap_raw)
-                        analysis_source = src_cfg.get("analysis_source") or "aggregated"
+                        stored_src = (
+                            snap_raw.get("analysis_source")
+                            or (snap_raw.get("data_sources") or {}).get("analysis_source")
+                        )
+                        analysis_source = _lm_normalize_analysis_source(
+                            stored_src or "aggregated"
+                        )
 
                         # Always restart sampler if it died (server restart recovery)
                         try:
@@ -24138,7 +24155,9 @@ def _lm_bias_shift_auto_refresh_loop():  # noqa: C901
                             _lm_bias_ar_item_state[item_id]["refresh_reason"]  = refresh_reason
                             _lm_bias_ar_item_state[item_id]["next_allowed_at"] = now_ts + ITEM_COOLDOWN
 
-                        result = _lm_refresh_bias_orderflow_alignment_for_item(row, force=True)
+                        result = _lm_refresh_bias_orderflow_alignment_for_item(
+                            row, force=True, analysis_source=analysis_source
+                        )
 
                         # ── Rebuild + save 10.9F ──────────────────────────────
                         if result.get("ok"):
