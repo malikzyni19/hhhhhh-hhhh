@@ -6625,6 +6625,11 @@ body.tutorial-open .tut-highlight.tut-interactive *{pointer-events:auto}
                 if(sebody) sebody.innerHTML=_lmSmartEntryHtml(_lmSelItem);
                 // Reload Event Timeline if currently visible
                 if(_lmInstructionView==="events"){ _lmLoadEvents(id); }
+                // Refresh 10.9F values for Bias Shift items (invalidate cache first)
+                if(_lmIsBiasShift(_lmSelItem)){
+                  if(_lmSelItem.snapshot) delete _lmSelItem.snapshot.phase10_9f_bias_shift_values;
+                  _lmLoad109f(_lmSelItem);
+                }
                 // Reload chat history if a chat auto-message was posted
                 if(d.chat_updated){
                   _lmChatHistoryLoad(id,function(msgs){
@@ -7222,14 +7227,22 @@ body.tutorial-open .tut-highlight.tut-interactive *{pointer-events:auto}
     if(!item||!_lmIsBiasShift(item)) return;
     var itemId=item.id;
     var src=_lmGetDataSrc()||"binance";
-    // Use cached snapshot values if available (skip fetch)
+    // Validate cache: must exist, have table values, match current source, and be <5min old
     var _cached=(item.snapshot&&item.snapshot.phase10_9f_bias_shift_values)||null;
+    var _useCache=false;
     if(_cached&&_cached.existing_table_values){
-      console.log("[LM-10.9G] bias shift values loaded (cached)",{itemId:itemId,src:src,status:_cached.status,score:_cached.score});
+      var _cachedAt=_cached.computed_at||0;
+      var _cacheAgeSec=Math.floor(Date.now()/1000)-_cachedAt;
+      var _cachedSrc=(_cached.analysis_source||"").toLowerCase();
+      var _srcMatch=(!_cachedSrc||_cachedSrc===src||src==="aggregated"&&_cachedSrc==="aggregated");
+      _useCache=(_cacheAgeSec<300&&_srcMatch);
+    }
+    if(_useCache){
+      console.log("[LM-10.9G] bias shift values loaded (cache hit, age "+Math.floor(Date.now()/1000-(_cached.computed_at||0))+"s)",{itemId:itemId,src:src,status:_cached.status,score:_cached.score});
       _lmApply109f(item,_cached);
       return;
     }
-    // Fetch fresh from backend
+    // Fetch fresh from backend (force_refresh=1 so backend rebuilds and persists)
     var url="/api/live-monitor/items/"+itemId+"/phase10-9f/debug?analysis_source="+encodeURIComponent(src)+"&force_refresh=1";
     fetch(url,{credentials:"same-origin"})
       .then(function(r){return r.ok?r.json():null;})
@@ -7237,10 +7250,10 @@ body.tutorial-open .tut-highlight.tut-interactive *{pointer-events:auto}
         if(!d||!d.ok) return;
         var vals=d.phase10_9f_bias_shift_values;
         if(!vals||!vals.existing_table_values) return;
-        console.log("[LM-10.9G] bias shift values loaded",{itemId:itemId,src:src,status:vals.status,score:vals.score,verdict:vals.bias_shift_label});
-        // Cache into item snapshot so checklist can use it on next render
+        console.log("[LM-10.9G] bias shift values loaded",{itemId:itemId,src:src,status:vals.status,score:vals.score,verdict:vals.bias_shift_label,sourceMismatch:d.source_mismatch});
+        // Cache into item snapshot so checklist uses fresh values on next render
         if(item.snapshot) item.snapshot.phase10_9f_bias_shift_values=vals;
-        // Update item in liveMonitorItems array
+        // Sync into liveMonitorItems array
         for(var ki=0;ki<liveMonitorItems.length;ki++){
           if(liveMonitorItems[ki].id===itemId){
             if(liveMonitorItems[ki].snapshot) liveMonitorItems[ki].snapshot.phase10_9f_bias_shift_values=vals;

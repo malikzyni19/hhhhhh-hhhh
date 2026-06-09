@@ -23653,6 +23653,26 @@ def _lm_build_phase10_9f_bias_shift_values(  # noqa: C901
         and delta_net is None
         and not ob_ok
     )
+    # Stale guard: very stale data must not produce "Confirmed" verdict
+    _very_stale = snap_age_sec is not None and snap_age_sec >= 900
+    if _very_stale:
+        source_warnings.append(
+            f"Data is {int(snap_age_sec)}s old (>15min). "
+            "Verdict capped at Developing — refresh orderflow for accurate verdict."
+        )
+
+    # Orderflow-against guard: orderflow directly conflicting with bias blocks "Confirmed"
+    _of_against_bias = (
+        of_status == "ready" and _tf_directions and (
+            (is_bullish and
+             sum(1 for d in _tf_directions if any(w in d for w in ("bear", "sell", "short")))
+             >= len(_tf_directions) * 0.6) or
+            (is_bearish and
+             sum(1 for d in _tf_directions if any(w in d for w in ("bull", "buy", "long")))
+             >= len(_tf_directions) * 0.6)
+        )
+    )
+
     if _critical_missing or raw_dir == "unknown":
         verdict       = "needs_more_data"
         verdict_label = "Needs More Data"
@@ -23660,13 +23680,29 @@ def _lm_build_phase10_9f_bias_shift_values(  # noqa: C901
             "Bias direction not set or critical data still loading. "
             "Check item direction and wait for orderflow samples."
         )
-    elif score >= 75:
+    elif snap_age_sec is not None and snap_age_sec >= 900 and not _critical_missing:
+        verdict       = "needs_fresh_orderflow"
+        verdict_label = "Needs Fresh Orderflow"
+        manual_read   = (
+            f"Orderflow data is {round(snap_age_sec / 3600, 1)}h old. "
+            "Cached signals are stale — verdict is withheld until orderflow is refreshed."
+        )
+    elif score >= 75 and not _of_against_bias:
         verdict       = "confirmed"
         verdict_label = "Confirmed Bias Shift"
         _dlbl         = "Bullish" if is_bullish else "Bearish"
         manual_read   = (
             f"{_dlbl} bias shift is strongly confirmed by multiple evidence sources. "
             "Orderflow, delta, sweep, and OB context are aligned."
+        )
+    elif score >= 75 and _of_against_bias:
+        # Score high but orderflow conflicts — downgrade to developing
+        verdict       = "developing_strong"
+        verdict_label = "Developing Bias Shift"
+        _dlbl         = "Bullish" if is_bullish else "Bearish"
+        manual_read   = (
+            f"{_dlbl} signals are mostly strong but orderflow is conflicting. "
+            "Score would confirm but orderflow majority is against bias — watch closely."
         )
     elif score >= 55:
         verdict       = "developing_strong"
@@ -23702,7 +23738,12 @@ def _lm_build_phase10_9f_bias_shift_values(  # noqa: C901
     _of_total  = len(_tf_directions)
     _of_bull_c = sum(1 for d in _tf_directions if any(w in d for w in ("bull", "buy", "long")))
     _of_bear_c = sum(1 for d in _tf_directions if any(w in d for w in ("bear", "sell", "short")))
-    if of_status not in ("ready",) or not _tf_directions:
+    # Source mismatch overrides all — data came from a different source than requested
+    _of_src_mismatch = bool(of_src and of_src != analysis_source and of_status == "ready")
+    if _of_src_mismatch:
+        _of_label  = f"Source Mismatch ({of_src} stored, {analysis_source} requested)"
+        _of_status = "needs_refresh"
+    elif of_status not in ("ready",) or not _tf_directions:
         _of_label  = "Collecting samples" if of_status in ("collecting", "initializing") else "Unavailable"
         _of_status = "watch"
     elif is_bullish:
@@ -23800,32 +23841,48 @@ def _lm_build_phase10_9f_bias_shift_values(  # noqa: C901
     else:
         _freshness_status = "needs_fresh_orderflow"
 
+    # setup_validity status follows the actual verdict, not raw score
+    _sv_status = {
+        "confirmed":           "confirm",
+        "developing_strong":   "watch",
+        "developing_mixed":    "watch",
+        "needs_fresh_orderflow": "needs_refresh",
+        "weak":                "caution",
+        "invalid":             "invalid",
+        "needs_more_data":     "pend",
+    }.get(verdict, "pend")
+
+    # orderflow_agreement note: source mismatch takes priority over stale
+    if _of_src_mismatch:
+        _of_note = (
+            f"Orderflow stored for source '{of_src}' but '{analysis_source}' requested. "
+            "Use bias-orderflow/refresh to rebuild for the correct source."
+        )
+        _of_status_final = "needs_refresh"
+    elif _dq_lbl in ("stale", "very_stale"):
+        _of_note = (
+            f"Phase 10.9E source is {_dq_lbl} "
+            f"(~{round((snap_age_sec or 0)/3600, 1)}h old). "
+            "Refresh orderflow before trusting verdict."
+        )
+        _of_status_final = "needs_refresh"
+    else:
+        _of_note = f"Phase 10.9E: {of_status} on {len(_tf_directions)} TFs."
+        _of_status_final = _of_status
+
     existing_table_values = {
         "confirmation_checklist": {
             "setup_validity": {
                 "label":  "Bias Shift Status",
                 "value":  verdict_label,
-                "status": (
-                    "confirm" if score >= 75 else
-                    "watch"   if score >= 40 else
-                    "caution" if score >= 20 else "invalid"
-                ),
+                "status": _sv_status,
                 "note": manual_read[:140],
             },
             "orderflow_agreement": {
                 "label":  "Orderflow Agreement",
                 "value":  _of_label,
-                "status": (
-                    "needs_refresh" if _dq_lbl in ("stale", "very_stale")
-                    else _of_status
-                ),
-                "note": (
-                    f"Phase 10.9E source is {_dq_lbl} "
-                    f"(~{round((snap_age_sec or 0)/3600, 1)}h old). "
-                    "Refresh orderflow before trusting verdict."
-                    if _dq_lbl in ("stale", "very_stale")
-                    else f"Phase 10.9E: {of_status} on {len(_tf_directions)} TFs."
-                ),
+                "status": _of_status_final,
+                "note":   _of_note,
             },
             "sweep_rekt_confirmation": {
                 "label":  "Sweep + Rekt",
@@ -23859,13 +23916,17 @@ def _lm_build_phase10_9f_bias_shift_values(  # noqa: C901
             "snapshot_age_sec": snap_age_sec,
         },
         "ai_context": {
-            "bias_shift_label":  verdict_label,
-            "score":             score,
-            "manual_read":       manual_read,
-            "direction":         raw_dir,
-            "analysis_source":   analysis_source,
-            "context_only":      True,
+            "bias_shift_label":   verdict_label,
+            "score":              score,
+            "manual_read":        manual_read,
+            "direction":          raw_dir,
+            "analysis_source":    analysis_source,
+            "context_only":       True,
             "no_entry_candidate": True,
+            "positive_reasons":   positive_reasons,
+            "negative_reasons":   negative_reasons,
+            "missing_reasons":    missing_reasons,
+            "warnings":           source_warnings,
         },
     }
 
@@ -24000,6 +24061,97 @@ def api_lm_phase10_9f_debug(item_id):
         "no_entry_candidate":           True,
         "stored":                       stored,
         "phase10_9f_bias_shift_values": values,
+    })
+
+
+@app.route("/api/live-monitor/bias-shift/phase10-9h/audit",
+           methods=["GET"])
+@login_required
+def api_lm_phase10_9h_audit():
+    """Phase 10.9H: read-only audit of all active Bias Shift Live Monitor items.
+
+    No AI call. No trading. No entry signals. No UI changes.
+    Query params:
+      analysis_source  — source to audit (default: aggregated)
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"ok": False, "error": "auth"}), 401
+
+    analysis_source = (
+        request.args.get("analysis_source") or
+        request.args.get("exchange") or "aggregated"
+    ).strip().lower()
+
+    from models import LiveMonitorItem as _LMI9h
+    import time as _t9h
+
+    items = _LMI9h.query.filter_by(user_id=uid, is_active=True).all()
+    rows_out = []
+    now_s = _t9h.time()
+
+    for row in items:
+        if not _lm_is_bias_shift_item(row):
+            continue
+        snap_raw = _json_loads_safe(row.snapshot_json, {})
+        of_align = snap_raw.get("orderflow_alignment", {}) or {}
+        of_src   = (of_align.get("analysis_source") or "").lower()
+        of_status = (of_align.get("status") or "collecting").lower()
+
+        # Cached 10.9F values if stored
+        cached_109f = snap_raw.get("phase10_9f_bias_shift_values") or {}
+        cached_status  = cached_109f.get("status", "—")
+        cached_verdict = cached_109f.get("bias_shift_label", "—")
+        cached_score   = cached_109f.get("score")
+        cached_at      = cached_109f.get("computed_at")
+        cached_age_sec = round(now_s - cached_at, 0) if cached_at else None
+        snap_age_sec   = cached_109f.get("snapshot_age_sec")
+
+        source_mismatch = bool(of_src and of_src != analysis_source and of_status == "ready")
+        warnings_out    = cached_109f.get("warnings") or []
+        if source_mismatch:
+            warnings_out = [
+                f"Orderflow stored as '{of_src}'; audit source is '{analysis_source}'."
+            ] + warnings_out
+
+        freshness = "—"
+        if snap_age_sec is not None:
+            if snap_age_sec < 60:
+                freshness = "fresh"
+            elif snap_age_sec < 300:
+                freshness = "acceptable"
+            elif snap_age_sec < 900:
+                freshness = "stale"
+            else:
+                freshness = "very_stale"
+
+        rows_out.append({
+            "item_id":         row.id,
+            "symbol":          row.symbol,
+            "direction":       getattr(row, "direction", None) or "—",
+            "setup_category":  _lm_setup_category(row),
+            "analysis_source": analysis_source,
+            "of_status":       of_status,
+            "of_stored_src":   of_src or "—",
+            "source_mismatch": source_mismatch,
+            "cached_109f_status":  cached_status,
+            "cached_109f_verdict": cached_verdict,
+            "cached_109f_score":   cached_score,
+            "cached_109f_age_sec": cached_age_sec,
+            "snapshot_age_sec":    snap_age_sec,
+            "freshness":           freshness,
+            "warnings":            warnings_out,
+        })
+
+    return jsonify({
+        "ok":             True,
+        "phase":          "phase10_9h_audit",
+        "analysis_source": analysis_source,
+        "context_only":   True,
+        "no_entry_candidate": True,
+        "item_count":     len(rows_out),
+        "items":          rows_out,
+        "audited_at":     int(now_s),
     })
 
 
