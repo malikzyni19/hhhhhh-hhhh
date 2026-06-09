@@ -568,6 +568,7 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
 .tut-intro-bd[hidden]{display:none}
 .tut-intro-card{background:var(--bg-card);border:1px solid var(--border-2);
   border-radius:14px;padding:22px 26px;width:420px;max-width:96vw;
+  max-height:90vh;overflow-y:auto;
   box-shadow:0 18px 50px rgba(0,0,0,.6);color:var(--text);text-align:center}
 .tut-intro-ico{width:46px;height:46px;border-radius:50%;background:rgba(34,211,238,.12);
   border:1px solid rgba(34,211,238,.35);display:flex;align-items:center;justify-content:center;
@@ -581,24 +582,27 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
 .tut-intro-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
 .tut-intro-actions .btn{padding:8px 18px;font-size:13px}
 
-/* ───── Tutorial-open background lock (Round 19 — Task 2) ───── */
+/* ───── Tutorial-open background lock (Round 20 hotfix) ─────
+   One reliable click-layer model:
+     - body.tutorial-open       → page scroll locked
+     - .tut-overlay (sibling of .tut-card, NOT parent of it) is the
+       full-viewport click absorber: pointer-events:auto, z-index 7990.
+     - .tut-card is position:fixed, z-index:8001, pointer-events:auto,
+       placed OUTSIDE the overlay in the DOM. Card is always clickable;
+       background can never be touched while overlay is up.
+     - For dropdown / required-click steps the overlay temporarily turns
+       its pointer-events off (toggled via .tut-overlay-passthrough) so
+       the user can tap the highlighted target. A document-level capture
+       click handler keeps blocking everything except the card + target. */
 body.tutorial-open{overflow:hidden}
-/* Hide-from-pointer mask sits behind the tutorial card and absorbs clicks
-   on the background. The active highlighted target sits ABOVE it (via
-   .tut-highlight z-index 401) so the visual rect is still visible but
-   the rest of the page is locked. */
-.tut-lock{position:fixed;inset:0;z-index:399;background:transparent;
-  pointer-events:auto;display:none}
-body.tutorial-open .tut-lock{display:block}
-body.tutorial-open .tut-overlay{pointer-events:none}
+.tut-card-host{position:fixed;inset:0;z-index:8001;pointer-events:none}
+.tut-card-host[hidden]{display:none}
+.tut-card-host > .tut-card{pointer-events:auto}
 
-/* Per-step interactive carve-out: when the step requires interacting
-   with a real target (e.g. opening a dropdown), the highlighted target
-   stays clickable. Otherwise it's a visual-only ring. */
-body.tutorial-open .tut-highlight{pointer-events:none}
-body.tutorial-open .tut-highlight *{pointer-events:none}
-body.tutorial-open .tut-highlight.tut-interactive{pointer-events:auto}
-body.tutorial-open .tut-highlight.tut-interactive *{pointer-events:auto}
+/* Highlighted target is visual only — the box-shadow ring is decoration.
+   By default we don't change pointer-events on the target itself; the
+   overlay/document-handler combo enforces lock. */
+.tut-highlight.tut-interactive{cursor:pointer}
 
 /* ───── Tutorial card mobile / centered fallback (Round 19 — Task 3) ───── */
 .tut-card.tut-card-centered{left:50% !important;top:50% !important;
@@ -617,25 +621,33 @@ body.tutorial-open .tut-highlight.tut-interactive *{pointer-events:auto}
   letter-spacing:.2px}
 .tut-card .tut-actions .btn:disabled{opacity:.45;cursor:not-allowed}
 
-/* Tutorial overlay (Queue 16) */
-/* Tutorial overlay (Task 7 rework).
-   - .tut-overlay has NO z-index so it isn't a stacking context.
-   - .tut-mask is fully transparent (no blur) and pointer-events:none.
-   - Dimming + ring come from .tut-highlight applied directly to the
-     real target element via a spread box-shadow.
-   - .tut-card is position:fixed at z-index 8000 — above panels, below
-     the token-limit modal (9000+). */
-.tut-overlay{position:fixed;inset:0;pointer-events:none}
+/* Tutorial overlay (Round 20 hotfix — robust click layering).
+   .tut-overlay is the BACKGROUND ABSORBER — full viewport, pointer-events
+   auto (default), z-index 7990. .tut-card lives outside this element so
+   we never have to rely on "parent none, child auto" inheritance, which
+   is flaky on some Android Chrome versions. */
+.tut-overlay{position:fixed;inset:0;z-index:7990;background:transparent;
+  pointer-events:auto}
 .tut-overlay[hidden]{display:none}
-.tut-mask{position:absolute;inset:0;background:transparent;pointer-events:none}
-.tut-highlight{position:relative;z-index:401 !important;
+.tut-overlay.tut-overlay-passthrough{pointer-events:none}
+.tut-mask{position:absolute;inset:0;background:transparent;pointer-events:auto}
+.tut-overlay.tut-overlay-passthrough .tut-mask{pointer-events:none}
+.tut-highlight{position:relative;z-index:7995 !important;
   box-shadow:0 0 0 3px var(--accent), 0 0 0 9999px rgba(2,6,14,.72) !important;
   border-radius:10px !important;transition:box-shadow .2s ease}
 .tut-spot{display:none !important}
+/* .tut-card host (separate from overlay) — see .tut-card-host above. */
 .tut-card{position:fixed;width:340px;max-width:92vw;background:var(--bg-card);
-  border:1px solid var(--border-2);border-radius:12px;padding:16px 18px;
+  border:1px solid var(--border-2);border-radius:12px;padding:16px 40px 16px 18px;
   box-shadow:0 12px 36px rgba(0,0,0,.55);color:var(--text);
-  z-index:8000;pointer-events:auto}
+  z-index:8001;pointer-events:auto}
+.tut-card-close{position:absolute;top:8px;right:8px;width:28px;height:28px;
+  border-radius:50%;background:var(--bg-card-2);border:1px solid var(--border);
+  color:var(--text-2);font-size:16px;line-height:1;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;padding:0;
+  font-family:inherit;font-weight:700;pointer-events:auto;z-index:1}
+.tut-card-close:hover{color:var(--text);border-color:var(--accent);background:rgba(34,211,238,.08)}
+.tut-card-close:focus{outline:none;border-color:var(--accent)}
 .tut-step{font-size:10px;font-weight:700;letter-spacing:.6px;color:var(--accent);margin-bottom:6px}
 .tut-title{font-size:15px;font-weight:700;margin-bottom:6px}
 .tut-text{font-size:12.5px;color:var(--text-2);line-height:1.5;margin-bottom:12px}
@@ -643,6 +655,13 @@ body.tutorial-open .tut-highlight.tut-interactive *{pointer-events:auto}
 .tut-never input{width:14px;height:14px;accent-color:var(--accent);cursor:pointer}
 .tut-actions{display:flex;gap:8px;justify-content:flex-end}
 .tut-actions .btn{padding:6px 14px;font-size:12px}
+
+/* The native <select> elements are hidden but stay in the DOM so existing
+   change-listeners and code paths that read selectEl.value keep working
+   (Round 20 hotfix — do NOT replaceChild). */
+select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
+  overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;opacity:0;
+  pointer-events:none}
 
 /* Settings (i) info buttons (Queue 16) */
 .info-i{display:inline-flex;width:14px;height:14px;border-radius:50%;border:1px solid var(--border);
@@ -1603,14 +1622,15 @@ body.tutorial-open .tut-highlight.tut-interactive *{pointer-events:auto}
       </div>
     </div>
 
-    <!-- Background lock (Task 2) — absorbs pointer events while tutorial is open -->
-    <div id="tutLock" class="tut-lock" aria-hidden="true"></div>
-
-    <!-- Tutorial overlay (Queue 16 + Round 19 rework) -->
+    <!-- Tutorial overlay (background absorber — Round 20 hotfix) -->
     <div id="tutOverlay" class="tut-overlay" hidden>
       <div class="tut-mask" id="tutMask"></div>
       <div class="tut-spot" id="tutSpot"></div>
+    </div>
+    <!-- Tutorial card host (sibling of overlay, always above it) -->
+    <div id="tutCardHost" class="tut-card-host" hidden>
       <div class="tut-card" id="tutCard">
+        <button class="tut-card-close" id="tutClose" type="button" aria-label="Close tutorial" title="Close">×</button>
         <div class="tut-step" id="tutStep">1 / 1</div>
         <div class="tut-title" id="tutTitle">—</div>
         <div class="tut-text" id="tutText">—</div>
@@ -9070,151 +9090,143 @@ body.tutorial-open .tut-highlight.tut-interactive *{pointer-events:auto}
       wrap.classList.add("cdd-open-up");
     }
   }
+  /* Round 20 hotfix: the native <select> is KEPT in the DOM (hidden) so
+     existing listeners and code that reads selectEl.value keep working.
+     The wrapper is inserted as a sibling AFTER the select. Value writes
+     forward to the native select (which dispatches change/input). */
   function _cddUpgrade(selectEl){
     if(!selectEl || selectEl.tagName !== "SELECT") return null;
     if(selectEl.dataset && selectEl.dataset.cddSkip === "1") return null;
-    /* Collect options */
-    var opts = [];
-    for(var i=0;i<selectEl.options.length;i++){
-      var o = selectEl.options[i];
-      opts.push({value:o.value, label:(o.textContent||"").trim(), disabled:o.disabled});
+    if(selectEl._cddWrap) return selectEl._cddWrap;  // already upgraded
+    /* Collect options from the LIVE select element. */
+    function _readOpts(){
+      var out = [];
+      for(var i=0;i<selectEl.options.length;i++){
+        var o = selectEl.options[i];
+        out.push({value:o.value, label:(o.textContent||"").trim(), disabled:o.disabled, node:o});
+      }
+      return out;
     }
-    var initial = selectEl.value;
-    /* Build wrapper div, inherit attributes from the original select. */
+    var opts = _readOpts();
+
+    /* Build the visual wrapper — it is NOT a select replacement. */
     var wrap = document.createElement("div");
     wrap.className = "cdd";
     wrap.tabIndex = 0;
-    for(var k=0;k<selectEl.attributes.length;k++){
-      var a = selectEl.attributes[k];
-      if(a.name==="class"||a.name==="tabindex"||a.name==="type") continue;
-      try{ wrap.setAttribute(a.name, a.value); }catch(_){}
-    }
-    /* Preserve the original tagName for any "is this a SELECT" checks: we
-       can't change the wrapper's tagName but ALL of our code only reads
-       .value / dispatches 'change' so it doesn't matter. */
+    wrap.setAttribute("role","combobox");
+    wrap.setAttribute("aria-haspopup","listbox");
+    /* Mirror data-opt and similar selectors so the tutorial / state code
+       that does `[data-opt='status']` can still find a unique node — but
+       to keep selectors pointing to the LIVE listener owner (the select)
+       we mirror with a `data-cdd-for` attribute, not by stealing it. */
+    if(selectEl.id) wrap.setAttribute("data-cdd-for", selectEl.id);
+
     var btn = document.createElement("button");
     btn.type = "button"; btn.className = "cdd-btn";
     var valSpan = document.createElement("span"); valSpan.className = "cdd-val";
-    var chev = document.createElement("span"); chev.className = "cdd-chev"; chev.textContent = "▾";
+    var chev    = document.createElement("span"); chev.className    = "cdd-chev"; chev.textContent = "▾";
     btn.appendChild(valSpan); btn.appendChild(chev);
-    var list = document.createElement("div"); list.className = "cdd-list"; list.hidden = true;
-    opts.forEach(function(o){
-      var item = document.createElement("div");
-      item.className = "cdd-opt" + (o.disabled?" cdd-disabled":"");
-      item.setAttribute("data-val", o.value);
-      item.textContent = o.label || o.value;
-      list.appendChild(item);
-    });
-    wrap.appendChild(btn);
-    wrap.appendChild(list);
 
-    var _val = initial;
+    var list = document.createElement("div");
+    list.className = "cdd-list"; list.hidden = true;
+    list.setAttribute("role","listbox");
+    wrap.appendChild(btn); wrap.appendChild(list);
+
     function _findLabel(v){
       for(var i=0;i<opts.length;i++){
         if(String(opts[i].value)===String(v)) return opts[i].label || opts[i].value;
       }
       return String(v||"");
     }
-    function _setVal(v, fireChange){
-      _val = String(v==null?"":v);
-      valSpan.textContent = _findLabel(_val);
-      var items = list.querySelectorAll(".cdd-opt");
-      for(var i=0;i<items.length;i++){
-        items[i].classList.toggle("on", items[i].getAttribute("data-val")===_val);
-      }
-      if(fireChange){
-        try{ wrap.dispatchEvent(new Event("change", {bubbles:true})); }catch(_){}
-        try{ wrap.dispatchEvent(new Event("input",  {bubbles:true})); }catch(_){}
-      }
+    function _rebuildList(){
+      list.innerHTML = "";
+      opts.forEach(function(o){
+        var item = document.createElement("div");
+        item.className = "cdd-opt" + (o.disabled?" cdd-disabled":"");
+        item.setAttribute("role","option");
+        item.setAttribute("data-val", o.value);
+        item.textContent = o.label || o.value;
+        if(String(o.value)===String(selectEl.value)) item.classList.add("on");
+        list.appendChild(item);
+      });
     }
-    _setVal(initial, false);
+    function _refreshUiFromSelect(){
+      opts = _readOpts();
+      _rebuildList();
+      valSpan.textContent = _findLabel(selectEl.value);
+    }
+    _refreshUiFromSelect();
 
-    Object.defineProperty(wrap, "value", {
-      get: function(){ return _val; },
-      set: function(v){ _setVal(v, false); },
-      configurable: true
-    });
-    /* Also mirror .selectedIndex for code that uses it. */
-    Object.defineProperty(wrap, "selectedIndex", {
-      get: function(){
-        for(var i=0;i<opts.length;i++){ if(String(opts[i].value)===String(_val)) return i; }
-        return -1;
-      },
-      set: function(i){
-        if(opts[i]) _setVal(opts[i].value, false);
-      },
-      configurable: true
-    });
-    /* options[] passthrough — return the actual .cdd-opt DOM nodes so
-       legacy code that does sel.options[i].setAttribute / textContent
-       still works. Each opt div also exposes a .value getter that reads
-       its data-val. */
-    [].forEach.call(list.querySelectorAll(".cdd-opt"), function(opt){
-      try{
-        Object.defineProperty(opt, "value", {
-          get: function(){ return opt.getAttribute("data-val") || ""; },
-          set: function(v){ opt.setAttribute("data-val", v); },
-          configurable: true
-        });
-        Object.defineProperty(opt, "text", {
-          get: function(){ return opt.textContent || ""; },
-          set: function(t){
-            /* When existing code overrides option text (e.g. locked
-               badge), keep the dropdown value in sync. */
-            opt.textContent = t;
-            if(opt.classList.contains("on")) valSpan.textContent = t;
-          },
-          configurable: true
-        });
-        Object.defineProperty(opt, "disabled", {
-          get: function(){ return opt.classList.contains("cdd-disabled"); },
-          set: function(d){ opt.classList.toggle("cdd-disabled", !!d); },
-          configurable: true
-        });
-      }catch(_){}
-    });
-    Object.defineProperty(wrap, "options", { get: function(){
-      return list.querySelectorAll(".cdd-opt");
-    }, configurable: true });
-
-    /* Click handlers */
+    /* Open / close */
     btn.addEventListener("click", function(e){
       e.preventDefault(); e.stopPropagation();
       var wasOpen = wrap.classList.contains("cdd-open");
       _cddCloseOpen();
-      if(!wasOpen){
-        wrap.classList.add("cdd-open");
-        list.hidden = false;
-        _cddOpenDropdown = wrap;
-        requestAnimationFrame(function(){ _cddPositionList(wrap); });
-        try{ wrap.dispatchEvent(new Event("cdd-open",{bubbles:true})); }catch(_){}
-      }
+      if(wasOpen) return;
+      wrap.classList.add("cdd-open");
+      list.hidden = false;
+      _cddOpenDropdown = wrap;
+      requestAnimationFrame(function(){ _cddPositionList(wrap); });
+      try{ wrap.dispatchEvent(new Event("cdd-open", {bubbles:true})); }catch(_){}
     });
     list.addEventListener("click", function(e){
-      e.stopPropagation();
-      e.preventDefault();
+      e.stopPropagation(); e.preventDefault();
       var opt = e.target.closest(".cdd-opt");
       if(!opt || opt.classList.contains("cdd-disabled")) return;
       var v = opt.getAttribute("data-val");
+      /* Close visually first, then write the value into the NATIVE select
+         and dispatch change/input on the select so every existing
+         listener fires exactly once. */
       wrap.classList.remove("cdd-open","cdd-open-up");
       list.hidden = true;
       _cddOpenDropdown = null;
-      /* Defer the value update one tick so any change-handler that
-         re-renders / re-applies state does so AFTER the dropdown is
-         visually closed, and so subsequent clicks during the same
-         microtask can't reopen the menu. */
-      setTimeout(function(){ _setVal(v, true); }, 0);
+      setTimeout(function(){
+        try{ selectEl.value = v; }catch(_){}
+        try{ selectEl.dispatchEvent(new Event("input",  {bubbles:true})); }catch(_){}
+        try{ selectEl.dispatchEvent(new Event("change", {bubbles:true})); }catch(_){}
+        /* The native change handlers may revert .value (e.g. when a
+           feature is locked), so always re-sync the UI from the real
+           current value of the select. */
+        _refreshUiFromSelect();
+      }, 0);
     });
     wrap.addEventListener("keydown", function(e){
-      if(e.key==="Enter"||e.key===" "){
-        e.preventDefault(); btn.click();
-      } else if(e.key==="Escape"){
-        _cddCloseOpen();
-      }
+      if(e.key==="Enter"||e.key===" "){ e.preventDefault(); btn.click(); }
+      else if(e.key==="Escape"){ _cddCloseOpen(); }
     });
 
-    /* Swap in the new wrapper */
-    selectEl.parentNode.replaceChild(wrap, selectEl);
+    /* Trap programmatic writes to selectEl.value so the UI stays in sync.
+       Existing code uses selectEl.value = "x" all over the place. */
+    try{
+      var proto = HTMLSelectElement.prototype;
+      var desc = Object.getOwnPropertyDescriptor(proto, "value");
+      if(desc && desc.get && desc.set){
+        Object.defineProperty(selectEl, "value", {
+          get: function(){ return desc.get.call(this); },
+          set: function(v){ desc.set.call(this, v); _refreshUiFromSelect(); },
+          configurable: true
+        });
+      }
+    }catch(_){}
+
+    /* Watch for option additions / disabled-flag changes / text edits so
+       e.g. the exchange "— locked" badge or dynamically-built option
+       lists (LM AI providers etc.) update the dropdown UI. */
+    try{
+      var obs = new MutationObserver(function(){ _refreshUiFromSelect(); });
+      obs.observe(selectEl, {childList:true, subtree:true, characterData:true, attributes:true, attributeFilter:["disabled","value"]});
+    }catch(_){}
+
+    /* Insert AFTER the native select, then hide the select via class so
+       the keyboard / native picker can't open. */
+    selectEl.classList.add("cdd-hidden");
+    selectEl.setAttribute("aria-hidden","true");
+    selectEl.tabIndex = -1;
+    selectEl.parentNode.insertBefore(wrap, selectEl.nextSibling);
+
+    /* Cross-refs for the tutorial / look-up code. */
+    selectEl._cddWrap = wrap;
+    wrap._cddSelect   = selectEl;
     return wrap;
   }
   function _cddUpgradeAll(container){
@@ -9417,6 +9429,20 @@ body.tutorial-open .tut-highlight.tut-interactive *{pointer-events:auto}
       _tutCurTgt.classList.remove("tut-highlight","tut-interactive");
     }
     _tutCurTgt = null;
+    var ovl = E("tutOverlay");
+    if(ovl) ovl.classList.remove("tut-overlay-passthrough");
+  }
+  /* If the resolved selector returns a native <select> that has been
+     upgraded with a custom dropdown wrapper, prefer the wrapper for
+     visual highlighting and tap-detection. */
+  function _tutResolveTarget(sel){
+    var sels = (sel||"").split(",").map(function(s){return s.trim();}).filter(Boolean);
+    var tgt = null;
+    for(var i=0;i<sels.length && !tgt;i++){
+      try{ tgt = document.querySelector(sels[i]); }catch(_){ tgt = null; }
+    }
+    if(tgt && tgt.tagName === "SELECT" && tgt._cddWrap) return tgt._cddWrap;
+    return tgt;
   }
   function _tutIsMobile(){ return innerWidth <= 820; }
   function _tutPositionCard(){
@@ -9468,17 +9494,17 @@ body.tutorial-open .tut-highlight.tut-interactive *{pointer-events:auto}
       _tutPositionCard();   // centered/bottom because _tutCurTgt is null
       _tutSetNextDisabled(false);
     } else {
-      var sels = (step.sel||"").split(",").map(function(s){return s.trim();}).filter(Boolean);
-      var tgt = null;
-      for(var i=0;i<sels.length && !tgt;i++){
-        try{ tgt = document.querySelector(sels[i]); }catch(_){ tgt = null; }
-      }
+      var tgt = _tutResolveTarget(step.sel);
       if(tgt){
         _tutCurTgt = tgt;
         try{ tgt.scrollIntoView({block:"center", inline:"nearest", behavior:"instant"}); }catch(_){ try{ tgt.scrollIntoView(); }catch(__){} }
         tgt.classList.add("tut-highlight");
         if(kind === "dropdown" || kind === "required_click"){
           tgt.classList.add("tut-interactive");
+          /* Let the user actually tap the highlighted control:
+             temporarily turn the overlay into passthrough. */
+          var _ovl = E("tutOverlay");
+          if(_ovl) _ovl.classList.add("tut-overlay-passthrough");
         }
         _tutPositionCard();
       } else {
@@ -9526,12 +9552,19 @@ body.tutorial-open .tut-highlight.tut-interactive *{pointer-events:auto}
   function _tutGoTo(i){
     var step = _tutSteps[i]; if(!step) return _tutFinish();
     _tutIdx = i;
+    function _safePaint(){
+      try{ _tutPaintStep(step); }
+      catch(err){
+        try{ console.error("tutorial step failed, closing", err); }catch(_){ }
+        _tutHide();
+      }
+    }
     var needSwitch = step.view && step.view !== ST.view;
     if(needSwitch){
       try{ switchView(step.view); }catch(_){ }
-      setTimeout(function(){ _tutPaintStep(step); }, 220);
+      setTimeout(_safePaint, 220);
     } else {
-      _tutPaintStep(step);
+      _safePaint();
     }
   }
   function _tutShowGroup(groupKey){
@@ -9541,8 +9574,10 @@ body.tutorial-open .tut-highlight.tut-interactive *{pointer-events:auto}
     _tutIdx = 0;
     _tutSessionGroups[groupKey] = true;
     document.body.classList.add("tutorial-open");
-    E("tutOverlay").hidden = false;
-    _tutGoTo(0);
+    var ovl = E("tutOverlay"); if(ovl) ovl.hidden = false;
+    var host = E("tutCardHost"); if(host) host.hidden = false;
+    try{ _tutGoTo(0); }
+    catch(err){ try{ console.error("tutorial paint failed", err); }catch(_){ } _tutHide(); return false; }
     return true;
   }
   function _tutHide(){
@@ -9550,10 +9585,20 @@ body.tutorial-open .tut-highlight.tut-interactive *{pointer-events:auto}
     _tutHideOpts();
     _tutShowHint("");
     document.body.classList.remove("tutorial-open");
-    if(E("tutOverlay")) E("tutOverlay").hidden = true;
+    var ovl = E("tutOverlay"); if(ovl){ ovl.hidden = true; ovl.classList.remove("tut-overlay-passthrough"); }
+    var host = E("tutCardHost"); if(host) host.hidden = true;
   }
-  function _tutFinish(){ _tutSavePrefs({markCompleted:true}); _tutHide(); }
-  function _tutSkip(){   _tutSavePrefs({markSkipped:true});   _tutHide(); }
+  function _tutFinish(){ try{ _tutSavePrefs({markCompleted:true}); }catch(_){ } _tutHide(); }
+  function _tutSkip(){   try{ _tutSavePrefs({markSkipped:true});   }catch(_){ } _tutHide(); }
+  /* Emergency escape (Task 2): Esc + X close button + intro Esc.
+     Always wired so a stuck card can always be dismissed. */
+  document.addEventListener("keydown", function(e){
+    if(e.key !== "Escape") return;
+    var ovl = E("tutOverlay"), intro = E("tutIntro");
+    if(ovl && !ovl.hidden){ _tutSkip(); return; }
+    if(intro && !intro.hidden){ _tutHideIntro(); return; }
+  });
+  if(E("tutClose")) E("tutClose").addEventListener("click", _tutSkip);
 
   /* Intro modal flow (Task 1) */
   function _tutShowIntro(){
@@ -9582,6 +9627,9 @@ body.tutorial-open .tut-highlight.tut-interactive *{pointer-events:auto}
       _tutPrefs.desktopTutorialNeverShow = true;
       _tutSavePrefs({});
     }
+    /* User opted in — clear the "skipped this session" flag so further
+       tab switches still surface their tutorials. */
+    _tutSessionSkipped = false;
     _tutHideIntro();
     var key = _tutGroupKey() || "scanner_main";
     _tutShowGroup(key);
