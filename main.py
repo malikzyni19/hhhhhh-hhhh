@@ -19867,6 +19867,18 @@ def _lm_ai_trade_proposal_prompt() -> str:
         "- candidate_analysis.explanation: quote it in entry_logic if it supports the proposal.\n"
         "- Do NOT invent ai_trade_control_decision data. If null, ignore these rules.\n\n"
 
+        "AUTOMATION POLICY RULES (Phase 11.4):\n"
+        "The context may include an automation_policy block with policy evaluation.\n"
+        "- allowed=false: you MUST output action='no_trade'. "
+        "Cite blocking_reasons in risk_notes.\n"
+        "- future_action='block_trade': add to risk_notes. Output action='no_trade'.\n"
+        "- future_action='pause_setup': add to risk_notes. Output action='no_trade'.\n"
+        "- future_action='switch_mode': note recommended_mode in entry_logic. "
+        "Do NOT say the switch was applied — it was not.\n"
+        "- future_action='none': policy is satisfied with current mode. "
+        "Mention in reasoning_summary.\n"
+        "- Do NOT invent automation_policy data. If null, ignore these rules.\n\n"
+
         "Do not wrap the JSON in markdown code fences. Output raw JSON only."
     )
 
@@ -20004,6 +20016,7 @@ def _lm_build_trade_proposal_context(row, snapshot=None) -> dict:
         "ai_trade_control_decision": (lambda _aec=None: _lm_build_ai_trade_control_decision(
             row, snap, ai_exec_ctx=_aec
         ))(snap.get("latest_ai_execution_context")),
+        "automation_policy": (lambda: _lm_build_automation_policy(row, snap))(),
     }
 
 
@@ -21058,6 +21071,7 @@ def _lm_build_ai_context(item) -> dict:
         "ai_trade_control_decision": (lambda _aec=None: _lm_build_ai_trade_control_decision(
             item, snap, ai_exec_ctx=_aec
         ))(snap.get("latest_ai_execution_context")),
+        "automation_policy": (lambda: _lm_build_automation_policy(item, snap))(),
     }
 
 
@@ -21321,6 +21335,31 @@ def _lm_ai_system_prompt() -> str:
         "- action 'no_action': note in agent_note that context is insufficient.\n"
         "- Do NOT invent ai_trade_control_decision data. If null, ignore these rules.\n"
         "- advisory_note must always be respected: Phase 11.3 has no execution authority.\n\n"
+
+        "AUTOMATION POLICY (Phase 11.4):\n"
+        "The context may include an automation_policy block — policy evaluation of "
+        "whether the AI trade-control decision would be allowed under the current policy "
+        "and entry mode configuration. Advisory only. No automation is applied.\n"
+        "FIELD MEANINGS:\n"
+        "- policy_result.allowed: whether the AI decision is policy-permitted (boolean).\n"
+        "- policy_result.recommended_mode: entry mode the policy recommends "
+        "('touch_limit', 'confirmation', 'ai_controlled').\n"
+        "- policy_result.future_action: what would happen if automation were enabled "
+        "('none', 'switch_mode', 'block_trade', 'pause_setup'). NOT applied in Phase 11.4.\n"
+        "- policy_result.reason: human-readable explanation of the policy evaluation.\n"
+        "- policy_result.blocking_reasons: list of reasons if allowed=false.\n"
+        "- policy_context.policy_mode: current policy mode "
+        "('proposal_only', 'auto_testnet'). 'future_live_execution' is hard-disabled.\n"
+        "- policy_context.entry_mode: current entry mode configuration.\n"
+        "USE RULES:\n"
+        "- allowed=false: cite blocking_reasons in risks[]. "
+        "Do NOT recommend entry regardless of other factors.\n"
+        "- future_action='switch_mode': note recommended mode in agent_note. "
+        "Do NOT say the switch has happened — it hasn't. State 'policy would recommend'.\n"
+        "- future_action='block_trade' or 'pause_setup': cite in risks[] and invalidations[].\n"
+        "- future_action='none': policy is satisfied with current mode — note this.\n"
+        "- Do NOT invent automation_policy data. If null, ignore these rules.\n"
+        "- Phase 11.4 has no execution authority — never say any action was taken.\n\n"
 
         "STRICT RULES:\n"
         "- Analyze ONLY the provided backend facts. Do not invent missing data.\n"
@@ -24147,6 +24186,7 @@ from live_monitor import (
     _lm_build_smc_orderflow_fusion,
     _lm_build_ai_execution_context,
     _lm_build_ai_trade_control_decision,
+    _lm_build_automation_policy,
 )
 
 # ── Phase 10.9I: Auto-refresh scheduler ─────────────────────────────────────
@@ -27378,6 +27418,78 @@ def api_lm_ai_trade_control_get(item_id):
         "decision": decision,
         "symbol":  row.symbol,
         "exchange": row.exchange,
+    })
+
+
+# ── Phase 11.4: Automation Policy endpoint ────────────────────────────────────
+
+@app.route("/api/live-monitor/items/<int:item_id>/automation-policy", methods=["GET"])
+@login_required
+def api_lm_automation_policy_get(item_id):
+    """Return (or rebuild) the Phase 11.4 Automation Policy evaluation.
+
+    Query params:
+      ?refresh=1  — rebuild even if a cached copy exists in snapshot_json.
+
+    Phase 11.4: policy evaluation only — no orders, no execution, no automation
+    applied, no Binance Testnet.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import LiveMonitorItem as _LMI114, db as _db114
+    row = _LMI114.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+
+    snap    = _json_loads_safe(row.snapshot_json, {})
+    refresh = request.args.get("refresh", "").lower() in ("1", "true", "yes")
+
+    # Use cached copies if available
+    cached_ctx    = snap.get("latest_automation_policy_context")
+    cached_result = snap.get("latest_automation_policy_result")
+
+    if not cached_ctx or not cached_result or refresh:
+        try:
+            policy_out = _lm_build_automation_policy(row, snap)
+        except Exception as _e114e:
+            policy_out = {
+                "ok": False, "error": str(_e114e)[:300],
+                "policy_context": {},
+                "policy_result": {
+                    "allowed": False,
+                    "recommended_mode": "confirmation",
+                    "future_action": "none",
+                    "reason": f"Policy build error: {str(_e114e)[:80]}",
+                    "blocking_reasons": ["build_error"],
+                    "advisory_note": "Phase 11.4 evaluates automation policy only. No execution authority exists.",
+                },
+            }
+
+        cached_ctx    = policy_out.get("policy_context", {})
+        cached_result = policy_out.get("policy_result", {})
+
+        if policy_out.get("ok"):
+            try:
+                row2 = _LMI114.query.filter_by(id=item_id, user_id=uid).first()
+                if row2:
+                    snap2 = _json_loads_safe(row2.snapshot_json, {})
+                    snap2["latest_automation_policy_context"] = cached_ctx
+                    snap2["latest_automation_policy_result"]  = cached_result
+                    row2.snapshot_json = _json_dumps_safe(snap2)
+                    _db114.session.commit()
+            except Exception:
+                pass
+
+    return jsonify({
+        "ok":             True,
+        "policy_context": cached_ctx,
+        "policy_result":  cached_result,
+        "symbol":         row.symbol,
+        "exchange":       row.exchange,
     })
 
 

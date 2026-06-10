@@ -7058,6 +7058,57 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                 }
                 h3+='</div>';
                 tcDiv.innerHTML=h3;
+                // Phase 11.4: chain-fetch automation policy and append below trade control
+                var apDiv=document.createElement('div');
+                apDiv.style.cssText='border-top:1px solid var(--border);padding-top:7px;margin-top:7px';
+                apDiv.innerHTML='<span style="opacity:.4;font-size:9px;color:var(--text-3)">Loading policy…</span>';
+                tcDiv.appendChild(apDiv);
+                fetch("/api/live-monitor/items/"+id+"/automation-policy?refresh=1",{credentials:"same-origin"})
+                  .then(function(r4){return r4.json();})
+                  .then(function(d4){
+                    if(!d4||!d4.ok){
+                      apDiv.innerHTML='<span style="color:var(--text-3);font-size:9px;opacity:.55">Policy: '+(d4&&d4.error?esc(String(d4.error)):"unavailable")+'</span>';
+                      return;
+                    }
+                    var pr=d4.policy_result||{};
+                    var pc=d4.policy_context||{};
+                    var polAllowed=pr.allowed!==false;
+                    var futAct=pr.future_action||'none';
+                    var recMode=pr.recommended_mode||'—';
+                    var polReason=pr.reason||'';
+                    var polMode=pc.policy_mode||'—';
+                    var entMode=pc.entry_mode||'—';
+                    var polBR=pr.blocking_reasons||[];
+                    var polAdvNote=pr.advisory_note||'';
+                    var allowCol=polAllowed?'var(--green-2,#4ade80)':'var(--red-2,#f87171)';
+                    var futActCol=futAct==='block_trade'||futAct==='pause_setup'?'var(--red-2,#f87171)':futAct==='switch_mode'?'var(--yellow,#facc15)':'var(--text-3)';
+                    var h4='<div style="font-size:10px">';
+                    h4+='<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:5px">';
+                    h4+='<span style="font-size:9.5px;font-weight:700;color:var(--text-2)">AUTOMATION POLICY</span>';
+                    h4+='<span style="font-size:8.5px;color:var(--text-3)">Phase 11.4 · evaluation only</span>';
+                    h4+='<span style="margin-left:auto;font-size:10px;font-weight:700;padding:1px 7px;border-radius:3px;background:'+allowCol+';color:#000">'+(polAllowed?'ALLOWED':'BLOCKED')+'</span>';
+                    h4+='</div>';
+                    h4+='<div style="display:flex;gap:12px;flex-wrap:wrap;font-size:9.5px;color:var(--text-3);margin-bottom:5px">';
+                    h4+='<span>policy: <b>'+esc(polMode)+'</b></span>';
+                    h4+='<span>entry: <b>'+esc(entMode)+'</b></span>';
+                    h4+='<span>→ rec: <b>'+esc(recMode)+'</b></span>';
+                    h4+='<span>future: <b style="color:'+futActCol+'">'+esc(futAct)+'</b></span>';
+                    h4+='</div>';
+                    if(polReason){
+                      h4+='<div style="font-size:9px;color:var(--text-3);line-height:1.4;margin-bottom:3px">'+esc(polReason)+'</div>';
+                    }
+                    if(!polAllowed&&polBR.length){
+                      h4+='<div style="font-size:8.5px;color:var(--red-2,#f87171);opacity:.85">Blocked: '+esc(polBR.slice(0,3).join(' · '))+'</div>';
+                    }
+                    if(polAdvNote){
+                      h4+='<div style="font-size:8px;color:var(--text-3);opacity:.5;margin-top:4px">'+esc(polAdvNote)+'</div>';
+                    }
+                    h4+='</div>';
+                    apDiv.innerHTML=h4;
+                  })
+                  .catch(function(){
+                    apDiv.innerHTML='<span style="color:var(--text-3);font-size:9px;opacity:.4">Policy unavailable.</span>';
+                  });
               })
               .catch(function(){
                 tcDiv.innerHTML='<span style="color:var(--text-3);font-size:9.5px;opacity:.55">Trade control unavailable.</span>';

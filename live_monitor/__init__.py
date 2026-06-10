@@ -22,6 +22,7 @@ from live_monitor.mtf_orderflow import (
 from live_monitor.smc_orderflow_fusion import _lm_build_smc_orderflow_fusion
 from live_monitor.ai_execution_context import _lm_build_ai_execution_context
 from live_monitor.ai_trade_control import _lm_build_ai_trade_control_decision
+from live_monitor.automation_policy import _lm_build_automation_policy
 
 __all__ = [
     "_lm_build_orderflow_state",
@@ -41,4 +42,5 @@ __all__ = [
     "_lm_build_smc_orderflow_fusion",
     "_lm_build_ai_execution_context",
     "_lm_build_ai_trade_control_decision",
+    "_lm_build_automation_policy",
 ]
