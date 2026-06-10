@@ -4839,6 +4839,46 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                     '<b style="color:var(--yellow)">Phase 11.6</b> — Simulation only. No orders. No execution. No automation.'+
                   '</div>'+
                 '</div>'+
+
+                /* ── Phase 11.7A: Testnet Order Draft ── */
+                '<div style="margin-top:12px;background:rgba(251,191,36,.04);border:1px solid rgba(251,191,36,.18);border-radius:6px;padding:8px 10px">'+
+                  '<div style="font-size:10px;font-weight:700;color:var(--yellow,#facc15);letter-spacing:.06em;margin-bottom:6px">'+
+                    'TESTNET ORDER DRAFT <span style="font-size:9px;font-weight:400;opacity:.7">(Phase 11.7A)</span>'+
+                  '</div>'+
+                  '<table style="width:100%;font-size:9px;border-collapse:collapse">'+
+                    '<tr><td style="color:var(--text-3);padding:1px 0;width:44%">Symbol</td><td id="lmTod-symbol" style="color:var(--text-1)">—</td></tr>'+
+                    '<tr><td style="color:var(--text-3);padding:1px 0">Side</td><td id="lmTod-side" style="color:var(--text-1)">—</td></tr>'+
+                    '<tr><td style="color:var(--text-3);padding:1px 0">Type</td><td style="color:var(--text-1)">LIMIT / GTC</td></tr>'+
+                    '<tr><td style="color:var(--text-3);padding:1px 0">Entry Price</td><td id="lmTod-price" style="color:var(--text-1)">—</td></tr>'+
+                    '<tr><td style="color:var(--text-3);padding:1px 0">Sim Ready</td><td id="lmTod-simReady" style="color:var(--text-1)">—</td></tr>'+
+                    '<tr><td style="color:var(--text-3);padding:1px 0">Connector</td><td id="lmTod-connector" style="color:var(--text-1)">—</td></tr>'+
+                    '<tr><td style="color:var(--text-3);padding:1px 0">Order Env</td><td id="lmTod-orderEnv" style="color:var(--text-1)">—</td></tr>'+
+                    '<tr><td style="color:var(--text-3);padding:1px 0">Filter OK</td><td id="lmTod-filterOk" style="color:var(--text-1)">—</td></tr>'+
+                    '<tr><td style="color:var(--text-3);padding:1px 0">Est. Notional</td><td id="lmTod-notional" style="color:var(--text-1)">—</td></tr>'+
+                  '</table>'+
+                  '<div style="margin-top:6px;display:flex;gap:4px;align-items:center">'+
+                    '<label style="font-size:9px;color:var(--text-3);white-space:nowrap">Qty:</label>'+
+                    '<input id="lmTodQtyInput" type="text" placeholder="e.g. 0.001" '+
+                      'style="flex:1;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);'+
+                      'border-radius:4px;padding:3px 6px;font-size:9px;color:var(--text-1);outline:none" '+
+                      'oninput="window._lmTodRefreshDraft()" />'+
+                    '<button class="btn lm-sm-btn" id="lmTodDraftBtn" style="white-space:nowrap" onclick="window._lmTodRefreshDraft()">Refresh</button>'+
+                  '</div>'+
+                  '<div id="lmTod-qtyErr" style="display:none;font-size:9px;color:#f87171;padding:2px 0"></div>'+
+                  '<div id="lmTod-reasons" style="display:none;font-size:9px;color:var(--yellow);padding:2px 0;line-height:1.4"></div>'+
+                  '<div style="margin-top:6px">'+
+                    '<button class="btn lm-sm-btn" id="lmTodSubmitBtn" disabled '+
+                      'style="width:100%;justify-content:center;background:rgba(16,185,129,.15);border-color:rgba(16,185,129,.4);color:#6ee7b7;cursor:not-allowed;opacity:.5" '+
+                      'onclick="window._lmTodSubmitOrder()">'+
+                      'Submit Testnet Order'+
+                    '</button>'+
+                  '</div>'+
+                  '<div id="lmTod-result" style="display:none;font-size:9px;padding:4px 0;line-height:1.5"></div>'+
+                  '<div style="font-size:9px;color:var(--text-3);padding:4px 0 0;line-height:1.4">'+
+                    '<b style="color:#f87171">Manual submit only.</b> No TP/SL. No automation. Entry order only.'+
+                  '</div>'+
+                '</div>'+
+
                 '<div style="display:flex;gap:6px;margin-top:12px">'+
                   '<button class="btn" disabled style="flex:1;justify-content:center;opacity:.4;cursor:not-allowed">Buy / Long</button>'+
                   '<button class="btn" disabled style="flex:1;justify-content:center;opacity:.4;cursor:not-allowed">Sell / Short</button>'+
@@ -7638,6 +7678,105 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         if(btn){ btn.disabled=false; btn.textContent='Run Simulation'; }
         var rEl=document.getElementById("lmSimReasons");
         if(rEl){ rEl.style.display=''; rEl.textContent='Network error — could not run simulation.'; }
+      });
+  };
+
+  // ── Phase 11.7A: Testnet Order Draft UI helpers ───────────────────────────
+  window._lmTodRefreshDraft=function(){
+    var itemId=window._lmSimItemId||(window._lmSelItem&&window._lmSelItem.id);
+    if(!itemId) return;
+    var qty=(document.getElementById("lmTodQtyInput")||{}).value||'';
+    var url='/api/live-monitor/items/'+itemId+'/testnet-order/draft'+(qty?'?quantity='+encodeURIComponent(qty):'');
+    fetch(url,{credentials:'same-origin'})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        var dr=(d&&d.draft)||{};
+        function _tv(id,v){
+          var el=document.getElementById(id); if(!el) return;
+          el.textContent=v==null?'—':String(v);
+        }
+        function _tf(id,ok,yes,no){
+          var el=document.getElementById(id); if(!el) return;
+          el.textContent=ok?yes:no;
+          el.style.color=ok?'var(--green-2,#4ade80)':'var(--red-2,#f87171)';
+        }
+        _tv('lmTod-symbol', dr.symbol||'—');
+        var sideEl=document.getElementById('lmTod-side');
+        if(sideEl){
+          sideEl.textContent=dr.side||'—';
+          sideEl.style.color=dr.side==='BUY'?'var(--green-2,#4ade80)':dr.side==='SELL'?'var(--red-2,#f87171)':'var(--text-1)';
+        }
+        _tv('lmTod-price', dr.price||'—');
+        _tf('lmTod-simReady', dr.simulation_ready, 'YES', 'NO');
+        _tf('lmTod-connector', dr.connector_ready, 'YES', 'NO');
+        _tf('lmTod-orderEnv', dr.order_enabled, 'YES', 'NO');
+        _tf('lmTod-filterOk', dr.filter_ok, 'YES', 'NO');
+        _tv('lmTod-notional', dr.estimated_notional!=null?(dr.estimated_notional+' USDT'):'—');
+        // qty validation error
+        var qErr=document.getElementById('lmTod-qtyErr');
+        var qv=dr.qty_validation||{};
+        if(qErr){
+          if(qty&&!qv.ok&&qv.error&&qv.error!=='quantity_required'){
+            qErr.style.display=''; qErr.textContent=qv.error;
+          } else { qErr.style.display='none'; }
+        }
+        // reasons
+        var rs=dr.reasons||[];
+        var rEl=document.getElementById('lmTod-reasons');
+        if(rEl){
+          if(rs.length){ rEl.style.display=''; rEl.textContent='Blocked: '+rs.slice(0,6).join(' · '); }
+          else { rEl.style.display='none'; }
+        }
+        // enable/disable submit button
+        var sb=document.getElementById('lmTodSubmitBtn');
+        if(sb){
+          var ready=dr.draft_ready===true;
+          sb.disabled=!ready;
+          sb.style.opacity=ready?'1':'0.5';
+          sb.style.cursor=ready?'pointer':'not-allowed';
+        }
+      })
+      .catch(function(){ /* silent on draft refresh error */ });
+  };
+
+  window._lmTodSubmitOrder=function(){
+    var itemId=window._lmSimItemId||(window._lmSelItem&&window._lmSelItem.id);
+    if(!itemId) return;
+    var qty=((document.getElementById("lmTodQtyInput")||{}).value||'').trim();
+    if(!qty){ alert('Enter a quantity first.'); return; }
+    if(!confirm('Place a real LIMIT order on Binance Futures Testnet?\n\nThis is a testnet order — not mainnet. No TP/SL.\n\nSymbol / Qty / confirm manually?')) return;
+    var sb=document.getElementById('lmTodSubmitBtn');
+    if(sb){ sb.disabled=true; sb.textContent='Submitting…'; }
+    var resEl=document.getElementById('lmTod-result');
+    if(resEl){ resEl.style.display='none'; }
+    fetch('/api/live-monitor/items/'+itemId+'/testnet-order/submit',{
+      method:'POST',
+      credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({quantity:qty}),
+    })
+      .then(function(r){ return r.json().then(function(d){ return {s:r.status,d:d}; }); })
+      .then(function(rd){
+        var d=rd.d; var s=rd.s;
+        if(sb){ sb.disabled=false; sb.textContent='Submit Testnet Order'; }
+        if(resEl){
+          resEl.style.display='';
+          if(d&&d.ok){
+            resEl.style.color='var(--green-2,#4ade80)';
+            resEl.innerHTML='<b>Order placed!</b> ID: '+esc(String(d.order_id||'—'))+
+              ' &nbsp;·&nbsp; Status: '+esc(d.status||'—')+
+              ' &nbsp;·&nbsp; '+esc(d.side||'—')+' '+esc(d.quantity||'—')+' @ '+esc(d.price||'—');
+          } else {
+            resEl.style.color='var(--red-2,#f87171)';
+            resEl.innerHTML='<b>Failed:</b> '+esc((d&&(d.error||JSON.stringify(d.reasons||d)))||'Unknown error');
+          }
+        }
+        // Re-refresh draft state after submit
+        window._lmTodRefreshDraft();
+      })
+      .catch(function(){
+        if(sb){ sb.disabled=false; sb.textContent='Submit Testnet Order'; }
+        if(resEl){ resEl.style.display=''; resEl.style.color='var(--red-2,#f87171)'; resEl.textContent='Network error during submit.'; }
       });
   };
 

@@ -393,6 +393,223 @@ def _lm_bt_positions(symbol: str | None = None) -> dict:
     }
 
 
+# ── Phase 11.7A: Manual testnet LIMIT order placement ────────────────────────
+# Isolated from _lm_bt_signed_request (which is read-only GET only).
+# This is the ONLY function that may POST to /fapi/v1/order.
+
+_BT_ORDER_PATH           = "/fapi/v1/order"
+_BT_ORDER_ENV_FLAG       = "BINANCE_TESTNET_ORDER_ENABLED"
+_BT_ORDER_CLIENT_PREFIX  = "ZYNILM_"
+_BT_ORDER_TIMEOUT        = 12
+
+# Order types allowed in Phase 11.7A (entry LIMIT only)
+_BT_ALLOWED_ORDER_TYPE  = "LIMIT"
+_BT_ALLOWED_TIF         = "GTC"
+_BT_ALLOWED_SIDES       = frozenset({"BUY", "SELL"})
+
+# Order types/params that are permanently blocked
+_BT_BLOCKED_ORDER_TYPES = frozenset({
+    "MARKET", "STOP", "TAKE_PROFIT", "STOP_MARKET",
+    "TAKE_PROFIT_MARKET", "TRAILING_STOP_MARKET",
+})
+_BT_BLOCKED_ORDER_PARAMS = frozenset({
+    "reduceOnly", "closePosition", "leverage", "marginType",
+    "positionSide", "stopPrice", "activationPrice", "callbackRate",
+})
+
+
+def _lm_bt_order_enabled() -> bool:
+    """Return True only when BINANCE_TESTNET_ORDER_ENABLED=1 is set in env."""
+    return os.environ.get(_BT_ORDER_ENV_FLAG, "").strip() == "1"
+
+
+def _lm_bt_place_limit_order_testnet(
+    symbol: str,
+    side: str,
+    quantity: str,
+    price: str,
+    client_order_id: str | None = None,
+) -> dict:
+    """Phase 11.7A: Place a LIMIT entry order on Binance Futures Testnet.
+
+    THIS IS THE ONLY FUNCTION THAT CAN POST TO /fapi/v1/order.
+    _lm_bt_signed_request() is NOT called — it is GET-only and read-only.
+    This function builds its own HMAC-SHA256 POST request independently.
+
+    Safety gates (all hard-fail before any network call):
+    1. Testnet lock — demo-fapi.binance.com only
+    2. BINANCE_TESTNET_ORDER_ENABLED=1 env var required
+    3. Credentials available
+    4. Side: BUY or SELL only
+    5. Type: LIMIT hardcoded — no other type accepted
+    6. TimeInForce: GTC hardcoded — no other TIF accepted
+    7. quantity > 0
+    8. price > 0
+    9. No blocked params or order types in call
+
+    Secret is never returned, logged, or stored in any response.
+    """
+    # Gate 1: testnet lock
+    if not _lm_bt_is_testnet_only():
+        return {
+            "ok": False, "status_code": 0,
+            "error": "Binance connector locked to testnet only — mainnet refused",
+            "order_placed": False,
+        }
+
+    # Gate 2: env flag required
+    if not _lm_bt_order_enabled():
+        return {
+            "ok": False, "status_code": 0,
+            "error": "testnet_order_placement_disabled",
+            "hint":  f"Set {_BT_ORDER_ENV_FLAG}=1 to enable testnet order placement.",
+            "order_placed": False,
+        }
+
+    # Gate 3: credentials
+    if not _lm_bt_credentials_available():
+        return {
+            "ok": False, "status_code": 0,
+            "error": "credentials_not_configured",
+            "order_placed": False,
+        }
+
+    # Gate 4: side validation
+    side_upper = str(side or "").upper().strip()
+    if side_upper not in _BT_ALLOWED_SIDES:
+        return {
+            "ok": False, "status_code": 0,
+            "error": f"invalid_side:{side_upper} — only BUY or SELL allowed",
+            "order_placed": False,
+        }
+
+    # Gate 5+6: type and TIF are hardcoded — not caller-supplied
+    order_type = _BT_ALLOWED_ORDER_TYPE   # always LIMIT
+    tif        = _BT_ALLOWED_TIF          # always GTC
+
+    # Gate 7: quantity
+    try:
+        qty_f = float(quantity)
+    except (TypeError, ValueError):
+        qty_f = 0.0
+    if qty_f <= 0:
+        return {
+            "ok": False, "status_code": 0,
+            "error": "quantity_must_be_positive",
+            "order_placed": False,
+        }
+
+    # Gate 8: price
+    try:
+        price_f = float(price)
+    except (TypeError, ValueError):
+        price_f = 0.0
+    if price_f <= 0:
+        return {
+            "ok": False, "status_code": 0,
+            "error": "price_must_be_positive",
+            "order_placed": False,
+        }
+
+    # Build client order ID
+    symbol_upper = str(symbol or "").upper().strip()
+    ts_ms        = int(time.time() * 1000)
+    coid = (
+        str(client_order_id).strip()[:36]
+        if client_order_id
+        else f"{_BT_ORDER_CLIENT_PREFIX}{symbol_upper[:8]}_{str(ts_ms)[-9:]}"
+    )
+
+    # Build POST params
+    api_key = os.environ.get("BINANCE_TESTNET_API_KEY", "").strip()
+    secret  = os.environ.get("BINANCE_TESTNET_API_SECRET", "").strip()
+
+    params: dict = {
+        "symbol":           symbol_upper,
+        "side":             side_upper,
+        "type":             order_type,
+        "timeInForce":      tif,
+        "quantity":         str(quantity),
+        "price":            str(price),
+        "newClientOrderId": coid,
+        "timestamp":        ts_ms,
+        "recvWindow":       _BT_RECV_WINDOW,
+    }
+
+    query_string = urlencode(params)
+    signature    = hmac.new(
+        secret.encode("utf-8"),
+        query_string.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    params["signature"] = signature
+
+    url     = f"{_lm_bt_base_url()}{_BT_ORDER_PATH}"
+    headers = {"X-MBX-APIKEY": api_key}
+
+    # Safe request log (no secret, no signature)
+    safe_request = {
+        "symbol": symbol_upper, "side": side_upper,
+        "type": order_type, "timeInForce": tif,
+        "quantity": str(quantity), "price": str(price),
+        "newClientOrderId": coid,
+    }
+
+    try:
+        resp = _m.req.post(
+            url,
+            params=params,
+            headers=headers,
+            timeout=_BT_ORDER_TIMEOUT,
+        )
+        placed = resp.status_code == 200
+        raw_data: dict = {}
+        try:
+            raw_data = resp.json()
+        except Exception:
+            pass
+
+        # Safe compact response — no secrets
+        safe_resp = {
+            "orderId":        raw_data.get("orderId"),
+            "clientOrderId":  raw_data.get("clientOrderId"),
+            "symbol":         raw_data.get("symbol"),
+            "side":           raw_data.get("side"),
+            "type":           raw_data.get("type"),
+            "timeInForce":    raw_data.get("timeInForce"),
+            "origQty":        raw_data.get("origQty"),
+            "price":          raw_data.get("price"),
+            "status":         raw_data.get("status"),
+            "transactTime":   raw_data.get("transactTime"),
+            "msg":            raw_data.get("msg"),
+            "code":           raw_data.get("code"),
+        }
+
+        return {
+            "ok":              placed,
+            "order_placed":    placed,
+            "status_code":     resp.status_code,
+            "client_order_id": coid,
+            "binance_order_id": str(raw_data.get("orderId", "")) if placed else None,
+            "order_status":    raw_data.get("status") if placed else None,
+            "data":            safe_resp,
+            "error":           "" if placed else str(raw_data.get("msg", "") or resp.text[:200]),
+            "safe_request":    safe_request,
+            "is_timeout":      False,
+        }
+
+    except Exception as _eo:
+        is_to = "timeout" in type(_eo).__name__.lower() or "timeout" in str(_eo).lower()
+        return {
+            "ok":           False,
+            "order_placed": False,
+            "status_code":  0,
+            "error":        str(_eo)[:200],
+            "is_timeout":   is_to,
+            "safe_request": safe_request,
+        }
+
+
 # ── Health check ──────────────────────────────────────────────────────────────
 
 def _lm_bt_health() -> dict:

@@ -24240,6 +24240,10 @@ from live_monitor import (
     _lm_bt_balance,
     _lm_bt_positions,
     _lm_bt_health,
+    _lm_bt_order_enabled,
+    _lm_bt_place_limit_order_testnet,
+    _lm_build_testnet_order_draft,
+    _lm_validate_order_quantity,
 )
 
 # ── Phase 10.9I: Auto-refresh scheduler ─────────────────────────────────────
@@ -27672,6 +27676,253 @@ def api_lm_execution_simulation(item_id):
         "symbol":              row.symbol,
         "exchange":            row.exchange,
     })
+
+
+# ── Phase 11.7A: Testnet Order Draft + Manual Submit Gate ─────────────────────
+# MANUAL SUBMIT ONLY. No automation. No AI execution. No background placement.
+# User must explicitly click Submit Testnet Order in the Trading Terminal.
+
+@app.route("/api/live-monitor/items/<int:item_id>/testnet-order/draft", methods=["GET"])
+@login_required
+def api_lm_testnet_order_draft(item_id):
+    """Phase 11.7A: Build and return a testnet LIMIT order draft (no placement)."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    from models import db as _db117d, LiveMonitorItem as _LMI117d
+    row = _LMI117d.query.filter_by(id=item_id, user_id=uid).first()
+    if not row:
+        return jsonify({"error": "item_not_found"}), 404
+    snap = _json_loads_safe(row.snapshot_json, {})
+    quantity_str = request.args.get("quantity") or None
+    draft = _lm_build_testnet_order_draft(row, snap, quantity_str)
+    if draft.get("ok"):
+        try:
+            snap2 = _json_loads_safe(row.snapshot_json, {})
+            snap2["latest_testnet_order_draft"] = {
+                k: v for k, v in draft.items()
+                if k not in ("filter_details",)
+            }
+            row.snapshot_json = _json_dumps_safe(snap2)
+            _db117d.session.commit()
+        except Exception:
+            pass
+    return jsonify({
+        "ok":     draft.get("ok", False),
+        "draft":  draft,
+        "symbol": row.symbol,
+    })
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/testnet-order/submit", methods=["POST"])
+@login_required
+def api_lm_testnet_order_submit(item_id):
+    """Phase 11.7A: Manual submit gate — place a testnet LIMIT entry order.
+
+    SAFETY GATES (all must pass):
+    1. Item ownership
+    2. latest_execution_simulation.ready_for_testnet == True
+    3. latest_execution_intent.allowed == True
+    4. BINANCE_TESTNET_ORDER_ENABLED == "1"
+    5. Connector ready (testnet-only + credentials)
+    6. Quantity provided and valid
+    7. Draft passes all filter checks
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import (
+        db as _db117s,
+        LiveMonitorItem as _LMI117s,
+        LiveMonitorTestnetOrder as _LMTO117,
+    )
+
+    row = _LMI117s.query.filter_by(id=item_id, user_id=uid).first()
+    if not row:
+        return jsonify({"error": "item_not_found"}), 404
+
+    body = {}
+    try:
+        body = request.get_json(force=True, silent=True) or {}
+    except Exception:
+        pass
+
+    quantity_str = str(body.get("quantity", "") or "").strip() or None
+
+    snap = _json_loads_safe(row.snapshot_json, {})
+
+    # ── Gate 1: simulation ready ───────────────────────────────────────────────
+    sim = snap.get("latest_execution_simulation") or {}
+    if not sim.get("ready_for_testnet"):
+        return jsonify({
+            "ok": False,
+            "error": "simulation_not_ready",
+            "detail": "latest_execution_simulation.ready_for_testnet must be true.",
+        }), 422
+
+    # ── Gate 2: intent allowed ─────────────────────────────────────────────────
+    intent = snap.get("latest_execution_intent") or {}
+    if not intent.get("allowed"):
+        return jsonify({
+            "ok": False,
+            "error": "intent_not_allowed",
+            "detail": "latest_execution_intent.allowed must be true.",
+        }), 422
+
+    # ── Gate 3: order env flag ─────────────────────────────────────────────────
+    if not _lm_bt_order_enabled():
+        return jsonify({
+            "ok": False,
+            "error": "order_disabled",
+            "detail": "BINANCE_TESTNET_ORDER_ENABLED is not set to '1'.",
+        }), 422
+
+    # ── Gate 4: connector ─────────────────────────────────────────────────────
+    from live_monitor.binance_testnet import (
+        _lm_bt_is_testnet_only,
+        _lm_bt_credentials_available,
+    )
+    if not (_lm_bt_is_testnet_only() and _lm_bt_credentials_available()):
+        return jsonify({
+            "ok": False,
+            "error": "connector_not_ready",
+            "detail": "Binance Testnet connector is not properly configured.",
+        }), 422
+
+    # ── Gate 5: quantity ──────────────────────────────────────────────────────
+    if not quantity_str:
+        return jsonify({
+            "ok": False,
+            "error": "quantity_required",
+            "detail": "Provide 'quantity' in the request body.",
+        }), 422
+
+    # ── Build and validate draft ──────────────────────────────────────────────
+    draft = _lm_build_testnet_order_draft(row, snap, quantity_str)
+    if not draft.get("draft_ready"):
+        return jsonify({
+            "ok": False,
+            "error": "draft_not_ready",
+            "reasons": draft.get("reasons", []),
+            "draft": draft,
+        }), 422
+
+    symbol   = draft["symbol"]
+    side     = draft["side"]
+    quantity = draft["quantity"]
+    price    = draft["price"]
+
+    # ── Place order ───────────────────────────────────────────────────────────
+    order_result = _lm_bt_place_limit_order_testnet(
+        symbol=symbol,
+        side=side,
+        quantity=quantity,
+        price=price,
+    )
+
+    # ── Persist record (no secrets) ───────────────────────────────────────────
+    _order_safe_req = order_result.get("safe_request") or {}
+    _order_status   = order_result.get("order_status") or ("submitted" if order_result.get("ok") else "failed")
+    _order_bn_id    = str(order_result.get("binance_order_id") or "")
+    db_record = _LMTO117(
+        user_id=uid,
+        item_id=item_id,
+        symbol=symbol,
+        side=side,
+        order_type="LIMIT",
+        time_in_force="GTC",
+        quantity=quantity,
+        price=price,
+        status=_order_status,
+        client_order_id=order_result.get("client_order_id"),
+        binance_order_id=_order_bn_id,
+        execution_intent_json=_json_dumps_safe(intent),
+        execution_simulation_json=_json_dumps_safe(sim),
+        ai_decision_json=_json_dumps_safe(snap.get("latest_ai_trade_control_decision") or {}),
+        automation_policy_json=_json_dumps_safe(snap.get("latest_automation_policy_result") or {}),
+        request_json=_json_dumps_safe(_order_safe_req),
+        response_json=_json_dumps_safe(order_result.get("data") or {}),
+        error_json=_json_dumps_safe(order_result.get("error") or ""),
+    )
+    import datetime as _dt117
+    db_record.submitted_at = _dt117.datetime.utcnow()
+    try:
+        _db117s.session.add(db_record)
+        _db117s.session.commit()
+    except Exception as _e117s:
+        try:
+            _db117s.session.rollback()
+        except Exception:
+            pass
+
+    # ── Update snapshot ───────────────────────────────────────────────────────
+    try:
+        snap2 = _json_loads_safe(row.snapshot_json, {})
+        snap2["latest_testnet_order_draft"] = {
+            k: v for k, v in draft.items() if k not in ("filter_details",)
+        }
+        snap2["latest_testnet_order_result"] = {
+            "ok":              order_result.get("ok"),
+            "status":          _order_status,
+            "order_id":        _order_bn_id,
+            "client_order_id": order_result.get("client_order_id"),
+            "symbol":          symbol,
+            "side":            side,
+            "quantity":        quantity,
+            "price":           price,
+            "submitted_at":    int(__import__("time").time()),
+        }
+        row.snapshot_json = _json_dumps_safe(snap2)
+        _db117s.session.commit()
+    except Exception:
+        pass
+
+    # ── Task 10: Chat/timeline event ──────────────────────────────────────────
+    try:
+        from models import LiveMonitorEvent as _LME117
+        _lme_payload = {
+            "symbol":          symbol,
+            "side":            side,
+            "quantity":        quantity,
+            "price":           price,
+            "order_id":        _order_bn_id,
+            "client_order_id": order_result.get("client_order_id"),
+            "status":          _order_status,
+            "ok":              order_result.get("ok"),
+        }
+        _lme117 = _LME117(
+            item_id           = item_id,
+            user_id           = uid,
+            symbol            = symbol,
+            event_type        = "testnet_order_submitted",
+            event_description = (
+                f"Testnet LIMIT {side} {quantity} {symbol} @ {price} — "
+                f"status={_order_status}"
+            ),
+            details_json      = _json_dumps_safe(_lme_payload),
+            price_at_event    = draft.get("price_float"),
+        )
+        _db117s.session.add(_lme117)
+        _db117s.session.commit()
+    except Exception:
+        pass
+
+    safe_response = {
+        "ok":              order_result.get("ok"),
+        "status":          _order_status,
+        "order_id":        _order_bn_id,
+        "client_order_id": order_result.get("client_order_id"),
+        "symbol":          symbol,
+        "side":            side,
+        "quantity":        quantity,
+        "price":           price,
+        "estimated_notional": draft.get("estimated_notional"),
+        "error":           order_result.get("error"),
+        "advisory_note":   draft.get("advisory_note"),
+    }
+    status_code = 200 if order_result.get("ok") else 502
+    return jsonify(safe_response), status_code
 
 
 @app.route("/api/live-monitor/trades/<trade_uid>/demo-submit", methods=["POST"])

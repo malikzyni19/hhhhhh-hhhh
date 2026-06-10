@@ -893,3 +893,66 @@ class LiveMonitorAIIntervention(db.Model):
         return (f"<LiveMonitorAIIntervention item={self.item_id} "
                 f"action={self.decision_action} conf={self.confidence} "
                 f"user={self.user_id}>")
+
+
+class LiveMonitorTestnetOrder(db.Model):
+    """Phase 11.7A: Binance Futures Testnet LIMIT order record.
+
+    Stores the full lifecycle of a manual testnet order: draft, submission,
+    Binance response, and context snapshots at the time of submission.
+
+    Rules:
+    - No API keys stored.
+    - No secrets stored.
+    - Populated only by POST /api/live-monitor/items/<id>/testnet-order/submit.
+    - No automatic population — manual submit only.
+    - Testnet only.
+    """
+    __tablename__ = "live_monitor_testnet_orders"
+
+    id              = db.Column(db.Integer, primary_key=True)
+    user_id         = db.Column(db.Integer, db.ForeignKey("users.id"),
+                                nullable=False, index=True)
+    item_id         = db.Column(db.Integer, db.ForeignKey("live_monitor_items.id"),
+                                nullable=False, index=True)
+
+    symbol          = db.Column(db.String(20), nullable=False)
+    side            = db.Column(db.String(10), nullable=False)          # BUY | SELL
+    order_type      = db.Column(db.String(20), nullable=False)          # LIMIT
+    time_in_force   = db.Column(db.String(10), nullable=False)          # GTC
+    quantity        = db.Column(db.String(40), nullable=False)          # decimal string
+    price           = db.Column(db.String(40), nullable=False)          # decimal string
+    status          = db.Column(db.String(30), nullable=False,          # draft/submitted/filled/failed/cancelled
+                                default="draft", index=True)
+
+    client_order_id  = db.Column(db.String(40), nullable=True, index=True)
+    binance_order_id = db.Column(db.String(40), nullable=True, index=True)
+
+    # Snapshot context at time of submission (no secrets, no API keys)
+    execution_intent_json     = db.Column(db.Text, nullable=True)
+    execution_simulation_json = db.Column(db.Text, nullable=True)
+    ai_decision_json          = db.Column(db.Text, nullable=True)
+    automation_policy_json    = db.Column(db.Text, nullable=True)
+
+    # Request / response audit trail (no secrets)
+    request_json  = db.Column(db.Text, nullable=True)   # POST params sent (no signature, no secret)
+    response_json = db.Column(db.Text, nullable=True)   # Binance response (safe compact)
+    error_json    = db.Column(db.Text, nullable=True)   # error if failed
+
+    created_at   = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
+                             nullable=False, index=True)
+    submitted_at = db.Column(db.DateTime, nullable=True)
+    updated_at   = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
+                             onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        db.Index("ix_lm_testnet_order_item", "user_id", "item_id"),
+    )
+
+    user = db.relationship("User",            foreign_keys=[user_id])
+    item = db.relationship("LiveMonitorItem", foreign_keys=[item_id])
+
+    def __repr__(self) -> str:
+        return (f"<LiveMonitorTestnetOrder id={self.id} {self.symbol} "
+                f"{self.side} qty={self.quantity} status={self.status} "
+                f"user={self.user_id}>")
