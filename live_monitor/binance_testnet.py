@@ -38,6 +38,31 @@ _BT_ALLOWED_GET_PATHS = {
     "/fapi/v1/ticker/price",
 }
 
+# Phase 11.5A Task 1: signed requests restricted to these 3 paths ONLY.
+_BT_SIGNED_ALLOWED_PATHS: frozenset = frozenset({
+    "/fapi/v2/account",
+    "/fapi/v2/balance",
+    "/fapi/v2/positionRisk",
+})
+
+# Phase 11.5A Task 2: fragments in any path string that indicate order/execution.
+# Checked case-insensitively.  Never allowed regardless of whitelist status.
+_BT_BLOCKED_FRAGMENTS: frozenset = frozenset({
+    "order",
+    "batchorders",
+    "leverage",
+    "margintype",
+    "positionside",
+    "countdowncancelall",
+    "listenkey",
+})
+
+
+def _lm_bt_is_execution_path(path: str) -> bool:
+    """Return True if path contains any blocked execution-related fragment."""
+    p = path.lower()
+    return any(frag in p for frag in _BT_BLOCKED_FRAGMENTS)
+
 
 # ── Base URL / testnet guard ──────────────────────────────────────────────────
 
@@ -60,15 +85,31 @@ def _lm_bt_credentials_available() -> bool:
 
 # ── Request helpers ───────────────────────────────────────────────────────────
 
-def _lm_bt_public_request(path: str, params: dict | None = None) -> dict:
+def _lm_bt_public_request(path: str, params: dict | None = None, method: str = "GET") -> dict:
     """GET a public (unauthenticated) Binance Testnet endpoint.
 
     Returns structured response — no raw exception raised to caller.
+    Phase 11.5A: method guard, execution-path block, testnet lock — all hard-fail.
     """
+    # Task 3: method guard — GET only, no network call for anything else
+    if method.upper() != "GET":
+        return {
+            "ok": False, "status_code": 0, "data": {},
+            "error": "method_not_allowed_phase11_5",
+            "is_timeout": False,
+        }
+    # Task 4: testnet lock — hard fail, no fallback
     if not _lm_bt_is_testnet_only():
         return {
             "ok": False, "status_code": 0, "data": {},
             "error": "Binance connector locked to testnet only — mainnet refused",
+            "is_timeout": False,
+        }
+    # Task 2: execution-path block — reject before any network call
+    if _lm_bt_is_execution_path(path):
+        return {
+            "ok": False, "status_code": 0, "data": {},
+            "error": "execution_path_blocked_phase11_5",
             "is_timeout": False,
         }
     url = f"{_lm_bt_base_url()}{path}"
@@ -92,17 +133,40 @@ def _lm_bt_public_request(path: str, params: dict | None = None) -> dict:
         return {"ok": False, "status_code": 0, "data": {}, "error": str(_e)[:200], "is_timeout": is_to}
 
 
-def _lm_bt_signed_request(path: str, params: dict | None = None) -> dict:
+def _lm_bt_signed_request(path: str, params: dict | None = None, method: str = "GET") -> dict:
     """Signed GET to a private Binance Testnet endpoint.
 
-    Rules:
-    - timestamp added in ms; recvWindow defaults to _BT_RECV_WINDOW
-    - HMAC-SHA256 signature over full query string appended as 'signature'
-    - API key sent in X-MBX-APIKEY header
-    - Secret is never returned, logged, or stored
-    - Only GET is issued in Phase 11.5 (no POST/DELETE)
-    - Refuses if base URL is not testnet
+    Phase 11.5A safety gates (in order, all hard-fail before any network call):
+    1. Method guard — GET only
+    2. Path whitelist — only _BT_SIGNED_ALLOWED_PATHS
+    3. Execution-path fragment block — rejects order/leverage/etc. substrings
+    4. Testnet lock — demo-fapi.binance.com only
+    5. Credentials check
+    Then: HMAC-SHA256 signature, X-MBX-APIKEY header, GET request.
+    Secret is never returned, logged, or stored.
     """
+    # Task 3: method guard — reject non-GET before any other processing
+    if method.upper() != "GET":
+        return {
+            "ok": False, "status_code": 0, "data": {},
+            "error": "method_not_allowed_phase11_5",
+            "is_timeout": False,
+        }
+    # Task 1: hard path whitelist — only account/balance/positionRisk allowed
+    if path not in _BT_SIGNED_ALLOWED_PATHS:
+        return {
+            "ok": False, "status_code": 0, "data": {},
+            "error": "signed_path_not_allowed_phase11_5",
+            "is_timeout": False,
+        }
+    # Task 2: execution-path fragment block — belt-and-suspenders after whitelist
+    if _lm_bt_is_execution_path(path):
+        return {
+            "ok": False, "status_code": 0, "data": {},
+            "error": "execution_path_blocked_phase11_5",
+            "is_timeout": False,
+        }
+    # Task 4: testnet lock — hard fail, no fallback
     if not _lm_bt_is_testnet_only():
         return {
             "ok": False, "status_code": 0, "data": {},
@@ -344,10 +408,13 @@ def _lm_bt_health() -> dict:
     testnet_only = _lm_bt_is_testnet_only()
     errors: list = []
 
-    # Testnet guard
+    # Task 4: testnet lock — hard fail, no fallback, no warning-only mode
     if not testnet_only:
         return {
             "ok":                      False,
+            "phase":                   "11.5_read_only",
+            "orders_enabled":          False,
+            "execution_enabled":       False,
             "base_url":                base_url,
             "testnet_locked":          False,
             "credentials_configured":  creds_ok,
@@ -408,6 +475,9 @@ def _lm_bt_health() -> dict:
 
     return {
         "ok":                      overall_ok,
+        "phase":                   "11.5_read_only",
+        "orders_enabled":          False,
+        "execution_enabled":       False,
         "base_url":                base_url,
         "testnet_locked":          testnet_only,
         "credentials_configured":  creds_ok,
