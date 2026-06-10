@@ -1,216 +1,390 @@
 ================================================================================
-PHASE 11.1 / 11.1B / 11.1C — FINAL REPORT
-Project: hhhhhh-hhhh
+PHASE 11 FINAL REPORT
+Project: hhhhhh-hhhh Trading Monitor
 Branch:  claude/zyni-phase-0-audit-dwTl0 (also pushed to main)
 Date:    2026-06-10
 ================================================================================
 
-────────────────────────────────────────────────────────────────────────────────
-PHASE 11.1 — EXECUTION INTELLIGENCE ENGINE
-────────────────────────────────────────────────────────────────────────────────
+PHASES DELIVERED
+----------------
+  Phase 11.2  — AI Execution Context Builder
+  Phase 11.3  — AI Trade Control Decision Engine
+  Phase 11.4  — Automation Policy Layer
+  Phase 11.5  — Binance Futures Testnet Connector Foundation
+  Phase 11.5A — Binance Testnet Safety Hardening
 
-STATUS: COMPLETE
+All phases are advisory / read-only.
+No trade execution exists at any point.
 
-WHAT WAS BUILT
-  Evidence-only execution intelligence layer for Live Monitor items.
-  No AI. No orders. No Entry Candidate. No trading logic.
+================================================================================
+PHASE 11.2 — AI EXECUTION CONTEXT BUILDER
+================================================================================
 
-HELPERS IMPLEMENTED (8 functions)
-  _lm_build_orderflow_state        — scalar trend state from two values
-  _lm_build_zone_ob_slice          — bid/ask depth slice around a zone
-  _lm_build_candidate_orderflow    — delta, CVD proxy, OI, liq, funding, L/S
-  _lm_build_ltf_confirmation_context — LTF alignment from MTF scan snapshot
-  _lm_score_candidate_intelligence — 0-100 score, 9 components, no AI
-  _lm_build_candidate_intelligence — per-candidate scored intelligence dict
-  _lm_build_execution_intelligence — orchestrator, max 5 candidates
-  _lm_save_execution_intelligence  — persists to snapshot_json
+File:     live_monitor/ai_execution_context.py
+Endpoint: GET /api/live-monitor/items/<id>/ai-execution-context?refresh=1
+UI:       "AI Ctx" button inside EI card
 
-SCORING COMPONENTS (total 100 pts)
-  OB/FIB quality          25 pts
-  Orderbook support        20 pts  (bid/ask imbalance in zone)
-  Delta state              15 pts  (5m delta direction/velocity)
-  CVD proxy state          10 pts  (net signed delta trend)
-  OI state                 10 pts  (OI level + OI change direction)
-  Liquidations bias         5 pts
-  Funding bias              5 pts
-  Parent zone alignment     5 pts
-  LTF confirmation          5 pts
+Function: _lm_build_ai_execution_context(item, snapshot=None)
 
-ROUTES ADDED
-  GET /api/live-monitor/items/<id>/execution-intelligence?refresh=1
+Aggregates Phase 11.1, 11.1B, Smart Entry, and Data Health into one
+structured context dict used by all downstream phases.
 
-SNAPSHOT KEYS WRITTEN
-  snapshot_json["latest_execution_intelligence"]
+Key output fields:
+  - phase                      "phase11_2_ai_execution_context"
+  - danger_context
+      danger_level             blocked / high / medium / low
+      danger_score             0-100
+      reasons                  list of contributing factors
+      blocking_reasons         list of hard-block factors
+      recommended_behavior     wait / confirm / allow_touch_limit / block
+      touch_limit_allowed_by_context
+      confirmation_required
+  - orderflow_history_quality
+      overall                  high / medium / low / insufficient / none
+      by_tf                    per-timeframe breakdown
+      limitations              list
+  - best_candidate             top-scoring execution candidate (tf, type, score)
+  - smc_orderflow_fusion       zone_flow_state, confidence
+  - ai_allowed_actions_preview list of currently permissible actions
+  - data_health, smart_entry, execution_intelligence, mtf_orderflow_history
+  - warnings, limitations
 
-UI CHANGES (preview.html)
-  EXECUTION INTELLIGENCE card added to Live Monitor side panel
-  Collapsed by default. Load button triggers API call.
-  Shows: candidates table, score badge, orderflow summary bar.
-  Hidden for Bias Shift items.
+Danger scoring rules (6 rules, 0-100):
+  1. Data health blocked         -> score +80, level blocked
+  2. Fusion zone breaking        -> score +60, level high
+  3. Candle delta divergence     -> score +25, level medium+
+  4. No orderflow data           -> score +40, level high
+  5. Low orderflow quality       -> score +15, level medium
+  6. Fusion zone attacked        -> score +20, level medium
 
-────────────────────────────────────────────────────────────────────────────────
-PHASE 11.1B — MTF ORDERFLOW HISTORY ENGINE
-────────────────────────────────────────────────────────────────────────────────
+Orderflow quality method:
+  candle_delta=high, aligned_snapshots=medium, delta_proxy=low, unavailable=none
 
-STATUS: COMPLETE
+================================================================================
+PHASE 11.3 — AI TRADE CONTROL DECISION ENGINE
+================================================================================
 
-WHAT WAS BUILT
-  Fixes Phase 11.1 limitations:
-  - Multi-candle history (up to 20 candles per TF) instead of single snapshot
-  - True per-candle CVD from Binance klines taker volumes instead of proxy
-  - Correct parent→child TF mapping (4h uses 1h/30m/15m/5m, not just 5m)
-  - Linear regression slope for series-level trend state analysis
-  - SMC zone fusion: 7 zone flow states from cross-TF evidence
+File:     live_monitor/ai_trade_control.py
+Endpoint: GET /api/live-monitor/items/<id>/ai-trade-control?refresh=1
+UI:       Rendered below AI Execution Context card (chain-fetch)
 
-HELPERS IMPLEMENTED (7 functions)
-  _lm_child_orderflow_timeframes   — parent TF → child TF list
-  _lm_fetch_klines_with_delta      — Binance klines with k[7]/k[10] taker vol
-  _lm_build_series_orderflow_state — multi-candle series via linear regression
-  _lm_build_tf_orderflow_history   — single-TF history (delta+CVD series+context)
-  _lm_build_mtf_orderflow_history  — orchestrates all child TFs
-  _lm_build_mtf_history_summary    — compact per-TF summary for candidates
-  _lm_build_smc_orderflow_fusion   — SMC zone flow state from cross-TF evidence
+Function: _lm_build_ai_trade_control_decision(item, snapshot=None, ai_exec_ctx=None)
 
-PARENT→CHILD TF MAPPING
-  1d  → [4h, 1h, 30m, 15m]
-  4h  → [1h, 30m, 15m, 5m]
-  1h  → [30m, 15m, 5m]
-  30m → [15m, 5m]
-  15m → [5m]
-  5m  → [5m]
+13-rule priority decision engine. Decision only - no execution authority.
 
-CVD METHOD PRIORITY (best → worst)
-  candle_delta                — Binance taker_buy_quote per kline (k[10])
-  aligned_orderflow_snapshots — LiveMonitorCandleOrderflow.delta_net_sum (DB)
-  delta_proxy                 — current 5m snapshot fallback
-  unavailable                 — no data
+Rule priority (highest to lowest):
+   1. data_health_blocked      -> block_trade
+   2. danger_blocked           -> block_trade
+   3. fusion_breaking          -> block_trade
+   4. danger_high              -> block_trade
+   5. smart_entry_invalidated  -> pause_setup
+   6. fusion_attacked          -> switch_to_confirmation
+   7. danger_medium            -> switch_to_confirmation
+   8. fusion_absorbing         -> switch_to_confirmation
+   9. of_quality_insufficient  -> no_action
+  10. of_quality_low           -> wait
+  11. fusion_defended          -> allow_touch_limit
+  12. danger_low               -> allow_touch_limit
+  13. default                  -> no_action
 
-ZONE FLOW STATES (smc_orderflow_fusion)
-  defended   — 3+ bullish signals, 0 danger → behavior: touch_limit
-  absorbing  — 2+ bullish signals           → behavior: confirmation
-  attacked   — 2+ danger signals            → behavior: wait
-  breaking   — 3+ danger signals            → behavior: block
-  ignored    — 0 bullish, 0 danger          → behavior: wait
-  uncertain  — insufficient/conflicting     → behavior: confirmation/wait
+Confidence scaling by orderflow quality:
+  high=100%, medium=80%, low=60%, insufficient=30%, none=10%
 
-CANDIDATE ENRICHMENT
-  Each candidate now gets:
-    mtf_orderflow_history_summary  — compact per-TF state summary
-    smc_orderflow_fusion           — zone flow state + evidence + behavior
+Key output fields:
+  - action           block_trade / pause_setup / switch_to_confirmation /
+                     allow_touch_limit / wait / no_action
+  - confidence       0-100
+  - danger_level     blocked / high / medium / low
+  - danger_score     0-100
+  - fusion_state     breaking / attacked / absorbing / defended / neutral / unknown
+  - orderflow_quality high / medium / low / insufficient / none
+  - primary_reasons  list
+  - supporting_reasons list
+  - risk_factors     list
+  - advisory_note    "Phase 11.3 generates decisions only.
+                      No trade execution authority exists."
 
-EXECUTION INTELLIGENCE OUTPUT ADDITIONS
-  candidates[n].mtf_orderflow_history_summary
-  candidates[n].smc_orderflow_fusion
-  mtf_orderflow_history  (top-level in EI dict)
+Model storage:
+  LiveMonitorAIIntervention (models.py) - stores decision for audit trail.
+  No automation connection. Storage only.
 
-ROUTES ADDED
-  GET /api/live-monitor/items/<id>/mtf-orderflow-history?refresh=1
+================================================================================
+PHASE 11.4 — AUTOMATION POLICY LAYER
+================================================================================
 
-SNAPSHOT KEYS WRITTEN
-  snapshot_json["latest_mtf_orderflow_history"]
-  snapshot_json["latest_execution_intelligence"]["mtf_orderflow_history"]
+File:     live_monitor/automation_policy.py
+Endpoint: GET /api/live-monitor/items/<id>/automation-policy?refresh=1
+UI:       Rendered below AI Trade Control section (chain-fetch)
 
-UI CHANGES (preview.html)
-  MTF Orderflow History table appended to EI card on Load.
-  Columns: TF | CVD STATE | DELTA | OI | LIQ BIAS | METHOD
-  Fusion state badge (zone_flow_state + behavior + confidence) shown above table.
-  overflow-x scrollable for mobile. Hidden for Bias Shift items.
+Function: _lm_build_automation_policy(item, snapshot=None)
 
-────────────────────────────────────────────────────────────────────────────────
-PHASE 11.1C — LIVE MONITOR MODULE SPLIT FOUNDATION
-────────────────────────────────────────────────────────────────────────────────
+Evaluates whether a Phase 11.3 decision would be allowed under the current
+policy configuration. Evaluates only - never applies.
 
-STATUS: COMPLETE
+Policy modes:
+  proposal_only         (default) - advisory only, no automation
+  auto_testnet          - testnet automation (future, not yet active)
+  future_live_execution - HARD DISABLED in Phase 11.4 (always clamped to
+                          proposal_only if set)
 
-WHAT WAS DONE
-  Refactor only. Zero behavior changes. Zero feature additions.
-  Moved 15 helper functions out of main.py into a live_monitor/ package.
-  All Flask routes, models, DB, and Flask app remain in main.py.
+Entry modes:
+  touch_limit / confirmation / ai_controlled
 
-FILES CREATED
-  live_monitor/__init__.py               — package, re-exports all 15 names
-  live_monitor/execution_intelligence.py — Phase 11.1 helpers (8 functions)
-  live_monitor/mtf_orderflow.py          — Phase 11.1B helpers (6 functions)
-  live_monitor/smc_orderflow_fusion.py   — SMC fusion helper (1 pure function)
+5 blocking rules:
+  1. data_health_gate_blocked          -> block_trade
+  2. danger_level == "blocked"         -> block_trade
+  3. risk_guard_status blocked         -> block_trade
+  4. orderflow_quality insufficient/none -> block_trade
+  5. ai_action == block_trade/pause_setup -> block/pause
 
-LINES REMOVED FROM main.py
-  1,316 lines removed
-  33,020 lines → 31,704 lines
-  Replaced with a 17-line import block at line 24034
+Key output fields (policy_result):
+  - allowed              bool
+  - recommended_mode     entry mode recommendation
+  - future_action        none / switch_mode / block_trade / pause_setup
+  - reason               human-readable explanation
+  - blocking_reasons     list
+  - future_ready_state   apply_pending: false (always - never applied)
+  - advisory_note        "Phase 11.4 evaluates automation policy only.
+                          No execution authority exists."
 
-IMPORTS ADDED TO main.py
-  from live_monitor import (
-      _lm_build_orderflow_state,
-      _lm_build_zone_ob_slice,
-      _lm_build_candidate_orderflow,
-      _lm_build_ltf_confirmation_context,
-      _lm_score_candidate_intelligence,
-      _lm_build_candidate_intelligence,
-      _lm_build_execution_intelligence,
-      _lm_save_execution_intelligence,
-      _lm_child_orderflow_timeframes,
-      _lm_fetch_klines_with_delta,
-      _lm_build_series_orderflow_state,
-      _lm_build_tf_orderflow_history,
-      _lm_build_mtf_orderflow_history,
-      _lm_build_mtf_history_summary,
-      _lm_build_smc_orderflow_fusion,
-  )
+Task 14 (added in Phase 11.5):
+  policy_context now includes binance_testnet_connector:
+    connector_ready   bool (derived from env-var presence)
+    testnet_locked    true
+    note              "Phase 11.5 read-only connector. No order placement."
 
-CIRCULAR IMPORT STRATEGY
-  live_monitor modules use `import main as _m` at module level.
-  Safe because main.py imports live_monitor at line ~24036, by which point
-  all 14 dependencies are already defined:
-    _lm_delta_get             line 11385
-    _lm_normalize_analysis_source  line 12146
-    _lm_ws_get                line 10287
-    _json_loads_safe          line  7510
-    _json_dumps_safe          line  7502
-    _lm_direction_from_item   line  7770
-    ensure_ob_stream          line  1148
-    _ob_books / _ob_book_lock line   780
-    _LM_TF_MS                 line 14713
-    BINANCE_FUTURES_API       line  1538
-    _lm_rest_cached           line 10450
-    _lm_fetch_public_klines   line 14890
-    _LM_SPECIFIC_ANALYSIS_SRCS line 12141
-    req (requests alias)      line    24
+================================================================================
+PHASE 11.5 — BINANCE FUTURES TESTNET CONNECTOR FOUNDATION
+================================================================================
 
-HELPERS THAT COULD NOT BE MOVED
-  None. All 15 moved successfully.
-  DB model imports (LiveMonitorItem, LiveMonitorCandleOrderflow, db)
-  remain as inline `from models import` inside function bodies — this
-  is the correct pattern for Flask-SQLAlchemy and was not changed.
+File:     live_monitor/binance_testnet.py
+Endpoints (all GET, all @login_required):
+  /api/live-monitor/binance-testnet/health
+  /api/live-monitor/binance-testnet/account
+  /api/live-monitor/binance-testnet/balance
+  /api/live-monitor/binance-testnet/positions
+  /api/live-monitor/binance-testnet/symbol-filters?symbol=BTCUSDT
 
-────────────────────────────────────────────────────────────────────────────────
-CONSTRAINTS VERIFICATION
-────────────────────────────────────────────────────────────────────────────────
+UI:       Binance Testnet Connector card at top of Trading Terminal pane
+Buttons:  Check Connection / Refresh Balance / Refresh Positions (read-only)
 
-  No orders placed                         CONFIRMED
-  No Binance Testnet connection            CONFIRMED
-  No real execution added                  CONFIRMED
-  No AI decisions added                    CONFIRMED
-  Risk Guard not modified                  CONFIRMED
-  Data Health layout not modified          CONFIRMED
-  Smart Entry not broken                   CONFIRMED
-  Phase 10.6–10.9I not broken              CONFIRMED
-  Phase 11.1 Execution Intelligence intact CONFIRMED
-  Live price polling not broken            CONFIRMED
-  Data source selection not broken         CONFIRMED
-  No fake data — public REST/WS/cache only CONFIRMED
-  No API keys / private account data       CONFIRMED
-  No order data in storage                 CONFIRMED
-  No route movement (11.1C)                CONFIRMED
-  No model movement (11.1C)                CONFIRMED
-  No behavior changes (11.1C)              CONFIRMED
+Exported functions (12):
+  _lm_bt_base_url()
+  _lm_bt_is_testnet_only()
+  _lm_bt_credentials_available()
+  _lm_bt_public_request(path, params, method)
+  _lm_bt_signed_request(path, params, method)
+  _lm_bt_ping()
+  _lm_bt_exchange_info()
+  _lm_bt_symbol_filters(symbol)
+  _lm_bt_account()
+  _lm_bt_balance()
+  _lm_bt_positions(symbol=None)
+  _lm_bt_health()
 
-────────────────────────────────────────────────────────────────────────────────
-GIT COMMITS (branch: claude/zyni-phase-0-audit-dwTl0 → main)
-────────────────────────────────────────────────────────────────────────────────
+Credential rules:
+  - Loaded from env only: BINANCE_TESTNET_API_KEY, BINANCE_TESTNET_API_SECRET
+  - Never returned in any JSON response
+  - Never stored in snapshot_json
+  - Never logged or printed
+  - Never exposed to frontend
 
-  faa8189  Phase 11.1: Execution Intelligence Engine
-  cca4022  Phase 11.1B: MTF Orderflow History Engine
-  4a53512  Phase 11.1C: Live Monitor module split foundation
+Signing algorithm:
+  HMAC-SHA256 over urlencode(params + timestamp + recvWindow)
+  Signature appended as ?signature=...
+  API key sent in X-MBX-APIKEY header only
+
+================================================================================
+PHASE 11.5A — BINANCE TESTNET SAFETY HARDENING
+================================================================================
+
+Files changed:
+  live_monitor/binance_testnet.py  (+73 / -10)
+  templates/preview.html           (+3 / 0)
+
+----------------------------------------------------------------------
+TASK 1 — SIGNED PATH WHITELIST (hard)
+----------------------------------------------------------------------
+_BT_SIGNED_ALLOWED_PATHS = frozenset({
+    "/fapi/v2/account",
+    "/fapi/v2/balance",
+    "/fapi/v2/positionRisk",
+})
+
+Any signed request to a path outside this set returns immediately:
+  { "ok": false, "error": "signed_path_not_allowed_phase11_5" }
+No network call is made.
+
+----------------------------------------------------------------------
+TASK 2 — EXECUTION-PATH FRAGMENT BLOCK
+----------------------------------------------------------------------
+_BT_BLOCKED_FRAGMENTS = frozenset({
+    "order", "batchorders", "leverage", "margintype",
+    "positionside", "countdowncancelall", "listenkey",
+})
+
+Checked case-insensitively against path.lower() in BOTH
+_lm_bt_public_request() and _lm_bt_signed_request() before any
+network call. Returns:
+  { "ok": false, "error": "execution_path_blocked_phase11_5" }
+
+----------------------------------------------------------------------
+TASK 3 — METHOD GUARD (GET only)
+----------------------------------------------------------------------
+method: str = "GET" parameter added to both request functions.
+Any method != "GET" returns before any network call:
+  { "ok": false, "error": "method_not_allowed_phase11_5" }
+
+Blocked: POST / PUT / PATCH / DELETE
+
+----------------------------------------------------------------------
+TASK 4 — TESTNET LOCK (hardened)
+----------------------------------------------------------------------
+Existing guard confirmed hard-fail - no fallback, no warning-only mode.
+Early-return dict in health() updated to also carry:
+  orders_enabled: false, execution_enabled: false, phase: "11.5_read_only"
+
+----------------------------------------------------------------------
+TASK 5 — HEALTH RESPONSE EXTENDED
+----------------------------------------------------------------------
+_lm_bt_health() now always returns:
+  "phase":             "11.5_read_only"
+  "orders_enabled":    false
+  "execution_enabled": false
+
+Both the testnet-guard early-return and the normal return path carry
+these fields. They are always false and cannot be changed at runtime.
+
+Example health response:
+{
+  "ok": true,
+  "phase": "11.5_read_only",
+  "orders_enabled": false,
+  "execution_enabled": false,
+  "base_url": "https://demo-fapi.binance.com",
+  "testnet_locked": true,
+  "credentials_configured": false,
+  "ping_ok": true,
+  "server_time_ok": true,
+  "account_ok": null,
+  "balance_ok": null,
+  "positions_ok": null,
+  "account_skipped": true,
+  "balance_skipped": true,
+  "positions_skipped": true,
+  "available_usdt": null,
+  "error_summary": [],
+  "checked_at": 1749600000,
+  "advisory_note": "Phase 11.5 read-only connector. No order placement. No automation execution."
+}
+
+----------------------------------------------------------------------
+TASK 6 — ENDPOINT AUDIT
+----------------------------------------------------------------------
+All 5 Binance Testnet routes confirmed:
+  /api/live-monitor/binance-testnet/health         GET
+  /api/live-monitor/binance-testnet/account        GET
+  /api/live-monitor/binance-testnet/balance        GET
+  /api/live-monitor/binance-testnet/positions      GET
+  /api/live-monitor/binance-testnet/symbol-filters GET
+
+No forbidden routes found:
+  /order          - NOT PRESENT
+  /create-order   - NOT PRESENT
+  /place-order    - NOT PRESENT
+  /cancel-order   - NOT PRESENT
+  /close-position - NOT PRESENT
+
+Result: CLEAN
+
+----------------------------------------------------------------------
+TASK 7 — TRADING TERMINAL STATUS CARD
+----------------------------------------------------------------------
+Three hardcoded (non-dynamic) status lines added to connector card:
+
+  Orders enabled:     FALSE   (red)
+  Execution enabled:  FALSE   (red)
+  Mode:               READ ONLY (yellow)
+
+These values are static HTML - they cannot be changed by any API
+response or runtime state. They always display FALSE / READ ONLY.
+
+----------------------------------------------------------------------
+TASK 8 — VERIFICATION RESULTS
+----------------------------------------------------------------------
+  OK  Only account/balance/positionRisk signed paths allowed
+  OK  Order-like path fragments blocked
+  OK  POST blocked
+  OK  DELETE blocked
+  OK  PUT blocked
+  OK  PATCH blocked
+  OK  Testnet lock enforced (hard fail, no fallback)
+  OK  Health shows orders_enabled: false, execution_enabled: false
+  OK  Health shows phase: "11.5_read_only"
+  OK  Trading Terminal card shows READ ONLY / FALSE / FALSE
+  OK  No order endpoints exist in main.py
+  OK  No automation
+  OK  No execution
+  OK  Existing Phase 11.5 functionality unchanged
+
+================================================================================
+SAFETY GUARD ORDER OF EXECUTION (signed requests)
+================================================================================
+
+When _lm_bt_signed_request(path, params) is called:
+
+  Step 1  method == "GET"?                  NO -> method_not_allowed_phase11_5
+  Step 2  path in _BT_SIGNED_ALLOWED_PATHS? NO -> signed_path_not_allowed_phase11_5
+  Step 3  _lm_bt_is_execution_path(path)?  YES -> execution_path_blocked_phase11_5
+  Step 4  _lm_bt_is_testnet_only()?         NO -> locked to testnet only
+  Step 5  _lm_bt_credentials_available()?   NO -> credentials_not_configured
+  Step 6  Build HMAC-SHA256 signature
+  Step 7  Issue GET request to demo-fapi.binance.com
+
+No network call is made until steps 1-5 all pass.
+
+================================================================================
+FILES CHANGED ACROSS ALL PHASES
+================================================================================
+
+  live_monitor/__init__.py             - exports all 30 live_monitor functions
+  live_monitor/ai_execution_context.py - Phase 11.2
+  live_monitor/ai_trade_control.py     - Phase 11.3
+  live_monitor/automation_policy.py    - Phase 11.4 + 11.5 Task 14
+  live_monitor/binance_testnet.py      - Phase 11.5 + 11.5A
+  models.py                            - LiveMonitorAIIntervention model
+  main.py                              - import block + 8 new endpoints
+  templates/preview.html               - AI Ctx chain UI + Connector card
+
+================================================================================
+COMMIT HISTORY
+================================================================================
+
+  Phase 11.2: AI Execution Context Builder
+  Phase 11.3: AI Trade Control Decision Engine
+  Phase 11.4: Automation Policy Layer
+  Phase 11.5: Binance Futures Testnet Connector Foundation
+  Phase 11.5A: Binance Testnet Safety Hardening
+
+All commits pushed to:
+  origin/claude/zyni-phase-0-audit-dwTl0
+  origin/main
+
+================================================================================
+CONFIRMATION
+================================================================================
+
+Phase 11.5 remains read-only.
+No order placement is possible through the connector.
+
+No order placement.
+No position modification.
+No leverage change.
+No margin change.
+No automation execution.
+No AI-triggered execution.
+No mainnet access.
+No secrets exposed.
 
 ================================================================================
 END OF REPORT
