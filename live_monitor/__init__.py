@@ -20,6 +20,7 @@ from live_monitor.mtf_orderflow import (
     _lm_build_mtf_history_summary,
 )
 from live_monitor.smc_orderflow_fusion import _lm_build_smc_orderflow_fusion
+from live_monitor.ai_execution_context import _lm_build_ai_execution_context
 
 __all__ = [
     "_lm_build_orderflow_state",
@@ -37,4 +38,5 @@ __all__ = [
     "_lm_build_mtf_orderflow_history",
     "_lm_build_mtf_history_summary",
     "_lm_build_smc_orderflow_fusion",
+    "_lm_build_ai_execution_context",
 ]

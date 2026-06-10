@@ -19840,6 +19840,18 @@ def _lm_ai_trade_proposal_prompt() -> str:
         "- Do NOT claim your proposal is approved, safe, or executable.\n"
         "- Do not output a disclaimer field — the rules above cover it.\n\n"
 
+        "AI EXECUTION CONTEXT RULES (Phase 11.2):\n"
+        "The context may include an ai_execution_context block with pre-computed danger assessment.\n"
+        "- danger_level 'blocked': output action='no_trade', confidence=0. "
+        "Cite blocking_reasons in risk_notes.\n"
+        "- danger_level 'high': output action='no_trade' or 'wait'. Cite danger evidence in risk_notes.\n"
+        "- danger_level 'medium': prefer 'wait'. Cite danger score in reasoning_summary.\n"
+        "- danger_level 'low': context is supportive — you may proceed with normal readiness rules.\n"
+        "- orderflow_history_quality.overall 'none' or 'low': state data weakness in reasoning_summary.\n"
+        "- zone_flow_state 'breaking' or 'attacked': add to risk_notes. "
+        "zone_flow_state 'defended' or 'absorbing': add to entry_logic as supporting evidence.\n"
+        "- Do NOT invent ai_execution_context data. If block is null, ignore these rules.\n\n"
+
         "Do not wrap the JSON in markdown code fences. Output raw JSON only."
     )
 
@@ -19973,6 +19985,7 @@ def _lm_build_trade_proposal_context(row, snapshot=None) -> dict:
             "analysis_data_confirmation_only":   True,
             "parent_setup_zones_immutable":      True,
         },
+        "ai_execution_context": (lambda: _lm_build_ai_execution_context(row, snap))() if True else None,
     }
 
 
@@ -21023,6 +21036,7 @@ def _lm_build_ai_context(item) -> dict:
                     "AI must NOT create Entry Candidate or trade signal from alignment. "
                     "Full snapshot arrays and alignment rows are NOT in AI context.",
         } if _of and isinstance(_of, dict) else None)(snap.get("orderflow_alignment")),
+        "ai_execution_context": (lambda: _lm_build_ai_execution_context(item, snap))() if True else None,
     }
 
 
@@ -21225,6 +21239,39 @@ def _lm_ai_system_prompt() -> str:
         "- Do NOT invent smart entry levels not present in the plan.\n"
         "- Do NOT use smart_entry_plan as permission to execute a trade.\n"
         "- If smart_entry_plan is null or missing, analyze from other context fields only.\n\n"
+
+        "AI EXECUTION CONTEXT (Phase 11.2):\n"
+        "The context may include an ai_execution_context block — a pre-computed structured "
+        "summary that aggregates execution intelligence, MTF orderflow, SMC fusion, and a "
+        "deterministic danger assessment. This block is ADVISORY ONLY.\n"
+        "FIELD MEANINGS:\n"
+        "- danger_context.danger_level: 'low' | 'medium' | 'high' | 'blocked'. "
+        "This is a deterministic backend signal — treat it as a hard constraint, not a suggestion.\n"
+        "- danger_context.danger_score: 0–100 composite danger score.\n"
+        "- danger_context.recommended_behavior: 'touch_limit' | 'confirmation' | 'wait' | 'block'.\n"
+        "- danger_context.touch_limit_allowed_by_context: boolean — false means do NOT suggest touch-limit entry.\n"
+        "- danger_context.confirmation_required: boolean.\n"
+        "- orderflow_history_quality.overall: 'high' | 'medium' | 'low' | 'none'. "
+        "Reflects data reliability — candle_delta=high, db_snapshots=medium, proxy=low, unavailable=none.\n"
+        "- ai_allowed_actions_preview: advisory list of actions appropriate for the current danger level. "
+        "This is a PREVIEW only — no execution is performed in Phase 11.2.\n"
+        "- smc_orderflow_fusion.zone_flow_state: 'defended' | 'absorbing' | 'attacked' | "
+        "'breaking' | 'ignored' | 'uncertain'.\n"
+        "- best_candidate: highest-scored execution candidate from Execution Intelligence.\n"
+        "USE RULES:\n"
+        "- If danger_level is 'blocked': output verdict='avoid', confidence ≤ 20. "
+        "Cite the blocking reasons from danger_context.blocking_reasons.\n"
+        "- If danger_level is 'high': output verdict='high_risk' or 'avoid'. "
+        "Do NOT suggest touch-limit entry.\n"
+        "- If danger_level is 'medium': note elevated risk. Do NOT suggest aggressive entry.\n"
+        "- If danger_level is 'low': context is supportive. Still require your own confirmations.\n"
+        "- If orderflow_history_quality.overall is 'none' or 'low': state clearly in agent_note "
+        "that orderflow evidence is weak or absent.\n"
+        "- zone_flow_state 'breaking' or 'attacked' → cite in risks[]. "
+        "zone_flow_state 'defended' or 'absorbing' → cite as supporting evidence in zone_read.\n"
+        "- ai_allowed_actions_preview is advisory only — it does NOT grant execution permission.\n"
+        "- Do NOT invent execution context data not present in ai_execution_context.\n"
+        "- If ai_execution_context is null or missing, analyze from other context fields only.\n\n"
 
         "STRICT RULES:\n"
         "- Analyze ONLY the provided backend facts. Do not invent missing data.\n"
@@ -24049,6 +24096,7 @@ from live_monitor import (
     _lm_build_mtf_orderflow_history,
     _lm_build_mtf_history_summary,
     _lm_build_smc_orderflow_fusion,
+    _lm_build_ai_execution_context,
 )
 
 # ── Phase 10.9I: Auto-refresh scheduler ─────────────────────────────────────
@@ -27168,6 +27216,58 @@ def api_lm_mtf_orderflow_history_get(item_id):
     return jsonify({
         "ok":                   True,
         "mtf_orderflow_history": mtf_history,
+        "symbol":               row.symbol,
+        "exchange":             row.exchange,
+    })
+
+
+# ── Phase 11.2: AI Execution Context endpoint ─────────────────────────────────
+
+@app.route("/api/live-monitor/items/<int:item_id>/ai-execution-context", methods=["GET"])
+@login_required
+def api_lm_ai_execution_context_get(item_id):
+    """Return (or rebuild) the Phase 11.2 AI Execution Context for a Live Monitor item.
+
+    Query params:
+      ?refresh=1  — rebuild even if a cached copy exists in snapshot_json.
+
+    Phase 11.2: advisory context only — no AI call, no orders, no Binance Testnet.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import LiveMonitorItem as _LMI112, db as _db112
+    row = _LMI112.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+
+    snap    = _json_loads_safe(row.snapshot_json, {})
+    refresh = request.args.get("refresh", "").lower() in ("1", "true", "yes")
+
+    ai_ctx = snap.get("latest_ai_execution_context")
+    if not ai_ctx or refresh:
+        try:
+            ai_ctx = _lm_build_ai_execution_context(row, snap)
+        except Exception as _e112:
+            ai_ctx = {"ok": False, "error": str(_e112)[:300]}
+
+        if ai_ctx and not ai_ctx.get("error"):
+            try:
+                row2 = _LMI112.query.filter_by(id=item_id, user_id=uid).first()
+                if row2:
+                    snap2 = _json_loads_safe(row2.snapshot_json, {})
+                    snap2["latest_ai_execution_context"] = ai_ctx
+                    row2.snapshot_json = _json_dumps_safe(snap2)
+                    _db112.session.commit()
+            except Exception:
+                pass
+
+    return jsonify({
+        "ok":                   True,
+        "ai_execution_context": ai_ctx,
         "symbol":               row.symbol,
         "exchange":             row.exchange,
     })

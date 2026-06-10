@@ -6426,12 +6426,14 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
             '<span class="sch-title">EXECUTION INTELLIGENCE</span>'+
             '<span id="lmExecIntelScoreBadge" style="margin-left:8px;font-size:10px;padding:1px 6px;border-radius:3px;display:none"></span>'+
             '<button class="btn" type="button" id="lmExecIntelFetchBtn" data-lmeifetch="'+item.id+'" title="Build execution intelligence for this setup" style="margin-left:auto;padding:2px 7px;font-size:10px">Load</button>'+
+            '<button class="btn" type="button" id="lmAiCtxFetchBtn" data-lmaictxfetch="'+item.id+'" title="Load Phase 11.2 AI Execution Context (danger level, orderflow quality, allowed actions)" style="padding:2px 7px;font-size:10px;margin-left:4px">AI Ctx</button>'+
             '<button class="btn" type="button" id="lmExecIntelToggleBtn" title="Show/hide execution intelligence" style="padding:2px 7px;font-size:10px;margin-left:4px">&#9658; Show</button>'+
           '</div>'+
           '<div class="sec-card-body" id="lmExecIntelBody" style="display:none;padding:10px 13px">'+
             '<div id="lmExecIntelContent" style="color:var(--text-3);font-size:11px">'+
               'Click <b>Load</b> to fetch execution intelligence for this setup.'+
             '</div>'+
+            '<div id="lmAiCtxContent" style="display:none;border-top:1px solid var(--border);padding-top:8px;margin-top:8px;font-size:11px"></div>'+
           '</div>'+
         '</div>'
       : '')+
@@ -6906,6 +6908,111 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
           .catch(function(){
             eiFetchBtn.disabled=false; eiFetchBtn.innerHTML=origHtml;
             if(eiContent) eiContent.innerHTML='<span style="color:var(--red-2)">Network error — could not load execution intelligence.</span>';
+          });
+      });
+    }
+    // Phase 11.2: AI Execution Context fetch handler
+    var aiCtxFetchBtn=box.querySelector("[data-lmaictxfetch]");
+    if(aiCtxFetchBtn){
+      aiCtxFetchBtn.addEventListener("click",function(){
+        var id=parseInt(aiCtxFetchBtn.getAttribute("data-lmaictxfetch"),10); if(!id) return;
+        var origHtml2=aiCtxFetchBtn.innerHTML;
+        aiCtxFetchBtn.disabled=true; aiCtxFetchBtn.textContent="…";
+        var aiCtxDiv=document.getElementById("lmAiCtxContent");
+        var eiBody2=document.getElementById("lmExecIntelBody");
+        if(eiBody2) eiBody2.style.display="";
+        var tBtn3=document.getElementById("lmExecIntelToggleBtn");
+        if(tBtn3) tBtn3.innerHTML="&#9660; Hide";
+        if(aiCtxDiv){ aiCtxDiv.style.display=""; aiCtxDiv.innerHTML='<span style="opacity:.6">Loading AI context…</span>'; }
+        fetch("/api/live-monitor/items/"+id+"/ai-execution-context?refresh=1",{credentials:"same-origin"})
+          .then(function(r){ return r.json(); })
+          .then(function(d){
+            aiCtxFetchBtn.disabled=false; aiCtxFetchBtn.innerHTML=origHtml2;
+            if(!aiCtxDiv) return;
+            if(!d||!d.ok){
+              aiCtxDiv.innerHTML='<span style="color:var(--red-2)">Error: '+(d&&d.error?esc(String(d.error)):"server error")+'</span>';
+              return;
+            }
+            var ax=d.ai_execution_context||{};
+            var dc=ax.danger_context||{};
+            var dl=dc.danger_level||'unknown';
+            var ds=dc.danger_score||0;
+            var rb=dc.recommended_behavior||'—';
+            var tlOk=dc.touch_limit_allowed_by_context!==false;
+            var confReq=!!dc.confirmation_required;
+            var dlColor=dl==='blocked'?'var(--red-2,#f87171)':dl==='high'?'var(--red-2,#f87171)':dl==='medium'?'var(--yellow,#facc15)':'var(--green-2,#4ade80)';
+            var ofQ=(ax.orderflow_history_quality||{});
+            var qOverall=ofQ.overall||'none';
+            var qColor=qOverall==='high'?'var(--green-2,#4ade80)':qOverall==='medium'?'var(--yellow,#facc15)':qOverall==='low'?'var(--red-2,#f87171)':'var(--text-3)';
+            var aap=ax.ai_allowed_actions_preview||[];
+            var bc=ax.best_candidate||{};
+            var fusCtx=(ax.smc_orderflow_fusion||{});
+            var zfs=fusCtx.zone_flow_state||'—';
+            var zfsColor=zfs==='defended'||zfs==='absorbing'?'var(--green-2,#4ade80)':zfs==='breaking'||zfs==='attacked'?'var(--red-2,#f87171)':'var(--text-3)';
+            var warns=ax.warnings||[];
+            var lims=ax.limitations||[];
+            var html2='<div style="font-size:11px">';
+            html2+='<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">';
+            html2+='<span style="font-size:10px;font-weight:700;color:var(--text-2)">AI EXECUTION CONTEXT</span>';
+            html2+='<span style="font-size:9px;color:var(--text-3)">Phase 11.2 · advisory only</span>';
+            html2+='<span style="margin-left:auto;font-size:11px;font-weight:700;padding:2px 8px;border-radius:3px;background:'+dlColor+';color:#000">'+esc(dl.toUpperCase())+'</span>';
+            html2+='<span style="font-size:10px;color:var(--text-3)">score '+esc(ds)+'</span>';
+            html2+='</div>';
+            // Key row
+            html2+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px;margin-bottom:8px">';
+            html2+='<div style="background:var(--bg-2);border-radius:4px;padding:5px 8px">';
+            html2+='<div style="font-size:8.5px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px">Behavior</div>';
+            html2+='<div style="font-size:11px;font-weight:600;color:var(--text-2)">'+esc(rb)+'</div>';
+            html2+='<div style="font-size:8.5px;color:var(--text-3)">touch_limit: '+(tlOk?'<span style="color:var(--green-2)">✓</span>':'<span style="color:var(--red-2)">✗</span>')+' · conf req: '+(confReq?'<span style="color:var(--yellow)">yes</span>':'no')+'</div>';
+            html2+='</div>';
+            html2+='<div style="background:var(--bg-2);border-radius:4px;padding:5px 8px">';
+            html2+='<div style="font-size:8.5px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px">OF Quality</div>';
+            html2+='<div style="font-size:11px;font-weight:600;color:'+qColor+'">'+esc(qOverall)+'</div>';
+            html2+='<div style="font-size:8.5px;color:var(--text-3)">tfs: '+esc(Object.keys(ofQ.by_tf||{}).join(' · ')||'—')+'</div>';
+            html2+='</div>';
+            html2+='<div style="background:var(--bg-2);border-radius:4px;padding:5px 8px">';
+            html2+='<div style="font-size:8.5px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px">Zone Flow</div>';
+            html2+='<div style="font-size:11px;font-weight:600;color:'+zfsColor+'">'+esc(zfs)+'</div>';
+            html2+='<div style="font-size:8.5px;color:var(--text-3)">conf: '+esc(fusCtx.confidence||'—')+'</div>';
+            html2+='</div>';
+            if(bc&&bc.tf){
+              html2+='<div style="background:var(--bg-2);border-radius:4px;padding:5px 8px">';
+              html2+='<div style="font-size:8.5px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px">Best Candidate</div>';
+              html2+='<div style="font-size:11px;font-weight:600;color:var(--text-2)">'+esc((bc.tf||'').toUpperCase())+' '+esc((bc.type||'').toUpperCase())+'</div>';
+              html2+='<div style="font-size:8.5px;color:var(--text-3)">score: '+esc(bc.score||'—')+'</div>';
+              html2+='</div>';
+            }
+            html2+='</div>';
+            // Allowed actions
+            if(aap.length){
+              html2+='<div style="margin-bottom:6px;font-size:10px;color:var(--text-3)">';
+              html2+='<span style="color:var(--text-2);font-weight:600">Allowed actions: </span>';
+              html2+=esc(aap.join(' · '));
+              html2+='</div>';
+            }
+            // Blocking reasons / key reasons
+            var br=dc.blocking_reasons||[];
+            var kr=dc.reasons||[];
+            var allR=br.concat(kr);
+            if(allR.length){
+              html2+='<div style="font-size:9.5px;color:var(--text-3);line-height:1.5;margin-bottom:4px">';
+              html2+='<span style="color:var(--text-2);font-weight:600">Reasons: </span>';
+              html2+=esc(allR.slice(0,6).join(' · '));
+              html2+='</div>';
+            }
+            // Warnings / limitations
+            if(warns.length||lims.length){
+              html2+='<div style="font-size:8.5px;color:var(--text-3);opacity:.7">';
+              if(warns.length) html2+='⚠ '+esc(warns.slice(0,3).join(' · '));
+              if(lims.length) html2+=(warns.length?' · ':'')+esc(lims.slice(0,2).join(' · '));
+              html2+='</div>';
+            }
+            html2+='</div>';
+            aiCtxDiv.innerHTML=html2;
+          })
+          .catch(function(){
+            aiCtxFetchBtn.disabled=false; aiCtxFetchBtn.innerHTML=origHtml2;
+            if(aiCtxDiv) aiCtxDiv.innerHTML='<span style="color:var(--red-2)">Network error — could not load AI context.</span>';
           });
       });
     }
