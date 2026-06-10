@@ -19852,6 +19852,21 @@ def _lm_ai_trade_proposal_prompt() -> str:
         "zone_flow_state 'defended' or 'absorbing': add to entry_logic as supporting evidence.\n"
         "- Do NOT invent ai_execution_context data. If block is null, ignore these rules.\n\n"
 
+        "AI TRADE CONTROL DECISION RULES (Phase 11.3):\n"
+        "The context may include an ai_trade_control_decision block — "
+        "a deterministic Phase 11.3 decision. Use it to inform your proposal.\n"
+        "- action 'block_trade': you MUST output action='no_trade'. "
+        "Cite primary_reasons in risk_notes. Confidence must be ≤ 15.\n"
+        "- action 'pause_setup': output action='no_trade'. Cite in reasoning_summary.\n"
+        "- action 'switch_to_confirmation': prefer action='wait'. "
+        "List required confirmations from risk_factors in required_confirmations.\n"
+        "- action 'allow_touch_limit': you may proceed with normal readiness rules. "
+        "Cite as supporting evidence in entry_logic.\n"
+        "- action 'wait': prefer action='wait'. State orderflow data weakness in reasoning_summary.\n"
+        "- action 'no_action': you may analyze from other context fields; note it in reasoning_summary.\n"
+        "- candidate_analysis.explanation: quote it in entry_logic if it supports the proposal.\n"
+        "- Do NOT invent ai_trade_control_decision data. If null, ignore these rules.\n\n"
+
         "Do not wrap the JSON in markdown code fences. Output raw JSON only."
     )
 
@@ -19985,7 +20000,10 @@ def _lm_build_trade_proposal_context(row, snapshot=None) -> dict:
             "analysis_data_confirmation_only":   True,
             "parent_setup_zones_immutable":      True,
         },
-        "ai_execution_context": (lambda: _lm_build_ai_execution_context(row, snap))() if True else None,
+        "ai_execution_context":      (lambda: _lm_build_ai_execution_context(row, snap))(),
+        "ai_trade_control_decision": (lambda _aec=None: _lm_build_ai_trade_control_decision(
+            row, snap, ai_exec_ctx=_aec
+        ))(snap.get("latest_ai_execution_context")),
     }
 
 
@@ -21036,7 +21054,10 @@ def _lm_build_ai_context(item) -> dict:
                     "AI must NOT create Entry Candidate or trade signal from alignment. "
                     "Full snapshot arrays and alignment rows are NOT in AI context.",
         } if _of and isinstance(_of, dict) else None)(snap.get("orderflow_alignment")),
-        "ai_execution_context": (lambda: _lm_build_ai_execution_context(item, snap))() if True else None,
+        "ai_execution_context":      (lambda: _lm_build_ai_execution_context(item, snap))(),
+        "ai_trade_control_decision": (lambda _aec=None: _lm_build_ai_trade_control_decision(
+            item, snap, ai_exec_ctx=_aec
+        ))(snap.get("latest_ai_execution_context")),
     }
 
 
@@ -21272,6 +21293,34 @@ def _lm_ai_system_prompt() -> str:
         "- ai_allowed_actions_preview is advisory only — it does NOT grant execution permission.\n"
         "- Do NOT invent execution context data not present in ai_execution_context.\n"
         "- If ai_execution_context is null or missing, analyze from other context fields only.\n\n"
+
+        "AI TRADE CONTROL DECISION (Phase 11.3):\n"
+        "The context may include an ai_trade_control_decision block — a deterministic decision "
+        "generated from danger context, SMC fusion, and orderflow quality. Advisory only.\n"
+        "FIELD MEANINGS:\n"
+        "- action: the recommended control action. "
+        "'allow_touch_limit' = context supports a touch-limit approach. "
+        "'switch_to_confirmation' = context requires confirmation before entry. "
+        "'block_trade' = context says do not enter — dangerous or insufficient data. "
+        "'pause_setup' = setup may be invalidated — hold off. "
+        "'wait' = insufficient orderflow evidence — watch for clearer data. "
+        "'no_action' = no clear signal — maintain current state.\n"
+        "- confidence: 0–100 confidence in the decision (not in the trade).\n"
+        "- danger_level / danger_score: inherited from Phase 11.2 danger context.\n"
+        "- primary_reasons: top reasons driving the action.\n"
+        "- risk_factors: specific risks that contributed to a restrictive decision.\n"
+        "- candidate_analysis.explanation: summary of candidate comparison (highest-scored candidate).\n"
+        "USE RULES:\n"
+        "- action 'block_trade': cite primary_reasons in risks[]. Output verdict='avoid' or 'high_risk'.\n"
+        "- action 'pause_setup': cite invalidation in risks[]. Do NOT recommend entry.\n"
+        "- action 'switch_to_confirmation': cite in confirmations_needed[]. "
+        "Mention confirmation is required in zone_read.\n"
+        "- action 'allow_touch_limit': cite as supporting evidence in zone_read. "
+        "Still require your own confirmations.\n"
+        "- action 'wait': note in agent_note that orderflow evidence is too weak for a decision.\n"
+        "- action 'no_action': note in agent_note that context is insufficient.\n"
+        "- Do NOT invent ai_trade_control_decision data. If null, ignore these rules.\n"
+        "- advisory_note must always be respected: Phase 11.3 has no execution authority.\n\n"
 
         "STRICT RULES:\n"
         "- Analyze ONLY the provided backend facts. Do not invent missing data.\n"
@@ -24097,6 +24146,7 @@ from live_monitor import (
     _lm_build_mtf_history_summary,
     _lm_build_smc_orderflow_fusion,
     _lm_build_ai_execution_context,
+    _lm_build_ai_trade_control_decision,
 )
 
 # ── Phase 10.9I: Auto-refresh scheduler ─────────────────────────────────────
@@ -27270,6 +27320,64 @@ def api_lm_ai_execution_context_get(item_id):
         "ai_execution_context": ai_ctx,
         "symbol":               row.symbol,
         "exchange":             row.exchange,
+    })
+
+
+# ── Phase 11.3: AI Trade Control Decision endpoint ────────────────────────────
+
+@app.route("/api/live-monitor/items/<int:item_id>/ai-trade-control", methods=["GET"])
+@login_required
+def api_lm_ai_trade_control_get(item_id):
+    """Return (or rebuild) the Phase 11.3 AI Trade Control Decision for a Live Monitor item.
+
+    Query params:
+      ?refresh=1  — rebuild even if a cached copy exists in snapshot_json.
+
+    Phase 11.3: decision generation only — no AI call, no orders, no execution,
+    no Binance Testnet, no automation.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import LiveMonitorItem as _LMI113, db as _db113
+    row = _LMI113.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+
+    snap    = _json_loads_safe(row.snapshot_json, {})
+    refresh = request.args.get("refresh", "").lower() in ("1", "true", "yes")
+
+    decision = snap.get("latest_ai_trade_control_decision")
+    if not decision or refresh:
+        try:
+            ai_exec_ctx = snap.get("latest_ai_execution_context") or None
+            decision = _lm_build_ai_trade_control_decision(row, snap, ai_exec_ctx=ai_exec_ctx)
+        except Exception as _e113e:
+            decision = {
+                "ok": False, "error": str(_e113e)[:300],
+                "action": "no_action", "confidence": 0,
+                "advisory_note": "Phase 11.3 generates decisions only. No trade execution authority exists.",
+            }
+
+        if decision and not decision.get("error"):
+            try:
+                row2 = _LMI113.query.filter_by(id=item_id, user_id=uid).first()
+                if row2:
+                    snap2 = _json_loads_safe(row2.snapshot_json, {})
+                    snap2["latest_ai_trade_control_decision"] = decision
+                    row2.snapshot_json = _json_dumps_safe(snap2)
+                    _db113.session.commit()
+            except Exception:
+                pass
+
+    return jsonify({
+        "ok":      True,
+        "decision": decision,
+        "symbol":  row.symbol,
+        "exchange": row.exchange,
     })
 
 

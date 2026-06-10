@@ -7009,6 +7009,59 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
             }
             html2+='</div>';
             aiCtxDiv.innerHTML=html2;
+            // Phase 11.3: chain-fetch trade control decision into same card
+            var tcDiv=document.createElement('div');
+            tcDiv.style.cssText='border-top:1px solid var(--border);padding-top:8px;margin-top:8px';
+            tcDiv.innerHTML='<span style="opacity:.45;font-size:9.5px;color:var(--text-3)">Loading trade control…</span>';
+            aiCtxDiv.appendChild(tcDiv);
+            fetch("/api/live-monitor/items/"+id+"/ai-trade-control?refresh=1",{credentials:"same-origin"})
+              .then(function(r3){return r3.json();})
+              .then(function(d3){
+                if(!d3||!d3.ok){
+                  tcDiv.innerHTML='<span style="color:var(--red-2);font-size:9.5px">Trade control error: '+(d3&&d3.error?esc(String(d3.error)):"server error")+'</span>';
+                  return;
+                }
+                var dec=d3.decision||{};
+                var act=dec.action||'no_action';
+                var conf=dec.confidence||0;
+                var dl3=dec.danger_level||'unknown';
+                var fus3=dec.fusion_state||'—';
+                var pR=dec.primary_reasons||[];
+                var rF=dec.risk_factors||[];
+                var candEx=(dec.candidate_analysis||{}).explanation||'';
+                var advNote=dec.advisory_note||'';
+                var actCol=act==='allow_touch_limit'?'var(--green-2,#4ade80)':act==='block_trade'||act==='pause_setup'?'var(--red-2,#f87171)':act==='switch_to_confirmation'||act==='wait'?'var(--yellow,#facc15)':'var(--text-3)';
+                var dl3Col=dl3==='blocked'||dl3==='high'?'var(--red-2,#f87171)':dl3==='medium'?'var(--yellow,#facc15)':dl3==='low'?'var(--green-2,#4ade80)':'var(--text-3)';
+                var h3='<div style="font-size:11px">';
+                h3+='<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">';
+                h3+='<span style="font-size:10px;font-weight:700;color:var(--text-2)">AI TRADE CONTROL</span>';
+                h3+='<span style="font-size:9px;color:var(--text-3)">Phase 11.3 · decision only · no execution</span>';
+                h3+='<span style="margin-left:auto;font-size:11px;font-weight:700;padding:2px 9px;border-radius:3px;background:'+actCol+';color:#000">'+esc(act.replace(/_/g,' ').toUpperCase())+'</span>';
+                h3+='<span style="font-size:10px;color:var(--text-3)">conf '+esc(conf)+'%</span>';
+                h3+='</div>';
+                h3+='<div style="display:flex;gap:14px;flex-wrap:wrap;font-size:10px;color:var(--text-3);margin-bottom:6px">';
+                h3+='<span>danger: <b style="color:'+dl3Col+'">'+esc(dl3)+'</b></span>';
+                h3+='<span>zone: <b>'+esc(fus3)+'</b></span>';
+                h3+='<span>quality: <b>'+esc(dec.orderflow_quality||'—')+'</b></span>';
+                h3+='</div>';
+                if(pR.length){
+                  h3+='<div style="font-size:9.5px;color:var(--text-3);margin-bottom:4px"><span style="color:var(--text-2);font-weight:600">Reasons: </span>'+esc(pR.slice(0,5).join(' · '))+'</div>';
+                }
+                if(rF.length){
+                  h3+='<div style="font-size:9.5px;color:var(--red-2,#f87171);opacity:.85;margin-bottom:4px"><span style="font-weight:600">Risks: </span>'+esc(rF.slice(0,4).join(' · '))+'</div>';
+                }
+                if(candEx){
+                  h3+='<div style="font-size:9px;color:var(--text-3);font-style:italic;margin-bottom:3px">'+esc(candEx)+'</div>';
+                }
+                if(advNote){
+                  h3+='<div style="font-size:8px;color:var(--text-3);opacity:.5;margin-top:4px">'+esc(advNote)+'</div>';
+                }
+                h3+='</div>';
+                tcDiv.innerHTML=h3;
+              })
+              .catch(function(){
+                tcDiv.innerHTML='<span style="color:var(--text-3);font-size:9.5px;opacity:.55">Trade control unavailable.</span>';
+              });
           })
           .catch(function(){
             aiCtxFetchBtn.disabled=false; aiCtxFetchBtn.innerHTML=origHtml2;
