@@ -6831,6 +6831,76 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
               html+='</div>';
             }
             html+='</div>';
+            // Phase 11.1B Task 10: MTF Orderflow History table
+            var mtfHist=ei.mtf_orderflow_history||{};
+            var mtfTfs=mtfHist.timeframes||{};
+            var mtfTfKeys=Object.keys(mtfTfs);
+            if(mtfTfKeys.length){
+              // Collect best candidate fusion
+              var bestFusion=null;
+              if(best){
+                for(var bci2=0;bci2<cands.length;bci2++){
+                  if(cands[bci2].idx===best.idx){bestFusion=cands[bci2].smc_orderflow_fusion||null;break;}
+                }
+              }
+              var fusionState=bestFusion?esc(bestFusion.zone_flow_state||'—'):'—';
+              var fusionBeh=bestFusion?esc(bestFusion.recommended_entry_behavior||'—'):'—';
+              var fusionConf=bestFusion?esc(bestFusion.confidence||'—'):'—';
+              var fusionSummary=bestFusion?esc((bestFusion.reason_summary||[]).join(' · ')):'';
+              var fusionColor=bestFusion?(bestFusion.zone_flow_state==='defended'||bestFusion.zone_flow_state==='absorbing'?'var(--green-2,#4ade80)':bestFusion.zone_flow_state==='breaking'||bestFusion.zone_flow_state==='attacked'?'var(--red-2,#f87171)':bestFusion.zone_flow_state==='ignored'?'var(--text-3)':'var(--yellow,#facc15)'):'var(--text-3)';
+              html+='<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:7px">';
+              html+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">';
+              html+='<span style="font-size:10px;font-weight:700;color:var(--text-2)">MTF ORDERFLOW HISTORY</span>';
+              html+='<span style="font-size:9px;color:var(--text-3)">'+(mtfHist.parent_tf?esc(mtfHist.parent_tf.toUpperCase())+' →':'')+' children</span>';
+              if(bestFusion){
+                html+='<span style="margin-left:auto;font-size:10px;font-weight:700;padding:1px 7px;border-radius:3px;background:'+fusionColor+';color:#000">'+fusionState+'</span>';
+                html+='<span style="font-size:9px;color:var(--text-3)">'+fusionBeh+'</span>';
+                html+='<span style="font-size:9px;color:var(--text-3)">conf: '+fusionConf+'</span>';
+              }
+              html+='</div>';
+              if(fusionSummary) html+='<div style="font-size:9px;color:var(--text-3);margin-bottom:5px;line-height:1.4">'+fusionSummary+'</div>';
+              html+='<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">';
+              html+='<table style="width:100%;border-collapse:collapse;font-size:9.5px;min-width:520px">';
+              html+='<thead><tr style="color:var(--text-3);border-bottom:1px solid var(--border)">';
+              html+='<th style="text-align:left;padding:3px 6px;font-size:8.5px;letter-spacing:.4px">TF</th>';
+              html+='<th style="text-align:center;padding:3px 6px;font-size:8.5px;letter-spacing:.4px">CVD STATE</th>';
+              html+='<th style="text-align:center;padding:3px 6px;font-size:8.5px;letter-spacing:.4px">DELTA</th>';
+              html+='<th style="text-align:center;padding:3px 6px;font-size:8.5px;letter-spacing:.4px">OI</th>';
+              html+='<th style="text-align:center;padding:3px 6px;font-size:8.5px;letter-spacing:.4px">LIQ BIAS</th>';
+              html+='<th style="text-align:center;padding:3px 6px;font-size:8.5px;letter-spacing:.4px">METHOD</th>';
+              html+='</tr></thead><tbody>';
+              for(var tfi=0;tfi<mtfTfKeys.length;tfi++){
+                var tfKey=mtfTfKeys[tfi];
+                var tfData=mtfTfs[tfKey]||{};
+                if(!tfData.data_available){
+                  html+='<tr style="border-bottom:1px solid var(--border,rgba(255,255,255,.06))">';
+                  html+='<td style="padding:3px 6px;font-weight:700;font-size:9px;color:var(--text-3)">'+esc(tfKey.toUpperCase())+'</td>';
+                  html+='<td colspan="5" style="padding:3px 6px;color:var(--text-3);font-size:9px;text-align:center;opacity:.5">no data</td>';
+                  html+='</tr>';
+                  continue;
+                }
+                var cvdSt=tfData.cvd_state||{};
+                var deltaSt=tfData.delta_state||{};
+                var oiDir=((tfData.open_interest||{}).direction)||'—';
+                var liqBias=((tfData.liquidations||{}).bias)||'—';
+                var cvdDir=cvdSt.direction||'neutral';
+                var deltaDir=deltaSt.direction||'neutral';
+                var cvdTxt=esc(cvdSt.state||'—');
+                var cvdColor=cvdDir==='bullish'||cvdDir==='rising'?'var(--green-2,#4ade80)':cvdDir==='bearish'||cvdDir==='falling'?'var(--red-2,#f87171)':'var(--text-2)';
+                var deltaColor=deltaDir==='bullish'||deltaDir==='rising'?'var(--green-2,#4ade80)':deltaDir==='bearish'||deltaDir==='falling'?'var(--red-2,#f87171)':'var(--text-2)';
+                var oiColor=oiDir==='rising'?'var(--green-2,#4ade80)':oiDir==='falling'?'var(--red-2,#f87171)':'var(--text-2)';
+                var liqColor=liqBias==='long_heavy'?'var(--red-2,#f87171)':liqBias==='short_heavy'?'var(--green-2,#4ade80)':'var(--text-2)';
+                html+='<tr style="border-bottom:1px solid var(--border,rgba(255,255,255,.06))">';
+                html+='<td style="padding:3px 6px;font-weight:700;font-size:9.5px;color:var(--text-2)">'+esc(tfKey.toUpperCase())+'</td>';
+                html+='<td style="padding:3px 6px;text-align:center;color:'+cvdColor+'">'+cvdTxt+(cvdSt.but_improving?'<br><span style="font-size:8px;color:var(--yellow,#facc15)">↑ improving</span>':'')+'</td>';
+                html+='<td style="padding:3px 6px;text-align:center;color:'+deltaColor+'">'+esc(deltaSt.state||'—')+(deltaSt.danger_increasing?'<br><span style="font-size:8px;color:var(--red-2,#f87171)">⚠ accel</span>':'')+'</td>';
+                html+='<td style="padding:3px 6px;text-align:center;color:'+oiColor+'">'+esc(oiDir)+'</td>';
+                html+='<td style="padding:3px 6px;text-align:center;color:'+liqColor+'">'+esc(liqBias)+'</td>';
+                html+='<td style="padding:3px 6px;text-align:center;font-size:8.5px;color:var(--text-3)">'+esc(tfData.cvd_method||'—')+'</td>';
+                html+='</tr>';
+              }
+              html+='</tbody></table></div></div>';
+            }
             if(eiContent) eiContent.innerHTML=html;
           })
           .catch(function(){
