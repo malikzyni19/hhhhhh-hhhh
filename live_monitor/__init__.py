@@ -23,6 +23,20 @@ from live_monitor.smc_orderflow_fusion import _lm_build_smc_orderflow_fusion
 from live_monitor.ai_execution_context import _lm_build_ai_execution_context
 from live_monitor.ai_trade_control import _lm_build_ai_trade_control_decision
 from live_monitor.automation_policy import _lm_build_automation_policy
+from live_monitor.binance_testnet import (
+    _lm_bt_base_url,
+    _lm_bt_is_testnet_only,
+    _lm_bt_credentials_available,
+    _lm_bt_public_request,
+    _lm_bt_signed_request,
+    _lm_bt_ping,
+    _lm_bt_exchange_info,
+    _lm_bt_symbol_filters,
+    _lm_bt_account,
+    _lm_bt_balance,
+    _lm_bt_positions,
+    _lm_bt_health,
+)
 
 __all__ = [
     "_lm_build_orderflow_state",
@@ -43,4 +57,16 @@ __all__ = [
     "_lm_build_ai_execution_context",
     "_lm_build_ai_trade_control_decision",
     "_lm_build_automation_policy",
+    "_lm_bt_base_url",
+    "_lm_bt_is_testnet_only",
+    "_lm_bt_credentials_available",
+    "_lm_bt_public_request",
+    "_lm_bt_signed_request",
+    "_lm_bt_ping",
+    "_lm_bt_exchange_info",
+    "_lm_bt_symbol_filters",
+    "_lm_bt_account",
+    "_lm_bt_balance",
+    "_lm_bt_positions",
+    "_lm_bt_health",
 ]

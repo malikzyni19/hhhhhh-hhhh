@@ -8,6 +8,7 @@ no execution, no automation applied, no live mode switching.
 Routes stay in main.py. Evidence-only advisory layer.
 """
 from __future__ import annotations
+import os
 import time
 
 import main as _m
@@ -153,6 +154,14 @@ def _lm_build_automation_policy(item, snapshot=None) -> dict:  # noqa: C901
                 "policy_modes_active":   list(_SUPPORTED_POLICY_MODES),
                 "entry_modes_active":    list(_VALID_ENTRY_MODES),
                 "future_live_execution": "hard_disabled_phase11_4",
+            },
+            "binance_testnet_connector": {
+                "connector_ready": bool(
+                    os.environ.get("BINANCE_TESTNET_API_KEY")
+                    and os.environ.get("BINANCE_TESTNET_API_SECRET")
+                ),
+                "testnet_locked": True,
+                "note": "Phase 11.5 read-only connector. No order placement.",
             },
             "phase11_4_note": (
                 "Phase 11.4 evaluates automation policy only. "

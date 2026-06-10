@@ -24187,6 +24187,18 @@ from live_monitor import (
     _lm_build_ai_execution_context,
     _lm_build_ai_trade_control_decision,
     _lm_build_automation_policy,
+    _lm_bt_base_url,
+    _lm_bt_is_testnet_only,
+    _lm_bt_credentials_available,
+    _lm_bt_public_request,
+    _lm_bt_signed_request,
+    _lm_bt_ping,
+    _lm_bt_exchange_info,
+    _lm_bt_symbol_filters,
+    _lm_bt_account,
+    _lm_bt_balance,
+    _lm_bt_positions,
+    _lm_bt_health,
 )
 
 # ── Phase 10.9I: Auto-refresh scheduler ─────────────────────────────────────
@@ -27491,6 +27503,69 @@ def api_lm_automation_policy_get(item_id):
         "symbol":         row.symbol,
         "exchange":       row.exchange,
     })
+
+
+# ── Phase 11.5: Binance Futures Testnet read-only endpoints ──────────────────
+# All endpoints are read-only. No order placement. No position modification.
+# Credentials loaded from env only — never returned in any response.
+
+@app.route("/api/live-monitor/binance-testnet/health", methods=["GET"])
+@login_required
+def api_lm_bt_health():
+    """Phase 11.5: Full Binance Testnet health check (read-only)."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    result = _lm_bt_health()
+    return jsonify(result)
+
+
+@app.route("/api/live-monitor/binance-testnet/account", methods=["GET"])
+@login_required
+def api_lm_bt_account():
+    """Phase 11.5: Binance Testnet account summary (read-only, signed)."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    result = _lm_bt_account()
+    return jsonify(result)
+
+
+@app.route("/api/live-monitor/binance-testnet/balance", methods=["GET"])
+@login_required
+def api_lm_bt_balance():
+    """Phase 11.5: Binance Testnet USDT balance (read-only, signed)."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    result = _lm_bt_balance()
+    return jsonify(result)
+
+
+@app.route("/api/live-monitor/binance-testnet/positions", methods=["GET"])
+@login_required
+def api_lm_bt_positions():
+    """Phase 11.5: Binance Testnet open positions (read-only, signed)."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    symbol = request.args.get("symbol") or None
+    result = _lm_bt_positions(symbol=symbol)
+    return jsonify(result)
+
+
+@app.route("/api/live-monitor/binance-testnet/symbol-filters", methods=["GET"])
+@login_required
+def api_lm_bt_symbol_filters():
+    """Phase 11.5: Binance Testnet symbol filter details (read-only, public)."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    symbol = (request.args.get("symbol") or "").upper().strip()
+    if not symbol:
+        return jsonify({"ok": False, "error": "symbol_required"}), 400
+    result = _lm_bt_symbol_filters(symbol)
+    return jsonify(result)
 
 
 @app.route("/api/live-monitor/trades/<trade_uid>/demo-submit", methods=["POST"])

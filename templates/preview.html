@@ -4752,7 +4752,31 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
             '<div class="lm-stab-pane" id="lmPane-terminal" hidden>'+
               '<div class="lm-pane-head">TRADING TERMINAL</div>'+
               '<div class="lm-pane-scroll" style="padding:10px">'+
-                '<div class="lm-pane-section">'+
+                /* Phase 11.5: Binance Testnet Connector card */
+                '<div class="lm-pane-section" id="lmBtConnectorSection">'+
+                  '<div class="lm-pane-sh">BINANCE TESTNET CONNECTOR</div>'+
+                  '<div id="lmBtStatusGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;font-size:10px;color:var(--text-3);padding:6px 0 4px">'+
+                    '<span>Testnet locked:</span><span id="lmBtTestnetLocked" style="color:var(--green)">—</span>'+
+                    '<span>Credentials:</span><span id="lmBtCreds" style="color:var(--text-3)">—</span>'+
+                    '<span>Ping:</span><span id="lmBtPing" style="color:var(--text-3)">—</span>'+
+                    '<span>Server time:</span><span id="lmBtServerTime" style="color:var(--text-3)">—</span>'+
+                    '<span>Account:</span><span id="lmBtAccount" style="color:var(--text-3)">—</span>'+
+                    '<span>Balance (USDT):</span><span id="lmBtBalance" style="color:var(--text-3)">—</span>'+
+                    '<span>Positions:</span><span id="lmBtPositions" style="color:var(--text-3)">—</span>'+
+                    '<span>Avail. USDT:</span><span id="lmBtAvailUsdt" style="color:var(--accent);font-weight:700">—</span>'+
+                    '<span>Last checked:</span><span id="lmBtCheckedAt" style="color:var(--text-3)">—</span>'+
+                  '</div>'+
+                  '<div id="lmBtError" style="display:none;font-size:10px;color:var(--red);padding:3px 6px;background:rgba(239,68,68,.07);border-radius:4px;margin-bottom:4px"></div>'+
+                  '<div style="display:flex;gap:6px;margin-top:6px">'+
+                    '<button class="btn lm-sm-btn" id="lmBtCheckBtn" style="flex:1;justify-content:center" onclick="window._lmBtCheck()">Check Connection</button>'+
+                    '<button class="btn lm-sm-btn" id="lmBtBalanceBtn" style="flex:1;justify-content:center" onclick="window._lmBtRefreshBalance()">Refresh Balance</button>'+
+                    '<button class="btn lm-sm-btn" id="lmBtPositionsBtn" style="flex:1;justify-content:center" onclick="window._lmBtRefreshPositions()">Refresh Positions</button>'+
+                  '</div>'+
+                  '<div style="font-size:9px;color:var(--text-3);padding:5px 6px 0;line-height:1.4">'+
+                    '<b style="color:var(--yellow)">Phase 11.5</b> — Read-only connector. Testnet only (demo-fapi.binance.com). No order placement. No automation execution.'+
+                  '</div>'+
+                '</div>'+
+                '<div class="lm-pane-section" style="margin-top:10px">'+
                   '<div class="lm-pane-sh">EXECUTION MODE</div>'+
                   '<select style="width:100%;background:var(--bg-card-2);border:1px solid var(--border);color:var(--text-3);border-radius:6px;padding:6px 8px;font-size:11px;outline:none;cursor:not-allowed;margin-bottom:8px" disabled>'+
                     '<option>Confirmation (Pending)</option>'+
@@ -7427,6 +7451,93 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       }
     },100);
   }
+
+  // ── Phase 11.5: Binance Testnet Connector UI helpers ──────────────────────
+  function _lmBtApplyHealth(d){
+    var h=d||{};
+    var ok=!!h.ok;
+    var tlEl=document.getElementById("lmBtTestnetLocked");
+    var crEl=document.getElementById("lmBtCreds");
+    var pingEl=document.getElementById("lmBtPing");
+    var stEl=document.getElementById("lmBtServerTime");
+    var accEl=document.getElementById("lmBtAccount");
+    var balEl=document.getElementById("lmBtBalance");
+    var posEl=document.getElementById("lmBtPositions");
+    var availEl=document.getElementById("lmBtAvailUsdt");
+    var tsEl=document.getElementById("lmBtCheckedAt");
+    var errEl=document.getElementById("lmBtError");
+    function _col(v){ return v===true?'var(--green-2,#4ade80)':v===false?'var(--red-2,#f87171)':'var(--text-3)'; }
+    function _txt(v){ return v===true?'YES':v===false?'NO':v===null?'skipped':'—'; }
+    if(tlEl){ tlEl.textContent=h.testnet_locked!==false?'YES':'NO (WARNING)'; tlEl.style.color=h.testnet_locked!==false?'var(--green-2,#4ade80)':'var(--red-2,#f87171)'; }
+    if(crEl){ crEl.textContent=_txt(h.credentials_configured); crEl.style.color=_col(h.credentials_configured); }
+    if(pingEl){ pingEl.textContent=_txt(h.ping_ok); pingEl.style.color=_col(h.ping_ok); }
+    if(stEl){ stEl.textContent=_txt(h.server_time_ok); stEl.style.color=_col(h.server_time_ok); }
+    if(accEl){ accEl.textContent=h.account_skipped?'skipped':_txt(h.account_ok); accEl.style.color=h.account_skipped?'var(--text-3)':_col(h.account_ok); }
+    if(balEl){ balEl.textContent=h.balance_skipped?'skipped':_txt(h.balance_ok); balEl.style.color=h.balance_skipped?'var(--text-3)':_col(h.balance_ok); }
+    if(posEl){ posEl.textContent=h.positions_skipped?'skipped':_txt(h.positions_ok); posEl.style.color=h.positions_skipped?'var(--text-3)':_col(h.positions_ok); }
+    if(availEl){ availEl.textContent=h.available_usdt!=null?String(h.available_usdt)+' USDT':'—'; }
+    if(tsEl&&h.checked_at){ tsEl.textContent=new Date(h.checked_at*1000).toLocaleTimeString(); }
+    if(errEl){
+      var errs=h.error_summary||(h.error?[h.error]:[]);
+      if(errs.length){ errEl.style.display=''; errEl.textContent=errs.slice(0,2).join(' · '); }
+      else { errEl.style.display='none'; errEl.textContent=''; }
+    }
+  }
+  window._lmBtCheck=function(){
+    var b1=document.getElementById("lmBtCheckBtn"); if(b1){ b1.disabled=true; b1.textContent='…'; }
+    fetch('/api/live-monitor/binance-testnet/health',{credentials:'same-origin'})
+      .then(function(r){ return r.json(); })
+      .then(function(d){ _lmBtApplyHealth(d); if(b1){ b1.disabled=false; b1.textContent='Check Connection'; } })
+      .catch(function(){ if(b1){ b1.disabled=false; b1.textContent='Check Connection'; }
+        var e=document.getElementById("lmBtError"); if(e){ e.style.display=''; e.textContent='Network error'; }
+      });
+  };
+  window._lmBtRefreshBalance=function(){
+    var b2=document.getElementById("lmBtBalanceBtn"); if(b2){ b2.disabled=true; b2.textContent='…'; }
+    fetch('/api/live-monitor/binance-testnet/balance',{credentials:'same-origin'})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(b2){ b2.disabled=false; b2.textContent='Refresh Balance'; }
+        var balEl=document.getElementById("lmBtBalance");
+        var availEl=document.getElementById("lmBtAvailUsdt");
+        var errEl=document.getElementById("lmBtError");
+        if(d&&d.ok&&d.data){
+          var bd=d.data;
+          if(balEl){ balEl.textContent='OK'; balEl.style.color='var(--green-2,#4ade80)'; }
+          if(availEl){ availEl.textContent=(bd.availableBalance!=null?String(bd.availableBalance):bd.balance!=null?String(bd.balance):'—')+' USDT'; }
+          if(errEl){ errEl.style.display='none'; }
+        } else {
+          if(balEl){ balEl.textContent='error'; balEl.style.color='var(--red-2,#f87171)'; }
+          if(errEl){ errEl.style.display=''; errEl.textContent=(d&&d.error)||'balance error'; }
+        }
+      })
+      .catch(function(){
+        if(b2){ b2.disabled=false; b2.textContent='Refresh Balance'; }
+        var e=document.getElementById("lmBtError"); if(e){ e.style.display=''; e.textContent='Network error'; }
+      });
+  };
+  window._lmBtRefreshPositions=function(){
+    var b3=document.getElementById("lmBtPositionsBtn"); if(b3){ b3.disabled=true; b3.textContent='…'; }
+    fetch('/api/live-monitor/binance-testnet/positions',{credentials:'same-origin'})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(b3){ b3.disabled=false; b3.textContent='Refresh Positions'; }
+        var posEl=document.getElementById("lmBtPositions");
+        var errEl=document.getElementById("lmBtError");
+        if(d&&d.ok){
+          var cnt=(d.data&&Array.isArray(d.data))?d.data.length:0;
+          if(posEl){ posEl.textContent=cnt+' position'+(cnt!==1?'s':''); posEl.style.color='var(--text-2)'; }
+          if(errEl){ errEl.style.display='none'; }
+        } else {
+          if(posEl){ posEl.textContent='error'; posEl.style.color='var(--red-2,#f87171)'; }
+          if(errEl){ errEl.style.display=''; errEl.textContent=(d&&d.error)||'positions error'; }
+        }
+      })
+      .catch(function(){
+        if(b3){ b3.disabled=false; b3.textContent='Refresh Positions'; }
+        var e=document.getElementById("lmBtError"); if(e){ e.style.display=''; e.textContent='Network error'; }
+      });
+  };
 
   function _lmMtfMatrix(item){
     var scan=(item.snapshot&&item.snapshot.latest_mtf_scan)||null;
