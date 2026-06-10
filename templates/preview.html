@@ -4809,6 +4809,36 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                     '</table>'+
                   '</div>'+
                 '</div>'+
+                /* Phase 11.6: Execution Simulator */
+                '<div class="lm-pane-section" id="lmExecSimSection" style="margin-top:10px">'+
+                  '<div class="lm-pane-sh">EXECUTION SIMULATOR</div>'+
+                  /* Task 12: Hardcoded safety status */
+                  '<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:10px;padding:4px 0 6px">'+
+                    '<span style="color:var(--text-3)">Execution status:</span><span style="color:var(--yellow,#facc15);font-weight:700">SIMULATION ONLY</span>'+
+                    '<span style="color:var(--text-3)">Testnet orders:</span><span style="color:var(--red-2,#f87171);font-weight:700">DISABLED</span>'+
+                    '<span style="color:var(--text-3)">Execution:</span><span style="color:var(--red-2,#f87171);font-weight:700">DISABLED</span>'+
+                  '</div>'+
+                  /* Simulation result grid (populated by JS) */
+                  '<div id="lmSimGrid" style="display:none;margin-top:2px">'+
+                    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:10px;color:var(--text-3);padding:2px 0 4px">'+
+                      '<span>Ready for testnet:</span><span id="lmSimReady" style="font-weight:700">—</span>'+
+                      '<span>Intent valid:</span><span id="lmSimIntent">—</span>'+
+                      '<span>Policy valid:</span><span id="lmSimPolicy">—</span>'+
+                      '<span>Decision valid:</span><span id="lmSimDecision">—</span>'+
+                      '<span>Filter valid:</span><span id="lmSimFilter">—</span>'+
+                      '<span>Data health:</span><span id="lmSimData">—</span>'+
+                    '</div>'+
+                    '<div id="lmSimIntentBox" style="display:none;font-size:9.5px;color:var(--text-3);padding:4px 6px;background:var(--bg-2);border-radius:4px;margin-bottom:4px;line-height:1.5"></div>'+
+                    '<div id="lmSimReasons" style="display:none;font-size:9px;color:var(--red-2,#f87171);padding:3px 6px;background:rgba(239,68,68,.07);border-radius:4px;margin-bottom:4px"></div>'+
+                    '<div id="lmSimWarnings" style="display:none;font-size:9px;color:var(--yellow,#facc15);padding:3px 6px;background:rgba(251,191,36,.06);border-radius:4px"></div>'+
+                  '</div>'+
+                  '<div style="margin-top:6px">'+
+                    '<button class="btn lm-sm-btn" id="lmRunSimBtn" style="width:100%;justify-content:center" onclick="window._lmRunSimulation()">Run Simulation</button>'+
+                  '</div>'+
+                  '<div style="font-size:9px;color:var(--text-3);padding:5px 6px 0;line-height:1.4">'+
+                    '<b style="color:var(--yellow)">Phase 11.6</b> — Simulation only. No orders. No execution. No automation.'+
+                  '</div>'+
+                '</div>'+
                 '<div style="display:flex;gap:6px;margin-top:12px">'+
                   '<button class="btn" disabled style="flex:1;justify-content:center;opacity:.4;cursor:not-allowed">Buy / Long</button>'+
                   '<button class="btn" disabled style="flex:1;justify-content:center;opacity:.4;cursor:not-allowed">Sell / Short</button>'+
@@ -7539,6 +7569,75 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       .catch(function(){
         if(b3){ b3.disabled=false; b3.textContent='Refresh Positions'; }
         var e=document.getElementById("lmBtError"); if(e){ e.style.display=''; e.textContent='Network error'; }
+      });
+  };
+
+  // ── Phase 11.6: Execution Simulation UI helper ────────────────────────────
+  window._lmRunSimulation=function(){
+    var btn=document.getElementById("lmRunSimBtn");
+    if(btn){ btn.disabled=true; btn.textContent='…'; }
+    // Resolve active item id from current terminal pane context
+    var itemId=window._lmSimItemId||(window._lmSelItem&&window._lmSelItem.id);
+    if(!itemId){
+      if(btn){ btn.disabled=false; btn.textContent='Run Simulation'; }
+      var rEl=document.getElementById("lmSimReasons");
+      if(rEl){ rEl.style.display=''; rEl.textContent='No active setup selected. Open a setup first.'; }
+      return;
+    }
+    fetch('/api/live-monitor/items/'+itemId+'/execution-simulation',{credentials:'same-origin'})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(btn){ btn.disabled=false; btn.textContent='Run Simulation'; }
+        var grid=document.getElementById("lmSimGrid"); if(grid) grid.style.display='';
+        var sim=(d&&d.execution_simulation)||{};
+        var intent=(d&&d.execution_intent)||{};
+        function _sv(id,v,good){
+          var el=document.getElementById(id); if(!el) return;
+          var yes=v===true||v==='true';var no=v===false||v==='false';var skip=v===null||v===undefined;
+          el.textContent=skip?'skipped':yes?'YES':'NO';
+          el.style.color=skip?'var(--text-3)':good?yes?'var(--green-2,#4ade80)':'var(--red-2,#f87171)':yes?'var(--red-2,#f87171)':'var(--green-2,#4ade80)';
+        }
+        var rdy=sim.ready_for_testnet;
+        var rdyEl=document.getElementById("lmSimReady");
+        if(rdyEl){rdyEl.textContent=rdy?'YES':'NO';rdyEl.style.color=rdy?'var(--green-2,#4ade80)':'var(--red-2,#f87171)';}
+        _sv("lmSimIntent",sim.intent_valid,true);
+        _sv("lmSimPolicy",sim.policy_valid,true);
+        _sv("lmSimDecision",sim.decision_valid,true);
+        _sv("lmSimFilter",sim.filter_valid===null?null:sim.filter_valid,true);
+        _sv("lmSimData",sim.data_health_ok,true);
+        // Intent summary
+        var is=sim.intent_summary||{};
+        var iBox=document.getElementById("lmSimIntentBox");
+        if(iBox&&(is.symbol||is.entry_price)){
+          iBox.style.display='';
+          iBox.innerHTML=
+            '<b style="color:var(--text-2)">'+esc(is.symbol||'—')+'</b> '+esc((is.direction||'').toUpperCase())+
+            ' &nbsp;·&nbsp; Entry: <b>'+esc(is.entry_price||'—')+'</b>'+
+            ' &nbsp;·&nbsp; SL: '+esc(is.stop_loss||'—')+
+            ' &nbsp;·&nbsp; TP: '+esc(is.take_profit||'—')+
+            ' &nbsp;·&nbsp; RR: <b>'+esc(is.risk_reward||'—')+'×</b>'+
+            ' &nbsp;·&nbsp; Conf: '+esc(is.confidence||0)+'%'+
+            ' &nbsp;·&nbsp; Mode: '+esc(is.entry_mode||'—');
+        }
+        // Reasons
+        var rs=sim.reasons||[];
+        var rEl=document.getElementById("lmSimReasons");
+        if(rEl){
+          if(rs.length){ rEl.style.display=''; rEl.textContent='Issues: '+rs.slice(0,6).join(' · '); }
+          else { rEl.style.display='none'; }
+        }
+        // Warnings
+        var ws=sim.warnings||[];
+        var wEl=document.getElementById("lmSimWarnings");
+        if(wEl){
+          if(ws.length){ wEl.style.display=''; wEl.textContent='Warnings: '+ws.slice(0,4).join(' · '); }
+          else { wEl.style.display='none'; }
+        }
+      })
+      .catch(function(){
+        if(btn){ btn.disabled=false; btn.textContent='Run Simulation'; }
+        var rEl=document.getElementById("lmSimReasons");
+        if(rEl){ rEl.style.display=''; rEl.textContent='Network error — could not run simulation.'; }
       });
   };
 

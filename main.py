@@ -19879,6 +19879,13 @@ def _lm_ai_trade_proposal_prompt() -> str:
         "Mention in reasoning_summary.\n"
         "- Do NOT invent automation_policy data. If null, ignore these rules.\n\n"
 
+        "EXECUTION SIMULATION (Phase 11.6):\n"
+        "The context may include an execution_simulation block.\n"
+        "- ready_for_testnet=true: all validation checks passed. "
+        "State this in reasoning_summary. Still simulation only.\n"
+        "- ready_for_testnet=false: cite execution_simulation.reasons in risk_notes.\n"
+        "- Do NOT state an order was placed. Phase 11.6 is simulation only.\n\n"
+
         "Do not wrap the JSON in markdown code fences. Output raw JSON only."
     )
 
@@ -20017,6 +20024,7 @@ def _lm_build_trade_proposal_context(row, snapshot=None) -> dict:
             row, snap, ai_exec_ctx=_aec
         ))(snap.get("latest_ai_execution_context")),
         "automation_policy": (lambda: _lm_build_automation_policy(row, snap))(),
+        "execution_simulation": (lambda: _lm_build_execution_simulation(row, snap))(),
     }
 
 
@@ -21072,6 +21080,7 @@ def _lm_build_ai_context(item) -> dict:
             item, snap, ai_exec_ctx=_aec
         ))(snap.get("latest_ai_execution_context")),
         "automation_policy": (lambda: _lm_build_automation_policy(item, snap))(),
+        "execution_simulation": (lambda: _lm_build_execution_simulation(item, snap))(),
     }
 
 
@@ -21360,6 +21369,36 @@ def _lm_ai_system_prompt() -> str:
         "- future_action='none': policy is satisfied with current mode — note this.\n"
         "- Do NOT invent automation_policy data. If null, ignore these rules.\n"
         "- Phase 11.4 has no execution authority — never say any action was taken.\n\n"
+
+        "EXECUTION SIMULATION (Phase 11.6):\n"
+        "The context may include an execution_simulation block — the result of running "
+        "the full validation pipeline (intent, zone, entry, stop, TP, RR, policy, data health, "
+        "symbol filters) in simulation mode. No order was placed. Simulation only.\n"
+        "FIELD MEANINGS:\n"
+        "- execution_simulation.ready_for_testnet: true if ALL checks pass and setup is "
+        "structurally valid for a testnet order (simulation verdict only — no order placed).\n"
+        "- execution_simulation.intent_valid: entry, stop, TP, RR, direction all valid.\n"
+        "- execution_simulation.policy_valid: automation policy allows the setup.\n"
+        "- execution_simulation.decision_valid: AI trade control decision is not blocking.\n"
+        "- execution_simulation.filter_valid: Binance symbol filters validated (null=unavailable).\n"
+        "- execution_simulation.data_health_ok: data health gate allows the setup.\n"
+        "- execution_simulation.reasons: list of failure reasons (empty = all checks passed).\n"
+        "- execution_simulation.warnings: non-blocking notices.\n"
+        "- execution_simulation.intent_summary: compact view of the resolved intent "
+        "(symbol, direction, entry_price, stop_loss, take_profit, risk_reward).\n"
+        "USE RULES:\n"
+        "- ready_for_testnet=true: you may state the setup is structurally valid. "
+        "Do NOT say an order was placed or will be placed.\n"
+        "- ready_for_testnet=false: cite reasons[] in risks[]. Explain what is missing.\n"
+        "- reasons contains 'policy_blocked': add to risks[] and invalidations[].\n"
+        "- reasons contains 'decision_block_trade' or 'decision_pause_setup': "
+        "cite in risks[]. Do NOT recommend entry.\n"
+        "- reasons contains 'invalid_rr': mention in risk_notes that RR is insufficient.\n"
+        "- reasons contains 'data_health_blocked': add to risks[]. State data is not fresh.\n"
+        "- filter_valid=false: cite 'symbol_filter_failed' in risks[]. "
+        "Symbol may not be tradeable on testnet.\n"
+        "- If execution_simulation is null: ignore these rules.\n"
+        "- Phase 11.6 is simulation only. Never state an order was placed.\n\n"
 
         "STRICT RULES:\n"
         "- Analyze ONLY the provided backend facts. Do not invent missing data.\n"
@@ -24187,6 +24226,8 @@ from live_monitor import (
     _lm_build_ai_execution_context,
     _lm_build_ai_trade_control_decision,
     _lm_build_automation_policy,
+    _lm_build_execution_intent,
+    _lm_build_execution_simulation,
     _lm_bt_base_url,
     _lm_bt_is_testnet_only,
     _lm_bt_credentials_available,
@@ -27566,6 +27607,71 @@ def api_lm_bt_symbol_filters():
         return jsonify({"ok": False, "error": "symbol_required"}), 400
     result = _lm_bt_symbol_filters(symbol)
     return jsonify(result)
+
+
+# ── Phase 11.6: Execution Simulation Layer ────────────────────────────────────
+# Simulation only. No order placement. No position creation. No execution.
+
+@app.route("/api/live-monitor/items/<int:item_id>/execution-intent", methods=["GET"])
+@login_required
+def api_lm_execution_intent(item_id):
+    """Phase 11.6: Build execution intent from Smart Entry + AI Decision + Policy."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    from models import db as _db116, LiveMonitorItem as _LMI116
+    row = _LMI116.query.filter_by(id=item_id, user_id=uid).first()
+    if not row:
+        return jsonify({"error": "item_not_found"}), 404
+    snap = _json_loads_safe(row.snapshot_json, {})
+    intent = _lm_build_execution_intent(row, snap)
+    if intent.get("ok"):
+        try:
+            snap2 = _json_loads_safe(row.snapshot_json, {})
+            snap2["latest_execution_intent"] = intent
+            row.snapshot_json = _json_dumps_safe(snap2)
+            _db116.session.commit()
+        except Exception:
+            pass
+    return jsonify({
+        "ok":             intent.get("ok", False),
+        "execution_intent": intent,
+        "symbol":         row.symbol,
+        "exchange":       row.exchange,
+    })
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/execution-simulation", methods=["GET"])
+@login_required
+def api_lm_execution_simulation(item_id):
+    """Phase 11.6: Run full execution simulation pipeline (no order placement)."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    from models import db as _db116s, LiveMonitorItem as _LMI116s
+    row = _LMI116s.query.filter_by(id=item_id, user_id=uid).first()
+    if not row:
+        return jsonify({"error": "item_not_found"}), 404
+    snap = _json_loads_safe(row.snapshot_json, {})
+    intent = _lm_build_execution_intent(row, snap)
+    snap["latest_execution_intent"] = intent
+    simulation = _lm_build_execution_simulation(row, snap)
+    if simulation.get("ok") or simulation.get("simulated"):
+        try:
+            snap2 = _json_loads_safe(row.snapshot_json, {})
+            snap2["latest_execution_intent"]    = intent
+            snap2["latest_execution_simulation"] = simulation
+            row.snapshot_json = _json_dumps_safe(snap2)
+            _db116s.session.commit()
+        except Exception:
+            pass
+    return jsonify({
+        "ok":                  simulation.get("ok", False),
+        "execution_intent":    intent,
+        "execution_simulation": simulation,
+        "symbol":              row.symbol,
+        "exchange":            row.exchange,
+    })
 
 
 @app.route("/api/live-monitor/trades/<trade_uid>/demo-submit", methods=["POST"])
