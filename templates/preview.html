@@ -6418,6 +6418,24 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         '</div>'+
       '</div>'+
 
+      // Phase 11.1 Task 10: Execution Intelligence debug card (collapsed by default, Live Setup only)
+      (!isBiasShift ?
+        '<div class="sec-card" style="margin-bottom:12px" id="lmExecIntelCard">'+
+          '<div class="sec-card-head">'+
+            '<svg class="ico" style="width:13px;height:13px;color:var(--text-3)" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>'+
+            '<span class="sch-title">EXECUTION INTELLIGENCE</span>'+
+            '<span id="lmExecIntelScoreBadge" style="margin-left:8px;font-size:10px;padding:1px 6px;border-radius:3px;display:none"></span>'+
+            '<button class="btn" type="button" id="lmExecIntelFetchBtn" data-lmeifetch="'+item.id+'" title="Build execution intelligence for this setup" style="margin-left:auto;padding:2px 7px;font-size:10px">Load</button>'+
+            '<button class="btn" type="button" id="lmExecIntelToggleBtn" title="Show/hide execution intelligence" style="padding:2px 7px;font-size:10px;margin-left:4px">&#9658; Show</button>'+
+          '</div>'+
+          '<div class="sec-card-body" id="lmExecIntelBody" style="display:none;padding:10px 13px">'+
+            '<div id="lmExecIntelContent" style="color:var(--text-3);font-size:11px">'+
+              'Click <b>Load</b> to fetch execution intelligence for this setup.'+
+            '</div>'+
+          '</div>'+
+        '</div>'
+      : '')+
+
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start">'+
         '<div class="sec-card">'+
           '<div class="sec-card-head">'+
@@ -6699,6 +6717,128 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
           });
       });
     });
+    // Phase 11.1 Task 10: Execution Intelligence toggle and load buttons
+    var eiToggleBtn=box.querySelector("#lmExecIntelToggleBtn");
+    if(eiToggleBtn){
+      eiToggleBtn.addEventListener("click",function(){
+        var body=document.getElementById("lmExecIntelBody");
+        if(!body) return;
+        var open=body.style.display!=="none";
+        body.style.display=open?"none":"";
+        eiToggleBtn.innerHTML=open?"&#9658; Show":"&#9660; Hide";
+      });
+    }
+    var eiFetchBtn=box.querySelector("[data-lmeifetch]");
+    if(eiFetchBtn){
+      eiFetchBtn.addEventListener("click",function(){
+        var id=parseInt(eiFetchBtn.getAttribute("data-lmeifetch"),10); if(!id) return;
+        var origHtml=eiFetchBtn.innerHTML;
+        eiFetchBtn.disabled=true;
+        eiFetchBtn.textContent="Loading…";
+        var eiBody=document.getElementById("lmExecIntelBody");
+        var eiContent=document.getElementById("lmExecIntelContent");
+        var eiBadge=document.getElementById("lmExecIntelScoreBadge");
+        if(eiBody) eiBody.style.display="";
+        var tBtn2=document.getElementById("lmExecIntelToggleBtn");
+        if(tBtn2) tBtn2.innerHTML="&#9660; Hide";
+        if(eiContent) eiContent.innerHTML='<span style="opacity:.6">Building execution intelligence…</span>';
+        fetch("/api/live-monitor/items/"+id+"/execution-intelligence?refresh=1",{
+          credentials:"same-origin"})
+          .then(function(r){ return r.json(); })
+          .then(function(d){
+            eiFetchBtn.disabled=false; eiFetchBtn.innerHTML=origHtml;
+            if(!d||!d.ok){
+              if(eiContent) eiContent.innerHTML='<span style="color:var(--red-2)">Error: '+(d&&d.error?esc(String(d.error)):"server error")+'</span>';
+              return;
+            }
+            var ei=d.execution_intelligence||{};
+            if(_lmSelItem&&_lmSelItem.id===id){
+              if(!_lmSelItem.snapshot) _lmSelItem.snapshot={};
+              _lmSelItem.snapshot.latest_execution_intelligence=ei;
+            }
+            // Best candidate score badge
+            var best=ei.best_candidate;
+            if(eiBadge){
+              if(best){
+                var sc=best.score||0;
+                var col=sc>=80?"var(--green-2,#4ade80)":sc>=60?"var(--yellow,#facc15)":"var(--red-2,#f87171)";
+                eiBadge.style.cssText="display:inline-block;background:"+col+";color:#000;font-weight:600;font-size:10px;padding:1px 6px;border-radius:3px;margin-left:8px";
+                eiBadge.textContent="Best: "+sc+" — "+esc(best.score_label||"");
+              } else {
+                eiBadge.style.display="none";
+              }
+            }
+            // Candidates table
+            var html='<div style="font-size:11px;overflow:auto;max-height:420px">';
+            var cands=ei.candidates||[];
+            if(!cands.length){
+              html+='<div style="color:var(--text-3);padding:4px 0">No candidates found — run Smart Entry Plan first.</div>';
+            } else {
+              html+='<table style="width:100%;border-collapse:collapse;font-size:10px">';
+              html+='<thead><tr style="color:var(--text-3);border-bottom:1px solid var(--border)">';
+              html+='<th style="text-align:left;padding:3px 5px">#</th>';
+              html+='<th style="text-align:left;padding:3px 5px">TF / Type</th>';
+              html+='<th style="text-align:left;padding:3px 5px">Zone</th>';
+              html+='<th style="text-align:left;padding:3px 5px">Virgin</th>';
+              html+='<th style="text-align:left;padding:3px 5px">OB Imbalance</th>';
+              html+='<th style="text-align:left;padding:3px 5px">Delta State</th>';
+              html+='<th style="text-align:left;padding:3px 5px">Score</th>';
+              html+='</tr></thead><tbody>';
+              for(var ci=0;ci<cands.length;ci++){
+                var c=cands[ci];
+                var sc2=c.score||0;
+                var scCol=sc2>=80?"var(--green-2,#4ade80)":sc2>=60?"var(--yellow,#facc15)":"var(--text-2)";
+                var isStar=(best&&best.idx===c.idx)?' ★':'';
+                var obSl=c.ob_slice||{};
+                var obNote=obSl.available
+                  ?esc(obSl.imbalance_side||'neutral')+' <span style="opacity:.6">('+esc(obSl.imbalance_ratio||1)+'x)</span>'
+                  :'<span style="opacity:.5">—</span>';
+                var dOf=(c.orderflow||{}).delta||{};
+                var dNote=dOf.available?esc(dOf.state||'—'):'<span style="opacity:.5">—</span>';
+                var virNote=c.virgin?'<span style="color:var(--green-2,#4ade80)">Yes</span>':'No';
+                var qualNote='<span style="color:var(--text-3)">'+esc(c.quality_label||'')+' ('+esc(c.quality||0)+')</span>';
+                html+='<tr style="border-bottom:1px solid var(--border,rgba(255,255,255,.06))">';
+                html+='<td style="padding:3px 5px;color:var(--text-3)">'+esc(c.idx+1)+'</td>';
+                html+='<td style="padding:3px 5px"><b>'+esc((c.tf||'').toUpperCase())+'</b> '+esc((c.type||'').toUpperCase())+'<br>'+qualNote+'</td>';
+                html+='<td style="padding:3px 5px;font-size:9px;font-family:monospace">'
+                  +esc(fmt(c.zone_low))+'–'+esc(fmt(c.zone_high))
+                  +'<br><span style="opacity:.6">'+esc(c.zone_range_pct||0)+'% rng</span></td>';
+                html+='<td style="padding:3px 5px">'+virNote+'</td>';
+                html+='<td style="padding:3px 5px">'+obNote+'</td>';
+                html+='<td style="padding:3px 5px">'+dNote+'</td>';
+                html+='<td style="padding:3px 5px;font-weight:600;color:'+scCol+'">'+esc(sc2)+isStar
+                  +'<br><span style="font-size:9px;font-weight:400;color:var(--text-3)">'+esc(c.score_label||'')+'</span></td>';
+                html+='</tr>';
+                // Score factors row
+                var facs=c.score_factors||[];
+                if(facs.length){
+                  html+='<tr style="border-bottom:1px solid var(--border,rgba(255,255,255,.06))">';
+                  html+='<td colspan="7" style="padding:2px 5px 4px 14px;font-size:9px;color:var(--text-3)">'+esc(facs.join(' · '))+'</td>';
+                  html+='</tr>';
+                }
+              }
+              html+='</tbody></table>';
+            }
+            // Orderflow summary bar
+            var of=ei.orderflow||{};
+            if(of.delta||of.funding){
+              html+='<div style="margin-top:8px;border-top:1px solid var(--border);padding-top:6px;color:var(--text-3);font-size:10px">';
+              html+='<b style="color:var(--text-2)">Orderflow Snapshot</b> — ';
+              if(of.delta) html+='Delta 5m: '+esc(((of.delta.current_value||0)).toFixed(2))+'% <span style="opacity:.7">('+esc(of.delta.state||'—')+')</span> · ';
+              if(of.funding) html+='Funding: <span style="'+(of.funding.bias==='short_crowded'?'color:var(--green-2)':of.funding.bias==='long_crowded'?'color:var(--red-2)':'')+'">'+esc(of.funding.bias||'—')+'</span> · ';
+              if(of.liq_bias) html+='Liq bias: '+esc(((of.liq_bias.current_value||0)).toFixed(0))+' · ';
+              if(ei.ltf_context) html+='LTF: <b>'+esc(ei.ltf_context.verdict||'—')+'</b> ('+esc(ei.ltf_context.alignment_score||0)+'%)';
+              html+='</div>';
+            }
+            html+='</div>';
+            if(eiContent) eiContent.innerHTML=html;
+          })
+          .catch(function(){
+            eiFetchBtn.disabled=false; eiFetchBtn.innerHTML=origHtml;
+            if(eiContent) eiContent.innerHTML='<span style="color:var(--red-2)">Network error — could not load execution intelligence.</span>';
+          });
+      });
+    }
     // Agent selector change handler (persists to localStorage)
     var agentSel=box.querySelector("#dsAgentSel");
     if(agentSel){
