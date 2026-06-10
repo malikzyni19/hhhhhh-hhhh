@@ -1,0 +1,217 @@
+================================================================================
+PHASE 11.1 / 11.1B / 11.1C — FINAL REPORT
+Project: hhhhhh-hhhh
+Branch:  claude/zyni-phase-0-audit-dwTl0 (also pushed to main)
+Date:    2026-06-10
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+PHASE 11.1 — EXECUTION INTELLIGENCE ENGINE
+────────────────────────────────────────────────────────────────────────────────
+
+STATUS: COMPLETE
+
+WHAT WAS BUILT
+  Evidence-only execution intelligence layer for Live Monitor items.
+  No AI. No orders. No Entry Candidate. No trading logic.
+
+HELPERS IMPLEMENTED (8 functions)
+  _lm_build_orderflow_state        — scalar trend state from two values
+  _lm_build_zone_ob_slice          — bid/ask depth slice around a zone
+  _lm_build_candidate_orderflow    — delta, CVD proxy, OI, liq, funding, L/S
+  _lm_build_ltf_confirmation_context — LTF alignment from MTF scan snapshot
+  _lm_score_candidate_intelligence — 0-100 score, 9 components, no AI
+  _lm_build_candidate_intelligence — per-candidate scored intelligence dict
+  _lm_build_execution_intelligence — orchestrator, max 5 candidates
+  _lm_save_execution_intelligence  — persists to snapshot_json
+
+SCORING COMPONENTS (total 100 pts)
+  OB/FIB quality          25 pts
+  Orderbook support        20 pts  (bid/ask imbalance in zone)
+  Delta state              15 pts  (5m delta direction/velocity)
+  CVD proxy state          10 pts  (net signed delta trend)
+  OI state                 10 pts  (OI level + OI change direction)
+  Liquidations bias         5 pts
+  Funding bias              5 pts
+  Parent zone alignment     5 pts
+  LTF confirmation          5 pts
+
+ROUTES ADDED
+  GET /api/live-monitor/items/<id>/execution-intelligence?refresh=1
+
+SNAPSHOT KEYS WRITTEN
+  snapshot_json["latest_execution_intelligence"]
+
+UI CHANGES (preview.html)
+  EXECUTION INTELLIGENCE card added to Live Monitor side panel
+  Collapsed by default. Load button triggers API call.
+  Shows: candidates table, score badge, orderflow summary bar.
+  Hidden for Bias Shift items.
+
+────────────────────────────────────────────────────────────────────────────────
+PHASE 11.1B — MTF ORDERFLOW HISTORY ENGINE
+────────────────────────────────────────────────────────────────────────────────
+
+STATUS: COMPLETE
+
+WHAT WAS BUILT
+  Fixes Phase 11.1 limitations:
+  - Multi-candle history (up to 20 candles per TF) instead of single snapshot
+  - True per-candle CVD from Binance klines taker volumes instead of proxy
+  - Correct parent→child TF mapping (4h uses 1h/30m/15m/5m, not just 5m)
+  - Linear regression slope for series-level trend state analysis
+  - SMC zone fusion: 7 zone flow states from cross-TF evidence
+
+HELPERS IMPLEMENTED (7 functions)
+  _lm_child_orderflow_timeframes   — parent TF → child TF list
+  _lm_fetch_klines_with_delta      — Binance klines with k[7]/k[10] taker vol
+  _lm_build_series_orderflow_state — multi-candle series via linear regression
+  _lm_build_tf_orderflow_history   — single-TF history (delta+CVD series+context)
+  _lm_build_mtf_orderflow_history  — orchestrates all child TFs
+  _lm_build_mtf_history_summary    — compact per-TF summary for candidates
+  _lm_build_smc_orderflow_fusion   — SMC zone flow state from cross-TF evidence
+
+PARENT→CHILD TF MAPPING
+  1d  → [4h, 1h, 30m, 15m]
+  4h  → [1h, 30m, 15m, 5m]
+  1h  → [30m, 15m, 5m]
+  30m → [15m, 5m]
+  15m → [5m]
+  5m  → [5m]
+
+CVD METHOD PRIORITY (best → worst)
+  candle_delta                — Binance taker_buy_quote per kline (k[10])
+  aligned_orderflow_snapshots — LiveMonitorCandleOrderflow.delta_net_sum (DB)
+  delta_proxy                 — current 5m snapshot fallback
+  unavailable                 — no data
+
+ZONE FLOW STATES (smc_orderflow_fusion)
+  defended   — 3+ bullish signals, 0 danger → behavior: touch_limit
+  absorbing  — 2+ bullish signals           → behavior: confirmation
+  attacked   — 2+ danger signals            → behavior: wait
+  breaking   — 3+ danger signals            → behavior: block
+  ignored    — 0 bullish, 0 danger          → behavior: wait
+  uncertain  — insufficient/conflicting     → behavior: confirmation/wait
+
+CANDIDATE ENRICHMENT
+  Each candidate now gets:
+    mtf_orderflow_history_summary  — compact per-TF state summary
+    smc_orderflow_fusion           — zone flow state + evidence + behavior
+
+EXECUTION INTELLIGENCE OUTPUT ADDITIONS
+  candidates[n].mtf_orderflow_history_summary
+  candidates[n].smc_orderflow_fusion
+  mtf_orderflow_history  (top-level in EI dict)
+
+ROUTES ADDED
+  GET /api/live-monitor/items/<id>/mtf-orderflow-history?refresh=1
+
+SNAPSHOT KEYS WRITTEN
+  snapshot_json["latest_mtf_orderflow_history"]
+  snapshot_json["latest_execution_intelligence"]["mtf_orderflow_history"]
+
+UI CHANGES (preview.html)
+  MTF Orderflow History table appended to EI card on Load.
+  Columns: TF | CVD STATE | DELTA | OI | LIQ BIAS | METHOD
+  Fusion state badge (zone_flow_state + behavior + confidence) shown above table.
+  overflow-x scrollable for mobile. Hidden for Bias Shift items.
+
+────────────────────────────────────────────────────────────────────────────────
+PHASE 11.1C — LIVE MONITOR MODULE SPLIT FOUNDATION
+────────────────────────────────────────────────────────────────────────────────
+
+STATUS: COMPLETE
+
+WHAT WAS DONE
+  Refactor only. Zero behavior changes. Zero feature additions.
+  Moved 15 helper functions out of main.py into a live_monitor/ package.
+  All Flask routes, models, DB, and Flask app remain in main.py.
+
+FILES CREATED
+  live_monitor/__init__.py               — package, re-exports all 15 names
+  live_monitor/execution_intelligence.py — Phase 11.1 helpers (8 functions)
+  live_monitor/mtf_orderflow.py          — Phase 11.1B helpers (6 functions)
+  live_monitor/smc_orderflow_fusion.py   — SMC fusion helper (1 pure function)
+
+LINES REMOVED FROM main.py
+  1,316 lines removed
+  33,020 lines → 31,704 lines
+  Replaced with a 17-line import block at line 24034
+
+IMPORTS ADDED TO main.py
+  from live_monitor import (
+      _lm_build_orderflow_state,
+      _lm_build_zone_ob_slice,
+      _lm_build_candidate_orderflow,
+      _lm_build_ltf_confirmation_context,
+      _lm_score_candidate_intelligence,
+      _lm_build_candidate_intelligence,
+      _lm_build_execution_intelligence,
+      _lm_save_execution_intelligence,
+      _lm_child_orderflow_timeframes,
+      _lm_fetch_klines_with_delta,
+      _lm_build_series_orderflow_state,
+      _lm_build_tf_orderflow_history,
+      _lm_build_mtf_orderflow_history,
+      _lm_build_mtf_history_summary,
+      _lm_build_smc_orderflow_fusion,
+  )
+
+CIRCULAR IMPORT STRATEGY
+  live_monitor modules use `import main as _m` at module level.
+  Safe because main.py imports live_monitor at line ~24036, by which point
+  all 14 dependencies are already defined:
+    _lm_delta_get             line 11385
+    _lm_normalize_analysis_source  line 12146
+    _lm_ws_get                line 10287
+    _json_loads_safe          line  7510
+    _json_dumps_safe          line  7502
+    _lm_direction_from_item   line  7770
+    ensure_ob_stream          line  1148
+    _ob_books / _ob_book_lock line   780
+    _LM_TF_MS                 line 14713
+    BINANCE_FUTURES_API       line  1538
+    _lm_rest_cached           line 10450
+    _lm_fetch_public_klines   line 14890
+    _LM_SPECIFIC_ANALYSIS_SRCS line 12141
+    req (requests alias)      line    24
+
+HELPERS THAT COULD NOT BE MOVED
+  None. All 15 moved successfully.
+  DB model imports (LiveMonitorItem, LiveMonitorCandleOrderflow, db)
+  remain as inline `from models import` inside function bodies — this
+  is the correct pattern for Flask-SQLAlchemy and was not changed.
+
+────────────────────────────────────────────────────────────────────────────────
+CONSTRAINTS VERIFICATION
+────────────────────────────────────────────────────────────────────────────────
+
+  No orders placed                         CONFIRMED
+  No Binance Testnet connection            CONFIRMED
+  No real execution added                  CONFIRMED
+  No AI decisions added                    CONFIRMED
+  Risk Guard not modified                  CONFIRMED
+  Data Health layout not modified          CONFIRMED
+  Smart Entry not broken                   CONFIRMED
+  Phase 10.6–10.9I not broken              CONFIRMED
+  Phase 11.1 Execution Intelligence intact CONFIRMED
+  Live price polling not broken            CONFIRMED
+  Data source selection not broken         CONFIRMED
+  No fake data — public REST/WS/cache only CONFIRMED
+  No API keys / private account data       CONFIRMED
+  No order data in storage                 CONFIRMED
+  No route movement (11.1C)                CONFIRMED
+  No model movement (11.1C)                CONFIRMED
+  No behavior changes (11.1C)              CONFIRMED
+
+────────────────────────────────────────────────────────────────────────────────
+GIT COMMITS (branch: claude/zyni-phase-0-audit-dwTl0 → main)
+────────────────────────────────────────────────────────────────────────────────
+
+  faa8189  Phase 11.1: Execution Intelligence Engine
+  cca4022  Phase 11.1B: MTF Orderflow History Engine
+  4a53512  Phase 11.1C: Live Monitor module split foundation
+
+================================================================================
+END OF REPORT
+================================================================================
