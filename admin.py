@@ -4025,9 +4025,13 @@ def security_bot_delete():
 # ─────────────────────────────────────────────────────────────────────────────
 
 @admin_bp.route("/security/purge-non-admins", methods=["POST"])
-@admin_required
 def security_purge_non_admins():
     """Delete every user whose role is not 'admin'. Requires explicit confirmation."""
+    # Accept either Flask-Login session (admin panel) or main-app session (session["is_admin"])
+    authed = (current_user.is_authenticated and current_user.is_admin) or session.get("is_admin")
+    if not authed:
+        return jsonify({"error": "Unauthorized. Log in as admin first."}), 403
+
     data = request.get_json(force=True) or {}
     if data.get("confirm") != "DELETE ALL NON ADMIN USERS":
         return jsonify({
@@ -4049,10 +4053,15 @@ def security_purge_non_admins():
             db.session.delete(u)
 
         db.session.commit()
-        _log_action(
-            "purge_non_admins",
-            f"Deleted ALL {count} non-admin users. Sample: {', '.join(sample)}",
-        )
+        try:
+            admin_id = current_user.id if current_user.is_authenticated else None
+            if admin_id:
+                log = AdminLog(admin_id=admin_id, action="purge_non_admins",
+                               details=f"Deleted ALL {count} non-admin users. Sample: {', '.join(sample)}")
+                db.session.add(log)
+                db.session.commit()
+        except Exception:
+            pass
         return jsonify({"ok": True, "deleted": count, "sample": sample})
 
     except Exception as _e:
