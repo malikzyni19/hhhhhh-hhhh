@@ -1197,6 +1197,44 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 @keyframes sBar{0%{width:0}100%{width:100%}}
 @keyframes sExit{0%{opacity:1;transform:scale(1)}100%{opacity:0;transform:scale(1.015)}}
 @media(prefers-reduced-motion:reduce){.spl-z-left,.spl-z-right,.spl-z-flash,.spl-glow-bg,.spl-brand,.spl-tag,.spl-bar{animation:none!important}.spl-z-left,.spl-z-right{transform:translateX(0);opacity:1}.spl-brand,.spl-tag{opacity:1;transform:none}}
+
+/* ───── Mobile desktop-mode notice (R22 + R23 hotfix) ─────
+   Mirrors preview.html's .mdn-* stack but uses index.html's CSS
+   variables. Self-contained so it doesn't depend on the screener's
+   _ls_* helpers. z-index 7400/7401 — below any tutorial / token modal
+   that might be added to this template in the future. */
+.mdn-bd{position:fixed;inset:0;background:rgba(2,8,16,.78);z-index:7400;
+  display:flex;align-items:center;justify-content:center;padding:20px}
+.mdn-bd[hidden]{display:none}
+.mdn-card{position:relative;background:var(--bg-card);
+  border:1px solid var(--border2);border-radius:14px;
+  padding:22px 22px 18px;width:420px;max-width:92vw;max-height:90vh;
+  overflow-y:auto;box-shadow:var(--card-shadow);color:var(--text-primary)}
+.mdn-ico{width:46px;height:46px;border-radius:50%;background:var(--glow-cyan);
+  border:1px solid var(--accent);display:flex;align-items:center;
+  justify-content:center;margin:0 auto 12px;color:var(--accent)}
+.mdn-ico svg{width:22px;height:22px;stroke-width:2;fill:none;stroke:currentColor}
+.mdn-t{font-size:16px;font-weight:700;letter-spacing:.2px;
+  margin-bottom:8px;text-align:center}
+.mdn-s{font-size:13px;color:var(--text-secondary);line-height:1.55;
+  margin-bottom:14px;text-align:left}
+.mdn-s b{color:var(--text-primary);font-weight:700}
+.mdn-never{display:flex;align-items:center;justify-content:center;gap:8px;
+  font-size:12px;color:var(--text-muted);margin-bottom:14px;cursor:pointer;user-select:none}
+.mdn-never input{width:14px;height:14px;accent-color:var(--accent);cursor:pointer}
+.mdn-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+.mdn-actions button.mdn-btn{padding:9px 16px;font-size:13px;min-height:40px;
+  cursor:pointer;border-radius:8px;font-family:inherit;font-weight:600;
+  border:1px solid var(--border2);background:var(--bg-input);
+  color:var(--text-primary)}
+.mdn-actions button.mdn-btn.primary{background:var(--accent);color:#020810;
+  border-color:var(--accent)}
+.mdn-actions button.mdn-btn:hover{filter:brightness(1.08)}
+/* On screens wider than 768px the notice cannot paint at all, even if
+   the `hidden` attribute is stripped — defence in depth for ?view=desktop. */
+@media (min-width:769px){
+  .mdn-bd{display:none !important}
+}
 </style>
 </head>
 <body>
@@ -7180,6 +7218,184 @@ if ('serviceWorker' in navigator) {
       .catch(function(e) { console.warn('[PWA] SW registration failed:', e); });
   });
 }
+</script>
+
+<!-- ───── Mobile desktop-mode notice (R22 + R23 hotfix) ───── -->
+<div id="mobileDesktopNoticeBd" class="mdn-bd" hidden role="dialog" aria-modal="true"
+     aria-labelledby="mobileDesktopNoticeTitle">
+  <div id="mobileDesktopNoticeCard" class="mdn-card">
+    <div class="mdn-ico" aria-hidden="true">
+      <svg viewBox="0 0 24 24">
+        <rect x="3" y="4" width="18" height="13" rx="2"/>
+        <path d="M8 21h8M12 17v4"/>
+      </svg>
+    </div>
+    <div class="mdn-t" id="mobileDesktopNoticeTitle">Unlock the full screener experience</div>
+    <div class="mdn-s">
+      You're using the mobile layout. It's good for quick checks, but
+      <b>Desktop Mode</b> gives the full workspace: Live Monitor, AI
+      workflow, setup insight, timeline, and advanced tables.
+      <br><br>
+      For best results, open your browser menu and turn on
+      <b>"Desktop site"</b>.
+    </div>
+    <label class="mdn-never">
+      <input type="checkbox" id="mobileDesktopNoticeNever">
+      <span>Do not show again</span>
+    </label>
+    <div class="mdn-actions">
+      <button class="mdn-btn"          id="mobileDesktopNoticeClose" type="button">Continue mobile</button>
+      <button class="mdn-btn primary"  id="mobileDesktopNoticeGotIt" type="button">Got it</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════
+   MOBILE DESKTOP-MODE NOTICE — index.html copy (R23 hotfix)
+   This template is what /  serves to mobile users (main.py:15892).
+   The block is self-contained: it doesn't depend on the screener's
+   _ls_* helpers or its tutorial system, but it DOES respect the same
+   localStorage key + the same conflict-check pattern so dismissals
+   carry over between mobile and desktop renders.
+   ═══════════════════════════════════════════════════════════════════ */
+(function(){
+  var MDN_NEVER_KEY = "zyni_mobile_desktop_notice_never";
+  var _seenSession = false;
+  function _qf(name){
+    try{
+      var v = new URLSearchParams(location.search).get(name);
+      if(v == null) return false;
+      v = String(v).trim().toLowerCase();
+      return v === "1" || v === "true" || v === "yes" || v === "on";
+    }catch(_){ return false; }
+  }
+  var FORCE = _qf("show_mobile_notice");
+  var RESET = _qf("reset_mobile_notice");
+  var DEBUG = _qf("debug_mobile_notice");
+  if(RESET){
+    try{ localStorage.removeItem(MDN_NEVER_KEY); }catch(_){}
+  }
+  function log(){
+    if(!DEBUG) return;
+    try{ console.log.apply(console, ["[mdn]"].concat([].slice.call(arguments))); }catch(_){}
+  }
+  function _lsGetBool(k){
+    try{
+      var v = localStorage.getItem(k);
+      return v === "1" || v === "true";
+    }catch(_){ return false; }
+  }
+  function _lsSetBool(k,v){
+    try{ localStorage.setItem(k, v ? "1" : "0"); }catch(_){}
+  }
+  function isMobile(){
+    var w=false, sw=false, mq=false, ua=false;
+    try{ w  = (window.innerWidth || 0) <= 768; }catch(_){}
+    try{ sw = (screen && screen.width || 0) <= 768; }catch(_){}
+    try{ mq = (typeof window.matchMedia === "function") && window.matchMedia("(max-width: 768px)").matches; }catch(_){}
+    try{
+      var s = navigator.userAgent || "";
+      ua = /Mobi|Android|iPhone|iPad|iPod|Mobile|BlackBerry|Opera Mini|IEMobile/i.test(s);
+    }catch(_){}
+    return w || sw || mq || ua;
+  }
+  function isTutorialVisible(){
+    /* This template doesn't ship the tutorial today, but check anyway
+       so a future tutorial would never get covered by us. */
+    var ids = ["tutIntro","tutOverlay","tutCardHost"];
+    for(var i=0;i<ids.length;i++){
+      var n = document.getElementById(ids[i]);
+      if(n && !n.hidden) return true;
+    }
+    return false;
+  }
+  function permanentlyDisabled(){ return _lsGetBool(MDN_NEVER_KEY); }
+  function domReady(){
+    var bd = document.getElementById("mobileDesktopNoticeBd");
+    var b  = document.body;
+    var hasBody = !!(b && b.clientHeight > 0);
+    if(!bd)      return "dom_missing";
+    if(!hasBody) return "layout_not_ready";
+    return null;
+  }
+  function show(){
+    var bd = document.getElementById("mobileDesktopNoticeBd"); if(!bd) return;
+    bd.hidden = false;
+    _seenSession = true;
+  }
+  function hide(){
+    var bd = document.getElementById("mobileDesktopNoticeBd"); if(!bd) return;
+    bd.hidden = true;
+  }
+  function dismiss(perm){
+    if(perm) _lsSetBool(MDN_NEVER_KEY, true);
+    hide();
+  }
+  function tryShow(){
+    var dr = domReady();
+    if(dr) return { shown:false, reason:dr };
+    if(!isMobile() && !FORCE) return { shown:false, reason:"not_mobile" };
+    if(isTutorialVisible())    return { shown:false, reason:"tutorial_visible" };
+    if(permanentlyDisabled() && !(FORCE && RESET)){
+      return { shown:false, reason:"permanently_disabled" };
+    }
+    if(_seenSession && !FORCE) return { shown:false, reason:"seen_session" };
+    show();
+    return { shown:true, reason:null };
+  }
+  /* Expose for ad-hoc debugging from the console. */
+  window._mdnTryShow = tryShow;
+  window._mdnHide    = hide;
+
+  /* Wire buttons */
+  function wire(){
+    var close = document.getElementById("mobileDesktopNoticeClose");
+    var got   = document.getElementById("mobileDesktopNoticeGotIt");
+    var never = document.getElementById("mobileDesktopNoticeNever");
+    function onDismiss(){ dismiss(!!(never && never.checked)); }
+    if(close) close.addEventListener("click", onDismiss);
+    if(got)   got.addEventListener("click",   onDismiss);
+  }
+  if(document.readyState === "loading"){
+    document.addEventListener("DOMContentLoaded", wire);
+  } else {
+    wire();
+  }
+
+  /* Retry scheduler: try every 500ms for up to 10s if blocked by a
+     transient reason (tutorial visible / DOM not yet ready / layout
+     not yet measured). Stops the moment a permanent reason returns. */
+  var MAX_MS = 10000, STEP = 500, FIRST = 1200, elapsed = 0;
+  function tick(){
+    var res = tryShow();
+    log("tick", {
+      url: location.href,
+      elapsed: elapsed,
+      domExists: !!document.getElementById("mobileDesktopNoticeBd"),
+      innerWidth: window.innerWidth,
+      screenWidth: (typeof screen !== "undefined" && screen.width) || null,
+      userAgentMobile: /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent||""),
+      isMobile: isMobile(),
+      permanentlyDisabled: permanentlyDisabled(),
+      seenSession: _seenSession,
+      tutorialVisible: isTutorialVisible(),
+      force: FORCE,
+      reset: RESET,
+      blockedReason: res.reason,
+      willShow: res.shown
+    });
+    if(res.shown) return;
+    var transient = res.reason === "tutorial_visible" ||
+                    res.reason === "dom_missing" ||
+                    res.reason === "layout_not_ready";
+    if(!transient) return;
+    elapsed += STEP;
+    if(elapsed >= MAX_MS) return;
+    setTimeout(tick, STEP);
+  }
+  setTimeout(tick, FIRST);
+})();
 </script>
 
 </body>

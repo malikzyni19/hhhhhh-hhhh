@@ -7133,37 +7133,76 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   }catch(_){}
 
   /* ═══════════════════════════════════════════════════════════════════
-     MOBILE DESKTOP-MODE NOTICE (Round 22)
+     MOBILE DESKTOP-MODE NOTICE (Round 22, R23 hotfix)
      Polite, dismissable nudge to switch to Desktop site on small
      viewports. Strict conflict-check vs the tutorial system.
+     R23: URL flags, multi-source mobile detection, blockedReason
+     returns, 500ms / 10s retry loop.
      ═══════════════════════════════════════════════════════════════════ */
   var _mobileDesktopNoticeSeenSession = false;
   var MDN_NEVER_KEY = "zyni_mobile_desktop_notice_never";
-  function _mdnIsMobile(){
-    var w = innerWidth <= 768;
-    var ua = navigator.userAgent || "";
-    var isMobUa = /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(ua);
-    return w || isMobUa;
+  /* URL-param helper: trims, compares against "1" / "true" / "yes". */
+  function _mdnQueryFlag(name){
+    try{
+      var v = new URLSearchParams(location.search).get(name);
+      if(v == null) return false;
+      v = String(v).trim().toLowerCase();
+      return v === "1" || v === "true" || v === "yes" || v === "on";
+    }catch(_){ return false; }
   }
-  function _mdnPermanentlyDisabled(){
-    try{ return _ls_getBool(MDN_NEVER_KEY, false); }catch(_){ return false; }
+  var _MDN_FORCE  = _mdnQueryFlag("show_mobile_notice");
+  var _MDN_RESET  = _mdnQueryFlag("reset_mobile_notice");
+  var _MDN_DEBUG  = _mdnQueryFlag("debug_mobile_notice");
+  /* reset_mobile_notice=1 clears the permanent flag IMMEDIATELY at boot
+     so the rest of the show logic sees a clean state. */
+  if(_MDN_RESET){
+    try{ localStorage.removeItem(MDN_NEVER_KEY); }catch(_){}
+  }
+  function _mdnLog(){
+    if(!_MDN_DEBUG) return;
+    try{ console.log.apply(console, ["[mdn]"].concat([].slice.call(arguments))); }catch(_){}
+  }
+  /* Multi-source mobile detection: any of the four sources is enough. */
+  function _mdnIsMobile(){
+    var w  = false, sw = false, mq = false, ua = false;
+    try{ w  = (innerWidth || 0) <= 768; }catch(_){}
+    try{ sw = (screen && screen.width || 0) <= 768; }catch(_){}
+    try{ mq = (typeof matchMedia === "function") && matchMedia("(max-width: 768px)").matches; }catch(_){}
+    try{
+      var s = navigator.userAgent || "";
+      ua = /Mobi|Android|iPhone|iPad|iPod|Mobile|BlackBerry|Opera Mini|IEMobile/i.test(s);
+    }catch(_){}
+    return w || sw || mq || ua;
   }
   function _mdnIsTutorialVisible(){
-    var intro = E("tutIntro");
-    var ovl   = E("tutOverlay");
-    var host  = E("tutCardHost");
+    var intro = document.getElementById("tutIntro");
+    var ovl   = document.getElementById("tutOverlay");
+    var host  = document.getElementById("tutCardHost");
     if(intro && !intro.hidden) return true;
     if(ovl   && !ovl.hidden)   return true;
     if(host  && !host.hidden)  return true;
     return false;
   }
+  function _mdnPermanentlyDisabled(){
+    try{ return _ls_getBool(MDN_NEVER_KEY, false); }catch(_){ return false; }
+  }
+  function _mdnDomReady(){
+    var bd = document.getElementById("mobileDesktopNoticeBd");
+    /* layout_not_ready: zero-size body almost always means the layout
+       hasn't been measured yet — we'd rather wait one more tick. */
+    var b = document.body;
+    var hasBody = !!(b && b.clientHeight > 0);
+    if(!bd) return "dom_missing";
+    if(!hasBody) return "layout_not_ready";
+    return null;
+  }
   function _mdnShow(){
-    var bd = E("mobileDesktopNoticeBd"); if(!bd) return;
+    var bd = document.getElementById("mobileDesktopNoticeBd"); if(!bd) return;
     bd.hidden = false;
     _mobileDesktopNoticeSeenSession = true;
   }
   function _mdnHide(){
-    var bd = E("mobileDesktopNoticeBd"); if(!bd) return;
+    var bd = document.getElementById("mobileDesktopNoticeBd"); if(!bd) return;
     bd.hidden = true;
   }
   function _mdnDismiss(savePermanent){
@@ -7172,28 +7211,40 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     }
     _mdnHide();
   }
+  /* Returns { shown:boolean, reason:string|null }.
+     show_mobile_notice=1 forces past seen_session, and additionally past
+     permanently_disabled when reset_mobile_notice=1 is also present.
+     Tutorial visibility ALWAYS wins so we never overlap. */
   function _mdnTryShow(){
-    if(!_mdnIsMobile())               return false;
-    if(_mobileDesktopNoticeSeenSession) return false;
-    if(_mdnPermanentlyDisabled())     return false;
-    if(_mdnIsTutorialVisible())       return false;
+    var domReason = _mdnDomReady();
+    if(domReason) return { shown:false, reason:domReason };
+    if(!_mdnIsMobile() && !_MDN_FORCE){
+      return { shown:false, reason:"not_mobile" };
+    }
+    if(_mdnIsTutorialVisible()){
+      return { shown:false, reason:"tutorial_visible" };
+    }
+    if(_mdnPermanentlyDisabled() && !(_MDN_FORCE && _MDN_RESET)){
+      return { shown:false, reason:"permanently_disabled" };
+    }
+    if(_mobileDesktopNoticeSeenSession && !_MDN_FORCE){
+      return { shown:false, reason:"seen_session" };
+    }
     _mdnShow();
-    return true;
+    return { shown:true, reason:null };
   }
   /* Wire dismiss buttons. Either button counts as "seen this session"
      and only the checkbox decides whether it's also permanent. */
   (function _mdnWireButtons(){
-    var close = E("mobileDesktopNoticeClose");
-    var got   = E("mobileDesktopNoticeGotIt");
-    var never = E("mobileDesktopNoticeNever");
+    var close = document.getElementById("mobileDesktopNoticeClose");
+    var got   = document.getElementById("mobileDesktopNoticeGotIt");
+    var never = document.getElementById("mobileDesktopNoticeNever");
     function onDismiss(){
       var permanent = !!(never && never.checked);
       _mdnDismiss(permanent);
     }
     if(close) close.addEventListener("click", onDismiss);
     if(got)   got.addEventListener("click",   onDismiss);
-    /* Backdrop clicks do NOT dismiss — user must press a button (cleaner
-       UX, and avoids accidental dismiss on a fat-finger). */
   })();
   /* If the tutorial intro / tutorial card opens while the notice is up,
      hide the notice immediately so the user can interact with the
@@ -7210,18 +7261,45 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       window._tutShowGroup = _tutShowGroup;
     }
   })();
-  /* Initial trigger — wait 1200 ms so layout / fonts / async init settle.
-     If the tutorial is in the way, retry once after another 3000 ms and
-     then give up for this session. */
-  setTimeout(function(){
-    if(_mdnTryShow()) return;
-    if(!_mdnIsMobile()) return;
-    if(_mdnPermanentlyDisabled()) return;
-    if(_mobileDesktopNoticeSeenSession) return;
-    /* The only reason _mdnTryShow could have returned false at this
-       point is a visible tutorial — retry once. */
-    setTimeout(function(){ _mdnTryShow(); }, 3000);
-  }, 1200);
+  /* Robust scheduler: try every 500ms for up to 10 seconds (20 ticks).
+     Retries only while the blockedReason is one of:
+       tutorial_visible / dom_missing / layout_not_ready
+     Any other reason (not_mobile / permanently_disabled / seen_session)
+     ends the loop early — those don't change without user action. */
+  (function _mdnSchedule(){
+    var MAX_MS = 10000;
+    var STEP   = 500;
+    var FIRST_DELAY = 1200;
+    var elapsed = 0;
+    function tick(){
+      var res = _mdnTryShow();
+      _mdnLog("tick", {
+        url: location.href,
+        elapsed: elapsed,
+        domExists: !!document.getElementById("mobileDesktopNoticeBd"),
+        innerWidth: innerWidth,
+        screenWidth: (typeof screen !== "undefined" && screen.width) || null,
+        userAgentMobile: /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent||""),
+        isMobile: _mdnIsMobile(),
+        permanentlyDisabled: _mdnPermanentlyDisabled(),
+        seenSession: _mobileDesktopNoticeSeenSession,
+        tutorialVisible: _mdnIsTutorialVisible(),
+        force: _MDN_FORCE,
+        reset: _MDN_RESET,
+        blockedReason: res.reason,
+        willShow: res.shown
+      });
+      if(res.shown) return;
+      var transient = res.reason === "tutorial_visible" ||
+                      res.reason === "dom_missing" ||
+                      res.reason === "layout_not_ready";
+      if(!transient) return;     // permanent / not-mobile / seen-session — stop
+      elapsed += STEP;
+      if(elapsed >= MAX_MS) return;
+      setTimeout(tick, STEP);
+    }
+    setTimeout(tick, FIRST_DELAY);
+  })();
 
   /* ═══════════════════════════════════════════════════════════════════
      TUTORIAL SYSTEM (Round 19 — Tasks 1-4, 6-8)
