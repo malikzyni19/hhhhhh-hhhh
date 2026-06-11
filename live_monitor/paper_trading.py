@@ -4,14 +4,14 @@
 # - No Binance API. DB-only. No exchange calls of any kind.
 # - No auto-submit. No AI direct execution. No background order placement.
 # - No order placed unless user manually clicks Submit Paper Order.
-# - Fill engine uses real Live Monitor market price (item.current_price) only.
+# - Fill engine uses real Live Monitor market price only.
 # - No Binance Testnet price. No _lm_bt_* calls. No requests/HTTP calls.
 # - _lm_bt_signed_request() is NOT called here — read-only GET-only, untouched.
 # - No API keys. No secrets. No exchange order IDs in DB.
 import uuid
 
 
-# ── helpers ──────────────────────────────────────────────────────────────────
+# ── JSON helpers ──────────────────────────────────────────────────────────────
 
 def _json_dumps_safe(obj, fallback="{}"):
     try:
@@ -31,6 +31,62 @@ def _json_loads_safe(s, fallback=None):
         return fallback
 
 
+# ── direction / side mapping ──────────────────────────────────────────────────
+
+def _lm_direction_to_paper_side(direction):
+    """Map a direction string to BUY or SELL. Returns '' if unknown.
+
+    Supported: bullish/long/buy → BUY; bearish/short/sell → SELL.
+    """
+    d = (direction or "").strip().lower()
+    if d in ("bullish", "long", "buy"):
+        return "BUY"
+    if d in ("bearish", "short", "sell"):
+        return "SELL"
+    return ""
+
+
+# ── schema-safe helpers ───────────────────────────────────────────────────────
+
+def _lm_model_has_attr(model_or_row, attr):
+    """Return True if the SQLAlchemy model has the given column attribute."""
+    try:
+        from sqlalchemy import inspect as _sa_inspect
+        mapper = _sa_inspect(type(model_or_row))
+        return attr in {c.key for c in mapper.column_attrs}
+    except Exception:
+        return hasattr(model_or_row, attr)
+
+
+def _lm_set_if_exists(row, attr, value):
+    """Set row.attr = value only if the column exists on the model. Silent on miss."""
+    if _lm_model_has_attr(row, attr):
+        try:
+            setattr(row, attr, value)
+        except Exception:
+            pass
+
+
+def _lm_get_qty_from_position(pos):
+    """Return position quantity as float, checking 'quantity' then 'size'."""
+    v = getattr(pos, "quantity", None) or getattr(pos, "size", None)
+    try:
+        return float(v or "0")
+    except Exception:
+        return 0.0
+
+
+def _lm_set_qty_on_position(pos, qty_str):
+    """Set size (and quantity if column exists) on a position row."""
+    _lm_set_if_exists(pos, "size",     qty_str)
+    _lm_set_if_exists(pos, "quantity", qty_str)
+
+
+def _lm_get_order_qty(order):
+    """Return order quantity as a string."""
+    return str(getattr(order, "quantity", None) or "0")
+
+
 # ── account ───────────────────────────────────────────────────────────────────
 
 def _lm_get_or_create_paper_account(user_id):
@@ -39,7 +95,6 @@ def _lm_get_or_create_paper_account(user_id):
     Starting balance: 10,000 USDT.
     Returns the ORM row (LiveMonitorPaperAccount).
     """
-    import main as _m
     from models import db as _db, LiveMonitorPaperAccount as _PA
     row = _PA.query.filter_by(user_id=user_id).first()
     if row:
@@ -73,7 +128,7 @@ def _lm_get_paper_account_summary(user_id) -> dict:
         LiveMonitorPaperOrder    as _PO,
         LiveMonitorPaperPosition as _PP,
     )
-    acc = _lm_get_or_create_paper_account(user_id)
+    acc            = _lm_get_or_create_paper_account(user_id)
     open_orders    = _PO.query.filter_by(user_id=user_id, status="open").count()
     open_positions = _PP.query.filter_by(user_id=user_id, status="open").count()
     return {
@@ -96,7 +151,7 @@ def _lm_validate_paper_order_quantity(qty_str, price_f, cash_balance=None) -> di
     """Validate quantity string for a paper order.
 
     Returns {ok, qty_float, notional, error, details}.
-    cash_balance: if provided, reject if estimated_notional > cash_balance.
+    cash_balance: if provided, reject when estimated_notional > cash_balance.
     """
     if not qty_str or not str(qty_str).strip():
         return {"ok": False, "qty_float": None, "notional": None,
@@ -109,7 +164,6 @@ def _lm_validate_paper_order_quantity(qty_str, price_f, cash_balance=None) -> di
     if qty_f <= 0:
         return {"ok": False, "qty_float": None, "notional": None,
                 "error": "quantity_not_positive", "details": "Quantity must be > 0."}
-    # max 8 decimal places
     qty_str_clean = str(qty_str).strip()
     if "." in qty_str_clean:
         decimals = len(qty_str_clean.rstrip("0").split(".")[-1])
@@ -117,7 +171,7 @@ def _lm_validate_paper_order_quantity(qty_str, price_f, cash_balance=None) -> di
             return {"ok": False, "qty_float": None, "notional": None,
                     "error": "quantity_too_many_decimals",
                     "details": "Quantity has more than 8 decimal places."}
-    price_f = float(price_f) if price_f else 0.0
+    price_f  = float(price_f) if price_f else 0.0
     notional = round(qty_f * price_f, 6) if price_f else None
     if cash_balance is not None and notional is not None:
         if notional > float(cash_balance):
@@ -129,7 +183,99 @@ def _lm_validate_paper_order_quantity(qty_str, price_f, cash_balance=None) -> di
                     f"cash balance {float(cash_balance):.4f} USDT."
                 ),
             }
-    return {"ok": True, "qty_float": qty_f, "notional": notional, "error": None, "details": None}
+    return {"ok": True, "qty_float": qty_f, "notional": notional,
+            "error": None, "details": None}
+
+
+# ── real market price ─────────────────────────────────────────────────────────
+
+def _lm_get_real_market_price_for_paper(item=None, item_id=None, snapshot=None):
+    """Return real Live Monitor market price for paper fill checking.
+
+    Price source priority:
+    1. Live WebSocket cache (_lm_ws_get in main module) — live/mark price
+    2. Data health snapshot (latest_data_health / data_health)
+    3. item.current_price
+    4. Snapshot fallback keys (last_known_price / latest_price / etc.)
+
+    Returns: {ok, price, price_source, symbol, error}
+
+    NO Binance API. NO Binance Testnet. NO exchange calls. NO _lm_bt_* calls.
+    NO requests/HTTP. DB + in-process WS cache only.
+    """
+    if item is None and item_id is not None:
+        try:
+            from models import LiveMonitorItem as _LMI
+            item = _LMI.query.get(item_id)
+        except Exception:
+            pass
+
+    symbol   = (getattr(item, "symbol",   None) or "").strip().upper()   if item else ""
+    exchange = (getattr(item, "exchange", None) or "binance").strip().lower() if item else "binance"
+
+    snap = snapshot or {}
+    if item is not None and not snap:
+        snap = _json_loads_safe(getattr(item, "snapshot_json", None), {}) or {}
+
+    def _hit(price_val, src):
+        return {"ok": True, "price": float(price_val),
+                "price_source": src, "symbol": symbol or None, "error": None}
+
+    # 1. Live WebSocket cache (in-process; no network call)
+    if symbol and exchange:
+        try:
+            import main as _m
+            _ws_get_fn = getattr(_m, "_lm_ws_get", None)
+            if _ws_get_fn is not None:
+                ws_entry, ws_status = _ws_get_fn(exchange, symbol)
+                if ws_entry:
+                    lp = ws_entry.get("live_price")
+                    mp = ws_entry.get("mark_price")
+                    use_p = lp if lp is not None else mp
+                    if use_p is not None:
+                        return _hit(use_p, f"ws_{exchange}_{ws_status}")
+        except Exception:
+            pass
+
+    # 2. Data health snapshot
+    for dh_key in ("latest_data_health", "data_health", "latest_live_data_health"):
+        dh = snap.get(dh_key)
+        if isinstance(dh, dict):
+            for pk in ("price", "last_price", "mark_price", "live_price"):
+                v = dh.get(pk)
+                if v is not None:
+                    try:
+                        return _hit(v, f"snap.{dh_key}.{pk}")
+                    except Exception:
+                        pass
+
+    # 3. item.current_price
+    if item is not None:
+        cp = getattr(item, "current_price", None)
+        if cp is not None:
+            try:
+                return _hit(cp, "item.current_price")
+            except Exception:
+                pass
+
+    # 4. Snapshot fallback keys
+    for sk in ("latest_price", "last_known_price", "current_price",
+               "mark_price", "latest_market_price", "snapshot_latest_price"):
+        v = snap.get(sk)
+        if v is not None:
+            try:
+                return _hit(v, f"snap.{sk}")
+            except Exception:
+                pass
+
+    return {"ok": False, "price": None, "price_source": None,
+            "symbol": symbol or None, "error": "price_unavailable"}
+
+
+def _lm_get_real_market_price_value_for_paper(item=None, item_id=None, snapshot=None):
+    """Compatibility shim — returns float or None (old float-returning signature)."""
+    r = _lm_get_real_market_price_for_paper(item=item, item_id=item_id, snapshot=snapshot)
+    return r.get("price")
 
 
 # ── draft ─────────────────────────────────────────────────────────────────────
@@ -137,61 +283,65 @@ def _lm_validate_paper_order_quantity(qty_str, price_f, cash_balance=None) -> di
 def _lm_build_paper_order_draft(item, snapshot=None, quantity_str=None) -> dict:
     """Build a paper order draft dict (no DB write, no exchange call).
 
-    paper_ready requires ALL of:
-      - symbol, side, price present
-      - intent.allowed == True  (explicit check)
-      - sim.intent_valid, sim.policy_valid, sim.decision_valid, sim.data_health_ok
+    Limit order price comes from execution_intent.entry_price (PRIMARY).
+    item.current_price is NOT the order price — it is the market reference only.
+    paper_ready requires: symbol, side, price, intent.allowed, all sim flags.
     """
-    import main as _m
     snap = snapshot or {}
     if hasattr(item, "snapshot_json"):
-        snap = snap or _json_loads_safe(item.snapshot_json, {})
+        snap = snap or _json_loads_safe(item.snapshot_json, {}) or {}
 
     symbol = (getattr(item, "symbol", None) or "").strip().upper()
-    direction = (getattr(item, "direction", None) or "").strip().lower()
-    side = "BUY" if direction in ("long", "buy") else ("SELL" if direction in ("short", "sell") else "")
-
-    # Price priority: current_price → intent.entry_price → snap.last_known_price
     intent = snap.get("latest_execution_intent") or {}
     sim    = snap.get("latest_execution_simulation") or {}
 
-    price_f = None
+    # Direction → side: check intent.direction first, then item.direction
+    intent_dir = (intent.get("direction") or "").strip()
+    item_dir   = (getattr(item, "direction", None) or "").strip()
+    side       = _lm_direction_to_paper_side(intent_dir) or _lm_direction_to_paper_side(item_dir)
+
+    # Limit order price: execution_intent.entry_price (PRIMARY — the setup price)
+    # DO NOT use item.current_price as the order price
+    price_f      = None
     price_source = None
-    _cp = getattr(item, "current_price", None)
-    if _cp:
+    warnings     = []
+
+    _ep = intent.get("entry_price")
+    if _ep:
         try:
-            price_f = float(_cp)
-            price_source = "current_price"
+            price_f      = float(_ep)
+            price_source = "execution_intent.entry_price"
         except Exception:
             pass
+
     if price_f is None:
-        _ep = intent.get("entry_price")
-        if _ep:
-            try:
-                price_f = float(_ep)
-                price_source = "intent_entry_price"
-            except Exception:
-                pass
-    if price_f is None:
+        warnings.append("entry_price_missing")
+        # Secondary fallback: snapshot last_known_price (still not current_price)
         _lp = snap.get("last_known_price")
         if _lp:
             try:
-                price_f = float(_lp)
-                price_source = "last_known_price"
+                price_f      = float(_lp)
+                price_source = "snap.last_known_price"
             except Exception:
                 pass
 
     price_str = f"{price_f:.8f}".rstrip("0").rstrip(".") if price_f else None
 
-    # Simulation-derived readiness flags
-    intent_allowed  = bool(intent.get("allowed"))
-    intent_valid    = bool(sim.get("intent_valid"))
-    policy_valid    = bool(sim.get("policy_valid"))
-    decision_valid  = bool(sim.get("decision_valid"))
-    data_health_ok  = bool(sim.get("data_health_ok"))
+    # Market price for reference display (separate from order price)
+    mkt_r            = _lm_get_real_market_price_for_paper(item=item, snapshot=snap)
+    market_price     = mkt_r.get("price")
+    market_price_src = mkt_r.get("price_source")
 
+    # Readiness flags
+    intent_allowed = bool(intent.get("allowed"))
+    intent_valid   = bool(sim.get("intent_valid"))
+    policy_valid   = bool(sim.get("policy_valid"))
+    decision_valid = bool(sim.get("decision_valid"))
+    data_health_ok = bool(sim.get("data_health_ok"))
+
+    draft_ready = bool(symbol) and bool(side) and bool(price_f)
     paper_ready = (
-        bool(symbol) and bool(side) and bool(price_f)
+        draft_ready
         and intent_allowed
         and intent_valid and policy_valid and decision_valid and data_health_ok
     )
@@ -214,56 +364,59 @@ def _lm_build_paper_order_draft(item, snapshot=None, quantity_str=None) -> dict:
     if not data_health_ok:
         reasons.append("data_health_not_ok")
 
-    # Quantity validation
-    qty_result = {"ok": False, "qty_float": None, "notional": None, "error": None, "details": None}
     cash_balance = None
     try:
-        acc = _lm_get_or_create_paper_account(item.user_id)
+        acc          = _lm_get_or_create_paper_account(item.user_id)
         cash_balance = float(acc.cash_balance or 0)
     except Exception:
         pass
 
+    qty_result = {"ok": False, "qty_float": None, "notional": None,
+                  "error": None, "details": None}
     if quantity_str and price_f:
         qty_result = _lm_validate_paper_order_quantity(quantity_str, price_f, cash_balance)
 
     notional = qty_result.get("notional")
 
     return {
-        "ok":                paper_ready,
-        "paper_ready":       paper_ready,
-        "intent_allowed":    intent_allowed,
-        "intent_valid":      intent_valid,
-        "policy_valid":      policy_valid,
-        "decision_valid":    decision_valid,
-        "data_health_ok":    data_health_ok,
-        "symbol":            symbol or None,
-        "side":              side or None,
-        "order_type":        "LIMIT",
-        "time_in_force":     "GTC",
-        "price":             price_str,
-        "price_float":       price_f,
-        "price_source":      price_source,
-        "quantity":          str(qty_result["qty_float"]) if qty_result.get("qty_float") else None,
-        "qty_float":         qty_result.get("qty_float"),
-        "estimated_notional": notional,
-        "cash_balance":      cash_balance,
-        "qty_ok":            qty_result.get("ok", False),
-        "qty_error":         qty_result.get("error"),
-        "qty_details":       qty_result.get("details"),
-        "reasons":           reasons,
-        "warnings":          [],
-        "advisory_note":     "No Binance API. DB-only paper record. No real order placed.",
-        "source":            "internal_paper",
+        "ok":                  paper_ready,
+        "draft_ready":         draft_ready,
+        "paper_ready":         paper_ready,
+        "intent_allowed":      intent_allowed,
+        "intent_valid":        intent_valid,
+        "policy_valid":        policy_valid,
+        "decision_valid":      decision_valid,
+        "data_health_ok":      data_health_ok,
+        "symbol":              symbol or None,
+        "side":                side or None,
+        "type":                "LIMIT",
+        "order_type":          "LIMIT",
+        "timeInForce":         "GTC",
+        "time_in_force":       "GTC",
+        "price":               price_str,
+        "price_str":           price_str,
+        "price_float":         price_f,
+        "price_source":        price_source,
+        "market_price":        market_price,
+        "market_price_source": market_price_src,
+        "quantity":            str(qty_result["qty_float"]) if qty_result.get("qty_float") else None,
+        "qty_float":           qty_result.get("qty_float"),
+        "estimated_notional":  notional,
+        "cash_balance":        cash_balance,
+        "qty_ok":              qty_result.get("ok", False),
+        "qty_error":           qty_result.get("error"),
+        "qty_details":         qty_result.get("details"),
+        "reasons":             reasons,
+        "warnings":            warnings,
+        "advisory_note":       "No Binance API. DB-only paper record. No real order placed.",
+        "source":              "internal_paper",
     }
 
 
 # ── validation ────────────────────────────────────────────────────────────────
 
 def _lm_validate_paper_order_draft(draft) -> dict:
-    """Validate a completed draft dict before submission.
-
-    Returns {ok, errors}.
-    """
+    """Validate a completed draft dict before submission. Returns {ok, errors}."""
     errors = []
     if not draft.get("paper_ready"):
         errors.append("paper_ready_false")
@@ -286,20 +439,15 @@ def _lm_submit_paper_order(user_id, item, quantity_str) -> dict:
     Returns {ok, order_id, client_order_id, symbol, side, price, quantity,
              estimated_notional, status, error}.
     """
-    import main as _m
     from models import db as _db, LiveMonitorPaperOrder as _PO
 
-    snap = _json_loads_safe(getattr(item, "snapshot_json", None), {})
+    snap  = _json_loads_safe(getattr(item, "snapshot_json", None), {})
     draft = _lm_build_paper_order_draft(item, snapshot=snap, quantity_str=quantity_str)
 
     val = _lm_validate_paper_order_draft(draft)
     if not val["ok"]:
-        return {
-            "ok": False,
-            "error": "draft_invalid",
-            "errors": val["errors"],
-            "draft": draft,
-        }
+        return {"ok": False, "error": "draft_invalid",
+                "errors": val["errors"], "draft": draft}
 
     client_order_id = f"ZYNIPAPER_{uuid.uuid4().hex[:12].upper()}"
     symbol   = draft["symbol"]
@@ -341,20 +489,20 @@ def _lm_submit_paper_order(user_id, item, quantity_str) -> dict:
         return {"ok": False, "error": "db_error", "detail": str(_e)}
 
     return {
-        "ok":                True,
-        "order_id":          row.id,
-        "client_order_id":   client_order_id,
-        "symbol":            symbol,
-        "side":              side,
-        "order_type":        "LIMIT",
-        "time_in_force":     "GTC",
-        "price":             price,
-        "quantity":          quantity,
+        "ok":               True,
+        "order_id":         row.id,
+        "client_order_id":  client_order_id,
+        "symbol":           symbol,
+        "side":             side,
+        "order_type":       "LIMIT",
+        "time_in_force":    "GTC",
+        "price":            price,
+        "quantity":         quantity,
         "estimated_notional": draft.get("estimated_notional"),
-        "status":            "open",
-        "fill_status":       "unfilled",
-        "source":            "internal_paper",
-        "advisory_note":     "No Binance API. DB-only paper record. No real order placed.",
+        "status":           "open",
+        "fill_status":      "unfilled",
+        "source":           "internal_paper",
+        "advisory_note":    "No Binance API. DB-only paper record. No real order placed.",
     }
 
 
@@ -389,7 +537,7 @@ def _lm_get_paper_orders(user_id, item_id=None, limit=50) -> list:
 
 
 def _lm_get_paper_positions(user_id, item_id=None) -> list:
-    """Return open paper positions as a list of dicts (fill engine: Phase 11.7C)."""
+    """Return paper positions as a list of dicts."""
     from models import LiveMonitorPaperPosition as _PP
     q = _PP.query.filter_by(user_id=user_id)
     if item_id is not None:
@@ -412,52 +560,24 @@ def _lm_get_paper_positions(user_id, item_id=None) -> list:
 
 
 # ── Phase 11.7C: Paper Fill Engine ────────────────────────────────────────────
-# Safety: No Binance API. No _lm_bt_* calls. No HTTP requests.
-# Price source: real Live Monitor item.current_price only.
-# Trigger: manual only (no background loop, no auto execution).
-
-def _lm_get_real_market_price_for_paper(item=None, item_id=None):
-    """Return the real Live Monitor market price for paper fill checking.
-
-    Uses item.current_price (live Binance feed stored in DB), falls back to
-    snapshot last_known_price. Never calls Binance Testnet or any exchange API.
-    """
-    if item is not None:
-        try:
-            cp = getattr(item, "current_price", None)
-            if cp is not None:
-                return float(cp)
-        except Exception:
-            pass
-        try:
-            snap = _json_loads_safe(getattr(item, "snapshot_json", None), {})
-            lp = snap.get("last_known_price")
-            if lp is not None:
-                return float(lp)
-        except Exception:
-            pass
-    if item_id is not None and item is None:
-        try:
-            from models import LiveMonitorItem as _LMI
-            row = _LMI.query.get(item_id)
-            if row:
-                return _lm_get_real_market_price_for_paper(item=row)
-        except Exception:
-            pass
-    return None
-
+# Safety: No Binance API. No Binance Testnet. No _lm_bt_* calls. No HTTP requests.
+# Price source: real Live Monitor market price only (WS cache → DB → snapshot).
+# Trigger: manual only — no background loop, no auto execution.
 
 def _lm_check_paper_order_fill(order, item=None, current_price=None):
     """Check one open paper order and fill it if conditions are met.
 
-    BUY LIMIT: fill when current_price <= order.price
+    BUY LIMIT:  fill when current_price <= order.price
     SELL LIMIT: fill when current_price >= order.price
-    Fill price: order.price (limit price).
-    No exchange API calls. DB-only.
-    Returns a result dict describing the outcome.
+    Fill price: order.price (limit price). No exchange API calls. DB-only.
     """
-    if current_price is None and item is not None:
-        current_price = _lm_get_real_market_price_for_paper(item=item)
+    import datetime as _dt
+
+    price_source = "passed_in"
+    if current_price is None:
+        pr            = _lm_get_real_market_price_for_paper(item=item)
+        current_price = pr.get("price")
+        price_source  = pr.get("price_source") or "unknown"
 
     order_price_f = None
     try:
@@ -466,62 +586,69 @@ def _lm_check_paper_order_fill(order, item=None, current_price=None):
         return {
             "ok": False, "checked": False,
             "reason": "order_price_invalid", "order_id": order.id,
+            "source": "internal_paper",
         }
 
     if current_price is None:
         return {
             "ok": True, "checked": True, "filled": False,
-            "reason": "no_current_price", "order_id": order.id,
-            "symbol": order.symbol, "side": order.side,
+            "reason": "no_current_price",
+            "order_id":    order.id,
+            "symbol":      order.symbol,
+            "side":        order.side,
             "order_price": order_price_f,
+            "source":      "internal_paper",
         }
 
     side = (order.side or "").upper()
-    should_fill = False
-    if side == "BUY" and current_price <= order_price_f:
-        should_fill = True
-    elif side == "SELL" and current_price >= order_price_f:
-        should_fill = True
+    should_fill = (
+        (side == "BUY"  and current_price <= order_price_f) or
+        (side == "SELL" and current_price >= order_price_f)
+    )
 
     if not should_fill:
         reason = "buy_limit_not_touched" if side == "BUY" else "sell_limit_not_touched"
         return {
             "ok": True, "checked": True, "filled": False,
-            "reason": reason,
-            "order_id": order.id,
-            "symbol": order.symbol,
-            "side": side,
-            "order_price": order_price_f,
+            "reason":        reason,
+            "order_id":      order.id,
+            "symbol":        order.symbol,
+            "side":          side,
+            "order_price":   order_price_f,
             "current_price": current_price,
+            "source":        "internal_paper",
         }
 
     # ── Execute fill ──────────────────────────────────────────────────────────
     from models import (
-        db as _db,
-        LiveMonitorPaperOrder    as _PO,
+        db                       as _db,
         LiveMonitorPaperFill     as _PF,
         LiveMonitorPaperPosition as _PP,
     )
-    import datetime as _dt
 
-    fill_price = order_price_f
-    qty_str = order.quantity
+    fill_price    = order_price_f
+    qty_str       = _lm_get_order_qty(order)
     try:
         qty_f = float(qty_str)
     except Exception:
         qty_f = 0.0
-    notional = round(qty_f * fill_price, 6)
+    notional      = round(qty_f * fill_price, 6)
     position_side = "LONG" if side == "BUY" else "SHORT"
-    fill_id = None
-    position_id = None
+    fill_id       = None
+    position_id   = None
+    now           = _dt.datetime.utcnow()
 
     try:
-        # Update order
-        order.status = "filled"
+        # ── Update order status ───────────────────────────────────────────────
+        order.status      = "filled"
         order.fill_status = "filled"
+        _lm_set_if_exists(order, "filled_qty",     qty_str)
+        _lm_set_if_exists(order, "avg_fill_price", str(fill_price))
+        _lm_set_if_exists(order, "filled_at",      now)
+        _lm_set_if_exists(order, "updated_at",     now)
         _db.session.flush()
 
-        # Create fill record
+        # ── Create fill record ────────────────────────────────────────────────
         fill = _PF(
             user_id=order.user_id,
             order_id=order.id,
@@ -532,11 +659,17 @@ def _lm_check_paper_order_fill(order, item=None, current_price=None):
             fill_price=str(fill_price),
             fill_notional=notional,
         )
+        _lm_set_if_exists(fill, "quantity",   qty_str)
+        _lm_set_if_exists(fill, "price",      str(fill_price))
+        _lm_set_if_exists(fill, "notional",   notional)
+        _lm_set_if_exists(fill, "fee",        0)
+        _lm_set_if_exists(fill, "fill_type",  "entry")
+        _lm_set_if_exists(fill, "account_id", None)
         _db.session.add(fill)
         _db.session.flush()
         fill_id = fill.id
 
-        # Create or update position
+        # ── Create or update position ─────────────────────────────────────────
         pos = _PP.query.filter_by(
             user_id=order.user_id,
             item_id=order.item_id,
@@ -558,25 +691,35 @@ def _lm_check_paper_order_fill(order, item=None, current_price=None):
                 realized_pnl=0.0,
                 unrealized_pnl=0.0,
             )
+            _lm_set_if_exists(pos, "quantity",   qty_str)
+            _lm_set_if_exists(pos, "mark_price", str(fill_price))
+            _lm_set_if_exists(pos, "opened_at",  now)
+            _lm_set_if_exists(pos, "account_id", None)
+            _lm_set_if_exists(pos, "updated_at", now)
             _db.session.add(pos)
             _db.session.flush()
         else:
             # Weighted average entry price
             try:
-                old_qty = float(pos.size or "0")
+                old_qty   = _lm_get_qty_from_position(pos)
                 old_entry = float(pos.entry_price or "0")
-                new_qty = old_qty + qty_f
-                if new_qty > 0:
-                    new_entry = ((old_qty * old_entry) + (qty_f * fill_price)) / new_qty
-                else:
-                    new_entry = fill_price
-                pos.size = str(round(new_qty, 8))
+                new_qty   = old_qty + qty_f
+                new_entry = (
+                    ((old_qty * old_entry) + (qty_f * fill_price)) / new_qty
+                    if new_qty > 0 else fill_price
+                )
+                _lm_set_qty_on_position(pos, str(round(new_qty, 8)))
                 pos.entry_price = str(round(new_entry, 8))
             except Exception:
                 pass
+            _lm_set_if_exists(pos, "updated_at", now)
             _db.session.flush()
 
         position_id = pos.id
+
+        # Link fill → position if model supports it
+        _lm_set_if_exists(fill, "position_id", position_id)
+
         _db.session.commit()
 
     except Exception as _e:
@@ -588,32 +731,33 @@ def _lm_check_paper_order_fill(order, item=None, current_price=None):
             "ok": False, "checked": True, "filled": False,
             "reason": "db_error", "error": str(_e)[:200],
             "order_id": order.id,
+            "source":   "internal_paper",
         }
 
     return {
-        "ok": True,
-        "checked": True,
-        "filled": True,
-        "reason": "filled",
-        "order_id": order.id,
-        "symbol": order.symbol,
-        "side": side,
-        "order_price": order_price_f,
+        "ok":           True,
+        "checked":      True,
+        "filled":       True,
+        "reason":       "filled",
+        "order_id":     order.id,
+        "symbol":       order.symbol,
+        "side":         side,
+        "order_price":  order_price_f,
         "current_price": current_price,
-        "fill_price": fill_price,
-        "filled_qty": qty_str,
-        "notional": notional,
-        "position_id": position_id,
-        "fill_id": fill_id,
+        "fill_price":   fill_price,
+        "filled_qty":   qty_str,
+        "notional":     notional,
+        "position_id":  position_id,
+        "fill_id":      fill_id,
+        "source":       "internal_paper",
     }
 
 
 def _lm_process_paper_fills_for_item(user_id, item_id):
     """Process all open paper orders for the given item/user.
 
-    Manual/process-triggered only. No background loop. No exchange API.
-    Uses real Live Monitor item.current_price. DB-only.
-    Returns {ok, processed, filled, results, current_price, source}.
+    Manual/process-triggered only. No background loop. No exchange API. DB-only.
+    Returns {ok, processed, filled, current_price, price_source, results, source}.
     """
     from models import (
         LiveMonitorItem       as _LMI,
@@ -622,9 +766,12 @@ def _lm_process_paper_fills_for_item(user_id, item_id):
     try:
         item = _LMI.query.filter_by(id=item_id, user_id=user_id).first()
         if not item:
-            return {"ok": False, "error": "item_not_found", "processed": 0, "filled": 0}
+            return {"ok": False, "error": "item_not_found",
+                    "processed": 0, "filled": 0, "source": "internal_paper"}
 
-        current_price = _lm_get_real_market_price_for_paper(item=item)
+        pr            = _lm_get_real_market_price_for_paper(item=item)
+        current_price = pr.get("price")
+        price_source  = pr.get("price_source")
 
         open_orders = _PO.query.filter_by(
             user_id=user_id,
@@ -633,7 +780,7 @@ def _lm_process_paper_fills_for_item(user_id, item_id):
             fill_status="unfilled",
         ).all()
 
-        results = []
+        results      = []
         filled_count = 0
         for order in open_orders:
             res = _lm_check_paper_order_fill(
@@ -644,13 +791,14 @@ def _lm_process_paper_fills_for_item(user_id, item_id):
                 filled_count += 1
 
         return {
-            "ok": True,
-            "item_id": item_id,
-            "processed": len(open_orders),
-            "filled": filled_count,
+            "ok":           True,
+            "item_id":      item_id,
+            "processed":    len(open_orders),
+            "filled":       filled_count,
             "current_price": current_price,
-            "results": results,
-            "source": "internal_paper",
+            "price_source": price_source,
+            "results":      results,
+            "source":       "internal_paper",
         }
     except Exception as _e:
         return {
@@ -673,23 +821,23 @@ def _lm_process_all_paper_fills_for_user(user_id):
             .with_entities(_PO.item_id).distinct().all()
         ]
         total_processed = 0
-        total_filled = 0
-        by_item = []
+        total_filled    = 0
+        by_item         = []
         for iid in item_ids:
             res = _lm_process_paper_fills_for_item(user_id, iid)
             total_processed += res.get("processed", 0)
-            total_filled += res.get("filled", 0)
+            total_filled    += res.get("filled", 0)
             by_item.append({
                 "item_id":   iid,
                 "processed": res.get("processed", 0),
                 "filled":    res.get("filled", 0),
             })
         return {
-            "ok": True,
+            "ok":              True,
             "total_processed": total_processed,
-            "total_filled": total_filled,
-            "by_item": by_item,
-            "source": "internal_paper",
+            "total_filled":    total_filled,
+            "by_item":         by_item,
+            "source":          "internal_paper",
         }
     except Exception as _e:
         return {

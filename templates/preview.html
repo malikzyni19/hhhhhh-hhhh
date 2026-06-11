@@ -8235,10 +8235,21 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         if(resEl){
           resEl.style.display='';
           if(d&&d.ok){
-            var cp=d.current_price!=null?(' @ price '+d.current_price):'';
-            resEl.style.color=d.filled>0?'var(--green-2,#4ade80)':'var(--text-3)';
-            resEl.innerHTML='<b>Processed '+esc(String(d.processed||0))+' orders</b> · '+
-              esc(String(d.filled||0))+' filled'+esc(cp);
+            var hasFills=d.filled>0;
+            resEl.style.color=hasFills?'var(--green-2,#4ade80)':'var(--text-3)';
+            var cpStr=d.current_price!=null?(' · mkt '+esc(String(d.current_price))):'';
+            var psStr=d.price_source?' <span style="opacity:.6;font-size:8px">('+esc(d.price_source)+')</span>':'';
+            var lines=['<b>Processed '+esc(String(d.processed||0))+'</b> · '+
+              '<span style="color:'+(hasFills?'var(--green-2,#4ade80)':'inherit')+'">'+
+              esc(String(d.filled||0))+' filled</span>'+cpStr+psStr];
+            var results=d.results||[];
+            results.filter(function(r){return r.filled;}).forEach(function(r){
+              lines.push('&nbsp;&nbsp;→ <b>'+esc(r.symbol||'')+'</b> '+
+                esc(r.side||'')+' '+esc(String(r.filled_qty||r.quantity||''))+
+                ' @ fill '+esc(String(r.fill_price||''))+
+                (r.notional?' ('+esc(String(parseFloat(r.notional).toFixed(2)))+' USDT)':''));
+            });
+            resEl.innerHTML=lines.join('<br>');
           } else {
             resEl.style.color='var(--red-2,#f87171)';
             resEl.innerHTML='<b>Failed:</b> '+esc((d&&d.error)||'Unknown error');
