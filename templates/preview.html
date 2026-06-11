@@ -562,43 +562,6 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
 /* Make the LM topbar selects look the same as their old siblings */
 .lm-manual-row .cdd-btn{padding:7px 9px;font-size:12px}
 
-/* ───── Mobile desktop-mode notice (Round 22 — Task 1) ─────
-   Polite modal shown ONLY on mobile / small screens. The whole stack
-   is gated behind @media (max-width:768px) so the notice can never
-   paint on desktop, even if its hidden attribute is somehow stripped.
-   Z-index 7400/7401 — below the tutorial (7900+) and far below the
-   token-limit modal (9000+). */
-@media (max-width:768px){
-  .mdn-bd{position:fixed;inset:0;background:rgba(2,8,16,.78);z-index:7400;
-    display:flex;align-items:center;justify-content:center;padding:20px}
-  .mdn-bd[hidden]{display:none}
-  .mdn-card{position:relative;background:var(--bg-card);
-    border:1px solid var(--border-2);border-radius:14px;
-    padding:22px 22px 18px;width:420px;max-width:92vw;max-height:90vh;
-    overflow-y:auto;box-shadow:0 18px 50px rgba(0,0,0,.6);color:var(--text);
-    z-index:7401}
-  .mdn-ico{width:46px;height:46px;border-radius:50%;
-    background:rgba(34,211,238,.12);border:1px solid rgba(34,211,238,.35);
-    display:flex;align-items:center;justify-content:center;margin:0 auto 12px;
-    color:var(--accent)}
-  .mdn-ico svg{width:22px;height:22px;stroke-width:2;fill:none;stroke:currentColor}
-  .mdn-t{font-size:16px;font-weight:700;letter-spacing:.2px;
-    margin-bottom:8px;text-align:center}
-  .mdn-s{font-size:13px;color:var(--text-2);line-height:1.55;
-    margin-bottom:14px;text-align:left}
-  .mdn-s b{color:var(--text);font-weight:700}
-  .mdn-never{display:flex;align-items:center;justify-content:center;gap:8px;
-    font-size:12px;color:var(--text-3);margin-bottom:14px;cursor:pointer;
-    user-select:none}
-  .mdn-never input{width:14px;height:14px;accent-color:var(--accent);cursor:pointer}
-  .mdn-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
-  .mdn-actions .btn{padding:9px 16px;font-size:13px;min-height:40px}
-}
-/* Above 768 the notice is removed from the layout entirely. */
-@media (min-width:769px){
-  .mdn-bd{display:none !important}
-}
-
 /* ───── Tutorial intro modal (Round 19 — Task 1) ───── */
 .tut-intro-bd{position:fixed;inset:0;background:rgba(2,8,16,.78);z-index:7900;
   display:flex;align-items:center;justify-content:center;padding:20px}
@@ -998,14 +961,6 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 .lm-term-grp-hdr:hover{background:rgba(255,255,255,.06)}
 .lm-term-grp-arrow{font-size:9px;color:var(--text-3);flex-shrink:0}
 #lmTermGrpBody-paper,.lm-term-group [id^="lmTermGrpBody-"]{padding:10px 14px}
-.lm-term-header{padding:10px 16px 8px;border-bottom:1px solid var(--border);flex-shrink:0}
-.lm-term-ht{font-size:13px;font-weight:700;color:var(--text-1);line-height:1.3}
-.lm-term-ht-sep{color:var(--text-3);margin:0 4px}
-.lm-term-ht-sym{color:var(--accent)}
-.lm-term-meta{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}
-.lm-term-chip{font-size:9.5px;padding:1px 7px;border-radius:4px;background:rgba(255,255,255,.07);border:1px solid var(--border);color:var(--text-2);font-weight:600;letter-spacing:.3px}
-.lm-term-price{font-size:10px;color:var(--accent);font-weight:700;font-family:var(--mono);padding:1px 6px;border-radius:4px;background:rgba(var(--accent-rgb,99,102,241),.1)}
-.lm-term-empty{font-size:10px;color:var(--text-3);padding:2px 0}
 .lm-outer[data-workspace]:not([data-workspace="setups"]) .lm-manual{display:none!important}
 .lm-outer[data-workspace]:not([data-workspace="setups"]) .lm-ob-da-wrap{display:none!important}
 .lm-outer[data-workspace]:not([data-workspace="setups"]) [data-lmf]{display:none!important}
@@ -1673,36 +1628,6 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         </div>
       </div>
     </aside>
-
-    <!-- Mobile desktop-mode notice (Round 22) — mobile only -->
-    <div id="mobileDesktopNoticeBd" class="mdn-bd" hidden role="dialog" aria-modal="true"
-         aria-labelledby="mobileDesktopNoticeTitle">
-      <div id="mobileDesktopNoticeCard" class="mdn-card">
-        <div class="mdn-ico" aria-hidden="true">
-          <svg viewBox="0 0 24 24">
-            <rect x="3" y="4" width="18" height="13" rx="2"/>
-            <path d="M8 21h8M12 17v4"/>
-          </svg>
-        </div>
-        <div class="mdn-t" id="mobileDesktopNoticeTitle">Unlock the full screener experience</div>
-        <div class="mdn-s">
-          You're using the mobile layout. It's good for quick checks, but
-          <b>Desktop Mode</b> gives the full workspace: Live Monitor, AI
-          workflow, setup insight, timeline, and advanced tables.
-          <br><br>
-          For best results, open your browser menu and turn on
-          <b>"Desktop site"</b>.
-        </div>
-        <label class="mdn-never">
-          <input type="checkbox" id="mobileDesktopNoticeNever">
-          <span>Do not show again</span>
-        </label>
-        <div class="mdn-actions">
-          <button class="btn" id="mobileDesktopNoticeClose" type="button">Continue mobile</button>
-          <button class="btn btn-primary" id="mobileDesktopNoticeGotIt" type="button">Got it</button>
-        </div>
-      </div>
-    </div>
 
     <!-- Tutorial intro modal (Round 19 — Task 1) -->
     <div id="tutIntro" class="tut-intro-bd" hidden role="dialog" aria-modal="true">
@@ -4652,43 +4577,27 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     if(ws==='terminal'){
       try{_lmUpdateTerminalActiveItem();}catch(e){}
       try{window._lmTodRefreshDraft();}catch(e){}
-      try{window._lmPapRefreshDraft();}catch(e){}
-      try{window._lmPapRefreshAccount();}catch(e){}
     }
     // Persist selection
     try{localStorage.setItem('zyni_lm_workspace',ws);}catch(e){}
     _lmActiveWorkspace=ws;
   }
   function _lmUpdateTerminalActiveItem(){
-    var el=document.getElementById('lmTermHeader');
+    var el=document.getElementById('lmTermActiveItem');
     if(!el) return;
     var item=window._lmSelItem||null;
     if(item&&item.symbol){
-      var dir=(item.direction||'').toUpperCase();
-      var dirColor=dir.indexOf('BULL')!==-1?'var(--green-2,#4ade80)':dir.indexOf('BEAR')!==-1?'var(--red-2,#f87171)':'var(--text-2)';
-      var px=item.current_price!=null?String(item.current_price):'';
-      var st=item.setup_type||'';
       el.innerHTML=
-        '<div class="lm-term-ht">Trading Terminal <span class="lm-term-ht-sep">&mdash;</span> <span class="lm-term-ht-sym">'+esc(item.symbol)+'</span></div>'+
-        '<div class="lm-term-meta">'+
-          (item.timeframe?'<span class="lm-term-chip">'+esc(item.timeframe)+'</span>':'')+
-          (dir?'<span class="lm-term-chip" style="color:'+dirColor+'">'+esc(dir)+'</span>':'')+
-          (st?'<span class="lm-term-chip">'+esc(st)+'</span>':'')+
-          (px?'<span class="lm-term-price">'+esc(px)+'</span>':'')+
-        '</div>';
+        '<span style="font-size:10px;color:var(--text-3)">Active: </span>'+
+        '<span style="font-size:11px;font-weight:700;color:var(--text-2);font-family:var(--mono)">'+esc(item.symbol)+'</span>'+
+        '<span style="font-size:10px;color:var(--text-3);margin-left:5px">'+esc((item.direction||'').toUpperCase())+' '+esc(item.timeframe||'')+'</span>';
       window._lmSimItemId=item.id;
     } else {
-      el.innerHTML='<div class="lm-term-empty">Select a setup from the list to use Trading Terminal.</div>';
+      el.innerHTML=
+        '<span style="font-size:10px;color:var(--text-3)">No setup selected — </span>'+
+        '<button class="btn lm-sm-btn" onclick="_lmSwitchPane(\'setups\')" style="font-size:9px;padding:2px 8px">&#8592; Go to Live Setups</button>';
     }
   }
-  window._lmToggleTermGroup=function(id){
-    var body=document.getElementById('lmTgBody-'+id);
-    var chev=document.getElementById('lmTgChev-'+id);
-    if(!body) return;
-    var open=body.style.display!=='none';
-    body.style.display=open?'none':'';
-    if(chev) chev.style.transform=open?'rotate(-90deg)':'rotate(0deg)';
-  };
 
   /* Bind click/keyboard on LM sidebar items */
   function _bindLmSidebarEvents(aside){
@@ -4915,10 +4824,15 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
             /* PANE: Trading Terminal */
             '<div id="lmWsPane-terminal" class="lm-ws-pane" hidden>'+
               '<div class="lm-ws-page">'+
-
-                /* Selected Setup Header */
-                '<div class="lm-term-header" id="lmTermHeader">'+
-                  '<div class="lm-term-empty">Select a setup from the list to use Trading Terminal.</div>'+
+                '<div class="lm-ws-header">'+
+                  '<div class="lm-ws-htitle">'+
+                    '<svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>'+
+                    'Trading Terminal'+
+                  '</div>'+
+                  '<div id="lmTermActiveItem" style="display:flex;align-items:center;gap:8px">'+
+                    '<span style="font-size:10px;color:var(--text-3)">No setup selected — </span>'+
+                    '<button class="btn lm-sm-btn" onclick="_lmSwitchPane(\'setups\')" style="font-size:9px;padding:2px 8px">&#8592; Go to Live Setups</button>'+
+                  '</div>'+
                 '</div>'+
 
                 /* ── GROUP 1: Internal Paper Trading (open) ────────────────── */
@@ -4926,13 +4840,9 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                   '<div class="lm-term-grp-hdr" onclick="window._lmToggleTermGroup(\'paper\')">'+
                     '<span class="lm-term-grp-arrow" id="lmTermGrpArr-paper">▼</span>'+
                     '<span>Internal Paper Trading</span>'+
-                    '<span style="font-size:9px;color:var(--green,#4ade80);margin-left:6px;font-weight:700;letter-spacing:.4px">PRIMARY STRATEGY TESTING MODE</span>'+
+                    '<span style="font-size:9px;color:var(--green,#4ade80);margin-left:6px">Phase 11.7B</span>'+
                   '</div>'+
                   '<div id="lmTermGrpBody-paper">'+
-                    '<div style="font-size:10px;color:var(--text-3);padding:6px 0 10px;line-height:1.6;border-bottom:1px solid var(--border);margin-bottom:10px">'+
-                      'Real futures market data + internal paper execution. '+
-                      'No Binance Testnet price dependency. No real exchange orders.'+
-                    '</div>'+
                     '<div class="lm-ws-grid-2" style="padding:0 0 8px">'+
 
                       /* Left: Account + Order Draft */
@@ -5021,19 +4931,19 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                   '<div class="lm-term-grp-hdr" onclick="window._lmToggleTermGroup(\'execready\')">'+
                     '<span class="lm-term-grp-arrow" id="lmTermGrpArr-execready">▼</span>'+
                     '<span>Execution Readiness</span>'+
-                    '<span style="font-size:9px;color:var(--text-3);margin-left:6px">Validation Only · Phase 11.6</span>'+
+                    '<span style="font-size:9px;color:var(--text-3);margin-left:6px">Simulation · Phase 11.6</span>'+
                   '</div>'+
                   '<div id="lmTermGrpBody-execready">'+
                     '<div class="lm-ws-section" id="lmExecSimSection">'+
-                      '<div class="lm-ws-sh">Execution Readiness Check</div>'+
+                      '<div class="lm-ws-sh">Execution Simulator</div>'+
                       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:10px;margin-bottom:8px">'+
-                        '<span style="color:var(--text-3)">Mode:</span><span style="color:var(--yellow,#facc15);font-weight:700">VALIDATION ONLY</span>'+
+                        '<span style="color:var(--text-3)">Execution status:</span><span style="color:var(--yellow,#facc15);font-weight:700">SIMULATION ONLY</span>'+
                         '<span style="color:var(--text-3)">Exchange orders:</span><span style="color:var(--red-2,#f87171);font-weight:700">DISABLED</span>'+
                         '<span style="color:var(--text-3)">Execution:</span><span style="color:var(--red-2,#f87171);font-weight:700">DISABLED</span>'+
                       '</div>'+
                       '<div id="lmSimGrid" style="display:none">'+
                         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:10px;color:var(--text-3);padding:2px 0 6px">'+
-                          '<span>Simulation status:</span><span id="lmSimReady" style="font-weight:700">—</span>'+
+                          '<span>Ready for testnet:</span><span id="lmSimReady" style="font-weight:700">—</span>'+
                           '<span>Intent valid:</span><span id="lmSimIntent">—</span>'+
                           '<span>Policy valid:</span><span id="lmSimPolicy">—</span>'+
                           '<span>Decision valid:</span><span id="lmSimDecision">—</span>'+
@@ -5048,7 +4958,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                         '<button class="btn lm-sm-btn" id="lmRunSimBtn" style="width:100%;justify-content:center" onclick="window._lmRunSimulation()">Run Simulation</button>'+
                       '</div>'+
                       '<div style="font-size:9px;color:var(--text-3);padding:5px 0 0;line-height:1.4">'+
-                        '<b style="color:var(--yellow)">Phase 11.6</b> — Validation only. No orders placed. No execution. No automation.'+
+                        '<b style="color:var(--yellow)">Phase 11.6</b> — Simulation only. No orders. No execution. No automation.'+
                       '</div>'+
                     '</div>'+
                   '</div>'+ /* end lmTermGrpBody-execready */
@@ -5062,11 +4972,6 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                     '<span style="font-size:9px;color:var(--yellow,#facc15);margin-left:6px">API Testing Only · Phase 11.5 / 11.7A</span>'+
                   '</div>'+
                   '<div id="lmTermGrpBody-testnet" style="display:none">'+
-                    '<div style="font-size:9.5px;color:var(--text-3);padding:6px 0 10px;line-height:1.6;border-bottom:1px solid var(--border);margin-bottom:10px">'+
-                      '<b style="color:var(--yellow,#facc15)">API TESTING ONLY.</b> '+
-                      'Binance Testnet is kept only for connector/API testing. '+
-                      'It is not used for strategy validation because testnet prices can differ from real futures prices.'+
-                    '</div>'+
                     '<div class="lm-ws-grid-2" style="padding:0 0 8px">'+
                       '<div>'+
                         '<div class="lm-ws-section" id="lmBtConnectorSection">'+
@@ -5315,7 +5220,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                     '<div style="font-size:10px;color:var(--text-3);line-height:1.8">'+
                       '<div style="display:flex;justify-content:space-between"><span>Trades opened</span><span style="color:var(--text-2)">0</span></div>'+
                       '<div style="display:flex;justify-content:space-between"><span>Trades closed</span><span style="color:var(--text-2)">0</span></div>'+
-                      '<div style="display:flex;justify-content:space-between"><span>Paper orders</span><span style="color:var(--text-2)">0</span></div>'+
+                      '<div style="display:flex;justify-content:space-between"><span>Testnet orders</span><span style="color:var(--text-2)">0</span></div>'+
                       '<div style="display:flex;justify-content:space-between"><span>AI decisions</span><span style="color:var(--text-2)">—</span></div>'+
                       '<div style="display:flex;justify-content:space-between"><span>Simulations run</span><span style="color:var(--text-2)">—</span></div>'+
                     '</div>'+
@@ -6618,11 +6523,6 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         card.classList.add("active");
         _lmRenderRight(_lmSelItem);  // handles DH fetch + polling internally
         try{_lmUpdateTerminalActiveItem();}catch(e){}  // keep terminal header in sync
-        if(_lmActiveWorkspace==='terminal'){
-          try{window._lmPapRefreshDraft();}catch(e){}
-          try{window._lmPapRefreshAccount();}catch(e){}
-          try{window._lmPapRefreshOrders(_lmSelItem&&_lmSelItem.id);}catch(e){}
-        }
       });
     });
     // auto-select: keep selection if still valid, else pick first
@@ -6636,11 +6536,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     }
     // Sync terminal header + draft after auto-select (covers page-load with terminal workspace restored)
     try{_lmUpdateTerminalActiveItem();}catch(e){}
-    if(_lmActiveWorkspace==='terminal'){
-      try{window._lmTodRefreshDraft();}catch(e){}
-      try{window._lmPapRefreshDraft();}catch(e){}
-      try{window._lmPapRefreshAccount();}catch(e){}
-    }
+    if(_lmActiveWorkspace==='terminal') try{window._lmTodRefreshDraft();}catch(e){}
     // mark active card
     if(_lmSelItem){
       var selIdx=-1;
@@ -10608,109 +10504,6 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   /* Initial sweep */
   _cddUpgradeAll(document);
 
-  /* Round 21 hotfix: hoist the tutorial nodes OUT of the scaled `.window`
-     container so position:fixed math is relative to the viewport (not the
-     transformed ancestor). Without this, every `style.left` we set on the
-     card is interpreted in `.window`'s 0.8x-scaled coord space and the
-     card ends up overlapping the highlighted target. */
-  try{
-    ["tutIntro","tutOverlay","tutCardHost","mobileDesktopNoticeBd"].forEach(function(id){
-      var n = document.getElementById(id);
-      if(n && n.parentNode !== document.body) document.body.appendChild(n);
-    });
-  }catch(_){}
-
-  /* ═══════════════════════════════════════════════════════════════════
-     MOBILE DESKTOP-MODE NOTICE (Round 22)
-     Polite, dismissable nudge to switch to Desktop site on small
-     viewports. Strict conflict-check vs the tutorial system.
-     ═══════════════════════════════════════════════════════════════════ */
-  var _mobileDesktopNoticeSeenSession = false;
-  var MDN_NEVER_KEY = "zyni_mobile_desktop_notice_never";
-  function _mdnIsMobile(){
-    var w = innerWidth <= 768;
-    var ua = navigator.userAgent || "";
-    var isMobUa = /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(ua);
-    return w || isMobUa;
-  }
-  function _mdnPermanentlyDisabled(){
-    try{ return _ls_getBool(MDN_NEVER_KEY, false); }catch(_){ return false; }
-  }
-  function _mdnIsTutorialVisible(){
-    var intro = E("tutIntro");
-    var ovl   = E("tutOverlay");
-    var host  = E("tutCardHost");
-    if(intro && !intro.hidden) return true;
-    if(ovl   && !ovl.hidden)   return true;
-    if(host  && !host.hidden)  return true;
-    return false;
-  }
-  function _mdnShow(){
-    var bd = E("mobileDesktopNoticeBd"); if(!bd) return;
-    bd.hidden = false;
-    _mobileDesktopNoticeSeenSession = true;
-  }
-  function _mdnHide(){
-    var bd = E("mobileDesktopNoticeBd"); if(!bd) return;
-    bd.hidden = true;
-  }
-  function _mdnDismiss(savePermanent){
-    if(savePermanent){
-      try{ _ls_setBool(MDN_NEVER_KEY, true); }catch(_){}
-    }
-    _mdnHide();
-  }
-  function _mdnTryShow(){
-    if(!_mdnIsMobile())               return false;
-    if(_mobileDesktopNoticeSeenSession) return false;
-    if(_mdnPermanentlyDisabled())     return false;
-    if(_mdnIsTutorialVisible())       return false;
-    _mdnShow();
-    return true;
-  }
-  /* Wire dismiss buttons. Either button counts as "seen this session"
-     and only the checkbox decides whether it's also permanent. */
-  (function _mdnWireButtons(){
-    var close = E("mobileDesktopNoticeClose");
-    var got   = E("mobileDesktopNoticeGotIt");
-    var never = E("mobileDesktopNoticeNever");
-    function onDismiss(){
-      var permanent = !!(never && never.checked);
-      _mdnDismiss(permanent);
-    }
-    if(close) close.addEventListener("click", onDismiss);
-    if(got)   got.addEventListener("click",   onDismiss);
-    /* Backdrop clicks do NOT dismiss — user must press a button (cleaner
-       UX, and avoids accidental dismiss on a fat-finger). */
-  })();
-  /* If the tutorial intro / tutorial card opens while the notice is up,
-     hide the notice immediately so the user can interact with the
-     tutorial. Wrap the tutorial show functions. */
-  (function _mdnWireTutorialHides(){
-    if(typeof _tutShowIntro === "function"){
-      var orig = _tutShowIntro;
-      _tutShowIntro = function(){ _mdnHide(); return orig.apply(this, arguments); };
-      window._tutShowIntro = _tutShowIntro;
-    }
-    if(typeof _tutShowGroup === "function"){
-      var orig2 = _tutShowGroup;
-      _tutShowGroup = function(){ _mdnHide(); return orig2.apply(this, arguments); };
-      window._tutShowGroup = _tutShowGroup;
-    }
-  })();
-  /* Initial trigger — wait 1200 ms so layout / fonts / async init settle.
-     If the tutorial is in the way, retry once after another 3000 ms and
-     then give up for this session. */
-  setTimeout(function(){
-    if(_mdnTryShow()) return;
-    if(!_mdnIsMobile()) return;
-    if(_mdnPermanentlyDisabled()) return;
-    if(_mobileDesktopNoticeSeenSession) return;
-    /* The only reason _mdnTryShow could have returned false at this
-       point is a visible tutorial — retry once. */
-    setTimeout(function(){ _mdnTryShow(); }, 3000);
-  }, 1200);
-
   /* ═══════════════════════════════════════════════════════════════════
      TUTORIAL SYSTEM (Round 19 — Tasks 1-4, 6-8)
      ═══════════════════════════════════════════════════════════════════ */
@@ -10891,127 +10684,22 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     return tgt;
   }
   function _tutIsMobile(){ return innerWidth <= 820; }
-  /* Round 21 hotfix: overlap-aware tutorial card placement.
-     The card must never cover the highlighted target rect or, when a
-     custom dropdown is open, its option list. Placement tries right →
-     below → above → left → opposite half, in that order, clamps inside
-     the viewport, and is re-run whenever content or layout changes. */
-  function _tutRectsOverlap(a, b, gap){
-    gap = gap || 0;
-    return !(a.right  + gap <= b.left ||
-             a.left          >= b.right  + gap ||
-             a.bottom + gap <= b.top  ||
-             a.top           >= b.bottom + gap);
-  }
-  function _tutValidRect(r){
-    return r && (r.width > 1 || r.height > 1) &&
-           r.bottom > 0 && r.top < innerHeight &&
-           r.right  > 0 && r.left < innerWidth;
-  }
-  function _tutCollectAvoidRects(){
-    var out = [];
-    if(_tutCurTgt){
-      var tr = _tutCurTgt.getBoundingClientRect();
-      if(_tutValidRect(tr)) out.push(tr);
-    }
-    /* If a custom dropdown is currently open, its option list also
-       counts as an avoid-rect so the card doesn't cover the options. */
-    if(typeof _cddOpenDropdown !== "undefined" && _cddOpenDropdown){
-      var listEl = _cddOpenDropdown.querySelector(".cdd-list");
-      if(listEl && !listEl.hidden){
-        var lr = listEl.getBoundingClientRect();
-        if(_tutValidRect(lr)) out.push(lr);
-      }
-    }
-    return out;
-  }
-  function _tutPlaceAt(card, x, y, cw, ch, minX, minY, maxX, maxY){
-    var clampedX = Math.max(minX, Math.min(maxX - cw, x));
-    var clampedY = Math.max(minY, Math.min(maxY - ch, y));
-    return {
-      x: clampedX, y: clampedY,
-      rect: { left:clampedX, top:clampedY, right:clampedX+cw, bottom:clampedY+ch }
-    };
-  }
   function _tutPositionCard(){
     var card = E("tutCard"); if(!card) return;
-    /* Reset any previous placement so offsetWidth/Height reflect the
-       natural size with the current content (option explanations etc.). */
     card.classList.remove("tut-card-centered","tut-card-bottom");
-    card.style.left = "";
-    card.style.top  = "";
-    card.style.bottom = "";
-    card.style.right  = "";
-    card.style.transform = "";
-
-    var GAP   = 14;
-    var EDGE  = 12;
-    var minX  = EDGE, maxX = innerWidth  - EDGE;
-    var minY  = EDGE, maxY = innerHeight - EDGE;
-    /* Clamp card to fit the viewport even when content grows. */
-    card.style.maxHeight = Math.max(160, innerHeight - EDGE*2) + "px";
-    card.style.overflowY = "auto";
-
-    var cw = Math.min(card.offsetWidth  || 340, maxX - minX);
-    var ch = Math.min(card.offsetHeight || 220, maxY - minY);
-
-    var avoids = _tutCollectAvoidRects();
-    /* No real target → just center the card. */
-    if(!avoids.length){
-      var p = _tutPlaceAt(card, (innerWidth-cw)/2, (innerHeight-ch)/2, cw, ch, minX, minY, maxX, maxY);
-      card.style.left = p.x + "px"; card.style.top = p.y + "px";
+    if(!_tutCurTgt || _tutIsMobile()){
+      /* mobile or no target → bottom sheet on mobile, centered on desktop */
+      card.classList.add(_tutIsMobile() ? "tut-card-bottom" : "tut-card-centered");
       return;
     }
-
-    /* Union the avoid rects for placement decisions but keep the
-       individual rects for overlap checks. */
-    var u = { left:avoids[0].left, right:avoids[0].right, top:avoids[0].top, bottom:avoids[0].bottom };
-    for(var i=1;i<avoids.length;i++){
-      u.left   = Math.min(u.left,   avoids[i].left);
-      u.right  = Math.max(u.right,  avoids[i].right);
-      u.top    = Math.min(u.top,    avoids[i].top);
-      u.bottom = Math.max(u.bottom, avoids[i].bottom);
-    }
-
-    /* Candidates in priority order. Each one has an "anchor" position
-       that we then clamp inside the viewport. Overlap is checked against
-       EVERY avoid rect (target + open dropdown list). */
-    var candidates = [
-      { name:"right",  x: u.right  + GAP,        y: u.top },
-      { name:"below",  x: u.left,                y: u.bottom + GAP },
-      { name:"above",  x: u.left,                y: u.top    - GAP - ch },
-      { name:"left",   x: u.left   - GAP - cw,   y: u.top },
-      /* Half-aware mobile / narrow fallback. */
-      { name:"halfOpp", x: (innerWidth - cw)/2,
-                       y: ((u.top + u.bottom)/2 > innerHeight/2)
-                            ? minY
-                            : (innerHeight - ch - EDGE) }
-    ];
-
-    for(var j=0;j<candidates.length;j++){
-      var c = candidates[j];
-      var p2 = _tutPlaceAt(card, c.x, c.y, cw, ch, minX, minY, maxX, maxY);
-      var overlapsAny = false;
-      for(var k=0;k<avoids.length;k++){
-        if(_tutRectsOverlap(p2.rect, avoids[k], 4)){ overlapsAny = true; break; }
-      }
-      if(!overlapsAny){
-        card.style.left = p2.x + "px"; card.style.top = p2.y + "px";
-        return;
-      }
-    }
-
-    /* Last-resort: place in the half OPPOSITE to the target's mid-point
-       even if it slightly overlaps a corner — at least the target stays
-       mostly visible. */
-    var oppY = ((u.top + u.bottom)/2 > innerHeight/2) ? minY : (innerHeight - ch - EDGE);
-    var p3 = _tutPlaceAt(card, (innerWidth-cw)/2, oppY, cw, ch, minX, minY, maxX, maxY);
-    card.style.left = p3.x + "px"; card.style.top = p3.y + "px";
-  }
-  /* Re-run placement after layout-affecting changes, on the next frame
-     so the new content has settled. */
-  function _tutReposition(){
-    requestAnimationFrame(function(){ _tutPositionCard(); });
+    var r = _tutCurTgt.getBoundingClientRect();
+    var cw = card.offsetWidth || 360, ch = card.offsetHeight || 220;
+    var cx = r.left + r.width + 14;
+    var cy = Math.max(12, r.top);
+    if(cx + cw > innerWidth - 12){ cx = r.left; cy = r.bottom + 14; }
+    cx = Math.max(12, Math.min(innerWidth - cw - 12, cx));
+    cy = Math.max(12, Math.min(innerHeight - ch - 12, cy));
+    card.style.left = cx + "px"; card.style.top = cy + "px"; card.style.transform = "";
   }
   function _tutSetNextDisabled(disabled){
     var n = E("tutNext"); if(n) n.disabled = !!disabled;
@@ -11067,20 +10755,11 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         _tutDdSeen = false;
         _tutShowHint("Open the dropdown to see what each option does.");
         _tutSetNextDisabled(true);
-        /* Reposition the card when the dropdown opens — the open list
-           becomes a new avoid-rect, and we want the card to move out of
-           the way of the options BEFORE they're explained. */
-        var onListOpen = function(){ _tutReposition(); };
-        tgt.addEventListener("cdd-open", onListOpen);
         var onceOpen = function(){
           _tutDdSeen = true;
           _tutShowHint("");
           _tutShowOpts(step.options||[]);
           _tutSetNextDisabled(false);
-          /* Card height just grew — re-place so it still clears target
-             and option list. */
-          _tutReposition();
-          tgt.removeEventListener("cdd-open", onListOpen);
           tgt.removeEventListener("cdd-open", onceOpen);
           tgt.removeEventListener("click", onceOpen);
         };
