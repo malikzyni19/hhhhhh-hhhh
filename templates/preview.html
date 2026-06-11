@@ -1421,7 +1421,100 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 .lm-dh-yellow{color:#f59e0b!important}
 #lmDhBody .lm-dh-tbl th{background:#0a1422;color:#8294aa;text-transform:uppercase;font-size:10px;letter-spacing:.08em}
 #lmDhBody .lm-dh-tbl td{color:#a9bdd2;white-space:normal;vertical-align:top}
+/* ═══ Backtest Module ═══ */
+.bt-wrap{padding:0;display:flex;flex-direction:column;min-height:100%}
+.bt-head{display:flex;align-items:flex-start;justify-content:space-between;padding:14px 20px 12px;border-bottom:1px solid var(--border);flex-wrap:wrap;gap:8px}
+.bt-title{font-size:19px;font-weight:700;color:var(--text);letter-spacing:-.3px;line-height:1.2}
+.bt-badge{display:inline-flex;align-items:center;background:var(--accent-soft);border:1px solid rgba(34,211,238,.22);border-radius:20px;padding:2px 9px;font-size:10px;font-weight:700;color:var(--accent);margin:4px 0 2px;font-family:var(--mono);letter-spacing:.5px}
+.bt-sub{font-size:10.5px;color:var(--text-3);margin-top:2px}
+.bt-head-right{display:flex;align-items:center;gap:8px}
+.bt-export-btn{background:var(--bg-card);border:1px solid var(--border-2);border-radius:7px;color:var(--text-2);font-size:11px;font-weight:600;padding:7px 14px;cursor:pointer;display:flex;align-items:center;gap:6px;transition:border-color .15s}
+.bt-export-btn:hover{border-color:var(--accent);color:var(--accent)}
+.bt-ctrl-row{display:flex;align-items:center;gap:7px;padding:10px 20px;background:var(--bg-panel);border-bottom:1px solid var(--border);flex-wrap:wrap}
+.bt-ctrl-label{font-size:10px;color:var(--text-3);font-weight:600;letter-spacing:.5px;margin-right:1px}
+.bt-inp{background:var(--bg-card);border:1px solid var(--border-2);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:12px;font-weight:600;padding:6px 10px;outline:none;width:95px;text-transform:uppercase}
+.bt-inp:focus{border-color:var(--accent)}
+.bt-sel{background:var(--bg-card);border:1px solid var(--border-2);border-radius:6px;color:var(--text);font-size:12px;padding:6px 10px;outline:none;cursor:pointer;min-width:70px}
+.bt-sel:focus{border-color:var(--accent)}
+.bt-rr-group{display:flex;gap:3px}
+.bt-rr-btn{background:var(--bg-card);border:1px solid var(--border-2);border-radius:5px;color:var(--text-2);font-size:11px;font-weight:600;padding:5px 10px;cursor:pointer;transition:all .15s;font-family:var(--mono)}
+.bt-rr-btn.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+.bt-run-btn{background:linear-gradient(135deg,#22d3ee,#0ea5e9);border:none;border-radius:7px;color:#000;font-size:12px;font-weight:800;padding:7px 20px;cursor:pointer;letter-spacing:.4px;margin-left:auto;transition:opacity .15s;display:flex;align-items:center;gap:7px;white-space:nowrap}
+.bt-run-btn:hover{opacity:.86}
+.bt-run-btn:disabled{opacity:.4;cursor:not-allowed}
+.bt-body{padding:14px 20px;display:flex;flex-direction:column;gap:14px;flex:1}
+.bt-kpi-row{display:grid;grid-template-columns:repeat(7,1fr);gap:9px}
+.bt-kpi{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:12px 13px;position:relative;overflow:hidden}
+.bt-kpi::after{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--accent),transparent);opacity:.7}
+.bt-kpi-l{font-size:9px;font-weight:700;color:var(--text-3);letter-spacing:.9px;text-transform:uppercase;margin-bottom:7px}
+.bt-kpi-v{font-size:21px;font-weight:700;font-family:var(--mono);color:var(--text);line-height:1;margin-bottom:3px}
+.bt-kpi-v.g{color:var(--green-2)}.bt-kpi-v.r{color:var(--red-2)}.bt-kpi-v.a{color:var(--accent)}.bt-kpi-v.y{color:var(--yellow)}
+.bt-kpi-s{font-size:10px;color:var(--text-3);line-height:1.3}
+.bt-charts-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.bt-chart-card{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:14px}
+.bt-chart-h{font-size:10px;font-weight:700;color:var(--accent);letter-spacing:1px;text-transform:uppercase;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between}
+.bt-chart-hsub{font-size:9.5px;color:var(--text-3);font-weight:400;letter-spacing:0;text-transform:none}
+.bt-chart-wrap{position:relative;height:170px}
+.bt-section-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.bt-section-title{font-size:12px;font-weight:700;color:var(--text);letter-spacing:.4px}
+.bt-section-sub{font-size:10px;color:var(--text-3);margin-top:1px}
+.bt-tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:8px}
+.bt-tbl{width:100%;border-collapse:collapse;font-size:11px}
+.bt-tbl th{background:rgba(11,17,28,.9);color:var(--text-3);font-weight:700;padding:8px 7px;text-align:left;white-space:nowrap;font-size:9.5px;letter-spacing:.6px;text-transform:uppercase;border-bottom:1px solid var(--border)}
+.bt-tbl td{padding:7px 7px;border-bottom:1px solid rgba(27,38,54,.5);color:var(--text-2);white-space:nowrap;font-size:10.5px}
+.bt-tbl tr:hover td{background:var(--bg-hover)}
+.bt-tbl tr:last-child td{border-bottom:none}
+.bt-tag{display:inline-block;border-radius:4px;font-size:9px;font-weight:700;padding:2px 6px;letter-spacing:.4px;font-family:var(--mono)}
+.bt-tag.bull{background:rgba(34,197,94,.13);color:#4ade80;border:1px solid rgba(34,197,94,.22)}
+.bt-tag.bear{background:rgba(239,68,68,.13);color:#f87171;border:1px solid rgba(239,68,68,.22)}
+.bt-tag.tp1{background:rgba(52,211,153,.13);color:#34d399;border:1px solid rgba(52,211,153,.22)}
+.bt-tag.tp2{background:rgba(34,211,238,.13);color:var(--accent);border:1px solid rgba(34,211,238,.22)}
+.bt-tag.tp3{background:rgba(99,102,241,.15);color:#a5b4fc;border:1px solid rgba(99,102,241,.22)}
+.bt-tag.sl{background:rgba(251,113,133,.13);color:#fb7185;border:1px solid rgba(251,113,133,.22)}
+.bt-tag.amb{background:rgba(251,191,36,.13);color:#fbbf24;border:1px solid rgba(251,191,36,.22)}
+.bt-tag.unr{background:rgba(148,163,184,.1);color:#94a3b8;border:1px solid rgba(148,163,184,.18)}
+.bt-hit-y{color:var(--green-2);font-weight:700;font-family:var(--mono);font-size:11px}
+.bt-hit-n{color:var(--text-3);font-family:var(--mono);font-size:11px}
+.bt-num{font-family:var(--mono);font-size:10.5px}
+.bt-empty{padding:50px 20px;text-align:center;color:var(--text-3);font-size:12px;line-height:1.8}
+.bt-loading{display:flex;align-items:center;justify-content:center;gap:10px;padding:80px;color:var(--text-3);font-size:12px}
+.bt-spin{width:18px;height:18px;border:2px solid var(--border-2);border-top-color:var(--accent);border-radius:50%;animation:bt-spin .75s linear infinite;flex-shrink:0}
+@keyframes bt-spin{to{transform:rotate(360deg)}}
+.bt-err{padding:14px 16px;background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.2);border-radius:8px;color:var(--red-2);font-size:11.5px;line-height:1.6}
+.bt-page-wrap{display:none}
+.bt-page-wrap.active{display:flex;flex-direction:column;gap:14px}
+.bt-scaffold{text-align:center;padding:50px 20px}
+.bt-scaffold h3{font-size:15px;font-weight:700;color:var(--text);margin-bottom:8px}
+.bt-scaffold p{font-size:11px;color:var(--text-3);line-height:1.7;max-width:380px;margin:0 auto 12px}
+.bt-pager{display:flex;align-items:center;gap:6px;justify-content:flex-end;margin-top:6px}
+.bt-pager span{font-size:10.5px;color:var(--text-3)}
+.bt-pager-btn{background:var(--bg-card);border:1px solid var(--border-2);border-radius:5px;color:var(--text-2);font-size:10.5px;padding:3px 9px;cursor:pointer}
+.bt-pager-btn:hover{border-color:var(--accent);color:var(--accent)}
+.bt-pager-btn:disabled{opacity:.33;cursor:not-allowed}
+.bt-last-run{margin:8px 8px 6px;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border-2);border-radius:8px}
+.bt-lr-h{font-size:9px;font-weight:700;color:var(--text-3);letter-spacing:.9px;text-transform:uppercase;margin-bottom:7px}
+.bt-lr-kv{display:flex;justify-content:space-between;margin-bottom:4px}
+.bt-lr-k{font-size:10.5px;color:var(--text-3)}
+.bt-lr-v{font-family:var(--mono);color:var(--text);font-weight:600;font-size:10.5px}
+.bt-lr-btn{display:block;width:100%;margin-top:8px;background:var(--accent-soft);border:1px solid rgba(34,211,238,.25);border-radius:6px;color:var(--accent);font-size:10.5px;font-weight:700;padding:6px;cursor:pointer;text-align:center;transition:background .15s}
+.bt-lr-btn:hover{background:var(--accent-soft-2)}
+.bt-settings-card{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:10px}
+.bt-settings-h{font-size:10px;font-weight:700;color:var(--accent);letter-spacing:1px;text-transform:uppercase;margin-bottom:10px}
+.bt-settings-row{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid rgba(27,38,54,.5);font-size:11px}
+.bt-settings-row:last-child{border-bottom:none}
+.bt-settings-k{color:var(--text-3)}
+.bt-settings-v{font-family:var(--mono);font-weight:600;color:var(--accent)}
+.bt-compare-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.bt-compare-card{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:14px}
+.bt-compare-h{font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:10px}
+.bt-compare-h.bull{color:#4ade80}.bt-compare-h.bear{color:#f87171}
+.bt-run-form{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:20px;max-width:520px}
+.bt-run-form-row{margin-bottom:12px}
+.bt-run-form-label{font-size:10.5px;font-weight:600;color:var(--text-2);margin-bottom:5px;display:block}
+.bt-run-form-inp{background:var(--bg-panel);border:1px solid var(--border-2);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:12px;padding:8px 12px;outline:none;width:100%}
+.bt-run-form-inp:focus{border-color:var(--accent)}
 </style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 </head>
 <body>
 <div class="viewport"><div class="frame">
@@ -4640,6 +4733,56 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       _bindLmSidebarEvents(aside);
       return;
     }
+    /* Backtest sidebar */
+    if(v==="backtest"){
+      if(!_origSidebarHTML) _origSidebarHTML=aside.innerHTML;
+      var lr=_btState&&_btState.lastRun;
+      aside.innerHTML=
+        '<div class="side-label">BACKTEST</div>'+
+        '<div class="nav-item active" data-btpage="overview" role="button" tabindex="0">'+
+          '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>'+
+          '<div><div class="nt">Overview</div><div class="ns">Dashboard & KPIs</div></div>'+
+        '</div>'+
+        '<div class="nav-item" data-btpage="run" role="button" tabindex="0">'+
+          '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>'+
+          '<div><div class="nt">Run Backtest</div><div class="ns">Configure & execute</div></div>'+
+        '</div>'+
+        '<div class="nav-item" data-btpage="replay" role="button" tabindex="0">'+
+          '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.51"/></svg>'+
+          '<div><div class="nt">Replay Events</div><div class="ns">Formation timeline</div></div>'+
+        '</div>'+
+        '<div class="nav-item" data-btpage="outcomes" role="button" tabindex="0">'+
+          '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>'+
+          '<div><div class="nt">Outcomes</div><div class="ns">TP / SL performance</div></div>'+
+        '</div>'+
+        '<div class="nav-item" data-btpage="analytics" role="button" tabindex="0">'+
+          '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>'+
+          '<div><div class="nt">Analytics</div><div class="ns">Deep breakdowns</div></div>'+
+        '</div>'+
+        '<div class="nav-item" data-btpage="tradelog" role="button" tabindex="0">'+
+          '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>'+
+          '<div><div class="nt">Trade Log</div><div class="ns">Full event table</div></div>'+
+        '</div>'+
+        '<div class="nav-item" data-btpage="compare" role="button" tabindex="0">'+
+          '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/><line x1="2" y1="20" x2="22" y2="20"/></svg>'+
+          '<div><div class="nt">Compare</div><div class="ns">Bull vs bear split</div></div>'+
+        '</div>'+
+        '<div class="nav-item" data-btpage="settings" role="button" tabindex="0">'+
+          '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>'+
+          '<div><div class="nt">Settings</div><div class="ns">Engine config</div></div>'+
+        '</div>'+
+        '<div class="side-spacer"></div>'+
+        '<div class="bt-last-run">'+
+          '<div class="bt-lr-h">Last Backtest</div>'+
+          '<div class="bt-lr-kv"><span class="bt-lr-k">Pair</span><span class="bt-lr-v">'+(lr?lr.pair:"—")+'</span></div>'+
+          '<div class="bt-lr-kv"><span class="bt-lr-k">TF</span><span class="bt-lr-v">'+(lr?lr.tf:"—")+'</span></div>'+
+          '<div class="bt-lr-kv"><span class="bt-lr-k">Candles</span><span class="bt-lr-v">'+(lr?lr.candles:"—")+'</span></div>'+
+          '<div class="bt-lr-kv"><span class="bt-lr-k">Done</span><span class="bt-lr-v">'+(lr?lr.done:"—")+'</span></div>'+
+          '<button class="bt-lr-btn" onclick="_btSwitchPage(\'overview\')">View Report</button>'+
+        '</div>';
+      _bindBtSidebarEvents(aside);
+      return;
+    }
     /* Scanner and all other views — restore original sidebar */
     if(_origSidebarHTML){
       aside.innerHTML=_origSidebarHTML;
@@ -4692,6 +4835,10 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     }
     if(v==="tools"){
       renderMarketToolsInto(scroll);
+      return;
+    }
+    if(v==="backtest"){
+      renderBacktestInto(scroll);
       return;
     }
     stopLiveMonitorPolling();
@@ -11023,6 +11170,664 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       _maybeOffer();
     }, true);
   })();
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     BACKTEST MODULE
+     ═══════════════════════════════════════════════════════════════════════ */
+  var _btState={data:null,page:"overview",rr:[1,2,3],charts:{},tblPage:0,lastRun:null};
+
+  function _bindBtSidebarEvents(aside){
+    [].forEach.call(aside.querySelectorAll("[data-btpage]"),function(item){
+      item.addEventListener("click",function(){ _btSwitchPage(item.getAttribute("data-btpage")); });
+      item.addEventListener("keydown",function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); item.click(); } });
+    });
+  }
+
+  function _btSwitchPage(page){
+    _btState.page=page;
+    [].forEach.call(document.querySelectorAll(".bt-page-wrap"),function(el){
+      el.classList.toggle("active",el.getAttribute("data-btpage")===page);
+    });
+    var aside=document.querySelector(".side");
+    if(aside){
+      [].forEach.call(aside.querySelectorAll("[data-btpage]"),function(x){x.classList.remove("active");});
+      var ai=aside.querySelector("[data-btpage='"+page+"']");
+      if(ai) ai.classList.add("active");
+    }
+    if(_btState.data){
+      if(page==="replay")   _btRenderReplayPage(_btState.data);
+      else if(page==="outcomes")  _btRenderOutcomesPage(_btState.data);
+      else if(page==="analytics") _btRenderAnalyticsPage(_btState.data);
+      else if(page==="tradelog")  { _btState.tblPage=0; _btRenderTradeLog(_btState.data); }
+      else if(page==="compare")   _btRenderComparePage(_btState.data);
+    }
+  }
+
+  function renderBacktestInto(scroll){
+    var rr=_btState.rr;
+    function rrBtn(v){ return '<button class="bt-rr-btn'+(rr.indexOf(v)>=0?" on":"")+'" data-rr="'+v+'">'+v+'R</button>'; }
+    scroll.innerHTML=
+      '<div class="bt-wrap">'+
+        '<div class="bt-head">'+
+          '<div>'+
+            '<div class="bt-title">Backtest Overview</div>'+
+            '<div class="bt-badge" id="btSymBadge">BTCUSDT &bull; 1H</div>'+
+            '<div class="bt-sub">OB Replay Engine &bull; First Touch Outcomes Connected</div>'+
+          '</div>'+
+          '<div class="bt-head-right">'+
+            '<button class="bt-export-btn" id="btExportBtn">'+
+              '<svg style="width:13px;height:13px;stroke:currentColor;fill:none;stroke-linecap:round;stroke-linejoin:round" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>'+
+              'Export Report'+
+            '</button>'+
+          '</div>'+
+        '</div>'+
+        '<div class="bt-ctrl-row">'+
+          '<span class="bt-ctrl-label">Pair</span>'+
+          '<input class="bt-inp" id="btInpPair" value="BTCUSDT" maxlength="12" />'+
+          '<span class="bt-ctrl-label" style="margin-left:5px">TF</span>'+
+          '<select class="bt-sel" id="btSelTf">'+
+            '<option value="5m">5m</option><option value="15m">15m</option><option value="30m">30m</option>'+
+            '<option value="1h" selected>1H</option><option value="4h">4H</option><option value="1d">1D</option>'+
+          '</select>'+
+          '<span class="bt-ctrl-label" style="margin-left:5px">Candles</span>'+
+          '<select class="bt-sel" id="btSelCandles">'+
+            '<option value="500">500</option><option value="1000">1000</option><option value="2000">2000</option>'+
+            '<option value="3000" selected>3000</option><option value="4000">4000</option>'+
+          '</select>'+
+          '<span class="bt-ctrl-label" style="margin-left:5px">R/R</span>'+
+          '<div class="bt-rr-group" id="btRrGroup">'+rrBtn(1)+rrBtn(2)+rrBtn(3)+'</div>'+
+          '<button class="bt-run-btn" id="btRunBtn">'+
+            '<svg style="width:13px;height:13px;stroke:currentColor;fill:none" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>'+
+            'Run Backtest'+
+          '</button>'+
+        '</div>'+
+        '<div class="bt-body" id="btBody">'+
+          /* Overview */
+          '<div class="bt-page-wrap active" data-btpage="overview">'+
+            '<div id="btOverviewContent">'+
+              '<div class="bt-empty">'+
+                '<div style="font-size:32px;opacity:.25;margin-bottom:10px">&#9711;</div>'+
+                '<div style="font-size:13px;font-weight:600;color:var(--text-2);margin-bottom:6px">No backtest data yet</div>'+
+                '<div style="font-size:11px">Select a pair and timeframe, then click <b style="color:var(--accent)">Run Backtest</b>.</div>'+
+              '</div>'+
+            '</div>'+
+          '</div>'+
+          /* Run Backtest */
+          '<div class="bt-page-wrap" data-btpage="run">'+
+            '<div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:12px">Run Backtest Configuration</div>'+
+            '<div class="bt-run-form">'+
+              '<div class="bt-run-form-row"><label class="bt-run-form-label">Symbol</label><input class="bt-run-form-inp" id="btRfPair" value="BTCUSDT" /></div>'+
+              '<div class="bt-run-form-row"><label class="bt-run-form-label">Timeframe</label>'+
+              '<select class="bt-run-form-inp" id="btRfTf"><option value="5m">5m</option><option value="15m">15m</option><option value="30m">30m</option><option value="1h" selected>1H</option><option value="4h">4H</option><option value="1d">1D</option></select></div>'+
+              '<div class="bt-run-form-row"><label class="bt-run-form-label">Candle Count</label><input class="bt-run-form-inp" id="btRfCandles" type="number" value="3000" min="500" max="4000" /></div>'+
+              '<div class="bt-run-form-row"><label class="bt-run-form-label">R/R Targets</label><div class="bt-rr-group" id="btRfRr">'+rrBtn(1)+rrBtn(2)+rrBtn(3)+'</div></div>'+
+              '<div style="margin-top:16px"><button class="bt-run-btn" id="btRunFormBtn" style="margin-left:0"><svg style="width:13px;height:13px;stroke:currentColor;fill:none" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>Run Backtest</button></div>'+
+            '</div>'+
+          '</div>'+
+          /* Replay Events */
+          '<div class="bt-page-wrap" data-btpage="replay">'+
+            '<div id="btReplayContent" class="bt-scaffold"><h3>Replay Events</h3><p>Run a backtest to see the OB formation and first-touch timeline.</p></div>'+
+          '</div>'+
+          /* Outcomes */
+          '<div class="bt-page-wrap" data-btpage="outcomes">'+
+            '<div id="btOutcomesContent" class="bt-scaffold"><h3>Outcomes</h3><p>Run a backtest to see TP / SL outcome statistics.</p></div>'+
+          '</div>'+
+          /* Analytics */
+          '<div class="bt-page-wrap" data-btpage="analytics">'+
+            '<div id="btAnalyticsContent" class="bt-scaffold"><h3>Analytics</h3><p>Run a backtest to see detailed analytics and comparison charts.</p></div>'+
+          '</div>'+
+          /* Trade Log */
+          '<div class="bt-page-wrap" data-btpage="tradelog">'+
+            '<div id="btTradeLogContent" class="bt-scaffold"><h3>Trade Log</h3><p>Run a backtest to view the full raw event log.</p></div>'+
+          '</div>'+
+          /* Compare */
+          '<div class="bt-page-wrap" data-btpage="compare">'+
+            '<div id="btCompareContent" class="bt-scaffold"><h3>Compare</h3><p>Run a backtest to compare Bullish vs Bearish OB performance.</p></div>'+
+          '</div>'+
+          /* Settings */
+          '<div class="bt-page-wrap" data-btpage="settings">'+
+            _btSettingsPageHTML()+
+          '</div>'+
+        '</div>'+
+      '</div>';
+
+    /* RR toggle — both control bar and run form */
+    function _bindRrGroup(groupId){
+      var g=document.getElementById(groupId); if(!g) return;
+      [].forEach.call(g.querySelectorAll(".bt-rr-btn"),function(btn){
+        btn.addEventListener("click",function(){
+          var v=parseFloat(btn.getAttribute("data-rr"));
+          var idx=_btState.rr.indexOf(v);
+          if(idx>=0){ if(_btState.rr.length>1) _btState.rr.splice(idx,1); }
+          else { _btState.rr.push(v); _btState.rr.sort(function(a,b){return a-b;}); }
+          [].forEach.call(document.querySelectorAll(".bt-rr-btn"),function(b){
+            b.classList.toggle("on",_btState.rr.indexOf(parseFloat(b.getAttribute("data-rr")))>=0);
+          });
+        });
+      });
+    }
+    _bindRrGroup("btRrGroup");
+    _bindRrGroup("btRfRr");
+
+    /* Sync pair/tf/candles between top bar and run form */
+    function _sync(a,b){
+      var ea=document.getElementById(a), eb=document.getElementById(b); if(!ea||!eb) return;
+      ea.addEventListener("change",function(){eb.value=ea.value;}); ea.addEventListener("input",function(){eb.value=ea.value;});
+      eb.addEventListener("change",function(){ea.value=eb.value;}); eb.addEventListener("input",function(){ea.value=eb.value;});
+    }
+    _sync("btInpPair","btRfPair"); _sync("btSelTf","btRfTf"); _sync("btSelCandles","btRfCandles");
+
+    var runBtn=document.getElementById("btRunBtn");
+    if(runBtn) runBtn.addEventListener("click",_btRunBacktest);
+
+    var rfBtn=document.getElementById("btRunFormBtn");
+    if(rfBtn) rfBtn.addEventListener("click",function(){ _btSwitchPage("overview"); _btRunBacktest(); });
+
+    var expBtn=document.getElementById("btExportBtn");
+    if(expBtn) expBtn.addEventListener("click",_btExport);
+
+    if(_btState.data) _btApplyData(_btState.data);
+  }
+
+  function _btSettingsPageHTML(){
+    return '<div>'+
+      '<div class="bt-settings-card">'+
+        '<div class="bt-settings-h">Engine Configuration</div>'+
+        '<div class="bt-settings-row"><span class="bt-settings-k">Version</span><span class="bt-settings-v">V1 — Single Pair</span></div>'+
+        '<div class="bt-settings-row"><span class="bt-settings-k">Entry Rule</span><span class="bt-settings-v">zone_high</span></div>'+
+        '<div class="bt-settings-row"><span class="bt-settings-k">Stop Rule</span><span class="bt-settings-v">Close beyond zone</span></div>'+
+        '<div class="bt-settings-row"><span class="bt-settings-k">RR Presets</span><span class="bt-settings-v">1R / 2R / 3R</span></div>'+
+        '<div class="bt-settings-row"><span class="bt-settings-k">OB Detection</span><span class="bt-settings-v">Precise mode (hl2 src)</span></div>'+
+        '<div class="bt-settings-row"><span class="bt-settings-k">Mitigated OBs</span><span class="bt-settings-v">Included in replay</span></div>'+
+        '<div class="bt-settings-row"><span class="bt-settings-k">Candle Source</span><span class="bt-settings-v">Binance Futures</span></div>'+
+      '</div>'+
+      '<div class="bt-settings-card">'+
+        '<div class="bt-settings-h">V1 Limits</div>'+
+        '<div class="bt-settings-row"><span class="bt-settings-k">Max Pairs</span><span class="bt-settings-v">1</span></div>'+
+        '<div class="bt-settings-row"><span class="bt-settings-k">Max Candles</span><span class="bt-settings-v">4000</span></div>'+
+        '<div class="bt-settings-row"><span class="bt-settings-k">Multi-leg TP/SL</span><span class="bt-settings-v">Not supported</span></div>'+
+        '<div class="bt-settings-row"><span class="bt-settings-k">Walk-forward</span><span class="bt-settings-v">Not supported</span></div>'+
+      '</div>'+
+      '<div class="bt-settings-card" style="background:rgba(34,211,238,.03);border-color:rgba(34,211,238,.13)">'+
+        '<div class="bt-settings-h" style="color:var(--text-2)">Notes</div>'+
+        '<p style="font-size:11px;color:var(--text-3);line-height:1.7">Entry is always <b style="color:var(--text-2)">zone_high</b> for both bullish and bearish OBs. Stop loss triggers only on a candle <b style="color:var(--text-2)">close</b> beyond the zone — wick touches do not trigger SL. All historical OBs including later-mitigated ones are captured.</p>'+
+      '</div>'+
+    '</div>';
+  }
+
+  function _btRunBacktest(){
+    var pair=(document.getElementById("btInpPair")||{}).value||"BTCUSDT";
+    pair=pair.trim().toUpperCase(); if(!pair.endsWith("USDT")) pair+=("USDT");
+    var tf=(document.getElementById("btSelTf")||{}).value||"1h";
+    var candles=parseInt((document.getElementById("btSelCandles")||{}).value)||3000;
+    var rr=_btState.rr.slice(); if(!rr.length) rr=[1,2,3];
+
+    function setLoading(on){
+      var b=document.getElementById("btRunBtn"); if(!b) return;
+      b.disabled=on;
+      b.innerHTML=on
+        ?'<div class="bt-spin" style="width:12px;height:12px;border-width:2px;margin:0"></div>Running…'
+        :'<svg style="width:13px;height:13px;stroke:currentColor;fill:none" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>Run Backtest';
+      var b2=document.getElementById("btRunFormBtn"); if(b2) b2.disabled=on;
+    }
+
+    _btSwitchPage("overview");
+    var oc=document.getElementById("btOverviewContent");
+    if(oc) oc.innerHTML='<div class="bt-loading"><div class="bt-spin"></div>Fetching '+pair+' '+tf.toUpperCase()+' &mdash; '+candles+' candles&hellip;</div>';
+    setLoading(true);
+
+    fetch("/api/backtest/ob-historical",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({symbol:pair,timeframe:tf,candle_count:candles,
+        exchange:"binance",market:"perpetual",rr_values:rr,
+        entry_rule:"zone_high",stop_rule:"close_beyond_zone",include_parity:false})
+    })
+    .then(function(r){return r.json();})
+    .then(function(data){
+      setLoading(false);
+      _btState.data=data;
+      if(data.ok){
+        _btApplyData(data);
+        _btUpdateLastRun(pair,tf,candles);
+      } else {
+        if(oc) oc.innerHTML='<div class="bt-err"><b>Error:</b> '+esc(data.error||"Unknown error")+'<br><span style="opacity:.65;font-size:10px">'+esc(data.details||"")+'</span></div>';
+      }
+    })
+    .catch(function(err){
+      setLoading(false);
+      if(oc) oc.innerHTML='<div class="bt-err"><b>Network error:</b> '+String(err)+'</div>';
+    });
+  }
+
+  function _btApplyData(data){
+    var prm=data.params||{};
+    var badge=document.getElementById("btSymBadge");
+    if(badge) badge.textContent=(prm.symbol||"—")+" • "+(prm.timeframe||"—").toUpperCase();
+    _btRenderOverview(data);
+    var p=_btState.page;
+    if(p==="replay")   _btRenderReplayPage(data);
+    else if(p==="outcomes")  _btRenderOutcomesPage(data);
+    else if(p==="analytics") _btRenderAnalyticsPage(data);
+    else if(p==="tradelog")  { _btState.tblPage=0; _btRenderTradeLog(data); }
+    else if(p==="compare")   _btRenderComparePage(data);
+  }
+
+  function _btRenderOverview(data){
+    var cs=data.candle_summary||{}, rs=data.replay_summary||{}, os=data.outcome_summary||{}, par=data.parity||{};
+    var hrr=os.hit_rate_by_rr||{};
+    var rr1=hrr["1"]||{}, rr2=hrr["2"]||{}, rr3=hrr["3"]||{};
+    var events=data.events||[];
+    var oc=document.getElementById("btOverviewContent"); if(!oc) return;
+
+    oc.innerHTML=
+      '<div class="bt-kpi-row">'+
+        _btKpiCard("OB Events",rs.ob_events_detected,"","from "+cs.returned+" candles")+
+        _btKpiCard("First Touches",rs.touched_events,"","of "+rs.ob_events_detected+" total")+
+        _btKpiCard("1R Hit Rate",_btFmt(rr1.rate_pct,"%"),"a",(rr1.hits||0)+" hits")+
+        _btKpiCard("2R Hit Rate",_btFmt(rr2.rate_pct,"%"),"a",(rr2.hits||0)+" hits")+
+        _btKpiCard("3R Hit Rate",_btFmt(rr3.rate_pct,"%"),"y",(rr3.hits||0)+" hits")+
+        _btKpiCard("Avg Max R",_btFmt(os.avg_max_r_reached,"R"),"g","avg excursion")+
+        _btKpiCard("Parity",par.enabled?_btFmt(par.match_rate_pct,"%"):"—","","vs detect_obs_all")+
+      '</div>'+
+      '<div class="bt-charts-grid">'+
+        '<div class="bt-chart-card"><div class="bt-chart-h">Hit Rate by Target <span class="bt-chart-hsub">1R / 2R / 3R</span></div><div class="bt-chart-wrap"><canvas id="btCHitRate"></canvas></div></div>'+
+        '<div class="bt-chart-card"><div class="bt-chart-h">Outcome Distribution <span class="bt-chart-hsub">TP / SL / Ambiguous / Unresolved</span></div><div class="bt-chart-wrap"><canvas id="btCOutcome"></canvas></div></div>'+
+        '<div class="bt-chart-card"><div class="bt-chart-h">Cumulative R <span class="bt-chart-hsub">Expectancy curve by event sequence</span></div><div class="bt-chart-wrap"><canvas id="btCCumR"></canvas></div></div>'+
+        '<div class="bt-chart-card"><div class="bt-chart-h">Max R Strength Buckets <span class="bt-chart-hsub">Achieved R distribution</span></div><div class="bt-chart-wrap"><canvas id="btCBucket"></canvas></div></div>'+
+      '</div>'+
+      '<div>'+
+        '<div class="bt-section-head">'+
+          '<div><div class="bt-section-title">Recent OB Events (First Touches)</div>'+
+          '<div class="bt-section-sub">'+Math.min(events.length,50)+' of '+(os.eligible_touched||0)+' touched events</div></div>'+
+        '</div>'+
+        '<div class="bt-tbl-wrap">'+
+          '<table class="bt-tbl"><thead><tr>'+
+            '<th>#</th><th>Symbol</th><th>Time (UTC)</th><th>Type</th>'+
+            '<th>Zone High</th><th>Zone Low</th><th>Touch Price</th>'+
+            '<th>Outcome</th><th>First Touch (UTC)</th><th>Max R</th>'+
+            '<th>1R</th><th>2R</th><th>3R</th><th>Mitigated</th>'+
+          '</tr></thead>'+
+          '<tbody id="btEvtTbody">'+_btEvtRows(events,0,50)+'</tbody>'+
+          '</table>'+
+        '</div>'+
+        _btMakePager(events.length,50,_btState.tblPage,"btEvtTbody",events)+
+      '</div>';
+
+    setTimeout(function(){ _btBuildCharts(data); },0);
+  }
+
+  function _btKpiCard(label,val,colorCls,sub){
+    return '<div class="bt-kpi">'+
+      '<div class="bt-kpi-l">'+label+'</div>'+
+      '<div class="bt-kpi-v'+(colorCls?" "+colorCls:"")+'">'+(val===null||val===undefined?"—":val)+'</div>'+
+      '<div class="bt-kpi-s">'+(sub||"&nbsp;")+'</div>'+
+    '</div>';
+  }
+
+  function _btFmt(v,suffix){
+    if(v===null||v===undefined) return "—";
+    var n=parseFloat(v); if(isNaN(n)) return "—";
+    if(suffix==="%") return n.toFixed(1)+"%";
+    if(suffix==="R") return n.toFixed(2)+"R";
+    return String(n);
+  }
+
+  function _btFmtTime(ts){
+    if(!ts) return "—";
+    try{ var d=new Date(ts); return d.toISOString().replace("T"," ").substring(0,16); }
+    catch(e){ return String(ts); }
+  }
+
+  function _btEvtRows(events,startIdx,pageSize){
+    var slice=events.slice(startIdx,startIdx+pageSize);
+    var eligible=[]; for(var i=0;i<slice.length;i++){ if(slice[i].simulation&&slice[i].simulation.eligible) eligible.push({ev:slice[i],idx:startIdx+i}); }
+    if(!eligible.length) return '<tr><td colspan="14" style="text-align:center;padding:30px;color:var(--text-3)">No touched events</td></tr>';
+    var html="";
+    for(var j=0;j<eligible.length;j++){
+      var ev=eligible[j].ev, n=eligible[j].idx+1, sim=ev.simulation||{};
+      var hr=sim.hit_rr||{};
+      function chk(k){ return (hr[k]||hr[k+".0"])?"<span class='bt-hit-y'>&#10003;</span>":"<span class='bt-hit-n'>&middot;</span>"; }
+      html+='<tr>'+
+        '<td class="bt-num">'+n+'</td>'+
+        '<td class="bt-num">'+(ev.symbol||"—")+'</td>'+
+        '<td class="bt-num">'+_btFmtTime(ev.formation_time)+'</td>'+
+        '<td>'+(ev.type==="bullish"?'<span class="bt-tag bull">Bullish</span>':'<span class="bt-tag bear">Bearish</span>')+'</td>'+
+        '<td class="bt-num">'+(ev.zone_high?Number(ev.zone_high).toFixed(2):"—")+'</td>'+
+        '<td class="bt-num">'+(ev.zone_low?Number(ev.zone_low).toFixed(2):"—")+'</td>'+
+        '<td class="bt-num">'+(sim.entry_price?Number(sim.entry_price).toFixed(2):"—")+'</td>'+
+        '<td>'+_btOutcomeTag(sim.first_outcome,sim.first_tp_rr)+'</td>'+
+        '<td class="bt-num">'+_btFmtTime(ev.first_touch_time)+'</td>'+
+        '<td class="bt-num" style="color:var(--accent)">'+(sim.max_r_reached!=null?sim.max_r_reached.toFixed(2)+"R":"—")+'</td>'+
+        '<td>'+chk("1")+'</td><td>'+chk("2")+'</td><td>'+chk("3")+'</td>'+
+        '<td>'+(ev.later_mitigated?'<span style="color:var(--yellow);font-size:10px">Yes</span>':'<span style="color:var(--text-3)">No</span>')+'</td>'+
+      '</tr>';
+    }
+    return html;
+  }
+
+  function _btOutcomeTag(outcome,firstTpRr){
+    if(!outcome) return "—";
+    if(outcome==="tp"){
+      var r=firstTpRr;
+      if(r===1||r==="1"||r===1.0) return '<span class="bt-tag tp1">TP 1R</span>';
+      if(r===2||r==="2"||r===2.0) return '<span class="bt-tag tp2">TP 2R</span>';
+      if(r===3||r==="3"||r===3.0) return '<span class="bt-tag tp3">TP 3R</span>';
+      return '<span class="bt-tag tp1">TP '+r+'R</span>';
+    }
+    if(outcome==="sl")        return '<span class="bt-tag sl">SL First</span>';
+    if(outcome==="ambiguous") return '<span class="bt-tag amb">Ambiguous</span>';
+    if(outcome==="unresolved")return '<span class="bt-tag unr">Unresolved</span>';
+    if(outcome==="no_touch")  return '<span class="bt-tag unr">No Touch</span>';
+    return outcome;
+  }
+
+  function _btMakePager(total,ps,cp,tbodyId,events){
+    var pages=Math.ceil(total/ps); if(pages<=1) return "";
+    return '<div class="bt-pager"><span>Page '+(cp+1)+' of '+pages+'</span>'+
+      '<button class="bt-pager-btn" id="btPg_prev"'+(cp===0?" disabled":"")+'>&#8249; Prev</button>'+
+      '<button class="bt-pager-btn" id="btPg_next"'+(cp>=pages-1?" disabled":"")+'>Next &#8250;</button></div>';
+  }
+
+  function _btBindPagerEvents(total,ps,tbodyId,events){
+    var pages=Math.ceil(total/ps);
+    var prev=document.getElementById("btPg_prev"), next=document.getElementById("btPg_next");
+    if(prev) prev.addEventListener("click",function(){
+      if(_btState.tblPage>0){ _btState.tblPage--; _btRefreshEvtTable(events); }
+    });
+    if(next) next.addEventListener("click",function(){
+      if(_btState.tblPage<pages-1){ _btState.tblPage++; _btRefreshEvtTable(events); }
+    });
+  }
+
+  function _btRefreshEvtTable(events){
+    var tbody=document.getElementById("btEvtTbody");
+    if(tbody) tbody.innerHTML=_btEvtRows(events,_btState.tblPage*50,50);
+    var pg=document.querySelector(".bt-pager");
+    if(pg){ pg.outerHTML=_btMakePager(events.length,50,_btState.tblPage,"btEvtTbody",events); _btBindPagerEvents(events.length,50,"btEvtTbody",events); }
+  }
+
+  function _btBuildCharts(data){
+    if(typeof Chart==="undefined") return;
+    var os=data.outcome_summary||{}, hrr=os.hit_rate_by_rr||{}, events=data.events||[];
+    var gcfg={responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:"#8a9bb3",font:{family:"JetBrains Mono,monospace",size:10},boxWidth:12}}},
+      scales:{x:{ticks:{color:"#566377",font:{size:10}},grid:{color:"rgba(27,38,54,.5)"}},
+              y:{ticks:{color:"#566377",font:{size:10}},grid:{color:"rgba(27,38,54,.5)"}}}};
+    function dc(id){ if(_btState.charts[id]){ try{_btState.charts[id].destroy();}catch(e){} delete _btState.charts[id]; } }
+
+    /* 1 — Hit Rate bar */
+    dc("btCHitRate");
+    var c1=document.getElementById("btCHitRate");
+    if(c1){
+      _btState.charts["btCHitRate"]=new Chart(c1,{type:"bar",
+        data:{labels:["1R","2R","3R"],datasets:[{label:"Hit %",
+          data:[(hrr["1"]||{}).rate_pct||0,(hrr["2"]||{}).rate_pct||0,(hrr["3"]||{}).rate_pct||0],
+          backgroundColor:["rgba(52,211,153,.7)","rgba(34,211,238,.7)","rgba(99,102,241,.7)"],
+          borderColor:["#34d399","#22d3ee","#818cf8"],borderWidth:1,borderRadius:5}]},
+        options:Object.assign({},gcfg,{plugins:{legend:{display:false},
+          tooltip:{callbacks:{label:function(ctx){var rk=["1","2","3"][ctx.dataIndex];var h=(hrr[rk]||{}).hits||0;return ctx.parsed.y.toFixed(1)+"% ("+h+" hits)";}}}}
+          ,scales:{x:{ticks:{color:"#8a9bb3"},grid:{color:"rgba(27,38,54,.5)"}},
+                   y:{min:0,max:100,ticks:{color:"#566377",callback:function(v){return v+"%"}},grid:{color:"rgba(27,38,54,.5)"}}}}
+        )});
+    }
+
+    /* 2 — Outcome donut */
+    dc("btCOutcome");
+    var c2=document.getElementById("btCOutcome");
+    if(c2){
+      var elig=os.eligible_touched||0;
+      _btState.charts["btCOutcome"]=new Chart(c2,{type:"doughnut",
+        data:{labels:["TP First","SL First","Ambiguous","Unresolved"],
+          datasets:[{data:[os.tp_first||0,os.sl_first||0,os.ambiguous||0,os.unresolved||0],
+            backgroundColor:["rgba(52,211,153,.8)","rgba(251,113,133,.8)","rgba(251,191,36,.8)","rgba(148,163,184,.6)"],
+            borderColor:["#34d399","#fb7185","#fbbf24","#94a3b8"],borderWidth:1,hoverOffset:6}]},
+        options:{responsive:true,maintainAspectRatio:false,cutout:"62%",
+          plugins:{legend:{position:"right",labels:{color:"#8a9bb3",font:{family:"JetBrains Mono,monospace",size:10},boxWidth:12,padding:10}},
+          tooltip:{callbacks:{label:function(ctx){var p=elig>0?(ctx.raw/elig*100).toFixed(1):"0.0";return " "+ctx.raw+" ("+p+"%)";}}}}
+        }});
+    }
+
+    /* 3 — Cumulative R line */
+    dc("btCCumR");
+    var c3=document.getElementById("btCCumR");
+    if(c3){
+      var cumR=0,cumD=[0],lbls=["0"];
+      var elig2=events.filter(function(e){return e.simulation&&e.simulation.eligible;});
+      elig2.sort(function(a,b){return (a.formation_bar||0)-(b.formation_bar||0);});
+      for(var i=0;i<elig2.length;i++){
+        var sim=elig2[i].simulation;
+        if(sim.first_outcome==="tp") cumR+=sim.first_tp_rr||1;
+        else if(sim.first_outcome==="sl") cumR-=1;
+        cumD.push(Math.round(cumR*100)/100); lbls.push(String(i+1));
+      }
+      var step=Math.max(1,Math.ceil(lbls.length/120));
+      var dl=[],dd=[];
+      for(var j=0;j<lbls.length;j+=step){dl.push(lbls[j]);dd.push(cumD[j]);}
+      if(dl[dl.length-1]!==lbls[lbls.length-1]){dl.push(lbls[lbls.length-1]);dd.push(cumD[cumD.length-1]);}
+      _btState.charts["btCCumR"]=new Chart(c3,{type:"line",
+        data:{labels:dl,datasets:[{label:"Cumulative R",data:dd,borderColor:"#22d3ee",
+          backgroundColor:"rgba(34,211,238,.07)",borderWidth:1.5,pointRadius:0,pointHoverRadius:4,fill:true,tension:.3}]},
+        options:Object.assign({},gcfg,{plugins:{legend:{display:false},tooltip:{mode:"index",intersect:false}},
+          scales:{x:{display:true,ticks:{color:"#566377",font:{size:9},maxTicksLimit:8},grid:{color:"rgba(27,38,54,.4)"}},
+                  y:{ticks:{color:"#566377",font:{size:10},callback:function(v){return v+"R"}},grid:{color:"rgba(27,38,54,.5)"}}}})
+      });
+    }
+
+    /* 4 — Max R buckets horizontal bar */
+    dc("btCBucket");
+    var c4=document.getElementById("btCBucket");
+    if(c4){
+      var bk=[0,0,0,0];
+      var elig3=events.filter(function(e){return e.simulation&&e.simulation.eligible;});
+      elig3.forEach(function(e){ var mr=e.simulation.max_r_reached||0; if(mr<1)bk[0]++;else if(mr<2)bk[1]++;else if(mr<3)bk[2]++;else bk[3]++; });
+      var tot=elig3.length||1;
+      _btState.charts["btCBucket"]=new Chart(c4,{type:"bar",
+        data:{labels:["0–1R","1–2R","2–3R","≥3R"],
+          datasets:[{label:"Events",data:bk,
+            backgroundColor:["rgba(148,163,184,.5)","rgba(34,211,238,.5)","rgba(52,211,153,.6)","rgba(99,102,241,.7)"],
+            borderColor:["#94a3b8","#22d3ee","#34d399","#818cf8"],borderWidth:1,borderRadius:4}]},
+        options:Object.assign({},gcfg,{indexAxis:"y",plugins:{legend:{display:false},
+          tooltip:{callbacks:{label:function(ctx){return " "+ctx.raw+" ("+((ctx.raw/tot)*100).toFixed(1)+"%)";}}}}
+          ,scales:{x:{ticks:{color:"#566377",font:{size:10}},grid:{color:"rgba(27,38,54,.5)"}},
+                   y:{ticks:{color:"#8a9bb3",font:{size:10,family:"JetBrains Mono,monospace"}},grid:{display:false}}}})
+      });
+    }
+
+    _btBindPagerEvents(events.length,50,"btEvtTbody",events);
+  }
+
+  function _btUpdateLastRun(pair,tf,candles){
+    _btState.lastRun={pair:pair,tf:tf.toUpperCase(),candles:candles,
+      done:new Date().toISOString().replace("T"," ").substring(0,16)+" UTC"};
+    var lr=document.querySelector(".bt-last-run");
+    if(lr&&_btState.lastRun){
+      var lrData=_btState.lastRun;
+      lr.innerHTML='<div class="bt-lr-h">Last Backtest</div>'+
+        '<div class="bt-lr-kv"><span class="bt-lr-k">Pair</span><span class="bt-lr-v">'+lrData.pair+'</span></div>'+
+        '<div class="bt-lr-kv"><span class="bt-lr-k">TF</span><span class="bt-lr-v">'+lrData.tf+'</span></div>'+
+        '<div class="bt-lr-kv"><span class="bt-lr-k">Candles</span><span class="bt-lr-v">'+lrData.candles+'</span></div>'+
+        '<div class="bt-lr-kv"><span class="bt-lr-k">Done</span><span class="bt-lr-v">'+lrData.done+'</span></div>'+
+        '<button class="bt-lr-btn" onclick="_btSwitchPage(\'overview\')">View Report</button>';
+    }
+  }
+
+  function _btExport(){
+    if(!_btState.data){ return; }
+    try{
+      var blob=new Blob([JSON.stringify(_btState.data,null,2)],{type:"application/json"});
+      var url=URL.createObjectURL(blob);
+      var a=document.createElement("a");
+      a.href=url; a.download="zyni_bt_"+((_btState.data.params||{}).symbol||"export")+"_"+Date.now()+".json";
+      a.click(); setTimeout(function(){URL.revokeObjectURL(url);},2000);
+    }catch(e){}
+  }
+
+  /* ── Other pages ─────────────────────────────────────────────────────────── */
+  function _btRenderReplayPage(data){
+    var el=document.getElementById("btReplayContent"); if(!el) return;
+    var events=data.events||[], rs=data.replay_summary||{};
+    var shown=events.slice(0,150);
+    var html='<div style="margin-bottom:10px"><div class="bt-section-title">OB Formation Timeline</div>'+
+      '<div class="bt-section-sub">'+rs.ob_events_detected+' events &mdash; '+rs.replay_bars+' bars replayed</div></div>'+
+      '<div class="bt-tbl-wrap"><table class="bt-tbl"><thead><tr>'+
+      '<th>#</th><th>Type</th><th>Formation (UTC)</th><th>Zone High</th><th>Zone Low</th>'+
+      '<th>Touch</th><th>First Touch (UTC)</th><th>Candles</th><th>Mitigated</th>'+
+      '</tr></thead><tbody>';
+    for(var i=0;i<shown.length;i++){
+      var ev=shown[i];
+      html+='<tr>'+
+        '<td class="bt-num">'+(i+1)+'</td>'+
+        '<td>'+(ev.type==="bullish"?'<span class="bt-tag bull">Bull</span>':'<span class="bt-tag bear">Bear</span>')+'</td>'+
+        '<td class="bt-num">'+_btFmtTime(ev.formation_time)+'</td>'+
+        '<td class="bt-num">'+(ev.zone_high?Number(ev.zone_high).toFixed(2):"—")+'</td>'+
+        '<td class="bt-num">'+(ev.zone_low?Number(ev.zone_low).toFixed(2):"—")+'</td>'+
+        '<td>'+(ev.touch_status==="touched"?'<span style="color:var(--green-2)">&#10003; Touched</span>':'<span style="color:var(--text-3)">Untouched</span>')+'</td>'+
+        '<td class="bt-num">'+_btFmtTime(ev.first_touch_time)+'</td>'+
+        '<td class="bt-num">'+(ev.candles_to_first_touch!=null?ev.candles_to_first_touch:"—")+'</td>'+
+        '<td>'+(ev.later_mitigated?'<span style="color:var(--yellow)">Yes</span>':'<span style="color:var(--text-3)">No</span>')+'</td>'+
+      '</tr>';
+    }
+    html+='</tbody></table></div>';
+    if(events.length>150) html+='<div style="font-size:10px;color:var(--text-3);margin-top:6px;text-align:center">Showing first 150 of '+events.length+' events</div>';
+    el.innerHTML=html;
+  }
+
+  function _btRenderOutcomesPage(data){
+    var el=document.getElementById("btOutcomesContent"); if(!el) return;
+    var os=data.outcome_summary||{}, hrr=os.hit_rate_by_rr||{};
+    function row(k,v){ return '<div class="bt-settings-row"><span class="bt-settings-k">'+k+'</span><span class="bt-settings-v">'+v+'</span></div>'; }
+    el.innerHTML=
+      '<div class="bt-settings-card">'+
+        '<div class="bt-settings-h">Outcome Summary</div>'+
+        row("Eligible Touched",os.eligible_touched||0)+row("No Touch",os.no_touch||0)+
+        row("TP First",os.tp_first||0)+row("SL First",os.sl_first||0)+
+        row("Ambiguous",os.ambiguous||0)+row("Unresolved",os.unresolved||0)+
+      '</div>'+
+      '<div class="bt-settings-card">'+
+        '<div class="bt-settings-h">R/R Performance</div>'+
+        row("1R Hit Rate",_btFmt((hrr["1"]||{}).rate_pct,"%")+" ("+(hrr["1"]||{}).hits+" hits)")+
+        row("2R Hit Rate",_btFmt((hrr["2"]||{}).rate_pct,"%")+" ("+(hrr["2"]||{}).hits+" hits)")+
+        row("3R Hit Rate",_btFmt((hrr["3"]||{}).rate_pct,"%")+" ("+(hrr["3"]||{}).hits+" hits)")+
+        row("Avg Max R",_btFmt(os.avg_max_r_reached,"R"))+
+        row("Avg Max Adverse R",_btFmt(os.avg_max_adverse_r,"R"))+
+      '</div>'+
+      '<div class="bt-compare-grid">'+
+        '<div class="bt-compare-card"><div class="bt-compare-h bull">&#11044; Bullish OBs</div>'+
+          row("Count",(os.bullish||{}).count||0)+row("TP First",(os.bullish||{}).tp_first||0)+
+          row("SL First",(os.bullish||{}).sl_first||0)+row("Avg Max R",_btFmt((os.bullish||{}).avg_max_r_reached,"R"))+
+        '</div>'+
+        '<div class="bt-compare-card"><div class="bt-compare-h bear">&#11044; Bearish OBs</div>'+
+          row("Count",(os.bearish||{}).count||0)+row("TP First",(os.bearish||{}).tp_first||0)+
+          row("SL First",(os.bearish||{}).sl_first||0)+row("Avg Max R",_btFmt((os.bearish||{}).avg_max_r_reached,"R"))+
+        '</div>'+
+      '</div>';
+  }
+
+  function _btRenderAnalyticsPage(data){
+    var el=document.getElementById("btAnalyticsContent"); if(!el) return;
+    var os=data.outcome_summary||{}, bull=os.bullish||{}, bear=os.bearish||{};
+    function pct(n,d){ return d&&d>0?((n||0)/d*100).toFixed(1)+"%":"—"; }
+    el.innerHTML=
+      '<div class="bt-charts-grid">'+
+        '<div class="bt-chart-card"><div class="bt-chart-h">TP Rate — Bull vs Bear</div><div class="bt-chart-wrap"><canvas id="btAnC1"></canvas></div></div>'+
+        '<div class="bt-chart-card"><div class="bt-chart-h">Avg Max R — Bull vs Bear</div><div class="bt-chart-wrap"><canvas id="btAnC2"></canvas></div></div>'+
+      '</div>'+
+      '<div class="bt-settings-card" style="margin-top:0">'+
+        '<div class="bt-settings-h">Aggregate</div>'+
+        '<div class="bt-settings-row"><span class="bt-settings-k">Total Eligible</span><span class="bt-settings-v">'+(os.eligible_touched||0)+'</span></div>'+
+        '<div class="bt-settings-row"><span class="bt-settings-k">Win Rate (TP First)</span><span class="bt-settings-v">'+pct(os.tp_first,os.eligible_touched)+'</span></div>'+
+        '<div class="bt-settings-row"><span class="bt-settings-k">Loss Rate (SL First)</span><span class="bt-settings-v">'+pct(os.sl_first,os.eligible_touched)+'</span></div>'+
+        '<div class="bt-settings-row"><span class="bt-settings-k">Avg Max R</span><span class="bt-settings-v">'+_btFmt(os.avg_max_r_reached,"R")+'</span></div>'+
+        '<div class="bt-settings-row"><span class="bt-settings-k">Avg Max Adverse R</span><span class="bt-settings-v">'+_btFmt(os.avg_max_adverse_r,"R")+'</span></div>'+
+      '</div>';
+    setTimeout(function(){
+      if(typeof Chart==="undefined") return;
+      function dc(id){if(_btState.charts[id]){try{_btState.charts[id].destroy();}catch(e){}delete _btState.charts[id];}}
+      var scl={x:{ticks:{color:"#8a9bb3"},grid:{color:"rgba(27,38,54,.5)"}},y:{ticks:{color:"#566377"},grid:{color:"rgba(27,38,54,.5)"}}};
+      dc("btAnC1");var a1=document.getElementById("btAnC1");
+      if(a1) _btState.charts["btAnC1"]=new Chart(a1,{type:"bar",
+        data:{labels:["Bullish","Bearish"],datasets:[
+          {label:"TP %",data:[bull.count?(bull.tp_first/bull.count*100).toFixed(1):0,bear.count?(bear.tp_first/bear.count*100).toFixed(1):0],backgroundColor:["rgba(34,197,94,.6)","rgba(239,68,68,.6)"],borderColor:["#22c55e","#ef4444"],borderWidth:1,borderRadius:5},
+          {label:"SL %",data:[bull.count?(bull.sl_first/bull.count*100).toFixed(1):0,bear.count?(bear.sl_first/bear.count*100).toFixed(1):0],backgroundColor:["rgba(34,197,94,.2)","rgba(239,68,68,.2)"],borderColor:["rgba(34,197,94,.5)","rgba(239,68,68,.5)"],borderWidth:1,borderRadius:5}
+        ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:"#8a9bb3",font:{size:10},boxWidth:12}}},scales:Object.assign({},scl,{y:{min:0,max:100,ticks:{color:"#566377",callback:function(v){return v+"%"}},grid:{color:"rgba(27,38,54,.5)"}}})}});
+      dc("btAnC2");var a2=document.getElementById("btAnC2");
+      if(a2) _btState.charts["btAnC2"]=new Chart(a2,{type:"bar",
+        data:{labels:["Bullish","Bearish"],datasets:[{label:"Avg Max R",
+          data:[bull.avg_max_r_reached||0,bear.avg_max_r_reached||0],
+          backgroundColor:["rgba(34,211,238,.5)","rgba(99,102,241,.5)"],borderColor:["#22d3ee","#818cf8"],borderWidth:1,borderRadius:5}]},
+        options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:Object.assign({},scl,{y:{min:0,ticks:{color:"#566377",callback:function(v){return v+"R"}},grid:{color:"rgba(27,38,54,.5)"}}})}});
+    },0);
+  }
+
+  function _btRenderTradeLog(data){
+    var el=document.getElementById("btTradeLogContent"); if(!el) return;
+    var events=data.events||[];
+    var allE=events.filter(function(e){return e.simulation&&e.simulation.eligible;});
+    var ps=100, cp=_btState.tblPage, start=cp*ps;
+    var pages=Math.ceil(allE.length/ps);
+    el.innerHTML=
+      '<div class="bt-section-head"><div><div class="bt-section-title">Full Trade Log</div>'+
+      '<div class="bt-section-sub">'+allE.length+' eligible events &bull; page '+(cp+1)+' of '+Math.max(1,pages)+'</div></div></div>'+
+      '<div class="bt-tbl-wrap"><table class="bt-tbl"><thead><tr>'+
+      '<th>#</th><th>Type</th><th>Formation (UTC)</th><th>Zone High</th><th>Zone Low</th>'+
+      '<th>Entry</th><th>Risk</th><th>Outcome</th><th>Max R</th><th>Adv R</th><th>1R</th><th>2R</th><th>3R</th>'+
+      '</tr></thead><tbody>'+_btTlRows(allE,start,ps)+'</tbody></table></div>'+
+      (pages>1?'<div class="bt-pager"><span>Page '+(cp+1)+' of '+pages+'</span>'+
+        '<button class="bt-pager-btn" id="btTlPrev"'+(cp===0?" disabled":"")+'>&#8249; Prev</button>'+
+        '<button class="bt-pager-btn" id="btTlNext"'+(cp>=pages-1?" disabled":"")+'>Next &#8250;</button></div>':"");
+    var prev=document.getElementById("btTlPrev"), next=document.getElementById("btTlNext");
+    if(prev) prev.addEventListener("click",function(){ if(_btState.tblPage>0){_btState.tblPage--;_btRenderTradeLog(data);} });
+    if(next) next.addEventListener("click",function(){ if(_btState.tblPage<pages-1){_btState.tblPage++;_btRenderTradeLog(data);} });
+  }
+
+  function _btTlRows(events,start,ps){
+    var slice=events.slice(start,start+ps);
+    if(!slice.length) return '<tr><td colspan="13" style="text-align:center;padding:30px;color:var(--text-3)">No data</td></tr>';
+    var html="";
+    slice.forEach(function(ev,i){
+      var sim=ev.simulation||{}, hr=sim.hit_rr||{};
+      function chk(k){return (hr[k]||hr[k+".0"])?"<span class='bt-hit-y'>&#10003;</span>":"<span class='bt-hit-n'>&middot;</span>";}
+      html+='<tr>'+
+        '<td class="bt-num">'+(start+i+1)+'</td>'+
+        '<td>'+(ev.type==="bullish"?'<span class="bt-tag bull">Bull</span>':'<span class="bt-tag bear">Bear</span>')+'</td>'+
+        '<td class="bt-num">'+_btFmtTime(ev.formation_time)+'</td>'+
+        '<td class="bt-num">'+(ev.zone_high?Number(ev.zone_high).toFixed(2):"—")+'</td>'+
+        '<td class="bt-num">'+(ev.zone_low?Number(ev.zone_low).toFixed(2):"—")+'</td>'+
+        '<td class="bt-num">'+(sim.entry_price?Number(sim.entry_price).toFixed(2):"—")+'</td>'+
+        '<td class="bt-num">'+(sim.risk_amount?Number(sim.risk_amount).toFixed(2):"—")+'</td>'+
+        '<td>'+_btOutcomeTag(sim.first_outcome,sim.first_tp_rr)+'</td>'+
+        '<td class="bt-num" style="color:var(--accent)">'+(sim.max_r_reached!=null?sim.max_r_reached.toFixed(2)+"R":"—")+'</td>'+
+        '<td class="bt-num" style="color:var(--red-2)">'+(sim.max_adverse_r!=null?sim.max_adverse_r.toFixed(2)+"R":"—")+'</td>'+
+        '<td>'+chk("1")+'</td><td>'+chk("2")+'</td><td>'+chk("3")+'</td>'+
+      '</tr>';
+    });
+    return html;
+  }
+
+  function _btRenderComparePage(data){
+    var el=document.getElementById("btCompareContent"); if(!el) return;
+    var os=data.outcome_summary||{}, bull=os.bullish||{}, bear=os.bearish||{};
+    function pct(n,d){ return d&&d>0?((n||0)/d*100).toFixed(1)+"%":"—"; }
+    function row(k,v){ return '<div class="bt-settings-row"><span class="bt-settings-k">'+k+'</span><span class="bt-settings-v">'+v+'</span></div>'; }
+    el.innerHTML=
+      '<div style="margin-bottom:10px"><div class="bt-section-title">Bullish vs Bearish Comparison</div></div>'+
+      '<div class="bt-compare-grid">'+
+        '<div class="bt-compare-card"><div class="bt-compare-h bull">&#11044; Bullish OBs</div>'+
+          row("Count",bull.count||0)+row("TP First",bull.tp_first||0)+row("SL First",bull.sl_first||0)+
+          row("Win Rate",pct(bull.tp_first,bull.count))+row("Avg Max R",_btFmt(bull.avg_max_r_reached,"R"))+
+        '</div>'+
+        '<div class="bt-compare-card"><div class="bt-compare-h bear">&#11044; Bearish OBs</div>'+
+          row("Count",bear.count||0)+row("TP First",bear.tp_first||0)+row("SL First",bear.sl_first||0)+
+          row("Win Rate",pct(bear.tp_first,bear.count))+row("Avg Max R",_btFmt(bear.avg_max_r_reached,"R"))+
+        '</div>'+
+      '</div>'+
+      '<div class="bt-settings-card">'+
+        '<div class="bt-settings-h">Touched vs Untouched</div>'+
+        row("Touched",(os.eligible_touched||0)+" ("+pct(os.eligible_touched,os.events_total)+")")+
+        row("Untouched",(os.no_touch||0)+" ("+pct(os.no_touch,os.events_total)+")")+
+      '</div>';
+  }
 
   /* Tag body with current view so per-view CSS (Task 3) applies before
      the first switchView() call. */
