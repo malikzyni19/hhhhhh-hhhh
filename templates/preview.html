@@ -4569,7 +4569,10 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var outer=document.querySelector('.lm-outer');
     if(outer) outer.setAttribute('data-workspace',ws);
     // Refresh terminal active-item display when entering terminal workspace
-    if(ws==='terminal') try{_lmUpdateTerminalActiveItem();}catch(e){}
+    if(ws==='terminal'){
+      try{_lmUpdateTerminalActiveItem();}catch(e){}
+      try{window._lmTodRefreshDraft();}catch(e){}
+    }
     // Persist selection
     try{localStorage.setItem('zyni_lm_workspace',ws);}catch(e){}
     _lmActiveWorkspace=ws;
@@ -6438,6 +6441,9 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       // #lmRight is empty (e.g. user navigated away then back) — re-render without losing selection
       _lmRenderRight(_lmSelItem);
     }
+    // Sync terminal header + draft after auto-select (covers page-load with terminal workspace restored)
+    try{_lmUpdateTerminalActiveItem();}catch(e){}
+    if(_lmActiveWorkspace==='terminal') try{window._lmTodRefreshDraft();}catch(e){}
     // mark active card
     if(_lmSelItem){
       var selIdx=-1;
