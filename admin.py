@@ -4016,3 +4016,45 @@ def security_bot_delete():
     except Exception as _e:
         db.session.rollback()
         return jsonify({"error": str(_e)}), 500
+
+
+# ── Purge ALL non-admin users (one-shot cleanup) ───────────────────────────────
+# POST /admin/security/purge-non-admins
+# Requires JSON body: {"confirm": "DELETE ALL NON ADMIN USERS"}
+# Admin accounts are NEVER touched regardless of role.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@admin_bp.route("/security/purge-non-admins", methods=["POST"])
+@admin_required
+def security_purge_non_admins():
+    """Delete every user whose role is not 'admin'. Requires explicit confirmation."""
+    data = request.get_json(force=True) or {}
+    if data.get("confirm") != "DELETE ALL NON ADMIN USERS":
+        return jsonify({
+            "error": "Missing confirmation. Send JSON: {\"confirm\": \"DELETE ALL NON ADMIN USERS\"}"
+        }), 400
+
+    try:
+        targets = User.query.filter(User.role != "admin").all()
+        count   = len(targets)
+        if count == 0:
+            return jsonify({"ok": True, "deleted": 0, "message": "No non-admin users found."})
+
+        sample = [u.username for u in targets[:30]]
+        for u in targets:
+            EmailVerification.query.filter_by(user_id=u.id).delete()
+            LoginHistory.query.filter_by(user_id=u.id).delete()
+            DailyTokenUsage.query.filter_by(user_id=u.id).delete()
+            GuestDevice.query.filter_by(user_id=u.id).delete()
+            db.session.delete(u)
+
+        db.session.commit()
+        _log_action(
+            "purge_non_admins",
+            f"Deleted ALL {count} non-admin users. Sample: {', '.join(sample)}",
+        )
+        return jsonify({"ok": True, "deleted": count, "sample": sample})
+
+    except Exception as _e:
+        db.session.rollback()
+        return jsonify({"error": str(_e)}), 500
