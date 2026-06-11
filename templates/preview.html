@@ -8392,17 +8392,24 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         if(resEl){
           resEl.style.display='';
           if(d&&d.ok){
-            var upd=d.updated||0;
-            var pnl=d.total_unrealized_pnl!=null?parseFloat(d.total_unrealized_pnl):null;
+            // Support both nested (position_update/position_summary) and flat keys
+            var pu=d.position_update||{};
+            var ps=d.position_summary||{};
+            var upd=(pu.updated!=null?pu.updated:d.updated)||0;
+            var skp=(pu.skipped!=null?pu.skipped:d.skipped)||0;
+            var pnlVal=ps.total_unrealized_pnl!=null?ps.total_unrealized_pnl:d.total_unrealized_pnl;
+            var pnl=pnlVal!=null?parseFloat(pnlVal):null;
             var pnlStr=pnl===null?'':(pnl>=0?' · PnL +':' · PnL ')+pnl.toFixed(4);
+            var skpStr=skp>0?' · '+skp+' skipped':'';
             resEl.style.color=upd>0?'var(--green-2,#4ade80)':'var(--text-3)';
-            resEl.innerHTML='Updated '+upd+' position'+(upd===1?'':'s')+pnlStr;
+            resEl.innerHTML='Updated '+upd+' position'+(upd===1?'':'s')+pnlStr+skpStr;
           } else {
             resEl.style.color='var(--red-2,#f87171)';
             resEl.innerHTML='<b>Failed:</b> '+esc((d&&d.error)||'Unknown error');
           }
         }
         window._lmPapRefreshPositions();
+        window._lmPapRefreshAccount&&window._lmPapRefreshAccount();
       })
       .catch(function(){
         if(btn){ btn.disabled=false; btn.textContent='Refresh PnL'; }

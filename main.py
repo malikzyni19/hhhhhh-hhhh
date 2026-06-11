@@ -28100,7 +28100,7 @@ def api_lm_paper_orders(item_id):
 @app.route("/api/live-monitor/items/<int:item_id>/paper-positions", methods=["GET"])
 @login_required
 def api_lm_paper_positions(item_id):
-    """Phase 11.7B: Return paper positions for the given item (fill engine: 11.7C)."""
+    """Phase 11.8: Return paper positions with PnL summary fields."""
     uid, _ = _current_user_id_and_user()
     if not uid:
         return jsonify({"error": "no_user"}), 401
@@ -28108,8 +28108,18 @@ def api_lm_paper_positions(item_id):
     row = _LMI117pp.query.filter_by(id=item_id, user_id=uid).first()
     if not row:
         return jsonify({"error": "item_not_found"}), 404
-    positions = _lm_get_paper_positions(uid, item_id=item_id)
-    return jsonify({"ok": True, "positions": positions, "count": len(positions)})
+    summary = _lm_get_paper_position_summary(uid, item_id=item_id)
+    positions = summary.get("positions", [])
+    return jsonify({
+        "ok":                  summary.get("ok", True),
+        "positions":           positions,
+        "count":               len(positions),
+        "open_count":          summary.get("open_count", 0),
+        "closed_count":        summary.get("closed_count", 0),
+        "total_unrealized_pnl": summary.get("total_unrealized_pnl", 0.0),
+        "total_realized_pnl":  summary.get("total_realized_pnl", 0.0),
+        "source":              "internal_paper",
+    })
 
 
 @app.route("/api/live-monitor/items/<int:item_id>/paper-orders/process-fills", methods=["POST"])
@@ -28226,15 +28236,18 @@ def api_lm_paper_positions_refresh(item_id):
     if not item:
         return jsonify({"error": "item_not_found"}), 404
 
-    # 1. Update mark prices + unrealized_pnl on all open positions for this item
-    mark_result  = _lm_update_paper_position_marks(uid, item_id=item_id)
+    # 1. Update unrealized_pnl on all open positions for this item
+    mark_result   = _lm_update_paper_position_marks(uid, item_id=item_id)
 
-    # 2. Recalculate account equity (sum of unrealized PnL across all open positions)
+    # 2. Recalculate account equity
     equity_result = _lm_recalculate_paper_account_equity(uid)
+
+    # 3. Compact position summary (positions list + totals)
+    pos_summary   = _lm_get_paper_position_summary(uid, item_id=item_id)
 
     now_iso = _dt118.datetime.utcnow().isoformat() + "Z"
 
-    # 3. Snapshot: compact summary (no positions array — keep snapshot lean)
+    # 4. Snapshot: compact key — no positions array, keep lean
     try:
         snap = {}
         if item.snapshot_json:
@@ -28246,6 +28259,7 @@ def api_lm_paper_positions_refresh(item_id):
             "ok":                  mark_result.get("ok", False),
             "processed":           mark_result.get("processed", 0),
             "updated":             mark_result.get("updated", 0),
+            "skipped":             mark_result.get("skipped", 0),
             "total_unrealized_pnl": equity_result.get("unrealized_pnl", 0.0),
             "last_checked_at":     now_iso,
             "source":              "internal_paper",
@@ -28255,18 +28269,20 @@ def api_lm_paper_positions_refresh(item_id):
     except Exception:
         pass
 
-    # 4. ONE timeline event for the refresh (not per position)
+    # 5. ONE timeline event per manual refresh (not per position)
     try:
         ev = _LMEv118(
             user_id=uid,
             item_id=item_id,
             event_type="paper_position_updated",
             event_data=_json118.dumps({
+                "item_id":             item_id,
                 "processed":           mark_result.get("processed", 0),
                 "updated":             mark_result.get("updated", 0),
+                "skipped":             mark_result.get("skipped", 0),
                 "total_unrealized_pnl": equity_result.get("unrealized_pnl", 0.0),
-                "equity":              equity_result.get("equity"),
                 "last_checked_at":     now_iso,
+                "source":              "internal_paper",
             }, default=str),
         )
         _db118.session.add(ev)
@@ -28274,9 +28290,32 @@ def api_lm_paper_positions_refresh(item_id):
     except Exception:
         pass
 
+    _ok = mark_result.get("ok", False)
     return jsonify({
-        "ok":                  mark_result.get("ok", False),
-        "item_id":             item_id,
+        "ok":      _ok,
+        "item_id": item_id,
+        # Nested objects per spec
+        "position_update": {
+            "ok":        _ok,
+            "processed": mark_result.get("processed", 0),
+            "updated":   mark_result.get("updated", 0),
+            "skipped":   mark_result.get("skipped", 0),
+            "results":   mark_result.get("results", []),
+        },
+        "position_summary": {
+            "open_count":           pos_summary.get("open_count", 0),
+            "closed_count":         pos_summary.get("closed_count", 0),
+            "total_unrealized_pnl": pos_summary.get("total_unrealized_pnl", 0.0),
+            "total_realized_pnl":   pos_summary.get("total_realized_pnl", 0.0),
+        },
+        "account": {
+            "cash_balance":   equity_result.get("cash_balance"),
+            "equity":         equity_result.get("equity"),
+            "unrealized_pnl": equity_result.get("unrealized_pnl", 0.0),
+            "realized_pnl":   equity_result.get("realized_pnl", 0.0),
+            "open_positions": equity_result.get("open_positions", 0),
+        },
+        # Flat convenience keys (backward compat for JS)
         "processed":           mark_result.get("processed", 0),
         "updated":             mark_result.get("updated", 0),
         "skipped":             mark_result.get("skipped", 0),
@@ -28284,7 +28323,6 @@ def api_lm_paper_positions_refresh(item_id):
         "equity":              equity_result.get("equity"),
         "cash_balance":        equity_result.get("cash_balance"),
         "last_checked_at":     now_iso,
-        "results":             mark_result.get("results", []),
         "source":              "internal_paper",
         "error":               mark_result.get("error") or equity_result.get("error"),
     })
