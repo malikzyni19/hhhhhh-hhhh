@@ -1,0 +1,1117 @@
+================================================================================
+  ZYNI SMC / SMCSETUPS.COM — BACKTEST V1 AUDIT REPORT — PHASE 0
+  Date: 2026-06-11
+  Status: READ-ONLY AUDIT — NO FILES MODIFIED
+================================================================================
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. EXECUTIVE SUMMARY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+This is a mature, production-grade SMC / Order-Flow scanner codebase with:
+
+  - 32,000+ lines of highly optimized OB / FVG / structure detection logic
+    in main.py alone
+  - A complete, production-proven OB backtest engine (backtest_ob.py, 847 lines)
+  - A multi-exchange candle-fetch layer with time-range support ready for
+    historical backtest use (get_klines_exchange_window)
+  - A pure, deterministic signal-resolution engine (outcome_resolver.py)
+  - Live Monitor Phase 11 (AI trading terminal, paper trading, testnet orders)
+  - A comprehensive database schema covering signals, trades, monitoring, and
+    a BacktestRun model that already exists
+
+For Backtest V1 specifically:
+  - BACKEND: Already ready. backtest_ob.run_ob_backtest() is production-ready,
+    makes no DB writes, and is fully tested. Zero changes needed to existing
+    scanner or live monitor logic.
+  - CANDLE DATA: Ready. get_klines_exchange_window() supports arbitrary
+    time-range fetches for historical backtesting.
+  - RESOLUTION ENGINE: Ready. outcome_resolver._run_resolution_loop() is
+    a pure function with 7 test cases proving correctness.
+  - FRONTEND: Missing. No renderBacktest() function exists. Only a placeholder
+    "This view is not yet implemented" div is rendered.
+  - ROUTE: Missing. No /api/backtest endpoint exists anywhere in main.py.
+
+Risk level for Backtest V1: LOW. All core logic is isolated and reusable.
+No changes to the live scanner or live monitor are required.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2. FILE MAP
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ROOT-LEVEL PYTHON FILES
+────────────────────────────────────────────────────────────────────────────────
+File                     Lines     Category
+────────────────────────────────────────────────────────────────────────────────
+main.py                  32,643    Backend Core — Flask app, routes, OB/FVG/
+                                   structure detection, scanner, candle fetching
+models.py                 1,160    Database Models — All SQLAlchemy entities
+signal_extractor.py      34,609    Scanner Logic — Multi-TF multi-module signal
+                                   detection (DO NOT TOUCH for backtest)
+signal_logger.py         11,132    Signal Persistence — Event logging, audit trail
+outcome_resolver.py         682    Backtest Helper — Signal resolution engine
+                                   (pure core loop is safe to reuse)
+backtest_ob.py              847    Backtest (OB) — Complete OB candle-replay
+                                   backtest engine, diagnostics, Phase 7B–7E
+ob_candidates.py            385    OB Candidate Preview — Live-only OB preview,
+                                   read-only, not relevant to historical backtest
+resolver_audit.py        27,797    Backtest Tracing — Low-level candle replay
+                                   with detailed loss diagnostics
+breaker_quality.py       10,045    Breaker Analysis — Breaker block quality
+auto_resolver_runner.py   8,934    Background Job — Cron-like resolution loop
+admin.py                  large    Admin Backend — User/permission/settings
+permissions.py            7,343    Access Control — Role-based permissions
+migrate.py                3,863    DB Migrations — Schema migration utilities
+check_schema.py           4,133    Schema Validation
+
+DIRECTORIES
+────────────────────────────────────────────────────────────────────────────────
+templates/               Frontend HTML templates
+  preview.html           Main scanner UI (contains Backtest tab stub)
+  index.html             Landing/entry page
+  homepage.html          Homepage
+  admin/                 Admin panel templates
+
+static/                  Static assets
+  (service worker, offline page, icons, images)
+  No standalone backtest JS/CSS files exist yet
+
+live_monitor/            Live Monitor modules (Phases 9–11)
+  automation_policy.py
+  ai_trade_control.py
+  execution_simulation.py
+  paper_trading.py
+  testnet_order_draft.py
+  mtf_orderflow.py
+  smc_orderflow_fusion.py
+  execution_intelligence.py
+
+scripts/                 Ad-hoc utilities
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3. BACKTEST TAB FRONTEND LOCATION (templates/preview.html)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+NAVIGATION BUTTON
+  File:    templates/preview.html
+  Line:    ~1461
+  HTML:    <a href="#" data-view="backtest">Backtest</a>
+  Parent:  #topnav (top navigation bar)
+  ID:      None on the anchor itself; tab activated via data-view attribute
+
+CSS SHOW/HIDE RULES
+  Lines ~362, ~367:
+    body[data-view="backtest"] .insight { display: none !important; }
+    body[data-view="backtest"] .body    { grid-template-columns: 210px 1fr; }
+  Effect: hides the insight panel, forces sidebar + main-content layout
+
+VIEW SWITCHING JAVASCRIPT
+  Function:  switchView(v)
+  Location:  Line ~4685
+  Behavior:
+    1. Sets ST.view = v
+    2. Calls renderSidebarForView(v)
+    3. Sets body[data-view="backtest"] attribute
+    4. Updates topnav active state (lines ~4692–4694)
+    5. For backtest (and other unimplemented views): falls through to
+       the placeholder renderer at line ~4734, which outputs:
+         <div class="view-soon">
+           <h2>Backtest</h2>
+           <p>This view is not yet implemented.</p>
+         </div>
+
+  STATUS: Backtest view is NOT implemented. Only a placeholder exists.
+
+  VIEW_TITLE DEFINITION
+    Line ~4562:  backtest: "Backtest"
+
+CONTENT CONTAINER (where new content must be injected)
+  Element:   document.querySelector(".main-scroll")
+  Used by:   All view renderers (scanner, live monitor, etc.)
+
+WORKING PATTERN TO FOLLOW (Live Monitor example, lines ~4715–4721):
+  if (v === "live" || v === "watchlist") {
+    renderLiveMonitorInto(scroll);
+    startLiveMonitorPolling();
+    loadLiveMonitorItems();
+    loadLiveMonitorSessionContext();
+    loadLiveMonitorAiProviders();
+    return;
+  }
+
+WHERE TO INSERT BACKTEST VIEW CODE (later — NOT NOW):
+  - Add case in switchView() BEFORE the placeholder at line ~4732
+  - Pattern: if (v === "backtest") { renderBacktestInto(scroll); return; }
+  - Add renderBacktestInto(scroll) function definition nearby
+  - New Backtest content div injects into .main-scroll element
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+4. EXISTING OB DETECTION LOGIC (main.py)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+FUNCTION: detect_obs
+  Location:   main.py, line ~2604
+  Signature:  detect_obs(o, h, l, c, v, i_len, s_len, max_ob=5,
+                         ob_positioning="Precise", ob_mitigation="Absolute",
+                         ...)
+  Purpose:    Core OB detection with full Pine-script parity rules.
+              Detects bullish/bearish Order Blocks by finding structural
+              pivot-driven displacement candles.
+  Returns:    List[Dict] — each dict is a full OB record including:
+                type, top, bottom, bar, sourceBar, touches, firstTouchBar,
+                lastTouchBar, mitigated, mitigationBar, isVirgin,
+                onceTouched, currentlyInside, touchSeq, quality scores,
+                TV parity fields
+  Reusable:   YES — pure function, no DB writes, deterministic
+  Risk/Notes: Optional debug params (trace, anchor_mode, extreme_tie_mode)
+              exist — use defaults. Do not add mandatory params, scanner
+              calls this function with positional args.
+
+────────────────────────────────────────────────────────────────────────────────
+
+FUNCTION: detect_obs_all
+  Location:   main.py, line ~3125
+  Signature:  detect_obs_all(o, h, l, c, v, i_len, s_len, max_ob=20)
+  Purpose:    Wrapper around detect_obs that returns all OBs plus BOS
+              tracking metadata. Increases max_ob to capture full history.
+  Returns:    Dict: { "obs": [...], "bos": [...], ... }
+  Reusable:   YES — safe wrapper, good for backtest context building
+  Risk/Notes: None. Safe.
+
+────────────────────────────────────────────────────────────────────────────────
+
+FUNCTION: _compute_ob_touch_meta
+  Location:   main.py, line ~2500
+  Signature:  _compute_ob_touch_meta(ob, h, l, c, n,
+                                     ob_mitigation="Absolute",
+                                     track_mitigation=False,
+                                     clearance_factor=_OB_TOUCH_CLEARANCE)
+  Purpose:    Counts zone touches with clearance-based de-duplication.
+              Determines firstTouchBar, lastTouchBar, mitigated status,
+              mitigationBar, touchSeq (list of touch bar indices).
+  Returns:    Dict with touch metadata
+  Reusable:   YES — pure function, critical for first-touch / virgin OB logic
+  Risk/Notes: _OB_TOUCH_CLEARANCE constant must not be changed without
+              regression testing against backtest_ob.py baseline.
+
+────────────────────────────────────────────────────────────────────────────────
+
+FUNCTION: score_ob_quality
+  Location:   main.py, line ~3485
+  Signature:  score_ob_quality(ob: Dict, o, h, l, c, volume_profile,
+                               settings) -> float
+  Purpose:    Quality scoring (0–100) based on impulse, volume, displacement,
+              zone tightness, and other confluence factors.
+  Returns:    float (score 0–100)
+  Reusable:   YES — pure scoring, used for backtest strength filter
+  Risk/Notes: Requires a volume_profile input; ensure this is constructed
+              from the same candle array used for detection.
+
+────────────────────────────────────────────────────────────────────────────────
+
+FUNCTION: filter_ob
+  Location:   main.py, line ~3727
+  Signature:  filter_ob(ob: Dict, price: float, settings: Dict) -> bool
+  Purpose:    Distance and approach filtering — returns True if OB is
+              within configured approach distance of current price.
+  Returns:    bool
+  Reusable:   YES — but only for live/near-price filtering.
+              For pure historical backtest, may not be needed (all OBs
+              should be tested regardless of distance).
+  Risk/Notes: Low risk. Optional use for Backtest V1.
+
+────────────────────────────────────────────────────────────────────────────────
+
+FUNCTION: _ob_touch_label
+  Location:   main.py, line ~3752
+  Signature:  _ob_touch_label(ob: Dict) -> str
+  Purpose:    Returns human-readable touch bucket label.
+              "virgin" (0 touches), "touch_1", "touch_2", "touch_3_plus"
+  Returns:    str
+  Reusable:   YES — utility, used by backtest_ob.py already
+  Risk/Notes: None. Trivial pure function.
+
+────────────────────────────────────────────────────────────────────────────────
+
+OB METADATA RETURNED TO FRONTEND (per OB dict from detect_obs):
+  {
+    "type":            "bullish" | "bearish",
+    "top":             float  (zone high),
+    "bottom":          float  (zone low),
+    "bar":             int    (formation bar index),
+    "sourceBar":       int    (original extreme bar),
+    "touches":         int    (post-formation touches),
+    "firstTouchBar":   int or None,
+    "lastTouchBar":    int or None,
+    "mitigated":       bool,
+    "mitigationBar":   int or None,
+    "isVirgin":        bool   (touches == 0),
+    "onceTouched":     bool   (touches == 1),
+    "currentlyInside": bool   (last candle inside zone),
+    "touchSeq":        list   (bar indices of each touch event),
+    ... (quality scores, TV parity fields)
+  }
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+5. EXISTING BOS / CHoCH / STRUCTURE LOGIC
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+FUNCTION: detect_pivots
+  Location:   main.py, line ~2321
+  Signature:  detect_pivots(high, low, left, right)
+              -> Tuple[List[bool], List[bool]]
+  Purpose:    Strict pivot high/low detection using left/right lookback bars.
+              Classic swing-point detection, Pine-parity.
+  Returns:    Tuple: (pivot_highs, pivot_lows) — bool arrays same length as input
+  Reusable:   YES — foundational pure function, no side effects
+  Risk/Notes: None. Foundation of all structure detection.
+
+────────────────────────────────────────────────────────────────────────────────
+
+FUNCTION: _detect_pivots_relaxed
+  Location:   main.py, line ~2333
+  Signature:  _detect_pivots_relaxed(high, low, left, right)
+  Purpose:    Debug/diagnostic variant that allows plateau candles (tolerates
+              equal highs/lows in the lookback window).
+  Returns:    Tuple: (pivot_highs, pivot_lows)
+  Reusable:   NO — debug-only, not suitable for production backtest logic
+  Risk/Notes: Do not use in Backtest V1. Exists for diagnostics only.
+
+────────────────────────────────────────────────────────────────────────────────
+
+FUNCTION: detect_structure
+  Location:   main.py, line ~2351
+  Signature:  detect_structure(high, low, close, i_len, s_len)
+              -> Tuple[int, int]
+  Purpose:    Detects internal and structural market trend (1=bullish,
+              -1=bearish, 0=neutral) using pivot-based structure analysis.
+              i_len = internal pivot lookback, s_len = structural lookback.
+  Returns:    Tuple: (itrend, trend) — both int values
+  Reusable:   YES — core structure context for all OB detection
+  Risk/Notes: None. Pure function.
+
+────────────────────────────────────────────────────────────────────────────────
+
+FUNCTION: _lm_detect_structure_events_for_tf
+  Location:   main.py, line ~16039
+  Signature:  _lm_detect_structure_events_for_tf(candles, timeframe, ...)
+              -> list
+  Purpose:    Detects BOS (Break of Structure) and CHoCH (Change of Character)
+              events for a given timeframe. Produces event list used by
+              Live Monitor's structure overlay.
+  Returns:    List[Dict] — each dict: event_type, level, direction,
+              candle_open_time, confirmation_close, swing_left,
+              swing_right, threshold_pct, strength_score, context_json
+  Reusable:   YES — can be used to provide structure context for backtest
+              (e.g., "was structure bullish when this OB formed?")
+  Risk/Notes: Primarily wired to Live Monitor. Safe to call independently
+              with candle arrays. Do not modify.
+
+────────────────────────────────────────────────────────────────────────────────
+
+FUNCTION: _lm_build_structure_summary_for_tf
+  Location:   main.py, line ~16233
+  Signature:  _lm_build_structure_summary_for_tf(events, timeframe) -> dict
+  Purpose:    Aggregates BOS/CHoCH events into a summary context dict.
+              Used to understand overall bullish/bearish bias at a given TF.
+  Returns:    Dict: summary with bullish/bearish break levels
+  Reusable:   YES — optional context enrichment for Backtest V1 results
+  Risk/Notes: None. Pure aggregation function.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+6. EXISTING CANDLE FETCH LOGIC
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+FUNCTION: get_klines
+  Location:   main.py, line ~5910
+  Signature:  get_klines(symbol, interval, limit=300, market="perpetual")
+              -> List[Dict]
+  Purpose:    Primary Binance Futures candle fetcher. Auto-paginates when
+              limit > 1500. Falls back to Binance Spot mirror on geo-block.
+  Exchange:   Binance Futures (/fapi/v1/klines), Spot fallback (/api/v3/klines)
+  Reusable:   YES — primary fetch for Backtest V1 (Binance)
+  Limit:      1500 candles per request (Binance API max)
+
+────────────────────────────────────────────────────────────────────────────────
+
+FUNCTION: get_klines_exchange
+  Location:   main.py, line ~5674
+  Signature:  get_klines_exchange(symbol, interval, limit=300,
+                                  market, exchange) -> List[Dict]
+  Purpose:    Multi-exchange router. Dispatches to Binance, Bybit, OKX,
+              or MEXC based on `exchange` parameter.
+  Reusable:   YES — exchange-agnostic candle fetch
+
+────────────────────────────────────────────────────────────────────────────────
+
+FUNCTION: get_klines_exchange_window    *** KEY FOR BACKTEST V1 ***
+  Location:   main.py, line ~5719
+  Signature:  get_klines_exchange_window(symbol, interval, start_ms,
+                                         end_ms, market, exchange)
+              -> List[Dict]
+  Purpose:    Time-range fetch for backtest use. Accepts Unix millisecond
+              timestamps (start_ms, end_ms). Paginates automatically with
+              a 12-request safety limit. Falls back to spot mirror.
+  Used by:    backtest_ob.py, line ~557 (already production-proven)
+  Reusable:   YES — this is THE function for historical backtest candle fetch
+  Notes:      Already used in production backtest. Supports fetching
+              3000–4000+ candles across multiple pagination calls.
+
+────────────────────────────────────────────────────────────────────────────────
+
+FUNCTION: get_klines_paginated
+  Location:   main.py, line ~6085
+  Signature:  get_klines_paginated(symbol, interval, total_limit, ...)
+  Purpose:    Internal pagination helper used by get_klines()
+  Reusable:   YES (indirectly via get_klines)
+
+────────────────────────────────────────────────────────────────────────────────
+
+FUNCTION: _scan_kline_limit
+  Location:   main.py, line ~5701
+  Signature:  _scan_kline_limit() -> int
+  Purpose:    Returns configured scanner candle-fetch limit (default 1500,
+              configurable via GlobalSetting)
+  Reusable:   NO — scanner-specific setting, backtest should use its own limit
+
+────────────────────────────────────────────────────────────────────────────────
+
+FUNCTION: get_klines_bybit
+  Location:   main.py, line ~5437
+  Signature:  get_klines_bybit(symbol, interval, limit=300, market)
+  Purpose:    Bybit perpetual candle fetcher
+  Reusable:   YES (via get_klines_exchange router)
+
+FUNCTION: get_klines_okx
+  Location:   main.py, line ~5520
+  Signature:  get_klines_okx(symbol, interval, limit=300, market)
+  Purpose:    OKX perpetual candle fetcher
+  Reusable:   YES (via get_klines_exchange router)
+
+FUNCTION: get_klines_mexc
+  Location:   main.py, line ~5611
+  Signature:  get_klines_mexc(symbol, interval, limit=300, market)
+  Purpose:    MEXC perpetual candle fetcher
+  Reusable:   YES (via get_klines_exchange router)
+
+────────────────────────────────────────────────────────────────────────────────
+
+CANDLE NORMALIZATION FORMAT (all exchanges normalized to):
+  {
+    "openTime":     int    (Unix milliseconds),
+    "open":         float,
+    "high":         float,
+    "low":          float,
+    "close":        float,
+    "volume":       float,
+    "closeTime":    int    (optional, Unix ms),
+    "quoteVolume":  float  (optional, from Binance),
+    "tradeCount":   int    (optional),
+    "takerBuyBase": float  (optional),
+    "takerBuyQuote":float  (optional),
+  }
+
+BINANCE RAW ARRAY MAPPING:
+  [0]  openTime       [1]  open          [2]  high         [3]  low
+  [4]  close          [5]  volume        [6]  closeTime    [7]  quoteVolume
+  [8]  tradeCount     [9]  takerBuyBase  [10] takerBuyQuote
+
+FIELDS INCLUDED: open, high, low, close, volume, quote volume, number of trades,
+                 taker buy base volume, taker buy quote volume — ALL PRESENT.
+
+TIMEFRAMES SUPPORTED:
+  "1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d"
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+7. EXISTING BACKTEST-RELATED FILES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+FILE: backtest_ob.py (847 lines — Phases 7B through 7E + 8B)
+──────────────────────────────────────────────────────────────────────────────
+  Status:   COMPLETE, production-ready OB backtest engine.
+
+  Entry Point:
+    run_ob_backtest(
+      limit=100, timeframe=None, pair=None, setup_type=None,
+      source="live", result_filter=None, stop_mode="wick",
+      freshness="all", strength_min=0.0, max_touch_count=None
+    ) -> dict
+
+  What it does:
+    1. Queries SignalEvent table for OB module signals
+       (setup_type in {OB_APPROACH, OB_CONSOL})
+    2. Fetches pre-signal candles (1500 bars before detection) and
+       post-signal candles (expiry window after detection) using
+       get_klines_exchange_window()
+    3. Runs 4 candle-replay variants per signal:
+       - res_wick  : loss if wick crosses OB boundary
+       - res_close : loss only if candle CLOSES beyond boundary (strict)
+       - res_small : smaller bounce threshold (counterfactual)
+       - res_cce   : candle-close entry mode (counterfactual)
+    4. Classifies loss reason per signal:
+       wick_stop_only, close_stop_also_lost, same_candle_stop, etc.
+    5. Measures MFE/MAE (max favourable/adverse excursion from entry)
+    6. Builds per-signal loss diagnostics and aggregated summaries
+
+  Phases implemented:
+    Phase 7B: Loss reason classification + counterfactual variants
+    Phase 7C: Stop mode selector (wick vs. close)
+    Phase 7D: First-touch freshness filter (virgin vs. already_touched)
+    Phase 8B: Signal-time clearance-based touch count (no lookahead bias)
+
+  Output structure:
+    {
+      "ok": bool,
+      "summary": {
+        checked, won, lost, expired, ambiguous, entered, errors
+      },
+      "freshness_summary": {
+        first_touch, already_touched, unknown
+      },
+      "strength_summary": {
+        with_true_ob_strength, missing_true_ob_strength, ...
+      },
+      "touch_bucket_summary": {
+        virgin, touch_1, touch_2, touch_3_plus, unknown
+      },
+      "by_timeframe": [
+        { timeframe, checked, won, lost, win_rate_entered, ... }
+      ],
+      "by_setup_type": [
+        { setup_type, checked, won, lost, ... }
+      ],
+      "signals": [
+        {
+          signal_id, pair, timeframe, setup_type, direction, score,
+          result, loss_reason_detail, mfe_pct, mae_pct,
+          cf_alt_stop, cf_small_target, cf_candle_close_entry,
+          freshness_status, obTouchBucket, ...
+        }
+      ]
+    }
+
+  DB Writes:     NONE. Fully read-only.
+  Reusable:      YES — already production-proven, Phase 8B touch-count
+                 uses signal-time clearance (no lookahead bias).
+  Recommendation: REUSE AS-IS for Backtest V1. Do not duplicate.
+                  Backtest V1 route simply calls run_ob_backtest() and
+                  returns the JSON to the frontend.
+
+────────────────────────────────────────────────────────────────────────────────
+
+FILE: ob_candidates.py (385 lines — Phase 8A)
+──────────────────────────────────────────────────────────────────────────────
+  Status:   COMPLETE, read-only live preview engine.
+
+  Entry Point:
+    run_ob_candidates(
+      limit=100, timeframe=None, setup_type=None, strength_min=0.0,
+      max_distance_pct=1.0, source="live", pair=None,
+      entry_mode="zone_middle", tp_mode="rr", tp_pct=0.30, rr=1.5
+    ) -> dict
+
+  What it does:
+    1. Queries live OB signals from SignalEvent
+    2. Fetches current market prices (batch, no per-pair REST polling):
+       - Checks app PAIR_CACHE (scanner-populated) first
+       - Falls back to single batch /fapi/v1/ticker/price call
+       - Final fallback: detected_price from SignalEvent row
+    3. Classifies each candidate:
+       TOUCHING_ZONE, APPROACHING_ZONE, TOO_FAR, BEYOND_ZONE, MISSING_PRICE
+    4. Computes preview trade plan (entry, SL, TP) — no order placed
+    5. Filters by strength, distance, expiry
+
+  DB Writes:     NONE. Read-only.
+  Reusable:      NO — live-only (requires current prices). Not applicable
+                 to historical backtest.
+  Recommendation: IGNORE for Backtest V1.
+
+────────────────────────────────────────────────────────────────────────────────
+
+FILE: outcome_resolver.py (682 lines)
+──────────────────────────────────────────────────────────────────────────────
+  Status:   COMPLETE, production signal-resolution engine.
+
+  Public Functions:
+    resolve_pending_signals(app, limit=50) -> dict
+    resolve_pending_admin(limit=20, dry_run=False,
+                          module_filter=None) -> dict
+    resolve_one(signal, db, dry_run=False) -> dict
+
+  Core Pure Function (KEY FOR BACKTEST):
+    _run_resolution_loop(
+      zone_high, zone_low, direction, bounce,
+      detected_at_ms, candles, timeframe
+    ) -> dict
+
+  What the core loop does:
+    1. Replays candles after detected_at_ms
+    2. Detects entry (first candle wicking into zone)
+    3. Tracks MFE (max favourable) and MAE (max adverse excursion)
+    4. Detects WIN (target hit), LOSS (stop hit), or
+       EXPIRY (EXPIRY_CANDLES limit exceeded)
+    5. Handles AMBIGUOUS (target and stop hit on same candle)
+
+  Entry logic:
+    Bullish: entry when candle.low  <= zone_high → entry_price = zone_high
+    Bearish: entry when candle.high >= zone_low  → entry_price = zone_low
+    Target  = entry_price * (1 ± bounce%)
+    Stop    = opposite zone boundary
+
+  Expiry limits (EXPIRY_CANDLES):
+    "1m":12, "3m":20, "5m":24, "15m":16, "30m":14,
+    "1h":12, "2h":10, "4h":8,  "6h":6,  "12h":5,  "1d":5
+
+  Output (per signal):
+    {
+      status, entry_price, entry_time, target_price, stop_price,
+      exit_price, exit_time, result, result_reason,
+      mfe_pct, mae_pct, time_to_entry_hours, time_to_result_hours
+    }
+
+  Test Coverage:  7 comprehensive test cases (lines ~555–676) covering
+                  all resolution paths (WIN, LOSS, AMBIGUOUS, EXPIRED,
+                  WAITING_FOR_ENTRY, same-candle stop, etc.)
+
+  DB Writes:      resolve_one() writes to SignalEvent/SignalOutcome.
+                  _run_resolution_loop() writes NOTHING — pure function.
+
+  Reusable:       YES — call _run_resolution_loop() directly for backtest.
+                  NEVER call resolve_one() from backtest code (it writes DB).
+  Recommendation: Reuse _run_resolution_loop() as the backtest resolution
+                  engine. backtest_ob.py already does this correctly.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+8. EXISTING API ROUTES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+SCANNER ROUTES
+────────────────────────────────────────────────────────────────────────────────
+Route               Method  Function              Returns
+────────────────────────────────────────────────────────────────────────────────
+/api/scan           POST    (scanner handler)     Multi-TF, multi-module scan
+                                                  { scan: [...], summary: {},
+                                                    meta: {} }
+                                                  Backtest V1: NOT relevant
+
+/api/compressed_scan POST   (compressed handler)  High-level multi-pair summary
+                                                  Backtest V1: NOT relevant
+
+/api/trending_scan  POST    (trending handler)    Trending pairs by volume
+                                                  Backtest V1: NOT relevant
+
+/api/ath_atl_scan   POST    (ath_atl handler)     ATH/ATL detection results
+                                                  Backtest V1: NOT relevant
+
+/api/bias_scan      POST    (bias handler)        Bullish/bearish/mixed bias
+                                                  Backtest V1: NOT relevant
+
+────────────────────────────────────────────────────────────────────────────────
+
+LIVE MONITOR ROUTES (Phases 1–11)
+────────────────────────────────────────────────────────────────────────────────
+/api/live-monitor/items                          GET/POST — NOT relevant
+/api/live-monitor/items/<id>/bias-candles/refresh  POST  — NOT relevant
+/api/live-monitor/items/<id>/bias-structure/refresh POST  — NOT relevant
+/api/live-monitor/items/<id>/bias-orderflow/refresh POST  — NOT relevant
+/api/live-monitor/session-context                GET   — NOT relevant
+/api/live-monitor/ai-providers                   GET   — NOT relevant
+(and many more Phase 9–11 routes)               All:  NOT relevant to backtest
+
+────────────────────────────────────────────────────────────────────────────────
+
+ORDER-FLOW ROUTE
+────────────────────────────────────────────────────────────────────────────────
+/api/orderflow      GET/POST  Line ~32058   OB walls, delta, liquidation,
+                                             funding rate snapshot
+                                             Backtest V1: NOT relevant
+                                             (live snapshot only)
+
+────────────────────────────────────────────────────────────────────────────────
+
+BACKTEST ROUTE STATUS
+────────────────────────────────────────────────────────────────────────────────
+  /api/backtest           DOES NOT EXIST
+  /api/backtest/ob        DOES NOT EXIST
+  /api/backtest/run       DOES NOT EXIST
+  /api/backtest/results/* DOES NOT EXIST
+
+  The backtest engine (backtest_ob.py) exists and is complete but has NO
+  HTTP route exposing it. Backtest V1 requires creating one new route.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+9. EXISTING DATABASE MODELS (models.py — 1,160 lines)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+CATEGORY: User / Auth / Access Control
+────────────────────────────────────────────────────────────────────────────────
+User
+  id, username, email, password_hash, role, status, email_verified,
+  created_at, last_login_at, last_login_ip
+
+RolePermission
+  role, daily_tokens, max_pairs_per_scan, allowed_modules, allowed_tabs,
+  allowed_exchanges, allowed_timeframes
+
+UserPermission
+  user_id, daily_tokens, max_pairs_per_scan, allowed_modules,
+  allowed_tabs (per-user override)
+
+DailyTokenUsage
+  user_id, date, tokens_used, scan_count, last_scan_at
+
+AdminLog
+  admin_id, action, target_user_id, details, ip_address, created_at
+
+LoginHistory
+  user_id, logged_in_at, ip_address, user_agent, country, city,
+  device_type, browser, os, session_duration
+
+EmailVerification
+  user_id, code, created_at, expires_at, used
+
+PasswordResetToken
+  user_id, token_hash, created_at, expires_at, used
+
+GuestDevice
+  device_fingerprint, user_id, first_seen_at, last_seen_at,
+  ip_address, user_agent
+
+────────────────────────────────────────────────────────────────────────────────
+
+CATEGORY: Signal Events & Outcomes  *** KEY FOR BACKTEST ***
+────────────────────────────────────────────────────────────────────────────────
+SignalEvent
+  signal_id, pair, module, timeframe, direction, score,
+  zone_high, zone_low, detected_price, detected_at,
+  exchange, strategy_ver, settings_json, status, source,
+  setup_type, raw_setup, raw_meta_json
+  → relationship: SignalOutcome (one-to-one)
+
+SignalOutcome
+  signal_id (FK → SignalEvent),
+  entry_price, entry_time, target_price, stop_price,
+  exit_price, exit_time, result, result_reason,
+  mfe_pct, mae_pct, time_to_entry_hours, time_to_result_hours,
+  bounce_threshold_pct
+
+────────────────────────────────────────────────────────────────────────────────
+
+CATEGORY: Backtest Records  *** ALREADY EXISTS ***
+────────────────────────────────────────────────────────────────────────────────
+BacktestRun
+  run_name, config_json, run_at, completed_at, status,
+  pairs_tested, total_signals, entered_signals,
+  won_count, lost_count, expired_count, ambiguous_count,
+  win_rate_entered, win_rate_total,
+  date_from, date_to, run_by, error_message
+
+  NOTE: This model exists but is NOT yet written to by any route.
+  It is schema-ready for Backtest V1 persistence.
+
+────────────────────────────────────────────────────────────────────────────────
+
+CATEGORY: User Preferences
+────────────────────────────────────────────────────────────────────────────────
+ScanPreset
+  user_id, name, payload (JSON), is_default, created_at, updated_at
+
+UserPreference
+  user_id, desktop_tutorial_never_show, desktop_tutorial_completed_at,
+  ob_da_settings_json, updated_at
+
+GlobalSetting
+  key, value, description, updated_at, updated_by
+
+IntelligenceSettings
+  auto_resolver_enabled, auto_resolver_interval_minutes,
+  auto_resolver_limit, auto_resolver_mode, runner_installed,
+  last_saved_at, last_run_at, last_run_summary
+
+────────────────────────────────────────────────────────────────────────────────
+
+CATEGORY: Live Monitor
+────────────────────────────────────────────────────────────────────────────────
+LiveMonitorItem
+  user_id, symbol, exchange, market, source_tab, setup_type, direction,
+  timeframe, zone_high, zone_low, confidence, score, current_price,
+  status, snapshot_json, selected_timeframes, selected_modules,
+  alert_settings_json, is_active, added_at, updated_at
+
+LiveMonitorEvent
+  item_id, user_id, symbol, event_type, event_description,
+  details_json, health_score_at_event, price_at_event, created_at
+
+LiveMonitorTrade
+  trade_uid, user_id, item_id, mode, execution_exchange, symbol,
+  direction, setup_type, status, entry_price, stop_loss, take_profit,
+  risk_reward, position_size, leverage, ai_proposal_json, risk_guard_json,
+  risk_guard_status, exchange_order_id, opened_at, closed_at,
+  pnl, fees, outcome, post_trade_review_json
+
+LiveMonitorChatMessage
+  user_id, item_id, symbol, exchange, role, content,
+  agent_id, agent_label, metadata_json, created_at
+
+────────────────────────────────────────────────────────────────────────────────
+
+CATEGORY: Live Monitor Candles & Features (Phase 10.9B–10.9C)
+────────────────────────────────────────────────────────────────────────────────
+LiveMonitorCandle
+  user_id, exchange, market, symbol, timeframe, open_time (ms),
+  open, high, low, close, volume, close_time, quote_volume,
+  trade_count, taker_buy_base, taker_buy_quote, raw_json
+
+LiveMonitorCandleFeature
+  user_id, exchange, market, symbol, timeframe, open_time,
+  candle_open/high/low/close/volume, body_pct, upper_wick_pct,
+  lower_wick_pct, close_position_pct, candle_direction,
+  detected_patterns_json, feature_summary_json
+
+────────────────────────────────────────────────────────────────────────────────
+
+CATEGORY: Live Monitor Structure & Order-Flow (Phase 10.9D–10.9E)
+────────────────────────────────────────────────────────────────────────────────
+LiveMonitorStructureEvent
+  user_id, exchange, market, symbol, timeframe, event_time (ms),
+  event_type (bullish_bos/bearish_bos/choch), direction, level,
+  candle_open_time, confirmation_close, swing_left, swing_right,
+  threshold_pct, strength_score, context_json
+
+LiveMonitorOrderflowSnapshot
+  user_id, exchange, market, symbol, sample_time (ms),
+  source_status, bid_wall_price/size, ask_wall_price/size,
+  buy_volume, sell_volume, delta_net, delta_pct, open_interest,
+  oi_change, liquidation data, long/short ratio, funding_rate,
+  data_health_status
+
+LiveMonitorCandleOrderflow
+  user_id, exchange, market, symbol, timeframe, open_time,
+  analysis_source, sample_count, flow_status,
+  aggregated volumes/oi/liq sums, candle_flow_alignment
+
+────────────────────────────────────────────────────────────────────────────────
+
+CATEGORY: Live Monitor AI & Paper Trading (Phase 10.9E+, 11.3, 11.7B)
+────────────────────────────────────────────────────────────────────────────────
+LiveMonitorAIIntervention
+  user_id, item_id, symbol, decision_action, confidence, danger_level,
+  primary_reasons_json, risk_factors_json, created_at
+
+LiveMonitorTestnetOrder
+  user_id, item_id, symbol, side, order_type, time_in_force,
+  quantity, price, status, client_order_id, binance_order_id,
+  execution_intent_json, request_json, response_json,
+  created_at, submitted_at
+
+LiveMonitorPaperAccount
+  user_id, currency, starting_balance, cash_balance, equity,
+  realized_pnl, unrealized_pnl, status, created_at
+
+LiveMonitorPaperOrder
+  user_id, item_id, account_id, symbol, side, order_type,
+  time_in_force, quantity, price, status, fill_status,
+  filled_qty, avg_fill_price, client_order_id
+
+LiveMonitorPaperPosition
+  user_id, item_id, account_id, symbol, side, quantity,
+  entry_price, mark_price, unrealized_pnl, realized_pnl,
+  status, opened_at, closed_at
+
+LiveMonitorPaperFill
+  user_id, item_id, account_id, order_id, position_id,
+  symbol, side, quantity, price, notional, fee,
+  fill_type (entry/exit/partial), created_at
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+10. REUSE PLAN FOR BACKTEST V1
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+REUSE AS-IS (no changes required)
+────────────────────────────────────────────────────────────────────────────────
+  backtest_ob.run_ob_backtest()
+    The complete OB backtest engine. Accepts filters (pair, timeframe,
+    stop_mode, freshness, strength_min, max_touch_count). Returns full
+    JSON with signals, summaries, breakdowns. No DB writes.
+    → Backtest V1 route simply calls this and returns the result.
+
+  outcome_resolver._run_resolution_loop()
+    Pure candle-replay function. Already used internally by backtest_ob.py.
+    → Do NOT call directly from the new route; backtest_ob.py handles it.
+
+  get_klines_exchange_window()
+    Time-range candle fetcher. Already used by backtest_ob.py.
+    → Do NOT call directly from the new route.
+
+  detect_pivots(), detect_structure()
+    Core structure functions. Already used inside detect_obs().
+    → Backtest reuses them indirectly.
+
+  detect_obs(), detect_obs_all()
+    Core OB detection. Already used inside backtest_ob.py.
+    → Backtest reuses them indirectly.
+
+  _compute_ob_touch_meta(), _ob_touch_label()
+    Touch counting. Already used inside backtest_ob.py (Phase 8B).
+    → Backtest reuses indirectly.
+
+  score_ob_quality()
+    Quality scoring. Feeds strength_min filter in backtest_ob.py.
+    → Backtest reuses indirectly.
+
+  BacktestRun model (models.py)
+    Already defined, schema-ready. Can optionally persist run metadata.
+    → Backtest V1 may write here after the run if persistence is desired.
+
+  SignalEvent + SignalOutcome models
+    Already populated by the live scanner and resolver.
+    → backtest_ob.py reads from these tables as its input data source.
+
+────────────────────────────────────────────────────────────────────────────────
+
+CREATE NEW (minimal additions only)
+────────────────────────────────────────────────────────────────────────────────
+  1. POST /api/backtest route in main.py
+     - Parse JSON body (filters)
+     - Call backtest_ob.run_ob_backtest(**filters)
+     - Return JSON
+     - Add auth/permission check
+
+  2. renderBacktestInto(scroll) in preview.html
+     - Form: pair input, timeframe select, stop_mode, freshness,
+             strength_min, result_filter
+     - Submit → POST /api/backtest
+     - Results section: summary cards, signal table
+     - Premium analytics charts (win rate by TF, by setup type,
+       loss reason breakdown, score bucket distribution)
+
+  3. switchView() case for "backtest" in preview.html
+     - Add before the placeholder renderer (line ~4732)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+11. MISSING PIECES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+FRONTEND (preview.html)
+  [ ] renderBacktestInto(scroll) function
+  [ ] Backtest filter form (pair, timeframe, stop_mode, freshness,
+      strength_min, result_filter, max_touch_count)
+  [ ] Results summary cards (win rate, total checked, won, lost,
+      expired, entered)
+  [ ] Results signal table (signal_id, pair, TF, direction, score,
+      result, loss_reason, MFE, MAE, freshness, touch bucket)
+  [ ] Analytics charts: win rate by TF, by setup type, loss reason
+      breakdown, score bucket distribution
+  [ ] Backtest case in switchView() at line ~4732
+  [ ] Loading/spinner state
+  [ ] Empty state (no signals found)
+  [ ] Error state
+
+BACKEND (main.py)
+  [ ] POST /api/backtest route (or POST /api/backtest/ob)
+  [ ] Input validation (pair, timeframe, filters)
+  [ ] Authentication check
+  [ ] Permission check (allowed_tabs or similar)
+  [ ] Optional: BacktestRun DB write (persist run metadata)
+
+HISTORICAL DATA REQUIREMENT
+  [ ] SignalEvent rows with module="ob" must exist in the database.
+      If the scanner has been running in production, these rows exist.
+      If the DB is empty, backtest_ob.py will return 0 signals.
+      → This is not a code gap, just a data dependency.
+
+FUTURE (NOT V1)
+  [ ] FVG backtest engine
+  [ ] Breaker block backtest engine
+  [ ] Multi-module backtest orchestrator
+  [ ] Fetch-and-detect mode (no DB dependency, raw historical backtest)
+  [ ] Date range filter (date_from, date_to on the form)
+  [ ] Export to CSV/PDF
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+12. RISKS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+SAFE TO REUSE — NO RISK
+────────────────────────────────────────────────────────────────────────────────
+  backtest_ob.run_ob_backtest()     → No DB writes, pure computation
+  outcome_resolver._run_resolution_loop() → Pure function, 7 test cases
+  detect_obs(), detect_pivots(), detect_structure()
+                                    → Pure functions, no side effects
+  get_klines_exchange_window()      → Read-only HTTP, no DB interaction
+  BacktestRun model                 → Optional write, no scanner impact
+  SignalEvent/SignalOutcome models   → Backtest reads only, never writes here
+
+────────────────────────────────────────────────────────────────────────────────
+
+DANGEROUS TO TOUCH — DO NOT MODIFY
+────────────────────────────────────────────────────────────────────────────────
+  signal_extractor.py
+    Live scanner signal generation. Any modification risks breaking
+    OB/FVG/structure detection for all users. DO NOT TOUCH for backtest.
+
+  signal_logger.py
+    Signal persistence / audit trail. Any modification risks data loss
+    or duplicate signals. DO NOT TOUCH for backtest.
+
+  auto_resolver_runner.py
+    Background resolution loop. Any modification risks stopping the
+    automatic outcome tracking. DO NOT TOUCH for backtest.
+
+  live_monitor/ modules
+    Phases 9–11 AI trading terminal, risk guard, paper trading.
+    Entirely separate concern. DO NOT TOUCH.
+
+  detect_obs() mandatory parameter signature
+    Adding required parameters to detect_obs() will break every scanner
+    call site in signal_extractor.py. Only add optional kwargs.
+
+  _OB_TOUCH_CLEARANCE constant
+    Changing this will alter touch counts retroactively across all
+    live signals and backtest results. Do not modify without explicit
+    regression testing.
+
+────────────────────────────────────────────────────────────────────────────────
+
+RISKS SPECIFIC TO BACKTEST V1
+────────────────────────────────────────────────────────────────────────────────
+  1. DATA DEPENDENCY
+     backtest_ob.py queries SignalEvent rows. If the live scanner has
+     not run for a given pair/timeframe, there will be no signals to
+     backtest. This is expected behavior, not a bug. The UI should
+     communicate this clearly.
+
+  2. NO PURE HISTORICAL MODE YET
+     The current backtest engine does NOT fetch historical candles and
+     run detection from scratch. It replays existing SignalEvent rows.
+     True "from-scratch historical backtest" (fetch 3000–4000 candles,
+     detect OBs, test them) is a different architecture (Fetch-and-Detect
+     mode) and is NOT present in backtest_ob.py. This is important to
+     understand: Backtest V1 tests SIGNALS THAT WERE ALREADY DETECTED
+     by the live scanner — it is not a raw historical scan.
+
+     If the goal is a pure historical engine (no dependency on live
+     scanner having run), a new fetch-and-detect pipeline must be built.
+     backtest_ob.py cannot be reused for that purpose as-is.
+
+  3. CANDLE FETCH LATENCY
+     Fetching 1500 pre-signal + post-signal candles per signal via
+     the Binance API takes time. For large limit values (limit=100+),
+     the POST /api/backtest call may take 10–60 seconds. Consider
+     async response or streaming for the frontend UX.
+
+  4. RATE LIMITING
+     get_klines_exchange_window() has a 12-request safety cap per call.
+     For 100 signals × 2 candle windows each = 200 API calls. Binance
+     allows 1200 weight/minute. Monitor carefully with large limits.
+
+  5. LOOKAHEAD BIAS
+     Phase 8B in backtest_ob.py already addresses touch-count lookahead
+     bias (uses signal-time candles only, not full candle array). This
+     is correct. Do not revert this behavior.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+13. RECOMMENDED PHASE 1 BACKEND SKELETON PLAN
+    (Planning only — no code yet)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The following is a logical plan for what Phase 1 implementation will look
+like. Nothing is written yet. This is the audit output recommendation only.
+
+────────────────────────────────────────────────────────────────────────────────
+BACKEND (main.py — 1 new route, ~30 lines)
+────────────────────────────────────────────────────────────────────────────────
+  Add at the end of the routes section:
+
+    POST /api/backtest
+    ├── Auth check (require login)
+    ├── Permission check (backtest in allowed_tabs or similar)
+    ├── Parse JSON body:
+    │     pair           (str, optional, e.g. "BTCUSDT")
+    │     timeframe      (str, optional, e.g. "1h")
+    │     setup_type     (str, optional)
+    │     stop_mode      (str, default "wick")
+    │     freshness      (str, default "all")
+    │     strength_min   (float, default 0.0)
+    │     max_touch_count (int, optional)
+    │     result_filter  (str, optional)
+    │     limit          (int, default 100, max 500)
+    ├── Call: result = backtest_ob.run_ob_backtest(**params)
+    ├── Optional: write BacktestRun row with config_json + summary
+    └── Return: jsonify(result), 200
+
+  Import already available: from backtest_ob import run_ob_backtest
+
+────────────────────────────────────────────────────────────────────────────────
+FRONTEND (preview.html — new renderBacktestInto function)
+────────────────────────────────────────────────────────────────────────────────
+  In switchView(v), before line ~4732:
+    if (v === "backtest") {
+      renderBacktestInto(scroll);
+      return;
+    }
+
+  New renderBacktestInto(scroll) function:
+    ├── Injects HTML: filter form + results container
+    ├── Binds submit event → calls POST /api/backtest
+    ├── Shows loading state during fetch
+    ├── On response:
+    │     - Renders summary cards (win rate, checked, won, lost, expired)
+    │     - Renders by_timeframe breakdown table
+    │     - Renders by_setup_type breakdown table
+    │     - Renders signals table (sortable, filterable)
+    │     - Renders analytics charts (Chart.js or similar)
+    └── Error and empty states handled
+
+────────────────────────────────────────────────────────────────────────────────
+FILTERS AVAILABLE FROM EXISTING BACKEND
+────────────────────────────────────────────────────────────────────────────────
+  pair            → "BTCUSDT" or blank (all pairs)
+  timeframe       → "1m" | "5m" | "15m" | "1h" | "4h" | "1d" | blank
+  stop_mode       → "wick" | "close"
+  freshness       → "all" | "virgin" | "first_touch"
+  strength_min    → 0–100 float slider
+  max_touch_count → 0, 1, 2, 3, blank
+  result_filter   → "all" | "won" | "lost" | "expired" | "ambiguous"
+  setup_type      → "OB_APPROACH" | "OB_CONSOL" | blank
+  limit           → 50–500 slider
+
+────────────────────────────────────────────────────────────────────────────────
+COLUMNS AVAILABLE FOR SIGNALS TABLE
+────────────────────────────────────────────────────────────────────────────────
+  signal_id, pair, timeframe, setup_type, direction, score,
+  result, loss_reason_detail, mfe_pct, mae_pct,
+  cf_alt_stop, cf_small_target, cf_candle_close_entry,
+  freshness_status, obTouchBucket
+
+────────────────────────────────────────────────────────────────────────────────
+ANALYTICS CHARTS (premium dashboard — Phase 2 frontend)
+────────────────────────────────────────────────────────────────────────────────
+  1. Win rate by timeframe (horizontal bar chart)
+  2. Win rate by setup type (donut chart)
+  3. Win rate by score bucket (0–25, 25–50, 50–75, 75–100)
+  4. Win rate by touch bucket (virgin, touch_1, touch_2, touch_3+)
+  5. Win rate by freshness (first_touch vs already_touched)
+  6. Loss reason breakdown (pie chart: wick_only, close_also, same_candle)
+  7. MFE distribution (histogram of max favourable excursion %)
+  8. MAE distribution (histogram of max adverse excursion %)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+END OF AUDIT REPORT — PHASE 0
+Status: READ-ONLY. Zero files modified.
+Next: Await Phase 1 implementation approval.
+================================================================================
