@@ -998,6 +998,14 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 .lm-term-grp-hdr:hover{background:rgba(255,255,255,.06)}
 .lm-term-grp-arrow{font-size:9px;color:var(--text-3);flex-shrink:0}
 #lmTermGrpBody-paper,.lm-term-group [id^="lmTermGrpBody-"]{padding:10px 14px}
+.lm-term-header{padding:10px 16px 8px;border-bottom:1px solid var(--border);flex-shrink:0}
+.lm-term-ht{font-size:13px;font-weight:700;color:var(--text-1);line-height:1.3}
+.lm-term-ht-sep{color:var(--text-3);margin:0 4px}
+.lm-term-ht-sym{color:var(--accent)}
+.lm-term-meta{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}
+.lm-term-chip{font-size:9.5px;padding:1px 7px;border-radius:4px;background:rgba(255,255,255,.07);border:1px solid var(--border);color:var(--text-2);font-weight:600;letter-spacing:.3px}
+.lm-term-price{font-size:10px;color:var(--accent);font-weight:700;font-family:var(--mono);padding:1px 6px;border-radius:4px;background:rgba(var(--accent-rgb,99,102,241),.1)}
+.lm-term-empty{font-size:10px;color:var(--text-3);padding:2px 0}
 .lm-outer[data-workspace]:not([data-workspace="setups"]) .lm-manual{display:none!important}
 .lm-outer[data-workspace]:not([data-workspace="setups"]) .lm-ob-da-wrap{display:none!important}
 .lm-outer[data-workspace]:not([data-workspace="setups"]) [data-lmf]{display:none!important}
@@ -4913,68 +4921,18 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                   '<div class="lm-term-empty">Select a setup from the list to use Trading Terminal.</div>'+
                 '</div>'+
 
-                /* ── GROUP 1: Internal Paper Trading (open by default) ── */
-                '<div class="lm-term-group">'+
-                  '<div class="lm-term-gh" onclick="window._lmToggleTermGroup(\'paper\')">'+
-                    '<div class="lm-term-gl">'+
-                      '<span class="lm-term-glabel">Internal Paper Trading</span>'+
-                      '<span class="lm-term-gbadge">Primary Strategy Testing Mode</span>'+
-                    '</div>'+
-                    '<span class="lm-term-gchev" id="lmTgChev-paper">&#9660;</span>'+
-                  '</div>'+
-                  '<div class="lm-term-gbody" id="lmTgBody-paper">'+
-                    /* Paper Account Summary row */
-                    '<div id="lmPapAccRow" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;padding:6px 8px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:6px;">'+
-                      '<span style="font-size:9px;font-weight:700;letter-spacing:.5px;color:var(--text-3);text-transform:uppercase">Paper Account</span>'+
-                      '<span id="lmPapAccBal" style="font-size:11px;font-weight:700;color:var(--accent);font-family:var(--mono)">—</span>'+
-                      '<span style="font-size:9px;color:var(--text-3)">USDT</span>'+
-                      '<span style="flex:1"></span>'+
-                      '<span id="lmPapAccPnl" style="font-size:10px;font-weight:600;font-family:var(--mono);color:var(--text-3)"></span>'+
-                      '<button class="btn lm-sm-btn" onclick="window._lmPapRefreshAccount()" style="font-size:9px;padding:2px 7px">↻</button>'+
-                    '</div>'+
-                    /* Paper Draft section */
-                    '<div id="lmPapDraftSection" style="margin-bottom:8px">'+
-                      '<table style="width:100%;border-collapse:collapse;font-size:10px">'+
-                        '<tr><td style="color:var(--text-3);padding:2px 0;width:44%">Symbol</td><td id="lmPap-symbol" style="color:var(--text-1);font-family:var(--mono)">—</td></tr>'+
-                        '<tr><td style="color:var(--text-3);padding:2px 0">Side</td><td id="lmPap-side" style="color:var(--text-1);font-family:var(--mono)">—</td></tr>'+
-                        '<tr><td style="color:var(--text-3);padding:2px 0">Entry Price</td><td id="lmPap-price" style="color:var(--text-1);font-family:var(--mono)">—</td></tr>'+
-                        '<tr><td style="color:var(--text-3);padding:2px 0">Paper Ready</td><td id="lmPap-ready" style="color:var(--text-1)">—</td></tr>'+
-                        '<tr><td style="color:var(--text-3);padding:2px 0">Est. Notional</td><td id="lmPap-notional" style="color:var(--text-1);font-family:var(--mono)">—</td></tr>'+
-                      '</table>'+
-                    '</div>'+
-                    /* Quantity input + submit */
-                    '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">'+
-                      '<input id="lmPapQtyInput" type="text" placeholder="Qty e.g. 0.001" '+
-                        'style="flex:1;font-size:11px;padding:4px 7px;border-radius:5px;border:1px solid var(--border);background:var(--bg-input,var(--bg-card-2));color:var(--text-1);font-family:var(--mono)" '+
-                        'oninput="window._lmPapRefreshDraft()" />'+
-                      '<button class="btn lm-sm-btn" id="lmPapDraftBtn" style="white-space:nowrap" onclick="window._lmPapRefreshDraft()">Refresh</button>'+
-                    '</div>'+
-                    '<div id="lmPap-qtyErr" style="display:none;font-size:9px;color:#f87171;padding:2px 0"></div>'+
-                    '<div id="lmPap-reasons" style="display:none;font-size:9px;color:var(--yellow);padding:2px 0;line-height:1.4"></div>'+
-                    '<div style="margin-top:6px">'+
-                      '<button class="btn lm-sm-btn" id="lmPapSubmitBtn" disabled '+
-                        'style="width:100%;padding:6px 10px;font-size:11px;font-weight:700;opacity:0.5;cursor:not-allowed" '+
-                        'onclick="window._lmPapSubmitOrder()">'+
-                        'Submit Paper Order'+
-                      '</button>'+
-                    '</div>'+
-                    '<div id="lmPap-result" style="display:none;font-size:9px;padding:4px 0;line-height:1.5"></div>'+
-                    /* Recent paper orders */
-                    '<div id="lmPapOrdersSection" style="margin-top:8px;display:none">'+
-                      '<div style="font-size:9px;font-weight:700;letter-spacing:.5px;color:var(--text-3);text-transform:uppercase;margin-bottom:4px">Recent Paper Orders</div>'+
-                      '<div id="lmPapOrdersList" style="font-size:9px;font-family:var(--mono);line-height:1.6;color:var(--text-2)"></div>'+
-                    '</div>'+
-                  '</div>'+
-                '</div>'+
-
                 /* ── GROUP 1: Internal Paper Trading (open) ────────────────── */
                 '<div class="lm-term-group" id="lmTermGrp-paper">'+
                   '<div class="lm-term-grp-hdr" onclick="window._lmToggleTermGroup(\'paper\')">'+
                     '<span class="lm-term-grp-arrow" id="lmTermGrpArr-paper">▼</span>'+
                     '<span>Internal Paper Trading</span>'+
-                    '<span style="font-size:9px;color:var(--green,#4ade80);margin-left:6px">Phase 11.7B</span>'+
+                    '<span style="font-size:9px;color:var(--green,#4ade80);margin-left:6px;font-weight:700;letter-spacing:.4px">PRIMARY STRATEGY TESTING MODE</span>'+
                   '</div>'+
                   '<div id="lmTermGrpBody-paper">'+
+                    '<div style="font-size:10px;color:var(--text-3);padding:6px 0 10px;line-height:1.6;border-bottom:1px solid var(--border);margin-bottom:10px">'+
+                      'Real futures market data + internal paper execution. '+
+                      'No Binance Testnet price dependency. No real exchange orders.'+
+                    '</div>'+
                     '<div class="lm-ws-grid-2" style="padding:0 0 8px">'+
 
                       /* Left: Account + Order Draft */
@@ -5063,19 +5021,19 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                   '<div class="lm-term-grp-hdr" onclick="window._lmToggleTermGroup(\'execready\')">'+
                     '<span class="lm-term-grp-arrow" id="lmTermGrpArr-execready">▼</span>'+
                     '<span>Execution Readiness</span>'+
-                    '<span style="font-size:9px;color:var(--text-3);margin-left:6px">Simulation · Phase 11.6</span>'+
+                    '<span style="font-size:9px;color:var(--text-3);margin-left:6px">Validation Only · Phase 11.6</span>'+
                   '</div>'+
                   '<div id="lmTermGrpBody-execready">'+
                     '<div class="lm-ws-section" id="lmExecSimSection">'+
-                      '<div class="lm-ws-sh">Execution Simulator</div>'+
+                      '<div class="lm-ws-sh">Execution Readiness Check</div>'+
                       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:10px;margin-bottom:8px">'+
-                        '<span style="color:var(--text-3)">Execution status:</span><span style="color:var(--yellow,#facc15);font-weight:700">SIMULATION ONLY</span>'+
+                        '<span style="color:var(--text-3)">Mode:</span><span style="color:var(--yellow,#facc15);font-weight:700">VALIDATION ONLY</span>'+
                         '<span style="color:var(--text-3)">Exchange orders:</span><span style="color:var(--red-2,#f87171);font-weight:700">DISABLED</span>'+
                         '<span style="color:var(--text-3)">Execution:</span><span style="color:var(--red-2,#f87171);font-weight:700">DISABLED</span>'+
                       '</div>'+
                       '<div id="lmSimGrid" style="display:none">'+
                         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:10px;color:var(--text-3);padding:2px 0 6px">'+
-                          '<span>Ready for testnet:</span><span id="lmSimReady" style="font-weight:700">—</span>'+
+                          '<span>Simulation status:</span><span id="lmSimReady" style="font-weight:700">—</span>'+
                           '<span>Intent valid:</span><span id="lmSimIntent">—</span>'+
                           '<span>Policy valid:</span><span id="lmSimPolicy">—</span>'+
                           '<span>Decision valid:</span><span id="lmSimDecision">—</span>'+
@@ -5090,7 +5048,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                         '<button class="btn lm-sm-btn" id="lmRunSimBtn" style="width:100%;justify-content:center" onclick="window._lmRunSimulation()">Run Simulation</button>'+
                       '</div>'+
                       '<div style="font-size:9px;color:var(--text-3);padding:5px 0 0;line-height:1.4">'+
-                        '<b style="color:var(--yellow)">Phase 11.6</b> — Simulation only. No orders. No execution. No automation.'+
+                        '<b style="color:var(--yellow)">Phase 11.6</b> — Validation only. No orders placed. No execution. No automation.'+
                       '</div>'+
                     '</div>'+
                   '</div>'+ /* end lmTermGrpBody-execready */
@@ -5104,6 +5062,11 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                     '<span style="font-size:9px;color:var(--yellow,#facc15);margin-left:6px">API Testing Only · Phase 11.5 / 11.7A</span>'+
                   '</div>'+
                   '<div id="lmTermGrpBody-testnet" style="display:none">'+
+                    '<div style="font-size:9.5px;color:var(--text-3);padding:6px 0 10px;line-height:1.6;border-bottom:1px solid var(--border);margin-bottom:10px">'+
+                      '<b style="color:var(--yellow,#facc15)">API TESTING ONLY.</b> '+
+                      'Binance Testnet is kept only for connector/API testing. '+
+                      'It is not used for strategy validation because testnet prices can differ from real futures prices.'+
+                    '</div>'+
                     '<div class="lm-ws-grid-2" style="padding:0 0 8px">'+
                       '<div>'+
                         '<div class="lm-ws-section" id="lmBtConnectorSection">'+
@@ -5352,7 +5315,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                     '<div style="font-size:10px;color:var(--text-3);line-height:1.8">'+
                       '<div style="display:flex;justify-content:space-between"><span>Trades opened</span><span style="color:var(--text-2)">0</span></div>'+
                       '<div style="display:flex;justify-content:space-between"><span>Trades closed</span><span style="color:var(--text-2)">0</span></div>'+
-                      '<div style="display:flex;justify-content:space-between"><span>Testnet orders</span><span style="color:var(--text-2)">0</span></div>'+
+                      '<div style="display:flex;justify-content:space-between"><span>Paper orders</span><span style="color:var(--text-2)">0</span></div>'+
                       '<div style="display:flex;justify-content:space-between"><span>AI decisions</span><span style="color:var(--text-2)">—</span></div>'+
                       '<div style="display:flex;justify-content:space-between"><span>Simulations run</span><span style="color:var(--text-2)">—</span></div>'+
                     '</div>'+
