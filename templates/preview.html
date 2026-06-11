@@ -8364,7 +8364,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
             '<td style="color:'+sideC+'">'+esc(p.side||'—')+'</td>'+
             '<td>'+esc(p.size||p.quantity||'—')+'</td>'+
             '<td>'+esc(p.entry_price||'—')+'</td>'+
-            '<td>'+esc(p.mark_price||'—')+'</td>'+
+            '<td'+(p.mark_price_source?' title="src: '+esc(p.mark_price_source)+'"':'')+'>'+esc(p.mark_price||'—')+'</td>'+
             '<td style="color:'+pnlC+'">'+pnlStr+'</td>'+
             '<td style="color:'+pnlC+'">'+pnlPctStr+'</td>'+
             '<td style="color:'+stC+'">'+esc(p.status||'—')+'</td>'+
