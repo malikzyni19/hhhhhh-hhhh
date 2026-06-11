@@ -316,14 +316,7 @@ def _lm_build_paper_order_draft(item, snapshot=None, quantity_str=None) -> dict:
 
     if price_f is None:
         warnings.append("entry_price_missing")
-        # Secondary fallback: snapshot last_known_price (still not current_price)
-        _lp = snap.get("last_known_price")
-        if _lp:
-            try:
-                price_f      = float(_lp)
-                price_source = "snap.last_known_price"
-            except Exception:
-                pass
+        # No fallback — LIMIT order price must come from execution_intent.entry_price only
 
     price_str = f"{price_f:.8f}".rstrip("0").rstrip(".") if price_f else None
 
