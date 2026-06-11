@@ -19840,6 +19840,52 @@ def _lm_ai_trade_proposal_prompt() -> str:
         "- Do NOT claim your proposal is approved, safe, or executable.\n"
         "- Do not output a disclaimer field — the rules above cover it.\n\n"
 
+        "AI EXECUTION CONTEXT RULES (Phase 11.2):\n"
+        "The context may include an ai_execution_context block with pre-computed danger assessment.\n"
+        "- danger_level 'blocked': output action='no_trade', confidence=0. "
+        "Cite blocking_reasons in risk_notes.\n"
+        "- danger_level 'high': output action='no_trade' or 'wait'. Cite danger evidence in risk_notes.\n"
+        "- danger_level 'medium': prefer 'wait'. Cite danger score in reasoning_summary.\n"
+        "- danger_level 'low': context is supportive — you may proceed with normal readiness rules.\n"
+        "- orderflow_history_quality.overall 'none' or 'low': state data weakness in reasoning_summary.\n"
+        "- zone_flow_state 'breaking' or 'attacked': add to risk_notes. "
+        "zone_flow_state 'defended' or 'absorbing': add to entry_logic as supporting evidence.\n"
+        "- Do NOT invent ai_execution_context data. If block is null, ignore these rules.\n\n"
+
+        "AI TRADE CONTROL DECISION RULES (Phase 11.3):\n"
+        "The context may include an ai_trade_control_decision block — "
+        "a deterministic Phase 11.3 decision. Use it to inform your proposal.\n"
+        "- action 'block_trade': you MUST output action='no_trade'. "
+        "Cite primary_reasons in risk_notes. Confidence must be ≤ 15.\n"
+        "- action 'pause_setup': output action='no_trade'. Cite in reasoning_summary.\n"
+        "- action 'switch_to_confirmation': prefer action='wait'. "
+        "List required confirmations from risk_factors in required_confirmations.\n"
+        "- action 'allow_touch_limit': you may proceed with normal readiness rules. "
+        "Cite as supporting evidence in entry_logic.\n"
+        "- action 'wait': prefer action='wait'. State orderflow data weakness in reasoning_summary.\n"
+        "- action 'no_action': you may analyze from other context fields; note it in reasoning_summary.\n"
+        "- candidate_analysis.explanation: quote it in entry_logic if it supports the proposal.\n"
+        "- Do NOT invent ai_trade_control_decision data. If null, ignore these rules.\n\n"
+
+        "AUTOMATION POLICY RULES (Phase 11.4):\n"
+        "The context may include an automation_policy block with policy evaluation.\n"
+        "- allowed=false: you MUST output action='no_trade'. "
+        "Cite blocking_reasons in risk_notes.\n"
+        "- future_action='block_trade': add to risk_notes. Output action='no_trade'.\n"
+        "- future_action='pause_setup': add to risk_notes. Output action='no_trade'.\n"
+        "- future_action='switch_mode': note recommended_mode in entry_logic. "
+        "Do NOT say the switch was applied — it was not.\n"
+        "- future_action='none': policy is satisfied with current mode. "
+        "Mention in reasoning_summary.\n"
+        "- Do NOT invent automation_policy data. If null, ignore these rules.\n\n"
+
+        "EXECUTION SIMULATION (Phase 11.6):\n"
+        "The context may include an execution_simulation block.\n"
+        "- ready_for_testnet=true: all validation checks passed. "
+        "State this in reasoning_summary. Still simulation only.\n"
+        "- ready_for_testnet=false: cite execution_simulation.reasons in risk_notes.\n"
+        "- Do NOT state an order was placed. Phase 11.6 is simulation only.\n\n"
+
         "Do not wrap the JSON in markdown code fences. Output raw JSON only."
     )
 
@@ -19973,6 +20019,12 @@ def _lm_build_trade_proposal_context(row, snapshot=None) -> dict:
             "analysis_data_confirmation_only":   True,
             "parent_setup_zones_immutable":      True,
         },
+        "ai_execution_context":      (lambda: _lm_build_ai_execution_context(row, snap))(),
+        "ai_trade_control_decision": (lambda _aec=None: _lm_build_ai_trade_control_decision(
+            row, snap, ai_exec_ctx=_aec
+        ))(snap.get("latest_ai_execution_context")),
+        "automation_policy": (lambda: _lm_build_automation_policy(row, snap))(),
+        "execution_simulation": (lambda: _lm_build_execution_simulation(row, snap))(),
     }
 
 
@@ -21023,6 +21075,12 @@ def _lm_build_ai_context(item) -> dict:
                     "AI must NOT create Entry Candidate or trade signal from alignment. "
                     "Full snapshot arrays and alignment rows are NOT in AI context.",
         } if _of and isinstance(_of, dict) else None)(snap.get("orderflow_alignment")),
+        "ai_execution_context":      (lambda: _lm_build_ai_execution_context(item, snap))(),
+        "ai_trade_control_decision": (lambda _aec=None: _lm_build_ai_trade_control_decision(
+            item, snap, ai_exec_ctx=_aec
+        ))(snap.get("latest_ai_execution_context")),
+        "automation_policy": (lambda: _lm_build_automation_policy(item, snap))(),
+        "execution_simulation": (lambda: _lm_build_execution_simulation(item, snap))(),
     }
 
 
@@ -21225,6 +21283,122 @@ def _lm_ai_system_prompt() -> str:
         "- Do NOT invent smart entry levels not present in the plan.\n"
         "- Do NOT use smart_entry_plan as permission to execute a trade.\n"
         "- If smart_entry_plan is null or missing, analyze from other context fields only.\n\n"
+
+        "AI EXECUTION CONTEXT (Phase 11.2):\n"
+        "The context may include an ai_execution_context block — a pre-computed structured "
+        "summary that aggregates execution intelligence, MTF orderflow, SMC fusion, and a "
+        "deterministic danger assessment. This block is ADVISORY ONLY.\n"
+        "FIELD MEANINGS:\n"
+        "- danger_context.danger_level: 'low' | 'medium' | 'high' | 'blocked'. "
+        "This is a deterministic backend signal — treat it as a hard constraint, not a suggestion.\n"
+        "- danger_context.danger_score: 0–100 composite danger score.\n"
+        "- danger_context.recommended_behavior: 'touch_limit' | 'confirmation' | 'wait' | 'block'.\n"
+        "- danger_context.touch_limit_allowed_by_context: boolean — false means do NOT suggest touch-limit entry.\n"
+        "- danger_context.confirmation_required: boolean.\n"
+        "- orderflow_history_quality.overall: 'high' | 'medium' | 'low' | 'none'. "
+        "Reflects data reliability — candle_delta=high, db_snapshots=medium, proxy=low, unavailable=none.\n"
+        "- ai_allowed_actions_preview: advisory list of actions appropriate for the current danger level. "
+        "This is a PREVIEW only — no execution is performed in Phase 11.2.\n"
+        "- smc_orderflow_fusion.zone_flow_state: 'defended' | 'absorbing' | 'attacked' | "
+        "'breaking' | 'ignored' | 'uncertain'.\n"
+        "- best_candidate: highest-scored execution candidate from Execution Intelligence.\n"
+        "USE RULES:\n"
+        "- If danger_level is 'blocked': output verdict='avoid', confidence ≤ 20. "
+        "Cite the blocking reasons from danger_context.blocking_reasons.\n"
+        "- If danger_level is 'high': output verdict='high_risk' or 'avoid'. "
+        "Do NOT suggest touch-limit entry.\n"
+        "- If danger_level is 'medium': note elevated risk. Do NOT suggest aggressive entry.\n"
+        "- If danger_level is 'low': context is supportive. Still require your own confirmations.\n"
+        "- If orderflow_history_quality.overall is 'none' or 'low': state clearly in agent_note "
+        "that orderflow evidence is weak or absent.\n"
+        "- zone_flow_state 'breaking' or 'attacked' → cite in risks[]. "
+        "zone_flow_state 'defended' or 'absorbing' → cite as supporting evidence in zone_read.\n"
+        "- ai_allowed_actions_preview is advisory only — it does NOT grant execution permission.\n"
+        "- Do NOT invent execution context data not present in ai_execution_context.\n"
+        "- If ai_execution_context is null or missing, analyze from other context fields only.\n\n"
+
+        "AI TRADE CONTROL DECISION (Phase 11.3):\n"
+        "The context may include an ai_trade_control_decision block — a deterministic decision "
+        "generated from danger context, SMC fusion, and orderflow quality. Advisory only.\n"
+        "FIELD MEANINGS:\n"
+        "- action: the recommended control action. "
+        "'allow_touch_limit' = context supports a touch-limit approach. "
+        "'switch_to_confirmation' = context requires confirmation before entry. "
+        "'block_trade' = context says do not enter — dangerous or insufficient data. "
+        "'pause_setup' = setup may be invalidated — hold off. "
+        "'wait' = insufficient orderflow evidence — watch for clearer data. "
+        "'no_action' = no clear signal — maintain current state.\n"
+        "- confidence: 0–100 confidence in the decision (not in the trade).\n"
+        "- danger_level / danger_score: inherited from Phase 11.2 danger context.\n"
+        "- primary_reasons: top reasons driving the action.\n"
+        "- risk_factors: specific risks that contributed to a restrictive decision.\n"
+        "- candidate_analysis.explanation: summary of candidate comparison (highest-scored candidate).\n"
+        "USE RULES:\n"
+        "- action 'block_trade': cite primary_reasons in risks[]. Output verdict='avoid' or 'high_risk'.\n"
+        "- action 'pause_setup': cite invalidation in risks[]. Do NOT recommend entry.\n"
+        "- action 'switch_to_confirmation': cite in confirmations_needed[]. "
+        "Mention confirmation is required in zone_read.\n"
+        "- action 'allow_touch_limit': cite as supporting evidence in zone_read. "
+        "Still require your own confirmations.\n"
+        "- action 'wait': note in agent_note that orderflow evidence is too weak for a decision.\n"
+        "- action 'no_action': note in agent_note that context is insufficient.\n"
+        "- Do NOT invent ai_trade_control_decision data. If null, ignore these rules.\n"
+        "- advisory_note must always be respected: Phase 11.3 has no execution authority.\n\n"
+
+        "AUTOMATION POLICY (Phase 11.4):\n"
+        "The context may include an automation_policy block — policy evaluation of "
+        "whether the AI trade-control decision would be allowed under the current policy "
+        "and entry mode configuration. Advisory only. No automation is applied.\n"
+        "FIELD MEANINGS:\n"
+        "- policy_result.allowed: whether the AI decision is policy-permitted (boolean).\n"
+        "- policy_result.recommended_mode: entry mode the policy recommends "
+        "('touch_limit', 'confirmation', 'ai_controlled').\n"
+        "- policy_result.future_action: what would happen if automation were enabled "
+        "('none', 'switch_mode', 'block_trade', 'pause_setup'). NOT applied in Phase 11.4.\n"
+        "- policy_result.reason: human-readable explanation of the policy evaluation.\n"
+        "- policy_result.blocking_reasons: list of reasons if allowed=false.\n"
+        "- policy_context.policy_mode: current policy mode "
+        "('proposal_only', 'auto_testnet'). 'future_live_execution' is hard-disabled.\n"
+        "- policy_context.entry_mode: current entry mode configuration.\n"
+        "USE RULES:\n"
+        "- allowed=false: cite blocking_reasons in risks[]. "
+        "Do NOT recommend entry regardless of other factors.\n"
+        "- future_action='switch_mode': note recommended mode in agent_note. "
+        "Do NOT say the switch has happened — it hasn't. State 'policy would recommend'.\n"
+        "- future_action='block_trade' or 'pause_setup': cite in risks[] and invalidations[].\n"
+        "- future_action='none': policy is satisfied with current mode — note this.\n"
+        "- Do NOT invent automation_policy data. If null, ignore these rules.\n"
+        "- Phase 11.4 has no execution authority — never say any action was taken.\n\n"
+
+        "EXECUTION SIMULATION (Phase 11.6):\n"
+        "The context may include an execution_simulation block — the result of running "
+        "the full validation pipeline (intent, zone, entry, stop, TP, RR, policy, data health, "
+        "symbol filters) in simulation mode. No order was placed. Simulation only.\n"
+        "FIELD MEANINGS:\n"
+        "- execution_simulation.ready_for_testnet: true if ALL checks pass and setup is "
+        "structurally valid for a testnet order (simulation verdict only — no order placed).\n"
+        "- execution_simulation.intent_valid: entry, stop, TP, RR, direction all valid.\n"
+        "- execution_simulation.policy_valid: automation policy allows the setup.\n"
+        "- execution_simulation.decision_valid: AI trade control decision is not blocking.\n"
+        "- execution_simulation.filter_valid: Binance symbol filters validated (null=unavailable).\n"
+        "- execution_simulation.data_health_ok: data health gate allows the setup.\n"
+        "- execution_simulation.reasons: list of failure reasons (empty = all checks passed).\n"
+        "- execution_simulation.warnings: non-blocking notices.\n"
+        "- execution_simulation.intent_summary: compact view of the resolved intent "
+        "(symbol, direction, entry_price, stop_loss, take_profit, risk_reward).\n"
+        "USE RULES:\n"
+        "- ready_for_testnet=true: you may state the setup is structurally valid. "
+        "Do NOT say an order was placed or will be placed.\n"
+        "- ready_for_testnet=false: cite reasons[] in risks[]. Explain what is missing.\n"
+        "- reasons contains 'policy_blocked': add to risks[] and invalidations[].\n"
+        "- reasons contains 'decision_block_trade' or 'decision_pause_setup': "
+        "cite in risks[]. Do NOT recommend entry.\n"
+        "- reasons contains 'invalid_rr': mention in risk_notes that RR is insufficient.\n"
+        "- reasons contains 'data_health_blocked': add to risks[]. State data is not fresh.\n"
+        "- filter_valid=false: cite 'symbol_filter_failed' in risks[]. "
+        "Symbol may not be tradeable on testnet.\n"
+        "- If execution_simulation is null: ignore these rules.\n"
+        "- Phase 11.6 is simulation only. Never state an order was placed.\n\n"
 
         "STRICT RULES:\n"
         "- Analyze ONLY the provided backend facts. Do not invent missing data.\n"
@@ -24030,6 +24204,47 @@ def _lm_save_phase10_9f_values(uid: int, item_id: int, values: dict) -> bool:
         print(f"[10.9F] save error item={item_id}: {_e9f}")
         return False
 
+
+# ── Phase 11.1 + 11.1B: helpers moved to live_monitor package (Phase 11.1C) ──
+# Routes stay here. All helper logic lives in live_monitor/.
+from live_monitor import (
+    _lm_build_orderflow_state,
+    _lm_build_zone_ob_slice,
+    _lm_build_candidate_orderflow,
+    _lm_build_ltf_confirmation_context,
+    _lm_score_candidate_intelligence,
+    _lm_build_candidate_intelligence,
+    _lm_build_execution_intelligence,
+    _lm_save_execution_intelligence,
+    _lm_child_orderflow_timeframes,
+    _lm_fetch_klines_with_delta,
+    _lm_build_series_orderflow_state,
+    _lm_build_tf_orderflow_history,
+    _lm_build_mtf_orderflow_history,
+    _lm_build_mtf_history_summary,
+    _lm_build_smc_orderflow_fusion,
+    _lm_build_ai_execution_context,
+    _lm_build_ai_trade_control_decision,
+    _lm_build_automation_policy,
+    _lm_build_execution_intent,
+    _lm_build_execution_simulation,
+    _lm_bt_base_url,
+    _lm_bt_is_testnet_only,
+    _lm_bt_credentials_available,
+    _lm_bt_public_request,
+    _lm_bt_signed_request,
+    _lm_bt_ping,
+    _lm_bt_exchange_info,
+    _lm_bt_symbol_filters,
+    _lm_bt_account,
+    _lm_bt_balance,
+    _lm_bt_positions,
+    _lm_bt_health,
+    _lm_bt_order_enabled,
+    _lm_bt_place_limit_order_testnet,
+    _lm_build_testnet_order_draft,
+    _lm_validate_order_quantity,
+)
 
 # ── Phase 10.9I: Auto-refresh scheduler ─────────────────────────────────────
 
@@ -27049,6 +27264,665 @@ def api_lm_demo_execution_status():
         "health":              health_clean,
         "mexc_private_debug":  mexc_private_debug,
     })
+
+
+# ── Phase 11.1 Task 9: Execution Intelligence debug endpoint ─────────────────
+
+@app.route("/api/live-monitor/items/<int:item_id>/execution-intelligence", methods=["GET"])
+@login_required
+def api_lm_execution_intelligence_get(item_id):
+    """Return (or build on-the-fly) execution intelligence for a Live Monitor item.
+
+    Query params:
+      ?refresh=1  — rebuild even if a cached copy exists in snapshot_json.
+
+    Phase 11.1 Task 9. Evidence only — no AI, no orders, no Entry Candidate.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import LiveMonitorItem as _LMI11r
+    row = _LMI11r.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+
+    snap    = _json_loads_safe(row.snapshot_json, {})
+    refresh = request.args.get("refresh", "").lower() in ("1", "true", "yes")
+
+    intel = snap.get("latest_execution_intelligence")
+    if not intel or refresh:
+        intel = _lm_build_execution_intelligence(row, snapshot=snap)
+        if intel.get("ok"):
+            _lm_save_execution_intelligence(uid, item_id, intel)
+
+    return jsonify({
+        "ok":                     True,
+        "execution_intelligence": intel,
+        "symbol":                 row.symbol,
+        "exchange":               row.exchange,
+    })
+
+
+# ── Phase 11.1B Task 9: MTF Orderflow History endpoint ───────────────────────
+
+@app.route("/api/live-monitor/items/<int:item_id>/mtf-orderflow-history", methods=["GET"])
+@login_required
+def api_lm_mtf_orderflow_history_get(item_id):
+    """Return (or build on-the-fly) MTF orderflow history for a Live Monitor item.
+
+    Query params:
+      ?refresh=1  — rebuild even if a cached copy exists in snapshot_json.
+
+    Phase 11.1B Task 9. Evidence only — no AI, no orders, no Entry Candidate.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import LiveMonitorItem as _LMI11bh
+    row = _LMI11bh.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+
+    snap    = _json_loads_safe(row.snapshot_json, {})
+    refresh = request.args.get("refresh", "").lower() in ("1", "true", "yes")
+
+    mtf_history = snap.get("latest_mtf_orderflow_history")
+    if not mtf_history or refresh:
+        symbol          = (row.symbol or "").upper()
+        exchange        = (row.exchange or "binance").lower()
+        market          = (getattr(row, "market", None) or "perpetual").lower()
+        parent_tf       = (getattr(row, "timeframe", None) or "4h").lower()
+        stored_src      = snap.get("analysis_source") or (snap.get("data_sources") or {}).get("analysis_source") or exchange
+        analysis_source = _lm_normalize_analysis_source(stored_src)
+
+        try:
+            mtf_history = _lm_build_mtf_orderflow_history(
+                uid, exchange, market, symbol, analysis_source, parent_tf
+            )
+        except Exception as _e11b:
+            mtf_history = {"ok": False, "error": str(_e11b)[:200]}
+
+        if mtf_history and not mtf_history.get("error"):
+            try:
+                from models import db as _db11bh, LiveMonitorItem as _LMI11bhs
+                row2 = _LMI11bhs.query.filter_by(id=item_id, user_id=uid).first()
+                if row2:
+                    snap2 = _json_loads_safe(row2.snapshot_json, {})
+                    snap2["latest_mtf_orderflow_history"] = mtf_history
+                    row2.snapshot_json = _json_dumps_safe(snap2)
+                    _db11bh.session.commit()
+            except Exception:
+                pass
+
+    return jsonify({
+        "ok":                   True,
+        "mtf_orderflow_history": mtf_history,
+        "symbol":               row.symbol,
+        "exchange":             row.exchange,
+    })
+
+
+# ── Phase 11.2: AI Execution Context endpoint ─────────────────────────────────
+
+@app.route("/api/live-monitor/items/<int:item_id>/ai-execution-context", methods=["GET"])
+@login_required
+def api_lm_ai_execution_context_get(item_id):
+    """Return (or rebuild) the Phase 11.2 AI Execution Context for a Live Monitor item.
+
+    Query params:
+      ?refresh=1  — rebuild even if a cached copy exists in snapshot_json.
+
+    Phase 11.2: advisory context only — no AI call, no orders, no Binance Testnet.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import LiveMonitorItem as _LMI112, db as _db112
+    row = _LMI112.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+
+    snap    = _json_loads_safe(row.snapshot_json, {})
+    refresh = request.args.get("refresh", "").lower() in ("1", "true", "yes")
+
+    ai_ctx = snap.get("latest_ai_execution_context")
+    if not ai_ctx or refresh:
+        try:
+            ai_ctx = _lm_build_ai_execution_context(row, snap)
+        except Exception as _e112:
+            ai_ctx = {"ok": False, "error": str(_e112)[:300]}
+
+        if ai_ctx and not ai_ctx.get("error"):
+            try:
+                row2 = _LMI112.query.filter_by(id=item_id, user_id=uid).first()
+                if row2:
+                    snap2 = _json_loads_safe(row2.snapshot_json, {})
+                    snap2["latest_ai_execution_context"] = ai_ctx
+                    row2.snapshot_json = _json_dumps_safe(snap2)
+                    _db112.session.commit()
+            except Exception:
+                pass
+
+    return jsonify({
+        "ok":                   True,
+        "ai_execution_context": ai_ctx,
+        "symbol":               row.symbol,
+        "exchange":             row.exchange,
+    })
+
+
+# ── Phase 11.3: AI Trade Control Decision endpoint ────────────────────────────
+
+@app.route("/api/live-monitor/items/<int:item_id>/ai-trade-control", methods=["GET"])
+@login_required
+def api_lm_ai_trade_control_get(item_id):
+    """Return (or rebuild) the Phase 11.3 AI Trade Control Decision for a Live Monitor item.
+
+    Query params:
+      ?refresh=1  — rebuild even if a cached copy exists in snapshot_json.
+
+    Phase 11.3: decision generation only — no AI call, no orders, no execution,
+    no Binance Testnet, no automation.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import LiveMonitorItem as _LMI113, db as _db113
+    row = _LMI113.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+
+    snap    = _json_loads_safe(row.snapshot_json, {})
+    refresh = request.args.get("refresh", "").lower() in ("1", "true", "yes")
+
+    decision = snap.get("latest_ai_trade_control_decision")
+    if not decision or refresh:
+        try:
+            ai_exec_ctx = snap.get("latest_ai_execution_context") or None
+            decision = _lm_build_ai_trade_control_decision(row, snap, ai_exec_ctx=ai_exec_ctx)
+        except Exception as _e113e:
+            decision = {
+                "ok": False, "error": str(_e113e)[:300],
+                "action": "no_action", "confidence": 0,
+                "advisory_note": "Phase 11.3 generates decisions only. No trade execution authority exists.",
+            }
+
+        if decision and not decision.get("error"):
+            try:
+                row2 = _LMI113.query.filter_by(id=item_id, user_id=uid).first()
+                if row2:
+                    snap2 = _json_loads_safe(row2.snapshot_json, {})
+                    snap2["latest_ai_trade_control_decision"] = decision
+                    row2.snapshot_json = _json_dumps_safe(snap2)
+                    _db113.session.commit()
+            except Exception:
+                pass
+
+    return jsonify({
+        "ok":      True,
+        "decision": decision,
+        "symbol":  row.symbol,
+        "exchange": row.exchange,
+    })
+
+
+# ── Phase 11.4: Automation Policy endpoint ────────────────────────────────────
+
+@app.route("/api/live-monitor/items/<int:item_id>/automation-policy", methods=["GET"])
+@login_required
+def api_lm_automation_policy_get(item_id):
+    """Return (or rebuild) the Phase 11.4 Automation Policy evaluation.
+
+    Query params:
+      ?refresh=1  — rebuild even if a cached copy exists in snapshot_json.
+
+    Phase 11.4: policy evaluation only — no orders, no execution, no automation
+    applied, no Binance Testnet.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import LiveMonitorItem as _LMI114, db as _db114
+    row = _LMI114.query.filter_by(id=item_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    if row.user_id != uid:
+        return jsonify({"error": "forbidden"}), 403
+
+    snap    = _json_loads_safe(row.snapshot_json, {})
+    refresh = request.args.get("refresh", "").lower() in ("1", "true", "yes")
+
+    # Use cached copies if available
+    cached_ctx    = snap.get("latest_automation_policy_context")
+    cached_result = snap.get("latest_automation_policy_result")
+
+    if not cached_ctx or not cached_result or refresh:
+        try:
+            policy_out = _lm_build_automation_policy(row, snap)
+        except Exception as _e114e:
+            policy_out = {
+                "ok": False, "error": str(_e114e)[:300],
+                "policy_context": {},
+                "policy_result": {
+                    "allowed": False,
+                    "recommended_mode": "confirmation",
+                    "future_action": "none",
+                    "reason": f"Policy build error: {str(_e114e)[:80]}",
+                    "blocking_reasons": ["build_error"],
+                    "advisory_note": "Phase 11.4 evaluates automation policy only. No execution authority exists.",
+                },
+            }
+
+        cached_ctx    = policy_out.get("policy_context", {})
+        cached_result = policy_out.get("policy_result", {})
+
+        if policy_out.get("ok"):
+            try:
+                row2 = _LMI114.query.filter_by(id=item_id, user_id=uid).first()
+                if row2:
+                    snap2 = _json_loads_safe(row2.snapshot_json, {})
+                    snap2["latest_automation_policy_context"] = cached_ctx
+                    snap2["latest_automation_policy_result"]  = cached_result
+                    row2.snapshot_json = _json_dumps_safe(snap2)
+                    _db114.session.commit()
+            except Exception:
+                pass
+
+    return jsonify({
+        "ok":             True,
+        "policy_context": cached_ctx,
+        "policy_result":  cached_result,
+        "symbol":         row.symbol,
+        "exchange":       row.exchange,
+    })
+
+
+# ── Phase 11.5: Binance Futures Testnet read-only endpoints ──────────────────
+# All endpoints are read-only. No order placement. No position modification.
+# Credentials loaded from env only — never returned in any response.
+
+@app.route("/api/live-monitor/binance-testnet/health", methods=["GET"])
+@login_required
+def api_lm_bt_health():
+    """Phase 11.5: Full Binance Testnet health check (read-only)."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    result = _lm_bt_health()
+    return jsonify(result)
+
+
+@app.route("/api/live-monitor/binance-testnet/account", methods=["GET"])
+@login_required
+def api_lm_bt_account():
+    """Phase 11.5: Binance Testnet account summary (read-only, signed)."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    result = _lm_bt_account()
+    return jsonify(result)
+
+
+@app.route("/api/live-monitor/binance-testnet/balance", methods=["GET"])
+@login_required
+def api_lm_bt_balance():
+    """Phase 11.5: Binance Testnet USDT balance (read-only, signed)."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    result = _lm_bt_balance()
+    return jsonify(result)
+
+
+@app.route("/api/live-monitor/binance-testnet/positions", methods=["GET"])
+@login_required
+def api_lm_bt_positions():
+    """Phase 11.5: Binance Testnet open positions (read-only, signed)."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    symbol = request.args.get("symbol") or None
+    result = _lm_bt_positions(symbol=symbol)
+    return jsonify(result)
+
+
+@app.route("/api/live-monitor/binance-testnet/symbol-filters", methods=["GET"])
+@login_required
+def api_lm_bt_symbol_filters():
+    """Phase 11.5: Binance Testnet symbol filter details (read-only, public)."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    symbol = (request.args.get("symbol") or "").upper().strip()
+    if not symbol:
+        return jsonify({"ok": False, "error": "symbol_required"}), 400
+    result = _lm_bt_symbol_filters(symbol)
+    return jsonify(result)
+
+
+# ── Phase 11.6: Execution Simulation Layer ────────────────────────────────────
+# Simulation only. No order placement. No position creation. No execution.
+
+@app.route("/api/live-monitor/items/<int:item_id>/execution-intent", methods=["GET"])
+@login_required
+def api_lm_execution_intent(item_id):
+    """Phase 11.6: Build execution intent from Smart Entry + AI Decision + Policy."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    from models import db as _db116, LiveMonitorItem as _LMI116
+    row = _LMI116.query.filter_by(id=item_id, user_id=uid).first()
+    if not row:
+        return jsonify({"error": "item_not_found"}), 404
+    snap = _json_loads_safe(row.snapshot_json, {})
+    intent = _lm_build_execution_intent(row, snap)
+    if intent.get("ok"):
+        try:
+            snap2 = _json_loads_safe(row.snapshot_json, {})
+            snap2["latest_execution_intent"] = intent
+            row.snapshot_json = _json_dumps_safe(snap2)
+            _db116.session.commit()
+        except Exception:
+            pass
+    return jsonify({
+        "ok":             intent.get("ok", False),
+        "execution_intent": intent,
+        "symbol":         row.symbol,
+        "exchange":       row.exchange,
+    })
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/execution-simulation", methods=["GET"])
+@login_required
+def api_lm_execution_simulation(item_id):
+    """Phase 11.6: Run full execution simulation pipeline (no order placement)."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    from models import db as _db116s, LiveMonitorItem as _LMI116s
+    row = _LMI116s.query.filter_by(id=item_id, user_id=uid).first()
+    if not row:
+        return jsonify({"error": "item_not_found"}), 404
+    snap = _json_loads_safe(row.snapshot_json, {})
+    intent = _lm_build_execution_intent(row, snap)
+    snap["latest_execution_intent"] = intent
+    simulation = _lm_build_execution_simulation(row, snap)
+    if simulation.get("ok") or simulation.get("simulated"):
+        try:
+            snap2 = _json_loads_safe(row.snapshot_json, {})
+            snap2["latest_execution_intent"]    = intent
+            snap2["latest_execution_simulation"] = simulation
+            row.snapshot_json = _json_dumps_safe(snap2)
+            _db116s.session.commit()
+        except Exception:
+            pass
+    return jsonify({
+        "ok":                  simulation.get("ok", False),
+        "execution_intent":    intent,
+        "execution_simulation": simulation,
+        "symbol":              row.symbol,
+        "exchange":            row.exchange,
+    })
+
+
+# ── Phase 11.7A: Testnet Order Draft + Manual Submit Gate ─────────────────────
+# MANUAL SUBMIT ONLY. No automation. No AI execution. No background placement.
+# User must explicitly click Submit Testnet Order in the Trading Terminal.
+
+@app.route("/api/live-monitor/items/<int:item_id>/testnet-order/draft", methods=["GET"])
+@login_required
+def api_lm_testnet_order_draft(item_id):
+    """Phase 11.7A: Build and return a testnet LIMIT order draft (no placement)."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    from models import db as _db117d, LiveMonitorItem as _LMI117d
+    row = _LMI117d.query.filter_by(id=item_id, user_id=uid).first()
+    if not row:
+        return jsonify({"error": "item_not_found"}), 404
+    snap = _json_loads_safe(row.snapshot_json, {})
+    quantity_str = request.args.get("quantity") or None
+    draft = _lm_build_testnet_order_draft(row, snap, quantity_str)
+    if draft.get("ok"):
+        try:
+            snap2 = _json_loads_safe(row.snapshot_json, {})
+            snap2["latest_testnet_order_draft"] = {
+                k: v for k, v in draft.items()
+                if k not in ("filter_details",)
+            }
+            row.snapshot_json = _json_dumps_safe(snap2)
+            _db117d.session.commit()
+        except Exception:
+            pass
+    return jsonify({
+        "ok":     draft.get("ok", False),
+        "draft":  draft,
+        "symbol": row.symbol,
+    })
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/testnet-order/submit", methods=["POST"])
+@login_required
+def api_lm_testnet_order_submit(item_id):
+    """Phase 11.7A: Manual submit gate — place a testnet LIMIT entry order.
+
+    SAFETY GATES (all must pass):
+    1. Item ownership
+    2. latest_execution_simulation.ready_for_testnet == True
+    3. latest_execution_intent.allowed == True
+    4. BINANCE_TESTNET_ORDER_ENABLED == "1"
+    5. Connector ready (testnet-only + credentials)
+    6. Quantity provided and valid
+    7. Draft passes all filter checks
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    from models import (
+        db as _db117s,
+        LiveMonitorItem as _LMI117s,
+        LiveMonitorTestnetOrder as _LMTO117,
+    )
+
+    row = _LMI117s.query.filter_by(id=item_id, user_id=uid).first()
+    if not row:
+        return jsonify({"error": "item_not_found"}), 404
+
+    body = {}
+    try:
+        body = request.get_json(force=True, silent=True) or {}
+    except Exception:
+        pass
+
+    quantity_str = str(body.get("quantity", "") or "").strip() or None
+
+    snap = _json_loads_safe(row.snapshot_json, {})
+
+    # ── Gate 1: simulation ready ───────────────────────────────────────────────
+    sim = snap.get("latest_execution_simulation") or {}
+    if not sim.get("ready_for_testnet"):
+        return jsonify({
+            "ok": False,
+            "error": "simulation_not_ready",
+            "detail": "latest_execution_simulation.ready_for_testnet must be true.",
+        }), 422
+
+    # ── Gate 2: intent allowed ─────────────────────────────────────────────────
+    intent = snap.get("latest_execution_intent") or {}
+    if not intent.get("allowed"):
+        return jsonify({
+            "ok": False,
+            "error": "intent_not_allowed",
+            "detail": "latest_execution_intent.allowed must be true.",
+        }), 422
+
+    # ── Gate 3: order env flag ─────────────────────────────────────────────────
+    if not _lm_bt_order_enabled():
+        return jsonify({
+            "ok": False,
+            "error": "order_disabled",
+            "detail": "BINANCE_TESTNET_ORDER_ENABLED is not set to '1'.",
+        }), 422
+
+    # ── Gate 4: connector ─────────────────────────────────────────────────────
+    from live_monitor.binance_testnet import (
+        _lm_bt_is_testnet_only,
+        _lm_bt_credentials_available,
+    )
+    if not (_lm_bt_is_testnet_only() and _lm_bt_credentials_available()):
+        return jsonify({
+            "ok": False,
+            "error": "connector_not_ready",
+            "detail": "Binance Testnet connector is not properly configured.",
+        }), 422
+
+    # ── Gate 5: quantity ──────────────────────────────────────────────────────
+    if not quantity_str:
+        return jsonify({
+            "ok": False,
+            "error": "quantity_required",
+            "detail": "Provide 'quantity' in the request body.",
+        }), 422
+
+    # ── Build and validate draft ──────────────────────────────────────────────
+    draft = _lm_build_testnet_order_draft(row, snap, quantity_str)
+    if not draft.get("draft_ready"):
+        return jsonify({
+            "ok": False,
+            "error": "draft_not_ready",
+            "reasons": draft.get("reasons", []),
+            "draft": draft,
+        }), 422
+
+    symbol   = draft["symbol"]
+    side     = draft["side"]
+    quantity = draft["quantity"]
+    price    = draft["price"]
+
+    # ── Place order ───────────────────────────────────────────────────────────
+    order_result = _lm_bt_place_limit_order_testnet(
+        symbol=symbol,
+        side=side,
+        quantity=quantity,
+        price=price,
+    )
+
+    # ── Persist record (no secrets) ───────────────────────────────────────────
+    _order_safe_req = order_result.get("safe_request") or {}
+    _order_status   = order_result.get("order_status") or ("submitted" if order_result.get("ok") else "failed")
+    _order_bn_id    = str(order_result.get("binance_order_id") or "")
+    db_record = _LMTO117(
+        user_id=uid,
+        item_id=item_id,
+        symbol=symbol,
+        side=side,
+        order_type="LIMIT",
+        time_in_force="GTC",
+        quantity=quantity,
+        price=price,
+        status=_order_status,
+        client_order_id=order_result.get("client_order_id"),
+        binance_order_id=_order_bn_id,
+        execution_intent_json=_json_dumps_safe(intent),
+        execution_simulation_json=_json_dumps_safe(sim),
+        ai_decision_json=_json_dumps_safe(snap.get("latest_ai_trade_control_decision") or {}),
+        automation_policy_json=_json_dumps_safe(snap.get("latest_automation_policy_result") or {}),
+        request_json=_json_dumps_safe(_order_safe_req),
+        response_json=_json_dumps_safe(order_result.get("data") or {}),
+        error_json=_json_dumps_safe(order_result.get("error") or ""),
+    )
+    import datetime as _dt117
+    db_record.submitted_at = _dt117.datetime.utcnow()
+    try:
+        _db117s.session.add(db_record)
+        _db117s.session.commit()
+    except Exception as _e117s:
+        try:
+            _db117s.session.rollback()
+        except Exception:
+            pass
+
+    # ── Update snapshot ───────────────────────────────────────────────────────
+    try:
+        snap2 = _json_loads_safe(row.snapshot_json, {})
+        snap2["latest_testnet_order_draft"] = {
+            k: v for k, v in draft.items() if k not in ("filter_details",)
+        }
+        snap2["latest_testnet_order_result"] = {
+            "ok":              order_result.get("ok"),
+            "status":          _order_status,
+            "order_id":        _order_bn_id,
+            "client_order_id": order_result.get("client_order_id"),
+            "symbol":          symbol,
+            "side":            side,
+            "quantity":        quantity,
+            "price":           price,
+            "submitted_at":    int(__import__("time").time()),
+        }
+        row.snapshot_json = _json_dumps_safe(snap2)
+        _db117s.session.commit()
+    except Exception:
+        pass
+
+    # ── Task 10: Chat/timeline event ──────────────────────────────────────────
+    try:
+        from models import LiveMonitorEvent as _LME117
+        _lme_payload = {
+            "symbol":          symbol,
+            "side":            side,
+            "quantity":        quantity,
+            "price":           price,
+            "order_id":        _order_bn_id,
+            "client_order_id": order_result.get("client_order_id"),
+            "status":          _order_status,
+            "ok":              order_result.get("ok"),
+        }
+        _lme117 = _LME117(
+            item_id           = item_id,
+            user_id           = uid,
+            symbol            = symbol,
+            event_type        = "testnet_order_submitted",
+            event_description = (
+                f"Testnet LIMIT {side} {quantity} {symbol} @ {price} — "
+                f"status={_order_status}"
+            ),
+            details_json      = _json_dumps_safe(_lme_payload),
+            price_at_event    = draft.get("price_float"),
+        )
+        _db117s.session.add(_lme117)
+        _db117s.session.commit()
+    except Exception:
+        pass
+
+    safe_response = {
+        "ok":              order_result.get("ok"),
+        "status":          _order_status,
+        "order_id":        _order_bn_id,
+        "client_order_id": order_result.get("client_order_id"),
+        "symbol":          symbol,
+        "side":            side,
+        "quantity":        quantity,
+        "price":           price,
+        "estimated_notional": draft.get("estimated_notional"),
+        "error":           order_result.get("error"),
+        "advisory_note":   draft.get("advisory_note"),
+    }
+    status_code = 200 if order_result.get("ok") else 502
+    return jsonify(safe_response), status_code
 
 
 @app.route("/api/live-monitor/trades/<trade_uid>/demo-submit", methods=["POST"])

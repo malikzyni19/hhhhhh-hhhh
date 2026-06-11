@@ -787,7 +787,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 .lm-manual-msg{font-size:11.5px;margin-top:6px;min-height:14px;color:var(--text-3)}
 .lm-manual-msg.ok{color:var(--green-2,#22d3ee)}
 .lm-manual-msg.err{color:var(--red-2,#ef4444)}
-.lm-body{display:grid;grid-template-columns:290px 1fr;flex:1;min-height:0;overflow:hidden;height:0}
+.lm-body{display:flex;flex:1;min-height:0;overflow:hidden;height:0}
 #lmDhWrap{margin-top:12px}
 .lm-left{border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0;background:var(--bg-panel)}
 .lm-left-head{display:flex;align-items:center;justify-content:space-between;padding:10px 12px 8px;border-bottom:1px solid var(--border);flex-shrink:0}
@@ -944,6 +944,25 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 .lm-stab.active{color:var(--accent);border-bottom-color:var(--accent)}
 .lm-stab-pane{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}
 .lm-stab-pane[hidden]{display:none!important}
+/* Q2: Workspace architecture */
+.lm-workspace{flex:1;min-height:0;overflow:hidden;display:flex}
+.lm-workspace[hidden]{display:none!important}
+#lmWs-setups{display:grid!important;grid-template-columns:290px 1fr}
+.lm-ws-page{flex:1;overflow-y:auto;padding:14px 16px;min-width:0;box-sizing:border-box}
+.lm-ws-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.lm-ws-htitle{font-size:13px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:8px}
+.lm-ws-htitle svg{width:15px;height:15px;stroke:var(--accent);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.lm-ws-badge{display:inline-flex;align-items:center;font-size:9px;font-weight:700;letter-spacing:.5px;background:rgba(34,211,238,.1);color:var(--accent);border:1px solid rgba(34,211,238,.25);border-radius:4px;padding:2px 8px;white-space:nowrap;flex-shrink:0}
+.lm-ws-grid-2{display:grid;grid-template-columns:380px 1fr;gap:12px}
+.lm-ws-section{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:12px}
+.lm-ws-section:last-child{margin-bottom:0}
+.lm-ws-sh{font-size:9.5px;font-weight:700;letter-spacing:.6px;color:var(--text-3);margin-bottom:8px;text-transform:uppercase}
+.lm-outer[data-workspace]:not([data-workspace="setups"]) .lm-manual{display:none!important}
+.lm-outer[data-workspace]:not([data-workspace="setups"]) .lm-ob-da-wrap{display:none!important}
+.lm-outer[data-workspace]:not([data-workspace="setups"]) [data-lmf]{display:none!important}
+.lm-outer[data-workspace]:not([data-workspace="setups"]) #lmAiToggle{display:none!important}
+@media(max-width:1100px){.lm-ws-grid-2{grid-template-columns:320px 1fr}}
+@media(max-width:900px){.lm-ws-grid-2{grid-template-columns:1fr}}
 .lm-ds-row{display:flex;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg-card)}
 .lm-ds-lbl{font-size:9.5px;font-weight:700;letter-spacing:.6px;color:var(--text-3);white-space:nowrap}
 .lm-ds-sel{flex:1;background:var(--bg-card-2);border:1px solid var(--border);color:var(--text);border-radius:5px;padding:3px 6px;font-size:11px;outline:none;cursor:pointer;font-family:inherit}
@@ -4525,16 +4544,49 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     try{ stopDashboardPolling(); }catch(_){}
   }
 
-  /* Switch which .lm-stab-pane is visible and sync sidebar active state */
-  function _lmSwitchPane(pane){
-    [].forEach.call(document.querySelectorAll(".lm-stab-pane"),function(p){p.hidden=true;});
-    var paneEl=document.getElementById("lmPane-"+pane);
-    if(paneEl) paneEl.hidden=false;
-    var aside=document.querySelector(".side");
+  /* Q2: Workspace architecture — switch entire workspace area */
+  var _lmActiveWorkspace='setups';
+  var _LM_WS_IDS=['setups','terminal','riskguard','journal'];
+  function _lmSwitchPane(ws){
+    // Show target workspace, hide all others
+    _LM_WS_IDS.forEach(function(w){
+      var el=document.getElementById('lmWs-'+w);
+      if(el) el.hidden=(w!==ws);
+    });
+    // Sync sidebar active state
+    var aside=document.querySelector('.side');
     if(aside){
-      [].forEach.call(aside.querySelectorAll("[data-lmpane]"),function(x){x.classList.remove("active");});
-      var ai=aside.querySelector("[data-lmpane='"+pane+"']");
-      if(ai) ai.classList.add("active");
+      [].forEach.call(aside.querySelectorAll('[data-lmpane]'),function(x){x.classList.remove('active');});
+      var ai=aside.querySelector('[data-lmpane="'+ws+'"]');
+      if(ai) ai.classList.add('active');
+    }
+    // Update workspace badge in topbar
+    var _wsLabels={setups:'Live Setups',terminal:'Trading Terminal',riskguard:'Risk Guard',journal:'Trade Journal'};
+    var badge=document.getElementById('lmWsBadge');
+    if(badge) badge.textContent=_wsLabels[ws]||ws;
+    // Set data-workspace on outer for CSS show/hide of setup-specific topbar controls
+    var outer=document.querySelector('.lm-outer');
+    if(outer) outer.setAttribute('data-workspace',ws);
+    // Refresh terminal active-item display when entering terminal workspace
+    if(ws==='terminal') try{_lmUpdateTerminalActiveItem();}catch(e){}
+    // Persist selection
+    try{localStorage.setItem('zyni_lm_workspace',ws);}catch(e){}
+    _lmActiveWorkspace=ws;
+  }
+  function _lmUpdateTerminalActiveItem(){
+    var el=document.getElementById('lmTermActiveItem');
+    if(!el) return;
+    var item=window._lmSelItem||null;
+    if(item&&item.symbol){
+      el.innerHTML=
+        '<span style="font-size:10px;color:var(--text-3)">Active: </span>'+
+        '<span style="font-size:11px;font-weight:700;color:var(--text-2);font-family:var(--mono)">'+esc(item.symbol)+'</span>'+
+        '<span style="font-size:10px;color:var(--text-3);margin-left:5px">'+esc((item.direction||'').toUpperCase())+' '+esc(item.timeframe||'')+'</span>';
+      window._lmSimItemId=item.id;
+    } else {
+      el.innerHTML=
+        '<span style="font-size:10px;color:var(--text-3)">No setup selected — </span>'+
+        '<button class="btn lm-sm-btn" onclick="_lmSwitchPane(\'setups\')" style="font-size:9px;padding:2px 8px">&#8592; Go to Live Setups</button>';
     }
   }
 
@@ -4663,7 +4715,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   function renderLiveMonitorInto(scroll){
     scroll.classList.add("lm-active");
     scroll.innerHTML=
-      '<div class="lm-outer">'+
+      '<div class="lm-outer" data-workspace="setups">'+
         '<div class="lm-topbar">'+
           '<div class="lm-topbar-left">'+
             '<div style="margin-right:6px">'+
@@ -4702,6 +4754,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
             '</div>'+
           '</div>'+
           '<div class="lm-topbar-right">'+
+            '<span class="lm-ws-badge" id="lmWsBadge">Live Setups</span>'+
             '<div class="lm-ai-toggle" id="lmAiToggle">'+
               '<svg class="ico" style="width:12px;height:12px" viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 1 7 7c0 3-1.6 5.5-4 6.7V17a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-1.3C6.6 14.5 5 12 5 9a7 7 0 0 1 7-7z"/><path d="M9 21h6"/></svg>'+
               '<span id="lmAiLabel">AI Preview</span>'+
@@ -4731,67 +4784,201 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
           '<div class="lm-manual-msg" id="lmAddMsg" aria-live="polite"></div>'+
         '</div>'+
         '<div class="lm-body">'+
-          '<div class="lm-left">'+
-            /* ── Live Setups pane (tab controlled by global sidebar) ── */
-            '<div class="lm-stab-pane" id="lmPane-setups">'+
-              '<div class="lm-ds-row">'+
-                '<span class="lm-ds-lbl">DATA SOURCE</span>'+
-                '<select class="lm-ds-sel" id="lmDataSrc">'+
-                  '<option value="binance">Binance</option>'+
-                  '<option value="bybit">Bybit</option>'+
-                  '<option value="okx">OKX</option>'+
-                  '<option value="mexc">MEXC</option>'+
-                  '<option value="aggregated">Aggregated</option>'+
-                '</select>'+
-                '<span class="lm-ds-note" title="Analysis data only. Parent setup OB/FIB zones, SL, TP and invalidation levels are never changed by analysis source selection.">&#9432; Analysis only — setup levels unchanged</span>'+
-              '</div>'+
-              '<div class="lm-left-head"><span>ACTIVE SETUPS</span><span id="lmCount" style="font-size:11px;color:var(--accent);font-weight:700;font-family:var(--mono)">0</span></div>'+
-              '<div class="lm-cards" id="lmCards"></div>'+
-            '</div>'+
-            /* ── Trading Terminal pane ── */
-            '<div class="lm-stab-pane" id="lmPane-terminal" hidden>'+
-              '<div class="lm-pane-head">TRADING TERMINAL</div>'+
-              '<div class="lm-pane-scroll" style="padding:10px">'+
-                '<div class="lm-pane-section">'+
-                  '<div class="lm-pane-sh">EXECUTION MODE</div>'+
-                  '<select style="width:100%;background:var(--bg-card-2);border:1px solid var(--border);color:var(--text-3);border-radius:6px;padding:6px 8px;font-size:11px;outline:none;cursor:not-allowed;margin-bottom:8px" disabled>'+
-                    '<option>Confirmation (Pending)</option>'+
-                    '<option>OB Touch</option>'+
-                    '<option>Deep OB</option>'+
-                    '<option>Manual Approval</option>'+
+
+          /* ── WORKSPACE: Live Setups (2-col: card list + detail) ── */
+          '<div id="lmWs-setups" class="lm-workspace">'+
+            '<div class="lm-left">'+
+              '<div class="lm-stab-pane" id="lmPane-setups">'+
+                '<div class="lm-ds-row">'+
+                  '<span class="lm-ds-lbl">DATA SOURCE</span>'+
+                  '<select class="lm-ds-sel" id="lmDataSrc">'+
+                    '<option value="binance">Binance</option>'+
+                    '<option value="bybit">Bybit</option>'+
+                    '<option value="okx">OKX</option>'+
+                    '<option value="mexc">MEXC</option>'+
+                    '<option value="aggregated">Aggregated</option>'+
                   '</select>'+
-                  '<div style="font-size:10px;color:var(--text-3);padding:5px 8px;background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.2);border-radius:5px;line-height:1.4">'+
-                    '<b style="color:var(--yellow)">Demo Only</b> — Execution disabled. Enable via DEMO_TRADING_ENABLED env flag.'+
-                  '</div>'+
+                  '<span class="lm-ds-note" title="Analysis data only. Parent setup OB/FIB zones, SL, TP and invalidation levels are never changed by analysis source selection.">&#9432; Analysis only — setup levels unchanged</span>'+
                 '</div>'+
-                '<div class="lm-pane-section" style="margin-top:10px">'+
-                  '<div class="lm-pane-sh">PENDING ORDERS</div>'+
-                  '<div class="lm-tbl-wrap">'+
-                    '<table class="lm-inner-tbl">'+
-                      '<thead><tr><th>Symbol</th><th>Side</th><th>Type</th><th>Qty</th><th>Price</th><th>Status</th></tr></thead>'+
-                      '<tbody><tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:14px 0">No pending orders</td></tr></tbody>'+
-                    '</table>'+
-                  '</div>'+
-                '</div>'+
-                '<div class="lm-pane-section" style="margin-top:10px">'+
-                  '<div class="lm-pane-sh">OPEN POSITIONS</div>'+
-                  '<div class="lm-tbl-wrap">'+
-                    '<table class="lm-inner-tbl">'+
-                      '<thead><tr><th>Symbol</th><th>Side</th><th>Size</th><th>Entry</th><th>Mark</th><th>PnL</th></tr></thead>'+
-                      '<tbody><tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:14px 0">No open positions</td></tr></tbody>'+
-                    '</table>'+
-                  '</div>'+
-                '</div>'+
-                '<div style="display:flex;gap:6px;margin-top:12px">'+
-                  '<button class="btn" disabled style="flex:1;justify-content:center;opacity:.4;cursor:not-allowed">Buy / Long</button>'+
-                  '<button class="btn" disabled style="flex:1;justify-content:center;opacity:.4;cursor:not-allowed">Sell / Short</button>'+
-                '</div>'+
+                '<div class="lm-left-head"><span>ACTIVE SETUPS</span><span id="lmCount" style="font-size:11px;color:var(--accent);font-weight:700;font-family:var(--mono)">0</span></div>'+
+                '<div class="lm-cards" id="lmCards"></div>'+
               '</div>'+
             '</div>'+
-            /* ── Risk Guard pane ── */
-            '<div class="lm-stab-pane" id="lmPane-riskguard" hidden>'+
-              '<div class="lm-pane-head">RISK GUARD</div>'+
-              '<div class="lm-pane-scroll" style="padding:10px">'+
+            '<div class="lm-right"><div class="lm-right-scroll" id="lmRight"></div></div>'+
+          '</div>'+
+
+          /* ── WORKSPACE: Trading Terminal (full-width) ── */
+          '<div id="lmWs-terminal" class="lm-workspace" hidden>'+
+            '<div class="lm-ws-page">'+
+              '<div class="lm-ws-header">'+
+                '<div class="lm-ws-htitle">'+
+                  '<svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>'+
+                  'Trading Terminal'+
+                '</div>'+
+                '<div id="lmTermActiveItem" style="display:flex;align-items:center;gap:8px">'+
+                  '<span style="font-size:10px;color:var(--text-3)">No setup selected — </span>'+
+                  '<button class="btn lm-sm-btn" onclick="_lmSwitchPane(\'setups\')" style="font-size:9px;padding:2px 8px">&#8592; Go to Live Setups</button>'+
+                '</div>'+
+              '</div>'+
+              '<div class="lm-ws-grid-2">'+
+
+                /* Left col — Connector, Exec Mode, Order Draft */
+                '<div>'+
+                  '<div class="lm-ws-section" id="lmBtConnectorSection">'+
+                    '<div class="lm-ws-sh">Binance Testnet Connector</div>'+
+                    '<div id="lmBtStatusGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;font-size:10px;color:var(--text-3)">'+
+                      '<span>Testnet locked:</span><span id="lmBtTestnetLocked" style="color:var(--green)">—</span>'+
+                      '<span>Credentials:</span><span id="lmBtCreds" style="color:var(--text-3)">—</span>'+
+                      '<span>Ping:</span><span id="lmBtPing" style="color:var(--text-3)">—</span>'+
+                      '<span>Server time:</span><span id="lmBtServerTime" style="color:var(--text-3)">—</span>'+
+                      '<span>Account:</span><span id="lmBtAccount" style="color:var(--text-3)">—</span>'+
+                      '<span>Balance (USDT):</span><span id="lmBtBalance" style="color:var(--text-3)">—</span>'+
+                      '<span>Positions:</span><span id="lmBtPositions" style="color:var(--text-3)">—</span>'+
+                      '<span>Avail. USDT:</span><span id="lmBtAvailUsdt" style="color:var(--accent);font-weight:700">—</span>'+
+                      '<span>Last checked:</span><span id="lmBtCheckedAt" style="color:var(--text-3)">—</span>'+
+                      '<span>Orders enabled:</span><span style="color:var(--red-2,#f87171);font-weight:700">FALSE</span>'+
+                      '<span>Execution:</span><span style="color:var(--red-2,#f87171);font-weight:700">FALSE</span>'+
+                      '<span>Mode:</span><span style="color:var(--yellow,#facc15);font-weight:700">READ ONLY</span>'+
+                    '</div>'+
+                    '<div id="lmBtError" style="display:none;font-size:10px;color:var(--red);padding:3px 6px;background:rgba(239,68,68,.07);border-radius:4px;margin:6px 0"></div>'+
+                    '<div style="display:flex;gap:6px;margin-top:8px">'+
+                      '<button class="btn lm-sm-btn" id="lmBtCheckBtn" style="flex:1;justify-content:center" onclick="window._lmBtCheck()">Check Connection</button>'+
+                      '<button class="btn lm-sm-btn" id="lmBtBalanceBtn" style="flex:1;justify-content:center" onclick="window._lmBtRefreshBalance()">Refresh Balance</button>'+
+                      '<button class="btn lm-sm-btn" id="lmBtPositionsBtn" style="flex:1;justify-content:center" onclick="window._lmBtRefreshPositions()">Refresh Positions</button>'+
+                    '</div>'+
+                    '<div style="font-size:9px;color:var(--text-3);padding:5px 0 0;line-height:1.4">'+
+                      '<b style="color:var(--yellow)">Phase 11.5</b> — Read-only. Testnet only (demo-fapi.binance.com). No execution.'+
+                    '</div>'+
+                  '</div>'+
+
+                  '<div class="lm-ws-section">'+
+                    '<div class="lm-ws-sh">Execution Mode</div>'+
+                    '<select style="width:100%;background:var(--bg-card-2);border:1px solid var(--border);color:var(--text-3);border-radius:6px;padding:6px 8px;font-size:11px;outline:none;cursor:not-allowed;margin-bottom:8px" disabled>'+
+                      '<option>Confirmation (Pending)</option>'+
+                      '<option>OB Touch</option>'+
+                      '<option>Deep OB</option>'+
+                      '<option>Manual Approval</option>'+
+                    '</select>'+
+                    '<div style="font-size:10px;color:var(--text-3);padding:6px 8px;background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.2);border-radius:5px;line-height:1.4">'+
+                      '<b style="color:var(--yellow)">Demo Only</b> — Execution disabled. Enable via DEMO_TRADING_ENABLED env flag.'+
+                    '</div>'+
+                  '</div>'+
+
+                  '<div class="lm-ws-section" style="background:rgba(251,191,36,.04);border-color:rgba(251,191,36,.2)">'+
+                    '<div class="lm-ws-sh" style="color:var(--yellow,#facc15)">Testnet Order Draft <span style="font-size:9px;opacity:.7;font-weight:400">(Phase 11.7A)</span></div>'+
+                    '<table style="width:100%;font-size:10px;border-collapse:collapse">'+
+                      '<tr><td style="color:var(--text-3);padding:2px 0;width:44%">Symbol</td><td id="lmTod-symbol" style="color:var(--text-1)">—</td></tr>'+
+                      '<tr><td style="color:var(--text-3);padding:2px 0">Side</td><td id="lmTod-side" style="color:var(--text-1)">—</td></tr>'+
+                      '<tr><td style="color:var(--text-3);padding:2px 0">Type</td><td style="color:var(--text-1)">LIMIT / GTC</td></tr>'+
+                      '<tr><td style="color:var(--text-3);padding:2px 0">Entry Price</td><td id="lmTod-price" style="color:var(--text-1)">—</td></tr>'+
+                      '<tr><td style="color:var(--text-3);padding:2px 0">Sim Ready</td><td id="lmTod-simReady" style="color:var(--text-1)">—</td></tr>'+
+                      '<tr><td style="color:var(--text-3);padding:2px 0">Connector</td><td id="lmTod-connector" style="color:var(--text-1)">—</td></tr>'+
+                      '<tr><td style="color:var(--text-3);padding:2px 0">Order Env</td><td id="lmTod-orderEnv" style="color:var(--text-1)">—</td></tr>'+
+                      '<tr><td style="color:var(--text-3);padding:2px 0">Filter OK</td><td id="lmTod-filterOk" style="color:var(--text-1)">—</td></tr>'+
+                      '<tr><td style="color:var(--text-3);padding:2px 0">Est. Notional</td><td id="lmTod-notional" style="color:var(--text-1)">—</td></tr>'+
+                    '</table>'+
+                    '<div style="margin-top:8px;display:flex;gap:4px;align-items:center">'+
+                      '<label style="font-size:9px;color:var(--text-3);white-space:nowrap">Qty:</label>'+
+                      '<input id="lmTodQtyInput" type="text" placeholder="e.g. 0.001" '+
+                        'style="flex:1;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:4px;padding:4px 8px;font-size:10px;color:var(--text-1);outline:none" '+
+                        'oninput="window._lmTodRefreshDraft()" />'+
+                      '<button class="btn lm-sm-btn" id="lmTodDraftBtn" style="white-space:nowrap" onclick="window._lmTodRefreshDraft()">Refresh</button>'+
+                    '</div>'+
+                    '<div id="lmTod-qtyErr" style="display:none;font-size:9px;color:#f87171;padding:2px 0"></div>'+
+                    '<div id="lmTod-reasons" style="display:none;font-size:9px;color:var(--yellow);padding:2px 0;line-height:1.4"></div>'+
+                    '<div style="margin-top:8px">'+
+                      '<button class="btn lm-sm-btn" id="lmTodSubmitBtn" disabled '+
+                        'style="width:100%;justify-content:center;background:rgba(16,185,129,.15);border-color:rgba(16,185,129,.4);color:#6ee7b7;cursor:not-allowed;opacity:.5" '+
+                        'onclick="window._lmTodSubmitOrder()">'+
+                        'Submit Testnet Order'+
+                      '</button>'+
+                    '</div>'+
+                    '<div id="lmTod-result" style="display:none;font-size:9px;padding:4px 0;line-height:1.5"></div>'+
+                    '<div style="font-size:9px;color:var(--text-3);padding:4px 0 0;line-height:1.4">'+
+                      '<b style="color:#f87171">Manual submit only.</b> No TP/SL. No automation. Entry order only.'+
+                    '</div>'+
+                  '</div>'+
+                '</div>'+
+
+                /* Right col — Simulator, Pending Orders, Open Positions, Order Status */
+                '<div>'+
+                  '<div class="lm-ws-section" id="lmExecSimSection">'+
+                    '<div class="lm-ws-sh">Execution Simulator</div>'+
+                    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:10px;margin-bottom:8px">'+
+                      '<span style="color:var(--text-3)">Execution status:</span><span style="color:var(--yellow,#facc15);font-weight:700">SIMULATION ONLY</span>'+
+                      '<span style="color:var(--text-3)">Testnet orders:</span><span style="color:var(--red-2,#f87171);font-weight:700">DISABLED</span>'+
+                      '<span style="color:var(--text-3)">Execution:</span><span style="color:var(--red-2,#f87171);font-weight:700">DISABLED</span>'+
+                    '</div>'+
+                    '<div id="lmSimGrid" style="display:none">'+
+                      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:10px;color:var(--text-3);padding:2px 0 6px">'+
+                        '<span>Ready for testnet:</span><span id="lmSimReady" style="font-weight:700">—</span>'+
+                        '<span>Intent valid:</span><span id="lmSimIntent">—</span>'+
+                        '<span>Policy valid:</span><span id="lmSimPolicy">—</span>'+
+                        '<span>Decision valid:</span><span id="lmSimDecision">—</span>'+
+                        '<span>Filter valid:</span><span id="lmSimFilter">—</span>'+
+                        '<span>Data health:</span><span id="lmSimData">—</span>'+
+                      '</div>'+
+                      '<div id="lmSimIntentBox" style="display:none;font-size:9.5px;color:var(--text-3);padding:4px 6px;background:var(--bg-2);border-radius:4px;margin-bottom:4px;line-height:1.5"></div>'+
+                      '<div id="lmSimReasons" style="display:none;font-size:9px;color:var(--red-2,#f87171);padding:3px 6px;background:rgba(239,68,68,.07);border-radius:4px;margin-bottom:4px"></div>'+
+                      '<div id="lmSimWarnings" style="display:none;font-size:9px;color:var(--yellow,#facc15);padding:3px 6px;background:rgba(251,191,36,.06);border-radius:4px"></div>'+
+                    '</div>'+
+                    '<div style="margin-top:8px">'+
+                      '<button class="btn lm-sm-btn" id="lmRunSimBtn" style="width:100%;justify-content:center" onclick="window._lmRunSimulation()">Run Simulation</button>'+
+                    '</div>'+
+                    '<div style="font-size:9px;color:var(--text-3);padding:5px 0 0;line-height:1.4">'+
+                      '<b style="color:var(--yellow)">Phase 11.6</b> — Simulation only. No orders. No execution. No automation.'+
+                    '</div>'+
+                  '</div>'+
+
+                  '<div class="lm-ws-section">'+
+                    '<div class="lm-ws-sh">Pending Orders</div>'+
+                    '<div class="lm-tbl-wrap" style="max-height:160px">'+
+                      '<table class="lm-inner-tbl">'+
+                        '<thead><tr><th>Symbol</th><th>Side</th><th>Type</th><th>Qty</th><th>Price</th><th>Status</th><th>Client ID</th></tr></thead>'+
+                        '<tbody><tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:14px 0">No pending orders</td></tr></tbody>'+
+                      '</table>'+
+                    '</div>'+
+                  '</div>'+
+
+                  '<div class="lm-ws-section">'+
+                    '<div class="lm-ws-sh">Open Positions</div>'+
+                    '<div class="lm-tbl-wrap" style="max-height:160px">'+
+                      '<table class="lm-inner-tbl">'+
+                        '<thead><tr><th>Symbol</th><th>Side</th><th>Size</th><th>Entry</th><th>Mark</th><th>PnL</th><th>Liq. Price</th></tr></thead>'+
+                        '<tbody><tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:14px 0">No open positions</td></tr></tbody>'+
+                      '</table>'+
+                    '</div>'+
+                  '</div>'+
+
+                  '<div class="lm-ws-section">'+
+                    '<div class="lm-ws-sh">Order Status</div>'+
+                    '<div style="font-size:10px;color:var(--text-3);line-height:1.5">'+
+                      'Last submitted testnet order status appears here after Submit Testnet Order.'+
+                    '</div>'+
+                    '<div id="lmTodResultExpanded" style="display:none;font-size:10px;padding:4px 0;line-height:1.6"></div>'+
+                  '</div>'+
+
+                  '<div style="display:flex;gap:8px;margin-top:4px">'+
+                    '<button class="btn" disabled style="flex:1;justify-content:center;opacity:.3;cursor:not-allowed">Buy / Long</button>'+
+                    '<button class="btn" disabled style="flex:1;justify-content:center;opacity:.3;cursor:not-allowed">Sell / Short</button>'+
+                  '</div>'+
+                '</div>'+
+
+              '</div>'+ /* end lm-ws-grid-2 */
+            '</div>'+ /* end lm-ws-page */
+          '</div>'+ /* end lmWs-terminal */
+
+          /* ── WORKSPACE: Risk Guard (full-width) ── */
+          '<div id="lmWs-riskguard" class="lm-workspace" hidden>'+
+            '<div class="lm-ws-page">'+
+              '<div class="lm-ws-header">'+
+                '<div class="lm-ws-htitle">'+
+                  '<svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>'+
+                  'Risk Guard'+
+                '</div>'+
+                '<span style="font-size:10px;color:var(--text-3)">Safety controls &amp; policy enforcement</span>'+
+              '</div>'+
+              '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+
                 '<div class="lm-rg-card">'+
                   '<div class="lm-rg-card-top"><span class="lm-rg-ico off"></span><span class="lm-rg-label">Trading Status</span><span class="lm-rg-val">DISABLED</span></div>'+
                   '<div class="lm-rg-note">Demo trading is off. Set DEMO_TRADING_ENABLED=true to enable.</div>'+
@@ -4817,29 +5004,129 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                   '<div class="lm-rg-note">No proposals evaluated yet this session.</div>'+
                 '</div>'+
               '</div>'+
-            '</div>'+
-            /* ── Trade Journal pane ── */
-            '<div class="lm-stab-pane" id="lmPane-journal" hidden>'+
-              '<div class="lm-pane-head">TRADE JOURNAL</div>'+
-              '<div class="lm-pane-scroll" style="padding:10px">'+
-                '<div class="lm-jn-cards">'+
-                  '<div class="lm-jn-card"><div class="lm-jn-card-l">TOTAL TRADES</div><div class="lm-jn-card-v">0</div></div>'+
-                  '<div class="lm-jn-card"><div class="lm-jn-card-l">WIN RATE</div><div class="lm-jn-card-v">—</div></div>'+
-                  '<div class="lm-jn-card"><div class="lm-jn-card-l">AVG R</div><div class="lm-jn-card-v">—</div></div>'+
-                  '<div class="lm-jn-card"><div class="lm-jn-card-l">NET PnL</div><div class="lm-jn-card-v">—</div></div>'+
+              '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:10px">'+
+                '<div class="lm-ws-section">'+
+                  '<div class="lm-ws-sh">Exposure Limits</div>'+
+                  '<div style="font-size:10px;color:var(--text-3);line-height:1.7">'+
+                    '<div style="display:flex;justify-content:space-between"><span>Daily exposure cap</span><span style="color:var(--text-2)">—</span></div>'+
+                    '<div style="display:flex;justify-content:space-between"><span>Max portfolio risk</span><span style="color:var(--text-2)">—</span></div>'+
+                    '<div style="display:flex;justify-content:space-between"><span>Correlation limit</span><span style="color:var(--text-2)">—</span></div>'+
+                  '</div>'+
                 '</div>'+
-                '<div class="lm-pane-sh">CLOSED TRADES</div>'+
-                '<div class="lm-tbl-wrap" style="max-height:160px">'+
-                  '<table class="lm-inner-tbl" style="min-width:400px">'+
-                    '<thead><tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL</th><th>R</th><th>Status</th></tr></thead>'+
-                    '<tbody><tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:14px 0">No closed trades</td></tr></tbody>'+
+                '<div class="lm-ws-section">'+
+                  '<div class="lm-ws-sh">Daily Limits</div>'+
+                  '<div style="font-size:10px;color:var(--text-3);line-height:1.7">'+
+                    '<div style="display:flex;justify-content:space-between"><span>Trades today</span><span style="color:var(--text-2)">0</span></div>'+
+                    '<div style="display:flex;justify-content:space-between"><span>Daily loss limit</span><span style="color:var(--text-2)">—</span></div>'+
+                    '<div style="display:flex;justify-content:space-between"><span>Session P&amp;L</span><span style="color:var(--text-2)">—</span></div>'+
+                  '</div>'+
+                '</div>'+
+                '<div class="lm-ws-section">'+
+                  '<div class="lm-ws-sh">Policy Blocks</div>'+
+                  '<div style="font-size:10px;color:var(--text-3);line-height:1.7">'+
+                    '<div style="display:flex;justify-content:space-between"><span>AI blocks</span><span style="color:var(--text-2)">0</span></div>'+
+                    '<div style="display:flex;justify-content:space-between"><span>Policy blocks</span><span style="color:var(--text-2)">0</span></div>'+
+                    '<div style="display:flex;justify-content:space-between"><span>Setup blocks</span><span style="color:var(--text-2)">0</span></div>'+
+                  '</div>'+
+                '</div>'+
+              '</div>'+
+              '<div class="lm-ws-section" style="margin-top:10px">'+
+                '<div class="lm-ws-sh">Risk Events</div>'+
+                '<div class="lm-tbl-wrap" style="max-height:220px">'+
+                  '<table class="lm-inner-tbl">'+
+                    '<thead><tr><th>Time</th><th>Type</th><th>Symbol</th><th>Reason</th><th>Action</th></tr></thead>'+
+                    '<tbody><tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:18px 0">No risk events this session</td></tr></tbody>'+
                   '</table>'+
                 '</div>'+
               '</div>'+
             '</div>'+
           '</div>'+
-          '<div class="lm-right"><div class="lm-right-scroll" id="lmRight"></div></div>'+
-        '</div>'+
+
+          /* ── WORKSPACE: Trade Journal (full-width) ── */
+          '<div id="lmWs-journal" class="lm-workspace" hidden>'+
+            '<div class="lm-ws-page">'+
+              '<div class="lm-ws-header">'+
+                '<div class="lm-ws-htitle">'+
+                  '<svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>'+
+                  'Trade Journal'+
+                '</div>'+
+                '<span style="font-size:10px;color:var(--text-3)">Closed trades, history &amp; performance</span>'+
+              '</div>'+
+              '<div class="lm-jn-cards" style="grid-template-columns:repeat(4,1fr)">'+
+                '<div class="lm-jn-card"><div class="lm-jn-card-l">TOTAL TRADES</div><div class="lm-jn-card-v">0</div></div>'+
+                '<div class="lm-jn-card"><div class="lm-jn-card-l">WIN RATE</div><div class="lm-jn-card-v">—</div></div>'+
+                '<div class="lm-jn-card"><div class="lm-jn-card-l">AVG R</div><div class="lm-jn-card-v">—</div></div>'+
+                '<div class="lm-jn-card"><div class="lm-jn-card-l">NET PnL</div><div class="lm-jn-card-v">—</div></div>'+
+              '</div>'+
+              '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:10px">'+
+                '<div class="lm-ws-section">'+
+                  '<div class="lm-ws-sh">TP Hits</div>'+
+                  '<div style="font-size:24px;font-weight:700;font-family:var(--mono);color:var(--green-2,#4ade80);margin:4px 0">0</div>'+
+                  '<div style="font-size:10px;color:var(--text-3)">Take-profit targets hit</div>'+
+                '</div>'+
+                '<div class="lm-ws-section">'+
+                  '<div class="lm-ws-sh">SL Hits</div>'+
+                  '<div style="font-size:24px;font-weight:700;font-family:var(--mono);color:var(--red-2,#f87171);margin:4px 0">0</div>'+
+                  '<div style="font-size:10px;color:var(--text-3)">Stop-loss exits</div>'+
+                '</div>'+
+                '<div class="lm-ws-section">'+
+                  '<div class="lm-ws-sh">AI Interventions</div>'+
+                  '<div style="font-size:24px;font-weight:700;font-family:var(--mono);color:var(--yellow,#facc15);margin:4px 0">0</div>'+
+                  '<div style="font-size:10px;color:var(--text-3)">AI-blocked or modified</div>'+
+                '</div>'+
+              '</div>'+
+              '<div class="lm-ws-section" style="margin-top:10px">'+
+                '<div class="lm-ws-sh">Closed Trades</div>'+
+                '<div class="lm-tbl-wrap" style="max-height:280px">'+
+                  '<table class="lm-inner-tbl" style="min-width:620px">'+
+                    '<thead><tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL</th><th>R</th><th>Duration</th><th>Status</th></tr></thead>'+
+                    '<tbody><tr><td colspan="8" style="text-align:center;color:var(--text-3);padding:20px 0">No closed trades</td></tr></tbody>'+
+                  '</table>'+
+                '</div>'+
+              '</div>'+
+              '<div class="lm-ws-section" style="margin-top:10px">'+
+                '<div class="lm-ws-sh">AI Intervention History</div>'+
+                '<div class="lm-tbl-wrap" style="max-height:180px">'+
+                  '<table class="lm-inner-tbl" style="min-width:580px">'+
+                    '<thead><tr><th>Time</th><th>Symbol</th><th>Action</th><th>Confidence</th><th>Reason</th></tr></thead>'+
+                    '<tbody><tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:14px 0">No AI interventions recorded</td></tr></tbody>'+
+                  '</table>'+
+                '</div>'+
+              '</div>'+
+              '<div class="lm-ws-section" style="margin-top:10px">'+
+                '<div class="lm-ws-sh">Execution Logs</div>'+
+                '<div class="lm-tbl-wrap" style="max-height:160px">'+
+                  '<table class="lm-inner-tbl" style="min-width:580px">'+
+                    '<thead><tr><th>Time</th><th>Symbol</th><th>Type</th><th>Client ID</th><th>Status</th><th>Error</th></tr></thead>'+
+                    '<tbody><tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:14px 0">No execution logs</td></tr></tbody>'+
+                  '</table>'+
+                '</div>'+
+              '</div>'+
+              '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">'+
+                '<div class="lm-ws-section">'+
+                  '<div class="lm-ws-sh">Performance Statistics</div>'+
+                  '<div style="font-size:10px;color:var(--text-3);line-height:1.8">'+
+                    '<div style="display:flex;justify-content:space-between"><span>Profit factor</span><span style="color:var(--text-2)">—</span></div>'+
+                    '<div style="display:flex;justify-content:space-between"><span>Best trade</span><span style="color:var(--green-2,#4ade80)">—</span></div>'+
+                    '<div style="display:flex;justify-content:space-between"><span>Worst trade</span><span style="color:var(--red-2,#f87171)">—</span></div>'+
+                    '<div style="display:flex;justify-content:space-between"><span>Avg hold time</span><span style="color:var(--text-2)">—</span></div>'+
+                    '<div style="display:flex;justify-content:space-between"><span>Max drawdown</span><span style="color:var(--text-2)">—</span></div>'+
+                  '</div>'+
+                '</div>'+
+                '<div class="lm-ws-section">'+
+                  '<div class="lm-ws-sh">Session Summary</div>'+
+                  '<div style="font-size:10px;color:var(--text-3);line-height:1.8">'+
+                    '<div style="display:flex;justify-content:space-between"><span>Trades opened</span><span style="color:var(--text-2)">0</span></div>'+
+                    '<div style="display:flex;justify-content:space-between"><span>Trades closed</span><span style="color:var(--text-2)">0</span></div>'+
+                    '<div style="display:flex;justify-content:space-between"><span>Testnet orders</span><span style="color:var(--text-2)">0</span></div>'+
+                    '<div style="display:flex;justify-content:space-between"><span>AI decisions</span><span style="color:var(--text-2)">—</span></div>'+
+                    '<div style="display:flex;justify-content:space-between"><span>Simulations run</span><span style="color:var(--text-2)">—</span></div>'+
+                  '</div>'+
+                '</div>'+
+              '</div>'+
+            '</div>'+
+          '</div>'+
+        '</div>'+ /* end lm-body */
       '</div>';
     // Filter chips
     [].forEach.call(scroll.querySelectorAll("[data-lmf]"),function(c){
@@ -4850,6 +5137,13 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         _lmRenderCards();
       });
     });
+    // Q2: Restore workspace selection from localStorage
+    (function(){
+      var _savedWs='setups';
+      try{_savedWs=localStorage.getItem('zyni_lm_workspace')||'setups';}catch(e){}
+      if(_LM_WS_IDS.indexOf(_savedWs)<0) _savedWs='setups';
+      _lmSwitchPane(_savedWs);
+    })();
     // AI Preview toggle (frontend-only visual toggle, no API call)
     var aiTog=document.getElementById("lmAiToggle");
     var aiLbl=document.getElementById("lmAiLabel");
@@ -6418,6 +6712,26 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         '</div>'+
       '</div>'+
 
+      // Phase 11.1 Task 10: Execution Intelligence debug card (collapsed by default, Live Setup only)
+      (!isBiasShift ?
+        '<div class="sec-card" style="margin-bottom:12px" id="lmExecIntelCard">'+
+          '<div class="sec-card-head">'+
+            '<svg class="ico" style="width:13px;height:13px;color:var(--text-3)" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>'+
+            '<span class="sch-title">EXECUTION INTELLIGENCE</span>'+
+            '<span id="lmExecIntelScoreBadge" style="margin-left:8px;font-size:10px;padding:1px 6px;border-radius:3px;display:none"></span>'+
+            '<button class="btn" type="button" id="lmExecIntelFetchBtn" data-lmeifetch="'+item.id+'" title="Build execution intelligence for this setup" style="margin-left:auto;padding:2px 7px;font-size:10px">Load</button>'+
+            '<button class="btn" type="button" id="lmAiCtxFetchBtn" data-lmaictxfetch="'+item.id+'" title="Load Phase 11.2 AI Execution Context (danger level, orderflow quality, allowed actions)" style="padding:2px 7px;font-size:10px;margin-left:4px">AI Ctx</button>'+
+            '<button class="btn" type="button" id="lmExecIntelToggleBtn" title="Show/hide execution intelligence" style="padding:2px 7px;font-size:10px;margin-left:4px">&#9658; Show</button>'+
+          '</div>'+
+          '<div class="sec-card-body" id="lmExecIntelBody" style="display:none;padding:10px 13px">'+
+            '<div id="lmExecIntelContent" style="color:var(--text-3);font-size:11px">'+
+              'Click <b>Load</b> to fetch execution intelligence for this setup.'+
+            '</div>'+
+            '<div id="lmAiCtxContent" style="display:none;border-top:1px solid var(--border);padding-top:8px;margin-top:8px;font-size:11px"></div>'+
+          '</div>'+
+        '</div>'
+      : '')+
+
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start">'+
         '<div class="sec-card">'+
           '<div class="sec-card-head">'+
@@ -6699,6 +7013,407 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
           });
       });
     });
+    // Phase 11.1 Task 10: Execution Intelligence toggle and load buttons
+    var eiToggleBtn=box.querySelector("#lmExecIntelToggleBtn");
+    if(eiToggleBtn){
+      eiToggleBtn.addEventListener("click",function(){
+        var body=document.getElementById("lmExecIntelBody");
+        if(!body) return;
+        var open=body.style.display!=="none";
+        body.style.display=open?"none":"";
+        eiToggleBtn.innerHTML=open?"&#9658; Show":"&#9660; Hide";
+      });
+    }
+    var eiFetchBtn=box.querySelector("[data-lmeifetch]");
+    if(eiFetchBtn){
+      eiFetchBtn.addEventListener("click",function(){
+        var id=parseInt(eiFetchBtn.getAttribute("data-lmeifetch"),10); if(!id) return;
+        var origHtml=eiFetchBtn.innerHTML;
+        eiFetchBtn.disabled=true;
+        eiFetchBtn.textContent="Loading…";
+        var eiBody=document.getElementById("lmExecIntelBody");
+        var eiContent=document.getElementById("lmExecIntelContent");
+        var eiBadge=document.getElementById("lmExecIntelScoreBadge");
+        if(eiBody) eiBody.style.display="";
+        var tBtn2=document.getElementById("lmExecIntelToggleBtn");
+        if(tBtn2) tBtn2.innerHTML="&#9660; Hide";
+        if(eiContent) eiContent.innerHTML='<span style="opacity:.6">Building execution intelligence…</span>';
+        fetch("/api/live-monitor/items/"+id+"/execution-intelligence?refresh=1",{
+          credentials:"same-origin"})
+          .then(function(r){ return r.json(); })
+          .then(function(d){
+            eiFetchBtn.disabled=false; eiFetchBtn.innerHTML=origHtml;
+            if(!d||!d.ok){
+              if(eiContent) eiContent.innerHTML='<span style="color:var(--red-2)">Error: '+(d&&d.error?esc(String(d.error)):"server error")+'</span>';
+              return;
+            }
+            var ei=d.execution_intelligence||{};
+            if(_lmSelItem&&_lmSelItem.id===id){
+              if(!_lmSelItem.snapshot) _lmSelItem.snapshot={};
+              _lmSelItem.snapshot.latest_execution_intelligence=ei;
+            }
+            // Best candidate score badge
+            var best=ei.best_candidate;
+            if(eiBadge){
+              if(best){
+                var sc=best.score||0;
+                var col=sc>=80?"var(--green-2,#4ade80)":sc>=60?"var(--yellow,#facc15)":"var(--red-2,#f87171)";
+                eiBadge.style.cssText="display:inline-block;background:"+col+";color:#000;font-weight:600;font-size:10px;padding:1px 6px;border-radius:3px;margin-left:8px";
+                eiBadge.textContent="Best: "+sc+" — "+esc(best.score_label||"");
+              } else {
+                eiBadge.style.display="none";
+              }
+            }
+            // Candidates table
+            var html='<div style="font-size:11px;overflow:auto;max-height:420px">';
+            var cands=ei.candidates||[];
+            if(!cands.length){
+              html+='<div style="color:var(--text-3);padding:4px 0">No candidates found — run Smart Entry Plan first.</div>';
+            } else {
+              html+='<table style="width:100%;border-collapse:collapse;font-size:10px">';
+              html+='<thead><tr style="color:var(--text-3);border-bottom:1px solid var(--border)">';
+              html+='<th style="text-align:left;padding:3px 5px">#</th>';
+              html+='<th style="text-align:left;padding:3px 5px">TF / Type</th>';
+              html+='<th style="text-align:left;padding:3px 5px">Zone</th>';
+              html+='<th style="text-align:left;padding:3px 5px">Virgin</th>';
+              html+='<th style="text-align:left;padding:3px 5px">OB Imbalance</th>';
+              html+='<th style="text-align:left;padding:3px 5px">Delta State</th>';
+              html+='<th style="text-align:left;padding:3px 5px">Score</th>';
+              html+='</tr></thead><tbody>';
+              for(var ci=0;ci<cands.length;ci++){
+                var c=cands[ci];
+                var sc2=c.score||0;
+                var scCol=sc2>=80?"var(--green-2,#4ade80)":sc2>=60?"var(--yellow,#facc15)":"var(--text-2)";
+                var isStar=(best&&best.idx===c.idx)?' ★':'';
+                var obSl=c.ob_slice||{};
+                var obNote=obSl.available
+                  ?esc(obSl.imbalance_side||'neutral')+' <span style="opacity:.6">('+esc(obSl.imbalance_ratio||1)+'x)</span>'
+                  :'<span style="opacity:.5">—</span>';
+                var dOf=(c.orderflow||{}).delta||{};
+                var dNote=dOf.available?esc(dOf.state||'—'):'<span style="opacity:.5">—</span>';
+                var virNote=c.virgin?'<span style="color:var(--green-2,#4ade80)">Yes</span>':'No';
+                var qualNote='<span style="color:var(--text-3)">'+esc(c.quality_label||'')+' ('+esc(c.quality||0)+')</span>';
+                html+='<tr style="border-bottom:1px solid var(--border,rgba(255,255,255,.06))">';
+                html+='<td style="padding:3px 5px;color:var(--text-3)">'+esc(c.idx+1)+'</td>';
+                html+='<td style="padding:3px 5px"><b>'+esc((c.tf||'').toUpperCase())+'</b> '+esc((c.type||'').toUpperCase())+'<br>'+qualNote+'</td>';
+                html+='<td style="padding:3px 5px;font-size:9px;font-family:monospace">'
+                  +esc(fmt(c.zone_low))+'–'+esc(fmt(c.zone_high))
+                  +'<br><span style="opacity:.6">'+esc(c.zone_range_pct||0)+'% rng</span></td>';
+                html+='<td style="padding:3px 5px">'+virNote+'</td>';
+                html+='<td style="padding:3px 5px">'+obNote+'</td>';
+                html+='<td style="padding:3px 5px">'+dNote+'</td>';
+                html+='<td style="padding:3px 5px;font-weight:600;color:'+scCol+'">'+esc(sc2)+isStar
+                  +'<br><span style="font-size:9px;font-weight:400;color:var(--text-3)">'+esc(c.score_label||'')+'</span></td>';
+                html+='</tr>';
+                // Score factors row
+                var facs=c.score_factors||[];
+                if(facs.length){
+                  html+='<tr style="border-bottom:1px solid var(--border,rgba(255,255,255,.06))">';
+                  html+='<td colspan="7" style="padding:2px 5px 4px 14px;font-size:9px;color:var(--text-3)">'+esc(facs.join(' · '))+'</td>';
+                  html+='</tr>';
+                }
+              }
+              html+='</tbody></table>';
+            }
+            // Orderflow summary bar
+            var of=ei.orderflow||{};
+            if(of.delta||of.funding){
+              html+='<div style="margin-top:8px;border-top:1px solid var(--border);padding-top:6px;color:var(--text-3);font-size:10px">';
+              html+='<b style="color:var(--text-2)">Orderflow Snapshot</b> — ';
+              if(of.delta) html+='Delta 5m: '+esc(((of.delta.current_value||0)).toFixed(2))+'% <span style="opacity:.7">('+esc(of.delta.state||'—')+')</span> · ';
+              if(of.funding) html+='Funding: <span style="'+(of.funding.bias==='short_crowded'?'color:var(--green-2)':of.funding.bias==='long_crowded'?'color:var(--red-2)':'')+'">'+esc(of.funding.bias||'—')+'</span> · ';
+              if(of.liq_bias) html+='Liq bias: '+esc(((of.liq_bias.current_value||0)).toFixed(0))+' · ';
+              if(ei.ltf_context) html+='LTF: <b>'+esc(ei.ltf_context.verdict||'—')+'</b> ('+esc(ei.ltf_context.alignment_score||0)+'%)';
+              html+='</div>';
+            }
+            html+='</div>';
+            // Phase 11.1B Task 10: MTF Orderflow History table
+            var mtfHist=ei.mtf_orderflow_history||{};
+            var mtfTfs=mtfHist.timeframes||{};
+            var mtfTfKeys=Object.keys(mtfTfs);
+            if(mtfTfKeys.length){
+              // Collect best candidate fusion
+              var bestFusion=null;
+              if(best){
+                for(var bci2=0;bci2<cands.length;bci2++){
+                  if(cands[bci2].idx===best.idx){bestFusion=cands[bci2].smc_orderflow_fusion||null;break;}
+                }
+              }
+              var fusionState=bestFusion?esc(bestFusion.zone_flow_state||'—'):'—';
+              var fusionBeh=bestFusion?esc(bestFusion.recommended_entry_behavior||'—'):'—';
+              var fusionConf=bestFusion?esc(bestFusion.confidence||'—'):'—';
+              var fusionSummary=bestFusion?esc((bestFusion.reason_summary||[]).join(' · ')):'';
+              var fusionColor=bestFusion?(bestFusion.zone_flow_state==='defended'||bestFusion.zone_flow_state==='absorbing'?'var(--green-2,#4ade80)':bestFusion.zone_flow_state==='breaking'||bestFusion.zone_flow_state==='attacked'?'var(--red-2,#f87171)':bestFusion.zone_flow_state==='ignored'?'var(--text-3)':'var(--yellow,#facc15)'):'var(--text-3)';
+              html+='<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:7px">';
+              html+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">';
+              html+='<span style="font-size:10px;font-weight:700;color:var(--text-2)">MTF ORDERFLOW HISTORY</span>';
+              html+='<span style="font-size:9px;color:var(--text-3)">'+(mtfHist.parent_tf?esc(mtfHist.parent_tf.toUpperCase())+' →':'')+' children</span>';
+              if(bestFusion){
+                html+='<span style="margin-left:auto;font-size:10px;font-weight:700;padding:1px 7px;border-radius:3px;background:'+fusionColor+';color:#000">'+fusionState+'</span>';
+                html+='<span style="font-size:9px;color:var(--text-3)">'+fusionBeh+'</span>';
+                html+='<span style="font-size:9px;color:var(--text-3)">conf: '+fusionConf+'</span>';
+              }
+              html+='</div>';
+              if(fusionSummary) html+='<div style="font-size:9px;color:var(--text-3);margin-bottom:5px;line-height:1.4">'+fusionSummary+'</div>';
+              html+='<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">';
+              html+='<table style="width:100%;border-collapse:collapse;font-size:9.5px;min-width:520px">';
+              html+='<thead><tr style="color:var(--text-3);border-bottom:1px solid var(--border)">';
+              html+='<th style="text-align:left;padding:3px 6px;font-size:8.5px;letter-spacing:.4px">TF</th>';
+              html+='<th style="text-align:center;padding:3px 6px;font-size:8.5px;letter-spacing:.4px">CVD STATE</th>';
+              html+='<th style="text-align:center;padding:3px 6px;font-size:8.5px;letter-spacing:.4px">DELTA</th>';
+              html+='<th style="text-align:center;padding:3px 6px;font-size:8.5px;letter-spacing:.4px">OI</th>';
+              html+='<th style="text-align:center;padding:3px 6px;font-size:8.5px;letter-spacing:.4px">LIQ BIAS</th>';
+              html+='<th style="text-align:center;padding:3px 6px;font-size:8.5px;letter-spacing:.4px">METHOD</th>';
+              html+='</tr></thead><tbody>';
+              for(var tfi=0;tfi<mtfTfKeys.length;tfi++){
+                var tfKey=mtfTfKeys[tfi];
+                var tfData=mtfTfs[tfKey]||{};
+                if(!tfData.data_available){
+                  html+='<tr style="border-bottom:1px solid var(--border,rgba(255,255,255,.06))">';
+                  html+='<td style="padding:3px 6px;font-weight:700;font-size:9px;color:var(--text-3)">'+esc(tfKey.toUpperCase())+'</td>';
+                  html+='<td colspan="5" style="padding:3px 6px;color:var(--text-3);font-size:9px;text-align:center;opacity:.5">no data</td>';
+                  html+='</tr>';
+                  continue;
+                }
+                var cvdSt=tfData.cvd_state||{};
+                var deltaSt=tfData.delta_state||{};
+                var oiDir=((tfData.open_interest||{}).direction)||'—';
+                var liqBias=((tfData.liquidations||{}).bias)||'—';
+                var cvdDir=cvdSt.direction||'neutral';
+                var deltaDir=deltaSt.direction||'neutral';
+                var cvdTxt=esc(cvdSt.state||'—');
+                var cvdColor=cvdDir==='bullish'||cvdDir==='rising'?'var(--green-2,#4ade80)':cvdDir==='bearish'||cvdDir==='falling'?'var(--red-2,#f87171)':'var(--text-2)';
+                var deltaColor=deltaDir==='bullish'||deltaDir==='rising'?'var(--green-2,#4ade80)':deltaDir==='bearish'||deltaDir==='falling'?'var(--red-2,#f87171)':'var(--text-2)';
+                var oiColor=oiDir==='rising'?'var(--green-2,#4ade80)':oiDir==='falling'?'var(--red-2,#f87171)':'var(--text-2)';
+                var liqColor=liqBias==='long_heavy'?'var(--red-2,#f87171)':liqBias==='short_heavy'?'var(--green-2,#4ade80)':'var(--text-2)';
+                html+='<tr style="border-bottom:1px solid var(--border,rgba(255,255,255,.06))">';
+                html+='<td style="padding:3px 6px;font-weight:700;font-size:9.5px;color:var(--text-2)">'+esc(tfKey.toUpperCase())+'</td>';
+                html+='<td style="padding:3px 6px;text-align:center;color:'+cvdColor+'">'+cvdTxt+(cvdSt.but_improving?'<br><span style="font-size:8px;color:var(--yellow,#facc15)">↑ improving</span>':'')+'</td>';
+                html+='<td style="padding:3px 6px;text-align:center;color:'+deltaColor+'">'+esc(deltaSt.state||'—')+(deltaSt.danger_increasing?'<br><span style="font-size:8px;color:var(--red-2,#f87171)">⚠ accel</span>':'')+'</td>';
+                html+='<td style="padding:3px 6px;text-align:center;color:'+oiColor+'">'+esc(oiDir)+'</td>';
+                html+='<td style="padding:3px 6px;text-align:center;color:'+liqColor+'">'+esc(liqBias)+'</td>';
+                html+='<td style="padding:3px 6px;text-align:center;font-size:8.5px;color:var(--text-3)">'+esc(tfData.cvd_method||'—')+'</td>';
+                html+='</tr>';
+              }
+              html+='</tbody></table></div></div>';
+            }
+            if(eiContent) eiContent.innerHTML=html;
+          })
+          .catch(function(){
+            eiFetchBtn.disabled=false; eiFetchBtn.innerHTML=origHtml;
+            if(eiContent) eiContent.innerHTML='<span style="color:var(--red-2)">Network error — could not load execution intelligence.</span>';
+          });
+      });
+    }
+    // Phase 11.2: AI Execution Context fetch handler
+    var aiCtxFetchBtn=box.querySelector("[data-lmaictxfetch]");
+    if(aiCtxFetchBtn){
+      aiCtxFetchBtn.addEventListener("click",function(){
+        var id=parseInt(aiCtxFetchBtn.getAttribute("data-lmaictxfetch"),10); if(!id) return;
+        var origHtml2=aiCtxFetchBtn.innerHTML;
+        aiCtxFetchBtn.disabled=true; aiCtxFetchBtn.textContent="…";
+        var aiCtxDiv=document.getElementById("lmAiCtxContent");
+        var eiBody2=document.getElementById("lmExecIntelBody");
+        if(eiBody2) eiBody2.style.display="";
+        var tBtn3=document.getElementById("lmExecIntelToggleBtn");
+        if(tBtn3) tBtn3.innerHTML="&#9660; Hide";
+        if(aiCtxDiv){ aiCtxDiv.style.display=""; aiCtxDiv.innerHTML='<span style="opacity:.6">Loading AI context…</span>'; }
+        fetch("/api/live-monitor/items/"+id+"/ai-execution-context?refresh=1",{credentials:"same-origin"})
+          .then(function(r){ return r.json(); })
+          .then(function(d){
+            aiCtxFetchBtn.disabled=false; aiCtxFetchBtn.innerHTML=origHtml2;
+            if(!aiCtxDiv) return;
+            if(!d||!d.ok){
+              aiCtxDiv.innerHTML='<span style="color:var(--red-2)">Error: '+(d&&d.error?esc(String(d.error)):"server error")+'</span>';
+              return;
+            }
+            var ax=d.ai_execution_context||{};
+            var dc=ax.danger_context||{};
+            var dl=dc.danger_level||'unknown';
+            var ds=dc.danger_score||0;
+            var rb=dc.recommended_behavior||'—';
+            var tlOk=dc.touch_limit_allowed_by_context!==false;
+            var confReq=!!dc.confirmation_required;
+            var dlColor=dl==='blocked'?'var(--red-2,#f87171)':dl==='high'?'var(--red-2,#f87171)':dl==='medium'?'var(--yellow,#facc15)':'var(--green-2,#4ade80)';
+            var ofQ=(ax.orderflow_history_quality||{});
+            var qOverall=ofQ.overall||'none';
+            var qColor=qOverall==='high'?'var(--green-2,#4ade80)':qOverall==='medium'?'var(--yellow,#facc15)':qOverall==='low'?'var(--red-2,#f87171)':'var(--text-3)';
+            var aap=ax.ai_allowed_actions_preview||[];
+            var bc=ax.best_candidate||{};
+            var fusCtx=(ax.smc_orderflow_fusion||{});
+            var zfs=fusCtx.zone_flow_state||'—';
+            var zfsColor=zfs==='defended'||zfs==='absorbing'?'var(--green-2,#4ade80)':zfs==='breaking'||zfs==='attacked'?'var(--red-2,#f87171)':'var(--text-3)';
+            var warns=ax.warnings||[];
+            var lims=ax.limitations||[];
+            var html2='<div style="font-size:11px">';
+            html2+='<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">';
+            html2+='<span style="font-size:10px;font-weight:700;color:var(--text-2)">AI EXECUTION CONTEXT</span>';
+            html2+='<span style="font-size:9px;color:var(--text-3)">Phase 11.2 · advisory only</span>';
+            html2+='<span style="margin-left:auto;font-size:11px;font-weight:700;padding:2px 8px;border-radius:3px;background:'+dlColor+';color:#000">'+esc(dl.toUpperCase())+'</span>';
+            html2+='<span style="font-size:10px;color:var(--text-3)">score '+esc(ds)+'</span>';
+            html2+='</div>';
+            // Key row
+            html2+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px;margin-bottom:8px">';
+            html2+='<div style="background:var(--bg-2);border-radius:4px;padding:5px 8px">';
+            html2+='<div style="font-size:8.5px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px">Behavior</div>';
+            html2+='<div style="font-size:11px;font-weight:600;color:var(--text-2)">'+esc(rb)+'</div>';
+            html2+='<div style="font-size:8.5px;color:var(--text-3)">touch_limit: '+(tlOk?'<span style="color:var(--green-2)">✓</span>':'<span style="color:var(--red-2)">✗</span>')+' · conf req: '+(confReq?'<span style="color:var(--yellow)">yes</span>':'no')+'</div>';
+            html2+='</div>';
+            html2+='<div style="background:var(--bg-2);border-radius:4px;padding:5px 8px">';
+            html2+='<div style="font-size:8.5px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px">OF Quality</div>';
+            html2+='<div style="font-size:11px;font-weight:600;color:'+qColor+'">'+esc(qOverall)+'</div>';
+            html2+='<div style="font-size:8.5px;color:var(--text-3)">tfs: '+esc(Object.keys(ofQ.by_tf||{}).join(' · ')||'—')+'</div>';
+            html2+='</div>';
+            html2+='<div style="background:var(--bg-2);border-radius:4px;padding:5px 8px">';
+            html2+='<div style="font-size:8.5px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px">Zone Flow</div>';
+            html2+='<div style="font-size:11px;font-weight:600;color:'+zfsColor+'">'+esc(zfs)+'</div>';
+            html2+='<div style="font-size:8.5px;color:var(--text-3)">conf: '+esc(fusCtx.confidence||'—')+'</div>';
+            html2+='</div>';
+            if(bc&&bc.tf){
+              html2+='<div style="background:var(--bg-2);border-radius:4px;padding:5px 8px">';
+              html2+='<div style="font-size:8.5px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px">Best Candidate</div>';
+              html2+='<div style="font-size:11px;font-weight:600;color:var(--text-2)">'+esc((bc.tf||'').toUpperCase())+' '+esc((bc.type||'').toUpperCase())+'</div>';
+              html2+='<div style="font-size:8.5px;color:var(--text-3)">score: '+esc(bc.score||'—')+'</div>';
+              html2+='</div>';
+            }
+            html2+='</div>';
+            // Allowed actions
+            if(aap.length){
+              html2+='<div style="margin-bottom:6px;font-size:10px;color:var(--text-3)">';
+              html2+='<span style="color:var(--text-2);font-weight:600">Allowed actions: </span>';
+              html2+=esc(aap.join(' · '));
+              html2+='</div>';
+            }
+            // Blocking reasons / key reasons
+            var br=dc.blocking_reasons||[];
+            var kr=dc.reasons||[];
+            var allR=br.concat(kr);
+            if(allR.length){
+              html2+='<div style="font-size:9.5px;color:var(--text-3);line-height:1.5;margin-bottom:4px">';
+              html2+='<span style="color:var(--text-2);font-weight:600">Reasons: </span>';
+              html2+=esc(allR.slice(0,6).join(' · '));
+              html2+='</div>';
+            }
+            // Warnings / limitations
+            if(warns.length||lims.length){
+              html2+='<div style="font-size:8.5px;color:var(--text-3);opacity:.7">';
+              if(warns.length) html2+='⚠ '+esc(warns.slice(0,3).join(' · '));
+              if(lims.length) html2+=(warns.length?' · ':'')+esc(lims.slice(0,2).join(' · '));
+              html2+='</div>';
+            }
+            html2+='</div>';
+            aiCtxDiv.innerHTML=html2;
+            // Phase 11.3: chain-fetch trade control decision into same card
+            var tcDiv=document.createElement('div');
+            tcDiv.style.cssText='border-top:1px solid var(--border);padding-top:8px;margin-top:8px';
+            tcDiv.innerHTML='<span style="opacity:.45;font-size:9.5px;color:var(--text-3)">Loading trade control…</span>';
+            aiCtxDiv.appendChild(tcDiv);
+            fetch("/api/live-monitor/items/"+id+"/ai-trade-control?refresh=1",{credentials:"same-origin"})
+              .then(function(r3){return r3.json();})
+              .then(function(d3){
+                if(!d3||!d3.ok){
+                  tcDiv.innerHTML='<span style="color:var(--red-2);font-size:9.5px">Trade control error: '+(d3&&d3.error?esc(String(d3.error)):"server error")+'</span>';
+                  return;
+                }
+                var dec=d3.decision||{};
+                var act=dec.action||'no_action';
+                var conf=dec.confidence||0;
+                var dl3=dec.danger_level||'unknown';
+                var fus3=dec.fusion_state||'—';
+                var pR=dec.primary_reasons||[];
+                var rF=dec.risk_factors||[];
+                var candEx=(dec.candidate_analysis||{}).explanation||'';
+                var advNote=dec.advisory_note||'';
+                var actCol=act==='allow_touch_limit'?'var(--green-2,#4ade80)':act==='block_trade'||act==='pause_setup'?'var(--red-2,#f87171)':act==='switch_to_confirmation'||act==='wait'?'var(--yellow,#facc15)':'var(--text-3)';
+                var dl3Col=dl3==='blocked'||dl3==='high'?'var(--red-2,#f87171)':dl3==='medium'?'var(--yellow,#facc15)':dl3==='low'?'var(--green-2,#4ade80)':'var(--text-3)';
+                var h3='<div style="font-size:11px">';
+                h3+='<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">';
+                h3+='<span style="font-size:10px;font-weight:700;color:var(--text-2)">AI TRADE CONTROL</span>';
+                h3+='<span style="font-size:9px;color:var(--text-3)">Phase 11.3 · decision only · no execution</span>';
+                h3+='<span style="margin-left:auto;font-size:11px;font-weight:700;padding:2px 9px;border-radius:3px;background:'+actCol+';color:#000">'+esc(act.replace(/_/g,' ').toUpperCase())+'</span>';
+                h3+='<span style="font-size:10px;color:var(--text-3)">conf '+esc(conf)+'%</span>';
+                h3+='</div>';
+                h3+='<div style="display:flex;gap:14px;flex-wrap:wrap;font-size:10px;color:var(--text-3);margin-bottom:6px">';
+                h3+='<span>danger: <b style="color:'+dl3Col+'">'+esc(dl3)+'</b></span>';
+                h3+='<span>zone: <b>'+esc(fus3)+'</b></span>';
+                h3+='<span>quality: <b>'+esc(dec.orderflow_quality||'—')+'</b></span>';
+                h3+='</div>';
+                if(pR.length){
+                  h3+='<div style="font-size:9.5px;color:var(--text-3);margin-bottom:4px"><span style="color:var(--text-2);font-weight:600">Reasons: </span>'+esc(pR.slice(0,5).join(' · '))+'</div>';
+                }
+                if(rF.length){
+                  h3+='<div style="font-size:9.5px;color:var(--red-2,#f87171);opacity:.85;margin-bottom:4px"><span style="font-weight:600">Risks: </span>'+esc(rF.slice(0,4).join(' · '))+'</div>';
+                }
+                if(candEx){
+                  h3+='<div style="font-size:9px;color:var(--text-3);font-style:italic;margin-bottom:3px">'+esc(candEx)+'</div>';
+                }
+                if(advNote){
+                  h3+='<div style="font-size:8px;color:var(--text-3);opacity:.5;margin-top:4px">'+esc(advNote)+'</div>';
+                }
+                h3+='</div>';
+                tcDiv.innerHTML=h3;
+                // Phase 11.4: chain-fetch automation policy and append below trade control
+                var apDiv=document.createElement('div');
+                apDiv.style.cssText='border-top:1px solid var(--border);padding-top:7px;margin-top:7px';
+                apDiv.innerHTML='<span style="opacity:.4;font-size:9px;color:var(--text-3)">Loading policy…</span>';
+                tcDiv.appendChild(apDiv);
+                fetch("/api/live-monitor/items/"+id+"/automation-policy?refresh=1",{credentials:"same-origin"})
+                  .then(function(r4){return r4.json();})
+                  .then(function(d4){
+                    if(!d4||!d4.ok){
+                      apDiv.innerHTML='<span style="color:var(--text-3);font-size:9px;opacity:.55">Policy: '+(d4&&d4.error?esc(String(d4.error)):"unavailable")+'</span>';
+                      return;
+                    }
+                    var pr=d4.policy_result||{};
+                    var pc=d4.policy_context||{};
+                    var polAllowed=pr.allowed!==false;
+                    var futAct=pr.future_action||'none';
+                    var recMode=pr.recommended_mode||'—';
+                    var polReason=pr.reason||'';
+                    var polMode=pc.policy_mode||'—';
+                    var entMode=pc.entry_mode||'—';
+                    var polBR=pr.blocking_reasons||[];
+                    var polAdvNote=pr.advisory_note||'';
+                    var allowCol=polAllowed?'var(--green-2,#4ade80)':'var(--red-2,#f87171)';
+                    var futActCol=futAct==='block_trade'||futAct==='pause_setup'?'var(--red-2,#f87171)':futAct==='switch_mode'?'var(--yellow,#facc15)':'var(--text-3)';
+                    var h4='<div style="font-size:10px">';
+                    h4+='<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:5px">';
+                    h4+='<span style="font-size:9.5px;font-weight:700;color:var(--text-2)">AUTOMATION POLICY</span>';
+                    h4+='<span style="font-size:8.5px;color:var(--text-3)">Phase 11.4 · evaluation only</span>';
+                    h4+='<span style="margin-left:auto;font-size:10px;font-weight:700;padding:1px 7px;border-radius:3px;background:'+allowCol+';color:#000">'+(polAllowed?'ALLOWED':'BLOCKED')+'</span>';
+                    h4+='</div>';
+                    h4+='<div style="display:flex;gap:12px;flex-wrap:wrap;font-size:9.5px;color:var(--text-3);margin-bottom:5px">';
+                    h4+='<span>policy: <b>'+esc(polMode)+'</b></span>';
+                    h4+='<span>entry: <b>'+esc(entMode)+'</b></span>';
+                    h4+='<span>→ rec: <b>'+esc(recMode)+'</b></span>';
+                    h4+='<span>future: <b style="color:'+futActCol+'">'+esc(futAct)+'</b></span>';
+                    h4+='</div>';
+                    if(polReason){
+                      h4+='<div style="font-size:9px;color:var(--text-3);line-height:1.4;margin-bottom:3px">'+esc(polReason)+'</div>';
+                    }
+                    if(!polAllowed&&polBR.length){
+                      h4+='<div style="font-size:8.5px;color:var(--red-2,#f87171);opacity:.85">Blocked: '+esc(polBR.slice(0,3).join(' · '))+'</div>';
+                    }
+                    if(polAdvNote){
+                      h4+='<div style="font-size:8px;color:var(--text-3);opacity:.5;margin-top:4px">'+esc(polAdvNote)+'</div>';
+                    }
+                    h4+='</div>';
+                    apDiv.innerHTML=h4;
+                  })
+                  .catch(function(){
+                    apDiv.innerHTML='<span style="color:var(--text-3);font-size:9px;opacity:.4">Policy unavailable.</span>';
+                  });
+              })
+              .catch(function(){
+                tcDiv.innerHTML='<span style="color:var(--text-3);font-size:9.5px;opacity:.55">Trade control unavailable.</span>';
+              });
+          })
+          .catch(function(){
+            aiCtxFetchBtn.disabled=false; aiCtxFetchBtn.innerHTML=origHtml2;
+            if(aiCtxDiv) aiCtxDiv.innerHTML='<span style="color:var(--red-2)">Network error — could not load AI context.</span>';
+          });
+      });
+    }
     // Agent selector change handler (persists to localStorage)
     var agentSel=box.querySelector("#dsAgentSel");
     if(agentSel){
@@ -7006,6 +7721,261 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       }
     },100);
   }
+
+  // ── Phase 11.5: Binance Testnet Connector UI helpers ──────────────────────
+  function _lmBtApplyHealth(d){
+    var h=d||{};
+    var ok=!!h.ok;
+    var tlEl=document.getElementById("lmBtTestnetLocked");
+    var crEl=document.getElementById("lmBtCreds");
+    var pingEl=document.getElementById("lmBtPing");
+    var stEl=document.getElementById("lmBtServerTime");
+    var accEl=document.getElementById("lmBtAccount");
+    var balEl=document.getElementById("lmBtBalance");
+    var posEl=document.getElementById("lmBtPositions");
+    var availEl=document.getElementById("lmBtAvailUsdt");
+    var tsEl=document.getElementById("lmBtCheckedAt");
+    var errEl=document.getElementById("lmBtError");
+    function _col(v){ return v===true?'var(--green-2,#4ade80)':v===false?'var(--red-2,#f87171)':'var(--text-3)'; }
+    function _txt(v){ return v===true?'YES':v===false?'NO':v===null?'skipped':'—'; }
+    if(tlEl){ tlEl.textContent=h.testnet_locked!==false?'YES':'NO (WARNING)'; tlEl.style.color=h.testnet_locked!==false?'var(--green-2,#4ade80)':'var(--red-2,#f87171)'; }
+    if(crEl){ crEl.textContent=_txt(h.credentials_configured); crEl.style.color=_col(h.credentials_configured); }
+    if(pingEl){ pingEl.textContent=_txt(h.ping_ok); pingEl.style.color=_col(h.ping_ok); }
+    if(stEl){ stEl.textContent=_txt(h.server_time_ok); stEl.style.color=_col(h.server_time_ok); }
+    if(accEl){ accEl.textContent=h.account_skipped?'skipped':_txt(h.account_ok); accEl.style.color=h.account_skipped?'var(--text-3)':_col(h.account_ok); }
+    if(balEl){ balEl.textContent=h.balance_skipped?'skipped':_txt(h.balance_ok); balEl.style.color=h.balance_skipped?'var(--text-3)':_col(h.balance_ok); }
+    if(posEl){ posEl.textContent=h.positions_skipped?'skipped':_txt(h.positions_ok); posEl.style.color=h.positions_skipped?'var(--text-3)':_col(h.positions_ok); }
+    if(availEl){ availEl.textContent=h.available_usdt!=null?String(h.available_usdt)+' USDT':'—'; }
+    if(tsEl&&h.checked_at){ tsEl.textContent=new Date(h.checked_at*1000).toLocaleTimeString(); }
+    if(errEl){
+      var errs=h.error_summary||(h.error?[h.error]:[]);
+      if(errs.length){ errEl.style.display=''; errEl.textContent=errs.slice(0,2).join(' · '); }
+      else { errEl.style.display='none'; errEl.textContent=''; }
+    }
+  }
+  window._lmBtCheck=function(){
+    var b1=document.getElementById("lmBtCheckBtn"); if(b1){ b1.disabled=true; b1.textContent='…'; }
+    fetch('/api/live-monitor/binance-testnet/health',{credentials:'same-origin'})
+      .then(function(r){ return r.json(); })
+      .then(function(d){ _lmBtApplyHealth(d); if(b1){ b1.disabled=false; b1.textContent='Check Connection'; } })
+      .catch(function(){ if(b1){ b1.disabled=false; b1.textContent='Check Connection'; }
+        var e=document.getElementById("lmBtError"); if(e){ e.style.display=''; e.textContent='Network error'; }
+      });
+  };
+  window._lmBtRefreshBalance=function(){
+    var b2=document.getElementById("lmBtBalanceBtn"); if(b2){ b2.disabled=true; b2.textContent='…'; }
+    fetch('/api/live-monitor/binance-testnet/balance',{credentials:'same-origin'})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(b2){ b2.disabled=false; b2.textContent='Refresh Balance'; }
+        var balEl=document.getElementById("lmBtBalance");
+        var availEl=document.getElementById("lmBtAvailUsdt");
+        var errEl=document.getElementById("lmBtError");
+        if(d&&d.ok&&d.data){
+          var bd=d.data;
+          if(balEl){ balEl.textContent='OK'; balEl.style.color='var(--green-2,#4ade80)'; }
+          if(availEl){ availEl.textContent=(bd.availableBalance!=null?String(bd.availableBalance):bd.balance!=null?String(bd.balance):'—')+' USDT'; }
+          if(errEl){ errEl.style.display='none'; }
+        } else {
+          if(balEl){ balEl.textContent='error'; balEl.style.color='var(--red-2,#f87171)'; }
+          if(errEl){ errEl.style.display=''; errEl.textContent=(d&&d.error)||'balance error'; }
+        }
+      })
+      .catch(function(){
+        if(b2){ b2.disabled=false; b2.textContent='Refresh Balance'; }
+        var e=document.getElementById("lmBtError"); if(e){ e.style.display=''; e.textContent='Network error'; }
+      });
+  };
+  window._lmBtRefreshPositions=function(){
+    var b3=document.getElementById("lmBtPositionsBtn"); if(b3){ b3.disabled=true; b3.textContent='…'; }
+    fetch('/api/live-monitor/binance-testnet/positions',{credentials:'same-origin'})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(b3){ b3.disabled=false; b3.textContent='Refresh Positions'; }
+        var posEl=document.getElementById("lmBtPositions");
+        var errEl=document.getElementById("lmBtError");
+        if(d&&d.ok){
+          var cnt=(d.data&&Array.isArray(d.data))?d.data.length:0;
+          if(posEl){ posEl.textContent=cnt+' position'+(cnt!==1?'s':''); posEl.style.color='var(--text-2)'; }
+          if(errEl){ errEl.style.display='none'; }
+        } else {
+          if(posEl){ posEl.textContent='error'; posEl.style.color='var(--red-2,#f87171)'; }
+          if(errEl){ errEl.style.display=''; errEl.textContent=(d&&d.error)||'positions error'; }
+        }
+      })
+      .catch(function(){
+        if(b3){ b3.disabled=false; b3.textContent='Refresh Positions'; }
+        var e=document.getElementById("lmBtError"); if(e){ e.style.display=''; e.textContent='Network error'; }
+      });
+  };
+
+  // ── Phase 11.6: Execution Simulation UI helper ────────────────────────────
+  window._lmRunSimulation=function(){
+    var btn=document.getElementById("lmRunSimBtn");
+    if(btn){ btn.disabled=true; btn.textContent='…'; }
+    // Resolve active item id from current terminal pane context
+    var itemId=window._lmSimItemId||(window._lmSelItem&&window._lmSelItem.id);
+    if(!itemId){
+      if(btn){ btn.disabled=false; btn.textContent='Run Simulation'; }
+      var rEl=document.getElementById("lmSimReasons");
+      if(rEl){ rEl.style.display=''; rEl.textContent='No active setup selected. Open a setup first.'; }
+      return;
+    }
+    fetch('/api/live-monitor/items/'+itemId+'/execution-simulation',{credentials:'same-origin'})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(btn){ btn.disabled=false; btn.textContent='Run Simulation'; }
+        var grid=document.getElementById("lmSimGrid"); if(grid) grid.style.display='';
+        var sim=(d&&d.execution_simulation)||{};
+        var intent=(d&&d.execution_intent)||{};
+        function _sv(id,v,good){
+          var el=document.getElementById(id); if(!el) return;
+          var yes=v===true||v==='true';var no=v===false||v==='false';var skip=v===null||v===undefined;
+          el.textContent=skip?'skipped':yes?'YES':'NO';
+          el.style.color=skip?'var(--text-3)':good?yes?'var(--green-2,#4ade80)':'var(--red-2,#f87171)':yes?'var(--red-2,#f87171)':'var(--green-2,#4ade80)';
+        }
+        var rdy=sim.ready_for_testnet;
+        var rdyEl=document.getElementById("lmSimReady");
+        if(rdyEl){rdyEl.textContent=rdy?'YES':'NO';rdyEl.style.color=rdy?'var(--green-2,#4ade80)':'var(--red-2,#f87171)';}
+        _sv("lmSimIntent",sim.intent_valid,true);
+        _sv("lmSimPolicy",sim.policy_valid,true);
+        _sv("lmSimDecision",sim.decision_valid,true);
+        _sv("lmSimFilter",sim.filter_valid===null?null:sim.filter_valid,true);
+        _sv("lmSimData",sim.data_health_ok,true);
+        // Intent summary
+        var is=sim.intent_summary||{};
+        var iBox=document.getElementById("lmSimIntentBox");
+        if(iBox&&(is.symbol||is.entry_price)){
+          iBox.style.display='';
+          iBox.innerHTML=
+            '<b style="color:var(--text-2)">'+esc(is.symbol||'—')+'</b> '+esc((is.direction||'').toUpperCase())+
+            ' &nbsp;·&nbsp; Entry: <b>'+esc(is.entry_price||'—')+'</b>'+
+            ' &nbsp;·&nbsp; SL: '+esc(is.stop_loss||'—')+
+            ' &nbsp;·&nbsp; TP: '+esc(is.take_profit||'—')+
+            ' &nbsp;·&nbsp; RR: <b>'+esc(is.risk_reward||'—')+'×</b>'+
+            ' &nbsp;·&nbsp; Conf: '+esc(is.confidence||0)+'%'+
+            ' &nbsp;·&nbsp; Mode: '+esc(is.entry_mode||'—');
+        }
+        // Reasons
+        var rs=sim.reasons||[];
+        var rEl=document.getElementById("lmSimReasons");
+        if(rEl){
+          if(rs.length){ rEl.style.display=''; rEl.textContent='Issues: '+rs.slice(0,6).join(' · '); }
+          else { rEl.style.display='none'; }
+        }
+        // Warnings
+        var ws=sim.warnings||[];
+        var wEl=document.getElementById("lmSimWarnings");
+        if(wEl){
+          if(ws.length){ wEl.style.display=''; wEl.textContent='Warnings: '+ws.slice(0,4).join(' · '); }
+          else { wEl.style.display='none'; }
+        }
+      })
+      .catch(function(){
+        if(btn){ btn.disabled=false; btn.textContent='Run Simulation'; }
+        var rEl=document.getElementById("lmSimReasons");
+        if(rEl){ rEl.style.display=''; rEl.textContent='Network error — could not run simulation.'; }
+      });
+  };
+
+  // ── Phase 11.7A: Testnet Order Draft UI helpers ───────────────────────────
+  window._lmTodRefreshDraft=function(){
+    var itemId=window._lmSimItemId||(window._lmSelItem&&window._lmSelItem.id);
+    if(!itemId) return;
+    var qty=(document.getElementById("lmTodQtyInput")||{}).value||'';
+    var url='/api/live-monitor/items/'+itemId+'/testnet-order/draft'+(qty?'?quantity='+encodeURIComponent(qty):'');
+    fetch(url,{credentials:'same-origin'})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        var dr=(d&&d.draft)||{};
+        function _tv(id,v){
+          var el=document.getElementById(id); if(!el) return;
+          el.textContent=v==null?'—':String(v);
+        }
+        function _tf(id,ok,yes,no){
+          var el=document.getElementById(id); if(!el) return;
+          el.textContent=ok?yes:no;
+          el.style.color=ok?'var(--green-2,#4ade80)':'var(--red-2,#f87171)';
+        }
+        _tv('lmTod-symbol', dr.symbol||'—');
+        var sideEl=document.getElementById('lmTod-side');
+        if(sideEl){
+          sideEl.textContent=dr.side||'—';
+          sideEl.style.color=dr.side==='BUY'?'var(--green-2,#4ade80)':dr.side==='SELL'?'var(--red-2,#f87171)':'var(--text-1)';
+        }
+        _tv('lmTod-price', dr.price||'—');
+        _tf('lmTod-simReady', dr.simulation_ready, 'YES', 'NO');
+        _tf('lmTod-connector', dr.connector_ready, 'YES', 'NO');
+        _tf('lmTod-orderEnv', dr.order_enabled, 'YES', 'NO');
+        _tf('lmTod-filterOk', dr.filter_ok, 'YES', 'NO');
+        _tv('lmTod-notional', dr.estimated_notional!=null?(dr.estimated_notional+' USDT'):'—');
+        // qty validation error
+        var qErr=document.getElementById('lmTod-qtyErr');
+        var qv=dr.qty_validation||{};
+        if(qErr){
+          if(qty&&!qv.ok&&qv.error&&qv.error!=='quantity_required'){
+            qErr.style.display=''; qErr.textContent=qv.error;
+          } else { qErr.style.display='none'; }
+        }
+        // reasons
+        var rs=dr.reasons||[];
+        var rEl=document.getElementById('lmTod-reasons');
+        if(rEl){
+          if(rs.length){ rEl.style.display=''; rEl.textContent='Blocked: '+rs.slice(0,6).join(' · '); }
+          else { rEl.style.display='none'; }
+        }
+        // enable/disable submit button
+        var sb=document.getElementById('lmTodSubmitBtn');
+        if(sb){
+          var ready=dr.draft_ready===true;
+          sb.disabled=!ready;
+          sb.style.opacity=ready?'1':'0.5';
+          sb.style.cursor=ready?'pointer':'not-allowed';
+        }
+      })
+      .catch(function(){ /* silent on draft refresh error */ });
+  };
+
+  window._lmTodSubmitOrder=function(){
+    var itemId=window._lmSimItemId||(window._lmSelItem&&window._lmSelItem.id);
+    if(!itemId) return;
+    var qty=((document.getElementById("lmTodQtyInput")||{}).value||'').trim();
+    if(!qty){ alert('Enter a quantity first.'); return; }
+    if(!confirm('Place a real LIMIT order on Binance Futures Testnet?\n\nThis is a testnet order — not mainnet. No TP/SL.\n\nSymbol / Qty / confirm manually?')) return;
+    var sb=document.getElementById('lmTodSubmitBtn');
+    if(sb){ sb.disabled=true; sb.textContent='Submitting…'; }
+    var resEl=document.getElementById('lmTod-result');
+    if(resEl){ resEl.style.display='none'; }
+    fetch('/api/live-monitor/items/'+itemId+'/testnet-order/submit',{
+      method:'POST',
+      credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({quantity:qty}),
+    })
+      .then(function(r){ return r.json().then(function(d){ return {s:r.status,d:d}; }); })
+      .then(function(rd){
+        var d=rd.d; var s=rd.s;
+        if(sb){ sb.disabled=false; sb.textContent='Submit Testnet Order'; }
+        if(resEl){
+          resEl.style.display='';
+          if(d&&d.ok){
+            resEl.style.color='var(--green-2,#4ade80)';
+            resEl.innerHTML='<b>Order placed!</b> ID: '+esc(String(d.order_id||'—'))+
+              ' &nbsp;·&nbsp; Status: '+esc(d.status||'—')+
+              ' &nbsp;·&nbsp; '+esc(d.side||'—')+' '+esc(d.quantity||'—')+' @ '+esc(d.price||'—');
+          } else {
+            resEl.style.color='var(--red-2,#f87171)';
+            resEl.innerHTML='<b>Failed:</b> '+esc((d&&(d.error||JSON.stringify(d.reasons||d)))||'Unknown error');
+          }
+        }
+        // Re-refresh draft state after submit
+        window._lmTodRefreshDraft();
+      })
+      .catch(function(){
+        if(sb){ sb.disabled=false; sb.textContent='Submit Testnet Order'; }
+        if(resEl){ resEl.style.display=''; resEl.style.color='var(--red-2,#f87171)'; resEl.textContent='Network error during submit.'; }
+      });
+  };
 
   function _lmMtfMatrix(item){
     var scan=(item.snapshot&&item.snapshot.latest_mtf_scan)||null;
