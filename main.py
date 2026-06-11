@@ -33088,19 +33088,15 @@ def _bt_run_parity_check(candles: List[Dict], replay_events: List[Dict], params:
         }
 
 
-@app.route("/api/backtest/ob-historical", methods=["POST"])
-@login_required
-def api_backtest_ob_historical():
-    err = _guest_tab_check("backtest")
-    if err is not None:
-        return err
+def _bt_run_ob_historical_backtest(params: dict) -> dict:
+    """Shared execution core used by both the POST and GET debug routes.
 
-    payload = request.get_json(force=True) or {}
-    params, parse_error = _bt_parse_ob_historical_payload(payload)
-    if parse_error:
-        return jsonify({"ok": False, "error": parse_error}), 400
+    Fetches candles, normalises them, runs the bar-replay OB engine, optionally
+    runs parity check, and returns the result dict (not a Flask response).
 
-    # ── Fetch historical candles (existing shared candle-fetch layer) ─────────
+    On error returns {"ok": False, "error": ..., "details": ...}.
+    """
+    # ── Fetch ─────────────────────────────────────────────────────────────────
     try:
         raw = get_klines(
             params["symbol"],
@@ -33110,39 +33106,39 @@ def api_backtest_ob_historical():
         )
     except Exception as _e:
         traceback.print_exc()
-        return jsonify({
+        return {
             "ok":      False,
             "error":   f"Could not fetch historical candles for {params['symbol']} {params['timeframe']}",
             "details": str(_e),
-        }), 502
+        }
 
     if not raw:
-        return jsonify({
+        return {
             "ok":      False,
             "error":   f"Could not fetch historical candles for {params['symbol']} {params['timeframe']}",
             "details": "Exchange returned empty candle list. Symbol may not exist on Binance Futures.",
-        }), 502
+        }
 
-    # ── Normalize ────────────────────────────────────────────────────────────
+    # ── Normalize ─────────────────────────────────────────────────────────────
     candles        = _bt_normalize_candles(raw)
     candle_summary = _bt_candle_summary(params, candles)
 
-    # ── Bar replay: extract all OB formation + first-touch events ─────────────
+    # ── Bar replay ────────────────────────────────────────────────────────────
     all_events     = _bt_extract_ob_replay_events(candles, params)
     replay_summary = _bt_replay_summary(candles, all_events)
 
-    # ── Optional parity validation (debug only) ───────────────────────────────
+    # ── Optional parity validation ────────────────────────────────────────────
     parity = (
         _bt_run_parity_check(candles, all_events, params)
         if params.get("include_parity")
         else {"enabled": False}
     )
 
-    # Truncate event list for response (summary is always over all events)
+    # Truncate event list for response (summary always uses full event count)
     truncated  = len(all_events) > _BT_MAX_EVENTS
     out_events = all_events[:_BT_MAX_EVENTS] if truncated else all_events
 
-    return jsonify({
+    return {
         "ok":           True,
         "mode":         "raw_historical_ob_v1",
         "phase":        "ob_replay_events_connected",
@@ -33163,7 +33159,179 @@ def api_backtest_ob_historical():
         "events_total":     len(all_events),
         "events_returned":  len(out_events),
         "events_truncated": truncated,
-    })
+    }
+
+
+@app.route("/api/backtest/ob-historical", methods=["POST"])
+@login_required
+def api_backtest_ob_historical():
+    err = _guest_tab_check("backtest")
+    if err is not None:
+        return err
+
+    payload = request.get_json(force=True) or {}
+    params, parse_error = _bt_parse_ob_historical_payload(payload)
+    if parse_error:
+        return jsonify({"ok": False, "error": parse_error}), 400
+
+    result = _bt_run_ob_historical_backtest(params)
+    status = 200 if result.get("ok") else 502
+    return jsonify(result), status
+
+
+# ── TEMPORARY DEBUG ENDPOINT — REMOVE AFTER MOBILE TESTING ──────────────────
+# Allows testing the backtest engine from a mobile browser (no console needed).
+# Restricted to logged-in admin users only.  Returns JSON or simple HTML report.
+@app.route("/api/backtest/ob-historical/debug", methods=["GET"])
+@login_required
+def api_backtest_ob_historical_debug():
+    if not session.get("is_admin"):
+        return jsonify({"ok": False, "error": "Admin access required"}), 403
+
+    err = _guest_tab_check("backtest")
+    if err is not None:
+        return err
+
+    # ── Build params from query string ────────────────────────────────────────
+    raw_rr = request.args.get("rr_values", "1,2,3")
+    try:
+        rr_list = [float(x) for x in raw_rr.split(",") if x.strip()]
+    except (ValueError, TypeError):
+        rr_list = [1, 2, 3]
+
+    raw_parity = request.args.get("include_parity", "true").lower()
+    include_parity = raw_parity in ("true", "1", "yes")
+
+    payload = {
+        "symbol":         request.args.get("symbol",       "BTCUSDT"),
+        "timeframe":      request.args.get("timeframe",    "1h"),
+        "candle_count":   request.args.get("candle_count", "3000"),
+        "exchange":       request.args.get("exchange",     "binance"),
+        "market":         request.args.get("market",       "perpetual"),
+        "rr_values":      rr_list,
+        "entry_rule":     request.args.get("entry_rule",   "zone_high"),
+        "stop_rule":      request.args.get("stop_rule",    "close_beyond_zone"),
+        "include_parity": include_parity,
+    }
+
+    params, parse_error = _bt_parse_ob_historical_payload(payload)
+    if parse_error:
+        _html_err = (
+            "<html><head><meta name='viewport' content='width=device-width'>"
+            "<style>body{font-family:monospace;padding:16px;background:#111;color:#f55;}"
+            "h2{color:#f88;}</style></head><body>"
+            f"<h2>Backtest Debug — Error</h2>"
+            f"<p><b>ok:</b> false</p>"
+            f"<p><b>error:</b> {parse_error}</p>"
+            "</body></html>"
+        )
+        return _html_err, 400, {"Content-Type": "text/html"}
+
+    result = _bt_run_ob_historical_backtest(params)
+
+    fmt = request.args.get("format", "html").strip().lower()
+    if fmt == "json":
+        status = 200 if result.get("ok") else 502
+        return jsonify(result), status
+
+    # ── HTML mobile report ────────────────────────────────────────────────────
+    def _v(val):
+        """Render a value safely for HTML."""
+        if val is None:
+            return "<span style='color:#888'>null</span>"
+        return str(val)
+
+    cs   = result.get("candle_summary",  {}) or {}
+    rs   = result.get("replay_summary",  {}) or {}
+    par  = result.get("parity",          {}) or {}
+    prm  = result.get("params",          {}) or {}
+    ev1  = (result.get("events_sample") or {}).get("first") or {}
+
+    if not result.get("ok"):
+        body = (
+            f"<p><b>ok:</b> <span style='color:#f55'>false</span></p>"
+            f"<p><b>error:</b> {_v(result.get('error'))}</p>"
+            f"<p><b>details:</b> {_v(result.get('details'))}</p>"
+        )
+        title_color = "#f55"
+    else:
+        rows = [
+            ("ok",                              "true"),
+            ("phase",                           _v(result.get("phase"))),
+            ("symbol",                          _v(prm.get("symbol"))),
+            ("timeframe",                       _v(prm.get("timeframe"))),
+            ("candle_count (requested)",        _v(prm.get("candle_count"))),
+            ("candles returned",                _v(cs.get("returned"))),
+            ("ob_events_detected",              _v(rs.get("ob_events_detected"))),
+            ("touched_events",                  _v(rs.get("touched_events"))),
+            ("mitigated_later",                 _v(rs.get("mitigated_later"))),
+            ("avg_candles_to_first_touch",      _v(rs.get("avg_candles_to_first_touch"))),
+            ("parity.enabled",                  _v(par.get("enabled"))),
+            ("parity.production_count",         _v(par.get("production_count"))),
+            ("parity.replay_events_total",      _v(par.get("replay_events_total"))),
+            ("parity.matched_count",            _v(par.get("matched_count"))),
+            ("parity.match_rate_pct",           _v(par.get("match_rate_pct"))),
+        ]
+        table_rows = "".join(
+            f"<tr><td style='padding:6px 12px 6px 0;color:#aaa'>{k}</td>"
+            f"<td style='padding:6px 0;color:#fff'>{v}</td></tr>"
+            for k, v in rows
+        )
+
+        first_ev_rows = ""
+        if ev1:
+            for k, fk in [
+                ("type",             "type"),
+                ("formation_time",   "formation_time"),
+                ("zone_high",        "zone_high"),
+                ("zone_low",         "zone_low"),
+                ("touch_status",     "touch_status"),
+                ("first_touch_time", "first_touch_time"),
+                ("later_mitigated",  "later_mitigated"),
+            ]:
+                first_ev_rows += (
+                    f"<tr><td style='padding:6px 12px 6px 0;color:#aaa'>{k}</td>"
+                    f"<td style='padding:6px 0;color:#fff'>{_v(ev1.get(fk))}</td></tr>"
+                )
+
+        parity_note = ""
+        if par.get("notes"):
+            parity_note = (
+                f"<p style='color:#888;font-size:12px;margin-top:8px'>"
+                f"{par['notes']}</p>"
+            )
+
+        body = (
+            f"<table>{table_rows}</table>"
+            + (
+                f"<h3 style='color:#8cf;margin-top:20px'>First Event</h3>"
+                f"<table>{first_ev_rows}</table>"
+                if ev1 else
+                "<p style='color:#888'>No events detected.</p>"
+            )
+            + parity_note
+        )
+        title_color = "#4f4"
+
+    html = (
+        "<!DOCTYPE html><html>"
+        "<head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>BT Debug</title>"
+        "<style>"
+        "body{font-family:monospace;padding:16px;background:#111;color:#eee;word-break:break-all}"
+        "h2{margin-bottom:4px}h3{margin-bottom:4px}"
+        "table{border-collapse:collapse;width:100%}"
+        ".warn{background:#332200;color:#fa0;padding:8px 12px;border-radius:6px;"
+        "margin-bottom:16px;font-size:13px}"
+        "</style></head><body>"
+        f"<h2 style='color:{title_color}'>ZyNi Backtest Debug</h2>"
+        "<p class='warn'>⚠ TEMPORARY DEBUG ENDPOINT — ADMIN ONLY — REMOVE AFTER TESTING</p>"
+        + body +
+        "</body></html>"
+    )
+    return html, 200, {"Content-Type": "text/html"}
+# ── END TEMPORARY DEBUG ENDPOINT ─────────────────────────────────────────────
 
 
     import os
