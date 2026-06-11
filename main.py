@@ -32661,12 +32661,14 @@ def api_fvg_imbalance():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Backtest — Raw Historical OB Engine  (Phase 2B: uses existing candle fetch)
+# Backtest — Raw Historical OB Engine  (Phase 3: OB replay events connected)
 # ─────────────────────────────────────────────────────────────────────────────
 
 _BT_ALLOWED_TIMEFRAMES = {"5m", "15m", "30m", "1h", "4h", "1d"}
 _BT_ALLOWED_EXCHANGES  = {"binance"}
 _BT_ALLOWED_MARKETS    = {"perpetual"}
+_BT_MAX_EVENTS         = 500  # response cap; replay_summary always uses all
+_BT_PIVOT_LEN          = 3    # internal pivot window — matches scanner default
 
 
 def _bt_clean_symbol(raw: str) -> str:
@@ -32800,6 +32802,209 @@ def _bt_candle_summary(params: Dict, normalized: List[Dict]) -> Dict:
     }
 
 
+def _bt_touch_candle(candles: List[Dict], bar_idx: int):
+    """Return the normalized candle dict for the given bar, or None."""
+    if bar_idx is None or bar_idx < 0 or bar_idx >= len(candles):
+        return None
+    c = candles[bar_idx]
+    return {
+        "open":            c.get("open"),
+        "high":            c.get("high"),
+        "low":             c.get("low"),
+        "close":           c.get("close"),
+        "volume":          c.get("volume"),
+        "quote_volume":    c.get("quote_volume"),
+        "trade_count":     c.get("trade_count"),
+        "taker_buy_base":  c.get("taker_buy_base"),
+        "taker_buy_quote": c.get("taker_buy_quote"),
+    }
+
+
+def _bt_build_event(ob_type: str, ob_id: str, formation_bar: int,
+                    ext_bar: int, src_bar: int,
+                    ob_hi: float, ob_lo: float,
+                    times: list, h_arr: list, l_arr: list, c_arr: list,
+                    candles: List[Dict], params: Dict, n: int) -> Dict:
+    """Build one OB event dict.
+
+    Scans forward from formation_bar to find:
+    - first_touch_bar: first bar j > formation_bar where l[j] <= ob_hi AND h[j] >= ob_lo
+    - mitigation:      first bar j > formation_bar where c[j] < ob_lo (bullish)
+                       or c[j] > ob_hi (bearish)
+
+    Using spec-defined conditions directly rather than _compute_ob_touch_meta so
+    the touch search starts strictly after formation_bar (not after the extreme
+    candle), and no clearance de-duplication is applied (spec asks for raw first
+    entry only).
+    """
+    first_touch_bar = None
+    mitigated       = False
+    mitigation_bar  = None
+
+    for j in range(formation_bar + 1, n):
+        if first_touch_bar is None and l_arr[j] <= ob_hi and h_arr[j] >= ob_lo:
+            first_touch_bar = j
+        if ob_type == "bullish":
+            if c_arr[j] < ob_lo:
+                mitigated      = True
+                mitigation_bar = j
+                break
+        else:
+            if c_arr[j] > ob_hi:
+                mitigated      = True
+                mitigation_bar = j
+                break
+
+    ftb  = first_touch_bar
+    mitb = mitigation_bar
+    return {
+        "ob_id":                  ob_id,
+        "symbol":                 params["symbol"],
+        "timeframe":              params["timeframe"],
+        "type":                   ob_type,
+        "formation_bar":          formation_bar,
+        "formation_time":         times[formation_bar] if formation_bar < n else None,
+        "source_bar":             ext_bar,
+        "source_time":            times[ext_bar]       if ext_bar       < n else None,
+        "zone_high":              round(ob_hi, 8),
+        "zone_low":               round(ob_lo, 8),
+        "zone_mid":               round((ob_hi + ob_lo) / 2.0, 8),
+        "zone_size":              round(ob_hi - ob_lo, 8),
+        "zone_size_pct":          round((ob_hi - ob_lo) / ob_lo * 100, 4),
+        "touch_status":           "touched" if ftb is not None else "untouched",
+        "first_touch_bar":        ftb,
+        "first_touch_time":       times[ftb]  if ftb  is not None and ftb  < n else None,
+        "candles_to_first_touch": (ftb - formation_bar) if ftb is not None else None,
+        "touch_candle":           _bt_touch_candle(candles, ftb),
+        "later_mitigated":        mitigated,
+        "mitigation_bar":         mitb,
+        "mitigation_time":        times[mitb] if mitb is not None and mitb < n else None,
+    }
+
+
+def _bt_extract_ob_replay_events(candles: List[Dict], params: Dict) -> List[Dict]:
+    """Single-pass TradingView-style bar replay engine.
+
+    Architecture:
+    1. Calls detect_pivots() once on the full array — existing function, O(n).
+    2. Walks forward bar by bar maintaining rolling pivot-high/low state.
+    3. Detects each BOS (breakout above pivot high → bullish OB;
+       breakout below pivot low → bearish OB) using crossover logic.
+    4. At each BOS, extracts the OB zone using detect_obs "Precise" mode rules:
+         Bullish: bottom = l[extreme], top = hl2(source) where source = extreme−1
+         Bearish: top = h[extreme], bottom = hl2(source) where source = extreme−1
+    5. Calls _bt_build_event() for each new OB — O(k) forward scan for touch
+       and mitigation — keeping ALL OBs regardless of later mitigation.
+
+    Reuses:
+    - detect_pivots() from the existing codebase (imported above).
+    - _bt_build_event / _bt_touch_candle (isolated _bt_ helpers).
+    Does NOT call detect_obs / detect_obs_all on growing slices (that would be
+    O(n^3)) or on the full array (those functions delete mitigated OBs from
+    their running array, so mitigated OBs would be absent from the result).
+    """
+    n = len(candles)
+    if n < _BT_PIVOT_LEN * 2 + 4:
+        return []
+
+    times = [c.get("open_time") for c in candles]
+    h_arr = [float(c["high"])   for c in candles]
+    l_arr = [float(c["low"])    for c in candles]
+    c_arr = [float(c["close"])  for c in candles]
+
+    # ── Pivot detection — reuse existing function once on full array (O(n)) ──
+    ph, pl = detect_pivots(h_arr, l_arr, _BT_PIVOT_LEN, _BT_PIVOT_LEN)
+
+    events    = []
+    seen_keys = set()
+
+    # Rolling state: most recently confirmed pivot high/low bar
+    last_ph_bar = None
+    last_pl_bar = None
+
+    for i in range(_BT_PIVOT_LEN, n):
+        # A pivot at bar j is confirmed when i reaches j + _BT_PIVOT_LEN
+        # (needs _BT_PIVOT_LEN bars on the right side to be settled).
+        confirmed = i - _BT_PIVOT_LEN
+        if ph[confirmed]:
+            last_ph_bar = confirmed
+        if pl[confirmed]:
+            last_pl_bar = confirmed
+
+        prev_c = c_arr[i - 1]
+
+        # ── Bullish BOS: close crosses above last confirmed pivot high ────────
+        if (last_ph_bar is not None
+                and prev_c        <= h_arr[last_ph_bar]
+                and c_arr[i]       > h_arr[last_ph_bar]):
+
+            ws = last_ph_bar + 1
+            if ws <= i:
+                # Candle with lowest low in window [ws, i] (inclusive)
+                ext_bar = min(range(ws, i + 1), key=lambda j: l_arr[j])
+                src_bar = max(0, ext_bar - 1)
+                ob_lo   = l_arr[ext_bar]
+                ob_hi   = (h_arr[src_bar] + l_arr[src_bar]) / 2.0   # hl2
+
+                if ob_hi > ob_lo > 0:
+                    key = f"bull|{ext_bar}|{ob_hi:.8f}|{ob_lo:.8f}"
+                    if key not in seen_keys:
+                        seen_keys.add(key)
+                        events.append(_bt_build_event(
+                            "bullish", key, i, ext_bar, src_bar,
+                            ob_hi, ob_lo, times, h_arr, l_arr, c_arr,
+                            candles, params, n))
+
+            last_ph_bar = None   # require a fresh pivot high for the next bull BOS
+
+        # ── Bearish BOS: close crosses below last confirmed pivot low ─────────
+        if (last_pl_bar is not None
+                and prev_c        >= l_arr[last_pl_bar]
+                and c_arr[i]       < l_arr[last_pl_bar]):
+
+            ws = last_pl_bar + 1
+            if ws <= i:
+                # Candle with highest high in window [ws, i] (inclusive)
+                ext_bar = max(range(ws, i + 1), key=lambda j: h_arr[j])
+                src_bar = max(0, ext_bar - 1)
+                ob_hi   = h_arr[ext_bar]
+                ob_lo   = (h_arr[src_bar] + l_arr[src_bar]) / 2.0   # hl2
+
+                if ob_hi > ob_lo > 0:
+                    key = f"bear|{ext_bar}|{ob_hi:.8f}|{ob_lo:.8f}"
+                    if key not in seen_keys:
+                        seen_keys.add(key)
+                        events.append(_bt_build_event(
+                            "bearish", key, i, ext_bar, src_bar,
+                            ob_hi, ob_lo, times, h_arr, l_arr, c_arr,
+                            candles, params, n))
+
+            last_pl_bar = None   # require a fresh pivot low for the next bear BOS
+
+    return events
+
+
+def _bt_replay_summary(candles: List[Dict], events: List[Dict]) -> Dict:
+    """Aggregate stats across all detected OB events (uses full event list)."""
+    total     = len(events)
+    bullish   = sum(1 for e in events if e["type"] == "bullish")
+    touched   = sum(1 for e in events if e["touch_status"] == "touched")
+    mitigated = sum(1 for e in events if e["later_mitigated"])
+    counts    = [e["candles_to_first_touch"] for e in events
+                 if e.get("candles_to_first_touch") is not None]
+    avg_touch = round(sum(counts) / len(counts), 1) if counts else None
+    return {
+        "replay_bars":                len(candles),
+        "ob_events_detected":         total,
+        "bullish_events":             bullish,
+        "bearish_events":             total - bullish,
+        "touched_events":             touched,
+        "untouched_events":           total - touched,
+        "mitigated_later":            mitigated,
+        "avg_candles_to_first_touch": avg_touch,
+    }
+
+
 @app.route("/api/backtest/ob-historical", methods=["POST"])
 @login_required
 def api_backtest_ob_historical():
@@ -32812,11 +33017,7 @@ def api_backtest_ob_historical():
     if parse_error:
         return jsonify({"ok": False, "error": parse_error}), 400
 
-    # ── Fetch historical candles via existing shared candle-fetch layer ───────
-    # get_klines() auto-paginates via get_binance_klines_paginated_latest()
-    # when limit > 1500, so candle_count up to 4000 is handled without any
-    # duplicate fetch logic here.  Extended Binance fields (quoteVolume etc.)
-    # are not returned by this path; _bt_normalize_candles() sets them to None.
+    # ── Fetch historical candles (existing shared candle-fetch layer) ─────────
     try:
         raw = get_klines(
             params["symbol"],
@@ -32840,30 +33041,37 @@ def api_backtest_ob_historical():
         }), 502
 
     # ── Normalize ────────────────────────────────────────────────────────────
-    candles = _bt_normalize_candles(raw)
-    summary = _bt_candle_summary(params, candles)
+    candles        = _bt_normalize_candles(raw)
+    candle_summary = _bt_candle_summary(params, candles)
+
+    # ── Bar replay: extract all OB formation + first-touch events ─────────────
+    all_events     = _bt_extract_ob_replay_events(candles, params)
+    replay_summary = _bt_replay_summary(candles, all_events)
+
+    # Truncate event list for response (summary is always over all events)
+    truncated      = len(all_events) > _BT_MAX_EVENTS
+    out_events     = all_events[:_BT_MAX_EVENTS] if truncated else all_events
 
     return jsonify({
-        "ok":          True,
-        "mode":        "raw_historical_ob_v1",
-        "phase":       "historical_candles_connected",
-        "fetch_source":"get_klines",
+        "ok":           True,
+        "mode":         "raw_historical_ob_v1",
+        "phase":        "ob_replay_events_connected",
+        "fetch_source": "get_klines",
         "message": (
-            "Historical candles fetched and normalized using existing candle "
-            "fetch logic. OB detection is not connected yet."
+            "Historical candles replayed. OB formation and first-touch events "
+            "extracted. TP/SL simulation is not connected yet."
         ),
-        "params":         params,
-        "candle_summary": summary,
-        "candles_sample": {
-            "first": candles[0]  if candles else None,
-            "last":  candles[-1] if candles else None,
+        "params":           params,
+        "candle_summary":   candle_summary,
+        "replay_summary":   replay_summary,
+        "events_sample": {
+            "first": all_events[0]  if all_events else None,
+            "last":  all_events[-1] if all_events else None,
         },
-        "next_engine_steps": [
-            "run detect_obs on full candle set",
-            "find first touch after each OB formation",
-            "simulate zone_high entry, close-beyond-zone SL, 1R/2R/3R targets",
-            "return premium dashboard-ready stats",
-        ],
+        "events":           out_events,
+        "events_total":     len(all_events),
+        "events_returned":  len(out_events),
+        "events_truncated": truncated,
     })
 
 
