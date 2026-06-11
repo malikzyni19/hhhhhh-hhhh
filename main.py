@@ -61,6 +61,11 @@ from models import (db, User as _DBUser, GlobalSetting as _GlobalSetting,
                     PasswordResetToken as _PasswordResetToken)
 from admin import admin_bp
 from permissions import get_user_permissions, consume_tokens, check_tokens
+from security import (
+    rate_limiter, RATE_LIMITS, log_security_event,
+    verify_turnstile, is_disposable_email,
+    TURNSTILE_SITE, TURNSTILE_ENABLED,
+)
 
 db.init_app(app)
 _login_manager = LoginManager()
@@ -6594,7 +6599,8 @@ def login():
         if session.get("logged_in"):
             return redirect(url_for("index"))
         pw_reset = request.args.get("reset") == "1"
-        return render_template("login.html", pw_reset_success=pw_reset)
+        return render_template("login.html", pw_reset_success=pw_reset,
+                               turnstile_site_key=TURNSTILE_SITE)
 
     username = request.form.get("username", "").strip().lower()
     pwd      = request.form.get("password", "")
@@ -6603,6 +6609,28 @@ def login():
     now_utc  = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     error    = None
     is_ajax  = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+
+    # ── IP rate limit ──────────────────────────────────────────────────────────
+    max_hits, window = RATE_LIMITS["login"]
+    if not rate_limiter.is_allowed(ip, "login", max_hits, window):
+        retry_after = rate_limiter.get_retry_after(ip, "login", window)
+        log_security_event("RATE_LIMIT_LOGIN", ip=ip, username=username,
+                           detail=f"blocked, retry_after={retry_after}s")
+        msg = f"Too many login attempts from your IP. Try again in {retry_after // 60 + 1} minute(s)."
+        if is_ajax:
+            return jsonify({"error": "rate_limit", "message": msg}), 429
+        return render_template("login.html", error=msg,
+                               turnstile_site_key=TURNSTILE_SITE), 429
+
+    # ── Turnstile verification ─────────────────────────────────────────────────
+    ts_token = request.form.get("cf-turnstile-response", "")
+    ts_ok, ts_err = verify_turnstile(ts_token, ip)
+    if not ts_ok:
+        log_security_event("TURNSTILE_BLOCK_LOGIN", ip=ip, username=username)
+        if is_ajax:
+            return jsonify({"error": "captcha", "message": ts_err}), 400
+        return render_template("login.html", error=ts_err,
+                               turnstile_site_key=TURNSTILE_SITE)
 
     # ── Try DB login first ──────────────────────────────────────────
     db_user      = None
@@ -6748,6 +6776,8 @@ def login():
             return jsonify({"success": True, "redirect": url_for("index")})
         return redirect(url_for("index"))
 
+    log_security_event("LOGIN_FAIL", ip=ip, username=username or "(empty)",
+                       detail=error_code or "unknown")
     LOGIN_AUDIT_LOG.appendleft({
         "username": username or "(empty)", "time": now_utc,
         "ip": ip, "geo": "", "ua": ua, "success": False
@@ -6760,12 +6790,13 @@ def login():
             return jsonify({"error": "unverified", "message": msg, "username": unverified_user}), 401
         return render_template("login.html",
                                error=msg,
-                               unverified_username=unverified_user)
+                               unverified_username=unverified_user,
+                               turnstile_site_key=TURNSTILE_SITE)
 
     if is_ajax:
         return jsonify({"error": error_code or "auth_failed",
                         "message": error or "Login failed. Please try again."}), 401
-    return render_template("login.html", error=error)
+    return render_template("login.html", error=error, turnstile_site_key=TURNSTILE_SITE)
 
 
 @app.route("/register", methods=["GET", "POST"])
@@ -6775,15 +6806,36 @@ def register():
 
     import random
     is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
+
+    def _err(msg, **kw):
+        if is_ajax:
+            return jsonify({"error": "validation", "message": msg}), 400
+        return render_template("login.html", register_error=msg, show_signup=True,
+                               turnstile_site_key=TURNSTILE_SITE, **kw)
+
+    # ── IP rate limit ──────────────────────────────────────────────────────────
+    max_hits, window = RATE_LIMITS["register"]
+    if not rate_limiter.is_allowed(ip, "register", max_hits, window):
+        retry_after = rate_limiter.get_retry_after(ip, "register", window)
+        log_security_event("RATE_LIMIT_REGISTER", ip=ip,
+                           detail=f"blocked, retry_after={retry_after}s")
+        if is_ajax:
+            return jsonify({"error": "rate_limit",
+                            "message": f"Too many registration attempts. Try again in {retry_after // 60 + 1} minute(s)."}), 429
+        return render_template("login.html", register_error="Too many registration attempts. Please wait before trying again.",
+                               show_signup=True, turnstile_site_key=TURNSTILE_SITE), 429
 
     username = request.form.get("username", "").strip().lower()
     email    = request.form.get("email", "").strip().lower()
     password = request.form.get("password", "")
 
-    def _err(msg, **kw):
-        if is_ajax:
-            return jsonify({"error": "validation", "message": msg}), 400
-        return render_template("login.html", register_error=msg, show_signup=True, **kw)
+    # ── Turnstile verification ─────────────────────────────────────────────────
+    ts_token = request.form.get("cf-turnstile-response", "")
+    ts_ok, ts_err = verify_turnstile(ts_token, ip)
+    if not ts_ok:
+        log_security_event("TURNSTILE_BLOCK_REGISTER", ip=ip, username=username)
+        return _err(ts_err, reg_username=username, reg_email=email)
 
     if not username:
         return _err("Username is required.")
@@ -6795,6 +6847,13 @@ def register():
         return _err("Password is required.", reg_username=username, reg_email=email)
     if len(password) < 6:
         return _err("Password must be at least 6 characters.", reg_username=username, reg_email=email)
+
+    # ── Disposable email check ─────────────────────────────────────────────────
+    if is_disposable_email(email):
+        log_security_event("DISPOSABLE_EMAIL_BLOCK", ip=ip, username=username, detail=email)
+        return _err("Temporary/disposable email addresses are not allowed. Please use a real email.",
+                    reg_username=username, reg_email=email)
+
     try:
         if _DBUser.query.filter_by(username=username).first():
             return _err("Username already taken. Choose another.", reg_username=username, reg_email=email)
@@ -6811,6 +6870,8 @@ def register():
         ev = _EmailVerification(user_id=new_user.id, code=code, expires_at=expires)
         db.session.add(ev)
         db.session.commit()
+
+        log_security_event("REGISTER_SUCCESS", ip=ip, username=username, detail=email)
 
         # Send synchronously so we know immediately if it succeeded
         email_sent, fail_reason = send_verification_email(email, code, username)
@@ -6847,8 +6908,17 @@ def verify_email():
                                fallback_code=fallback_code,
                                fail_reason=fail_reason)
 
+    ip       = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
     username = request.form.get("username", "").strip().lower()
     code     = request.form.get("code", "").strip()
+
+    # ── IP rate limit ──────────────────────────────────────────────────────────
+    max_hits, window = RATE_LIMITS["verify_email"]
+    if not rate_limiter.is_allowed(ip, "verify_email", max_hits, window):
+        retry_after = rate_limiter.get_retry_after(ip, "verify_email", window)
+        log_security_event("RATE_LIMIT_VERIFY", ip=ip, username=username)
+        return render_template("verify.html", username=username,
+                               error=f"Too many attempts. Please wait {retry_after // 60 + 1} minute(s) before trying again.")
 
     if not username or not code:
         return render_template("verify.html", username=username,
@@ -6860,7 +6930,7 @@ def verify_email():
                                    error="Account not found. Please register again.")
         if user.email_verified:
             return render_template("login.html", success="Email already verified. You can sign in.",
-                                   login_username=username)
+                                   login_username=username, turnstile_site_key=TURNSTILE_SITE)
 
         now = datetime.now(timezone.utc)
         ev  = (_EmailVerification.query
@@ -6869,6 +6939,7 @@ def verify_email():
                .first())
 
         if not ev:
+            log_security_event("VERIFY_FAIL_INVALID_CODE", ip=ip, username=username)
             return render_template("verify.html", username=username,
                                    error="Invalid or expired code. Request a new one below.")
 
@@ -6876,9 +6947,10 @@ def verify_email():
         user.email_verified = True
         db.session.commit()
 
+        log_security_event("VERIFY_SUCCESS", ip=ip, username=username)
         return render_template("login.html",
                                success="Email verified! Your account is active — sign in below.",
-                               login_username=username)
+                               login_username=username, turnstile_site_key=TURNSTILE_SITE)
     except Exception as _ve:
         print(f"[VERIFY] Error: {_ve}")
         db.session.rollback()
@@ -6889,7 +6961,17 @@ def verify_email():
 @app.route("/resend-verification", methods=["POST"])
 def resend_verification():
     import random
+    ip       = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
     username = request.form.get("username", "").strip().lower()
+
+    # ── IP rate limit ──────────────────────────────────────────────────────────
+    max_hits, window = RATE_LIMITS["resend_verification"]
+    if not rate_limiter.is_allowed(ip, "resend_verification", max_hits, window):
+        retry_after = rate_limiter.get_retry_after(ip, "resend_verification", window)
+        log_security_event("RATE_LIMIT_RESEND", ip=ip, username=username)
+        return render_template("verify.html", username=username,
+                               error=f"Too many resend requests. Please wait {retry_after // 60 + 1} minute(s).")
+
     try:
         user = _DBUser.query.filter_by(username=username).first()
         if not user or not user.email:
@@ -6897,7 +6979,7 @@ def resend_verification():
                                    error="Account not found or no email on file.")
         if user.email_verified:
             return render_template("login.html", success="Email already verified. You can sign in.",
-                                   login_username=username)
+                                   login_username=username, turnstile_site_key=TURNSTILE_SITE)
 
         # Rate-limit: block resend if a fresh code was issued within the last 2 minutes
         cooldown_cutoff = datetime.now(timezone.utc) - timedelta(minutes=2)

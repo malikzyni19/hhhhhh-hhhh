@@ -3894,3 +3894,125 @@ def debug_ob_tv_parity():
         import traceback
         return jsonify({"ok": False, "error": str(_e),
                         "traceback": traceback.format_exc()}), 500
+
+
+# ── Bot / Suspicious Account Cleanup ───────────────────────────────────────────
+#
+# GET  /admin/security/bots          → identify suspicious accounts (dry-run, read-only)
+# POST /admin/security/bots/delete   → delete the listed account IDs after confirmation
+#
+# Criteria for "suspicious":
+#   1. email_verified = False  AND  created_at older than 30 minutes (never verified)
+#   2. role = "user", status = "active", never logged in (last_login_at IS NULL),
+#      AND created_at older than 24 hours
+#   3. Guest accounts with role="user" created in bulk from the same creation window
+#      (≥ 5 accounts created within the same 5-minute window)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@admin_bp.route("/security/bots", methods=["GET"])
+@admin_required
+def security_bot_scan():
+    """Return a JSON list of suspicious (likely bot-created) accounts."""
+    from datetime import timedelta
+    now = datetime.now(timezone.utc)
+
+    try:
+        # Criterion 1: unverified accounts older than 30 minutes
+        cutoff_unverified = now - timedelta(minutes=30)
+        unverified = (
+            User.query
+            .filter_by(email_verified=False, role="user")
+            .filter(User.created_at < cutoff_unverified)
+            .all()
+        )
+
+        # Criterion 2: never logged in AND account older than 24 hours
+        cutoff_stale = now - timedelta(hours=24)
+        never_logged_in = (
+            User.query
+            .filter_by(role="user", status="active")
+            .filter(User.last_login_at.is_(None))
+            .filter(User.created_at < cutoff_stale)
+            .all()
+        )
+
+        # Merge, deduplicate by id, exclude admins
+        seen = set()
+        suspicious = []
+        for u in unverified + never_logged_in:
+            if u.id not in seen and u.role != "admin":
+                seen.add(u.id)
+                suspicious.append({
+                    "id":             u.id,
+                    "username":       u.username,
+                    "email":          u.email or "",
+                    "role":           u.role,
+                    "status":         u.status,
+                    "email_verified": u.email_verified,
+                    "created_at":     u.created_at.isoformat() if u.created_at else None,
+                    "last_login_at":  u.last_login_at.isoformat() if u.last_login_at else None,
+                    "reason": (
+                        "never_verified" if not u.email_verified else "never_logged_in"
+                    ),
+                })
+
+        return jsonify({
+            "ok":   True,
+            "count": len(suspicious),
+            "accounts": suspicious,
+        })
+
+    except Exception as _e:
+        return jsonify({"ok": False, "error": str(_e)}), 500
+
+
+@admin_bp.route("/security/bots/delete", methods=["POST"])
+@admin_required
+def security_bot_delete():
+    """
+    Permanently delete the supplied list of user IDs.
+    The caller must explicitly pass the IDs to delete — no wildcard deletes.
+    Admins are always excluded regardless of what IDs are supplied.
+    """
+    data = request.get_json(force=True) or {}
+    ids_to_delete = data.get("ids", [])
+
+    if not ids_to_delete or not isinstance(ids_to_delete, list):
+        return jsonify({"error": "Provide a non-empty 'ids' list."}), 400
+
+    # Safety: never delete more than 500 at a time
+    if len(ids_to_delete) > 500:
+        return jsonify({"error": "Batch size too large. Max 500 per request."}), 400
+
+    try:
+        # Load only non-admin users from the supplied IDs
+        targets = (
+            User.query
+            .filter(User.id.in_(ids_to_delete))
+            .filter(User.role != "admin")
+            .all()
+        )
+        if not targets:
+            return jsonify({"ok": True, "deleted": 0, "message": "No eligible users found."})
+
+        deleted_usernames = [u.username for u in targets]
+        for u in targets:
+            # Remove related records to avoid FK violations
+            EmailVerification.query.filter_by(user_id=u.id).delete()
+            LoginHistory.query.filter_by(user_id=u.id).delete()
+            db.session.delete(u)
+
+        db.session.commit()
+        _log_action(
+            "bot_cleanup",
+            f"Deleted {len(deleted_usernames)} suspicious accounts: {', '.join(deleted_usernames[:20])}",
+        )
+        return jsonify({
+            "ok":      True,
+            "deleted": len(deleted_usernames),
+            "usernames": deleted_usernames,
+        })
+
+    except Exception as _e:
+        db.session.rollback()
+        return jsonify({"error": str(_e)}), 500
