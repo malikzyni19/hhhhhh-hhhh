@@ -956,3 +956,205 @@ class LiveMonitorTestnetOrder(db.Model):
         return (f"<LiveMonitorTestnetOrder id={self.id} {self.symbol} "
                 f"{self.side} qty={self.quantity} status={self.status} "
                 f"user={self.user_id}>")
+
+
+# ── Phase 11.7B: Internal Paper Trading ───────────────────────────────────────
+
+class LiveMonitorPaperAccount(db.Model):
+    """Phase 11.7B: Internal paper trading account per user.
+
+    Rules:
+    - One active account per user (auto-created on first access).
+    - No API keys. No exchange connection.
+    - Starting balance: 10,000 USDT.
+    - Balance updated only by fill engine (11.7C+). Read-only in 11.7B.
+    """
+    __tablename__ = "live_monitor_paper_accounts"
+
+    id               = db.Column(db.Integer, primary_key=True)
+    user_id          = db.Column(db.Integer, db.ForeignKey("users.id"),
+                                 nullable=False, index=True)
+    currency         = db.Column(db.String(10), nullable=False, default="USDT")
+    starting_balance = db.Column(db.Float, nullable=False, default=10000.0)
+    cash_balance     = db.Column(db.Float, nullable=False, default=10000.0)
+    equity           = db.Column(db.Float, nullable=False, default=10000.0)
+    realized_pnl     = db.Column(db.Float, nullable=False, default=0.0)
+    unrealized_pnl   = db.Column(db.Float, nullable=False, default=0.0)
+    status           = db.Column(db.String(20), nullable=False,
+                                 default="active", index=True)
+
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
+                           nullable=False, index=True)
+    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
+                           onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        db.Index("ix_lm_paper_account_user", "user_id", "status"),
+    )
+
+    user = db.relationship("User", foreign_keys=[user_id])
+
+    def __repr__(self) -> str:
+        return (f"<LiveMonitorPaperAccount id={self.id} user={self.user_id} "
+                f"balance={self.cash_balance} {self.currency} status={self.status}>")
+
+
+class LiveMonitorPaperOrder(db.Model):
+    """Phase 11.7B: Internal paper order record.
+
+    Rules:
+    - No API keys. No exchange calls. DB-only.
+    - Populated only by POST /api/live-monitor/items/<id>/paper-order/submit.
+    - No automatic population — manual submit only.
+    - status=open, fill_status=unfilled on creation.
+    - Fill engine (11.7C+) will update filled_qty / avg_fill_price.
+    """
+    __tablename__ = "live_monitor_paper_orders"
+
+    id             = db.Column(db.Integer, primary_key=True)
+    user_id        = db.Column(db.Integer, db.ForeignKey("users.id"),
+                               nullable=False, index=True)
+    item_id        = db.Column(db.Integer, db.ForeignKey("live_monitor_items.id"),
+                               nullable=False, index=True)
+    account_id     = db.Column(db.Integer, db.ForeignKey("live_monitor_paper_accounts.id"),
+                               nullable=False, index=True)
+
+    symbol         = db.Column(db.String(20), nullable=False)
+    side           = db.Column(db.String(10), nullable=False)          # BUY | SELL
+    order_type     = db.Column(db.String(20), nullable=False)          # LIMIT
+    time_in_force  = db.Column(db.String(10), nullable=False)          # GTC
+    quantity       = db.Column(db.String(40), nullable=False)          # decimal string
+    price          = db.Column(db.String(40), nullable=False)          # decimal string
+    status         = db.Column(db.String(30), nullable=False,          # open/filled/cancelled/failed
+                               default="open", index=True)
+    fill_status    = db.Column(db.String(20), nullable=False,          # unfilled/partial/filled
+                               default="unfilled", index=True)
+    filled_qty     = db.Column(db.String(40), nullable=True)           # decimal string
+    avg_fill_price = db.Column(db.String(40), nullable=True)           # decimal string
+
+    client_order_id = db.Column(db.String(60), nullable=True, index=True)  # ZYNI_PAPER_<hex>
+    source          = db.Column(db.String(30), nullable=False, default="internal_paper")
+
+    # Snapshot context at time of submission
+    execution_intent_json     = db.Column(db.Text, nullable=True)
+    execution_simulation_json = db.Column(db.Text, nullable=True)
+    ai_decision_json          = db.Column(db.Text, nullable=True)
+    automation_policy_json    = db.Column(db.Text, nullable=True)
+
+    # Audit trail
+    request_json  = db.Column(db.Text, nullable=True)
+    response_json = db.Column(db.Text, nullable=True)
+    error_json    = db.Column(db.Text, nullable=True)
+
+    created_at   = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
+                             nullable=False, index=True)
+    submitted_at = db.Column(db.DateTime, nullable=True)
+    filled_at    = db.Column(db.DateTime, nullable=True)
+    updated_at   = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
+                             onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        db.Index("ix_lm_paper_order_item", "user_id", "item_id"),
+        db.Index("ix_lm_paper_order_status", "user_id", "status"),
+    )
+
+    user    = db.relationship("User",                     foreign_keys=[user_id])
+    item    = db.relationship("LiveMonitorItem",          foreign_keys=[item_id])
+    account = db.relationship("LiveMonitorPaperAccount",  foreign_keys=[account_id])
+
+    def __repr__(self) -> str:
+        return (f"<LiveMonitorPaperOrder id={self.id} {self.symbol} "
+                f"{self.side} qty={self.quantity} status={self.status} "
+                f"fill={self.fill_status} user={self.user_id}>")
+
+
+class LiveMonitorPaperPosition(db.Model):
+    """Phase 11.7B: Internal paper position record.
+
+    Created by fill engine (11.7C+). Defined here for schema completeness.
+    No positions are created in 11.7B — fill engine not yet implemented.
+    """
+    __tablename__ = "live_monitor_paper_positions"
+
+    id             = db.Column(db.Integer, primary_key=True)
+    user_id        = db.Column(db.Integer, db.ForeignKey("users.id"),
+                               nullable=False, index=True)
+    item_id        = db.Column(db.Integer, db.ForeignKey("live_monitor_items.id"),
+                               nullable=True, index=True)
+    account_id     = db.Column(db.Integer, db.ForeignKey("live_monitor_paper_accounts.id"),
+                               nullable=False, index=True)
+
+    symbol         = db.Column(db.String(20), nullable=False)
+    side           = db.Column(db.String(10), nullable=False)          # LONG | SHORT
+    quantity       = db.Column(db.String(40), nullable=False)
+    entry_price    = db.Column(db.String(40), nullable=True)
+    mark_price     = db.Column(db.String(40), nullable=True)
+    unrealized_pnl = db.Column(db.Float, nullable=True, default=0.0)
+    realized_pnl   = db.Column(db.Float, nullable=True, default=0.0)
+    status         = db.Column(db.String(20), nullable=False,
+                               default="open", index=True)  # open | closed
+
+    opened_at  = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
+                           nullable=False)
+    closed_at  = db.Column(db.DateTime, nullable=True)
+    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
+                           onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        db.Index("ix_lm_paper_position_item", "user_id", "item_id"),
+        db.Index("ix_lm_paper_position_status", "user_id", "status"),
+    )
+
+    user    = db.relationship("User",                     foreign_keys=[user_id])
+    item    = db.relationship("LiveMonitorItem",          foreign_keys=[item_id])
+    account = db.relationship("LiveMonitorPaperAccount",  foreign_keys=[account_id])
+
+    def __repr__(self) -> str:
+        return (f"<LiveMonitorPaperPosition id={self.id} {self.symbol} "
+                f"{self.side} qty={self.quantity} status={self.status} "
+                f"user={self.user_id}>")
+
+
+class LiveMonitorPaperFill(db.Model):
+    """Phase 11.7B: Internal paper fill record.
+
+    Created by fill engine (11.7C+). Defined here for schema completeness.
+    No fills are created in 11.7B.
+    """
+    __tablename__ = "live_monitor_paper_fills"
+
+    id          = db.Column(db.Integer, primary_key=True)
+    user_id     = db.Column(db.Integer, db.ForeignKey("users.id"),
+                            nullable=False, index=True)
+    item_id     = db.Column(db.Integer, db.ForeignKey("live_monitor_items.id"),
+                            nullable=True, index=True)
+    account_id  = db.Column(db.Integer, db.ForeignKey("live_monitor_paper_accounts.id"),
+                            nullable=False, index=True)
+    order_id    = db.Column(db.Integer, db.ForeignKey("live_monitor_paper_orders.id"),
+                            nullable=False, index=True)
+    position_id = db.Column(db.Integer, db.ForeignKey("live_monitor_paper_positions.id"),
+                            nullable=True, index=True)
+
+    symbol   = db.Column(db.String(20), nullable=False)
+    side     = db.Column(db.String(10), nullable=False)
+    quantity = db.Column(db.String(40), nullable=False)
+    price    = db.Column(db.String(40), nullable=False)
+    notional = db.Column(db.Float, nullable=True)
+    fee      = db.Column(db.Float, nullable=True, default=0.0)
+    fill_type = db.Column(db.String(20), nullable=True)  # entry | exit | partial
+
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
+                           nullable=False, index=True)
+
+    __table_args__ = (
+        db.Index("ix_lm_paper_fill_order", "user_id", "order_id"),
+    )
+
+    user     = db.relationship("User",                      foreign_keys=[user_id])
+    order    = db.relationship("LiveMonitorPaperOrder",     foreign_keys=[order_id])
+    account  = db.relationship("LiveMonitorPaperAccount",   foreign_keys=[account_id])
+
+    def __repr__(self) -> str:
+        return (f"<LiveMonitorPaperFill id={self.id} {self.symbol} "
+                f"{self.side} qty={self.quantity} @ {self.price} "
+                f"user={self.user_id}>")

@@ -4596,6 +4596,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     if(ws==='terminal'){
       try{_lmUpdateTerminalActiveItem();}catch(e){}
       try{window._lmTodRefreshDraft();}catch(e){}
+      try{window._lmPapRefreshDraft();}catch(e){}
+      try{window._lmPapRefreshAccount();}catch(e){}
     }
     // Persist selection
     try{localStorage.setItem('zyni_lm_workspace',ws);}catch(e){}
@@ -4873,27 +4875,46 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                     '<span class="lm-term-gchev" id="lmTgChev-paper">&#9660;</span>'+
                   '</div>'+
                   '<div class="lm-term-gbody" id="lmTgBody-paper">'+
-                    '<p class="lm-paper-desc">'+
-                      'Primary strategy testing mode uses real futures market data and internal paper execution. '+
-                      'Validates entries without touching any real or testnet account.'+
-                    '</p>'+
-                    '<div class="lm-paper-cards">'+
-                      '<div class="lm-paper-card">'+
-                        '<div class="lm-paper-card-l">Paper Account</div>'+
-                        '<div class="lm-paper-card-v" style="color:var(--text-3)">Coming next</div>'+
-                      '</div>'+
-                      '<div class="lm-paper-card">'+
-                        '<div class="lm-paper-card-l">Paper Order Draft</div>'+
-                        '<div class="lm-paper-card-v" style="color:var(--text-3)">Coming next</div>'+
-                      '</div>'+
-                      '<div class="lm-paper-card">'+
-                        '<div class="lm-paper-card-l">Paper Positions</div>'+
-                        '<div class="lm-paper-card-v" style="color:var(--text-3)">Coming next</div>'+
-                      '</div>'+
-                      '<div class="lm-paper-card">'+
-                        '<div class="lm-paper-card-l">Paper PnL</div>'+
-                        '<div class="lm-paper-card-v" style="color:var(--text-3)">Coming next</div>'+
-                      '</div>'+
+                    /* Paper Account Summary row */
+                    '<div id="lmPapAccRow" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;padding:6px 8px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:6px;">'+
+                      '<span style="font-size:9px;font-weight:700;letter-spacing:.5px;color:var(--text-3);text-transform:uppercase">Paper Account</span>'+
+                      '<span id="lmPapAccBal" style="font-size:11px;font-weight:700;color:var(--accent);font-family:var(--mono)">—</span>'+
+                      '<span style="font-size:9px;color:var(--text-3)">USDT</span>'+
+                      '<span style="flex:1"></span>'+
+                      '<span id="lmPapAccPnl" style="font-size:10px;font-weight:600;font-family:var(--mono);color:var(--text-3)"></span>'+
+                      '<button class="btn lm-sm-btn" onclick="window._lmPapRefreshAccount()" style="font-size:9px;padding:2px 7px">↻</button>'+
+                    '</div>'+
+                    /* Paper Draft section */
+                    '<div id="lmPapDraftSection" style="margin-bottom:8px">'+
+                      '<table style="width:100%;border-collapse:collapse;font-size:10px">'+
+                        '<tr><td style="color:var(--text-3);padding:2px 0;width:44%">Symbol</td><td id="lmPap-symbol" style="color:var(--text-1);font-family:var(--mono)">—</td></tr>'+
+                        '<tr><td style="color:var(--text-3);padding:2px 0">Side</td><td id="lmPap-side" style="color:var(--text-1);font-family:var(--mono)">—</td></tr>'+
+                        '<tr><td style="color:var(--text-3);padding:2px 0">Entry Price</td><td id="lmPap-price" style="color:var(--text-1);font-family:var(--mono)">—</td></tr>'+
+                        '<tr><td style="color:var(--text-3);padding:2px 0">Paper Ready</td><td id="lmPap-ready" style="color:var(--text-1)">—</td></tr>'+
+                        '<tr><td style="color:var(--text-3);padding:2px 0">Est. Notional</td><td id="lmPap-notional" style="color:var(--text-1);font-family:var(--mono)">—</td></tr>'+
+                      '</table>'+
+                    '</div>'+
+                    /* Quantity input + submit */
+                    '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">'+
+                      '<input id="lmPapQtyInput" type="text" placeholder="Qty e.g. 0.001" '+
+                        'style="flex:1;font-size:11px;padding:4px 7px;border-radius:5px;border:1px solid var(--border);background:var(--bg-input,var(--bg-card-2));color:var(--text-1);font-family:var(--mono)" '+
+                        'oninput="window._lmPapRefreshDraft()" />'+
+                      '<button class="btn lm-sm-btn" id="lmPapDraftBtn" style="white-space:nowrap" onclick="window._lmPapRefreshDraft()">Refresh</button>'+
+                    '</div>'+
+                    '<div id="lmPap-qtyErr" style="display:none;font-size:9px;color:#f87171;padding:2px 0"></div>'+
+                    '<div id="lmPap-reasons" style="display:none;font-size:9px;color:var(--yellow);padding:2px 0;line-height:1.4"></div>'+
+                    '<div style="margin-top:6px">'+
+                      '<button class="btn lm-sm-btn" id="lmPapSubmitBtn" disabled '+
+                        'style="width:100%;padding:6px 10px;font-size:11px;font-weight:700;opacity:0.5;cursor:not-allowed" '+
+                        'onclick="window._lmPapSubmitOrder()">'+
+                        'Submit Paper Order'+
+                      '</button>'+
+                    '</div>'+
+                    '<div id="lmPap-result" style="display:none;font-size:9px;padding:4px 0;line-height:1.5"></div>'+
+                    /* Recent paper orders */
+                    '<div id="lmPapOrdersSection" style="margin-top:8px;display:none">'+
+                      '<div style="font-size:9px;font-weight:700;letter-spacing:.5px;color:var(--text-3);text-transform:uppercase;margin-bottom:4px">Recent Paper Orders</div>'+
+                      '<div id="lmPapOrdersList" style="font-size:9px;font-family:var(--mono);line-height:1.6;color:var(--text-2)"></div>'+
                     '</div>'+
                   '</div>'+
                 '</div>'+
@@ -6534,6 +6555,11 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         card.classList.add("active");
         _lmRenderRight(_lmSelItem);  // handles DH fetch + polling internally
         try{_lmUpdateTerminalActiveItem();}catch(e){}  // keep terminal header in sync
+        if(_lmActiveWorkspace==='terminal'){
+          try{window._lmPapRefreshDraft();}catch(e){}
+          try{window._lmPapRefreshAccount();}catch(e){}
+          try{window._lmPapRefreshOrders(_lmSelItem&&_lmSelItem.id);}catch(e){}
+        }
       });
     });
     // auto-select: keep selection if still valid, else pick first
@@ -6547,7 +6573,11 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     }
     // Sync terminal header + draft after auto-select (covers page-load with terminal workspace restored)
     try{_lmUpdateTerminalActiveItem();}catch(e){}
-    if(_lmActiveWorkspace==='terminal') try{window._lmTodRefreshDraft();}catch(e){}
+    if(_lmActiveWorkspace==='terminal'){
+      try{window._lmTodRefreshDraft();}catch(e){}
+      try{window._lmPapRefreshDraft();}catch(e){}
+      try{window._lmPapRefreshAccount();}catch(e){}
+    }
     // mark active card
     if(_lmSelItem){
       var selIdx=-1;
@@ -8095,6 +8125,141 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         if(sb){ sb.disabled=false; sb.textContent='Submit Testnet Order'; }
         if(resEl){ resEl.style.display=''; resEl.style.color='var(--red-2,#f87171)'; resEl.textContent='Network error during submit.'; }
       });
+  };
+
+  // ── Phase 11.7B: Internal Paper Trading JS ──────────────────────────────────
+
+  window._lmPapRefreshAccount=function(){
+    fetch('/api/live-monitor/paper/account',{credentials:'same-origin'})
+      .then(function(r){return r.json();})
+      .then(function(d){
+        var balEl=document.getElementById('lmPapAccBal');
+        var pnlEl=document.getElementById('lmPapAccPnl');
+        if(balEl) balEl.textContent=d.cash_balance!=null?Number(d.cash_balance).toFixed(2):'—';
+        if(pnlEl){
+          var rpnl=d.realized_pnl||0;
+          pnlEl.textContent='PnL: '+(rpnl>=0?'+':'')+Number(rpnl).toFixed(2);
+          pnlEl.style.color=rpnl>=0?'var(--green-2,#4ade80)':'var(--red-2,#f87171)';
+        }
+      })
+      .catch(function(){});
+  };
+
+  window._lmPapRefreshDraft=function(){
+    var itemId=window._lmSimItemId||(window._lmSelItem&&window._lmSelItem.id);
+    if(!itemId) return;
+    var qty=(document.getElementById('lmPapQtyInput')||{}).value||'';
+    var url='/api/live-monitor/items/'+itemId+'/paper-order/draft'+(qty?'?quantity='+encodeURIComponent(qty):'');
+    fetch(url,{credentials:'same-origin'})
+      .then(function(r){return r.json();})
+      .then(function(d){
+        var dr=(d&&d.draft)||{};
+        function _tv(id,v){var el=document.getElementById(id);if(!el)return;el.textContent=v==null?'—':String(v);}
+        function _tf(id,ok,yes,no){
+          var el=document.getElementById(id);if(!el)return;
+          el.textContent=ok?yes:no;
+          el.style.color=ok?'var(--green-2,#4ade80)':'var(--red-2,#f87171)';
+        }
+        _tv('lmPap-symbol', dr.symbol||'—');
+        var sideEl=document.getElementById('lmPap-side');
+        if(sideEl){
+          sideEl.textContent=dr.side||'—';
+          sideEl.style.color=dr.side==='BUY'?'var(--green-2,#4ade80)':dr.side==='SELL'?'var(--red-2,#f87171)':'var(--text-1)';
+        }
+        _tv('lmPap-price', dr.price||'—');
+        _tf('lmPap-ready', dr.paper_ready, 'YES', 'NO');
+        _tv('lmPap-notional', dr.estimated_notional!=null?(dr.estimated_notional+' USDT'):'—');
+        var qErr=document.getElementById('lmPap-qtyErr');
+        var qv=dr.qty_validation||{};
+        if(qErr){
+          if(qty&&!qv.ok&&qv.error&&qv.error!=='quantity_required'){
+            qErr.style.display='';qErr.textContent=qv.error;
+          } else { qErr.style.display='none'; }
+        }
+        var rs=dr.reasons||[];
+        var rEl=document.getElementById('lmPap-reasons');
+        if(rEl){
+          if(rs.length){rEl.style.display='';rEl.textContent='Blocked: '+rs.slice(0,6).join(' · ');}
+          else{rEl.style.display='none';}
+        }
+        var sb=document.getElementById('lmPapSubmitBtn');
+        if(sb){
+          var ready=dr.draft_ready===true;
+          sb.disabled=!ready;
+          sb.style.opacity=ready?'1':'0.5';
+          sb.style.cursor=ready?'pointer':'not-allowed';
+        }
+      })
+      .catch(function(){});
+  };
+
+  window._lmPapSubmitOrder=function(){
+    var itemId=window._lmSimItemId||(window._lmSelItem&&window._lmSelItem.id);
+    if(!itemId) return;
+    var qty=((document.getElementById('lmPapQtyInput')||{}).value||'').trim();
+    if(!qty){alert('Enter a quantity first.');return;}
+    if(!confirm('Submit an internal paper LIMIT order?\n\nNo real or testnet exchange involved.\nDB simulation only. No TP/SL.\n\nProceed?')) return;
+    var sb=document.getElementById('lmPapSubmitBtn');
+    if(sb){sb.disabled=true;sb.textContent='Submitting…';}
+    var resEl=document.getElementById('lmPap-result');
+    if(resEl){resEl.style.display='none';}
+    fetch('/api/live-monitor/items/'+itemId+'/paper-order/submit',{
+      method:'POST',
+      credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({quantity:qty}),
+    })
+      .then(function(r){return r.json().then(function(d){return {s:r.status,d:d};});})
+      .then(function(rd){
+        var d=rd.d;
+        if(sb){sb.disabled=false;sb.textContent='Submit Paper Order';}
+        if(resEl){
+          resEl.style.display='';
+          if(d&&d.ok){
+            resEl.style.color='var(--green-2,#4ade80)';
+            resEl.innerHTML='<b>Paper order created!</b> #'+esc(String(d.order_id||'—'))+
+              ' &nbsp;·&nbsp; '+esc(d.side||'—')+' '+esc(d.quantity||'—')+' @ '+esc(d.price||'—')+
+              ' &nbsp;·&nbsp; '+esc(d.status||'—');
+          } else {
+            resEl.style.color='var(--red-2,#f87171)';
+            resEl.innerHTML='<b>Failed:</b> '+esc((d&&(d.error||JSON.stringify(d.reasons||d)))||'Unknown error');
+          }
+        }
+        window._lmPapRefreshDraft();
+        window._lmPapRefreshAccount();
+        window._lmPapRefreshOrders(itemId);
+      })
+      .catch(function(){
+        if(sb){sb.disabled=false;sb.textContent='Submit Paper Order';}
+        if(resEl){resEl.style.display='';resEl.style.color='var(--red-2,#f87171)';resEl.textContent='Network error during submit.';}
+      });
+  };
+
+  window._lmPapRefreshOrders=function(itemId){
+    if(!itemId) return;
+    fetch('/api/live-monitor/items/'+itemId+'/paper-orders',{credentials:'same-origin'})
+      .then(function(r){return r.json();})
+      .then(function(d){
+        var sec=document.getElementById('lmPapOrdersSection');
+        var listEl=document.getElementById('lmPapOrdersList');
+        if(!listEl) return;
+        var orders=(d&&d.orders)||[];
+        if(orders.length){
+          if(sec) sec.style.display='';
+          listEl.innerHTML=orders.slice(0,8).map(function(o){
+            var sideColor=o.side==='BUY'?'var(--green-2,#4ade80)':'var(--red-2,#f87171)';
+            return '<div style="padding:2px 0;border-bottom:1px solid var(--border)">'
+              +'#'+esc(String(o.id))+' '
+              +'<span style="color:'+sideColor+'">'+esc(o.side)+'</span> '
+              +esc(o.quantity)+' <span style="color:var(--text-3)">@</span> '+esc(o.price)
+              +' <span style="color:var(--text-3)">'+esc(o.status)+'/'+esc(o.fill_status)+'</span>'
+              +'</div>';
+          }).join('');
+        } else {
+          if(sec) sec.style.display='none';
+        }
+      })
+      .catch(function(){});
   };
 
   function _lmMtfMatrix(item){

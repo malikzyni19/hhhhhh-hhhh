@@ -47,6 +47,15 @@ from live_monitor.testnet_order_draft import (
     _lm_build_testnet_order_draft,
     _lm_validate_order_quantity,
 )
+from live_monitor.paper_trading import (
+    _lm_get_or_create_paper_account,
+    _lm_build_paper_order_draft,
+    _lm_validate_paper_order_draft,
+    _lm_submit_paper_order,
+    _lm_get_paper_account_summary,
+    _lm_get_paper_orders,
+    _lm_get_paper_positions,
+)
 
 __all__ = [
     "_lm_build_orderflow_state",
@@ -85,4 +94,11 @@ __all__ = [
     "_lm_bt_place_limit_order_testnet",
     "_lm_build_testnet_order_draft",
     "_lm_validate_order_quantity",
+    "_lm_get_or_create_paper_account",
+    "_lm_build_paper_order_draft",
+    "_lm_validate_paper_order_draft",
+    "_lm_submit_paper_order",
+    "_lm_get_paper_account_summary",
+    "_lm_get_paper_orders",
+    "_lm_get_paper_positions",
 ]
