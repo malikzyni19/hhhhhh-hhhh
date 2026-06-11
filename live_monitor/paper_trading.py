@@ -1,9 +1,11 @@
-# live_monitor/paper_trading.py — Phase 11.7B: Internal Paper Trading Engine Foundation
+# live_monitor/paper_trading.py — Phase 11.7B/11.7C: Internal Paper Trading Engine
 #
 # SAFETY RULES (permanent):
 # - No Binance API. DB-only. No exchange calls of any kind.
 # - No auto-submit. No AI direct execution. No background order placement.
 # - No order placed unless user manually clicks Submit Paper Order.
+# - Fill engine uses real Live Monitor market price (item.current_price) only.
+# - No Binance Testnet price. No _lm_bt_* calls. No requests/HTTP calls.
 # - _lm_bt_signed_request() is NOT called here — read-only GET-only, untouched.
 # - No API keys. No secrets. No exchange order IDs in DB.
 import uuid
@@ -407,3 +409,290 @@ def _lm_get_paper_positions(user_id, item_id=None) -> list:
             "created_at":   r.created_at.isoformat() if r.created_at else None,
         })
     return out
+
+
+# ── Phase 11.7C: Paper Fill Engine ────────────────────────────────────────────
+# Safety: No Binance API. No _lm_bt_* calls. No HTTP requests.
+# Price source: real Live Monitor item.current_price only.
+# Trigger: manual only (no background loop, no auto execution).
+
+def _lm_get_real_market_price_for_paper(item=None, item_id=None):
+    """Return the real Live Monitor market price for paper fill checking.
+
+    Uses item.current_price (live Binance feed stored in DB), falls back to
+    snapshot last_known_price. Never calls Binance Testnet or any exchange API.
+    """
+    if item is not None:
+        try:
+            cp = getattr(item, "current_price", None)
+            if cp is not None:
+                return float(cp)
+        except Exception:
+            pass
+        try:
+            snap = _json_loads_safe(getattr(item, "snapshot_json", None), {})
+            lp = snap.get("last_known_price")
+            if lp is not None:
+                return float(lp)
+        except Exception:
+            pass
+    if item_id is not None and item is None:
+        try:
+            from models import LiveMonitorItem as _LMI
+            row = _LMI.query.get(item_id)
+            if row:
+                return _lm_get_real_market_price_for_paper(item=row)
+        except Exception:
+            pass
+    return None
+
+
+def _lm_check_paper_order_fill(order, item=None, current_price=None):
+    """Check one open paper order and fill it if conditions are met.
+
+    BUY LIMIT: fill when current_price <= order.price
+    SELL LIMIT: fill when current_price >= order.price
+    Fill price: order.price (limit price).
+    No exchange API calls. DB-only.
+    Returns a result dict describing the outcome.
+    """
+    if current_price is None and item is not None:
+        current_price = _lm_get_real_market_price_for_paper(item=item)
+
+    order_price_f = None
+    try:
+        order_price_f = float(order.price)
+    except Exception:
+        return {
+            "ok": False, "checked": False,
+            "reason": "order_price_invalid", "order_id": order.id,
+        }
+
+    if current_price is None:
+        return {
+            "ok": True, "checked": True, "filled": False,
+            "reason": "no_current_price", "order_id": order.id,
+            "symbol": order.symbol, "side": order.side,
+            "order_price": order_price_f,
+        }
+
+    side = (order.side or "").upper()
+    should_fill = False
+    if side == "BUY" and current_price <= order_price_f:
+        should_fill = True
+    elif side == "SELL" and current_price >= order_price_f:
+        should_fill = True
+
+    if not should_fill:
+        reason = "buy_limit_not_touched" if side == "BUY" else "sell_limit_not_touched"
+        return {
+            "ok": True, "checked": True, "filled": False,
+            "reason": reason,
+            "order_id": order.id,
+            "symbol": order.symbol,
+            "side": side,
+            "order_price": order_price_f,
+            "current_price": current_price,
+        }
+
+    # ── Execute fill ──────────────────────────────────────────────────────────
+    from models import (
+        db as _db,
+        LiveMonitorPaperOrder    as _PO,
+        LiveMonitorPaperFill     as _PF,
+        LiveMonitorPaperPosition as _PP,
+    )
+    import datetime as _dt
+
+    fill_price = order_price_f
+    qty_str = order.quantity
+    try:
+        qty_f = float(qty_str)
+    except Exception:
+        qty_f = 0.0
+    notional = round(qty_f * fill_price, 6)
+    position_side = "LONG" if side == "BUY" else "SHORT"
+    fill_id = None
+    position_id = None
+
+    try:
+        # Update order
+        order.status = "filled"
+        order.fill_status = "filled"
+        _db.session.flush()
+
+        # Create fill record
+        fill = _PF(
+            user_id=order.user_id,
+            order_id=order.id,
+            item_id=order.item_id,
+            symbol=order.symbol,
+            side=side,
+            fill_qty=qty_str,
+            fill_price=str(fill_price),
+            fill_notional=notional,
+        )
+        _db.session.add(fill)
+        _db.session.flush()
+        fill_id = fill.id
+
+        # Create or update position
+        pos = _PP.query.filter_by(
+            user_id=order.user_id,
+            item_id=order.item_id,
+            symbol=order.symbol,
+            side=position_side,
+            status="open",
+        ).first()
+
+        if pos is None:
+            pos = _PP(
+                user_id=order.user_id,
+                item_id=order.item_id,
+                order_id=order.id,
+                symbol=order.symbol,
+                side=position_side,
+                size=qty_str,
+                entry_price=str(fill_price),
+                status="open",
+                realized_pnl=0.0,
+                unrealized_pnl=0.0,
+            )
+            _db.session.add(pos)
+            _db.session.flush()
+        else:
+            # Weighted average entry price
+            try:
+                old_qty = float(pos.size or "0")
+                old_entry = float(pos.entry_price or "0")
+                new_qty = old_qty + qty_f
+                if new_qty > 0:
+                    new_entry = ((old_qty * old_entry) + (qty_f * fill_price)) / new_qty
+                else:
+                    new_entry = fill_price
+                pos.size = str(round(new_qty, 8))
+                pos.entry_price = str(round(new_entry, 8))
+            except Exception:
+                pass
+            _db.session.flush()
+
+        position_id = pos.id
+        _db.session.commit()
+
+    except Exception as _e:
+        try:
+            _db.session.rollback()
+        except Exception:
+            pass
+        return {
+            "ok": False, "checked": True, "filled": False,
+            "reason": "db_error", "error": str(_e)[:200],
+            "order_id": order.id,
+        }
+
+    return {
+        "ok": True,
+        "checked": True,
+        "filled": True,
+        "reason": "filled",
+        "order_id": order.id,
+        "symbol": order.symbol,
+        "side": side,
+        "order_price": order_price_f,
+        "current_price": current_price,
+        "fill_price": fill_price,
+        "filled_qty": qty_str,
+        "notional": notional,
+        "position_id": position_id,
+        "fill_id": fill_id,
+    }
+
+
+def _lm_process_paper_fills_for_item(user_id, item_id):
+    """Process all open paper orders for the given item/user.
+
+    Manual/process-triggered only. No background loop. No exchange API.
+    Uses real Live Monitor item.current_price. DB-only.
+    Returns {ok, processed, filled, results, current_price, source}.
+    """
+    from models import (
+        LiveMonitorItem       as _LMI,
+        LiveMonitorPaperOrder as _PO,
+    )
+    try:
+        item = _LMI.query.filter_by(id=item_id, user_id=user_id).first()
+        if not item:
+            return {"ok": False, "error": "item_not_found", "processed": 0, "filled": 0}
+
+        current_price = _lm_get_real_market_price_for_paper(item=item)
+
+        open_orders = _PO.query.filter_by(
+            user_id=user_id,
+            item_id=item_id,
+            status="open",
+            fill_status="unfilled",
+        ).all()
+
+        results = []
+        filled_count = 0
+        for order in open_orders:
+            res = _lm_check_paper_order_fill(
+                order, item=item, current_price=current_price
+            )
+            results.append(res)
+            if res.get("filled"):
+                filled_count += 1
+
+        return {
+            "ok": True,
+            "item_id": item_id,
+            "processed": len(open_orders),
+            "filled": filled_count,
+            "current_price": current_price,
+            "results": results,
+            "source": "internal_paper",
+        }
+    except Exception as _e:
+        return {
+            "ok": False, "error": str(_e)[:200],
+            "processed": 0, "filled": 0, "source": "internal_paper",
+        }
+
+
+def _lm_process_all_paper_fills_for_user(user_id):
+    """Process open paper orders across all items for the user.
+
+    Manual/process-triggered only. No background loop. DB-only.
+    Returns {ok, total_processed, total_filled, by_item, source}.
+    """
+    from models import LiveMonitorPaperOrder as _PO
+    try:
+        item_ids = [
+            r.item_id for r in
+            _PO.query.filter_by(user_id=user_id, status="open", fill_status="unfilled")
+            .with_entities(_PO.item_id).distinct().all()
+        ]
+        total_processed = 0
+        total_filled = 0
+        by_item = []
+        for iid in item_ids:
+            res = _lm_process_paper_fills_for_item(user_id, iid)
+            total_processed += res.get("processed", 0)
+            total_filled += res.get("filled", 0)
+            by_item.append({
+                "item_id":   iid,
+                "processed": res.get("processed", 0),
+                "filled":    res.get("filled", 0),
+            })
+        return {
+            "ok": True,
+            "total_processed": total_processed,
+            "total_filled": total_filled,
+            "by_item": by_item,
+            "source": "internal_paper",
+        }
+    except Exception as _e:
+        return {
+            "ok": False, "error": str(_e)[:200],
+            "total_processed": 0, "total_filled": 0, "source": "internal_paper",
+        }

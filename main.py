@@ -20027,6 +20027,7 @@ def _lm_build_trade_proposal_context(row, snapshot=None) -> dict:
         "execution_simulation": (lambda: _lm_build_execution_simulation(row, snap))(),
         "paper_trading": (lambda: _lm_get_paper_account_summary(row.user_id))()
             if getattr(row, "user_id", None) else None,
+        "paper_fill_process_summary": snap.get("latest_paper_fill_process_summary"),
     }
 
 
@@ -21085,6 +21086,7 @@ def _lm_build_ai_context(item) -> dict:
         "execution_simulation": (lambda: _lm_build_execution_simulation(item, snap))(),
         "paper_trading": (lambda: _lm_get_paper_account_summary(item.user_id))()
             if getattr(item, "user_id", None) else None,
+        "paper_fill_process_summary": snap.get("latest_paper_fill_process_summary"),
     }
 
 
@@ -24256,6 +24258,10 @@ from live_monitor import (
     _lm_get_paper_account_summary,
     _lm_get_paper_orders,
     _lm_get_paper_positions,
+    _lm_get_real_market_price_for_paper,
+    _lm_check_paper_order_fill,
+    _lm_process_paper_fills_for_item,
+    _lm_process_all_paper_fills_for_user,
 )
 
 # ── Phase 10.9I: Auto-refresh scheduler ─────────────────────────────────────
@@ -28097,6 +28103,88 @@ def api_lm_paper_positions(item_id):
         return jsonify({"error": "item_not_found"}), 404
     positions = _lm_get_paper_positions(uid, item_id=item_id)
     return jsonify({"ok": True, "positions": positions, "count": len(positions)})
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/paper-orders/process-fills", methods=["POST"])
+@login_required
+def api_lm_paper_process_fills(item_id):
+    """Phase 11.7C: Check open paper orders against current_price and fill any that qualify.
+
+    SAFETY: DB-only. No Binance API. No exchange calls. No auto-execution.
+    Only runs when the user manually clicks 'Process Paper Fills'.
+    Fill price = order.price (limit price). Uses item.current_price from Live Monitor DB.
+    """
+    import json as _json
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    from models import (
+        db as _db117c,
+        LiveMonitorItem  as _LMI117c,
+        LiveMonitorEvent as _LMEv117c,
+    )
+    item = _LMI117c.query.filter_by(id=item_id, user_id=uid).first()
+    if not item:
+        return jsonify({"error": "item_not_found"}), 404
+
+    result = _lm_process_paper_fills_for_item(uid, item_id)
+
+    # ── TASK 3: snapshot latest_paper_fill_process_summary ───────────────────
+    try:
+        snap = {}
+        if item.snapshot_json:
+            try:
+                snap = _json.loads(item.snapshot_json)
+            except Exception:
+                snap = {}
+        snap["latest_paper_fill_process_summary"] = {
+            "processed":     result.get("processed", 0),
+            "filled":        result.get("filled", 0),
+            "current_price": result.get("current_price"),
+            "ts":            _json.dumps(None),  # will be replaced below
+        }
+        import datetime as _dt117c
+        snap["latest_paper_fill_process_summary"]["ts"] = _dt117c.datetime.utcnow().isoformat() + "Z"
+        item.snapshot_json = _json.dumps(snap, default=str)
+        _db117c.session.commit()
+    except Exception:
+        pass
+
+    # ── TASK 4: LiveMonitorEvent per filled order ─────────────────────────────
+    try:
+        filled_results = [r for r in result.get("results", []) if r.get("filled")]
+        for fr in filled_results:
+            ev = _LMEv117c(
+                user_id=uid,
+                item_id=item_id,
+                event_type="paper_order_filled",
+                event_data=_json.dumps({
+                    "order_id":    fr.get("order_id"),
+                    "symbol":      fr.get("symbol"),
+                    "side":        fr.get("side"),
+                    "order_price": fr.get("order_price"),
+                    "fill_price":  fr.get("fill_price"),
+                    "filled_qty":  fr.get("filled_qty"),
+                    "notional":    fr.get("notional"),
+                    "current_price": fr.get("current_price"),
+                }, default=str),
+            )
+            _db117c.session.add(ev)
+        if filled_results:
+            _db117c.session.commit()
+    except Exception:
+        pass
+
+    return jsonify({
+        "ok":            result.get("ok", False),
+        "item_id":       item_id,
+        "processed":     result.get("processed", 0),
+        "filled":        result.get("filled", 0),
+        "current_price": result.get("current_price"),
+        "results":       result.get("results", []),
+        "source":        "internal_paper",
+        "error":         result.get("error"),
+    })
 
 
 @app.route("/api/live-monitor/trades/<trade_uid>/demo-submit", methods=["POST"])

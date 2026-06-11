@@ -4898,26 +4898,33 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                         '</div>'+
                       '</div>'+
 
-                      /* Right: Orders table + Positions placeholder */
+                      /* Right: Orders table + Positions + Process Fills */
                       '<div>'+
                         '<div class="lm-ws-section">'+
                           '<div class="lm-ws-sh">Paper Orders</div>'+
-                          '<div class="lm-tbl-wrap" style="max-height:180px">'+
+                          '<div class="lm-tbl-wrap" style="max-height:160px">'+
                             '<table class="lm-inner-tbl" id="lmPapOrdersTbl">'+
-                              '<thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Price</th><th>Status</th><th>Client ID</th></tr></thead>'+
-                              '<tbody id="lmPapOrdersTbody"><tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:14px 0">No paper orders</td></tr></tbody>'+
+                              '<thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Price</th><th>Status</th><th>Fill</th><th>Client ID</th></tr></thead>'+
+                              '<tbody id="lmPapOrdersTbody"><tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:14px 0">No paper orders</td></tr></tbody>'+
                             '</table>'+
                           '</div>'+
-                          '<div style="margin-top:6px">'+
-                            '<button class="btn lm-sm-btn" style="width:100%;justify-content:center" onclick="window._lmPapRefreshOrders()">Refresh Orders</button>'+
+                          '<div style="margin-top:6px;display:flex;gap:4px">'+
+                            '<button class="btn lm-sm-btn" style="flex:1;justify-content:center" onclick="window._lmPapRefreshOrders()">Refresh Orders</button>'+
+                            '<button class="btn lm-sm-btn" id="lmPapFillsBtn" style="flex:1;justify-content:center;color:var(--yellow,#facc15)" onclick="window._lmPapProcessFills()">Process Paper Fills</button>'+
                           '</div>'+
+                          '<div id="lmPapFillResult" style="display:none;font-size:9px;padding:4px 0;line-height:1.5;margin-top:4px"></div>'+
                         '</div>'+
 
                         '<div class="lm-ws-section">'+
                           '<div class="lm-ws-sh">Paper Positions</div>'+
-                          '<div style="font-size:10px;color:var(--text-3);padding:6px 8px;background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.2);border-radius:5px;line-height:1.5">'+
-                            '<b style="color:var(--yellow)">Position engine comes next (Phase 11.7C)</b><br>'+
-                            'Positions will be created automatically when a paper order crosses its entry price.'+
+                          '<div class="lm-tbl-wrap" style="max-height:140px">'+
+                            '<table class="lm-inner-tbl" id="lmPapPosTbl">'+
+                              '<thead><tr><th>Symbol</th><th>Side</th><th>Size</th><th>Entry</th><th>Status</th></tr></thead>'+
+                              '<tbody id="lmPapPosTbody"><tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:14px 0">No positions</td></tr></tbody>'+
+                            '</table>'+
+                          '</div>'+
+                          '<div style="margin-top:6px">'+
+                            '<button class="btn lm-sm-btn" style="width:100%;justify-content:center" onclick="window._lmPapRefreshPositions()">Refresh Positions</button>'+
                           '</div>'+
                         '</div>'+
                       '</div>'+
@@ -8162,21 +8169,88 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         if(!tb) return;
         var orders=d.orders||[];
         if(!orders.length){
-          tb.innerHTML='<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:14px 0">No paper orders</td></tr>';
+          tb.innerHTML='<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:14px 0">No paper orders</td></tr>';
           return;
         }
         tb.innerHTML=orders.map(function(o){
           var sideC=o.side==='BUY'?'var(--green-2,#4ade80)':'var(--red-2,#f87171)';
+          var fillS=o.fill_status||'unfilled';
+          var fillC=fillS==='filled'?'var(--green-2,#4ade80)':'var(--text-3)';
           return '<tr>'+
             '<td>'+esc(o.symbol||'—')+'</td>'+
             '<td style="color:'+sideC+'">'+esc(o.side||'—')+'</td>'+
             '<td>'+esc(o.quantity||'—')+'</td>'+
             '<td>'+esc(o.price||'—')+'</td>'+
             '<td>'+esc(o.status||'—')+'</td>'+
+            '<td style="color:'+fillC+'">'+esc(fillS)+'</td>'+
             '<td style="font-size:9px">'+esc((o.client_order_id||'—').slice(0,18))+'</td>'+
             '</tr>';
         }).join('');
       }).catch(function(){});
+  };
+
+  window._lmPapRefreshPositions=function(){
+    var itemId=window._lmSimItemId||(window._lmSelItem&&window._lmSelItem.id);
+    if(!itemId) return;
+    fetch('/api/live-monitor/items/'+itemId+'/paper-positions',{credentials:'same-origin'})
+      .then(function(r){return r.json();})
+      .then(function(d){
+        var tb=document.getElementById('lmPapPosTbody');
+        if(!tb) return;
+        var positions=d.positions||[];
+        if(!positions.length){
+          tb.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:14px 0">No positions</td></tr>';
+          return;
+        }
+        tb.innerHTML=positions.map(function(p){
+          var sideC=p.side==='LONG'?'var(--green-2,#4ade80)':'var(--red-2,#f87171)';
+          var stC=p.status==='open'?'var(--green-2,#4ade80)':'var(--text-3)';
+          return '<tr>'+
+            '<td>'+esc(p.symbol||'—')+'</td>'+
+            '<td style="color:'+sideC+'">'+esc(p.side||'—')+'</td>'+
+            '<td>'+esc(p.size||'—')+'</td>'+
+            '<td>'+esc(p.entry_price||'—')+'</td>'+
+            '<td style="color:'+stC+'">'+esc(p.status||'—')+'</td>'+
+            '</tr>';
+        }).join('');
+      }).catch(function(){});
+  };
+
+  window._lmPapProcessFills=function(){
+    var itemId=window._lmSimItemId||(window._lmSelItem&&window._lmSelItem.id);
+    if(!itemId){ alert('Select a setup first.'); return; }
+    var btn=document.getElementById('lmPapFillsBtn');
+    var resEl=document.getElementById('lmPapFillResult');
+    if(btn){ btn.disabled=true; btn.textContent='Processing…'; }
+    if(resEl){ resEl.style.display='none'; }
+    fetch('/api/live-monitor/items/'+itemId+'/paper-orders/process-fills',{
+      method:'POST',
+      credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+    })
+      .then(function(r){return r.json().then(function(d){return {s:r.status,d:d};});})
+      .then(function(rd){
+        var d=rd.d;
+        if(btn){ btn.disabled=false; btn.textContent='Process Paper Fills'; }
+        if(resEl){
+          resEl.style.display='';
+          if(d&&d.ok){
+            var cp=d.current_price!=null?(' @ price '+d.current_price):'';
+            resEl.style.color=d.filled>0?'var(--green-2,#4ade80)':'var(--text-3)';
+            resEl.innerHTML='<b>Processed '+esc(String(d.processed||0))+' orders</b> · '+
+              esc(String(d.filled||0))+' filled'+esc(cp);
+          } else {
+            resEl.style.color='var(--red-2,#f87171)';
+            resEl.innerHTML='<b>Failed:</b> '+esc((d&&d.error)||'Unknown error');
+          }
+        }
+        window._lmPapRefreshOrders();
+        window._lmPapRefreshPositions();
+      })
+      .catch(function(){
+        if(btn){ btn.disabled=false; btn.textContent='Process Paper Fills'; }
+        if(resEl){ resEl.style.display=''; resEl.style.color='var(--red-2,#f87171)'; resEl.textContent='Network error.'; }
+      });
   };
 
   window._lmPapSubmitOrder=function(){
