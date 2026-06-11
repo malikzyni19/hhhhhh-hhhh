@@ -299,7 +299,7 @@ def _lm_submit_paper_order(
             filled_qty="0",
             avg_fill_price=None,
             client_order_id=client_order_id,
-            source="internal_paper",
+            source="internal_paper_manual",
             execution_intent_json=_m._json_dumps_safe(intent),
             execution_simulation_json=_m._json_dumps_safe(sim),
             ai_decision_json=_m._json_dumps_safe(ai_dec),
@@ -329,7 +329,7 @@ def _lm_submit_paper_order(
             "price":              price,
             "status":             "open",
             "fill_status":        "unfilled",
-            "source":             "internal_paper",
+            "source":             "internal_paper_manual",
             "estimated_notional": draft.get("estimated_notional"),
             "submitted_at":       str(now_dt),
         }

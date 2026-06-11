@@ -20025,6 +20025,16 @@ def _lm_build_trade_proposal_context(row, snapshot=None) -> dict:
         ))(snap.get("latest_ai_execution_context")),
         "automation_policy": (lambda: _lm_build_automation_policy(row, snap))(),
         "execution_simulation": (lambda: _lm_build_execution_simulation(row, snap))(),
+        # Phase 11.7B: internal paper trading context (read from snapshot — no DB call)
+        "paper_trading": {
+            "execution_mode":   "internal_paper",
+            "account_summary":  snap.get("latest_paper_account_summary"),
+            "order_draft":      snap.get("latest_paper_order_draft"),
+            "advisory_note": (
+                "Internal paper trading is the primary strategy-testing mode. "
+                "Execution mode is internal_paper. No live or testnet exchange orders."
+            ),
+        },
     }
 
 
@@ -21081,6 +21091,17 @@ def _lm_build_ai_context(item) -> dict:
         ))(snap.get("latest_ai_execution_context")),
         "automation_policy": (lambda: _lm_build_automation_policy(item, snap))(),
         "execution_simulation": (lambda: _lm_build_execution_simulation(item, snap))(),
+        # Phase 11.7B: internal paper trading context (read from snapshot — no DB call here)
+        "paper_trading": {
+            "execution_mode":       "internal_paper",
+            "account_summary":      snap.get("latest_paper_account_summary"),
+            "order_draft":          snap.get("latest_paper_order_draft"),
+            "advisory_note": (
+                "Internal paper trading is the primary strategy-testing mode. "
+                "All paper orders are DB-only simulations. "
+                "No exchange execution. No real or testnet orders exist in this phase."
+            ),
+        },
     }
 
 
@@ -28052,7 +28073,7 @@ def api_lm_paper_order_submit(item_id):
             "price":           result.get("price"),
             "status":          result.get("status"),
             "fill_status":     result.get("fill_status"),
-            "source":          "internal_paper",
+            "source":          "internal_paper_manual",
         }
         _lme = _LME117b(
             item_id=item_id,
