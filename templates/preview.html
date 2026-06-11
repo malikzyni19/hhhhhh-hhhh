@@ -956,30 +956,11 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 .lm-ws-section{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:12px}
 .lm-ws-section:last-child{margin-bottom:0}
 .lm-ws-sh{font-size:9.5px;font-weight:700;letter-spacing:.6px;color:var(--text-3);margin-bottom:8px;text-transform:uppercase}
-/* Trading Terminal grouped sections */
-.lm-term-group{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;margin-bottom:10px;overflow:hidden}
-.lm-term-gh{display:flex;align-items:center;justify-content:space-between;padding:11px 14px;cursor:pointer;user-select:none;gap:10px}
-.lm-term-gh:hover{background:rgba(255,255,255,.025)}
-.lm-term-gl{display:flex;flex-direction:column;gap:2px}
-.lm-term-glabel{font-size:11.5px;font-weight:700;color:var(--text);letter-spacing:.01em}
-.lm-term-gbadge{font-size:9px;font-weight:700;letter-spacing:.5px;color:var(--text-3);text-transform:uppercase}
-.lm-term-gchev{font-size:11px;color:var(--text-3);flex-shrink:0;transition:transform .18s;line-height:1}
-.lm-term-gbody{padding:4px 14px 14px}
-.lm-term-gwarn{font-size:9.5px;color:var(--yellow,#facc15);background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.18);border-radius:6px;padding:6px 10px;margin-bottom:10px;line-height:1.5}
-.lm-term-header{padding:0 0 14px;border-bottom:1px solid var(--border);margin-bottom:14px}
-.lm-term-ht{font-size:14px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:7px}
-.lm-term-ht-sep{color:var(--text-3);font-weight:400}
-.lm-term-ht-sym{color:var(--accent);font-family:var(--mono);letter-spacing:.05em}
-.lm-term-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.lm-term-chip{font-size:10px;font-weight:600;padding:2px 7px;border-radius:4px;background:var(--bg-card-2);color:var(--text-2);border:1px solid var(--border);font-family:var(--mono)}
-.lm-term-price{font-size:12px;font-weight:700;color:var(--accent);font-family:var(--mono)}
-.lm-term-empty{font-size:12px;color:var(--text-3);padding:4px 0 2px;line-height:1.5}
-.lm-paper-cards{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px}
-.lm-paper-card{background:var(--bg-card-2);border:1px solid var(--border);border-radius:8px;padding:10px 12px}
-.lm-paper-card-l{font-size:9px;font-weight:700;letter-spacing:.5px;color:var(--text-3);text-transform:uppercase;margin-bottom:4px}
-.lm-paper-card-v{font-size:11px;font-weight:700;color:var(--text-3);font-family:var(--mono)}
-.lm-paper-desc{font-size:10px;color:var(--text-3);line-height:1.6;margin-bottom:10px}
-@media(max-width:900px){.lm-paper-cards{grid-template-columns:1fr}}
+.lm-term-group{border:1px solid var(--border);border-radius:10px;margin-bottom:10px;overflow:hidden}
+.lm-term-grp-hdr{display:flex;align-items:center;gap:8px;padding:8px 14px;cursor:pointer;user-select:none;background:var(--bg-card-2,rgba(255,255,255,.03));font-size:11px;font-weight:600;color:var(--text-2)}
+.lm-term-grp-hdr:hover{background:rgba(255,255,255,.06)}
+.lm-term-grp-arrow{font-size:9px;color:var(--text-3);flex-shrink:0}
+#lmTermGrpBody-paper,.lm-term-group [id^="lmTermGrpBody-"]{padding:10px 14px}
 .lm-outer[data-workspace]:not([data-workspace="setups"]) .lm-manual{display:none!important}
 .lm-outer[data-workspace]:not([data-workspace="setups"]) .lm-ob-da-wrap{display:none!important}
 .lm-outer[data-workspace]:not([data-workspace="setups"]) [data-lmf]{display:none!important}
@@ -4919,16 +4900,105 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                   '</div>'+
                 '</div>'+
 
-                /* ── GROUP 2: Execution Readiness (open by default) ── */
-                '<div class="lm-term-group">'+
-                  '<div class="lm-term-gh" onclick="window._lmToggleTermGroup(\'readiness\')">'+
-                    '<div class="lm-term-gl">'+
-                      '<span class="lm-term-glabel">Execution Readiness</span>'+
-                      '<span class="lm-term-gbadge">Simulation / Validation Only</span>'+
-                    '</div>'+
-                    '<span class="lm-term-gchev" id="lmTgChev-readiness">&#9660;</span>'+
+                /* ── GROUP 1: Internal Paper Trading (open) ────────────────── */
+                '<div class="lm-term-group" id="lmTermGrp-paper">'+
+                  '<div class="lm-term-grp-hdr" onclick="window._lmToggleTermGroup(\'paper\')">'+
+                    '<span class="lm-term-grp-arrow" id="lmTermGrpArr-paper">▼</span>'+
+                    '<span>Internal Paper Trading</span>'+
+                    '<span style="font-size:9px;color:var(--green,#4ade80);margin-left:6px">Phase 11.7B</span>'+
                   '</div>'+
-                  '<div class="lm-term-gbody" id="lmTgBody-readiness">'+
+                  '<div id="lmTermGrpBody-paper">'+
+                    '<div class="lm-ws-grid-2" style="padding:0 0 8px">'+
+
+                      /* Left: Account + Order Draft */
+                      '<div>'+
+                        '<div class="lm-ws-section" style="background:rgba(74,222,128,.04);border-color:rgba(74,222,128,.2)">'+
+                          '<div class="lm-ws-sh" style="color:var(--green,#4ade80)">Paper Account</div>'+
+                          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:10px;color:var(--text-3)">'+
+                            '<span>Starting balance:</span><span id="lmPapAccStart" style="color:var(--text-1)">—</span>'+
+                            '<span>Cash balance:</span><span id="lmPapAccBal" style="color:var(--green,#4ade80);font-weight:700">—</span>'+
+                            '<span>Equity:</span><span id="lmPapAccEq" style="color:var(--text-1)">—</span>'+
+                            '<span>Realized PnL:</span><span id="lmPapAccPnl" style="color:var(--text-1)">—</span>'+
+                            '<span>Unrealized PnL:</span><span id="lmPapAccUpnl" style="color:var(--text-1)">—</span>'+
+                            '<span>Open orders:</span><span id="lmPapAccOrders" style="color:var(--text-1)">—</span>'+
+                            '<span>Open positions:</span><span id="lmPapAccPos" style="color:var(--text-1)">—</span>'+
+                          '</div>'+
+                          '<div style="margin-top:8px">'+
+                            '<button class="btn lm-sm-btn" style="width:100%;justify-content:center" onclick="window._lmPapRefreshAccount()">Refresh Account</button>'+
+                          '</div>'+
+                        '</div>'+
+
+                        '<div class="lm-ws-section" style="background:rgba(74,222,128,.04);border-color:rgba(74,222,128,.2)">'+
+                          '<div class="lm-ws-sh" style="color:var(--green,#4ade80)">Paper Order Draft</div>'+
+                          '<table style="width:100%;font-size:10px;border-collapse:collapse">'+
+                            '<tr><td style="color:var(--text-3);padding:2px 0;width:44%">Symbol</td><td id="lmPap-symbol" style="color:var(--text-1)">—</td></tr>'+
+                            '<tr><td style="color:var(--text-3);padding:2px 0">Side</td><td id="lmPap-side" style="color:var(--text-1)">—</td></tr>'+
+                            '<tr><td style="color:var(--text-3);padding:2px 0">Type</td><td style="color:var(--text-1)">LIMIT / GTC</td></tr>'+
+                            '<tr><td style="color:var(--text-3);padding:2px 0">Entry Price</td><td id="lmPap-price" style="color:var(--text-1)">—</td></tr>'+
+                            '<tr><td style="color:var(--text-3);padding:2px 0">Intent OK</td><td id="lmPap-intentOk" style="color:var(--text-1)">—</td></tr>'+
+                            '<tr><td style="color:var(--text-3);padding:2px 0">Paper Ready</td><td id="lmPap-ready" style="color:var(--text-1)">—</td></tr>'+
+                            '<tr><td style="color:var(--text-3);padding:2px 0">Est. Notional</td><td id="lmPap-notional" style="color:var(--text-1)">—</td></tr>'+
+                          '</table>'+
+                          '<div style="margin-top:8px;display:flex;gap:4px;align-items:center">'+
+                            '<label style="font-size:9px;color:var(--text-3);white-space:nowrap">Qty:</label>'+
+                            '<input id="lmPapQtyInput" type="text" placeholder="e.g. 0.001" '+
+                              'style="flex:1;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:4px;padding:4px 8px;font-size:10px;color:var(--text-1);outline:none" '+
+                              'oninput="window._lmPapRefreshDraft()" />'+
+                            '<button class="btn lm-sm-btn" style="white-space:nowrap" onclick="window._lmPapRefreshDraft()">Refresh</button>'+
+                          '</div>'+
+                          '<div id="lmPap-qtyErr" style="display:none;font-size:9px;color:#f87171;padding:2px 0"></div>'+
+                          '<div id="lmPap-reasons" style="display:none;font-size:9px;color:var(--yellow);padding:2px 0;line-height:1.4"></div>'+
+                          '<div id="lmPap-warnings" style="display:none;font-size:9px;color:var(--yellow);padding:2px 0;line-height:1.4"></div>'+
+                          '<div style="margin-top:8px">'+
+                            '<button class="btn lm-sm-btn" id="lmPapSubmitBtn" disabled '+
+                              'style="width:100%;justify-content:center;background:rgba(74,222,128,.15);border-color:rgba(74,222,128,.4);color:#4ade80;cursor:not-allowed;opacity:.5" '+
+                              'onclick="window._lmPapSubmitOrder()">'+
+                              'Submit Paper Order'+
+                            '</button>'+
+                          '</div>'+
+                          '<div id="lmPap-result" style="display:none;font-size:9px;padding:4px 0;line-height:1.5"></div>'+
+                          '<div style="font-size:9px;color:var(--text-3);padding:4px 0 0;line-height:1.4">'+
+                            '<b style="color:#f87171">Manual submit only.</b> No Binance API. DB-only paper record.'+
+                          '</div>'+
+                        '</div>'+
+                      '</div>'+
+
+                      /* Right: Orders table + Positions placeholder */
+                      '<div>'+
+                        '<div class="lm-ws-section">'+
+                          '<div class="lm-ws-sh">Paper Orders</div>'+
+                          '<div class="lm-tbl-wrap" style="max-height:180px">'+
+                            '<table class="lm-inner-tbl" id="lmPapOrdersTbl">'+
+                              '<thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Price</th><th>Status</th><th>Client ID</th></tr></thead>'+
+                              '<tbody id="lmPapOrdersTbody"><tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:14px 0">No paper orders</td></tr></tbody>'+
+                            '</table>'+
+                          '</div>'+
+                          '<div style="margin-top:6px">'+
+                            '<button class="btn lm-sm-btn" style="width:100%;justify-content:center" onclick="window._lmPapRefreshOrders()">Refresh Orders</button>'+
+                          '</div>'+
+                        '</div>'+
+
+                        '<div class="lm-ws-section">'+
+                          '<div class="lm-ws-sh">Paper Positions</div>'+
+                          '<div style="font-size:10px;color:var(--text-3);padding:6px 8px;background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.2);border-radius:5px;line-height:1.5">'+
+                            '<b style="color:var(--yellow)">Position engine comes next (Phase 11.7C)</b><br>'+
+                            'Positions will be created automatically when a paper order crosses its entry price.'+
+                          '</div>'+
+                        '</div>'+
+                      '</div>'+
+
+                    '</div>'+ /* end grid-2 */
+                  '</div>'+ /* end lmTermGrpBody-paper */
+                '</div>'+ /* end GROUP 1 */
+
+                /* ── GROUP 2: Execution Readiness (open) ───────────────────── */
+                '<div class="lm-term-group" id="lmTermGrp-execready">'+
+                  '<div class="lm-term-grp-hdr" onclick="window._lmToggleTermGroup(\'execready\')">'+
+                    '<span class="lm-term-grp-arrow" id="lmTermGrpArr-execready">▼</span>'+
+                    '<span>Execution Readiness</span>'+
+                    '<span style="font-size:9px;color:var(--text-3);margin-left:6px">Simulation · Phase 11.6</span>'+
+                  '</div>'+
+                  '<div id="lmTermGrpBody-execready">'+
                     '<div class="lm-ws-section" id="lmExecSimSection">'+
                       '<div class="lm-ws-sh">Execution Simulator</div>'+
                       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:10px;margin-bottom:8px">'+
@@ -4938,7 +5008,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                       '</div>'+
                       '<div id="lmSimGrid" style="display:none">'+
                         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:10px;color:var(--text-3);padding:2px 0 6px">'+
-                          '<span>Readiness Passed:</span><span id="lmSimReady" style="font-weight:700">—</span>'+
+                          '<span>Ready for testnet:</span><span id="lmSimReady" style="font-weight:700">—</span>'+
                           '<span>Intent valid:</span><span id="lmSimIntent">—</span>'+
                           '<span>Policy valid:</span><span id="lmSimPolicy">—</span>'+
                           '<span>Decision valid:</span><span id="lmSimDecision">—</span>'+
@@ -4956,143 +5026,111 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                         '<b style="color:var(--yellow)">Phase 11.6</b> — Simulation only. No orders. No execution. No automation.'+
                       '</div>'+
                     '</div>'+
+                  '</div>'+ /* end lmTermGrpBody-execready */
+                '</div>'+ /* end GROUP 2 */
+
+                /* ── GROUP 3: Binance Testnet (collapsed, API Testing Only) ── */
+                '<div class="lm-term-group" id="lmTermGrp-testnet">'+
+                  '<div class="lm-term-grp-hdr" onclick="window._lmToggleTermGroup(\'testnet\')">'+
+                    '<span class="lm-term-grp-arrow" id="lmTermGrpArr-testnet">▶</span>'+
+                    '<span>Binance Testnet</span>'+
+                    '<span style="font-size:9px;color:var(--yellow,#facc15);margin-left:6px">API Testing Only · Phase 11.5 / 11.7A</span>'+
                   '</div>'+
-                '</div>'+
-
-                /* ── GROUP 3: Binance Testnet API Testing (collapsed by default) ── */
-                '<div class="lm-term-group">'+
-                  '<div class="lm-term-gh" onclick="window._lmToggleTermGroup(\'testnet\')">'+
-                    '<div class="lm-term-gl">'+
-                      '<span class="lm-term-glabel">Binance Testnet API Testing</span>'+
-                      '<span class="lm-term-gbadge">API Testing Only</span>'+
+                  '<div id="lmTermGrpBody-testnet" style="display:none">'+
+                    '<div class="lm-ws-grid-2" style="padding:0 0 8px">'+
+                      '<div>'+
+                        '<div class="lm-ws-section" id="lmBtConnectorSection">'+
+                          '<div class="lm-ws-sh">Binance Testnet Connector</div>'+
+                          '<div id="lmBtStatusGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;font-size:10px;color:var(--text-3)">'+
+                            '<span>Testnet locked:</span><span id="lmBtTestnetLocked" style="color:var(--green)">—</span>'+
+                            '<span>Credentials:</span><span id="lmBtCreds" style="color:var(--text-3)">—</span>'+
+                            '<span>Ping:</span><span id="lmBtPing" style="color:var(--text-3)">—</span>'+
+                            '<span>Server time:</span><span id="lmBtServerTime" style="color:var(--text-3)">—</span>'+
+                            '<span>Account:</span><span id="lmBtAccount" style="color:var(--text-3)">—</span>'+
+                            '<span>Balance (USDT):</span><span id="lmBtBalance" style="color:var(--text-3)">—</span>'+
+                            '<span>Positions:</span><span id="lmBtPositions" style="color:var(--text-3)">—</span>'+
+                            '<span>Avail. USDT:</span><span id="lmBtAvailUsdt" style="color:var(--accent);font-weight:700">—</span>'+
+                            '<span>Last checked:</span><span id="lmBtCheckedAt" style="color:var(--text-3)">—</span>'+
+                            '<span>Orders enabled:</span><span style="color:var(--red-2,#f87171);font-weight:700">FALSE</span>'+
+                            '<span>Execution:</span><span style="color:var(--red-2,#f87171);font-weight:700">FALSE</span>'+
+                            '<span>Mode:</span><span style="color:var(--yellow,#facc15);font-weight:700">READ ONLY</span>'+
+                          '</div>'+
+                          '<div id="lmBtError" style="display:none;font-size:10px;color:var(--red);padding:3px 6px;background:rgba(239,68,68,.07);border-radius:4px;margin:6px 0"></div>'+
+                          '<div style="display:flex;gap:6px;margin-top:8px">'+
+                            '<button class="btn lm-sm-btn" id="lmBtCheckBtn" style="flex:1;justify-content:center" onclick="window._lmBtCheck()">Check Connection</button>'+
+                            '<button class="btn lm-sm-btn" id="lmBtBalanceBtn" style="flex:1;justify-content:center" onclick="window._lmBtRefreshBalance()">Refresh Balance</button>'+
+                            '<button class="btn lm-sm-btn" id="lmBtPositionsBtn" style="flex:1;justify-content:center" onclick="window._lmBtRefreshPositions()">Refresh Positions</button>'+
+                          '</div>'+
+                          '<div style="font-size:9px;color:var(--text-3);padding:5px 0 0;line-height:1.4">'+
+                            '<b style="color:var(--yellow)">Phase 11.5</b> — Read-only. Testnet only (demo-fapi.binance.com). No execution.'+
+                          '</div>'+
+                        '</div>'+
+                      '</div>'+
+                      '<div>'+
+                        '<div class="lm-ws-section" style="background:rgba(251,191,36,.04);border-color:rgba(251,191,36,.2)">'+
+                          '<div class="lm-ws-sh" style="color:var(--yellow,#facc15)">Testnet Order Draft <span style="font-size:9px;opacity:.7;font-weight:400">(Phase 11.7A)</span></div>'+
+                          '<table style="width:100%;font-size:10px;border-collapse:collapse">'+
+                            '<tr><td style="color:var(--text-3);padding:2px 0;width:44%">Symbol</td><td id="lmTod-symbol" style="color:var(--text-1)">—</td></tr>'+
+                            '<tr><td style="color:var(--text-3);padding:2px 0">Side</td><td id="lmTod-side" style="color:var(--text-1)">—</td></tr>'+
+                            '<tr><td style="color:var(--text-3);padding:2px 0">Type</td><td style="color:var(--text-1)">LIMIT / GTC</td></tr>'+
+                            '<tr><td style="color:var(--text-3);padding:2px 0">Entry Price</td><td id="lmTod-price" style="color:var(--text-1)">—</td></tr>'+
+                            '<tr><td style="color:var(--text-3);padding:2px 0">Sim Ready</td><td id="lmTod-simReady" style="color:var(--text-1)">—</td></tr>'+
+                            '<tr><td style="color:var(--text-3);padding:2px 0">Connector</td><td id="lmTod-connector" style="color:var(--text-1)">—</td></tr>'+
+                            '<tr><td style="color:var(--text-3);padding:2px 0">Order Env</td><td id="lmTod-orderEnv" style="color:var(--text-1)">—</td></tr>'+
+                            '<tr><td style="color:var(--text-3);padding:2px 0">Filter OK</td><td id="lmTod-filterOk" style="color:var(--text-1)">—</td></tr>'+
+                            '<tr><td style="color:var(--text-3);padding:2px 0">Est. Notional</td><td id="lmTod-notional" style="color:var(--text-1)">—</td></tr>'+
+                          '</table>'+
+                          '<div style="margin-top:8px;display:flex;gap:4px;align-items:center">'+
+                            '<label style="font-size:9px;color:var(--text-3);white-space:nowrap">Qty:</label>'+
+                            '<input id="lmTodQtyInput" type="text" placeholder="e.g. 0.001" '+
+                              'style="flex:1;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:4px;padding:4px 8px;font-size:10px;color:var(--text-1);outline:none" '+
+                              'oninput="window._lmTodRefreshDraft()" />'+
+                            '<button class="btn lm-sm-btn" id="lmTodDraftBtn" style="white-space:nowrap" onclick="window._lmTodRefreshDraft()">Refresh</button>'+
+                          '</div>'+
+                          '<div id="lmTod-qtyErr" style="display:none;font-size:9px;color:#f87171;padding:2px 0"></div>'+
+                          '<div id="lmTod-reasons" style="display:none;font-size:9px;color:var(--yellow);padding:2px 0;line-height:1.4"></div>'+
+                          '<div style="margin-top:8px">'+
+                            '<button class="btn lm-sm-btn" id="lmTodSubmitBtn" disabled '+
+                              'style="width:100%;justify-content:center;background:rgba(16,185,129,.15);border-color:rgba(16,185,129,.4);color:#6ee7b7;cursor:not-allowed;opacity:.5" '+
+                              'onclick="window._lmTodSubmitOrder()">'+
+                              'Submit Testnet Order'+
+                            '</button>'+
+                          '</div>'+
+                          '<div id="lmTod-result" style="display:none;font-size:9px;padding:4px 0;line-height:1.5"></div>'+
+                          '<div style="font-size:9px;color:var(--text-3);padding:4px 0 0;line-height:1.4">'+
+                            '<b style="color:#f87171">Manual submit only.</b> No TP/SL. No automation. Entry order only.'+
+                          '</div>'+
+                        '</div>'+
+                        '<div class="lm-ws-section">'+
+                          '<div class="lm-ws-sh">Order Status</div>'+
+                          '<div style="font-size:10px;color:var(--text-3);line-height:1.5">'+
+                            'Last submitted testnet order status appears here after Submit Testnet Order.'+
+                          '</div>'+
+                          '<div id="lmTodResultExpanded" style="display:none;font-size:10px;padding:4px 0;line-height:1.6"></div>'+
+                        '</div>'+
+                      '</div>'+
                     '</div>'+
-                    '<span class="lm-term-gchev" id="lmTgChev-testnet" style="transform:rotate(-90deg)">&#9660;</span>'+
+                  '</div>'+ /* end lmTermGrpBody-testnet */
+                '</div>'+ /* end GROUP 3 */
+
+                /* ── GROUP 4: Logs (collapsed, no action buttons) ──────────── */
+                '<div class="lm-term-group" id="lmTermGrp-logs">'+
+                  '<div class="lm-term-grp-hdr" onclick="window._lmToggleTermGroup(\'logs\')">'+
+                    '<span class="lm-term-grp-arrow" id="lmTermGrpArr-logs">▶</span>'+
+                    '<span>Logs</span>'+
                   '</div>'+
-                  '<div class="lm-term-gbody" id="lmTgBody-testnet" style="display:none">'+
-                    '<div class="lm-term-gwarn">'+
-                      '<b>API testing only.</b> Not used for strategy validation because testnet price can differ from real futures market.'+
-                    '</div>'+
-
-                    '<div class="lm-ws-section" id="lmBtConnectorSection">'+
-                      '<div class="lm-ws-sh">Binance Testnet Connector</div>'+
-                      '<div id="lmBtStatusGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;font-size:10px;color:var(--text-3)">'+
-                        '<span>Testnet locked:</span><span id="lmBtTestnetLocked" style="color:var(--green)">—</span>'+
-                        '<span>Credentials:</span><span id="lmBtCreds" style="color:var(--text-3)">—</span>'+
-                        '<span>Ping:</span><span id="lmBtPing" style="color:var(--text-3)">—</span>'+
-                        '<span>Server time:</span><span id="lmBtServerTime" style="color:var(--text-3)">—</span>'+
-                        '<span>Account:</span><span id="lmBtAccount" style="color:var(--text-3)">—</span>'+
-                        '<span>Balance (USDT):</span><span id="lmBtBalance" style="color:var(--text-3)">—</span>'+
-                        '<span>Positions:</span><span id="lmBtPositions" style="color:var(--text-3)">—</span>'+
-                        '<span>Avail. USDT:</span><span id="lmBtAvailUsdt" style="color:var(--accent);font-weight:700">—</span>'+
-                        '<span>Last checked:</span><span id="lmBtCheckedAt" style="color:var(--text-3)">—</span>'+
-                        '<span>Orders enabled:</span><span style="color:var(--red-2,#f87171);font-weight:700">FALSE</span>'+
-                        '<span>Execution:</span><span style="color:var(--red-2,#f87171);font-weight:700">FALSE</span>'+
-                        '<span>Mode:</span><span style="color:var(--yellow,#facc15);font-weight:700">READ ONLY</span>'+
-                      '</div>'+
-                      '<div id="lmBtError" style="display:none;font-size:10px;color:var(--red);padding:3px 6px;background:rgba(239,68,68,.07);border-radius:4px;margin:6px 0"></div>'+
-                      '<div style="display:flex;gap:6px;margin-top:8px">'+
-                        '<button class="btn lm-sm-btn" id="lmBtCheckBtn" style="flex:1;justify-content:center" onclick="window._lmBtCheck()">Check Connection</button>'+
-                        '<button class="btn lm-sm-btn" id="lmBtBalanceBtn" style="flex:1;justify-content:center" onclick="window._lmBtRefreshBalance()">Refresh Balance</button>'+
-                        '<button class="btn lm-sm-btn" id="lmBtPositionsBtn" style="flex:1;justify-content:center" onclick="window._lmBtRefreshPositions()">Refresh Positions</button>'+
-                      '</div>'+
-                      '<div style="font-size:9px;color:var(--text-3);padding:5px 0 0;line-height:1.4">'+
-                        '<b style="color:var(--yellow)">Phase 11.5</b> — Read-only. Testnet only (demo-fapi.binance.com). No execution.'+
-                      '</div>'+
-                    '</div>'+
-
+                  '<div id="lmTermGrpBody-logs" style="display:none">'+
                     '<div class="lm-ws-section">'+
-                      '<div class="lm-ws-sh">Execution Mode</div>'+
-                      '<select style="width:100%;background:var(--bg-card-2);border:1px solid var(--border);color:var(--text-3);border-radius:6px;padding:6px 8px;font-size:11px;outline:none;cursor:not-allowed;margin-bottom:8px" disabled>'+
-                        '<option>Confirmation (Pending)</option>'+
-                        '<option>OB Touch</option>'+
-                        '<option>Deep OB</option>'+
-                        '<option>Manual Approval</option>'+
-                      '</select>'+
-                      '<div style="font-size:10px;color:var(--text-3);padding:6px 8px;background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.2);border-radius:5px;line-height:1.4">'+
-                        '<b style="color:var(--yellow)">Demo Only</b> — Execution disabled. Enable via DEMO_TRADING_ENABLED env flag.'+
-                      '</div>'+
-                    '</div>'+
-
-                    '<div class="lm-ws-section" style="background:rgba(251,191,36,.04);border-color:rgba(251,191,36,.2)">'+
-                      '<div class="lm-ws-sh" style="color:var(--yellow,#facc15)">Testnet Order Draft <span style="font-size:9px;opacity:.7;font-weight:400">(Phase 11.7A)</span></div>'+
-                      '<div style="font-size:9px;color:var(--text-3);margin-bottom:8px">Manual Testnet Limit Order Only — no automation, no TP/SL.</div>'+
-                      '<table style="width:100%;font-size:10px;border-collapse:collapse">'+
-                        '<tr><td style="color:var(--text-3);padding:2px 0;width:44%">Symbol</td><td id="lmTod-symbol" style="color:var(--text-1)">—</td></tr>'+
-                        '<tr><td style="color:var(--text-3);padding:2px 0">Side</td><td id="lmTod-side" style="color:var(--text-1)">—</td></tr>'+
-                        '<tr><td style="color:var(--text-3);padding:2px 0">Type</td><td style="color:var(--text-1)">LIMIT / GTC</td></tr>'+
-                        '<tr><td style="color:var(--text-3);padding:2px 0">Entry Price</td><td id="lmTod-price" style="color:var(--text-1)">—</td></tr>'+
-                        '<tr><td style="color:var(--text-3);padding:2px 0">Sim Ready</td><td id="lmTod-simReady" style="color:var(--text-1)">—</td></tr>'+
-                        '<tr><td style="color:var(--text-3);padding:2px 0">Connector</td><td id="lmTod-connector" style="color:var(--text-1)">—</td></tr>'+
-                        '<tr><td style="color:var(--text-3);padding:2px 0">Order Env</td><td id="lmTod-orderEnv" style="color:var(--text-1)">—</td></tr>'+
-                        '<tr><td style="color:var(--text-3);padding:2px 0">Filter OK</td><td id="lmTod-filterOk" style="color:var(--text-1)">—</td></tr>'+
-                        '<tr><td style="color:var(--text-3);padding:2px 0">Est. Notional</td><td id="lmTod-notional" style="color:var(--text-1)">—</td></tr>'+
-                      '</table>'+
-                      '<div style="margin-top:8px;display:flex;gap:4px;align-items:center">'+
-                        '<label style="font-size:9px;color:var(--text-3);white-space:nowrap">Qty:</label>'+
-                        '<input id="lmTodQtyInput" type="text" placeholder="e.g. 0.001" '+
-                          'style="flex:1;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:4px;padding:4px 8px;font-size:10px;color:var(--text-1);outline:none" '+
-                          'oninput="window._lmTodRefreshDraft()" />'+
-                        '<button class="btn lm-sm-btn" id="lmTodDraftBtn" style="white-space:nowrap" onclick="window._lmTodRefreshDraft()">Refresh</button>'+
-                      '</div>'+
-                      '<div id="lmTod-qtyErr" style="display:none;font-size:9px;color:#f87171;padding:2px 0"></div>'+
-                      '<div id="lmTod-reasons" style="display:none;font-size:9px;color:var(--yellow);padding:2px 0;line-height:1.4"></div>'+
-                      '<div style="margin-top:8px">'+
-                        '<button class="btn lm-sm-btn" id="lmTodSubmitBtn" disabled '+
-                          'style="width:100%;justify-content:center;background:rgba(16,185,129,.15);border-color:rgba(16,185,129,.4);color:#6ee7b7;cursor:not-allowed;opacity:.5" '+
-                          'onclick="window._lmTodSubmitOrder()">'+
-                          'Submit Testnet Order'+
-                        '</button>'+
-                      '</div>'+
-                      '<div id="lmTod-result" style="display:none;font-size:9px;padding:4px 0;line-height:1.5"></div>'+
-                      '<div style="font-size:9px;color:var(--text-3);padding:4px 0 0;line-height:1.4">'+
-                        '<b style="color:#f87171">Manual submit only.</b> No TP/SL. No automation. Entry order only.'+
-                      '</div>'+
-                    '</div>'+
-
-                  '</div>'+
-                '</div>'+ /* end Binance Testnet group */
-
-                /* ── GROUP 4: Logs / Recent Actions (collapsed by default) ── */
-                '<div class="lm-term-group">'+
-                  '<div class="lm-term-gh" onclick="window._lmToggleTermGroup(\'logs\')">'+
-                    '<div class="lm-term-gl">'+
-                      '<span class="lm-term-glabel">Logs / Recent Actions</span>'+
-                      '<span class="lm-term-gbadge">Orders, positions &amp; status</span>'+
-                    '</div>'+
-                    '<span class="lm-term-gchev" id="lmTgChev-logs" style="transform:rotate(-90deg)">&#9660;</span>'+
-                  '</div>'+
-                  '<div class="lm-term-gbody" id="lmTgBody-logs" style="display:none">'+
-
-                    '<div class="lm-ws-section">'+
-                      '<div class="lm-ws-sh">Pending Orders</div>'+
+                      '<div class="lm-ws-sh">Order Log</div>'+
                       '<div class="lm-tbl-wrap" style="max-height:160px">'+
                         '<table class="lm-inner-tbl">'+
                           '<thead><tr><th>Symbol</th><th>Side</th><th>Type</th><th>Qty</th><th>Price</th><th>Status</th><th>Client ID</th></tr></thead>'+
-                          '<tbody><tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:14px 0">No pending orders</td></tr></tbody>'+
+                          '<tbody><tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:14px 0">No entries</td></tr></tbody>'+
                         '</table>'+
                       '</div>'+
                     '</div>'+
-
-                    '<div class="lm-ws-section">'+
-                      '<div class="lm-ws-sh">Open Positions</div>'+
-                      '<div class="lm-tbl-wrap" style="max-height:160px">'+
-                        '<table class="lm-inner-tbl">'+
-                          '<thead><tr><th>Symbol</th><th>Side</th><th>Size</th><th>Entry</th><th>Mark</th><th>PnL</th><th>Liq. Price</th></tr></thead>'+
-                          '<tbody><tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:14px 0">No open positions</td></tr></tbody>'+
-                        '</table>'+
-                      '</div>'+
-                    '</div>'+
-
-                    '<div class="lm-ws-section">'+
-                      '<div class="lm-ws-sh">Order Status</div>'+
-                      '<div style="font-size:10px;color:var(--text-3);line-height:1.5">'+
-                        'Last submitted testnet order status appears here after Submit Testnet Order.'+
-                      '</div>'+
-                      '<div id="lmTodResultExpanded" style="display:none;font-size:10px;padding:4px 0;line-height:1.6"></div>'+
-                    '</div>'+
-
-                  '</div>'+
-                '</div>'+ /* end Logs group */
+                  '</div>'+ /* end lmTermGrpBody-logs */
+                '</div>'+ /* end GROUP 4 */
 
               '</div>'+ /* end lm-ws-page */
             '</div>'+ /* end lmWsPane-terminal */
@@ -8122,82 +8160,109 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       });
   };
 
-  // ── Phase 11.7B: Internal Paper Trading JS ──────────────────────────────────
+  // ── Phase 11.7B: Terminal group toggle ────────────────────────────────────
+  window._lmToggleTermGroup=function(grp){
+    var body=document.getElementById('lmTermGrpBody-'+grp);
+    var arr=document.getElementById('lmTermGrpArr-'+grp);
+    if(!body) return;
+    var hidden=body.style.display==='none';
+    body.style.display=hidden?'':'none';
+    if(arr) arr.textContent=hidden?'▼':'▶';
+  };
 
+  // ── Phase 11.7B: Paper Trading UI helpers ────────────────────────────────
   window._lmPapRefreshAccount=function(){
     fetch('/api/live-monitor/paper/account',{credentials:'same-origin'})
       .then(function(r){return r.json();})
       .then(function(d){
-        var balEl=document.getElementById('lmPapAccBal');
-        var pnlEl=document.getElementById('lmPapAccPnl');
-        if(balEl) balEl.textContent=d.cash_balance!=null?Number(d.cash_balance).toFixed(2):'—';
-        if(pnlEl){
-          var rpnl=d.realized_pnl||0;
-          pnlEl.textContent='PnL: '+(rpnl>=0?'+':'')+Number(rpnl).toFixed(2);
-          pnlEl.style.color=rpnl>=0?'var(--green-2,#4ade80)':'var(--red-2,#f87171)';
-        }
-      })
-      .catch(function(){});
+        if(!d||!d.account) return;
+        var a=d.account;
+        var fmt=function(v){return (v!=null)?parseFloat(v).toFixed(2)+' USDT':'—';};
+        var setT=function(id,v){var el=document.getElementById(id);if(el)el.textContent=v;};
+        setT('lmPapAccStart',  fmt(a.starting_balance));
+        setT('lmPapAccBal',    fmt(a.cash_balance));
+        setT('lmPapAccEq',     fmt(a.equity));
+        setT('lmPapAccPnl',    fmt(a.realized_pnl));
+        setT('lmPapAccUpnl',   fmt(a.unrealized_pnl));
+        setT('lmPapAccOrders', a.open_orders!=null?String(a.open_orders):'—');
+        setT('lmPapAccPos',    a.open_positions!=null?String(a.open_positions):'—');
+      }).catch(function(){});
   };
 
   window._lmPapRefreshDraft=function(){
     var itemId=window._lmSimItemId||(window._lmSelItem&&window._lmSelItem.id);
     if(!itemId) return;
-    var qty=(document.getElementById('lmPapQtyInput')||{}).value||'';
+    var qty=((document.getElementById('lmPapQtyInput')||{}).value||'').trim();
     var url='/api/live-monitor/items/'+itemId+'/paper-order/draft'+(qty?'?quantity='+encodeURIComponent(qty):'');
     fetch(url,{credentials:'same-origin'})
       .then(function(r){return r.json();})
       .then(function(d){
-        var dr=(d&&d.draft)||{};
-        function _tv(id,v){var el=document.getElementById(id);if(!el)return;el.textContent=v==null?'—':String(v);}
-        function _tf(id,ok,yes,no){
-          var el=document.getElementById(id);if(!el)return;
-          el.textContent=ok?yes:no;
-          el.style.color=ok?'var(--green-2,#4ade80)':'var(--red-2,#f87171)';
-        }
-        _tv('lmPap-symbol', dr.symbol||'—');
-        var sideEl=document.getElementById('lmPap-side');
-        if(sideEl){
-          sideEl.textContent=dr.side||'—';
-          sideEl.style.color=dr.side==='BUY'?'var(--green-2,#4ade80)':dr.side==='SELL'?'var(--red-2,#f87171)':'var(--text-1)';
-        }
-        _tv('lmPap-price', dr.price||'—');
-        _tf('lmPap-ready', dr.paper_ready, 'YES', 'NO');
-        _tv('lmPap-notional', dr.estimated_notional!=null?(dr.estimated_notional+' USDT'):'—');
-        var qErr=document.getElementById('lmPap-qtyErr');
-        var qv=dr.qty_validation||{};
-        if(qErr){
-          if(qty&&!qv.ok&&qv.error&&qv.error!=='quantity_required'){
-            qErr.style.display='';qErr.textContent=qv.error;
-          } else { qErr.style.display='none'; }
-        }
-        var rs=dr.reasons||[];
+        var dr=d.draft||{};
+        var setT=function(id,v){var el=document.getElementById(id);if(el)el.textContent=v!=null?v:'—';};
+        var setC=function(id,ok){var el=document.getElementById(id);if(el)el.style.color=ok?'var(--green-2,#4ade80)':'var(--red-2,#f87171)';};
+        setT('lmPap-symbol',  dr.symbol||'—');
+        setT('lmPap-side',    dr.side||'—');
+        setT('lmPap-price',   dr.price||'—');
+        var intentOk=dr.intent_allowed;
+        setT('lmPap-intentOk', intentOk?'YES':'NO');
+        setC('lmPap-intentOk', intentOk);
+        var ready=dr.paper_ready;
+        setT('lmPap-ready', ready?'YES':'NO');
+        setC('lmPap-ready', ready);
+        setT('lmPap-notional', dr.estimated_notional!=null?(parseFloat(dr.estimated_notional).toFixed(4)+' USDT'):'—');
+        var qeEl=document.getElementById('lmPap-qtyErr');
+        if(qeEl){ if(dr.qty_error){ qeEl.style.display=''; qeEl.textContent=dr.qty_details||dr.qty_error; } else { qeEl.style.display='none'; } }
         var rEl=document.getElementById('lmPap-reasons');
-        if(rEl){
-          if(rs.length){rEl.style.display='';rEl.textContent='Blocked: '+rs.slice(0,6).join(' · ');}
-          else{rEl.style.display='none';}
-        }
+        if(rEl){ var rs=dr.reasons||[]; if(rs.length){ rEl.style.display=''; rEl.textContent='Not ready: '+rs.join(', '); } else { rEl.style.display='none'; } }
+        var wEl=document.getElementById('lmPap-warnings');
+        if(wEl){ var ws=dr.warnings||[]; if(ws.length){ wEl.style.display=''; wEl.textContent=ws.join(' | '); } else { wEl.style.display='none'; } }
         var sb=document.getElementById('lmPapSubmitBtn');
         if(sb){
-          var ready=dr.draft_ready===true;
-          sb.disabled=!ready;
-          sb.style.opacity=ready?'1':'0.5';
-          sb.style.cursor=ready?'pointer':'not-allowed';
+          var canSubmit=ready&&dr.qty_ok;
+          sb.disabled=!canSubmit;
+          sb.style.opacity=canSubmit?'1':'0.5';
+          sb.style.cursor=canSubmit?'pointer':'not-allowed';
         }
-      })
-      .catch(function(){});
+      }).catch(function(){});
+  };
+
+  window._lmPapRefreshOrders=function(){
+    var itemId=window._lmSimItemId||(window._lmSelItem&&window._lmSelItem.id);
+    if(!itemId) return;
+    fetch('/api/live-monitor/items/'+itemId+'/paper-orders',{credentials:'same-origin'})
+      .then(function(r){return r.json();})
+      .then(function(d){
+        var tb=document.getElementById('lmPapOrdersTbody');
+        if(!tb) return;
+        var orders=d.orders||[];
+        if(!orders.length){
+          tb.innerHTML='<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:14px 0">No paper orders</td></tr>';
+          return;
+        }
+        tb.innerHTML=orders.map(function(o){
+          var sideC=o.side==='BUY'?'var(--green-2,#4ade80)':'var(--red-2,#f87171)';
+          return '<tr>'+
+            '<td>'+esc(o.symbol||'—')+'</td>'+
+            '<td style="color:'+sideC+'">'+esc(o.side||'—')+'</td>'+
+            '<td>'+esc(o.quantity||'—')+'</td>'+
+            '<td>'+esc(o.price||'—')+'</td>'+
+            '<td>'+esc(o.status||'—')+'</td>'+
+            '<td style="font-size:9px">'+esc((o.client_order_id||'—').slice(0,18))+'</td>'+
+            '</tr>';
+        }).join('');
+      }).catch(function(){});
   };
 
   window._lmPapSubmitOrder=function(){
     var itemId=window._lmSimItemId||(window._lmSelItem&&window._lmSelItem.id);
     if(!itemId) return;
     var qty=((document.getElementById('lmPapQtyInput')||{}).value||'').trim();
-    if(!qty){alert('Enter a quantity first.');return;}
-    if(!confirm('Submit an internal paper LIMIT order?\n\nNo real or testnet exchange involved.\nDB simulation only. No TP/SL.\n\nProceed?')) return;
+    if(!qty){ alert('Enter a quantity first.'); return; }
+    if(!confirm('Submit a paper order (DB-only, no exchange)?\n\nQty: '+qty+'\n\nThis is a simulated paper trade only.')) return;
     var sb=document.getElementById('lmPapSubmitBtn');
-    if(sb){sb.disabled=true;sb.textContent='Submitting…';}
+    if(sb){ sb.disabled=true; sb.textContent='Submitting…'; }
     var resEl=document.getElementById('lmPap-result');
-    if(resEl){resEl.style.display='none';}
+    if(resEl){ resEl.style.display='none'; }
     fetch('/api/live-monitor/items/'+itemId+'/paper-order/submit',{
       method:'POST',
       credentials:'same-origin',
@@ -8207,54 +8272,26 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       .then(function(r){return r.json().then(function(d){return {s:r.status,d:d};});})
       .then(function(rd){
         var d=rd.d;
-        if(sb){sb.disabled=false;sb.textContent='Submit Paper Order';}
+        if(sb){ sb.disabled=false; sb.textContent='Submit Paper Order'; }
         if(resEl){
           resEl.style.display='';
           if(d&&d.ok){
             resEl.style.color='var(--green-2,#4ade80)';
-            resEl.innerHTML='<b>Paper order created!</b> #'+esc(String(d.order_id||'—'))+
-              ' &nbsp;·&nbsp; '+esc(d.side||'—')+' '+esc(d.quantity||'—')+' @ '+esc(d.price||'—')+
-              ' &nbsp;·&nbsp; '+esc(d.status||'—');
+            resEl.innerHTML='<b>Paper order created!</b> '+esc(d.side||'—')+' '+esc(d.quantity||'—')+' '+esc(d.symbol||'—')+' @ '+esc(d.price||'—')+
+              '<br>Client ID: '+esc(d.client_order_id||'—');
           } else {
             resEl.style.color='var(--red-2,#f87171)';
-            resEl.innerHTML='<b>Failed:</b> '+esc((d&&(d.error||JSON.stringify(d.reasons||d)))||'Unknown error');
+            resEl.innerHTML='<b>Failed:</b> '+esc((d&&(d.error||JSON.stringify(d.errors||d)))||'Unknown error');
           }
         }
         window._lmPapRefreshDraft();
+        window._lmPapRefreshOrders();
         window._lmPapRefreshAccount();
-        window._lmPapRefreshOrders(itemId);
       })
       .catch(function(){
-        if(sb){sb.disabled=false;sb.textContent='Submit Paper Order';}
-        if(resEl){resEl.style.display='';resEl.style.color='var(--red-2,#f87171)';resEl.textContent='Network error during submit.';}
+        if(sb){ sb.disabled=false; sb.textContent='Submit Paper Order'; }
+        if(resEl){ resEl.style.display=''; resEl.style.color='var(--red-2,#f87171)'; resEl.textContent='Network error during submit.'; }
       });
-  };
-
-  window._lmPapRefreshOrders=function(itemId){
-    if(!itemId) return;
-    fetch('/api/live-monitor/items/'+itemId+'/paper-orders',{credentials:'same-origin'})
-      .then(function(r){return r.json();})
-      .then(function(d){
-        var sec=document.getElementById('lmPapOrdersSection');
-        var listEl=document.getElementById('lmPapOrdersList');
-        if(!listEl) return;
-        var orders=(d&&d.orders)||[];
-        if(orders.length){
-          if(sec) sec.style.display='';
-          listEl.innerHTML=orders.slice(0,8).map(function(o){
-            var sideColor=o.side==='BUY'?'var(--green-2,#4ade80)':'var(--red-2,#f87171)';
-            return '<div style="padding:2px 0;border-bottom:1px solid var(--border)">'
-              +'#'+esc(String(o.id))+' '
-              +'<span style="color:'+sideColor+'">'+esc(o.side)+'</span> '
-              +esc(o.quantity)+' <span style="color:var(--text-3)">@</span> '+esc(o.price)
-              +' <span style="color:var(--text-3)">'+esc(o.status)+'/'+esc(o.fill_status)+'</span>'
-              +'</div>';
-          }).join('');
-        } else {
-          if(sec) sec.style.display='none';
-        }
-      })
-      .catch(function(){});
   };
 
   function _lmMtfMatrix(item){

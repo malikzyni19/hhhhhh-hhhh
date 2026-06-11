@@ -1,293 +1,314 @@
-"""Phase 11.7B: Internal Paper Trading Engine Foundation.
-
-DB-only paper order simulation. No exchange calls. No Binance API.
-No real or testnet orders. Manual submit only — no automation.
-
-Price source: item.current_price → snapshot entry_price → last known LM price.
-client_order_id prefix: ZYNI_PAPER_
-Default account: 10,000 USDT, auto-created per user.
-"""
-from __future__ import annotations
-import time
+# live_monitor/paper_trading.py — Phase 11.7B: Internal Paper Trading Engine Foundation
+#
+# SAFETY RULES (permanent):
+# - No Binance API. DB-only. No exchange calls of any kind.
+# - No auto-submit. No AI direct execution. No background order placement.
+# - No order placed unless user manually clicks Submit Paper Order.
+# - _lm_bt_signed_request() is NOT called here — read-only GET-only, untouched.
+# - No API keys. No secrets. No exchange order IDs in DB.
 import uuid
 
-import main as _m
 
+# ── helpers ──────────────────────────────────────────────────────────────────
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _pt_float(v) -> float | None:
+def _json_dumps_safe(obj, fallback="{}"):
     try:
-        return float(v) if v is not None and v != "" else None
-    except (TypeError, ValueError):
-        return None
+        import json
+        return json.dumps(obj, default=str)
+    except Exception:
+        return fallback
 
 
-def _pt_direction_to_side(direction: str) -> str | None:
-    d = direction.lower()
-    if "bull" in d or "long" in d:
-        return "BUY"
-    if "bear" in d or "short" in d:
-        return "SELL"
-    return None
-
-
-# ── Account ───────────────────────────────────────────────────────────────────
-
-def _lm_get_or_create_paper_account(user_id: int) -> dict:
-    """Return the paper account for user_id, creating it if needed.
-
-    Returns a safe dict (never the ORM object) so callers never hold
-    a detached-instance reference across request boundaries.
-    """
+def _json_loads_safe(s, fallback=None):
     try:
-        from models import (
-            db as _db,
-            LiveMonitorPaperAccount as _LMPA,
-        )
-        import datetime as _dt
-
-        acct = _LMPA.query.filter_by(user_id=user_id, status="active").first()
-        if not acct:
-            acct = _LMPA(
-                user_id=user_id,
-                currency="USDT",
-                starting_balance=10000.0,
-                cash_balance=10000.0,
-                equity=10000.0,
-                realized_pnl=0.0,
-                unrealized_pnl=0.0,
-                status="active",
-            )
-            _db.session.add(acct)
-            _db.session.commit()
-
-        return {
-            "ok":               True,
-            "account_id":       acct.id,
-            "user_id":          acct.user_id,
-            "currency":         acct.currency,
-            "starting_balance": float(acct.starting_balance or 0),
-            "cash_balance":     float(acct.cash_balance or 0),
-            "equity":           float(acct.equity or 0),
-            "realized_pnl":     float(acct.realized_pnl or 0),
-            "unrealized_pnl":   float(acct.unrealized_pnl or 0),
-            "status":           acct.status,
-            "created_at":       str(acct.created_at) if acct.created_at else None,
-        }
-    except Exception as _e:
-        return {"ok": False, "error": str(_e)[:200]}
+        import json
+        if not s:
+            return fallback
+        return json.loads(s)
+    except Exception:
+        return fallback
 
 
-def _lm_get_paper_account_summary(user_id: int) -> dict:
-    """Return paper account summary dict for snapshot storage."""
-    acct = _lm_get_or_create_paper_account(user_id)
-    if not acct.get("ok"):
-        return acct
-    acct["phase"] = "phase11_7b_paper_account"
-    acct["computed_at"] = int(time.time())
-    return acct
+# ── account ───────────────────────────────────────────────────────────────────
 
+def _lm_get_or_create_paper_account(user_id):
+    """Return the paper account row for user_id, creating it if it does not exist.
 
-# ── Draft ─────────────────────────────────────────────────────────────────────
-
-def _lm_build_paper_order_draft(
-    item,
-    snapshot: dict | None = None,
-    quantity_str: str | None = None,
-) -> dict:
-    """Build a paper order draft.
-
-    Price source: item.current_price → intent entry_price → snapshot price.
-    Does NOT call any exchange API. DB-only.
+    Starting balance: 10,000 USDT.
+    Returns the ORM row (LiveMonitorPaperAccount).
     """
-    now_ts = int(time.time())
+    import main as _m
+    from models import db as _db, LiveMonitorPaperAccount as _PA
+    row = _PA.query.filter_by(user_id=user_id).first()
+    if row:
+        return row
+    row = _PA(
+        user_id=user_id,
+        currency="USDT",
+        starting_balance=10000.0,
+        cash_balance=10000.0,
+        equity=10000.0,
+        realized_pnl=0.0,
+        unrealized_pnl=0.0,
+        status="active",
+    )
     try:
-        snap = (snapshot if isinstance(snapshot, dict)
-                else _m._json_loads_safe(getattr(item, "snapshot_json", None), {}))
-
-        intent = snap.get("latest_execution_intent") or {}
-        sim    = snap.get("latest_execution_simulation") or {}
-        ai_dec = snap.get("latest_ai_trade_control_decision") or {}
-        pol    = snap.get("latest_automation_policy_result") or {}
-
-        # ── Symbol ─────────────────────────────────────────────────────────────
-        symbol = str(
-            intent.get("symbol") or getattr(item, "symbol", None) or ""
-        ).upper().strip()
-
-        # ── Direction → side ───────────────────────────────────────────────────
-        direction = str(
-            intent.get("direction") or getattr(item, "direction", None) or ""
-        ).lower()
-        side = _pt_direction_to_side(direction)
-
-        # ── Price source: current_price → entry_price → snapshot ───────────────
-        price_f = (
-            _pt_float(getattr(item, "current_price", None))
-            or _pt_float(intent.get("entry_price"))
-            or _pt_float(snap.get("last_known_price"))
-        )
-        price_str = f"{price_f}" if price_f else None
-
-        # ── paper_ready from simulation (no connector check needed) ────────────
-        intent_valid  = bool(sim.get("intent_valid"))
-        policy_valid  = bool(sim.get("policy_valid"))
-        decision_valid = bool(sim.get("decision_valid"))
-        data_health_ok = bool(sim.get("data_health_ok"))
-        paper_ready   = intent_valid and policy_valid and decision_valid and data_health_ok
-
-        # ── Quantity ───────────────────────────────────────────────────────────
-        qty_f: float | None = None
-        qty_str_clean: str | None = None
-        qty_ok = False
-        qty_error = "quantity_required"
-        notional: float | None = None
-
-        if quantity_str is not None and str(quantity_str).strip():
-            qty_str_clean = str(quantity_str).strip()
-            try:
-                qty_f = float(qty_str_clean)
-                if qty_f > 0:
-                    qty_ok = True
-                    qty_error = ""
-                    if price_f:
-                        notional = round(qty_f * price_f, 4)
-                else:
-                    qty_error = "quantity_must_be_positive"
-            except (TypeError, ValueError):
-                qty_error = "quantity_not_a_number"
-
-        qty_validation = {
-            "ok":    qty_ok,
-            "error": qty_error,
-            "qty_float": qty_f or 0.0,
-        }
-
-        # ── Blocking reasons ───────────────────────────────────────────────────
-        reasons: list = []
-        if not symbol:
-            reasons.append("symbol_missing")
-        if not side:
-            reasons.append("direction_unknown_cannot_determine_side")
-        if not price_f:
-            reasons.append("entry_price_missing")
-        if quantity_str is None:
-            reasons.append("quantity_required")
-        elif not qty_ok:
-            reasons.append(qty_error)
-
-        draft_ready = not reasons
-
-        return {
-            "ok":                   True,
-            "phase":                "phase11_7b_paper_draft",
-            "computed_at":          now_ts,
-            "draft_ready":          draft_ready,
-            "symbol":               symbol,
-            "side":                 side,
-            "type":                 "LIMIT",
-            "timeInForce":          "GTC",
-            "quantity":             qty_str_clean,
-            "price":                price_str,
-            "price_float":          price_f,
-            "estimated_notional":   notional,
-            "paper_ready":          paper_ready,
-            "intent_valid":         intent_valid,
-            "policy_valid":         policy_valid,
-            "decision_valid":       decision_valid,
-            "data_health_ok":       data_health_ok,
-            "qty_validation":       qty_validation,
-            "reasons":              reasons,
-            "source":               "internal_paper",
-            "advisory_note": (
-                "Phase 11.7B — Internal paper LIMIT entry order only. "
-                "No TP/SL. No real exchange. No automatic execution. "
-                "User must manually click Submit Paper Order."
-            ),
-        }
-
-    except Exception as _e:
-        return {
-            "ok":           False,
-            "phase":        "phase11_7b_paper_draft",
-            "computed_at":  now_ts,
-            "draft_ready":  False,
-            "error":        str(_e)[:200],
-            "reasons":      [f"build_error:{str(_e)[:60]}"],
-            "advisory_note": "Phase 11.7B manual submit only.",
-        }
+        _db.session.add(row)
+        _db.session.commit()
+    except Exception:
+        try:
+            _db.session.rollback()
+        except Exception:
+            pass
+        row = _PA.query.filter_by(user_id=user_id).first() or row
+    return row
 
 
-def _lm_validate_paper_order_draft(draft: dict) -> dict:
-    """Validate a pre-built paper order draft.
+def _lm_get_paper_account_summary(user_id) -> dict:
+    """Return a serializable summary dict for the user's paper account."""
+    from models import (
+        LiveMonitorPaperAccount  as _PA,
+        LiveMonitorPaperOrder    as _PO,
+        LiveMonitorPaperPosition as _PP,
+    )
+    acc = _lm_get_or_create_paper_account(user_id)
+    open_orders    = _PO.query.filter_by(user_id=user_id, status="open").count()
+    open_positions = _PP.query.filter_by(user_id=user_id, status="open").count()
+    return {
+        "user_id":          user_id,
+        "currency":         acc.currency,
+        "starting_balance": float(acc.starting_balance or 0),
+        "cash_balance":     float(acc.cash_balance or 0),
+        "equity":           float(acc.equity or 0),
+        "realized_pnl":     float(acc.realized_pnl or 0),
+        "unrealized_pnl":   float(acc.unrealized_pnl or 0),
+        "status":           acc.status,
+        "open_orders":      open_orders,
+        "open_positions":   open_positions,
+    }
 
-    Returns {ok, error, reasons}.
+
+# ── quantity validation ───────────────────────────────────────────────────────
+
+def _lm_validate_paper_order_quantity(qty_str, price_f, cash_balance=None) -> dict:
+    """Validate quantity string for a paper order.
+
+    Returns {ok, qty_float, notional, error, details}.
+    cash_balance: if provided, reject if estimated_notional > cash_balance.
     """
-    if not draft.get("ok"):
-        return {"ok": False, "error": "draft_build_failed", "reasons": draft.get("reasons", [])}
-    if not draft.get("draft_ready"):
-        return {"ok": False, "error": "draft_not_ready", "reasons": draft.get("reasons", [])}
-    return {"ok": True, "error": "", "reasons": []}
-
-
-# ── Submit ─────────────────────────────────────────────────────────────────────
-
-def _lm_submit_paper_order(
-    user_id: int,
-    item,
-    quantity_str: str,
-) -> dict:
-    """Persist a paper order to DB. No exchange calls. Manual submit only.
-
-    Returns a safe result dict. The caller (endpoint) must never trigger this
-    automatically — only from an explicit user button click.
-    """
-    now_ts = int(time.time())
+    if not qty_str or not str(qty_str).strip():
+        return {"ok": False, "qty_float": None, "notional": None,
+                "error": "quantity_required", "details": "Quantity is required."}
     try:
-        from models import (
-            db as _db,
-            LiveMonitorPaperAccount as _LMPA,
-            LiveMonitorPaperOrder as _LMPO,
-        )
-        import datetime as _dt
-
-        snap = _m._json_loads_safe(getattr(item, "snapshot_json", None), {})
-        draft = _lm_build_paper_order_draft(item, snap, quantity_str)
-
-        validation = _lm_validate_paper_order_draft(draft)
-        if not validation["ok"]:
+        qty_f = float(str(qty_str).strip())
+    except (ValueError, TypeError):
+        return {"ok": False, "qty_float": None, "notional": None,
+                "error": "quantity_invalid", "details": "Quantity must be a number."}
+    if qty_f <= 0:
+        return {"ok": False, "qty_float": None, "notional": None,
+                "error": "quantity_not_positive", "details": "Quantity must be > 0."}
+    # max 8 decimal places
+    qty_str_clean = str(qty_str).strip()
+    if "." in qty_str_clean:
+        decimals = len(qty_str_clean.rstrip("0").split(".")[-1])
+        if decimals > 8:
+            return {"ok": False, "qty_float": None, "notional": None,
+                    "error": "quantity_too_many_decimals",
+                    "details": "Quantity has more than 8 decimal places."}
+    price_f = float(price_f) if price_f else 0.0
+    notional = round(qty_f * price_f, 6) if price_f else None
+    if cash_balance is not None and notional is not None:
+        if notional > float(cash_balance):
             return {
-                "ok":      False,
-                "error":   validation["error"],
-                "reasons": validation["reasons"],
-                "draft":   draft,
+                "ok": False, "qty_float": qty_f, "notional": notional,
+                "error": "insufficient_cash",
+                "details": (
+                    f"Estimated notional {notional:.4f} exceeds "
+                    f"cash balance {float(cash_balance):.4f} USDT."
+                ),
             }
+    return {"ok": True, "qty_float": qty_f, "notional": notional, "error": None, "details": None}
 
-        # ── Ensure account exists ──────────────────────────────────────────────
-        acct_summary = _lm_get_or_create_paper_account(user_id)
-        if not acct_summary.get("ok"):
-            return {"ok": False, "error": "account_error", "detail": acct_summary.get("error")}
-        account_id = acct_summary["account_id"]
 
-        symbol   = draft["symbol"]
-        side     = draft["side"]
-        quantity = draft["quantity"]
-        price    = draft["price"]
+# ── draft ─────────────────────────────────────────────────────────────────────
 
-        client_order_id = f"ZYNI_PAPER_{uuid.uuid4().hex[:12].upper()}"
+def _lm_build_paper_order_draft(item, snapshot=None, quantity_str=None) -> dict:
+    """Build a paper order draft dict (no DB write, no exchange call).
 
-        intent  = snap.get("latest_execution_intent") or {}
-        sim     = snap.get("latest_execution_simulation") or {}
-        ai_dec  = snap.get("latest_ai_trade_control_decision") or {}
-        pol     = snap.get("latest_automation_policy_result") or {}
+    paper_ready requires ALL of:
+      - symbol, side, price present
+      - intent.allowed == True  (explicit check)
+      - sim.intent_valid, sim.policy_valid, sim.decision_valid, sim.data_health_ok
+    """
+    import main as _m
+    snap = snapshot or {}
+    if hasattr(item, "snapshot_json"):
+        snap = snap or _json_loads_safe(item.snapshot_json, {})
 
-        now_dt = _dt.datetime.utcnow()
+    symbol = (getattr(item, "symbol", None) or "").strip().upper()
+    direction = (getattr(item, "direction", None) or "").strip().lower()
+    side = "BUY" if direction in ("long", "buy") else ("SELL" if direction in ("short", "sell") else "")
 
-        db_record = _LMPO(
+    # Price priority: current_price → intent.entry_price → snap.last_known_price
+    intent = snap.get("latest_execution_intent") or {}
+    sim    = snap.get("latest_execution_simulation") or {}
+
+    price_f = None
+    price_source = None
+    _cp = getattr(item, "current_price", None)
+    if _cp:
+        try:
+            price_f = float(_cp)
+            price_source = "current_price"
+        except Exception:
+            pass
+    if price_f is None:
+        _ep = intent.get("entry_price")
+        if _ep:
+            try:
+                price_f = float(_ep)
+                price_source = "intent_entry_price"
+            except Exception:
+                pass
+    if price_f is None:
+        _lp = snap.get("last_known_price")
+        if _lp:
+            try:
+                price_f = float(_lp)
+                price_source = "last_known_price"
+            except Exception:
+                pass
+
+    price_str = f"{price_f:.8f}".rstrip("0").rstrip(".") if price_f else None
+
+    # Simulation-derived readiness flags
+    intent_allowed  = bool(intent.get("allowed"))
+    intent_valid    = bool(sim.get("intent_valid"))
+    policy_valid    = bool(sim.get("policy_valid"))
+    decision_valid  = bool(sim.get("decision_valid"))
+    data_health_ok  = bool(sim.get("data_health_ok"))
+
+    paper_ready = (
+        bool(symbol) and bool(side) and bool(price_f)
+        and intent_allowed
+        and intent_valid and policy_valid and decision_valid and data_health_ok
+    )
+
+    reasons = []
+    if not symbol:
+        reasons.append("symbol_missing")
+    if not side:
+        reasons.append("side_missing")
+    if not price_f:
+        reasons.append("price_missing")
+    if not intent_allowed:
+        reasons.append("intent_not_allowed")
+    if not intent_valid:
+        reasons.append("intent_not_valid")
+    if not policy_valid:
+        reasons.append("policy_not_valid")
+    if not decision_valid:
+        reasons.append("decision_not_valid")
+    if not data_health_ok:
+        reasons.append("data_health_not_ok")
+
+    # Quantity validation
+    qty_result = {"ok": False, "qty_float": None, "notional": None, "error": None, "details": None}
+    cash_balance = None
+    try:
+        acc = _lm_get_or_create_paper_account(item.user_id)
+        cash_balance = float(acc.cash_balance or 0)
+    except Exception:
+        pass
+
+    if quantity_str and price_f:
+        qty_result = _lm_validate_paper_order_quantity(quantity_str, price_f, cash_balance)
+
+    notional = qty_result.get("notional")
+
+    return {
+        "ok":                paper_ready,
+        "paper_ready":       paper_ready,
+        "intent_allowed":    intent_allowed,
+        "intent_valid":      intent_valid,
+        "policy_valid":      policy_valid,
+        "decision_valid":    decision_valid,
+        "data_health_ok":    data_health_ok,
+        "symbol":            symbol or None,
+        "side":              side or None,
+        "order_type":        "LIMIT",
+        "time_in_force":     "GTC",
+        "price":             price_str,
+        "price_float":       price_f,
+        "price_source":      price_source,
+        "quantity":          str(qty_result["qty_float"]) if qty_result.get("qty_float") else None,
+        "qty_float":         qty_result.get("qty_float"),
+        "estimated_notional": notional,
+        "cash_balance":      cash_balance,
+        "qty_ok":            qty_result.get("ok", False),
+        "qty_error":         qty_result.get("error"),
+        "qty_details":       qty_result.get("details"),
+        "reasons":           reasons,
+        "warnings":          [],
+        "advisory_note":     "No Binance API. DB-only paper record. No real order placed.",
+        "source":            "internal_paper",
+    }
+
+
+# ── validation ────────────────────────────────────────────────────────────────
+
+def _lm_validate_paper_order_draft(draft) -> dict:
+    """Validate a completed draft dict before submission.
+
+    Returns {ok, errors}.
+    """
+    errors = []
+    if not draft.get("paper_ready"):
+        errors.append("paper_ready_false")
+    if not draft.get("symbol"):
+        errors.append("symbol_missing")
+    if not draft.get("side"):
+        errors.append("side_missing")
+    if not draft.get("price"):
+        errors.append("price_missing")
+    if not draft.get("qty_ok"):
+        errors.append(draft.get("qty_error") or "quantity_invalid")
+    return {"ok": len(errors) == 0, "errors": errors}
+
+
+# ── submit ────────────────────────────────────────────────────────────────────
+
+def _lm_submit_paper_order(user_id, item, quantity_str) -> dict:
+    """Create and persist a paper LIMIT order. No exchange call. DB-only.
+
+    Returns {ok, order_id, client_order_id, symbol, side, price, quantity,
+             estimated_notional, status, error}.
+    """
+    import main as _m
+    from models import db as _db, LiveMonitorPaperOrder as _PO
+
+    snap = _json_loads_safe(getattr(item, "snapshot_json", None), {})
+    draft = _lm_build_paper_order_draft(item, snapshot=snap, quantity_str=quantity_str)
+
+    val = _lm_validate_paper_order_draft(draft)
+    if not val["ok"]:
+        return {
+            "ok": False,
+            "error": "draft_invalid",
+            "errors": val["errors"],
+            "draft": draft,
+        }
+
+    client_order_id = f"ZYNIPAPER_{uuid.uuid4().hex[:12].upper()}"
+    symbol   = draft["symbol"]
+    side     = draft["side"]
+    price    = draft["price"]
+    quantity = draft["quantity"]
+
+    try:
+        row = _PO(
             user_id=user_id,
             item_id=item.id,
-            account_id=account_id,
             symbol=symbol,
             side=side,
             order_type="LIMIT",
@@ -296,114 +317,93 @@ def _lm_submit_paper_order(
             price=price,
             status="open",
             fill_status="unfilled",
-            filled_qty="0",
-            avg_fill_price=None,
             client_order_id=client_order_id,
-            source="internal_paper_manual",
-            execution_intent_json=_m._json_dumps_safe(intent),
-            execution_simulation_json=_m._json_dumps_safe(sim),
-            ai_decision_json=_m._json_dumps_safe(ai_dec),
-            automation_policy_json=_m._json_dumps_safe(pol),
-            request_json=_m._json_dumps_safe({
-                "symbol":   symbol,
-                "side":     side,
-                "type":     "LIMIT",
-                "quantity": quantity,
-                "price":    price,
-                "source":   "internal_paper",
-            }),
-            response_json=_m._json_dumps_safe({"status": "open", "fill_status": "unfilled"}),
-            error_json=None,
-            submitted_at=now_dt,
+            source="internal_paper",
+            estimated_notional=draft.get("estimated_notional"),
+            execution_intent_json=_json_dumps_safe(
+                snap.get("latest_execution_intent") or {}),
+            execution_simulation_json=_json_dumps_safe(
+                snap.get("latest_execution_simulation") or {}),
+            ai_decision_json=_json_dumps_safe(
+                snap.get("latest_ai_trade_control_decision") or {}),
+            automation_policy_json=_json_dumps_safe(
+                snap.get("latest_automation_policy_result") or {}),
         )
-        _db.session.add(db_record)
+        _db.session.add(row)
         _db.session.commit()
-
-        return {
-            "ok":                 True,
-            "order_id":           db_record.id,
-            "client_order_id":    client_order_id,
-            "symbol":             symbol,
-            "side":               side,
-            "quantity":           quantity,
-            "price":              price,
-            "status":             "open",
-            "fill_status":        "unfilled",
-            "source":             "internal_paper_manual",
-            "estimated_notional": draft.get("estimated_notional"),
-            "submitted_at":       str(now_dt),
-        }
-
     except Exception as _e:
-        return {
-            "ok":    False,
-            "error": "submit_error",
-            "detail": str(_e)[:300],
-        }
+        try:
+            _db.session.rollback()
+        except Exception:
+            pass
+        return {"ok": False, "error": "db_error", "detail": str(_e)}
+
+    return {
+        "ok":                True,
+        "order_id":          row.id,
+        "client_order_id":   client_order_id,
+        "symbol":            symbol,
+        "side":              side,
+        "order_type":        "LIMIT",
+        "time_in_force":     "GTC",
+        "price":             price,
+        "quantity":          quantity,
+        "estimated_notional": draft.get("estimated_notional"),
+        "status":            "open",
+        "fill_status":       "unfilled",
+        "source":            "internal_paper",
+        "advisory_note":     "No Binance API. DB-only paper record. No real order placed.",
+    }
 
 
-# ── Query helpers ──────────────────────────────────────────────────────────────
+# ── query helpers ─────────────────────────────────────────────────────────────
 
-def _lm_get_paper_orders(user_id: int, item_id: int | None = None) -> dict:
-    """Return recent paper orders for user, optionally filtered by item."""
-    try:
-        from models import LiveMonitorPaperOrder as _LMPO
-
-        q = _LMPO.query.filter_by(user_id=user_id)
-        if item_id:
-            q = q.filter_by(item_id=item_id)
-        rows = q.order_by(_LMPO.created_at.desc()).limit(50).all()
-
-        orders = []
-        for r in rows:
-            orders.append({
-                "id":              r.id,
-                "item_id":         r.item_id,
-                "symbol":          r.symbol,
-                "side":            r.side,
-                "order_type":      r.order_type,
-                "time_in_force":   r.time_in_force,
-                "quantity":        r.quantity,
-                "price":           r.price,
-                "status":          r.status,
-                "fill_status":     r.fill_status,
-                "filled_qty":      r.filled_qty,
-                "avg_fill_price":  r.avg_fill_price,
-                "client_order_id": r.client_order_id,
-                "source":          r.source,
-                "created_at":      str(r.created_at) if r.created_at else None,
-                "submitted_at":    str(r.submitted_at) if r.submitted_at else None,
-            })
-        return {"ok": True, "orders": orders, "count": len(orders)}
-    except Exception as _e:
-        return {"ok": False, "error": str(_e)[:200], "orders": []}
+def _lm_get_paper_orders(user_id, item_id=None, limit=50) -> list:
+    """Return recent paper orders as a list of dicts."""
+    from models import LiveMonitorPaperOrder as _PO
+    q = _PO.query.filter_by(user_id=user_id)
+    if item_id is not None:
+        q = q.filter_by(item_id=item_id)
+    rows = q.order_by(_PO.created_at.desc()).limit(limit).all()
+    out = []
+    for r in rows:
+        out.append({
+            "id":               r.id,
+            "item_id":          r.item_id,
+            "symbol":           r.symbol,
+            "side":             r.side,
+            "order_type":       r.order_type,
+            "time_in_force":    r.time_in_force,
+            "quantity":         r.quantity,
+            "price":            r.price,
+            "status":           r.status,
+            "fill_status":      r.fill_status,
+            "client_order_id":  r.client_order_id,
+            "source":           r.source,
+            "estimated_notional": float(r.estimated_notional) if r.estimated_notional else None,
+            "created_at":       r.created_at.isoformat() if r.created_at else None,
+        })
+    return out
 
 
-def _lm_get_paper_positions(user_id: int, item_id: int | None = None) -> dict:
-    """Return open paper positions for user, optionally filtered by item."""
-    try:
-        from models import LiveMonitorPaperPosition as _LMPP
-
-        q = _LMPP.query.filter_by(user_id=user_id, status="open")
-        if item_id:
-            q = q.filter_by(item_id=item_id)
-        rows = q.order_by(_LMPP.opened_at.desc()).limit(50).all()
-
-        positions = []
-        for r in rows:
-            positions.append({
-                "id":             r.id,
-                "item_id":        r.item_id,
-                "symbol":         r.symbol,
-                "side":           r.side,
-                "quantity":       r.quantity,
-                "entry_price":    r.entry_price,
-                "mark_price":     r.mark_price,
-                "unrealized_pnl": r.unrealized_pnl,
-                "realized_pnl":   r.realized_pnl,
-                "status":         r.status,
-                "opened_at":      str(r.opened_at) if r.opened_at else None,
-            })
-        return {"ok": True, "positions": positions, "count": len(positions)}
-    except Exception as _e:
-        return {"ok": False, "error": str(_e)[:200], "positions": []}
+def _lm_get_paper_positions(user_id, item_id=None) -> list:
+    """Return open paper positions as a list of dicts (fill engine: Phase 11.7C)."""
+    from models import LiveMonitorPaperPosition as _PP
+    q = _PP.query.filter_by(user_id=user_id)
+    if item_id is not None:
+        q = q.filter_by(item_id=item_id)
+    rows = q.order_by(_PP.created_at.desc()).all()
+    out = []
+    for r in rows:
+        out.append({
+            "id":           r.id,
+            "item_id":      r.item_id,
+            "symbol":       r.symbol,
+            "side":         r.side,
+            "size":         r.size,
+            "entry_price":  r.entry_price,
+            "status":       r.status,
+            "realized_pnl": float(r.realized_pnl) if r.realized_pnl else 0.0,
+            "created_at":   r.created_at.isoformat() if r.created_at else None,
+        })
+    return out

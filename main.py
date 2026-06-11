@@ -20025,16 +20025,8 @@ def _lm_build_trade_proposal_context(row, snapshot=None) -> dict:
         ))(snap.get("latest_ai_execution_context")),
         "automation_policy": (lambda: _lm_build_automation_policy(row, snap))(),
         "execution_simulation": (lambda: _lm_build_execution_simulation(row, snap))(),
-        # Phase 11.7B: internal paper trading context (read from snapshot — no DB call)
-        "paper_trading": {
-            "execution_mode":   "internal_paper",
-            "account_summary":  snap.get("latest_paper_account_summary"),
-            "order_draft":      snap.get("latest_paper_order_draft"),
-            "advisory_note": (
-                "Internal paper trading is the primary strategy-testing mode. "
-                "Execution mode is internal_paper. No live or testnet exchange orders."
-            ),
-        },
+        "paper_trading": (lambda: _lm_get_paper_account_summary(row.user_id))()
+            if getattr(row, "user_id", None) else None,
     }
 
 
@@ -21091,17 +21083,8 @@ def _lm_build_ai_context(item) -> dict:
         ))(snap.get("latest_ai_execution_context")),
         "automation_policy": (lambda: _lm_build_automation_policy(item, snap))(),
         "execution_simulation": (lambda: _lm_build_execution_simulation(item, snap))(),
-        # Phase 11.7B: internal paper trading context (read from snapshot — no DB call here)
-        "paper_trading": {
-            "execution_mode":       "internal_paper",
-            "account_summary":      snap.get("latest_paper_account_summary"),
-            "order_draft":          snap.get("latest_paper_order_draft"),
-            "advisory_note": (
-                "Internal paper trading is the primary strategy-testing mode. "
-                "All paper orders are DB-only simulations. "
-                "No exchange execution. No real or testnet orders exist in this phase."
-            ),
-        },
+        "paper_trading": (lambda: _lm_get_paper_account_summary(item.user_id))()
+            if getattr(item, "user_id", None) else None,
     }
 
 
@@ -24265,6 +24248,14 @@ from live_monitor import (
     _lm_bt_place_limit_order_testnet,
     _lm_build_testnet_order_draft,
     _lm_validate_order_quantity,
+    _lm_get_or_create_paper_account,
+    _lm_build_paper_order_draft,
+    _lm_validate_paper_order_quantity,
+    _lm_validate_paper_order_draft,
+    _lm_submit_paper_order,
+    _lm_get_paper_account_summary,
+    _lm_get_paper_orders,
+    _lm_get_paper_positions,
 )
 
 # ── Phase 10.9I: Auto-refresh scheduler ─────────────────────────────────────
@@ -27946,19 +27937,17 @@ def api_lm_testnet_order_submit(item_id):
     return jsonify(safe_response), status_code
 
 
-# ── Phase 11.7B: Internal Paper Trading Endpoints ─────────────────────────────
-# NO exchange calls. DB-only. Manual submit only. No automation.
+# ── Phase 11.7B: Paper Trading Endpoints ──────────────────────────────────────
 
 @app.route("/api/live-monitor/paper/account", methods=["GET"])
 @login_required
 def api_lm_paper_account():
-    """Phase 11.7B: Return (or create) the paper account for the current user."""
+    """Phase 11.7B: Return the current user's paper trading account summary."""
     uid, _ = _current_user_id_and_user()
     if not uid:
         return jsonify({"error": "no_user"}), 401
-    from live_monitor.paper_trading import _lm_get_paper_account_summary as _lm_gpas
-    summary = _lm_gpas(uid)
-    return jsonify(summary), (200 if summary.get("ok") else 500)
+    summary = _lm_get_paper_account_summary(uid)
+    return jsonify({"ok": True, "account": summary})
 
 
 @app.route("/api/live-monitor/items/<int:item_id>/paper-order/draft", methods=["GET"])
@@ -27968,51 +27957,53 @@ def api_lm_paper_order_draft(item_id):
     uid, _ = _current_user_id_and_user()
     if not uid:
         return jsonify({"error": "no_user"}), 401
-    from models import db as _db117bp, LiveMonitorItem as _LMI117bp
-    row = _LMI117bp.query.filter_by(id=item_id, user_id=uid).first()
+    from models import db as _db117pb, LiveMonitorItem as _LMI117pb
+    row = _LMI117pb.query.filter_by(id=item_id, user_id=uid).first()
     if not row:
         return jsonify({"error": "item_not_found"}), 404
     snap = _json_loads_safe(row.snapshot_json, {})
     quantity_str = request.args.get("quantity") or None
-    from live_monitor.paper_trading import _lm_build_paper_order_draft as _lm_bpod
-    draft = _lm_bpod(row, snap, quantity_str)
+    draft = _lm_build_paper_order_draft(row, snap, quantity_str)
     if draft.get("ok"):
         try:
             snap2 = _json_loads_safe(row.snapshot_json, {})
             snap2["latest_paper_order_draft"] = {
                 k: v for k, v in draft.items()
-                if k not in ("qty_validation",)
+                if k not in ("execution_intent_json", "execution_simulation_json")
             }
             row.snapshot_json = _json_dumps_safe(snap2)
-            _db117bp.session.commit()
+            _db117pb.session.commit()
         except Exception:
             pass
-    return jsonify({"ok": draft.get("ok", False), "draft": draft, "symbol": row.symbol})
+    return jsonify({
+        "ok":    draft.get("ok", False),
+        "draft": draft,
+        "symbol": row.symbol,
+    })
 
 
 @app.route("/api/live-monitor/items/<int:item_id>/paper-order/submit", methods=["POST"])
 @login_required
 def api_lm_paper_order_submit(item_id):
-    """Phase 11.7B: Manual paper order submit gate.
+    """Phase 11.7B: Manual submit — create a paper LIMIT entry order (DB-only).
 
     SAFETY GATES:
     1. Item ownership
-    2. Quantity provided
-    3. Draft passes validation (symbol, side, price, qty > 0)
-
-    NO exchange calls. NO Binance API. DB-only. Manual submit only.
+    2. draft.paper_ready == True
+    3. Quantity provided and valid
+    4. No exchange calls — DB-only. No Binance API.
     """
     uid, _ = _current_user_id_and_user()
     if not uid:
         return jsonify({"error": "no_user"}), 401
 
     from models import (
-        db as _db117bs,
-        LiveMonitorItem as _LMI117bs,
-        LiveMonitorEvent as _LME117b,
+        db as _db117ps,
+        LiveMonitorItem as _LMI117ps,
+        LiveMonitorEvent as _LME117ps,
     )
 
-    row = _LMI117bs.query.filter_by(id=item_id, user_id=uid).first()
+    row = _LMI117ps.query.filter_by(id=item_id, user_id=uid).first()
     if not row:
         return jsonify({"error": "item_not_found"}), 404
 
@@ -28023,6 +28014,7 @@ def api_lm_paper_order_submit(item_id):
         pass
 
     quantity_str = str(body.get("quantity", "") or "").strip() or None
+
     if not quantity_str:
         return jsonify({
             "ok": False,
@@ -28030,22 +28022,14 @@ def api_lm_paper_order_submit(item_id):
             "detail": "Provide 'quantity' in the request body.",
         }), 422
 
-    from live_monitor.paper_trading import _lm_submit_paper_order as _lm_spo
-    result = _lm_spo(uid, row, quantity_str)
+    result = _lm_submit_paper_order(uid, row, quantity_str)
 
-    if not result.get("ok"):
-        return jsonify(result), 422
-
-    # ── Update snapshot with account summary + last paper draft/result ─────────
-    try:
-        from live_monitor.paper_trading import (
-            _lm_get_paper_account_summary as _lm_gpas2,
-            _lm_build_paper_order_draft as _lm_bpod2,
-        )
-        snap2 = _json_loads_safe(row.snapshot_json, {})
-        snap2["latest_paper_account_summary"] = _lm_gpas2(uid)
-        snap2["latest_paper_order_draft"] = {
-            "last_submitted": {
+    if result.get("ok"):
+        # Update snapshot
+        try:
+            snap2 = _json_loads_safe(row.snapshot_json, {})
+            snap2["latest_paper_order_result"] = {
+                "ok":              True,
                 "order_id":        result.get("order_id"),
                 "client_order_id": result.get("client_order_id"),
                 "symbol":          result.get("symbol"),
@@ -28053,84 +28037,66 @@ def api_lm_paper_order_submit(item_id):
                 "quantity":        result.get("quantity"),
                 "price":           result.get("price"),
                 "status":          result.get("status"),
-                "fill_status":     result.get("fill_status"),
-                "submitted_at":    result.get("submitted_at"),
+                "source":          "internal_paper",
+                "submitted_at":    int(__import__("time").time()),
             }
-        }
-        row.snapshot_json = _json_dumps_safe(snap2)
-        _db117bs.session.commit()
-    except Exception:
-        pass
+            row.snapshot_json = _json_dumps_safe(snap2)
+            _db117ps.session.commit()
+        except Exception:
+            pass
 
-    # ── Timeline event ────────────────────────────────────────────────────────
-    try:
-        _lme_payload = {
-            "order_id":        result.get("order_id"),
-            "client_order_id": result.get("client_order_id"),
-            "symbol":          result.get("symbol"),
-            "side":            result.get("side"),
-            "quantity":        result.get("quantity"),
-            "price":           result.get("price"),
-            "status":          result.get("status"),
-            "fill_status":     result.get("fill_status"),
-            "source":          "internal_paper_manual",
-        }
-        _lme = _LME117b(
-            item_id=item_id,
-            user_id=uid,
-            symbol=result.get("symbol", row.symbol),
-            event_type="paper_order_submitted",
-            event_description=(
-                f"Paper LIMIT {result.get('side')} {result.get('quantity')} "
-                f"{result.get('symbol')} @ {result.get('price')} — "
-                f"status={result.get('status')} id={result.get('order_id')}"
-            ),
-            details_json=_json_dumps_safe(_lme_payload),
-            price_at_event=_pt_float117b(result.get("price")),
-        )
-        _db117bs.session.add(_lme)
-        _db117bs.session.commit()
-    except Exception:
-        pass
+        # Timeline event
+        try:
+            _lme = _LME117ps(
+                item_id           = item_id,
+                user_id           = uid,
+                symbol            = result.get("symbol"),
+                event_type        = "paper_order_submitted",
+                event_description = (
+                    f"Paper LIMIT {result.get('side')} {result.get('quantity')} "
+                    f"{result.get('symbol')} @ {result.get('price')} — "
+                    f"client_id={result.get('client_order_id')} source=internal_paper"
+                ),
+                details_json      = _json_dumps_safe(result),
+                price_at_event    = float(result.get("price") or 0) or None,
+            )
+            _db117ps.session.add(_lme)
+            _db117ps.session.commit()
+        except Exception:
+            pass
 
-    return jsonify(result), 200
-
-
-def _pt_float117b(v):
-    try:
-        return float(v) if v is not None and v != "" else None
-    except (TypeError, ValueError):
-        return None
+    return jsonify(result), (200 if result.get("ok") else 422)
 
 
 @app.route("/api/live-monitor/items/<int:item_id>/paper-orders", methods=["GET"])
 @login_required
 def api_lm_paper_orders(item_id):
-    """Phase 11.7B: List paper orders for an item."""
+    """Phase 11.7B: Return recent paper orders for the given item."""
     uid, _ = _current_user_id_and_user()
     if not uid:
         return jsonify({"error": "no_user"}), 401
-    from models import LiveMonitorItem as _LMI117bo
-    if not _LMI117bo.query.filter_by(id=item_id, user_id=uid).first():
+    from models import LiveMonitorItem as _LMI117po
+    row = _LMI117po.query.filter_by(id=item_id, user_id=uid).first()
+    if not row:
         return jsonify({"error": "item_not_found"}), 404
-    from live_monitor.paper_trading import _lm_get_paper_orders as _lm_gpo
-    result = _lm_gpo(uid, item_id)
-    return jsonify(result), (200 if result.get("ok") else 500)
+    limit = min(int(request.args.get("limit", 50)), 200)
+    orders = _lm_get_paper_orders(uid, item_id=item_id, limit=limit)
+    return jsonify({"ok": True, "orders": orders, "count": len(orders)})
 
 
 @app.route("/api/live-monitor/items/<int:item_id>/paper-positions", methods=["GET"])
 @login_required
 def api_lm_paper_positions(item_id):
-    """Phase 11.7B: List paper positions for an item."""
+    """Phase 11.7B: Return paper positions for the given item (fill engine: 11.7C)."""
     uid, _ = _current_user_id_and_user()
     if not uid:
         return jsonify({"error": "no_user"}), 401
-    from models import LiveMonitorItem as _LMI117bpo
-    if not _LMI117bpo.query.filter_by(id=item_id, user_id=uid).first():
+    from models import LiveMonitorItem as _LMI117pp
+    row = _LMI117pp.query.filter_by(id=item_id, user_id=uid).first()
+    if not row:
         return jsonify({"error": "item_not_found"}), 404
-    from live_monitor.paper_trading import _lm_get_paper_positions as _lm_gpp
-    result = _lm_gpp(uid, item_id)
-    return jsonify(result), (200 if result.get("ok") else 500)
+    positions = _lm_get_paper_positions(uid, item_id=item_id)
+    return jsonify({"ok": True, "positions": positions, "count": len(positions)})
 
 
 @app.route("/api/live-monitor/trades/<trade_uid>/demo-submit", methods=["POST"])
