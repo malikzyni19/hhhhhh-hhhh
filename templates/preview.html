@@ -7053,6 +7053,18 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   /* Initial sweep */
   _cddUpgradeAll(document);
 
+  /* Round 21 hotfix: hoist the tutorial nodes OUT of the scaled `.window`
+     container so position:fixed math is relative to the viewport (not the
+     transformed ancestor). Without this, every `style.left` we set on the
+     card is interpreted in `.window`'s 0.8x-scaled coord space and the
+     card ends up overlapping the highlighted target. */
+  try{
+    ["tutIntro","tutOverlay","tutCardHost"].forEach(function(id){
+      var n = document.getElementById(id);
+      if(n && n.parentNode !== document.body) document.body.appendChild(n);
+    });
+  }catch(_){}
+
   /* ═══════════════════════════════════════════════════════════════════
      TUTORIAL SYSTEM (Round 19 — Tasks 1-4, 6-8)
      ═══════════════════════════════════════════════════════════════════ */
@@ -7233,22 +7245,127 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     return tgt;
   }
   function _tutIsMobile(){ return innerWidth <= 820; }
+  /* Round 21 hotfix: overlap-aware tutorial card placement.
+     The card must never cover the highlighted target rect or, when a
+     custom dropdown is open, its option list. Placement tries right →
+     below → above → left → opposite half, in that order, clamps inside
+     the viewport, and is re-run whenever content or layout changes. */
+  function _tutRectsOverlap(a, b, gap){
+    gap = gap || 0;
+    return !(a.right  + gap <= b.left ||
+             a.left          >= b.right  + gap ||
+             a.bottom + gap <= b.top  ||
+             a.top           >= b.bottom + gap);
+  }
+  function _tutValidRect(r){
+    return r && (r.width > 1 || r.height > 1) &&
+           r.bottom > 0 && r.top < innerHeight &&
+           r.right  > 0 && r.left < innerWidth;
+  }
+  function _tutCollectAvoidRects(){
+    var out = [];
+    if(_tutCurTgt){
+      var tr = _tutCurTgt.getBoundingClientRect();
+      if(_tutValidRect(tr)) out.push(tr);
+    }
+    /* If a custom dropdown is currently open, its option list also
+       counts as an avoid-rect so the card doesn't cover the options. */
+    if(typeof _cddOpenDropdown !== "undefined" && _cddOpenDropdown){
+      var listEl = _cddOpenDropdown.querySelector(".cdd-list");
+      if(listEl && !listEl.hidden){
+        var lr = listEl.getBoundingClientRect();
+        if(_tutValidRect(lr)) out.push(lr);
+      }
+    }
+    return out;
+  }
+  function _tutPlaceAt(card, x, y, cw, ch, minX, minY, maxX, maxY){
+    var clampedX = Math.max(minX, Math.min(maxX - cw, x));
+    var clampedY = Math.max(minY, Math.min(maxY - ch, y));
+    return {
+      x: clampedX, y: clampedY,
+      rect: { left:clampedX, top:clampedY, right:clampedX+cw, bottom:clampedY+ch }
+    };
+  }
   function _tutPositionCard(){
     var card = E("tutCard"); if(!card) return;
+    /* Reset any previous placement so offsetWidth/Height reflect the
+       natural size with the current content (option explanations etc.). */
     card.classList.remove("tut-card-centered","tut-card-bottom");
-    if(!_tutCurTgt || _tutIsMobile()){
-      /* mobile or no target → bottom sheet on mobile, centered on desktop */
-      card.classList.add(_tutIsMobile() ? "tut-card-bottom" : "tut-card-centered");
+    card.style.left = "";
+    card.style.top  = "";
+    card.style.bottom = "";
+    card.style.right  = "";
+    card.style.transform = "";
+
+    var GAP   = 14;
+    var EDGE  = 12;
+    var minX  = EDGE, maxX = innerWidth  - EDGE;
+    var minY  = EDGE, maxY = innerHeight - EDGE;
+    /* Clamp card to fit the viewport even when content grows. */
+    card.style.maxHeight = Math.max(160, innerHeight - EDGE*2) + "px";
+    card.style.overflowY = "auto";
+
+    var cw = Math.min(card.offsetWidth  || 340, maxX - minX);
+    var ch = Math.min(card.offsetHeight || 220, maxY - minY);
+
+    var avoids = _tutCollectAvoidRects();
+    /* No real target → just center the card. */
+    if(!avoids.length){
+      var p = _tutPlaceAt(card, (innerWidth-cw)/2, (innerHeight-ch)/2, cw, ch, minX, minY, maxX, maxY);
+      card.style.left = p.x + "px"; card.style.top = p.y + "px";
       return;
     }
-    var r = _tutCurTgt.getBoundingClientRect();
-    var cw = card.offsetWidth || 360, ch = card.offsetHeight || 220;
-    var cx = r.left + r.width + 14;
-    var cy = Math.max(12, r.top);
-    if(cx + cw > innerWidth - 12){ cx = r.left; cy = r.bottom + 14; }
-    cx = Math.max(12, Math.min(innerWidth - cw - 12, cx));
-    cy = Math.max(12, Math.min(innerHeight - ch - 12, cy));
-    card.style.left = cx + "px"; card.style.top = cy + "px"; card.style.transform = "";
+
+    /* Union the avoid rects for placement decisions but keep the
+       individual rects for overlap checks. */
+    var u = { left:avoids[0].left, right:avoids[0].right, top:avoids[0].top, bottom:avoids[0].bottom };
+    for(var i=1;i<avoids.length;i++){
+      u.left   = Math.min(u.left,   avoids[i].left);
+      u.right  = Math.max(u.right,  avoids[i].right);
+      u.top    = Math.min(u.top,    avoids[i].top);
+      u.bottom = Math.max(u.bottom, avoids[i].bottom);
+    }
+
+    /* Candidates in priority order. Each one has an "anchor" position
+       that we then clamp inside the viewport. Overlap is checked against
+       EVERY avoid rect (target + open dropdown list). */
+    var candidates = [
+      { name:"right",  x: u.right  + GAP,        y: u.top },
+      { name:"below",  x: u.left,                y: u.bottom + GAP },
+      { name:"above",  x: u.left,                y: u.top    - GAP - ch },
+      { name:"left",   x: u.left   - GAP - cw,   y: u.top },
+      /* Half-aware mobile / narrow fallback. */
+      { name:"halfOpp", x: (innerWidth - cw)/2,
+                       y: ((u.top + u.bottom)/2 > innerHeight/2)
+                            ? minY
+                            : (innerHeight - ch - EDGE) }
+    ];
+
+    for(var j=0;j<candidates.length;j++){
+      var c = candidates[j];
+      var p2 = _tutPlaceAt(card, c.x, c.y, cw, ch, minX, minY, maxX, maxY);
+      var overlapsAny = false;
+      for(var k=0;k<avoids.length;k++){
+        if(_tutRectsOverlap(p2.rect, avoids[k], 4)){ overlapsAny = true; break; }
+      }
+      if(!overlapsAny){
+        card.style.left = p2.x + "px"; card.style.top = p2.y + "px";
+        return;
+      }
+    }
+
+    /* Last-resort: place in the half OPPOSITE to the target's mid-point
+       even if it slightly overlaps a corner — at least the target stays
+       mostly visible. */
+    var oppY = ((u.top + u.bottom)/2 > innerHeight/2) ? minY : (innerHeight - ch - EDGE);
+    var p3 = _tutPlaceAt(card, (innerWidth-cw)/2, oppY, cw, ch, minX, minY, maxX, maxY);
+    card.style.left = p3.x + "px"; card.style.top = p3.y + "px";
+  }
+  /* Re-run placement after layout-affecting changes, on the next frame
+     so the new content has settled. */
+  function _tutReposition(){
+    requestAnimationFrame(function(){ _tutPositionCard(); });
   }
   function _tutSetNextDisabled(disabled){
     var n = E("tutNext"); if(n) n.disabled = !!disabled;
@@ -7304,11 +7421,20 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         _tutDdSeen = false;
         _tutShowHint("Open the dropdown to see what each option does.");
         _tutSetNextDisabled(true);
+        /* Reposition the card when the dropdown opens — the open list
+           becomes a new avoid-rect, and we want the card to move out of
+           the way of the options BEFORE they're explained. */
+        var onListOpen = function(){ _tutReposition(); };
+        tgt.addEventListener("cdd-open", onListOpen);
         var onceOpen = function(){
           _tutDdSeen = true;
           _tutShowHint("");
           _tutShowOpts(step.options||[]);
           _tutSetNextDisabled(false);
+          /* Card height just grew — re-place so it still clears target
+             and option list. */
+          _tutReposition();
+          tgt.removeEventListener("cdd-open", onListOpen);
           tgt.removeEventListener("cdd-open", onceOpen);
           tgt.removeEventListener("click", onceOpen);
         };
