@@ -32725,6 +32725,12 @@ _BT_MAX_EVENTS         = 500  # response cap; replay_summary always uses all
 _BT_PIVOT_LEN          = 3    # internal pivot window — matches scanner default
 
 
+def _bt_rr_key(r) -> str:
+    """Normalise an R-multiple to a clean string key: 1.0 → '1', 1.5 → '1.5'."""
+    f = float(r)
+    return str(int(f)) if f == int(f) else str(f)
+
+
 def _bt_clean_symbol(raw: str) -> str:
     s = raw.strip().upper()
     if not s.endswith("USDT"):
@@ -33201,8 +33207,8 @@ def _bt_simulate_first_touch_outcome(event: dict, candles: List[Dict],
         "risk_amount":         None,
         "rr_values":           rr_values,
         "tp_prices":           {},
-        "hit_rr":              {str(r): False for r in rr_values},
-        "candles_to_rr":       {str(r): None  for r in rr_values},
+        "hit_rr":              {_bt_rr_key(r): False for r in rr_values},
+        "candles_to_rr":       {_bt_rr_key(r): None  for r in rr_values},
         "first_tp_rr":         None,
         "first_tp_bar":        None,
         "first_tp_time":       None,
@@ -33237,16 +33243,16 @@ def _bt_simulate_first_touch_outcome(event: dict, candles: List[Dict],
     # ── Targets ───────────────────────────────────────────────────────────────
     if ob_type == "bullish":
         stop_boundary = zone_low
-        tp_prices = {str(rv): round(entry_price + risk_amount * rv, 8)
+        tp_prices = {_bt_rr_key(rv): round(entry_price + risk_amount * rv, 8)
                      for rv in rr_values}
     else:  # bearish — short from zone_high, targets go down
         stop_boundary = zone_high
-        tp_prices = {str(rv): round(entry_price - risk_amount * rv, 8)
+        tp_prices = {_bt_rr_key(rv): round(entry_price - risk_amount * rv, 8)
                      for rv in rr_values}
 
     sorted_rr     = sorted(rr_values)  # ascending so smallest R records first_tp first
-    hit_rr        = {str(rv): False for rv in rr_values}
-    candles_to_rr = {str(rv): None  for rv in rr_values}
+    hit_rr        = {_bt_rr_key(rv): False for rv in rr_values}
+    candles_to_rr = {_bt_rr_key(rv): None  for rv in rr_values}
     first_tp_rr   = None
     first_tp_bar  = None
     first_tp_time = None
@@ -33274,7 +33280,7 @@ def _bt_simulate_first_touch_outcome(event: dict, candles: List[Dict],
 
         # ── TP checks (wick-based, ascending R so smallest hits first_tp) ─────
         for rv in sorted_rr:
-            rk = str(rv)
+            rk = _bt_rr_key(rv)
             if hit_rr[rk]:
                 continue
             tp_p = tp_prices[rk]
@@ -33369,7 +33375,7 @@ def _bt_apply_outcomes_to_events(events: List[Dict], candles: List[Dict],
 
     hit_rate_by_rr = {}
     for rv in rr_values:
-        rk   = str(rv)
+        rk   = _bt_rr_key(rv)
         hits = sum(1 for e in eligible if e["simulation"]["hit_rr"].get(rk, False))
         hit_rate_by_rr[rk] = {
             "hits":     hits,
