@@ -11435,7 +11435,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({symbol:pair,timeframe:tf,candle_count:candles,
         exchange:"binance",market:"perpetual",rr_values:rr,
-        entry_rule:"zone_high",stop_rule:"close_beyond_zone",include_parity:false})
+        entry_rule:"zone_high",stop_rule:"close_beyond_zone",include_parity:true})
+      // UI requests parity so Parity KPI can be populated; backend parity is diagnostic only.
     })
     .then(function(r){return r.json();})
     .then(function(data){
@@ -11508,6 +11509,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         _btMakePager(events.length,50,_btState.tblPage,"btEvtTbody",events)+
       '</div>';
 
+    // Bind pagination immediately — must not depend on Chart.js being available.
+    _btBindPagerEvents(events.length,50,"btEvtTbody",events);
     setTimeout(function(){ _btBuildCharts(data); },0);
   }
 
@@ -11688,7 +11691,6 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       });
     }
 
-    _btBindPagerEvents(events.length,50,"btEvtTbody",events);
   }
 
   function _btUpdateLastRun(pair,tf,candles){
