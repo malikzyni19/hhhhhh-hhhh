@@ -787,7 +787,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 .lm-manual-msg{font-size:11.5px;margin-top:6px;min-height:14px;color:var(--text-3)}
 .lm-manual-msg.ok{color:var(--green-2,#22d3ee)}
 .lm-manual-msg.err{color:var(--red-2,#ef4444)}
-.lm-body{display:flex;flex:1;min-height:0;overflow:hidden;height:0}
+.lm-body{display:grid;grid-template-columns:290px 1fr;flex:1;min-height:0;overflow:hidden;height:0}
 #lmDhWrap{margin-top:12px}
 .lm-left{border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0;background:var(--bg-panel)}
 .lm-left-head{display:flex;align-items:center;justify-content:space-between;padding:10px 12px 8px;border-bottom:1px solid var(--border);flex-shrink:0}
@@ -944,10 +944,9 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 .lm-stab.active{color:var(--accent);border-bottom-color:var(--accent)}
 .lm-stab-pane{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}
 .lm-stab-pane[hidden]{display:none!important}
-/* Q2: Workspace architecture */
-.lm-workspace{flex:1;min-height:0;overflow:hidden;display:flex}
-.lm-workspace[hidden]{display:none!important}
-#lmWs-setups{display:grid!important;grid-template-columns:290px 1fr}
+/* Q2 HOTFIX: Workspace pane architecture — panes swap inside .lm-right */
+.lm-ws-pane{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.lm-ws-pane[hidden]{display:none!important}
 .lm-ws-page{flex:1;overflow-y:auto;padding:14px 16px;min-width:0;box-sizing:border-box}
 .lm-ws-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--border);flex-wrap:wrap}
 .lm-ws-htitle{font-size:13px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:8px}
@@ -4545,12 +4544,14 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   }
 
   /* Q2: Workspace architecture — switch entire workspace area */
+  /* Q2 HOTFIX: workspace pane switching — .lm-left (setup list) is permanent;
+     only the panes inside .lm-right swap. No ID-level display rule → [hidden] wins cleanly. */
   var _lmActiveWorkspace='setups';
   var _LM_WS_IDS=['setups','terminal','riskguard','journal'];
   function _lmSwitchPane(ws){
-    // Show target workspace, hide all others
+    // Show target workspace pane, hide others (inside .lm-right)
     _LM_WS_IDS.forEach(function(w){
-      var el=document.getElementById('lmWs-'+w);
+      var el=document.getElementById('lmWsPane-'+w);
       if(el) el.hidden=(w!==ws);
     });
     // Sync sidebar active state
@@ -4785,347 +4786,355 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         '</div>'+
         '<div class="lm-body">'+
 
-          /* ── WORKSPACE: Live Setups (2-col: card list + detail) ── */
-          '<div id="lmWs-setups" class="lm-workspace">'+
-            '<div class="lm-left">'+
-              '<div class="lm-stab-pane" id="lmPane-setups">'+
-                '<div class="lm-ds-row">'+
-                  '<span class="lm-ds-lbl">DATA SOURCE</span>'+
-                  '<select class="lm-ds-sel" id="lmDataSrc">'+
-                    '<option value="binance">Binance</option>'+
-                    '<option value="bybit">Bybit</option>'+
-                    '<option value="okx">OKX</option>'+
-                    '<option value="mexc">MEXC</option>'+
-                    '<option value="aggregated">Aggregated</option>'+
-                  '</select>'+
-                  '<span class="lm-ds-note" title="Analysis data only. Parent setup OB/FIB zones, SL, TP and invalidation levels are never changed by analysis source selection.">&#9432; Analysis only — setup levels unchanged</span>'+
-                '</div>'+
-                '<div class="lm-left-head"><span>ACTIVE SETUPS</span><span id="lmCount" style="font-size:11px;color:var(--accent);font-weight:700;font-family:var(--mono)">0</span></div>'+
-                '<div class="lm-cards" id="lmCards"></div>'+
+          /* ── Permanent setup list (shared across all workspaces) ── */
+          '<div class="lm-left">'+
+            '<div class="lm-stab-pane" id="lmPane-setups">'+
+              '<div class="lm-ds-row">'+
+                '<span class="lm-ds-lbl">DATA SOURCE</span>'+
+                '<select class="lm-ds-sel" id="lmDataSrc">'+
+                  '<option value="binance">Binance</option>'+
+                  '<option value="bybit">Bybit</option>'+
+                  '<option value="okx">OKX</option>'+
+                  '<option value="mexc">MEXC</option>'+
+                  '<option value="aggregated">Aggregated</option>'+
+                '</select>'+
+                '<span class="lm-ds-note" title="Analysis data only. Parent setup OB/FIB zones, SL, TP and invalidation levels are never changed by analysis source selection.">&#9432; Analysis only — setup levels unchanged</span>'+
               '</div>'+
+              '<div class="lm-left-head"><span>ACTIVE SETUPS</span><span id="lmCount" style="font-size:11px;color:var(--accent);font-weight:700;font-family:var(--mono)">0</span></div>'+
+              '<div class="lm-cards" id="lmCards"></div>'+
             '</div>'+
-            '<div class="lm-right"><div class="lm-right-scroll" id="lmRight"></div></div>'+
           '</div>'+
 
-          /* ── WORKSPACE: Trading Terminal (full-width) ── */
-          '<div id="lmWs-terminal" class="lm-workspace" hidden>'+
-            '<div class="lm-ws-page">'+
-              '<div class="lm-ws-header">'+
-                '<div class="lm-ws-htitle">'+
-                  '<svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>'+
-                  'Trading Terminal'+
-                '</div>'+
-                '<div id="lmTermActiveItem" style="display:flex;align-items:center;gap:8px">'+
-                  '<span style="font-size:10px;color:var(--text-3)">No setup selected — </span>'+
-                  '<button class="btn lm-sm-btn" onclick="_lmSwitchPane(\'setups\')" style="font-size:9px;padding:2px 8px">&#8592; Go to Live Setups</button>'+
-                '</div>'+
-              '</div>'+
-              '<div class="lm-ws-grid-2">'+
+          /* ── Workspace panel — only this region changes by section ── */
+          '<div class="lm-right">'+
 
-                /* Left col — Connector, Exec Mode, Order Draft */
-                '<div>'+
-                  '<div class="lm-ws-section" id="lmBtConnectorSection">'+
-                    '<div class="lm-ws-sh">Binance Testnet Connector</div>'+
-                    '<div id="lmBtStatusGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;font-size:10px;color:var(--text-3)">'+
-                      '<span>Testnet locked:</span><span id="lmBtTestnetLocked" style="color:var(--green)">—</span>'+
-                      '<span>Credentials:</span><span id="lmBtCreds" style="color:var(--text-3)">—</span>'+
-                      '<span>Ping:</span><span id="lmBtPing" style="color:var(--text-3)">—</span>'+
-                      '<span>Server time:</span><span id="lmBtServerTime" style="color:var(--text-3)">—</span>'+
-                      '<span>Account:</span><span id="lmBtAccount" style="color:var(--text-3)">—</span>'+
-                      '<span>Balance (USDT):</span><span id="lmBtBalance" style="color:var(--text-3)">—</span>'+
-                      '<span>Positions:</span><span id="lmBtPositions" style="color:var(--text-3)">—</span>'+
-                      '<span>Avail. USDT:</span><span id="lmBtAvailUsdt" style="color:var(--accent);font-weight:700">—</span>'+
-                      '<span>Last checked:</span><span id="lmBtCheckedAt" style="color:var(--text-3)">—</span>'+
-                      '<span>Orders enabled:</span><span style="color:var(--red-2,#f87171);font-weight:700">FALSE</span>'+
-                      '<span>Execution:</span><span style="color:var(--red-2,#f87171);font-weight:700">FALSE</span>'+
-                      '<span>Mode:</span><span style="color:var(--yellow,#facc15);font-weight:700">READ ONLY</span>'+
-                    '</div>'+
-                    '<div id="lmBtError" style="display:none;font-size:10px;color:var(--red);padding:3px 6px;background:rgba(239,68,68,.07);border-radius:4px;margin:6px 0"></div>'+
-                    '<div style="display:flex;gap:6px;margin-top:8px">'+
-                      '<button class="btn lm-sm-btn" id="lmBtCheckBtn" style="flex:1;justify-content:center" onclick="window._lmBtCheck()">Check Connection</button>'+
-                      '<button class="btn lm-sm-btn" id="lmBtBalanceBtn" style="flex:1;justify-content:center" onclick="window._lmBtRefreshBalance()">Refresh Balance</button>'+
-                      '<button class="btn lm-sm-btn" id="lmBtPositionsBtn" style="flex:1;justify-content:center" onclick="window._lmBtRefreshPositions()">Refresh Positions</button>'+
-                    '</div>'+
-                    '<div style="font-size:9px;color:var(--text-3);padding:5px 0 0;line-height:1.4">'+
-                      '<b style="color:var(--yellow)">Phase 11.5</b> — Read-only. Testnet only (demo-fapi.binance.com). No execution.'+
-                    '</div>'+
+            /* PANE: Live Setups — setup detail rendered by _lmRenderRight into #lmRight */
+            '<div id="lmWsPane-setups" class="lm-ws-pane">'+
+              '<div class="lm-right-scroll" id="lmRight"></div>'+
+            '</div>'+
+
+            /* PANE: Trading Terminal */
+            '<div id="lmWsPane-terminal" class="lm-ws-pane" hidden>'+
+              '<div class="lm-ws-page">'+
+                '<div class="lm-ws-header">'+
+                  '<div class="lm-ws-htitle">'+
+                    '<svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>'+
+                    'Trading Terminal'+
                   '</div>'+
-
-                  '<div class="lm-ws-section">'+
-                    '<div class="lm-ws-sh">Execution Mode</div>'+
-                    '<select style="width:100%;background:var(--bg-card-2);border:1px solid var(--border);color:var(--text-3);border-radius:6px;padding:6px 8px;font-size:11px;outline:none;cursor:not-allowed;margin-bottom:8px" disabled>'+
-                      '<option>Confirmation (Pending)</option>'+
-                      '<option>OB Touch</option>'+
-                      '<option>Deep OB</option>'+
-                      '<option>Manual Approval</option>'+
-                    '</select>'+
-                    '<div style="font-size:10px;color:var(--text-3);padding:6px 8px;background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.2);border-radius:5px;line-height:1.4">'+
-                      '<b style="color:var(--yellow)">Demo Only</b> — Execution disabled. Enable via DEMO_TRADING_ENABLED env flag.'+
-                    '</div>'+
-                  '</div>'+
-
-                  '<div class="lm-ws-section" style="background:rgba(251,191,36,.04);border-color:rgba(251,191,36,.2)">'+
-                    '<div class="lm-ws-sh" style="color:var(--yellow,#facc15)">Testnet Order Draft <span style="font-size:9px;opacity:.7;font-weight:400">(Phase 11.7A)</span></div>'+
-                    '<table style="width:100%;font-size:10px;border-collapse:collapse">'+
-                      '<tr><td style="color:var(--text-3);padding:2px 0;width:44%">Symbol</td><td id="lmTod-symbol" style="color:var(--text-1)">—</td></tr>'+
-                      '<tr><td style="color:var(--text-3);padding:2px 0">Side</td><td id="lmTod-side" style="color:var(--text-1)">—</td></tr>'+
-                      '<tr><td style="color:var(--text-3);padding:2px 0">Type</td><td style="color:var(--text-1)">LIMIT / GTC</td></tr>'+
-                      '<tr><td style="color:var(--text-3);padding:2px 0">Entry Price</td><td id="lmTod-price" style="color:var(--text-1)">—</td></tr>'+
-                      '<tr><td style="color:var(--text-3);padding:2px 0">Sim Ready</td><td id="lmTod-simReady" style="color:var(--text-1)">—</td></tr>'+
-                      '<tr><td style="color:var(--text-3);padding:2px 0">Connector</td><td id="lmTod-connector" style="color:var(--text-1)">—</td></tr>'+
-                      '<tr><td style="color:var(--text-3);padding:2px 0">Order Env</td><td id="lmTod-orderEnv" style="color:var(--text-1)">—</td></tr>'+
-                      '<tr><td style="color:var(--text-3);padding:2px 0">Filter OK</td><td id="lmTod-filterOk" style="color:var(--text-1)">—</td></tr>'+
-                      '<tr><td style="color:var(--text-3);padding:2px 0">Est. Notional</td><td id="lmTod-notional" style="color:var(--text-1)">—</td></tr>'+
-                    '</table>'+
-                    '<div style="margin-top:8px;display:flex;gap:4px;align-items:center">'+
-                      '<label style="font-size:9px;color:var(--text-3);white-space:nowrap">Qty:</label>'+
-                      '<input id="lmTodQtyInput" type="text" placeholder="e.g. 0.001" '+
-                        'style="flex:1;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:4px;padding:4px 8px;font-size:10px;color:var(--text-1);outline:none" '+
-                        'oninput="window._lmTodRefreshDraft()" />'+
-                      '<button class="btn lm-sm-btn" id="lmTodDraftBtn" style="white-space:nowrap" onclick="window._lmTodRefreshDraft()">Refresh</button>'+
-                    '</div>'+
-                    '<div id="lmTod-qtyErr" style="display:none;font-size:9px;color:#f87171;padding:2px 0"></div>'+
-                    '<div id="lmTod-reasons" style="display:none;font-size:9px;color:var(--yellow);padding:2px 0;line-height:1.4"></div>'+
-                    '<div style="margin-top:8px">'+
-                      '<button class="btn lm-sm-btn" id="lmTodSubmitBtn" disabled '+
-                        'style="width:100%;justify-content:center;background:rgba(16,185,129,.15);border-color:rgba(16,185,129,.4);color:#6ee7b7;cursor:not-allowed;opacity:.5" '+
-                        'onclick="window._lmTodSubmitOrder()">'+
-                        'Submit Testnet Order'+
-                      '</button>'+
-                    '</div>'+
-                    '<div id="lmTod-result" style="display:none;font-size:9px;padding:4px 0;line-height:1.5"></div>'+
-                    '<div style="font-size:9px;color:var(--text-3);padding:4px 0 0;line-height:1.4">'+
-                      '<b style="color:#f87171">Manual submit only.</b> No TP/SL. No automation. Entry order only.'+
-                    '</div>'+
+                  '<div id="lmTermActiveItem" style="display:flex;align-items:center;gap:8px">'+
+                    '<span style="font-size:10px;color:var(--text-3)">No setup selected — </span>'+
+                    '<button class="btn lm-sm-btn" onclick="_lmSwitchPane(\'setups\')" style="font-size:9px;padding:2px 8px">&#8592; Go to Live Setups</button>'+
                   '</div>'+
                 '</div>'+
+                '<div class="lm-ws-grid-2">'+
 
-                /* Right col — Simulator, Pending Orders, Open Positions, Order Status */
-                '<div>'+
-                  '<div class="lm-ws-section" id="lmExecSimSection">'+
-                    '<div class="lm-ws-sh">Execution Simulator</div>'+
-                    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:10px;margin-bottom:8px">'+
-                      '<span style="color:var(--text-3)">Execution status:</span><span style="color:var(--yellow,#facc15);font-weight:700">SIMULATION ONLY</span>'+
-                      '<span style="color:var(--text-3)">Testnet orders:</span><span style="color:var(--red-2,#f87171);font-weight:700">DISABLED</span>'+
-                      '<span style="color:var(--text-3)">Execution:</span><span style="color:var(--red-2,#f87171);font-weight:700">DISABLED</span>'+
-                    '</div>'+
-                    '<div id="lmSimGrid" style="display:none">'+
-                      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:10px;color:var(--text-3);padding:2px 0 6px">'+
-                        '<span>Ready for testnet:</span><span id="lmSimReady" style="font-weight:700">—</span>'+
-                        '<span>Intent valid:</span><span id="lmSimIntent">—</span>'+
-                        '<span>Policy valid:</span><span id="lmSimPolicy">—</span>'+
-                        '<span>Decision valid:</span><span id="lmSimDecision">—</span>'+
-                        '<span>Filter valid:</span><span id="lmSimFilter">—</span>'+
-                        '<span>Data health:</span><span id="lmSimData">—</span>'+
+                  /* Left col — Connector, Exec Mode, Order Draft */
+                  '<div>'+
+                    '<div class="lm-ws-section" id="lmBtConnectorSection">'+
+                      '<div class="lm-ws-sh">Binance Testnet Connector</div>'+
+                      '<div id="lmBtStatusGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;font-size:10px;color:var(--text-3)">'+
+                        '<span>Testnet locked:</span><span id="lmBtTestnetLocked" style="color:var(--green)">—</span>'+
+                        '<span>Credentials:</span><span id="lmBtCreds" style="color:var(--text-3)">—</span>'+
+                        '<span>Ping:</span><span id="lmBtPing" style="color:var(--text-3)">—</span>'+
+                        '<span>Server time:</span><span id="lmBtServerTime" style="color:var(--text-3)">—</span>'+
+                        '<span>Account:</span><span id="lmBtAccount" style="color:var(--text-3)">—</span>'+
+                        '<span>Balance (USDT):</span><span id="lmBtBalance" style="color:var(--text-3)">—</span>'+
+                        '<span>Positions:</span><span id="lmBtPositions" style="color:var(--text-3)">—</span>'+
+                        '<span>Avail. USDT:</span><span id="lmBtAvailUsdt" style="color:var(--accent);font-weight:700">—</span>'+
+                        '<span>Last checked:</span><span id="lmBtCheckedAt" style="color:var(--text-3)">—</span>'+
+                        '<span>Orders enabled:</span><span style="color:var(--red-2,#f87171);font-weight:700">FALSE</span>'+
+                        '<span>Execution:</span><span style="color:var(--red-2,#f87171);font-weight:700">FALSE</span>'+
+                        '<span>Mode:</span><span style="color:var(--yellow,#facc15);font-weight:700">READ ONLY</span>'+
                       '</div>'+
-                      '<div id="lmSimIntentBox" style="display:none;font-size:9.5px;color:var(--text-3);padding:4px 6px;background:var(--bg-2);border-radius:4px;margin-bottom:4px;line-height:1.5"></div>'+
-                      '<div id="lmSimReasons" style="display:none;font-size:9px;color:var(--red-2,#f87171);padding:3px 6px;background:rgba(239,68,68,.07);border-radius:4px;margin-bottom:4px"></div>'+
-                      '<div id="lmSimWarnings" style="display:none;font-size:9px;color:var(--yellow,#facc15);padding:3px 6px;background:rgba(251,191,36,.06);border-radius:4px"></div>'+
+                      '<div id="lmBtError" style="display:none;font-size:10px;color:var(--red);padding:3px 6px;background:rgba(239,68,68,.07);border-radius:4px;margin:6px 0"></div>'+
+                      '<div style="display:flex;gap:6px;margin-top:8px">'+
+                        '<button class="btn lm-sm-btn" id="lmBtCheckBtn" style="flex:1;justify-content:center" onclick="window._lmBtCheck()">Check Connection</button>'+
+                        '<button class="btn lm-sm-btn" id="lmBtBalanceBtn" style="flex:1;justify-content:center" onclick="window._lmBtRefreshBalance()">Refresh Balance</button>'+
+                        '<button class="btn lm-sm-btn" id="lmBtPositionsBtn" style="flex:1;justify-content:center" onclick="window._lmBtRefreshPositions()">Refresh Positions</button>'+
+                      '</div>'+
+                      '<div style="font-size:9px;color:var(--text-3);padding:5px 0 0;line-height:1.4">'+
+                        '<b style="color:var(--yellow)">Phase 11.5</b> — Read-only. Testnet only (demo-fapi.binance.com). No execution.'+
+                      '</div>'+
                     '</div>'+
-                    '<div style="margin-top:8px">'+
-                      '<button class="btn lm-sm-btn" id="lmRunSimBtn" style="width:100%;justify-content:center" onclick="window._lmRunSimulation()">Run Simulation</button>'+
-                    '</div>'+
-                    '<div style="font-size:9px;color:var(--text-3);padding:5px 0 0;line-height:1.4">'+
-                      '<b style="color:var(--yellow)">Phase 11.6</b> — Simulation only. No orders. No execution. No automation.'+
-                    '</div>'+
-                  '</div>'+
 
-                  '<div class="lm-ws-section">'+
-                    '<div class="lm-ws-sh">Pending Orders</div>'+
-                    '<div class="lm-tbl-wrap" style="max-height:160px">'+
-                      '<table class="lm-inner-tbl">'+
-                        '<thead><tr><th>Symbol</th><th>Side</th><th>Type</th><th>Qty</th><th>Price</th><th>Status</th><th>Client ID</th></tr></thead>'+
-                        '<tbody><tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:14px 0">No pending orders</td></tr></tbody>'+
+                    '<div class="lm-ws-section">'+
+                      '<div class="lm-ws-sh">Execution Mode</div>'+
+                      '<select style="width:100%;background:var(--bg-card-2);border:1px solid var(--border);color:var(--text-3);border-radius:6px;padding:6px 8px;font-size:11px;outline:none;cursor:not-allowed;margin-bottom:8px" disabled>'+
+                        '<option>Confirmation (Pending)</option>'+
+                        '<option>OB Touch</option>'+
+                        '<option>Deep OB</option>'+
+                        '<option>Manual Approval</option>'+
+                      '</select>'+
+                      '<div style="font-size:10px;color:var(--text-3);padding:6px 8px;background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.2);border-radius:5px;line-height:1.4">'+
+                        '<b style="color:var(--yellow)">Demo Only</b> — Execution disabled. Enable via DEMO_TRADING_ENABLED env flag.'+
+                      '</div>'+
+                    '</div>'+
+
+                    '<div class="lm-ws-section" style="background:rgba(251,191,36,.04);border-color:rgba(251,191,36,.2)">'+
+                      '<div class="lm-ws-sh" style="color:var(--yellow,#facc15)">Testnet Order Draft <span style="font-size:9px;opacity:.7;font-weight:400">(Phase 11.7A)</span></div>'+
+                      '<table style="width:100%;font-size:10px;border-collapse:collapse">'+
+                        '<tr><td style="color:var(--text-3);padding:2px 0;width:44%">Symbol</td><td id="lmTod-symbol" style="color:var(--text-1)">—</td></tr>'+
+                        '<tr><td style="color:var(--text-3);padding:2px 0">Side</td><td id="lmTod-side" style="color:var(--text-1)">—</td></tr>'+
+                        '<tr><td style="color:var(--text-3);padding:2px 0">Type</td><td style="color:var(--text-1)">LIMIT / GTC</td></tr>'+
+                        '<tr><td style="color:var(--text-3);padding:2px 0">Entry Price</td><td id="lmTod-price" style="color:var(--text-1)">—</td></tr>'+
+                        '<tr><td style="color:var(--text-3);padding:2px 0">Sim Ready</td><td id="lmTod-simReady" style="color:var(--text-1)">—</td></tr>'+
+                        '<tr><td style="color:var(--text-3);padding:2px 0">Connector</td><td id="lmTod-connector" style="color:var(--text-1)">—</td></tr>'+
+                        '<tr><td style="color:var(--text-3);padding:2px 0">Order Env</td><td id="lmTod-orderEnv" style="color:var(--text-1)">—</td></tr>'+
+                        '<tr><td style="color:var(--text-3);padding:2px 0">Filter OK</td><td id="lmTod-filterOk" style="color:var(--text-1)">—</td></tr>'+
+                        '<tr><td style="color:var(--text-3);padding:2px 0">Est. Notional</td><td id="lmTod-notional" style="color:var(--text-1)">—</td></tr>'+
                       '</table>'+
+                      '<div style="margin-top:8px;display:flex;gap:4px;align-items:center">'+
+                        '<label style="font-size:9px;color:var(--text-3);white-space:nowrap">Qty:</label>'+
+                        '<input id="lmTodQtyInput" type="text" placeholder="e.g. 0.001" '+
+                          'style="flex:1;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:4px;padding:4px 8px;font-size:10px;color:var(--text-1);outline:none" '+
+                          'oninput="window._lmTodRefreshDraft()" />'+
+                        '<button class="btn lm-sm-btn" id="lmTodDraftBtn" style="white-space:nowrap" onclick="window._lmTodRefreshDraft()">Refresh</button>'+
+                      '</div>'+
+                      '<div id="lmTod-qtyErr" style="display:none;font-size:9px;color:#f87171;padding:2px 0"></div>'+
+                      '<div id="lmTod-reasons" style="display:none;font-size:9px;color:var(--yellow);padding:2px 0;line-height:1.4"></div>'+
+                      '<div style="margin-top:8px">'+
+                        '<button class="btn lm-sm-btn" id="lmTodSubmitBtn" disabled '+
+                          'style="width:100%;justify-content:center;background:rgba(16,185,129,.15);border-color:rgba(16,185,129,.4);color:#6ee7b7;cursor:not-allowed;opacity:.5" '+
+                          'onclick="window._lmTodSubmitOrder()">'+
+                          'Submit Testnet Order'+
+                        '</button>'+
+                      '</div>'+
+                      '<div id="lmTod-result" style="display:none;font-size:9px;padding:4px 0;line-height:1.5"></div>'+
+                      '<div style="font-size:9px;color:var(--text-3);padding:4px 0 0;line-height:1.4">'+
+                        '<b style="color:#f87171">Manual submit only.</b> No TP/SL. No automation. Entry order only.'+
+                      '</div>'+
                     '</div>'+
                   '</div>'+
 
+                  /* Right col — Simulator, Pending Orders, Open Positions, Order Status */
+                  '<div>'+
+                    '<div class="lm-ws-section" id="lmExecSimSection">'+
+                      '<div class="lm-ws-sh">Execution Simulator</div>'+
+                      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:10px;margin-bottom:8px">'+
+                        '<span style="color:var(--text-3)">Execution status:</span><span style="color:var(--yellow,#facc15);font-weight:700">SIMULATION ONLY</span>'+
+                        '<span style="color:var(--text-3)">Testnet orders:</span><span style="color:var(--red-2,#f87171);font-weight:700">DISABLED</span>'+
+                        '<span style="color:var(--text-3)">Execution:</span><span style="color:var(--red-2,#f87171);font-weight:700">DISABLED</span>'+
+                      '</div>'+
+                      '<div id="lmSimGrid" style="display:none">'+
+                        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:10px;color:var(--text-3);padding:2px 0 6px">'+
+                          '<span>Ready for testnet:</span><span id="lmSimReady" style="font-weight:700">—</span>'+
+                          '<span>Intent valid:</span><span id="lmSimIntent">—</span>'+
+                          '<span>Policy valid:</span><span id="lmSimPolicy">—</span>'+
+                          '<span>Decision valid:</span><span id="lmSimDecision">—</span>'+
+                          '<span>Filter valid:</span><span id="lmSimFilter">—</span>'+
+                          '<span>Data health:</span><span id="lmSimData">—</span>'+
+                        '</div>'+
+                        '<div id="lmSimIntentBox" style="display:none;font-size:9.5px;color:var(--text-3);padding:4px 6px;background:var(--bg-2);border-radius:4px;margin-bottom:4px;line-height:1.5"></div>'+
+                        '<div id="lmSimReasons" style="display:none;font-size:9px;color:var(--red-2,#f87171);padding:3px 6px;background:rgba(239,68,68,.07);border-radius:4px;margin-bottom:4px"></div>'+
+                        '<div id="lmSimWarnings" style="display:none;font-size:9px;color:var(--yellow,#facc15);padding:3px 6px;background:rgba(251,191,36,.06);border-radius:4px"></div>'+
+                      '</div>'+
+                      '<div style="margin-top:8px">'+
+                        '<button class="btn lm-sm-btn" id="lmRunSimBtn" style="width:100%;justify-content:center" onclick="window._lmRunSimulation()">Run Simulation</button>'+
+                      '</div>'+
+                      '<div style="font-size:9px;color:var(--text-3);padding:5px 0 0;line-height:1.4">'+
+                        '<b style="color:var(--yellow)">Phase 11.6</b> — Simulation only. No orders. No execution. No automation.'+
+                      '</div>'+
+                    '</div>'+
+
+                    '<div class="lm-ws-section">'+
+                      '<div class="lm-ws-sh">Pending Orders</div>'+
+                      '<div class="lm-tbl-wrap" style="max-height:160px">'+
+                        '<table class="lm-inner-tbl">'+
+                          '<thead><tr><th>Symbol</th><th>Side</th><th>Type</th><th>Qty</th><th>Price</th><th>Status</th><th>Client ID</th></tr></thead>'+
+                          '<tbody><tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:14px 0">No pending orders</td></tr></tbody>'+
+                        '</table>'+
+                      '</div>'+
+                    '</div>'+
+
+                    '<div class="lm-ws-section">'+
+                      '<div class="lm-ws-sh">Open Positions</div>'+
+                      '<div class="lm-tbl-wrap" style="max-height:160px">'+
+                        '<table class="lm-inner-tbl">'+
+                          '<thead><tr><th>Symbol</th><th>Side</th><th>Size</th><th>Entry</th><th>Mark</th><th>PnL</th><th>Liq. Price</th></tr></thead>'+
+                          '<tbody><tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:14px 0">No open positions</td></tr></tbody>'+
+                        '</table>'+
+                      '</div>'+
+                    '</div>'+
+
+                    '<div class="lm-ws-section">'+
+                      '<div class="lm-ws-sh">Order Status</div>'+
+                      '<div style="font-size:10px;color:var(--text-3);line-height:1.5">'+
+                        'Last submitted testnet order status appears here after Submit Testnet Order.'+
+                      '</div>'+
+                      '<div id="lmTodResultExpanded" style="display:none;font-size:10px;padding:4px 0;line-height:1.6"></div>'+
+                    '</div>'+
+
+                    '<div style="display:flex;gap:8px;margin-top:4px">'+
+                      '<button class="btn" disabled style="flex:1;justify-content:center;opacity:.3;cursor:not-allowed">Buy / Long</button>'+
+                      '<button class="btn" disabled style="flex:1;justify-content:center;opacity:.3;cursor:not-allowed">Sell / Short</button>'+
+                    '</div>'+
+                  '</div>'+
+
+                '</div>'+ /* end lm-ws-grid-2 */
+              '</div>'+ /* end lm-ws-page */
+            '</div>'+ /* end lmWsPane-terminal */
+
+            /* PANE: Risk Guard */
+            '<div id="lmWsPane-riskguard" class="lm-ws-pane" hidden>'+
+              '<div class="lm-ws-page">'+
+                '<div class="lm-ws-header">'+
+                  '<div class="lm-ws-htitle">'+
+                    '<svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>'+
+                    'Risk Guard'+
+                  '</div>'+
+                  '<span style="font-size:10px;color:var(--text-3)">Safety controls &amp; policy enforcement</span>'+
+                '</div>'+
+                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+
+                  '<div class="lm-rg-card">'+
+                    '<div class="lm-rg-card-top"><span class="lm-rg-ico off"></span><span class="lm-rg-label">Trading Status</span><span class="lm-rg-val">DISABLED</span></div>'+
+                    '<div class="lm-rg-note">Demo trading is off. Set DEMO_TRADING_ENABLED=true to enable.</div>'+
+                  '</div>'+
+                  '<div class="lm-rg-card">'+
+                    '<div class="lm-rg-card-top"><span class="lm-rg-ico ok"></span><span class="lm-rg-label">Max Concurrent Trades</span><span class="lm-rg-val">3</span></div>'+
+                    '<div class="lm-rg-note">Hard limit on simultaneous open positions.</div>'+
+                  '</div>'+
+                  '<div class="lm-rg-card">'+
+                    '<div class="lm-rg-card-top"><span class="lm-rg-ico ok"></span><span class="lm-rg-label">Max Loss / Trade</span><span class="lm-rg-val">1.0 %</span></div>'+
+                    '<div class="lm-rg-note">Risk Guard rejects proposals exceeding this threshold.</div>'+
+                  '</div>'+
+                  '<div class="lm-rg-card">'+
+                    '<div class="lm-rg-card-top"><span class="lm-rg-ico ok"></span><span class="lm-rg-label">Max Leverage</span><span class="lm-rg-val">5 ×</span></div>'+
+                    '<div class="lm-rg-note">Leverage cap enforced before any demo submission.</div>'+
+                  '</div>'+
+                  '<div class="lm-rg-card">'+
+                    '<div class="lm-rg-card-top"><span class="lm-rg-ico warn"></span><span class="lm-rg-label">Data Freshness</span><span class="lm-rg-val">UNKNOWN</span></div>'+
+                    '<div class="lm-rg-note">Stale or missing market data will block execution.</div>'+
+                  '</div>'+
+                  '<div class="lm-rg-card">'+
+                    '<div class="lm-rg-card-top"><span class="lm-rg-ico off"></span><span class="lm-rg-label">Last Decision</span><span class="lm-rg-val">—</span></div>'+
+                    '<div class="lm-rg-note">No proposals evaluated yet this session.</div>'+
+                  '</div>'+
+                '</div>'+
+                '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:10px">'+
                   '<div class="lm-ws-section">'+
-                    '<div class="lm-ws-sh">Open Positions</div>'+
-                    '<div class="lm-tbl-wrap" style="max-height:160px">'+
-                      '<table class="lm-inner-tbl">'+
-                        '<thead><tr><th>Symbol</th><th>Side</th><th>Size</th><th>Entry</th><th>Mark</th><th>PnL</th><th>Liq. Price</th></tr></thead>'+
-                        '<tbody><tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:14px 0">No open positions</td></tr></tbody>'+
-                      '</table>'+
+                    '<div class="lm-ws-sh">Exposure Limits</div>'+
+                    '<div style="font-size:10px;color:var(--text-3);line-height:1.7">'+
+                      '<div style="display:flex;justify-content:space-between"><span>Daily exposure cap</span><span style="color:var(--text-2)">—</span></div>'+
+                      '<div style="display:flex;justify-content:space-between"><span>Max portfolio risk</span><span style="color:var(--text-2)">—</span></div>'+
+                      '<div style="display:flex;justify-content:space-between"><span>Correlation limit</span><span style="color:var(--text-2)">—</span></div>'+
                     '</div>'+
                   '</div>'+
-
                   '<div class="lm-ws-section">'+
-                    '<div class="lm-ws-sh">Order Status</div>'+
-                    '<div style="font-size:10px;color:var(--text-3);line-height:1.5">'+
-                      'Last submitted testnet order status appears here after Submit Testnet Order.'+
+                    '<div class="lm-ws-sh">Daily Limits</div>'+
+                    '<div style="font-size:10px;color:var(--text-3);line-height:1.7">'+
+                      '<div style="display:flex;justify-content:space-between"><span>Trades today</span><span style="color:var(--text-2)">0</span></div>'+
+                      '<div style="display:flex;justify-content:space-between"><span>Daily loss limit</span><span style="color:var(--text-2)">—</span></div>'+
+                      '<div style="display:flex;justify-content:space-between"><span>Session P&amp;L</span><span style="color:var(--text-2)">—</span></div>'+
                     '</div>'+
-                    '<div id="lmTodResultExpanded" style="display:none;font-size:10px;padding:4px 0;line-height:1.6"></div>'+
                   '</div>'+
+                  '<div class="lm-ws-section">'+
+                    '<div class="lm-ws-sh">Policy Blocks</div>'+
+                    '<div style="font-size:10px;color:var(--text-3);line-height:1.7">'+
+                      '<div style="display:flex;justify-content:space-between"><span>AI blocks</span><span style="color:var(--text-2)">0</span></div>'+
+                      '<div style="display:flex;justify-content:space-between"><span>Policy blocks</span><span style="color:var(--text-2)">0</span></div>'+
+                      '<div style="display:flex;justify-content:space-between"><span>Setup blocks</span><span style="color:var(--text-2)">0</span></div>'+
+                    '</div>'+
+                  '</div>'+
+                '</div>'+
+                '<div class="lm-ws-section" style="margin-top:10px">'+
+                  '<div class="lm-ws-sh">Risk Events</div>'+
+                  '<div class="lm-tbl-wrap" style="max-height:220px">'+
+                    '<table class="lm-inner-tbl">'+
+                      '<thead><tr><th>Time</th><th>Type</th><th>Symbol</th><th>Reason</th><th>Action</th></tr></thead>'+
+                      '<tbody><tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:18px 0">No risk events this session</td></tr></tbody>'+
+                    '</table>'+
+                  '</div>'+
+                '</div>'+
+              '</div>'+
+            '</div>'+ /* end lmWsPane-riskguard */
 
-                  '<div style="display:flex;gap:8px;margin-top:4px">'+
-                    '<button class="btn" disabled style="flex:1;justify-content:center;opacity:.3;cursor:not-allowed">Buy / Long</button>'+
-                    '<button class="btn" disabled style="flex:1;justify-content:center;opacity:.3;cursor:not-allowed">Sell / Short</button>'+
+            /* PANE: Trade Journal */
+            '<div id="lmWsPane-journal" class="lm-ws-pane" hidden>'+
+              '<div class="lm-ws-page">'+
+                '<div class="lm-ws-header">'+
+                  '<div class="lm-ws-htitle">'+
+                    '<svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>'+
+                    'Trade Journal'+
+                  '</div>'+
+                  '<span style="font-size:10px;color:var(--text-3)">Closed trades, history &amp; performance</span>'+
+                '</div>'+
+                '<div class="lm-jn-cards" style="grid-template-columns:repeat(4,1fr)">'+
+                  '<div class="lm-jn-card"><div class="lm-jn-card-l">TOTAL TRADES</div><div class="lm-jn-card-v">0</div></div>'+
+                  '<div class="lm-jn-card"><div class="lm-jn-card-l">WIN RATE</div><div class="lm-jn-card-v">—</div></div>'+
+                  '<div class="lm-jn-card"><div class="lm-jn-card-l">AVG R</div><div class="lm-jn-card-v">—</div></div>'+
+                  '<div class="lm-jn-card"><div class="lm-jn-card-l">NET PnL</div><div class="lm-jn-card-v">—</div></div>'+
+                '</div>'+
+                '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:10px">'+
+                  '<div class="lm-ws-section">'+
+                    '<div class="lm-ws-sh">TP Hits</div>'+
+                    '<div style="font-size:24px;font-weight:700;font-family:var(--mono);color:var(--green-2,#4ade80);margin:4px 0">0</div>'+
+                    '<div style="font-size:10px;color:var(--text-3)">Take-profit targets hit</div>'+
+                  '</div>'+
+                  '<div class="lm-ws-section">'+
+                    '<div class="lm-ws-sh">SL Hits</div>'+
+                    '<div style="font-size:24px;font-weight:700;font-family:var(--mono);color:var(--red-2,#f87171);margin:4px 0">0</div>'+
+                    '<div style="font-size:10px;color:var(--text-3)">Stop-loss exits</div>'+
+                  '</div>'+
+                  '<div class="lm-ws-section">'+
+                    '<div class="lm-ws-sh">AI Interventions</div>'+
+                    '<div style="font-size:24px;font-weight:700;font-family:var(--mono);color:var(--yellow,#facc15);margin:4px 0">0</div>'+
+                    '<div style="font-size:10px;color:var(--text-3)">AI-blocked or modified</div>'+
                   '</div>'+
                 '</div>'+
+                '<div class="lm-ws-section" style="margin-top:10px">'+
+                  '<div class="lm-ws-sh">Closed Trades</div>'+
+                  '<div class="lm-tbl-wrap" style="max-height:280px">'+
+                    '<table class="lm-inner-tbl" style="min-width:620px">'+
+                      '<thead><tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL</th><th>R</th><th>Duration</th><th>Status</th></tr></thead>'+
+                      '<tbody><tr><td colspan="8" style="text-align:center;color:var(--text-3);padding:20px 0">No closed trades</td></tr></tbody>'+
+                    '</table>'+
+                  '</div>'+
+                '</div>'+
+                '<div class="lm-ws-section" style="margin-top:10px">'+
+                  '<div class="lm-ws-sh">AI Intervention History</div>'+
+                  '<div class="lm-tbl-wrap" style="max-height:180px">'+
+                    '<table class="lm-inner-tbl" style="min-width:580px">'+
+                      '<thead><tr><th>Time</th><th>Symbol</th><th>Action</th><th>Confidence</th><th>Reason</th></tr></thead>'+
+                      '<tbody><tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:14px 0">No AI interventions recorded</td></tr></tbody>'+
+                    '</table>'+
+                  '</div>'+
+                '</div>'+
+                '<div class="lm-ws-section" style="margin-top:10px">'+
+                  '<div class="lm-ws-sh">Execution Logs</div>'+
+                  '<div class="lm-tbl-wrap" style="max-height:160px">'+
+                    '<table class="lm-inner-tbl" style="min-width:580px">'+
+                      '<thead><tr><th>Time</th><th>Symbol</th><th>Type</th><th>Client ID</th><th>Status</th><th>Error</th></tr></thead>'+
+                      '<tbody><tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:14px 0">No execution logs</td></tr></tbody>'+
+                    '</table>'+
+                  '</div>'+
+                '</div>'+
+                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">'+
+                  '<div class="lm-ws-section">'+
+                    '<div class="lm-ws-sh">Performance Statistics</div>'+
+                    '<div style="font-size:10px;color:var(--text-3);line-height:1.8">'+
+                      '<div style="display:flex;justify-content:space-between"><span>Profit factor</span><span style="color:var(--text-2)">—</span></div>'+
+                      '<div style="display:flex;justify-content:space-between"><span>Best trade</span><span style="color:var(--green-2,#4ade80)">—</span></div>'+
+                      '<div style="display:flex;justify-content:space-between"><span>Worst trade</span><span style="color:var(--red-2,#f87171)">—</span></div>'+
+                      '<div style="display:flex;justify-content:space-between"><span>Avg hold time</span><span style="color:var(--text-2)">—</span></div>'+
+                      '<div style="display:flex;justify-content:space-between"><span>Max drawdown</span><span style="color:var(--text-2)">—</span></div>'+
+                    '</div>'+
+                  '</div>'+
+                  '<div class="lm-ws-section">'+
+                    '<div class="lm-ws-sh">Session Summary</div>'+
+                    '<div style="font-size:10px;color:var(--text-3);line-height:1.8">'+
+                      '<div style="display:flex;justify-content:space-between"><span>Trades opened</span><span style="color:var(--text-2)">0</span></div>'+
+                      '<div style="display:flex;justify-content:space-between"><span>Trades closed</span><span style="color:var(--text-2)">0</span></div>'+
+                      '<div style="display:flex;justify-content:space-between"><span>Testnet orders</span><span style="color:var(--text-2)">0</span></div>'+
+                      '<div style="display:flex;justify-content:space-between"><span>AI decisions</span><span style="color:var(--text-2)">—</span></div>'+
+                      '<div style="display:flex;justify-content:space-between"><span>Simulations run</span><span style="color:var(--text-2)">—</span></div>'+
+                    '</div>'+
+                  '</div>'+
+                '</div>'+
+              '</div>'+
+            '</div>'+ /* end lmWsPane-journal */
 
-              '</div>'+ /* end lm-ws-grid-2 */
-            '</div>'+ /* end lm-ws-page */
-          '</div>'+ /* end lmWs-terminal */
+          '</div>'+ /* end .lm-right */
 
-          /* ── WORKSPACE: Risk Guard (full-width) ── */
-          '<div id="lmWs-riskguard" class="lm-workspace" hidden>'+
-            '<div class="lm-ws-page">'+
-              '<div class="lm-ws-header">'+
-                '<div class="lm-ws-htitle">'+
-                  '<svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>'+
-                  'Risk Guard'+
-                '</div>'+
-                '<span style="font-size:10px;color:var(--text-3)">Safety controls &amp; policy enforcement</span>'+
-              '</div>'+
-              '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+
-                '<div class="lm-rg-card">'+
-                  '<div class="lm-rg-card-top"><span class="lm-rg-ico off"></span><span class="lm-rg-label">Trading Status</span><span class="lm-rg-val">DISABLED</span></div>'+
-                  '<div class="lm-rg-note">Demo trading is off. Set DEMO_TRADING_ENABLED=true to enable.</div>'+
-                '</div>'+
-                '<div class="lm-rg-card">'+
-                  '<div class="lm-rg-card-top"><span class="lm-rg-ico ok"></span><span class="lm-rg-label">Max Concurrent Trades</span><span class="lm-rg-val">3</span></div>'+
-                  '<div class="lm-rg-note">Hard limit on simultaneous open positions.</div>'+
-                '</div>'+
-                '<div class="lm-rg-card">'+
-                  '<div class="lm-rg-card-top"><span class="lm-rg-ico ok"></span><span class="lm-rg-label">Max Loss / Trade</span><span class="lm-rg-val">1.0 %</span></div>'+
-                  '<div class="lm-rg-note">Risk Guard rejects proposals exceeding this threshold.</div>'+
-                '</div>'+
-                '<div class="lm-rg-card">'+
-                  '<div class="lm-rg-card-top"><span class="lm-rg-ico ok"></span><span class="lm-rg-label">Max Leverage</span><span class="lm-rg-val">5 ×</span></div>'+
-                  '<div class="lm-rg-note">Leverage cap enforced before any demo submission.</div>'+
-                '</div>'+
-                '<div class="lm-rg-card">'+
-                  '<div class="lm-rg-card-top"><span class="lm-rg-ico warn"></span><span class="lm-rg-label">Data Freshness</span><span class="lm-rg-val">UNKNOWN</span></div>'+
-                  '<div class="lm-rg-note">Stale or missing market data will block execution.</div>'+
-                '</div>'+
-                '<div class="lm-rg-card">'+
-                  '<div class="lm-rg-card-top"><span class="lm-rg-ico off"></span><span class="lm-rg-label">Last Decision</span><span class="lm-rg-val">—</span></div>'+
-                  '<div class="lm-rg-note">No proposals evaluated yet this session.</div>'+
-                '</div>'+
-              '</div>'+
-              '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:10px">'+
-                '<div class="lm-ws-section">'+
-                  '<div class="lm-ws-sh">Exposure Limits</div>'+
-                  '<div style="font-size:10px;color:var(--text-3);line-height:1.7">'+
-                    '<div style="display:flex;justify-content:space-between"><span>Daily exposure cap</span><span style="color:var(--text-2)">—</span></div>'+
-                    '<div style="display:flex;justify-content:space-between"><span>Max portfolio risk</span><span style="color:var(--text-2)">—</span></div>'+
-                    '<div style="display:flex;justify-content:space-between"><span>Correlation limit</span><span style="color:var(--text-2)">—</span></div>'+
-                  '</div>'+
-                '</div>'+
-                '<div class="lm-ws-section">'+
-                  '<div class="lm-ws-sh">Daily Limits</div>'+
-                  '<div style="font-size:10px;color:var(--text-3);line-height:1.7">'+
-                    '<div style="display:flex;justify-content:space-between"><span>Trades today</span><span style="color:var(--text-2)">0</span></div>'+
-                    '<div style="display:flex;justify-content:space-between"><span>Daily loss limit</span><span style="color:var(--text-2)">—</span></div>'+
-                    '<div style="display:flex;justify-content:space-between"><span>Session P&amp;L</span><span style="color:var(--text-2)">—</span></div>'+
-                  '</div>'+
-                '</div>'+
-                '<div class="lm-ws-section">'+
-                  '<div class="lm-ws-sh">Policy Blocks</div>'+
-                  '<div style="font-size:10px;color:var(--text-3);line-height:1.7">'+
-                    '<div style="display:flex;justify-content:space-between"><span>AI blocks</span><span style="color:var(--text-2)">0</span></div>'+
-                    '<div style="display:flex;justify-content:space-between"><span>Policy blocks</span><span style="color:var(--text-2)">0</span></div>'+
-                    '<div style="display:flex;justify-content:space-between"><span>Setup blocks</span><span style="color:var(--text-2)">0</span></div>'+
-                  '</div>'+
-                '</div>'+
-              '</div>'+
-              '<div class="lm-ws-section" style="margin-top:10px">'+
-                '<div class="lm-ws-sh">Risk Events</div>'+
-                '<div class="lm-tbl-wrap" style="max-height:220px">'+
-                  '<table class="lm-inner-tbl">'+
-                    '<thead><tr><th>Time</th><th>Type</th><th>Symbol</th><th>Reason</th><th>Action</th></tr></thead>'+
-                    '<tbody><tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:18px 0">No risk events this session</td></tr></tbody>'+
-                  '</table>'+
-                '</div>'+
-              '</div>'+
-            '</div>'+
-          '</div>'+
-
-          /* ── WORKSPACE: Trade Journal (full-width) ── */
-          '<div id="lmWs-journal" class="lm-workspace" hidden>'+
-            '<div class="lm-ws-page">'+
-              '<div class="lm-ws-header">'+
-                '<div class="lm-ws-htitle">'+
-                  '<svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>'+
-                  'Trade Journal'+
-                '</div>'+
-                '<span style="font-size:10px;color:var(--text-3)">Closed trades, history &amp; performance</span>'+
-              '</div>'+
-              '<div class="lm-jn-cards" style="grid-template-columns:repeat(4,1fr)">'+
-                '<div class="lm-jn-card"><div class="lm-jn-card-l">TOTAL TRADES</div><div class="lm-jn-card-v">0</div></div>'+
-                '<div class="lm-jn-card"><div class="lm-jn-card-l">WIN RATE</div><div class="lm-jn-card-v">—</div></div>'+
-                '<div class="lm-jn-card"><div class="lm-jn-card-l">AVG R</div><div class="lm-jn-card-v">—</div></div>'+
-                '<div class="lm-jn-card"><div class="lm-jn-card-l">NET PnL</div><div class="lm-jn-card-v">—</div></div>'+
-              '</div>'+
-              '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:10px">'+
-                '<div class="lm-ws-section">'+
-                  '<div class="lm-ws-sh">TP Hits</div>'+
-                  '<div style="font-size:24px;font-weight:700;font-family:var(--mono);color:var(--green-2,#4ade80);margin:4px 0">0</div>'+
-                  '<div style="font-size:10px;color:var(--text-3)">Take-profit targets hit</div>'+
-                '</div>'+
-                '<div class="lm-ws-section">'+
-                  '<div class="lm-ws-sh">SL Hits</div>'+
-                  '<div style="font-size:24px;font-weight:700;font-family:var(--mono);color:var(--red-2,#f87171);margin:4px 0">0</div>'+
-                  '<div style="font-size:10px;color:var(--text-3)">Stop-loss exits</div>'+
-                '</div>'+
-                '<div class="lm-ws-section">'+
-                  '<div class="lm-ws-sh">AI Interventions</div>'+
-                  '<div style="font-size:24px;font-weight:700;font-family:var(--mono);color:var(--yellow,#facc15);margin:4px 0">0</div>'+
-                  '<div style="font-size:10px;color:var(--text-3)">AI-blocked or modified</div>'+
-                '</div>'+
-              '</div>'+
-              '<div class="lm-ws-section" style="margin-top:10px">'+
-                '<div class="lm-ws-sh">Closed Trades</div>'+
-                '<div class="lm-tbl-wrap" style="max-height:280px">'+
-                  '<table class="lm-inner-tbl" style="min-width:620px">'+
-                    '<thead><tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL</th><th>R</th><th>Duration</th><th>Status</th></tr></thead>'+
-                    '<tbody><tr><td colspan="8" style="text-align:center;color:var(--text-3);padding:20px 0">No closed trades</td></tr></tbody>'+
-                  '</table>'+
-                '</div>'+
-              '</div>'+
-              '<div class="lm-ws-section" style="margin-top:10px">'+
-                '<div class="lm-ws-sh">AI Intervention History</div>'+
-                '<div class="lm-tbl-wrap" style="max-height:180px">'+
-                  '<table class="lm-inner-tbl" style="min-width:580px">'+
-                    '<thead><tr><th>Time</th><th>Symbol</th><th>Action</th><th>Confidence</th><th>Reason</th></tr></thead>'+
-                    '<tbody><tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:14px 0">No AI interventions recorded</td></tr></tbody>'+
-                  '</table>'+
-                '</div>'+
-              '</div>'+
-              '<div class="lm-ws-section" style="margin-top:10px">'+
-                '<div class="lm-ws-sh">Execution Logs</div>'+
-                '<div class="lm-tbl-wrap" style="max-height:160px">'+
-                  '<table class="lm-inner-tbl" style="min-width:580px">'+
-                    '<thead><tr><th>Time</th><th>Symbol</th><th>Type</th><th>Client ID</th><th>Status</th><th>Error</th></tr></thead>'+
-                    '<tbody><tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:14px 0">No execution logs</td></tr></tbody>'+
-                  '</table>'+
-                '</div>'+
-              '</div>'+
-              '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">'+
-                '<div class="lm-ws-section">'+
-                  '<div class="lm-ws-sh">Performance Statistics</div>'+
-                  '<div style="font-size:10px;color:var(--text-3);line-height:1.8">'+
-                    '<div style="display:flex;justify-content:space-between"><span>Profit factor</span><span style="color:var(--text-2)">—</span></div>'+
-                    '<div style="display:flex;justify-content:space-between"><span>Best trade</span><span style="color:var(--green-2,#4ade80)">—</span></div>'+
-                    '<div style="display:flex;justify-content:space-between"><span>Worst trade</span><span style="color:var(--red-2,#f87171)">—</span></div>'+
-                    '<div style="display:flex;justify-content:space-between"><span>Avg hold time</span><span style="color:var(--text-2)">—</span></div>'+
-                    '<div style="display:flex;justify-content:space-between"><span>Max drawdown</span><span style="color:var(--text-2)">—</span></div>'+
-                  '</div>'+
-                '</div>'+
-                '<div class="lm-ws-section">'+
-                  '<div class="lm-ws-sh">Session Summary</div>'+
-                  '<div style="font-size:10px;color:var(--text-3);line-height:1.8">'+
-                    '<div style="display:flex;justify-content:space-between"><span>Trades opened</span><span style="color:var(--text-2)">0</span></div>'+
-                    '<div style="display:flex;justify-content:space-between"><span>Trades closed</span><span style="color:var(--text-2)">0</span></div>'+
-                    '<div style="display:flex;justify-content:space-between"><span>Testnet orders</span><span style="color:var(--text-2)">0</span></div>'+
-                    '<div style="display:flex;justify-content:space-between"><span>AI decisions</span><span style="color:var(--text-2)">—</span></div>'+
-                    '<div style="display:flex;justify-content:space-between"><span>Simulations run</span><span style="color:var(--text-2)">—</span></div>'+
-                  '</div>'+
-                '</div>'+
-              '</div>'+
-            '</div>'+
-          '</div>'+
         '</div>'+ /* end lm-body */
       '</div>';
     // Filter chips
@@ -6417,6 +6426,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         [].forEach.call(box.querySelectorAll(".setup-card"),function(c){c.classList.remove("active");});
         card.classList.add("active");
         _lmRenderRight(_lmSelItem);  // handles DH fetch + polling internally
+        try{_lmUpdateTerminalActiveItem();}catch(e){}  // keep terminal header in sync
       });
     });
     // auto-select: keep selection if still valid, else pick first
