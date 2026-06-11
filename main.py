@@ -33185,9 +33185,6 @@ def api_backtest_ob_historical():
 @app.route("/api/backtest/ob-historical/debug", methods=["GET"])
 @login_required
 def api_backtest_ob_historical_debug():
-    if not session.get("is_admin"):
-        return jsonify({"ok": False, "error": "Admin access required"}), 403
-
     err = _guest_tab_check("backtest")
     if err is not None:
         return err
