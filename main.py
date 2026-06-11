@@ -32640,16 +32640,12 @@ def api_fvg_imbalance():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Backtest — Raw Historical OB Engine  (Phase 2: historical candles connected)
+# Backtest — Raw Historical OB Engine  (Phase 2B: uses existing candle fetch)
 # ─────────────────────────────────────────────────────────────────────────────
 
 _BT_ALLOWED_TIMEFRAMES = {"5m", "15m", "30m", "1h", "4h", "1d"}
 _BT_ALLOWED_EXCHANGES  = {"binance"}
 _BT_ALLOWED_MARKETS    = {"perpetual"}
-
-# Binance hard caps per single API request
-_BT_FUTURES_MAX = 1500
-_BT_SPOT_MAX    = 1000
 
 
 def _bt_clean_symbol(raw: str) -> str:
@@ -32721,151 +32717,43 @@ def _bt_parse_ob_historical_payload(payload: dict):
     return params, None
 
 
-def _bt_fetch_binance_historical_candles(symbol: str, interval: str,
-                                         limit: int) -> List[Dict]:
-    """Backtest-only Binance candle fetcher that captures all 11 raw fields.
-
-    Existing get_klines / get_binance_klines_paginated_latest only extract
-    fields [0]–[5] because the scanner does not need the extended Binance
-    fields.  This function uses the same backward-pagination strategy but
-    preserves closeTime, quoteVolume, tradeCount, takerBuyBase, takerBuyQuote
-    so the backtest engine has full data quality.
-
-    Isolated to the backtest path — does NOT affect scanner or live monitor.
-    """
-    import math as _math
-
-    target = max(1, min(int(limit), 4000))
-    safety = _math.ceil(target / _BT_SPOT_MAX) + 5
-
-    def _parse_full(data):
-        if not isinstance(data, list):
-            return []
-        out = []
-        for k in data:
-            try:
-                out.append({
-                    "openTime":     int(k[0]),
-                    "open":         float(k[1]),
-                    "high":         float(k[2]),
-                    "low":          float(k[3]),
-                    "close":        float(k[4]),
-                    "volume":       float(k[5]),
-                    "closeTime":    int(k[6])   if len(k) > 6  else None,
-                    "quoteVolume":  float(k[7]) if len(k) > 7  else None,
-                    "tradeCount":   int(k[8])   if len(k) > 8  else None,
-                    "takerBuyBase": float(k[9]) if len(k) > 9  else None,
-                    "takerBuyQuote":float(k[10])if len(k) > 10 else None,
-                })
-            except (TypeError, ValueError, IndexError):
-                pass
-        return out
-
-    collected: List[Dict] = []
-    seen: set             = set()
-    end_time_ms           = None
-    batches               = 0
-    source                = "futures"
-
-    while len(collected) < target and safety > 0:
-        safety    -= 1
-        remaining  = target - len(collected)
-
-        # ── Binance Futures ──────────────────────────────────────────────────
-        fparams: Dict[str, Any] = {
-            "symbol": symbol, "interval": interval,
-            "limit": min(_BT_FUTURES_MAX, remaining),
-        }
-        if end_time_ms is not None:
-            fparams["endTime"] = end_time_ms
-
-        batch: List[Dict] = []
-        actual_cap = _BT_FUTURES_MAX
-        try:
-            r = req.get(
-                f"{BINANCE_FUTURES_API}/fapi/v1/klines",
-                params=fparams, timeout=15,
-            )
-            if r.status_code == 200:
-                update_api_weight("binance", r)
-                batch  = _parse_full(r.json())
-                source = "futures"
-        except Exception:
-            pass
-
-        # ── Spot geo-safe mirror fallback ────────────────────────────────────
-        if not batch:
-            sparams: Dict[str, Any] = {
-                "symbol": symbol, "interval": interval,
-                "limit": min(_BT_SPOT_MAX, remaining),
-            }
-            if end_time_ms is not None:
-                sparams["endTime"] = end_time_ms
-            actual_cap = _BT_SPOT_MAX
-            try:
-                r = req.get(
-                    f"{SPOT_API}/api/v3/klines",
-                    params=sparams, timeout=20,
-                )
-                if r.status_code == 200:
-                    batch  = _parse_full(r.json())
-                    source = "spot_fallback"
-            except Exception:
-                pass
-
-        if not batch:
-            break
-
-        batches  += 1
-        new_rows  = [row for row in batch if row["openTime"] not in seen]
-        if not new_rows:
-            break
-        for row in new_rows:
-            seen.add(row["openTime"])
-        collected.extend(new_rows)
-
-        oldest = min(row["openTime"] for row in new_rows)
-        end_time_ms = oldest - 1
-
-        if len(batch) < actual_cap:
-            break  # reached beginning of exchange history
-
-        time.sleep(0.08)
-
-    collected.sort(key=lambda x: x["openTime"])
-    if len(collected) > target:
-        collected = collected[-target:]
-
-    print(
-        f"[BT-CANDLES] {symbol} {interval} requested={target} "
-        f"fetched={len(collected)} batches={batches} source={source}"
-    )
-    return collected
-
-
 def _bt_normalize_candles(raw_candles: List[Dict]) -> List[Dict]:
-    """Convert raw Binance candles (camelCase) to backtest snake_case schema.
+    """Convert camelCase candles from get_klines() to backtest snake_case schema.
 
-    Accepts both the full 11-field format from _bt_fetch_binance_historical_candles
-    and the 6-field camelCase format from existing scanner fetch functions.
-    Missing extended fields are set to None so downstream code can check them
-    explicitly rather than raising KeyError.
+    Accepts the 6-field camelCase format returned by the existing get_klines /
+    get_binance_klines_paginated_latest helpers (openTime, open, high, low,
+    close, volume).  Extended Binance fields (quoteVolume, tradeCount,
+    takerBuyBase, takerBuyQuote) are not present in that format and will be
+    set to None.  Also handles camelCase variants with those extended keys if
+    they become available from a richer fetch path in a later phase.
     """
     out = []
     for c in raw_candles:
         try:
             out.append({
-                "open_time":      c.get("openTime"),
-                "close_time":     c.get("closeTime"),
-                "open":           float(c["open"]),
-                "high":           float(c["high"]),
-                "low":            float(c["low"]),
-                "close":          float(c["close"]),
-                "volume":         float(c["volume"]),
-                "quote_volume":   float(c["quoteVolume"])   if c.get("quoteVolume")   is not None else None,
-                "trade_count":    int(c["tradeCount"])      if c.get("tradeCount")    is not None else None,
-                "taker_buy_base": float(c["takerBuyBase"])  if c.get("takerBuyBase")  is not None else None,
-                "taker_buy_quote":float(c["takerBuyQuote"]) if c.get("takerBuyQuote") is not None else None,
+                "open_time":       c.get("openTime")  or c.get("open_time"),
+                "close_time":      c.get("closeTime") or c.get("close_time"),
+                "open":            float(c["open"]),
+                "high":            float(c["high"]),
+                "low":             float(c["low"]),
+                "close":           float(c["close"]),
+                "volume":          float(c["volume"]),
+                "quote_volume":    (float(c["quoteVolume"])
+                                    if c.get("quoteVolume")    is not None else
+                                    float(c["quote_volume"])
+                                    if c.get("quote_volume")   is not None else None),
+                "trade_count":     (int(c["tradeCount"])
+                                    if c.get("tradeCount")     is not None else
+                                    int(c["trade_count"])
+                                    if c.get("trade_count")    is not None else None),
+                "taker_buy_base":  (float(c["takerBuyBase"])
+                                    if c.get("takerBuyBase")   is not None else
+                                    float(c["taker_buy_base"])
+                                    if c.get("taker_buy_base") is not None else None),
+                "taker_buy_quote": (float(c["takerBuyQuote"])
+                                    if c.get("takerBuyQuote")  is not None else
+                                    float(c["taker_buy_quote"])
+                                    if c.get("taker_buy_quote")is not None else None),
             })
         except (KeyError, TypeError, ValueError):
             pass
@@ -32874,7 +32762,7 @@ def _bt_normalize_candles(raw_candles: List[Dict]) -> List[Dict]:
 
 def _bt_candle_summary(params: Dict, normalized: List[Dict]) -> Dict:
     """Build lightweight diagnostics for the candle fetch response."""
-    n = len(normalized)
+    n     = len(normalized)
     first = normalized[0]  if n > 0 else None
     last  = normalized[-1] if n > 0 else None
     return {
@@ -32884,10 +32772,10 @@ def _bt_candle_summary(params: Dict, normalized: List[Dict]) -> Dict:
         "last_open_time":     last["open_time"]  if last  else None,
         "first_close":        first["close"]     if first else None,
         "last_close":         last["close"]      if last  else None,
-        "has_quote_volume":   first is not None and first.get("quote_volume")   is not None,
-        "has_trade_count":    first is not None and first.get("trade_count")    is not None,
-        "has_taker_buy_base": first is not None and first.get("taker_buy_base") is not None,
-        "has_taker_buy_quote":first is not None and first.get("taker_buy_quote")is not None,
+        "has_quote_volume":   first is not None and first.get("quote_volume")    is not None,
+        "has_trade_count":    first is not None and first.get("trade_count")     is not None,
+        "has_taker_buy_base": first is not None and first.get("taker_buy_base")  is not None,
+        "has_taker_buy_quote":first is not None and first.get("taker_buy_quote") is not None,
     }
 
 
@@ -32903,12 +32791,17 @@ def api_backtest_ob_historical():
     if parse_error:
         return jsonify({"ok": False, "error": parse_error}), 400
 
-    # ── Fetch historical candles ─────────────────────────────────────────────
+    # ── Fetch historical candles via existing shared candle-fetch layer ───────
+    # get_klines() auto-paginates via get_binance_klines_paginated_latest()
+    # when limit > 1500, so candle_count up to 4000 is handled without any
+    # duplicate fetch logic here.  Extended Binance fields (quoteVolume etc.)
+    # are not returned by this path; _bt_normalize_candles() sets them to None.
     try:
-        raw = _bt_fetch_binance_historical_candles(
+        raw = get_klines(
             params["symbol"],
             params["timeframe"],
             params["candle_count"],
+            params["market"],
         )
     except Exception as _e:
         traceback.print_exc()
@@ -32926,16 +32819,17 @@ def api_backtest_ob_historical():
         }), 502
 
     # ── Normalize ────────────────────────────────────────────────────────────
-    candles    = _bt_normalize_candles(raw)
-    summary    = _bt_candle_summary(params, candles)
+    candles = _bt_normalize_candles(raw)
+    summary = _bt_candle_summary(params, candles)
 
     return jsonify({
-        "ok":      True,
-        "mode":    "raw_historical_ob_v1",
-        "phase":   "historical_candles_connected",
+        "ok":          True,
+        "mode":        "raw_historical_ob_v1",
+        "phase":       "historical_candles_connected",
+        "fetch_source":"get_klines",
         "message": (
-            "Historical candles fetched and normalized. "
-            "OB detection is not connected yet."
+            "Historical candles fetched and normalized using existing candle "
+            "fetch logic. OB detection is not connected yet."
         ),
         "params":         params,
         "candle_summary": summary,
