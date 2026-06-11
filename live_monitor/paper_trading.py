@@ -530,7 +530,7 @@ def _lm_get_paper_orders(user_id, item_id=None, limit=50) -> list:
 
 
 def _lm_get_paper_positions(user_id, item_id=None) -> list:
-    """Return paper positions as a list of dicts."""
+    """Return paper positions as a list of dicts with PnL fields."""
     from models import LiveMonitorPaperPosition as _PP
     q = _PP.query.filter_by(user_id=user_id)
     if item_id is not None:
@@ -538,16 +538,40 @@ def _lm_get_paper_positions(user_id, item_id=None) -> list:
     rows = q.order_by(_PP.created_at.desc()).all()
     out = []
     for r in rows:
+        unrealized_pnl = float(r.unrealized_pnl or 0)
+        realized_pnl   = float(r.realized_pnl   or 0)
+        # mark_price not in schema — read defensively
+        mark_price_raw = getattr(r, "mark_price", None)
+        mark_price_f   = None
+        try:
+            if mark_price_raw is not None:
+                mark_price_f = float(mark_price_raw)
+        except Exception:
+            pass
+        # pnl_pct from stored unrealized_pnl + entry_price * size (no mark needed)
+        pnl_pct = None
+        try:
+            ep = float(r.entry_price or "0")
+            sz = _lm_get_qty_from_position(r)
+            if ep > 0 and sz > 0:
+                pnl_pct = round((unrealized_pnl / (ep * sz)) * 100, 4)
+        except Exception:
+            pass
         out.append({
-            "id":           r.id,
-            "item_id":      r.item_id,
-            "symbol":       r.symbol,
-            "side":         r.side,
-            "size":         r.size,
-            "entry_price":  r.entry_price,
-            "status":       r.status,
-            "realized_pnl": float(r.realized_pnl) if r.realized_pnl else 0.0,
-            "created_at":   r.created_at.isoformat() if r.created_at else None,
+            "id":             r.id,
+            "item_id":        r.item_id,
+            "symbol":         r.symbol,
+            "side":           r.side,
+            "size":           r.size,
+            "quantity":       str(_lm_get_qty_from_position(r)),
+            "entry_price":    r.entry_price,
+            "mark_price":     str(mark_price_f) if mark_price_f is not None else None,
+            "unrealized_pnl": unrealized_pnl,
+            "realized_pnl":   realized_pnl,
+            "pnl_pct":        pnl_pct,
+            "status":         r.status,
+            "created_at":     r.created_at.isoformat() if r.created_at else None,
+            "updated_at":     r.updated_at.isoformat() if r.updated_at else None,
         })
     return out
 
@@ -836,4 +860,286 @@ def _lm_process_all_paper_fills_for_user(user_id):
         return {
             "ok": False, "error": str(_e)[:200],
             "total_processed": 0, "total_filled": 0, "source": "internal_paper",
+        }
+
+
+# ── Phase 11.8: Paper Position Engine + Real-Time PnL ─────────────────────────
+# Safety: No Binance API. No Binance Testnet. No _lm_bt_* calls. No HTTP requests.
+# Price source: real Live Monitor market price only.
+# Trigger: manual only — no background loop, no auto execution.
+# No TP/SL. No position close. No auto execution.
+
+def _lm_update_paper_position_marks(user_id, item_id=None):
+    """Update unrealized_pnl (and mark_price if column exists) for open positions.
+
+    LONG:  unrealized_pnl = (mark_price - entry_price) * quantity
+    SHORT: unrealized_pnl = (entry_price - mark_price) * quantity
+
+    Manual/process-triggered only. No exchange API. DB-only.
+    Returns {ok, processed, updated, skipped, results, source}.
+    """
+    import datetime as _dt
+    from models import (
+        db                       as _db,
+        LiveMonitorItem          as _LMI,
+        LiveMonitorPaperPosition as _PP,
+    )
+    try:
+        q = _PP.query.filter_by(user_id=user_id, status="open")
+        if item_id is not None:
+            q = q.filter_by(item_id=item_id)
+        positions = q.all()
+
+        item_cache   = {}
+        results      = []
+        updated_count = 0
+        skipped_count = 0
+        now           = _dt.datetime.utcnow()
+
+        for pos in positions:
+            pid = pos.id
+            iid = pos.item_id
+
+            # Resolve item (one DB hit per unique item_id)
+            if iid not in item_cache:
+                try:
+                    item_cache[iid] = _LMI.query.get(iid)
+                except Exception:
+                    item_cache[iid] = None
+            item = item_cache.get(iid)
+
+            pr            = _lm_get_real_market_price_for_paper(item=item)
+            mark_price_f  = pr.get("price")
+            price_source  = pr.get("price_source")
+
+            if mark_price_f is None:
+                results.append({
+                    "position_id": pid, "item_id": iid,
+                    "symbol": pos.symbol, "side": pos.side,
+                    "updated": False, "reason": "price_unavailable",
+                })
+                skipped_count += 1
+                continue
+
+            qty_f = _lm_get_qty_from_position(pos)
+            try:
+                entry_price_f = float(pos.entry_price or "0")
+            except Exception:
+                entry_price_f = 0.0
+
+            if qty_f <= 0 or entry_price_f <= 0:
+                results.append({
+                    "position_id": pid, "item_id": iid,
+                    "symbol": pos.symbol, "side": pos.side,
+                    "updated": False, "reason": "invalid_position_numbers",
+                })
+                skipped_count += 1
+                continue
+
+            side = (pos.side or "").upper()
+            if side == "LONG":
+                unrealized_pnl = round((mark_price_f - entry_price_f) * qty_f, 8)
+                pnl_pct        = round(((mark_price_f - entry_price_f) / entry_price_f) * 100, 4)
+            elif side == "SHORT":
+                unrealized_pnl = round((entry_price_f - mark_price_f) * qty_f, 8)
+                pnl_pct        = round(((entry_price_f - mark_price_f) / entry_price_f) * 100, 4)
+            else:
+                results.append({
+                    "position_id": pid, "item_id": iid,
+                    "symbol": pos.symbol, "side": pos.side,
+                    "updated": False, "reason": "unknown_side",
+                })
+                skipped_count += 1
+                continue
+
+            pos.unrealized_pnl = unrealized_pnl
+            _lm_set_if_exists(pos, "mark_price", str(mark_price_f))
+            _lm_set_if_exists(pos, "updated_at", now)
+
+            updated_count += 1
+            results.append({
+                "position_id":   pid,
+                "item_id":       iid,
+                "symbol":        pos.symbol,
+                "side":          side,
+                "quantity":      qty_f,
+                "entry_price":   entry_price_f,
+                "mark_price":    mark_price_f,
+                "unrealized_pnl": unrealized_pnl,
+                "pnl_pct":       pnl_pct,
+                "price_source":  price_source,
+                "updated":       True,
+            })
+
+        _db.session.commit()
+
+        return {
+            "ok":        True,
+            "processed": len(positions),
+            "updated":   updated_count,
+            "skipped":   skipped_count,
+            "results":   results,
+            "source":    "internal_paper",
+        }
+
+    except Exception as _e:
+        try:
+            _db.session.rollback()
+        except Exception:
+            pass
+        return {
+            "ok": False, "error": str(_e)[:200],
+            "processed": 0, "updated": 0, "skipped": 0,
+            "results": [], "source": "internal_paper",
+        }
+
+
+def _lm_recalculate_paper_account_equity(user_id):
+    """Recalculate paper account equity from open position unrealized PnL.
+
+    equity = cash_balance + total_unrealized_pnl
+    Does NOT modify cash_balance.
+    Does NOT recalculate realized_pnl — reads existing field.
+    No TP/SL. No fees in this phase.
+    Returns {ok, account_id, currency, cash_balance, equity, realized_pnl,
+             unrealized_pnl, open_positions, source}.
+    """
+    import datetime as _dt
+    from models import (
+        db                       as _db,
+        LiveMonitorPaperPosition as _PP,
+    )
+    try:
+        acc = _lm_get_or_create_paper_account(user_id)
+
+        open_positions   = _PP.query.filter_by(user_id=user_id, status="open").all()
+        total_unrealized = round(
+            sum(float(p.unrealized_pnl or 0) for p in open_positions), 8
+        )
+
+        realized_pnl  = float(acc.realized_pnl or 0)
+        cash_balance  = float(acc.cash_balance or 0)
+        equity        = round(cash_balance + total_unrealized, 8)
+
+        acc.unrealized_pnl = total_unrealized
+        acc.equity         = equity
+        _lm_set_if_exists(acc, "updated_at", _dt.datetime.utcnow())
+
+        _db.session.commit()
+
+        return {
+            "ok":            True,
+            "account_id":    acc.id,
+            "currency":      acc.currency,
+            "cash_balance":  cash_balance,
+            "equity":        equity,
+            "realized_pnl":  realized_pnl,
+            "unrealized_pnl": total_unrealized,
+            "open_positions": len(open_positions),
+            "source":        "internal_paper",
+        }
+
+    except Exception as _e:
+        try:
+            _db.session.rollback()
+        except Exception:
+            pass
+        return {
+            "ok": False, "error": str(_e)[:200],
+            "source": "internal_paper",
+        }
+
+
+def _lm_get_paper_position_summary(user_id, item_id=None):
+    """Return compact paper position summary (all statuses) with PnL totals.
+
+    Returns {ok, positions, open_count, closed_count,
+             total_unrealized_pnl, total_realized_pnl, source}.
+    """
+    from models import LiveMonitorPaperPosition as _PP
+    try:
+        q = _PP.query.filter_by(user_id=user_id)
+        if item_id is not None:
+            q = q.filter_by(item_id=item_id)
+        rows = q.order_by(_PP.created_at.desc()).all()
+
+        positions        = []
+        open_count       = 0
+        closed_count     = 0
+        total_unrealized = 0.0
+        total_realized   = 0.0
+
+        for r in rows:
+            unrealized_pnl = float(r.unrealized_pnl or 0)
+            realized_pnl   = float(r.realized_pnl   or 0)
+            qty_f          = _lm_get_qty_from_position(r)
+
+            entry_price_f = 0.0
+            try:
+                entry_price_f = float(r.entry_price or "0")
+            except Exception:
+                pass
+
+            mark_price_raw = getattr(r, "mark_price", None)
+            mark_price_f   = None
+            try:
+                if mark_price_raw is not None:
+                    mark_price_f = float(mark_price_raw)
+            except Exception:
+                pass
+
+            # pnl_pct from unrealized / notional-at-entry
+            pnl_pct = None
+            try:
+                if entry_price_f > 0 and qty_f > 0:
+                    pnl_pct = round((unrealized_pnl / (entry_price_f * qty_f)) * 100, 4)
+            except Exception:
+                pass
+
+            # opened_at: use created_at (opened_at not in schema)
+            opened_at = getattr(r, "opened_at", None) or r.created_at
+            closed_at = getattr(r, "closed_at", None)
+
+            positions.append({
+                "id":             r.id,
+                "item_id":        r.item_id,
+                "symbol":         r.symbol,
+                "side":           r.side,
+                "quantity":       str(qty_f),
+                "size":           r.size,
+                "entry_price":    r.entry_price,
+                "mark_price":     str(mark_price_f) if mark_price_f is not None else None,
+                "unrealized_pnl": unrealized_pnl,
+                "realized_pnl":   realized_pnl,
+                "pnl_pct":        pnl_pct,
+                "status":         r.status,
+                "opened_at":      opened_at.isoformat() if opened_at else None,
+                "closed_at":      closed_at.isoformat() if closed_at else None,
+                "updated_at":     r.updated_at.isoformat() if r.updated_at else None,
+                "created_at":     r.created_at.isoformat() if r.created_at else None,
+            })
+
+            if r.status == "open":
+                open_count       += 1
+                total_unrealized += unrealized_pnl
+            else:
+                closed_count += 1
+            total_realized += realized_pnl
+
+        return {
+            "ok":                  True,
+            "positions":           positions,
+            "open_count":          open_count,
+            "closed_count":        closed_count,
+            "total_unrealized_pnl": round(total_unrealized, 8),
+            "total_realized_pnl":  round(total_realized, 8),
+            "source":              "internal_paper",
+        }
+
+    except Exception as _e:
+        return {
+            "ok": False, "error": str(_e)[:200],
+            "positions": [], "open_count": 0, "closed_count": 0,
+            "total_unrealized_pnl": 0.0, "total_realized_pnl": 0.0,
+            "source": "internal_paper",
         }

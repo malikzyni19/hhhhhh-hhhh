@@ -20028,6 +20028,7 @@ def _lm_build_trade_proposal_context(row, snapshot=None) -> dict:
         "paper_trading": (lambda: _lm_get_paper_account_summary(row.user_id))()
             if getattr(row, "user_id", None) else None,
         "paper_fill_process_summary": snap.get("latest_paper_fill_process_summary"),
+        "paper_position_summary": snap.get("latest_paper_position_mark_summary"),
     }
 
 
@@ -21087,6 +21088,7 @@ def _lm_build_ai_context(item) -> dict:
         "paper_trading": (lambda: _lm_get_paper_account_summary(item.user_id))()
             if getattr(item, "user_id", None) else None,
         "paper_fill_process_summary": snap.get("latest_paper_fill_process_summary"),
+        "paper_position_summary": snap.get("latest_paper_position_mark_summary"),
     }
 
 
@@ -24264,6 +24266,9 @@ from live_monitor import (
     _lm_check_paper_order_fill,
     _lm_process_paper_fills_for_item,
     _lm_process_all_paper_fills_for_user,
+    _lm_update_paper_position_marks,
+    _lm_recalculate_paper_account_equity,
+    _lm_get_paper_position_summary,
 )
 
 # ── Phase 10.9I: Auto-refresh scheduler ─────────────────────────────────────
@@ -28195,6 +28200,93 @@ def api_lm_paper_process_fills(item_id):
         "results":       result.get("results", []),
         "source":        "internal_paper",
         "error":         result.get("error"),
+    })
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/paper-positions/refresh", methods=["POST"])
+@login_required
+def api_lm_paper_positions_refresh(item_id):
+    """Phase 11.8: Mark all open paper positions with current market price and recompute PnL.
+
+    SAFETY: DB-only. No Binance API. No Binance Testnet. No exchange calls.
+    No auto-execution. Runs only when user manually clicks 'Refresh PnL'.
+    Price source: WS cache → data_health snapshot → item.current_price → snapshot fallbacks.
+    """
+    import json as _json118
+    import datetime as _dt118
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    from models import (
+        db               as _db118,
+        LiveMonitorItem  as _LMI118,
+        LiveMonitorEvent as _LMEv118,
+    )
+    item = _LMI118.query.filter_by(id=item_id, user_id=uid).first()
+    if not item:
+        return jsonify({"error": "item_not_found"}), 404
+
+    # 1. Update mark prices + unrealized_pnl on all open positions for this item
+    mark_result  = _lm_update_paper_position_marks(uid, item_id=item_id)
+
+    # 2. Recalculate account equity (sum of unrealized PnL across all open positions)
+    equity_result = _lm_recalculate_paper_account_equity(uid)
+
+    now_iso = _dt118.datetime.utcnow().isoformat() + "Z"
+
+    # 3. Snapshot: compact summary (no positions array — keep snapshot lean)
+    try:
+        snap = {}
+        if item.snapshot_json:
+            try:
+                snap = _json118.loads(item.snapshot_json)
+            except Exception:
+                snap = {}
+        snap["latest_paper_position_mark_summary"] = {
+            "ok":                  mark_result.get("ok", False),
+            "processed":           mark_result.get("processed", 0),
+            "updated":             mark_result.get("updated", 0),
+            "total_unrealized_pnl": equity_result.get("unrealized_pnl", 0.0),
+            "last_checked_at":     now_iso,
+            "source":              "internal_paper",
+        }
+        item.snapshot_json = _json118.dumps(snap, default=str)
+        _db118.session.commit()
+    except Exception:
+        pass
+
+    # 4. ONE timeline event for the refresh (not per position)
+    try:
+        ev = _LMEv118(
+            user_id=uid,
+            item_id=item_id,
+            event_type="paper_position_updated",
+            event_data=_json118.dumps({
+                "processed":           mark_result.get("processed", 0),
+                "updated":             mark_result.get("updated", 0),
+                "total_unrealized_pnl": equity_result.get("unrealized_pnl", 0.0),
+                "equity":              equity_result.get("equity"),
+                "last_checked_at":     now_iso,
+            }, default=str),
+        )
+        _db118.session.add(ev)
+        _db118.session.commit()
+    except Exception:
+        pass
+
+    return jsonify({
+        "ok":                  mark_result.get("ok", False),
+        "item_id":             item_id,
+        "processed":           mark_result.get("processed", 0),
+        "updated":             mark_result.get("updated", 0),
+        "skipped":             mark_result.get("skipped", 0),
+        "total_unrealized_pnl": equity_result.get("unrealized_pnl", 0.0),
+        "equity":              equity_result.get("equity"),
+        "cash_balance":        equity_result.get("cash_balance"),
+        "last_checked_at":     now_iso,
+        "results":             mark_result.get("results", []),
+        "source":              "internal_paper",
+        "error":               mark_result.get("error") or equity_result.get("error"),
     })
 
 

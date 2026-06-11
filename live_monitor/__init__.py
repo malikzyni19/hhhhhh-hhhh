@@ -67,6 +67,9 @@ from live_monitor.paper_trading import (
     _lm_check_paper_order_fill,
     _lm_process_paper_fills_for_item,
     _lm_process_all_paper_fills_for_user,
+    _lm_update_paper_position_marks,
+    _lm_recalculate_paper_account_equity,
+    _lm_get_paper_position_summary,
 )
 
 __all__ = [
@@ -125,4 +128,7 @@ __all__ = [
     "_lm_check_paper_order_fill",
     "_lm_process_paper_fills_for_item",
     "_lm_process_all_paper_fills_for_user",
+    "_lm_update_paper_position_marks",
+    "_lm_recalculate_paper_account_equity",
+    "_lm_get_paper_position_summary",
 ]

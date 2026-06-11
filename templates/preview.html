@@ -5066,13 +5066,15 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                           '<div class="lm-ws-sh">Paper Positions</div>'+
                           '<div class="lm-tbl-wrap" style="max-height:140px">'+
                             '<table class="lm-inner-tbl" id="lmPapPosTbl">'+
-                              '<thead><tr><th>Symbol</th><th>Side</th><th>Size</th><th>Entry</th><th>Status</th></tr></thead>'+
-                              '<tbody id="lmPapPosTbody"><tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:14px 0">No positions</td></tr></tbody>'+
+                              '<thead><tr><th>Symbol</th><th>Side</th><th>Size</th><th>Entry</th><th>Mark</th><th>PnL</th><th>PnL%</th><th>Status</th></tr></thead>'+
+                              '<tbody id="lmPapPosTbody"><tr><td colspan="8" style="text-align:center;color:var(--text-3);padding:14px 0">No positions</td></tr></tbody>'+
                             '</table>'+
                           '</div>'+
-                          '<div style="margin-top:6px">'+
-                            '<button class="btn lm-sm-btn" style="width:100%;justify-content:center" onclick="window._lmPapRefreshPositions()">Refresh Positions</button>'+
+                          '<div style="margin-top:6px;display:flex;gap:6px">'+
+                            '<button class="btn lm-sm-btn" style="flex:1;justify-content:center" onclick="window._lmPapRefreshPositions()">Refresh Positions</button>'+
+                            '<button id="lmPapMarkBtn" class="btn lm-sm-btn" style="flex:1;justify-content:center" onclick="window._lmPapRefreshMarks()">Refresh PnL</button>'+
                           '</div>'+
+                          '<div id="lmPapMarkResult" style="display:none;margin-top:4px;font-size:10px;padding:4px 6px;border-radius:4px;background:var(--bg-3,#1e293b)"></div>'+
                         '</div>'+
                       '</div>'+
 
@@ -8346,21 +8348,66 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         if(!tb) return;
         var positions=d.positions||[];
         if(!positions.length){
-          tb.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:14px 0">No positions</td></tr>';
+          tb.innerHTML='<tr><td colspan="8" style="text-align:center;color:var(--text-3);padding:14px 0">No positions</td></tr>';
           return;
         }
         tb.innerHTML=positions.map(function(p){
-          var sideC=p.side==='LONG'?'var(--green-2,#4ade80)':'var(--red-2,#f87171)';
+          var sideC=p.side==='LONG'||p.side==='BUY'?'var(--green-2,#4ade80)':'var(--red-2,#f87171)';
           var stC=p.status==='open'?'var(--green-2,#4ade80)':'var(--text-3)';
+          var pnl=p.unrealized_pnl!=null?parseFloat(p.unrealized_pnl):null;
+          var pnlPct=p.pnl_pct!=null?parseFloat(p.pnl_pct):null;
+          var pnlC=pnl===null?'var(--text-3)':(pnl>=0?'var(--green-2,#4ade80)':'var(--red-2,#f87171)');
+          var pnlStr=pnl===null?'—':(pnl>=0?'+':'')+pnl.toFixed(4);
+          var pnlPctStr=pnlPct===null?'—':(pnlPct>=0?'+':'')+pnlPct.toFixed(2)+'%';
           return '<tr>'+
             '<td>'+esc(p.symbol||'—')+'</td>'+
             '<td style="color:'+sideC+'">'+esc(p.side||'—')+'</td>'+
-            '<td>'+esc(p.size||'—')+'</td>'+
+            '<td>'+esc(p.size||p.quantity||'—')+'</td>'+
             '<td>'+esc(p.entry_price||'—')+'</td>'+
+            '<td>'+esc(p.mark_price||'—')+'</td>'+
+            '<td style="color:'+pnlC+'">'+pnlStr+'</td>'+
+            '<td style="color:'+pnlC+'">'+pnlPctStr+'</td>'+
             '<td style="color:'+stC+'">'+esc(p.status||'—')+'</td>'+
             '</tr>';
         }).join('');
       }).catch(function(){});
+  };
+
+  window._lmPapRefreshMarks=function(){
+    var itemId=window._lmSimItemId||(window._lmSelItem&&window._lmSelItem.id);
+    if(!itemId){ alert('Select a setup first.'); return; }
+    var btn=document.getElementById('lmPapMarkBtn');
+    var resEl=document.getElementById('lmPapMarkResult');
+    if(btn){ btn.disabled=true; btn.textContent='Refreshing…'; }
+    if(resEl){ resEl.style.display='none'; }
+    fetch('/api/live-monitor/items/'+itemId+'/paper-positions/refresh',{
+      method:'POST',
+      credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+    })
+      .then(function(r){return r.json().then(function(d){return {s:r.status,d:d};});})
+      .then(function(rd){
+        var d=rd.d;
+        if(btn){ btn.disabled=false; btn.textContent='Refresh PnL'; }
+        if(resEl){
+          resEl.style.display='';
+          if(d&&d.ok){
+            var upd=d.updated||0;
+            var pnl=d.total_unrealized_pnl!=null?parseFloat(d.total_unrealized_pnl):null;
+            var pnlStr=pnl===null?'':(pnl>=0?' · PnL +':' · PnL ')+pnl.toFixed(4);
+            resEl.style.color=upd>0?'var(--green-2,#4ade80)':'var(--text-3)';
+            resEl.innerHTML='Updated '+upd+' position'+(upd===1?'':'s')+pnlStr;
+          } else {
+            resEl.style.color='var(--red-2,#f87171)';
+            resEl.innerHTML='<b>Failed:</b> '+esc((d&&d.error)||'Unknown error');
+          }
+        }
+        window._lmPapRefreshPositions();
+      })
+      .catch(function(){
+        if(btn){ btn.disabled=false; btn.textContent='Refresh PnL'; }
+        if(resEl){ resEl.style.display=''; resEl.style.color='var(--red-2,#f87171)'; resEl.textContent='Network error.'; }
+      });
   };
 
   window._lmPapProcessFills=function(){
