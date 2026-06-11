@@ -562,6 +562,43 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
 /* Make the LM topbar selects look the same as their old siblings */
 .lm-manual-row .cdd-btn{padding:7px 9px;font-size:12px}
 
+/* ───── Mobile desktop-mode notice (Round 22 — Task 1) ─────
+   Polite modal shown ONLY on mobile / small screens. The whole stack
+   is gated behind @media (max-width:768px) so the notice can never
+   paint on desktop, even if its hidden attribute is somehow stripped.
+   Z-index 7400/7401 — below the tutorial (7900+) and far below the
+   token-limit modal (9000+). */
+@media (max-width:768px){
+  .mdn-bd{position:fixed;inset:0;background:rgba(2,8,16,.78);z-index:7400;
+    display:flex;align-items:center;justify-content:center;padding:20px}
+  .mdn-bd[hidden]{display:none}
+  .mdn-card{position:relative;background:var(--bg-card);
+    border:1px solid var(--border-2);border-radius:14px;
+    padding:22px 22px 18px;width:420px;max-width:92vw;max-height:90vh;
+    overflow-y:auto;box-shadow:0 18px 50px rgba(0,0,0,.6);color:var(--text);
+    z-index:7401}
+  .mdn-ico{width:46px;height:46px;border-radius:50%;
+    background:rgba(34,211,238,.12);border:1px solid rgba(34,211,238,.35);
+    display:flex;align-items:center;justify-content:center;margin:0 auto 12px;
+    color:var(--accent)}
+  .mdn-ico svg{width:22px;height:22px;stroke-width:2;fill:none;stroke:currentColor}
+  .mdn-t{font-size:16px;font-weight:700;letter-spacing:.2px;
+    margin-bottom:8px;text-align:center}
+  .mdn-s{font-size:13px;color:var(--text-2);line-height:1.55;
+    margin-bottom:14px;text-align:left}
+  .mdn-s b{color:var(--text);font-weight:700}
+  .mdn-never{display:flex;align-items:center;justify-content:center;gap:8px;
+    font-size:12px;color:var(--text-3);margin-bottom:14px;cursor:pointer;
+    user-select:none}
+  .mdn-never input{width:14px;height:14px;accent-color:var(--accent);cursor:pointer}
+  .mdn-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+  .mdn-actions .btn{padding:9px 16px;font-size:13px;min-height:40px}
+}
+/* Above 768 the notice is removed from the layout entirely. */
+@media (min-width:769px){
+  .mdn-bd{display:none !important}
+}
+
 /* ───── Tutorial intro modal (Round 19 — Task 1) ───── */
 .tut-intro-bd{position:fixed;inset:0;background:rgba(2,8,16,.78);z-index:7900;
   display:flex;align-items:center;justify-content:center;padding:20px}
@@ -1466,6 +1503,36 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         </div>
       </div>
     </aside>
+
+    <!-- Mobile desktop-mode notice (Round 22) — mobile only -->
+    <div id="mobileDesktopNoticeBd" class="mdn-bd" hidden role="dialog" aria-modal="true"
+         aria-labelledby="mobileDesktopNoticeTitle">
+      <div id="mobileDesktopNoticeCard" class="mdn-card">
+        <div class="mdn-ico" aria-hidden="true">
+          <svg viewBox="0 0 24 24">
+            <rect x="3" y="4" width="18" height="13" rx="2"/>
+            <path d="M8 21h8M12 17v4"/>
+          </svg>
+        </div>
+        <div class="mdn-t" id="mobileDesktopNoticeTitle">Unlock the full screener experience</div>
+        <div class="mdn-s">
+          You're using the mobile layout. It's good for quick checks, but
+          <b>Desktop Mode</b> gives the full workspace: Live Monitor, AI
+          workflow, setup insight, timeline, and advanced tables.
+          <br><br>
+          For best results, open your browser menu and turn on
+          <b>"Desktop site"</b>.
+        </div>
+        <label class="mdn-never">
+          <input type="checkbox" id="mobileDesktopNoticeNever">
+          <span>Do not show again</span>
+        </label>
+        <div class="mdn-actions">
+          <button class="btn" id="mobileDesktopNoticeClose" type="button">Continue mobile</button>
+          <button class="btn btn-primary" id="mobileDesktopNoticeGotIt" type="button">Got it</button>
+        </div>
+      </div>
+    </div>
 
     <!-- Tutorial intro modal (Round 19 — Task 1) -->
     <div id="tutIntro" class="tut-intro-bd" hidden role="dialog" aria-modal="true">
@@ -7059,11 +7126,102 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
      card is interpreted in `.window`'s 0.8x-scaled coord space and the
      card ends up overlapping the highlighted target. */
   try{
-    ["tutIntro","tutOverlay","tutCardHost"].forEach(function(id){
+    ["tutIntro","tutOverlay","tutCardHost","mobileDesktopNoticeBd"].forEach(function(id){
       var n = document.getElementById(id);
       if(n && n.parentNode !== document.body) document.body.appendChild(n);
     });
   }catch(_){}
+
+  /* ═══════════════════════════════════════════════════════════════════
+     MOBILE DESKTOP-MODE NOTICE (Round 22)
+     Polite, dismissable nudge to switch to Desktop site on small
+     viewports. Strict conflict-check vs the tutorial system.
+     ═══════════════════════════════════════════════════════════════════ */
+  var _mobileDesktopNoticeSeenSession = false;
+  var MDN_NEVER_KEY = "zyni_mobile_desktop_notice_never";
+  function _mdnIsMobile(){
+    var w = innerWidth <= 768;
+    var ua = navigator.userAgent || "";
+    var isMobUa = /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(ua);
+    return w || isMobUa;
+  }
+  function _mdnPermanentlyDisabled(){
+    try{ return _ls_getBool(MDN_NEVER_KEY, false); }catch(_){ return false; }
+  }
+  function _mdnIsTutorialVisible(){
+    var intro = E("tutIntro");
+    var ovl   = E("tutOverlay");
+    var host  = E("tutCardHost");
+    if(intro && !intro.hidden) return true;
+    if(ovl   && !ovl.hidden)   return true;
+    if(host  && !host.hidden)  return true;
+    return false;
+  }
+  function _mdnShow(){
+    var bd = E("mobileDesktopNoticeBd"); if(!bd) return;
+    bd.hidden = false;
+    _mobileDesktopNoticeSeenSession = true;
+  }
+  function _mdnHide(){
+    var bd = E("mobileDesktopNoticeBd"); if(!bd) return;
+    bd.hidden = true;
+  }
+  function _mdnDismiss(savePermanent){
+    if(savePermanent){
+      try{ _ls_setBool(MDN_NEVER_KEY, true); }catch(_){}
+    }
+    _mdnHide();
+  }
+  function _mdnTryShow(){
+    if(!_mdnIsMobile())               return false;
+    if(_mobileDesktopNoticeSeenSession) return false;
+    if(_mdnPermanentlyDisabled())     return false;
+    if(_mdnIsTutorialVisible())       return false;
+    _mdnShow();
+    return true;
+  }
+  /* Wire dismiss buttons. Either button counts as "seen this session"
+     and only the checkbox decides whether it's also permanent. */
+  (function _mdnWireButtons(){
+    var close = E("mobileDesktopNoticeClose");
+    var got   = E("mobileDesktopNoticeGotIt");
+    var never = E("mobileDesktopNoticeNever");
+    function onDismiss(){
+      var permanent = !!(never && never.checked);
+      _mdnDismiss(permanent);
+    }
+    if(close) close.addEventListener("click", onDismiss);
+    if(got)   got.addEventListener("click",   onDismiss);
+    /* Backdrop clicks do NOT dismiss — user must press a button (cleaner
+       UX, and avoids accidental dismiss on a fat-finger). */
+  })();
+  /* If the tutorial intro / tutorial card opens while the notice is up,
+     hide the notice immediately so the user can interact with the
+     tutorial. Wrap the tutorial show functions. */
+  (function _mdnWireTutorialHides(){
+    if(typeof _tutShowIntro === "function"){
+      var orig = _tutShowIntro;
+      _tutShowIntro = function(){ _mdnHide(); return orig.apply(this, arguments); };
+      window._tutShowIntro = _tutShowIntro;
+    }
+    if(typeof _tutShowGroup === "function"){
+      var orig2 = _tutShowGroup;
+      _tutShowGroup = function(){ _mdnHide(); return orig2.apply(this, arguments); };
+      window._tutShowGroup = _tutShowGroup;
+    }
+  })();
+  /* Initial trigger — wait 1200 ms so layout / fonts / async init settle.
+     If the tutorial is in the way, retry once after another 3000 ms and
+     then give up for this session. */
+  setTimeout(function(){
+    if(_mdnTryShow()) return;
+    if(!_mdnIsMobile()) return;
+    if(_mdnPermanentlyDisabled()) return;
+    if(_mobileDesktopNoticeSeenSession) return;
+    /* The only reason _mdnTryShow could have returned false at this
+       point is a visible tutorial — retry once. */
+    setTimeout(function(){ _mdnTryShow(); }, 3000);
+  }, 1200);
 
   /* ═══════════════════════════════════════════════════════════════════
      TUTORIAL SYSTEM (Round 19 — Tasks 1-4, 6-8)
