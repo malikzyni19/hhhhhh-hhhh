@@ -32637,6 +32637,118 @@ def api_fvg_imbalance():
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Backtest — Raw Historical OB Engine  (Phase 1: skeleton only)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_BT_ALLOWED_TIMEFRAMES = {"5m", "15m", "30m", "1h", "4h", "1d"}
+_BT_ALLOWED_EXCHANGES  = {"binance"}
+_BT_ALLOWED_MARKETS    = {"perpetual"}
+
+
+def _bt_clean_symbol(raw: str) -> str:
+    s = raw.strip().upper()
+    if not s.endswith("USDT"):
+        s = s + "USDT"
+    return s
+
+
+def _bt_parse_rr_values(raw) -> list:
+    if not isinstance(raw, list) or len(raw) == 0:
+        return [1, 2, 3]
+    result = []
+    for v in raw:
+        try:
+            f = float(v)
+            if f > 0:
+                result.append(f)
+        except (TypeError, ValueError):
+            pass
+    return result if result else [1, 2, 3]
+
+
+def _bt_parse_ob_historical_payload(payload: dict):
+    """
+    Validate and normalise POST /api/backtest/ob-historical payload.
+    Returns (params_dict, error_str).  error_str is None on success.
+    """
+    raw_symbol = payload.get("symbol", "")
+    if not raw_symbol or not isinstance(raw_symbol, str):
+        return None, "symbol is required"
+
+    symbol    = _bt_clean_symbol(raw_symbol)
+    timeframe = str(payload.get("timeframe", "")).strip()
+    if timeframe not in _BT_ALLOWED_TIMEFRAMES:
+        return None, (
+            f"timeframe '{timeframe}' is not allowed. "
+            f"Allowed: {sorted(_BT_ALLOWED_TIMEFRAMES)}"
+        )
+
+    try:
+        candle_count = int(payload.get("candle_count", 3000))
+    except (TypeError, ValueError):
+        return None, "candle_count must be an integer"
+    candle_count = max(500, min(4000, candle_count))
+
+    exchange = str(payload.get("exchange", "binance")).strip().lower()
+    if exchange not in _BT_ALLOWED_EXCHANGES:
+        return None, "Only exchange='binance' is supported in Phase 1"
+
+    market = str(payload.get("market", "perpetual")).strip().lower()
+    if market not in _BT_ALLOWED_MARKETS:
+        return None, "Only market='perpetual' is supported in Phase 1"
+
+    rr_values  = _bt_parse_rr_values(payload.get("rr_values", [1, 2, 3]))
+    entry_rule = str(payload.get("entry_rule", "zone_high")).strip() or "zone_high"
+    stop_rule  = str(payload.get("stop_rule",  "close_beyond_zone")).strip() or "close_beyond_zone"
+
+    params = {
+        "symbol":       symbol,
+        "timeframe":    timeframe,
+        "candle_count": candle_count,
+        "exchange":     exchange,
+        "market":       market,
+        "rr_values":    rr_values,
+        "entry_rule":   entry_rule,
+        "stop_rule":    stop_rule,
+    }
+    return params, None
+
+
+@app.route("/api/backtest/ob-historical", methods=["POST"])
+@login_required
+def api_backtest_ob_historical():
+    err = _guest_tab_check("backtest")
+    if err is not None:
+        return err
+
+    payload = request.get_json(force=True) or {}
+    params, parse_error = _bt_parse_ob_historical_payload(payload)
+    if parse_error:
+        return jsonify({"ok": False, "error": parse_error}), 400
+
+    return jsonify({
+        "ok":      True,
+        "mode":    "raw_historical_ob_v1",
+        "phase":   "backend_skeleton",
+        "message": (
+            "Backtest OB historical endpoint skeleton ready. "
+            "Candle fetch and OB engine not connected yet."
+        ),
+        "params": params,
+        "next_engine_steps": [
+            "fetch historical candles",
+            "normalize OHLCV plus Binance taker fields",
+            "run detect_obs on full candle set",
+            "find first touch after each OB formation",
+            "simulate zone_high entry, close-beyond-zone SL, 1R/2R/3R targets",
+            "return premium dashboard-ready stats",
+        ],
+    })
+
+
     import os
 
     port = int(os.environ.get("PORT", 8000))
