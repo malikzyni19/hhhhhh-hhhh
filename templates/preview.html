@@ -956,6 +956,30 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 .lm-ws-section{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:12px}
 .lm-ws-section:last-child{margin-bottom:0}
 .lm-ws-sh{font-size:9.5px;font-weight:700;letter-spacing:.6px;color:var(--text-3);margin-bottom:8px;text-transform:uppercase}
+/* Trading Terminal grouped sections */
+.lm-term-group{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;margin-bottom:10px;overflow:hidden}
+.lm-term-gh{display:flex;align-items:center;justify-content:space-between;padding:11px 14px;cursor:pointer;user-select:none;gap:10px}
+.lm-term-gh:hover{background:rgba(255,255,255,.025)}
+.lm-term-gl{display:flex;flex-direction:column;gap:2px}
+.lm-term-glabel{font-size:11.5px;font-weight:700;color:var(--text);letter-spacing:.01em}
+.lm-term-gbadge{font-size:9px;font-weight:700;letter-spacing:.5px;color:var(--text-3);text-transform:uppercase}
+.lm-term-gchev{font-size:11px;color:var(--text-3);flex-shrink:0;transition:transform .18s;line-height:1}
+.lm-term-gbody{padding:4px 14px 14px}
+.lm-term-gwarn{font-size:9.5px;color:var(--yellow,#facc15);background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.18);border-radius:6px;padding:6px 10px;margin-bottom:10px;line-height:1.5}
+.lm-term-header{padding:0 0 14px;border-bottom:1px solid var(--border);margin-bottom:14px}
+.lm-term-ht{font-size:14px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:7px}
+.lm-term-ht-sep{color:var(--text-3);font-weight:400}
+.lm-term-ht-sym{color:var(--accent);font-family:var(--mono);letter-spacing:.05em}
+.lm-term-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.lm-term-chip{font-size:10px;font-weight:600;padding:2px 7px;border-radius:4px;background:var(--bg-card-2);color:var(--text-2);border:1px solid var(--border);font-family:var(--mono)}
+.lm-term-price{font-size:12px;font-weight:700;color:var(--accent);font-family:var(--mono)}
+.lm-term-empty{font-size:12px;color:var(--text-3);padding:4px 0 2px;line-height:1.5}
+.lm-paper-cards{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px}
+.lm-paper-card{background:var(--bg-card-2);border:1px solid var(--border);border-radius:8px;padding:10px 12px}
+.lm-paper-card-l{font-size:9px;font-weight:700;letter-spacing:.5px;color:var(--text-3);text-transform:uppercase;margin-bottom:4px}
+.lm-paper-card-v{font-size:11px;font-weight:700;color:var(--text-3);font-family:var(--mono)}
+.lm-paper-desc{font-size:10px;color:var(--text-3);line-height:1.6;margin-bottom:10px}
+@media(max-width:900px){.lm-paper-cards{grid-template-columns:1fr}}
 .lm-outer[data-workspace]:not([data-workspace="setups"]) .lm-manual{display:none!important}
 .lm-outer[data-workspace]:not([data-workspace="setups"]) .lm-ob-da-wrap{display:none!important}
 .lm-outer[data-workspace]:not([data-workspace="setups"]) [data-lmf]{display:none!important}
@@ -4578,21 +4602,35 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     _lmActiveWorkspace=ws;
   }
   function _lmUpdateTerminalActiveItem(){
-    var el=document.getElementById('lmTermActiveItem');
+    var el=document.getElementById('lmTermHeader');
     if(!el) return;
     var item=window._lmSelItem||null;
     if(item&&item.symbol){
+      var dir=(item.direction||'').toUpperCase();
+      var dirColor=dir.indexOf('BULL')!==-1?'var(--green-2,#4ade80)':dir.indexOf('BEAR')!==-1?'var(--red-2,#f87171)':'var(--text-2)';
+      var px=item.current_price!=null?String(item.current_price):'';
+      var st=item.setup_type||'';
       el.innerHTML=
-        '<span style="font-size:10px;color:var(--text-3)">Active: </span>'+
-        '<span style="font-size:11px;font-weight:700;color:var(--text-2);font-family:var(--mono)">'+esc(item.symbol)+'</span>'+
-        '<span style="font-size:10px;color:var(--text-3);margin-left:5px">'+esc((item.direction||'').toUpperCase())+' '+esc(item.timeframe||'')+'</span>';
+        '<div class="lm-term-ht">Trading Terminal <span class="lm-term-ht-sep">&mdash;</span> <span class="lm-term-ht-sym">'+esc(item.symbol)+'</span></div>'+
+        '<div class="lm-term-meta">'+
+          (item.timeframe?'<span class="lm-term-chip">'+esc(item.timeframe)+'</span>':'')+
+          (dir?'<span class="lm-term-chip" style="color:'+dirColor+'">'+esc(dir)+'</span>':'')+
+          (st?'<span class="lm-term-chip">'+esc(st)+'</span>':'')+
+          (px?'<span class="lm-term-price">'+esc(px)+'</span>':'')+
+        '</div>';
       window._lmSimItemId=item.id;
     } else {
-      el.innerHTML=
-        '<span style="font-size:10px;color:var(--text-3)">No setup selected — </span>'+
-        '<button class="btn lm-sm-btn" onclick="_lmSwitchPane(\'setups\')" style="font-size:9px;padding:2px 8px">&#8592; Go to Live Setups</button>';
+      el.innerHTML='<div class="lm-term-empty">Select a setup from the list to use Trading Terminal.</div>';
     }
   }
+  window._lmToggleTermGroup=function(id){
+    var body=document.getElementById('lmTgBody-'+id);
+    var chev=document.getElementById('lmTgChev-'+id);
+    if(!body) return;
+    var open=body.style.display!=='none';
+    body.style.display=open?'none':'';
+    if(chev) chev.style.transform=open?'rotate(-90deg)':'rotate(0deg)';
+  };
 
   /* Bind click/keyboard on LM sidebar items */
   function _bindLmSidebarEvents(aside){
@@ -4819,20 +4857,101 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
             /* PANE: Trading Terminal */
             '<div id="lmWsPane-terminal" class="lm-ws-pane" hidden>'+
               '<div class="lm-ws-page">'+
-                '<div class="lm-ws-header">'+
-                  '<div class="lm-ws-htitle">'+
-                    '<svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>'+
-                    'Trading Terminal'+
+
+                /* Selected Setup Header */
+                '<div class="lm-term-header" id="lmTermHeader">'+
+                  '<div class="lm-term-empty">Select a setup from the list to use Trading Terminal.</div>'+
+                '</div>'+
+
+                /* ── GROUP 1: Internal Paper Trading (open by default) ── */
+                '<div class="lm-term-group">'+
+                  '<div class="lm-term-gh" onclick="window._lmToggleTermGroup(\'paper\')">'+
+                    '<div class="lm-term-gl">'+
+                      '<span class="lm-term-glabel">Internal Paper Trading</span>'+
+                      '<span class="lm-term-gbadge">Primary Strategy Testing Mode</span>'+
+                    '</div>'+
+                    '<span class="lm-term-gchev" id="lmTgChev-paper">&#9660;</span>'+
                   '</div>'+
-                  '<div id="lmTermActiveItem" style="display:flex;align-items:center;gap:8px">'+
-                    '<span style="font-size:10px;color:var(--text-3)">No setup selected — </span>'+
-                    '<button class="btn lm-sm-btn" onclick="_lmSwitchPane(\'setups\')" style="font-size:9px;padding:2px 8px">&#8592; Go to Live Setups</button>'+
+                  '<div class="lm-term-gbody" id="lmTgBody-paper">'+
+                    '<p class="lm-paper-desc">'+
+                      'Primary strategy testing mode uses real futures market data and internal paper execution. '+
+                      'Validates entries without touching any real or testnet account.'+
+                    '</p>'+
+                    '<div class="lm-paper-cards">'+
+                      '<div class="lm-paper-card">'+
+                        '<div class="lm-paper-card-l">Paper Account</div>'+
+                        '<div class="lm-paper-card-v" style="color:var(--text-3)">Coming next</div>'+
+                      '</div>'+
+                      '<div class="lm-paper-card">'+
+                        '<div class="lm-paper-card-l">Paper Order Draft</div>'+
+                        '<div class="lm-paper-card-v" style="color:var(--text-3)">Coming next</div>'+
+                      '</div>'+
+                      '<div class="lm-paper-card">'+
+                        '<div class="lm-paper-card-l">Paper Positions</div>'+
+                        '<div class="lm-paper-card-v" style="color:var(--text-3)">Coming next</div>'+
+                      '</div>'+
+                      '<div class="lm-paper-card">'+
+                        '<div class="lm-paper-card-l">Paper PnL</div>'+
+                        '<div class="lm-paper-card-v" style="color:var(--text-3)">Coming next</div>'+
+                      '</div>'+
+                    '</div>'+
                   '</div>'+
                 '</div>'+
-                '<div class="lm-ws-grid-2">'+
 
-                  /* Left col — Connector, Exec Mode, Order Draft */
-                  '<div>'+
+                /* ── GROUP 2: Execution Readiness (open by default) ── */
+                '<div class="lm-term-group">'+
+                  '<div class="lm-term-gh" onclick="window._lmToggleTermGroup(\'readiness\')">'+
+                    '<div class="lm-term-gl">'+
+                      '<span class="lm-term-glabel">Execution Readiness</span>'+
+                      '<span class="lm-term-gbadge">Simulation / Validation Only</span>'+
+                    '</div>'+
+                    '<span class="lm-term-gchev" id="lmTgChev-readiness">&#9660;</span>'+
+                  '</div>'+
+                  '<div class="lm-term-gbody" id="lmTgBody-readiness">'+
+                    '<div class="lm-ws-section" id="lmExecSimSection">'+
+                      '<div class="lm-ws-sh">Execution Simulator</div>'+
+                      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:10px;margin-bottom:8px">'+
+                        '<span style="color:var(--text-3)">Execution status:</span><span style="color:var(--yellow,#facc15);font-weight:700">SIMULATION ONLY</span>'+
+                        '<span style="color:var(--text-3)">Testnet orders:</span><span style="color:var(--red-2,#f87171);font-weight:700">DISABLED</span>'+
+                        '<span style="color:var(--text-3)">Execution:</span><span style="color:var(--red-2,#f87171);font-weight:700">DISABLED</span>'+
+                      '</div>'+
+                      '<div id="lmSimGrid" style="display:none">'+
+                        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:10px;color:var(--text-3);padding:2px 0 6px">'+
+                          '<span>Readiness Passed:</span><span id="lmSimReady" style="font-weight:700">—</span>'+
+                          '<span>Intent valid:</span><span id="lmSimIntent">—</span>'+
+                          '<span>Policy valid:</span><span id="lmSimPolicy">—</span>'+
+                          '<span>Decision valid:</span><span id="lmSimDecision">—</span>'+
+                          '<span>Filter valid:</span><span id="lmSimFilter">—</span>'+
+                          '<span>Data health:</span><span id="lmSimData">—</span>'+
+                        '</div>'+
+                        '<div id="lmSimIntentBox" style="display:none;font-size:9.5px;color:var(--text-3);padding:4px 6px;background:var(--bg-2);border-radius:4px;margin-bottom:4px;line-height:1.5"></div>'+
+                        '<div id="lmSimReasons" style="display:none;font-size:9px;color:var(--red-2,#f87171);padding:3px 6px;background:rgba(239,68,68,.07);border-radius:4px;margin-bottom:4px"></div>'+
+                        '<div id="lmSimWarnings" style="display:none;font-size:9px;color:var(--yellow,#facc15);padding:3px 6px;background:rgba(251,191,36,.06);border-radius:4px"></div>'+
+                      '</div>'+
+                      '<div style="margin-top:8px">'+
+                        '<button class="btn lm-sm-btn" id="lmRunSimBtn" style="width:100%;justify-content:center" onclick="window._lmRunSimulation()">Run Simulation</button>'+
+                      '</div>'+
+                      '<div style="font-size:9px;color:var(--text-3);padding:5px 0 0;line-height:1.4">'+
+                        '<b style="color:var(--yellow)">Phase 11.6</b> — Simulation only. No orders. No execution. No automation.'+
+                      '</div>'+
+                    '</div>'+
+                  '</div>'+
+                '</div>'+
+
+                /* ── GROUP 3: Binance Testnet API Testing (collapsed by default) ── */
+                '<div class="lm-term-group">'+
+                  '<div class="lm-term-gh" onclick="window._lmToggleTermGroup(\'testnet\')">'+
+                    '<div class="lm-term-gl">'+
+                      '<span class="lm-term-glabel">Binance Testnet API Testing</span>'+
+                      '<span class="lm-term-gbadge">API Testing Only</span>'+
+                    '</div>'+
+                    '<span class="lm-term-gchev" id="lmTgChev-testnet" style="transform:rotate(-90deg)">&#9660;</span>'+
+                  '</div>'+
+                  '<div class="lm-term-gbody" id="lmTgBody-testnet" style="display:none">'+
+                    '<div class="lm-term-gwarn">'+
+                      '<b>API testing only.</b> Not used for strategy validation because testnet price can differ from real futures market.'+
+                    '</div>'+
+
                     '<div class="lm-ws-section" id="lmBtConnectorSection">'+
                       '<div class="lm-ws-sh">Binance Testnet Connector</div>'+
                       '<div id="lmBtStatusGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;font-size:10px;color:var(--text-3)">'+
@@ -4875,6 +4994,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 
                     '<div class="lm-ws-section" style="background:rgba(251,191,36,.04);border-color:rgba(251,191,36,.2)">'+
                       '<div class="lm-ws-sh" style="color:var(--yellow,#facc15)">Testnet Order Draft <span style="font-size:9px;opacity:.7;font-weight:400">(Phase 11.7A)</span></div>'+
+                      '<div style="font-size:9px;color:var(--text-3);margin-bottom:8px">Manual Testnet Limit Order Only — no automation, no TP/SL.</div>'+
                       '<table style="width:100%;font-size:10px;border-collapse:collapse">'+
                         '<tr><td style="color:var(--text-3);padding:2px 0;width:44%">Symbol</td><td id="lmTod-symbol" style="color:var(--text-1)">—</td></tr>'+
                         '<tr><td style="color:var(--text-3);padding:2px 0">Side</td><td id="lmTod-side" style="color:var(--text-1)">—</td></tr>'+
@@ -4907,37 +5027,20 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                         '<b style="color:#f87171">Manual submit only.</b> No TP/SL. No automation. Entry order only.'+
                       '</div>'+
                     '</div>'+
-                  '</div>'+
 
-                  /* Right col — Simulator, Pending Orders, Open Positions, Order Status */
-                  '<div>'+
-                    '<div class="lm-ws-section" id="lmExecSimSection">'+
-                      '<div class="lm-ws-sh">Execution Simulator</div>'+
-                      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:10px;margin-bottom:8px">'+
-                        '<span style="color:var(--text-3)">Execution status:</span><span style="color:var(--yellow,#facc15);font-weight:700">SIMULATION ONLY</span>'+
-                        '<span style="color:var(--text-3)">Testnet orders:</span><span style="color:var(--red-2,#f87171);font-weight:700">DISABLED</span>'+
-                        '<span style="color:var(--text-3)">Execution:</span><span style="color:var(--red-2,#f87171);font-weight:700">DISABLED</span>'+
-                      '</div>'+
-                      '<div id="lmSimGrid" style="display:none">'+
-                        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:10px;color:var(--text-3);padding:2px 0 6px">'+
-                          '<span>Ready for testnet:</span><span id="lmSimReady" style="font-weight:700">—</span>'+
-                          '<span>Intent valid:</span><span id="lmSimIntent">—</span>'+
-                          '<span>Policy valid:</span><span id="lmSimPolicy">—</span>'+
-                          '<span>Decision valid:</span><span id="lmSimDecision">—</span>'+
-                          '<span>Filter valid:</span><span id="lmSimFilter">—</span>'+
-                          '<span>Data health:</span><span id="lmSimData">—</span>'+
-                        '</div>'+
-                        '<div id="lmSimIntentBox" style="display:none;font-size:9.5px;color:var(--text-3);padding:4px 6px;background:var(--bg-2);border-radius:4px;margin-bottom:4px;line-height:1.5"></div>'+
-                        '<div id="lmSimReasons" style="display:none;font-size:9px;color:var(--red-2,#f87171);padding:3px 6px;background:rgba(239,68,68,.07);border-radius:4px;margin-bottom:4px"></div>'+
-                        '<div id="lmSimWarnings" style="display:none;font-size:9px;color:var(--yellow,#facc15);padding:3px 6px;background:rgba(251,191,36,.06);border-radius:4px"></div>'+
-                      '</div>'+
-                      '<div style="margin-top:8px">'+
-                        '<button class="btn lm-sm-btn" id="lmRunSimBtn" style="width:100%;justify-content:center" onclick="window._lmRunSimulation()">Run Simulation</button>'+
-                      '</div>'+
-                      '<div style="font-size:9px;color:var(--text-3);padding:5px 0 0;line-height:1.4">'+
-                        '<b style="color:var(--yellow)">Phase 11.6</b> — Simulation only. No orders. No execution. No automation.'+
-                      '</div>'+
+                  '</div>'+
+                '</div>'+ /* end Binance Testnet group */
+
+                /* ── GROUP 4: Logs / Recent Actions (collapsed by default) ── */
+                '<div class="lm-term-group">'+
+                  '<div class="lm-term-gh" onclick="window._lmToggleTermGroup(\'logs\')">'+
+                    '<div class="lm-term-gl">'+
+                      '<span class="lm-term-glabel">Logs / Recent Actions</span>'+
+                      '<span class="lm-term-gbadge">Orders, positions &amp; status</span>'+
                     '</div>'+
+                    '<span class="lm-term-gchev" id="lmTgChev-logs" style="transform:rotate(-90deg)">&#9660;</span>'+
+                  '</div>'+
+                  '<div class="lm-term-gbody" id="lmTgBody-logs" style="display:none">'+
 
                     '<div class="lm-ws-section">'+
                       '<div class="lm-ws-sh">Pending Orders</div>'+
@@ -4967,13 +5070,14 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                       '<div id="lmTodResultExpanded" style="display:none;font-size:10px;padding:4px 0;line-height:1.6"></div>'+
                     '</div>'+
 
-                    '<div style="display:flex;gap:8px;margin-top:4px">'+
+                    '<div style="display:flex;gap:8px;margin-top:8px">'+
                       '<button class="btn" disabled style="flex:1;justify-content:center;opacity:.3;cursor:not-allowed">Buy / Long</button>'+
                       '<button class="btn" disabled style="flex:1;justify-content:center;opacity:.3;cursor:not-allowed">Sell / Short</button>'+
                     '</div>'+
-                  '</div>'+
 
-                '</div>'+ /* end lm-ws-grid-2 */
+                  '</div>'+
+                '</div>'+ /* end Logs group */
+
               '</div>'+ /* end lm-ws-page */
             '</div>'+ /* end lmWsPane-terminal */
 
