@@ -49,6 +49,7 @@ from live_monitor.testnet_order_draft import (
 )
 from live_monitor.paper_trading import (
     _lm_get_or_create_paper_account,
+    _lm_get_real_market_price_for_paper,
     _lm_build_paper_order_draft,
     _lm_validate_paper_order_quantity,
     _lm_validate_paper_order_draft,
@@ -96,6 +97,7 @@ __all__ = [
     "_lm_build_testnet_order_draft",
     "_lm_validate_order_quantity",
     "_lm_get_or_create_paper_account",
+    "_lm_get_real_market_price_for_paper",
     "_lm_build_paper_order_draft",
     "_lm_validate_paper_order_quantity",
     "_lm_validate_paper_order_draft",
