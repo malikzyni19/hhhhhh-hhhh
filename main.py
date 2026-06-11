@@ -33088,6 +33088,238 @@ def _bt_run_parity_check(candles: List[Dict], replay_events: List[Dict], params:
         }
 
 
+def _bt_simulate_first_touch_outcome(event: dict, candles: List[Dict],
+                                     rr_values: list) -> dict:
+    """Simulate one OB event's trade outcome starting from its first-touch bar.
+
+    Entry rule  : zone_high (both bullish and bearish).
+    Stop rule   : candle CLOSE beyond zone — wick beyond zone does NOT trigger SL.
+    TP rule     : entry ± risk * R (bullish +, bearish −) checked via wick (high/low).
+    Scan range  : first_touch_bar (inclusive) → end of candle array.
+
+    Outcomes:
+      "tp"         — smallest-R TP was hit before a stop close
+      "sl"         — stop close hit before any TP
+      "ambiguous"  — TP wick and SL close both occurred on the same candle
+      "unresolved" — candle array ended with neither TP nor SL
+      "no_touch"   — event was never touched; simulation not run
+    """
+    _ineligible = {
+        "eligible":            False,
+        "entry_price":         None,
+        "entry_bar":           None,
+        "entry_time":          None,
+        "stop_boundary":       None,
+        "risk_amount":         None,
+        "rr_values":           rr_values,
+        "tp_prices":           {},
+        "hit_rr":              {str(r): False for r in rr_values},
+        "candles_to_rr":       {str(r): None  for r in rr_values},
+        "first_tp_rr":         None,
+        "first_tp_bar":        None,
+        "first_tp_time":       None,
+        "stop_hit":            False,
+        "stop_bar":            None,
+        "stop_time":           None,
+        "first_outcome":       "no_touch",
+        "same_candle_event":   False,
+        "max_r_reached":       0.0,
+        "max_adverse_r":       0.0,
+        "max_favorable_price": None,
+        "max_adverse_price":   None,
+    }
+
+    if event.get("touch_status") != "touched":
+        return _ineligible
+
+    ob_type         = event["type"]           # "bullish" | "bearish"
+    zone_high       = float(event["zone_high"])
+    zone_low        = float(event["zone_low"])
+    first_touch_bar = event["first_touch_bar"]
+    n               = len(candles)
+
+    entry_price = zone_high
+    risk_amount = zone_high - zone_low
+
+    if risk_amount <= 0 or first_touch_bar is None or first_touch_bar >= n:
+        r = dict(_ineligible)
+        r.update({"eligible": False, "first_outcome": "unresolved"})
+        return r
+
+    # ── Targets ───────────────────────────────────────────────────────────────
+    if ob_type == "bullish":
+        stop_boundary = zone_low
+        tp_prices = {str(rv): round(entry_price + risk_amount * rv, 8)
+                     for rv in rr_values}
+    else:  # bearish — short from zone_high, targets go down
+        stop_boundary = zone_high
+        tp_prices = {str(rv): round(entry_price - risk_amount * rv, 8)
+                     for rv in rr_values}
+
+    sorted_rr     = sorted(rr_values)  # ascending so smallest R records first_tp first
+    hit_rr        = {str(rv): False for rv in rr_values}
+    candles_to_rr = {str(rv): None  for rv in rr_values}
+    first_tp_rr   = None
+    first_tp_bar  = None
+    first_tp_time = None
+    stop_hit      = False
+    stop_bar      = None
+    stop_time     = None
+
+    max_fav_price = None   # max high (bull) / min low  (bear)
+    max_adv_price = None   # min low  (bull) / max high (bear)
+
+    times = [c.get("open_time") for c in candles]
+
+    for j in range(first_touch_bar, n):
+        h  = float(candles[j]["high"])
+        l  = float(candles[j]["low"])
+        cl = float(candles[j]["close"])
+
+        # ── Excursion ─────────────────────────────────────────────────────────
+        if ob_type == "bullish":
+            max_fav_price = h if max_fav_price is None else max(max_fav_price, h)
+            max_adv_price = l if max_adv_price is None else min(max_adv_price, l)
+        else:
+            max_fav_price = l if max_fav_price is None else min(max_fav_price, l)
+            max_adv_price = h if max_adv_price is None else max(max_adv_price, h)
+
+        # ── TP checks (wick-based, ascending R so smallest hits first_tp) ─────
+        for rv in sorted_rr:
+            rk = str(rv)
+            if hit_rr[rk]:
+                continue
+            tp_p = tp_prices[rk]
+            tp_hit = (ob_type == "bullish" and h >= tp_p) or \
+                     (ob_type == "bearish" and l <= tp_p)
+            if tp_hit:
+                hit_rr[rk]        = True
+                candles_to_rr[rk] = j - first_touch_bar
+                if first_tp_bar is None:
+                    first_tp_rr   = rv
+                    first_tp_bar  = j
+                    first_tp_time = times[j] if j < n else None
+
+        # ── SL check (close-based only — wick never triggers SL) ─────────────
+        if not stop_hit:
+            sl_hit = (ob_type == "bullish" and cl < zone_low) or \
+                     (ob_type == "bearish" and cl > zone_high)
+            if sl_hit:
+                stop_hit  = True
+                stop_bar  = j
+                stop_time = times[j] if j < n else None
+
+        # Trade closed at stop; any same-candle TP already recorded above
+        if stop_hit:
+            break
+
+    # ── First outcome ─────────────────────────────────────────────────────────
+    same_candle = (first_tp_bar is not None and stop_bar is not None
+                   and first_tp_bar == stop_bar)
+    if same_candle:
+        first_outcome = "ambiguous"
+    elif first_tp_bar is not None and (stop_bar is None or first_tp_bar < stop_bar):
+        first_outcome = "tp"
+    elif stop_hit:
+        first_outcome = "sl"
+    else:
+        first_outcome = "unresolved"
+
+    # ── Max-R calculations ────────────────────────────────────────────────────
+    if ob_type == "bullish":
+        max_r = max(0.0, (max_fav_price - entry_price) / risk_amount) \
+                if max_fav_price is not None else 0.0
+        adv_r = max(0.0, (entry_price  - max_adv_price) / risk_amount) \
+                if max_adv_price is not None else 0.0
+    else:
+        max_r = max(0.0, (entry_price  - max_fav_price) / risk_amount) \
+                if max_fav_price is not None else 0.0
+        adv_r = max(0.0, (max_adv_price - entry_price) / risk_amount) \
+                if max_adv_price is not None else 0.0
+
+    return {
+        "eligible":            True,
+        "entry_price":         round(entry_price, 8),
+        "entry_bar":           first_touch_bar,
+        "entry_time":          event.get("first_touch_time"),
+        "stop_boundary":       round(stop_boundary, 8),
+        "risk_amount":         round(risk_amount, 8),
+        "rr_values":           rr_values,
+        "tp_prices":           {k: round(v, 8) for k, v in tp_prices.items()},
+        "hit_rr":              hit_rr,
+        "candles_to_rr":       candles_to_rr,
+        "first_tp_rr":         first_tp_rr,
+        "first_tp_bar":        first_tp_bar,
+        "first_tp_time":       first_tp_time,
+        "stop_hit":            stop_hit,
+        "stop_bar":            stop_bar,
+        "stop_time":           stop_time,
+        "first_outcome":       first_outcome,
+        "same_candle_event":   same_candle,
+        "max_r_reached":       round(max_r, 4),
+        "max_adverse_r":       round(adv_r, 4),
+        "max_favorable_price": round(max_fav_price, 8) if max_fav_price is not None else None,
+        "max_adverse_price":   round(max_adv_price, 8) if max_adv_price is not None else None,
+    }
+
+
+def _bt_apply_outcomes_to_events(events: List[Dict], candles: List[Dict],
+                                  params: dict) -> dict:
+    """Attach simulation dict to every event in-place; return outcome_summary."""
+    rr_values = params.get("rr_values", [1, 2, 3])
+
+    for ev in events:
+        ev["simulation"] = _bt_simulate_first_touch_outcome(ev, candles, rr_values)
+
+    eligible  = [e for e in events if e["simulation"]["eligible"]]
+    n_elig    = len(eligible)
+
+    tp_first   = sum(1 for e in eligible if e["simulation"]["first_outcome"] == "tp")
+    sl_first   = sum(1 for e in eligible if e["simulation"]["first_outcome"] == "sl")
+    ambiguous  = sum(1 for e in eligible if e["simulation"]["first_outcome"] == "ambiguous")
+    unresolved = sum(1 for e in eligible if e["simulation"]["first_outcome"] == "unresolved")
+
+    hit_rate_by_rr = {}
+    for rv in rr_values:
+        rk   = str(rv)
+        hits = sum(1 for e in eligible if e["simulation"]["hit_rr"].get(rk, False))
+        hit_rate_by_rr[rk] = {
+            "hits":     hits,
+            "rate_pct": round(hits / n_elig * 100, 1) if n_elig else 0.0,
+        }
+
+    all_max_r = [e["simulation"]["max_r_reached"] for e in eligible]
+    all_adv_r = [e["simulation"]["max_adverse_r"]  for e in eligible]
+    avg_max_r = round(sum(all_max_r) / n_elig, 4) if n_elig else None
+    avg_adv_r = round(sum(all_adv_r) / n_elig, 4) if n_elig else None
+
+    def _dir(direction):
+        evs = [e for e in eligible if e["type"] == direction]
+        nd  = len(evs)
+        rs  = [e["simulation"]["max_r_reached"] for e in evs]
+        return {
+            "count":             nd,
+            "tp_first":          sum(1 for e in evs if e["simulation"]["first_outcome"] == "tp"),
+            "sl_first":          sum(1 for e in evs if e["simulation"]["first_outcome"] == "sl"),
+            "avg_max_r_reached": round(sum(rs) / nd, 4) if nd else None,
+        }
+
+    return {
+        "events_total":      len(events),
+        "eligible_touched":  n_elig,
+        "no_touch":          len(events) - n_elig,
+        "tp_first":          tp_first,
+        "sl_first":          sl_first,
+        "ambiguous":         ambiguous,
+        "unresolved":        unresolved,
+        "hit_rate_by_rr":    hit_rate_by_rr,
+        "avg_max_r_reached": avg_max_r,
+        "avg_max_adverse_r": avg_adv_r,
+        "bullish":           _dir("bullish"),
+        "bearish":           _dir("bearish"),
+    }
+
+
 def _bt_run_ob_historical_backtest(params: dict) -> dict:
     """Shared execution core used by both the POST and GET debug routes.
 
@@ -33127,6 +33359,9 @@ def _bt_run_ob_historical_backtest(params: dict) -> dict:
     all_events     = _bt_extract_ob_replay_events(candles, params)
     replay_summary = _bt_replay_summary(candles, all_events)
 
+    # ── First-touch outcome simulation ────────────────────────────────────────
+    outcome_summary = _bt_apply_outcomes_to_events(all_events, candles, params)
+
     # ── Optional parity validation ────────────────────────────────────────────
     parity = (
         _bt_run_parity_check(candles, all_events, params)
@@ -33141,15 +33376,17 @@ def _bt_run_ob_historical_backtest(params: dict) -> dict:
     return {
         "ok":           True,
         "mode":         "raw_historical_ob_v1",
-        "phase":        "ob_replay_events_connected",
+        "phase":        "first_touch_outcomes_connected",
         "fetch_source": "get_klines",
         "message": (
-            "Historical candles replayed. OB formation and first-touch events "
-            "extracted. TP/SL simulation is not connected yet."
+            "Historical candles replayed. OB formation, first-touch events, "
+            "and first-touch outcome simulation (entry/TP/SL/max-R) are connected. "
+            "TP/SL use zone_high entry with close-beyond-zone stop."
         ),
         "params":           params,
         "candle_summary":   candle_summary,
         "replay_summary":   replay_summary,
+        "outcome_summary":  outcome_summary,
         "parity":           parity,
         "events_sample": {
             "first": all_events[0]  if all_events else None,
@@ -33240,6 +33477,7 @@ def api_backtest_ob_historical_debug():
 
     cs   = result.get("candle_summary",  {}) or {}
     rs   = result.get("replay_summary",  {}) or {}
+    os_  = result.get("outcome_summary", {}) or {}
     par  = result.get("parity",          {}) or {}
     prm  = result.get("params",          {}) or {}
     ev1  = (result.get("events_sample") or {}).get("first") or {}
@@ -33252,6 +33490,13 @@ def api_backtest_ob_historical_debug():
         )
         title_color = "#f55"
     else:
+        # hit-rate helper
+        def _hr(rk):
+            d = (os_.get("hit_rate_by_rr") or {}).get(rk) or {}
+            if not d:
+                return _v(None)
+            return f"{d.get('hits', 0)} hits / {d.get('rate_pct', 0)}%"
+
         rows = [
             ("ok",                              "true"),
             ("phase",                           _v(result.get("phase"))),
@@ -33263,6 +33508,17 @@ def api_backtest_ob_historical_debug():
             ("touched_events",                  _v(rs.get("touched_events"))),
             ("mitigated_later",                 _v(rs.get("mitigated_later"))),
             ("avg_candles_to_first_touch",      _v(rs.get("avg_candles_to_first_touch"))),
+            ("── outcomes ──",                  ""),
+            ("eligible_touched",                _v(os_.get("eligible_touched"))),
+            ("tp_first",                        _v(os_.get("tp_first"))),
+            ("sl_first",                        _v(os_.get("sl_first"))),
+            ("ambiguous",                       _v(os_.get("ambiguous"))),
+            ("unresolved",                      _v(os_.get("unresolved"))),
+            ("hit_rate 1R",                     _hr("1")),
+            ("hit_rate 2R",                     _hr("2")),
+            ("hit_rate 3R",                     _hr("3")),
+            ("avg_max_r_reached",               _v(os_.get("avg_max_r_reached"))),
+            ("── parity ──",                    ""),
             ("parity.enabled",                  _v(par.get("enabled"))),
             ("parity.production_count",         _v(par.get("production_count"))),
             ("parity.replay_events_total",      _v(par.get("replay_events_total"))),
@@ -33277,18 +33533,28 @@ def api_backtest_ob_historical_debug():
 
         first_ev_rows = ""
         if ev1:
-            for k, fk in [
-                ("type",             "type"),
-                ("formation_time",   "formation_time"),
-                ("zone_high",        "zone_high"),
-                ("zone_low",         "zone_low"),
-                ("touch_status",     "touch_status"),
-                ("first_touch_time", "first_touch_time"),
-                ("later_mitigated",  "later_mitigated"),
+            sim1 = ev1.get("simulation") or {}
+            for k, val in [
+                ("type",                  ev1.get("type")),
+                ("formation_time",        ev1.get("formation_time")),
+                ("zone_high",             ev1.get("zone_high")),
+                ("zone_low",              ev1.get("zone_low")),
+                ("touch_status",          ev1.get("touch_status")),
+                ("first_touch_time",      ev1.get("first_touch_time")),
+                ("later_mitigated",       ev1.get("later_mitigated")),
+                ("sim.eligible",          sim1.get("eligible")),
+                ("sim.entry_price",       sim1.get("entry_price")),
+                ("sim.risk_amount",       sim1.get("risk_amount")),
+                ("sim.first_outcome",     sim1.get("first_outcome")),
+                ("sim.stop_hit",          sim1.get("stop_hit")),
+                ("sim.first_tp_rr",       sim1.get("first_tp_rr")),
+                ("sim.max_r_reached",     sim1.get("max_r_reached")),
+                ("sim.max_adverse_r",     sim1.get("max_adverse_r")),
+                ("sim.same_candle_event", sim1.get("same_candle_event")),
             ]:
                 first_ev_rows += (
                     f"<tr><td style='padding:6px 12px 6px 0;color:#aaa'>{k}</td>"
-                    f"<td style='padding:6px 0;color:#fff'>{_v(ev1.get(fk))}</td></tr>"
+                    f"<td style='padding:6px 0;color:#fff'>{_v(val)}</td></tr>"
                 )
 
         parity_note = ""
