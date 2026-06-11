@@ -1148,6 +1148,15 @@
                     </div>
                 </div>
 
+                {% if turnstile_site_key %}
+                <div class="field-wrapper slide-element" style="display:flex;justify-content:center;">
+                    <div class="cf-turnstile"
+                         data-sitekey="{{ turnstile_site_key }}"
+                         data-theme="dark"
+                         data-size="normal"></div>
+                </div>
+                {% endif %}
+
                 <div class="field-wrapper slide-element">
                     <button class="submit-button" id="loginBtn" type="submit">Sign In</button>
                 </div>
@@ -1207,6 +1216,15 @@
                     </div>
                 </div>
 
+                {% if turnstile_site_key %}
+                <div class="field-wrapper slide-element" style="display:flex;justify-content:center;">
+                    <div class="cf-turnstile"
+                         data-sitekey="{{ turnstile_site_key }}"
+                         data-theme="dark"
+                         data-size="normal"></div>
+                </div>
+                {% endif %}
+
                 <div class="field-wrapper slide-element">
                     <button class="submit-button" id="signupBtn" type="submit">Create Account</button>
                 </div>
@@ -1228,6 +1246,11 @@
     <div class="footer">
         <p>© 2026 ZyNi SMC. All rights reserved. &nbsp;|&nbsp; <a href="/">← Back to Home</a></p>
     </div>
+
+    {% if turnstile_site_key %}
+    <!-- Cloudflare Turnstile -->
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+    {% endif %}
 
     <!-- GSAP CDN -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"
