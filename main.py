@@ -32727,15 +32727,20 @@ def _bt_parse_ob_historical_payload(payload: dict):
     entry_rule = str(payload.get("entry_rule", "zone_high")).strip() or "zone_high"
     stop_rule  = str(payload.get("stop_rule",  "close_beyond_zone")).strip() or "close_beyond_zone"
 
+    # include_parity is a debug-only flag — default false
+    raw_parity = payload.get("include_parity", False)
+    include_parity = bool(raw_parity) if isinstance(raw_parity, bool) else str(raw_parity).lower() in ("true", "1", "yes")
+
     params = {
-        "symbol":       symbol,
-        "timeframe":    timeframe,
-        "candle_count": candle_count,
-        "exchange":     exchange,
-        "market":       market,
-        "rr_values":    rr_values,
-        "entry_rule":   entry_rule,
-        "stop_rule":    stop_rule,
+        "symbol":          symbol,
+        "timeframe":       timeframe,
+        "candle_count":    candle_count,
+        "exchange":        exchange,
+        "market":          market,
+        "rr_values":       rr_values,
+        "entry_rule":      entry_rule,
+        "stop_rule":       stop_rule,
+        "include_parity":  include_parity,
     }
     return params, None
 
@@ -33005,6 +33010,118 @@ def _bt_replay_summary(candles: List[Dict], events: List[Dict]) -> Dict:
     }
 
 
+def _bt_run_parity_check(candles: List[Dict], replay_events: List[Dict], params: Dict) -> Dict:
+    """Compare replay engine output against production detect_obs_all() output.
+
+    Production detector returns only surviving (non-mitigated) OBs; the replay
+    engine returns ALL historical OBs including later-mitigated ones.  A match
+    is declared when a production OB's (type, top, bottom) aligns within a
+    0.02% price tolerance with any replay event's (type, zone_high, zone_low).
+
+    Returns a parity dict.  Never raises — wraps everything in try/except so a
+    failure here cannot break the main endpoint response.
+    """
+    _PARITY_TOL = 0.0002  # 0.02 % relative price tolerance
+
+    try:
+        n = len(candles)
+        if n == 0:
+            return {"enabled": True, "error": "No candles available for parity check"}
+
+        o_arr  = [float(c["open"])   for c in candles]
+        h_arr  = [float(c["high"])   for c in candles]
+        l_arr  = [float(c["low"])    for c in candles]
+        c_arr  = [float(c["close"])  for c in candles]
+        v_arr  = [float(c["volume"]) for c in candles]
+
+        # detect_obs_all returns list directly (not tuple)
+        production_obs = detect_obs_all(
+            o_arr, h_arr, l_arr, c_arr, v_arr,
+            i_len=3, s_len=3, max_ob=200,
+        )
+
+        def _prices_match(a: float, b: float) -> bool:
+            ref = (abs(a) + abs(b)) / 2.0
+            if ref == 0:
+                return a == b
+            return abs(a - b) / ref <= _PARITY_TOL
+
+        def _ob_matches_event(prod_ob: dict, ev: dict) -> bool:
+            if prod_ob.get("type") != ev.get("type"):
+                return False
+            return (
+                _prices_match(float(prod_ob["top"]),    float(ev["zone_high"])) and
+                _prices_match(float(prod_ob["bottom"]), float(ev["zone_low"]))
+            )
+
+        matched_prod_indices   = set()
+        sample_matches         = []
+        sample_unmatched_prod  = []
+
+        for pi, prod_ob in enumerate(production_obs):
+            found = False
+            for ev in replay_events:
+                if _ob_matches_event(prod_ob, ev):
+                    found = True
+                    matched_prod_indices.add(pi)
+                    if len(sample_matches) < 10:
+                        sample_matches.append({
+                            "production": {
+                                "type":       prod_ob.get("type"),
+                                "top":        prod_ob.get("top"),
+                                "bottom":     prod_ob.get("bottom"),
+                                "bar":        prod_ob.get("bar"),
+                                "sourceBar":  prod_ob.get("sourceBar"),
+                            },
+                            "replay_event": {
+                                "type":           ev.get("type"),
+                                "zone_high":      ev.get("zone_high"),
+                                "zone_low":       ev.get("zone_low"),
+                                "formation_bar":  ev.get("formation_bar"),
+                                "source_bar":     ev.get("source_bar"),
+                            },
+                        })
+                    break
+            if not found and len(sample_unmatched_prod) < 10:
+                sample_unmatched_prod.append({
+                    "type":      prod_ob.get("type"),
+                    "top":       prod_ob.get("top"),
+                    "bottom":    prod_ob.get("bottom"),
+                    "bar":       prod_ob.get("bar"),
+                    "sourceBar": prod_ob.get("sourceBar"),
+                })
+
+        prod_count       = len(production_obs)
+        matched_count    = len(matched_prod_indices)
+        unmatched_count  = prod_count - matched_count
+        match_rate       = round(matched_count / prod_count * 100, 1) if prod_count > 0 else None
+
+        return {
+            "enabled":                     True,
+            "production_detector":         "detect_obs_all",
+            "production_count":            prod_count,
+            "replay_events_total":         len(replay_events),
+            "matched_count":               matched_count,
+            "unmatched_production_count":  unmatched_count,
+            "match_rate_pct":              match_rate,
+            "tolerance_pct":               round(_PARITY_TOL * 100, 4),
+            "sample_matches":              sample_matches,
+            "sample_unmatched_production": sample_unmatched_prod,
+            "notes": (
+                "detect_obs_all returns only surviving (non-mitigated) OBs. "
+                "Replay engine captures ALL historical OBs including mitigated ones. "
+                "A 1-bar timing difference exists: production uses prev-bar pivot state "
+                "while replay updates pivot state before the BOS check."
+            ),
+        }
+
+    except Exception as _parity_exc:
+        return {
+            "enabled": True,
+            "error":   f"Parity check failed: {_parity_exc}",
+        }
+
+
 @app.route("/api/backtest/ob-historical", methods=["POST"])
 @login_required
 def api_backtest_ob_historical():
@@ -33048,9 +33165,16 @@ def api_backtest_ob_historical():
     all_events     = _bt_extract_ob_replay_events(candles, params)
     replay_summary = _bt_replay_summary(candles, all_events)
 
+    # ── Optional parity validation (debug only) ───────────────────────────────
+    parity = (
+        _bt_run_parity_check(candles, all_events, params)
+        if params.get("include_parity")
+        else {"enabled": False}
+    )
+
     # Truncate event list for response (summary is always over all events)
-    truncated      = len(all_events) > _BT_MAX_EVENTS
-    out_events     = all_events[:_BT_MAX_EVENTS] if truncated else all_events
+    truncated  = len(all_events) > _BT_MAX_EVENTS
+    out_events = all_events[:_BT_MAX_EVENTS] if truncated else all_events
 
     return jsonify({
         "ok":           True,
@@ -33064,6 +33188,7 @@ def api_backtest_ob_historical():
         "params":           params,
         "candle_summary":   candle_summary,
         "replay_summary":   replay_summary,
+        "parity":           parity,
         "events_sample": {
             "first": all_events[0]  if all_events else None,
             "last":  all_events[-1] if all_events else None,
