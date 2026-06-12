@@ -11889,7 +11889,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
      ═══════════════════════════════════════════════════════════════════════ */
   var _btState={data:null,page:"overview",rr:[1,2,3],charts:{},tblPage:0,lastRun:null,filters:null,
     mtfData:null,mtfCharts:{},mtfTfs:["15m","1h","4h"],
-    batchData:null,batchCharts:{},compareMode:"mtf"};
+    batchData:null,batchCharts:{},compareMode:"mtf",batchTf:"4h"};
 
   function _bindBtSidebarEvents(aside){
     [].forEach.call(aside.querySelectorAll("[data-btpage]"),function(item){
@@ -13111,31 +13111,40 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 
   function _btRenderBatchMode(){
     var el=document.getElementById("btCompareModeContent"); if(!el) return;
-    var batchTfs=["1h","4h"];
+    var selTf=_btState.batchTf||"4h";
 
     function batchChipHtml(tf){
-      return '<button class="bt-mtf-chip on" data-btf="'+tf+'" style="cursor:default">'+tf+'</button>';
+      var on=tf===selTf?" on":"";
+      return '<button class="bt-mtf-chip'+on+'" data-btf="'+tf+'">'+tf+'</button>';
     }
+
+    /* estimated load line */
+    var symDefault="BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT";
+    var estLoad='<div id="btBatchEstLoad" style="font-size:10px;color:var(--text-3);margin-top:5px">'+
+      'Estimated load: 5 pairs &times; 1 TF &times; 500 candles = <b style="color:var(--accent)">2500 candles</b>'+
+    '</div>';
 
     el.innerHTML=
       '<div class="bt-mtf-form">'+
         '<div style="font-size:10px;font-weight:700;color:var(--accent);letter-spacing:1px;text-transform:uppercase;margin-bottom:10px">Pair Batch</div>'+
         '<div style="margin-bottom:8px">'+
-          '<span class="bt-mtf-label" style="display:block;margin-bottom:5px">Symbols (comma-separated, max 8)</span>'+
-          '<input class="bt-batch-sym-inp" id="btBatchSyms" value="BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT" />'+
+          '<span class="bt-mtf-label" style="display:block;margin-bottom:5px">Symbols (comma-separated, max 5)</span>'+
+          '<input class="bt-batch-sym-inp" id="btBatchSyms" value="'+symDefault+'" />'+
+          '<div id="btBatchSymWarn" style="display:none;font-size:10px;color:var(--red-2);margin-top:3px">Max 5 symbols per batch.</div>'+
         '</div>'+
         '<div class="bt-mtf-form-row">'+
-          '<span class="bt-mtf-label">Timeframes</span>'+
-          '<div class="bt-mtf-chips">'+batchTfs.map(batchChipHtml).join("")+'</div>'+
-          '<span class="bt-mtf-label" style="margin-left:6px;color:var(--text-3);font-size:9px">(1H &amp; 4H only)</span>'+
+          '<span class="bt-mtf-label">Timeframe</span>'+
+          '<div class="bt-mtf-chips" id="btBatchTfChips">'+["1h","4h"].map(batchChipHtml).join("")+'</div>'+
+          '<span class="bt-mtf-label" style="margin-left:6px;color:var(--text-3);font-size:9px">(one at a time)</span>'+
           '<span class="bt-mtf-label" style="margin-left:10px">Candles</span>'+
           '<select class="bt-filter-sel" id="btBatchCandles">'+
-            ['500','1000','2000'].map(function(v){return '<option value="'+v+'"'+(v==="1000"?" selected":"")+'>'+v+'</option>';}).join("")+
+            ['300','500'].map(function(v){return '<option value="'+v+'"'+(v==="500"?" selected":"")+'>'+v+'</option>';}).join("")+
           '</select>'+
           '<button class="bt-batch-run-btn" id="btBatchRunBtn">&#9654; Run Pair Batch</button>'+
         '</div>'+
+        estLoad+
         '<div style="font-size:10px;color:var(--text-3);margin-top:6px;line-height:1.5">'+
-          'Pair Batch is capped for speed. Start with 5 symbols and 1H/4H. Use deep single-timeframe runs for 3000-candle research.'+
+          'Pair Batch runs one timeframe at a time to stay fast. Test 4H first, then run 1H separately.'+
         '</div>'+
       '</div>'+
       '<div id="btBatchResults">'+
@@ -13145,6 +13154,34 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
             '<div style="font-size:12px;font-weight:600;color:var(--text-2)">Enter symbols and run pair batch.</div>'+
           '</div>')+
       '</div>';
+
+    /* TF chips: single-select */
+    [].forEach.call(el.querySelectorAll("#btBatchTfChips .bt-mtf-chip"),function(chip){
+      chip.addEventListener("click",function(){
+        _btState.batchTf=chip.getAttribute("data-btf");
+        [].forEach.call(el.querySelectorAll("#btBatchTfChips .bt-mtf-chip"),function(c){
+          c.classList.toggle("on",c.getAttribute("data-btf")===_btState.batchTf);
+        });
+        _btUpdateBatchEstLoad();
+      });
+    });
+
+    /* live estimated load update */
+    var symInp=document.getElementById("btBatchSyms");
+    var canSel=document.getElementById("btBatchCandles");
+    function _btUpdateBatchEstLoad(){
+      var raw=(symInp?symInp.value:"").split(",").map(function(s){return s.trim();}).filter(function(s){return s.length>0;});
+      var n=Math.min(raw.length,5);
+      var cc=parseInt(canSel?canSel.value:"500",10)||500;
+      var total=n*1*cc;
+      var estEl=document.getElementById("btBatchEstLoad");
+      if(estEl) estEl.innerHTML='Estimated load: '+n+' pairs &times; 1 TF &times; '+cc+' candles = <b style="color:var(--accent)">'+total+' candles</b>';
+      var warnEl=document.getElementById("btBatchSymWarn");
+      if(warnEl) warnEl.style.display=raw.length>5?"block":"none";
+    }
+    if(symInp) symInp.addEventListener("input",_btUpdateBatchEstLoad);
+    if(canSel) canSel.addEventListener("change",_btUpdateBatchEstLoad);
+    _btUpdateBatchEstLoad();
 
     document.getElementById("btBatchRunBtn").addEventListener("click",function(){ _btRunBatchComparison(); });
     if(_btState.batchData){
@@ -13422,26 +13459,30 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var el=document.getElementById("btBatchResults");
     var symRaw=(document.getElementById("btBatchSyms")||{value:""}).value||"";
     var canEl=document.getElementById("btBatchCandles");
-    var candles=parseInt((canEl?canEl.value:"1000")||"1000",10)||1000;
+    var candles=parseInt((canEl?canEl.value:"500")||"500",10)||500;
 
     var syms=symRaw.split(",").map(function(s){return s.trim().toUpperCase();})
       .filter(function(s){return s.length>0;})
       .map(function(s){return s.endsWith("USDT")?s:s+"USDT";})
-      .filter(function(s,i,a){return a.indexOf(s)===i;})
-      .slice(0,8);
+      .filter(function(s,i,a){return a.indexOf(s)===i;});
+
     if(!syms.length){
       if(el) el.innerHTML='<div class="bt-mtf-err">Enter at least one symbol.</div>';
       return;
     }
+    if(syms.length>5){
+      if(el) el.innerHTML='<div class="bt-mtf-err">Max 5 symbols per batch. Please remove some symbols and try again.</div>';
+      return;
+    }
 
-    var tfs=["1h","4h"];
-    if(el) el.innerHTML='<div class="bt-mtf-loading"><div class="bt-spin"></div>Running batch for '+syms.join(", ")+' on '+tfs.join(", ")+'&hellip;</div>';
+    var tf=_btState.batchTf||"4h";
+    if(el) el.innerHTML='<div class="bt-mtf-loading"><div class="bt-spin"></div>Running batch for '+syms.join(", ")+' on '+tf+'&hellip;</div>';
     var btn=document.getElementById("btBatchRunBtn"); if(btn) btn.disabled=true;
 
     fetch("/api/backtest/ob-batch",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({symbols:syms,timeframes:tfs,candle_count:candles,
+      body:JSON.stringify({symbols:syms,timeframes:[tf],candle_count:candles,
         rr_values:[1,2,3],include_parity:false,include_events:false})
     })
     .then(function(r){return r.json();})
@@ -13543,8 +13584,9 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       '<button class="bt-filter-reset" style="display:inline-flex" onclick="_btBatchExportCsv()">&#10515; CSV</button>'+
     '</div>';
 
-    return '<div class="bt-section-head"><div><div class="bt-section-title">Pair Batch — '+esc(syms)+'</div>'+
-        '<div class="bt-section-sub">'+lb.length+' rows &bull; ranked by expectancy R</div></div></div>'+
+    var activeTf=(d.timeframes||[])[0]||"";
+    return '<div class="bt-section-head"><div><div class="bt-section-title">Pair Batch — '+(activeTf?esc(activeTf.toUpperCase())+' — ':'')+esc(syms)+'</div>'+
+        '<div class="bt-section-sub">'+lb.length+' rows &bull; ranked by expectancy R &bull; one timeframe</div></div></div>'+
       limWarnHtml+bestCards+chartsHtml+
       '<div class="bt-tbl-wrap"><table class="bt-tbl">'+tblHead+tblBody+'</table></div>'+
       errHtml+exportHtml;

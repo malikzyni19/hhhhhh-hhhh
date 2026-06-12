@@ -35260,11 +35260,11 @@ def api_backtest_ob_mtf_debug():
 # Backtest — Multi-Pair Batch Engine (Phase 10)
 # ══════════════════════════════════════════════════════════════════════════════
 
-_BT_BATCH_MAX_SYMBOLS         = 8
+_BT_BATCH_MAX_SYMBOLS         = 5
 _BT_BATCH_ALLOWED_TFS         = {"1h", "4h"}
-_BT_BATCH_MAX_TF              = 2
-_BT_BATCH_MAX_CANDLES_PER_RUN = 1200
-_BT_BATCH_MAX_TOTAL_CANDLES   = 8000
+_BT_BATCH_MAX_TF              = 1
+_BT_BATCH_MAX_CANDLES_PER_RUN = 500
+_BT_BATCH_MAX_TOTAL_CANDLES   = 3000
 _BT_BATCH_MAX_EVS             = 50
 
 
@@ -35353,7 +35353,7 @@ def _bt_run_ob_batch_backtest(params: dict) -> dict:
     symbols        = params["symbols"]
     timeframes     = params["timeframes"]
     include_events = params.get("include_events", False)
-    warnings: list = []
+    warnings: list = list(params.get("_pre_warnings") or [])
 
     base_count      = params.get("candle_count", 1000)
     n_runs          = len(symbols) * len(timeframes)
@@ -35477,6 +35477,7 @@ def _bt_run_ob_batch_backtest(params: dict) -> dict:
         "batch_limits": {
             "max_symbols":             _BT_BATCH_MAX_SYMBOLS,
             "max_timeframes":          _BT_BATCH_MAX_TF,
+            "allowed_timeframes":      sorted(_BT_BATCH_ALLOWED_TFS),
             "max_candles_per_run":     _BT_BATCH_MAX_CANDLES_PER_RUN,
             "max_total_candles":       _BT_BATCH_MAX_TOTAL_CANDLES,
             "requested_total_candles": total_requested,
@@ -35516,7 +35517,7 @@ def api_backtest_ob_batch():
         return jsonify({"ok": False,
                         "error": f"max {_BT_BATCH_MAX_SYMBOLS} symbols allowed"}), 400
 
-    raw_tfs = payload.get("timeframes", ["1h", "4h"])
+    raw_tfs = payload.get("timeframes", ["4h"])
     if not isinstance(raw_tfs, list):
         raw_tfs = [str(raw_tfs)]
     timeframes: list = []
@@ -35532,12 +35533,19 @@ def api_backtest_ob_batch():
         return jsonify({"ok": False, "error": "at least one timeframe required"}), 400
     if len(timeframes) > _BT_BATCH_MAX_TF:
         return jsonify({"ok": False,
-                        "error": f"max {_BT_BATCH_MAX_TF} timeframes allowed in batch mode"}), 400
+                        "error": "Pair Batch supports one timeframe at a time. "
+                                 "Run 1H and 4H separately."}), 400
 
+    warnings_pre: list = []
     try:
-        candle_count = int(payload.get("candle_count", 1000))
+        candle_count = int(payload.get("candle_count", 500))
     except (TypeError, ValueError):
         return jsonify({"ok": False, "error": "candle_count must be integer"}), 400
+    if candle_count > _BT_BATCH_MAX_CANDLES_PER_RUN:
+        warnings_pre.append(
+            f"candle_count clamped from {candle_count} to {_BT_BATCH_MAX_CANDLES_PER_RUN} "
+            f"(Pair Batch limit)."
+        )
     candle_count = max(300, min(_BT_BATCH_MAX_CANDLES_PER_RUN, candle_count))
 
     def _bf(val, default=False):
@@ -35555,6 +35563,7 @@ def api_backtest_ob_batch():
         "stop_rule":      "close_beyond_zone",
         "include_parity": _bf(payload.get("include_parity", False)),
         "include_events": _bf(payload.get("include_events", False)),
+        "_pre_warnings":  warnings_pre,
     }
     result = _bt_run_ob_batch_backtest(params)
     return jsonify(result), 200 if result.get("ok") else 502
@@ -35577,25 +35586,48 @@ def api_backtest_ob_batch_debug():
             continue
         if not s.endswith("USDT"):
             s = s + "USDT"
-        if s not in seen_d and len(symbols) < _BT_BATCH_MAX_SYMBOLS:
+        if s not in seen_d and len(symbols) < _BT_BATCH_MAX_SYMBOLS:  # 5
             seen_d.add(s)
             symbols.append(s)
     if not symbols:
         symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"]
 
-    raw_tfs = request.args.get("timeframes", "1h,4h")
-    timeframes = [t.strip() for t in raw_tfs.split(",")
-                  if t.strip() in _BT_BATCH_ALLOWED_TFS][:_BT_BATCH_MAX_TF]
+    raw_tfs = request.args.get("timeframes", "4h")
+    req_tfs = [t.strip() for t in raw_tfs.split(",") if t.strip()]
+    timeframes = [t for t in req_tfs if t in _BT_BATCH_ALLOWED_TFS][:2]
     if not timeframes:
-        timeframes = ["1h", "4h"]
-
-    try:
-        candle_count = int(request.args.get("candle_count", 1000))
-    except Exception:
-        candle_count = 1000
-    candle_count = max(300, min(_BT_BATCH_MAX_CANDLES_PER_RUN, candle_count))
+        timeframes = ["4h"]
 
     fmt = request.args.get("format", "json").strip().lower()
+
+    # Reject multi-TF requests with clear HTML/JSON error
+    if len(req_tfs) > 1 or len(timeframes) > _BT_BATCH_MAX_TF:
+        err_msg = ("Pair Batch supports one timeframe at a time. "
+                   "Test 1H and 4H separately.")
+        if fmt == "json":
+            return jsonify({"ok": False, "error": err_msg}), 400
+        err_html = (
+            "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            "<title>BT Batch Debug — Error</title>"
+            "<style>body{font-family:monospace;padding:16px;background:#111;color:#eee}"
+            ".warn{background:#332200;color:#fa0;padding:8px 12px;border-radius:6px;margin-bottom:14px}</style>"
+            "</head><body>"
+            "<h2 style='color:#f55'>Pair Batch — Request Error</h2>"
+            f"<p class='warn'>&#9888; {err_msg}</p>"
+            f"<p style='color:#aaa;font-size:13px'>Requested timeframes: "
+            f"<b style='color:#fff'>{', '.join(req_tfs)}</b></p>"
+            "<p style='color:#aaa;font-size:13px'>Example valid URL:<br>"
+            "<code style='color:#8cf'>?symbols=BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT"
+            "&amp;timeframes=4h&amp;candle_count=500&amp;format=html</code></p>"
+            "</body></html>"
+        )
+        return err_html, 400, {"Content-Type": "text/html"}
+
+    try:
+        candle_count = int(request.args.get("candle_count", 500))
+    except Exception:
+        candle_count = 500
+    candle_count = max(300, min(_BT_BATCH_MAX_CANDLES_PER_RUN, candle_count))
 
     params = {
         "symbols": symbols, "timeframes": timeframes, "candle_count": candle_count,
