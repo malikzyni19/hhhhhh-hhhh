@@ -710,6 +710,17 @@ def _auto_migrate():
                 print("[MIGRATE] Phase 11.11 execution_mode/policy_mode columns ensured on user_preferences")
                 # Phase 11.12: Paper Auto Gate — table created by db.create_all() above
                 print("[MIGRATE] Phase 11.12 live_monitor_paper_auto_gate_events table ensured via create_all")
+                # Phase 11.13: Paper Risk Guard — add column to user_preferences
+                for _stmt_1113 in [
+                    "ALTER TABLE user_preferences ADD COLUMN IF NOT EXISTS "
+                    "paper_risk_guard_settings_json TEXT",
+                ]:
+                    try:
+                        conn.execute(text(_stmt_1113))
+                    except Exception:
+                        pass
+                conn.commit()
+                print("[MIGRATE] Phase 11.13 paper_risk_guard_settings_json column ensured on user_preferences")
         except Exception as exc:
             print(f"[MIGRATE] Auto-migration warning: {exc}")
 
@@ -20190,6 +20201,9 @@ def _lm_build_trade_proposal_context(row, snapshot=None) -> dict:
         "paper_auto_gate_summary": (lambda: _lm_paper_auto_gate_summary_for_ai(
             getattr(row, "user_id", None), getattr(row, "id", None)
         ))(),
+        "paper_risk_guard_summary": (lambda: _lm_paper_risk_guard_summary_for_ai(
+            getattr(row, "user_id", None), getattr(row, "id", None)
+        ))(),
     }
 
 
@@ -20949,6 +20963,35 @@ def _lm_paper_auto_gate_summary_for_ai(user_id, item_id) -> dict:
         return {"ok": False, "error": str(_epag)[:120]}
 
 
+def _lm_paper_risk_guard_summary_for_ai(user_id, item_id) -> dict:
+    """Return compact paper risk guard summary for AI context builders.
+
+    Phase 11.13. Read-only. No computation. No orders.
+    """
+    if not item_id or not user_id:
+        return {"ok": False, "error": "missing_ids"}
+    try:
+        state = _lm_get_paper_risk_guard_state(item_id, user_id)
+        if not state.get("ok"):
+            return state
+        guard = state.get("latest_guard_result") or {}
+        return {
+            "ok":               True,
+            "guard_evaluated":  state.get("guard_evaluated", False),
+            "allowed":          state.get("allowed", False),
+            "risk_status":      state.get("risk_status", "not_evaluated"),
+            "blocking_reasons": state.get("blocking_reasons", []),
+            "warnings":         state.get("warnings", []),
+            "risk_pct":         (state.get("risk") or {}).get("risk_pct"),
+            "rr":               (state.get("risk") or {}).get("rr"),
+            "allowed_actions":  state.get("allowed_actions", {}),
+            "guardrails":       state.get("guardrails", {}),
+            "source":           "paper_risk_guard",
+        }
+    except Exception as _epag:
+        return {"ok": False, "error": str(_epag)[:120]}
+
+
 def _lm_build_ai_context(item) -> dict:
     """Build a compact, JSON-safe context dict from a LiveMonitorItem for the AI agent."""
     snap = _json_loads_safe(getattr(item, "snapshot_json", None), {})
@@ -21315,6 +21358,9 @@ def _lm_build_ai_context(item) -> dict:
             getattr(item, "user_id", None)
         ) if getattr(item, "user_id", None) else None)(),
         "paper_auto_gate_summary": (lambda: _lm_paper_auto_gate_summary_for_ai(
+            getattr(item, "user_id", None), getattr(item, "id", None)
+        ))(),
+        "paper_risk_guard_summary": (lambda: _lm_paper_risk_guard_summary_for_ai(
             getattr(item, "user_id", None), getattr(item, "id", None)
         ))(),
     }
@@ -24521,6 +24567,12 @@ from live_monitor import (
     _lm_arm_paper_auto_gate,
     _lm_disarm_paper_auto_gate,
     _lm_record_paper_auto_gate_event,
+    # Phase 11.13: Paper Risk Guard
+    _lm_get_paper_risk_guard_settings,
+    _lm_update_paper_risk_guard_settings,
+    _lm_build_paper_risk_guard,
+    _lm_get_paper_risk_guard_state,
+    _lm_validate_paper_order_against_risk_guard,
 )
 
 # ── Phase 10.9I: Auto-refresh scheduler ─────────────────────────────────────
@@ -28287,6 +28339,19 @@ def api_lm_paper_order_submit(item_id):
             "detail": "Provide 'quantity' in the request body.",
         }), 422
 
+    # Phase 11.13: Risk Guard check — must pass before order is created
+    _rg_validation = _lm_validate_paper_order_against_risk_guard(row, uid, quantity_str)
+    if not _rg_validation.get("allowed"):
+        _rg_result = _rg_validation.get("risk_guard", {})
+        return jsonify({
+            "ok":              False,
+            "error":           "paper_risk_guard_blocked",
+            "blocking_reasons": _rg_result.get("blocking_reasons", []),
+            "warnings":        _rg_result.get("warnings", []),
+            "risk_status":     _rg_result.get("risk_status", "blocked"),
+            "risk_guard":      _rg_result,
+        }), 422
+
     result = _lm_submit_paper_order(uid, row, quantity_str)
 
     if result.get("ok"):
@@ -29073,6 +29138,85 @@ def api_lm_paper_auto_gate_disarm(item_id):
     uid    = current_user.id
     result = _lm_disarm_paper_auto_gate(item_id, uid)
     return jsonify(result)
+
+
+# ── Phase 11.13: Paper Risk Guard endpoints ───────────────────────────────────
+
+import json as _json1113
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/paper-risk-guard/check", methods=["POST"])
+@login_required
+def api_lm_paper_risk_guard_check(item_id):
+    """POST: Run paper risk guard and store result in item snapshot.
+
+    Advisory risk evaluation only. No execution. No orders.
+    """
+    from models import db as _db1113, LiveMonitorItem as _LMI1113
+    uid  = current_user.id
+    item = _LMI1113.query.filter_by(id=item_id, user_id=uid).first()
+    if item is None:
+        return jsonify({"ok": False, "error": "item_not_found"}), 404
+    body = {}
+    try:
+        body = request.get_json(force=True, silent=True) or {}
+    except Exception:
+        pass
+    quantity_str = str(body.get("quantity", "") or "").strip() or None
+    snap = {}
+    if item.snapshot_json:
+        try:
+            snap = _json1113.loads(item.snapshot_json)
+        except Exception:
+            pass
+    guard = _lm_build_paper_risk_guard(item, snap, quantity_str=quantity_str)
+    snap["latest_paper_risk_guard_result"] = guard
+    item.snapshot_json = _json1113.dumps(snap, default=str)
+    _db1113.session.commit()
+    return jsonify(guard)
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/paper-risk-guard", methods=["GET"])
+@login_required
+def api_lm_paper_risk_guard_get(item_id):
+    """GET: Return current paper risk guard state from item snapshot. Read-only."""
+    uid    = current_user.id
+    result = _lm_get_paper_risk_guard_state(item_id, uid)
+    if not result.get("ok"):
+        return jsonify(result), 404
+    return jsonify(result)
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/paper-risk-guard/settings", methods=["GET"])
+@login_required
+def api_lm_paper_risk_guard_settings_get(item_id):
+    """GET: Return current paper risk guard settings for the user."""
+    uid     = current_user.id
+    from models import LiveMonitorItem as _LMI1113s
+    item = _LMI1113s.query.filter_by(id=item_id, user_id=uid).first()
+    if item is None:
+        return jsonify({"ok": False, "error": "item_not_found"}), 404
+    settings = _lm_get_paper_risk_guard_settings(uid)
+    return jsonify({"ok": True, "settings": settings})
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/paper-risk-guard/settings", methods=["POST"])
+@login_required
+def api_lm_paper_risk_guard_settings_update(item_id):
+    """POST: Update paper risk guard settings for the user."""
+    uid  = current_user.id
+    from models import LiveMonitorItem as _LMI1113su
+    item = _LMI1113su.query.filter_by(id=item_id, user_id=uid).first()
+    if item is None:
+        return jsonify({"ok": False, "error": "item_not_found"}), 404
+    body = {}
+    try:
+        body = request.get_json(force=True, silent=True) or {}
+    except Exception:
+        pass
+    result = _lm_update_paper_risk_guard_settings(uid, body)
+    code   = 200 if result.get("ok") else 400
+    return jsonify(result), code
 
 
 @app.route("/api/live-monitor/trades/<trade_uid>/demo-submit", methods=["POST"])

@@ -5269,6 +5269,48 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                       '<div style="font-size:8px;color:var(--text-4,#475569);margin-top:5px">Gate is advisory only. can_auto_submit is always false. No auto execution.</div>'+
                     '</div>'+
 
+                    /* Paper Risk Guard — Phase 11.13 */
+                    '<div class="lm-ws-section" id="lmPapRiskGuardSection" style="margin-top:4px">'+
+                      '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">'+
+                        '<div class="lm-ws-sh" style="margin:0;flex:1">Paper Risk Guard</div>'+
+                        '<span style="font-size:9px;color:var(--text-3)">Phase 11.13</span>'+
+                      '</div>'+
+                      '<div id="lmPapRgStatus" style="font-size:9px;padding:3px 0 5px;color:var(--text-3)">Not evaluated — click Check Risk to evaluate</div>'+
+                      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">'+
+                        '<button class="btn lm-sm-btn" style="color:var(--yellow,#facc15)" onclick="window._lmPapRgCheck()">Check Risk</button>'+
+                        '<button class="btn lm-sm-btn" style="color:var(--text-3)" onclick="window._lmPapRgRefresh()">Refresh</button>'+
+                        '<button class="btn lm-sm-btn" style="color:var(--text-3)" onclick="window._lmPapRgShowSettings()">Settings</button>'+
+                      '</div>'+
+                      '<div id="lmPapRgMetrics" style="display:none;font-size:9px;margin-bottom:4px">'+
+                        '<table style="width:100%;border-collapse:collapse;font-size:9px">'+
+                          '<tbody id="lmPapRgMetricsTbody"></tbody>'+
+                        '</table>'+
+                      '</div>'+
+                      '<div id="lmPapRgBlocking" style="display:none;font-size:9px;padding:4px 6px;background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.25);border-radius:3px;color:#f87171;margin-bottom:4px;line-height:1.5"></div>'+
+                      '<div id="lmPapRgWarnings" style="display:none;font-size:9px;padding:4px 6px;background:rgba(250,204,21,.06);border:1px solid rgba(250,204,21,.2);border-radius:3px;color:var(--yellow,#facc15);margin-bottom:4px;line-height:1.5"></div>'+
+                      '<div id="lmPapRgSettings" style="display:none;margin-top:6px;padding:6px;background:var(--bg-3,#1e293b);border-radius:4px;font-size:9px">'+
+                        '<div style="font-weight:600;color:var(--text-2);margin-bottom:4px">Risk Limits</div>'+
+                        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 8px">'+
+                          '<label style="color:var(--text-3)">Max Risk %</label>'+
+                          '<input id="lmPapRgMaxPct" type="number" step="0.1" min="0.1" max="10" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
+                          '<label style="color:var(--text-3)">Max $ Risk</label>'+
+                          '<input id="lmPapRgMaxAmt" type="number" step="1" min="1" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
+                          '<label style="color:var(--text-3)">Max Notional</label>'+
+                          '<input id="lmPapRgMaxNot" type="number" step="10" min="10" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
+                          '<label style="color:var(--text-3)">Min R:R</label>'+
+                          '<input id="lmPapRgMinRr" type="number" step="0.1" min="0.5" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
+                          '<label style="color:var(--text-3)">Require SL</label>'+
+                          '<select id="lmPapRgReqSl" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
+                            '<option value="true">Yes (block)</option>'+
+                            '<option value="false">No (warn only)</option>'+
+                          '</select>'+
+                        '</div>'+
+                        '<button class="btn lm-sm-btn" style="margin-top:6px;color:var(--green,#4ade80)" onclick="window._lmPapRgSaveSettings()">Save Limits</button>'+
+                        '<div id="lmPapRgSettingsMsg" style="display:none;font-size:9px;padding:2px 0;margin-top:2px"></div>'+
+                      '</div>'+
+                      '<div style="font-size:8px;color:var(--text-4,#475569);margin-top:5px">Risk guard blocks unsafe orders. can_auto_submit is always false.</div>'+
+                    '</div>'+
+
                   '</div>'+ /* end lmTermGrpBody-paper */
                 '</div>'+ /* end GROUP 1 */
 
@@ -8725,6 +8767,16 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
             resEl.style.color='var(--green-2,#4ade80)';
             resEl.innerHTML='<b>Paper order created!</b> '+esc(d.side||'—')+' '+esc(d.quantity||'—')+' '+esc(d.symbol||'—')+' @ '+esc(d.price||'—')+
               '<br>Client ID: '+esc(d.client_order_id||'—');
+          } else if(d&&d.error==='paper_risk_guard_blocked'){
+            resEl.style.color='var(--red-2,#f87171)';
+            var reasons=(d.blocking_reasons||[]);
+            var warns=(d.warnings||[]);
+            var html='<b>Risk Guard Blocked:</b> '+(d.risk_status||'blocked')+'<br>';
+            if(reasons.length) html+='Blocking: '+reasons.map(function(r){return esc(r);}).join(', ')+'<br>';
+            if(warns.length)   html+='Warnings: '+warns.map(function(w){return esc(w);}).join(', ');
+            resEl.innerHTML=html;
+            /* Refresh risk guard panel */
+            if(window._lmPapRgRefresh) window._lmPapRgRefresh();
           } else {
             resEl.style.color='var(--red-2,#f87171)';
             resEl.innerHTML='<b>Failed:</b> '+esc((d&&(d.error||JSON.stringify(d.errors||d)))||'Unknown error');
@@ -8987,6 +9039,142 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       advEl.style.display='';
       advEl.innerHTML='<strong>Advisory:</strong><br>'+notes.map(function(n){return '• '+esc(n);}).join('<br>');
     } else if(advEl){ advEl.style.display='none'; }
+  };
+
+  /* ── Phase 11.13: Paper Risk Guard ──────────────────────────────────────── */
+  window._lmPapRgRefresh=function(){
+    var itemId=window._lmSimItemId||(window._lmSelItem&&window._lmSelItem.id);
+    if(!itemId) return;
+    fetch('/api/live-monitor/items/'+itemId+'/paper-risk-guard',{credentials:'same-origin'})
+      .then(function(r){return r.json();})
+      .then(function(d){ window._lmPapRgApply(d); })
+      .catch(function(){});
+  };
+
+  window._lmPapRgCheck=function(){
+    var itemId=window._lmSimItemId||(window._lmSelItem&&window._lmSelItem.id);
+    if(!itemId) return;
+    var qty=((document.getElementById('lmPapQtyInput')||{}).value||'').trim();
+    var statusEl=document.getElementById('lmPapRgStatus');
+    if(statusEl){ statusEl.style.color='var(--text-3)'; statusEl.textContent='Checking risk…'; }
+    fetch('/api/live-monitor/items/'+itemId+'/paper-risk-guard/check',{
+      method:'POST',credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(qty?{quantity:qty}:{}),
+    })
+      .then(function(r){return r.json();})
+      .then(function(d){ window._lmPapRgApply(d); })
+      .catch(function(){
+        if(statusEl){ statusEl.style.color='var(--red-2,#f87171)'; statusEl.textContent='Check error.'; }
+      });
+  };
+
+  window._lmPapRgShowSettings=function(){
+    var el=document.getElementById('lmPapRgSettings');
+    if(!el) return;
+    var visible=el.style.display&&el.style.display!=='none';
+    if(visible){ el.style.display='none'; return; }
+    /* Load current settings */
+    var itemId=window._lmSimItemId||(window._lmSelItem&&window._lmSelItem.id);
+    if(itemId){
+      fetch('/api/live-monitor/items/'+itemId+'/paper-risk-guard/settings',{credentials:'same-origin'})
+        .then(function(r){return r.json();})
+        .then(function(d){
+          if(d&&d.settings){
+            var s=d.settings;
+            var f=function(id,v){ var e=document.getElementById(id); if(e) e.value=v; };
+            f('lmPapRgMaxPct', s.max_risk_pct_per_trade||2);
+            f('lmPapRgMaxAmt', s.max_risk_amount_per_trade||100);
+            f('lmPapRgMaxNot', s.max_position_notional||1000);
+            f('lmPapRgMinRr',  s.min_rr||1.5);
+            var slEl=document.getElementById('lmPapRgReqSl');
+            if(slEl) slEl.value=s.require_sl?'true':'false';
+          }
+        }).catch(function(){});
+    }
+    el.style.display='';
+  };
+
+  window._lmPapRgSaveSettings=function(){
+    var itemId=window._lmSimItemId||(window._lmSelItem&&window._lmSelItem.id);
+    if(!itemId) return;
+    var gv=function(id){ var e=document.getElementById(id); return e?e.value:null; };
+    var settings={
+      max_risk_pct_per_trade:    parseFloat(gv('lmPapRgMaxPct'))||2,
+      max_risk_amount_per_trade: parseFloat(gv('lmPapRgMaxAmt'))||100,
+      max_position_notional:     parseFloat(gv('lmPapRgMaxNot'))||1000,
+      min_rr:                    parseFloat(gv('lmPapRgMinRr'))||1.5,
+      require_sl:                gv('lmPapRgReqSl')==='true',
+    };
+    var msgEl=document.getElementById('lmPapRgSettingsMsg');
+    if(msgEl){ msgEl.style.display=''; msgEl.style.color='var(--text-3)'; msgEl.textContent='Saving…'; }
+    fetch('/api/live-monitor/items/'+itemId+'/paper-risk-guard/settings',{
+      method:'POST',credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(settings),
+    })
+      .then(function(r){return r.json();})
+      .then(function(d){
+        if(msgEl){
+          msgEl.style.color=d.ok?'var(--green,#4ade80)':'var(--red-2,#f87171)';
+          msgEl.textContent=d.ok?'Saved.':('Error: '+(d.error||'unknown'));
+        }
+      })
+      .catch(function(){
+        if(msgEl){ msgEl.style.color='var(--red-2,#f87171)'; msgEl.textContent='Network error.'; }
+      });
+  };
+
+  window._lmPapRgApply=function(d){
+    var statusEl   =document.getElementById('lmPapRgStatus');
+    var metricsEl  =document.getElementById('lmPapRgMetrics');
+    var metricsTbl =document.getElementById('lmPapRgMetricsTbody');
+    var blockEl    =document.getElementById('lmPapRgBlocking');
+    var warnEl     =document.getElementById('lmPapRgWarnings');
+    if(!statusEl) return;
+    /* d may be flat guard result (from check) or guard_state wrapper (from GET) */
+    var guard   = d.latest_guard_result||d;
+    var allowed = d.allowed!==undefined?d.allowed:(guard.allowed||false);
+    var rsStatus= d.risk_status||guard.risk_status||'not_evaluated';
+    var evaluated = d.guard_evaluated!==undefined?d.guard_evaluated:(!!guard.ok);
+    var statusColor=(rsStatus==='allowed')   ?'var(--green,#4ade80)':
+                    (rsStatus==='warning')   ?'var(--yellow,#facc15)':
+                    (rsStatus==='not_evaluated')?'var(--text-3)':'var(--red-2,#f87171)';
+    statusEl.style.color=statusColor;
+    statusEl.textContent=!evaluated?'Not evaluated':
+      rsStatus==='allowed'?'Allowed — risk within limits':
+      rsStatus==='warning'?'Allowed with warnings':
+      rsStatus==='blocked'?'Blocked — see reasons below':
+      rsStatus;
+    var risk=guard.risk||d.risk||{};
+    var rows=[];
+    if(risk.direction)    rows.push(['Direction',risk.direction]);
+    if(risk.entry_price)  rows.push(['Entry Price','$'+risk.entry_price]);
+    if(risk.sl_price)     rows.push(['SL Price','$'+risk.sl_price]);
+    if(risk.tp_price)     rows.push(['TP Price','$'+risk.tp_price]);
+    if(risk.quantity)     rows.push(['Quantity',risk.quantity]);
+    if(risk.notional)     rows.push(['Notional','$'+risk.notional]);
+    if(risk.risk_amount)  rows.push(['$ Risk','$'+risk.risk_amount]);
+    if(risk.risk_pct)     rows.push(['Risk %',risk.risk_pct+'%']);
+    if(risk.rr!=null)     rows.push(['R:R',risk.rr]);
+    if(risk.market_price) rows.push(['Market','$'+risk.market_price]);
+    if(rows.length && metricsTbl){
+      metricsEl.style.display='';
+      metricsTbl.innerHTML=rows.map(function(r){
+        return '<tr><td style="color:var(--text-3);padding:1px 0;width:44%">'+esc(r[0])+'</td>'+
+               '<td style="color:var(--text-1)">'+esc(String(r[1]))+'</td></tr>';
+      }).join('');
+    } else if(metricsEl){ metricsEl.style.display='none'; }
+    var blocking=d.blocking_reasons||guard.blocking_reasons||[];
+    if(blocking.length&&blockEl){
+      blockEl.style.display='';
+      blockEl.innerHTML='<strong>Blocking:</strong><br>'+blocking.map(function(b){return '• '+esc(b);}).join('<br>');
+    } else if(blockEl){ blockEl.style.display='none'; }
+    var warns=d.warnings||guard.warnings||[];
+    if(warns.length&&warnEl){
+      warnEl.style.display='';
+      warnEl.innerHTML='<strong>Warnings:</strong><br>'+warns.map(function(w){return '• '+esc(w);}).join('<br>');
+    } else if(warnEl){ warnEl.style.display='none'; }
   };
 
   function _lmMtfMatrix(item){

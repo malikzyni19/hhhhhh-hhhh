@@ -352,6 +352,9 @@ class UserPreference(db.Model):
     policy_mode    = db.Column(db.String(40), nullable=False,
                                default="paper_manual",   server_default="paper_manual")
 
+    # Phase 11.13: Paper Risk Guard — per-user configurable limits JSON
+    paper_risk_guard_settings_json = db.Column(db.Text, nullable=True)
+
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
                             onupdate=lambda: datetime.now(timezone.utc))
 

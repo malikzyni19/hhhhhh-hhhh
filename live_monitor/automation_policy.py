@@ -310,6 +310,23 @@ def _lm_build_automation_policy(item, snapshot=None) -> dict:  # noqa: C901
         except Exception:
             pass
 
+        # Phase 11.13: Risk Guard awareness (read-only — never executes)
+        _rg_allowed     = False
+        _rg_status      = "not_evaluated"
+        _rg_block_count = 0
+        try:
+            if _uid:
+                _item_id_rg = getattr(item, "id", None)
+                if _item_id_rg:
+                    from live_monitor.paper_risk_guard import _lm_get_paper_risk_guard_state
+                    _rgs = _lm_get_paper_risk_guard_state(_item_id_rg, _uid)
+                    if _rgs.get("ok"):
+                        _rg_allowed     = _rgs.get("allowed", False)
+                        _rg_status      = _rgs.get("risk_status", "not_evaluated")
+                        _rg_block_count = len(_rgs.get("blocking_reasons", []))
+        except Exception:
+            pass
+
         policy_result = {
             "allowed":               allowed,
             "recommended_mode":      recommended_mode,
@@ -336,6 +353,10 @@ def _lm_build_automation_policy(item, snapshot=None) -> dict:  # noqa: C901
             "paper_auto_gate_status":            _gate_phase,
             "paper_auto_gate_eligible":          _gate_eligible,
             "paper_auto_gate_armed":             _gate_armed,
+            # Phase 11.13 risk guard awareness
+            "paper_risk_guard_status":           _rg_status,
+            "paper_risk_guard_allowed":          _rg_allowed,
+            "paper_risk_guard_blocking_reason_count": _rg_block_count,
         }
 
         return {
