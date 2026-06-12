@@ -70,6 +70,10 @@ from live_monitor.paper_trading import (
     _lm_update_paper_position_marks,
     _lm_recalculate_paper_account_equity,
     _lm_get_paper_position_summary,
+    _lm_get_paper_position_exit_levels,
+    _lm_check_paper_position_exit,
+    _lm_process_paper_exits_for_item,
+    _lm_process_all_paper_exits_for_user,
 )
 
 __all__ = [
@@ -131,4 +135,8 @@ __all__ = [
     "_lm_update_paper_position_marks",
     "_lm_recalculate_paper_account_equity",
     "_lm_get_paper_position_summary",
+    "_lm_get_paper_position_exit_levels",
+    "_lm_check_paper_position_exit",
+    "_lm_process_paper_exits_for_item",
+    "_lm_process_all_paper_exits_for_user",
 ]

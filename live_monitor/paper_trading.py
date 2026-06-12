@@ -867,7 +867,6 @@ def _lm_process_all_paper_fills_for_user(user_id):
 # Safety: No Binance API. No Binance Testnet. No _lm_bt_* calls. No HTTP requests.
 # Price source: real Live Monitor market price only.
 # Trigger: manual only — no background loop, no auto execution.
-# No TP/SL. No position close. No auto execution.
 
 def _lm_update_paper_position_marks(user_id, item_id=None):
     """Update unrealized_pnl (and mark_price if column exists) for open positions.
@@ -1173,6 +1172,8 @@ def _lm_get_paper_position_summary(user_id, item_id=None):
                 "realized_pnl":     realized_pnl,
                 "pnl_pct":          pnl_pct,
                 "status":           r.status,
+                "close_reason":     getattr(r, "close_reason", None),
+                "close_price":      getattr(r, "close_price",  None),
                 "opened_at":        opened_at.isoformat() if opened_at else None,
                 "closed_at":        closed_at.isoformat() if closed_at else None,
                 "updated_at":       r.updated_at.isoformat() if r.updated_at else None,
@@ -1202,4 +1203,407 @@ def _lm_get_paper_position_summary(user_id, item_id=None):
             "positions": [], "open_count": 0, "closed_count": 0,
             "total_unrealized_pnl": 0.0, "total_realized_pnl": 0.0,
             "source": "internal_paper",
+        }
+
+
+# ── Phase 11.9: Paper TP/SL Exit Engine ───────────────────────────────────────
+# Safety: No Binance API. No Binance Testnet. No _lm_bt_* calls. No HTTP requests.
+# Price source: real Live Monitor market price only.
+# Trigger: manual only — no background loop, no auto execution.
+# TP/SL levels: from execution_intent_json on entry order only.
+# No leverage. No margin. No liquidation. No trailing stop.
+
+def _lm_get_paper_position_exit_levels(position, item=None):
+    """Resolve TP/SL/entry levels from the position's entry order execution_intent.
+
+    Falls back to item snapshot latest_execution_intent if order has no intent.
+    Returns {ok, exit_ready, entry_price, stop_loss, take_profit, direction,
+             risk_reward, reason, source}.
+    """
+    intent = {}
+    order  = None
+
+    if position.order_id is not None:
+        try:
+            from models import LiveMonitorPaperOrder as _PO
+            order = _PO.query.get(position.order_id)
+        except Exception:
+            pass
+
+    if order is not None:
+        try:
+            raw = getattr(order, "execution_intent_json", None)
+            if raw:
+                intent = _json_loads_safe(raw, {}) or {}
+        except Exception:
+            pass
+
+    # Fallback: item snapshot latest_execution_intent
+    if not intent and item is not None:
+        try:
+            snap   = _json_loads_safe(getattr(item, "snapshot_json", None), {}) or {}
+            intent = snap.get("latest_execution_intent") or {}
+        except Exception:
+            pass
+
+    def _f(key):
+        v = intent.get(key)
+        if v is None:
+            return None
+        try:
+            return float(v)
+        except Exception:
+            return None
+
+    entry_price = _f("entry_price")
+    stop_loss   = _f("stop_loss")
+    take_profit = _f("take_profit")
+    risk_reward = _f("risk_reward")
+
+    try:
+        direction = str(intent.get("direction") or "").strip().lower() or None
+    except Exception:
+        direction = None
+
+    if stop_loss is None or take_profit is None:
+        return {
+            "ok":          True,
+            "exit_ready":  False,
+            "reason":      "tp_sl_missing",
+            "entry_price": entry_price,
+            "stop_loss":   stop_loss,
+            "take_profit": take_profit,
+            "direction":   direction,
+            "risk_reward": risk_reward,
+            "source":      "execution_intent",
+        }
+
+    return {
+        "ok":          True,
+        "exit_ready":  True,
+        "reason":      None,
+        "entry_price": entry_price,
+        "stop_loss":   stop_loss,
+        "take_profit": take_profit,
+        "direction":   direction,
+        "risk_reward": risk_reward,
+        "source":      "execution_intent",
+    }
+
+
+def _lm_check_paper_position_exit(position, item=None, current_price=None):
+    """Check whether an open position has hit TP or SL and close it if so.
+
+    Exit price: close at take_profit if TP hit, close at stop_loss if SL hit.
+    If both hit simultaneously, SL is preferred (conservative).
+    Closes position in DB, creates close fill (linked to entry order_id),
+    updates account cash_balance + realized_pnl immediately.
+    Does NOT call _lm_recalculate_paper_account_equity — caller handles that.
+
+    SAFETY: DB-only. No Binance API. No exchange calls. Manual trigger only.
+    Returns {ok, checked, closed, ...}.
+    """
+    import datetime as _dt
+    from models import (
+        db               as _db,
+        LiveMonitorPaperFill as _PF,
+    )
+
+    pos    = position
+    pid    = pos.id
+    symbol = pos.symbol
+    side   = (pos.side or "").upper()
+
+    # ── Resolve exit levels ───────────────────────────────────────────────────
+    levels = _lm_get_paper_position_exit_levels(pos, item=item)
+    if not levels.get("exit_ready"):
+        return {
+            "ok":          True,
+            "checked":     True,
+            "closed":      False,
+            "reason":      levels.get("reason", "tp_sl_missing"),
+            "position_id": pid,
+            "symbol":      symbol,
+            "side":        side,
+            "source":      "internal_paper",
+        }
+
+    stop_loss   = levels["stop_loss"]
+    take_profit = levels["take_profit"]
+
+    # Use actual DB entry_price as authoritative (levels.entry_price is advisory)
+    try:
+        entry_price_f = float(pos.entry_price or "0")
+    except Exception:
+        entry_price_f = levels.get("entry_price") or 0.0
+
+    # ── Resolve current mark price ────────────────────────────────────────────
+    if current_price is None:
+        pr = _lm_get_real_market_price_for_paper(item=item)
+        current_price = pr.get("price")
+
+    if current_price is None:
+        return {
+            "ok":          True,
+            "checked":     True,
+            "closed":      False,
+            "reason":      "price_unavailable",
+            "position_id": pid,
+            "symbol":      symbol,
+            "side":        side,
+            "source":      "internal_paper",
+        }
+
+    mark_price = float(current_price)
+
+    # ── TP/SL hit checks ──────────────────────────────────────────────────────
+    tp_hit = False
+    sl_hit = False
+    if side == "LONG":
+        tp_hit = mark_price >= take_profit
+        sl_hit = mark_price <= stop_loss
+    elif side == "SHORT":
+        tp_hit = mark_price <= take_profit
+        sl_hit = mark_price >= stop_loss
+    else:
+        return {
+            "ok":          True,
+            "checked":     True,
+            "closed":      False,
+            "reason":      "unknown_side",
+            "position_id": pid,
+            "symbol":      symbol,
+            "side":        side,
+            "source":      "internal_paper",
+        }
+
+    if not tp_hit and not sl_hit:
+        return {
+            "ok":          True,
+            "checked":     True,
+            "closed":      False,
+            "reason":      "not_hit",
+            "position_id": pid,
+            "symbol":      symbol,
+            "side":        side,
+            "entry_price": entry_price_f,
+            "mark_price":  mark_price,
+            "take_profit": take_profit,
+            "stop_loss":   stop_loss,
+            "source":      "internal_paper",
+        }
+
+    # Both hit — prefer SL (conservative)
+    warning = None
+    if tp_hit and sl_hit:
+        tp_hit  = False
+        sl_hit  = True
+        warning = "tp_and_sl_both_hit_preferred_sl"
+
+    close_reason = "take_profit" if tp_hit else "stop_loss"
+    exit_price   = take_profit   if tp_hit else stop_loss
+    close_side   = "SELL" if side == "LONG" else "BUY"
+
+    qty_f   = _lm_get_qty_from_position(pos)
+    qty_str = str(qty_f)
+
+    if side == "LONG":
+        realized_pnl = round((exit_price - entry_price_f) * qty_f, 8)
+    else:
+        realized_pnl = round((entry_price_f - exit_price) * qty_f, 8)
+
+    notional = round(qty_f * exit_price, 6)
+    now      = _dt.datetime.utcnow()
+    fill_id  = None
+
+    try:
+        # ── Close position ────────────────────────────────────────────────────
+        pos.status         = "closed"
+        pos.realized_pnl   = realized_pnl
+        pos.unrealized_pnl = 0.0
+        _lm_set_if_exists(pos, "close_price",  str(exit_price))
+        _lm_set_if_exists(pos, "close_reason", close_reason)
+        _lm_set_if_exists(pos, "closed_at",    now)
+        _lm_set_if_exists(pos, "updated_at",   now)
+        _db.session.flush()
+
+        # ── Create close fill (reuse entry order_id — PaperFill.order_id is non-nullable) ──
+        if pos.order_id is not None:
+            fill = _PF(
+                user_id=pos.user_id,
+                order_id=pos.order_id,
+                item_id=pos.item_id,
+                symbol=symbol,
+                side=close_side,
+                fill_qty=qty_str,
+                fill_price=str(exit_price),
+                fill_notional=notional,
+            )
+            _lm_set_if_exists(fill, "fill_type",   close_reason)
+            _lm_set_if_exists(fill, "fee",         0)
+            _lm_set_if_exists(fill, "position_id", pid)
+            _db.session.add(fill)
+            _db.session.flush()
+            fill_id = fill.id
+
+        # ── Update account cash_balance + realized_pnl ────────────────────────
+        acc = _lm_get_or_create_paper_account(pos.user_id)
+        acc.cash_balance  = round(float(acc.cash_balance  or 0) + realized_pnl, 8)
+        acc.realized_pnl  = round(float(acc.realized_pnl  or 0) + realized_pnl, 8)
+        _lm_set_if_exists(acc, "updated_at", now)
+        _db.session.flush()
+
+        _db.session.commit()
+
+        result = {
+            "ok":           True,
+            "checked":      True,
+            "closed":       True,
+            "close_reason": close_reason,
+            "position_id":  pid,
+            "symbol":       symbol,
+            "side":         side,
+            "quantity":     qty_f,
+            "entry_price":  entry_price_f,
+            "mark_price":   mark_price,
+            "exit_price":   exit_price,
+            "realized_pnl": realized_pnl,
+            "fill_id":      fill_id,
+            "source":       "internal_paper",
+        }
+        if warning:
+            result["warning"] = warning
+        return result
+
+    except Exception as _e:
+        try:
+            _db.session.rollback()
+        except Exception:
+            pass
+        return {
+            "ok":          False,
+            "checked":     True,
+            "closed":      False,
+            "error":       str(_e)[:200],
+            "position_id": pid,
+            "symbol":      symbol,
+            "side":        side,
+            "source":      "internal_paper",
+        }
+
+
+def _lm_process_paper_exits_for_item(user_id, item_id):
+    """Check all open paper positions for item against TP/SL levels.
+
+    Manual/process-triggered only. No background loop. No exchange API. DB-only.
+    Returns {ok, item_id, processed, closed, tp_hits, sl_hits, results, account, source}.
+    """
+    from models import (
+        LiveMonitorItem          as _LMI,
+        LiveMonitorPaperPosition as _PP,
+    )
+    try:
+        item = _LMI.query.filter_by(id=item_id, user_id=user_id).first()
+        if not item:
+            return {
+                "ok": False, "error": "item_not_found",
+                "item_id": item_id, "processed": 0, "closed": 0,
+                "tp_hits": 0, "sl_hits": 0, "source": "internal_paper",
+            }
+
+        pr            = _lm_get_real_market_price_for_paper(item=item)
+        current_price = pr.get("price")
+
+        open_positions = _PP.query.filter_by(
+            user_id=user_id,
+            item_id=item_id,
+            status="open",
+        ).all()
+
+        results      = []
+        closed_count = 0
+        tp_hits      = 0
+        sl_hits      = 0
+
+        for pos in open_positions:
+            res = _lm_check_paper_position_exit(
+                pos, item=item, current_price=current_price
+            )
+            results.append(res)
+            if res.get("closed"):
+                closed_count += 1
+                reason = res.get("close_reason", "")
+                if reason == "take_profit":
+                    tp_hits += 1
+                elif reason == "stop_loss":
+                    sl_hits += 1
+
+        # Recalculate equity after all closes in this batch
+        equity_result = _lm_recalculate_paper_account_equity(user_id)
+
+        return {
+            "ok":        True,
+            "item_id":   item_id,
+            "processed": len(open_positions),
+            "closed":    closed_count,
+            "tp_hits":   tp_hits,
+            "sl_hits":   sl_hits,
+            "results":   results,
+            "account":   equity_result,
+            "source":    "internal_paper",
+        }
+
+    except Exception as _e:
+        return {
+            "ok": False, "error": str(_e)[:200],
+            "item_id": item_id, "processed": 0, "closed": 0,
+            "tp_hits": 0, "sl_hits": 0, "source": "internal_paper",
+        }
+
+
+def _lm_process_all_paper_exits_for_user(user_id):
+    """Check paper positions across all items for the user against TP/SL levels.
+
+    Manual/process-triggered only. No background loop. DB-only.
+    Returns {ok, total_processed, total_closed, tp_hits, sl_hits, by_item, source}.
+    """
+    from models import LiveMonitorPaperPosition as _PP
+    try:
+        item_ids = [
+            r.item_id for r in
+            _PP.query.filter_by(user_id=user_id, status="open")
+            .with_entities(_PP.item_id).distinct().all()
+        ]
+        total_processed = 0
+        total_closed    = 0
+        total_tp        = 0
+        total_sl        = 0
+        by_item         = []
+        for iid in item_ids:
+            res             = _lm_process_paper_exits_for_item(user_id, iid)
+            total_processed += res.get("processed", 0)
+            total_closed    += res.get("closed", 0)
+            total_tp        += res.get("tp_hits", 0)
+            total_sl        += res.get("sl_hits", 0)
+            by_item.append({
+                "item_id":   iid,
+                "processed": res.get("processed", 0),
+                "closed":    res.get("closed", 0),
+                "tp_hits":   res.get("tp_hits", 0),
+                "sl_hits":   res.get("sl_hits", 0),
+            })
+        return {
+            "ok":              True,
+            "total_processed": total_processed,
+            "total_closed":    total_closed,
+            "tp_hits":         total_tp,
+            "sl_hits":         total_sl,
+            "by_item":         by_item,
+            "source":          "internal_paper",
+        }
+    except Exception as _e:
+        return {
+            "ok": False, "error": str(_e)[:200],
+            "total_processed": 0, "total_closed": 0,
+            "tp_hits": 0, "sl_hits": 0, "source": "internal_paper",
         }

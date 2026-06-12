@@ -5150,11 +5150,13 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                               '<tbody id="lmPapPosTbody"><tr><td colspan="8" style="text-align:center;color:var(--text-3);padding:14px 0">No positions</td></tr></tbody>'+
                             '</table>'+
                           '</div>'+
-                          '<div style="margin-top:6px;display:flex;gap:6px">'+
-                            '<button class="btn lm-sm-btn" style="flex:1;justify-content:center" onclick="window._lmPapRefreshPositions()">Refresh Positions</button>'+
-                            '<button id="lmPapMarkBtn" class="btn lm-sm-btn" style="flex:1;justify-content:center" onclick="window._lmPapRefreshMarks()">Refresh PnL</button>'+
+                          '<div style="margin-top:6px;display:flex;gap:4px">'+
+                            '<button class="btn lm-sm-btn" style="flex:1;justify-content:center" onclick="window._lmPapRefreshPositions()">Refresh</button>'+
+                            '<button id="lmPapMarkBtn" class="btn lm-sm-btn" style="flex:1;justify-content:center" onclick="window._lmPapRefreshMarks()">PnL</button>'+
+                            '<button id="lmPapExitBtn" class="btn lm-sm-btn" style="flex:1;justify-content:center;color:var(--yellow,#facc15)" onclick="window._lmPapCheckExits()">Check TP/SL</button>'+
                           '</div>'+
                           '<div id="lmPapMarkResult" style="display:none;margin-top:4px;font-size:10px;padding:4px 6px;border-radius:4px;background:var(--bg-3,#1e293b)"></div>'+
+                          '<div id="lmPapExitResult" style="display:none;margin-top:4px;font-size:10px;padding:4px 6px;border-radius:4px;background:var(--bg-3,#1e293b)"></div>'+
                         '</div>'+
                       '</div>'+
 
@@ -8447,7 +8449,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
             '<td'+(p.mark_price_source?' title="src: '+esc(p.mark_price_source)+'"':'')+'>'+esc(p.mark_price||'—')+'</td>'+
             '<td style="color:'+pnlC+'">'+pnlStr+'</td>'+
             '<td style="color:'+pnlC+'">'+pnlPctStr+'</td>'+
-            '<td style="color:'+stC+'">'+esc(p.status||'—')+'</td>'+
+            '<td style="color:'+stC+'"'+(p.close_reason?' title="'+esc(p.close_reason)+'"':'')+'>'+esc(p.status||'—')+(p.close_reason?' <span style="font-size:8px;opacity:.7">('+esc(p.close_reason==='take_profit'?'tp':'sl')+')</span>':'')+'</td>'+
             '</tr>';
         }).join('');
       }).catch(function(){});
@@ -8493,6 +8495,50 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       })
       .catch(function(){
         if(btn){ btn.disabled=false; btn.textContent='Refresh PnL'; }
+        if(resEl){ resEl.style.display=''; resEl.style.color='var(--red-2,#f87171)'; resEl.textContent='Network error.'; }
+      });
+  };
+
+  window._lmPapCheckExits=function(){
+    var itemId=window._lmSimItemId||(window._lmSelItem&&window._lmSelItem.id);
+    if(!itemId){ alert('Select a setup first.'); return; }
+    var btn=document.getElementById('lmPapExitBtn');
+    var resEl=document.getElementById('lmPapExitResult');
+    if(btn){ btn.disabled=true; btn.textContent='Checking…'; }
+    if(resEl){ resEl.style.display='none'; }
+    fetch('/api/live-monitor/items/'+itemId+'/paper-positions/check-exits',{
+      method:'POST',
+      credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+    })
+      .then(function(r){return r.json().then(function(d){return {s:r.status,d:d};});})
+      .then(function(rd){
+        var d=rd.d;
+        if(btn){ btn.disabled=false; btn.textContent='Check TP/SL'; }
+        if(resEl){
+          resEl.style.display='';
+          if(d&&d.ok){
+            var ec=d.exit_check||{};
+            var closed=ec.closed||0;
+            var tp=ec.tp_hits||0;
+            var sl=ec.sl_hits||0;
+            var proc=ec.processed||0;
+            var hasClose=closed>0;
+            resEl.style.color=hasClose?'var(--green-2,#4ade80)':'var(--text-3)';
+            var detail='';
+            if(tp>0) detail+=' · <span style="color:var(--green-2,#4ade80)">TP×'+tp+'</span>';
+            if(sl>0) detail+=' · <span style="color:var(--red-2,#f87171)">SL×'+sl+'</span>';
+            resEl.innerHTML='Checked '+esc(String(proc))+' · Closed '+esc(String(closed))+detail;
+          } else {
+            resEl.style.color='var(--red-2,#f87171)';
+            resEl.innerHTML='<b>Failed:</b> '+esc((d&&d.error)||'Unknown error');
+          }
+        }
+        window._lmPapRefreshPositions();
+        window._lmPapRefreshAccount&&window._lmPapRefreshAccount();
+      })
+      .catch(function(){
+        if(btn){ btn.disabled=false; btn.textContent='Check TP/SL'; }
         if(resEl){ resEl.style.display=''; resEl.style.color='var(--red-2,#f87171)'; resEl.textContent='Network error.'; }
       });
   };

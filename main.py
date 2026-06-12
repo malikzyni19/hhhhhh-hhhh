@@ -20111,6 +20111,7 @@ def _lm_build_trade_proposal_context(row, snapshot=None) -> dict:
             if getattr(row, "user_id", None) else None,
         "paper_fill_process_summary": snap.get("latest_paper_fill_process_summary"),
         "paper_position_summary": snap.get("latest_paper_position_mark_summary"),
+        "paper_exit_check_summary": snap.get("latest_paper_exit_check_summary"),
     }
 
 
@@ -21171,6 +21172,7 @@ def _lm_build_ai_context(item) -> dict:
             if getattr(item, "user_id", None) else None,
         "paper_fill_process_summary": snap.get("latest_paper_fill_process_summary"),
         "paper_position_summary": snap.get("latest_paper_position_mark_summary"),
+        "paper_exit_check_summary": snap.get("latest_paper_exit_check_summary"),
     }
 
 
@@ -24351,6 +24353,10 @@ from live_monitor import (
     _lm_update_paper_position_marks,
     _lm_recalculate_paper_account_equity,
     _lm_get_paper_position_summary,
+    _lm_get_paper_position_exit_levels,
+    _lm_check_paper_position_exit,
+    _lm_process_paper_exits_for_item,
+    _lm_process_all_paper_exits_for_user,
 )
 
 # ── Phase 10.9I: Auto-refresh scheduler ─────────────────────────────────────
@@ -28407,6 +28413,114 @@ def api_lm_paper_positions_refresh(item_id):
         "last_checked_at":     now_iso,
         "source":              "internal_paper",
         "error":               mark_result.get("error") or equity_result.get("error"),
+    })
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/paper-positions/check-exits", methods=["POST"])
+@login_required
+def api_lm_paper_check_exits(item_id):
+    """Phase 11.9: Check open paper positions for TP/SL hits and close qualifying ones.
+
+    SAFETY: DB-only. No Binance API. No Binance Testnet. No exchange calls.
+    No auto-execution. Runs only when user manually clicks 'Check TP/SL'.
+    TP/SL levels from execution_intent_json on entry order only.
+    Exit price = take_profit (if TP hit) or stop_loss (if SL hit).
+    """
+    import json as _json119
+    import datetime as _dt119
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    from models import (
+        db               as _db119,
+        LiveMonitorItem  as _LMI119,
+        LiveMonitorEvent as _LMEv119,
+    )
+    item = _LMI119.query.filter_by(id=item_id, user_id=uid).first()
+    if not item:
+        return jsonify({"error": "item_not_found"}), 404
+
+    # 1. Process TP/SL exits for this item
+    exit_result  = _lm_process_paper_exits_for_item(uid, item_id)
+
+    # 2. Refresh position summary and account
+    pos_summary  = _lm_get_paper_position_summary(uid, item_id=item_id)
+    acct_summary = _lm_get_paper_account_summary(uid)
+
+    now_iso = _dt119.datetime.utcnow().isoformat() + "Z"
+
+    # 3. Snapshot: compact key — no results array
+    try:
+        snap = {}
+        if item.snapshot_json:
+            try:
+                snap = _json119.loads(item.snapshot_json)
+            except Exception:
+                snap = {}
+        snap["latest_paper_exit_check_summary"] = {
+            "ok":             exit_result.get("ok", False),
+            "processed":      exit_result.get("processed", 0),
+            "closed":         exit_result.get("closed", 0),
+            "tp_hits":        exit_result.get("tp_hits", 0),
+            "sl_hits":        exit_result.get("sl_hits", 0),
+            "last_checked_at": now_iso,
+            "source":         "internal_paper",
+        }
+        item.snapshot_json = _json119.dumps(snap, default=str)
+        _db119.session.commit()
+    except Exception:
+        pass
+
+    # 4. ONE timeline event per closed position (tp_hit or sl_hit)
+    try:
+        closed_results = [r for r in exit_result.get("results", []) if r.get("closed")]
+        for cr in closed_results:
+            reason = cr.get("close_reason", "")
+            evt    = "paper_tp_hit" if reason == "take_profit" else "paper_sl_hit"
+            ev = _LMEv119(
+                user_id=uid,
+                item_id=item_id,
+                event_type=evt,
+                event_data=_json119.dumps({
+                    "item_id":     item_id,
+                    "position_id": cr.get("position_id"),
+                    "symbol":      cr.get("symbol"),
+                    "side":        cr.get("side"),
+                    "quantity":    cr.get("quantity"),
+                    "entry_price": cr.get("entry_price"),
+                    "mark_price":  cr.get("mark_price"),
+                    "exit_price":  cr.get("exit_price"),
+                    "realized_pnl": cr.get("realized_pnl"),
+                    "close_reason": reason,
+                    "source":      "internal_paper",
+                }, default=str),
+            )
+            _db119.session.add(ev)
+        if closed_results:
+            _db119.session.commit()
+    except Exception:
+        pass
+
+    return jsonify({
+        "ok":      exit_result.get("ok", False),
+        "item_id": item_id,
+        "exit_check": {
+            "processed":  exit_result.get("processed", 0),
+            "closed":     exit_result.get("closed", 0),
+            "tp_hits":    exit_result.get("tp_hits", 0),
+            "sl_hits":    exit_result.get("sl_hits", 0),
+            "results":    exit_result.get("results", []),
+        },
+        "position_summary": {
+            "open_count":           pos_summary.get("open_count", 0),
+            "closed_count":         pos_summary.get("closed_count", 0),
+            "total_unrealized_pnl": pos_summary.get("total_unrealized_pnl", 0.0),
+            "total_realized_pnl":   pos_summary.get("total_realized_pnl", 0.0),
+        },
+        "account": acct_summary,
+        "last_checked_at": now_iso,
+        "source":  "internal_paper",
+        "error":   exit_result.get("error"),
     })
 
 
