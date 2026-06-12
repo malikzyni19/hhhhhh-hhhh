@@ -1545,6 +1545,24 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 .bt-run-form-label{font-size:10.5px;font-weight:600;color:var(--text-2);margin-bottom:5px;display:block}
 .bt-run-form-inp{background:var(--bg-panel);border:1px solid var(--border-2);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:12px;padding:8px 12px;outline:none;width:100%}
 .bt-run-form-inp:focus{border-color:var(--accent)}
+/* ── Backtest filter bar ─── */
+.bt-filter-bar{display:flex;align-items:center;gap:5px;padding:7px 20px;background:var(--bg-panel);border-bottom:1px solid var(--border);flex-wrap:wrap}
+.bt-filter-sel{background:var(--bg-card);border:1px solid var(--border-2);border-radius:5px;color:var(--text-2);font-size:10.5px;padding:3px 7px;outline:none;cursor:pointer;height:25px}
+.bt-filter-sel:focus{border-color:var(--accent)}
+.bt-filter-inp{background:var(--bg-card);border:1px solid var(--border-2);border-radius:5px;color:var(--text-2);font-size:10.5px;padding:3px 8px;outline:none;width:100px;height:25px}
+.bt-filter-inp:focus{border-color:var(--accent)}
+.bt-filter-label{font-size:9px;font-weight:700;color:var(--text-3);letter-spacing:.7px;text-transform:uppercase;white-space:nowrap}
+.bt-filter-sep{width:1px;height:16px;background:var(--border-2);flex-shrink:0;margin:0 2px}
+.bt-filter-count{background:rgba(34,211,238,.12);border:1px solid rgba(34,211,238,.25);border-radius:10px;color:var(--accent);font-size:9px;font-weight:700;padding:1px 7px;white-space:nowrap;font-family:var(--mono)}
+.bt-filter-reset{background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.18);border-radius:5px;color:#f87171;font-size:10px;font-weight:700;padding:2px 8px;cursor:pointer;height:25px;white-space:nowrap;transition:background .12s}
+.bt-filter-reset:hover{background:rgba(239,68,68,.14)}
+.bt-filter-status{font-size:10px;color:var(--accent);font-family:var(--mono);white-space:nowrap;font-weight:600;margin-left:auto}
+/* ── Backtest export group ─── */
+.bt-export-grp{display:flex;gap:4px}
+.bt-export-btn-sm{background:var(--bg-card);border:1px solid var(--border-2);border-radius:6px;color:var(--text-2);font-size:10.5px;font-weight:600;padding:5px 11px;cursor:pointer;transition:border-color .15s;white-space:nowrap}
+.bt-export-btn-sm:hover{border-color:var(--accent);color:var(--accent)}
+.bt-export-btn-sm.ai{border-color:rgba(99,102,241,.3);color:#a5b4fc}
+.bt-export-btn-sm.ai:hover{border-color:#818cf8;color:#c4b5fd}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 </head>
@@ -11470,7 +11488,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   /* ═══════════════════════════════════════════════════════════════════════
      BACKTEST MODULE
      ═══════════════════════════════════════════════════════════════════════ */
-  var _btState={data:null,page:"overview",rr:[1,2,3],charts:{},tblPage:0,lastRun:null};
+  var _btState={data:null,page:"overview",rr:[1,2,3],charts:{},tblPage:0,lastRun:null,filters:null};
 
   function _bindBtSidebarEvents(aside){
     [].forEach.call(aside.querySelectorAll("[data-btpage]"),function(item){
@@ -11511,10 +11529,11 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
             '<div class="bt-sub">OB Replay Engine &bull; First Touch Outcomes Connected</div>'+
           '</div>'+
           '<div class="bt-head-right">'+
-            '<button class="bt-export-btn" id="btExportBtn">'+
-              '<svg style="width:13px;height:13px;stroke:currentColor;fill:none;stroke-linecap:round;stroke-linejoin:round" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>'+
-              'Export Report'+
-            '</button>'+
+            '<div class="bt-export-grp">'+
+              '<button class="bt-export-btn-sm" id="btExpJsonBtn">&#x25BE; JSON</button>'+
+              '<button class="bt-export-btn-sm" id="btExpCsvBtn">&#x25BE; CSV</button>'+
+              '<button class="bt-export-btn-sm ai" id="btExpAiBtn">&#x25BE; AI Dataset</button>'+
+            '</div>'+
           '</div>'+
         '</div>'+
         '<div class="bt-ctrl-row">'+
@@ -11619,8 +11638,9 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var rfBtn=document.getElementById("btRunFormBtn");
     if(rfBtn) rfBtn.addEventListener("click",function(){ _btSwitchPage("overview"); _btRunBacktest(); });
 
-    var expBtn=document.getElementById("btExportBtn");
-    if(expBtn) expBtn.addEventListener("click",_btExport);
+    var eJ=document.getElementById("btExpJsonBtn"); if(eJ) eJ.addEventListener("click",_btExportJson);
+    var eC=document.getElementById("btExpCsvBtn");  if(eC) eC.addEventListener("click",_btExportCsv);
+    var eA=document.getElementById("btExpAiBtn");   if(eA) eA.addEventListener("click",_btExportAiDataset);
 
     if(_btState.data) _btApplyData(_btState.data);
   }
@@ -11711,49 +11731,43 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   }
 
   function _btRenderOverview(data){
-    var cs=data.candle_summary||{}, rs=data.replay_summary||{}, os=data.outcome_summary||{}, par=data.parity||{};
+    if(!_btState.filters) _btState.filters=_btDefaultFilters();
+    var f=_btState.filters;
+    var cs=data.candle_summary||{}, rs=data.replay_summary||{}, par=data.parity||{};
+    var allEvts=data.events||[];
+    var fe=_btGetFilteredEvents(allEvts,f);
+    var os=_btBuildSummaryFromEvents(fe,data);
+    var active=_btFiltersActive(f);
+    var allElig=allEvts.filter(function(e){return e.simulation&&e.simulation.eligible;});
+    var elig=fe.filter(function(e){return e.simulation&&e.simulation.eligible;});
     var hrr=os.hit_rate_by_rr||{};
     var rr1=hrr["1"]||{}, rr2=hrr["2"]||{}, rr3=hrr["3"]||{};
-    var events=data.events||[];
     var oc=document.getElementById("btOverviewContent"); if(!oc) return;
+    _btState.tblPage=0;
 
     oc.innerHTML=
-      '<div class="bt-kpi-row">'+
-        _btKpiCard("OB Events",rs.ob_events_detected,"","from "+cs.returned+" candles")+
-        _btKpiCard("First Touches",rs.touched_events,"","of "+rs.ob_events_detected+" total")+
+      _btRenderFilterBar(f)+
+      '<div id="btOvKpis"><div class="bt-kpi-row">'+
+        _btKpiCard("OB Events",active?fe.length:rs.ob_events_detected||allEvts.length,"",active?"filtered events":"from "+cs.returned+" candles")+
+        _btKpiCard("First Touches",os.eligible_touched,"","touched eligible")+
         _btKpiCard("1R Hit Rate",_btFmt(rr1.rate_pct,"%"),"a",(rr1.hits||0)+" hits")+
         _btKpiCard("2R Hit Rate",_btFmt(rr2.rate_pct,"%"),"a",(rr2.hits||0)+" hits")+
         _btKpiCard("3R Hit Rate",_btFmt(rr3.rate_pct,"%"),"y",(rr3.hits||0)+" hits")+
         _btKpiCard("Avg Max R",_btFmt(os.avg_max_r_reached,"R"),"g","avg excursion")+
         _btKpiCard("Parity",par.enabled?_btFmt(par.match_rate_pct,"%"):"—","","vs detect_obs_all")+
-      '</div>'+
-      '<div class="bt-charts-grid">'+
+      '</div></div>'+
+      '<div id="btOvCharts"><div class="bt-charts-grid">'+
         '<div class="bt-chart-card"><div class="bt-chart-h">Hit Rate by Target <span class="bt-chart-hsub">1R / 2R / 3R</span></div><div class="bt-chart-wrap"><canvas id="btCHitRate"></canvas></div></div>'+
         '<div class="bt-chart-card"><div class="bt-chart-h">Outcome Distribution <span class="bt-chart-hsub">TP / SL / Ambiguous / Unresolved</span></div><div class="bt-chart-wrap"><canvas id="btCOutcome"></canvas></div></div>'+
         '<div class="bt-chart-card"><div class="bt-chart-h">Cumulative R <span class="bt-chart-hsub">Expectancy curve by event sequence</span></div><div class="bt-chart-wrap"><canvas id="btCCumR"></canvas></div></div>'+
         '<div class="bt-chart-card"><div class="bt-chart-h">Max R Strength Buckets <span class="bt-chart-hsub">Achieved R distribution</span></div><div class="bt-chart-wrap"><canvas id="btCBucket"></canvas></div></div>'+
-      '</div>'+
-      '<div>'+
-        '<div class="bt-section-head">'+
-          '<div><div class="bt-section-title">Recent OB Events (First Touches)</div>'+
-          '<div class="bt-section-sub">'+Math.min(events.length,50)+' of '+(os.eligible_touched||0)+' touched events</div></div>'+
-        '</div>'+
-        '<div class="bt-tbl-wrap">'+
-          '<table class="bt-tbl"><thead><tr>'+
-            '<th>#</th><th>Symbol</th><th>Time (UTC)</th><th>Type</th>'+
-            '<th>Zone High</th><th>Zone Low</th><th>Touch Price</th>'+
-            '<th>Outcome</th><th>First Touch (UTC)</th><th>Max R</th>'+
-            '<th>1R</th><th>2R</th><th>3R</th><th>Mitigated</th>'+
-          '</tr></thead>'+
-          '<tbody id="btEvtTbody">'+_btEvtRows(events,0,50)+'</tbody>'+
-          '</table>'+
-        '</div>'+
-        _btMakePager(events.length,50,_btState.tblPage,"btEvtTbody",events)+
-      '</div>';
+      '</div></div>'+
+      '<div id="btOvEvents">'+_btBuildEventsSection(elig,active,allElig.length)+'</div>';
 
-    // Bind pagination immediately — must not depend on Chart.js being available.
-    _btBindPagerEvents(events.length,50,"btEvtTbody",events);
-    setTimeout(function(){ _btBuildCharts(data); },0);
+    _btUpdateFilterBarStatus(f,elig.length,allElig.length);
+    _btBindFilterBarEvents();
+    _btBindPagerEvents(elig.length,50,"btEvtTbody",elig);
+    setTimeout(function(){ _btBuildCharts(data,fe,os); },0);
   }
 
   function _btKpiCard(label,val,colorCls,sub){
@@ -11841,14 +11855,14 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 
   function _btRefreshEvtTable(events){
     var tbody=document.getElementById("btEvtTbody");
-    if(tbody) tbody.innerHTML=_btEvtRows(events,_btState.tblPage*50,50);
+    if(tbody) tbody.innerHTML=_btEvtRows2(events,_btState.tblPage*50,50);
     var pg=document.querySelector(".bt-pager");
     if(pg){ pg.outerHTML=_btMakePager(events.length,50,_btState.tblPage,"btEvtTbody",events); _btBindPagerEvents(events.length,50,"btEvtTbody",events); }
   }
 
-  function _btBuildCharts(data){
+  function _btBuildCharts(data, eventsOverride, osOverride){
     if(typeof Chart==="undefined") return;
-    var os=data.outcome_summary||{}, hrr=os.hit_rate_by_rr||{}, events=data.events||[];
+    var os=osOverride||data.outcome_summary||{}, hrr=os.hit_rate_by_rr||{}, events=eventsOverride||data.events||[];
     var gcfg={responsive:true,maintainAspectRatio:false,
       plugins:{legend:{labels:{color:"#8a9bb3",font:{family:"JetBrains Mono,monospace",size:10},boxWidth:12}}},
       scales:{x:{ticks:{color:"#566377",font:{size:10}},grid:{color:"rgba(27,38,54,.5)"}},
@@ -11950,15 +11964,334 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     }
   }
 
-  function _btExport(){
-    if(!_btState.data){ return; }
+  function _btDownloadBlob(filename,content,mime){
     try{
-      var blob=new Blob([JSON.stringify(_btState.data,null,2)],{type:"application/json"});
+      var blob=new Blob([content],{type:mime});
       var url=URL.createObjectURL(blob);
       var a=document.createElement("a");
-      a.href=url; a.download="zyni_bt_"+((_btState.data.params||{}).symbol||"export")+"_"+Date.now()+".json";
-      a.click(); setTimeout(function(){URL.revokeObjectURL(url);},2000);
+      a.href=url; a.download=filename; a.click();
+      setTimeout(function(){URL.revokeObjectURL(url);},2000);
     }catch(e){}
+  }
+
+  function _btExportJson(){
+    if(!_btState.data) return;
+    var d=_btState.data, p=d.params||{};
+    var f=_btState.filters, active=f&&_btFiltersActive(f);
+    var fe=active?_btGetFilteredEvents(d.events||[],f):null;
+    var out={metadata:{symbol:p.symbol,timeframe:p.timeframe,candle_count:p.candle_count,
+      exported_at:new Date().toISOString(),filters:f||null},backtest_response:d};
+    if(active) out.filtered_events=fe;
+    _btDownloadBlob("zyni_bt_"+(p.symbol||"export")+"_"+Date.now()+".json",JSON.stringify(out,null,2),"application/json");
+  }
+
+  function _btExportCsv(){
+    if(!_btState.data) return;
+    var d=_btState.data, p=d.params||{};
+    var f=_btState.filters, active=f&&_btFiltersActive(f);
+    var events=active?_btGetFilteredEvents(d.events||[],f):d.events||[];
+    var cols=["symbol","timeframe","type","formation_time","first_touch_time","zone_high","zone_low",
+      "touch_status","later_mitigated","outcome","entry_price","stop_boundary","max_r_reached",
+      "max_adverse_r","hit_1r","hit_2r","hit_3r","candles_to_1r","candles_to_2r","candles_to_3r"];
+    var rows=[cols.join(",")];
+    events.forEach(function(ev){
+      var sim=ev.simulation||{}, hr=sim.hit_rr||{};
+      function hk(k){return !!(hr[k]||hr[k+".0"]);}
+      function cv(x){var s=String(x==null?"":x);return(s.indexOf(",")>=0||s.indexOf('"')>=0)?'"'+s.replace(/"/g,'""')+'"':s;}
+      rows.push([
+        cv(p.symbol),cv(p.timeframe),cv(ev.type),cv(ev.formation_time),cv(ev.first_touch_time),
+        cv(ev.zone_high),cv(ev.zone_low),cv(ev.touch_status),cv(ev.later_mitigated?1:0),
+        cv(sim.first_outcome||""),cv(sim.entry_price||""),cv(sim.stop_boundary||""),
+        cv(sim.max_r_reached!=null?sim.max_r_reached:""),cv(sim.max_adverse_r!=null?sim.max_adverse_r:""),
+        cv(hk("1")?1:0),cv(hk("2")?1:0),cv(hk("3")?1:0),
+        cv(sim.candles_to_rr&&sim.candles_to_rr["1"]!=null?sim.candles_to_rr["1"]:""),
+        cv(sim.candles_to_rr&&sim.candles_to_rr["2"]!=null?sim.candles_to_rr["2"]:""),
+        cv(sim.candles_to_rr&&sim.candles_to_rr["3"]!=null?sim.candles_to_rr["3"]:"")
+      ].join(","));
+    });
+    _btDownloadBlob("zyni_bt_"+(p.symbol||"export")+"_"+Date.now()+".csv",rows.join("\r\n"),"text/csv");
+  }
+
+  function _btExportAiDataset(){
+    if(!_btState.data) return;
+    var d=_btState.data, p=d.params||{};
+    var f=_btState.filters, active=f&&_btFiltersActive(f);
+    var events=active?_btGetFilteredEvents(d.events||[],f):d.events||[];
+    function aiLabel(ev){
+      var sim=ev.simulation||{}, hr=sim.hit_rr||{};
+      if(ev.touch_status!=="touched") return "no_touch";
+      if(sim.first_outcome==="tp") return (hr["3"]||hr["3.0"])?"strong_win":"win";
+      if(sim.first_outcome==="sl") return "loss";
+      if(sim.first_outcome==="ambiguous") return "ambiguous";
+      if(sim.first_outcome==="unresolved") return "unresolved";
+      return "no_touch";
+    }
+    var records=events.map(function(ev){
+      var sim=ev.simulation||{}, hr=sim.hit_rr||{};
+      function hk(k){return !!(hr[k]||hr[k+".0"]);}
+      var zh=ev.zone_high||0, zl=ev.zone_low||0, mid=(zh+zl)/2;
+      return {symbol:p.symbol,timeframe:p.timeframe,ob_type:ev.type,
+        formation_bar:ev.formation_bar,formation_time:ev.formation_time,
+        zone_high:zh,zone_low:zl,zone_size_pct:mid>0?parseFloat(((zh-zl)/mid*100).toFixed(4)):0,
+        touch_status:ev.touch_status,first_touch_bar:ev.first_touch_bar,
+        first_touch_time:ev.first_touch_time,candles_to_first_touch:ev.candles_to_first_touch,
+        later_mitigated:ev.later_mitigated||false,outcome:sim.first_outcome||null,
+        hit_1r:hk("1"),hit_2r:hk("2"),hit_3r:hk("3"),
+        max_r_reached:sim.max_r_reached!=null?parseFloat(sim.max_r_reached.toFixed(4)):null,
+        max_adverse_r:sim.max_adverse_r!=null?parseFloat(sim.max_adverse_r.toFixed(4)):null,
+        label:aiLabel(ev)};
+    });
+    _btDownloadBlob("zyni_bt_ai_"+(p.symbol||"export")+"_"+Date.now()+".json",JSON.stringify(records,null,2),"application/json");
+  }
+
+  /* ── Filter helpers ──────────────────────────────────────────────────────── */
+  function _btDefaultFilters(){
+    return {direction:"all",outcome:"all",rrHit:"any",mitigation:"all",touch:"all",maxR:"all",search:""};
+  }
+
+  function _btFiltersActive(f){
+    if(!f) return false;
+    return f.direction!=="all"||f.outcome!=="all"||f.rrHit!=="any"||f.mitigation!=="all"||
+           f.touch!=="all"||f.maxR!=="all"||(f.search||"").trim()!=="";
+  }
+
+  function _btFilterCount(f){
+    if(!f) return 0;
+    var n=0;
+    if(f.direction!=="all") n++; if(f.outcome!=="all") n++; if(f.rrHit!=="any") n++;
+    if(f.mitigation!=="all") n++; if(f.touch!=="all") n++; if(f.maxR!=="all") n++;
+    if((f.search||"").trim()) n++;
+    return n;
+  }
+
+  function _btGetFilteredEvents(events,f){
+    if(!f||!_btFiltersActive(f)) return events;
+    var q=(f.search||"").trim().toLowerCase();
+    return events.filter(function(ev){
+      var sim=ev.simulation||{}, hr=sim.hit_rr||{};
+      if(f.direction!=="all"&&ev.type!==f.direction) return false;
+      if(f.touch==="touched"&&ev.touch_status!=="touched") return false;
+      if(f.touch==="untouched"&&ev.touch_status==="touched") return false;
+      if(f.outcome!=="all"){
+        var fo=sim.first_outcome||(ev.touch_status!=="touched"?"no_touch":"unresolved");
+        if(f.outcome==="tp"&&fo!=="tp") return false;
+        if(f.outcome==="sl"&&fo!=="sl") return false;
+        if(f.outcome==="ambiguous"&&fo!=="ambiguous") return false;
+        if(f.outcome==="unresolved"&&fo!=="unresolved") return false;
+        if(f.outcome==="no_touch"&&ev.touch_status==="touched") return false;
+      }
+      if(f.rrHit!=="any"){
+        var rk=String(f.rrHit); if(!(hr[rk]||hr[rk+".0"])) return false;
+      }
+      if(f.mitigation==="mitigated"&&!ev.later_mitigated) return false;
+      if(f.mitigation==="not_mitigated"&&ev.later_mitigated) return false;
+      var mr=sim.max_r_reached||0;
+      if(f.maxR==="0-1"&&(mr<0||mr>=1)) return false;
+      if(f.maxR==="1-2"&&(mr<1||mr>=2)) return false;
+      if(f.maxR==="2-3"&&(mr<2||mr>=3)) return false;
+      if(f.maxR==="3+"&&mr<3) return false;
+      if(q){
+        var s=((ev.symbol||"")+" "+(ev.type||"")+" "+(sim.first_outcome||"")+" "+_btFmtTime(ev.formation_time)).toLowerCase();
+        if(s.indexOf(q)<0) return false;
+      }
+      return true;
+    });
+  }
+
+  function _btBuildSummaryFromEvents(events,originalData){
+    var elig=events.filter(function(e){return e.simulation&&e.simulation.eligible;});
+    var os={eligible_touched:elig.length};
+    os.no_touch=events.filter(function(e){return e.touch_status!=="touched";}).length;
+    os.tp_first=elig.filter(function(e){return e.simulation.first_outcome==="tp";}).length;
+    os.sl_first=elig.filter(function(e){return e.simulation.first_outcome==="sl";}).length;
+    os.ambiguous=elig.filter(function(e){return e.simulation.first_outcome==="ambiguous";}).length;
+    os.unresolved=elig.filter(function(e){return e.simulation.first_outcome==="unresolved";}).length;
+    os.hit_rate_by_rr={};
+    [1,2,3].forEach(function(r){
+      var rk=String(r);
+      var hits=elig.filter(function(e){var hr=e.simulation.hit_rr||{};return !!(hr[rk]||hr[rk+".0"]);}).length;
+      os.hit_rate_by_rr[rk]={hits:hits,rate_pct:elig.length>0?hits/elig.length*100:0};
+    });
+    var sumMR=0,sumAR=0,cnt=0;
+    elig.forEach(function(e){
+      if(e.simulation.max_r_reached!=null){sumMR+=e.simulation.max_r_reached;sumAR+=e.simulation.max_adverse_r||0;cnt++;}
+    });
+    os.avg_max_r_reached=cnt>0?sumMR/cnt:null;
+    os.avg_max_adverse_r=cnt>0?sumAR/cnt:null;
+    function subSet(arr){
+      var s={count:arr.length};
+      s.tp_first=arr.filter(function(e){return e.simulation.first_outcome==="tp";}).length;
+      s.sl_first=arr.filter(function(e){return e.simulation.first_outcome==="sl";}).length;
+      var sm=0,sc=0; arr.forEach(function(e){if(e.simulation.max_r_reached!=null){sm+=e.simulation.max_r_reached;sc++;}});
+      s.avg_max_r_reached=sc>0?sm/sc:null;
+      return s;
+    }
+    os.bullish=subSet(elig.filter(function(e){return e.type==="bullish";}));
+    os.bearish=subSet(elig.filter(function(e){return e.type==="bearish";}));
+    return os;
+  }
+
+  function _btRenderFilterBar(f){
+    function sel(id,val,opts){
+      var h='<select class="bt-filter-sel" id="'+id+'">';
+      opts.forEach(function(o){h+='<option value="'+o[0]+'"'+(val===o[0]?' selected':'')+'>'+o[1]+'</option>';});
+      return h+'</select>';
+    }
+    return '<div class="bt-filter-bar" id="btFilterBar">'+
+      '<span class="bt-filter-label">Dir</span>'+
+      sel("btFDir",f.direction,[["all","All"],["bullish","Bullish"],["bearish","Bearish"]])+
+      '<span class="bt-filter-label" style="margin-left:3px">Outcome</span>'+
+      sel("btFOut",f.outcome,[["all","All"],["tp","TP First"],["sl","SL First"],["ambiguous","Ambiguous"],["unresolved","Unresolved"],["no_touch","No Touch"]])+
+      '<span class="bt-filter-label" style="margin-left:3px">RR Hit</span>'+
+      sel("btFRr",f.rrHit,[["any","Any"],["1","1R"],["2","2R"],["3","3R"]])+
+      '<span class="bt-filter-label" style="margin-left:3px">Mitig</span>'+
+      sel("btFMit",f.mitigation,[["all","All"],["mitigated","Mitigated"],["not_mitigated","Not Mitig."]])+
+      '<span class="bt-filter-label" style="margin-left:3px">Touch</span>'+
+      sel("btFTch",f.touch,[["all","All"],["touched","Touched"],["untouched","Untouched"]])+
+      '<span class="bt-filter-label" style="margin-left:3px">Max R</span>'+
+      sel("btFMaxR",f.maxR,[["all","All"],["0-1","0–1R"],["1-2","1–2R"],["2-3","2–3R"],["3+","3R+"]])+
+      '<div class="bt-filter-sep"></div>'+
+      '<input class="bt-filter-inp" id="btFSearch" placeholder="Search…" value="'+((f.search||"").replace(/"/g,"&quot;"))+'" />'+
+      '<span class="bt-filter-count" id="btFCount" style="display:none"></span>'+
+      '<button class="bt-filter-reset" id="btFReset" style="display:none">&#x21BA; Reset</button>'+
+      '<span class="bt-filter-status" id="btFStatus" style="display:none"></span>'+
+    '</div>';
+  }
+
+  function _btUpdateFilterBarStatus(f,filteredElig,totalElig){
+    var active=_btFiltersActive(f), cnt=_btFilterCount(f);
+    var cEl=document.getElementById("btFCount"),rEl=document.getElementById("btFReset"),sEl=document.getElementById("btFStatus");
+    if(cEl){cEl.style.display=active?"":"none"; if(active) cEl.textContent=cnt+" filter"+(cnt>1?"s":"");}
+    if(rEl) rEl.style.display=active?"":"none";
+    if(sEl){sEl.style.display=active?"":"none"; if(active) sEl.textContent="Filtered: "+filteredElig+" of "+totalElig+" eligible";}
+  }
+
+  function _btBindFilterBarEvents(){
+    var map={btFDir:"direction",btFOut:"outcome",btFRr:"rrHit",btFMit:"mitigation",btFTch:"touch",btFMaxR:"maxR"};
+    Object.keys(map).forEach(function(id){
+      var el=document.getElementById(id); if(!el) return;
+      el.addEventListener("change",function(){
+        if(!_btState.filters) _btState.filters=_btDefaultFilters();
+        _btState.filters[map[id]]=el.value;
+        _btRepaintFromFilters();
+      });
+    });
+    var si=document.getElementById("btFSearch");
+    if(si) si.addEventListener("input",function(){
+      if(!_btState.filters) _btState.filters=_btDefaultFilters();
+      _btState.filters.search=si.value;
+      _btRepaintFromFilters();
+    });
+    var ri=document.getElementById("btFReset");
+    if(ri) ri.addEventListener("click",function(){
+      _btState.filters=_btDefaultFilters();
+      var defs={btFDir:"all",btFOut:"all",btFRr:"any",btFMit:"all",btFTch:"all",btFMaxR:"all"};
+      Object.keys(defs).forEach(function(id){var e=document.getElementById(id);if(e) e.value=defs[id];});
+      var sch=document.getElementById("btFSearch"); if(sch) sch.value="";
+      _btRepaintFromFilters();
+    });
+  }
+
+  function _btRepaintFromFilters(){
+    if(!_btState.data) return;
+    if(!_btState.filters) _btState.filters=_btDefaultFilters();
+    var f=_btState.filters, d=_btState.data;
+    var allEvts=d.events||[];
+    var fe=_btGetFilteredEvents(allEvts,f);
+    var os=_btBuildSummaryFromEvents(fe,d);
+    var active=_btFiltersActive(f);
+    var allElig=allEvts.filter(function(e){return e.simulation&&e.simulation.eligible;});
+    var elig=fe.filter(function(e){return e.simulation&&e.simulation.eligible;});
+    var par=d.parity||{};
+    var hrr=os.hit_rate_by_rr||{}, rr1=hrr["1"]||{}, rr2=hrr["2"]||{}, rr3=hrr["3"]||{};
+
+    /* KPIs */
+    var kEl=document.getElementById("btOvKpis");
+    if(kEl) kEl.innerHTML='<div class="bt-kpi-row">'+
+      _btKpiCard("OB Events",active?fe.length:allEvts.length,"",active?"filtered events":"total events")+
+      _btKpiCard("First Touches",os.eligible_touched,"","touched eligible")+
+      _btKpiCard("1R Hit Rate",_btFmt(rr1.rate_pct,"%"),"a",(rr1.hits||0)+" hits")+
+      _btKpiCard("2R Hit Rate",_btFmt(rr2.rate_pct,"%"),"a",(rr2.hits||0)+" hits")+
+      _btKpiCard("3R Hit Rate",_btFmt(rr3.rate_pct,"%"),"y",(rr3.hits||0)+" hits")+
+      _btKpiCard("Avg Max R",_btFmt(os.avg_max_r_reached,"R"),"g","avg excursion")+
+      _btKpiCard("Parity",par.enabled?_btFmt(par.match_rate_pct,"%"):"—","","vs detect_obs_all")+
+    '</div>';
+
+    /* Events table */
+    _btState.tblPage=0;
+    var eEl=document.getElementById("btOvEvents");
+    if(eEl){
+      eEl.innerHTML=_btBuildEventsSection(elig,active,allElig.length);
+      _btBindPagerEvents(elig.length,50,"btEvtTbody",elig);
+    }
+
+    /* Charts — replace canvases then build */
+    var cEl=document.getElementById("btOvCharts");
+    if(cEl){
+      cEl.innerHTML='<div class="bt-charts-grid">'+
+        '<div class="bt-chart-card"><div class="bt-chart-h">Hit Rate by Target <span class="bt-chart-hsub">1R / 2R / 3R</span></div><div class="bt-chart-wrap"><canvas id="btCHitRate"></canvas></div></div>'+
+        '<div class="bt-chart-card"><div class="bt-chart-h">Outcome Distribution <span class="bt-chart-hsub">TP / SL / Ambiguous / Unresolved</span></div><div class="bt-chart-wrap"><canvas id="btCOutcome"></canvas></div></div>'+
+        '<div class="bt-chart-card"><div class="bt-chart-h">Cumulative R <span class="bt-chart-hsub">Expectancy curve by event sequence</span></div><div class="bt-chart-wrap"><canvas id="btCCumR"></canvas></div></div>'+
+        '<div class="bt-chart-card"><div class="bt-chart-h">Max R Strength Buckets <span class="bt-chart-hsub">Achieved R distribution</span></div><div class="bt-chart-wrap"><canvas id="btCBucket"></canvas></div></div>'+
+      '</div>';
+      setTimeout(function(){ _btBuildCharts(d,fe,os); },0);
+    }
+
+    _btUpdateFilterBarStatus(f,elig.length,allElig.length);
+  }
+
+  function _btBuildEventsSection(elig,active,totalElig){
+    var cp=_btState.tblPage;
+    if(active&&!elig.length){
+      return '<div class="bt-section-head"><div>'+
+        '<div class="bt-section-title">Recent OB Events (First Touches)</div>'+
+        '<div class="bt-section-sub">0 events match current filters</div></div></div>'+
+        '<div style="text-align:center;padding:40px 20px;color:var(--text-3)">'+
+          '<div style="font-size:26px;margin-bottom:8px;opacity:.3">&#8709;</div>'+
+          '<div style="font-size:12px;font-weight:600;color:var(--text-2);margin-bottom:6px">No events match current filters.</div>'+
+          '<div style="font-size:11px">Try adjusting or <span style="color:var(--accent);cursor:pointer;font-weight:700" onclick="_btState.filters=_btDefaultFilters();_btRepaintFromFilters()">resetting</span> the filters.</div>'+
+        '</div>';
+    }
+    var sub=active
+      ? 'Filtered: '+elig.length+' of '+totalElig+' eligible'
+      : Math.min(elig.length,50)+' of '+elig.length+' touched events';
+    return '<div class="bt-section-head"><div>'+
+      '<div class="bt-section-title">Recent OB Events (First Touches)</div>'+
+      '<div class="bt-section-sub">'+sub+'</div></div></div>'+
+      '<div class="bt-tbl-wrap"><table class="bt-tbl"><thead><tr>'+
+        '<th>#</th><th>Symbol</th><th>Time (UTC)</th><th>Type</th>'+
+        '<th>Zone High</th><th>Zone Low</th><th>Touch Price</th>'+
+        '<th>Outcome</th><th>First Touch (UTC)</th><th>Max R</th>'+
+        '<th>1R</th><th>2R</th><th>3R</th><th>Mitigated</th>'+
+      '</tr></thead>'+
+      '<tbody id="btEvtTbody">'+_btEvtRows2(elig,cp*50,50)+'</tbody>'+
+      '</table></div>'+
+      _btMakePager(elig.length,50,cp,"btEvtTbody",elig);
+  }
+
+  function _btEvtRows2(events,startIdx,pageSize){
+    var slice=events.slice(startIdx,startIdx+pageSize);
+    if(!slice.length) return '<tr><td colspan="14" style="text-align:center;padding:30px;color:var(--text-3)">No touched events</td></tr>';
+    var html="";
+    for(var j=0;j<slice.length;j++){
+      var ev=slice[j], n=startIdx+j+1, sim=ev.simulation||{}, hr=sim.hit_rr||{};
+      function chk(k){return (hr[k]||hr[k+".0"])?"<span class='bt-hit-y'>&#10003;</span>":"<span class='bt-hit-n'>&middot;</span>";}
+      html+='<tr>'+
+        '<td class="bt-num">'+n+'</td>'+
+        '<td class="bt-num">'+(ev.symbol||"—")+'</td>'+
+        '<td class="bt-num">'+_btFmtTime(ev.formation_time)+'</td>'+
+        '<td>'+(ev.type==="bullish"?'<span class="bt-tag bull">Bullish</span>':'<span class="bt-tag bear">Bearish</span>')+'</td>'+
+        '<td class="bt-num">'+(ev.zone_high?Number(ev.zone_high).toFixed(2):"—")+'</td>'+
+        '<td class="bt-num">'+(ev.zone_low?Number(ev.zone_low).toFixed(2):"—")+'</td>'+
+        '<td class="bt-num">'+(sim.entry_price?Number(sim.entry_price).toFixed(2):"—")+'</td>'+
+        '<td>'+_btOutcomeTag(sim.first_outcome,sim.first_tp_rr)+'</td>'+
+        '<td class="bt-num">'+_btFmtTime(ev.first_touch_time)+'</td>'+
+        '<td class="bt-num" style="color:var(--accent)">'+(sim.max_r_reached!=null?sim.max_r_reached.toFixed(2)+"R":"—")+'</td>'+
+        '<td>'+chk("1")+'</td><td>'+chk("2")+'</td><td>'+chk("3")+'</td>'+
+        '<td>'+(ev.later_mitigated?'<span style="color:var(--yellow);font-size:10px">Yes</span>':'<span style="color:var(--text-3)">No</span>')+'</td>'+
+      '</tr>';
+    }
+    return html;
   }
 
   /* ── Other pages ─────────────────────────────────────────────────────────── */
@@ -12060,13 +12393,16 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 
   function _btRenderTradeLog(data){
     var el=document.getElementById("btTradeLogContent"); if(!el) return;
-    var events=data.events||[];
-    var allE=events.filter(function(e){return e.simulation&&e.simulation.eligible;});
+    var allEvts=data.events||[];
+    var f=_btState.filters;
+    var fe=(f&&_btFiltersActive(f))?_btGetFilteredEvents(allEvts,f):allEvts;
+    var tlActive=f&&_btFiltersActive(f);
+    var allE=fe.filter(function(e){return e.simulation&&e.simulation.eligible;});
     var ps=100, cp=_btState.tblPage, start=cp*ps;
     var pages=Math.ceil(allE.length/ps);
     el.innerHTML=
       '<div class="bt-section-head"><div><div class="bt-section-title">Full Trade Log</div>'+
-      '<div class="bt-section-sub">'+allE.length+' eligible events &bull; page '+(cp+1)+' of '+Math.max(1,pages)+'</div></div></div>'+
+      '<div class="bt-section-sub">'+(tlActive?'Filtered: ':'')+allE.length+' eligible events &bull; page '+(cp+1)+' of '+Math.max(1,pages)+'</div></div></div>'+
       '<div class="bt-tbl-wrap"><table class="bt-tbl"><thead><tr>'+
       '<th>#</th><th>Type</th><th>Formation (UTC)</th><th>Zone High</th><th>Zone Low</th>'+
       '<th>Entry</th><th>Risk</th><th>Outcome</th><th>Max R</th><th>Adv R</th><th>1R</th><th>2R</th><th>3R</th>'+
