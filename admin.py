@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from models import (db, User, AdminLog, GlobalSetting, RolePermission, UserPermission,
                     LoginHistory, DailyTokenUsage, EmailVerification, GuestDevice,
-                    BacktestRun, IntelligenceSettings, PasswordResetToken,
+                    BacktestRun, IntelligenceSettings, PasswordResetToken, UserPreference,
                     ALL_MODULES, ALL_TABS, ALL_EXCHANGES, ALL_TIMEFRAMES)
 from permissions import get_user_permissions, save_user_permissions, _bust_cache
 
@@ -412,6 +412,7 @@ def users_delete(user_id):
         LoginHistory.query.filter_by(user_id=uid).delete(synchronize_session=False)
         DailyTokenUsage.query.filter_by(user_id=uid).delete(synchronize_session=False)
         UserPermission.query.filter_by(user_id=uid).delete(synchronize_session=False)
+        UserPreference.query.filter_by(user_id=uid).delete(synchronize_session=False)
         AdminLog.query.filter_by(admin_id=uid).delete(synchronize_session=False)
 
         # Nullify nullable audit references
@@ -478,6 +479,7 @@ def users_bulk_delete():
             LoginHistory.query.filter_by(user_id=uid).delete(synchronize_session=False)
             DailyTokenUsage.query.filter_by(user_id=uid).delete(synchronize_session=False)
             UserPermission.query.filter_by(user_id=uid).delete(synchronize_session=False)
+            UserPreference.query.filter_by(user_id=uid).delete(synchronize_session=False)
             db.session.query(BacktestRun).filter(BacktestRun.run_by == uid).update(
                 {"run_by": None}, synchronize_session=False)
             db.session.delete(u)
