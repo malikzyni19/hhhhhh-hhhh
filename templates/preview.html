@@ -1540,6 +1540,26 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 .bt-compare-card{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:14px}
 .bt-compare-h{font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:10px}
 .bt-compare-h.bull{color:#4ade80}.bt-compare-h.bear{color:#f87171}
+.bt-mtf-form{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:12px}
+.bt-mtf-form-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.bt-mtf-form-row:last-child{margin-bottom:0}
+.bt-mtf-label{font-size:9px;font-weight:700;color:var(--text-3);letter-spacing:.8px;text-transform:uppercase;white-space:nowrap}
+.bt-mtf-chips{display:flex;gap:5px;flex-wrap:wrap}
+.bt-mtf-chip{background:var(--bg-card);border:1px solid var(--border-2);border-radius:6px;color:var(--text-2);font-size:11px;font-weight:700;padding:4px 10px;cursor:pointer;transition:all .15s;font-family:var(--mono)}
+.bt-mtf-chip.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+.bt-mtf-chip:hover:not(.on){border-color:var(--text-3);color:var(--text)}
+.bt-best-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:9px;margin-bottom:12px}
+.bt-best-card{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:10px 13px;position:relative;overflow:hidden}
+.bt-best-card::after{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--accent),transparent);opacity:.6}
+.bt-best-card-l{font-size:9px;font-weight:700;color:var(--text-3);letter-spacing:.8px;text-transform:uppercase;margin-bottom:5px}
+.bt-best-card-v{font-size:20px;font-weight:700;font-family:var(--mono);color:var(--accent);line-height:1;margin-bottom:3px}
+.bt-best-card-s{font-size:9.5px;color:var(--text-3)}
+.bt-mtf-charts-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin:12px 0}
+.bt-mtf-run-btn{background:linear-gradient(135deg,#a855f7,#6366f1);border:none;border-radius:7px;color:#fff;font-size:12px;font-weight:800;padding:7px 20px;cursor:pointer;letter-spacing:.4px;transition:opacity .15s;display:flex;align-items:center;gap:7px;white-space:nowrap;margin-left:auto}
+.bt-mtf-run-btn:hover{opacity:.86}
+.bt-mtf-run-btn:disabled{opacity:.4;cursor:not-allowed}
+.bt-mtf-loading{padding:40px 20px;text-align:center;color:var(--text-3);font-size:12px}
+.bt-mtf-err{background:rgba(251,113,133,.08);border:1px solid rgba(251,113,133,.25);border-radius:8px;padding:12px;color:var(--red-2);font-size:11px;margin-top:10px}
 .bt-run-form{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:20px;max-width:520px}
 .bt-run-form-row{margin-bottom:12px}
 .bt-run-form-label{font-size:10.5px;font-weight:600;color:var(--text-2);margin-bottom:5px;display:block}
@@ -11717,7 +11737,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   /* ═══════════════════════════════════════════════════════════════════════
      BACKTEST MODULE
      ═══════════════════════════════════════════════════════════════════════ */
-  var _btState={data:null,page:"overview",rr:[1,2,3],charts:{},tblPage:0,lastRun:null,filters:null};
+  var _btState={data:null,page:"overview",rr:[1,2,3],charts:{},tblPage:0,lastRun:null,filters:null,
+    mtfData:null,mtfCharts:{},mtfTfs:["15m","30m","1h","4h"]};
 
   function _bindBtSidebarEvents(aside){
     [].forEach.call(aside.querySelectorAll("[data-btpage]"),function(item){
@@ -11737,12 +11758,12 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       var ai=aside.querySelector("[data-btpage='"+page+"']");
       if(ai) ai.classList.add("active");
     }
+    if(page==="compare"){ _btRenderComparePage(); return; }
     if(_btState.data){
       if(page==="replay")   _btRenderReplayPage(_btState.data);
       else if(page==="outcomes")  _btRenderOutcomesPage(_btState.data);
       else if(page==="analytics") _btRenderAnalyticsPage(_btState.data);
       else if(page==="tradelog")  { _btState.tblPage=0; _btRenderTradeLog(_btState.data); }
-      else if(page==="compare")   _btRenderComparePage(_btState.data);
     }
   }
 
@@ -11826,7 +11847,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
           '</div>'+
           /* Compare */
           '<div class="bt-page-wrap" data-btpage="compare">'+
-            '<div id="btCompareContent" class="bt-scaffold"><h3>Compare</h3><p>Run a backtest to compare Bullish vs Bearish OB performance.</p></div>'+
+            '<div id="btCompareContent" class="bt-scaffold"></div>'+
           '</div>'+
           /* Settings */
           '<div class="bt-page-wrap" data-btpage="settings">'+
@@ -11956,7 +11977,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     else if(p==="outcomes")  _btRenderOutcomesPage(data);
     else if(p==="analytics") _btRenderAnalyticsPage(data);
     else if(p==="tradelog")  { _btState.tblPage=0; _btRenderTradeLog(data); }
-    else if(p==="compare")   _btRenderComparePage(data);
+    else if(p==="compare")   _btRenderComparePage();
   }
 
   function _btRenderOverview(data){
@@ -12873,28 +12894,284 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     return html;
   }
 
-  function _btRenderComparePage(data){
+  /* ── Multi-Timeframe Compare Page ──────────────────────────────────────── */
+
+  function _btRenderComparePage(){
     var el=document.getElementById("btCompareContent"); if(!el) return;
-    var os=data.outcome_summary||{}, bull=os.bullish||{}, bear=os.bearish||{};
-    function pct(n,d){ return d&&d>0?((n||0)/d*100).toFixed(1)+"%":"—"; }
-    function row(k,v){ return '<div class="bt-settings-row"><span class="bt-settings-k">'+k+'</span><span class="bt-settings-v">'+v+'</span></div>'; }
+    var sym=(_btState.data&&_btState.data.params&&_btState.data.params.symbol)||"BTCUSDT";
+    var allTfs=["5m","15m","30m","1h","4h","1d"];
+    var selTfs=_btState.mtfTfs||["15m","30m","1h","4h"];
+
+    function chipHtml(tf){
+      var on=selTfs.indexOf(tf)>=0?" on":"";
+      return '<button class="bt-mtf-chip'+on+'" data-tf="'+tf+'">'+tf+'</button>';
+    }
+
     el.innerHTML=
-      '<div style="margin-bottom:10px"><div class="bt-section-title">Bullish vs Bearish Comparison</div></div>'+
-      '<div class="bt-compare-grid">'+
-        '<div class="bt-compare-card"><div class="bt-compare-h bull">&#11044; Bullish OBs</div>'+
-          row("Count",bull.count||0)+row("TP First",bull.tp_first||0)+row("SL First",bull.sl_first||0)+
-          row("Win Rate",pct(bull.tp_first,bull.count))+row("Avg Max R",_btFmt(bull.avg_max_r_reached,"R"))+
-        '</div>'+
-        '<div class="bt-compare-card"><div class="bt-compare-h bear">&#11044; Bearish OBs</div>'+
-          row("Count",bear.count||0)+row("TP First",bear.tp_first||0)+row("SL First",bear.sl_first||0)+
-          row("Win Rate",pct(bear.tp_first,bear.count))+row("Avg Max R",_btFmt(bear.avg_max_r_reached,"R"))+
+      '<div class="bt-mtf-form">'+
+        '<div style="font-size:10px;font-weight:700;color:var(--accent);letter-spacing:1px;text-transform:uppercase;margin-bottom:10px">Timeframe Comparison</div>'+
+        '<div class="bt-mtf-form-row">'+
+          '<span class="bt-mtf-label">Symbol</span>'+
+          '<input class="bt-filter-inp" id="btMtfSym" value="'+sym+'" style="width:90px" />'+
+          '<span class="bt-mtf-label" style="margin-left:6px">Timeframes</span>'+
+          '<div class="bt-mtf-chips" id="btMtfChips">'+allTfs.map(chipHtml).join("")+'</div>'+
+          '<span class="bt-mtf-label" style="margin-left:6px">Candles</span>'+
+          '<select class="bt-filter-sel" id="btMtfCandles">'+
+            ['500','1000','2000','3000'].map(function(v){return '<option value="'+v+'"'+(v==="3000"?" selected":"")+'>'+v+'</option>';}).join("")+
+          '</select>'+
+          '<button class="bt-mtf-run-btn" id="btMtfRunBtn">&#9654; Run Comparison</button>'+
         '</div>'+
       '</div>'+
-      '<div class="bt-settings-card">'+
-        '<div class="bt-settings-h">Touched vs Untouched</div>'+
-        row("Touched",(os.eligible_touched||0)+" ("+pct(os.eligible_touched,os.events_total)+")")+
-        row("Untouched",(os.no_touch||0)+" ("+pct(os.no_touch,os.events_total)+")")+
+      '<div id="btMtfResults">'+
+        (_btState.mtfData ? _btMtfResultsHtml(_btState.mtfData) :
+          '<div style="text-align:center;padding:40px 20px;color:var(--text-3)">'+
+            '<div style="font-size:26px;margin-bottom:8px;opacity:.3">&#9776;</div>'+
+            '<div style="font-size:12px;font-weight:600;color:var(--text-2)">Select timeframes and run comparison.</div>'+
+          '</div>')+
       '</div>';
+
+    _btBindMtfFormEvents();
+    if(_btState.mtfData){
+      setTimeout(function(){ _btBuildMtfCharts(_btState.mtfData); },0);
+    }
+  }
+
+  function _btMtfBestCard(label, value, sub){
+    return '<div class="bt-best-card">'+
+      '<div class="bt-best-card-l">'+label+'</div>'+
+      '<div class="bt-best-card-v">'+(value||"—")+'</div>'+
+      '<div class="bt-best-card-s">'+(sub||"&nbsp;")+'</div>'+
+    '</div>';
+  }
+
+  function _btMtfResultsHtml(d){
+    var lb=d.leaderboard||[], bst=d.best||{}, ers=d.errors||{};
+    var sym=d.symbol||"";
+
+    /* best cards */
+    function bestRow(key){ return lb.find(function(r){return r.timeframe===bst[key];})||null; }
+    var bExp=bestRow("by_expectancy"), bPf=bestRow("by_profit_factor"),
+        bSl=bestRow("by_lowest_avg_sl"), b3r=bestRow("by_highest_3r_hit_rate");
+
+    var bestCards='<div class="bt-best-grid">'+
+      _btMtfBestCard("Best Expectancy",bst.by_expectancy||"—",bExp?"Exp: "+_btFmt(bExp.best_expectancy_r,"R"):"no data")+
+      _btMtfBestCard("Best Profit Factor",bst.by_profit_factor||"—",bPf?"PF: "+_btFmt(bPf.best_profit_factor_r,"R"):"no data")+
+      _btMtfBestCard("Lowest Avg SL",bst.by_lowest_avg_sl||"—",bSl?"Avg SL: "+_btFmt(bSl.avg_stop_loss_r,"R"):"no data")+
+      _btMtfBestCard("Highest 3R Hit",bst.by_highest_3r_hit_rate||"—",b3r?"Touched: "+(b3r.touched_events||0):"no data")+
+    '</div>';
+
+    /* leaderboard table */
+    var tblHead='<thead><tr>'+
+      '<th>#</th><th>TF</th><th>OB Events</th><th>Touched</th>'+
+      '<th>TP First</th><th>SL First</th><th>Ambig</th>'+
+      '<th>Avg Max R</th><th>Avg SL R</th>'+
+      '<th>Best RR</th><th>Expectancy</th><th>Profit Factor</th>'+
+      '<th>Net R</th><th>Win Rate</th>'+
+    '</tr></thead>';
+
+    var tblBody='<tbody>';
+    lb.forEach(function(row,i){
+      var rank=i+1;
+      var expClr=row.best_expectancy_r!=null?(row.best_expectancy_r>=0?"color:var(--green-2)":"color:var(--red-2)"):"color:var(--text-3)";
+      tblBody+='<tr>'+
+        '<td class="bt-num">'+rank+'</td>'+
+        '<td class="bt-num" style="color:var(--accent);font-weight:700">'+row.timeframe+'</td>'+
+        '<td class="bt-num">'+(row.ob_events!=null?row.ob_events:"—")+'</td>'+
+        '<td class="bt-num">'+(row.touched_events!=null?row.touched_events:"—")+'</td>'+
+        '<td class="bt-num" style="color:var(--green-2)">'+(row.tp_first!=null?row.tp_first:"—")+'</td>'+
+        '<td class="bt-num" style="color:var(--red-2)">'+(row.sl_first!=null?row.sl_first:"—")+'</td>'+
+        '<td class="bt-num" style="color:var(--yellow)">'+(row.ambiguous!=null?row.ambiguous:"—")+'</td>'+
+        '<td class="bt-num" style="color:var(--accent)">'+_btFmt(row.avg_max_r,"R")+'</td>'+
+        '<td class="bt-num" style="color:var(--red-2)">'+_btFmt(row.avg_stop_loss_r,"R")+'</td>'+
+        '<td class="bt-num" style="color:var(--accent)">'+(row.best_rr?row.best_rr+"R":"—")+'</td>'+
+        '<td class="bt-num" style="'+expClr+'">'+_btFmt(row.best_expectancy_r,"R")+'</td>'+
+        '<td class="bt-num">'+_btFmt(row.best_profit_factor_r,"R")+'</td>'+
+        '<td class="bt-num" style="'+expClr+'">'+_btFmt(row.net_r_at_best_rr,"R")+'</td>'+
+        '<td class="bt-num">'+_btFmt(row.win_rate_at_best_rr,"%")+'</td>'+
+      '</tr>';
+    });
+    tblBody+='</tbody>';
+
+    /* error rows */
+    var errHtml="";
+    Object.keys(ers).forEach(function(tf){
+      errHtml+='<div class="bt-mtf-err">&#9888; '+tf+': '+esc(ers[tf])+'</div>';
+    });
+
+    /* charts */
+    var chartsHtml='<div class="bt-mtf-charts-grid">'+
+      '<div class="bt-chart-card"><div class="bt-chart-h">Expectancy by Timeframe <span class="bt-chart-hsub">1R / 2R / 3R</span></div><div class="bt-chart-wrap"><canvas id="btMtfCA"></canvas></div></div>'+
+      '<div class="bt-chart-card"><div class="bt-chart-h">Profit Factor by Timeframe <span class="bt-chart-hsub">best RR per TF</span></div><div class="bt-chart-wrap"><canvas id="btMtfCB"></canvas></div></div>'+
+      '<div class="bt-chart-card"><div class="bt-chart-h">Avg SL R vs Avg Max R <span class="bt-chart-hsub">risk quality per TF</span></div><div class="bt-chart-wrap"><canvas id="btMtfCC"></canvas></div></div>'+
+      '<div class="bt-chart-card"><div class="bt-chart-h">Event Quality Funnel <span class="bt-chart-hsub">Touched → TP / SL / Ambig</span></div><div class="bt-chart-wrap"><canvas id="btMtfCD"></canvas></div></div>'+
+    '</div>';
+
+    /* exports */
+    var exportHtml='<div style="display:flex;gap:8px;margin-top:10px">'+
+      '<button class="bt-filter-reset" style="display:inline-flex" onclick="_btMtfExportJson()">&#10515; JSON</button>'+
+      '<button class="bt-filter-reset" style="display:inline-flex" onclick="_btMtfExportCsv()">&#10515; CSV</button>'+
+    '</div>';
+
+    return '<div class="bt-section-head"><div><div class="bt-section-title">Timeframe Comparison — '+sym+'</div>'+
+        '<div class="bt-section-sub">'+lb.length+' timeframes &bull; ranked by expectancy R</div></div></div>'+
+      bestCards+chartsHtml+
+      '<div class="bt-tbl-wrap"><table class="bt-tbl">'+tblHead+tblBody+'</table></div>'+
+      errHtml+exportHtml;
+  }
+
+  function _btBuildMtfCharts(d){
+    if(typeof Chart==="undefined") return;
+    var lb=d.leaderboard||[];
+    var tfs=lb.map(function(r){return r.timeframe;});
+    function dc(id){if(_btState.mtfCharts[id]){try{_btState.mtfCharts[id].destroy();}catch(e){}delete _btState.mtfCharts[id];}}
+
+    var gscale={x:{ticks:{color:"#566377",font:{size:10}},grid:{color:"rgba(27,38,54,.5)"}},
+                y:{ticks:{color:"#566377",font:{size:10}},grid:{color:"rgba(27,38,54,.5)"}}};
+    var gplug={legend:{labels:{color:"#8a9bb3",font:{family:"JetBrains Mono,monospace",size:10},boxWidth:10}},
+               tooltip:{mode:"index",intersect:false}};
+
+    /* A — Expectancy by TF: grouped bar 1R/2R/3R */
+    dc("btMtfCA");
+    var cA=document.getElementById("btMtfCA");
+    if(cA){
+      var e1=lb.map(function(r){return r.rr_1_expectancy;}),
+          e2=lb.map(function(r){return r.rr_2_expectancy;}),
+          e3=lb.map(function(r){return r.rr_3_expectancy;});
+      _btState.mtfCharts["btMtfCA"]=new Chart(cA,{type:"bar",
+        data:{labels:tfs,datasets:[
+          {label:"1R Exp",data:e1,backgroundColor:"rgba(34,211,238,.65)",borderColor:"#22d3ee",borderWidth:1,borderRadius:3},
+          {label:"2R Exp",data:e2,backgroundColor:"rgba(52,211,153,.65)",borderColor:"#34d399",borderWidth:1,borderRadius:3},
+          {label:"3R Exp",data:e3,backgroundColor:"rgba(168,85,247,.65)",borderColor:"#a855f7",borderWidth:1,borderRadius:3}
+        ]},
+        options:{responsive:true,maintainAspectRatio:false,plugins:gplug,scales:Object.assign({},gscale,
+          {y:{ticks:{color:"#566377",font:{size:9},callback:function(v){return v+"R"}},grid:{color:"rgba(27,38,54,.5)"}}})}
+      });
+    }
+
+    /* B — Profit Factor by TF: bar */
+    dc("btMtfCB");
+    var cB=document.getElementById("btMtfCB");
+    if(cB){
+      var pfData=lb.map(function(r){return r.best_profit_factor_r;});
+      var pfColors=pfData.map(function(v){return v!=null&&v>=1?"rgba(52,211,153,.7)":"rgba(251,113,133,.7)";});
+      _btState.mtfCharts["btMtfCB"]=new Chart(cB,{type:"bar",
+        data:{labels:tfs,datasets:[{label:"Profit Factor",data:pfData,backgroundColor:pfColors,borderColor:pfColors.map(function(c){return c.replace(".7","1");}),borderWidth:1,borderRadius:3}]},
+        options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{mode:"index",intersect:false}},
+          scales:Object.assign({},gscale,{y:{ticks:{color:"#566377",font:{size:9}},grid:{color:"rgba(27,38,54,.5)"}}})}
+      });
+    }
+
+    /* C — Avg SL R vs Avg Max R: grouped bar */
+    dc("btMtfCC");
+    var cC=document.getElementById("btMtfCC");
+    if(cC){
+      _btState.mtfCharts["btMtfCC"]=new Chart(cC,{type:"bar",
+        data:{labels:tfs,datasets:[
+          {label:"Avg SL R",data:lb.map(function(r){return r.avg_stop_loss_r;}),backgroundColor:"rgba(251,113,133,.65)",borderColor:"#fb7185",borderWidth:1,borderRadius:3},
+          {label:"Avg Max R",data:lb.map(function(r){return r.avg_max_r;}),backgroundColor:"rgba(52,211,153,.65)",borderColor:"#34d399",borderWidth:1,borderRadius:3}
+        ]},
+        options:{responsive:true,maintainAspectRatio:false,plugins:gplug,
+          scales:Object.assign({},gscale,{y:{ticks:{color:"#566377",font:{size:9},callback:function(v){return v+"R"}},grid:{color:"rgba(27,38,54,.5)"}}})}
+      });
+    }
+
+    /* D — Event Quality Funnel: stacked bar */
+    dc("btMtfCD");
+    var cD=document.getElementById("btMtfCD");
+    if(cD){
+      _btState.mtfCharts["btMtfCD"]=new Chart(cD,{type:"bar",
+        data:{labels:tfs,datasets:[
+          {label:"TP First",data:lb.map(function(r){return r.tp_first||0;}),backgroundColor:"rgba(52,211,153,.75)",borderRadius:2,stack:"s"},
+          {label:"SL First",data:lb.map(function(r){return r.sl_first||0;}),backgroundColor:"rgba(251,113,133,.75)",borderRadius:2,stack:"s"},
+          {label:"Ambiguous",data:lb.map(function(r){return r.ambiguous||0;}),backgroundColor:"rgba(251,191,36,.6)",borderRadius:2,stack:"s"},
+          {label:"Unresolved",data:lb.map(function(r){
+            var t=r.eligible_touched||0,tp=r.tp_first||0,sl=r.sl_first||0,am=r.ambiguous||0;
+            return Math.max(0,t-tp-sl-am);}),backgroundColor:"rgba(148,163,184,.4)",borderRadius:2,stack:"s"}
+        ]},
+        options:{responsive:true,maintainAspectRatio:false,plugins:gplug,
+          scales:Object.assign({},gscale,{x:{stacked:true,ticks:{color:"#8a9bb3"},grid:{color:"rgba(27,38,54,.5)"}},
+            y:{stacked:true,ticks:{color:"#566377",font:{size:9}},grid:{color:"rgba(27,38,54,.5)"}}})}
+      });
+    }
+  }
+
+  function _btBindMtfFormEvents(){
+    /* chip toggle */
+    var chips=document.getElementById("btMtfChips"); if(!chips) return;
+    [].forEach.call(chips.querySelectorAll(".bt-mtf-chip"),function(chip){
+      chip.addEventListener("click",function(){
+        var tf=chip.getAttribute("data-tf");
+        var idx=_btState.mtfTfs.indexOf(tf);
+        if(idx>=0) _btState.mtfTfs.splice(idx,1);
+        else _btState.mtfTfs.push(tf);
+        chip.classList.toggle("on",_btState.mtfTfs.indexOf(tf)>=0);
+      });
+    });
+    /* run button */
+    var btn=document.getElementById("btMtfRunBtn"); if(!btn) return;
+    btn.addEventListener("click",function(){ _btRunMtfComparison(); });
+  }
+
+  function _btRunMtfComparison(){
+    var el=document.getElementById("btCompareContent"); if(!el) return;
+    var symEl=document.getElementById("btMtfSym");
+    var canEl=document.getElementById("btMtfCandles");
+    var sym=(symEl?symEl.value.trim():"BTCUSDT")||"BTCUSDT";
+    var candles=parseInt((canEl?canEl.value:"3000")||"3000",10)||3000;
+    var tfs=(_btState.mtfTfs||[]).slice();
+    if(!tfs.length){
+      var res=document.getElementById("btMtfResults");
+      if(res) res.innerHTML='<div class="bt-mtf-err">Select at least one timeframe.</div>';
+      return;
+    }
+    var res=document.getElementById("btMtfResults");
+    if(res) res.innerHTML='<div class="bt-mtf-loading"><div class="bt-spin"></div>Running '+esc(sym)+' across '+tfs.join(", ")+'&hellip;</div>';
+    var btn=document.getElementById("btMtfRunBtn"); if(btn) btn.disabled=true;
+
+    fetch("/api/backtest/ob-mtf",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({symbol:sym,timeframes:tfs,candle_count:candles,
+        rr_values:[1,2,3],include_parity:false,include_events:false})
+    })
+    .then(function(r){return r.json();})
+    .then(function(data){
+      if(btn) btn.disabled=false;
+      if(!data.ok&&!(data.leaderboard&&data.leaderboard.length)){
+        if(res) res.innerHTML='<div class="bt-mtf-err"><b>Error:</b> '+esc(data.error||"Unknown error")+'</div>';
+        return;
+      }
+      _btState.mtfData=data;
+      if(res) res.innerHTML=_btMtfResultsHtml(data);
+      setTimeout(function(){ _btBuildMtfCharts(data); },0);
+    })
+    .catch(function(e){
+      if(btn) btn.disabled=false;
+      if(res) res.innerHTML='<div class="bt-mtf-err">Network error: '+esc(String(e))+'</div>';
+    });
+  }
+
+  function _btMtfExportJson(){
+    if(!_btState.mtfData) return;
+    _btDownloadBlob("zyni_mtf_"+((_btState.mtfData.symbol)||"export")+"_"+Date.now()+".json",
+      JSON.stringify(_btState.mtfData,null,2),"application/json");
+  }
+
+  function _btMtfExportCsv(){
+    if(!_btState.mtfData) return;
+    var d=_btState.mtfData;
+    var cols=["symbol","timeframe","ob_events","touched_events","eligible_touched",
+      "tp_first","sl_first","ambiguous","avg_max_r","avg_max_adverse_r",
+      "avg_stop_loss_r","max_stop_loss_r","best_rr","best_expectancy_r",
+      "best_profit_factor_r","net_r_at_best_rr","win_rate_at_best_rr",
+      "rr_1_expectancy","rr_2_expectancy","rr_3_expectancy",
+      "rr_1_profit_factor","rr_2_profit_factor","rr_3_profit_factor"];
+    function cv(x){var s=String(x==null?"":x);return(s.indexOf(",")>=0||s.indexOf('"')>=0)?'"'+s.replace(/"/g,'""')+'"':s;}
+    var rows=[cols.join(",")];
+    (d.leaderboard||[]).forEach(function(row){
+      rows.push(cols.map(function(c){return cv(c==="symbol"?d.symbol:row[c]);}).join(","));
+    });
+    _btDownloadBlob("zyni_mtf_"+(d.symbol||"export")+"_"+Date.now()+".csv",rows.join("\r\n"),"text/csv");
   }
 
   /* Tag body with current view so per-view CSS (Task 3) applies before
