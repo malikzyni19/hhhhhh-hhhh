@@ -5251,7 +5251,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                       '<div id="lmPapGateStatus" style="font-size:9px;padding:3px 0 5px;color:var(--text-3)">Not evaluated — click Evaluate to run checks</div>'+
                       '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">'+
                         '<button class="btn lm-sm-btn" onclick="window._lmPapAutoGateEvaluate()">Evaluate</button>'+
-                        '<button id="lmPapGateArmBtn" class="btn lm-sm-btn" style="display:none;color:var(--green,#4ade80)" onclick="window._lmPapAutoGateArm()">Arm Gate</button>'+
+                        '<button id="lmPapGateArmBtn" class="btn lm-sm-btn" style="display:none;color:var(--green,#4ade80)" title="Arming is metadata only. It does not submit paper orders in Phase 11.12." onclick="window._lmPapAutoGateArm()">Arm Gate</button>'+
                         '<button id="lmPapGateDisarmBtn" class="btn lm-sm-btn" style="display:none;color:var(--text-3)" onclick="window._lmPapAutoGateDisarm()">Disarm</button>'+
                         '<button class="btn lm-sm-btn" style="color:var(--text-3)" onclick="window._lmPapAutoGateRefresh()">Refresh</button>'+
                       '</div>'+
@@ -8935,17 +8935,26 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var armBtn    =document.getElementById('lmPapGateArmBtn');
     var disarmBtn =document.getElementById('lmPapGateDisarmBtn');
     if(!statusEl) return;
+    /* d may be flat gate result (from evaluate) or gate_state wrapper (from GET) */
     var gate     = d.latest_gate_result||d;
     var eligible = d.eligible!==undefined ? d.eligible : (gate.eligible||false);
     var armed    = d.armed!==undefined ? d.armed : false;
     var evaluated= d.gate_evaluated!==undefined ? d.gate_evaluated : (!!(gate.ok));
-    var statusColor = eligible ? 'var(--green,#4ade80)'
-                    : evaluated ? 'var(--red-2,#f87171)' : 'var(--text-3)';
+    /* Use stable gate_status if present */
+    var gateStatus = d.gate_status || gate.gate_status || (
+      !evaluated ? 'not_evaluated' : eligible ? 'eligible' : 'blocked'
+    );
+    var statusColor = (gateStatus==='eligible')  ? 'var(--green,#4ade80)'
+                    : (gateStatus==='warning')   ? 'var(--yellow,#facc15)'
+                    : (gateStatus==='not_evaluated') ? 'var(--text-3)'
+                    : 'var(--red-2,#f87171)';
     statusEl.style.color = statusColor;
+    var armedSuffix = armed ? ' \xb7 ARMED' : '';
     statusEl.textContent = (
-      !evaluated ? 'Not evaluated' :
-      eligible   ? ('Eligible'+(armed?' \xb7 ARMED':'')) :
-                   ('Not eligible'+(armed?' \xb7 ARMED':''))
+      gateStatus==='not_evaluated' ? 'Not evaluated' :
+      gateStatus==='eligible'  ? ('Eligible'+armedSuffix) :
+      gateStatus==='warning'   ? ('Eligible (warnings)'+armedSuffix) :
+                                  ('Not eligible'+armedSuffix)
     );
     if(armBtn)    armBtn.style.display    = (eligible && !armed) ? '' : 'none';
     if(disarmBtn) disarmBtn.style.display = armed ? '' : 'none';
@@ -8961,12 +8970,15 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
           : pass
             ? '<span style="color:var(--green,#4ade80)">✓</span>'
             : '<span style="color:var(--red-2,#f87171)">✗</span>';
+        var noteStr=c.note||'';
+        if(c.source_key) noteStr+=' ['+c.source_key+']';
         return '<tr><td style="white-space:nowrap">'+esc(k)+'</td>'+
                '<td style="text-align:center">'+passCell+'</td>'+
-               '<td style="color:var(--text-2)">'+esc(c.note||'')+'</td></tr>';
+               '<td style="color:var(--text-2)">'+esc(noteStr)+'</td></tr>';
       }).join('');
     }
-    var notes=(gate.advisory_notes||d.advisory_notes||[]);
+    /* Use stable warnings field; fall back to advisory_notes */
+    var notes=(d.warnings||gate.warnings||gate.advisory_notes||d.advisory_notes||[]);
     if(notes.length && advEl){
       advEl.style.display='';
       advEl.innerHTML='<strong>Advisory:</strong><br>'+notes.map(function(n){return '• '+esc(n);}).join('<br>');

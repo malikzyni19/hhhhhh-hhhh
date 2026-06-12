@@ -108,7 +108,14 @@ def _lm_build_paper_auto_gate(item, snap: dict) -> dict:
 
     # ── Check 3: Execution intent ────────────────────────────────────────────
     try:
-        _intent = snap.get("execution_intent") or {}
+        # Prefer latest_execution_intent; fall back to legacy execution_intent key
+        _intent_key = "missing"
+        _intent_raw = snap.get("latest_execution_intent") or snap.get("execution_intent")
+        if snap.get("latest_execution_intent"):
+            _intent_key = "latest_execution_intent"
+        elif snap.get("execution_intent"):
+            _intent_key = "execution_intent"
+        _intent = _intent_raw or {}
         if not isinstance(_intent, dict):
             try:
                 _intent = _json_ag.loads(_intent) if _intent else {}
@@ -118,8 +125,9 @@ def _lm_build_paper_auto_gate(item, snap: dict) -> dict:
         _missing  = [k for k in _required if not _intent.get(k)]
         intent_ok = len(_missing) == 0
         checks[_CHECK_EXECUTION_INTENT] = {
-            "pass":    intent_ok,
-            "missing": _missing,
+            "pass":       intent_ok,
+            "missing":    _missing,
+            "source_key": _intent_key,
             "note": "All intent fields present" if intent_ok else f"Missing: {_missing}",
         }
         if not intent_ok:
@@ -130,20 +138,31 @@ def _lm_build_paper_auto_gate(item, snap: dict) -> dict:
 
     # ── Check 4: AI trade control (advisory only) ────────────────────────────
     try:
-        _atc         = snap.get("latest_ai_trade_control") or {}
+        # Prefer latest_ai_trade_control_decision; fall back to legacy key
+        _atc_key = "missing"
+        _atc_raw = (
+            snap.get("latest_ai_trade_control_decision")
+            or snap.get("latest_ai_trade_control")
+        )
+        if snap.get("latest_ai_trade_control_decision"):
+            _atc_key = "latest_ai_trade_control_decision"
+        elif snap.get("latest_ai_trade_control"):
+            _atc_key = "latest_ai_trade_control"
+        _atc = _atc_raw or {}
         if not isinstance(_atc, dict):
             try:
                 _atc = _json_ag.loads(_atc) if _atc else {}
             except Exception:
                 _atc = {}
-        ai_action    = (_atc.get("action") or "none").lower()
-        ai_blocked   = ai_action in _BLOCKING_AI_ACTIONS
+        ai_action     = (_atc.get("action") or "none").lower()
+        ai_blocked    = ai_action in _BLOCKING_AI_ACTIONS
         ai_confidence = _atc.get("confidence", 0) or 0
         checks[_CHECK_AI_TRADE_CONTROL] = {
             "pass":       not ai_blocked,
             "action":     ai_action,
             "confidence": ai_confidence,
             "advisory":   True,
+            "source_key": _atc_key,
             "note": (
                 f"AI action '{ai_action}' is blocking"
                 if ai_blocked
@@ -298,16 +317,28 @@ def _lm_build_paper_auto_gate(item, snap: dict) -> dict:
     if not eligible:
         advisory_notes.append(f"Not eligible — failed checks: {hard_failed}")
 
+    # Stable gate_status field
+    if eligible and not advisory_notes:
+        gate_status = "eligible"
+    elif eligible:
+        gate_status = "warning"
+    else:
+        gate_status = "blocked"
+
     return {
-        "ok":             True,
-        "phase":          "phase11_12_paper_auto_gate",
-        "computed_at":    now_ts,
-        "item_id":        item_id,
-        "user_id":        user_id,
-        "symbol":         symbol,
-        "eligible":       eligible,
-        "checks":         checks,
-        "advisory_notes": advisory_notes,
+        "ok":               True,
+        "phase":            "phase11_12_paper_auto_gate",
+        "computed_at":      now_ts,
+        "item_id":          item_id,
+        "user_id":          user_id,
+        "symbol":           symbol,
+        "eligible":         eligible,
+        "gate_status":      gate_status,
+        "blocking_reasons": hard_failed,
+        "warnings":         advisory_notes,
+        "checks":           checks,
+        "advisory_notes":   advisory_notes,
+        "source":           "internal_paper_auto_gate",
         # Allowed actions — can_auto_submit ALWAYS False
         "allowed_actions": {
             "can_paper_manually_submit":     eligible,
@@ -347,11 +378,15 @@ def _lm_get_paper_auto_gate_state(item_id, user_id) -> dict:
             "user_id":             user_id,
             "gate_evaluated":      bool(gate_result),
             "eligible":            gate_result.get("eligible", False),
+            "gate_status":         gate_result.get("gate_status", "not_evaluated"),
+            "blocking_reasons":    gate_result.get("blocking_reasons", []),
+            "warnings":            gate_result.get("warnings", []),
             "armed":               arm_state.get("armed", False),
             "arm_requested_at":    arm_state.get("arm_requested_at"),
             "disarm_requested_at": arm_state.get("disarm_requested_at"),
             "latest_gate_result":  gate_result,
             "arming_state":        arm_state,
+            "source":              gate_result.get("source", "internal_paper_auto_gate"),
             "allowed_actions": gate_result.get("allowed_actions", {
                 "can_paper_manually_submit":     False,
                 "can_auto_submit":               False,
