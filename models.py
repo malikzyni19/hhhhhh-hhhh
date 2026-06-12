@@ -1180,3 +1180,42 @@ class LiveMonitorPaperTrade(db.Model):
     def __repr__(self) -> str:
         return (f"<LiveMonitorPaperTrade id={self.id} pos={self.position_id} "
                 f"{self.symbol} {self.side} outcome={self.outcome}>")
+
+
+class LiveMonitorPaperAutoGateEvent(db.Model):
+    """Paper Auto Mode Safety Gate event log — Phase 11.12.
+
+    Each row is one gate evaluation or arm/disarm event.
+    Advisory + metadata only. No execution. No orders. No API keys. No secrets.
+    """
+    __tablename__ = "live_monitor_paper_auto_gate_events"
+
+    id         = db.Column(db.Integer, primary_key=True)
+    user_id    = db.Column(db.Integer, db.ForeignKey("users.id"),
+                           nullable=False, index=True)
+    item_id    = db.Column(db.Integer, db.ForeignKey("live_monitor_items.id"),
+                           nullable=True, index=True)
+
+    event_type = db.Column(db.String(30), nullable=False, index=True)
+    # "evaluate" | "arm" | "disarm"
+
+    eligible   = db.Column(db.Boolean, nullable=True)
+    armed      = db.Column(db.Boolean, nullable=True, default=False)
+
+    gate_result_json    = db.Column(db.Text, nullable=True)
+    checks_json         = db.Column(db.Text, nullable=True)
+    advisory_notes_json = db.Column(db.Text, nullable=True)
+
+    execution_mode = db.Column(db.String(40), nullable=True)
+    policy_mode    = db.Column(db.String(40), nullable=True)
+
+    created_at = db.Column(db.DateTime,
+                           default=lambda: datetime.now(timezone.utc),
+                           nullable=False, index=True)
+
+    user = db.relationship("User",            foreign_keys=[user_id])
+    item = db.relationship("LiveMonitorItem", foreign_keys=[item_id])
+
+    def __repr__(self) -> str:
+        return (f"<LiveMonitorPaperAutoGateEvent id={self.id} "
+                f"item={self.item_id} type={self.event_type} eligible={self.eligible}>")

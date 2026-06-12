@@ -5242,6 +5242,29 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                       '</div>'+
                     '</div>'+
 
+                    /* Paper Auto Safety Gate — Phase 11.12 */
+                    '<div class="lm-ws-section" id="lmPapAutoGateSection" style="margin-top:4px">'+
+                      '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">'+
+                        '<div class="lm-ws-sh" style="margin:0;flex:1">Paper Auto Safety Gate</div>'+
+                        '<span style="font-size:9px;color:var(--text-3)">Advisory · Phase 11.12</span>'+
+                      '</div>'+
+                      '<div id="lmPapGateStatus" style="font-size:9px;padding:3px 0 5px;color:var(--text-3)">Not evaluated — click Evaluate to run checks</div>'+
+                      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">'+
+                        '<button class="btn lm-sm-btn" onclick="window._lmPapAutoGateEvaluate()">Evaluate</button>'+
+                        '<button id="lmPapGateArmBtn" class="btn lm-sm-btn" style="display:none;color:var(--green,#4ade80)" onclick="window._lmPapAutoGateArm()">Arm Gate</button>'+
+                        '<button id="lmPapGateDisarmBtn" class="btn lm-sm-btn" style="display:none;color:var(--text-3)" onclick="window._lmPapAutoGateDisarm()">Disarm</button>'+
+                        '<button class="btn lm-sm-btn" style="color:var(--text-3)" onclick="window._lmPapAutoGateRefresh()">Refresh</button>'+
+                      '</div>'+
+                      '<div id="lmPapGateChecks" style="display:none">'+
+                        '<table class="lm-inner-tbl" style="font-size:9px">'+
+                          '<thead><tr><th>Check</th><th>Pass</th><th>Note</th></tr></thead>'+
+                          '<tbody id="lmPapGateChecksTbody"></tbody>'+
+                        '</table>'+
+                      '</div>'+
+                      '<div id="lmPapGateAdvisory" style="display:none;font-size:9px;margin-top:4px;padding:4px 6px;background:var(--bg-3,#1e293b);border-radius:3px;color:var(--yellow,#facc15)"></div>'+
+                      '<div style="font-size:8px;color:var(--text-4,#475569);margin-top:5px">Gate is advisory only. can_auto_submit is always false. No auto execution.</div>'+
+                    '</div>'+
+
                   '</div>'+ /* end lmTermGrpBody-paper */
                 '</div>'+ /* end GROUP 1 */
 
@@ -8845,6 +8868,109 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
             '</tr>';
         }).join('');
       }).catch(function(){});
+  };
+
+  /* ── Phase 11.12: Paper Auto Safety Gate ── */
+  window._lmPapAutoGateRefresh=function(){
+    var itemId=window._lmSimItemId||(window._lmSelItem&&window._lmSelItem.id);
+    if(!itemId) return;
+    fetch('/api/live-monitor/items/'+itemId+'/paper-auto-gate',{credentials:'same-origin'})
+      .then(function(r){return r.json();})
+      .then(function(d){ window._lmPapAutoGateApply(d); })
+      .catch(function(){});
+  };
+
+  window._lmPapAutoGateEvaluate=function(){
+    var itemId=window._lmSimItemId||(window._lmSelItem&&window._lmSelItem.id);
+    if(!itemId) return;
+    var statusEl=document.getElementById('lmPapGateStatus');
+    if(statusEl){ statusEl.style.color='var(--text-3)'; statusEl.textContent='Evaluating…'; }
+    fetch('/api/live-monitor/items/'+itemId+'/paper-auto-gate/evaluate',{
+      method:'POST',credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},body:'{}'
+    })
+      .then(function(r){return r.json();})
+      .then(function(d){ window._lmPapAutoGateApply(d); })
+      .catch(function(){
+        if(statusEl){ statusEl.style.color='var(--red-2,#f87171)'; statusEl.textContent='Evaluate error.'; }
+      });
+  };
+
+  window._lmPapAutoGateArm=function(){
+    var itemId=window._lmSimItemId||(window._lmSelItem&&window._lmSelItem.id);
+    if(!itemId) return;
+    var btn=document.getElementById('lmPapGateArmBtn');
+    if(btn){ btn.disabled=true; btn.textContent='Arming…'; }
+    fetch('/api/live-monitor/items/'+itemId+'/paper-auto-gate/arm',{
+      method:'POST',credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},body:'{}'
+    })
+      .then(function(r){return r.json();})
+      .then(function(d){
+        if(btn){ btn.disabled=false; btn.textContent='Arm Gate'; }
+        window._lmPapAutoGateRefresh();
+      })
+      .catch(function(){
+        if(btn){ btn.disabled=false; btn.textContent='Arm Gate'; }
+      });
+  };
+
+  window._lmPapAutoGateDisarm=function(){
+    var itemId=window._lmSimItemId||(window._lmSelItem&&window._lmSelItem.id);
+    if(!itemId) return;
+    fetch('/api/live-monitor/items/'+itemId+'/paper-auto-gate/disarm',{
+      method:'POST',credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},body:'{}'
+    })
+      .then(function(r){return r.json();})
+      .then(function(d){ window._lmPapAutoGateRefresh(); })
+      .catch(function(){});
+  };
+
+  window._lmPapAutoGateApply=function(d){
+    var statusEl  =document.getElementById('lmPapGateStatus');
+    var checksEl  =document.getElementById('lmPapGateChecks');
+    var tbodyEl   =document.getElementById('lmPapGateChecksTbody');
+    var advEl     =document.getElementById('lmPapGateAdvisory');
+    var armBtn    =document.getElementById('lmPapGateArmBtn');
+    var disarmBtn =document.getElementById('lmPapGateDisarmBtn');
+    if(!statusEl) return;
+    var gate     = d.latest_gate_result||d;
+    var eligible = d.eligible!==undefined ? d.eligible : (gate.eligible||false);
+    var armed    = d.armed!==undefined ? d.armed : false;
+    var evaluated= d.gate_evaluated!==undefined ? d.gate_evaluated : (!!(gate.ok));
+    var statusColor = eligible ? 'var(--green,#4ade80)'
+                    : evaluated ? 'var(--red-2,#f87171)' : 'var(--text-3)';
+    statusEl.style.color = statusColor;
+    statusEl.textContent = (
+      !evaluated ? 'Not evaluated' :
+      eligible   ? ('Eligible'+(armed?' \xb7 ARMED':'')) :
+                   ('Not eligible'+(armed?' \xb7 ARMED':''))
+    );
+    if(armBtn)    armBtn.style.display    = (eligible && !armed) ? '' : 'none';
+    if(disarmBtn) disarmBtn.style.display = armed ? '' : 'none';
+    var checks   = gate.checks||{};
+    var checkKeys= Object.keys(checks);
+    if(checkKeys.length && tbodyEl){
+      if(checksEl) checksEl.style.display='';
+      tbodyEl.innerHTML=checkKeys.map(function(k){
+        var c=checks[k]||{};
+        var pass=c.pass!==undefined?c.pass:true;
+        var passCell=c.advisory
+          ? '<span style="color:var(--yellow,#facc15)" title="advisory">⚠</span>'
+          : pass
+            ? '<span style="color:var(--green,#4ade80)">✓</span>'
+            : '<span style="color:var(--red-2,#f87171)">✗</span>';
+        return '<tr><td style="white-space:nowrap">'+esc(k)+'</td>'+
+               '<td style="text-align:center">'+passCell+'</td>'+
+               '<td style="color:var(--text-2)">'+esc(c.note||'')+'</td></tr>';
+      }).join('');
+    }
+    var notes=(gate.advisory_notes||d.advisory_notes||[]);
+    if(notes.length && advEl){
+      advEl.style.display='';
+      advEl.innerHTML='<strong>Advisory:</strong><br>'+notes.map(function(n){return '• '+esc(n);}).join('<br>');
+    } else if(advEl){ advEl.style.display='none'; }
   };
 
   function _lmMtfMatrix(item){

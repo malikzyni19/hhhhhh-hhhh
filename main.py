@@ -708,6 +708,8 @@ def _auto_migrate():
                         pass
                 conn.commit()
                 print("[MIGRATE] Phase 11.11 execution_mode/policy_mode columns ensured on user_preferences")
+                # Phase 11.12: Paper Auto Gate — table created by db.create_all() above
+                print("[MIGRATE] Phase 11.12 live_monitor_paper_auto_gate_events table ensured via create_all")
         except Exception as exc:
             print(f"[MIGRATE] Auto-migration warning: {exc}")
 
@@ -20185,6 +20187,9 @@ def _lm_build_trade_proposal_context(row, snapshot=None) -> dict:
         "execution_mode_summary": (lambda: _lm_get_execution_mode_summary(
             getattr(row, "user_id", None)
         ) if getattr(row, "user_id", None) else None)(),
+        "paper_auto_gate_summary": (lambda: _lm_paper_auto_gate_summary_for_ai(
+            getattr(row, "user_id", None), getattr(row, "id", None)
+        ))(),
     }
 
 
@@ -20918,6 +20923,32 @@ def _lm_paper_journal_summary_for_ai(user_id, item_id):
         return None
 
 
+def _lm_paper_auto_gate_summary_for_ai(user_id, item_id) -> dict:
+    """Return compact paper auto gate summary for AI context builders.
+
+    Phase 11.12. Read-only. No computation. No orders.
+    """
+    if not item_id or not user_id:
+        return {"ok": False, "error": "missing_ids"}
+    try:
+        state = _lm_get_paper_auto_gate_state(item_id, user_id)
+        if not state.get("ok"):
+            return state
+        gate = state.get("latest_gate_result") or {}
+        return {
+            "ok":              True,
+            "gate_evaluated":  state.get("gate_evaluated", False),
+            "eligible":        state.get("eligible", False),
+            "armed":           state.get("armed", False),
+            "advisory_notes":  gate.get("advisory_notes", []),
+            "allowed_actions": state.get("allowed_actions", {}),
+            "gate_invariants": state.get("gate_invariants", {}),
+            "source":          "paper_auto_gate",
+        }
+    except Exception as _epag:
+        return {"ok": False, "error": str(_epag)[:120]}
+
+
 def _lm_build_ai_context(item) -> dict:
     """Build a compact, JSON-safe context dict from a LiveMonitorItem for the AI agent."""
     snap = _json_loads_safe(getattr(item, "snapshot_json", None), {})
@@ -21283,6 +21314,9 @@ def _lm_build_ai_context(item) -> dict:
         "execution_mode_summary": (lambda: _lm_get_execution_mode_summary(
             getattr(item, "user_id", None)
         ) if getattr(item, "user_id", None) else None)(),
+        "paper_auto_gate_summary": (lambda: _lm_paper_auto_gate_summary_for_ai(
+            getattr(item, "user_id", None), getattr(item, "id", None)
+        ))(),
     }
 
 
@@ -24481,6 +24515,12 @@ from live_monitor import (
     _lm_validate_execution_mode,
     _lm_validate_policy_mode,
     _lm_execution_mode_labels,
+    # Phase 11.12: Paper Auto Gate
+    _lm_build_paper_auto_gate,
+    _lm_get_paper_auto_gate_state,
+    _lm_arm_paper_auto_gate,
+    _lm_disarm_paper_auto_gate,
+    _lm_record_paper_auto_gate_event,
 )
 
 # ── Phase 10.9I: Auto-refresh scheduler ─────────────────────────────────────
@@ -28962,6 +29002,77 @@ def api_lm_set_execution_mode():
         "policy_mode":            summary.get("policy_mode"),
         "source":                 "execution_account",
     })
+
+
+# ── Phase 11.12: Paper Auto Gate endpoints ────────────────────────────────────
+
+import json as _json1112
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/paper-auto-gate/evaluate", methods=["POST"])
+@login_required
+def api_lm_paper_auto_gate_evaluate(item_id):
+    """POST: Run gate checks and store result in item snapshot.
+
+    Advisory + metadata only. No execution. No orders.
+    """
+    from models import db as _db1112, LiveMonitorItem as _LMI1112
+    uid  = current_user.id
+    item = _LMI1112.query.filter_by(id=item_id, user_id=uid).first()
+    if item is None:
+        return jsonify({"ok": False, "error": "item_not_found"}), 404
+    snap = {}
+    if item.snapshot_json:
+        try:
+            snap = _json1112.loads(item.snapshot_json)
+        except Exception:
+            pass
+    gate = _lm_build_paper_auto_gate(item, snap)
+    snap["latest_paper_auto_gate_result"] = gate
+    item.snapshot_json = _json1112.dumps(snap, default=str)
+    _db1112.session.commit()
+    _lm_record_paper_auto_gate_event(
+        user_id=uid, item_id=item_id, event_type="evaluate",
+        eligible=gate.get("eligible", False),
+        armed=False,
+        gate_result=gate,
+        checks=gate.get("checks"),
+        advisory_notes=gate.get("advisory_notes"),
+        execution_mode=(
+            gate.get("checks", {}).get("execution_mode", {}).get("execution_mode", "internal_paper")
+        ),
+    )
+    return jsonify(gate)
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/paper-auto-gate", methods=["GET"])
+@login_required
+def api_lm_paper_auto_gate_get(item_id):
+    """GET: Return current gate state from item snapshot. Read-only."""
+    uid    = current_user.id
+    result = _lm_get_paper_auto_gate_state(item_id, uid)
+    if not result.get("ok"):
+        return jsonify(result), 404
+    return jsonify(result)
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/paper-auto-gate/arm", methods=["POST"])
+@login_required
+def api_lm_paper_auto_gate_arm(item_id):
+    """POST: Arm the gate (user-controlled only). No auto execution."""
+    uid    = current_user.id
+    result = _lm_arm_paper_auto_gate(item_id, uid)
+    code   = 200 if result.get("ok") else 400
+    return jsonify(result), code
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/paper-auto-gate/disarm", methods=["POST"])
+@login_required
+def api_lm_paper_auto_gate_disarm(item_id):
+    """POST: Disarm the gate (user-controlled). Always succeeds."""
+    uid    = current_user.id
+    result = _lm_disarm_paper_auto_gate(item_id, uid)
+    return jsonify(result)
 
 
 @app.route("/api/live-monitor/trades/<trade_uid>/demo-submit", methods=["POST"])

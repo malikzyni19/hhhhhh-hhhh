@@ -282,12 +282,31 @@ def _lm_build_automation_policy(item, snapshot=None) -> dict:  # noqa: C901
 
         # Phase 11.11: Execution mode guardrails — paper is ALWAYS primary
         _exec_mode = "internal_paper"
+        _uid = getattr(item, "user_id", None)
         try:
-            _uid = getattr(item, "user_id", None)
             if _uid:
                 from live_monitor.execution_account import _lm_get_execution_mode_summary
                 _es = _lm_get_execution_mode_summary(_uid)
                 _exec_mode = _es.get("execution_mode", "internal_paper")
+        except Exception:
+            pass
+
+        # Phase 11.12: Gate awareness (read-only — never executes)
+        _gate_eligible = False
+        _gate_armed    = False
+        _gate_phase    = "not_evaluated"
+        try:
+            if _uid:
+                _item_id_ap = getattr(item, "id", None)
+                if _item_id_ap:
+                    from live_monitor.paper_auto_gate import _lm_get_paper_auto_gate_state
+                    _gs = _lm_get_paper_auto_gate_state(_item_id_ap, _uid)
+                    if _gs.get("ok"):
+                        _gate_eligible = _gs.get("eligible", False)
+                        _gate_armed    = _gs.get("armed", False)
+                        _gate_phase    = (_gs.get("latest_gate_result") or {}).get(
+                            "phase", "not_evaluated"
+                        )
         except Exception:
             pass
 
@@ -313,6 +332,10 @@ def _lm_build_automation_policy(item, snapshot=None) -> dict:  # noqa: C901
             "testnet_strategy_validation":       False,
             "live_disabled":                     True,
             "auto_execution_allowed":            False,
+            # Phase 11.12 gate awareness
+            "paper_auto_gate_status":            _gate_phase,
+            "paper_auto_gate_eligible":          _gate_eligible,
+            "paper_auto_gate_armed":             _gate_armed,
         }
 
         return {

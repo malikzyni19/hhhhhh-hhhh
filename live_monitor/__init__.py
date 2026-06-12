@@ -9,6 +9,13 @@ from live_monitor.execution_account import (
     _lm_validate_policy_mode,
     _lm_execution_mode_labels,
 )
+from live_monitor.paper_auto_gate import (
+    _lm_build_paper_auto_gate,
+    _lm_get_paper_auto_gate_state,
+    _lm_arm_paper_auto_gate,
+    _lm_disarm_paper_auto_gate,
+    _lm_record_paper_auto_gate_event,
+)
 from live_monitor.execution_intelligence import (
     _lm_build_orderflow_state,
     _lm_build_zone_ob_slice,
@@ -168,4 +175,10 @@ __all__ = [
     "_lm_validate_execution_mode",
     "_lm_validate_policy_mode",
     "_lm_execution_mode_labels",
+    # Phase 11.12: Paper Auto Gate
+    "_lm_build_paper_auto_gate",
+    "_lm_get_paper_auto_gate_state",
+    "_lm_arm_paper_auto_gate",
+    "_lm_disarm_paper_auto_gate",
+    "_lm_record_paper_auto_gate_event",
 ]
