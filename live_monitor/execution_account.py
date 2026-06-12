@@ -191,16 +191,21 @@ def _lm_get_execution_mode_summary(user_id):
     )
 
     return {
-        "ok":                          True,
-        "execution_mode":              mode,
-        "execution_mode_label":        label,
-        "execution_mode_purpose":      purpose,
-        "policy_mode":                 pol,
-        "paper_primary":               mode == "internal_paper",
-        "live_enabled":                False,
-        "testnet_strategy_validation": False,
-        "live_disabled":               True,
-        "auto_execution_allowed":      False,
-        "ai_can_execute":              False,
-        "source":                      "execution_account",
+        "ok":                                True,
+        "execution_mode":                    mode,
+        "execution_mode_label":              label,
+        "execution_mode_purpose":            purpose,
+        "policy_mode":                       pol,
+        # paper_primary is ALWAYS true — internal paper is the permanent primary
+        # strategy-testing mode regardless of which mode the user has selected.
+        "paper_primary":                     True,
+        "primary_strategy_testing_mode":     "internal_paper",
+        # True only when the currently selected mode IS internal_paper
+        "current_mode_is_primary_strategy_mode": mode == "internal_paper",
+        "live_enabled":                      False,
+        "testnet_strategy_validation":       False,
+        "live_disabled":                     True,
+        "auto_execution_allowed":            False,
+        "ai_can_execute":                    False,
+        "source":                            "execution_account",
     }

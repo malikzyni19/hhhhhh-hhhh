@@ -280,22 +280,14 @@ def _lm_build_automation_policy(item, snapshot=None) -> dict:  # noqa: C901
             "note":                         "Phase 11.4 only. apply_pending remains False.",
         }
 
-        # Phase 11.11: Execution mode fields — default internal_paper
-        exec_mode_fields: dict = {
-            "execution_mode":              "internal_paper",
-            "policy_mode":                 policy_mode,
-            "paper_primary":               True,
-            "testnet_strategy_validation": False,
-            "live_disabled":               True,
-            "auto_execution_allowed":      False,
-        }
+        # Phase 11.11: Execution mode guardrails — paper is ALWAYS primary
+        _exec_mode = "internal_paper"
         try:
             _uid = getattr(item, "user_id", None)
             if _uid:
                 from live_monitor.execution_account import _lm_get_execution_mode_summary
                 _es = _lm_get_execution_mode_summary(_uid)
-                exec_mode_fields["execution_mode"]    = _es.get("execution_mode", "internal_paper")
-                exec_mode_fields["paper_primary"]     = _es.get("paper_primary", True)
+                _exec_mode = _es.get("execution_mode", "internal_paper")
         except Exception:
             pass
 
@@ -313,12 +305,14 @@ def _lm_build_automation_policy(item, snapshot=None) -> dict:  # noqa: C901
                 "No execution authority exists."
             ),
             # Phase 11.11 execution mode guardrails
-            "execution_mode":              exec_mode_fields["execution_mode"],
-            "policy_mode":                 exec_mode_fields["policy_mode"],
-            "paper_primary":               exec_mode_fields["paper_primary"],
-            "testnet_strategy_validation": False,
-            "live_disabled":               True,
-            "auto_execution_allowed":      False,
+            "execution_mode":                    _exec_mode,
+            "policy_mode":                       policy_mode,
+            # paper_primary is ALWAYS true regardless of selected execution mode
+            "paper_primary":                     True,
+            "primary_strategy_testing_mode":     "internal_paper",
+            "testnet_strategy_validation":       False,
+            "live_disabled":                     True,
+            "auto_execution_allowed":            False,
         }
 
         return {
