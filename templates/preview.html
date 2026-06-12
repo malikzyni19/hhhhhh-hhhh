@@ -11738,7 +11738,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
      BACKTEST MODULE
      ═══════════════════════════════════════════════════════════════════════ */
   var _btState={data:null,page:"overview",rr:[1,2,3],charts:{},tblPage:0,lastRun:null,filters:null,
-    mtfData:null,mtfCharts:{},mtfTfs:["15m","30m","1h","4h"]};
+    mtfData:null,mtfCharts:{},mtfTfs:["15m","1h","4h"]};
 
   function _bindBtSidebarEvents(aside){
     [].forEach.call(aside.querySelectorAll("[data-btpage]"),function(item){
@@ -12900,7 +12900,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var el=document.getElementById("btCompareContent"); if(!el) return;
     var sym=(_btState.data&&_btState.data.params&&_btState.data.params.symbol)||"BTCUSDT";
     var allTfs=["5m","15m","30m","1h","4h","1d"];
-    var selTfs=_btState.mtfTfs||["15m","30m","1h","4h"];
+    var selTfs=_btState.mtfTfs||["15m","1h","4h"];
 
     function chipHtml(tf){
       var on=selTfs.indexOf(tf)>=0?" on":"";
@@ -12917,9 +12917,12 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
           '<div class="bt-mtf-chips" id="btMtfChips">'+allTfs.map(chipHtml).join("")+'</div>'+
           '<span class="bt-mtf-label" style="margin-left:6px">Candles</span>'+
           '<select class="bt-filter-sel" id="btMtfCandles">'+
-            ['500','1000','2000','3000'].map(function(v){return '<option value="'+v+'"'+(v==="3000"?" selected":"")+'>'+v+'</option>';}).join("")+
+            ['500','1000','2000','3000'].map(function(v){return '<option value="'+v+'"'+(v==="1000"?" selected":"")+'>'+v+'</option>';}).join("")+
           '</select>'+
           '<button class="bt-mtf-run-btn" id="btMtfRunBtn">&#9654; Run Comparison</button>'+
+        '</div>'+
+        '<div style="font-size:10px;color:var(--text-3);margin-top:6px;line-height:1.5">'+
+          'MTF comparison uses capped candles per timeframe for speed. For deep 3000-candle tests run one timeframe at a time via Run Backtest.'+
         '</div>'+
       '</div>'+
       '<div id="btMtfResults">'+
@@ -12947,6 +12950,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   function _btMtfResultsHtml(d){
     var lb=d.leaderboard||[], bst=d.best||{}, ers=d.errors||{};
     var sym=d.symbol||"";
+    var lims=d.mtf_limits||{};
 
     /* best cards */
     function bestRow(key){ return lb.find(function(r){return r.timeframe===bst[key];})||null; }
@@ -12992,6 +12996,12 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     });
     tblBody+='</tbody>';
 
+    /* mtf_limits warnings */
+    var limWarnHtml="";
+    (lims.warnings||[]).forEach(function(w){
+      limWarnHtml+='<div style="font-size:11px;color:#fa0;background:#1f1600;border:1px solid #443200;border-radius:5px;padding:6px 10px;margin-bottom:6px">&#9888; '+esc(w)+'</div>';
+    });
+
     /* error rows */
     var errHtml="";
     Object.keys(ers).forEach(function(tf){
@@ -13014,7 +13024,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 
     return '<div class="bt-section-head"><div><div class="bt-section-title">Timeframe Comparison — '+sym+'</div>'+
         '<div class="bt-section-sub">'+lb.length+' timeframes &bull; ranked by expectancy R</div></div></div>'+
-      bestCards+chartsHtml+
+      limWarnHtml+bestCards+chartsHtml+
       '<div class="bt-tbl-wrap"><table class="bt-tbl">'+tblHead+tblBody+'</table></div>'+
       errHtml+exportHtml;
   }
@@ -13117,13 +13127,32 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var symEl=document.getElementById("btMtfSym");
     var canEl=document.getElementById("btMtfCandles");
     var sym=(symEl?symEl.value.trim():"BTCUSDT")||"BTCUSDT";
-    var candles=parseInt((canEl?canEl.value:"3000")||"3000",10)||3000;
+    var candles=parseInt((canEl?canEl.value:"1000")||"1000",10)||1000;
     var tfs=(_btState.mtfTfs||[]).slice();
     if(!tfs.length){
       var res=document.getElementById("btMtfResults");
       if(res) res.innerHTML='<div class="bt-mtf-err">Select at least one timeframe.</div>';
       return;
     }
+
+    /* warn before heavy runs */
+    var warnEl=document.getElementById("btMtfWarn");
+    if(warnEl) warnEl.remove();
+    var isHeavy=(tfs.length>=4 && candles>=2000)||(tfs.length>=5)||(candles>=3000 && tfs.length>=3);
+    if(isHeavy){
+      var wDiv=document.createElement("div");
+      wDiv.id="btMtfWarn";
+      wDiv.style.cssText="font-size:11px;color:#fa0;background:#1f1600;border:1px solid #443200;border-radius:5px;padding:6px 10px;margin-bottom:8px";
+      wDiv.textContent="⚠ Large comparison (" + tfs.length + " TFs × " + candles + " candles). This may take several seconds. Candles are auto-capped at 1500/TF.";
+      var formEl=el.querySelector(".bt-mtf-form");
+      if(formEl) formEl.appendChild(wDiv);
+    }
+
+    /* build per-TF candle budget using backend defaults */
+    var tfDefaults={"5m":800,"15m":800,"30m":800,"1h":1200,"4h":1000,"1d":600};
+    var ccByTf={};
+    tfs.forEach(function(tf){ ccByTf[tf]=Math.min(candles, tfDefaults[tf]||candles); });
+
     var res=document.getElementById("btMtfResults");
     if(res) res.innerHTML='<div class="bt-mtf-loading"><div class="bt-spin"></div>Running '+esc(sym)+' across '+tfs.join(", ")+'&hellip;</div>';
     var btn=document.getElementById("btMtfRunBtn"); if(btn) btn.disabled=true;
@@ -13132,7 +13161,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       method:"POST",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({symbol:sym,timeframes:tfs,candle_count:candles,
-        rr_values:[1,2,3],include_parity:false,include_events:false})
+        candle_count_by_tf:ccByTf,rr_values:[1,2,3],include_parity:false,include_events:false})
     })
     .then(function(r){return r.json();})
     .then(function(data){

@@ -34741,8 +34741,13 @@ def api_backtest_ob_historical_debug():
 # Backtest — Multi-Timeframe (MTF) Comparison Engine
 # ══════════════════════════════════════════════════════════════════════════════
 
-_BT_MTF_MAX_TF  = 5    # max timeframes per MTF request
-_BT_MTF_MAX_EVS = 100  # per-TF event cap when include_events=True
+_BT_MTF_MAX_TF             = 5     # max timeframes per MTF request
+_BT_MTF_MAX_EVS            = 100   # per-TF event cap when include_events=True
+_BT_MTF_MAX_CANDLES_PER_TF = 1500  # hard ceiling per timeframe in MTF mode
+_BT_MTF_MAX_TOTAL_CANDLES  = 5000  # hard ceiling across all timeframes combined
+_BT_MTF_DEFAULT_CANDLES_BY_TF: Dict[str, int] = {
+    "5m": 800, "15m": 800, "30m": 800, "1h": 1200, "4h": 1000, "1d": 600,
+}
 
 
 def _bt_build_mtf_leaderboard(results: dict) -> list:
@@ -34805,38 +34810,90 @@ def _bt_build_mtf_leaderboard(results: dict) -> list:
 
 
 def _bt_run_ob_mtf_backtest(params: dict) -> dict:
-    """Run the single-TF engine for each timeframe; return a comparison bundle."""
+    """Run single-TF engine per timeframe with candle-budget safety caps."""
+    import time as _time
+
     symbol         = params["symbol"]
     timeframes     = params["timeframes"]
     include_events = params.get("include_events", False)
+    warnings: list = []
 
+    # ── Build per-TF candle budget ────────────────────────────────────────────
+    # Caller may supply {tf: count} overrides; fall back to single candle_count
+    # or the built-in safe defaults.
+    base_count     = params.get("candle_count", 1000)
+    override_by_tf = params.get("candle_count_by_tf") or {}
+
+    candles_by_tf: Dict[str, int] = {}
+    for tf in timeframes:
+        raw = override_by_tf.get(tf, base_count)
+        try:
+            raw = int(raw)
+        except (TypeError, ValueError):
+            raw = base_count
+        # per-TF hard clamp: min 300, max 1500
+        candles_by_tf[tf] = max(300, min(_BT_MTF_MAX_CANDLES_PER_TF, raw))
+
+    # ── Global total-candle cap: scale down proportionally if needed ──────────
+    total_requested = sum(candles_by_tf.values())
+    scaled_down     = False
+    if total_requested > _BT_MTF_MAX_TOTAL_CANDLES:
+        scale = _BT_MTF_MAX_TOTAL_CANDLES / total_requested
+        candles_by_tf = {
+            tf: max(300, int(n * scale))
+            for tf, n in candles_by_tf.items()
+        }
+        scaled_down = True
+        used_total  = sum(candles_by_tf.values())
+        warnings.append(
+            f"Requested {total_requested} total candles across {len(timeframes)} "
+            f"timeframes; auto-scaled to {used_total} for MTF safety "
+            f"(limit: {_BT_MTF_MAX_TOTAL_CANDLES})."
+        )
+
+    # ── Run per-TF ────────────────────────────────────────────────────────────
     results: Dict[str, dict] = {}
     errors:  Dict[str, str]  = {}
 
     for tf in timeframes:
+        used_cc = candles_by_tf[tf]
         tf_params = {k: v for k, v in params.items()
-                     if k not in ("timeframes", "include_events")}
-        tf_params["timeframe"] = tf
+                     if k not in ("timeframes", "include_events",
+                                  "candle_count_by_tf", "candle_count")}
+        tf_params["timeframe"]    = tf
+        tf_params["candle_count"] = used_cc
+
+        t0 = _time.time()
         try:
             res = _bt_run_ob_historical_backtest(tf_params)
         except Exception as exc:
+            elapsed_ms = int((_time.time() - t0) * 1000)
             errors[tf] = str(exc)
-            results[tf] = {"ok": False, "timeframe": tf, "error": str(exc)}
+            results[tf] = {
+                "ok": False, "timeframe": tf, "error": str(exc),
+                "requested_candle_count": used_cc,
+                "used_candle_count":      used_cc,
+                "elapsed_ms":             elapsed_ms,
+            }
             continue
+        elapsed_ms = int((_time.time() - t0) * 1000)
 
         if not res.get("ok"):
             errors[tf] = res.get("error", "unknown error")
 
         out: Dict = {
-            "ok":              res.get("ok", False),
-            "timeframe":       tf,
-            "candle_summary":  res.get("candle_summary"),
-            "replay_summary":  res.get("replay_summary"),
-            "outcome_summary": res.get("outcome_summary"),
-            "parity":          res.get("parity"),
-            "events_total":    res.get("events_total"),
-            "events_returned": res.get("events_returned"),
-            "events_sample":   res.get("events_sample"),
+            "ok":                    res.get("ok", False),
+            "timeframe":             tf,
+            "requested_candle_count":used_cc,
+            "used_candle_count":     (res.get("candle_summary") or {}).get("returned", used_cc),
+            "elapsed_ms":            elapsed_ms,
+            "candle_summary":        res.get("candle_summary"),
+            "replay_summary":        res.get("replay_summary"),
+            "outcome_summary":       res.get("outcome_summary"),
+            "parity":                res.get("parity"),
+            "events_total":          res.get("events_total"),
+            "events_returned":       res.get("events_returned"),
+            "events_sample":         res.get("events_sample"),
         }
         if not res.get("ok"):
             out["error"]   = res.get("error")
@@ -34871,6 +34928,10 @@ def _bt_run_ob_mtf_backtest(params: dict) -> dict:
     best_3r  = _best_3r_hit()
     ok       = any(r.get("ok") for r in results.values())
 
+    used_total_candles = sum(
+        r.get("used_candle_count") or 0 for r in results.values()
+    )
+
     return {
         "ok":           ok,
         "mode":         "multi_timeframe_ob_v1",
@@ -34887,7 +34948,16 @@ def _bt_run_ob_mtf_backtest(params: dict) -> dict:
             "by_lowest_avg_sl":       best_sl["timeframe"]  if best_sl  else None,
             "by_highest_3r_hit_rate": best_3r,
         },
-        "errors": errors,
+        "errors":  errors,
+        "mtf_limits": {
+            "max_timeframes":        _BT_MTF_MAX_TF,
+            "max_candles_per_tf":    _BT_MTF_MAX_CANDLES_PER_TF,
+            "max_total_candles":     _BT_MTF_MAX_TOTAL_CANDLES,
+            "requested_total_candles": total_requested,
+            "used_total_candles":    used_total_candles,
+            "scaled_down":           scaled_down,
+            "warnings":              warnings,
+        },
     }
 
 
@@ -34905,7 +34975,7 @@ def api_backtest_ob_mtf():
         return jsonify({"ok": False, "error": "symbol is required"}), 400
     symbol = _bt_clean_symbol(raw_symbol)
 
-    raw_tfs = payload.get("timeframes", ["15m", "30m", "1h", "4h"])
+    raw_tfs = payload.get("timeframes", ["15m", "1h", "4h"])
     if not isinstance(raw_tfs, list):
         raw_tfs = [str(raw_tfs)]
     if len(raw_tfs) > _BT_MTF_MAX_TF:
@@ -34923,26 +34993,36 @@ def api_backtest_ob_mtf():
         return jsonify({"ok": False, "error": "at least one timeframe required"}), 400
 
     try:
-        candle_count = int(payload.get("candle_count", 3000))
+        candle_count = int(payload.get("candle_count", 1000))
     except (TypeError, ValueError):
         return jsonify({"ok": False, "error": "candle_count must be integer"}), 400
-    candle_count = max(500, min(4000, candle_count))
+    candle_count = max(300, min(_BT_MTF_MAX_CANDLES_PER_TF, candle_count))
+
+    raw_cc_by_tf = payload.get("candle_count_by_tf") or {}
+    candle_count_by_tf: Dict[str, int] = {}
+    if isinstance(raw_cc_by_tf, dict):
+        for _tf, _n in raw_cc_by_tf.items():
+            try:
+                candle_count_by_tf[str(_tf)] = max(300, min(_BT_MTF_MAX_CANDLES_PER_TF, int(_n)))
+            except (TypeError, ValueError):
+                pass
 
     def _bf(val, default=False):
         if isinstance(val, bool): return val
         return str(val).lower() in ("true", "1", "yes")
 
     params = {
-        "symbol":         symbol,
-        "timeframes":     timeframes,
-        "candle_count":   candle_count,
-        "exchange":       "binance",
-        "market":         "perpetual",
-        "rr_values":      _bt_parse_rr_values(payload.get("rr_values", [1, 2, 3])),
-        "entry_rule":     "zone_high",
-        "stop_rule":      "close_beyond_zone",
-        "include_parity": _bf(payload.get("include_parity", False)),
-        "include_events": _bf(payload.get("include_events", False)),
+        "symbol":              symbol,
+        "timeframes":          timeframes,
+        "candle_count":        candle_count,
+        "candle_count_by_tf":  candle_count_by_tf or None,
+        "exchange":            "binance",
+        "market":              "perpetual",
+        "rr_values":           _bt_parse_rr_values(payload.get("rr_values", [1, 2, 3])),
+        "entry_rule":          "zone_high",
+        "stop_rule":           "close_beyond_zone",
+        "include_parity":      _bf(payload.get("include_parity", False)),
+        "include_events":      _bf(payload.get("include_events", False)),
     }
     result = _bt_run_ob_mtf_backtest(params)
     return jsonify(result), 200 if result.get("ok") else 502
@@ -34957,17 +35037,17 @@ def api_backtest_ob_mtf_debug():
         return err
 
     symbol = _bt_clean_symbol(request.args.get("symbol", "BTCUSDT"))
-    raw_tfs = request.args.get("timeframes", "15m,30m,1h,4h")
+    raw_tfs = request.args.get("timeframes", "15m,1h,4h")
     timeframes = [t.strip() for t in raw_tfs.split(",")
                   if t.strip() in _BT_ALLOWED_TIMEFRAMES][:_BT_MTF_MAX_TF]
     if not timeframes:
         timeframes = ["15m", "1h", "4h"]
 
     try:
-        candle_count = int(request.args.get("candle_count", 3000))
+        candle_count = int(request.args.get("candle_count", 1000))
     except Exception:
-        candle_count = 3000
-    candle_count = max(500, min(4000, candle_count))
+        candle_count = 1000
+    candle_count = max(300, min(_BT_MTF_MAX_CANDLES_PER_TF, candle_count))
 
     fmt = request.args.get("format", "json").strip().lower()
     include_parity = request.args.get("include_parity", "false").lower() in ("true","1","yes")
@@ -34987,9 +35067,10 @@ def api_backtest_ob_mtf_debug():
         if val is None: return "<span style='color:#888'>null</span>"
         return str(val)
 
-    lb  = result.get("leaderboard") or []
-    bst = result.get("best")        or {}
-    ers = result.get("errors")      or {}
+    lb   = result.get("leaderboard") or []
+    bst  = result.get("best")        or {}
+    ers  = result.get("errors")      or {}
+    lims = result.get("mtf_limits")  or {}
 
     TH = "padding:6px 10px;background:#1a2233;color:#8cf;border-bottom:1px solid #222;white-space:nowrap"
     TD = "padding:5px 10px;border-bottom:1px solid #1a2233;color:#ddd"
@@ -35022,6 +35103,23 @@ def api_backtest_ob_mtf_debug():
         f"</p>"
     )
 
+    limits_html = ""
+    if lims:
+        sd_color = "#fa0" if lims.get("scaled_down") else "#4f4"
+        sd_label = "YES (auto-scaled)" if lims.get("scaled_down") else "no"
+        limits_html = (
+            "<h3 style='color:#8cf;margin-top:20px'>MTF Candle Limits</h3>"
+            f"<p style='color:#aaa;font-size:13px'>"
+            f"Max candles/TF: <b style='color:#fff'>{_v(lims.get('max_candles_per_tf'))}</b>"
+            f" &nbsp;|&nbsp; Max total: <b style='color:#fff'>{_v(lims.get('max_total_candles'))}</b>"
+            f" &nbsp;|&nbsp; Requested total: <b style='color:#fff'>{_v(lims.get('requested_total_candles'))}</b>"
+            f" &nbsp;|&nbsp; Used total: <b style='color:#fff'>{_v(lims.get('used_total_candles'))}</b>"
+            f" &nbsp;|&nbsp; Scaled down: <b style='color:{sd_color}'>{sd_label}</b>"
+            f"</p>"
+        )
+        for w in (lims.get("warnings") or []):
+            limits_html += f"<p style='color:#fa0;font-size:12px'>⚠ {w}</p>"
+
     tc = "#4f4" if result.get("ok") else "#f55"
     html = (
         "<!DOCTYPE html><html><head><meta charset='utf-8'>"
@@ -35037,6 +35135,7 @@ def api_backtest_ob_mtf_debug():
         f"<p style='color:#aaa;font-size:13px'>Symbol: <b style='color:#fff'>{symbol}</b>"
         f" &nbsp;|&nbsp; Timeframes: <b style='color:#fff'>{', '.join(timeframes)}</b>"
         f" &nbsp;|&nbsp; Candles: <b style='color:#fff'>{candle_count}</b></p>"
+        + limits_html
         + best_html
         + "<h3 style='color:#8cf;margin-top:20px'>Leaderboard</h3>"
         + f"<table><thead>{hdr}</thead><tbody>{trs}</tbody></table>"
