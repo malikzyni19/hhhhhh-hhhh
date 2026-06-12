@@ -34201,12 +34201,14 @@ def _bt_apply_outcomes_to_events(events: List[Dict], candles: List[Dict],
         _net  = round(_twr - _tlr, 4)
         realized_summary_by_rr[rk] = {
             "target_rr":           float(rv),
-            "trades":              _ntr,
+            "trades":              _ntr,               # wins + losses only
+            "evaluated":           len(_rzal),         # wins + losses + ambiguous + unresolved
             "wins":                len(_wins),
             "losses":              len(_loss),
             "ambiguous":           len(_ambs),
             "unresolved":          len(_unrs),
-            "win_rate_pct":        round(len(_wins) / _ntr * 100, 1) if _ntr else 0.0,
+            "no_touch":            len(events) - len(_rzal),
+            "win_rate_pct":        round(len(_wins) / _ntr * 100, 1) if _ntr else None,
             "avg_win_r":           round(sum(_wr) / len(_wr), 4) if _wr else None,
             "avg_loss_r":          round(sum(_lr) / len(_lr), 4) if _lr else None,
             "max_loss_r":          round(max(_lr), 4) if _lr else None,
@@ -34307,8 +34309,12 @@ def _bt_run_ob_historical_backtest(params: dict) -> dict:
         "outcome_summary":  outcome_summary,
         "parity":           parity,
         "events_sample": {
-            "first": all_events[0]  if all_events else None,
-            "last":  all_events[-1] if all_events else None,
+            "first":   all_events[0]  if all_events else None,
+            "last":    all_events[-1] if all_events else None,
+            "sl":      next((e for e in all_events
+                             if (e.get("simulation") or {}).get("stop_hit")), None),
+            "touched": next((e for e in all_events
+                             if (e.get("simulation") or {}).get("eligible")), None),
         },
         "events":           out_events,
         "events_total":     len(all_events),
@@ -34393,12 +34399,15 @@ def api_backtest_ob_historical_debug():
             return "<span style='color:#888'>null</span>"
         return str(val)
 
-    cs   = result.get("candle_summary",  {}) or {}
-    rs   = result.get("replay_summary",  {}) or {}
-    os_  = result.get("outcome_summary", {}) or {}
-    par  = result.get("parity",          {}) or {}
-    prm  = result.get("params",          {}) or {}
-    ev1  = (result.get("events_sample") or {}).get("first") or {}
+    cs      = result.get("candle_summary",  {}) or {}
+    rs      = result.get("replay_summary",  {}) or {}
+    os_     = result.get("outcome_summary", {}) or {}
+    par     = result.get("parity",          {}) or {}
+    prm     = result.get("params",          {}) or {}
+    _esmp   = result.get("events_sample")  or {}
+    ev1     = _esmp.get("first")   or {}
+    ev_sl   = _esmp.get("sl")      or {}
+    ev_tch  = _esmp.get("touched") or {}
 
     if not result.get("ok"):
         body = (
@@ -34440,14 +34449,27 @@ def api_backtest_ob_historical_debug():
             ("── stop loss ──",                 ""),
             ("stop_loss_count",                 _v((os_.get("stop_loss_summary") or {}).get("stop_loss_count"))),
             ("avg_stop_loss_r",                 _v((os_.get("stop_loss_summary") or {}).get("avg_stop_loss_r"))),
+            ("median_stop_loss_r",              _v((os_.get("stop_loss_summary") or {}).get("median_stop_loss_r"))),
             ("max_stop_loss_r",                 _v((os_.get("stop_loss_summary") or {}).get("max_stop_loss_r"))),
+            ("min_stop_loss_r",                 _v((os_.get("stop_loss_summary") or {}).get("min_stop_loss_r"))),
+            ("avg_stop_loss_pct",               _v((os_.get("stop_loss_summary") or {}).get("avg_stop_loss_pct"))),
+            ("sl_bucket 1.0-1.25R",             _v(((os_.get("stop_loss_summary") or {}).get("stop_loss_buckets") or {}).get("1.0-1.25R"))),
+            ("sl_bucket 1.25-1.5R",             _v(((os_.get("stop_loss_summary") or {}).get("stop_loss_buckets") or {}).get("1.25-1.5R"))),
+            ("sl_bucket 1.5-2.0R",              _v(((os_.get("stop_loss_summary") or {}).get("stop_loss_buckets") or {}).get("1.5-2.0R"))),
+            ("sl_bucket 2.0R+",                 _v(((os_.get("stop_loss_summary") or {}).get("stop_loss_buckets") or {}).get("2.0R+"))),
             ("── realized by RR ──",            ""),
+            ("1R trades/wins/losses",           f"{(os_.get('realized_summary_by_rr') or {}).get('1', {}).get('trades', 0)} / {(os_.get('realized_summary_by_rr') or {}).get('1', {}).get('wins', 0)} / {(os_.get('realized_summary_by_rr') or {}).get('1', {}).get('losses', 0)}"),
             ("1R expectancy_r",                 _v((os_.get("realized_summary_by_rr") or {}).get("1", {}).get("expectancy_r"))),
             ("1R profit_factor_r",              _v((os_.get("realized_summary_by_rr") or {}).get("1", {}).get("profit_factor_r"))),
+            ("1R net_r",                        _v((os_.get("realized_summary_by_rr") or {}).get("1", {}).get("net_r"))),
+            ("2R trades/wins/losses",           f"{(os_.get('realized_summary_by_rr') or {}).get('2', {}).get('trades', 0)} / {(os_.get('realized_summary_by_rr') or {}).get('2', {}).get('wins', 0)} / {(os_.get('realized_summary_by_rr') or {}).get('2', {}).get('losses', 0)}"),
             ("2R expectancy_r",                 _v((os_.get("realized_summary_by_rr") or {}).get("2", {}).get("expectancy_r"))),
             ("2R profit_factor_r",              _v((os_.get("realized_summary_by_rr") or {}).get("2", {}).get("profit_factor_r"))),
+            ("2R net_r",                        _v((os_.get("realized_summary_by_rr") or {}).get("2", {}).get("net_r"))),
+            ("3R trades/wins/losses",           f"{(os_.get('realized_summary_by_rr') or {}).get('3', {}).get('trades', 0)} / {(os_.get('realized_summary_by_rr') or {}).get('3', {}).get('wins', 0)} / {(os_.get('realized_summary_by_rr') or {}).get('3', {}).get('losses', 0)}"),
             ("3R expectancy_r",                 _v((os_.get("realized_summary_by_rr") or {}).get("3", {}).get("expectancy_r"))),
             ("3R profit_factor_r",              _v((os_.get("realized_summary_by_rr") or {}).get("3", {}).get("profit_factor_r"))),
+            ("3R net_r",                        _v((os_.get("realized_summary_by_rr") or {}).get("3", {}).get("net_r"))),
             ("── parity ──",                    ""),
             ("parity.enabled",                  _v(par.get("enabled"))),
             ("parity.production_count",         _v(par.get("production_count"))),
@@ -34487,6 +34509,59 @@ def api_backtest_ob_historical_debug():
                     f"<td style='padding:6px 0;color:#fff'>{_v(val)}</td></tr>"
                 )
 
+        # ── Sample SL event ───────────────────────────────────────────────────
+        sl_ev_rows = ""
+        if ev_sl:
+            sim_sl = ev_sl.get("simulation") or {}
+            for k, val in [
+                ("type",                    ev_sl.get("type")),
+                ("formation_time",          ev_sl.get("formation_time")),
+                ("zone_high",               ev_sl.get("zone_high")),
+                ("zone_low",                ev_sl.get("zone_low")),
+                ("sim.entry_price",         sim_sl.get("entry_price")),
+                ("sim.risk_amount",         sim_sl.get("risk_amount")),
+                ("sim.first_outcome",       sim_sl.get("first_outcome")),
+                ("sim.stop_hit",            sim_sl.get("stop_hit")),
+                ("sim.stop_time",           sim_sl.get("stop_time")),
+                ("sim.stop_close_price",    sim_sl.get("stop_close_price")),
+                ("sim.stop_loss_abs",       sim_sl.get("stop_loss_abs")),
+                ("sim.stop_loss_r",         sim_sl.get("stop_loss_r")),
+                ("sim.stop_loss_pct",       sim_sl.get("stop_loss_pct")),
+                ("sim.max_r_reached",       sim_sl.get("max_r_reached")),
+                ("sim.max_adverse_r",       sim_sl.get("max_adverse_r")),
+            ]:
+                sl_ev_rows += (
+                    f"<tr><td style='padding:6px 12px 6px 0;color:#aaa'>{k}</td>"
+                    f"<td style='padding:6px 0;color:#fff'>{_v(val)}</td></tr>"
+                )
+
+        # ── Sample touched event with realized_by_rr ──────────────────────────
+        tch_ev_rows = ""
+        if ev_tch:
+            sim_tch = ev_tch.get("simulation") or {}
+            rzrr    = sim_tch.get("realized_by_rr") or {}
+            for k, val in [
+                ("type",                    ev_tch.get("type")),
+                ("formation_time",          ev_tch.get("formation_time")),
+                ("zone_high",               ev_tch.get("zone_high")),
+                ("zone_low",                ev_tch.get("zone_low")),
+                ("sim.first_outcome",       sim_tch.get("first_outcome")),
+                ("sim.stop_loss_r",         sim_tch.get("stop_loss_r")),
+                ("sim.stop_close_price",    sim_tch.get("stop_close_price")),
+                ("sim.max_r_reached",       sim_tch.get("max_r_reached")),
+                ("realized[1R].outcome",    (rzrr.get("1") or {}).get("outcome")),
+                ("realized[1R].realized_r", (rzrr.get("1") or {}).get("realized_r")),
+                ("realized[1R].exit_price", (rzrr.get("1") or {}).get("exit_price")),
+                ("realized[2R].outcome",    (rzrr.get("2") or {}).get("outcome")),
+                ("realized[2R].realized_r", (rzrr.get("2") or {}).get("realized_r")),
+                ("realized[3R].outcome",    (rzrr.get("3") or {}).get("outcome")),
+                ("realized[3R].realized_r", (rzrr.get("3") or {}).get("realized_r")),
+            ]:
+                tch_ev_rows += (
+                    f"<tr><td style='padding:6px 12px 6px 0;color:#aaa'>{k}</td>"
+                    f"<td style='padding:6px 0;color:#fff'>{_v(val)}</td></tr>"
+                )
+
         parity_note = ""
         if par.get("notes"):
             parity_note = (
@@ -34501,6 +34576,16 @@ def api_backtest_ob_historical_debug():
                 f"<table>{first_ev_rows}</table>"
                 if ev1 else
                 "<p style='color:#888'>No events detected.</p>"
+            )
+            + (
+                f"<h3 style='color:#f84;margin-top:20px'>Sample SL Event</h3>"
+                f"<table>{sl_ev_rows}</table>"
+                if ev_sl else ""
+            )
+            + (
+                f"<h3 style='color:#4f8;margin-top:20px'>Sample Touched Event — realized_by_rr</h3>"
+                f"<table>{tch_ev_rows}</table>"
+                if ev_tch else ""
             )
             + parity_note
         )

@@ -11875,8 +11875,14 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var cs=data.candle_summary||{}, rs=data.replay_summary||{}, par=data.parity||{};
     var allEvts=data.events||[];
     var fe=_btGetFilteredEvents(allEvts,f);
-    var os=_btBuildSummaryFromEvents(fe,data);
     var active=_btFiltersActive(f);
+    var os=_btBuildSummaryFromEvents(fe,data);
+    /* prefer backend aggregates when no filters — backend is source of truth */
+    if(!active && data.outcome_summary){
+      var bos=data.outcome_summary;
+      if(bos.stop_loss_summary)      os.stop_loss_summary      = bos.stop_loss_summary;
+      if(bos.realized_summary_by_rr) os.realized_summary_by_rr = bos.realized_summary_by_rr;
+    }
     var allElig=allEvts.filter(function(e){return e.simulation&&e.simulation.eligible;});
     var elig=fe.filter(function(e){return e.simulation&&e.simulation.eligible;});
     var hrr=os.hit_rate_by_rr||{};
@@ -12391,9 +12397,10 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       var pf=totalLossR>0?totalWinR/totalLossR:null;
       var wCan=wins.map(function(e){return (e.simulation.realized_by_rr[rk]||{}).candles_to_exit||0;});
       var lCan=losses.map(function(e){return (e.simulation.realized_by_rr[rk]||{}).candles_to_exit||0;});
+      var evaluated=trades.length+ambig+unres;
       os.realized_summary_by_rr[rk]={
-        target_rr:rv, trades:trades.length, wins:wins.length, losses:losses.length,
-        ambiguous:ambig, unresolved:unres,
+        target_rr:rv, trades:trades.length, evaluated:evaluated, wins:wins.length, losses:losses.length,
+        ambiguous:ambig, unresolved:unres, no_touch:events.length-evaluated,
         win_rate_pct:trades.length>0?wins.length/trades.length*100:null,
         avg_win_r:winRs.length?totalWinR/winRs.length:null,
         avg_loss_r:lossRs.length?totalLossR/lossRs.length:null,
@@ -12478,6 +12485,12 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var fe=_btGetFilteredEvents(allEvts,f);
     var os=_btBuildSummaryFromEvents(fe,d);
     var active=_btFiltersActive(f);
+    /* prefer backend aggregates when no filters — backend is source of truth */
+    if(!active && d.outcome_summary){
+      var bos=d.outcome_summary;
+      if(bos.stop_loss_summary)      os.stop_loss_summary      = bos.stop_loss_summary;
+      if(bos.realized_summary_by_rr) os.realized_summary_by_rr = bos.realized_summary_by_rr;
+    }
     var allElig=allEvts.filter(function(e){return e.simulation&&e.simulation.eligible;});
     var elig=fe.filter(function(e){return e.simulation&&e.simulation.eligible;});
     var par=d.parity||{};
