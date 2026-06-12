@@ -2146,7 +2146,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       fr.style.width='100%';fr.style.height='auto';
       return;
     }
-    var s=innerWidth/W;
+    var s=Math.min(innerWidth/W, innerHeight/H);
     win.style.transform='scale('+s+')';
     fr.style.width=(W*s)+'px';fr.style.height=(H*s)+'px';
   }
