@@ -282,6 +282,107 @@ code, .mono { font-family: 'JetBrains Mono', monospace !important; }
 @media (max-width: 900px) {
     #detailDrawer { width: 100%; top: 54px; }
 }
+
+/* ── Checkboxes ── */
+.row-check {
+    width: 16px; height: 16px;
+    accent-color: #22d3ee;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.th-check { width: 38px; }
+
+/* ── Bulk Actions Bar ── */
+#bulkBar {
+    display: none;
+    align-items: center;
+    gap: 12px;
+    background: rgba(34,211,238,0.06);
+    border: 1px solid rgba(34,211,238,0.2);
+    border-radius: 10px;
+    padding: 10px 16px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+}
+#bulkBar.visible { display: flex; }
+.bulk-count {
+    font-size: 12.5px; font-weight: 600; color: #22d3ee;
+    flex: 1;
+}
+.bulk-btn {
+    height: 34px; padding: 0 16px;
+    border-radius: 8px; border: 1px solid;
+    font-family: 'Poppins', sans-serif;
+    font-size: 12px; font-weight: 600;
+    cursor: pointer; transition: all .18s;
+    display: inline-flex; align-items: center; gap: 6px;
+}
+.bulk-btn-del {
+    background: rgba(248,113,113,.08);
+    border-color: rgba(248,113,113,.3);
+    color: #f87171;
+}
+.bulk-btn-del:hover { background: rgba(248,113,113,.18); }
+.bulk-btn-clear {
+    background: rgba(255,255,255,.04);
+    border-color: #1a2e40; color: #64748b;
+}
+.bulk-btn-clear:hover { color: #e2e8f0; background: rgba(255,255,255,.08); }
+
+/* ── Bulk Delete Modal ── */
+#bulkDelModal {
+    position: fixed; inset: 0;
+    background: rgba(2,8,16,.85);
+    backdrop-filter: blur(6px);
+    z-index: 210;
+    display: none;
+    align-items: center; justify-content: center;
+    padding: 20px;
+}
+.bdm-box {
+    background: #060f1e;
+    border: 1px solid #1a2e40;
+    border-radius: 16px;
+    padding: 28px 28px 24px;
+    max-width: 420px; width: 100%;
+    box-shadow: 0 24px 64px rgba(0,0,0,.7);
+}
+.bdm-icon {
+    width: 48px; height: 48px; border-radius: 50%;
+    background: rgba(248,113,113,.10);
+    border: 1px solid rgba(248,113,113,.3);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px; color: #f87171;
+    margin: 0 auto 16px;
+}
+.bdm-title { font-size: 15px; font-weight: 700; color: #e2e8f0; text-align: center; margin-bottom: 6px; }
+.bdm-sub   { font-size: 12.5px; color: #64748b; text-align: center; line-height: 1.6; margin-bottom: 20px; }
+.bdm-sub strong { color: #f87171; }
+.bdm-input {
+    width: 100%; background: #04090f;
+    border: 1.5px solid #1a2e40; border-radius: 9px;
+    padding: 10px 14px; color: #e2e8f0;
+    font-family: 'JetBrains Mono', monospace; font-size: 13px;
+    outline: none; transition: border-color .2s; margin-bottom: 8px;
+}
+.bdm-input:focus { border-color: rgba(248,113,113,.5); }
+.bdm-hint { font-size: 11px; color: #334d66; text-align: center; margin-bottom: 18px; }
+.bdm-actions { display: flex; gap: 10px; }
+.bdm-btn {
+    flex: 1; height: 40px; border-radius: 9px;
+    font-family: 'Poppins', sans-serif; font-size: 12.5px; font-weight: 600;
+    cursor: pointer; transition: all .18s; border: 1px solid;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+}
+.bdm-cancel { background: rgba(255,255,255,.04); border-color: #1a2e40; color: #64748b; }
+.bdm-cancel:hover { color: #e2e8f0; background: rgba(255,255,255,.08); }
+.bdm-confirm {
+    background: linear-gradient(135deg,#b91c1c,#dc2626);
+    border-color: transparent; color: #fff;
+    box-shadow: 0 4px 14px rgba(185,28,28,.35);
+}
+.bdm-confirm:hover:not(:disabled) { box-shadow: 0 4px 22px rgba(185,28,28,.55); transform: translateY(-1px); }
+.bdm-confirm:disabled { opacity: .38; cursor: not-allowed; transform: none; }
 </style>
 
 <!-- Header row -->
@@ -313,13 +414,25 @@ code, .mono { font-family: 'JetBrains Mono', monospace !important; }
   </div>
 </div>
 
+<!-- Bulk actions bar (visible when rows are selected) -->
+<div id="bulkBar">
+  <span class="bulk-count" id="bulkCount">0 users selected</span>
+  <button class="bulk-btn bulk-btn-del" onclick="openBulkDelModal()">
+    <i class="fa-solid fa-trash-can" style="font-family:unset;font-size:11px"></i> Delete Selected
+  </button>
+  <button class="bulk-btn bulk-btn-clear" onclick="clearSelection()">Deselect All</button>
+</div>
+
 <!-- Users table -->
 <div class="adm-card" id="usersCard">
   <div class="adm-table-wrap">
     <table class="adm-table" id="usersTable">
       <thead>
         <tr>
-          <th style="width:40px">#</th>
+          <th class="th-check">
+            <input type="checkbox" class="row-check" id="checkAll" title="Select all"
+                   onclick="toggleSelectAll(this)">
+          </th>
           <th>Username</th>
           <th>Email</th>
           <th>Role</th>
@@ -334,7 +447,11 @@ code, .mono { font-family: 'JetBrains Mono', monospace !important; }
           {% for u in users %}
           <tr class="user-row" id="row-{{ u.id }}" data-username="{{ u.username }}" data-id="{{ u.id }}"
               onclick="openDrawer({{ u.id }}, '{{ u.username }}')">
-            <td style="color:var(--muted);font-size:11px">{{ loop.index }}</td>
+            <td onclick="event.stopPropagation()">
+              <input type="checkbox" class="row-check" data-id="{{ u.id }}"
+                     {% if u.role == 'admin' %}disabled title="Cannot select admin accounts"{% endif %}
+                     onchange="onRowCheck()">
+            </td>
             <td>
               <span class="mono" style="color:var(--cyan);font-weight:600;font-size:13px">{{ u.username }}</span>
               {% if u.id == current_user.id %}
@@ -401,7 +518,7 @@ code, .mono { font-family: 'JetBrains Mono', monospace !important; }
           </tr>
           {% endfor %}
         {% else %}
-          <tr><td colspan="8" class="adm-empty">No users found.</td></tr>
+          <tr><td colspan="9" class="adm-empty">No users found.</td></tr>
         {% endif %}
       </tbody>
     </table>
@@ -479,6 +596,26 @@ code, .mono { font-family: 'JetBrains Mono', monospace !important; }
     <button id="drawerDelBtn" class="drawer-btn drawer-btn-del" onclick="openDelModalFromDrawer()">
       <i class="fa-solid fa-trash-can" style="font-family:unset;font-size:12px"></i> Delete User
     </button>
+  </div>
+</div>
+
+<!-- ══ BULK DELETE MODAL ══ -->
+<div id="bulkDelModal">
+  <div class="bdm-box">
+    <div class="bdm-icon"><i class="fa-solid fa-triangle-exclamation" style="font-family:unset"></i></div>
+    <div class="bdm-title">Delete Selected Users</div>
+    <div class="bdm-sub">
+      You are about to permanently delete <strong id="bdmCount">?</strong> user account(s).<br>
+      This action <strong style="color:#e2e8f0">cannot be undone</strong>.
+    </div>
+    <input id="bdmInput" class="bdm-input" type="text" placeholder='Type DELETE to confirm' autocomplete="off"/>
+    <div class="bdm-hint">Type <strong style="color:#e2e8f0">DELETE</strong> (all caps) to enable the button.</div>
+    <div class="bdm-actions">
+      <button class="bdm-btn bdm-cancel" onclick="closeBulkDelModal()">Cancel</button>
+      <button class="bdm-btn bdm-confirm" id="bdmConfirmBtn" disabled onclick="executeBulkDelete()">
+        Delete All Selected
+      </button>
+    </div>
   </div>
 </div>
 
@@ -747,6 +884,128 @@ function toggleStatus(userId, currentStatus) {
     if (_drawerUserId === userId) openDrawer(userId, _drawerUsername);
   })
   .catch(() => showToast('Request failed', 'red'));
+}
+
+/* ══════════════════════════════════════════════════════
+   MULTI-SELECT & BULK DELETE
+══════════════════════════════════════════════════════ */
+function getCheckedIds() {
+  return Array.from(document.querySelectorAll('.row-check[data-id]:checked'))
+              .map(cb => parseInt(cb.dataset.id));
+}
+
+function onRowCheck() {
+  const ids     = getCheckedIds();
+  const bar     = document.getElementById('bulkBar');
+  const countEl = document.getElementById('bulkCount');
+  const allCb   = document.getElementById('checkAll');
+
+  bar.classList.toggle('visible', ids.length > 0);
+  countEl.textContent = ids.length + ' user' + (ids.length !== 1 ? 's' : '') + ' selected';
+
+  // sync "select all" state
+  const allBoxes = document.querySelectorAll('.row-check[data-id]:not(:disabled)');
+  allCb.indeterminate = ids.length > 0 && ids.length < allBoxes.length;
+  allCb.checked       = ids.length > 0 && ids.length === allBoxes.length;
+}
+
+function toggleSelectAll(master) {
+  document.querySelectorAll('.row-check[data-id]:not(:disabled)')
+          .forEach(cb => cb.checked = master.checked);
+  onRowCheck();
+}
+
+function clearSelection() {
+  document.querySelectorAll('.row-check').forEach(cb => cb.checked = false);
+  document.getElementById('checkAll').checked       = false;
+  document.getElementById('checkAll').indeterminate = false;
+  onRowCheck();
+}
+
+function openBulkDelModal() {
+  const ids = getCheckedIds();
+  if (!ids.length) return;
+  document.getElementById('bdmCount').textContent = ids.length;
+  document.getElementById('bdmInput').value       = '';
+  document.getElementById('bdmConfirmBtn').disabled = true;
+  const modal = document.getElementById('bulkDelModal');
+  modal.style.display = 'flex';
+  gsap.fromTo('.bdm-box', { scale: 0.92, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.28, ease: 'back.out(1.4)' });
+  setTimeout(() => document.getElementById('bdmInput').focus(), 100);
+}
+
+function closeBulkDelModal() {
+  gsap.to('.bdm-box', {
+    scale: 0.92, opacity: 0, duration: 0.2, ease: 'power2.in',
+    onComplete: () => { document.getElementById('bulkDelModal').style.display = 'none'; }
+  });
+}
+
+document.getElementById('bdmInput').addEventListener('input', function() {
+  document.getElementById('bdmConfirmBtn').disabled = this.value.trim() !== 'DELETE';
+});
+document.getElementById('bulkDelModal').addEventListener('click', function(e) {
+  if (e.target === this) closeBulkDelModal();
+});
+
+async function executeBulkDelete() {
+  const ids = getCheckedIds();
+  if (!ids.length) return;
+
+  const btn = document.getElementById('bdmConfirmBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="btn-spin"></span> Deleting…';
+
+  try {
+    const resp = await fetch('/admin/users/bulk-delete', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      body:    JSON.stringify({ ids }),
+    });
+    const data = await resp.json();
+
+    if (data.error) {
+      showToast(data.error, 'red');
+      btn.disabled = false;
+      btn.textContent = 'Delete All Selected';
+      return;
+    }
+
+    closeBulkDelModal();
+    closeDrawer();
+
+    // animate rows out
+    (data.deleted_ids || ids).forEach(id => {
+      const row = document.getElementById('row-' + id);
+      if (row) {
+        gsap.to(row, {
+          opacity: 0, x: -30, height: 0, paddingTop: 0, paddingBottom: 0,
+          duration: 0.4, ease: 'power2.in',
+          onComplete: () => row.remove()
+        });
+      }
+    });
+
+    // update count label
+    const lbl = document.getElementById('totalCountLabel');
+    if (lbl) lbl.textContent = Math.max(0, parseInt(lbl.textContent) - (data.deleted || 0));
+
+    clearSelection();
+    showToast(data.deleted + ' user(s) deleted.', 'green');
+
+    // show empty state if no rows left
+    setTimeout(() => {
+      if (!document.querySelectorAll('.user-row').length) {
+        document.getElementById('usersBody').innerHTML =
+          '<tr><td colspan="9" class="adm-empty">No users found.</td></tr>';
+      }
+    }, 500);
+
+  } catch (err) {
+    showToast('Network error — please try again.', 'red');
+    btn.disabled = false;
+    btn.textContent = 'Delete All Selected';
+  }
 }
 
 /* ══════════════════════════════════════════════════════

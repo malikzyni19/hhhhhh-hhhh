@@ -443,6 +443,58 @@ def users_delete(user_id):
     return redirect(url_for("admin.users"))
 
 
+# ── Bulk Delete ────────────────────────────────────────────────────
+@admin_bp.route("/users/bulk-delete", methods=["POST"])
+@admin_required
+def users_bulk_delete():
+    """Delete multiple users by ID list. Admins and the current user are always excluded."""
+    data = request.get_json(force=True) or {}
+    ids  = data.get("ids", [])
+
+    if not ids or not isinstance(ids, list):
+        return jsonify({"error": "Provide a non-empty 'ids' list."}), 400
+    if len(ids) > 500:
+        return jsonify({"error": "Batch too large. Max 500 per request."}), 400
+
+    try:
+        targets = (
+            User.query
+            .filter(User.id.in_(ids))
+            .filter(User.role != "admin")
+            .filter(User.id != current_user.id)
+            .all()
+        )
+        if not targets:
+            return jsonify({"error": "No eligible users found in selection."}), 400
+
+        deleted_ids   = [u.id for u in targets]
+        deleted_names = [u.username for u in targets]
+
+        for u in targets:
+            uid = u.id
+            EmailVerification.query.filter_by(user_id=uid).delete(synchronize_session=False)
+            PasswordResetToken.query.filter_by(user_id=uid).delete(synchronize_session=False)
+            GuestDevice.query.filter_by(user_id=uid).delete(synchronize_session=False)
+            LoginHistory.query.filter_by(user_id=uid).delete(synchronize_session=False)
+            DailyTokenUsage.query.filter_by(user_id=uid).delete(synchronize_session=False)
+            UserPermission.query.filter_by(user_id=uid).delete(synchronize_session=False)
+            db.session.query(BacktestRun).filter(BacktestRun.run_by == uid).update(
+                {"run_by": None}, synchronize_session=False)
+            db.session.delete(u)
+            _bust_cache(uid)
+
+        db.session.commit()
+        _log_action(
+            "bulk_delete_users",
+            f"Bulk deleted {len(deleted_names)} users: {', '.join(deleted_names[:30])}",
+        )
+        return jsonify({"ok": True, "deleted": len(deleted_ids), "deleted_ids": deleted_ids})
+
+    except Exception as _e:
+        db.session.rollback()
+        return jsonify({"error": str(_e)}), 500
+
+
 # ── Toggle Status ──────────────────────────────────────────────────
 @admin_bp.route("/users/<int:user_id>/toggle-status", methods=["POST"])
 @admin_required
