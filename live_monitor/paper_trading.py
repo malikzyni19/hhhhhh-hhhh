@@ -1174,6 +1174,7 @@ def _lm_get_paper_position_summary(user_id, item_id=None):
                 "status":           r.status,
                 "close_reason":     getattr(r, "close_reason", None),
                 "close_price":      getattr(r, "close_price",  None),
+                "exit_fill_id":     getattr(r, "exit_fill_id", None),
                 "opened_at":        opened_at.isoformat() if opened_at else None,
                 "closed_at":        closed_at.isoformat() if closed_at else None,
                 "updated_at":       r.updated_at.isoformat() if r.updated_at else None,
@@ -1421,10 +1422,10 @@ def _lm_check_paper_position_exit(position, item=None, current_price=None):
         pos.status         = "closed"
         pos.realized_pnl   = realized_pnl
         pos.unrealized_pnl = 0.0
-        _lm_set_if_exists(pos, "close_price",  str(exit_price))
-        _lm_set_if_exists(pos, "close_reason", close_reason)
-        _lm_set_if_exists(pos, "closed_at",    now)
-        _lm_set_if_exists(pos, "updated_at",   now)
+        pos.close_reason   = close_reason
+        pos.close_price    = str(exit_price)
+        pos.closed_at      = now
+        _lm_set_if_exists(pos, "updated_at", now)
         _db.session.flush()
 
         # ── Create close fill (reuse entry order_id — PaperFill.order_id is non-nullable) ──
@@ -1438,13 +1439,14 @@ def _lm_check_paper_position_exit(position, item=None, current_price=None):
                 fill_qty=qty_str,
                 fill_price=str(exit_price),
                 fill_notional=notional,
+                fill_type=close_reason,
+                position_id=pid,
+                fee=0,
             )
-            _lm_set_if_exists(fill, "fill_type",   close_reason)
-            _lm_set_if_exists(fill, "fee",         0)
-            _lm_set_if_exists(fill, "position_id", pid)
             _db.session.add(fill)
             _db.session.flush()
             fill_id = fill.id
+            pos.exit_fill_id = fill_id   # link position → close fill
 
         # ── Update account cash_balance + realized_pnl ────────────────────────
         acc = _lm_get_or_create_paper_account(pos.user_id)

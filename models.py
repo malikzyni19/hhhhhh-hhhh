@@ -1053,6 +1053,12 @@ class LiveMonitorPaperPosition(db.Model):
     realized_pnl   = db.Column(db.Numeric(20, 8), nullable=False, default=0.0)
     unrealized_pnl = db.Column(db.Numeric(20, 8), nullable=False, default=0.0)
 
+    # Phase 11.9: TP/SL close metadata (nullable — added via idempotent migration)
+    close_reason   = db.Column(db.String(30),  nullable=True)   # "take_profit" | "stop_loss" | "manual"
+    close_price    = db.Column(db.String(40),  nullable=True)
+    closed_at      = db.Column(db.DateTime,    nullable=True)
+    exit_fill_id   = db.Column(db.Integer,     nullable=True)   # fill.id of the closing fill
+
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
                            nullable=False, index=True)
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
@@ -1084,6 +1090,11 @@ class LiveMonitorPaperFill(db.Model):
     fill_qty     = db.Column(db.String(40), nullable=False)
     fill_price   = db.Column(db.String(40), nullable=False)
     fill_notional = db.Column(db.Numeric(20, 8), nullable=True)
+
+    # Phase 11.9: close fill metadata (nullable — added via idempotent migration)
+    fill_type    = db.Column(db.String(30),    nullable=True)   # "entry" | "take_profit" | "stop_loss"
+    position_id  = db.Column(db.Integer,       nullable=True)   # position closed by this fill
+    fee          = db.Column(db.Numeric(20, 8), nullable=True, default=0)
 
     created_at   = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
                              nullable=False, index=True)

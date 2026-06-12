@@ -8449,7 +8449,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
             '<td'+(p.mark_price_source?' title="src: '+esc(p.mark_price_source)+'"':'')+'>'+esc(p.mark_price||'—')+'</td>'+
             '<td style="color:'+pnlC+'">'+pnlStr+'</td>'+
             '<td style="color:'+pnlC+'">'+pnlPctStr+'</td>'+
-            '<td style="color:'+stC+'"'+(p.close_reason?' title="'+esc(p.close_reason)+'"':'')+'>'+esc(p.status||'—')+(p.close_reason?' <span style="font-size:8px;opacity:.7">('+esc(p.close_reason==='take_profit'?'tp':'sl')+')</span>':'')+'</td>'+
+            (function(){var ct=p.close_reason?esc(p.close_reason)+(p.close_price?' @ '+esc(p.close_price):''):'';return '<td style="color:'+stC+'"'+(ct?' title="'+ct+'"':'')+'>'+esc(p.status||'—')+(p.close_reason?' <span style="font-size:8px;opacity:.7">('+esc(p.close_reason==='take_profit'?'tp':'sl')+')</span>':'')+'</td>';})() +
             '</tr>';
         }).join('');
       }).catch(function(){});

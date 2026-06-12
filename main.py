@@ -641,6 +641,20 @@ def _auto_migrate():
                 ))
                 conn.commit()
                 print("[MIGRATE] ob_da_settings_json column ensured on user_preferences table")
+                # Phase 11.9: TP/SL close metadata on paper positions
+                for _stmt in [
+                    "ALTER TABLE live_monitor_paper_positions ADD COLUMN IF NOT EXISTS close_reason  VARCHAR(30)",
+                    "ALTER TABLE live_monitor_paper_positions ADD COLUMN IF NOT EXISTS close_price   VARCHAR(40)",
+                    "ALTER TABLE live_monitor_paper_positions ADD COLUMN IF NOT EXISTS closed_at     TIMESTAMP",
+                    "ALTER TABLE live_monitor_paper_positions ADD COLUMN IF NOT EXISTS exit_fill_id  INTEGER",
+                    # Phase 11.9: close fill metadata on paper fills
+                    "ALTER TABLE live_monitor_paper_fills ADD COLUMN IF NOT EXISTS fill_type    VARCHAR(30)",
+                    "ALTER TABLE live_monitor_paper_fills ADD COLUMN IF NOT EXISTS position_id  INTEGER",
+                    "ALTER TABLE live_monitor_paper_fills ADD COLUMN IF NOT EXISTS fee          NUMERIC(20,8)",
+                ]:
+                    conn.execute(text(_stmt))
+                conn.commit()
+                print("[MIGRATE] Phase 11.9 paper position/fill close metadata columns ensured")
         except Exception as exc:
             print(f"[MIGRATE] Auto-migration warning: {exc}")
 
@@ -28482,17 +28496,19 @@ def api_lm_paper_check_exits(item_id):
                 item_id=item_id,
                 event_type=evt,
                 event_data=_json119.dumps({
-                    "item_id":     item_id,
-                    "position_id": cr.get("position_id"),
-                    "symbol":      cr.get("symbol"),
-                    "side":        cr.get("side"),
-                    "quantity":    cr.get("quantity"),
-                    "entry_price": cr.get("entry_price"),
-                    "mark_price":  cr.get("mark_price"),
-                    "exit_price":  cr.get("exit_price"),
+                    "item_id":      item_id,
+                    "position_id":  cr.get("position_id"),
+                    "symbol":       cr.get("symbol"),
+                    "side":         cr.get("side"),
+                    "quantity":     cr.get("quantity"),
+                    "entry_price":  cr.get("entry_price"),
+                    "mark_price":   cr.get("mark_price"),
+                    "exit_price":   cr.get("exit_price"),
+                    "close_price":  cr.get("exit_price"),
                     "realized_pnl": cr.get("realized_pnl"),
                     "close_reason": reason,
-                    "source":      "internal_paper",
+                    "exit_fill_id": cr.get("fill_id"),
+                    "source":       "internal_paper",
                 }, default=str),
             )
             _db119.session.add(ev)
