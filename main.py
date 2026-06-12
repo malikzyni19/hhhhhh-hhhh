@@ -35144,3 +35144,448 @@ def api_backtest_ob_mtf_debug():
     )
     return html, 200, {"Content-Type": "text/html"}
 # ── END MTF TEMPORARY DEBUG ENDPOINT ─────────────────────────────────────────
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Backtest — Multi-Pair Batch Engine (Phase 10)
+# ══════════════════════════════════════════════════════════════════════════════
+
+_BT_BATCH_MAX_SYMBOLS         = 8
+_BT_BATCH_ALLOWED_TFS         = {"1h", "4h"}
+_BT_BATCH_MAX_TF              = 2
+_BT_BATCH_MAX_CANDLES_PER_RUN = 1200
+_BT_BATCH_MAX_TOTAL_CANDLES   = 8000
+_BT_BATCH_MAX_EVS             = 50
+
+
+def _bt_build_batch_leaderboard(results: dict) -> list:
+    """Build sorted leaderboard from per-symbol/per-TF result dicts."""
+    rows = []
+    for symbol, tf_map in results.items():
+        for tf, res in tf_map.items():
+            if not res.get("ok"):
+                continue
+            rs  = res.get("replay_summary",  {}) or {}
+            os_ = res.get("outcome_summary", {}) or {}
+            slm = os_.get("stop_loss_summary")       or {}
+            rzm = os_.get("realized_summary_by_rr")  or {}
+
+            best_rk, best_exp, best_pf, best_nr = None, None, None, None
+            for rk, rd in rzm.items():
+                exp = rd.get("expectancy_r")
+                pf  = rd.get("profit_factor_r")
+                nr  = rd.get("net_r")
+                if exp is not None:
+                    if (best_exp is None
+                            or exp > best_exp
+                            or (exp == best_exp and (pf or 0) > (best_pf or 0))
+                            or (exp == best_exp and (pf or 0) == (best_pf or 0)
+                                and (nr or 0) > (best_nr or 0))):
+                        best_rk, best_exp, best_pf, best_nr = rk, exp, pf, nr
+            if best_rk is None:
+                for rk, rd in rzm.items():
+                    pf = rd.get("profit_factor_r")
+                    if pf is not None and (best_pf is None or pf > best_pf):
+                        best_rk, best_pf = rk, pf
+
+            best_rd = (rzm.get(best_rk) or {}) if best_rk else {}
+            rows.append({
+                "symbol":               symbol,
+                "timeframe":            tf,
+                "ob_events":            rs.get("ob_events_detected"),
+                "touched_events":       rs.get("touched_events"),
+                "eligible_touched":     os_.get("eligible_touched"),
+                "tp_first":             os_.get("tp_first"),
+                "sl_first":             os_.get("sl_first"),
+                "ambiguous":            os_.get("ambiguous"),
+                "avg_max_r":            os_.get("avg_max_r_reached"),
+                "avg_max_adverse_r":    os_.get("avg_max_adverse_r"),
+                "avg_stop_loss_r":      slm.get("avg_stop_loss_r"),
+                "max_stop_loss_r":      slm.get("max_stop_loss_r"),
+                "best_rr":              best_rk,
+                "best_expectancy_r":    best_rd.get("expectancy_r"),
+                "best_profit_factor_r": best_rd.get("profit_factor_r"),
+                "net_r_at_best_rr":     best_rd.get("net_r"),
+                "win_rate_at_best_rr":  best_rd.get("win_rate_pct"),
+                "rr_1_expectancy":      (rzm.get("1") or {}).get("expectancy_r"),
+                "rr_2_expectancy":      (rzm.get("2") or {}).get("expectancy_r"),
+                "rr_3_expectancy":      (rzm.get("3") or {}).get("expectancy_r"),
+                "rr_1_profit_factor":   (rzm.get("1") or {}).get("profit_factor_r"),
+                "rr_2_profit_factor":   (rzm.get("2") or {}).get("profit_factor_r"),
+                "rr_3_profit_factor":   (rzm.get("3") or {}).get("profit_factor_r"),
+                "used_candle_count":    res.get("used_candle_count"),
+                "elapsed_ms":           res.get("elapsed_ms"),
+            })
+
+    def _sort_key(r):
+        exp = r["best_expectancy_r"]
+        pf  = r["best_profit_factor_r"]
+        sl  = r["avg_stop_loss_r"]
+        nr  = r["net_r_at_best_rr"]
+        return (
+            exp is not None,
+            exp or 0.0,
+            pf or 0.0,
+            -(sl or 0.0),
+            nr or 0.0,
+        )
+
+    rows.sort(key=_sort_key, reverse=True)
+    for i, row in enumerate(rows):
+        row["rank"] = i + 1
+    return rows
+
+
+def _bt_run_ob_batch_backtest(params: dict) -> dict:
+    """Run _bt_run_ob_historical_backtest for each symbol × timeframe."""
+    import time as _time
+
+    symbols        = params["symbols"]
+    timeframes     = params["timeframes"]
+    include_events = params.get("include_events", False)
+    warnings: list = []
+
+    base_count      = params.get("candle_count", 1000)
+    n_runs          = len(symbols) * len(timeframes)
+    total_requested = n_runs * base_count
+    scaled_down     = False
+    candle_count    = base_count
+
+    if total_requested > _BT_BATCH_MAX_TOTAL_CANDLES:
+        candle_count = max(300, int(_BT_BATCH_MAX_TOTAL_CANDLES / n_runs))
+        scaled_down  = True
+        used_total_w = n_runs * candle_count
+        warnings.append(
+            f"Requested {total_requested} total candles across {len(symbols)} symbols × "
+            f"{len(timeframes)} timeframes; auto-scaled to {used_total_w} for batch safety "
+            f"(limit: {_BT_BATCH_MAX_TOTAL_CANDLES})."
+        )
+    candle_count = max(300, min(_BT_BATCH_MAX_CANDLES_PER_RUN, candle_count))
+
+    results: Dict[str, Dict[str, dict]] = {}
+    errors:  Dict[str, Dict[str, str]]  = {}
+
+    for symbol in symbols:
+        results[symbol] = {}
+        for tf in timeframes:
+            run_params = {
+                "symbol":         symbol,
+                "timeframe":      tf,
+                "candle_count":   candle_count,
+                "exchange":       params.get("exchange", "binance"),
+                "market":         params.get("market", "perpetual"),
+                "rr_values":      params.get("rr_values", [1, 2, 3]),
+                "entry_rule":     params.get("entry_rule", "zone_high"),
+                "stop_rule":      params.get("stop_rule",  "close_beyond_zone"),
+                "include_parity": params.get("include_parity", False),
+            }
+            t0 = _time.time()
+            try:
+                res = _bt_run_ob_historical_backtest(run_params)
+            except Exception as exc:
+                elapsed_ms = int((_time.time() - t0) * 1000)
+                err_str = str(exc)
+                errors.setdefault(symbol, {})[tf] = err_str
+                results[symbol][tf] = {
+                    "ok": False, "symbol": symbol, "timeframe": tf,
+                    "error": err_str, "elapsed_ms": elapsed_ms,
+                    "used_candle_count": candle_count,
+                }
+                continue
+            elapsed_ms = int((_time.time() - t0) * 1000)
+            if not res.get("ok"):
+                errors.setdefault(symbol, {})[tf] = res.get("error", "unknown error")
+            out: Dict = {
+                "ok":               res.get("ok", False),
+                "symbol":           symbol,
+                "timeframe":        tf,
+                "used_candle_count": (res.get("candle_summary") or {}).get("returned", candle_count),
+                "elapsed_ms":       elapsed_ms,
+                "candle_summary":   res.get("candle_summary"),
+                "replay_summary":   res.get("replay_summary"),
+                "outcome_summary":  res.get("outcome_summary"),
+                "events_total":     res.get("events_total"),
+                "events_returned":  res.get("events_returned"),
+                "events_sample":    res.get("events_sample"),
+            }
+            if not res.get("ok"):
+                out["error"]   = res.get("error")
+                out["details"] = res.get("details")
+            if include_events:
+                evs = res.get("events") or []
+                out["events"] = evs[:_BT_BATCH_MAX_EVS]
+            results[symbol][tf] = out
+
+    leaderboard = _bt_build_batch_leaderboard(results)
+
+    def _best_by_field(key: str, higher: bool = True):
+        valid = [r for r in leaderboard if r.get(key) is not None]
+        if not valid:
+            return None
+        return max(valid, key=lambda r: r[key]) if higher else min(valid, key=lambda r: r[key])
+
+    def _best_for_symbol(sym: str):
+        rows = [r for r in leaderboard if r.get("symbol") == sym]
+        return rows[0] if rows else None
+
+    best_exp  = _best_by_field("best_expectancy_r",    True)
+    best_pf   = _best_by_field("best_profit_factor_r", True)
+    best_sl   = _best_by_field("avg_stop_loss_r",      False)
+    best_netr = _best_by_field("net_r_at_best_rr",     True)
+
+    by_symbol = {sym: _best_for_symbol(sym) for sym in symbols}
+
+    ok = any(
+        res.get("ok")
+        for tf_map in results.values()
+        for res in tf_map.values()
+    )
+    used_total_candles = sum(
+        res.get("used_candle_count") or 0
+        for tf_map in results.values()
+        for res in tf_map.values()
+    )
+
+    return {
+        "ok":           ok,
+        "mode":         "multi_pair_batch_ob_v1",
+        "phase":        "multi_pair_batch_connected",
+        "symbols":      symbols,
+        "timeframes":   timeframes,
+        "candle_count": candle_count,
+        "rr_values":    params.get("rr_values"),
+        "results":      results,
+        "leaderboard":  leaderboard,
+        "best": {
+            "by_expectancy":    best_exp,
+            "by_profit_factor": best_pf,
+            "by_lowest_avg_sl": best_sl,
+            "by_highest_net_r": best_netr,
+            "by_symbol":        by_symbol,
+        },
+        "errors": errors,
+        "batch_limits": {
+            "max_symbols":             _BT_BATCH_MAX_SYMBOLS,
+            "max_timeframes":          _BT_BATCH_MAX_TF,
+            "max_candles_per_run":     _BT_BATCH_MAX_CANDLES_PER_RUN,
+            "max_total_candles":       _BT_BATCH_MAX_TOTAL_CANDLES,
+            "requested_total_candles": total_requested,
+            "used_total_candles":      used_total_candles,
+            "scaled_down":             scaled_down,
+            "warnings":                warnings,
+        },
+    }
+
+
+@app.route("/api/backtest/ob-batch", methods=["POST"])
+@login_required
+def api_backtest_ob_batch():
+    err = _guest_tab_check("backtest")
+    if err is not None:
+        return err
+
+    payload = request.get_json(force=True) or {}
+
+    raw_syms = payload.get("symbols", ["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT"])
+    if not isinstance(raw_syms, list):
+        raw_syms = [str(raw_syms)]
+    seen: set = set()
+    symbols: list = []
+    for s in raw_syms:
+        s = str(s).strip().upper()
+        if not s:
+            continue
+        if not s.endswith("USDT"):
+            s = s + "USDT"
+        if s not in seen:
+            seen.add(s)
+            symbols.append(s)
+    if not symbols:
+        return jsonify({"ok": False, "error": "at least one symbol required"}), 400
+    if len(symbols) > _BT_BATCH_MAX_SYMBOLS:
+        return jsonify({"ok": False,
+                        "error": f"max {_BT_BATCH_MAX_SYMBOLS} symbols allowed"}), 400
+
+    raw_tfs = payload.get("timeframes", ["1h", "4h"])
+    if not isinstance(raw_tfs, list):
+        raw_tfs = [str(raw_tfs)]
+    timeframes: list = []
+    for _tf in raw_tfs:
+        _tf = str(_tf).strip()
+        if _tf not in _BT_BATCH_ALLOWED_TFS:
+            return jsonify({"ok": False,
+                            "error": f"timeframe '{_tf}' not allowed in batch mode. "
+                                     f"Allowed: {sorted(_BT_BATCH_ALLOWED_TFS)}"}), 400
+        if _tf not in timeframes:
+            timeframes.append(_tf)
+    if not timeframes:
+        return jsonify({"ok": False, "error": "at least one timeframe required"}), 400
+    if len(timeframes) > _BT_BATCH_MAX_TF:
+        return jsonify({"ok": False,
+                        "error": f"max {_BT_BATCH_MAX_TF} timeframes allowed in batch mode"}), 400
+
+    try:
+        candle_count = int(payload.get("candle_count", 1000))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "candle_count must be integer"}), 400
+    candle_count = max(300, min(_BT_BATCH_MAX_CANDLES_PER_RUN, candle_count))
+
+    def _bf(val, default=False):
+        if isinstance(val, bool): return val
+        return str(val).lower() in ("true", "1", "yes")
+
+    params = {
+        "symbols":        symbols,
+        "timeframes":     timeframes,
+        "candle_count":   candle_count,
+        "exchange":       "binance",
+        "market":         "perpetual",
+        "rr_values":      _bt_parse_rr_values(payload.get("rr_values", [1, 2, 3])),
+        "entry_rule":     "zone_high",
+        "stop_rule":      "close_beyond_zone",
+        "include_parity": _bf(payload.get("include_parity", False)),
+        "include_events": _bf(payload.get("include_events", False)),
+    }
+    result = _bt_run_ob_batch_backtest(params)
+    return jsonify(result), 200 if result.get("ok") else 502
+
+
+# ── TEMPORARY BATCH DEBUG ENDPOINT — REMOVE AFTER TESTING ────────────────────
+@app.route("/api/backtest/ob-batch/debug", methods=["GET"])
+@login_required
+def api_backtest_ob_batch_debug():
+    err = _guest_tab_check("backtest")
+    if err is not None:
+        return err
+
+    raw_syms = request.args.get("symbols", "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT")
+    symbols = []
+    seen_d: set = set()
+    for s in raw_syms.split(","):
+        s = s.strip().upper()
+        if not s:
+            continue
+        if not s.endswith("USDT"):
+            s = s + "USDT"
+        if s not in seen_d and len(symbols) < _BT_BATCH_MAX_SYMBOLS:
+            seen_d.add(s)
+            symbols.append(s)
+    if not symbols:
+        symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"]
+
+    raw_tfs = request.args.get("timeframes", "1h,4h")
+    timeframes = [t.strip() for t in raw_tfs.split(",")
+                  if t.strip() in _BT_BATCH_ALLOWED_TFS][:_BT_BATCH_MAX_TF]
+    if not timeframes:
+        timeframes = ["1h", "4h"]
+
+    try:
+        candle_count = int(request.args.get("candle_count", 1000))
+    except Exception:
+        candle_count = 1000
+    candle_count = max(300, min(_BT_BATCH_MAX_CANDLES_PER_RUN, candle_count))
+
+    fmt = request.args.get("format", "json").strip().lower()
+
+    params = {
+        "symbols": symbols, "timeframes": timeframes, "candle_count": candle_count,
+        "exchange": "binance", "market": "perpetual", "rr_values": [1, 2, 3],
+        "entry_rule": "zone_high", "stop_rule": "close_beyond_zone",
+        "include_parity": False, "include_events": False,
+    }
+    result = _bt_run_ob_batch_backtest(params)
+
+    if fmt == "json":
+        return jsonify(result), 200 if result.get("ok") else 502
+
+    def _v(val):
+        if val is None: return "<span style='color:#888'>null</span>"
+        return str(val)
+
+    lb   = result.get("leaderboard") or []
+    bst  = result.get("best")        or {}
+    ers  = result.get("errors")      or {}
+    lims = result.get("batch_limits") or {}
+
+    TH = "padding:6px 10px;background:#1a2233;color:#8cf;border-bottom:1px solid #222;white-space:nowrap"
+    TD = "padding:5px 10px;border-bottom:1px solid #1a2233;color:#ddd"
+    hdr = ("<tr>" + "".join(
+        f"<th style='{TH}'>{c}</th>" for c in
+        ["#","Symbol","TF","OB","Touch","TP","SL","Ambig","AvgMaxR","AvgSLR",
+         "BestRR","Expect","PF","NetR","Win%","Candles","ms"]) + "</tr>")
+    trs = ""
+    for row in lb:
+        cols = [row.get(k) for k in
+                ["rank","symbol","timeframe","ob_events","touched_events",
+                 "tp_first","sl_first","ambiguous","avg_max_r","avg_stop_loss_r",
+                 "best_rr","best_expectancy_r","best_profit_factor_r",
+                 "net_r_at_best_rr","win_rate_at_best_rr",
+                 "used_candle_count","elapsed_ms"]]
+        trs += "<tr>" + "".join(f"<td style='{TD}'>{_v(c)}</td>" for c in cols) + "</tr>"
+
+    err_html = ""
+    if ers:
+        err_html = "<h3 style='color:#f84;margin-top:20px'>Errors</h3><ul style='color:#f84'>"
+        for sym, tf_errs in ers.items():
+            for tf, msg in tf_errs.items():
+                err_html += f"<li><b>{sym}/{tf}</b>: {msg}</li>"
+        err_html += "</ul>"
+
+    be = bst.get("by_expectancy") or {}
+    bp = bst.get("by_profit_factor") or {}
+    bs = bst.get("by_lowest_avg_sl") or {}
+    bn = bst.get("by_highest_net_r") or {}
+
+    def _sym_tf(d):
+        if not d: return "<span style='color:#888'>—</span>"
+        return f"<b style='color:#4f4'>{d.get('symbol','?')}</b> / {d.get('timeframe','?')}"
+
+    best_html = (
+        "<h3 style='color:#8cf;margin-top:20px'>Best Pairs</h3>"
+        f"<p style='color:#aaa;font-size:13px'>"
+        f"By Expectancy: {_sym_tf(be)}"
+        f" &nbsp;|&nbsp; By Profit Factor: {_sym_tf(bp)}"
+        f" &nbsp;|&nbsp; Lowest Avg SL: {_sym_tf(bs)}"
+        f" &nbsp;|&nbsp; Highest Net R: {_sym_tf(bn)}"
+        f"</p>"
+    )
+
+    sd_color = "#fa0" if lims.get("scaled_down") else "#4f4"
+    sd_label = "YES (auto-scaled)" if lims.get("scaled_down") else "no"
+    limits_html = (
+        "<h3 style='color:#8cf;margin-top:20px'>Batch Limits</h3>"
+        f"<p style='color:#aaa;font-size:13px'>"
+        f"Max symbols: <b style='color:#fff'>{_v(lims.get('max_symbols'))}</b>"
+        f" &nbsp;|&nbsp; Max runs: {_v(lims.get('max_symbols'))}×{_v(lims.get('max_timeframes'))}"
+        f" &nbsp;|&nbsp; Max candles/run: <b style='color:#fff'>{_v(lims.get('max_candles_per_run'))}</b>"
+        f" &nbsp;|&nbsp; Requested total: <b style='color:#fff'>{_v(lims.get('requested_total_candles'))}</b>"
+        f" &nbsp;|&nbsp; Used total: <b style='color:#fff'>{_v(lims.get('used_total_candles'))}</b>"
+        f" &nbsp;|&nbsp; Scaled: <b style='color:{sd_color}'>{sd_label}</b>"
+        f"</p>"
+    )
+    for w in (lims.get("warnings") or []):
+        limits_html += f"<p style='color:#fa0;font-size:12px'>⚠ {w}</p>"
+
+    tc = "#4f4" if result.get("ok") else "#f55"
+    html = (
+        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>BT Batch Debug</title>"
+        "<style>body{font-family:monospace;padding:16px;background:#111;color:#eee}"
+        "h2{margin-bottom:4px}h3{margin-bottom:4px}"
+        "table{border-collapse:collapse;width:100%;margin-top:6px;font-size:12px}"
+        ".warn{background:#332200;color:#fa0;padding:8px 12px;border-radius:6px;margin-bottom:14px}</style>"
+        "</head><body>"
+        f"<h2 style='color:{tc}'>ZyNi Pair Batch Backtest Debug</h2>"
+        "<p class='warn'>⚠ TEMPORARY DEBUG ENDPOINT — ADMIN ONLY — REMOVE AFTER TESTING</p>"
+        f"<p style='color:#aaa;font-size:13px'>Symbols: <b style='color:#fff'>{', '.join(symbols)}</b>"
+        f" &nbsp;|&nbsp; Timeframes: <b style='color:#fff'>{', '.join(timeframes)}</b>"
+        f" &nbsp;|&nbsp; Candles: <b style='color:#fff'>{candle_count}</b></p>"
+        + limits_html
+        + best_html
+        + "<h3 style='color:#8cf;margin-top:20px'>Leaderboard</h3>"
+        + f"<table><thead>{hdr}</thead><tbody>{trs}</tbody></table>"
+        + err_html
+        + "</body></html>"
+    )
+    return html, 200, {"Content-Type": "text/html"}
+# ── END BATCH TEMPORARY DEBUG ENDPOINT ───────────────────────────────────────
