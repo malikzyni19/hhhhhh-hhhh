@@ -33574,6 +33574,11 @@ def _bt_simulate_first_touch_outcome(event: dict, candles: List[Dict],
         "max_adverse_r":       0.0,
         "max_favorable_price": None,
         "max_adverse_price":   None,
+        "stop_close_price":    None,
+        "stop_loss_r":         None,
+        "stop_loss_abs":       None,
+        "stop_loss_pct":       None,
+        "realized_by_rr":      {},
     }
 
     if event.get("touch_status") != "touched":
@@ -33684,6 +33689,73 @@ def _bt_simulate_first_touch_outcome(event: dict, candles: List[Dict],
         adv_r = max(0.0, (max_adv_price - entry_price) / risk_amount) \
                 if max_adv_price is not None else 0.0
 
+    # ── Close-based stop loss R ───────────────────────────────────────────────
+    stop_close_price = None
+    stop_loss_r      = None
+    stop_loss_abs    = None
+    stop_loss_pct    = None
+    if stop_hit and stop_bar is not None:
+        _scp = float(candles[stop_bar]["close"])
+        if ob_type == "bullish":
+            _raw = max(0.0, (entry_price - _scp) / risk_amount)
+        else:
+            _raw = max(0.0, (_scp - entry_price) / risk_amount)
+        stop_loss_r      = round(_raw, 4)
+        stop_loss_abs    = round(abs(entry_price - _scp), 8)
+        stop_loss_pct    = round(stop_loss_abs / entry_price * 100, 4) if entry_price else None
+        stop_close_price = round(_scp, 8)
+
+    # ── Per-RR realized outcomes ──────────────────────────────────────────────
+    realized_by_rr: Dict[str, dict] = {}
+    for _rv in sorted_rr:
+        _rk     = _bt_rr_key(_rv)
+        _rr_hit = hit_rr[_rk]
+        _tp_rel = candles_to_rr[_rk]
+        _tp_abs = (first_touch_bar + _tp_rel) if _tp_rel is not None else None
+
+        if _rr_hit and _tp_abs is not None:
+            if stop_bar is None or _tp_abs < stop_bar:
+                _rz_out   = "win"
+                _rz_r     = float(_rv)
+                _rz_eb    = _tp_abs
+                _rz_et    = times[_tp_abs] if _tp_abs < n else None
+                _rz_ep    = round(tp_prices[_rk], 8)
+                _rz_cl    = _tp_rel
+            else:  # _tp_abs == stop_bar — same-candle ambiguity
+                _rz_out   = "ambiguous"
+                _rz_r     = None
+                _rz_eb    = stop_bar
+                _rz_et    = stop_time
+                _rz_ep    = None
+                _rz_cl    = stop_bar - first_touch_bar
+        elif stop_hit:
+            _rz_out  = "loss"
+            _rz_r    = (-stop_loss_r) if stop_loss_r is not None else None
+            _rz_eb   = stop_bar
+            _rz_et   = stop_time
+            _rz_ep   = stop_close_price
+            _rz_cl   = (stop_bar - first_touch_bar) if stop_bar is not None else None
+        else:
+            _rz_out  = "unresolved"
+            _rz_r    = None
+            _rz_eb   = None
+            _rz_et   = None
+            _rz_ep   = None
+            _rz_cl   = None
+
+        realized_by_rr[_rk] = {
+            "target_rr":        float(_rv),
+            "outcome":          _rz_out,
+            "realized_r":       round(_rz_r, 4) if _rz_r is not None else None,
+            "exit_bar":         _rz_eb,
+            "exit_time":        _rz_et,
+            "exit_price":       _rz_ep,
+            "target_price":     round(tp_prices[_rk], 8),
+            "stop_close_price": stop_close_price,
+            "stop_loss_r":      stop_loss_r,
+            "candles_to_exit":  _rz_cl,
+        }
+
     return {
         "eligible":            True,
         "entry_price":         round(entry_price, 8),
@@ -33707,6 +33779,11 @@ def _bt_simulate_first_touch_outcome(event: dict, candles: List[Dict],
         "max_adverse_r":       round(adv_r, 4),
         "max_favorable_price": round(max_fav_price, 8) if max_fav_price is not None else None,
         "max_adverse_price":   round(max_adv_price, 8) if max_adv_price is not None else None,
+        "stop_close_price":    stop_close_price,
+        "stop_loss_r":         stop_loss_r,
+        "stop_loss_abs":       stop_loss_abs,
+        "stop_loss_pct":       stop_loss_pct,
+        "realized_by_rr":      realized_by_rr,
     }
 
 
@@ -33751,19 +33828,108 @@ def _bt_apply_outcomes_to_events(events: List[Dict], candles: List[Dict],
             "avg_max_r_reached": round(sum(rs) / nd, 4) if nd else None,
         }
 
+    # ── Stop loss summary ─────────────────────────────────────────────────────
+    _sl_evs   = [e for e in eligible
+                 if e["simulation"]["stop_hit"] and
+                    e["simulation"].get("stop_loss_r") is not None]
+    _sl_rv    = [e["simulation"]["stop_loss_r"] for e in _sl_evs]
+    _sl_pv    = [e["simulation"]["stop_loss_pct"] for e in _sl_evs
+                 if e["simulation"].get("stop_loss_pct") is not None]
+    if _sl_rv:
+        _sls  = sorted(_sl_rv)
+        _nsl  = len(_sls)
+        _midx = _nsl // 2
+        _med  = _sls[_midx] if _nsl % 2 == 1 else (_sls[_midx - 1] + _sls[_midx]) / 2
+        _bkt  = {"1.0-1.25R": 0, "1.25-1.5R": 0, "1.5-2.0R": 0, "2.0R+": 0}
+        for _r in _sl_rv:
+            if _r < 1.25:   _bkt["1.0-1.25R"] += 1
+            elif _r < 1.5:  _bkt["1.25-1.5R"] += 1
+            elif _r < 2.0:  _bkt["1.5-2.0R"]  += 1
+            else:           _bkt["2.0R+"]      += 1
+        stop_loss_summary = {
+            "stop_loss_count":    _nsl,
+            "avg_stop_loss_r":    round(sum(_sl_rv) / _nsl, 4),
+            "median_stop_loss_r": round(_med, 4),
+            "max_stop_loss_r":    round(max(_sl_rv), 4),
+            "min_stop_loss_r":    round(min(_sl_rv), 4),
+            "avg_stop_loss_pct":  round(sum(_sl_pv) / len(_sl_pv), 4) if _sl_pv else None,
+            "stop_loss_buckets":  _bkt,
+        }
+    else:
+        stop_loss_summary = {
+            "stop_loss_count": 0,
+            "avg_stop_loss_r": None, "median_stop_loss_r": None,
+            "max_stop_loss_r": None, "min_stop_loss_r": None,
+            "avg_stop_loss_pct": None,
+            "stop_loss_buckets": {"1.0-1.25R": 0, "1.25-1.5R": 0, "1.5-2.0R": 0, "2.0R+": 0},
+        }
+
+    # ── Realized summary by RR ────────────────────────────────────────────────
+    realized_summary_by_rr: Dict[str, dict] = {}
+    for rv in rr_values:
+        rk    = _bt_rr_key(rv)
+        _rzal = [e for e in eligible
+                 if rk in (e["simulation"].get("realized_by_rr") or {})]
+        _wins = [e for e in _rzal
+                 if e["simulation"]["realized_by_rr"][rk]["outcome"] == "win"]
+        _loss = [e for e in _rzal
+                 if e["simulation"]["realized_by_rr"][rk]["outcome"] == "loss"]
+        _ambs = [e for e in _rzal
+                 if e["simulation"]["realized_by_rr"][rk]["outcome"] == "ambiguous"]
+        _unrs = [e for e in _rzal
+                 if e["simulation"]["realized_by_rr"][rk]["outcome"] == "unresolved"]
+        _ntr  = len(_wins) + len(_loss)
+        _wr   = [e["simulation"]["realized_by_rr"][rk]["realized_r"]
+                 for e in _wins
+                 if e["simulation"]["realized_by_rr"][rk].get("realized_r") is not None]
+        _lr   = [abs(e["simulation"]["realized_by_rr"][rk]["realized_r"])
+                 for e in _loss
+                 if e["simulation"]["realized_by_rr"][rk].get("realized_r") is not None]
+        _wc   = [e["simulation"]["realized_by_rr"][rk]["candles_to_exit"]
+                 for e in _wins
+                 if e["simulation"]["realized_by_rr"][rk].get("candles_to_exit") is not None]
+        _lc   = [e["simulation"]["realized_by_rr"][rk]["candles_to_exit"]
+                 for e in _loss
+                 if e["simulation"]["realized_by_rr"][rk].get("candles_to_exit") is not None]
+        _twr  = round(sum(_wr), 4)
+        _tlr  = round(sum(_lr), 4)
+        _net  = round(_twr - _tlr, 4)
+        realized_summary_by_rr[rk] = {
+            "target_rr":           float(rv),
+            "trades":              _ntr,
+            "wins":                len(_wins),
+            "losses":              len(_loss),
+            "ambiguous":           len(_ambs),
+            "unresolved":          len(_unrs),
+            "win_rate_pct":        round(len(_wins) / _ntr * 100, 1) if _ntr else 0.0,
+            "avg_win_r":           round(sum(_wr) / len(_wr), 4) if _wr else None,
+            "avg_loss_r":          round(sum(_lr) / len(_lr), 4) if _lr else None,
+            "max_loss_r":          round(max(_lr), 4) if _lr else None,
+            "min_loss_r":          round(min(_lr), 4) if _lr else None,
+            "total_win_r":         _twr,
+            "total_loss_r":        _tlr,
+            "net_r":               _net,
+            "expectancy_r":        round(_net / _ntr, 4) if _ntr else None,
+            "profit_factor_r":     round(_twr / _tlr, 4) if _tlr > 0 else None,
+            "avg_candles_to_win":  round(sum(_wc) / len(_wc), 1) if _wc else None,
+            "avg_candles_to_loss": round(sum(_lc) / len(_lc), 1) if _lc else None,
+        }
+
     return {
-        "events_total":      len(events),
-        "eligible_touched":  n_elig,
-        "no_touch":          len(events) - n_elig,
-        "tp_first":          tp_first,
-        "sl_first":          sl_first,
-        "ambiguous":         ambiguous,
-        "unresolved":        unresolved,
-        "hit_rate_by_rr":    hit_rate_by_rr,
-        "avg_max_r_reached": avg_max_r,
-        "avg_max_adverse_r": avg_adv_r,
-        "bullish":           _dir("bullish"),
-        "bearish":           _dir("bearish"),
+        "events_total":           len(events),
+        "eligible_touched":       n_elig,
+        "no_touch":               len(events) - n_elig,
+        "tp_first":               tp_first,
+        "sl_first":               sl_first,
+        "ambiguous":              ambiguous,
+        "unresolved":             unresolved,
+        "hit_rate_by_rr":         hit_rate_by_rr,
+        "avg_max_r_reached":      avg_max_r,
+        "avg_max_adverse_r":      avg_adv_r,
+        "bullish":                _dir("bullish"),
+        "bearish":                _dir("bearish"),
+        "stop_loss_summary":      stop_loss_summary,
+        "realized_summary_by_rr": realized_summary_by_rr,
     }
 
 
@@ -33965,6 +34131,18 @@ def api_backtest_ob_historical_debug():
             ("hit_rate 2R",                     _hr("2")),
             ("hit_rate 3R",                     _hr("3")),
             ("avg_max_r_reached",               _v(os_.get("avg_max_r_reached"))),
+            ("avg_max_adverse_r",               _v(os_.get("avg_max_adverse_r"))),
+            ("── stop loss ──",                 ""),
+            ("stop_loss_count",                 _v((os_.get("stop_loss_summary") or {}).get("stop_loss_count"))),
+            ("avg_stop_loss_r",                 _v((os_.get("stop_loss_summary") or {}).get("avg_stop_loss_r"))),
+            ("max_stop_loss_r",                 _v((os_.get("stop_loss_summary") or {}).get("max_stop_loss_r"))),
+            ("── realized by RR ──",            ""),
+            ("1R expectancy_r",                 _v((os_.get("realized_summary_by_rr") or {}).get("1", {}).get("expectancy_r"))),
+            ("1R profit_factor_r",              _v((os_.get("realized_summary_by_rr") or {}).get("1", {}).get("profit_factor_r"))),
+            ("2R expectancy_r",                 _v((os_.get("realized_summary_by_rr") or {}).get("2", {}).get("expectancy_r"))),
+            ("2R profit_factor_r",              _v((os_.get("realized_summary_by_rr") or {}).get("2", {}).get("profit_factor_r"))),
+            ("3R expectancy_r",                 _v((os_.get("realized_summary_by_rr") or {}).get("3", {}).get("expectancy_r"))),
+            ("3R profit_factor_r",              _v((os_.get("realized_summary_by_rr") or {}).get("3", {}).get("profit_factor_r"))),
             ("── parity ──",                    ""),
             ("parity.enabled",                  _v(par.get("enabled"))),
             ("parity.production_count",         _v(par.get("production_count"))),
