@@ -1106,3 +1106,71 @@ class LiveMonitorPaperFill(db.Model):
     def __repr__(self) -> str:
         return (f"<LiveMonitorPaperFill id={self.id} order={self.order_id} "
                 f"{self.symbol} {self.side} qty={self.fill_qty}>")
+
+
+class LiveMonitorPaperTrade(db.Model):
+    """Paper trade journal record — Phase 11.10.
+
+    One row per closed LiveMonitorPaperPosition.
+    DB-only. No exchange order IDs. No secrets. No API keys.
+    """
+    __tablename__ = "live_monitor_paper_trades"
+
+    id             = db.Column(db.Integer, primary_key=True)
+    user_id        = db.Column(db.Integer, db.ForeignKey("users.id"),
+                               nullable=False, index=True)
+    item_id        = db.Column(db.Integer, db.ForeignKey("live_monitor_items.id"),
+                               nullable=True,  index=True)
+    account_id     = db.Column(db.Integer, nullable=True)
+    position_id    = db.Column(db.Integer, nullable=True, index=True, unique=True)
+    entry_order_id = db.Column(db.Integer, nullable=True)
+    exit_fill_id   = db.Column(db.Integer, nullable=True)
+
+    symbol         = db.Column(db.String(20),  nullable=False)
+    side           = db.Column(db.String(10),  nullable=False)
+    quantity       = db.Column(db.String(40),  nullable=True)
+    entry_price    = db.Column(db.String(40),  nullable=True)
+    exit_price     = db.Column(db.String(40),  nullable=True)
+
+    status         = db.Column(db.String(20),  nullable=False, default="closed")
+    outcome        = db.Column(db.String(20),  nullable=True)   # win | loss | breakeven
+    outcome_reason = db.Column(db.String(40),  nullable=True)   # take_profit | stop_loss | manual | unknown
+    realized_pnl     = db.Column(db.Numeric(20, 8), nullable=True, default=0.0)
+    realized_pnl_pct = db.Column(db.Numeric(10, 4), nullable=True)
+    risk_reward      = db.Column(db.Numeric(10, 4), nullable=True)
+    duration_seconds = db.Column(db.Integer,   nullable=True)
+
+    max_favorable_excursion = db.Column(db.Numeric(20, 8), nullable=True)
+    max_adverse_excursion   = db.Column(db.Numeric(20, 8), nullable=True)
+
+    # Context snapshots — TEXT (JSON), all nullable
+    entry_snapshot_json           = db.Column(db.Text, nullable=True)
+    exit_snapshot_json            = db.Column(db.Text, nullable=True)
+    execution_intent_json         = db.Column(db.Text, nullable=True)
+    execution_intelligence_json   = db.Column(db.Text, nullable=True)
+    mtf_orderflow_history_json    = db.Column(db.Text, nullable=True)
+    ai_context_json               = db.Column(db.Text, nullable=True)
+    ai_decision_json              = db.Column(db.Text, nullable=True)
+    automation_policy_json        = db.Column(db.Text, nullable=True)
+    paper_order_draft_json        = db.Column(db.Text, nullable=True)
+    entry_order_json              = db.Column(db.Text, nullable=True)
+    exit_fill_json                = db.Column(db.Text, nullable=True)
+    entry_orderflow_snapshot_json = db.Column(db.Text, nullable=True)
+    exit_orderflow_snapshot_json  = db.Column(db.Text, nullable=True)
+    ai_post_trade_review_json     = db.Column(db.Text, nullable=True)
+
+    created_at = db.Column(db.DateTime,
+                           default=lambda: datetime.now(timezone.utc),
+                           nullable=False, index=True)
+    closed_at  = db.Column(db.DateTime, nullable=True)
+    updated_at = db.Column(db.DateTime,
+                           default=lambda: datetime.now(timezone.utc),
+                           onupdate=lambda: datetime.now(timezone.utc),
+                           nullable=True)
+
+    user = db.relationship("User",              foreign_keys=[user_id])
+    item = db.relationship("LiveMonitorItem",   foreign_keys=[item_id])
+
+    def __repr__(self) -> str:
+        return (f"<LiveMonitorPaperTrade id={self.id} pos={self.position_id} "
+                f"{self.symbol} {self.side} outcome={self.outcome}>")

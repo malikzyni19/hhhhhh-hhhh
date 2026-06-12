@@ -5161,6 +5161,23 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                       '</div>'+
 
                     '</div>'+ /* end grid-2 */
+
+                    /* Paper Trade Journal */
+                    '<div class="lm-ws-section" style="margin-top:4px">'+
+                      '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">'+
+                        '<div class="lm-ws-sh" style="margin:0;flex:1">Paper Trade Journal</div>'+
+                        '<button id="lmPapJnlSyncBtn" class="btn lm-sm-btn" style="color:var(--yellow,#facc15)" onclick="window._lmPapSyncJournal()">Sync Journal</button>'+
+                        '<button class="btn lm-sm-btn" onclick="window._lmPapRefreshJournal()">Refresh</button>'+
+                      '</div>'+
+                      '<div id="lmPapJnlResult" style="display:none;font-size:9px;padding:3px 0 4px;line-height:1.5"></div>'+
+                      '<div class="lm-tbl-wrap" style="max-height:180px">'+
+                        '<table class="lm-inner-tbl" id="lmPapJnlTbl">'+
+                          '<thead><tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>Outcome</th><th>PnL</th><th>PnL%</th><th>Reason</th><th>Closed</th><th>AI</th></tr></thead>'+
+                          '<tbody id="lmPapJnlTbody"><tr><td colspan="10" style="text-align:center;color:var(--text-3);padding:14px 0">No journal entries — click Sync Journal to build</td></tr></tbody>'+
+                        '</table>'+
+                      '</div>'+
+                    '</div>'+
+
                   '</div>'+ /* end lmTermGrpBody-paper */
                 '</div>'+ /* end GROUP 1 */
 
@@ -8630,6 +8647,82 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         if(sb){ sb.disabled=false; sb.textContent='Submit Paper Order'; }
         if(resEl){ resEl.style.display=''; resEl.style.color='var(--red-2,#f87171)'; resEl.textContent='Network error during submit.'; }
       });
+  };
+
+  window._lmPapSyncJournal=function(){
+    var itemId=window._lmSimItemId||(window._lmSelItem&&window._lmSelItem.id);
+    if(!itemId){ alert('Select a setup first.'); return; }
+    var btn=document.getElementById('lmPapJnlSyncBtn');
+    var resEl=document.getElementById('lmPapJnlResult');
+    if(btn){ btn.disabled=true; btn.textContent='Syncing…'; }
+    if(resEl){ resEl.style.display='none'; }
+    fetch('/api/live-monitor/items/'+itemId+'/paper/journal/sync',{
+      method:'POST',
+      credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+    })
+      .then(function(r){return r.json().then(function(d){return {s:r.status,d:d};});})
+      .then(function(rd){
+        var d=rd.d;
+        if(btn){ btn.disabled=false; btn.textContent='Sync Journal'; }
+        if(resEl){
+          resEl.style.display='';
+          if(d&&d.ok){
+            resEl.style.color='var(--green-2,#4ade80)';
+            resEl.innerHTML='<b>Journal synced</b> — Processed: '+esc(String(d.processed||0))+
+              ' · Created: <b>'+esc(String(d.created||0))+'</b>'+
+              ' · Updated: '+esc(String(d.updated||0))+
+              ' · Skipped: '+esc(String(d.skipped||0));
+          } else {
+            resEl.style.color='var(--red-2,#f87171)';
+            resEl.innerHTML='<b>Sync failed:</b> '+esc((d&&d.error)||'Unknown error');
+          }
+        }
+        if(d&&d.ok) window._lmPapRefreshJournal();
+      })
+      .catch(function(){
+        if(btn){ btn.disabled=false; btn.textContent='Sync Journal'; }
+        if(resEl){ resEl.style.display=''; resEl.style.color='var(--red-2,#f87171)'; resEl.textContent='Network error.'; }
+      });
+  };
+
+  window._lmPapRefreshJournal=function(){
+    var itemId=window._lmSimItemId||(window._lmSelItem&&window._lmSelItem.id);
+    if(!itemId) return;
+    var tbody=document.getElementById('lmPapJnlTbody');
+    fetch('/api/live-monitor/items/'+itemId+'/paper/journal',{credentials:'same-origin'})
+      .then(function(r){return r.json();})
+      .then(function(d){
+        if(!tbody) return;
+        var trades=d.trades||[];
+        if(!trades.length){
+          tbody.innerHTML='<tr><td colspan="10" style="text-align:center;color:var(--text-3);padding:14px 0">No journal entries</td></tr>';
+          return;
+        }
+        tbody.innerHTML=trades.map(function(t){
+          var pnl=t.realized_pnl!=null?parseFloat(t.realized_pnl):null;
+          var pct=t.realized_pnl_pct!=null?parseFloat(t.realized_pnl_pct):null;
+          var pnlC=pnl===null?'var(--text-2)':(pnl>0?'var(--green,#4ade80)':'var(--red-2,#f87171)');
+          var pnlStr=pnl===null?'—':(pnl>=0?'+':'')+pnl.toFixed(4);
+          var pctStr=pct===null?'—':(pct>=0?'+':'')+pct.toFixed(2)+'%';
+          var outC=t.outcome==='win'?'var(--green,#4ade80)':t.outcome==='loss'?'var(--red-2,#f87171)':'var(--text-2)';
+          var sideC=t.side==='LONG'||t.side==='BUY'?'var(--green,#4ade80)':'var(--red-2,#f87171)';
+          var cl=t.closed_at?t.closed_at.replace('T',' ').slice(0,16):'—';
+          var aiMark=t.ai_review_available?'<span style="color:var(--yellow,#facc15)" title="AI review stored">✓</span>':'—';
+          return '<tr>'+
+            '<td>'+esc(t.symbol||'—')+'</td>'+
+            '<td style="color:'+sideC+'">'+esc(t.side||'—')+'</td>'+
+            '<td>'+esc(t.entry_price||'—')+'</td>'+
+            '<td>'+esc(t.exit_price||'—')+'</td>'+
+            '<td style="color:'+outC+';font-weight:700">'+esc(t.outcome||'—')+'</td>'+
+            '<td style="color:'+pnlC+'">'+pnlStr+'</td>'+
+            '<td style="color:'+pnlC+'">'+pctStr+'</td>'+
+            '<td style="font-size:9px">'+esc(t.outcome_reason||'—')+'</td>'+
+            '<td style="font-size:9px;white-space:nowrap">'+esc(cl)+'</td>'+
+            '<td style="text-align:center">'+aiMark+'</td>'+
+            '</tr>';
+        }).join('');
+      }).catch(function(){});
   };
 
   function _lmMtfMatrix(item){

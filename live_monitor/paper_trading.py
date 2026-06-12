@@ -1609,3 +1609,555 @@ def _lm_process_all_paper_exits_for_user(user_id):
             "total_processed": 0, "total_closed": 0,
             "tp_hits": 0, "sl_hits": 0, "source": "internal_paper",
         }
+
+
+# ── Phase 11.10: Paper Trade Journal ─────────────────────────────────────────
+# Safety: No Binance API. No Binance Testnet. No _lm_bt_* calls. No HTTP requests.
+# DB-only. Read-only snapshots captured at sync time. No auto execution.
+# No background worker. Manual sync only.
+
+
+def _lm_build_paper_trade_record_from_position(position, item=None):
+    """Build a trade record dict from a closed LiveMonitorPaperPosition.
+
+    Returns {ok, record: {...}} or {ok: False, reason: '...'}.
+    No Binance API. No exchange calls. DB-only snapshot capture.
+    """
+    import datetime as _dt_jnl
+    from models import (
+        db                       as _db_jnl,
+        LiveMonitorPaperOrder    as _PO_jnl,
+        LiveMonitorPaperFill     as _PF_jnl,
+        LiveMonitorItem          as _LMI_jnl,
+    )
+
+    if position.status != "closed":
+        return {"ok": False, "reason": "not_closed"}
+
+    pid    = position.id
+    uid    = position.user_id
+    iid    = position.item_id
+    symbol = position.symbol or ""
+    side   = (position.side or "").upper()
+
+    if item is None and iid:
+        try:
+            item = _LMI_jnl.query.get(iid)
+        except Exception:
+            item = None
+
+    snap = _json_loads_safe(item.snapshot_json if item else None, {})
+
+    # Quantity
+    try:
+        qty_f = float(_lm_get_qty_from_position(position) or 0)
+    except Exception:
+        qty_f = 0.0
+    qty_str = str(qty_f) if qty_f else None
+
+    # Prices
+    try:
+        entry_price_f = float(position.entry_price or 0)
+    except Exception:
+        entry_price_f = 0.0
+
+    exit_price_f = None
+    try:
+        cp = getattr(position, "close_price", None)
+        if cp:
+            exit_price_f = float(cp)
+    except Exception:
+        pass
+
+    # Entry order
+    entry_order = None
+    if position.order_id:
+        try:
+            entry_order = _PO_jnl.query.get(position.order_id)
+        except Exception:
+            pass
+
+    # Exit fill — priority: exit_fill_id → position_id FK → last non-entry fill for order
+    exit_fill = None
+    efid = getattr(position, "exit_fill_id", None)
+    if efid:
+        try:
+            exit_fill = _PF_jnl.query.get(efid)
+        except Exception:
+            pass
+    if exit_fill is None:
+        try:
+            exit_fill = (_PF_jnl.query
+                         .filter_by(position_id=pid)
+                         .order_by(_PF_jnl.id.desc())
+                         .first())
+        except Exception:
+            pass
+    if exit_fill is None and entry_order:
+        try:
+            exit_fill = (_PF_jnl.query
+                         .filter(_PF_jnl.order_id == entry_order.id,
+                                 _PF_jnl.fill_type != "entry")
+                         .order_by(_PF_jnl.id.desc())
+                         .first())
+        except Exception:
+            pass
+
+    if exit_price_f is None and exit_fill:
+        try:
+            v = float(exit_fill.fill_price or 0)
+            if v:
+                exit_price_f = v
+        except Exception:
+            pass
+
+    # PnL
+    try:
+        realized_pnl = float(position.realized_pnl or 0)
+    except Exception:
+        realized_pnl = 0.0
+
+    realized_pnl_pct = None
+    if entry_price_f > 0 and qty_f > 0:
+        try:
+            notional = entry_price_f * qty_f
+            realized_pnl_pct = round((realized_pnl / notional) * 100, 4)
+        except Exception:
+            pass
+
+    # Outcome
+    if realized_pnl > 0:
+        outcome = "win"
+    elif realized_pnl < 0:
+        outcome = "loss"
+    else:
+        outcome = "breakeven"
+
+    outcome_reason = getattr(position, "close_reason", None) or "unknown"
+
+    # Duration
+    duration_seconds = None
+    closed_at  = getattr(position, "closed_at",  None)
+    created_at = getattr(position, "created_at", None)
+    if closed_at and created_at:
+        try:
+            def _naive(v):
+                return v.replace(tzinfo=None) if getattr(v, "tzinfo", None) else v
+            dur = (_naive(closed_at) - _naive(created_at)).total_seconds()
+            duration_seconds = int(dur) if dur >= 0 else None
+        except Exception:
+            pass
+
+    # Risk/reward from execution_intent_json on entry order or snapshot
+    risk_reward = None
+    exec_intent_obj = None
+    if entry_order and entry_order.execution_intent_json:
+        exec_intent_obj = _json_loads_safe(entry_order.execution_intent_json, {})
+    if not exec_intent_obj:
+        exec_intent_obj = snap.get("latest_execution_intent") or {}
+    if exec_intent_obj:
+        try:
+            rr = exec_intent_obj.get("risk_reward")
+            risk_reward = float(rr) if rr is not None else None
+        except Exception:
+            pass
+
+    # Account id (best-effort lookup)
+    account_id = None
+    try:
+        acc = _lm_get_or_create_paper_account(uid)
+        account_id = acc.id if acc else None
+    except Exception:
+        pass
+
+    # Snapshot capture helpers
+    def _js(obj):
+        return _json_dumps_safe(obj) if obj else None
+
+    exec_intel_raw = snap.get("latest_execution_intelligence")
+    mtf_of_raw     = snap.get("latest_mtf_orderflow_history")
+    ai_ctx_raw     = snap.get("latest_ai_execution_context")
+    draft_raw      = snap.get("latest_paper_order_draft")
+    exit_of_raw    = snap.get("latest_mtf_orderflow_history") or snap.get("orderflow_alignment")
+
+    ai_dec_obj = None
+    if entry_order and entry_order.ai_decision_json:
+        ai_dec_obj = _json_loads_safe(entry_order.ai_decision_json, None)
+    if ai_dec_obj is None:
+        ai_dec_obj = snap.get("latest_ai_trade_control_decision")
+
+    autopol_obj = None
+    if entry_order and entry_order.automation_policy_json:
+        autopol_obj = _json_loads_safe(entry_order.automation_policy_json, None)
+    if autopol_obj is None:
+        autopol_obj = snap.get("latest_automation_policy_result")
+
+    entry_order_compact = None
+    if entry_order:
+        entry_order_compact = {
+            "id":          entry_order.id,
+            "symbol":      entry_order.symbol,
+            "side":        entry_order.side,
+            "quantity":    entry_order.quantity,
+            "price":       entry_order.price,
+            "status":      entry_order.status,
+            "fill_status": entry_order.fill_status,
+            "source":      entry_order.source,
+            "created_at":  str(entry_order.created_at) if entry_order.created_at else None,
+        }
+
+    exit_fill_compact = None
+    if exit_fill:
+        exit_fill_compact = {
+            "id":         exit_fill.id,
+            "symbol":     exit_fill.symbol,
+            "side":       exit_fill.side,
+            "fill_qty":   exit_fill.fill_qty,
+            "fill_price": exit_fill.fill_price,
+            "fill_type":  getattr(exit_fill, "fill_type", None),
+            "created_at": str(exit_fill.created_at) if exit_fill.created_at else None,
+        }
+
+    record = {
+        "user_id":         uid,
+        "item_id":         iid,
+        "account_id":      account_id,
+        "position_id":     pid,
+        "entry_order_id":  position.order_id,
+        "exit_fill_id":    efid,
+        "symbol":          symbol,
+        "side":            side,
+        "quantity":        qty_str,
+        "entry_price":     str(entry_price_f) if entry_price_f else None,
+        "exit_price":      str(exit_price_f)  if exit_price_f is not None else None,
+        "status":          "closed",
+        "outcome":         outcome,
+        "outcome_reason":  outcome_reason,
+        "realized_pnl":    realized_pnl,
+        "realized_pnl_pct": realized_pnl_pct,
+        "risk_reward":     risk_reward,
+        "duration_seconds": duration_seconds,
+        "closed_at":       closed_at,
+        "exit_snapshot_json":           _js(snap),
+        "execution_intent_json":        _js(exec_intent_obj),
+        "execution_intelligence_json":  _js(exec_intel_raw),
+        "mtf_orderflow_history_json":   _js(mtf_of_raw),
+        "ai_context_json":              _js(ai_ctx_raw),
+        "ai_decision_json":             _js(ai_dec_obj),
+        "automation_policy_json":       _js(autopol_obj),
+        "paper_order_draft_json":       _js(draft_raw),
+        "entry_order_json":             _js(entry_order_compact),
+        "exit_fill_json":               _js(exit_fill_compact),
+        "exit_orderflow_snapshot_json": _js(exit_of_raw),
+    }
+    return {"ok": True, "record": record}
+
+
+def _lm_upsert_paper_trade_from_closed_position(position, item=None):
+    """Create or update a LiveMonitorPaperTrade row for a closed position.
+
+    Idempotent: keyed on position_id unique constraint.
+    Returns {ok, trade_id, action: created|updated|skipped}.
+    No Binance API. DB-only.
+    """
+    import datetime as _dt_up
+    from models import (
+        db                      as _db_up,
+        LiveMonitorPaperTrade   as _PT_up,
+    )
+
+    build = _lm_build_paper_trade_record_from_position(position, item=item)
+    if not build.get("ok"):
+        return {"ok": False, "reason": build.get("reason", "build_failed"),
+                "source": "internal_paper"}
+
+    rec = build["record"]
+    pid = rec["position_id"]
+    now = _dt_up.datetime.utcnow()
+
+    try:
+        existing = _PT_up.query.filter_by(position_id=pid).first()
+        if existing:
+            # Update only mutable review/snapshot fields
+            for _fld in (
+                "exit_snapshot_json", "execution_intelligence_json",
+                "mtf_orderflow_history_json", "ai_context_json",
+                "ai_decision_json", "automation_policy_json",
+                "exit_fill_json", "exit_orderflow_snapshot_json",
+                "realized_pnl", "realized_pnl_pct",
+                "outcome", "outcome_reason",
+                "exit_price", "closed_at",
+            ):
+                v = rec.get(_fld)
+                if v is not None:
+                    setattr(existing, _fld, v)
+            existing.updated_at = now
+            _db_up.session.commit()
+            return {"ok": True, "trade_id": existing.id, "action": "updated",
+                    "source": "internal_paper"}
+
+        trade = _PT_up(
+            user_id          = rec["user_id"],
+            item_id          = rec["item_id"],
+            account_id       = rec["account_id"],
+            position_id      = pid,
+            entry_order_id   = rec["entry_order_id"],
+            exit_fill_id     = rec["exit_fill_id"],
+            symbol           = rec["symbol"],
+            side             = rec["side"],
+            quantity         = rec["quantity"],
+            entry_price      = rec["entry_price"],
+            exit_price       = rec["exit_price"],
+            status           = "closed",
+            outcome          = rec["outcome"],
+            outcome_reason   = rec["outcome_reason"],
+            realized_pnl     = rec["realized_pnl"],
+            realized_pnl_pct = rec["realized_pnl_pct"],
+            risk_reward      = rec["risk_reward"],
+            duration_seconds = rec["duration_seconds"],
+            closed_at        = rec["closed_at"],
+            exit_snapshot_json           = rec["exit_snapshot_json"],
+            execution_intent_json        = rec["execution_intent_json"],
+            execution_intelligence_json  = rec["execution_intelligence_json"],
+            mtf_orderflow_history_json   = rec["mtf_orderflow_history_json"],
+            ai_context_json              = rec["ai_context_json"],
+            ai_decision_json             = rec["ai_decision_json"],
+            automation_policy_json       = rec["automation_policy_json"],
+            paper_order_draft_json       = rec["paper_order_draft_json"],
+            entry_order_json             = rec["entry_order_json"],
+            exit_fill_json               = rec["exit_fill_json"],
+            exit_orderflow_snapshot_json = rec["exit_orderflow_snapshot_json"],
+        )
+        _db_up.session.add(trade)
+        _db_up.session.commit()
+        return {"ok": True, "trade_id": trade.id, "action": "created",
+                "source": "internal_paper"}
+
+    except Exception as _e:
+        try:
+            _db_up.session.rollback()
+        except Exception:
+            pass
+        return {"ok": False, "error": str(_e)[:200], "source": "internal_paper"}
+
+
+def _lm_sync_paper_trade_journal_for_item(user_id, item_id):
+    """Sync closed paper positions → paper trade journal for one item.
+
+    Returns {ok, item_id, processed, created, updated, skipped, source}.
+    Manual only. No Binance API. DB-only.
+    """
+    from models import (
+        db                       as _db_si,
+        LiveMonitorPaperPosition as _PP_si,
+        LiveMonitorItem          as _LMI_si,
+    )
+    try:
+        item   = _LMI_si.query.filter_by(id=item_id, user_id=user_id).first()
+        if not item:
+            return {"ok": False, "reason": "item_not_found", "item_id": item_id,
+                    "source": "internal_paper"}
+
+        closed = (_PP_si.query
+                  .filter_by(user_id=user_id, item_id=item_id, status="closed")
+                  .order_by(_PP_si.id)
+                  .all())
+
+        processed = created = updated = skipped = 0
+        for pos in closed:
+            processed += 1
+            res = _lm_upsert_paper_trade_from_closed_position(pos, item=item)
+            if not res.get("ok"):
+                skipped += 1
+            elif res.get("action") == "created":
+                created += 1
+            elif res.get("action") == "updated":
+                updated += 1
+            else:
+                skipped += 1
+
+        return {
+            "ok":        True,
+            "item_id":   item_id,
+            "processed": processed,
+            "created":   created,
+            "updated":   updated,
+            "skipped":   skipped,
+            "source":    "internal_paper",
+        }
+    except Exception as _e:
+        return {
+            "ok": False, "error": str(_e)[:200],
+            "item_id": item_id, "processed": 0,
+            "created": 0, "updated": 0, "skipped": 0,
+            "source": "internal_paper",
+        }
+
+
+def _lm_sync_paper_trade_journal_for_user(user_id):
+    """Sync closed paper positions → journal for all user items.
+
+    Returns aggregate totals. Manual only. No Binance API. DB-only.
+    """
+    from models import (
+        db                       as _db_su,
+        LiveMonitorPaperPosition as _PP_su,
+    )
+    try:
+        item_ids = [
+            r[0] for r in
+            _db_su.session.query(_PP_su.item_id)
+            .filter_by(user_id=user_id, status="closed")
+            .distinct()
+            .all()
+        ]
+
+        total_processed = total_created = total_updated = total_skipped = 0
+        by_item = []
+        for iid in item_ids:
+            res = _lm_sync_paper_trade_journal_for_item(user_id, iid)
+            total_processed += res.get("processed", 0)
+            total_created   += res.get("created",   0)
+            total_updated   += res.get("updated",   0)
+            total_skipped   += res.get("skipped",   0)
+            by_item.append({
+                "item_id":   iid,
+                "processed": res.get("processed", 0),
+                "created":   res.get("created",   0),
+                "updated":   res.get("updated",   0),
+                "skipped":   res.get("skipped",   0),
+            })
+
+        return {
+            "ok":             True,
+            "total_processed": total_processed,
+            "total_created":   total_created,
+            "total_updated":   total_updated,
+            "total_skipped":   total_skipped,
+            "by_item":         by_item,
+            "source":          "internal_paper",
+        }
+    except Exception as _e:
+        return {
+            "ok": False, "error": str(_e)[:200],
+            "total_processed": 0, "total_created": 0,
+            "total_updated": 0, "total_skipped": 0,
+            "source": "internal_paper",
+        }
+
+
+def _lm_get_paper_trade_journal(user_id, item_id=None, limit=100):
+    """Return latest closed paper trades for a user (optionally filtered by item).
+
+    Returns {ok, trades: [...], count, source}.
+    No Binance API. DB-only. Read-only.
+    """
+    from models import (
+        LiveMonitorPaperTrade as _PT_gj,
+    )
+    try:
+        q = _PT_gj.query.filter_by(user_id=user_id)
+        if item_id is not None:
+            q = q.filter_by(item_id=item_id)
+        rows = q.order_by(_PT_gj.id.desc()).limit(limit).all()
+
+        trades = []
+        for t in rows:
+            ai_review = None
+            if t.ai_post_trade_review_json:
+                ai_review = _json_loads_safe(t.ai_post_trade_review_json, None)
+
+            trades.append({
+                "id":              t.id,
+                "item_id":         t.item_id,
+                "position_id":     t.position_id,
+                "symbol":          t.symbol,
+                "side":            t.side,
+                "quantity":        t.quantity,
+                "entry_price":     t.entry_price,
+                "exit_price":      t.exit_price,
+                "outcome":         t.outcome,
+                "outcome_reason":  t.outcome_reason,
+                "realized_pnl":    float(t.realized_pnl)     if t.realized_pnl is not None else None,
+                "realized_pnl_pct": float(t.realized_pnl_pct) if t.realized_pnl_pct is not None else None,
+                "risk_reward":     float(t.risk_reward)      if t.risk_reward is not None else None,
+                "duration_seconds": t.duration_seconds,
+                "closed_at":       t.closed_at.isoformat() if t.closed_at else None,
+                "ai_review_available": ai_review is not None and ai_review.get("ok", False),
+                "source":          "internal_paper",
+            })
+
+        return {"ok": True, "trades": trades, "count": len(trades), "source": "internal_paper"}
+    except Exception as _e:
+        return {"ok": False, "error": str(_e)[:200], "trades": [], "count": 0,
+                "source": "internal_paper"}
+
+
+def _lm_build_ai_post_trade_review_context(trade):
+    """Build compact AI post-trade review context for one LiveMonitorPaperTrade.
+
+    Returns a structured context dict ready for storage or review.
+    No AI call is made here — returns context_only mode.
+    No Binance API. DB-only. Read-only.
+    """
+    try:
+        exec_intent = _json_loads_safe(trade.execution_intent_json,    {})
+        ai_decision = _json_loads_safe(trade.ai_decision_json,         {})
+        autopol     = _json_loads_safe(trade.automation_policy_json,   {})
+        ai_ctx      = _json_loads_safe(trade.ai_context_json,          {})
+        exit_snap   = _json_loads_safe(trade.exit_snapshot_json,       {})
+
+        pnl_f   = float(trade.realized_pnl)     if trade.realized_pnl is not None else 0.0
+        pnl_pct = float(trade.realized_pnl_pct) if trade.realized_pnl_pct is not None else None
+
+        context = {
+            "trade_id":       trade.id,
+            "symbol":         trade.symbol,
+            "side":           trade.side,
+            "quantity":       trade.quantity,
+            "entry_price":    trade.entry_price,
+            "exit_price":     trade.exit_price,
+            "outcome":        trade.outcome,
+            "outcome_reason": trade.outcome_reason,
+            "realized_pnl":   pnl_f,
+            "realized_pnl_pct": pnl_pct,
+            "risk_reward":    float(trade.risk_reward) if trade.risk_reward is not None else None,
+            "duration_seconds": trade.duration_seconds,
+            "closed_at":      trade.closed_at.isoformat() if trade.closed_at else None,
+            "execution_intent": {
+                "direction":    exec_intent.get("direction"),
+                "entry_price":  exec_intent.get("entry_price"),
+                "stop_loss":    exec_intent.get("stop_loss"),
+                "take_profit":  exec_intent.get("take_profit"),
+                "risk_reward":  exec_intent.get("risk_reward"),
+            } if exec_intent else None,
+            "ai_decision_summary": {
+                "decision":    ai_decision.get("decision"),
+                "confidence":  ai_decision.get("confidence"),
+                "reason":      ai_decision.get("reason"),
+            } if ai_decision else None,
+            "automation_policy_summary": {
+                "policy":      autopol.get("policy"),
+                "approved":    autopol.get("approved"),
+            } if autopol else None,
+            "ai_execution_context_available": bool(ai_ctx),
+            "exit_snapshot_keys": list(exit_snap.keys()) if exit_snap else [],
+            "source": "internal_paper",
+        }
+
+        review_shell = {
+            "ok":             True,
+            "mode":           "context_only",
+            "summary":        "AI review context prepared; model call not configured.",
+            "learning_points": [],
+            "risk_notes":     [],
+            "context":        context,
+            "source":         "internal_paper",
+        }
+        return review_shell
+
+    except Exception as _e:
+        return {
+            "ok": False, "error": str(_e)[:200], "mode": "context_only",
+            "source": "internal_paper",
+        }

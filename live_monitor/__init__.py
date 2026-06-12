@@ -74,6 +74,13 @@ from live_monitor.paper_trading import (
     _lm_check_paper_position_exit,
     _lm_process_paper_exits_for_item,
     _lm_process_all_paper_exits_for_user,
+    # Phase 11.10: Paper Trade Journal
+    _lm_build_paper_trade_record_from_position,
+    _lm_upsert_paper_trade_from_closed_position,
+    _lm_sync_paper_trade_journal_for_item,
+    _lm_sync_paper_trade_journal_for_user,
+    _lm_get_paper_trade_journal,
+    _lm_build_ai_post_trade_review_context,
 )
 
 __all__ = [
@@ -139,4 +146,11 @@ __all__ = [
     "_lm_check_paper_position_exit",
     "_lm_process_paper_exits_for_item",
     "_lm_process_all_paper_exits_for_user",
+    # Phase 11.10: Paper Trade Journal
+    "_lm_build_paper_trade_record_from_position",
+    "_lm_upsert_paper_trade_from_closed_position",
+    "_lm_sync_paper_trade_journal_for_item",
+    "_lm_sync_paper_trade_journal_for_user",
+    "_lm_get_paper_trade_journal",
+    "_lm_build_ai_post_trade_review_context",
 ]

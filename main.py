@@ -655,6 +655,46 @@ def _auto_migrate():
                     conn.execute(text(_stmt))
                 conn.commit()
                 print("[MIGRATE] Phase 11.9 paper position/fill close metadata columns ensured")
+                # Phase 11.10: paper trades journal table — db.create_all() above handles
+                # the new table on fresh installs; ALTER TABLE below is idempotent insurance
+                # for live DBs that already ran without the new model registered.
+                for _stmt in [
+                    "ALTER TABLE live_monitor_paper_trades ADD COLUMN IF NOT EXISTS account_id        INTEGER",
+                    "ALTER TABLE live_monitor_paper_trades ADD COLUMN IF NOT EXISTS exit_fill_id      INTEGER",
+                    "ALTER TABLE live_monitor_paper_trades ADD COLUMN IF NOT EXISTS quantity          VARCHAR(40)",
+                    "ALTER TABLE live_monitor_paper_trades ADD COLUMN IF NOT EXISTS entry_price       VARCHAR(40)",
+                    "ALTER TABLE live_monitor_paper_trades ADD COLUMN IF NOT EXISTS exit_price        VARCHAR(40)",
+                    "ALTER TABLE live_monitor_paper_trades ADD COLUMN IF NOT EXISTS outcome           VARCHAR(20)",
+                    "ALTER TABLE live_monitor_paper_trades ADD COLUMN IF NOT EXISTS outcome_reason    VARCHAR(40)",
+                    "ALTER TABLE live_monitor_paper_trades ADD COLUMN IF NOT EXISTS realized_pnl      NUMERIC(20,8)",
+                    "ALTER TABLE live_monitor_paper_trades ADD COLUMN IF NOT EXISTS realized_pnl_pct  NUMERIC(10,4)",
+                    "ALTER TABLE live_monitor_paper_trades ADD COLUMN IF NOT EXISTS risk_reward       NUMERIC(10,4)",
+                    "ALTER TABLE live_monitor_paper_trades ADD COLUMN IF NOT EXISTS duration_seconds  INTEGER",
+                    "ALTER TABLE live_monitor_paper_trades ADD COLUMN IF NOT EXISTS max_favorable_excursion NUMERIC(20,8)",
+                    "ALTER TABLE live_monitor_paper_trades ADD COLUMN IF NOT EXISTS max_adverse_excursion   NUMERIC(20,8)",
+                    "ALTER TABLE live_monitor_paper_trades ADD COLUMN IF NOT EXISTS entry_snapshot_json           TEXT",
+                    "ALTER TABLE live_monitor_paper_trades ADD COLUMN IF NOT EXISTS exit_snapshot_json            TEXT",
+                    "ALTER TABLE live_monitor_paper_trades ADD COLUMN IF NOT EXISTS execution_intent_json         TEXT",
+                    "ALTER TABLE live_monitor_paper_trades ADD COLUMN IF NOT EXISTS execution_intelligence_json   TEXT",
+                    "ALTER TABLE live_monitor_paper_trades ADD COLUMN IF NOT EXISTS mtf_orderflow_history_json    TEXT",
+                    "ALTER TABLE live_monitor_paper_trades ADD COLUMN IF NOT EXISTS ai_context_json               TEXT",
+                    "ALTER TABLE live_monitor_paper_trades ADD COLUMN IF NOT EXISTS ai_decision_json              TEXT",
+                    "ALTER TABLE live_monitor_paper_trades ADD COLUMN IF NOT EXISTS automation_policy_json        TEXT",
+                    "ALTER TABLE live_monitor_paper_trades ADD COLUMN IF NOT EXISTS paper_order_draft_json        TEXT",
+                    "ALTER TABLE live_monitor_paper_trades ADD COLUMN IF NOT EXISTS entry_order_json              TEXT",
+                    "ALTER TABLE live_monitor_paper_trades ADD COLUMN IF NOT EXISTS exit_fill_json                TEXT",
+                    "ALTER TABLE live_monitor_paper_trades ADD COLUMN IF NOT EXISTS entry_orderflow_snapshot_json TEXT",
+                    "ALTER TABLE live_monitor_paper_trades ADD COLUMN IF NOT EXISTS exit_orderflow_snapshot_json  TEXT",
+                    "ALTER TABLE live_monitor_paper_trades ADD COLUMN IF NOT EXISTS ai_post_trade_review_json     TEXT",
+                    "ALTER TABLE live_monitor_paper_trades ADD COLUMN IF NOT EXISTS closed_at  TIMESTAMP",
+                    "ALTER TABLE live_monitor_paper_trades ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP",
+                ]:
+                    try:
+                        conn.execute(text(_stmt))
+                    except Exception:
+                        pass
+                conn.commit()
+                print("[MIGRATE] Phase 11.10 paper trades journal table columns ensured")
         except Exception as exc:
             print(f"[MIGRATE] Auto-migration warning: {exc}")
 
@@ -20126,6 +20166,9 @@ def _lm_build_trade_proposal_context(row, snapshot=None) -> dict:
         "paper_fill_process_summary": snap.get("latest_paper_fill_process_summary"),
         "paper_position_summary": snap.get("latest_paper_position_mark_summary"),
         "paper_exit_check_summary": snap.get("latest_paper_exit_check_summary"),
+        "paper_journal_summary": (lambda: _lm_paper_journal_summary_for_ai(
+            getattr(row, "user_id", None), getattr(row, "id", None)
+        ))(),
     }
 
 
@@ -20828,6 +20871,37 @@ def _lm_build_post_trade_review(trade) -> dict:
     }
 
 
+def _lm_paper_journal_summary_for_ai(user_id, item_id):
+    """Return compact paper trade journal summary for AI context builders.
+
+    Phase 11.10. No Binance API. DB-only. Read-only.
+    """
+    if not user_id:
+        return None
+    try:
+        result = _lm_get_paper_trade_journal(user_id, item_id=item_id, limit=50)
+        trades = result.get("trades", [])
+        if not trades:
+            return {"total_closed_trades": 0, "source": "internal_paper"}
+        wins      = sum(1 for t in trades if t.get("outcome") == "win")
+        losses    = sum(1 for t in trades if t.get("outcome") == "loss")
+        breakeven = sum(1 for t in trades if t.get("outcome") == "breakeven")
+        latest    = trades[0]
+        return {
+            "total_closed_trades":   len(trades),
+            "wins":                  wins,
+            "losses":                losses,
+            "breakeven":             breakeven,
+            "latest_outcome":        latest.get("outcome"),
+            "latest_outcome_reason": latest.get("outcome_reason"),
+            "latest_realized_pnl":   latest.get("realized_pnl"),
+            "latest_ai_review_available": latest.get("ai_review_available", False),
+            "source":                "internal_paper",
+        }
+    except Exception:
+        return None
+
+
 def _lm_build_ai_context(item) -> dict:
     """Build a compact, JSON-safe context dict from a LiveMonitorItem for the AI agent."""
     snap = _json_loads_safe(getattr(item, "snapshot_json", None), {})
@@ -21187,6 +21261,9 @@ def _lm_build_ai_context(item) -> dict:
         "paper_fill_process_summary": snap.get("latest_paper_fill_process_summary"),
         "paper_position_summary": snap.get("latest_paper_position_mark_summary"),
         "paper_exit_check_summary": snap.get("latest_paper_exit_check_summary"),
+        "paper_journal_summary": (lambda: _lm_paper_journal_summary_for_ai(
+            getattr(item, "user_id", None), getattr(item, "id", None)
+        ))(),
     }
 
 
@@ -24371,6 +24448,13 @@ from live_monitor import (
     _lm_check_paper_position_exit,
     _lm_process_paper_exits_for_item,
     _lm_process_all_paper_exits_for_user,
+    # Phase 11.10: Paper Trade Journal
+    _lm_build_paper_trade_record_from_position,
+    _lm_upsert_paper_trade_from_closed_position,
+    _lm_sync_paper_trade_journal_for_item,
+    _lm_sync_paper_trade_journal_for_user,
+    _lm_get_paper_trade_journal,
+    _lm_build_ai_post_trade_review_context,
 )
 
 # ── Phase 10.9I: Auto-refresh scheduler ─────────────────────────────────────
@@ -28537,6 +28621,227 @@ def api_lm_paper_check_exits(item_id):
         "last_checked_at": now_iso,
         "source":  "internal_paper",
         "error":   exit_result.get("error"),
+    })
+
+
+# ── Phase 11.10: Paper Trade Journal endpoints ────────────────────────────────
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/paper/journal/sync", methods=["POST"])
+@login_required
+def api_lm_paper_journal_sync(item_id):
+    """Phase 11.10: Sync closed paper positions → trade journal for one item.
+
+    SAFETY: DB-only. No Binance API. No Binance Testnet. No exchange calls.
+    No auto execution. Manual sync only — triggered by user button click.
+    """
+    import json as _json120
+    import datetime as _dt120
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    from models import (
+        db               as _db120,
+        LiveMonitorItem  as _LMI120,
+        LiveMonitorEvent as _LMEv120,
+    )
+    item = _LMI120.query.filter_by(id=item_id, user_id=uid).first()
+    if not item:
+        return jsonify({"error": "item_not_found"}), 404
+
+    sync_result = _lm_sync_paper_trade_journal_for_item(uid, item_id)
+    now_iso     = _dt120.datetime.utcnow().isoformat() + "Z"
+
+    # Snapshot: compact summary key on item
+    try:
+        snap = {}
+        if item.snapshot_json:
+            try:
+                snap = _json120.loads(item.snapshot_json)
+            except Exception:
+                snap = {}
+        snap["latest_paper_journal_sync_summary"] = {
+            "ok":              sync_result.get("ok", False),
+            "processed":       sync_result.get("processed", 0),
+            "created":         sync_result.get("created",   0),
+            "updated":         sync_result.get("updated",   0),
+            "skipped":         sync_result.get("skipped",   0),
+            "last_checked_at": now_iso,
+            "source":          "internal_paper",
+        }
+        item.snapshot_json = _json120.dumps(snap, default=str)
+        _db120.session.commit()
+    except Exception:
+        pass
+
+    # ONE timeline event for the sync (not per trade)
+    try:
+        ev = _LMEv120(
+            user_id=uid,
+            item_id=item_id,
+            event_type="paper_journal_synced",
+            event_data=_json120.dumps({
+                "item_id":   item_id,
+                "processed": sync_result.get("processed", 0),
+                "created":   sync_result.get("created",   0),
+                "updated":   sync_result.get("updated",   0),
+                "skipped":   sync_result.get("skipped",   0),
+                "source":    "internal_paper",
+            }, default=str),
+        )
+        _db120.session.add(ev)
+        _db120.session.commit()
+    except Exception:
+        pass
+
+    return jsonify({
+        "ok":        sync_result.get("ok", False),
+        "item_id":   item_id,
+        "processed": sync_result.get("processed", 0),
+        "created":   sync_result.get("created",   0),
+        "updated":   sync_result.get("updated",   0),
+        "skipped":   sync_result.get("skipped",   0),
+        "synced_at": now_iso,
+        "source":    "internal_paper",
+        "error":     sync_result.get("error"),
+    })
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/paper/journal", methods=["GET"])
+@login_required
+def api_lm_paper_journal_for_item(item_id):
+    """Phase 11.10: Get paper trade journal entries for one item.
+
+    SAFETY: DB-only read. No Binance API. No exchange calls.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    from models import LiveMonitorItem as _LMI121
+    item = _LMI121.query.filter_by(id=item_id, user_id=uid).first()
+    if not item:
+        return jsonify({"error": "item_not_found"}), 404
+
+    result = _lm_get_paper_trade_journal(uid, item_id=item_id)
+    return jsonify({
+        "ok":      result.get("ok", False),
+        "item_id": item_id,
+        "trades":  result.get("trades", []),
+        "count":   result.get("count",  0),
+        "source":  "internal_paper",
+        "error":   result.get("error"),
+    })
+
+
+@app.route("/api/live-monitor/paper/journal", methods=["GET"])
+@login_required
+def api_lm_paper_journal_global():
+    """Phase 11.10: Get paper trade journal across all user items.
+
+    SAFETY: DB-only read. No Binance API. No exchange calls.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    result = _lm_get_paper_trade_journal(uid)
+    return jsonify({
+        "ok":     result.get("ok", False),
+        "trades": result.get("trades", []),
+        "count":  result.get("count",  0),
+        "source": "internal_paper",
+        "error":  result.get("error"),
+    })
+
+
+@app.route("/api/live-monitor/paper-trades/<int:trade_id>", methods=["GET"])
+@login_required
+def api_lm_paper_trade_detail(trade_id):
+    """Phase 11.10: Get paper trade detail for one trade.
+
+    Pass ?detail=1 to include full snapshot JSON fields.
+    SAFETY: DB-only read. No Binance API. No exchange calls.
+    """
+    import json as _json122
+    from flask import request as _req122
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    from models import LiveMonitorPaperTrade as _PT122
+    trade = _PT122.query.filter_by(id=trade_id, user_id=uid).first()
+    if not trade:
+        return jsonify({"error": "trade_not_found"}), 404
+
+    detail = _req122.args.get("detail", "0") == "1"
+
+    row = {
+        "id":              trade.id,
+        "item_id":         trade.item_id,
+        "position_id":     trade.position_id,
+        "entry_order_id":  trade.entry_order_id,
+        "exit_fill_id":    trade.exit_fill_id,
+        "symbol":          trade.symbol,
+        "side":            trade.side,
+        "quantity":        trade.quantity,
+        "entry_price":     trade.entry_price,
+        "exit_price":      trade.exit_price,
+        "status":          trade.status,
+        "outcome":         trade.outcome,
+        "outcome_reason":  trade.outcome_reason,
+        "realized_pnl":    float(trade.realized_pnl)     if trade.realized_pnl is not None else None,
+        "realized_pnl_pct": float(trade.realized_pnl_pct) if trade.realized_pnl_pct is not None else None,
+        "risk_reward":     float(trade.risk_reward)      if trade.risk_reward is not None else None,
+        "duration_seconds": trade.duration_seconds,
+        "closed_at":       trade.closed_at.isoformat()  if trade.closed_at  else None,
+        "created_at":      trade.created_at.isoformat() if trade.created_at else None,
+        "ai_review_available": bool(trade.ai_post_trade_review_json),
+        "source": "internal_paper",
+    }
+
+    if detail:
+        for _fld in (
+            "execution_intent_json", "ai_decision_json",
+            "automation_policy_json", "ai_post_trade_review_json",
+            "entry_order_json", "exit_fill_json",
+        ):
+            raw = getattr(trade, _fld, None)
+            row[_fld] = _json122.loads(raw) if raw else None
+
+    return jsonify({"ok": True, "trade": row, "source": "internal_paper"})
+
+
+@app.route("/api/live-monitor/paper-trades/<int:trade_id>/ai-review", methods=["POST"])
+@login_required
+def api_lm_paper_trade_ai_review(trade_id):
+    """Phase 11.10: Build and store AI post-trade review context for one trade.
+
+    No live AI model call in this phase — stores context_only review shell.
+    SAFETY: DB-only. No Binance API. No exchange calls. No auto execution.
+    """
+    import json as _json123
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+    from models import (
+        db                    as _db123,
+        LiveMonitorPaperTrade as _PT123,
+    )
+    trade = _PT123.query.filter_by(id=trade_id, user_id=uid).first()
+    if not trade:
+        return jsonify({"error": "trade_not_found"}), 404
+
+    review = _lm_build_ai_post_trade_review_context(trade)
+    try:
+        trade.ai_post_trade_review_json = _json123.dumps(review, default=str)
+        _db123.session.commit()
+    except Exception:
+        pass
+
+    return jsonify({
+        "ok":       review.get("ok", False),
+        "trade_id": trade_id,
+        "review":   review,
+        "source":   "internal_paper",
     })
 
 
