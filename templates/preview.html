@@ -11889,7 +11889,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
      ═══════════════════════════════════════════════════════════════════════ */
   var _btState={data:null,page:"overview",rr:[1,2,3],charts:{},tblPage:0,lastRun:null,filters:null,
     mtfData:null,mtfCharts:{},mtfTfs:["15m","1h","4h"],
-    batchData:null,batchCharts:{},compareMode:"mtf",batchTf:"4h"};
+    batchData:null,batchCharts:{},compareMode:"mtf",batchTf:"4h",
+    batchRuns:{"1h":null,"4h":null}};
 
   function _bindBtSidebarEvents(aside){
     [].forEach.call(aside.querySelectorAll("[data-btpage]"),function(item){
@@ -13112,39 +13113,50 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   function _btRenderBatchMode(){
     var el=document.getElementById("btCompareModeContent"); if(!el) return;
     var selTf=_btState.batchTf||"4h";
+    var runs=_btState.batchRuns||{};
 
     function batchChipHtml(tf){
       var on=tf===selTf?" on":"";
-      return '<button class="bt-mtf-chip'+on+'" data-btf="'+tf+'">'+tf+'</button>';
+      return '<button class="bt-mtf-chip'+on+'" data-btf="'+tf+'">'+tf.toUpperCase()+'</button>';
     }
 
-    /* estimated load line */
+    function statusChip(tf){
+      var ready=!!runs[tf];
+      var clr=ready?"var(--green-2)":"var(--text-3)";
+      var bg=ready?"rgba(34,197,94,.1)":"var(--bg-card)";
+      var bd=ready?"rgba(34,197,94,.3)":"var(--border-2)";
+      return '<span style="display:inline-flex;align-items:center;gap:4px;background:'+bg+';border:1px solid '+bd+';border-radius:10px;color:'+clr+';font-size:9px;font-weight:700;padding:2px 9px;font-family:var(--mono)">'+
+        tf.toUpperCase()+': '+(ready?'Ready':'Not run')+'</span>';
+    }
+
     var symDefault="BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT";
-    var estLoad='<div id="btBatchEstLoad" style="font-size:10px;color:var(--text-3);margin-top:5px">'+
-      'Estimated load: 5 pairs &times; 1 TF &times; 500 candles = <b style="color:var(--accent)">2500 candles</b>'+
-    '</div>';
 
     el.innerHTML=
       '<div class="bt-mtf-form">'+
-        '<div style="font-size:10px;font-weight:700;color:var(--accent);letter-spacing:1px;text-transform:uppercase;margin-bottom:10px">Pair Batch</div>'+
+        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;flex-wrap:wrap">'+
+          '<span id="btBatchTitle" style="font-size:10px;font-weight:700;color:var(--accent);letter-spacing:1px;text-transform:uppercase">Pair Batch — '+selTf.toUpperCase()+' — One Timeframe at a Time</span>'+
+          '<span id="btBatchStatusChips" style="display:inline-flex;gap:5px">'+statusChip("4h")+statusChip("1h")+'</span>'+
+        '</div>'+
+        '<div style="font-size:10px;color:var(--text-3);margin-bottom:10px;line-height:1.5">'+
+          'Run 4H first, then switch to 1H and run separately. This keeps total candles under the safe runtime limit.'+
+        '</div>'+
         '<div style="margin-bottom:8px">'+
           '<span class="bt-mtf-label" style="display:block;margin-bottom:5px">Symbols (comma-separated, max 5)</span>'+
           '<input class="bt-batch-sym-inp" id="btBatchSyms" value="'+symDefault+'" />'+
-          '<div id="btBatchSymWarn" style="display:none;font-size:10px;color:var(--red-2);margin-top:3px">Max 5 symbols per batch.</div>'+
+          '<div id="btBatchSymWarn" style="display:none;font-size:10px;color:var(--red-2);margin-top:3px">Max 5 symbols per Pair Batch.</div>'+
         '</div>'+
         '<div class="bt-mtf-form-row">'+
           '<span class="bt-mtf-label">Timeframe</span>'+
-          '<div class="bt-mtf-chips" id="btBatchTfChips">'+["1h","4h"].map(batchChipHtml).join("")+'</div>'+
-          '<span class="bt-mtf-label" style="margin-left:6px;color:var(--text-3);font-size:9px">(one at a time)</span>'+
+          '<div class="bt-mtf-chips" id="btBatchTfChips">'+["4h","1h"].map(batchChipHtml).join("")+'</div>'+
+          '<span class="bt-mtf-label" style="margin-left:6px;color:var(--text-3);font-size:9px">(single-select)</span>'+
           '<span class="bt-mtf-label" style="margin-left:10px">Candles</span>'+
           '<select class="bt-filter-sel" id="btBatchCandles">'+
             ['300','500'].map(function(v){return '<option value="'+v+'"'+(v==="500"?" selected":"")+'>'+v+'</option>';}).join("")+
           '</select>'+
           '<button class="bt-batch-run-btn" id="btBatchRunBtn">&#9654; Run Pair Batch</button>'+
         '</div>'+
-        estLoad+
-        '<div style="font-size:10px;color:var(--text-3);margin-top:6px;line-height:1.5">'+
-          'Pair Batch runs one timeframe at a time to stay fast. Test 4H first, then run 1H separately.'+
+        '<div id="btBatchEstLoad" style="font-size:10px;color:var(--text-3);margin-top:5px">'+
+          'Estimated load: 5 pairs &times; 1 TF &times; 500 candles = <b style="color:var(--accent)">2500 candles</b>'+
         '</div>'+
       '</div>'+
       '<div id="btBatchResults">'+
@@ -13153,20 +13165,23 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
             '<div style="font-size:26px;margin-bottom:8px;opacity:.3">&#9650;</div>'+
             '<div style="font-size:12px;font-weight:600;color:var(--text-2)">Enter symbols and run pair batch.</div>'+
           '</div>')+
-      '</div>';
+      '</div>'+
+      '<div id="btBatchQuickCompare">'+_btQuickCompareHtml()+'</div>';
 
-    /* TF chips: single-select */
+    /* TF chips: single-select; update title on change */
     [].forEach.call(el.querySelectorAll("#btBatchTfChips .bt-mtf-chip"),function(chip){
       chip.addEventListener("click",function(){
         _btState.batchTf=chip.getAttribute("data-btf");
         [].forEach.call(el.querySelectorAll("#btBatchTfChips .bt-mtf-chip"),function(c){
           c.classList.toggle("on",c.getAttribute("data-btf")===_btState.batchTf);
         });
+        var tEl=document.getElementById("btBatchTitle");
+        if(tEl) tEl.textContent="Pair Batch — "+_btState.batchTf.toUpperCase()+" — One Timeframe at a Time";
         _btUpdateBatchEstLoad();
       });
     });
 
-    /* live estimated load update */
+    /* live estimated load + run-button gating */
     var symInp=document.getElementById("btBatchSyms");
     var canSel=document.getElementById("btBatchCandles");
     function _btUpdateBatchEstLoad(){
@@ -13178,6 +13193,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       if(estEl) estEl.innerHTML='Estimated load: '+n+' pairs &times; 1 TF &times; '+cc+' candles = <b style="color:var(--accent)">'+total+' candles</b>';
       var warnEl=document.getElementById("btBatchSymWarn");
       if(warnEl) warnEl.style.display=raw.length>5?"block":"none";
+      var btn=document.getElementById("btBatchRunBtn");
+      if(btn) btn.disabled=(raw.length===0||raw.length>5);
     }
     if(symInp) symInp.addEventListener("input",_btUpdateBatchEstLoad);
     if(canSel) canSel.addEventListener("change",_btUpdateBatchEstLoad);
@@ -13186,6 +13203,9 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     document.getElementById("btBatchRunBtn").addEventListener("click",function(){ _btRunBatchComparison(); });
     if(_btState.batchData){
       setTimeout(function(){ _btBuildBatchCharts(_btState.batchData); },0);
+    }
+    if(runs["1h"]&&runs["4h"]){
+      setTimeout(function(){ _btBuildQuickCompareChart(); },0);
     }
   }
 
@@ -13493,8 +13513,30 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         return;
       }
       _btState.batchData=data;
+      var doneTf=(data.timeframes||[])[0]||tf;
+      if(_btState.batchRuns&&(doneTf==="1h"||doneTf==="4h")) _btState.batchRuns[doneTf]=data;
       if(el) el.innerHTML=_btBatchResultsHtml(data);
       setTimeout(function(){ _btBuildBatchCharts(data); },0);
+      /* refresh status chips + quick compare panel */
+      var qcEl=document.getElementById("btBatchQuickCompare");
+      if(qcEl){
+        qcEl.innerHTML=_btQuickCompareHtml();
+        if(_btState.batchRuns["1h"]&&_btState.batchRuns["4h"]){
+          setTimeout(function(){ _btBuildQuickCompareChart(); },0);
+        }
+      }
+      var chipsEl=document.getElementById("btBatchStatusChips");
+      if(chipsEl){
+        function sChip(t){
+          var ready=!!_btState.batchRuns[t];
+          var clr=ready?"var(--green-2)":"var(--text-3)";
+          var bg=ready?"rgba(34,197,94,.1)":"var(--bg-card)";
+          var bd=ready?"rgba(34,197,94,.3)":"var(--border-2)";
+          return '<span style="display:inline-flex;align-items:center;gap:4px;background:'+bg+';border:1px solid '+bd+';border-radius:10px;color:'+clr+';font-size:9px;font-weight:700;padding:2px 9px;font-family:var(--mono)">'+
+            t.toUpperCase()+': '+(ready?'Ready':'Not run')+'</span>';
+        }
+        chipsEl.innerHTML=sChip("4h")+sChip("1h");
+      }
     })
     .catch(function(e){
       if(btn) btn.disabled=false;
@@ -13585,8 +13627,17 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     '</div>';
 
     var activeTf=(d.timeframes||[])[0]||"";
-    return '<div class="bt-section-head"><div><div class="bt-section-title">Pair Batch — '+(activeTf?esc(activeTf.toUpperCase())+' — ':'')+esc(syms)+'</div>'+
-        '<div class="bt-section-sub">'+lb.length+' rows &bull; ranked by expectancy R &bull; one timeframe</div></div></div>'+
+    var scaled=!!lims.scaled_down;
+    var loadStats='<div style="font-size:10px;color:var(--text-3);font-family:var(--mono);margin-top:3px">'+
+      'Requested: <b style="color:var(--text-2)">'+(lims.requested_total_candles!=null?lims.requested_total_candles:"—")+'</b> candles'+
+      ' &bull; Used: <b style="color:var(--text-2)">'+(lims.used_total_candles!=null?lims.used_total_candles:"—")+'</b>'+
+      ' &bull; Scaled: <b style="color:'+(scaled?"var(--yellow)":"var(--green-2)")+'">'+(scaled?"yes":"no")+'</b>'+
+    '</div>';
+    return '<div class="bt-section-head"><div>'+
+        '<div class="bt-section-title">Current Result: '+(activeTf?esc(activeTf.toUpperCase()):'')+' Pair Batch</div>'+
+        '<div class="bt-section-sub">'+esc(syms)+' &bull; '+lb.length+' rows &bull; ranked by expectancy R &bull; one timeframe</div>'+
+        loadStats+
+      '</div></div>'+
       limWarnHtml+bestCards+chartsHtml+
       '<div class="bt-tbl-wrap"><table class="bt-tbl">'+tblHead+tblBody+'</table></div>'+
       errHtml+exportHtml;
@@ -13688,6 +13739,168 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var syms=(d.symbols||[]).join("_")||"export";
     _btDownloadBlob("zyni_batch_"+syms+"_"+Date.now()+".csv",rows.join("\r\n"),"text/csv");
   }
+
+  /* ── 1H vs 4H Quick Compare (frontend session memory only) ──────────────── */
+
+  function _btCombinedBatchRows(){
+    var runs=_btState.batchRuns||{};
+    var rows=[];
+    ["1h","4h"].forEach(function(tf){
+      var d=runs[tf];
+      if(d&&d.leaderboard) d.leaderboard.forEach(function(r){ rows.push(r); });
+    });
+    rows.sort(function(a,b){
+      var ea=a.best_expectancy_r,eb=b.best_expectancy_r;
+      if(ea==null&&eb==null) return 0;
+      if(ea==null) return 1;
+      if(eb==null) return -1;
+      return eb-ea;
+    });
+    return rows;
+  }
+
+  function _btQuickCompareHtml(){
+    var runs=_btState.batchRuns||{};
+    var d1=runs["1h"], d4=runs["4h"];
+    if(!d1||!d4) return "";
+
+    var lb1=d1.leaderboard||[], lb4=d4.leaderboard||[];
+    var b1=(d1.best||{}).by_expectancy, b4=(d4.best||{}).by_expectancy;
+
+    /* winner helpers: compare best rows of each TF */
+    function bestOf(lb,key,higher){
+      var valid=lb.filter(function(r){return r[key]!=null;});
+      if(!valid.length) return null;
+      return valid.reduce(function(a,b){return higher?(b[key]>a[key]?b:a):(b[key]<a[key]?b:a);});
+    }
+    function winner(key,higher){
+      var r1=bestOf(lb1,key,higher), r4=bestOf(lb4,key,higher);
+      if(!r1&&!r4) return "—";
+      if(!r1) return "4H"; if(!r4) return "1H";
+      if(higher) return r4[key]>=r1[key]?"4H":"1H";
+      return r4[key]<=r1[key]?"4H":"1H";
+    }
+    var wExp=winner("best_expectancy_r",true);
+    var wPf=winner("best_profit_factor_r",true);
+    var wSl=winner("avg_stop_loss_r",false);
+
+    function qCard(label,value,sub){
+      return '<div class="bt-best-card">'+
+        '<div class="bt-best-card-l">'+label+'</div>'+
+        '<div class="bt-best-card-v" style="font-size:13px">'+(value||"—")+'</div>'+
+        '<div class="bt-best-card-s">'+(sub||"&nbsp;")+'</div>'+
+      '</div>';
+    }
+    var cards='<div class="bt-best-grid">'+
+      qCard("Best 1H Pair",b1?(b1.symbol||"—"):"—",b1?"Exp: "+_btFmt(b1.best_expectancy_r,"R"):"")+
+      qCard("Best 4H Pair",b4?(b4.symbol||"—"):"—",b4?"Exp: "+_btFmt(b4.best_expectancy_r,"R"):"")+
+      qCard("Winner: Expectancy",wExp,"")+
+      qCard("Winner: Profit Factor",wPf,"")+
+      qCard("Winner: Lowest Avg SL",wSl,"")+
+    '</div>';
+
+    /* combined top-10 leaderboard */
+    var rows=_btCombinedBatchRows().slice(0,10);
+    var tblHead='<thead><tr>'+
+      '<th>#</th><th>Symbol</th><th>TF</th><th>Expectancy</th><th>Profit Factor</th>'+
+      '<th>Net R</th><th>Win Rate</th><th>Avg SL R</th><th>Best RR</th>'+
+    '</tr></thead>';
+    var tblBody='<tbody>';
+    rows.forEach(function(row,i){
+      var expClr=row.best_expectancy_r!=null?(row.best_expectancy_r>=0?"color:var(--green-2)":"color:var(--red-2)"):"color:var(--text-3)";
+      var tfClr=row.timeframe==="4h"?"var(--accent)":"var(--yellow)";
+      tblBody+='<tr>'+
+        '<td class="bt-num">'+(i+1)+'</td>'+
+        '<td class="bt-num" style="color:var(--accent);font-weight:700">'+esc(row.symbol||"")+'</td>'+
+        '<td class="bt-num" style="color:'+tfClr+';font-weight:700">'+esc((row.timeframe||"").toUpperCase())+'</td>'+
+        '<td class="bt-num" style="'+expClr+'">'+_btFmt(row.best_expectancy_r,"R")+'</td>'+
+        '<td class="bt-num">'+_btFmt(row.best_profit_factor_r,"")+'</td>'+
+        '<td class="bt-num" style="'+expClr+'">'+_btFmt(row.net_r_at_best_rr,"R")+'</td>'+
+        '<td class="bt-num">'+_btFmt(row.win_rate_at_best_rr,"%")+'</td>'+
+        '<td class="bt-num" style="color:var(--red-2)">'+_btFmt(row.avg_stop_loss_r,"R")+'</td>'+
+        '<td class="bt-num" style="color:var(--accent)">'+(row.best_rr?row.best_rr+"R":"—")+'</td>'+
+      '</tr>';
+    });
+    tblBody+='</tbody>';
+
+    var chartHtml='<div class="bt-chart-card" style="margin-top:10px">'+
+      '<div class="bt-chart-h">Top 10 1H/4H Pair-TF by Expectancy <span class="bt-chart-hsub">combined sessions</span></div>'+
+      '<div class="bt-chart-wrap"><canvas id="btQcChart"></canvas></div>'+
+    '</div>';
+
+    var exportHtml='<div style="display:flex;gap:8px;margin-top:10px">'+
+      '<button class="bt-filter-reset" style="display:inline-flex" onclick="_btCombinedExportJson()">&#10515; Combined 1H/4H JSON</button>'+
+      '<button class="bt-filter-reset" style="display:inline-flex" onclick="_btCombinedExportCsv()">&#10515; Combined 1H/4H CSV</button>'+
+    '</div>';
+
+    return '<div class="bt-section-head" style="margin-top:18px"><div>'+
+        '<div class="bt-section-title">1H vs 4H Quick Compare</div>'+
+        '<div class="bt-section-sub">Session memory only &bull; 1H result loaded &bull; 4H result loaded</div>'+
+      '</div></div>'+
+      cards+chartHtml+
+      '<div class="bt-tbl-wrap" style="margin-top:10px"><table class="bt-tbl">'+tblHead+tblBody+'</table></div>'+
+      exportHtml;
+  }
+
+  function _btBuildQuickCompareChart(){
+    if(typeof Chart==="undefined") return;
+    var c=document.getElementById("btQcChart"); if(!c) return;
+    if(_btState.batchCharts["btQcChart"]){try{_btState.batchCharts["btQcChart"].destroy();}catch(e){}delete _btState.batchCharts["btQcChart"];}
+    var rows=_btCombinedBatchRows().slice(0,10);
+    var labels=rows.map(function(r){return (r.symbol||"")+"/"+(r.timeframe||"").toUpperCase();});
+    _btState.batchCharts["btQcChart"]=new Chart(c,{type:"bar",
+      data:{labels:labels,datasets:[
+        {label:"Expectancy (R)",data:rows.map(function(r){return r.best_expectancy_r;}),
+         backgroundColor:rows.map(function(r){return r.timeframe==="4h"?"rgba(34,211,238,.65)":"rgba(251,191,36,.65)";}),
+         borderColor:rows.map(function(r){return r.timeframe==="4h"?"#22d3ee":"#fbbf24";}),
+         borderWidth:1,borderRadius:3}
+      ]},
+      options:{indexAxis:"y",responsive:true,maintainAspectRatio:false,
+        plugins:{legend:{display:false},tooltip:{mode:"index",intersect:false}},
+        scales:{x:{ticks:{color:"#566377",font:{size:10}},grid:{color:"rgba(27,38,54,.5)"}},
+                y:{ticks:{color:"#566377",font:{size:10}},grid:{color:"rgba(27,38,54,.5)"}}}}
+    });
+  }
+
+  function _btCombinedExportJson(){
+    var runs=_btState.batchRuns||{};
+    if(!runs["1h"]||!runs["4h"]) return;
+    _btDownloadBlob("zyni_batch_combined_1h_4h_"+Date.now()+".json",
+      JSON.stringify({mode:"pair_batch_combined_1h_4h",
+        run_1h:runs["1h"],run_4h:runs["4h"],
+        combined_leaderboard:_btCombinedBatchRows()},null,2),"application/json");
+  }
+
+  function _btCombinedExportCsv(){
+    var runs=_btState.batchRuns||{};
+    if(!runs["1h"]||!runs["4h"]) return;
+    var cols=["rank","symbol","timeframe","ob_events","touched_events","eligible_touched",
+      "tp_first","sl_first","ambiguous","avg_max_r","avg_max_adverse_r",
+      "avg_stop_loss_r","max_stop_loss_r","best_rr","best_expectancy_r",
+      "best_profit_factor_r","net_r_at_best_rr","win_rate_at_best_rr",
+      "rr_1_expectancy","rr_2_expectancy","rr_3_expectancy",
+      "rr_1_profit_factor","rr_2_profit_factor","rr_3_profit_factor",
+      "used_candle_count","elapsed_ms"];
+    function cv(x){var s=String(x==null?"":x);return(s.indexOf(",")>=0||s.indexOf('"')>=0)?'"'+s.replace(/"/g,'""')+'"':s;}
+    var out=[cols.join(",")];
+    _btCombinedBatchRows().forEach(function(row,i){
+      out.push(cols.map(function(c){return cv(c==="rank"?(i+1):row[c]);}).join(","));
+    });
+    _btDownloadBlob("zyni_batch_combined_1h_4h_"+Date.now()+".csv",out.join("\r\n"),"text/csv");
+  }
+
+  /* Expose handlers referenced by inline onclick attributes (IIFE is strict-
+     mode scoped, so inline handlers can only reach window globals). */
+  window._btSwitchPage=_btSwitchPage;
+  window._btState=_btState;
+  window._btDefaultFilters=_btDefaultFilters;
+  window._btRepaintFromFilters=_btRepaintFromFilters;
+  window._btMtfExportJson=_btMtfExportJson;
+  window._btMtfExportCsv=_btMtfExportCsv;
+  window._btBatchExportJson=_btBatchExportJson;
+  window._btBatchExportCsv=_btBatchExportCsv;
+  window._btCombinedExportJson=_btCombinedExportJson;
+  window._btCombinedExportCsv=_btCombinedExportCsv;
 
   /* Tag body with current view so per-view CSS (Task 3) applies before
      the first switchView() call. */
