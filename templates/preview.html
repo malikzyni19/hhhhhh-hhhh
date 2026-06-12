@@ -1475,7 +1475,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 .bt-run-btn:hover{opacity:.86}
 .bt-run-btn:disabled{opacity:.4;cursor:not-allowed}
 .bt-body{padding:14px 20px;display:flex;flex-direction:column;gap:14px;flex:1}
-.bt-kpi-row{display:grid;grid-template-columns:repeat(7,1fr);gap:9px}
+.bt-kpi-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:9px}
 .bt-kpi{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:12px 13px;position:relative;overflow:hidden}
 .bt-kpi::after{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--accent),transparent);opacity:.7}
 .bt-kpi-l{font-size:9px;font-weight:700;color:var(--text-3);letter-spacing:.9px;text-transform:uppercase;margin-bottom:7px}
@@ -11801,12 +11801,13 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         _btKpiCard("3R Hit Rate",_btFmt(rr3.rate_pct,"%"),"y",(rr3.hits||0)+" hits")+
         _btKpiCard("Avg Max R",_btFmt(os.avg_max_r_reached,"R"),"g","avg excursion")+
         _btKpiCard("Parity",par.enabled?_btFmt(par.match_rate_pct,"%"):"—","","vs detect_obs_all")+
+        _btKpiCard("Avg SL R",_btFmt((os.stop_loss_summary||{}).avg_stop_loss_r,"R"),"r","realized loss size")+
       '</div></div>'+
       '<div id="btOvCharts"><div class="bt-charts-grid">'+
-        '<div class="bt-chart-card"><div class="bt-chart-h">Hit Rate by Target <span class="bt-chart-hsub">1R / 2R / 3R</span></div><div class="bt-chart-wrap"><canvas id="btCHitRate"></canvas></div></div>'+
-        '<div class="bt-chart-card"><div class="bt-chart-h">Outcome Distribution <span class="bt-chart-hsub">TP / SL / Ambiguous / Unresolved</span></div><div class="bt-chart-wrap"><canvas id="btCOutcome"></canvas></div></div>'+
-        '<div class="bt-chart-card"><div class="bt-chart-h">Cumulative R <span class="bt-chart-hsub">Expectancy curve by event sequence</span></div><div class="bt-chart-wrap"><canvas id="btCCumR"></canvas></div></div>'+
-        '<div class="bt-chart-card"><div class="bt-chart-h">Max R Strength Buckets <span class="bt-chart-hsub">Achieved R distribution</span></div><div class="bt-chart-wrap"><canvas id="btCBucket"></canvas></div></div>'+
+        '<div class="bt-chart-card"><div class="bt-chart-h">Realized Strategy Performance <span class="bt-chart-hsub">Expectancy &amp; Win Rate per RR</span></div><div class="bt-chart-wrap"><canvas id="btCHitRate"></canvas></div></div>'+
+        '<div class="bt-chart-card"><div class="bt-chart-h">Stop Loss R Distribution <span class="bt-chart-hsub">Actual loss magnitude buckets</span></div><div class="bt-chart-wrap"><canvas id="btCOutcome"></canvas></div></div>'+
+        '<div class="bt-chart-card"><div class="bt-chart-h">Max Favorable vs Adverse <span class="bt-chart-hsub">R scatter by event outcome</span></div><div class="bt-chart-wrap"><canvas id="btCCumR"></canvas></div></div>'+
+        '<div class="bt-chart-card"><div class="bt-chart-h">Cumulative Realized R <span class="bt-chart-hsub">Equity curve — realized exits only</span></div><div class="bt-chart-wrap"><canvas id="btCBucket"></canvas></div></div>'+
       '</div></div>'+
       '<div id="btOvEvents">'+_btBuildEventsSection(elig,active,allElig.length)+'</div>';
 
@@ -11908,88 +11909,137 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 
   function _btBuildCharts(data, eventsOverride, osOverride){
     if(typeof Chart==="undefined") return;
-    var os=osOverride||data.outcome_summary||{}, hrr=os.hit_rate_by_rr||{}, events=eventsOverride||data.events||[];
+    var os=osOverride||data.outcome_summary||{}, events=eventsOverride||data.events||[];
+    var rsm=os.realized_summary_by_rr||data.outcome_summary&&data.outcome_summary.realized_summary_by_rr||{};
+    var slm=os.stop_loss_summary||data.outcome_summary&&data.outcome_summary.stop_loss_summary||{};
     var gcfg={responsive:true,maintainAspectRatio:false,
       plugins:{legend:{labels:{color:"#8a9bb3",font:{family:"JetBrains Mono,monospace",size:10},boxWidth:12}}},
       scales:{x:{ticks:{color:"#566377",font:{size:10}},grid:{color:"rgba(27,38,54,.5)"}},
               y:{ticks:{color:"#566377",font:{size:10}},grid:{color:"rgba(27,38,54,.5)"}}}};
     function dc(id){ if(_btState.charts[id]){ try{_btState.charts[id].destroy();}catch(e){} delete _btState.charts[id]; } }
 
-    /* 1 — Hit Rate bar */
+    /* 1 — Realized Strategy Performance: grouped bar (expectancy) + line (win rate) */
     dc("btCHitRate");
     var c1=document.getElementById("btCHitRate");
     if(c1){
+      var rrLabels=["1R","2R","3R"], rrKeys=["1","2","3"];
+      var expData=rrKeys.map(function(k){var r=rsm[k]||{}; return r.expectancy_r!=null?parseFloat(r.expectancy_r.toFixed(3)):null;});
+      var wrData=rrKeys.map(function(k){var r=rsm[k]||{}; return r.win_rate_pct!=null?parseFloat(r.win_rate_pct.toFixed(1)):null;});
+      var expColors=expData.map(function(v){return v!=null&&v>=0?"rgba(52,211,153,.75)":"rgba(251,113,133,.75)";});
+      var expBorders=expData.map(function(v){return v!=null&&v>=0?"#34d399":"#fb7185";});
       _btState.charts["btCHitRate"]=new Chart(c1,{type:"bar",
-        data:{labels:["1R","2R","3R"],datasets:[{label:"Hit %",
-          data:[(hrr["1"]||{}).rate_pct||0,(hrr["2"]||{}).rate_pct||0,(hrr["3"]||{}).rate_pct||0],
-          backgroundColor:["rgba(52,211,153,.7)","rgba(34,211,238,.7)","rgba(99,102,241,.7)"],
-          borderColor:["#34d399","#22d3ee","#818cf8"],borderWidth:1,borderRadius:5}]},
-        options:Object.assign({},gcfg,{plugins:{legend:{display:false},
-          tooltip:{callbacks:{label:function(ctx){var rk=["1","2","3"][ctx.dataIndex];var h=(hrr[rk]||{}).hits||0;return ctx.parsed.y.toFixed(1)+"% ("+h+" hits)";}}}}
-          ,scales:{x:{ticks:{color:"#8a9bb3"},grid:{color:"rgba(27,38,54,.5)"}},
-                   y:{min:0,max:100,ticks:{color:"#566377",callback:function(v){return v+"%"}},grid:{color:"rgba(27,38,54,.5)"}}}}
-        )});
-    }
-
-    /* 2 — Outcome donut */
-    dc("btCOutcome");
-    var c2=document.getElementById("btCOutcome");
-    if(c2){
-      var elig=os.eligible_touched||0;
-      _btState.charts["btCOutcome"]=new Chart(c2,{type:"doughnut",
-        data:{labels:["TP First","SL First","Ambiguous","Unresolved"],
-          datasets:[{data:[os.tp_first||0,os.sl_first||0,os.ambiguous||0,os.unresolved||0],
-            backgroundColor:["rgba(52,211,153,.8)","rgba(251,113,133,.8)","rgba(251,191,36,.8)","rgba(148,163,184,.6)"],
-            borderColor:["#34d399","#fb7185","#fbbf24","#94a3b8"],borderWidth:1,hoverOffset:6}]},
-        options:{responsive:true,maintainAspectRatio:false,cutout:"62%",
-          plugins:{legend:{position:"right",labels:{color:"#8a9bb3",font:{family:"JetBrains Mono,monospace",size:10},boxWidth:12,padding:10}},
-          tooltip:{callbacks:{label:function(ctx){var p=elig>0?(ctx.raw/elig*100).toFixed(1):"0.0";return " "+ctx.raw+" ("+p+"%)";}}}}
+        data:{labels:rrLabels,datasets:[
+          {label:"Expectancy (R)",data:expData,backgroundColor:expColors,borderColor:expBorders,borderWidth:1,borderRadius:4,yAxisID:"yR",order:2},
+          {label:"Win Rate %",data:wrData,type:"line",borderColor:"#f59e0b",backgroundColor:"rgba(245,158,11,.15)",
+           borderWidth:2,pointRadius:4,pointHoverRadius:6,fill:false,tension:.2,yAxisID:"yPct",order:1}
+        ]},
+        options:{responsive:true,maintainAspectRatio:false,
+          plugins:{legend:{display:true,labels:{color:"#8a9bb3",font:{family:"JetBrains Mono,monospace",size:10},boxWidth:10}},
+            tooltip:{mode:"index",intersect:false,callbacks:{label:function(ctx){
+              if(ctx.dataset.yAxisID==="yR") return " Expectancy: "+(ctx.raw!=null?ctx.raw.toFixed(3)+"R":"—");
+              return " Win Rate: "+(ctx.raw!=null?ctx.raw.toFixed(1)+"%":"—");
+            }}}},
+          scales:{
+            x:{ticks:{color:"#8a9bb3",font:{size:10}},grid:{color:"rgba(27,38,54,.5)"}},
+            yR:{position:"left",ticks:{color:"#566377",font:{size:9},callback:function(v){return v+"R"}},grid:{color:"rgba(27,38,54,.5)"}},
+            yPct:{position:"right",min:0,max:100,ticks:{color:"#f59e0b",font:{size:9},callback:function(v){return v+"%"}},grid:{display:false}}
+          }
         }});
     }
 
-    /* 3 — Cumulative R line */
+    /* 2 — Stop Loss R Distribution: horizontal bar, 4 severity buckets */
+    dc("btCOutcome");
+    var c2=document.getElementById("btCOutcome");
+    if(c2){
+      var slb=slm.stop_loss_buckets||{};
+      var slBucketVals=[slb["1.0-1.25R"]||0,slb["1.25-1.5R"]||0,slb["1.5-2.0R"]||0,slb["2.0R+"]||0];
+      var slTotal=slBucketVals.reduce(function(a,b){return a+b;},0)||1;
+      _btState.charts["btCOutcome"]=new Chart(c2,{type:"bar",
+        data:{labels:["1.0–1.25R","1.25–1.5R","1.5–2.0R","2.0R+"],
+          datasets:[{label:"Stop Losses",data:slBucketVals,
+            backgroundColor:["rgba(251,191,36,.7)","rgba(251,146,60,.7)","rgba(251,113,133,.75)","rgba(220,38,38,.8)"],
+            borderColor:["#fbbf24","#f97316","#fb7185","#dc2626"],borderWidth:1,borderRadius:4}]},
+        options:Object.assign({},gcfg,{indexAxis:"y",
+          plugins:{legend:{display:false},
+            tooltip:{callbacks:{label:function(ctx){return " "+ctx.raw+" ("+((ctx.raw/slTotal)*100).toFixed(1)+"%)";}}},
+            title:{display:slm.stop_loss_count!=null,text:"Total SL hits: "+(slm.stop_loss_count||0)+" | Avg: "+_btFmt(slm.avg_stop_loss_r,"R"),
+              color:"#8a9bb3",font:{size:9,family:"JetBrains Mono,monospace"},padding:{bottom:4}}},
+          scales:{x:{ticks:{color:"#566377",font:{size:10}},grid:{color:"rgba(27,38,54,.5)"}},
+                  y:{ticks:{color:"#8a9bb3",font:{size:10,family:"JetBrains Mono,monospace"}},grid:{display:false}}}
+        })});
+    }
+
+    /* 3 — Max Favorable vs Adverse scatter, colored by outcome */
     dc("btCCumR");
     var c3=document.getElementById("btCCumR");
     if(c3){
-      var cumR=0,cumD=[0],lbls=["0"];
-      var elig2=events.filter(function(e){return e.simulation&&e.simulation.eligible;});
-      elig2.sort(function(a,b){return (a.formation_bar||0)-(b.formation_bar||0);});
-      for(var i=0;i<elig2.length;i++){
-        var sim=elig2[i].simulation;
-        if(sim.first_outcome==="tp") cumR+=sim.first_tp_rr||1;
-        else if(sim.first_outcome==="sl") cumR-=1;
-        cumD.push(Math.round(cumR*100)/100); lbls.push(String(i+1));
-      }
-      var step=Math.max(1,Math.ceil(lbls.length/120));
-      var dl=[],dd=[];
-      for(var j=0;j<lbls.length;j+=step){dl.push(lbls[j]);dd.push(cumD[j]);}
-      if(dl[dl.length-1]!==lbls[lbls.length-1]){dl.push(lbls[lbls.length-1]);dd.push(cumD[cumD.length-1]);}
-      _btState.charts["btCCumR"]=new Chart(c3,{type:"line",
-        data:{labels:dl,datasets:[{label:"Cumulative R",data:dd,borderColor:"#22d3ee",
-          backgroundColor:"rgba(34,211,238,.07)",borderWidth:1.5,pointRadius:0,pointHoverRadius:4,fill:true,tension:.3}]},
-        options:Object.assign({},gcfg,{plugins:{legend:{display:false},tooltip:{mode:"index",intersect:false}},
-          scales:{x:{display:true,ticks:{color:"#566377",font:{size:9},maxTicksLimit:8},grid:{color:"rgba(27,38,54,.4)"}},
-                  y:{ticks:{color:"#566377",font:{size:10},callback:function(v){return v+"R"}},grid:{color:"rgba(27,38,54,.5)"}}}})
+      var scTP=[],scSL=[],scAmb=[],scUnr=[];
+      var elig3=events.filter(function(e){return e.simulation&&e.simulation.eligible;});
+      elig3.forEach(function(e){
+        var sim=e.simulation||{};
+        var pt={x:sim.max_adverse_r!=null?parseFloat(sim.max_adverse_r.toFixed(3)):0,
+                y:sim.max_r_reached!=null?parseFloat(sim.max_r_reached.toFixed(3)):0};
+        if(sim.first_outcome==="tp") scTP.push(pt);
+        else if(sim.first_outcome==="sl") scSL.push(pt);
+        else if(sim.first_outcome==="ambiguous") scAmb.push(pt);
+        else scUnr.push(pt);
       });
+      _btState.charts["btCCumR"]=new Chart(c3,{type:"scatter",
+        data:{datasets:[
+          {label:"TP",data:scTP,backgroundColor:"rgba(52,211,153,.6)",borderColor:"#34d399",pointRadius:3,pointHoverRadius:5},
+          {label:"SL",data:scSL,backgroundColor:"rgba(251,113,133,.6)",borderColor:"#fb7185",pointRadius:3,pointHoverRadius:5},
+          {label:"Ambiguous",data:scAmb,backgroundColor:"rgba(251,191,36,.55)",borderColor:"#fbbf24",pointRadius:3,pointHoverRadius:5},
+          {label:"Unresolved",data:scUnr,backgroundColor:"rgba(148,163,184,.4)",borderColor:"#94a3b8",pointRadius:2,pointHoverRadius:4}
+        ]},
+        options:{responsive:true,maintainAspectRatio:false,
+          plugins:{legend:{display:true,labels:{color:"#8a9bb3",font:{family:"JetBrains Mono,monospace",size:10},boxWidth:10}},
+            tooltip:{callbacks:{label:function(ctx){return " Adv: "+ctx.parsed.x.toFixed(2)+"R  Fav: "+ctx.parsed.y.toFixed(2)+"R";}}}},
+          scales:{
+            x:{title:{display:true,text:"Max Adverse R",color:"#566377",font:{size:9}},
+               ticks:{color:"#566377",font:{size:9}},grid:{color:"rgba(27,38,54,.5)"}},
+            y:{title:{display:true,text:"Max Favorable R",color:"#566377",font:{size:9}},
+               ticks:{color:"#566377",font:{size:9},callback:function(v){return v+"R"}},grid:{color:"rgba(27,38,54,.5)"}}
+          }
+        }});
     }
 
-    /* 4 — Max R buckets horizontal bar */
+    /* 4 — Cumulative Realized R equity curve (uses realized_by_rr, defaults to highest available RR) */
     dc("btCBucket");
     var c4=document.getElementById("btCBucket");
     if(c4){
-      var bk=[0,0,0,0];
-      var elig3=events.filter(function(e){return e.simulation&&e.simulation.eligible;});
-      elig3.forEach(function(e){ var mr=e.simulation.max_r_reached||0; if(mr<1)bk[0]++;else if(mr<2)bk[1]++;else if(mr<3)bk[2]++;else bk[3]++; });
-      var tot=elig3.length||1;
-      _btState.charts["btCBucket"]=new Chart(c4,{type:"bar",
-        data:{labels:["0–1R","1–2R","2–3R","≥3R"],
-          datasets:[{label:"Events",data:bk,
-            backgroundColor:["rgba(148,163,184,.5)","rgba(34,211,238,.5)","rgba(52,211,153,.6)","rgba(99,102,241,.7)"],
-            borderColor:["#94a3b8","#22d3ee","#34d399","#818cf8"],borderWidth:1,borderRadius:4}]},
-        options:Object.assign({},gcfg,{indexAxis:"y",plugins:{legend:{display:false},
-          tooltip:{callbacks:{label:function(ctx){return " "+ctx.raw+" ("+((ctx.raw/tot)*100).toFixed(1)+"%)";}}}}
-          ,scales:{x:{ticks:{color:"#566377",font:{size:10}},grid:{color:"rgba(27,38,54,.5)"}},
-                   y:{ticks:{color:"#8a9bb3",font:{size:10,family:"JetBrains Mono,monospace"}},grid:{display:false}}}})
+      var elig4=events.filter(function(e){return e.simulation&&e.simulation.eligible;});
+      elig4.sort(function(a,b){return (a.formation_bar||0)-(b.formation_bar||0);});
+      var bestRk="1";
+      ["3","2","1"].forEach(function(rk){
+        var cnt=0;
+        elig4.forEach(function(e){var r=(e.simulation.realized_by_rr||{})[rk];if(r&&(r.outcome==="win"||r.outcome==="loss"))cnt++;});
+        if(cnt>0) bestRk=rk;
+      });
+      var cumRv=0,cumArr=[0],cumLbls=["0"];
+      elig4.forEach(function(e,idx){
+        var r=(e.simulation.realized_by_rr||{})[bestRk];
+        if(!r) return;
+        if(r.outcome==="win"||r.outcome==="loss"){
+          var rv=r.realized_r!=null?r.realized_r:0;
+          cumRv=Math.round((cumRv+rv)*10000)/10000;
+          cumArr.push(cumRv); cumLbls.push(String(idx+1));
+        }
+      });
+      var step=Math.max(1,Math.ceil(cumLbls.length/120));
+      var dl=[],dd=[];
+      for(var ji=0;ji<cumLbls.length;ji+=step){dl.push(cumLbls[ji]);dd.push(cumArr[ji]);}
+      if(dl[dl.length-1]!==cumLbls[cumLbls.length-1]){dl.push(cumLbls[cumLbls.length-1]);dd.push(cumArr[cumArr.length-1]);}
+      var finalR=dd[dd.length-1]||0;
+      var lineColor=finalR>=0?"#34d399":"#fb7185";
+      var fillColor=finalR>=0?"rgba(52,211,153,.07)":"rgba(251,113,133,.07)";
+      _btState.charts["btCBucket"]=new Chart(c4,{type:"line",
+        data:{labels:dl,datasets:[{label:bestRk+"R Realized",data:dd,
+          borderColor:lineColor,backgroundColor:fillColor,borderWidth:1.5,pointRadius:0,pointHoverRadius:4,fill:true,tension:.3}]},
+        options:Object.assign({},gcfg,{plugins:{
+          legend:{display:true,labels:{color:"#8a9bb3",font:{family:"JetBrains Mono,monospace",size:10},boxWidth:10}},
+          tooltip:{mode:"index",intersect:false}},
+          scales:{x:{display:true,ticks:{color:"#566377",font:{size:9},maxTicksLimit:8},grid:{color:"rgba(27,38,54,.4)"}},
+                  y:{ticks:{color:"#566377",font:{size:10},callback:function(v){return v+"R"}},grid:{color:"rgba(27,38,54,.5)"}}}})
       });
     }
 
@@ -12038,12 +12088,15 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var events=active?_btGetFilteredEvents(d.events||[],f):d.events||[];
     var cols=["symbol","timeframe","type","formation_time","first_touch_time","zone_high","zone_low",
       "touch_status","later_mitigated","outcome","entry_price","stop_boundary","max_r_reached",
-      "max_adverse_r","hit_1r","hit_2r","hit_3r","candles_to_1r","candles_to_2r","candles_to_3r"];
+      "max_adverse_r","hit_1r","hit_2r","hit_3r","candles_to_1r","candles_to_2r","candles_to_3r",
+      "stop_close_price","stop_loss_r","stop_loss_abs","stop_loss_pct",
+      "outcome_1r","realized_1r","outcome_2r","realized_2r","outcome_3r","realized_3r"];
     var rows=[cols.join(",")];
     events.forEach(function(ev){
-      var sim=ev.simulation||{}, hr=sim.hit_rr||{};
+      var sim=ev.simulation||{}, hr=sim.hit_rr||{}, rz=sim.realized_by_rr||{};
       function hk(k){return !!(hr[k]||hr[k+".0"]);}
       function cv(x){var s=String(x==null?"":x);return(s.indexOf(",")>=0||s.indexOf('"')>=0)?'"'+s.replace(/"/g,'""')+'"':s;}
+      function rzv(k,field){var r=rz[k]; return r!=null?r[field]:""}
       rows.push([
         cv(p.symbol),cv(p.timeframe),cv(ev.type),cv(ev.formation_time),cv(ev.first_touch_time),
         cv(ev.zone_high),cv(ev.zone_low),cv(ev.touch_status),cv(ev.later_mitigated?1:0),
@@ -12052,7 +12105,14 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         cv(hk("1")?1:0),cv(hk("2")?1:0),cv(hk("3")?1:0),
         cv(sim.candles_to_rr&&sim.candles_to_rr["1"]!=null?sim.candles_to_rr["1"]:""),
         cv(sim.candles_to_rr&&sim.candles_to_rr["2"]!=null?sim.candles_to_rr["2"]:""),
-        cv(sim.candles_to_rr&&sim.candles_to_rr["3"]!=null?sim.candles_to_rr["3"]:"")
+        cv(sim.candles_to_rr&&sim.candles_to_rr["3"]!=null?sim.candles_to_rr["3"]:""),
+        cv(sim.stop_close_price!=null?sim.stop_close_price:""),
+        cv(sim.stop_loss_r!=null?sim.stop_loss_r:""),
+        cv(sim.stop_loss_abs!=null?sim.stop_loss_abs:""),
+        cv(sim.stop_loss_pct!=null?sim.stop_loss_pct:""),
+        cv(rzv("1","outcome")),cv(rzv("1","realized_r")),
+        cv(rzv("2","outcome")),cv(rzv("2","realized_r")),
+        cv(rzv("3","outcome")),cv(rzv("3","realized_r"))
       ].join(","));
     });
     _btDownloadBlob("zyni_bt_"+(p.symbol||"export")+"_"+Date.now()+".csv",rows.join("\r\n"),"text/csv");
@@ -12072,9 +12132,19 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       if(sim.first_outcome==="unresolved") return "unresolved";
       return "no_touch";
     }
+    function riskProfileLabel(ev){
+      var sim=ev.simulation||{}, slr=sim.stop_loss_r;
+      if(slr==null) return "no_sl";
+      if(slr<1.25) return "tight_sl";
+      if(slr<1.5)  return "normal_sl";
+      if(slr<2.0)  return "wide_sl";
+      return "extreme_sl";
+    }
     var records=events.map(function(ev){
-      var sim=ev.simulation||{}, hr=sim.hit_rr||{};
+      var sim=ev.simulation||{}, hr=sim.hit_rr||{}, rz=sim.realized_by_rr||{};
       function hk(k){return !!(hr[k]||hr[k+".0"]);}
+      function rzOut(k){return rz[k]?rz[k].outcome:null;}
+      function rzR(k){return rz[k]&&rz[k].realized_r!=null?parseFloat(rz[k].realized_r.toFixed(4)):null;}
       var zh=ev.zone_high||0, zl=ev.zone_low||0, mid=(zh+zl)/2;
       return {symbol:p.symbol,timeframe:p.timeframe,ob_type:ev.type,
         formation_bar:ev.formation_bar,formation_time:ev.formation_time,
@@ -12085,6 +12155,14 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         hit_1r:hk("1"),hit_2r:hk("2"),hit_3r:hk("3"),
         max_r_reached:sim.max_r_reached!=null?parseFloat(sim.max_r_reached.toFixed(4)):null,
         max_adverse_r:sim.max_adverse_r!=null?parseFloat(sim.max_adverse_r.toFixed(4)):null,
+        stop_loss_r:sim.stop_loss_r!=null?sim.stop_loss_r:null,
+        realized_by_rr:{
+          "1":{outcome:rzOut("1"),realized_r:rzR("1")},
+          "2":{outcome:rzOut("2"),realized_r:rzR("2")},
+          "3":{outcome:rzOut("3"),realized_r:rzR("3")}
+        },
+        label_1r:rzOut("1"),label_2r:rzOut("2"),label_3r:rzOut("3"),
+        risk_profile_label:riskProfileLabel(ev),
         label:aiLabel(ev)};
     });
     _btDownloadBlob("zyni_bt_ai_"+(p.symbol||"export")+"_"+Date.now()+".json",JSON.stringify(records,null,2),"application/json");
@@ -12174,6 +12252,67 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     }
     os.bullish=subSet(elig.filter(function(e){return e.type==="bullish";}));
     os.bearish=subSet(elig.filter(function(e){return e.type==="bearish";}));
+
+    /* stop_loss_summary */
+    var slHits=elig.filter(function(e){return e.simulation.stop_loss_r!=null;});
+    var slBkts={"1.0-1.25R":0,"1.25-1.5R":0,"1.5-2.0R":0,"2.0R+":0};
+    var slRvals=slHits.map(function(e){return e.simulation.stop_loss_r;});
+    slRvals.forEach(function(r){
+      if(r<1.25) slBkts["1.0-1.25R"]++;
+      else if(r<1.5) slBkts["1.25-1.5R"]++;
+      else if(r<2.0) slBkts["1.5-2.0R"]++;
+      else slBkts["2.0R+"]++;
+    });
+    var slPctVals=slHits.map(function(e){return e.simulation.stop_loss_pct;}).filter(function(v){return v!=null;});
+    var slRsorted=slRvals.slice().sort(function(a,b){return a-b;});
+    var slMed=null;
+    if(slRsorted.length){
+      var mid=Math.floor(slRsorted.length/2);
+      slMed=slRsorted.length%2===0?(slRsorted[mid-1]+slRsorted[mid])/2:slRsorted[mid];
+    }
+    os.stop_loss_summary={
+      stop_loss_count:slRvals.length,
+      avg_stop_loss_r:slRvals.length?slRvals.reduce(function(a,b){return a+b;},0)/slRvals.length:null,
+      median_stop_loss_r:slMed,
+      max_stop_loss_r:slRvals.length?Math.max.apply(null,slRvals):null,
+      min_stop_loss_r:slRvals.length?Math.min.apply(null,slRvals):null,
+      avg_stop_loss_pct:slPctVals.length?slPctVals.reduce(function(a,b){return a+b;},0)/slPctVals.length:null,
+      stop_loss_buckets:slBkts
+    };
+
+    /* realized_summary_by_rr */
+    os.realized_summary_by_rr={};
+    [1,2,3].forEach(function(rv){
+      var rk=String(rv);
+      var trades=elig.filter(function(e){var r=(e.simulation.realized_by_rr||{})[rk];return r&&(r.outcome==="win"||r.outcome==="loss");});
+      var wins=trades.filter(function(e){return (e.simulation.realized_by_rr[rk]||{}).outcome==="win";});
+      var losses=trades.filter(function(e){return (e.simulation.realized_by_rr[rk]||{}).outcome==="loss";});
+      var ambig=elig.filter(function(e){return ((e.simulation.realized_by_rr||{})[rk]||{}).outcome==="ambiguous";}).length;
+      var unres=elig.filter(function(e){return ((e.simulation.realized_by_rr||{})[rk]||{}).outcome==="unresolved";}).length;
+      var winRs=wins.map(function(e){return (e.simulation.realized_by_rr[rk]||{}).realized_r||0;});
+      var lossRs=losses.map(function(e){return Math.abs((e.simulation.realized_by_rr[rk]||{}).realized_r||0);});
+      var totalWinR=winRs.reduce(function(a,b){return a+b;},0);
+      var totalLossR=lossRs.reduce(function(a,b){return a+b;},0);
+      var netR=totalWinR-totalLossR;
+      var expectancy=trades.length>0?netR/trades.length:null;
+      var pf=totalLossR>0?totalWinR/totalLossR:null;
+      var wCan=wins.map(function(e){return (e.simulation.realized_by_rr[rk]||{}).candles_to_exit||0;});
+      var lCan=losses.map(function(e){return (e.simulation.realized_by_rr[rk]||{}).candles_to_exit||0;});
+      os.realized_summary_by_rr[rk]={
+        target_rr:rv, trades:trades.length, wins:wins.length, losses:losses.length,
+        ambiguous:ambig, unresolved:unres,
+        win_rate_pct:trades.length>0?wins.length/trades.length*100:null,
+        avg_win_r:winRs.length?totalWinR/winRs.length:null,
+        avg_loss_r:lossRs.length?totalLossR/lossRs.length:null,
+        max_loss_r:lossRs.length?Math.max.apply(null,lossRs):null,
+        min_loss_r:lossRs.length?Math.min.apply(null,lossRs):null,
+        total_win_r:totalWinR, total_loss_r:totalLossR, net_r:netR,
+        expectancy_r:expectancy, profit_factor_r:pf,
+        avg_candles_to_win:wCan.length?wCan.reduce(function(a,b){return a+b;},0)/wCan.length:null,
+        avg_candles_to_loss:lCan.length?lCan.reduce(function(a,b){return a+b;},0)/lCan.length:null
+      };
+    });
+
     return os;
   }
 
@@ -12261,6 +12400,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       _btKpiCard("3R Hit Rate",_btFmt(rr3.rate_pct,"%"),"y",(rr3.hits||0)+" hits")+
       _btKpiCard("Avg Max R",_btFmt(os.avg_max_r_reached,"R"),"g","avg excursion")+
       _btKpiCard("Parity",par.enabled?_btFmt(par.match_rate_pct,"%"):"—","","vs detect_obs_all")+
+      _btKpiCard("Avg SL R",_btFmt((os.stop_loss_summary||{}).avg_stop_loss_r,"R"),"r","realized loss size")+
     '</div>';
 
     /* Events table */
@@ -12275,10 +12415,10 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var cEl=document.getElementById("btOvCharts");
     if(cEl){
       cEl.innerHTML='<div class="bt-charts-grid">'+
-        '<div class="bt-chart-card"><div class="bt-chart-h">Hit Rate by Target <span class="bt-chart-hsub">1R / 2R / 3R</span></div><div class="bt-chart-wrap"><canvas id="btCHitRate"></canvas></div></div>'+
-        '<div class="bt-chart-card"><div class="bt-chart-h">Outcome Distribution <span class="bt-chart-hsub">TP / SL / Ambiguous / Unresolved</span></div><div class="bt-chart-wrap"><canvas id="btCOutcome"></canvas></div></div>'+
-        '<div class="bt-chart-card"><div class="bt-chart-h">Cumulative R <span class="bt-chart-hsub">Expectancy curve by event sequence</span></div><div class="bt-chart-wrap"><canvas id="btCCumR"></canvas></div></div>'+
-        '<div class="bt-chart-card"><div class="bt-chart-h">Max R Strength Buckets <span class="bt-chart-hsub">Achieved R distribution</span></div><div class="bt-chart-wrap"><canvas id="btCBucket"></canvas></div></div>'+
+        '<div class="bt-chart-card"><div class="bt-chart-h">Realized Strategy Performance <span class="bt-chart-hsub">Expectancy &amp; Win Rate per RR</span></div><div class="bt-chart-wrap"><canvas id="btCHitRate"></canvas></div></div>'+
+        '<div class="bt-chart-card"><div class="bt-chart-h">Stop Loss R Distribution <span class="bt-chart-hsub">Actual loss magnitude buckets</span></div><div class="bt-chart-wrap"><canvas id="btCOutcome"></canvas></div></div>'+
+        '<div class="bt-chart-card"><div class="bt-chart-h">Max Favorable vs Adverse <span class="bt-chart-hsub">R scatter by event outcome</span></div><div class="bt-chart-wrap"><canvas id="btCCumR"></canvas></div></div>'+
+        '<div class="bt-chart-card"><div class="bt-chart-h">Cumulative Realized R <span class="bt-chart-hsub">Equity curve — realized exits only</span></div><div class="bt-chart-wrap"><canvas id="btCBucket"></canvas></div></div>'+
       '</div>';
       setTimeout(function(){ _btBuildCharts(d,fe,os); },0);
     }
@@ -12373,7 +12513,33 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   function _btRenderOutcomesPage(data){
     var el=document.getElementById("btOutcomesContent"); if(!el) return;
     var os=data.outcome_summary||{}, hrr=os.hit_rate_by_rr||{};
+    var slm=os.stop_loss_summary||{}, rsm=os.realized_summary_by_rr||{};
     function row(k,v){ return '<div class="bt-settings-row"><span class="bt-settings-k">'+k+'</span><span class="bt-settings-v">'+v+'</span></div>'; }
+
+    /* realized summary table */
+    var rrKeys=["1","2","3"];
+    var rsmHtml='<div class="bt-tbl-wrap" style="margin-top:0"><table class="bt-tbl"><thead><tr>'+
+      '<th>RR</th><th>Trades</th><th>Wins</th><th>Losses</th><th>Win%</th>'+
+      '<th>Expectancy</th><th>Profit Factor</th><th>Net R</th><th>Avg Win R</th><th>Avg Loss R</th></tr></thead><tbody>';
+    rrKeys.forEach(function(rk){
+      var r=rsm[rk]||{};
+      if(!r.trades) return;
+      rsmHtml+='<tr>'+
+        '<td class="bt-num" style="color:var(--accent)">'+rk+'R</td>'+
+        '<td class="bt-num">'+r.trades+'</td>'+
+        '<td class="bt-num" style="color:var(--green-2)">'+r.wins+'</td>'+
+        '<td class="bt-num" style="color:var(--red-2)">'+r.losses+'</td>'+
+        '<td class="bt-num">'+_btFmt(r.win_rate_pct,"%")+'</td>'+
+        '<td class="bt-num" style="color:'+(r.expectancy_r>=0?"var(--green-2)":"var(--red-2)")+'">'+_btFmt(r.expectancy_r,"R")+'</td>'+
+        '<td class="bt-num">'+_btFmt(r.profit_factor_r,"R")+'</td>'+
+        '<td class="bt-num" style="color:'+(r.net_r>=0?"var(--green-2)":"var(--red-2)")+'">'+_btFmt(r.net_r,"R")+'</td>'+
+        '<td class="bt-num" style="color:var(--green-2)">'+_btFmt(r.avg_win_r,"R")+'</td>'+
+        '<td class="bt-num" style="color:var(--red-2)">'+_btFmt(r.avg_loss_r,"R")+'</td>'+
+      '</tr>';
+    });
+    rsmHtml+='</tbody></table></div>';
+    var hasRsm=rrKeys.some(function(k){return rsm[k]&&rsm[k].trades;});
+
     el.innerHTML=
       '<div class="bt-settings-card">'+
         '<div class="bt-settings-h">Outcome Summary</div>'+
@@ -12389,6 +12555,21 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         row("Avg Max R",_btFmt(os.avg_max_r_reached,"R"))+
         row("Avg Max Adverse R",_btFmt(os.avg_max_adverse_r,"R"))+
       '</div>'+
+      '<div class="bt-settings-card">'+
+        '<div class="bt-settings-h">Stop Loss Metrics</div>'+
+        row("SL Events",slm.stop_loss_count||0)+
+        row("Avg Stop Loss R",_btFmt(slm.avg_stop_loss_r,"R"))+
+        row("Median Stop Loss R",_btFmt(slm.median_stop_loss_r,"R"))+
+        row("Max Stop Loss R",_btFmt(slm.max_stop_loss_r,"R"))+
+        row("Min Stop Loss R",_btFmt(slm.min_stop_loss_r,"R"))+
+        row("Avg Stop Loss %",slm.avg_stop_loss_pct!=null?slm.avg_stop_loss_pct.toFixed(3)+"%":"—")+
+        (slm.stop_loss_buckets?
+          row("1.0–1.25R",(slm.stop_loss_buckets["1.0-1.25R"]||0)+" losses")+
+          row("1.25–1.5R",(slm.stop_loss_buckets["1.25-1.5R"]||0)+" losses")+
+          row("1.5–2.0R",(slm.stop_loss_buckets["1.5-2.0R"]||0)+" losses")+
+          row("2.0R+",(slm.stop_loss_buckets["2.0R+"]||0)+" losses"):"")+
+      '</div>'+
+      (hasRsm?'<div class="bt-settings-card"><div class="bt-settings-h">Realized R Performance by Target</div>'+rsmHtml+'</div>':"")+
       '<div class="bt-compare-grid">'+
         '<div class="bt-compare-card"><div class="bt-compare-h bull">&#11044; Bullish OBs</div>'+
           row("Count",(os.bullish||{}).count||0)+row("TP First",(os.bullish||{}).tp_first||0)+
@@ -12452,6 +12633,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       '<div class="bt-tbl-wrap"><table class="bt-tbl"><thead><tr>'+
       '<th>#</th><th>Type</th><th>Formation (UTC)</th><th>Zone High</th><th>Zone Low</th>'+
       '<th>Entry</th><th>Risk</th><th>Outcome</th><th>Max R</th><th>Adv R</th><th>1R</th><th>2R</th><th>3R</th>'+
+      '<th>SL Close</th><th>SL R</th><th>Real 1R</th><th>Real 2R</th><th>Real 3R</th>'+
       '</tr></thead><tbody>'+_btTlRows(allE,start,ps)+'</tbody></table></div>'+
       (pages>1?'<div class="bt-pager"><span>Page '+(cp+1)+' of '+pages+'</span>'+
         '<button class="bt-pager-btn" id="btTlPrev"'+(cp===0?" disabled":"")+'>&#8249; Prev</button>'+
@@ -12463,11 +12645,18 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 
   function _btTlRows(events,start,ps){
     var slice=events.slice(start,start+ps);
-    if(!slice.length) return '<tr><td colspan="13" style="text-align:center;padding:30px;color:var(--text-3)">No data</td></tr>';
+    if(!slice.length) return '<tr><td colspan="18" style="text-align:center;padding:30px;color:var(--text-3)">No data</td></tr>';
     var html="";
     slice.forEach(function(ev,i){
-      var sim=ev.simulation||{}, hr=sim.hit_rr||{};
+      var sim=ev.simulation||{}, hr=sim.hit_rr||{}, rz=sim.realized_by_rr||{};
       function chk(k){return (hr[k]||hr[k+".0"])?"<span class='bt-hit-y'>&#10003;</span>":"<span class='bt-hit-n'>&middot;</span>";}
+      function rzCell(k){
+        var r=rz[k]; if(!r) return '<td class="bt-num" style="color:var(--text-3)">—</td>';
+        var oc=r.outcome, rr=r.realized_r;
+        var clr=oc==="win"?"var(--green-2)":oc==="loss"?"var(--red-2)":oc==="ambiguous"?"var(--yellow)":"var(--text-3)";
+        var lbl=rr!=null?(rr>0?"+":"")+rr.toFixed(2)+"R":oc;
+        return '<td class="bt-num" style="color:'+clr+'">'+lbl+'</td>';
+      }
       html+='<tr>'+
         '<td class="bt-num">'+(start+i+1)+'</td>'+
         '<td>'+(ev.type==="bullish"?'<span class="bt-tag bull">Bull</span>':'<span class="bt-tag bear">Bear</span>')+'</td>'+
@@ -12480,6 +12669,9 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         '<td class="bt-num" style="color:var(--accent)">'+(sim.max_r_reached!=null?sim.max_r_reached.toFixed(2)+"R":"—")+'</td>'+
         '<td class="bt-num" style="color:var(--red-2)">'+(sim.max_adverse_r!=null?sim.max_adverse_r.toFixed(2)+"R":"—")+'</td>'+
         '<td>'+chk("1")+'</td><td>'+chk("2")+'</td><td>'+chk("3")+'</td>'+
+        '<td class="bt-num" style="color:var(--text-3)">'+(sim.stop_close_price!=null?Number(sim.stop_close_price).toFixed(2):"—")+'</td>'+
+        '<td class="bt-num" style="color:var(--red-2)">'+(sim.stop_loss_r!=null?sim.stop_loss_r.toFixed(3)+"R":"—")+'</td>'+
+        rzCell("1")+rzCell("2")+rzCell("3")+
       '</tr>';
     });
     return html;
