@@ -1,6 +1,14 @@
 # live_monitor package — Phase 11.1C module split foundation
 # Routes stay in main.py; only helper logic lives here.
 # Models and Flask app stay in their original locations.
+from live_monitor.execution_account import (
+    _lm_get_execution_settings,
+    _lm_update_execution_mode,
+    _lm_get_execution_mode_summary,
+    _lm_validate_execution_mode,
+    _lm_validate_policy_mode,
+    _lm_execution_mode_labels,
+)
 from live_monitor.execution_intelligence import (
     _lm_build_orderflow_state,
     _lm_build_zone_ob_slice,
@@ -153,4 +161,11 @@ __all__ = [
     "_lm_sync_paper_trade_journal_for_user",
     "_lm_get_paper_trade_journal",
     "_lm_build_ai_post_trade_review_context",
+    # Phase 11.11: Execution Account Architecture
+    "_lm_get_execution_settings",
+    "_lm_update_execution_mode",
+    "_lm_get_execution_mode_summary",
+    "_lm_validate_execution_mode",
+    "_lm_validate_policy_mode",
+    "_lm_execution_mode_labels",
 ]

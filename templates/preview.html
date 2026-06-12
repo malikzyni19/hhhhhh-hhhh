@@ -4750,6 +4750,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     if(ws==='terminal'){
       try{_lmUpdateTerminalActiveItem();}catch(e){}
       try{window._lmTodRefreshDraft();}catch(e){}
+      try{window._lmLoadExecutionMode();}catch(e){}
     }
     // Persist selection
     try{localStorage.setItem('zyni_lm_workspace',ws);}catch(e){}
@@ -5060,6 +5061,37 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                     '<span style="font-size:10px;color:var(--text-3)">No setup selected — </span>'+
                     '<button class="btn lm-sm-btn" onclick="_lmSwitchPane(\'setups\')" style="font-size:9px;padding:2px 8px">&#8592; Go to Live Setups</button>'+
                   '</div>'+
+                '</div>'+
+
+                /* ── Execution Mode Header ────────────────────────────────── */
+                '<div id="lmExecModeBar" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0 10px;border-bottom:1px solid rgba(255,255,255,.07);margin-bottom:10px">'+
+                  '<div>'+
+                    '<div style="font-size:9px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">Execution Mode</div>'+
+                    '<div style="display:flex;align-items:center;gap:6px">'+
+                      '<span id="lmExecModeLabel" style="font-size:12px;font-weight:700;color:var(--green,#4ade80)">Internal Paper</span>'+
+                      '<span id="lmExecModePurpose" style="font-size:9px;color:var(--text-3)">Primary Strategy Testing</span>'+
+                    '</div>'+
+                  '</div>'+
+                  '<div style="display:flex;gap:4px">'+
+                    '<button class="btn lm-sm-btn" id="lmExecModeBtn-paper" '+
+                      'style="font-size:9px;padding:2px 7px;border-color:rgba(74,222,128,.5);color:var(--green,#4ade80)" '+
+                      'onclick="window._lmSetExecutionMode(\'internal_paper\')" title="Primary Strategy Testing">'+
+                      'Paper'+
+                    '</button>'+
+                    '<button class="btn lm-sm-btn" id="lmExecModeBtn-testnet" '+
+                      'style="font-size:9px;padding:2px 7px" '+
+                      'onclick="window._lmSetExecutionMode(\'binance_testnet\')" title="API Testing Only — not for strategy validation">'+
+                      'Testnet'+
+                    '</button>'+
+                    '<button class="btn lm-sm-btn" id="lmExecModeBtn-live" disabled '+
+                      'style="font-size:9px;padding:2px 7px;opacity:.35;cursor:not-allowed" '+
+                      'title="Future / Disabled">'+
+                      'Live'+
+                    '</button>'+
+                  '</div>'+
+                '</div>'+
+                '<div id="lmExecModeWarn" style="display:none;font-size:9px;padding:4px 8px;margin-bottom:8px;border-radius:4px;background:rgba(251,191,36,.09);color:var(--yellow,#facc15);border:1px solid rgba(251,191,36,.22)">'+
+                  '&#9888; Binance Testnet is API-testing only and not used for strategy validation.'+
                 '</div>'+
 
                 /* ── GROUP 1: Internal Paper Trading (open) ────────────────── */
@@ -8647,6 +8679,64 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         if(sb){ sb.disabled=false; sb.textContent='Submit Paper Order'; }
         if(resEl){ resEl.style.display=''; resEl.style.color='var(--red-2,#f87171)'; resEl.textContent='Network error during submit.'; }
       });
+  };
+
+  /* ── Phase 11.11: Execution Mode ─────────────────────────────────────────── */
+  window._lmLoadExecutionMode=function(){
+    fetch('/api/live-monitor/execution-mode',{credentials:'same-origin'})
+      .then(function(r){return r.json();})
+      .then(function(d){ if(d&&d.ok) window._lmApplyExecutionMode(d); })
+      .catch(function(){});
+  };
+
+  window._lmApplyExecutionMode=function(summary){
+    if(!summary) return;
+    var mode    = summary.execution_mode || 'internal_paper';
+    var label   = summary.execution_mode_label || 'Internal Paper';
+    var purpose = summary.execution_mode_purpose || 'Primary Strategy Testing';
+    var lEl=document.getElementById('lmExecModeLabel');
+    var pEl=document.getElementById('lmExecModePurpose');
+    var wEl=document.getElementById('lmExecModeWarn');
+    if(lEl) lEl.textContent=label;
+    if(pEl) pEl.textContent=purpose;
+    // Label colour: green for paper, yellow for testnet
+    var lC=mode==='internal_paper'?'var(--green,#4ade80)':'var(--yellow,#facc15)';
+    if(lEl) lEl.style.color=lC;
+    // Testnet warning
+    if(wEl) wEl.style.display=mode==='binance_testnet'?'':'none';
+    // Active button highlight
+    ['paper','testnet'].forEach(function(k){
+      var b=document.getElementById('lmExecModeBtn-'+k);
+      if(!b) return;
+      var active=(k==='paper'&&mode==='internal_paper')||(k==='testnet'&&mode==='binance_testnet');
+      b.style.background=active?'rgba(74,222,128,.13)':'';
+      b.style.borderColor=active?'rgba(74,222,128,.5)':'';
+      b.style.color=active?(k==='testnet'?'var(--yellow,#facc15)':'var(--green,#4ade80)'):'';
+    });
+  };
+
+  window._lmSetExecutionMode=function(mode){
+    var itemId=window._lmSimItemId||(window._lmSelItem&&window._lmSelItem.id);
+    if(mode==='binance_testnet'){
+      if(!confirm('Switch to Binance Testnet?\n\nTestnet is API-testing only.\nIt is NOT used for strategy validation.\nInternal Paper remains the primary strategy-testing mode.')) return;
+    }
+    fetch('/api/live-monitor/execution-mode',{
+      method:'POST',
+      credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({execution_mode:mode, item_id:itemId||null}),
+    })
+      .then(function(r){return r.json();})
+      .then(function(d){
+        if(d&&d.ok){
+          window._lmApplyExecutionMode(d);
+        } else {
+          var msg=d&&d.message?d.message:(d&&d.error?d.error:'Mode change failed.');
+          alert('Execution mode: '+msg);
+          window._lmLoadExecutionMode();
+        }
+      })
+      .catch(function(){ window._lmLoadExecutionMode(); });
   };
 
   window._lmPapSyncJournal=function(){

@@ -346,6 +346,12 @@ class UserPreference(db.Model):
     # Phase 10.8: OB Distance/Approach settings JSON (per-user, persistent)
     ob_da_settings_json = db.Column(db.Text, nullable=True)
 
+    # Phase 11.11: Execution mode architecture — default internal_paper (primary)
+    execution_mode = db.Column(db.String(40), nullable=False,
+                               default="internal_paper", server_default="internal_paper")
+    policy_mode    = db.Column(db.String(40), nullable=False,
+                               default="paper_manual",   server_default="paper_manual")
+
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
                             onupdate=lambda: datetime.now(timezone.utc))
 

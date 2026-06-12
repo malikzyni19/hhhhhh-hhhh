@@ -695,6 +695,19 @@ def _auto_migrate():
                         pass
                 conn.commit()
                 print("[MIGRATE] Phase 11.10 paper trades journal table columns ensured")
+                # Phase 11.11: Execution mode on user_preferences
+                for _stmt in [
+                    "ALTER TABLE user_preferences ADD COLUMN IF NOT EXISTS "
+                    "execution_mode VARCHAR(40) NOT NULL DEFAULT 'internal_paper'",
+                    "ALTER TABLE user_preferences ADD COLUMN IF NOT EXISTS "
+                    "policy_mode VARCHAR(40) NOT NULL DEFAULT 'paper_manual'",
+                ]:
+                    try:
+                        conn.execute(text(_stmt))
+                    except Exception:
+                        pass
+                conn.commit()
+                print("[MIGRATE] Phase 11.11 execution_mode/policy_mode columns ensured on user_preferences")
         except Exception as exc:
             print(f"[MIGRATE] Auto-migration warning: {exc}")
 
@@ -20169,6 +20182,9 @@ def _lm_build_trade_proposal_context(row, snapshot=None) -> dict:
         "paper_journal_summary": (lambda: _lm_paper_journal_summary_for_ai(
             getattr(row, "user_id", None), getattr(row, "id", None)
         ))(),
+        "execution_mode_summary": (lambda: _lm_get_execution_mode_summary(
+            getattr(row, "user_id", None)
+        ) if getattr(row, "user_id", None) else None)(),
     }
 
 
@@ -21264,6 +21280,9 @@ def _lm_build_ai_context(item) -> dict:
         "paper_journal_summary": (lambda: _lm_paper_journal_summary_for_ai(
             getattr(item, "user_id", None), getattr(item, "id", None)
         ))(),
+        "execution_mode_summary": (lambda: _lm_get_execution_mode_summary(
+            getattr(item, "user_id", None)
+        ) if getattr(item, "user_id", None) else None)(),
     }
 
 
@@ -24455,6 +24474,13 @@ from live_monitor import (
     _lm_sync_paper_trade_journal_for_user,
     _lm_get_paper_trade_journal,
     _lm_build_ai_post_trade_review_context,
+    # Phase 11.11: Execution Account Architecture
+    _lm_get_execution_settings,
+    _lm_update_execution_mode,
+    _lm_get_execution_mode_summary,
+    _lm_validate_execution_mode,
+    _lm_validate_policy_mode,
+    _lm_execution_mode_labels,
 )
 
 # ── Phase 10.9I: Auto-refresh scheduler ─────────────────────────────────────
@@ -28842,6 +28868,99 @@ def api_lm_paper_trade_ai_review(trade_id):
         "trade_id": trade_id,
         "review":   review,
         "source":   "internal_paper",
+    })
+
+
+# ── Phase 11.11: Execution Mode endpoints ────────────────────────────────────
+
+
+@app.route("/api/live-monitor/execution-mode", methods=["GET"])
+@login_required
+def api_lm_get_execution_mode():
+    """Phase 11.11: Get current execution mode summary for the logged-in user.
+
+    SAFETY: DB-only read. No Binance API. No exchange calls. No order placement.
+    No auto execution. Architecture/guardrails only.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    summary = _lm_get_execution_mode_summary(uid)
+    return jsonify(summary)
+
+
+@app.route("/api/live-monitor/execution-mode", methods=["POST"])
+@login_required
+def api_lm_set_execution_mode():
+    """Phase 11.11: Set execution mode for the logged-in user.
+
+    Only internal_paper and binance_testnet are allowed.
+    binance_live_future is always rejected.
+    AI cannot call this endpoint as an execution action.
+    SAFETY: DB-only. No Binance API. No exchange calls. No order placement.
+    No auto execution. No API keys. No secrets.
+    """
+    import json as _json124
+    from flask import request as _req124
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"error": "no_user"}), 401
+
+    try:
+        body = _req124.get_json(force=True, silent=True) or {}
+    except Exception:
+        body = {}
+
+    new_mode = (body.get("execution_mode") or "").strip()
+    if not new_mode:
+        return jsonify({"ok": False, "error": "missing_execution_mode"}), 400
+
+    result = _lm_update_execution_mode(uid, new_mode)
+    if not result.get("ok"):
+        err = result.get("error", "update_failed")
+        return jsonify({
+            "ok":             False,
+            "error":          err,
+            "message":        result.get("message", err),
+            "execution_mode": result.get("execution_mode", "internal_paper"),
+        }), 400
+
+    summary = _lm_get_execution_mode_summary(uid)
+
+    # Task 9: store compact snapshot on selected item if item_id provided
+    item_id_snap = body.get("item_id")
+    if item_id_snap:
+        try:
+            from models import db as _db124, LiveMonitorItem as _LMI124
+            _item = _LMI124.query.filter_by(id=item_id_snap, user_id=uid).first()
+            if _item:
+                _snap = {}
+                if _item.snapshot_json:
+                    try:
+                        _snap = _json124.loads(_item.snapshot_json)
+                    except Exception:
+                        pass
+                _snap["latest_execution_mode_summary"] = {
+                    "execution_mode":              summary.get("execution_mode"),
+                    "policy_mode":                 summary.get("policy_mode"),
+                    "paper_primary":               summary.get("paper_primary"),
+                    "testnet_strategy_validation": False,
+                    "live_disabled":               True,
+                    "source":                      "execution_account",
+                }
+                _item.snapshot_json = _json124.dumps(_snap, default=str)
+                _db124.session.commit()
+        except Exception:
+            pass
+
+    return jsonify({
+        "ok":                     True,
+        "execution_mode":         summary.get("execution_mode"),
+        "execution_mode_label":   summary.get("execution_mode_label"),
+        "execution_mode_purpose": summary.get("execution_mode_purpose"),
+        "policy_mode":            summary.get("policy_mode"),
+        "source":                 "execution_account",
     })
 
 
