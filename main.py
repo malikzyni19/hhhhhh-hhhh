@@ -34744,7 +34744,7 @@ def _bt_apply_outcomes_to_events(events: List[Dict], candles: List[Dict],
     }
 
 
-# ── Phase 12B: TV OB % historical snapshots ──────────────────────────────────
+# ── Phase 12C: TV OB % historical snapshots ──────────────────────────────────
 # Reproduces the production tvObVolumeSharePct metric at two snapshot points
 # for every backtest event using the exact production helpers:
 #   detect_obs() + _tv_visible_pool() + calculate_tv_ob_volume_share()
@@ -34753,10 +34753,14 @@ def _bt_apply_outcomes_to_events(events: List[Dict], candles: List[Dict],
 #
 # Phase 12B: independent candle-prefix parity audit, alias fields,
 # prefix cache, realized_summary_by_rr, winner cards, trust gating.
+# Phase 12C: single source of truth for production mode (read from detect_obs).
 
-_BT_TV_OB_PRODUCTION_OB_LOGIC_MODE: str = "tv_parity_v3"
-# ^ Diagnostic constant — records the default used by detect_obs().
-# Do NOT pass this to detect_obs(); let it inherit the default naturally.
+import inspect as _inspect
+_BT_TV_OB_PRODUCTION_OB_LOGIC_MODE: str = (
+    _inspect.signature(detect_obs).parameters["ob_logic_mode"].default
+)
+# ^ Read directly from detect_obs default parameter — one source of truth.
+# Only used for diagnostics/debug output; never passed to detect_obs().
 
 _BT_TV_OB_PCT_BUCKET_LABELS: List[str] = [
     "0–19%", "20–39%", "40–59%", "60–79%", "80–100%", "no_data",
@@ -34992,6 +34996,16 @@ def _bt_run_tv_ob_pct_snapshot_parity(
     detect_obs() on the same candle prefix without hardcoded ob_logic_mode,
     rebuilds the visible pool and volume share independently, then compares
     against the values already stored on each event by _bt_attach_tv_ob_pct_snapshots.
+
+    Mismatch classification:
+      CRITICAL  — identity_not_found, pct_mismatch, ob_vol_mismatch,
+                  pool_vol_mismatch, pool_sz_mismatch → block trusted
+      ADVISORY  — zone_top / zone_bottom differences → reported separately,
+                  do NOT block trusted.
+                  Cause: detect_obs "Precise" mode applies a conditional
+                  ob_top shrink (hl2 → ob_avg when ob_avg < body_low) that
+                  the bar-replay backtest engine does not replicate.  This
+                  does not affect the TV OB% value or pool membership.
     """
     n = len(candles)
     if n < 1 or not events:
@@ -35053,8 +35067,9 @@ def _bt_run_tv_ob_pct_snapshot_parity(
     sampled_f = formation_cands[:half]
     sampled_t = pretouch_cands[:half]
 
-    checks:     List[Dict] = []
-    mismatches: List[Dict] = []
+    checks:          List[Dict] = []
+    mismatches:      List[Dict] = []   # critical only — block trusted
+    zone_advisories: List[Dict] = []   # zone differences — advisory only
 
     def _do_check(ev: Dict, bar_count: int, snap_type: str,
                   stored_pct, stored_ob_vol, stored_pool_vol, stored_pool_sz):
@@ -35085,22 +35100,30 @@ def _bt_run_tv_ob_pct_snapshot_parity(
         audit_ob_vol   = match.get("tvObFormationVolume")
         audit_pool_vol = match.get("tvObVisibleTotalVolume")
         audit_pool_sz  = len(pool)
-        zone_top_ok    = _near(match.get("top"),    ev.get("zone_top"))
-        zone_bot_ok    = _near(match.get("bottom"), ev.get("zone_bottom"))
-        ob_vol_ok      = _near(audit_ob_vol,   stored_ob_vol)
-        pool_vol_ok    = _near(audit_pool_vol, stored_pool_vol)
-        pool_sz_ok     = (audit_pool_sz == stored_pool_sz)
-        pct_ok         = (audit_pct     == stored_pct)
 
-        all_ok = all([zone_top_ok, zone_bot_ok, ob_vol_ok,
-                      pool_vol_ok, pool_sz_ok, pct_ok])
+        # Backtest events use zone_high/zone_low; detect_obs uses top/bottom.
+        # For bullish OBs detect_obs "Precise" mode may shrink ob_top from hl2
+        # to ob_avg — the bar-replay engine does not apply this.  Zone checks
+        # are therefore advisory: they do NOT affect trusted or pct parity.
+        zone_top_ok = _near(match.get("top"),    ev.get("zone_high"))
+        zone_bot_ok = _near(match.get("bottom"), ev.get("zone_low"))
+
+        ob_vol_ok   = _near(audit_ob_vol,   stored_ob_vol)
+        pool_vol_ok = _near(audit_pool_vol, stored_pool_vol)
+        pool_sz_ok  = (audit_pool_sz == stored_pool_sz)
+        pct_ok      = (audit_pct     == stored_pct)
+
+        # CRITICAL: pct + source volume + pool totals
+        critical_ok = all([ob_vol_ok, pool_vol_ok, pool_sz_ok, pct_ok])
+
         checks.append({
             "identity":   True,
             "visibility": True,
             "pct_match":  pct_ok,
-            "all_ok":     all_ok,
+            "all_ok":     critical_ok,
         })
-        if not all_ok and len(mismatches) < 20:
+
+        if not critical_ok and len(mismatches) < 20:
             mismatches.append({
                 "ob_id":       ev.get("ob_id"),
                 "type":        direction,
@@ -35109,11 +35132,23 @@ def _bt_run_tv_ob_pct_snapshot_parity(
                 "target_bar":  target,
                 "stored_pct":  stored_pct,
                 "audit_pct":   audit_pct,
-                "zone_top_ok": zone_top_ok,
-                "zone_bot_ok": zone_bot_ok,
                 "ob_vol_ok":   ob_vol_ok,
                 "pool_vol_ok": pool_vol_ok,
                 "pool_sz_ok":  pool_sz_ok,
+            })
+
+        if not (zone_top_ok and zone_bot_ok) and len(zone_advisories) < 20:
+            zone_advisories.append({
+                "ob_id":       ev.get("ob_id"),
+                "type":        direction,
+                "snap_type":   snap_type,
+                "audit_top":   match.get("top"),
+                "stored_top":  ev.get("zone_high"),
+                "audit_bot":   match.get("bottom"),
+                "stored_bot":  ev.get("zone_low"),
+                "zone_top_ok": zone_top_ok,
+                "zone_bot_ok": zone_bot_ok,
+                "note":        "Precise ob_top shrink in detect_obs; does not affect pct",
             })
 
     for ev in sampled_f:
@@ -35143,7 +35178,7 @@ def _bt_run_tv_ob_pct_snapshot_parity(
 
     trusted = (
         total > 0
-        and len(mismatches) == 0
+        and len(mismatches) == 0     # no critical failures
         and id_rate  == 100.0
         and vis_rate == 100.0
         and pct_rate == 100.0
@@ -35158,9 +35193,11 @@ def _bt_run_tv_ob_pct_snapshot_parity(
         "visibility_match_rate_pct":       vis_rate,
         "percentage_exact_match_rate_pct": pct_rate,
         "percentage_mismatches":           len(mismatches),
+        "zone_advisory_count":             len(zone_advisories),
         "touch_candle_excluded":           True,
         "trusted":                         trusted,
         "mismatches":                      mismatches,
+        "zone_advisories":                 zone_advisories[:5],
     }
 
 
