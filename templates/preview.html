@@ -12717,7 +12717,10 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       "stop_close_price","stop_loss_r","stop_loss_abs","stop_loss_pct",
       "outcome_1r","realized_1r","outcome_2r","realized_2r","outcome_3r","realized_3r",
       "tv_ob_pct_at_formation","tv_ob_pct_formation_bucket","tv_ob_pct_formation_in_pool",
-      "tv_ob_pct_before_touch","tv_ob_pct_before_touch_bucket"];
+      "tv_ob_pct_before_touch","tv_ob_pct_before_touch_bucket",
+      "tv_ob_pct_before_first_touch","tv_ob_pct_before_touch_visible_count",
+      "tv_ob_pct_before_touch_total_volume","tv_ob_pct_before_touch_source_volume",
+      "tv_ob_pct_snapshot_bar","tv_ob_pct_snapshot_time","tv_ob_pct_source"];
     var rows=[cols.join(",")];
     events.forEach(function(ev){
       var sim=ev.simulation||{}, hr=sim.hit_rr||{}, rz=sim.realized_by_rr||{};
@@ -12744,7 +12747,14 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         cv(ev.tv_ob_pct_formation_bucket||""),
         cv(ev.tv_ob_pct_formation_in_pool?1:0),
         cv(ev.tv_ob_pct_before_touch!=null?ev.tv_ob_pct_before_touch:""),
-        cv(ev.tv_ob_pct_before_touch_bucket||"")
+        cv(ev.tv_ob_pct_before_touch_bucket||""),
+        cv(ev.tv_ob_pct_before_first_touch!=null?ev.tv_ob_pct_before_first_touch:""),
+        cv(ev.tv_ob_pct_before_touch_visible_count!=null?ev.tv_ob_pct_before_touch_visible_count:""),
+        cv(ev.tv_ob_pct_before_touch_total_volume!=null?ev.tv_ob_pct_before_touch_total_volume:""),
+        cv(ev.tv_ob_pct_before_touch_source_volume!=null?ev.tv_ob_pct_before_touch_source_volume:""),
+        cv(ev.tv_ob_pct_snapshot_bar!=null?ev.tv_ob_pct_snapshot_bar:""),
+        cv(ev.tv_ob_pct_snapshot_time!=null?ev.tv_ob_pct_snapshot_time:""),
+        cv(ev.tv_ob_pct_source||"")
       ].join(","));
     });
     _btDownloadBlob("zyni_bt_"+(p.symbol||"export")+"_"+Date.now()+".csv",rows.join("\r\n"),"text/csv");
@@ -12808,8 +12818,12 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var par=os.tv_ob_pct_parity||null;
     var f=_btState.filters, active=f&&_btFiltersActive(f);
     var events=active?_btGetFilteredEvents(d.events||[],f):d.events||[];
+    var perf=os.tv_ob_pct_performance||null;
     // Per-event TV OB% records
     var evRecs=events.map(function(ev){
+      var sim=ev.simulation||{}, rz=sim.realized_by_rr||{};
+      function rzOut(k){return rz[k]?rz[k].outcome:null;}
+      function rzR(k){return rz[k]&&rz[k].realized_r!=null?rz[k].realized_r:null;}
       return {
         ob_id:ev.ob_id,type:ev.type,
         formation_time:ev.formation_time,
@@ -12822,19 +12836,37 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         tv_ob_pct_formation_pool_size:ev.tv_ob_pct_formation_pool_size!=null?ev.tv_ob_pct_formation_pool_size:null,
         tv_ob_pct_formation_ob_vol:ev.tv_ob_pct_formation_ob_vol!=null?ev.tv_ob_pct_formation_ob_vol:null,
         tv_ob_pct_formation_pool_vol:ev.tv_ob_pct_formation_pool_vol!=null?ev.tv_ob_pct_formation_pool_vol:null,
+        tv_ob_pct_formation_visible_count:ev.tv_ob_pct_formation_visible_count!=null?ev.tv_ob_pct_formation_visible_count:null,
+        tv_ob_pct_formation_source_volume:ev.tv_ob_pct_formation_source_volume!=null?ev.tv_ob_pct_formation_source_volume:null,
         tv_ob_pct_before_touch:ev.tv_ob_pct_before_touch!=null?ev.tv_ob_pct_before_touch:null,
+        tv_ob_pct_before_first_touch:ev.tv_ob_pct_before_first_touch!=null?ev.tv_ob_pct_before_first_touch:null,
         tv_ob_pct_before_touch_bucket:ev.tv_ob_pct_before_touch_bucket||null,
         tv_ob_pct_before_touch_in_pool:ev.tv_ob_pct_before_touch_in_pool||false,
         tv_ob_pct_before_touch_status:ev.tv_ob_pct_before_touch_status||null,
-        outcome:(ev.simulation||{}).first_outcome||null,
-        max_r_reached:(ev.simulation||{}).max_r_reached!=null?(ev.simulation||{}).max_r_reached:null
+        tv_ob_pct_before_touch_visible_count:ev.tv_ob_pct_before_touch_visible_count!=null?ev.tv_ob_pct_before_touch_visible_count:null,
+        tv_ob_pct_before_touch_total_volume:ev.tv_ob_pct_before_touch_total_volume!=null?ev.tv_ob_pct_before_touch_total_volume:null,
+        tv_ob_pct_before_touch_source_volume:ev.tv_ob_pct_before_touch_source_volume!=null?ev.tv_ob_pct_before_touch_source_volume:null,
+        tv_ob_pct_snapshot_bar:ev.tv_ob_pct_snapshot_bar!=null?ev.tv_ob_pct_snapshot_bar:null,
+        tv_ob_pct_snapshot_time:ev.tv_ob_pct_snapshot_time!=null?ev.tv_ob_pct_snapshot_time:null,
+        tv_ob_pct_source:ev.tv_ob_pct_source||null,
+        outcome:sim.first_outcome||null,
+        max_r_reached:sim.max_r_reached!=null?sim.max_r_reached:null,
+        realized_by_rr:{"1":{outcome:rzOut("1"),realized_r:rzR("1")},
+                        "2":{outcome:rzOut("2"),realized_r:rzR("2")},
+                        "3":{outcome:rzOut("3"),realized_r:rzR("3")}}
       };
     });
     var out={
       metadata:{symbol:p.symbol,timeframe:p.timeframe,candle_count:p.candle_count,
-        exported_at:new Date().toISOString(),filters:f||null,filtered:active},
+        exported_at:new Date().toISOString(),filters:f||null,filtered:active,
+        trusted:ana?ana.trusted:null,
+        audit_type:par?par.audit_type:null,
+        snapshots_checked:par?par.snapshots_checked:null,
+        identity_match_rate_pct:par?par.identity_match_rate_pct:null,
+        percentage_exact_match_rate_pct:par?par.percentage_exact_match_rate_pct:null},
       tv_ob_pct_analysis:ana,
       tv_ob_pct_parity:par,
+      tv_ob_pct_performance:perf,
       events:evRecs
     };
     _btDownloadBlob("zyni_bt_tv_ob_pct_"+(p.symbol||"export")+"_"+Date.now()+".json",JSON.stringify(out,null,2),"application/json");
@@ -13273,10 +13305,58 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var os=data.outcome_summary||{}, bull=os.bullish||{}, bear=os.bearish||{};
     var tvAna=(os.tv_ob_pct_analysis||{}), tvF=(tvAna.at_formation||{}), tvT=(tvAna.before_touch||{});
     var tvPar=os.tv_ob_pct_parity||{};
+    var trusted=tvAna.trusted===true;
     var bktLabels=["0–19%","20–39%","40–59%","60–79%","80–100%","no_data"];
+    var rrVals=tvAna.rr_values||[1,2,3];
     function pct(n,d){ return d&&d>0?((n||0)/d*100).toFixed(1)+"%":"—"; }
+    function _f(v,suf){ return v!=null?Number(v).toFixed(3)+(suf||""):"—"; }
+    function _rk(rv){ var f=parseFloat(rv); return f===Math.floor(f)?String(Math.floor(f)):String(f); }
 
-    function _tvBktRows(bkts){
+    // Trust banner
+    var trustBanner= trusted
+      ? '<div style="display:flex;align-items:center;gap:8px;background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.3);border-radius:6px;padding:7px 12px;margin-bottom:10px">'+
+          '<span style="color:#22c55e;font-size:11px;font-weight:700">&#10003; VERIFIED</span>'+
+          '<span style="color:#86efac;font-size:10px">Independent parity audit passed — all snapshots match production helpers exactly</span>'+
+        '</div>'
+      : '<div style="display:flex;align-items:center;gap:8px;background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.3);border-radius:6px;padding:7px 12px;margin-bottom:10px">'+
+          '<span style="color:#fbbf24;font-size:11px;font-weight:700">&#9888; EXPERIMENTAL</span>'+
+          '<span style="color:#fde68a;font-size:10px">Parity audit incomplete or found mismatches — results are provisional</span>'+
+        '</div>';
+
+    // Winner card helper
+    function _winCard(card,label){
+      if(!card||!trusted) return '';
+      var ssColor=card.sample_size_status==="strong"?"#22c55e":card.sample_size_status==="usable"?"#fbbf24":"#ef4444";
+      return '<div style="background:rgba(27,38,54,.7);border:1px solid rgba(99,102,241,.3);border-radius:6px;padding:8px 10px;min-width:130px">'+
+        '<div style="font-size:9px;font-weight:700;color:#818cf8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">'+label+'</div>'+
+        '<div style="font-size:13px;font-weight:700;color:#e2e8f0">'+card.bucket+'</div>'+
+        '<div style="font-size:10px;color:#94a3b8;margin-top:2px">'+card.rr+'R target</div>'+
+        '<div style="display:flex;gap:8px;margin-top:5px;flex-wrap:wrap">'+
+          '<span style="font-size:10px;color:#22c55e">W:'+card.wins+'</span>'+
+          '<span style="font-size:10px;color:#ef4444">L:'+card.losses+'</span>'+
+          '<span style="font-size:10px;color:var(--accent)">WR:'+(card.win_rate_pct!=null?card.win_rate_pct.toFixed(1)+"%":"—")+'</span>'+
+        '</div>'+
+        '<div style="font-size:10px;color:#fbbf24;margin-top:3px">E:'+(card.expectancy_r!=null?card.expectancy_r.toFixed(4)+"R":"—")+
+          ' PF:'+(card.profit_factor!=null?card.profit_factor.toFixed(2):"—")+'</div>'+
+        '<div style="font-size:9px;margin-top:3px"><span style="color:'+ssColor+'">'+card.sample_size_status+'</span></div>'+
+      '</div>';
+    }
+
+    function _winCards(wc){
+      if(!wc||!trusted) return '';
+      var cards=[
+        _winCard(wc.by_expectancy,"Best Expectancy"),
+        _winCard(wc.by_profit_factor,"Best PF"),
+        _winCard(wc.by_highest_net_r,"Best Net R"),
+        _winCard(wc.by_highest_3r_win_rate,"Best 3R WR"),
+        _winCard(wc.by_lowest_avg_sl,"Lowest SL"),
+      ].filter(Boolean);
+      if(!cards.length) return '';
+      return '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 6px">'+cards.join('')+'</div>';
+    }
+
+    // Bucket table with realized columns
+    function _tvBktRows(bkts,wc){
       if(!bkts) return '';
       var h='';
       bktLabels.forEach(function(lbl){
@@ -13285,58 +13365,84 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         var tp=b.tp||0, sl=b.sl||0;
         var tpr=b.tp_rate_pct!=null?b.tp_rate_pct.toFixed(1)+"%":"—";
         var amr=b.avg_max_r!=null?b.avg_max_r.toFixed(3)+"R":"—";
+        var br=b.best_rr;
+        var rzBest=br!=null?(b.realized_summary_by_rr||{})[_rk(br)]||{}:{};
+        var exp=rzBest.expectancy_r!=null?rzBest.expectancy_r.toFixed(4):"—";
+        var pf=rzBest.profit_factor!=null?rzBest.profit_factor.toFixed(2):"—";
+        var nr=rzBest.net_r!=null?rzBest.net_r.toFixed(2)+"R":"—";
+        var wr=rzBest.win_rate_pct!=null?rzBest.win_rate_pct.toFixed(1)+"%":"—";
+        var ss=rzBest.sample_size_status||"—";
+        var ssC=ss==="strong"?"#22c55e":ss==="usable"?"#fbbf24":"#ef4444";
+        var avg_sl=rzBest.avg_sl_r!=null?rzBest.avg_sl_r.toFixed(2)+"R":"—";
         h+='<tr>'+
-          '<td style="padding:5px 10px 5px 0;color:#c5d0de;font-family:var(--mono);font-size:11px">'+lbl+'</td>'+
-          '<td style="padding:5px 6px;text-align:right;color:#8a9bb3;font-family:var(--mono);font-size:11px">'+n+'</td>'+
-          '<td style="padding:5px 6px;text-align:right;color:var(--green-2);font-family:var(--mono);font-size:11px">'+tp+'</td>'+
-          '<td style="padding:5px 6px;text-align:right;color:var(--red-2);font-family:var(--mono);font-size:11px">'+sl+'</td>'+
-          '<td style="padding:5px 6px;text-align:right;color:var(--accent);font-family:var(--mono);font-size:11px">'+tpr+'</td>'+
-          '<td style="padding:5px 6px;text-align:right;color:#fbbf24;font-family:var(--mono);font-size:11px">'+amr+'</td>'+
+          '<td style="padding:4px 8px 4px 0;color:#c5d0de;font-family:var(--mono);font-size:11px">'+lbl+'</td>'+
+          '<td style="padding:4px 5px;text-align:right;color:#8a9bb3;font-family:var(--mono);font-size:11px">'+n+'</td>'+
+          '<td style="padding:4px 5px;text-align:right;color:var(--green-2);font-family:var(--mono);font-size:11px">'+tp+'</td>'+
+          '<td style="padding:4px 5px;text-align:right;color:var(--red-2);font-family:var(--mono);font-size:11px">'+sl+'</td>'+
+          '<td style="padding:4px 5px;text-align:right;color:var(--accent);font-family:var(--mono);font-size:11px">'+tpr+'</td>'+
+          '<td style="padding:4px 5px;text-align:right;color:#8a9bb3;font-family:var(--mono);font-size:11px">'+(br!=null?br+"R":"—")+'</td>'+
+          '<td style="padding:4px 5px;text-align:right;color:#fbbf24;font-family:var(--mono);font-size:11px">'+wr+'</td>'+
+          '<td style="padding:4px 5px;text-align:right;color:#22d3ee;font-family:var(--mono);font-size:11px">'+exp+'</td>'+
+          '<td style="padding:4px 5px;text-align:right;color:#a78bfa;font-family:var(--mono);font-size:11px">'+pf+'</td>'+
+          '<td style="padding:4px 5px;text-align:right;color:#34d399;font-family:var(--mono);font-size:11px">'+nr+'</td>'+
+          '<td style="padding:4px 5px;text-align:right;color:#f87171;font-family:var(--mono);font-size:11px">'+avg_sl+'</td>'+
+          '<td style="padding:4px 5px;text-align:right;font-family:var(--mono);font-size:10px"><span style="color:'+ssC+'">'+ss+'</span></td>'+
         '</tr>';
       });
       return h;
     }
 
+    var tableHead='<thead><tr>'+
+      '<th style="text-align:left;padding:3px 8px 3px 0;color:var(--text-3);font-size:9px;font-weight:600;text-transform:uppercase">Bucket</th>'+
+      '<th style="text-align:right;padding:3px 5px;color:var(--text-3);font-size:9px;font-weight:600">N</th>'+
+      '<th style="text-align:right;padding:3px 5px;color:var(--green-2);font-size:9px;font-weight:600">TP</th>'+
+      '<th style="text-align:right;padding:3px 5px;color:var(--red-2);font-size:9px;font-weight:600">SL</th>'+
+      '<th style="text-align:right;padding:3px 5px;color:var(--accent);font-size:9px;font-weight:600">TP%</th>'+
+      '<th style="text-align:right;padding:3px 5px;color:#8a9bb3;font-size:9px;font-weight:600">Best RR</th>'+
+      '<th style="text-align:right;padding:3px 5px;color:#fbbf24;font-size:9px;font-weight:600">WR%</th>'+
+      '<th style="text-align:right;padding:3px 5px;color:#22d3ee;font-size:9px;font-weight:600">Expect</th>'+
+      '<th style="text-align:right;padding:3px 5px;color:#a78bfa;font-size:9px;font-weight:600">PF</th>'+
+      '<th style="text-align:right;padding:3px 5px;color:#34d399;font-size:9px;font-weight:600">Net R</th>'+
+      '<th style="text-align:right;padding:3px 5px;color:#f87171;font-size:9px;font-weight:600">Avg SL R</th>'+
+      '<th style="text-align:right;padding:3px 5px;color:#8a9bb3;font-size:9px;font-weight:600">Sample</th>'+
+    '</tr></thead>';
+
     var tvSection=
       '<div class="bt-settings-card" style="margin-top:16px">'+
         '<div class="bt-settings-h" style="color:#fbbf24">TV OB% Snapshot Analysis <span style="font-size:9px;opacity:.6;font-weight:400;margin-left:6px">production metric reproduced at formation &amp; pre-touch</span></div>'+
+        trustBanner+
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px">'+
           '<div>'+
-            '<div style="font-size:10px;font-weight:700;color:var(--accent);letter-spacing:.5px;text-transform:uppercase;margin-bottom:6px">At Formation</div>'+
+            '<div style="font-size:10px;font-weight:700;color:var(--accent);letter-spacing:.5px;text-transform:uppercase;margin-bottom:4px">At Formation</div>'+
             '<div style="font-size:10px;color:var(--text-3);margin-bottom:6px">In Pool: '+(tvF.in_pool||0)+' / '+(tvF.total_eligible||0)+' eligible</div>'+
+            _winCards(tvF.winner_cards)+
             '<table style="width:100%;border-collapse:collapse">'+
-              '<thead><tr>'+
-                '<th style="text-align:left;padding:3px 10px 3px 0;color:var(--text-3);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.5px">Bucket</th>'+
-                '<th style="text-align:right;padding:3px 6px;color:var(--text-3);font-size:9px;font-weight:600;letter-spacing:.5px">N</th>'+
-                '<th style="text-align:right;padding:3px 6px;color:var(--green-2);font-size:9px;font-weight:600">TP</th>'+
-                '<th style="text-align:right;padding:3px 6px;color:var(--red-2);font-size:9px;font-weight:600">SL</th>'+
-                '<th style="text-align:right;padding:3px 6px;color:var(--accent);font-size:9px;font-weight:600">TP%</th>'+
-                '<th style="text-align:right;padding:3px 6px;color:#fbbf24;font-size:9px;font-weight:600">Avg R</th>'+
-              '</tr></thead>'+
-              '<tbody>'+_tvBktRows(tvF.buckets)+'</tbody>'+
+              tableHead+
+              '<tbody>'+_tvBktRows(tvF.buckets,tvF.winner_cards)+'</tbody>'+
             '</table>'+
           '</div>'+
           '<div>'+
-            '<div style="font-size:10px;font-weight:700;color:var(--accent);letter-spacing:.5px;text-transform:uppercase;margin-bottom:6px">Before First Touch</div>'+
+            '<div style="font-size:10px;font-weight:700;color:var(--accent);letter-spacing:.5px;text-transform:uppercase;margin-bottom:4px">Before First Touch</div>'+
             '<div style="font-size:10px;color:var(--text-3);margin-bottom:6px">In Pool: '+(tvT.in_pool||0)+' / '+(tvT.total_touched||0)+' touched</div>'+
+            _winCards(tvT.winner_cards)+
             '<table style="width:100%;border-collapse:collapse">'+
-              '<thead><tr>'+
-                '<th style="text-align:left;padding:3px 10px 3px 0;color:var(--text-3);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.5px">Bucket</th>'+
-                '<th style="text-align:right;padding:3px 6px;color:var(--text-3);font-size:9px;font-weight:600;letter-spacing:.5px">N</th>'+
-                '<th style="text-align:right;padding:3px 6px;color:var(--green-2);font-size:9px;font-weight:600">TP</th>'+
-                '<th style="text-align:right;padding:3px 6px;color:var(--red-2);font-size:9px;font-weight:600">SL</th>'+
-                '<th style="text-align:right;padding:3px 6px;color:var(--accent);font-size:9px;font-weight:600">TP%</th>'+
-                '<th style="text-align:right;padding:3px 6px;color:#fbbf24;font-size:9px;font-weight:600">Avg R</th>'+
-              '</tr></thead>'+
-              '<tbody>'+_tvBktRows(tvT.buckets)+'</tbody>'+
+              tableHead+
+              '<tbody>'+_tvBktRows(tvT.buckets,tvT.winner_cards)+'</tbody>'+
             '</table>'+
           '</div>'+
         '</div>'+
         '<div style="margin-top:10px;font-size:10px;color:var(--text-3)">'+
-          'Parity: checked='+( tvPar.checked||0)+' matched='+(tvPar.matched||0)+' match_rate='+(tvPar.match_rate_pct!=null?tvPar.match_rate_pct+"%":"—")+
+          'Audit: '+tvPar.audit_type+' | checked='+( tvPar.snapshots_checked||0)+
+          ' | id='+(tvPar.identity_match_rate_pct!=null?tvPar.identity_match_rate_pct+"%":"—")+
+          ' | pct='+(tvPar.percentage_exact_match_rate_pct!=null?tvPar.percentage_exact_match_rate_pct+"%":"—")+
           ' &bull; <span style="color:#fbbf24">TV OB% filter available in filter bar above</span>'+
         '</div>'+
-        '<div style="margin-top:8px"><canvas id="btAnTvObPct" style="max-height:160px"></canvas></div>'+
+        '<div style="margin-top:8px;display:grid;grid-template-columns:1fr 1fr;gap:8px">'+
+          '<div><canvas id="btAnTvObExp" style="max-height:150px"></canvas></div>'+
+          '<div><canvas id="btAnTvObWR" style="max-height:150px"></canvas></div>'+
+          '<div><canvas id="btAnTvObPct" style="max-height:150px"></canvas></div>'+
+          '<div><canvas id="btAnTvObN" style="max-height:150px"></canvas></div>'+
+        '</div>'+
       '</div>';
 
     el.innerHTML=
@@ -13369,25 +13475,82 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
           data:[bull.avg_max_r_reached||0,bear.avg_max_r_reached||0],
           backgroundColor:["rgba(34,211,238,.5)","rgba(99,102,241,.5)"],borderColor:["#22d3ee","#818cf8"],borderWidth:1,borderRadius:5}]},
         options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:Object.assign({},scl,{y:{min:0,ticks:{color:"#566377",callback:function(v){return v+"R"}},grid:{color:"rgba(27,38,54,.5)"}}})}});
-      /* TV OB% bucket TP rate chart */
+      /* TV OB% charts — 4 panels */
+      var tvL5=["0–19%","20–39%","40–59%","60–79%","80–100%"];
+      var tvBkts=tvF.buckets||{};
+      var tvColors=["rgba(251,191,36,.6)","rgba(34,211,238,.6)","rgba(99,102,241,.6)"];
+      var tvBorderC=["#fbbf24","#22d3ee","#818cf8"];
+
+      /* Chart 1: Expectancy by bucket for each RR */
+      dc("btAnTvObExp");var aExp=document.getElementById("btAnTvObExp");
+      if(aExp&&tvBkts){
+        var expDS=rrVals.map(function(rv,ri){
+          return {label:rv+"R",data:tvL5.map(function(l){
+            var rz=((tvBkts[l]||{}).realized_summary_by_rr||{})[_rk(rv)]||{};
+            return rz.expectancy_r!=null?rz.expectancy_r:null;
+          }),backgroundColor:tvColors[ri]||"rgba(148,163,184,.4)",borderColor:tvBorderC[ri]||"#94a3b8",borderWidth:1,borderRadius:3};
+        });
+        _btState.charts["btAnTvObExp"]=new Chart(aExp,{type:"bar",
+          data:{labels:tvL5,datasets:expDS},
+          options:{responsive:true,maintainAspectRatio:false,
+            plugins:{legend:{labels:{color:"#8a9bb3",font:{size:10},boxWidth:10}},
+              title:{display:true,text:"Expectancy by TV OB% Bucket",color:"#8a9bb3",font:{size:10}}},
+            scales:{x:{ticks:{color:"#8a9bb3",font:{size:9}},grid:{color:"rgba(27,38,54,.5)"}},
+              y:{ticks:{color:"#fbbf24",callback:function(v){return v.toFixed(2)+"R"}},grid:{color:"rgba(27,38,54,.3)"}}}}});
+      }
+
+      /* Chart 2: Win Rate by bucket for each RR */
+      dc("btAnTvObWR");var aWR=document.getElementById("btAnTvObWR");
+      if(aWR&&tvBkts){
+        var wrDS=rrVals.map(function(rv,ri){
+          return {label:rv+"R",data:tvL5.map(function(l){
+            var rz=((tvBkts[l]||{}).realized_summary_by_rr||{})[_rk(rv)]||{};
+            return rz.win_rate_pct!=null?rz.win_rate_pct:null;
+          }),backgroundColor:tvColors[ri]||"rgba(148,163,184,.4)",borderColor:tvBorderC[ri]||"#94a3b8",borderWidth:1,borderRadius:3};
+        });
+        _btState.charts["btAnTvObWR"]=new Chart(aWR,{type:"bar",
+          data:{labels:tvL5,datasets:wrDS},
+          options:{responsive:true,maintainAspectRatio:false,
+            plugins:{legend:{labels:{color:"#8a9bb3",font:{size:10},boxWidth:10}},
+              title:{display:true,text:"Win Rate % by TV OB% Bucket",color:"#8a9bb3",font:{size:10}}},
+            scales:{x:{ticks:{color:"#8a9bb3",font:{size:9}},grid:{color:"rgba(27,38,54,.5)"}},
+              y:{min:0,max:100,ticks:{color:"#22c55e",callback:function(v){return v+"%"}},grid:{color:"rgba(27,38,54,.3)"}}}}});
+      }
+
+      /* Chart 3: TP rate at formation (original chart, now in grid) */
       dc("btAnTvObPct");var aTV=document.getElementById("btAnTvObPct");
-      if(aTV&&tvF.buckets){
-        var tvLabels=["0–19%","20–39%","40–59%","60–79%","80–100%"];
-        var tvTpData=tvLabels.map(function(l){var b=(tvF.buckets||{})[l]||{};return b.tp_rate_pct!=null?b.tp_rate_pct:0;});
-        var tvNData=tvLabels.map(function(l){var b=(tvF.buckets||{})[l]||{};return b.count||0;});
+      if(aTV&&tvBkts){
+        var tvTpData=tvL5.map(function(l){var b=tvBkts[l]||{};return b.tp_rate_pct!=null?b.tp_rate_pct:0;});
+        var tvNData=tvL5.map(function(l){var b=tvBkts[l]||{};return b.count||0;});
         _btState.charts["btAnTvObPct"]=new Chart(aTV,{type:"bar",
-          data:{labels:tvLabels,datasets:[
+          data:{labels:tvL5,datasets:[
             {label:"TP Rate %",data:tvTpData,backgroundColor:"rgba(251,191,36,.5)",borderColor:"#fbbf24",borderWidth:1,borderRadius:4,yAxisID:"yL"},
             {label:"N",data:tvNData,type:"line",borderColor:"rgba(34,211,238,.5)",backgroundColor:"transparent",pointBackgroundColor:"#22d3ee",borderWidth:1,yAxisID:"yR"}
           ]},
           options:{responsive:true,maintainAspectRatio:false,
             plugins:{legend:{labels:{color:"#8a9bb3",font:{size:10},boxWidth:12}},
-              title:{display:true,text:"TV OB% Bucket — TP Rate at Formation",color:"#8a9bb3",font:{size:10}}},
-            scales:{
-              x:{ticks:{color:"#8a9bb3"},grid:{color:"rgba(27,38,54,.5)"}},
+              title:{display:true,text:"TP Rate at Formation",color:"#8a9bb3",font:{size:10}}},
+            scales:{x:{ticks:{color:"#8a9bb3",font:{size:9}},grid:{color:"rgba(27,38,54,.5)"}},
               yL:{position:"left",min:0,max:100,ticks:{color:"#fbbf24",callback:function(v){return v+"%"}},grid:{color:"rgba(27,38,54,.3)"}},
-              yR:{position:"right",ticks:{color:"#22d3ee"},grid:{display:false}}
-            }}});
+              yR:{position:"right",ticks:{color:"#22d3ee"},grid:{display:false}}}}});
+      }
+
+      /* Chart 4: Sample size by bucket */
+      dc("btAnTvObN");var aN=document.getElementById("btAnTvObN");
+      if(aN&&tvBkts){
+        var nsDS=rrVals.map(function(rv,ri){
+          return {label:rv+"R",data:tvL5.map(function(l){
+            var rz=((tvBkts[l]||{}).realized_summary_by_rr||{})[_rk(rv)]||{};
+            return rz.trades||0;
+          }),backgroundColor:tvColors[ri]||"rgba(148,163,184,.4)",borderColor:tvBorderC[ri]||"#94a3b8",borderWidth:1,borderRadius:3};
+        });
+        _btState.charts["btAnTvObN"]=new Chart(aN,{type:"bar",
+          data:{labels:tvL5,datasets:nsDS},
+          options:{responsive:true,maintainAspectRatio:false,
+            plugins:{legend:{labels:{color:"#8a9bb3",font:{size:10},boxWidth:10}},
+              title:{display:true,text:"Sample Size by TV OB% Bucket",color:"#8a9bb3",font:{size:10}}},
+            scales:{x:{ticks:{color:"#8a9bb3",font:{size:9}},grid:{color:"rgba(27,38,54,.5)"}},
+              y:{min:0,ticks:{color:"#8a9bb3"},grid:{color:"rgba(27,38,54,.3)"}}}}});
       }
     },0);
   }
