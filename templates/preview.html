@@ -83,7 +83,7 @@ body{
 .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
 .window{
   position:absolute;top:0;left:0;transform-origin:top left;
-  width:1520px;height:930px;
+  width:1560px;height:930px;
   background:var(--bg-window);
   border:none;
   border-radius:0;
@@ -195,6 +195,7 @@ svg{display:block}
   cursor:pointer;transition:color .18s,background .18s;position:relative;
 }
 .ic-btn:hover{color:var(--text);background:rgba(255,255,255,.05)}
+.ic-btn.ic-logout:hover{background:rgba(239,68,68,.14);color:#fda4af}
 .ic-btn .dot{position:absolute;top:5px;right:6px;width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 6px var(--accent)}
 .win-ctrls{display:flex;align-items:center;gap:2px;margin-left:6px;padding-left:8px;border-left:1px solid var(--border)}
 .win-ctrls .ic-btn:last-child:hover{background:rgba(239,68,68,.18);color:#fda4af}
@@ -1633,6 +1634,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       <button class="ic-btn" id="btnThemeLight" type="button" aria-label="Light mode"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button>
       <button class="ic-btn" id="btnThemeDark" type="button" aria-label="Dark mode"><svg class="ico" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg></button>
       <button class="ic-btn" id="btnBell" type="button" aria-label="Notifications"><span class="dot" id="bellDot" style="display:none"></span><svg class="ico" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></button>
+      <a class="ic-btn ic-logout" id="btnLogout" href="/logout" title="Log out" aria-label="Log out"><svg class="ico" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg></a>
       <div class="win-ctrls">
         <button class="ic-btn" aria-label="Minimize"><svg class="ico-sm" viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
         <button class="ic-btn" aria-label="Maximize"><svg class="ico-sm" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="1.5"/></svg></button>
@@ -2138,7 +2140,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 
 <script>
 (function fitApp(){
-  var W=1520;                       // design width — must fit the full topbar
+  var W=1560;                       // design width — must fit the full topbar
   function fit(){
     var win=document.querySelector('.window'),fr=document.querySelector('.frame');
     if(innerWidth<=820){            // mobile: natural fluid layout, no scaling
