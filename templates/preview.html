@@ -696,10 +696,11 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   pointer-events:none}
 
 /* Settings (i) info buttons (Queue 16) */
-.info-i{display:inline-flex;width:14px;height:14px;border-radius:50%;border:1px solid var(--border);
-  background:var(--bg-card-2);color:var(--text-3);font-size:9.5px;font-weight:700;
-  align-items:center;justify-content:center;margin-left:6px;cursor:pointer;padding:0;line-height:1}
-.info-i:hover{color:var(--accent);border-color:rgba(34,211,238,.5)}
+.info-i{display:inline-flex;width:16px;height:16px;border-radius:50%;border:1px solid var(--border);
+  background:transparent;color:var(--text-3);font-size:10px;font-weight:700;font-family:var(--mono);
+  align-items:center;justify-content:center;margin-left:6px;cursor:pointer;padding:0;line-height:1;
+  flex:0 0 auto;transition:color .15s,border-color .15s}
+.info-i:hover{color:var(--accent);border-color:var(--accent)}
 .sp-help.collapsed{display:none}
 
 /* Settings drawer (Wave 6) */
@@ -731,34 +732,42 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 .sp-content{overflow-y:auto;padding:24px 32px}
 .sp-content-h{font-size:17px;font-weight:700;color:var(--text);margin-bottom:6px;letter-spacing:.2px}
 .sp-content-sub{font-size:12.5px;color:var(--text-3);margin-bottom:18px;line-height:1.45;max-width:640px}
-.sp-group{box-shadow:0 1px 0 rgba(255,255,255,.02) inset}
-.sp-field label{font-weight:500}
-.sp-help{margin-top:2px}
 .sp-section{display:none}
 .sp-section.active{display:block}
 .sp-body{flex:1;overflow-y:auto;padding:14px 16px}  /* legacy — kept for safety */
 .sp-foot{display:flex;gap:10px;padding:14px 20px;border-top:1px solid var(--border);background:var(--bg-panel);flex-shrink:0;justify-content:flex-end}
 .sp-foot .btn{padding:9px 18px}
-.sp-group{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:12px}
-.sp-group-h{font-size:11px;font-weight:700;letter-spacing:1px;color:var(--accent);margin-bottom:12px}
-.sp-field{display:flex;align-items:center;justify-content:space-between;gap:14px;
-  padding:9px 0;font-size:13px;color:var(--text-2);border-bottom:1px solid rgba(27,38,54,.4)}
+.sp-group{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:8px 18px;margin-bottom:14px}
+.sp-group-h{font-size:11px;font-weight:700;letter-spacing:1px;color:var(--accent);margin:8px 0 10px}
+.sp-content .sp-section{max-width:760px}
+/* One settings row: label block (title + optional help) left, control docked right */
+.sp-field{display:flex;align-items:center;justify-content:space-between;gap:18px;
+  padding:12px 0;font-size:13px;color:var(--text-2);border-bottom:1px solid var(--border)}
 .sp-field:last-child{border-bottom:0}
-.sp-field label{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;color:var(--text);font-weight:500;cursor:pointer}
-.sp-field label input[type="checkbox"]{width:14px;height:14px;accent-color:var(--accent);cursor:pointer;margin-right:8px;flex:0 0 auto;display:inline-block}
-.sp-field > label > input[type="checkbox"]{display:inline-block;vertical-align:middle}
+.sp-field label{flex:1;min-width:0;display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;
+  color:var(--text);font-weight:600;font-size:12.5px;letter-spacing:.1px;line-height:1.4;
+  cursor:pointer;text-align:left}
+.sp-field label input[type="checkbox"]{width:15px;height:15px;accent-color:var(--accent);
+  cursor:pointer;margin:0;flex:0 0 auto}
+.sp-help{font-size:11.5px;color:var(--text-3);font-weight:400;line-height:1.5}
+.sp-field .sp-help{flex:0 0 100%;order:10;margin:2px 0 1px;max-width:560px}
+.sp-field label input[type="checkbox"]~.sp-help{margin-left:23px}
+.sp-field .info-i{margin-left:0}
+/* Controls dock to the right edge of the row, whether inside or beside the label.
+   order:5 keeps the (i) button visually next to the title even when the control
+   sits inside the label and the (i) is appended after it in the DOM. */
 .sp-field label > input[type="number"],
 .sp-field label > input[type="text"],
-.sp-field label > select{
-  width:140px;background:var(--bg-card-2);border:1px solid var(--border);
-  color:var(--text);border-radius:7px;padding:6px 10px;font-family:var(--mono);font-size:12.5px;outline:none;align-self:flex-start}
-.sp-field > input[type="number"],
-.sp-field > input[type="text"],
-.sp-field > select{
-  width:140px;background:var(--bg-card-2);border:1px solid var(--border);
-  color:var(--text);border-radius:7px;padding:6px 10px;font-family:var(--mono);font-size:12.5px;outline:none}
+.sp-field label > select,
+.sp-field label > .cdd{margin-left:auto;order:5}
+.sp-field input[type="number"],.sp-field input[type="text"],.sp-field select:not(.cdd-hidden){
+  width:140px;flex:0 0 auto;background:var(--bg-card-2);border:1px solid var(--border);
+  color:var(--text);border-radius:8px;padding:7px 11px;font-family:var(--mono);font-size:12.5px;
+  outline:none;transition:border-color .15s}
+.sp-field input[type="number"]{text-align:right}
 .sp-field input[type="number"]:focus,.sp-field input[type="text"]:focus,.sp-field select:focus{border-color:var(--accent)}
-.sp-help{font-size:11.5px;color:var(--text-3);font-weight:400;line-height:1.4;max-width:520px}
+.sp-field .cdd{flex:0 0 auto}
+.sp-field .cdd .cdd-btn{min-width:140px;justify-content:space-between;padding:7px 11px;border-radius:8px;font-size:12.5px}
 .sp-field code{font-size:11px;color:var(--accent);font-family:var(--mono)}
 @media (max-width:820px){
   .sp-main{grid-template-columns:1fr;grid-template-rows:auto 1fr}
@@ -770,15 +779,6 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   .sp-tab-sub{display:none}
   .sp-content{padding:14px 18px}
 }
-.sp-field label{flex:1;min-width:0;display:flex;align-items:center;gap:8px;cursor:pointer}
-.sp-field input[type="number"],.sp-field input[type="text"],.sp-field select{
-  width:120px;background:var(--bg-input,var(--bg-card-2));border:1px solid var(--border);
-  color:var(--text);border-radius:6px;padding:5px 8px;font-family:var(--mono);font-size:12px;outline:none}
-.sp-field input[type="number"]:focus,.sp-field input[type="text"]:focus,.sp-field select:focus{
-  border-color:var(--accent)}
-.sp-field input[type="checkbox"]{width:14px;height:14px;accent-color:var(--accent);cursor:pointer}
-.sp-field code{font-size:11px;color:var(--accent);font-family:var(--mono)}
-
 /* Coming-soon view for stub nav tabs */
 .view-soon{display:flex;align-items:center;justify-content:center;flex-direction:column;
   padding:80px 20px;color:var(--text-3);gap:8px}
@@ -1964,7 +1964,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
             <div class="sp-content-sub">How the screener carves the chart into structure. Timeframe lives on the Main Scan controls so you can change it without opening this drawer.</div>
             <div class="sp-group">
               <div class="sp-field"><label>Swing lookback (sLen)<div class="sp-help">Bars used to define swing highs / lows. Bigger = fewer, stronger swings.</div></label>
-                <input type="number" data-s="sLen" value="30" min="5" max="120"></div>
+                <input type="number" data-s="sLen" value="50" min="5" max="120"></div>
               <div class="sp-field"><label>Internal lookback (iLen)<div class="sp-help">Bars for short-term structure (used by OB detection).</div></label>
                 <input type="number" data-s="iLen" value="5" min="2" max="40"></div>
               <div class="sp-field"><label>Consolidation candles<div class="sp-help">How many flat candles count as a consolidation before an OB.</div></label>
@@ -1982,10 +1982,10 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                 <input type="number" data-s="obMinQuality" value="0" min="0" max="100"></div>
               <div class="sp-field"><label>Max touches<div class="sp-help">Skip OBs that have been touched too many times (often "used up").</div></label>
                 <input type="number" data-s="obMaxTouches" value="2" min="0" max="10"></div>
+              <div class="sp-field"><label><input type="checkbox" data-s="useObTouchState" checked>Apply touch-state filter<div class="sp-help">Filter OBs by touch/virgin state — ensures the zone hasn't been fully consumed.</div></label></div>
               <div class="sp-field"><label><input type="checkbox" data-s="useObStrengthFilter">Use strength filter<div class="sp-help">Hide OBs whose volume strength is below the threshold below.</div></label></div>
               <div class="sp-field"><label>Min strength %<input type="number" data-s="obMinStrengthPct" value="0" step="0.1" min="0" max="100"></label></div>
               <div class="sp-field"><label><input type="checkbox" data-s="useHighProbOB">High-probability only<div class="sp-help">Strict mode — only OBs that pass the multi-factor checklist.</div></label></div>
-              <div class="sp-field"><label><input type="checkbox" data-s="useObTouchState">Apply touch-state filter</label></div>
             </div>
           </section>
 
@@ -1993,12 +1993,12 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
             <div class="sp-content-h">Fair Value Gap (FVG)</div>
             <div class="sp-content-sub">Inefficiency between three candles. These show up <b>only when the FVG module is selected</b> on the main page (or All).</div>
             <div class="sp-group">
-              <div class="sp-field"><label><input type="checkbox" data-s="useFvgValidOnly">Valid FVGs only<div class="sp-help">Drop "stale" FVGs that have already been fully filled.</div></label></div>
-              <div class="sp-field"><label><input type="checkbox" data-s="useFvgState">Filter by state</label></div>
+              <div class="sp-field"><label><input type="checkbox" data-s="useFvgValidOnly" checked>Valid FVGs only<div class="sp-help">Drop "stale" FVGs that have already been fully filled.</div></label></div>
+              <div class="sp-field"><label><input type="checkbox" data-s="useFvgState" checked>Filter by state</label></div>
               <div class="sp-field"><label>State<div class="sp-help">all / valid (unfilled) / bag (oversized).</div></label>
                 <select data-s="fvgState"><option value="all">all</option><option value="valid">valid</option><option value="bag">bag</option></select></div>
               <div class="sp-field"><label>Min age (bars)<input type="number" data-s="fvgAgeMin" value="0" min="0" max="500"></label></div>
-              <div class="sp-field"><label>Max age (bars)<input type="number" data-s="fvgAgeMax" value="200" min="1" max="2000"></label></div>
+              <div class="sp-field"><label>Max age (bars)<input type="number" data-s="fvgAgeMax" value="5" min="1" max="2000"></label></div>
               <div class="sp-field"><label>Max distance %<input type="number" data-s="fvgMaxDistancePct" value="3.0" step="0.1" min="0" max="20"></label></div>
               <div class="sp-field"><label>Touch depth<div class="sp-help">"any" / "shallow" / "deep" — how far price must enter the gap.</div></label>
                 <input type="text" data-s="fvgTouchDepth" value="any"></div>
@@ -2032,7 +2032,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
             <div class="sp-content-h">BTC Correlation</div>
             <div class="sp-content-sub">Optionally filter results by how a pair moves relative to BTC.</div>
             <div class="sp-group">
-              <div class="sp-field"><label><input type="checkbox" data-s="useBtcCorrelation">Enable filter</label></div>
+              <div class="sp-field"><label><input type="checkbox" data-s="useBtcCorrelation" checked>Enable filter</label></div>
               <div class="sp-field"><label>Mode<select data-s="btcCorrelationMode"><option value="all">all</option><option value="correlated">correlated</option><option value="non_correlated">non-correlated</option></select></label></div>
               <div class="sp-field"><label>Lookback (bars)<input type="number" data-s="btcLookback" value="60" min="10" max="500"></label></div>
             </div>
@@ -2176,17 +2176,17 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     applyTheme(saved);
   })();
   var DEFAULT_SETTINGS={
-    tf:"4h", iLen:5, sLen:30, consolCandles:5,
+    tf:"4h", iLen:5, sLen:50, consolCandles:5,
     useObModule:true, useFvgModule:true,
     obDistancePct:2.0, obMinQuality:0, obMaxTouches:2,
     useObStrengthFilter:false, obMinStrengthPct:0,
-    useHighProbOB:false, useObTouchState:false,
-    useFvgValidOnly:false, useFvgState:false, fvgState:"all",
-    fvgAgeMin:0, fvgAgeMax:200, fvgMaxDistancePct:3.0, fvgTouchDepth:"any",
+    useHighProbOB:false, useObTouchState:true,
+    useFvgValidOnly:true, useFvgState:true, fvgState:"all",
+    fvgAgeMin:0, fvgAgeMax:5, fvgMaxDistancePct:3.0, fvgTouchDepth:"any",
     useBreakerModule:true, breakerApproachPct:2.0, breakerMaxAge:200, breakerRequireFvg:false,
     useFibModule:true, fibTf:"4h", fibTolerancePct:0.5, fibAtrMultiplier:0.5,
     fibApproachPct:2.0, useFibRequireFvg:false, useFibRequireOb:false,
-    useBtcCorrelation:false, btcCorrelationMode:"all", btcLookback:60,
+    useBtcCorrelation:true, btcCorrelationMode:"all", btcLookback:60,
     rsiOB:70, rsiOS:30,
     tvExchange:"BINANCE", tvPerpSuffix:true
   };
@@ -4744,6 +4744,13 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     ST.settings=Object.assign({},DEFAULT_SETTINGS);
     try{ localStorage.removeItem("zyni-settings"); }catch(_){}
     _populateSettingsForm();
+  });
+  /* Auto-persist settings to localStorage on every field change so values
+     survive a page reload even if the user closes the drawer without Apply. */
+  E("settingsPanel").addEventListener("change",function(e){
+    if(e.target.getAttribute("data-s")){
+      try{ localStorage.setItem("zyni-settings",JSON.stringify(_readSettingsForm())); }catch(_){}
+    }
   });
 
   /* ── top-nav routing (Wave 6) ── */
