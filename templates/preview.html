@@ -76,14 +76,14 @@ body{
 }
 .viewport{
   position:fixed;inset:0;
-  display:flex;align-items:center;justify-content:center;
+  display:flex;align-items:flex-start;justify-content:center;
   overflow:auto;background:var(--bg-window);padding:0;
 }
 .frame{position:relative;flex:0 0 auto}
 .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
 .window{
   position:absolute;top:0;left:0;transform-origin:top left;
-  width:1280px;height:930px;
+  width:1520px;height:930px;
   background:var(--bg-window);
   border:none;
   border-radius:0;
@@ -2138,17 +2138,21 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 
 <script>
 (function fitApp(){
-  var W=1280,H=930;
+  var W=1520;                       // design width — must fit the full topbar
   function fit(){
     var win=document.querySelector('.window'),fr=document.querySelector('.frame');
     if(innerWidth<=820){            // mobile: natural fluid layout, no scaling
-      win.style.transform='none';
+      win.style.transform='none';win.style.height='';
       fr.style.width='100%';fr.style.height='auto';
       return;
     }
-    var s=Math.min(innerWidth/W, innerHeight/H);
+    // Fill the viewport width, and give the window an adaptive design height
+    // so it fills the viewport height too — no letterbox, no clipped header.
+    var s=innerWidth/W;
+    var H=Math.max(560,Math.round(innerHeight/s));
     win.style.transform='scale('+s+')';
-    fr.style.width=(W*s)+'px';fr.style.height=(H*s)+'px';
+    win.style.height=H+'px';
+    fr.style.width=innerWidth+'px';fr.style.height=(H*s)+'px';
   }
   addEventListener('resize',fit);fit();
 })();
