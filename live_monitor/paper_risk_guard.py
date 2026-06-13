@@ -105,11 +105,20 @@ _RG_GUARDRAILS_BASE = {
 # ── Bool parser ───────────────────────────────────────────────────────────────
 
 def _parse_bool(v) -> bool | None:
-    """Parse a boolean from various representations. Returns None on failure."""
+    """Parse a boolean from various representations. Returns None on failure.
+
+    Accepts: True/False (bool), 1/0 (int only), "true"/"false"/"1"/"0"/"yes"/"no".
+    Rejects: 2, -1, arbitrary floats, arbitrary strings, empty string, lists, dicts.
+    Does NOT use bool(v) for integers — only 0 and 1 are valid integer booleans.
+    """
     if isinstance(v, bool):
         return v
-    if isinstance(v, int):
-        return bool(v)
+    if isinstance(v, int) and not isinstance(v, bool):
+        if v == 1:
+            return True
+        if v == 0:
+            return False
+        return None  # 2, -1, etc. are not valid booleans
     if isinstance(v, str):
         s = v.strip().lower()
         if s in ("true", "1", "yes"):
@@ -170,6 +179,8 @@ def _lm_normalize_paper_risk_guard_settings(  # noqa: C901
         raw["min_risk_reward"] = raw["min_rr"]
 
     # ── Boolean fields ────────────────────────────────────────────────────────
+    _UNSAFE_BOOL_FIELDS = {"allow_if_no_stop_loss", "allow_if_no_take_profit"}
+
     for bf in _RG_BOOL_FIELDS:
         if bf not in raw:
             continue
@@ -177,10 +188,21 @@ def _lm_normalize_paper_risk_guard_settings(  # noqa: C901
         b = _parse_bool(v)
         if b is None:
             if for_write:
-                field_errors[bf] = f"must_be_true_or_false"
-            # on read, keep default
+                field_errors[bf] = "must_be_true_or_false"
+            # on read, keep default (False)
+        elif b is True and bf in _UNSAFE_BOOL_FIELDS:
+            if for_write:
+                # Reject: missing SL/TP must always block — warn-only is unsafe
+                field_errors[bf] = "unsupported_unsafe_setting"
+            else:
+                # Read/legacy mode: normalize unsafe stored value to False silently
+                merged[bf] = False
         else:
             merged[bf] = b
+
+    # Enforce hard-False for unsafe fields regardless of stored value (belt-and-suspenders)
+    merged["allow_if_no_stop_loss"]  = False
+    merged["allow_if_no_take_profit"] = False
 
     # ── Numeric fields ────────────────────────────────────────────────────────
     for key, (lo, hi) in _RG_NUMERIC_RANGES.items():
@@ -377,6 +399,60 @@ def _lm_compute_consecutive_losses(user_id) -> int:
         return 0
 
 
+# ── Computable-risk invariant enforcer ───────────────────────────────────────
+
+def _lm_enforce_computable_risk_invariants(
+    entry_dec,
+    sl_dec,
+    tp_dec,
+    qty_dec,
+    equity_dec,
+    risk_per_unit_dec,
+    reward_per_unit_dec,
+    risk_amount_dec,
+    reward_amount_dec,
+    risk_pct_dec,
+    risk_reward_dec,
+    blocking_reasons,
+) -> list:
+    """Append blocking reasons for any null or non-positive required risk metric.
+
+    Phase 11.13: A trade must NEVER be allowed when any of these metrics is
+    null or non-positive.  This is a final belt-and-suspenders check before
+    the allowed verdict is computed.  Caller deduplicates the returned list.
+    Does not execute anything.
+    """
+    out = list(blocking_reasons)
+
+    def _add(r):
+        out.append(r)
+
+    if entry_dec is None or entry_dec <= 0:
+        _add("entry_price_missing")
+    if sl_dec is None or sl_dec <= 0:
+        _add("stop_loss_missing")
+    if tp_dec is None or tp_dec <= 0:
+        _add("take_profit_missing")
+    if qty_dec is None or qty_dec <= 0:
+        _add("quantity_missing")
+    if equity_dec is None or equity_dec <= 0:
+        _add("account_unavailable")
+    if risk_per_unit_dec is None or risk_per_unit_dec <= 0:
+        _add("invalid_stop_distance")
+    if reward_per_unit_dec is None or reward_per_unit_dec <= 0:
+        _add("invalid_reward_distance")
+    if risk_amount_dec is None or risk_amount_dec <= 0:
+        _add("risk_amount_unavailable")
+    if reward_amount_dec is None or reward_amount_dec <= 0:
+        _add("reward_amount_unavailable")
+    if risk_pct_dec is None or risk_pct_dec <= 0:
+        _add("risk_pct_unavailable")
+    if risk_reward_dec is None or risk_reward_dec <= 0:
+        _add("risk_reward_unavailable")
+
+    return out
+
+
 # ── Main builder ──────────────────────────────────────────────────────────────
 
 def _lm_build_paper_risk_guard(  # noqa: C901
@@ -440,10 +516,11 @@ def _lm_build_paper_risk_guard(  # noqa: C901
     except Exception:
         pass
 
-    paper_primary              = exec_summary.get("paper_primary", True)
-    live_disabled              = exec_summary.get("live_disabled", True)
+    paper_primary               = exec_summary.get("paper_primary", True)
+    live_disabled               = exec_summary.get("live_disabled", True)
     testnet_strategy_validation = exec_summary.get("testnet_strategy_validation", False)
-    ai_can_execute             = exec_summary.get("ai_can_execute", False)
+    ai_can_execute              = exec_summary.get("ai_can_execute", False)
+    primary_strat_mode          = exec_summary.get("primary_strategy_testing_mode", "")
 
     # Guardrails violation → block
     if not paper_primary:
@@ -454,6 +531,9 @@ def _lm_build_paper_risk_guard(  # noqa: C901
         blocking_reasons.append("execution_mode_invalid")
     if ai_can_execute:
         blocking_reasons.append("execution_mode_invalid")
+    # primary_strategy_testing_mode must be internal_paper
+    if primary_strat_mode != "internal_paper":
+        blocking_reasons.append("execution_mode_invalid")
 
     # Testnet selected → warn only (paper trading still available)
     if exec_mode == "binance_testnet":
@@ -461,10 +541,10 @@ def _lm_build_paper_risk_guard(  # noqa: C901
 
     guardrails = {
         "execution_mode":                exec_mode,
-        "paper_primary":                 True,
-        "primary_strategy_testing_mode": "internal_paper",
-        "live_disabled":                 True,
-        "testnet_strategy_validation":   False,
+        "paper_primary":                 paper_primary,
+        "primary_strategy_testing_mode": primary_strat_mode,
+        "live_disabled":                 live_disabled,
+        "testnet_strategy_validation":   testnet_strategy_validation,
         "can_auto_submit":               False,
         "auto_execution_allowed":        False,
         "ai_can_execute":                False,
@@ -880,6 +960,18 @@ def _lm_build_paper_risk_guard(  # noqa: C901
 
     if market_price_dec is None:
         warnings.append("market_price_unavailable")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # STEP 6: Computable-risk invariants — must run before allowed verdict
+    # allowed is NEVER true when any required metric is null or non-positive
+    # ─────────────────────────────────────────────────────────────────────────
+    blocking_reasons = _lm_enforce_computable_risk_invariants(
+        entry_dec, sl_dec, tp_dec, qty_dec, equity_dec,
+        risk_per_unit_dec, reward_per_unit_dec,
+        risk_amount_dec, reward_amount_dec,
+        risk_pct_dec, risk_reward_dec,
+        blocking_reasons,
+    )
 
     # ─────────────────────────────────────────────────────────────────────────
     # FINAL VERDICT — deduplicate preserving order

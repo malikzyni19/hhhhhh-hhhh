@@ -5320,17 +5320,12 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                           '<input id="lmPapRgMaxDailyLoss" type="number" step="0.5" min="0.5" max="20" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
                           '<label style="color:var(--text-3)">Min Equity $</label>'+
                           '<input id="lmPapRgMinEquity" type="number" step="1" min="0" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
-                          '<label style="color:var(--text-3)">Allow w/o SL</label>'+
-                          '<select id="lmPapRgAllowNoSl" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
-                            '<option value="false">No (block)</option>'+
-                            '<option value="true">Yes (warn only)</option>'+
-                          '</select>'+
-                          '<label style="color:var(--text-3)">Allow w/o TP</label>'+
-                          '<select id="lmPapRgAllowNoTp" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
-                            '<option value="false">No (block)</option>'+
-                            '<option value="true">Yes (warn only)</option>'+
-                          '</select>'+
+                          '<label style="color:var(--text-3)">SL Required</label>'+
+                          '<span style="color:var(--green,#4ade80);font-size:9px;line-height:1.6">YES — always required</span>'+
+                          '<label style="color:var(--text-3)">TP Required</label>'+
+                          '<span style="color:var(--green,#4ade80);font-size:9px;line-height:1.6">YES — always required</span>'+
                         '</div>'+
+                        '<div style="font-size:8px;color:var(--text-4,#475569);margin-top:5px">Paper Risk Guard requires both SL and TP so risk and reward can be calculated before submission.</div>'+
                         '<button class="btn lm-sm-btn" style="margin-top:6px;color:var(--green,#4ade80)" onclick="window._lmPapRgSaveSettings()">Save Limits</button>'+
                         '<div id="lmPapRgSettingsMsg" style="display:none;font-size:9px;padding:2px 0;margin-top:2px"></div>'+
                         '<div id="lmPapRgFieldErrors" style="display:none;font-size:9px;padding:3px 5px;margin-top:3px;background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.25);border-radius:3px;color:#f87171;line-height:1.6"></div>'+
@@ -9125,10 +9120,6 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
             f('lmPapRgMaxSymOrd',   s.max_symbol_open_orders);
             f('lmPapRgMaxDailyLoss',s.max_daily_realized_loss_pct);
             f('lmPapRgMinEquity',   s.min_account_equity);
-            var slEl=document.getElementById('lmPapRgAllowNoSl');
-            if(slEl) slEl.value=s.allow_if_no_stop_loss?'true':'false';
-            var tpEl=document.getElementById('lmPapRgAllowNoTp');
-            if(tpEl) tpEl.value=s.allow_if_no_take_profit?'true':'false';
           }
         }).catch(function(){});
     }
@@ -9155,10 +9146,6 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     _add('max_symbol_open_orders',      'lmPapRgMaxSymOrd');
     _add('max_daily_realized_loss_pct', 'lmPapRgMaxDailyLoss');
     _add('min_account_equity',          'lmPapRgMinEquity');
-    var slV=gv('lmPapRgAllowNoSl');
-    if(slV!==null) settings['allow_if_no_stop_loss']=slV;
-    var tpV=gv('lmPapRgAllowNoTp');
-    if(tpV!==null) settings['allow_if_no_take_profit']=tpV;
     var msgEl=document.getElementById('lmPapRgSettingsMsg');
     var errEl=document.getElementById('lmPapRgFieldErrors');
     if(msgEl){ msgEl.style.display=''; msgEl.style.color='var(--text-3)'; msgEl.textContent='Saving…'; }
