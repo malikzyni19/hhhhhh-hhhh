@@ -200,6 +200,14 @@ svg{display:block}
   border-bottom:1px solid rgba(251,191,36,.35);color:#fbbf24;font-size:12px;font-weight:600;letter-spacing:.3px}
 .maintenance-banner .ico{width:14px;height:14px;flex:0 0 auto;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .maintenance-banner[hidden]{display:none}
+.preview-banner{display:flex;align-items:center;gap:10px;padding:8px 16px;background:rgba(34,211,238,.10);
+  border-bottom:1px solid rgba(34,211,238,.32);color:var(--accent);font-size:12px;font-weight:600;letter-spacing:.3px}
+.preview-banner .ico{width:14px;height:14px;flex:0 0 auto;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.preview-banner .pb-msg{flex:1;min-width:0}
+.preview-banner .pb-upgrade{background:rgba(34,211,238,.18);border:1px solid rgba(34,211,238,.4);color:var(--accent);
+  padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;letter-spacing:.5px;cursor:pointer;flex:0 0 auto}
+.preview-banner .pb-upgrade:hover{background:rgba(34,211,238,.28)}
+.preview-banner[hidden]{display:none}
 .ic-btn .dot{position:absolute;top:5px;right:6px;width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 6px var(--accent)}
 .win-ctrls{display:flex;align-items:center;gap:2px;margin-left:6px;padding-left:8px;border-left:1px solid var(--border)}
 .win-ctrls .ic-btn:last-child:hover{background:rgba(239,68,68,.18);color:#fda4af}
@@ -1655,6 +1663,12 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     <span id="maintBannerMsg">Maintenance mode</span>
   </div>
 
+  <div class="preview-banner" id="previewBanner" hidden>
+    <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+    <span class="pb-msg" id="previewBannerMsg">Preview mode — this tab is locked on your plan. Sample data shown.</span>
+    <button class="pb-upgrade" id="previewBannerCta" type="button">Upgrade</button>
+  </div>
+
   <div class="body">
 
     <!-- ═══ LEFT SIDEBAR ═══ -->
@@ -3041,27 +3055,78 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     if(msgEl) msgEl.textContent=msg;
     bar.hidden=false;
   }
+  /* Returns true when either the role lacks the tab OR the admin's
+     global tab-toggle has switched it off. Both surfaces look the same
+     to the user: tab visible, content shown, actions blocked. */
+  function _modeLocked(mode){
+    var tab=TAB_OF_MODE[mode];
+    var perUser = tab ? !_featAllowed("allowed_tabs", tab) : false;
+    var global  = _tabGloballyDisabled(TAB_CTRL_OF_MODE[mode]);
+    return perUser || global;
+  }
+  function _viewLocked(view){
+    var tab=TAB_OF_VIEW[view];
+    var perUser = tab ? !_featAllowed("allowed_tabs", tab) : false;
+    var global  = _tabGloballyDisabled(TAB_CTRL_OF_VIEW[view]);
+    return perUser || global;
+  }
+  function _currentTabLabel(){
+    if(ST.view && ST.view!=="scanner"){
+      var a=document.querySelector('#topnav a[data-view="'+ST.view+'"]');
+      if(a) return a.textContent.trim();
+      return ST.view;
+    }
+    return (typeof MODE_LABEL!=="undefined" && MODE_LABEL[ST.mode]) || "This scanner";
+  }
+  function _syncCurrentTabLocked(){
+    var viewLocked = (ST.view && ST.view!=="scanner") ? _viewLocked(ST.view) : false;
+    var modeLocked = (!ST.view || ST.view==="scanner") ? _modeLocked(ST.mode||"main") : false;
+    ST.currentTabLocked = !!(viewLocked || modeLocked);
+  }
+  function _renderPreviewBanner(){
+    var bar=document.getElementById("previewBanner"); if(!bar) return;
+    bar.hidden = !ST.currentTabLocked;
+    document.body.classList.toggle("preview-locked", !!ST.currentTabLocked);
+  }
+  /* Centralised lock-popup for the currently-locked tab. */
+  function _popLockedCurrent(){
+    showLockPopup(_currentTabLabel());
+  }
   // Reflect current permissions in the UI (lock badges, disabled options).
   function applyPermissionsUI(){
     [].forEach.call(document.querySelectorAll('.side .nav-item[data-mode]'),function(el){
       var mode=el.getAttribute('data-mode');
       var tab=TAB_OF_MODE[mode];
-      var locked = tab ? !_featAllowed("allowed_tabs", tab) : false;
+      var perUserLocked = tab ? !_featAllowed("allowed_tabs", tab) : false;
       var globalOff = _tabGloballyDisabled(TAB_CTRL_OF_MODE[mode]);
-      el.classList.toggle('locked', locked && !globalOff);
-      el.style.display = globalOff ? "none" : "";
-      _setLockBadge(el, locked && !globalOff);
+      var locked = perUserLocked || globalOff;
+      el.classList.toggle('locked', locked);
+      el.style.display = "";   // always visible — preview-mode pattern
+      el.title = locked ? "Locked — upgrade to unlock" : "";
+      _setLockBadge(el, locked);
     });
     [].forEach.call(document.querySelectorAll('#topnav a[data-view]'),function(a){
       var view=a.getAttribute('data-view');
       var tab=TAB_OF_VIEW[view];
-      var locked = tab ? !_featAllowed("allowed_tabs", tab) : false;
+      var perUserLocked = tab ? !_featAllowed("allowed_tabs", tab) : false;
       var globalOff = _tabGloballyDisabled(TAB_CTRL_OF_VIEW[view]);
-      a.classList.toggle('locked', locked && !globalOff);
-      a.style.display = globalOff ? "none" : "";
-      if(locked && !globalOff) a.title="Locked — upgrade to unlock"; else a.removeAttribute('title');
+      var locked = perUserLocked || globalOff;
+      a.classList.toggle('locked', locked);
+      a.style.display = "";   // always visible — preview-mode pattern
+      if(locked) a.title="Locked — upgrade to unlock"; else a.removeAttribute('title');
     });
     _renderMaintenanceBanner();
+    var wasLocked = !!ST.currentTabLocked;
+    _syncCurrentTabLocked();
+    _renderPreviewBanner();
+    // If the user is already on a locked tab when perms first arrive and
+    // there's nothing rendered yet, drop in sample data so the table has
+    // something to show.
+    if(ST.currentTabLocked && !wasLocked &&
+       (!ST.results || !ST.results.length) &&
+       (!ST.view || ST.view==="scanner")){
+      try{ useSample("Preview — sample data, upgrade to see live results"); }catch(_){}
+    }
     var sel=E("exchSelect");
     if(sel) [].forEach.call(sel.options,function(o){
       if(!o.getAttribute('data-base')) o.setAttribute('data-base', o.textContent);
@@ -4667,16 +4732,28 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       renderAll();
     });
   })();
-  /* sidebar scanner-mode tabs — switch view only; user presses Scan to fetch */
+  /* sidebar scanner-mode tabs — switch view only; user presses Scan to fetch.
+     Preview-mode pattern: locked tabs are still navigable so the user can
+     see what the tab offers; we load sample data for the table and
+     intercept any subsequent action with the upgrade popup. */
   [].forEach.call(document.querySelectorAll('.side .nav-item[data-mode]'),function(el){
     el.addEventListener('click',function(){
       var m=el.getAttribute('data-mode');
       if(m===ST.mode) return;
-      var _tab=TAB_OF_MODE[m];
-      if(_tab && !_featAllowed("allowed_tabs", _tab)){ showLockPopup(MODE_LABEL[m]||"This scanner"); return; }
       [].forEach.call(document.querySelectorAll('.side .nav-item[data-mode]'),function(x){x.classList.remove('active');});
       el.classList.add('active');
       ST.mode=m; ST.sel=-1;
+      _syncCurrentTabLocked();
+      _renderPreviewBanner();
+      if(ST.currentTabLocked){
+        // Locked: show canned sample data so the columns / layout are
+        // visible; actions get intercepted by the delegated guard below.
+        useSample("Preview — sample data, upgrade to see live results");
+        var seg=document.getElementById('segSignal');
+        if(seg) seg.style.display = (m==='main'||m==='compressed')?'':'none';
+        _renderTabCtrls();
+        return;
+      }
       // Restore this tab's own persisted results (do NOT auto-scan / spend tokens).
       var td=ST.tabData[m]||{};
       ST.results = ("results" in td) ? (td.results||[]) : [];
@@ -11427,11 +11504,88 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   [].forEach.call(document.querySelectorAll("#topnav a[data-view]"),function(a){
     a.addEventListener("click",function(e){
       e.preventDefault();
-      var v=a.getAttribute("data-view"), tab=TAB_OF_VIEW[v];
-      if(tab && !_featAllowed("allowed_tabs", tab)){ showLockPopup(a.textContent.trim()||v); return; }
-      switchView(v);
+      var v=a.getAttribute("data-view");
+      switchView(v);  // sets ST.view internally
+      _syncCurrentTabLocked();
+      _renderPreviewBanner();
+      if(ST.currentTabLocked && ST.view==="scanner"){
+        useSample("Preview — sample data, upgrade to see live results");
+      }
     });
   });
+
+  /* Preview-mode click guard. While the current tab is locked, intercept
+     interactive clicks inside the main content area (the .body) and
+     surface the upgrade popup instead of letting the action fire.
+     Nav (sidebar / topnav), settings drawer, the lock modal itself, and
+     icon buttons in the topbar are explicitly allowed so the user can
+     navigate, read, and dismiss popups. */
+  function _isInteractive(el){
+    if(!el || el.nodeType!==1) return false;
+    var t=el.tagName;
+    if(t==="BUTTON" || t==="SELECT") return true;
+    if(t==="INPUT"){
+      var it=(el.type||"").toLowerCase();
+      return it!=="" && it!=="hidden";
+    }
+    if(el.classList){
+      if(el.classList.contains("btn")) return true;
+      if(el.classList.contains("cdd-opt")) return true;
+      if(el.classList.contains("cdd-btn")) return true;
+    }
+    return false;
+  }
+  function _isLockExempt(target){
+    if(!target || target.nodeType!==1) return false;
+    if(target.closest("#topnav")) return true;
+    if(target.closest(".side")) return true;
+    if(target.closest(".topright")) return true;
+    if(target.closest(".win-ctrls")) return true;
+    if(target.closest("#settingsPanel")) return true;
+    if(target.closest("#settingsBd")) return true;
+    if(target.closest("#notifPanel")) return true;
+    if(target.closest("#notifBd")) return true;
+    if(target.closest("#lockModal")) return true;
+    if(target.closest("#lockModalBd")) return true;
+    if(target.closest("#tokenModal")) return true;
+    if(target.closest("#tokenModalBd")) return true;
+    if(target.closest("#tutModal")) return true;
+    if(target.closest("#previewBanner")) return true;
+    if(target.closest("#maintBanner")) return true;
+    return false;
+  }
+  document.addEventListener("click", function(e){
+    if(!ST.currentTabLocked) return;
+    var t=e.target;
+    if(_isLockExempt(t)) return;
+    if(!_isInteractive(t) && !(t.closest && t.closest("button,.btn,.cdd-btn,.cdd-opt"))) return;
+    e.preventDefault();
+    e.stopPropagation();
+    _popLockedCurrent();
+  }, true);
+  document.addEventListener("submit", function(e){
+    if(!ST.currentTabLocked) return;
+    if(_isLockExempt(e.target)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    _popLockedCurrent();
+  }, true);
+  document.addEventListener("change", function(e){
+    if(!ST.currentTabLocked) return;
+    var t=e.target;
+    if(_isLockExempt(t)) return;
+    // Allow settings-drawer / sidebar-resident inputs to mutate localStorage;
+    // only intercept inputs that live inside the main content body.
+    if(t.closest && (t.closest(".side") || t.closest("#settingsPanel"))) return;
+    e.preventDefault();
+    e.stopPropagation();
+    _popLockedCurrent();
+  }, true);
+  /* Banner CTA */
+  (function(){
+    var cta = document.getElementById("previewBannerCta");
+    if(cta) cta.addEventListener("click", function(e){ e.stopPropagation(); _popLockedCurrent(); });
+  })();
 
   // live "updated" ticker
   setInterval(function(){
