@@ -185,6 +185,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
     <div class="adm-mob-tab" onclick="showSection('stats')">📊 Stats</div>
     <div class="adm-mob-tab" onclick="showSection('guest')">◇ Guest</div>
     <div class="adm-mob-tab" onclick="showSection('controls')">⚙ Controls</div>
+    <div class="adm-mob-tab" onclick="showSection('defaults')">★ Defaults</div>
   </div>
 </nav>
 
@@ -200,6 +201,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
     <div class="adm-nav-sep"></div>
     <div class="adm-nav-item" onclick="showSection('guest')"><span class="adm-nav-icon">◇</span>Guest Access</div>
     <div class="adm-nav-item" onclick="showSection('controls')"><span class="adm-nav-icon">⚙</span>App Controls</div>
+    <div class="adm-nav-item" onclick="showSection('defaults')"><span class="adm-nav-icon">★</span>App Defaults</div>
   </nav>
 
   <!-- Main -->
@@ -342,9 +344,25 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <div class="adm-section-title">App Controls — Tab Toggles</div>
         <button class="adm-btn primary sm" onclick="loadControls()">Refresh</button>
       </div>
-      <p style="font-size:11px;color:var(--muted);margin-bottom:18px;line-height:1.6">Enable or disable specific scan tabs for all users. Changes take effect immediately — disabled tabs will return an error when called.</p>
+      <p style="font-size:11px;color:var(--muted);margin-bottom:18px;line-height:1.6">Enable or disable specific scan tabs for all users. Changes take effect immediately — disabled tabs disappear from the desktop nav and return an error if called directly.</p>
       <div class="adm-toggles-grid" id="toggles-grid">
         <div class="adm-empty">Loading...</div>
+      </div>
+    </section>
+
+    <!-- APP DEFAULTS -->
+    <section class="adm-section" id="sec-defaults">
+      <div class="adm-section-hdr">
+        <div class="adm-section-title">App Defaults</div>
+        <button class="adm-btn primary sm" onclick="loadDefaults()">Refresh</button>
+      </div>
+      <p style="font-size:11px;color:var(--muted);margin-bottom:18px;line-height:1.6">These values seed brand-new user sessions. They never overwrite a user who has already saved their own choice on the desktop — they're the "house defaults".</p>
+      <div id="defaults-form" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px">
+        <div class="adm-empty">Loading...</div>
+      </div>
+      <div style="margin-top:18px;display:flex;gap:8px;align-items:center">
+        <button class="adm-btn primary sm" onclick="saveDefaults()">Save defaults</button>
+        <span id="defaults-status" style="font-size:11px;color:var(--muted)"></span>
       </div>
     </section>
 
@@ -372,7 +390,7 @@ function showSection(name){
   document.querySelectorAll('.adm-mob-tab').forEach(function(n){n.classList.remove('active')});
   var sec=document.getElementById('sec-'+name);
   if(sec)sec.classList.add('active');
-  var keyMap={dashboard:'Dashboard',users:'Users',sessions:'Sessions',logs:'Audit',stats:'Stats',guest:'Guest',controls:'Controls'};
+  var keyMap={dashboard:'Dashboard',users:'Users',sessions:'Sessions',logs:'Audit',stats:'Stats',guest:'Guest',controls:'Controls',defaults:'Defaults'};
   var key=keyMap[name]||name;
   document.querySelectorAll('.adm-nav-item,.adm-mob-tab').forEach(function(n){
     if(n.textContent.indexOf(key)!==-1)n.classList.add('active');
@@ -385,6 +403,7 @@ function showSection(name){
   else if(name==='stats')loadStats();
   else if(name==='guest')loadGuest();
   else if(name==='controls')loadControls();
+  else if(name==='defaults')loadDefaults();
 }
 
 function toast(msg,type){
@@ -681,6 +700,72 @@ function saveGuestLimits(){
   var mp=parseInt(document.getElementById('guest-max-pairs').value)||20;
   apiFetch('/api/admin/guest/controls',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({max_scans_per_session:ms,max_pairs:mp})})
     .then(function(d){if(d)toast('Guest limits saved','ok');});
+}
+
+/* ── App Defaults ── */
+var _DEFAULT_FIELDS=[
+  {key:'support_url',     label:'Support URL',        type:'text',   group:'General'},
+  {key:'theme',           label:'Default theme',      type:'select', opts:['dark','light'], group:'General'},
+  {key:'tutorial_enabled',label:'Tutorial on first visit', type:'bool', group:'General'},
+  {key:'market',          label:'Default market',     type:'select', opts:['perpetual','spot'], group:'New-user defaults'},
+  {key:'signal',          label:'Default signal',     type:'select', opts:['OB','FVG','BREAKER','FIB','ALL'], group:'New-user defaults'},
+  {key:'exchange',        label:'Default exchange',   type:'select', opts:['binance','bybit','okx','mexc'], group:'New-user defaults'},
+  {key:'timeframe',       label:'Default timeframe',  type:'select', opts:['15m','30m','1h','4h','1d'], group:'New-user defaults'},
+  {key:'sLen',            label:'Swing lookback (sLen)', type:'number', group:'Scan defaults'},
+  {key:'iLen',            label:'Internal lookback (iLen)', type:'number', group:'Scan defaults'},
+  {key:'obMaxTouches',    label:'OB max touches',     type:'number', group:'Scan defaults'},
+  {key:'fvgAgeMax',       label:'FVG max age (bars)', type:'number', group:'Scan defaults'},
+  {key:'useObTouchState', label:'OB touch-state filter', type:'bool', group:'Scan defaults'},
+  {key:'useFvgValidOnly', label:'FVG valid only',     type:'bool', group:'Scan defaults'},
+  {key:'useFvgState',     label:'FVG filter by state',type:'bool', group:'Scan defaults'},
+  {key:'useBtcCorrelation',label:'BTC correlation filter', type:'bool', group:'Scan defaults'}
+];
+function loadDefaults(){
+  apiFetch('/api/admin/config/defaults').then(function(d){
+    if(!d)return;
+    var box=document.getElementById('defaults-form');
+    var groups={};
+    _DEFAULT_FIELDS.forEach(function(f){ (groups[f.group]=groups[f.group]||[]).push(f); });
+    var html='';
+    Object.keys(groups).forEach(function(g){
+      html+='<div style="grid-column:1/-1;font-size:10px;letter-spacing:2px;color:var(--muted2);text-transform:uppercase;font-weight:600;margin:8px 0 -4px">'+esc(g)+'</div>';
+      groups[g].forEach(function(f){
+        var v=d[f.key];
+        var ctl='';
+        if(f.type==='bool'){
+          ctl='<label class="toggle-sw" style="margin-top:4px"><input type="checkbox" id="def-'+f.key+'" '+(v?'checked':'')+'><div class="toggle-track"></div><div class="toggle-thumb"></div></label>';
+        } else if(f.type==='select'){
+          ctl='<select id="def-'+f.key+'" class="guest-num-inp" style="width:100%">'
+            + f.opts.map(function(o){return '<option value="'+esc(o)+'"'+(String(v)===o?' selected':'')+'>'+esc(o)+'</option>';}).join('')
+            + '</select>';
+        } else if(f.type==='number'){
+          ctl='<input type="number" id="def-'+f.key+'" class="guest-num-inp" style="width:100%" value="'+esc(v==null?'':v)+'">';
+        } else {
+          ctl='<input type="text" id="def-'+f.key+'" class="guest-num-inp" style="width:100%" value="'+esc(v==null?'':v)+'">';
+        }
+        html+='<div class="guest-ctrl-card"><div class="guest-ctrl-lbl">'+esc(f.label)+'</div><div style="margin-top:6px">'+ctl+'</div></div>';
+      });
+    });
+    box.innerHTML=html;
+    var st=document.getElementById('defaults-status'); if(st) st.textContent='';
+  });
+}
+function saveDefaults(){
+  var body={};
+  _DEFAULT_FIELDS.forEach(function(f){
+    var el=document.getElementById('def-'+f.key); if(!el) return;
+    if(f.type==='bool') body[f.key]=!!el.checked;
+    else if(f.type==='number'){ var n=parseInt(el.value,10); body[f.key]=isFinite(n)?n:0; }
+    else body[f.key]=el.value;
+  });
+  apiFetch('/api/admin/config/defaults',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(function(d){
+      if(!d)return;
+      if(d.error){toast(d.error,'err');return;}
+      toast('App defaults saved','ok');
+      var st=document.getElementById('defaults-status');
+      if(st) st.textContent='Saved at '+(new Date()).toLocaleTimeString();
+    });
 }
 
 function esc(str){
