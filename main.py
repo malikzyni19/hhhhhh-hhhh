@@ -24568,11 +24568,14 @@ from live_monitor import (
     _lm_disarm_paper_auto_gate,
     _lm_record_paper_auto_gate_event,
     # Phase 11.13: Paper Risk Guard
+    _lm_default_paper_risk_settings,
+    _lm_normalize_paper_risk_guard_settings,
     _lm_get_paper_risk_guard_settings,
     _lm_update_paper_risk_guard_settings,
     _lm_build_paper_risk_guard,
     _lm_get_paper_risk_guard_state,
     _lm_validate_paper_order_against_risk_guard,
+    _lm_record_paper_risk_guard_event,
 )
 
 # ── Phase 10.9I: Auto-refresh scheduler ─────────────────────────────────────
@@ -28339,18 +28342,26 @@ def api_lm_paper_order_submit(item_id):
             "detail": "Provide 'quantity' in the request body.",
         }), 422
 
-    # Phase 11.13: Risk Guard check — must pass before order is created
-    _rg_validation = _lm_validate_paper_order_against_risk_guard(row, uid, quantity_str)
+    # Phase 11.13: Risk Guard check — must pass before order is created (fail-closed)
+    try:
+        _rg_validation = _lm_validate_paper_order_against_risk_guard(row, uid, quantity_str)
+    except Exception as _rg_exc:
+        return jsonify({
+            "ok":          False,
+            "error":       "paper_risk_guard_error",
+            "detail":      str(_rg_exc)[:200],
+            "risk_status": "error",
+        }), 500
     if not _rg_validation.get("allowed"):
         _rg_result = _rg_validation.get("risk_guard", {})
         return jsonify({
-            "ok":              False,
-            "error":           "paper_risk_guard_blocked",
+            "ok":               False,
+            "error":            "paper_risk_guard_blocked",
             "blocking_reasons": _rg_result.get("blocking_reasons", []),
-            "warnings":        _rg_result.get("warnings", []),
-            "risk_status":     _rg_result.get("risk_status", "blocked"),
-            "risk_guard":      _rg_result,
-        }), 422
+            "warnings":         _rg_result.get("warnings", []),
+            "risk_status":      _rg_result.get("risk_status", "blocked"),
+            "risk_guard":       _rg_result,
+        }), 409
 
     result = _lm_submit_paper_order(uid, row, quantity_str)
 
@@ -29214,6 +29225,14 @@ def api_lm_paper_risk_guard_settings_update(item_id):
         body = request.get_json(force=True, silent=True) or {}
     except Exception:
         pass
+    # Validate before writing — return field_errors for invalid values
+    _norm, _field_errors = _lm_normalize_paper_risk_guard_settings(body, for_write=True)
+    if _field_errors:
+        return jsonify({
+            "ok":           False,
+            "error":        "settings_validation_failed",
+            "field_errors": _field_errors,
+        }), 422
     result = _lm_update_paper_risk_guard_settings(uid, body)
     code   = 200 if result.get("ok") else 400
     return jsonify(result), code

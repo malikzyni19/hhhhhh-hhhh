@@ -17,11 +17,14 @@ from live_monitor.paper_auto_gate import (
     _lm_record_paper_auto_gate_event,
 )
 from live_monitor.paper_risk_guard import (
+    _lm_default_paper_risk_settings,
+    _lm_normalize_paper_risk_guard_settings,
     _lm_get_paper_risk_guard_settings,
     _lm_update_paper_risk_guard_settings,
     _lm_build_paper_risk_guard,
     _lm_get_paper_risk_guard_state,
     _lm_validate_paper_order_against_risk_guard,
+    _lm_record_paper_risk_guard_event,
 )
 from live_monitor.execution_intelligence import (
     _lm_build_orderflow_state,
@@ -189,9 +192,12 @@ __all__ = [
     "_lm_disarm_paper_auto_gate",
     "_lm_record_paper_auto_gate_event",
     # Phase 11.13: Paper Risk Guard
+    "_lm_default_paper_risk_settings",
+    "_lm_normalize_paper_risk_guard_settings",
     "_lm_get_paper_risk_guard_settings",
     "_lm_update_paper_risk_guard_settings",
     "_lm_build_paper_risk_guard",
     "_lm_get_paper_risk_guard_state",
     "_lm_validate_paper_order_against_risk_guard",
+    "_lm_record_paper_risk_guard_event",
 ]

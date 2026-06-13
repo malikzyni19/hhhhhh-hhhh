@@ -5299,21 +5299,39 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                         '<div style="font-weight:600;color:var(--text-2);margin-bottom:4px">Risk Limits</div>'+
                         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 8px">'+
                           '<label style="color:var(--text-3)">Max Risk %</label>'+
-                          '<input id="lmPapRgMaxPct" type="number" step="0.1" min="0.1" max="10" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
+                          '<input id="lmPapRgMaxPct" type="number" step="0.1" min="0.1" max="5" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
                           '<label style="color:var(--text-3)">Max $ Risk</label>'+
-                          '<input id="lmPapRgMaxAmt" type="number" step="1" min="1" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
+                          '<input id="lmPapRgMaxAmt" type="number" step="1" min="1" placeholder="none" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
                           '<label style="color:var(--text-3)">Max Notional</label>'+
-                          '<input id="lmPapRgMaxNot" type="number" step="10" min="10" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
+                          '<input id="lmPapRgMaxNot" type="number" step="10" min="10" placeholder="none" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
                           '<label style="color:var(--text-3)">Min R:R</label>'+
                           '<input id="lmPapRgMinRr" type="number" step="0.1" min="0.5" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
-                          '<label style="color:var(--text-3)">Require SL</label>'+
-                          '<select id="lmPapRgReqSl" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
-                            '<option value="true">Yes (block)</option>'+
-                            '<option value="false">No (warn only)</option>'+
+                          '<label style="color:var(--text-3)">Max Open Pos</label>'+
+                          '<input id="lmPapRgMaxPos" type="number" step="1" min="1" max="20" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
+                          '<label style="color:var(--text-3)">Max Open Orders</label>'+
+                          '<input id="lmPapRgMaxOrd" type="number" step="1" min="1" max="20" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
+                          '<label style="color:var(--text-3)">Max Sym Pos</label>'+
+                          '<input id="lmPapRgMaxSymPos" type="number" step="1" min="1" max="5" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
+                          '<label style="color:var(--text-3)">Max Sym Orders</label>'+
+                          '<input id="lmPapRgMaxSymOrd" type="number" step="1" min="1" max="5" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
+                          '<label style="color:var(--text-3)">Max Daily Loss %</label>'+
+                          '<input id="lmPapRgMaxDailyLoss" type="number" step="0.5" min="0.5" max="20" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
+                          '<label style="color:var(--text-3)">Min Equity $</label>'+
+                          '<input id="lmPapRgMinEquity" type="number" step="1" min="0" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
+                          '<label style="color:var(--text-3)">Allow w/o SL</label>'+
+                          '<select id="lmPapRgAllowNoSl" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
+                            '<option value="false">No (block)</option>'+
+                            '<option value="true">Yes (warn only)</option>'+
+                          '</select>'+
+                          '<label style="color:var(--text-3)">Allow w/o TP</label>'+
+                          '<select id="lmPapRgAllowNoTp" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
+                            '<option value="false">No (block)</option>'+
+                            '<option value="true">Yes (warn only)</option>'+
                           '</select>'+
                         '</div>'+
                         '<button class="btn lm-sm-btn" style="margin-top:6px;color:var(--green,#4ade80)" onclick="window._lmPapRgSaveSettings()">Save Limits</button>'+
                         '<div id="lmPapRgSettingsMsg" style="display:none;font-size:9px;padding:2px 0;margin-top:2px"></div>'+
+                        '<div id="lmPapRgFieldErrors" style="display:none;font-size:9px;padding:3px 5px;margin-top:3px;background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.25);border-radius:3px;color:#f87171;line-height:1.6"></div>'+
                       '</div>'+
                       '<div style="font-size:8px;color:var(--text-4,#475569);margin-top:5px">Risk guard blocks unsafe orders. can_auto_submit is always false.</div>'+
                     '</div>'+
@@ -9089,13 +9107,26 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         .then(function(d){
           if(d&&d.settings){
             var s=d.settings;
-            var f=function(id,v){ var e=document.getElementById(id); if(e) e.value=v; };
-            f('lmPapRgMaxPct', s.max_risk_pct_per_trade||2);
-            f('lmPapRgMaxAmt', s.max_risk_amount_per_trade||100);
-            f('lmPapRgMaxNot', s.max_position_notional||1000);
-            f('lmPapRgMinRr',  s.min_rr||1.5);
-            var slEl=document.getElementById('lmPapRgReqSl');
-            if(slEl) slEl.value=s.require_sl?'true':'false';
+            var f=function(id,v){
+              var e=document.getElementById(id);
+              if(!e) return;
+              if(v==null||v===''){ e.value=''; }
+              else { e.value=v; }
+            };
+            f('lmPapRgMaxPct',      s.max_risk_pct_per_trade);
+            f('lmPapRgMaxAmt',      s.max_risk_amount_per_trade!=null?s.max_risk_amount_per_trade:'');
+            f('lmPapRgMaxNot',      s.max_position_notional!=null?s.max_position_notional:'');
+            f('lmPapRgMinRr',       s.min_risk_reward);
+            f('lmPapRgMaxPos',      s.max_open_paper_positions);
+            f('lmPapRgMaxOrd',      s.max_open_paper_orders);
+            f('lmPapRgMaxSymPos',   s.max_symbol_open_positions);
+            f('lmPapRgMaxSymOrd',   s.max_symbol_open_orders);
+            f('lmPapRgMaxDailyLoss',s.max_daily_realized_loss_pct);
+            f('lmPapRgMinEquity',   s.min_account_equity);
+            var slEl=document.getElementById('lmPapRgAllowNoSl');
+            if(slEl) slEl.value=s.allow_if_no_stop_loss?'true':'false';
+            var tpEl=document.getElementById('lmPapRgAllowNoTp');
+            if(tpEl) tpEl.value=s.allow_if_no_take_profit?'true':'false';
           }
         }).catch(function(){});
     }
@@ -9105,16 +9136,31 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   window._lmPapRgSaveSettings=function(){
     var itemId=window._lmSimItemId||(window._lmSelItem&&window._lmSelItem.id);
     if(!itemId) return;
-    var gv=function(id){ var e=document.getElementById(id); return e?e.value:null; };
-    var settings={
-      max_risk_pct_per_trade:    parseFloat(gv('lmPapRgMaxPct'))||2,
-      max_risk_amount_per_trade: parseFloat(gv('lmPapRgMaxAmt'))||100,
-      max_position_notional:     parseFloat(gv('lmPapRgMaxNot'))||1000,
-      min_rr:                    parseFloat(gv('lmPapRgMinRr'))||1.5,
-      require_sl:                gv('lmPapRgReqSl')==='true',
+    var gv=function(id){ var e=document.getElementById(id); return e?e.value.trim():null; };
+    var settings={};
+    /* Send raw string values — backend validates and converts. Empty string = omit (keep default). */
+    var _add=function(key,id){
+      var v=gv(id);
+      if(v!==null&&v!=='') settings[key]=v;
     };
+    _add('max_risk_pct_per_trade',      'lmPapRgMaxPct');
+    _add('max_risk_amount_per_trade',   'lmPapRgMaxAmt');
+    _add('max_position_notional',       'lmPapRgMaxNot');
+    _add('min_risk_reward',             'lmPapRgMinRr');
+    _add('max_open_paper_positions',    'lmPapRgMaxPos');
+    _add('max_open_paper_orders',       'lmPapRgMaxOrd');
+    _add('max_symbol_open_positions',   'lmPapRgMaxSymPos');
+    _add('max_symbol_open_orders',      'lmPapRgMaxSymOrd');
+    _add('max_daily_realized_loss_pct', 'lmPapRgMaxDailyLoss');
+    _add('min_account_equity',          'lmPapRgMinEquity');
+    var slV=gv('lmPapRgAllowNoSl');
+    if(slV!==null) settings['allow_if_no_stop_loss']=slV;
+    var tpV=gv('lmPapRgAllowNoTp');
+    if(tpV!==null) settings['allow_if_no_take_profit']=tpV;
     var msgEl=document.getElementById('lmPapRgSettingsMsg');
+    var errEl=document.getElementById('lmPapRgFieldErrors');
     if(msgEl){ msgEl.style.display=''; msgEl.style.color='var(--text-3)'; msgEl.textContent='Saving…'; }
+    if(errEl){ errEl.style.display='none'; errEl.innerHTML=''; }
     fetch('/api/live-monitor/items/'+itemId+'/paper-risk-guard/settings',{
       method:'POST',credentials:'same-origin',
       headers:{'Content-Type':'application/json'},
@@ -9122,7 +9168,14 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     })
       .then(function(r){return r.json();})
       .then(function(d){
-        if(msgEl){
+        if(d&&d.field_errors&&errEl){
+          errEl.style.display='';
+          var lines=Object.keys(d.field_errors).map(function(k){
+            return '• '+esc(k)+': '+esc(d.field_errors[k]);
+          });
+          errEl.innerHTML='<strong>Validation errors:</strong><br>'+lines.join('<br>');
+          if(msgEl){ msgEl.style.color='var(--red-2,#f87171)'; msgEl.textContent='Fix errors above.'; }
+        } else if(msgEl){
           msgEl.style.color=d.ok?'var(--green,#4ade80)':'var(--red-2,#f87171)';
           msgEl.textContent=d.ok?'Saved.':('Error: '+(d.error||'unknown'));
         }
@@ -9153,18 +9206,38 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       rsStatus==='warning'?'Allowed with warnings':
       rsStatus==='blocked'?'Blocked — see reasons below':
       rsStatus;
-    var risk=guard.risk||d.risk||{};
+    var risk       = guard.risk||d.risk||{};
+    var openState  = guard.open_state||d.open_state||{};
+    var dailyLoss  = guard.daily_loss||d.daily_loss||{};
+    var journalFb  = guard.journal_feedback||d.journal_feedback||{};
     var rows=[];
-    if(risk.direction)    rows.push(['Direction',risk.direction]);
+    if(risk.direction)    rows.push(['Direction',risk.direction+(risk.side?' ('+risk.side+')':'')]);
     if(risk.entry_price)  rows.push(['Entry Price','$'+risk.entry_price]);
-    if(risk.sl_price)     rows.push(['SL Price','$'+risk.sl_price]);
-    if(risk.tp_price)     rows.push(['TP Price','$'+risk.tp_price]);
+    if(risk.sl_price||risk.stop_loss) rows.push(['SL Price','$'+(risk.sl_price||risk.stop_loss)]);
+    if(risk.tp_price||risk.take_profit) rows.push(['TP Price','$'+(risk.tp_price||risk.take_profit)]);
     if(risk.quantity)     rows.push(['Quantity',risk.quantity]);
     if(risk.notional)     rows.push(['Notional','$'+risk.notional]);
     if(risk.risk_amount)  rows.push(['$ Risk','$'+risk.risk_amount]);
-    if(risk.risk_pct)     rows.push(['Risk %',risk.risk_pct+'%']);
-    if(risk.rr!=null)     rows.push(['R:R',risk.rr]);
+    var riskPct=risk.risk_pct_of_equity||risk.risk_pct;
+    if(riskPct!=null)     rows.push(['Risk %',riskPct+'%']);
+    var rr=risk.risk_reward||risk.rr;
+    if(rr!=null)          rows.push(['R:R',rr]);
     if(risk.market_price) rows.push(['Market','$'+risk.market_price]);
+    /* Open state */
+    if(openState.open_positions!=null||openState.open_orders!=null){
+      rows.push(['Open Pos / Ord',(openState.open_positions||0)+' / '+(openState.open_orders||0)]);
+    }
+    if(openState.symbol&&(openState.same_symbol_open_positions!=null||openState.same_symbol_open_orders!=null)){
+      rows.push([openState.symbol+' Pos/Ord',(openState.same_symbol_open_positions||0)+' / '+(openState.same_symbol_open_orders||0)]);
+    }
+    /* Daily loss */
+    if(dailyLoss.loss_pct_of_equity!=null){
+      rows.push(['Daily Loss %',dailyLoss.loss_pct_of_equity+'%']);
+    }
+    /* Consecutive losses */
+    if(journalFb.consecutive_losses!=null&&journalFb.consecutive_losses>0){
+      rows.push(['Consec. Losses',journalFb.consecutive_losses]);
+    }
     if(rows.length && metricsTbl){
       metricsEl.style.display='';
       metricsTbl.innerHTML=rows.map(function(r){
