@@ -72,6 +72,13 @@ from live_monitor.testnet_order_draft import (
     _lm_build_testnet_order_draft,
     _lm_validate_order_quantity,
 )
+from live_monitor.paper_performance import (
+    _lm_normalize_performance_period,
+    _lm_build_paper_performance_filters,
+    _lm_query_closed_paper_trades,
+    _lm_get_paper_performance_state,
+    _lm_build_paper_performance_summary,
+)
 from live_monitor.paper_trading import (
     _lm_direction_to_paper_side,
     _lm_model_has_attr,
@@ -191,6 +198,12 @@ __all__ = [
     "_lm_arm_paper_auto_gate",
     "_lm_disarm_paper_auto_gate",
     "_lm_record_paper_auto_gate_event",
+    # Phase 11.14: Paper Performance Dashboard
+    "_lm_normalize_performance_period",
+    "_lm_build_paper_performance_filters",
+    "_lm_query_closed_paper_trades",
+    "_lm_get_paper_performance_state",
+    "_lm_build_paper_performance_summary",
     # Phase 11.13: Paper Risk Guard
     "_lm_default_paper_risk_settings",
     "_lm_normalize_paper_risk_guard_settings",

@@ -992,6 +992,9 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 .lm-ws-grid-2{display:grid;grid-template-columns:380px 1fr;gap:12px}
 .lm-ws-section{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:12px}
 .lm-ws-section:last-child{margin-bottom:0}
+.lm-pp-card{background:var(--bg-3,#1e293b);border:1px solid var(--border);border-radius:4px;padding:4px 6px}
+.lm-pp-cl{font-size:8px;color:var(--text-3);margin-bottom:1px}
+.lm-pp-cv{font-size:10px;font-weight:600;color:var(--text-1,#f1f5f9)}
 .lm-ws-sh{font-size:9.5px;font-weight:700;letter-spacing:.6px;color:var(--text-3);margin-bottom:8px;text-transform:uppercase}
 .lm-term-group{border:1px solid var(--border);border-radius:10px;margin-bottom:10px;overflow:hidden}
 .lm-term-grp-hdr{display:flex;align-items:center;gap:8px;padding:8px 14px;cursor:pointer;user-select:none;background:var(--bg-card-2,rgba(255,255,255,.03));font-size:11px;font-weight:600;color:var(--text-2)}
@@ -5408,6 +5411,95 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                       '<div style="font-size:8px;color:var(--text-4,#475569);margin-top:5px">Risk guard blocks unsafe orders. can_auto_submit is always false.</div>'+
                     '</div>'+
 
+                    /* ── Phase 11.14: Paper Performance Dashboard ──────────── */
+                    '<div class="lm-ws-section" id="lmPapPerfSection" style="margin-top:4px">'+
+                      '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">'+
+                        '<div class="lm-ws-sh" style="margin:0;flex:1">Paper Performance</div>'+
+                        '<span style="font-size:9px;color:var(--text-3)">Phase 11.14 · read-only</span>'+
+                      '</div>'+
+                      /* Filters row */
+                      '<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-bottom:6px">'+
+                        '<select id="lmPapPerfPeriod" class="lm-mini-input" style="font-size:9px;padding:2px 4px;background:var(--bg-3,#1e293b);border:1px solid var(--border,#334155);border-radius:3px;color:var(--text-2)">'+
+                          '<option value="7d">7 days</option>'+
+                          '<option value="30d" selected>30 days</option>'+
+                          '<option value="90d">90 days</option>'+
+                          '<option value="365d">365 days</option>'+
+                          '<option value="all">All time</option>'+
+                        '</select>'+
+                        '<select id="lmPapPerfSide" class="lm-mini-input" style="font-size:9px;padding:2px 4px;background:var(--bg-3,#1e293b);border:1px solid var(--border,#334155);border-radius:3px;color:var(--text-2)">'+
+                          '<option value="">All sides</option>'+
+                          '<option value="BUY">Long</option>'+
+                          '<option value="SELL">Short</option>'+
+                        '</select>'+
+                        '<button class="btn lm-sm-btn" style="color:var(--green,#4ade80)" onclick="window._lmPapPerfRefresh()">Refresh</button>'+
+                      '</div>'+
+                      /* Status / sample quality message */
+                      '<div id="lmPapPerfStatus" style="font-size:9px;color:var(--text-3);margin-bottom:5px">Click Refresh to load performance analytics</div>'+
+                      /* Summary cards */
+                      '<div id="lmPapPerfCards" style="display:none;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:6px">'+
+                        '<div class="lm-pp-card"><div class="lm-pp-cl">Net PnL</div><div id="lmPapPerfNetPnl" class="lm-pp-cv">—</div></div>'+
+                        '<div class="lm-pp-card"><div class="lm-pp-cl">Win Rate</div><div id="lmPapPerfWinRate" class="lm-pp-cv">—</div></div>'+
+                        '<div class="lm-pp-card"><div class="lm-pp-cl">Profit Factor</div><div id="lmPapPerfPF" class="lm-pp-cv">—</div></div>'+
+                        '<div class="lm-pp-card"><div class="lm-pp-cl">Expectancy</div><div id="lmPapPerfExp" class="lm-pp-cv">—</div></div>'+
+                        '<div class="lm-pp-card"><div class="lm-pp-cl">Avg Win</div><div id="lmPapPerfAvgWin" class="lm-pp-cv">—</div></div>'+
+                        '<div class="lm-pp-card"><div class="lm-pp-cl">Avg Loss</div><div id="lmPapPerfAvgLoss" class="lm-pp-cv">—</div></div>'+
+                        '<div class="lm-pp-card"><div class="lm-pp-cl">Max Drawdown</div><div id="lmPapPerfDD" class="lm-pp-cv">—</div></div>'+
+                        '<div class="lm-pp-card"><div class="lm-pp-cl">Trades</div><div id="lmPapPerfCount" class="lm-pp-cv">—</div></div>'+
+                      '</div>'+
+                      /* Trend + streaks row */
+                      '<div id="lmPapPerfMeta" style="display:none;font-size:9px;color:var(--text-3);margin-bottom:5px;line-height:1.6">'+
+                        '<span id="lmPapPerfTrend"></span>'+
+                        '<span style="margin-left:8px" id="lmPapPerfStreaks"></span>'+
+                        '<span style="margin-left:8px" id="lmPapPerfWLB"></span>'+
+                      '</div>'+
+                      /* Account context */
+                      '<div id="lmPapPerfAcct" style="display:none;font-size:9px;color:var(--text-3);margin-bottom:5px;line-height:1.6">'+
+                        'Equity: <span id="lmPapPerfEquity">—</span> &nbsp;|&nbsp; Realized: <span id="lmPapPerfRealized">—</span> &nbsp;|&nbsp; Unrealized: <span id="lmPapPerfUnrealized">—</span>'+
+                      '</div>'+
+                      /* Warnings */
+                      '<div id="lmPapPerfWarnings" style="display:none;font-size:9px;padding:4px 6px;background:rgba(250,204,21,.06);border:1px solid rgba(250,204,21,.2);border-radius:3px;color:var(--yellow,#facc15);margin-bottom:4px;line-height:1.5"></div>'+
+                      /* Equity curve canvas */
+                      '<div id="lmPapPerfChartWrap" style="display:none;margin-bottom:6px">'+
+                        '<div style="font-size:9px;font-weight:600;color:var(--text-2);margin-bottom:3px">Equity Curve</div>'+
+                        '<canvas id="lmPapPerfChart" style="width:100%;height:80px;display:block;border-radius:3px;background:var(--bg-3,#1e293b)"></canvas>'+
+                      '</div>'+
+                      /* Breakdowns */
+                      '<div id="lmPapPerfBreakdowns" style="display:none">'+
+                        '<div style="font-size:9px;font-weight:600;color:var(--text-2);margin-bottom:3px">Breakdowns</div>'+
+                        '<table style="width:100%;border-collapse:collapse;font-size:9px;margin-bottom:4px">'+
+                          '<thead><tr>'+
+                            '<th style="text-align:left;padding:2px 3px;color:var(--text-3)">Symbol</th>'+
+                            '<th style="text-align:right;padding:2px 3px;color:var(--text-3)">Trades</th>'+
+                            '<th style="text-align:right;padding:2px 3px;color:var(--text-3)">Win%</th>'+
+                            '<th style="text-align:right;padding:2px 3px;color:var(--text-3)">Net PnL</th>'+
+                          '</tr></thead>'+
+                          '<tbody id="lmPapPerfSymTbody"></tbody>'+
+                        '</table>'+
+                        '<table style="width:100%;border-collapse:collapse;font-size:9px;margin-bottom:4px">'+
+                          '<thead><tr>'+
+                            '<th style="text-align:left;padding:2px 3px;color:var(--text-3)">Exit Reason</th>'+
+                            '<th style="text-align:right;padding:2px 3px;color:var(--text-3)">Count</th>'+
+                            '<th style="text-align:right;padding:2px 3px;color:var(--text-3)">Net PnL</th>'+
+                          '</tr></thead>'+
+                          '<tbody id="lmPapPerfExitTbody"></tbody>'+
+                        '</table>'+
+                      '</div>'+
+                      /* Recent trades */
+                      '<div id="lmPapPerfRecent" style="display:none">'+
+                        '<div style="font-size:9px;font-weight:600;color:var(--text-2);margin-bottom:3px">Recent Closed Trades</div>'+
+                        '<table style="width:100%;border-collapse:collapse;font-size:9px">'+
+                          '<thead><tr>'+
+                            '<th style="text-align:left;padding:2px 3px;color:var(--text-3)">Symbol</th>'+
+                            '<th style="text-align:left;padding:2px 3px;color:var(--text-3)">Side</th>'+
+                            '<th style="text-align:right;padding:2px 3px;color:var(--text-3)">PnL</th>'+
+                            '<th style="text-align:left;padding:2px 3px;color:var(--text-3)">Exit</th>'+
+                          '</tr></thead>'+
+                          '<tbody id="lmPapPerfRecentTbody"></tbody>'+
+                        '</table>'+
+                      '</div>'+
+                      '<div style="font-size:8px;color:var(--text-4,#475569);margin-top:5px">Analytics only. No orders. No execution. Read-only.</div>'+
+                    '</div>'+
+
                   '</div>'+ /* end lmTermGrpBody-paper */
                 '</div>'+ /* end GROUP 1 */
 
@@ -9319,6 +9411,218 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       warnEl.style.display='';
       warnEl.innerHTML='<strong>Warnings:</strong><br>'+warns.map(function(w){return '• '+esc(w);}).join('<br>');
     } else if(warnEl){ warnEl.style.display='none'; }
+  };
+
+  /* ── Phase 11.14: Paper Performance Dashboard ─────────────────────────── */
+
+  window._lmPapPerfRefresh=function(){
+    var itemId=window._lmCurrentItemId;
+    if(!itemId){
+      var statusEl=document.getElementById('lmPapPerfStatus');
+      if(statusEl) statusEl.textContent='No item selected';
+      return;
+    }
+    var period=(document.getElementById('lmPapPerfPeriod')||{}).value||'30d';
+    var side=(document.getElementById('lmPapPerfSide')||{}).value||'';
+    var url='/api/live-monitor/items/'+itemId+'/paper-performance?period='+encodeURIComponent(period);
+    if(side) url+='&side='+encodeURIComponent(side);
+    var statusEl=document.getElementById('lmPapPerfStatus');
+    if(statusEl) statusEl.textContent='Loading…';
+    fetch(url,{credentials:'same-origin'})
+      .then(function(r){return r.json();})
+      .then(function(d){ window._lmPapPerfApply(d); })
+      .catch(function(e){
+        if(statusEl) statusEl.textContent='Error: '+String(e).slice(0,80);
+      });
+  };
+
+  window._lmPapPerfApply=function(d){
+    var statusEl=document.getElementById('lmPapPerfStatus');
+    if(!d||!d.ok){
+      if(statusEl) statusEl.textContent='No data: '+(d&&d.error?esc(d.error):'unknown');
+      return;
+    }
+    var summary=d.summary||{};
+    var sample=d.sample||{};
+    if(!summary.trade_count){
+      if(statusEl) statusEl.textContent='No closed paper trades in this period.';
+      ['lmPapPerfCards','lmPapPerfMeta','lmPapPerfAcct','lmPapPerfWarnings',
+       'lmPapPerfChartWrap','lmPapPerfBreakdowns','lmPapPerfRecent'].forEach(function(id){
+        var el=document.getElementById(id);
+        if(el) el.style.display='none';
+      });
+      return;
+    }
+    if(statusEl) statusEl.textContent='';
+    window._lmPapPerfRenderSummary(summary, d.drawdown||{}, d.streaks||{}, sample, d.comparison||{});
+    window._lmPapPerfRenderBreakdowns(d.breakdowns||{});
+    window._lmPapPerfRenderRecentTrades(d.recent_trades||[]);
+    /* Account context */
+    var acct=d.account||{};
+    var acctEl=document.getElementById('lmPapPerfAcct');
+    if(acctEl&&(acct.equity!=null||acct.realized_pnl!=null)){
+      document.getElementById('lmPapPerfEquity').textContent=acct.equity!=null?'$'+acct.equity:'—';
+      document.getElementById('lmPapPerfRealized').textContent=acct.realized_pnl!=null?'$'+acct.realized_pnl:'—';
+      document.getElementById('lmPapPerfUnrealized').textContent=acct.unrealized_pnl!=null?'$'+acct.unrealized_pnl:'—';
+      acctEl.style.display='';
+    }
+    /* Equity curve */
+    var curve=d.equity_curve||[];
+    var chartWrap=document.getElementById('lmPapPerfChartWrap');
+    if(chartWrap){
+      if(curve.length>=2){
+        chartWrap.style.display='';
+        window._lmPapPerfDrawCurve(curve);
+      } else {
+        chartWrap.style.display='none';
+      }
+    }
+  };
+
+  window._lmPapPerfRenderSummary=function(summary, drawdown, streaks, sample, comparison){
+    function fmt(v){ return v!=null?String(v):'—'; }
+    function fmtPct(v){ return v!=null?String(v)+'%':'—'; }
+    function colorPnl(v,el){
+      if(!el||v==null) return;
+      var n=parseFloat(v);
+      el.style.color=n>0?'var(--green,#4ade80)':n<0?'var(--red-2,#f87171)':'var(--text-1)';
+    }
+    var cardsEl=document.getElementById('lmPapPerfCards');
+    if(cardsEl) cardsEl.style.display='grid';
+
+    var netEl=document.getElementById('lmPapPerfNetPnl');
+    if(netEl){ netEl.textContent='$'+fmt(summary.net_realized_pnl); colorPnl(summary.net_realized_pnl,netEl); }
+    var wrEl=document.getElementById('lmPapPerfWinRate');
+    if(wrEl) wrEl.textContent=fmtPct(summary.win_rate_pct);
+    var pfEl=document.getElementById('lmPapPerfPF');
+    if(pfEl) pfEl.textContent=summary.profit_factor!=null?fmt(summary.profit_factor):(summary.profit_factor_reason?'—*':'—');
+    var expEl=document.getElementById('lmPapPerfExp');
+    if(expEl){ expEl.textContent='$'+fmt(summary.expectancy_amount); colorPnl(summary.expectancy_amount,expEl); }
+    var awEl=document.getElementById('lmPapPerfAvgWin');
+    if(awEl) awEl.textContent='$'+fmt(summary.avg_win);
+    var alEl=document.getElementById('lmPapPerfAvgLoss');
+    if(alEl) alEl.textContent='$'+fmt(summary.avg_loss);
+    var ddEl=document.getElementById('lmPapPerfDD');
+    if(ddEl) ddEl.textContent=drawdown.max_drawdown_amount!=null?'$'+drawdown.max_drawdown_amount:'—';
+    var ctEl=document.getElementById('lmPapPerfCount');
+    if(ctEl) ctEl.textContent=fmt(summary.trade_count);
+
+    /* Trend + streaks */
+    var metaEl=document.getElementById('lmPapPerfMeta');
+    if(metaEl) metaEl.style.display='';
+    var trendEl=document.getElementById('lmPapPerfTrend');
+    if(trendEl&&comparison.trend){
+      var tc={'improving':'▲ Improving','deteriorating':'▼ Deteriorating','mixed':'↕ Mixed','insufficient_data':'— Trend unknown'};
+      var tcol={'improving':'var(--green,#4ade80)','deteriorating':'var(--red-2,#f87171)','mixed':'var(--yellow,#facc15)'};
+      trendEl.textContent='Trend: '+(tc[comparison.trend]||comparison.trend);
+      trendEl.style.color=tcol[comparison.trend]||'var(--text-3)';
+    }
+    var streakEl=document.getElementById('lmPapPerfStreaks');
+    if(streakEl){
+      var parts=[];
+      if(streaks.current_win_streak>0)  parts.push('W'+streaks.current_win_streak+' streak');
+      if(streaks.current_loss_streak>0) parts.push('L'+streaks.current_loss_streak+' streak');
+      if(streaks.max_win_streak)        parts.push('Best W: '+streaks.max_win_streak);
+      if(streaks.max_loss_streak)       parts.push('Worst L: '+streaks.max_loss_streak);
+      streakEl.textContent=parts.join(' · ');
+    }
+    var wlbEl=document.getElementById('lmPapPerfWLB');
+    if(wlbEl){
+      var w=summary.win_count||0, l=summary.loss_count||0, b=summary.be_count||0;
+      wlbEl.textContent='W'+w+' / L'+l+(b?' / BE'+b:'');
+    }
+    /* Sample quality warning */
+    var warns=(sample.warnings||[]);
+    var warnEl=document.getElementById('lmPapPerfWarnings');
+    if(warnEl){
+      if(warns.length){
+        warnEl.style.display='';
+        warnEl.innerHTML='<strong>Sample:</strong> '+warns.map(function(w){return esc(w);}).join(' · ');
+      } else {
+        warnEl.style.display='none';
+      }
+    }
+  };
+
+  window._lmPapPerfDrawCurve=function(points){
+    var canvas=document.getElementById('lmPapPerfChart');
+    if(!canvas||!canvas.getContext) return;
+    var W=canvas.offsetWidth||200, H=80;
+    canvas.width=W; canvas.height=H;
+    var ctx=canvas.getContext('2d');
+    ctx.clearRect(0,0,W,H);
+    var vals=points.map(function(p){ return parseFloat(p.cumulative_pnl)||0; });
+    var minV=Math.min.apply(null,vals), maxV=Math.max.apply(null,vals);
+    var range=maxV-minV||1;
+    var pad=6;
+    function xOf(i){ return pad+(W-2*pad)*(i/(vals.length-1)); }
+    function yOf(v){ return H-pad-(H-2*pad)*((v-minV)/range); }
+    /* Zero line */
+    var y0=yOf(0);
+    ctx.strokeStyle='rgba(255,255,255,0.08)';
+    ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(pad,y0); ctx.lineTo(W-pad,y0); ctx.stroke();
+    /* Curve */
+    ctx.lineWidth=1.5;
+    ctx.beginPath();
+    vals.forEach(function(v,i){
+      if(i===0) ctx.moveTo(xOf(i),yOf(v));
+      else      ctx.lineTo(xOf(i),yOf(v));
+    });
+    var endPnl=vals[vals.length-1]||0;
+    ctx.strokeStyle=endPnl>=0?'#4ade80':'#f87171';
+    ctx.stroke();
+  };
+
+  window._lmPapPerfRenderBreakdowns=function(breakdowns){
+    var symTbody=document.getElementById('lmPapPerfSymTbody');
+    var exitTbody=document.getElementById('lmPapPerfExitTbody');
+    var bkEl=document.getElementById('lmPapPerfBreakdowns');
+    var syms=breakdowns.symbols||[];
+    var exits=breakdowns.outcome_reasons||[];
+    if(!syms.length&&!exits.length){ if(bkEl) bkEl.style.display='none'; return; }
+    if(bkEl) bkEl.style.display='';
+    if(symTbody&&syms.length){
+      symTbody.innerHTML=syms.slice(0,10).map(function(s){
+        var pnl=parseFloat(s.net_pnl)||0;
+        var col=pnl>0?'var(--green,#4ade80)':pnl<0?'var(--red-2,#f87171)':'var(--text-1)';
+        var wr=s.win_rate_pct!=null?s.win_rate_pct+'%':'—';
+        return '<tr>'+
+          '<td style="padding:1px 3px">'+esc(s.symbol||'?')+'</td>'+
+          '<td style="padding:1px 3px;text-align:right">'+esc(String(s.trade_count||0))+'</td>'+
+          '<td style="padding:1px 3px;text-align:right">'+esc(wr)+'</td>'+
+          '<td style="padding:1px 3px;text-align:right;color:'+col+'">$'+esc(String(s.net_pnl||'0'))+'</td>'+
+          '</tr>';
+      }).join('');
+    }
+    if(exitTbody&&exits.length){
+      exitTbody.innerHTML=exits.slice(0,8).map(function(e){
+        var pnl=parseFloat(e.net_pnl)||0;
+        var col=pnl>0?'var(--green,#4ade80)':pnl<0?'var(--red-2,#f87171)':'var(--text-1)';
+        return '<tr>'+
+          '<td style="padding:1px 3px">'+esc(e.reason||'unknown')+'</td>'+
+          '<td style="padding:1px 3px;text-align:right">'+esc(String(e.trade_count||0))+'</td>'+
+          '<td style="padding:1px 3px;text-align:right;color:'+col+'">$'+esc(String(e.net_pnl||'0'))+'</td>'+
+          '</tr>';
+      }).join('');
+    }
+  };
+
+  window._lmPapPerfRenderRecentTrades=function(trades){
+    var tbody=document.getElementById('lmPapPerfRecentTbody');
+    var recEl=document.getElementById('lmPapPerfRecent');
+    if(!tbody||!trades.length){ if(recEl) recEl.style.display='none'; return; }
+    if(recEl) recEl.style.display='';
+    tbody.innerHTML=trades.slice(0,20).map(function(t){
+      var pnl=parseFloat(t.realized_pnl)||0;
+      var col=pnl>0?'var(--green,#4ade80)':pnl<0?'var(--red-2,#f87171)':'var(--text-1)';
+      return '<tr>'+
+        '<td style="padding:1px 3px">'+esc(t.symbol||'?')+'</td>'+
+        '<td style="padding:1px 3px">'+esc(t.side||'?')+'</td>'+
+        '<td style="padding:1px 3px;text-align:right;color:'+col+'">$'+esc(String(t.realized_pnl||'0'))+'</td>'+
+        '<td style="padding:1px 3px;color:var(--text-3)">'+esc(t.exit_reason||'—')+'</td>'+
+        '</tr>';
+    }).join('');
   };
 
   function _lmMtfMatrix(item){

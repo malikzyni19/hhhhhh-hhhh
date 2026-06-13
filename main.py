@@ -20292,6 +20292,9 @@ def _lm_build_trade_proposal_context(row, snapshot=None) -> dict:
         "paper_risk_guard_summary": (lambda: _lm_paper_risk_guard_summary_for_ai(
             getattr(row, "user_id", None), getattr(row, "id", None)
         ))(),
+        "paper_performance_summary": (lambda: _lm_paper_performance_summary_for_ai(
+            getattr(row, "user_id", None), getattr(row, "id", None)
+        ))(),
     }
 
 
@@ -21080,6 +21083,46 @@ def _lm_paper_risk_guard_summary_for_ai(user_id, item_id) -> dict:
         return {"ok": False, "error": str(_epag)[:120]}
 
 
+def _lm_paper_performance_summary_for_ai(user_id, item_id=None) -> dict:
+    """Return compact paper performance summary for AI context builders.
+
+    Phase 11.14. Read-only. No execution. No orders. No state mutation.
+    """
+    if not user_id:
+        return {"ok": False, "error": "missing_user_id", "read_only": True}
+    try:
+        state = _lm_get_paper_performance_state(user_id, period="30d", item_id=item_id)
+        if not state.get("ok"):
+            return {"ok": False, "error": state.get("error", "performance_error"), "read_only": True}
+        summary = state.get("summary") or {}
+        sample  = state.get("sample")  or {}
+        streaks = state.get("streaks") or {}
+        comp    = state.get("comparison") or {}
+        warns   = sample.get("warnings", [])
+        return {
+            "ok":                      True,
+            "period":                  state.get("filters", {}).get("period", "30d"),
+            "sample_size":             summary.get("trade_count", 0),
+            "sample_quality":          sample.get("sample_quality", "insufficient"),
+            "win_rate_pct":            summary.get("win_rate_pct"),
+            "net_realized_pnl":        summary.get("net_realized_pnl"),
+            "profit_factor":           summary.get("profit_factor"),
+            "expectancy_amount":       summary.get("expectancy_amount"),
+            "max_drawdown_amount":     (state.get("drawdown") or {}).get("max_drawdown_amount"),
+            "current_win_streak":      streaks.get("current_win_streak", 0),
+            "current_loss_streak":     streaks.get("current_loss_streak", 0),
+            "recent_trend":            comp.get("trend", "insufficient_data"),
+            "warning_count":           len(warns),
+            "read_only":               True,
+            "can_auto_submit":         False,
+            "auto_execution_allowed":  False,
+            "ai_can_execute":          False,
+            "source":                  "paper_performance",
+        }
+    except Exception as _epp:
+        return {"ok": False, "error": str(_epp)[:120], "read_only": True}
+
+
 def _lm_build_ai_context(item) -> dict:
     """Build a compact, JSON-safe context dict from a LiveMonitorItem for the AI agent."""
     snap = _json_loads_safe(getattr(item, "snapshot_json", None), {})
@@ -21449,6 +21492,9 @@ def _lm_build_ai_context(item) -> dict:
             getattr(item, "user_id", None), getattr(item, "id", None)
         ))(),
         "paper_risk_guard_summary": (lambda: _lm_paper_risk_guard_summary_for_ai(
+            getattr(item, "user_id", None), getattr(item, "id", None)
+        ))(),
+        "paper_performance_summary": (lambda: _lm_paper_performance_summary_for_ai(
             getattr(item, "user_id", None), getattr(item, "id", None)
         ))(),
     }
@@ -24664,6 +24710,12 @@ from live_monitor import (
     _lm_get_paper_risk_guard_state,
     _lm_validate_paper_order_against_risk_guard,
     _lm_record_paper_risk_guard_event,
+    # Phase 11.14: Paper Performance Dashboard
+    _lm_normalize_performance_period,
+    _lm_build_paper_performance_filters,
+    _lm_query_closed_paper_trades,
+    _lm_get_paper_performance_state,
+    _lm_build_paper_performance_summary,
 )
 
 # ── Phase 10.9I: Auto-refresh scheduler ─────────────────────────────────────
@@ -29322,6 +29374,36 @@ def api_lm_paper_risk_guard_settings_update(item_id):
             "field_errors": _field_errors,
         }), 422
     result = _lm_update_paper_risk_guard_settings(uid, body)
+    code   = 200 if result.get("ok") else 400
+    return jsonify(result), code
+
+
+@app.route("/api/live-monitor/paper-performance", methods=["GET"])
+@login_required
+def api_lm_paper_performance():
+    """GET: Return paper performance dashboard analytics for the current user. Read-only."""
+    uid    = current_user.id
+    period = (request.args.get("period") or "30d").strip()
+    symbol = (request.args.get("symbol") or "").strip() or None
+    side   = (request.args.get("side")   or "").strip() or None
+    result = _lm_get_paper_performance_state(uid, period=period, symbol=symbol, side=side)
+    code   = 200 if result.get("ok") else 400
+    return jsonify(result), code
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/paper-performance", methods=["GET"])
+@login_required
+def api_lm_item_paper_performance(item_id):
+    """GET: Return paper performance dashboard analytics scoped to one item. Read-only."""
+    uid  = current_user.id
+    from models import LiveMonitorItem as _LMI1114p
+    item = _LMI1114p.query.filter_by(id=item_id, user_id=uid).first()
+    if item is None:
+        return jsonify({"ok": False, "error": "item_not_found"}), 404
+    period = (request.args.get("period") or "30d").strip()
+    symbol = (request.args.get("symbol") or getattr(item, "symbol", None) or "").strip() or None
+    side   = (request.args.get("side")   or "").strip() or None
+    result = _lm_get_paper_performance_state(uid, period=period, symbol=symbol, side=side, item_id=item_id)
     code   = 200 if result.get("ok") else 400
     return jsonify(result), code
 
