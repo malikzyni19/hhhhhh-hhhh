@@ -12209,6 +12209,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
               '<button class="bt-export-btn-sm" id="btExpJsonBtn">&#x25BE; JSON</button>'+
               '<button class="bt-export-btn-sm" id="btExpCsvBtn">&#x25BE; CSV</button>'+
               '<button class="bt-export-btn-sm ai" id="btExpAiBtn">&#x25BE; AI Dataset</button>'+
+              '<button class="bt-export-btn-sm" id="btExpTvObPctBtn" style="background:rgba(251,191,36,.12);color:#fbbf24;border-color:rgba(251,191,36,.3)">&#x25BE; TV OB% Analysis</button>'+
             '</div>'+
           '</div>'+
         '</div>'+
@@ -12317,6 +12318,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var eJ=document.getElementById("btExpJsonBtn"); if(eJ) eJ.addEventListener("click",_btExportJson);
     var eC=document.getElementById("btExpCsvBtn");  if(eC) eC.addEventListener("click",_btExportCsv);
     var eA=document.getElementById("btExpAiBtn");   if(eA) eA.addEventListener("click",_btExportAiDataset);
+    var eT=document.getElementById("btExpTvObPctBtn"); if(eT) eT.addEventListener("click",_btExportTvObPctAnalysis);
 
     if(_btState.data) _btApplyData(_btState.data);
   }
@@ -12726,7 +12728,9 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       "touch_status","later_mitigated","outcome","entry_price","stop_boundary","max_r_reached",
       "max_adverse_r","hit_1r","hit_2r","hit_3r","candles_to_1r","candles_to_2r","candles_to_3r",
       "stop_close_price","stop_loss_r","stop_loss_abs","stop_loss_pct",
-      "outcome_1r","realized_1r","outcome_2r","realized_2r","outcome_3r","realized_3r"];
+      "outcome_1r","realized_1r","outcome_2r","realized_2r","outcome_3r","realized_3r",
+      "tv_ob_pct_at_formation","tv_ob_pct_formation_bucket","tv_ob_pct_formation_in_pool",
+      "tv_ob_pct_before_touch","tv_ob_pct_before_touch_bucket"];
     var rows=[cols.join(",")];
     events.forEach(function(ev){
       var sim=ev.simulation||{}, hr=sim.hit_rr||{}, rz=sim.realized_by_rr||{};
@@ -12748,7 +12752,12 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         cv(sim.stop_loss_pct!=null?sim.stop_loss_pct:""),
         cv(rzv("1","outcome")),cv(rzv("1","realized_r")),
         cv(rzv("2","outcome")),cv(rzv("2","realized_r")),
-        cv(rzv("3","outcome")),cv(rzv("3","realized_r"))
+        cv(rzv("3","outcome")),cv(rzv("3","realized_r")),
+        cv(ev.tv_ob_pct_at_formation!=null?ev.tv_ob_pct_at_formation:""),
+        cv(ev.tv_ob_pct_formation_bucket||""),
+        cv(ev.tv_ob_pct_formation_in_pool?1:0),
+        cv(ev.tv_ob_pct_before_touch!=null?ev.tv_ob_pct_before_touch:""),
+        cv(ev.tv_ob_pct_before_touch_bucket||"")
       ].join(","));
     });
     _btDownloadBlob("zyni_bt_"+(p.symbol||"export")+"_"+Date.now()+".csv",rows.join("\r\n"),"text/csv");
@@ -12804,15 +12813,55 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     _btDownloadBlob("zyni_bt_ai_"+(p.symbol||"export")+"_"+Date.now()+".json",JSON.stringify(records,null,2),"application/json");
   }
 
+  function _btExportTvObPctAnalysis(){
+    if(!_btState.data) return;
+    var d=_btState.data, p=d.params||{};
+    var os=d.outcome_summary||{};
+    var ana=os.tv_ob_pct_analysis||null;
+    var par=os.tv_ob_pct_parity||null;
+    var f=_btState.filters, active=f&&_btFiltersActive(f);
+    var events=active?_btGetFilteredEvents(d.events||[],f):d.events||[];
+    // Per-event TV OB% records
+    var evRecs=events.map(function(ev){
+      return {
+        ob_id:ev.ob_id,type:ev.type,
+        formation_time:ev.formation_time,
+        zone_high:ev.zone_high,zone_low:ev.zone_low,
+        touch_status:ev.touch_status,
+        tv_ob_pct_at_formation:ev.tv_ob_pct_at_formation!=null?ev.tv_ob_pct_at_formation:null,
+        tv_ob_pct_formation_bucket:ev.tv_ob_pct_formation_bucket||null,
+        tv_ob_pct_formation_in_pool:ev.tv_ob_pct_formation_in_pool||false,
+        tv_ob_pct_formation_status:ev.tv_ob_pct_formation_status||null,
+        tv_ob_pct_formation_pool_size:ev.tv_ob_pct_formation_pool_size!=null?ev.tv_ob_pct_formation_pool_size:null,
+        tv_ob_pct_formation_ob_vol:ev.tv_ob_pct_formation_ob_vol!=null?ev.tv_ob_pct_formation_ob_vol:null,
+        tv_ob_pct_formation_pool_vol:ev.tv_ob_pct_formation_pool_vol!=null?ev.tv_ob_pct_formation_pool_vol:null,
+        tv_ob_pct_before_touch:ev.tv_ob_pct_before_touch!=null?ev.tv_ob_pct_before_touch:null,
+        tv_ob_pct_before_touch_bucket:ev.tv_ob_pct_before_touch_bucket||null,
+        tv_ob_pct_before_touch_in_pool:ev.tv_ob_pct_before_touch_in_pool||false,
+        tv_ob_pct_before_touch_status:ev.tv_ob_pct_before_touch_status||null,
+        outcome:(ev.simulation||{}).first_outcome||null,
+        max_r_reached:(ev.simulation||{}).max_r_reached!=null?(ev.simulation||{}).max_r_reached:null
+      };
+    });
+    var out={
+      metadata:{symbol:p.symbol,timeframe:p.timeframe,candle_count:p.candle_count,
+        exported_at:new Date().toISOString(),filters:f||null,filtered:active},
+      tv_ob_pct_analysis:ana,
+      tv_ob_pct_parity:par,
+      events:evRecs
+    };
+    _btDownloadBlob("zyni_bt_tv_ob_pct_"+(p.symbol||"export")+"_"+Date.now()+".json",JSON.stringify(out,null,2),"application/json");
+  }
+
   /* ── Filter helpers ──────────────────────────────────────────────────────── */
   function _btDefaultFilters(){
-    return {direction:"all",outcome:"all",rrHit:"any",mitigation:"all",touch:"all",maxR:"all",search:""};
+    return {direction:"all",outcome:"all",rrHit:"any",mitigation:"all",touch:"all",maxR:"all",tvObPct:"any",search:""};
   }
 
   function _btFiltersActive(f){
     if(!f) return false;
     return f.direction!=="all"||f.outcome!=="all"||f.rrHit!=="any"||f.mitigation!=="all"||
-           f.touch!=="all"||f.maxR!=="all"||(f.search||"").trim()!=="";
+           f.touch!=="all"||f.maxR!=="all"||f.tvObPct!=="any"||(f.search||"").trim()!=="";
   }
 
   function _btFilterCount(f){
@@ -12820,6 +12869,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var n=0;
     if(f.direction!=="all") n++; if(f.outcome!=="all") n++; if(f.rrHit!=="any") n++;
     if(f.mitigation!=="all") n++; if(f.touch!=="all") n++; if(f.maxR!=="all") n++;
+    if(f.tvObPct!=="any") n++;
     if((f.search||"").trim()) n++;
     return n;
   }
@@ -12850,6 +12900,10 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       if(f.maxR==="1-2"&&(mr<1||mr>=2)) return false;
       if(f.maxR==="2-3"&&(mr<2||mr>=3)) return false;
       if(f.maxR==="3+"&&mr<3) return false;
+      if(f.tvObPct&&f.tvObPct!=="any"){
+        var bkt=ev.tv_ob_pct_formation_bucket||"no_data";
+        if(bkt!==f.tvObPct) return false;
+      }
       if(q){
         var s=((ev.symbol||"")+" "+(ev.type||"")+" "+(sim.first_outcome||"")+" "+_btFmtTime(ev.formation_time)).toLowerCase();
         if(s.indexOf(q)<0) return false;
@@ -12972,6 +13026,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       sel("btFTch",f.touch,[["all","All"],["touched","Touched"],["untouched","Untouched"]])+
       '<span class="bt-filter-label" style="margin-left:3px">Max R</span>'+
       sel("btFMaxR",f.maxR,[["all","All"],["0-1","0–1R"],["1-2","1–2R"],["2-3","2–3R"],["3+","3R+"]])+
+      '<span class="bt-filter-label" style="margin-left:3px">TV OB%</span>'+
+      sel("btFTvObPct",f.tvObPct||"any",[["any","Any"],["0–19%","0–19%"],["20–39%","20–39%"],["40–59%","40–59%"],["60–79%","60–79%"],["80–100%","80–100%"],["no_data","No Data"]])+
       '<div class="bt-filter-sep"></div>'+
       '<input class="bt-filter-inp" id="btFSearch" placeholder="Search…" value="'+((f.search||"").replace(/"/g,"&quot;"))+'" />'+
       '<span class="bt-filter-count" id="btFCount" style="display:none"></span>'+
@@ -12989,7 +13045,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   }
 
   function _btBindFilterBarEvents(){
-    var map={btFDir:"direction",btFOut:"outcome",btFRr:"rrHit",btFMit:"mitigation",btFTch:"touch",btFMaxR:"maxR"};
+    var map={btFDir:"direction",btFOut:"outcome",btFRr:"rrHit",btFMit:"mitigation",btFTch:"touch",btFMaxR:"maxR",btFTvObPct:"tvObPct"};
     Object.keys(map).forEach(function(id){
       var el=document.getElementById(id); if(!el) return;
       el.addEventListener("change",function(){
@@ -13007,7 +13063,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var ri=document.getElementById("btFReset");
     if(ri) ri.addEventListener("click",function(){
       _btState.filters=_btDefaultFilters();
-      var defs={btFDir:"all",btFOut:"all",btFRr:"any",btFMit:"all",btFTch:"all",btFMaxR:"all"};
+      var defs={btFDir:"all",btFOut:"all",btFRr:"any",btFMit:"all",btFTch:"all",btFMaxR:"all",btFTvObPct:"any"};
       Object.keys(defs).forEach(function(id){var e=document.getElementById(id);if(e) e.value=defs[id];});
       var sch=document.getElementById("btFSearch"); if(sch) sch.value="";
       _btRepaintFromFilters();
@@ -13228,7 +13284,74 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   function _btRenderAnalyticsPage(data){
     var el=document.getElementById("btAnalyticsContent"); if(!el) return;
     var os=data.outcome_summary||{}, bull=os.bullish||{}, bear=os.bearish||{};
+    var tvAna=(os.tv_ob_pct_analysis||{}), tvF=(tvAna.at_formation||{}), tvT=(tvAna.before_touch||{});
+    var tvPar=os.tv_ob_pct_parity||{};
+    var bktLabels=["0–19%","20–39%","40–59%","60–79%","80–100%","no_data"];
     function pct(n,d){ return d&&d>0?((n||0)/d*100).toFixed(1)+"%":"—"; }
+
+    function _tvBktRows(bkts){
+      if(!bkts) return '';
+      var h='';
+      bktLabels.forEach(function(lbl){
+        var b=bkts[lbl]||{};
+        var n=b.count||0;
+        var tp=b.tp||0, sl=b.sl||0;
+        var tpr=b.tp_rate_pct!=null?b.tp_rate_pct.toFixed(1)+"%":"—";
+        var amr=b.avg_max_r!=null?b.avg_max_r.toFixed(3)+"R":"—";
+        h+='<tr>'+
+          '<td style="padding:5px 10px 5px 0;color:#c5d0de;font-family:var(--mono);font-size:11px">'+lbl+'</td>'+
+          '<td style="padding:5px 6px;text-align:right;color:#8a9bb3;font-family:var(--mono);font-size:11px">'+n+'</td>'+
+          '<td style="padding:5px 6px;text-align:right;color:var(--green-2);font-family:var(--mono);font-size:11px">'+tp+'</td>'+
+          '<td style="padding:5px 6px;text-align:right;color:var(--red-2);font-family:var(--mono);font-size:11px">'+sl+'</td>'+
+          '<td style="padding:5px 6px;text-align:right;color:var(--accent);font-family:var(--mono);font-size:11px">'+tpr+'</td>'+
+          '<td style="padding:5px 6px;text-align:right;color:#fbbf24;font-family:var(--mono);font-size:11px">'+amr+'</td>'+
+        '</tr>';
+      });
+      return h;
+    }
+
+    var tvSection=
+      '<div class="bt-settings-card" style="margin-top:16px">'+
+        '<div class="bt-settings-h" style="color:#fbbf24">TV OB% Snapshot Analysis <span style="font-size:9px;opacity:.6;font-weight:400;margin-left:6px">production metric reproduced at formation &amp; pre-touch</span></div>'+
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px">'+
+          '<div>'+
+            '<div style="font-size:10px;font-weight:700;color:var(--accent);letter-spacing:.5px;text-transform:uppercase;margin-bottom:6px">At Formation</div>'+
+            '<div style="font-size:10px;color:var(--text-3);margin-bottom:6px">In Pool: '+(tvF.in_pool||0)+' / '+(tvF.total_eligible||0)+' eligible</div>'+
+            '<table style="width:100%;border-collapse:collapse">'+
+              '<thead><tr>'+
+                '<th style="text-align:left;padding:3px 10px 3px 0;color:var(--text-3);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.5px">Bucket</th>'+
+                '<th style="text-align:right;padding:3px 6px;color:var(--text-3);font-size:9px;font-weight:600;letter-spacing:.5px">N</th>'+
+                '<th style="text-align:right;padding:3px 6px;color:var(--green-2);font-size:9px;font-weight:600">TP</th>'+
+                '<th style="text-align:right;padding:3px 6px;color:var(--red-2);font-size:9px;font-weight:600">SL</th>'+
+                '<th style="text-align:right;padding:3px 6px;color:var(--accent);font-size:9px;font-weight:600">TP%</th>'+
+                '<th style="text-align:right;padding:3px 6px;color:#fbbf24;font-size:9px;font-weight:600">Avg R</th>'+
+              '</tr></thead>'+
+              '<tbody>'+_tvBktRows(tvF.buckets)+'</tbody>'+
+            '</table>'+
+          '</div>'+
+          '<div>'+
+            '<div style="font-size:10px;font-weight:700;color:var(--accent);letter-spacing:.5px;text-transform:uppercase;margin-bottom:6px">Before First Touch</div>'+
+            '<div style="font-size:10px;color:var(--text-3);margin-bottom:6px">In Pool: '+(tvT.in_pool||0)+' / '+(tvT.total_touched||0)+' touched</div>'+
+            '<table style="width:100%;border-collapse:collapse">'+
+              '<thead><tr>'+
+                '<th style="text-align:left;padding:3px 10px 3px 0;color:var(--text-3);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.5px">Bucket</th>'+
+                '<th style="text-align:right;padding:3px 6px;color:var(--text-3);font-size:9px;font-weight:600;letter-spacing:.5px">N</th>'+
+                '<th style="text-align:right;padding:3px 6px;color:var(--green-2);font-size:9px;font-weight:600">TP</th>'+
+                '<th style="text-align:right;padding:3px 6px;color:var(--red-2);font-size:9px;font-weight:600">SL</th>'+
+                '<th style="text-align:right;padding:3px 6px;color:var(--accent);font-size:9px;font-weight:600">TP%</th>'+
+                '<th style="text-align:right;padding:3px 6px;color:#fbbf24;font-size:9px;font-weight:600">Avg R</th>'+
+              '</tr></thead>'+
+              '<tbody>'+_tvBktRows(tvT.buckets)+'</tbody>'+
+            '</table>'+
+          '</div>'+
+        '</div>'+
+        '<div style="margin-top:10px;font-size:10px;color:var(--text-3)">'+
+          'Parity: checked='+( tvPar.checked||0)+' matched='+(tvPar.matched||0)+' match_rate='+(tvPar.match_rate_pct!=null?tvPar.match_rate_pct+"%":"—")+
+          ' &bull; <span style="color:#fbbf24">TV OB% filter available in filter bar above</span>'+
+        '</div>'+
+        '<div style="margin-top:8px"><canvas id="btAnTvObPct" style="max-height:160px"></canvas></div>'+
+      '</div>';
+
     el.innerHTML=
       '<div class="bt-charts-grid">'+
         '<div class="bt-chart-card"><div class="bt-chart-h">TP Rate — Bull vs Bear</div><div class="bt-chart-wrap"><canvas id="btAnC1"></canvas></div></div>'+
@@ -13241,7 +13364,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         '<div class="bt-settings-row"><span class="bt-settings-k">Loss Rate (SL First)</span><span class="bt-settings-v">'+pct(os.sl_first,os.eligible_touched)+'</span></div>'+
         '<div class="bt-settings-row"><span class="bt-settings-k">Avg Max R</span><span class="bt-settings-v">'+_btFmt(os.avg_max_r_reached,"R")+'</span></div>'+
         '<div class="bt-settings-row"><span class="bt-settings-k">Avg Max Adverse R</span><span class="bt-settings-v">'+_btFmt(os.avg_max_adverse_r,"R")+'</span></div>'+
-      '</div>';
+      '</div>'+
+      tvSection;
     setTimeout(function(){
       if(typeof Chart==="undefined") return;
       function dc(id){if(_btState.charts[id]){try{_btState.charts[id].destroy();}catch(e){}delete _btState.charts[id];}}
@@ -13258,6 +13382,26 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
           data:[bull.avg_max_r_reached||0,bear.avg_max_r_reached||0],
           backgroundColor:["rgba(34,211,238,.5)","rgba(99,102,241,.5)"],borderColor:["#22d3ee","#818cf8"],borderWidth:1,borderRadius:5}]},
         options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:Object.assign({},scl,{y:{min:0,ticks:{color:"#566377",callback:function(v){return v+"R"}},grid:{color:"rgba(27,38,54,.5)"}}})}});
+      /* TV OB% bucket TP rate chart */
+      dc("btAnTvObPct");var aTV=document.getElementById("btAnTvObPct");
+      if(aTV&&tvF.buckets){
+        var tvLabels=["0–19%","20–39%","40–59%","60–79%","80–100%"];
+        var tvTpData=tvLabels.map(function(l){var b=(tvF.buckets||{})[l]||{};return b.tp_rate_pct!=null?b.tp_rate_pct:0;});
+        var tvNData=tvLabels.map(function(l){var b=(tvF.buckets||{})[l]||{};return b.count||0;});
+        _btState.charts["btAnTvObPct"]=new Chart(aTV,{type:"bar",
+          data:{labels:tvLabels,datasets:[
+            {label:"TP Rate %",data:tvTpData,backgroundColor:"rgba(251,191,36,.5)",borderColor:"#fbbf24",borderWidth:1,borderRadius:4,yAxisID:"yL"},
+            {label:"N",data:tvNData,type:"line",borderColor:"rgba(34,211,238,.5)",backgroundColor:"transparent",pointBackgroundColor:"#22d3ee",borderWidth:1,yAxisID:"yR"}
+          ]},
+          options:{responsive:true,maintainAspectRatio:false,
+            plugins:{legend:{labels:{color:"#8a9bb3",font:{size:10},boxWidth:12}},
+              title:{display:true,text:"TV OB% Bucket — TP Rate at Formation",color:"#8a9bb3",font:{size:10}}},
+            scales:{
+              x:{ticks:{color:"#8a9bb3"},grid:{color:"rgba(27,38,54,.5)"}},
+              yL:{position:"left",min:0,max:100,ticks:{color:"#fbbf24",callback:function(v){return v+"%"}},grid:{color:"rgba(27,38,54,.3)"}},
+              yR:{position:"right",ticks:{color:"#22d3ee"},grid:{display:false}}
+            }}});
+      }
     },0);
   }
 
@@ -14175,6 +14319,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   window._btBatchExportCsv=_btBatchExportCsv;
   window._btCombinedExportJson=_btCombinedExportJson;
   window._btCombinedExportCsv=_btCombinedExportCsv;
+  window._btExportTvObPctAnalysis=_btExportTvObPctAnalysis;
 
   /* Tag body with current view so per-view CSS (Task 3) applies before
      the first switchView() call. */

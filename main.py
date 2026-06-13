@@ -34633,6 +34633,251 @@ def _bt_apply_outcomes_to_events(events: List[Dict], candles: List[Dict],
     }
 
 
+# ── Phase 12: TV OB % historical snapshots ───────────────────────────────────
+# Reproduces the production tvObVolumeSharePct metric at two snapshot points
+# for every backtest event, using the exact production helpers:
+#   detect_obs() + _tv_visible_pool() + calculate_tv_ob_volume_share()
+# No lookahead: formation snapshot uses candles[:formation_bar+1];
+#               pre-touch snapshot uses candles[:first_touch_bar].
+
+_BT_TV_OB_PCT_BUCKET_LABELS: List[str] = [
+    "0–19%", "20–39%", "40–59%", "60–79%", "80–100%", "no_data",
+]
+
+
+def _bt_tv_ob_pct_bucket(value) -> str:
+    """Map a TV OB% integer (or None) to its bucket label."""
+    if value is None:
+        return "no_data"
+    v = int(value)
+    if   v <= 19:  return "0–19%"
+    elif v <= 39:  return "20–39%"
+    elif v <= 59:  return "40–59%"
+    elif v <= 79:  return "60–79%"
+    else:          return "80–100%"
+
+
+def _bt_attach_tv_ob_pct_snapshots(
+    events:  List[Dict],
+    candles: List[Dict],
+    params:  Dict,
+) -> None:
+    """
+    Attach TV OB% snapshots at two points in time for each event.
+
+    New fields on every event:
+      tv_ob_pct_at_formation, tv_ob_pct_formation_status,
+      tv_ob_pct_formation_in_pool, tv_ob_pct_formation_pool_size,
+      tv_ob_pct_formation_ob_vol, tv_ob_pct_formation_pool_vol,
+      tv_ob_pct_formation_bucket
+
+    New fields on touched events (untouched events get null values):
+      tv_ob_pct_before_touch, tv_ob_pct_before_touch_status,
+      tv_ob_pct_before_touch_in_pool, tv_ob_pct_before_touch_pool_size,
+      tv_ob_pct_before_touch_bucket
+
+    Uses detect_obs() + _tv_visible_pool() + calculate_tv_ob_volume_share()
+    — the exact production helpers — at each snapshot bar.
+    """
+    n = len(candles)
+    if n < 1 or not events:
+        return
+
+    o_arr = [float(c.get("open",  0)) for c in candles]
+    h_arr = [float(c.get("high",  0)) for c in candles]
+    l_arr = [float(c.get("low",   0)) for c in candles]
+    c_arr = [float(c.get("close", 0)) for c in candles]
+    v_arr = [float(c.get("volume") or 0) for c in candles]
+
+    i_len    = params.get("i_len", _BT_PIVOT_LEN)
+    s_len    = params.get("s_len", _BT_PIVOT_LEN)
+    min_bars = max(i_len * 2 + 4, 20)
+
+    def _snap(event: Dict, bar_count: int) -> Dict:
+        if bar_count < min_bars:
+            return {"pct": None, "status": "too_few_candles",
+                    "in_pool": False, "pool_size": None}
+
+        obs_all, _ = detect_obs(
+            o_arr[:bar_count], h_arr[:bar_count],
+            l_arr[:bar_count], c_arr[:bar_count],
+            v_arr[:bar_count],
+            i_len, s_len, max_ob=None, ob_logic_mode="tv_parity_v3",
+        )
+
+        direction = event["type"]
+        bull_src  = [ob for ob in obs_all if ob["type"] == "bullish"]
+        bear_src  = [ob for ob in obs_all if ob["type"] == "bearish"]
+
+        bull_pool = _tv_visible_pool(bull_src)
+        bear_pool = _tv_visible_pool(bear_src)
+        calculate_tv_ob_volume_share(bull_pool, "bullish", len(bull_src))
+        calculate_tv_ob_volume_share(bear_pool, "bearish", len(bear_src))
+
+        pool   = bull_pool if direction == "bullish" else bear_pool
+        # event["source_bar"] = ext_bar = extreme bar = ob["bar"] in detect_obs
+        target = event["source_bar"]
+
+        match = next((ob for ob in pool if ob["bar"] == target), None)
+        if match is None:
+            return {
+                "pct":       None,
+                "status":    "ob_not_in_visible_pool",
+                "in_pool":   False,
+                "pool_size": len(pool),
+            }
+
+        return {
+            "pct":       match.get("tvObVolumeSharePct"),
+            "status":    match.get("tvObVolumeShareStatus", "ok"),
+            "in_pool":   True,
+            "pool_size": len(pool),
+            "ob_vol":    match.get("tvObFormationVolume"),
+            "pool_vol":  match.get("tvObVisibleTotalVolume"),
+        }
+
+    for event in events:
+        f_bar = event.get("formation_bar")
+        t_bar = event.get("first_touch_bar")
+
+        # ── Formation snapshot: candles[0..formation_bar] inclusive ───────────
+        if f_bar is not None and 0 <= f_bar < n:
+            sf = _snap(event, f_bar + 1)
+        else:
+            sf = {"pct": None, "status": "no_formation_bar",
+                  "in_pool": False, "pool_size": None}
+
+        event["tv_ob_pct_at_formation"]        = sf.get("pct")
+        event["tv_ob_pct_formation_status"]    = sf.get("status", "unknown")
+        event["tv_ob_pct_formation_in_pool"]   = sf.get("in_pool", False)
+        event["tv_ob_pct_formation_pool_size"] = sf.get("pool_size")
+        event["tv_ob_pct_formation_ob_vol"]    = sf.get("ob_vol")
+        event["tv_ob_pct_formation_pool_vol"]  = sf.get("pool_vol")
+        event["tv_ob_pct_formation_bucket"]    = _bt_tv_ob_pct_bucket(sf.get("pct"))
+
+        # ── Pre-first-touch snapshot: candles[0..first_touch_bar-1] inclusive ─
+        if t_bar is not None and t_bar > 0 and t_bar < n:
+            sp = _snap(event, t_bar)
+        elif t_bar is not None and t_bar == 0:
+            sp = {"pct": None, "status": "touch_at_bar_0",
+                  "in_pool": False, "pool_size": None}
+        else:
+            sp = {"pct": None, "status": "no_first_touch",
+                  "in_pool": False, "pool_size": None}
+
+        event["tv_ob_pct_before_touch"]           = sp.get("pct")
+        event["tv_ob_pct_before_touch_status"]    = sp.get("status", "unknown")
+        event["tv_ob_pct_before_touch_in_pool"]   = sp.get("in_pool", False)
+        event["tv_ob_pct_before_touch_pool_size"] = sp.get("pool_size")
+        event["tv_ob_pct_before_touch_bucket"]    = _bt_tv_ob_pct_bucket(sp.get("pct"))
+
+
+def _bt_run_tv_ob_pct_snapshot_parity(events: List[Dict]) -> Dict:
+    """
+    Self-consistency parity check for TV OB% snapshots.
+
+    For every event where the formation snapshot found the OB in the pool,
+    recomputes floor(ob_vol / pool_vol * 100) and compares against the stored
+    tv_ob_pct_at_formation. A 100% match rate confirms the math is correct.
+    """
+    checked    = 0
+    matched    = 0
+    mismatches: List[Dict] = []
+
+    for ev in events:
+        if not ev.get("tv_ob_pct_formation_in_pool"):
+            continue
+        ob_vol   = ev.get("tv_ob_pct_formation_ob_vol")
+        pool_vol = ev.get("tv_ob_pct_formation_pool_vol")
+        stored   = ev.get("tv_ob_pct_at_formation")
+        if ob_vol is None or pool_vol is None or pool_vol <= 0:
+            continue
+
+        checked  += 1
+        expected  = int(ob_vol / pool_vol * 100)
+
+        if stored == expected:
+            matched += 1
+        else:
+            mismatches.append({
+                "ob_id":    ev.get("ob_id"),
+                "type":     ev.get("type"),
+                "f_bar":    ev.get("formation_bar"),
+                "stored":   stored,
+                "expected": expected,
+                "ob_vol":   ob_vol,
+                "pool_vol": pool_vol,
+            })
+
+    return {
+        "enabled":        True,
+        "checked":        checked,
+        "matched":        matched,
+        "mismatched":     len(mismatches),
+        "match_rate_pct": round(matched / checked * 100, 1) if checked else None,
+        "mismatches":     mismatches[:10],
+    }
+
+
+def _bt_tv_ob_pct_analysis(events: List[Dict]) -> Dict:
+    """
+    Build TV OB% bucket analysis for the outcome_summary.
+
+    at_formation: per-bucket breakdown using tv_ob_pct_formation_bucket,
+      restricted to eligible (touched) events.
+    before_touch: same using tv_ob_pct_before_touch_bucket,
+      restricted to eligible events with a first_touch_bar.
+    """
+    eligible = [e for e in events
+                if (e.get("simulation") or {}).get("eligible")]
+    touched  = [e for e in eligible
+                if e.get("tv_ob_pct_before_touch_status") != "no_first_touch"]
+
+    def _bucket_row(evs: List[Dict]) -> Dict:
+        n   = len(evs)
+        tps = sum(1 for e in evs
+                  if (e.get("simulation") or {}).get("first_outcome") == "tp")
+        sls = sum(1 for e in evs
+                  if (e.get("simulation") or {}).get("first_outcome") == "sl")
+        rs  = [e["simulation"]["max_r_reached"]
+               for e in evs
+               if (e.get("simulation") or {}).get("max_r_reached") is not None]
+        return {
+            "count":       n,
+            "tp":          tps,
+            "sl":          sls,
+            "tp_rate_pct": round(tps / n * 100, 1) if n else None,
+            "avg_max_r":   round(sum(rs) / len(rs), 4) if rs else None,
+        }
+
+    def _build(evs: List[Dict], bkt_field: str) -> Dict:
+        groups: Dict[str, List[Dict]] = {lbl: [] for lbl in _BT_TV_OB_PCT_BUCKET_LABELS}
+        for ev in evs:
+            bkt = ev.get(bkt_field, "no_data") or "no_data"
+            if bkt not in groups:
+                bkt = "no_data"
+            groups[bkt].append(ev)
+        return {lbl: _bucket_row(groups[lbl]) for lbl in _BT_TV_OB_PCT_BUCKET_LABELS}
+
+    in_pool_f = sum(1 for e in events if e.get("tv_ob_pct_formation_in_pool"))
+    in_pool_t = sum(1 for e in events if e.get("tv_ob_pct_before_touch_in_pool"))
+
+    return {
+        "at_formation": {
+            "total_eligible": len(eligible),
+            "in_pool":        in_pool_f,
+            "not_in_pool":    len(events) - in_pool_f,
+            "buckets":        _build(eligible, "tv_ob_pct_formation_bucket"),
+        },
+        "before_touch": {
+            "total_touched": len(touched),
+            "in_pool":       in_pool_t,
+            "not_in_pool":   len(touched) - in_pool_t,
+            "buckets":       _build(touched, "tv_ob_pct_before_touch_bucket"),
+        },
+    }
+
+
 def _bt_run_ob_historical_backtest(params: dict) -> dict:
     """Shared execution core used by both the POST and GET debug routes.
 
@@ -34674,6 +34919,11 @@ def _bt_run_ob_historical_backtest(params: dict) -> dict:
 
     # ── First-touch outcome simulation ────────────────────────────────────────
     outcome_summary = _bt_apply_outcomes_to_events(all_events, candles, params)
+
+    # ── TV OB% snapshots (Phase 12) ────────────────────────────────────────────
+    _bt_attach_tv_ob_pct_snapshots(all_events, candles, params)
+    outcome_summary["tv_ob_pct_analysis"] = _bt_tv_ob_pct_analysis(all_events)
+    outcome_summary["tv_ob_pct_parity"]   = _bt_run_tv_ob_pct_snapshot_parity(all_events)
 
     # ── Optional parity validation ────────────────────────────────────────────
     parity = (
@@ -34962,6 +35212,81 @@ def api_backtest_ob_historical_debug():
                 f"{par['notes']}</p>"
             )
 
+        # ── TV OB% section ────────────────────────────────────────────────────
+        tv_pct_rows = ""
+        tv_ana = (os_.get("tv_ob_pct_analysis") or {})
+        tv_par = (os_.get("tv_ob_pct_parity")   or {})
+        tv_f   = tv_ana.get("at_formation", {})
+        tv_t   = tv_ana.get("before_touch",  {})
+        for k, val in [
+            ("── tv_ob_pct (at_formation) ──",      ""),
+            ("total_eligible",                       tv_f.get("total_eligible")),
+            ("in_pool",                              tv_f.get("in_pool")),
+            ("not_in_pool",                          tv_f.get("not_in_pool")),
+        ]:
+            tv_pct_rows += (
+                f"<tr><td style='padding:4px 12px 4px 0;color:#aaa'>{k}</td>"
+                f"<td style='padding:4px 0;color:#fff'>{_v(val)}</td></tr>"
+            )
+        for lbl in _BT_TV_OB_PCT_BUCKET_LABELS:
+            bkt = (tv_f.get("buckets") or {}).get(lbl, {})
+            tv_pct_rows += (
+                f"<tr><td style='padding:4px 12px 4px 0;color:#aaa'>  {lbl}</td>"
+                f"<td style='padding:4px 0;color:#fff'>"
+                f"n={bkt.get('count',0)} tp={bkt.get('tp',0)} sl={bkt.get('sl',0)}"
+                f" tp_rate={bkt.get('tp_rate_pct')} avg_max_r={bkt.get('avg_max_r')}"
+                f"</td></tr>"
+            )
+        for k, val in [
+            ("── tv_ob_pct (before_touch) ──",       ""),
+            ("total_touched",                         tv_t.get("total_touched")),
+            ("in_pool",                               tv_t.get("in_pool")),
+        ]:
+            tv_pct_rows += (
+                f"<tr><td style='padding:4px 12px 4px 0;color:#aaa'>{k}</td>"
+                f"<td style='padding:4px 0;color:#fff'>{_v(val)}</td></tr>"
+            )
+        for lbl in _BT_TV_OB_PCT_BUCKET_LABELS:
+            bkt = (tv_t.get("buckets") or {}).get(lbl, {})
+            tv_pct_rows += (
+                f"<tr><td style='padding:4px 12px 4px 0;color:#aaa'>  {lbl}</td>"
+                f"<td style='padding:4px 0;color:#fff'>"
+                f"n={bkt.get('count',0)} tp={bkt.get('tp',0)} sl={bkt.get('sl',0)}"
+                f" tp_rate={bkt.get('tp_rate_pct')} avg_max_r={bkt.get('avg_max_r')}"
+                f"</td></tr>"
+            )
+        for k, val in [
+            ("── tv_ob_pct parity ──",               ""),
+            ("parity.checked",                        tv_par.get("checked")),
+            ("parity.matched",                        tv_par.get("matched")),
+            ("parity.mismatched",                     tv_par.get("mismatched")),
+            ("parity.match_rate_pct",                 tv_par.get("match_rate_pct")),
+        ]:
+            tv_pct_rows += (
+                f"<tr><td style='padding:4px 12px 4px 0;color:#aaa'>{k}</td>"
+                f"<td style='padding:4px 0;color:#fff'>{_v(val)}</td></tr>"
+            )
+
+        # First event TV OB% fields
+        tv_ev_rows = ""
+        if ev1:
+            for k, val in [
+                ("tv_ob_pct_at_formation",        ev1.get("tv_ob_pct_at_formation")),
+                ("tv_ob_pct_formation_status",    ev1.get("tv_ob_pct_formation_status")),
+                ("tv_ob_pct_formation_in_pool",   ev1.get("tv_ob_pct_formation_in_pool")),
+                ("tv_ob_pct_formation_pool_size", ev1.get("tv_ob_pct_formation_pool_size")),
+                ("tv_ob_pct_formation_ob_vol",    ev1.get("tv_ob_pct_formation_ob_vol")),
+                ("tv_ob_pct_formation_pool_vol",  ev1.get("tv_ob_pct_formation_pool_vol")),
+                ("tv_ob_pct_formation_bucket",    ev1.get("tv_ob_pct_formation_bucket")),
+                ("tv_ob_pct_before_touch",        ev1.get("tv_ob_pct_before_touch")),
+                ("tv_ob_pct_before_touch_status", ev1.get("tv_ob_pct_before_touch_status")),
+                ("tv_ob_pct_before_touch_bucket", ev1.get("tv_ob_pct_before_touch_bucket")),
+            ]:
+                tv_ev_rows += (
+                    f"<tr><td style='padding:4px 12px 4px 0;color:#aaa'>{k}</td>"
+                    f"<td style='padding:4px 0;color:#fff'>{_v(val)}</td></tr>"
+                )
+
         body = (
             f"<table>{table_rows}</table>"
             + (
@@ -34979,6 +35304,13 @@ def api_backtest_ob_historical_debug():
                 f"<h3 style='color:#4f8;margin-top:20px'>Sample Touched Event — realized_by_rr</h3>"
                 f"<table>{tch_ev_rows}</table>"
                 if ev_tch else ""
+            )
+            + f"<h3 style='color:#fa0;margin-top:20px'>TV OB% Snapshot Analysis</h3>"
+            + f"<table>{tv_pct_rows}</table>"
+            + (
+                f"<h3 style='color:#fa0;margin-top:16px'>First Event — TV OB% Fields</h3>"
+                f"<table>{tv_ev_rows}</table>"
+                if tv_ev_rows else ""
             )
             + parity_note
         )
