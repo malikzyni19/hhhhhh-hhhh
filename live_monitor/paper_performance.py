@@ -25,6 +25,7 @@ Hotfix changes:
 """
 from __future__ import annotations
 
+import re as _re
 from decimal import Decimal, InvalidOperation
 from datetime import datetime, timezone, timedelta
 from statistics import median as _stat_median
@@ -155,12 +156,16 @@ def _lm_build_paper_performance_filters(
     now_utc = datetime.now(timezone.utc)
     from_dt = None if period == "all" else now_utc - timedelta(days=_PERIOD_DAYS[period])
 
-    # Symbol: trim + uppercase + length guard
-    sym = None
+    # Symbol: trim + uppercase + strict validation (A-Z, 0-9, -, /, _, :)
+    sym     = None
+    sym_err = None
     if symbol:
         sym_raw = str(symbol).strip().upper()
-        if sym_raw and len(sym_raw) <= 30:
-            sym = sym_raw
+        if sym_raw:
+            if len(sym_raw) > 30 or not _re.match(r'^[A-Z0-9\-/_:]+$', sym_raw):
+                sym_err = "invalid_symbol"
+            else:
+                sym = sym_raw
 
     # Side: case-insensitive lookup
     side_n   = None
@@ -193,6 +198,7 @@ def _lm_build_paper_performance_filters(
         # Internal keys
         "_from_dt":     from_dt,
         "_to_dt":       now_utc,
+        "_symbol_err":  sym_err,
         "_side_err":    side_err,
         "_item_id_err": item_id_err,
     }
@@ -609,22 +615,32 @@ def _lm_build_paper_equity_curve(trades: list) -> tuple:
 
 
 def _downsample_curve(points: list) -> list:
+    """Deterministic downsample to <= _MAX_CURVE points. Hard cap always enforced."""
     n = len(points)
     if n <= _MAX_CURVE:
         return points
-    stride = max(1, n // (_MAX_CURVE - 2))
+
+    # Mandatory anchors: first, last, global max and min cumulative PnL
     sel: set = {0, n - 1}
-    for i in range(0, n, stride):
-        sel.add(min(i, n - 1))
-    for i in range(1, n - 1):
-        if len(sel) >= _MAX_CURVE:
-            break
-        prev_c = points[i - 1]["_c"]
-        curr_c = points[i]["_c"]
-        next_c = points[i + 1]["_c"]
-        if (curr_c >= prev_c and curr_c >= next_c) or (curr_c <= prev_c and curr_c <= next_c):
+    sel.add(max(range(n), key=lambda i: points[i]["_c"]))
+    sel.add(min(range(n), key=lambda i: points[i]["_c"]))
+
+    # Fill remaining budget with evenly-spaced interior indices
+    budget = _MAX_CURVE - len(sel)
+    if budget > 0 and n > 2:
+        stride = max(1, (n - 2) // budget)
+        i = stride
+        while i < n - 1 and len(sel) < _MAX_CURVE:
             sel.add(i)
-    return [points[i] for i in sorted(sel)]
+            i += stride
+
+    # Sort, then enforce absolute hard cap (safety net for edge cases)
+    sorted_sel = sorted(sel)
+    if len(sorted_sel) > _MAX_CURVE:
+        interior = sorted_sel[1:-1][:_MAX_CURVE - 2]
+        sorted_sel = [sorted_sel[0]] + interior + [sorted_sel[-1]]
+
+    return [points[i] for i in sorted_sel]
 
 
 def _compute_drawdown(raw: list) -> dict:
@@ -661,8 +677,8 @@ def _compute_drawdown(raw: list) -> dict:
     if max_dd == 0:
         return {
             "max_drawdown_amount": "0",
-            "max_drawdown_pct":    "0",
-            "drawdown_pct_reason": None,
+            "max_drawdown_pct":    None,
+            "drawdown_pct_reason": "period_start_equity_unavailable",
             "peak_trade_id":       None,
             "trough_trade_id":     None,
             "recovered":           True,
@@ -877,7 +893,8 @@ def _lm_compute_period_comparison(
     side_norm,
     item_id,
     current_metrics,
-    current_drawdown = None,
+    current_drawdown  = None,
+    current_truncated = False,
 ) -> dict:
     if period == "all":
         return {"available": False, "reason": "period_all_no_comparison"}
@@ -902,13 +919,28 @@ def _lm_compute_period_comparison(
         if symbol:    q = q.filter(_T.symbol  == symbol)
         if side_norm: q = q.filter(_T.side     == side_norm)
 
-        prior_rows = q.order_by(_perf_ts.asc()).limit(_MAX_ROWS).all()
+        prior_total = q.count()
+        prior_rows  = q.order_by(_perf_ts.asc()).limit(_MAX_ROWS).all()
     except Exception as _e:
         return {"available": False, "reason": f"query_error:{str(_e)[:80]}"}
 
-    pri          = _compute_core_metrics(prior_rows)
-    prior_dd     = _compute_drawdown_from_trades(prior_rows)
-    trend        = _compute_trend(current_metrics, pri, current_drawdown, prior_dd)
+    prior_loaded    = len(prior_rows)
+    prior_truncated = prior_total > _MAX_ROWS
+    prior_meta      = {
+        "row_limit":       _MAX_ROWS,
+        "total_available": prior_total,
+        "rows_loaded":     prior_loaded,
+        "truncated":       prior_truncated,
+    }
+
+    pri      = _compute_core_metrics(prior_rows)
+    prior_dd = _compute_drawdown_from_trades(prior_rows)
+    trend    = _compute_trend(current_metrics, pri, current_drawdown, prior_dd)
+
+    trend_reason = None
+    if current_truncated or prior_truncated:
+        trend        = "insufficient_data"
+        trend_reason = "comparison_period_truncated"
 
     def _delta(key):
         cv = _sdec(current_metrics.get(key))
@@ -919,9 +951,20 @@ def _lm_compute_period_comparison(
     pri_dd_amt = _sdec(prior_dd.get("max_drawdown_amount"))
     dd_delta   = _ds(cur_dd_amt - pri_dd_amt) if cur_dd_amt is not None and pri_dd_amt is not None else None
 
+    comp_warnings = []
+    if prior_truncated:
+        comp_warnings.append("prior_period_analytics_row_limit_reached")
+    if current_truncated:
+        comp_warnings.append("current_period_analytics_row_limit_reached")
+
     return {
-        "available":  True,
-        "trend":      trend,
+        "available":    True,
+        "trend":        trend,
+        "trend_reason": trend_reason,
+        "query": {
+            "prior": prior_meta,
+        },
+        "warnings": comp_warnings,
         "current_period": {
             "trade_count":       current_metrics.get("trade_count"),
             "win_rate_pct":      current_metrics.get("win_rate_pct"),
@@ -1024,28 +1067,17 @@ def _lm_get_paper_performance_state(
     pub_f = {k: v for k, v in f.items() if not k.startswith("_")}
 
     # Validate filters
+    _filter_err_base = {
+        "phase": _PHASE, "error": "invalid_performance_filter",
+        "filters": pub_f, "guardrails": dict(_GUARDRAILS),
+        "source": "internal_paper_performance", "computed_at": now_iso,
+    }
     if f.get("_item_id_err"):
-        return {
-            "ok":           False,
-            "phase":        _PHASE,
-            "error":        "invalid_performance_filter",
-            "field_errors": {"item_id": f["_item_id_err"]},
-            "filters":      pub_f,
-            "guardrails":   dict(_GUARDRAILS),
-            "source":       "internal_paper_performance",
-            "computed_at":  now_iso,
-        }
+        return {"ok": False, "field_errors": {"item_id": f["_item_id_err"]}, **_filter_err_base}
     if f.get("_side_err"):
-        return {
-            "ok":           False,
-            "phase":        _PHASE,
-            "error":        "invalid_performance_filter",
-            "field_errors": {"side": f["_side_err"]},
-            "filters":      pub_f,
-            "guardrails":   dict(_GUARDRAILS),
-            "source":       "internal_paper_performance",
-            "computed_at":  now_iso,
-        }
+        return {"ok": False, "field_errors": {"side": f["_side_err"]}, **_filter_err_base}
+    if f.get("_symbol_err"):
+        return {"ok": False, "field_errors": {"symbol": f["_symbol_err"]}, **_filter_err_base}
 
     query_section = {
         "row_limit":       qmeta["row_limit"],
@@ -1093,6 +1125,7 @@ def _lm_get_paper_performance_state(
     comparison = _lm_compute_period_comparison(
         user_id, f["period"], f["symbol"], f["side"], f["item_id"],
         summary, drawdown,
+        current_truncated=qmeta.get("truncated", False),
     )
     recent  = _build_recent_trades(trades)
     account = _build_account_context(user_id)

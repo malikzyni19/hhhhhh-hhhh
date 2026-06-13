@@ -21097,10 +21097,13 @@ def _lm_paper_performance_summary_for_ai(user_id, item_id=None) -> dict:
         summary = state.get("summary") or {}
         sample  = state.get("sample")  or {}
         streaks = state.get("streaks") or {}
-        comp    = state.get("comparison") or {}
-        warns   = sample.get("warnings", [])
-        dq      = (state.get("data_quality") or (state.get("summary") or {}).get("data_quality") or {})
-        qmeta   = state.get("query") or {}
+        comp       = state.get("comparison") or {}
+        warns      = sample.get("warnings", [])
+        dq         = (state.get("data_quality") or (state.get("summary") or {}).get("data_quality") or {})
+        qmeta      = state.get("query") or {}
+        prior_meta = (comp.get("query") or {}).get("prior") or {}
+        cur_trunc  = bool(qmeta.get("truncated", False))
+        pri_trunc  = bool(prior_meta.get("truncated", False))
         return {
             "ok":                         True,
             "period":                     state.get("filters", {}).get("period", "30d"),
@@ -21114,8 +21117,12 @@ def _lm_paper_performance_summary_for_ai(user_id, item_id=None) -> dict:
             "current_win_streak":         streaks.get("current_win_streak", 0),
             "current_loss_streak":        streaks.get("current_loss_streak", 0),
             "recent_trend":               comp.get("trend", "insufficient_data"),
+            "trend_reason":               comp.get("trend_reason"),
             "warning_count":              len(warns),
-            "truncated":                  qmeta.get("truncated", False),
+            "truncated":                  cur_trunc,
+            "current_period_truncated":   cur_trunc,
+            "prior_period_truncated":     pri_trunc,
+            "comparison_truncated":       cur_trunc or pri_trunc,
             "outcome_pnl_mismatch_count": dq.get("outcome_pnl_mismatch_count", 0),
             "read_only":                  True,
             "can_auto_submit":            False,

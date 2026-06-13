@@ -9538,7 +9538,12 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   window._lmPapPerfApply=function(d,scope,sym){
     var statusEl=document.getElementById('lmPapPerfStatus');
     if(!d||!d.ok){
-      if(statusEl) statusEl.textContent='No data: '+(d&&d.error?esc(d.error):'unknown');
+      var errMsg='No data: '+(d&&d.error?esc(d.error):'unknown');
+      if(d&&d.error==='invalid_performance_filter'&&d.field_errors){
+        var ferrs=Object.keys(d.field_errors).map(function(k){return k+': '+d.field_errors[k];}).join(', ');
+        errMsg='Filter error — '+ferrs;
+      }
+      if(statusEl) statusEl.textContent=errMsg;
       return;
     }
     var summary=d.summary||{};
@@ -9631,7 +9636,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     }
     var wlbEl=document.getElementById('lmPapPerfWLB');
     if(wlbEl){
-      var w=summary.win_count||0, l=summary.loss_count||0, b=summary.be_count||0;
+      var w=summary.win_count||0, l=summary.loss_count||0, b=summary.breakeven_count!=null?summary.breakeven_count:(summary.be_count||0);
       wlbEl.textContent='W'+w+' / L'+l+(b?' / BE'+b:'');
     }
     /* Sample quality warning */

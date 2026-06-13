@@ -475,6 +475,153 @@ for pat in FORBIDDEN:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# GROUP 12 — Final Contract Corrections (hotfix)
+# ═══════════════════════════════════════════════════════════════════════════════
+print("\n── GROUP 12: final contract corrections ────────────────────────────────")
+
+# ── 12A: Strict symbol filter validation ──────────────────────────────────────
+
+f_valid = pp._lm_build_paper_performance_filters(1, symbol="BTCUSDT")
+_check("12A1 valid symbol accepted", f_valid["symbol"] == "BTCUSDT" and not f_valid.get("_symbol_err"))
+
+f_special = pp._lm_build_paper_performance_filters(1, symbol="BTC!USDT")
+_check("12A2 symbol with ! → invalid_symbol",
+       f_special.get("_symbol_err") == "invalid_symbol" and f_special["symbol"] is None)
+
+f_long = pp._lm_build_paper_performance_filters(1, symbol="X" * 31)
+_check("12A3 symbol > 30 chars → invalid_symbol",
+       f_long.get("_symbol_err") == "invalid_symbol" and f_long["symbol"] is None)
+
+f_empty = pp._lm_build_paper_performance_filters(1, symbol="")
+_check("12A4 empty symbol → no error and no filter",
+       not f_empty.get("_symbol_err") and f_empty["symbol"] is None)
+
+f_ws = pp._lm_build_paper_performance_filters(1, symbol="   ")
+_check("12A5 whitespace-only symbol → no error and no filter",
+       not f_ws.get("_symbol_err") and f_ws["symbol"] is None)
+
+f_lower = pp._lm_build_paper_performance_filters(1, symbol="btcusdt")
+_check("12A6 lowercase symbol normalised to uppercase", f_lower["symbol"] == "BTCUSDT")
+
+f_slash = pp._lm_build_paper_performance_filters(1, symbol="BTC/USDT")
+_check("12A7 slash in symbol accepted", f_slash["symbol"] == "BTC/USDT" and not f_slash.get("_symbol_err"))
+
+f_colon = pp._lm_build_paper_performance_filters(1, symbol="BTC:USDT")
+_check("12A8 colon in symbol accepted", f_colon["symbol"] == "BTC:USDT" and not f_colon.get("_symbol_err"))
+
+f_30 = pp._lm_build_paper_performance_filters(1, symbol="A" * 30)
+_check("12A9 exactly 30 chars accepted", f_30["symbol"] == "A" * 30 and not f_30.get("_symbol_err"))
+
+# ── 12B: Zero-drawdown must not fabricate a percentage ────────────────────────
+
+# Flat equity series — no drawdown
+flat_raw = [{"trade_id": i, "_c": Decimal("10")} for i in range(5)]
+dd_flat  = pp._compute_drawdown(flat_raw)
+_check("12B1 zero drawdown → max_drawdown_pct is None",
+       dd_flat["max_drawdown_pct"] is None,
+       f"got {dd_flat['max_drawdown_pct']!r}")
+_check("12B2 zero drawdown → drawdown_pct_reason is period_start_equity_unavailable",
+       dd_flat["drawdown_pct_reason"] == "period_start_equity_unavailable",
+       f"got {dd_flat['drawdown_pct_reason']!r}")
+_check("12B3 zero drawdown → recovered=True", dd_flat["recovered"] is True)
+
+# Ascending equity — also no drawdown
+asc_raw = [{"trade_id": i, "_c": Decimal(str(i * 10))} for i in range(10)]
+dd_asc  = pp._compute_drawdown(asc_raw)
+_check("12B4 ascending series → max_drawdown_pct is None",
+       dd_asc["max_drawdown_pct"] is None,
+       f"got {dd_asc['max_drawdown_pct']!r}")
+
+# Non-zero drawdown still returns None pct (no denominator)
+raw_dd = [
+    {"trade_id": 1, "_c": Decimal("0")},
+    {"trade_id": 2, "_c": Decimal("100")},
+    {"trade_id": 3, "_c": Decimal("50")},
+]
+dd_nonzero = pp._compute_drawdown(raw_dd)
+_check("12B5 non-zero drawdown → amount is correct",
+       dd_nonzero["max_drawdown_amount"] == "50",
+       f"got {dd_nonzero['max_drawdown_amount']!r}")
+_check("12B6 non-zero drawdown → max_drawdown_pct still None",
+       dd_nonzero["max_drawdown_pct"] is None,
+       f"got {dd_nonzero['max_drawdown_pct']!r}")
+
+# ── 12C: Equity curve hard cap ≤ 500 points ───────────────────────────────────
+
+import random
+rng = random.Random(42)
+big_pts = [{"trade_id": i, "_c": Decimal(str(rng.gauss(0, 100))), "realized_pnl": "1"} for i in range(1000)]
+# Assign _c as running cumulative
+running_c = Decimal("0")
+for pt in big_pts:
+    pt["_c"] = running_c + Decimal(str(rng.gauss(0, 10)))
+    running_c = pt["_c"]
+
+ds_1000 = pp._downsample_curve(big_pts)
+_check("12C1 1000 points downsampled to ≤ 500",
+       len(ds_1000) <= 500,
+       f"got {len(ds_1000)}")
+_check("12C2 first point preserved", ds_1000[0] is big_pts[0])
+_check("12C3 last point preserved",  ds_1000[-1] is big_pts[-1])
+
+# Edge case: exactly 500 → pass through unchanged
+pts_500 = [{"trade_id": i, "_c": Decimal(str(i))} for i in range(500)]
+ds_500  = pp._downsample_curve(pts_500)
+_check("12C4 exactly 500 points → unchanged", len(ds_500) == 500 and ds_500 is pts_500)
+
+# Edge case: 501 points → downsample triggers, still ≤ 500
+pts_501 = [{"trade_id": i, "_c": Decimal(str(i))} for i in range(501)]
+ds_501  = pp._downsample_curve(pts_501)
+_check("12C5 501 points → ≤ 500 after downsample", len(ds_501) <= 500, f"got {len(ds_501)}")
+
+# ── 12D: State getter returns invalid_performance_filter for bad symbol ────────
+# (No DB needed — filter validation fires before any query)
+
+_orig_query = pp._lm_query_closed_paper_trades
+
+def _mock_query(*a, **kw):
+    f = pp._lm_build_paper_performance_filters(*a, **kw)
+    return [], f, {"row_limit": 5000, "total_available": 0, "rows_loaded": 0,
+                   "truncated": False, "missing_pnl_db": 0, "invalid_pnl_c": 0}
+
+pp._lm_query_closed_paper_trades = _mock_query
+
+state_bad_sym = pp._lm_get_paper_performance_state(1, symbol="BTC!!!")
+_check("12D1 bad symbol → ok=False", state_bad_sym.get("ok") is False)
+_check("12D2 bad symbol → error=invalid_performance_filter",
+       state_bad_sym.get("error") == "invalid_performance_filter")
+_check("12D3 bad symbol → field_errors.symbol=invalid_symbol",
+       (state_bad_sym.get("field_errors") or {}).get("symbol") == "invalid_symbol")
+_check("12D4 bad symbol → guardrails present",
+       "guardrails" in state_bad_sym)
+_check("12D5 bad symbol → can_auto_submit always False",
+       state_bad_sym.get("guardrails", {}).get("can_auto_submit") is False)
+
+state_good_sym = pp._lm_get_paper_performance_state(1, symbol="BTCUSDT")
+_check("12D6 good symbol → no filter error (passes to no-trade response)",
+       state_good_sym.get("ok") is True and state_good_sym.get("error") is None)
+
+pp._lm_query_closed_paper_trades = _orig_query   # restore
+
+# ── 12E: Comparison trend_reason propagated ───────────────────────────────────
+# Test _compute_trend directly for insufficient data case
+t_small = {"trade_count": 3, "win_rate_pct": "60", "net_realized_pnl": "100",
+           "profit_factor": "1.5", "expectancy_amount": "10"}
+trend_small = pp._compute_trend(t_small, t_small)
+_check("12E1 <5 trades → insufficient_data", trend_small == "insufficient_data")
+
+t_enough = {"trade_count": 10, "win_rate_pct": "70", "net_realized_pnl": "200",
+            "profit_factor": "2.0", "expectancy_amount": "20"}
+t_worse  = {"trade_count": 10, "win_rate_pct": "40", "net_realized_pnl": "50",
+            "profit_factor": "0.8", "expectancy_amount": "5"}
+trend_imp = pp._compute_trend(t_enough, t_worse)
+_check("12E2 improving metrics → improving", trend_imp == "improving")
+
+trend_det = pp._compute_trend(t_worse, t_enough)
+_check("12E3 deteriorating metrics → deteriorating", trend_det == "deteriorating")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # SUMMARY
 # ═══════════════════════════════════════════════════════════════════════════════
 print(f"\n{'='*60}")
