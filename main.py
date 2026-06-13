@@ -7507,6 +7507,94 @@ def api_admin_stats():
     })
 
 
+# ── Global app defaults (admin-controlled, consumed by desktop UI) ──
+# Stored in global_settings table under keys prefixed "app_default_*".
+# Only used to seed brand-new sessions / users — never overrides an
+# explicit user choice already saved to localStorage on the client.
+_APP_DEFAULTS_SCHEMA = {
+    "support_url":    {"type": "str",  "default": "https://t.me/MalikZyNi"},
+    "theme":          {"type": "str",  "default": "dark"},   # "dark" | "light"
+    "market":         {"type": "str",  "default": "perpetual"},
+    "signal":         {"type": "str",  "default": "OB"},
+    "exchange":       {"type": "str",  "default": "binance"},
+    "timeframe":      {"type": "str",  "default": "4h"},
+    "tutorial_enabled": {"type": "bool", "default": True},
+    "sLen":           {"type": "int",  "default": 50},
+    "iLen":           {"type": "int",  "default": 5},
+    "obMaxTouches":   {"type": "int",  "default": 2},
+    "fvgAgeMax":      {"type": "int",  "default": 5},
+    "useObTouchState":   {"type": "bool", "default": True},
+    "useFvgValidOnly":   {"type": "bool", "default": True},
+    "useFvgState":       {"type": "bool", "default": True},
+    "useBtcCorrelation": {"type": "bool", "default": True},
+}
+
+def _coerce_default(key, raw):
+    spec = _APP_DEFAULTS_SCHEMA.get(key)
+    if not spec:
+        return None
+    t = spec["type"]
+    if raw is None:
+        return spec["default"]
+    try:
+        if t == "bool":
+            if isinstance(raw, bool):
+                return raw
+            return str(raw).strip().lower() in ("1", "true", "yes", "on")
+        if t == "int":
+            return int(raw)
+        return str(raw)
+    except Exception:
+        return spec["default"]
+
+def _read_app_defaults():
+    out = {}
+    for key, spec in _APP_DEFAULTS_SCHEMA.items():
+        try:
+            row = _GlobalSetting.query.filter_by(key="app_default_" + key).first()
+        except Exception:
+            row = None
+        out[key] = _coerce_default(key, row.value if row else None)
+    return out
+
+
+@app.route("/api/config/defaults")
+def api_config_defaults():
+    """Public — desktop UI reads on boot to seed brand-new sessions."""
+    return jsonify(_read_app_defaults())
+
+
+@app.route("/api/admin/config/defaults", methods=["GET", "POST"])
+@admin_required
+def api_admin_config_defaults():
+    if request.method == "GET":
+        return jsonify(_read_app_defaults())
+    data = request.get_json(force=True) or {}
+    uid = session.get("user_id")
+    saved = {}
+    for key, raw in data.items():
+        if key not in _APP_DEFAULTS_SCHEMA:
+            continue
+        val = _coerce_default(key, raw)
+        try:
+            row = _GlobalSetting.query.filter_by(key="app_default_" + key).first()
+            if not row:
+                row = _GlobalSetting(key="app_default_" + key, value=str(val), updated_by=uid)
+                db.session.add(row)
+            else:
+                row.value = str(val)
+                row.updated_by = uid
+            saved[key] = val
+        except Exception:
+            continue
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return jsonify({"error": "save failed"}), 500
+    return jsonify({"ok": True, "saved": saved, "defaults": _read_app_defaults()})
+
+
 @app.route("/api/admin/controls/tabs")
 @admin_required
 def api_admin_tab_status():
@@ -30277,18 +30365,33 @@ def api_my_permissions():
             return jsonify({"is_admin": False, "daily_tokens": 500, "tokens_remaining": 500,
                             "allowed_tabs": ["scan","pairs","settings"],
                             "allowed_modules": ["ob","fvg","fib","bias"],
-                            "allowed_exchanges": ["binance"], "allowed_timeframes": ["1h","4h"]})
+                            "allowed_exchanges": ["binance"], "allowed_timeframes": ["1h","4h"],
+                            "tab_controls": dict(_tab_controls),
+                            "is_guest": bool(session.get("is_guest"))})
         perms = get_user_permissions(user)
         maint = _GlobalSetting.query.filter_by(key="maintenance_mode").first()
         perms["maintenance_mode"] = (maint.value == "true") if maint else False
+        msg = _GlobalSetting.query.filter_by(key="maintenance_message").first()
+        perms["maintenance_message"] = (msg.value if msg else "") or ""
         perms["username"] = user.username
         perms["role"]     = user.role
+        # Global tab toggles (admin can disable any tab for everyone)
+        perms["tab_controls"] = dict(_tab_controls)
+        # Guest-specific limits (only meaningful when is_guest=True)
+        perms["is_guest"] = bool(session.get("is_guest"))
+        if perms["is_guest"]:
+            perms["guest_controls"] = {
+                "tabs": dict(_guest_controls.get("tabs", {})),
+                "max_scans_per_session": int(_guest_controls.get("max_scans_per_session", 5)),
+                "max_pairs": int(_guest_controls.get("max_pairs", 20)),
+            }
         return jsonify(perms)
     except Exception as e:
         return jsonify({"error": str(e), "is_admin": False, "daily_tokens": 500,
                         "tokens_remaining": 500, "allowed_tabs": ["scan","pairs","settings"],
                         "allowed_modules": ["ob","fvg","fib","bias"],
-                        "allowed_exchanges": ["binance"], "allowed_timeframes": ["1h","4h"]})
+                        "allowed_exchanges": ["binance"], "allowed_timeframes": ["1h","4h"],
+                        "tab_controls": dict(_tab_controls)})
 
 
 @app.route("/guest-access")
@@ -30410,6 +30513,14 @@ def api_scan():
     symbols = payload.get("symbols", [])
     mode = payload.get("scanMode", "selected")
     pairs_per_cycle = int(payload.get("pairsPerCycle", 20))
+
+    # Guests are capped by admin-set max_pairs (was previously stored but unused).
+    if session.get("is_guest"):
+        cap = max(1, int(_guest_controls.get("max_pairs", 20)))
+        if pairs_per_cycle > cap:
+            pairs_per_cycle = cap
+        if isinstance(symbols, list) and len(symbols) > cap:
+            symbols = symbols[:cap]
 
     # FIX BUG 1: Full Market ALWAYS ignores selectedPairs
     # even if frontend accidentally sends them

@@ -196,6 +196,10 @@ svg{display:block}
 }
 .ic-btn:hover{color:var(--text);background:rgba(255,255,255,.05)}
 .ic-btn.ic-logout:hover{background:rgba(239,68,68,.14);color:#fda4af}
+.maintenance-banner{display:flex;align-items:center;gap:10px;padding:8px 16px;background:rgba(251,191,36,.12);
+  border-bottom:1px solid rgba(251,191,36,.35);color:#fbbf24;font-size:12px;font-weight:600;letter-spacing:.3px}
+.maintenance-banner .ico{width:14px;height:14px;flex:0 0 auto;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.maintenance-banner[hidden]{display:none}
 .ic-btn .dot{position:absolute;top:5px;right:6px;width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 6px var(--accent)}
 .win-ctrls{display:flex;align-items:center;gap:2px;margin-left:6px;padding-left:8px;border-left:1px solid var(--border)}
 .win-ctrls .ic-btn:last-child:hover{background:rgba(239,68,68,.18);color:#fda4af}
@@ -1643,6 +1647,11 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     </div>
   </div>
 
+  <div class="maintenance-banner" id="maintBanner" hidden>
+    <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+    <span id="maintBannerMsg">Maintenance mode</span>
+  </div>
+
   <div class="body">
 
     <!-- ═══ LEFT SIDEBAR ═══ -->
@@ -2195,6 +2204,46 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   function _loadSettings(){
     try{ var s=localStorage.getItem("zyni-settings"); if(s) return Object.assign({},DEFAULT_SETTINGS,JSON.parse(s)); }catch(_){}
     return Object.assign({},DEFAULT_SETTINGS);
+  }
+  /* App-default config from admin (GET /api/config/defaults). Seeds blank
+     sessions only — never overrides values the user already saved. */
+  function _applyAppDefaults(cfg){
+    if(!cfg || typeof cfg!=="object") return;
+    try{
+      if(!localStorage.getItem("zyni-theme") && cfg.theme){
+        applyTheme(cfg.theme==="light"?"light":"dark");
+      }
+    }catch(_){}
+    var lsMap={ market:"zyni-market", signal:"zyni-signal",
+                exchange:"zyni-exchange" };
+    Object.keys(lsMap).forEach(function(k){
+      try{
+        if(cfg[k] && !localStorage.getItem(lsMap[k])){
+          localStorage.setItem(lsMap[k], String(cfg[k]));
+          if(ST && ST.hasOwnProperty(k)) ST[k]=cfg[k];
+        }
+      }catch(_){}
+    });
+    /* Scanner defaults — only seed when the user has never saved settings. */
+    try{
+      if(!localStorage.getItem("zyni-settings") && ST && ST.settings){
+        ["sLen","iLen","obMaxTouches","fvgAgeMax",
+         "useObTouchState","useFvgValidOnly","useFvgState","useBtcCorrelation"
+        ].forEach(function(k){ if(cfg[k]!=null) ST.settings[k]=cfg[k]; });
+      }
+    }catch(_){}
+    var sup=document.getElementById("btnSupport");
+    if(sup && cfg.support_url) sup.href=cfg.support_url;
+    if(cfg.tutorial_enabled===false){
+      try{ localStorage.setItem("zyni-tutorial-skip","1"); }catch(_){}
+    }
+  }
+  function _bootAppDefaults(){
+    if(location.protocol==="file:") return;
+    fetch("/api/config/defaults",{credentials:"same-origin"})
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(d){ if(d) _applyAppDefaults(d); })
+      .catch(function(){});
   }
   /* persistent-state helpers (Wave 16) */
   function _ls_get(k,d){try{var v=localStorage.getItem(k);return v==null?d:v;}catch(_){return d;}}
@@ -2970,20 +3019,46 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       el.appendChild(b);
     } else if(!locked && b){ b.remove(); }
   }
+  /* Admin "App Controls — Tab Toggles" — keys differ from TAB_OF_MODE
+     (e.g. sidebar uses "ath_atl"; tab_controls also uses "ath_atl"). */
+  var TAB_CTRL_OF_MODE = {main:"scan", compressed:"compressed", trending:"trending",
+                          ath_atl:"ath_atl", bias:"bias"};
+  var TAB_CTRL_OF_VIEW = {scanner:"scan", live:"live_monitor"};
+  function _tabGloballyDisabled(key){
+    var tc = ST.perms && ST.perms.tab_controls;
+    if(!tc || !key) return false;
+    return tc[key] === false;
+  }
+  function _renderMaintenanceBanner(){
+    var bar=document.getElementById("maintBanner"); if(!bar) return;
+    var on = !!(ST.perms && ST.perms.maintenance_mode);
+    if(!on){ bar.hidden=true; return; }
+    var msgEl=document.getElementById("maintBannerMsg");
+    var msg=(ST.perms && ST.perms.maintenance_message) || "Maintenance mode — some features may be limited.";
+    if(msgEl) msgEl.textContent=msg;
+    bar.hidden=false;
+  }
   // Reflect current permissions in the UI (lock badges, disabled options).
   function applyPermissionsUI(){
     [].forEach.call(document.querySelectorAll('.side .nav-item[data-mode]'),function(el){
-      var tab=TAB_OF_MODE[el.getAttribute('data-mode')];
+      var mode=el.getAttribute('data-mode');
+      var tab=TAB_OF_MODE[mode];
       var locked = tab ? !_featAllowed("allowed_tabs", tab) : false;
-      el.classList.toggle('locked', locked);
-      _setLockBadge(el, locked);
+      var globalOff = _tabGloballyDisabled(TAB_CTRL_OF_MODE[mode]);
+      el.classList.toggle('locked', locked && !globalOff);
+      el.style.display = globalOff ? "none" : "";
+      _setLockBadge(el, locked && !globalOff);
     });
     [].forEach.call(document.querySelectorAll('#topnav a[data-view]'),function(a){
-      var tab=TAB_OF_VIEW[a.getAttribute('data-view')];
+      var view=a.getAttribute('data-view');
+      var tab=TAB_OF_VIEW[view];
       var locked = tab ? !_featAllowed("allowed_tabs", tab) : false;
-      a.classList.toggle('locked', locked);
-      if(locked) a.title="Locked — upgrade to unlock"; else a.removeAttribute('title');
+      var globalOff = _tabGloballyDisabled(TAB_CTRL_OF_VIEW[view]);
+      a.classList.toggle('locked', locked && !globalOff);
+      a.style.display = globalOff ? "none" : "";
+      if(locked && !globalOff) a.title="Locked — upgrade to unlock"; else a.removeAttribute('title');
     });
+    _renderMaintenanceBanner();
     var sel=E("exchSelect");
     if(sel) [].forEach.call(sel.options,function(o){
       if(!o.getAttribute('data-base')) o.setAttribute('data-base', o.textContent);
@@ -14479,6 +14554,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   loadLiveMonitorItems();       // Phase 1: pre-load DB-backed Live Monitor items
   loadLiveMonitorAiProviders(); // Phase 6.5: pre-load AI provider list
   loadTokens();                 // load token counter without triggering a scan
+  _bootAppDefaults();           // pull admin-configured app defaults
   _renderTabCtrls();
   // No auto-scan on page load — scanning only happens when the user clicks
   // Scan Now or explicitly turns Auto Scan ON.
