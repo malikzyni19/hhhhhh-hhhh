@@ -5496,6 +5496,11 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                       '</div>'+
                       /* Filters row */
                       '<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-bottom:6px">'+
+                        '<select id="lmPapPerfScope" class="lm-mini-input" style="font-size:9px;padding:2px 4px;background:var(--bg-3,#1e293b);border:1px solid var(--border,#334155);border-radius:3px;color:var(--text-2)" onchange="window._lmPapPerfRefresh()">'+
+                          '<option value="all" selected>All Trades</option>'+
+                          '<option value="symbol">This Symbol</option>'+
+                          '<option value="item">This Item</option>'+
+                        '</select>'+
                         '<select id="lmPapPerfPeriod" class="lm-mini-input" style="font-size:9px;padding:2px 4px;background:var(--bg-3,#1e293b);border:1px solid var(--border,#334155);border-radius:3px;color:var(--text-2)">'+
                           '<option value="7d">7 days</option>'+
                           '<option value="30d" selected>30 days</option>'+
@@ -9493,27 +9498,44 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   /* ── Phase 11.14: Paper Performance Dashboard ─────────────────────────── */
 
   window._lmPapPerfRefresh=function(){
-    var itemId=window._lmCurrentItemId;
-    if(!itemId){
-      var statusEl=document.getElementById('lmPapPerfStatus');
-      if(statusEl) statusEl.textContent='No item selected';
-      return;
-    }
-    var period=(document.getElementById('lmPapPerfPeriod')||{}).value||'30d';
-    var side=(document.getElementById('lmPapPerfSide')||{}).value||'';
-    var url='/api/live-monitor/items/'+itemId+'/paper-performance?period='+encodeURIComponent(period);
-    if(side) url+='&side='+encodeURIComponent(side);
+    var scope=  (document.getElementById('lmPapPerfScope') ||{}).value||'all';
+    var period= (document.getElementById('lmPapPerfPeriod')||{}).value||'30d';
+    var side=   (document.getElementById('lmPapPerfSide')  ||{}).value||'';
+    var itemId= window._lmSimItemId||(window._lmSelItem&&window._lmSelItem.id);
+    var sym=    window._lmSelItem&&window._lmSelItem.symbol;
     var statusEl=document.getElementById('lmPapPerfStatus');
+    var url;
+
+    if(scope==='item'){
+      if(!itemId){
+        if(statusEl) statusEl.textContent='No item selected — choose "All Trades" or select an item first.';
+        return;
+      }
+      url='/api/live-monitor/items/'+itemId+'/paper-performance?period='+encodeURIComponent(period);
+      if(side) url+='&side='+encodeURIComponent(side);
+    } else if(scope==='symbol'){
+      if(!sym){
+        if(statusEl) statusEl.textContent='No symbol available — select an item first.';
+        return;
+      }
+      url='/api/live-monitor/paper-performance?period='+encodeURIComponent(period)+'&symbol='+encodeURIComponent(sym);
+      if(side) url+='&side='+encodeURIComponent(side);
+    } else {
+      /* All Paper Trades */
+      url='/api/live-monitor/paper-performance?period='+encodeURIComponent(period);
+      if(side) url+='&side='+encodeURIComponent(side);
+    }
+
     if(statusEl) statusEl.textContent='Loading…';
     fetch(url,{credentials:'same-origin'})
       .then(function(r){return r.json();})
-      .then(function(d){ window._lmPapPerfApply(d); })
+      .then(function(d){ window._lmPapPerfApply(d,scope,sym); })
       .catch(function(e){
         if(statusEl) statusEl.textContent='Error: '+String(e).slice(0,80);
       });
   };
 
-  window._lmPapPerfApply=function(d){
+  window._lmPapPerfApply=function(d,scope,sym){
     var statusEl=document.getElementById('lmPapPerfStatus');
     if(!d||!d.ok){
       if(statusEl) statusEl.textContent='No data: '+(d&&d.error?esc(d.error):'unknown');
@@ -9521,8 +9543,12 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     }
     var summary=d.summary||{};
     var sample=d.sample||{};
+    var qmeta=d.query||{};
+    /* Scope label */
+    var scopeLabel=scope==='item'?'This Item':scope==='symbol'&&sym?'Symbol: '+sym:'All Paper Trades';
+    var truncNote=qmeta.truncated?' [first '+qmeta.row_limit+' of '+qmeta.total_available+' trades]':'';
     if(!summary.trade_count){
-      if(statusEl) statusEl.textContent='No closed paper trades in this period.';
+      if(statusEl) statusEl.textContent=scopeLabel+' — no closed paper trades in this period.'+truncNote;
       ['lmPapPerfCards','lmPapPerfMeta','lmPapPerfAcct','lmPapPerfWarnings',
        'lmPapPerfChartWrap','lmPapPerfBreakdowns','lmPapPerfRecent'].forEach(function(id){
         var el=document.getElementById(id);
@@ -9530,7 +9556,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       });
       return;
     }
-    if(statusEl) statusEl.textContent='';
+    if(statusEl) statusEl.textContent=scopeLabel+truncNote;
     window._lmPapPerfRenderSummary(summary, d.drawdown||{}, d.streaks||{}, sample, d.comparison||{});
     window._lmPapPerfRenderBreakdowns(d.breakdowns||{});
     window._lmPapPerfRenderRecentTrades(d.recent_trades||[]);
@@ -9576,9 +9602,9 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var expEl=document.getElementById('lmPapPerfExp');
     if(expEl){ expEl.textContent='$'+fmt(summary.expectancy_amount); colorPnl(summary.expectancy_amount,expEl); }
     var awEl=document.getElementById('lmPapPerfAvgWin');
-    if(awEl) awEl.textContent='$'+fmt(summary.avg_win);
+    if(awEl) awEl.textContent='$'+fmt(summary.average_win!=null?summary.average_win:summary.avg_win);
     var alEl=document.getElementById('lmPapPerfAvgLoss');
-    if(alEl) alEl.textContent='$'+fmt(summary.avg_loss);
+    if(alEl) alEl.textContent='$'+fmt(summary.average_loss!=null?summary.average_loss:summary.avg_loss);
     var ddEl=document.getElementById('lmPapPerfDD');
     if(ddEl) ddEl.textContent=drawdown.max_drawdown_amount!=null?'$'+drawdown.max_drawdown_amount:'—';
     var ctEl=document.getElementById('lmPapPerfCount');

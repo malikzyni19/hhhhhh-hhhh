@@ -1,39 +1,57 @@
-"""Phase 11.14: Paper Performance Dashboard — read-only analytics for Internal Paper Trading.
+"""Phase 11.14 (Hotfix): Paper Performance Dashboard — read-only analytics.
 
 Query-only. No execution. No order creation. No position mutation.
 No Paper Auto Gate or Risk Guard changes. No exchange calls.
 can_auto_submit is ALWAYS False. auto_execution_allowed is ALWAYS False.
 ai_can_execute is ALWAYS False.
+
+Hotfix changes:
+- Canonical performance timestamp: coalesce(closed_at, updated_at, created_at) for
+  all SQL filters, ordering, and prior-period queries.
+- Case-insensitive closed-status filter.
+- Canonical outcome classifier: PnL-sign wins over label when they disagree;
+  mismatches tracked in data_quality without corrupting monetary aggregates.
+- Monetary aggregates (gross_profit, gross_loss, avg_win, avg_loss) always use
+  realized_pnl sign — never the outcome label.
+- PnL sum reconciliation: direct_sum vs gross_profit−gross_loss, reported + warned.
+- Safe item_id parsing (no ValueError).
+- Case-insensitive side normalization via lowercase lookup.
+- Row-limit metadata: total_available, rows_loaded, truncated.
+- analytics_row_limit_reached sample warning when truncated.
+- Data quality counters: explicit/derived/mismatch/missing_pnl/invalid_pnl/
+  missing_timestamp/missing_rr/missing_duration/missing_pnl_pct.
+- Prior-period comparison uses canonical timestamp + drawdown delta + expectancy delta.
+- Breakdowns use canonical outcome for win/loss counts and PnL-sign for monetary.
 """
 from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
 from datetime import datetime, timezone, timedelta
 from statistics import median as _stat_median
+from sqlalchemy import func as _sa_func
 
-_PHASE = "phase11_14_paper_performance_dashboard"
-_VALID_PERIODS   = frozenset({"7d", "30d", "90d", "365d", "all"})
-_DEFAULT_PERIOD  = "30d"
-_MAX_ROWS        = 5_000
-_MAX_RECENT      = 50
-_MAX_CURVE       = 500
-_MAX_SYMS        = 20
-_PERIOD_DAYS     = {"7d": 7, "30d": 30, "90d": 90, "365d": 365}
+_PHASE          = "phase11_14_paper_performance_dashboard"
+_VALID_PERIODS  = frozenset({"7d", "30d", "90d", "365d", "all"})
+_DEFAULT_PERIOD = "30d"
+_MAX_ROWS       = 5_000
+_MAX_RECENT     = 50
+_MAX_CURVE      = 500
+_MAX_SYMS       = 20
+_PERIOD_DAYS    = {"7d": 7, "30d": 30, "90d": 90, "365d": 365}
 
+# Lowercase-only keys — lookup normalises input with .lower() before checking
 _SIDE_NORM: dict = {
     "long": "BUY",  "buy": "BUY",  "bullish": "BUY",
-    "LONG": "BUY",  "BUY": "BUY",
     "short": "SELL", "sell": "SELL", "bearish": "SELL",
-    "SHORT": "SELL", "SELL": "SELL",
 }
 
 _GUARDRAILS: dict = {
-    "read_only":                  True,
-    "paper_primary":              True,
-    "can_auto_submit":            False,
-    "auto_execution_allowed":     False,
-    "ai_can_execute":             False,
-    "live_disabled":              True,
+    "read_only":                   True,
+    "paper_primary":               True,
+    "can_auto_submit":             False,
+    "auto_execution_allowed":      False,
+    "ai_can_execute":              False,
+    "live_disabled":               True,
     "testnet_strategy_validation": False,
 }
 
@@ -41,6 +59,7 @@ _GUARDRAILS: dict = {
 # ── Decimal / string helpers ──────────────────────────────────────────────────
 
 def _sdec(v):
+    """Safe Decimal. Returns None for None/NaN/Infinity/unparseable."""
     if v is None:
         return None
     try:
@@ -53,6 +72,7 @@ def _sdec(v):
 
 
 def _ds(d):
+    """Compact fixed-point string, or None."""
     if d is None:
         return None
     try:
@@ -65,7 +85,7 @@ def _ds(d):
 
 
 def _ts(trade):
-    """Best-available close timestamp for a trade record."""
+    """Best close timestamp: closed_at → updated_at → created_at, UTC-normalised."""
     raw = (
         getattr(trade, "closed_at",  None)
         or getattr(trade, "updated_at", None)
@@ -78,15 +98,42 @@ def _ts(trade):
     return raw
 
 
-def _outcome_of(trade) -> str:
-    """Return 'win' / 'loss' / 'breakeven' — prefer explicit field, fall back to PnL sign."""
-    o = (getattr(trade, "outcome", "") or "").lower().strip()
-    if o in ("win", "loss", "breakeven"):
-        return o
-    pnl = _sdec(trade.realized_pnl)
+# ── Canonical outcome classification ─────────────────────────────────────────
+
+def _lm_classify_paper_trade_outcome(trade):
+    """Canonical outcome for a trade record.
+
+    Returns (canonical, pnl, mismatch, source) where:
+      canonical : 'win' | 'loss' | 'breakeven' | None (missing/invalid PnL)
+      pnl       : Decimal or None
+      mismatch  : True when explicit label disagreed with PnL sign
+      source    : 'explicit' | 'pnl_override' | 'derived' | 'missing_pnl' | 'invalid_pnl'
+
+    Rules (in order):
+      1. Parse realized_pnl. Missing → ('missing_pnl'). Malformed → ('invalid_pnl').
+      2. Derive PnL-sign outcome: pnl>0 → win, pnl<0 → loss, pnl==0 → breakeven.
+      3. Read explicit outcome field.
+      4. Explicit present and AGREES with PnL-sign → source='explicit'.
+      5. Explicit present and DISAGREES → canonical=PnL-sign, mismatch=True, source='pnl_override'.
+      6. Explicit absent/invalid → canonical=PnL-sign, source='derived'.
+    """
+    raw_pnl = getattr(trade, "realized_pnl", None)
+    if raw_pnl is None:
+        return None, None, False, "missing_pnl"
+    pnl = _sdec(raw_pnl)
     if pnl is None:
-        return ""
-    return "win" if pnl > 0 else ("loss" if pnl < 0 else "breakeven")
+        return None, None, False, "invalid_pnl"
+
+    pnl_outcome = "win" if pnl > 0 else ("loss" if pnl < 0 else "breakeven")
+    explicit    = (getattr(trade, "outcome", "") or "").lower().strip()
+
+    if explicit in ("win", "loss", "breakeven"):
+        if explicit == pnl_outcome:
+            return pnl_outcome, pnl, False, "explicit"
+        else:
+            return pnl_outcome, pnl, True, "pnl_override"
+    else:
+        return pnl_outcome, pnl, False, "derived"
 
 
 # ── Period / filter normalization ─────────────────────────────────────────────
@@ -104,25 +151,50 @@ def _lm_build_paper_performance_filters(
     side    = None,
     item_id = None,
 ) -> dict:
-    period   = _lm_normalize_performance_period(period)
-    now_utc  = datetime.now(timezone.utc)
-    from_dt  = None if period == "all" else now_utc - timedelta(days=_PERIOD_DAYS[period])
+    period  = _lm_normalize_performance_period(period)
+    now_utc = datetime.now(timezone.utc)
+    from_dt = None if period == "all" else now_utc - timedelta(days=_PERIOD_DAYS[period])
 
-    sym      = (str(symbol).strip().upper() if symbol else None) or None
-    side_n   = _SIDE_NORM.get(str(side or "").strip()) if side else None
-    side_err = (f"unknown_side:{side!r}" if side and not side_n else None)
+    # Symbol: trim + uppercase + length guard
+    sym = None
+    if symbol:
+        sym_raw = str(symbol).strip().upper()
+        if sym_raw and len(sym_raw) <= 30:
+            sym = sym_raw
+
+    # Side: case-insensitive lookup
+    side_n   = None
+    side_err = None
+    if side:
+        side_key = str(side).strip().lower()
+        side_n   = _SIDE_NORM.get(side_key)
+        if not side_n:
+            side_err = "invalid_performance_filter"
+
+    # item_id: safe integer parse — never raises
+    iid          = None
+    item_id_err  = None
+    if item_id is not None:
+        try:
+            iid = int(item_id)
+            if iid <= 0:
+                iid         = None
+                item_id_err = "must_be_positive_integer"
+        except (TypeError, ValueError):
+            item_id_err = "must_be_positive_integer"
 
     return {
         "period":   period,
         "symbol":   sym,
         "side":     side_n,
-        "item_id":  int(item_id) if item_id else None,
+        "item_id":  iid,
         "date_from": from_dt.isoformat() if from_dt else None,
         "date_to":   now_utc.isoformat(),
-        # Internal keys (prefixed with _)
-        "_from_dt": from_dt,
-        "_to_dt":   now_utc,
-        "_err":     side_err,
+        # Internal keys
+        "_from_dt":     from_dt,
+        "_to_dt":       now_utc,
+        "_side_err":    side_err,
+        "_item_id_err": item_id_err,
     }
 
 
@@ -135,38 +207,76 @@ def _lm_query_closed_paper_trades(
     side    = None,
     item_id = None,
 ) -> tuple:
-    """Return (trades_list, filters_dict).
+    """Return (trades_list, filters_dict, query_meta).
 
-    Bounded query. Deduplicates by position_id.
+    Canonical performance timestamp: coalesce(closed_at, updated_at, created_at).
+    Case-insensitive closed-status filter.
+    Counts total_available before applying the row limit.
+    Deduplicates by position_id (belt-and-suspenders above DB UNIQUE).
     """
     from models import LiveMonitorPaperTrade as _T
 
     f = _lm_build_paper_performance_filters(user_id, period, symbol, side, item_id)
 
-    q = _T.query.filter(
-        _T.user_id      == user_id,
-        _T.status       == "closed",
-        _T.realized_pnl .isnot(None),
-    )
-    if f["item_id"]:
-        q = q.filter(_T.item_id == f["item_id"])
-    if f["symbol"]:
-        q = q.filter(_T.symbol == f["symbol"])
-    if f["side"]:
-        q = q.filter(_T.side == f["side"])
-    if f["_from_dt"]:
-        q = q.filter(_T.created_at >= f["_from_dt"])
+    # Canonical performance timestamp SQL expression
+    _perf_ts = _sa_func.coalesce(_T.closed_at, _T.updated_at, _T.created_at)
 
-    rows = q.order_by(_T.created_at.asc()).limit(_MAX_ROWS).all()
+    def _base_q():
+        q = _T.query.filter(
+            _T.user_id == user_id,
+            _sa_func.lower(_sa_func.trim(_T.status)) == "closed",
+            _T.realized_pnl.isnot(None),
+        )
+        if f["item_id"]:  q = q.filter(_T.item_id == f["item_id"])
+        if f["symbol"]:   q = q.filter(_T.symbol  == f["symbol"])
+        if f["side"]:     q = q.filter(_T.side     == f["side"])
+        if f["_from_dt"]:
+            q = q.filter(_perf_ts >= f["_from_dt"])
+            q = q.filter(_perf_ts <= f["_to_dt"])
+        return q
 
-    # Python-refine by best timestamp
-    if f["_from_dt"]:
-        rows = [t for t in rows if (_ts(t) or f["_to_dt"]) >= f["_from_dt"]]
+    # Total qualifying rows (before limit) — separate COUNT query
+    try:
+        total_available = _base_q().count()
+    except Exception:
+        total_available = None
 
-    # Deduplicate by position_id (DB UNIQUE constraint already prevents this,
-    # but belt-and-suspenders for safety)
-    seen: set = set()
-    deduped   = []
+    # Count closed trades with NULL PnL in the same scope (for data quality)
+    missing_pnl_db = 0
+    try:
+        q_null = _T.query.filter(
+            _T.user_id == user_id,
+            _sa_func.lower(_sa_func.trim(_T.status)) == "closed",
+            _T.realized_pnl.is_(None),
+        )
+        if f["item_id"]:  q_null = q_null.filter(_T.item_id == f["item_id"])
+        if f["symbol"]:   q_null = q_null.filter(_T.symbol  == f["symbol"])
+        if f["side"]:     q_null = q_null.filter(_T.side     == f["side"])
+        if f["_from_dt"]:
+            q_null = q_null.filter(_perf_ts >= f["_from_dt"])
+            q_null = q_null.filter(_perf_ts <= f["_to_dt"])
+        missing_pnl_db = q_null.count()
+    except Exception:
+        missing_pnl_db = 0
+
+    # Fetch ordered by canonical timestamp, bounded
+    rows       = _base_q().order_by(_perf_ts.asc()).limit(_MAX_ROWS).all()
+    rows_loaded = len(rows)
+    truncated   = (total_available is not None) and (total_available > _MAX_ROWS)
+
+    # Python-side: detect any Numeric column values that still can't parse
+    invalid_pnl_c = 0
+    valid_rows    = []
+    for t in rows:
+        if _sdec(t.realized_pnl) is None:
+            invalid_pnl_c += 1
+        else:
+            valid_rows.append(t)
+    rows = valid_rows
+
+    # Deduplicate by position_id
+    seen:   set  = set()
+    deduped: list = []
     for t in rows:
         pid = getattr(t, "position_id", None)
         if pid is not None:
@@ -175,67 +285,113 @@ def _lm_query_closed_paper_trades(
             seen.add(pid)
         deduped.append(t)
 
-    return deduped, f
+    query_meta = {
+        "row_limit":       _MAX_ROWS,
+        "total_available": total_available,
+        "rows_loaded":     rows_loaded,
+        "truncated":       truncated,
+        "missing_pnl_db":  missing_pnl_db,
+        "invalid_pnl_c":   invalid_pnl_c,
+    }
+
+    return deduped, f, query_meta
 
 
 # ── Core metrics ──────────────────────────────────────────────────────────────
 
-def _compute_core_metrics(trades: list) -> dict:
-    trade_count = win_count = loss_count = be_count = 0
-    explicit_c = derived_c = missing_pnl_c = 0
+def _compute_core_metrics(trades: list, extra_dq: dict = None) -> dict:
+    """Compute all core performance metrics.
 
-    gross_profit = Decimal("0")
-    gross_loss   = Decimal("0")
+    Monetary aggregates use realized_pnl SIGN — never the outcome label.
+    Canonical outcome is resolved via _lm_classify_paper_trade_outcome.
+    """
+    trade_count = win_count = loss_count = be_count = 0
+    explicit_c  = derived_c = mismatch_c             = 0
+    missing_ts_c = missing_rr_c = missing_dur_c = missing_pct_c = 0
+
+    gross_profit = Decimal("0")   # sum of pnl where pnl > 0
+    gross_loss   = Decimal("0")   # abs sum of pnl where pnl < 0
+    direct_sum   = Decimal("0")   # direct sum of every valid pnl
 
     pnl_list  = []
     pct_list  = []
     rr_list   = []
     dur_list  = []
     win_pnls  = []
-    loss_mags = []  # abs value of losses
+    loss_mags = []
+
+    dq_extra = extra_dq or {}
 
     for t in trades:
-        pnl = _sdec(t.realized_pnl)
-        if pnl is None:
-            missing_pnl_c += 1
-            continue
+        canonical, pnl, mismatch, source = _lm_classify_paper_trade_outcome(t)
+        if canonical is None:
+            continue  # missing / invalid PnL counted at query time
 
         trade_count += 1
-        o_raw = (getattr(t, "outcome", "") or "").lower().strip()
-        if o_raw in ("win", "loss", "breakeven"):
-            explicit_c += 1
-            o = o_raw
-        else:
-            derived_c += 1
-            o = "win" if pnl > 0 else ("loss" if pnl < 0 else "breakeven")
+        direct_sum  += pnl
+        pnl_list.append(pnl)
 
-        if o == "win":
-            win_count    += 1
-            gross_profit += pnl
-            win_pnls.append(pnl)
-        elif o == "loss":
+        # Outcome counts (canonical, PnL-sign based)
+        if canonical == "win":
+            win_count += 1
+        elif canonical == "loss":
             loss_count += 1
-            gross_loss += abs(pnl)
-            loss_mags.append(abs(pnl))
         else:
             be_count += 1
 
-        pnl_list.append(pnl)
+        # Source tracking
+        if source == "explicit":
+            explicit_c += 1
+        elif source == "pnl_override":
+            mismatch_c += 1
+        else:
+            derived_c += 1
 
+        # Monetary: ALWAYS PnL sign, NEVER outcome label
+        if pnl > 0:
+            gross_profit += pnl
+            win_pnls.append(pnl)
+        elif pnl < 0:
+            gross_loss += abs(pnl)
+            loss_mags.append(abs(pnl))
+
+        # Timestamp quality
+        if _ts(t) is None:
+            missing_ts_c += 1
+
+        # Optional metrics
         pct = _sdec(getattr(t, "realized_pnl_pct", None))
         if pct is not None:
             pct_list.append(pct)
+        else:
+            missing_pct_c += 1
 
         rr = _sdec(getattr(t, "risk_reward", None))
         if rr is not None and rr > 0:
             rr_list.append(rr)
+        else:
+            missing_rr_c += 1
 
         dur = getattr(t, "duration_seconds", None)
         if dur is not None:
             try:
                 dur_list.append(int(dur))
             except (TypeError, ValueError):
-                pass
+                missing_dur_c += 1
+        else:
+            missing_dur_c += 1
+
+    base_dq = {
+        "explicit_outcome_count":       explicit_c,
+        "derived_outcome_count":        derived_c,
+        "outcome_pnl_mismatch_count":   mismatch_c,
+        "missing_pnl_count":            dq_extra.get("missing_pnl_db", 0),
+        "invalid_pnl_count":            dq_extra.get("invalid_pnl_c", 0),
+        "missing_timestamp_count":      missing_ts_c,
+        "missing_risk_reward_count":    missing_rr_c,
+        "missing_duration_count":       missing_dur_c,
+        "missing_pnl_percentage_count": missing_pct_c,
+    }
 
     if trade_count == 0:
         return {
@@ -250,21 +406,19 @@ def _compute_core_metrics(trades: list) -> dict:
             "average_risk_reward": None, "median_risk_reward": None,
             "average_realized_pnl_pct": None, "median_realized_pnl_pct": None,
             "average_duration_seconds": None, "median_duration_seconds": None,
-            "data_quality": {
-                "explicit_outcome_count": 0, "derived_outcome_count": 0,
-                "missing_pnl_count": missing_pnl_c, "invalid_pnl_count": 0,
-            },
+            "pnl_sum_reconciliation": None,
+            "data_quality": base_dq,
         }
 
-    tc   = Decimal(str(trade_count))
-    net  = gross_profit - gross_loss
-    wr   = Decimal(str(win_count))  / tc * Decimal("100")
-    lr   = Decimal(str(loss_count)) / tc * Decimal("100")
-    ber  = Decimal(str(be_count))   / tc * Decimal("100")
+    tc  = Decimal(str(trade_count))
+    net = gross_profit - gross_loss   # = direct_sum (verified below)
+    wr  = Decimal(str(win_count))  / tc * Decimal("100")
+    lr  = Decimal(str(loss_count)) / tc * Decimal("100")
+    ber = Decimal(str(be_count))   / tc * Decimal("100")
 
-    avg_pnl  = net / tc
-    avg_win  = gross_profit / Decimal(str(win_count))  if win_count  > 0 else None
-    avg_loss = gross_loss   / Decimal(str(loss_count)) if loss_count > 0 else None
+    avg_pnl  = direct_sum / tc
+    avg_win  = gross_profit / Decimal(str(len(win_pnls)))  if win_pnls  else None
+    avg_loss = gross_loss   / Decimal(str(len(loss_mags))) if loss_mags else None
     med_pnl  = Decimal(str(_stat_median(float(p) for p in pnl_list)))
 
     largest_win  = max(win_pnls,  default=None)
@@ -289,9 +443,7 @@ def _compute_core_metrics(trades: list) -> dict:
 
     # Expectancy: (win_rate × avg_win) − (loss_rate × avg_loss)
     if avg_win is not None and avg_loss is not None:
-        wr_d = wr / Decimal("100")
-        lr_d = lr / Decimal("100")
-        exp  = (wr_d * avg_win) - (lr_d * avg_loss)
+        exp = (wr / Decimal("100") * avg_win) - (lr / Decimal("100") * avg_loss)
     else:
         exp = None
 
@@ -319,45 +471,53 @@ def _compute_core_metrics(trades: list) -> dict:
         if pct_list else None
     )
 
+    # PnL sum reconciliation: gross_profit − gross_loss must equal direct_sum
+    recon_match = abs(net - direct_sum) < Decimal("0.00000001")
+    recon = {
+        "direct_sum":                    _ds(direct_sum),
+        "gross_profit_minus_gross_loss": _ds(net),
+        "matches":                       recon_match,
+    }
+
     return {
-        "trade_count":           trade_count,
-        "win_count":             win_count,
-        "loss_count":            loss_count,
-        "breakeven_count":       be_count,
-        "win_rate_pct":          _ds(wr),
-        "loss_rate_pct":         _ds(lr),
-        "breakeven_rate_pct":    _ds(ber),
-        "gross_profit":          _ds(gross_profit),
-        "gross_loss":            _ds(gross_loss),
-        "net_realized_pnl":      _ds(net),
-        "average_pnl_per_trade": _ds(avg_pnl),
-        "average_win":           _ds(avg_win),
-        "average_loss":          _ds(avg_loss),
-        "median_pnl":            _ds(med_pnl),
-        "largest_win":           _ds(largest_win),
-        "largest_loss":          _ds(largest_loss),
-        "profit_factor":         _ds(pf),
-        "profit_factor_reason":  pf_reason,
-        "payoff_ratio":          _ds(payoff),
-        "expectancy_amount":     _ds(exp),
-        "average_risk_reward":   _ds(avg_rr),
-        "median_risk_reward":    _ds(med_rr),
+        "trade_count":             trade_count,
+        "win_count":               win_count,
+        "loss_count":              loss_count,
+        "breakeven_count":         be_count,
+        "win_rate_pct":            _ds(wr),
+        "loss_rate_pct":           _ds(lr),
+        "breakeven_rate_pct":      _ds(ber),
+        "gross_profit":            _ds(gross_profit),
+        "gross_loss":              _ds(gross_loss),
+        "net_realized_pnl":        _ds(net),
+        "average_pnl_per_trade":   _ds(avg_pnl),
+        "average_win":             _ds(avg_win),
+        "average_loss":            _ds(avg_loss),
+        "median_pnl":              _ds(med_pnl),
+        "largest_win":             _ds(largest_win),
+        "largest_loss":            _ds(largest_loss),
+        "profit_factor":           _ds(pf),
+        "profit_factor_reason":    pf_reason,
+        "payoff_ratio":            _ds(payoff),
+        "expectancy_amount":       _ds(exp),
+        "average_risk_reward":     _ds(avg_rr),
+        "median_risk_reward":      _ds(med_rr),
         "average_realized_pnl_pct": _ds(avg_pct),
         "median_realized_pnl_pct":  _ds(med_pct),
         "average_duration_seconds": avg_dur,
         "median_duration_seconds":  med_dur,
-        "data_quality": {
-            "explicit_outcome_count": explicit_c,
-            "derived_outcome_count":  derived_c,
-            "missing_pnl_count":      missing_pnl_c,
-            "invalid_pnl_count":      0,
-        },
+        "pnl_sum_reconciliation":   recon,
+        "data_quality":             base_dq,
     }
 
 
 # ── Sample quality ────────────────────────────────────────────────────────────
 
-def _compute_sample_quality(metrics: dict, trades: list) -> dict:
+def _compute_sample_quality(
+    metrics: dict,
+    trades: list,
+    query_meta: dict = None,
+) -> dict:
     tc = metrics.get("trade_count", 0)
     sq = (
         "insufficient" if tc < 10  else
@@ -365,38 +525,55 @@ def _compute_sample_quality(metrics: dict, trades: list) -> dict:
         "developing"   if tc < 100 else
         "meaningful"
     )
-    warnings = []
+    dq = metrics.get("data_quality", {})
+    warnings: list = []
+
     if tc < 10:
         warnings.append("small_sample_size")
-    if tc > 0 and metrics.get("win_count", 0) == 0:
+    if tc > 0 and metrics.get("win_count",  0) == 0:
         warnings.append("no_wins_in_sample")
     if tc > 0 and metrics.get("loss_count", 0) == 0:
         warnings.append("no_losses_in_sample")
-    if trades:
-        if any(_sdec(getattr(t, "risk_reward",     None)) is None for t in trades):
-            warnings.append("missing_risk_reward_data")
-        if any(getattr(t, "duration_seconds", None)        is None for t in trades):
-            warnings.append("missing_duration_data")
-        if any(_sdec(getattr(t, "realized_pnl_pct", None)) is None for t in trades):
-            warnings.append("missing_pnl_percentage_data")
-    if metrics.get("data_quality", {}).get("missing_pnl_count", 0) > 0:
+    if dq.get("outcome_pnl_mismatch_count", 0) > 0:
+        warnings.append("outcome_pnl_mismatch_detected")
+    if dq.get("missing_risk_reward_count",    0) > 0:
+        warnings.append("missing_risk_reward_data")
+    if dq.get("missing_duration_count",       0) > 0:
+        warnings.append("missing_duration_data")
+    if dq.get("missing_pnl_percentage_count", 0) > 0:
+        warnings.append("missing_pnl_percentage_data")
+    if dq.get("missing_timestamp_count",      0) > 0:
+        warnings.append("missing_timestamp_data")
+    if dq.get("missing_pnl_count", 0) > 0 or dq.get("invalid_pnl_count", 0) > 0:
         warnings.append("journal_data_incomplete")
+    recon = metrics.get("pnl_sum_reconciliation") or {}
+    if recon and not recon.get("matches", True):
+        warnings.append("analytics_reconciliation_failed")
+    if (query_meta or {}).get("truncated"):
+        warnings.append("analytics_row_limit_reached")
+
+    # Deduplicate, preserve order
+    seen_w:    set  = set()
+    deduped_w: list = []
+    for w in warnings:
+        if w not in seen_w:
+            seen_w.add(w)
+            deduped_w.append(w)
+
     return {
         "sample_quality":             sq,
         "sample_size":                tc,
         "minimum_recommended_trades": 30,
-        "warnings":                   warnings,
+        "warnings":                   deduped_w,
     }
 
 
 # ── Equity curve + drawdown ───────────────────────────────────────────────────
 
-def _lm_build_paper_equity_curve(trades: list) -> tuple:
-    """Build realized cumulative-PnL curve. Returns (curve_points, total_valid, drawdown)."""
-    _epoch = datetime.min.replace(tzinfo=timezone.utc)
-
+def _build_equity_raw(trades: list) -> list:
+    """Build raw [{trade_id, _c}] series sorted by canonical timestamp."""
+    _epoch  = datetime.min.replace(tzinfo=timezone.utc)
     ordered = sorted(trades, key=lambda t: (_ts(t) or _epoch))
-
     running = Decimal("0")
     raw     = []
     for t in ordered:
@@ -415,9 +592,14 @@ def _lm_build_paper_equity_curve(trades: list) -> tuple:
             "cumulative_realized_pnl": _ds(running),
             "_c":                     running,
         })
+    return raw
 
+
+def _lm_build_paper_equity_curve(trades: list) -> tuple:
+    """Build realized cumulative-PnL curve. Returns (curve_points, total_valid, drawdown)."""
+    raw        = _build_equity_raw(trades)
     total_valid = len(raw)
-    drawdown    = _compute_drawdown(raw)
+    drawdown   = _compute_drawdown(raw)
 
     if total_valid > _MAX_CURVE:
         raw = _downsample_curve(raw)
@@ -440,14 +622,13 @@ def _downsample_curve(points: list) -> list:
         prev_c = points[i - 1]["_c"]
         curr_c = points[i]["_c"]
         next_c = points[i + 1]["_c"]
-        if curr_c >= prev_c and curr_c >= next_c:
-            sel.add(i)
-        elif curr_c <= prev_c and curr_c <= next_c:
+        if (curr_c >= prev_c and curr_c >= next_c) or (curr_c <= prev_c and curr_c <= next_c):
             sel.add(i)
     return [points[i] for i in sorted(sel)]
 
 
 def _compute_drawdown(raw: list) -> dict:
+    """Realized cumulative-PnL drawdown from an equity raw series."""
     EMPTY = {
         "max_drawdown_amount": "0",
         "max_drawdown_pct":    None,
@@ -459,10 +640,10 @@ def _compute_drawdown(raw: list) -> dict:
     if not raw:
         return EMPTY
 
-    peak      = Decimal("0")
-    max_dd    = Decimal("0")
-    peak_tid  = None
-    trough_tid = None
+    peak         = Decimal("0")
+    max_dd       = Decimal("0")
+    peak_tid     = None
+    trough_tid   = None
     cur_peak_tid = None
 
     for p in raw:
@@ -492,7 +673,7 @@ def _compute_drawdown(raw: list) -> dict:
     if trough_tid is not None:
         idx = next((i for i, p in enumerate(raw) if p["trade_id"] == trough_tid), None)
         if idx is not None:
-            peak_c = raw[idx]["_c"] + max_dd
+            peak_c    = raw[idx]["_c"] + max_dd
             recovered = any(p["_c"] >= peak_c for p in raw[idx + 1:])
 
     return {
@@ -505,16 +686,23 @@ def _compute_drawdown(raw: list) -> dict:
     }
 
 
+def _compute_drawdown_from_trades(trades: list) -> dict:
+    """Convenience: build equity raw from trades and compute drawdown."""
+    raw = _build_equity_raw(trades)
+    return _compute_drawdown(raw)
+
+
 # ── Streaks ───────────────────────────────────────────────────────────────────
 
 def _compute_streaks(trades: list) -> dict:
+    _epoch  = datetime.min.replace(tzinfo=timezone.utc)
+    ordered = sorted(trades, key=lambda t: (_ts(t) or _epoch))
+
     outcomes = []
-    _epoch   = datetime.min.replace(tzinfo=timezone.utc)
-    ordered  = sorted(trades, key=lambda t: (_ts(t) or _epoch))
     for t in ordered:
-        if _sdec(t.realized_pnl) is None:
-            continue
-        outcomes.append(_outcome_of(t))
+        canonical, _, _, _ = _lm_classify_paper_trade_outcome(t)
+        if canonical is not None:
+            outcomes.append(canonical)
 
     max_win = max_loss = 0
     rw = rl = 0
@@ -531,7 +719,7 @@ def _compute_streaks(trades: list) -> dict:
     cur_win = cur_loss = 0
     for o in reversed(outcomes):
         if cur_win == 0 and cur_loss == 0:
-            if o == "win":   cur_win  = 1
+            if o == "win":    cur_win  = 1
             elif o == "loss": cur_loss = 1
             else:             break
         elif cur_win > 0:
@@ -560,25 +748,29 @@ def _lm_build_paper_performance_breakdowns(trades: list, period: str) -> dict:
     sym_m = {}; side_m = {}; reason_m = {}; time_m = {}
 
     for t in trades:
-        pnl = _sdec(t.realized_pnl)
-        if pnl is None:
+        canonical, pnl, _, _ = _lm_classify_paper_trade_outcome(t)
+        if canonical is None:
             continue
-        o   = _outcome_of(t)
-        sym    = (getattr(t, "symbol",        "") or "").upper() or "UNKNOWN"
-        side   = (getattr(t, "side",          "") or "").upper() or "UNKNOWN"
-        reason = (getattr(t, "outcome_reason","") or "unknown").lower()
+
+        sym    = (getattr(t, "symbol",         "") or "").upper() or "UNKNOWN"
+        side   = (getattr(t, "side",           "") or "").upper() or "UNKNOWN"
+        reason = (getattr(t, "outcome_reason", "") or "unknown").lower()
         ts_v   = _ts(t)
 
         def _push(mp, key):
-            if key not in mp:
-                mp[key] = _nb()
-            b = mp[key]
-            if o == "win":
-                b["w"] += 1; b["gp"] += pnl
-            elif o == "loss":
-                b["l"] += 1; b["gl"] += abs(pnl)
+            b = mp.setdefault(key, _nb())
+            # Win/loss counts use canonical outcome
+            if canonical == "win":
+                b["w"] += 1
+            elif canonical == "loss":
+                b["l"] += 1
             else:
                 b["be"] += 1
+            # Monetary: PnL sign, never outcome label
+            if pnl > 0:
+                b["gp"] += pnl
+            elif pnl < 0:
+                b["gl"] += abs(pnl)
 
         _push(sym_m,    sym)
         _push(side_m,   side)
@@ -594,18 +786,20 @@ def _lm_build_paper_performance_breakdowns(trades: list, period: str) -> dict:
         for k, b in mp.items():
             cnt = b["w"] + b["l"] + b["be"]
             net = b["gp"] - b["gl"]
-            wr  = _ds(Decimal(str(b["w"])) / Decimal(str(cnt)) * Decimal("100")) if cnt > 0 else None
-            avg = _ds(net / Decimal(str(cnt))) if cnt > 0 else None
+            wr  = _ds(Decimal(str(b["w"])) / Decimal(str(cnt)) * Decimal("100")) if cnt else None
+            avg = _ds(net / Decimal(str(cnt))) if cnt else None
             pf  = _ds(b["gp"] / b["gl"]) if b["gl"] > 0 else None
             out.append({
-                lbl:              k,
-                "trade_count":    cnt,
-                "wins":           b["w"],
-                "losses":         b["l"],
-                "win_rate_pct":   wr,
+                lbl:                k,
+                "trade_count":      cnt,
+                "wins":             b["w"],
+                "losses":           b["l"],
+                "win_rate_pct":     wr,
                 "net_realized_pnl": _ds(net),
-                "average_pnl":    avg,
-                "profit_factor":  pf,
+                "gross_profit":     _ds(b["gp"]),
+                "gross_loss":       _ds(b["gl"]),
+                "average_pnl":      avg,
+                "profit_factor":    pf,
             })
         out.sort(key=lambda x: (-x["trade_count"], -(float(x["net_realized_pnl"] or "0"))))
         return out[:limit]
@@ -635,7 +829,12 @@ def _lm_build_paper_performance_breakdowns(trades: list, period: str) -> dict:
 
 # ── Period comparison ─────────────────────────────────────────────────────────
 
-def _compute_trend(cur: dict, pri: dict) -> str:
+def _compute_trend(
+    cur: dict,
+    pri: dict,
+    cur_drawdown: dict = None,
+    pri_drawdown: dict = None,
+) -> str:
     if cur.get("trade_count", 0) < 5 or pri.get("trade_count", 0) < 5:
         return "insufficient_data"
     imp = det = 0
@@ -658,13 +857,27 @@ def _compute_trend(cur: dict, pri: dict) -> str:
     _cmp("profit_factor")
     _cmp("expectancy_amount")
 
+    # Optional drawdown comparison (lower is better)
+    if cur_drawdown and pri_drawdown:
+        cv = _sdec((cur_drawdown or {}).get("max_drawdown_amount"))
+        pv = _sdec((pri_drawdown or {}).get("max_drawdown_amount"))
+        if cv is not None and pv is not None:
+            if cv < pv:   imp += 1
+            elif cv > pv: det += 1
+
     if imp >= 2 and det == 0: return "improving"
     if det >= 2 and imp == 0: return "deteriorating"
     return "mixed"
 
 
 def _lm_compute_period_comparison(
-    user_id, period, symbol, side_norm, item_id, current_metrics,
+    user_id,
+    period,
+    symbol,
+    side_norm,
+    item_id,
+    current_metrics,
+    current_drawdown = None,
 ) -> dict:
     if period == "all":
         return {"available": False, "reason": "period_all_no_comparison"}
@@ -676,56 +889,61 @@ def _lm_compute_period_comparison(
 
     try:
         from models import LiveMonitorPaperTrade as _T
-        q = _T.query.filter(
-            _T.user_id      == user_id,
-            _T.status       == "closed",
-            _T.realized_pnl .isnot(None),
-            _T.created_at   >= prior_start,
-            _T.created_at   <  prior_end,
-        )
-        if item_id:  q = q.filter(_T.item_id == item_id)
-        if symbol:   q = q.filter(_T.symbol  == symbol)
-        if side_norm: q = q.filter(_T.side   == side_norm)
+        _perf_ts = _sa_func.coalesce(_T.closed_at, _T.updated_at, _T.created_at)
 
-        prior_rows = q.order_by(_T.created_at.asc()).limit(_MAX_ROWS).all()
-        prior_rows = [
-            t for t in prior_rows
-            if (_ts(t) or now_utc) >= prior_start and (_ts(t) or now_utc) < prior_end
-        ]
+        q = _T.query.filter(
+            _T.user_id == user_id,
+            _sa_func.lower(_sa_func.trim(_T.status)) == "closed",
+            _T.realized_pnl.isnot(None),
+            _perf_ts >= prior_start,
+            _perf_ts <  prior_end,
+        )
+        if item_id:   q = q.filter(_T.item_id == item_id)
+        if symbol:    q = q.filter(_T.symbol  == symbol)
+        if side_norm: q = q.filter(_T.side     == side_norm)
+
+        prior_rows = q.order_by(_perf_ts.asc()).limit(_MAX_ROWS).all()
     except Exception as _e:
         return {"available": False, "reason": f"query_error:{str(_e)[:80]}"}
 
-    pri = _compute_core_metrics(prior_rows)
-    trend = _compute_trend(current_metrics, pri)
+    pri          = _compute_core_metrics(prior_rows)
+    prior_dd     = _compute_drawdown_from_trades(prior_rows)
+    trend        = _compute_trend(current_metrics, pri, current_drawdown, prior_dd)
 
     def _delta(key):
         cv = _sdec(current_metrics.get(key))
         pv = _sdec(pri.get(key))
         return _ds(cv - pv) if cv is not None and pv is not None else None
 
+    cur_dd_amt = _sdec((current_drawdown or {}).get("max_drawdown_amount"))
+    pri_dd_amt = _sdec(prior_dd.get("max_drawdown_amount"))
+    dd_delta   = _ds(cur_dd_amt - pri_dd_amt) if cur_dd_amt is not None and pri_dd_amt is not None else None
+
     return {
         "available":  True,
         "trend":      trend,
         "current_period": {
-            "trade_count":      current_metrics.get("trade_count"),
-            "win_rate_pct":     current_metrics.get("win_rate_pct"),
-            "net_realized_pnl": current_metrics.get("net_realized_pnl"),
-            "profit_factor":    current_metrics.get("profit_factor"),
+            "trade_count":       current_metrics.get("trade_count"),
+            "win_rate_pct":      current_metrics.get("win_rate_pct"),
+            "net_realized_pnl":  current_metrics.get("net_realized_pnl"),
+            "profit_factor":     current_metrics.get("profit_factor"),
             "expectancy_amount": current_metrics.get("expectancy_amount"),
         },
         "prior_period": {
-            "trade_count":      pri.get("trade_count"),
-            "win_rate_pct":     pri.get("win_rate_pct"),
-            "net_realized_pnl": pri.get("net_realized_pnl"),
-            "profit_factor":    pri.get("profit_factor"),
+            "trade_count":       pri.get("trade_count"),
+            "win_rate_pct":      pri.get("win_rate_pct"),
+            "net_realized_pnl":  pri.get("net_realized_pnl"),
+            "profit_factor":     pri.get("profit_factor"),
             "expectancy_amount": pri.get("expectancy_amount"),
         },
         "deltas": {
-            "trade_count_delta":   (current_metrics.get("trade_count") or 0) - (pri.get("trade_count") or 0),
-            "win_rate_pct_delta":  _delta("win_rate_pct"),
-            "net_pnl_delta":       _delta("net_realized_pnl"),
-            "average_pnl_delta":   _delta("average_pnl_per_trade"),
-            "profit_factor_delta": _delta("profit_factor"),
+            "trade_count_delta":         (current_metrics.get("trade_count") or 0) - (pri.get("trade_count") or 0),
+            "win_rate_pct_delta":        _delta("win_rate_pct"),
+            "net_pnl_delta":             _delta("net_realized_pnl"),
+            "average_pnl_delta":         _delta("average_pnl_per_trade"),
+            "profit_factor_delta":       _delta("profit_factor"),
+            "expectancy_delta":          _delta("expectancy_amount"),
+            "max_drawdown_amount_delta": dd_delta,
         },
     }
 
@@ -737,6 +955,7 @@ def _build_recent_trades(trades: list) -> list:
     srt    = sorted(trades, key=lambda t: (_ts(t) or _epoch), reverse=True)
     out    = []
     for t in srt[:_MAX_RECENT]:
+        canonical, _, _, _ = _lm_classify_paper_trade_outcome(t)
         ts_v = _ts(t)
         out.append({
             "id":               t.id,
@@ -748,7 +967,8 @@ def _build_recent_trades(trades: list) -> list:
             "exit_price":       getattr(t, "exit_price",    None),
             "realized_pnl":     _ds(_sdec(t.realized_pnl)),
             "realized_pnl_pct": _ds(_sdec(getattr(t, "realized_pnl_pct", None))),
-            "outcome":          getattr(t, "outcome",       "") or "",
+            "outcome":          canonical or "",
+            "outcome_raw":      getattr(t, "outcome",       "") or "",
             "outcome_reason":   getattr(t, "outcome_reason","") or "",
             "risk_reward":      _ds(_sdec(getattr(t, "risk_reward", None))),
             "duration_seconds": getattr(t, "duration_seconds", None),
@@ -788,7 +1008,9 @@ def _lm_get_paper_performance_state(
     now_iso = datetime.now(timezone.utc).isoformat()
 
     try:
-        trades, f = _lm_query_closed_paper_trades(user_id, period, symbol, side, item_id)
+        trades, f, qmeta = _lm_query_closed_paper_trades(
+            user_id, period, symbol, side, item_id
+        )
     except Exception as _e:
         return {
             "ok":          False,
@@ -801,23 +1023,43 @@ def _lm_get_paper_performance_state(
 
     pub_f = {k: v for k, v in f.items() if not k.startswith("_")}
 
-    if f.get("_err"):
+    # Validate filters
+    if f.get("_item_id_err"):
         return {
-            "ok":          False,
-            "phase":       _PHASE,
-            "error":       "invalid_performance_filter",
-            "field_errors": {"side": f["_err"]},
-            "filters":     pub_f,
-            "guardrails":  dict(_GUARDRAILS),
-            "source":      "internal_paper_performance",
-            "computed_at": now_iso,
+            "ok":           False,
+            "phase":        _PHASE,
+            "error":        "invalid_performance_filter",
+            "field_errors": {"item_id": f["_item_id_err"]},
+            "filters":      pub_f,
+            "guardrails":   dict(_GUARDRAILS),
+            "source":       "internal_paper_performance",
+            "computed_at":  now_iso,
         }
+    if f.get("_side_err"):
+        return {
+            "ok":           False,
+            "phase":        _PHASE,
+            "error":        "invalid_performance_filter",
+            "field_errors": {"side": f["_side_err"]},
+            "filters":      pub_f,
+            "guardrails":   dict(_GUARDRAILS),
+            "source":       "internal_paper_performance",
+            "computed_at":  now_iso,
+        }
+
+    query_section = {
+        "row_limit":       qmeta["row_limit"],
+        "total_available": qmeta["total_available"],
+        "rows_loaded":     qmeta["rows_loaded"],
+        "truncated":       qmeta["truncated"],
+    }
 
     if not trades:
         return {
             "ok":      True,
             "phase":   _PHASE,
             "filters": pub_f,
+            "query":   query_section,
             "summary": {"trade_count": 0},
             "drawdown": _compute_drawdown([]),
             "streaks":  {"current_win_streak": 0, "current_loss_streak": 0,
@@ -825,24 +1067,32 @@ def _lm_get_paper_performance_state(
             "sample":   {"sample_quality": "insufficient", "sample_size": 0,
                          "minimum_recommended_trades": 30,
                          "warnings": ["no_closed_paper_trades"]},
-            "comparison": {"available": False, "reason": "no_trades"},
-            "account":    _build_account_context(user_id),
+            "comparison":   {"available": False, "reason": "no_trades"},
+            "account":      _build_account_context(user_id),
             "equity_curve": [], "equity_curve_total_valid": 0,
-            "breakdowns": {"symbols": [], "sides": [], "outcome_reasons": [], "time_buckets": []},
+            "breakdowns":   {"symbols": [], "sides": [], "outcome_reasons": [], "time_buckets": []},
             "recent_trades": [],
-            "data_quality": {},
+            "data_quality":  {
+                "explicit_outcome_count": 0, "derived_outcome_count": 0,
+                "outcome_pnl_mismatch_count": 0,
+                "missing_pnl_count": qmeta.get("missing_pnl_db", 0),
+                "invalid_pnl_count": qmeta.get("invalid_pnl_c",  0),
+                "missing_timestamp_count": 0, "missing_risk_reward_count": 0,
+                "missing_duration_count": 0,  "missing_pnl_percentage_count": 0,
+            },
             "guardrails":  dict(_GUARDRAILS),
             "source":      "internal_paper_performance",
             "computed_at": now_iso,
         }
 
-    summary    = _compute_core_metrics(trades)
+    summary    = _compute_core_metrics(trades, extra_dq=qmeta)
     curve, tv, drawdown = _lm_build_paper_equity_curve(trades)
     streaks    = _compute_streaks(trades)
-    sample     = _compute_sample_quality(summary, trades)
+    sample     = _compute_sample_quality(summary, trades, query_meta=qmeta)
     breakdowns = _lm_build_paper_performance_breakdowns(trades, f["period"])
     comparison = _lm_compute_period_comparison(
-        user_id, f["period"], f["symbol"], f["side"], f["item_id"], summary,
+        user_id, f["period"], f["symbol"], f["side"], f["item_id"],
+        summary, drawdown,
     )
     recent  = _build_recent_trades(trades)
     account = _build_account_context(user_id)
@@ -851,21 +1101,21 @@ def _lm_get_paper_performance_state(
         "ok":      True,
         "phase":   _PHASE,
         "filters": pub_f,
+        "query":   query_section,
         "summary": summary,
         "drawdown": drawdown,
         "streaks":  streaks,
         "sample":   sample,
         "comparison": comparison,
         "account":  account,
-        "equity_curve": curve,
+        "equity_curve":             curve,
         "equity_curve_total_valid": tv,
-        "breakdowns": breakdowns,
-        "recent_trades": recent,
-        "data_quality": summary.get("data_quality", {}),
-        "guardrails":  dict(_GUARDRAILS),
-        "source":      "internal_paper_performance",
-        "engine_source": "internal_paper_performance",
-        "computed_at":   now_iso,
+        "breakdowns":               breakdowns,
+        "recent_trades":            recent,
+        "data_quality":             summary.get("data_quality", {}),
+        "guardrails":               dict(_GUARDRAILS),
+        "source":                   "internal_paper_performance",
+        "computed_at":              now_iso,
     }
 
 

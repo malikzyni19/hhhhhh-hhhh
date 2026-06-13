@@ -21099,25 +21099,29 @@ def _lm_paper_performance_summary_for_ai(user_id, item_id=None) -> dict:
         streaks = state.get("streaks") or {}
         comp    = state.get("comparison") or {}
         warns   = sample.get("warnings", [])
+        dq      = (state.get("data_quality") or (state.get("summary") or {}).get("data_quality") or {})
+        qmeta   = state.get("query") or {}
         return {
-            "ok":                      True,
-            "period":                  state.get("filters", {}).get("period", "30d"),
-            "sample_size":             summary.get("trade_count", 0),
-            "sample_quality":          sample.get("sample_quality", "insufficient"),
-            "win_rate_pct":            summary.get("win_rate_pct"),
-            "net_realized_pnl":        summary.get("net_realized_pnl"),
-            "profit_factor":           summary.get("profit_factor"),
-            "expectancy_amount":       summary.get("expectancy_amount"),
-            "max_drawdown_amount":     (state.get("drawdown") or {}).get("max_drawdown_amount"),
-            "current_win_streak":      streaks.get("current_win_streak", 0),
-            "current_loss_streak":     streaks.get("current_loss_streak", 0),
-            "recent_trend":            comp.get("trend", "insufficient_data"),
-            "warning_count":           len(warns),
-            "read_only":               True,
-            "can_auto_submit":         False,
-            "auto_execution_allowed":  False,
-            "ai_can_execute":          False,
-            "source":                  "paper_performance",
+            "ok":                         True,
+            "period":                     state.get("filters", {}).get("period", "30d"),
+            "sample_size":                summary.get("trade_count", 0),
+            "sample_quality":             sample.get("sample_quality", "insufficient"),
+            "win_rate_pct":               summary.get("win_rate_pct"),
+            "net_realized_pnl":           summary.get("net_realized_pnl"),
+            "profit_factor":              summary.get("profit_factor"),
+            "expectancy_amount":          summary.get("expectancy_amount"),
+            "max_drawdown_amount":        (state.get("drawdown") or {}).get("max_drawdown_amount"),
+            "current_win_streak":         streaks.get("current_win_streak", 0),
+            "current_loss_streak":        streaks.get("current_loss_streak", 0),
+            "recent_trend":               comp.get("trend", "insufficient_data"),
+            "warning_count":              len(warns),
+            "truncated":                  qmeta.get("truncated", False),
+            "outcome_pnl_mismatch_count": dq.get("outcome_pnl_mismatch_count", 0),
+            "read_only":                  True,
+            "can_auto_submit":            False,
+            "auto_execution_allowed":     False,
+            "ai_can_execute":             False,
+            "source":                     "paper_performance",
         }
     except Exception as _epp:
         return {"ok": False, "error": str(_epp)[:120], "read_only": True}
