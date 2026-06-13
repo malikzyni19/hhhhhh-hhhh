@@ -14017,7 +14017,360 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         '<div class="bt-settings-row"><span class="bt-settings-k">Avg Max R</span><span class="bt-settings-v">'+_btFmt(os.avg_max_r_reached,"R")+'</span></div>'+
         '<div class="bt-settings-row"><span class="bt-settings-k">Avg Max Adverse R</span><span class="bt-settings-v">'+_btFmt(os.avg_max_adverse_r,"R")+'</span></div>'+
       '</div>'+
-      tvSection;
+      tvSection+
+      '<div class="bt-settings-card" id="btThrLabSection" style="margin-top:16px">'+
+        '<div class="bt-settings-h" style="color:#38bdf8">TV OB% Threshold Lab'+
+          '<span class="bt-chart-hsub" style="font-weight:400;color:#64748b;margin-left:8px">Tests minimum pre-touch TV OB% cutoffs against realized performance and retained trade count.</span>'+
+        '</div>'+
+        '<div id="btThrLabInner"></div>'+
+      '</div>';
+
+    // ── Threshold lab state ─────────────────────────────────────────────────
+    var _thrLabData=(os.tv_ob_pct_threshold_analysis)||{};
+    var _thrMetric="before_first_touch";
+    var _thrRrView="best";
+
+    function _thrFmt(v,d){if(v==null)return"—";var n=Number(v);return isNaN(n)?"—":n.toFixed(d!=null?d:3);}
+    function _thrDelta(v){if(v==null)return"—";var n=Number(v);return isNaN(n)?"—":(n>=0?"<span style='color:#22c55e'>+"+n.toFixed(3)+"</span>":"<span style='color:#ef4444'>"+n.toFixed(3)+"</span>");}
+    function _thrBadge(ss){
+      if(ss==="strong")return"<span style='color:#22c55e;font-size:9px;font-weight:700'>STRONG</span>";
+      if(ss==="usable")return"<span style='color:#22d3ee;font-size:9px;font-weight:700'>USABLE</span>";
+      return"<span style='color:#ef4444;font-size:9px;font-weight:700'>INSUF</span>";
+    }
+    function _thrRetBadge(rs){
+      return rs==="too_low"?"<span style='color:#ef4444;font-size:9px'>LOW</span>":"<span style='color:#22c55e;font-size:9px'>OK</span>";
+    }
+    function _thrAuthBadge(a){
+      return a?"<span style='color:#22c55e;font-size:9px'>&#10003;</span>":"<span style='color:#666;font-size:9px'>&#8212;</span>";
+    }
+
+    function _renderThrLab(){
+      var el2=document.getElementById("btThrLabInner"); if(!el2) return;
+      var td=_thrLabData[_thrMetric]||{};
+      var trusted=td.trusted===true;
+      var results=td.results||{};
+      var best=td.best||{};
+      var rec=best.balanced_recommendation||null;
+      var warns=td.warnings||[];
+      var thrs=[0,20,40,60,80];
+      var rrOpts=["1","2","3"];
+
+      // Trust banner
+      var tBanner=trusted
+        ?'<div style="display:flex;align-items:center;gap:8px;background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.25);border-radius:5px;padding:6px 10px;margin-bottom:8px">'+
+          '<span style="color:#22c55e;font-size:10px;font-weight:700">&#10003; VERIFIED TV OB% SOURCE</span>'+
+          '<span style="color:#86efac;font-size:10px">Threshold conclusions may be evaluated.</span></div>'
+        :'<div style="display:flex;align-items:center;gap:8px;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);border-radius:5px;padding:6px 10px;margin-bottom:8px">'+
+          '<span style="color:#fbbf24;font-size:10px;font-weight:700">&#9888; EXPERIMENTAL</span>'+
+          '<span style="color:#fde68a;font-size:10px">Threshold recommendations disabled until TV OB% parity is verified.</span></div>';
+
+      var selStyle="background:#1e2a38;color:#c5d0de;border:1px solid #2d3f52;border-radius:4px;padding:3px 6px;font-size:11px";
+      var controls=
+        '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">'+
+          '<span style="font-size:10px;color:#64748b">Threshold Lab uses the full backtest result.</span>'+
+          '<span style="width:1px;height:14px;background:#2d3f52"></span>'+
+          '<label style="font-size:10px;color:#8a9bb3">Metric: <select id="btThrMetricSel" style="'+selStyle+'">'+
+            '<option value="before_first_touch"'+((_thrMetric==="before_first_touch")?" selected":"")+'">Before First Touch</option>'+
+            '<option value="at_formation"'+((_thrMetric==="at_formation")?" selected":"")+'">At Formation</option>'+
+          '</select></label>'+
+          '<label style="font-size:10px;color:#8a9bb3">RR view: <select id="btThrRrSel" style="'+selStyle+'">'+
+            '<option value="best"'+((_thrRrView==="best")?" selected":"")+'">Best RR</option>'+
+            '<option value="1"'+((_thrRrView==="1")?" selected":"")+'">1R</option>'+
+            '<option value="2"'+((_thrRrView==="2")?" selected":"")+'">2R</option>'+
+            '<option value="3"'+((_thrRrView==="3")?" selected":"")+'">3R</option>'+
+          '</select></label>'+
+        '</div>';
+
+      // ── Summary cards ─────────────────────────────────────────────────────
+      function _sumCard(title,val,sub,accent){
+        return'<div style="background:rgba(27,38,54,.7);border:1px solid rgba(56,189,248,.2);border-radius:6px;padding:8px 10px;min-width:110px;flex:1 1 110px">'+
+          '<div style="font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px">'+title+'</div>'+
+          '<div style="font-size:13px;font-weight:700;color:'+(accent||"#e2e8f0")+'">'+val+'</div>'+
+          (sub?'<div style="font-size:9px;color:#8a9bb3;margin-top:2px">'+sub+'</div>':'')+
+        '</div>';
+      }
+
+      function _thrRzAt(rd,rrView){
+        if(!rd) return {};
+        var rzm=rd.realized_summary_by_rr||{};
+        if(rrView==="best"){var br=rd.best_rr; return br?rzm[br]||{}:{};}
+        return rzm[rrView]||{};
+      }
+
+      var b0=results["0"]||{};
+      var rz0=_thrRzAt(b0,_thrRrView);
+      var baseTradesLbl=(rz0.trades!=null?rz0.trades+"T":"—");
+
+      var recCard=rec
+        ?'<div style="background:rgba(56,189,248,.1);border:2px solid rgba(56,189,248,.4);border-radius:8px;padding:10px 12px;min-width:140px;flex:1 1 140px">'+
+          '<div style="font-size:9px;color:#38bdf8;text-transform:uppercase;font-weight:700;letter-spacing:.5px;margin-bottom:4px">&#9733; Balanced Threshold</div>'+
+          '<div style="font-size:16px;font-weight:800;color:#e2e8f0">'+rec.threshold_pct+'%</div>'+
+          '<div style="font-size:10px;color:#94a3b8">at '+rec.rr+'R &bull; '+rec.trades+'T &bull; '+_thrFmt(rec.trade_retention_pct,1)+'% retained</div>'+
+          '<div style="font-size:10px;color:#fbbf24;margin-top:4px">E: +'+_thrFmt(rec.expectancy_r,4)+'R &nbsp; PF: '+_thrFmt(rec.profit_factor_r,2)+'</div>'+
+          '<div style="font-size:9px;color:#22c55e;margin-top:2px">Net R: '+_thrFmt(rec.net_r,2)+'</div>'+
+        '</div>'
+        :(trusted
+          ?'<div style="background:rgba(27,38,54,.6);border:1px dashed #334155;border-radius:8px;padding:10px 12px;min-width:140px;flex:1 1 140px">'+
+            '<div style="font-size:9px;color:#64748b;text-transform:uppercase;font-weight:700;letter-spacing:.5px;margin-bottom:4px">Balanced Threshold</div>'+
+            '<div style="color:#64748b;font-size:11px">No reliable threshold yet</div>'+
+          '</div>'
+          :'');
+
+      function _bestC(key,title){
+        var b=best[key]||null;
+        if(!b||!trusted) return _sumCard(title,"—","",null);
+        return _sumCard(title,b.threshold_pct+"%",b.rr+"R &bull; "+b.trades+"T &bull; E:"+_thrFmt(b.expectancy_r,3)+"R","#a78bfa");
+      }
+
+      var baseCard=_sumCard("Baseline (0%)",baseTradesLbl+"&nbsp;"+_thrFmt(rz0.expectancy_r,3)+"R",""+td.baseline_available_events+" events","#8a9bb3");
+      var cardsHtml=
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">'+
+          recCard+
+          _bestC("by_expectancy","Best Expectancy")+
+          _bestC("by_profit_factor","Best PF")+
+          _bestC("by_net_r","Best Net R")+
+          _bestC("by_lowest_avg_sl","Lowest SL")+
+          baseCard+
+        '</div>';
+
+      // ── Main threshold table ──────────────────────────────────────────────
+      var TH="padding:3px 6px;text-align:right;font-size:9px;font-weight:600;color:";
+      var THL="padding:3px 6px;text-align:left;font-size:9px;font-weight:600;color:";
+      var TD2="padding:3px 6px;text-align:right;font-size:11px;font-family:var(--mono);color:";
+      var TDL="padding:3px 6px;text-align:left;font-size:11px;font-family:var(--mono);color:";
+
+      var thead='<thead><tr>'+
+        '<th style="'+THL+'#8a9bb3">Min %</th>'+
+        '<th style="'+TH+'#8a9bb3">Events</th>'+
+        '<th style="'+TH+'#8a9bb3">Trades</th>'+
+        '<th style="'+TH+'#8a9bb3">Ret%</th>'+
+        '<th style="'+TH+'#22c55e">Wins</th>'+
+        '<th style="'+TH+'#ef4444">Loss</th>'+
+        '<th style="'+TH+'#fbbf24">Amb</th>'+
+        '<th style="'+TH+'#fbbf24">WR%</th>'+
+        '<th style="'+TH+'#8a9bb3">Best RR</th>'+
+        '<th style="'+TH+'#22d3ee">Expect</th>'+
+        '<th style="'+TH+'#22d3ee">&Delta;Exp</th>'+
+        '<th style="'+TH+'#a78bfa">PF</th>'+
+        '<th style="'+TH+'#a78bfa">&Delta;PF</th>'+
+        '<th style="'+TH+'#34d399">Net R</th>'+
+        '<th style="'+TH+'#34d399">&Delta;Net R</th>'+
+        '<th style="'+TH+'#f87171">Avg SL R</th>'+
+        '<th style="'+TH+'#8a9bb3">Sample</th>'+
+        '<th style="'+TH+'#8a9bb3">Auth</th>'+
+      '</tr></thead>';
+
+      var tbody="";
+      thrs.forEach(function(thr){
+        var td2=results[String(thr)]||{};
+        var isRec=rec&&rec.threshold_pct===thr;
+        var rz=_thrRzAt(td2,_thrRrView);
+        var retPct=td2.trade_retention_pct;
+        var retC=retPct!=null&&retPct>=20?"#22c55e":"#ef4444";
+        var rowBg=isRec?"background:rgba(56,189,248,.07);outline:1px solid rgba(56,189,248,.25)":"";
+        tbody+='<tr style="'+rowBg+'">'+
+          '<td style="'+TDL+(isRec?"#38bdf8":"#fbbf24")+'">'+(isRec?"&#9733; ":"")+thr+'%</td>'+
+          '<td style="'+TD2+'#8a9bb3">'+(td2.available_events||0)+'</td>'+
+          '<td style="'+TD2+'#c5d0de">'+(rz.trades!=null?rz.trades:"—")+'</td>'+
+          '<td style="'+TD2+retC+'">'+(retPct!=null?retPct.toFixed(1)+"%":"—")+'</td>'+
+          '<td style="'+TD2+'#22c55e">'+(rz.wins!=null?rz.wins:"—")+'</td>'+
+          '<td style="'+TD2+'#ef4444">'+(rz.losses!=null?rz.losses:"—")+'</td>'+
+          '<td style="'+TD2+'#fbbf24">'+(rz.ambiguous!=null?rz.ambiguous:"—")+'</td>'+
+          '<td style="'+TD2+'#fbbf24">'+(rz.win_rate_pct!=null?rz.win_rate_pct.toFixed(1)+"%":"—")+'</td>'+
+          '<td style="'+TD2+'#8a9bb3">'+(td2.best_rr!=null?td2.best_rr+"R":"—")+'</td>'+
+          '<td style="'+TD2+'#22d3ee">'+(rz.expectancy_r!=null?rz.expectancy_r.toFixed(4):"—")+'</td>'+
+          '<td style="padding:3px 6px;text-align:right;font-size:11px">'+_thrDelta(td2.expectancy_change_vs_baseline)+'</td>'+
+          '<td style="'+TD2+'#a78bfa">'+(rz.profit_factor_r!=null?rz.profit_factor_r.toFixed(2):"—")+'</td>'+
+          '<td style="padding:3px 6px;text-align:right;font-size:11px">'+_thrDelta(td2.profit_factor_change_vs_baseline)+'</td>'+
+          '<td style="'+TD2+'#34d399">'+(rz.net_r!=null?rz.net_r.toFixed(2)+"R":"—")+'</td>'+
+          '<td style="padding:3px 6px;text-align:right;font-size:11px">'+_thrDelta(td2.net_r_change_vs_baseline)+'</td>'+
+          '<td style="'+TD2+'#f87171">'+(td2.avg_stop_loss_r!=null?td2.avg_stop_loss_r.toFixed(3)+"R":"—")+'</td>'+
+          '<td style="padding:3px 6px;text-align:right">'+_thrBadge(td2.sample_size_status)+'</td>'+
+          '<td style="padding:3px 6px;text-align:right">'+_thrAuthBadge(td2.eligible_for_authoritative_ranking)+'</td>'+
+        '</tr>';
+      });
+
+      var tableHtml='<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%">'+thead+'<tbody>'+tbody+'</tbody></table></div>';
+
+      // ── Direction split table ─────────────────────────────────────────────
+      var dirRows="";
+      thrs.forEach(function(thr){
+        var td2=results[String(thr)]||{};
+        var byDir=td2.by_direction||{};
+        ["bullish","bearish"].forEach(function(dir){
+          var dd=byDir[dir]||{};
+          dirRows+='<tr>'+
+            '<td style="'+TDL+'#fbbf24">'+thr+'%</td>'+
+            '<td style="'+TDL+(dir==="bullish"?"#22c55e":"#ef4444")+'">'+dir+'</td>'+
+            '<td style="'+TD2+'#8a9bb3">'+(dd.trades||0)+'</td>'+
+            '<td style="'+TD2+'#8a9bb3">'+(dd.best_rr!=null?dd.best_rr+"R":"—")+'</td>'+
+            '<td style="'+TD2+'#22d3ee">'+(dd.expectancy_r!=null?dd.expectancy_r.toFixed(4):"—")+'</td>'+
+            '<td style="'+TD2+'#a78bfa">'+(dd.profit_factor_r!=null?dd.profit_factor_r.toFixed(2):"—")+'</td>'+
+            '<td style="'+TD2+'#34d399">'+(dd.net_r!=null?dd.net_r.toFixed(2)+"R":"—")+'</td>'+
+          '</tr>';
+        });
+      });
+      var dirTable='<div style="margin-top:12px"><div style="font-size:10px;color:#64748b;margin-bottom:4px">Direction Split</div>'+
+        '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%">'+
+        '<thead><tr>'+
+          '<th style="'+THL+'#8a9bb3">Threshold</th><th style="'+THL+'#8a9bb3">Dir</th>'+
+          '<th style="'+TH+'#8a9bb3">Trades</th><th style="'+TH+'#8a9bb3">Best RR</th>'+
+          '<th style="'+TH+'#22d3ee">Exp</th><th style="'+TH+'#a78bfa">PF</th><th style="'+TH+'#34d399">Net R</th>'+
+        '</tr></thead><tbody>'+dirRows+'</tbody></table></div></div>';
+
+      // ── Charts placeholder ────────────────────────────────────────────────
+      var chartsHtml=
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px">'+
+          '<div class="bt-chart-card"><div class="bt-chart-h" style="font-size:10px">Expectancy vs Threshold</div><div class="bt-chart-wrap"><canvas id="btThrC1" style="max-height:180px"></canvas></div></div>'+
+          '<div class="bt-chart-card"><div class="bt-chart-h" style="font-size:10px">Trade Retention vs Threshold</div><div class="bt-chart-wrap"><canvas id="btThrC2" style="max-height:180px"></canvas></div></div>'+
+          '<div class="bt-chart-card"><div class="bt-chart-h" style="font-size:10px">Net R vs Threshold</div><div class="bt-chart-wrap"><canvas id="btThrC3" style="max-height:180px"></canvas></div></div>'+
+          '<div class="bt-chart-card"><div class="bt-chart-h" style="font-size:10px">Expectancy &amp; Trade Count Balance</div><div class="bt-chart-wrap"><canvas id="btThrC4" style="max-height:180px"></canvas></div></div>'+
+        '</div>';
+
+      // ── Export buttons ────────────────────────────────────────────────────
+      var warnHtml=warns.length?'<div style="color:#fbbf24;font-size:10px;margin-bottom:8px">'+warns.join("<br>")+'</div>':"";
+
+      var exportHtml=
+        '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">'+
+          '<button id="btThrExpJson" style="background:#1e2a38;border:1px solid #2d3f52;color:#38bdf8;border-radius:4px;padding:4px 10px;cursor:pointer;font-size:11px">&#8595; Export JSON</button>'+
+          '<button id="btThrExpCsv"  style="background:#1e2a38;border:1px solid #2d3f52;color:#34d399;border-radius:4px;padding:4px 10px;cursor:pointer;font-size:11px">&#8595; Export CSV</button>'+
+        '</div>';
+
+      el2.innerHTML=tBanner+warnHtml+controls+cardsHtml+tableHtml+dirTable+chartsHtml+exportHtml;
+
+      // ── Attach control listeners ──────────────────────────────────────────
+      var ms=document.getElementById("btThrMetricSel");
+      var rs=document.getElementById("btThrRrSel");
+      if(ms) ms.addEventListener("change",function(){_thrMetric=this.value;_renderThrLab();_renderThrCharts();});
+      if(rs) rs.addEventListener("change",function(){_thrRrView=this.value;_renderThrLab();_renderThrCharts();});
+
+      // ── Export listeners ──────────────────────────────────────────────────
+      var ej=document.getElementById("btThrExpJson");
+      var ec=document.getElementById("btThrExpCsv");
+      if(ej) ej.addEventListener("click",function(){
+        _btDownloadBlob("zyni_bt_thr_"+Date.now()+".json",JSON.stringify(_thrLabData,null,2),"application/json");
+      });
+      if(ec) ec.addEventListener("click",function(){
+        var td3=_thrLabData[_thrMetric]||{};
+        var res3=td3.results||{};
+        var header=["threshold_pct","metric","rr","available_events","eligible_touched","trades","wins","losses","ambiguous","unresolved","trade_retention_pct","win_rate_pct","expectancy_r","expectancy_delta_vs_baseline","profit_factor_r","profit_factor_delta_vs_baseline","net_r","net_r_delta_vs_baseline","avg_stop_loss_r","avg_max_r","best_rr","sample_size_status","retention_status","eligible_for_authoritative_ranking","balanced_recommendation"].join(",");
+        var rows3=[header];
+        [0,20,40,60,80].forEach(function(thr){
+          var td4=res3[String(thr)]||{};
+          var rzm2=td4.realized_summary_by_rr||{};
+          var recFlag=(rec&&rec.threshold_pct===thr)?1:0;
+          ["1","2","3"].forEach(function(rk){
+            var rz2=rzm2[rk]||{};
+            var cmp=(td4.comparison_vs_baseline_by_rr||{})[rk]||{};
+            function cv(v){if(v==null)return"";return String(v).indexOf(",")>=0?'"'+v+'"':String(v);}
+            rows3.push([
+              thr,_thrMetric,rk,
+              td4.available_events,td4.eligible_touched,
+              rz2.trades,rz2.wins,rz2.losses,rz2.ambiguous,rz2.unresolved,
+              td4.trade_retention_pct,rz2.win_rate_pct,rz2.expectancy_r,
+              cmp.expectancy_delta,rz2.profit_factor_r,cmp.profit_factor_delta,
+              rz2.net_r,cmp.net_r_delta,td4.avg_stop_loss_r,td4.avg_max_r,
+              td4.best_rr,td4.sample_size_status,td4.retention_status,
+              td4.eligible_for_authoritative_ranking?1:0,recFlag
+            ].map(function(v){if(v==null)return"";return String(v).indexOf(",")>=0?'"'+v+'"':String(v);}).join(","));
+          });
+        });
+        _btDownloadBlob("zyni_bt_thr_"+Date.now()+".csv",rows3.join("\n"),"text/csv");
+      });
+
+      _renderThrCharts();
+    }
+
+    function _renderThrCharts(){
+      if(typeof Chart==="undefined") return;
+      function dc(id){if(_btState.charts[id]){try{_btState.charts[id].destroy();}catch(e){}delete _btState.charts[id];}}
+      var td3=_thrLabData[_thrMetric]||{};
+      var res3=td3.results||{};
+      var thrLabels=["0%","20%","40%","60%","80%"];
+      var thrKeys=["0","20","40","60","80"];
+      var scl2={x:{ticks:{color:"#8a9bb3",font:{size:9}},grid:{color:"rgba(27,38,54,.5)"}},
+                y:{ticks:{color:"#566377"},grid:{color:"rgba(27,38,54,.3)"}}};
+      var rrColors=["rgba(251,191,36,.6)","rgba(34,211,238,.6)","rgba(99,102,241,.6)"];
+      var rrBorder=["#fbbf24","#22d3ee","#818cf8"];
+      var rrKeys=["1","2","3"];
+
+      // Chart 1: Expectancy vs Threshold (lines for 1R/2R/3R)
+      dc("btThrC1");var c1=document.getElementById("btThrC1");
+      if(c1){
+        var ds1=rrKeys.map(function(rk,ri){
+          return {label:rk+"R",data:thrKeys.map(function(tk){
+            var rz=(res3[tk]||{}).realized_summary_by_rr||{};
+            var v=(rz[rk]||{}).expectancy_r;
+            return v!=null?v:null;
+          }),borderColor:rrBorder[ri],backgroundColor:"transparent",
+          pointBackgroundColor:rrBorder[ri],borderWidth:2,pointRadius:4,fill:false,tension:0.3};
+        });
+        _btState.charts["btThrC1"]=new Chart(c1,{type:"line",data:{labels:thrLabels,datasets:ds1},
+          options:{responsive:true,maintainAspectRatio:false,
+            plugins:{legend:{labels:{color:"#8a9bb3",font:{size:10},boxWidth:12}}},
+            scales:Object.assign({},scl2,{y:{ticks:{color:"#22d3ee",callback:function(v){return v.toFixed(2)+"R"}},grid:{color:"rgba(27,38,54,.3)"}}})}});
+      }
+
+      // Chart 2: Trade Retention vs Threshold (bars + 20% reference line)
+      dc("btThrC2");var c2=document.getElementById("btThrC2");
+      if(c2){
+        var retData=thrKeys.map(function(tk){return (res3[tk]||{}).trade_retention_pct||0;});
+        _btState.charts["btThrC2"]=new Chart(c2,{type:"bar",
+          data:{labels:thrLabels,datasets:[
+            {label:"Trade Retention %",data:retData,backgroundColor:"rgba(99,102,241,.5)",borderColor:"#818cf8",borderWidth:1,borderRadius:3},
+          ]},
+          options:{responsive:true,maintainAspectRatio:false,
+            plugins:{legend:{labels:{color:"#8a9bb3",font:{size:10},boxWidth:12}},
+              annotation:{annotations:{line1:{type:"line",yMin:20,yMax:20,borderColor:"rgba(239,68,68,.7)",borderWidth:1,borderDash:[4,4],label:{content:"20% Min",display:true,color:"#ef4444",font:{size:9}}}}}},
+            scales:Object.assign({},scl2,{y:{min:0,max:100,ticks:{color:"#a78bfa",callback:function(v){return v+"%"}},grid:{color:"rgba(27,38,54,.3)"}}})}});
+      }
+
+      // Chart 3: Net R vs Threshold (grouped bars 1R/2R/3R)
+      dc("btThrC3");var c3=document.getElementById("btThrC3");
+      if(c3){
+        var ds3=rrKeys.map(function(rk,ri){
+          return {label:rk+"R",data:thrKeys.map(function(tk){
+            var rz=(res3[tk]||{}).realized_summary_by_rr||{};
+            var v=(rz[rk]||{}).net_r;
+            return v!=null?v:0;
+          }),backgroundColor:rrColors[ri],borderColor:rrBorder[ri],borderWidth:1,borderRadius:3};
+        });
+        _btState.charts["btThrC3"]=new Chart(c3,{type:"bar",data:{labels:thrLabels,datasets:ds3},
+          options:{responsive:true,maintainAspectRatio:false,
+            plugins:{legend:{labels:{color:"#8a9bb3",font:{size:10},boxWidth:12}}},
+            scales:Object.assign({},scl2,{y:{ticks:{color:"#34d399",callback:function(v){return v.toFixed(1)+"R"}},grid:{color:"rgba(27,38,54,.3)"}}})}});
+      }
+
+      // Chart 4: Expectancy & Trade Count Balance
+      dc("btThrC4");var c4=document.getElementById("btThrC4");
+      if(c4){
+        var tcData=thrKeys.map(function(tk){return (res3[tk]||{}).available_events||0;});
+        var expKey=(_thrRrView==="best")?null:_thrRrView;
+        var expData=thrKeys.map(function(tk){
+          var td4=res3[tk]||{};
+          if(expKey){
+            return ((td4.realized_summary_by_rr||{})[expKey]||{}).expectancy_r||null;
+          }
+          return td4.expectancy_at_best_rr||null;
+        });
+        _btState.charts["btThrC4"]=new Chart(c4,{type:"bar",
+          data:{labels:thrLabels,datasets:[
+            {label:"Trade Count",data:tcData,backgroundColor:"rgba(99,102,241,.4)",borderColor:"#818cf8",borderWidth:1,borderRadius:3,yAxisID:"yL"},
+            {label:"Expectancy (R)",data:expData,type:"line",borderColor:"#22d3ee",backgroundColor:"transparent",pointBackgroundColor:"#22d3ee",borderWidth:2,pointRadius:4,yAxisID:"yR"},
+          ]},
+          options:{responsive:true,maintainAspectRatio:false,
+            plugins:{legend:{labels:{color:"#8a9bb3",font:{size:10},boxWidth:12}}},
+            scales:{
+              x:scl2.x,
+              yL:{position:"left",ticks:{color:"#a78bfa"},grid:{color:"rgba(27,38,54,.3)"}},
+              yR:{position:"right",ticks:{color:"#22d3ee",callback:function(v){return v!=null?v.toFixed(2)+"R":""}},grid:{display:false}},
+            }}});
+      }
+    }
+
+    // Initial render
+    _renderThrLab();
+
     setTimeout(function(){
       if(typeof Chart==="undefined") return;
       function dc(id){if(_btState.charts[id]){try{_btState.charts[id].destroy();}catch(e){}delete _btState.charts[id];}}

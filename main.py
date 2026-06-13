@@ -34853,6 +34853,372 @@ _BT_TV_OB_PCT_BUCKET_LABELS: List[str] = [
 ]
 
 _MIN_RANK_TRADES: int = 10
+_MIN_AUTHORITATIVE_TRADES: int = 20  # Phase 13 threshold lab ranking gate
+
+
+# ── Phase 13: TV OB % Threshold Optimization Lab ─────────────────────────────
+def _bt_build_tv_ob_pct_threshold_analysis(
+    events: List[Dict],
+    rr_values: List,
+    parity_trusted: bool,
+    metric: str = "before_first_touch",
+    thresholds: List[int] = None,
+) -> Dict:
+    """
+    Research-only. Tests minimum TV OB% thresholds against realized performance.
+    Does NOT activate any threshold in production systems (Scanner / Live Monitor
+    / alerts / paper trading / automation). Never called with production impact.
+    """
+    if thresholds is None:
+        thresholds = [0, 20, 40, 60, 80]
+
+    source_field = (
+        "tv_ob_pct_before_first_touch" if metric == "before_first_touch"
+        else "tv_ob_pct_at_formation"
+    )
+    warnings_out: List[str] = []
+
+    # ── Eligible events ───────────────────────────────────────────────────────
+    eligible = [e for e in events if (e.get("simulation") or {}).get("eligible")]
+
+    def _get_pct(ev):
+        v = ev.get(source_field)
+        if v is None or isinstance(v, (bool, str)):
+            return None
+        try:
+            f = float(v)
+            return f if 0.0 <= f <= 100.0 else None
+        except (TypeError, ValueError):
+            return None
+
+    valid_pairs: List[tuple] = []
+    no_data_count = 0
+    for ev in eligible:
+        p = _get_pct(ev)
+        if p is not None:
+            valid_pairs.append((ev, p))
+        else:
+            no_data_count += 1
+
+    baseline_available = len(valid_pairs)
+
+    # ── Realized summary for a set of (ev, pct) pairs at one RR ──────────────
+    def _realized_for(pairs, rv):
+        rk = _bt_rr_key(rv)
+        rv_f = float(rv)
+        wins = 0; losses = 0; ambiguous = 0; unresolved = 0
+        gross_win_r = 0.0; gross_loss_r = 0.0
+        sl_r_list: List[float] = []
+        for (ev, _) in pairs:
+            sim = ev.get("simulation") or {}
+            rz = (sim.get("realized_by_rr") or {}).get(rk)
+            if rz is None:
+                unresolved += 1
+                continue
+            out = rz.get("outcome", "unresolved")
+            if out == "win":
+                wins += 1
+                gross_win_r += rv_f
+            elif out == "loss":
+                losses += 1
+                slr = abs(float(rz.get("stop_loss_r") or rz.get("realized_r") or 1.0))
+                gross_loss_r += slr
+                sl_r_list.append(slr)
+            elif out == "ambiguous":
+                ambiguous += 1
+            else:
+                unresolved += 1
+        trades = wins + losses
+        win_rate = round(wins / trades * 100, 1) if trades else None
+        net_r    = round(gross_win_r - gross_loss_r, 4)
+        expect   = round(net_r / trades, 4) if trades else None
+        pf = (round(gross_win_r / gross_loss_r, 4) if gross_loss_r > 0
+              else (None if wins == 0 else 999.0))
+        return {
+            "trades": trades, "wins": wins, "losses": losses,
+            "ambiguous": ambiguous, "unresolved": unresolved,
+            "win_rate_pct": win_rate,
+            "avg_win_r":  round(gross_win_r / wins, 4) if wins else None,
+            "avg_loss_r": round(gross_loss_r / losses, 4) if losses else None,
+            "gross_profit_r": round(gross_win_r, 4),
+            "gross_loss_r":   round(gross_loss_r, 4),
+            "net_r": net_r, "expectancy_r": expect, "profit_factor_r": pf,
+        }
+
+    def _sample_status(t: int) -> str:
+        return "insufficient" if t < _MIN_AUTHORITATIVE_TRADES else "usable" if t < 50 else "strong"
+
+    def _ret_status(r) -> str:
+        return "too_low" if (r is None or r < 20.0) else "acceptable"
+
+    def _median(vals):
+        if not vals: return None
+        sv = sorted(vals); n = len(sv); m = n // 2
+        return round(sv[m] if n % 2 == 1 else (sv[m-1]+sv[m])/2, 4)
+
+    # ── Baseline (threshold 0) ────────────────────────────────────────────────
+    baseline_rz: Dict[str, dict] = {_bt_rr_key(rv): _realized_for(valid_pairs, rv) for rv in rr_values}
+    base_trades_0 = baseline_rz[_bt_rr_key(rr_values[0])]["trades"] if rr_values else 0
+
+    # ── Build each threshold row ──────────────────────────────────────────────
+    results: Dict[str, dict] = {}
+    for thr in thresholds:
+        thr_pairs = [(ev, p) for (ev, p) in valid_pairs if p >= thr]
+        excl_below = len(valid_pairs) - len(thr_pairs)
+        avail = len(thr_pairs)
+        event_ret = round(avail / baseline_available * 100, 1) if baseline_available else None
+
+        rzm = {_bt_rr_key(rv): _realized_for(thr_pairs, rv) for rv in rr_values}
+        thr_trades_0 = rzm[_bt_rr_key(rr_values[0])]["trades"] if rr_values else 0
+        trade_ret = round(thr_trades_0 / base_trades_0 * 100, 1) if base_trades_0 else None
+
+        tp_first = sum(1 for (ev,_) in thr_pairs if (ev.get("simulation") or {}).get("first_outcome")=="tp")
+        sl_first = sum(1 for (ev,_) in thr_pairs if (ev.get("simulation") or {}).get("first_outcome")=="sl")
+        amb_ev   = sum(1 for (ev,_) in thr_pairs if (ev.get("simulation") or {}).get("first_outcome")=="ambiguous")
+        unr_ev   = sum(1 for (ev,_) in thr_pairs if (ev.get("simulation") or {}).get("first_outcome")=="unresolved")
+
+        pcts = [p for (_,p) in thr_pairs]
+        avg_pct = round(sum(pcts)/len(pcts), 2) if pcts else None
+        med_pct = _median(pcts)
+
+        sl_r_vals  = [float((ev.get("simulation") or {}).get("stop_loss_r"))
+                      for (ev,_) in thr_pairs
+                      if (ev.get("simulation") or {}).get("stop_hit")
+                      and (ev.get("simulation") or {}).get("stop_loss_r") is not None]
+        max_r_vals = [float((ev.get("simulation") or {}).get("max_r_reached"))
+                      for (ev,_) in thr_pairs
+                      if (ev.get("simulation") or {}).get("max_r_reached") is not None]
+        adv_r_vals = [float((ev.get("simulation") or {}).get("max_adverse_r"))
+                      for (ev,_) in thr_pairs
+                      if (ev.get("simulation") or {}).get("max_adverse_r") is not None]
+
+        avg_sl_r  = round(sum(sl_r_vals)/len(sl_r_vals), 4) if sl_r_vals else None
+        max_sl_r  = round(max(sl_r_vals), 4) if sl_r_vals else None
+        med_sl_r  = _median(sl_r_vals)
+        avg_max_r = round(sum(max_r_vals)/len(max_r_vals), 4) if max_r_vals else None
+        avg_adv_r = round(sum(adv_r_vals)/len(adv_r_vals), 4) if adv_r_vals else None
+
+        # Best RR: prefer >= _MIN_AUTHORITATIVE_TRADES, else best available
+        best_rr_str: str | None = None; best_exp_v: float | None = None
+        for rv in rr_values:
+            rz = rzm[_bt_rr_key(rv)]
+            if rz["trades"] >= _MIN_AUTHORITATIVE_TRADES and rz["expectancy_r"] is not None:
+                if best_exp_v is None or rz["expectancy_r"] > best_exp_v:
+                    best_exp_v = rz["expectancy_r"]
+                    best_rr_str = _bt_rr_key(rv)
+        if best_rr_str is None:
+            for rv in rr_values:
+                rz = rzm[_bt_rr_key(rv)]
+                if rz["trades"] > 0 and rz["expectancy_r"] is not None:
+                    if best_exp_v is None or rz["expectancy_r"] > best_exp_v:
+                        best_exp_v = rz["expectancy_r"]
+                        best_rr_str = _bt_rr_key(rv)
+
+        best_rz   = rzm.get(best_rr_str) or {}
+        best_tr   = best_rz.get("trades", 0)
+        ss        = _sample_status(best_tr)
+        rst       = _ret_status(trade_ret)
+        auth = (
+            parity_trusted
+            and best_tr >= _MIN_AUTHORITATIVE_TRADES
+            and trade_ret is not None and trade_ret >= 20.0
+            and best_rz.get("expectancy_r") is not None
+        )
+
+        # Comparison vs baseline by RR
+        cmp: Dict[str, dict] = {}
+        for rv in rr_values:
+            rk = _bt_rr_key(rv)
+            rz = rzm[rk]; bz = baseline_rz[rk]
+            exp_d = (round(rz["expectancy_r"] - bz["expectancy_r"], 4)
+                     if rz["expectancy_r"] is not None and bz["expectancy_r"] is not None else None)
+            pf_d  = (round((rz["profit_factor_r"] or 0) - (bz["profit_factor_r"] or 0), 4)
+                     if rz["profit_factor_r"] is not None and bz["profit_factor_r"] is not None else None)
+            nr_d  = (round(rz["net_r"] - bz["net_r"], 4)
+                     if rz["net_r"] is not None and bz["net_r"] is not None else None)
+            cmp[rk] = {
+                "expectancy_delta": exp_d, "profit_factor_delta": pf_d, "net_r_delta": nr_d,
+                "trade_count_delta": rz["trades"] - bz["trades"],
+                "trade_retention_pct": (round(rz["trades"]/bz["trades"]*100,1) if bz["trades"] else None),
+            }
+
+        bz_best = baseline_rz.get(best_rr_str) or {}
+        def _chg(a, b): return round(a-b, 4) if a is not None and b is not None else None
+        exp_chg = _chg(best_rz.get("expectancy_r"),    bz_best.get("expectancy_r"))
+        pf_chg  = _chg(best_rz.get("profit_factor_r"), bz_best.get("profit_factor_r"))
+        nr_chg  = _chg(best_rz.get("net_r"),           bz_best.get("net_r"))
+
+        # Direction split
+        by_dir: Dict[str, dict] = {}
+        for direction in ("bullish", "bearish"):
+            dp = [(ev,p) for (ev,p) in thr_pairs if ev.get("type")==direction]
+            dr_best_rr: str | None = None; dr_best_exp: float | None = None; dr_rz: dict = {}
+            for rv in rr_values:
+                d_rz = _realized_for(dp, rv)
+                if d_rz["trades"] >= _MIN_AUTHORITATIVE_TRADES and d_rz["expectancy_r"] is not None:
+                    if dr_best_exp is None or d_rz["expectancy_r"] > dr_best_exp:
+                        dr_best_exp = d_rz["expectancy_r"]
+                        dr_best_rr  = _bt_rr_key(rv)
+                        dr_rz = d_rz
+            by_dir[direction] = {
+                "trades": len(dp), "best_rr": dr_best_rr,
+                "expectancy_r":   dr_rz.get("expectancy_r"),
+                "profit_factor_r": dr_rz.get("profit_factor_r"),
+                "net_r":          dr_rz.get("net_r"),
+            }
+
+        results[str(thr)] = {
+            "threshold_pct": thr,
+            "available_events": avail, "eligible_touched": avail,
+            "excluded_below_threshold": excl_below,
+            "excluded_no_data": no_data_count,
+            "event_retention_pct": event_ret,
+            "trade_retention_pct": trade_ret,
+            "tp_first": tp_first, "sl_first": sl_first,
+            "ambiguous": amb_ev, "unresolved": unr_ev,
+            "avg_tv_ob_pct": avg_pct, "median_tv_ob_pct": med_pct,
+            "avg_max_r": avg_max_r, "avg_max_adverse_r": avg_adv_r,
+            "avg_stop_loss_r": avg_sl_r,
+            "median_stop_loss_r": med_sl_r,
+            "max_stop_loss_r": max_sl_r,
+            "realized_summary_by_rr": rzm,
+            "best_rr": best_rr_str,
+            "trades_at_best_rr": best_tr,
+            "win_rate_at_best_rr":      best_rz.get("win_rate_pct"),
+            "expectancy_at_best_rr":    best_rz.get("expectancy_r"),
+            "profit_factor_at_best_rr": best_rz.get("profit_factor_r"),
+            "net_r_at_best_rr":         best_rz.get("net_r"),
+            "expectancy_change_vs_baseline":    exp_chg,
+            "profit_factor_change_vs_baseline": pf_chg,
+            "net_r_change_vs_baseline":         nr_chg,
+            "trade_retention_change_vs_baseline": (
+                round(trade_ret-100.0, 2) if trade_ret is not None else None),
+            "sample_size_status": ss,
+            "retention_status":   rst,
+            "eligible_for_authoritative_ranking": auth,
+            "comparison_vs_baseline_by_rr": cmp,
+            "by_direction": by_dir,
+        }
+
+    # ── "Best" summary cards ──────────────────────────────────────────────────
+    auth_cands = [(thr, results[str(thr)]) for thr in thresholds
+                  if results[str(thr)]["eligible_for_authoritative_ranking"]]
+
+    def _best_card(field: str):
+        best_v = None; best_it = None
+        for (t, rd) in auth_cands:
+            v = rd.get(f"{field}_at_best_rr")
+            if v is None: continue
+            if best_v is None or v > best_v:
+                best_v = v; best_it = (t, rd)
+        if best_it is None: return None
+        t, rd = best_it
+        return {"threshold_pct": t, "rr": rd["best_rr"], "trades": rd["trades_at_best_rr"],
+                "trade_retention_pct": rd["trade_retention_pct"],
+                "expectancy_r": rd["expectancy_at_best_rr"],
+                "profit_factor_r": rd["profit_factor_at_best_rr"],
+                "net_r": rd["net_r_at_best_rr"]}
+
+    def _best_sl_card():
+        best_v = None; best_it = None
+        for (t, rd) in auth_cands:
+            v = rd.get("avg_stop_loss_r")
+            if v is None: continue
+            if best_v is None or v < best_v:
+                best_v = v; best_it = (t, rd)
+        if best_it is None: return None
+        t, rd = best_it
+        return {"threshold_pct": t, "rr": rd["best_rr"], "trades": rd["trades_at_best_rr"],
+                "trade_retention_pct": rd["trade_retention_pct"],
+                "avg_stop_loss_r": best_v, "expectancy_r": rd["expectancy_at_best_rr"]}
+
+    # ── Balanced recommendation ───────────────────────────────────────────────
+    balanced = None
+    if parity_trusted and auth_cands:
+        bz0_rz = (results.get("0") or {}).get("realized_summary_by_rr") or {}
+        scored = []
+        for (thr, rd) in auth_cands:
+            if thr == 0: continue
+            rr_s = rd.get("best_rr")
+            if not rr_s: continue
+            rz = (rd.get("realized_summary_by_rr") or {}).get(rr_s) or {}
+            bz = bz0_rz.get(rr_s) or {}
+            exp_t, exp_b = rz.get("expectancy_r"), bz.get("expectancy_r")
+            pf_t,  pf_b  = rz.get("profit_factor_r"), bz.get("profit_factor_r")
+            nr_t         = rz.get("net_r")
+            if exp_t is None or exp_b is None: continue
+            if exp_t <= exp_b: continue
+            if (nr_t or 0) <= 0: continue
+            if pf_t is not None and pf_b is not None and pf_t < pf_b * 0.9: continue
+            scored.append({
+                "threshold_pct": thr, "rr": rr_s,
+                "trades": rz.get("trades", 0),
+                "trade_retention_pct": rd.get("trade_retention_pct"),
+                "expectancy_r": exp_t,
+                "expectancy_improvement_vs_baseline": round(exp_t - exp_b, 4),
+                "profit_factor_r": pf_t, "net_r": nr_t,
+            })
+        if scored:
+            scored.sort(key=lambda x: (-x["expectancy_r"], x["threshold_pct"]))
+            best_s = scored[0]
+            for other in scored[1:]:
+                if (other["threshold_pct"] < best_s["threshold_pct"]
+                        and abs(best_s["expectancy_r"] - other["expectancy_r"]) < 0.05
+                        and other["trades"] > best_s["trades"]):
+                    best_s = other
+            impr = best_s["expectancy_improvement_vs_baseline"]
+            balanced = {
+                "threshold_pct": best_s["threshold_pct"],
+                "rr": best_s["rr"],
+                "trades": best_s["trades"],
+                "trade_retention_pct": best_s["trade_retention_pct"],
+                "expectancy_r": best_s["expectancy_r"],
+                "profit_factor_r": best_s["profit_factor_r"],
+                "net_r": best_s["net_r"],
+                "expectancy_improvement_vs_baseline": impr,
+                "reason": (
+                    f"Threshold {best_s['threshold_pct']}% at {best_s['rr']}R: "
+                    f"expectancy {best_s['expectancy_r']:+.4f}R "
+                    f"(+{impr:.4f}R vs baseline), "
+                    f"{best_s['trades']} trades, "
+                    f"{(best_s['trade_retention_pct'] or 0):.1f}% retention"
+                ),
+                "authoritative": True,
+            }
+
+    if not auth_cands:
+        warnings_out.append(
+            "No threshold has sufficient sample size and retention to justify "
+            "an authoritative recommendation."
+        )
+    if not parity_trusted:
+        warnings_out.append(
+            "Threshold recommendations disabled until TV OB% parity is verified (trusted=False)."
+        )
+        balanced = None
+
+    return {
+        "trusted": parity_trusted,
+        "source": "main_scan_visible_ob_volume_share",
+        "primary_metric": source_field,
+        "metric": metric,
+        "thresholds_tested": thresholds,
+        "baseline_threshold": 0,
+        "baseline_available_events": baseline_available,
+        "baseline_no_data_count": no_data_count,
+        "baseline_eligible_trades": base_trades_0,
+        "minimum_authoritative_trades": _MIN_AUTHORITATIVE_TRADES,
+        "minimum_retention_pct": 20.0,
+        "results": results,
+        "best": {
+            "by_expectancy":          _best_card("expectancy"),
+            "by_profit_factor":       _best_card("profit_factor"),
+            "by_net_r":               _best_card("net_r"),
+            "by_lowest_avg_sl":       _best_sl_card(),
+            "balanced_recommendation": balanced,
+        },
+        "warnings": warnings_out,
+    }
 
 
 def _bt_tv_ob_pct_bucket(value) -> str:
@@ -35516,6 +35882,17 @@ def _bt_run_ob_historical_backtest(params: dict) -> dict:
     outcome_summary["tv_ob_pct_parity"]      = tv_par
     outcome_summary["tv_ob_pct_performance"] = tv_perf
 
+    # ── Phase 13: Threshold Optimization Lab (research only) ──────────────────
+    _par_trusted = tv_par.get("trusted", False)
+    outcome_summary["tv_ob_pct_threshold_analysis"] = {
+        "before_first_touch": _bt_build_tv_ob_pct_threshold_analysis(
+            all_events, rr_vals, _par_trusted, metric="before_first_touch",
+        ),
+        "at_formation": _bt_build_tv_ob_pct_threshold_analysis(
+            all_events, rr_vals, _par_trusted, metric="at_formation",
+        ),
+    }
+
     # ── Optional parity validation ────────────────────────────────────────────
     parity = (
         _bt_run_parity_check(candles, all_events, params)
@@ -35946,6 +36323,98 @@ def api_backtest_ob_historical_debug():
                     f"<td style='padding:4px 0;color:#fff'>{_v(val)}</td></tr>"
                 )
 
+        # ── Threshold Optimization section ────────────────────────────────────
+        thr_all  = os_.get("tv_ob_pct_threshold_analysis") or {}
+        thr_d    = thr_all.get("before_first_touch") or {}
+        thr_tr   = thr_d.get("trusted")
+        thr_tr_c = "#4f4" if thr_tr else "#fa0"
+        thr_rec  = (thr_d.get("best") or {}).get("balanced_recommendation") or {}
+        thr_warn = thr_d.get("warnings") or []
+        thr_rows = ""
+        for k, val in [
+            ("── TV OB% Threshold Optimization Lab (Phase 13) ──", ""),
+            ("trusted",                   thr_d.get("trusted")),
+            ("primary_metric",            thr_d.get("primary_metric")),
+            ("baseline_available_events", thr_d.get("baseline_available_events")),
+            ("baseline_no_data_count",    thr_d.get("baseline_no_data_count")),
+            ("baseline_eligible_trades",  thr_d.get("baseline_eligible_trades")),
+            ("minimum_authoritative",     thr_d.get("minimum_authoritative_trades")),
+            ("minimum_retention_pct",     thr_d.get("minimum_retention_pct")),
+            ("thresholds_tested",         str(thr_d.get("thresholds_tested"))),
+            ("── Balanced Recommendation ──", ""),
+            ("rec.threshold_pct",         thr_rec.get("threshold_pct")),
+            ("rec.rr",                    thr_rec.get("rr")),
+            ("rec.trades",                thr_rec.get("trades")),
+            ("rec.trade_retention_pct",   thr_rec.get("trade_retention_pct")),
+            ("rec.expectancy_r",          thr_rec.get("expectancy_r")),
+            ("rec.profit_factor_r",       thr_rec.get("profit_factor_r")),
+            ("rec.net_r",                 thr_rec.get("net_r")),
+            ("rec.improvement_vs_baseline", thr_rec.get("expectancy_improvement_vs_baseline")),
+            ("rec.reason",                thr_rec.get("reason")),
+            ("rec.authoritative",         thr_rec.get("authoritative")),
+        ]:
+            color = thr_tr_c if k == "trusted" else "#fff"
+            thr_rows += (
+                f"<tr><td style='padding:3px 12px 3px 0;color:#aaa'>{k}</td>"
+                f"<td style='padding:3px 0;color:{color}'>{_v(val)}</td></tr>"
+            )
+        if thr_warn:
+            thr_rows += (
+                f"<tr><td colspan='2' style='padding:4px 0;color:#fa0;font-size:11px'>"
+                + " | ".join(thr_warn) + "</td></tr>"
+            )
+
+        # Threshold table rows
+        thr_table_body = ""
+        for thr_k in ["0", "20", "40", "60", "80"]:
+            td = (thr_d.get("results") or {}).get(thr_k) or {}
+            rzm = td.get("realized_summary_by_rr") or {}
+            rr_cells = ""
+            for rk in ["1", "2", "3"]:
+                rz = rzm.get(rk) or {}
+                rr_cells += (
+                    f"<td style='padding:2px 6px;color:#ccc;font-size:10px'>"
+                    f"{rz.get('trades',0)} T "
+                    f"E:{rz.get('expectancy_r','—')} "
+                    f"PF:{rz.get('profit_factor_r','—')}"
+                    f"</td>"
+                )
+            ss_c = "#22c55e" if td.get("sample_size_status")=="strong" else (
+                   "#fbbf24" if td.get("sample_size_status")=="usable" else "#ef4444")
+            rt_c = "#ef4444" if td.get("retention_status")=="too_low" else "#22c55e"
+            auth_c = "#22c55e" if td.get("eligible_for_authoritative_ranking") else "#666"
+            thr_table_body += (
+                f"<tr>"
+                f"<td style='padding:2px 8px;color:#fbbf24'>{thr_k}%</td>"
+                f"<td style='padding:2px 6px;color:#ccc'>{td.get('available_events',0)}</td>"
+                f"<td style='padding:2px 6px;color:#ccc'>{td.get('tp_first',0)}</td>"
+                f"<td style='padding:2px 6px;color:#ccc'>{td.get('sl_first',0)}</td>"
+                f"<td style='padding:2px 6px;color:{rt_c}'>{td.get('trade_retention_pct','—')}%</td>"
+                + rr_cells +
+                f"<td style='padding:2px 6px'><span style='color:{ss_c}'>{td.get('sample_size_status','—')}</span></td>"
+                f"<td style='padding:2px 6px'><span style='color:{auth_c}'>{'Y' if td.get('eligible_for_authoritative_ranking') else 'N'}</span></td>"
+                f"</tr>"
+            )
+        thr_table_html = (
+            "<table style='border-collapse:collapse;width:100%;font-size:11px;margin-top:6px'>"
+            "<thead><tr>"
+            "<th style='padding:2px 8px;color:#fa0;text-align:left'>Threshold</th>"
+            "<th style='padding:2px 6px;color:#aaa'>Events</th>"
+            "<th style='padding:2px 6px;color:#22c55e'>TP</th>"
+            "<th style='padding:2px 6px;color:#ef4444'>SL</th>"
+            "<th style='padding:2px 6px;color:#aaa'>Retention</th>"
+            "<th style='padding:2px 6px;color:#22d3ee'>1R</th>"
+            "<th style='padding:2px 6px;color:#22d3ee'>2R</th>"
+            "<th style='padding:2px 6px;color:#22d3ee'>3R</th>"
+            "<th style='padding:2px 6px;color:#aaa'>Sample</th>"
+            "<th style='padding:2px 6px;color:#aaa'>Auth</th>"
+            "</tr></thead>"
+            f"<tbody>{thr_table_body}</tbody></table>"
+        )
+        thr_rows += (
+            f"<tr><td colspan='2'>{thr_table_html}</td></tr>"
+        )
+
         body = (
             f"<table>{table_rows}</table>"
             + (
@@ -35971,6 +36440,8 @@ def api_backtest_ob_historical_debug():
                 f"<table>{tv_ev_rows}</table>"
                 if tv_ev_rows else ""
             )
+            + f"<h3 style='color:#38bdf8;margin-top:20px'>TV OB% Threshold Optimization</h3>"
+            + f"<table>{thr_rows}</table>"
             + parity_note
         )
         title_color = "#4f4"
@@ -36578,6 +37049,17 @@ def _bt_run_ob_batch_backtest(params: dict) -> dict:
             if include_events:
                 evs = res.get("events") or []
                 out["events"] = evs[:_BT_BATCH_MAX_EVS]
+            # Compact threshold summary (Part N)
+            _thr_all = (res.get("outcome_summary") or {}).get("tv_ob_pct_threshold_analysis") or {}
+            _thr_bft = _thr_all.get("before_first_touch") or {}
+            _thr_rec = (_thr_bft.get("best") or {}).get("balanced_recommendation") or {}
+            out["tv_ob_pct_threshold_summary"] = {
+                "balanced_threshold_pct": _thr_rec.get("threshold_pct"),
+                "balanced_rr":            _thr_rec.get("rr"),
+                "balanced_expectancy_r":  _thr_rec.get("expectancy_r"),
+                "balanced_trade_retention_pct": _thr_rec.get("trade_retention_pct"),
+                "threshold_analysis_trusted": _thr_bft.get("trusted", False),
+            }
             results[symbol][tf] = out
 
     leaderboard = _bt_build_batch_leaderboard(results)
