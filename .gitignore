@@ -16,6 +16,8 @@ venv/
 .mcp.json
 .swarm/
 ruvector.db
+instance/
+*.db
 
 # Backup files
 *.backup-*.html
