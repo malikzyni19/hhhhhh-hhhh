@@ -1611,6 +1611,32 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 .bt-batch-run-btn:hover{opacity:.86}
 .bt-batch-run-btn:disabled{opacity:.4;cursor:not-allowed}
 .bt-batch-charts-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin:12px 0}
+
+/* ── Screener contact popup (parity with index.html) ── */
+.screener-contact-overlay{position:fixed;inset:0;z-index:9998;display:none;align-items:center;justify-content:center}
+.screener-contact-overlay.show{display:flex}
+.screener-contact-bg{position:absolute;inset:0;background:rgba(3,8,15,0.7);backdrop-filter:blur(16px)}
+.screener-contact-popup{position:relative;z-index:1;width:300px;background:linear-gradient(135deg,rgba(255,255,255,0.09),rgba(255,255,255,0.04),rgba(34,211,238,0.04));backdrop-filter:blur(28px);border:1px solid rgba(255,255,255,0.12);border-radius:24px;padding:32px 28px 28px;box-shadow:0 32px 64px rgba(0,0,0,0.5),inset 0 1px 0 rgba(255,255,255,0.14);animation:scpPopIn .3s cubic-bezier(.34,1.56,.64,1)}
+@keyframes scpPopIn{from{opacity:0;transform:scale(0.88) translateY(12px)}to{opacity:1;transform:scale(1) translateY(0)}}
+.screener-contact-popup::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.3),#22d3ee,rgba(255,255,255,0.3),transparent);border-radius:24px 24px 0 0}
+.screener-contact-popup::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(34,211,238,.15),transparent);border-radius:0 0 24px 24px}
+.scp-close{position:absolute;top:12px;right:12px;width:26px;height:26px;border-radius:50%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.45);font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s}
+.scp-close:hover{background:rgba(255,255,255,0.14);color:#fff;transform:rotate(90deg)}
+.scp-icon{width:52px;height:52px;border-radius:16px;overflow:hidden;margin:0 auto 14px;border:1px solid rgba(34,211,238,0.2)}
+.scp-icon img{width:100%;height:100%;object-fit:cover}
+.scp-title{font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:700;text-align:center;color:#fff;margin-bottom:4px}
+.scp-sub{font-size:10px;color:rgba(255,255,255,0.3);text-align:center;margin-bottom:22px;letter-spacing:1px}
+.scp-divider{height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.08),transparent);margin-bottom:16px}
+.scp-opt{display:flex;align-items:center;gap:12px;padding:13px 16px;border-radius:13px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.04);cursor:pointer;transition:all .25s;text-decoration:none;margin-bottom:8px}
+.scp-opt:last-child{margin-bottom:0}
+.scp-opt:hover{background:rgba(255,255,255,0.08);border-color:rgba(34,211,238,0.3);transform:translateY(-2px)}
+.scp-opt-icon{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
+.scp-opt-icon.tg{background:rgba(34,211,238,0.12);border:1px solid rgba(34,211,238,0.2)}
+.scp-opt-icon.em{background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.2)}
+.scp-opt-label{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;color:#fff;margin-bottom:2px}
+.scp-opt-val{font-size:10px;color:rgba(255,255,255,0.35)}
+.scp-arrow{margin-left:auto;color:rgba(255,255,255,0.2);font-size:14px;transition:transform .2s}
+.scp-opt:hover .scp-arrow{transform:translateX(4px);color:rgba(255,255,255,0.5)}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 </head>
@@ -1640,7 +1666,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         <span class="hc-sep">·</span>
         <span class="hc-cd" id="hdrCandleCd" title="Candle close countdown">—</span>
       </div>
-      <a class="ic-btn ic-support" id="btnSupport" href="https://t.me/MalikZyNi" target="_blank" rel="noopener" title="Contact support" aria-label="Contact support"><svg class="ico" viewBox="0 0 24 24"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></a>
+      <button class="ic-btn ic-support" id="btnSupport" type="button" onclick="openScreenerContact()" title="Contact support" aria-label="Contact support"><svg class="ico" viewBox="0 0 24 24"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></button>
       <div class="token-pill na" id="tokenPill" title="Daily scan tokens — set by admin, resets at midnight UTC">
         <svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg>
         <span class="tp-label">Tokens:</span>
@@ -2249,8 +2275,13 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         ].forEach(function(k){ if(cfg[k]!=null) ST.settings[k]=cfg[k]; });
       }
     }catch(_){}
-    var sup=document.getElementById("btnSupport");
-    if(sup && cfg.support_url) sup.href=cfg.support_url;
+    // Admin-configured support URL now retargets the Telegram option inside
+    // the contact popup (the trigger itself became a <button> that opens the
+    // popup instead of an <a> with an href).
+    if(cfg.support_url){
+      var tgLink=document.getElementById("scpTelegramLink");
+      if(tgLink) tgLink.href=cfg.support_url;
+    }
     if(cfg.tutorial_enabled===false){
       try{ localStorage.setItem("zyni-tutorial-skip","1"); }catch(_){}
     }
@@ -16251,6 +16282,44 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   // Auto Scan interval is owned by _setAutoScan() above when the persisted
   // flag is true. We never call scan() on page load.
 })();
+</script>
+
+<!-- ── Screener Contact Popup (parity with index.html) ── -->
+<div class="screener-contact-overlay" id="screenerContactOverlay">
+  <div class="screener-contact-bg" onclick="closeScreenerContact()"></div>
+  <div class="screener-contact-popup">
+    <button class="scp-close" type="button" onclick="closeScreenerContact()">&#10005;</button>
+    <div class="scp-icon"><img src="data:image/png;base64,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" alt="Developer"></div>
+    <div class="scp-title">Contact Developer</div>
+    <div class="scp-sub">ZYNI SMC &middot; SUPPORT</div>
+    <div class="scp-divider"></div>
+    <a class="scp-opt" id="scpTelegramLink" href="https://t.me/MalikZyNi" target="_blank" rel="noopener">
+      <div class="scp-opt-icon tg">&#9992;&#65039;</div>
+      <div><div class="scp-opt-label">Telegram</div><div class="scp-opt-val">@MalikZyNi</div></div>
+      <span class="scp-arrow">&rarr;</span>
+    </a>
+    <a class="scp-opt" href="mailto:support@smcsetups.com">
+      <div class="scp-opt-icon em">&#9993;&#65039;</div>
+      <div><div class="scp-opt-label">Email</div><div class="scp-opt-val">support@smcsetups.com</div></div>
+      <span class="scp-arrow">&rarr;</span>
+    </a>
+  </div>
+</div>
+<script>
+function openScreenerContact(){
+  var el = document.getElementById('screenerContactOverlay');
+  if(el) el.classList.add('show');
+}
+function closeScreenerContact(){
+  var el = document.getElementById('screenerContactOverlay');
+  if(el) el.classList.remove('show');
+}
+document.addEventListener('keydown', function(e){
+  if(e.key === 'Escape'){
+    var el = document.getElementById('screenerContactOverlay');
+    if(el && el.classList.contains('show')) el.classList.remove('show');
+  }
+});
 </script>
 </body>
 </html>
