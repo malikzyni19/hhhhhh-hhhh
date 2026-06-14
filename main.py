@@ -20295,6 +20295,9 @@ def _lm_build_trade_proposal_context(row, snapshot=None) -> dict:
         "paper_performance_summary": (lambda: _lm_paper_performance_summary_for_ai(
             getattr(row, "user_id", None), getattr(row, "id", None)
         ))(),
+        "accepted_learning_insights": (lambda: _lm_build_accepted_learning_context(
+            getattr(row, "user_id", None), getattr(row, "id", None)
+        ) if getattr(row, "user_id", None) else [])(),
     }
 
 
@@ -21508,6 +21511,9 @@ def _lm_build_ai_context(item) -> dict:
         "paper_performance_summary": (lambda: _lm_paper_performance_summary_for_ai(
             getattr(item, "user_id", None), getattr(item, "id", None)
         ))(),
+        "accepted_learning_insights": (lambda: _lm_build_accepted_learning_context(
+            getattr(item, "user_id", None), getattr(item, "id", None)
+        ) if getattr(item, "user_id", None) else [])(),
     }
 
 
@@ -24727,6 +24733,19 @@ from live_monitor import (
     _lm_query_closed_paper_trades,
     _lm_get_paper_performance_state,
     _lm_build_paper_performance_summary,
+    # Phase 11.15: AI Learning Review Loop
+    _lm_build_learning_review_filters,
+    _lm_validate_learning_review_filters,
+    _lm_build_learning_evidence,
+    _lm_build_learning_observation_candidates,
+    _lm_build_learning_review_prompt,
+    _lm_parse_learning_review_response,
+    _lm_validate_learning_review_response,
+    _lm_save_learning_review,
+    _lm_get_learning_reviews,
+    _lm_get_learning_review,
+    _lm_update_learning_review_status,
+    _lm_build_accepted_learning_context,
 )
 
 # ── Phase 10.9I: Auto-refresh scheduler ─────────────────────────────────────
@@ -29429,6 +29448,345 @@ def api_lm_item_paper_performance(item_id):
     )
     code = 200 if result.get("ok") else 400
     return jsonify(result), code
+
+
+# ── Phase 11.15: AI Learning Review Loop ─────────────────────────────────────
+# Advisory only. No execution. No orders. No strategy mutation.
+
+_lm_learning_review_generate_lock = threading.Lock()
+_lm_learning_review_inflight: set = set()  # set of user_id currently generating
+
+
+@app.route("/api/live-monitor/learning-reviews/generate", methods=["POST"])
+@login_required
+def api_lm_learning_review_generate():
+    """POST: Generate a new AI learning review from closed paper trade history.
+
+    Phase 11.15 — Advisory only. No execution. No orders. No strategy changes.
+    can_auto_submit=False. auto_execution_allowed=False. ai_can_execute=False.
+    """
+    uid = current_user.id
+    ip  = request.remote_addr or "unknown"
+
+    # Rate limit: 5 generates per user per 10 minutes
+    from security import rate_limiter as _rl
+    if not _rl.is_allowed(ip, f"lm_learning_generate_{uid}", max_hits=5, window=600):
+        return jsonify({
+            "ok": False, "error": "rate_limited",
+            "message": "Too many review generation requests. Please wait.",
+        }), 429
+
+    # Duplicate-request prevention
+    with _lm_learning_review_generate_lock:
+        if uid in _lm_learning_review_inflight:
+            return jsonify({
+                "ok": False, "error": "generation_in_progress",
+                "message": "A review is already being generated for your account.",
+            }), 409
+        _lm_learning_review_inflight.add(uid)
+
+    try:
+        body = request.get_json(silent=True) or {}
+
+        review_scope     = (body.get("review_scope") or "portfolio").strip()
+        period           = (body.get("period")       or "30d").strip()
+        symbol_supplied  = "symbol" in body
+        symbol           = (body.get("symbol") or "").strip() or None
+        side             = (body.get("side")   or "").strip() or None
+        item_id_raw      = body.get("item_id")
+        try:
+            item_id = int(item_id_raw) if item_id_raw is not None else None
+        except (TypeError, ValueError):
+            item_id = None
+
+        # Step 1: Build + validate filters
+        filters = _lm_build_learning_review_filters(
+            uid,
+            review_scope    = review_scope,
+            period          = period,
+            symbol          = symbol,
+            side            = side,
+            item_id         = item_id,
+            symbol_supplied = symbol_supplied,
+        )
+        field_errors = _lm_validate_learning_review_filters(filters)
+        if field_errors:
+            return jsonify({
+                "ok":           False,
+                "error":        "invalid_learning_filter",
+                "field_errors": field_errors,
+                "guardrails":   {
+                    "can_auto_submit":        False,
+                    "auto_execution_allowed": False,
+                    "ai_can_execute":         False,
+                },
+            }), 400
+
+        # Step 2: Build evidence
+        evidence = _lm_build_learning_evidence(uid, filters)
+        total    = evidence.get("sample_size", 0)
+
+        # Data quality gate (Task 17)
+        if total < 5:
+            return jsonify({
+                "ok":             False,
+                "error":          "insufficient_learning_sample",
+                "sample_size":    total,
+                "required_min":   5,
+                "message":        "At least 5 closed paper trades are required to generate a review.",
+                "evidence_meta":  {
+                    "period":       filters.get("period"),
+                    "review_scope": filters.get("_review_scope"),
+                    "symbol":       filters.get("symbol"),
+                    "side":         filters.get("side_norm"),
+                },
+                "guardrails":     {
+                    "can_auto_submit":        False,
+                    "auto_execution_allowed": False,
+                    "ai_can_execute":         False,
+                },
+            }), 200
+
+        # Step 3: Build candidates + prompt
+        candidates = _lm_build_learning_observation_candidates(evidence)
+        prompt     = _lm_build_learning_review_prompt(evidence, candidates)
+
+        # Step 4: Call AI (may fall back to deterministic)
+        ai_context = {"learning_review_prompt": prompt, "phase": "11_15"}
+        ai_result  = _lm_call_ai_provider(ai_context, user_message=prompt, agent_id=None)
+
+        source     = "ai" if ai_result.get("ok") else "deterministic"
+        model_name = ai_result.get("model") or None
+
+        if ai_result.get("ok"):
+            raw_analysis = ai_result.get("analysis") or {}
+        else:
+            # Deterministic fallback (Task 18)
+            raw_analysis = _lm_deterministic_learning_fallback(evidence, candidates)
+            source = "deterministic"
+
+        # Step 5: Parse + validate response
+        parsed  = _lm_parse_learning_review_response(raw_analysis)
+        is_valid, invalid_reasons = _lm_validate_learning_review_response(parsed)
+        if not is_valid:
+            # Build minimal deterministic response if AI returned garbage
+            parsed   = _lm_parse_learning_review_response(
+                _lm_deterministic_learning_fallback(evidence, candidates)
+            )
+            source   = "deterministic"
+            model_name = None
+
+        # Low-confidence warning for small samples (5-9 trades)
+        if total < 10:
+            parsed.setdefault("warnings", [])
+            if "low_sample_size" not in parsed["warnings"]:
+                parsed["warnings"].append("low_sample_size")
+            parsed["confidence_level"] = "low"
+
+        # Step 6: Persist
+        from extensions import db
+        review = _lm_save_learning_review(
+            uid,
+            filters          = filters,
+            evidence         = evidence,
+            parsed_response  = parsed,
+            source           = source,
+            model_name       = model_name,
+        )
+        db.session.commit()
+
+        from models import LiveMonitorLearningReview as _LR1115
+        saved = _LR1115.query.get(review.id)
+
+        from live_monitor.ai_learning_review import _serialize_review
+        return jsonify({
+            "ok":           True,
+            "review":       _serialize_review(saved, include_json=True),
+            "source":       source,
+            "sample_size":  total,
+            "guardrails":   {
+                "can_auto_submit":        False,
+                "auto_execution_allowed": False,
+                "ai_can_execute":         False,
+                "auto_apply_allowed":     False,
+            },
+        }), 201
+
+    finally:
+        with _lm_learning_review_generate_lock:
+            _lm_learning_review_inflight.discard(uid)
+
+
+def _lm_deterministic_learning_fallback(evidence: dict, candidates: list) -> dict:
+    """Build a deterministic learning review when AI is unavailable.
+
+    Returns a dict that conforms to the AI response schema.
+    """
+    total = evidence.get("sample_size", 0)
+    eq    = evidence.get("execution_quality", {})
+
+    obs = []
+    for c in candidates[:5]:
+        obs.append({
+            "type":             c.get("type", "general_observation"),
+            "label":            c.get("label", ""),
+            "finding":          c.get("finding", ""),
+            "sample_n":         total,
+            "confidence":       c.get("confidence", "low"),
+            "auto_apply_allowed": False,
+        })
+
+    avg_cap = eq.get("avg_rr_capture")
+    summary_parts = [f"Analysis of {total} closed paper trades."]
+    if avg_cap is not None:
+        summary_parts.append(f"Average RR capture: {avg_cap:.1%}.")
+    if obs:
+        summary_parts.append(f"{len(obs)} pattern(s) detected from trade history.")
+
+    return {
+        "title":            "Learning Review (Deterministic)",
+        "summary":          " ".join(summary_parts),
+        "confidence_level": "low",
+        "observations":     obs,
+        "warnings":         ["ai_provider_unavailable", "deterministic_fallback_used"],
+        "guardrails": {
+            "auto_apply_allowed":     False,
+            "ai_can_execute":         False,
+            "auto_execution_allowed": False,
+        },
+    }
+
+
+@app.route("/api/live-monitor/learning-reviews", methods=["GET"])
+@login_required
+def api_lm_learning_reviews_list():
+    """GET: List learning reviews for the current user."""
+    uid          = current_user.id
+    review_scope = request.args.get("review_scope") or None
+    status_f     = request.args.get("status") or None
+    try:
+        limit  = min(int(request.args.get("limit",  20)), 100)
+        offset = max(int(request.args.get("offset",  0)), 0)
+    except (TypeError, ValueError):
+        limit, offset = 20, 0
+
+    reviews = _lm_get_learning_reviews(
+        uid,
+        review_scope  = review_scope,
+        status_filter = status_f,
+        limit         = limit,
+        offset        = offset,
+    )
+    return jsonify({
+        "ok":       True,
+        "reviews":  reviews,
+        "count":    len(reviews),
+        "guardrails": {
+            "can_auto_submit":        False,
+            "auto_execution_allowed": False,
+            "ai_can_execute":         False,
+        },
+    }), 200
+
+
+@app.route("/api/live-monitor/learning-reviews/<int:review_id>", methods=["GET"])
+@login_required
+def api_lm_learning_review_get(review_id):
+    """GET: Retrieve a single learning review with full detail."""
+    uid    = current_user.id
+    review = _lm_get_learning_review(uid, review_id)
+    if review is None:
+        return jsonify({"ok": False, "error": "review_not_found"}), 404
+    return jsonify({"ok": True, "review": review}), 200
+
+
+@app.route("/api/live-monitor/learning-reviews/<int:review_id>", methods=["PATCH"])
+@login_required
+def api_lm_learning_review_update(review_id):
+    """PATCH: Update review status and/or human note.
+
+    Advisory only — transitions human review decisions, no execution.
+    """
+    uid  = current_user.id
+    body = request.get_json(silent=True) or {}
+
+    new_status = (body.get("status") or "").strip() or None
+    human_note = body.get("human_note")   # None = don't update
+
+    if new_status is None and human_note is None:
+        return jsonify({"ok": False, "error": "no_fields_to_update"}), 400
+
+    if new_status is not None:
+        ok, reason, updated = _lm_update_learning_review_status(
+            uid, review_id, new_status, human_note=human_note,
+        )
+        if not ok:
+            return jsonify({"ok": False, "error": reason}), 400
+        return jsonify({
+            "ok":     True,
+            "review": updated,
+            "guardrails": {
+                "can_auto_submit":        False,
+                "auto_execution_allowed": False,
+                "ai_can_execute":         False,
+            },
+        }), 200
+
+    # Note-only update
+    from models import LiveMonitorLearningReview as _LR1115p
+    from extensions import db
+    r = _LR1115p.query.filter_by(id=review_id, user_id=uid).first()
+    if r is None:
+        return jsonify({"ok": False, "error": "review_not_found"}), 404
+    r.human_note = str(human_note)[:2000] if human_note is not None else r.human_note
+    r.updated_at = datetime.now(timezone.utc)
+    db.session.commit()
+    from live_monitor.ai_learning_review import _serialize_review
+    return jsonify({
+        "ok":     True,
+        "review": _serialize_review(r, include_json=False),
+        "guardrails": {
+            "can_auto_submit":        False,
+            "auto_execution_allowed": False,
+            "ai_can_execute":         False,
+        },
+    }), 200
+
+
+@app.route("/api/live-monitor/items/<int:item_id>/learning-reviews", methods=["GET"])
+@login_required
+def api_lm_item_learning_reviews(item_id):
+    """GET: List learning reviews scoped to a specific item."""
+    uid = current_user.id
+    from models import LiveMonitorItem as _LMI1115
+    item = _LMI1115.query.filter_by(id=item_id, user_id=uid).first()
+    if item is None:
+        return jsonify({"ok": False, "error": "item_not_found"}), 404
+
+    status_f = request.args.get("status") or None
+    try:
+        limit  = min(int(request.args.get("limit",  20)), 100)
+        offset = max(int(request.args.get("offset",  0)), 0)
+    except (TypeError, ValueError):
+        limit, offset = 20, 0
+
+    reviews = _lm_get_learning_reviews(
+        uid, item_id=item_id,
+        status_filter = status_f,
+        limit         = limit,
+        offset        = offset,
+    )
+    return jsonify({
+        "ok":       True,
+        "item_id":  item_id,
+        "reviews":  reviews,
+        "count":    len(reviews),
+        "guardrails": {
+            "can_auto_submit":        False,
+            "auto_execution_allowed": False,
+            "ai_can_execute":         False,
+        },
+    }), 200
 
 
 @app.route("/api/live-monitor/trades/<trade_uid>/demo-submit", methods=["POST"])

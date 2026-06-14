@@ -1222,3 +1222,81 @@ class LiveMonitorPaperAutoGateEvent(db.Model):
     def __repr__(self) -> str:
         return (f"<LiveMonitorPaperAutoGateEvent id={self.id} "
                 f"item={self.item_id} type={self.event_type} eligible={self.eligible}>")
+
+
+class LiveMonitorLearningReview(db.Model):
+    """AI-generated learning observations with human review workflow — Phase 11.15.
+
+    Advisory + read-only analysis of paper trading history only.
+    No execution. No orders. No strategy mutation. No automatic apply.
+    Human review decisions are tracked here; no decision is ever automated.
+    """
+    __tablename__ = "live_monitor_learning_reviews"
+
+    id      = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"),
+                        nullable=False, index=True)
+    item_id = db.Column(db.Integer, db.ForeignKey("live_monitor_items.id"),
+                        nullable=True, index=True)
+
+    # Scope and filter context used to generate this review
+    review_scope = db.Column(db.String(20), nullable=False, default="portfolio")
+    # "portfolio" | "symbol" | "item"
+    period       = db.Column(db.String(10), nullable=True)
+    # "7d" | "30d" | "90d" | "365d" | "all"
+    symbol       = db.Column(db.String(30), nullable=True)
+    side         = db.Column(db.String(10), nullable=True)
+    # "long" | "short" | null (= both)
+
+    # Review status workflow: generated → reviewed / accepted_insight / rejected / archived
+    status = db.Column(db.String(30), nullable=False, default="generated", index=True)
+
+    # Human-readable summary fields written by AI and optionally annotated by human
+    title   = db.Column(db.Text, nullable=True)
+    summary = db.Column(db.Text, nullable=True)
+
+    # Full AI response and evidence snapshot (JSON blobs)
+    review_json   = db.Column(db.Text, nullable=True)  # parsed AI observations
+    evidence_json = db.Column(db.Text, nullable=True)  # evidence segments snapshot
+
+    # Human annotation
+    human_note = db.Column(db.Text, nullable=True)
+
+    # Data quality metadata
+    sample_size     = db.Column(db.Integer,    nullable=True)
+    sample_quality  = db.Column(db.String(20), nullable=True)  # "high" | "low" | "insufficient"
+    confidence_level= db.Column(db.String(20), nullable=True)  # "high" | "medium" | "low"
+    warning_count   = db.Column(db.Integer,    nullable=True, default=0)
+
+    # Provenance
+    source         = db.Column(db.String(30), nullable=True)   # "ai" | "deterministic"
+    model_name     = db.Column(db.String(80), nullable=True)
+    prompt_version = db.Column(db.String(20), nullable=True, default="11.15.0")
+
+    # Review lineage (self-referential: a re-run supersedes an older review)
+    parent_review_id    = db.Column(db.Integer, db.ForeignKey("live_monitor_learning_reviews.id"),
+                                    nullable=True, index=True)
+    supersedes_review_id= db.Column(db.Integer, db.ForeignKey("live_monitor_learning_reviews.id"),
+                                    nullable=True)
+
+    created_at  = db.Column(db.DateTime,
+                            default=lambda: datetime.now(timezone.utc),
+                            nullable=False, index=True)
+    updated_at  = db.Column(db.DateTime,
+                            default=lambda: datetime.now(timezone.utc),
+                            onupdate=lambda: datetime.now(timezone.utc),
+                            nullable=True)
+    reviewed_at = db.Column(db.DateTime, nullable=True)
+
+    user = db.relationship("User",            foreign_keys=[user_id])
+    item = db.relationship("LiveMonitorItem", foreign_keys=[item_id])
+    parent_review = db.relationship(
+        "LiveMonitorLearningReview",
+        foreign_keys=[parent_review_id],
+        remote_side="LiveMonitorLearningReview.id",
+        uselist=False,
+    )
+
+    def __repr__(self) -> str:
+        return (f"<LiveMonitorLearningReview id={self.id} "
+                f"user={self.user_id} scope={self.review_scope} status={self.status}>")

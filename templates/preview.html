@@ -5582,6 +5582,41 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                       '<div style="font-size:8px;color:var(--text-4,#475569);margin-top:5px">Analytics only. No orders. No execution. Read-only.</div>'+
                     '</div>'+
 
+                    /* ── Phase 11.15: AI Learning Review Loop ─────────── */
+                    '<div class="lm-ws-section" id="lmLearnRevSection" style="margin-top:4px">'+
+                      '<div class="lm-ws-sh-row" style="display:flex;align-items:center;gap:6px;margin-bottom:4px">'+
+                        '<div class="lm-ws-sh" style="margin:0;flex:1">AI Learning Review</div>'+
+                        '<button id="lmLearnRevGenBtn" onclick="window._lmLearningReviewGenerate()" style="font-size:9px;padding:2px 7px;background:var(--accent,#3b82f6);color:#fff;border:none;border-radius:3px;cursor:pointer">Generate</button>'+
+                        '<button id="lmLearnRevRefreshBtn" onclick="window._lmLearningReviewRefresh()" style="font-size:9px;padding:2px 7px;background:var(--bg-3,#1e293b);color:var(--text-2,#cbd5e1);border:1px solid var(--border,#334155);border-radius:3px;cursor:pointer">↻</button>'+
+                      '</div>'+
+                      '<div id="lmLearnRevBanner" style="font-size:9px;color:var(--text-3,#94a3b8);background:var(--bg-3,#1e293b);border:1px solid var(--border,#334155);border-radius:3px;padding:4px 6px;margin-bottom:5px;line-height:1.4">'+
+                        '⚠ Advisory only. AI observations are based on past paper trades. No recommendations are applied automatically. No strategy changes. No parameter edits. Human review required for all insights.'+
+                      '</div>'+
+                      '<div id="lmLearnRevStatus" style="font-size:9px;color:var(--text-3,#94a3b8);min-height:14px;margin-bottom:3px"></div>'+
+                      '<div id="lmLearnRevList" style="display:flex;flex-direction:column;gap:3px"></div>'+
+                      /* Detail panel (hidden until a review is opened) */
+                      '<div id="lmLearnRevDetail" style="display:none;margin-top:6px;background:var(--bg-3,#1e293b);border:1px solid var(--border,#334155);border-radius:4px;padding:6px">'+
+                        '<div style="display:flex;align-items:center;gap:4px;margin-bottom:4px">'+
+                          '<span id="lmLearnRevDetailTitle" style="font-size:10px;font-weight:600;color:var(--text-1,#f1f5f9);flex:1"></span>'+
+                          '<button onclick="document.getElementById(\'lmLearnRevDetail\').style.display=\'none\'" style="font-size:9px;padding:1px 5px;background:transparent;color:var(--text-3,#94a3b8);border:1px solid var(--border,#334155);border-radius:3px;cursor:pointer">✕</button>'+
+                        '</div>'+
+                        '<div id="lmLearnRevDetailMeta" style="font-size:9px;color:var(--text-3,#94a3b8);margin-bottom:4px"></div>'+
+                        '<div id="lmLearnRevDetailSummary" style="font-size:9px;color:var(--text-2,#cbd5e1);margin-bottom:5px;line-height:1.5"></div>'+
+                        '<div id="lmLearnRevDetailObs" style="display:flex;flex-direction:column;gap:3px;margin-bottom:5px"></div>'+
+                        '<div id="lmLearnRevDetailWarns" style="font-size:8px;color:var(--warn,#f59e0b);margin-bottom:5px"></div>'+
+                        '<div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">'+
+                          '<button id="lmLearnRevAcceptBtn" onclick="window._lmLearningReviewUpdate(\'accepted_insight\')" style="font-size:9px;padding:2px 7px;background:var(--green,#22c55e);color:#fff;border:none;border-radius:3px;cursor:pointer">Accept Insight</button>'+
+                          '<button id="lmLearnRevRejectBtn" onclick="window._lmLearningReviewUpdate(\'rejected\')" style="font-size:9px;padding:2px 7px;background:var(--red,#ef4444);color:#fff;border:none;border-radius:3px;cursor:pointer">Reject</button>'+
+                          '<button id="lmLearnRevArchiveBtn" onclick="window._lmLearningReviewUpdate(\'archived\')" style="font-size:9px;padding:2px 7px;background:var(--bg-4,#0f172a);color:var(--text-3,#94a3b8);border:1px solid var(--border,#334155);border-radius:3px;cursor:pointer">Archive</button>'+
+                        '</div>'+
+                        '<div style="margin-top:5px">'+
+                          '<textarea id="lmLearnRevNoteInput" placeholder="Add a note (optional)…" rows="2" style="width:100%;font-size:9px;background:var(--bg-2,#0f172a);color:var(--text-1,#f1f5f9);border:1px solid var(--border,#334155);border-radius:3px;padding:3px 5px;resize:vertical;box-sizing:border-box"></textarea>'+
+                          '<button onclick="window._lmLearningReviewSaveNote()" style="margin-top:3px;font-size:9px;padding:2px 7px;background:var(--bg-3,#1e293b);color:var(--text-2,#cbd5e1);border:1px solid var(--border,#334155);border-radius:3px;cursor:pointer">Save Note</button>'+
+                        '</div>'+
+                      '</div>'+
+                      '<div style="font-size:8px;color:var(--text-4,#475569);margin-top:5px">Advisory only. AI observations from paper trade history. No automatic execution.</div>'+
+                    '</div>'+
+
                   '</div>'+ /* end lmTermGrpBody-paper */
                 '</div>'+ /* end GROUP 1 */
 
@@ -9732,6 +9767,201 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         '</tr>';
     }).join('');
   };
+
+  /* ── Phase 11.15: AI Learning Review Loop ─────────────────────────────── */
+  (function(){
+    var _lrActiveId=null; // currently open review id
+
+    window._lmLearningReviewGenerate=function(){
+      var btn=document.getElementById('lmLearnRevGenBtn');
+      var statusEl=document.getElementById('lmLearnRevStatus');
+      if(btn) btn.disabled=true;
+      if(statusEl) statusEl.textContent='Generating review…';
+
+      // Derive scope/period/symbol from paper performance controls if present
+      var scopeEl=document.getElementById('lmPapPerfScope');
+      var periodEl=document.getElementById('lmPapPerfPeriod');
+      var symEl=document.getElementById('lmPapPerfSym');
+      var scope=scopeEl?scopeEl.value:'portfolio';
+      var period=periodEl?periodEl.value:'30d';
+      var sym=(symEl?symEl.value:'').trim().toUpperCase();
+
+      var body={review_scope:scope, period:period};
+      if(sym){ body.symbol=sym; }
+
+      fetch('/api/live-monitor/learning-reviews/generate',{
+        method:'POST',
+        headers:{'Content-Type':'application/json','X-CSRFToken':window._csrfToken||''},
+        body:JSON.stringify(body),
+        credentials:'same-origin',
+      })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(btn) btn.disabled=false;
+        if(!d.ok){
+          if(d.error==='insufficient_learning_sample'){
+            if(statusEl) statusEl.textContent='Need ≥5 closed trades (have '+( d.sample_size||0)+').';
+          } else if(d.error==='rate_limited'){
+            if(statusEl) statusEl.textContent='Rate limit — wait a few minutes.';
+          } else if(d.error==='generation_in_progress'){
+            if(statusEl) statusEl.textContent='Already generating — please wait.';
+          } else {
+            if(statusEl) statusEl.textContent='Error: '+(d.error||'unknown');
+          }
+          return;
+        }
+        if(statusEl) statusEl.textContent='Review generated ('+(d.source||'ai')+', n='+(d.sample_size||0)+').';
+        window._lmLearningReviewRefresh();
+      })
+      .catch(function(e){
+        if(btn) btn.disabled=false;
+        if(statusEl) statusEl.textContent='Network error.';
+      });
+    };
+
+    window._lmLearningReviewRefresh=function(){
+      var statusEl=document.getElementById('lmLearnRevStatus');
+      fetch('/api/live-monitor/learning-reviews?limit=10',{credentials:'same-origin'})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(d.ok) window._lmLearningReviewApplyList(d.reviews||[]);
+        else if(statusEl) statusEl.textContent='Could not load reviews.';
+      })
+      .catch(function(){ if(statusEl) statusEl.textContent='Network error loading reviews.'; });
+    };
+
+    window._lmLearningReviewApplyList=function(reviews){
+      var list=document.getElementById('lmLearnRevList');
+      if(!list) return;
+      if(!reviews.length){
+        list.innerHTML='<div style="font-size:9px;color:var(--text-4,#475569)">No reviews yet. Click Generate to create one.</div>';
+        return;
+      }
+      var statusColors={generated:'#94a3b8',reviewed:'#60a5fa',accepted_insight:'#4ade80',rejected:'#f87171',archived:'#475569'};
+      list.innerHTML=reviews.map(function(r){
+        var col=statusColors[r.status]||'#94a3b8';
+        var src=r.source==='deterministic'?' (det)':'';
+        var conf=r.confidence_level?(' · '+r.confidence_level):'';
+        return '<div onclick="window._lmLearningReviewOpen('+r.id+')" style="cursor:pointer;padding:4px 5px;background:var(--bg-3,#1e293b);border:1px solid var(--border,#334155);border-radius:3px;font-size:9px">'+
+          '<div style="display:flex;gap:4px;align-items:center">'+
+            '<span style="color:'+col+';font-size:8px">●</span>'+
+            '<span style="font-weight:600;color:var(--text-1,#f1f5f9);flex:1">'+esc(r.title||'Review')+'</span>'+
+            '<span style="color:var(--text-4,#475569);font-size:8px">'+esc(r.period||'')+(r.symbol?' · '+r.symbol:'')+src+conf+'</span>'+
+          '</div>'+
+          '<div style="color:var(--text-3,#94a3b8);margin-top:1px;font-size:8px">'+esc((r.summary||'').substring(0,80))+'…</div>'+
+        '</div>';
+      }).join('');
+    };
+
+    window._lmLearningReviewOpen=function(review_id){
+      _lrActiveId=review_id;
+      var detail=document.getElementById('lmLearnRevDetail');
+      if(detail) detail.style.display='none'; // hide while loading
+      fetch('/api/live-monitor/learning-reviews/'+review_id,{credentials:'same-origin'})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(d.ok) window._lmLearningReviewApplyDetail(d.review);
+      });
+    };
+
+    window._lmLearningReviewApplyDetail=function(r){
+      var detail=document.getElementById('lmLearnRevDetail');
+      if(!detail) return;
+      detail.style.display='';
+      var titleEl=document.getElementById('lmLearnRevDetailTitle');
+      var metaEl=document.getElementById('lmLearnRevDetailMeta');
+      var sumEl=document.getElementById('lmLearnRevDetailSummary');
+      var obsEl=document.getElementById('lmLearnRevDetailObs');
+      var warnEl=document.getElementById('lmLearnRevDetailWarns');
+      var noteEl=document.getElementById('lmLearnRevNoteInput');
+
+      if(titleEl) titleEl.textContent=r.title||'Review';
+      if(metaEl) metaEl.textContent=[
+        r.status, r.source, r.period,
+        r.symbol?'· '+r.symbol:'',
+        r.confidence_level?'· '+r.confidence_level+' confidence':'',
+        'n='+(r.sample_size||0),
+      ].filter(Boolean).join(' · ');
+      if(sumEl) sumEl.textContent=r.summary||'';
+      if(noteEl) noteEl.value=r.human_note||'';
+
+      // Observations
+      var obs=(r.review_data&&r.review_data.observations)||[];
+      if(obsEl){
+        if(!obs.length){
+          obsEl.innerHTML='<div style="color:var(--text-4,#475569);font-size:8px">No observations.</div>';
+        } else {
+          obsEl.innerHTML=obs.map(function(o){
+            var confCol={high:'#4ade80',medium:'#facc15',low:'#94a3b8'}[o.confidence]||'#94a3b8';
+            return '<div style="background:var(--bg-2,#0f172a);border:1px solid var(--border,#334155);border-radius:3px;padding:3px 5px;font-size:9px">'+
+              '<div style="display:flex;gap:4px;align-items:center">'+
+                '<span style="font-weight:600;color:var(--text-1)">'+esc(o.label||o.type||'')+'</span>'+
+                '<span style="color:'+confCol+';font-size:8px">'+esc(o.confidence||'')+'</span>'+
+                '<span style="color:var(--text-4);font-size:8px;margin-left:auto">'+esc(o.type||'')+'</span>'+
+              '</div>'+
+              '<div style="color:var(--text-2,#cbd5e1);margin-top:1px">'+esc(o.finding||'')+'</div>'+
+            '</div>';
+          }).join('');
+        }
+      }
+
+      // Warnings
+      var warns=(r.review_data&&r.review_data.warnings)||[];
+      if(warnEl) warnEl.textContent=warns.length?'⚠ '+warns.join(' · '):'';
+
+      // Show/hide action buttons by allowed transitions
+      var allowed={generated:['accepted_insight','rejected','archived'],reviewed:['accepted_insight','rejected','archived'],accepted_insight:['archived'],rejected:['archived'],archived:[]};
+      var allowed_next=allowed[r.status]||[];
+      var accBtn=document.getElementById('lmLearnRevAcceptBtn');
+      var rejBtn=document.getElementById('lmLearnRevRejectBtn');
+      var arcBtn=document.getElementById('lmLearnRevArchiveBtn');
+      if(accBtn) accBtn.style.display=allowed_next.indexOf('accepted_insight')!==-1?'':'none';
+      if(rejBtn) rejBtn.style.display=allowed_next.indexOf('rejected')!==-1?'':'none';
+      if(arcBtn) arcBtn.style.display=allowed_next.indexOf('archived')!==-1?'':'none';
+    };
+
+    window._lmLearningReviewUpdate=function(new_status){
+      if(!_lrActiveId) return;
+      var noteEl=document.getElementById('lmLearnRevNoteInput');
+      var note=noteEl?noteEl.value.trim():'';
+      var body={status:new_status};
+      if(note) body.human_note=note;
+      fetch('/api/live-monitor/learning-reviews/'+_lrActiveId,{
+        method:'PATCH',
+        headers:{'Content-Type':'application/json','X-CSRFToken':window._csrfToken||''},
+        body:JSON.stringify(body),
+        credentials:'same-origin',
+      })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(d.ok){
+          window._lmLearningReviewRefresh();
+          if(d.review) window._lmLearningReviewApplyDetail(d.review);
+        }
+      });
+    };
+
+    window._lmLearningReviewSaveNote=function(){
+      if(!_lrActiveId) return;
+      var noteEl=document.getElementById('lmLearnRevNoteInput');
+      var note=noteEl?noteEl.value:'';
+      fetch('/api/live-monitor/learning-reviews/'+_lrActiveId,{
+        method:'PATCH',
+        headers:{'Content-Type':'application/json','X-CSRFToken':window._csrfToken||''},
+        body:JSON.stringify({human_note:note}),
+        credentials:'same-origin',
+      })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(d.ok){
+          var statusEl=document.getElementById('lmLearnRevStatus');
+          if(statusEl) statusEl.textContent='Note saved.';
+          setTimeout(function(){ if(statusEl) statusEl.textContent=''; }, 2000);
+        }
+      });
+    };
+  })();
+  /* ── End Phase 11.15 ──────────────────────────────────────────────────── */
 
   function _lmMtfMatrix(item){
     var scan=(item.snapshot&&item.snapshot.latest_mtf_scan)||null;
