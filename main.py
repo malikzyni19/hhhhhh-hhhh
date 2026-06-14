@@ -35418,6 +35418,801 @@ def _bt_build_tv_ob_pct_threshold_analysis(
     }
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Phase 14 — Cross-Market TV OB% Threshold Stability Lab
+# ══════════════════════════════════════════════════════════════════════════════
+
+import random as _random
+
+_STAB_BOOTSTRAP_ITERS:       int   = 2000
+_STAB_BOOTSTRAP_SEED:        int   = 14013
+_STAB_MIN_USABLE_CELLS:      int   = 6
+_STAB_MIN_SYMBOLS:           int   = 4
+_STAB_MIN_TF_CELLS:          int   = 2
+_STAB_MIN_TOTAL_TRADES:      int   = 100
+_STAB_MIN_RETENTION:         float = 20.0
+_STAB_MIN_POSITIVE_PCT:      float = 60.0
+_STAB_MIN_BEAT_BASELINE_PCT: float = 60.0
+_STAB_WORST_CELL_FLOOR:      float = -0.25
+_STAB_NEAR_EQ_CI:            float = 0.03
+_STAB_MAX_SYMBOLS:           int   = 5
+_STAB_MAX_TIMEFRAMES:        int   = 2
+_STAB_MAX_CELLS:             int   = 10
+
+
+def _stab_sample_status(trades: int) -> str:
+    if trades < 10:
+        return "no_sample"
+    if trades < _MIN_AUTHORITATIVE_TRADES:
+        return "insufficient"
+    if trades < 50:
+        return "usable"
+    return "strong"
+
+
+def _stab_aggregate_pf(gross_profit: float, gross_loss: float):
+    """Return (pf_r, pf_inf). Never averages per-cell PFs."""
+    if gross_loss > 0:
+        return round(gross_profit / gross_loss, 4), False
+    if gross_profit > 0:
+        return None, True
+    return None, False
+
+
+def _stab_pf_non_degraded(thr_pf, thr_pf_inf, base_pf, base_pf_inf):
+    """True if threshold PF is not materially worse than baseline (≥95% rule)."""
+    if thr_pf_inf:
+        return True
+    if base_pf_inf:
+        return thr_pf_inf
+    if thr_pf is None or base_pf is None:
+        return True
+    if base_pf <= 0:
+        return True
+    return thr_pf >= base_pf * 0.95
+
+
+def _stab_bootstrap_delta(usable_rows: list) -> dict:
+    """
+    Resample cell-level expectancy deltas with replacement.
+    2000 iterations, seed 14013.  Returns 2.5th/97.5th percentile CI.
+    """
+    rng = _random.Random(_STAB_BOOTSTRAP_SEED)
+    deltas = [
+        r["expectancy_delta_vs_baseline"]
+        for r in usable_rows
+        if r.get("expectancy_delta_vs_baseline") is not None
+    ]
+    if not deltas:
+        return {
+            "macro_expectancy_delta_low":  None,
+            "macro_expectancy_delta_high": None,
+            "iterations": _STAB_BOOTSTRAP_ITERS,
+            "seed":       _STAB_BOOTSTRAP_SEED,
+        }
+    n = len(deltas)
+    means = []
+    for _ in range(_STAB_BOOTSTRAP_ITERS):
+        sample = [deltas[rng.randrange(n)] for _ in range(n)]
+        means.append(sum(sample) / n)
+    means.sort()
+    low_idx  = 50   # index 50 → 2.5th percentile of 2000
+    high_idx = 1950 # index 1950 → 97.5th percentile of 2000
+    return {
+        "macro_expectancy_delta_low":  round(means[low_idx],  6),
+        "macro_expectancy_delta_high": round(means[high_idx], 6),
+        "iterations": _STAB_BOOTSTRAP_ITERS,
+        "seed":       _STAB_BOOTSTRAP_SEED,
+    }
+
+
+def _bt_build_tv_ob_pct_stability_analysis(
+    cell_results:    List[Dict],
+    thresholds:      List[int] = None,
+    rr_values:       List      = None,
+    primary_metric:  str       = "before_first_touch",
+) -> Dict:
+    """
+    Aggregate per-cell Phase 13 threshold analyses into a cross-market
+    stability study.  Never activates any threshold in Scanner/Monitor/execution.
+    """
+    import time as _time_stab
+    t0 = _time_stab.time()
+
+    if thresholds is None:
+        thresholds = list(range(0, 105, 5))
+    if rr_values is None:
+        rr_values = [1, 2, 3]
+
+    rr_strs = [_bt_rr_key(rv) for rv in rr_values]
+    failures: List[Dict] = []
+
+    # ── Flatten all cell × threshold × rr rows ────────────────────────────────
+    all_cell_rows: List[Dict] = []
+
+    for cell in cell_results:
+        if not cell.get("ok", False):
+            failures.append({
+                "symbol":    cell.get("symbol"),
+                "timeframe": cell.get("timeframe"),
+                "error":     cell.get("error", "cell_failed"),
+            })
+            continue
+
+        sym = cell.get("symbol", "")
+        tf  = cell.get("timeframe", "")
+        par_trusted = cell.get("parity_trusted", False)
+        thr_analysis = cell.get("threshold_analysis") or {}
+        pm_data = thr_analysis.get(primary_metric) or {}
+        results_map = pm_data.get("results") or {}
+        baseline_map = (results_map.get("0") or {})
+
+        for thr in thresholds:
+            thr_key = str(thr)
+            thr_data = results_map.get(thr_key) or {}
+            if not thr_data:
+                continue
+
+            rz_by_rr = thr_data.get("realized_summary_by_rr") or {}
+            cmp_by_rr = thr_data.get("comparison_vs_baseline_by_rr") or {}
+
+            base_rz_by_rr = baseline_map.get("realized_summary_by_rr") or {}
+
+            for rr_str in rr_strs:
+                rs   = rz_by_rr.get(rr_str) or {}
+                comp = cmp_by_rr.get(rr_str) or {}
+                bs   = base_rz_by_rr.get(rr_str) or {}
+
+                trades    = rs.get("trades", 0) or 0
+                wins      = rs.get("wins", 0) or 0
+                losses    = rs.get("losses", 0) or 0
+                ambiguous = rs.get("ambiguous", 0) or 0
+                unresolved = rs.get("unresolved", 0) or 0
+                invalid_lr = rs.get("invalid_loss_r", 0) or 0
+                win_rate   = rs.get("win_rate_pct")
+                net_r      = rs.get("net_r") or 0.0
+                expectancy = rs.get("expectancy_r")
+                gross_profit = rs.get("gross_profit_r") or 0.0
+                gross_loss   = rs.get("gross_loss_r") or 0.0
+                pf_r         = rs.get("profit_factor_r")
+                pf_inf       = rs.get("profit_factor_infinite", False) or False
+                valid_pct_events = rs.get("valid_percentage_events", 0) or 0
+
+                retention    = comp.get("trade_retention_pct")
+                exp_delta    = comp.get("expectancy_delta")
+                net_r_delta  = comp.get("net_r_delta")
+
+                b_trades      = bs.get("trades", 0) or 0
+                b_expectancy  = bs.get("expectancy_r")
+                b_net_r       = bs.get("net_r") or 0.0
+                b_gross_profit = bs.get("gross_profit_r") or 0.0
+                b_gross_loss   = bs.get("gross_loss_r") or 0.0
+
+                sample_status = _stab_sample_status(trades)
+
+                rejection_reasons: List[str] = []
+                if not par_trusted:
+                    rejection_reasons.append("parity_not_trusted")
+                if b_trades <= 0:
+                    rejection_reasons.append("no_baseline_trades")
+                if trades <= 0:
+                    rejection_reasons.append("no_threshold_trades")
+                if expectancy is None:
+                    rejection_reasons.append("expectancy_unavailable")
+                if invalid_lr > 0:
+                    rejection_reasons.append("invalid_loss_r_present")
+
+                eligible = (
+                    par_trusted
+                    and b_trades > 0
+                    and trades > 0
+                    and expectancy is not None
+                    and invalid_lr == 0
+                )
+
+                all_cell_rows.append({
+                    "symbol":                      sym,
+                    "timeframe":                   tf,
+                    "threshold_pct":               thr,
+                    "rr":                          rr_str,
+                    "parity_trusted":              par_trusted,
+                    "valid_percentage_events":     valid_pct_events,
+                    "baseline_trades":             b_trades,
+                    "trades":                      trades,
+                    "wins":                        wins,
+                    "losses":                      losses,
+                    "ambiguous":                   ambiguous,
+                    "unresolved":                  unresolved,
+                    "invalid_loss_r":              invalid_lr,
+                    "trade_retention_pct":         retention,
+                    "win_rate_pct":                win_rate,
+                    "gross_profit_r":              gross_profit,
+                    "gross_loss_r":                gross_loss,
+                    "net_r":                       net_r,
+                    "expectancy_r":                expectancy,
+                    "profit_factor_r":             pf_r,
+                    "profit_factor_infinite":      pf_inf,
+                    "baseline_expectancy_r":       b_expectancy,
+                    "expectancy_delta_vs_baseline": exp_delta,
+                    "baseline_net_r":              b_net_r,
+                    "net_r_delta_vs_baseline":     net_r_delta,
+                    "baseline_gross_profit_r":     b_gross_profit,
+                    "baseline_gross_loss_r":       b_gross_loss,
+                    "sample_size_status":          sample_status,
+                    "eligible_cell":               eligible,
+                    "rejection_reasons":           rejection_reasons,
+                })
+
+    # ── Helper lambdas ────────────────────────────────────────────────────────
+    def _rows_for(thr, rr_str, rows=None):
+        src = rows if rows is not None else all_cell_rows
+        return [r for r in src if r["threshold_pct"] == thr and r["rr"] == rr_str]
+
+    def _eligible(rows):
+        return [r for r in rows if r["eligible_cell"]]
+
+    def _usable(rows):
+        return [
+            r for r in rows
+            if r["eligible_cell"]
+            and r["trades"] >= 20
+            and r.get("trade_retention_pct") is not None
+            and r["trade_retention_pct"] >= _STAB_MIN_RETENTION
+        ]
+
+    def _micro_stats(elig_rows):
+        if not elig_rows:
+            return {}
+        total_b   = sum(r["baseline_trades"] for r in elig_rows)
+        total_t   = sum(r["trades"] for r in elig_rows)
+        total_w   = sum(r["wins"] for r in elig_rows)
+        total_l   = sum(r["losses"] for r in elig_rows)
+        total_amb = sum(r["ambiguous"] for r in elig_rows)
+        total_unr = sum(r["unresolved"] for r in elig_rows)
+        total_ilr = sum(r["invalid_loss_r"] for r in elig_rows)
+        gp  = sum(r["gross_profit_r"] for r in elig_rows)
+        gl  = sum(r["gross_loss_r"] for r in elig_rows)
+        nr  = gp - gl
+        exp = round(nr / total_t, 6) if total_t > 0 else None
+        ret = round(total_t / total_b * 100, 4) if total_b > 0 else None
+        pf_val, pf_inf2 = _stab_aggregate_pf(gp, gl)
+        return {
+            "total_baseline_trades":        total_b,
+            "total_trades":                 total_t,
+            "total_wins":                   total_w,
+            "total_losses":                 total_l,
+            "total_ambiguous":              total_amb,
+            "total_unresolved":             total_unr,
+            "total_invalid_loss_r":         total_ilr,
+            "micro_gross_profit_r":         round(gp, 6),
+            "micro_gross_loss_r":           round(gl, 6),
+            "micro_net_r":                  round(nr, 6),
+            "micro_expectancy_r":           exp,
+            "micro_trade_retention_pct":    ret,
+            "micro_profit_factor_r":        pf_val,
+            "micro_profit_factor_infinite": pf_inf2,
+        }
+
+    def _macro_stats(usable_rows):
+        if not usable_rows:
+            return {}
+        exps = [r["expectancy_r"] for r in usable_rows if r["expectancy_r"] is not None]
+        if not exps:
+            return {}
+        exps_sorted = sorted(exps)
+        n = len(exps_sorted)
+        mean_exp   = sum(exps_sorted) / n
+        median_exp = exps_sorted[n // 2] if n % 2 == 1 else (
+            exps_sorted[n // 2 - 1] + exps_sorted[n // 2]) / 2
+        worst_exp  = exps_sorted[0]
+        best_exp   = exps_sorted[-1]
+        std_dev    = None
+        if n >= 2:
+            variance = sum((x - mean_exp) ** 2 for x in exps_sorted) / (n - 1)
+            std_dev  = round(variance ** 0.5, 6)
+        return {
+            "macro_expectancy_r":       round(mean_exp, 6),
+            "median_cell_expectancy_r": round(median_exp, 6),
+            "worst_cell_expectancy_r":  round(worst_exp, 6),
+            "best_cell_expectancy_r":   round(best_exp, 6),
+            "expectancy_std_dev":       std_dev,
+        }
+
+    # ── Baseline micro/macro per RR ───────────────────────────────────────────
+    baseline_micro_by_rr: Dict[str, Dict] = {}
+    baseline_macro_by_rr: Dict[str, Dict] = {}
+    for rr_str in rr_strs:
+        b_rows  = _rows_for(0, rr_str)
+        b_elig  = _eligible(b_rows)
+        b_usable = _usable(b_rows)
+        baseline_micro_by_rr[rr_str] = _micro_stats(b_elig)
+        baseline_macro_by_rr[rr_str] = _macro_stats(b_usable)
+
+    # ── Per-(thr, rr) aggregates ──────────────────────────────────────────────
+    aggregate_by_thr_rr: Dict[str, Dict] = {}
+
+    for thr in thresholds:
+        for rr_str in rr_strs:
+            key    = f"{thr}_{rr_str}"
+            rows   = _rows_for(thr, rr_str)
+            elig   = _eligible(rows)
+            usable = _usable(rows)
+            strong = [r for r in elig if r["trades"] >= 50]
+            trusted = [r for r in rows if r["parity_trusted"]]
+            syms_repr = set(r["symbol"] for r in usable)
+            tfs_repr  = set(r["timeframe"] for r in usable)
+            n_usable  = len(usable)
+
+            micro = _micro_stats(elig)
+            macro = _macro_stats(usable)
+
+            pos_cells  = sum(1 for r in usable if (r["expectancy_r"] or 0) > 0)
+            neg_cells  = sum(1 for r in usable if (r["expectancy_r"] or 0) < 0)
+            zero_cells = sum(1 for r in usable if (r["expectancy_r"] or 0) == 0)
+            usable_with_delta = [r for r in usable
+                                  if r.get("expectancy_delta_vs_baseline") is not None]
+            beat_baseline = sum(1 for r in usable_with_delta
+                                if r["expectancy_delta_vs_baseline"] > 0)
+            lost_baseline = sum(1 for r in usable_with_delta
+                                if r["expectancy_delta_vs_baseline"] <= 0)
+            pos_pct  = round(pos_cells / n_usable * 100, 2) if n_usable > 0 else None
+            beat_pct = (round(beat_baseline / len(usable_with_delta) * 100, 2)
+                        if usable_with_delta else None)
+
+            bm = baseline_micro_by_rr.get(rr_str, {})
+            bM = baseline_macro_by_rr.get(rr_str, {})
+            macro_delta = None
+            micro_delta = None
+            if (macro.get("macro_expectancy_r") is not None
+                    and bM.get("macro_expectancy_r") is not None):
+                macro_delta = round(
+                    macro["macro_expectancy_r"] - bM["macro_expectancy_r"], 6)
+            if (micro.get("micro_expectancy_r") is not None
+                    and bm.get("micro_expectancy_r") is not None):
+                micro_delta = round(
+                    micro["micro_expectancy_r"] - bm["micro_expectancy_r"], 6)
+
+            boot = (_stab_bootstrap_delta(usable)
+                    if len(usable) >= 4
+                    else {
+                        "macro_expectancy_delta_low":  None,
+                        "macro_expectancy_delta_high": None,
+                        "iterations": _STAB_BOOTSTRAP_ITERS,
+                        "seed":       _STAB_BOOTSTRAP_SEED,
+                    })
+
+            aggregate_by_thr_rr[key] = {
+                "threshold_pct":            thr,
+                "rr":                       rr_str,
+                "completed_cells":          len(rows),
+                "trusted_cells":            len(trusted),
+                "eligible_cells":           len(elig),
+                "usable_cells":             n_usable,
+                "strong_cells":             len(strong),
+                "symbols_represented":      len(syms_repr),
+                "timeframes_represented":   sorted(list(tfs_repr)),
+                **micro,
+                **macro,
+                "positive_expectancy_cells":  pos_cells,
+                "negative_expectancy_cells":  neg_cells,
+                "zero_expectancy_cells":      zero_cells,
+                "beat_baseline_cells":        beat_baseline,
+                "lost_to_baseline_cells":     lost_baseline,
+                "positive_cell_pct":          pos_pct,
+                "beat_baseline_cell_pct":     beat_pct,
+                "macro_expectancy_delta_vs_baseline": macro_delta,
+                "micro_expectancy_delta_vs_baseline": micro_delta,
+                "baseline_macro_expectancy_r": bM.get("macro_expectancy_r"),
+                "baseline_micro_expectancy_r": bm.get("micro_expectancy_r"),
+                "baseline_micro_net_r":        bm.get("micro_net_r"),
+                "baseline_micro_profit_factor_r":
+                    bm.get("micro_profit_factor_r"),
+                "baseline_micro_profit_factor_infinite":
+                    bm.get("micro_profit_factor_infinite", False),
+                "bootstrap_ci_95":          boot,
+                "coverage_passes":          False,
+                "coverage_failures":        [],
+                "robustness_passes":        False,
+                "robustness_failures":      [],
+                "eligible_for_robust_ranking": False,
+                "timeframe_summaries":      {},
+            }
+
+    # ── Coverage check ────────────────────────────────────────────────────────
+    for thr in thresholds:
+        if thr == 0:
+            continue
+        for rr_str in rr_strs:
+            key    = f"{thr}_{rr_str}"
+            agg    = aggregate_by_thr_rr.get(key, {})
+            rows   = _rows_for(thr, rr_str)
+            usable = _usable(rows)
+            tfs_usable = set(r["timeframe"] for r in usable)
+
+            fails = []
+            if agg.get("usable_cells", 0) < _STAB_MIN_USABLE_CELLS:
+                fails.append(f"usable_cells<{_STAB_MIN_USABLE_CELLS}")
+            if agg.get("symbols_represented", 0) < _STAB_MIN_SYMBOLS:
+                fails.append(f"symbols_represented<{_STAB_MIN_SYMBOLS}")
+            if "1h" not in tfs_usable:
+                fails.append("no_1h_usable_cells")
+            if "4h" not in tfs_usable:
+                fails.append("no_4h_usable_cells")
+            if sum(1 for r in usable if r["timeframe"] == "1h") < _STAB_MIN_TF_CELLS:
+                fails.append(f"1h_usable_cells<{_STAB_MIN_TF_CELLS}")
+            if sum(1 for r in usable if r["timeframe"] == "4h") < _STAB_MIN_TF_CELLS:
+                fails.append(f"4h_usable_cells<{_STAB_MIN_TF_CELLS}")
+            if agg.get("total_trades", 0) < _STAB_MIN_TOTAL_TRADES:
+                fails.append(f"total_trades<{_STAB_MIN_TOTAL_TRADES}")
+            if (agg.get("micro_trade_retention_pct") or 0) < _STAB_MIN_RETENTION:
+                fails.append(
+                    f"micro_trade_retention_pct<{_STAB_MIN_RETENTION}")
+            any_invalid = sum(r["invalid_loss_r"] for r in rows)
+            if any_invalid > 0:
+                fails.append("total_invalid_loss_r>0")
+
+            agg["coverage_passes"]   = len(fails) == 0
+            agg["coverage_failures"] = fails
+
+    # ── Robustness check ──────────────────────────────────────────────────────
+    for thr in thresholds:
+        if thr == 0:
+            continue
+        for rr_str in rr_strs:
+            key = f"{thr}_{rr_str}"
+            agg = aggregate_by_thr_rr.get(key, {})
+            if not agg.get("coverage_passes", False):
+                agg["robustness_passes"]   = False
+                agg["robustness_failures"] = ["coverage_failed"]
+                continue
+
+            bm_exp    = agg.get("baseline_micro_expectancy_r")
+            bM_exp    = agg.get("baseline_macro_expectancy_r")
+            bm_pf     = agg.get("baseline_micro_profit_factor_r")
+            bm_pf_inf = agg.get("baseline_micro_profit_factor_infinite", False)
+            boot_ci   = agg.get("bootstrap_ci_95", {})
+            ci_low    = boot_ci.get("macro_expectancy_delta_low")
+
+            rob_fails = []
+            if not (agg.get("micro_expectancy_r") is not None
+                    and bm_exp is not None
+                    and agg["micro_expectancy_r"] > bm_exp):
+                rob_fails.append("micro_expectancy_not_above_baseline")
+            if not (agg.get("macro_expectancy_r") is not None
+                    and bM_exp is not None
+                    and agg["macro_expectancy_r"] > bM_exp):
+                rob_fails.append("macro_expectancy_not_above_baseline")
+            if not (agg.get("micro_net_r") is not None
+                    and agg["micro_net_r"] > 0):
+                rob_fails.append("micro_net_r_not_positive")
+            if (agg.get("positive_cell_pct") or 0) < _STAB_MIN_POSITIVE_PCT:
+                rob_fails.append(
+                    f"positive_cell_pct<{_STAB_MIN_POSITIVE_PCT}")
+            if (agg.get("beat_baseline_cell_pct") or 0) < _STAB_MIN_BEAT_BASELINE_PCT:
+                rob_fails.append(
+                    f"beat_baseline_cell_pct<{_STAB_MIN_BEAT_BASELINE_PCT}")
+            if (agg.get("worst_cell_expectancy_r") is None
+                    or agg["worst_cell_expectancy_r"] < _STAB_WORST_CELL_FLOOR):
+                rob_fails.append(
+                    f"worst_cell_expectancy_r<{_STAB_WORST_CELL_FLOOR}")
+            if ci_low is None or ci_low < 0:
+                rob_fails.append("bootstrap_ci_low<0")
+            if not _stab_pf_non_degraded(
+                agg.get("micro_profit_factor_r"),
+                agg.get("micro_profit_factor_infinite", False),
+                bm_pf,
+                bm_pf_inf,
+            ):
+                rob_fails.append("profit_factor_degraded")
+            if (agg.get("micro_trade_retention_pct") or 0) < _STAB_MIN_RETENTION:
+                rob_fails.append(
+                    f"micro_trade_retention_pct<{_STAB_MIN_RETENTION}")
+
+            agg["robustness_passes"]          = len(rob_fails) == 0
+            agg["robustness_failures"]        = rob_fails
+            agg["eligible_for_robust_ranking"] = len(rob_fails) == 0
+
+    # ── Timeframe summaries ───────────────────────────────────────────────────
+    for thr in thresholds:
+        for rr_str in rr_strs:
+            key  = f"{thr}_{rr_str}"
+            agg  = aggregate_by_thr_rr.get(key, {})
+            rows = _rows_for(thr, rr_str)
+            usable = _usable(rows)
+            tf_sums: Dict[str, Dict] = {}
+            for tf_name in ("1h", "4h"):
+                tf_usable = [r for r in usable if r["timeframe"] == tf_name]
+                if not tf_usable:
+                    tf_sums[tf_name] = {"eligible_cells": 0}
+                    continue
+                tf_elig  = _eligible([r for r in rows if r["timeframe"] == tf_name])
+                tf_micro = _micro_stats(tf_elig)
+                tf_macro = _macro_stats(tf_usable)
+                tf_pos   = sum(1 for r in tf_usable if (r["expectancy_r"] or 0) > 0)
+                tf_uwd   = [r for r in tf_usable
+                            if r.get("expectancy_delta_vs_baseline") is not None]
+                tf_beat  = sum(1 for r in tf_uwd
+                               if r["expectancy_delta_vs_baseline"] > 0)
+                tf_sums[tf_name] = {
+                    "eligible_cells":        len(tf_usable),
+                    "total_trades":          tf_micro.get("total_trades", 0),
+                    "retention_pct":         tf_micro.get("micro_trade_retention_pct"),
+                    "micro_expectancy_r":    tf_micro.get("micro_expectancy_r"),
+                    "macro_expectancy_r":    tf_macro.get("macro_expectancy_r"),
+                    "net_r":                 tf_micro.get("micro_net_r"),
+                    "positive_cell_pct":     round(
+                        tf_pos / len(tf_usable) * 100, 2),
+                    "beat_baseline_cell_pct": (
+                        round(tf_beat / len(tf_uwd) * 100, 2)
+                        if tf_uwd else None),
+                }
+            agg["timeframe_summaries"] = tf_sums
+
+    # ── Symbol summaries ──────────────────────────────────────────────────────
+    symbol_summaries: Dict[str, Dict] = {}
+    _sym_agg: Dict[str, Dict] = {}
+
+    for cell in cell_results:
+        if not cell.get("ok", False):
+            continue
+        sym = cell.get("symbol", "")
+        tf  = cell.get("timeframe", "")
+        if sym not in symbol_summaries:
+            symbol_summaries[sym] = {
+                "timeframes_completed":    [],
+                "total_trades":            0,
+                "micro_expectancy_r":      None,
+                "net_r":                   0.0,
+                "positive_timeframes":     0,
+                "beat_baseline_timeframes": 0,
+            }
+            _sym_agg[sym] = {"t": 0, "gp": 0.0, "gl": 0.0}
+        ss  = symbol_summaries[sym]
+        sag = _sym_agg[sym]
+        ss["timeframes_completed"].append(tf)
+
+    for r in all_cell_rows:
+        sym = r["symbol"]
+        if sym not in symbol_summaries or not r["eligible_cell"]:
+            continue
+        ss  = symbol_summaries[sym]
+        sag = _sym_agg[sym]
+        sag["t"]  += r["trades"]
+        sag["gp"] += r["gross_profit_r"]
+        sag["gl"] += r["gross_loss_r"]
+        if (r["expectancy_r"] or 0) > 0:
+            ss["positive_timeframes"] += 1
+        if (r.get("expectancy_delta_vs_baseline") or 0) > 0:
+            ss["beat_baseline_timeframes"] += 1
+
+    for sym, ss in symbol_summaries.items():
+        sag = _sym_agg.get(sym, {"t": 0, "gp": 0.0, "gl": 0.0})
+        t  = sag["t"]
+        gp = sag["gp"]
+        gl = sag["gl"]
+        ss["total_trades"]      = t
+        ss["net_r"]             = round(gp - gl, 6)
+        ss["micro_expectancy_r"] = round((gp - gl) / t, 6) if t > 0 else None
+
+    # ── Recommendation selection ──────────────────────────────────────────────
+    candidates   = []
+    audit_cands  = []
+    audit_rejects = []
+
+    for thr in thresholds:
+        if thr == 0:
+            continue
+        for rr_str in rr_strs:
+            key = f"{thr}_{rr_str}"
+            agg = aggregate_by_thr_rr.get(key, {})
+            if not agg.get("eligible_for_robust_ranking", False):
+                audit_rejects.append({
+                    "threshold_pct":      thr,
+                    "rr":                 rr_str,
+                    "reason":             "not_eligible_for_robust_ranking",
+                    "coverage_failures":  agg.get("coverage_failures", []),
+                    "robustness_failures": agg.get("robustness_failures", []),
+                })
+                continue
+            boot_ci   = agg.get("bootstrap_ci_95", {})
+            ci_low    = boot_ci.get("macro_expectancy_delta_low") or 0.0
+            macro_d   = agg.get("macro_expectancy_delta_vs_baseline") or 0.0
+            micro_d   = agg.get("micro_expectancy_delta_vs_baseline") or 0.0
+            pos_pct   = agg.get("positive_cell_pct") or 0.0
+            ret       = agg.get("micro_trade_retention_pct") or 0.0
+            net_r_val = agg.get("micro_net_r") or 0.0
+            rr_float  = float(rr_str)
+            sort_key  = (
+                -ci_low, -macro_d, -micro_d,
+                -pos_pct, -ret, -net_r_val,
+                thr, rr_float,
+            )
+            candidates.append({
+                "threshold_pct": thr,
+                "rr":            rr_str,
+                "ci_low":        ci_low,
+                "macro_delta":   macro_d,
+                "micro_delta":   micro_d,
+                "positive_cell_pct": pos_pct,
+                "retention":     ret,
+                "net_r":         net_r_val,
+                "sort_key":      sort_key,
+            })
+            audit_cands.append({"threshold_pct": thr, "rr": rr_str})
+
+    recommendation = None
+    if candidates:
+        candidates.sort(key=lambda c: c["sort_key"])
+        if len(candidates) >= 2:
+            top    = candidates[0]
+            second = candidates[1]
+            if abs(top["ci_low"] - second["ci_low"]) < _STAB_NEAR_EQ_CI:
+                if (second["threshold_pct"] < top["threshold_pct"]
+                        and second["retention"] > top["retention"]):
+                    candidates[0], candidates[1] = candidates[1], candidates[0]
+                    top = candidates[0]
+        best = candidates[0]
+        recommendation = {
+            "threshold_pct":           best["threshold_pct"],
+            "rr":                      best["rr"],
+            "ci_low":                  best["ci_low"],
+            "macro_delta":             best["macro_delta"],
+            "micro_delta":             best["micro_delta"],
+            "positive_cell_pct":       best["positive_cell_pct"],
+            "retention":               best["retention"],
+            "fragile_to_single_cell":  False,
+            "leave_one_out":           [],
+        }
+
+    # ── Leave-one-out fragility ───────────────────────────────────────────────
+    if recommendation is not None:
+        rec_thr    = recommendation["threshold_pct"]
+        rec_rr     = recommendation["rr"]
+        rec_rows   = _rows_for(rec_thr, rec_rr)
+        rec_usable = _usable(rec_rows)
+        rec_elig   = _eligible(rec_rows)
+
+        loo_results = []
+        fragile     = False
+
+        for i, dropped in enumerate(rec_usable):
+            loo_usable = [r for j, r in enumerate(rec_usable) if j != i]
+            loo_elig   = [
+                r for r in rec_elig
+                if not (r["symbol"] == dropped["symbol"]
+                        and r["timeframe"] == dropped["timeframe"])
+            ]
+            loo_micro = _micro_stats(loo_elig)
+            loo_macro = _macro_stats(loo_usable)
+
+            bm_exp    = baseline_micro_by_rr.get(rec_rr, {}).get("micro_expectancy_r")
+            bM_exp    = baseline_macro_by_rr.get(rec_rr, {}).get("macro_expectancy_r")
+            bm_pf     = baseline_micro_by_rr.get(rec_rr, {}).get("micro_profit_factor_r")
+            bm_pf_inf = baseline_micro_by_rr.get(rec_rr, {}).get(
+                "micro_profit_factor_infinite", False)
+
+            loo_macro_d = None
+            loo_micro_d = None
+            if (loo_macro.get("macro_expectancy_r") is not None
+                    and bM_exp is not None):
+                loo_macro_d = round(
+                    loo_macro["macro_expectancy_r"] - bM_exp, 6)
+            if (loo_micro.get("micro_expectancy_r") is not None
+                    and bm_exp is not None):
+                loo_micro_d = round(
+                    loo_micro["micro_expectancy_r"] - bm_exp, 6)
+
+            loo_tfs  = set(r["timeframe"] for r in loo_usable)
+            loo_syms = set(r["symbol"] for r in loo_usable)
+            loo_pos_pct = (
+                sum(1 for r in loo_usable if (r["expectancy_r"] or 0) > 0)
+                / max(len(loo_usable), 1) * 100
+            )
+            loo_uwd  = [r for r in loo_usable
+                        if r.get("expectancy_delta_vs_baseline") is not None]
+            loo_beat_pct = (
+                sum(1 for r in loo_uwd if r["expectancy_delta_vs_baseline"] > 0)
+                / max(len(loo_uwd), 1) * 100
+            ) if loo_uwd else 0
+            loo_worst = min(
+                (r["expectancy_r"] for r in loo_usable
+                 if r["expectancy_r"] is not None),
+                default=None,
+            )
+            loo_cov = (
+                len(loo_usable) >= _STAB_MIN_USABLE_CELLS
+                and len(loo_syms) >= _STAB_MIN_SYMBOLS
+                and "1h" in loo_tfs and "4h" in loo_tfs
+                and sum(1 for r in loo_usable if r["timeframe"] == "1h")
+                    >= _STAB_MIN_TF_CELLS
+                and sum(1 for r in loo_usable if r["timeframe"] == "4h")
+                    >= _STAB_MIN_TF_CELLS
+                and loo_micro.get("total_trades", 0) >= _STAB_MIN_TOTAL_TRADES
+                and (loo_micro.get("micro_trade_retention_pct") or 0)
+                    >= _STAB_MIN_RETENTION
+                and loo_micro.get("total_invalid_loss_r", 0) == 0
+            )
+            loo_rob = (
+                loo_cov
+                and (loo_micro.get("micro_expectancy_r") or -999)
+                    > (bm_exp or 0)
+                and (loo_macro.get("macro_expectancy_r") or -999)
+                    > (bM_exp or 0)
+                and (loo_micro.get("micro_net_r") or 0) > 0
+                and loo_pos_pct  >= _STAB_MIN_POSITIVE_PCT
+                and loo_beat_pct >= _STAB_MIN_BEAT_BASELINE_PCT
+                and loo_worst is not None
+                and loo_worst >= _STAB_WORST_CELL_FLOOR
+                and _stab_pf_non_degraded(
+                    loo_micro.get("micro_profit_factor_r"),
+                    loo_micro.get("micro_profit_factor_infinite", False),
+                    bm_pf,
+                    bm_pf_inf,
+                )
+                and (loo_micro.get("micro_trade_retention_pct") or 0)
+                    >= _STAB_MIN_RETENTION
+            )
+            if not loo_rob:
+                fragile = True
+
+            loo_results.append({
+                "removed_symbol":    dropped["symbol"],
+                "removed_timeframe": dropped["timeframe"],
+                "macro_delta":       loo_macro_d,
+                "micro_delta":       loo_micro_d,
+                "still_qualifies":   loo_rob,
+            })
+
+        recommendation["leave_one_out"]          = loo_results
+        recommendation["fragile_to_single_cell"] = fragile
+
+        if fragile:
+            audit_rejects.append({
+                "threshold_pct": rec_thr,
+                "rr":            rec_rr,
+                "reason":        "fragile_to_single_cell",
+                "leave_one_out": loo_results,
+            })
+            recommendation = None
+
+    elapsed_ms = round((_time_stab.time() - t0) * 1000, 1)
+
+    return {
+        "thresholds_tested":   thresholds,
+        "rr_values_tested":    rr_strs,
+        "primary_metric":      primary_metric,
+        "total_cell_rows":     len(all_cell_rows),
+        "failures":            failures,
+        "aggregate_by_thr_rr": aggregate_by_thr_rr,
+        "recommendation":      recommendation,
+        "audit": {
+            "candidates_considered": audit_cands,
+            "candidates_rejected":   audit_rejects,
+            "selection_rule":
+                "ci_low_then_8level_tiebreak_near_eq_retention",
+        },
+        "symbol_summaries":    symbol_summaries,
+        "cell_data":           list(all_cell_rows),
+        "elapsed_ms":          elapsed_ms,
+        "constants": {
+            "bootstrap_iters":       _STAB_BOOTSTRAP_ITERS,
+            "bootstrap_seed":        _STAB_BOOTSTRAP_SEED,
+            "min_usable_cells":      _STAB_MIN_USABLE_CELLS,
+            "min_symbols":           _STAB_MIN_SYMBOLS,
+            "min_tf_cells":          _STAB_MIN_TF_CELLS,
+            "min_total_trades":      _STAB_MIN_TOTAL_TRADES,
+            "min_retention_pct":     _STAB_MIN_RETENTION,
+            "min_positive_pct":      _STAB_MIN_POSITIVE_PCT,
+            "min_beat_baseline_pct": _STAB_MIN_BEAT_BASELINE_PCT,
+            "worst_cell_floor":      _STAB_WORST_CELL_FLOOR,
+            "near_eq_ci":            _STAB_NEAR_EQ_CI,
+            "max_symbols":           _STAB_MAX_SYMBOLS,
+            "max_timeframes":        _STAB_MAX_TIMEFRAMES,
+            "max_cells":             _STAB_MAX_CELLS,
+        },
+    }
+
+
 def _bt_tv_ob_pct_bucket(value) -> str:
     """Map a TV OB% integer (or None/invalid) to its half-open bucket label."""
     if value is None or isinstance(value, bool):
@@ -36676,6 +37471,98 @@ def api_backtest_ob_historical_debug():
 
     port = int(os.environ.get("PORT", 8000))
     app.run(host="0.0.0.0", port=port, debug=False)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Phase 14 — Stability Lab Endpoint
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/backtest/ob-historical/threshold-stability", methods=["POST"])
+@login_required
+def api_backtest_ob_historical_threshold_stability():
+    err = _guest_tab_check("backtest")
+    if err is not None:
+        return err
+
+    import time as _t14
+
+    payload = request.get_json(force=True) or {}
+
+    # ── Parse cell_results ────────────────────────────────────────────────────
+    raw_cells = payload.get("cell_results")
+    if not isinstance(raw_cells, list) or not raw_cells:
+        return jsonify({"ok": False,
+                        "error": "cell_results must be a non-empty list"}), 400
+
+    # ── Symbol / timeframe limits ─────────────────────────────────────────────
+    syms_seen: set  = set()
+    tfs_seen:  set  = set()
+    cell_results: List[Dict] = []
+
+    for cell in raw_cells:
+        if not isinstance(cell, dict):
+            continue
+        sym = str(cell.get("symbol", "")).strip().upper()
+        tf  = str(cell.get("timeframe", "")).strip()
+        if sym and not sym.endswith("USDT"):
+            sym = sym + "USDT"
+        if sym:
+            syms_seen.add(sym)
+        if tf:
+            tfs_seen.add(tf)
+        cell["symbol"]    = sym
+        cell["timeframe"] = tf
+        cell_results.append(cell)
+
+    if len(syms_seen) > _STAB_MAX_SYMBOLS:
+        return jsonify({
+            "ok":    False,
+            "error": f"Stability Lab supports max {_STAB_MAX_SYMBOLS} symbols",
+        }), 400
+    if len(tfs_seen) > _STAB_MAX_TIMEFRAMES:
+        return jsonify({
+            "ok":    False,
+            "error": f"Stability Lab supports max {_STAB_MAX_TIMEFRAMES} timeframes",
+        }), 400
+    if len(cell_results) > _STAB_MAX_CELLS:
+        return jsonify({
+            "ok":    False,
+            "error": f"Stability Lab supports max {_STAB_MAX_CELLS} cells",
+        }), 400
+
+    # ── Optional parameters ───────────────────────────────────────────────────
+    raw_rr = payload.get("rr_values", [1, 2, 3])
+    rr_values = _bt_parse_rr_values(raw_rr)
+
+    raw_thr = payload.get("thresholds")
+    if raw_thr is not None:
+        try:
+            thresholds = [int(x) for x in raw_thr]
+        except (TypeError, ValueError):
+            return jsonify({"ok": False,
+                            "error": "thresholds must be list of integers"}), 400
+    else:
+        thresholds = list(range(0, 105, 5))
+
+    primary_metric = str(payload.get("primary_metric", "before_first_touch")).strip()
+    if primary_metric not in ("before_first_touch", "at_formation"):
+        primary_metric = "before_first_touch"
+
+    t0 = _t14.time()
+    result = _bt_build_tv_ob_pct_stability_analysis(
+        cell_results   = cell_results,
+        thresholds     = thresholds,
+        rr_values      = rr_values,
+        primary_metric = primary_metric,
+    )
+    elapsed_total_ms = round((_t14.time() - t0) * 1000, 1)
+
+    return jsonify({
+        "ok":              True,
+        "mode":            "tv_ob_pct_threshold_stability_v1",
+        "elapsed_total_ms": elapsed_total_ms,
+        "stability":       result,
+    }), 200
 
 
 # ══════════════════════════════════════════════════════════════════════════════
