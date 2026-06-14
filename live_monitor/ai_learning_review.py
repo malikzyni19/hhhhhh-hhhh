@@ -1,7 +1,10 @@
-"""Phase 11.15: AI Learning Review Loop — read-only advisory analysis.
+"""Phase 11.15 Hotfix 11.15.1: AI Learning Review Loop — strict validation.
 
-This module generates AI-assisted learning observations from closed paper trade
-history and manages the human review workflow for those observations.
+HOTFIX PRINCIPLE: Unsafe or malformed AI output is REJECTED, not repaired.
+Three-stage pipeline:
+  1. _lm_parse_learning_review_response   — pure JSON decoding, no semantic repair
+  2. _lm_validate_learning_review_response — strict validation against evidence
+  3. _lm_sanitize_valid_learning_review   — display-text trimming only (after pass)
 
 HARD INVARIANTS (never negotiable):
   - No execution. No orders. No position mutations. No exchange API calls.
@@ -9,7 +12,7 @@ HARD INVARIANTS (never negotiable):
   - can_auto_submit is ALWAYS False.
   - auto_execution_allowed is ALWAYS False.
   - ai_can_execute is ALWAYS False.
-  - auto_apply_allowed in AI response is ALWAYS rejected/forced False.
+  - auto_apply_allowed in ANY proposal or guardrail MUST be exactly False or review is REJECTED.
   - Human review decisions are tracked but never automated.
   - No background workers. No schedulers. No setInterval. No polling.
 """
@@ -24,6 +27,7 @@ from live_monitor.paper_performance import (
     _lm_build_paper_performance_filters,
     _lm_validate_paper_performance_filters,
     _lm_query_closed_paper_trades_from_filters,
+    _lm_get_paper_performance_state,
     _lm_classify_paper_trade_outcome,
     _lm_normalize_performance_period,
     _sdec,
@@ -33,13 +37,39 @@ from live_monitor.paper_performance import (
 )
 
 _PHASE          = "phase11_15_ai_learning_review"
-_PROMPT_VERSION = "11.15.0"
-_MIN_TRADES_AI  = 5   # below → no AI call, insufficient_learning_sample
-_MIN_TRADES_LOW = 5   # 5-9 → low confidence only
+_PROMPT_VERSION = "11.15.1"  # bumped for schema change
+_MIN_TRADES_AI  = 5          # fewer than this: no AI call, no deterministic save
 _MAX_ACCEPTED_INSIGHTS = 20
+_MAX_EVIDENCE_RECENT   = 10
 
-_VALID_SCOPES  = frozenset({"portfolio", "symbol", "item"})
-_VALID_STATUSES = frozenset({
+# Sentinel — "caller did not supply human_note at all"
+_NOTE_NOT_PROVIDED = object()
+
+# ── Sample quality scale (one scale used everywhere) ─────────────────────────
+_SQ_INSUFFICIENT = "insufficient"  # 0–9
+_SQ_EARLY        = "early"         # 10–29
+_SQ_DEVELOPING   = "developing"    # 30–99
+_SQ_MEANINGFUL   = "meaningful"    # 100+
+
+
+def _sample_quality(n: int) -> str:
+    """Deterministic sample quality label — single canonical implementation."""
+    if n < 10:  return _SQ_INSUFFICIENT
+    if n < 30:  return _SQ_EARLY
+    if n < 100: return _SQ_DEVELOPING
+    return _SQ_MEANINGFUL
+
+
+# ── Segment minimum samples ───────────────────────────────────────────────────
+_SEG_MIN_DIRECTIONAL  = 5     # below: no directional segment claim at all
+_SEG_MIN_SIDE_EACH    = 5     # each side needs this for imbalance comparison
+_SEG_UNDERPERF_WIN_MAX = 35.0  # win rate at or below → underperformance
+_SEG_OUTPERF_WIN_MIN   = 65.0  # win rate at or above → outperformance
+_SEG_IMBALANCE_DIFF    = 20.0  # abs win-rate gap to flag imbalance
+
+# ── Schema constants ──────────────────────────────────────────────────────────
+_VALID_SCOPES       = frozenset({"portfolio", "symbol", "item"})
+_VALID_STATUSES     = frozenset({
     "generated", "reviewed", "accepted_insight", "rejected", "archived",
 })
 _STATUS_TRANSITIONS: dict[str, frozenset] = {
@@ -49,38 +79,95 @@ _STATUS_TRANSITIONS: dict[str, frozenset] = {
     "rejected":         frozenset({"archived"}),
     "archived":         frozenset(),
 }
+_VALID_OBS_CATEGORIES = frozenset({
+    "symbol", "side", "setup", "risk_reward", "exit",
+    "confidence", "trend", "data_quality",
+})
+_VALID_SEVERITIES     = frozenset({"info", "watch", "important"})
+_VALID_CONFIDENCES    = frozenset({"low", "medium", "high"})
+_VALID_ASSESSMENTS    = frozenset({"positive", "negative", "mixed", "insufficient_data"})
+_VALID_SAMPLE_QUALITIES = frozenset({
+    _SQ_INSUFFICIENT, _SQ_EARLY, _SQ_DEVELOPING, _SQ_MEANINGFUL,
+})
+_VALID_PROPOSAL_ACTIONS = frozenset({
+    "investigate", "monitor", "collect_more_data", "compare",
+    "retain_current_behavior", "future_controlled_experiment",
+})
+_FORBIDDEN_ACTION_WORDS = frozenset({
+    "apply", "activate", "enable", "disable", "execute", "submit",
+    "modify_strategy", "change_threshold", "change_risk", "arm_gate", "switch_mode",
+})
+_VALID_CANDIDATE_TYPES = frozenset({
+    "symbol_underperformance", "symbol_outperformance",
+    "side_imbalance",
+    "stop_loss_concentration",
+    "low_rr_capture", "strong_rr_capture",
+    "confidence_not_confirmed", "confidence_supported",
+    "setup_type_underperformance", "setup_type_outperformance",
+    "deteriorating_recent_period", "improving_recent_period",
+    "insufficient_sample",
+    "data_quality_problem",
+    "no_action_recommended",
+})
 
-_GUARDRAILS: dict = {
+# Required top-level keys in AI response
+_REQUIRED_TOP_KEYS = frozenset({
+    "review_title", "executive_summary", "overall_assessment", "confidence_level",
+    "sample_assessment", "observations", "review_proposals", "what_not_to_conclude",
+    "guardrails",
+})
+# Required guardrail keys and their exact values
+_GUARDRAILS_REQUIRED: dict = {
+    "read_only":             True,
+    "human_review_required": True,
+    "auto_apply_allowed":    False,
+    "can_change_strategy":   False,
+    "can_change_risk_guard": False,
+    "can_arm_auto_gate":     False,
+    "can_auto_submit":       False,
+    "auto_execution_allowed": False,
+    "ai_can_execute":        False,
+}
+# Observation required keys
+_OBS_REQUIRED_KEYS = frozenset({
+    "id", "category", "title", "statement", "evidence",
+    "sample_size", "confidence", "severity", "limitations",
+})
+# Proposal required keys
+_PROP_REQUIRED_KEYS = frozenset({
+    "id", "action_type", "title", "description", "evidence_observation_ids",
+    "minimum_additional_sample", "human_review_required", "auto_apply_allowed",
+})
+# Array limits
+_OBS_MAX       = 10
+_PROPOSAL_MAX  = 10
+_EVIDENCE_ROWS = 10
+_LIMIT_MAX     = 20
+_WNTC_MAX      = 20
+
+# Numeric comparison tolerance for evidence validation
+_EV_NUMERIC_REL_TOL = 0.02   # 2 % relative tolerance for display rounding
+_EV_NUMERIC_ABS_TOL = 1.0    # or 1.0 absolute (whichever is larger)
+
+# Module-level guardrails for API responses
+_MODULE_GUARDRAILS: dict = {
     "read_only":                   True,
-    "paper_primary":               True,
+    "human_review_required":       True,
+    "auto_apply_allowed":          False,
+    "can_change_strategy":         False,
+    "can_change_risk_guard":       False,
+    "can_arm_auto_gate":           False,
     "can_auto_submit":             False,
     "auto_execution_allowed":      False,
     "ai_can_execute":              False,
     "live_disabled":               True,
     "testnet_strategy_validation": False,
-    "auto_apply_allowed":          False,
 }
 
-_VALID_OBS_TYPES = frozenset({
-    "symbol_underperformance",
-    "symbol_outperformance",
-    "side_imbalance",
-    "low_rr_capture",
-    "high_rr_capture",
-    "exit_timing_observation",
-    "confidence_filter_signal",
-    "setup_type_signal",
-    "entry_mode_signal",
-    "outcome_reason_pattern",
-    "data_quality_warning",
-    "general_observation",
-})
 
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# ── Generic helpers ───────────────────────────────────────────────────────────
 
 def _safe_pct(num, den):
-    """Return float percentage or None."""
     try:
         if den == 0:
             return None
@@ -90,7 +177,6 @@ def _safe_pct(num, den):
 
 
 def _safe_avg(values: list):
-    """Return float average or None."""
     vals = [v for v in values if v is not None]
     if not vals:
         return None
@@ -100,18 +186,18 @@ def _safe_avg(values: list):
         return None
 
 
-def _sdec_list(rows, attr: str) -> list:
-    """Extract Decimal values from a list of objects/dicts, skipping None."""
-    out = []
-    for r in rows:
-        raw = r.get(attr) if isinstance(r, dict) else getattr(r, attr, None)
-        d = _sdec(raw)
-        if d is not None:
-            out.append(d)
-    return out
+def _extract_json_field(trade_obj, json_col: str, field: str):
+    try:
+        raw = getattr(trade_obj, json_col, None)
+        if raw is None:
+            return None
+        parsed = raw if isinstance(raw, dict) else _json.loads(raw)
+        return parsed.get(field)
+    except Exception:
+        return None
 
 
-# ── Filter / validation ───────────────────────────────────────────────────────
+# ── Filter building / validation ──────────────────────────────────────────────
 
 def _lm_build_learning_review_filters(
     user_id,
@@ -125,32 +211,29 @@ def _lm_build_learning_review_filters(
     """Build validated filter dict for a learning review request.
 
     Reuses Phase 11.14 filter architecture; adds review_scope validation.
-    Returns a dict with _scope_err if scope is invalid.
     """
-    scope_err = None
+    scope_err  = None
     scope_norm = (review_scope or "portfolio").strip().lower()
     if scope_norm not in _VALID_SCOPES:
-        scope_err = "invalid_review_scope"
+        scope_err  = "invalid_review_scope"
         scope_norm = "portfolio"
 
-    # Delegate symbol/side/item_id/period validation to Phase 11.14 layer
     perf_filters = _lm_build_paper_performance_filters(
         user_id,
-        period=period,
-        symbol=symbol,
-        side=side,
-        item_id=item_id,
-        symbol_supplied=symbol_supplied,
+        period          = period,
+        symbol          = symbol,
+        side            = side,
+        item_id         = item_id,
+        symbol_supplied = symbol_supplied,
     )
-
     perf_filters["_review_scope"]     = scope_norm
     perf_filters["_review_scope_err"] = scope_err
     return perf_filters
 
 
 def _lm_validate_learning_review_filters(filters: dict) -> dict:
-    """Returns field_errors dict. Empty = valid."""
-    errs = {}
+    """Return field_errors dict. Empty = valid."""
+    errs: dict = {}
     if filters.get("_review_scope_err"):
         errs["review_scope"] = filters["_review_scope_err"]
     if filters.get("_symbol_err"):
@@ -162,35 +245,44 @@ def _lm_validate_learning_review_filters(filters: dict) -> dict:
     return errs
 
 
-# ── Evidence builder ──────────────────────────────────────────────────────────
+# ── Evidence building ─────────────────────────────────────────────────────────
 
 def _lm_build_learning_evidence(user_id, filters: dict) -> dict:
-    """Build evidence snapshot from closed paper trades.
+    """Build evidence snapshot from closed paper trades + Phase 11.14 analytics.
 
-    Must be called only with validated filters (raises ValueError otherwise).
-    Reuses _lm_query_closed_paper_trades_from_filters — no re-query.
+    Raises ValueError if filters are invalid (must be pre-validated).
+    Side is read from filters["side"] — the Phase 11.14 normalized key.
     """
     field_errors = _lm_validate_learning_review_filters(filters)
     if field_errors:
         raise ValueError(f"unvalidated_learning_filters:{list(field_errors.keys())}")
 
     trades, qmeta = _lm_query_closed_paper_trades_from_filters(user_id, filters)
-
     total = len(trades)
-    evidence = {
-        "sample_size":    total,
-        "sample_quality": "insufficient" if total < _MIN_TRADES_AI
-                          else ("low" if total < 10 else "high"),
-        "query_meta":     qmeta,
-        "period":         filters.get("period", "30d"),
-        "symbol":         filters.get("symbol"),
-        "side":           filters.get("side_norm"),
-        "item_id":        filters.get("item_id"),
-        "review_scope":   filters.get("_review_scope", "portfolio"),
-        "segments":       {},
-        "execution_quality": {},
-        "recent_trades":  [],
-        "warnings":       [],
+
+    # Task 8 fix: Phase 11.14 stores normalized side under "side" not "side_norm"
+    side   = filters.get("side")
+    symbol = filters.get("symbol")
+    period = filters.get("period", "30d")
+    iid    = filters.get("item_id")
+
+    sq = _sample_quality(total)
+
+    evidence: dict = {
+        "sample_size":         total,
+        "sample_quality":      sq,
+        "query_meta":          qmeta,
+        "period":              period,
+        "symbol":              symbol,
+        "side":                side,        # corrected key
+        "item_id":             iid,
+        "review_scope":        filters.get("_review_scope", "portfolio"),
+        "performance_summary": {},
+        "segments":            {},
+        "execution_quality":   {},
+        "recent_trades":       [],
+        "data_quality":        {},
+        "warnings":            [],
     }
 
     if total == 0:
@@ -200,122 +292,141 @@ def _lm_build_learning_evidence(user_id, filters: dict) -> dict:
     if qmeta.get("truncated"):
         evidence["warnings"].append("analytics_row_limit_reached")
 
-    evidence["segments"]          = _lm_build_learning_segments(trades)
+    # Task 6: Phase 11.14 trusted performance summary (separate query but trusted formulas)
+    try:
+        perf_state = _lm_get_paper_performance_state(
+            user_id,
+            period          = period,
+            symbol          = symbol,
+            side            = side,
+            item_id         = iid,
+            symbol_supplied = bool(symbol),
+        )
+        if perf_state.get("ok"):
+            ps    = perf_state.get("summary") or {}
+            dd    = perf_state.get("drawdown") or {}
+            comp  = perf_state.get("comparison") or {}
+            dq    = perf_state.get("data_quality") or {}
+            evidence["performance_summary"] = {
+                "trade_count":          ps.get("trade_count", 0),
+                "win_count":            ps.get("win_count", 0),
+                "loss_count":           ps.get("loss_count", 0),
+                "breakeven_count":      ps.get("breakeven_count", 0),
+                "win_rate_pct":         ps.get("win_rate_pct"),
+                "net_realized_pnl":     ps.get("net_realized_pnl"),
+                "gross_profit":         ps.get("gross_profit"),
+                "gross_loss":           ps.get("gross_loss"),
+                "profit_factor":        ps.get("profit_factor"),
+                "expectancy_amount":    ps.get("expectancy_amount"),
+                "average_win":          ps.get("average_win"),
+                "average_loss":         ps.get("average_loss"),
+                "payoff_ratio":         ps.get("payoff_ratio"),
+                "average_risk_reward":  ps.get("average_risk_reward"),
+                "max_drawdown_amount":  dd.get("max_drawdown_amount"),
+                "max_drawdown_pct":     dd.get("max_drawdown_pct"),
+                "recent_trend":         comp.get("trend", "insufficient_data"),
+                "trend_reason":         comp.get("trend_reason"),
+                "truncated":            bool(qmeta.get("truncated", False)),
+            }
+            evidence["data_quality"] = dq
+    except Exception:
+        evidence["warnings"].append("performance_summary_unavailable")
+
+    evidence["segments"]        = _lm_build_learning_segments(trades)
     evidence["execution_quality"] = _lm_build_execution_quality(trades)
-    evidence["recent_trades"]     = _build_recent_trade_summaries(trades, limit=10)
+    evidence["recent_trades"]   = _build_recent_trade_summaries(trades, _MAX_EVIDENCE_RECENT)
 
     return evidence
 
 
+# ── Segment builder ───────────────────────────────────────────────────────────
+
 def _lm_build_learning_segments(trades: list) -> dict:
-    """Compute per-dimension breakdown segments for learning evidence."""
-    by_symbol:   dict = {}
-    by_side:     dict = {}
-    by_reason:   dict = {}
-    by_conf:     dict = {}
-    by_setup:    dict = {}
-    by_entry:    dict = {}
+    """Per-dimension breakdown. Win/loss/breakeven from canonical outcome."""
+    by_symbol: dict = {}
+    by_side:   dict = {}
+    by_reason: dict = {}
+    by_conf:   dict = {}
+    by_setup:  dict = {}
+    by_entry:  dict = {}
 
     for t in trades:
         outcome, pnl, _, _ = _lm_classify_paper_trade_outcome(t)
-        pnl_f = float(pnl) if pnl is not None else None
-        sym   = (getattr(t, "symbol", None) or "unknown").upper()
-        side  = (getattr(t, "side",   None) or "unknown").upper()
+        pnl_f  = float(pnl) if pnl is not None else None
+        sym    = (getattr(t, "symbol", None) or "unknown").upper()
+        side_v = (getattr(t, "side",   None) or "unknown").upper()
         reason = (getattr(t, "outcome_reason", None) or "").lower().strip() or "unknown"
+        conf_b = _extract_json_field(t, "ai_decision_json",    "confidence_bucket") or "unknown"
+        setup  = _extract_json_field(t, "entry_snapshot_json", "setup_type")         or "unknown"
+        entry  = _extract_json_field(t, "entry_snapshot_json", "entry_mode")         or "unknown"
 
-        # Confidence bucket from ai_decision_json
-        conf_bucket = _extract_json_field(t, "ai_decision_json", "confidence_bucket") or "unknown"
-        setup_type  = _extract_json_field(t, "entry_snapshot_json", "setup_type")    or "unknown"
-        entry_mode  = _extract_json_field(t, "entry_snapshot_json", "entry_mode")    or "unknown"
-
-        for seg_dict, key in [
-            (by_symbol, sym),
-            (by_side,   side),
-            (by_reason, reason),
-            (by_conf,   conf_bucket),
-            (by_setup,  setup_type),
-            (by_entry,  entry_mode),
+        for seg_d, key in [
+            (by_symbol, sym), (by_side, side_v), (by_reason, reason),
+            (by_conf, conf_b), (by_setup, setup), (by_entry, entry),
         ]:
-            if key not in seg_dict:
-                seg_dict[key] = {"count": 0, "wins": 0, "losses": 0, "breakevenS": 0,
-                                 "pnl_sum": Decimal(0), "pnl_values": []}
-            seg = seg_dict[key]
+            if key not in seg_d:
+                seg_d[key] = {"count": 0, "wins": 0, "losses": 0, "breakevenS": 0,
+                               "pnl_sum": Decimal(0)}
+            seg = seg_d[key]
             seg["count"] += 1
             if outcome == "win":
                 seg["wins"] += 1
                 seg["pnl_sum"] += pnl if pnl else Decimal(0)
-                if pnl_f is not None:
-                    seg["pnl_values"].append(pnl_f)
             elif outcome == "loss":
                 seg["losses"] += 1
                 seg["pnl_sum"] += pnl if pnl else Decimal(0)
-                if pnl_f is not None:
-                    seg["pnl_values"].append(pnl_f)
             elif outcome == "breakeven":
                 seg["breakevenS"] += 1
 
-    def _finalize(seg_dict: dict) -> list:
+    def _finalize(d: dict) -> list:
         out = []
-        for k, s in seg_dict.items():
-            total   = s["count"]
-            win_pct = _safe_pct(s["wins"], total)
+        for lbl, s in d.items():
+            total_s = s["count"]
             out.append({
-                "label":    k,
-                "count":    total,
-                "wins":     s["wins"],
-                "losses":   s["losses"],
+                "label":      lbl,
+                "count":      total_s,
+                "wins":       s["wins"],
+                "losses":     s["losses"],
                 "breakevens": s["breakevenS"],
-                "win_rate": win_pct,
-                "net_pnl":  _ds(s["pnl_sum"]),
+                "win_rate":   _safe_pct(s["wins"], total_s),
+                "net_pnl":    _ds(s["pnl_sum"]),
             })
         out.sort(key=lambda x: -x["count"])
         return out
 
     return {
-        "by_symbol":        _finalize(by_symbol),
-        "by_side":          _finalize(by_side),
-        "by_outcome_reason":_finalize(by_reason),
-        "by_confidence":    _finalize(by_conf),
-        "by_setup_type":    _finalize(by_setup),
-        "by_entry_mode":    _finalize(by_entry),
+        "by_symbol":          _finalize(by_symbol),
+        "by_side":            _finalize(by_side),
+        "by_outcome_reason":  _finalize(by_reason),
+        "by_confidence":      _finalize(by_conf),
+        "by_setup_type":      _finalize(by_setup),
+        "by_entry_mode":      _finalize(by_entry),
     }
 
 
-def _lm_build_execution_quality(trades: list) -> dict:
-    """Analyse planned vs realised RR to assess execution quality."""
-    planned_rrs  = []
-    realized_rrs = []
-    rr_captures  = []
+# ── Execution quality ─────────────────────────────────────────────────────────
 
-    tp_exit = 0; sl_exit = 0; manual_exit = 0; other_exit = 0
-    wins = 0; losses = 0; total_with_pnl = 0
+def _lm_build_execution_quality(trades: list) -> dict:
+    planned_rrs: list = []
+    realized_rrs: list = []
+    rr_captures: list = []
+    tp_exit = sl_exit = manual_exit = other_exit = 0
 
     for t in trades:
-        outcome, pnl, _, _ = _lm_classify_paper_trade_outcome(t)
-        if pnl is not None:
-            total_with_pnl += 1
-            if outcome == "win":
-                wins += 1
-            elif outcome == "loss":
-                losses += 1
+        planned = _sdec(getattr(t, "risk_reward", None))
+        if planned is not None:
+            planned_rrs.append(float(planned))
 
-        planned_rr = _sdec(getattr(t, "risk_reward", None))
-        if planned_rr is not None:
-            planned_rrs.append(float(planned_rr))
-
-        # Realized RR from ai_post_trade_review_json or execution_intent_json
-        realized_rr = _extract_json_field(t, "ai_post_trade_review_json", "realized_rr")
-        if realized_rr is None:
-            realized_rr = _extract_json_field(t, "execution_intent_json", "realized_rr")
-        d_rr = _sdec(realized_rr)
+        realized = _extract_json_field(t, "ai_post_trade_review_json", "realized_rr")
+        if realized is None:
+            realized = _extract_json_field(t, "execution_intent_json", "realized_rr")
+        d_rr = _sdec(realized)
         if d_rr is not None:
             realized_rrs.append(float(d_rr))
 
-        # RR capture = realised / planned
-        if planned_rr and d_rr is not None and planned_rr > 0:
-            rr_captures.append(float(d_rr / planned_rr))
+        if planned and d_rr is not None and planned > 0:
+            rr_captures.append(float(d_rr / planned))
 
-        # Exit reason
         reason = (getattr(t, "outcome_reason", None) or "").lower()
         if "tp" in reason or "take_profit" in reason or "take profit" in reason:
             tp_exit += 1
@@ -326,314 +437,994 @@ def _lm_build_execution_quality(trades: list) -> dict:
         else:
             other_exit += 1
 
+    n = len(trades)
     return {
-        "avg_planned_rr":   _safe_avg(planned_rrs),
-        "avg_realized_rr":  _safe_avg(realized_rrs),
-        "avg_rr_capture":   _safe_avg(rr_captures),
-        "tp_exit_count":    tp_exit,
-        "sl_exit_count":    sl_exit,
-        "manual_exit_count":manual_exit,
-        "other_exit_count": other_exit,
-        "tp_pct":           _safe_pct(tp_exit, len(trades)),
-        "sl_pct":           _safe_pct(sl_exit, len(trades)),
-        "manual_pct":       _safe_pct(manual_exit, len(trades)),
+        "avg_planned_rr":    _safe_avg(planned_rrs),
+        "avg_realized_rr":   _safe_avg(realized_rrs),
+        "avg_rr_capture":    _safe_avg(rr_captures),
+        "tp_exit_count":     tp_exit,
+        "sl_exit_count":     sl_exit,
+        "manual_exit_count": manual_exit,
+        "other_exit_count":  other_exit,
+        "tp_pct":    _safe_pct(tp_exit, n),
+        "sl_pct":    _safe_pct(sl_exit, n),
+        "manual_pct": _safe_pct(manual_exit, n),
     }
 
 
 def _build_recent_trade_summaries(trades: list, limit: int = 10) -> list:
-    """Compact summary list of most recent trades."""
     recent = sorted(
         trades,
         key=lambda t: (_ts(t) or datetime.min.replace(tzinfo=timezone.utc)),
         reverse=True,
     )[:limit]
-
     out = []
     for t in recent:
         outcome, pnl, _, _ = _lm_classify_paper_trade_outcome(t)
         ts = _ts(t)
         out.append({
-            "symbol":       getattr(t, "symbol",  None),
-            "side":         getattr(t, "side",    None),
-            "outcome":      outcome,
-            "realized_pnl": _ds(pnl),
+            "symbol":         getattr(t, "symbol", None),
+            "side":           getattr(t, "side", None),
+            "outcome":        outcome,
+            "realized_pnl":   _ds(pnl),
             "outcome_reason": getattr(t, "outcome_reason", None),
-            "closed_at":    ts.isoformat() if ts else None,
+            "closed_at":      ts.isoformat() if ts else None,
         })
     return out
 
 
-def _extract_json_field(trade_obj, json_col: str, field: str):
-    """Safely extract a field from a JSON column (stored as text)."""
+# ── Evidence metric allowlist ─────────────────────────────────────────────────
+
+def _lm_build_evidence_metric_allowlist(evidence: dict) -> dict:
+    """Build deterministic metric allowlist for AI evidence-row validation.
+
+    Returns dict: metric_id -> value (None = metric exists but value unknown).
+    AI evidence rows must only reference metric IDs present in this allowlist.
+    """
+    metrics: dict = {}
+
+    def _m(key: str, val):
+        if val is not None:
+            metrics[key] = val
+
+    ps = evidence.get("performance_summary") or {}
+    _m("performance.trade_count",       ps.get("trade_count"))
+    _m("performance.win_count",         ps.get("win_count"))
+    _m("performance.loss_count",        ps.get("loss_count"))
+    _m("performance.breakeven_count",   ps.get("breakeven_count"))
+    _m("performance.win_rate_pct",      ps.get("win_rate_pct"))
+    _m("performance.net_realized_pnl",  ps.get("net_realized_pnl"))
+    _m("performance.gross_profit",      ps.get("gross_profit"))
+    _m("performance.gross_loss",        ps.get("gross_loss"))
+    _m("performance.profit_factor",     ps.get("profit_factor"))
+    _m("performance.expectancy_amount", ps.get("expectancy_amount"))
+    _m("performance.average_win",       ps.get("average_win"))
+    _m("performance.average_loss",      ps.get("average_loss"))
+    _m("performance.average_risk_reward",ps.get("average_risk_reward"))
+    _m("performance.max_drawdown_amount",ps.get("max_drawdown_amount"))
+    _m("performance.recent_trend",      ps.get("recent_trend"))
+    _m("performance.truncated",         ps.get("truncated"))
+    _m("performance.sample_size",       evidence.get("sample_size"))
+    _m("performance.sample_quality",    evidence.get("sample_quality"))
+
+    eq = evidence.get("execution_quality") or {}
+    _m("execution.avg_planned_rr",  eq.get("avg_planned_rr"))
+    _m("execution.avg_realized_rr", eq.get("avg_realized_rr"))
+    _m("execution.avg_rr_capture",  eq.get("avg_rr_capture"))
+    _m("execution.tp_pct",          eq.get("tp_pct"))
+    _m("execution.sl_pct",          eq.get("sl_pct"))
+    _m("execution.manual_pct",      eq.get("manual_pct"))
+    _m("execution.tp_count",        eq.get("tp_exit_count"))
+    _m("execution.sl_count",        eq.get("sl_exit_count"))
+    _m("execution.manual_count",    eq.get("manual_exit_count"))
+
+    segs = evidence.get("segments") or {}
+    _dim_map = [
+        ("by_symbol",       "symbol"),
+        ("by_side",         "side"),
+        ("by_setup_type",   "setup"),
+        ("by_confidence",   "confidence"),
+        ("by_outcome_reason","reason"),
+        ("by_entry_mode",   "entry"),
+    ]
+    for dim_key, dim_label in _dim_map:
+        for seg in segs.get(dim_key) or []:
+            lbl = seg.get("label") or ""
+            if not lbl:
+                continue
+            pfx = f"segment.{dim_label}.{lbl}"
+            _m(f"{pfx}.trade_count", seg.get("count"))
+            _m(f"{pfx}.win_rate_pct", seg.get("win_rate"))
+            _m(f"{pfx}.net_pnl",     seg.get("net_pnl"))
+            _m(f"{pfx}.wins",        seg.get("wins"))
+            _m(f"{pfx}.losses",      seg.get("losses"))
+            _m(f"{pfx}.breakevens",  seg.get("breakevens"))
+
+    return metrics
+
+
+def _check_evidence_value(allowlist: dict, metric: str, ai_val) -> bool:
+    """Return True if metric is in allowlist and value is within tolerance.
+
+    Rejects metrics NOT in the allowlist entirely.
+    For numeric values in the allowlist, allows within 2% relative or 1 absolute.
+    For string values: requires exact string match (after strip).
+    """
+    if metric not in allowlist:
+        return False
+    expected = allowlist[metric]
+    if expected is None:
+        return True
+    # Try numeric comparison
     try:
-        raw = getattr(trade_obj, json_col, None)
-        if raw is None:
-            return None
-        parsed = raw if isinstance(raw, dict) else _json.loads(raw)
-        return parsed.get(field)
-    except Exception:
-        return None
+        e = float(str(expected).replace(",", ""))
+        a = float(str(ai_val).replace(",", ""))
+        abs_diff = abs(e - a)
+        tol = max(abs(e) * _EV_NUMERIC_REL_TOL, _EV_NUMERIC_ABS_TOL)
+        return abs_diff <= tol
+    except (TypeError, ValueError):
+        pass
+    # String comparison
+    return str(expected).strip().lower() == str(ai_val).strip().lower()
 
 
-# ── Observation candidates ────────────────────────────────────────────────────
+# ── Deterministic candidates ──────────────────────────────────────────────────
 
 def _lm_build_learning_observation_candidates(evidence: dict) -> list:
-    """Build deterministic pre-AI observation candidates from evidence segments.
+    """Build deterministic pre-AI observation candidates.
 
-    These candidates guide the AI prompt — they are NOT the AI output.
-    Returned as list of {type, label, finding, confidence} dicts.
+    Task 9 enforcement:
+     - Symbol/setup claims require >= _SEG_MIN_DIRECTIONAL trades in that segment.
+     - Side imbalance requires >= _SEG_MIN_SIDE_EACH trades on EACH side.
+     - 5–9 trades → low confidence + limitation "small_segment_sample".
+
+    Task 10: Full candidate schema with candidate_id, evidence_metric_ids, etc.
     """
-    candidates = []
-    segs = evidence.get("segments", {})
-    total = evidence.get("sample_size", 0)
-    if total == 0:
+    candidates: list = []
+    total  = evidence.get("sample_size", 0)
+    segs   = evidence.get("segments") or {}
+    eq     = evidence.get("execution_quality") or {}
+    ps     = evidence.get("performance_summary") or {}
+    warns  = evidence.get("warnings") or []
+    sq     = evidence.get("sample_quality", _SQ_INSUFFICIENT)
+
+    cid = [0]  # mutable counter
+
+    def _next_id() -> str:
+        cid[0] += 1
+        return f"candidate_{cid[0]}"
+
+    # Insufficient sample
+    if total < _MIN_TRADES_AI:
+        candidates.append({
+            "candidate_id":        _next_id(),
+            "candidate_type":      "insufficient_sample",
+            "category":            "data_quality",
+            "segment_type":        "portfolio",
+            "segment_value":       None,
+            "evidence_metric_ids": ["performance.trade_count", "performance.sample_quality"],
+            "sample_size":         total,
+            "sample_quality":      sq,
+            "severity":            "important",
+            "confidence":          "low",
+            "limitations":         ["below_minimum_generation_gate"],
+        })
         return candidates
 
-    eq = evidence.get("execution_quality", {})
+    # Data quality problems
+    if warns:
+        cands_warns = []
+        for w in warns:
+            if "truncated" in w or "limit" in w:
+                cands_warns.append(w)
+        if cands_warns:
+            candidates.append({
+                "candidate_id":        _next_id(),
+                "candidate_type":      "data_quality_problem",
+                "category":            "data_quality",
+                "segment_type":        "portfolio",
+                "segment_value":       None,
+                "evidence_metric_ids": ["performance.truncated"],
+                "sample_size":         total,
+                "sample_quality":      sq,
+                "severity":            "watch",
+                "confidence":          "low",
+                "limitations":         cands_warns,
+            })
 
-    # Symbol underperformance / outperformance
-    for seg in segs.get("by_symbol", []):
-        if seg["count"] < 3:
+    # Performance trend
+    trend = ps.get("recent_trend")
+    if trend == "declining" and total >= _SEG_MIN_DIRECTIONAL:
+        candidates.append({
+            "candidate_id":        _next_id(),
+            "candidate_type":      "deteriorating_recent_period",
+            "category":            "trend",
+            "segment_type":        "portfolio",
+            "segment_value":       None,
+            "evidence_metric_ids": ["performance.recent_trend", "performance.trade_count"],
+            "sample_size":         total,
+            "sample_quality":      sq,
+            "severity":            "watch",
+            "confidence":          "low" if total < 10 else "medium",
+            "limitations":         ["trend_comparison_requires_prior_period"],
+        })
+    elif trend == "improving" and total >= _SEG_MIN_DIRECTIONAL:
+        candidates.append({
+            "candidate_id":        _next_id(),
+            "candidate_type":      "improving_recent_period",
+            "category":            "trend",
+            "segment_type":        "portfolio",
+            "segment_value":       None,
+            "evidence_metric_ids": ["performance.recent_trend", "performance.trade_count"],
+            "sample_size":         total,
+            "sample_quality":      sq,
+            "severity":            "info",
+            "confidence":          "low" if total < 10 else "medium",
+            "limitations":         ["trend_comparison_requires_prior_period"],
+        })
+
+    # Symbol under/outperformance
+    for seg in segs.get("by_symbol") or []:
+        n_seg = seg.get("count", 0)
+        wr    = seg.get("win_rate")
+        if n_seg < _SEG_MIN_DIRECTIONAL or wr is None:
             continue
-        wr = seg.get("win_rate")
-        if wr is None:
-            continue
-        if wr < 35:
+        lbl  = seg.get("label", "unknown")
+        pfx  = f"segment.symbol.{lbl}"
+        lims: list = []
+        if n_seg < 10:
+            lims.append("small_segment_sample")
+        sq_seg = _sample_quality(n_seg)
+        conf = "low" if n_seg < 10 else ("medium" if n_seg < 30 else "medium")
+
+        if wr <= _SEG_UNDERPERF_WIN_MAX:
             candidates.append({
-                "type": "symbol_underperformance",
-                "label": seg["label"],
-                "finding": f"Win rate {wr}% on {seg['count']} trades",
-                "confidence": "medium" if seg["count"] >= 5 else "low",
+                "candidate_id":        _next_id(),
+                "candidate_type":      "symbol_underperformance",
+                "category":            "symbol",
+                "segment_type":        "symbol",
+                "segment_value":       lbl,
+                "evidence_metric_ids": [f"{pfx}.trade_count", f"{pfx}.win_rate_pct", f"{pfx}.net_pnl"],
+                "sample_size":         n_seg,
+                "sample_quality":      sq_seg,
+                "severity":            "watch" if n_seg >= 10 else "info",
+                "confidence":          conf,
+                "limitations":         lims,
             })
-        elif wr > 65:
+        elif wr >= _SEG_OUTPERF_WIN_MIN:
             candidates.append({
-                "type": "symbol_outperformance",
-                "label": seg["label"],
-                "finding": f"Win rate {wr}% on {seg['count']} trades",
-                "confidence": "medium" if seg["count"] >= 5 else "low",
+                "candidate_id":        _next_id(),
+                "candidate_type":      "symbol_outperformance",
+                "category":            "symbol",
+                "segment_type":        "symbol",
+                "segment_value":       lbl,
+                "evidence_metric_ids": [f"{pfx}.trade_count", f"{pfx}.win_rate_pct", f"{pfx}.net_pnl"],
+                "sample_size":         n_seg,
+                "sample_quality":      sq_seg,
+                "severity":            "info",
+                "confidence":          conf,
+                "limitations":         lims,
             })
 
-    # Side imbalance
-    by_side = {s["label"]: s for s in segs.get("by_side", [])}
-    buy_seg  = by_side.get("BUY")
-    sell_seg = by_side.get("SELL")
-    if buy_seg and sell_seg:
-        buy_wr  = buy_seg.get("win_rate") or 0
-        sell_wr = sell_seg.get("win_rate") or 0
-        if abs(buy_wr - sell_wr) >= 20:
-            weaker = "BUY" if buy_wr < sell_wr else "SELL"
+    # Side imbalance (requires >= _SEG_MIN_SIDE_EACH on each side)
+    by_side_map = {s.get("label", ""): s for s in (segs.get("by_side") or [])}
+    buy_seg  = by_side_map.get("BUY")
+    sell_seg = by_side_map.get("SELL")
+    buy_n    = (buy_seg  or {}).get("count", 0)
+    sell_n   = (sell_seg or {}).get("count", 0)
+    if buy_n >= _SEG_MIN_SIDE_EACH and sell_n >= _SEG_MIN_SIDE_EACH:
+        buy_wr  = (buy_seg  or {}).get("win_rate") or 0
+        sell_wr = (sell_seg or {}).get("win_rate") or 0
+        if abs(buy_wr - sell_wr) >= _SEG_IMBALANCE_DIFF:
+            lims_side = []
+            if min(buy_n, sell_n) < 10:
+                lims_side.append("small_segment_sample")
+            sq_side = _sample_quality(min(buy_n, sell_n))
             candidates.append({
-                "type": "side_imbalance",
-                "label": weaker,
-                "finding": f"BUY win_rate={buy_wr}% vs SELL win_rate={sell_wr}%",
-                "confidence": "medium",
+                "candidate_id":        _next_id(),
+                "candidate_type":      "side_imbalance",
+                "category":            "side",
+                "segment_type":        "side",
+                "segment_value":       "BUY_vs_SELL",
+                "evidence_metric_ids": [
+                    "segment.side.BUY.trade_count",  "segment.side.BUY.win_rate_pct",
+                    "segment.side.SELL.trade_count", "segment.side.SELL.win_rate_pct",
+                ],
+                "sample_size":         buy_n + sell_n,
+                "sample_quality":      sq_side,
+                "severity":            "watch",
+                "confidence":          "low" if min(buy_n, sell_n) < 10 else "medium",
+                "limitations":         lims_side,
             })
 
-    # Low / high RR capture
+    # Stop-loss concentration
+    sl_pct = eq.get("sl_pct") or 0
+    n_sl   = eq.get("sl_exit_count") or 0
+    if sl_pct > 60 and total >= _SEG_MIN_DIRECTIONAL:
+        candidates.append({
+            "candidate_id":        _next_id(),
+            "candidate_type":      "stop_loss_concentration",
+            "category":            "exit",
+            "segment_type":        "portfolio",
+            "segment_value":       None,
+            "evidence_metric_ids": ["execution.sl_pct", "execution.sl_count", "performance.trade_count"],
+            "sample_size":         total,
+            "sample_quality":      sq,
+            "severity":            "watch",
+            "confidence":          "low" if total < 10 else "medium",
+            "limitations":         [] if total >= 10 else ["small_segment_sample"],
+        })
+
+    # RR capture
     avg_cap = eq.get("avg_rr_capture")
-    if avg_cap is not None:
+    if avg_cap is not None and total >= _SEG_MIN_DIRECTIONAL:
         if avg_cap < 0.5:
             candidates.append({
-                "type": "low_rr_capture",
-                "label": f"{avg_cap:.0%}",
-                "finding": f"Average RR capture is {avg_cap:.1%} — exits before target",
-                "confidence": "medium",
+                "candidate_id":        _next_id(),
+                "candidate_type":      "low_rr_capture",
+                "category":            "risk_reward",
+                "segment_type":        "portfolio",
+                "segment_value":       None,
+                "evidence_metric_ids": ["execution.avg_rr_capture", "execution.avg_planned_rr", "execution.avg_realized_rr"],
+                "sample_size":         total,
+                "sample_quality":      sq,
+                "severity":            "watch",
+                "confidence":          "low" if total < 10 else "medium",
+                "limitations":         [] if total >= 10 else ["small_segment_sample"],
             })
         elif avg_cap > 1.1:
             candidates.append({
-                "type": "high_rr_capture",
-                "label": f"{avg_cap:.0%}",
-                "finding": f"Average RR capture is {avg_cap:.1%} — exceeds planned target",
-                "confidence": "low",
+                "candidate_id":        _next_id(),
+                "candidate_type":      "strong_rr_capture",
+                "category":            "risk_reward",
+                "segment_type":        "portfolio",
+                "segment_value":       None,
+                "evidence_metric_ids": ["execution.avg_rr_capture", "execution.avg_planned_rr"],
+                "sample_size":         total,
+                "sample_quality":      sq,
+                "severity":            "info",
+                "confidence":          "low",
+                "limitations":         ["low_realized_rr_data_availability"],
             })
 
-    # Exit timing: heavy manual exits
-    manual_pct = eq.get("manual_pct") or 0
-    if manual_pct > 50:
-        candidates.append({
-            "type": "exit_timing_observation",
-            "label": "manual_heavy",
-            "finding": f"{manual_pct:.1f}% of exits are manual — plan adherence low",
-            "confidence": "medium",
-        })
-
-    # Confidence bucket signal
-    for seg in segs.get("by_confidence", []):
-        if seg["count"] < 3:
+    # Confidence bucket signals
+    for seg in segs.get("by_confidence") or []:
+        n_seg = seg.get("count", 0)
+        wr    = seg.get("win_rate")
+        lbl   = seg.get("label", "unknown")
+        if n_seg < _SEG_MIN_DIRECTIONAL or wr is None or lbl == "unknown":
             continue
-        wr = seg.get("win_rate")
-        if wr is None:
-            continue
-        if wr > 60 and seg["label"] not in ("unknown",):
+        pfx  = f"segment.confidence.{lbl}"
+        lims = ["small_segment_sample"] if n_seg < 10 else []
+        sq_seg = _sample_quality(n_seg)
+        if wr >= _SEG_OUTPERF_WIN_MIN:
             candidates.append({
-                "type": "confidence_filter_signal",
-                "label": seg["label"],
-                "finding": f"'{seg['label']}' confidence → {wr}% win rate on {seg['count']} trades",
-                "confidence": "low" if seg["count"] < 5 else "medium",
+                "candidate_id":        _next_id(),
+                "candidate_type":      "confidence_supported",
+                "category":            "confidence",
+                "segment_type":        "confidence_bucket",
+                "segment_value":       lbl,
+                "evidence_metric_ids": [f"{pfx}.trade_count", f"{pfx}.win_rate_pct"],
+                "sample_size":         n_seg,
+                "sample_quality":      sq_seg,
+                "severity":            "info",
+                "confidence":          "low" if n_seg < 10 else "medium",
+                "limitations":         lims,
             })
+        elif wr <= _SEG_UNDERPERF_WIN_MAX:
+            candidates.append({
+                "candidate_id":        _next_id(),
+                "candidate_type":      "confidence_not_confirmed",
+                "category":            "confidence",
+                "segment_type":        "confidence_bucket",
+                "segment_value":       lbl,
+                "evidence_metric_ids": [f"{pfx}.trade_count", f"{pfx}.win_rate_pct"],
+                "sample_size":         n_seg,
+                "sample_quality":      sq_seg,
+                "severity":            "watch",
+                "confidence":          "low" if n_seg < 10 else "medium",
+                "limitations":         lims,
+            })
+
+    # Setup type under/outperformance
+    for seg in segs.get("by_setup_type") or []:
+        n_seg = seg.get("count", 0)
+        wr    = seg.get("win_rate")
+        lbl   = seg.get("label", "unknown")
+        if n_seg < _SEG_MIN_DIRECTIONAL or wr is None or lbl == "unknown":
+            continue
+        pfx  = f"segment.setup.{lbl}"
+        lims = ["small_segment_sample"] if n_seg < 10 else []
+        sq_seg = _sample_quality(n_seg)
+        if wr <= _SEG_UNDERPERF_WIN_MAX:
+            candidates.append({
+                "candidate_id":        _next_id(),
+                "candidate_type":      "setup_type_underperformance",
+                "category":            "setup",
+                "segment_type":        "setup_type",
+                "segment_value":       lbl,
+                "evidence_metric_ids": [f"{pfx}.trade_count", f"{pfx}.win_rate_pct"],
+                "sample_size":         n_seg,
+                "sample_quality":      sq_seg,
+                "severity":            "watch",
+                "confidence":          "low" if n_seg < 10 else "medium",
+                "limitations":         lims,
+            })
+        elif wr >= _SEG_OUTPERF_WIN_MIN:
+            candidates.append({
+                "candidate_id":        _next_id(),
+                "candidate_type":      "setup_type_outperformance",
+                "category":            "setup",
+                "segment_type":        "setup_type",
+                "segment_value":       lbl,
+                "evidence_metric_ids": [f"{pfx}.trade_count", f"{pfx}.win_rate_pct"],
+                "sample_size":         n_seg,
+                "sample_quality":      sq_seg,
+                "severity":            "info",
+                "confidence":          "low" if n_seg < 10 else "medium",
+                "limitations":         lims,
+            })
+
+    # No candidates found
+    if not candidates:
+        candidates.append({
+            "candidate_id":        _next_id(),
+            "candidate_type":      "no_action_recommended",
+            "category":            "data_quality",
+            "segment_type":        "portfolio",
+            "segment_value":       None,
+            "evidence_metric_ids": ["performance.trade_count", "performance.win_rate_pct"],
+            "sample_size":         total,
+            "sample_quality":      sq,
+            "severity":            "info",
+            "confidence":          "low",
+            "limitations":         [],
+        })
 
     return candidates
 
 
-# ── AI prompt builder ─────────────────────────────────────────────────────────
+# ── Prompt builder ────────────────────────────────────────────────────────────
 
 def _lm_build_learning_review_prompt(evidence: dict, candidates: list) -> str:
-    """Build the compact structured prompt sent to the AI provider."""
-    period    = evidence.get("period", "30d")
-    scope     = evidence.get("review_scope", "portfolio")
-    sym       = evidence.get("symbol")
-    side      = evidence.get("side")
-    total     = evidence.get("sample_size", 0)
-    quality   = evidence.get("sample_quality", "unknown")
-    eq        = evidence.get("execution_quality", {})
-    segs      = evidence.get("segments", {})
-    warnings  = evidence.get("warnings", [])
+    """Build the bounded, structured prompt sent to the AI provider.
 
-    sym_label   = f" for {sym}"  if sym  else ""
-    side_label  = f" ({side} side)" if side else ""
-    scope_label = scope
+    The prompt includes the full evidence metric allowlist so AI can only
+    reference metrics we actually have. The strict JSON schema is specified.
+    """
+    period  = evidence.get("period", "30d")
+    scope   = evidence.get("review_scope", "portfolio")
+    sym     = evidence.get("symbol")
+    side    = evidence.get("side")
+    total   = evidence.get("sample_size", 0)
+    sq      = evidence.get("sample_quality", _SQ_INSUFFICIENT)
+    ps      = evidence.get("performance_summary") or {}
+    eq      = evidence.get("execution_quality") or {}
+    segs    = evidence.get("segments") or {}
+    warns   = evidence.get("warnings") or []
 
-    cand_json = _json.dumps(candidates[:10], separators=(",", ":"))
-    segs_json = _json.dumps({
-        k: v[:5] for k, v in segs.items() if isinstance(v, list)
+    sym_label  = f" for {sym}"    if sym  else ""
+    side_label = f" ({side} side)" if side else ""
+
+    cand_json = _json.dumps(candidates[:8], separators=(",", ":"))
+
+    # Compact performance summary for prompt
+    ps_compact = {
+        "trade_count":   ps.get("trade_count"),
+        "win_rate_pct":  ps.get("win_rate_pct"),
+        "net_pnl":       ps.get("net_realized_pnl"),
+        "profit_factor": ps.get("profit_factor"),
+        "expectancy":    ps.get("expectancy_amount"),
+        "max_drawdown":  ps.get("max_drawdown_amount"),
+        "recent_trend":  ps.get("recent_trend", "insufficient_data"),
+        "truncated":     ps.get("truncated", False),
+    }
+    ps_json = _json.dumps(ps_compact, separators=(",", ":"))
+
+    eq_json = _json.dumps({
+        "avg_planned_rr":  eq.get("avg_planned_rr"),
+        "avg_realized_rr": eq.get("avg_realized_rr"),
+        "avg_rr_capture":  eq.get("avg_rr_capture"),
+        "tp_pct":  eq.get("tp_pct"),
+        "sl_pct":  eq.get("sl_pct"),
+        "manual_pct": eq.get("manual_pct"),
     }, separators=(",", ":"))
-    eq_json = _json.dumps(eq, separators=(",", ":"))
 
-    warnings_note = ""
-    if warnings:
-        warnings_note = f"\nData warnings: {', '.join(warnings)}."
+    segs_compact = {
+        k: (v[:5] if isinstance(v, list) else v)
+        for k, v in segs.items()
+    }
+    segs_json = _json.dumps(segs_compact, separators=(",", ":"))
 
-    prompt = f"""You are an objective learning analysis assistant for a paper trading system.
-Analyse the following closed paper trade evidence and return a structured JSON learning review.
+    warn_note = ""
+    if warns:
+        warn_note = f"\nData warnings present: {', '.join(warns[:5])}. " \
+                    f"You MUST add at least one entry to what_not_to_conclude."
 
-Scope: {scope_label}{sym_label}{side_label}
-Period: {period} | Trades: {total} | Sample quality: {quality}{warnings_note}
+    # 5-9 trade constraint
+    low_sample_note = ""
+    if total < 10:
+        low_sample_note = (
+            "\nSMALL SAMPLE CONSTRAINT: Fewer than 10 trades. "
+            "confidence_level MUST be 'low'. overall_assessment MUST be 'insufficient_data'. "
+            "All proposals must be 'collect_more_data' or 'monitor' only."
+        )
 
+    prompt = f"""You are an objective paper-trade learning analysis assistant.
+Analyse the evidence below and return a structured JSON learning review.
+
+Scope: {scope}{sym_label}{side_label} | Period: {period} | Trades: {total} | Quality: {sq}{warn_note}{low_sample_note}
+
+Performance summary: {ps_json}
 Execution quality: {eq_json}
 Segment summary (top-5 each): {segs_json}
 Deterministic candidates: {cand_json}
 
-CRITICAL GUARDRAILS (these override everything else):
-- auto_apply_allowed MUST be false in every observation.
-- Do NOT recommend strategy parameter changes, threshold changes, or Pine Script edits.
-- Do NOT recommend changing execution mode, risk guard settings, or auto gate state.
-- Only surface observations about past paper trade patterns.
-- Phrase every insight as "based on paper trades" — never as certainty.
-- If fewer than 5 trades, respond with observations: [] and a warning.
+CRITICAL GUARDRAILS — these override everything:
+1. auto_apply_allowed MUST be exactly false in EVERY proposal and in guardrails.
+2. human_review_required MUST be exactly true in EVERY proposal and in guardrails.
+3. Do NOT recommend: strategy changes, threshold changes, Pine Script edits,
+   Risk Guard changes, Auto Gate arming, execution mode changes, order submission.
+4. Allowed proposal action_types ONLY: investigate, monitor, collect_more_data,
+   compare, retain_current_behavior, future_controlled_experiment.
+5. Every observation must reference only metric IDs from the supplied evidence.
+6. Do not fabricate symbols, segments or numbers not present in the evidence.
+7. Every proposal must reference at least one valid observation ID.
+8. You must provide what_not_to_conclude (minimum 1 entry for small/truncated data).
 
-Return valid JSON only — no markdown fences, no prose outside the JSON:
+Return valid JSON ONLY — no markdown fences, no prose outside JSON:
 {{
-  "title": "short review title (max 80 chars)",
-  "summary": "2-3 sentence plain-language summary",
-  "confidence_level": "high|medium|low",
+  "review_title": "short title (max 80 chars)",
+  "executive_summary": "2-3 sentence summary",
+  "overall_assessment": "positive|negative|mixed|insufficient_data",
+  "confidence_level": "low|medium|high",
+  "sample_assessment": {{
+    "sample_size": {total},
+    "sample_quality": "{sq}",
+    "limitations": ["list of data quality limitations"]
+  }},
   "observations": [
     {{
-      "type": "one of: {', '.join(sorted(_VALID_OBS_TYPES))}",
-      "label": "short label",
-      "finding": "1-2 sentences describing the pattern",
-      "sample_n": <integer>,
-      "confidence": "high|medium|low",
+      "id": "obs_1",
+      "category": "symbol|side|setup|risk_reward|exit|confidence|trend|data_quality",
+      "title": "short title",
+      "statement": "1-2 sentences describing the pattern",
+      "evidence": [
+        {{"metric": "performance.win_rate_pct", "value": 45.5, "comparison": "below 50% threshold"}}
+      ],
+      "sample_size": <integer from evidence>,
+      "confidence": "low|medium|high",
+      "severity": "info|watch|important",
+      "limitations": [],
       "auto_apply_allowed": false
     }}
   ],
-  "warnings": ["list of data quality or caution notes"],
+  "review_proposals": [
+    {{
+      "id": "proposal_1",
+      "action_type": "investigate|monitor|collect_more_data|compare|retain_current_behavior|future_controlled_experiment",
+      "title": "proposal title",
+      "description": "what to investigate and why",
+      "evidence_observation_ids": ["obs_1"],
+      "minimum_additional_sample": 0,
+      "human_review_required": true,
+      "auto_apply_allowed": false
+    }}
+  ],
+  "what_not_to_conclude": [
+    "This sample does not prove <X> should be disabled.",
+    "Observed correlation does not prove causation."
+  ],
   "guardrails": {{
+    "read_only": true,
+    "human_review_required": true,
     "auto_apply_allowed": false,
-    "ai_can_execute": false,
-    "auto_execution_allowed": false
+    "can_change_strategy": false,
+    "can_change_risk_guard": false,
+    "can_arm_auto_gate": false,
+    "can_auto_submit": false,
+    "auto_execution_allowed": false,
+    "ai_can_execute": false
   }}
 }}"""
     return prompt
 
 
-# ── Response parser + validator ───────────────────────────────────────────────
+# ── Stage 1: Pure parse ───────────────────────────────────────────────────────
 
-def _lm_parse_learning_review_response(raw: dict) -> dict:
-    """Sanitize and validate AI response dict.
+def _lm_parse_learning_review_response(raw) -> dict:
+    """Stage 1: Pure JSON decoding. No semantic repair.
 
-    - Forces guardrails to safe values.
-    - Strips any observation with an invalid type.
-    - Limits to 10 observations.
-    - Returns parsed dict with _validation_warnings list.
+    Accepts raw text or already-decoded dict.
+    Returns the parsed dict (or a dict with _parse_error key).
+    Does NOT force, remap, repair, or invent any semantic value.
     """
-    validation_warnings: list = []
-
-    if not isinstance(raw, dict):
+    if isinstance(raw, dict):
+        return raw
+    if not raw:
+        return {"_parse_error": "empty_response", "raw_text": ""}
+    t = str(raw).strip()
+    if t.startswith("```"):
+        lines = t.splitlines()
+        t = "\n".join(lines[1:-1] if lines and lines[-1].strip() == "```" else lines[1:])
+    t = t.strip()
+    try:
+        return _json.loads(t)
+    except Exception as _e:
         return {
-            "_parse_error": "non_dict_response",
-            "observations": [],
-            "_validation_warnings": ["response_not_dict"],
+            "_parse_error": "invalid_json",
+            "raw_text":     t[:400],
+            "json_error":   str(_e)[:120],
         }
 
-    if "_parse_error" in raw:
-        return {**raw, "observations": [], "_validation_warnings": ["json_parse_error"]}
 
-    # Force all guardrail flags safe
-    guardrails = raw.get("guardrails") or {}
-    if not isinstance(guardrails, dict):
-        guardrails = {}
-    for flag in ("auto_apply_allowed", "ai_can_execute", "auto_execution_allowed"):
-        if guardrails.get(flag) is True:
-            validation_warnings.append(f"guardrail_{flag}_forced_false")
-        guardrails[flag] = False
-    raw["guardrails"] = guardrails
+# ── Stage 2: Strict validation ────────────────────────────────────────────────
 
-    # Validate observations
-    obs_raw = raw.get("observations") or []
-    if not isinstance(obs_raw, list):
-        obs_raw = []
-        validation_warnings.append("observations_not_list")
+def _lm_validate_learning_review_response(
+    parsed: dict, evidence: dict
+) -> tuple[bool, list[str]]:
+    """Stage 2: Strict validation. Rejects; does NOT repair.
 
-    clean_obs = []
-    for obs in obs_raw[:10]:
-        if not isinstance(obs, dict):
-            validation_warnings.append("observation_skipped_non_dict")
-            continue
-        obs_type = obs.get("type", "")
-        if obs_type not in _VALID_OBS_TYPES:
-            obs["type"] = "general_observation"
-            validation_warnings.append(f"observation_type_remapped:{obs_type}")
-        # Force auto_apply_allowed = false on every observation
-        if obs.get("auto_apply_allowed") is True:
-            validation_warnings.append("obs_auto_apply_forced_false")
-        obs["auto_apply_allowed"] = False
-        clean_obs.append(obs)
+    Returns (is_valid, reason_list).
+    An empty reason_list means validation passed.
+    """
+    reasons: list[str] = []
 
-    raw["observations"] = clean_obs
-    raw["_validation_warnings"] = validation_warnings
-
-    # Sanitize confidence_level
-    valid_conf = {"high", "medium", "low"}
-    if raw.get("confidence_level") not in valid_conf:
-        raw["confidence_level"] = "low"
-
-    # Ensure title and summary are strings
-    raw["title"]   = str(raw.get("title")   or "Learning Review")[:80]
-    raw["summary"] = str(raw.get("summary") or "")[:1000]
-
-    # Ensure warnings is a list of strings
-    warns = raw.get("warnings") or []
-    if not isinstance(warns, list):
-        warns = []
-    raw["warnings"] = [str(w)[:200] for w in warns[:20]]
-
-    return raw
-
-
-def _lm_validate_learning_review_response(parsed: dict) -> tuple[bool, list]:
-    """Return (is_valid, reasons). Valid = can be saved."""
-    reasons = []
+    # Parse error check
+    if not isinstance(parsed, dict):
+        return False, ["response_not_a_dict"]
     if "_parse_error" in parsed:
-        reasons.append(f"parse_error:{parsed['_parse_error']}")
-    if not isinstance(parsed.get("observations"), list):
-        reasons.append("missing_observations_list")
-    # guardrails must be present and all False
-    g = parsed.get("guardrails") or {}
-    for flag in ("auto_apply_allowed", "ai_can_execute", "auto_execution_allowed"):
-        if g.get(flag) is not False:
-            reasons.append(f"guardrail_not_false:{flag}")
+        return False, [f"parse_error:{parsed['_parse_error']}"]
+
+    # Required top-level keys
+    missing_keys = _REQUIRED_TOP_KEYS - set(parsed.keys())
+    if missing_keys:
+        for k in sorted(missing_keys):
+            reasons.append(f"missing_required_key:{k}")
+        return False, reasons
+
+    # overall_assessment
+    if parsed.get("overall_assessment") not in _VALID_ASSESSMENTS:
+        reasons.append(f"invalid_overall_assessment:{parsed.get('overall_assessment')!r}")
+
+    # confidence_level
+    if parsed.get("confidence_level") not in _VALID_CONFIDENCES:
+        reasons.append(f"invalid_confidence_level:{parsed.get('confidence_level')!r}")
+
+    # Low-sample enforcement: 5-9 trades must be low + insufficient_data
+    total = evidence.get("sample_size", 0)
+    if 5 <= total < 10:
+        if parsed.get("confidence_level") != "low":
+            reasons.append("insufficient_sample_confidence_must_be_low")
+        if parsed.get("overall_assessment") != "insufficient_data":
+            reasons.append("insufficient_sample_assessment_must_be_insufficient_data")
+
+    # sample_assessment
+    sa = parsed.get("sample_assessment")
+    if not isinstance(sa, dict):
+        reasons.append("sample_assessment_not_a_dict")
+    else:
+        # sample_quality must match deterministic value
+        ev_sq  = evidence.get("sample_quality", _SQ_INSUFFICIENT)
+        ai_sq  = sa.get("sample_quality")
+        if ai_sq not in _VALID_SAMPLE_QUALITIES:
+            reasons.append(f"invalid_sample_quality:{ai_sq!r}")
+        elif ai_sq != ev_sq:
+            # AI claims higher quality than deterministic → reject
+            _sq_rank = {_SQ_INSUFFICIENT: 0, _SQ_EARLY: 1, _SQ_DEVELOPING: 2, _SQ_MEANINGFUL: 3}
+            if _sq_rank.get(ai_sq, 0) > _sq_rank.get(ev_sq, 0):
+                reasons.append(f"ai_sample_quality_higher_than_evidence:{ai_sq!r}>{ev_sq!r}")
+        # sample_size must match
+        ai_n = sa.get("sample_size")
+        if ai_n != total:
+            reasons.append(f"sample_size_mismatch:ai={ai_n}!=evidence={total}")
+
+    # Build allowlist for evidence-row validation
+    allowlist = _lm_build_evidence_metric_allowlist(evidence)
+
+    # observations
+    obs_list = parsed.get("observations")
+    if not isinstance(obs_list, list):
+        reasons.append("observations_not_a_list")
+        obs_list = []
+
+    obs_ids: set = set()
+    for i, obs in enumerate(obs_list[:_OBS_MAX]):
+        if not isinstance(obs, dict):
+            reasons.append(f"obs[{i}]_not_a_dict")
+            continue
+        missing_obs = _OBS_REQUIRED_KEYS - set(obs.keys())
+        if missing_obs:
+            for k in sorted(missing_obs):
+                reasons.append(f"obs[{i}]_missing_key:{k}")
+
+        obs_id = obs.get("id")
+        if not obs_id or not isinstance(obs_id, str):
+            reasons.append(f"obs[{i}]_missing_or_invalid_id")
+        elif obs_id in obs_ids:
+            reasons.append(f"obs[{i}]_duplicate_id:{obs_id!r}")
+        else:
+            obs_ids.add(obs_id)
+
+        if obs.get("category") not in _VALID_OBS_CATEGORIES:
+            reasons.append(f"obs[{i}]_invalid_category:{obs.get('category')!r}")
+        if obs.get("confidence") not in _VALID_CONFIDENCES:
+            reasons.append(f"obs[{i}]_invalid_confidence:{obs.get('confidence')!r}")
+        if obs.get("severity") not in _VALID_SEVERITIES:
+            reasons.append(f"obs[{i}]_invalid_severity:{obs.get('severity')!r}")
+
+        # auto_apply_allowed must be exactly False — reject if True
+        if obs.get("auto_apply_allowed") is not False:
+            reasons.append(f"obs[{i}]_auto_apply_allowed_not_false")
+
+        # Validate evidence rows
+        ev_rows = obs.get("evidence") or []
+        if not isinstance(ev_rows, list):
+            reasons.append(f"obs[{i}]_evidence_not_a_list")
+        else:
+            for j, row in enumerate(ev_rows[:_EVIDENCE_ROWS]):
+                if not isinstance(row, dict):
+                    reasons.append(f"obs[{i}].evidence[{j}]_not_a_dict")
+                    continue
+                metric = row.get("metric")
+                if not metric:
+                    reasons.append(f"obs[{i}].evidence[{j}]_missing_metric")
+                    continue
+                if metric not in allowlist:
+                    reasons.append(f"obs[{i}].evidence[{j}]_unknown_metric:{metric!r}")
+                else:
+                    # Numeric value within tolerance
+                    ai_val = row.get("value")
+                    if ai_val is not None and not _check_evidence_value(allowlist, metric, ai_val):
+                        reasons.append(f"obs[{i}].evidence[{j}]_value_out_of_tolerance:{metric!r}")
+
+    # review_proposals
+    prop_list = parsed.get("review_proposals")
+    if not isinstance(prop_list, list):
+        reasons.append("review_proposals_not_a_list")
+        prop_list = []
+
+    prop_ids: set = set()
+    for i, prop in enumerate(prop_list[:_PROPOSAL_MAX]):
+        if not isinstance(prop, dict):
+            reasons.append(f"proposal[{i}]_not_a_dict")
+            continue
+        missing_prop = _PROP_REQUIRED_KEYS - set(prop.keys())
+        if missing_prop:
+            for k in sorted(missing_prop):
+                reasons.append(f"proposal[{i}]_missing_key:{k}")
+
+        pid = prop.get("id")
+        if not pid or not isinstance(pid, str):
+            reasons.append(f"proposal[{i}]_missing_or_invalid_id")
+        elif pid in prop_ids:
+            reasons.append(f"proposal[{i}]_duplicate_id:{pid!r}")
+        else:
+            prop_ids.add(pid)
+
+        # action_type strict whitelist
+        action = prop.get("action_type")
+        if action not in _VALID_PROPOSAL_ACTIONS:
+            reasons.append(f"proposal[{i}]_invalid_action_type:{action!r}")
+        # Also catch if any forbidden word leaked through
+        if isinstance(action, str):
+            for forbidden in _FORBIDDEN_ACTION_WORDS:
+                if forbidden in action.lower():
+                    reasons.append(f"proposal[{i}]_forbidden_action_word:{forbidden!r}")
+
+        # human_review_required must be exactly True
+        hrr = prop.get("human_review_required")
+        if hrr is not True:
+            reasons.append(f"proposal[{i}]_human_review_required_not_true")
+
+        # auto_apply_allowed must be exactly False
+        if prop.get("auto_apply_allowed") is not False:
+            reasons.append(f"proposal[{i}]_auto_apply_not_false")
+
+        # evidence_observation_ids must be non-empty and reference known obs
+        eoi = prop.get("evidence_observation_ids")
+        if not isinstance(eoi, list) or len(eoi) == 0:
+            reasons.append(f"proposal[{i}]_empty_evidence_observation_ids")
+        elif obs_ids:
+            for ref_id in eoi:
+                if ref_id not in obs_ids:
+                    reasons.append(f"proposal[{i}]_unknown_obs_ref:{ref_id!r}")
+
+        # Low-sample proposals must be collect_more_data or monitor only
+        if 5 <= total < 10 and action not in ("collect_more_data", "monitor"):
+            reasons.append(f"proposal[{i}]_insufficient_sample_must_be_collect_or_monitor")
+
+    # what_not_to_conclude
+    wntc = parsed.get("what_not_to_conclude")
+    if not isinstance(wntc, list):
+        reasons.append("what_not_to_conclude_not_a_list")
+    else:
+        # Require at least one entry when sample is poor, data truncated, or warnings
+        ev_warns = evidence.get("warnings") or []
+        needs_wntc = (
+            evidence.get("sample_quality") in (_SQ_INSUFFICIENT, _SQ_EARLY)
+            or bool(ev_warns)
+            or total < 30
+        )
+        if needs_wntc and len(wntc) == 0:
+            reasons.append("what_not_to_conclude_required_but_empty")
+
+    # guardrails — strict exact value checking
+    g = parsed.get("guardrails")
+    if not isinstance(g, dict):
+        reasons.append("guardrails_not_a_dict")
+    else:
+        for key, expected in _GUARDRAILS_REQUIRED.items():
+            actual = g.get(key)
+            if actual != expected:
+                reasons.append(f"guardrail_{key}_must_be_{expected}:got_{actual!r}")
+
     is_valid = len(reasons) == 0
     return is_valid, reasons
+
+
+# ── Stage 3: Sanitize (text trimming only — after validation passes) ──────────
+
+def _lm_sanitize_valid_learning_review(parsed: dict) -> dict:
+    """Stage 3: Trim bounded display strings. Called ONLY after validation passes.
+
+    MUST NOT alter: IDs, action_types, categories, confidence, severity,
+    guardrail booleans, human_review_required, auto_apply_allowed, numeric values.
+    """
+    import copy
+    out = copy.deepcopy(parsed)
+
+    def _st(v, max_len: int) -> str:
+        return str(v).strip()[:max_len]
+
+    out["review_title"]       = _st(out.get("review_title", ""),       80)
+    out["executive_summary"]  = _st(out.get("executive_summary", ""),  1000)
+
+    # Sample assessment limitations
+    sa = out.get("sample_assessment") or {}
+    if isinstance(sa.get("limitations"), list):
+        sa["limitations"] = [_st(x, 200) for x in sa["limitations"][:_LIMIT_MAX]]
+    out["sample_assessment"] = sa
+
+    # Observations: trim display text, not schema fields
+    obs = out.get("observations") or []
+    for o in obs[:_OBS_MAX]:
+        if isinstance(o, dict):
+            o["title"]     = _st(o.get("title",     ""), 80)
+            o["statement"] = _st(o.get("statement", ""), 500)
+            ev_rows = o.get("evidence") or []
+            for row in ev_rows[:_EVIDENCE_ROWS]:
+                if isinstance(row, dict) and isinstance(row.get("comparison"), str):
+                    row["comparison"] = _st(row["comparison"], 200)
+            o["evidence"] = ev_rows[:_EVIDENCE_ROWS]
+            lims = o.get("limitations") or []
+            if isinstance(lims, list):
+                o["limitations"] = [_st(x, 200) for x in lims[:_LIMIT_MAX]]
+            elif isinstance(lims, str):
+                o["limitations"] = _st(lims, 200)
+    out["observations"] = obs[:_OBS_MAX]
+
+    # Proposals: trim display text, not action_type, IDs, or booleans
+    props = out.get("review_proposals") or []
+    for p in props[:_PROPOSAL_MAX]:
+        if isinstance(p, dict):
+            p["title"]       = _st(p.get("title",       ""), 80)
+            p["description"] = _st(p.get("description", ""), 500)
+    out["review_proposals"] = props[:_PROPOSAL_MAX]
+
+    # what_not_to_conclude
+    wntc = out.get("what_not_to_conclude") or []
+    out["what_not_to_conclude"] = [_st(x, 300) for x in wntc[:_WNTC_MAX]]
+
+    return out
+
+
+# ── Deterministic fallback ────────────────────────────────────────────────────
+
+def _lm_build_deterministic_review(evidence: dict, candidates: list) -> dict:
+    """Build a valid deterministic review when AI is unavailable.
+
+    Always labelled source="deterministic_fallback". Conforms to full schema.
+    """
+    total = evidence.get("sample_size", 0)
+    sq    = evidence.get("sample_quality", _SQ_INSUFFICIENT)
+    ps    = evidence.get("performance_summary") or {}
+    warns = evidence.get("warnings") or []
+
+    # Build observations from candidates
+    obs: list = []
+    for i, c in enumerate(candidates[:_OBS_MAX]):
+        ct = c.get("candidate_type", "general_observation")
+        cat_map = {
+            "symbol_underperformance": "symbol", "symbol_outperformance": "symbol",
+            "side_imbalance": "side",
+            "stop_loss_concentration": "exit",
+            "low_rr_capture": "risk_reward", "strong_rr_capture": "risk_reward",
+            "confidence_not_confirmed": "confidence", "confidence_supported": "confidence",
+            "setup_type_underperformance": "setup", "setup_type_outperformance": "setup",
+            "deteriorating_recent_period": "trend", "improving_recent_period": "trend",
+            "insufficient_sample": "data_quality", "data_quality_problem": "data_quality",
+            "no_action_recommended": "data_quality",
+        }
+        cat = cat_map.get(ct, "data_quality")
+        conf = c.get("confidence", "low")
+        ev_rows = [
+            {"metric": mid, "value": None, "comparison": None}
+            for mid in (c.get("evidence_metric_ids") or [])[:_EVIDENCE_ROWS]
+        ]
+        seg_val = c.get("segment_value")
+        obs.append({
+            "id":           f"obs_{i+1}",
+            "category":     cat,
+            "title":        ct.replace("_", " ").title(),
+            "statement":    (
+                f"Deterministic analysis of {c.get('sample_size', total)} paper trades "
+                f"suggests pattern: {ct.replace('_',' ')}."
+                + (f" Segment: {seg_val}." if seg_val else "")
+            ),
+            "evidence":     ev_rows,
+            "sample_size":  c.get("sample_size", total),
+            "confidence":   conf,
+            "severity":     c.get("severity", "info"),
+            "limitations":  c.get("limitations", []) + ["deterministic_fallback_no_ai_analysis"],
+            "auto_apply_allowed": False,
+        })
+
+    if not obs:
+        obs.append({
+            "id": "obs_1", "category": "data_quality",
+            "title": "Insufficient Data for Analysis",
+            "statement": f"Only {total} paper trades available. Insufficient for pattern detection.",
+            "evidence": [{"metric": "performance.trade_count", "value": total, "comparison": None}],
+            "sample_size": total, "confidence": "low", "severity": "info",
+            "limitations": ["deterministic_fallback_no_ai_analysis"],
+            "auto_apply_allowed": False,
+        })
+
+    obs_ids = [o["id"] for o in obs]
+    proposal_action = "collect_more_data" if sq in (_SQ_INSUFFICIENT, _SQ_EARLY) else "monitor"
+    proposals = [{
+        "id": "proposal_1",
+        "action_type": proposal_action,
+        "title": "Gather more data for meaningful analysis",
+        "description": (
+            "Continue paper trading to accumulate statistically meaningful sample. "
+            "Re-generate a learning review when more trades are available."
+        ),
+        "evidence_observation_ids": [obs_ids[0]],
+        "minimum_additional_sample": max(0, 30 - total),
+        "human_review_required": True,
+        "auto_apply_allowed": False,
+    }]
+
+    wntc = [
+        "This deterministic summary does not prove any pattern is real or persistent.",
+        "Do not change strategy, risk settings, or execution mode based on this review.",
+    ]
+    if warns:
+        wntc.append("Data warnings are present — review may be incomplete.")
+
+    overall = "insufficient_data" if sq in (_SQ_INSUFFICIENT, _SQ_EARLY) else "mixed"
+    conf    = "low"
+
+    return {
+        "review_title":       "Learning Review (Deterministic Fallback)",
+        "executive_summary":  (
+            f"Deterministic analysis of {total} paper trades ({sq} quality). "
+            "AI provider was unavailable. Results are pattern-detection only — no AI reasoning applied."
+        ),
+        "overall_assessment": overall,
+        "confidence_level":   conf,
+        "sample_assessment": {
+            "sample_size":   total,
+            "sample_quality": sq,
+            "limitations":   ["ai_provider_unavailable", "deterministic_fallback_used"],
+        },
+        "observations":       obs,
+        "review_proposals":   proposals,
+        "what_not_to_conclude": wntc,
+        "guardrails":         dict(_GUARDRAILS_REQUIRED),
+    }
 
 
 # ── Persistence ───────────────────────────────────────────────────────────────
@@ -642,44 +1433,69 @@ def _lm_save_learning_review(
     user_id,
     filters:          dict,
     evidence:         dict,
-    parsed_response:  dict,
-    source:           str     = "ai",
-    model_name:       str     = None,
-    parent_review_id: int     = None,
+    sanitized_review: dict,
+    source:           str  = "ai",
+    model_name:       str  = None,
+    parent_review_id: int  = None,
+    candidates:       list = None,
+    allowlist:        dict = None,
 ) -> object:
-    """Persist a learning review to the database.
+    """Persist a validated + sanitized review to the database.
 
-    Returns the saved LiveMonitorLearningReview instance.
-    Caller is responsible for db.session.commit() after calling this.
+    Task 13: evidence_json now stores full auditable snapshot including
+    performance summary, candidates, and evidence metric allowlist.
     """
     from models import LiveMonitorLearningReview as _LR
     from extensions import db
 
+    ps = evidence.get("performance_summary") or {}
+
+    # Task 13: bounded auditable evidence_json
+    evidence_record = {
+        "prompt_version":    _PROMPT_VERSION,
+        "filters": {
+            "period":       filters.get("period"),
+            "symbol":       filters.get("symbol"),
+            "side":         filters.get("side"),     # Task 8: correct key
+            "item_id":      filters.get("item_id"),
+            "review_scope": filters.get("_review_scope"),
+        },
+        "performance_summary": ps,
+        "query_meta":   evidence.get("query_meta"),
+        "data_quality": evidence.get("data_quality"),
+        "execution_quality": evidence.get("execution_quality"),
+        "warnings":     evidence.get("warnings"),
+        "sample_size":  evidence.get("sample_size"),
+        "sample_quality": evidence.get("sample_quality"),
+        # Top segments for auditability (bounded)
+        "segments_summary": {
+            k: v[:10] if isinstance(v, list) else v
+            for k, v in (evidence.get("segments") or {}).items()
+        },
+        # Deterministic candidates used in prompt
+        "deterministic_candidates": (candidates or [])[:_OBS_MAX],
+        # Evidence metric allowlist (compact — keys only, values are derivable)
+        "evidence_metric_keys": list((allowlist or {}).keys())[:100],
+    }
+
+    # Task 8: side key correction (read from filters["side"])
     review = _LR(
         user_id          = user_id,
         item_id          = filters.get("item_id"),
         review_scope     = filters.get("_review_scope", "portfolio"),
         period           = filters.get("period", "30d"),
         symbol           = filters.get("symbol"),
-        side             = filters.get("side_norm"),
+        side             = filters.get("side"),          # Task 8 fix
         status           = "generated",
-        title            = parsed_response.get("title", "Learning Review"),
-        summary          = parsed_response.get("summary", ""),
-        review_json      = _json.dumps(parsed_response),
-        evidence_json    = _json.dumps({
-            "sample_size":       evidence.get("sample_size"),
-            "query_meta":        evidence.get("query_meta"),
-            "period":            evidence.get("period"),
-            "symbol":            evidence.get("symbol"),
-            "side":              evidence.get("side"),
-            "execution_quality": evidence.get("execution_quality"),
-            "warnings":          evidence.get("warnings"),
-            # omit raw segments — they can be large; kept in review_json
-        }),
+        title            = sanitized_review.get("review_title", "Learning Review")[:200],
+        summary          = sanitized_review.get("executive_summary", "")[:1000],
+        review_json      = _json.dumps(sanitized_review),
+        evidence_json    = _json.dumps(evidence_record),
         sample_size      = evidence.get("sample_size", 0),
-        sample_quality   = evidence.get("sample_quality", "unknown"),
-        confidence_level = parsed_response.get("confidence_level", "low"),
-        warning_count    = len(parsed_response.get("warnings") or []),
+        sample_quality   = evidence.get("sample_quality", _SQ_INSUFFICIENT),
+        confidence_level = sanitized_review.get("confidence_level", "low"),
+        warning_count    = len(sanitized_review.get("what_not_to_conclude") or []) +
+                           len(evidence.get("warnings") or []),
         source           = source,
         model_name       = model_name,
         prompt_version   = _PROMPT_VERSION,
@@ -693,15 +1509,13 @@ def _lm_save_learning_review(
 
 def _lm_get_learning_reviews(
     user_id,
-    item_id          = None,
-    review_scope     = None,
-    status_filter    = None,
-    limit            = 20,
-    offset           = 0,
+    item_id       = None,
+    review_scope  = None,
+    status_filter = None,
+    limit         = 20,
+    offset        = 0,
 ) -> list:
-    """Return list of review dicts (newest first)."""
     from models import LiveMonitorLearningReview as _LR
-
     q = _LR.query.filter_by(user_id=user_id)
     if item_id is not None:
         q = q.filter_by(item_id=int(item_id))
@@ -714,22 +1528,26 @@ def _lm_get_learning_reviews(
 
 
 def _lm_get_learning_review(user_id, review_id: int) -> dict | None:
-    """Return a single review dict with full JSON, or None if not found."""
     from models import LiveMonitorLearningReview as _LR
-
     r = _LR.query.filter_by(id=review_id, user_id=user_id).first()
-    if r is None:
-        return None
-    return _serialize_review(r, include_json=True)
+    return None if r is None else _serialize_review(r, include_json=True)
 
 
-def _lm_update_learning_review_status(
+def _lm_update_learning_review(
     user_id,
     review_id:   int,
-    new_status:  str,
-    human_note:  str = None,
+    new_status:  str | None = None,
+    human_note   = _NOTE_NOT_PROVIDED,
 ) -> tuple[bool, str, dict | None]:
-    """Transition a review's status. Returns (ok, reason, serialized)."""
+    """Update review status and/or human note.
+
+    Task 15 contract:
+      - new_status=None: note-only update, no transition attempted.
+      - human_note=_NOTE_NOT_PROVIDED: note field is untouched.
+      - human_note=None: explicitly clears the note.
+      - human_note="text": sets the note (bounded to 2000 chars).
+      - Empty PATCH (no new_status, no human_note supplied): caller should reject before here.
+    """
     from models import LiveMonitorLearningReview as _LR
     from extensions import db
 
@@ -737,26 +1555,50 @@ def _lm_update_learning_review_status(
     if r is None:
         return False, "review_not_found", None
 
-    if new_status not in _VALID_STATUSES:
-        return False, "invalid_status", None
+    changed = False
 
-    allowed = _STATUS_TRANSITIONS.get(r.status, frozenset())
-    if new_status not in allowed:
-        return False, f"invalid_transition:{r.status}->{new_status}", None
+    # Status transition (optional)
+    if new_status is not None:
+        if new_status not in _VALID_STATUSES:
+            return False, "invalid_status", None
+        allowed = _STATUS_TRANSITIONS.get(r.status, frozenset())
+        if new_status not in allowed:
+            return False, f"invalid_transition:{r.status}->{new_status}", None
+        r.status      = new_status
+        r.reviewed_at = datetime.now(timezone.utc)
+        changed = True
 
-    r.status     = new_status
+    # Note update (optional, independent of status)
+    if human_note is not _NOTE_NOT_PROVIDED:
+        if human_note is None:
+            r.human_note = None
+        else:
+            r.human_note = str(human_note)[:2000]
+        changed = True
+
+    if not changed:
+        return False, "no_changes_applied", None
+
     r.updated_at = datetime.now(timezone.utc)
-    r.reviewed_at = datetime.now(timezone.utc)
-    if human_note is not None:
-        r.human_note = str(human_note)[:2000]
-
     db.session.commit()
     return True, "ok", _serialize_review(r, include_json=False)
 
 
+def _lm_update_learning_review_status(
+    user_id, review_id: int, new_status: str, human_note: str = None,
+) -> tuple[bool, str, dict | None]:
+    """Legacy alias. Prefer _lm_update_learning_review."""
+    note = _NOTE_NOT_PROVIDED if human_note is None else human_note
+    return _lm_update_learning_review(
+        user_id, review_id, new_status=new_status, human_note=note,
+    )
+
+
+# ── Serialization ─────────────────────────────────────────────────────────────
+
 def _serialize_review(r, include_json: bool = False) -> dict:
-    """Convert a LiveMonitorLearningReview row to a dict."""
-    d = {
+    """Convert a LiveMonitorLearningReview row to a wire-safe dict."""
+    d: dict = {
         "id":              r.id,
         "user_id":         r.user_id,
         "item_id":         r.item_id,
@@ -765,8 +1607,8 @@ def _serialize_review(r, include_json: bool = False) -> dict:
         "symbol":          r.symbol,
         "side":            r.side,
         "status":          r.status,
-        "title":           r.title,
-        "summary":         r.summary,
+        "review_title":    r.title,
+        "executive_summary": r.summary,
         "sample_size":     r.sample_size,
         "sample_quality":  r.sample_quality,
         "confidence_level":r.confidence_level,
@@ -779,24 +1621,38 @@ def _serialize_review(r, include_json: bool = False) -> dict:
         "created_at":      r.created_at.isoformat() if r.created_at else None,
         "updated_at":      r.updated_at.isoformat() if r.updated_at else None,
         "reviewed_at":     r.reviewed_at.isoformat() if r.reviewed_at else None,
-        "guardrails":      _GUARDRAILS,
+        "guardrails":      dict(_MODULE_GUARDRAILS),
     }
     if include_json:
         try:
-            d["review_data"]   = _json.loads(r.review_json)   if r.review_json   else None
-            d["evidence_data"] = _json.loads(r.evidence_json) if r.evidence_json else None
+            review_data = _json.loads(r.review_json) if r.review_json else None
+            d["overall_assessment"]   = (review_data or {}).get("overall_assessment")
+            d["observations"]         = (review_data or {}).get("observations", [])
+            d["review_proposals"]     = (review_data or {}).get("review_proposals", [])
+            d["what_not_to_conclude"] = (review_data or {}).get("what_not_to_conclude", [])
+            d["review_data"]          = review_data
+            d["evidence_data"]        = _json.loads(r.evidence_json) if r.evidence_json else None
         except Exception:
-            d["review_data"]   = None
-            d["evidence_data"] = None
+            d["review_data"]          = None
+            d["evidence_data"]        = None
+            d["overall_assessment"]   = None
+            d["observations"]         = []
+            d["review_proposals"]     = []
+            d["what_not_to_conclude"] = []
     return d
 
 
 # ── Accepted insights context ─────────────────────────────────────────────────
 
-def _lm_build_accepted_learning_context(user_id, item_id=None, max_items: int = _MAX_ACCEPTED_INSIGHTS) -> list:
-    """Build compact list of accepted insights for AI context injection.
+def _lm_build_accepted_learning_context(
+    user_id,
+    item_id   = None,
+    max_items: int = _MAX_ACCEPTED_INSIGHTS,
+) -> list:
+    """Build compact accepted-insight context for AI decision context injection.
 
-    Returns at most max_items entries. Advisory only.
+    Task 14: Returns bounded list with human_note, sample_size, sample_quality,
+    read_only, auto_apply_allowed. Excludes full evidence JSON.
     """
     from models import LiveMonitorLearningReview as _LR
 
@@ -808,22 +1664,29 @@ def _lm_build_accepted_learning_context(user_id, item_id=None, max_items: int = 
     out = []
     for r in rows:
         entry: dict = {
-            "review_id":    r.id,
-            "scope":        r.review_scope,
-            "period":       r.period,
-            "symbol":       r.symbol,
-            "side":         r.side,
-            "title":        r.title,
-            "summary":      r.summary,
-            "confidence":   r.confidence_level,
-            "accepted_at":  r.reviewed_at.isoformat() if r.reviewed_at else None,
+            "review_id":     r.id,
+            "date":          r.reviewed_at.isoformat() if r.reviewed_at else None,
+            "scope":         r.review_scope,
+            "period":        r.period,
+            "symbol":        r.symbol,
+            "side":          r.side,
+            "title":         r.title,
+            "summary":       r.summary,
+            "sample_size":   r.sample_size,
+            "sample_quality": r.sample_quality,
+            "confidence_level": r.confidence_level,
+            "human_note":    r.human_note,
+            "read_only":     True,
+            "auto_apply_allowed": False,
         }
-        # Include observation types (compact — no full finding text)
+        # Accepted observation titles (compact — no full statement text)
         try:
-            rd = _json.loads(r.review_json) if r.review_json else {}
+            rd  = _json.loads(r.review_json) if r.review_json else {}
             obs = rd.get("observations") or []
-            entry["observation_types"] = [o.get("type") for o in obs if isinstance(o, dict)]
+            entry["accepted_observation_titles"] = [
+                o.get("title", "") for o in obs if isinstance(o, dict)
+            ][:_OBS_MAX]
         except Exception:
-            entry["observation_types"] = []
+            entry["accepted_observation_titles"] = []
         out.append(entry)
     return out

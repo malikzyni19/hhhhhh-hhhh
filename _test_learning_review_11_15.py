@@ -166,7 +166,7 @@ f_valid["_mock_n"] = 10
 
 ev = lr._lm_build_learning_evidence(1, f_valid)
 check("3-1 sample_size matches trade count", ev["sample_size"] == 10)
-check("3-2 sample_quality high for >=10", ev["sample_quality"] == "high")
+check("3-2 sample_quality early for 10-29", ev["sample_quality"] == "early")
 check("3-3 segments present", isinstance(ev.get("segments"), dict))
 check("3-4 execution_quality present", isinstance(ev.get("execution_quality"), dict))
 check("3-5 recent_trades present", isinstance(ev.get("recent_trades"), list))
@@ -176,7 +176,7 @@ f_valid5 = lr._lm_build_learning_review_filters(1, review_scope="portfolio", per
 f_valid5["_mock_n"] = 5
 
 ev5 = lr._lm_build_learning_evidence(1, f_valid5)
-check("3-7 sample_quality low for 5-9", ev5["sample_quality"] == "low")
+check("3-7 sample_quality insufficient for 0-9", ev5["sample_quality"] == "insufficient")
 
 def _zero_query(user_id, filters):
     return [], {"total_available": 0, "rows_loaded": 0, "truncated": False}
@@ -287,13 +287,15 @@ ev_sample = {
 }
 
 cands = lr._lm_build_learning_observation_candidates(ev_sample)
-types_found = {c["type"] for c in cands}
+ctypes_found = {c["candidate_type"] for c in cands}
 check("7-1 candidates list is non-empty", len(cands) > 0)
-check("7-2 symbol_underperformance detected for BTCUSDT", "symbol_underperformance" in types_found)
-check("7-3 symbol_outperformance detected for ETHUSDT", "symbol_outperformance" in types_found)
-check("7-4 side_imbalance detected", "side_imbalance" in types_found)
-check("7-5 low_rr_capture detected (capture=0.4)", "low_rr_capture" in types_found)
-check("7-6 exit_timing detected (manual 60%)", "exit_timing_observation" in types_found)
+check("7-2 symbol_underperformance detected for BTCUSDT", "symbol_underperformance" in ctypes_found)
+check("7-3 symbol_outperformance detected for ETHUSDT", "symbol_outperformance" in ctypes_found)
+check("7-4 side_imbalance detected", "side_imbalance" in ctypes_found)
+check("7-5 low_rr_capture detected (capture=0.4)", "low_rr_capture" in ctypes_found)
+check("7-6 candidates have candidate_id + evidence_metric_ids", all(
+    "candidate_id" in c and "evidence_metric_ids" in c for c in cands
+))
 
 ev_empty = {
     "sample_size": 0,
@@ -301,7 +303,7 @@ ev_empty = {
     "execution_quality": {},
 }
 cands_empty = lr._lm_build_learning_observation_candidates(ev_empty)
-check("7-7 zero trades → no candidates", cands_empty == [])
+check("7-7 zero trades → insufficient_sample candidate", len(cands_empty) == 1 and cands_empty[0]["candidate_type"] == "insufficient_sample")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # GROUP 8: Prompt builder
@@ -322,84 +324,148 @@ check("8-1 prompt is a string", isinstance(prompt, str))
 check("8-2 prompt mentions auto_apply_allowed", "auto_apply_allowed" in prompt)
 check("8-3 prompt mentions CRITICAL GUARDRAILS", "CRITICAL GUARDRAILS" in prompt)
 check("8-4 prompt includes sample size", "20" in prompt)
-check("8-5 prompt requests JSON output", '"observations"' in prompt)
+check("8-5 prompt requests review_proposals", '"review_proposals"' in prompt)
 check("8-6 auto_apply_allowed false in schema", '"auto_apply_allowed": false' in prompt)
+check("8-7 prompt requests what_not_to_conclude", '"what_not_to_conclude"' in prompt)
+check("8-8 prompt requests overall_assessment", '"overall_assessment"' in prompt)
+check("8-9 prompt requests review_title", '"review_title"' in prompt)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# GROUP 9: Response parser and validator
+# GROUP 9: Response parser and validator (hotfix 11.15.1 — strict, no repair)
 # ══════════════════════════════════════════════════════════════════════════════
-section("GROUP 9 — _lm_parse_learning_review_response / _lm_validate_learning_review_response")
+section("GROUP 9 — strict parse/validate (hotfix schema)")
 
-valid_ai_resp = {
-    "title": "Test Review",
-    "summary": "Good test summary.",
-    "confidence_level": "medium",
+# Minimal evidence for validator
+_ev9 = {
+    "sample_size":    30,
+    "sample_quality": "developing",
+    "warnings":       [],
+    "performance_summary": {"win_rate_pct": 55.0, "net_realized_pnl": "150.00",
+                             "trade_count": 30, "recent_trend": "stable"},
+    "execution_quality": {"avg_rr_capture": 0.7, "avg_planned_rr": 2.0,
+                           "avg_realized_rr": 1.4, "tp_pct": 55.0, "sl_pct": 30.0, "manual_pct": 15.0},
+    "segments": {"by_symbol": [], "by_side": [], "by_outcome_reason": [],
+                 "by_confidence": [], "by_setup_type": [], "by_entry_mode": []},
+}
+
+# Build allowlist from evidence for obs evidence rows
+_al9 = lr._lm_build_evidence_metric_allowlist(_ev9)
+
+# Valid full-schema AI response
+_valid9 = {
+    "review_title":       "30-Trade Portfolio Review",
+    "executive_summary":  "Portfolio shows moderate performance with 55% win rate.",
+    "overall_assessment": "mixed",
+    "confidence_level":   "medium",
+    "sample_assessment":  {"sample_size": 30, "sample_quality": "developing", "limitations": []},
     "observations": [
-        {"type": "symbol_underperformance", "label": "BTCUSDT",
-         "finding": "BTC had low win rate.", "sample_n": 10,
-         "confidence": "medium", "auto_apply_allowed": False}
+        {
+            "id":         "obs_1",
+            "category":   "risk_reward",
+            "title":      "Moderate RR capture",
+            "statement":  "Average RR capture is 70% of planned ratio.",
+            "evidence":   [{"metric": "execution.avg_rr_capture", "value": 0.7, "comparison": "below 1.0 target"}],
+            "sample_size": 30,
+            "confidence": "medium",
+            "severity":   "watch",
+            "limitations": "small_history",
+            "auto_apply_allowed": False,
+        }
     ],
-    "warnings": [],
-    "guardrails": {"auto_apply_allowed": False, "ai_can_execute": False, "auto_execution_allowed": False}
-}
-
-parsed = lr._lm_parse_learning_review_response(valid_ai_resp)
-check("9-1 valid response parsed ok", "_parse_error" not in parsed)
-check("9-2 title preserved", parsed.get("title") == "Test Review")
-check("9-3 observations count=1", len(parsed.get("observations",[])) == 1)
-check("9-4 guardrails auto_apply_allowed=False", parsed["guardrails"]["auto_apply_allowed"] is False)
-check("9-5 guardrails ai_can_execute=False", parsed["guardrails"]["ai_can_execute"] is False)
-
-is_valid, reasons = lr._lm_validate_learning_review_response(parsed)
-check("9-6 valid response passes validation", is_valid)
-check("9-7 no validation reasons for valid response", reasons == [])
-
-# AI tries to set auto_apply_allowed=True → must be forced False
-sneaky_resp = {
-    "title": "Sneaky",
-    "summary": "Trying to auto apply.",
-    "confidence_level": "high",
-    "observations": [
-        {"type": "general_observation", "label": "x", "finding": "y",
-         "sample_n": 5, "confidence": "high", "auto_apply_allowed": True}
+    "review_proposals": [
+        {
+            "id":                     "prop_1",
+            "action_type":            "monitor",
+            "title":                  "Continue monitoring RR capture",
+            "description":            "Track RR capture over next 30 trades to see if pattern persists.",
+            "evidence_observation_ids": ["obs_1"],
+            "minimum_additional_sample": 30,
+            "human_review_required":  True,
+            "auto_apply_allowed":     False,
+        }
     ],
-    "warnings": [],
-    "guardrails": {"auto_apply_allowed": True, "ai_can_execute": True, "auto_execution_allowed": True}
+    "what_not_to_conclude": [
+        "This sample does not prove the strategy should be changed.",
+    ],
+    "guardrails": {
+        "read_only":              True,
+        "human_review_required":  True,
+        "auto_apply_allowed":     False,
+        "can_change_strategy":    False,
+        "can_change_risk_guard":  False,
+        "can_arm_auto_gate":      False,
+        "can_auto_submit":        False,
+        "auto_execution_allowed": False,
+        "ai_can_execute":         False,
+    },
 }
-parsed_sneaky = lr._lm_parse_learning_review_response(sneaky_resp)
-check("9-8 auto_apply_allowed forced False in guardrails", parsed_sneaky["guardrails"]["auto_apply_allowed"] is False)
-check("9-9 ai_can_execute forced False in guardrails", parsed_sneaky["guardrails"]["ai_can_execute"] is False)
-check("9-10 auto_execution_allowed forced False in guardrails", parsed_sneaky["guardrails"]["auto_execution_allowed"] is False)
-check("9-11 obs auto_apply_allowed forced False", parsed_sneaky["observations"][0]["auto_apply_allowed"] is False)
-check("9-12 validation_warnings mention force", len(parsed_sneaky.get("_validation_warnings",[]))>0)
 
-# Invalid obs type gets remapped
-bad_type_resp = {
-    "title": "Bad type", "summary": "x", "confidence_level": "low",
-    "observations": [{"type": "illegal_type_xyz", "label": "x", "finding": "y",
-                      "sample_n": 1, "confidence": "low", "auto_apply_allowed": False}],
-    "warnings": [],
-    "guardrails": {"auto_apply_allowed": False, "ai_can_execute": False, "auto_execution_allowed": False}
-}
-parsed_bad = lr._lm_parse_learning_review_response(bad_type_resp)
-check("9-13 invalid obs type remapped to general_observation", parsed_bad["observations"][0]["type"] == "general_observation")
+parsed9 = lr._lm_parse_learning_review_response(_valid9)
+check("9-1 valid response parsed ok (no _parse_error)", "_parse_error" not in parsed9)
+check("9-2 review_title preserved", parsed9.get("review_title") == "30-Trade Portfolio Review")
+check("9-3 observations count=1", len(parsed9.get("observations", [])) == 1)
+check("9-4 guardrails auto_apply_allowed=False", parsed9["guardrails"]["auto_apply_allowed"] is False)
+check("9-5 guardrails ai_can_execute=False", parsed9["guardrails"]["ai_can_execute"] is False)
+
+is_valid9, reasons9 = lr._lm_validate_learning_review_response(parsed9, _ev9)
+check("9-6 valid full-schema response passes validation", is_valid9, str(reasons9))
+check("9-7 no validation reasons for valid response", reasons9 == [], str(reasons9))
+
+# AI tries to set auto_apply_allowed=True in guardrails → parser passes (no repair)
+# but validator rejects it
+sneaky_gr = dict(_valid9)
+sneaky_gr = {**_valid9, "guardrails": {**_valid9["guardrails"], "auto_apply_allowed": True}}
+parsed_sneaky9 = lr._lm_parse_learning_review_response(sneaky_gr)
+check("9-8 parser does NOT repair auto_apply_allowed (passes through True)", parsed_sneaky9["guardrails"]["auto_apply_allowed"] is True)
+is_sneaky_v, sneaky_reasons = lr._lm_validate_learning_review_response(parsed_sneaky9, _ev9)
+check("9-9 validator rejects auto_apply_allowed=True in guardrails", not is_sneaky_v)
+check("9-10 rejection reason mentions guardrail", any("guardrail_auto_apply_allowed" in r for r in sneaky_reasons), str(sneaky_reasons))
+
+# AI sets auto_apply_allowed=True in a proposal → validator rejects
+sneaky_prop = {**_valid9, "review_proposals": [{**_valid9["review_proposals"][0], "auto_apply_allowed": True}]}
+parsed_sneaky_prop = lr._lm_parse_learning_review_response(sneaky_prop)
+is_prop_v, prop_reasons = lr._lm_validate_learning_review_response(parsed_sneaky_prop, _ev9)
+check("9-11 validator rejects proposal auto_apply_allowed=True", not is_prop_v)
+check("9-12 rejection reason mentions proposal auto_apply", any("auto_apply_not_false" in r for r in prop_reasons), str(prop_reasons))
+
+# Missing required top-level key → rejected
+missing_key_resp = {k: v for k, v in _valid9.items() if k != "what_not_to_conclude"}
+parsed_miss = lr._lm_parse_learning_review_response(missing_key_resp)
+is_miss_v, miss_reasons = lr._lm_validate_learning_review_response(parsed_miss, _ev9)
+check("9-13 missing required key → rejected", not is_miss_v)
+check("9-14 rejection names missing key", any("missing_required_key:what_not_to_conclude" in r for r in miss_reasons), str(miss_reasons))
 
 # Non-dict response
 parsed_non_dict = lr._lm_parse_learning_review_response("not a dict")
-check("9-14 non-dict response returns error key", "_parse_error" in parsed_non_dict)
-is_v, reasons_nd = lr._lm_validate_learning_review_response(parsed_non_dict)
-check("9-15 non-dict response is invalid", not is_v)
+check("9-15 non-dict response returns error key", "_parse_error" in parsed_non_dict)
+is_nd_v, reasons_nd = lr._lm_validate_learning_review_response(parsed_non_dict, _ev9)
+check("9-16 non-dict response is invalid", not is_nd_v)
 
-# Empty observations list is still valid structure
-empty_obs_resp = {
-    "title": "Empty", "summary": "No obs.", "confidence_level": "low",
-    "observations": [],
-    "warnings": ["no_patterns"],
-    "guardrails": {"auto_apply_allowed": False, "ai_can_execute": False, "auto_execution_allowed": False}
-}
-parsed_empty = lr._lm_parse_learning_review_response(empty_obs_resp)
-is_v2, _ = lr._lm_validate_learning_review_response(parsed_empty)
-check("9-16 empty observations list is valid", is_v2)
+# Empty response
+parsed_empty_str = lr._lm_parse_learning_review_response("")
+check("9-17 empty string → _parse_error", "_parse_error" in parsed_empty_str)
+is_e_v, _ = lr._lm_validate_learning_review_response(parsed_empty_str, _ev9)
+check("9-18 empty string → invalid", not is_e_v)
+
+# Low sample enforcement: 5-9 trades → confidence must be low, assessment=insufficient_data
+_ev9_low = {**_ev9, "sample_size": 7, "sample_quality": "insufficient"}
+_resp9_hi_conf = {**_valid9, "confidence_level": "high", "overall_assessment": "positive",
+                  "sample_assessment": {"sample_size": 7, "sample_quality": "insufficient", "limitations": []},
+                  "review_proposals": [{**_valid9["review_proposals"][0],
+                                        "action_type": "collect_more_data"}]}
+parsed9_lo = lr._lm_parse_learning_review_response(_resp9_hi_conf)
+is_lo_v, lo_reasons = lr._lm_validate_learning_review_response(parsed9_lo, _ev9_low)
+check("9-19 5-9 trades with confidence=high → rejected", not is_lo_v)
+check("9-20 5-9 trades assessment=positive → rejected", any("assessment_must_be_insufficient_data" in r for r in lo_reasons), str(lo_reasons))
+
+# Evidence metric not in allowlist → rejected
+unknown_metric_resp = {**_valid9,
+    "observations": [{**_valid9["observations"][0],
+                      "evidence": [{"metric": "fabricated.unknown_metric", "value": 999}]}]}
+parsed9_unk = lr._lm_parse_learning_review_response(unknown_metric_resp)
+is_unk_v, unk_reasons = lr._lm_validate_learning_review_response(parsed9_unk, _ev9)
+check("9-21 unknown evidence metric → rejected", not is_unk_v)
+check("9-22 rejection names unknown metric", any("unknown_metric" in r for r in unk_reasons), str(unk_reasons))
 
 # ══════════════════════════════════════════════════════════════════════════════
 # GROUP 10: Status transition logic
@@ -422,9 +488,9 @@ check("10-10 reviewed → accepted_insight allowed", "accepted_insight" in trans
 # ══════════════════════════════════════════════════════════════════════════════
 # GROUP 11: Guardrails constants
 # ══════════════════════════════════════════════════════════════════════════════
-section("GROUP 11 — _GUARDRAILS permanent invariants")
+section("GROUP 11 — _MODULE_GUARDRAILS + _GUARDRAILS_REQUIRED permanent invariants")
 
-g = lr._GUARDRAILS
+g = lr._MODULE_GUARDRAILS
 check("11-1 can_auto_submit is False",             g["can_auto_submit"]             is False)
 check("11-2 auto_execution_allowed is False",      g["auto_execution_allowed"]      is False)
 check("11-3 ai_can_execute is False",              g["ai_can_execute"]              is False)
@@ -433,20 +499,36 @@ check("11-5 testnet_strategy_validation is False", g["testnet_strategy_validatio
 check("11-6 auto_apply_allowed is False",          g["auto_apply_allowed"]          is False)
 check("11-7 read_only is True",                    g["read_only"]                   is True)
 
+gr = lr._GUARDRAILS_REQUIRED
+check("11-8 _GUARDRAILS_REQUIRED has all 9 keys", len(gr) == 9)
+check("11-9 _GUARDRAILS_REQUIRED auto_apply_allowed=False", gr["auto_apply_allowed"] is False)
+check("11-10 _GUARDRAILS_REQUIRED human_review_required=True", gr["human_review_required"] is True)
+
 # ══════════════════════════════════════════════════════════════════════════════
 # GROUP 12: Prompt includes all valid observation types
 # ══════════════════════════════════════════════════════════════════════════════
-section("GROUP 12 — prompt schema coverage")
+section("GROUP 12 — prompt schema coverage + candidate types")
 
-expected_obs_types = {
-    "symbol_underperformance", "symbol_outperformance", "side_imbalance",
-    "low_rr_capture", "high_rr_capture", "exit_timing_observation",
-    "confidence_filter_signal", "setup_type_signal", "entry_mode_signal",
-    "outcome_reason_pattern", "data_quality_warning", "general_observation",
+expected_candidate_types = {
+    "symbol_underperformance", "symbol_outperformance",
+    "side_imbalance",
+    "stop_loss_concentration",
+    "low_rr_capture", "strong_rr_capture",
+    "confidence_not_confirmed", "confidence_supported",
+    "setup_type_underperformance", "setup_type_outperformance",
+    "deteriorating_recent_period", "improving_recent_period",
+    "insufficient_sample",
+    "data_quality_problem",
+    "no_action_recommended",
 }
-check("12-1 _VALID_OBS_TYPES includes all 12 types", lr._VALID_OBS_TYPES == expected_obs_types)
-for t in expected_obs_types:
-    check(f"12-type:{t}", t in prompt)
+check("12-1 _VALID_CANDIDATE_TYPES has all 15 types", lr._VALID_CANDIDATE_TYPES == expected_candidate_types)
+check("12-2 prompt mentions observations schema", '"observations"' in prompt)
+check("12-3 prompt mentions review_proposals schema", '"review_proposals"' in prompt)
+check("12-4 prompt mentions what_not_to_conclude schema", '"what_not_to_conclude"' in prompt)
+check("12-5 prompt mentions action_type options", "investigate" in prompt and "collect_more_data" in prompt)
+check("12-6 prompt schema has obs categories", "symbol|side|setup|risk_reward" in prompt or "category" in prompt)
+check("12-7 prompt has severity schema", "info|watch|important" in prompt)
+check("12-8 prompt forbids strategy changes", "strategy" in prompt.lower())
 
 # ══════════════════════════════════════════════════════════════════════════════
 # GROUP 13: _lm_build_accepted_learning_context — DB layer (mock)
@@ -514,11 +596,12 @@ check("13-1 _MAX_ACCEPTED_INSIGHTS=20", lr._MAX_ACCEPTED_INSIGHTS == 20)
 class _FakeRow:
     id=1; user_id=1; item_id=None; review_scope="portfolio"; period="30d"
     symbol=None; side=None; status="generated"; title="T"; summary="S"
-    sample_size=10; sample_quality="high"; confidence_level="medium"
-    warning_count=0; source="ai"; model_name="gpt4"; prompt_version="11.15.0"
+    sample_size=10; sample_quality="early"; confidence_level="medium"
+    warning_count=0; source="ai"; model_name="gpt4"; prompt_version="11.15.1"
     parent_review_id=None; human_note=None
     created_at=datetime.now(timezone.utc); updated_at=None; reviewed_at=None
-    review_json='{"observations":[]}'; evidence_json='{}'
+    review_json='{"observations":[],"review_proposals":[],"what_not_to_conclude":[]}'
+    evidence_json='{}'
 
 from live_monitor.ai_learning_review import _serialize_review
 d = _serialize_review(_FakeRow(), include_json=False)
@@ -527,20 +610,31 @@ check("13-3 serialize returns status", d["status"] == "generated")
 check("13-4 serialize includes guardrails", "guardrails" in d)
 check("13-5 serialized guardrails auto_apply_allowed=False", d["guardrails"]["auto_apply_allowed"] is False)
 check("13-6 no review_data when include_json=False", "review_data" not in d)
+check("13-7a serialize has review_title field", "review_title" in d)
+check("13-7b serialize has executive_summary field", "executive_summary" in d)
 
 d2 = _serialize_review(_FakeRow(), include_json=True)
-check("13-7 review_data present when include_json=True", "review_data" in d2)
+check("13-8 review_data present when include_json=True", "review_data" in d2)
+check("13-9 observations field present when include_json=True", "observations" in d2)
+check("13-10 review_proposals field present when include_json=True", "review_proposals" in d2)
+check("13-11 what_not_to_conclude field present when include_json=True", "what_not_to_conclude" in d2)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # GROUP 14: Data quality gate thresholds
 # ══════════════════════════════════════════════════════════════════════════════
 section("GROUP 14 — data quality gate constants")
 
-check("14-1 _MIN_TRADES_AI=5",  lr._MIN_TRADES_AI == 5)
-check("14-2 _MIN_TRADES_LOW=5", lr._MIN_TRADES_LOW == 5)
-check("14-3 _PROMPT_VERSION set", lr._PROMPT_VERSION == "11.15.0")
-check("14-4 _VALID_SCOPES contains 3 values", len(lr._VALID_SCOPES) == 3)
-check("14-5 _VALID_STATUSES contains 5 values", len(lr._VALID_STATUSES) == 5)
+check("14-1 _MIN_TRADES_AI=5",             lr._MIN_TRADES_AI == 5)
+check("14-2 _PROMPT_VERSION=11.15.1",      lr._PROMPT_VERSION == "11.15.1")
+check("14-3 _VALID_SCOPES contains 3",     len(lr._VALID_SCOPES) == 3)
+check("14-4 _VALID_STATUSES contains 5",   len(lr._VALID_STATUSES) == 5)
+check("14-5 _SEG_MIN_DIRECTIONAL=5",       lr._SEG_MIN_DIRECTIONAL == 5)
+check("14-6 _SEG_MIN_SIDE_EACH=5",         lr._SEG_MIN_SIDE_EACH == 5)
+check("14-7 _MAX_ACCEPTED_INSIGHTS=20",    lr._MAX_ACCEPTED_INSIGHTS == 20)
+check("14-8 _SQ_INSUFFICIENT=insufficient",lr._SQ_INSUFFICIENT == "insufficient")
+check("14-9 _SQ_EARLY=early",              lr._SQ_EARLY == "early")
+check("14-10 _SQ_DEVELOPING=developing",   lr._SQ_DEVELOPING == "developing")
+check("14-11 _SQ_MEANINGFUL=meaningful",   lr._SQ_MEANINGFUL == "meaningful")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # GROUP 15: _lm_build_learning_evidence raises on unvalidated filters
@@ -583,6 +677,176 @@ check("16-3 period 7d accepted", f_7d.get("period") == "7d")
 
 f_365 = lr._lm_build_learning_review_filters(1, review_scope="portfolio", period="365d")
 check("16-4 period 365d accepted", f_365.get("period") == "365d")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GROUP 17: _lm_build_evidence_metric_allowlist
+# ══════════════════════════════════════════════════════════════════════════════
+section("GROUP 17 — _lm_build_evidence_metric_allowlist")
+
+_ev17 = {
+    "sample_size":    20,
+    "sample_quality": "early",
+    "warnings":       [],
+    "performance_summary": {
+        "win_rate_pct": 60.0, "net_realized_pnl": "100.00",
+        "trade_count": 20, "profit_factor": 1.5, "expectancy_amount": "5.00",
+        "max_drawdown_amount": "30.00", "recent_trend": "stable",
+    },
+    "execution_quality": {
+        "avg_rr_capture": 0.65, "avg_planned_rr": 2.0,
+        "avg_realized_rr": 1.3, "tp_pct": 50.0, "sl_pct": 30.0, "manual_pct": 20.0,
+    },
+    "segments": {
+        "by_symbol": [{"label": "BTCUSDT", "count": 20, "wins": 12, "losses": 8,
+                       "breakevens": 0, "win_rate": 60.0, "net_pnl": "100.00"}],
+        "by_side": [], "by_outcome_reason": [], "by_confidence": [],
+        "by_setup_type": [], "by_entry_mode": [],
+    },
+}
+al17 = lr._lm_build_evidence_metric_allowlist(_ev17)
+check("17-1 allowlist is a dict", isinstance(al17, dict))
+check("17-2 allowlist non-empty", len(al17) > 0)
+check("17-3 performance.win_rate_pct in allowlist", "performance.win_rate_pct" in al17)
+check("17-4 execution.avg_rr_capture in allowlist", "execution.avg_rr_capture" in al17)
+check("17-5 performance.trade_count in allowlist", "performance.trade_count" in al17)
+check("17-6 execution.tp_pct in allowlist", "execution.tp_pct" in al17)
+check("17-7 segment metrics in allowlist", any("segment." in k for k in al17))
+check("17-8 win_rate value is float", isinstance(al17.get("performance.win_rate_pct"), float))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GROUP 18: _lm_sanitize_valid_learning_review
+# ══════════════════════════════════════════════════════════════════════════════
+section("GROUP 18 — _lm_sanitize_valid_learning_review")
+
+_dirty_review = {
+    "review_title":       "  Padded Title  ",
+    "executive_summary":  "  Summary with trailing whitespace.  ",
+    "overall_assessment": "positive",
+    "confidence_level":   "medium",
+    "sample_assessment":  {"sample_size": 30, "sample_quality": "developing", "limitations": []},
+    "observations": [
+        {
+            "id": "obs_1", "category": "risk_reward",
+            "title": "  Padded obs title  ",
+            "statement": "  Padded statement.  ",
+            "evidence": [{"metric": "performance.win_rate_pct", "value": 60.0}],
+            "sample_size": 30, "confidence": "medium", "severity": "watch",
+            "limitations": "  some limit  ", "auto_apply_allowed": False,
+        }
+    ],
+    "review_proposals": [
+        {
+            "id": "prop_1", "action_type": "monitor",
+            "title": "  Padded prop  ", "description": "  Padded desc.  ",
+            "evidence_observation_ids": ["obs_1"],
+            "minimum_additional_sample": 10,
+            "human_review_required": True, "auto_apply_allowed": False,
+        }
+    ],
+    "what_not_to_conclude": ["  Padded wntc entry.  "],
+    "guardrails": {
+        "read_only": True, "human_review_required": True, "auto_apply_allowed": False,
+        "can_change_strategy": False, "can_change_risk_guard": False,
+        "can_arm_auto_gate": False, "can_auto_submit": False,
+        "auto_execution_allowed": False, "ai_can_execute": False,
+    },
+}
+sanitized18 = lr._lm_sanitize_valid_learning_review(_dirty_review)
+check("18-1 review_title trimmed", sanitized18["review_title"] == "Padded Title")
+check("18-2 executive_summary trimmed", sanitized18["executive_summary"] == "Summary with trailing whitespace.")
+check("18-3 obs title trimmed", sanitized18["observations"][0]["title"] == "Padded obs title")
+check("18-4 obs statement trimmed", sanitized18["observations"][0]["statement"] == "Padded statement.")
+check("18-5 proposal title trimmed", sanitized18["review_proposals"][0]["title"] == "Padded prop")
+check("18-6 wntc entry trimmed", sanitized18["what_not_to_conclude"][0] == "Padded wntc entry.")
+check("18-7 guardrails preserved exactly", sanitized18["guardrails"]["auto_apply_allowed"] is False)
+check("18-8 overall_assessment preserved", sanitized18["overall_assessment"] == "positive")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GROUP 19: _lm_build_deterministic_review
+# ══════════════════════════════════════════════════════════════════════════════
+section("GROUP 19 — _lm_build_deterministic_review")
+
+_ev19 = {
+    "sample_size":    10,
+    "sample_quality": "early",
+    "warnings":       [],
+    "performance_summary": {"win_rate_pct": 50.0, "net_realized_pnl": "50.00", "trade_count": 10},
+    "execution_quality": {"avg_rr_capture": 0.6},
+    "segments": {"by_symbol": [], "by_side": [], "by_outcome_reason": [],
+                 "by_confidence": [], "by_setup_type": [], "by_entry_mode": []},
+}
+_cands19 = lr._lm_build_learning_observation_candidates(_ev19)
+det19 = lr._lm_build_deterministic_review(_ev19, _cands19)
+check("19-1 deterministic review is a dict", isinstance(det19, dict))
+check("19-2 has review_title", "review_title" in det19)
+check("19-3 has executive_summary", "executive_summary" in det19)
+check("19-4 has overall_assessment", "overall_assessment" in det19)
+check("19-5 has observations list", isinstance(det19.get("observations"), list))
+check("19-6 has review_proposals list", isinstance(det19.get("review_proposals"), list))
+check("19-7 has what_not_to_conclude list", isinstance(det19.get("what_not_to_conclude"), list))
+check("19-8 review_title mentions Deterministic", "Deterministic" in (det19.get("review_title") or ""))
+check("19-9 guardrails present", isinstance(det19.get("guardrails"), dict))
+check("19-10 guardrails auto_apply_allowed=False", det19["guardrails"]["auto_apply_allowed"] is False)
+check("19-11 guardrails ai_can_execute=False", det19["guardrails"]["ai_can_execute"] is False)
+
+# Deterministic review must pass strict validation (it conforms to schema)
+det_parsed = lr._lm_parse_learning_review_response(det19)
+is_det_v, det_reasons = lr._lm_validate_learning_review_response(det_parsed, _ev19)
+check("19-12 deterministic review passes strict validation", is_det_v, str(det_reasons))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GROUP 20: _lm_update_learning_review + sentinel
+# ══════════════════════════════════════════════════════════════════════════════
+section("GROUP 20 — _lm_update_learning_review sentinel")
+
+from live_monitor.ai_learning_review import _NOTE_NOT_PROVIDED as _SENTINEL20
+
+check("20-1 _NOTE_NOT_PROVIDED is a unique object", _SENTINEL20 is not None)
+check("20-2 _NOTE_NOT_PROVIDED is not a string", not isinstance(_SENTINEL20, str))
+check("20-3 _NOTE_NOT_PROVIDED is not False", _SENTINEL20 is not False)
+
+# Missing model row returns (False, "review_not_found", None)
+_models_mod20 = sys.modules.get("models") or types.ModuleType("models")
+class _MockLR20:
+    class query:
+        @staticmethod
+        def filter_by(**kw):
+            class _Q:
+                def first(self): return None
+            return _Q()
+_models_mod20.LiveMonitorLearningReview = _MockLR20
+sys.modules["models"] = _models_mod20
+
+_ext_mod = sys.modules.get("extensions") or types.ModuleType("extensions")
+class _FakeDb:
+    def add(self, *a): pass
+    def commit(self): pass
+    def flush(self): pass
+_ext_mod.db = _FakeDb()
+sys.modules["extensions"] = _ext_mod
+
+ok20, reason20, _ = lr._lm_update_learning_review(1, 9999, new_status="reviewed")
+check("20-4 missing review → ok=False", not ok20)
+check("20-5 missing review → reason=review_not_found", reason20 == "review_not_found")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GROUP 21: _sample_quality function
+# ══════════════════════════════════════════════════════════════════════════════
+section("GROUP 21 — _sample_quality")
+
+check("21-1  0 trades → insufficient", lr._sample_quality(0)   == "insufficient")
+check("21-2  9 trades → insufficient", lr._sample_quality(9)   == "insufficient")
+check("21-3 10 trades → early",        lr._sample_quality(10)  == "early")
+check("21-4 29 trades → early",        lr._sample_quality(29)  == "early")
+check("21-5 30 trades → developing",   lr._sample_quality(30)  == "developing")
+check("21-6 99 trades → developing",   lr._sample_quality(99)  == "developing")
+check("21-7 100 trades → meaningful",  lr._sample_quality(100) == "meaningful")
+check("21-8 500 trades → meaningful",  lr._sample_quality(500) == "meaningful")
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Final summary

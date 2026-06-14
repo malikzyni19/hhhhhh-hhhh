@@ -5603,6 +5603,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                         '<div id="lmLearnRevDetailMeta" style="font-size:9px;color:var(--text-3,#94a3b8);margin-bottom:4px"></div>'+
                         '<div id="lmLearnRevDetailSummary" style="font-size:9px;color:var(--text-2,#cbd5e1);margin-bottom:5px;line-height:1.5"></div>'+
                         '<div id="lmLearnRevDetailObs" style="display:flex;flex-direction:column;gap:3px;margin-bottom:5px"></div>'+
+                        '<div id="lmLearnRevDetailProposals" style="margin-bottom:5px"></div>'+
+                        '<div id="lmLearnRevDetailWntc" style="margin-bottom:5px;padding:4px 6px;background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.2);border-radius:3px"></div>'+
                         '<div id="lmLearnRevDetailWarns" style="font-size:8px;color:var(--warn,#f59e0b);margin-bottom:5px"></div>'+
                         '<div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">'+
                           '<button id="lmLearnRevAcceptBtn" onclick="window._lmLearningReviewUpdate(\'accepted_insight\')" style="font-size:9px;padding:2px 7px;background:var(--green,#22c55e);color:#fff;border:none;border-radius:3px;cursor:pointer">Accept Insight</button>'+
@@ -9768,9 +9770,14 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     }).join('');
   };
 
-  /* ── Phase 11.15: AI Learning Review Loop ─────────────────────────────── */
+  /* ── Phase 11.15 Hotfix: AI Learning Review Loop ─────────────────────── */
   (function(){
-    var _lrActiveId=null; // currently open review id
+    var _lrActiveId=null;
+
+    var _sqColors={insufficient:'#f87171',early:'#facc15',developing:'#60a5fa',meaningful:'#4ade80'};
+    var _sevColors={info:'#94a3b8',watch:'#facc15',important:'#f87171'};
+    var _assColors={positive:'#4ade80',negative:'#f87171',mixed:'#facc15',insufficient_data:'#94a3b8'};
+    var _statusColors={generated:'#94a3b8',reviewed:'#60a5fa',accepted_insight:'#4ade80',rejected:'#f87171',archived:'#475569'};
 
     window._lmLearningReviewGenerate=function(){
       var btn=document.getElementById('lmLearnRevGenBtn');
@@ -9778,7 +9785,6 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       if(btn) btn.disabled=true;
       if(statusEl) statusEl.textContent='Generating review…';
 
-      // Derive scope/period/symbol from paper performance controls if present
       var scopeEl=document.getElementById('lmPapPerfScope');
       var periodEl=document.getElementById('lmPapPerfPeriod');
       var symEl=document.getElementById('lmPapPerfSym');
@@ -9800,7 +9806,11 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         if(btn) btn.disabled=false;
         if(!d.ok){
           if(d.error==='insufficient_learning_sample'){
-            if(statusEl) statusEl.textContent='Need ≥5 closed trades (have '+( d.sample_size||0)+').';
+            var ev=d.evidence_summary||{};
+            if(statusEl) statusEl.textContent='Need ≥5 closed trades (have '+(d.sample_size||0)+').';
+          } else if(d.error==='ai_learning_review_invalid'){
+            var errs=(d.validation_errors||[]).slice(0,3).join('; ');
+            if(statusEl) statusEl.textContent='AI response rejected — '+( errs||'invalid output')+'.';
           } else if(d.error==='rate_limited'){
             if(statusEl) statusEl.textContent='Rate limit — wait a few minutes.';
           } else if(d.error==='generation_in_progress'){
@@ -9810,10 +9820,11 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
           }
           return;
         }
-        if(statusEl) statusEl.textContent='Review generated ('+(d.source||'ai')+', n='+(d.sample_size||0)+').';
+        var ev=d.evidence_summary||{};
+        if(statusEl) statusEl.textContent='Review generated ('+(d.review&&d.review.source||'ai')+', n='+(ev.sample_size||0)+').';
         window._lmLearningReviewRefresh();
       })
-      .catch(function(e){
+      .catch(function(){
         if(btn) btn.disabled=false;
         if(statusEl) statusEl.textContent='Network error.';
       });
@@ -9837,18 +9848,20 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         list.innerHTML='<div style="font-size:9px;color:var(--text-4,#475569)">No reviews yet. Click Generate to create one.</div>';
         return;
       }
-      var statusColors={generated:'#94a3b8',reviewed:'#60a5fa',accepted_insight:'#4ade80',rejected:'#f87171',archived:'#475569'};
       list.innerHTML=reviews.map(function(r){
-        var col=statusColors[r.status]||'#94a3b8';
-        var src=r.source==='deterministic'?' (det)':'';
-        var conf=r.confidence_level?(' · '+r.confidence_level):'';
+        var col=_statusColors[r.status]||'#94a3b8';
+        var sqBadge=r.sample_quality
+          ?'<span style="font-size:7px;color:'+(_sqColors[r.sample_quality]||'#94a3b8')+';border:1px solid currentColor;border-radius:2px;padding:0 2px">'+esc(r.sample_quality)+'</span> '
+          :'';
+        var src=(r.source||'').indexOf('deterministic')!==-1?' (det)':'';
         return '<div onclick="window._lmLearningReviewOpen('+r.id+')" style="cursor:pointer;padding:4px 5px;background:var(--bg-3,#1e293b);border:1px solid var(--border,#334155);border-radius:3px;font-size:9px">'+
           '<div style="display:flex;gap:4px;align-items:center">'+
             '<span style="color:'+col+';font-size:8px">●</span>'+
-            '<span style="font-weight:600;color:var(--text-1,#f1f5f9);flex:1">'+esc(r.title||'Review')+'</span>'+
-            '<span style="color:var(--text-4,#475569);font-size:8px">'+esc(r.period||'')+(r.symbol?' · '+r.symbol:'')+src+conf+'</span>'+
+            '<span style="font-weight:600;color:var(--text-1,#f1f5f9);flex:1">'+esc(r.review_title||'Review')+'</span>'+
+            sqBadge+
+            '<span style="color:var(--text-4,#475569);font-size:8px">'+esc(r.period||'')+(r.symbol?' · '+r.symbol:'')+src+'</span>'+
           '</div>'+
-          '<div style="color:var(--text-3,#94a3b8);margin-top:1px;font-size:8px">'+esc((r.summary||'').substring(0,80))+'…</div>'+
+          '<div style="color:var(--text-3,#94a3b8);margin-top:1px;font-size:8px">'+esc((r.executive_summary||'').substring(0,90))+'…</div>'+
         '</div>';
       }).join('');
     };
@@ -9856,13 +9869,20 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     window._lmLearningReviewOpen=function(review_id){
       _lrActiveId=review_id;
       var detail=document.getElementById('lmLearnRevDetail');
-      if(detail) detail.style.display='none'; // hide while loading
+      if(detail) detail.style.display='none';
       fetch('/api/live-monitor/learning-reviews/'+review_id,{credentials:'same-origin'})
       .then(function(r){ return r.json(); })
-      .then(function(d){
-        if(d.ok) window._lmLearningReviewApplyDetail(d.review);
-      });
+      .then(function(d){ if(d.ok) window._lmLearningReviewApplyDetail(d.review); });
     };
+
+    function _lrSqBadge(sq){
+      if(!sq) return '';
+      return '<span style="font-size:8px;font-weight:600;color:'+(_sqColors[sq]||'#94a3b8')+';border:1px solid currentColor;border-radius:3px;padding:1px 4px">'+esc(sq)+'</span>';
+    }
+    function _lrAssBadge(ass){
+      if(!ass) return '';
+      return '<span style="font-size:8px;font-weight:600;color:'+(_assColors[ass]||'#94a3b8')+';border:1px solid currentColor;border-radius:3px;padding:1px 4px">'+esc(ass)+'</span>';
+    }
 
     window._lmLearningReviewApplyDetail=function(r){
       var detail=document.getElementById('lmLearnRevDetail');
@@ -9872,36 +9892,91 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       var metaEl=document.getElementById('lmLearnRevDetailMeta');
       var sumEl=document.getElementById('lmLearnRevDetailSummary');
       var obsEl=document.getElementById('lmLearnRevDetailObs');
+      var propEl=document.getElementById('lmLearnRevDetailProposals');
+      var wntcEl=document.getElementById('lmLearnRevDetailWntc');
       var warnEl=document.getElementById('lmLearnRevDetailWarns');
       var noteEl=document.getElementById('lmLearnRevNoteInput');
 
-      if(titleEl) titleEl.textContent=r.title||'Review';
+      if(titleEl) titleEl.innerHTML=esc(r.review_title||'Review')+' '+_lrAssBadge(r.overall_assessment)+' '+_lrSqBadge(r.sample_quality);
       if(metaEl) metaEl.textContent=[
         r.status, r.source, r.period,
         r.symbol?'· '+r.symbol:'',
         r.confidence_level?'· '+r.confidence_level+' confidence':'',
         'n='+(r.sample_size||0),
       ].filter(Boolean).join(' · ');
-      if(sumEl) sumEl.textContent=r.summary||'';
+      if(sumEl) sumEl.textContent=r.executive_summary||'';
       if(noteEl) noteEl.value=r.human_note||'';
 
-      // Observations
-      var obs=(r.review_data&&r.review_data.observations)||[];
+      // Observations (new schema: id, category, title, statement, evidence, confidence, severity, limitations)
+      var obs=r.observations||[];
       if(obsEl){
         if(!obs.length){
           obsEl.innerHTML='<div style="color:var(--text-4,#475569);font-size:8px">No observations.</div>';
         } else {
           obsEl.innerHTML=obs.map(function(o){
             var confCol={high:'#4ade80',medium:'#facc15',low:'#94a3b8'}[o.confidence]||'#94a3b8';
-            return '<div style="background:var(--bg-2,#0f172a);border:1px solid var(--border,#334155);border-radius:3px;padding:3px 5px;font-size:9px">'+
-              '<div style="display:flex;gap:4px;align-items:center">'+
-                '<span style="font-weight:600;color:var(--text-1)">'+esc(o.label||o.type||'')+'</span>'+
-                '<span style="color:'+confCol+';font-size:8px">'+esc(o.confidence||'')+'</span>'+
-                '<span style="color:var(--text-4);font-size:8px;margin-left:auto">'+esc(o.type||'')+'</span>'+
+            var sevCol=_sevColors[o.severity]||'#94a3b8';
+            var evList=(o.evidence||[]);
+            var evHtml=evList.length
+              ?'<ul style="margin:2px 0 0 10px;padding:0;font-size:8px;color:var(--text-3)">'+
+                  evList.map(function(e){ return '<li>'+esc(String(e))+'</li>'; }).join('')+
+                '</ul>'
+              :'';
+            var limHtml=o.limitations
+              ?'<div style="font-size:8px;color:var(--text-4);margin-top:2px;font-style:italic">⚑ '+esc(o.limitations)+'</div>'
+              :'';
+            return '<div style="background:var(--bg-2,#0f172a);border:1px solid var(--border,#334155);border-radius:3px;padding:4px 6px;font-size:9px">'+
+              '<div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">'+
+                '<span style="font-weight:600;color:var(--text-1)">'+esc(o.title||o.id||'')+'</span>'+
+                '<span style="font-size:7px;color:'+sevCol+';border:1px solid currentColor;border-radius:2px;padding:0 2px">'+esc(o.severity||'')+'</span>'+
+                '<span style="font-size:7px;color:'+confCol+';border:1px solid currentColor;border-radius:2px;padding:0 2px">'+esc(o.confidence||'')+'</span>'+
+                '<span style="font-size:7px;color:var(--text-4);margin-left:auto">'+esc(o.category||'')+'</span>'+
               '</div>'+
-              '<div style="color:var(--text-2,#cbd5e1);margin-top:1px">'+esc(o.finding||'')+'</div>'+
+              '<div style="color:var(--text-2,#cbd5e1);margin-top:2px">'+esc(o.statement||'')+'</div>'+
+              evHtml+limHtml+
             '</div>';
           }).join('');
+        }
+      }
+
+      // Review Proposals (advisory only — no Apply button)
+      var props=r.review_proposals||[];
+      if(propEl){
+        if(!props.length){
+          propEl.style.display='none';
+        } else {
+          propEl.style.display='';
+          var propHtml='<div style="font-size:9px;font-weight:600;color:var(--text-2);margin-bottom:4px">Advisory Proposals <span style="font-weight:400;color:var(--text-4)">(human review required — cannot auto-apply)</span></div>';
+          propHtml+=props.map(function(p){
+            var minSamp=p.minimum_additional_sample?(' · min +'+(p.minimum_additional_sample)+' trades'):'';
+            return '<div style="background:var(--bg-2,#0f172a);border:1px solid var(--border,#334155);border-radius:3px;padding:4px 6px;font-size:9px;margin-bottom:3px">'+
+              '<div style="display:flex;gap:4px;align-items:center">'+
+                '<span style="font-weight:600;color:var(--text-1)">'+esc(p.title||p.id||'')+'</span>'+
+                '<span style="font-size:7px;color:#60a5fa;border:1px solid #60a5fa;border-radius:2px;padding:0 3px">'+esc(p.action_type||'')+'</span>'+
+                '<span style="font-size:7px;color:#4ade80;border:1px solid #4ade80;border-radius:2px;padding:0 3px;margin-left:auto">Human review required</span>'+
+              '</div>'+
+              '<div style="color:var(--text-2,#cbd5e1);margin-top:2px">'+esc(p.description||'')+'</div>'+
+              (p.evidence_observation_ids&&p.evidence_observation_ids.length
+                ?'<div style="font-size:8px;color:var(--text-4);margin-top:1px">Evidence: '+esc(p.evidence_observation_ids.join(', '))+'</div>'
+                :'')+
+              '<div style="font-size:8px;color:var(--text-4);margin-top:1px">Cannot auto-apply'+minSamp+'</div>'+
+            '</div>';
+          }).join('');
+          propEl.innerHTML=propHtml;
+        }
+      }
+
+      // What Not To Conclude
+      var wntc=r.what_not_to_conclude||[];
+      if(wntcEl){
+        if(!wntc.length){
+          wntcEl.style.display='none';
+        } else {
+          wntcEl.style.display='';
+          wntcEl.innerHTML='<div style="font-size:9px;font-weight:600;color:#f87171;margin-bottom:3px">What not to conclude from this review</div>'+
+            '<ul style="margin:0;padding-left:14px;font-size:8px;color:var(--text-3)">'+
+              wntc.map(function(w){ return '<li>'+esc(String(w))+'</li>'; }).join('')+
+            '</ul>';
         }
       }
 
@@ -9909,7 +9984,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       var warns=(r.review_data&&r.review_data.warnings)||[];
       if(warnEl) warnEl.textContent=warns.length?'⚠ '+warns.join(' · '):'';
 
-      // Show/hide action buttons by allowed transitions
+      // Status action buttons
       var allowed={generated:['accepted_insight','rejected','archived'],reviewed:['accepted_insight','rejected','archived'],accepted_insight:['archived'],rejected:['archived'],archived:[]};
       var allowed_next=allowed[r.status]||[];
       var accBtn=document.getElementById('lmLearnRevAcceptBtn');

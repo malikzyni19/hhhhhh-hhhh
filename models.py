@@ -1264,7 +1264,7 @@ class LiveMonitorLearningReview(db.Model):
 
     # Data quality metadata
     sample_size     = db.Column(db.Integer,    nullable=True)
-    sample_quality  = db.Column(db.String(20), nullable=True)  # "high" | "low" | "insufficient"
+    sample_quality  = db.Column(db.String(20), nullable=True)  # "insufficient"|"early"|"developing"|"meaningful"
     confidence_level= db.Column(db.String(20), nullable=True)  # "high" | "medium" | "low"
     warning_count   = db.Column(db.Integer,    nullable=True, default=0)
 
