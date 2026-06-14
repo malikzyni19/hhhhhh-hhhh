@@ -14111,7 +14111,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
           '<div style="font-size:9px;color:#38bdf8;text-transform:uppercase;font-weight:700;letter-spacing:.5px;margin-bottom:4px">&#9733; Balanced Threshold</div>'+
           '<div style="font-size:16px;font-weight:800;color:#e2e8f0">'+rec.threshold_pct+'%</div>'+
           '<div style="font-size:10px;color:#94a3b8">at '+rec.rr+'R &bull; '+rec.trades+'T &bull; '+_thrFmt(rec.trade_retention_pct,1)+'% retained</div>'+
-          '<div style="font-size:10px;color:#fbbf24;margin-top:4px">E: +'+_thrFmt(rec.expectancy_r,4)+'R &nbsp; PF: '+_thrFmt(rec.profit_factor_r,2)+'</div>'+
+          '<div style="font-size:10px;color:#fbbf24;margin-top:4px">E: +'+_thrFmt(rec.expectancy_r,4)+'R &nbsp; PF: '+(rec.profit_factor_infinite?"&#8734;":_thrFmt(rec.profit_factor_r,2))+'</div>'+
           '<div style="font-size:9px;color:#22c55e;margin-top:2px">Net R: '+_thrFmt(rec.net_r,2)+'</div>'+
         '</div>'
         :(trusted
@@ -14170,8 +14170,18 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         var td2=results[String(thr)]||{};
         var isRec=rec&&rec.threshold_pct===thr;
         var rz=_thrRzAt(td2,_thrRrView);
-        var retPct=td2.trade_retention_pct;
+        // Retention: at best_rr when view=best, else at the selected RR
+        var retPct=(_thrRrView==="best")?td2.trade_retention_pct
+          :((td2.comparison_vs_baseline_by_rr||{})[_thrRrView]||{}).trade_retention_pct;
         var retC=retPct!=null&&retPct>=20?"#22c55e":"#ef4444";
+        // Delta values: at best_rr when view=best, else from comparison_vs_baseline_by_rr
+        var _cmpRr=(_thrRrView==="best")?null:((td2.comparison_vs_baseline_by_rr||{})[_thrRrView]||{});
+        var _expDelta=(_thrRrView==="best")?td2.expectancy_change_vs_baseline:(_cmpRr?_cmpRr.expectancy_delta:null);
+        var _pfDelta=(_thrRrView==="best")?td2.profit_factor_change_vs_baseline:(_cmpRr?_cmpRr.profit_factor_delta:null);
+        var _nrDelta=(_thrRrView==="best")?td2.net_r_change_vs_baseline:(_cmpRr?_cmpRr.net_r_delta:null);
+        var _pfDisp=rz.profit_factor_infinite?"&#8734;":(rz.profit_factor_r!=null?rz.profit_factor_r.toFixed(2):"—");
+        var _invBadge=(td2.invalid_loss_r_at_best_rr>0)
+          ?'<span style="color:#ef4444;font-size:9px" title="'+td2.invalid_loss_r_at_best_rr+' missing loss R"> !</span>':'';
         var rowBg=isRec?"background:rgba(56,189,248,.07);outline:1px solid rgba(56,189,248,.25)":"";
         tbody+='<tr style="'+rowBg+'">'+
           '<td style="'+TDL+(isRec?"#38bdf8":"#fbbf24")+'">'+(isRec?"&#9733; ":"")+thr+'%</td>'+
@@ -14182,13 +14192,13 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
           '<td style="'+TD2+'#ef4444">'+(rz.losses!=null?rz.losses:"—")+'</td>'+
           '<td style="'+TD2+'#fbbf24">'+(rz.ambiguous!=null?rz.ambiguous:"—")+'</td>'+
           '<td style="'+TD2+'#fbbf24">'+(rz.win_rate_pct!=null?rz.win_rate_pct.toFixed(1)+"%":"—")+'</td>'+
-          '<td style="'+TD2+'#8a9bb3">'+(td2.best_rr!=null?td2.best_rr+"R":"—")+'</td>'+
+          '<td style="'+TD2+'#8a9bb3">'+(td2.best_rr!=null?td2.best_rr+"R":"—")+_invBadge+'</td>'+
           '<td style="'+TD2+'#22d3ee">'+(rz.expectancy_r!=null?rz.expectancy_r.toFixed(4):"—")+'</td>'+
-          '<td style="padding:3px 6px;text-align:right;font-size:11px">'+_thrDelta(td2.expectancy_change_vs_baseline)+'</td>'+
-          '<td style="'+TD2+'#a78bfa">'+(rz.profit_factor_r!=null?rz.profit_factor_r.toFixed(2):"—")+'</td>'+
-          '<td style="padding:3px 6px;text-align:right;font-size:11px">'+_thrDelta(td2.profit_factor_change_vs_baseline)+'</td>'+
+          '<td style="padding:3px 6px;text-align:right;font-size:11px">'+_thrDelta(_expDelta)+'</td>'+
+          '<td style="'+TD2+'#a78bfa">'+_pfDisp+'</td>'+
+          '<td style="padding:3px 6px;text-align:right;font-size:11px">'+_thrDelta(_pfDelta)+'</td>'+
           '<td style="'+TD2+'#34d399">'+(rz.net_r!=null?rz.net_r.toFixed(2)+"R":"—")+'</td>'+
-          '<td style="padding:3px 6px;text-align:right;font-size:11px">'+_thrDelta(td2.net_r_change_vs_baseline)+'</td>'+
+          '<td style="padding:3px 6px;text-align:right;font-size:11px">'+_thrDelta(_nrDelta)+'</td>'+
           '<td style="'+TD2+'#f87171">'+(td2.avg_stop_loss_r!=null?td2.avg_stop_loss_r.toFixed(3)+"R":"—")+'</td>'+
           '<td style="padding:3px 6px;text-align:right">'+_thrBadge(td2.sample_size_status)+'</td>'+
           '<td style="padding:3px 6px;text-align:right">'+_thrAuthBadge(td2.eligible_for_authoritative_ranking)+'</td>'+
@@ -14204,13 +14214,15 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         var byDir=td2.by_direction||{};
         ["bullish","bearish"].forEach(function(dir){
           var dd=byDir[dir]||{};
+          var _dirPfDisp=dd.profit_factor_infinite?"&#8734;":(dd.profit_factor_r!=null?dd.profit_factor_r.toFixed(2):"—");
+          var _dirTradesDisp=(dd.trades!=null?dd.trades:(dd.event_count!=null?dd.event_count+"ev":"—"));
           dirRows+='<tr>'+
             '<td style="'+TDL+'#fbbf24">'+thr+'%</td>'+
             '<td style="'+TDL+(dir==="bullish"?"#22c55e":"#ef4444")+'">'+dir+'</td>'+
-            '<td style="'+TD2+'#8a9bb3">'+(dd.trades||0)+'</td>'+
+            '<td style="'+TD2+'#8a9bb3">'+_dirTradesDisp+'</td>'+
             '<td style="'+TD2+'#8a9bb3">'+(dd.best_rr!=null?dd.best_rr+"R":"—")+'</td>'+
             '<td style="'+TD2+'#22d3ee">'+(dd.expectancy_r!=null?dd.expectancy_r.toFixed(4):"—")+'</td>'+
-            '<td style="'+TD2+'#a78bfa">'+(dd.profit_factor_r!=null?dd.profit_factor_r.toFixed(2):"—")+'</td>'+
+            '<td style="'+TD2+'#a78bfa">'+_dirPfDisp+'</td>'+
             '<td style="'+TD2+'#34d399">'+(dd.net_r!=null?dd.net_r.toFixed(2)+"R":"—")+'</td>'+
           '</tr>';
         });
@@ -14258,7 +14270,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       if(ec) ec.addEventListener("click",function(){
         var td3=_thrLabData[_thrMetric]||{};
         var res3=td3.results||{};
-        var header=["threshold_pct","metric","rr","available_events","eligible_touched","trades","wins","losses","ambiguous","unresolved","trade_retention_pct","win_rate_pct","expectancy_r","expectancy_delta_vs_baseline","profit_factor_r","profit_factor_delta_vs_baseline","net_r","net_r_delta_vs_baseline","avg_stop_loss_r","avg_max_r","best_rr","sample_size_status","retention_status","eligible_for_authoritative_ranking","balanced_recommendation"].join(",");
+        var header=["threshold_pct","metric","rr","available_events","eligible_touched","trades","wins","losses","ambiguous","unresolved","invalid_loss_r","trade_retention_pct","win_rate_pct","expectancy_r","expectancy_delta_vs_baseline","profit_factor_r","profit_factor_infinite","profit_factor_delta_vs_baseline","net_r","net_r_delta_vs_baseline","avg_stop_loss_r","avg_max_r","best_rr","invalid_loss_r_at_best_rr","sample_size_status","retention_status","eligible_for_authoritative_ranking","balanced_recommendation"].join(",");
         var rows3=[header];
         [0,20,40,60,80].forEach(function(thr){
           var td4=res3[String(thr)]||{};
@@ -14267,15 +14279,17 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
           ["1","2","3"].forEach(function(rk){
             var rz2=rzm2[rk]||{};
             var cmp=(td4.comparison_vs_baseline_by_rr||{})[rk]||{};
-            function cv(v){if(v==null)return"";return String(v).indexOf(",")>=0?'"'+v+'"':String(v);}
             rows3.push([
               thr,_thrMetric,rk,
               td4.available_events,td4.eligible_touched,
               rz2.trades,rz2.wins,rz2.losses,rz2.ambiguous,rz2.unresolved,
-              td4.trade_retention_pct,rz2.win_rate_pct,rz2.expectancy_r,
-              cmp.expectancy_delta,rz2.profit_factor_r,cmp.profit_factor_delta,
+              rz2.invalid_loss_r||0,
+              cmp.trade_retention_pct,rz2.win_rate_pct,rz2.expectancy_r,
+              cmp.expectancy_delta,rz2.profit_factor_r,rz2.profit_factor_infinite?1:0,
+              cmp.profit_factor_delta,
               rz2.net_r,cmp.net_r_delta,td4.avg_stop_loss_r,td4.avg_max_r,
-              td4.best_rr,td4.sample_size_status,td4.retention_status,
+              td4.best_rr,td4.invalid_loss_r_at_best_rr||0,
+              td4.sample_size_status,td4.retention_status,
               td4.eligible_for_authoritative_ranking?1:0,recFlag
             ].map(function(v){if(v==null)return"";return String(v).indexOf(",")>=0?'"'+v+'"':String(v);}).join(","));
           });

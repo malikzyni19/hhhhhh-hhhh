@@ -34875,6 +34875,43 @@ _MIN_RANK_TRADES: int = 10
 _MIN_AUTHORITATIVE_TRADES: int = 20  # Phase 13 threshold lab ranking gate
 
 
+# ── Phase 13B helpers ─────────────────────────────────────────────────────────
+def _bt_realized_loss_r(rz: dict):
+    """Canonical loss-R extraction. Returns abs(R) or None. Never substitutes 1R."""
+    if rz.get("outcome") != "loss":
+        return None
+    raw = rz.get("realized_r")
+    if raw is None:
+        raw = rz.get("stop_loss_r")
+    if raw is None:
+        return None
+    try:
+        f = float(raw)
+        if math.isnan(f) or math.isinf(f):
+            return None
+        return abs(f)
+    except (TypeError, ValueError):
+        return None
+
+
+def _bt_threshold_rr_rank_key(rz: dict, rv_float: float, authoritative: bool = False):
+    """5-level comparator key for best-RR selection in threshold analysis.
+    Returns None when the RR is ineligible. Higher tuple = better RR."""
+    trades = rz.get("trades", 0)
+    exp = rz.get("expectancy_r")
+    pf = rz.get("profit_factor_r")
+    pf_inf = rz.get("profit_factor_infinite", False)
+    nr = rz.get("net_r") or 0.0
+    invalid = rz.get("invalid_loss_r", 0)
+    if exp is None or trades == 0:
+        return None
+    if authoritative and (trades < _MIN_AUTHORITATIVE_TRADES or invalid > 0):
+        return None
+    pf_rank = 2 if pf_inf else (1 if (pf is not None and pf > 0) else 0)
+    pf_val = pf if (pf is not None and not pf_inf) else 0.0
+    return (exp, pf_rank, pf_val, nr, trades, -rv_float)
+
+
 # ── Phase 13: TV OB % Threshold Optimization Lab ─────────────────────────────
 def _bt_build_tv_ob_pct_threshold_analysis(
     events: List[Dict],
@@ -34921,28 +34958,36 @@ def _bt_build_tv_ob_pct_threshold_analysis(
 
     baseline_available = len(valid_pairs)
 
+    def _median(vals):
+        if not vals: return None
+        sv = sorted(vals); n = len(sv); m = n // 2
+        return round(sv[m] if n % 2 == 1 else (sv[m-1]+sv[m])/2, 4)
+
     # ── Realized summary for a set of (ev, pct) pairs at one RR ──────────────
     def _realized_for(pairs, rv):
         rk = _bt_rr_key(rv)
         rv_f = float(rv)
-        wins = 0; losses = 0; ambiguous = 0; unresolved = 0
+        wins = 0; losses = 0; ambiguous = 0; unresolved = 0; invalid_loss_r = 0
         gross_win_r = 0.0; gross_loss_r = 0.0
-        sl_r_list: List[float] = []
+        loss_r_list: List[float] = []
         for (ev, _) in pairs:
             sim = ev.get("simulation") or {}
-            rz = (sim.get("realized_by_rr") or {}).get(rk)
-            if rz is None:
+            rz_entry = (sim.get("realized_by_rr") or {}).get(rk)
+            if rz_entry is None:
                 unresolved += 1
                 continue
-            out = rz.get("outcome", "unresolved")
+            out = rz_entry.get("outcome", "unresolved")
             if out == "win":
                 wins += 1
                 gross_win_r += rv_f
             elif out == "loss":
-                losses += 1
-                slr = abs(float(rz.get("stop_loss_r") or rz.get("realized_r") or 1.0))
-                gross_loss_r += slr
-                sl_r_list.append(slr)
+                lr = _bt_realized_loss_r(rz_entry)
+                if lr is None:
+                    invalid_loss_r += 1
+                else:
+                    losses += 1
+                    gross_loss_r += lr
+                    loss_r_list.append(lr)
             elif out == "ambiguous":
                 ambiguous += 1
             else:
@@ -34951,17 +34996,26 @@ def _bt_build_tv_ob_pct_threshold_analysis(
         win_rate = round(wins / trades * 100, 1) if trades else None
         net_r    = round(gross_win_r - gross_loss_r, 4)
         expect   = round(net_r / trades, 4) if trades else None
-        pf = (round(gross_win_r / gross_loss_r, 4) if gross_loss_r > 0
-              else (None if wins == 0 else 999.0))
+        # PF: no 999.0 sentinel — use profit_factor_infinite flag
+        if gross_loss_r > 0:
+            pf = round(gross_win_r / gross_loss_r, 4); pf_inf = False
+        elif wins > 0:
+            pf = None; pf_inf = True
+        else:
+            pf = None; pf_inf = False
         return {
             "trades": trades, "wins": wins, "losses": losses,
             "ambiguous": ambiguous, "unresolved": unresolved,
+            "invalid_loss_r": invalid_loss_r,
             "win_rate_pct": win_rate,
-            "avg_win_r":  round(gross_win_r / wins, 4) if wins else None,
-            "avg_loss_r": round(gross_loss_r / losses, 4) if losses else None,
+            "avg_win_r":    round(gross_win_r / wins, 4) if wins else None,
+            "avg_loss_r":   round(gross_loss_r / losses, 4) if losses else None,
+            "median_loss_r": _median(loss_r_list),
+            "max_loss_r":   round(max(loss_r_list), 4) if loss_r_list else None,
             "gross_profit_r": round(gross_win_r, 4),
             "gross_loss_r":   round(gross_loss_r, 4),
-            "net_r": net_r, "expectancy_r": expect, "profit_factor_r": pf,
+            "net_r": net_r, "expectancy_r": expect,
+            "profit_factor_r": pf, "profit_factor_infinite": pf_inf,
         }
 
     def _sample_status(t: int) -> str:
@@ -34970,13 +35024,20 @@ def _bt_build_tv_ob_pct_threshold_analysis(
     def _ret_status(r) -> str:
         return "too_low" if (r is None or r < 20.0) else "acceptable"
 
-    def _median(vals):
-        if not vals: return None
-        sv = sorted(vals); n = len(sv); m = n // 2
-        return round(sv[m] if n % 2 == 1 else (sv[m-1]+sv[m])/2, 4)
+    def _pf_non_degraded(pf_t, pf_inf_t, pf_b, pf_inf_b):
+        """True when threshold PF is not degraded vs baseline (≥95% rule)."""
+        if pf_inf_t: return True
+        if pf_inf_b and not pf_inf_t: return False
+        if pf_t is None and pf_b is None: return True
+        if pf_t is not None and pf_b is None: return pf_t > 0
+        if pf_t is None: return False
+        return pf_t >= pf_b * 0.95
 
     # ── Baseline (threshold 0) ────────────────────────────────────────────────
-    baseline_rz: Dict[str, dict] = {_bt_rr_key(rv): _realized_for(valid_pairs, rv) for rv in rr_values}
+    baseline_rz: Dict[str, dict] = {
+        _bt_rr_key(rv): _realized_for(valid_pairs, rv) for rv in rr_values
+    }
+    # Diagnostic: baseline trades at first RR (display only)
     base_trades_0 = baseline_rz[_bt_rr_key(rr_values[0])]["trades"] if rr_values else 0
 
     # ── Build each threshold row ──────────────────────────────────────────────
@@ -34988,102 +35049,147 @@ def _bt_build_tv_ob_pct_threshold_analysis(
         event_ret = round(avail / baseline_available * 100, 1) if baseline_available else None
 
         rzm = {_bt_rr_key(rv): _realized_for(thr_pairs, rv) for rv in rr_values}
-        thr_trades_0 = rzm[_bt_rr_key(rr_values[0])]["trades"] if rr_values else 0
-        trade_ret = round(thr_trades_0 / base_trades_0 * 100, 1) if base_trades_0 else None
 
-        tp_first = sum(1 for (ev,_) in thr_pairs if (ev.get("simulation") or {}).get("first_outcome")=="tp")
-        sl_first = sum(1 for (ev,_) in thr_pairs if (ev.get("simulation") or {}).get("first_outcome")=="sl")
-        amb_ev   = sum(1 for (ev,_) in thr_pairs if (ev.get("simulation") or {}).get("first_outcome")=="ambiguous")
-        unr_ev   = sum(1 for (ev,_) in thr_pairs if (ev.get("simulation") or {}).get("first_outcome")=="unresolved")
-
-        pcts = [p for (_,p) in thr_pairs]
+        pcts = [p for (_, p) in thr_pairs]
         avg_pct = round(sum(pcts)/len(pcts), 2) if pcts else None
         med_pct = _median(pcts)
 
-        sl_r_vals  = [float((ev.get("simulation") or {}).get("stop_loss_r"))
-                      for (ev,_) in thr_pairs
-                      if (ev.get("simulation") or {}).get("stop_hit")
-                      and (ev.get("simulation") or {}).get("stop_loss_r") is not None]
+        tp_first = sum(1 for (ev, _) in thr_pairs
+                       if (ev.get("simulation") or {}).get("first_outcome") == "tp")
+        sl_first = sum(1 for (ev, _) in thr_pairs
+                       if (ev.get("simulation") or {}).get("first_outcome") == "sl")
+        amb_ev   = sum(1 for (ev, _) in thr_pairs
+                       if (ev.get("simulation") or {}).get("first_outcome") == "ambiguous")
+        unr_ev   = sum(1 for (ev, _) in thr_pairs
+                       if (ev.get("simulation") or {}).get("first_outcome") == "unresolved")
+
         max_r_vals = [float((ev.get("simulation") or {}).get("max_r_reached"))
-                      for (ev,_) in thr_pairs
+                      for (ev, _) in thr_pairs
                       if (ev.get("simulation") or {}).get("max_r_reached") is not None]
         adv_r_vals = [float((ev.get("simulation") or {}).get("max_adverse_r"))
-                      for (ev,_) in thr_pairs
+                      for (ev, _) in thr_pairs
                       if (ev.get("simulation") or {}).get("max_adverse_r") is not None]
-
-        avg_sl_r  = round(sum(sl_r_vals)/len(sl_r_vals), 4) if sl_r_vals else None
-        max_sl_r  = round(max(sl_r_vals), 4) if sl_r_vals else None
-        med_sl_r  = _median(sl_r_vals)
         avg_max_r = round(sum(max_r_vals)/len(max_r_vals), 4) if max_r_vals else None
         avg_adv_r = round(sum(adv_r_vals)/len(adv_r_vals), 4) if adv_r_vals else None
 
-        # Best RR: prefer >= _MIN_AUTHORITATIVE_TRADES, else best available
-        best_rr_str: str | None = None; best_exp_v: float | None = None
+        # ── Best RR: use _bt_threshold_rr_rank_key, prefer authoritative ──────
+        best_rr_str: str | None = None
+        best_rank = None
         for rv in rr_values:
-            rz = rzm[_bt_rr_key(rv)]
-            if rz["trades"] >= _MIN_AUTHORITATIVE_TRADES and rz["expectancy_r"] is not None:
-                if best_exp_v is None or rz["expectancy_r"] > best_exp_v:
-                    best_exp_v = rz["expectancy_r"]
-                    best_rr_str = _bt_rr_key(rv)
+            rk = _bt_rr_key(rv)
+            key = _bt_threshold_rr_rank_key(rzm[rk], float(rv), authoritative=True)
+            if key is not None and (best_rank is None or key > best_rank):
+                best_rank = key; best_rr_str = rk
+        # Second pass: raw best (no gate) — kept as diagnostic
+        raw_best_rr_str: str | None = None
+        raw_best_rank = None
+        for rv in rr_values:
+            rk = _bt_rr_key(rv)
+            key = _bt_threshold_rr_rank_key(rzm[rk], float(rv), authoritative=False)
+            if key is not None and (raw_best_rank is None or key > raw_best_rank):
+                raw_best_rank = key; raw_best_rr_str = rk
         if best_rr_str is None:
-            for rv in rr_values:
-                rz = rzm[_bt_rr_key(rv)]
-                if rz["trades"] > 0 and rz["expectancy_r"] is not None:
-                    if best_exp_v is None or rz["expectancy_r"] > best_exp_v:
-                        best_exp_v = rz["expectancy_r"]
-                        best_rr_str = _bt_rr_key(rv)
+            best_rr_str = raw_best_rr_str  # display fallback
 
-        best_rz   = rzm.get(best_rr_str) or {}
-        best_tr   = best_rz.get("trades", 0)
-        ss        = _sample_status(best_tr)
-        rst       = _ret_status(trade_ret)
-        auth = (
-            parity_trusted
-            and best_tr >= _MIN_AUTHORITATIVE_TRADES
-            and trade_ret is not None and trade_ret >= 20.0
-            and best_rz.get("expectancy_r") is not None
-        )
-
-        # Comparison vs baseline by RR
+        # ── Comparison vs baseline by RR (computed before trade_ret) ─────────
         cmp: Dict[str, dict] = {}
         for rv in rr_values:
             rk = _bt_rr_key(rv)
             rz = rzm[rk]; bz = baseline_rz[rk]
             exp_d = (round(rz["expectancy_r"] - bz["expectancy_r"], 4)
                      if rz["expectancy_r"] is not None and bz["expectancy_r"] is not None else None)
-            pf_d  = (round((rz["profit_factor_r"] or 0) - (bz["profit_factor_r"] or 0), 4)
-                     if rz["profit_factor_r"] is not None and bz["profit_factor_r"] is not None else None)
-            nr_d  = (round(rz["net_r"] - bz["net_r"], 4)
-                     if rz["net_r"] is not None and bz["net_r"] is not None else None)
+            # PF delta only when both are finite
+            pf_d = None
+            if (not rz.get("profit_factor_infinite") and not bz.get("profit_factor_infinite")
+                    and rz["profit_factor_r"] is not None and bz["profit_factor_r"] is not None):
+                pf_d = round(rz["profit_factor_r"] - bz["profit_factor_r"], 4)
+            nr_d = (round(rz["net_r"] - bz["net_r"], 4)
+                    if rz.get("net_r") is not None and bz.get("net_r") is not None else None)
             cmp[rk] = {
                 "expectancy_delta": exp_d, "profit_factor_delta": pf_d, "net_r_delta": nr_d,
                 "trade_count_delta": rz["trades"] - bz["trades"],
-                "trade_retention_pct": (round(rz["trades"]/bz["trades"]*100,1) if bz["trades"] else None),
+                "trade_retention_pct": (
+                    round(rz["trades"]/bz["trades"]*100, 1) if bz["trades"] else None),
             }
 
-        bz_best = baseline_rz.get(best_rr_str) or {}
-        def _chg(a, b): return round(a-b, 4) if a is not None and b is not None else None
-        exp_chg = _chg(best_rz.get("expectancy_r"),    bz_best.get("expectancy_r"))
-        pf_chg  = _chg(best_rz.get("profit_factor_r"), bz_best.get("profit_factor_r"))
-        nr_chg  = _chg(best_rz.get("net_r"),           bz_best.get("net_r"))
+        # ── Trade retention at best_rr (not always at rr_values[0]) ──────────
+        trade_ret: float | None = None
+        trade_ret_rr: str | None = None
+        if best_rr_str is not None:
+            trade_ret = cmp[best_rr_str].get("trade_retention_pct")
+            trade_ret_rr = best_rr_str
+        elif rr_values:
+            trade_ret = cmp.get(_bt_rr_key(rr_values[0]), {}).get("trade_retention_pct")
+            trade_ret_rr = _bt_rr_key(rr_values[0])
 
-        # Direction split
+        # ── SL metrics from realized loss population at best_rr ───────────────
+        sl_r_vals: List[float] = []
+        if best_rr_str:
+            for (ev, _) in thr_pairs:
+                sim = ev.get("simulation") or {}
+                rz_entry = (sim.get("realized_by_rr") or {}).get(best_rr_str)
+                if rz_entry is not None:
+                    lr = _bt_realized_loss_r(rz_entry)
+                    if lr is not None:
+                        sl_r_vals.append(lr)
+        avg_sl_r = round(sum(sl_r_vals)/len(sl_r_vals), 4) if sl_r_vals else None
+        max_sl_r = round(max(sl_r_vals), 4) if sl_r_vals else None
+        med_sl_r = _median(sl_r_vals)
+
+        best_rz      = rzm.get(best_rr_str) or {}
+        best_tr      = best_rz.get("trades", 0)
+        best_invalid = best_rz.get("invalid_loss_r", 0)
+        ss           = _sample_status(best_tr)
+        rst          = _ret_status(trade_ret)
+        auth = (
+            parity_trusted
+            and best_tr >= _MIN_AUTHORITATIVE_TRADES
+            and best_invalid == 0
+            and trade_ret is not None and trade_ret >= 20.0
+            and best_rz.get("expectancy_r") is not None
+        )
+
+        bz_best = baseline_rz.get(best_rr_str) or {}
+        def _chg(a, b): return round(a - b, 4) if a is not None and b is not None else None
+        exp_chg = _chg(best_rz.get("expectancy_r"), bz_best.get("expectancy_r"))
+        pf_chg  = None
+        if (not best_rz.get("profit_factor_infinite") and not bz_best.get("profit_factor_infinite")
+                and best_rz.get("profit_factor_r") is not None
+                and bz_best.get("profit_factor_r") is not None):
+            pf_chg = _chg(best_rz.get("profit_factor_r"), bz_best.get("profit_factor_r"))
+        nr_chg  = _chg(best_rz.get("net_r"), bz_best.get("net_r"))
+
+        # ── Direction split: trades = wins+losses at best_rr (not len(dp)) ────
         by_dir: Dict[str, dict] = {}
         for direction in ("bullish", "bearish"):
-            dp = [(ev,p) for (ev,p) in thr_pairs if ev.get("type")==direction]
-            dr_best_rr: str | None = None; dr_best_exp: float | None = None; dr_rz: dict = {}
+            dp = [(ev, p) for (ev, p) in thr_pairs if ev.get("type") == direction]
+            dr_rzm = {_bt_rr_key(rv): _realized_for(dp, rv) for rv in rr_values}
+            dr_best_rr: str | None = None
+            dr_best_rank = None
             for rv in rr_values:
-                d_rz = _realized_for(dp, rv)
-                if d_rz["trades"] >= _MIN_AUTHORITATIVE_TRADES and d_rz["expectancy_r"] is not None:
-                    if dr_best_exp is None or d_rz["expectancy_r"] > dr_best_exp:
-                        dr_best_exp = d_rz["expectancy_r"]
-                        dr_best_rr  = _bt_rr_key(rv)
-                        dr_rz = d_rz
+                rk = _bt_rr_key(rv)
+                key = _bt_threshold_rr_rank_key(dr_rzm[rk], float(rv), authoritative=True)
+                if key is not None and (dr_best_rank is None or key > dr_best_rank):
+                    dr_best_rank = key; dr_best_rr = rk
+            if dr_best_rr is None:
+                dr_raw_rank = None
+                for rv in rr_values:
+                    rk = _bt_rr_key(rv)
+                    key = _bt_threshold_rr_rank_key(dr_rzm[rk], float(rv), authoritative=False)
+                    if key is not None and (dr_raw_rank is None or key > dr_raw_rank):
+                        dr_raw_rank = key; dr_best_rr = rk
+            dr_rz = dr_rzm.get(dr_best_rr) or {} if dr_best_rr else {}
             by_dir[direction] = {
-                "trades": len(dp), "best_rr": dr_best_rr,
-                "expectancy_r":   dr_rz.get("expectancy_r"),
-                "profit_factor_r": dr_rz.get("profit_factor_r"),
-                "net_r":          dr_rz.get("net_r"),
+                "trades":      dr_rz.get("trades"),   # wins+losses at best_rr
+                "event_count": len(dp),               # raw event count for reference
+                "best_rr":     dr_best_rr,
+                "wins":        dr_rz.get("wins"),
+                "losses":      dr_rz.get("losses"),
+                "invalid_loss_r":          dr_rz.get("invalid_loss_r", 0),
+                "expectancy_r":            dr_rz.get("expectancy_r"),
+                "profit_factor_r":         dr_rz.get("profit_factor_r"),
+                "profit_factor_infinite":  dr_rz.get("profit_factor_infinite", False),
+                "net_r":                   dr_rz.get("net_r"),
             }
 
         results[str(thr)] = {
@@ -35093,6 +35199,7 @@ def _bt_build_tv_ob_pct_threshold_analysis(
             "excluded_no_data": no_data_count,
             "event_retention_pct": event_ret,
             "trade_retention_pct": trade_ret,
+            "trade_retention_rr": trade_ret_rr,
             "tp_first": tp_first, "sl_first": sl_first,
             "ambiguous": amb_ev, "unresolved": unr_ev,
             "avg_tv_ob_pct": avg_pct, "median_tv_ob_pct": med_pct,
@@ -35102,16 +35209,19 @@ def _bt_build_tv_ob_pct_threshold_analysis(
             "max_stop_loss_r": max_sl_r,
             "realized_summary_by_rr": rzm,
             "best_rr": best_rr_str,
+            "raw_best_rr": raw_best_rr_str,
             "trades_at_best_rr": best_tr,
-            "win_rate_at_best_rr":      best_rz.get("win_rate_pct"),
-            "expectancy_at_best_rr":    best_rz.get("expectancy_r"),
-            "profit_factor_at_best_rr": best_rz.get("profit_factor_r"),
-            "net_r_at_best_rr":         best_rz.get("net_r"),
+            "invalid_loss_r_at_best_rr": best_invalid,
+            "win_rate_at_best_rr":               best_rz.get("win_rate_pct"),
+            "expectancy_at_best_rr":             best_rz.get("expectancy_r"),
+            "profit_factor_at_best_rr":          best_rz.get("profit_factor_r"),
+            "profit_factor_infinite_at_best_rr": best_rz.get("profit_factor_infinite", False),
+            "net_r_at_best_rr":                  best_rz.get("net_r"),
             "expectancy_change_vs_baseline":    exp_chg,
             "profit_factor_change_vs_baseline": pf_chg,
             "net_r_change_vs_baseline":         nr_chg,
             "trade_retention_change_vs_baseline": (
-                round(trade_ret-100.0, 2) if trade_ret is not None else None),
+                round(trade_ret - 100.0, 2) if trade_ret is not None else None),
             "sample_size_status": ss,
             "retention_status":   rst,
             "eligible_for_authoritative_ranking": auth,
@@ -35126,17 +35236,25 @@ def _bt_build_tv_ob_pct_threshold_analysis(
     def _best_card(field: str):
         best_v = None; best_it = None
         for (t, rd) in auth_cands:
-            v = rd.get(f"{field}_at_best_rr")
+            if field == "profit_factor":
+                pf_inf = rd.get("profit_factor_infinite_at_best_rr", False)
+                pf_v   = rd.get("profit_factor_at_best_rr")
+                v = float("inf") if pf_inf else (pf_v if pf_v is not None else None)
+            else:
+                v = rd.get(f"{field}_at_best_rr")
             if v is None: continue
             if best_v is None or v > best_v:
                 best_v = v; best_it = (t, rd)
         if best_it is None: return None
         t, rd = best_it
-        return {"threshold_pct": t, "rr": rd["best_rr"], "trades": rd["trades_at_best_rr"],
-                "trade_retention_pct": rd["trade_retention_pct"],
-                "expectancy_r": rd["expectancy_at_best_rr"],
-                "profit_factor_r": rd["profit_factor_at_best_rr"],
-                "net_r": rd["net_r_at_best_rr"]}
+        return {
+            "threshold_pct": t, "rr": rd["best_rr"], "trades": rd["trades_at_best_rr"],
+            "trade_retention_pct": rd["trade_retention_pct"],
+            "expectancy_r": rd["expectancy_at_best_rr"],
+            "profit_factor_r": rd["profit_factor_at_best_rr"],
+            "profit_factor_infinite": rd.get("profit_factor_infinite_at_best_rr", False),
+            "net_r": rd["net_r_at_best_rr"],
+        }
 
     def _best_sl_card():
         best_v = None; best_it = None
@@ -35147,12 +35265,44 @@ def _bt_build_tv_ob_pct_threshold_analysis(
                 best_v = v; best_it = (t, rd)
         if best_it is None: return None
         t, rd = best_it
-        return {"threshold_pct": t, "rr": rd["best_rr"], "trades": rd["trades_at_best_rr"],
-                "trade_retention_pct": rd["trade_retention_pct"],
-                "avg_stop_loss_r": best_v, "expectancy_r": rd["expectancy_at_best_rr"]}
+        return {
+            "threshold_pct": t, "rr": rd["best_rr"], "trades": rd["trades_at_best_rr"],
+            "trade_retention_pct": rd["trade_retention_pct"],
+            "avg_stop_loss_r": best_v, "expectancy_r": rd["expectancy_at_best_rr"],
+        }
 
     # ── Balanced recommendation ───────────────────────────────────────────────
+    def _near_eq_wins(challenger, champion):
+        """Returns True if challenger replaces champion under near-equality (diff<0.05R)."""
+        diff = abs(champion["expectancy_r"] - challenger["expectancy_r"])
+        if diff >= 0.05:
+            return False
+        # Level 1: lower threshold
+        if challenger["threshold_pct"] != champion["threshold_pct"]:
+            return challenger["threshold_pct"] < champion["threshold_pct"]
+        # Level 2: higher retention
+        cr = challenger.get("trade_retention_pct") or 0
+        hr = champion.get("trade_retention_pct") or 0
+        if cr != hr: return cr > hr
+        # Level 3: higher net_r
+        cn = challenger.get("net_r") or 0
+        hn = champion.get("net_r") or 0
+        if cn != hn: return cn > hn
+        # Level 4: higher PF (handle infinite)
+        ci = challenger.get("profit_factor_infinite", False)
+        hi = champion.get("profit_factor_infinite", False)
+        cpf = challenger.get("profit_factor_r") or 0
+        hpf = champion.get("profit_factor_r") or 0
+        if ci and not hi: return True
+        if hi and not ci: return False
+        if cpf != hpf: return cpf > hpf
+        # Level 5: more trades
+        return challenger.get("trades", 0) > champion.get("trades", 0)
+
     balanced = None
+    audit_candidates: List[dict] = []
+    audit_rejected:   List[dict] = []
+
     if parity_trusted and auth_cands:
         bz0_rz = (results.get("0") or {}).get("realized_summary_by_rr") or {}
         scored = []
@@ -35162,28 +35312,49 @@ def _bt_build_tv_ob_pct_threshold_analysis(
             if not rr_s: continue
             rz = (rd.get("realized_summary_by_rr") or {}).get(rr_s) or {}
             bz = bz0_rz.get(rr_s) or {}
-            exp_t, exp_b = rz.get("expectancy_r"), bz.get("expectancy_r")
-            pf_t,  pf_b  = rz.get("profit_factor_r"), bz.get("profit_factor_r")
-            nr_t         = rz.get("net_r")
-            if exp_t is None or exp_b is None: continue
-            if exp_t <= exp_b: continue
-            if (nr_t or 0) <= 0: continue
-            if pf_t is not None and pf_b is not None and pf_t < pf_b * 0.9: continue
-            scored.append({
+            exp_t    = rz.get("expectancy_r")
+            exp_b    = bz.get("expectancy_r")
+            pf_t     = rz.get("profit_factor_r")
+            pf_inf_t = rz.get("profit_factor_infinite", False)
+            pf_b     = bz.get("profit_factor_r")
+            pf_inf_b = bz.get("profit_factor_infinite", False)
+            nr_t     = rz.get("net_r")
+            ret_t    = rd.get("trade_retention_pct")
+            impr     = (round(exp_t - exp_b, 4)
+                        if exp_t is not None and exp_b is not None else None)
+            cand_info = {
                 "threshold_pct": thr, "rr": rr_s,
                 "trades": rz.get("trades", 0),
-                "trade_retention_pct": rd.get("trade_retention_pct"),
+                "trade_retention_pct": ret_t,
                 "expectancy_r": exp_t,
-                "expectancy_improvement_vs_baseline": round(exp_t - exp_b, 4),
-                "profit_factor_r": pf_t, "net_r": nr_t,
-            })
+                "profit_factor_r": pf_t,
+                "profit_factor_infinite": pf_inf_t,
+                "net_r": nr_t,
+                "expectancy_improvement_vs_baseline": impr,
+            }
+            if exp_t is None or exp_b is None:
+                audit_rejected.append({**cand_info, "rejected_reason": "expectancy_unavailable"})
+                continue
+            if exp_t <= exp_b:
+                audit_rejected.append({**cand_info, "rejected_reason": "expectancy_not_above_baseline"})
+                continue
+            if (nr_t or 0) <= 0:
+                audit_rejected.append({**cand_info, "rejected_reason": "net_r_not_positive"})
+                continue
+            if not _pf_non_degraded(pf_t, pf_inf_t, pf_b, pf_inf_b):
+                audit_rejected.append({**cand_info, "rejected_reason": "profit_factor_degraded_below_95pct"})
+                continue
+            if ret_t is None or ret_t < 20.0:
+                audit_rejected.append({**cand_info, "rejected_reason": "retention_below_20pct"})
+                continue
+            scored.append(cand_info)
+            audit_candidates.append(cand_info)
+
         if scored:
-            scored.sort(key=lambda x: (-x["expectancy_r"], x["threshold_pct"]))
+            scored.sort(key=lambda x: -(x["expectancy_r"] or 0))
             best_s = scored[0]
             for other in scored[1:]:
-                if (other["threshold_pct"] < best_s["threshold_pct"]
-                        and abs(best_s["expectancy_r"] - other["expectancy_r"]) < 0.05
-                        and other["trades"] > best_s["trades"]):
+                if _near_eq_wins(other, best_s):
                     best_s = other
             impr = best_s["expectancy_improvement_vs_baseline"]
             balanced = {
@@ -35193,14 +35364,15 @@ def _bt_build_tv_ob_pct_threshold_analysis(
                 "trade_retention_pct": best_s["trade_retention_pct"],
                 "expectancy_r": best_s["expectancy_r"],
                 "profit_factor_r": best_s["profit_factor_r"],
+                "profit_factor_infinite": best_s["profit_factor_infinite"],
                 "net_r": best_s["net_r"],
                 "expectancy_improvement_vs_baseline": impr,
                 "reason": (
                     f"Threshold {best_s['threshold_pct']}% at {best_s['rr']}R: "
-                    f"expectancy {best_s['expectancy_r']:+.4f}R "
-                    f"(+{impr:.4f}R vs baseline), "
-                    f"{best_s['trades']} trades, "
-                    f"{(best_s['trade_retention_pct'] or 0):.1f}% retention"
+                    f"expectancy {best_s['expectancy_r']:+.4f}R"
+                    + (f" (+{impr:.4f}R vs baseline)," if impr is not None else ",")
+                    + f" {best_s['trades']} trades,"
+                    f" {(best_s['trade_retention_pct'] or 0):.1f}% retention"
                 ),
                 "authoritative": True,
             }
@@ -35235,6 +35407,12 @@ def _bt_build_tv_ob_pct_threshold_analysis(
             "by_net_r":               _best_card("net_r"),
             "by_lowest_avg_sl":       _best_sl_card(),
             "balanced_recommendation": balanced,
+        },
+        "balanced_recommendation_audit": {
+            "candidates_considered": audit_candidates,
+            "candidates_rejected":   audit_rejected,
+            "selection_rule": "highest_expectancy_then_near_eq_5level_tiebreak",
+            "selected": balanced,
         },
         "warnings": warnings_out,
     }
@@ -35713,12 +35891,12 @@ def _bt_tv_ob_pct_analysis(events: List[Dict], rr_values: List = None) -> Dict:
                 wins    += 1
                 gain_r  += float(rr_val)
             elif out == "loss":
-                losses  += 1
-                sl_r     = abs(float(rz.get("stop_loss_r") or
-                                     rz.get("realized_r") or 1.0))
-                loss_r   += sl_r
-                sl_r_sum += sl_r
-                sl_count += 1
+                lr = _bt_realized_loss_r(rz)
+                if lr is not None:
+                    losses  += 1
+                    loss_r  += lr
+                    sl_r_sum += lr
+                    sl_count += 1
             else:
                 ambiguity += 1
 
@@ -35726,8 +35904,12 @@ def _bt_tv_ob_pct_analysis(events: List[Dict], rr_values: List = None) -> Dict:
         win_rate = round(wins / decided * 100, 1) if decided else None
         net_r    = round(gain_r - loss_r, 3)
         expect   = round(net_r / cnt, 4) if cnt else None
-        pf       = (round(gain_r / loss_r, 3) if loss_r > 0
-                    else (None if wins == 0 else 999.0))
+        if loss_r > 0:
+            pf = round(gain_r / loss_r, 3); pf_inf = False
+        elif wins > 0:
+            pf = None; pf_inf = True
+        else:
+            pf = None; pf_inf = False
         avg_sl   = round(sl_r_sum / sl_count, 3) if sl_count else None
 
         return {
@@ -35738,6 +35920,7 @@ def _bt_tv_ob_pct_analysis(events: List[Dict], rr_values: List = None) -> Dict:
             "win_rate_pct":         win_rate,
             "expectancy_r":         expect,
             "profit_factor":        pf,
+            "profit_factor_infinite": pf_inf,
             "net_r":                net_r,
             "avg_sl_r":             avg_sl,
             "sample_size_status":   _sample_status(cnt),
@@ -36367,6 +36550,7 @@ def api_backtest_ob_historical_debug():
             ("rec.trade_retention_pct",   thr_rec.get("trade_retention_pct")),
             ("rec.expectancy_r",          thr_rec.get("expectancy_r")),
             ("rec.profit_factor_r",       thr_rec.get("profit_factor_r")),
+            ("rec.profit_factor_infinite", thr_rec.get("profit_factor_infinite")),
             ("rec.net_r",                 thr_rec.get("net_r")),
             ("rec.improvement_vs_baseline", thr_rec.get("expectancy_improvement_vs_baseline")),
             ("rec.reason",                thr_rec.get("reason")),
@@ -36391,11 +36575,13 @@ def api_backtest_ob_historical_debug():
             rr_cells = ""
             for rk in ["1", "2", "3"]:
                 rz = rzm.get(rk) or {}
+                _pf_disp = ("∞" if rz.get("profit_factor_infinite")
+                            else rz.get("profit_factor_r", "—"))
                 rr_cells += (
                     f"<td style='padding:2px 6px;color:#ccc;font-size:10px'>"
                     f"{rz.get('trades',0)} T "
                     f"E:{rz.get('expectancy_r','—')} "
-                    f"PF:{rz.get('profit_factor_r','—')}"
+                    f"PF:{_pf_disp}"
                     f"</td>"
                 )
             ss_c = "#22c55e" if td.get("sample_size_status")=="strong" else (
@@ -37076,7 +37262,11 @@ def _bt_run_ob_batch_backtest(params: dict) -> dict:
                 "balanced_threshold_pct": _thr_rec.get("threshold_pct"),
                 "balanced_rr":            _thr_rec.get("rr"),
                 "balanced_expectancy_r":  _thr_rec.get("expectancy_r"),
-                "balanced_trade_retention_pct": _thr_rec.get("trade_retention_pct"),
+                "balanced_trade_retention_pct":    _thr_rec.get("trade_retention_pct"),
+                "balanced_profit_factor_r":        _thr_rec.get("profit_factor_r"),
+                "balanced_profit_factor_infinite":  _thr_rec.get("profit_factor_infinite", False),
+                "balanced_net_r":                  _thr_rec.get("net_r"),
+                "balanced_trades":                 _thr_rec.get("trades"),
                 "threshold_analysis_trusted": _thr_bft.get("trusted", False),
             }
             results[symbol][tf] = out
