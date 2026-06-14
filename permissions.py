@@ -30,7 +30,7 @@ _ROLE_DEFAULTS = {
         "daily_tokens":        500,
         "max_pairs_per_scan":  100,
         "max_pairs_per_cycle": 50,
-        "allowed_modules":     ["ob", "fvg", "fib", "bias"],
+        "allowed_modules":     ["ob", "fvg", "bb", "fib"],
         "allowed_tabs":        ["scan", "pairs", "settings", "bias"],
         "allowed_exchanges":   ["binance"],
         "allowed_timeframes":  ["15m", "1h", "4h"],
@@ -50,7 +50,10 @@ _ROLE_DEFAULTS = {
 def _parse_json(val, fallback):
     if val is None:
         return None
-    if isinstance(val, list):
+    # Integer/float columns (daily_tokens, max_pairs_*) come back as numbers,
+    # not JSON strings — return them as-is. json.loads() would TypeError on
+    # a bare int and silently fall through to the hardcoded default.
+    if isinstance(val, (list, bool, int, float)):
         return val
     try:
         return json.loads(val)
