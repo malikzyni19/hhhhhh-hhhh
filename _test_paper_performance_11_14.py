@@ -575,16 +575,23 @@ ds_501  = pp._downsample_curve(pts_501)
 _check("12C5 501 points → ≤ 500 after downsample", len(ds_501) <= 500, f"got {len(ds_501)}")
 
 # ── 12D: State getter returns invalid_performance_filter for bad symbol ────────
-# (No DB needed — filter validation fires before any query)
+# After refactoring, _lm_get_paper_performance_state calls
+# _lm_query_closed_paper_trades_from_filters (not the old public wrapper).
+# Mock the internal query to avoid DB access; validation returns before it for bad symbols.
 
-_orig_query = pp._lm_query_closed_paper_trades
+_EMPTY_QMETA = {"row_limit": 5000, "total_available": 0, "rows_loaded": 0,
+                "truncated": False, "missing_pnl_db": 0, "invalid_pnl_c": 0}
 
-def _mock_query(*a, **kw):
-    f = pp._lm_build_paper_performance_filters(*a, **kw)
-    return [], f, {"row_limit": 5000, "total_available": 0, "rows_loaded": 0,
-                   "truncated": False, "missing_pnl_db": 0, "invalid_pnl_c": 0}
+_orig_qtf = pp._lm_query_closed_paper_trades_from_filters
 
-pp._lm_query_closed_paper_trades = _mock_query
+def _mock_qtf(user_id, filters):
+    # Replicate the defensive guard so the mock behaves correctly
+    errs = pp._lm_validate_paper_performance_filters(filters)
+    if errs:
+        raise ValueError(f"unvalidated_performance_filters:{list(errs.keys())}")
+    return [], dict(_EMPTY_QMETA)
+
+pp._lm_query_closed_paper_trades_from_filters = _mock_qtf
 
 state_bad_sym = pp._lm_get_paper_performance_state(1, symbol="BTC!!!")
 _check("12D1 bad symbol → ok=False", state_bad_sym.get("ok") is False)
@@ -601,7 +608,7 @@ state_good_sym = pp._lm_get_paper_performance_state(1, symbol="BTCUSDT")
 _check("12D6 good symbol → no filter error (passes to no-trade response)",
        state_good_sym.get("ok") is True and state_good_sym.get("error") is None)
 
-pp._lm_query_closed_paper_trades = _orig_query   # restore
+pp._lm_query_closed_paper_trades_from_filters = _orig_qtf   # restore
 
 # ── 12E: Comparison trend_reason propagated ───────────────────────────────────
 # Test _compute_trend directly for insufficient data case
@@ -619,6 +626,179 @@ _check("12E2 improving metrics → improving", trend_imp == "improving")
 
 trend_det = pp._compute_trend(t_worse, t_enough)
 _check("12E3 deteriorating metrics → deteriorating", trend_det == "deteriorating")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GROUP 13 — Pre-query validation: no DB access for invalid filters
+#
+# Each test installs a sentinel on _lm_query_closed_paper_trades_from_filters
+# that sets called["query"]=True if the DB path is ever reached. Invalid
+# filters must return before the sentinel fires.
+# ═══════════════════════════════════════════════════════════════════════════════
+print("\n── GROUP 13: invalid filters must not reach DB query ───────────────────")
+
+def _make_sentinel():
+    tracker = {"called": False}
+    _saved  = pp._lm_query_closed_paper_trades_from_filters
+
+    def _sentinel(user_id, filters):
+        tracker["called"] = True
+        return [], dict(_EMPTY_QMETA)
+
+    pp._lm_query_closed_paper_trades_from_filters = _sentinel
+    return tracker, _saved
+
+def _restore_sentinel(saved):
+    pp._lm_query_closed_paper_trades_from_filters = saved
+
+# 13-1: Invalid symbol characters — query must NOT be called
+tracker, saved = _make_sentinel()
+r = pp._lm_get_paper_performance_state(1, symbol="BTC!!!", symbol_supplied=True)
+_restore_sentinel(saved)
+_check("13-1 invalid symbol chars → ok=False",       r.get("ok") is False)
+_check("13-1 invalid symbol chars → no DB query",    not tracker["called"])
+_check("13-1 invalid symbol chars → correct error",  r.get("error") == "invalid_performance_filter")
+_check("13-1 field_errors.symbol = invalid_symbol",  (r.get("field_errors") or {}).get("symbol") == "invalid_symbol")
+
+# 13-2: Symbol longer than 30 chars — query must NOT be called
+tracker, saved = _make_sentinel()
+r = pp._lm_get_paper_performance_state(1, symbol="B" * 31, symbol_supplied=True)
+_restore_sentinel(saved)
+_check("13-2 symbol >30 chars → ok=False",    r.get("ok") is False)
+_check("13-2 symbol >30 chars → no DB query", not tracker["called"])
+
+# 13-3: Explicit blank symbol — query must NOT be called
+tracker, saved = _make_sentinel()
+r = pp._lm_get_paper_performance_state(1, symbol="", symbol_supplied=True)
+_restore_sentinel(saved)
+_check("13-3 explicit blank symbol → ok=False",    r.get("ok") is False)
+_check("13-3 explicit blank symbol → no DB query", not tracker["called"])
+_check("13-3 explicit blank → field_errors.symbol", (r.get("field_errors") or {}).get("symbol") == "invalid_symbol")
+
+# 13-4: Whitespace-only symbol — query must NOT be called
+tracker, saved = _make_sentinel()
+r = pp._lm_get_paper_performance_state(1, symbol="   ", symbol_supplied=True)
+_restore_sentinel(saved)
+_check("13-4 whitespace-only symbol → ok=False",    r.get("ok") is False)
+_check("13-4 whitespace-only symbol → no DB query", not tracker["called"])
+_check("13-4 whitespace-only → field_errors.symbol", (r.get("field_errors") or {}).get("symbol") == "invalid_symbol")
+
+# 13-5: Invalid side — query must NOT be called
+tracker, saved = _make_sentinel()
+r = pp._lm_get_paper_performance_state(1, side="diagonal")
+_restore_sentinel(saved)
+_check("13-5 invalid side → ok=False",    r.get("ok") is False)
+_check("13-5 invalid side → no DB query", not tracker["called"])
+_check("13-5 invalid side → field_errors.side", (r.get("field_errors") or {}).get("side") is not None)
+
+# 13-6: Invalid item_id — query must NOT be called
+tracker, saved = _make_sentinel()
+r = pp._lm_get_paper_performance_state(1, item_id="abc")
+_restore_sentinel(saved)
+_check("13-6 invalid item_id → ok=False",    r.get("ok") is False)
+_check("13-6 invalid item_id → no DB query", not tracker["called"])
+
+# 13-7: Omitted symbol (symbol_supplied=False, symbol=None) — query MUST be called
+tracker, saved = _make_sentinel()
+r = pp._lm_get_paper_performance_state(1, symbol=None, symbol_supplied=False)
+_restore_sentinel(saved)
+_check("13-7 omitted symbol → ok=True",       r.get("ok") is True)
+_check("13-7 omitted symbol → DB query called", tracker["called"])
+
+# 13-8: Valid lowercase symbol (symbol_supplied=True) — normalized, query IS called
+tracker, saved = _make_sentinel()
+r = pp._lm_get_paper_performance_state(1, symbol="btcusdt", symbol_supplied=True)
+_restore_sentinel(saved)
+_check("13-8 valid lowercase symbol → ok=True",   r.get("ok") is True)
+_check("13-8 valid lowercase symbol → DB called",  tracker["called"])
+_check("13-8 valid lowercase → normalized in filters",
+       (r.get("filters") or {}).get("symbol") == "BTCUSDT")
+
+# 13-9: Validated filters are NOT rebuilt inside the query helper
+# Verify that the filter object passed to the query carries the same timestamp as built
+tracker, saved = _make_sentinel()
+_captured = {}
+def _capture_sentinel(user_id, filters):
+    _captured["filters"] = dict(filters)
+    tracker["called"] = True
+    return [], dict(_EMPTY_QMETA)
+pp._lm_query_closed_paper_trades_from_filters = _capture_sentinel
+r = pp._lm_get_paper_performance_state(1, symbol="ETHUSDT", symbol_supplied=True, period="7d")
+pp._lm_query_closed_paper_trades_from_filters = saved
+_check("13-9 filters passed to query match built filters",
+       _captured.get("filters", {}).get("symbol") == "ETHUSDT"
+       and _captured.get("filters", {}).get("period") == "7d")
+_check("13-9 filters not rebuilt — same object shape",
+       "_from_dt" in _captured.get("filters", {}))
+
+# 13-10: Invalid filter → account summary helper NOT called
+# _build_account_context calls _lm_get_paper_account_summary — stub it
+_acct_called = {"called": False}
+_orig_acct = pp._build_account_context
+def _acct_sentinel(uid):
+    _acct_called["called"] = True
+    return {}
+pp._build_account_context = _acct_sentinel
+
+tracker, saved = _make_sentinel()
+r = pp._lm_get_paper_performance_state(1, symbol="INVALID!!!", symbol_supplied=True)
+_restore_sentinel(saved)
+pp._build_account_context = _orig_acct
+_check("13-10 invalid filter → account context not called", not _acct_called["called"])
+
+# ── 13-A: symbol_supplied flag contract via _lm_build_paper_performance_filters ──
+
+# symbol_supplied=False + symbol=None → no filter, no error (omitted)
+f_omit = pp._lm_build_paper_performance_filters(1, symbol=None, symbol_supplied=False)
+_check("13-A1 omitted symbol → no _symbol_err and sym=None",
+       f_omit["_symbol_err"] is None and f_omit["symbol"] is None)
+
+# symbol_supplied=True + symbol="" → invalid_symbol
+f_blank = pp._lm_build_paper_performance_filters(1, symbol="", symbol_supplied=True)
+_check("13-A2 supplied blank → _symbol_err=invalid_symbol",
+       f_blank["_symbol_err"] == "invalid_symbol")
+
+# symbol_supplied=True + symbol="   " → invalid_symbol
+f_ws = pp._lm_build_paper_performance_filters(1, symbol="   ", symbol_supplied=True)
+_check("13-A3 supplied whitespace → _symbol_err=invalid_symbol",
+       f_ws["_symbol_err"] == "invalid_symbol")
+
+# symbol_supplied=True + valid symbol → normalized, no error
+f_valid = pp._lm_build_paper_performance_filters(1, symbol="eth-usdt", symbol_supplied=True)
+_check("13-A4 supplied valid → sym normalized, no error",
+       f_valid["symbol"] == "ETH-USDT" and f_valid["_symbol_err"] is None)
+
+# symbol_supplied=True + HTML → invalid_symbol
+f_html = pp._lm_build_paper_performance_filters(1, symbol="<script>", symbol_supplied=True)
+_check("13-A5 supplied HTML → invalid_symbol", f_html["_symbol_err"] == "invalid_symbol")
+
+# symbol_supplied=True + internal space → invalid_symbol
+f_space = pp._lm_build_paper_performance_filters(1, symbol="BTC USDT", symbol_supplied=True)
+_check("13-A6 supplied internal space → invalid_symbol", f_space["_symbol_err"] == "invalid_symbol")
+
+# symbol_supplied=True + length exactly 30 → valid
+f_30 = pp._lm_build_paper_performance_filters(1, symbol="A" * 30, symbol_supplied=True)
+_check("13-A7 supplied 30-char symbol → valid", f_30["symbol"] == "A" * 30)
+
+# symbol_supplied=True + length 31 → invalid_symbol
+f_31 = pp._lm_build_paper_performance_filters(1, symbol="A" * 31, symbol_supplied=True)
+_check("13-A8 supplied 31-char symbol → invalid_symbol", f_31["_symbol_err"] == "invalid_symbol")
+
+# ── 13-B: _lm_validate_paper_performance_filters helper ──────────────────────
+
+errs_none = pp._lm_validate_paper_performance_filters(
+    {"_symbol_err": None, "_side_err": None, "_item_id_err": None})
+_check("13-B1 all None errors → empty dict", errs_none == {})
+
+errs_sym = pp._lm_validate_paper_performance_filters(
+    {"_symbol_err": "invalid_symbol", "_side_err": None, "_item_id_err": None})
+_check("13-B2 symbol error → field_errors.symbol", errs_sym == {"symbol": "invalid_symbol"})
+
+errs_multi = pp._lm_validate_paper_performance_filters(
+    {"_symbol_err": "invalid_symbol", "_side_err": "invalid_performance_filter",
+     "_item_id_err": "must_be_positive_integer"})
+_check("13-B3 all three errors → all three keys",
+       set(errs_multi.keys()) == {"symbol", "side", "item_id"})
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

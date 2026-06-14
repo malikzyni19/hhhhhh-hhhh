@@ -147,22 +147,35 @@ def _lm_normalize_performance_period(period) -> str:
 
 def _lm_build_paper_performance_filters(
     user_id,
-    period  = "30d",
-    symbol  = None,
-    side    = None,
-    item_id = None,
+    period          = "30d",
+    symbol          = None,
+    side            = None,
+    item_id         = None,
+    symbol_supplied = False,
 ) -> dict:
     period  = _lm_normalize_performance_period(period)
     now_utc = datetime.now(timezone.utc)
     from_dt = None if period == "all" else now_utc - timedelta(days=_PERIOD_DAYS[period])
 
-    # Symbol: trim + uppercase + strict validation (A-Z, 0-9, -, /, _, :)
+    # Symbol: distinguish omitted from explicitly supplied blank/invalid.
+    # symbol_supplied=True: any value (including blank) was passed by the caller.
+    # symbol_supplied=False: symbol parameter was omitted — no filter, no error.
     sym     = None
     sym_err = None
-    if symbol:
+    if symbol_supplied:
+        sym_raw = str(symbol).strip().upper() if symbol is not None else ""
+        if not sym_raw:
+            # Explicit blank or whitespace-only → always invalid
+            sym_err = "invalid_symbol"
+        elif not _re.fullmatch(r'[A-Z0-9/_:-]{1,30}', sym_raw):
+            sym_err = "invalid_symbol"
+        else:
+            sym = sym_raw
+    elif symbol:
+        # Backwards-compat path: internal callers that supply symbol without the flag
         sym_raw = str(symbol).strip().upper()
         if sym_raw:
-            if len(sym_raw) > 30 or not _re.match(r'^[A-Z0-9\-/_:]+$', sym_raw):
+            if not _re.fullmatch(r'[A-Z0-9/_:-]{1,30}', sym_raw):
                 sym_err = "invalid_symbol"
             else:
                 sym = sym_raw
@@ -196,35 +209,51 @@ def _lm_build_paper_performance_filters(
         "date_from": from_dt.isoformat() if from_dt else None,
         "date_to":   now_utc.isoformat(),
         # Internal keys
-        "_from_dt":     from_dt,
-        "_to_dt":       now_utc,
-        "_symbol_err":  sym_err,
-        "_side_err":    side_err,
-        "_item_id_err": item_id_err,
+        "_from_dt":       from_dt,
+        "_to_dt":         now_utc,
+        "_symbol_err":    sym_err,
+        "_symbol_supplied": symbol_supplied,
+        "_side_err":      side_err,
+        "_item_id_err":   item_id_err,
     }
+
+
+# ── Filter validation helper ──────────────────────────────────────────────────
+
+def _lm_validate_paper_performance_filters(filters: dict) -> dict:
+    """Return a field_errors dict. Empty dict means all filters are valid.
+
+    Must be called BEFORE any SQL query. The state getter uses this to gate
+    all database access — no query may run when field_errors is non-empty.
+    """
+    errs: dict = {}
+    if filters.get("_symbol_err"):
+        errs["symbol"]  = filters["_symbol_err"]
+    if filters.get("_side_err"):
+        errs["side"]    = filters["_side_err"]
+    if filters.get("_item_id_err"):
+        errs["item_id"] = filters["_item_id_err"]
+    return errs
 
 
 # ── Query ─────────────────────────────────────────────────────────────────────
 
-def _lm_query_closed_paper_trades(
-    user_id,
-    period  = "30d",
-    symbol  = None,
-    side    = None,
-    item_id = None,
-) -> tuple:
-    """Return (trades_list, filters_dict, query_meta).
+def _lm_query_closed_paper_trades_from_filters(user_id, filters: dict) -> tuple:
+    """Execute analytics queries using an already-built, validated filter dict.
 
-    Canonical performance timestamp: coalesce(closed_at, updated_at, created_at).
-    Case-insensitive closed-status filter.
-    Counts total_available before applying the row limit.
-    Deduplicates by position_id (belt-and-suspenders above DB UNIQUE).
+    Returns (trades_list, query_meta) — 2-tuple. Caller already holds the filter dict.
+
+    CRITICAL: raises ValueError if called with invalid filters. All callers must
+    run _lm_validate_paper_performance_filters() first and return early on errors.
+    This is a defensive belt-and-suspenders check — normal flow prevents it.
     """
+    field_errors = _lm_validate_paper_performance_filters(filters)
+    if field_errors:
+        raise ValueError(f"unvalidated_performance_filters:{list(field_errors.keys())}")
+
     from models import LiveMonitorPaperTrade as _T
+    f = filters
 
-    f = _lm_build_paper_performance_filters(user_id, period, symbol, side, item_id)
-
-    # Canonical performance timestamp SQL expression
     _perf_ts = _sa_func.coalesce(_T.closed_at, _T.updated_at, _T.created_at)
 
     def _base_q():
@@ -241,13 +270,11 @@ def _lm_query_closed_paper_trades(
             q = q.filter(_perf_ts <= f["_to_dt"])
         return q
 
-    # Total qualifying rows (before limit) — separate COUNT query
     try:
         total_available = _base_q().count()
     except Exception:
         total_available = None
 
-    # Count closed trades with NULL PnL in the same scope (for data quality)
     missing_pnl_db = 0
     try:
         q_null = _T.query.filter(
@@ -265,12 +292,10 @@ def _lm_query_closed_paper_trades(
     except Exception:
         missing_pnl_db = 0
 
-    # Fetch ordered by canonical timestamp, bounded
-    rows       = _base_q().order_by(_perf_ts.asc()).limit(_MAX_ROWS).all()
+    rows        = _base_q().order_by(_perf_ts.asc()).limit(_MAX_ROWS).all()
     rows_loaded = len(rows)
     truncated   = (total_available is not None) and (total_available > _MAX_ROWS)
 
-    # Python-side: detect any Numeric column values that still can't parse
     invalid_pnl_c = 0
     valid_rows    = []
     for t in rows:
@@ -280,8 +305,7 @@ def _lm_query_closed_paper_trades(
             valid_rows.append(t)
     rows = valid_rows
 
-    # Deduplicate by position_id
-    seen:   set  = set()
+    seen:    set  = set()
     deduped: list = []
     for t in rows:
         pid = getattr(t, "position_id", None)
@@ -300,7 +324,28 @@ def _lm_query_closed_paper_trades(
         "invalid_pnl_c":   invalid_pnl_c,
     }
 
-    return deduped, f, query_meta
+    return deduped, query_meta
+
+
+def _lm_query_closed_paper_trades(
+    user_id,
+    period  = "30d",
+    symbol  = None,
+    side    = None,
+    item_id = None,
+) -> tuple:
+    """Public helper: build filters, validate, query. Returns (trades, filters, query_meta).
+
+    Kept for backwards compatibility. Internal analytics use
+    _lm_query_closed_paper_trades_from_filters() with a pre-validated filter dict.
+    Raises ValueError on invalid filters rather than silently broadening the query.
+    """
+    f = _lm_build_paper_performance_filters(user_id, period, symbol, side, item_id)
+    field_errors = _lm_validate_paper_performance_filters(f)
+    if field_errors:
+        raise ValueError(f"invalid_performance_filters:{field_errors}")
+    trades, query_meta = _lm_query_closed_paper_trades_from_filters(user_id, f)
+    return trades, f, query_meta
 
 
 # ── Core metrics ──────────────────────────────────────────────────────────────
@@ -1042,18 +1087,43 @@ def _build_account_context(user_id) -> dict:
 
 def _lm_get_paper_performance_state(
     user_id,
-    period  = "30d",
-    symbol  = None,
-    side    = None,
-    item_id = None,
+    period          = "30d",
+    symbol          = None,
+    side            = None,
+    item_id         = None,
+    symbol_supplied = False,
 ) -> dict:
-    """Build complete paper performance dashboard state. Read-only analytics."""
+    """Build complete paper performance dashboard state. Read-only analytics.
+
+    Filter validation happens BEFORE any SQL query. An invalid filter never
+    broadens into a wider query — it returns an error response immediately.
+    """
     now_iso = datetime.now(timezone.utc).isoformat()
 
+    # ── Step 1: build filters (pure Python, no DB) ────────────────────────────
+    f = _lm_build_paper_performance_filters(
+        user_id, period, symbol, side, item_id,
+        symbol_supplied=symbol_supplied,
+    )
+    pub_f = {k: v for k, v in f.items() if not k.startswith("_")}
+
+    # ── Step 2: validate — return immediately, no SQL yet ─────────────────────
+    field_errors = _lm_validate_paper_performance_filters(f)
+    if field_errors:
+        return {
+            "ok":           False,
+            "phase":        _PHASE,
+            "error":        "invalid_performance_filter",
+            "field_errors": field_errors,
+            "filters":      pub_f,
+            "guardrails":   dict(_GUARDRAILS),
+            "source":       "internal_paper_performance",
+            "computed_at":  now_iso,
+        }
+
+    # ── Step 3: query using the same validated filter object (no rebuild) ─────
     try:
-        trades, f, qmeta = _lm_query_closed_paper_trades(
-            user_id, period, symbol, side, item_id
-        )
+        trades, qmeta = _lm_query_closed_paper_trades_from_filters(user_id, f)
     except Exception as _e:
         return {
             "ok":          False,
@@ -1063,21 +1133,6 @@ def _lm_get_paper_performance_state(
             "source":      "internal_paper_performance",
             "computed_at": now_iso,
         }
-
-    pub_f = {k: v for k, v in f.items() if not k.startswith("_")}
-
-    # Validate filters
-    _filter_err_base = {
-        "phase": _PHASE, "error": "invalid_performance_filter",
-        "filters": pub_f, "guardrails": dict(_GUARDRAILS),
-        "source": "internal_paper_performance", "computed_at": now_iso,
-    }
-    if f.get("_item_id_err"):
-        return {"ok": False, "field_errors": {"item_id": f["_item_id_err"]}, **_filter_err_base}
-    if f.get("_side_err"):
-        return {"ok": False, "field_errors": {"side": f["_side_err"]}, **_filter_err_base}
-    if f.get("_symbol_err"):
-        return {"ok": False, "field_errors": {"symbol": f["_symbol_err"]}, **_filter_err_base}
 
     query_section = {
         "row_limit":       qmeta["row_limit"],
@@ -1154,6 +1209,10 @@ def _lm_get_paper_performance_state(
 
 def _lm_build_paper_performance_summary(
     user_id, period="30d", symbol=None, side=None, item_id=None,
+    symbol_supplied=False,
 ) -> dict:
     """Alias for _lm_get_paper_performance_state."""
-    return _lm_get_paper_performance_state(user_id, period, symbol, side, item_id)
+    return _lm_get_paper_performance_state(
+        user_id, period, symbol, side, item_id,
+        symbol_supplied=symbol_supplied,
+    )

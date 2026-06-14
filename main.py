@@ -29393,12 +29393,17 @@ def api_lm_paper_risk_guard_settings_update(item_id):
 @login_required
 def api_lm_paper_performance():
     """GET: Return paper performance dashboard analytics for the current user. Read-only."""
-    uid    = current_user.id
-    period = (request.args.get("period") or "30d").strip()
-    symbol = (request.args.get("symbol") or "").strip() or None
-    side   = (request.args.get("side")   or "").strip() or None
-    result = _lm_get_paper_performance_state(uid, period=period, symbol=symbol, side=side)
-    code   = 200 if result.get("ok") else 400
+    uid             = current_user.id
+    period          = (request.args.get("period") or "30d").strip()
+    symbol_supplied = "symbol" in request.args
+    symbol          = request.args.get("symbol", "").strip() if symbol_supplied else None
+    side            = (request.args.get("side") or "").strip() or None
+    result = _lm_get_paper_performance_state(
+        uid, period=period,
+        symbol=symbol, symbol_supplied=symbol_supplied,
+        side=side,
+    )
+    code = 200 if result.get("ok") else 400
     return jsonify(result), code
 
 
@@ -29411,11 +29416,18 @@ def api_lm_item_paper_performance(item_id):
     item = _LMI1114p.query.filter_by(id=item_id, user_id=uid).first()
     if item is None:
         return jsonify({"ok": False, "error": "item_not_found"}), 404
-    period = (request.args.get("period") or "30d").strip()
-    symbol = (request.args.get("symbol") or getattr(item, "symbol", None) or "").strip() or None
-    side   = (request.args.get("side")   or "").strip() or None
-    result = _lm_get_paper_performance_state(uid, period=period, symbol=symbol, side=side, item_id=item_id)
-    code   = 200 if result.get("ok") else 400
+    period          = (request.args.get("period") or "30d").strip()
+    symbol_supplied = "symbol" in request.args
+    # If user supplied ?symbol=..., use it (validated by filter builder).
+    # If omitted, fall back to the item's own symbol — not user-supplied, no blank check.
+    symbol = request.args.get("symbol", "").strip() if symbol_supplied else getattr(item, "symbol", None)
+    side   = (request.args.get("side") or "").strip() or None
+    result = _lm_get_paper_performance_state(
+        uid, period=period,
+        symbol=symbol, symbol_supplied=symbol_supplied,
+        side=side, item_id=item_id,
+    )
+    code = 200 if result.get("ok") else 400
     return jsonify(result), code
 
 

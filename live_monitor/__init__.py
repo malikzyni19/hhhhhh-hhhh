@@ -75,7 +75,9 @@ from live_monitor.testnet_order_draft import (
 from live_monitor.paper_performance import (
     _lm_normalize_performance_period,
     _lm_build_paper_performance_filters,
+    _lm_validate_paper_performance_filters,
     _lm_query_closed_paper_trades,
+    _lm_query_closed_paper_trades_from_filters,
     _lm_get_paper_performance_state,
     _lm_build_paper_performance_summary,
 )
@@ -201,7 +203,9 @@ __all__ = [
     # Phase 11.14: Paper Performance Dashboard
     "_lm_normalize_performance_period",
     "_lm_build_paper_performance_filters",
+    "_lm_validate_paper_performance_filters",
     "_lm_query_closed_paper_trades",
+    "_lm_query_closed_paper_trades_from_filters",
     "_lm_get_paper_performance_state",
     "_lm_build_paper_performance_summary",
     # Phase 11.13: Paper Risk Guard
