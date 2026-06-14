@@ -13053,7 +13053,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     batchData:null,batchCharts:{},compareMode:"mtf",batchTf:"4h",
     batchRuns:{"1h":null,"4h":null},
     stabilityData:null,stabilityRunning:false,
-    stabilityRrView:"all",stabCharts:{}};
+    stabilityRrView:"all",stabCharts:{},
+    wfData:null,wfRunning:false,wfFoldView:1,wfCharts:{}};
 
   function _bindBtSidebarEvents(aside){
     [].forEach.call(aside.querySelectorAll("[data-btpage]"),function(item){
@@ -14893,6 +14894,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         '<button class="bt-compare-tab'+(mode==="mtf"?" active":"")+'" data-cmode="mtf">Timeframe Compare</button>'+
         '<button class="bt-compare-tab'+(mode==="batch"?" active":"")+'" data-cmode="batch">Pair Batch</button>'+
         '<button class="bt-compare-tab'+(mode==="stability"?" active":"")+'" data-cmode="stability">Stability Lab</button>'+
+        '<button class="bt-compare-tab'+(mode==="walkforward"?" active":"")+'" data-cmode="walkforward">Walk-Forward</button>'+
       '</div>'+
       '<div id="btCompareModeContent"></div>';
     [].forEach.call(el.querySelectorAll("[data-cmode]"),function(btn){
@@ -14903,6 +14905,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     });
     if(mode==="mtf") _btRenderMtfMode();
     else if(mode==="stability") _btRenderStabilityMode();
+    else if(mode==="walkforward") _btRenderWalkForwardMode();
     else _btRenderBatchMode();
   }
 
@@ -15427,6 +15430,389 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       rows.push(cols.map(function(c){return _btCsvVal(row[c]);}).join(","));
     });
     _btDownloadBlob("zyni_stability_aggregate_"+Date.now()+".csv",rows.join("\r\n"),"text/csv");
+  }
+
+  /* ── Walk-Forward Lab ────────────────────────────────────────────────────── */
+
+  function _btRenderWalkForwardMode(){
+    var el=document.getElementById("btCompareModeContent"); if(!el) return;
+    var wf=_btState.wfData&&_btState.wfData.walk_forward||null;
+    var running=_btState.wfRunning||false;
+
+    var html='<div style="padding:12px 0">';
+
+    /* ── Controls ── */
+    html+='<div class="bt-stab-header" style="margin-bottom:10px">';
+    html+='<span style="font-size:13px;font-weight:600;color:var(--text-1)">Walk-Forward Validation — Chronological OOS Test</span>';
+    html+='</div>';
+
+    /* Candidate mode selector */
+    var mode=_btState.wfCandMode||"locked";
+    html+='<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">';
+    html+='<span style="font-size:11px;color:var(--text-2);font-weight:600">Candidate Mode:</span>';
+    ['locked','train_selected'].forEach(function(m){
+      var lbl=m==="locked"?"Locked (fixed candidate)":"Train-Selected (per fold)";
+      html+='<button class="bt-rr-btn'+(mode===m?" active":"")+'" data-wfmode="'+m+'" style="font-size:11px">'+lbl+'</button>';
+    });
+    html+='</div>';
+
+    /* Locked-mode candidate inputs */
+    if(mode==="locked"){
+      var cThr=_btState.wfCandThr||40;
+      var cRR=_btState.wfCandRR||"2";
+      html+='<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px">';
+      html+='<span style="font-size:11px;color:var(--text-2);font-weight:600">Candidate Threshold%:</span>';
+      [20,40,60,80].forEach(function(t){
+        html+='<button class="bt-rr-btn'+(cThr===t?" active":"")+'" data-wfthr="'+t+'" style="font-size:11px">'+t+'%</button>';
+      });
+      html+='<span style="font-size:11px;color:var(--text-2);font-weight:600;margin-left:8px">Candidate RR:</span>';
+      ["1","2","3"].forEach(function(r){
+        html+='<button class="bt-rr-btn'+(cRR===r?" active":"")+'" data-wfrr="'+r+'" style="font-size:11px">'+r+'R</button>';
+      });
+      html+='</div>';
+    }
+
+    /* Symbols selector (reuse stability state) */
+    var allSyms=["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT"];
+    var selSyms=_btState.wfSelSyms||["BTCUSDT","ETHUSDT"];
+    html+='<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px">';
+    html+='<span style="font-size:11px;color:var(--text-2);font-weight:600">Symbols:</span>';
+    allSyms.forEach(function(s){
+      var on=selSyms.indexOf(s)>=0;
+      html+='<button class="bt-rr-btn'+(on?" active":"")+'" data-wfsym="'+s+'" style="font-size:10px">'+s+'</button>';
+    });
+    html+='</div>';
+
+    /* Timeframes */
+    var selTfs=_btState.wfSelTfs||["1h","4h"];
+    html+='<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px">';
+    html+='<span style="font-size:11px;color:var(--text-2);font-weight:600">Timeframes:</span>';
+    ["1h","4h"].forEach(function(tf){
+      var on=selTfs.indexOf(tf)>=0;
+      html+='<button class="bt-rr-btn'+(on?" active":"")+'" data-wftf="'+tf+'" style="font-size:11px">'+tf+'</button>';
+    });
+    html+='</div>';
+
+    /* Fold/candle settings */
+    var wfCandles=_btState.wfCandles||1000;
+    var wfFolds=_btState.wfFolds||4;
+    var wfTrainPct=_btState.wfTrainPct||40;
+    var wfTestPct=_btState.wfTestPct||15;
+    html+='<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px">';
+    html+='<span style="font-size:11px;color:var(--text-2);font-weight:600">Candles:</span>';
+    [500,1000,2000].forEach(function(c){
+      html+='<button class="bt-rr-btn'+(wfCandles===c?" active":"")+'" data-wfcandles="'+c+'" style="font-size:11px">'+c+'</button>';
+    });
+    html+='<span style="font-size:11px;color:var(--text-2);font-weight:600;margin-left:8px">Folds:</span>';
+    [3,4,5].forEach(function(f){
+      html+='<button class="bt-rr-btn'+(wfFolds===f?" active":"")+'" data-wffolds="'+f+'" style="font-size:11px">'+f+'</button>';
+    });
+    html+='<span style="font-size:11px;color:var(--text-2);font-weight:600;margin-left:8px">Init Train%:</span>';
+    [35,40,50].forEach(function(p){
+      html+='<button class="bt-rr-btn'+(wfTrainPct===p?" active":"")+'" data-wftrainpct="'+p+'" style="font-size:11px">'+p+'%</button>';
+    });
+    html+='<span style="font-size:11px;color:var(--text-2);font-weight:600;margin-left:8px">Test%:</span>';
+    [10,15,20].forEach(function(p){
+      html+='<button class="bt-rr-btn'+(wfTestPct===p?" active":"")+'" data-wftestpct="'+p+'" style="font-size:11px">'+p+'%</button>';
+    });
+    html+='</div>';
+
+    /* Run button */
+    html+='<div style="margin-bottom:12px">';
+    html+='<button id="btWfRunBtn" class="bt-run-btn" style="font-size:12px;padding:6px 18px" '+(running?"disabled":"")+'>'+
+      (running?'&#9733; Running…':'&#9654; Run Walk-Forward')+'</button>';
+    if(wf){
+      var st=wf.status||"";
+      var stColor=st==="PASS"?"#22c55e":st==="FAIL"?"#ef4444":st==="ADVISORY"?"#f59e0b":"#94a3b8";
+      html+=' <span style="margin-left:10px;font-size:12px;font-weight:700;color:'+stColor+'">'+st+'</span>';
+      if(wf.elapsed_ms!=null) html+=' <span style="font-size:10px;color:var(--text-3);margin-left:6px">'+wf.elapsed_ms+'ms</span>';
+    }
+    html+='</div>';
+
+    /* Results */
+    html+='<div id="btWfResults">';
+    if(running){
+      html+='<div style="font-size:12px;color:var(--text-2);padding:12px">Running walk-forward validation…</div>';
+    } else if(wf){
+      html+=_btWfSummaryCardsHtml(wf);
+      html+=_btWfFoldTableHtml(wf);
+      /* Charts placeholder — filled by _btWfBuildCharts */
+      html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">';
+      html+='<div><div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">OOS Expectancy by Fold</div><canvas id="btWfChart1" height="160"></canvas></div>';
+      html+='<div><div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">Expectancy Delta vs Baseline</div><canvas id="btWfChart2" height="160"></canvas></div>';
+      html+='<div><div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">OOS Trade Retention % by Fold</div><canvas id="btWfChart3" height="160"></canvas></div>';
+      html+='<div><div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">Training vs OOS Expectancy</div><canvas id="btWfChart4" height="160"></canvas></div>';
+      html+='</div>';
+      /* Exports */
+      html+='<div style="display:flex;gap:8px;margin-top:10px">';
+      html+='<button class="bt-export-btn" onclick="_btWfExportJson(_btState.wfData)">Export JSON</button>';
+      html+='<button class="bt-export-btn" onclick="_btWfExportFoldCsv(_btState.wfData)">Export Folds CSV</button>';
+      html+='<button class="bt-export-btn" onclick="_btWfExportCellCsv(_btState.wfData)">Export Cell-Fold CSV</button>';
+      html+='</div>';
+    } else {
+      html+='<div style="font-size:12px;color:var(--text-2);padding:12px">Select symbols, timeframes and run Walk-Forward validation.</div>';
+    }
+    html+='</div>';
+    html+='</div>';
+
+    el.innerHTML=html;
+
+    /* Bind controls */
+    [].forEach.call(el.querySelectorAll("[data-wfmode]"),function(b){
+      b.addEventListener("click",function(){_btState.wfCandMode=b.getAttribute("data-wfmode");_btRenderWalkForwardMode();});
+    });
+    [].forEach.call(el.querySelectorAll("[data-wfthr]"),function(b){
+      b.addEventListener("click",function(){_btState.wfCandThr=parseInt(b.getAttribute("data-wfthr"));_btRenderWalkForwardMode();});
+    });
+    [].forEach.call(el.querySelectorAll("[data-wfrr]"),function(b){
+      b.addEventListener("click",function(){_btState.wfCandRR=b.getAttribute("data-wfrr");_btRenderWalkForwardMode();});
+    });
+    [].forEach.call(el.querySelectorAll("[data-wfsym]"),function(b){
+      b.addEventListener("click",function(){
+        var s=b.getAttribute("data-wfsym");
+        var arr=(_btState.wfSelSyms||[]).slice();
+        var i=arr.indexOf(s); if(i>=0) arr.splice(i,1); else arr.push(s);
+        _btState.wfSelSyms=arr; _btRenderWalkForwardMode();
+      });
+    });
+    [].forEach.call(el.querySelectorAll("[data-wftf]"),function(b){
+      b.addEventListener("click",function(){
+        var tf=b.getAttribute("data-wftf");
+        var arr=(_btState.wfSelTfs||[]).slice();
+        var i=arr.indexOf(tf); if(i>=0) arr.splice(i,1); else arr.push(tf);
+        _btState.wfSelTfs=arr; _btRenderWalkForwardMode();
+      });
+    });
+    [].forEach.call(el.querySelectorAll("[data-wfcandles]"),function(b){
+      b.addEventListener("click",function(){_btState.wfCandles=parseInt(b.getAttribute("data-wfcandles"));_btRenderWalkForwardMode();});
+    });
+    [].forEach.call(el.querySelectorAll("[data-wffolds]"),function(b){
+      b.addEventListener("click",function(){_btState.wfFolds=parseInt(b.getAttribute("data-wffolds"));_btRenderWalkForwardMode();});
+    });
+    [].forEach.call(el.querySelectorAll("[data-wftrainpct]"),function(b){
+      b.addEventListener("click",function(){_btState.wfTrainPct=parseInt(b.getAttribute("data-wftrainpct"));_btRenderWalkForwardMode();});
+    });
+    [].forEach.call(el.querySelectorAll("[data-wftestpct]"),function(b){
+      b.addEventListener("click",function(){_btState.wfTestPct=parseInt(b.getAttribute("data-wftestpct"));_btRenderWalkForwardMode();});
+    });
+    var runBtn=document.getElementById("btWfRunBtn");
+    if(runBtn) runBtn.addEventListener("click",_btRunWalkForward);
+
+    if(wf) _btWfBuildCharts(wf);
+  }
+
+  function _btRunWalkForward(){
+    var syms=(_btState.wfSelSyms||[]).slice();
+    var tfs=(_btState.wfSelTfs||[]).slice();
+    if(!syms.length||!tfs.length){
+      var re=document.getElementById("btWfResults");
+      if(re) re.innerHTML='<div class="bt-mtf-err">Select at least one symbol and one timeframe.</div>';
+      return;
+    }
+    if(syms.length>5||tfs.length>2){
+      var re2=document.getElementById("btWfResults");
+      if(re2) re2.innerHTML='<div class="bt-mtf-err">Max 5 symbols × 2 timeframes.</div>';
+      return;
+    }
+    var mode=_btState.wfCandMode||"locked";
+    var payload={
+      symbols:syms,
+      timeframes:tfs,
+      candle_count:_btState.wfCandles||1000,
+      rr_values:[1,2,3],
+      candidate_mode:mode,
+      fold_count:_btState.wfFolds||4,
+      initial_train_pct:_btState.wfTrainPct||40,
+      test_pct:_btState.wfTestPct||15,
+      primary_metric:"before_first_touch"
+    };
+    if(mode==="locked"){
+      payload.candidate_threshold_pct=_btState.wfCandThr||40;
+      payload.candidate_rr=_btState.wfCandRR||"2";
+    }
+    _btState.wfRunning=true;
+    _btRenderWalkForwardMode();
+    fetch("/api/backtest/ob-historical/threshold-walk-forward",{
+      method:"POST",credentials:"same-origin",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(payload)
+    }).then(function(r){return r.json();}).then(function(d){
+      _btState.wfData=d;
+      _btState.wfRunning=false;
+      _btRenderWalkForwardMode();
+    }).catch(function(e){
+      _btState.wfRunning=false;
+      _btRenderWalkForwardMode();
+      var re3=document.getElementById("btWfResults");
+      if(re3) re3.innerHTML='<div class="bt-mtf-err">Walk-forward run failed: '+e+'</div>';
+    });
+  }
+
+  function _btWfSummaryCardsHtml(wf){
+    var s=wf.summary||{};
+    var boot=wf.bootstrap||{};
+    var look=wf.lookahead_audit||{};
+    var gates=wf.failed_gates||[];
+    var cand=wf.resolved_candidate||{};
+    var html='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:12px">';
+    function card(label,val,color){
+      html+='<div class="bt-stat-card"><div class="bt-stat-label">'+label+'</div>'+
+        '<div class="bt-stat-val" style="color:'+(color||"var(--text-1)")+'">'+(val==null?"—":val)+'</div></div>';
+    }
+    var st=wf.status||"—";
+    var stc=st==="PASS"?"#22c55e":st==="FAIL"?"#ef4444":st==="ADVISORY"?"#f59e0b":"#94a3b8";
+    card("Status",st,stc);
+    card("Mode",wf.candidate_mode||"—");
+    card("Candidate",cand.threshold_pct!=null?cand.threshold_pct+"% / "+cand.rr+"R":"—");
+    card("Evaluable Folds",s.evaluable_folds!=null?s.evaluable_folds+"/"+s.total_folds:"—");
+    card("OOS Trades",s.oos_trades!=null?s.oos_trades:"—");
+    card("OOS Expectancy",s.oos_expectancy_r!=null?s.oos_expectancy_r.toFixed(4)+"R":"—",
+      s.oos_expectancy_r>0?"#22c55e":s.oos_expectancy_r<0?"#ef4444":"");
+    card("OOS ΔE vs Base",s.oos_expectancy_delta_vs_baseline!=null?
+      (s.oos_expectancy_delta_vs_baseline>=0?"+":"")+s.oos_expectancy_delta_vs_baseline.toFixed(4)+"R":"—",
+      s.oos_expectancy_delta_vs_baseline>0?"#22c55e":s.oos_expectancy_delta_vs_baseline<0?"#ef4444":"");
+    card("Positive Folds",s.positive_fold_pct!=null?s.positive_fold_pct+"%":"—");
+    card("Beat Base Folds",s.beat_baseline_fold_pct!=null?s.beat_baseline_fold_pct+"%":"—");
+    card("Worst Fold",s.worst_fold_expectancy_r!=null?s.worst_fold_expectancy_r.toFixed(4)+"R":"—",
+      s.worst_fold_expectancy_r!=null&&s.worst_fold_expectancy_r>=-0.30?"inherit":"#ef4444");
+    card("CI 95% Low",boot.expectancy_delta_low!=null?boot.expectancy_delta_low.toFixed(4):"—",
+      boot.expectancy_delta_low>=0?"#22c55e":boot.expectancy_delta_low<0?"#ef4444":"");
+    card("Retention",s.oos_trade_retention_pct!=null?s.oos_trade_retention_pct+"%":"—");
+    card("Look-Ahead",look.passes?"PASS":"FAIL",look.passes?"#22c55e":"#ef4444");
+    html+='</div>';
+    if(gates&&gates.length){
+      html+='<div style="margin-bottom:8px;font-size:11px;color:#ef4444;font-weight:600">Failed gates: '+gates.join(", ")+'</div>';
+    }
+    return html;
+  }
+
+  function _btWfFoldTableHtml(wf){
+    var folds=wf.fold_aggregates||[];
+    if(!folds.length) return '';
+    var html='<div class="bt-section-title" style="margin-top:10px">Fold Summary</div>';
+    html+='<div style="overflow-x:auto"><table class="bt-table" style="font-size:10px"><thead><tr>';
+    ['Fold','Train End','Test Window','OOS Trades','OOS Exp R','ΔE vs Base','Retention%','Pos Cell%','Beat Cell%','Eligible'].forEach(function(h){
+      html+='<th>'+h+'</th>';
+    });
+    html+='</tr></thead><tbody>';
+    folds.forEach(function(f){
+      var elig=f.eligible;
+      var bg=elig?(f.oos_expectancy_r>0?"rgba(34,197,94,.07)":f.oos_expectancy_r<0?"rgba(239,68,68,.07)":""):"rgba(100,116,139,.05)";
+      html+='<tr style="background:'+bg+'">';
+      html+='<td style="text-align:center;font-weight:700">'+f.fold+'</td>';
+      html+='<td>'+f.train_candle_count+'c</td>';
+      html+='<td>'+f.test_start_index+'–'+f.test_end_index_exclusive+'</td>';
+      html+='<td>'+f.oos_trades+'</td>';
+      var expColor=f.oos_expectancy_r>0?"#22c55e":f.oos_expectancy_r<0?"#ef4444":"inherit";
+      html+='<td style="color:'+expColor+'">'+(f.oos_expectancy_r!=null?f.oos_expectancy_r.toFixed(4):"—")+'</td>';
+      var dColor=f.expectancy_delta_vs_baseline>0?"#22c55e":f.expectancy_delta_vs_baseline<0?"#ef4444":"inherit";
+      html+='<td style="color:'+dColor+'">'+(f.expectancy_delta_vs_baseline!=null?(f.expectancy_delta_vs_baseline>=0?"+":"")+f.expectancy_delta_vs_baseline.toFixed(4):"—")+'</td>';
+      html+='<td>'+(f.trade_retention_pct!=null?f.trade_retention_pct+"%":"—")+'</td>';
+      html+='<td>'+(f.positive_cell_pct!=null?f.positive_cell_pct+"%":"—")+'</td>';
+      html+='<td>'+(f.beat_baseline_cell_pct!=null?f.beat_baseline_cell_pct+"%":"—")+'</td>';
+      html+='<td style="text-align:center;color:'+(elig?"#22c55e":"#94a3b8")+'">'+(elig?"✓":"✗")+'</td>';
+      html+='</tr>';
+      /* Per-cell sub-rows */
+      (f.cells||[]).forEach(function(c){
+        var cellOk=c.ok;
+        html+='<tr style="background:rgba(0,0,0,.03);font-size:9px">';
+        html+='<td></td>';
+        html+='<td colspan="2" style="padding-left:12px;color:var(--text-2)">'+c.symbol+' '+c.timeframe+'</td>';
+        html+='<td>'+(cellOk?c.trades:"err")+'</td>';
+        html+='<td>'+(cellOk&&c.expectancy_r!=null?c.expectancy_r.toFixed(4):"—")+'</td>';
+        html+='<td>'+(cellOk&&c.expectancy_delta_vs_baseline!=null?(c.expectancy_delta_vs_baseline>=0?"+":"")+c.expectancy_delta_vs_baseline.toFixed(4):"—")+'</td>';
+        html+='<td>'+(cellOk&&c.trade_retention_pct!=null?c.trade_retention_pct+"%":"—")+'</td>';
+        html+='<td colspan="3">'+(cellOk?"":"Error: "+(c.error||"?"))+'</td>';
+        html+='</tr>';
+      });
+    });
+    html+='</tbody></table></div>';
+    return html;
+  }
+
+  function _btWfBuildCharts(wf){
+    _btState.wfCharts=_btState.wfCharts||{};
+    function dc(id){if(_btState.wfCharts[id]){try{_btState.wfCharts[id].destroy();}catch(e){}delete _btState.wfCharts[id];}}
+    dc("btWfChart1");dc("btWfChart2");dc("btWfChart3");dc("btWfChart4");
+
+    var folds=(wf.fold_aggregates||[]);
+    var labels=folds.map(function(f){return "Fold "+f.fold;});
+    var gscale={x:{ticks:{color:"#566377",font:{size:9}},grid:{color:"rgba(27,38,54,.5)"}},
+                y:{ticks:{color:"#566377",font:{size:9}},grid:{color:"rgba(27,38,54,.5)"}}};
+    var opts={responsive:true,animation:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:function(ctx){return ctx.parsed.y!=null?ctx.parsed.y.toFixed(4):"";}}}},scales:gscale};
+
+    /* Chart 1: OOS Expectancy per fold */
+    var c1=document.getElementById("btWfChart1");
+    if(c1){
+      var vals1=folds.map(function(f){return f.oos_expectancy_r!=null?f.oos_expectancy_r:null;});
+      _btState.wfCharts["btWfChart1"]=new Chart(c1,{type:"bar",data:{labels:labels,datasets:[{label:"OOS Exp R",data:vals1,
+        backgroundColor:vals1.map(function(v){return v==null?"#94a3b8":v>0?"rgba(34,197,94,.6)":"rgba(239,68,68,.6)";}),
+        borderColor:vals1.map(function(v){return v==null?"#94a3b8":v>0?"#22c55e":"#ef4444";}),borderWidth:1}]},options:opts});
+    }
+
+    /* Chart 2: Delta vs baseline per fold */
+    var c2=document.getElementById("btWfChart2");
+    if(c2){
+      var vals2=folds.map(function(f){return f.expectancy_delta_vs_baseline!=null?f.expectancy_delta_vs_baseline:null;});
+      _btState.wfCharts["btWfChart2"]=new Chart(c2,{type:"bar",data:{labels:labels,datasets:[{label:"ΔE vs Base",data:vals2,
+        backgroundColor:vals2.map(function(v){return v==null?"#94a3b8":v>0?"rgba(34,197,94,.6)":"rgba(239,68,68,.6)";}),
+        borderColor:vals2.map(function(v){return v==null?"#94a3b8":v>0?"#22c55e":"#ef4444";}),borderWidth:1}]},options:opts});
+    }
+
+    /* Chart 3: Trade retention % per fold */
+    var c3=document.getElementById("btWfChart3");
+    if(c3){
+      var vals3=folds.map(function(f){return f.trade_retention_pct!=null?f.trade_retention_pct:null;});
+      _btState.wfCharts["btWfChart3"]=new Chart(c3,{type:"line",data:{labels:labels,datasets:[{label:"Retention%",data:vals3,
+        borderColor:"#60a5fa",backgroundColor:"rgba(96,165,250,.15)",tension:.35,fill:true,pointRadius:4}]},
+        options:Object.assign({},opts,{scales:Object.assign({},gscale,{y:{ticks:{color:"#566377",font:{size:9},callback:function(v){return v+"%"}},grid:{color:"rgba(27,38,54,.5)"}}}})}});
+    }
+
+    /* Chart 4: Training vs OOS expectancy */
+    var c4=document.getElementById("btWfChart4");
+    if(c4){
+      var trainExp=(wf.summary&&wf.summary.training_expectancy_by_fold)||[];
+      var tMap={};
+      trainExp.forEach(function(te){if(te&&te.fold!=null) tMap[te.fold]=te.expectancy_r;});
+      var vt=folds.map(function(f){var v=tMap[f.fold];return v!=null?v:null;});
+      var vo=folds.map(function(f){return f.oos_expectancy_r!=null?f.oos_expectancy_r:null;});
+      _btState.wfCharts["btWfChart4"]=new Chart(c4,{type:"line",data:{labels:labels,datasets:[
+        {label:"Train Exp",data:vt,borderColor:"#f59e0b",backgroundColor:"transparent",tension:.35,pointRadius:4,borderDash:[4,2]},
+        {label:"OOS Exp",data:vo,borderColor:"#60a5fa",backgroundColor:"rgba(96,165,250,.1)",tension:.35,fill:true,pointRadius:4}
+      ]},options:Object.assign({},opts,{plugins:{legend:{display:true,labels:{color:"#94a3b8",font:{size:9}}},tooltip:{callbacks:{label:function(ctx){return ctx.dataset.label+": "+(ctx.parsed.y!=null?ctx.parsed.y.toFixed(4):"—");}}}},scales:gscale})});
+    }
+  }
+
+  function _btWfExportJson(d){
+    if(!d){alert("No walk-forward data to export.");return;}
+    _btDownloadBlob("zyni_walkforward_"+Date.now()+".json",JSON.stringify(d,null,2),"application/json");
+  }
+
+  function _btWfExportFoldCsv(d){
+    if(!d||!d.walk_forward){alert("No walk-forward data to export.");return;}
+    var folds=d.walk_forward.fold_aggregates||[];
+    if(!folds.length){alert("No fold data to export.");return;}
+    var cols=["fold","train_candle_count","test_start_index","test_end_index_exclusive","oos_trades","oos_wins","oos_losses",
+      "oos_expectancy_r","baseline_expectancy_r","expectancy_delta_vs_baseline","trade_retention_pct",
+      "oos_profit_factor_r","oos_profit_factor_infinite","oos_net_r","baseline_net_r","censored_unresolved",
+      "positive_cell_pct","beat_baseline_cell_pct","eligible"];
+    var rows=[cols.join(",")];
+    folds.forEach(function(f){rows.push(cols.map(function(c){return _btCsvVal(f[c]);}).join(","));});
+    _btDownloadBlob("zyni_wf_folds_"+Date.now()+".csv",rows.join("\r\n"),"text/csv");
+  }
+
+  function _btWfExportCellCsv(d){
+    if(!d||!d.walk_forward){alert("No walk-forward data to export.");return;}
+    var folds=d.walk_forward.fold_aggregates||[];
+    var cols=["fold","symbol","timeframe","trades","expectancy_r","expectancy_delta_vs_baseline","trade_retention_pct","net_r","eligible","ok","error"];
+    var rows=[cols.join(",")];
+    folds.forEach(function(f){
+      (f.cells||[]).forEach(function(c){
+        var r=Object.assign({fold:f.fold},c);
+        rows.push(cols.map(function(k){return _btCsvVal(r[k]);}).join(","));
+      });
+    });
+    _btDownloadBlob("zyni_wf_cells_"+Date.now()+".csv",rows.join("\r\n"),"text/csv");
   }
 
   function _btRenderMtfMode(){
