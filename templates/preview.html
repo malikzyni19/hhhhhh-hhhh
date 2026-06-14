@@ -12716,7 +12716,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     mtfData:null,mtfCharts:{},mtfTfs:["15m","1h","4h"],
     batchData:null,batchCharts:{},compareMode:"mtf",batchTf:"4h",
     batchRuns:{"1h":null,"4h":null},
-    stabilityData:null,stabilityRunning:false};
+    stabilityData:null,stabilityRunning:false,
+    stabilityRrView:"all",stabCharts:{}};
 
   function _bindBtSidebarEvents(aside){
     [].forEach.call(aside.querySelectorAll("[data-btpage]"),function(item){
@@ -14578,7 +14579,10 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 
     var symsList=["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT"];
     var tfsList=["1h","4h"];
-    var candles=500;
+    var selSyms=_btState.stabSelSyms||symsList.slice();
+    var selTfs=_btState.stabSelTfs||tfsList.slice();
+    var selCandles=_btState.stabCandles||500;
+    _btState.stabSelSyms=selSyms; _btState.stabSelTfs=selTfs; _btState.stabCandles=selCandles;
 
     el.innerHTML=
       '<div class="bt-mtf-form">'+
@@ -14586,65 +14590,91 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
           'Stability Lab — Cross-Market TV OB% Threshold Robustness Study'+
         '</div>'+
         '<div style="font-size:10px;color:var(--text-3);line-height:1.5;margin-bottom:10px">'+
-          'Runs Phase 13 threshold analysis on 5 symbols × 2 timeframes (10 cells, 500 candles each). '+
-          'Determines whether any fixed TV OB% threshold performs consistently across markets. '+
+          'Server-authoritative: the backend runs all cells itself (5 symbols × 2 timeframes, max 10 cells) and aggregates them. '+
+          'No performance data is supplied from the browser. '+
           '<strong style="color:var(--yellow)">Research only — no threshold is activated in Scanner or Monitor.</strong>'+
         '</div>'+
         '<div class="bt-mtf-form-row" style="flex-wrap:wrap;gap:6px">'+
           '<span class="bt-mtf-label">Symbols</span>'+
           '<div id="btStabSymChips">'+
             symsList.map(function(s){
-              return '<button class="bt-mtf-chip on" data-stabsym="'+s+'">'+s.replace("USDT","")+'</button>';
+              var on=selSyms.indexOf(s)>=0?" on":"";
+              return '<button class="bt-mtf-chip'+on+'" data-stabsym="'+s+'">'+s.replace("USDT","")+'</button>';
             }).join("")+
           '</div>'+
           '<span class="bt-mtf-label" style="margin-left:6px">Timeframes</span>'+
           '<div id="btStabTfChips">'+
             tfsList.map(function(tf){
-              return '<button class="bt-mtf-chip on" data-stabtf="'+tf+'">'+tf.toUpperCase()+'</button>';
+              var on=selTfs.indexOf(tf)>=0?" on":"";
+              return '<button class="bt-mtf-chip'+on+'" data-stabtf="'+tf+'">'+tf.toUpperCase()+'</button>';
             }).join("")+
           '</div>'+
+          '<span class="bt-mtf-label" style="margin-left:6px">Candles</span>'+
+          '<select id="btStabCandles" class="bt-input" style="width:auto;padding:3px 8px;font-size:11px">'+
+            [300,500].map(function(c){
+              return '<option value="'+c+'"'+(c===selCandles?' selected':'')+'>'+c+'</option>';
+            }).join("")+
+          '</select>'+
         '</div>'+
         '<div class="bt-mtf-form-row" style="margin-top:8px">'+
           '<button class="bt-mtf-run-btn" id="btStabRunBtn" style="'+(stabRunning?"opacity:.5;pointer-events:none":"")+'">'+
             (stabRunning?'&#9733; Running…':'&#9654; Run Stability Lab')+
           '</button>'+
           '<span style="font-size:10px;color:var(--text-3);margin-left:10px">'+
-            '500 candles per cell · max 10 cells · no DB writes'+
+            'single server-side request · max 10 cells · no DB writes'+
           '</span>'+
         '</div>'+
-        (stabRunning?'<div id="btStabProgress" style="font-size:10px;color:var(--text-3);margin-top:8px;padding:6px 10px;background:var(--bg-card);border-radius:6px;border:1px solid var(--border-2)">Initializing…</div>':'')+
+        (stabRunning?'<div id="btStabProgress" style="font-size:10px;color:var(--text-3);margin-top:8px;padding:6px 10px;background:var(--bg-card);border-radius:6px;border:1px solid var(--border-2)">Running all cells server-side…</div>':'')+
       '</div>'+
       '<div id="btStabResults">'+
-        (stabData ? _btStabResultsHtml(stabData) :
+        (stabData ? _btStabResultsHtml(stabData,_btState.stabilityRrView||"all") :
           '<div style="text-align:center;padding:40px 20px;color:var(--text-3)">'+
             '<div style="font-size:26px;margin-bottom:8px;opacity:.3">&#11835;</div>'+
             '<div style="font-size:12px;font-weight:600;color:var(--text-2)">Select symbols, timeframes and run the Stability Lab.</div>'+
-            '<div style="font-size:10px;margin-top:4px">Each cell runs an independent Phase 13 threshold analysis. Results are aggregated for robustness scoring.</div>'+
+            '<div style="font-size:10px;margin-top:4px">The server runs each cell\'s Phase 13 threshold analysis and aggregates them for robustness scoring.</div>'+
           '</div>')+
       '</div>';
 
-    // chip toggles
-    [].forEach.call(el.querySelectorAll("[data-stabsym],[data-stabtf]"),function(btn){
+    // chip toggles (update persisted selection)
+    [].forEach.call(el.querySelectorAll("[data-stabsym]"),function(btn){
       btn.addEventListener("click",function(){
-        btn.classList.toggle("on");
+        var s=btn.getAttribute("data-stabsym");
+        var idx=selSyms.indexOf(s);
+        if(idx>=0){ selSyms.splice(idx,1); }
+        else { if(selSyms.length<5) selSyms.push(s); }
+        btn.classList.toggle("on",selSyms.indexOf(s)>=0);
       });
+    });
+    [].forEach.call(el.querySelectorAll("[data-stabtf]"),function(btn){
+      btn.addEventListener("click",function(){
+        var t=btn.getAttribute("data-stabtf");
+        var idx=selTfs.indexOf(t);
+        if(idx>=0){ selTfs.splice(idx,1); }
+        else { selTfs.push(t); }
+        btn.classList.toggle("on",selTfs.indexOf(t)>=0);
+      });
+    });
+    var candSel=document.getElementById("btStabCandles");
+    if(candSel) candSel.addEventListener("change",function(){
+      _btState.stabCandles=parseInt(candSel.value)||500;
     });
 
     // run button
     var runBtn=document.getElementById("btStabRunBtn");
     if(runBtn) runBtn.addEventListener("click",_btRunStabilityLab);
+
+    // RR view + export + chart bindings (only when data present)
+    if(stabData&&stabData.ok){
+      _btBindStabResultControls(stabData);
+      setTimeout(function(){ _btBuildStabCharts(stabData,_btState.stabilityRrView||"all"); },0);
+    }
   }
 
   function _btRunStabilityLab(){
     var el=document.getElementById("btCompareModeContent"); if(!el) return;
-    var progressEl=null;
 
-    var syms=[].slice.call(document.querySelectorAll("[data-stabsym].on"))
-      .map(function(b){return b.getAttribute("data-stabsym");})
-      .filter(function(s){return s;});
-    var tfs=[].slice.call(document.querySelectorAll("[data-stabtf].on"))
-      .map(function(b){return b.getAttribute("data-stabtf");})
-      .filter(function(t){return t;});
+    var syms=(_btState.stabSelSyms||[]).slice();
+    var tfs=(_btState.stabSelTfs||[]).slice();
 
     if(!syms.length||!tfs.length){
       var re=document.getElementById("btStabResults");
@@ -14658,82 +14688,66 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     }
 
     _btState.stabilityRunning=true;
+    _btState.stabilityRrView="all";
     _btRenderStabilityMode();
 
-    // Run cells sequentially
-    var cells=[];
-    var pairs=[];
-    syms.forEach(function(sym){tfs.forEach(function(tf){pairs.push({sym:sym,tf:tf});});});
-    var total=pairs.length;
-    var done=0;
-
-    function updateProgress(){
-      var p=document.getElementById("btStabProgress");
-      if(p) p.textContent="Running cell "+done+"/"+total+"…";
-    }
-
-    function runNext(){
-      if(done>=total){
-        // All cells done — call stability endpoint
-        _btState.stabilityRunning=false;
-        var payload={cell_results:cells,rr_values:[1,2,3],primary_metric:"before_first_touch"};
-        fetch("/api/backtest/ob-historical/threshold-stability",{
-          method:"POST",credentials:"same-origin",
-          headers:{"Content-Type":"application/json"},
-          body:JSON.stringify(payload)
-        }).then(function(r){return r.json();}).then(function(d){
-          _btState.stabilityData=d;
-          _btState.stabilityRunning=false;
-          _btRenderStabilityMode();
-        }).catch(function(e){
-          _btState.stabilityRunning=false;
-          var re3=document.getElementById("btStabResults");
-          if(re3) re3.innerHTML='<div class="bt-mtf-err">Stability aggregation failed: '+e+'</div>';
-        });
-        return;
-      }
-      var pair=pairs[done];
-      updateProgress();
-      fetch("/api/backtest/ob-historical",{
-        method:"POST",credentials:"same-origin",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({
-          symbol:pair.sym,timeframe:pair.tf,candle_count:500,
-          exchange:"binance",market:"perpetual",
-          rr_values:[1,2,3],entry_rule:"zone_high",
-          stop_rule:"close_beyond_zone",include_parity:true
-        })
-      }).then(function(r){return r.json();}).then(function(d){
-        var parity_trusted=(d.outcome_summary&&d.outcome_summary.tv_ob_pct_parity&&
-                            d.outcome_summary.tv_ob_pct_parity.trusted)||false;
-        var thr_analysis=(d.outcome_summary&&d.outcome_summary.tv_ob_pct_threshold_analysis)||null;
-        cells.push({
-          symbol:pair.sym,timeframe:pair.tf,candle_count:500,
-          ok:!!d.ok,error:d.error||null,
-          parity_trusted:parity_trusted,
-          threshold_analysis:thr_analysis
-        });
-        done++;
-        runNext();
-      }).catch(function(e){
-        cells.push({symbol:pair.sym,timeframe:pair.tf,candle_count:500,
-                    ok:false,error:String(e),parity_trusted:false,threshold_analysis:null});
-        done++;
-        runNext();
-      });
-    }
-
-    runNext();
+    // ONE server-authoritative request — the backend runs all cells itself.
+    var payload={
+      symbols:syms,
+      timeframes:tfs,
+      candle_count:_btState.stabCandles||500,
+      rr_values:[1,2,3],
+      ambiguity_mode:"mark",
+      include_parity:false,
+      primary_metric:"before_first_touch"
+    };
+    fetch("/api/backtest/ob-historical/threshold-stability",{
+      method:"POST",credentials:"same-origin",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(payload)
+    }).then(function(r){return r.json();}).then(function(d){
+      _btState.stabilityData=d;
+      _btState.stabilityRunning=false;
+      _btRenderStabilityMode();
+    }).catch(function(e){
+      _btState.stabilityRunning=false;
+      _btRenderStabilityMode();
+      var re3=document.getElementById("btStabResults");
+      if(re3) re3.innerHTML='<div class="bt-mtf-err">Stability run failed: '+e+'</div>';
+    });
   }
 
-  function _btStabResultsHtml(d){
+  function _btBindStabResultControls(d){
+    // RR view chips
+    [].forEach.call(document.querySelectorAll("[data-stabrr]"),function(btn){
+      btn.addEventListener("click",function(){
+        _btState.stabilityRrView=btn.getAttribute("data-stabrr");
+        // Re-render results section only (no re-fetch)
+        var re=document.getElementById("btStabResults");
+        if(re){
+          re.innerHTML=_btStabResultsHtml(d,_btState.stabilityRrView);
+          _btBindStabResultControls(d);
+          setTimeout(function(){ _btBuildStabCharts(d,_btState.stabilityRrView); },0);
+        }
+      });
+    });
+    // Exports
+    var ej=document.getElementById("btStabExportJson");
+    if(ej) ej.addEventListener("click",function(){ _btStabExportJson(d); });
+    var ec=document.getElementById("btStabExportCellCsv");
+    if(ec) ec.addEventListener("click",function(){ _btStabExportCellCsv(d.stability||{}); });
+    var ea=document.getElementById("btStabExportAggCsv");
+    if(ea) ea.addEventListener("click",function(){ _btStabExportAggCsv(d.stability||{}); });
+  }
+
+  function _btStabResultsHtml(d,rrView){
     if(!d||!d.ok) return '<div class="bt-mtf-err">'+(d&&d.error?esc(d.error):"Stability run failed.")+'</div>';
+    rrView=rrView||"all";
     var st=d.stability||{};
     var rec=st.recommendation||null;
     var agg=st.aggregate_by_thr_rr||{};
     var cells=st.cell_data||[];
     var symSum=st.symbol_summaries||{};
-    var tfSum={}; // built from aggregate_by_thr_rr[0_1] etc.
     var constants=st.constants||{};
     var failures=st.failures||[];
     var audit=st.audit||{};
@@ -14742,6 +14756,29 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     function _pct(v){return(v==null)?"—":Number(v).toFixed(1)+"%";}
 
     var html='';
+
+    // ── Server-authoritative execution diagnostics ───────────────────────────
+    html+='<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0 4px">'+
+      '<span style="font-size:9px;font-weight:700;color:var(--green-2);background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.25);padding:2px 8px;border-radius:10px">'+
+        'SERVER-AUTHORITATIVE'+
+      '</span>'+
+      '<span style="font-size:10px;color:var(--text-3)">'+
+        (d.completed_cells||0)+'/'+(d.requested_cells||0)+' cells · '+
+        (d.trusted_cells||0)+' trusted · '+(d.failed_cells||0)+' failed · '+
+        'slowest '+esc(d.slowest_cell||"—")+' · '+
+        _rf(d.total_elapsed_ms,0)+'ms · '+_rf((d.response_size_bytes||0)/1024,1)+'KB'+
+      '</span>'+
+    '</div>';
+
+    // ── RR view control ──────────────────────────────────────────────────────
+    html+='<div style="display:flex;align-items:center;gap:6px;margin:6px 0">'+
+      '<span class="bt-mtf-label">RR view</span>'+
+      ["all","1","2","3"].map(function(v){
+        var on=rrView===v?" on":"";
+        var lbl=v==="all"?"All":v+"R";
+        return '<button class="bt-mtf-chip'+on+'" data-stabrr="'+v+'">'+lbl+'</button>';
+      }).join("")+
+    '</div>';
 
     // ── Recommendation card ──────────────────────────────────────────────────
     html+='<div class="bt-section-title" style="margin-top:12px">Stability Lab — Robust Recommendation</div>';
@@ -14823,100 +14860,92 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       html+='</tbody></table></div>';
     }
 
-    // ── Threshold × RR aggregate table ───────────────────────────────────────
+    // ── Threshold × RR aggregate table (Part Q full column set) ──────────────
     var aggKeys=Object.keys(agg).sort(function(a,b){
       var at=parseInt(a.split("_")[0])||0, bt2=parseInt(b.split("_")[0])||0;
       var ar=parseFloat(a.split("_")[1])||0, br=parseFloat(b.split("_")[1])||0;
       return at!==bt2?at-bt2:ar-br;
     }).filter(function(k){
-      var t=parseInt(k.split("_")[0])||0;
-      return t>0; // exclude baseline
+      // RR view filter — keep all thresholds (incl baseline 0)
+      return rrView==="all" || k.split("_").slice(1).join("_")===rrView;
     });
 
     if(aggKeys.length){
       html+='<div class="bt-section-title" style="margin-top:12px">Threshold × RR Aggregate Results</div>';
-      html+='<div style="overflow-x:auto"><table class="bt-thr-table" style="min-width:800px">'+
+      html+='<div style="overflow-x:auto"><table class="bt-thr-table" style="min-width:1280px">'+
         '<thead><tr>'+
-          '<th>Thr%</th><th>RR</th>'+
-          '<th>Usable</th><th>Syms</th>'+
+          '<th>Thr%</th><th>RR</th><th>Baseline</th>'+
+          '<th>Cells</th><th>Trusted</th><th>Usable</th>'+
+          '<th>Syms</th><th>TFs</th><th>Trades</th><th>Retain%</th>'+
           '<th>Micro Exp</th><th>Macro Exp</th>'+
           '<th>Micro Δ</th><th>Macro Δ</th>'+
-          '<th>+Cell%</th><th>Beat%</th>'+
-          '<th>CI Low</th><th>Retain%</th>'+
-          '<th>Coverage</th><th>Robust</th>'+
+          '<th>Agg PF</th><th>Net R</th>'+
+          '<th>+Cell%</th><th>Beat%</th><th>Worst</th>'+
+          '<th>CI Low</th><th>CI High</th>'+
+          '<th>Coverage</th><th>Robust</th><th>Eligible</th>'+
         '</tr></thead><tbody>';
       aggKeys.forEach(function(k){
         var ag=agg[k]||{};
+        var isBase=!!ag.is_baseline;
         var isRec=rec&&ag.threshold_pct===rec.threshold_pct&&ag.rr===rec.rr;
-        var rowStyle=isRec?"background:rgba(34,197,94,.07)":"";
+        var rowStyle=isRec?"background:rgba(34,197,94,.07)":(isBase?"background:rgba(148,163,184,.05)":"");
         var bootCi=(ag.bootstrap_ci_95||{});
-        var ciLow=bootCi.macro_expectancy_delta_low;
-        var covOk=ag.coverage_passes, robOk=ag.robustness_passes;
+        var ciLow=isBase?0:bootCi.macro_expectancy_delta_low;
+        var ciHigh=isBase?0:bootCi.macro_expectancy_delta_high;
+        var covOk=ag.coverage_passes, robOk=ag.robustness_passes, eligOk=ag.eligible_for_robust_ranking;
+        var microD=isBase?0:ag.micro_expectancy_delta_vs_baseline;
+        var macroD=isBase?0:ag.macro_expectancy_delta_vs_baseline;
+        var pfTxt=ag.micro_profit_factor_infinite?"∞":_rf(ag.micro_profit_factor_r,3);
+        function badge(ok,txt){return '<span style="font-size:9px;padding:2px 6px;border-radius:8px;background:'+(ok?"rgba(34,197,94,.15)":"rgba(239,68,68,.12)")+';color:'+(ok?"var(--green-2)":"var(--red-2)")+'">'+txt+'</span>';}
         html+='<tr style="'+rowStyle+'">'+
           '<td><b>'+(isRec?'<span style="color:var(--green-2)">&#9679;</span> ':'')+ag.threshold_pct+'%</b></td>'+
           '<td>'+esc(ag.rr)+'</td>'+
+          '<td>'+(isBase?'<span style="font-size:9px;padding:2px 6px;border-radius:8px;background:rgba(148,163,184,.18);color:var(--text-2)">Baseline</span>':'—')+'</td>'+
+          '<td>'+_rf(ag.completed_cells,0)+'</td>'+
+          '<td>'+_rf(ag.trusted_cells,0)+'</td>'+
           '<td>'+_rf(ag.usable_cells,0)+'</td>'+
           '<td>'+_rf(ag.symbols_represented,0)+'</td>'+
+          '<td style="font-size:9px">'+esc((ag.timeframes_represented||[]).join(","))+'</td>'+
+          '<td>'+_rf(ag.total_trades,0)+'</td>'+
+          '<td>'+_pct(ag.micro_trade_retention_pct)+'</td>'+
           '<td style="color:'+(ag.micro_expectancy_r>0?"var(--green-2)":ag.micro_expectancy_r<0?"var(--red-2)":"var(--text-2)")+'">'+_rf(ag.micro_expectancy_r,4)+'</td>'+
           '<td style="color:'+(ag.macro_expectancy_r>0?"var(--green-2)":ag.macro_expectancy_r<0?"var(--red-2)":"var(--text-2)")+'">'+_rf(ag.macro_expectancy_r,4)+'</td>'+
-          '<td style="color:'+(ag.micro_expectancy_delta_vs_baseline>0?"var(--green-2)":ag.micro_expectancy_delta_vs_baseline<0?"var(--red-2)":"var(--text-2)")+'">'+_rf(ag.micro_expectancy_delta_vs_baseline,4)+'</td>'+
-          '<td style="color:'+(ag.macro_expectancy_delta_vs_baseline>0?"var(--green-2)":ag.macro_expectancy_delta_vs_baseline<0?"var(--red-2)":"var(--text-2)")+'">'+_rf(ag.macro_expectancy_delta_vs_baseline,4)+'</td>'+
+          '<td style="color:'+(microD>0?"var(--green-2)":microD<0?"var(--red-2)":"var(--text-2)")+'">'+_rf(microD,4)+'</td>'+
+          '<td style="color:'+(macroD>0?"var(--green-2)":macroD<0?"var(--red-2)":"var(--text-2)")+'">'+_rf(macroD,4)+'</td>'+
+          '<td>'+pfTxt+'</td>'+
+          '<td style="color:'+(ag.micro_net_r>0?"var(--green-2)":ag.micro_net_r<0?"var(--red-2)":"var(--text-2)")+'">'+_rf(ag.micro_net_r,4)+'</td>'+
           '<td>'+_pct(ag.positive_cell_pct)+'</td>'+
           '<td>'+_pct(ag.beat_baseline_cell_pct)+'</td>'+
+          '<td>'+_rf(ag.worst_cell_expectancy_r,4)+'</td>'+
           '<td style="color:'+(ciLow!=null&&ciLow>=0?"var(--green-2)":"var(--red-2)")+'">'+_rf(ciLow,4)+'</td>'+
-          '<td>'+_pct(ag.micro_trade_retention_pct)+'</td>'+
-          '<td><span style="font-size:9px;padding:2px 6px;border-radius:8px;background:'+(covOk?"rgba(34,197,94,.15)":"rgba(239,68,68,.12)")+';color:'+(covOk?"var(--green-2)":"var(--red-2)")+'">'+
-            (covOk?"PASS":((ag.coverage_failures||[]).slice(0,1).join("").replace("usable_cells<6","uc<6").replace("symbols_represented<4","sym<4").replace("total_trades<100","t<100")||"FAIL"))+
-          '</span></td>'+
-          '<td><span style="font-size:9px;padding:2px 6px;border-radius:8px;background:'+(robOk?"rgba(34,197,94,.15)":"rgba(239,68,68,.12)")+';color:'+(robOk?"var(--green-2)":"var(--red-2)")+'">'+
-            (robOk?"PASS":"FAIL")+
-          '</span></td>'+
+          '<td>'+_rf(ciHigh,4)+'</td>'+
+          '<td>'+(isBase?'—':badge(covOk,covOk?"PASS":((ag.coverage_failures||[]).slice(0,1).join("").replace("usable_cells<6","uc<6").replace("symbols_represented<4","sym<4").replace("total_trades<100","t<100")||"FAIL")))+'</td>'+
+          '<td>'+(isBase?'—':badge(robOk,robOk?"PASS":"FAIL"))+'</td>'+
+          '<td>'+(isBase?'—':badge(eligOk,eligOk?"YES":"NO"))+'</td>'+
         '</tr>';
       });
       html+='</tbody></table></div>';
     }
 
-    // ── Cell matrix ───────────────────────────────────────────────────────────
-    if(rec&&cells.length){
-      html+='<div class="bt-section-title" style="margin-top:12px">Cell Matrix (recommended threshold '+rec.threshold_pct+'% · RR '+rec.rr+')</div>';
-      var recCells=cells.filter(function(r){return r.threshold_pct===rec.threshold_pct&&r.rr===rec.rr;});
-      var allSyms=[...new Set(recCells.map(function(r){return r.symbol;}))].sort();
-      var allTfs=[...new Set(recCells.map(function(r){return r.timeframe;}))].sort();
-      html+='<div style="overflow-x:auto"><table class="bt-thr-table">'+
-        '<thead><tr><th>Symbol \\ TF</th>'+allTfs.map(function(tf){return '<th>'+esc(tf)+'</th>';}).join("")+'</tr></thead>'+
-        '<tbody>';
-      allSyms.forEach(function(sym){
-        html+='<tr><td><b>'+esc(sym)+'</b></td>';
-        allTfs.forEach(function(tf){
-          var cell=recCells.find(function(r){return r.symbol===sym&&r.timeframe===tf;})||null;
-          if(!cell){html+='<td style="color:var(--text-3)">—</td>';return;}
-          var exp=cell.expectancy_r;
-          var ok=cell.eligible_cell;
-          var col=!ok?"var(--text-3)":exp>0?"var(--green-2)":exp<0?"var(--red-2)":"var(--text-2)";
-          html+='<td style="color:'+col+'">';
-          if(!ok){
-            html+='<span style="font-size:9px">'+esc((cell.rejection_reasons||[]).slice(0,1).join("")||"ineligible")+'</span>';
-          } else {
-            html+='<span style="font-size:11px;font-weight:700">'+_rf(exp,4)+'R</span>'+
-              '<br><span style="font-size:9px;color:var(--text-3)">'+_rf(cell.trade_retention_pct,1)+'% ret</span>';
-          }
-          html+='</td>';
-        });
-        html+='</tr>';
-      });
-      html+='</tbody></table></div>';
-    }
+    // ── Charts ────────────────────────────────────────────────────────────────
+    html+='<div class="bt-section-title" style="margin-top:14px">Stability Charts</div>'+
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px">'+
+        ['btStabChart1','btStabChart2','btStabChart3','btStabChart4'].map(function(id,i){
+          var titles=["Macro Expectancy Δ by Threshold","Micro Expectancy Δ by Threshold",
+                      "Trade Retention by Threshold","Cell Stability by Threshold"];
+          return '<div style="background:var(--bg-card);border:1px solid var(--border-2);border-radius:8px;padding:8px">'+
+            '<div style="font-size:10px;font-weight:600;color:var(--text-2);margin-bottom:4px">'+titles[i]+'</div>'+
+            '<div style="height:200px"><canvas id="'+id+'"></canvas></div>'+
+          '</div>';
+        }).join("")+
+      '</div>';
 
-    // ── Export CSV button ─────────────────────────────────────────────────────
-    html+='<div style="margin-top:12px">'+
-      '<button class="bt-batch-run-btn" id="btStabExportBtn" style="font-size:10px;padding:4px 14px">&#8659; Export Cell Data CSV</button>'+
+    // ── Exports ────────────────────────────────────────────────────────────────
+    html+='<div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">'+
+      '<button class="bt-batch-run-btn" id="btStabExportJson" style="font-size:10px;padding:4px 14px">&#8659; Export JSON</button>'+
+      '<button class="bt-batch-run-btn" id="btStabExportCellCsv" style="font-size:10px;padding:4px 14px">&#8659; Export Cell CSV</button>'+
+      '<button class="bt-batch-run-btn" id="btStabExportAggCsv" style="font-size:10px;padding:4px 14px">&#8659; Export Aggregate CSV</button>'+
     '</div>';
-
-    // Bind export on next tick
-    setTimeout(function(){
-      var btn=document.getElementById("btStabExportBtn");
-      if(btn) btn.addEventListener("click",function(){ _btStabExportCsv(st); });
-    },0);
 
     return html;
   }
@@ -14928,21 +14957,140 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     '</div>';
   }
 
-  function _btStabExportCsv(st){
+  /* ── Stability charts ─────────────────────────────────────────────────────── */
+  function _btBuildStabCharts(d,rrView){
+    if(typeof Chart==="undefined") return;
+    rrView=rrView||"all";
+    var st=d.stability||{};
+    var agg=st.aggregate_by_thr_rr||{};
+    _btState.stabCharts=_btState.stabCharts||{};
+    function dc(id){if(_btState.stabCharts[id]){try{_btState.stabCharts[id].destroy();}catch(e){}delete _btState.stabCharts[id];}}
+
+    // Distinct sorted thresholds and RRs
+    var thrSet={}, rrSet={};
+    Object.keys(agg).forEach(function(k){
+      var ag=agg[k]; thrSet[ag.threshold_pct]=true; rrSet[ag.rr]=true;
+    });
+    var thresholds=Object.keys(thrSet).map(Number).sort(function(a,b){return a-b;});
+    var rrs=(rrView==="all")?Object.keys(rrSet).sort():[rrView];
+    var labels=thresholds.map(function(t){return t+"%";});
+    var palette={"1":"#22d3ee","2":"#34d399","3":"#a855f7"};
+
+    var gscale={x:{ticks:{color:"#566377",font:{size:10}},grid:{color:"rgba(27,38,54,.5)"}},
+                y:{ticks:{color:"#566377",font:{size:10}},grid:{color:"rgba(27,38,54,.5)"}}};
+    var gplug={legend:{labels:{color:"#8a9bb3",font:{family:"JetBrains Mono,monospace",size:10},boxWidth:10}},
+               tooltip:{mode:"index",intersect:false}};
+
+    function valFor(thr,rr,field){
+      var ag=agg[thr+"_"+rr]; if(!ag) return null;
+      if(ag.is_baseline){
+        if(field==="macro_expectancy_delta_vs_baseline"||field==="micro_expectancy_delta_vs_baseline") return 0;
+      }
+      if(field==="ci_low"){var b=ag.bootstrap_ci_95||{};return b.macro_expectancy_delta_low;}
+      return ag[field];
+    }
+    function dsFor(field){
+      return rrs.map(function(rr){
+        return {label:rr+"R",data:thresholds.map(function(t){return valFor(t,rr,field);}),
+          borderColor:palette[rr]||"#8a9bb3",backgroundColor:(palette[rr]||"#8a9bb3"),
+          borderWidth:2,tension:.25,pointRadius:2,fill:false};
+      });
+    }
+
+    /* Chart 1 — Macro Expectancy Δ by Threshold */
+    dc("btStabChart1");
+    var c1=document.getElementById("btStabChart1");
+    if(c1) _btState.stabCharts["btStabChart1"]=new Chart(c1,{type:"line",
+      data:{labels:labels,datasets:dsFor("macro_expectancy_delta_vs_baseline")},
+      options:{responsive:true,maintainAspectRatio:false,plugins:gplug,scales:gscale}});
+
+    /* Chart 2 — Micro Expectancy Δ by Threshold */
+    dc("btStabChart2");
+    var c2=document.getElementById("btStabChart2");
+    if(c2) _btState.stabCharts["btStabChart2"]=new Chart(c2,{type:"line",
+      data:{labels:labels,datasets:dsFor("micro_expectancy_delta_vs_baseline")},
+      options:{responsive:true,maintainAspectRatio:false,plugins:gplug,scales:gscale}});
+
+    /* Chart 3 — Trade Retention by Threshold (+ 20% reference) */
+    dc("btStabChart3");
+    var c3=document.getElementById("btStabChart3");
+    if(c3){
+      var retDs=dsFor("micro_trade_retention_pct");
+      retDs.push({label:"20% floor",data:thresholds.map(function(){return 20;}),
+        borderColor:"#fb7185",borderWidth:1,borderDash:[5,4],pointRadius:0,fill:false});
+      _btState.stabCharts["btStabChart3"]=new Chart(c3,{type:"line",
+        data:{labels:labels,datasets:retDs},
+        options:{responsive:true,maintainAspectRatio:false,plugins:gplug,
+          scales:Object.assign({},gscale,{y:{ticks:{color:"#566377",font:{size:9},callback:function(v){return v+"%"}},grid:{color:"rgba(27,38,54,.5)"}}})}});
+    }
+
+    /* Chart 4 — Cell Stability (positive_cell_pct + beat_baseline_cell_pct) */
+    dc("btStabChart4");
+    var c4=document.getElementById("btStabChart4");
+    if(c4){
+      var rr0=rrs[0];
+      _btState.stabCharts["btStabChart4"]=new Chart(c4,{type:"line",
+        data:{labels:labels,datasets:[
+          {label:"+Cell% ("+rr0+"R)",data:thresholds.map(function(t){return valFor(t,rr0,"positive_cell_pct");}),
+            borderColor:"#34d399",borderWidth:2,tension:.25,pointRadius:2,fill:false},
+          {label:"Beat Base% ("+rr0+"R)",data:thresholds.map(function(t){return valFor(t,rr0,"beat_baseline_cell_pct");}),
+            borderColor:"#22d3ee",borderWidth:2,tension:.25,pointRadius:2,fill:false}
+        ]},
+        options:{responsive:true,maintainAspectRatio:false,plugins:gplug,
+          scales:Object.assign({},gscale,{y:{ticks:{color:"#566377",font:{size:9},callback:function(v){return v+"%"}},grid:{color:"rgba(27,38,54,.5)"}}})}});
+    }
+  }
+
+  function _btCsvVal(x){var s=Array.isArray(x)?x.join("|"):String(x==null?"":x);
+    return(s.indexOf(",")>=0||s.indexOf('"')>=0||s.indexOf("\n")>=0)?'"'+s.replace(/"/g,'""')+'"':s;}
+
+  function _btStabExportJson(d){
+    if(!d){alert("No stability data to export.");return;}
+    _btDownloadBlob("zyni_stability_"+Date.now()+".json",JSON.stringify(d,null,2),"application/json");
+  }
+
+  function _btStabExportCellCsv(st){
     var cells=st.cell_data||[];
     if(!cells.length){alert("No cell data to export.");return;}
-    var cols=["symbol","timeframe","threshold_pct","rr","parity_trusted",
-      "trades","wins","losses","invalid_loss_r","trade_retention_pct",
-      "win_rate_pct","net_r","expectancy_r","profit_factor_r","profit_factor_infinite",
-      "baseline_trades","baseline_expectancy_r","expectancy_delta_vs_baseline",
-      "eligible_cell","sample_size_status","rejection_reasons"];
-    function cv(x){var s=Array.isArray(x)?x.join("|"):String(x==null?"":x);
-      return(s.indexOf(",")>=0||s.indexOf('"')>=0)?'"'+s.replace(/"/g,'""')+'"':s;}
+    var cols=["symbol","timeframe","candle_count","generated_server_side","build_commit","ok","error","parity_trusted",
+      "threshold_pct","rr","baseline_trades","trades","wins","losses","ambiguous","unresolved","invalid_loss_r",
+      "trade_retention_pct","expectancy_r","baseline_expectancy_r","expectancy_delta_vs_baseline",
+      "profit_factor_r","profit_factor_infinite","net_r","eligible_cell","sample_size_status","rejection_reasons"];
     var rows=[cols.join(",")];
     cells.forEach(function(r){
-      rows.push(cols.map(function(c){return cv(r[c]);}).join(","));
+      rows.push(cols.map(function(c){return _btCsvVal(r[c]);}).join(","));
     });
-    _btDownloadBlob("zyni_stability_"+Date.now()+".csv",rows.join("\r\n"),"text/csv");
+    _btDownloadBlob("zyni_stability_cells_"+Date.now()+".csv",rows.join("\r\n"),"text/csv");
+  }
+
+  function _btStabExportAggCsv(st){
+    var agg=st.aggregate_by_thr_rr||{};
+    var keys=Object.keys(agg);
+    if(!keys.length){alert("No aggregate data to export.");return;}
+    var cols=["threshold_pct","rr","is_baseline","completed_cells","trusted_cells","eligible_cells","usable_cells",
+      "symbols_represented","timeframes_represented","total_baseline_trades","total_trades",
+      "micro_trade_retention_pct","micro_expectancy_r","macro_expectancy_r",
+      "micro_expectancy_delta_vs_baseline","macro_expectancy_delta_vs_baseline",
+      "micro_profit_factor_r","micro_profit_factor_infinite","micro_net_r",
+      "positive_cell_pct","beat_baseline_cell_pct","worst_cell_expectancy_r",
+      "bootstrap_ci_low","bootstrap_ci_high","coverage_passes","robustness_passes",
+      "eligible_for_robust_ranking"];
+    var rows=[cols.join(",")];
+    keys.sort(function(a,b){
+      var at=parseInt(a.split("_")[0])||0, bt=parseInt(b.split("_")[0])||0;
+      var ar=parseFloat(a.split("_")[1])||0, br=parseFloat(b.split("_")[1])||0;
+      return at!==bt?at-bt:ar-br;
+    }).forEach(function(k){
+      var ag=agg[k]||{};
+      var boot=ag.bootstrap_ci_95||{};
+      var row={};
+      cols.forEach(function(c){row[c]=ag[c];});
+      row.timeframes_represented=(ag.timeframes_represented||[]).join("|");
+      row.bootstrap_ci_low=boot.macro_expectancy_delta_low;
+      row.bootstrap_ci_high=boot.macro_expectancy_delta_high;
+      rows.push(cols.map(function(c){return _btCsvVal(row[c]);}).join(","));
+    });
+    _btDownloadBlob("zyni_stability_aggregate_"+Date.now()+".csv",rows.join("\r\n"),"text/csv");
   }
 
   function _btRenderMtfMode(){

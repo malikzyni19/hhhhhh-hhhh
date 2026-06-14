@@ -35459,17 +35459,48 @@ def _stab_aggregate_pf(gross_profit: float, gross_loss: float):
     return None, False
 
 
-def _stab_pf_non_degraded(thr_pf, thr_pf_inf, base_pf, base_pf_inf):
-    """True if threshold PF is not materially worse than baseline (≥95% rule)."""
-    if thr_pf_inf:
-        return True
-    if base_pf_inf:
-        return thr_pf_inf
-    if thr_pf is None or base_pf is None:
-        return True
-    if base_pf <= 0:
-        return True
-    return thr_pf >= base_pf * 0.95
+def _stab_pf_non_degraded(
+    candidate_pf,
+    candidate_pf_inf,
+    baseline_pf,
+    baseline_pf_inf,
+    candidate_trades=0,
+    baseline_trades=0,
+    baseline_gross_profit=0.0,
+    baseline_gross_loss=0.0,
+):
+    """
+    Returns (passes: bool, reason: str).
+    """
+    # Candidate infinite always passes (unless no trades)
+    if candidate_pf_inf:
+        if candidate_trades == 0:
+            return False, "candidate_zero_trades"
+        return True, "candidate_infinite"
+
+    # Baseline infinite → candidate must also be infinite
+    if baseline_pf_inf:
+        return False, "baseline_infinite_candidate_finite"
+
+    # Baseline PF is None — check why
+    if baseline_pf is None:
+        if baseline_trades == 0:
+            return False, "baseline_profit_factor_not_comparable"
+        if baseline_gross_profit == 0.0 and baseline_gross_loss == 0.0:
+            return False, "baseline_profit_factor_not_comparable"
+        # Baseline has trades but PF is still None — malformed
+        return False, "baseline_profit_factor_not_comparable"
+
+    if baseline_pf <= 0:
+        return True, "baseline_pf_nonpositive"
+
+    if candidate_pf is None:
+        return False, "candidate_pf_none"
+
+    if candidate_pf >= baseline_pf * 0.95:
+        return True, "95_pct_rule_passed"
+
+    return False, "95_pct_rule_failed"
 
 
 def _stab_bootstrap_delta(usable_rows: list) -> dict:
@@ -35784,6 +35815,7 @@ def _bt_build_tv_ob_pct_stability_analysis(
             aggregate_by_thr_rr[key] = {
                 "threshold_pct":            thr,
                 "rr":                       rr_str,
+                "is_baseline":              thr == 0,
                 "completed_cells":          len(rows),
                 "trusted_cells":            len(trusted),
                 "eligible_cells":           len(elig),
@@ -35866,6 +35898,7 @@ def _bt_build_tv_ob_pct_stability_analysis(
                 agg["robustness_failures"] = ["coverage_failed"]
                 continue
 
+            bm        = baseline_micro_by_rr.get(rr_str, {})
             bm_exp    = agg.get("baseline_micro_expectancy_r")
             bM_exp    = agg.get("baseline_macro_expectancy_r")
             bm_pf     = agg.get("baseline_micro_profit_factor_r")
@@ -35897,13 +35930,17 @@ def _bt_build_tv_ob_pct_stability_analysis(
                     f"worst_cell_expectancy_r<{_STAB_WORST_CELL_FLOOR}")
             if ci_low is None or ci_low < 0:
                 rob_fails.append("bootstrap_ci_low<0")
-            if not _stab_pf_non_degraded(
+            pf_ok, pf_reason = _stab_pf_non_degraded(
                 agg.get("micro_profit_factor_r"),
                 agg.get("micro_profit_factor_infinite", False),
-                bm_pf,
-                bm_pf_inf,
-            ):
-                rob_fails.append("profit_factor_degraded")
+                bm_pf, bm_pf_inf,
+                candidate_trades=agg.get("total_trades", 0) or 0,
+                baseline_trades=bm.get("total_baseline_trades", 0) or 0,
+                baseline_gross_profit=bm.get("micro_gross_profit_r", 0.0) or 0.0,
+                baseline_gross_loss=bm.get("micro_gross_loss_r", 0.0) or 0.0,
+            )
+            if not pf_ok:
+                rob_fails.append(f"profit_factor_degraded:{pf_reason}")
             if (agg.get("micro_trade_retention_pct") or 0) < _STAB_MIN_RETENTION:
                 rob_fails.append(
                     f"micro_trade_retention_pct<{_STAB_MIN_RETENTION}")
@@ -36085,11 +36122,11 @@ def _bt_build_tv_ob_pct_stability_analysis(
             loo_micro = _micro_stats(loo_elig)
             loo_macro = _macro_stats(loo_usable)
 
-            bm_exp    = baseline_micro_by_rr.get(rec_rr, {}).get("micro_expectancy_r")
+            bm_base   = baseline_micro_by_rr.get(rec_rr, {})
+            bm_exp    = bm_base.get("micro_expectancy_r")
             bM_exp    = baseline_macro_by_rr.get(rec_rr, {}).get("macro_expectancy_r")
-            bm_pf     = baseline_micro_by_rr.get(rec_rr, {}).get("micro_profit_factor_r")
-            bm_pf_inf = baseline_micro_by_rr.get(rec_rr, {}).get(
-                "micro_profit_factor_infinite", False)
+            bm_pf     = bm_base.get("micro_profit_factor_r")
+            bm_pf_inf = bm_base.get("micro_profit_factor_infinite", False)
 
             loo_macro_d = None
             loo_micro_d = None
@@ -36132,6 +36169,15 @@ def _bt_build_tv_ob_pct_stability_analysis(
                     >= _STAB_MIN_RETENTION
                 and loo_micro.get("total_invalid_loss_r", 0) == 0
             )
+            loo_pf_ok, _loo_pf_reason = _stab_pf_non_degraded(
+                loo_micro.get("micro_profit_factor_r"),
+                loo_micro.get("micro_profit_factor_infinite", False),
+                bm_pf, bm_pf_inf,
+                candidate_trades=loo_micro.get("total_trades", 0) or 0,
+                baseline_trades=bm_base.get("total_baseline_trades", 0) or 0,
+                baseline_gross_profit=bm_base.get("micro_gross_profit_r", 0.0) or 0.0,
+                baseline_gross_loss=bm_base.get("micro_gross_loss_r", 0.0) or 0.0,
+            )
             loo_rob = (
                 loo_cov
                 and (loo_micro.get("micro_expectancy_r") or -999)
@@ -36143,12 +36189,7 @@ def _bt_build_tv_ob_pct_stability_analysis(
                 and loo_beat_pct >= _STAB_MIN_BEAT_BASELINE_PCT
                 and loo_worst is not None
                 and loo_worst >= _STAB_WORST_CELL_FLOOR
-                and _stab_pf_non_degraded(
-                    loo_micro.get("micro_profit_factor_r"),
-                    loo_micro.get("micro_profit_factor_infinite", False),
-                    bm_pf,
-                    bm_pf_inf,
-                )
+                and loo_pf_ok
                 and (loo_micro.get("micro_trade_retention_pct") or 0)
                     >= _STAB_MIN_RETENTION
             )
@@ -36211,6 +36252,139 @@ def _bt_build_tv_ob_pct_stability_analysis(
             "max_cells":             _STAB_MAX_CELLS,
         },
     }
+
+
+_STAB_BUILD_COMMIT = "115115a"  # Phase 14 base commit
+
+
+def _bt_run_threshold_stability_cells(
+    symbols: List[str],
+    timeframes: List[str],
+    candle_count: int,
+    rr_values: List,
+    ambiguity_mode: str = "mark",
+    include_parity: bool = True,
+    primary_metric: str = "before_first_touch",
+) -> Tuple[List[Dict], Dict]:
+    """
+    Server-authoritative cell runner. For each symbol × timeframe pair, runs an
+    independent Phase 13 threshold analysis by invoking the historical backtest
+    core directly (no client-supplied performance data). Returns compact cells
+    (no raw events / no raw candles) plus execution diagnostics.
+
+    Research only — never activates any threshold in Scanner / Live Monitor /
+    alerts / paper trading / automation / execution.
+    """
+    import time as _t_cell
+
+    cell_list: List[Dict] = []
+    cell_elapsed_ms: Dict[str, float] = {}
+    success_count = 0
+    fail_count = 0
+    trusted_count = 0
+    untrusted_count = 0
+    slowest_cell = None
+    slowest_ms = -1.0
+
+    t_all = _t_cell.time()
+
+    for sym in symbols:
+        for tf in timeframes:
+            cell_key = f"{sym}_{tf}"
+            t_cell0 = _t_cell.time()
+            try:
+                params, parse_err = _bt_parse_ob_historical_payload({
+                    "symbol":         sym,
+                    "timeframe":      tf,
+                    "candle_count":   candle_count,
+                    "exchange":       "binance",
+                    "market":         "perpetual",
+                    "rr_values":      rr_values,
+                    "entry_rule":     "zone_high",
+                    "stop_rule":      "close_beyond_zone",
+                    "include_parity": include_parity,
+                })
+                if parse_err is not None:
+                    cell = {
+                        "symbol":                     sym,
+                        "timeframe":                  tf,
+                        "candle_count":               candle_count,
+                        "ok":                         False,
+                        "error":                      parse_err,
+                        "generated_server_side":      True,
+                        "build_commit":               _STAB_BUILD_COMMIT,
+                        "data_source":                "binance_futures_klines",
+                        "parity_trusted":             False,
+                        "threshold_analysis":         None,
+                        "threshold_analysis_present": False,
+                    }
+                else:
+                    result = _bt_run_ob_historical_backtest(params)
+                    os_ = result.get("outcome_summary") or {}
+                    parity_trusted = (os_.get("tv_ob_pct_parity") or {}).get(
+                        "trusted", False)
+                    threshold_analysis = os_.get("tv_ob_pct_threshold_analysis")
+                    cell = {
+                        "symbol":                     sym,
+                        "timeframe":                  tf,
+                        "candle_count":               candle_count,
+                        "ok":                         result.get("ok", False),
+                        "error":                      result.get("error"),
+                        "generated_server_side":      True,
+                        "build_commit":               _STAB_BUILD_COMMIT,
+                        "data_source":                "binance_futures_klines",
+                        "parity_trusted":             parity_trusted,
+                        "threshold_analysis":         threshold_analysis,
+                        "threshold_analysis_present": threshold_analysis is not None,
+                    }
+            except Exception as _e:
+                traceback.print_exc()
+                cell = {
+                    "symbol":                     sym,
+                    "timeframe":                  tf,
+                    "candle_count":               candle_count,
+                    "ok":                         False,
+                    "error":                      f"cell_exception: {_e}",
+                    "generated_server_side":      True,
+                    "build_commit":               _STAB_BUILD_COMMIT,
+                    "data_source":                "binance_futures_klines",
+                    "parity_trusted":             False,
+                    "threshold_analysis":         None,
+                    "threshold_analysis_present": False,
+                }
+
+            elapsed = round((_t_cell.time() - t_cell0) * 1000, 1)
+            cell_elapsed_ms[cell_key] = elapsed
+            if elapsed > slowest_ms:
+                slowest_ms = elapsed
+                slowest_cell = cell_key
+
+            if cell.get("ok"):
+                success_count += 1
+            else:
+                fail_count += 1
+            if cell.get("parity_trusted"):
+                trusted_count += 1
+            else:
+                untrusted_count += 1
+
+            cell_list.append(cell)
+
+    total = len(cell_list)
+    total_elapsed_ms = round((_t_cell.time() - t_all) * 1000, 1)
+
+    exec_diag = {
+        "execution_mode":   "sequential",
+        "requested_cells":  total,
+        "completed_cells":  success_count,
+        "failed_cells":     fail_count,
+        "trusted_cells":    trusted_count,
+        "untrusted_cells":  untrusted_count,
+        "total_elapsed_ms": total_elapsed_ms,
+        "cell_elapsed_ms":  cell_elapsed_ms,
+        "slowest_cell":     slowest_cell,
+    }
+    return cell_list, exec_diag
 
 
 def _bt_tv_ob_pct_bucket(value) -> str:
@@ -37485,84 +37659,112 @@ def api_backtest_ob_historical_threshold_stability():
         return err
 
     import time as _t14
-
     payload = request.get_json(force=True) or {}
 
-    # ── Parse cell_results ────────────────────────────────────────────────────
-    raw_cells = payload.get("cell_results")
-    if not isinstance(raw_cells, list) or not raw_cells:
-        return jsonify({"ok": False,
-                        "error": "cell_results must be a non-empty list"}), 400
+    # Reject client-provided cell results
+    if "cell_results" in payload:
+        return jsonify({
+            "ok": False,
+            "error": "client_supplied_cell_results_not_allowed"
+        }), 400
 
-    # ── Symbol / timeframe limits ─────────────────────────────────────────────
-    syms_seen: set  = set()
-    tfs_seen:  set  = set()
-    cell_results: List[Dict] = []
+    # Parse symbols
+    raw_syms = payload.get("symbols", ["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT"])
+    if not isinstance(raw_syms, list):
+        raw_syms = [str(raw_syms)]
+    seen_syms: set = set()
+    symbols: List[str] = []
+    for s in raw_syms:
+        s = str(s).strip().upper()
+        if not s:
+            return jsonify({"ok": False, "error": "blank symbol not allowed"}), 400
+        if not s.endswith("USDT"):
+            s = s + "USDT"
+        if s in seen_syms:
+            continue  # deduplicate
+        seen_syms.add(s)
+        symbols.append(s)
+    if not symbols:
+        return jsonify({"ok": False, "error": "at least one symbol required"}), 400
+    if len(symbols) > _STAB_MAX_SYMBOLS:
+        return jsonify({"ok": False, "error": f"max {_STAB_MAX_SYMBOLS} symbols"}), 400
 
-    for cell in raw_cells:
-        if not isinstance(cell, dict):
+    # Parse timeframes
+    raw_tfs = payload.get("timeframes", ["1h","4h"])
+    if not isinstance(raw_tfs, list):
+        raw_tfs = [str(raw_tfs)]
+    seen_tfs: set = set()
+    timeframes: List[str] = []
+    allowed_tfs = {"1h","4h"}
+    for tf in raw_tfs:
+        tf = str(tf).strip()
+        if tf not in allowed_tfs:
+            return jsonify({"ok": False, "error": f"timeframe '{tf}' not allowed; use 1h or 4h"}), 400
+        if tf in seen_tfs:
             continue
-        sym = str(cell.get("symbol", "")).strip().upper()
-        tf  = str(cell.get("timeframe", "")).strip()
-        if sym and not sym.endswith("USDT"):
-            sym = sym + "USDT"
-        if sym:
-            syms_seen.add(sym)
-        if tf:
-            tfs_seen.add(tf)
-        cell["symbol"]    = sym
-        cell["timeframe"] = tf
-        cell_results.append(cell)
+        seen_tfs.add(tf)
+        timeframes.append(tf)
+    if not timeframes:
+        return jsonify({"ok": False, "error": "at least one timeframe required"}), 400
+    if len(timeframes) > _STAB_MAX_TIMEFRAMES:
+        return jsonify({"ok": False, "error": f"max {_STAB_MAX_TIMEFRAMES} timeframes"}), 400
 
-    if len(syms_seen) > _STAB_MAX_SYMBOLS:
-        return jsonify({
-            "ok":    False,
-            "error": f"Stability Lab supports max {_STAB_MAX_SYMBOLS} symbols",
-        }), 400
-    if len(tfs_seen) > _STAB_MAX_TIMEFRAMES:
-        return jsonify({
-            "ok":    False,
-            "error": f"Stability Lab supports max {_STAB_MAX_TIMEFRAMES} timeframes",
-        }), 400
-    if len(cell_results) > _STAB_MAX_CELLS:
-        return jsonify({
-            "ok":    False,
-            "error": f"Stability Lab supports max {_STAB_MAX_CELLS} cells",
-        }), 400
+    if len(symbols) * len(timeframes) > _STAB_MAX_CELLS:
+        return jsonify({"ok": False, "error": f"max {_STAB_MAX_CELLS} cells"}), 400
 
-    # ── Optional parameters ───────────────────────────────────────────────────
-    raw_rr = payload.get("rr_values", [1, 2, 3])
-    rr_values = _bt_parse_rr_values(raw_rr)
+    # Parse candle_count
+    try:
+        candle_count = int(payload.get("candle_count", 500))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "candle_count must be integer"}), 400
+    candle_count = max(500, min(4000, candle_count))
 
-    raw_thr = payload.get("thresholds")
-    if raw_thr is not None:
-        try:
-            thresholds = [int(x) for x in raw_thr]
-        except (TypeError, ValueError):
-            return jsonify({"ok": False,
-                            "error": "thresholds must be list of integers"}), 400
-    else:
-        thresholds = list(range(0, 105, 5))
+    # Parse rr_values
+    rr_values = _bt_parse_rr_values(payload.get("rr_values", [1,2,3]))
+
+    ambiguity_mode = str(payload.get("ambiguity_mode", "mark")).strip() or "mark"
+    include_parity = True  # always run parity server-side
 
     primary_metric = str(payload.get("primary_metric", "before_first_touch")).strip()
     if primary_metric not in ("before_first_touch", "at_formation"):
         primary_metric = "before_first_touch"
 
     t0 = _t14.time()
-    result = _bt_build_tv_ob_pct_stability_analysis(
-        cell_results   = cell_results,
-        thresholds     = thresholds,
-        rr_values      = rr_values,
-        primary_metric = primary_metric,
+
+    # Run all cells server-side
+    cell_results, exec_diag = _bt_run_threshold_stability_cells(
+        symbols=symbols,
+        timeframes=timeframes,
+        candle_count=candle_count,
+        rr_values=rr_values,
+        ambiguity_mode=ambiguity_mode,
+        include_parity=include_parity,
+        primary_metric=primary_metric,
     )
+
+    stability = _bt_build_tv_ob_pct_stability_analysis(
+        cell_results=cell_results,
+        thresholds=list(range(0, 105, 20)),  # 0,20,40,60,80,100
+        rr_values=rr_values,
+        primary_metric=primary_metric,
+    )
+
     elapsed_total_ms = round((_t14.time() - t0) * 1000, 1)
 
-    return jsonify({
-        "ok":              True,
-        "mode":            "tv_ob_pct_threshold_stability_v1",
+    response_body = {
+        "ok": True,
+        "authoritative_execution": True,
+        "client_results_accepted": False,
+        "mode": "tv_ob_pct_threshold_stability_v1",
         "elapsed_total_ms": elapsed_total_ms,
-        "stability":       result,
-    }), 200
+        **exec_diag,
+        "stability": stability,
+    }
+
+    import json as _json_size
+    response_body["response_size_bytes"] = len(_json_size.dumps(response_body, default=str))
+
+    return jsonify(response_body), 200
 
 
 # ══════════════════════════════════════════════════════════════════════════════
