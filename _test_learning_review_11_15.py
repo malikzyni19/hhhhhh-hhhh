@@ -368,7 +368,7 @@ _valid9 = {
             "sample_size": 30,
             "confidence": "medium",
             "severity":   "watch",
-            "limitations": "small_history",
+            "limitations": ["small_history"],
             "auto_apply_allowed": False,
         }
     ],

@@ -19,6 +19,7 @@ HARD INVARIANTS (never negotiable):
 from __future__ import annotations
 
 import json as _json
+import math as _math
 import re as _re
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal, InvalidOperation
@@ -144,10 +145,41 @@ _PROPOSAL_MAX  = 10
 _EVIDENCE_ROWS = 10
 _LIMIT_MAX     = 20
 _WNTC_MAX      = 20
+_OBS_ID_MAX    = 50   # max chars for obs/proposal IDs
+_PROP_EOI_MAX  = 20   # max evidence_observation_ids per proposal
+_SA_LIM_MAX    = 20   # max limitations in sample_assessment
 
-# Numeric comparison tolerance for evidence validation
-_EV_NUMERIC_REL_TOL = 0.02   # 2 % relative tolerance for display rounding
-_EV_NUMERIC_ABS_TOL = 1.0    # or 1.0 absolute (whichever is larger)
+# Numeric comparison tolerance — replaced by metric-specific logic; kept as fallback only
+_EV_NUMERIC_REL_TOL = 0.005   # 0.5 % relative (generic fallback only)
+_EV_NUMERIC_ABS_TOL = 0.01    # 0.01 absolute (generic fallback only)
+
+# Operational language phrases that are forbidden in proposal title/description
+_OPERATIONAL_PHRASES = (
+    "apply this", "apply the change", "apply these", "apply now",
+    "enable automatic", "enable auto-",
+    "submit order", "place order", "order submission",
+    "execute trade", "execute automatically", "execute now",
+    "change threshold", "modify threshold",
+    "change strategy", "modify strategy",
+    "update pine script",
+    "arm gate", "arm auto gate",
+    "change risk guard", "modify risk guard",
+    "switch execution mode",
+    "enable testnet validation",
+    "enable live trading", "disable paper trading", "start live trading",
+)
+# Analytical-framing prefixes that excuse an operational keyword in context
+_ANALYTICAL_PREFIXES = (
+    "whether", "if ", "investigate", "check", "evaluate",
+    "analyze", "analyse", "review", "observe", "study", "verify",
+)
+
+# Small-sample limitation markers accepted in sample_assessment.limitations
+_SMALL_SAMPLE_MARKERS = frozenset({
+    "small_sample", "insufficient_sample", "limited_sample_size",
+    "early_evidence_only", "below_minimum", "insufficient", "early_evidence",
+    "small_segment_sample", "low_sample", "insufficient_data",
+})
 
 # Module-level guardrails for API responses
 _MODULE_GUARDRAILS: dict = {
@@ -543,29 +575,80 @@ def _lm_build_evidence_metric_allowlist(evidence: dict) -> dict:
     return metrics
 
 
-def _check_evidence_value(allowlist: dict, metric: str, ai_val) -> bool:
-    """Return True if metric is in allowlist and value is within tolerance.
+def _metric_kind(metric_id: str) -> str:
+    """Classify a metric ID into a comparison kind for tolerance selection."""
+    m = metric_id.lower()
+    if (m.endswith(".trade_count") or m.endswith(".win_count") or m.endswith(".loss_count")
+            or m.endswith(".breakeven_count") or m.endswith(".wins") or m.endswith(".losses")
+            or m.endswith(".breakevens") or m.endswith("_count")):
+        return "count"
+    if m.endswith("_pct") or ".win_rate" in m:
+        return "pct"
+    if m.endswith("_rr") or m.endswith("_capture") or ".profit_factor" in m or "payoff_ratio" in m:
+        return "ratio"
+    if (m.endswith("_pnl") or "gross_" in m or "expectancy" in m
+            or "drawdown" in m or m.endswith(".average_win") or m.endswith(".average_loss")):
+        return "monetary"
+    return "generic"
 
-    Rejects metrics NOT in the allowlist entirely.
-    For numeric values in the allowlist, allows within 2% relative or 1 absolute.
-    For string values: requires exact string match (after strip).
+
+def _lm_compare_evidence_metric(metric_id: str, trusted_val, ai_val) -> bool:
+    """Return True if AI value matches trusted value within metric-specific tolerance.
+
+    Task 7: metric-specific tolerances.
+    - count: exact int equality
+    - pct: abs <= 0.1
+    - ratio: abs <= 0.01
+    - monetary: Decimal abs <= 0.01
+    - generic fallback: max(0.5% relative, 0.01 absolute)
     """
-    if metric not in allowlist:
-        return False
-    expected = allowlist[metric]
-    if expected is None:
+    if trusted_val is None:
         return True
-    # Try numeric comparison
     try:
-        e = float(str(expected).replace(",", ""))
-        a = float(str(ai_val).replace(",", ""))
-        abs_diff = abs(e - a)
-        tol = max(abs(e) * _EV_NUMERIC_REL_TOL, _EV_NUMERIC_ABS_TOL)
-        return abs_diff <= tol
+        float(str(trusted_val).replace(",", ""))
     except (TypeError, ValueError):
-        pass
-    # String comparison
-    return str(expected).strip().lower() == str(ai_val).strip().lower()
+        return str(trusted_val).strip().lower() == str(ai_val).strip().lower()
+    try:
+        e = float(str(trusted_val).replace(",", ""))
+        a = float(str(ai_val).replace(",", ""))
+    except (TypeError, ValueError):
+        return False
+    abs_diff = abs(e - a)
+    kind = _metric_kind(metric_id)
+    if kind == "count":
+        return int(round(e)) == int(round(a))
+    if kind == "pct":
+        return abs_diff <= 0.1
+    if kind == "ratio":
+        return abs_diff <= 0.01
+    if kind == "monetary":
+        try:
+            e_d = Decimal(str(trusted_val))
+            a_d = Decimal(str(ai_val))
+            return abs(e_d - a_d) <= Decimal("0.01")
+        except (InvalidOperation, TypeError):
+            return abs_diff <= 0.01
+    tol = max(abs(e) * _EV_NUMERIC_REL_TOL, _EV_NUMERIC_ABS_TOL)
+    return abs_diff <= tol
+
+
+def _has_operational_language(text: str) -> bool:
+    """Return True if text contains an operational command phrase not excused by analytical framing.
+
+    Task 10: checks _OPERATIONAL_PHRASES with _ANALYTICAL_PREFIXES exclusion.
+    """
+    if not isinstance(text, str):
+        return False
+    t = text.lower()
+    for phrase in _OPERATIONAL_PHRASES:
+        idx = t.find(phrase)
+        if idx == -1:
+            continue
+        prefix_window = t[max(0, idx - 30):idx]
+        if any(pref in prefix_window for pref in _ANALYTICAL_PREFIXES):
+            continue
+        return True
+    return False
 
 
 # ── Deterministic candidates ──────────────────────────────────────────────────
@@ -634,7 +717,7 @@ def _lm_build_learning_observation_candidates(evidence: dict) -> list:
 
     # Performance trend
     trend = ps.get("recent_trend")
-    if trend == "declining" and total >= _SEG_MIN_DIRECTIONAL:
+    if trend == "deteriorating" and total >= _SEG_MIN_DIRECTIONAL:
         candidates.append({
             "candidate_id":        _next_id(),
             "candidate_type":      "deteriorating_recent_period",
@@ -1083,6 +1166,19 @@ def _lm_validate_learning_review_response(
             reasons.append(f"missing_required_key:{k}")
         return False, reasons
 
+    # Task 2: strict non-empty string types for review_title and executive_summary
+    title_v = parsed.get("review_title")
+    if not isinstance(title_v, str) or not title_v.strip():
+        reasons.append("review_title_not_a_nonempty_string")
+    elif len(title_v.strip()) > 80:
+        reasons.append("review_title_exceeds_80_chars")
+
+    summary_v = parsed.get("executive_summary")
+    if not isinstance(summary_v, str) or not summary_v.strip():
+        reasons.append("executive_summary_not_a_nonempty_string")
+    elif len(summary_v.strip()) > 1000:
+        reasons.append("executive_summary_exceeds_1000_chars")
+
     # overall_assessment
     if parsed.get("overall_assessment") not in _VALID_ASSESSMENTS:
         reasons.append(f"invalid_overall_assessment:{parsed.get('overall_assessment')!r}")
@@ -1099,34 +1195,55 @@ def _lm_validate_learning_review_response(
         if parsed.get("overall_assessment") != "insufficient_data":
             reasons.append("insufficient_sample_assessment_must_be_insufficient_data")
 
-    # sample_assessment
+    # Task 3: strict sample_assessment schema
     sa = parsed.get("sample_assessment")
     if not isinstance(sa, dict):
         reasons.append("sample_assessment_not_a_dict")
     else:
-        # sample_quality must match deterministic value
-        ev_sq  = evidence.get("sample_quality", _SQ_INSUFFICIENT)
-        ai_sq  = sa.get("sample_quality")
+        ev_sq = evidence.get("sample_quality", _SQ_INSUFFICIENT)
+        ai_sq = sa.get("sample_quality")
         if ai_sq not in _VALID_SAMPLE_QUALITIES:
             reasons.append(f"invalid_sample_quality:{ai_sq!r}")
         elif ai_sq != ev_sq:
-            # AI claims higher quality than deterministic → reject
             _sq_rank = {_SQ_INSUFFICIENT: 0, _SQ_EARLY: 1, _SQ_DEVELOPING: 2, _SQ_MEANINGFUL: 3}
             if _sq_rank.get(ai_sq, 0) > _sq_rank.get(ev_sq, 0):
                 reasons.append(f"ai_sample_quality_higher_than_evidence:{ai_sq!r}>{ev_sq!r}")
-        # sample_size must match
+
+        # Task 3: sample_size must be int (not bool), non-negative
         ai_n = sa.get("sample_size")
-        if ai_n != total:
+        if not isinstance(ai_n, int) or isinstance(ai_n, bool) or ai_n < 0:
+            reasons.append("sample_assessment_sample_size_not_a_nonneg_int")
+        elif ai_n != total:
             reasons.append(f"sample_size_mismatch:ai={ai_n}!=evidence={total}")
+
+        # Task 3: limitations must be list of strings
+        sa_lims = sa.get("limitations")
+        if not isinstance(sa_lims, list):
+            reasons.append("sample_assessment_limitations_not_a_list")
+        else:
+            if len(sa_lims) > _SA_LIM_MAX:
+                reasons.append("too_many_sample_limitations")
+            for li, lim in enumerate(sa_lims):
+                if not isinstance(lim, str):
+                    reasons.append(f"sample_limitation[{li}]_not_a_string")
+            if 5 <= total < 10:
+                has_marker = any(
+                    isinstance(l, str) and l in _SMALL_SAMPLE_MARKERS
+                    for l in sa_lims
+                )
+                if not has_marker:
+                    reasons.append("sample_assessment_missing_small_sample_marker")
 
     # Build allowlist for evidence-row validation
     allowlist = _lm_build_evidence_metric_allowlist(evidence)
 
-    # observations
+    # Task 1: explicit length rejection before processing
     obs_list = parsed.get("observations")
     if not isinstance(obs_list, list):
         reasons.append("observations_not_a_list")
         obs_list = []
+    elif len(obs_list) > _OBS_MAX:
+        reasons.append("too_many_observations")
 
     obs_ids: set = set()
     for i, obs in enumerate(obs_list[:_OBS_MAX]):
@@ -1141,6 +1258,8 @@ def _lm_validate_learning_review_response(
         obs_id = obs.get("id")
         if not obs_id or not isinstance(obs_id, str):
             reasons.append(f"obs[{i}]_missing_or_invalid_id")
+        elif len(obs_id) > _OBS_ID_MAX:
+            reasons.append(f"obs[{i}]_id_too_long:{obs_id!r}")
         elif obs_id in obs_ids:
             reasons.append(f"obs[{i}]_duplicate_id:{obs_id!r}")
         else:
@@ -1153,36 +1272,115 @@ def _lm_validate_learning_review_response(
         if obs.get("severity") not in _VALID_SEVERITIES:
             reasons.append(f"obs[{i}]_invalid_severity:{obs.get('severity')!r}")
 
-        # auto_apply_allowed must be exactly False — reject if True
+        # Task 4: title/statement must be non-empty strings
+        obs_title = obs.get("title")
+        if not isinstance(obs_title, str) or not obs_title.strip():
+            reasons.append(f"obs[{i}]_title_not_a_nonempty_string")
+        obs_stmt = obs.get("statement")
+        if not isinstance(obs_stmt, str) or not obs_stmt.strip():
+            reasons.append(f"obs[{i}]_statement_not_a_nonempty_string")
+
+        # Task 4: sample_size must be int (not bool), non-negative
+        obs_n = obs.get("sample_size")
+        if not isinstance(obs_n, int) or isinstance(obs_n, bool) or obs_n < 0:
+            reasons.append(f"obs[{i}]_sample_size_not_a_nonneg_int")
+            obs_n = None  # prevent Task 6 binding on bad value
+
+        # Task 4: limitations must be a list (reject string)
+        lims = obs.get("limitations")
+        if not isinstance(lims, list):
+            reasons.append(f"obs[{i}]_limitations_not_a_list")
+        else:
+            if len(lims) > _LIMIT_MAX:
+                reasons.append(f"obs[{i}]_too_many_limitations")
+            for li, lim in enumerate(lims):
+                if not isinstance(lim, str):
+                    reasons.append(f"obs[{i}].limitation[{li}]_not_a_string")
+
+        # auto_apply_allowed must be exactly False
         if obs.get("auto_apply_allowed") is not False:
             reasons.append(f"obs[{i}]_auto_apply_allowed_not_false")
 
-        # Validate evidence rows
-        ev_rows = obs.get("evidence") or []
+        # Task 5: validate evidence rows
+        ev_rows = obs.get("evidence")
         if not isinstance(ev_rows, list):
             reasons.append(f"obs[{i}]_evidence_not_a_list")
-        else:
-            for j, row in enumerate(ev_rows[:_EVIDENCE_ROWS]):
-                if not isinstance(row, dict):
-                    reasons.append(f"obs[{i}].evidence[{j}]_not_a_dict")
-                    continue
-                metric = row.get("metric")
-                if not metric:
-                    reasons.append(f"obs[{i}].evidence[{j}]_missing_metric")
-                    continue
-                if metric not in allowlist:
-                    reasons.append(f"obs[{i}].evidence[{j}]_unknown_metric:{metric!r}")
-                else:
-                    # Numeric value within tolerance
-                    ai_val = row.get("value")
-                    if ai_val is not None and not _check_evidence_value(allowlist, metric, ai_val):
-                        reasons.append(f"obs[{i}].evidence[{j}]_value_out_of_tolerance:{metric!r}")
+            ev_rows = []
+        elif len(ev_rows) == 0:
+            reasons.append(f"obs[{i}]_evidence_empty")
+        elif len(ev_rows) > _EVIDENCE_ROWS:
+            reasons.append(f"obs[{i}]_too_many_evidence_rows")
 
-    # review_proposals
+        # Track first .trade_count metric for Task 6 sample_size binding
+        tc_metric_found: str | None = None
+        tc_trusted_val = None
+
+        for j, row in enumerate(ev_rows[:_EVIDENCE_ROWS]):
+            if not isinstance(row, dict):
+                reasons.append(f"obs[{i}].evidence[{j}]_not_a_dict")
+                continue
+            metric = row.get("metric")
+            if not metric or not isinstance(metric, str):
+                reasons.append(f"obs[{i}].evidence[{j}]_missing_metric")
+                continue
+
+            # Task 5: require value and comparison keys
+            if "value" not in row:
+                reasons.append(f"obs[{i}].evidence[{j}]_missing_value_key")
+            if "comparison" not in row:
+                reasons.append(f"obs[{i}].evidence[{j}]_missing_comparison_key")
+
+            if metric not in allowlist:
+                reasons.append(f"obs[{i}].evidence[{j}]_unknown_metric:{metric!r}")
+                continue
+
+            ai_val = row.get("value")
+
+            # Task 5: reject NaN/Infinity
+            if isinstance(ai_val, float) and (_math.isnan(ai_val) or _math.isinf(ai_val)):
+                reasons.append(f"obs[{i}].evidence[{j}]_value_nan_or_inf:{metric!r}")
+                continue
+
+            trusted_val = allowlist[metric]
+
+            # Task 5: reject null AI value for known non-null trusted metric
+            if trusted_val is not None and ai_val is None:
+                reasons.append(
+                    f"obs[{i}].evidence[{j}]_null_value_for_non_null_metric:{metric!r}"
+                )
+                continue
+
+            # Task 7: metric-specific tolerance check
+            if ai_val is not None:
+                if not _lm_compare_evidence_metric(metric, trusted_val, ai_val):
+                    reasons.append(
+                        f"obs[{i}].evidence[{j}]_value_out_of_tolerance:{metric!r}"
+                    )
+
+            # Task 6: track first .trade_count metric for binding check
+            if tc_metric_found is None and metric.endswith(".trade_count"):
+                tc_metric_found = metric
+                tc_trusted_val  = trusted_val
+
+        # Task 6: trusted sample_size binding — obs.sample_size must equal trade_count
+        if (
+            tc_metric_found is not None
+            and tc_trusted_val is not None
+            and obs_n is not None
+        ):
+            if obs_n != int(tc_trusted_val):
+                reasons.append(
+                    f"obs[{i}]_sample_size_mismatch_with_trade_count:"
+                    f"{obs_n}!={tc_metric_found}={tc_trusted_val}"
+                )
+
+    # Task 1: explicit length rejection for review_proposals
     prop_list = parsed.get("review_proposals")
     if not isinstance(prop_list, list):
         reasons.append("review_proposals_not_a_list")
         prop_list = []
+    elif len(prop_list) > _PROPOSAL_MAX:
+        reasons.append("too_many_review_proposals")
 
     prop_ids: set = set()
     for i, prop in enumerate(prop_list[:_PROPOSAL_MAX]):
@@ -1197,6 +1395,8 @@ def _lm_validate_learning_review_response(
         pid = prop.get("id")
         if not pid or not isinstance(pid, str):
             reasons.append(f"proposal[{i}]_missing_or_invalid_id")
+        elif len(pid) > _OBS_ID_MAX:
+            reasons.append(f"proposal[{i}]_id_too_long:{pid!r}")
         elif pid in prop_ids:
             reasons.append(f"proposal[{i}]_duplicate_id:{pid!r}")
         else:
@@ -1206,40 +1406,64 @@ def _lm_validate_learning_review_response(
         action = prop.get("action_type")
         if action not in _VALID_PROPOSAL_ACTIONS:
             reasons.append(f"proposal[{i}]_invalid_action_type:{action!r}")
-        # Also catch if any forbidden word leaked through
         if isinstance(action, str):
             for forbidden in _FORBIDDEN_ACTION_WORDS:
                 if forbidden in action.lower():
                     reasons.append(f"proposal[{i}]_forbidden_action_word:{forbidden!r}")
 
+        # Task 9: strict proposal field types
+        prop_title = prop.get("title")
+        if not isinstance(prop_title, str) or not prop_title.strip():
+            reasons.append(f"proposal[{i}]_title_not_a_nonempty_string")
+
+        prop_desc = prop.get("description")
+        if not isinstance(prop_desc, str) or not prop_desc.strip():
+            reasons.append(f"proposal[{i}]_description_not_a_nonempty_string")
+
+        # Task 9: minimum_additional_sample must be int (not bool), non-negative
+        mas = prop.get("minimum_additional_sample")
+        if not isinstance(mas, int) or isinstance(mas, bool) or mas < 0:
+            reasons.append(f"proposal[{i}]_minimum_additional_sample_not_a_nonneg_int")
+
         # human_review_required must be exactly True
-        hrr = prop.get("human_review_required")
-        if hrr is not True:
+        if prop.get("human_review_required") is not True:
             reasons.append(f"proposal[{i}]_human_review_required_not_true")
 
         # auto_apply_allowed must be exactly False
         if prop.get("auto_apply_allowed") is not False:
             reasons.append(f"proposal[{i}]_auto_apply_not_false")
 
-        # evidence_observation_ids must be non-empty and reference known obs
+        # Task 10: forbidden operational language in title/description
+        if _has_operational_language(prop_title) or _has_operational_language(prop_desc):
+            reasons.append(f"proposal[{i}]_forbidden_operational_language")
+
+        # Task 8: always validate observation refs unconditionally (fix: no elif obs_ids)
         eoi = prop.get("evidence_observation_ids")
         if not isinstance(eoi, list) or len(eoi) == 0:
             reasons.append(f"proposal[{i}]_empty_evidence_observation_ids")
-        elif obs_ids:
+        else:
+            if len(eoi) > _PROP_EOI_MAX:
+                reasons.append(f"proposal[{i}]_too_many_observation_references")
             for ref_id in eoi:
-                if ref_id not in obs_ids:
+                if not isinstance(ref_id, str):
+                    reasons.append(f"proposal[{i}]_obs_ref_not_a_string:{ref_id!r}")
+                elif ref_id not in obs_ids:
                     reasons.append(f"proposal[{i}]_unknown_obs_ref:{ref_id!r}")
 
         # Low-sample proposals must be collect_more_data or monitor only
         if 5 <= total < 10 and action not in ("collect_more_data", "monitor"):
             reasons.append(f"proposal[{i}]_insufficient_sample_must_be_collect_or_monitor")
 
-    # what_not_to_conclude
+    # Task 1: what_not_to_conclude length and type check
     wntc = parsed.get("what_not_to_conclude")
     if not isinstance(wntc, list):
         reasons.append("what_not_to_conclude_not_a_list")
     else:
-        # Require at least one entry when sample is poor, data truncated, or warnings
+        if len(wntc) > _WNTC_MAX:
+            reasons.append("too_many_what_not_to_conclude")
+        for wi, w in enumerate(wntc):
+            if not isinstance(w, str):
+                reasons.append(f"what_not_to_conclude[{wi}]_not_a_string")
         ev_warns = evidence.get("warnings") or []
         needs_wntc = (
             evidence.get("sample_quality") in (_SQ_INSUFFICIENT, _SQ_EARLY)
@@ -1331,6 +1555,9 @@ def _lm_build_deterministic_review(evidence: dict, candidates: list) -> dict:
     ps    = evidence.get("performance_summary") or {}
     warns = evidence.get("warnings") or []
 
+    # Task 13: build allowlist to use real evidence values in evidence rows
+    allowlist = _lm_build_evidence_metric_allowlist(evidence)
+
     # Build observations from candidates
     obs: list = []
     for i, c in enumerate(candidates[:_OBS_MAX]):
@@ -1348,10 +1575,20 @@ def _lm_build_deterministic_review(evidence: dict, candidates: list) -> dict:
         }
         cat = cat_map.get(ct, "data_quality")
         conf = c.get("confidence", "low")
+        # Task 13: use real values from allowlist; skip metrics not present there
         ev_rows = [
-            {"metric": mid, "value": None, "comparison": None}
+            {"metric": mid, "value": allowlist[mid], "comparison": None}
             for mid in (c.get("evidence_metric_ids") or [])[:_EVIDENCE_ROWS]
+            if mid in allowlist
         ]
+        # Ensure at least one evidence row (Task 5: evidence must not be empty)
+        if not ev_rows:
+            fallback = "performance.sample_size"
+            ev_rows = [{
+                "metric":     fallback,
+                "value":      allowlist.get(fallback, total),
+                "comparison": None,
+            }]
         seg_val = c.get("segment_value")
         obs.append({
             "id":           f"obs_{i+1}",
