@@ -20,7 +20,7 @@ def register():
         except Exception:
             return response
 
-        marker = '<script type="module" src="/static/js/firebase-live-monitor.js"></script>'
+        marker = '<script type="module" src="/static/js/firebase-live-monitor-init.js"></script>'
         is_screener = "ZyNi Screener" in html and 'data-view="live"' in html
         if not is_screener or marker in html or "</body>" not in html:
             return response
