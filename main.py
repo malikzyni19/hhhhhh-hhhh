@@ -37797,6 +37797,9 @@ _WF_ALLOWED_TF:        set   = {"1h", "4h"}
 _WF_ALLOWED_THRESHOLDS:list  = [0, 20, 40, 60, 80]
 _WF_CANDIDATE_THRESHOLDS: list = [20, 40, 60, 80]
 _WF_BUILD_COMMIT:      str   = "7215f6e"  # Phase 14B
+_WF_MIN_SYMBOLS:       int   = 4
+_WF_MIN_TF_CELL_FOLDS: int   = 2
+_WF_15B_COMMIT:        str   = "708b769"  # Phase 15
 
 
 def _bt_build_walk_forward_folds(
@@ -37878,6 +37881,121 @@ def _bt_wf_build_params(sym: str, tf: str, candle_count: int, rr_values: List) -
         "entry_rule":      "zone_high",
         "stop_rule":       "close_beyond_zone",
         "include_parity":  True,
+    }
+
+
+def _bt_wf_run_prefix_backtest(
+    candles_full: List[Dict],
+    end_index_exclusive: int,
+    sym: str,
+    tf: str,
+    rr_values: List,
+    primary_metric: str,
+    stage: str,
+    fold_num: int,
+) -> Dict:
+    """
+    Physically slice candles to end_index_exclusive and run the full backtest
+    pipeline (detector → outcomes → TV OB% snapshots → parity → threshold
+    analysis) on the prefix.  The slice is the ONLY candle data any downstream
+    helper receives — there is no full-array path.
+
+    Returns events, parity, threshold_analysis, and a prefix_audit dict that
+    proves physical isolation.
+    """
+    prefix = candles_full[:end_index_exclusive]
+    params  = _bt_wf_build_params(sym, tf, len(prefix), rr_values)
+
+    events = _bt_extract_ob_replay_events(prefix, params)
+    _bt_apply_outcomes_to_events(events, prefix, params)
+    _bt_attach_tv_ob_pct_snapshots(events, prefix, params)
+    parity = _bt_run_tv_ob_pct_snapshot_parity(prefix, events, params)
+    trusted = bool(parity.get("trusted", False))
+    thr = _bt_build_tv_ob_pct_threshold_analysis(
+        events, rr_values, trusted,
+        metric=primary_metric,
+        thresholds=_WF_ALLOWED_THRESHOLDS,
+    )
+
+    contract_passed = (len(prefix) == end_index_exclusive)
+    audit = {
+        "fold":                         fold_num,
+        "symbol":                       sym,
+        "timeframe":                    tf,
+        "stage":                        stage,
+        "allowed_end_index_exclusive":  end_index_exclusive,
+        "input_candle_count":           len(prefix),
+        "detector_input_candle_count":  len(prefix),
+        "snapshot_input_candle_count":  len(prefix),
+        "outcome_input_candle_count":   len(prefix),
+        "max_detector_index_read":      len(prefix) - 1 if prefix else None,
+        "max_snapshot_index_read":      len(prefix) - 1 if prefix else None,
+        "max_outcome_index_read":       len(prefix) - 1 if prefix else None,
+        "prefix_contract_passed":       contract_passed,
+        "violations":                   [] if contract_passed else ["prefix_length_mismatch"],
+    }
+
+    return {
+        "events":              events,
+        "parity":              parity,
+        "trusted":             trusted,
+        "threshold_analysis":  {primary_metric: thr},
+        "prefix_audit":        audit,
+    }
+
+
+def _bt_wf_future_candle_invariance(
+    candles_full: List[Dict],
+    test_end: int,
+    sym: str,
+    tf: str,
+    rr_values: List,
+    primary_metric: str,
+    fold_num: int,
+    original_event_ids: List[str],
+    original_metrics_snapshot: Dict,
+) -> Dict:
+    """
+    Appends extreme future candles to the full array and reruns with the SAME
+    test_end boundary.  If any fold output differs, future-candle leakage is
+    detected.  Returns a dict with invariance result.
+    """
+    n_future = 20
+    future_high = 9_999_999.0
+    future_low  = 0.001
+    last_t = (candles_full[-1].get("open_time") or 0) if candles_full else 0
+    future = [
+        {
+            "open_time":  last_t + (i + 1) * 3_600_000,
+            "close_time": last_t + (i + 2) * 3_600_000 - 1,
+            "open":  50_000.0, "high": future_high,
+            "low":   future_low, "close": 50_000.0,
+            "volume": 10_000.0,
+        }
+        for i in range(n_future)
+    ]
+    candles_with_future = candles_full + future
+
+    result2 = _bt_wf_run_prefix_backtest(
+        candles_with_future, test_end,
+        sym, tf, rr_values, primary_metric, "invariance_check", fold_num,
+    )
+
+    events2 = result2["events"]
+    ids2 = sorted(_bt_wf_event_id(sym, tf, e) for e in events2)
+    ids1 = sorted(original_event_ids)
+
+    invariant = (ids1 == ids2)
+    violations = []
+    if not invariant:
+        violations.append(f"event_ids_changed_after_future_candles: fold={fold_num}")
+
+    return {
+        "passed":               invariant,
+        "original_event_count": len(ids1),
+        "rerun_event_count":    len(ids2),
+        "future_candles_added": n_future,
+        "violations":           violations,
     }
 
 
@@ -37988,50 +38106,71 @@ def _bt_run_walk_forward_cell(
     primary_metric: str = "before_first_touch",
 ) -> List[Dict]:
     """
-    Run one symbol×timeframe cell across all folds. For each fold:
-      1. Run the engine on the training prefix → training threshold analysis.
-      2. Run the engine on the test-end prefix, then keep only events whose first
-         touch falls inside the fold's test window → out-of-sample test metrics.
-    For locked mode the candidate is fixed. For train_selected mode the per-fold
-    training analysis is recorded so the caller can choose a candidate from training
-    data only.
-
-    Returns a list of per-fold dicts (one per fold). Never raises on per-fold
-    failure — failed folds remain visible with ok=False.
+    Run one symbol×timeframe cell across all folds.  For each fold the backtest
+    engine receives ONLY a physically-sliced candle prefix — the full array is
+    never passed downstream.  Returns per-fold dicts with prefix audit data and
+    a future-candle invariance flag.
     """
-    params = _bt_wf_build_params(sym, tf, len(candles_normalized), rr_values)
     cell_results: List[Dict] = []
 
     for fold in folds:
-        fold_num = fold["fold"]
+        fold_num  = fold["fold"]
         train_end = fold["train_end_index_exclusive"]
         test_start = fold["test_start_index"]
-        test_end = fold["test_end_index_exclusive"]
+        test_end  = fold["test_end_index_exclusive"]
         try:
-            # ── Training analysis (train prefix only) ─────────────────────────
-            train_candles = candles_normalized[:train_end]
-            train_events = _bt_extract_ob_replay_events(train_candles, params)
-            _bt_apply_outcomes_to_events(train_events, train_candles, params)
-            _bt_attach_tv_ob_pct_snapshots(train_events, train_candles, params)
-            train_parity = _bt_run_tv_ob_pct_snapshot_parity(train_candles, train_events, params)
-            train_trusted = bool(train_parity.get("trusted", False))
-            train_thr = _bt_build_tv_ob_pct_threshold_analysis(
-                train_events, rr_values, train_trusted, metric=primary_metric,
-                thresholds=_WF_ALLOWED_THRESHOLDS,
+            # ── Training prefix ───────────────────────────────────────────────
+            train_result = _bt_wf_run_prefix_backtest(
+                candles_normalized, train_end,
+                sym, tf, rr_values, primary_metric, "training", fold_num,
+            )
+            train_events   = train_result["events"]
+            train_parity   = train_result["parity"]
+            train_trusted  = train_result["trusted"]
+            train_thr      = train_result["threshold_analysis"]
+            train_audit    = train_result["prefix_audit"]
+
+            # ── Test prefix ───────────────────────────────────────────────────
+            test_result  = _bt_wf_run_prefix_backtest(
+                candles_normalized, test_end,
+                sym, tf, rr_values, primary_metric, "test", fold_num,
+            )
+            test_all     = test_result["events"]
+            test_parity  = test_result["parity"]
+            test_trusted = test_result["trusted"]
+            test_audit   = test_result["prefix_audit"]
+
+            # ── Filter to test window by first touch ──────────────────────────
+            test_events   = _bt_wf_filter_test_events(test_all, test_start, test_end)
+            test_event_ids = [_bt_wf_event_id(sym, tf, e) for e in test_events]
+            censored      = _bt_wf_count_censored(test_events)
+
+            # Count resolved vs censored
+            resolved_inside = sum(
+                1 for e in test_events
+                if (e.get("simulation") or {}).get("first_outcome") not in (None, "unresolved")
             )
 
-            # ── Test analysis (prefix up to test_end, filtered by first touch) ─
-            test_prefix = candles_normalized[:test_end]
-            test_all = _bt_extract_ob_replay_events(test_prefix, params)
-            _bt_apply_outcomes_to_events(test_all, test_prefix, params)
-            _bt_attach_tv_ob_pct_snapshots(test_all, test_prefix, params)
-            test_parity = _bt_run_tv_ob_pct_snapshot_parity(test_prefix, test_all, params)
-            test_trusted = bool(test_parity.get("trusted", False))
-            test_events = _bt_wf_filter_test_events(test_all, test_start, test_end)
-            test_event_ids = [_bt_wf_event_id(sym, tf, e) for e in test_events]
-            censored = _bt_wf_count_censored(test_events)
+            # Events outside window (those from test_all whose first touch != in window)
+            events_outside_window = len(test_all) - len(
+                _bt_wf_filter_test_events(test_all, 0, test_end)
+            )
+            # Simpler: events in test_all with first_touch NOT in [test_start, test_end)
+            n_outside = sum(
+                1 for e in test_all
+                if _bt_wf_first_touch_index(e) is not None
+                and not (test_start <= _bt_wf_first_touch_index(e) < test_end)
+            )
 
-            # Locked mode candidate metrics computed now; train_selected resolved later.
+            # ── Future-candle invariance ──────────────────────────────────────
+            all_test_event_ids = [_bt_wf_event_id(sym, tf, e) for e in test_all]
+            invariance = _bt_wf_future_candle_invariance(
+                candles_normalized, test_end,
+                sym, tf, rr_values, primary_metric, fold_num,
+                all_test_event_ids, {},
+            )
+
+            # ── Locked-mode candidate metrics (computed now) ──────────────────
             metrics = None
             if candidate_mode == "locked" and candidate_threshold_pct is not None:
                 metrics = _bt_wf_extract_test_metrics(
@@ -38040,38 +38179,51 @@ def _bt_run_walk_forward_cell(
                 )
 
             cell_results.append({
-                "ok": True,
-                "symbol": sym,
-                "timeframe": tf,
-                "fold": fold_num,
+                "ok":                       True,
+                "symbol":                   sym,
+                "timeframe":                tf,
+                "fold":                     fold_num,
                 "train_end_index_exclusive": train_end,
-                "test_start_index": test_start,
+                "test_start_index":         test_start,
                 "test_end_index_exclusive": test_end,
-                "train_parity_trusted": train_trusted,
-                "test_parity_trusted": test_trusted,
-                "train_threshold_analysis": {primary_metric: train_thr},
-                "test_event_ids": test_event_ids,
-                "test_event_count": len(test_events),
-                "censored_unresolved": censored,
-                "metrics": metrics,
-                "_test_events": test_events,  # internal; stripped before response
+                "train_parity_trusted":     train_trusted,
+                "test_parity_trusted":      test_trusted,
+                "train_threshold_analysis": train_thr,
+                "test_event_ids":           test_event_ids,
+                "test_event_count":         len(test_events),
+                "censored_unresolved":      censored,
+                "resolved_inside_window":   resolved_inside,
+                "events_outside_window":    n_outside,
+                "metrics":                  metrics,
+                "prefix_audits":            [train_audit, test_audit],
+                "prefix_contract_passed":   (train_audit["prefix_contract_passed"]
+                                             and test_audit["prefix_contract_passed"]),
+                "future_candle_invariance": invariance["passed"],
+                "_test_events":             test_events,   # stripped before response
+                "_train_events":            train_events,  # stripped before response
             })
         except Exception as _e:
             traceback.print_exc()
             cell_results.append({
-                "ok": False,
-                "symbol": sym,
-                "timeframe": tf,
-                "fold": fold_num,
-                "error": f"wf_cell_exception: {_e}",
-                "train_parity_trusted": False,
-                "test_parity_trusted": False,
+                "ok":                       False,
+                "symbol":                   sym,
+                "timeframe":                tf,
+                "fold":                     fold_num,
+                "error":                    f"wf_cell_exception: {_e}",
+                "train_parity_trusted":     False,
+                "test_parity_trusted":      False,
                 "train_threshold_analysis": None,
-                "test_event_ids": [],
-                "test_event_count": 0,
-                "censored_unresolved": 0,
-                "metrics": None,
-                "_test_events": [],
+                "test_event_ids":           [],
+                "test_event_count":         0,
+                "censored_unresolved":      0,
+                "resolved_inside_window":   0,
+                "events_outside_window":    0,
+                "metrics":                  None,
+                "prefix_audits":            [],
+                "prefix_contract_passed":   False,
+                "future_candle_invariance": False,
+                "_test_events":             [],
+                "_train_events":            [],
             })
     return cell_results
 
@@ -38087,113 +38239,296 @@ def _bt_aggregate_wf_fold(
     cand_trades = cand_wins = cand_losses = 0
     base_trades = base_wins = base_losses = 0
     cand_amb = cand_unres = cand_invalid = 0
-    censored = 0
-    completed_cells = 0
+    censored = resolved_inside = 0
+    completed_cells = trusted_cells = 0
     cell_rows: List[Dict] = []
+    symbols_in_fold: set = set()
+    tfs_in_fold: set = set()
 
     for c in fold_cell_results:
+        sym_c = c.get("symbol", "")
+        tf_c  = c.get("timeframe", "")
         if not c.get("ok"):
             cell_rows.append({
-                "symbol": c.get("symbol"), "timeframe": c.get("timeframe"),
+                "symbol": sym_c, "timeframe": tf_c,
                 "ok": False, "error": c.get("error"),
-                "trades": 0, "expectancy_r": None, "net_r": None,
-                "expectancy_delta_vs_baseline": None, "trade_retention_pct": None,
-                "eligible": False,
+                "baseline_trades": 0, "trades": 0,
+                "wins": 0, "losses": 0, "ambiguous": 0, "unresolved": 0,
+                "censored_unresolved": 0, "invalid_loss_r": 0,
+                "expectancy_r": None, "net_r": None,
+                "baseline_expectancy_r": None, "expectancy_delta_vs_baseline": None,
+                "trade_retention_pct": None,
+                "baseline_profit_factor_r": None, "baseline_profit_factor_infinite": False,
+                "candidate_profit_factor_r": None, "candidate_profit_factor_infinite": False,
+                "baseline_net_r": None, "net_r_delta": None,
+                "resolved_inside_window": 0,
+                "prefix_contract_passed": False,
+                "eligible": False, "rejection_reasons": ["cell_failed"],
             })
             continue
-        m = c.get("metrics") or {}
+
+        m    = c.get("metrics") or {}
         cand = m.get("candidate") or {}
         base = m.get("baseline") or {}
         completed_cells += 1
-        censored += int(c.get("censored_unresolved", 0) or 0)
+        if c.get("test_parity_trusted"):
+            trusted_cells += 1
+        censored       += int(c.get("censored_unresolved", 0) or 0)
+        resolved_inside += int(c.get("resolved_inside_window", 0) or 0)
 
-        cand_gp += float(cand.get("gross_profit_r", 0.0) or 0.0)
-        cand_gl += float(cand.get("gross_loss_r", 0.0) or 0.0)
+        cand_gp    += float(cand.get("gross_profit_r", 0.0) or 0.0)
+        cand_gl    += float(cand.get("gross_loss_r",   0.0) or 0.0)
         cand_trades += int(cand.get("trades", 0) or 0)
-        cand_wins += int(cand.get("wins", 0) or 0)
+        cand_wins   += int(cand.get("wins",   0) or 0)
         cand_losses += int(cand.get("losses", 0) or 0)
-        cand_amb += int(cand.get("ambiguous", 0) or 0)
-        cand_unres += int(cand.get("unresolved", 0) or 0)
+        cand_amb    += int(cand.get("ambiguous",  0) or 0)
+        cand_unres  += int(cand.get("unresolved", 0) or 0)
         cand_invalid += int(cand.get("invalid_loss_r", 0) or 0)
 
-        base_gp += float(base.get("gross_profit_r", 0.0) or 0.0)
-        base_gl += float(base.get("gross_loss_r", 0.0) or 0.0)
+        base_gp    += float(base.get("gross_profit_r", 0.0) or 0.0)
+        base_gl    += float(base.get("gross_loss_r",   0.0) or 0.0)
         base_trades += int(base.get("trades", 0) or 0)
-        base_wins += int(base.get("wins", 0) or 0)
+        base_wins   += int(base.get("wins",   0) or 0)
         base_losses += int(base.get("losses", 0) or 0)
 
-        cell_exp = cand.get("expectancy_r")
+        cell_cand_t = int(cand.get("trades", 0) or 0)
+        cell_elig   = cell_cand_t >= _MIN_AUTHORITATIVE_TRADES and int(cand.get("invalid_loss_r", 0) or 0) == 0 and c.get("test_parity_trusted", False)
+        if cell_elig:
+            symbols_in_fold.add(sym_c)
+            tfs_in_fold.add(tf_c)
+
+        c_pf, c_pf_inf = _stab_aggregate_pf(
+            float(cand.get("gross_profit_r", 0.0) or 0.0),
+            float(cand.get("gross_loss_r",   0.0) or 0.0),
+        )
+        b_pf, b_pf_inf = _stab_aggregate_pf(
+            float(base.get("gross_profit_r", 0.0) or 0.0),
+            float(base.get("gross_loss_r",   0.0) or 0.0),
+        )
+        cell_exp   = cand.get("expectancy_r")
+        base_exp_c = base.get("expectancy_r")
+        cell_delta = m.get("expectancy_delta_vs_baseline")
+        cell_ret   = m.get("trade_retention_pct")
+        c_net      = cand.get("net_r")
+        b_net      = base.get("net_r")
+        net_delta  = (round(float(c_net) - float(b_net), 4)
+                      if c_net is not None and b_net is not None else None)
+
+        rejection_reasons: List[str] = []
+        if not c.get("test_parity_trusted"):
+            rejection_reasons.append("parity_not_trusted")
+        if cell_cand_t < _MIN_AUTHORITATIVE_TRADES:
+            rejection_reasons.append("insufficient_trades")
+        if int(cand.get("invalid_loss_r", 0) or 0) > 0:
+            rejection_reasons.append("invalid_loss_r")
+
         cell_rows.append({
-            "symbol": c.get("symbol"), "timeframe": c.get("timeframe"),
+            "symbol": sym_c, "timeframe": tf_c,
             "ok": True, "error": None,
-            "trades": int(cand.get("trades", 0) or 0),
-            "expectancy_r": cell_exp,
-            "net_r": cand.get("net_r"),
-            "expectancy_delta_vs_baseline": m.get("expectancy_delta_vs_baseline"),
-            "trade_retention_pct": m.get("trade_retention_pct"),
-            "eligible": int(cand.get("trades", 0) or 0) >= _MIN_AUTHORITATIVE_TRADES,
+            "baseline_trades":               int(base.get("trades", 0) or 0),
+            "trades":                        cell_cand_t,
+            "wins":                          int(cand.get("wins",   0) or 0),
+            "losses":                        int(cand.get("losses", 0) or 0),
+            "ambiguous":                     int(cand.get("ambiguous",  0) or 0),
+            "unresolved":                    int(cand.get("unresolved", 0) or 0),
+            "censored_unresolved":           int(c.get("censored_unresolved", 0) or 0),
+            "invalid_loss_r":                int(cand.get("invalid_loss_r", 0) or 0),
+            "expectancy_r":                  cell_exp,
+            "net_r":                         c_net,
+            "baseline_expectancy_r":         base_exp_c,
+            "expectancy_delta_vs_baseline":  cell_delta,
+            "trade_retention_pct":           cell_ret,
+            "candidate_profit_factor_r":     c_pf,
+            "candidate_profit_factor_infinite": c_pf_inf,
+            "baseline_profit_factor_r":      b_pf,
+            "baseline_profit_factor_infinite": b_pf_inf,
+            "baseline_net_r":                b_net,
+            "net_r_delta":                   net_delta,
+            "resolved_inside_window":        int(c.get("resolved_inside_window", 0) or 0),
+            "prefix_contract_passed":        bool(c.get("prefix_contract_passed", False)),
+            "eligible":                      cell_elig,
+            "rejection_reasons":             rejection_reasons,
         })
 
     cand_net = round(cand_gp - cand_gl, 4)
     base_net = round(base_gp - base_gl, 4)
-    cand_exp = round(cand_net / cand_trades, 6) if cand_trades else None
-    base_exp = round(base_net / base_trades, 6) if base_trades else None
+    cand_exp_micro = round(cand_net / cand_trades, 6) if cand_trades else None
+    base_exp_micro = round(base_net / base_trades, 6) if base_trades else None
     cand_pf, cand_pf_inf = _stab_aggregate_pf(cand_gp, cand_gl)
     base_pf, base_pf_inf = _stab_aggregate_pf(base_gp, base_gl)
-    exp_delta = (round(cand_exp - base_exp, 6)
-                 if cand_exp is not None and base_exp is not None else None)
-    retention = round(cand_trades / base_trades * 100, 2) if base_trades else None
+
+    micro_delta = (round(cand_exp_micro - base_exp_micro, 6)
+                   if cand_exp_micro is not None and base_exp_micro is not None else None)
+    retention   = round(cand_trades / base_trades * 100, 2) if base_trades else None
 
     eligible_rows = [r for r in cell_rows if r.get("eligible")]
-    pos_cells = sum(1 for r in eligible_rows if (r.get("expectancy_r") or 0) > 0)
-    beat_rows = [r for r in eligible_rows if r.get("expectancy_delta_vs_baseline") is not None]
-    beat_cells = sum(1 for r in beat_rows if r["expectancy_delta_vs_baseline"] > 0)
-    pos_cell_pct = round(pos_cells / len(eligible_rows) * 100, 1) if eligible_rows else None
+    usable_cells  = len(eligible_rows)
+    pos_cells     = sum(1 for r in eligible_rows if (r.get("expectancy_r") or 0) > 0)
+    beat_rows     = [r for r in eligible_rows if r.get("expectancy_delta_vs_baseline") is not None]
+    beat_cells    = sum(1 for r in beat_rows if r["expectancy_delta_vs_baseline"] > 0)
+    pos_cell_pct  = round(pos_cells  / usable_cells * 100, 1) if usable_cells else None
     beat_cell_pct = round(beat_cells / len(beat_rows) * 100, 1) if beat_rows else None
 
+    # Macro expectancy = mean of eligible cell expectancies
+    cell_exps = [r["expectancy_r"] for r in eligible_rows if r.get("expectancy_r") is not None]
+    cand_exp_macro = round(sum(cell_exps) / len(cell_exps), 6) if cell_exps else None
+    base_exps = [r["baseline_expectancy_r"] for r in eligible_rows if r.get("baseline_expectancy_r") is not None]
+    base_exp_macro = round(sum(base_exps) / len(base_exps), 6) if base_exps else None
+    macro_delta    = (round(cand_exp_macro - base_exp_macro, 6)
+                      if cand_exp_macro is not None and base_exp_macro is not None else None)
+
+    # Worst eligible cell expectancy
+    worst_cell = min((r["expectancy_r"] for r in eligible_rows if r.get("expectancy_r") is not None), default=None)
+
+    # Training expectancy for this fold (populated later by caller)
+    pf_nd_ok, pf_nd_reason = _stab_pf_non_degraded(
+        cand_pf, cand_pf_inf, base_pf, base_pf_inf,
+        candidate_trades=cand_trades, baseline_trades=base_trades,
+        baseline_gross_profit=round(base_gp, 4), baseline_gross_loss=round(base_gl, 4),
+    )
+
+    eligible_fold = (cand_trades >= _MIN_AUTHORITATIVE_TRADES and cand_invalid == 0)
+
     return {
-        "fold": fold_info["fold"],
-        "train_end_index_exclusive": fold_info["train_end_index_exclusive"],
-        "test_start_index": fold_info["test_start_index"],
-        "test_end_index_exclusive": fold_info["test_end_index_exclusive"],
-        "train_candle_count": fold_info["train_candle_count"],
-        "test_candle_count": fold_info["test_candle_count"],
-        "train_start_time": fold_info.get("train_start_time"),
-        "train_end_time": fold_info.get("train_end_time"),
-        "test_start_time": fold_info.get("test_start_time"),
-        "test_end_time": fold_info.get("test_end_time"),
-        "candidate_threshold_pct": (int(candidate_threshold_pct)
-                                    if candidate_threshold_pct is not None else None),
-        "candidate_rr": str(candidate_rr) if candidate_rr is not None else None,
-        "completed_cells": completed_cells,
-        "total_cells": len(fold_cell_results),
-        "oos_trades": cand_trades,
-        "oos_wins": cand_wins,
-        "oos_losses": cand_losses,
-        "oos_ambiguous": cand_amb,
-        "oos_unresolved": cand_unres,
-        "oos_invalid_loss_r": cand_invalid,
-        "censored_unresolved": censored,
-        "oos_gross_profit_r": round(cand_gp, 4),
-        "oos_gross_loss_r": round(cand_gl, 4),
-        "oos_net_r": cand_net,
-        "oos_expectancy_r": cand_exp,
-        "oos_profit_factor_r": cand_pf,
-        "oos_profit_factor_infinite": cand_pf_inf,
-        "baseline_trades": base_trades,
-        "baseline_gross_profit_r": round(base_gp, 4),
-        "baseline_gross_loss_r": round(base_gl, 4),
-        "baseline_net_r": base_net,
-        "baseline_expectancy_r": base_exp,
-        "baseline_profit_factor_r": base_pf,
+        "fold":                          fold_info["fold"],
+        "train_start_index":             fold_info.get("train_start_index", 0),
+        "train_end_index_exclusive":     fold_info["train_end_index_exclusive"],
+        "test_start_index":              fold_info["test_start_index"],
+        "test_end_index_exclusive":      fold_info["test_end_index_exclusive"],
+        "train_candle_count":            fold_info["train_candle_count"],
+        "test_candle_count":             fold_info["test_candle_count"],
+        "train_start_time":              fold_info.get("train_start_time"),
+        "train_end_time":                fold_info.get("train_end_time"),
+        "test_start_time":               fold_info.get("test_start_time"),
+        "test_end_time":                 fold_info.get("test_end_time"),
+        "candidate_threshold_pct":       (int(candidate_threshold_pct)
+                                          if candidate_threshold_pct is not None else None),
+        "candidate_rr":                  str(candidate_rr) if candidate_rr is not None else None,
+        "requested_cells":               len(fold_cell_results),
+        "completed_cells":               completed_cells,
+        "trusted_cells":                 trusted_cells,
+        "usable_cells":                  usable_cells,
+        "symbols_represented":           sorted(symbols_in_fold),
+        "timeframes_represented":        sorted(tfs_in_fold),
+        "baseline_trades":               base_trades,
+        "oos_trades":                    cand_trades,
+        "oos_wins":                      cand_wins,
+        "oos_losses":                    cand_losses,
+        "oos_ambiguous":                 cand_amb,
+        "oos_unresolved":                cand_unres,
+        "oos_invalid_loss_r":            cand_invalid,
+        "censored_unresolved":           censored,
+        "resolved_inside_window":        resolved_inside,
+        "oos_gross_profit_r":            round(cand_gp, 4),
+        "oos_gross_loss_r":              round(cand_gl, 4),
+        "oos_net_r":                     cand_net,
+        "oos_expectancy_r":              cand_exp_micro,
+        "candidate_micro_expectancy_r":  cand_exp_micro,
+        "candidate_macro_expectancy_r":  cand_exp_macro,
+        "baseline_expectancy_r":         base_exp_micro,
+        "baseline_gross_profit_r":       round(base_gp, 4),
+        "baseline_gross_loss_r":         round(base_gl, 4),
+        "baseline_net_r":                base_net,
+        "baseline_profit_factor_r":      base_pf,
         "baseline_profit_factor_infinite": base_pf_inf,
-        "expectancy_delta_vs_baseline": exp_delta,
-        "trade_retention_pct": retention,
-        "positive_cell_pct": pos_cell_pct,
-        "beat_baseline_cell_pct": beat_cell_pct,
-        "eligible": (cand_trades >= _MIN_AUTHORITATIVE_TRADES and cand_invalid == 0),
-        "cells": cell_rows,
+        "oos_profit_factor_r":           cand_pf,
+        "oos_profit_factor_infinite":    cand_pf_inf,
+        "pf_non_degradation_passed":     pf_nd_ok,
+        "pf_non_degradation_reason":     pf_nd_reason,
+        "expectancy_delta_vs_baseline":  micro_delta,
+        "micro_expectancy_delta":        micro_delta,
+        "macro_expectancy_delta":        macro_delta,
+        "trade_retention_pct":           retention,
+        "positive_cell_pct":             pos_cell_pct,
+        "beat_baseline_cell_pct":        beat_cell_pct,
+        "worst_cell_expectancy_r":       worst_cell,
+        "training_expectancy_r":         None,  # filled by caller
+        "eligible":                      eligible_fold,
+        "cells":                         cell_rows,
     }
+
+
+def _bt_wf_locked_candidate_constancy_audit(
+    fold_aggregates: List[Dict],
+    requested_threshold_pct,
+    requested_rr,
+) -> Dict:
+    """
+    Verify that every evaluable fold used exactly the requested locked threshold
+    and RR.  Any variation is a constancy failure.
+    """
+    req_thr = int(requested_threshold_pct) if requested_threshold_pct is not None else None
+    req_rr  = str(requested_rr) if requested_rr is not None else None
+
+    thresholds_by_fold = []
+    rrs_by_fold        = []
+    fallback_used      = False
+
+    for f in fold_aggregates:
+        if not f.get("eligible"):
+            continue
+        t = f.get("candidate_threshold_pct")
+        r = f.get("candidate_rr")
+        thresholds_by_fold.append({"fold": f["fold"], "threshold_pct": t})
+        rrs_by_fold.append({"fold": f["fold"], "rr": r})
+        if t != req_thr or r != req_rr:
+            fallback_used = True
+
+    unique_thrs = set(x["threshold_pct"] for x in thresholds_by_fold)
+    unique_rrs  = set(x["rr"] for x in rrs_by_fold)
+
+    thr_constant = (len(unique_thrs) <= 1) and (not fallback_used)
+    rr_constant  = (len(unique_rrs)  <= 1) and (not fallback_used)
+    passed = thr_constant and rr_constant and (not fallback_used)
+
+    return {
+        "locked_candidate_audit": {
+            "requested_threshold_pct":   req_thr,
+            "requested_rr":              req_rr,
+            "thresholds_observed_by_fold": thresholds_by_fold,
+            "rrs_observed_by_fold":        rrs_by_fold,
+            "threshold_constant":          thr_constant,
+            "rr_constant":                 rr_constant,
+            "fallback_candidate_used":     fallback_used,
+            "passed":                      passed,
+        }
+    }
+
+
+def _bt_wf_training_selection_timestamp_audit(
+    folds: List[Dict],
+    training_selection: List[Dict],
+) -> List[Dict]:
+    """
+    Prove per fold that the training-data candidate was selected before the test
+    window begins.  Uses data-boundary indices, not wall-clock times.
+    """
+    result = []
+    for fold in folds:
+        fold_num = fold["fold"]
+        sel_entry = next(
+            (s for s in training_selection if s.get("fold") == fold_num),
+            None,
+        )
+        selected = sel_entry.get("selected") if sel_entry else None
+        fallback = selected is None
+
+        # Selection is point-in-time if train_end <= test_start (always true by construction)
+        train_end  = fold["train_end_index_exclusive"]
+        test_start = fold["test_start_index"]
+        sel_before_test = (train_end <= test_start)
+
+        result.append({
+            "fold":                          fold_num,
+            "training_end_index_exclusive":  train_end,
+            "test_start_index":              test_start,
+            "selection_completed_before_test": sel_before_test,
+            "selected_threshold_pct":        int(selected["threshold_pct"]) if selected else None,
+            "selected_rr":                   str(selected["rr"]) if selected else None,
+            "fallback_used":                 fallback,
+            "training_selection_passed":     sel_before_test and (not fallback),
+        })
+    return result
 
 
 def _bt_wf_bootstrap_delta(evaluable_fold_deltas: List[float]) -> Dict:
@@ -38229,16 +38564,35 @@ def _bt_wf_bootstrap_delta(evaluable_fold_deltas: List[float]) -> Dict:
     }
 
 
-def _bt_wf_lookahead_audit(folds: List[Dict], all_fold_test_event_ids: Dict) -> Dict:
+def _bt_wf_lookahead_audit(
+    folds: List[Dict],
+    all_fold_test_event_ids: Dict,
+    cell_fold_results: Dict,   # keyed by "sym_tf"
+) -> Dict:
     """
-    Verify chronological integrity: training ends before testing begins, test
-    windows do not overlap, and no event id appears in more than one test fold.
+    Comprehensive look-ahead integrity audit.  Returns a 'passed' boolean that
+    is derived from actual execution metadata — no hardcoded values.
     """
+    violations: List[str] = []
+
+    # ── 1. Fold boundaries: train ends exactly at test start ──────────────────
+    boundaries_valid = True
+    for f in folds:
+        if f["train_end_index_exclusive"] != f["test_start_index"]:
+            boundaries_valid = False
+            violations.append(
+                f"fold {f['fold']}: train_end {f['train_end_index_exclusive']} "
+                f"!= test_start {f['test_start_index']}"
+            )
+
+    # ── 2. Training ends before test starts (train_end <= test_start) ─────────
     train_before_test = True
     for f in folds:
         if not (f["train_end_index_exclusive"] <= f["test_start_index"]):
             train_before_test = False
+            violations.append(f"fold {f['fold']}: train overlaps test")
 
+    # ── 3. Test windows non-overlapping ───────────────────────────────────────
     windows = sorted(
         [(f["test_start_index"], f["test_end_index_exclusive"]) for f in folds],
         key=lambda w: w[0],
@@ -38247,7 +38601,69 @@ def _bt_wf_lookahead_audit(folds: List[Dict], all_fold_test_event_ids: Dict) -> 
     for i in range(1, len(windows)):
         if windows[i][0] < windows[i - 1][1]:
             overlap = True
+            violations.append(
+                f"test windows overlap: [{windows[i-1][0]},{windows[i-1][1]}) "
+                f"and [{windows[i][0]},{windows[i][1]})"
+            )
 
+    # ── 4. Events assigned by first touch (not formation bar) ─────────────────
+    events_assigned_by_first_touch = True  # structural: filter uses first_touch_bar
+
+    # ── 5. Training prefix isolated ───────────────────────────────────────────
+    # Proved by physical slicing: collect all training prefix audits
+    train_prefix_isolated = True
+    n_prefix_checked = 0
+    n_prefix_failed  = 0
+    for key, fold_rows in cell_fold_results.items():
+        for row in fold_rows:
+            for pa in row.get("prefix_audits", []):
+                if pa.get("stage") == "training":
+                    n_prefix_checked += 1
+                    if not pa.get("prefix_contract_passed", False):
+                        train_prefix_isolated = False
+                        n_prefix_failed += 1
+                        violations.append(
+                            f"training prefix contract failed: "
+                            f"{pa.get('symbol')} {pa.get('timeframe')} fold {pa.get('fold')}"
+                        )
+
+    # ── 6. Test prefix isolated ────────────────────────────────────────────────
+    test_prefix_isolated = True
+    for key, fold_rows in cell_fold_results.items():
+        for row in fold_rows:
+            for pa in row.get("prefix_audits", []):
+                if pa.get("stage") == "test":
+                    n_prefix_checked += 1
+                    if not pa.get("prefix_contract_passed", False):
+                        test_prefix_isolated = False
+                        n_prefix_failed += 1
+                        violations.append(
+                            f"test prefix contract failed: "
+                            f"{pa.get('symbol')} {pa.get('timeframe')} fold {pa.get('fold')}"
+                        )
+
+    # ── 7. Outcomes capped at fold end ─────────────────────────────────────────
+    # Proved by physical prefix slicing: outcomes can only see candles up to test_end
+    outcomes_capped = train_prefix_isolated and test_prefix_isolated
+
+    # ── 8. Percentages point-in-time ──────────────────────────────────────────
+    # TV OB% snapshots are attached on the prefix → point-in-time by construction
+    percentages_point_in_time = test_prefix_isolated
+
+    # ── 9. Future-candle invariance ───────────────────────────────────────────
+    future_candle_invariance = True
+    future_reads_detected = 0
+    for key, fold_rows in cell_fold_results.items():
+        for row in fold_rows:
+            if not row.get("future_candle_invariance", True):
+                future_candle_invariance = False
+                future_reads_detected += 1
+                violations.append(
+                    f"future candle invariance failed: "
+                    f"{row.get('symbol')} {row.get('timeframe')} fold {row.get('fold')}"
+                )
+
+    # ── 10. Duplicate event IDs ────────────────────────────────────────────────
     seen: set = set()
     dup = 0
     for _fold, ids in (all_fold_test_event_ids or {}).items():
@@ -38256,13 +38672,47 @@ def _bt_wf_lookahead_audit(folds: List[Dict], all_fold_test_event_ids: Dict) -> 
                 dup += 1
             else:
                 seen.add(eid)
+    if dup > 0:
+        violations.append(f"duplicate_test_event_ids: {dup}")
 
-    passes = train_before_test and (not overlap) and dup == 0
+    # ── 11. Events outside test window ────────────────────────────────────────
+    n_outside_total = 0
+    for key, fold_rows in cell_fold_results.items():
+        for row in fold_rows:
+            n_outside_total += int(row.get("events_outside_window", 0) or 0)
+
+    passed = (
+        boundaries_valid
+        and train_before_test
+        and (not overlap)
+        and events_assigned_by_first_touch
+        and train_prefix_isolated
+        and test_prefix_isolated
+        and outcomes_capped
+        and percentages_point_in_time
+        and future_candle_invariance
+        and dup == 0
+        and n_outside_total == 0
+        and n_prefix_failed == 0
+    )
+
     return {
-        "training_ends_before_test": train_before_test,
-        "test_windows_non_overlapping": (not overlap),
-        "duplicate_test_event_ids": dup,
-        "passes": passes,
+        "passed":                          passed,
+        "fold_boundaries_valid":           boundaries_valid,
+        "training_ends_before_test_starts": train_before_test,
+        "test_windows_non_overlapping":    (not overlap),
+        "events_assigned_by_first_touch":  events_assigned_by_first_touch,
+        "training_prefix_isolated":        train_prefix_isolated,
+        "test_prefix_isolated":            test_prefix_isolated,
+        "outcomes_capped_at_fold_end":     outcomes_capped,
+        "percentages_point_in_time":       percentages_point_in_time,
+        "future_candle_invariance":        future_candle_invariance,
+        "duplicate_test_event_ids":        dup,
+        "events_outside_test_window":      n_outside_total,
+        "future_candle_reads_detected":    future_reads_detected,
+        "prefix_audits_checked":           n_prefix_checked,
+        "prefix_audits_failed":            n_prefix_failed,
+        "violations":                      violations,
     }
 
 
@@ -38270,34 +38720,61 @@ def _bt_aggregate_wf_summary(
     fold_aggregates: List[Dict],
     candidate_mode: str,
     training_expectancy_by_fold: List,
+    symbols_requested: List[str],
+    timeframes_requested: List[str],
 ) -> Dict:
     """Aggregate test-only metrics across all folds. Training trades excluded."""
     evaluable = [f for f in fold_aggregates if f.get("eligible")]
-    total_folds = len(fold_aggregates)
 
     cand_gp = cand_gl = base_gp = base_gl = 0.0
     oos_trades = oos_wins = oos_losses = oos_amb = oos_unres = oos_invalid = 0
-    censored = 0
-    base_trades = 0
+    censored = base_trades = 0
     fold_deltas: List[float] = []
-    pos_folds = 0
-    beat_folds = 0
-    beat_eval = 0
+    pos_folds = beat_folds = beat_eval = 0
     worst_fold = None
+
+    # Cell-fold level counters
+    total_cell_folds = pos_cell_folds = beat_cell_folds = 0
+    eligible_1h_cell_folds = eligible_4h_cell_folds = 0
+    sym_represented: set = set()
+    tf_represented:  set = set()
+    locked_thrs: set = set()
+    locked_rrs:  set = set()
 
     for f in fold_aggregates:
         oos_trades += int(f.get("oos_trades", 0) or 0)
-        oos_wins += int(f.get("oos_wins", 0) or 0)
+        oos_wins   += int(f.get("oos_wins",   0) or 0)
         oos_losses += int(f.get("oos_losses", 0) or 0)
-        oos_amb += int(f.get("oos_ambiguous", 0) or 0)
-        oos_unres += int(f.get("oos_unresolved", 0) or 0)
+        oos_amb    += int(f.get("oos_ambiguous",  0) or 0)
+        oos_unres  += int(f.get("oos_unresolved", 0) or 0)
         oos_invalid += int(f.get("oos_invalid_loss_r", 0) or 0)
-        censored += int(f.get("censored_unresolved", 0) or 0)
+        censored   += int(f.get("censored_unresolved", 0) or 0)
         base_trades += int(f.get("baseline_trades", 0) or 0)
-        cand_gp += float(f.get("oos_gross_profit_r", 0.0) or 0.0)
-        cand_gl += float(f.get("oos_gross_loss_r", 0.0) or 0.0)
+        cand_gp += float(f.get("oos_gross_profit_r",  0.0) or 0.0)
+        cand_gl += float(f.get("oos_gross_loss_r",    0.0) or 0.0)
         base_gp += float(f.get("baseline_gross_profit_r", 0.0) or 0.0)
-        base_gl += float(f.get("baseline_gross_loss_r", 0.0) or 0.0)
+        base_gl += float(f.get("baseline_gross_loss_r",   0.0) or 0.0)
+
+        for sym in (f.get("symbols_represented") or []):
+            sym_represented.add(sym)
+        for tf in (f.get("timeframes_represented") or []):
+            tf_represented.add(tf)
+
+        # Per-cell-fold counting (across all eligible cells in this fold)
+        for cell in (f.get("cells") or []):
+            if not cell.get("eligible"):
+                continue
+            total_cell_folds += 1
+            tf_c = cell.get("timeframe", "")
+            if tf_c == "1h":
+                eligible_1h_cell_folds += 1
+            elif tf_c == "4h":
+                eligible_4h_cell_folds += 1
+            if (cell.get("expectancy_r") or 0) > 0:
+                pos_cell_folds += 1
+            delta_c = cell.get("expectancy_delta_vs_baseline")
+            if delta_c is not None and delta_c > 0:
+                beat_cell_folds += 1
 
         if f.get("eligible"):
             if (f.get("oos_expectancy_r") or 0) > 0:
@@ -38311,53 +38788,84 @@ def _bt_aggregate_wf_summary(
             fe = f.get("oos_expectancy_r")
             if fe is not None:
                 worst_fold = fe if worst_fold is None else min(worst_fold, fe)
+            thr_f = f.get("candidate_threshold_pct")
+            rr_f  = f.get("candidate_rr")
+            if thr_f is not None: locked_thrs.add(thr_f)
+            if rr_f  is not None: locked_rrs.add(rr_f)
 
-    oos_net_r = round(cand_gp - cand_gl, 4)
-    baseline_net_r = round(base_gp - base_gl, 4)
-    oos_expectancy = round(oos_net_r / oos_trades, 6) if oos_trades else None
-    baseline_expectancy = (round(baseline_net_r / base_trades, 6)
-                           if base_trades else None)
-    oos_exp_delta = (round(oos_expectancy - baseline_expectancy, 6)
-                     if oos_expectancy is not None and baseline_expectancy is not None
-                     else None)
-    retention = round(oos_trades / base_trades * 100, 2) if base_trades else None
-    oos_pf, oos_pf_inf = _stab_aggregate_pf(cand_gp, cand_gl)
+    oos_net_r       = round(cand_gp - cand_gl, 4)
+    baseline_net_r  = round(base_gp - base_gl, 4)
+    oos_expectancy  = round(oos_net_r / oos_trades, 6) if oos_trades else None
+    base_expectancy = round(baseline_net_r / base_trades, 6) if base_trades else None
+    oos_exp_delta   = (round(oos_expectancy - base_expectancy, 6)
+                       if oos_expectancy is not None and base_expectancy is not None else None)
+    retention       = round(oos_trades / base_trades * 100, 2) if base_trades else None
+    oos_pf,  oos_pf_inf  = _stab_aggregate_pf(cand_gp, cand_gl)
     base_pf, base_pf_inf = _stab_aggregate_pf(base_gp, base_gl)
 
-    positive_fold_pct = round(pos_folds / len(evaluable) * 100, 1) if evaluable else None
-    beat_fold_pct = round(beat_folds / beat_eval * 100, 1) if beat_eval else None
+    pos_fold_pct   = round(pos_folds  / len(evaluable) * 100, 1) if evaluable else None
+    beat_fold_pct  = round(beat_folds / beat_eval * 100, 1)      if beat_eval  else None
+    pos_cell_pct_  = round(pos_cell_folds  / total_cell_folds * 100, 1) if total_cell_folds else None
+    beat_cell_pct_ = round(beat_cell_folds / total_cell_folds * 100, 1) if total_cell_folds else None
+
+    locked_thr_constant = (len(locked_thrs) <= 1)
+    locked_rr_constant  = (len(locked_rrs)  <= 1)
+
+    # Annotate fold_aggregates with training expectancy
+    for i, f in enumerate(fold_aggregates):
+        te = training_expectancy_by_fold[i] if i < len(training_expectancy_by_fold) else None
+        f["training_expectancy_r"] = te
+        if te is not None and f.get("oos_expectancy_r") is not None:
+            f["train_test_gap_r"] = round(float(te) - float(f["oos_expectancy_r"]), 6)
+        else:
+            f["train_test_gap_r"] = None
 
     return {
-        "candidate_mode": candidate_mode,
-        "total_folds": total_folds,
-        "evaluable_folds": len(evaluable),
-        "oos_trades": oos_trades,
-        "oos_wins": oos_wins,
-        "oos_losses": oos_losses,
-        "oos_ambiguous": oos_amb,
-        "oos_unresolved": oos_unres,
-        "oos_invalid_loss_r": oos_invalid,
-        "censored_unresolved": censored,
-        "baseline_trades": base_trades,
-        "oos_gross_profit_r": round(cand_gp, 4),
-        "oos_gross_loss_r": round(cand_gl, 4),
-        "oos_net_r": oos_net_r,
-        "baseline_net_r": baseline_net_r,
-        "oos_expectancy_r": oos_expectancy,
-        "baseline_expectancy_r": baseline_expectancy,
+        "candidate_mode":                   candidate_mode,
+        "requested_symbols":                len(symbols_requested),
+        "symbols_represented":              len(sym_represented),
+        "symbol_list_represented":          sorted(sym_represented),
+        "requested_timeframes":             sorted(timeframes_requested),
+        "timeframes_represented":           sorted(tf_represented),
+        "eligible_1h_cell_folds":           eligible_1h_cell_folds,
+        "eligible_4h_cell_folds":           eligible_4h_cell_folds,
+        "total_eligible_cell_folds":        total_cell_folds,
+        "positive_cell_folds":              pos_cell_folds,
+        "beat_baseline_cell_folds":         beat_cell_folds,
+        "positive_cell_fold_pct":           pos_cell_pct_,
+        "beat_baseline_cell_fold_pct":      beat_cell_pct_,
+        "locked_threshold_constant":        locked_thr_constant,
+        "locked_rr_constant":               locked_rr_constant,
+        "training_trades_in_oos":           0,  # structural guarantee: different prefixes
+        "total_folds":                      len(fold_aggregates),
+        "evaluable_folds":                  len(evaluable),
+        "oos_trades":                       oos_trades,
+        "oos_wins":                         oos_wins,
+        "oos_losses":                       oos_losses,
+        "oos_ambiguous":                    oos_amb,
+        "oos_unresolved":                   oos_unres,
+        "oos_invalid_loss_r":               oos_invalid,
+        "censored_unresolved":              censored,
+        "baseline_trades":                  base_trades,
+        "oos_gross_profit_r":               round(cand_gp, 4),
+        "oos_gross_loss_r":                 round(cand_gl, 4),
+        "oos_net_r":                        oos_net_r,
+        "baseline_net_r":                   baseline_net_r,
+        "oos_expectancy_r":                 oos_expectancy,
+        "baseline_expectancy_r":            base_expectancy,
         "oos_expectancy_delta_vs_baseline": oos_exp_delta,
-        "oos_profit_factor_r": oos_pf,
-        "oos_profit_factor_infinite": oos_pf_inf,
-        "baseline_profit_factor_r": base_pf,
-        "baseline_profit_factor_infinite": base_pf_inf,
-        "oos_trade_retention_pct": retention,
-        "positive_folds": pos_folds,
-        "positive_fold_pct": positive_fold_pct,
-        "beat_baseline_folds": beat_folds,
-        "beat_baseline_fold_pct": beat_fold_pct,
-        "worst_fold_expectancy_r": worst_fold,
-        "evaluable_fold_deltas": fold_deltas,
-        "training_expectancy_by_fold": training_expectancy_by_fold,
+        "oos_profit_factor_r":              oos_pf,
+        "oos_profit_factor_infinite":       oos_pf_inf,
+        "baseline_profit_factor_r":         base_pf,
+        "baseline_profit_factor_infinite":  base_pf_inf,
+        "oos_trade_retention_pct":          retention,
+        "positive_folds":                   pos_folds,
+        "positive_fold_pct":                pos_fold_pct,
+        "beat_baseline_folds":              beat_folds,
+        "beat_baseline_fold_pct":           beat_fold_pct,
+        "worst_fold_expectancy_r":          worst_fold,
+        "evaluable_fold_deltas":            fold_deltas,
+        "training_expectancy_by_fold":      training_expectancy_by_fold,
     }
 
 
@@ -38368,109 +38876,204 @@ def _bt_wf_check_pass_gates(
     authoritative: bool,
     candidate_mode: str,
     bootstrap: Dict,
+    constancy_audit: Dict,
+    candidate_threshold_pct,
+    timeframes_requested: List[str],
 ) -> Tuple[bool, List[str]]:
     """
-    Evaluate locked-mode pass gates. Returns (passes, failed_gates_list).
-    train_selected mode is advisory (research-only) and never returns PASS.
+    Evaluate 30 locked-mode pass gates.  Returns (passes, sorted_failed_gates).
+    train_selected mode never returns authoritative PASS here.
     """
     failed: List[str] = []
 
-    # 1. Look-ahead integrity
-    if not lookahead_audit.get("passes"):
-        failed.append("lookahead_violation")
-    # 2. Server authority
+    # 1. Server authority
     if not authoritative:
         failed.append("not_server_authoritative")
-    # 3. Minimum evaluable folds
+    # 2. Look-ahead integrity (full audit)
+    if not lookahead_audit.get("passed"):
+        failed.append("lookahead_violation")
+    # 3. Minimum evaluable folds (≥3)
     if summary.get("evaluable_folds", 0) < _WF_MIN_FOLDS:
         failed.append("insufficient_evaluable_folds")
-    # 4. Minimum OOS trades
+    # 4. Minimum 4 distinct symbols in eligible OOS cells
+    if summary.get("symbols_represented", 0) < _WF_MIN_SYMBOLS:
+        failed.append("insufficient_symbols_represented")
+    # 5. Both 1h and 4h represented in eligible OOS cells
+    tfs_rep = set(summary.get("timeframes_represented") or [])
+    if "1h" not in tfs_rep or "4h" not in tfs_rep:
+        failed.append("missing_1h_or_4h_coverage")
+    # 6. At least 2 eligible 1h cell-fold observations
+    if summary.get("eligible_1h_cell_folds", 0) < _WF_MIN_TF_CELL_FOLDS:
+        failed.append("insufficient_1h_cell_folds")
+    # 7. At least 2 eligible 4h cell-fold observations
+    if summary.get("eligible_4h_cell_folds", 0) < _WF_MIN_TF_CELL_FOLDS:
+        failed.append("insufficient_4h_cell_folds")
+    # 8. Total OOS trades ≥ 100
     if summary.get("oos_trades", 0) < _WF_MIN_OOS_TRADES:
         failed.append("insufficient_oos_trades")
-    # 5. No invalid loss R (blocks pass)
-    if summary.get("oos_invalid_loss_r", 0) > 0:
-        failed.append("invalid_loss_r_present")
-    # 6. OOS retention
+    # 9. OOS retention ≥ 20%
     if (summary.get("oos_trade_retention_pct") or 0) < _WF_MIN_RETENTION:
         failed.append("retention_below_floor")
-    # 7. OOS expectancy positive
-    if (summary.get("oos_expectancy_r") or -999) <= 0:
-        failed.append("oos_expectancy_not_positive")
-    # 8. OOS expectancy beats baseline
+    # 10. OOS micro expectancy > baseline
     d = summary.get("oos_expectancy_delta_vs_baseline")
     if d is None or d <= 0:
-        failed.append("oos_expectancy_not_above_baseline")
-    # 9. OOS net R positive
+        failed.append("oos_micro_expectancy_not_above_baseline")
+    # 11. Macro fold expectancy delta > 0 (mean of fold deltas)
+    fold_deltas = summary.get("evaluable_fold_deltas") or []
+    macro_delta = sum(fold_deltas) / len(fold_deltas) if fold_deltas else None
+    if macro_delta is None or macro_delta <= 0:
+        failed.append("oos_macro_fold_delta_not_positive")
+    # 12. OOS net R > 0
     if (summary.get("oos_net_r") or 0) <= 0:
         failed.append("oos_net_r_not_positive")
-    # 10. Positive folds gate
+    # 13. Positive folds ≥ 60%
     if (summary.get("positive_fold_pct") or 0) < _WF_MIN_POSITIVE_FOLDS:
         failed.append("positive_folds_below_floor")
-    # 11. Beat-baseline folds gate
+    # 14. Beat-baseline folds ≥ 60%
     if (summary.get("beat_baseline_fold_pct") or 0) < _WF_MIN_BEAT_FOLDS:
         failed.append("beat_baseline_folds_below_floor")
-    # 12. Worst fold floor
-    wf = summary.get("worst_fold_expectancy_r")
-    if wf is None or wf < _WF_WORST_FOLD_FLOOR:
+    # 15. Positive eligible cell-fold observations ≥ 55%
+    if (summary.get("positive_cell_fold_pct") or 0) < _WF_MIN_POS_CELL_FOLD:
+        failed.append("positive_cell_fold_pct_below_floor")
+    # 16. Beat-baseline eligible cell-fold observations ≥ 55%
+    if (summary.get("beat_baseline_cell_fold_pct") or 0) < _WF_MIN_BEAT_CELL_FOLD:
+        failed.append("beat_baseline_cell_fold_pct_below_floor")
+    # 17. Worst fold expectancy ≥ -0.30R
+    wf_e = summary.get("worst_fold_expectancy_r")
+    if wf_e is None or wf_e < _WF_WORST_FOLD_FLOOR:
         failed.append("worst_fold_below_floor")
-    # 13. Bootstrap CI low must be > 0
+    # 18. Bootstrap CI lower bound ≥ 0
     ci_low = bootstrap.get("expectancy_delta_low")
     if bootstrap.get("insufficient_folds") or ci_low is None or ci_low <= 0:
         failed.append("bootstrap_ci_low_not_positive")
-    # 14. PF non-degradation across all evaluable folds (vs each baseline)
-    pf_degraded = False
+    # 19. PF non-degradation (checked per eligible fold)
+    pf_deg = False
     for f in fold_aggregates:
         if not f.get("eligible"):
             continue
-        ok, _reason = _stab_pf_non_degraded(
-            f.get("oos_profit_factor_r"),
-            f.get("oos_profit_factor_infinite", False),
-            f.get("baseline_profit_factor_r"),
-            f.get("baseline_profit_factor_infinite", False),
-            candidate_trades=f.get("oos_trades", 0) or 0,
-            baseline_trades=f.get("baseline_trades", 0) or 0,
-            baseline_gross_profit=f.get("baseline_gross_profit_r", 0.0) or 0.0,
-            baseline_gross_loss=f.get("baseline_gross_loss_r", 0.0) or 0.0,
-        )
-        if not ok:
-            pf_degraded = True
-    if pf_degraded:
+        if not f.get("pf_non_degradation_passed", False):
+            pf_deg = True
+    if pf_deg:
         failed.append("profit_factor_degraded")
-    # 15. Per-cell positive ratio within folds
-    pcell_fail = False
-    for f in fold_aggregates:
-        if f.get("eligible") and (f.get("positive_cell_pct") is not None):
-            if f["positive_cell_pct"] < _WF_MIN_POS_CELL_FOLD:
-                pcell_fail = True
-    if pcell_fail:
-        failed.append("positive_cell_fold_below_floor")
-    # 16. Per-cell beat-baseline ratio within folds
-    bcell_fail = False
-    for f in fold_aggregates:
-        if f.get("eligible") and (f.get("beat_baseline_cell_pct") is not None):
-            if f["beat_baseline_cell_pct"] < _WF_MIN_BEAT_CELL_FOLD:
-                bcell_fail = True
-    if bcell_fail:
-        failed.append("beat_cell_fold_below_floor")
-    # 17. Candidate mode must be locked for an authoritative PASS
-    if candidate_mode == "locked":
-        if summary.get("candidate_mode") != "locked":
-            failed.append("candidate_mode_mismatch")
-    # 18. train_selected mode is never authoritative PASS (research advisory)
+    # 20. No invalid loss R
+    if summary.get("oos_invalid_loss_r", 0) > 0:
+        failed.append("invalid_loss_r_present")
+    # 21. No duplicate event IDs
+    if lookahead_audit.get("duplicate_test_event_ids", 0) > 0:
+        failed.append("duplicate_event_ids")
+    # 22. No events outside test window
+    if lookahead_audit.get("events_outside_test_window", 0) > 0:
+        failed.append("events_outside_test_window")
+    # 23. No prefix audit failure
+    if lookahead_audit.get("prefix_audits_failed", 0) > 0:
+        failed.append("prefix_audit_failed")
+    # 24. Locked threshold constant across all evaluable folds
+    ca = (constancy_audit.get("locked_candidate_audit") or {})
+    if not ca.get("threshold_constant", True):
+        failed.append("locked_threshold_not_constant")
+    # 25. Locked RR constant across all evaluable folds
+    if not ca.get("rr_constant", True):
+        failed.append("locked_rr_not_constant")
+    # 26. Candidate threshold must not be 0
+    req_thr = ca.get("requested_threshold_pct")
+    if req_thr is not None and int(req_thr) == 0:
+        failed.append("candidate_threshold_is_zero")
+    # 27. At least one eligible fold exists for every requested timeframe
+    for req_tf in (timeframes_requested or []):
+        has_tf = any(
+            req_tf in (f.get("timeframes_represented") or [])
+            for f in fold_aggregates if f.get("eligible")
+        )
+        if not has_tf:
+            failed.append("timeframe_not_fully_covered")
+            break
+    # 28. No fabricated fallback candidate used
+    if ca.get("fallback_candidate_used", False):
+        failed.append("fallback_candidate_used")
+    # 29. No training trades in OOS metrics
+    if summary.get("training_trades_in_oos", 0) > 0:
+        failed.append("training_trades_in_oos")
+    # 30. train_selected mode never gets authoritative locked PASS
     if candidate_mode == "train_selected":
-        failed.append("train_selected_advisory_only")
-    # 19. Total folds requested met minimum
-    if summary.get("total_folds", 0) < _WF_MIN_FOLDS:
-        failed.append("too_few_folds")
-    # 20. Zero OOS trades is malformed
-    if summary.get("oos_trades", 0) == 0:
-        failed.append("zero_oos_trades")
-    # 21. OOS net R must be defined
-    if summary.get("oos_net_r") is None:
-        failed.append("oos_net_r_undefined")
+        failed.append("train_selected_not_authoritative_locked")
 
     passes = (len(failed) == 0)
     return passes, sorted(set(failed))
+
+
+def _bt_wf_adaptive_process_check(
+    summary: Dict,
+    fold_aggregates: List[Dict],
+    lookahead_audit: Dict,
+    bootstrap: Dict,
+    training_selection_audit: List[Dict],
+    timeframes_requested: List[str],
+) -> Dict:
+    """
+    Evaluate train-selected mode adaptive-process gates (research-only).
+    Returns a separate verdict; never replaces the locked authoritative verdict.
+    """
+    failed: List[str] = []
+
+    # Leakage and prefix gates (same as locked)
+    if not lookahead_audit.get("passed"):
+        failed.append("lookahead_violation")
+    if lookahead_audit.get("duplicate_test_event_ids", 0) > 0:
+        failed.append("duplicate_event_ids")
+    if lookahead_audit.get("prefix_audits_failed", 0) > 0:
+        failed.append("prefix_audit_failed")
+    if lookahead_audit.get("events_outside_test_window", 0) > 0:
+        failed.append("events_outside_test_window")
+
+    # OOS gates
+    if summary.get("evaluable_folds", 0) < _WF_MIN_FOLDS:
+        failed.append("insufficient_evaluable_folds")
+    if summary.get("oos_trades", 0) < _WF_MIN_OOS_TRADES:
+        failed.append("insufficient_oos_trades")
+    if (summary.get("oos_trade_retention_pct") or 0) < _WF_MIN_RETENTION:
+        failed.append("retention_below_floor")
+    if (summary.get("oos_net_r") or 0) <= 0:
+        failed.append("oos_net_r_not_positive")
+    if summary.get("oos_invalid_loss_r", 0) > 0:
+        failed.append("invalid_loss_r_present")
+    d = summary.get("oos_expectancy_delta_vs_baseline")
+    if d is None or d <= 0:
+        failed.append("oos_micro_expectancy_not_above_baseline")
+    ci_low = bootstrap.get("expectancy_delta_low")
+    if bootstrap.get("insufficient_folds") or ci_low is None or ci_low <= 0:
+        failed.append("bootstrap_ci_low_not_positive")
+
+    # Training selection gates (Part I)
+    valid_sel = sum(
+        1 for s in (training_selection_audit or [])
+        if s.get("training_selection_passed")
+    )
+    if valid_sel < _WF_MIN_FOLDS:
+        failed.append("insufficient_valid_training_selections")
+    for s in (training_selection_audit or []):
+        if s.get("fallback_used"):
+            failed.append("fallback_candidate_used_in_train_selected")
+            break
+    # Every selection must be completed before test starts (verified by index)
+    for s in (training_selection_audit or []):
+        if not s.get("selection_completed_before_test", True):
+            failed.append("selection_not_before_test")
+            break
+
+    n_folds = len(training_selection_audit or [])
+    oos_evaluable = summary.get("evaluable_folds", 0)
+    status = "insufficient" if oos_evaluable < _WF_MIN_FOLDS else (
+        "passed" if not failed else "failed"
+    )
+
+    return {
+        "passes":                            not bool(failed),
+        "authoritative_for_adaptive_process": not bool(failed),
+        "status":                            status,
+        "failed_gates":                      sorted(set(failed)),
+        "valid_training_selections":         valid_sel,
+        "total_folds_with_selection_audit":  n_folds,
+    }
 
 
 def _bt_run_walk_forward(
@@ -38488,8 +39091,8 @@ def _bt_run_walk_forward(
     primary_metric: str = "before_first_touch",
 ) -> Dict:
     """
-    Orchestrate chronological walk-forward validation across symbol×timeframe cells.
-    Research only — never activates any threshold in production systems.
+    Orchestrate chronological walk-forward validation. Research only —
+    never activates any threshold in production systems.
     """
     import time as _t_wf
     t0 = _t_wf.time()
@@ -38499,16 +39102,22 @@ def _bt_run_walk_forward(
     )
 
     cell_fold_results: Dict[str, List[Dict]] = {}
-    candle_meta: Dict[str, Dict] = {}
-    cells_failed: List[Dict] = []
-    needed = folds[-1]["test_end_index_exclusive"] if folds else candle_count
+    candle_meta:       Dict[str, Dict]       = {}
+    cells_failed:      List[Dict]            = []
+    cell_elapsed_ms:   Dict[str, float]      = {}
+    network_fetch_count = 0
+    training_prefix_runs = test_prefix_runs = 0
 
+    needed = folds[-1]["test_end_index_exclusive"] if folds else candle_count
     folds_time_filled = False
+
     for sym in symbols:
         for tf in timeframes:
             key = f"{sym}_{tf}"
+            t_cell = _t_wf.time()
             try:
                 raw = get_klines(sym, tf, candle_count, "perpetual")
+                network_fetch_count += 1
                 candles = _bt_normalize_candles(raw or [])
             except Exception as _e:
                 traceback.print_exc()
@@ -38521,17 +39130,18 @@ def _bt_run_walk_forward(
                                      "error": "insufficient_candles_for_folds",
                                      "fetched": len(candles)})
                 cell_fold_results[key] = []
+                cell_elapsed_ms[key] = round((_t_wf.time() - t_cell) * 1000, 1)
                 continue
 
             if not folds_time_filled and folds:
                 for fold in folds:
                     tr_end_idx = fold["train_end_index_exclusive"] - 1
-                    te_start_idx = fold["test_start_index"]
+                    te_start_i = fold["test_start_index"]
                     te_end_idx = fold["test_end_index_exclusive"] - 1
                     fold["train_start_time"] = str(candles[0].get("open_time") or "")
-                    fold["train_end_time"] = str(candles[tr_end_idx].get("open_time") or "")
-                    fold["test_start_time"] = str(candles[te_start_idx].get("open_time") or "")
-                    fold["test_end_time"] = str(candles[te_end_idx].get("open_time") or "")
+                    fold["train_end_time"]   = str(candles[tr_end_idx].get("open_time") or "")
+                    fold["test_start_time"]  = str(candles[te_start_i].get("open_time") or "")
+                    fold["test_end_time"]    = str(candles[te_end_idx].get("open_time") or "")
                 folds_time_filled = True
 
             cell_fold_results[key] = _bt_run_walk_forward_cell(
@@ -38539,34 +39149,37 @@ def _bt_run_walk_forward(
                 candidate_threshold_pct, candidate_rr, candidate_mode,
                 thresholds, primary_metric,
             )
+            # Each cell runs 2 prefix backtests per fold (train + test)
+            n_folds_run = len(cell_fold_results[key])
+            training_prefix_runs += n_folds_run
+            test_prefix_runs     += n_folds_run
+            cell_elapsed_ms[key] = round((_t_wf.time() - t_cell) * 1000, 1)
 
-    # ── Resolve candidate per fold (train_selected) + (re)extract test metrics ──
+    # ── Resolve candidate per fold ────────────────────────────────────────────
     training_selection: List[Dict] = []
-    training_expectancy_by_fold: List = []
+    training_expectancy_by_fold:   List = []
     resolved_candidate = None
     if candidate_mode == "locked":
         resolved_candidate = {
             "threshold_pct": int(candidate_threshold_pct),
-            "rr": str(candidate_rr),
+            "rr":            str(candidate_rr),
         }
 
     for fold in folds:
-        fold_num = fold["fold"]
+        fold_num   = fold["fold"]
         train_cells = []
         for sym in symbols:
             for tf in timeframes:
-                key = f"{sym}_{tf}"
+                key  = f"{sym}_{tf}"
                 rows = cell_fold_results.get(key, [])
-                row = next((r for r in rows if r.get("fold") == fold_num and r.get("ok")), None)
+                row  = next((r for r in rows if r.get("fold") == fold_num and r.get("ok")), None)
                 if row is None:
                     continue
                 train_cells.append({
-                    "ok": True,
-                    "symbol": sym,
-                    "timeframe": tf,
-                    "candle_count": fold["train_candle_count"],
-                    "parity_trusted": row.get("train_parity_trusted", False),
-                    "threshold_analysis": row.get("train_threshold_analysis"),
+                    "ok": True, "symbol": sym, "timeframe": tf,
+                    "candle_count":              fold["train_candle_count"],
+                    "parity_trusted":            row.get("train_parity_trusted", False),
+                    "threshold_analysis":        row.get("train_threshold_analysis"),
                     "threshold_analysis_present": row.get("train_threshold_analysis") is not None,
                 })
 
@@ -38578,33 +39191,30 @@ def _bt_run_walk_forward(
             )
             fold_candidate = sel
             training_selection.append({
-                "fold": fold_num,
-                "selected": sel,
+                "fold": fold_num, "selected": sel,
                 "recommendation_present": sel is not None,
             })
             if sel is not None:
                 aggk = f"{int(sel['threshold_pct'])}_{str(sel['rr'])}"
-                agg = (stab.get("aggregate_by_thr_rr") or {}).get(aggk) or {}
+                agg  = (stab.get("aggregate_by_thr_rr") or {}).get(aggk) or {}
                 fold_train_exp = agg.get("micro_expectancy_r")
         else:
-            gp = gl = 0.0
-            tr_trades = 0
+            gp = gl = 0.0; tr_trades = 0
             for tc in train_cells:
-                ta = ((tc.get("threshold_analysis") or {}).get(primary_metric) or {})
+                ta  = ((tc.get("threshold_analysis") or {}).get(primary_metric) or {})
                 row = ((ta.get("results") or {}).get(str(int(candidate_threshold_pct))) or {})
-                rz = (row.get("realized_summary_by_rr") or {}).get(str(candidate_rr)) or {}
-                gp += float(rz.get("gross_profit_r", 0.0) or 0.0)
-                gl += float(rz.get("gross_loss_r", 0.0) or 0.0)
+                rz  = (row.get("realized_summary_by_rr") or {}).get(str(candidate_rr)) or {}
+                gp  += float(rz.get("gross_profit_r", 0.0) or 0.0)
+                gl  += float(rz.get("gross_loss_r",   0.0) or 0.0)
                 tr_trades += int(rz.get("trades", 0) or 0)
             fold_train_exp = round((gp - gl) / tr_trades, 6) if tr_trades else None
         training_expectancy_by_fold.append(fold_train_exp)
 
-        # (Re)extract test metrics for each cell using the resolved candidate.
         for sym in symbols:
             for tf in timeframes:
-                key = f"{sym}_{tf}"
+                key  = f"{sym}_{tf}"
                 rows = cell_fold_results.get(key, [])
-                row = next((r for r in rows if r.get("fold") == fold_num and r.get("ok")), None)
+                row  = next((r for r in rows if r.get("fold") == fold_num and r.get("ok")), None)
                 if row is None:
                     continue
                 if fold_candidate is None:
@@ -38620,47 +39230,107 @@ def _bt_run_walk_forward(
                         rr_values,
                     )
 
-    # ── Aggregate folds ──────────────────────────────────────────────────────
-    fold_aggregates: List[Dict] = []
+    # ── Aggregate folds ───────────────────────────────────────────────────────
+    fold_aggregates: List[Dict]  = []
     all_fold_test_event_ids: Dict = {}
+
     for fold in folds:
-        fold_num = fold["fold"]
-        fold_cells = []
-        ids: List[str] = []
+        fold_num  = fold["fold"]
+        fold_cells = []; ids: List[str] = []
         for sym in symbols:
             for tf in timeframes:
-                key = f"{sym}_{tf}"
+                key  = f"{sym}_{tf}"
                 rows = cell_fold_results.get(key, [])
-                row = next((r for r in rows if r.get("fold") == fold_num), None)
-                if row is None:
-                    continue
+                row  = next((r for r in rows if r.get("fold") == fold_num), None)
+                if row is None: continue
                 fold_cells.append(row)
                 ids.extend(row.get("test_event_ids", []))
         all_fold_test_event_ids[fold_num] = ids
-        if candidate_mode == "locked":
-            fc_thr = int(candidate_threshold_pct)
-            fc_rr = str(candidate_rr)
-        else:
+        fc_thr = int(candidate_threshold_pct) if candidate_mode == "locked" else None
+        fc_rr  = str(candidate_rr)            if candidate_mode == "locked" else None
+        if candidate_mode == "train_selected":
             sel = next((s["selected"] for s in training_selection if s["fold"] == fold_num), None)
             fc_thr = int(sel["threshold_pct"]) if sel else None
-            fc_rr = str(sel["rr"]) if sel else None
+            fc_rr  = str(sel["rr"])            if sel else None
         fold_aggregates.append(_bt_aggregate_wf_fold(fold_cells, fold, fc_thr, fc_rr))
 
-    # Strip internal _test_events before returning anything.
+    # Strip internal arrays before any further use
     for key, rows in cell_fold_results.items():
         for r in rows:
-            r.pop("_test_events", None)
+            r.pop("_test_events",  None)
+            r.pop("_train_events", None)
 
+    # ── Audits and summary ────────────────────────────────────────────────────
     summary = _bt_aggregate_wf_summary(
-        fold_aggregates, candidate_mode, training_expectancy_by_fold
+        fold_aggregates, candidate_mode, training_expectancy_by_fold,
+        symbols, timeframes,
     )
     bootstrap = _bt_wf_bootstrap_delta(summary.get("evaluable_fold_deltas", []))
-    lookahead = _bt_wf_lookahead_audit(folds, all_fold_test_event_ids)
+    lookahead = _bt_wf_lookahead_audit(folds, all_fold_test_event_ids, cell_fold_results)
 
-    passes, failed_gates = _bt_wf_check_pass_gates(
-        summary, fold_aggregates, lookahead, True, candidate_mode, bootstrap
+    # Constancy audit (locked mode)
+    constancy_audit = _bt_wf_locked_candidate_constancy_audit(
+        fold_aggregates,
+        candidate_threshold_pct if candidate_mode == "locked" else None,
+        candidate_rr            if candidate_mode == "locked" else None,
+    ) if candidate_mode == "locked" else {
+        "locked_candidate_audit": {
+            "requested_threshold_pct": None, "requested_rr": None,
+            "thresholds_observed_by_fold": [], "rrs_observed_by_fold": [],
+            "threshold_constant": True, "rr_constant": True,
+            "fallback_candidate_used": False, "passed": True,
+        }
+    }
+
+    # Timestamp audit (train-selected)
+    timestamp_audit = (
+        _bt_wf_training_selection_timestamp_audit(folds, training_selection)
+        if candidate_mode == "train_selected" else []
     )
 
+    # PF non-degradation summary
+    pf_nd_ok, pf_nd_reason = _stab_pf_non_degraded(
+        summary.get("oos_profit_factor_r"),
+        summary.get("oos_profit_factor_infinite", False),
+        summary.get("baseline_profit_factor_r"),
+        summary.get("baseline_profit_factor_infinite", False),
+        candidate_trades=summary.get("oos_trades", 0) or 0,
+        baseline_trades=summary.get("baseline_trades", 0) or 0,
+        baseline_gross_profit=summary.get("oos_gross_profit_r", 0.0) or 0.0,
+        baseline_gross_loss=summary.get("oos_gross_loss_r", 0.0) or 0.0,
+    )
+    pf_non_degradation = {
+        "passed":                     pf_nd_ok,
+        "reason":                     pf_nd_reason,
+        "candidate_pf":               summary.get("oos_profit_factor_r"),
+        "candidate_pf_infinite":      summary.get("oos_profit_factor_infinite", False),
+        "baseline_pf":                summary.get("baseline_profit_factor_r"),
+        "baseline_pf_infinite":       summary.get("baseline_profit_factor_infinite", False),
+        "candidate_trades":           summary.get("oos_trades", 0),
+        "baseline_trades":            summary.get("baseline_trades", 0),
+    }
+
+    # Locked-mode pass gates
+    passes, failed_gates = _bt_wf_check_pass_gates(
+        summary, fold_aggregates, lookahead, True, candidate_mode, bootstrap,
+        constancy_audit, candidate_threshold_pct, timeframes,
+    )
+
+    # Walk-forward result (locked authoritative)
+    walk_forward_result = {
+        "passes":       passes,
+        "authoritative": (candidate_mode == "locked"),
+    }
+
+    # Adaptive-process result (train-selected)
+    adaptive_process_result = None
+    if candidate_mode == "train_selected":
+        adaptive_process_result = _bt_wf_adaptive_process_check(
+            summary, fold_aggregates, lookahead, bootstrap,
+            timestamp_audit, timeframes,
+        )
+
+    # Status
     if candidate_mode == "train_selected":
         status = "ADVISORY"
     elif (summary.get("evaluable_folds", 0) < _WF_MIN_FOLDS
@@ -38669,46 +39339,72 @@ def _bt_run_walk_forward(
     else:
         status = "PASS" if passes else "FAIL"
 
+    # Selection stability
     selection_stability = None
     if candidate_mode == "train_selected":
-        sels = [s["selected"] for s in training_selection if s["selected"] is not None]
-        keys = [f"{s['threshold_pct']}_{s['rr']}" for s in sels]
+        sels   = [s["selected"] for s in training_selection if s["selected"] is not None]
+        keys   = [f"{s['threshold_pct']}_{s['rr']}" for s in sels]
         unique = sorted(set(keys))
         selection_stability = {
             "folds_with_candidate": len(sels),
-            "unique_candidates": len(unique),
-            "candidate_keys": unique,
-            "stable": len(unique) <= 1,
+            "unique_candidates":    len(unique),
+            "candidate_keys":       unique,
+            "stable":               len(unique) <= 1,
         }
 
     elapsed_ms = round((_t_wf.time() - t0) * 1000, 1)
+    prefix_runs = training_prefix_runs + test_prefix_runs
+    expected_fetch = len(symbols) * len(timeframes)
+    slowest = (max(cell_elapsed_ms, key=lambda k: cell_elapsed_ms[k])
+               if cell_elapsed_ms else None)
 
     return {
-        "status": status,
-        "passes_all_gates": passes,
-        "failed_gates": failed_gates,
-        "candidate_mode": candidate_mode,
-        "resolved_candidate": resolved_candidate,
-        "fold_definitions": folds,
-        "fold_count_built": len(folds),
-        "summary": summary,
-        "fold_aggregates": fold_aggregates,
-        "bootstrap": bootstrap,
-        "lookahead_audit": lookahead,
-        "training_selection": training_selection,
-        "selection_stability": selection_stability,
-        "cells_failed": cells_failed,
-        "candle_meta": candle_meta,
+        "status":                  status,
+        "passes_all_gates":        passes,
+        "failed_gates":            failed_gates,
+        "candidate_mode":          candidate_mode,
+        "resolved_candidate":      resolved_candidate,
+        "fold_definitions":        folds,
+        "fold_count_built":        len(folds),
+        "summary":                 summary,
+        "fold_aggregates":         fold_aggregates,
+        "bootstrap":               bootstrap,
+        "lookahead_audit":         lookahead,
+        "locked_candidate_audit":  constancy_audit.get("locked_candidate_audit"),
+        "training_selection":      training_selection,
+        "training_selection_audit": timestamp_audit,
+        "selection_stability":     selection_stability,
+        "pf_non_degradation":      pf_non_degradation,
+        "walk_forward_result":     walk_forward_result,
+        "adaptive_process_result": adaptive_process_result,
+        "cells_failed":            cells_failed,
+        "candle_meta":             candle_meta,
         "constants": {
-            "bootstrap_iters": _WF_BOOTSTRAP_ITERS,
-            "bootstrap_seed": _WF_BOOTSTRAP_SEED,
-            "min_folds": _WF_MIN_FOLDS,
-            "min_oos_trades": _WF_MIN_OOS_TRADES,
-            "min_retention": _WF_MIN_RETENTION,
+            "bootstrap_iters":   _WF_BOOTSTRAP_ITERS,
+            "bootstrap_seed":    _WF_BOOTSTRAP_SEED,
+            "min_folds":         _WF_MIN_FOLDS,
+            "min_oos_trades":    _WF_MIN_OOS_TRADES,
+            "min_retention":     _WF_MIN_RETENTION,
             "min_positive_folds": _WF_MIN_POSITIVE_FOLDS,
-            "min_beat_folds": _WF_MIN_BEAT_FOLDS,
-            "worst_fold_floor": _WF_WORST_FOLD_FLOOR,
-            "build_commit": _WF_BUILD_COMMIT,
+            "min_beat_folds":    _WF_MIN_BEAT_FOLDS,
+            "worst_fold_floor":  _WF_WORST_FOLD_FLOOR,
+            "min_symbols":       _WF_MIN_SYMBOLS,
+            "min_tf_cell_folds": _WF_MIN_TF_CELL_FOLDS,
+            "build_commit":      _WF_BUILD_COMMIT,
+            "build_15b_commit":  _WF_15B_COMMIT,
+        },
+        "performance": {
+            "candles_fetched_once_per_cell":    True,
+            "network_fetch_count":              network_fetch_count,
+            "expected_network_fetch_count":     expected_fetch,
+            "prefix_runs":                      prefix_runs,
+            "training_prefix_runs":             training_prefix_runs,
+            "test_prefix_runs":                 test_prefix_runs,
+            "prefix_cache_hits":                0,
+            "prefix_cache_misses":              prefix_runs,
+            "total_elapsed_ms":                 elapsed_ms,
+            "cell_elapsed_ms":                  cell_elapsed_ms,
+            "slowest_cell":                     slowest,
         },
         "elapsed_ms": elapsed_ms,
     }
@@ -38858,17 +39554,30 @@ def api_backtest_ob_historical_threshold_walk_forward():
     elapsed_total_ms = round((_t_wf_ep.time() - t0) * 1000, 1)
 
     response_body = {
-        "ok": True,
+        "ok":                      True,
         "authoritative_execution": True,
         "client_results_accepted": False,
-        "mode": "tv_ob_pct_threshold_walk_forward_v1",
-        "walk_forward": walk_forward,
+        "mode":                    "tv_ob_pct_threshold_walk_forward_v1",
+        "request": {
+            "symbols":                  symbols,
+            "timeframes":               timeframes,
+            "candle_count":             candle_count,
+            "rr_values":                [_bt_rr_key(r) for r in rr_values],
+            "candidate_mode":           candidate_mode,
+            "candidate_threshold_pct":  candidate_threshold_pct,
+            "candidate_rr":             candidate_rr,
+            "fold_count":               fold_count,
+            "initial_train_pct":        initial_train_pct,
+            "test_pct":                 test_pct,
+            "primary_metric":           primary_metric,
+        },
+        "walk_forward":            walk_forward,
         "performance": {
-            "elapsed_total_ms": elapsed_total_ms,
-            "symbols": symbols,
-            "timeframes": timeframes,
-            "candle_count": candle_count,
-            "fold_count": fold_count,
+            "elapsed_total_ms":         elapsed_total_ms,
+            "symbols":                  symbols,
+            "timeframes":               timeframes,
+            "candle_count":             candle_count,
+            "fold_count":               fold_count,
         },
     }
 

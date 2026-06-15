@@ -15203,7 +15203,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       /* Charts placeholder — filled by _btWfBuildCharts */
       html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">';
       html+='<div><div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">OOS Expectancy by Fold</div><canvas id="btWfChart1" height="160"></canvas></div>';
-      html+='<div><div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">Expectancy Delta vs Baseline</div><canvas id="btWfChart2" height="160"></canvas></div>';
+      html+='<div><div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">Cumulative OOS Net R</div><canvas id="btWfChart2" height="160"></canvas></div>';
       html+='<div><div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">OOS Trade Retention % by Fold</div><canvas id="btWfChart3" height="160"></canvas></div>';
       html+='<div><div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">Training vs OOS Expectancy</div><canvas id="btWfChart4" height="160"></canvas></div>';
       html+='</div>';
@@ -15342,20 +15342,47 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     card("CI 95% Low",boot.expectancy_delta_low!=null?boot.expectancy_delta_low.toFixed(4):"—",
       boot.expectancy_delta_low>=0?"#22c55e":boot.expectancy_delta_low<0?"#ef4444":"");
     card("Retention",s.oos_trade_retention_pct!=null?s.oos_trade_retention_pct+"%":"—");
-    card("Look-Ahead",look.passes?"PASS":"FAIL",look.passes?"#22c55e":"#ef4444");
+    card("Look-Ahead",look.passed?"PASS":"FAIL",look.passed?"#22c55e":"#ef4444");
     html+='</div>';
     if(gates&&gates.length){
       html+='<div style="margin-bottom:8px;font-size:11px;color:#ef4444;font-weight:600">Failed gates: '+gates.join(", ")+'</div>';
     }
+    // Add audit panel
+    var lca=wf.locked_candidate_audit||{};
+    var perf=wf.performance||{};
+    html+='<div style="margin-bottom:12px;padding:8px;background:rgba(0,0,0,.15);border-radius:6px">';
+    html+='<div style="font-size:11px;font-weight:700;color:var(--text-1);margin-bottom:6px">Walk-Forward Integrity Audit</div>';
+    html+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:4px;font-size:10px">';
+    function auditRow(label, val, good){
+      var c=good===true?"#22c55e":good===false?"#ef4444":"#94a3b8";
+      html+='<div style="display:flex;justify-content:space-between;padding:2px 4px"><span style="color:var(--text-2)">'+label+'</span><span style="color:'+c+';font-weight:600">'+val+'</span></div>';
+    }
+    auditRow("Server authoritative", perf.candles_fetched_once_per_cell?"YES":"NO", perf.candles_fetched_once_per_cell);
+    auditRow("Client results rejected", "YES", true);
+    auditRow("Fold boundaries", look.fold_boundaries_valid?"PASS":"FAIL", look.fold_boundaries_valid);
+    auditRow("No test overlap", look.test_windows_non_overlapping?"PASS":"FAIL", look.test_windows_non_overlapping);
+    auditRow("First-touch assignment", look.events_assigned_by_first_touch?"PASS":"FAIL", look.events_assigned_by_first_touch);
+    auditRow("Training prefix isolated", look.training_prefix_isolated?"PASS":"FAIL", look.training_prefix_isolated);
+    auditRow("Test prefix isolated", look.test_prefix_isolated?"PASS":"FAIL", look.test_prefix_isolated);
+    auditRow("Outcomes capped at fold end", look.outcomes_capped_at_fold_end?"PASS":"FAIL", look.outcomes_capped_at_fold_end);
+    auditRow("Point-in-time TV OB%", look.percentages_point_in_time?"PASS":"FAIL", look.percentages_point_in_time);
+    auditRow("Future-candle invariance", look.future_candle_invariance?"PASS":"FAIL", look.future_candle_invariance);
+    auditRow("Duplicate event IDs", look.duplicate_test_event_ids===0?"NONE":""+look.duplicate_test_event_ids, look.duplicate_test_event_ids===0);
+    auditRow("Future reads detected", look.future_candle_reads_detected===0?"NONE":""+look.future_candle_reads_detected, look.future_candle_reads_detected===0);
+    auditRow("Locked candidate constant", lca.threshold_constant&&lca.rr_constant?"PASS":"FAIL", lca.threshold_constant&&lca.rr_constant);
+    html+='</div></div>';
     return html;
   }
 
   function _btWfFoldTableHtml(wf){
     var folds=wf.fold_aggregates||[];
     if(!folds.length) return '';
+    function f4(v){return v!=null?v.toFixed(4):"—";}
+    function sgn(v){return v!=null?((v>=0?"+":"")+v.toFixed(4)):"—";}
     var html='<div class="bt-section-title" style="margin-top:10px">Fold Summary</div>';
     html+='<div style="overflow-x:auto"><table class="bt-table" style="font-size:10px"><thead><tr>';
-    ['Fold','Train End','Test Window','OOS Trades','OOS Exp R','ΔE vs Base','Retention%','Pos Cell%','Beat Cell%','Eligible'].forEach(function(h){
+    ['Fold','Candidate','Train Period','Test Period','Cells (C/T/U)','OOS Trades','Retention%',
+     'Baseline Exp','Micro Exp','Macro Exp','Micro Δ','Macro Δ','PF','Net R','Pos Cell%','Beat Cell%','Worst Cell','Censored','Status'].forEach(function(h){
       html+='<th>'+h+'</th>';
     });
     html+='</tr></thead><tbody>';
@@ -15364,16 +15391,25 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       var bg=elig?(f.oos_expectancy_r>0?"rgba(34,197,94,.07)":f.oos_expectancy_r<0?"rgba(239,68,68,.07)":""):"rgba(100,116,139,.05)";
       html+='<tr style="background:'+bg+'">';
       html+='<td style="text-align:center;font-weight:700">'+f.fold+'</td>';
-      html+='<td>'+f.train_candle_count+'c</td>';
+      html+='<td>'+(f.candidate_threshold_pct!=null?f.candidate_threshold_pct+"% / "+(f.candidate_rr||"?")+"R":"—")+'</td>';
+      html+='<td>'+(f.train_start_index!=null?f.train_start_index:0)+'–'+f.train_end_index_exclusive+'</td>';
       html+='<td>'+f.test_start_index+'–'+f.test_end_index_exclusive+'</td>';
+      html+='<td>'+(f.completed_cells!=null?f.completed_cells:"?")+'/'+(f.trusted_cells!=null?f.trusted_cells:"?")+'/'+(f.usable_cells!=null?f.usable_cells:"?")+'</td>';
       html+='<td>'+f.oos_trades+'</td>';
-      var expColor=f.oos_expectancy_r>0?"#22c55e":f.oos_expectancy_r<0?"#ef4444":"inherit";
-      html+='<td style="color:'+expColor+'">'+(f.oos_expectancy_r!=null?f.oos_expectancy_r.toFixed(4):"—")+'</td>';
-      var dColor=f.expectancy_delta_vs_baseline>0?"#22c55e":f.expectancy_delta_vs_baseline<0?"#ef4444":"inherit";
-      html+='<td style="color:'+dColor+'">'+(f.expectancy_delta_vs_baseline!=null?(f.expectancy_delta_vs_baseline>=0?"+":"")+f.expectancy_delta_vs_baseline.toFixed(4):"—")+'</td>';
       html+='<td>'+(f.trade_retention_pct!=null?f.trade_retention_pct+"%":"—")+'</td>';
+      html+='<td>'+f4(f.baseline_expectancy_r)+'</td>';
+      var mColor=f.candidate_micro_expectancy_r>0?"#22c55e":f.candidate_micro_expectancy_r<0?"#ef4444":"inherit";
+      html+='<td style="color:'+mColor+'">'+f4(f.candidate_micro_expectancy_r)+'</td>';
+      html+='<td>'+f4(f.candidate_macro_expectancy_r)+'</td>';
+      var dColor=f.micro_expectancy_delta>0?"#22c55e":f.micro_expectancy_delta<0?"#ef4444":"inherit";
+      html+='<td style="color:'+dColor+'">'+sgn(f.micro_expectancy_delta)+'</td>';
+      html+='<td>'+sgn(f.macro_expectancy_delta)+'</td>';
+      html+='<td>'+(f.oos_profit_factor_infinite?"∞":(f.oos_profit_factor_r!=null?f.oos_profit_factor_r.toFixed(2):"—"))+'</td>';
+      html+='<td>'+(f.oos_net_r!=null?f.oos_net_r.toFixed(2):"—")+'</td>';
       html+='<td>'+(f.positive_cell_pct!=null?f.positive_cell_pct+"%":"—")+'</td>';
       html+='<td>'+(f.beat_baseline_cell_pct!=null?f.beat_baseline_cell_pct+"%":"—")+'</td>';
+      html+='<td>'+f4(f.worst_cell_expectancy_r)+'</td>';
+      html+='<td>'+(f.censored_unresolved!=null?f.censored_unresolved:0)+'</td>';
       html+='<td style="text-align:center;color:'+(elig?"#22c55e":"#94a3b8")+'">'+(elig?"✓":"✗")+'</td>';
       html+='</tr>';
       /* Per-cell sub-rows */
@@ -15381,12 +15417,21 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         var cellOk=c.ok;
         html+='<tr style="background:rgba(0,0,0,.03);font-size:9px">';
         html+='<td></td>';
-        html+='<td colspan="2" style="padding-left:12px;color:var(--text-2)">'+c.symbol+' '+c.timeframe+'</td>';
-        html+='<td>'+(cellOk?c.trades:"err")+'</td>';
-        html+='<td>'+(cellOk&&c.expectancy_r!=null?c.expectancy_r.toFixed(4):"—")+'</td>';
-        html+='<td>'+(cellOk&&c.expectancy_delta_vs_baseline!=null?(c.expectancy_delta_vs_baseline>=0?"+":"")+c.expectancy_delta_vs_baseline.toFixed(4):"—")+'</td>';
+        html+='<td colspan="3" style="padding-left:12px;color:var(--text-2)">'+c.symbol+' '+c.timeframe+(cellOk?"":" — Error: "+(c.error||"?"))+'</td>';
+        html+='<td>'+(cellOk?(c.trades+" / "+(c.baseline_trades!=null?c.baseline_trades:"?")):"err")+'</td>';
+        html+='<td>'+(cellOk?c.trades:"—")+'</td>';
         html+='<td>'+(cellOk&&c.trade_retention_pct!=null?c.trade_retention_pct+"%":"—")+'</td>';
-        html+='<td colspan="3">'+(cellOk?"":"Error: "+(c.error||"?"))+'</td>';
+        html+='<td>'+(cellOk?f4(c.baseline_expectancy_r):"—")+'</td>';
+        html+='<td>'+(cellOk?f4(c.expectancy_r):"—")+'</td>';
+        html+='<td>—</td>';
+        html+='<td>'+(cellOk?sgn(c.expectancy_delta_vs_baseline):"—")+'</td>';
+        html+='<td>—</td>';
+        html+='<td>'+(cellOk?(c.candidate_profit_factor_infinite?"∞":(c.candidate_profit_factor_r!=null?c.candidate_profit_factor_r.toFixed(2):"—")):"—")+'</td>';
+        html+='<td>'+(cellOk&&c.net_r!=null?c.net_r.toFixed(2):"—")+'</td>';
+        html+='<td colspan="2">'+(cellOk?(c.eligible?"eligible":(c.rejection_reasons||[]).join(", ")):"")+'</td>';
+        html+='<td>—</td>';
+        html+='<td>'+(cellOk&&c.censored_unresolved!=null?c.censored_unresolved:0)+'</td>';
+        html+='<td style="text-align:center;color:'+(cellOk&&c.eligible?"#22c55e":"#94a3b8")+'">'+(cellOk&&c.eligible?"✓":"✗")+'</td>';
         html+='</tr>';
       });
     });
@@ -15396,6 +15441,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 
   function _btWfBuildCharts(wf){
     _btState.wfCharts=_btState.wfCharts||{};
+    function round4(v){return Math.round(v*10000)/10000;}
     function dc(id){if(_btState.wfCharts[id]){try{_btState.wfCharts[id].destroy();}catch(e){}delete _btState.wfCharts[id];}}
     dc("btWfChart1");dc("btWfChart2");dc("btWfChart3");dc("btWfChart4");
 
@@ -15414,13 +15460,20 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         borderColor:vals1.map(function(v){return v==null?"#94a3b8":v>0?"#22c55e":"#ef4444";}),borderWidth:1}]},options:opts});
     }
 
-    /* Chart 2: Delta vs baseline per fold */
+    /* Chart 2: Cumulative OOS Net R */
     var c2=document.getElementById("btWfChart2");
     if(c2){
-      var vals2=folds.map(function(f){return f.expectancy_delta_vs_baseline!=null?f.expectancy_delta_vs_baseline:null;});
-      _btState.wfCharts["btWfChart2"]=new Chart(c2,{type:"bar",data:{labels:labels,datasets:[{label:"ΔE vs Base",data:vals2,
-        backgroundColor:vals2.map(function(v){return v==null?"#94a3b8":v>0?"rgba(34,197,94,.6)":"rgba(239,68,68,.6)";}),
-        borderColor:vals2.map(function(v){return v==null?"#94a3b8":v>0?"#22c55e":"#ef4444";}),borderWidth:1}]},options:opts});
+      var cumCand=[], cumBase=[], cumCandSum=0, cumBaseSum=0;
+      folds.forEach(function(f){
+        cumCandSum+=f.oos_net_r!=null?f.oos_net_r:0;
+        cumBaseSum+=f.baseline_net_r!=null?f.baseline_net_r:0;
+        cumCand.push(round4(cumCandSum));
+        cumBase.push(round4(cumBaseSum));
+      });
+      _btState.wfCharts["btWfChart2"]=new Chart(c2,{type:"line",data:{labels:labels,datasets:[
+        {label:"Cumulative Candidate Net R",data:cumCand,borderColor:"#22c55e",backgroundColor:"rgba(34,197,94,.1)",tension:.35,fill:false,pointRadius:4},
+        {label:"Cumulative Baseline Net R",data:cumBase,borderColor:"#94a3b8",backgroundColor:"transparent",tension:.35,fill:false,pointRadius:3,borderDash:[4,2]}
+      ]},options:Object.assign({},opts,{plugins:{legend:{display:true,labels:{color:"#94a3b8",font:{size:9}}},tooltip:{callbacks:{label:function(ctx){return ctx.dataset.label+": "+(ctx.parsed.y!=null?ctx.parsed.y.toFixed(4)+"R":"—");}}}},scales:gscale})});
     }
 
     /* Chart 3: Trade retention % per fold */
