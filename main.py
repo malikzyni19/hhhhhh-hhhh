@@ -29605,36 +29605,19 @@ def api_lm_learning_review_generate():
         # Step 12: Strict validate against evidence allowlist
         is_valid, validation_errors = _lm_validate_learning_review_response(parsed, evidence)
 
-        # Step 13: Reject invalid AI response without saving — use deterministic instead
+        # Step 13: Reject invalid output — hard 422, no fallback for unsafe AI output
         if not is_valid:
-            if source == "ai":
-                # AI returned malformed/unsafe output — fall back, do NOT repair
-                det_review  = _lm_build_deterministic_review(evidence, candidates)
-                parsed      = _lm_parse_learning_review_response(det_review)
-                det_valid, _ = _lm_validate_learning_review_response(parsed, evidence)
-                if not det_valid:
-                    return jsonify({
-                        "ok":               False,
-                        "phase":            "phase11_15_ai_learning_review_loop",
-                        "error":            "ai_learning_review_invalid",
-                        "validation_errors": validation_errors,
-                        "ai_called":        True,
-                        "review_saved":     False,
-                        "guardrails":       _guardrails_block,
-                    }), 422
-                source     = "deterministic_fallback"
-                model_name = None
-            else:
-                # Deterministic itself failed validation — structural bug
-                return jsonify({
-                    "ok":               False,
-                    "phase":            "phase11_15_ai_learning_review_loop",
-                    "error":            "ai_learning_review_invalid",
-                    "validation_errors": validation_errors,
-                    "ai_called":        ai_called,
-                    "review_saved":     False,
-                    "guardrails":       _guardrails_block,
-                }), 422
+            # Invalid AI output is NOT silently repaired by falling back to deterministic.
+            # Invalid deterministic output is a structural bug. Both cases: hard 422.
+            return jsonify({
+                "ok":               False,
+                "phase":            "phase11_15_ai_learning_review_loop",
+                "error":            "ai_learning_review_invalid",
+                "validation_errors": validation_errors,
+                "ai_called":        ai_called,
+                "review_saved":     False,
+                "guardrails":       _guardrails_block,
+            }), 422
 
         # Step 14: Sanitize — display-text trimming only (after passing validation)
         sanitized = _lm_sanitize_valid_learning_review(parsed)

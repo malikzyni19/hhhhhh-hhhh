@@ -9949,11 +9949,19 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
             var evList=(o.evidence||[]);
             var evHtml=evList.length
               ?'<ul style="margin:2px 0 0 10px;padding:0;font-size:8px;color:var(--text-3)">'+
-                  evList.map(function(e){ return '<li>'+esc(String(e))+'</li>'; }).join('')+
+                  evList.map(function(e){
+                    var metric=e&&e.metric!=null?String(e.metric):'unknown_metric';
+                    var value=e&&Object.prototype.hasOwnProperty.call(e,'value')?String(e.value):'—';
+                    var comparison=e&&e.comparison?' — '+String(e.comparison):'';
+                    return '<li>'+esc(metric)+': '+esc(value)+esc(comparison)+'</li>';
+                  }).join('')+
                 '</ul>'
               :'';
-            var limHtml=o.limitations
-              ?'<div style="font-size:8px;color:var(--text-4);margin-top:2px;font-style:italic">⚑ '+esc(o.limitations)+'</div>'
+            var limArr=Array.isArray(o.limitations)?o.limitations:(o.limitations?[String(o.limitations)]:[]);
+            var limHtml=limArr.length
+              ?'<div style="font-size:8px;color:var(--text-4);margin-top:2px;font-style:italic">⚑ <ul style="margin:0 0 0 8px;padding:0">'+
+                  limArr.map(function(l){return '<li>'+esc(String(l))+'</li>';}).join('')+
+                '</ul></div>'
               :'';
             return '<div style="background:var(--bg-2,#0f172a);border:1px solid var(--border,#334155);border-radius:3px;padding:4px 6px;font-size:9px">'+
               '<div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">'+

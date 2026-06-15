@@ -578,6 +578,8 @@ def _lm_build_evidence_metric_allowlist(evidence: dict) -> dict:
 def _metric_kind(metric_id: str) -> str:
     """Classify a metric ID into a comparison kind for tolerance selection."""
     m = metric_id.lower()
+    if m == "performance.truncated":
+        return "boolean"
     if (m.endswith(".trade_count") or m.endswith(".win_count") or m.endswith(".loss_count")
             or m.endswith(".breakeven_count") or m.endswith(".wins") or m.endswith(".losses")
             or m.endswith(".breakevens") or m.endswith("_count")):
@@ -595,8 +597,8 @@ def _metric_kind(metric_id: str) -> str:
 def _lm_compare_evidence_metric(metric_id: str, trusted_val, ai_val) -> bool:
     """Return True if AI value matches trusted value within metric-specific tolerance.
 
-    Task 7: metric-specific tolerances.
-    - count: exact int equality
+    - boolean: AI value must be exactly a Python bool equal to trusted bool
+    - count: AI value must be plain int (not bool); exact equality, no rounding
     - pct: abs <= 0.1
     - ratio: abs <= 0.01
     - monetary: Decimal abs <= 0.01
@@ -604,6 +606,21 @@ def _lm_compare_evidence_metric(metric_id: str, trusted_val, ai_val) -> bool:
     """
     if trusted_val is None:
         return True
+    kind = _metric_kind(metric_id)
+
+    if kind == "boolean":
+        if not isinstance(ai_val, bool):
+            return False
+        return ai_val == bool(trusted_val)
+
+    if kind == "count":
+        if isinstance(ai_val, bool) or not isinstance(ai_val, int):
+            return False
+        try:
+            return ai_val == int(trusted_val)
+        except (TypeError, ValueError):
+            return False
+
     try:
         float(str(trusted_val).replace(",", ""))
     except (TypeError, ValueError):
@@ -614,9 +631,6 @@ def _lm_compare_evidence_metric(metric_id: str, trusted_val, ai_val) -> bool:
     except (TypeError, ValueError):
         return False
     abs_diff = abs(e - a)
-    kind = _metric_kind(metric_id)
-    if kind == "count":
-        return int(round(e)) == int(round(a))
     if kind == "pct":
         return abs_diff <= 0.1
     if kind == "ratio":
@@ -1054,6 +1068,9 @@ CRITICAL GUARDRAILS — these override everything:
 6. Do not fabricate symbols, segments or numbers not present in the evidence.
 7. Every proposal must reference at least one valid observation ID.
 8. You must provide what_not_to_conclude (minimum 1 entry for small/truncated data).
+9. MANDATORY: every observation must include exactly ONE evidence row with a .trade_count metric
+   (e.g. "performance.trade_count" or "segment.<dim>.<val>.trade_count").
+   observation.sample_size must exactly equal the value of that .trade_count evidence row.
 
 Return valid JSON ONLY — no markdown fences, no prose outside JSON:
 {{
@@ -1226,6 +1243,8 @@ def _lm_validate_learning_review_response(
             for li, lim in enumerate(sa_lims):
                 if not isinstance(lim, str):
                     reasons.append(f"sample_limitation[{li}]_not_a_string")
+                elif len(lim) > 200:
+                    reasons.append(f"sample_limitation[{li}]_exceeds_200_chars")
             if 5 <= total < 10:
                 has_marker = any(
                     isinstance(l, str) and l in _SMALL_SAMPLE_MARKERS
@@ -1272,13 +1291,17 @@ def _lm_validate_learning_review_response(
         if obs.get("severity") not in _VALID_SEVERITIES:
             reasons.append(f"obs[{i}]_invalid_severity:{obs.get('severity')!r}")
 
-        # Task 4: title/statement must be non-empty strings
+        # Task 4: title/statement must be non-empty strings within length limits
         obs_title = obs.get("title")
         if not isinstance(obs_title, str) or not obs_title.strip():
             reasons.append(f"obs[{i}]_title_not_a_nonempty_string")
+        elif len(obs_title.strip()) > 80:
+            reasons.append(f"obs[{i}]_title_exceeds_80_chars")
         obs_stmt = obs.get("statement")
         if not isinstance(obs_stmt, str) or not obs_stmt.strip():
             reasons.append(f"obs[{i}]_statement_not_a_nonempty_string")
+        elif len(obs_stmt.strip()) > 500:
+            reasons.append(f"obs[{i}]_statement_exceeds_500_chars")
 
         # Task 4: sample_size must be int (not bool), non-negative
         obs_n = obs.get("sample_size")
@@ -1296,6 +1319,8 @@ def _lm_validate_learning_review_response(
             for li, lim in enumerate(lims):
                 if not isinstance(lim, str):
                     reasons.append(f"obs[{i}].limitation[{li}]_not_a_string")
+                elif len(lim) > 200:
+                    reasons.append(f"obs[{i}].limitation[{li}]_exceeds_200_chars")
 
         # auto_apply_allowed must be exactly False
         if obs.get("auto_apply_allowed") is not False:
@@ -1311,9 +1336,8 @@ def _lm_validate_learning_review_response(
         elif len(ev_rows) > _EVIDENCE_ROWS:
             reasons.append(f"obs[{i}]_too_many_evidence_rows")
 
-        # Track first .trade_count metric for Task 6 sample_size binding
-        tc_metric_found: str | None = None
-        tc_trusted_val = None
+        # Task 1: collect all .trade_count metrics for mandatory binding check
+        tc_metrics_found: list = []
 
         for j, row in enumerate(ev_rows[:_EVIDENCE_ROWS]):
             if not isinstance(row, dict):
@@ -1329,6 +1353,15 @@ def _lm_validate_learning_review_response(
                 reasons.append(f"obs[{i}].evidence[{j}]_missing_value_key")
             if "comparison" not in row:
                 reasons.append(f"obs[{i}].evidence[{j}]_missing_comparison_key")
+            else:
+                comp = row.get("comparison")
+                if comp is not None:
+                    if not isinstance(comp, str):
+                        reasons.append(f"obs[{i}].evidence[{j}]_comparison_not_a_string_or_null")
+                    elif not comp.strip():
+                        reasons.append(f"obs[{i}].evidence[{j}]_comparison_empty_after_trim")
+                    elif len(comp) > 200:
+                        reasons.append(f"obs[{i}].evidence[{j}]_comparison_exceeds_200_chars")
 
             if metric not in allowlist:
                 reasons.append(f"obs[{i}].evidence[{j}]_unknown_metric:{metric!r}")
@@ -1357,22 +1390,29 @@ def _lm_validate_learning_review_response(
                         f"obs[{i}].evidence[{j}]_value_out_of_tolerance:{metric!r}"
                     )
 
-            # Task 6: track first .trade_count metric for binding check
-            if tc_metric_found is None and metric.endswith(".trade_count"):
-                tc_metric_found = metric
-                tc_trusted_val  = trusted_val
+            # Task 1: accumulate .trade_count metrics
+            if metric.endswith(".trade_count"):
+                tc_metrics_found.append((metric, trusted_val))
 
-        # Task 6: trusted sample_size binding — obs.sample_size must equal trade_count
-        if (
-            tc_metric_found is not None
-            and tc_trusted_val is not None
-            and obs_n is not None
-        ):
-            if obs_n != int(tc_trusted_val):
-                reasons.append(
-                    f"obs[{i}]_sample_size_mismatch_with_trade_count:"
-                    f"{obs_n}!={tc_metric_found}={tc_trusted_val}"
-                )
+        # Task 1: every observation must cite exactly one trusted .trade_count metric
+        if len(tc_metrics_found) == 0:
+            reasons.append(f"obs[{i}]_observation_missing_sample_count_metric")
+        elif len(tc_metrics_found) > 1:
+            reasons.append(f"obs[{i}]_observation_multiple_sample_count_metrics")
+        else:
+            tc_metric, tc_trusted_val = tc_metrics_found[0]
+            if obs_n is not None and tc_trusted_val is not None:
+                tc_trusted_int = int(tc_trusted_val)
+                if obs_n != tc_trusted_int:
+                    reasons.append(
+                        f"obs[{i}]_observation_sample_size_mismatch:"
+                        f"{obs_n}!={tc_metric}={tc_trusted_val}"
+                    )
+                if obs_n > total:
+                    reasons.append(
+                        f"obs[{i}]_observation_sample_size_exceeds_total:"
+                        f"{obs_n}>{total}"
+                    )
 
     # Task 1: explicit length rejection for review_proposals
     prop_list = parsed.get("review_proposals")
@@ -1411,14 +1451,18 @@ def _lm_validate_learning_review_response(
                 if forbidden in action.lower():
                     reasons.append(f"proposal[{i}]_forbidden_action_word:{forbidden!r}")
 
-        # Task 9: strict proposal field types
+        # Task 9: strict proposal field types and length limits
         prop_title = prop.get("title")
         if not isinstance(prop_title, str) or not prop_title.strip():
             reasons.append(f"proposal[{i}]_title_not_a_nonempty_string")
+        elif len(prop_title.strip()) > 80:
+            reasons.append(f"proposal[{i}]_title_exceeds_80_chars")
 
         prop_desc = prop.get("description")
         if not isinstance(prop_desc, str) or not prop_desc.strip():
             reasons.append(f"proposal[{i}]_description_not_a_nonempty_string")
+        elif len(prop_desc.strip()) > 500:
+            reasons.append(f"proposal[{i}]_description_exceeds_500_chars")
 
         # Task 9: minimum_additional_sample must be int (not bool), non-negative
         mas = prop.get("minimum_additional_sample")
@@ -1464,6 +1508,8 @@ def _lm_validate_learning_review_response(
         for wi, w in enumerate(wntc):
             if not isinstance(w, str):
                 reasons.append(f"what_not_to_conclude[{wi}]_not_a_string")
+            elif len(w) > 300:
+                reasons.append(f"what_not_to_conclude[{wi}]_exceeds_300_chars")
         ev_warns = evidence.get("warnings") or []
         needs_wntc = (
             evidence.get("sample_quality") in (_SQ_INSUFFICIENT, _SQ_EARLY)
@@ -1581,26 +1627,49 @@ def _lm_build_deterministic_review(evidence: dict, candidates: list) -> dict:
             for mid in (c.get("evidence_metric_ids") or [])[:_EVIDENCE_ROWS]
             if mid in allowlist
         ]
+
+        # Task 1/4: ensure exactly one .trade_count metric in every observation
+        tc_rows = [r for r in ev_rows if r["metric"].endswith(".trade_count")]
+        if len(tc_rows) == 0:
+            # Determine best count metric for this candidate
+            seg_type  = c.get("segment_type")
+            seg_val_c = c.get("segment_value")
+            if seg_type and seg_val_c and seg_type != "portfolio":
+                seg_metric = f"segment.{seg_type}.{seg_val_c}.trade_count"
+                if seg_metric in allowlist:
+                    ev_rows.insert(0, {"metric": seg_metric, "value": allowlist[seg_metric], "comparison": None})
+                else:
+                    ev_rows.insert(0, {"metric": "performance.trade_count", "value": allowlist.get("performance.trade_count", total), "comparison": None})
+            else:
+                ev_rows.insert(0, {"metric": "performance.trade_count", "value": allowlist.get("performance.trade_count", total), "comparison": None})
+        elif len(tc_rows) > 1:
+            # Keep only first, remove duplicates
+            first_tc = tc_rows[0]
+            ev_rows  = [r for r in ev_rows if not r["metric"].endswith(".trade_count")]
+            ev_rows.insert(0, first_tc)
+
         # Ensure at least one evidence row (Task 5: evidence must not be empty)
         if not ev_rows:
-            fallback = "performance.sample_size"
-            ev_rows = [{
-                "metric":     fallback,
-                "value":      allowlist.get(fallback, total),
-                "comparison": None,
-            }]
+            ev_rows = [{"metric": "performance.trade_count", "value": allowlist.get("performance.trade_count", total), "comparison": None}]
+
+        ev_rows = ev_rows[:_EVIDENCE_ROWS]
+
+        # Task 1: obs.sample_size must equal its .trade_count evidence value
+        tc_row = next((r for r in ev_rows if r["metric"].endswith(".trade_count")), None)
+        obs_sample_size = tc_row["value"] if tc_row is not None else c.get("sample_size", total)
+
         seg_val = c.get("segment_value")
         obs.append({
             "id":           f"obs_{i+1}",
             "category":     cat,
             "title":        ct.replace("_", " ").title(),
             "statement":    (
-                f"Deterministic analysis of {c.get('sample_size', total)} paper trades "
+                f"Deterministic analysis of {obs_sample_size} paper trades "
                 f"suggests pattern: {ct.replace('_',' ')}."
                 + (f" Segment: {seg_val}." if seg_val else "")
             ),
             "evidence":     ev_rows,
-            "sample_size":  c.get("sample_size", total),
+            "sample_size":  obs_sample_size,
             "confidence":   conf,
             "severity":     c.get("severity", "info"),
             "limitations":  c.get("limitations", []) + ["deterministic_fallback_no_ai_analysis"],
@@ -1608,12 +1677,13 @@ def _lm_build_deterministic_review(evidence: dict, candidates: list) -> dict:
         })
 
     if not obs:
+        tc_val = allowlist.get("performance.trade_count", total)
         obs.append({
             "id": "obs_1", "category": "data_quality",
             "title": "Insufficient Data for Analysis",
             "statement": f"Only {total} paper trades available. Insufficient for pattern detection.",
-            "evidence": [{"metric": "performance.trade_count", "value": total, "comparison": None}],
-            "sample_size": total, "confidence": "low", "severity": "info",
+            "evidence": [{"metric": "performance.trade_count", "value": tc_val, "comparison": None}],
+            "sample_size": tc_val, "confidence": "low", "severity": "info",
             "limitations": ["deterministic_fallback_no_ai_analysis"],
             "auto_apply_allowed": False,
         })
@@ -1655,7 +1725,7 @@ def _lm_build_deterministic_review(evidence: dict, candidates: list) -> dict:
         "sample_assessment": {
             "sample_size":   total,
             "sample_quality": sq,
-            "limitations":   ["ai_provider_unavailable", "deterministic_fallback_used"],
+            "limitations":   (["small_sample"] if 5 <= total < 10 else []) + ["ai_provider_unavailable", "deterministic_fallback_used"],
         },
         "observations":       obs,
         "review_proposals":   proposals,

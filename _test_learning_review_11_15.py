@@ -364,7 +364,10 @@ _valid9 = {
             "category":   "risk_reward",
             "title":      "Moderate RR capture",
             "statement":  "Average RR capture is 70% of planned ratio.",
-            "evidence":   [{"metric": "execution.avg_rr_capture", "value": 0.7, "comparison": "below 1.0 target"}],
+            "evidence":   [
+                {"metric": "performance.trade_count", "value": 30, "comparison": None},
+                {"metric": "execution.avg_rr_capture", "value": 0.7, "comparison": "below 1.0 target"},
+            ],
             "sample_size": 30,
             "confidence": "medium",
             "severity":   "watch",
