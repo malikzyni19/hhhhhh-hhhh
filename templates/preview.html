@@ -11014,56 +11014,63 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     if(lookSel)  _lmDhCtl[uid].look=lookSel.value;
     if(minLSel)  _lmDhCtl[uid].minl=minLSel.value;
     if(swingSel) _lmDhCtl[uid].swing=swingSel.value;
-    if(!data||!data.ok||!data.events||!data.events.length){
-      // Distinguish a working-but-empty pipeline (ok=true, no sweeps/liqs yet) from a
-      // genuine backend gap (ok=false). Showing "Needs Backend Support" for the former
-      // wrongly reads as broken when the stream is connected and simply has no events.
-      var _liqOk=!!(data&&data.ok);
-      var _hasStream=!!(data&&data.has_liq_stream);
-      var _defMsg=_liqOk
-        ?"No sweep-linked liquidation events yet. Binance emits forced-liquidation (forceOrder) events only when liquidations actually occur, and this panel correlates them with recent swing sweeps — both can be empty for quieter symbols."
-        :"Sweep-linked liquidation history is loading. Waiting for the liquidation stream to connect.";
-      var _msg=data&&data.message?esc(data.message):_defMsg;
-      var _hdr=_liqOk
-        ?(_hasStream?"Sweep Rekt History — Stream Live · No Events Yet":"Sweep Rekt History — No Events Yet")
-        :"Sweep Rekt History — Connecting…";
-      var _hdrCol=_liqOk?"#22d3ee":"#f59e0b";
-      liqBody.innerHTML="<tr><td colspan='8' style='padding:18px;color:#9eb3c7;font-size:11px;text-align:center'>"+
-        "<div style='color:"+_hdrCol+";font-weight:700;margin-bottom:6px'>"+_hdr+"</div>"+
-        _msg+"</td></tr>";
-      if(liqCount) liqCount.textContent="0 events";
-      return;
-    }
+    // Live liquidation feed (counts liquidations directly and compares the current
+    // window vs the average of previous windows) — independent of swing sweeps, so it
+    // populates whenever any liquidation has been captured.
+    var ll=data&&data.live_liq;
     var lookback=lookSel?parseFloat(lookSel.value):900;
     var minLiq=minLSel?parseFloat(minLSel.value):0;
-    var now=Date.now()/1000;
-    var events=(data.events||[]).filter(function(e){
-      return (now-(e.timestamp/1000))<=lookback && e.liq_usd>=minLiq;
-    });
-    if(liqCount) liqCount.textContent=events.length+" event"+(events.length!==1?"s":"");
-    var latest=events[0]||data.latest||null;
-    if(latest){
-      if(lastSweep) lastSweep.textContent=(latest.sweep_type||"—").replace(" Sweep","");
-      if(rektSide) rektSide.textContent=latest.rekt_side||"—";
-      if(sweepLiq) sweepLiq.textContent=latest.liq_label||"—";
-      if(sweepVs) sweepVs.textContent=latest.vs_avg!=null?(latest.vs_avg.toFixed(1)+"x"):"—";
-      if(sweepOutcome) sweepOutcome.textContent=latest.reaction||"—";
+    function fmtU(v){v=v||0;if(v>=1e9)return"$"+(v/1e9).toFixed(2)+"B";if(v>=1e6)return"$"+(v/1e6).toFixed(2)+"M";if(v>=1e3)return"$"+(v/1e3).toFixed(1)+"K";return"$"+Math.round(v);}
+    var _hasLive=!!(data&&data.ok&&ll&&ll.total_events>0);
+    if(!_hasLive){
+      var _liqOk=!!(data&&data.ok);
+      var _hasStream=!!(data&&data.has_liq_stream);
+      var _hdr=_liqOk?(_hasStream?"Liquidation Stream Live · No Events Yet":"Liquidation Feed · No Events Yet"):"Liquidation Feed · Connecting…";
+      var _hdrCol=_liqOk?"#22d3ee":"#f59e0b";
+      var _msg=_liqOk
+        ?"Binance emits a forced-liquidation (forceOrder) event only when a position is actually liquidated. None captured for this symbol yet — quieter symbols can go long stretches with no liquidations."
+        :"Waiting for the liquidation stream to connect.";
+      liqBody.innerHTML="<tr><td colspan='5' style='padding:18px;color:#9eb3c7;font-size:11px;text-align:center'>"+
+        "<div style='color:"+_hdrCol+";font-weight:700;margin-bottom:6px'>"+_hdr+"</div>"+_msg+"</td></tr>";
+      if(liqCount) liqCount.textContent="0 events";
+      if(lastSweep) lastSweep.textContent="$0";
+      if(rektSide) rektSide.textContent="—";
+      if(sweepLiq) sweepLiq.textContent="—";
+      if(sweepVs) sweepVs.textContent="—";
+      if(sweepOutcome) sweepOutcome.textContent=(ll&&ll.total_events!=null)?String(ll.total_events):"0";
+      return;
     }
-    liqBody.innerHTML=events.length?events.map(function(e){
-      var sideC=e.rekt_side&&e.rekt_side.toLowerCase().includes("long")?"lm-dh-red":"lm-dh-yellow";
-      var reactC=e.reaction==="Reclaimed"?"lm-dh-green":e.reaction==="Rejected"?"lm-dh-yellow":"lm-dh-red";
+    // Summary — current 5m window vs the average of previous windows
+    var _dom=ll.dominant_side==="long"?"Longs":ll.dominant_side==="short"?"Shorts":"Balanced";
+    if(lastSweep) lastSweep.textContent=fmtU(ll.current_usd);
+    if(rektSide){ rektSide.textContent=_dom; rektSide.className="v "+(ll.dominant_side==="long"?"lm-dh-red":ll.dominant_side==="short"?"lm-dh-green":"lm-dh-yellow"); }
+    if(sweepLiq) sweepLiq.textContent=fmtU(ll.current_long_usd)+" / "+fmtU(ll.current_short_usd);
+    if(sweepVs){
+      if(ll.vs_prev_pct==null){ sweepVs.textContent="—"; sweepVs.className="v lm-dh-yellow"; }
+      else { var _vp=ll.vs_prev_pct; sweepVs.textContent=(_vp>=0?"+":"")+Math.round(_vp)+"%"; sweepVs.className="v "+(_vp>0?"lm-dh-red":_vp<0?"lm-dh-green":"lm-dh-yellow"); }
+    }
+    if(sweepOutcome) sweepOutcome.textContent=String(ll.total_events);
+    // Table — recent liquidations filtered by Lookback + Min Liq
+    var nowS=Date.now()/1000;
+    var evs=(ll.recent_events||[]).filter(function(e){
+      return (nowS-((e.ts_ms||0)/1000))<=lookback && (e.usd||0)>=minLiq;
+    });
+    if(liqCount) liqCount.textContent=evs.length+" event"+(evs.length!==1?"s":"");
+    liqBody.innerHTML=evs.length?evs.map(function(e){
+      var isLong=e.side==="long";
+      var sideLabel=isLong?"Longs Rekt":"Shorts Rekt";
+      var sideC=isLong?"lm-dh-red":"lm-dh-green";
+      var note=isLong?"Long position force-liquidated (adds sell pressure)":"Short position force-liquidated (adds buy pressure)";
+      var priceStr=(e.price!=null)?String(e.price):"—";
       return "<tr style='border-bottom:1px solid rgba(148,163,184,.08)'>"+
-        "<td style='padding:6px;color:#9eb3c7;font-size:10px'>"+esc(e.time||"—")+"</td>"+
-        "<td style='padding:6px;color:#e5f3ff;font-weight:700;font-size:10px'>"+esc(e.sweep_type||"—")+"</td>"+
-        "<td style='padding:6px;color:#a9bdd2;font-size:10px'>"+(e.sweep_level!=null?e.sweep_level.toFixed(2):"—")+"</td>"+
-        "<td style='padding:6px;font-size:10px' class='"+sideC+"'>"+esc(e.rekt_side||"—")+"</td>"+
-        "<td style='padding:6px;color:#e5f3ff;font-weight:700;font-size:10px'>"+esc(e.liq_label||"—")+"</td>"+
-        "<td style='padding:6px;color:#a9bdd2;font-size:10px'>"+(e.vs_avg!=null?e.vs_avg.toFixed(1)+"x":"—")+"</td>"+
-        "<td style='padding:6px;font-size:10px' class='"+reactC+"'>"+esc(e.reaction||"—")+"</td>"+
-        "<td style='padding:6px;color:#9eb3c7;font-size:10px;white-space:normal;max-width:180px'>"+esc(e.meaning||"—")+"</td>"+
+        "<td style='padding:6px;color:#9eb3c7;font-size:10px'>"+esc(e.ago||"—")+"</td>"+
+        "<td style='padding:6px;font-weight:700;font-size:10px' class='"+sideC+"'>"+sideLabel+"</td>"+
+        "<td style='padding:6px;color:#e5f3ff;font-weight:700;font-size:11px'>"+esc(e.usd_label||fmtU(e.usd))+"</td>"+
+        "<td style='padding:6px;color:#a9bdd2;font-size:10px'>"+esc(priceStr)+"</td>"+
+        "<td style='padding:6px;color:#9eb3c7;font-size:10px;white-space:normal;max-width:220px'>"+note+"</td>"+
       "</tr>";
     }).join(""):
-    "<tr><td colspan='8' style='padding:18px;color:#9eb3c7;font-size:11px;text-align:center'>No sweep liquidation events above selected minimum. Lower Min Liq filter or expand lookback.</td></tr>";
+    "<tr><td colspan='5' style='padding:18px;color:#9eb3c7;font-size:11px;text-align:center'>"+ll.total_events+" liquidation"+(ll.total_events!==1?"s":"")+" captured, but none within the selected Lookback / Min Liq filter. Lower Min Liq or widen Lookback.</td></tr>";
   }
   window._lmDhRenderLiqTable=_lmDhRenderLiqTable;
   function _lmDhObPanelHtml(uid,sym,obRow){
@@ -11164,8 +11171,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     function _osel(v,cur){ return v===cur?" selected":""; }
     return '<div class="lm-dh-panel" id="'+uid+'Panel">'+
       '<div class="lm-dh-panel-top">'+
-        '<span class="lm-dh-ptitle">Expanded Sweep Rekt Map</span>'+
-        '<span class="lm-dh-badge lm-dh-b-yellow">swing sweep linked</span>'+
+        '<span class="lm-dh-ptitle">Expanded Liquidation Feed</span>'+
+        '<span class="lm-dh-badge lm-dh-b-yellow">live · 5m buckets</span>'+
         '<span class="lm-dh-lab">Lookback:</span>'+
         '<select class="lm-dh-sel" id="'+uid+'Look" onchange="window._lmDhRenderLiqTable(\''+uid+'\')">'+
           '<option value="300"'+_osel("300",_look)+'>5m</option>'+
@@ -11187,30 +11194,27 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         '</select>'+
       '</div>'+
       '<div class="lm-dh-summary" id="'+uid+'LiqSummary">'+
-        '<div class="lm-dh-stat"><div class="k">Last Sweep</div><div class="v lm-dh-yellow" id="'+uid+'LastSweep">—</div></div>'+
-        '<div class="lm-dh-stat"><div class="k">Rekt Side</div><div class="v lm-dh-red" id="'+uid+'RektSide">—</div></div>'+
-        '<div class="lm-dh-stat"><div class="k">Sweep Liq</div><div class="v lm-dh-red" id="'+uid+'SweepLiq">—</div></div>'+
-        '<div class="lm-dh-stat"><div class="k">Vs Previous Avg</div><div class="v lm-dh-yellow" id="'+uid+'SweepVs">—</div></div>'+
-        '<div class="lm-dh-stat"><div class="k">Outcome</div><div class="v lm-dh-green" id="'+uid+'SweepOutcome">—</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Current 5m Liq</div><div class="v lm-dh-red" id="'+uid+'LastSweep">—</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Dominant Side</div><div class="v lm-dh-yellow" id="'+uid+'RektSide">—</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Longs / Shorts (5m)</div><div class="v lm-dh-red" id="'+uid+'SweepLiq">—</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">vs Prev Avg</div><div class="v lm-dh-yellow" id="'+uid+'SweepVs">—</div></div>'+
+        '<div class="lm-dh-stat"><div class="k">Total Liqs</div><div class="v lm-dh-green" id="'+uid+'SweepOutcome">—</div></div>'+
       '</div>'+
       '<div class="lm-dh-side" style="margin-top:8px">'+
         '<div class="lm-dh-side-head">'+
-          '<span class="lm-dh-side-title lm-dh-yellow">SWEEP LIQUIDATION HISTORY / REKT EVENTS</span>'+
+          '<span class="lm-dh-side-title lm-dh-yellow">LIVE LIQUIDATIONS · MOST RECENT FIRST</span>'+
           '<span class="lm-dh-badge lm-dh-b-yellow" id="'+uid+'LiqCount">0 events</span>'+
         '</div>'+
         '<div class="lm-dh-scroll">'+
-          '<table style="width:100%;border-collapse:collapse;min-width:760px">'+
+          '<table style="width:100%;border-collapse:collapse;min-width:560px">'+
             '<thead><tr>'+
               '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Time</th>'+
-              '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Sweep Type</th>'+
-              '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Level</th>'+
-              '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Rekt Side</th>'+
-              '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Liq $</th>'+
-              '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Vs Avg</th>'+
-              '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Reaction</th>'+
-              '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Meaning</th>'+
+              '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Side Liquidated</th>'+
+              '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Size (USD)</th>'+
+              '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Price</th>'+
+              '<th style="position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase">Note</th>'+
             '</tr></thead>'+
-            '<tbody id="'+uid+'LiqBody"><tr><td colspan="8" style="padding:14px;color:#71869b;font-size:10px">Loading…</td></tr></tbody>'+
+            '<tbody id="'+uid+'LiqBody"><tr><td colspan="5" style="padding:14px;color:#71869b;font-size:10px">Loading…</td></tr></tbody>'+
           '</table>'+
         '</div>'+
       '</div>'+

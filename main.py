@@ -11278,6 +11278,87 @@ def _lm_build_ob_wall_map(symbol: str, exchange: str) -> dict:
     }
 
 
+def _lm_summarize_live_liq(events_full: list, now_s: float,
+                           bucket_sec: int = 300, num_buckets: int = 12,
+                           recent_n: int = 40) -> dict:
+    """Live liquidation feed + period-over-period comparison, independent of swing sweeps.
+
+    events_full: list of (ts_seconds, side, usd, price_or_None) where side is
+      "long"  → a long position was force-liquidated, or
+      "short" → a short position was force-liquidated.
+
+    Returns fixed-width time buckets (oldest → newest), the current window's
+    liquidation total compared against the average of the previous windows, the
+    dominant liquidated side, and the most recent raw liquidation events. This is
+    the "count live and compare vs previous points" view — it does NOT require a
+    swing sweep, so it populates whenever any liquidation has been captured.
+    """
+    def _lbl(v: float) -> str:
+        if v >= 1e9: return f"${v/1e9:.2f}B"
+        if v >= 1e6: return f"${v/1e6:.2f}M"
+        if v >= 1e3: return f"${v/1e3:.1f}K"
+        return f"${v:.0f}"
+
+    def _ago(ts: float) -> str:
+        d = now_s - ts
+        if d < 60:   return f"{int(d)}s ago"
+        if d < 3600: return f"{int(d/60)}m ago"
+        return f"{d/3600:.1f}h ago"
+
+    buckets: list = []
+    for i in range(num_buckets):
+        b_end   = now_s - i * bucket_sec
+        b_start = b_end - bucket_sec
+        sel       = [e for e in events_full if b_start <= e[0] < b_end]
+        long_usd  = sum(e[2] for e in sel if e[1] == "long")
+        short_usd = sum(e[2] for e in sel if e[1] == "short")
+        buckets.append({
+            "index":     i,                       # 0 = current (most recent) window
+            "start_ms":  int(b_start * 1000),
+            "long_usd":  round(long_usd),
+            "short_usd": round(short_usd),
+            "total_usd": round(long_usd + short_usd),
+            "count":     len(sel),
+        })
+
+    current  = buckets[0]
+    prev     = buckets[1:]
+    prev_avg = round(sum(b["total_usd"] for b in prev) / len(prev)) if prev else 0
+    vs_prev  = (round((current["total_usd"] - prev_avg) / prev_avg * 100, 1)
+                if prev_avg > 0 else None)
+    if current["long_usd"] > current["short_usd"]:
+        dom = "long"
+    elif current["short_usd"] > current["long_usd"]:
+        dom = "short"
+    else:
+        dom = "balanced"
+
+    recent = sorted(events_full, key=lambda e: e[0], reverse=True)[:recent_n]
+    recent_events = [{
+        "ts_ms":     int(e[0] * 1000),
+        "ago":       _ago(e[0]),
+        "side":      e[1],
+        "usd":       round(e[2]),
+        "usd_label": _lbl(e[2]),
+        "price":     (round(e[3], 6) if len(e) > 3 and e[3] else None),
+    } for e in recent]
+
+    return {
+        "bucket_sec":        bucket_sec,
+        "num_buckets":       num_buckets,
+        "buckets":           list(reversed(buckets)),   # oldest → newest for charting
+        "current_usd":       current["total_usd"],
+        "current_long_usd":  current["long_usd"],
+        "current_short_usd": current["short_usd"],
+        "current_count":     current["count"],
+        "prev_avg_usd":      prev_avg,
+        "vs_prev_pct":       vs_prev,
+        "dominant_side":     dom,
+        "total_events":      len(events_full),
+        "recent_events":     recent_events,
+    }
+
+
 def _lm_build_sweep_rekt_map(symbol: str, exchange: str) -> dict:  # noqa: C901
     """Build sweep rekt map for the DH expanded panel.
 
@@ -11299,29 +11380,10 @@ def _lm_build_sweep_rekt_map(symbol: str, exchange: str) -> dict:  # noqa: C901
     _LIQ_WIN_SEC = 60        # buffer: candle_open-60s → candle_close+60s
     now_s        = time.time()
 
-    # ── 1. Candles ──────────────────────────────────────────────────────────────
-    try:
-        candles = _lm_get_candles_for_features(
-            symbol, _TF, limit=_LOOKBACK, ttl=60,
-            exchange="binance", market="perpetual",
-        )
-    except Exception:
-        candles = []
-
-    if not candles or len(candles) < 20:
-        return {
-            "ok":      False,
-            "status":  "needs_data",
-            "events":  [],
-            "message": (
-                "Sweep-linked liquidation history needs fresh candle data. "
-                f"Got {len(candles)} candles for {symbol} {_TF}."
-            ),
-        }
-
-    # ── 2. Collect liquidation events from all available sources ─────────────
+    # ── 1. Collect liquidation events from all available sources ─────────────
     # Normalized events: (ts_seconds, side, usd)
     liq_events:          list = []
+    liq_events_full:     list = []   # (ts, side, usd, price_or_None) — for the live feed
     liq_sources_used:    list = []
     liq_sources_skipped: list = []
     liq_stream_statuses: dict = {}
@@ -11335,6 +11397,9 @@ def _lm_build_sweep_rekt_map(symbol: str, exchange: str) -> dict:  # noqa: C901
     if _bin_raw:
         liq_sources_used.append("binance")
         liq_events.extend((e[0], e[1], e[2]) for e in _bin_raw)
+        liq_events_full.extend(
+            (e[0], e[1], e[2], (e[3] if len(e) > 3 else None)) for e in _bin_raw
+        )
         liq_stream_statuses["binance"] = {"status": "ok", "event_count": len(_bin_raw)}
     else:
         liq_stream_statuses["binance"] = {
@@ -11355,6 +11420,7 @@ def _lm_build_sweep_rekt_map(symbol: str, exchange: str) -> dict:  # noqa: C901
         if _mx_raw:
             liq_sources_used.append(_mx_exch)
             liq_events.extend(_mx_raw)
+            liq_events_full.extend((e[0], e[1], e[2], None) for e in _mx_raw)
             liq_stream_statuses[_mx_exch] = {"status": "ok", "event_count": len(_mx_raw)}
         else:
             liq_sources_skipped.append(_mx_exch)
@@ -11369,6 +11435,39 @@ def _lm_build_sweep_rekt_map(symbol: str, exchange: str) -> dict:  # noqa: C901
                                     "reason": "adapter_not_implemented"}
 
     liq_total_events = len(liq_events)
+
+    # Live liquidation feed + period comparison — independent of swing sweeps so the
+    # panel populates whenever any liquidation is captured, not only near a sweep.
+    live_liq = _lm_summarize_live_liq(liq_events_full, now_s)
+
+    # ── 2. Candles (needed only for swing/sweep correlation, not the live feed) ──
+    try:
+        candles = _lm_get_candles_for_features(
+            symbol, _TF, limit=_LOOKBACK, ttl=60,
+            exchange="binance", market="perpetual",
+        )
+    except Exception:
+        candles = []
+
+    if not candles or len(candles) < 20:
+        # Candle data unavailable — the live liquidation feed still works; only the
+        # swing-sweep correlation is skipped. Return live_liq so the panel populates.
+        return {
+            "ok":              True,
+            "status":          "live_only_no_candles",
+            "symbol":          symbol,
+            "exchange":        exchange,
+            "has_liq_stream":  has_liq_stream,
+            "latest":          None,
+            "events":          [],
+            "live_liq":        live_liq,
+            "liq_sources_used":    liq_sources_used,
+            "liq_sources_skipped": liq_sources_skipped,
+            "message": (
+                "Live liquidation feed active. Swing-sweep correlation needs fresh "
+                f"candle data (got {len(candles)} candles for {symbol} {_TF})."
+            ),
+        }
 
     # ── 3. Swing + sweep detection ───────────────────────────────────────────
     piv        = _lm_structure_pivot_settings(_TF)
@@ -11406,6 +11505,7 @@ def _lm_build_sweep_rekt_map(symbol: str, exchange: str) -> dict:  # noqa: C901
             "has_liq_stream":  has_liq_stream,
             "latest":          None,
             "events":          [],
+            "live_liq":        live_liq,
             "message":         "No recent swing sweep found in last 4 hours.",
             "liq_sources_used":    liq_sources_used,
             "liq_sources_skipped": liq_sources_skipped,
@@ -11567,6 +11667,7 @@ def _lm_build_sweep_rekt_map(symbol: str, exchange: str) -> dict:  # noqa: C901
         "has_liq_stream": has_liq_stream,
         "latest":         events[0] if events else None,
         "events":         events,
+        "live_liq":       live_liq,
         "liq_sources_used":    liq_sources_used,
         "liq_sources_skipped": liq_sources_skipped,
         "debug":          _debug_base,
