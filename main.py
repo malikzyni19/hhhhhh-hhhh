@@ -10613,10 +10613,13 @@ def _lm_ws_background_loop():
                 time.sleep(10)
                 continue
 
-            streams = "/".join(s.lower() + "@markPrice" for s in current_symbols)
+            # Use the @markPrice@1s variant (1s push cadence) instead of the default
+            # @markPrice stream (3s cadence) so the live price updates every second
+            # instead of lagging up to 3s. Same markPriceUpdate event payload.
+            streams = "/".join(s.lower() + "@markPrice@1s" for s in current_symbols)
             path    = f"/stream?streams={streams}"
             try:
-                print(f"[LM-WS] binance subscribing {current_symbols} streams: price, mark, funding")
+                print(f"[LM-WS] binance subscribing {current_symbols} streams: price(1s), mark, funding")
                 sock = _raw_ws_connect("fstream.binance.com", path)
                 sock.settimeout(30)
                 print("[LM-WS] Connected")
