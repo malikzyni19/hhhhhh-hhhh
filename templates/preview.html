@@ -3620,7 +3620,17 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   function _refreshFooterButtons(){
     var r = getActiveInsightRow();
     var ok = !!r;
-    var c = E("btnChart"); if(c){ c.classList.toggle("disabled", !ok); c.setAttribute("aria-disabled", ok?"false":"true"); }
+    var c = E("btnChart"); if(c){
+      c.classList.toggle("disabled", !ok);
+      c.setAttribute("aria-disabled", ok?"false":"true");
+      // Also clear/restore the inline pointer-events+opacity set by setFoot().
+      // Non-main tabs never call setFoot(r), so the initial HTML inline style
+      // (pointer-events:none) would block clicks even when a row is selected.
+      // Compressed calls setFoot(null) after rendering, which re-disables clicks.
+      // _refreshFooterButtons is always called last, so it is authoritative.
+      c.style.pointerEvents = ok ? "" : "none";
+      c.style.opacity       = ok ? "" : ".5";
+    }
     var l = E("btnLM"); if(l){ l.disabled = !ok; l.classList.toggle("disabled", !ok); }
   }
   function _ti(k,v){return '<div class="ti-row"><span class="k">'+esc(k)+'</span><span class="v">'+v+'</span></div>';}
