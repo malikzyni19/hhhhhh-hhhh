@@ -29,6 +29,12 @@ app.secret_key = os.environ.get("SECRET_KEY", "zyni-fallback-secret")
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', '')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+# ── Secure session cookies ─────────────────────────────────────────────────────
+app.config['SESSION_COOKIE_HTTPONLY'] = True   # JS cannot access the cookie
+app.config['SESSION_COOKIE_SECURE']   = True   # HTTPS only (Koyeb always uses HTTPS)
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # CSRF mitigation for same-origin forms
+app.config['PERMANENT_SESSION_LIFETIME'] = 86400  # 24 h max session age
+
 # Build commit — read once at startup so every API response can include it
 _BUILD_COMMIT = "unknown"
 try:
@@ -65,6 +71,7 @@ from security import (
     rate_limiter, RATE_LIMITS, log_security_event,
     verify_turnstile, is_disposable_email,
     TURNSTILE_SITE, TURNSTILE_ENABLED,
+    verify_recaptcha, RECAPTCHA_SITE_KEY, RECAPTCHA_ENABLED,
 )
 
 db.init_app(app)
@@ -6680,7 +6687,7 @@ def login():
             return redirect(url_for("index"))
         pw_reset = request.args.get("reset") == "1"
         return render_template("login.html", pw_reset_success=pw_reset,
-                               turnstile_site_key=TURNSTILE_SITE)
+                               recaptcha_site_key=RECAPTCHA_SITE_KEY)
 
     username = request.form.get("username", "").strip().lower()
     pwd      = request.form.get("password", "")
@@ -6690,27 +6697,28 @@ def login():
     error    = None
     is_ajax  = request.headers.get("X-Requested-With") == "XMLHttpRequest"
 
-    # ── IP rate limit ──────────────────────────────────────────────────────────
+    def _login_err(msg, code=400, error_code="auth_failed"):
+        log_security_event("LOGIN_BLOCK", ip=ip, username=username or "(empty)", detail=msg)
+        if is_ajax:
+            return jsonify({"error": error_code, "message": msg}), code
+        return render_template("login.html", error=msg,
+                               recaptcha_site_key=RECAPTCHA_SITE_KEY), code
+
+    # ── IP rate limit (checked before reCAPTCHA to short-circuit bots fast) ───
     max_hits, window = RATE_LIMITS["login"]
     if not rate_limiter.is_allowed(ip, "login", max_hits, window):
         retry_after = rate_limiter.get_retry_after(ip, "login", window)
         log_security_event("RATE_LIMIT_LOGIN", ip=ip, username=username,
                            detail=f"blocked, retry_after={retry_after}s")
-        msg = f"Too many login attempts from your IP. Try again in {retry_after // 60 + 1} minute(s)."
-        if is_ajax:
-            return jsonify({"error": "rate_limit", "message": msg}), 429
-        return render_template("login.html", error=msg,
-                               turnstile_site_key=TURNSTILE_SITE), 429
+        msg = f"Too many login attempts. Please wait {retry_after // 60 + 1} minute(s) before trying again."
+        return _login_err(msg, 429, "rate_limit")
 
-    # ── Turnstile verification ─────────────────────────────────────────────────
-    ts_token = request.form.get("cf-turnstile-response", "")
-    ts_ok, ts_err = verify_turnstile(ts_token, ip)
-    if not ts_ok:
-        log_security_event("TURNSTILE_BLOCK_LOGIN", ip=ip, username=username)
-        if is_ajax:
-            return jsonify({"error": "captcha", "message": ts_err}), 400
-        return render_template("login.html", error=ts_err,
-                               turnstile_site_key=TURNSTILE_SITE)
+    # ── Google reCAPTCHA v2 server-side verification (MANDATORY / fail-closed) ─
+    rc_token = request.form.get("g-recaptcha-response", "")
+    rc_ok, rc_err = verify_recaptcha(rc_token, ip)
+    if not rc_ok:
+        log_security_event("RECAPTCHA_BLOCK_LOGIN", ip=ip, username=username)
+        return _login_err(rc_err, 400, "recaptcha")
 
     # ── Try DB login first ──────────────────────────────────────────
     db_user      = None
@@ -6871,12 +6879,12 @@ def login():
         return render_template("login.html",
                                error=msg,
                                unverified_username=unverified_user,
-                               turnstile_site_key=TURNSTILE_SITE)
+                               recaptcha_site_key=RECAPTCHA_SITE_KEY)
 
     if is_ajax:
         return jsonify({"error": error_code or "auth_failed",
                         "message": error or "Login failed. Please try again."}), 401
-    return render_template("login.html", error=error, turnstile_site_key=TURNSTILE_SITE)
+    return render_template("login.html", error=error, recaptcha_site_key=RECAPTCHA_SITE_KEY)
 
 
 @app.route("/register", methods=["GET", "POST"])
@@ -7010,7 +7018,7 @@ def verify_email():
                                    error="Account not found. Please register again.")
         if user.email_verified:
             return render_template("login.html", success="Email already verified. You can sign in.",
-                                   login_username=username, turnstile_site_key=TURNSTILE_SITE)
+                                   login_username=username, recaptcha_site_key=RECAPTCHA_SITE_KEY)
 
         now = datetime.now(timezone.utc)
         ev  = (_EmailVerification.query
@@ -7030,7 +7038,7 @@ def verify_email():
         log_security_event("VERIFY_SUCCESS", ip=ip, username=username)
         return render_template("login.html",
                                success="Email verified! Your account is active — sign in below.",
-                               login_username=username, turnstile_site_key=TURNSTILE_SITE)
+                               login_username=username, recaptcha_site_key=RECAPTCHA_SITE_KEY)
     except Exception as _ve:
         print(f"[VERIFY] Error: {_ve}")
         db.session.rollback()
@@ -7059,7 +7067,7 @@ def resend_verification():
                                    error="Account not found or no email on file.")
         if user.email_verified:
             return render_template("login.html", success="Email already verified. You can sign in.",
-                                   login_username=username, turnstile_site_key=TURNSTILE_SITE)
+                                   login_username=username, recaptcha_site_key=RECAPTCHA_SITE_KEY)
 
         # Rate-limit: block resend if a fresh code was issued within the last 2 minutes
         cooldown_cutoff = datetime.now(timezone.utc) - timedelta(minutes=2)

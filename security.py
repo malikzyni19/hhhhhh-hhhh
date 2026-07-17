@@ -92,12 +92,7 @@ _TURNSTILE_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 def verify_turnstile(token: str, remote_ip: str) -> Tuple[bool, str]:
     """
     Validate a Cloudflare Turnstile challenge token.
-
-    Returns (True, "") on success.
-    Returns (False, error_message) on failure.
-    If TURNSTILE_SITE_KEY / TURNSTILE_SECRET_KEY are not set the check
-    is skipped and (True, "") is always returned so existing deploys
-    without Turnstile credentials are not broken.
+    Fails OPEN — if keys are not set, the check is skipped (register still works).
     """
     if not TURNSTILE_ENABLED:
         return True, ""
@@ -119,6 +114,51 @@ def verify_turnstile(token: str, remote_ip: str) -> Tuple[bool, str]:
         # Fail open: don't block legitimate users if Turnstile is unreachable
         log_security_event("TURNSTILE_ERROR", ip=remote_ip, detail=str(exc))
         return True, ""
+
+
+# ── Google reCAPTCHA v2 ────────────────────────────────────────────────────────
+# FAILS CLOSED: if either key is missing, login is BLOCKED.
+RECAPTCHA_SITE_KEY   = os.environ.get("RECAPTCHA_SITE_KEY", "")
+RECAPTCHA_SECRET_KEY = os.environ.get("RECAPTCHA_SECRET_KEY", "")
+RECAPTCHA_ENABLED    = bool(RECAPTCHA_SITE_KEY and RECAPTCHA_SECRET_KEY)
+
+_RECAPTCHA_VERIFY_URL = "https://www.google.com/recaptcha/api/siteverify"
+
+
+def verify_recaptcha(token: str, remote_ip: str) -> Tuple[bool, str]:
+    """
+    Validate a Google reCAPTCHA v2 token server-side.
+
+    FAILS CLOSED:
+      - If RECAPTCHA_SITE_KEY / RECAPTCHA_SECRET_KEY are not configured → blocked.
+      - If Google's API is unreachable → blocked (no fail-open).
+      - The Secret Key is never sent to the frontend.
+    """
+    if not RECAPTCHA_ENABLED:
+        log_security_event("RECAPTCHA_NOT_CONFIGURED", ip=remote_ip)
+        return False, "Login is temporarily unavailable. Please contact the administrator."
+    if not token:
+        return False, "Please complete the reCAPTCHA verification before signing in."
+    try:
+        resp = _http.post(
+            _RECAPTCHA_VERIFY_URL,
+            data={
+                "secret":   RECAPTCHA_SECRET_KEY,
+                "response": token,
+                "remoteip": remote_ip,
+            },
+            timeout=6,
+        )
+        result = resp.json()
+        if result.get("success"):
+            return True, ""
+        codes = result.get("error-codes", [])
+        log_security_event("RECAPTCHA_FAIL", ip=remote_ip, detail=str(codes))
+        return False, "reCAPTCHA verification failed. Please try again."
+    except Exception as exc:
+        # Fail CLOSED — do not allow login if Google is unreachable
+        log_security_event("RECAPTCHA_API_ERROR", ip=remote_ip, detail=str(exc))
+        return False, "Verification service unavailable. Please try again in a moment."
 
 
 # ── Disposable / Temp Email Domains ───────────────────────────────────────────

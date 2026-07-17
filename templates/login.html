@@ -1148,14 +1148,19 @@
                     </div>
                 </div>
 
-                {% if turnstile_site_key %}
                 <div class="field-wrapper slide-element" style="display:flex;justify-content:center;">
-                    <div class="cf-turnstile"
-                         data-sitekey="{{ turnstile_site_key }}"
+                    {% if recaptcha_site_key %}
+                    <div class="g-recaptcha"
+                         id="loginRecaptcha"
+                         data-sitekey="{{ recaptcha_site_key }}"
                          data-theme="dark"
                          data-size="normal"></div>
+                    {% else %}
+                    <div style="padding:10px 14px;background:rgba(248,113,113,0.08);border:1px solid rgba(248,113,113,0.3);border-radius:9px;color:#f87171;font-size:12px;text-align:center;width:100%">
+                        ⚠ Login verification not configured. Contact the administrator.
+                    </div>
+                    {% endif %}
                 </div>
-                {% endif %}
 
                 <div class="field-wrapper slide-element">
                     <button class="submit-button" id="loginBtn" type="submit">Sign In</button>
@@ -1247,8 +1252,13 @@
         <p>© 2026 ZyNi SMC. All rights reserved. &nbsp;|&nbsp; <a href="/">← Back to Home</a></p>
     </div>
 
+    <!-- Google reCAPTCHA v2 (login form only — always loaded so widget renders) -->
+    {% if recaptcha_site_key %}
+    <script src="https://www.google.com/recaptcha/api.js" async defer></script>
+    {% endif %}
+
     {% if turnstile_site_key %}
-    <!-- Cloudflare Turnstile -->
+    <!-- Cloudflare Turnstile (signup form) -->
     <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
     {% endif %}
 
@@ -1447,13 +1457,19 @@
 
             resetBtn(loginBtn, 'Sign In');
 
+            // Reset reCAPTCHA after every failed attempt so user can retry
+            try { if (window.grecaptcha) grecaptcha.reset(); } catch (_) {}
+
             if (data && data.error) {
                 const MAP = {
-                    empty:        { title: 'Username Required',    message: 'Please enter your username.' },
-                    no_account:   { title: 'Account Not Found',    message: 'No account found. Please create and verify your account first.' },
-                    wrong_password:{ title: 'Incorrect Password',  message: 'Incorrect password. Please try again.' },
-                    unverified:   { title: 'Account Not Verified', message: 'Your account is not verified yet. Please verify your email before logging in.' },
-                    paused:       { title: 'Account Suspended',    message: data.message || 'Your account has been paused. Contact admin.' },
+                    empty:         { title: 'Username Required',     message: 'Please enter your username.' },
+                    no_account:    { title: 'Account Not Found',     message: 'No account found. Please create and verify your account first.' },
+                    wrong_password:{ title: 'Incorrect Password',    message: 'Incorrect password. Please try again.' },
+                    unverified:    { title: 'Account Not Verified',  message: 'Your account is not verified yet. Please verify your email before logging in.' },
+                    paused:        { title: 'Account Suspended',     message: data.message || 'Your account has been paused. Contact admin.' },
+                    recaptcha:     { title: 'Verification Required', message: data.message || 'Please complete the reCAPTCHA check and try again.' },
+                    rate_limit:    { title: 'Too Many Attempts',     message: data.message || 'Too many login attempts. Please wait and try again.' },
+                    captcha:       { title: 'Verification Required', message: data.message || 'Please complete the verification check.' },
                 };
                 const info   = MAP[data.error] || { title: 'Login Failed', message: data.message || 'Something went wrong. Please try again.' };
                 const isWarn = data.error === 'unverified';
