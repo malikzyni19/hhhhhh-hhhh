@@ -10685,6 +10685,11 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var sel=document.getElementById("lmDataSrc");
     return (sel&&sel.value)||"binance";
   }
+  // True when the DH tbody currently shows real metric rows (not a loading/error placeholder).
+  // Used to avoid wiping already-rendered values on a transient empty/failed poll.
+  function _lmDhHasDataRows(tb){
+    return !!(tb&&tb.querySelector&&tb.querySelector(".lm-dh-metric"));
+  }
   function _lmFetchDataHealth(symbol,exchange,itemId,pollKey){
     if(!symbol||!exchange) return;
     if(location.protocol==="file:") return;
@@ -10728,9 +10733,19 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         var _wrap=(_errBox&&(_errBox.querySelector('#lmDhRows[data-lm-dh-rows-for="'+itemId+'"]')||_errBox.querySelector("#lmDhRows")||_errBox.querySelector("#lmDhBody")))||document.getElementById("lmDhRows")||document.getElementById("lmDhBody");
         if(_wrap){
           var _tb=(_wrap.tagName==="TBODY")?_wrap:_wrap.querySelector("tbody");
-          if(_tb) _tb.innerHTML=d===null
-            ?"<tr><td colspan='6' style='color:var(--yellow-2,#f59e0b);font-size:10px;padding:10px'>Session expired — please refresh the page.</td></tr>"
-            :"<tr><td colspan='6' style='color:var(--red-2,#ef4444);font-size:10px;padding:10px'>Data Health unavailable — will retry.</td></tr>";
+          // Preserve last-good values across transient failed polls: only show the
+          // placeholder when the table has no rendered data yet. Otherwise keep the
+          // existing rows and just flag the retry in the status line.
+          if(_tb&&!_lmDhHasDataRows(_tb)){
+            _tb.innerHTML=d===null
+              ?"<tr><td colspan='6' style='color:var(--yellow-2,#f59e0b);font-size:10px;padding:10px'>Session expired — please refresh the page.</td></tr>"
+              :"<tr><td colspan='6' style='color:var(--red-2,#ef4444);font-size:10px;padding:10px'>Data Health unavailable — will retry.</td></tr>";
+          } else {
+            var _slR=document.getElementById("lmDhStatusLine");
+            if(_slR) _slR.textContent=d===null
+              ?"Data Health · session may have expired — showing last values"
+              :"Data Health · retrying… showing last values";
+          }
         }
         console.log("[LM-DH] fetch result not ok",d);
       }
@@ -10740,7 +10755,13 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       var _wrap=(_errBox2&&(_errBox2.querySelector("#lmDhRows")||_errBox2.querySelector("#lmDhBody")))||document.getElementById("lmDhRows")||document.getElementById("lmDhBody");
       if(_wrap){
         var _tb=(_wrap.tagName==="TBODY")?_wrap:_wrap.querySelector("tbody");
-        if(_tb) _tb.innerHTML="<tr><td colspan='6' style='color:var(--red-2,#ef4444);font-size:10px;padding:10px'>Data Health unavailable — will retry.</td></tr>";
+        // Keep last-good rows on a transient network error; only show placeholder if empty.
+        if(_tb&&!_lmDhHasDataRows(_tb)){
+          _tb.innerHTML="<tr><td colspan='6' style='color:var(--red-2,#ef4444);font-size:10px;padding:10px'>Data Health unavailable — will retry.</td></tr>";
+        } else {
+          var _slC=document.getElementById("lmDhStatusLine");
+          if(_slC) _slC.textContent="Data Health · retrying… showing last values";
+        }
       }
     });
   }
@@ -10790,7 +10811,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       if(tbl){ tbody=document.createElement("tbody"); tbl.appendChild(tbody); console.log("[LM-DH] tbody missing — restored"); }
       else { console.log("[LM-DH] tbody missing and no table — cannot render"); return; }
     }
-    if(!rows||!rows.length){ tbody.innerHTML=""; return; }
+    // Empty poll result: keep the last-good rows rather than blanking every value.
+    if(!rows||!rows.length){ if(!_lmDhHasDataRows(tbody)) tbody.innerHTML=""; return; }
     // Build row map and render sectioned professional DH table
     var rowMap={};
     for(var _ri=0;_ri<rows.length;_ri++){ rowMap[rows[_ri].metric]=rows[_ri]; }
