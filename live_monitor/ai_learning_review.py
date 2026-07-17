@@ -181,6 +181,9 @@ _SMALL_SAMPLE_MARKERS = frozenset({
     "small_segment_sample", "low_sample", "insufficient_data",
 })
 
+# Phase 11.15.4: segment observation categories that must cite a category-specific count
+_SEGMENT_CATEGORIES = frozenset({"symbol", "side", "setup", "confidence"})
+
 # Module-level guardrails for API responses
 _MODULE_GUARDRAILS: dict = {
     "read_only":                   True,
@@ -1068,8 +1071,13 @@ CRITICAL GUARDRAILS — these override everything:
 6. Do not fabricate symbols, segments or numbers not present in the evidence.
 7. Every proposal must reference at least one valid observation ID.
 8. You must provide what_not_to_conclude (minimum 1 entry for small/truncated data).
-9. MANDATORY: every observation must include exactly ONE evidence row with a .trade_count metric
-   (e.g. "performance.trade_count" or "segment.<dim>.<val>.trade_count").
+9. MANDATORY: every observation must include exactly ONE evidence row with a .trade_count metric,
+   and the metric MUST match the observation category:
+   - symbol observations   → use "segment.symbol.<LABEL>.trade_count"  (NOT performance.trade_count)
+   - side observations     → use "segment.side.<LABEL>.trade_count"    (NOT performance.trade_count)
+   - setup observations    → use "segment.setup.<LABEL>.trade_count"   (NOT performance.trade_count)
+   - confidence observations → use "segment.confidence.<LABEL>.trade_count" (NOT performance.trade_count)
+   - risk_reward / exit / trend / data_quality → use "performance.trade_count"
    observation.sample_size must exactly equal the value of that .trade_count evidence row.
 
 Return valid JSON ONLY — no markdown fences, no prose outside JSON:
@@ -1284,8 +1292,9 @@ def _lm_validate_learning_review_response(
         else:
             obs_ids.add(obs_id)
 
-        if obs.get("category") not in _VALID_OBS_CATEGORIES:
-            reasons.append(f"obs[{i}]_invalid_category:{obs.get('category')!r}")
+        category = obs.get("category")
+        if category not in _VALID_OBS_CATEGORIES:
+            reasons.append(f"obs[{i}]_invalid_category:{category!r}")
         if obs.get("confidence") not in _VALID_CONFIDENCES:
             reasons.append(f"obs[{i}]_invalid_confidence:{obs.get('confidence')!r}")
         if obs.get("severity") not in _VALID_SEVERITIES:
@@ -1412,6 +1421,14 @@ def _lm_validate_learning_review_response(
                     reasons.append(
                         f"obs[{i}]_observation_sample_size_exceeds_total:"
                         f"{obs_n}>{total}"
+                    )
+            # Phase 11.15.4 Task 1: segment observations must cite a category-specific count
+            if category in _SEGMENT_CATEGORIES:
+                required_prefix = f"segment.{category}."
+                if not tc_metric.startswith(required_prefix):
+                    reasons.append(
+                        f"obs[{i}]_{category}_observation_requires_{category}_count:"
+                        f"got_{tc_metric!r}"
                     )
 
     # Task 1: explicit length rejection for review_proposals

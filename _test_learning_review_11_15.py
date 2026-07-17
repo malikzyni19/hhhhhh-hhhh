@@ -852,6 +852,147 @@ check("21-8 500 trades → meaningful",  lr._sample_quality(500) == "meaningful"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# GROUP 22: Phase 11.15.4 Task 1 — Category-specific count binding
+# ══════════════════════════════════════════════════════════════════════════════
+section("GROUP 22 — category-specific count binding (Phase 11.15.4 Task 1)")
+
+check("22-1 _SEGMENT_CATEGORIES exported", hasattr(lr, "_SEGMENT_CATEGORIES"))
+check("22-2 _SEGMENT_CATEGORIES == {symbol,side,setup,confidence}",
+      getattr(lr, "_SEGMENT_CATEGORIES", None) == frozenset({"symbol", "side", "setup", "confidence"}))
+
+# Evidence fixture with segment data for all four segment categories
+_ev22 = {
+    "sample_size":    30,
+    "sample_quality": "developing",
+    "warnings":       [],
+    "performance_summary": {
+        "win_rate_pct": 55.0, "net_realized_pnl": "150.00", "trade_count": 30,
+    },
+    "execution_quality": {"avg_rr_capture": 0.7},
+    "segments": {
+        "by_symbol": [
+            {"label": "BTCUSDT", "count": 20, "wins": 11, "losses": 9,
+             "breakevens": 0, "win_rate": 55.0, "net_pnl": "100.00"},
+        ],
+        "by_side": [
+            {"label": "BUY",  "count": 18, "wins": 10, "losses": 8,
+             "breakevens": 0, "win_rate": 55.6, "net_pnl": "90.00"},
+            {"label": "SELL", "count": 12, "wins":  6, "losses": 6,
+             "breakevens": 0, "win_rate": 50.0, "net_pnl": "60.00"},
+        ],
+        "by_outcome_reason": [],
+        "by_confidence": [
+            {"label": "high", "count": 15, "wins": 10, "losses": 5,
+             "breakevens": 0, "win_rate": 66.7, "net_pnl": "80.00"},
+        ],
+        "by_setup_type": [
+            {"label": "breakout", "count": 10, "wins": 6, "losses": 4,
+             "breakevens": 0, "win_rate": 60.0, "net_pnl": "50.00"},
+        ],
+        "by_entry_mode": [],
+    },
+}
+
+_guardrails22 = {
+    "read_only":              True,
+    "human_review_required":  True,
+    "auto_apply_allowed":     False,
+    "can_change_strategy":    False,
+    "can_change_risk_guard":  False,
+    "can_arm_auto_gate":      False,
+    "can_auto_submit":        False,
+    "auto_execution_allowed": False,
+    "ai_can_execute":         False,
+}
+
+def _mk_resp22(category, ev_metric, ev_value, sample_size):
+    return {
+        "review_title":       "30-Trade Portfolio Review",
+        "executive_summary":  "Portfolio shows moderate performance.",
+        "overall_assessment": "mixed",
+        "confidence_level":   "medium",
+        "sample_assessment":  {"sample_size": 30, "sample_quality": "developing", "limitations": []},
+        "observations": [
+            {
+                "id":          "obs_1",
+                "category":    category,
+                "title":       "Observation title",
+                "statement":   "Observation statement about trading patterns.",
+                "evidence":    [{"metric": ev_metric, "value": ev_value, "comparison": None}],
+                "sample_size": sample_size,
+                "confidence":  "medium",
+                "severity":    "watch",
+                "limitations": [],
+                "auto_apply_allowed": False,
+            }
+        ],
+        "review_proposals":    [],
+        "what_not_to_conclude": ["This is inconclusive."],
+        "guardrails":          _guardrails22,
+    }
+
+# 22-3: symbol observation with portfolio count → rejected
+_p22_sym_wrong = lr._lm_parse_learning_review_response(
+    _mk_resp22("symbol", "performance.trade_count", 30, 30))
+_v22_3, _rr22_3 = lr._lm_validate_learning_review_response(_p22_sym_wrong, _ev22)
+check("22-3 symbol obs + performance.trade_count → rejected", not _v22_3, str(_rr22_3))
+check("22-4 symbol rejection reason cites symbol_observation_requires_symbol_count",
+      any("symbol_observation_requires_symbol_count" in r for r in _rr22_3), str(_rr22_3))
+
+# 22-5: symbol observation with segment-specific count → accepted
+_p22_sym_ok = lr._lm_parse_learning_review_response(
+    _mk_resp22("symbol", "segment.symbol.BTCUSDT.trade_count", 20, 20))
+_v22_5, _rr22_5 = lr._lm_validate_learning_review_response(_p22_sym_ok, _ev22)
+check("22-5 symbol obs + segment.symbol.BTCUSDT.trade_count → accepted", _v22_5, str(_rr22_5))
+
+# 22-6: side observation with portfolio count → rejected
+_p22_side_wrong = lr._lm_parse_learning_review_response(
+    _mk_resp22("side", "performance.trade_count", 30, 30))
+_v22_6, _rr22_6 = lr._lm_validate_learning_review_response(_p22_side_wrong, _ev22)
+check("22-6 side obs + performance.trade_count → rejected", not _v22_6, str(_rr22_6))
+check("22-7 side rejection reason cites side_observation_requires_side_count",
+      any("side_observation_requires_side_count" in r for r in _rr22_6), str(_rr22_6))
+
+# 22-8: side observation with segment-specific count → accepted
+_p22_side_ok = lr._lm_parse_learning_review_response(
+    _mk_resp22("side", "segment.side.BUY.trade_count", 18, 18))
+_v22_8, _rr22_8 = lr._lm_validate_learning_review_response(_p22_side_ok, _ev22)
+check("22-8 side obs + segment.side.BUY.trade_count → accepted", _v22_8, str(_rr22_8))
+
+# 22-9: setup observation with portfolio count → rejected
+_p22_setup_wrong = lr._lm_parse_learning_review_response(
+    _mk_resp22("setup", "performance.trade_count", 30, 30))
+_v22_9, _rr22_9 = lr._lm_validate_learning_review_response(_p22_setup_wrong, _ev22)
+check("22-9 setup obs + performance.trade_count → rejected", not _v22_9, str(_rr22_9))
+
+# 22-10: setup observation with segment-specific count → accepted
+_p22_setup_ok = lr._lm_parse_learning_review_response(
+    _mk_resp22("setup", "segment.setup.breakout.trade_count", 10, 10))
+_v22_10, _rr22_10 = lr._lm_validate_learning_review_response(_p22_setup_ok, _ev22)
+check("22-10 setup obs + segment.setup.breakout.trade_count → accepted", _v22_10, str(_rr22_10))
+
+# 22-11: confidence observation with portfolio count → rejected
+_p22_conf_wrong = lr._lm_parse_learning_review_response(
+    _mk_resp22("confidence", "performance.trade_count", 30, 30))
+_v22_11, _rr22_11 = lr._lm_validate_learning_review_response(_p22_conf_wrong, _ev22)
+check("22-11 confidence obs + performance.trade_count → rejected", not _v22_11, str(_rr22_11))
+
+# 22-12: confidence observation with segment-specific count → accepted
+_p22_conf_ok = lr._lm_parse_learning_review_response(
+    _mk_resp22("confidence", "segment.confidence.high.trade_count", 15, 15))
+_v22_12, _rr22_12 = lr._lm_validate_learning_review_response(_p22_conf_ok, _ev22)
+check("22-12 confidence obs + segment.confidence.high.trade_count → accepted", _v22_12, str(_rr22_12))
+
+# 22-13 to 22-16: non-segment categories may use performance.trade_count
+for _cat22, _num22 in [("risk_reward", 13), ("exit", 14), ("trend", 15), ("data_quality", 16)]:
+    _p22_ns = lr._lm_parse_learning_review_response(
+        _mk_resp22(_cat22, "performance.trade_count", 30, 30))
+    _v22_ns, _rr22_ns = lr._lm_validate_learning_review_response(_p22_ns, _ev22)
+    check(f"22-{_num22} {_cat22} obs + performance.trade_count → accepted (non-segment)",
+          _v22_ns, str(_rr22_ns))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Final summary
 # ══════════════════════════════════════════════════════════════════════════════
 print(f"\n{'='*60}")
