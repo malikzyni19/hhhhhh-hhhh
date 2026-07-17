@@ -78,6 +78,8 @@ RATE_LIMITS: dict = {
     "login":               (10, 900),    # 10 per IP per 15 minutes
     "resend_verification": (3,  900),    # 3 per IP per 15 minutes
     "verify_email":        (10, 900),    # 10 per IP per 15 minutes
+    "resend_2fa":          (3,  300),    # 3 per IP per 5 minutes
+    "submit_2fa":          (10, 600),    # 10 per IP per 10 minutes
 }
 
 

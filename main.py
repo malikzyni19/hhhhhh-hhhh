@@ -6682,6 +6682,119 @@ def _guest_tab_check(tab_name: str):
     return None
 
 
+def _mask_email(email: str) -> str:
+    """Return a privacy-masked email hint like a***n@g***.com."""
+    if "@" not in email:
+        return "***"
+    local, domain = email.rsplit("@", 1)
+    if len(local) <= 1:
+        masked_local = "*"
+    elif len(local) == 2:
+        masked_local = local[0] + "*"
+    else:
+        masked_local = local[0] + "*" * (len(local) - 2) + local[-1]
+    parts = domain.split(".")
+    d = parts[0]
+    masked_d = d[0] + "*" * max(1, len(d) - 1) if d else "*"
+    masked_domain = masked_d + "." + ".".join(parts[1:]) if len(parts) > 1 else masked_d
+    return f"{masked_local}@{masked_domain}"
+
+
+def _complete_login(username: str, db_user, ip: str, ua: str,
+                    remember_me: bool, now_utc: str) -> None:
+    """Finalise a successful login: set session, load watchlist, record history."""
+    session.permanent    = remember_me
+    session["logged_in"] = True
+    session["username"]  = username
+
+    if db_user is not None:
+        try:
+            db_user.last_login_at = datetime.now(timezone.utc)
+            db_user.last_login_ip = ip
+            db.session.commit()
+        except Exception:
+            pass
+
+    sid = os.urandom(16).hex()
+    session["sid"] = sid
+
+    saved_pairs = load_user_watchlist(username)
+    with _wl_lock:
+        _wl_user_pairs[username] = saved_pairs
+        _wl_rebuild_union()
+    if saved_pairs:
+        _ensure_wl_thread()
+
+    geo = "unknown"
+    try:
+        gr = req.get(f"https://ipapi.co/{ip}/json/", timeout=4)
+        if gr.status_code == 200:
+            gd      = gr.json()
+            city    = gd.get("city", "")
+            country = gd.get("country_name", "")
+            geo     = f"{city}, {country}" if city else country
+    except Exception:
+        pass
+
+    with _sessions_lock:
+        _active_sessions[username] = {
+            "ip": ip, "ua": ua,
+            "login_time": datetime.now(timezone.utc).isoformat(),
+            "sid": sid, "is_admin": False,
+        }
+    LOGIN_AUDIT_LOG.appendleft({
+        "username": username, "time": now_utc,
+        "ip": ip, "geo": geo, "ua": ua, "success": True,
+    })
+
+    try:
+        subject = f"🔐 ZyNi Screener — {username.title()} logged in"
+        body = f"""
+<html><body style="font-family:monospace;background:#0a0e17;color:#e2e8f0;padding:24px">
+<div style="max-width:520px;margin:0 auto;background:#0d1525;border:1px solid #1e3040;border-top:3px solid #22d3ee;border-radius:10px;padding:24px">
+  <h2 style="color:#22d3ee;margin:0 0 16px">🔐 New Login — ZyNi SMC Screener</h2>
+  <table style="width:100%;border-collapse:collapse">
+    <tr><td style="color:#64748b;padding:6px 0;width:120px">User</td><td style="color:#22d3ee;font-weight:700">{username.title()}</td></tr>
+    <tr><td style="color:#64748b;padding:6px 0">Time</td><td style="color:#e2e8f0">{now_utc}</td></tr>
+    <tr><td style="color:#64748b;padding:6px 0">IP Address</td><td style="color:#e2e8f0">{ip}</td></tr>
+    <tr><td style="color:#64748b;padding:6px 0">Location</td><td style="color:#e2e8f0">{geo}</td></tr>
+    <tr><td style="color:#64748b;padding:6px 0;vertical-align:top">Device</td><td style="color:#e2e8f0;word-break:break-all;font-size:11px">{ua}</td></tr>
+  </table>
+  <div style="margin-top:16px;padding:12px;background:#071525;border-radius:6px;font-size:12px;color:#64748b">
+    If this was you — no action needed.<br>
+    If this was NOT you — remove this username from USERS immediately.
+  </div>
+</div>
+</body></html>"""
+        threading.Thread(target=send_email_alert, args=(subject, body), daemon=True).start()
+    except Exception as _e:
+        print(f"[LOGIN-NOTIFY] Error: {_e}")
+
+    if db_user is not None:
+        session["user_id"] = db_user.id
+
+    def _record_login_hist(uid, _ip, _ua):
+        try:
+            with app.app_context():
+                _geo  = _geo_lookup(_ip)
+                _ua_p = _parse_ua(_ua)
+                lh    = _LoginHistory(
+                    user_id    = uid,
+                    ip_address = _ip,
+                    user_agent = _ua,
+                    country    = _geo.get("country", ""),
+                    city       = _geo.get("city", ""),
+                    **_ua_p,
+                )
+                db.session.add(lh)
+                db.session.commit()
+        except Exception as _e:
+            print(f"[LOGIN-HIST] {_e}")
+
+    if db_user is not None:
+        threading.Thread(target=_record_login_hist, args=(db_user.id, ip, ua), daemon=True).start()
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "GET":
@@ -6771,98 +6884,36 @@ def login():
         # else: legacy success, error stays None
 
     if error is None and username:
-        session.permanent    = True   # honour PERMANENT_SESSION_LIFETIME (7 days by default)
-        session["logged_in"] = True
-        session["username"]  = username
-        # persist DB fields if user found
-        if db_user is not None:
-            try:
-                db_user.last_login_at = datetime.now(timezone.utc)
-                db_user.last_login_ip = ip
-                from models import db as _db
-                _db.session.commit()
-            except Exception:
-                pass
-        sid = os.urandom(16).hex()
-        session["sid"] = sid
+        remember_me = request.form.get("remember_me") == "1"
 
-        saved_pairs = load_user_watchlist(username)
-        with _wl_lock:
-            _wl_user_pairs[username] = saved_pairs
-            _wl_rebuild_union()
-        if saved_pairs:
-            _ensure_wl_thread()
+        # ── Email 2FA for DB users with an email address ───────────────────────
+        if db_user is not None and db_user.email:
+            raw_code  = f"{secrets.randbelow(1000000):06d}"
+            code_hash = hashlib.sha256(raw_code.encode()).hexdigest()
 
-        geo = "unknown"
-        try:
-            gr = req.get(f"https://ipapi.co/{ip}/json/", timeout=4)
-            if gr.status_code == 200:
-                gd      = gr.json()
-                city    = gd.get("city", "")
-                country = gd.get("country_name", "")
-                geo     = f"{city}, {country}" if city else country
-        except Exception:
-            pass
-
-        with _sessions_lock:
-            _active_sessions[username] = {
-                "ip": ip, "ua": ua,
-                "login_time": datetime.now(timezone.utc).isoformat(),
-                "sid": sid, "is_admin": False
+            session["_2fa_pending"] = {
+                "username":    username,
+                "user_id":     db_user.id,
+                "code_hash":   code_hash,
+                "expires":     time.time() + 600,
+                "remember_me": remember_me,
+                "attempts":    0,
+                "email_hint":  _mask_email(db_user.email),
             }
-        LOGIN_AUDIT_LOG.appendleft({
-            "username": username, "time": now_utc,
-            "ip": ip, "geo": geo, "ua": ua, "success": True
-        })
 
-        try:
-            subject = f"🔐 ZyNi Screener — {username.title()} logged in"
-            body = f"""
-<html><body style="font-family:monospace;background:#0a0e17;color:#e2e8f0;padding:24px">
-<div style="max-width:520px;margin:0 auto;background:#0d1525;border:1px solid #1e3040;border-top:3px solid #22d3ee;border-radius:10px;padding:24px">
-  <h2 style="color:#22d3ee;margin:0 0 16px">🔐 New Login — ZyNi SMC Screener</h2>
-  <table style="width:100%;border-collapse:collapse">
-    <tr><td style="color:#64748b;padding:6px 0;width:120px">User</td><td style="color:#22d3ee;font-weight:700">{username.title()}</td></tr>
-    <tr><td style="color:#64748b;padding:6px 0">Time</td><td style="color:#e2e8f0">{now_utc}</td></tr>
-    <tr><td style="color:#64748b;padding:6px 0">IP Address</td><td style="color:#e2e8f0">{ip}</td></tr>
-    <tr><td style="color:#64748b;padding:6px 0">Location</td><td style="color:#e2e8f0">{geo}</td></tr>
-    <tr><td style="color:#64748b;padding:6px 0;vertical-align:top">Device</td><td style="color:#e2e8f0;word-break:break-all;font-size:11px">{ua}</td></tr>
-  </table>
-  <div style="margin-top:16px;padding:12px;background:#071525;border-radius:6px;font-size:12px;color:#64748b">
-    If this was you — no action needed.<br>
-    If this was NOT you — remove this username from USERS immediately.
-  </div>
-</div>
-</body></html>"""
-            threading.Thread(target=send_email_alert, args=(subject, body), daemon=True).start()
-        except Exception as e:
-            print(f"[LOGIN-NOTIFY] Error: {e}")
+            email_sent, _ = send_verification_email(db_user.email, raw_code, username)
+            session["_2fa_email_sent"] = email_sent
+            if not email_sent:
+                session["_2fa_fallback_code"] = raw_code
 
-        # Store user_id in session if DB user exists
-        if db_user is not None:
-            session["user_id"] = db_user.id
+            log_security_event("2FA_OTP_SENT", ip=ip, username=username,
+                               detail=_mask_email(db_user.email))
+            if is_ajax:
+                return jsonify({"success": True, "redirect": url_for("two_factor_auth")})
+            return redirect(url_for("two_factor_auth"))
 
-        # Record login history asynchronously
-        def _record_login(uid, _ip, _ua):
-            try:
-                with app.app_context():
-                    geo  = _geo_lookup(_ip)
-                    ua_p = _parse_ua(_ua)
-                    lh   = _LoginHistory(
-                        user_id    = uid,
-                        ip_address = _ip,
-                        user_agent = _ua,
-                        country    = geo.get("country", ""),
-                        city       = geo.get("city", ""),
-                        **ua_p,
-                    )
-                    db.session.add(lh)
-                    db.session.commit()
-            except Exception as _e:
-                print(f"[LOGIN-HIST] {_e}")
-        if db_user is not None:
-            threading.Thread(target=_record_login, args=(db_user.id, ip, ua), daemon=True).start()
-
+        # ── Legacy / no-email users: complete login immediately ────────────────
+        _complete_login(username, db_user, ip, ua, remember_me, now_utc)
         if is_ajax:
             return jsonify({"success": True, "redirect": url_for("index")})
         return redirect(url_for("index"))
@@ -6888,6 +6939,129 @@ def login():
         return jsonify({"error": error_code or "auth_failed",
                         "message": error or "Login failed. Please try again."}), 401
     return render_template("login.html", error=error, recaptcha_site_key=RECAPTCHA_SITE_KEY)
+
+
+# ── Email 2FA ──────────────────────────────────────────────────────────────────
+
+@app.route("/2fa", methods=["GET", "POST"])
+def two_factor_auth():
+    pending = session.get("_2fa_pending")
+    if not pending:
+        return redirect(url_for("login"))
+
+    ip      = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
+    is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+
+    if request.method == "GET":
+        email_sent    = session.pop("_2fa_email_sent", True)
+        fallback_code = session.pop("_2fa_fallback_code", None)
+        return render_template("2fa.html",
+                               email_hint=pending.get("email_hint", "your email"),
+                               email_sent=email_sent,
+                               fallback_code=fallback_code)
+
+    def _2fa_err(msg, http_code=400, error_code="2fa_failed"):
+        if is_ajax:
+            return jsonify({"error": error_code, "message": msg}), http_code
+        return render_template("2fa.html",
+                               error=msg,
+                               email_hint=pending.get("email_hint", "your email")), http_code
+
+    # ── Check OTP submission rate limit ────────────────────────────────────────
+    max_hits, window = RATE_LIMITS["submit_2fa"]
+    if not rate_limiter.is_allowed(ip, "submit_2fa", max_hits, window):
+        retry_after = rate_limiter.get_retry_after(ip, "submit_2fa", window)
+        return _2fa_err(f"Too many attempts. Wait {retry_after}s before trying again.", 429, "rate_limit")
+
+    # ── Check expiry ───────────────────────────────────────────────────────────
+    if time.time() > pending.get("expires", 0):
+        session.pop("_2fa_pending", None)
+        msg = "Your verification code has expired. Please log in again."
+        if is_ajax:
+            return jsonify({"error": "expired", "message": msg,
+                            "redirect": url_for("login")}), 401
+        return redirect(url_for("login"))
+
+    # ── Check attempt count ────────────────────────────────────────────────────
+    if pending.get("attempts", 0) >= 5:
+        session.pop("_2fa_pending", None)
+        msg = "Too many failed attempts. Please log in again."
+        if is_ajax:
+            return jsonify({"error": "too_many_attempts", "message": msg,
+                            "redirect": url_for("login")}), 429
+        return redirect(url_for("login"))
+
+    code           = request.form.get("code", "").strip()
+    submitted_hash = hashlib.sha256(code.encode()).hexdigest()
+
+    if not hmac.compare_digest(submitted_hash, pending.get("code_hash", "")):
+        pending["attempts"] = pending.get("attempts", 0) + 1
+        session["_2fa_pending"] = pending
+        log_security_event("2FA_FAIL", ip=ip, username=pending.get("username", "?"),
+                           detail=f"attempt={pending['attempts']}")
+        remaining = 5 - pending["attempts"]
+        return _2fa_err(f"Incorrect code. {remaining} attempt(s) remaining.", 401, "wrong_code")
+
+    # ── Correct code — complete login ──────────────────────────────────────────
+    username    = pending["username"]
+    user_id     = pending["user_id"]
+    remember_me = pending.get("remember_me", True)
+    now_utc     = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    ua          = request.headers.get("User-Agent", "unknown")
+
+    session.pop("_2fa_pending", None)
+
+    db_user = None
+    try:
+        db_user = _DBUser.query.get(user_id)
+    except Exception:
+        pass
+
+    _complete_login(username, db_user, ip, ua, remember_me, now_utc)
+    log_security_event("2FA_SUCCESS", ip=ip, username=username)
+
+    if is_ajax:
+        return jsonify({"success": True, "redirect": url_for("index")})
+    return redirect(url_for("index"))
+
+
+@app.route("/resend-2fa", methods=["POST"])
+def resend_2fa():
+    pending = session.get("_2fa_pending")
+    if not pending:
+        return jsonify({"error": "no_pending", "message": "No 2FA session active."}), 400
+
+    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
+
+    max_hits, window = RATE_LIMITS["resend_2fa"]
+    if not rate_limiter.is_allowed(ip, "resend_2fa", max_hits, window):
+        retry_after = rate_limiter.get_retry_after(ip, "resend_2fa", window)
+        return jsonify({"error": "rate_limit",
+                        "message": f"Too many resend requests. Wait {retry_after}s."}), 429
+
+    raw_code  = f"{secrets.randbelow(1000000):06d}"
+    code_hash = hashlib.sha256(raw_code.encode()).hexdigest()
+    pending["code_hash"] = code_hash
+    pending["expires"]   = time.time() + 600
+    pending["attempts"]  = 0
+    session["_2fa_pending"] = pending
+
+    db_user = None
+    try:
+        db_user = _DBUser.query.get(pending.get("user_id"))
+    except Exception:
+        pass
+
+    if db_user and db_user.email:
+        email_sent, _ = send_verification_email(db_user.email, raw_code, pending["username"])
+        log_security_event("2FA_RESEND", ip=ip, username=pending["username"])
+        if email_sent:
+            return jsonify({"success": True,
+                            "message": "A new code has been sent to your email."})
+        return jsonify({"success": False, "fallback_code": raw_code,
+                        "message": "Email delivery failed. Use the code shown on screen."})
+
+    return jsonify({"error": "no_email", "message": "No email address on file."}), 400
 
 
 @app.route("/register", methods=["GET", "POST"])
