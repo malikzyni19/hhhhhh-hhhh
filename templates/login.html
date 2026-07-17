@@ -1221,14 +1221,15 @@
                     </div>
                 </div>
 
-                {% if turnstile_site_key %}
                 <div class="field-wrapper slide-element" style="display:flex;justify-content:center;">
-                    <div class="cf-turnstile"
-                         data-sitekey="{{ turnstile_site_key }}"
+                    {% if recaptcha_site_key %}
+                    <div class="g-recaptcha"
+                         id="signupRecaptcha"
+                         data-sitekey="{{ recaptcha_site_key }}"
                          data-theme="dark"
                          data-size="normal"></div>
+                    {% endif %}
                 </div>
-                {% endif %}
 
                 <div class="field-wrapper slide-element">
                     <button class="submit-button" id="signupBtn" type="submit">Create Account</button>
@@ -1255,11 +1256,6 @@
     <!-- Google reCAPTCHA v2 (login form only — always loaded so widget renders) -->
     {% if recaptcha_site_key %}
     <script src="https://www.google.com/recaptcha/api.js" async defer></script>
-    {% endif %}
-
-    {% if turnstile_site_key %}
-    <!-- Cloudflare Turnstile (signup form) -->
-    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
     {% endif %}
 
     <!-- GSAP CDN -->
@@ -1579,6 +1575,8 @@
                 window.location.href = data.redirect;
             } else {
                 resetBtn(signupBtn, 'Create Account');
+                // Reset reCAPTCHA so it can be completed again
+                try { if (window.grecaptcha) grecaptcha.reset(grecaptcha.getWidgetId ? undefined : 1); } catch (_) {}
                 showAuthToast({
                     type:    'error',
                     title:   'Registration Failed',

@@ -33,7 +33,9 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SESSION_COOKIE_HTTPONLY'] = True   # JS cannot access the cookie
 app.config['SESSION_COOKIE_SECURE']   = True   # HTTPS only (Koyeb always uses HTTPS)
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # CSRF mitigation for same-origin forms
-app.config['PERMANENT_SESSION_LIFETIME'] = 86400  # 24 h max session age
+# Session lifetime: default 7 days, overridable via SESSION_LIFETIME_DAYS env var
+_session_days = int(os.environ.get("SESSION_LIFETIME_DAYS", "7"))
+app.config['PERMANENT_SESSION_LIFETIME'] = _session_days * 86400
 
 # Build commit — read once at startup so every API response can include it
 _BUILD_COMMIT = "unknown"
@@ -6769,6 +6771,7 @@ def login():
         # else: legacy success, error stays None
 
     if error is None and username:
+        session.permanent    = True   # honour PERMANENT_SESSION_LIFETIME (7 days by default)
         session["logged_in"] = True
         session["username"]  = username
         # persist DB fields if user found
@@ -6900,7 +6903,7 @@ def register():
         if is_ajax:
             return jsonify({"error": "validation", "message": msg}), 400
         return render_template("login.html", register_error=msg, show_signup=True,
-                               turnstile_site_key=TURNSTILE_SITE, **kw)
+                               recaptcha_site_key=RECAPTCHA_SITE_KEY, **kw)
 
     # ── IP rate limit ──────────────────────────────────────────────────────────
     max_hits, window = RATE_LIMITS["register"]
@@ -6912,18 +6915,18 @@ def register():
             return jsonify({"error": "rate_limit",
                             "message": f"Too many registration attempts. Try again in {retry_after // 60 + 1} minute(s)."}), 429
         return render_template("login.html", register_error="Too many registration attempts. Please wait before trying again.",
-                               show_signup=True, turnstile_site_key=TURNSTILE_SITE), 429
+                               show_signup=True, recaptcha_site_key=RECAPTCHA_SITE_KEY), 429
 
     username = request.form.get("username", "").strip().lower()
     email    = request.form.get("email", "").strip().lower()
     password = request.form.get("password", "")
 
-    # ── Turnstile verification ─────────────────────────────────────────────────
-    ts_token = request.form.get("cf-turnstile-response", "")
-    ts_ok, ts_err = verify_turnstile(ts_token, ip)
-    if not ts_ok:
-        log_security_event("TURNSTILE_BLOCK_REGISTER", ip=ip, username=username)
-        return _err(ts_err, reg_username=username, reg_email=email)
+    # ── reCAPTCHA verification (signup) ───────────────────────────────────────
+    rc_token = request.form.get("g-recaptcha-response", "")
+    rc_ok, rc_err = verify_recaptcha(rc_token, ip)
+    if not rc_ok:
+        log_security_event("RECAPTCHA_BLOCK_REGISTER", ip=ip, username=username)
+        return _err(rc_err, reg_username=username, reg_email=email)
 
     if not username:
         return _err("Username is required.")
