@@ -5180,6 +5180,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   var _lmActivePollKey=null;        // "itemId:symbol:ts" — invalidates stale async responses
   var _lmDhObRaw=null;              // latest order_book_wall_map from data-health API
   var _lmDhLiqRaw=null;             // latest sweep_rekt_map from data-health API
+  var _lmDhCtl={};                  // per-panel control selections (Window/Min Wall/Lookback/…) preserved across re-renders
   var _lmObDaDefaults = {
     "5m":  {distance_pct:0.50, approach_pct:0.15},
     "15m": {distance_pct:0.80, approach_pct:0.25},
@@ -10939,6 +10940,11 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     }
     var winSel=document.getElementById(uid+"Win");
     var minWSel=document.getElementById(uid+"MinW");
+    // Persist the user's selections so the 4s table rebuild can restore them
+    // instead of snapping back to the hardcoded defaults.
+    _lmDhCtl[uid]=_lmDhCtl[uid]||{};
+    if(winSel)  _lmDhCtl[uid].win=winSel.value;
+    if(minWSel) _lmDhCtl[uid].minw=minWSel.value;
     var winPct=winSel?parseFloat(winSel.value):1.0;
     var minWall=minWSel?parseFloat(minWSel.value):0;
     function fmtU(v){if(v>=1e9)return"$"+(v/1e9).toFixed(2)+"B";if(v>=1e6)return"$"+(v/1e6).toFixed(1)+"M";if(v>=1e3)return"$"+Math.round(v/1e3)+"K";return"$"+Math.round(v);}
@@ -10999,16 +11005,35 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       console.warn("[LM-DH-LIQ] table body missing for uid="+uid);
       return;
     }
+    // Persist the user's Lookback / Swing / Min Liq selection BEFORE the empty-data
+    // return, so the 4s table rebuild restores them even when no events exist yet.
+    var lookSel=document.getElementById(uid+"Look");
+    var minLSel=document.getElementById(uid+"MinL");
+    var swingSel=document.getElementById(uid+"SwingSrc");
+    _lmDhCtl[uid]=_lmDhCtl[uid]||{};
+    if(lookSel)  _lmDhCtl[uid].look=lookSel.value;
+    if(minLSel)  _lmDhCtl[uid].minl=minLSel.value;
+    if(swingSel) _lmDhCtl[uid].swing=swingSel.value;
     if(!data||!data.ok||!data.events||!data.events.length){
-      var msg=data&&data.message?esc(data.message):"Sweep-linked liquidation history needs backend support. Swing detection correlated with forceOrder events is not yet implemented.";
+      // Distinguish a working-but-empty pipeline (ok=true, no sweeps/liqs yet) from a
+      // genuine backend gap (ok=false). Showing "Needs Backend Support" for the former
+      // wrongly reads as broken when the stream is connected and simply has no events.
+      var _liqOk=!!(data&&data.ok);
+      var _hasStream=!!(data&&data.has_liq_stream);
+      var _defMsg=_liqOk
+        ?"No sweep-linked liquidation events yet. Binance emits forced-liquidation (forceOrder) events only when liquidations actually occur, and this panel correlates them with recent swing sweeps — both can be empty for quieter symbols."
+        :"Sweep-linked liquidation history is loading. Waiting for the liquidation stream to connect.";
+      var _msg=data&&data.message?esc(data.message):_defMsg;
+      var _hdr=_liqOk
+        ?(_hasStream?"Sweep Rekt History — Stream Live · No Events Yet":"Sweep Rekt History — No Events Yet")
+        :"Sweep Rekt History — Connecting…";
+      var _hdrCol=_liqOk?"#22d3ee":"#f59e0b";
       liqBody.innerHTML="<tr><td colspan='8' style='padding:18px;color:#9eb3c7;font-size:11px;text-align:center'>"+
-        "<div style='color:#f59e0b;font-weight:700;margin-bottom:6px'>Sweep Rekt History — Needs Backend Support</div>"+
-        msg+"</td></tr>";
+        "<div style='color:"+_hdrCol+";font-weight:700;margin-bottom:6px'>"+_hdr+"</div>"+
+        _msg+"</td></tr>";
       if(liqCount) liqCount.textContent="0 events";
       return;
     }
-    var lookSel=document.getElementById(uid+"Look");
-    var minLSel=document.getElementById(uid+"MinL");
     var lookback=lookSel?parseFloat(lookSel.value):900;
     var minLiq=minLSel?parseFloat(minLSel.value):0;
     var now=Date.now()/1000;
@@ -11045,6 +11070,10 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var src=obRow?esc(obRow.source||"—"):"—";
     var st=obRow?esc(obRow.status||"—"):"—";
     var upd=obRow?esc(obRow.updated||"—"):"—";
+    // Restore the user's saved Window / Min Wall selection across re-renders.
+    var _sv=_lmDhCtl[uid]||{};
+    var _win=_sv.win||"1", _minw=_sv.minw||"450000";
+    function _osel(v,cur){ return v===cur?" selected":""; }
     return '<div class="lm-dh-panel" id="'+uid+'Panel">'+
       '<div class="lm-dh-panel-top">'+
         '<span class="lm-dh-ptitle">Expanded Order Book Window</span>'+
@@ -11052,22 +11081,22 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         '<span class="lm-dh-badge lm-dh-b-yellow">price sorted</span>'+
         '<span class="lm-dh-lab">Window:</span>'+
         '<select class="lm-dh-sel" id="'+uid+'Win" onchange="window._lmDhRenderOBTable(\''+uid+'\')">'+
-          '<option value="0.25">\xb10.25%</option>'+
-          '<option value="0.5">\xb10.50%</option>'+
-          '<option value="1" selected>\xb11.00%</option>'+
-          '<option value="2">\xb12.00%</option>'+
-          '<option value="3">\xb13.00%</option>'+
-          '<option value="5">\xb15.00%</option>'+
-          '<option value="7.5">\xb17.50%</option>'+
-          '<option value="10">\xb110.00%</option>'+
+          '<option value="0.25"'+_osel("0.25",_win)+'>\xb10.25%</option>'+
+          '<option value="0.5"'+_osel("0.5",_win)+'>\xb10.50%</option>'+
+          '<option value="1"'+_osel("1",_win)+'>\xb11.00%</option>'+
+          '<option value="2"'+_osel("2",_win)+'>\xb12.00%</option>'+
+          '<option value="3"'+_osel("3",_win)+'>\xb13.00%</option>'+
+          '<option value="5"'+_osel("5",_win)+'>\xb15.00%</option>'+
+          '<option value="7.5"'+_osel("7.5",_win)+'>\xb17.50%</option>'+
+          '<option value="10"'+_osel("10",_win)+'>\xb110.00%</option>'+
         '</select>'+
         '<span class="lm-dh-lab">Min Wall:</span>'+
         '<select class="lm-dh-sel" id="'+uid+'MinW" onchange="window._lmDhRenderOBTable(\''+uid+'\')">'+
-          '<option value="0">Auto</option>'+
-          '<option value="250000">$250K+</option>'+
-          '<option value="450000" selected>$450K+</option>'+
-          '<option value="1000000">$1M+</option>'+
-          '<option value="2000000">$2M+</option>'+
+          '<option value="0"'+_osel("0",_minw)+'>Auto</option>'+
+          '<option value="250000"'+_osel("250000",_minw)+'>$250K+</option>'+
+          '<option value="450000"'+_osel("450000",_minw)+'>$450K+</option>'+
+          '<option value="1000000"'+_osel("1000000",_minw)+'>$1M+</option>'+
+          '<option value="2000000"'+_osel("2000000",_minw)+'>$2M+</option>'+
         '</select>'+
       '</div>'+
       '<div class="lm-dh-summary" id="'+uid+'Summary">'+
@@ -11129,28 +11158,32 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var src=liqRow?esc(liqRow.source||"—"):"—";
     var st=liqRow?esc(liqRow.status||"—"):"—";
     var upd=liqRow?esc(liqRow.updated||"—"):"—";
+    // Restore the user's saved Lookback / Swing / Min Liq selection across re-renders.
+    var _sv=_lmDhCtl[uid]||{};
+    var _look=_sv.look||"900", _minl=_sv.minl||"100000", _swing=_sv.swing||"External";
+    function _osel(v,cur){ return v===cur?" selected":""; }
     return '<div class="lm-dh-panel" id="'+uid+'Panel">'+
       '<div class="lm-dh-panel-top">'+
         '<span class="lm-dh-ptitle">Expanded Sweep Rekt Map</span>'+
         '<span class="lm-dh-badge lm-dh-b-yellow">swing sweep linked</span>'+
         '<span class="lm-dh-lab">Lookback:</span>'+
         '<select class="lm-dh-sel" id="'+uid+'Look" onchange="window._lmDhRenderLiqTable(\''+uid+'\')">'+
-          '<option value="300">5m</option>'+
-          '<option value="900" selected>15m</option>'+
-          '<option value="3600">1h</option>'+
-          '<option value="14400">4h</option>'+
+          '<option value="300"'+_osel("300",_look)+'>5m</option>'+
+          '<option value="900"'+_osel("900",_look)+'>15m</option>'+
+          '<option value="3600"'+_osel("3600",_look)+'>1h</option>'+
+          '<option value="14400"'+_osel("14400",_look)+'>4h</option>'+
         '</select>'+
         '<span class="lm-dh-lab">Swing:</span>'+
-        '<select class="lm-dh-sel" id="'+uid+'SwingSrc">'+
-          '<option>Internal</option><option selected>External</option><option>Both</option>'+
+        '<select class="lm-dh-sel" id="'+uid+'SwingSrc" onchange="window._lmDhRenderLiqTable(\''+uid+'\')">'+
+          '<option'+_osel("Internal",_swing)+'>Internal</option><option'+_osel("External",_swing)+'>External</option><option'+_osel("Both",_swing)+'>Both</option>'+
         '</select>'+
         '<span class="lm-dh-lab">Min Liq:</span>'+
         '<select class="lm-dh-sel" id="'+uid+'MinL" onchange="window._lmDhRenderLiqTable(\''+uid+'\')">'+
-          '<option value="0">Auto</option>'+
-          '<option value="50000">$50K+</option>'+
-          '<option value="100000" selected>$100K+</option>'+
-          '<option value="250000">$250K+</option>'+
-          '<option value="500000">$500K+</option>'+
+          '<option value="0"'+_osel("0",_minl)+'>Auto</option>'+
+          '<option value="50000"'+_osel("50000",_minl)+'>$50K+</option>'+
+          '<option value="100000"'+_osel("100000",_minl)+'>$100K+</option>'+
+          '<option value="250000"'+_osel("250000",_minl)+'>$250K+</option>'+
+          '<option value="500000"'+_osel("500000",_minl)+'>$500K+</option>'+
         '</select>'+
       '</div>'+
       '<div class="lm-dh-summary" id="'+uid+'LiqSummary">'+
