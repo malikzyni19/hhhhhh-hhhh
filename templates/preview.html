@@ -13061,7 +13061,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     batchRuns:{"1h":null,"4h":null},
     stabilityData:null,stabilityRunning:false,
     stabilityRrView:"all",stabCharts:{},
-    wfData:null,wfRunning:false,wfFoldView:1,wfCharts:{}};
+    wfData:null,wfRunning:false,wfFoldView:1,wfCharts:{},
+    teData:null,teRunning:false,teCharts:{},tePage:1,teShowFilters:false};
 
   function _bindBtSidebarEvents(aside){
     [].forEach.call(aside.querySelectorAll("[data-btpage]"),function(item){
@@ -14902,6 +14903,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         '<button class="bt-compare-tab'+(mode==="batch"?" active":"")+'" data-cmode="batch">Pair Batch</button>'+
         '<button class="bt-compare-tab'+(mode==="stability"?" active":"")+'" data-cmode="stability">Stability Lab</button>'+
         '<button class="bt-compare-tab'+(mode==="walkforward"?" active":"")+'" data-cmode="walkforward">Walk-Forward</button>'+
+        '<button class="bt-compare-tab'+(mode==="explorer"?" active":"")+'" data-cmode="explorer">Trade Explorer</button>'+
       '</div>'+
       '<div id="btCompareModeContent"></div>';
     [].forEach.call(el.querySelectorAll("[data-cmode]"),function(btn){
@@ -14913,6 +14915,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     if(mode==="mtf") _btRenderMtfMode();
     else if(mode==="stability") _btRenderStabilityMode();
     else if(mode==="walkforward") _btRenderWalkForwardMode();
+    else if(mode==="explorer") _btRenderTradeExplorerMode();
     else _btRenderBatchMode();
   }
 
@@ -15874,6 +15877,594 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     });
     _btDownloadBlob("zyni_wf_cells_"+Date.now()+".csv",rows.join("\r\n"),"text/csv");
   }
+
+  /* ── Trade Explorer (Phase 16) ───────────────────────────────────────────── */
+
+  function _btTeDefaultFilters(){
+    return {touch_numbers:[],directions:[],outcomes:[],sessions:[],weekdays:[],
+      ob_age_candles_min:null,ob_age_candles_max:null,
+      stop_loss_r_min:null,stop_loss_r_max:null,
+      fvg_overlap:"all",higher_timeframe_alignment:"all",
+      tv_ob_pct_min:null,tv_ob_pct_max:null,
+      include_unknown:true};
+  }
+
+  function _btRenderTradeExplorerMode(){
+    var el=document.getElementById("btCompareModeContent"); if(!el) return;
+    var d=_btState.teData||null;
+    var running=_btState.teRunning||false;
+    if(!_btState.teFilters) _btState.teFilters=_btTeDefaultFilters();
+    var F=_btState.teFilters;
+
+    var html='<div style="padding:12px 0">';
+    html+='<div class="bt-stab-header" style="margin-bottom:4px">';
+    html+='<span style="font-size:13px;font-weight:600;color:var(--text-1)">Historical Trade Explorer</span>';
+    html+='</div>';
+    html+='<div style="font-size:11px;color:var(--text-2);margin-bottom:6px">Filter and compare first, second, third and later OB touch entries.</div>';
+    html+='<div style="font-size:10px;color:#f59e0b;margin-bottom:10px">Research only. Filters do not affect Scanner, Live Monitor, alerts or execution.</div>';
+
+    /* Symbols */
+    var allSyms=["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT"];
+    var selSyms=_btState.teSelSyms||["BTCUSDT","ETHUSDT"];
+    html+='<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px">';
+    html+='<span style="font-size:11px;color:var(--text-2);font-weight:600">Symbols:</span>';
+    allSyms.forEach(function(s){
+      var on=selSyms.indexOf(s)>=0;
+      html+='<button class="bt-rr-btn'+(on?" active":"")+'" data-tesym="'+s+'" style="font-size:10px">'+s+'</button>';
+    });
+    html+='</div>';
+
+    /* Timeframes */
+    var selTfs=_btState.teSelTfs||["1h","4h"];
+    html+='<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px">';
+    html+='<span style="font-size:11px;color:var(--text-2);font-weight:600">Timeframes:</span>';
+    ["1h","4h"].forEach(function(tf){
+      var on=selTfs.indexOf(tf)>=0;
+      html+='<button class="bt-rr-btn'+(on?" active":"")+'" data-tetf="'+tf+'" style="font-size:11px">'+tf+'</button>';
+    });
+    /* Candles + RR */
+    var teCandles=_btState.teCandles||1000;
+    var teRR=_btState.teRR||2;
+    html+='<span style="font-size:11px;color:var(--text-2);font-weight:600;margin-left:10px">Candles:</span>';
+    [500,1000,2000].forEach(function(c){
+      html+='<button class="bt-rr-btn'+(teCandles===c?" active":"")+'" data-tecandles="'+c+'" style="font-size:11px">'+c+'</button>';
+    });
+    html+='<span style="font-size:11px;color:var(--text-2);font-weight:600;margin-left:10px">RR:</span>';
+    [1,2,3].forEach(function(r){
+      html+='<button class="bt-rr-btn'+(teRR===r?" active":"")+'" data-terr="'+r+'" style="font-size:11px">'+r+'R</button>';
+    });
+    html+='</div>';
+
+    /* ── Filter panel ── */
+    html+='<div style="margin:8px 0;padding:8px;background:rgba(0,0,0,.15);border-radius:6px">';
+    html+='<div style="font-size:11px;font-weight:700;color:var(--text-1);margin-bottom:6px">Filters <span style="font-weight:400;color:var(--text-3)">(AND across categories, OR within a category)</span></div>';
+
+    function chipRow(label,attr,opts,selected){
+      var h='<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;margin-bottom:5px">';
+      h+='<span style="font-size:10px;color:var(--text-2);font-weight:600;min-width:78px">'+label+':</span>';
+      opts.forEach(function(o){
+        var on=selected.indexOf(o.v)>=0;
+        h+='<button class="bt-rr-btn'+(on?" active":"")+'" data-'+attr+'="'+o.v+'" style="font-size:10px">'+o.l+'</button>';
+      });
+      h+='</div>';
+      return h;
+    }
+    html+=chipRow("Touch #","tetouch",[{v:1,l:"First"},{v:2,l:"Second"},{v:3,l:"Third"},{v:4,l:"Fourth+"}],F.touch_numbers);
+    html+=chipRow("Direction","tedir",[{v:"bullish",l:"Bullish"},{v:"bearish",l:"Bearish"}],F.directions);
+    html+=chipRow("Outcome","teout",[{v:"win",l:"Win"},{v:"loss",l:"Loss"},{v:"ambiguous",l:"Ambiguous"},{v:"unresolved",l:"Unresolved"},{v:"invalid_loss_r",l:"Invalid Loss R"}],F.outcomes);
+    html+=chipRow("Session","tesess",[{v:"Asia",l:"Asia"},{v:"London",l:"London"},{v:"NewYork",l:"New York"},{v:"Other",l:"Other"}],F.sessions);
+    html+=chipRow("Weekday","teday",[{v:"Monday",l:"Mon"},{v:"Tuesday",l:"Tue"},{v:"Wednesday",l:"Wed"},{v:"Thursday",l:"Thu"},{v:"Friday",l:"Fri"},{v:"Saturday",l:"Sat"},{v:"Sunday",l:"Sun"}],F.weekdays);
+
+    /* Numeric ranges */
+    html+='<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:5px">';
+    html+='<span style="font-size:10px;color:var(--text-2);font-weight:600;min-width:78px">OB Age:</span>';
+    html+='<input id="teAgeMin" type="number" placeholder="min candles" value="'+(F.ob_age_candles_min!=null?F.ob_age_candles_min:"")+'" style="width:90px;font-size:10px;background:var(--surface-2,#111a27);color:var(--text-1);border:1px solid rgba(148,163,184,.2);border-radius:4px;padding:3px 6px">';
+    html+='<input id="teAgeMax" type="number" placeholder="max candles" value="'+(F.ob_age_candles_max!=null?F.ob_age_candles_max:"")+'" style="width:90px;font-size:10px;background:var(--surface-2,#111a27);color:var(--text-1);border:1px solid rgba(148,163,184,.2);border-radius:4px;padding:3px 6px">';
+    html+='<span style="font-size:10px;color:var(--text-2);font-weight:600;margin-left:8px">Stop R:</span>';
+    html+='<input id="teSlrMin" type="number" step="0.1" placeholder="min" value="'+(F.stop_loss_r_min!=null?F.stop_loss_r_min:"")+'" style="width:64px;font-size:10px;background:var(--surface-2,#111a27);color:var(--text-1);border:1px solid rgba(148,163,184,.2);border-radius:4px;padding:3px 6px">';
+    html+='<input id="teSlrMax" type="number" step="0.1" placeholder="max" value="'+(F.stop_loss_r_max!=null?F.stop_loss_r_max:"")+'" style="width:64px;font-size:10px;background:var(--surface-2,#111a27);color:var(--text-1);border:1px solid rgba(148,163,184,.2);border-radius:4px;padding:3px 6px">';
+    html+='<label style="font-size:10px;color:var(--text-2);display:flex;align-items:center;gap:4px;margin-left:8px"><input id="teInclUnknown" type="checkbox" '+(F.include_unknown?"checked":"")+'> Include unknown values</label>';
+    html+='</div>';
+
+    /* Unavailable filters shown disabled */
+    html+='<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:5px;opacity:.45">';
+    html+='<span style="font-size:10px;color:var(--text-2);font-weight:600;min-width:78px">FVG Overlap:</span>';
+    html+='<button class="bt-rr-btn" disabled style="font-size:10px">Unavailable — not computed by replay engine</button>';
+    html+='<span style="font-size:10px;color:var(--text-2);font-weight:600;margin-left:8px">HTF Align:</span>';
+    html+='<button class="bt-rr-btn" disabled style="font-size:10px">Unavailable</button>';
+    html+='<span style="font-size:10px;color:var(--text-2);font-weight:600;margin-left:8px">Zone ATR / MFE / MAE:</span>';
+    html+='<button class="bt-rr-btn" disabled style="font-size:10px">Metadata only this phase</button>';
+    html+='</div>';
+
+    /* TV OB% — optional exchange-specific metadata, collapsed + disabled by default */
+    var tvOpen=_btState.teTvOpen||false;
+    html+='<div style="margin-top:6px;border-top:1px dashed rgba(148,163,184,.15);padding-top:6px">';
+    html+='<button id="teTvToggle" class="bt-rr-btn" style="font-size:10px">'+(tvOpen?"▾":"▸")+' Optional exchange-specific metadata (TV OB%)</button>';
+    if(tvOpen){
+      var tvOn=_btState.teTvEnabled||false;
+      html+='<div style="margin-top:5px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">';
+      html+='<span style="font-size:10px;color:#f59e0b">Not comparable across exchanges.</span>';
+      html+='<label style="font-size:10px;color:var(--text-2);display:flex;align-items:center;gap:4px"><input id="teTvEnable" type="checkbox" '+(tvOn?"checked":"")+'> Enable TV OB% range filter</label>';
+      html+='<input id="teTvMin" type="number" placeholder="min %" '+(tvOn?"":"disabled")+' value="'+(F.tv_ob_pct_min!=null?F.tv_ob_pct_min:"")+'" style="width:64px;font-size:10px;background:var(--surface-2,#111a27);color:var(--text-1);border:1px solid rgba(148,163,184,.2);border-radius:4px;padding:3px 6px">';
+      html+='<input id="teTvMax" type="number" placeholder="max %" '+(tvOn?"":"disabled")+' value="'+(F.tv_ob_pct_max!=null?F.tv_ob_pct_max:"")+'" style="width:64px;font-size:10px;background:var(--surface-2,#111a27);color:var(--text-1);border:1px solid rgba(148,163,184,.2);border-radius:4px;padding:3px 6px">';
+      html+='</div>';
+    }
+    html+='</div>';
+    html+='</div>'; /* filter panel */
+
+    /* Buttons */
+    html+='<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">';
+    html+='<button id="btTeRunBtn" class="bt-run-btn" style="font-size:12px;padding:6px 18px" '+(running?"disabled":"")+'>'+
+      (running?'&#9733; Running…':'&#9654; Run Explorer')+'</button>';
+    html+='<button id="btTeApplyBtn" class="bt-export-btn" '+((running||!d)?"disabled":"")+'>Apply Filters</button>';
+    html+='<button id="btTeResetBtn" class="bt-export-btn" '+(running?"disabled":"")+'>Reset Filters</button>';
+    if(d){
+      html+='<button class="bt-export-btn" onclick="_btTeExportJson()">Export JSON</button>';
+      html+='<button class="bt-export-btn" onclick="_btTeExportTradesCsv()">Export Trades CSV</button>';
+      html+='<button class="bt-export-btn" onclick="_btTeExportSummaryCsv()">Export Touch Summary CSV</button>';
+    }
+    html+='</div>';
+
+    /* Results */
+    html+='<div id="btTeResults">';
+    if(running){
+      html+='<div style="font-size:12px;color:var(--text-2);padding:12px">Running Trade Explorer…</div>';
+    } else if(d&&d.ok){
+      html+=_btTeSummaryCardsHtml(d);
+      html+=_btTeBucketTableHtml(d);
+      html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">';
+      html+='<div><div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">Expectancy by Touch Number</div><canvas id="btTeChart1" height="160"></canvas></div>';
+      html+='<div><div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">Win Rate &amp; Trade Count by Touch Number</div><canvas id="btTeChart2" height="160"></canvas></div>';
+      html+='<div><div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">Cumulative Realized R (filtered)</div><canvas id="btTeChart3" height="160"></canvas></div>';
+      html+='<div><div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">Stop-Loss R Distribution (losses)</div><canvas id="btTeChart4" height="160"></canvas></div>';
+      html+='</div>';
+      html+=_btTeTradeTableHtml(d);
+      html+='<div id="btTeDetail"></div>';
+    } else if(d&&!d.ok){
+      html+='<div class="bt-mtf-err">'+(d.error||(d.errors||[]).join(", ")||"Request failed")+'</div>';
+    } else {
+      html+='<div style="font-size:12px;color:var(--text-2);padding:12px">Select symbols and timeframes, then run the explorer.</div>';
+    }
+    html+='</div>';
+    html+='</div>';
+
+    el.innerHTML=html;
+
+    /* Bind: setup chips */
+    [].forEach.call(el.querySelectorAll("[data-tesym]"),function(b){
+      b.addEventListener("click",function(){
+        var s=b.getAttribute("data-tesym");
+        var arr=(_btState.teSelSyms||["BTCUSDT","ETHUSDT"]).slice();
+        var i=arr.indexOf(s); if(i>=0) arr.splice(i,1); else arr.push(s);
+        _btState.teSelSyms=arr; _btRenderTradeExplorerMode();
+      });
+    });
+    [].forEach.call(el.querySelectorAll("[data-tetf]"),function(b){
+      b.addEventListener("click",function(){
+        var tf=b.getAttribute("data-tetf");
+        var arr=(_btState.teSelTfs||["1h","4h"]).slice();
+        var i=arr.indexOf(tf); if(i>=0) arr.splice(i,1); else arr.push(tf);
+        _btState.teSelTfs=arr; _btRenderTradeExplorerMode();
+      });
+    });
+    [].forEach.call(el.querySelectorAll("[data-tecandles]"),function(b){
+      b.addEventListener("click",function(){_btState.teCandles=parseInt(b.getAttribute("data-tecandles"));_btRenderTradeExplorerMode();});
+    });
+    [].forEach.call(el.querySelectorAll("[data-terr]"),function(b){
+      b.addEventListener("click",function(){_btState.teRR=parseInt(b.getAttribute("data-terr"));_btRenderTradeExplorerMode();});
+    });
+
+    /* Bind: filter chips (multi-select OR within category) */
+    function bindMulti(attr,key,numeric){
+      [].forEach.call(el.querySelectorAll("[data-"+attr+"]"),function(b){
+        b.addEventListener("click",function(){
+          var v=b.getAttribute("data-"+attr);
+          if(numeric) v=parseInt(v);
+          var arr=(F[key]||[]).slice();
+          var i=arr.indexOf(v); if(i>=0) arr.splice(i,1); else arr.push(v);
+          F[key]=arr; _btRenderTradeExplorerMode();
+        });
+      });
+    }
+    bindMulti("tetouch","touch_numbers",true);
+    bindMulti("tedir","directions",false);
+    bindMulti("teout","outcomes",false);
+    bindMulti("tesess","sessions",false);
+    bindMulti("teday","weekdays",false);
+
+    var tvT=document.getElementById("teTvToggle");
+    if(tvT) tvT.addEventListener("click",function(){_btState.teTvOpen=!_btState.teTvOpen;_btRenderTradeExplorerMode();});
+    var tvE=document.getElementById("teTvEnable");
+    if(tvE) tvE.addEventListener("change",function(){
+      _btState.teTvEnabled=tvE.checked;
+      if(!tvE.checked){F.tv_ob_pct_min=null;F.tv_ob_pct_max=null;}
+      _btRenderTradeExplorerMode();
+    });
+
+    var runBtn=document.getElementById("btTeRunBtn");
+    if(runBtn) runBtn.addEventListener("click",function(){_btState.tePage=1;_btTeCollectRanges();_btRunTradeExplorer();});
+    var applyBtn=document.getElementById("btTeApplyBtn");
+    if(applyBtn) applyBtn.addEventListener("click",function(){_btState.tePage=1;_btTeCollectRanges();_btRunTradeExplorer();});
+    var resetBtn=document.getElementById("btTeResetBtn");
+    if(resetBtn) resetBtn.addEventListener("click",function(){
+      _btState.teFilters=_btTeDefaultFilters();
+      _btState.teTvEnabled=false;
+      _btState.tePage=1;
+      _btRenderTradeExplorerMode();
+    });
+
+    /* Pagination + sorting + detail binds */
+    [].forEach.call(el.querySelectorAll("[data-tepage]"),function(b){
+      b.addEventListener("click",function(){
+        _btState.tePage=parseInt(b.getAttribute("data-tepage"));
+        _btTeCollectRanges(); _btRunTradeExplorer();
+      });
+    });
+    [].forEach.call(el.querySelectorAll("[data-tesort]"),function(b){
+      b.addEventListener("click",function(){
+        var f=b.getAttribute("data-tesort");
+        var cur=_btState.teSort||{field:"touch_time",direction:"desc"};
+        if(cur.field===f) cur.direction=(cur.direction==="desc"?"asc":"desc");
+        else cur={field:f,direction:"desc"};
+        _btState.teSort=cur; _btState.tePage=1;
+        _btTeCollectRanges(); _btRunTradeExplorer();
+      });
+    });
+    [].forEach.call(el.querySelectorAll("[data-tedetail]"),function(b){
+      b.addEventListener("click",function(){_btTeOpenDetail(b.getAttribute("data-tedetail"));});
+    });
+    [].forEach.call(el.querySelectorAll("[data-tecopy]"),function(b){
+      b.addEventListener("click",function(){
+        try{navigator.clipboard.writeText(b.getAttribute("data-tecopy"));b.textContent="✓";}catch(e){}
+      });
+    });
+
+    if(d&&d.ok) _btTeBuildCharts(d);
+  }
+
+  function _btTeCollectRanges(){
+    var F=_btState.teFilters;
+    function numOrNull(id){
+      var e=document.getElementById(id);
+      if(!e||e.value==="") return null;
+      var v=parseFloat(e.value);
+      return isNaN(v)?null:v;
+    }
+    F.ob_age_candles_min=numOrNull("teAgeMin");
+    F.ob_age_candles_max=numOrNull("teAgeMax");
+    F.stop_loss_r_min=numOrNull("teSlrMin");
+    F.stop_loss_r_max=numOrNull("teSlrMax");
+    var iu=document.getElementById("teInclUnknown");
+    if(iu) F.include_unknown=iu.checked;
+    if(_btState.teTvEnabled){
+      F.tv_ob_pct_min=numOrNull("teTvMin");
+      F.tv_ob_pct_max=numOrNull("teTvMax");
+    } else {
+      F.tv_ob_pct_min=null; F.tv_ob_pct_max=null;
+    }
+  }
+
+  function _btRunTradeExplorer(){
+    var syms=(_btState.teSelSyms||["BTCUSDT","ETHUSDT"]).slice();
+    var tfs=(_btState.teSelTfs||["1h","4h"]).slice();
+    if(!syms.length||!tfs.length){
+      var re=document.getElementById("btTeResults");
+      if(re) re.innerHTML='<div class="bt-mtf-err">Select at least one symbol and one timeframe.</div>';
+      return;
+    }
+    if(syms.length>5||tfs.length>2||syms.length*tfs.length>10){
+      var re2=document.getElementById("btTeResults");
+      if(re2) re2.innerHTML='<div class="bt-mtf-err">Max 5 symbols × 2 timeframes (10 cells).</div>';
+      return;
+    }
+    var sort=_btState.teSort||{field:"touch_time",direction:"desc"};
+    var payload={
+      symbols:syms, timeframes:tfs,
+      candle_count:_btState.teCandles||1000,
+      rr:_btState.teRR||2,
+      filters:_btState.teFilters||_btTeDefaultFilters(),
+      page:_btState.tePage||1,
+      page_size:100,
+      sort:sort
+    };
+    _btState.teRunning=true;
+    _btRenderTradeExplorerMode();
+    fetch("/api/backtest/ob-historical/trade-explorer",{
+      method:"POST",credentials:"same-origin",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(payload)
+    }).then(function(r){return r.json();}).then(function(d){
+      _btState.teData=d;
+      _btState.teRunning=false;
+      _btRenderTradeExplorerMode();
+    }).catch(function(e){
+      _btState.teRunning=false;
+      _btRenderTradeExplorerMode();
+      var re3=document.getElementById("btTeResults");
+      if(re3) re3.innerHTML='<div class="bt-mtf-err">Trade Explorer run failed: '+e+'</div>';
+    });
+  }
+
+  function _btTeFmt(v,dec){
+    if(v==null) return "—";
+    if(typeof v==="number") return dec!=null?v.toFixed(dec):String(v);
+    return String(v);
+  }
+
+  function _btTeSummaryCardsHtml(d){
+    var f=d.filtered_summary||{};
+    var b=d.baseline_summary||{};
+    var c=d.comparison||{};
+    var html='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-bottom:10px">';
+    function card(label,val,sub,color){
+      html+='<div style="background:rgba(0,0,0,.18);border-radius:6px;padding:8px">';
+      html+='<div style="font-size:9px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px">'+label+'</div>';
+      html+='<div style="font-size:15px;font-weight:700;color:'+(color||"var(--text-1)")+'">'+val+'</div>';
+      if(sub) html+='<div style="font-size:9px;color:var(--text-3)">'+sub+'</div>';
+      html+='</div>';
+    }
+    var sss=f.sample_size_status||"—";
+    var sssColor=sss==="strong"?"#22c55e":sss==="usable"?"#60a5fa":sss==="small"?"#f59e0b":"#ef4444";
+    card("Filtered Trades",_btTeFmt(f.trades),"baseline "+_btTeFmt(b.trades));
+    card("Trade Retention",c.trade_retention_pct!=null?c.trade_retention_pct+"%":"—","of baseline");
+    card("Wins",_btTeFmt(f.wins),null,"#22c55e");
+    card("Losses",_btTeFmt(f.losses),null,"#ef4444");
+    card("Win Rate",f.win_rate_pct!=null?f.win_rate_pct+"%":"—","Δ "+_btTeFmt(c.win_rate_delta_pct,2)+"%");
+    card("Expectancy",_btTeFmt(f.expectancy_r,4)+"R","Δ "+_btTeFmt(c.expectancy_delta_r,4)+"R",
+      (f.expectancy_r||0)>0?"#22c55e":"#ef4444");
+    card("Profit Factor",f.profit_factor_infinite?"∞":_btTeFmt(f.profit_factor_r,3),"Δ "+_btTeFmt(c.profit_factor_delta,3));
+    card("Net R",_btTeFmt(f.net_r,2)+"R","Δ "+_btTeFmt(c.net_r_delta,2)+"R",(f.net_r||0)>0?"#22c55e":"#ef4444");
+    card("Ambiguous",_btTeFmt(f.ambiguous),"excluded from trades","#94a3b8");
+    card("Unresolved",_btTeFmt(f.unresolved),"excluded from trades","#94a3b8");
+    card("Avg Stop R",_btTeFmt(f.avg_stop_loss_r,3),"actual close-based");
+    card("Sample Size",sss,c.sample_size_warning?("⚠ "+c.sample_size_warning):null,sssColor);
+    html+='</div>';
+    if(c.sample_size_warning){
+      html+='<div style="font-size:10px;color:#f59e0b;margin-bottom:8px">⚠ Filtered sample below 20 trades — results are not reliable evidence.</div>';
+    }
+    return html;
+  }
+
+  function _btTeBucketTableHtml(d){
+    var buckets=d.filtered_touch_bucket_comparison||d.touch_bucket_comparison||[];
+    var html='<div style="margin-bottom:6px;font-size:11px;font-weight:700;color:var(--text-1)">Touch Bucket Comparison ('+((d.request&&d.request.rr)||"")+'R, filtered universe)</div>';
+    html+='<div style="overflow-x:auto"><table class="bt-table" style="font-size:10px;width:100%">';
+    html+='<thead><tr><th>Bucket</th><th>Opportunities</th><th>Trades</th><th>Wins</th><th>Losses</th><th>Ambig</th><th>Unres</th><th>Win %</th><th>Expectancy</th><th>PF</th><th>Net R</th><th>Avg Stop R</th><th>MFE</th><th>MAE</th><th>Sample</th></tr></thead><tbody>';
+    var names={first:"First",second:"Second",third:"Third",fourth_plus:"Fourth+"};
+    buckets.forEach(function(bk){
+      var exp=bk.expectancy_r;
+      var expColor=exp==null?"var(--text-3)":exp>0?"#22c55e":"#ef4444";
+      html+='<tr>';
+      html+='<td style="font-weight:600">'+(names[bk.touch_bucket]||bk.touch_bucket)+'</td>';
+      html+='<td>'+_btTeFmt(bk.opportunities)+'</td>';
+      html+='<td>'+_btTeFmt(bk.trades)+'</td>';
+      html+='<td style="color:#22c55e">'+_btTeFmt(bk.wins)+'</td>';
+      html+='<td style="color:#ef4444">'+_btTeFmt(bk.losses)+'</td>';
+      html+='<td>'+_btTeFmt(bk.ambiguous)+'</td>';
+      html+='<td>'+_btTeFmt(bk.unresolved)+'</td>';
+      html+='<td>'+(bk.win_rate_pct!=null?bk.win_rate_pct+"%":"—")+'</td>';
+      html+='<td style="color:'+expColor+';font-weight:600">'+_btTeFmt(exp,4)+'</td>';
+      html+='<td>'+(bk.profit_factor_infinite?"∞":_btTeFmt(bk.profit_factor_r,3))+'</td>';
+      html+='<td>'+_btTeFmt(bk.net_r,2)+'</td>';
+      html+='<td>'+_btTeFmt(bk.avg_stop_loss_r,3)+'</td>';
+      html+='<td>'+_btTeFmt(bk.avg_mfe_r,3)+'</td>';
+      html+='<td>'+_btTeFmt(bk.avg_mae_r,3)+'</td>';
+      html+='<td>'+(bk.sample_size_status||"—")+'</td>';
+      html+='</tr>';
+    });
+    html+='</tbody></table></div>';
+    return html;
+  }
+
+  function _btTeTradeTableHtml(d){
+    var rows=d.trade_rows||[];
+    var sort=_btState.teSort||{field:"touch_time",direction:"desc"};
+    var html='<div style="margin:12px 0 6px;font-size:11px;font-weight:700;color:var(--text-1)">Filtered Trades ('+_btTeFmt(d.total_trade_count)+' rows — page '+d.page+'/'+d.total_pages+')</div>';
+    html+='<div style="overflow-x:auto"><table class="bt-table" style="font-size:9px;width:100%">';
+    function th(label,field){
+      var arrow=sort.field===field?(sort.direction==="desc"?" ▼":" ▲"):"";
+      return '<th style="cursor:pointer;white-space:nowrap" data-tesort="'+field+'">'+label+arrow+'</th>';
+    }
+    html+='<thead><tr>'+
+      '<th>ID</th>'+th("Symbol","symbol")+th("TF","timeframe")+th("Dir","direction")+
+      th("Touch#","touch_number")+'<th>Formation</th>'+th("Touch Time","touch_time")+
+      th("OB Age","candles_since_formation")+'<th>Session</th>'+
+      th("Entry","entry_price")+'<th>Stop</th>'+th("Stop R","stop_loss_r")+
+      '<th>RR</th><th>Outcome</th>'+th("Real R","realized_r")+
+      th("MFE","mfe_r")+th("MAE","mae_r")+'<th>FVG</th><th>HTF</th><th>Detail</th></tr></thead><tbody>';
+    function ts(ms){
+      if(ms==null) return "—";
+      try{var dt=new Date(ms);return dt.toISOString().slice(0,16).replace("T"," ");}catch(e){return String(ms);}
+    }
+    rows.forEach(function(r){
+      var oc=r.outcome;
+      var ocColor=oc==="win"?"#22c55e":oc==="loss"?"#ef4444":oc==="ambiguous"?"#f59e0b":"#94a3b8";
+      html+='<tr>';
+      html+='<td><button class="bt-export-btn" style="font-size:8px;padding:1px 5px" data-tecopy="'+r.touch_trade_id+'" title="'+r.touch_trade_id+'">copy</button></td>';
+      html+='<td>'+r.symbol+'</td><td>'+r.timeframe+'</td>';
+      html+='<td style="color:'+(r.direction==="bullish"?"#22c55e":"#ef4444")+'">'+r.direction+'</td>';
+      html+='<td style="text-align:center">'+r.touch_number+'</td>';
+      html+='<td style="white-space:nowrap">'+ts(r.formation_time)+'</td>';
+      html+='<td style="white-space:nowrap">'+ts(r.touch_time)+'</td>';
+      html+='<td style="text-align:center">'+_btTeFmt(r.candles_since_formation)+'</td>';
+      html+='<td>'+(r.session||"—")+'</td>';
+      html+='<td>'+_btTeFmt(r.entry_price)+'</td>';
+      html+='<td>'+_btTeFmt(r.stop_price)+'</td>';
+      html+='<td>'+_btTeFmt(r.stop_loss_r,3)+'</td>';
+      html+='<td style="text-align:center">'+r.rr+'R</td>';
+      html+='<td style="color:'+ocColor+';font-weight:600">'+oc+'</td>';
+      html+='<td>'+_btTeFmt(r.realized_r,2)+'</td>';
+      html+='<td>'+_btTeFmt(r.mfe_r,2)+'</td>';
+      html+='<td>'+_btTeFmt(r.mae_r,2)+'</td>';
+      html+='<td>'+(r.fvg_overlap||"—")+'</td>';
+      html+='<td>'+(r.higher_timeframe_alignment||"—")+'</td>';
+      html+='<td><button class="bt-export-btn" style="font-size:8px;padding:1px 5px" data-tedetail="'+r.touch_trade_id+'">open</button></td>';
+      html+='</tr>';
+    });
+    if(!rows.length){
+      html+='<tr><td colspan="20" style="text-align:center;color:var(--text-3);padding:10px">No trades match the current filters.</td></tr>';
+    }
+    html+='</tbody></table></div>';
+    /* Pagination */
+    if(d.total_pages>1){
+      html+='<div style="display:flex;gap:5px;margin-top:6px;flex-wrap:wrap">';
+      for(var p=1;p<=Math.min(d.total_pages,20);p++){
+        html+='<button class="bt-rr-btn'+(p===d.page?" active":"")+'" data-tepage="'+p+'" style="font-size:10px">'+p+'</button>';
+      }
+      html+='</div>';
+    }
+    return html;
+  }
+
+  function _btTeOpenDetail(tradeId){
+    var host=document.getElementById("btTeDetail");
+    if(!host) return;
+    host.innerHTML='<div style="font-size:11px;color:var(--text-2);padding:8px">Loading trade '+tradeId+'…</div>';
+    var payload={
+      symbols:(_btState.teSelSyms||["BTCUSDT","ETHUSDT"]).slice(),
+      timeframes:(_btState.teSelTfs||["1h","4h"]).slice(),
+      candle_count:_btState.teCandles||1000
+    };
+    fetch("/api/backtest/ob-historical/trade-explorer/trade/"+encodeURIComponent(tradeId),{
+      method:"POST",credentials:"same-origin",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(payload)
+    }).then(function(r){return r.json();}).then(function(t){
+      if(!t.ok){host.innerHTML='<div class="bt-mtf-err">Trade not found: '+tradeId+'</div>';return;}
+      var sim=t.simulation||{};
+      var rb=(sim.realized_by_rr||{})[t.rr]||{};
+      var html='<div style="margin-top:12px;padding:10px;background:rgba(0,0,0,.2);border-radius:6px">';
+      html+='<div style="font-size:11px;font-weight:700;color:var(--text-1);margin-bottom:6px">Trade Detail — '+t.symbol+' '+t.timeframe+' '+t.direction+' touch #'+t.touch_number+' ('+t.rr+'R)</div>';
+      html+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:4px;font-size:10px;color:var(--text-2)">';
+      function kv(k,v){html+='<div><span style="color:var(--text-3)">'+k+':</span> <span style="color:var(--text-1);font-weight:600">'+(v==null?"—":v)+'</span></div>';}
+      kv("Trade ID",t.touch_trade_id);
+      kv("OB ID",t.ob_id);
+      kv("Zone",_btTeFmt(t.zone_low)+" – "+_btTeFmt(t.zone_high));
+      kv("Formation bar",t.formation_bar);
+      kv("Touch index",t.touch_index);
+      kv("Entry",sim.entry_price);
+      kv("Stop boundary",sim.stop_boundary);
+      kv("Risk",sim.risk_amount);
+      kv("Target",rb.target_price);
+      kv("Outcome",rb.outcome);
+      kv("Realized R",rb.realized_r);
+      kv("Exit bar",rb.exit_bar);
+      kv("Stop loss R",sim.stop_loss_r);
+      kv("MFE R",sim.max_r_reached);
+      kv("MAE R",sim.max_adverse_r);
+      kv("First outcome",sim.first_outcome);
+      kv("Prev touch",t.previous_touch?("#"+t.previous_touch.touch_number+" @bar "+t.previous_touch.touch_index):"none");
+      kv("Next touch",t.next_touch?("#"+t.next_touch.touch_number+" @bar "+t.next_touch.touch_index):"none");
+      kv("Candle window",t.candle_window_size+" candles (max "+t.candle_window_limit+")");
+      html+='</div></div>';
+      host.innerHTML=html;
+      host.scrollIntoView({behavior:"smooth",block:"nearest"});
+    }).catch(function(e){
+      host.innerHTML='<div class="bt-mtf-err">Detail fetch failed: '+e+'</div>';
+    });
+  }
+
+  function _btTeBuildCharts(d){
+    _btState.teCharts=_btState.teCharts||{};
+    function dc(id){if(_btState.teCharts[id]){try{_btState.teCharts[id].destroy();}catch(e){}delete _btState.teCharts[id];}}
+    dc("btTeChart1");dc("btTeChart2");dc("btTeChart3");dc("btTeChart4");
+
+    var buckets=d.filtered_touch_bucket_comparison||d.touch_bucket_comparison||[];
+    var labels=["First","Second","Third","Fourth+"];
+    var gscale={x:{ticks:{color:"#566377",font:{size:9}},grid:{color:"rgba(27,38,54,.5)"}},
+                y:{ticks:{color:"#566377",font:{size:9}},grid:{color:"rgba(27,38,54,.5)"}}};
+    var opts={responsive:true,plugins:{legend:{display:false}},scales:gscale};
+
+    /* Chart 1: Expectancy by touch bucket */
+    var c1=document.getElementById("btTeChart1");
+    if(c1){
+      var v1=buckets.map(function(b){return b.expectancy_r;});
+      _btState.teCharts["btTeChart1"]=new Chart(c1,{type:"bar",data:{labels:labels,datasets:[{label:"Expectancy R",data:v1,
+        backgroundColor:v1.map(function(v){return v==null?"rgba(148,163,184,.4)":v>0?"rgba(34,197,94,.6)":"rgba(239,68,68,.6)";}),
+        borderColor:v1.map(function(v){return v==null?"#94a3b8":v>0?"#22c55e":"#ef4444";}),borderWidth:1}]},options:opts});
+    }
+
+    /* Chart 2: Win rate line + trade count bars */
+    var c2=document.getElementById("btTeChart2");
+    if(c2){
+      var wr=buckets.map(function(b){return b.win_rate_pct;});
+      var tc=buckets.map(function(b){return b.trades;});
+      _btState.teCharts["btTeChart2"]=new Chart(c2,{data:{labels:labels,datasets:[
+        {type:"bar",label:"Trades",data:tc,backgroundColor:"rgba(96,165,250,.35)",borderColor:"#60a5fa",borderWidth:1,yAxisID:"y"},
+        {type:"line",label:"Win %",data:wr,borderColor:"#f59e0b",backgroundColor:"transparent",tension:.3,pointRadius:4,yAxisID:"y2"}
+      ]},options:{responsive:true,
+        plugins:{legend:{display:true,labels:{color:"#94a3b8",font:{size:9}}}},
+        scales:{x:gscale.x,
+          y:{position:"left",ticks:{color:"#566377",font:{size:9}},grid:{color:"rgba(27,38,54,.5)"}},
+          y2:{position:"right",ticks:{color:"#566377",font:{size:9},callback:function(v){return v+"%"}},grid:{display:false},min:0,max:100}}}});
+    }
+
+    /* Chart 3: Cumulative realized R — resolved trades only, chronological */
+    var c3=document.getElementById("btTeChart3");
+    if(c3){
+      var rows=(d.trade_rows||[]).filter(function(r){return r.outcome==="win"||r.outcome==="loss";})
+        .slice().sort(function(a,b){return (a.touch_time||0)-(b.touch_time||0);});
+      var cum=0;
+      var cl=[],cv=[];
+      rows.forEach(function(r,i){
+        cum+=(r.realized_r||0);
+        cl.push(i+1);
+        cv.push(Math.round(cum*10000)/10000);
+      });
+      _btState.teCharts["btTeChart3"]=new Chart(c3,{type:"line",data:{labels:cl,datasets:[{label:"Cumulative R",data:cv,
+        borderColor:"#22c55e",backgroundColor:"rgba(34,197,94,.08)",tension:.2,fill:true,pointRadius:0}]},
+        options:Object.assign({},opts,{plugins:{legend:{display:false},tooltip:{callbacks:{label:function(ctx){return ctx.parsed.y+"R";}}}}})});
+    }
+
+    /* Chart 4: Stop-loss R distribution (losses on current page) */
+    var c4=document.getElementById("btTeChart4");
+    if(c4){
+      var losses=(d.trade_rows||[]).filter(function(r){return r.outcome==="loss"&&r.stop_loss_r!=null;});
+      var bk={"1.0–1.25R":0,"1.25–1.5R":0,"1.5–2.0R":0,"2.0R+":0};
+      losses.forEach(function(r){
+        var v=r.stop_loss_r;
+        if(v<1.25) bk["1.0–1.25R"]++;
+        else if(v<1.5) bk["1.25–1.5R"]++;
+        else if(v<2.0) bk["1.5–2.0R"]++;
+        else bk["2.0R+"]++;
+      });
+      _btState.teCharts["btTeChart4"]=new Chart(c4,{type:"bar",data:{labels:Object.keys(bk),datasets:[{label:"Losses",data:Object.keys(bk).map(function(k){return bk[k];}),
+        backgroundColor:"rgba(239,68,68,.5)",borderColor:"#ef4444",borderWidth:1}]},options:opts});
+    }
+  }
+
+  function _btTeExportJson(){
+    var d=_btState.teData;
+    if(!d){alert("No Trade Explorer data to export.");return;}
+    _btDownloadBlob("zyni_trade_explorer_"+Date.now()+".json",JSON.stringify(d,null,2),"application/json");
+  }
+
+  function _btTeExportTradesCsv(){
+    var d=_btState.teData;
+    if(!d||!d.trade_rows||!d.trade_rows.length){alert("No trade rows to export.");return;}
+    var cols=["touch_trade_id","ob_id","symbol","timeframe","direction","touch_number","touch_bucket",
+      "formation_time","touch_time","candles_since_formation","session","weekday",
+      "zone_high","zone_low","zone_size_pct","zone_size_atr","entry_price","stop_price","stop_loss_r",
+      "rr","outcome","realized_r","mfe_r","mae_r","fvg_overlap","higher_timeframe_alignment",
+      "tv_ob_pct_before_touch","tv_ob_pct_exchange_specific","overlaps_previous_touch_trade",
+      "eligible","rejection_reasons"];
+    var rows=[cols.join(",")];
+    d.trade_rows.forEach(function(r){rows.push(cols.map(function(c){return _btCsvVal(r[c]);}).join(","));});
+    _btDownloadBlob("zyni_te_trades_"+Date.now()+".csv",rows.join("\r\n"),"text/csv");
+  }
+
+  function _btTeExportSummaryCsv(){
+    var d=_btState.teData;
+    var buckets=(d&&(d.filtered_touch_bucket_comparison||d.touch_bucket_comparison))||[];
+    if(!buckets.length){alert("No touch summary to export.");return;}
+    var cols=["touch_bucket","opportunities","trades","wins","losses","ambiguous","unresolved","invalid_loss_r",
+      "win_rate_pct","expectancy_r","gross_profit_r","gross_loss_r","profit_factor_r","profit_factor_infinite",
+      "net_r","avg_win_r","avg_loss_r","avg_stop_loss_r","avg_mfe_r","avg_mae_r","sample_size_status"];
+    var rows=[cols.join(",")];
+    buckets.forEach(function(b){rows.push(cols.map(function(c){return _btCsvVal(b[c]);}).join(","));});
+    _btDownloadBlob("zyni_te_touch_summary_"+Date.now()+".csv",rows.join("\r\n"),"text/csv");
+  }
+
 
   function _btRenderMtfMode(){
     var el=document.getElementById("btCompareModeContent"); if(!el) return;

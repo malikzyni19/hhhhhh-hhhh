@@ -39983,6 +39983,1132 @@ def api_backtest_ob_historical_threshold_walk_forward():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Phase 16 — Advanced Trade Explorer: first/second/third/fourth+ touch analysis
+# Research only. No production filter activation. No DB writes.
+# ══════════════════════════════════════════════════════════════════════════════
+
+_TE_MAX_SYMBOLS:    int = 5
+_TE_MAX_TIMEFRAMES: int = 2
+_TE_MAX_CELLS:      int = 10
+_TE_MAX_PAGE_SIZE:  int = 250
+_TE_CANDLE_WINDOW:  int = 200   # max candles returned by trade detail endpoint
+_TE_ALLOWED_RR          = (1, 2, 3)
+_TE_BUILD_COMMIT:   str = "37b465a"  # Phase 15B
+
+
+def _te_in_zone(c: Dict, zh: float, zl: float) -> bool:
+    """Candle wick intersects [zl, zh] — same condition as _bt_build_event."""
+    return float(c["high"]) >= zl and float(c["low"]) <= zh
+
+
+def _te_outside_zone(c: Dict, zh: float, zl: float) -> bool:
+    """Candle entirely outside [zl, zh]."""
+    return float(c["high"]) < zl or float(c["low"]) > zh
+
+
+def _te_touch_bucket(n: int) -> str:
+    if n == 1:
+        return "first"
+    if n == 2:
+        return "second"
+    if n == 3:
+        return "third"
+    return "fourth_plus"
+
+
+def _te_ob_id(event: Dict) -> str:
+    """Deterministic OB identity from canonical formation data."""
+    return "te_ob:{}:{}:{}:{}:{}".format(
+        event.get("symbol", ""), event.get("timeframe", ""),
+        event.get("type", ""), event.get("formation_bar", 0),
+        event.get("formation_time", ""))
+
+
+def _te_touch_trade_id(event: Dict, touch_number: int, touch_index: int, rr_key: str) -> str:
+    """Deterministic touch-trade identity: same touch → same ID on every run."""
+    raw = f"{_te_ob_id(event)}:t{touch_number}:i{touch_index}:rr{rr_key}"
+    return "tte_" + hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+def _te_session(ms) -> Optional[str]:
+    """UTC session bucket from a ms timestamp."""
+    if ms is None:
+        return None
+    try:
+        h = datetime.fromtimestamp(int(ms) / 1000, tz=timezone.utc).hour
+        if h < 8:
+            return "Asia"
+        if h < 13:
+            return "London"
+        if h < 21:
+            return "NewYork"
+        return "Other"
+    except Exception:
+        return None
+
+
+def _te_weekday(ms) -> Optional[str]:
+    if ms is None:
+        return None
+    try:
+        return datetime.fromtimestamp(int(ms) / 1000, tz=timezone.utc).strftime("%A")
+    except Exception:
+        return None
+
+
+def _te_sample_size_status(n_trades: int) -> str:
+    if n_trades < 20:
+        return "insufficient"
+    if n_trades < 50:
+        return "small"
+    if n_trades < 100:
+        return "usable"
+    return "strong"
+
+
+def _te_detect_touch_episodes(candles: List[Dict], event: Dict) -> List[Dict]:
+    """Detect chronological touch episodes for one OB event.
+
+    Rules (spec Parts A-C):
+    - Scan strictly after formation_bar (formation candle never counts).
+    - Consecutive intersecting candles form ONE episode.
+    - An episode ends only when a later candle is fully outside the zone.
+    - A new episode starts when price re-enters after being fully outside.
+    - Scanning stops at the canonical mitigation bar (inclusive — the
+      mitigation candle itself may intersect the zone); no touches exist
+      after canonical invalidation.  No new invalidation rule is invented.
+    """
+    if event.get("touch_status") != "touched":
+        return []
+
+    zh = float(event["zone_high"])
+    zl = float(event["zone_low"])
+    formation_bar = int(event["formation_bar"])
+    mitigation_bar = event.get("mitigation_bar")
+
+    if mitigation_bar is not None:
+        scan_end = min(int(mitigation_bar) + 1, len(candles))
+    else:
+        scan_end = len(candles)
+
+    episodes: List[Dict] = []
+    in_episode = False
+    touch_number = 0
+
+    for i in range(formation_bar + 1, scan_end):
+        c = candles[i]
+        if _te_in_zone(c, zh, zl):
+            if not in_episode:
+                touch_number += 1
+                in_episode = True
+                episodes.append({
+                    "touch_number":                touch_number,
+                    "touch_bucket":                _te_touch_bucket(touch_number),
+                    "episode_start_index":         i,
+                    "episode_end_index_exclusive": None,
+                    "touch_index":                 i,
+                    "touch_time":                  c.get("open_time"),
+                    "touch_price":                 c.get("close"),
+                    "candles_since_formation":     i - formation_bar,
+                    "ob_valid_before_touch":       True,
+                    "ob_state_before_touch":       "active",
+                    "touch_rejected_reason":       None,
+                    "generated_server_side":       True,
+                })
+        else:
+            if in_episode and _te_outside_zone(c, zh, zl):
+                episodes[-1]["episode_end_index_exclusive"] = i
+                in_episode = False
+
+    if in_episode and episodes:
+        episodes[-1]["episode_end_index_exclusive"] = scan_end
+
+    return episodes
+
+
+def _te_simulate_touch_outcome(entry_bar: int, event: Dict, candles: List[Dict],
+                               rr_values: list) -> dict:
+    """Simulate one trade outcome starting from an arbitrary entry bar.
+
+    Identical rules to the canonical _bt_simulate_first_touch_outcome:
+      entry = zone_high (both directions), risk = zone size,
+      SL close-based only, TP wick-based, same-candle TP+SL = ambiguous.
+    The only difference is the scan starts at entry_bar instead of the
+    event's first_touch_bar, enabling independent later-touch variants.
+    """
+    ob_type   = event["type"]
+    zone_high = float(event["zone_high"])
+    zone_low  = float(event["zone_low"])
+    n         = len(candles)
+
+    entry_price = zone_high
+    risk_amount = zone_high - zone_low
+
+    _ineligible = {
+        "eligible":            False,
+        "entry_price":         None,
+        "entry_bar":           entry_bar,
+        "entry_time":          None,
+        "stop_boundary":       None,
+        "risk_amount":         None,
+        "rr_values":           rr_values,
+        "tp_prices":           {},
+        "hit_rr":              {_bt_rr_key(r): False for r in rr_values},
+        "candles_to_rr":       {_bt_rr_key(r): None  for r in rr_values},
+        "first_tp_rr":         None,
+        "first_tp_bar":        None,
+        "first_tp_time":       None,
+        "stop_hit":            False,
+        "stop_bar":            None,
+        "stop_time":           None,
+        "first_outcome":       "unresolved",
+        "same_candle_event":   False,
+        "max_r_reached":       0.0,
+        "max_adverse_r":       0.0,
+        "max_favorable_price": None,
+        "max_adverse_price":   None,
+        "stop_close_price":    None,
+        "stop_loss_r":         None,
+        "stop_loss_abs":       None,
+        "stop_loss_pct":       None,
+        "realized_by_rr":      {},
+    }
+
+    if risk_amount <= 0 or entry_bar is None or entry_bar >= n:
+        return _ineligible
+
+    if ob_type == "bullish":
+        stop_boundary = zone_low
+        tp_prices = {_bt_rr_key(rv): round(entry_price + risk_amount * rv, 8)
+                     for rv in rr_values}
+    else:
+        stop_boundary = zone_high
+        tp_prices = {_bt_rr_key(rv): round(entry_price - risk_amount * rv, 8)
+                     for rv in rr_values}
+
+    sorted_rr     = sorted(rr_values)
+    hit_rr        = {_bt_rr_key(rv): False for rv in rr_values}
+    candles_to_rr = {_bt_rr_key(rv): None  for rv in rr_values}
+    first_tp_rr   = None
+    first_tp_bar  = None
+    first_tp_time = None
+    stop_hit      = False
+    stop_bar      = None
+    stop_time     = None
+    max_fav_price = None
+    max_adv_price = None
+    times = [c.get("open_time") for c in candles]
+
+    for j in range(entry_bar, n):
+        h  = float(candles[j]["high"])
+        l  = float(candles[j]["low"])
+        cl = float(candles[j]["close"])
+
+        if ob_type == "bullish":
+            max_fav_price = h if max_fav_price is None else max(max_fav_price, h)
+            max_adv_price = l if max_adv_price is None else min(max_adv_price, l)
+            for rv in sorted_rr:
+                rk = _bt_rr_key(rv)
+                if not hit_rr[rk] and h >= tp_prices[rk]:
+                    hit_rr[rk]        = True
+                    candles_to_rr[rk] = j - entry_bar
+                    if first_tp_bar is None:
+                        first_tp_rr, first_tp_bar = rv, j
+                        first_tp_time = times[j] if j < n else None
+        else:
+            max_fav_price = l if max_fav_price is None else min(max_fav_price, l)
+            max_adv_price = h if max_adv_price is None else max(max_adv_price, h)
+            for rv in sorted_rr:
+                rk = _bt_rr_key(rv)
+                if not hit_rr[rk] and l <= tp_prices[rk]:
+                    hit_rr[rk]        = True
+                    candles_to_rr[rk] = j - entry_bar
+                    if first_tp_bar is None:
+                        first_tp_rr, first_tp_bar = rv, j
+                        first_tp_time = times[j] if j < n else None
+
+        if not stop_hit:
+            sl_hit = (ob_type == "bullish" and cl < zone_low) or \
+                     (ob_type == "bearish" and cl > zone_high)
+            if sl_hit:
+                stop_hit  = True
+                stop_bar  = j
+                stop_time = times[j] if j < n else None
+
+        if stop_hit:
+            break
+
+    same_candle = (first_tp_bar is not None and stop_bar is not None
+                   and first_tp_bar == stop_bar)
+    if same_candle:
+        first_outcome = "ambiguous"
+    elif first_tp_bar is not None and (stop_bar is None or first_tp_bar < stop_bar):
+        first_outcome = "tp"
+    elif stop_hit:
+        first_outcome = "sl"
+    else:
+        first_outcome = "unresolved"
+
+    if ob_type == "bullish":
+        max_r = max(0.0, (max_fav_price - entry_price) / risk_amount) \
+                if max_fav_price is not None else 0.0
+        adv_r = max(0.0, (entry_price  - max_adv_price) / risk_amount) \
+                if max_adv_price is not None else 0.0
+    else:
+        max_r = max(0.0, (entry_price  - max_fav_price) / risk_amount) \
+                if max_fav_price is not None else 0.0
+        adv_r = max(0.0, (max_adv_price - entry_price) / risk_amount) \
+                if max_adv_price is not None else 0.0
+
+    stop_close_price = None
+    stop_loss_r      = None
+    stop_loss_abs    = None
+    stop_loss_pct    = None
+    if stop_hit and stop_bar is not None:
+        _scp = float(candles[stop_bar]["close"])
+        if ob_type == "bullish":
+            _raw = max(0.0, (entry_price - _scp) / risk_amount)
+        else:
+            _raw = max(0.0, (_scp - entry_price) / risk_amount)
+        stop_loss_r      = round(_raw, 4)
+        stop_loss_abs    = round(abs(entry_price - _scp), 8)
+        stop_loss_pct    = round(stop_loss_abs / entry_price * 100, 4) if entry_price else None
+        stop_close_price = round(_scp, 8)
+
+    realized_by_rr: Dict[str, dict] = {}
+    for _rv in sorted_rr:
+        _rk     = _bt_rr_key(_rv)
+        _rr_hit = hit_rr[_rk]
+        _tp_rel = candles_to_rr[_rk]
+        _tp_abs = (entry_bar + _tp_rel) if _tp_rel is not None else None
+
+        if _rr_hit and _tp_abs is not None:
+            if stop_bar is None or _tp_abs < stop_bar:
+                _rz_out = "win";  _rz_r = float(_rv); _rz_eb = _tp_abs
+                _rz_et  = times[_tp_abs] if _tp_abs < n else None
+                _rz_ep  = round(tp_prices[_rk], 8)
+                _rz_cl  = _tp_rel
+            else:
+                _rz_out = "ambiguous"; _rz_r = None; _rz_eb = stop_bar
+                _rz_et  = stop_time;   _rz_ep = None
+                _rz_cl  = stop_bar - entry_bar
+        elif stop_hit:
+            _rz_out = "loss"
+            _rz_r   = (-stop_loss_r) if stop_loss_r is not None else None
+            _rz_eb  = stop_bar; _rz_et = stop_time; _rz_ep = stop_close_price
+            _rz_cl  = (stop_bar - entry_bar) if stop_bar is not None else None
+        else:
+            _rz_out = "unresolved"
+            _rz_r = None; _rz_eb = None; _rz_et = None; _rz_ep = None; _rz_cl = None
+
+        realized_by_rr[_rk] = {
+            "target_rr":        float(_rv),
+            "outcome":          _rz_out,
+            "realized_r":       round(_rz_r, 4) if _rz_r is not None else None,
+            "exit_bar":         _rz_eb,
+            "exit_time":        _rz_et,
+            "exit_price":       _rz_ep,
+            "target_price":     round(tp_prices[_rk], 8),
+            "stop_close_price": stop_close_price,
+            "stop_loss_r":      stop_loss_r,
+            "candles_to_exit":  _rz_cl,
+        }
+
+    return {
+        "eligible":            True,
+        "entry_price":         round(entry_price, 8),
+        "entry_bar":           entry_bar,
+        "entry_time":          times[entry_bar] if entry_bar < n else None,
+        "stop_boundary":       round(stop_boundary, 8),
+        "risk_amount":         round(risk_amount, 8),
+        "rr_values":           rr_values,
+        "tp_prices":           {k: round(v, 8) for k, v in tp_prices.items()},
+        "hit_rr":              hit_rr,
+        "candles_to_rr":       candles_to_rr,
+        "first_tp_rr":         first_tp_rr,
+        "first_tp_bar":        first_tp_bar,
+        "first_tp_time":       first_tp_time,
+        "stop_hit":            stop_hit,
+        "stop_bar":            stop_bar,
+        "stop_time":           stop_time,
+        "first_outcome":       first_outcome,
+        "same_candle_event":   same_candle,
+        "max_r_reached":       round(max_r, 4),
+        "max_adverse_r":       round(adv_r, 4),
+        "max_favorable_price": round(max_fav_price, 8) if max_fav_price is not None else None,
+        "max_adverse_price":   round(max_adv_price, 8) if max_adv_price is not None else None,
+        "stop_close_price":    stop_close_price,
+        "stop_loss_r":         stop_loss_r,
+        "stop_loss_abs":       stop_loss_abs,
+        "stop_loss_pct":       stop_loss_pct,
+        "realized_by_rr":      realized_by_rr,
+    }
+
+
+def _te_build_touch_trade_rows(event: Dict, episodes: List[Dict],
+                               candles: List[Dict], rr_values: list) -> List[Dict]:
+    """Build one compact trade row per (touch episode, RR) combination.
+
+    Each touch variant is simulated independently — an earlier touch's
+    outcome never changes a later touch's simulation.  Overlap with the
+    previous touch's still-open variant is recorded as a diagnostic only.
+    """
+    rows: List[Dict] = []
+
+    sims: List[Dict] = [
+        _te_simulate_touch_outcome(ep["touch_index"], event, candles, rr_values)
+        for ep in episodes
+    ]
+
+    zh  = float(event["zone_high"])
+    zl  = float(event["zone_low"])
+    fb  = int(event["formation_bar"])
+    ft  = event.get("formation_time")
+    sym = event.get("symbol", "")
+    tf  = event.get("timeframe", "")
+    direction = event.get("type", "")
+    ob_id = _te_ob_id(event)
+    zone_size_pct = event.get("zone_size_pct")
+    tv_pct = event.get("tv_ob_pct_before_touch")
+
+    for ep_idx, (ep, sim) in enumerate(zip(episodes, sims)):
+        touch_idx  = ep["touch_index"]
+        touch_time = ep.get("touch_time")
+        touch_num  = ep["touch_number"]
+
+        session = _te_session(touch_time)
+        weekday = _te_weekday(touch_time)
+
+        for rr in rr_values:
+            rk = _bt_rr_key(rr)
+            rb = (sim.get("realized_by_rr") or {}).get(rk, {})
+            outcome = rb.get("outcome", "unresolved")
+
+            eligible = bool(sim.get("eligible", False))
+            rejection_reasons: List[str] = []
+            if not eligible:
+                rejection_reasons.append("simulation_ineligible")
+            realized_r = rb.get("realized_r")
+            if outcome == "loss" and realized_r is None:
+                outcome = "invalid_loss_r"
+                rejection_reasons.append("invalid_loss_r")
+                eligible = False
+
+            overlaps = False
+            if ep_idx > 0:
+                prev_rb   = (sims[ep_idx - 1].get("realized_by_rr") or {}).get(rk, {})
+                prev_exit = prev_rb.get("exit_bar")
+                if prev_exit is None or prev_exit >= touch_idx:
+                    overlaps = True
+
+            rows.append({
+                "touch_trade_id":              _te_touch_trade_id(event, touch_num, touch_idx, rk),
+                "ob_id":                       ob_id,
+                "symbol":                      sym,
+                "timeframe":                   tf,
+                "direction":                   direction,
+                "touch_number":                touch_num,
+                "touch_bucket":                ep["touch_bucket"],
+                "formation_time":              ft,
+                "touch_time":                  touch_time,
+                "candles_since_formation":     ep.get("candles_since_formation", touch_idx - fb),
+                "session":                     session,
+                "weekday":                     weekday,
+                "zone_high":                   zh,
+                "zone_low":                    zl,
+                "zone_size_pct":               zone_size_pct,
+                "zone_size_atr":               None,
+                "entry_price":                 sim.get("entry_price"),
+                "stop_price":                  sim.get("stop_boundary"),
+                "stop_loss_r":                 sim.get("stop_loss_r"),
+                "rr":                          rk,
+                "outcome":                     outcome,
+                "realized_r":                  realized_r,
+                "mfe_r":                       sim.get("max_r_reached"),
+                "mae_r":                       sim.get("max_adverse_r"),
+                "fvg_overlap":                 "unknown",
+                "higher_timeframe_alignment":  "unknown",
+                "tv_ob_pct_before_touch":      tv_pct,
+                "tv_ob_pct_exchange_specific": True,
+                "overlaps_previous_touch_trade": overlaps,
+                "eligible":                    eligible,
+                "rejection_reasons":           rejection_reasons,
+                "ob_valid_before_touch":       ep.get("ob_valid_before_touch", True),
+                "ob_state_before_touch":       ep.get("ob_state_before_touch", "active"),
+                "formation_bar":               fb,
+                "touch_index":                 touch_idx,
+            })
+
+    return rows
+
+
+def _te_compute_aggregate(rows: List[Dict], rr_key: str) -> Dict:
+    """Authoritative aggregate for one RR: trades = wins + losses only.
+
+    Ambiguous, unresolved and invalid_loss_r never enter trades, are never
+    converted to losses, and no -1R value is fabricated for them.
+    """
+    rr_rows = [r for r in rows if r.get("rr") == rr_key]
+
+    wins   = sum(1 for r in rr_rows if r["outcome"] == "win")
+    losses = sum(1 for r in rr_rows if r["outcome"] == "loss")
+    amb    = sum(1 for r in rr_rows if r["outcome"] == "ambiguous")
+    unres  = sum(1 for r in rr_rows if r["outcome"] == "unresolved")
+    inv    = sum(1 for r in rr_rows if r["outcome"] == "invalid_loss_r")
+    trades = wins + losses
+
+    gp = sum(r["realized_r"] for r in rr_rows
+             if r["outcome"] == "win" and r.get("realized_r") is not None)
+    gl = abs(sum(r["realized_r"] for r in rr_rows
+                 if r["outcome"] == "loss" and r.get("realized_r") is not None))
+    net_r = round(gp - gl, 4)
+    pf, pf_inf = _stab_aggregate_pf(gp, gl)
+
+    sl_vals  = [r["stop_loss_r"] for r in rr_rows
+                if r["outcome"] == "loss" and r.get("stop_loss_r") is not None]
+    mfe_vals = [r["mfe_r"] for r in rr_rows if r.get("mfe_r") is not None]
+    mae_vals = [r["mae_r"] for r in rr_rows if r.get("mae_r") is not None]
+
+    return {
+        "rr":                     rr_key,
+        "trades":                 trades,
+        "wins":                   wins,
+        "losses":                 losses,
+        "ambiguous":              amb,
+        "unresolved":             unres,
+        "invalid_loss_r":         inv,
+        "win_rate_pct":           round(wins / trades * 100, 2) if trades else None,
+        "expectancy_r":           round(net_r / trades, 6) if trades else None,
+        "gross_profit_r":         round(gp, 4),
+        "gross_loss_r":           round(gl, 4),
+        "profit_factor_r":        pf,
+        "profit_factor_infinite": pf_inf,
+        "net_r":                  net_r,
+        "avg_win_r":              round(gp / wins, 4) if wins else None,
+        "avg_loss_r":             round(-gl / losses, 4) if losses else None,
+        "avg_stop_loss_r":        round(sum(sl_vals) / len(sl_vals), 4) if sl_vals else None,
+        "avg_mfe_r":              round(sum(mfe_vals) / len(mfe_vals), 4) if mfe_vals else None,
+        "avg_mae_r":              round(sum(mae_vals) / len(mae_vals), 4) if mae_vals else None,
+        "sample_size_status":     _te_sample_size_status(trades),
+    }
+
+
+def _te_touch_bucket_comparison(rows: List[Dict], rr_key: str) -> List[Dict]:
+    """Same-RR aggregates for first / second / third / fourth_plus buckets."""
+    buckets = [("first", 1, 1), ("second", 2, 2), ("third", 3, 3),
+               ("fourth_plus", 4, None)]
+    out = []
+    for name, mn, mx in buckets:
+        b_rows = [r for r in rows
+                  if r.get("rr") == rr_key
+                  and r.get("touch_number", 0) >= mn
+                  and (mx is None or r.get("touch_number", 0) <= mx)]
+        agg = _te_compute_aggregate(b_rows, rr_key)
+        agg.update({
+            "touch_bucket":     name,
+            "touch_number_min": mn,
+            "touch_number_max": mx,
+            "opportunities":    len(b_rows),
+        })
+        out.append(agg)
+    return out
+
+
+def _te_apply_filters(rows: List[Dict], filters: Dict) -> List[Dict]:
+    """AND across categories; OR within one multi-select category.
+
+    Unknown/None metadata values are INCLUDED by default; set
+    include_unknown=false to exclude them from metadata-based filters.
+    """
+    if not filters:
+        return rows
+    out = rows
+    include_unknown = filters.get("include_unknown", True)
+
+    tnums = filters.get("touch_numbers")
+    if tnums:
+        tset = set(int(t) for t in tnums)
+        has_4plus = any(int(t) >= 4 for t in tnums)
+        out = [r for r in out
+               if r.get("touch_number") in tset
+               or (has_4plus and (r.get("touch_number") or 0) >= 4)]
+
+    dirs = filters.get("directions")
+    if dirs:
+        out = [r for r in out if r.get("direction") in dirs]
+
+    outcomes = filters.get("outcomes")
+    if outcomes:
+        out = [r for r in out if r.get("outcome") in outcomes]
+
+    syms = filters.get("symbols")
+    if syms:
+        out = [r for r in out if r.get("symbol") in syms]
+
+    tfs = filters.get("timeframes")
+    if tfs:
+        out = [r for r in out if r.get("timeframe") in tfs]
+
+    sess = filters.get("sessions")
+    if sess:
+        out = [r for r in out
+               if r.get("session") in sess
+               or (include_unknown and r.get("session") is None)]
+
+    wdays = filters.get("weekdays")
+    if wdays:
+        out = [r for r in out
+               if r.get("weekday") in wdays
+               or (include_unknown and r.get("weekday") is None)]
+
+    age_min = filters.get("ob_age_candles_min")
+    if age_min is not None:
+        out = [r for r in out
+               if r.get("candles_since_formation") is not None
+               and r["candles_since_formation"] >= age_min]
+    age_max = filters.get("ob_age_candles_max")
+    if age_max is not None:
+        out = [r for r in out
+               if r.get("candles_since_formation") is not None
+               and r["candles_since_formation"] <= age_max]
+
+    slr_min = filters.get("stop_loss_r_min")
+    if slr_min is not None:
+        out = [r for r in out
+               if r.get("stop_loss_r") is not None and r["stop_loss_r"] >= slr_min
+               or (include_unknown and r.get("stop_loss_r") is None)]
+    slr_max = filters.get("stop_loss_r_max")
+    if slr_max is not None:
+        out = [r for r in out
+               if r.get("stop_loss_r") is not None and r["stop_loss_r"] <= slr_max
+               or (include_unknown and r.get("stop_loss_r") is None)]
+
+    fvg = filters.get("fvg_overlap")
+    if fvg and fvg != "all":
+        if include_unknown:
+            out = [r for r in out if r.get("fvg_overlap") in (fvg, "unknown", None)]
+        else:
+            out = [r for r in out if r.get("fvg_overlap") == fvg]
+
+    htf = filters.get("higher_timeframe_alignment")
+    if htf and htf != "all":
+        if include_unknown:
+            out = [r for r in out
+                   if r.get("higher_timeframe_alignment") in (htf, "unknown", None)]
+        else:
+            out = [r for r in out if r.get("higher_timeframe_alignment") == htf]
+
+    # TV OB% range — optional exchange-specific metadata; disabled (None) by default
+    tv_min = filters.get("tv_ob_pct_min")
+    if tv_min is not None:
+        out = [r for r in out
+               if r.get("tv_ob_pct_before_touch") is not None
+               and r["tv_ob_pct_before_touch"] >= tv_min
+               or (include_unknown and r.get("tv_ob_pct_before_touch") is None)]
+    tv_max = filters.get("tv_ob_pct_max")
+    if tv_max is not None:
+        out = [r for r in out
+               if r.get("tv_ob_pct_before_touch") is not None
+               and r["tv_ob_pct_before_touch"] <= tv_max
+               or (include_unknown and r.get("tv_ob_pct_before_touch") is None)]
+
+    return out
+
+
+def _te_filter_availability() -> Dict:
+    """Which filter facets are backed by real canonical data right now."""
+    return {
+        "touch_numbers":  {"available": True},
+        "directions":     {"available": True},
+        "outcomes":       {"available": True},
+        "symbols":        {"available": True},
+        "timeframes":     {"available": True},
+        "rr":             {"available": True},
+        "ob_age_candles": {"available": True},
+        "stop_loss_r":    {"available": True},
+        "sessions":       {"available": True, "note": "UTC session boundaries"},
+        "weekdays":       {"available": True, "note": "UTC weekday"},
+        "fvg_overlap":    {"available": False,
+                           "note": "FVG overlap not computed by the historical replay engine yet"},
+        "higher_timeframe_alignment": {"available": False,
+                           "note": "HTF alignment not computed by the historical replay engine yet"},
+        "zone_size_atr":  {"available": False,
+                           "note": "ATR normalization not computed in this phase; zone_size_pct available on rows"},
+        "mfe_r":          {"available": False,
+                           "note": "MFE returned as row metadata; range filter not active this phase"},
+        "mae_r":          {"available": False,
+                           "note": "MAE returned as row metadata; range filter not active this phase"},
+        "tv_ob_pct":      {"available": True, "enabled_by_default": False,
+                           "exchange_specific": True,
+                           "note": "Optional exchange-specific metadata. Not comparable across exchanges."},
+    }
+
+
+def _te_process_cell(sym: str, tf: str, candles_normalized: List[Dict],
+                     rr_values: list, params: Dict) -> Dict:
+    """Build all touch trade rows for one symbol/timeframe cell."""
+    t0 = time.monotonic()
+
+    events = _bt_extract_ob_replay_events(candles_normalized, params)
+    _bt_apply_outcomes_to_events(events, candles_normalized, params)
+
+    all_rows: List[Dict] = []
+    episode_count = 0
+    for ev in events:
+        if ev.get("touch_status") != "touched":
+            continue
+        episodes = _te_detect_touch_episodes(candles_normalized, ev)
+        episode_count += len(episodes)
+        all_rows.extend(_te_build_touch_trade_rows(ev, episodes,
+                                                   candles_normalized, rr_values))
+
+    return {
+        "ok":            True,
+        "symbol":        sym,
+        "timeframe":     tf,
+        "rows":          all_rows,
+        "ob_count":      len(events),
+        "episode_count": episode_count,
+        "elapsed_ms":    round((time.monotonic() - t0) * 1000),
+    }
+
+
+_TE_SORTABLE_FIELDS = {
+    "touch_time", "formation_time", "symbol", "timeframe", "direction",
+    "touch_number", "candles_since_formation", "stop_loss_r", "realized_r",
+    "mfe_r", "mae_r", "outcome", "entry_price",
+}
+
+_TE_ROW_DISPLAY_KEYS = [
+    "touch_trade_id", "ob_id", "symbol", "timeframe", "direction",
+    "touch_number", "touch_bucket", "formation_time", "touch_time",
+    "candles_since_formation", "session", "weekday",
+    "zone_high", "zone_low", "zone_size_pct", "zone_size_atr",
+    "entry_price", "stop_price", "stop_loss_r", "rr", "outcome", "realized_r",
+    "mfe_r", "mae_r", "fvg_overlap", "higher_timeframe_alignment",
+    "tv_ob_pct_before_touch", "tv_ob_pct_exchange_specific",
+    "overlaps_previous_touch_trade", "eligible", "rejection_reasons",
+    "ob_valid_before_touch", "ob_state_before_touch",
+]
+
+
+def _te_sort_rows(rows: List[Dict], sort_field: str, sort_dir: str) -> List[Dict]:
+    """Stable server-side sort with deterministic touch_trade_id tiebreak."""
+    if sort_field not in _TE_SORTABLE_FIELDS:
+        sort_field = "touch_time"
+    reverse = (str(sort_dir).lower() != "asc")
+
+    def _key(r):
+        v = r.get(sort_field)
+        # None sorts last regardless of direction; tiebreak on trade id
+        return (v is None, v if v is not None else 0, r.get("touch_trade_id", ""))
+
+    try:
+        return sorted(rows, key=_key, reverse=reverse)
+    except TypeError:
+        return sorted(rows, key=lambda r: (r.get(sort_field) is None,
+                                           str(r.get(sort_field) or ""),
+                                           r.get("touch_trade_id", "")),
+                      reverse=reverse)
+
+
+def _bt_run_trade_explorer(req: Dict) -> Dict:
+    """Server-authoritative Trade Explorer orchestrator (research only)."""
+    t_start = time.monotonic()
+
+    symbols      = req.get("symbols", [])
+    timeframes   = req.get("timeframes", [])
+    candle_count = int(req.get("candle_count", 1000))
+    rr_raw       = req.get("rr", 2)
+    filters      = req.get("filters") or {}
+    page         = max(1, int(req.get("page", 1)))
+    page_size    = max(1, min(int(req.get("page_size", 100)), _TE_MAX_PAGE_SIZE))
+    sort_cfg     = req.get("sort") or {}
+    sort_field   = str(sort_cfg.get("field", "touch_time"))
+    sort_dir     = str(sort_cfg.get("direction", "desc"))
+
+    rr_values = [1, 2, 3]
+    rr_key    = _bt_rr_key(int(rr_raw))
+
+    all_rows: List[Dict] = []
+    failures: List[Dict] = []
+    network_fetch_count = 0
+    completed_cells = 0
+    total_ob_count = 0
+    total_episode_count = 0
+    slowest_cell = None
+    slowest_ms   = -1
+
+    for sym in symbols:
+        for tf in timeframes:
+            try:
+                raw = get_klines(sym, tf, limit=candle_count)
+                network_fetch_count += 1
+                candles_norm = _bt_normalize_candles(raw)
+                if not candles_norm:
+                    failures.append({"symbol": sym, "timeframe": tf,
+                                     "stage": "normalize", "error": "no_candles"})
+                    continue
+                params = _bt_wf_build_params(sym, tf, len(candles_norm), rr_values)
+                cell = _te_process_cell(sym, tf, candles_norm, rr_values, params)
+                completed_cells += 1
+                all_rows.extend(cell["rows"])
+                total_ob_count      += cell["ob_count"]
+                total_episode_count += cell["episode_count"]
+                if cell["elapsed_ms"] > slowest_ms:
+                    slowest_ms   = cell["elapsed_ms"]
+                    slowest_cell = f"{sym}:{tf}"
+            except Exception as e:
+                failures.append({"symbol": sym, "timeframe": tf,
+                                 "stage": "run", "error": str(e)[:200]})
+
+    # ── Duplicate-ID guard ────────────────────────────────────────────────────
+    _seen_ids: set = set()
+    deduped: List[Dict] = []
+    for r in all_rows:
+        tid = r.get("touch_trade_id")
+        if tid in _seen_ids:
+            continue
+        _seen_ids.add(tid)
+        deduped.append(r)
+    all_rows = deduped
+
+    # ── Baseline vs filtered (same RR only) ───────────────────────────────────
+    baseline_rows = [r for r in all_rows if r.get("rr") == rr_key]
+    baseline_summary = _te_compute_aggregate(baseline_rows, rr_key)
+    filtered_rows = _te_apply_filters(baseline_rows, filters)
+    filtered_summary = _te_compute_aggregate(filtered_rows, rr_key)
+
+    bt_n = baseline_summary["trades"]
+    ft_n = filtered_summary["trades"]
+    bwr, fwr = baseline_summary["win_rate_pct"], filtered_summary["win_rate_pct"]
+    bex, fex = baseline_summary["expectancy_r"], filtered_summary["expectancy_r"]
+    bpf, fpf = baseline_summary["profit_factor_r"], filtered_summary["profit_factor_r"]
+    comparison = {
+        "trade_count_delta":   ft_n - bt_n,
+        "trade_retention_pct": round(ft_n / bt_n * 100, 2) if bt_n else None,
+        "win_rate_delta_pct":  round(fwr - bwr, 2) if fwr is not None and bwr is not None else None,
+        "expectancy_delta_r":  round(fex - bex, 6) if fex is not None and bex is not None else None,
+        "profit_factor_delta": round(fpf - bpf, 4) if fpf is not None and bpf is not None else None,
+        "net_r_delta":         round(filtered_summary["net_r"] - baseline_summary["net_r"], 4),
+        "sample_size_warning": ("insufficient_filtered_sample" if ft_n < 20 else None),
+    }
+
+    # ── Sort + paginate (stable, deterministic) ──────────────────────────────
+    sorted_rows    = _te_sort_rows(filtered_rows, sort_field, sort_dir)
+    total_filtered = len(sorted_rows)
+    start_idx      = (page - 1) * page_size
+    page_rows      = sorted_rows[start_idx:start_idx + page_size]
+    page_rows_out  = [{k: r.get(k) for k in _TE_ROW_DISPLAY_KEYS} for r in page_rows]
+
+    result = {
+        "ok":                      True,
+        "authoritative_execution": True,
+        "client_results_accepted": False,
+        "mode":                    "trade_explorer_v1",
+        "request": {
+            "symbols":      symbols,
+            "timeframes":   timeframes,
+            "candle_count": candle_count,
+            "rr":           rr_key,
+            "filters":      filters,
+            "page":         page,
+            "page_size":    page_size,
+            "sort":         {"field": sort_field, "direction": sort_dir},
+        },
+        "filter_availability":     _te_filter_availability(),
+        "baseline_summary":        baseline_summary,
+        "filtered_summary":        filtered_summary,
+        "comparison":              comparison,
+        "touch_bucket_comparison":          _te_touch_bucket_comparison(baseline_rows, rr_key),
+        "filtered_touch_bucket_comparison": _te_touch_bucket_comparison(filtered_rows, rr_key),
+        "trade_rows":              page_rows_out,
+        "total_trade_count":       total_filtered,
+        "total_opportunities":     len(baseline_rows),
+        "page":                    page,
+        "page_size":               page_size,
+        "total_pages":             max(1, (total_filtered + page_size - 1) // page_size),
+        "failures":                failures,
+        "performance": {
+            "requested_cells":              len(symbols) * len(timeframes),
+            "completed_cells":              completed_cells,
+            "failed_cells":                 len(failures),
+            "network_fetch_count":          network_fetch_count,
+            "expected_network_fetch_count": len(symbols) * len(timeframes),
+            "candles_fetched_once_per_cell": network_fetch_count <= len(symbols) * len(timeframes),
+            "ob_count":                     total_ob_count,
+            "touch_episode_count":          total_episode_count,
+            "touch_trade_count":            len(all_rows),
+            "total_elapsed_ms":             round((time.monotonic() - t_start) * 1000),
+            "response_size_bytes":          None,
+            "slowest_cell":                 slowest_cell,
+        },
+        "constants": {
+            "max_symbols":     _TE_MAX_SYMBOLS,
+            "max_timeframes":  _TE_MAX_TIMEFRAMES,
+            "max_cells":       _TE_MAX_CELLS,
+            "max_page_size":   _TE_MAX_PAGE_SIZE,
+            "candle_window":   _TE_CANDLE_WINDOW,
+            "build_commit":    _TE_BUILD_COMMIT,
+            "phase":           "16",
+        },
+        "notice": "Research only. Filters do not affect Scanner, Live Monitor, alerts or execution.",
+    }
+    return result
+
+
+def _bt_run_trade_explorer_detail(touch_trade_id: str, req: Dict) -> Dict:
+    """Re-derive one touch trade deterministically and return an audit view.
+
+    Candle window is capped at _TE_CANDLE_WINDOW — never the full history.
+    """
+    symbols      = req.get("symbols", [])
+    timeframes   = req.get("timeframes", [])
+    candle_count = int(req.get("candle_count", 1000))
+    rr_values    = [1, 2, 3]
+
+    for sym in symbols:
+        for tf in timeframes:
+            try:
+                raw = get_klines(sym, tf, limit=candle_count)
+                candles_norm = _bt_normalize_candles(raw)
+                if not candles_norm:
+                    continue
+                params = _bt_wf_build_params(sym, tf, len(candles_norm), rr_values)
+                events = _bt_extract_ob_replay_events(candles_norm, params)
+                _bt_apply_outcomes_to_events(events, candles_norm, params)
+                for ev in events:
+                    if ev.get("touch_status") != "touched":
+                        continue
+                    episodes = _te_detect_touch_episodes(candles_norm, ev)
+                    for ep_i, ep in enumerate(episodes):
+                        for rv in rr_values:
+                            rk  = _bt_rr_key(rv)
+                            tid = _te_touch_trade_id(ev, ep["touch_number"],
+                                                     ep["touch_index"], rk)
+                            if tid != touch_trade_id:
+                                continue
+                            sim = _te_simulate_touch_outcome(
+                                ep["touch_index"], ev, candles_norm, rr_values)
+                            fb        = int(ev["formation_bar"])
+                            touch_idx = ep["touch_index"]
+                            exit_bar  = (sim.get("realized_by_rr") or {}) \
+                                .get(rk, {}).get("exit_bar")
+                            w_start = max(0, fb - 30)
+                            w_end_target = (exit_bar + 10) if exit_bar is not None \
+                                else (touch_idx + 50)
+                            w_end = min(len(candles_norm),
+                                        max(w_end_target, touch_idx + 5),
+                                        w_start + _TE_CANDLE_WINDOW)
+                            window = candles_norm[w_start:w_end]
+                            return {
+                                "ok":             True,
+                                "touch_trade_id": tid,
+                                "ob_id":          _te_ob_id(ev),
+                                "symbol":         sym,
+                                "timeframe":      tf,
+                                "direction":      ev.get("type"),
+                                "rr":             rk,
+                                "touch_number":   ep["touch_number"],
+                                "touch_bucket":   ep["touch_bucket"],
+                                "zone_high":      ev.get("zone_high"),
+                                "zone_low":       ev.get("zone_low"),
+                                "formation_bar":  fb,
+                                "formation_time": ev.get("formation_time"),
+                                "touch_index":    touch_idx,
+                                "touch_time":     ep.get("touch_time"),
+                                "episode":        ep,
+                                "previous_touch": episodes[ep_i - 1] if ep_i > 0 else None,
+                                "next_touch":     (episodes[ep_i + 1]
+                                                   if ep_i + 1 < len(episodes) else None),
+                                "all_touch_episodes": episodes,
+                                "simulation":     sim,
+                                "candle_window":  window,
+                                "candle_window_start_index": w_start,
+                                "candle_window_size": len(window),
+                                "candle_window_limit": _TE_CANDLE_WINDOW,
+                            }
+            except Exception:
+                continue
+    return {"ok": False, "error": "touch_trade_id_not_found",
+            "touch_trade_id": touch_trade_id}
+
+
+_TE_FORBIDDEN_REQUEST_KEYS = (
+    "trades", "outcomes", "metrics", "touch_histories", "event_results",
+    "summaries", "comparison_results", "trade_rows", "baseline_summary",
+    "filtered_summary", "touch_bucket_comparison", "win_rate", "expectancy",
+)
+
+
+@app.route("/api/backtest/ob-historical/trade-explorer", methods=["POST"])
+@login_required
+def api_backtest_ob_historical_trade_explorer():
+    err = _guest_tab_check("backtest")
+    if err is not None:
+        return err
+
+    payload = request.get_json(force=True) or {}
+
+    # Server is authoritative — reject any client-supplied results.
+    for banned in _TE_FORBIDDEN_REQUEST_KEYS:
+        if banned in payload:
+            return jsonify({
+                "ok": False,
+                "error": "client_supplied_trade_results_not_allowed",
+            }), 400
+
+    # Symbols (max 5, no blanks, no duplicates)
+    raw_syms = payload.get("symbols",
+                           ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT"])
+    if not isinstance(raw_syms, list):
+        raw_syms = [str(raw_syms)]
+    seen_syms: set = set()
+    symbols: List[str] = []
+    for s in raw_syms:
+        s = str(s or "").strip().upper()
+        if not s:
+            return jsonify({"ok": False, "error": "blank symbol not allowed"}), 400
+        if not s.endswith("USDT"):
+            s = s + "USDT"
+        if s in seen_syms:
+            return jsonify({"ok": False, "error": "duplicate symbols not allowed"}), 400
+        seen_syms.add(s)
+        symbols.append(s)
+    if not symbols:
+        return jsonify({"ok": False, "error": "at least one symbol required"}), 400
+    if len(symbols) > _TE_MAX_SYMBOLS:
+        return jsonify({"ok": False, "error": f"max {_TE_MAX_SYMBOLS} symbols"}), 400
+
+    # Timeframes (max 2, existing allowed set, no duplicates)
+    raw_tfs = payload.get("timeframes", ["1h", "4h"])
+    if not isinstance(raw_tfs, list):
+        raw_tfs = [str(raw_tfs)]
+    seen_tfs: set = set()
+    timeframes: List[str] = []
+    for tf in raw_tfs:
+        tf = str(tf).strip()
+        if tf not in _BT_ALLOWED_TIMEFRAMES:
+            return jsonify({"ok": False,
+                            "error": f"timeframe '{tf}' not allowed. "
+                                     f"Allowed: {sorted(_BT_ALLOWED_TIMEFRAMES)}"}), 400
+        if tf in seen_tfs:
+            return jsonify({"ok": False, "error": "duplicate timeframes not allowed"}), 400
+        seen_tfs.add(tf)
+        timeframes.append(tf)
+    if not timeframes:
+        return jsonify({"ok": False, "error": "at least one timeframe required"}), 400
+    if len(timeframes) > _TE_MAX_TIMEFRAMES:
+        return jsonify({"ok": False, "error": f"max {_TE_MAX_TIMEFRAMES} timeframes"}), 400
+
+    if len(symbols) * len(timeframes) > _TE_MAX_CELLS:
+        return jsonify({"ok": False,
+                        "error": f"max {_TE_MAX_CELLS} symbol/timeframe cells"}), 400
+
+    # candle_count within existing historical limits (500-4000)
+    try:
+        candle_count = int(payload.get("candle_count", 1000))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "candle_count must be integer"}), 400
+    candle_count = max(500, min(4000, candle_count))
+
+    # RR limited to 1, 2 or 3
+    try:
+        rr = int(payload.get("rr", 2))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "rr must be 1, 2 or 3"}), 400
+    if rr not in _TE_ALLOWED_RR:
+        return jsonify({"ok": False, "error": "rr must be 1, 2 or 3"}), 400
+
+    # page / page_size
+    try:
+        page = max(1, int(payload.get("page", 1)))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "page must be integer"}), 400
+    try:
+        page_size = int(payload.get("page_size", 100))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "page_size must be integer"}), 400
+    if page_size < 1 or page_size > _TE_MAX_PAGE_SIZE:
+        return jsonify({"ok": False,
+                        "error": f"page_size must be 1-{_TE_MAX_PAGE_SIZE}"}), 400
+
+    filters = payload.get("filters") or {}
+    if not isinstance(filters, dict):
+        return jsonify({"ok": False, "error": "filters must be an object"}), 400
+
+    sort_cfg = payload.get("sort") or {}
+    if not isinstance(sort_cfg, dict):
+        sort_cfg = {}
+
+    try:
+        result = _bt_run_trade_explorer({
+            "symbols":      symbols,
+            "timeframes":   timeframes,
+            "candle_count": candle_count,
+            "rr":           rr,
+            "filters":      filters,
+            "page":         page,
+            "page_size":    page_size,
+            "sort":         sort_cfg,
+        })
+        import json as _json_te_size
+        result["performance"]["response_size_bytes"] = len(
+            _json_te_size.dumps(result, default=str))
+        return jsonify(result), 200
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)[:500]}), 500
+
+
+@app.route("/api/backtest/ob-historical/trade-explorer/trade/<touch_trade_id>",
+           methods=["POST"])
+@login_required
+def api_backtest_ob_historical_trade_explorer_detail(touch_trade_id: str):
+    err = _guest_tab_check("backtest")
+    if err is not None:
+        return err
+
+    payload = request.get_json(force=True) or {}
+    for banned in _TE_FORBIDDEN_REQUEST_KEYS:
+        if banned in payload:
+            return jsonify({
+                "ok": False,
+                "error": "client_supplied_trade_results_not_allowed",
+            }), 400
+
+    raw_syms = payload.get("symbols", [])
+    if not isinstance(raw_syms, list) or not raw_syms:
+        return jsonify({"ok": False, "error": "symbols required"}), 400
+    symbols = [str(s or "").strip().upper() for s in raw_syms][: _TE_MAX_SYMBOLS]
+    symbols = [s if s.endswith("USDT") else s + "USDT" for s in symbols if s]
+
+    raw_tfs = payload.get("timeframes", ["1h", "4h"])
+    if not isinstance(raw_tfs, list):
+        raw_tfs = [str(raw_tfs)]
+    timeframes = [str(t).strip() for t in raw_tfs
+                  if str(t).strip() in _BT_ALLOWED_TIMEFRAMES][: _TE_MAX_TIMEFRAMES]
+    if not timeframes:
+        return jsonify({"ok": False, "error": "at least one valid timeframe required"}), 400
+
+    try:
+        candle_count = max(500, min(4000, int(payload.get("candle_count", 1000))))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "candle_count must be integer"}), 400
+
+    try:
+        result = _bt_run_trade_explorer_detail(str(touch_trade_id), {
+            "symbols":      symbols,
+            "timeframes":   timeframes,
+            "candle_count": candle_count,
+        })
+        status = 200 if result.get("ok") else 404
+        return jsonify(result), status
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)[:500]}), 500
+
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Backtest — Multi-Timeframe (MTF) Comparison Engine
 # ══════════════════════════════════════════════════════════════════════════════
 
