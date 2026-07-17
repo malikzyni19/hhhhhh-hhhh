@@ -29675,12 +29675,14 @@ def api_lm_learning_review_generate():
     Advisory only. No execution. No orders. No strategy changes.
     can_auto_submit=False. auto_execution_allowed=False. ai_can_execute=False.
     """
-    uid = current_user.id
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"ok": False, "error": "no_user"}), 401
     ip  = request.remote_addr or "unknown"
 
     # Rate limit — 5 generates per user per 10 minutes
     from security import rate_limiter as _rl
-    if not _rl.is_allowed(ip, f"lm_learning_generate_{uid}", max_hits=5, window=600):
+    if not _rl.is_allowed(ip, f"lm_learning_generate_{uid}", max_hits=5, window_seconds=600):
         return jsonify({
             "ok": False, "error": "rate_limited",
             "message": "Too many review generation requests. Please wait.",
@@ -29696,7 +29698,9 @@ def api_lm_learning_review_generate():
 @login_required
 def api_lm_learning_reviews_list():
     """GET: List learning reviews for the current user."""
-    uid          = current_user.id
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"ok": False, "error": "no_user"}), 401
     review_scope = request.args.get("review_scope") or None
     status_f     = request.args.get("status") or None
     try:
@@ -29728,7 +29732,9 @@ def api_lm_learning_reviews_list():
 @login_required
 def api_lm_learning_review_get(review_id):
     """GET: Retrieve a single learning review with full detail."""
-    uid    = current_user.id
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"ok": False, "error": "no_user"}), 401
     review = _lm_get_learning_review(uid, review_id)
     if review is None:
         return jsonify({"ok": False, "error": "review_not_found"}), 404
@@ -29744,7 +29750,9 @@ def api_lm_learning_review_update(review_id):
     Either or both of status / human_note may be supplied.
     human_note absent from body → sentinel (do not touch the note field).
     """
-    uid  = current_user.id
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"ok": False, "error": "no_user"}), 401
     body = request.get_json(silent=True) or {}
 
     new_status = (body.get("status") or "").strip() or None
@@ -29783,7 +29791,9 @@ def api_lm_learning_review_update(review_id):
 @login_required
 def api_lm_item_learning_reviews(item_id):
     """GET: List learning reviews scoped to a specific item."""
-    uid = current_user.id
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"ok": False, "error": "no_user"}), 401
     from models import LiveMonitorItem as _LMI1115
     item = _LMI1115.query.filter_by(id=item_id, user_id=uid).first()
     if item is None:
