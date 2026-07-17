@@ -1148,6 +1148,14 @@
                     </div>
                 </div>
 
+                <div class="field-wrapper slide-element" style="display:flex;align-items:center;gap:8px;padding:2px 0;">
+                    <input type="checkbox" id="rememberMe" name="remember_me" value="1"
+                           style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer;flex-shrink:0;">
+                    <label for="rememberMe" style="font-size:13px;font-weight:400;color:rgba(232,240,255,0.65);cursor:pointer;user-select:none;margin:0;">
+                        Remember me for 7 days
+                    </label>
+                </div>
+
                 {% if turnstile_site_key %}
                 <div class="field-wrapper slide-element" style="display:flex;justify-content:center;">
                     <div class="cf-turnstile"

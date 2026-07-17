@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZyNi SMC – Two-Factor Authentication</title>
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap');
+
+        :root {
+            --navy:       #0a0f1e;
+            --navy-mid:   #0d1530;
+            --navy-light: #112040;
+            --black:      #060a14;
+            --accent:     #1eb8c8;
+            --accent2:    #0e8fa0;
+            --white:      #e8f0ff;
+            --border:     rgba(30,184,200,0.40);
+            --red:        #f87171;
+            --green:      #4ade80;
+        }
+
+        *, *::before, *::after {
+            margin: 0; padding: 0;
+            box-sizing: border-box;
+            font-family: 'Poppins', sans-serif;
+            color: var(--white);
+            -webkit-font-smoothing: antialiased;
+        }
+
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: radial-gradient(ellipse at 60% 0%, #0d2040 0%, var(--black) 70%);
+            padding: 24px 16px;
+        }
+
+        .brand-logo {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            margin-bottom: 24px;
+            user-select: none;
+        }
+
+        .brand-logo .z-icon {
+            width: 52px; height: 52px;
+            object-fit: contain;
+            background: transparent;
+            filter:
+                drop-shadow(0 0 8px rgba(30,210,230,0.9))
+                drop-shadow(0 0 22px rgba(20,180,200,0.45))
+                drop-shadow(0 2px 8px rgba(0,0,0,0.65));
+        }
+
+        .brand-logo .brand-text { display: flex; flex-direction: column; line-height: 1; }
+
+        .brand-logo .brand-name { font-size: 21px; font-weight: 700; letter-spacing: 0.4px; }
+
+        .brand-logo .brand-sub {
+            font-size: 9.5px; font-weight: 500;
+            letter-spacing: 3.4px;
+            color: var(--accent);
+            text-transform: uppercase;
+            margin-top: 5px;
+        }
+
+        .verify-card {
+            width: 100%;
+            max-width: 460px;
+            background: var(--navy);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            box-shadow:
+                0 0 0 1px rgba(30,184,200,0.06),
+                0 0 40px rgba(14,143,160,0.20),
+                0 0 100px rgba(14,143,160,0.06),
+                0 24px 64px rgba(0,0,0,0.52);
+            padding: 40px 44px 36px;
+            text-align: center;
+        }
+
+        .verify-icon {
+            width: 68px; height: 68px;
+            border-radius: 50%;
+            background: rgba(30,184,200,0.08);
+            border: 1.5px solid rgba(30,184,200,0.35);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 20px;
+            font-size: 28px;
+            color: var(--accent);
+        }
+
+        .verify-title { font-size: 21px; font-weight: 700; margin-bottom: 8px; letter-spacing: -0.3px; }
+
+        .verify-sub {
+            font-size: 13px; font-weight: 400;
+            color: rgba(232,240,255,0.52);
+            line-height: 1.65;
+            margin-bottom: 26px;
+        }
+
+        .verify-sub .email-hint {
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        .alert-msg {
+            font-size: 12.5px; font-weight: 400;
+            border-radius: 10px;
+            padding: 10px 14px;
+            margin-bottom: 16px;
+            text-align: left;
+            line-height: 1.55;
+        }
+
+        .error-msg {
+            background: rgba(127,29,29,0.20);
+            border: 1px solid rgba(220,38,38,0.28);
+            color: #fca5a5;
+        }
+
+        .success-msg {
+            background: rgba(21,128,61,0.16);
+            border: 1px solid rgba(34,197,94,0.28);
+            color: #86efac;
+        }
+
+        .otp-group {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-bottom: 22px;
+        }
+
+        .otp-digit {
+            width: 50px; height: 56px;
+            background: rgba(255,255,255,0.04);
+            border: 1.5px solid rgba(232,240,255,0.11);
+            border-radius: 11px;
+            font-family: 'Poppins', sans-serif;
+            font-size: 24px; font-weight: 700;
+            text-align: center;
+            color: var(--white);
+            outline: none;
+            transition: border-color 0.22s, box-shadow 0.22s, background 0.22s;
+            caret-color: var(--accent);
+        }
+
+        .otp-digit:hover:not(:focus) {
+            border-color: rgba(232,240,255,0.20);
+            background: rgba(255,255,255,0.06);
+        }
+
+        .otp-digit:focus {
+            border-color: var(--accent);
+            background: rgba(30,184,200,0.045);
+            box-shadow: 0 0 0 3px rgba(30,184,200,0.13);
+        }
+
+        .otp-digit.filled { border-color: rgba(30,184,200,0.55); }
+
+        #codeInput { display: none; }
+
+        .verify-btn {
+            width: 100%;
+            height: 46px;
+            background: linear-gradient(135deg, var(--accent) 0%, var(--accent2) 100%);
+            border: none;
+            border-radius: 11px;
+            font-family: 'Poppins', sans-serif;
+            font-size: 14px; font-weight: 600;
+            color: #fff;
+            letter-spacing: 0.2px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            box-shadow: 0 4px 18px rgba(30,184,200,0.28);
+            transition: opacity 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
+            margin-bottom: 20px;
+        }
+
+        .verify-btn:hover:not(:disabled) {
+            opacity: 0.88;
+            box-shadow: 0 6px 28px rgba(30,184,200,0.44);
+            transform: translateY(-1px);
+        }
+
+        .verify-btn:active:not(:disabled) {
+            transform: translateY(0);
+            box-shadow: 0 2px 8px rgba(30,184,200,0.20);
+        }
+
+        .verify-btn:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+            background: linear-gradient(135deg, var(--accent2) 0%, #086474 100%);
+            transform: none;
+            box-shadow: none;
+        }
+
+        .divider {
+            font-size: 11.5px; font-weight: 400;
+            color: rgba(232,240,255,0.28);
+            margin-bottom: 16px;
+            position: relative;
+        }
+
+        .divider::before, .divider::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            width: 38%;
+            height: 1px;
+            background: rgba(30,184,200,0.18);
+        }
+
+        .divider::before { left: 0; }
+        .divider::after  { right: 0; }
+
+        .resend-form {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .resend-note { font-size: 12.5px; font-weight: 400; color: rgba(232,240,255,0.38); }
+
+        .resend-btn {
+            background: none;
+            border: none;
+            color: var(--accent);
+            font-family: 'Poppins', sans-serif;
+            font-size: 13px; font-weight: 600;
+            cursor: pointer;
+            text-decoration: underline;
+            padding: 0;
+            transition: opacity 0.2s;
+        }
+
+        .resend-btn:hover { opacity: 0.74; }
+        .resend-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+        .timer-note {
+            font-size: 12px; font-weight: 400;
+            color: rgba(232,240,255,0.38);
+            margin-bottom: 20px;
+        }
+
+        .timer-note span { color: var(--accent); font-weight: 600; }
+
+        .fallback-box {
+            background: rgba(245,158,11,0.08);
+            border: 1px solid rgba(245,158,11,0.35);
+            border-radius: 10px;
+            padding: 18px 20px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .fallback-box .fb-label {
+            font-size: 11px;
+            color: rgba(245,158,11,0.8);
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+        }
+
+        .fallback-box .fb-code {
+            font-size: 38px; font-weight: 800;
+            letter-spacing: 12px;
+            color: #f59e0b;
+            font-family: 'Courier New', monospace;
+        }
+
+        .fallback-box .fb-note {
+            font-size: 11px;
+            color: rgba(232,240,255,0.4);
+            margin-top: 8px;
+            line-height: 1.5;
+        }
+
+        .footer {
+            margin-top: 22px;
+            text-align: center;
+            font-size: 12px; font-weight: 400;
+            color: rgba(232,240,255,0.24);
+        }
+
+        .footer a {
+            color: var(--accent);
+            text-decoration: none;
+            font-weight: 500;
+            transition: opacity 0.2s;
+        }
+
+        .footer a:hover { opacity: 0.72; text-decoration: underline; }
+
+        @media (max-width: 520px) {
+            .verify-card { padding: 30px 20px 26px; }
+            .otp-digit { width: 42px; height: 50px; font-size: 22px; }
+        }
+    </style>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#1eb8c8">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ZyNi SMC">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="apple-touch-icon" href="/static/icons/icon-192x192.png">
+</head>
+<body>
+
+    <div class="brand-logo">
+        <img class="z-icon" src="{{ url_for('static', filename='images/favicon.png') }}" alt="ZyNi Logo">
+        <div class="brand-text">
+            <span class="brand-name">ZyNi SMC</span>
+            <span class="brand-sub">Smart Market Center</span>
+        </div>
+    </div>
+
+    <div class="verify-card">
+        <div class="verify-icon">
+            {% if fallback_code %}
+            <i class="fa-solid fa-triangle-exclamation" style="color:#f59e0b"></i>
+            {% else %}
+            <i class="fa-solid fa-shield-halved"></i>
+            {% endif %}
+        </div>
+
+        {% if fallback_code %}
+        <div class="verify-title">Email not delivered</div>
+        <div class="verify-sub">
+            Email delivery failed. Use the code below to sign in.
+        </div>
+        <div class="fallback-box">
+            <div class="fb-label">Your sign-in code</div>
+            <div class="fb-code" id="fbCode">{{ fallback_code }}</div>
+            <div class="fb-note">Enter this code in the boxes below. Valid for 10 minutes.</div>
+        </div>
+        {% else %}
+        <div class="verify-title">Check your email</div>
+        <div class="verify-sub">
+            We sent a 6-digit sign-in code to<br>
+            <span class="email-hint">{{ email_hint }}</span><br>
+            Enter it below to complete sign-in.
+        </div>
+        {% endif %}
+
+        <div id="alertBox" style="display:none"></div>
+
+        {% if error %}
+        <div class="alert-msg error-msg">
+            <i class="fa-solid fa-circle-exclamation" style="margin-right:6px"></i>{{ error }}
+        </div>
+        {% endif %}
+
+        <form id="twoFaForm" action="/2fa" method="POST">
+            <input type="hidden" name="code" id="codeInput">
+
+            <div class="otp-group" id="otpGroup">
+                <input class="otp-digit" type="text" inputmode="numeric" maxlength="1" data-idx="0" autocomplete="one-time-code">
+                <input class="otp-digit" type="text" inputmode="numeric" maxlength="1" data-idx="1">
+                <input class="otp-digit" type="text" inputmode="numeric" maxlength="1" data-idx="2">
+                <input class="otp-digit" type="text" inputmode="numeric" maxlength="1" data-idx="3">
+                <input class="otp-digit" type="text" inputmode="numeric" maxlength="1" data-idx="4">
+                <input class="otp-digit" type="text" inputmode="numeric" maxlength="1" data-idx="5">
+            </div>
+
+            <p class="timer-note">Code expires in <span id="countdown">10:00</span></p>
+
+            <button class="verify-btn" type="submit" id="submitBtn" disabled>
+                <i class="fa-solid fa-shield-check"></i> Verify &amp; Sign In
+            </button>
+        </form>
+
+        <div class="divider">or</div>
+
+        <div class="resend-form">
+            <span class="resend-note">Didn't receive it? Check spam or</span>
+            <button class="resend-btn" id="resendBtn" type="button">Resend sign-in code</button>
+        </div>
+    </div>
+
+    <div class="footer">
+        <p>&#169; 2026 ZyNi SMC. &nbsp;|&nbsp;
+            <a href="/login">&#8592; Back to Login</a>
+        </p>
+    </div>
+
+    <script>
+        const digits    = Array.from(document.querySelectorAll('.otp-digit'));
+        const codeInput = document.getElementById('codeInput');
+        const submitBtn = document.getElementById('submitBtn');
+        const alertBox  = document.getElementById('alertBox');
+
+        function showAlert(msg, type) {
+            alertBox.className  = 'alert-msg ' + (type === 'success' ? 'success-msg' : 'error-msg');
+            alertBox.innerHTML  = '<i class="fa-solid ' + (type === 'success' ? 'fa-circle-check' : 'fa-circle-exclamation') + '" style="margin-right:6px"></i>' + msg;
+            alertBox.style.display = '';
+        }
+
+        function updateHidden() {
+            const val = digits.map(d => d.value).join('');
+            codeInput.value    = val;
+            submitBtn.disabled = val.length < 6;
+            digits.forEach(d => d.classList.toggle('filled', d.value !== ''));
+        }
+
+        digits.forEach((digit, idx) => {
+            digit.addEventListener('input', (e) => {
+                const v = e.target.value.replace(/\D/g, '');
+                e.target.value = v.slice(-1);
+                if (idx === 0 && v.length >= 6) {
+                    v.slice(0, 6).split('').forEach((ch, i) => { if (digits[i]) digits[i].value = ch; });
+                    digits[5].focus();
+                    updateHidden();
+                    return;
+                }
+                if (v && idx < 5) digits[idx + 1].focus();
+                updateHidden();
+            });
+
+            digit.addEventListener('keydown', (e) => {
+                if (e.key === 'Backspace' && !digit.value && idx > 0) {
+                    digits[idx - 1].focus();
+                    digits[idx - 1].value = '';
+                    updateHidden();
+                }
+                if (e.key === 'ArrowLeft'  && idx > 0) digits[idx - 1].focus();
+                if (e.key === 'ArrowRight' && idx < 5) digits[idx + 1].focus();
+            });
+
+            digit.addEventListener('paste', (e) => {
+                e.preventDefault();
+                const pasted = (e.clipboardData || window.clipboardData)
+                    .getData('text').replace(/\D/g, '').slice(0, 6);
+                pasted.split('').forEach((ch, i) => { if (digits[i]) digits[i].value = ch; });
+                const focusIdx = Math.min(pasted.length, 5);
+                digits[focusIdx].focus();
+                updateHidden();
+            });
+        });
+
+        const fbCodeEl = document.getElementById('fbCode');
+        if (fbCodeEl) {
+            const fc = fbCodeEl.textContent.replace(/\D/g, '').slice(0, 6);
+            fc.split('').forEach((ch, i) => { if (digits[i]) digits[i].value = ch; });
+            updateHidden();
+        }
+
+        if (!fbCodeEl) digits[0].focus();
+
+        let remaining = 10 * 60;
+        const countdownEl = document.getElementById('countdown');
+
+        const timer = setInterval(() => {
+            remaining--;
+            const m   = Math.floor(remaining / 60);
+            const sec = remaining % 60;
+            countdownEl.textContent = String(m).padStart(2, '0') + ':' + String(sec).padStart(2, '0');
+            if (remaining <= 0) {
+                clearInterval(timer);
+                countdownEl.textContent = '00:00';
+                countdownEl.style.color = '#f87171';
+                submitBtn.disabled      = true;
+                submitBtn.innerHTML     = 'Code expired — request a new one below';
+            }
+        }, 1000);
+
+        const twoFaForm = document.getElementById('twoFaForm');
+
+        twoFaForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            submitBtn.disabled  = true;
+            submitBtn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Verifying...';
+
+            try {
+                const resp = await fetch('/2fa', {
+                    method:  'POST',
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                    body:    new FormData(twoFaForm),
+                });
+
+                let data = null;
+                try { data = await resp.json(); } catch {}
+
+                if (data && data.success) {
+                    submitBtn.innerHTML = '<i class="fa-solid fa-circle-check"></i> Verified!';
+                    window.location.href = data.redirect || '/';
+                    return;
+                }
+
+                submitBtn.disabled  = false;
+                submitBtn.innerHTML = '<i class="fa-solid fa-shield-check"></i> Verify &amp; Sign In';
+
+                if (data && (data.error === 'expired' || data.error === 'too_many_attempts')) {
+                    window.location.href = data.redirect || '/login';
+                    return;
+                }
+
+                if (data && data.message) {
+                    showAlert(data.message, 'error');
+                    digits.forEach(d => { d.value = ''; d.classList.remove('filled'); });
+                    codeInput.value    = '';
+                    submitBtn.disabled = true;
+                    digits[0].focus();
+                } else {
+                    showAlert('Verification failed. Please try again.', 'error');
+                }
+            } catch {
+                twoFaForm.submit();
+            }
+        });
+
+        const resendBtn = document.getElementById('resendBtn');
+        let resendCooldown = 0;
+        let resendTimer;
+
+        function startResendCooldown(seconds) {
+            resendCooldown = seconds;
+            resendBtn.disabled = true;
+            resendTimer = setInterval(() => {
+                resendCooldown--;
+                resendBtn.textContent = 'Resend in ' + resendCooldown + 's';
+                if (resendCooldown <= 0) {
+                    clearInterval(resendTimer);
+                    resendBtn.disabled    = false;
+                    resendBtn.textContent = 'Resend sign-in code';
+                }
+            }, 1000);
+        }
+
+        resendBtn.addEventListener('click', async () => {
+            resendBtn.disabled    = true;
+            resendBtn.textContent = 'Sending...';
+
+            try {
+                const resp = await fetch('/resend-2fa', {
+                    method:  'POST',
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                });
+                const data = await resp.json();
+
+                if (data.success) {
+                    showAlert(data.message || 'A new code has been sent.', 'success');
+                    remaining = 10 * 60;
+                } else if (data.fallback_code) {
+                    const box = document.createElement('div');
+                    box.className = 'fallback-box';
+                    box.innerHTML =
+                        '<div class="fb-label">Your sign-in code</div>' +
+                        '<div class="fb-code" id="fbCode">' + data.fallback_code + '</div>' +
+                        '<div class="fb-note">Enter this code in the boxes above.</div>';
+                    twoFaForm.parentNode.insertBefore(box, twoFaForm);
+                    const fc = data.fallback_code.replace(/\D/g, '').slice(0, 6);
+                    fc.split('').forEach((ch, i) => { if (digits[i]) digits[i].value = ch; });
+                    updateHidden();
+                    showAlert(data.message || 'Email failed. Use the code shown above.', 'error');
+                } else if (data.error === 'rate_limit') {
+                    showAlert(data.message || 'Too many resend requests. Please wait.', 'error');
+                } else {
+                    showAlert(data.message || 'Could not resend code. Please try again.', 'error');
+                }
+
+                startResendCooldown(60);
+            } catch {
+                resendBtn.disabled    = false;
+                resendBtn.textContent = 'Resend sign-in code';
+                showAlert('Network error. Please try again.', 'error');
+            }
+        });
+    </script>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function() {
+    navigator.serviceWorker.register('/service-worker.js', { scope: '/' })
+      .catch(function(e) { console.warn('[PWA] SW registration failed:', e); });
+  });
+}
+</script>
+</body>
+</html>
