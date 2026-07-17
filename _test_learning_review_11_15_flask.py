@@ -47,10 +47,13 @@ lr = importlib.util.module_from_spec(_lr_spec)
 sys.modules["live_monitor.ai_learning_review"] = lr
 _lr_spec.loader.exec_module(lr)
 
-# ── Minimal Flask + SQLAlchemy app for integration tests ──────────────────────
+# ── Task 4: import production db and model classes — no duplicate definitions ──
+# models.py is standalone (no circular deps), safe to import before Flask app.
+from models import db, User, LiveMonitorLearningReview, LiveMonitorItem
+
+# ── Minimal Flask app for integration tests ──────────────────────────────────
 
 from flask import Flask
-from flask_sqlalchemy import SQLAlchemy
 
 app  = Flask(__name__)
 app.config["SQLALCHEMY_DATABASE_URI"]        = "sqlite:///:memory:"
@@ -59,59 +62,22 @@ app.config["TESTING"]                        = True
 app.config["SECRET_KEY"]                     = "test_secret_phase_11_15_2"
 app.config["WTF_CSRF_ENABLED"]               = False
 
-db = SQLAlchemy(app)
-
-# ── Minimal models for the test ───────────────────────────────────────────────
-
-class User(db.Model):
-    __tablename__ = "users"
-    id       = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(80), unique=True, nullable=False)
-
-class LiveMonitorLearningReview(db.Model):
-    """Mirrors the production model — columns only."""
-    __tablename__ = "live_monitor_learning_reviews"
-    id               = db.Column(db.Integer, primary_key=True)
-    user_id          = db.Column(db.Integer, nullable=False, index=True)
-    item_id          = db.Column(db.Integer, nullable=True)
-    review_scope     = db.Column(db.String(20), nullable=False, default="portfolio")
-    period           = db.Column(db.String(10), nullable=True)
-    symbol           = db.Column(db.String(30), nullable=True)
-    side             = db.Column(db.String(10), nullable=True)
-    status           = db.Column(db.String(30), nullable=False, default="generated", index=True)
-    title            = db.Column(db.Text, nullable=True)
-    summary          = db.Column(db.Text, nullable=True)
-    review_json      = db.Column(db.Text, nullable=True)
-    evidence_json    = db.Column(db.Text, nullable=True)
-    human_note       = db.Column(db.Text, nullable=True)
-    sample_size      = db.Column(db.Integer, nullable=True)
-    sample_quality   = db.Column(db.String(20), nullable=True)
-    confidence_level = db.Column(db.String(20), nullable=True)
-    warning_count    = db.Column(db.Integer, nullable=True, default=0)
-    source           = db.Column(db.String(30), nullable=True)
-    model_name       = db.Column(db.String(80), nullable=True)
-    prompt_version   = db.Column(db.String(20), nullable=True)
-    parent_review_id = db.Column(db.Integer, nullable=True)
-    supersedes_review_id = db.Column(db.Integer, nullable=True)
-    created_at       = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
-    updated_at       = db.Column(db.DateTime, nullable=True)
-    reviewed_at      = db.Column(db.DateTime, nullable=True)
+# Bind the production db to the test app; db.create_all() uses production metadata
+db.init_app(app)
 
 with app.app_context():
     db.create_all()
-    _u1 = User(username="alice")
-    _u2 = User(username="bob")
+    # Production User requires password_hash (nullable=False)
+    _u1 = User(username="alice", password_hash="x", role="user", status="active")
+    _u2 = User(username="bob",   password_hash="x", role="user", status="active")
     db.session.add_all([_u1, _u2])
     db.session.commit()
     _UID1 = _u1.id
     _UID2 = _u2.id
 
-# ── Inject models into lr module's import context ─────────────────────────────
-
-_models_mod = types.ModuleType("models")
-_models_mod.LiveMonitorLearningReview = LiveMonitorLearningReview
-sys.modules["models"] = _models_mod
-
+# ── Wire production models and db into module import context ──────────────────
+# sys.modules["models"] is already the real models module from the import above.
+# Point the extensions stub at the same production db instance.
 _ext_mod = types.ModuleType("extensions")
 _ext_mod.db = db
 sys.modules["extensions"] = _ext_mod

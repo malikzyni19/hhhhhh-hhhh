@@ -29460,6 +29460,211 @@ def api_lm_item_paper_performance(item_id):
 _lm_learning_review_generate_lock = threading.Lock()
 _lm_learning_review_inflight: set = set()  # set of user_id currently generating
 
+_LM_GUARDRAILS_BLOCK = {
+    "read_only":                   True,
+    "human_review_required":       True,
+    "auto_apply_allowed":          False,
+    "can_change_strategy":         False,
+    "can_change_risk_guard":       False,
+    "can_arm_auto_gate":           False,
+    "can_auto_submit":             False,
+    "auto_execution_allowed":      False,
+    "ai_can_execute":              False,
+    "live_disabled":               True,
+    "testnet_strategy_validation": False,
+}
+
+
+def _lm_handle_generate_learning_review_request(uid: int, body: dict) -> dict:
+    """Service function for learning review generation.
+
+    Handles: parse payload → validate filters → ownership check → build evidence
+    → sample gate → build candidates → in-flight lock → call provider → parse
+    → validate → 422 if invalid (no save) → sanitize → save → commit.
+    Lock is always released in finally.
+
+    Returns {"payload": dict, "status_code": int}.
+    Phase 11.15.4 Task 3. Advisory only. No execution. No orders.
+    """
+    guardrails = _LM_GUARDRAILS_BLOCK
+
+    # Parse body
+    review_scope    = (body.get("review_scope") or "portfolio").strip()
+    period          = (body.get("period")       or "30d").strip()
+    symbol_supplied = "symbol" in body
+    symbol          = (body.get("symbol") or "").strip() or None
+    side            = (body.get("side")   or "").strip() or None
+    item_id_raw     = body.get("item_id")
+    try:
+        item_id = int(item_id_raw) if item_id_raw is not None else None
+    except (TypeError, ValueError):
+        item_id = None
+
+    # Build + validate filters
+    filters = _lm_build_learning_review_filters(
+        uid,
+        review_scope    = review_scope,
+        period          = period,
+        symbol          = symbol,
+        side            = side,
+        item_id         = item_id,
+        symbol_supplied = symbol_supplied,
+    )
+    field_errors = _lm_validate_learning_review_filters(filters)
+    if field_errors:
+        return {
+            "payload": {
+                "ok":           False,
+                "phase":        "phase11_15_ai_learning_review_loop",
+                "error":        "invalid_learning_filter",
+                "field_errors": field_errors,
+                "guardrails":   guardrails,
+            },
+            "status_code": 400,
+        }
+
+    # Item ownership check
+    if item_id is not None:
+        from models import LiveMonitorItem as _LMItem
+        _owned = _LMItem.query.filter_by(id=item_id, user_id=uid).first()
+        if _owned is None:
+            return {
+                "payload": {
+                    "ok":         False,
+                    "phase":      "phase11_15_ai_learning_review_loop",
+                    "error":      "item_not_found",
+                    "guardrails": guardrails,
+                },
+                "status_code": 404,
+            }
+
+    # Build trusted evidence
+    evidence = _lm_build_learning_evidence(uid, filters)
+    total    = evidence.get("sample_size", 0)
+
+    # Sample gate — reject before acquiring lock or calling AI
+    if total < 5:
+        return {
+            "payload": {
+                "ok":           False,
+                "phase":        "phase11_15_ai_learning_review_loop",
+                "error":        "insufficient_learning_sample",
+                "sample_size":  total,
+                "required_min": 5,
+                "message":      "At least 5 closed paper trades are required to generate a review.",
+                "evidence_summary": {
+                    "period":       filters.get("period"),
+                    "review_scope": filters.get("_review_scope"),
+                    "symbol":       filters.get("symbol"),
+                    "side":         filters.get("side"),
+                },
+                "guardrails": guardrails,
+            },
+            "status_code": 200,
+        }
+
+    # Build candidates, allowlist, and prompt before acquiring lock
+    candidates = _lm_build_learning_observation_candidates(evidence)
+    allowlist  = _lm_build_evidence_metric_allowlist(evidence)
+    prompt     = _lm_build_learning_review_prompt(evidence, candidates)
+
+    # Acquire in-flight lock before the expensive AI call
+    with _lm_learning_review_generate_lock:
+        if uid in _lm_learning_review_inflight:
+            return {
+                "payload": {
+                    "ok":      False,
+                    "error":   "generation_in_progress",
+                    "message": "A review is already being generated for your account.",
+                    "guardrails": guardrails,
+                },
+                "status_code": 409,
+            }
+        _lm_learning_review_inflight.add(uid)
+
+    try:
+        # Call AI provider
+        ai_context = {"learning_review_prompt": prompt, "phase": "11_15"}
+        ai_result  = _lm_call_ai_provider(ai_context, user_message=prompt, agent_id=None)
+        ai_called  = True
+        model_name = ai_result.get("model") or None
+
+        if ai_result.get("ok"):
+            raw_payload = ai_result.get("analysis") or {}
+            source = "ai"
+        else:
+            raw_payload = _lm_build_deterministic_review(evidence, candidates)
+            source      = "deterministic_fallback"
+            ai_called   = False
+            model_name  = None
+
+        # Parse — pure JSON decode, NO semantic repair
+        parsed = _lm_parse_learning_review_response(raw_payload)
+
+        # Strict validate against evidence allowlist
+        is_valid, validation_errors = _lm_validate_learning_review_response(parsed, evidence)
+
+        # Reject invalid output — hard 422, no save
+        if not is_valid:
+            return {
+                "payload": {
+                    "ok":                False,
+                    "phase":             "phase11_15_ai_learning_review_loop",
+                    "error":             "ai_learning_review_invalid",
+                    "validation_errors": validation_errors,
+                    "ai_called":         ai_called,
+                    "review_saved":      False,
+                    "guardrails":        guardrails,
+                },
+                "status_code": 422,
+            }
+
+        # Sanitize — display-text trimming only
+        sanitized = _lm_sanitize_valid_learning_review(parsed)
+
+        # Save valid review with full auditable evidence snapshot
+        from extensions import db
+        review = _lm_save_learning_review(
+            uid,
+            filters          = filters,
+            evidence         = evidence,
+            sanitized_review = sanitized,
+            source           = source,
+            model_name       = model_name,
+            candidates       = candidates,
+            allowlist        = allowlist,
+        )
+
+        # Commit
+        db.session.commit()
+
+        from models import LiveMonitorLearningReview as _LR1115
+        saved = _LR1115.query.get(review.id)
+
+        from live_monitor.ai_learning_review import _serialize_review
+        return {
+            "payload": {
+                "ok":     True,
+                "phase":  "phase11_15_ai_learning_review_loop",
+                "source": "internal_paper_ai_learning_review",
+                "review": _serialize_review(saved, include_json=True),
+                "evidence_summary": {
+                    "sample_size":    total,
+                    "sample_quality": evidence.get("sample_quality"),
+                    "period":         filters.get("period"),
+                    "review_scope":   filters.get("_review_scope"),
+                    "symbol":         filters.get("symbol"),
+                    "side":           filters.get("side"),
+                },
+                "guardrails": guardrails,
+            },
+            "status_code": 201,
+        }
+
+    finally:
+        with _lm_learning_review_generate_lock:
+            _lm_learning_review_inflight.discard(uid)
+
 
 @app.route("/api/live-monitor/learning-reviews/generate", methods=["POST"])
 @login_required
@@ -29473,194 +29678,18 @@ def api_lm_learning_review_generate():
     uid = current_user.id
     ip  = request.remote_addr or "unknown"
 
-    _guardrails_block = {
-        "read_only":                   True,
-        "human_review_required":       True,
-        "auto_apply_allowed":          False,
-        "can_change_strategy":         False,
-        "can_change_risk_guard":       False,
-        "can_arm_auto_gate":           False,
-        "can_auto_submit":             False,
-        "auto_execution_allowed":      False,
-        "ai_can_execute":              False,
-        "live_disabled":               True,
-        "testnet_strategy_validation": False,
-    }
-
-    # Step 1: Rate limit — 5 generates per user per 10 minutes
+    # Rate limit — 5 generates per user per 10 minutes
     from security import rate_limiter as _rl
     if not _rl.is_allowed(ip, f"lm_learning_generate_{uid}", max_hits=5, window=600):
         return jsonify({
             "ok": False, "error": "rate_limited",
             "message": "Too many review generation requests. Please wait.",
-            "guardrails": _guardrails_block,
+            "guardrails": _LM_GUARDRAILS_BLOCK,
         }), 429
 
-    # Step 2: Duplicate-request prevention
-    with _lm_learning_review_generate_lock:
-        if uid in _lm_learning_review_inflight:
-            return jsonify({
-                "ok": False, "error": "generation_in_progress",
-                "message": "A review is already being generated for your account.",
-                "guardrails": _guardrails_block,
-            }), 409
-        _lm_learning_review_inflight.add(uid)
-
-    try:
-        body = request.get_json(silent=True) or {}
-
-        review_scope    = (body.get("review_scope") or "portfolio").strip()
-        period          = (body.get("period")       or "30d").strip()
-        symbol_supplied = "symbol" in body
-        symbol          = (body.get("symbol") or "").strip() or None
-        side            = (body.get("side")   or "").strip() or None
-        item_id_raw     = body.get("item_id")
-        try:
-            item_id = int(item_id_raw) if item_id_raw is not None else None
-        except (TypeError, ValueError):
-            item_id = None
-
-        # Step 3: Build + validate filters
-        filters = _lm_build_learning_review_filters(
-            uid,
-            review_scope    = review_scope,
-            period          = period,
-            symbol          = symbol,
-            side            = side,
-            item_id         = item_id,
-            symbol_supplied = symbol_supplied,
-        )
-        field_errors = _lm_validate_learning_review_filters(filters)
-        if field_errors:
-            return jsonify({
-                "ok":           False,
-                "phase":        "phase11_15_ai_learning_review_loop",
-                "error":        "invalid_learning_filter",
-                "field_errors": field_errors,
-                "guardrails":   _guardrails_block,
-            }), 400
-
-        # Step 4: Verify item ownership (item_id scope)
-        if item_id is not None:
-            from models import LiveMonitorItem as _LMItem
-            _owned = _LMItem.query.filter_by(id=item_id, user_id=uid).first()
-            if _owned is None:
-                return jsonify({
-                    "ok":    False,
-                    "phase": "phase11_15_ai_learning_review_loop",
-                    "error": "item_not_found",
-                    "guardrails": _guardrails_block,
-                }), 404
-
-        # Step 5: Build trusted evidence (delegates to Phase 11.14 performance state)
-        evidence = _lm_build_learning_evidence(uid, filters)
-        total    = evidence.get("sample_size", 0)
-
-        # Step 6: Sample gate — reject before calling AI
-        if total < 5:
-            return jsonify({
-                "ok":           False,
-                "phase":        "phase11_15_ai_learning_review_loop",
-                "error":        "insufficient_learning_sample",
-                "sample_size":  total,
-                "required_min": 5,
-                "message":      "At least 5 closed paper trades are required to generate a review.",
-                "evidence_summary": {
-                    "period":       filters.get("period"),
-                    "review_scope": filters.get("_review_scope"),
-                    "symbol":       filters.get("symbol"),
-                    "side":         filters.get("side"),
-                },
-                "guardrails": _guardrails_block,
-            }), 200
-
-        # Step 7: Build deterministic observation candidates
-        candidates = _lm_build_learning_observation_candidates(evidence)
-
-        # Step 8: Build evidence allowlist (bounds for AI numeric claims)
-        allowlist = _lm_build_evidence_metric_allowlist(evidence)
-
-        # Step 9: Build bounded AI prompt
-        prompt = _lm_build_learning_review_prompt(evidence, candidates)
-
-        # Step 10: Call AI provider
-        ai_context = {"learning_review_prompt": prompt, "phase": "11_15"}
-        ai_result  = _lm_call_ai_provider(ai_context, user_message=prompt, agent_id=None)
-        ai_called  = True
-        model_name = ai_result.get("model") or None
-
-        if ai_result.get("ok"):
-            raw_payload = ai_result.get("analysis") or {}
-            source = "ai"
-        else:
-            # AI provider unavailable — use deterministic fallback immediately
-            raw_payload = _lm_build_deterministic_review(evidence, candidates)
-            source      = "deterministic_fallback"
-            ai_called   = False
-            model_name  = None
-
-        # Step 11: Parse — pure JSON decode, NO semantic repair
-        parsed = _lm_parse_learning_review_response(raw_payload)
-
-        # Step 12: Strict validate against evidence allowlist
-        is_valid, validation_errors = _lm_validate_learning_review_response(parsed, evidence)
-
-        # Step 13: Reject invalid output — hard 422, no fallback for unsafe AI output
-        if not is_valid:
-            # Invalid AI output is NOT silently repaired by falling back to deterministic.
-            # Invalid deterministic output is a structural bug. Both cases: hard 422.
-            return jsonify({
-                "ok":               False,
-                "phase":            "phase11_15_ai_learning_review_loop",
-                "error":            "ai_learning_review_invalid",
-                "validation_errors": validation_errors,
-                "ai_called":        ai_called,
-                "review_saved":     False,
-                "guardrails":       _guardrails_block,
-            }), 422
-
-        # Step 14: Sanitize — display-text trimming only (after passing validation)
-        sanitized = _lm_sanitize_valid_learning_review(parsed)
-
-        # Step 15: Save valid review with full auditable evidence snapshot
-        from extensions import db
-        review = _lm_save_learning_review(
-            uid,
-            filters        = filters,
-            evidence       = evidence,
-            sanitized_review = sanitized,
-            source         = source,
-            model_name     = model_name,
-            candidates     = candidates,
-            allowlist      = allowlist,
-        )
-
-        # Step 16: Commit + return 201
-        db.session.commit()
-
-        from models import LiveMonitorLearningReview as _LR1115
-        saved = _LR1115.query.get(review.id)
-
-        from live_monitor.ai_learning_review import _serialize_review
-        return jsonify({
-            "ok":      True,
-            "phase":   "phase11_15_ai_learning_review_loop",
-            "source":  "internal_paper_ai_learning_review",
-            "review":  _serialize_review(saved, include_json=True),
-            "evidence_summary": {
-                "sample_size":    total,
-                "sample_quality": evidence.get("sample_quality"),
-                "period":         filters.get("period"),
-                "review_scope":   filters.get("_review_scope"),
-                "symbol":         filters.get("symbol"),
-                "side":           filters.get("side"),
-            },
-            "guardrails": _guardrails_block,
-        }), 201
-
-    finally:
-        with _lm_learning_review_generate_lock:
-            _lm_learning_review_inflight.discard(uid)
+    body   = request.get_json(silent=True) or {}
+    result = _lm_handle_generate_learning_review_request(uid, body)
+    return jsonify(result["payload"]), result["status_code"]
 
 
 @app.route("/api/live-monitor/learning-reviews", methods=["GET"])
