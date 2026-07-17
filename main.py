@@ -30467,9 +30467,12 @@ def api_lm_price():
                 "source":     lp.get("source", f"{exchange}_rest"),
             })
 
-    # Final fallback: Binance REST mark-price cache (works even without WS)
+    # Final fallback: Binance REST mark-price cache (works even without WS).
+    # This is the 1s price hot-path — use a dedicated short-TTL (3s) key so the
+    # live price stays fresh when the WebSocket is disabled, without disturbing
+    # the shared 10s `mark:` cache that the 4s Data Health rows rely on.
     rest_m = _lm_rest_cached(
-        f"mark:{symbol}", 10, lambda: _lm_fetch_mark_price_rest(symbol)
+        f"pxfast:{symbol}", 3, lambda: _lm_fetch_mark_price_rest(symbol)
     )
     if rest_m and rest_m.get("mark_price"):
         rv = f"{rest_m['mark_price']:.4f}"
