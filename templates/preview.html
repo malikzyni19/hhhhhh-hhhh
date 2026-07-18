@@ -12720,7 +12720,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     stabilityRrView:"all",stabCharts:{},
     wfData:null,wfRunning:false,wfFoldView:1,wfCharts:{},
     teData:null,teRunning:false,teCharts:{},tePage:1,teShowFilters:false,
-    obClass:"internal"};
+    obClass:"internal",
+    apData:null,apRunning:false,apClass:"internal",apCharts:{}};
 
   function _bindBtSidebarEvents(aside){
     [].forEach.call(aside.querySelectorAll("[data-btpage]"),function(item){
@@ -14614,6 +14615,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         '<button class="bt-compare-tab'+(mode==="stability"?" active":"")+'" data-cmode="stability">Stability Lab</button>'+
         '<button class="bt-compare-tab'+(mode==="walkforward"?" active":"")+'" data-cmode="walkforward">Walk-Forward</button>'+
         '<button class="bt-compare-tab'+(mode==="explorer"?" active":"")+'" data-cmode="explorer">Trade Explorer</button>'+
+        '<button class="bt-compare-tab'+(mode==="autopsy"?" active":"")+'" data-cmode="autopsy">Autopsy</button>'+
       '</div>'+
       '<div id="btCompareModeContent"></div>';
     [].forEach.call(el.querySelectorAll("[data-cmode]"),function(btn){
@@ -14626,6 +14628,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     else if(mode==="stability") _btRenderStabilityMode();
     else if(mode==="walkforward") _btRenderWalkForwardMode();
     else if(mode==="explorer") _btRenderTradeExplorerMode();
+    else if(mode==="autopsy") _btRenderAutopsyMode();
     else _btRenderBatchMode();
   }
 
@@ -16175,6 +16178,312 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     _btDownloadBlob("zyni_te_touch_summary_"+Date.now()+".csv",rows.join("\r\n"),"text/csv");
   }
 
+  /* ── Autopsy Agent (Phase 18) ────────────────────────────────────────────── */
+
+  function _btRenderAutopsyMode(){
+    var el=document.getElementById("btCompareModeContent"); if(!el) return;
+    var d=_btState.apData||null;
+    var running=_btState.apRunning||false;
+    var cls=_btState.apClass||"internal";
+
+    var html='<div style="padding:12px 0">';
+    html+='<div class="bt-stab-header" style="margin-bottom:4px">';
+    html+='<span style="font-size:13px;font-weight:600;color:var(--text-1)">Autopsy Agent — Why Trades Win and Lose</span>';
+    html+='</div>';
+    html+='<div style="font-size:11px;color:var(--text-2);margin-bottom:6px">Deterministic per-trade reason codes, loser-vs-winner ranking and setup profiles. Every number is a computed fact — no AI guessing.</div>';
+    html+='<div style="font-size:10px;color:#f59e0b;margin-bottom:10px">Research only. Findings are hypotheses for walk-forward validation, not proven edges.</div>';
+
+    /* Symbols */
+    var allSyms=["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT"];
+    var selSyms=_btState.apSelSyms||["BTCUSDT","ETHUSDT"];
+    html+='<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px">';
+    html+='<span style="font-size:11px;color:var(--text-2);font-weight:600">Symbols:</span>';
+    allSyms.forEach(function(s){
+      var on=selSyms.indexOf(s)>=0;
+      html+='<button class="bt-rr-btn'+(on?" active":"")+'" data-apsym="'+s+'" style="font-size:10px">'+s+'</button>';
+    });
+    html+='</div>';
+
+    /* Timeframes + candles + RR */
+    var selTfs=_btState.apSelTfs||["1h","4h"];
+    var apCandles=_btState.apCandles||1000;
+    var apRR=_btState.apRR||2;
+    html+='<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px">';
+    html+='<span style="font-size:11px;color:var(--text-2);font-weight:600">Timeframes:</span>';
+    ["1h","4h"].forEach(function(tf){
+      var on=selTfs.indexOf(tf)>=0;
+      html+='<button class="bt-rr-btn'+(on?" active":"")+'" data-aptf="'+tf+'" style="font-size:11px">'+tf+'</button>';
+    });
+    html+='<span style="font-size:11px;color:var(--text-2);font-weight:600;margin-left:10px">Candles:</span>';
+    [500,1000,2000,3000].forEach(function(c){
+      html+='<button class="bt-rr-btn'+(apCandles===c?" active":"")+'" data-apcandles="'+c+'" style="font-size:11px">'+c+'</button>';
+    });
+    html+='<span style="font-size:11px;color:var(--text-2);font-weight:600;margin-left:10px">RR:</span>';
+    [1,2,3].forEach(function(r){
+      html+='<button class="bt-rr-btn'+(apRR===r?" active":"")+'" data-aprr="'+r+'" style="font-size:11px">'+r+'R</button>';
+    });
+    html+='</div>';
+
+    /* Run + class toggle */
+    html+='<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">';
+    html+='<button id="btApRunBtn" class="bt-run-btn" style="font-size:12px;padding:6px 18px" '+(running?"disabled":"")+'>'+
+      (running?'&#9733; Running…':'&#9654; Run Autopsy')+'</button>';
+    if(d&&d.ok){
+      html+='<span style="font-size:10px;color:var(--text-3);font-weight:600;text-transform:uppercase;letter-spacing:.4px;margin-left:8px">View class:</span>';
+      html+='<button class="bt-rr-btn'+(cls==="internal"?" active":"")+'" data-apclass="internal" style="font-size:10px">Internal</button>';
+      html+='<button class="bt-rr-btn'+(cls==="swing"?" active":"")+'" data-apclass="swing" style="font-size:10px">Swing</button>';
+      html+='<span style="font-size:9px;color:var(--text-3)">never pooled</span>';
+      html+='<button class="bt-export-btn" onclick="_btApExportJson()" style="margin-left:8px">Export JSON</button>';
+      html+='<button class="bt-export-btn" onclick="_btApExportReasonsCsv()">Reasons CSV</button>';
+      html+='<button class="bt-export-btn" onclick="_btApExportProfilesCsv()">Profiles CSV</button>';
+    }
+    html+='</div>';
+
+    html+='<div id="btApResults">';
+    if(running){
+      html+='<div style="font-size:12px;color:var(--text-2);padding:12px">Running autopsy…</div>';
+    } else if(d&&d.ok){
+      var rep=(d.reports_by_class||{})[cls];
+      if(rep){
+        html+=_btApSummaryHtml(rep,cls);
+        html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:12px 0">';
+        html+='<div><div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">Reason Delta — % in losers minus % in winners</div><canvas id="btApChart1" height="170"></canvas></div>';
+        html+='<div><div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">Failure Modes (losing trades)</div><canvas id="btApChart2" height="170"></canvas></div>';
+        html+='</div>';
+        html+=_btApReasonTableHtml(rep);
+        html+=_btApProfileTableHtml(rep);
+      } else {
+        html+='<div style="font-size:12px;color:var(--text-2);padding:12px">No report for class '+cls+'.</div>';
+      }
+    } else if(d&&!d.ok){
+      html+='<div class="bt-mtf-err">'+esc(d.error||"Request failed")+'</div>';
+    } else {
+      html+='<div style="font-size:12px;color:var(--text-2);padding:12px">Select symbols and timeframes, then run the autopsy.</div>';
+    }
+    html+='</div>';
+    html+='</div>';
+
+    el.innerHTML=html;
+
+    [].forEach.call(el.querySelectorAll("[data-apsym]"),function(b){
+      b.addEventListener("click",function(){
+        var s=b.getAttribute("data-apsym");
+        var arr=(_btState.apSelSyms||["BTCUSDT","ETHUSDT"]).slice();
+        var i=arr.indexOf(s); if(i>=0) arr.splice(i,1); else arr.push(s);
+        _btState.apSelSyms=arr; _btRenderAutopsyMode();
+      });
+    });
+    [].forEach.call(el.querySelectorAll("[data-aptf]"),function(b){
+      b.addEventListener("click",function(){
+        var tf=b.getAttribute("data-aptf");
+        var arr=(_btState.apSelTfs||["1h","4h"]).slice();
+        var i=arr.indexOf(tf); if(i>=0) arr.splice(i,1); else arr.push(tf);
+        _btState.apSelTfs=arr; _btRenderAutopsyMode();
+      });
+    });
+    [].forEach.call(el.querySelectorAll("[data-apcandles]"),function(b){
+      b.addEventListener("click",function(){_btState.apCandles=parseInt(b.getAttribute("data-apcandles"));_btRenderAutopsyMode();});
+    });
+    [].forEach.call(el.querySelectorAll("[data-aprr]"),function(b){
+      b.addEventListener("click",function(){_btState.apRR=parseInt(b.getAttribute("data-aprr"));_btRenderAutopsyMode();});
+    });
+    [].forEach.call(el.querySelectorAll("[data-apclass]"),function(b){
+      b.addEventListener("click",function(){_btState.apClass=b.getAttribute("data-apclass");_btRenderAutopsyMode();});
+    });
+    var runBtn=document.getElementById("btApRunBtn");
+    if(runBtn) runBtn.addEventListener("click",_btRunAutopsy);
+
+    if(d&&d.ok) _btApBuildCharts(d);
+  }
+
+  function _btRunAutopsy(){
+    var syms=(_btState.apSelSyms||["BTCUSDT","ETHUSDT"]).slice();
+    var tfs=(_btState.apSelTfs||["1h","4h"]).slice();
+    if(!syms.length||!tfs.length){
+      var re=document.getElementById("btApResults");
+      if(re) re.innerHTML='<div class="bt-mtf-err">Select at least one symbol and one timeframe.</div>';
+      return;
+    }
+    if(syms.length>5||tfs.length>2||syms.length*tfs.length>10){
+      var re2=document.getElementById("btApResults");
+      if(re2) re2.innerHTML='<div class="bt-mtf-err">Max 5 symbols × 2 timeframes (10 cells).</div>';
+      return;
+    }
+    _btState.apRunning=true;
+    _btRenderAutopsyMode();
+    fetch("/api/backtest/ob-historical/autopsy",{
+      method:"POST",credentials:"same-origin",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        symbols:syms, timeframes:tfs,
+        candle_count:_btState.apCandles||1000,
+        rr:_btState.apRR||2,
+        ob_classes:["internal","swing"]
+      })
+    }).then(function(r){return r.json();}).then(function(d){
+      _btState.apData=d;
+      _btState.apRunning=false;
+      _btRenderAutopsyMode();
+    }).catch(function(e){
+      _btState.apRunning=false;
+      _btRenderAutopsyMode();
+      var re3=document.getElementById("btApResults");
+      if(re3) re3.innerHTML='<div class="bt-mtf-err">Autopsy run failed: '+e+'</div>';
+    });
+  }
+
+  function _btApFmt(v,dec){
+    if(v==null) return "—";
+    if(typeof v==="number") return dec!=null?v.toFixed(dec):String(v);
+    return String(v);
+  }
+
+  function _btApSummaryHtml(rep,cls){
+    var fm=rep.failure_modes||{};
+    var sss=rep.sample_size_status||"—";
+    var sssColor=sss==="strong"?"#22c55e":sss==="usable"?"#60a5fa":sss==="small"?"#f59e0b":"#ef4444";
+    var html='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;margin-bottom:4px">';
+    function card(label,val,color){
+      html+='<div style="background:rgba(0,0,0,.18);border-radius:6px;padding:8px">';
+      html+='<div style="font-size:9px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px">'+label+'</div>';
+      html+='<div style="font-size:15px;font-weight:700;color:'+(color||"var(--text-1)")+'">'+val+'</div>';
+      html+='</div>';
+    }
+    card("Class",cls==="internal"?"Internal (iLen 5)":"Swing (sLen 30)");
+    card("Touch Trades",_btApFmt(rep.trades));
+    card("Wins",_btApFmt(rep.wins),"#22c55e");
+    card("Losses",_btApFmt(rep.losses),"#ef4444");
+    card("Win Rate",rep.win_rate_pct!=null?rep.win_rate_pct+"%":"—");
+    card("Ambiguous",_btApFmt(rep.ambiguous),"#94a3b8");
+    card("Unresolved",_btApFmt(rep.unresolved),"#94a3b8");
+    card("Sample",sss,sssColor);
+    html+='</div>';
+    return html;
+  }
+
+  function _btApReasonTableHtml(rep){
+    var rows=rep.reason_ranking||[];
+    var html='<div style="margin:10px 0 4px;font-size:11px;font-weight:700;color:var(--text-1)">Reason Ranking — feature frequency in losers vs winners ('+((rep.rr||"")+"R")+')</div>';
+    html+='<div style="font-size:9px;color:var(--text-3);margin-bottom:4px">delta &gt; 0 = more common in losers. Unknown values excluded per feature. Session lift replaces a hard-coded BAD_SESSION rule.</div>';
+    html+='<div style="overflow-x:auto"><table class="bt-table" style="font-size:10px;width:100%">';
+    html+='<thead><tr><th>Feature</th><th>Losers with</th><th>Loser %</th><th>Winners with</th><th>Winner %</th><th>Delta</th><th>Lift</th><th>Sample</th></tr></thead><tbody>';
+    rows.forEach(function(r){
+      var d=r.delta_pct;
+      var dColor=d==null?"var(--text-3)":d>0?"#ef4444":"#22c55e";
+      html+='<tr>';
+      html+='<td style="font-weight:600">'+r.feature+'</td>';
+      html+='<td>'+r.losers_with+'/'+r.losers_known+'</td>';
+      html+='<td>'+_btApFmt(r.loser_pct,2)+(r.loser_pct!=null?"%":"")+'</td>';
+      html+='<td>'+r.winners_with+'/'+r.winners_known+'</td>';
+      html+='<td>'+_btApFmt(r.winner_pct,2)+(r.winner_pct!=null?"%":"")+'</td>';
+      html+='<td style="color:'+dColor+';font-weight:700">'+_btApFmt(d,2)+(d!=null?"%":"")+'</td>';
+      html+='<td>'+_btApFmt(r.lift,3)+'</td>';
+      html+='<td>'+(r.sample_size_status||"—")+'</td>';
+      html+='</tr>';
+    });
+    html+='</tbody></table></div>';
+    return html;
+  }
+
+  function _btApProfileTableHtml(rep){
+    var rows=rep.setup_profiles||[];
+    var html='<div style="margin:12px 0 4px;font-size:11px;font-weight:700;color:var(--text-1)">Setup Profiles — HTF alignment | touch bucket | session, sorted by win rate</div>';
+    html+='<div style="font-size:9px;color:var(--text-3);margin-bottom:4px">Profiles are candidates for walk-forward validation — a high win rate here is NOT yet a proven edge. Rows below 5 trades are flagged.</div>';
+    html+='<div style="overflow-x:auto"><table class="bt-table" style="font-size:10px;width:100%">';
+    html+='<thead><tr><th>HTF Align</th><th>Touch</th><th>Session</th><th>Trades</th><th>Wins</th><th>Losses</th><th>Win %</th><th>Expectancy</th><th>PF</th><th>Net R</th><th>Sample</th></tr></thead><tbody>';
+    rows.forEach(function(p){
+      var wr=p.win_rate_pct;
+      var wrColor=wr==null?"var(--text-3)":wr>=55?"#22c55e":wr>=45?"#f59e0b":"#ef4444";
+      var dim=p.below_min_trades?' style="opacity:.45"':'';
+      html+='<tr'+dim+'>';
+      html+='<td style="font-weight:600">'+p.htf_alignment+'</td>';
+      html+='<td>'+p.touch_bucket+'</td>';
+      html+='<td>'+p.session+'</td>';
+      html+='<td>'+p.trades+'</td>';
+      html+='<td style="color:#22c55e">'+p.wins+'</td>';
+      html+='<td style="color:#ef4444">'+p.losses+'</td>';
+      html+='<td style="color:'+wrColor+';font-weight:700">'+_btApFmt(wr,1)+(wr!=null?"%":"")+'</td>';
+      html+='<td>'+_btApFmt(p.expectancy_r,4)+'</td>';
+      html+='<td>'+(p.profit_factor_infinite?"∞":_btApFmt(p.profit_factor_r,3))+'</td>';
+      html+='<td>'+_btApFmt(p.net_r,2)+'</td>';
+      html+='<td>'+(p.sample_size_status||"—")+(p.below_min_trades?" ⚠":"")+'</td>';
+      html+='</tr>';
+    });
+    if(!rows.length){
+      html+='<tr><td colspan="11" style="text-align:center;color:var(--text-3);padding:10px">No profiles.</td></tr>';
+    }
+    html+='</tbody></table></div>';
+    return html;
+  }
+
+  function _btApBuildCharts(d){
+    _btState.apCharts=_btState.apCharts||{};
+    function dc(id){if(_btState.apCharts[id]){try{_btState.apCharts[id].destroy();}catch(e){}delete _btState.apCharts[id];}}
+    dc("btApChart1");dc("btApChart2");
+    var cls=_btState.apClass||"internal";
+    var rep=(d.reports_by_class||{})[cls]||{};
+    var gscale={x:{ticks:{color:"#566377",font:{size:8}},grid:{color:"rgba(27,38,54,.5)"}},
+                y:{ticks:{color:"#566377",font:{size:9}},grid:{color:"rgba(27,38,54,.5)"}}};
+    var opts={responsive:true,plugins:{legend:{display:false}},scales:gscale};
+
+    var c1=document.getElementById("btApChart1");
+    if(c1){
+      var rr=(rep.reason_ranking||[]).filter(function(r){return r.delta_pct!=null;});
+      var labels=rr.map(function(r){return r.feature;});
+      var vals=rr.map(function(r){return r.delta_pct;});
+      _btState.apCharts["btApChart1"]=new Chart(c1,{type:"bar",data:{labels:labels,datasets:[{label:"Delta %",data:vals,
+        backgroundColor:vals.map(function(v){return v>0?"rgba(239,68,68,.55)":"rgba(34,197,94,.55)";}),
+        borderColor:vals.map(function(v){return v>0?"#ef4444":"#22c55e";}),borderWidth:1}]},
+        options:Object.assign({},opts,{indexAxis:"y"})});
+    }
+
+    var c2=document.getElementById("btApChart2");
+    if(c2){
+      var fm=(rep.failure_modes||{}).counts||{};
+      var fl=Object.keys(fm);
+      _btState.apCharts["btApChart2"]=new Chart(c2,{type:"bar",data:{labels:fl,datasets:[{label:"Losses",data:fl.map(function(k){return fm[k];}),
+        backgroundColor:"rgba(239,68,68,.5)",borderColor:"#ef4444",borderWidth:1}]},options:opts});
+    }
+  }
+
+  function _btApExportJson(){
+    var d=_btState.apData;
+    if(!d){alert("No autopsy data to export.");return;}
+    _btDownloadBlob("zyni_autopsy_"+Date.now()+".json",JSON.stringify(d,null,2),"application/json");
+  }
+
+  function _btApExportReasonsCsv(){
+    var d=_btState.apData;
+    if(!d||!d.reports_by_class){alert("No autopsy data to export.");return;}
+    var cols=["ob_class","feature","losers_with","losers_known","loser_pct",
+      "winners_with","winners_known","winner_pct","delta_pct","lift","sample_size_status"];
+    var rows=[cols.join(",")];
+    Object.keys(d.reports_by_class).forEach(function(cls){
+      ((d.reports_by_class[cls]||{}).reason_ranking||[]).forEach(function(r){
+        var rec=Object.assign({ob_class:cls},r);
+        rows.push(cols.map(function(c){return _btCsvVal(rec[c]);}).join(","));
+      });
+    });
+    _btDownloadBlob("zyni_autopsy_reasons_"+Date.now()+".csv",rows.join("\r\n"),"text/csv");
+  }
+
+  function _btApExportProfilesCsv(){
+    var d=_btState.apData;
+    if(!d||!d.reports_by_class){alert("No autopsy data to export.");return;}
+    var cols=["ob_class","htf_alignment","touch_bucket","session","opportunities","trades",
+      "wins","losses","ambiguous","unresolved","win_rate_pct","expectancy_r",
+      "profit_factor_r","profit_factor_infinite","net_r","rr","sample_size_status","below_min_trades"];
+    var rows=[cols.join(",")];
+    Object.keys(d.reports_by_class).forEach(function(cls){
+      ((d.reports_by_class[cls]||{}).setup_profiles||[]).forEach(function(p){
+        var rec=Object.assign({ob_class:cls},p);
+        rows.push(cols.map(function(c){return _btCsvVal(rec[c]);}).join(","));
+      });
+    });
+    _btDownloadBlob("zyni_autopsy_profiles_"+Date.now()+".csv",rows.join("\r\n"),"text/csv");
+  }
+
+
 
   function _btRenderMtfMode(){
     var el=document.getElementById("btCompareModeContent"); if(!el) return;
@@ -17011,6 +17320,17 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   window._btCombinedExportJson=_btCombinedExportJson;
   window._btCombinedExportCsv=_btCombinedExportCsv;
   window._btExportTvObPctAnalysis=_btExportTvObPctAnalysis;
+  /* Walk-Forward / Trade Explorer / Autopsy export buttons use inline onclick,
+     which resolves in global scope — expose them (fixes dead buttons). */
+  window._btWfExportJson=_btWfExportJson;
+  window._btWfExportFoldCsv=_btWfExportFoldCsv;
+  window._btWfExportCellCsv=_btWfExportCellCsv;
+  window._btTeExportJson=_btTeExportJson;
+  window._btTeExportTradesCsv=_btTeExportTradesCsv;
+  window._btTeExportSummaryCsv=_btTeExportSummaryCsv;
+  window._btApExportJson=_btApExportJson;
+  window._btApExportReasonsCsv=_btApExportReasonsCsv;
+  window._btApExportProfilesCsv=_btApExportProfilesCsv;
 
   /* Tag body with current view so per-view CSS (Task 3) applies before
      the first switchView() call. */

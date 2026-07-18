@@ -40775,6 +40775,647 @@ def api_backtest_ob_historical_trade_explorer_detail(touch_trade_id: str):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Phase 18 — Autopsy Agent: deterministic per-trade failure analysis
+# Research only. No AI API in the core — every reason code is a computed fact.
+# No production filter activation. No DB writes.
+# ══════════════════════════════════════════════════════════════════════════════
+
+_AP_MAX_SYMBOLS:    int   = 5
+_AP_MAX_TIMEFRAMES: int   = 2
+_AP_MAX_CELLS:      int   = 10
+_AP_ATR_PERIOD:     int   = 14
+_AP_WEAK_DISPLACEMENT_ATR: float = 1.0   # formation move below this many ATRs = weak
+_AP_OVERSIZED_ZONE_ATR:    float = 2.0   # zone bigger than this many ATRs = oversized
+_AP_STALE_ZONE_CANDLES:    int   = 50    # touch later than this after formation = stale
+_AP_LATE_TOUCH_NUMBER:     int   = 3     # touch number >= this = late touch
+_AP_SLOW_BLEED_CANDLES:    int   = 20    # loss taking at least this many candles = slow bleed
+_AP_MIN_PROFILE_TRADES:    int   = 5     # profiles below this are reported but flagged
+
+# Higher-timeframe map for HTF trend context (fixed, documented).
+_AP_HTF_MAP: Dict[str, Optional[str]] = {
+    "5m": "1h", "15m": "1h", "30m": "4h", "1h": "4h", "4h": "1d", "1d": None,
+}
+
+# Predictive features ranked in 18B (computed for BOTH winners and losers).
+_AP_FEATURE_KEYS = (
+    "AGAINST_HTF_TREND", "AGAINST_TF_TREND", "COUNTER_SWING",
+    "LATE_TOUCH", "WEAK_DISPLACEMENT", "OVERSIZED_ZONE", "STALE_ZONE",
+    "SESSION_ASIA", "SESSION_LONDON", "SESSION_NEWYORK", "SESSION_OTHER",
+)
+
+
+def _bt_ap_atr_series(candles: List[Dict], period: int = _AP_ATR_PERIOD) -> List[Optional[float]]:
+    """Simple-moving-average ATR per bar. atr[i] uses bars 0..i only (no look-ahead).
+
+    Definition (deterministic, documented): TR[0] = high-low; TR[i] =
+    max(high-low, |high-prev_close|, |low-prev_close|). ATR[i] is the plain
+    mean of the last `period` TRs (expanding mean before `period` bars).
+    """
+    n = len(candles)
+    if n == 0:
+        return []
+    trs: List[float] = [0.0] * n
+    for i in range(n):
+        h = float(candles[i]["high"])
+        l = float(candles[i]["low"])
+        if i == 0:
+            trs[i] = h - l
+        else:
+            pc = float(candles[i - 1]["close"])
+            trs[i] = max(h - l, abs(h - pc), abs(l - pc))
+    atr: List[Optional[float]] = [None] * n
+    running = 0.0
+    for i in range(n):
+        running += trs[i]
+        if i < period:
+            atr[i] = running / (i + 1)
+        else:
+            running -= trs[i - period]
+            atr[i] = running / period
+    return atr
+
+
+def _bt_ap_build_trend_index(candles: List[Dict], pivot_len: int) -> Dict:
+    """Precompute confirmed-pivot arrays for O(log n) HH/HL trend queries."""
+    h_arr = [float(c["high"]) for c in candles]
+    l_arr = [float(c["low"])  for c in candles]
+    if len(candles) < pivot_len * 2 + 1:
+        return {"high_bars": [], "low_bars": [], "h": h_arr, "l": l_arr,
+                "pivot_len": pivot_len}
+    ph, pl = detect_pivots(h_arr, l_arr, pivot_len, pivot_len)
+    return {
+        "high_bars": [j for j in range(len(candles)) if ph[j]],
+        "low_bars":  [j for j in range(len(candles)) if pl[j]],
+        "h": h_arr, "l": l_arr, "pivot_len": pivot_len,
+    }
+
+
+def _bt_ap_trend_at(trend_idx: Dict, bar_index: int) -> str:
+    """HH/HL structure trend using only pivots CONFIRMED by bar_index.
+
+    A pivot at bar j is confirmed at bar j + pivot_len — pivots that need
+    future bars to settle are never used (no look-ahead).
+
+    Returns "up" (HH+HL), "down" (LH+LL), "neutral" (mixed), or "unknown"
+    (fewer than 2 confirmed pivot highs/lows).
+    """
+    import bisect as _bisect
+    if bar_index is None or bar_index < 0:
+        return "unknown"
+    p_len  = trend_idx["pivot_len"]
+    cutoff = bar_index - p_len          # last pivot bar confirmed by bar_index
+    hb = trend_idx["high_bars"]
+    lb = trend_idx["low_bars"]
+    hi = _bisect.bisect_right(hb, cutoff)
+    li = _bisect.bisect_right(lb, cutoff)
+    if hi < 2 or li < 2:
+        return "unknown"
+    h1 = trend_idx["h"][hb[hi - 2]]
+    h2 = trend_idx["h"][hb[hi - 1]]
+    l1 = trend_idx["l"][lb[li - 2]]
+    l2 = trend_idx["l"][lb[li - 1]]
+    if h2 > h1 and l2 > l1:
+        return "up"
+    if h2 < h1 and l2 < l1:
+        return "down"
+    return "neutral"
+
+
+def _bt_ap_alignment(direction: str, trend: str) -> str:
+    """Trade direction vs trend state → with / against / neutral / unknown."""
+    if trend == "unknown":
+        return "unknown"
+    if trend == "neutral":
+        return "neutral"
+    if (direction == "bullish" and trend == "up") or \
+       (direction == "bearish" and trend == "down"):
+        return "with"
+    return "against"
+
+
+def _bt_ap_htf_bar_index(htf_candles: List[Dict], touch_time) -> Optional[int]:
+    """Largest HTF bar index whose open_time <= touch_time (binary search)."""
+    import bisect as _bisect
+    if not htf_candles or touch_time is None:
+        return None
+    opens = [c.get("open_time") or 0 for c in htf_candles]
+    idx = _bisect.bisect_right(opens, int(touch_time)) - 1
+    return idx if idx >= 0 else None
+
+
+def _bt_ap_failure_mode(sim: Dict, rr_key: str) -> Optional[str]:
+    """Descriptive failure mode for a LOSING trade (None for non-losses).
+
+    INSTANT_MITIGATION — the entry candle itself closed through the zone.
+    SLOW_BLEED         — the loss took >= _AP_SLOW_BLEED_CANDLES candles.
+    STANDARD_STOP      — any other close-based stop.
+    """
+    rb = (sim.get("realized_by_rr") or {}).get(rr_key) or {}
+    if rb.get("outcome") != "loss":
+        return None
+    entry_bar = sim.get("entry_bar")
+    stop_bar  = sim.get("stop_bar")
+    if stop_bar is not None and entry_bar is not None and stop_bar == entry_bar:
+        return "INSTANT_MITIGATION"
+    cte = rb.get("candles_to_exit")
+    if cte is not None and cte >= _AP_SLOW_BLEED_CANDLES:
+        return "SLOW_BLEED"
+    return "STANDARD_STOP"
+
+
+def _bt_ap_build_trade_records(
+    events: List[Dict],
+    candles: List[Dict],
+    rr_key: str,
+    ob_class: str,
+    tf_trend_idx: Dict,
+    swing_trend_idx: Dict,
+    htf_candles: Optional[List[Dict]],
+    htf_trend_idx: Optional[Dict],
+    atr: List[Optional[float]],
+) -> List[Dict]:
+    """Build one autopsy record per touch trade at the selected RR.
+
+    Reuses the canonical Phase 16 touch-episode detection and touch
+    simulation so autopsy trades are the same trades the Trade Explorer
+    reports. Every feature is computed from data available at or before
+    the touch bar — no look-ahead.
+    """
+    records: List[Dict] = []
+    for ev in events:
+        if ev.get("touch_status") != "touched":
+            continue
+        episodes = _te_detect_touch_episodes(candles, ev)
+        if not episodes:
+            continue
+        fb        = int(ev["formation_bar"])
+        direction = ev.get("type", "")
+        zone_size = float(ev.get("zone_size") or 0.0)
+        atr_fb    = atr[fb] if fb < len(atr) else None
+
+        # Displacement proxy v1: formation-candle body size in ATRs.
+        disp_atr = None
+        if atr_fb and atr_fb > 0 and fb < len(candles):
+            body = abs(float(candles[fb]["close"]) - float(candles[fb]["open"]))
+            disp_atr = round(body / atr_fb, 3)
+        zone_atr = (round(zone_size / atr_fb, 3)
+                    if atr_fb and atr_fb > 0 and zone_size > 0 else None)
+
+        for ep in episodes:
+            touch_idx  = ep["touch_index"]
+            touch_time = ep.get("touch_time")
+            sim = _te_simulate_touch_outcome(touch_idx, ev, candles,
+                                             [1, 2, 3])
+            rb  = (sim.get("realized_by_rr") or {}).get(rr_key) or {}
+            outcome = rb.get("outcome", "unresolved")
+            if not sim.get("eligible", False):
+                continue
+
+            tf_trend    = _bt_ap_trend_at(tf_trend_idx, touch_idx)
+            swing_trend = _bt_ap_trend_at(swing_trend_idx, touch_idx)
+            htf_trend   = "unknown"
+            if htf_trend_idx is not None and htf_candles:
+                hbar = _bt_ap_htf_bar_index(htf_candles, touch_time)
+                # The HTF bar containing the touch is still IN PROGRESS at the
+                # touch — its final high/low are unknowable then. Query the
+                # trend at the last fully CLOSED HTF bar (hbar - 1) so a pivot
+                # confirming on the in-progress bar can never leak in.
+                if hbar is not None and hbar >= 1:
+                    htf_trend = _bt_ap_trend_at(htf_trend_idx, hbar - 1)
+
+            tf_align    = _bt_ap_alignment(direction, tf_trend)
+            swing_align = _bt_ap_alignment(direction, swing_trend)
+            htf_align   = _bt_ap_alignment(direction, htf_trend)
+
+            session = _te_session(touch_time)
+            weekday = _te_weekday(touch_time)
+            candles_since = ep.get("candles_since_formation", touch_idx - fb)
+            touch_num = ep["touch_number"]
+
+            # Predictive features — None = unknown, excluded from ranking
+            # denominators for that feature.
+            features: Dict[str, Optional[bool]] = {
+                "AGAINST_HTF_TREND": (None if htf_align == "unknown"
+                                      else htf_align == "against"),
+                "AGAINST_TF_TREND":  (None if tf_align == "unknown"
+                                      else tf_align == "against"),
+                "COUNTER_SWING":     (None if swing_align == "unknown"
+                                      else swing_align == "against"),
+                "LATE_TOUCH":        touch_num >= _AP_LATE_TOUCH_NUMBER,
+                "WEAK_DISPLACEMENT": (None if disp_atr is None
+                                      else disp_atr < _AP_WEAK_DISPLACEMENT_ATR),
+                "OVERSIZED_ZONE":    (None if zone_atr is None
+                                      else zone_atr > _AP_OVERSIZED_ZONE_ATR),
+                "STALE_ZONE":        candles_since > _AP_STALE_ZONE_CANDLES,
+                "SESSION_ASIA":      (None if session is None else session == "Asia"),
+                "SESSION_LONDON":    (None if session is None else session == "London"),
+                "SESSION_NEWYORK":   (None if session is None else session == "NewYork"),
+                "SESSION_OTHER":     (None if session is None else session == "Other"),
+            }
+
+            records.append({
+                "touch_trade_id":  _te_touch_trade_id(ev, touch_num, touch_idx, rr_key),
+                "ob_id":           _te_ob_id(ev),
+                "symbol":          ev.get("symbol", ""),
+                "timeframe":       ev.get("timeframe", ""),
+                "ob_class":        ob_class,
+                "direction":       direction,
+                "rr":              rr_key,
+                "touch_number":    touch_num,
+                "touch_bucket":    ep["touch_bucket"],
+                "outcome":         outcome,
+                "realized_r":      rb.get("realized_r"),
+                "stop_loss_r":     sim.get("stop_loss_r"),
+                "entry_bar":       sim.get("entry_bar"),
+                "exit_bar":        rb.get("exit_bar"),
+                "candles_to_exit": rb.get("candles_to_exit"),
+                "session":         session,
+                "weekday":         weekday,
+                "touch_time":      touch_time,
+                "candles_since_formation": candles_since,
+                "zone_size_atr":   zone_atr,
+                "displacement_atr": disp_atr,
+                "mfe_r":           sim.get("max_r_reached"),
+                "mae_r":           sim.get("max_adverse_r"),
+                "tf_trend":        tf_trend,
+                "swing_trend":     swing_trend,
+                "htf_trend":       htf_trend,
+                "tf_alignment":    tf_align,
+                "swing_alignment": swing_align,
+                "htf_alignment":   htf_align,
+                "features":        features,
+                "failure_mode":    _bt_ap_failure_mode(sim, rr_key),
+            })
+    return records
+
+
+def _bt_ap_rank_reasons(records: List[Dict]) -> List[Dict]:
+    """18B — per-feature loser-vs-winner frequency comparison.
+
+    For each predictive feature: how often it is present among losers vs
+    winners (trades with unknown/None value excluded from that feature's
+    denominators). delta_pct > 0 means the feature is more common in losers.
+    """
+    losers  = [r for r in records if r["outcome"] == "loss"]
+    winners = [r for r in records if r["outcome"] == "win"]
+    out: List[Dict] = []
+    for feat in _AP_FEATURE_KEYS:
+        l_known = [r for r in losers  if r["features"].get(feat) is not None]
+        w_known = [r for r in winners if r["features"].get(feat) is not None]
+        l_with  = sum(1 for r in l_known if r["features"][feat])
+        w_with  = sum(1 for r in w_known if r["features"][feat])
+        l_pct = round(l_with / len(l_known) * 100, 2) if l_known else None
+        w_pct = round(w_with / len(w_known) * 100, 2) if w_known else None
+        delta = (round(l_pct - w_pct, 2)
+                 if l_pct is not None and w_pct is not None else None)
+        lift  = (round(l_pct / w_pct, 3)
+                 if l_pct is not None and w_pct not in (None, 0) else None)
+        out.append({
+            "feature":            feat,
+            "losers_with":        l_with,
+            "losers_known":       len(l_known),
+            "loser_pct":          l_pct,
+            "winners_with":       w_with,
+            "winners_known":      len(w_known),
+            "winner_pct":         w_pct,
+            "delta_pct":          delta,
+            "lift":               lift,
+            "sample_size_status": _te_sample_size_status(len(l_known) + len(w_known)),
+        })
+    out.sort(key=lambda r: (r["delta_pct"] is None,
+                            -(r["delta_pct"] or 0.0)))
+    return out
+
+
+def _bt_ap_failure_mode_distribution(records: List[Dict]) -> Dict:
+    """Distribution of descriptive failure modes across losing trades."""
+    losers = [r for r in records if r["outcome"] == "loss"]
+    dist: Dict[str, int] = {"INSTANT_MITIGATION": 0, "SLOW_BLEED": 0,
+                            "STANDARD_STOP": 0}
+    for r in losers:
+        fm = r.get("failure_mode")
+        if fm in dist:
+            dist[fm] += 1
+    total = len(losers)
+    return {
+        "total_losses": total,
+        "counts": dist,
+        "pcts": {k: (round(v / total * 100, 1) if total else None)
+                 for k, v in dist.items()},
+    }
+
+
+def _bt_ap_build_profiles(records: List[Dict], rr_key: str) -> List[Dict]:
+    """18C — setup-profile table.
+
+    Profile key = HTF alignment | touch bucket | session. Every profile
+    reports the authoritative outcome contract (trades = wins + losses;
+    ambiguous / unresolved excluded) at the selected RR, sample-size
+    labeled, sorted by win rate then trade count.
+    """
+    groups: Dict[str, List[Dict]] = {}
+    for r in records:
+        key = f"{r['htf_alignment']}|{r['touch_bucket']}|{r['session'] or 'unknown'}"
+        groups.setdefault(key, []).append(r)
+
+    profiles: List[Dict] = []
+    for key, rows in groups.items():
+        wins   = sum(1 for r in rows if r["outcome"] == "win")
+        losses = sum(1 for r in rows if r["outcome"] == "loss")
+        amb    = sum(1 for r in rows if r["outcome"] == "ambiguous")
+        unres  = sum(1 for r in rows if r["outcome"] == "unresolved")
+        trades = wins + losses
+        gp = sum(r["realized_r"] for r in rows
+                 if r["outcome"] == "win" and r.get("realized_r") is not None)
+        gl = abs(sum(r["realized_r"] for r in rows
+                     if r["outcome"] == "loss" and r.get("realized_r") is not None))
+        net = round(gp - gl, 4)
+        pf, pf_inf = _stab_aggregate_pf(gp, gl)
+        htf_align, bucket, session = key.split("|", 2)
+        profiles.append({
+            "profile_key":        key,
+            "htf_alignment":      htf_align,
+            "touch_bucket":       bucket,
+            "session":            session,
+            "opportunities":      len(rows),
+            "trades":             trades,
+            "wins":               wins,
+            "losses":             losses,
+            "ambiguous":          amb,
+            "unresolved":         unres,
+            "win_rate_pct":       round(wins / trades * 100, 2) if trades else None,
+            "expectancy_r":       round(net / trades, 6) if trades else None,
+            "profit_factor_r":    pf,
+            "profit_factor_infinite": pf_inf,
+            "net_r":              net,
+            "rr":                 rr_key,
+            "sample_size_status": _te_sample_size_status(trades),
+            "below_min_trades":   trades < _AP_MIN_PROFILE_TRADES,
+        })
+    profiles.sort(key=lambda p: (p["win_rate_pct"] is None,
+                                 -(p["win_rate_pct"] or 0.0),
+                                 -p["trades"]))
+    return profiles
+
+
+def _bt_ap_class_report(records: List[Dict], rr_key: str) -> Dict:
+    """Full 18A-18C report for one OB class."""
+    wins   = sum(1 for r in records if r["outcome"] == "win")
+    losses = sum(1 for r in records if r["outcome"] == "loss")
+    amb    = sum(1 for r in records if r["outcome"] == "ambiguous")
+    unres  = sum(1 for r in records if r["outcome"] == "unresolved")
+    trades = wins + losses
+    return {
+        "rr":                 rr_key,
+        "records_total":      len(records),
+        "trades":             trades,
+        "wins":               wins,
+        "losses":             losses,
+        "ambiguous":          amb,
+        "unresolved":         unres,
+        "win_rate_pct":       round(wins / trades * 100, 2) if trades else None,
+        "sample_size_status": _te_sample_size_status(trades),
+        "failure_modes":      _bt_ap_failure_mode_distribution(records),
+        "reason_ranking":     _bt_ap_rank_reasons(records),
+        "setup_profiles":     _bt_ap_build_profiles(records, rr_key),
+    }
+
+
+def _bt_run_autopsy(req: Dict) -> Dict:
+    """Server-authoritative Autopsy Agent orchestrator (research only).
+
+    Runs the full-range dual-class touch-trade backtest per cell, computes
+    deterministic autopsy features for every trade, and reports
+    loser-vs-winner reason rankings and setup profiles per OB class —
+    internal and swing are never pooled.
+    """
+    t_start = time.monotonic()
+
+    symbols      = req.get("symbols", [])
+    timeframes   = req.get("timeframes", [])
+    candle_count = int(req.get("candle_count", 1000))
+    rr_key       = _bt_rr_key(int(req.get("rr", 2)))
+    ob_classes   = req.get("ob_classes") or ["internal", "swing"]
+
+    failures: List[Dict] = []
+    records_by_class: Dict[str, List[Dict]] = {c: [] for c in ob_classes}
+    network_fetch_count = 0
+    htf_fetch_count     = 0
+    completed_cells     = 0
+    _htf_cache: Dict = {}
+
+    for sym in symbols:
+        for tf in timeframes:
+            try:
+                raw = get_klines(sym, tf, limit=candle_count)
+                network_fetch_count += 1
+                candles = _bt_normalize_candles(raw)
+                if not candles:
+                    failures.append({"symbol": sym, "timeframe": tf,
+                                     "stage": "normalize", "error": "no_candles"})
+                    continue
+
+                atr             = _bt_ap_atr_series(candles)
+                tf_trend_idx    = _bt_ap_build_trend_index(candles, _BT_PIVOT_LEN)
+                swing_trend_idx = _bt_ap_build_trend_index(candles, _BT_SWING_PIVOT_LEN)
+
+                htf_tf = _AP_HTF_MAP.get(tf)
+                htf_candles = None
+                htf_trend_idx = None
+                if htf_tf:
+                    ck = (sym, htf_tf)
+                    if ck not in _htf_cache:
+                        try:
+                            htf_raw = get_klines(sym, htf_tf, limit=candle_count)
+                            htf_fetch_count += 1
+                            _htf_cache[ck] = _bt_normalize_candles(htf_raw) or None
+                        except Exception:
+                            _htf_cache[ck] = None
+                    htf_candles = _htf_cache[ck]
+                    if htf_candles:
+                        htf_trend_idx = _bt_ap_build_trend_index(
+                            htf_candles, _BT_PIVOT_LEN)
+
+                for ob_class in ob_classes:
+                    params = _bt_wf_build_params(sym, tf, len(candles), [1, 2, 3])
+                    params["ob_class"] = ob_class
+                    events = _bt_extract_ob_replay_events(candles, params)
+                    # (record building runs its own per-touch simulations;
+                    #  the first-touch outcome pass is not needed here)
+                    recs = _bt_ap_build_trade_records(
+                        events, candles, rr_key, ob_class,
+                        tf_trend_idx, swing_trend_idx,
+                        htf_candles, htf_trend_idx, atr)
+                    records_by_class[ob_class].extend(recs)
+
+                completed_cells += 1
+            except Exception as e:
+                failures.append({"symbol": sym, "timeframe": tf,
+                                 "stage": "run", "error": str(e)[:200]})
+
+    reports = {cls: _bt_ap_class_report(records_by_class[cls], rr_key)
+               for cls in ob_classes}
+
+    return {
+        "ok":                      True,
+        "authoritative_execution": True,
+        "client_results_accepted": False,
+        "mode":                    "autopsy_agent_v1",
+        "request": {
+            "symbols":      symbols,
+            "timeframes":   timeframes,
+            "candle_count": candle_count,
+            "rr":           rr_key,
+            "ob_classes":   ob_classes,
+        },
+        "reports_by_class":  reports,
+        "failures":          failures,
+        "definitions": {
+            "trend":             "HH/HL pivot structure; pivot confirmed only after pivot_len bars (no look-ahead)",
+            "htf_map":           {k: v for k, v in _AP_HTF_MAP.items()},
+            "atr":               f"SMA ATR, period {_AP_ATR_PERIOD}, no look-ahead",
+            "displacement":      f"formation-candle body / ATR; weak < {_AP_WEAK_DISPLACEMENT_ATR}",
+            "oversized_zone":    f"zone size / ATR > {_AP_OVERSIZED_ZONE_ATR}",
+            "stale_zone":        f"touch > {_AP_STALE_ZONE_CANDLES} candles after formation",
+            "late_touch":        f"touch number >= {_AP_LATE_TOUCH_NUMBER}",
+            "slow_bleed":        f"loss taking >= {_AP_SLOW_BLEED_CANDLES} candles",
+            "sessions":          "UTC: Asia 0-8, London 8-13, NewYork 13-21, Other 21-24",
+            "note": ("BAD_SESSION is not a hard-coded reason — session lift emerges "
+                     "from the ranking (SESSION_* features) instead of being assumed."),
+        },
+        "performance": {
+            "requested_cells":       len(symbols) * len(timeframes),
+            "completed_cells":       completed_cells,
+            "failed_cells":          len(failures),
+            "network_fetch_count":   network_fetch_count,
+            "htf_fetch_count":       htf_fetch_count,
+            "candles_fetched_once_per_cell":
+                network_fetch_count <= len(symbols) * len(timeframes),
+            "total_elapsed_ms":      round((time.monotonic() - t_start) * 1000),
+        },
+        "constants": {
+            "max_symbols":    _AP_MAX_SYMBOLS,
+            "max_timeframes": _AP_MAX_TIMEFRAMES,
+            "max_cells":      _AP_MAX_CELLS,
+            "phase":          "18",
+        },
+        "notice": ("Research only. Autopsy findings are hypotheses for "
+                   "walk-forward validation, not proven edges. Nothing here "
+                   "affects Scanner, Live Monitor, alerts or execution."),
+    }
+
+
+_AP_FORBIDDEN_REQUEST_KEYS = (
+    "trades", "outcomes", "metrics", "records", "reports_by_class",
+    "reason_ranking", "setup_profiles", "failure_modes", "win_rate",
+    "expectancy", "summaries",
+)
+
+
+@app.route("/api/backtest/ob-historical/autopsy", methods=["POST"])
+@login_required
+def api_backtest_ob_historical_autopsy():
+    err = _guest_tab_check("backtest")
+    if err is not None:
+        return err
+
+    payload = request.get_json(force=True, silent=True) or {}
+    if not isinstance(payload, dict):
+        return jsonify({"ok": False, "error": "request body must be a JSON object"}), 400
+
+    for banned in _AP_FORBIDDEN_REQUEST_KEYS:
+        if banned in payload:
+            return jsonify({
+                "ok": False,
+                "error": "client_supplied_trade_results_not_allowed",
+            }), 400
+
+    raw_syms = payload.get("symbols",
+                           ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT"])
+    if not isinstance(raw_syms, list):
+        raw_syms = [str(raw_syms)]
+    seen_syms: set = set()
+    symbols: List[str] = []
+    for s in raw_syms:
+        s = str(s or "").strip().upper()
+        if not s:
+            return jsonify({"ok": False, "error": "blank symbol not allowed"}), 400
+        if not s.endswith("USDT"):
+            s = s + "USDT"
+        if s in seen_syms:
+            return jsonify({"ok": False, "error": "duplicate symbols not allowed"}), 400
+        seen_syms.add(s)
+        symbols.append(s)
+    if not symbols:
+        return jsonify({"ok": False, "error": "at least one symbol required"}), 400
+    if len(symbols) > _AP_MAX_SYMBOLS:
+        return jsonify({"ok": False, "error": f"max {_AP_MAX_SYMBOLS} symbols"}), 400
+
+    raw_tfs = payload.get("timeframes", ["1h", "4h"])
+    if not isinstance(raw_tfs, list):
+        raw_tfs = [str(raw_tfs)]
+    seen_tfs: set = set()
+    timeframes: List[str] = []
+    for tf in raw_tfs:
+        tf = str(tf).strip()
+        if tf not in _BT_ALLOWED_TIMEFRAMES:
+            return jsonify({"ok": False,
+                            "error": f"timeframe '{tf}' not allowed. "
+                                     f"Allowed: {sorted(_BT_ALLOWED_TIMEFRAMES)}"}), 400
+        if tf in seen_tfs:
+            return jsonify({"ok": False, "error": "duplicate timeframes not allowed"}), 400
+        seen_tfs.add(tf)
+        timeframes.append(tf)
+    if not timeframes:
+        return jsonify({"ok": False, "error": "at least one timeframe required"}), 400
+    if len(timeframes) > _AP_MAX_TIMEFRAMES:
+        return jsonify({"ok": False, "error": f"max {_AP_MAX_TIMEFRAMES} timeframes"}), 400
+    if len(symbols) * len(timeframes) > _AP_MAX_CELLS:
+        return jsonify({"ok": False,
+                        "error": f"max {_AP_MAX_CELLS} symbol/timeframe cells"}), 400
+
+    try:
+        candle_count = int(payload.get("candle_count", 1000))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "candle_count must be integer"}), 400
+    candle_count = max(500, min(4000, candle_count))
+
+    rr_raw = payload.get("rr", 2)
+    try:
+        rr = int(rr_raw)
+        if float(rr_raw) != rr:          # reject 2.9-style silent truncation
+            raise ValueError
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "rr must be 1, 2 or 3"}), 400
+    if rr not in (1, 2, 3):
+        return jsonify({"ok": False, "error": "rr must be 1, 2 or 3"}), 400
+
+    raw_classes = payload.get("ob_classes", ["internal", "swing"])
+    if not isinstance(raw_classes, list) or not raw_classes:
+        return jsonify({"ok": False, "error": "ob_classes must be a non-empty list"}), 400
+    ob_classes: List[str] = []
+    for c in raw_classes:
+        c = str(c).strip().lower()
+        if c not in ("internal", "swing"):
+            return jsonify({"ok": False,
+                            "error": "ob_classes entries must be 'internal' or 'swing'"}), 400
+        if c not in ob_classes:
+            ob_classes.append(c)
+
+    try:
+        result = _bt_run_autopsy({
+            "symbols":      symbols,
+            "timeframes":   timeframes,
+            "candle_count": candle_count,
+            "rr":           rr,
+            "ob_classes":   ob_classes,
+        })
+        return jsonify(result), 200
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)[:500]}), 500
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Backtest — Multi-Timeframe (MTF) Comparison Engine
 # ══════════════════════════════════════════════════════════════════════════════
 
