@@ -41,17 +41,32 @@ metadata with no threshold recommendation.
 - Alignment matrix: 15m OB→{1h,4h}, 1h OB→{4h,1d}, 4h OB→{1d} (no 5m here)
 - Features prioritized by Phase 18 autopsy findings; both OB classes
 
-## Phase 20 — Reaction Zones + Entry Modules
-- Pullback/OTE zones, FVG, breakers, pivot clusters
-- User's CAB + valid-pullback rules encoded from chart screenshots
-  (definitions pending — will be confirmed in plain language before coding)
-- 5m used ONLY as scalp entry refinement inside HTF-validated zones — never
-  for zone selection
+## Phase 20 — Bad-Trade Filter Lab  (REVISED 2026-07-18 by user decision)
+Goal: make the ORDER BLOCK module itself better by identifying and filtering
+the bad trades — before any new zone types or entry modules are added.
+- Run the Autopsy Agent (18) + Alignment Matrix (19) on real data to surface
+  the dominant loss patterns (reason ranking, failure modes, matrix edges)
+- Turn the strongest loss patterns into explicit, deterministic FILTER
+  CANDIDATES (e.g. "exclude against-1d-trend trades", "exclude touch 3+",
+  "exclude oversized zones") — each defined as a rule over existing features
+- Measure every candidate the honest way: baseline vs filtered comparison
+  (same-RR, trade retention, expectancy/PF/net-R delta, sample-size gates) —
+  reusing the Phase 16 comparison contract
+- Combine surviving candidates into a "refined OB module" filter set and
+  report combined-vs-baseline performance per OB class
+- Research only — filters are NOT activated anywhere in production
 
 ## Phase 21 — Walk-Forward Validation
-- High-win-ratio setups from 18C/19/20 validated through the Phase 15B
-  walk-forward machinery (locked candidates, 30 gates, look-ahead audit)
-  before anything is trusted or discussed for production.
+- Filter sets from Phase 20 validated through the Phase 15B walk-forward
+  machinery (locked candidates, gates, look-ahead audit) before anything is
+  trusted or discussed for production.
+
+## Deferred (by user decision, 2026-07-18)
+- Reaction zones (pullback/OTE, FVG standalone, breakers, pivot clusters)
+- CAB + valid-pullback entry modules (chart-screenshot definitions)
+- 5m scalp entry refinement
+These return to the roadmap only after the OB module is refined via
+Phases 20-21.
 
 ## Standing notes
 - Phases 13–16 numbers were produced on pivot-3 zones; after the Phase 17
