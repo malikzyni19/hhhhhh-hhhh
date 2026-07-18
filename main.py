@@ -23384,6 +23384,15 @@ def api_lm_items_post():
     setup_type  = (str(data.get("setup_type") or "")).strip()[:40] or None
     direction   = (str(data.get("direction")  or "")).strip()[:10]  or None
     timeframe   = (str(data.get("timeframe")  or "")).strip()[:10]  or None
+    # Manual add no longer asks for direction/timeframe (LM derives bias multi-TF).
+    # When the payload OMITS the key entirely, apply safe defaults so downstream
+    # logic keeps working: neutral has safe fallback branches, and a primary TF is
+    # required for the duplicate-detection key + smart-entry/candle fallback below.
+    # Scanner-tab adds always include both keys, so they are unaffected.
+    if direction is None and "direction" not in data:
+        direction = "neutral"
+    if timeframe is None and "timeframe" not in data:
+        timeframe = "4h"
 
     # Safe numeric parsing — never crashes on bad/empty/null frontend values
     zone_high     = _lm_float_or_none(data.get("zone_high"))
