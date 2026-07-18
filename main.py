@@ -41538,12 +41538,110 @@ _AP_HTF_MAP: Dict[str, Optional[str]] = {
 
 # Predictive features ranked in 18B (computed for BOTH winners and losers).
 # Phase 19 adds FVG_CONFLUENCE, IN_PREMIUM_HALF, HIGH_VOL_REGIME.
+# Phase 20 adds the four volume-context features.
 _AP_FEATURE_KEYS = (
     "AGAINST_HTF_TREND", "AGAINST_TF_TREND", "COUNTER_SWING",
     "LATE_TOUCH", "WEAK_DISPLACEMENT", "OVERSIZED_ZONE", "STALE_ZONE",
     "SESSION_ASIA", "SESSION_LONDON", "SESSION_NEWYORK", "SESSION_OTHER",
     "FVG_CONFLUENCE", "IN_PREMIUM_HALF", "HIGH_VOL_REGIME",
+    "HIGH_FORMATION_VOLUME", "LOW_FORMATION_VOLUME",
+    "HIGH_TOUCH_VOLUME", "LOW_TOUCH_VOLUME",
 )
+
+# ── Phase 20: Bad-Trade Filter Lab (labels only — trades are NEVER removed) ──
+_FL_CLEAN_WIN_MAX_MAE:      float = 0.5   # win with MAE <= this = clean win
+_FL_REVERSAL_LOSS_MIN_MFE:  float = 1.0   # loss that first reached this MFE = reversal loss
+_FL_PAUSE_MIN_MFE:          float = 1.0   # unresolved above this MFE = paused positive
+_FL_VOL_SMA_WINDOW:         int   = 20    # trailing volume average window
+_FL_VOL_MIN_SAMPLES:        int   = 5     # min trailing volume values for a ratio
+_FL_HIGH_VOL_RATIO:         float = 1.5   # volume >= 1.5x trailing avg = high
+_FL_LOW_VOL_RATIO:          float = 0.7   # volume <  0.7x trailing avg = low
+_FL_TRADE_LOG_CAP:          int   = 1000  # max trade-log rows in the response
+
+# Performance grades — the user's mental model made deterministic:
+#   clean_win       — worked very well (win, never went deeper than 0.5R against)
+#   stressed_win    — worked, but went >0.5R against first
+#   reversal_loss   — performed (reached >=1R in favor) then failed
+#   hard_loss       — failed without ever performing (<1R MFE)
+#   paused_positive — unfinished at data end but already >=1R in favor
+#   paused_flat     — unfinished and not performing
+#   ambiguous       — same-candle TP/SL, unclassifiable
+_FL_GRADES = ("clean_win", "stressed_win", "reversal_loss", "hard_loss",
+              "paused_positive", "paused_flat", "ambiguous")
+_FL_WORKING_GRADES = ("clean_win", "stressed_win")
+_FL_FAILING_GRADES = ("reversal_loss", "hard_loss")
+
+
+def _bt_fl_grade(outcome: str, mfe_r, mae_r) -> str:
+    """Deterministic performance grade for one trade (labels, never filters)."""
+    mfe = float(mfe_r) if mfe_r is not None else 0.0
+    mae = float(mae_r) if mae_r is not None else 0.0
+    if outcome == "win":
+        return "clean_win" if mae <= _FL_CLEAN_WIN_MAX_MAE else "stressed_win"
+    if outcome == "loss":
+        return "reversal_loss" if mfe >= _FL_REVERSAL_LOSS_MIN_MFE else "hard_loss"
+    if outcome == "ambiguous":
+        return "ambiguous"
+    return "paused_positive" if mfe >= _FL_PAUSE_MIN_MFE else "paused_flat"
+
+
+def _bt_fl_excursions_to_exit(event: Dict, candles: List[Dict],
+                              entry_bar: int, exit_bar: int) -> Tuple[Optional[float], Optional[float]]:
+    """(MFE_R, MAE_R) measured ONLY over [entry_bar, exit_bar] inclusive.
+
+    The Phase 16 simulation tracks excursions from the touch until the STOP
+    or the end of data — for a winning trade that exits at TP, its raw MAE
+    keeps accumulating after the trade is already closed. Grades must use
+    the excursion up to the actual exit, so wins are re-measured here.
+    """
+    try:
+        zone_high = float(event["zone_high"])
+        zone_low  = float(event["zone_low"])
+    except (KeyError, TypeError, ValueError):
+        return None, None
+    risk = zone_high - zone_low
+    if risk <= 0 or entry_bar is None or exit_bar is None:
+        return None, None
+    entry = zone_high
+    end = min(int(exit_bar), len(candles) - 1)
+    if end < entry_bar:
+        return None, None
+    lo = None
+    hi = None
+    for j in range(int(entry_bar), end + 1):
+        l = float(candles[j]["low"])
+        h = float(candles[j]["high"])
+        lo = l if lo is None else min(lo, l)
+        hi = h if hi is None else max(hi, h)
+    if event.get("type") == "bullish":
+        mfe = max(0.0, (hi - entry) / risk) if hi is not None else 0.0
+        mae = max(0.0, (entry - lo) / risk) if lo is not None else 0.0
+    else:
+        mfe = max(0.0, (entry - lo) / risk) if lo is not None else 0.0
+        mae = max(0.0, (hi - entry) / risk) if hi is not None else 0.0
+    return round(mfe, 4), round(mae, 4)
+
+
+def _bt_fl_volume_ratio(candles: List[Dict], bar: Optional[int],
+                        window: int = _FL_VOL_SMA_WINDOW) -> Optional[float]:
+    """Volume at `bar` (numerator) divided by the trailing simple average of
+    the previous `window` bars' volumes (denominator).
+
+    All inputs are known at the bar's close — no look-ahead. None when the
+    bar is out of range, volume data is missing/zero, or fewer than
+    _FL_VOL_MIN_SAMPLES trailing values exist.
+    """
+    if bar is None or bar <= 0 or bar >= len(candles):
+        return None
+    trailing = [float(c.get("volume") or 0.0) for c in candles[max(0, bar - window):bar]]
+    trailing = [v for v in trailing if v > 0]
+    if len(trailing) < _FL_VOL_MIN_SAMPLES:
+        return None
+    avg = sum(trailing) / len(trailing)
+    cur = float(candles[bar].get("volume") or 0.0)
+    if avg <= 0 or cur <= 0:
+        return None
+    return round(cur / avg, 3)
 
 # ── Phase 19: Alignment matrix + zone feature enrichment ─────────────────────
 # Which trend timeframes each OB timeframe is tested against (frozen roadmap:
@@ -41868,6 +41966,22 @@ def _bt_ap_build_trade_records(
             candles_since = ep.get("candles_since_formation", touch_idx - fb)
             touch_num = ep["touch_number"]
 
+            # ── Phase 20: volume context + performance grade (labels only) ───
+            formation_vol_ratio = _bt_fl_volume_ratio(candles, fb)
+            touch_vol_ratio     = _bt_fl_volume_ratio(candles, touch_idx)
+            # Wins exit at TP — the sim's raw excursions keep running until
+            # the stop or data end, so re-measure them up to the actual exit
+            # bar; otherwise a post-exit wick would flip a clean win to
+            # "stressed_win" (grades must describe the trade, not the after).
+            mfe_r = sim.get("max_r_reached")
+            mae_r = sim.get("max_adverse_r")
+            if outcome == "win" and rb.get("exit_bar") is not None:
+                _bmfe, _bmae = _bt_fl_excursions_to_exit(
+                    ev, candles, touch_idx, rb.get("exit_bar"))
+                if _bmfe is not None:
+                    mfe_r, mae_r = _bmfe, _bmae
+            grade = _bt_fl_grade(outcome, mfe_r, mae_r)
+
             # Predictive features — None = unknown, excluded from ranking
             # denominators for that feature.
             features: Dict[str, Optional[bool]] = {
@@ -41892,6 +42006,14 @@ def _bt_ap_build_trade_records(
                                       else range_pos > 50.0),
                 "HIGH_VOL_REGIME":   (None if atr_pct is None
                                       else atr_pct > _AL_HIGH_VOL_PERCENTILE),
+                "HIGH_FORMATION_VOLUME": (None if formation_vol_ratio is None
+                                          else formation_vol_ratio >= _FL_HIGH_VOL_RATIO),
+                "LOW_FORMATION_VOLUME":  (None if formation_vol_ratio is None
+                                          else formation_vol_ratio < _FL_LOW_VOL_RATIO),
+                "HIGH_TOUCH_VOLUME":     (None if touch_vol_ratio is None
+                                          else touch_vol_ratio >= _FL_HIGH_VOL_RATIO),
+                "LOW_TOUCH_VOLUME":      (None if touch_vol_ratio is None
+                                          else touch_vol_ratio < _FL_LOW_VOL_RATIO),
             }
 
             records.append({
@@ -41916,8 +42038,8 @@ def _bt_ap_build_trade_records(
                 "candles_since_formation": candles_since,
                 "zone_size_atr":   zone_atr,
                 "displacement_atr": disp_atr,
-                "mfe_r":           sim.get("max_r_reached"),
-                "mae_r":           sim.get("max_adverse_r"),
+                "mfe_r":           mfe_r,   # exit-bounded for wins (grade-consistent)
+                "mae_r":           mae_r,
                 "tf_trend":        tf_trend,
                 "swing_trend":     swing_trend,
                 "htf_trend":       htf_trend,
@@ -41927,6 +42049,9 @@ def _bt_ap_build_trade_records(
                 "alignments":      alignments,
                 "range_position_pct": range_pos,
                 "atr_percentile":  atr_pct,
+                "formation_volume_ratio": formation_vol_ratio,
+                "touch_volume_ratio":     touch_vol_ratio,
+                "performance_grade":      grade,
                 "features":        features,
                 "failure_mode":    _bt_ap_failure_mode(sim, rr_key),
             })
@@ -42098,13 +42223,320 @@ def _bt_ap_build_profiles(records: List[Dict], rr_key: str) -> List[Dict]:
     return profiles
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Phase 20 — Bad-Trade Filter Lab analysis (labels only; trades never removed)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _bt_fl_aggregate(rows: List[Dict]) -> Dict:
+    """Authoritative aggregate for a labeled group (contract: trades = W+L)."""
+    wins   = sum(1 for r in rows if r["outcome"] == "win")
+    losses = sum(1 for r in rows if r["outcome"] == "loss")
+    amb    = sum(1 for r in rows if r["outcome"] == "ambiguous")
+    unres  = sum(1 for r in rows if r["outcome"] == "unresolved")
+    trades = wins + losses
+    gp = sum(r["realized_r"] for r in rows
+             if r["outcome"] == "win" and r.get("realized_r") is not None)
+    gl = abs(sum(r["realized_r"] for r in rows
+                 if r["outcome"] == "loss" and r.get("realized_r") is not None))
+    net = round(gp - gl, 4)
+    pf, pf_inf = _stab_aggregate_pf(gp, gl)
+    return {
+        "opportunities":      len(rows),
+        "trades":             trades,
+        "wins":               wins,
+        "losses":             losses,
+        "ambiguous":          amb,
+        "unresolved":         unres,
+        "win_rate_pct":       round(wins / trades * 100, 2) if trades else None,
+        "expectancy_r":       round(net / trades, 6) if trades else None,
+        "profit_factor_r":    pf,
+        "profit_factor_infinite": pf_inf,
+        "net_r":              net,
+        "sample_size_status": _te_sample_size_status(trades),
+    }
+
+
+def _bt_fl_grade_distribution(records: List[Dict]) -> Dict:
+    """How the OB performed across the whole log: works / pauses / fails."""
+    counts = {g: 0 for g in _FL_GRADES}
+    for r in records:
+        g = r.get("performance_grade")
+        if g in counts:
+            counts[g] += 1
+    total = len(records)
+    working = sum(counts[g] for g in _FL_WORKING_GRADES)
+    failing = sum(counts[g] for g in _FL_FAILING_GRADES)
+    paused  = counts["paused_positive"] + counts["paused_flat"]
+    return {
+        "total":        total,
+        "counts":       counts,
+        "pcts":         {g: (round(c / total * 100, 1) if total else None)
+                         for g, c in counts.items()},
+        "working":      working,
+        "failing":      failing,
+        "paused":       paused,
+        "working_pct":  round(working / total * 100, 1) if total else None,
+        "failing_pct":  round(failing / total * 100, 1) if total else None,
+    }
+
+
+def _bt_fl_pattern_book(records: List[Dict]) -> List[Dict]:
+    """When the OB works vs fails, per pattern.
+
+    For every feature: grade mix (working / failing / paused pcts) when the
+    feature is PRESENT vs ABSENT. Unknown (None) trades are excluded from
+    that feature's comparison but never from the log itself.
+    """
+    out: List[Dict] = []
+    for feat in _AP_FEATURE_KEYS:
+        present = [r for r in records if r["features"].get(feat) is True]
+        absent  = [r for r in records if r["features"].get(feat) is False]
+
+        def _mix(rows: List[Dict]) -> Dict:
+            n = len(rows)
+            working = sum(1 for r in rows
+                          if r.get("performance_grade") in _FL_WORKING_GRADES)
+            failing = sum(1 for r in rows
+                          if r.get("performance_grade") in _FL_FAILING_GRADES)
+            hard    = sum(1 for r in rows
+                          if r.get("performance_grade") == "hard_loss")
+            return {
+                "count":        n,
+                "working_pct":  round(working / n * 100, 1) if n else None,
+                "failing_pct":  round(failing / n * 100, 1) if n else None,
+                "hard_loss_pct": round(hard / n * 100, 1) if n else None,
+            }
+
+        p_mix = _mix(present)
+        a_mix = _mix(absent)
+        delta = (round(p_mix["failing_pct"] - a_mix["failing_pct"], 1)
+                 if p_mix["failing_pct"] is not None
+                 and a_mix["failing_pct"] is not None else None)
+        out.append({
+            "feature":            feat,
+            "present":            p_mix,
+            "absent":             a_mix,
+            "failing_delta_pct":  delta,   # >0 = feature makes OBs fail more
+            "unknown_count":      len(records) - len(present) - len(absent),
+            "sample_size_status": _te_sample_size_status(len(present) + len(absent)),
+        })
+    out.sort(key=lambda r: (r["failing_delta_pct"] is None,
+                            -(r["failing_delta_pct"] or 0.0)))
+    return out
+
+
+def _bt_fl_volume_by_grade(records: List[Dict]) -> List[Dict]:
+    """Volume context per performance grade — 'what was the volume when the
+    OB failed / paused / behaved very well'."""
+    out: List[Dict] = []
+    for grade in _FL_GRADES:
+        rows = [r for r in records if r.get("performance_grade") == grade]
+        f_vols = [r["formation_volume_ratio"] for r in rows
+                  if r.get("formation_volume_ratio") is not None]
+        t_vols = [r["touch_volume_ratio"] for r in rows
+                  if r.get("touch_volume_ratio") is not None]
+        mfes = [r["mfe_r"] for r in rows if r.get("mfe_r") is not None]
+        maes = [r["mae_r"] for r in rows if r.get("mae_r") is not None]
+        out.append({
+            "grade":                      grade,
+            "count":                      len(rows),
+            "avg_formation_volume_ratio": (round(sum(f_vols) / len(f_vols), 3)
+                                           if f_vols else None),
+            "avg_touch_volume_ratio":     (round(sum(t_vols) / len(t_vols), 3)
+                                           if t_vols else None),
+            "avg_mfe_r":                  (round(sum(mfes) / len(mfes), 3)
+                                           if mfes else None),
+            "avg_mae_r":                  (round(sum(maes) / len(maes), 3)
+                                           if maes else None),
+        })
+    return out
+
+
+# Candidate pass-rules — each is a LABEL over existing features. A trade
+# failing a rule stays in the log with pass=False; nothing is ever removed.
+# None = rule not evaluable for that trade (unknown inputs).
+def _bt_fl_rule_predicates() -> List[Dict]:
+    def _feat(rec, key):
+        return rec["features"].get(key)
+
+    def _not_feat(rec, key):
+        v = _feat(rec, key)
+        return None if v is None else (not v)
+
+    return [
+        {"id": "with_htf_trend",
+         "label": "HTF trend not against",
+         "fn": lambda r: (None if r.get("htf_alignment") == "unknown"
+                          else r.get("htf_alignment") != "against")},
+        {"id": "with_tf_trend",
+         "label": "Own-TF trend not against",
+         "fn": lambda r: (None if r.get("tf_alignment") == "unknown"
+                          else r.get("tf_alignment") != "against")},
+        {"id": "not_counter_swing",
+         "label": "Not against swing structure",
+         "fn": lambda r: _not_feat(r, "COUNTER_SWING")},
+        {"id": "first_touch_only",
+         "label": "First touch only",
+         "fn": lambda r: r.get("touch_number") == 1},
+        {"id": "early_touch",
+         "label": "Touch 1 or 2 only",
+         "fn": lambda r: (r.get("touch_number") or 99) <= 2},
+        {"id": "fresh_zone",
+         "label": "Zone not stale",
+         "fn": lambda r: _not_feat(r, "STALE_ZONE")},
+        {"id": "not_oversized",
+         "label": "Zone not oversized",
+         "fn": lambda r: _not_feat(r, "OVERSIZED_ZONE")},
+        {"id": "strong_displacement",
+         "label": "Displacement not weak",
+         "fn": lambda r: _not_feat(r, "WEAK_DISPLACEMENT")},
+        {"id": "formation_volume_above_avg",
+         "label": "Formation volume >= trailing average",
+         "fn": lambda r: (None if r.get("formation_volume_ratio") is None
+                          else r["formation_volume_ratio"] >= 1.0)},
+        {"id": "fvg_confluence",
+         "label": "FVG confluence present",
+         "fn": lambda r: _feat(r, "FVG_CONFLUENCE")},
+        {"id": "combo_htf_first_touch",
+         "label": "HTF-aligned + first touch",
+         "fn": lambda r: (None if r.get("htf_alignment") == "unknown"
+                          else (r.get("htf_alignment") != "against"
+                                and r.get("touch_number") == 1))},
+        {"id": "combo_quality",
+         "label": "HTF-aligned + touch<=2 + strong displacement + fresh zone",
+         "fn": lambda r: (
+             None if (r.get("htf_alignment") == "unknown"
+                      or _feat(r, "WEAK_DISPLACEMENT") is None)
+             else (r.get("htf_alignment") != "against"
+                   and (r.get("touch_number") or 99) <= 2
+                   and not _feat(r, "WEAK_DISPLACEMENT")
+                   and not _feat(r, "STALE_ZONE")))},
+    ]
+
+
+def _bt_fl_evaluate_rules(records: List[Dict]) -> Dict:
+    """Evaluate every candidate rule as a label overlay.
+
+    Returns per-rule pass-group vs fail-group vs baseline aggregates, and
+    attaches rule_passes to every record IN PLACE — no record is ever
+    dropped. Retention shows how much of the baseline a rule would keep.
+    """
+    rules = _bt_fl_rule_predicates()
+    baseline = _bt_fl_aggregate(records)
+
+    for r in records:
+        r["rule_passes"] = {}
+    rule_reports: List[Dict] = []
+
+    for rule in rules:
+        passed:  List[Dict] = []
+        failed:  List[Dict] = []
+        unknown = 0
+        for r in records:
+            try:
+                verdict = rule["fn"](r)
+            except Exception:
+                verdict = None
+            r["rule_passes"][rule["id"]] = verdict
+            if verdict is True:
+                passed.append(r)
+            elif verdict is False:
+                failed.append(r)
+            else:
+                unknown += 1
+
+        p_agg = _bt_fl_aggregate(passed)
+        f_agg = _bt_fl_aggregate(failed)
+        b_tr  = baseline["trades"]
+        exp_delta = (round(p_agg["expectancy_r"] - baseline["expectancy_r"], 6)
+                     if p_agg["expectancy_r"] is not None
+                     and baseline["expectancy_r"] is not None else None)
+        wr_delta  = (round(p_agg["win_rate_pct"] - baseline["win_rate_pct"], 2)
+                     if p_agg["win_rate_pct"] is not None
+                     and baseline["win_rate_pct"] is not None else None)
+        rule_reports.append({
+            "rule_id":            rule["id"],
+            "label":              rule["label"],
+            "pass":               p_agg,
+            "fail":               f_agg,
+            "unknown_count":      unknown,
+            "trade_retention_pct": (round(p_agg["trades"] / b_tr * 100, 2)
+                                    if b_tr else None),
+            "expectancy_delta_vs_baseline": exp_delta,
+            "win_rate_delta_vs_baseline":   wr_delta,
+        })
+
+    rule_reports.sort(key=lambda r: (r["expectancy_delta_vs_baseline"] is None,
+                                     -(r["expectancy_delta_vs_baseline"] or 0.0)))
+    return {
+        "baseline":     baseline,
+        "rules":        rule_reports,
+        "note": ("Rules are labels, not deletions — every trade stays in the "
+                 "log with its pass/fail/unknown verdict per rule. High "
+                 "expectancy delta with low retention or a small sample is "
+                 "NOT evidence; validate survivors via walk-forward."),
+    }
+
+
+def _bt_fl_trade_log(records: List[Dict]) -> Dict:
+    """Compact labeled trade log — the full population, never filtered.
+
+    Capped at _FL_TRADE_LOG_CAP rows (chronological by touch_time) purely to
+    bound the response size; the cap is reported so truncation is explicit.
+    """
+    ordered = sorted(records, key=lambda r: (r.get("touch_time") or 0,
+                                             r.get("touch_trade_id") or ""))
+    truncated = len(ordered) > _FL_TRADE_LOG_CAP
+    rows = []
+    for r in ordered[:_FL_TRADE_LOG_CAP]:
+        pattern_tags = [k for k, v in (r.get("features") or {}).items() if v is True]
+        rows.append({
+            "touch_trade_id":   r.get("touch_trade_id"),
+            "symbol":           r.get("symbol"),
+            "timeframe":        r.get("timeframe"),
+            "direction":        r.get("direction"),
+            "touch_number":     r.get("touch_number"),
+            "touch_time":       r.get("touch_time"),
+            "outcome":          r.get("outcome"),
+            "performance_grade": r.get("performance_grade"),
+            "realized_r":       r.get("realized_r"),
+            "mfe_r":            r.get("mfe_r"),
+            "mae_r":            r.get("mae_r"),
+            "stop_loss_r":      r.get("stop_loss_r"),
+            "formation_volume_ratio": r.get("formation_volume_ratio"),
+            "touch_volume_ratio":     r.get("touch_volume_ratio"),
+            "htf_alignment":    r.get("htf_alignment"),
+            "tf_alignment":     r.get("tf_alignment"),
+            "swing_alignment":  r.get("swing_alignment"),
+            "session":          r.get("session"),
+            "failure_mode":     r.get("failure_mode"),
+            "pattern_tags":     pattern_tags,
+            "rule_passes":      r.get("rule_passes") or {},
+        })
+    return {
+        "rows":       rows,
+        "total":      len(ordered),
+        "returned":   len(rows),
+        "truncated":  truncated,
+        "cap":        _FL_TRADE_LOG_CAP,
+        "note":       "Labels only — no trade is ever removed from this log.",
+    }
+
+
 def _bt_ap_class_report(records: List[Dict], rr_key: str) -> Dict:
-    """Full 18A-18C report for one OB class."""
+    """Full 18A-18C + Phase 20 report for one OB class."""
     wins   = sum(1 for r in records if r["outcome"] == "win")
     losses = sum(1 for r in records if r["outcome"] == "loss")
     amb    = sum(1 for r in records if r["outcome"] == "ambiguous")
     unres  = sum(1 for r in records if r["outcome"] == "unresolved")
     trades = wins + losses
+
+    # Phase 20 — labels only, trades never removed. rule_evaluation MUST run
+    # before the trade log is built: it attaches rule_passes to every record
+    # in place, and the log rows carry those verdicts.
+    rule_evaluation = _bt_fl_evaluate_rules(records)
+    trade_log       = _bt_fl_trade_log(records)
+
     return {
         "rr":                 rr_key,
         "records_total":      len(records),
@@ -42119,6 +42551,11 @@ def _bt_ap_class_report(records: List[Dict], rr_key: str) -> Dict:
         "reason_ranking":     _bt_ap_rank_reasons(records),
         "setup_profiles":     _bt_ap_build_profiles(records, rr_key),
         "alignment_matrix":   _bt_al_build_matrix(records),
+        "rule_evaluation":    rule_evaluation,
+        "grade_distribution": _bt_fl_grade_distribution(records),
+        "pattern_book":       _bt_fl_pattern_book(records),
+        "volume_by_grade":    _bt_fl_volume_by_grade(records),
+        "trade_log":          trade_log,
     }
 
 
@@ -42256,6 +42693,17 @@ def _bt_run_autopsy(req: Dict) -> Dict:
             "alignment_matrix":  ("per (OB timeframe, trend timeframe) pair: outcomes split "
                                   "by with/against/neutral/unknown HH/HL alignment at the "
                                   "last CLOSED trend-TF bar before the touch"),
+            "performance_grades": ("clean_win: win, MAE<=0.5R | stressed_win: win, MAE>0.5R | "
+                                   "reversal_loss: loss after reaching >=1R MFE | hard_loss: "
+                                   "loss with <1R MFE | paused_positive: unresolved, >=1R MFE | "
+                                   "paused_flat: unresolved, <1R MFE | ambiguous"),
+            "volume_ratio":      (f"bar volume / trailing {_FL_VOL_SMA_WINDOW}-bar average; "
+                                  f"high >= {_FL_HIGH_VOL_RATIO}x, low < {_FL_LOW_VOL_RATIO}x; "
+                                  "no look-ahead. Touch-bar volume is the bar's FINAL volume "
+                                  "(known at bar close, consistent with close-based stops)"),
+            "rules":             ("candidate pass-rules are LABELS over existing features — "
+                                  "every trade stays in the log with its per-rule verdict; "
+                                  "nothing is removed"),
         },
         "performance": {
             "requested_cells":       len(symbols) * len(timeframes),
@@ -42271,7 +42719,7 @@ def _bt_run_autopsy(req: Dict) -> Dict:
             "max_symbols":    _AP_MAX_SYMBOLS,
             "max_timeframes": _AP_MAX_TIMEFRAMES,
             "max_cells":      _AP_MAX_CELLS,
-            "phase":          "19",
+            "phase":          "20",
         },
         "notice": ("Research only. Autopsy findings are hypotheses for "
                    "walk-forward validation, not proven edges. Nothing here "
