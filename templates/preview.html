@@ -13131,7 +13131,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     stabilityData:null,stabilityRunning:false,
     stabilityRrView:"all",stabCharts:{},
     wfData:null,wfRunning:false,wfFoldView:1,wfCharts:{},
-    teData:null,teRunning:false,teCharts:{},tePage:1,teShowFilters:false};
+    teData:null,teRunning:false,teCharts:{},tePage:1,teShowFilters:false,
+    obClass:"internal"};
 
   function _bindBtSidebarEvents(aside){
     [].forEach.call(aside.querySelectorAll("[data-btpage]"),function(item){
@@ -13153,10 +13154,11 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     }
     if(page==="compare"){ _btRenderComparePage(); return; }
     if(_btState.data){
-      if(page==="replay")   _btRenderReplayPage(_btState.data);
-      else if(page==="outcomes")  _btRenderOutcomesPage(_btState.data);
-      else if(page==="analytics") _btRenderAnalyticsPage(_btState.data);
-      else if(page==="tradelog")  { _btState.tblPage=0; _btRenderTradeLog(_btState.data); }
+      var _v=_btViewData(_btState.data);
+      if(page==="replay")   _btRenderReplayPage(_v);
+      else if(page==="outcomes")  _btRenderOutcomesPage(_v);
+      else if(page==="analytics") _btRenderAnalyticsPage(_v);
+      else if(page==="tradelog")  { _btState.tblPage=0; _btRenderTradeLog(_v); }
     }
   }
 
@@ -13362,16 +13364,65 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     });
   }
 
+  /* Phase 17: build the view for the selected OB class.
+     Internal (default) = raw response; Swing = response with swing_results
+     substituted in. Internal and swing metrics are never pooled. */
+  function _btViewData(data){
+    if(!data) return data;
+    if(_btState.obClass==="swing"){
+      var sw=data.swing_results||{};
+      if(sw&&sw.enabled){
+        return Object.assign({},data,{
+          replay_summary:sw.replay_summary||{},
+          outcome_summary:sw.outcome_summary||{},
+          events:sw.events||[],
+          events_total:sw.events_total||0,
+          events_truncated:!!sw.events_truncated,
+          parity:{enabled:false,note:"Parity applies to the internal class only"},
+          ob_class:"swing",pivot_len:sw.pivot_len
+        });
+      }
+    }
+    return data;
+  }
+
+  function _btClassToggleHtml(data){
+    var sw=(data&&data.swing_results)||{};
+    var swingOk=!!sw.enabled;
+    var cls=_btState.obClass||"internal";
+    var html='<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px">';
+    html+='<span style="font-size:10px;color:var(--text-3);font-weight:600;text-transform:uppercase;letter-spacing:.4px">OB Class:</span>';
+    html+='<button class="bt-rr-btn'+(cls==="internal"?" active":"")+'" data-obclass="internal" style="font-size:10px">Internal (iLen 5)</button>';
+    html+='<button class="bt-rr-btn'+(cls==="swing"?" active":"")+'" data-obclass="swing" style="font-size:10px" '+(swingOk?"":"disabled title=\"Run a backtest to compute swing results\"")+'>Swing (sLen 30)</button>';
+    html+='<span style="font-size:9px;color:var(--text-3)">separate classes — never pooled</span>';
+    html+='</div>';
+    return html;
+  }
+
+  function _btBindClassToggle(){
+    [].forEach.call(document.querySelectorAll("[data-obclass]"),function(b){
+      b.addEventListener("click",function(){
+        if(b.disabled) return;
+        var v=b.getAttribute("data-obclass");
+        if(_btState.obClass===v) return;
+        _btState.obClass=v;
+        if(_btState.data) _btApplyData(_btState.data);
+      });
+    });
+  }
+
   function _btApplyData(data){
     var prm=data.params||{};
+    var view=_btViewData(data);
     var badge=document.getElementById("btSymBadge");
-    if(badge) badge.textContent=(prm.symbol||"—")+" • "+(prm.timeframe||"—").toUpperCase();
-    _btRenderOverview(data);
+    if(badge) badge.textContent=(prm.symbol||"—")+" • "+(prm.timeframe||"—").toUpperCase()+
+      (_btState.obClass==="swing"?" • SWING":"");
+    _btRenderOverview(view);
     var p=_btState.page;
-    if(p==="replay")   _btRenderReplayPage(data);
-    else if(p==="outcomes")  _btRenderOutcomesPage(data);
-    else if(p==="analytics") _btRenderAnalyticsPage(data);
-    else if(p==="tradelog")  { _btState.tblPage=0; _btRenderTradeLog(data); }
+    if(p==="replay")   _btRenderReplayPage(view);
+    else if(p==="outcomes")  _btRenderOutcomesPage(view);
+    else if(p==="analytics") _btRenderAnalyticsPage(view);
+    else if(p==="tradelog")  { _btState.tblPage=0; _btRenderTradeLog(view); }
     else if(p==="compare")   _btRenderComparePage();
   }
 
@@ -13397,6 +13448,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     _btState.tblPage=0;
 
     oc.innerHTML=
+      _btClassToggleHtml(_btState.data)+
       _btRenderFilterBar(f)+
       '<div id="btOvKpis"><div class="bt-kpi-row">'+
         _btKpiCard("OB Events",active?fe.length:rs.ob_events_detected||allEvts.length,"",active?"filtered events":"from "+cs.returned+" candles")+
@@ -13418,6 +13470,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 
     _btUpdateFilterBarStatus(f,elig.length,allElig.length);
     _btBindFilterBarEvents();
+    _btBindClassToggle();
     _btBindPagerEvents(elig.length,50,"btEvtTbody",elig);
     setTimeout(function(){ _btBuildCharts(data,fe,os); },0);
   }
@@ -14072,7 +14125,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   function _btRepaintFromFilters(){
     if(!_btState.data) return;
     if(!_btState.filters) _btState.filters=_btDefaultFilters();
-    var f=_btState.filters, d=_btState.data;
+    var f=_btState.filters, d=_btViewData(_btState.data);
     var allEvts=d.events||[];
     var fe=_btGetFilteredEvents(allEvts,f);
     var os=_btBuildSummaryFromEvents(fe,d);

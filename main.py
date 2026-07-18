@@ -34675,7 +34675,8 @@ _BT_ALLOWED_TIMEFRAMES = {"5m", "15m", "30m", "1h", "4h", "1d"}
 _BT_ALLOWED_EXCHANGES  = {"binance"}
 _BT_ALLOWED_MARKETS    = {"perpetual"}
 _BT_MAX_EVENTS         = 500  # response cap; replay_summary always uses all
-_BT_PIVOT_LEN          = 3    # internal pivot window — matches scanner default
+_BT_PIVOT_LEN          = 5    # internal pivot window — matches production scanner iLen=5 (Phase 17 parity fix; was 3)
+_BT_SWING_PIVOT_LEN    = 30   # swing pivot window — matches production sLen=30 (Phase 17 new research class)
 
 
 def _bt_rr_key(r) -> str:
@@ -34744,6 +34745,13 @@ def _bt_parse_ob_historical_payload(payload: dict):
     raw_parity = payload.get("include_parity", False)
     include_parity = bool(raw_parity) if isinstance(raw_parity, bool) else str(raw_parity).lower() in ("true", "1", "yes")
 
+    # Phase 17: ob_class_mode — "both" (default) runs internal AND swing
+    # classes over the full candle range in one request; "internal" skips the
+    # swing pass. Results are always reported separately, never pooled.
+    ob_class_mode = str(payload.get("ob_class_mode", "both")).strip().lower()
+    if ob_class_mode not in ("both", "internal"):
+        return None, "ob_class_mode must be 'both' or 'internal'"
+
     params = {
         "symbol":          symbol,
         "timeframe":       timeframe,
@@ -34754,6 +34762,7 @@ def _bt_parse_ob_historical_payload(payload: dict):
         "entry_rule":      entry_rule,
         "stop_rule":       stop_rule,
         "include_parity":  include_parity,
+        "ob_class_mode":   ob_class_mode,
     }
     return params, None
 
@@ -34921,8 +34930,15 @@ def _bt_extract_ob_replay_events(candles: List[Dict], params: Dict) -> List[Dict
     O(n^3)) or on the full array (those functions delete mitigated OBs from
     their running array, so mitigated OBs would be absent from the result).
     """
+    # ── Phase 17: OB class → pivot lookback ──────────────────────────────────
+    # "internal" (default) uses _BT_PIVOT_LEN (=5, production iLen parity).
+    # "swing" uses _BT_SWING_PIVOT_LEN (=30, production sLen) — a separate
+    # research class; internal and swing results are never pooled.
+    ob_class  = str(params.get("ob_class", "internal"))
+    pivot_len = _BT_SWING_PIVOT_LEN if ob_class == "swing" else _BT_PIVOT_LEN
+
     n = len(candles)
-    if n < _BT_PIVOT_LEN * 2 + 4:
+    if n < pivot_len * 2 + 4:
         return []
 
     times = [c.get("open_time") for c in candles]
@@ -34931,7 +34947,7 @@ def _bt_extract_ob_replay_events(candles: List[Dict], params: Dict) -> List[Dict
     c_arr = [float(c["close"])  for c in candles]
 
     # ── Pivot detection — reuse existing function once on full array (O(n)) ──
-    ph, pl = detect_pivots(h_arr, l_arr, _BT_PIVOT_LEN, _BT_PIVOT_LEN)
+    ph, pl = detect_pivots(h_arr, l_arr, pivot_len, pivot_len)
 
     events    = []
     seen_keys = set()
@@ -34940,10 +34956,10 @@ def _bt_extract_ob_replay_events(candles: List[Dict], params: Dict) -> List[Dict
     last_ph_bar = None
     last_pl_bar = None
 
-    for i in range(_BT_PIVOT_LEN, n):
-        # A pivot at bar j is confirmed when i reaches j + _BT_PIVOT_LEN
-        # (needs _BT_PIVOT_LEN bars on the right side to be settled).
-        confirmed = i - _BT_PIVOT_LEN
+    for i in range(pivot_len, n):
+        # A pivot at bar j is confirmed when i reaches j + pivot_len
+        # (needs pivot_len bars on the right side to be settled).
+        confirmed = i - pivot_len
         if ph[confirmed]:
             last_ph_bar = confirmed
         if pl[confirmed]:
@@ -34999,6 +35015,12 @@ def _bt_extract_ob_replay_events(candles: List[Dict], params: Dict) -> List[Dict
 
             last_pl_bar = None   # require a fresh pivot low for the next bear BOS
 
+    # Phase 17: tag every event with its OB class and pivot lookback so
+    # internal and swing events can never be silently pooled downstream.
+    for _ev in events:
+        _ev["ob_class"]  = ob_class
+        _ev["pivot_len"] = pivot_len
+
     return events
 
 
@@ -35048,9 +35070,13 @@ def _bt_run_parity_check(candles: List[Dict], replay_events: List[Dict], params:
         v_arr  = [float(c["volume"]) for c in candles]
 
         # detect_obs_all returns list directly (not tuple)
+        # Phase 17: parity is checked against the REAL production parameters
+        # (iLen=5, sLen=30) — previously this used i_len=3/s_len=3, which
+        # validated the replay against a detector configured to match the
+        # replay rather than against what the scanner actually runs.
         production_obs = detect_obs_all(
             o_arr, h_arr, l_arr, c_arr, v_arr,
-            i_len=3, s_len=3, max_ob=200,
+            i_len=_BT_PIVOT_LEN, s_len=_BT_SWING_PIVOT_LEN, max_ob=200,
         )
 
         def _prices_match(a: float, b: float) -> bool:
@@ -37757,6 +37783,37 @@ def _bt_run_ob_historical_backtest(params: dict) -> dict:
         else {"enabled": False}
     )
 
+    # ── Phase 17: swing OB class pass (same candles, sLen=30 pivots) ─────────
+    # Runs the identical canonical pipeline with the swing pivot lookback and
+    # reports the results SEPARATELY under "swing_results" — internal and
+    # swing metrics are never pooled. TV OB% analysis is intentionally not
+    # computed for the swing class (TV OB% research is parked per roadmap).
+    swing_results: Dict = {"enabled": False}
+    if params.get("ob_class_mode", "both") == "both":
+        try:
+            swing_params = dict(params)
+            swing_params["ob_class"] = "swing"
+            swing_events  = _bt_extract_ob_replay_events(candles, swing_params)
+            swing_replay  = _bt_replay_summary(candles, swing_events)
+            swing_outcome = _bt_apply_outcomes_to_events(swing_events, candles, swing_params)
+            _sw_trunc     = len(swing_events) > _BT_MAX_EVENTS
+            _sw_out       = swing_events[:_BT_MAX_EVENTS] if _sw_trunc else swing_events
+            swing_results = {
+                "enabled":          True,
+                "ob_class":         "swing",
+                "pivot_len":        _BT_SWING_PIVOT_LEN,
+                "replay_summary":   swing_replay,
+                "outcome_summary":  swing_outcome,
+                "events":           _sw_out,
+                "events_total":     len(swing_events),
+                "events_returned":  len(_sw_out),
+                "events_truncated": _sw_trunc,
+                "note": ("Swing OBs are a separate research class (30-length pivots). "
+                         "Never compare pooled with internal results."),
+            }
+        except Exception as _sw_exc:
+            swing_results = {"enabled": False, "error": str(_sw_exc)[:300]}
+
     # Truncate event list for response (summary always uses full event count)
     truncated  = len(all_events) > _BT_MAX_EVENTS
     out_events = all_events[:_BT_MAX_EVENTS] if truncated else all_events
@@ -37772,6 +37829,8 @@ def _bt_run_ob_historical_backtest(params: dict) -> dict:
             "TP/SL use zone_high entry with close-beyond-zone stop."
         ),
         "params":           params,
+        "ob_class":         "internal",
+        "pivot_len":        _BT_PIVOT_LEN,
         "candle_summary":   candle_summary,
         "replay_summary":   replay_summary,
         "outcome_summary":  outcome_summary,
@@ -37788,6 +37847,7 @@ def _bt_run_ob_historical_backtest(params: dict) -> dict:
         "events_total":     len(all_events),
         "events_returned":  len(out_events),
         "events_truncated": truncated,
+        "swing_results":    swing_results,
     }
 
 
