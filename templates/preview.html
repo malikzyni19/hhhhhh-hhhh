@@ -12721,7 +12721,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     wfData:null,wfRunning:false,wfFoldView:1,wfCharts:{},
     teData:null,teRunning:false,teCharts:{},tePage:1,teShowFilters:false,
     obClass:"internal",
-    apData:null,apRunning:false,apClass:"internal",apCharts:{}};
+    apData:null,apRunning:false,apClass:"internal",apCharts:{},apLogPage:0};
 
   function _bindBtSidebarEvents(aside){
     [].forEach.call(aside.querySelectorAll("[data-btpage]"),function(item){
@@ -16237,6 +16237,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       html+='<button class="bt-export-btn" onclick="_btApExportReasonsCsv()">Reasons CSV</button>';
       html+='<button class="bt-export-btn" onclick="_btApExportProfilesCsv()">Profiles CSV</button>';
       html+='<button class="bt-export-btn" onclick="_btApExportMatrixCsv()">Matrix CSV</button>';
+      html+='<button class="bt-export-btn" onclick="_btApExportRulesCsv()">Rules CSV</button>';
+      html+='<button class="bt-export-btn" onclick="_btApExportTradeLogCsv()">Trade Log CSV</button>';
     }
     html+='</div>';
 
@@ -16252,8 +16254,13 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         html+='<div><div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">Failure Modes (losing trades)</div><canvas id="btApChart2" height="170"></canvas></div>';
         html+='</div>';
         html+=_btApReasonTableHtml(rep);
+        html+=_btApGradeCardsHtml(rep);
         html+=_btApMatrixTableHtml(rep);
+        html+=_btApRulesTableHtml(rep);
+        html+=_btApPatternBookHtml(rep);
+        html+=_btApVolumeTableHtml(rep);
         html+=_btApProfileTableHtml(rep);
+        html+=_btApTradeLogHtml(rep);
       } else {
         html+='<div style="font-size:12px;color:var(--text-2);padding:12px">No report for class '+cls+'.</div>';
       }
@@ -16290,7 +16297,10 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       b.addEventListener("click",function(){_btState.apRR=parseInt(b.getAttribute("data-aprr"));_btRenderAutopsyMode();});
     });
     [].forEach.call(el.querySelectorAll("[data-apclass]"),function(b){
-      b.addEventListener("click",function(){_btState.apClass=b.getAttribute("data-apclass");_btRenderAutopsyMode();});
+      b.addEventListener("click",function(){_btState.apClass=b.getAttribute("data-apclass");_btState.apLogPage=0;_btRenderAutopsyMode();});
+    });
+    [].forEach.call(el.querySelectorAll("[data-aplogpage]"),function(b){
+      b.addEventListener("click",function(){_btState.apLogPage=parseInt(b.getAttribute("data-aplogpage"));_btRenderAutopsyMode();});
     });
     var runBtn=document.getElementById("btApRunBtn");
     if(runBtn) runBtn.addEventListener("click",_btRunAutopsy);
@@ -16441,6 +16451,224 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       });
     });
     _btDownloadBlob("zyni_autopsy_matrix_"+Date.now()+".csv",rows.join("\r\n"),"text/csv");
+  }
+
+  var _AP_GRADE_META={
+    clean_win:{l:"Clean Win",c:"#22c55e"},
+    stressed_win:{l:"Stressed Win",c:"#84cc16"},
+    reversal_loss:{l:"Reversal Loss",c:"#f97316"},
+    hard_loss:{l:"Hard Loss",c:"#ef4444"},
+    paused_positive:{l:"Paused +",c:"#60a5fa"},
+    paused_flat:{l:"Paused Flat",c:"#94a3b8"},
+    ambiguous:{l:"Ambiguous",c:"#a78bfa"}
+  };
+
+  function _btApGradeCardsHtml(rep){
+    var gd=rep.grade_distribution||{};
+    var counts=gd.counts||{};
+    var html='<div style="margin:10px 0 4px;font-size:11px;font-weight:700;color:var(--text-1)">OB Performance Grades — labels only, no trade removed</div>';
+    html+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;margin-bottom:4px">';
+    Object.keys(_AP_GRADE_META).forEach(function(g){
+      var m=_AP_GRADE_META[g];
+      var pct=(gd.pcts||{})[g];
+      html+='<div style="background:rgba(0,0,0,.18);border-radius:6px;padding:8px;border-left:3px solid '+m.c+'">';
+      html+='<div style="font-size:9px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px">'+m.l+'</div>';
+      html+='<div style="font-size:15px;font-weight:700;color:'+m.c+'">'+_btApFmt(counts[g])+'</div>';
+      html+='<div style="font-size:9px;color:var(--text-3)">'+(pct!=null?pct+"%":"—")+'</div>';
+      html+='</div>';
+    });
+    html+='</div>';
+    html+='<div style="font-size:10px;color:var(--text-2);margin-bottom:8px">Working: <b style="color:#22c55e">'+_btApFmt(gd.working)+' ('+_btApFmt(gd.working_pct)+'%)</b>'+
+      ' &nbsp;•&nbsp; Failing: <b style="color:#ef4444">'+_btApFmt(gd.failing)+' ('+_btApFmt(gd.failing_pct)+'%)</b>'+
+      ' &nbsp;•&nbsp; Paused: <b style="color:#60a5fa">'+_btApFmt(gd.paused)+'</b></div>';
+    return html;
+  }
+
+  function _btApRulesTableHtml(rep){
+    var rv=rep.rule_evaluation||{};
+    var base=rv.baseline||{};
+    var rules=rv.rules||[];
+    var html='<div style="margin:12px 0 4px;font-size:11px;font-weight:700;color:var(--text-1)">Candidate Pass-Rules — labels, not deletions</div>';
+    html+='<div style="font-size:9px;color:var(--text-3);margin-bottom:4px">Every trade keeps its per-rule verdict in the log. Baseline: '+_btApFmt(base.trades)+' trades, exp '+_btApFmt(base.expectancy_r,4)+'R. High delta with low retention or small sample is NOT evidence — survivors go to walk-forward.</div>';
+    html+='<div style="overflow-x:auto"><table class="bt-table" style="font-size:10px;width:100%">';
+    html+='<thead><tr><th>Rule</th><th>Pass Trades</th><th>Retention</th><th>Pass Win %</th><th>Pass Exp</th><th>Δ Exp vs Base</th><th>Δ Win% vs Base</th><th>Fail-group Exp</th><th>Unknown</th><th>Sample</th></tr></thead><tbody>';
+    rules.forEach(function(r){
+      var d=r.expectancy_delta_vs_baseline;
+      var dColor=d==null?"var(--text-3)":d>=0?"#22c55e":"#ef4444";
+      html+='<tr>';
+      html+='<td style="font-weight:600" title="'+r.rule_id+'">'+r.label+'</td>';
+      html+='<td>'+_btApFmt((r.pass||{}).trades)+'</td>';
+      html+='<td>'+_btApFmt(r.trade_retention_pct,1)+(r.trade_retention_pct!=null?"%":"")+'</td>';
+      html+='<td>'+_btApFmt((r.pass||{}).win_rate_pct,1)+((r.pass||{}).win_rate_pct!=null?"%":"")+'</td>';
+      html+='<td>'+_btApFmt((r.pass||{}).expectancy_r,4)+'</td>';
+      html+='<td style="color:'+dColor+';font-weight:700">'+_btApFmt(d,4)+'</td>';
+      html+='<td>'+_btApFmt(r.win_rate_delta_vs_baseline,2)+(r.win_rate_delta_vs_baseline!=null?"%":"")+'</td>';
+      html+='<td>'+_btApFmt((r.fail||{}).expectancy_r,4)+'</td>';
+      html+='<td>'+_btApFmt(r.unknown_count)+'</td>';
+      html+='<td>'+((r.pass||{}).sample_size_status||"—")+'</td>';
+      html+='</tr>';
+    });
+    html+='</tbody></table></div>';
+    return html;
+  }
+
+  function _btApPatternBookHtml(rep){
+    var rows=rep.pattern_book||[];
+    var html='<div style="margin:12px 0 4px;font-size:11px;font-weight:700;color:var(--text-1)">Pattern Book — when the OB works vs fails</div>';
+    html+='<div style="font-size:9px;color:var(--text-3);margin-bottom:4px">Grade mix with each pattern present vs absent. Fail Δ &gt; 0 = OBs fail more often when the pattern is present.</div>';
+    html+='<div style="overflow-x:auto"><table class="bt-table" style="font-size:10px;width:100%">';
+    html+='<thead><tr><th>Pattern</th>'+
+      '<th colspan="3" style="text-align:center">Present</th>'+
+      '<th colspan="3" style="text-align:center">Absent</th>'+
+      '<th>Fail Δ</th><th>Unknown</th><th>Sample</th></tr>'+
+      '<tr><th></th><th>N</th><th>Works %</th><th>Fails %</th><th>N</th><th>Works %</th><th>Fails %</th><th></th><th></th><th></th></tr></thead><tbody>';
+    rows.forEach(function(p){
+      var d=p.failing_delta_pct;
+      var dColor=d==null?"var(--text-3)":d>0?"#ef4444":"#22c55e";
+      html+='<tr>';
+      html+='<td style="font-weight:600">'+p.feature+'</td>';
+      html+='<td>'+_btApFmt((p.present||{}).count)+'</td>';
+      html+='<td style="color:#22c55e">'+_btApFmt((p.present||{}).working_pct,1)+((p.present||{}).working_pct!=null?"%":"")+'</td>';
+      html+='<td style="color:#ef4444">'+_btApFmt((p.present||{}).failing_pct,1)+((p.present||{}).failing_pct!=null?"%":"")+'</td>';
+      html+='<td>'+_btApFmt((p.absent||{}).count)+'</td>';
+      html+='<td style="color:#22c55e">'+_btApFmt((p.absent||{}).working_pct,1)+((p.absent||{}).working_pct!=null?"%":"")+'</td>';
+      html+='<td style="color:#ef4444">'+_btApFmt((p.absent||{}).failing_pct,1)+((p.absent||{}).failing_pct!=null?"%":"")+'</td>';
+      html+='<td style="color:'+dColor+';font-weight:700">'+_btApFmt(d,1)+(d!=null?"%":"")+'</td>';
+      html+='<td>'+_btApFmt(p.unknown_count)+'</td>';
+      html+='<td>'+(p.sample_size_status||"—")+'</td>';
+      html+='</tr>';
+    });
+    html+='</tbody></table></div>';
+    return html;
+  }
+
+  function _btApVolumeTableHtml(rep){
+    var rows=(rep.volume_by_grade||[]).filter(function(v){return v.count>0;});
+    var html='<div style="margin:12px 0 4px;font-size:11px;font-weight:700;color:var(--text-1)">Volume Context by Grade — what the volume was when the OB worked, paused, or failed</div>';
+    html+='<div style="font-size:9px;color:var(--text-3);margin-bottom:4px">Ratios vs the trailing 20-bar average volume (1.0 = average).</div>';
+    html+='<div style="overflow-x:auto"><table class="bt-table" style="font-size:10px;width:100%">';
+    html+='<thead><tr><th>Grade</th><th>Count</th><th>Avg Formation Vol Ratio</th><th>Avg Touch Vol Ratio</th><th>Avg MFE</th><th>Avg MAE</th></tr></thead><tbody>';
+    rows.forEach(function(v){
+      var m=_AP_GRADE_META[v.grade]||{l:v.grade,c:"var(--text-1)"};
+      html+='<tr>';
+      html+='<td style="font-weight:600;color:'+m.c+'">'+m.l+'</td>';
+      html+='<td>'+_btApFmt(v.count)+'</td>';
+      html+='<td>'+_btApFmt(v.avg_formation_volume_ratio,3)+'</td>';
+      html+='<td>'+_btApFmt(v.avg_touch_volume_ratio,3)+'</td>';
+      html+='<td>'+_btApFmt(v.avg_mfe_r,3)+'</td>';
+      html+='<td>'+_btApFmt(v.avg_mae_r,3)+'</td>';
+      html+='</tr>';
+    });
+    if(!rows.length){
+      html+='<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:8px">No graded trades.</td></tr>';
+    }
+    html+='</tbody></table></div>';
+    return html;
+  }
+
+  function _btApTradeLogHtml(rep){
+    var log=rep.trade_log||{};
+    var rows=log.rows||[];
+    var pageSize=25;
+    var pages=Math.max(1,Math.ceil(rows.length/pageSize));
+    var page=Math.min(_btState.apLogPage||0,pages-1);
+    var slice=rows.slice(page*pageSize,(page+1)*pageSize);
+    var html='<div style="margin:12px 0 4px;font-size:11px;font-weight:700;color:var(--text-1)">Labeled Trade Log — '+_btApFmt(log.total)+' trades, none removed'+(log.truncated?' (showing first '+log.cap+')':'')+'</div>';
+    html+='<div style="overflow-x:auto"><table class="bt-table" style="font-size:9px;width:100%">';
+    html+='<thead><tr><th>Symbol</th><th>TF</th><th>Dir</th><th>Touch#</th><th>Time</th><th>Outcome</th><th>Grade</th><th>Real R</th><th>MFE</th><th>MAE</th><th>Form Vol</th><th>Touch Vol</th><th>HTF</th><th>Session</th><th>Patterns</th><th>Rules Passed</th></tr></thead><tbody>';
+    function ts(ms){
+      if(ms==null) return "—";
+      try{return new Date(ms).toISOString().slice(0,16).replace("T"," ");}catch(e){return String(ms);}
+    }
+    slice.forEach(function(r){
+      var m=_AP_GRADE_META[r.performance_grade]||{l:r.performance_grade,c:"var(--text-1)"};
+      var passes=r.rule_passes||{};
+      var pkeys=Object.keys(passes);
+      var np=pkeys.filter(function(k){return passes[k]===true;}).length;
+      html+='<tr>';
+      html+='<td>'+r.symbol+'</td><td>'+r.timeframe+'</td>';
+      html+='<td style="color:'+(r.direction==="bullish"?"#22c55e":"#ef4444")+'">'+r.direction+'</td>';
+      html+='<td style="text-align:center">'+r.touch_number+'</td>';
+      html+='<td style="white-space:nowrap">'+ts(r.touch_time)+'</td>';
+      html+='<td>'+r.outcome+'</td>';
+      html+='<td style="color:'+m.c+';font-weight:700">'+m.l+'</td>';
+      html+='<td>'+_btApFmt(r.realized_r,2)+'</td>';
+      html+='<td>'+_btApFmt(r.mfe_r,2)+'</td>';
+      html+='<td>'+_btApFmt(r.mae_r,2)+'</td>';
+      html+='<td>'+_btApFmt(r.formation_volume_ratio,2)+'</td>';
+      html+='<td>'+_btApFmt(r.touch_volume_ratio,2)+'</td>';
+      html+='<td>'+(r.htf_alignment||"—")+'</td>';
+      html+='<td>'+(r.session||"—")+'</td>';
+      html+='<td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+(r.pattern_tags||[]).join(", ")+'">'+((r.pattern_tags||[]).join(", ")||"—")+'</td>';
+      html+='<td style="text-align:center">'+np+'/'+pkeys.length+'</td>';
+      html+='</tr>';
+    });
+    html+='</tbody></table></div>';
+    if(pages>1){
+      /* Prev/Next + a windowed range so EVERY page is reachable */
+      html+='<div style="display:flex;gap:5px;margin-top:6px;flex-wrap:wrap;align-items:center">';
+      html+='<button class="bt-rr-btn" data-aplogpage="'+Math.max(0,page-1)+'" style="font-size:10px" '+(page===0?"disabled":"")+'>&laquo; Prev</button>';
+      var wStart=Math.max(0,page-5);
+      var wEnd=Math.min(pages,wStart+11);
+      wStart=Math.max(0,wEnd-11);
+      if(wStart>0) html+='<button class="bt-rr-btn" data-aplogpage="0" style="font-size:10px">1…</button>';
+      for(var p=wStart;p<wEnd;p++){
+        html+='<button class="bt-rr-btn'+(p===page?" active":"")+'" data-aplogpage="'+p+'" style="font-size:10px">'+(p+1)+'</button>';
+      }
+      if(wEnd<pages) html+='<button class="bt-rr-btn" data-aplogpage="'+(pages-1)+'" style="font-size:10px">…'+pages+'</button>';
+      html+='<button class="bt-rr-btn" data-aplogpage="'+Math.min(pages-1,page+1)+'" style="font-size:10px" '+(page===pages-1?"disabled":"")+'>Next &raquo;</button>';
+      html+='<span style="font-size:9px;color:var(--text-3)">page '+(page+1)+'/'+pages+'</span>';
+      html+='</div>';
+    }
+    return html;
+  }
+
+  function _btApExportRulesCsv(){
+    var d=_btState.apData;
+    if(!d||!d.reports_by_class){alert("No autopsy data to export.");return;}
+    var cols=["ob_class","rule_id","label","pass_trades","pass_wins","pass_losses",
+      "pass_win_rate_pct","pass_expectancy_r","pass_profit_factor_r","pass_net_r",
+      "trade_retention_pct","expectancy_delta_vs_baseline","win_rate_delta_vs_baseline",
+      "fail_trades","fail_expectancy_r","unknown_count","pass_sample_size_status"];
+    var rows=[cols.join(",")];
+    Object.keys(d.reports_by_class).forEach(function(cls){
+      (((d.reports_by_class[cls]||{}).rule_evaluation||{}).rules||[]).forEach(function(r){
+        var p=r.pass||{},f=r.fail||{};
+        var rec={ob_class:cls,rule_id:r.rule_id,label:r.label,
+          pass_trades:p.trades,pass_wins:p.wins,pass_losses:p.losses,
+          pass_win_rate_pct:p.win_rate_pct,pass_expectancy_r:p.expectancy_r,
+          pass_profit_factor_r:p.profit_factor_r,pass_net_r:p.net_r,
+          trade_retention_pct:r.trade_retention_pct,
+          expectancy_delta_vs_baseline:r.expectancy_delta_vs_baseline,
+          win_rate_delta_vs_baseline:r.win_rate_delta_vs_baseline,
+          fail_trades:f.trades,fail_expectancy_r:f.expectancy_r,
+          unknown_count:r.unknown_count,pass_sample_size_status:p.sample_size_status};
+        rows.push(cols.map(function(k){return _btCsvVal(rec[k]);}).join(","));
+      });
+    });
+    _btDownloadBlob("zyni_autopsy_rules_"+Date.now()+".csv",rows.join("\r\n"),"text/csv");
+  }
+
+  function _btApExportTradeLogCsv(){
+    var d=_btState.apData;
+    if(!d||!d.reports_by_class){alert("No autopsy data to export.");return;}
+    var cols=["ob_class","touch_trade_id","symbol","timeframe","direction","touch_number",
+      "touch_time","outcome","performance_grade","realized_r","mfe_r","mae_r","stop_loss_r",
+      "formation_volume_ratio","touch_volume_ratio","htf_alignment","tf_alignment",
+      "swing_alignment","session","failure_mode","pattern_tags","rules_passed","rules_total"];
+    var rows=[cols.join(",")];
+    Object.keys(d.reports_by_class).forEach(function(cls){
+      ((((d.reports_by_class[cls]||{}).trade_log)||{}).rows||[]).forEach(function(r){
+        var passes=r.rule_passes||{};
+        var pkeys=Object.keys(passes);
+        var rec=Object.assign({},r,{ob_class:cls,
+          pattern_tags:(r.pattern_tags||[]).join("|"),
+          rules_passed:pkeys.filter(function(k){return passes[k]===true;}).length,
+          rules_total:pkeys.length});
+        rows.push(cols.map(function(k){return _btCsvVal(rec[k]);}).join(","));
+      });
+    });
+    _btDownloadBlob("zyni_autopsy_tradelog_"+Date.now()+".csv",rows.join("\r\n"),"text/csv");
   }
 
   function _btApProfileTableHtml(rep){
@@ -17390,6 +17618,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   window._btApExportReasonsCsv=_btApExportReasonsCsv;
   window._btApExportProfilesCsv=_btApExportProfilesCsv;
   window._btApExportMatrixCsv=_btApExportMatrixCsv;
+  window._btApExportRulesCsv=_btApExportRulesCsv;
+  window._btApExportTradeLogCsv=_btApExportTradeLogCsv;
 
   /* Tag body with current view so per-view CSS (Task 3) applies before
      the first switchView() call. */
