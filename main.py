@@ -40797,11 +40797,119 @@ _AP_HTF_MAP: Dict[str, Optional[str]] = {
 }
 
 # Predictive features ranked in 18B (computed for BOTH winners and losers).
+# Phase 19 adds FVG_CONFLUENCE, IN_PREMIUM_HALF, HIGH_VOL_REGIME.
 _AP_FEATURE_KEYS = (
     "AGAINST_HTF_TREND", "AGAINST_TF_TREND", "COUNTER_SWING",
     "LATE_TOUCH", "WEAK_DISPLACEMENT", "OVERSIZED_ZONE", "STALE_ZONE",
     "SESSION_ASIA", "SESSION_LONDON", "SESSION_NEWYORK", "SESSION_OTHER",
+    "FVG_CONFLUENCE", "IN_PREMIUM_HALF", "HIGH_VOL_REGIME",
 )
+
+# ── Phase 19: Alignment matrix + zone feature enrichment ─────────────────────
+# Which trend timeframes each OB timeframe is tested against (frozen roadmap:
+# 15m→{1h,4h}, 1h→{4h,1d}, 4h→{1d}; 5m/30m get their nearest sensible pair).
+_AL_MATRIX_MAP: Dict[str, List[str]] = {
+    "5m":  ["1h"],
+    "15m": ["1h", "4h"],
+    "30m": ["4h"],
+    "1h":  ["4h", "1d"],
+    "4h":  ["1d"],
+    "1d":  [],
+}
+_AL_FVG_FORMATION_WINDOW: int   = 5     # FVGs formed in [fb-5, fb] count as confluence
+_AL_ATR_PERCENTILE_WINDOW: int  = 100   # trailing ATR window for the volatility regime
+_AL_HIGH_VOL_PERCENTILE: float  = 70.0  # ATR percentile above this = high-vol regime
+
+
+def _bt_al_detect_fvgs(candles: List[Dict], start: int, end_inclusive: int) -> List[Dict]:
+    """Fair value gaps formed at bars start..end_inclusive (3-candle rule).
+
+    Bullish FVG at bar i: low[i] > high[i-2] → gap zone [high[i-2], low[i]].
+    Bearish FVG at bar i: high[i] < low[i-2] → gap zone [high[i], low[i-2]].
+    Uses only bars <= i — a gap "formed at i" is fully known at bar i's close.
+    """
+    out: List[Dict] = []
+    n = len(candles)
+    lo_bound = max(2, start)
+    hi_bound = min(end_inclusive, n - 1)
+    for i in range(lo_bound, hi_bound + 1):
+        h2 = float(candles[i - 2]["high"])
+        l2 = float(candles[i - 2]["low"])
+        hi_i = float(candles[i]["high"])
+        lo_i = float(candles[i]["low"])
+        if lo_i > h2:
+            out.append({"type": "bullish", "bar": i, "lo": h2, "hi": lo_i})
+        elif hi_i < l2:
+            out.append({"type": "bearish", "bar": i, "lo": hi_i, "hi": l2})
+    return out
+
+
+def _bt_al_fvg_confluence(candles: List[Dict], formation_bar: int,
+                          zone_high: float, zone_low: float) -> Optional[bool]:
+    """True when an FVG formed at bars [fb-window, fb] overlaps the OB zone.
+
+    Only bars at or before formation are inspected — every input is known at
+    formation time (no look-ahead). Returns None when the window has fewer
+    than 3 bars (FVG undefined).
+    """
+    if formation_bar < 2:
+        return None
+    fvgs = _bt_al_detect_fvgs(candles,
+                              formation_bar - _AL_FVG_FORMATION_WINDOW,
+                              formation_bar)
+    for f in fvgs:
+        if f["lo"] <= zone_high and f["hi"] >= zone_low:
+            return True
+    return False
+
+
+def _bt_al_range_position(trend_idx: Dict, formation_bar: int,
+                          zone_mid: float) -> Optional[float]:
+    """Zone-mid position inside the last confirmed pivot dealing range, 0-100.
+
+    Range = [last confirmed pivot low, last confirmed pivot high] before the
+    formation bar (confirmed = pivot bar <= formation_bar - pivot_len, same
+    no-look-ahead rule as the trend queries). 0 = at the range low (deep
+    discount), 100 = at the range high (deep premium). Values outside the
+    range are clamped to 0/100. None when no confirmed pivot pair exists.
+    """
+    import bisect as _bisect
+    if formation_bar is None or formation_bar < 0:
+        return None
+    p_len  = trend_idx["pivot_len"]
+    cutoff = formation_bar - p_len
+    hb = trend_idx["high_bars"]
+    lb = trend_idx["low_bars"]
+    hi = _bisect.bisect_right(hb, cutoff)
+    li = _bisect.bisect_right(lb, cutoff)
+    if hi < 1 or li < 1:
+        return None
+    range_high = trend_idx["h"][hb[hi - 1]]
+    range_low  = trend_idx["l"][lb[li - 1]]
+    if range_high <= range_low:
+        return None
+    pos = (zone_mid - range_low) / (range_high - range_low) * 100.0
+    return round(min(100.0, max(0.0, pos)), 2)
+
+
+def _bt_al_atr_percentile(atr: List[Optional[float]], formation_bar: int,
+                          window: int = _AL_ATR_PERCENTILE_WINDOW) -> Optional[float]:
+    """Percentile rank of ATR[fb] within the trailing window ending at fb.
+
+    Uses atr[fb-window .. fb] only (no look-ahead). None when ATR is missing
+    or fewer than 10 trailing values exist.
+    """
+    if formation_bar is None or formation_bar < 0 or formation_bar >= len(atr):
+        return None
+    cur = atr[formation_bar]
+    if cur is None:
+        return None
+    vals = [a for a in atr[max(0, formation_bar - window):formation_bar + 1]
+            if a is not None]
+    if len(vals) < 10:
+        return None
+    below = sum(1 for v in vals if v < cur)
+    return round(below / len(vals) * 100.0, 2)
 
 
 def _bt_ap_atr_series(candles: List[Dict], period: int = _AP_ATR_PERIOD) -> List[Optional[float]]:
@@ -40933,6 +41041,7 @@ def _bt_ap_build_trade_records(
     htf_candles: Optional[List[Dict]],
     htf_trend_idx: Optional[Dict],
     atr: List[Optional[float]],
+    multi_trend: Optional[Dict[str, Dict]] = None,
 ) -> List[Dict]:
     """Build one autopsy record per touch trade at the selected RR.
 
@@ -40940,6 +41049,12 @@ def _bt_ap_build_trade_records(
     simulation so autopsy trades are the same trades the Trade Explorer
     reports. Every feature is computed from data available at or before
     the touch bar — no look-ahead.
+
+    Phase 19: `multi_trend` maps trend timeframe → {"candles": [...],
+    "trend_idx": {...}}. When provided, each record gains an
+    `alignments` dict (trend_tf → with/against/neutral/unknown) using
+    the same closed-HTF-bar rule as the single-HTF feature, plus the
+    FVG_CONFLUENCE / IN_PREMIUM_HALF / HIGH_VOL_REGIME features.
     """
     records: List[Dict] = []
     for ev in events:
@@ -40960,6 +41075,14 @@ def _bt_ap_build_trade_records(
             disp_atr = round(body / atr_fb, 3)
         zone_atr = (round(zone_size / atr_fb, 3)
                     if atr_fb and atr_fb > 0 and zone_size > 0 else None)
+
+        # ── Phase 19 formation-time zone features (constant per OB) ─────────
+        zone_mid = float(ev.get("zone_mid") or
+                         ((float(ev["zone_high"]) + float(ev["zone_low"])) / 2.0))
+        fvg_confluence = _bt_al_fvg_confluence(
+            candles, fb, float(ev["zone_high"]), float(ev["zone_low"]))
+        range_pos      = _bt_al_range_position(tf_trend_idx, fb, zone_mid)
+        atr_pct        = _bt_al_atr_percentile(atr, fb)
 
         for ep in episodes:
             touch_idx  = ep["touch_index"]
@@ -40987,6 +41110,19 @@ def _bt_ap_build_trade_records(
             swing_align = _bt_ap_alignment(direction, swing_trend)
             htf_align   = _bt_ap_alignment(direction, htf_trend)
 
+            # ── Phase 19: per-trend-TF alignments (closed-bar rule) ──────────
+            alignments: Dict[str, str] = {}
+            if multi_trend:
+                for ttf, tdata in multi_trend.items():
+                    t_candles = tdata.get("candles")
+                    t_idx     = tdata.get("trend_idx")
+                    t_trend   = "unknown"
+                    if t_idx is not None and t_candles:
+                        tbar = _bt_ap_htf_bar_index(t_candles, touch_time)
+                        if tbar is not None and tbar >= 1:
+                            t_trend = _bt_ap_trend_at(t_idx, tbar - 1)
+                    alignments[ttf] = _bt_ap_alignment(direction, t_trend)
+
             session = _te_session(touch_time)
             weekday = _te_weekday(touch_time)
             candles_since = ep.get("candles_since_formation", touch_idx - fb)
@@ -41011,6 +41147,11 @@ def _bt_ap_build_trade_records(
                 "SESSION_LONDON":    (None if session is None else session == "London"),
                 "SESSION_NEWYORK":   (None if session is None else session == "NewYork"),
                 "SESSION_OTHER":     (None if session is None else session == "Other"),
+                "FVG_CONFLUENCE":    fvg_confluence,
+                "IN_PREMIUM_HALF":   (None if range_pos is None
+                                      else range_pos > 50.0),
+                "HIGH_VOL_REGIME":   (None if atr_pct is None
+                                      else atr_pct > _AL_HIGH_VOL_PERCENTILE),
             }
 
             records.append({
@@ -41043,10 +41184,69 @@ def _bt_ap_build_trade_records(
                 "tf_alignment":    tf_align,
                 "swing_alignment": swing_align,
                 "htf_alignment":   htf_align,
+                "alignments":      alignments,
+                "range_position_pct": range_pos,
+                "atr_percentile":  atr_pct,
                 "features":        features,
                 "failure_mode":    _bt_ap_failure_mode(sim, rr_key),
             })
     return records
+
+
+def _bt_al_build_matrix(records: List[Dict]) -> List[Dict]:
+    """Phase 19 — timeframe alignment matrix for one OB class.
+
+    One cell per (ob_timeframe, trend_timeframe) pair; each cell reports the
+    authoritative outcome contract (trades = wins + losses; ambiguous /
+    unresolved excluded) separately for with / against / neutral / unknown
+    alignment, sample-size labeled. Cells never pool OB classes — the caller
+    passes a single class's records.
+    """
+    cells: Dict[Tuple[str, str], List[Tuple[str, Dict]]] = {}
+    for r in records:
+        for ttf, align in (r.get("alignments") or {}).items():
+            cells.setdefault((r.get("timeframe", ""), ttf), []).append((align, r))
+
+    out: List[Dict] = []
+    for (ob_tf, ttf) in sorted(cells.keys()):
+        pairs = cells[(ob_tf, ttf)]
+        entry: Dict = {"ob_timeframe": ob_tf, "trend_timeframe": ttf,
+                       "alignments": {}}
+        for align in ("with", "against", "neutral", "unknown"):
+            rows = [r for a, r in pairs if a == align]
+            wins   = sum(1 for r in rows if r["outcome"] == "win")
+            losses = sum(1 for r in rows if r["outcome"] == "loss")
+            amb    = sum(1 for r in rows if r["outcome"] == "ambiguous")
+            unres  = sum(1 for r in rows if r["outcome"] == "unresolved")
+            trades = wins + losses
+            gp = sum(r["realized_r"] for r in rows
+                     if r["outcome"] == "win" and r.get("realized_r") is not None)
+            gl = abs(sum(r["realized_r"] for r in rows
+                         if r["outcome"] == "loss" and r.get("realized_r") is not None))
+            net = round(gp - gl, 4)
+            pf, pf_inf = _stab_aggregate_pf(gp, gl)
+            entry["alignments"][align] = {
+                "opportunities":      len(rows),
+                "trades":             trades,
+                "wins":               wins,
+                "losses":             losses,
+                "ambiguous":          amb,
+                "unresolved":         unres,
+                "win_rate_pct":       round(wins / trades * 100, 2) if trades else None,
+                "expectancy_r":       round(net / trades, 6) if trades else None,
+                "profit_factor_r":    pf,
+                "profit_factor_infinite": pf_inf,
+                "net_r":              net,
+                "sample_size_status": _te_sample_size_status(trades),
+            }
+        # Headline: with-vs-against expectancy edge for quick reading.
+        w_exp = entry["alignments"]["with"]["expectancy_r"]
+        a_exp = entry["alignments"]["against"]["expectancy_r"]
+        entry["with_minus_against_expectancy_r"] = (
+            round(w_exp - a_exp, 6)
+            if w_exp is not None and a_exp is not None else None)
+        out.append(entry)
+    return out
 
 
 def _bt_ap_rank_reasons(records: List[Dict]) -> List[Dict]:
@@ -41178,6 +41378,7 @@ def _bt_ap_class_report(records: List[Dict], rr_key: str) -> Dict:
         "failure_modes":      _bt_ap_failure_mode_distribution(records),
         "reason_ranking":     _bt_ap_rank_reasons(records),
         "setup_profiles":     _bt_ap_build_profiles(records, rr_key),
+        "alignment_matrix":   _bt_al_build_matrix(records),
     }
 
 
@@ -41219,22 +41420,44 @@ def _bt_run_autopsy(req: Dict) -> Dict:
                 tf_trend_idx    = _bt_ap_build_trend_index(candles, _BT_PIVOT_LEN)
                 swing_trend_idx = _bt_ap_build_trend_index(candles, _BT_SWING_PIVOT_LEN)
 
+                # ── Trend-TF fetches: single-HTF feature + Phase 19 matrix ───
+                # One shared per-symbol cache; each (sym, trend_tf) fetched at
+                # most once no matter how many features/classes consume it.
+                def _get_trend_tf(_ttf: str):
+                    ck = (sym, _ttf)
+                    if ck not in _htf_cache:
+                        try:
+                            _raw = get_klines(sym, _ttf, limit=candle_count)
+                            _htf_cache[ck] = _bt_normalize_candles(_raw) or None
+                            return _htf_cache[ck], _htf_cache[ck] is not None
+                        except Exception:
+                            _htf_cache[ck] = None
+                            return None, False   # failed attempts don't count as fetches
+                    return _htf_cache[ck], False
+
                 htf_tf = _AP_HTF_MAP.get(tf)
                 htf_candles = None
                 htf_trend_idx = None
                 if htf_tf:
-                    ck = (sym, htf_tf)
-                    if ck not in _htf_cache:
-                        try:
-                            htf_raw = get_klines(sym, htf_tf, limit=candle_count)
-                            htf_fetch_count += 1
-                            _htf_cache[ck] = _bt_normalize_candles(htf_raw) or None
-                        except Exception:
-                            _htf_cache[ck] = None
-                    htf_candles = _htf_cache[ck]
+                    htf_candles, fetched = _get_trend_tf(htf_tf)
+                    if fetched:
+                        htf_fetch_count += 1
                     if htf_candles:
                         htf_trend_idx = _bt_ap_build_trend_index(
                             htf_candles, _BT_PIVOT_LEN)
+
+                # Phase 19: matrix trend timeframes for this OB timeframe.
+                multi_trend: Dict[str, Dict] = {}
+                for ttf in _AL_MATRIX_MAP.get(tf, []):
+                    t_candles, fetched = _get_trend_tf(ttf)
+                    if fetched:
+                        htf_fetch_count += 1
+                    if t_candles:
+                        multi_trend[ttf] = {
+                            "candles":   t_candles,
+                            "trend_idx": _bt_ap_build_trend_index(
+                                t_candles, _BT_PIVOT_LEN),
+                        }
 
                 for ob_class in ob_classes:
                     params = _bt_wf_build_params(sym, tf, len(candles), [1, 2, 3])
@@ -41245,7 +41468,8 @@ def _bt_run_autopsy(req: Dict) -> Dict:
                     recs = _bt_ap_build_trade_records(
                         events, candles, rr_key, ob_class,
                         tf_trend_idx, swing_trend_idx,
-                        htf_candles, htf_trend_idx, atr)
+                        htf_candles, htf_trend_idx, atr,
+                        multi_trend=multi_trend)
                     records_by_class[ob_class].extend(recs)
 
                 completed_cells += 1
@@ -41282,6 +41506,16 @@ def _bt_run_autopsy(req: Dict) -> Dict:
             "sessions":          "UTC: Asia 0-8, London 8-13, NewYork 13-21, Other 21-24",
             "note": ("BAD_SESSION is not a hard-coded reason — session lift emerges "
                      "from the ranking (SESSION_* features) instead of being assumed."),
+            "matrix_map":        {k: v for k, v in _AL_MATRIX_MAP.items()},
+            "fvg_confluence":    (f"3-candle FVG formed in [formation-{_AL_FVG_FORMATION_WINDOW}, "
+                                  "formation] overlapping the OB zone — known at formation"),
+            "in_premium_half":   ("OB zone-mid above 50% of the last confirmed pivot "
+                                  "dealing range at formation"),
+            "high_vol_regime":   (f"formation ATR percentile > {_AL_HIGH_VOL_PERCENTILE} within "
+                                  f"trailing {_AL_ATR_PERCENTILE_WINDOW}-bar window"),
+            "alignment_matrix":  ("per (OB timeframe, trend timeframe) pair: outcomes split "
+                                  "by with/against/neutral/unknown HH/HL alignment at the "
+                                  "last CLOSED trend-TF bar before the touch"),
         },
         "performance": {
             "requested_cells":       len(symbols) * len(timeframes),
@@ -41297,7 +41531,7 @@ def _bt_run_autopsy(req: Dict) -> Dict:
             "max_symbols":    _AP_MAX_SYMBOLS,
             "max_timeframes": _AP_MAX_TIMEFRAMES,
             "max_cells":      _AP_MAX_CELLS,
-            "phase":          "18",
+            "phase":          "19",
         },
         "notice": ("Research only. Autopsy findings are hypotheses for "
                    "walk-forward validation, not proven edges. Nothing here "

@@ -16210,7 +16210,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var apRR=_btState.apRR||2;
     html+='<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px">';
     html+='<span style="font-size:11px;color:var(--text-2);font-weight:600">Timeframes:</span>';
-    ["1h","4h"].forEach(function(tf){
+    ["15m","30m","1h","4h"].forEach(function(tf){
       var on=selTfs.indexOf(tf)>=0;
       html+='<button class="bt-rr-btn'+(on?" active":"")+'" data-aptf="'+tf+'" style="font-size:11px">'+tf+'</button>';
     });
@@ -16236,6 +16236,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       html+='<button class="bt-export-btn" onclick="_btApExportJson()" style="margin-left:8px">Export JSON</button>';
       html+='<button class="bt-export-btn" onclick="_btApExportReasonsCsv()">Reasons CSV</button>';
       html+='<button class="bt-export-btn" onclick="_btApExportProfilesCsv()">Profiles CSV</button>';
+      html+='<button class="bt-export-btn" onclick="_btApExportMatrixCsv()">Matrix CSV</button>';
     }
     html+='</div>';
 
@@ -16251,6 +16252,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         html+='<div><div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">Failure Modes (losing trades)</div><canvas id="btApChart2" height="170"></canvas></div>';
         html+='</div>';
         html+=_btApReasonTableHtml(rep);
+        html+=_btApMatrixTableHtml(rep);
         html+=_btApProfileTableHtml(rep);
       } else {
         html+='<div style="font-size:12px;color:var(--text-2);padding:12px">No report for class '+cls+'.</div>';
@@ -16383,6 +16385,62 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     });
     html+='</tbody></table></div>';
     return html;
+  }
+
+  function _btApMatrixTableHtml(rep){
+    var cells=rep.alignment_matrix||[];
+    var html='<div style="margin:12px 0 4px;font-size:11px;font-weight:700;color:var(--text-1)">Timeframe Alignment Matrix — which trend TF matters for which OB TF</div>';
+    html+='<div style="font-size:9px;color:var(--text-3);margin-bottom:4px">HH/HL trend measured at the last CLOSED trend-TF bar before each touch. Edge = with-trend expectancy minus against-trend expectancy.</div>';
+    if(!cells.length){
+      html+='<div style="font-size:10px;color:var(--text-3);padding:8px">No matrix data (trend timeframes unavailable for the selected OB timeframes).</div>';
+      return html;
+    }
+    html+='<div style="overflow-x:auto"><table class="bt-table" style="font-size:10px;width:100%">';
+    html+='<thead><tr><th>OB TF → Trend TF</th>'+
+      '<th colspan="3" style="text-align:center">With Trend</th>'+
+      '<th colspan="3" style="text-align:center">Against Trend</th>'+
+      '<th colspan="3" style="text-align:center">Neutral</th>'+
+      '<th>Edge (Exp)</th></tr>'+
+      '<tr><th></th><th>Trades</th><th>Win %</th><th>Exp</th>'+
+      '<th>Trades</th><th>Win %</th><th>Exp</th>'+
+      '<th>Trades</th><th>Win %</th><th>Exp</th><th></th></tr></thead><tbody>';
+    cells.forEach(function(c){
+      var w=c.alignments["with"]||{}, a=c.alignments["against"]||{}, n=c.alignments["neutral"]||{};
+      var edge=c.with_minus_against_expectancy_r;
+      var edgeColor=edge==null?"var(--text-3)":edge>=0?"#22c55e":"#ef4444";
+      function cellHtml(x){
+        return '<td>'+_btApFmt(x.trades)+'</td>'+
+               '<td>'+(x.win_rate_pct!=null?x.win_rate_pct+"%":"—")+
+               (x.sample_size_status==="insufficient"&&x.trades>0?" ⚠":"")+'</td>'+
+               '<td>'+_btApFmt(x.expectancy_r,4)+'</td>';
+      }
+      html+='<tr>';
+      html+='<td style="font-weight:700">'+c.ob_timeframe+' → '+c.trend_timeframe+'</td>';
+      html+=cellHtml(w)+cellHtml(a)+cellHtml(n);
+      html+='<td style="color:'+edgeColor+';font-weight:700">'+_btApFmt(edge,4)+'</td>';
+      html+='</tr>';
+    });
+    html+='</tbody></table></div>';
+    return html;
+  }
+
+  function _btApExportMatrixCsv(){
+    var d=_btState.apData;
+    if(!d||!d.reports_by_class){alert("No autopsy data to export.");return;}
+    var cols=["ob_class","ob_timeframe","trend_timeframe","alignment","opportunities","trades",
+      "wins","losses","ambiguous","unresolved","win_rate_pct","expectancy_r",
+      "profit_factor_r","profit_factor_infinite","net_r","sample_size_status"];
+    var rows=[cols.join(",")];
+    Object.keys(d.reports_by_class).forEach(function(cls){
+      ((d.reports_by_class[cls]||{}).alignment_matrix||[]).forEach(function(c){
+        Object.keys(c.alignments||{}).forEach(function(al){
+          var rec=Object.assign({ob_class:cls,ob_timeframe:c.ob_timeframe,
+            trend_timeframe:c.trend_timeframe,alignment:al},c.alignments[al]);
+          rows.push(cols.map(function(k){return _btCsvVal(rec[k]);}).join(","));
+        });
+      });
+    });
+    _btDownloadBlob("zyni_autopsy_matrix_"+Date.now()+".csv",rows.join("\r\n"),"text/csv");
   }
 
   function _btApProfileTableHtml(rep){
@@ -17331,6 +17389,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   window._btApExportJson=_btApExportJson;
   window._btApExportReasonsCsv=_btApExportReasonsCsv;
   window._btApExportProfilesCsv=_btApExportProfilesCsv;
+  window._btApExportMatrixCsv=_btApExportMatrixCsv;
 
   /* Tag body with current view so per-view CSS (Task 3) applies before
      the first switchView() call. */
