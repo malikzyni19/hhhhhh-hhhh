@@ -352,7 +352,7 @@ def send_email_alert(subject: str, body: str) -> bool:
         return False
 
 
-def _send_via_resend(to_email: str, subject: str, html_body: str) -> bool:
+def _send_via_resend(to_email: str, subject: str, html_body: str, text_body: str = "") -> bool:
     """Send email via official Resend Python SDK.
     Only requires RESEND_API_KEY env var. Sender is always support@smcsetups.com.
     """
@@ -363,18 +363,50 @@ def _send_via_resend(to_email: str, subject: str, html_body: str) -> bool:
     try:
         import resend as _resend_sdk
         _resend_sdk.api_key = api_key
-        resp = _resend_sdk.Emails.send({
+        payload = {
             "from": "ZyNi SMC <support@smcsetups.com>",
             "to": [to_email],
             "subject": subject,
             "html": html_body,
-        })
+            "reply_to": "support@smcsetups.com",
+            "headers": {
+                "List-Unsubscribe": "<mailto:support@smcsetups.com?subject=unsubscribe>",
+                "Precedence": "transactional",
+                "X-Entity-Ref-ID": "zyni-otp",
+            },
+        }
+        if text_body:
+            payload["text"] = text_body
+        resp = _resend_sdk.Emails.send(payload)
         email_id = getattr(resp, "id", None) or (resp.get("id") if isinstance(resp, dict) else "n/a")
         print(f"[VERIFY-EMAIL] Sent via Resend SDK to {to_email} — id={email_id}")
         return True
     except Exception as exc:
         print(f"[VERIFY-EMAIL] Resend SDK exception: {exc}")
         return False
+
+
+def _build_verification_email_text(username: str, code: str, purpose: str = "verify") -> str:
+    """Plain-text alternative for the OTP email (required to avoid spam filters)."""
+    if purpose == "2fa":
+        action = "sign in to your account"
+        step   = "Enter it on the sign-in page to complete login."
+    else:
+        action = "verify your email address and activate your account"
+        step   = "Enter it on the verification page."
+    return (
+        f"ZyNi SMC — {'Sign-In Code' if purpose == '2fa' else 'Email Verification'}\n"
+        f"{'=' * 50}\n\n"
+        f"Hi {username},\n\n"
+        f"Use the code below to {action}:\n\n"
+        f"  {code}\n\n"
+        f"{step}\n"
+        f"This code expires in 10 minutes. Do not share it with anyone.\n\n"
+        f"If you did not request this, ignore this email safely.\n\n"
+        f"---\n"
+        f"ZyNi SMC | smcsetups.com\n"
+        f"support@smcsetups.com\n"
+    )
 
 
 def _build_verification_email(username: str, code: str) -> str:
@@ -557,8 +589,10 @@ def _build_verification_email(username: str, code: str) -> str:
 </html>"""
 
 
-def send_verification_email(to_email: str, code: str, username: str) -> "tuple[bool, str]":
-    """Send a 6-digit OTP verification email directly to the new user.
+def send_verification_email(to_email: str, code: str, username: str,
+                            purpose: str = "verify") -> "tuple[bool, str]":
+    """Send a 6-digit OTP email directly to the user.
+    purpose: 'verify' (email activation) | '2fa' (sign-in code)
     Attempts in order:
       1. Resend Python SDK  (RESEND_API_KEY env var — works on all cloud hosts)
       2. Gmail SMTP_SSL   port 465
@@ -570,13 +604,18 @@ def send_verification_email(to_email: str, code: str, username: str) -> "tuple[b
     if not to_email:
         return False, "missing_config"
 
-    subject = "ZyNi SMC — Verify Your Email Address"
-    body    = _build_verification_email(username, code)
+    if purpose == "2fa":
+        subject = "Your ZyNi SMC sign-in code"
+    else:
+        subject = "Your ZyNi SMC verification code"
 
-    print(f"[VERIFY-EMAIL] Attempting to send OTP to {to_email}")
+    html_body = _build_verification_email(username, code)
+    text_body = _build_verification_email_text(username, code, purpose)
+
+    print(f"[VERIFY-EMAIL] Attempting to send {purpose} OTP to {to_email}")
 
     # ── Method 1: Resend HTTP API (works even when SMTP ports are blocked) ──
-    if _send_via_resend(to_email, subject, body):
+    if _send_via_resend(to_email, subject, html_body, text_body):
         return True, "ok"
 
     # ── Method 2 & 3: Gmail SMTP ─────────────────────────────────────────
@@ -588,10 +627,16 @@ def send_verification_email(to_email: str, code: str, username: str) -> "tuple[b
 
     def _build_msg():
         msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"]    = frm
-        msg["To"]      = to_email
-        msg.attach(MIMEText(body, "html"))
+        msg["Subject"]         = subject
+        msg["From"]            = f"ZyNi SMC <{frm}>"
+        msg["To"]              = to_email
+        msg["Reply-To"]        = frm
+        msg["Precedence"]      = "transactional"
+        msg["List-Unsubscribe"] = f"<mailto:{frm}?subject=unsubscribe>"
+        msg["X-Entity-Ref-ID"] = "zyni-otp"
+        # Plain-text first — spam filters prefer multipart/alternative with text first
+        msg.attach(MIMEText(text_body, "plain", "utf-8"))
+        msg.attach(MIMEText(html_body, "html",  "utf-8"))
         return msg
 
     # Method 2: SMTP_SSL port 465
@@ -6901,7 +6946,7 @@ def login():
                 "email_hint":  _mask_email(db_user.email),
             }
 
-            email_sent, _ = send_verification_email(db_user.email, raw_code, username)
+            email_sent, _ = send_verification_email(db_user.email, raw_code, username, purpose="2fa")
             session["_2fa_email_sent"] = email_sent
             if not email_sent:
                 session["_2fa_fallback_code"] = raw_code
@@ -7053,7 +7098,7 @@ def resend_2fa():
         pass
 
     if db_user and db_user.email:
-        email_sent, _ = send_verification_email(db_user.email, raw_code, pending["username"])
+        email_sent, _ = send_verification_email(db_user.email, raw_code, pending["username"], purpose="2fa")
         log_security_event("2FA_RESEND", ip=ip, username=pending["username"])
         if email_sent:
             return jsonify({"success": True,
