@@ -15604,6 +15604,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       html+='<button class="bt-export-btn" onclick="_btApExportMatrixCsv()">Matrix CSV</button>';
       html+='<button class="bt-export-btn" onclick="_btApExportRulesCsv()">Rules CSV</button>';
       html+='<button class="bt-export-btn" onclick="_btApExportTradeLogCsv()">Trade Log CSV</button>';
+      html+='<button class="bt-export-btn" onclick="_btApExportRespectCsv()">Respect CSV</button>';
     }
     html+='</div>';
 
@@ -15619,6 +15620,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         html+='<div><div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">Failure Modes (losing trades)</div><canvas id="btApChart2" height="170"></canvas></div>';
         html+='</div>';
         html+=_btApReasonTableHtml(rep);
+        html+=_btApRespectSummaryHtml(rep);
+        html+=_btApRespectHtfHtml(rep);
         html+=_btApGradeCardsHtml(rep);
         html+=_btApMatrixTableHtml(rep);
         html+=_btApRulesTableHtml(rep);
@@ -15828,6 +15831,95 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     ambiguous:{l:"Ambiguous",c:"#a78bfa"}
   };
 
+  var _AP_RESPECT_META={
+    respected:{l:"Respected",c:"#22c55e"},
+    partial:{l:"Partial",c:"#f59e0b"},
+    not_respected:{l:"Not Respected",c:"#ef4444"},
+    neutral:{l:"Neutral / Inconclusive",c:"#94a3b8"}
+  };
+  var _AP_JOINT_META={
+    all_with:"All HTF with trend",
+    with_some_neutral:"Some with, none against",
+    all_neutral:"All HTF neutral",
+    conflicting:"Conflicting (with + against)",
+    against_some_neutral:"Some against, none with",
+    all_against:"All HTF against trend",
+    unknown:"Unknown"
+  };
+
+  function _btApRespectSummaryHtml(rep){
+    var rs=rep.respect_summary||{};
+    var ov=rs.overall||{};
+    var counts=ov.counts||{};
+    var html='<div style="margin:10px 0 4px;font-size:11px;font-weight:700;color:var(--text-1)">OB Respect — did price react to the zone?</div>';
+    html+='<div style="font-size:9px;color:var(--text-3);margin-bottom:4px">Respected rate excludes neutral/inconclusive touches from its denominator. Labels only — no trade removed.</div>';
+    html+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-bottom:8px">';
+    ["respected","partial","not_respected","neutral"].forEach(function(k){
+      var m=_AP_RESPECT_META[k];var pct=(ov.pcts||{})[k];
+      html+='<div style="background:rgba(0,0,0,.18);border-radius:6px;padding:8px;border-left:3px solid '+m.c+'">';
+      html+='<div style="font-size:9px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px">'+m.l+'</div>';
+      html+='<div style="font-size:16px;font-weight:700;color:'+m.c+'">'+_btApFmt(counts[k])+'</div>';
+      html+='<div style="font-size:9px;color:var(--text-3)">'+(pct!=null?pct+"%":"—")+'</div>';
+      html+='</div>';
+    });
+    html+='</div>';
+    html+='<div style="font-size:10px;color:var(--text-2);margin-bottom:6px">Overall respected rate: <b style="color:#22c55e">'+_btApFmt(ov.respected_rate_pct)+'%</b> of '+_btApFmt(ov.classified)+' classified touches ('+(ov.sample_size_status||"—")+')</div>';
+
+    /* Per-touch respect table — first-touch primary, 2nd/3rd comparison */
+    var bt=rs.by_touch||[];
+    html+='<div style="margin:4px 0 4px;font-size:10px;font-weight:700;color:var(--text-1)">Respect by Touch Number <span style="font-weight:400;color:var(--text-3)">(first = primary; does the 2nd / 3rd touch also get respected?)</span></div>';
+    html+='<div style="overflow-x:auto"><table class="bt-table" style="font-size:10px;width:100%">';
+    html+='<thead><tr><th>Touch</th><th>Total</th><th>Respected</th><th>Partial</th><th>Not Respected</th><th>Neutral</th><th>Respected Rate</th><th>Sample</th></tr></thead><tbody>';
+    var names={first:"First",second:"Second",third:"Third",fourth_plus:"Fourth+"};
+    bt.forEach(function(b){
+      var c=b.counts||{};var rate=b.respected_rate_pct;
+      var rColor=rate==null?"var(--text-3)":rate>=60?"#22c55e":rate>=45?"#f59e0b":"#ef4444";
+      html+='<tr'+(b.touch_bucket==="first"?' style="background:rgba(34,197,94,.06)"':'')+'>';
+      html+='<td style="font-weight:600">'+(names[b.touch_bucket]||b.touch_bucket)+'</td>';
+      html+='<td>'+_btApFmt(b.total)+'</td>';
+      html+='<td style="color:#22c55e">'+_btApFmt(c.respected)+'</td>';
+      html+='<td style="color:#f59e0b">'+_btApFmt(c.partial)+'</td>';
+      html+='<td style="color:#ef4444">'+_btApFmt(c.not_respected)+'</td>';
+      html+='<td style="color:#94a3b8">'+_btApFmt(c.neutral)+'</td>';
+      html+='<td style="color:'+rColor+';font-weight:700">'+_btApFmt(rate,1)+(rate!=null?"%":"")+'</td>';
+      html+='<td>'+(b.sample_size_status||"—")+'</td>';
+      html+='</tr>';
+    });
+    html+='</tbody></table></div>';
+    return html;
+  }
+
+  function _btApRespectHtfHtml(rep){
+    var rows=rep.respect_by_htf_state||[];
+    var html='<div style="margin:12px 0 4px;font-size:11px;font-weight:700;color:var(--text-1)">Respect × Higher-Timeframe State</div>';
+    html+='<div style="font-size:9px;color:var(--text-3);margin-bottom:4px">When the OB was respected, was the HTF aligned? When not respected, was HTF against? Joint state combines all mapped trend TFs at the last closed bar before the touch.</div>';
+    if(!rows.length){
+      html+='<div style="font-size:10px;color:var(--text-3);padding:8px">No HTF-state data (selected OB timeframes have no mapped trend TFs).</div>';
+      return html;
+    }
+    html+='<div style="overflow-x:auto"><table class="bt-table" style="font-size:10px;width:100%">';
+    html+='<thead><tr><th>OB TF</th><th>HTF Joint State</th><th>Total</th><th>Respected</th><th>Partial</th><th>Not Respected</th><th>Respected Rate</th><th>Sample</th></tr></thead><tbody>';
+    var lastTf=null;
+    rows.forEach(function(r){
+      var c=r.counts||{};var rate=r.respected_rate_pct;
+      var rColor=rate==null?"var(--text-3)":rate>=60?"#22c55e":rate>=45?"#f59e0b":"#ef4444";
+      var sep=(lastTf!==null&&lastTf!==r.ob_timeframe)?' style="border-top:2px solid rgba(148,163,184,.2)"':'';
+      lastTf=r.ob_timeframe;
+      html+='<tr'+sep+'>';
+      html+='<td style="font-weight:700">'+r.ob_timeframe+'</td>';
+      html+='<td>'+(_AP_JOINT_META[r.htf_joint_state]||r.htf_joint_state)+'</td>';
+      html+='<td>'+_btApFmt(r.total)+'</td>';
+      html+='<td style="color:#22c55e">'+_btApFmt(c.respected)+'</td>';
+      html+='<td style="color:#f59e0b">'+_btApFmt(c.partial)+'</td>';
+      html+='<td style="color:#ef4444">'+_btApFmt(c.not_respected)+'</td>';
+      html+='<td style="color:'+rColor+';font-weight:700">'+_btApFmt(rate,1)+(rate!=null?"%":"")+'</td>';
+      html+='<td>'+(r.sample_size_status||"—")+(r.sample_size_status==="insufficient"?" ⚠":"")+'</td>';
+      html+='</tr>';
+    });
+    html+='</tbody></table></div>';
+    return html;
+  }
+
   function _btApGradeCardsHtml(rep){
     var gd=rep.grade_distribution||{};
     var counts=gd.counts||{};
@@ -15940,13 +16032,14 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var slice=rows.slice(page*pageSize,(page+1)*pageSize);
     var html='<div style="margin:12px 0 4px;font-size:11px;font-weight:700;color:var(--text-1)">Labeled Trade Log — '+_btApFmt(log.total)+' trades, none removed'+(log.truncated?' (showing first '+log.cap+')':'')+'</div>';
     html+='<div style="overflow-x:auto"><table class="bt-table" style="font-size:9px;width:100%">';
-    html+='<thead><tr><th>Symbol</th><th>TF</th><th>Dir</th><th>Touch#</th><th>Time</th><th>Outcome</th><th>Grade</th><th>Real R</th><th>MFE</th><th>MAE</th><th>Form Vol</th><th>Touch Vol</th><th>HTF</th><th>Session</th><th>Patterns</th><th>Rules Passed</th></tr></thead><tbody>';
+    html+='<thead><tr><th>Symbol</th><th>TF</th><th>Dir</th><th>Touch#</th><th>Time</th><th>Outcome</th><th>Grade</th><th>Respect</th><th>HTF State</th><th>Real R</th><th>MFE</th><th>MAE</th><th>Form Vol</th><th>Touch Vol</th><th>HTF</th><th>Session</th><th>Patterns</th><th>Rules Passed</th></tr></thead><tbody>';
     function ts(ms){
       if(ms==null) return "—";
       try{return new Date(ms).toISOString().slice(0,16).replace("T"," ");}catch(e){return String(ms);}
     }
     slice.forEach(function(r){
       var m=_AP_GRADE_META[r.performance_grade]||{l:r.performance_grade,c:"var(--text-1)"};
+      var rm=_AP_RESPECT_META[r.respect_class]||{l:r.respect_class||"—",c:"var(--text-3)"};
       var passes=r.rule_passes||{};
       var pkeys=Object.keys(passes);
       var np=pkeys.filter(function(k){return passes[k]===true;}).length;
@@ -15957,6 +16050,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       html+='<td style="white-space:nowrap">'+ts(r.touch_time)+'</td>';
       html+='<td>'+r.outcome+'</td>';
       html+='<td style="color:'+m.c+';font-weight:700">'+m.l+'</td>';
+      html+='<td style="color:'+rm.c+';font-weight:600">'+rm.l+'</td>';
+      html+='<td style="white-space:nowrap">'+(r.htf_joint_state||"—")+'</td>';
       html+='<td>'+_btApFmt(r.realized_r,2)+'</td>';
       html+='<td>'+_btApFmt(r.mfe_r,2)+'</td>';
       html+='<td>'+_btApFmt(r.mae_r,2)+'</td>';
@@ -16014,11 +16109,38 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     _btDownloadBlob("zyni_autopsy_rules_"+Date.now()+".csv",rows.join("\r\n"),"text/csv");
   }
 
+  function _btApExportRespectCsv(){
+    var d=_btState.apData;
+    if(!d||!d.reports_by_class){alert("No autopsy data to export.");return;}
+    var cols=["ob_class","scope","key","total","respected","partial","not_respected",
+      "neutral","respected_rate_pct","not_respected_rate_pct","sample_size_status"];
+    var rows=[cols.join(",")];
+    function emit(cls,scope,key,blk){
+      var c=blk.counts||{};
+      var rec={ob_class:cls,scope:scope,key:key,total:blk.total,
+        respected:c.respected,partial:c.partial,not_respected:c.not_respected,
+        neutral:c.neutral,respected_rate_pct:blk.respected_rate_pct,
+        not_respected_rate_pct:blk.not_respected_rate_pct,
+        sample_size_status:blk.sample_size_status};
+      rows.push(cols.map(function(k){return _btCsvVal(rec[k]);}).join(","));
+    }
+    Object.keys(d.reports_by_class).forEach(function(cls){
+      var rep=d.reports_by_class[cls]||{};
+      var rs=rep.respect_summary||{};
+      if(rs.overall) emit(cls,"overall","all",rs.overall);
+      (rs.by_touch||[]).forEach(function(b){emit(cls,"touch",b.touch_bucket,b);});
+      (rep.respect_by_htf_state||[]).forEach(function(h){
+        emit(cls,"htf_state",h.ob_timeframe+"|"+h.htf_joint_state,h);});
+    });
+    _btDownloadBlob("zyni_autopsy_respect_"+Date.now()+".csv",rows.join("\r\n"),"text/csv");
+  }
+
   function _btApExportTradeLogCsv(){
     var d=_btState.apData;
     if(!d||!d.reports_by_class){alert("No autopsy data to export.");return;}
     var cols=["ob_class","touch_trade_id","symbol","timeframe","direction","touch_number",
-      "touch_time","outcome","performance_grade","realized_r","mfe_r","mae_r","stop_loss_r",
+      "touch_time","outcome","performance_grade","respect_class","htf_joint_state",
+      "realized_r","mfe_r","mae_r","stop_loss_r",
       "formation_volume_ratio","touch_volume_ratio","htf_alignment","tf_alignment",
       "swing_alignment","session","failure_mode","pattern_tags","rules_passed","rules_total"];
     var rows=[cols.join(",")];
@@ -16985,6 +17107,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   window._btApExportMatrixCsv=_btApExportMatrixCsv;
   window._btApExportRulesCsv=_btApExportRulesCsv;
   window._btApExportTradeLogCsv=_btApExportTradeLogCsv;
+  window._btApExportRespectCsv=_btApExportRespectCsv;
 
   /* Tag body with current view so per-view CSS (Task 3) applies before
      the first switchView() call. */

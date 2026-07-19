@@ -557,5 +557,145 @@ class TestVerificationRegressions(unittest.TestCase):
             self.assertEqual(set(r["rule_passes"].keys()), expected_rules)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Chunk 2 — Respect framing (labels only)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestRespectClass(unittest.TestCase):
+    def test_44_grade_to_respect_mapping(self):
+        self.assertEqual(_m._bt_fl_respect_class("clean_win"), "respected")
+        self.assertEqual(_m._bt_fl_respect_class("stressed_win"), "respected")
+        self.assertEqual(_m._bt_fl_respect_class("reversal_loss"), "partial")
+        self.assertEqual(_m._bt_fl_respect_class("paused_positive"), "partial")
+        self.assertEqual(_m._bt_fl_respect_class("hard_loss"), "not_respected")
+        self.assertEqual(_m._bt_fl_respect_class("paused_flat"), "neutral")
+        self.assertEqual(_m._bt_fl_respect_class("ambiguous"), "neutral")
+        self.assertEqual(_m._bt_fl_respect_class("unknown_grade"), "neutral")
+
+    def test_45_every_grade_maps(self):
+        for g in _m._FL_GRADES:
+            self.assertIn(_m._bt_fl_respect_class(g), _m._FL_RESPECT_CLASSES)
+
+
+class TestHtfJointState(unittest.TestCase):
+    js = staticmethod(lambda a: _m._bt_fl_htf_joint_state(a))
+
+    def test_46_all_with_against(self):
+        self.assertEqual(self.js({"1h": "with", "4h": "with"}), "all_with")
+        self.assertEqual(self.js({"1h": "against", "4h": "against"}), "all_against")
+        self.assertEqual(self.js({"1d": "with"}), "all_with")
+
+    def test_47_conflicting(self):
+        self.assertEqual(self.js({"1h": "with", "4h": "against"}), "conflicting")
+        self.assertEqual(self.js({"1h": "against", "4h": "with"}), "conflicting")
+
+    def test_48_partial_neutral(self):
+        self.assertEqual(self.js({"1h": "with", "4h": "neutral"}), "with_some_neutral")
+        self.assertEqual(self.js({"1h": "against", "4h": "neutral"}), "against_some_neutral")
+        self.assertEqual(self.js({"1h": "neutral", "4h": "neutral"}), "all_neutral")
+
+    def test_49_unknown(self):
+        self.assertEqual(self.js({"1h": "with", "4h": "unknown"}), "unknown")
+        self.assertEqual(self.js({}), "unknown")
+        self.assertEqual(self.js(None), "unknown")
+
+
+class TestRespectCounts(unittest.TestCase):
+    def _r(self, respect_class, tn=1, alignments=None):
+        return {"respect_class": respect_class, "touch_number": tn,
+                "timeframe": "15m",
+                "alignments": alignments if alignments is not None else {"1h": "with"},
+                "htf_joint_state": "all_with"}
+
+    def test_50_counts_and_rate(self):
+        rows = ([self._r("respected")] * 6 + [self._r("partial")] * 2 +
+                [self._r("not_respected")] * 2 + [self._r("neutral")] * 3)
+        c = _m._bt_fl_respect_counts(rows)
+        self.assertEqual(c["total"], 13)
+        self.assertEqual(c["counts"]["respected"], 6)
+        self.assertEqual(c["classified"], 10)         # excludes 3 neutral
+        self.assertEqual(c["respected_rate_pct"], 60.0)  # 6/10
+        self.assertEqual(c["not_respected_rate_pct"], 20.0)
+
+    def test_51_empty_safe(self):
+        c = _m._bt_fl_respect_counts([])
+        self.assertEqual(c["total"], 0)
+        self.assertIsNone(c["respected_rate_pct"])
+
+    def test_52_summary_touch_buckets_and_invariant(self):
+        rows = ([self._r("respected", tn=1)] * 5 +
+                [self._r("not_respected", tn=1)] * 2 +
+                [self._r("respected", tn=2)] * 3 +
+                [self._r("partial", tn=3)] * 2 +
+                [self._r("neutral", tn=5)] * 1)
+        s = _m._bt_fl_respect_summary(rows)
+        self.assertEqual(s["primary_view"], "first")
+        first = next(b for b in s["by_touch"] if b["touch_bucket"] == "first")
+        self.assertEqual(first["total"], 7)
+        self.assertEqual(first["respected_rate_pct"], round(5/7*100, 1))
+        fourth = next(b for b in s["by_touch"] if b["touch_bucket"] == "fourth_plus")
+        self.assertEqual(fourth["total"], 1)
+        # invariant: overall counts sum to all records
+        self.assertEqual(sum(s["overall"]["counts"].values()), len(rows))
+        # invariant: touch buckets partition the records
+        self.assertEqual(sum(b["total"] for b in s["by_touch"]), len(rows))
+
+    def test_53_htf_state_table_excludes_no_alignment(self):
+        rows = ([self._r("respected", alignments={"1h": "with", "4h": "with"})] * 4 +
+                [self._r("not_respected", alignments={"1h": "against", "4h": "against"})] * 3 +
+                [self._r("respected", alignments={})] * 2)  # no mapped TFs → excluded
+        # give the no-alignment rows a distinct joint state so grouping is clear
+        for r in rows:
+            r["htf_joint_state"] = _m._bt_fl_htf_joint_state(r["alignments"])
+        table = _m._bt_fl_respect_by_htf_state(rows)
+        total_in_table = sum(c["total"] for c in table)
+        self.assertEqual(total_in_table, 7)   # 2 no-alignment rows excluded
+        states = {c["htf_joint_state"] for c in table}
+        self.assertIn("all_with", states)
+        self.assertIn("all_against", states)
+
+
+class TestRespectPipeline(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        with patch.object(_m, "get_klines", side_effect=_det_gk()):
+            cls.res = _m._bt_run_autopsy({
+                "symbols": ["BTCUSDT"], "timeframes": ["15m", "1h"],
+                "candle_count": 1500, "rr": 2, "ob_classes": ["internal", "swing"]})
+
+    def test_54_respect_sections_present(self):
+        for cls_name in ("internal", "swing"):
+            rep = self.res["reports_by_class"][cls_name]
+            self.assertIn("respect_summary", rep)
+            self.assertIn("respect_by_htf_state", rep)
+            self.assertIn("overall", rep["respect_summary"])
+            self.assertEqual(len(rep["respect_summary"]["by_touch"]), 4)
+
+    def test_55_respect_counts_cover_all_records(self):
+        for cls_name in ("internal", "swing"):
+            rep = self.res["reports_by_class"][cls_name]
+            ov = rep["respect_summary"]["overall"]
+            self.assertEqual(sum(ov["counts"].values()), rep["records_total"])
+
+    def test_56_log_rows_carry_respect_fields(self):
+        rows = self.res["reports_by_class"]["internal"]["trade_log"]["rows"]
+        self.assertGreater(len(rows), 0)
+        for r in rows:
+            self.assertIn(r["respect_class"], _m._FL_RESPECT_CLASSES)
+            self.assertIn("htf_joint_state", r)
+
+    def test_57_definitions_documented(self):
+        defs = self.res["definitions"]
+        self.assertIn("respect_class", defs)
+        self.assertIn("htf_joint_state", defs)
+
+    def test_58_respect_consistent_with_grade(self):
+        # respect_class must equal the mapping of the row's performance grade
+        rows = self.res["reports_by_class"]["internal"]["trade_log"]["rows"]
+        for r in rows:
+            self.assertEqual(r["respect_class"],
+                             _m._bt_fl_respect_class(r["performance_grade"]))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
