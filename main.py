@@ -5992,7 +5992,8 @@ def get_pairs(market: str = "perpetual", force: bool = False) -> List[Dict[str, 
         return cache.get("pairs", [])
 
 
-def get_klines(symbol: str, interval: str, limit: int = 300, market: str = "perpetual") -> List[Dict[str, float]]:
+def get_klines(symbol: str, interval: str, limit: int = 300, market: str = "perpetual",
+               extended: bool = False) -> List[Dict[str, float]]:
     """
     Fetch OHLCV candles. Tries Binance Futures API first (real futures volume),
     falls back to the geo-safe spot mirror.
@@ -6002,6 +6003,11 @@ def get_klines(symbol: str, interval: str, limit: int = 300, market: str = "perp
     routes request 4000-10000 candles without any per-site changes.
     Live scanner always stays ≤1500 via _scan_kline_limit(), so this path is
     only hit from the debug route.
+
+    extended=True additionally carries the Binance kline fields the 6-field
+    parse normally drops (closeTime, quoteVolume, tradeCount, takerBuyBase,
+    takerBuyQuote) — used ONLY by the backtest for delta/CVD. Production
+    callers omit the flag and get the identical 6-field dicts as before.
     """
     try:
         requested = int(limit)
@@ -6010,17 +6016,31 @@ def get_klines(symbol: str, interval: str, limit: int = 300, market: str = "perp
 
     BINANCE_FUTURES_MAX = 1500
     if requested > BINANCE_FUTURES_MAX:
-        return get_binance_klines_paginated_latest(symbol, interval, requested, market)
+        return get_binance_klines_paginated_latest(symbol, interval, requested,
+                                                   market, extended=extended)
 
     def _parse(data):
-        return [{
-            "openTime": k[0],
-            "open":     float(k[1]),
-            "high":     float(k[2]),
-            "low":      float(k[3]),
-            "close":    float(k[4]),
-            "volume":   float(k[5]),
-        } for k in data]
+        rows = []
+        for k in data:
+            row = {
+                "openTime": k[0],
+                "open":     float(k[1]),
+                "high":     float(k[2]),
+                "low":      float(k[3]),
+                "close":    float(k[4]),
+                "volume":   float(k[5]),
+            }
+            if extended:
+                try:
+                    row["closeTime"]     = k[6]
+                    row["quoteVolume"]   = float(k[7])
+                    row["tradeCount"]    = int(k[8])
+                    row["takerBuyBase"]  = float(k[9])
+                    row["takerBuyQuote"] = float(k[10])
+                except (IndexError, TypeError, ValueError):
+                    pass
+            rows.append(row)
+        return rows
 
     # ── Try Binance Futures API first ──
     try:
@@ -6043,7 +6063,8 @@ def get_klines(symbol: str, interval: str, limit: int = 300, market: str = "perp
 
 def get_binance_klines_paginated_latest(symbol: str, interval: str,
                                         total_limit: int = 1500,
-                                        market: str = "perpetual") -> List[Dict[str, float]]:
+                                        market: str = "perpetual",
+                                        extended: bool = False) -> List[Dict[str, float]]:
     """Fetch the latest N Binance candles by paginating backward with endTime.
 
     Binance hard caps:
@@ -6071,14 +6092,24 @@ def get_binance_klines_paginated_latest(symbol: str, interval: str,
         out = []
         for k in data:
             try:
-                out.append({
+                row = {
                     "openTime": int(k[0]),
                     "open":     float(k[1]),
                     "high":     float(k[2]),
                     "low":      float(k[3]),
                     "close":    float(k[4]),
                     "volume":   float(k[5]),
-                })
+                }
+                if extended:
+                    try:
+                        row["closeTime"]     = k[6]
+                        row["quoteVolume"]   = float(k[7])
+                        row["tradeCount"]    = int(k[8])
+                        row["takerBuyBase"]  = float(k[9])
+                        row["takerBuyQuote"] = float(k[10])
+                    except (IndexError, TypeError, ValueError):
+                        pass
+                out.append(row)
             except (TypeError, ValueError, IndexError):
                 pass
         return out
@@ -40814,6 +40845,9 @@ _AP_FEATURE_KEYS = (
     "FVG_CONFLUENCE", "IN_PREMIUM_HALF", "HIGH_VOL_REGIME",
     "HIGH_FORMATION_VOLUME", "LOW_FORMATION_VOLUME",
     "HIGH_TOUCH_VOLUME", "LOW_TOUCH_VOLUME",
+    # Phase 20B Chunk 3 — primary divergence signals at touch
+    "RSI_DIVERGENCE_AT_TOUCH", "CVD_DIVERGENCE_AT_TOUCH",
+    "RSI_OVERSOLD_AT_TOUCH", "RSI_OVERBOUGHT_AT_TOUCH",
 )
 
 # ── Phase 20: Bad-Trade Filter Lab (labels only — trades are NEVER removed) ──
@@ -40894,6 +40928,95 @@ def _bt_fl_htf_joint_state(alignments: Dict) -> str:
     if a > 0 and w == 0:
         return "against_some_neutral"
     return "all_neutral"
+
+
+# ── Phase 20B Chunk 3: RSI + CVD divergence at touch (PRIMARY signals) ───────
+_FL_RSI_PERIOD:     int   = 14
+_FL_RSI_OVERSOLD:   float = 30.0
+_FL_RSI_OVERBOUGHT: float = 70.0
+
+
+def _bt_fl_cvd_series(candles: List[Dict]) -> List[Optional[float]]:
+    """Cumulative Volume Delta per bar (running sum of per-bar delta).
+
+    Per-bar delta = taker_buy_base - (volume - taker_buy_base)
+                  = 2*taker_buy_base - volume  (buy volume minus sell volume).
+    Requires taker_buy_base (Binance kline field 9). When it is missing on a
+    bar, that bar contributes 0 to the running sum and its CVD value is still
+    emitted (so the series stays aligned), but bars with NO taker data anywhere
+    yield an all-None series → divergence returns not-evaluable. No look-ahead:
+    cvd[i] uses only bars 0..i.
+    """
+    n = len(candles)
+    out: List[Optional[float]] = [None] * n
+    have_any = any(c.get("taker_buy_base") is not None for c in candles)
+    if not have_any:
+        return out
+    running = 0.0
+    for i in range(n):
+        tb = candles[i].get("taker_buy_base")
+        vol = candles[i].get("volume")
+        if tb is not None and vol is not None:
+            running += (2.0 * float(tb) - float(vol))
+        out[i] = round(running, 4)
+    return out
+
+
+def _bt_fl_bar_delta(candle: Dict) -> Optional[float]:
+    """Single-bar delta (buy minus sell volume) or None when taker data missing."""
+    tb = candle.get("taker_buy_base")
+    vol = candle.get("volume")
+    if tb is None or vol is None:
+        return None
+    return round(2.0 * float(tb) - float(vol), 4)
+
+
+def _bt_fl_divergence_at_touch(direction: str, touch_idx: int,
+                               candles: List[Dict], series: List[Optional[float]],
+                               trend_idx: Dict) -> Optional[bool]:
+    """Divergence between price and an indicator series at the touch bar.
+
+    Bullish OB (price falling into the zone): divergence = the touch bar makes
+    a LOWER LOW than the last confirmed pivot low, while the indicator makes a
+    HIGHER low (price weaker, momentum/flow stronger → reversal fuel).
+    Bearish OB: mirror (higher high in price, lower high in indicator).
+
+    Reference = last pivot CONFIRMED before the touch (pivot bar <= touch_idx -
+    pivot_len), same no-look-ahead rule as the trend queries. Returns
+    True / False / None (None when there is no prior confirmed pivot or the
+    indicator value is missing at either point).
+    """
+    import bisect as _bisect
+    if touch_idx is None or touch_idx < 0 or touch_idx >= len(candles):
+        return None
+    if not series or touch_idx >= len(series):
+        return None
+    p_len  = trend_idx.get("pivot_len", _BT_PIVOT_LEN)
+    cutoff = touch_idx - p_len
+    if direction == "bullish":
+        bars = trend_idx.get("low_bars", [])
+        i = _bisect.bisect_right(bars, cutoff) - 1
+        if i < 0:
+            return None
+        piv = bars[i]
+        s_now, s_piv = series[touch_idx], series[piv]
+        if s_now is None or s_piv is None:
+            return None
+        price_now = float(candles[touch_idx]["low"])
+        price_piv = float(candles[piv]["low"])
+        return bool(price_now < price_piv and s_now > s_piv)
+    else:
+        bars = trend_idx.get("high_bars", [])
+        i = _bisect.bisect_right(bars, cutoff) - 1
+        if i < 0:
+            return None
+        piv = bars[i]
+        s_now, s_piv = series[touch_idx], series[piv]
+        if s_now is None or s_piv is None:
+            return None
+        price_now = float(candles[touch_idx]["high"])
+        price_piv = float(candles[piv]["high"])
+        return bool(price_now > price_piv and s_now < s_piv)
 
 
 def _bt_fl_grade(outcome: str, mfe_r, mae_r) -> str:
@@ -41204,6 +41327,8 @@ def _bt_ap_build_trade_records(
     htf_trend_idx: Optional[Dict],
     atr: List[Optional[float]],
     multi_trend: Optional[Dict[str, Dict]] = None,
+    rsi_series: Optional[List[Optional[float]]] = None,
+    cvd_series: Optional[List[Optional[float]]] = None,
 ) -> List[Dict]:
     """Build one autopsy record per touch trade at the selected RR.
 
@@ -41306,6 +41431,22 @@ def _bt_ap_build_trade_records(
                     mfe_r, mae_r = _bmfe, _bmae
             grade = _bt_fl_grade(outcome, mfe_r, mae_r)
 
+            # ── Phase 20B Chunk 3: RSI + CVD divergence at the touch bar ─────
+            rsi_at_touch = (rsi_series[touch_idx]
+                            if rsi_series is not None and touch_idx < len(rsi_series)
+                            else None)
+            cvd_at_touch = (cvd_series[touch_idx]
+                            if cvd_series is not None and touch_idx < len(cvd_series)
+                            else None)
+            delta_at_touch     = _bt_fl_bar_delta(candles[touch_idx]) if touch_idx < len(candles) else None
+            delta_at_formation = _bt_fl_bar_delta(candles[fb]) if fb < len(candles) else None
+            rsi_divergence = (_bt_fl_divergence_at_touch(direction, touch_idx, candles,
+                                                         rsi_series, tf_trend_idx)
+                              if rsi_series is not None else None)
+            cvd_divergence = (_bt_fl_divergence_at_touch(direction, touch_idx, candles,
+                                                         cvd_series, tf_trend_idx)
+                              if cvd_series is not None else None)
+
             # Predictive features — None = unknown, excluded from ranking
             # denominators for that feature.
             features: Dict[str, Optional[bool]] = {
@@ -41338,6 +41479,12 @@ def _bt_ap_build_trade_records(
                                           else touch_vol_ratio >= _FL_HIGH_VOL_RATIO),
                 "LOW_TOUCH_VOLUME":      (None if touch_vol_ratio is None
                                           else touch_vol_ratio < _FL_LOW_VOL_RATIO),
+                "RSI_DIVERGENCE_AT_TOUCH": rsi_divergence,
+                "CVD_DIVERGENCE_AT_TOUCH": cvd_divergence,
+                "RSI_OVERSOLD_AT_TOUCH":   (None if rsi_at_touch is None
+                                            else rsi_at_touch < _FL_RSI_OVERSOLD),
+                "RSI_OVERBOUGHT_AT_TOUCH": (None if rsi_at_touch is None
+                                            else rsi_at_touch > _FL_RSI_OVERBOUGHT),
             }
 
             records.append({
@@ -41375,6 +41522,12 @@ def _bt_ap_build_trade_records(
                 "atr_percentile":  atr_pct,
                 "formation_volume_ratio": formation_vol_ratio,
                 "touch_volume_ratio":     touch_vol_ratio,
+                "rsi_at_touch":           rsi_at_touch,
+                "cvd_at_touch":           cvd_at_touch,
+                "delta_at_touch":         delta_at_touch,
+                "delta_at_formation":     delta_at_formation,
+                "rsi_divergence":         rsi_divergence,
+                "cvd_divergence":         cvd_divergence,
                 "performance_grade":      grade,
                 "respect_class":          _bt_fl_respect_class(grade),
                 "htf_joint_state":        _bt_fl_htf_joint_state(alignments),
@@ -41833,6 +41986,11 @@ def _bt_fl_trade_log(records: List[Dict]) -> Dict:
             "stop_loss_r":      r.get("stop_loss_r"),
             "formation_volume_ratio": r.get("formation_volume_ratio"),
             "touch_volume_ratio":     r.get("touch_volume_ratio"),
+            "rsi_at_touch":     r.get("rsi_at_touch"),
+            "cvd_at_touch":     r.get("cvd_at_touch"),
+            "delta_at_touch":   r.get("delta_at_touch"),
+            "rsi_divergence":   r.get("rsi_divergence"),
+            "cvd_divergence":   r.get("cvd_divergence"),
             "htf_alignment":    r.get("htf_alignment"),
             "tf_alignment":     r.get("tf_alignment"),
             "swing_alignment":  r.get("swing_alignment"),
@@ -41996,7 +42154,8 @@ def _bt_run_autopsy(req: Dict) -> Dict:
     for sym in symbols:
         for tf in timeframes:
             try:
-                raw = get_klines(sym, tf, limit=candle_count)
+                # extended=True carries taker-buy volume through for delta/CVD
+                raw = get_klines(sym, tf, limit=candle_count, extended=True)
                 network_fetch_count += 1
                 candles = _bt_normalize_candles(raw)
                 if not candles:
@@ -42007,6 +42166,10 @@ def _bt_run_autopsy(req: Dict) -> Dict:
                 atr             = _bt_ap_atr_series(candles)
                 tf_trend_idx    = _bt_ap_build_trend_index(candles, _BT_PIVOT_LEN)
                 swing_trend_idx = _bt_ap_build_trend_index(candles, _BT_SWING_PIVOT_LEN)
+                # Chunk 3: RSI + CVD once per cell (no look-ahead by construction)
+                _closes    = [float(c["close"]) for c in candles]
+                rsi_series = calc_rsi(_closes, _FL_RSI_PERIOD)
+                cvd_series = _bt_fl_cvd_series(candles)
 
                 # ── Trend-TF fetches: single-HTF feature + Phase 19 matrix ───
                 # One shared per-symbol cache; each (sym, trend_tf) fetched at
@@ -42057,7 +42220,8 @@ def _bt_run_autopsy(req: Dict) -> Dict:
                         events, candles, rr_key, ob_class,
                         tf_trend_idx, swing_trend_idx,
                         htf_candles, htf_trend_idx, atr,
-                        multi_trend=multi_trend)
+                        multi_trend=multi_trend,
+                        rsi_series=rsi_series, cvd_series=cvd_series)
                     records_by_class[ob_class].extend(recs)
 
                 completed_cells += 1
@@ -42123,6 +42287,15 @@ def _bt_run_autopsy(req: Dict) -> Dict:
             "htf_joint_state":   ("combined higher-TF alignment for the OB's mapped trend "
                                   "TFs: all_with | with_some_neutral | all_neutral | "
                                   "conflicting | against_some_neutral | all_against | unknown"),
+            "rsi_divergence":    (f"RSI({_FL_RSI_PERIOD}) divergence at the touch bar vs the last "
+                                  "CONFIRMED pivot: bullish = price lower-low + RSI higher-low; "
+                                  "bearish = price higher-high + RSI lower-high. No look-ahead. "
+                                  "None when no prior confirmed pivot / RSI unavailable"),
+            "cvd_divergence":    ("same divergence test using Cumulative Volume Delta (2*taker_buy "
+                                  "- volume, running sum). Bullish CVD higher-low into a lower "
+                                  "price low = absorption. None when taker-buy volume unavailable"),
+            "rsi_flags":         (f"RSI_OVERSOLD (<{_FL_RSI_OVERSOLD}) / RSI_OVERBOUGHT "
+                                  f"(>{_FL_RSI_OVERBOUGHT}) at touch"),
         },
         "performance": {
             "requested_cells":       len(symbols) * len(timeframes),

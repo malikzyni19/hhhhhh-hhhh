@@ -427,7 +427,7 @@ class TestTradeRecords(unittest.TestCase):
 class TestOrchestrator(unittest.TestCase):
     def _gk(self):
         cache = {}
-        def gk(sym, tf, limit=300, market="perpetual"):
+        def gk(sym, tf, limit=300, market="perpetual", extended=False):
             key = (sym, tf)
             if key not in cache:
                 # Deterministic seed (hash() is process-randomized for strings)
@@ -462,7 +462,7 @@ class TestOrchestrator(unittest.TestCase):
     def test_33_htf_fetch_cached(self):
         calls = []
         cache = {}
-        def gk(sym, tf, limit=300, market="perpetual"):
+        def gk(sym, tf, limit=300, market="perpetual", extended=False):
             calls.append((sym, tf))
             key = (sym, tf)
             if key not in cache:
@@ -478,7 +478,7 @@ class TestOrchestrator(unittest.TestCase):
 
     def test_34_failure_isolation(self):
         good = _fake_raw_candles()
-        def gk(sym, tf, limit=300, market="perpetual"):
+        def gk(sym, tf, limit=300, market="perpetual", extended=False):
             if sym == "ETHUSDT" and tf == "1h":
                 raise RuntimeError("boom")
             return good

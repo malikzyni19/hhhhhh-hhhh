@@ -82,18 +82,20 @@ def _fake_raw_candles(seed=42, n=1000):
         drift = 6.0 * math.sin(i / 9.0) + 3.5 * math.sin(i / 23.0)
         close = 100.0 + drift + rnd.uniform(-1.2, 1.2)
         vol = 800 + 600 * abs(math.sin(i / 7.0)) + rnd.uniform(0, 300)
+        # varying taker-buy share so delta/CVD are non-trivial
+        tb = vol * (0.5 + 0.3 * math.sin(i / 5.0))
         out.append({"openTime": i * 3_600_000, "closeTime": (i + 1) * 3_600_000 - 1,
                     "open": close - 0.2,
                     "high": close + rnd.uniform(0.4, 1.6),
                     "low":  close - rnd.uniform(0.4, 1.6),
-                    "close": close, "volume": vol, "quoteVolume": vol,
-                    "trades": 100, "takerBuyBase": vol / 2, "takerBuyQuote": vol / 2})
+                    "close": close, "volume": vol, "quoteVolume": vol * close,
+                    "tradeCount": 100, "takerBuyBase": tb, "takerBuyQuote": tb * close})
     return out
 
 
 def _det_gk():
     cache = {}
-    def gk(sym, tf, limit=300, market="perpetual"):
+    def gk(sym, tf, limit=300, market="perpetual", extended=False):
         key = (sym, tf)
         if key not in cache:
             cache[key] = _fake_raw_candles(sum(ord(c) for c in sym + tf))
@@ -695,6 +697,166 @@ class TestRespectPipeline(unittest.TestCase):
         for r in rows:
             self.assertEqual(r["respect_class"],
                              _m._bt_fl_respect_class(r["performance_grade"]))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Chunk 3 — RSI + CVD divergence at touch (primary signals)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _cvd_candle(i, high, low, close, taker_buy, vol=1000.0):
+    return {"open_time": i * 3_600_000, "open": close, "high": float(high),
+            "low": float(low), "close": float(close), "volume": vol,
+            "taker_buy_base": taker_buy}
+
+
+class TestCvdDelta(unittest.TestCase):
+    def test_59_cvd_series_and_delta(self):
+        cds = [_cvd_candle(i, 101 + i, 99 + i, 100 + i, 700.0) for i in range(30)]
+        cvd = _m._bt_fl_cvd_series(cds)
+        self.assertIsNotNone(cvd[0])
+        self.assertAlmostEqual(cvd[0], 400.0)          # 2*700 - 1000
+        self.assertAlmostEqual(cvd[1], 800.0)          # running sum
+        self.assertEqual(_m._bt_fl_bar_delta(cds[0]), 400.0)
+
+    def test_60_cvd_all_none_without_taker(self):
+        cds = [{"open_time": i, "open": 100, "high": 101, "low": 99,
+                "close": 100, "volume": 1000.0} for i in range(30)]
+        self.assertTrue(all(v is None for v in _m._bt_fl_cvd_series(cds)))
+        self.assertIsNone(_m._bt_fl_bar_delta(cds[0]))
+
+    def test_61_cvd_no_lookahead(self):
+        base = [_cvd_candle(i, 101, 99, 100, 600.0) for i in range(40)]
+        ext  = base + [_cvd_candle(40 + i, 101, 99, 100, 9999.0) for i in range(10)]
+        cvd_a = _m._bt_fl_cvd_series(base)
+        cvd_b = _m._bt_fl_cvd_series(ext)
+        for i in range(40):
+            self.assertEqual(cvd_a[i], cvd_b[i])
+
+
+class TestDivergence(unittest.TestCase):
+    def _trend(self, low_bars=(), high_bars=(), pivot_len=5):
+        return {"low_bars": list(low_bars), "high_bars": list(high_bars),
+                "pivot_len": pivot_len, "h": [], "l": []}
+
+    def test_62_bullish_divergence_true(self):
+        cc = [{"open_time": i, "open": 100, "high": 110, "low": 95,
+               "close": 100, "volume": 1} for i in range(40)]
+        cc[10]["low"] = 90.0; cc[30]["low"] = 85.0   # price lower low
+        s = [None] * 40; s[10] = 20.0; s[30] = 30.0   # indicator higher low
+        self.assertTrue(_m._bt_fl_divergence_at_touch(
+            "bullish", 30, cc, s, self._trend(low_bars=[10])))
+
+    def test_63_bullish_no_divergence(self):
+        cc = [{"open_time": i, "open": 100, "high": 110, "low": 95,
+               "close": 100, "volume": 1} for i in range(40)]
+        cc[10]["low"] = 90.0; cc[30]["low"] = 85.0
+        s = [None] * 40; s[10] = 20.0; s[30] = 15.0   # indicator also lower → no div
+        self.assertFalse(_m._bt_fl_divergence_at_touch(
+            "bullish", 30, cc, s, self._trend(low_bars=[10])))
+
+    def test_64_bearish_divergence_true(self):
+        cc = [{"open_time": i, "open": 100, "high": 105, "low": 95,
+               "close": 100, "volume": 1} for i in range(40)]
+        cc[10]["high"] = 110.0; cc[30]["high"] = 115.0  # price higher high
+        s = [None] * 40; s[10] = 80.0; s[30] = 70.0     # indicator lower high
+        self.assertTrue(_m._bt_fl_divergence_at_touch(
+            "bearish", 30, cc, s, self._trend(high_bars=[10])))
+
+    def test_65_none_without_prior_pivot(self):
+        cc = [{"open_time": i, "open": 100, "high": 110, "low": 95,
+               "close": 100, "volume": 1} for i in range(40)]
+        s = [None] * 40; s[30] = 30.0
+        # pivot at bar 10 but confirmation needs touch-pivot_len; touch=8 → cutoff=3 → no pivot
+        self.assertIsNone(_m._bt_fl_divergence_at_touch(
+            "bullish", 8, cc, s, self._trend(low_bars=[10])))
+
+    def test_66_none_when_indicator_missing(self):
+        cc = [{"open_time": i, "open": 100, "high": 110, "low": 95,
+               "close": 100, "volume": 1} for i in range(40)]
+        cc[10]["low"] = 90.0; cc[30]["low"] = 85.0
+        s = [None] * 40   # no indicator values at all
+        self.assertIsNone(_m._bt_fl_divergence_at_touch(
+            "bullish", 30, cc, s, self._trend(low_bars=[10])))
+
+    def test_67_confirmed_pivot_only(self):
+        # touch at 30, pivot_len 5 → cutoff 25; pivot at 28 is NOT yet confirmed
+        cc = [{"open_time": i, "open": 100, "high": 110, "low": 95,
+               "close": 100, "volume": 1} for i in range(40)]
+        cc[28]["low"] = 90.0; cc[30]["low"] = 85.0
+        s = [None] * 40; s[28] = 20.0; s[30] = 30.0
+        # only pivot bar is 28 (> cutoff 25) → not confirmed → None
+        self.assertIsNone(_m._bt_fl_divergence_at_touch(
+            "bullish", 30, cc, s, self._trend(low_bars=[28])))
+
+
+class TestExtendedFetchAndFeatures(unittest.TestCase):
+    def test_68_new_feature_keys(self):
+        for k in ("RSI_DIVERGENCE_AT_TOUCH", "CVD_DIVERGENCE_AT_TOUCH",
+                  "RSI_OVERSOLD_AT_TOUCH", "RSI_OVERBOUGHT_AT_TOUCH"):
+            self.assertIn(k, _m._AP_FEATURE_KEYS)
+
+    def test_69_get_klines_extended_default_off(self):
+        # Production callers (no extended kwarg) get the plain 6-field dicts.
+        import inspect as _insp
+        sig = _insp.signature(_m.get_klines)
+        self.assertIn("extended", sig.parameters)
+        self.assertEqual(sig.parameters["extended"].default, False)
+
+    def test_70_normalize_carries_taker(self):
+        norm = _m._bt_normalize_candles([{
+            "openTime": 0, "open": "100", "high": "101", "low": "99",
+            "close": "100.5", "volume": "1000", "takerBuyBase": "600"}])
+        self.assertEqual(norm[0]["taker_buy_base"], 600.0)
+
+    def test_71_pipeline_divergence_fields(self):
+        with patch.object(_m, "get_klines", side_effect=_det_gk()):
+            res = _m._bt_run_autopsy({
+                "symbols": ["BTCUSDT"], "timeframes": ["15m", "1h"],
+                "candle_count": 1500, "rr": 2, "ob_classes": ["internal"]})
+        rows = res["reports_by_class"]["internal"]["trade_log"]["rows"]
+        self.assertGreater(len(rows), 0)
+        for r in rows:
+            self.assertIn("rsi_at_touch", r)
+            self.assertIn("cvd_at_touch", r)
+            self.assertIn("rsi_divergence", r)
+            self.assertIn("cvd_divergence", r)
+            # divergence is True / False / None only
+            self.assertIn(r["rsi_divergence"], (True, False, None))
+            self.assertIn(r["cvd_divergence"], (True, False, None))
+        # with taker data present, at least some CVD divergences are evaluable
+        evaluable = sum(1 for r in rows if r["cvd_divergence"] is not None)
+        self.assertGreater(evaluable, 0)
+        # features present in the pattern book
+        pb = {p["feature"] for p in res["reports_by_class"]["internal"]["pattern_book"]}
+        self.assertIn("RSI_DIVERGENCE_AT_TOUCH", pb)
+        self.assertIn("CVD_DIVERGENCE_AT_TOUCH", pb)
+
+    def test_72_definitions_documented(self):
+        with patch.object(_m, "get_klines", side_effect=_det_gk()):
+            res = _m._bt_run_autopsy({
+                "symbols": ["BTCUSDT"], "timeframes": ["1h"],
+                "candle_count": 1000, "rr": 2, "ob_classes": ["internal"]})
+        for k in ("rsi_divergence", "cvd_divergence", "rsi_flags"):
+            self.assertIn(k, res["definitions"])
+
+    def test_73_feature_consistency_with_row(self):
+        # the RSI_DIVERGENCE feature must equal the row's rsi_divergence field
+        candles = _m._bt_normalize_candles(_fake_raw_candles(seed=7, n=1200))
+        params = _m._bt_wf_build_params("BTCUSDT", "1h", len(candles), [1, 2, 3])
+        events = _m._bt_extract_ob_replay_events(candles, params)
+        atr = _m._bt_ap_atr_series(candles)
+        idx = _m._bt_ap_build_trend_index(candles, _m._BT_PIVOT_LEN)
+        sidx = _m._bt_ap_build_trend_index(candles, _m._BT_SWING_PIVOT_LEN)
+        closes = [c["close"] for c in candles]
+        rsi = _m.calc_rsi(closes, _m._FL_RSI_PERIOD)
+        cvd = _m._bt_fl_cvd_series(candles)
+        recs = _m._bt_ap_build_trade_records(
+            events, candles, "2", "internal", idx, sidx, None, None, atr,
+            rsi_series=rsi, cvd_series=cvd)
+        self.assertGreater(len(recs), 0)
+        for r in recs:
+            self.assertEqual(r["features"]["RSI_DIVERGENCE_AT_TOUCH"], r["rsi_divergence"])
+            self.assertEqual(r["features"]["CVD_DIVERGENCE_AT_TOUCH"], r["cvd_divergence"])
 
 
 if __name__ == "__main__":

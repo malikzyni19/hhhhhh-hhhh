@@ -16032,7 +16032,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var slice=rows.slice(page*pageSize,(page+1)*pageSize);
     var html='<div style="margin:12px 0 4px;font-size:11px;font-weight:700;color:var(--text-1)">Labeled Trade Log — '+_btApFmt(log.total)+' trades, none removed'+(log.truncated?' (showing first '+log.cap+')':'')+'</div>';
     html+='<div style="overflow-x:auto"><table class="bt-table" style="font-size:9px;width:100%">';
-    html+='<thead><tr><th>Symbol</th><th>TF</th><th>Dir</th><th>Touch#</th><th>Time</th><th>Outcome</th><th>Grade</th><th>Respect</th><th>HTF State</th><th>Real R</th><th>MFE</th><th>MAE</th><th>Form Vol</th><th>Touch Vol</th><th>HTF</th><th>Session</th><th>Patterns</th><th>Rules Passed</th></tr></thead><tbody>';
+    html+='<thead><tr><th>Symbol</th><th>TF</th><th>Dir</th><th>Touch#</th><th>Time</th><th>Outcome</th><th>Grade</th><th>Respect</th><th>HTF State</th><th>RSI</th><th>RSI Div</th><th>CVD Div</th><th>Real R</th><th>MFE</th><th>MAE</th><th>Form Vol</th><th>Touch Vol</th><th>HTF</th><th>Session</th><th>Patterns</th><th>Rules Passed</th></tr></thead><tbody>';
     function ts(ms){
       if(ms==null) return "—";
       try{return new Date(ms).toISOString().slice(0,16).replace("T"," ");}catch(e){return String(ms);}
@@ -16052,6 +16052,14 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       html+='<td style="color:'+m.c+';font-weight:700">'+m.l+'</td>';
       html+='<td style="color:'+rm.c+';font-weight:600">'+rm.l+'</td>';
       html+='<td style="white-space:nowrap">'+(r.htf_joint_state||"—")+'</td>';
+      function divCell(v){
+        if(v===true) return '<td style="color:#22c55e;font-weight:700">yes</td>';
+        if(v===false) return '<td style="color:var(--text-3)">no</td>';
+        return '<td style="color:var(--text-3)">—</td>';
+      }
+      html+='<td>'+_btApFmt(r.rsi_at_touch,1)+'</td>';
+      html+=divCell(r.rsi_divergence);
+      html+=divCell(r.cvd_divergence);
       html+='<td>'+_btApFmt(r.realized_r,2)+'</td>';
       html+='<td>'+_btApFmt(r.mfe_r,2)+'</td>';
       html+='<td>'+_btApFmt(r.mae_r,2)+'</td>';
@@ -16140,6 +16148,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     if(!d||!d.reports_by_class){alert("No autopsy data to export.");return;}
     var cols=["ob_class","touch_trade_id","symbol","timeframe","direction","touch_number",
       "touch_time","outcome","performance_grade","respect_class","htf_joint_state",
+      "rsi_at_touch","rsi_divergence","cvd_at_touch","cvd_divergence","delta_at_touch",
       "realized_r","mfe_r","mae_r","stop_loss_r",
       "formation_volume_ratio","touch_volume_ratio","htf_alignment","tf_alignment",
       "swing_alignment","session","failure_mode","pattern_tags","rules_passed","rules_total"];
