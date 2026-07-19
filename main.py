@@ -34059,6 +34059,10 @@ def _bt_parse_ob_historical_payload(payload: dict):
     raw_parity = payload.get("include_parity", False)
     include_parity = bool(raw_parity) if isinstance(raw_parity, bool) else str(raw_parity).lower() in ("true", "1", "yes")
 
+    # include_tv_analysis — TV OB% research retired (Phase 20B); default false
+    raw_tv = payload.get("include_tv_analysis", False)
+    include_tv = bool(raw_tv) if isinstance(raw_tv, bool) else str(raw_tv).lower() in ("true", "1", "yes")
+
     # Phase 17: ob_class_mode — "both" (default) runs internal AND swing
     # classes over the full candle range in one request; "internal" skips the
     # swing pass. Results are always reported separately, never pooled.
@@ -34076,6 +34080,7 @@ def _bt_parse_ob_historical_payload(payload: dict):
         "entry_rule":      entry_rule,
         "stop_rule":       stop_rule,
         "include_parity":  include_parity,
+        "include_tv_analysis": include_tv,
         "ob_class_mode":   ob_class_mode,
     }
     return params, None
@@ -37069,26 +37074,29 @@ def _bt_run_ob_historical_backtest(params: dict) -> dict:
     # ── First-touch outcome simulation ────────────────────────────────────────
     outcome_summary = _bt_apply_outcomes_to_events(all_events, candles, params)
 
-    # ── TV OB% snapshots (Phase 12B) ───────────────────────────────────────────
-    tv_perf = _bt_attach_tv_ob_pct_snapshots(all_events, candles, params)
-    tv_par  = _bt_run_tv_ob_pct_snapshot_parity(candles, all_events, params)
-    rr_vals = params.get("rr_values", [1, 2, 3])
-    tv_ana  = _bt_tv_ob_pct_analysis(all_events, rr_vals)
-    tv_ana["trusted"] = tv_par.get("trusted", False)
-    outcome_summary["tv_ob_pct_analysis"]    = tv_ana
-    outcome_summary["tv_ob_pct_parity"]      = tv_par
-    outcome_summary["tv_ob_pct_performance"] = tv_perf
-
-    # ── Phase 13: Threshold Optimization Lab (research only) ──────────────────
-    _par_trusted = tv_par.get("trusted", False)
-    outcome_summary["tv_ob_pct_threshold_analysis"] = {
-        "before_first_touch": _bt_build_tv_ob_pct_threshold_analysis(
-            all_events, rr_vals, _par_trusted, metric="before_first_touch",
-        ),
-        "at_formation": _bt_build_tv_ob_pct_threshold_analysis(
-            all_events, rr_vals, _par_trusted, metric="at_formation",
-        ),
-    }
+    # ── TV OB% snapshots (Phase 12B) — RETIRED by default (Phase 20B) ─────────
+    # The TV OB% research concluded with "no robust edge" (Stability Lab +
+    # Walk-Forward), so the expensive snapshot/parity/threshold computation is
+    # skipped unless explicitly requested (include_tv_analysis=true). The
+    # machinery stays intact for the dormant research endpoints and audits.
+    if params.get("include_tv_analysis"):
+        tv_perf = _bt_attach_tv_ob_pct_snapshots(all_events, candles, params)
+        tv_par  = _bt_run_tv_ob_pct_snapshot_parity(candles, all_events, params)
+        rr_vals = params.get("rr_values", [1, 2, 3])
+        tv_ana  = _bt_tv_ob_pct_analysis(all_events, rr_vals)
+        tv_ana["trusted"] = tv_par.get("trusted", False)
+        outcome_summary["tv_ob_pct_analysis"]    = tv_ana
+        outcome_summary["tv_ob_pct_parity"]      = tv_par
+        outcome_summary["tv_ob_pct_performance"] = tv_perf
+        _par_trusted = tv_par.get("trusted", False)
+        outcome_summary["tv_ob_pct_threshold_analysis"] = {
+            "before_first_touch": _bt_build_tv_ob_pct_threshold_analysis(
+                all_events, rr_vals, _par_trusted, metric="before_first_touch",
+            ),
+            "at_formation": _bt_build_tv_ob_pct_threshold_analysis(
+                all_events, rr_vals, _par_trusted, metric="at_formation",
+            ),
+        }
 
     # ── Optional parity validation ────────────────────────────────────────────
     parity = (

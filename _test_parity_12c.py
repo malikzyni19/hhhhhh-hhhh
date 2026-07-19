@@ -159,6 +159,7 @@ for cfg in TESTS:
         "i_len":         _m._BT_PIVOT_LEN,
         "s_len":         _m._BT_PIVOT_LEN,
         "include_parity": False,
+        "include_tv_analysis": True,   # this IS the TV audit — opt in explicitly
     }
 
     # Patch get_klines so it returns our synthetic candles

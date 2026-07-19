@@ -61,6 +61,52 @@ the bad trades — before any new zone types or entry modules are added.
   machinery (locked candidates, gates, look-ahead audit) before anything is
   trusted or discussed for production.
 
+## Phase 20B — OB Respect Lab  (FROZEN 2026-07-19 by user decision)
+Implemented in verified chunks — each chunk passes an adversarial
+verification agent before the next begins.
+
+Chunk 1 — TV% removal (full sweep):
+- Stability Lab + Walk-Forward tabs removed from the Compare UI (both exist
+  only for the TV% question, answered: no edge). TV% filter/export/sections
+  stripped from Overview and Trade Explorer. TV% computation OFF by default
+  in the backtest runner (faster runs). Backend + tests stay dormant for
+  Phase 21 machinery reuse.
+
+Chunk 2 — Respect framing:
+- Grades relabeled: Respected (clean/stressed win) / Partial (reversal
+  loss, paused+) / Not-Respected (hard loss, instant mitigation)
+- First-touch default view; touch 2/3 comparison ("which OBs also work on
+  the 2nd/3rd touch")
+- HTF joint-state × respect table per OB timeframe: both aligned / only
+  lower / only higher / both against / mixed → respect rates.
+  15m→(1h,4h), 1h→(4h,1d), 4h→(1d)
+
+Chunk 3 — Divergence features (PRIMARY focus per user):
+- Delta/CVD from extended klines (full history): CVD divergence at touch
+  (price lower-low into bullish zone vs last confirmed pivot low, CVD
+  higher low → absorption) — primary; formation/touch delta secondary
+- RSI via production calc_rsi (full history): RSI divergence at touch —
+  primary; raw formation/touch values + OB/OS flags secondary
+- Divergence reference = last CONFIRMED pivot before the touch (no
+  look-ahead); not-evaluable → honest None
+
+Chunk 4 — Open Interest (30-day window):
+- Binance free OI history (last 30 days only). Trades older than the
+  window show "not available" — never guessed, never removed. Coverage
+  by TF made explicit (15m ≈ full, 1h ≈ 24%, 4h ≈ 6% of a 3000-candle run)
+
+Chunk 5 — Structure & flow features (user-approved top 5):
+- Liquidity sweep into zone (touch wicked a recent confirmed pivot low
+  first, then entered the zone)
+- Continuation vs reversal OB (trend state at FORMATION)
+- BTC trend state for altcoin OBs at touch
+- Zone penetration depth of respected zones (entry-placement insight)
+- Absorption at touch (high volume + small range inside zone)
+
+Excluded: liquidations (no free historical source), extra indicators
+beyond RSI, zone-formula/mitigation changes, ilen sweep (later
+diagnostic only, walk-forward-gated).
+
 ## Deferred (by user decision, 2026-07-18)
 - Reaction zones (pullback/OTE, FVG standalone, breakers, pivot clusters)
 - CAB + valid-pullback entry modules (chart-screenshot definitions)
