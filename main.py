@@ -7593,38 +7593,23 @@ def admin_test_email():
     }
 
     # ── Test Resend ────────────────────────────────────────────────────────────
+    # NOTE: Resend API keys scoped to "Sending access" only will get 403 on
+    # management endpoints (e.g. /domains). The only reliable way to validate
+    # such a key is to send an actual email. We check SDK availability here
+    # and rely on the live_send result (see below) to confirm the key works.
     if resend_key:
         try:
-            import resend as _r
+            import resend as _r  # noqa: F401
             result["resend"]["sdk_importable"] = True
-            # Validate key via Resend domains list (read-only, no email sent)
-            import urllib.request, json as _json
-            req_obj = urllib.request.Request(
-                "https://api.resend.com/domains",
-                headers={"Authorization": f"Bearer {resend_key}"},
+            result["resend"]["test"] = "SDK loaded — key validity confirmed by live_send below"
+            result["active_provider"] = "Resend SDK (pending live_send confirmation)"
+            result["resend"]["note"] = (
+                "Sending-only API keys cannot list domains via the Resend API. "
+                "To verify smcsetups.com is authenticated, log in to resend.com → Domains."
             )
-            with urllib.request.urlopen(req_obj, timeout=6) as resp_obj:
-                domains_data = _json.loads(resp_obj.read())
-            domains = [d.get("name", "") for d in domains_data.get("data", [])]
-            smcsetups_verified = any("smcsetups.com" in d for d in domains)
-            result["resend"]["verified_domains"]      = domains
-            result["resend"]["smcsetups_com_verified"] = smcsetups_verified
-            result["resend"]["test"] = "API key valid"
-            result["active_provider"] = "Resend SDK — OTP emails go via Resend"
-            if not smcsetups_verified:
-                result["resend"]["warning"] = (
-                    "smcsetups.com is NOT verified in your Resend account. "
-                    "Go to resend.com/domains, add smcsetups.com, and add the "
-                    "3 DNS records (SPF, DKIM, DMARC) to Cloudflare."
-                )
-                result["note"] = "IMPORTANT: domain not verified → emails arrive unauthenticated → spam"
-            else:
-                result["note"] = "Resend is active and smcsetups.com is verified. Emails should land in inbox."
-        except urllib.error.HTTPError as he:
-            result["resend"]["test"] = f"API key rejected ({he.code})"
-            result["active_provider"] = "Resend key invalid — will fall back to Gmail SMTP"
         except Exception as exc:
-            result["resend"]["test"] = f"Error: {exc}"
+            result["resend"]["test"] = f"SDK import error: {exc}"
+            result["active_provider"] = "Resend SDK unavailable — will fall back to Gmail SMTP"
     else:
         result["resend"]["test"] = "SKIPPED — RESEND_API_KEY not set"
         result["active_provider"] = "Gmail SMTP (Resend not configured)"
@@ -7653,14 +7638,32 @@ def admin_test_email():
                     result["active_provider"] = "NONE — both Resend and SMTP are broken"
                     result["note"] = "No working email provider. Set RESEND_API_KEY in Koyeb env vars."
 
-    # ── Live send test (optional) ──────────────────────────────────────────────
-    if send_to:
-        ok, reason = send_verification_email(send_to, "123456", "testuser", purpose="2fa")
+    # ── Live send test — always run to confirm active provider ─────────────────
+    # Use ?send_to= to choose destination; defaults to the admin alert address.
+    live_target = send_to or to or frm
+    if live_target:
+        ok, reason = send_verification_email(live_target, "123456", "testuser", purpose="2fa")
         result["live_send"] = {
-            "to":      send_to,
+            "to":      live_target,
             "success": ok,
             "reason":  reason,
         }
+        # Use the actual send result to confirm (or correct) active_provider
+        if ok:
+            if resend_key:
+                result["active_provider"] = "Resend SDK — confirmed working (live send succeeded)"
+                result["note"] = (
+                    "Resend is sending OTP emails. "
+                    "If emails land in spam, verify smcsetups.com at resend.com/domains "
+                    "and add the SPF/DKIM/DMARC DNS records in Cloudflare."
+                )
+            else:
+                result["active_provider"] = "Gmail SMTP — confirmed working (live send succeeded)"
+        else:
+            result["active_provider"] = "BROKEN — live send failed (reason: " + reason + ")"
+            result["note"] = "No email provider is working. Check RESEND_API_KEY in Koyeb env vars."
+    else:
+        result["live_send"] = {"skipped": True, "reason": "no destination address available"}
 
     return jsonify(result)
 
