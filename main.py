@@ -41579,6 +41579,62 @@ _FL_GRADES = ("clean_win", "stressed_win", "reversal_loss", "hard_loss",
 _FL_WORKING_GRADES = ("clean_win", "stressed_win")
 _FL_FAILING_GRADES = ("reversal_loss", "hard_loss")
 
+# ── Phase 20B Chunk 2: "respect" framing (the user's language) ───────────────
+# A LABEL over the existing grade — did price REACT to the zone?
+#   respected     — price reacted and paid (clean_win / stressed_win)
+#   partial       — price reacted (reached >=1R in favor) but did not fully pay
+#                   (reversal_loss) or is still open in profit (paused_positive)
+#   not_respected — price sliced through without reacting (hard_loss)
+#   neutral       — inconclusive: unfinished-flat, or same-candle ambiguous
+_FL_RESPECT_CLASSES = ("respected", "partial", "not_respected", "neutral")
+_FL_GRADE_TO_RESPECT = {
+    "clean_win":       "respected",
+    "stressed_win":    "respected",
+    "reversal_loss":   "partial",
+    "paused_positive": "partial",
+    "hard_loss":       "not_respected",
+    "paused_flat":     "neutral",
+    "ambiguous":       "neutral",
+}
+
+
+def _bt_fl_respect_class(grade: str) -> str:
+    """Map a performance grade to a respect class (label only)."""
+    return _FL_GRADE_TO_RESPECT.get(grade, "neutral")
+
+
+def _bt_fl_htf_joint_state(alignments: Dict) -> str:
+    """Combine per-trend-TF alignments into ONE joint HTF state.
+
+    `alignments` maps each mapped trend TF (e.g. 1h, 4h for a 15m OB) to
+    with / against / neutral / unknown. Returns a single categorical:
+      all_with            — every trend TF aligned with the trade
+      all_against         — every trend TF against
+      conflicting         — at least one with AND at least one against
+      with_some_neutral   — some with, none against (rest neutral)
+      against_some_neutral— some against, none with (rest neutral)
+      all_neutral         — every trend TF neutral
+      unknown             — any trend TF unknown (or no trend TFs)
+    """
+    vals = list(alignments.values()) if alignments else []
+    if not vals or any(v == "unknown" for v in vals):
+        return "unknown"
+    w = sum(1 for v in vals if v == "with")
+    a = sum(1 for v in vals if v == "against")
+    n = sum(1 for v in vals if v == "neutral")
+    total = len(vals)
+    if w == total:
+        return "all_with"
+    if a == total:
+        return "all_against"
+    if w > 0 and a > 0:
+        return "conflicting"
+    if w > 0 and a == 0:
+        return "with_some_neutral"
+    if a > 0 and w == 0:
+        return "against_some_neutral"
+    return "all_neutral"
+
 
 def _bt_fl_grade(outcome: str, mfe_r, mae_r) -> str:
     """Deterministic performance grade for one trade (labels, never filters)."""
@@ -42060,6 +42116,8 @@ def _bt_ap_build_trade_records(
                 "formation_volume_ratio": formation_vol_ratio,
                 "touch_volume_ratio":     touch_vol_ratio,
                 "performance_grade":      grade,
+                "respect_class":          _bt_fl_respect_class(grade),
+                "htf_joint_state":        _bt_fl_htf_joint_state(alignments),
                 "features":        features,
                 "failure_mode":    _bt_ap_failure_mode(sim, rr_key),
             })
@@ -42507,6 +42565,8 @@ def _bt_fl_trade_log(records: List[Dict]) -> Dict:
             "touch_time":       r.get("touch_time"),
             "outcome":          r.get("outcome"),
             "performance_grade": r.get("performance_grade"),
+            "respect_class":    r.get("respect_class"),
+            "htf_joint_state":  r.get("htf_joint_state"),
             "realized_r":       r.get("realized_r"),
             "mfe_r":            r.get("mfe_r"),
             "mae_r":            r.get("mae_r"),
@@ -42529,6 +42589,87 @@ def _bt_fl_trade_log(records: List[Dict]) -> Dict:
         "cap":        _FL_TRADE_LOG_CAP,
         "note":       "Labels only — no trade is ever removed from this log.",
     }
+
+
+def _bt_fl_respect_counts(rows: List[Dict]) -> Dict:
+    """Respect-class tally for a group of records (label counts, no removal)."""
+    counts = {c: 0 for c in _FL_RESPECT_CLASSES}
+    for r in rows:
+        rc = r.get("respect_class")
+        if rc in counts:
+            counts[rc] += 1
+    total = len(rows)
+    # Denominator for respect rate = classified (exclude neutral/inconclusive)
+    classified = counts["respected"] + counts["partial"] + counts["not_respected"]
+    return {
+        "total":             total,
+        "counts":            counts,
+        "pcts":              {c: (round(counts[c] / total * 100, 1) if total else None)
+                              for c in _FL_RESPECT_CLASSES},
+        "classified":        classified,
+        "respected_rate_pct": (round(counts["respected"] / classified * 100, 1)
+                               if classified else None),
+        "not_respected_rate_pct": (round(counts["not_respected"] / classified * 100, 1)
+                                   if classified else None),
+        "sample_size_status": _te_sample_size_status(classified),
+    }
+
+
+def _bt_fl_respect_summary(records: List[Dict]) -> Dict:
+    """Overall respect tally + per-touch-number breakdown.
+
+    First touch is the primary lens; second / third / fourth+ are reported
+    alongside so the user can see 'on which OBs does the 2nd/3rd touch also
+    get respected'. Buckets never pool — each is that touch number's own rows.
+    """
+    buckets = [("first", 1, 1), ("second", 2, 2), ("third", 3, 3),
+               ("fourth_plus", 4, None)]
+    by_touch = []
+    for name, mn, mx in buckets:
+        rows = [r for r in records
+                if r.get("touch_number", 0) >= mn
+                and (mx is None or r.get("touch_number", 0) <= mx)]
+        entry = {"touch_bucket": name, "touch_number_min": mn,
+                 "touch_number_max": mx}
+        entry.update(_bt_fl_respect_counts(rows))
+        by_touch.append(entry)
+    return {
+        "overall":  _bt_fl_respect_counts(records),
+        "by_touch": by_touch,
+        "primary_view": "first",
+        "note": ("respect = did price react to the zone. respected rate excludes "
+                 "neutral/inconclusive touches from its denominator."),
+    }
+
+
+def _bt_fl_respect_by_htf_state(records: List[Dict]) -> List[Dict]:
+    """Joint HTF state x respect, per OB timeframe.
+
+    Answers directly: 'when a 15m OB was respected, was the higher timeframe
+    aligned; when it was not respected, was the HTF against?' One row per
+    (OB timeframe, joint HTF state); respect tally per cell, sample-size
+    labelled. Only OB timeframes that actually have mapped trend TFs appear.
+    """
+    _JOINT_ORDER = ("all_with", "with_some_neutral", "all_neutral",
+                    "conflicting", "against_some_neutral", "all_against",
+                    "unknown")
+    groups: Dict[Tuple[str, str], List[Dict]] = {}
+    for r in records:
+        # only records that carry a joint HTF state (i.e. had mapped trend TFs)
+        if not r.get("alignments"):
+            continue
+        key = (r.get("timeframe", ""), r.get("htf_joint_state", "unknown"))
+        groups.setdefault(key, []).append(r)
+
+    out: List[Dict] = []
+    for (ob_tf, state) in sorted(
+            groups.keys(),
+            key=lambda k: (k[0], _JOINT_ORDER.index(k[1])
+                           if k[1] in _JOINT_ORDER else 99)):
+        entry = {"ob_timeframe": ob_tf, "htf_joint_state": state}
+        entry.update(_bt_fl_respect_counts(groups[(ob_tf, state)]))
+        out.append(entry)
+    return out
 
 
 def _bt_ap_class_report(records: List[Dict], rr_key: str) -> Dict:
@@ -42561,6 +42702,8 @@ def _bt_ap_class_report(records: List[Dict], rr_key: str) -> Dict:
         "alignment_matrix":   _bt_al_build_matrix(records),
         "rule_evaluation":    rule_evaluation,
         "grade_distribution": _bt_fl_grade_distribution(records),
+        "respect_summary":    _bt_fl_respect_summary(records),
+        "respect_by_htf_state": _bt_fl_respect_by_htf_state(records),
         "pattern_book":       _bt_fl_pattern_book(records),
         "volume_by_grade":    _bt_fl_volume_by_grade(records),
         "trade_log":          trade_log,
@@ -42712,6 +42855,14 @@ def _bt_run_autopsy(req: Dict) -> Dict:
             "rules":             ("candidate pass-rules are LABELS over existing features — "
                                   "every trade stays in the log with its per-rule verdict; "
                                   "nothing is removed"),
+            "respect_class":     ("did price REACT to the zone: respected (clean/stressed "
+                                  "win) | partial (reversal loss or paused-positive: reacted "
+                                  ">=1R then didn't fully pay) | not_respected (hard loss, "
+                                  "sliced through) | neutral (unfinished-flat / ambiguous). "
+                                  "respected rate excludes neutral from its denominator"),
+            "htf_joint_state":   ("combined higher-TF alignment for the OB's mapped trend "
+                                  "TFs: all_with | with_some_neutral | all_neutral | "
+                                  "conflicting | against_some_neutral | all_against | unknown"),
         },
         "performance": {
             "requested_cells":       len(symbols) * len(timeframes),
