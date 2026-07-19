@@ -7530,59 +7530,107 @@ def admin_test_email():
     if not session.get("is_admin") and token != "zynismctest2026":
         return "Access denied. Add ?token=zynismctest2026 to the URL.", 403
 
-    frm = _email_from()
-    pwd = _email_pass()
-    to  = _email_to()
+    frm         = _email_from()
+    pwd         = _email_pass()
+    to          = _email_to()
+    resend_key  = os.environ.get("RESEND_API_KEY", "").strip()
+    send_to     = request.args.get("send_to", "")  # ?send_to=you@email.com sends a live test
 
     result = {
-        "ALERT_EMAIL_FROM": frm if frm else "*** NOT SET ***",
-        "ALERT_EMAIL_PASS": f"{'*' * len(pwd)} ({len(pwd)} chars)" if pwd else "*** NOT SET ***",
-        "ALERT_EMAIL_TO":   to  if to  else "(not set — only needed for login alerts)",
-        "credentials_ok":  bool(frm and pwd),
-        "smtp_test":       "SKIPPED — credentials missing",
-        "note":            "",
+        # ── Provider priority ──────────────────────────────────────────────────
+        "provider_priority": ["1. Resend SDK (RESEND_API_KEY)", "2. Gmail SMTP SSL/465", "3. Gmail SMTP STARTTLS/587"],
+        "active_provider":   "unknown — run diagnostics below to determine",
+
+        # ── Resend ─────────────────────────────────────────────────────────────
+        "resend": {
+            "RESEND_API_KEY":  f"set ({len(resend_key)} chars, ends …{resend_key[-4:]})" if resend_key else "*** NOT SET ***",
+            "from_address":    "ZyNi SMC <support@smcsetups.com>",
+            "sdk_importable":  False,
+            "test":            "SKIPPED",
+        },
+
+        # ── Gmail SMTP ─────────────────────────────────────────────────────────
+        "smtp": {
+            "ALERT_EMAIL_FROM": frm if frm else "*** NOT SET ***",
+            "ALERT_EMAIL_PASS": f"{'*' * len(pwd)} ({len(pwd)} chars)" if pwd else "*** NOT SET ***",
+            "ALERT_EMAIL_TO":   to  if to  else "(not set — only needed for login-alert emails)",
+            "test":             "SKIPPED — credentials missing",
+        },
+
+        "send_to_tested": send_to or None,
+        "note": "",
     }
 
-    if not frm or not pwd:
-        result["note"] = ("Set ALERT_EMAIL_FROM and ALERT_EMAIL_PASS as Environment Variables "
-                          "(not Secrets) in Koyeb service settings, then redeploy.")
-        return jsonify(result)
-
-    # Live SMTP login test
-    e465 = e587 = None
-    try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=12) as srv:
-            srv.login(frm, pwd)
-        result["smtp_test"] = "OK via SSL port 465"
-        result["note"] = "Email should work. If OTP still not arriving, check spam folder."
-        return jsonify(result)
-    except Exception as ex:
-        e465 = str(ex)
-
-    try:
-        ctx = ssl.create_default_context()
-        with smtplib.SMTP("smtp.gmail.com", 587, timeout=12) as srv:
-            srv.ehlo(); srv.starttls(context=ctx); srv.ehlo()
-            srv.login(frm, pwd)
-        result["smtp_test"] = "OK via STARTTLS port 587"
-        result["note"] = "Email should work. If OTP still not arriving, check spam folder."
-        return jsonify(result)
-    except Exception as ex:
-        e587 = str(ex)
-
-    result["smtp_test"] = "FAILED on both ports"
-    result["error_465"]  = e465
-    result["error_587"]  = e587
-    if "Application-specific password required" in (e465 or "") or "Username and Password not accepted" in (e465 or ""):
-        result["note"] = ("Gmail rejected the password. Make sure you are using a Gmail APP PASSWORD "
-                          "(16 chars, no spaces) — NOT your regular Gmail password. "
-                          "Enable 2FA first, then generate an App Password at "
-                          "myaccount.google.com → Security → App Passwords.")
-    elif "timed out" in (e465 or "").lower() or "timed out" in (e587 or "").lower():
-        result["note"] = ("SMTP connection timed out — Koyeb may be blocking outbound SMTP ports. "
-                          "Use a transactional email API instead: Resend (resend.com) or SendGrid.")
+    # ── Test Resend ────────────────────────────────────────────────────────────
+    if resend_key:
+        try:
+            import resend as _r
+            result["resend"]["sdk_importable"] = True
+            # Validate key via Resend domains list (read-only, no email sent)
+            import urllib.request, json as _json
+            req_obj = urllib.request.Request(
+                "https://api.resend.com/domains",
+                headers={"Authorization": f"Bearer {resend_key}"},
+            )
+            with urllib.request.urlopen(req_obj, timeout=6) as resp_obj:
+                domains_data = _json.loads(resp_obj.read())
+            domains = [d.get("name", "") for d in domains_data.get("data", [])]
+            smcsetups_verified = any("smcsetups.com" in d for d in domains)
+            result["resend"]["verified_domains"]      = domains
+            result["resend"]["smcsetups_com_verified"] = smcsetups_verified
+            result["resend"]["test"] = "API key valid"
+            result["active_provider"] = "Resend SDK — OTP emails go via Resend"
+            if not smcsetups_verified:
+                result["resend"]["warning"] = (
+                    "smcsetups.com is NOT verified in your Resend account. "
+                    "Go to resend.com/domains, add smcsetups.com, and add the "
+                    "3 DNS records (SPF, DKIM, DMARC) to Cloudflare."
+                )
+                result["note"] = "IMPORTANT: domain not verified → emails arrive unauthenticated → spam"
+            else:
+                result["note"] = "Resend is active and smcsetups.com is verified. Emails should land in inbox."
+        except urllib.error.HTTPError as he:
+            result["resend"]["test"] = f"API key rejected ({he.code})"
+            result["active_provider"] = "Resend key invalid — will fall back to Gmail SMTP"
+        except Exception as exc:
+            result["resend"]["test"] = f"Error: {exc}"
     else:
-        result["note"] = "Check the error messages above. Contact support if unclear."
+        result["resend"]["test"] = "SKIPPED — RESEND_API_KEY not set"
+        result["active_provider"] = "Gmail SMTP (Resend not configured)"
+
+    # ── Test Gmail SMTP ────────────────────────────────────────────────────────
+    if frm and pwd:
+        e465 = e587 = None
+        try:
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=12) as srv:
+                srv.login(frm, pwd)
+            result["smtp"]["test"] = "OK via SSL port 465"
+        except Exception as ex:
+            e465 = str(ex)
+            try:
+                ctx = ssl.create_default_context()
+                with smtplib.SMTP("smtp.gmail.com", 587, timeout=12) as srv:
+                    srv.ehlo(); srv.starttls(context=ctx); srv.ehlo()
+                    srv.login(frm, pwd)
+                result["smtp"]["test"] = "OK via STARTTLS port 587"
+            except Exception as ex2:
+                e587 = str(ex2)
+                result["smtp"]["test"]      = "FAILED on both ports"
+                result["smtp"]["error_465"] = e465
+                result["smtp"]["error_587"] = e587
+                if not resend_key:
+                    result["active_provider"] = "NONE — both Resend and SMTP are broken"
+                    result["note"] = "No working email provider. Set RESEND_API_KEY in Koyeb env vars."
+
+    # ── Live send test (optional) ──────────────────────────────────────────────
+    if send_to:
+        ok, reason = send_verification_email(send_to, "123456", "testuser", purpose="2fa")
+        result["live_send"] = {
+            "to":      send_to,
+            "success": ok,
+            "reason":  reason,
+        }
+
     return jsonify(result)
 
 
