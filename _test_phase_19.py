@@ -83,7 +83,7 @@ def _fake_raw_candles(seed=42, n=1000):
 
 def _det_gk():
     cache = {}
-    def gk(sym, tf, limit=300, market="perpetual"):
+    def gk(sym, tf, limit=300, market="perpetual", extended=False):
         key = (sym, tf)
         if key not in cache:
             cache[key] = _fake_raw_candles(sum(ord(c) for c in sym + tf))
@@ -396,7 +396,7 @@ class TestOrchestrator(unittest.TestCase):
     def test_27_matrix_fetches_cached_once(self):
         calls = []
         cache = {}
-        def gk(sym, tf, limit=300, market="perpetual"):
+        def gk(sym, tf, limit=300, market="perpetual", extended=False):
             calls.append((sym, tf))
             key = (sym, tf)
             if key not in cache:
