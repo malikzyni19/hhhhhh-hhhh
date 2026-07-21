@@ -10920,6 +10920,18 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       _wasObOpen=!!(_oldOb&&_oldOb.classList.contains("lm-dh-open"));
       _wasLiqOpen=!!(_oldLiq&&_oldLiq.classList.contains("lm-dh-open"));
     }catch(_e2){}
+    // Preserve scroll position of the expanded OB/Liq scroll boxes (and the outer
+    // panel) across the full-table rebuild, so a 4s data refresh does not jump the
+    // user back to the top of the order book.
+    var _scrollSave={};
+    try{
+      var _grabScroll=function(id){ var tb=document.getElementById(id); var sc=(tb&&tb.closest)?tb.closest(".lm-dh-scroll"):null; return sc?sc.scrollTop:0; };
+      _scrollSave.obBid=_grabScroll("ob"+uid+"BidBody");
+      _scrollSave.obAsk=_grabScroll("ob"+uid+"AskBody");
+      _scrollSave.liq =_grabScroll("liq"+uid+"LiqBody");
+      var _outerEl=document.getElementById("lmRight");
+      _scrollSave.outer=_outerEl?_outerEl.scrollTop:0;
+    }catch(_eS){}
     tbody.innerHTML=t;
     // Restore expanded state after DOM rebuild
     if(_wasObOpen){
@@ -10935,7 +10947,19 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       if(_liqI) _liqI.textContent="−";
     }
     // Populate OB and Liq panel tables — use prefixed uids matching _lmDhObPanelHtml("ob"+uid) and _lmDhLiqPanelHtml("liq"+uid)
-    setTimeout(function(){ _lmDhRenderOBTable("ob"+uid); _lmDhRenderLiqTable("liq"+uid); }, 0);
+    setTimeout(function(){
+      _lmDhRenderOBTable("ob"+uid); _lmDhRenderLiqTable("liq"+uid);
+      // Rows are now populated (containers have their scroll height back) — restore
+      // the captured scroll positions so the refresh stays where the user was.
+      try{
+        var _restScroll=function(id,top){ if(!top) return; var tb=document.getElementById(id); var sc=(tb&&tb.closest)?tb.closest(".lm-dh-scroll"):null; if(sc) sc.scrollTop=top; };
+        _restScroll("ob"+uid+"BidBody",_scrollSave.obBid);
+        _restScroll("ob"+uid+"AskBody",_scrollSave.obAsk);
+        _restScroll("liq"+uid+"LiqBody",_scrollSave.liq);
+        var _outerEl2=document.getElementById("lmRight");
+        if(_outerEl2&&_scrollSave.outer) _outerEl2.scrollTop=_scrollSave.outer;
+      }catch(_eR){}
+    }, 0);
     var _badge=document.getElementById("lmDhMountBadge");
     if(_badge) _badge.textContent=rows.length+" rows \xb7 "+(_lmGetDataSrc()||"?");
     var _statusLine=document.getElementById("lmDhStatusLine");
