@@ -13198,7 +13198,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     wfData:null,wfRunning:false,wfFoldView:1,wfCharts:{},
     teData:null,teRunning:false,teCharts:{},tePage:1,teShowFilters:false,
     obClass:"internal",
-    apData:null,apRunning:false,apClass:"internal",apCharts:{},apLogPage:0};
+    apData:null,apRunning:false,apClass:"internal",apCharts:{},apLogPage:0,apOpenRows:{}};
 
   function _bindBtSidebarEvents(aside){
     [].forEach.call(aside.querySelectorAll("[data-btpage]"),function(item){
@@ -16142,10 +16142,20 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       b.addEventListener("click",function(){_btState.apRR=parseInt(b.getAttribute("data-aprr"));_btRenderAutopsyMode();});
     });
     [].forEach.call(el.querySelectorAll("[data-apclass]"),function(b){
-      b.addEventListener("click",function(){_btState.apClass=b.getAttribute("data-apclass");_btState.apLogPage=0;_btRenderAutopsyMode();});
+      b.addEventListener("click",function(){_btState.apClass=b.getAttribute("data-apclass");_btState.apLogPage=0;_btState.apOpenRows={};_btRenderAutopsyMode();});
     });
     [].forEach.call(el.querySelectorAll("[data-aplogpage]"),function(b){
       b.addEventListener("click",function(){_btState.apLogPage=parseInt(b.getAttribute("data-aplogpage"));_btRenderAutopsyMode();});
+    });
+    /* Expand / collapse trade-log rows (multiple may be open at once) */
+    [].forEach.call(el.querySelectorAll("[data-aprow]"),function(tr){
+      tr.addEventListener("click",function(){
+        var id=tr.getAttribute("data-aprow");
+        if(!_btState.apOpenRows) _btState.apOpenRows={};
+        if(_btState.apOpenRows[id]) delete _btState.apOpenRows[id];
+        else _btState.apOpenRows[id]=true;
+        _btRenderAutopsyMode();
+      });
     });
     var runBtn=document.getElementById("btApRunBtn");
     if(runBtn) runBtn.addEventListener("click",_btRunAutopsy);
@@ -16167,6 +16177,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       return;
     }
     _btState.apRunning=true;
+    _btState.apOpenRows={};
     _btRenderAutopsyMode();
     fetch("/api/backtest/ob-historical/autopsy",{
       method:"POST",credentials:"same-origin",
@@ -16524,6 +16535,111 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     return html;
   }
 
+  function _btApRowDetailHtml(r){
+    /* Full per-trade detail card — everything the autopsy computes. Labels
+       only. Tap the row again to collapse. */
+    function ts(ms){
+      if(ms==null) return "—";
+      try{return new Date(ms).toISOString().slice(0,16).replace("T"," ");}catch(e){return String(ms);}
+    }
+    function b3(v){return v===true?"yes":v===false?"no":"—";}
+    function grp(title){return '<div style="font-size:9px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.5px;margin:6px 0 3px">'+title+'</div>';}
+    function kv(k,v,color){
+      return '<div style="display:flex;justify-content:space-between;gap:8px;padding:1px 0">'+
+        '<span style="color:var(--text-3)">'+k+'</span>'+
+        '<span style="color:'+(color||"var(--text-1)")+';font-weight:600;text-align:right">'+(v==null?"—":v)+'</span></div>';
+    }
+    var m=_AP_GRADE_META[r.performance_grade]||{l:r.performance_grade,c:"var(--text-1)"};
+    var rm=_AP_RESPECT_META[r.respect_class]||{l:r.respect_class||"—",c:"var(--text-3)"};
+    var h='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:0 18px;padding:8px 12px;font-size:10px">';
+
+    // Identity
+    h+='<div>';
+    h+=grp("Trade");
+    h+=kv("Symbol / TF", r.symbol+" "+r.timeframe);
+    h+=kv("Direction", r.direction, r.direction==="bullish"?"#22c55e":"#ef4444");
+    h+=kv("Touch #", r.touch_number);
+    h+=kv("Formation", ts(r.formation_time));
+    h+=kv("Touch time", ts(r.touch_time));
+    h+=kv("Trade ID", '<span style="font-size:8px">'+r.touch_trade_id+'</span>');
+    h+='</div>';
+
+    // Outcome
+    h+='<div>';
+    h+=grp("Outcome");
+    h+=kv("Grade", m.l, m.c);
+    h+=kv("Respect", rm.l, rm.c);
+    h+=kv("Outcome", r.outcome);
+    h+=kv("Realized R", _btApFmt(r.realized_r,2));
+    h+=kv("MFE / MAE", _btApFmt(r.mfe_r,2)+" / "+_btApFmt(r.mae_r,2));
+    h+=kv("Stop R", _btApFmt(r.stop_loss_r,3));
+    h+=kv("Zone penetration", r.zone_penetration_pct!=null?_btApFmt(r.zone_penetration_pct,1)+"%":"—");
+    h+='</div>';
+
+    // Trend context
+    h+='<div>';
+    h+=grp("Trend context");
+    h+=kv("OB kind", r.ob_kind, r.ob_kind==="reversal"?"#f59e0b":r.ob_kind==="continuation"?"#22c55e":"var(--text-3)");
+    h+=kv("Own-TF align", r.tf_alignment);
+    h+=kv("Swing align", r.swing_alignment);
+    h+=kv("HTF align", r.htf_alignment);
+    h+=kv("HTF joint state", r.htf_joint_state);
+    h+=kv("BTC align", r.btc_alignment&&r.btc_alignment!=="unknown"?r.btc_alignment:"—");
+    h+='</div>';
+
+    // Flow / divergence
+    h+='<div>';
+    h+=grp("Flow &amp; divergence");
+    h+=kv("RSI at touch", _btApFmt(r.rsi_at_touch,1));
+    h+=kv("RSI divergence", b3(r.rsi_divergence), r.rsi_divergence===true?"#22c55e":"var(--text-2)");
+    h+=kv("CVD divergence", b3(r.cvd_divergence), r.cvd_divergence===true?"#22c55e":"var(--text-2)");
+    h+=kv("Delta at touch", _btApFmt(r.delta_at_touch,0));
+    h+=kv("OI at touch", r.oi_available?_btApFmt(r.oi_at_touch,0):"not available");
+    h+=kv("OI change", (r.oi_available&&r.oi_change_pct!=null)?_btApFmt(r.oi_change_pct,1)+"%":"n/a");
+    h+=kv("Liquidity sweep", b3(r.liquidity_sweep), r.liquidity_sweep===true?"#22c55e":"var(--text-2)");
+    h+=kv("Absorption", b3(r.absorption), r.absorption===true?"#22c55e":"var(--text-2)");
+    h+='</div>';
+
+    // Context / structure
+    h+='<div>';
+    h+=grp("Structure &amp; context");
+    h+=kv("Session", r.session);
+    h+=kv("Formation vol", _btApFmt(r.formation_volume_ratio,2));
+    h+=kv("Touch vol", _btApFmt(r.touch_volume_ratio,2));
+    h+=kv("Failure mode", r.failure_mode);
+    h+='</div>';
+
+    h+='</div>';
+
+    // Pattern tags (full, not truncated)
+    var tags=(r.pattern_tags||[]);
+    h+='<div style="padding:2px 12px 6px">';
+    h+='<div style="font-size:9px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">Pattern tags ('+tags.length+')</div>';
+    h+='<div style="display:flex;flex-wrap:wrap;gap:4px">';
+    if(tags.length){
+      tags.forEach(function(t){
+        h+='<span style="font-size:9px;background:rgba(34,211,238,.12);color:#67e8f9;border-radius:4px;padding:1px 6px">'+t+'</span>';
+      });
+    } else { h+='<span style="font-size:9px;color:var(--text-3)">none</span>'; }
+    h+='</div></div>';
+
+    // Rule verdicts
+    var passes=r.rule_passes||{};
+    var rkeys=Object.keys(passes);
+    h+='<div style="padding:2px 12px 8px">';
+    h+='<div style="font-size:9px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">Pass-rule verdicts</div>';
+    h+='<div style="display:flex;flex-wrap:wrap;gap:4px">';
+    rkeys.forEach(function(k){
+      var v=passes[k];
+      var col=v===true?"#22c55e":v===false?"#ef4444":"#94a3b8";
+      var mark=v===true?"✓":v===false?"✗":"?";
+      h+='<span style="font-size:9px;color:'+col+';border:1px solid '+col+';border-radius:4px;padding:1px 6px" title="'+k+'">'+mark+" "+k+'</span>';
+    });
+    if(!rkeys.length) h+='<span style="font-size:9px;color:var(--text-3)">none</span>';
+    h+='</div></div>';
+    return h;
+  }
+
   function _btApTradeLogHtml(rep){
     var log=rep.trade_log||{};
     var rows=log.rows||[];
@@ -16546,8 +16662,10 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       var passes=r.rule_passes||{};
       var pkeys=Object.keys(passes);
       var np=pkeys.filter(function(k){return passes[k]===true;}).length;
-      html+='<tr>';
-      html+='<td>'+r.symbol+'</td><td>'+r.timeframe+'</td>';
+      var _open=!!(_btState.apOpenRows&&_btState.apOpenRows[r.touch_trade_id]);
+      html+='<tr class="ap-log-row" data-aprow="'+r.touch_trade_id+'" style="cursor:pointer"'+
+            (_open?' data-open="1"':'')+'>';
+      html+='<td>'+(_open?"▾ ":"▸ ")+r.symbol+'</td><td>'+r.timeframe+'</td>';
       html+='<td style="color:'+(r.direction==="bullish"?"#22c55e":"#ef4444")+'">'+r.direction+'</td>';
       html+='<td style="text-align:center">'+r.touch_number+'</td>';
       html+='<td style="white-space:nowrap">'+ts(r.touch_time)+'</td>';
@@ -16584,6 +16702,10 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       html+='<td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+(r.pattern_tags||[]).join(", ")+'">'+((r.pattern_tags||[]).join(", ")||"—")+'</td>';
       html+='<td style="text-align:center">'+np+'/'+pkeys.length+'</td>';
       html+='</tr>';
+      if(_open){
+        html+='<tr class="ap-detail-row"><td colspan="26" style="padding:0;background:rgba(0,0,0,.25)">'+
+              _btApRowDetailHtml(r)+'</td></tr>';
+      }
     });
     html+='</tbody></table></div>';
     if(pages>1){

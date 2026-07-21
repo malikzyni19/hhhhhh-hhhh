@@ -352,17 +352,25 @@ class TestTradeLog(unittest.TestCase):
         ids_in  = {r["touch_trade_id"] for r in recs}
         ids_out = {r["touch_trade_id"] for r in log["rows"]}
         self.assertEqual(ids_in, ids_out)                  # nothing vanished
+        # newest → oldest ordering
+        times = [r["touch_time"] for r in log["rows"]]
+        self.assertEqual(times, sorted(times, reverse=True))
 
-    def test_27_chronological_and_capped(self):
-        recs = [_rec("win", touch_time=(1500 - i) * 1000)
-                for i in range(1500)]
+    def test_27_newest_first_and_cap_keeps_recent(self):
+        # touch_time increases with the loop; newest = 1_500_000
+        recs = [_rec("win", touch_time=(i + 1) * 1000) for i in range(1500)]
         _m._bt_fl_evaluate_rules(recs)
         log = _m._bt_fl_trade_log(recs)
         self.assertEqual(log["total"], 1500)
         self.assertEqual(log["returned"], _m._FL_TRADE_LOG_CAP)
         self.assertTrue(log["truncated"])
         times = [r["touch_time"] for r in log["rows"]]
-        self.assertEqual(times, sorted(times))
+        # newest → oldest (descending)
+        self.assertEqual(times, sorted(times, reverse=True))
+        # cap keeps the MOST RECENT rows: top row is the newest overall
+        self.assertEqual(times[0], 1_500_000)
+        # oldest returned row is newest-minus-999 (older 500 dropped, not the recent)
+        self.assertEqual(times[-1], (1500 - _m._FL_TRADE_LOG_CAP + 1) * 1000)
 
     def test_28_rows_carry_labels(self):
         recs = [_rec("loss", mfe=0.1, fvr=0.6,
