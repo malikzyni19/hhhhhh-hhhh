@@ -43546,6 +43546,461 @@ def api_backtest_ob_historical_autopsy():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Phase 21 — Pass-Profile Walk-Forward Validation (research only)
+# ══════════════════════════════════════════════════════════════════════════════
+# Validates whether an autopsy "pass profile" (a set of rules from the Chunk-20B
+# rule library, ANDed) keeps its expectancy edge OUT-OF-SAMPLE. Chronological
+# expanding-anchor folds: a trade belongs to a fold's train/test window by its
+# touch time. Autopsy features are causal (every Phase-20B feature uses only
+# data <= the touch bar — verified), so partitioning full-cell records by touch
+# time is equivalent to prefix-slicing with no look-ahead.
+#
+# Modes:
+#   locked         — a fixed profile (caller-supplied rule ids) applied to every
+#                    fold's TEST window; per-fold pass-vs-baseline delta.
+#   train_selected — per fold, the single best rule is chosen on TRAIN data only,
+#                    then applied to TEST — a truly out-of-sample selection test.
+# Labels only; no trade removed; no production activation.
+
+_PWF_MIN_FOLDS:        int   = 3
+_PWF_MAX_FOLDS:        int   = 6
+_PWF_MIN_TRAIN_PCT:    float = 35.0
+_PWF_MAX_TRAIN_PCT:    float = 60.0
+_PWF_MIN_TEST_PCT:     float = 10.0
+_PWF_MAX_TEST_PCT:     float = 25.0
+_PWF_MIN_PASS_TRADES:  int   = 50    # min total OOS pass-group trades to judge
+_PWF_MIN_TRAIN_TRADES: int   = 15    # min train pass-trades to select a rule / eval a fold
+_PWF_MIN_BEAT_PCT:     float = 60.0  # % of evaluable folds where pass beats baseline
+_PWF_MAX_SYMBOLS:      int   = 5
+_PWF_MAX_TIMEFRAMES:   int   = 2
+_PWF_MAX_CELLS:        int   = 10
+
+
+def _bt_pwf_record_passes(record: Dict, rule_fns: List) -> Optional[bool]:
+    """AND of the profile's rule verdicts for one record.
+
+    Returns True only if EVERY rule returns True. Returns False if any rule
+    returns False. Returns None (not evaluable) if no rule is False but at
+    least one is None (unknown) — conservative: an unconfirmable rule is never
+    counted as a pass.
+    """
+    any_unknown = False
+    for fn in rule_fns:
+        try:
+            v = fn(record)
+        except Exception:
+            v = None
+        if v is False:
+            return False
+        if v is None:
+            any_unknown = True
+    return None if any_unknown else True
+
+
+def _bt_pwf_fold_time_bounds(fold: Dict, candles: List[Dict]) -> Dict:
+    """Convert a fold's index boundaries to open-time boundaries."""
+    n = len(candles)
+    def _t(idx):
+        if idx is None or idx < 0 or idx >= n:
+            return None
+        return candles[idx].get("open_time")
+    return {
+        "train_end_time":  _t(fold["train_end_index_exclusive"] - 1),
+        "test_start_time": _t(fold["test_start_index"]),
+        "test_end_time":   _t(fold["test_end_index_exclusive"] - 1),
+    }
+
+
+def _bt_pwf_partition(records: List[Dict], fold: Dict, candles: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
+    """Split records into (train, test) for one fold by touch bar index.
+
+    train = touch bar < train_end_index_exclusive
+    test  = test_start_index <= touch bar < test_end_index_exclusive
+    A record's touch bar is looked up from its touch_time against the candle
+    grid (records carry touch_time, not the index). No look-ahead: features
+    are causal, so a test trade's labels match a prefix-sliced rerun.
+    """
+    te_s   = fold["test_start_index"]
+    te_e   = fold["test_end_index_exclusive"]
+    # touch_time → bar via the candle open-time grid. train_end == test_start
+    # by construction, so te_s_t doubles as the train boundary.
+    te_s_t   = (candles[te_s].get("open_time") if te_s < len(candles) else None)
+    te_e_t   = (candles[te_e].get("open_time") if te_e < len(candles) else None)
+    train, test = [], []
+    for r in records:
+        tt = r.get("touch_time")
+        if tt is None:
+            continue
+        # train: touch strictly before the test window starts
+        if te_s_t is not None and tt < te_s_t:
+            train.append(r)
+        # test: touch inside [test_start, test_end)
+        if te_s_t is not None and te_e_t is not None and te_s_t <= tt < te_e_t:
+            test.append(r)
+        elif te_s_t is not None and te_e_t is None and tt >= te_s_t:
+            # last fold's test window runs to the end of data
+            test.append(r)
+    return train, test
+
+
+def _bt_pwf_select_rule(train_recs: List[Dict], rules: List[Dict]) -> Optional[Dict]:
+    """Pick the single rule with the best TRAIN pass-group expectancy.
+
+    Only rules whose train pass-group has >= _PWF_MIN_TRAIN_TRADES authoritative
+    trades are eligible. Returns {"id","label","train_expectancy","train_trades"}
+    or None when no rule qualifies.
+    """
+    best = None
+    for rule in rules:
+        passed = [r for r in train_recs
+                  if _bt_pwf_record_passes(r, [rule["fn"]]) is True]
+        agg = _bt_fl_aggregate(passed)
+        if agg["trades"] < _PWF_MIN_TRAIN_TRADES or agg["expectancy_r"] is None:
+            continue
+        if best is None or agg["expectancy_r"] > best["train_expectancy"]:
+            best = {"id": rule["id"], "label": rule["label"],
+                    "train_expectancy": agg["expectancy_r"],
+                    "train_trades": agg["trades"], "_fn": rule["fn"]}
+    return best
+
+
+def _bt_run_profile_walk_forward(req: Dict) -> Dict:
+    """Chronological walk-forward validation of an OB pass profile (research)."""
+    t_start = time.monotonic()
+
+    symbols      = req.get("symbols", [])
+    timeframes   = req.get("timeframes", [])
+    candle_count = int(req.get("candle_count", 2000))
+    rr_key       = _bt_rr_key(int(req.get("rr", 2)))
+    ob_class     = str(req.get("ob_class", "internal"))
+    mode         = str(req.get("candidate_mode", "locked"))
+    fold_count   = max(_PWF_MIN_FOLDS, min(_PWF_MAX_FOLDS, int(req.get("fold_count", 4))))
+    train_pct    = max(_PWF_MIN_TRAIN_PCT, min(_PWF_MAX_TRAIN_PCT,
+                                               float(req.get("initial_train_pct", 45.0))))
+    test_pct     = max(_PWF_MIN_TEST_PCT, min(_PWF_MAX_TEST_PCT,
+                                              float(req.get("test_pct", 15.0))))
+
+    rule_lib   = {ru["id"]: ru for ru in _bt_fl_rule_predicates()}
+    profile_ids = [rid for rid in (req.get("profile_rules") or []) if rid in rule_lib]
+    profile_fns = [rule_lib[rid]["fn"] for rid in profile_ids]
+
+    failures: List[Dict] = []
+    network_fetch_count = 0
+    htf_fetch_count     = 0
+    completed_cells     = 0
+    _htf_cache: Dict = {}
+
+    # Collected per (cell, fold) evaluable results
+    fold_rows: List[Dict] = []          # one per (cell, fold) with pass + baseline aggs
+    oos_pass_recs: List[Dict] = []      # all OOS pass-group records (for totals)
+    oos_base_recs: List[Dict] = []      # all OOS baseline records (for totals)
+    selected_rule_counts: Dict[str, int] = {}
+
+    for sym in symbols:
+        for tf in timeframes:
+            try:
+                raw = get_klines(sym, tf, limit=candle_count)
+                network_fetch_count += 1
+                candles = _bt_normalize_candles(raw)
+                if not candles:
+                    failures.append({"symbol": sym, "timeframe": tf,
+                                     "stage": "normalize", "error": "no_candles"})
+                    continue
+
+                atr        = _bt_ap_atr_series(candles)
+                tf_idx     = _bt_ap_build_trend_index(candles, _BT_PIVOT_LEN)
+                swing_idx  = _bt_ap_build_trend_index(candles, _BT_SWING_PIVOT_LEN)
+
+                # single-HTF fetch (rules use htf_alignment); cached per (sym, htf)
+                htf_tf = _AP_HTF_MAP.get(tf)
+                htf_candles = None
+                htf_idx = None
+                if htf_tf:
+                    ck = (sym, htf_tf)
+                    if ck not in _htf_cache:
+                        try:
+                            _hraw = get_klines(sym, htf_tf, limit=candle_count)
+                            _htf_cache[ck] = _bt_normalize_candles(_hraw) or None
+                            if _htf_cache[ck]:
+                                htf_fetch_count += 1
+                        except Exception:
+                            _htf_cache[ck] = None
+                    htf_candles = _htf_cache[ck]
+                    if htf_candles:
+                        htf_idx = _bt_ap_build_trend_index(htf_candles, _BT_PIVOT_LEN)
+
+                params = _bt_wf_build_params(sym, tf, len(candles), [1, 2, 3])
+                params["ob_class"] = ob_class
+                events = _bt_extract_ob_replay_events(candles, params)
+                records = _bt_ap_build_trade_records(
+                    events, candles, rr_key, ob_class, tf_idx, swing_idx,
+                    htf_candles, htf_idx, atr)
+
+                folds = _bt_build_walk_forward_folds(len(candles), fold_count,
+                                                     train_pct, test_pct)
+                for fold in folds:
+                    train_recs, test_recs = _bt_pwf_partition(records, fold, candles)
+                    if not test_recs:
+                        continue
+
+                    if mode == "train_selected":
+                        sel = _bt_pwf_select_rule(train_recs, list(rule_lib.values()))
+                        if sel is None:
+                            continue     # no rule qualified on train → fold not evaluable
+                        fns = [sel["_fn"]]
+                        selected_rule_counts[sel["id"]] = selected_rule_counts.get(sel["id"], 0) + 1
+                    else:
+                        if not profile_fns:
+                            continue
+                        fns = profile_fns
+                        sel = None
+
+                    pass_recs = [r for r in test_recs
+                                 if _bt_pwf_record_passes(r, fns) is True]
+                    base_agg = _bt_fl_aggregate(test_recs)
+                    pass_agg = _bt_fl_aggregate(pass_recs)
+                    oos_base_recs.extend(test_recs)
+                    oos_pass_recs.extend(pass_recs)
+
+                    evaluable = (pass_agg["trades"] >= 1
+                                 and pass_agg["expectancy_r"] is not None
+                                 and base_agg["expectancy_r"] is not None)
+                    delta = (round(pass_agg["expectancy_r"] - base_agg["expectancy_r"], 6)
+                             if evaluable else None)
+                    fold_rows.append({
+                        "symbol": sym, "timeframe": tf, "fold": fold["fold"],
+                        "selected_rule": (sel["id"] if sel else None),
+                        "train_trades": (sel["train_trades"] if sel else None),
+                        "pass_trades": pass_agg["trades"],
+                        "pass_win_rate_pct": pass_agg["win_rate_pct"],
+                        "pass_expectancy_r": pass_agg["expectancy_r"],
+                        "pass_net_r": pass_agg["net_r"],
+                        "baseline_trades": base_agg["trades"],
+                        "baseline_expectancy_r": base_agg["expectancy_r"],
+                        "expectancy_delta": delta,
+                        "beat_baseline": (delta is not None and delta > 0),
+                        "evaluable": evaluable,
+                    })
+                completed_cells += 1
+            except Exception as e:
+                failures.append({"symbol": sym, "timeframe": tf,
+                                 "stage": "run", "error": str(e)[:200]})
+
+    # ── Aggregate across all (cell, fold) test windows ────────────────────────
+    evaluable_rows = [f for f in fold_rows if f["evaluable"]]
+    deltas = [f["expectancy_delta"] for f in evaluable_rows]
+    beat   = sum(1 for f in evaluable_rows if f["beat_baseline"])
+    beat_pct = round(beat / len(evaluable_rows) * 100, 1) if evaluable_rows else None
+
+    pass_total = _bt_fl_aggregate(oos_pass_recs)
+    base_total = _bt_fl_aggregate(oos_base_recs)
+    oos_delta = (round(pass_total["expectancy_r"] - base_total["expectancy_r"], 6)
+                 if pass_total["expectancy_r"] is not None
+                 and base_total["expectancy_r"] is not None else None)
+    retention = (round(pass_total["trades"] / base_total["trades"] * 100, 2)
+                 if base_total["trades"] else None)
+    bootstrap = _bt_wf_bootstrap_delta(deltas)
+
+    # ── Pass gates → verdict ──────────────────────────────────────────────────
+    gates_failed: List[str] = []
+    if len(evaluable_rows) < _PWF_MIN_FOLDS:
+        gates_failed.append("insufficient_evaluable_folds")
+    if pass_total["trades"] < _PWF_MIN_PASS_TRADES:
+        gates_failed.append("insufficient_oos_pass_trades")
+    if beat_pct is None or beat_pct < _PWF_MIN_BEAT_PCT:
+        gates_failed.append("majority_of_folds_do_not_beat_baseline")
+    if oos_delta is None or oos_delta <= 0:
+        gates_failed.append("oos_expectancy_not_above_baseline")
+    ci_low = bootstrap.get("expectancy_delta_low")
+    if ci_low is None or ci_low <= 0:
+        gates_failed.append("bootstrap_ci_lower_bound_not_positive")
+
+    if len(evaluable_rows) < _PWF_MIN_FOLDS or pass_total["trades"] < _PWF_MIN_PASS_TRADES:
+        verdict = "INSUFFICIENT"
+    elif not gates_failed:
+        verdict = "PASS"
+    else:
+        verdict = "FAIL"
+
+    return {
+        "ok":                      True,
+        "authoritative_execution": True,
+        "client_results_accepted": False,
+        "mode":                    "profile_walk_forward_v1",
+        "verdict":                 verdict,
+        "failed_gates":            gates_failed,
+        "request": {
+            "symbols": symbols, "timeframes": timeframes,
+            "candle_count": candle_count, "rr": rr_key, "ob_class": ob_class,
+            "candidate_mode": mode, "profile_rules": profile_ids,
+            "fold_count": fold_count, "initial_train_pct": train_pct,
+            "test_pct": test_pct,
+        },
+        "summary": {
+            "evaluable_folds":        len(evaluable_rows),
+            "total_fold_windows":     len(fold_rows),
+            "folds_beat_baseline":    beat,
+            "beat_baseline_pct":      beat_pct,
+            "oos_pass_trades":        pass_total["trades"],
+            "oos_pass_wins":          pass_total["wins"],
+            "oos_pass_losses":        pass_total["losses"],
+            "oos_pass_win_rate_pct":  pass_total["win_rate_pct"],
+            "oos_pass_expectancy_r":  pass_total["expectancy_r"],
+            "oos_pass_profit_factor_r": pass_total["profit_factor_r"],
+            "oos_pass_net_r":         pass_total["net_r"],
+            "oos_baseline_trades":    base_total["trades"],
+            "oos_baseline_expectancy_r": base_total["expectancy_r"],
+            "oos_expectancy_delta":   oos_delta,
+            "trade_retention_pct":    retention,
+            "sample_size_status":     pass_total["sample_size_status"],
+        },
+        "bootstrap_delta_ci":  bootstrap,
+        "fold_windows":        fold_rows,
+        "selected_rule_counts": (selected_rule_counts if mode == "train_selected" else None),
+        "failures":            failures,
+        "performance": {
+            "requested_cells":     len(symbols) * len(timeframes),
+            "completed_cells":     completed_cells,
+            "failed_cells":        len(failures),
+            "network_fetch_count": network_fetch_count,
+            "htf_fetch_count":     htf_fetch_count,
+            "total_elapsed_ms":    round((time.monotonic() - t_start) * 1000),
+        },
+        "definitions": {
+            "method": ("expanding-anchor chronological folds; a trade is train/test "
+                       "by its touch time vs the fold boundary. Features are causal "
+                       "(<= touch bar) so this equals prefix-slicing — no look-ahead"),
+            "locked":         "fixed profile_rules (ANDed) applied to every fold's test window",
+            "train_selected": ("per fold the single best rule is chosen on TRAIN data "
+                               "only, then applied to TEST — out-of-sample rule selection"),
+            "verdict": ("PASS = all gates met (>= min folds & pass trades, majority of "
+                        "folds beat baseline, OOS expectancy above baseline, AND bootstrap "
+                        "CI lower bound on the fold delta > 0); FAIL = a gate missed; "
+                        "INSUFFICIENT = too few folds/trades to judge"),
+            "outcome_resolution": ("a trade's win/loss is its real eventual outcome (it may "
+                                   "resolve on bars after its test window). This is applied "
+                                   "identically to the pass group and the baseline (pass ⊆ "
+                                   "baseline), so it adds no differential bias — it answers "
+                                   "'did the filtered trades actually work'."),
+            "note": ("Research only. A PASS is evidence the edge survived out-of-sample "
+                     "on this data — not a guarantee. Nothing here affects Scanner, Live "
+                     "Monitor, alerts or execution."),
+        },
+        "constants": {
+            "min_folds": _PWF_MIN_FOLDS, "min_pass_trades": _PWF_MIN_PASS_TRADES,
+            "min_beat_pct": _PWF_MIN_BEAT_PCT, "phase": "21",
+        },
+    }
+
+
+_PWF_FORBIDDEN_KEYS = (
+    "trades", "outcomes", "metrics", "fold_windows", "summary", "verdict",
+    "bootstrap_delta_ci", "win_rate", "expectancy",
+)
+
+
+@app.route("/api/backtest/ob-historical/profile-walk-forward", methods=["POST"])
+@login_required
+def api_backtest_ob_historical_profile_walk_forward():
+    err = _guest_tab_check("backtest")
+    if err is not None:
+        return err
+
+    payload = request.get_json(force=True, silent=True) or {}
+    if not isinstance(payload, dict):
+        return jsonify({"ok": False, "error": "request body must be a JSON object"}), 400
+    for banned in _PWF_FORBIDDEN_KEYS:
+        if banned in payload:
+            return jsonify({"ok": False,
+                            "error": "client_supplied_trade_results_not_allowed"}), 400
+
+    raw_syms = payload.get("symbols", ["BTCUSDT", "ETHUSDT", "XRPUSDT"])
+    if not isinstance(raw_syms, list):
+        raw_syms = [str(raw_syms)]
+    seen: set = set()
+    symbols: List[str] = []
+    for s in raw_syms:
+        s = str(s or "").strip().upper()
+        if not s:
+            return jsonify({"ok": False, "error": "blank symbol not allowed"}), 400
+        if not s.endswith("USDT"):
+            s = s + "USDT"
+        if s in seen:
+            return jsonify({"ok": False, "error": "duplicate symbols not allowed"}), 400
+        seen.add(s); symbols.append(s)
+    if not symbols:
+        return jsonify({"ok": False, "error": "at least one symbol required"}), 400
+    if len(symbols) > _PWF_MAX_SYMBOLS:
+        return jsonify({"ok": False, "error": f"max {_PWF_MAX_SYMBOLS} symbols"}), 400
+
+    raw_tfs = payload.get("timeframes", ["15m", "1h"])
+    if not isinstance(raw_tfs, list):
+        raw_tfs = [str(raw_tfs)]
+    seen_tf: set = set()
+    timeframes: List[str] = []
+    for tf in raw_tfs:
+        tf = str(tf).strip()
+        if tf not in _BT_ALLOWED_TIMEFRAMES:
+            return jsonify({"ok": False,
+                            "error": f"timeframe '{tf}' not allowed. "
+                                     f"Allowed: {sorted(_BT_ALLOWED_TIMEFRAMES)}"}), 400
+        if tf in seen_tf:
+            return jsonify({"ok": False, "error": "duplicate timeframes not allowed"}), 400
+        seen_tf.add(tf); timeframes.append(tf)
+    if not timeframes:
+        return jsonify({"ok": False, "error": "at least one timeframe required"}), 400
+    if len(timeframes) > _PWF_MAX_TIMEFRAMES:
+        return jsonify({"ok": False, "error": f"max {_PWF_MAX_TIMEFRAMES} timeframes"}), 400
+    if len(symbols) * len(timeframes) > _PWF_MAX_CELLS:
+        return jsonify({"ok": False, "error": f"max {_PWF_MAX_CELLS} cells"}), 400
+
+    try:
+        candle_count = max(1000, min(4000, int(payload.get("candle_count", 2000))))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "candle_count must be integer"}), 400
+
+    try:
+        rr = int(payload.get("rr", 2))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "rr must be 1, 2 or 3"}), 400
+    if rr not in (1, 2, 3):
+        return jsonify({"ok": False, "error": "rr must be 1, 2 or 3"}), 400
+
+    ob_class = str(payload.get("ob_class", "internal")).strip().lower()
+    if ob_class not in ("internal", "swing"):
+        return jsonify({"ok": False, "error": "ob_class must be 'internal' or 'swing'"}), 400
+
+    mode = str(payload.get("candidate_mode", "locked")).strip().lower()
+    if mode not in ("locked", "train_selected"):
+        return jsonify({"ok": False, "error": "candidate_mode must be 'locked' or 'train_selected'"}), 400
+
+    valid_rule_ids = {ru["id"] for ru in _bt_fl_rule_predicates()}
+    profile_rules = payload.get("profile_rules") or []
+    if not isinstance(profile_rules, list):
+        return jsonify({"ok": False, "error": "profile_rules must be a list"}), 400
+    bad = [r for r in profile_rules if r not in valid_rule_ids]
+    if bad:
+        return jsonify({"ok": False, "error": f"unknown profile_rules: {bad}"}), 400
+    if mode == "locked" and not profile_rules:
+        return jsonify({"ok": False,
+                        "error": "locked mode requires at least one profile rule"}), 400
+
+    try:
+        result = _bt_run_profile_walk_forward({
+            "symbols": symbols, "timeframes": timeframes,
+            "candle_count": candle_count, "rr": rr, "ob_class": ob_class,
+            "candidate_mode": mode, "profile_rules": profile_rules,
+            "fold_count": payload.get("fold_count", 4),
+            "initial_train_pct": payload.get("initial_train_pct", 45.0),
+            "test_pct": payload.get("test_pct", 15.0),
+        })
+        return jsonify(result), 200
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)[:500]}), 500
+
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Backtest — Multi-Timeframe (MTF) Comparison Engine
 # ══════════════════════════════════════════════════════════════════════════════
 

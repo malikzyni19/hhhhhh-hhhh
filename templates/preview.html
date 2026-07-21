@@ -13198,7 +13198,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     wfData:null,wfRunning:false,wfFoldView:1,wfCharts:{},
     teData:null,teRunning:false,teCharts:{},tePage:1,teShowFilters:false,
     obClass:"internal",
-    apData:null,apRunning:false,apClass:"internal",apCharts:{},apLogPage:0,apOpenRows:{}};
+    apData:null,apRunning:false,apClass:"internal",apCharts:{},apLogPage:0,apOpenRows:{},
+    pwfData:null,pwfRunning:false,pwfMode:"train_selected",pwfRules:{}};
 
   function _bindBtSidebarEvents(aside){
     [].forEach.call(aside.querySelectorAll("[data-btpage]"),function(item){
@@ -14486,6 +14487,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         '<button class="bt-compare-tab'+(mode==="batch"?" active":"")+'" data-cmode="batch">Pair Batch</button>'+
         '<button class="bt-compare-tab'+(mode==="explorer"?" active":"")+'" data-cmode="explorer">Trade Explorer</button>'+
         '<button class="bt-compare-tab'+(mode==="autopsy"?" active":"")+'" data-cmode="autopsy">Autopsy</button>'+
+        '<button class="bt-compare-tab'+(mode==="profilewf"?" active":"")+'" data-cmode="profilewf">Profile WF</button>'+
       '</div>'+
       '<div id="btCompareModeContent"></div>';
     [].forEach.call(el.querySelectorAll("[data-cmode]"),function(btn){
@@ -14497,6 +14499,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     if(mode==="mtf") _btRenderMtfMode();
     else if(mode==="explorer") _btRenderTradeExplorerMode();
     else if(mode==="autopsy") _btRenderAutopsyMode();
+    else if(mode==="profilewf") _btRenderProfileWfMode();
     else _btRenderBatchMode();
   }
 
@@ -16905,6 +16908,156 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 
 
 
+  /* ── Phase 21: Pass-Profile Walk-Forward ─────────────────────────────────── */
+  var _PWF_RULES=[
+    ["first_touch_only","First touch only"],
+    ["early_touch","Touch 1 or 2 only"],
+    ["not_oversized","Zone not oversized"],
+    ["strong_displacement","Displacement not weak"],
+    ["fresh_zone","Zone not stale"],
+    ["with_htf_trend","HTF trend not against"],
+    ["with_tf_trend","Own-TF trend not against"],
+    ["not_counter_swing","Not against swing"],
+    ["formation_volume_above_avg","Formation vol >= avg"],
+    ["fvg_confluence","FVG confluence present"],
+    ["combo_htf_first_touch","HTF-aligned + first touch"],
+    ["combo_quality","HTF + touch<=2 + strong disp + fresh"]
+  ];
+
+  function _btRenderProfileWfMode(){
+    var el=document.getElementById("btCompareModeContent"); if(!el) return;
+    var d=_btState.pwfData; var running=_btState.pwfRunning||false;
+    var mode=_btState.pwfMode||"train_selected";
+    var syms=_btState.pwfSyms||["BTCUSDT","ETHUSDT","XRPUSDT"];
+    var tfs=_btState.pwfTfs||["15m","1h"];
+    var cls=_btState.pwfObClass||"internal";
+    var candles=_btState.pwfCandles||2000;
+
+    var html='<div style="padding:12px 0">';
+    html+='<div class="bt-stab-header" style="margin-bottom:4px"><span style="font-size:13px;font-weight:600;color:var(--text-1)">Pass-Profile Walk-Forward Validation</span></div>';
+    html+='<div style="font-size:11px;color:var(--text-2);margin-bottom:6px">Does an autopsy pass-profile keep its edge OUT-OF-SAMPLE? Chronological folds; a PASS means the edge survived on data it was not chosen from.</div>';
+    html+='<div style="font-size:10px;color:#f59e0b;margin-bottom:10px">Research only. A PASS is evidence, not a guarantee — nothing here affects Scanner, Live Monitor, alerts or execution.</div>';
+
+    var allSyms=["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT"];
+    html+='<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px"><span style="font-size:11px;color:var(--text-2);font-weight:600">Symbols:</span>';
+    allSyms.forEach(function(s){html+='<button class="bt-rr-btn'+(syms.indexOf(s)>=0?" active":"")+'" data-pwfsym="'+s+'" style="font-size:10px">'+s+'</button>';});
+    html+='</div>';
+    html+='<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px"><span style="font-size:11px;color:var(--text-2);font-weight:600">Timeframes:</span>';
+    ["15m","30m","1h","4h"].forEach(function(t){html+='<button class="bt-rr-btn'+(tfs.indexOf(t)>=0?" active":"")+'" data-pwftf="'+t+'" style="font-size:11px">'+t+'</button>';});
+    html+='<span style="font-size:11px;color:var(--text-2);font-weight:600;margin-left:10px">Candles:</span>';
+    [1000,2000,3000].forEach(function(c){html+='<button class="bt-rr-btn'+(candles===c?" active":"")+'" data-pwfcandles="'+c+'" style="font-size:11px">'+c+'</button>';});
+    html+='<span style="font-size:11px;color:var(--text-2);font-weight:600;margin-left:10px">OB class:</span>';
+    ["internal","swing"].forEach(function(k){html+='<button class="bt-rr-btn'+(cls===k?" active":"")+'" data-pwfclass="'+k+'" style="font-size:10px">'+k+'</button>';});
+    html+='</div>';
+
+    html+='<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px"><span style="font-size:11px;color:var(--text-2);font-weight:600">Mode:</span>';
+    html+='<button class="bt-rr-btn'+(mode==="train_selected"?" active":"")+'" data-pwfmode="train_selected" style="font-size:10px">Train-selected (auto best rule/fold)</button>';
+    html+='<button class="bt-rr-btn'+(mode==="locked"?" active":"")+'" data-pwfmode="locked" style="font-size:10px">Locked (my profile)</button>';
+    html+='</div>';
+
+    if(mode==="locked"){
+      html+='<div style="margin:4px 0 8px;padding:8px;background:rgba(0,0,0,.15);border-radius:6px">';
+      html+='<div style="font-size:10px;color:var(--text-2);font-weight:600;margin-bottom:5px">Profile rules (ANDed — trade must pass ALL selected):</div>';
+      html+='<div style="display:flex;gap:5px;flex-wrap:wrap">';
+      _PWF_RULES.forEach(function(r){
+        var on=!!(_btState.pwfRules&&_btState.pwfRules[r[0]]);
+        html+='<button class="bt-rr-btn'+(on?" active":"")+'" data-pwfrule="'+r[0]+'" style="font-size:10px" title="'+r[0]+'">'+r[1]+'</button>';
+      });
+      html+='</div></div>';
+    }
+
+    html+='<div style="margin-bottom:12px"><button id="btPwfRun" class="bt-run-btn" style="font-size:12px;padding:6px 18px" '+(running?"disabled":"")+'>'+(running?'&#9733; Running…':'&#9654; Run Walk-Forward')+'</button>';
+    if(d&&d.ok){
+      var vc=d.verdict==="PASS"?"#22c55e":d.verdict==="FAIL"?"#ef4444":"#f59e0b";
+      html+=' <span style="margin-left:10px;font-size:13px;font-weight:800;color:'+vc+'">'+d.verdict+'</span>';
+      html+='<button class="bt-export-btn" onclick="_btPwfExport()" style="margin-left:10px">Export JSON</button>';
+    }
+    html+='</div>';
+
+    html+='<div id="btPwfResults">';
+    if(running){ html+='<div style="font-size:12px;color:var(--text-2);padding:12px">Running walk-forward…</div>'; }
+    else if(d&&d.ok){ html+=_btPwfResultsHtml(d); }
+    else if(d&&!d.ok){ html+='<div class="bt-mtf-err">'+esc(d.error||"Request failed")+'</div>'; }
+    else { html+='<div style="font-size:12px;color:var(--text-2);padding:12px">Pick a mode and run. Train-selected needs no rules; Locked validates the exact profile you tick.</div>'; }
+    html+='</div></div>';
+
+    el.innerHTML=html;
+
+    function toggleArr(key,val){var a=(_btState[key]||[]).slice();var i=a.indexOf(val);if(i>=0)a.splice(i,1);else a.push(val);_btState[key]=a;_btRenderProfileWfMode();}
+    [].forEach.call(el.querySelectorAll("[data-pwfsym]"),function(b){b.addEventListener("click",function(){if(!_btState.pwfSyms)_btState.pwfSyms=syms.slice();toggleArr("pwfSyms",b.getAttribute("data-pwfsym"));});});
+    [].forEach.call(el.querySelectorAll("[data-pwftf]"),function(b){b.addEventListener("click",function(){if(!_btState.pwfTfs)_btState.pwfTfs=tfs.slice();toggleArr("pwfTfs",b.getAttribute("data-pwftf"));});});
+    [].forEach.call(el.querySelectorAll("[data-pwfcandles]"),function(b){b.addEventListener("click",function(){_btState.pwfCandles=parseInt(b.getAttribute("data-pwfcandles"));_btRenderProfileWfMode();});});
+    [].forEach.call(el.querySelectorAll("[data-pwfclass]"),function(b){b.addEventListener("click",function(){_btState.pwfObClass=b.getAttribute("data-pwfclass");_btRenderProfileWfMode();});});
+    [].forEach.call(el.querySelectorAll("[data-pwfmode]"),function(b){b.addEventListener("click",function(){_btState.pwfMode=b.getAttribute("data-pwfmode");_btRenderProfileWfMode();});});
+    [].forEach.call(el.querySelectorAll("[data-pwfrule]"),function(b){b.addEventListener("click",function(){var id=b.getAttribute("data-pwfrule");if(!_btState.pwfRules)_btState.pwfRules={};if(_btState.pwfRules[id])delete _btState.pwfRules[id];else _btState.pwfRules[id]=true;_btRenderProfileWfMode();});});
+    var rb=document.getElementById("btPwfRun"); if(rb) rb.addEventListener("click",_btRunProfileWf);
+  }
+
+  function _btRunProfileWf(){
+    var syms=(_btState.pwfSyms||["BTCUSDT","ETHUSDT","XRPUSDT"]).slice();
+    var tfs=(_btState.pwfTfs||["15m","1h"]).slice();
+    var mode=_btState.pwfMode||"train_selected";
+    if(!syms.length||!tfs.length){var re=document.getElementById("btPwfResults");if(re)re.innerHTML='<div class="bt-mtf-err">Select at least one symbol and timeframe.</div>';return;}
+    if(syms.length>5||tfs.length>2||syms.length*tfs.length>10){var re2=document.getElementById("btPwfResults");if(re2)re2.innerHTML='<div class="bt-mtf-err">Max 5 symbols × 2 timeframes (10 cells).</div>';return;}
+    var rules=Object.keys(_btState.pwfRules||{});
+    if(mode==="locked"&&!rules.length){var re3=document.getElementById("btPwfResults");if(re3)re3.innerHTML='<div class="bt-mtf-err">Locked mode: tick at least one profile rule.</div>';return;}
+    _btState.pwfRunning=true; _btRenderProfileWfMode();
+    fetch("/api/backtest/ob-historical/profile-walk-forward",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({symbols:syms,timeframes:tfs,candle_count:_btState.pwfCandles||2000,rr:2,ob_class:_btState.pwfObClass||"internal",candidate_mode:mode,profile_rules:rules})})
+    .then(function(r){return r.json();}).then(function(d){_btState.pwfData=d;_btState.pwfRunning=false;_btRenderProfileWfMode();})
+    .catch(function(e){_btState.pwfRunning=false;_btRenderProfileWfMode();var re4=document.getElementById("btPwfResults");if(re4)re4.innerHTML='<div class="bt-mtf-err">Run failed: '+e+'</div>';});
+  }
+
+  function _btPwfFmt(v,dec){if(v==null)return"—";if(typeof v==="number")return dec!=null?v.toFixed(dec):String(v);return String(v);}
+
+  function _btPwfResultsHtml(d){
+    var s=d.summary||{}; var ci=d.bootstrap_delta_ci||{};
+    var html='';
+    if(d.failed_gates&&d.failed_gates.length){
+      html+='<div style="font-size:10px;color:#ef4444;margin-bottom:6px">Failed gates: '+d.failed_gates.join(", ")+'</div>';
+    }
+    html+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-bottom:10px">';
+    function card(l,v,sub,c){html+='<div style="background:rgba(0,0,0,.18);border-radius:6px;padding:8px"><div style="font-size:9px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px">'+l+'</div><div style="font-size:15px;font-weight:700;color:'+(c||"var(--text-1)")+'">'+v+'</div>'+(sub?'<div style="font-size:9px;color:var(--text-3)">'+sub+'</div>':'')+'</div>';}
+    card("Evaluable folds",_btPwfFmt(s.evaluable_folds),"of "+_btPwfFmt(s.total_fold_windows));
+    card("Folds beat baseline",_btPwfFmt(s.beat_baseline_pct)+"%",_btPwfFmt(s.folds_beat_baseline)+" folds",(s.beat_baseline_pct||0)>=60?"#22c55e":"#ef4444");
+    card("OOS pass trades",_btPwfFmt(s.oos_pass_trades),"retention "+_btPwfFmt(s.trade_retention_pct)+"%");
+    card("OOS pass win%",_btPwfFmt(s.oos_pass_win_rate_pct)+"%");
+    card("Pass expectancy",_btPwfFmt(s.oos_pass_expectancy_r,4)+"R","baseline "+_btPwfFmt(s.oos_baseline_expectancy_r,4));
+    card("Expectancy edge",_btPwfFmt(s.oos_expectancy_delta,4)+"R","OOS vs baseline",(s.oos_expectancy_delta||0)>0?"#22c55e":"#ef4444");
+    card("Bootstrap 95% CI",_btPwfFmt(ci.expectancy_delta_low,3)+" … "+_btPwfFmt(ci.expectancy_delta_high,3),(ci.expectancy_delta_low||0)>0?"CI low > 0 ✓":"CI includes 0",(ci.expectancy_delta_low||0)>0?"#22c55e":"#ef4444");
+    card("Sample",s.sample_size_status||"—");
+    html+='</div>';
+
+    if(d.selected_rule_counts){
+      html+='<div style="font-size:10px;color:var(--text-2);margin-bottom:8px"><b>Train-selected rule per fold:</b> ';
+      html+=Object.keys(d.selected_rule_counts).map(function(k){return k+" ×"+d.selected_rule_counts[k];}).join(", ")+'</div>';
+    }
+
+    var rows=d.fold_windows||[];
+    html+='<div style="margin:6px 0 4px;font-size:11px;font-weight:700;color:var(--text-1)">Per fold-window (out-of-sample)</div>';
+    html+='<div style="overflow-x:auto"><table class="bt-table" style="font-size:10px;width:100%"><thead><tr><th>Symbol</th><th>TF</th><th>Fold</th>'+(d.selected_rule_counts?'<th>Rule</th>':'')+'<th>Pass Trades</th><th>Pass Win%</th><th>Pass Exp</th><th>Baseline Exp</th><th>Δ Edge</th><th>Beat?</th></tr></thead><tbody>';
+    rows.forEach(function(f){
+      var dc=f.expectancy_delta==null?"var(--text-3)":f.expectancy_delta>0?"#22c55e":"#ef4444";
+      html+='<tr>';
+      html+='<td>'+f.symbol+'</td><td>'+f.timeframe+'</td><td style="text-align:center">'+f.fold+'</td>';
+      if(d.selected_rule_counts) html+='<td>'+(f.selected_rule||"—")+'</td>';
+      html+='<td>'+_btPwfFmt(f.pass_trades)+'</td>';
+      html+='<td>'+_btPwfFmt(f.pass_win_rate_pct,1)+(f.pass_win_rate_pct!=null?"%":"")+'</td>';
+      html+='<td>'+_btPwfFmt(f.pass_expectancy_r,3)+'</td>';
+      html+='<td>'+_btPwfFmt(f.baseline_expectancy_r,3)+'</td>';
+      html+='<td style="color:'+dc+';font-weight:700">'+_btPwfFmt(f.expectancy_delta,3)+'</td>';
+      html+='<td>'+(f.beat_baseline?'<span style="color:#22c55e">✓</span>':'<span style="color:var(--text-3)">·</span>')+'</td>';
+      html+='</tr>';
+    });
+    html+='</tbody></table></div>';
+    return html;
+  }
+
+  function _btPwfExport(){
+    if(!_btState.pwfData){alert("No walk-forward data to export.");return;}
+    _btDownloadBlob("zyni_profile_wf_"+Date.now()+".json",JSON.stringify(_btState.pwfData,null,2),"application/json");
+  }
+
   function _btRenderMtfMode(){
     var el=document.getElementById("btCompareModeContent"); if(!el) return;
     var sym=(_btState.data&&_btState.data.params&&_btState.data.params.symbol)||"BTCUSDT";
@@ -17755,6 +17908,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   window._btApExportRulesCsv=_btApExportRulesCsv;
   window._btApExportTradeLogCsv=_btApExportTradeLogCsv;
   window._btApExportRespectCsv=_btApExportRespectCsv;
+  window._btPwfExport=_btPwfExport;
 
   /* Tag body with current view so per-view CSS (Task 3) applies before
      the first switchView() call. */
