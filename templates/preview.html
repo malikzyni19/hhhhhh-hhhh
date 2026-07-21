@@ -16482,9 +16482,11 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var pages=Math.max(1,Math.ceil(rows.length/pageSize));
     var page=Math.min(_btState.apLogPage||0,pages-1);
     var slice=rows.slice(page*pageSize,(page+1)*pageSize);
+    var cov=rep.oi_coverage||{};
     var html='<div style="margin:12px 0 4px;font-size:11px;font-weight:700;color:var(--text-1)">Labeled Trade Log — '+_btApFmt(log.total)+' trades, none removed'+(log.truncated?' (showing first '+log.cap+')':'')+'</div>';
+    html+='<div style="font-size:9px;color:var(--text-3);margin-bottom:4px">Open-Interest coverage: '+_btApFmt(cov.available)+'/'+_btApFmt(cov.total)+' trades ('+_btApFmt(cov.coverage_pct)+'%) — OI history is last ~30 days only; older trades show "n/a".</div>';
     html+='<div style="overflow-x:auto"><table class="bt-table" style="font-size:9px;width:100%">';
-    html+='<thead><tr><th>Symbol</th><th>TF</th><th>Dir</th><th>Touch#</th><th>Time</th><th>Outcome</th><th>Grade</th><th>Respect</th><th>HTF State</th><th>RSI</th><th>RSI Div</th><th>CVD Div</th><th>Real R</th><th>MFE</th><th>MAE</th><th>Form Vol</th><th>Touch Vol</th><th>HTF</th><th>Session</th><th>Patterns</th><th>Rules Passed</th></tr></thead><tbody>';
+    html+='<thead><tr><th>Symbol</th><th>TF</th><th>Dir</th><th>Touch#</th><th>Time</th><th>Outcome</th><th>Grade</th><th>Respect</th><th>HTF State</th><th>RSI</th><th>RSI Div</th><th>CVD Div</th><th>OI Δ%</th><th>Real R</th><th>MFE</th><th>MAE</th><th>Form Vol</th><th>Touch Vol</th><th>HTF</th><th>Session</th><th>Patterns</th><th>Rules Passed</th></tr></thead><tbody>';
     function ts(ms){
       if(ms==null) return "—";
       try{return new Date(ms).toISOString().slice(0,16).replace("T"," ");}catch(e){return String(ms);}
@@ -16512,6 +16514,12 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       html+='<td>'+_btApFmt(r.rsi_at_touch,1)+'</td>';
       html+=divCell(r.rsi_divergence);
       html+=divCell(r.cvd_divergence);
+      if(!r.oi_available||r.oi_change_pct==null){
+        html+='<td style="color:var(--text-3)">n/a</td>';
+      } else {
+        var oic=r.oi_change_pct>0?"#22c55e":r.oi_change_pct<0?"#ef4444":"var(--text-2)";
+        html+='<td style="color:'+oic+'">'+_btApFmt(r.oi_change_pct,1)+'%</td>';
+      }
       html+='<td>'+_btApFmt(r.realized_r,2)+'</td>';
       html+='<td>'+_btApFmt(r.mfe_r,2)+'</td>';
       html+='<td>'+_btApFmt(r.mae_r,2)+'</td>';
@@ -16601,6 +16609,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var cols=["ob_class","touch_trade_id","symbol","timeframe","direction","touch_number",
       "touch_time","outcome","performance_grade","respect_class","htf_joint_state",
       "rsi_at_touch","rsi_divergence","cvd_at_touch","cvd_divergence","delta_at_touch",
+      "oi_at_touch","oi_change_pct","oi_available",
       "realized_r","mfe_r","mae_r","stop_loss_r",
       "formation_volume_ratio","touch_volume_ratio","htf_alignment","tf_alignment",
       "swing_alignment","session","failure_mode","pattern_tags","rules_passed","rules_total"];
