@@ -409,177 +409,77 @@ def _build_verification_email_text(username: str, code: str, purpose: str = "ver
     )
 
 
-def _build_verification_email(username: str, code: str) -> str:
-    """Return the premium HTML email body for OTP verification."""
+def _build_verification_email(username: str, code: str, purpose: str = "verify") -> str:
+    """Return the transactional OTP email body. purpose: 'verify' | '2fa'"""
+    if purpose == "2fa":
+        title    = "Your sign-in code"
+        subtitle = f"Hi <strong style=\"color:#ffffff;\">{username}</strong>, use the code below to complete your sign-in."
+        label    = "Sign-In Code"
+    else:
+        title    = "Verify your email address"
+        subtitle = f"Hi <strong style=\"color:#ffffff;\">{username}</strong>, enter the code below to activate your account."
+        label    = "Verification Code"
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
-  <title>Verify Your Email — ZyNi SMC</title>
+  <title>{title} — ZyNi SMC</title>
 </head>
 <body style="margin:0;padding:0;background:#060a14;font-family:'Segoe UI',Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;">
 <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background:#060a14;">
-  <tr><td align="center" style="padding:40px 16px;">
-    <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="max-width:580px;">
+  <tr><td align="center" style="padding:32px 16px;">
+    <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="max-width:520px;">
 
-      <!-- HEADER / LOGO BANNER — image fills the header, black bg matches image bg exactly -->
-      <tr><td style="background:#000000;border-radius:16px 16px 0 0;padding:0;text-align:center;border:1px solid rgba(249,115,22,0.25);border-bottom:3px solid #f97316;overflow:hidden;line-height:0;font-size:0;">
+      <!-- LOGO BANNER -->
+      <tr><td style="background:#000000;border-radius:14px 14px 0 0;padding:0;text-align:center;border:1px solid rgba(249,115,22,0.22);border-bottom:2px solid #f97316;overflow:hidden;line-height:0;font-size:0;">
         <img src="https://smcsetups.com/static/images/logo-email.png"
              alt="ZyNi SMC"
-             width="580"
-             style="width:100%;max-width:580px;height:auto;display:block;border-radius:16px 16px 0 0;">
+             width="520"
+             style="width:100%;max-width:520px;height:auto;display:block;border-radius:14px 14px 0 0;">
       </td></tr>
 
-      <!-- HERO BANNER -->
-      <tr><td style="background:linear-gradient(135deg,#0d1525 0%,#0f1e38 60%,#0a0f1e 100%);padding:36px 40px 28px;text-align:center;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
-        <img src="https://smcsetups.com/static/images/avatar-email.png" alt="ZyNi SMC" width="90" height="90" style="width:90px;height:90px;border-radius:50%;display:block;margin:0 auto 20px;border:2.5px solid rgba(249,115,22,0.70);box-shadow:0 0 0 4px rgba(249,115,22,0.12),0 8px 28px rgba(0,0,0,0.55),0 0 30px rgba(249,115,22,0.18);object-fit:cover;">
-        <h1 style="color:#ffffff;font-size:23px;font-weight:800;margin:0 0 14px;letter-spacing:-0.3px;">Verify Your Email Address</h1>
-        <p style="color:rgba(232,240,255,0.65);font-size:15px;margin:0;line-height:1.75;">
-          Hi <strong style="color:#ffffff;">{username}</strong>, welcome to ZyNi SMC!<br>
-          Enter the code below to activate your account and start trading smarter.
-        </p>
+      <!-- IDENTITY + TITLE -->
+      <tr><td style="background:#0b1120;padding:32px 36px 24px;text-align:center;border-left:1px solid rgba(249,115,22,0.12);border-right:1px solid rgba(249,115,22,0.12);">
+        <img src="https://smcsetups.com/static/images/avatar-email.png"
+             alt="ZyNi SMC"
+             width="72" height="72"
+             style="width:72px;height:72px;border-radius:50%;display:block;margin:0 auto 18px;border:2px solid rgba(249,115,22,0.65);box-shadow:0 0 0 4px rgba(249,115,22,0.10),0 6px 20px rgba(0,0,0,0.50);object-fit:cover;">
+        <h1 style="color:#ffffff;font-size:20px;font-weight:700;margin:0 0 10px;letter-spacing:-0.2px;">{title}</h1>
+        <p style="color:rgba(232,240,255,0.60);font-size:14px;margin:0;line-height:1.7;">{subtitle}</p>
       </td></tr>
 
       <!-- OTP CODE -->
-      <tr><td style="background:#0d1525;padding:32px 40px;text-align:center;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
-        <p style="color:rgba(232,240,255,0.50);font-size:12px;margin:0 0 14px;letter-spacing:2px;text-transform:uppercase;font-weight:600;">Your Verification Code</p>
-        <div style="background:#07101f;border:2px solid rgba(249,115,22,0.55);border-radius:14px;padding:26px 20px 22px;margin-bottom:14px;display:inline-block;width:100%;box-sizing:border-box;">
-          <div style="font-size:50px;font-weight:900;letter-spacing:18px;color:#f97316;font-family:'Courier New',Courier,monospace;line-height:1;padding-left:18px;">{code}</div>
+      <tr><td style="background:#0b1120;padding:4px 36px 28px;text-align:center;border-left:1px solid rgba(249,115,22,0.12);border-right:1px solid rgba(249,115,22,0.12);">
+        <p style="color:rgba(232,240,255,0.40);font-size:11px;margin:0 0 12px;letter-spacing:2px;text-transform:uppercase;font-weight:600;">{label}</p>
+        <div style="background:#07101f;border:1.5px solid rgba(249,115,22,0.50);border-radius:12px;padding:24px 16px 20px;margin-bottom:14px;">
+          <div style="font-size:46px;font-weight:900;letter-spacing:16px;color:#f97316;font-family:'Courier New',Courier,monospace;line-height:1;padding-left:16px;">{code}</div>
         </div>
-        <p style="color:rgba(232,240,255,0.40);font-size:13px;margin:0;line-height:1.6;">
-          &#8987; Valid for <strong style="color:#f97316;">10 minutes</strong> only &nbsp;&middot;&nbsp; Do not share this code with anyone
+        <p style="color:rgba(232,240,255,0.38);font-size:13px;margin:0;line-height:1.6;">
+          Expires in <strong style="color:#f97316;">10 minutes</strong> &nbsp;&middot;&nbsp; Do not share this code
         </p>
       </td></tr>
 
-      <!-- CTA BUTTON -->
-      <tr><td style="background:#0d1525;padding:4px 40px 30px;text-align:center;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
-        <a href="https://smcsetups.com" style="display:inline-block;background:linear-gradient(135deg,#f97316 0%,#ea580c 100%);color:#ffffff;text-decoration:none;font-size:15px;font-weight:700;padding:14px 38px;border-radius:10px;letter-spacing:0.3px;box-shadow:0 4px 20px rgba(249,115,22,0.35);">
-          Explore Features &rarr;
-        </a>
-      </td></tr>
-
-      <!-- DIVIDER -->
-      <tr><td style="background:#0d1525;padding:0 40px;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
-        <div style="height:1px;background:linear-gradient(90deg,transparent,rgba(249,115,22,0.35),transparent);"></div>
-      </td></tr>
-
-      <!-- PLATFORM FEATURES -->
-      <tr><td style="background:#0d1525;padding:28px 40px;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
-        <h2 style="color:#ffffff;font-size:17px;font-weight:700;margin:0 0 20px;text-align:center;">What You Can Do on ZyNi SMC</h2>
-        <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
-          <tr><td style="padding:0 0 15px;">
-            <table cellpadding="0" cellspacing="0" role="presentation"><tr>
-              <td style="width:40px;vertical-align:top;padding-top:3px;">
-                <div style="width:32px;height:32px;background:rgba(249,115,22,0.12);border:1px solid rgba(249,115,22,0.35);border-radius:8px;text-align:center;line-height:32px;font-size:16px;">&#128202;</div>
-              </td>
-              <td style="padding-left:12px;">
-                <div style="color:#ffffff;font-size:14px;font-weight:700;margin-bottom:3px;">Smart Money Scanner</div>
-                <div style="color:rgba(232,240,255,0.55);font-size:13px;line-height:1.6;">Scan hundreds of crypto pairs for institutional order blocks, fair value gaps, and breaker patterns in real time.</div>
-              </td>
-            </tr></table>
-          </td></tr>
-          <tr><td style="padding:0 0 15px;">
-            <table cellpadding="0" cellspacing="0" role="presentation"><tr>
-              <td style="width:40px;vertical-align:top;padding-top:3px;">
-                <div style="width:32px;height:32px;background:rgba(249,115,22,0.12);border:1px solid rgba(249,115,22,0.35);border-radius:8px;text-align:center;line-height:32px;font-size:16px;">&#9889;</div>
-              </td>
-              <td style="padding-left:12px;">
-                <div style="color:#ffffff;font-size:14px;font-weight:700;margin-bottom:3px;">Multi-Exchange Coverage</div>
-                <div style="color:rgba(232,240,255,0.55);font-size:13px;line-height:1.6;">Access signals from Binance, Bybit, OKX &amp; MEXC across 15m, 30m, 1H, 4H, and 1D timeframes simultaneously.</div>
-              </td>
-            </tr></table>
-          </td></tr>
-          <tr><td style="padding:0 0 15px;">
-            <table cellpadding="0" cellspacing="0" role="presentation"><tr>
-              <td style="width:40px;vertical-align:top;padding-top:3px;">
-                <div style="width:32px;height:32px;background:rgba(249,115,22,0.12);border:1px solid rgba(249,115,22,0.35);border-radius:8px;text-align:center;line-height:32px;font-size:16px;">&#127919;</div>
-              </td>
-              <td style="padding-left:12px;">
-                <div style="color:#ffffff;font-size:14px;font-weight:700;margin-bottom:3px;">Bias &amp; Trend Analysis</div>
-                <div style="color:rgba(232,240,255,0.55);font-size:13px;line-height:1.6;">Get clear bullish/bearish bias per pair per timeframe with scoring, trend direction, and ATH/ATL levels.</div>
-              </td>
-            </tr></table>
-          </td></tr>
-          <tr><td>
-            <table cellpadding="0" cellspacing="0" role="presentation"><tr>
-              <td style="width:40px;vertical-align:top;padding-top:3px;">
-                <div style="width:32px;height:32px;background:rgba(249,115,22,0.12);border:1px solid rgba(249,115,22,0.35);border-radius:8px;text-align:center;line-height:32px;font-size:16px;">&#128276;</div>
-              </td>
-              <td style="padding-left:12px;">
-                <div style="color:#ffffff;font-size:14px;font-weight:700;margin-bottom:3px;">Watchlist &amp; Pair Tracking</div>
-                <div style="color:rgba(232,240,255,0.55);font-size:13px;line-height:1.6;">Build a personalised watchlist, save top setups, and monitor compressed pairs before major moves.</div>
-              </td>
-            </tr></table>
-          </td></tr>
-        </table>
-      </td></tr>
-
-      <!-- DIVIDER -->
-      <tr><td style="background:#0d1525;padding:0 40px;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
-        <div style="height:1px;background:linear-gradient(90deg,transparent,rgba(249,115,22,0.35),transparent);"></div>
-      </td></tr>
-
-      <!-- HOW TO GET STARTED -->
-      <tr><td style="background:#080e1c;padding:26px 40px 28px;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
-        <h2 style="color:#ffffff;font-size:16px;font-weight:700;margin:0 0 18px;text-align:center;">How to Get Started</h2>
-        <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
-          <tr><td style="padding:0 0 12px;">
-            <table cellpadding="0" cellspacing="0" role="presentation"><tr>
-              <td style="width:30px;vertical-align:top;">
-                <div style="width:24px;height:24px;background:#f97316;border-radius:50%;text-align:center;line-height:24px;font-size:12px;font-weight:700;color:#fff;">1</div>
-              </td>
-              <td style="padding-left:10px;"><div style="color:rgba(232,240,255,0.80);font-size:13.5px;line-height:1.6;"><strong style="color:#f97316;">Verify your email</strong> — Enter the 6-digit code on the verification page.</div></td>
-            </tr></table>
-          </td></tr>
-          <tr><td style="padding:0 0 12px;">
-            <table cellpadding="0" cellspacing="0" role="presentation"><tr>
-              <td style="width:30px;vertical-align:top;">
-                <div style="width:24px;height:24px;background:#f97316;border-radius:50%;text-align:center;line-height:24px;font-size:12px;font-weight:700;color:#fff;">2</div>
-              </td>
-              <td style="padding-left:10px;"><div style="color:rgba(232,240,255,0.80);font-size:13.5px;line-height:1.6;"><strong style="color:#f97316;">Sign in to your dashboard</strong> — Use your credentials on the login page.</div></td>
-            </tr></table>
-          </td></tr>
-          <tr><td style="padding:0 0 12px;">
-            <table cellpadding="0" cellspacing="0" role="presentation"><tr>
-              <td style="width:30px;vertical-align:top;">
-                <div style="width:24px;height:24px;background:#f97316;border-radius:50%;text-align:center;line-height:24px;font-size:12px;font-weight:700;color:#fff;">3</div>
-              </td>
-              <td style="padding-left:10px;"><div style="color:rgba(232,240,255,0.80);font-size:13.5px;line-height:1.6;"><strong style="color:#f97316;">Run your first scan</strong> — Select exchange, timeframe, and module to discover setups.</div></td>
-            </tr></table>
-          </td></tr>
-          <tr><td>
-            <table cellpadding="0" cellspacing="0" role="presentation"><tr>
-              <td style="width:30px;vertical-align:top;">
-                <div style="width:24px;height:24px;background:#f97316;border-radius:50%;text-align:center;line-height:24px;font-size:12px;font-weight:700;color:#fff;">4</div>
-              </td>
-              <td style="padding-left:10px;"><div style="color:rgba(232,240,255,0.80);font-size:13.5px;line-height:1.6;"><strong style="color:#f97316;">Build your watchlist</strong> — Save top setups and track them with compressed &amp; trending views.</div></td>
-            </tr></table>
-          </td></tr>
-        </table>
-      </td></tr>
-
-      <!-- SECURITY NOTE -->
-      <tr><td style="background:#070c1a;padding:16px 40px;border-left:1px solid rgba(249,115,22,0.15);border-right:1px solid rgba(249,115,22,0.15);">
-        <p style="color:rgba(232,240,255,0.30);font-size:12px;margin:0;text-align:center;line-height:1.7;">
-          &#128274; If you did not create a ZyNi SMC account, ignore this email safely.<br>
-          Never share your verification code with anyone.
+      <!-- SECURITY NOTICE -->
+      <tr><td style="background:#080e1b;padding:14px 36px;border-left:1px solid rgba(249,115,22,0.12);border-right:1px solid rgba(249,115,22,0.12);">
+        <p style="color:rgba(232,240,255,0.28);font-size:12px;margin:0;text-align:center;line-height:1.7;">
+          If you did not request this code, you can safely ignore this email.<br>
+          Never share your code with anyone — ZyNi SMC will never ask for it.
         </p>
       </td></tr>
 
       <!-- FOOTER -->
-      <tr><td style="background:#050810;border-radius:0 0 16px 16px;padding:22px 40px;text-align:center;border:1px solid rgba(249,115,22,0.15);border-top:none;">
-        <div style="margin-bottom:10px;">
-          <span style="color:#f97316;font-size:17px;font-weight:900;">ZyNi SMC</span>
-          <span style="color:rgba(232,240,255,0.30);font-size:13px;"> &middot; Smart Money Center</span>
-        </div>
+      <tr><td style="background:#050810;border-radius:0 0 14px 14px;padding:20px 36px;text-align:center;border:1px solid rgba(249,115,22,0.12);border-top:none;">
         <div style="margin-bottom:8px;">
-          <a href="https://smcsetups.com" style="color:#f97316;text-decoration:none;font-size:13px;font-weight:500;">smcsetups.com</a>
-          <span style="color:rgba(232,240,255,0.20);font-size:13px;"> &middot; </span>
-          <a href="mailto:support@smcsetups.com" style="color:rgba(232,240,255,0.50);text-decoration:none;font-size:13px;">support@smcsetups.com</a>
+          <span style="color:#f97316;font-size:15px;font-weight:800;">ZyNi SMC</span>
+          <span style="color:rgba(232,240,255,0.25);font-size:13px;"> &middot; smcsetups.com</span>
         </div>
-        <p style="color:rgba(232,240,255,0.18);font-size:11px;margin:6px 0 0;">&copy; 2026 ZyNi SMC. All rights reserved.</p>
+        <div style="margin-bottom:6px;">
+          <a href="mailto:support@smcsetups.com" style="color:rgba(232,240,255,0.40);text-decoration:none;font-size:12px;">support@smcsetups.com</a>
+        </div>
+        <p style="color:rgba(232,240,255,0.15);font-size:11px;margin:4px 0 0;">&copy; 2026 ZyNi SMC. All rights reserved.</p>
       </td></tr>
 
     </table>
@@ -609,7 +509,7 @@ def send_verification_email(to_email: str, code: str, username: str,
     else:
         subject = "Your ZyNi SMC verification code"
 
-    html_body = _build_verification_email(username, code)
+    html_body = _build_verification_email(username, code, purpose)
     text_body = _build_verification_email_text(username, code, purpose)
 
     print(f"[VERIFY-EMAIL] Attempting to send {purpose} OTP to {to_email}")
