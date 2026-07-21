@@ -15622,6 +15622,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         html+=_btApReasonTableHtml(rep);
         html+=_btApRespectSummaryHtml(rep);
         html+=_btApRespectHtfHtml(rep);
+        html+=_btApPenetrationHtml(rep);
         html+=_btApGradeCardsHtml(rep);
         html+=_btApMatrixTableHtml(rep);
         html+=_btApRulesTableHtml(rep);
@@ -15889,6 +15890,30 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     return html;
   }
 
+  function _btApPenetrationHtml(rep){
+    var rows=(rep.penetration_by_respect||[]).filter(function(p){return p.count>0;});
+    var html='<div style="margin:12px 0 4px;font-size:11px;font-weight:700;color:var(--text-1)">Zone Penetration by Respect — where should the entry sit?</div>';
+    html+='<div style="font-size:9px;color:var(--text-3);margin-bottom:4px">How deep price reached into the zone (% of zone size) before reacting. Respected zones typically react shallow; failures blow through. Guides edge-of-zone vs mid-zone entries.</div>';
+    if(!rows.length){
+      html+='<div style="font-size:10px;color:var(--text-3);padding:6px">No penetration data.</div>';
+      return html;
+    }
+    html+='<div style="overflow-x:auto"><table class="bt-table" style="font-size:10px;width:100%">';
+    html+='<thead><tr><th>Respect Class</th><th>Count</th><th>Avg Penetration</th><th>Median</th><th>Max</th></tr></thead><tbody>';
+    rows.forEach(function(p){
+      var m=_AP_RESPECT_META[p.respect_class]||{l:p.respect_class,c:"var(--text-1)"};
+      html+='<tr>';
+      html+='<td style="color:'+m.c+';font-weight:600">'+m.l+'</td>';
+      html+='<td>'+_btApFmt(p.count)+'</td>';
+      html+='<td>'+_btApFmt(p.avg_penetration_pct,1)+(p.avg_penetration_pct!=null?"%":"")+'</td>';
+      html+='<td>'+_btApFmt(p.median_penetration_pct,1)+(p.median_penetration_pct!=null?"%":"")+'</td>';
+      html+='<td>'+_btApFmt(p.max_penetration_pct,1)+(p.max_penetration_pct!=null?"%":"")+'</td>';
+      html+='</tr>';
+    });
+    html+='</tbody></table></div>';
+    return html;
+  }
+
   function _btApRespectHtfHtml(rep){
     var rows=rep.respect_by_htf_state||[];
     var html='<div style="margin:12px 0 4px;font-size:11px;font-weight:700;color:var(--text-1)">Respect × Higher-Timeframe State</div>';
@@ -16034,7 +16059,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var html='<div style="margin:12px 0 4px;font-size:11px;font-weight:700;color:var(--text-1)">Labeled Trade Log — '+_btApFmt(log.total)+' trades, none removed'+(log.truncated?' (showing first '+log.cap+')':'')+'</div>';
     html+='<div style="font-size:9px;color:var(--text-3);margin-bottom:4px">Open-Interest coverage: '+_btApFmt(cov.available)+'/'+_btApFmt(cov.total)+' trades ('+_btApFmt(cov.coverage_pct)+'%) — OI history is last ~30 days only; older trades show "n/a".</div>';
     html+='<div style="overflow-x:auto"><table class="bt-table" style="font-size:9px;width:100%">';
-    html+='<thead><tr><th>Symbol</th><th>TF</th><th>Dir</th><th>Touch#</th><th>Time</th><th>Outcome</th><th>Grade</th><th>Respect</th><th>HTF State</th><th>RSI</th><th>RSI Div</th><th>CVD Div</th><th>OI Δ%</th><th>Real R</th><th>MFE</th><th>MAE</th><th>Form Vol</th><th>Touch Vol</th><th>HTF</th><th>Session</th><th>Patterns</th><th>Rules Passed</th></tr></thead><tbody>';
+    html+='<thead><tr><th>Symbol</th><th>TF</th><th>Dir</th><th>Touch#</th><th>Time</th><th>Outcome</th><th>Grade</th><th>Respect</th><th>OB Kind</th><th>Sweep</th><th>BTC</th><th>Pen%</th><th>HTF State</th><th>RSI</th><th>RSI Div</th><th>CVD Div</th><th>OI Δ%</th><th>Real R</th><th>MFE</th><th>MAE</th><th>Form Vol</th><th>Touch Vol</th><th>HTF</th><th>Session</th><th>Patterns</th><th>Rules Passed</th></tr></thead><tbody>';
     function ts(ms){
       if(ms==null) return "—";
       try{return new Date(ms).toISOString().slice(0,16).replace("T"," ");}catch(e){return String(ms);}
@@ -16053,12 +16078,17 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       html+='<td>'+r.outcome+'</td>';
       html+='<td style="color:'+m.c+';font-weight:700">'+m.l+'</td>';
       html+='<td style="color:'+rm.c+';font-weight:600">'+rm.l+'</td>';
-      html+='<td style="white-space:nowrap">'+(r.htf_joint_state||"—")+'</td>';
       function divCell(v){
         if(v===true) return '<td style="color:#22c55e;font-weight:700">yes</td>';
         if(v===false) return '<td style="color:var(--text-3)">no</td>';
         return '<td style="color:var(--text-3)">—</td>';
       }
+      var kindC=r.ob_kind==="reversal"?"#f59e0b":r.ob_kind==="continuation"?"#22c55e":"var(--text-3)";
+      html+='<td style="color:'+kindC+'">'+(r.ob_kind||"—")+'</td>';
+      html+=divCell(r.liquidity_sweep);
+      html+='<td>'+(r.btc_alignment&&r.btc_alignment!=="unknown"?r.btc_alignment:"—")+'</td>';
+      html+='<td>'+_btApFmt(r.zone_penetration_pct,0)+(r.zone_penetration_pct!=null?"%":"")+'</td>';
+      html+='<td style="white-space:nowrap">'+(r.htf_joint_state||"—")+'</td>';
       html+='<td>'+_btApFmt(r.rsi_at_touch,1)+'</td>';
       html+=divCell(r.rsi_divergence);
       html+=divCell(r.cvd_divergence);
@@ -16158,6 +16188,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       "touch_time","outcome","performance_grade","respect_class","htf_joint_state",
       "rsi_at_touch","rsi_divergence","cvd_at_touch","cvd_divergence","delta_at_touch",
       "oi_at_touch","oi_change_pct","oi_available",
+      "liquidity_sweep","ob_kind","btc_alignment","zone_penetration_pct","absorption",
       "realized_r","mfe_r","mae_r","stop_loss_r",
       "formation_volume_ratio","touch_volume_ratio","htf_alignment","tf_alignment",
       "swing_alignment","session","failure_mode","pattern_tags","rules_passed","rules_total"];

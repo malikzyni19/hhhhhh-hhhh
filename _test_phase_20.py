@@ -1033,5 +1033,155 @@ class TestOiPipeline(unittest.TestCase):
         self.assertIn("open_interest", res["definitions"])
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Chunk 5 — structure & flow features
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestLiquiditySweep(unittest.TestCase):
+    def _trend(self, low_bars=(), high_bars=(), lows=None, highs=None, n=40):
+        return {"low_bars": list(low_bars), "high_bars": list(high_bars),
+                "pivot_len": 5,
+                "l": lows if lows is not None else [0.0] * n,
+                "h": highs if highs is not None else [0.0] * n}
+
+    def test_87_bullish_sweep_true(self):
+        cc = [{"open_time": i, "open": 100, "high": 110, "low": 95,
+               "close": 100, "volume": 1} for i in range(40)]
+        cc[30]["low"] = 85.0                      # touch sweeps below pivot low 90
+        lows = [c["low"] for c in cc]; lows[10] = 90.0
+        tr = self._trend(low_bars=[10], lows=lows)
+        self.assertTrue(_m._bt_fl_liquidity_sweep("bullish", 30, cc, tr))
+
+    def test_88_bullish_no_sweep(self):
+        cc = [{"open_time": i, "open": 100, "high": 110, "low": 95,
+               "close": 100, "volume": 1} for i in range(40)]
+        lows = [c["low"] for c in cc]; lows[10] = 90.0
+        tr = self._trend(low_bars=[10], lows=lows)   # touch low 95 >= pivot 90
+        self.assertFalse(_m._bt_fl_liquidity_sweep("bullish", 30, cc, tr))
+
+    def test_89_bearish_sweep(self):
+        cc = [{"open_time": i, "open": 100, "high": 105, "low": 95,
+               "close": 100, "volume": 1} for i in range(40)]
+        cc[30]["high"] = 120.0
+        highs = [c["high"] for c in cc]; highs[10] = 110.0
+        tr = self._trend(high_bars=[10], highs=highs)
+        self.assertTrue(_m._bt_fl_liquidity_sweep("bearish", 30, cc, tr))
+
+    def test_90_sweep_none_no_pivot(self):
+        cc = [{"open_time": i, "open": 100, "high": 110, "low": 95,
+               "close": 100, "volume": 1} for i in range(40)]
+        tr = self._trend(low_bars=[28], lows=[c["low"] for c in cc])  # pivot@28 > cutoff 25
+        self.assertIsNone(_m._bt_fl_liquidity_sweep("bullish", 30, cc, tr))
+
+
+class TestRangeRatio(unittest.TestCase):
+    def test_91_range_ratio(self):
+        rc = [{"open_time": i, "open": 100, "high": 104, "low": 96,
+               "close": 100, "volume": 1} for i in range(30)]   # range 8
+        rc[25]["high"] = 101.0; rc[25]["low"] = 99.0             # range 2 → ratio 0.25
+        self.assertEqual(_m._bt_fl_range_ratio(rc, 25), 0.25)
+
+    def test_92_range_ratio_none(self):
+        rc = [{"open_time": i, "open": 100, "high": 104, "low": 96,
+               "close": 100, "volume": 1} for i in range(4)]
+        self.assertIsNone(_m._bt_fl_range_ratio(rc, 3))   # < min samples
+        self.assertIsNone(_m._bt_fl_range_ratio(rc, 0))
+        self.assertIsNone(_m._bt_fl_range_ratio(rc, None))
+
+
+class TestChunk5Features(unittest.TestCase):
+    def test_93_feature_keys(self):
+        for k in ("LIQUIDITY_SWEEP_INTO_ZONE", "OB_REVERSAL", "OB_CONTINUATION",
+                  "AGAINST_BTC_TREND", "DEEP_ZONE_PENETRATION", "ABSORPTION_AT_TOUCH"):
+            self.assertIn(k, _m._AP_FEATURE_KEYS)
+
+    def test_94_reversal_continuation_mutually_exclusive(self):
+        # build a zigzag uptrend; a bearish OB formed in it is a reversal,
+        # a bullish OB is a continuation — reversal/continuation never both True
+        candles = _m._bt_normalize_candles(_fake_raw_candles(seed=5, n=1000))
+        params = _m._bt_wf_build_params("ETHUSDT", "1h", len(candles), [1, 2, 3])
+        events = _m._bt_extract_ob_replay_events(candles, params)
+        atr = _m._bt_ap_atr_series(candles)
+        idx = _m._bt_ap_build_trend_index(candles, _m._BT_PIVOT_LEN)
+        sidx = _m._bt_ap_build_trend_index(candles, _m._BT_SWING_PIVOT_LEN)
+        recs = _m._bt_ap_build_trade_records(
+            events, candles, "2", "internal", idx, sidx, None, None, atr)
+        self.assertGreater(len(recs), 0)
+        for r in recs:
+            rev = r["features"]["OB_REVERSAL"]
+            con = r["features"]["OB_CONTINUATION"]
+            if rev is None:
+                self.assertIsNone(con)          # both unknown together
+            else:
+                self.assertFalse(rev and con)   # never both True (neutral → both False)
+            self.assertIn(r["ob_kind"], ("reversal", "continuation", "neutral", "unknown"))
+            # ob_kind must be consistent with the features
+            if rev is True:
+                self.assertEqual(r["ob_kind"], "reversal")
+            elif con is True:
+                self.assertEqual(r["ob_kind"], "continuation")
+
+    def test_95_penetration_equals_mae_pct(self):
+        candles = _m._bt_normalize_candles(_fake_raw_candles(seed=6, n=1000))
+        params = _m._bt_wf_build_params("BTCUSDT", "1h", len(candles), [1, 2, 3])
+        events = _m._bt_extract_ob_replay_events(candles, params)
+        atr = _m._bt_ap_atr_series(candles)
+        idx = _m._bt_ap_build_trend_index(candles, _m._BT_PIVOT_LEN)
+        sidx = _m._bt_ap_build_trend_index(candles, _m._BT_SWING_PIVOT_LEN)
+        recs = _m._bt_ap_build_trade_records(
+            events, candles, "2", "internal", idx, sidx, None, None, atr)
+        for r in recs:
+            if r["mae_r"] is not None:
+                self.assertAlmostEqual(r["zone_penetration_pct"],
+                                       round(r["mae_r"] * 100.0, 1), places=1)
+
+    def test_96_btc_self_skip(self):
+        # BTC symbol records must have AGAINST_BTC_TREND = None (can't oppose self)
+        candles = _m._bt_normalize_candles(_fake_raw_candles(seed=8, n=1000))
+        params = _m._bt_wf_build_params("BTCUSDT", "1h", len(candles), [1, 2, 3])
+        for ev in _m._bt_extract_ob_replay_events(candles, params):
+            ev["symbol"] = "BTCUSDT"
+        events = _m._bt_extract_ob_replay_events(candles, params)
+        for ev in events:
+            ev["symbol"] = "BTCUSDT"
+        atr = _m._bt_ap_atr_series(candles)
+        idx = _m._bt_ap_build_trend_index(candles, _m._BT_PIVOT_LEN)
+        sidx = _m._bt_ap_build_trend_index(candles, _m._BT_SWING_PIVOT_LEN)
+        btc_idx = _m._bt_ap_build_trend_index(candles, _m._BT_PIVOT_LEN)
+        recs = _m._bt_ap_build_trade_records(
+            events, candles, "2", "internal", idx, sidx, None, None, atr,
+            btc_candles=candles, btc_trend_idx=btc_idx)
+        self.assertGreater(len(recs), 0)
+        for r in recs:
+            self.assertIsNone(r["features"]["AGAINST_BTC_TREND"])
+            self.assertEqual(r["btc_alignment"], "unknown")
+
+    def test_97_pipeline_and_penetration_table(self):
+        def gk(sym, tf, limit=300, market="perpetual", extended=False):
+            return _fake_raw_candles(sum(ord(c) for c in sym + tf))
+        with patch.object(_m, "get_klines", side_effect=gk), \
+             patch.object(_m, "_bt_fl_fetch_oi_history", return_value=[]):
+            res = _m._bt_run_autopsy({
+                "symbols": ["BTCUSDT", "ETHUSDT"], "timeframes": ["1h"],
+                "candle_count": 1000, "rr": 2, "ob_classes": ["internal"]})
+        rep = res["reports_by_class"]["internal"]
+        # penetration-by-respect present, partitions the graded records
+        self.assertIn("penetration_by_respect", rep)
+        pb = {p["feature"] for p in rep["pattern_book"]}
+        for k in ("LIQUIDITY_SWEEP_INTO_ZONE", "OB_REVERSAL", "AGAINST_BTC_TREND",
+                  "ABSORPTION_AT_TOUCH", "DEEP_ZONE_PENETRATION"):
+            self.assertIn(k, pb)
+        # ETH needs one BTC fetch; BTC reuses own candles
+        self.assertEqual(res["performance"]["btc_fetch_count"], 1)
+        # definitions
+        for k in ("liquidity_sweep", "ob_kind", "btc_trend", "zone_penetration", "absorption"):
+            self.assertIn(k, res["definitions"])
+        # trade-log rows carry the new fields
+        for r in rep["trade_log"]["rows"]:
+            for k in ("liquidity_sweep", "ob_kind", "btc_alignment",
+                      "zone_penetration_pct", "absorption"):
+                self.assertIn(k, r)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
