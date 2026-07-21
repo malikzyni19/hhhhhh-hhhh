@@ -430,6 +430,7 @@ def _build_verification_email(username: str, code: str, purpose: str = "verify")
   <title>{title} — ZyNi SMC</title>
 </head>
 <body style="margin:0;padding:0;background:#060a14;font-family:'Segoe UI',Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;">
+<!--[if !mso]><!--><div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#060a14;">Your one-time code is inside &mdash; expires in 10&nbsp;minutes. Do not share it.&nbsp;&#8199;&zwnj;&nbsp;&#8199;&zwnj;&nbsp;&#8199;&zwnj;&nbsp;&#8199;&zwnj;&nbsp;&#8199;&zwnj;&nbsp;&#8199;&zwnj;&nbsp;&#8199;&zwnj;&nbsp;&#8199;&zwnj;&nbsp;&#8199;&zwnj;&nbsp;&#8199;&zwnj;&nbsp;&#8199;&zwnj;&nbsp;&#8199;&zwnj;</div><!--<![endif]-->
 <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background:#060a14;">
   <tr><td align="center" style="padding:32px 16px;">
     <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="max-width:520px;">
