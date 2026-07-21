@@ -12892,6 +12892,10 @@ def _lm_detect_symbol_exchange(symbol: str, preferred: str = "binance") -> str:
     Falls back to `preferred` when no exchange responds (e.g. network down).
     """
     def _probe():
+        # Overall budget: during a full network outage the serial probe chain
+        # could otherwise take ~21s of stacked timeouts. Bail to `preferred`
+        # once ~8s have elapsed rather than hanging the manual-add request.
+        _t0 = time.time()
         # Binance: premiumIndex is authoritative for listing (None when unlisted)
         try:
             if _lm_fetch_mark_price_rest(symbol):
@@ -12899,6 +12903,8 @@ def _lm_detect_symbol_exchange(symbol: str, preferred: str = "binance") -> str:
         except Exception:
             pass
         for _ex in ("bybit", "okx", "mexc"):
+            if time.time() - _t0 > 8:
+                return None  # budget exhausted — do not cache, retry next add
             try:
                 lp = _lm_fetch_exchange_live_price(_ex, symbol)
                 if lp and lp.get("available") and lp.get("price", 0) > 0:
