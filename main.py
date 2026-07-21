@@ -41542,6 +41542,9 @@ _AP_FEATURE_KEYS = (
     "RSI_OVERSOLD_AT_TOUCH", "RSI_OVERBOUGHT_AT_TOUCH",
     # Phase 20B Chunk 4 — open-interest context (last-30-days window)
     "OI_RISING_AT_TOUCH", "OI_FALLING_AT_TOUCH",
+    # Phase 20B Chunk 5 — structure & flow
+    "LIQUIDITY_SWEEP_INTO_ZONE", "OB_REVERSAL", "OB_CONTINUATION",
+    "AGAINST_BTC_TREND", "DEEP_ZONE_PENETRATION", "ABSORPTION_AT_TOUCH",
 )
 
 # ── Phase 20: Bad-Trade Filter Lab (labels only — trades are NEVER removed) ──
@@ -41827,6 +41830,66 @@ def _bt_fl_oi_context(oi_list: List[Tuple[int, float]], touch_time) -> Dict:
             out["rising"]  = chg >= _FL_OI_RISE_PCT
             out["falling"] = chg <= -_FL_OI_RISE_PCT
     return out
+
+
+# ── Phase 20B Chunk 5: structure & flow features ────────────────────────────
+_FL_RANGE_SMA_WINDOW:  int   = 20    # trailing window for the candle-range average
+_FL_ABSORPTION_RANGE:  float = 0.7   # touch range < this * avg range = small candle
+_FL_DEEP_PENETRATION:  float = 0.5   # MAE_r >= this = price reached >50% into zone
+
+
+def _bt_fl_range_ratio(candles: List[Dict], bar: Optional[int],
+                       window: int = _FL_RANGE_SMA_WINDOW) -> Optional[float]:
+    """Candle (high-low) range at `bar` / trailing average range. No look-ahead."""
+    if bar is None or bar <= 0 or bar >= len(candles):
+        return None
+    trailing = []
+    for c in candles[max(0, bar - window):bar]:
+        rng = float(c["high"]) - float(c["low"])
+        if rng > 0:
+            trailing.append(rng)
+    if len(trailing) < _FL_VOL_MIN_SAMPLES:
+        return None
+    avg = sum(trailing) / len(trailing)
+    cur = float(candles[bar]["high"]) - float(candles[bar]["low"])
+    if avg <= 0 or cur <= 0:
+        return None
+    return round(cur / avg, 3)
+
+
+def _bt_fl_liquidity_sweep(direction: str, touch_idx: int, candles: List[Dict],
+                           trend_idx: Dict) -> Optional[bool]:
+    """Did the touch sweep liquidity beyond the last confirmed pivot?
+
+    Bullish OB: the touch bar's low prints BELOW the last confirmed pivot low
+    (sell-side stop hunt) before reacting from the zone. Bearish: touch bar's
+    high prints ABOVE the last confirmed pivot high. Reference pivot uses the
+    same confirmed-only rule (cutoff = touch_idx - pivot_len). None when there
+    is no prior confirmed pivot.
+    """
+    import bisect as _bisect
+    if touch_idx is None or touch_idx < 0 or touch_idx >= len(candles):
+        return None
+    p_len  = trend_idx.get("pivot_len", _BT_PIVOT_LEN)
+    cutoff = touch_idx - p_len
+    if direction == "bullish":
+        bars = trend_idx.get("low_bars", [])
+        i = _bisect.bisect_right(bars, cutoff) - 1
+        if i < 0:
+            return None
+        piv_low = trend_idx["l"][bars[i]] if bars[i] < len(trend_idx.get("l", [])) else None
+        if piv_low is None:
+            return None
+        return bool(float(candles[touch_idx]["low"]) < piv_low)
+    else:
+        bars = trend_idx.get("high_bars", [])
+        i = _bisect.bisect_right(bars, cutoff) - 1
+        if i < 0:
+            return None
+        piv_high = trend_idx["h"][bars[i]] if bars[i] < len(trend_idx.get("h", [])) else None
+        if piv_high is None:
+            return None
+        return bool(float(candles[touch_idx]["high"]) > piv_high)
 
 
 def _bt_fl_grade(outcome: str, mfe_r, mae_r) -> str:
@@ -42140,6 +42203,8 @@ def _bt_ap_build_trade_records(
     rsi_series: Optional[List[Optional[float]]] = None,
     cvd_series: Optional[List[Optional[float]]] = None,
     oi_list: Optional[List[Tuple[int, float]]] = None,
+    btc_candles: Optional[List[Dict]] = None,
+    btc_trend_idx: Optional[Dict] = None,
 ) -> List[Dict]:
     """Build one autopsy record per touch trade at the selected RR.
 
@@ -42181,6 +42246,9 @@ def _bt_ap_build_trade_records(
             candles, fb, float(ev["zone_high"]), float(ev["zone_low"]))
         range_pos      = _bt_al_range_position(tf_trend_idx, fb, zone_mid)
         atr_pct        = _bt_al_atr_percentile(atr, fb)
+        # Chunk 5: continuation vs reversal — own-TF trend at FORMATION
+        formation_trend = _bt_ap_trend_at(tf_trend_idx, fb)
+        formation_align = _bt_ap_alignment(direction, formation_trend)
 
         for ep in episodes:
             touch_idx  = ep["touch_index"]
@@ -42264,6 +42332,26 @@ def _bt_ap_build_trade_records(
                                        "oi_change_pct": None, "rising": None,
                                        "falling": None})
 
+            # ── Phase 20B Chunk 5: structure & flow at the touch ─────────────
+            liq_sweep = _bt_fl_liquidity_sweep(direction, touch_idx, candles, tf_trend_idx)
+            # zone penetration: MAE_r is (entry - deepest adverse)/zone_size,
+            # so mae_r*100 = % of zone depth price reached before reacting
+            penetration_pct = (round(mae_r * 100.0, 1) if mae_r is not None else None)
+            touch_range_ratio = _bt_fl_range_ratio(candles, touch_idx)
+            absorption = None
+            if touch_vol_ratio is not None and touch_range_ratio is not None:
+                absorption = bool(touch_vol_ratio >= _FL_HIGH_VOL_RATIO
+                                  and touch_range_ratio < _FL_ABSORPTION_RANGE)
+            # BTC trend for altcoins (skip when the symbol itself is BTC)
+            btc_trend = "unknown"
+            btc_align = "unknown"
+            _is_btc = str(ev.get("symbol", "")).upper().startswith("BTC")
+            if not _is_btc and btc_trend_idx is not None and btc_candles:
+                _bbar = _bt_ap_htf_bar_index(btc_candles, touch_time)
+                if _bbar is not None:
+                    btc_trend = _bt_ap_trend_at(btc_trend_idx, _bbar)
+                    btc_align = _bt_ap_alignment(direction, btc_trend)
+
             # Predictive features — None = unknown, excluded from ranking
             # denominators for that feature.
             features: Dict[str, Optional[bool]] = {
@@ -42308,6 +42396,16 @@ def _bt_ap_build_trade_records(
                 "OI_FALLING_AT_TOUCH":     (None if not oi_ctx["available"]
                                             or oi_ctx["falling"] is None
                                             else bool(oi_ctx["falling"])),
+                "LIQUIDITY_SWEEP_INTO_ZONE": liq_sweep,
+                "OB_REVERSAL":     (None if formation_align == "unknown"
+                                    else formation_align == "against"),
+                "OB_CONTINUATION": (None if formation_align == "unknown"
+                                    else formation_align == "with"),
+                "AGAINST_BTC_TREND": (None if btc_align == "unknown"
+                                      else btc_align == "against"),
+                "DEEP_ZONE_PENETRATION": (None if penetration_pct is None
+                                          else penetration_pct >= _FL_DEEP_PENETRATION * 100),
+                "ABSORPTION_AT_TOUCH":   absorption,
             }
 
             records.append({
@@ -42354,6 +42452,16 @@ def _bt_ap_build_trade_records(
                 "oi_at_touch":            oi_ctx["oi_at_touch"],
                 "oi_change_pct":          oi_ctx["oi_change_pct"],
                 "oi_available":           oi_ctx["available"],
+                "liquidity_sweep":        liq_sweep,
+                "formation_trend":        formation_trend,
+                "ob_kind":                ("reversal" if formation_align == "against"
+                                           else "continuation" if formation_align == "with"
+                                           else "neutral" if formation_align == "neutral"
+                                           else "unknown"),
+                "btc_trend":              btc_trend,
+                "btc_alignment":          btc_align,
+                "zone_penetration_pct":   penetration_pct,
+                "absorption":             absorption,
                 "performance_grade":      grade,
                 "respect_class":          _bt_fl_respect_class(grade),
                 "htf_joint_state":        _bt_fl_htf_joint_state(alignments),
@@ -42820,6 +42928,11 @@ def _bt_fl_trade_log(records: List[Dict]) -> Dict:
             "oi_at_touch":      r.get("oi_at_touch"),
             "oi_change_pct":    r.get("oi_change_pct"),
             "oi_available":     r.get("oi_available"),
+            "liquidity_sweep":  r.get("liquidity_sweep"),
+            "ob_kind":          r.get("ob_kind"),
+            "btc_alignment":    r.get("btc_alignment"),
+            "zone_penetration_pct": r.get("zone_penetration_pct"),
+            "absorption":       r.get("absorption"),
             "htf_alignment":    r.get("htf_alignment"),
             "tf_alignment":     r.get("tf_alignment"),
             "swing_alignment":  r.get("swing_alignment"),
@@ -42919,6 +43032,32 @@ def _bt_fl_respect_by_htf_state(records: List[Dict]) -> List[Dict]:
     return out
 
 
+def _bt_fl_penetration_by_respect(records: List[Dict]) -> List[Dict]:
+    """Chunk 5 — how deep price penetrates the zone, per respect class.
+
+    Answers 'where should the entry sit?': if respected zones are typically
+    penetrated to ~60% before reacting, an edge-of-zone entry misses many
+    good trades. Reports avg / median penetration % per respect class.
+    """
+    out = []
+    for rc in _FL_RESPECT_CLASSES:
+        vals = sorted(r["zone_penetration_pct"] for r in records
+                      if r.get("respect_class") == rc
+                      and r.get("zone_penetration_pct") is not None)
+        n = len(vals)
+        med = None
+        if n:
+            med = vals[n // 2] if n % 2 else round((vals[n // 2 - 1] + vals[n // 2]) / 2, 1)
+        out.append({
+            "respect_class":       rc,
+            "count":               n,
+            "avg_penetration_pct": round(sum(vals) / n, 1) if n else None,
+            "median_penetration_pct": med,
+            "max_penetration_pct": max(vals) if n else None,
+        })
+    return out
+
+
 def _bt_ap_class_report(records: List[Dict], rr_key: str) -> Dict:
     """Full 18A-18C + Phase 20 report for one OB class."""
     wins   = sum(1 for r in records if r["outcome"] == "win")
@@ -42962,6 +43101,7 @@ def _bt_ap_class_report(records: List[Dict], rr_key: str) -> Dict:
         "grade_distribution": _bt_fl_grade_distribution(records),
         "respect_summary":    _bt_fl_respect_summary(records),
         "respect_by_htf_state": _bt_fl_respect_by_htf_state(records),
+        "penetration_by_respect": _bt_fl_penetration_by_respect(records),
         "pattern_book":       _bt_fl_pattern_book(records),
         "volume_by_grade":    _bt_fl_volume_by_grade(records),
         "oi_coverage":        oi_coverage,
@@ -42990,8 +43130,10 @@ def _bt_run_autopsy(req: Dict) -> Dict:
     network_fetch_count = 0
     htf_fetch_count     = 0
     oi_fetch_count      = 0
+    btc_fetch_count     = 0
     completed_cells     = 0
     _htf_cache: Dict = {}
+    _btc_cache: Dict = {}   # Chunk 5: BTCUSDT trend per timeframe (shared)
 
     for sym in symbols:
         for tf in timeframes:
@@ -43020,6 +43162,27 @@ def _bt_run_autopsy(req: Dict) -> Dict:
                     oi_list = _bt_fl_fetch_oi_history(sym, _oi_period)
                     if oi_list:
                         oi_fetch_count += 1
+
+                # Chunk 5: BTCUSDT trend at this TF (shared cache; alts only).
+                # For BTC cells we reuse the cell's own candles as the BTC ref.
+                btc_candles = None
+                btc_trend_idx = None
+                if str(sym).upper().startswith("BTC"):
+                    btc_candles, btc_trend_idx = candles, tf_trend_idx
+                else:
+                    if tf not in _btc_cache:
+                        try:
+                            _braw = get_klines("BTCUSDT", tf, limit=candle_count)
+                            _bc = _bt_normalize_candles(_braw) or None
+                            _btc_cache[tf] = (
+                                _bc,
+                                _bt_ap_build_trend_index(_bc, _BT_PIVOT_LEN) if _bc else None,
+                            )
+                            if _bc:
+                                btc_fetch_count += 1
+                        except Exception:
+                            _btc_cache[tf] = (None, None)
+                    btc_candles, btc_trend_idx = _btc_cache[tf]
 
                 # ── Trend-TF fetches: single-HTF feature + Phase 19 matrix ───
                 # One shared per-symbol cache; each (sym, trend_tf) fetched at
@@ -43072,7 +43235,8 @@ def _bt_run_autopsy(req: Dict) -> Dict:
                         htf_candles, htf_trend_idx, atr,
                         multi_trend=multi_trend,
                         rsi_series=rsi_series, cvd_series=cvd_series,
-                        oi_list=oi_list)
+                        oi_list=oi_list,
+                        btc_candles=btc_candles, btc_trend_idx=btc_trend_idx)
                     records_by_class[ob_class].extend(recs)
 
                 completed_cells += 1
@@ -43152,6 +43316,21 @@ def _bt_run_autopsy(req: Dict) -> Dict:
                                   f"{_FL_OI_LOOKBACK} periods before touch beyond "
                                   f"±{_FL_OI_RISE_PCT}%. Trades outside the window: "
                                   "'not available' (never guessed). See oi_coverage per class"),
+            "liquidity_sweep":   ("touch bar prints beyond the last CONFIRMED pivot (bullish: "
+                                  "low < prior pivot low; bearish: high > prior pivot high) — "
+                                  "a stop hunt into the zone. No look-ahead"),
+            "ob_kind":           ("continuation = OB formed WITH the own-TF HH/HL trend at "
+                                  "formation; reversal = formed AGAINST it (CHoCH-born); "
+                                  "neutral / unknown otherwise"),
+            "btc_trend":         ("for altcoin OBs, BTCUSDT's HH/HL trend at the same TF at the "
+                                  "touch; AGAINST_BTC_TREND = alt trade opposes BTC. N/A for "
+                                  "BTC symbols"),
+            "zone_penetration":  ("zone_penetration_pct = how deep price reached into the zone "
+                                  "before reacting (MAE as % of zone size, exit-bounded for "
+                                  f"wins); DEEP_ZONE_PENETRATION ≥ {int(_FL_DEEP_PENETRATION*100)}%. "
+                                  "Informs where the entry should sit"),
+            "absorption":        (f"touch-bar volume ≥ {_FL_HIGH_VOL_RATIO}x avg AND range < "
+                                  f"{_FL_ABSORPTION_RANGE}x avg — high effort, small result"),
         },
         "performance": {
             "requested_cells":       len(symbols) * len(timeframes),
@@ -43160,6 +43339,7 @@ def _bt_run_autopsy(req: Dict) -> Dict:
             "network_fetch_count":   network_fetch_count,
             "htf_fetch_count":       htf_fetch_count,
             "oi_fetch_count":        oi_fetch_count,
+            "btc_fetch_count":       btc_fetch_count,
             "candles_fetched_once_per_cell":
                 network_fetch_count <= len(symbols) * len(timeframes),
             "total_elapsed_ms":      round((time.monotonic() - t_start) * 1000),
