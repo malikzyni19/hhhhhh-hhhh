@@ -42202,11 +42202,13 @@ def _bt_fl_evaluate_rules(records: List[Dict]) -> Dict:
 def _bt_fl_trade_log(records: List[Dict]) -> Dict:
     """Compact labeled trade log — the full population, never filtered.
 
-    Capped at _FL_TRADE_LOG_CAP rows (chronological by touch_time) purely to
-    bound the response size; the cap is reported so truncation is explicit.
+    Ordered NEWEST → OLDEST by touch_time. Capped at _FL_TRADE_LOG_CAP rows
+    (keeping the MOST RECENT ones) purely to bound the response size; the cap
+    is reported so truncation is explicit.
     """
     ordered = sorted(records, key=lambda r: (r.get("touch_time") or 0,
-                                             r.get("touch_trade_id") or ""))
+                                             r.get("touch_trade_id") or ""),
+                     reverse=True)
     truncated = len(ordered) > _FL_TRADE_LOG_CAP
     rows = []
     for r in ordered[:_FL_TRADE_LOG_CAP]:
