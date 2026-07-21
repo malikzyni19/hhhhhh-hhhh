@@ -859,5 +859,179 @@ class TestExtendedFetchAndFeatures(unittest.TestCase):
             self.assertEqual(r["features"]["CVD_DIVERGENCE_AT_TOUCH"], r["cvd_divergence"])
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Chunk 4 — Open Interest context (last-30-days window)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestOiLookup(unittest.TestCase):
+    def _oi(self, n=100, base=1000.0, step=10.0):
+        return [(i * 3_600_000, base + i * step) for i in range(n)]
+
+    def test_74_oi_at_basic(self):
+        oi = self._oi()
+        val, avail = _m._bt_fl_oi_at(oi, 50 * 3_600_000)
+        self.assertTrue(avail)
+        self.assertEqual(val, 1500.0)
+
+    def test_75_oi_at_between_points(self):
+        oi = self._oi()
+        # touch between bar 50 and 51 → uses bar 50 (last <= touch)
+        val, avail = _m._bt_fl_oi_at(oi, 50 * 3_600_000 + 1800_000)
+        self.assertTrue(avail)
+        self.assertEqual(val, 1500.0)
+
+    def test_76_oi_before_window_not_available(self):
+        oi = self._oi()
+        val, avail = _m._bt_fl_oi_at(oi, -5)
+        self.assertIsNone(val)
+        self.assertFalse(avail)
+
+    def test_77_oi_empty_not_available(self):
+        val, avail = _m._bt_fl_oi_at([], 100)
+        self.assertIsNone(val)
+        self.assertFalse(avail)
+        self.assertIsNone(_m._bt_fl_oi_at(self._oi(), None)[0])
+
+    def test_78_oi_context_rising(self):
+        ctx = _m._bt_fl_oi_context(self._oi(step=10.0), 50 * 3_600_000)
+        self.assertTrue(ctx["available"])
+        self.assertGreater(ctx["oi_change_pct"], 0)
+        self.assertTrue(ctx["rising"])
+        self.assertFalse(ctx["falling"])
+
+    def test_79_oi_context_falling(self):
+        ctx = _m._bt_fl_oi_context(self._oi(base=3000.0, step=-40.0), 50 * 3_600_000)
+        self.assertLess(ctx["oi_change_pct"], 0)
+        self.assertTrue(ctx["falling"])
+        self.assertFalse(ctx["rising"])
+
+    def test_80_oi_context_insufficient_lookback(self):
+        # touch at bar 3, lookback 6 → no prior point → change None but available
+        ctx = _m._bt_fl_oi_context(self._oi(), 3 * 3_600_000)
+        self.assertTrue(ctx["available"])
+        self.assertIsNone(ctx["oi_change_pct"])
+        self.assertIsNone(ctx["rising"])
+
+    def test_81_oi_context_no_lookahead(self):
+        # OI change at a touch uses only points <= touch; future OI can't leak
+        oi = self._oi(n=100)
+        ctx_a = _m._bt_fl_oi_context(oi, 40 * 3_600_000)
+        ctx_b = _m._bt_fl_oi_context(oi[:41], 40 * 3_600_000)   # truncated after touch
+        self.assertEqual(ctx_a["oi_change_pct"], ctx_b["oi_change_pct"])
+
+    def test_82_oi_feature_keys(self):
+        self.assertIn("OI_RISING_AT_TOUCH", _m._AP_FEATURE_KEYS)
+        self.assertIn("OI_FALLING_AT_TOUCH", _m._AP_FEATURE_KEYS)
+
+
+class TestOiPipeline(unittest.TestCase):
+    def test_83_no_oi_all_not_available(self):
+        with patch.object(_m, "get_klines", side_effect=_det_gk()), \
+             patch.object(_m, "_bt_fl_fetch_oi_history", return_value=[]):
+            res = _m._bt_run_autopsy({
+                "symbols": ["BTCUSDT"], "timeframes": ["1h"],
+                "candle_count": 1500, "rr": 2, "ob_classes": ["internal"]})
+        rep = res["reports_by_class"]["internal"]
+        self.assertEqual(rep["oi_coverage"]["available"], 0)
+        self.assertEqual(rep["oi_coverage"]["coverage_pct"], 0.0)
+        self.assertEqual(res["performance"]["oi_fetch_count"], 0)
+        for r in rep["trade_log"]["rows"]:
+            self.assertFalse(r["oi_available"])
+            self.assertIsNone(r["oi_at_touch"])
+            # OI features must be None (unknown), never fabricated False
+            # (verified via record features below)
+
+    def test_84_oi_available_coverage_and_features(self):
+        # _det_gk returns 1000 candles (bars 0-999). OI covers the LAST half
+        # (bars 500-999) so coverage is partial: recent touches available,
+        # older touches "not available".
+        def oi_hist(sym, period, now_ms=None):
+            return [(i * 3_600_000, 1000.0 + 50.0 * math.sin(i / 8.0) + i * 0.5)
+                    for i in range(500, 1000)]
+        with patch.object(_m, "get_klines", side_effect=_det_gk()), \
+             patch.object(_m, "_bt_fl_fetch_oi_history", side_effect=oi_hist):
+            res = _m._bt_run_autopsy({
+                "symbols": ["BTCUSDT"], "timeframes": ["1h"],
+                "candle_count": 1000, "rr": 2, "ob_classes": ["internal"]})
+        rep = res["reports_by_class"]["internal"]
+        cov = rep["oi_coverage"]
+        self.assertGreater(cov["available"], 0)
+        self.assertLess(cov["available"], cov["total"])   # partial coverage
+        self.assertEqual(res["performance"]["oi_fetch_count"], 1)
+        pb = {p["feature"] for p in rep["pattern_book"]}
+        self.assertIn("OI_RISING_AT_TOUCH", pb)
+        self.assertIn("OI_FALLING_AT_TOUCH", pb)
+        # not-available trades → None OI fields; available → numeric
+        for r in rep["trade_log"]["rows"]:
+            if not r["oi_available"]:
+                self.assertIsNone(r["oi_at_touch"])
+            else:
+                self.assertIsNotNone(r["oi_at_touch"])
+
+    def test_85_oi_feature_none_when_unavailable(self):
+        # a record with no OI must carry OI features = None (not False)
+        candles = _m._bt_normalize_candles(_fake_raw_candles(seed=3, n=1000))
+        params = _m._bt_wf_build_params("BTCUSDT", "1h", len(candles), [1, 2, 3])
+        events = _m._bt_extract_ob_replay_events(candles, params)
+        atr = _m._bt_ap_atr_series(candles)
+        idx = _m._bt_ap_build_trend_index(candles, _m._BT_PIVOT_LEN)
+        sidx = _m._bt_ap_build_trend_index(candles, _m._BT_SWING_PIVOT_LEN)
+        recs = _m._bt_ap_build_trade_records(
+            events, candles, "2", "internal", idx, sidx, None, None, atr,
+            oi_list=[])   # no OI
+        self.assertGreater(len(recs), 0)
+        for r in recs:
+            self.assertIsNone(r["features"]["OI_RISING_AT_TOUCH"])
+            self.assertIsNone(r["features"]["OI_FALLING_AT_TOUCH"])
+            self.assertFalse(r["oi_available"])
+
+    def test_86b_oi_feature_none_when_change_uncomputable(self):
+        # A touch inside the OI window but within the first _FL_OI_LOOKBACK OI
+        # points has change=None → the OI feature must be None (unknown), NOT a
+        # definitive False (which would pollute pattern-book denominators).
+        # Anchor the OI window to start AT an actual touch so that touch sits at
+        # OI index 0 (no prior point → change uncomputable, available=True).
+        candles = _m._bt_normalize_candles(_fake_raw_candles(seed=11, n=1000))
+        params = _m._bt_wf_build_params("BTCUSDT", "1h", len(candles), [1, 2, 3])
+        events = _m._bt_extract_ob_replay_events(candles, params)
+        atr = _m._bt_ap_atr_series(candles)
+        idx = _m._bt_ap_build_trend_index(candles, _m._BT_PIVOT_LEN)
+        sidx = _m._bt_ap_build_trend_index(candles, _m._BT_SWING_PIVOT_LEN)
+        # find a real touch index
+        touch_idx = None
+        for ev in events:
+            if ev.get("touch_status") != "touched":
+                continue
+            eps = _m._te_detect_touch_episodes(candles, ev)
+            if eps:
+                touch_idx = eps[0]["touch_index"]
+                break
+        self.assertIsNotNone(touch_idx)
+        touch_time = candles[touch_idx]["open_time"]
+        # OI window begins exactly at that touch → touch at OI index 0
+        oi = [(touch_time + k * 3_600_000, 1000.0 + k) for k in range(50)]
+        ctx = _m._bt_fl_oi_context(oi, touch_time)
+        self.assertTrue(ctx["available"])          # inside window
+        self.assertIsNone(ctx["oi_change_pct"])    # but no prior point → None
+        recs = _m._bt_ap_build_trade_records(
+            events, candles, "2", "internal", idx, sidx, None, None, atr,
+            oi_list=oi)
+        target = [r for r in recs if r["touch_time"] == touch_time]
+        self.assertTrue(target)
+        for r in target:
+            self.assertTrue(r["oi_available"])
+            self.assertIsNone(r["oi_change_pct"])
+            self.assertIsNone(r["features"]["OI_RISING_AT_TOUCH"])
+            self.assertIsNone(r["features"]["OI_FALLING_AT_TOUCH"])
+
+    def test_86_definitions_documented(self):
+        with patch.object(_m, "get_klines", side_effect=_det_gk()), \
+             patch.object(_m, "_bt_fl_fetch_oi_history", return_value=[]):
+            res = _m._bt_run_autopsy({
+                "symbols": ["BTCUSDT"], "timeframes": ["1h"],
+                "candle_count": 1000, "rr": 2, "ob_classes": ["internal"]})
+        self.assertIn("open_interest", res["definitions"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

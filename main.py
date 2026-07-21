@@ -40848,6 +40848,8 @@ _AP_FEATURE_KEYS = (
     # Phase 20B Chunk 3 — primary divergence signals at touch
     "RSI_DIVERGENCE_AT_TOUCH", "CVD_DIVERGENCE_AT_TOUCH",
     "RSI_OVERSOLD_AT_TOUCH", "RSI_OVERBOUGHT_AT_TOUCH",
+    # Phase 20B Chunk 4 — open-interest context (last-30-days window)
+    "OI_RISING_AT_TOUCH", "OI_FALLING_AT_TOUCH",
 )
 
 # ── Phase 20: Bad-Trade Filter Lab (labels only — trades are NEVER removed) ──
@@ -41017,6 +41019,122 @@ def _bt_fl_divergence_at_touch(direction: str, touch_idx: int,
         price_now = float(candles[touch_idx]["high"])
         price_piv = float(candles[piv]["high"])
         return bool(price_now > price_piv and s_now < s_piv)
+
+
+# ── Phase 20B Chunk 4: Open Interest context (last-30-days window) ───────────
+# Binance's free OI-history endpoint only serves the last ~30 days. Trades
+# older than the fetched window are labelled OI "not available" — never
+# guessed, never removed from the log.
+_FL_OI_PERIOD_MAP: Dict[str, str] = {
+    "5m": "5m", "15m": "15m", "30m": "30m", "1h": "1h",
+    "2h": "2h", "4h": "4h", "1d": "1d",
+}
+_FL_OI_PAGE_ROWS:   int   = 500     # Binance per-request cap
+_FL_OI_MAX_ROWS:    int   = 3000    # backtest cap (bounds pagination)
+_FL_OI_WINDOW_DAYS: int   = 30      # endpoint hard limit
+_FL_OI_LOOKBACK:    int   = 6       # OI periods before touch for the change calc
+_FL_OI_RISE_PCT:    float = 2.0     # |change| above this = rising / falling
+
+
+def _bt_fl_fetch_oi_history(symbol: str, period: str,
+                            now_ms: Optional[int] = None) -> List[Tuple[int, float]]:
+    """Fetch Binance futures OI history (last ~30 days), sorted oldest→newest.
+
+    Returns [(timestamp_ms, sum_open_interest), ...] or [] on any failure /
+    unsupported period. Paginates backward with endTime, capped at
+    _FL_OI_MAX_ROWS and _FL_OI_WINDOW_DAYS. Network-only — in environments
+    without outbound access this returns [] and every trade's OI shows
+    "not available" (honest, never fabricated).
+    """
+    if period not in _FL_OI_PERIOD_MAP.values():
+        return []
+    collected: Dict[int, float] = {}
+    end_time: Optional[int] = None
+    pages = 0
+    max_pages = max(1, _FL_OI_MAX_ROWS // _FL_OI_PAGE_ROWS)
+    oldest_allowed = None
+    if now_ms is not None:
+        oldest_allowed = int(now_ms) - _FL_OI_WINDOW_DAYS * 86_400_000
+    try:
+        while pages < max_pages and len(collected) < _FL_OI_MAX_ROWS:
+            pages += 1
+            params: Dict[str, Any] = {"symbol": symbol, "period": period,
+                                      "limit": _FL_OI_PAGE_ROWS}
+            if end_time is not None:
+                params["endTime"] = end_time
+            r = req.get(f"{BINANCE_FUTURES_API}/futures/data/openInterestHist",
+                        params=params, timeout=15)
+            if r.status_code != 200:
+                break
+            rows = r.json()
+            if not isinstance(rows, list) or not rows:
+                break
+            added = 0
+            earliest_ts = None
+            for row in rows:
+                try:
+                    ts = int(row["timestamp"])
+                    oi = float(row["sumOpenInterest"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                earliest_ts = ts if earliest_ts is None else min(earliest_ts, ts)
+                if ts not in collected:
+                    collected[ts] = oi
+                    added += 1
+            if added == 0 or earliest_ts is None:
+                break
+            if oldest_allowed is not None and earliest_ts <= oldest_allowed:
+                break
+            end_time = earliest_ts - 1   # page backward
+    except Exception:
+        return sorted(collected.items())
+    return sorted(collected.items())
+
+
+def _bt_fl_oi_at(oi_list: List[Tuple[int, float]], touch_time) -> Tuple[Optional[float], bool]:
+    """OI at the last period whose timestamp <= touch_time.
+
+    Returns (oi_value, available). available is False when there is no OI data
+    or the touch is older than the earliest fetched point (beyond the 30-day
+    window) — that trade is labelled "not available", never guessed.
+    """
+    import bisect as _bisect
+    if not oi_list or touch_time is None:
+        return None, False
+    ts_list = [t for t, _ in oi_list]
+    tt = int(touch_time)
+    if tt < ts_list[0]:
+        return None, False               # older than the fetched window
+    i = _bisect.bisect_right(ts_list, tt) - 1
+    if i < 0:
+        return None, False
+    return oi_list[i][1], True
+
+
+def _bt_fl_oi_context(oi_list: List[Tuple[int, float]], touch_time) -> Dict:
+    """OI value + rising/falling context at the touch (no look-ahead).
+
+    Change is measured from the OI point _FL_OI_LOOKBACK periods before the
+    touch to the point at the touch — both at/before touch_time. When the
+    touch is outside the fetched window, everything is not-available.
+    """
+    import bisect as _bisect
+    oi_now, available = _bt_fl_oi_at(oi_list, touch_time)
+    out = {"oi_at_touch": oi_now, "available": available,
+           "oi_change_pct": None, "rising": None, "falling": None}
+    if not available:
+        return out
+    ts_list = [t for t, _ in oi_list]
+    i = _bisect.bisect_right(ts_list, int(touch_time)) - 1
+    j = i - _FL_OI_LOOKBACK
+    if j >= 0:
+        oi_prev = oi_list[j][1]
+        if oi_prev and oi_prev > 0:
+            chg = (oi_now - oi_prev) / oi_prev * 100.0
+            out["oi_change_pct"] = round(chg, 3)
+            out["rising"]  = chg >= _FL_OI_RISE_PCT
+            out["falling"] = chg <= -_FL_OI_RISE_PCT
+    return out
 
 
 def _bt_fl_grade(outcome: str, mfe_r, mae_r) -> str:
@@ -41329,6 +41447,7 @@ def _bt_ap_build_trade_records(
     multi_trend: Optional[Dict[str, Dict]] = None,
     rsi_series: Optional[List[Optional[float]]] = None,
     cvd_series: Optional[List[Optional[float]]] = None,
+    oi_list: Optional[List[Tuple[int, float]]] = None,
 ) -> List[Dict]:
     """Build one autopsy record per touch trade at the selected RR.
 
@@ -41447,6 +41566,12 @@ def _bt_ap_build_trade_records(
                                                          cvd_series, tf_trend_idx)
                               if cvd_series is not None else None)
 
+            # ── Phase 20B Chunk 4: OI context (30-day window; else not-avail) ─
+            oi_ctx = (_bt_fl_oi_context(oi_list, touch_time)
+                      if oi_list else {"oi_at_touch": None, "available": False,
+                                       "oi_change_pct": None, "rising": None,
+                                       "falling": None})
+
             # Predictive features — None = unknown, excluded from ranking
             # denominators for that feature.
             features: Dict[str, Optional[bool]] = {
@@ -41485,6 +41610,12 @@ def _bt_ap_build_trade_records(
                                             else rsi_at_touch < _FL_RSI_OVERSOLD),
                 "RSI_OVERBOUGHT_AT_TOUCH": (None if rsi_at_touch is None
                                             else rsi_at_touch > _FL_RSI_OVERBOUGHT),
+                "OI_RISING_AT_TOUCH":      (None if not oi_ctx["available"]
+                                            or oi_ctx["rising"] is None
+                                            else bool(oi_ctx["rising"])),
+                "OI_FALLING_AT_TOUCH":     (None if not oi_ctx["available"]
+                                            or oi_ctx["falling"] is None
+                                            else bool(oi_ctx["falling"])),
             }
 
             records.append({
@@ -41528,6 +41659,9 @@ def _bt_ap_build_trade_records(
                 "delta_at_formation":     delta_at_formation,
                 "rsi_divergence":         rsi_divergence,
                 "cvd_divergence":         cvd_divergence,
+                "oi_at_touch":            oi_ctx["oi_at_touch"],
+                "oi_change_pct":          oi_ctx["oi_change_pct"],
+                "oi_available":           oi_ctx["available"],
                 "performance_grade":      grade,
                 "respect_class":          _bt_fl_respect_class(grade),
                 "htf_joint_state":        _bt_fl_htf_joint_state(alignments),
@@ -41991,6 +42125,9 @@ def _bt_fl_trade_log(records: List[Dict]) -> Dict:
             "delta_at_touch":   r.get("delta_at_touch"),
             "rsi_divergence":   r.get("rsi_divergence"),
             "cvd_divergence":   r.get("cvd_divergence"),
+            "oi_at_touch":      r.get("oi_at_touch"),
+            "oi_change_pct":    r.get("oi_change_pct"),
+            "oi_available":     r.get("oi_available"),
             "htf_alignment":    r.get("htf_alignment"),
             "tf_alignment":     r.get("tf_alignment"),
             "swing_alignment":  r.get("swing_alignment"),
@@ -42104,6 +42241,17 @@ def _bt_ap_class_report(records: List[Dict], rr_key: str) -> Dict:
     rule_evaluation = _bt_fl_evaluate_rules(records)
     trade_log       = _bt_fl_trade_log(records)
 
+    # Chunk 4 — OI coverage (how many trades fell inside the 30-day OI window)
+    oi_avail = sum(1 for r in records if r.get("oi_available"))
+    oi_coverage = {
+        "available":     oi_avail,
+        "total":         len(records),
+        "coverage_pct":  round(oi_avail / len(records) * 100, 1) if records else None,
+        "note": ("Binance OI history covers only the last ~30 days (and ≤500 rows "
+                 "per page). Trades older than that show OI 'not available' — never "
+                 "guessed. Low timeframes reach fewer days of coverage."),
+    }
+
     return {
         "rr":                 rr_key,
         "records_total":      len(records),
@@ -42124,6 +42272,7 @@ def _bt_ap_class_report(records: List[Dict], rr_key: str) -> Dict:
         "respect_by_htf_state": _bt_fl_respect_by_htf_state(records),
         "pattern_book":       _bt_fl_pattern_book(records),
         "volume_by_grade":    _bt_fl_volume_by_grade(records),
+        "oi_coverage":        oi_coverage,
         "trade_log":          trade_log,
     }
 
@@ -42148,6 +42297,7 @@ def _bt_run_autopsy(req: Dict) -> Dict:
     records_by_class: Dict[str, List[Dict]] = {c: [] for c in ob_classes}
     network_fetch_count = 0
     htf_fetch_count     = 0
+    oi_fetch_count      = 0
     completed_cells     = 0
     _htf_cache: Dict = {}
 
@@ -42170,6 +42320,14 @@ def _bt_run_autopsy(req: Dict) -> Dict:
                 _closes    = [float(c["close"]) for c in candles]
                 rsi_series = calc_rsi(_closes, _FL_RSI_PERIOD)
                 cvd_series = _bt_fl_cvd_series(candles)
+                # Chunk 4: Open Interest history once per cell (last ~30 days;
+                # empty when unsupported TF or no network → all "not available")
+                oi_list = []
+                _oi_period = _FL_OI_PERIOD_MAP.get(tf)
+                if _oi_period:
+                    oi_list = _bt_fl_fetch_oi_history(sym, _oi_period)
+                    if oi_list:
+                        oi_fetch_count += 1
 
                 # ── Trend-TF fetches: single-HTF feature + Phase 19 matrix ───
                 # One shared per-symbol cache; each (sym, trend_tf) fetched at
@@ -42221,7 +42379,8 @@ def _bt_run_autopsy(req: Dict) -> Dict:
                         tf_trend_idx, swing_trend_idx,
                         htf_candles, htf_trend_idx, atr,
                         multi_trend=multi_trend,
-                        rsi_series=rsi_series, cvd_series=cvd_series)
+                        rsi_series=rsi_series, cvd_series=cvd_series,
+                        oi_list=oi_list)
                     records_by_class[ob_class].extend(recs)
 
                 completed_cells += 1
@@ -42296,6 +42455,11 @@ def _bt_run_autopsy(req: Dict) -> Dict:
                                   "price low = absorption. None when taker-buy volume unavailable"),
             "rsi_flags":         (f"RSI_OVERSOLD (<{_FL_RSI_OVERSOLD}) / RSI_OVERBOUGHT "
                                   f"(>{_FL_RSI_OVERBOUGHT}) at touch"),
+            "open_interest":     (f"Binance OI history, last ~{_FL_OI_WINDOW_DAYS} days only "
+                                  "(≤500 rows/page). OI_RISING / OI_FALLING = OI change over "
+                                  f"{_FL_OI_LOOKBACK} periods before touch beyond "
+                                  f"±{_FL_OI_RISE_PCT}%. Trades outside the window: "
+                                  "'not available' (never guessed). See oi_coverage per class"),
         },
         "performance": {
             "requested_cells":       len(symbols) * len(timeframes),
@@ -42303,6 +42467,7 @@ def _bt_run_autopsy(req: Dict) -> Dict:
             "failed_cells":          len(failures),
             "network_fetch_count":   network_fetch_count,
             "htf_fetch_count":       htf_fetch_count,
+            "oi_fetch_count":        oi_fetch_count,
             "candles_fetched_once_per_cell":
                 network_fetch_count <= len(symbols) * len(timeframes),
             "total_elapsed_ms":      round((time.monotonic() - t_start) * 1000),
