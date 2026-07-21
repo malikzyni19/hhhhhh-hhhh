@@ -56,10 +56,21 @@ the bad trades — before any new zone types or entry modules are added.
   report combined-vs-baseline performance per OB class
 - Research only — filters are NOT activated anywhere in production
 
-## Phase 21 — Walk-Forward Validation
-- Filter sets from Phase 20 validated through the Phase 15B walk-forward
-  machinery (locked candidates, gates, look-ahead audit) before anything is
-  trusted or discussed for production.
+## Phase 21 — Pass-Profile Walk-Forward Validation  ✅ (implemented)
+- New endpoint POST /api/backtest/ob-historical/profile-walk-forward + a
+  "Profile WF" tab in Backtest > Compare.
+- Chronological expanding-anchor folds (reuses _bt_build_walk_forward_folds
+  and _bt_wf_bootstrap_delta). A trade is train/test by its touch time vs the
+  fold boundary; autopsy features are causal (<= touch bar), so partitioning
+  full-cell records equals prefix-slicing — no look-ahead.
+- Two modes: locked (a fixed profile of Chunk-20B rule ids, ANDed, applied to
+  every fold's test window) and train_selected (per fold the single best rule
+  is chosen on TRAIN data only, then applied to TEST — true OOS selection).
+- Verdict PASS/FAIL/INSUFFICIENT via gates: >= min folds & OOS pass trades,
+  majority of folds beat baseline, OOS expectancy above baseline, AND the
+  bootstrap 95% CI lower bound on the fold delta > 0.
+- Research only; labels; no production activation. A PASS is out-of-sample
+  evidence, not a guarantee.
 
 ## Phase 20B — OB Respect Lab  (FROZEN 2026-07-19 by user decision)
 Implemented in verified chunks — each chunk passes an adversarial
