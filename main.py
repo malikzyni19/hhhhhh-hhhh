@@ -12878,6 +12878,41 @@ def _lm_fetch_exchange_mark_price(exchange: str, symbol: str) -> dict:
     return {"available": False, "status": "unavailable", "source": exchange}
 
 
+def _lm_detect_symbol_exchange(symbol: str, preferred: str = "binance") -> str:
+    """Detect which futures exchange actually lists `symbol`.
+
+    Used by manual Live Monitor adds, which have no scanner row to tell us the
+    home exchange. A wrong stored exchange (e.g. binance for a MEXC-only pair
+    like DODOUSDT) starves every price surface: the Binance WS never emits for
+    an unlisted symbol, the REST premiumIndex fallback returns nothing, and the
+    item shows "Live Price unavailable" forever.
+
+    Probes REST endpoints in order binance -> bybit -> okx -> mexc and returns
+    the first exchange with a real price. Result is cached for 1h per symbol.
+    Falls back to `preferred` when no exchange responds (e.g. network down).
+    """
+    def _probe():
+        # Binance: premiumIndex is authoritative for listing (None when unlisted)
+        try:
+            if _lm_fetch_mark_price_rest(symbol):
+                return {"exchange": "binance"}
+        except Exception:
+            pass
+        for _ex in ("bybit", "okx", "mexc"):
+            try:
+                lp = _lm_fetch_exchange_live_price(_ex, symbol)
+                if lp and lp.get("available") and lp.get("price", 0) > 0:
+                    return {"exchange": _ex}
+            except Exception:
+                continue
+        return None  # nothing reachable — do not cache, retry on next add
+
+    det = _lm_rest_cached(f"exdetect:{symbol}", 3600, _probe)
+    if det and det.get("exchange"):
+        return det["exchange"]
+    return preferred
+
+
 def _lm_fetch_exchange_orderbook(exchange: str, symbol: str) -> dict:
     """Return {available, best_bid, best_ask, bids, asks, status, source}."""
     try:
@@ -23393,6 +23428,20 @@ def api_lm_items_post():
     if data.get("meta"):
         snap_src["meta"] = data["meta"]
     snap_src["addedFrom"] = source_tab
+    # Manual adds have no scanner row carrying the true home exchange — a blind
+    # "binance" default breaks every price surface for pairs Binance doesn't
+    # list (e.g. MEXC-only symbols). Auto-detect the exchange server-side.
+    # Scanner adds are untouched: they already send the scanned row's exchange.
+    if snap_src.get("manual_add") is True:
+        try:
+            _detected_ex = _lm_detect_symbol_exchange(symbol, preferred=exchange)
+            if _detected_ex and _detected_ex != exchange:
+                print(f"[LM-MANUAL-ADD] {symbol}: exchange auto-detected "
+                      f"{exchange} -> {_detected_ex}")
+                exchange = _detected_ex
+            snap_src["detected_exchange"] = _detected_ex
+        except Exception as _de:
+            print(f"[LM-MANUAL-ADD] exchange detect failed for {symbol}: {_de}")
     snapshot_json = _json_dumps_safe(snap_src)
 
     sel_tf  = data.get("selected_timeframes") or ["15m", "30m", "1h", "4h", "1d"]
@@ -30804,6 +30853,28 @@ def api_lm_price():
             "age_sec":    0,
             "source":     "binance_mark_rest",
         })
+
+    # Last-resort read-only sweep: another exchange's warm price cache may have
+    # this symbol (e.g. a MEXC-only pair whose item still says binance). Reads
+    # existing cache entries only — never blocks the 1s timer with new fetches.
+    _now_fb = time.time()
+    with _lm_rest_lock:
+        for _ex_fb in ("mexc", "bybit", "okx"):
+            _e_fb = _lm_rest_cache.get(f"agg_lp_{_ex_fb}:{symbol}")
+            if _e_fb and (_now_fb - _e_fb["ts"]) < 15:
+                _lp_fb = _e_fb["data"]
+                if _lp_fb and _lp_fb.get("available") and _lp_fb.get("price", 0) > 0:
+                    pf_fb = f"{float(_lp_fb['price']):.4f}"
+                    return _ret({
+                        "ok":         True,
+                        "symbol":     symbol,
+                        "exchange":   _ex_fb,
+                        "live_price": pf_fb,
+                        "mark_price": pf_fb,
+                        "status":     "fallback_fresh",
+                        "age_sec":    round(_now_fb - _e_fb["ts"], 1),
+                        "source":     f"{_ex_fb}_cache_fallback",
+                    })
 
     return _ret({
         "ok": True, "symbol": symbol, "exchange": exchange,
