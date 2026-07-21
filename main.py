@@ -369,8 +369,9 @@ def _send_via_resend(to_email: str, subject: str, html_body: str, text_body: str
             "subject": subject,
             "html": html_body,
             "reply_to": "support@smcsetups.com",
+            # Omit List-Unsubscribe: OTPs are security-critical transactional mail,
+            # not bulk. That header signals newsletter to spam filters.
             "headers": {
-                "List-Unsubscribe": "<mailto:support@smcsetups.com?subject=unsubscribe>",
                 "Precedence": "transactional",
                 "X-Entity-Ref-ID": "zyni-otp",
             },
@@ -532,7 +533,6 @@ def send_verification_email(to_email: str, code: str, username: str,
         msg["To"]              = to_email
         msg["Reply-To"]        = frm
         msg["Precedence"]      = "transactional"
-        msg["List-Unsubscribe"] = f"<mailto:{frm}?subject=unsubscribe>"
         msg["X-Entity-Ref-ID"] = "zyni-otp"
         # Plain-text first — spam filters prefer multipart/alternative with text first
         msg.attach(MIMEText(text_body, "plain", "utf-8"))
