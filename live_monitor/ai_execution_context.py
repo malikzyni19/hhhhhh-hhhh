@@ -531,6 +531,54 @@ def _lm_build_ai_execution_context(item, snapshot=None) -> dict:  # noqa: C901
         else:
             allowed_actions = ["allow_touch_limit", "no_action"]
 
+        # ── TASK 11: Order-flow series context (Phase FlowC.D) ─────────────────
+        # Real tick-built CVD + Open Interest series and deterministic CVD
+        # divergence / OI regime flags, distinct from the cvd_method/cvd_state
+        # candle-wick heuristics in TASK 7 above (used when no tick stream is
+        # available). Bounded and rounded. Purely descriptive — does NOT feed
+        # danger_ctx, blocking_reasons, or allowed_actions above; this section
+        # is computed after and independently of that decision.
+        order_flow_series_ctx = None
+        try:
+            _of_candles = _m._lm_get_flow_candles_series(symbol, "5m", 24)  # last ~2h
+            if len(_of_candles) >= 3:
+                _of_recent = [{
+                    "t":           c.get("t"),
+                    "price_close": c.get("price_close"),
+                    "delta_usd":   c.get("delta_usd"),
+                    "cvd_usd":     c.get("cvd_usd"),
+                    "oi_close":    c.get("oi_close"),
+                } for c in _of_candles[-12:]]  # last 12 x 5m = 1h, bounded
+
+                _of_divergences = []
+                if len(_of_candles) >= 10:
+                    _raw_divs = _m._lm_detect_metric_divergence(_of_candles, "cvd_usd")
+                    _of_divergences = [{
+                        "kind":        d["kind"],
+                        "swing_type":  d["swing_type"],
+                        "strength":    d["strength"],
+                        "candle_b_ms": d["candle_b_ms"],
+                    } for d in _raw_divs[:3]]
+
+                _oir = _m._lm_classify_oi_regime(_of_candles, lookback=20)
+                order_flow_series_ctx = {
+                    "ok":             True,
+                    "timeframe":      "5m",
+                    "candle_count":   len(_of_candles),
+                    "recent_candles": _of_recent,
+                    "cvd_divergences": _of_divergences,
+                    "oi_regime": {
+                        "current":        _oir.get("current_regime"),
+                        "dominant_recent": _oir.get("dominant_regime_recent"),
+                        "sample_count":   _oir.get("sample_count"),
+                    },
+                }
+            else:
+                order_flow_series_ctx = {"ok": False, "reason": "insufficient_history",
+                                         "candle_count": len(_of_candles)}
+        except Exception as _ofe:
+            order_flow_series_ctx = {"ok": False, "reason": f"error: {str(_ofe)[:100]}"}
+
         return {
             "phase":       "phase11_2_ai_execution_context",
             "ok":          True,
@@ -547,6 +595,7 @@ def _lm_build_ai_execution_context(item, snapshot=None) -> dict:  # noqa: C901
             "smc_orderflow_fusion":       fusion_ctx,
             "danger_context":             danger_ctx,
             "orderflow_history_quality":  of_history_quality,
+            "order_flow_series":          order_flow_series_ctx,
             "ai_allowed_actions_preview": allowed_actions,
             "limitations":                limitations,
             "warnings":                   warnings_list,

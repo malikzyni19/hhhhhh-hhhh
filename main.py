@@ -14796,6 +14796,93 @@ def _lm_build_data_health_context(symbol: str, exchange: str,
                      "updated": "—", "notes": f"flow store error: {str(_fcerr)[:60]}"})
 
     # ═════════════════════════════════════════════════════════════════════════
+    # ROW 7c/7d — CVD Divergence + OI Regime  (deterministic, 5m flow candles)
+    # Descriptive/advisory context only — not entry signals by themselves.
+    # Regular divergence = reversal signal; hidden = trend-continuation signal.
+    # OI regime is interpretive (what the price+OI combination usually means).
+    # ═════════════════════════════════════════════════════════════════════════
+    _flow5m_candles = None
+    _flow5m_err = None
+    try:
+        _flow5m_candles = _lm_get_flow_candles_series(symbol, "5m", 60)
+    except Exception as _fc5err:
+        _flow5m_err = str(_fc5err)[:60]
+
+    _DIV_KIND_LABELS = {
+        "regular_bearish": "Regular Bearish (reversal-down)",
+        "hidden_bearish":  "Hidden Bearish (downtrend continuation)",
+        "regular_bullish": "Regular Bullish (reversal-up)",
+        "hidden_bullish":  "Hidden Bullish (uptrend continuation)",
+    }
+    try:
+        if _flow5m_err:
+            raise RuntimeError(_flow5m_err)
+        if len(_flow5m_candles) < 10:
+            rows.append({"metric": "CVD Divergence", "value": "—",
+                         "source": "flow_candles (binance) · 5m swings", "status": "unavailable",
+                         "updated": "—",
+                         "notes": f"Needs >= 10 candles of 5m history ({len(_flow5m_candles)} loaded)."})
+        else:
+            _dv_events  = _lm_detect_metric_divergence(_flow5m_candles, "cvd_usd")
+            _dv_age_min = (time.time() * 1000 - _flow5m_candles[-1]["t"]) / 60000.0
+            _dv_status  = "fresh" if _dv_age_min <= 15 else "stale"
+            if _dv_events:
+                _dv0 = _dv_events[0]
+                rows.append({"metric": "CVD Divergence",
+                             "value":  _DIV_KIND_LABELS.get(_dv0["kind"], _dv0["kind"]),
+                             "source": "flow_candles (binance) · 5m swings",
+                             "status": _dv_status,
+                             "updated": f"{_dv_age_min:.1f}m candle age",
+                             "notes": (f"Strength {_dv0['strength']:.2f} · "
+                                      f"price {_dv0['price_a']:.4g}→{_dv0['price_b']:.4g} "
+                                      f"vs cvd {_dv0['metric_a']:.4g}→{_dv0['metric_b']:.4g} | "
+                                      "regular = reversal signal, hidden = trend continuation")})
+            else:
+                rows.append({"metric": "CVD Divergence", "value": "No active divergence",
+                             "source": "flow_candles (binance) · 5m swings",
+                             "status": _dv_status, "updated": f"{_dv_age_min:.1f}m candle age",
+                             "notes": "Price and CVD are moving the same direction at recent "
+                                      "swing points (confirming, not diverging)."})
+    except Exception as _dverr:
+        rows.append({"metric": "CVD Divergence", "value": "—",
+                     "source": "flow_candles (binance) · 5m swings", "status": "unavailable",
+                     "updated": "—", "notes": f"divergence engine error: {str(_dverr)[:60]}"})
+
+    _OI_REGIME_LABELS = {
+        "new_longs":       "New Longs (price↑ OI↑)",
+        "short_covering":  "Short Covering (price↑ OI↓)",
+        "new_shorts":      "New Shorts (price↓ OI↑)",
+        "long_unwind":     "Long Unwind (price↓ OI↓)",
+    }
+    try:
+        if _flow5m_err:
+            raise RuntimeError(_flow5m_err)
+        if len(_flow5m_candles) < 3:
+            rows.append({"metric": "OI Regime", "value": "—",
+                         "source": "flow_candles (binance) · 5m", "status": "unavailable",
+                         "updated": "—",
+                         "notes": f"Needs >= 3 candles of 5m history ({len(_flow5m_candles)} loaded)."})
+        else:
+            _oir = _lm_classify_oi_regime(_flow5m_candles, lookback=20)
+            if _oir["current_regime"]:
+                _dom = _oir.get("dominant_regime_recent")
+                rows.append({"metric": "OI Regime",
+                             "value":  _OI_REGIME_LABELS.get(_oir["current_regime"], _oir["current_regime"]),
+                             "source": "flow_candles (binance) · 5m",
+                             "status": "fresh", "updated": "current candle",
+                             "notes": (f"Recent dominant: {_OI_REGIME_LABELS.get(_dom, '—') if _dom else '—'} "
+                                      f"({_oir['sample_count']} samples) | interpretive context, not a signal")})
+            else:
+                rows.append({"metric": "OI Regime", "value": "—",
+                             "source": "flow_candles (binance) · 5m", "status": "unavailable",
+                             "updated": "—",
+                             "notes": "No OI samples yet for this window, or price/OI flat between candles."})
+    except Exception as _oierr:
+        rows.append({"metric": "OI Regime", "value": "—",
+                     "source": "flow_candles (binance) · 5m", "status": "unavailable",
+                     "updated": "—", "notes": f"regime engine error: {str(_oierr)[:60]}"})
+
+    # ═════════════════════════════════════════════════════════════════════════
     # ROW 8 — Long/Short Ratio  (source: interval/REST, TTL 5m)
     # ═════════════════════════════════════════════════════════════════════════
     if exchange == "binance":
@@ -31030,34 +31117,22 @@ def api_lm_liq_debug():
     })
 
 
-@app.route("/api/live-monitor/flow-candles", methods=["GET"])
-@login_required
-def api_lm_flow_candles():
-    """GET stored CVD/OI flow candles for a symbol — Phase FlowC.
+_LM_FLOW_TF_FACTOR = {"1m": 1, "5m": 5, "15m": 15, "1h": 60}
 
-    Query: symbol (required), tf (1m|5m|15m|1h, default 1m), limit (<=500).
-    1m rows are stored; higher timeframes are aggregated on read:
-    delta/buy/sell/ticks summed, cvd/price/oi taken at bucket close.
-    Read-only market data — no execution, no orders.
+
+def _lm_get_flow_candles_series(symbol: str, tf: str = "1m", limit: int = 120) -> list:
+    """Fetch stored 1m flow candles for `symbol` and aggregate on read to `tf`.
+
+    Shared by the read API (api_lm_flow_candles) and the divergence/regime
+    engine below, so both operate on identical series construction. 1m rows
+    are stored as-is; higher timeframes sum delta/buy/sell/ticks per bucket
+    and take cvd/price at bucket close, oi as the last non-null sample with
+    oi_delta vs the previous bucket's oi (not the previous 1m row's).
+
+    tf must be a key of _LM_FLOW_TF_FACTOR; limit is the caller's
+    responsibility to have already validated/clamped.
     """
-    uid, _ = _current_user_id_and_user()
-    if not uid:
-        return jsonify({"ok": False, "error": "no_user"}), 401
-
-    symbol = (request.args.get("symbol") or "").upper().strip()
-    if not symbol:
-        return jsonify({"ok": False, "error": "symbol_required"}), 400
-    tf = (request.args.get("tf") or "1m").lower().strip()
-    _TF_FACTOR = {"1m": 1, "5m": 5, "15m": 15, "1h": 60}
-    if tf not in _TF_FACTOR:
-        return jsonify({"ok": False, "error": "invalid_tf",
-                        "allowed": sorted(_TF_FACTOR.keys())}), 400
-    try:
-        limit = min(max(int(request.args.get("limit", 120)), 1), 500)
-    except (TypeError, ValueError):
-        limit = 120
-
-    factor = _TF_FACTOR[tf]
+    factor = _LM_FLOW_TF_FACTOR[tf]
     from models import LiveMonitorFlowCandle as _FC
     base = (_FC.query.filter_by(symbol=symbol, timeframe="1m")
             .order_by(_FC.candle_open_ms.desc())
@@ -31104,9 +31179,223 @@ def api_lm_flow_candles():
             candles.append(_row_out(b, g["price"], g["buy"], g["sell"],
                                     g["delta"], g["cvd"], g["oi"], oi_d, g["ticks"]))
         candles = candles[-limit:]
+    return candles
 
+
+def _lm_parse_flow_query_args(default_limit: int = 120):
+    """Shared symbol/tf/limit parsing + validation for flow-candle endpoints.
+    Returns (symbol, tf, limit, error_response_or_None)."""
+    symbol = (request.args.get("symbol") or "").upper().strip()
+    if not symbol:
+        return None, None, None, (jsonify({"ok": False, "error": "symbol_required"}), 400)
+    tf = (request.args.get("tf") or "1m").lower().strip()
+    if tf not in _LM_FLOW_TF_FACTOR:
+        return None, None, None, (jsonify({"ok": False, "error": "invalid_tf",
+                                   "allowed": sorted(_LM_FLOW_TF_FACTOR.keys())}), 400)
+    try:
+        limit = min(max(int(request.args.get("limit", default_limit)), 1), 500)
+    except (TypeError, ValueError):
+        limit = default_limit
+    return symbol, tf, limit, None
+
+
+@app.route("/api/live-monitor/flow-candles", methods=["GET"])
+@login_required
+def api_lm_flow_candles():
+    """GET stored CVD/OI flow candles for a symbol — Phase FlowC.
+
+    Query: symbol (required), tf (1m|5m|15m|1h, default 1m), limit (<=500).
+    1m rows are stored; higher timeframes are aggregated on read:
+    delta/buy/sell/ticks summed, cvd/price/oi taken at bucket close.
+    Read-only market data — no execution, no orders.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"ok": False, "error": "no_user"}), 401
+
+    symbol, tf, limit, err = _lm_parse_flow_query_args()
+    if err:
+        return err
+
+    candles = _lm_get_flow_candles_series(symbol, tf, limit)
     return jsonify({"ok": True, "symbol": symbol, "timeframe": tf,
                     "count": len(candles), "candles": candles}), 200
+
+
+# ── Deterministic CVD divergence + OI regime engine (Phase FlowC.C) ──────────
+# Pure, testable functions reading the flow-candle series built above. No AI
+# call. No order. No strategy mutation — descriptive/advisory context only.
+
+def _lm_pivot_indices(values: list, left: int = 3, right: int = 3) -> tuple:
+    """Close-based swing pivot detector (strict left/right comparison).
+
+    Standalone from _lm_find_swing_points (which requires full OHLC candles)
+    since flow candles only carry one value per timeframe (price_close, or
+    any other metric series such as cvd_usd/oi_close). A pivot must be
+    strictly greater (or less) than every neighbor in the [left, right]
+    window, matching the strictness convention of _lm_is_swing_high/low.
+
+    Returns (high_idxs, low_idxs) — ascending indices into `values`.
+    """
+    n = len(values)
+    highs, lows = [], []
+    for i in range(left, n - right):
+        v = values[i]
+        if v is None:
+            continue
+        window = values[i - left:i] + values[i + 1:i + 1 + right]
+        if any(x is None for x in window):
+            continue
+        if all(v > x for x in window):
+            highs.append(i)
+        if all(v < x for x in window):
+            lows.append(i)
+    return highs, lows
+
+
+def _lm_detect_metric_divergence(candles: list, metric_key: str,
+                                 left: int = 3, right: int = 3) -> list:
+    """Deterministic divergence detection between price and `metric_key`
+    (e.g. "cvd_usd") using price's own swing highs/lows.
+
+    At the two most recent PRICE swing highs, and separately the two most
+    recent PRICE swing lows, compares the price direction vs the metric's
+    value at those same candle indices:
+
+      swing highs — price higher-high + metric lower-high  -> regular_bearish
+                    price lower-high  + metric higher-high -> hidden_bearish
+      swing lows  — price lower-low  + metric higher-low   -> regular_bullish
+                    price higher-low + metric lower-low    -> hidden_bullish
+
+    (Regular = reversal signal; hidden = trend-continuation signal — standard
+    technical-analysis divergence definitions, applied here to CVD instead of
+    a momentum oscillator.) Returns events sorted most-recent-first.
+    """
+    prices  = [c.get("price_close") for c in candles]
+    metrics = [c.get(metric_key) for c in candles]
+    hi_idx, lo_idx = _lm_pivot_indices(prices, left, right)
+
+    events = []
+
+    def _pair(idxs, is_high):
+        if len(idxs) < 2:
+            return
+        a, b = idxs[-2], idxs[-1]  # older, newer (ascending index order)
+        pa, pb = prices[a], prices[b]
+        ma, mb = metrics[a], metrics[b]
+        if None in (pa, pb, ma, mb):
+            return
+        price_up  = pb > pa
+        metric_up = mb > ma
+        if price_up == metric_up:
+            return  # both move the same way — confirming, not diverging
+        if is_high:
+            kind = "regular_bearish" if price_up else "hidden_bearish"
+        else:
+            kind = "regular_bullish" if not price_up else "hidden_bullish"
+        price_pct  = ((pb - pa) / abs(pa) * 100.0) if pa else 0.0
+        metric_pct = ((mb - ma) / abs(ma) * 100.0) if ma else (100.0 if mb != ma else 0.0)
+        strength = round(min(1.0, (abs(price_pct) + abs(metric_pct)) / 10.0), 3)
+        events.append({
+            "kind": kind, "metric": metric_key,
+            "swing_type": "high" if is_high else "low",
+            "candle_a_ms": candles[a].get("t"), "candle_b_ms": candles[b].get("t"),
+            "price_a": pa, "price_b": pb, "metric_a": ma, "metric_b": mb,
+            "price_pct_change": round(price_pct, 3),
+            "metric_pct_change": round(metric_pct, 3),
+            "strength": strength,
+        })
+
+    _pair(hi_idx, True)
+    _pair(lo_idx, False)
+    events.sort(key=lambda e: e["candle_b_ms"] or 0, reverse=True)
+    return events
+
+
+_LM_OI_REGIMES = {
+    (True,  True):  "new_longs",       # price up,   OI up   — new money entering long
+    (True,  False): "short_covering",  # price up,   OI down — shorts closing, not new buyers
+    (False, True):  "new_shorts",      # price down, OI up   — new money entering short
+    (False, False): "long_unwind",     # price down, OI down — longs closing, not new sellers
+}
+
+
+def _lm_classify_oi_regime(candles: list, lookback: int = 20) -> dict:
+    """Per-candle price-vs-OI regime classification (4-way matrix), plus the
+    dominant regime over the recent window. This is interpretive context
+    (what the OI+price combination usually means), not a trading signal by
+    itself and not a divergence — OI is compared to price on the SAME candle,
+    not at swing points."""
+    labeled = []
+    prev_price = None
+    prev_oi = None
+    for c in candles:
+        price = c.get("price_close")
+        oi = c.get("oi_close")
+        regime = None
+        if (price is not None and oi is not None
+                and prev_price is not None and prev_oi is not None
+                and price != prev_price and oi != prev_oi):
+            regime = _LM_OI_REGIMES[(price > prev_price, oi > prev_oi)]
+        labeled.append({"t": c.get("t"), "regime": regime})
+        if price is not None:
+            prev_price = price
+        if oi is not None:
+            prev_oi = oi
+
+    recent = [x["regime"] for x in labeled[-lookback:] if x["regime"]]
+    dominant = None
+    counts: dict = {}
+    if recent:
+        for r in recent:
+            counts[r] = counts.get(r, 0) + 1
+        dominant = max(counts, key=counts.get)
+    current = next((x["regime"] for x in reversed(labeled) if x["regime"]), None)
+    return {
+        "current_regime": current,
+        "dominant_regime_recent": dominant,
+        "recent_counts": counts,
+        "sample_count": len(recent),
+        "labeled_candles": labeled[-lookback:],
+    }
+
+
+@app.route("/api/live-monitor/flow-divergence", methods=["GET"])
+@login_required
+def api_lm_flow_divergence():
+    """GET deterministic CVD divergence flags + OI regime for a symbol.
+
+    Query: symbol (required), tf (1m|5m|15m|1h, default 5m), lookback (<=500).
+    Read-only advisory market data — no execution, no orders, no strategy
+    mutation. Divergence/regime are descriptive context, not entry signals.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"ok": False, "error": "no_user"}), 401
+
+    symbol, tf, limit, err = _lm_parse_flow_query_args(default_limit=120)
+    if err:
+        return err
+    # Query args reused: "tf" default differs (5m is more useful for swings
+    # than 1m noise), so re-resolve tf's default explicitly.
+    if "tf" not in request.args:
+        tf = "5m"
+
+    candles = _lm_get_flow_candles_series(symbol, tf, limit)
+    if len(candles) < 10:
+        return jsonify({"ok": True, "symbol": symbol, "timeframe": tf,
+                        "candle_count": len(candles),
+                        "cvd_divergences": [], "oi_regime": None,
+                        "message": "Not enough candle history yet "
+                                   f"({len(candles)} loaded, need >= 10)."}), 200
+
+    cvd_divs = _lm_detect_metric_divergence(candles, "cvd_usd")
+    oi_regime = _lm_classify_oi_regime(candles)
+
+    return jsonify({"ok": True, "symbol": symbol, "timeframe": tf,
+                    "candle_count": len(candles),
+                    "cvd_divergences": cvd_divs[:10],
+                    "oi_regime": oi_regime}), 200
 
 
 @app.route("/api/live-monitor/data-health", methods=["GET"])
