@@ -31377,8 +31377,10 @@ def api_lm_flow_divergence():
     if err:
         return err
     # Query args reused: "tf" default differs (5m is more useful for swings
-    # than 1m noise), so re-resolve tf's default explicitly.
-    if "tf" not in request.args:
+    # than 1m noise), so re-resolve tf's default explicitly. Checks the RAW
+    # value (not just key presence) so an explicit but blank ?tf= also gets
+    # the 5m default instead of falling through to the shared parser's 1m.
+    if not (request.args.get("tf") or "").strip():
         tf = "5m"
 
     candles = _lm_get_flow_candles_series(symbol, tf, limit)
