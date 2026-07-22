@@ -12209,6 +12209,7 @@ def _lm_flow_backfill(symbol: str):
 
         cvd = 0.0
         added = 0
+        rows_to_insert = []
         for k in kl_all:
             try:
                 open_ms   = int(k[0])
@@ -12221,17 +12222,40 @@ def _lm_flow_backfill(symbol: str):
             delta    = taker_buy - sell_usd
             cvd     += delta
             oi_c, oi_d = oi_by_ms.get(open_ms, (None, None))
-            _db.session.add(_FC(
-                symbol=symbol, exchange="binance", timeframe="1m",
-                candle_open_ms=open_ms, price_close=close_px,
-                buy_vol_usd=round(taker_buy, 2), sell_vol_usd=round(sell_usd, 2),
-                delta_usd=round(delta, 2), cvd_usd=round(cvd, 2),
-                oi_close=oi_c, oi_delta=oi_d,
-                tick_count=int(k[8]) if len(k) > 8 else 0,
-                source="backfill",
-            ))
+            rows_to_insert.append({
+                "symbol": symbol, "exchange": "binance", "timeframe": "1m",
+                "candle_open_ms": open_ms, "price_close": close_px,
+                "buy_vol_usd": round(taker_buy, 2), "sell_vol_usd": round(sell_usd, 2),
+                "delta_usd": round(delta, 2), "cvd_usd": round(cvd, 2),
+                "oi_close": oi_c, "oi_delta": oi_d,
+                "tick_count": int(k[8]) if len(k) > 8 else 0,
+                "source": "backfill",
+            })
             added += 1
+        if not rows_to_insert:
+            return {"ok": False, "error": "no_valid_rows"}
         try:
+            # Bulk upsert with ON CONFLICT DO NOTHING: a live rollover can persist
+            # a candle in this exact range while klines/OI REST calls are still in
+            # flight (rare race with _lm_flow_persist_candle). A plain bulk insert
+            # would hit the unique constraint and roll back the ENTIRE 1500-3000
+            # row batch on a single collision. This skips only the colliding
+            # row(s) — the surrounding historical reconstruction is unaffected —
+            # in one atomic statement (no N+1 per-row exists checks needed).
+            _dialect = _db.engine.dialect.name
+            if _dialect == "postgresql":
+                from sqlalchemy.dialects.postgresql import insert as _upsert
+            elif _dialect == "sqlite":
+                from sqlalchemy.dialects.sqlite import insert as _upsert
+            else:
+                _upsert = None
+            if _upsert is not None:
+                _stmt = _upsert(_FC.__table__).values(rows_to_insert)
+                _stmt = _stmt.on_conflict_do_nothing(
+                    index_elements=["symbol", "timeframe", "candle_open_ms"])
+                _db.session.execute(_stmt)
+            else:
+                _db.session.execute(_FC.__table__.insert(), rows_to_insert)
             _db.session.commit()
         except Exception as _ce:
             _db.session.rollback()
@@ -12267,17 +12291,23 @@ def _lm_flow_backfill_bg(symbol: str):
 def _lm_flow_cleanup_if_unreferenced(symbol: str):
     """Free-tier hygiene: when the LAST active setup (any user) for a symbol is
     removed, delete that symbol's stored flow candles and RAM state. History is
-    recoverable via backfill if the pair is re-added later."""
-    from models import db as _db, LiveMonitorItem as _LMI, LiveMonitorFlowCandle as _FC
-    still = _LMI.query.filter_by(symbol=symbol, is_active=True).first()
-    if still is not None:
-        return {"deleted": False, "reason": "still_referenced"}
-    n = _FC.query.filter_by(symbol=symbol).delete(synchronize_session=False)
-    _db.session.commit()
-    with _lm_flow_lock:
-        _lm_flow_buckets.pop(symbol, None)
-        _lm_flow_state.pop(symbol, None)
-    print(f"[LM-FLOW] cleanup {symbol}: removed {n} flow candles (no active setups)")
+    recoverable via backfill if the pair is re-added later.
+
+    Wraps its own app.app_context() (Flask app contexts nest safely) so this is
+    correct both from the DELETE route (already has a request context) and if
+    ever called from a background thread (no context), matching the other
+    _lm_flow_* functions' background-thread-safe pattern."""
+    with app.app_context():
+        from models import db as _db, LiveMonitorItem as _LMI, LiveMonitorFlowCandle as _FC
+        still = _LMI.query.filter_by(symbol=symbol, is_active=True).first()
+        if still is not None:
+            return {"deleted": False, "reason": "still_referenced"}
+        n = _FC.query.filter_by(symbol=symbol).delete(synchronize_session=False)
+        _db.session.commit()
+        with _lm_flow_lock:
+            _lm_flow_buckets.pop(symbol, None)
+            _lm_flow_state.pop(symbol, None)
+        print(f"[LM-FLOW] cleanup {symbol}: removed {n} flow candles (no active setups)")
     return {"deleted": True, "rows": n}
 
 
