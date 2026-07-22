@@ -291,9 +291,9 @@ with main.app.app_context():
 r2 = client.get("/api/live-monitor/data-health?symbol=ROUTESPOTUSDT&exchange=binance")
 b2 = r2.get_json()
 check("6-5 spot_flow populated through the real route with real data", b2["spot_flow"]["ok"] is True, b2["spot_flow"])
-check("6-6 hero-relevant field (parent_setup_exchange) still present after spot_flow populates",
-      b2.get("parent_setup_exchange") == b.get("parent_setup_exchange") or True,  # differing symbols is fine; presence is what matters
-      b2.get("parent_setup_exchange"))
+check("6-6 parent_setup_exchange identical before/after spot_flow populates (same symbol, real assertion)",
+      b2.get("parent_setup_exchange") == b.get("parent_setup_exchange"),
+      (b.get("parent_setup_exchange"), b2.get("parent_setup_exchange")))
 check("6-7 rows list unaffected in shape (still a list)", isinstance(b2.get("rows"), list))
 
 
