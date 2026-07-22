@@ -10898,8 +10898,9 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     t+=_sec("Open interest — compare now vs past");
     var oiR=rowMap["Open Interest"]; if(oiR) t+=_row(oiR,undefined,"Raw OI alone is not useful; decision comes from change vs price.");
     var oiCR=rowMap["OI Change"]; if(oiCR) t+=_row(oiCR);
-    // Section 5: Delta
-    t+=_sec("Delta — pressure and absorption");
+    // Section 5: CVD + Delta
+    t+=_sec("CVD & Delta — pressure and absorption");
+    var cvdR=rowMap["CVD"]; if(cvdR) t+=_row(cvdR,undefined,"Cumulative Volume Delta stored candle-by-candle — the AI's divergence source. Rising price + falling CVD = absorption/distribution.");
     var dR=rowMap["Delta"]; if(dR) t+=_row(dR,undefined,"Sell pressure during OB approach may signal absorption if price holds.");
     // Section 6: Crowd and funding
     t+=_sec("Crowd and funding conflict");
@@ -10910,7 +10911,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var csR=rowMap["Candle Status"]; if(csR) t+=_row(csR,undefined,"No final OB judgment without fresh candle close/rejection.");
     var aiR=rowMap["AI Entry Analysis"]; if(aiR) t+=_row(aiR,undefined,"Allowed means data gate passed. It does not mean buy/sell.");
     // Remaining rows (skip Mark Price)
-    var _dhShown={"Live Price":1,"Mark Price":1,"Order Book":1,"Liquidations":1,"Open Interest":1,"OI Change":1,"Delta":1,"Long/Short Ratio":1,"Funding Rate":1,"Candle Status":1,"AI Entry Analysis":1};
+    var _dhShown={"Live Price":1,"Mark Price":1,"Order Book":1,"Liquidations":1,"Open Interest":1,"OI Change":1,"Delta":1,"CVD":1,"Long/Short Ratio":1,"Funding Rate":1,"Candle Status":1,"AI Entry Analysis":1};
     for(var _rj=0;_rj<rows.length;_rj++){ if(!_dhShown[rows[_rj].metric]) t+=_row(rows[_rj]); }
     // Capture expanded state BEFORE destroying DOM
     var _wasObOpen=false, _wasLiqOpen=false;

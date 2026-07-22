@@ -1300,3 +1300,43 @@ class LiveMonitorLearningReview(db.Model):
     def __repr__(self) -> str:
         return (f"<LiveMonitorLearningReview id={self.id} "
                 f"user={self.user_id} scope={self.review_scope} status={self.status}>")
+
+
+class LiveMonitorFlowCandle(db.Model):
+    """Per-candle order-flow series: CVD (from ticks) + Open Interest — Phase FlowC.
+
+    One row per symbol + timeframe + candle_open_time. Base timeframe is 1m;
+    higher timeframes are aggregated on read. Volumes are USD (quote) amounts.
+    Advisory market data only — no execution, no orders, no strategy mutation.
+    """
+    __tablename__ = "live_monitor_flow_candles"
+
+    id               = db.Column(db.Integer, primary_key=True)
+    symbol           = db.Column(db.String(30), nullable=False, index=True)
+    exchange         = db.Column(db.String(20), nullable=False, default="binance")
+    timeframe        = db.Column(db.String(10), nullable=False, default="1m")
+    candle_open_ms   = db.Column(db.BigInteger, nullable=False)   # epoch ms of candle open
+
+    price_close      = db.Column(db.Float, nullable=True)
+    buy_vol_usd      = db.Column(db.Float, nullable=False, default=0.0)   # taker-buy quote vol
+    sell_vol_usd     = db.Column(db.Float, nullable=False, default=0.0)   # taker-sell quote vol
+    delta_usd        = db.Column(db.Float, nullable=False, default=0.0)   # buy - sell
+    cvd_usd          = db.Column(db.Float, nullable=False, default=0.0)   # running cumulative delta
+    oi_close         = db.Column(db.Float, nullable=True)                 # open interest (contracts)
+    oi_delta         = db.Column(db.Float, nullable=True)                 # vs previous sample
+    tick_count       = db.Column(db.Integer, nullable=False, default=0)
+    source           = db.Column(db.String(20), nullable=False, default="live")  # "live" | "backfill"
+
+    created_at       = db.Column(db.DateTime,
+                                 default=lambda: datetime.now(timezone.utc),
+                                 nullable=False)
+
+    __table_args__ = (
+        db.UniqueConstraint("symbol", "timeframe", "candle_open_ms",
+                            name="uq_flow_candle_symbol_tf_open"),
+        db.Index("ix_flow_candle_symbol_tf_open", "symbol", "timeframe", "candle_open_ms"),
+    )
+
+    def __repr__(self) -> str:
+        return (f"<FlowCandle {self.symbol} {self.timeframe} "
+                f"open={self.candle_open_ms} delta={self.delta_usd:.0f}>")

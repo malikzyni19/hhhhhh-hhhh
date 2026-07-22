@@ -10884,6 +10884,11 @@ def _lm_ws_background_loop():
                     )
                 except Exception:
                     pass
+                # Phase FlowC: flush stale CVD buckets + sample OI (~1s cadence)
+                try:
+                    _lm_flow_housekeeping(sym, mark_price=float(mp))
+                except Exception as _fhe:
+                    print(f"[LM-FLOW] housekeeping error {sym}: {_fhe}")
 
     print("[LM-WS] Background thread stopped")
     if sock:
@@ -11947,6 +11952,13 @@ def _lm_delta_update(exchange: str, symbol: str, is_buyer_maker: bool, qty: floa
         entry["last_update_ts"] = now
     if first:
         print(f"[LM-WS] binance {symbol} delta fresh (first aggTrade)")
+    # Phase FlowC: accumulate the same tick into the 1m CVD candle bucket.
+    # Existing 5m rolling delta consumers above are untouched.
+    if exchange == "binance":
+        try:
+            _lm_flow_tick(symbol, side, usd_vol, price, now)
+        except Exception as _fe:
+            print(f"[LM-FLOW] tick error {symbol}: {_fe}")
 
 
 def _lm_delta_get(exchange: str, symbol: str):
@@ -11980,6 +11992,293 @@ def _lm_delta_get(exchange: str, symbol: str):
         "data_age_sec":  round(age, 1),
         "status":        "fresh" if age <= 5 else "stale",
     }, ("fresh" if age <= 5 else "stale")
+
+
+# ── Flow candles: per-candle CVD + OI series (Phase FlowC) ───────────────────
+# Ticks accumulate into an in-RAM 1m bucket; the completed candle is persisted
+# to live_monitor_flow_candles at rollover. Raw ticks are never stored.
+# Advisory market data only — no execution, no orders, no strategy mutation.
+
+_lm_flow_lock            = threading.Lock()
+_lm_flow_buckets: dict   = {}   # symbol → {open_ms, buy, sell, ticks, last_price}
+_lm_flow_state: dict     = {}   # symbol → {cvd, cvd_seeded, last_oi, last_oi_ts}
+_LM_FLOW_TF_MS           = 60_000          # base timeframe: 1m
+_LM_FLOW_RETENTION_MS    = 3 * 86_400_000  # 3-day rolling retention per symbol
+_LM_FLOW_GLOBAL_CAP      = 100_000         # hard table cap (free-tier backstop)
+_LM_FLOW_OI_SAMPLE_SEC   = 55              # OI snapshot cadence
+
+
+def _lm_flow_tick(symbol: str, side: str, usd_vol: float, price: float, now: float):
+    """Accumulate one aggTrade tick into the current 1m bucket.
+    Rollover persists the completed candle. Called from _lm_delta_update."""
+    open_ms = int(now * 1000) // _LM_FLOW_TF_MS * _LM_FLOW_TF_MS
+    done = None
+    with _lm_flow_lock:
+        b = _lm_flow_buckets.get(symbol)
+        if b is None or b["open_ms"] != open_ms:
+            if b is not None and b["open_ms"] < open_ms:
+                done = b
+            _lm_flow_buckets[symbol] = b = {
+                "open_ms": open_ms, "buy": 0.0, "sell": 0.0,
+                "ticks": 0, "last_price": price,
+            }
+        if side == "buy":
+            b["buy"] += usd_vol
+        else:
+            b["sell"] += usd_vol
+        b["ticks"] += 1
+        b["last_price"] = price
+    if done is not None:
+        _lm_flow_persist_candle(symbol, done)
+
+
+def _lm_flow_housekeeping(symbol: str, mark_price=None):
+    """Called from the markPrice WS handler (~1s cadence per symbol).
+    a) Flushes a stale bucket whose minute has passed even with no new ticks —
+       quiet symbols still get continuous (zero-delta) candles.
+    b) Samples Open Interest every ~55s for attachment at persist time."""
+    now = time.time()
+    open_ms = int(now * 1000) // _LM_FLOW_TF_MS * _LM_FLOW_TF_MS
+    done = None
+    with _lm_flow_lock:
+        b = _lm_flow_buckets.get(symbol)
+        if b is not None and b["open_ms"] < open_ms:
+            done = b
+            _lm_flow_buckets[symbol] = {
+                "open_ms": open_ms, "buy": 0.0, "sell": 0.0,
+                "ticks": 0, "last_price": (mark_price if mark_price is not None
+                                           else b.get("last_price")),
+            }
+        elif b is None and mark_price is not None:
+            # No ticks yet for this symbol — start a zero bucket from mark price
+            _lm_flow_buckets[symbol] = {
+                "open_ms": open_ms, "buy": 0.0, "sell": 0.0,
+                "ticks": 0, "last_price": mark_price,
+            }
+        st = _lm_flow_state.setdefault(symbol, {"cvd": 0.0, "cvd_seeded": False,
+                                                "last_oi": None, "last_oi_ts": 0.0})
+        _needs_oi = (now - st["last_oi_ts"]) >= _LM_FLOW_OI_SAMPLE_SEC
+    if _needs_oi:
+        try:
+            oi = _lm_rest_cached(f"oi:{symbol}", _LM_FLOW_OI_SAMPLE_SEC - 5,
+                                 lambda: _lm_fetch_oi_rest(symbol))
+            with _lm_flow_lock:
+                st = _lm_flow_state[symbol]
+                st["last_oi_ts"] = now
+                if oi and oi.get("oi_contracts"):
+                    st["last_oi"] = float(oi["oi_contracts"])
+        except Exception:
+            pass
+    if done is not None:
+        _lm_flow_persist_candle(symbol, done)
+
+
+def _lm_flow_persist_candle(symbol: str, bucket: dict):
+    """Write one completed 1m candle. Maintains CVD continuity (seeds from the
+    last stored row after a restart) and attaches the latest OI sample."""
+    try:
+        with app.app_context():
+            from models import db as _db, LiveMonitorFlowCandle as _FC
+            with _lm_flow_lock:
+                st = _lm_flow_state.setdefault(symbol, {"cvd": 0.0, "cvd_seeded": False,
+                                                        "last_oi": None, "last_oi_ts": 0.0})
+                seeded  = st["cvd_seeded"]
+                last_oi = st["last_oi"]
+            if not seeded:
+                prev = (_FC.query.filter_by(symbol=symbol, timeframe="1m")
+                        .order_by(_FC.candle_open_ms.desc()).first())
+                with _lm_flow_lock:
+                    st["cvd"] = float(prev.cvd_usd) if prev else 0.0
+                    st["cvd_seeded"] = True
+
+            delta = bucket["buy"] - bucket["sell"]
+            with _lm_flow_lock:
+                st["cvd"] += delta
+                cvd_now = st["cvd"]
+
+            # oi_delta vs previous stored candle that had an OI value
+            oi_delta = None
+            if last_oi is not None:
+                prev_oi_row = (_FC.query.filter(_FC.symbol == symbol,
+                                                _FC.timeframe == "1m",
+                                                _FC.oi_close.isnot(None),
+                                                _FC.candle_open_ms < bucket["open_ms"])
+                               .order_by(_FC.candle_open_ms.desc()).first())
+                if prev_oi_row and prev_oi_row.oi_close is not None:
+                    oi_delta = last_oi - float(prev_oi_row.oi_close)
+
+            exists = _FC.query.filter_by(symbol=symbol, timeframe="1m",
+                                         candle_open_ms=bucket["open_ms"]).first()
+            if exists is None:
+                _db.session.add(_FC(
+                    symbol=symbol, exchange="binance", timeframe="1m",
+                    candle_open_ms=bucket["open_ms"],
+                    price_close=bucket.get("last_price"),
+                    buy_vol_usd=round(bucket["buy"], 2),
+                    sell_vol_usd=round(bucket["sell"], 2),
+                    delta_usd=round(delta, 2),
+                    cvd_usd=round(cvd_now, 2),
+                    oi_close=last_oi, oi_delta=oi_delta,
+                    tick_count=bucket["ticks"], source="live",
+                ))
+                _db.session.commit()
+
+            # Retention: prune this symbol's old rows roughly once per hour of candles
+            if (bucket["open_ms"] // _LM_FLOW_TF_MS) % 60 == 0:
+                _cut = bucket["open_ms"] - _LM_FLOW_RETENTION_MS
+                _FC.query.filter(_FC.symbol == symbol,
+                                 _FC.candle_open_ms < _cut).delete(synchronize_session=False)
+                _db.session.commit()
+                _total = _FC.query.count()
+                if _total > _LM_FLOW_GLOBAL_CAP:
+                    _over = _total - _LM_FLOW_GLOBAL_CAP
+                    _old = (_FC.query.order_by(_FC.candle_open_ms.asc())
+                            .limit(_over).all())
+                    for _r in _old:
+                        _db.session.delete(_r)
+                    _db.session.commit()
+    except Exception as _e:
+        print(f"[LM-FLOW] persist error {symbol}: {_e}")
+        try:
+            from models import db as _db2
+            _db2.session.rollback()
+        except Exception:
+            pass
+
+
+_lm_flow_backfill_inflight: set = set()
+_lm_flow_backfill_lock = threading.Lock()
+
+
+def _lm_flow_backfill(symbol: str):
+    """One-shot history reconstruction for a newly-activated symbol.
+
+    CVD: Binance 1m klines carry taker-buy quote volume, so per-candle delta is
+    reconstructable from REST: delta = 2*takerBuyQuote - quoteVol. Two pages of
+    1500 candles ≈ 2 days of history.
+    OI: /futures/data/openInterestHist (5m granularity) attached to matching rows.
+
+    Runs ONLY when the symbol has no stored flow candles — backfilling under
+    live rows would corrupt the cumulative CVD baseline.
+    """
+    with app.app_context():
+        from models import db as _db, LiveMonitorFlowCandle as _FC
+        if _FC.query.filter_by(symbol=symbol, timeframe="1m").first() is not None:
+            return {"ok": True, "skipped": "rows_exist"}
+
+        kl_all = []
+        end_ms = None
+        for _page in range(2):
+            params = {"symbol": symbol, "interval": "1m", "limit": 1500}
+            if end_ms:
+                params["endTime"] = end_ms - 1
+            try:
+                r = req.get(f"{BINANCE_FUTURES_API}/fapi/v1/klines",
+                            params=params, timeout=10)
+                if r.status_code != 200:
+                    break
+                page = r.json()
+            except Exception as _ke:
+                print(f"[LM-FLOW] backfill klines error {symbol}: {_ke}")
+                break
+            if not page:
+                break
+            kl_all = page + kl_all
+            end_ms = int(page[0][0])
+            if len(page) < 1500:
+                break
+        if not kl_all:
+            return {"ok": False, "error": "no_klines"}
+
+        # OI history (5m) → map by candle_open_ms
+        oi_by_ms: dict = {}
+        try:
+            r_oi = req.get(f"{BINANCE_FUTURES_API}/futures/data/openInterestHist",
+                           params={"symbol": symbol, "period": "5m", "limit": 500},
+                           timeout=10)
+            if r_oi.status_code == 200:
+                prev_oi = None
+                for _p in r_oi.json():
+                    _ts = int(_p.get("timestamp", 0)) // 60000 * 60000
+                    _v  = float(_p.get("sumOpenInterest", 0) or 0)
+                    if _v > 0:
+                        oi_by_ms[_ts] = (_v, (_v - prev_oi) if prev_oi is not None else None)
+                        prev_oi = _v
+        except Exception as _oe:
+            print(f"[LM-FLOW] backfill OI error {symbol}: {_oe}")
+
+        cvd = 0.0
+        added = 0
+        for k in kl_all:
+            try:
+                open_ms   = int(k[0])
+                close_px  = float(k[4])
+                quote_vol = float(k[7])
+                taker_buy = float(k[10])
+            except (ValueError, TypeError, IndexError):
+                continue
+            sell_usd = max(quote_vol - taker_buy, 0.0)
+            delta    = taker_buy - sell_usd
+            cvd     += delta
+            oi_c, oi_d = oi_by_ms.get(open_ms, (None, None))
+            _db.session.add(_FC(
+                symbol=symbol, exchange="binance", timeframe="1m",
+                candle_open_ms=open_ms, price_close=close_px,
+                buy_vol_usd=round(taker_buy, 2), sell_vol_usd=round(sell_usd, 2),
+                delta_usd=round(delta, 2), cvd_usd=round(cvd, 2),
+                oi_close=oi_c, oi_delta=oi_d,
+                tick_count=int(k[8]) if len(k) > 8 else 0,
+                source="backfill",
+            ))
+            added += 1
+        try:
+            _db.session.commit()
+        except Exception as _ce:
+            _db.session.rollback()
+            print(f"[LM-FLOW] backfill commit error {symbol}: {_ce}")
+            return {"ok": False, "error": "db"}
+        # Seed live CVD continuity from the backfilled tail
+        with _lm_flow_lock:
+            st = _lm_flow_state.setdefault(symbol, {"cvd": 0.0, "cvd_seeded": False,
+                                                    "last_oi": None, "last_oi_ts": 0.0})
+            st["cvd"] = cvd
+            st["cvd_seeded"] = True
+        print(f"[LM-FLOW] backfill {symbol}: {added} candles, oi_points={len(oi_by_ms)}")
+        return {"ok": True, "added": added}
+
+
+def _lm_flow_backfill_bg(symbol: str):
+    """Spawn one-shot backfill in a daemon thread (deduped per symbol)."""
+    with _lm_flow_backfill_lock:
+        if symbol in _lm_flow_backfill_inflight:
+            return
+        _lm_flow_backfill_inflight.add(symbol)
+
+    def _run():
+        try:
+            _lm_flow_backfill(symbol)
+        finally:
+            with _lm_flow_backfill_lock:
+                _lm_flow_backfill_inflight.discard(symbol)
+
+    threading.Thread(target=_run, daemon=True, name=f"lm-flow-bf-{symbol}").start()
+
+
+def _lm_flow_cleanup_if_unreferenced(symbol: str):
+    """Free-tier hygiene: when the LAST active setup (any user) for a symbol is
+    removed, delete that symbol's stored flow candles and RAM state. History is
+    recoverable via backfill if the pair is re-added later."""
+    from models import db as _db, LiveMonitorItem as _LMI, LiveMonitorFlowCandle as _FC
+    still = _LMI.query.filter_by(symbol=symbol, is_active=True).first()
+    if still is not None:
+        return {"deleted": False, "reason": "still_referenced"}
+    n = _FC.query.filter_by(symbol=symbol).delete(synchronize_session=False)
+    _db.session.commit()
+    with _lm_flow_lock:
+        _lm_flow_buckets.pop(symbol, None)
+        _lm_flow_state.pop(symbol, None)
+    print(f"[LM-FLOW] cleanup {symbol}: removed {n} flow candles (no active setups)")
+    return {"deleted": True, "rows": n}
 
 
 def _lm_delta_background_loop():
@@ -14425,6 +14724,46 @@ def _lm_build_data_health_context(symbol: str, exchange: str,
                          "updated": "—", "notes": _ws_disabled_note()})
     else:
         rows.append(_nc("Delta"))
+
+    # ═════════════════════════════════════════════════════════════════════════
+    # ROW 7b — CVD  (source: stored 1m flow candles — Phase FlowC)
+    # Cumulative Volume Delta with 15m/1h changes; the candle-by-candle series
+    # behind this row is what the AI reads for divergences. Binance-derived,
+    # shown regardless of analysis source.
+    # ═════════════════════════════════════════════════════════════════════════
+    try:
+        from models import LiveMonitorFlowCandle as _FCdh
+        _fc_rows = (_FCdh.query.filter_by(symbol=symbol, timeframe="1m")
+                    .order_by(_FCdh.candle_open_ms.desc()).limit(61).all())
+        if _fc_rows:
+            _fc_now  = _fc_rows[0]
+            _cvd_now = float(_fc_now.cvd_usd)
+            _cvd_15  = (_cvd_now - float(_fc_rows[15].cvd_usd)) if len(_fc_rows) > 15 else None
+            _cvd_60  = (_cvd_now - float(_fc_rows[60].cvd_usd)) if len(_fc_rows) > 60 else None
+            _age_min = (time.time() * 1000 - float(_fc_now.candle_open_ms)) / 60000.0
+            _cvd_status = "fresh" if _age_min <= 3 else "stale"
+            _v = f"{'+' if _cvd_now>=0 else ''}{_fmt_usd_lm(abs(_cvd_now))}"
+            if _cvd_15 is not None:
+                _v += f" · 15m {'+' if _cvd_15>=0 else '-'}{_fmt_usd_lm(abs(_cvd_15))}"
+            if _cvd_60 is not None:
+                _v += f" · 1h {'+' if _cvd_60>=0 else '-'}{_fmt_usd_lm(abs(_cvd_60))}"
+            rows.append({"metric": "CVD",
+                         "value":  _v,
+                         "source": "flow_candles (binance)",
+                         "status": _cvd_status,
+                         "updated": f"{_age_min:.1f}m candle age",
+                         "notes":  f"Cumulative Volume Delta, 1m candles stored "
+                                   f"({len(_fc_rows)} loaded) | divergence source for AI"})
+        else:
+            rows.append({"metric": "CVD", "value": "—",
+                         "source": "flow_candles (binance)", "status": "unavailable",
+                         "updated": "—",
+                         "notes": "Collecting… history builds from backfill + live ticks "
+                                  "after a Binance-listed symbol is activated"})
+    except Exception as _fcerr:
+        rows.append({"metric": "CVD", "value": "—",
+                     "source": "flow_candles (binance)", "status": "unavailable",
+                     "updated": "—", "notes": f"flow store error: {str(_fcerr)[:60]}"})
 
     # ═════════════════════════════════════════════════════════════════════════
     # ROW 8 — Long/Short Ratio  (source: interval/REST, TTL 5m)
@@ -23537,6 +23876,14 @@ def api_lm_items_post():
 
     # Phase 10.9B Task 5: For Bias Shift items, mark candle_store as initializing
     # and start background MTF candle fetch immediately after commit.
+    # Phase FlowC: reconstruct CVD/OI candle history for newly-activated
+    # binance-listed symbols (one-shot, deduped, no-op when rows exist).
+    if exchange == "binance":
+        try:
+            _lm_flow_backfill_bg(symbol)
+        except Exception as _fbe:
+            print(f"[LM-FLOW] backfill spawn error {symbol}: {_fbe}")
+
     _src_tab_norm = source_tab.strip().lower()
     if _src_tab_norm in ("bias_shift", "bias"):
         try:
@@ -25544,6 +25891,14 @@ def api_lm_items_delete(item_id):
     except Exception as e:
         _db.session.rollback()
         return jsonify({"error": "db", "message": str(e)}), 500
+
+    # Phase FlowC: if this was the last active setup for the symbol (any user),
+    # drop its stored CVD/OI flow candles — free-tier hygiene. Recoverable via
+    # backfill on re-add.
+    try:
+        _lm_flow_cleanup_if_unreferenced(row.symbol)
+    except Exception as _fce:
+        print(f"[LM-FLOW] cleanup error {row.symbol}: {_fce}")
 
     return jsonify({"ok": True, "deleted": item_id})
 
@@ -30643,6 +30998,85 @@ def api_lm_liq_debug():
             for e in latest_events
         ],
     })
+
+
+@app.route("/api/live-monitor/flow-candles", methods=["GET"])
+@login_required
+def api_lm_flow_candles():
+    """GET stored CVD/OI flow candles for a symbol — Phase FlowC.
+
+    Query: symbol (required), tf (1m|5m|15m|1h, default 1m), limit (<=500).
+    1m rows are stored; higher timeframes are aggregated on read:
+    delta/buy/sell/ticks summed, cvd/price/oi taken at bucket close.
+    Read-only market data — no execution, no orders.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"ok": False, "error": "no_user"}), 401
+
+    symbol = (request.args.get("symbol") or "").upper().strip()
+    if not symbol:
+        return jsonify({"ok": False, "error": "symbol_required"}), 400
+    tf = (request.args.get("tf") or "1m").lower().strip()
+    _TF_FACTOR = {"1m": 1, "5m": 5, "15m": 15, "1h": 60}
+    if tf not in _TF_FACTOR:
+        return jsonify({"ok": False, "error": "invalid_tf",
+                        "allowed": sorted(_TF_FACTOR.keys())}), 400
+    try:
+        limit = min(max(int(request.args.get("limit", 120)), 1), 500)
+    except (TypeError, ValueError):
+        limit = 120
+
+    factor = _TF_FACTOR[tf]
+    from models import LiveMonitorFlowCandle as _FC
+    base = (_FC.query.filter_by(symbol=symbol, timeframe="1m")
+            .order_by(_FC.candle_open_ms.desc())
+            .limit(limit * factor).all())
+    base.reverse()  # ascending time
+
+    def _row_out(t, price, buy, sell, delta, cvd, oi_c, oi_d, ticks):
+        return {"t": int(t), "price_close": price,
+                "buy_vol_usd": round(buy, 2), "sell_vol_usd": round(sell, 2),
+                "delta_usd": round(delta, 2), "cvd_usd": round(cvd, 2),
+                "oi_close": oi_c, "oi_delta": oi_d, "tick_count": int(ticks)}
+
+    candles = []
+    if factor == 1:
+        for r in base:
+            candles.append(_row_out(r.candle_open_ms, r.price_close,
+                                    r.buy_vol_usd, r.sell_vol_usd, r.delta_usd,
+                                    r.cvd_usd, r.oi_close, r.oi_delta, r.tick_count))
+    else:
+        span = factor * 60_000
+        groups: dict = {}
+        order: list = []
+        for r in base:
+            b = int(r.candle_open_ms) // span * span
+            g = groups.get(b)
+            if g is None:
+                groups[b] = g = {"buy": 0.0, "sell": 0.0, "delta": 0.0,
+                                 "ticks": 0, "cvd": 0.0, "price": None, "oi": None}
+                order.append(b)
+            g["buy"]   += float(r.buy_vol_usd or 0)
+            g["sell"]  += float(r.sell_vol_usd or 0)
+            g["delta"] += float(r.delta_usd or 0)
+            g["ticks"] += int(r.tick_count or 0)
+            g["cvd"]    = float(r.cvd_usd or 0)     # last 1m row wins (bucket close)
+            g["price"]  = r.price_close if r.price_close is not None else g["price"]
+            if r.oi_close is not None:
+                g["oi"] = float(r.oi_close)
+        prev_oi = None
+        for b in order:
+            g = groups[b]
+            oi_d = (g["oi"] - prev_oi) if (g["oi"] is not None and prev_oi is not None) else None
+            if g["oi"] is not None:
+                prev_oi = g["oi"]
+            candles.append(_row_out(b, g["price"], g["buy"], g["sell"],
+                                    g["delta"], g["cvd"], g["oi"], oi_d, g["ticks"]))
+        candles = candles[-limit:]
+
+    return jsonify({"ok": True, "symbol": symbol, "timeframe": tf,
+                    "count": len(candles), "candles": candles}), 200
 
 
 @app.route("/api/live-monitor/data-health", methods=["GET"])
