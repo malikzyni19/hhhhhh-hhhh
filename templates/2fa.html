@@ -236,6 +236,25 @@
 
         .resend-note { font-size: 12.5px; font-weight: 400; color: rgba(232,240,255,0.38); }
 
+        .spam-hint {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            background: rgba(30,184,200,0.05);
+            border: 1px solid rgba(30,184,200,0.16);
+            border-radius: 9px;
+            padding: 10px 14px;
+            font-size: 12.5px;
+            color: rgba(232,240,255,0.50);
+            margin-bottom: 16px;
+            line-height: 1.5;
+            text-align: left;
+        }
+
+        .spam-hint i { color: var(--accent); font-size: 13px; flex-shrink: 0; }
+        .spam-hint strong { color: rgba(232,240,255,0.72); font-weight: 600; }
+
         .resend-btn {
             background: none;
             border: none;
@@ -384,10 +403,15 @@
             </button>
         </form>
 
+        <div class="spam-hint">
+            <i class="fa-solid fa-circle-info"></i>
+            Didn't get the email? Check your <strong>spam or junk folder</strong> — it may have been filtered.
+        </div>
+
         <div class="divider">or</div>
 
         <div class="resend-form">
-            <span class="resend-note">Didn't receive it? Check spam or</span>
+            <span class="resend-note">Still nothing?</span>
             <button class="resend-btn" id="resendBtn" type="button">Resend sign-in code</button>
         </div>
     </div>
