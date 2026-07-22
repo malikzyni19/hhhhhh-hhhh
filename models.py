@@ -1340,3 +1340,53 @@ class LiveMonitorFlowCandle(db.Model):
     def __repr__(self) -> str:
         return (f"<FlowCandle {self.symbol} {self.timeframe} "
                 f"open={self.candle_open_ms} delta={self.delta_usd:.0f}>")
+
+
+class LiveMonitorSpotFlowCandle(db.Model):
+    """Per-candle SPOT order-flow series: CVD from spot ticks — Phase SpotFlow-1.
+
+    Dedicated table, separate from LiveMonitorFlowCandle (futures/perp CVD+OI),
+    on purpose — this guarantees zero regression risk to the already-shipped
+    perp flow-candle system (different collector, different symbols cadence,
+    different retention/backfill jobs; a bug here cannot corrupt perp rows).
+
+    Spot markets have no "open interest" concept (outright ownership, not
+    open contracts), so unlike LiveMonitorFlowCandle this table has no
+    oi_close/oi_delta columns.
+
+    One row per symbol + exchange + timeframe + candle_open_time. Base
+    timeframe is 1m. Advisory market data only — no execution, no orders,
+    no strategy mutation. Phase 1 scope: Binance spot only (exchange is a
+    real column from day one so Bybit/OKX/MEXC spot can be added later
+    without a schema change).
+    """
+    __tablename__ = "live_monitor_spot_flow_candles"
+
+    id               = db.Column(db.Integer, primary_key=True)
+    symbol           = db.Column(db.String(30), nullable=False, index=True)
+    exchange         = db.Column(db.String(20), nullable=False, default="binance")
+    timeframe        = db.Column(db.String(10), nullable=False, default="1m")
+    candle_open_ms   = db.Column(db.BigInteger, nullable=False)   # epoch ms of candle open
+
+    price_close      = db.Column(db.Float, nullable=True)
+    buy_vol_usd      = db.Column(db.Float, nullable=False, default=0.0)   # taker-buy quote vol
+    sell_vol_usd     = db.Column(db.Float, nullable=False, default=0.0)   # taker-sell quote vol
+    delta_usd        = db.Column(db.Float, nullable=False, default=0.0)   # buy - sell
+    cvd_usd          = db.Column(db.Float, nullable=False, default=0.0)   # running cumulative delta
+    tick_count       = db.Column(db.Integer, nullable=False, default=0)
+    source           = db.Column(db.String(20), nullable=False, default="live")  # "live" | "backfill"
+
+    created_at       = db.Column(db.DateTime,
+                                 default=lambda: datetime.now(timezone.utc),
+                                 nullable=False)
+
+    __table_args__ = (
+        db.UniqueConstraint("symbol", "exchange", "timeframe", "candle_open_ms",
+                            name="uq_spot_flow_candle_symbol_ex_tf_open"),
+        db.Index("ix_spot_flow_candle_symbol_ex_tf_open",
+                "symbol", "exchange", "timeframe", "candle_open_ms"),
+    )
+
+    def __repr__(self) -> str:
+        return (f"<SpotFlowCandle {self.exchange}:{self.symbol} {self.timeframe} "
+                f"open={self.candle_open_ms} delta={self.delta_usd:.0f}>")

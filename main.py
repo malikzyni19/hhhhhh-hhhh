@@ -12311,6 +12311,419 @@ def _lm_flow_cleanup_if_unreferenced(symbol: str):
     return {"deleted": True, "rows": n}
 
 
+# ── Spot flow candles: Binance spot CVD series — Phase SpotFlow-1 ────────────
+# Mirrors the perp flow-candle collector exactly (same aggTrade tick shape,
+# same bucketing/rollover/backfill/retention pattern), but writes to a
+# DEDICATED table (LiveMonitorSpotFlowCandle) via its own lock/state/thread —
+# this guarantees a bug here cannot corrupt or slow the already-shipped perp
+# system. No open interest (spot has none). Phase 1 = Binance only; the
+# exchange column exists from day one so Bybit/OKX/MEXC can be added later
+# without a schema change.
+
+_lm_spot_flow_lock          = threading.Lock()
+_lm_spot_flow_buckets: dict = {}   # symbol → {open_ms, buy, sell, ticks, last_price}
+_lm_spot_flow_state: dict   = {}   # symbol → {cvd, cvd_seeded}
+_lm_spot_running             = False
+_lm_spot_thread              = None
+_lm_spot_backfill_inflight: set = set()
+_lm_spot_backfill_lock       = threading.Lock()
+
+
+def _lm_spot_flow_tick(symbol: str, side: str, usd_vol: float, price: float, now: float):
+    """Accumulate one spot aggTrade tick into the current 1m bucket."""
+    open_ms = int(now * 1000) // _LM_FLOW_TF_MS * _LM_FLOW_TF_MS
+    done = None
+    with _lm_spot_flow_lock:
+        b = _lm_spot_flow_buckets.get(symbol)
+        if b is None or b["open_ms"] != open_ms:
+            if b is not None and b["open_ms"] < open_ms:
+                done = b
+            _lm_spot_flow_buckets[symbol] = b = {
+                "open_ms": open_ms, "buy": 0.0, "sell": 0.0,
+                "ticks": 0, "last_price": price,
+            }
+        if side == "buy":
+            b["buy"] += usd_vol
+        else:
+            b["sell"] += usd_vol
+        b["ticks"] += 1
+        b["last_price"] = price
+    if done is not None:
+        _lm_spot_flow_persist_candle(symbol, done)
+
+
+def _lm_spot_flow_flush_stale_buckets():
+    """Flush any tracked spot symbol's bucket whose minute has already
+    passed, even with no new ticks — keeps quiet symbols' series continuous.
+    Called periodically from the spot WS loop (no per-symbol heartbeat event
+    exists for spot the way markPriceUpdate does for futures)."""
+    now = time.time()
+    open_ms = int(now * 1000) // _LM_FLOW_TF_MS * _LM_FLOW_TF_MS
+    to_flush = []
+    with _lm_spot_flow_lock:
+        for sym, b in list(_lm_spot_flow_buckets.items()):
+            if b["open_ms"] < open_ms:
+                to_flush.append((sym, b))
+                _lm_spot_flow_buckets[sym] = {
+                    "open_ms": open_ms, "buy": 0.0, "sell": 0.0,
+                    "ticks": 0, "last_price": b.get("last_price"),
+                }
+    for sym, b in to_flush:
+        _lm_spot_flow_persist_candle(sym, b)
+
+
+def _lm_spot_flow_persist_candle(symbol: str, bucket: dict):
+    """Write one completed spot 1m candle. CVD continuity seeded from the
+    last stored row after a restart, matching the perp collector's pattern."""
+    try:
+        with app.app_context():
+            from models import db as _db, LiveMonitorSpotFlowCandle as _SFC
+            with _lm_spot_flow_lock:
+                st = _lm_spot_flow_state.setdefault(symbol, {"cvd": 0.0, "cvd_seeded": False})
+                seeded = st["cvd_seeded"]
+            if not seeded:
+                prev = (_SFC.query.filter_by(symbol=symbol, exchange="binance", timeframe="1m")
+                        .order_by(_SFC.candle_open_ms.desc()).first())
+                with _lm_spot_flow_lock:
+                    st["cvd"] = float(prev.cvd_usd) if prev else 0.0
+                    st["cvd_seeded"] = True
+
+            delta = bucket["buy"] - bucket["sell"]
+            with _lm_spot_flow_lock:
+                st["cvd"] += delta
+                cvd_now = st["cvd"]
+
+            exists = _SFC.query.filter_by(symbol=symbol, exchange="binance", timeframe="1m",
+                                          candle_open_ms=bucket["open_ms"]).first()
+            if exists is None:
+                _db.session.add(_SFC(
+                    symbol=symbol, exchange="binance", timeframe="1m",
+                    candle_open_ms=bucket["open_ms"],
+                    price_close=bucket.get("last_price"),
+                    buy_vol_usd=round(bucket["buy"], 2),
+                    sell_vol_usd=round(bucket["sell"], 2),
+                    delta_usd=round(delta, 2),
+                    cvd_usd=round(cvd_now, 2),
+                    tick_count=bucket["ticks"], source="live",
+                ))
+                _db.session.commit()
+
+            if (bucket["open_ms"] // _LM_FLOW_TF_MS) % 60 == 0:
+                _cut = bucket["open_ms"] - _LM_FLOW_RETENTION_MS
+                _SFC.query.filter(_SFC.symbol == symbol,
+                                  _SFC.candle_open_ms < _cut).delete(synchronize_session=False)
+                _db.session.commit()
+                _total = _SFC.query.count()
+                if _total > _LM_FLOW_GLOBAL_CAP:
+                    _over = _total - _LM_FLOW_GLOBAL_CAP
+                    _old = (_SFC.query.order_by(_SFC.candle_open_ms.asc())
+                            .limit(_over).all())
+                    for _r in _old:
+                        _db.session.delete(_r)
+                    _db.session.commit()
+    except Exception as _e:
+        print(f"[LM-SPOTFLOW] persist error {symbol}: {_e}")
+        try:
+            from models import db as _db2
+            _db2.session.rollback()
+        except Exception:
+            pass
+
+
+def _lm_spot_flow_backfill(symbol: str):
+    """One-shot history reconstruction for a newly-activated symbol, from
+    Binance SPOT klines REST (same taker-buy-volume field shape as futures
+    klines, so the same delta formula applies). No OI (spot has none)."""
+    with app.app_context():
+        from models import db as _db, LiveMonitorSpotFlowCandle as _SFC
+        if _SFC.query.filter_by(symbol=symbol, exchange="binance", timeframe="1m").first() is not None:
+            return {"ok": True, "skipped": "rows_exist"}
+
+        kl_all = []
+        end_ms = None
+        for _page in range(2):
+            params = {"symbol": symbol, "interval": "1m", "limit": 1500}
+            if end_ms:
+                params["endTime"] = end_ms - 1
+            try:
+                r = req.get(f"{BINANCE_SPOT_API}/api/v3/klines",
+                            params=params, timeout=10)
+                if r.status_code != 200:
+                    break
+                page = r.json()
+            except Exception as _ke:
+                print(f"[LM-SPOTFLOW] backfill klines error {symbol}: {_ke}")
+                break
+            if not page:
+                break
+            kl_all = page + kl_all
+            end_ms = int(page[0][0])
+            if len(page) < 1500:
+                break
+        if not kl_all:
+            return {"ok": False, "error": "no_klines"}
+
+        cvd = 0.0
+        added = 0
+        rows_to_insert = []
+        for k in kl_all:
+            try:
+                open_ms   = int(k[0])
+                close_px  = float(k[4])
+                quote_vol = float(k[7])
+                taker_buy = float(k[10])
+            except (ValueError, TypeError, IndexError):
+                continue
+            sell_usd = max(quote_vol - taker_buy, 0.0)
+            delta    = taker_buy - sell_usd
+            cvd     += delta
+            rows_to_insert.append({
+                "symbol": symbol, "exchange": "binance", "timeframe": "1m",
+                "candle_open_ms": open_ms, "price_close": close_px,
+                "buy_vol_usd": round(taker_buy, 2), "sell_vol_usd": round(sell_usd, 2),
+                "delta_usd": round(delta, 2), "cvd_usd": round(cvd, 2),
+                "tick_count": int(k[8]) if len(k) > 8 else 0,
+                "source": "backfill",
+            })
+            added += 1
+        if not rows_to_insert:
+            return {"ok": False, "error": "no_valid_rows"}
+        try:
+            # Same upsert-with-skip-on-conflict pattern as the perp backfill
+            # fix: a live rollover can land mid-fetch; skip only that row
+            # instead of losing the whole historical batch.
+            _dialect = _db.engine.dialect.name
+            if _dialect == "postgresql":
+                from sqlalchemy.dialects.postgresql import insert as _upsert
+            elif _dialect == "sqlite":
+                from sqlalchemy.dialects.sqlite import insert as _upsert
+            else:
+                _upsert = None
+            if _upsert is not None:
+                _stmt = _upsert(_SFC.__table__).values(rows_to_insert)
+                _stmt = _stmt.on_conflict_do_nothing(
+                    index_elements=["symbol", "exchange", "timeframe", "candle_open_ms"])
+                _db.session.execute(_stmt)
+            else:
+                _db.session.execute(_SFC.__table__.insert(), rows_to_insert)
+            _db.session.commit()
+        except Exception as _ce:
+            _db.session.rollback()
+            print(f"[LM-SPOTFLOW] backfill commit error {symbol}: {_ce}")
+            return {"ok": False, "error": "db"}
+
+        with _lm_spot_flow_lock:
+            st = _lm_spot_flow_state.setdefault(symbol, {"cvd": 0.0, "cvd_seeded": False})
+            st["cvd"] = cvd
+            st["cvd_seeded"] = True
+        print(f"[LM-SPOTFLOW] backfill {symbol}: {added} candles")
+        return {"ok": True, "added": added}
+
+
+def _lm_spot_flow_backfill_bg(symbol: str):
+    """Spawn one-shot spot backfill in a daemon thread (deduped per symbol)."""
+    with _lm_spot_backfill_lock:
+        if symbol in _lm_spot_backfill_inflight:
+            return
+        _lm_spot_backfill_inflight.add(symbol)
+
+    def _run():
+        try:
+            _lm_spot_flow_backfill(symbol)
+        finally:
+            with _lm_spot_backfill_lock:
+                _lm_spot_backfill_inflight.discard(symbol)
+
+    threading.Thread(target=_run, daemon=True, name=f"lm-spotflow-bf-{symbol}").start()
+
+
+def _lm_spot_flow_cleanup_if_unreferenced(symbol: str):
+    """Same free-tier hygiene rule as the perp cleanup: when the last active
+    setup (any user) for a symbol is removed, drop its spot flow candles too."""
+    with app.app_context():
+        from models import db as _db, LiveMonitorItem as _LMI, LiveMonitorSpotFlowCandle as _SFC
+        still = _LMI.query.filter_by(symbol=symbol, is_active=True).first()
+        if still is not None:
+            return {"deleted": False, "reason": "still_referenced"}
+        n = _SFC.query.filter_by(symbol=symbol).delete(synchronize_session=False)
+        _db.session.commit()
+        with _lm_spot_flow_lock:
+            _lm_spot_flow_buckets.pop(symbol, None)
+            _lm_spot_flow_state.pop(symbol, None)
+        print(f"[LM-SPOTFLOW] cleanup {symbol}: removed {n} spot flow candles (no active setups)")
+    return {"deleted": True, "rows": n}
+
+
+def _lm_spot_background_loop():
+    """Subscribe to Binance SPOT aggTrade combined stream for active LM
+    symbols. Mirrors _lm_delta_background_loop exactly, except host
+    (stream.binance.com, not fstream) and it feeds the spot collector
+    instead of the futures delta cache."""
+    global _lm_spot_running
+    print("[LM-SPOTFLOW] Background thread started")
+    current_symbols: list = []
+    sock = None
+
+    while _lm_spot_running:
+        new_symbols = _lm_ws_active_binance_symbols()
+
+        if new_symbols != current_symbols or sock is None:
+            if sock:
+                try: sock.close()
+                except Exception: pass
+                sock = None
+            current_symbols = new_symbols
+            if not current_symbols:
+                time.sleep(10)
+                continue
+            streams = "/".join(s.lower() + "@aggTrade" for s in current_symbols)
+            path    = f"/stream?streams={streams}"
+            try:
+                print(f"[LM-SPOTFLOW] binance spot subscribing {current_symbols}")
+                sock = _raw_ws_connect("stream.binance.com", path)
+                sock.settimeout(30)
+                print("[LM-SPOTFLOW] Connected")
+            except Exception as e:
+                print(f"[LM-SPOTFLOW] Connect error: {e}")
+                sock = None
+                time.sleep(5)
+                continue
+
+        try:
+            raw = _ws_recv_frame(sock)
+        except socket.timeout:
+            _lm_spot_flow_flush_stale_buckets()
+            continue
+        except Exception as e:
+            print(f"[LM-SPOTFLOW] Recv error ({type(e).__name__}): {e}")
+            try: sock.close()
+            except Exception: pass
+            sock = None
+            time.sleep(5)
+            continue
+
+        if raw is None:
+            print("[LM-SPOTFLOW] Connection dropped, reconnecting in 5s")
+            try: sock.close()
+            except Exception: pass
+            sock = None
+            time.sleep(5)
+            continue
+        if not raw:
+            continue
+
+        try:
+            msg = json.loads(raw.decode("utf-8"))
+        except Exception:
+            continue
+
+        data = msg.get("data") or msg
+        if data.get("e") == "aggTrade":
+            sym = (data.get("s") or "").upper()
+            p   = data.get("p")
+            q   = data.get("q")
+            m   = data.get("m", False)
+            if sym and p and q:
+                try:
+                    side = "sell" if bool(m) else "buy"
+                    _lm_spot_flow_tick(sym, side, float(q) * float(p), float(p), time.time())
+                except Exception:
+                    pass
+        _lm_spot_flow_flush_stale_buckets()
+
+    print("[LM-SPOTFLOW] Background thread stopped")
+    if sock:
+        try: sock.close()
+        except Exception: pass
+
+
+def _ensure_lm_spot_thread():
+    global _lm_spot_thread, _lm_spot_running
+    if _lm_spot_thread and _lm_spot_thread.is_alive():
+        return
+    _lm_spot_running = True
+    _lm_spot_thread  = threading.Thread(
+        target=_lm_spot_background_loop, daemon=True, name="lm-spotflow"
+    )
+    _lm_spot_thread.start()
+
+
+def _lm_get_spot_flow_candles_series(symbol: str, tf: str = "1m", limit: int = 120) -> list:
+    """Fetch stored Binance spot 1m flow candles and aggregate on read to `tf`.
+    Mirrors _lm_get_flow_candles_series (perp) exactly, minus the OI fields
+    (spot has none) — same tf aggregation semantics (delta/buy/sell/ticks
+    summed per bucket, cvd/price taken at bucket close)."""
+    factor = _LM_FLOW_TF_FACTOR[tf]
+    from models import LiveMonitorSpotFlowCandle as _SFC
+    base = (_SFC.query.filter_by(symbol=symbol, exchange="binance", timeframe="1m")
+            .order_by(_SFC.candle_open_ms.desc())
+            .limit(limit * factor).all())
+    base.reverse()  # ascending time
+
+    def _row_out(t, price, buy, sell, delta, cvd, ticks):
+        return {"t": int(t), "price_close": price,
+                "buy_vol_usd": round(buy, 2), "sell_vol_usd": round(sell, 2),
+                "delta_usd": round(delta, 2), "cvd_usd": round(cvd, 2),
+                "tick_count": int(ticks)}
+
+    candles = []
+    if factor == 1:
+        for r in base:
+            candles.append(_row_out(r.candle_open_ms, r.price_close,
+                                    r.buy_vol_usd, r.sell_vol_usd, r.delta_usd,
+                                    r.cvd_usd, r.tick_count))
+    else:
+        span = factor * 60_000
+        groups: dict = {}
+        order: list = []
+        for r in base:
+            b = int(r.candle_open_ms) // span * span
+            g = groups.get(b)
+            if g is None:
+                groups[b] = g = {"buy": 0.0, "sell": 0.0, "delta": 0.0,
+                                 "ticks": 0, "cvd": 0.0, "price": None}
+                order.append(b)
+            g["buy"]   += float(r.buy_vol_usd or 0)
+            g["sell"]  += float(r.sell_vol_usd or 0)
+            g["delta"] += float(r.delta_usd or 0)
+            g["ticks"] += int(r.tick_count or 0)
+            g["cvd"]    = float(r.cvd_usd or 0)     # last 1m row wins (bucket close)
+            g["price"]  = r.price_close if r.price_close is not None else g["price"]
+        for b in order:
+            g = groups[b]
+            candles.append(_row_out(b, g["price"], g["buy"], g["sell"],
+                                    g["delta"], g["cvd"], g["ticks"]))
+        candles = candles[-limit:]
+    return candles
+
+
+def _lm_cvd_trend_label(candles: list, metric_key: str = "cvd_usd", lookback: int = 6) -> str:
+    """Classify a metric series' recent trend as rising/falling/flat.
+
+    Compares the most recent value against the value `lookback` candles back.
+    "flat" when the change is small relative to the series' own recent scale
+    (a 2% floor against the larger magnitude) — avoids false rising/falling
+    labels from noise on a near-zero-magnitude CVD. Shared by both the spot
+    and futures CVD trend rows so "agree"/"diverge" cross-checks compare
+    labels computed the exact same way.
+    """
+    if not candles or len(candles) < 2:
+        return "flat"
+    n = len(candles)
+    idx_back = max(0, n - 1 - lookback)
+    v_now  = candles[-1].get(metric_key)
+    v_back = candles[idx_back].get(metric_key)
+    if v_now is None or v_back is None:
+        return "flat"
+    scale = max(abs(v_now), abs(v_back), 1.0)
+    pct = (v_now - v_back) / scale
+    if pct > 0.02:
+        return "rising"
+    if pct < -0.02:
+        return "falling"
+    return "flat"
+
+
 def _lm_delta_background_loop():
     """Subscribe to aggTrade combined stream for active LM symbols."""
     global _lm_delta_running
@@ -12402,6 +12815,7 @@ def _ensure_lm_delta_thread():
 if os.environ.get("ZYNI_LM_WS_ENABLED") == "1":
     _ensure_lm_liq_thread()
     _ensure_lm_delta_thread()
+    _ensure_lm_spot_thread()
 
 
 # ── Phase 10.8: Multi-Exchange Live WS Engine ────────────────────────────────
@@ -15028,6 +15442,72 @@ def _lm_build_data_health_context(symbol: str, exchange: str,
     else:
         critical_status = "fresh"
 
+    # ═════════════════════════════════════════════════════════════════════════
+    # SPOT FLOW — Perp/Spot toggle data (Phase SpotFlow-1, Binance only)
+    # Purely additive: does not touch rows/critical_status/ai_data_gate above,
+    # which remain the existing perp contract unchanged. Rendered by a
+    # SEPARATE frontend function (_lmRenderDataHealthSpot) into the same DH
+    # table container when the user clicks "Spot" — never merged into `rows`.
+    # ═════════════════════════════════════════════════════════════════════════
+    _ALL_SPOT_EXCHANGES = ["binance", "bybit", "okx", "mexc"]
+    spot_flow_ctx = None
+    try:
+        _spot_candles = _lm_get_spot_flow_candles_series(symbol, "5m", 24)
+        if len(_spot_candles) >= 3:
+            _sp_now   = _spot_candles[-1]
+            _sp_vol1h = sum((c.get("buy_vol_usd") or 0) + (c.get("sell_vol_usd") or 0)
+                            for c in _spot_candles[-12:])
+            _sp_trend = _lm_cvd_trend_label(_spot_candles, "cvd_usd", lookback=6)
+
+            # Futures cross-check reuses the already-shipped perp flow-candle series —
+            # same trend classifier, so "agree"/"diverge" compares like-for-like.
+            _fut_candles = _lm_get_flow_candles_series(symbol, "5m", 24)
+            _fut_trend = (_lm_cvd_trend_label(_fut_candles, "cvd_usd", lookback=6)
+                         if len(_fut_candles) >= 3 else None)
+            if _fut_trend and _sp_trend != "flat" and _fut_trend != "flat":
+                _div_status = "agree" if _sp_trend == _fut_trend else "diverge"
+            else:
+                _div_status = "insufficient_data"
+
+            _sp_divs = (_lm_detect_metric_divergence(_spot_candles, "cvd_usd")
+                       if len(_spot_candles) >= 10 else [])
+
+            spot_flow_ctx = {
+                "ok": True,
+                "per_exchange": {
+                    "binance": {
+                        "available":     True,
+                        "price":         _sp_now.get("price_close"),
+                        "volume_1h_usd": round(_sp_vol1h, 2),
+                        "cvd_1h_usd":    _sp_now.get("cvd_usd"),
+                        "cvd_trend":     _sp_trend,
+                        "candle_count":  len(_spot_candles),
+                    },
+                },
+                "combined": {
+                    "volume_1h_usd": round(_sp_vol1h, 2),
+                    "cvd_1h_usd":    _sp_now.get("cvd_usd"),
+                    "cvd_trend":     _sp_trend,
+                },
+                "cvd_divergences": [{
+                    "kind": d["kind"], "swing_type": d["swing_type"], "strength": d["strength"],
+                } for d in _sp_divs[:3]],
+                "cross_check": {
+                    "spot_cvd_trend":    _sp_trend,
+                    "futures_cvd_trend": _fut_trend,
+                    "divergence_status": _div_status,
+                },
+                "sources_used":    ["binance"],
+                "sources_skipped": [ex for ex in _ALL_SPOT_EXCHANGES if ex != "binance"],
+            }
+        else:
+            spot_flow_ctx = {"ok": False, "reason": "insufficient_history",
+                             "candle_count": len(_spot_candles),
+                             "sources_used": [], "sources_skipped": _ALL_SPOT_EXCHANGES}
+    except Exception as _spferr:
+        spot_flow_ctx = {"ok": False, "reason": f"error: {str(_spferr)[:100]}",
+                         "sources_used": [], "sources_skipped": _ALL_SPOT_EXCHANGES}
+
     return {
         "symbol":          symbol,
         "exchange":        exchange,
@@ -15041,6 +15521,7 @@ def _lm_build_data_health_context(symbol: str, exchange: str,
             "fresh_required": ["Live Price", "Mark Price"],
             "warnings":       gate_warnings,
         },
+        "spot_flow":       spot_flow_ctx,
     }
 
 
@@ -24000,6 +24481,12 @@ def api_lm_items_post():
             _lm_flow_backfill_bg(symbol)
         except Exception as _fbe:
             print(f"[LM-FLOW] backfill spawn error {symbol}: {_fbe}")
+        # Phase SpotFlow-1: reconstruct Binance SPOT CVD history too (dedicated
+        # table/collector — independent of the perp backfill above).
+        try:
+            _lm_spot_flow_backfill_bg(symbol)
+        except Exception as _sfbe:
+            print(f"[LM-SPOTFLOW] backfill spawn error {symbol}: {_sfbe}")
 
     _src_tab_norm = source_tab.strip().lower()
     if _src_tab_norm in ("bias_shift", "bias"):
@@ -26016,6 +26503,10 @@ def api_lm_items_delete(item_id):
         _lm_flow_cleanup_if_unreferenced(row.symbol)
     except Exception as _fce:
         print(f"[LM-FLOW] cleanup error {row.symbol}: {_fce}")
+    try:
+        _lm_spot_flow_cleanup_if_unreferenced(row.symbol)
+    except Exception as _sfce:
+        print(f"[LM-SPOTFLOW] cleanup error {row.symbol}: {_sfce}")
 
     return jsonify({"ok": True, "deleted": item_id})
 
@@ -31439,6 +31930,7 @@ def api_lm_data_health():
         _ensure_lm_ws_thread()
         _ensure_lm_liq_thread()
         _ensure_lm_delta_thread()
+        _ensure_lm_spot_thread()
         _ob_wait = 3.0 if exchange == "binance" else 0.5
         ensure_ob_stream(symbol, wait_sec=_ob_wait)
         _ws_has  = f"binance:{symbol}" in _lm_ws_cache
