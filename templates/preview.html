@@ -5379,6 +5379,15 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   var _lmDhObRaw=null;              // latest order_book_wall_map from data-health API
   var _lmDhLiqRaw=null;             // latest sweep_rekt_map from data-health API
   var _lmDhCtl={};                  // per-panel control selections (Window/Min Wall/Lookback/…) preserved across re-renders
+  // Perp/Spot Data Health toggle (Phase SpotFlow-1) — per-item, resets to "perp"
+  // on every item selection. Purely a display switch: it swaps which data
+  // renders into the SAME #lmDhRows container. It does NOT touch price/mark
+  // price routing, which always comes from parent_setup_exchange regardless
+  // of this toggle (non-negotiable — tested explicitly).
+  var _lmDhMode="perp";
+  var _lmDhModeItemId=null;                     // item.id the mode was last reset for
+  var _lmLastDhRows=null, _lmLastDhMeta=null;   // cached perp rows — re-render on toggle without a re-fetch
+  var _lmLastSpotFlow=null;                     // cached spot_flow — arrives in the same data-health response
   var _lmObDaDefaults = {
     "5m":  {distance_pct:0.50, approach_pct:0.15},
     "15m": {distance_pct:0.80, approach_pct:0.25},
@@ -7538,6 +7547,14 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         '<div style="font-size:12px">Click a card on the left to view details</div></div>';
       return;
     }
+    // Perp/Spot DH toggle: reset to "perp" only when the SELECTED ITEM changes,
+    // not on every re-render of the same item (e.g. after a manual refresh) —
+    // per spec, the toggle should stay on Spot if the user is actively viewing
+    // it and the item hasn't changed.
+    if(_lmDhModeItemId!==item.id){
+      _lmDhMode="perp"; _lmLastDhRows=null; _lmLastDhMeta=null; _lmLastSpotFlow=null;
+      _lmDhModeItemId=item.id;
+    }
     // Manage auto-detect timer: start/restart when item changes, keep running if same item
     if(_lmAutoDetect){
       if(_lmAutoDetectItemId!==item.id){ _lmStartAutoDetect(item.id); }
@@ -7869,6 +7886,10 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         '<div style="display:flex!important;align-items:center!important;min-height:34px!important;padding:9px 13px!important;border-bottom:1px solid rgba(34,211,238,.35)!important;background:rgba(34,211,238,.08)!important;gap:7px">'+
           '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>'+
           '<span style="font-size:11px!important;font-weight:700!important;letter-spacing:1px!important;color:#22d3ee!important;flex:1">DATA HEALTH</span>'+
+          '<div class="seg" id="lmDhModeToggle" style="padding:1px;margin-left:4px;flex-shrink:0" title="Perp = existing Data Health rows. Spot = Binance spot CVD context. Does not affect Live/Mark Price.">'+
+            '<button class="on" type="button" data-mode="perp" style="padding:2px 8px;font-size:9px">Perp</button>'+
+            '<button type="button" data-mode="spot" style="padding:2px 8px;font-size:9px">Spot</button>'+
+          '</div>'+
           '<span id="lmDhItemLabel" style="font-size:9px;color:var(--accent);margin-left:4px">'+esc(item.symbol)+(isBiasShift?" · Bias Shift Watch":"")+'</span>'+
           '<span id="lmDhMountBadge" style="font-size:9px;color:var(--text-3);margin-left:4px">'+esc(item.symbol)+' · '+esc(_lmGetDataSrc()||"binance")+'</span>'+
           '<span id="lmDhSrcLabel" style="font-size:9px;color:var(--text-3);margin-left:6px"></span>'+
@@ -7902,6 +7923,37 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     if(!box.querySelector("#lmDhWrap")){
       console.error("[LM-DH-MOUNT] FAILED — #lmDhWrap not found in box after innerHTML set");
     }
+    // Perp/Spot toggle click handler. Freshly bound each render since
+    // box.innerHTML just recreated the toggle element (old listener, if any,
+    // was destroyed with the old DOM node — no duplicate-binding risk).
+    // Swaps ONLY what renders into #lmDhRows; never touches price/mark price.
+    (function(){
+      var _dhToggle=box.querySelector("#lmDhModeToggle");
+      if(!_dhToggle) return;
+      _dhToggle.addEventListener("click",function(e){
+        var btn=e.target.closest("button[data-mode]");
+        if(!btn||_dhToggle.contains(btn)===false) return;
+        var mode=btn.getAttribute("data-mode");
+        if(mode!=="perp"&&mode!=="spot") return;
+        _lmDhMode=mode;
+        [].forEach.call(_dhToggle.querySelectorAll("button"),function(b){
+          b.classList.toggle("on",b===btn);
+        });
+        if(mode==="spot"){
+          if(_lmLastSpotFlow!==null){
+            _lmRenderDataHealthSpot(_lmLastSpotFlow);
+          } else {
+            var _tbLoad=box.querySelector("#lmDhRows");
+            if(_tbLoad) _tbLoad.innerHTML="<tr><td colspan='6' style='padding:14px;color:#71869b;font-size:10px'>Loading spot data…</td></tr>";
+          }
+        } else if(_lmLastDhRows!==null){
+          _lmRenderDataHealth(_lmLastDhRows,_lmLastDhMeta,
+            _lmSelItem&&_lmSelItem.symbol,_lmSelItem&&_lmSelItem.id,_lmActivePollKey);
+        }
+        // else (perp, no cached rows yet): initial "Loading Data Health…"
+        // placeholder from the template is already showing — nothing to do.
+      });
+    })();
     // Flush queued DH rows (no pollKey guard — pending data pre-dates this render cycle)
     if(_lmPendingDhData){ var _pd=_lmPendingDhData; _lmPendingDhData=null; _lmRenderDataHealth(_pd.rows,_pd.meta,null,null,null); }
     // Sync dropdown FIRST so _lmGetDataSrc() returns the correct source for this item
@@ -10959,7 +11011,17 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         _lmDhLiqRaw=d.sweep_rekt_map||null;
         console.log("[LM-DH-STRUCT] ob=",_lmDhObRaw&&_lmDhObRaw.ok,"bids=",_lmDhObRaw&&(_lmDhObRaw.bids||[]).length,"asks=",_lmDhObRaw&&(_lmDhObRaw.asks||[]).length,"liq=",_lmDhLiqRaw&&_lmDhLiqRaw.ok);
         var meta={sources_used:d.sources_used,sources_skipped:d.sources_skipped};
-        _lmRenderDataHealth(d.rows,meta,symbol,itemId,pollKey);
+        // Perp/Spot toggle: cache both so switching modes re-renders from
+        // already-fetched data without a new request (per spec). Live/mark
+        // price update below runs UNCONDITIONALLY, regardless of toggle mode —
+        // price routing is never affected by this toggle.
+        _lmLastDhRows=d.rows; _lmLastDhMeta=meta;
+        _lmLastSpotFlow=(d.spot_flow!==undefined)?d.spot_flow:_lmLastSpotFlow;
+        if(_lmDhMode==="spot"){
+          _lmRenderDataHealthSpot(_lmLastSpotFlow);
+        } else {
+          _lmRenderDataHealth(d.rows,meta,symbol,itemId,pollKey);
+        }
         _lmUpdateLivePriceFromRows(d.rows,d.price_source_exchange||exchange,symbol,itemId,pollKey);
         var _srcLbl=document.getElementById("lmDhSrcLabel");
         if(_srcLbl){
@@ -11164,6 +11226,117 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     if(_badge) _badge.textContent=rows.length+" rows \xb7 "+(_lmGetDataSrc()||"?");
     var _statusLine=document.getElementById("lmDhStatusLine");
     if(_statusLine) _statusLine.textContent="Data Health active \xb7 "+rows.length+" rows \xb7 aggregated";
+  }
+  // Perp/Spot toggle: Spot-mode renderer (Phase SpotFlow-1, Binance only).
+  // Renders into the SAME #lmDhRows container _lmRenderDataHealth uses — never
+  // merged into its `rows` array, never calls it, never modifies it. Container
+  // lookup is intentionally duplicated (not refactored into a shared helper)
+  // to guarantee zero behavior change to the already-shipped perp path.
+  function _lmRenderDataHealthSpot(spotFlow){
+    console.log("[LM-DH-SPOT] render", spotFlow&&spotFlow.ok);
+    var _lmRightBox=document.getElementById("lmRight");
+    var _rItemId=_lmSelItem&&_lmSelItem.id;
+    var wrap=null;
+    if(_lmRightBox){
+      if(_rItemId) wrap=_lmRightBox.querySelector('#lmDhRows[data-lm-dh-rows-for="'+_rItemId+'"]');
+      if(!wrap) wrap=_lmRightBox.querySelector("#lmDhRows")||_lmRightBox.querySelector("#lmDhBody");
+    }
+    if(!wrap) wrap=document.getElementById("lmDhRows")||document.getElementById("lmDhBody");
+    if(!wrap){ console.error("[LM-DH-SPOT] container not found"); return; }
+    var tbody=(wrap.tagName==="TBODY")?wrap:wrap.querySelector("tbody");
+    if(!tbody) return;
+
+    function fmtU(v){
+      if(v==null) return "—";
+      v=Number(v);
+      if(!isFinite(v)) return "—";
+      var sign=v<0?"-":""; v=Math.abs(v);
+      if(v>=1e9) return sign+"$"+(v/1e9).toFixed(2)+"B";
+      if(v>=1e6) return sign+"$"+(v/1e6).toFixed(2)+"M";
+      if(v>=1e3) return sign+"$"+(v/1e3).toFixed(1)+"K";
+      return sign+"$"+v.toFixed(2);
+    }
+    function trendColor(tr){ return tr==="rising"?"lm-dh-green":tr==="falling"?"lm-dh-red":"lm-dh-yellow"; }
+    function badgeClass(ok){ return ok?"lm-dh-b-green":"lm-dh-b-yellow"; }
+    function sec(label){ return "<tr class='lm-dh-section'><td colspan='6'>"+label+"</td></tr>"; }
+    function row(metric,value,source,statusOk,updated,notes){
+      return "<tr><td class='lm-dh-metric'>"+esc(metric)+"</td>"+
+        "<td class='lm-dh-value'>"+value+"</td>"+
+        "<td class='lm-dh-source'>"+esc(source||"—")+"</td>"+
+        "<td><span class='lm-dh-badge "+badgeClass(statusOk)+"'>"+(statusOk?"fresh":"unavailable")+"</span></td>"+
+        "<td class='lm-dh-na'>"+esc(updated||"—")+"</td>"+
+        "<td class='lm-dh-notes'>"+esc(notes||"—")+"</td></tr>";
+    }
+
+    if(!spotFlow){
+      tbody.innerHTML="<tr><td colspan='6' style='padding:14px;color:#71869b;font-size:10px'>Loading spot data…</td></tr>";
+      return;
+    }
+    if(!spotFlow.ok){
+      var _reason=spotFlow.reason==="insufficient_history"
+        ?"Collecting… spot CVD history builds from backfill + live ticks after activation."
+        :(spotFlow.reason||"Spot data unavailable.");
+      tbody.innerHTML="<tr><td colspan='6' style='padding:18px;color:#9eb3c7;font-size:11px;text-align:center'>"+
+        "<div style='color:#f59e0b;font-weight:700;margin-bottom:6px'>Spot Flow — Not Yet Available</div>"+
+        esc(_reason)+"</td></tr>";
+      return;
+    }
+
+    var bx=(spotFlow.per_exchange||{}).binance||{};
+    var cc=spotFlow.combined||{};
+    var cross=spotFlow.cross_check||{};
+    var t="";
+
+    t+=sec("Spot Price &amp; Volume (Binance)");
+    t+=row("Binance Spot Price", bx.price!=null?String(bx.price):"—", "binance_spot_ws",
+          !!bx.available, bx.candle_count+" candles loaded",
+          "Context only — Live/Mark Price above is always the parent exchange, unaffected by this toggle.");
+    t+=row("Binance Spot Volume (1h)", fmtU(bx.volume_1h_usd), "binance_spot_ws",
+          !!bx.available, "—", "Taker buy+sell volume, last 12x5m candles.");
+
+    t+=sec("Spot CVD — order flow / buy-sell pressure");
+    t+=row("Binance Spot CVD (1h)", fmtU(bx.cvd_1h_usd),
+          "binance_spot_ws", !!bx.available, "—",
+          "Cumulative Volume Delta from tick-by-tick spot trades.");
+    var trendVal="<span class='"+trendColor(bx.cvd_trend)+"'>"+esc((bx.cvd_trend||"—").toUpperCase())+"</span>";
+    t+=row("Spot CVD Trend", trendVal, "binance_spot_ws", !!bx.available, "—",
+          "Primary buy/sell pressure read for spot — real accumulation/distribution signal.");
+    t+=row("Combined Spot CVD (1h)", fmtU(cc.cvd_1h_usd), "aggregated (Phase 1: Binance only)",
+          !!spotFlow.ok, "—", "Bybit/OKX/MEXC spot not yet implemented — see Sources Skipped below.");
+
+    if((spotFlow.cvd_divergences||[]).length){
+      t+=sec("Spot CVD Divergence");
+      var d0=spotFlow.cvd_divergences[0];
+      var _kindLbl={"regular_bearish":"Regular Bearish (reversal-down)","hidden_bearish":"Hidden Bearish (continuation)",
+                   "regular_bullish":"Regular Bullish (reversal-up)","hidden_bullish":"Hidden Bullish (continuation)"};
+      t+=row("Spot CVD Divergence", esc(_kindLbl[d0.kind]||d0.kind), "flow_candles (spot, binance)",
+            true, "strength "+ (d0.strength!=null?d0.strength.toFixed(2):"—"),
+            "Regular = reversal signal, hidden = trend continuation.");
+    }
+
+    t+=sec("Spot vs Futures Cross-Check");
+    var divStatus=cross.divergence_status||"insufficient_data";
+    var divLbl=divStatus==="agree"?"AGREE":(divStatus==="diverge"?"DIVERGE ⚠":"Insufficient Data");
+    var divColor=divStatus==="diverge"?"lm-dh-red":(divStatus==="agree"?"lm-dh-green":"lm-dh-yellow");
+    t+=row("Spot CVD Trend", "<span class='"+trendColor(cross.spot_cvd_trend)+"'>"+esc((cross.spot_cvd_trend||"—").toUpperCase())+"</span>",
+          "binance_spot_ws", true, "—", "");
+    t+=row("Futures CVD Trend", "<span class='"+trendColor(cross.futures_cvd_trend)+"'>"+esc((cross.futures_cvd_trend||"—").toUpperCase())+"</span>",
+          "flow_candles (futures, binance)", !!cross.futures_cvd_trend, "—", "Pulled from the existing perp CVD series.");
+    t+=row("Divergence Status", "<span class='"+divColor+"'>"+divLbl+"</span>", "derived", true, "—",
+          "Spot and futures order flow disagreeing on direction is the single most valuable signal here.");
+
+    t+=sec("Data Health / Freshness");
+    var used=(spotFlow.sources_used||[]).map(function(s){return s.charAt(0).toUpperCase()+s.slice(1);}).join(", ")||"—";
+    var skipped=(spotFlow.sources_skipped||[]).map(function(s){return s.charAt(0).toUpperCase()+s.slice(1);}).join(", ")||"—";
+    t+=row("Sources Used", esc(used), "spot_flow", true, "—", "Exchanges with live spot data collected.");
+    t+=row("Sources Skipped", esc(skipped), "spot_flow", false, "—",
+          "Not yet implemented (Phase 1 = Binance only) — not the same as 'stale'.");
+
+    tbody.innerHTML=t;
+    var _badgeS=document.getElementById("lmDhMountBadge");
+    if(_badgeS) _badgeS.textContent="Spot \xb7 "+used;
+    var _statusLineS=document.getElementById("lmDhStatusLine");
+    if(_statusLineS) _statusLineS.textContent="Data Health (Spot mode) active \xb7 Binance only, Phase 1";
   }
   function _lmDhToggle(panelId,iconId){
     var panel=document.getElementById(panelId);
