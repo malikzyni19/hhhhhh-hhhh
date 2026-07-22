@@ -1722,6 +1722,10 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         <svg class="ico" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M6 8.5v7M8.3 6.8 15.7 11M15.7 13 8.3 17.2"/></svg>
         <div><div class="nt">Structure / Bias</div><div class="ns">Market structure scan</div></div>
       </div>
+      <div class="nav-item" data-mode="selected" role="button" tabindex="0">
+        <svg class="ico" viewBox="0 0 24 24"><path d="M4 6h11M4 12h7M4 18h5"/><circle cx="17" cy="15" r="3.2"/><path d="M19.3 17.3 22 20"/></svg>
+        <div><div class="nt">Selected Pairs</div><div class="ns">Build a custom scan universe</div></div>
+      </div>
 
       <div class="side-div"></div>
       <div class="nav-item nav-utility" id="sideSettings" role="button" tabindex="0" title="Open settings drawer">
@@ -2335,7 +2339,35 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     ".conf.lo{color:var(--yellow)}.conf.mid{color:var(--accent)}.conf.hi{color:var(--green-2)}"+
     ".htf.neutral,.dir.neutral{color:var(--text-3)}"+
     ".row-msg{padding:46px 20px;text-align:center;color:var(--text-3);font-size:13px}"+
-    ".row-msg.err{color:var(--red-2)}";
+    ".row-msg.err{color:var(--red-2)}"+
+    /* ── ⚡ Selected Pairs universe builder ── */
+    ".sp-univ{padding:4px 2px 24px}"+
+    ".sp-uhead{margin-bottom:14px}"+
+    ".sp-utitle{font-size:15px;font-weight:700;color:var(--text)}"+
+    ".sp-usub{font-size:12px;color:var(--text-3);margin-top:3px}"+
+    ".sp-ctrls{border:1px solid var(--border);border-radius:12px;padding:14px;background:var(--bg-card-2);margin-bottom:16px}"+
+    ".sp-dirs{display:inline-flex;gap:6px;margin-bottom:12px}"+
+    ".sp-dir{background:var(--bg-input,rgba(255,255,255,.03));color:var(--text-2);border:1px solid var(--border);border-radius:8px;padding:7px 14px;cursor:pointer;font-size:12px;font-weight:600;transition:all .15s}"+
+    ".sp-dir:hover{color:var(--text)}"+
+    ".sp-dir.on{background:rgba(34,211,238,.12);color:var(--accent);border-color:rgba(34,211,238,.5)}"+
+    ".sp-flds{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:12px}"+
+    ".sp-uf{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text-3);font-weight:600}"+
+    ".sp-uf input{width:130px;background:var(--bg-input,rgba(255,255,255,.03));color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;outline:none}"+
+    ".sp-uf input:focus{border-color:rgba(34,211,238,.5)}"+
+    ".sp-chk{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2);cursor:pointer;margin-bottom:14px}"+
+    ".sp-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}"+
+    ".sp-wl{background:var(--bg-input,rgba(255,255,255,.03));color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;outline:none;min-width:150px}"+
+    ".sp-note{margin-top:12px;font-size:12px;color:var(--accent);background:rgba(34,211,238,.06);border:1px solid var(--border);border-radius:8px;padding:8px 11px}"+
+    ".sp-listwrap{border:1px solid var(--border);border-radius:12px;overflow:hidden}"+
+    ".sp-lhead{padding:10px 14px;font-size:12px;font-weight:600;color:var(--text-2);border-bottom:1px solid var(--border);background:var(--bg-card-2)}"+
+    ".sp-list{width:100%;border-collapse:collapse;font-size:13px}"+
+    ".sp-list th{text-align:left;padding:9px 14px;font-size:10px;letter-spacing:.5px;color:var(--text-3);font-weight:600;border-bottom:1px solid var(--border)}"+
+    ".sp-list td{padding:8px 14px;border-bottom:1px solid var(--border);color:var(--text-2)}"+
+    ".sp-list tr:last-child td{border-bottom:none}"+
+    ".sp-list .sp-sym{font-weight:600;color:var(--text)}"+
+    ".sp-up{color:var(--green-2)}.sp-dn{color:var(--red-2)}"+
+    ".sp-rm{background:none;border:none;color:var(--text-3);cursor:pointer;font-size:13px;padding:2px 6px;border-radius:5px}"+
+    ".sp-rm:hover{color:var(--red-2);background:rgba(239,68,68,.1)}";
   document.head.appendChild(st);
 
   var IC={
@@ -2393,13 +2425,14 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   function confClass(s){return s>=80?"hi":s>=65?"mid":"lo";}
 
   /* ── data fetch ── */
-  var MODE_LABEL = {main:"Main Scan",compressed:"Compressed",trending:"Trending",ath_atl:"ATH / ATL",bias:"Structure / Bias"};
+  var MODE_LABEL = {main:"Main Scan",compressed:"Compressed",trending:"Trending",ath_atl:"ATH / ATL",bias:"Structure / Bias",selected:"Selected Pairs"};
   var MODE_SUB = {
     main:"All instruments across selected markets",
     compressed:"High-probability compressed zones",
     trending:"Trend-aligned movers with volume",
     ath_atl:"Pairs near all-time highs / lows",
-    bias:"Market-structure shifts (BOS / CHoCH)"
+    bias:"Market-structure shifts (BOS / CHoCH)",
+    selected:"Build a custom scan universe from the biggest movers"
   };
 
   /* Module gating — mirrors the master checkboxes the mobile UI sends.
@@ -3264,13 +3297,171 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     compressed: {results:[], scanned:0, raw:null, sel:-1},
     trending:   {items:[],   scanned:0, raw:null, sel:-1},
     ath_atl:    {items:[],   scanned:0, raw:null, sel:-1, found:0, totalScanned:0},
-    bias:       {items:[],   scanned:0, raw:null, sel:-1}
+    bias:       {items:[],   scanned:0, raw:null, sel:-1},
+    selected:   {items:[],   scanned:0, raw:null, sel:-1}
   };
+
+  /* ── ⚡ Selected Pairs universe builder (desktop) ──
+     Builds ST.stars (the "Selected / watchlist" scan scope) from the biggest
+     24h movers of the active exchange, so Main Scan with Scope=Selected runs
+     across a curated universe instead of the whole market. */
+  var SP_CFG = { dir:"both", gainers:100, losers:100, minVol:0, excludeJunk:true, loading:false, note:"" };
+  function _spIsJunk(sym){
+    return /(UP|DOWN|BULL|BEAR)USDT$/.test(sym)
+        || /\d+(L|S)USDT$/.test(sym)
+        || /^(USDC|BUSD|TUSD|DAI|FDUSD|USDD|USDP|GUSD|EUR|AEUR)/.test(sym);
+  }
+  function _spStarList(){
+    return Object.keys(ST.stars).filter(function(s){ return ST.stars[s]; }).sort();
+  }
+  function renderSelectedPairsInsight(){
+    var box=E("insScroll"); if(!box) return;
+    var n=_spStarList().length;
+    box.innerHTML = _insHead("selected")+
+      '<div style="padding:14px 16px;font-size:12.5px;line-height:1.6;color:var(--text-2)">'+
+      '<p style="margin:0 0 10px"><b style="color:var(--text)">'+n+'</b> pair'+(n===1?"":"s")+' currently in your scan universe.</p>'+
+      '<p style="margin:0 0 10px">Pick <b>Both / Gainers / Losers</b>, set how many of each, then <b>Load Movers</b> to pull the biggest 24h movers for the active exchange into this list — replacing whatever was here before.</p>'+
+      '<p style="margin:0 0 10px">A <b>minimum volume</b> floor skips illiquid pairs, and stablecoins / leveraged tokens are excluded by default.</p>'+
+      '<p style="margin:0">When you\'re ready, hit <b>Scan in Main Scan</b> — it switches to Main Scan with Scope set to <b>Selected</b> and runs across exactly these pairs.</p>'+
+      '</div>';
+  }
+  function renderSelectedPairs(){
+    var host=E("tabView"); if(!host) return;
+    var stars=_spStarList();
+    var exch=(EXCH_NAME&&EXCH_NAME[ST.exchange])||ST.exchange||"Binance";
+    var mkt = ST.market==="perpetual" ? "Perpetual" : "Spot";
+    var pill=function(id,val,lbl){ return '<button type="button" class="sp-dir'+(SP_CFG.dir===val?" on":"")+'" data-dir="'+val+'">'+lbl+'</button>'; };
+    var fld=function(id,lbl,val,min,step){
+      return '<label class="sp-uf"><span>'+lbl+'</span><input id="'+id+'" type="number" min="'+(min||0)+'"'+(step?(' step="'+step+'"'):"")+' value="'+val+'"></label>';
+    };
+    var rows = stars.length
+      ? stars.map(function(s,i){
+          var chg = (SP_LAST_CHG && SP_LAST_CHG[s]);
+          var chgHtml = (typeof chg==="number")
+            ? '<span class="'+(chg>=0?"sp-up":"sp-dn")+'">'+(chg>=0?"+":"")+chg.toFixed(2)+'%</span>'
+            : '<span style="color:var(--text-3)">—</span>';
+          return '<tr><td>'+(i+1)+'</td><td class="sp-sym">'+esc(s)+'</td><td style="text-align:right">'+chgHtml+
+                 '</td><td style="text-align:right"><button class="sp-rm" data-rm="'+esc(s)+'" title="Remove">✕</button></td></tr>';
+        }).join("")
+      : '<tr><td colspan="4" style="padding:26px 12px;text-align:center;color:var(--text-3)">No pairs selected yet — Load Movers to build your universe.</td></tr>';
+
+    host.innerHTML =
+      '<div class="sp-univ">'+
+        '<div class="sp-uhead">'+
+          '<div><div class="sp-utitle">⚡ Movers Universe</div>'+
+          '<div class="sp-usub">Source: <b>'+esc(exch)+'</b> · '+mkt+' — set via the exchange selector above</div></div>'+
+        '</div>'+
+        '<div class="sp-ctrls">'+
+          '<div class="sp-dirs">'+pill("","both","↕ Both")+pill("","gainers","▲ Gainers")+pill("","losers","▼ Losers")+'</div>'+
+          '<div class="sp-flds">'+
+            fld("spGainers","Gainers",SP_CFG.gainers,0,1)+
+            fld("spLosers","Losers",SP_CFG.losers,0,1)+
+            fld("spMinVol","Min Vol (USDT)",SP_CFG.minVol,0,100000)+
+          '</div>'+
+          '<label class="sp-chk"><input id="spExclJunk" type="checkbox"'+(SP_CFG.excludeJunk?" checked":"")+'> Exclude stablecoins &amp; leveraged tokens</label>'+
+          '<div class="sp-actions">'+
+            '<button class="btn btn-primary" id="spLoadBtn" type="button">'+(SP_CFG.loading?"Loading…":"⚡ Load Movers")+'</button>'+
+            '<button class="btn" id="spScanBtn" type="button" title="Switch to Main Scan and scan these pairs">Scan in Main Scan</button>'+
+            '<button class="btn" id="spClearBtn" type="button" title="Clear the universe">Clear</button>'+
+            '<input id="spWlName" class="sp-wl" type="text" placeholder="Watchlist name…">'+
+            '<button class="btn" id="spSaveBtn" type="button" title="Save this universe as a watchlist">Save</button>'+
+          '</div>'+
+          (SP_CFG.note?('<div class="sp-note">'+esc(SP_CFG.note)+'</div>'):"")+
+        '</div>'+
+        '<div class="sp-listwrap">'+
+          '<div class="sp-lhead"><span>'+stars.length+' pair'+(stars.length===1?"":"s")+' selected</span></div>'+
+          '<table class="sp-list"><thead><tr><th>#</th><th>SYMBOL</th><th style="text-align:right">24H %</th><th></th></tr></thead>'+
+          '<tbody>'+rows+'</tbody></table>'+
+        '</div>'+
+      '</div>';
+
+    // reflect active direction pill
+    [].forEach.call(host.querySelectorAll('.sp-dir'),function(b){
+      b.classList.toggle('on', b.getAttribute('data-dir')===SP_CFG.dir);
+      b.addEventListener('click',function(){ SP_CFG.dir=b.getAttribute('data-dir'); _spReadInputs(); renderSelectedPairs(); });
+    });
+    var g=E("spGainers"), l=E("spLosers"), v=E("spMinVol"), x=E("spExclJunk");
+    if(g) g.addEventListener('change',_spReadInputs);
+    if(l) l.addEventListener('change',_spReadInputs);
+    if(v) v.addEventListener('change',_spReadInputs);
+    if(x) x.addEventListener('change',_spReadInputs);
+    if(E("spLoadBtn"))  E("spLoadBtn").addEventListener('click', _spLoadMovers);
+    if(E("spScanBtn"))  E("spScanBtn").addEventListener('click', _spScanInMain);
+    if(E("spClearBtn")) E("spClearBtn").addEventListener('click', function(){ ST.stars={}; syncWatchlist(); SP_CFG.note="Universe cleared."; renderSelectedPairs(); renderSelectedPairsInsight(); });
+    if(E("spSaveBtn"))  E("spSaveBtn").addEventListener('click', _spSaveWatchlist);
+    var host2=host.querySelector('.sp-list tbody');
+    if(host2) [].forEach.call(host2.querySelectorAll('.sp-rm'),function(btn){
+      btn.addEventListener('click',function(){ var s=btn.getAttribute('data-rm'); delete ST.stars[s]; syncWatchlist(); renderSelectedPairs(); renderSelectedPairsInsight(); });
+    });
+  }
+  var SP_LAST_CHG = {};   // symbol -> last known 24h changePct (for the list display)
+  function _spReadInputs(){
+    var g=E("spGainers"), l=E("spLosers"), v=E("spMinVol"), x=E("spExclJunk");
+    if(g) SP_CFG.gainers = Math.max(0, parseInt(g.value,10)||0);
+    if(l) SP_CFG.losers  = Math.max(0, parseInt(l.value,10)||0);
+    if(v) SP_CFG.minVol  = Math.max(0, parseFloat(v.value)||0);
+    if(x) SP_CFG.excludeJunk = !!x.checked;
+  }
+  function _spLoadMovers(){
+    _spReadInputs();
+    if(SP_CFG.loading) return;
+    SP_CFG.loading=true; SP_CFG.note="Loading market…"; renderSelectedPairs();
+    fetch("/api/pairs?limit=1000&market="+encodeURIComponent(ST.market)+"&exchange="+encodeURIComponent(ST.exchange),{credentials:"same-origin"})
+      .then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); })
+      .then(function(data){
+        SP_CFG.loading=false;
+        if(!Array.isArray(data) || !data.length){ SP_CFG.note="No pairs returned for this exchange."; renderSelectedPairs(); return; }
+        var pool=data.filter(function(p){
+          if(!p || typeof p.changePct!=="number") return false;
+          if(SP_CFG.minVol && (p.quoteVolume||0) < SP_CFG.minVol) return false;
+          if(SP_CFG.excludeJunk && _spIsJunk(String(p.symbol||""))) return false;
+          return true;
+        });
+        var byChg=pool.slice().sort(function(a,b){ return b.changePct - a.changePct; });
+        var picked={};
+        SP_LAST_CHG={};
+        var add=function(p){ var s=String(p.symbol).toUpperCase(); picked[s]=true; SP_LAST_CHG[s]=p.changePct; };
+        if(SP_CFG.dir==="both"||SP_CFG.dir==="gainers") byChg.slice(0,SP_CFG.gainers).forEach(add);
+        if(SP_CFG.dir==="both"||SP_CFG.dir==="losers")  byChg.slice(Math.max(0,byChg.length-SP_CFG.losers)).forEach(add);
+        var keys=Object.keys(picked);
+        if(!keys.length){ SP_CFG.note="No pairs matched — lower Min Vol or raise the counts."; renderSelectedPairs(); return; }
+        ST.stars={}; keys.forEach(function(s){ ST.stars[s]=true; });   // clear previous, replace with movers
+        syncWatchlist();
+        ST.scanMode="selected"; _ls_set("zyni-scanMode","selected");    // Main Scan will now use this universe
+        SP_CFG.note="Loaded "+keys.length+" movers ("+((EXCH_NAME&&EXCH_NAME[ST.exchange])||ST.exchange)+"). Scope set to Selected — hit Scan in Main Scan.";
+        renderSelectedPairs(); renderSelectedPairsInsight();
+      })
+      .catch(function(){ SP_CFG.loading=false; SP_CFG.note="Error loading movers."; renderSelectedPairs(); });
+  }
+  function _spScanInMain(){
+    if(!_spStarList().length){ SP_CFG.note="Load some pairs first."; renderSelectedPairs(); return; }
+    ST.scanMode="selected"; _ls_set("zyni-scanMode","selected");
+    ST.mode="main"; ST.sel=-1;
+    [].forEach.call(document.querySelectorAll('.side .nav-item[data-mode]'),function(x){ x.classList.remove('active'); });
+    var mainNav=document.querySelector('.side .nav-item[data-mode="main"]'); if(mainNav) mainNav.classList.add('active');
+    _syncCurrentTabLocked(); _renderPreviewBanner();
+    var seg=document.getElementById('segSignal'); if(seg) seg.style.display='';
+    _renderTabCtrls(); renderAll();
+    if(typeof scan==="function") scan();
+  }
+  function _spSaveWatchlist(){
+    var nm=E("spWlName") ? String(E("spWlName").value||"").trim() : "";
+    var pairs=_spStarList();
+    if(!pairs.length){ SP_CFG.note="Nothing to save — load some pairs first."; renderSelectedPairs(); return; }
+    try{
+      var all=JSON.parse(localStorage.getItem("zyni_watchlists")||"{}");
+      var key=nm||("Movers "+new Date().toLocaleDateString());
+      all[key]=pairs;
+      localStorage.setItem("zyni_watchlists", JSON.stringify(all));
+      SP_CFG.note='Saved "'+key+'" ('+pairs.length+' pairs).';
+    }catch(e){ SP_CFG.note="Could not save watchlist."; }
+    renderSelectedPairs();
+  }
 
   var INSIGHT_TITLES = {
     main:"Setup Insight", compressed:"Compression Insight",
     trending:"Market Mover Insight", ath_atl:"Level Breakout Insight",
-    bias:"Bias & Structure Insight"
+    bias:"Bias & Structure Insight", selected:"Selected Pairs"
   };
 
   /* sessionStorage cache so refresh keeps the last visible results (Wave 16) */
@@ -3357,7 +3548,12 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     } else if(m==="bias"){
       E("tblHost").hidden=true; E("tabView").hidden=false;
       renderBiasKPI(); renderBiasTable();
+    } else if(m==="selected"){
+      E("tblHost").hidden=true; E("tabView").hidden=false;
+      renderSelectedPairs();
     }
+    // The Selected Pairs screen manages its own universe — the scan pager is meaningless here.
+    var pgr=document.querySelector('.pager'); if(pgr) pgr.style.display = (m==="selected") ? "none" : "";
     renderInsightForTab(m);
     renderMeta();
     _refreshFooterButtons();
@@ -3387,6 +3583,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     else if(mode==="trending") renderTrendingInsight(row);
     else if(mode==="ath_atl") renderAthAtlInsight(row);
     else if(mode==="bias") renderBiasInsight(row);
+    else if(mode==="selected") renderSelectedPairsInsight();
     _bindInsClose();
   }
   function openInsightForTab(mode, idx){
