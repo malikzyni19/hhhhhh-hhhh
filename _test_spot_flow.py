@@ -197,10 +197,19 @@ check("3-2 delete of last reference purges spot rows too", r.status_code == 200 
 # The item-ADD backfill trigger (Group 3) only fires on NEW adds — a symbol
 # added before this feature deployed would otherwise sit with zero spot rows
 # indefinitely. Viewing its Data Health should retroactively backfill it.
+#
+# CRITICAL: this must work with ZYNI_LM_WS_ENABLED UNSET. This exact gap was
+# the real production bug — the first version of this fix was accidentally
+# placed inside the `if ws_enabled and parent_exchange == "binance":` block,
+# so on any host running with the WebSocket feed disabled (no live price —
+# a real, observed deployment state) the lazy backfill silently never ran
+# and the Spot panel stayed on "Loading spot data…" forever. Backfill is a
+# one-shot REST call with zero WebSocket dependency, so it must never
+# require ZYNI_LM_WS_ENABLED. This group asserts that explicitly.
 # ══════════════════════════════════════════════════════════════════════════════
 section("GROUP 3B — lazy backfill on view for pre-existing items")
 
-os.environ["ZYNI_LM_WS_ENABLED"] = "1"  # this route branch is gated on this flag
+os.environ.pop("ZYNI_LM_WS_ENABLED", None)  # explicitly UNSET — reproduces the real bug condition
 with main.app.app_context():
     _old_item = LiveMonitorItem(user_id=UID_A, symbol="OLDITEMUSDT", exchange="binance",
                                 market="perpetual", source_tab="main", setup_type="MANUAL",
@@ -210,6 +219,7 @@ with main.app.app_context():
     db.session.commit()
 
 _lazy_calls = []
+_ws_thread_calls = []
 def _fake_lazy_backfill(symbol):
     _lazy_calls.append(symbol)
     with main.app.app_context():
@@ -220,29 +230,33 @@ def _fake_lazy_backfill(symbol):
         db.session.commit()
 
 with patch.object(main, "_lm_spot_flow_backfill_bg", side_effect=_fake_lazy_backfill), \
-     patch.object(main, "_ensure_lm_ws_thread"), patch.object(main, "_ensure_lm_liq_thread"), \
-     patch.object(main, "_ensure_lm_delta_thread"), patch.object(main, "_ensure_lm_spot_thread"), \
-     patch.object(main, "ensure_ob_stream"), patch.object(main, "_lm_ws_ensure_adhoc"):
+     patch.object(main, "_ensure_lm_spot_thread", side_effect=lambda: _ws_thread_calls.append(1)):
     _r1 = client.get("/api/live-monitor/data-health?symbol=OLDITEMUSDT&exchange=binance")
-check("3b-1 route succeeds for a pre-existing item", _r1.status_code == 200)
-check("3b-2 lazy backfill triggered for pre-existing item with zero spot rows",
+check("3b-1 route succeeds for a pre-existing item with WS DISABLED", _r1.status_code == 200)
+check("3b-2 lazy backfill triggers even with ZYNI_LM_WS_ENABLED unset (the real bug)",
       _lazy_calls == ["OLDITEMUSDT"], _lazy_calls)
+check("3b-3 WS thread is correctly NOT started when WS is disabled (unrelated, still gated)",
+      _ws_thread_calls == [], _ws_thread_calls)
 
-with patch.object(main, "_lm_spot_flow_backfill_bg", side_effect=_fake_lazy_backfill), \
-     patch.object(main, "_ensure_lm_ws_thread"), patch.object(main, "_ensure_lm_liq_thread"), \
-     patch.object(main, "_ensure_lm_delta_thread"), patch.object(main, "_ensure_lm_spot_thread"), \
-     patch.object(main, "ensure_ob_stream"), patch.object(main, "_lm_ws_ensure_adhoc"):
+with patch.object(main, "_lm_spot_flow_backfill_bg", side_effect=_fake_lazy_backfill):
     _r2 = client.get("/api/live-monitor/data-health?symbol=OLDITEMUSDT&exchange=binance")
-check("3b-3 second poll does NOT re-trigger backfill (rows now exist)",
+check("3b-4 second poll does NOT re-trigger backfill (rows now exist)",
       _lazy_calls == ["OLDITEMUSDT"], _lazy_calls)
 
+with patch.object(main, "_lm_spot_flow_backfill_bg", side_effect=_fake_lazy_backfill):
+    _r3 = client.get("/api/live-monitor/data-health?symbol=FRESH3BUSDT&exchange=binance")
+check("3b-5 a different empty symbol also triggers its own lazy backfill",
+      _lazy_calls == ["OLDITEMUSDT", "FRESH3BUSDT"], _lazy_calls)
+
+# Regression: also confirm it still works fine with WS enabled (normal path)
+os.environ["ZYNI_LM_WS_ENABLED"] = "1"
 with patch.object(main, "_lm_spot_flow_backfill_bg", side_effect=_fake_lazy_backfill), \
      patch.object(main, "_ensure_lm_ws_thread"), patch.object(main, "_ensure_lm_liq_thread"), \
      patch.object(main, "_ensure_lm_delta_thread"), patch.object(main, "_ensure_lm_spot_thread"), \
      patch.object(main, "ensure_ob_stream"), patch.object(main, "_lm_ws_ensure_adhoc"):
-    _r3 = client.get("/api/live-monitor/data-health?symbol=FRESH3BUSDT&exchange=binance")
-check("3b-4 a different empty symbol also triggers its own lazy backfill",
-      _lazy_calls == ["OLDITEMUSDT", "FRESH3BUSDT"], _lazy_calls)
+    _r4 = client.get("/api/live-monitor/data-health?symbol=WSENABLEDUSDT&exchange=binance")
+check("3b-6 lazy backfill also works normally with WS enabled",
+      _lazy_calls == ["OLDITEMUSDT", "FRESH3BUSDT", "WSENABLEDUSDT"], _lazy_calls)
 os.environ.pop("ZYNI_LM_WS_ENABLED", None)
 
 
