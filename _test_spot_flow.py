@@ -193,6 +193,60 @@ check("3-2 delete of last reference purges spot rows too", r.status_code == 200 
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# GROUP 3B — Lazy backfill for items that existed before this feature shipped.
+# The item-ADD backfill trigger (Group 3) only fires on NEW adds — a symbol
+# added before this feature deployed would otherwise sit with zero spot rows
+# indefinitely. Viewing its Data Health should retroactively backfill it.
+# ══════════════════════════════════════════════════════════════════════════════
+section("GROUP 3B — lazy backfill on view for pre-existing items")
+
+os.environ["ZYNI_LM_WS_ENABLED"] = "1"  # this route branch is gated on this flag
+with main.app.app_context():
+    _old_item = LiveMonitorItem(user_id=UID_A, symbol="OLDITEMUSDT", exchange="binance",
+                                market="perpetual", source_tab="main", setup_type="MANUAL",
+                                direction="neutral", timeframe="4h", current_price=1.0,
+                                is_active=True, status="watching")
+    db.session.add(_old_item)
+    db.session.commit()
+
+_lazy_calls = []
+def _fake_lazy_backfill(symbol):
+    _lazy_calls.append(symbol)
+    with main.app.app_context():
+        db.session.add(SFC(symbol=symbol, exchange="binance", timeframe="1m",
+                           candle_open_ms=int(time.time() * 1000) // 60000 * 60000,
+                           delta_usd=1, cvd_usd=1, buy_vol_usd=1, sell_vol_usd=0,
+                           tick_count=1, source="backfill"))
+        db.session.commit()
+
+with patch.object(main, "_lm_spot_flow_backfill_bg", side_effect=_fake_lazy_backfill), \
+     patch.object(main, "_ensure_lm_ws_thread"), patch.object(main, "_ensure_lm_liq_thread"), \
+     patch.object(main, "_ensure_lm_delta_thread"), patch.object(main, "_ensure_lm_spot_thread"), \
+     patch.object(main, "ensure_ob_stream"), patch.object(main, "_lm_ws_ensure_adhoc"):
+    _r1 = client.get("/api/live-monitor/data-health?symbol=OLDITEMUSDT&exchange=binance")
+check("3b-1 route succeeds for a pre-existing item", _r1.status_code == 200)
+check("3b-2 lazy backfill triggered for pre-existing item with zero spot rows",
+      _lazy_calls == ["OLDITEMUSDT"], _lazy_calls)
+
+with patch.object(main, "_lm_spot_flow_backfill_bg", side_effect=_fake_lazy_backfill), \
+     patch.object(main, "_ensure_lm_ws_thread"), patch.object(main, "_ensure_lm_liq_thread"), \
+     patch.object(main, "_ensure_lm_delta_thread"), patch.object(main, "_ensure_lm_spot_thread"), \
+     patch.object(main, "ensure_ob_stream"), patch.object(main, "_lm_ws_ensure_adhoc"):
+    _r2 = client.get("/api/live-monitor/data-health?symbol=OLDITEMUSDT&exchange=binance")
+check("3b-3 second poll does NOT re-trigger backfill (rows now exist)",
+      _lazy_calls == ["OLDITEMUSDT"], _lazy_calls)
+
+with patch.object(main, "_lm_spot_flow_backfill_bg", side_effect=_fake_lazy_backfill), \
+     patch.object(main, "_ensure_lm_ws_thread"), patch.object(main, "_ensure_lm_liq_thread"), \
+     patch.object(main, "_ensure_lm_delta_thread"), patch.object(main, "_ensure_lm_spot_thread"), \
+     patch.object(main, "ensure_ob_stream"), patch.object(main, "_lm_ws_ensure_adhoc"):
+    _r3 = client.get("/api/live-monitor/data-health?symbol=FRESH3BUSDT&exchange=binance")
+check("3b-4 a different empty symbol also triggers its own lazy backfill",
+      _lazy_calls == ["OLDITEMUSDT", "FRESH3BUSDT"], _lazy_calls)
+os.environ.pop("ZYNI_LM_WS_ENABLED", None)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # GROUP 4 — _lm_cvd_trend_label
 # ══════════════════════════════════════════════════════════════════════════════
 section("GROUP 4 — cvd_trend classifier")

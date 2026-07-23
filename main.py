@@ -31931,6 +31931,19 @@ def api_lm_data_health():
         _ensure_lm_liq_thread()
         _ensure_lm_delta_thread()
         _ensure_lm_spot_thread()
+        # Phase SpotFlow-1: lazy backfill for items that existed before this
+        # feature shipped — the item-ADD backfill trigger only fires on NEW
+        # adds, so a pair added before deployment would otherwise sit with
+        # zero spot rows until enough live ticks accumulate on their own.
+        # A fast existence check avoids re-spawning a thread on every poll
+        # once backfill has actually landed data for this symbol.
+        try:
+            from models import LiveMonitorSpotFlowCandle as _SFCq
+            if _SFCq.query.filter_by(symbol=symbol, exchange="binance",
+                                     timeframe="1m").first() is None:
+                _lm_spot_flow_backfill_bg(symbol)
+        except Exception as _sflz:
+            print(f"[LM-SPOTFLOW] lazy backfill check error {symbol}: {_sflz}")
         _ob_wait = 3.0 if exchange == "binance" else 0.5
         ensure_ob_stream(symbol, wait_sec=_ob_wait)
         _ws_has  = f"binance:{symbol}" in _lm_ws_cache
