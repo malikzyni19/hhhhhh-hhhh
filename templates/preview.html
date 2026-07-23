@@ -2359,13 +2359,22 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     ".sp-wl{background:var(--bg-input,rgba(255,255,255,.03));color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;outline:none;min-width:150px}"+
     ".sp-note{margin-top:12px;font-size:12px;color:var(--accent);background:rgba(34,211,238,.06);border:1px solid var(--border);border-radius:8px;padding:8px 11px}"+
     ".sp-listwrap{border:1px solid var(--border);border-radius:12px;overflow:hidden}"+
-    ".sp-lhead{padding:10px 14px;font-size:12px;font-weight:600;color:var(--text-2);border-bottom:1px solid var(--border);background:var(--bg-card-2)}"+
+    ".sp-lhead{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;font-size:12px;font-weight:600;color:var(--text-2);border-bottom:1px solid var(--border);background:var(--bg-card-2)}"+
+    ".sp-live{font-size:11px;font-weight:600;color:var(--text-3);white-space:nowrap}"+
+    ".sp-live.on{color:var(--green-2)}"+
     ".sp-list{width:100%;border-collapse:collapse;font-size:13px}"+
     ".sp-list th{text-align:left;padding:9px 14px;font-size:10px;letter-spacing:.5px;color:var(--text-3);font-weight:600;border-bottom:1px solid var(--border)}"+
     ".sp-list td{padding:8px 14px;border-bottom:1px solid var(--border);color:var(--text-2)}"+
     ".sp-list tr:last-child td{border-bottom:none}"+
     ".sp-list .sp-sym{font-weight:600;color:var(--text)}"+
+    ".sp-list .sp-price,.sp-list .sp-chg,.sp-list .sp-vol{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}"+
+    ".sp-list .sp-price{color:var(--text)}"+
+    ".sp-list .sp-vol{color:var(--text-2)}"+
     ".sp-up{color:var(--green-2)}.sp-dn{color:var(--red-2)}"+
+    "@keyframes spFlashUp{0%{background:rgba(34,197,94,.28)}100%{background:transparent}}"+
+    "@keyframes spFlashDn{0%{background:rgba(239,68,68,.28)}100%{background:transparent}}"+
+    ".sp-flash-up{animation:spFlashUp .6s ease-out}"+
+    ".sp-flash-dn{animation:spFlashDn .6s ease-out}"+
     ".sp-rm{background:none;border:none;color:var(--text-3);cursor:pointer;font-size:13px;padding:2px 6px;border-radius:5px}"+
     ".sp-rm:hover{color:var(--red-2);background:rgba(239,68,68,.1)}";
   document.head.appendChild(st);
@@ -3306,6 +3315,13 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
      24h movers of the active exchange, so Main Scan with Scope=Selected runs
      across a curated universe instead of the whole market. */
   var SP_CFG = { dir:"both", gainers:100, losers:100, minVol:0, excludeJunk:true, loading:false, note:"" };
+  var SP_LAST_PX = {};   // symbol -> snapshot price captured at load (seeds the list before live ticks)
+  var SP_LAST_VOL = {};  // symbol -> snapshot 24h quote volume captured at load
+  /* Live-price engine state. Prices/24h% stream straight from each exchange's
+     public WebSocket (the REST /api/pairs feed is cached up to 120s, so it is
+     not live). If a socket can't connect, the list keeps the load-time snapshot. */
+  var SP_LIVE = { price:{}, chg:{}, vol:{}, cells:{}, ws:null, pollT:null, pingT:null,
+                  active:false, exchange:null, market:null, syms:{}, sig:"", _start:null };
   function _spIsJunk(sym){
     return /(UP|DOWN|BULL|BEAR)USDT$/.test(sym)
         || /\d+(L|S)USDT$/.test(sym)
@@ -3336,14 +3352,24 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     };
     var rows = stars.length
       ? stars.map(function(s,i){
-          var chg = (SP_LAST_CHG && SP_LAST_CHG[s]);
-          var chgHtml = (typeof chg==="number")
-            ? '<span class="'+(chg>=0?"sp-up":"sp-dn")+'">'+(chg>=0?"+":"")+chg.toFixed(2)+'%</span>'
-            : '<span style="color:var(--text-3)">—</span>';
-          return '<tr><td>'+(i+1)+'</td><td class="sp-sym">'+esc(s)+'</td><td style="text-align:right">'+chgHtml+
-                 '</td><td style="text-align:right"><button class="sp-rm" data-rm="'+esc(s)+'" title="Remove">✕</button></td></tr>';
+          var chg = (SP_LIVE.chg[s]!=null ? SP_LIVE.chg[s] : (SP_LAST_CHG ? SP_LAST_CHG[s] : null));
+          var pr  = (SP_LIVE.price[s]!=null ? SP_LIVE.price[s] : SP_LAST_PX[s]);
+          var vol = (SP_LIVE.vol[s]!=null ? SP_LIVE.vol[s] : SP_LAST_VOL[s]);
+          var okChg = (typeof chg==="number" && isFinite(chg));
+          var chgHtml = okChg ? ((chg>=0?"+":"")+chg.toFixed(2)+"%") : "—";
+          var chgCls  = okChg ? (chg>=0?"sp-up":"sp-dn") : "";
+          var prHtml  = (typeof pr==="number" && isFinite(pr)) ? _spFmtPrice(pr) : "—";
+          var volHtml = (typeof vol==="number" && isFinite(vol)) ? _spFmtVol(vol) : "—";
+          return '<tr data-sym="'+esc(s)+'">'+
+                   '<td>'+(i+1)+'</td>'+
+                   '<td class="sp-sym">'+esc(s)+'</td>'+
+                   '<td class="sp-price">'+prHtml+'</td>'+
+                   '<td class="sp-chg '+chgCls+'">'+chgHtml+'</td>'+
+                   '<td class="sp-vol">'+volHtml+'</td>'+
+                   '<td style="text-align:right"><button class="sp-rm" data-rm="'+esc(s)+'" title="Remove">✕</button></td>'+
+                 '</tr>';
         }).join("")
-      : '<tr><td colspan="4" style="padding:26px 12px;text-align:center;color:var(--text-3)">No pairs selected yet — Load Movers to build your universe.</td></tr>';
+      : '<tr><td colspan="6" style="padding:26px 12px;text-align:center;color:var(--text-3)">No pairs selected yet — Load Movers to build your universe.</td></tr>';
 
     host.innerHTML =
       '<div class="sp-univ">'+
@@ -3369,8 +3395,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
           (SP_CFG.note?('<div class="sp-note">'+esc(SP_CFG.note)+'</div>'):"")+
         '</div>'+
         '<div class="sp-listwrap">'+
-          '<div class="sp-lhead"><span>'+stars.length+' pair'+(stars.length===1?"":"s")+' selected</span></div>'+
-          '<table class="sp-list"><thead><tr><th>#</th><th>SYMBOL</th><th style="text-align:right">24H %</th><th></th></tr></thead>'+
+          '<div class="sp-lhead"><span>'+stars.length+' pair'+(stars.length===1?"":"s")+' selected</span><span class="sp-live" id="spLiveStat">—</span></div>'+
+          '<table class="sp-list"><thead><tr><th>#</th><th>SYMBOL</th><th style="text-align:right">PRICE</th><th style="text-align:right">24H %</th><th style="text-align:right">24H VOL</th><th></th></tr></thead>'+
           '<tbody>'+rows+'</tbody></table>'+
         '</div>'+
       '</div>';
@@ -3393,6 +3419,14 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     if(host2) [].forEach.call(host2.querySelectorAll('.sp-rm'),function(btn){
       btn.addEventListener('click',function(){ var s=btn.getAttribute('data-rm'); delete ST.stars[s]; syncWatchlist(); renderSelectedPairs(); renderSelectedPairsInsight(); });
     });
+    // Map each row's price / 24h% cells so live ticks can update them in place,
+    // then (re)start the live WebSocket feed for the active exchange.
+    SP_LIVE.cells={};
+    [].forEach.call(host.querySelectorAll('.sp-list tbody tr[data-sym]'),function(tr){
+      var s=tr.getAttribute('data-sym');
+      SP_LIVE.cells[s]={ p:tr.querySelector('.sp-price'), c:tr.querySelector('.sp-chg'), v:tr.querySelector('.sp-vol') };
+    });
+    _spEnsureLive();
   }
   var SP_LAST_CHG = {};   // symbol -> last known 24h changePct (for the list display)
   function _spReadInputs(){
@@ -3419,8 +3453,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         });
         var byChg=pool.slice().sort(function(a,b){ return b.changePct - a.changePct; });
         var picked={};
-        SP_LAST_CHG={};
-        var add=function(p){ var s=String(p.symbol).toUpperCase(); picked[s]=true; SP_LAST_CHG[s]=p.changePct; };
+        SP_LAST_CHG={}; SP_LAST_PX={}; SP_LAST_VOL={}; SP_LIVE.price={}; SP_LIVE.chg={}; SP_LIVE.vol={};
+        var add=function(p){ var s=String(p.symbol).toUpperCase(); picked[s]=true; SP_LAST_CHG[s]=p.changePct; SP_LAST_PX[s]=(typeof p.price==="number"?p.price:parseFloat(p.price)); SP_LAST_VOL[s]=(typeof p.quoteVolume==="number"?p.quoteVolume:parseFloat(p.quoteVolume)); };
         if(SP_CFG.dir==="both"||SP_CFG.dir==="gainers") byChg.slice(0,SP_CFG.gainers).forEach(add);
         if(SP_CFG.dir==="both"||SP_CFG.dir==="losers")  byChg.slice(Math.max(0,byChg.length-SP_CFG.losers)).forEach(add);
         var keys=Object.keys(picked);
@@ -3456,6 +3490,172 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       SP_CFG.note='Saved "'+key+'" ('+pairs.length+' pairs).';
     }catch(e){ SP_CFG.note="Could not save watchlist."; }
     renderSelectedPairs();
+  }
+
+  /* ── live-price engine (direct exchange WebSockets) ── */
+  function _spFmtPrice(p){
+    if(p==null||!isFinite(p)) return "—";
+    var a=Math.abs(p), d = a>=1000?2 : a>=1?4 : a>=0.01?5 : a>=0.0001?6 : 8;
+    return p.toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
+  }
+  function _spFmtVol(v){
+    if(v==null||!isFinite(v)) return "—";
+    if(v>=1e9) return (v/1e9).toFixed(2)+"B";
+    if(v>=1e6) return (v/1e6).toFixed(2)+"M";
+    if(v>=1e3) return (v/1e3).toFixed(2)+"K";
+    return String(Math.round(v));
+  }
+  function _spSetLiveStat(txt, live){
+    var el=E("spLiveStat"); if(!el) return;
+    el.textContent=txt; el.className="sp-live"+(live?" on":"");
+  }
+  function _spApplyTick(sym, price, chg, vol){
+    var cell=SP_LIVE.cells[sym]; if(!cell) return;
+    if(cell.p && typeof price==="number" && isFinite(price)){
+      var nv=_spFmtPrice(price), prev=cell.p.getAttribute("data-raw");
+      if(cell.p.textContent!==nv){
+        cell.p.textContent=nv;
+        var dir=(prev!=null && isFinite(+prev)) ? (price>+prev?"sp-flash-up":(price<+prev?"sp-flash-dn":"")) : "";
+        if(dir){ cell.p.classList.remove("sp-flash-up","sp-flash-dn"); void cell.p.offsetWidth; cell.p.classList.add(dir); }
+      }
+      cell.p.setAttribute("data-raw", price);
+    }
+    if(cell.c && typeof chg==="number" && isFinite(chg)){
+      cell.c.textContent=(chg>=0?"+":"")+chg.toFixed(2)+"%";
+      cell.c.className="sp-chg "+(chg>=0?"sp-up":"sp-dn");
+    }
+    if(cell.v && typeof vol==="number" && isFinite(vol)){
+      cell.v.textContent=_spFmtVol(vol);
+    }
+  }
+  function _spBumpTick(sym, price, chg, vol){
+    if(typeof price==="number" && isFinite(price)) SP_LIVE.price[sym]=price;
+    if(typeof chg==="number" && isFinite(chg)) SP_LIVE.chg[sym]=chg;
+    if(typeof vol==="number" && isFinite(vol)) SP_LIVE.vol[sym]=vol;
+    _spApplyTick(sym, price, chg, vol);
+  }
+  function _spStopLive(){
+    SP_LIVE.active=false;
+    if(SP_LIVE.pingT){ clearInterval(SP_LIVE.pingT); SP_LIVE.pingT=null; }
+    if(SP_LIVE.pollT){ clearInterval(SP_LIVE.pollT); SP_LIVE.pollT=null; }
+    if(SP_LIVE.ws){ try{ SP_LIVE.ws.onclose=null; SP_LIVE.ws.onmessage=null; SP_LIVE.ws.onerror=null; SP_LIVE.ws.close(); }catch(_){ } SP_LIVE.ws=null; }
+  }
+  function _spEnsureLive(){
+    var syms=_spStarList();
+    SP_LIVE.syms={}; syms.forEach(function(s){ SP_LIVE.syms[s]=true; });
+    if(!syms.length){ _spStopLive(); _spSetLiveStat("—",false); return; }
+    var sig=ST.exchange+"|"+ST.market;
+    if(SP_LIVE.active && SP_LIVE.sig===sig && SP_LIVE.ws) return;   // already streaming the right feed
+    _spStopLive();
+    SP_LIVE.active=true; SP_LIVE.sig=sig; SP_LIVE.exchange=ST.exchange; SP_LIVE.market=ST.market;
+    var ex=ST.exchange;
+    SP_LIVE._start = (ex==="binance")?_spWSBinance : (ex==="bybit")?_spWSBybit :
+                     (ex==="okx")?_spWSOkx : (ex==="mexc")?_spWSMexc : null;
+    if(SP_LIVE._start) SP_LIVE._start();
+    else { SP_LIVE.active=false; _spSetLiveStat("Snapshot",false); }
+  }
+  function _spOpenWS(url, h){
+    var ws, opened=false;
+    try{ ws=new WebSocket(url); }catch(_){ SP_LIVE.active=false; _spSetLiveStat("Snapshot (live unavailable)",false); return; }
+    SP_LIVE.ws=ws;
+    _spSetLiveStat("Connecting live…",false);
+    ws.onopen=function(){
+      opened=true;
+      _spSetLiveStat("● Live · "+((EXCH_NAME&&EXCH_NAME[SP_LIVE.exchange])||SP_LIVE.exchange), true);
+      if(h.onopen){ try{ h.onopen(ws); }catch(_){ } }
+      if(h.ping){
+        if(SP_LIVE.pingT) clearInterval(SP_LIVE.pingT);
+        SP_LIVE.pingT=setInterval(function(){ if(ws.readyState===1) try{ h.ping(ws); }catch(_){ } }, h.pingMs||20000);
+      }
+    };
+    ws.onmessage=function(ev){ if(SP_LIVE.active && h.onmsg) h.onmsg(ev.data); };
+    ws.onerror=function(){ /* onclose handles cleanup + fallback */ };
+    ws.onclose=function(){
+      if(SP_LIVE.pingT){ clearInterval(SP_LIVE.pingT); SP_LIVE.pingT=null; }
+      if(SP_LIVE.ws===ws) SP_LIVE.ws=null;
+      if(!SP_LIVE.active) return;
+      if(!opened){ SP_LIVE.active=false; _spSetLiveStat("Snapshot (live unavailable)",false); return; }
+      _spSetLiveStat("Reconnecting…",false);
+      setTimeout(function(){ if(SP_LIVE.active && SP_LIVE._start) SP_LIVE._start(); }, 3000);
+    };
+  }
+  function _spWSBinance(){
+    var url = SP_LIVE.market==="perpetual"
+      ? "wss://fstream.binance.com/ws/!ticker@arr"
+      : "wss://stream.binance.com:9443/ws/!ticker@arr";
+    _spOpenWS(url, { onmsg:function(data){
+      var arr; try{ arr=JSON.parse(data); }catch(_){ return; }
+      if(!Array.isArray(arr)) return;
+      for(var i=0;i<arr.length;i++){ var t=arr[i], s=t.s; if(s && SP_LIVE.syms[s]) _spBumpTick(s, parseFloat(t.c), parseFloat(t.P), parseFloat(t.q)); }
+    }});
+  }
+  function _spWSBybit(){
+    var url = SP_LIVE.market==="perpetual"
+      ? "wss://stream.bybit.com/v5/public/linear"
+      : "wss://stream.bybit.com/v5/public/spot";
+    _spOpenWS(url, {
+      onopen:function(ws){
+        var args=Object.keys(SP_LIVE.syms).map(function(s){ return "tickers."+s; });
+        for(var i=0;i<args.length;i+=10){ try{ ws.send(JSON.stringify({op:"subscribe",args:args.slice(i,i+10)})); }catch(_){ } }
+      },
+      ping:function(ws){ ws.send(JSON.stringify({op:"ping"})); },
+      onmsg:function(data){
+        var m; try{ m=JSON.parse(data); }catch(_){ return; }
+        if(!m||!m.topic||m.topic.indexOf("tickers.")!==0||!m.data) return;
+        var d=m.data, s=d.symbol||m.topic.slice(8);
+        if(!s||!SP_LIVE.syms[s]) return;
+        var price=(d.lastPrice!=null)?parseFloat(d.lastPrice):undefined;
+        var chg  =(d.price24hPcnt!=null)?parseFloat(d.price24hPcnt)*100:undefined;
+        var vol  =(d.turnover24h!=null)?parseFloat(d.turnover24h):undefined;
+        _spBumpTick(s, price, chg, vol);
+      }
+    });
+  }
+  function _spWSOkx(){
+    var perp=SP_LIVE.market==="perpetual";
+    _spOpenWS("wss://ws.okx.com:8443/ws/v5/public", {
+      onopen:function(ws){
+        var args=Object.keys(SP_LIVE.syms).map(function(s){
+          var base=s.slice(0,-4);
+          return { channel:"tickers", instId: perp?(base+"-USDT-SWAP"):(base+"-USDT") };
+        });
+        for(var i=0;i<args.length;i+=100){ try{ ws.send(JSON.stringify({op:"subscribe",args:args.slice(i,i+100)})); }catch(_){ } }
+      },
+      ping:function(ws){ ws.send("ping"); }, pingMs:25000,
+      onmsg:function(data){
+        if(data==="pong") return;
+        var m; try{ m=JSON.parse(data); }catch(_){ return; }
+        if(!m||!m.arg||m.arg.channel!=="tickers"||!m.data) return;
+        for(var i=0;i<m.data.length;i++){
+          var t=m.data[i], inst=t.instId||"";
+          var s=inst.replace("-USDT-SWAP","").replace("-USDT","")+"USDT";
+          if(!SP_LIVE.syms[s]) continue;
+          var price=parseFloat(t.last), o=parseFloat(t.open24h);
+          var chg=(isFinite(o)&&o>0)?((price-o)/o*100):undefined;
+          var vol=(t.volCcy24h!=null)?parseFloat(t.volCcy24h):undefined;
+          _spBumpTick(s, price, chg, vol);
+        }
+      }
+    });
+  }
+  function _spWSMexc(){
+    if(SP_LIVE.market!=="perpetual"){ SP_LIVE.active=false; _spSetLiveStat("Snapshot (MEXC spot)",false); return; }
+    _spOpenWS("wss://contract.mexc.com/edge", {
+      onopen:function(ws){ ws.send(JSON.stringify({method:"sub.tickers",param:{}})); },
+      ping:function(ws){ ws.send(JSON.stringify({method:"ping"})); }, pingMs:15000,
+      onmsg:function(data){
+        var m; try{ m=JSON.parse(data); }catch(_){ return; }
+        if(!m||m.channel!=="push.tickers"||!Array.isArray(m.data)) return;
+        for(var i=0;i<m.data.length;i++){
+          var t=m.data[i], s=String(t.symbol||"").replace("_","");   // BTC_USDT → BTCUSDT
+          if(!SP_LIVE.syms[s]) continue;
+          var price=parseFloat(t.lastPrice);
+          var chg=(t.riseFallRate!=null)?parseFloat(t.riseFallRate)*100:undefined;
+          var vol=(t.amount24!=null)?parseFloat(t.amount24):undefined;
+          _spBumpTick(s, price, chg, vol);
+        }
+      }
+    });
   }
 
   var INSIGHT_TITLES = {
@@ -3554,6 +3754,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     }
     // The Selected Pairs screen manages its own universe — the scan pager is meaningless here.
     var pgr=document.querySelector('.pager'); if(pgr) pgr.style.display = (m==="selected") ? "none" : "";
+    if(m!=="selected" && typeof _spStopLive==="function") _spStopLive();   // tear down live sockets on leave
     renderInsightForTab(m);
     renderMeta();
     _refreshFooterButtons();
