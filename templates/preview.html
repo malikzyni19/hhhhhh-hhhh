@@ -5589,6 +5589,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   var _lmDhModeItemId=null;                     // item.id the mode was last reset for
   var _lmLastDhRows=null, _lmLastDhMeta=null;   // cached perp rows — re-render on toggle without a re-fetch
   var _lmLastSpotFlow=null;                     // cached spot_flow — arrives in the same data-health response
+  var _lmSpotFlowMissingPolls=0;                // consecutive polls where d.spot_flow was undefined entirely
+  var _lmLastBuildCommit=null;                  // last-seen backend build_commit, for the diagnostic message below
   var _lmObDaDefaults = {
     "5m":  {distance_pct:0.50, approach_pct:0.15},
     "15m": {distance_pct:0.80, approach_pct:0.25},
@@ -7754,6 +7756,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     // it and the item hasn't changed.
     if(_lmDhModeItemId!==item.id){
       _lmDhMode="perp"; _lmLastDhRows=null; _lmLastDhMeta=null; _lmLastSpotFlow=null;
+      _lmSpotFlowMissingPolls=0;
       _lmDhModeItemId=item.id;
     }
     // Manage auto-detect timer: start/restart when item changes, keep running if same item
@@ -11217,9 +11220,20 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         // price update below runs UNCONDITIONALLY, regardless of toggle mode —
         // price routing is never affected by this toggle.
         _lmLastDhRows=d.rows; _lmLastDhMeta=meta;
-        _lmLastSpotFlow=(d.spot_flow!==undefined)?d.spot_flow:_lmLastSpotFlow;
+        if(d.build_commit) _lmLastBuildCommit=d.build_commit;
+        if(d.spot_flow!==undefined){
+          _lmLastSpotFlow=d.spot_flow; _lmSpotFlowMissingPolls=0;
+        } else {
+          // Backend response has no spot_flow key at all — distinct from a
+          // present-but-empty {"ok":false,...}. After several consecutive
+          // polls like this, it means the backend process serving this
+          // request hasn't picked up the spot_flow code yet (stale deploy),
+          // not that spot data is still being collected. Surfaced directly
+          // in the Spot panel below instead of spinning on "Loading…" forever.
+          _lmSpotFlowMissingPolls++;
+        }
         if(_lmDhMode==="spot"){
-          _lmRenderDataHealthSpot(_lmLastSpotFlow);
+          _lmRenderDataHealthSpot(_lmLastSpotFlow,{missingPolls:_lmSpotFlowMissingPolls,buildCommit:_lmLastBuildCommit});
         } else {
           _lmRenderDataHealth(d.rows,meta,symbol,itemId,pollKey);
         }
@@ -11433,8 +11447,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   // merged into its `rows` array, never calls it, never modifies it. Container
   // lookup is intentionally duplicated (not refactored into a shared helper)
   // to guarantee zero behavior change to the already-shipped perp path.
-  function _lmRenderDataHealthSpot(spotFlow){
-    console.log("[LM-DH-SPOT] render", spotFlow&&spotFlow.ok);
+  function _lmRenderDataHealthSpot(spotFlow,diag){
+    console.log("[LM-DH-SPOT] render", spotFlow&&spotFlow.ok, "missingPolls=", diag&&diag.missingPolls);
     var _lmRightBox=document.getElementById("lmRight");
     var _rItemId=_lmSelItem&&_lmSelItem.id;
     var wrap=null;
@@ -11470,6 +11484,23 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     }
 
     if(!spotFlow){
+      // Distinguish "still waiting on the next poll" from "the server has
+      // never once included spot_flow in its response" — the latter means
+      // the backend process serving this request is running code from
+      // before this feature shipped (stale deploy), not that spot data is
+      // still being collected. Surface that directly instead of spinning
+      // on "Loading…" forever, since that's indistinguishable from a real
+      // bug to anyone looking at it.
+      if(diag&&diag.missingPolls>=3){
+        tbody.innerHTML="<tr><td colspan='6' style='padding:18px;color:#9eb3c7;font-size:11px;text-align:center'>"+
+          "<div style='color:#ef4444;font-weight:700;margin-bottom:6px'>Spot Flow — Backend Response Missing This Field</div>"+
+          "The server has not included spot data in its last "+diag.missingPolls+" responses. "+
+          "This means the backend process is still running code from before the Spot feature shipped — "+
+          "it needs to be redeployed/restarted to pick it up (this is a backend deploy, not a spot-data-collection issue).<br>"+
+          "<span style='color:#71869b'>Last known build: "+esc(diag.buildCommit||"unknown")+"</span>"+
+          "</td></tr>";
+        return;
+      }
       tbody.innerHTML="<tr><td colspan='6' style='padding:14px;color:#71869b;font-size:10px'>Loading spot data…</td></tr>";
       return;
     }
