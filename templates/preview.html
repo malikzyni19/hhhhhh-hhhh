@@ -2367,8 +2367,9 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     ".sp-list td{padding:8px 14px;border-bottom:1px solid var(--border);color:var(--text-2)}"+
     ".sp-list tr:last-child td{border-bottom:none}"+
     ".sp-list .sp-sym{font-weight:600;color:var(--text)}"+
-    ".sp-list .sp-price,.sp-list .sp-chg{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}"+
+    ".sp-list .sp-price,.sp-list .sp-chg,.sp-list .sp-vol{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}"+
     ".sp-list .sp-price{color:var(--text)}"+
+    ".sp-list .sp-vol{color:var(--text-2)}"+
     ".sp-up{color:var(--green-2)}.sp-dn{color:var(--red-2)}"+
     "@keyframes spFlashUp{0%{background:rgba(34,197,94,.28)}100%{background:transparent}}"+
     "@keyframes spFlashDn{0%{background:rgba(239,68,68,.28)}100%{background:transparent}}"+
@@ -3315,10 +3316,11 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
      across a curated universe instead of the whole market. */
   var SP_CFG = { dir:"both", gainers:100, losers:100, minVol:0, excludeJunk:true, loading:false, note:"" };
   var SP_LAST_PX = {};   // symbol -> snapshot price captured at load (seeds the list before live ticks)
+  var SP_LAST_VOL = {};  // symbol -> snapshot 24h quote volume captured at load
   /* Live-price engine state. Prices/24h% stream straight from each exchange's
      public WebSocket (the REST /api/pairs feed is cached up to 120s, so it is
      not live). If a socket can't connect, the list keeps the load-time snapshot. */
-  var SP_LIVE = { price:{}, chg:{}, cells:{}, ws:null, pollT:null, pingT:null,
+  var SP_LIVE = { price:{}, chg:{}, vol:{}, cells:{}, ws:null, pollT:null, pingT:null,
                   active:false, exchange:null, market:null, syms:{}, sig:"", _start:null };
   function _spIsJunk(sym){
     return /(UP|DOWN|BULL|BEAR)USDT$/.test(sym)
@@ -3352,19 +3354,22 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       ? stars.map(function(s,i){
           var chg = (SP_LIVE.chg[s]!=null ? SP_LIVE.chg[s] : (SP_LAST_CHG ? SP_LAST_CHG[s] : null));
           var pr  = (SP_LIVE.price[s]!=null ? SP_LIVE.price[s] : SP_LAST_PX[s]);
+          var vol = (SP_LIVE.vol[s]!=null ? SP_LIVE.vol[s] : SP_LAST_VOL[s]);
           var okChg = (typeof chg==="number" && isFinite(chg));
           var chgHtml = okChg ? ((chg>=0?"+":"")+chg.toFixed(2)+"%") : "—";
           var chgCls  = okChg ? (chg>=0?"sp-up":"sp-dn") : "";
           var prHtml  = (typeof pr==="number" && isFinite(pr)) ? _spFmtPrice(pr) : "—";
+          var volHtml = (typeof vol==="number" && isFinite(vol)) ? _spFmtVol(vol) : "—";
           return '<tr data-sym="'+esc(s)+'">'+
                    '<td>'+(i+1)+'</td>'+
                    '<td class="sp-sym">'+esc(s)+'</td>'+
                    '<td class="sp-price">'+prHtml+'</td>'+
                    '<td class="sp-chg '+chgCls+'">'+chgHtml+'</td>'+
+                   '<td class="sp-vol">'+volHtml+'</td>'+
                    '<td style="text-align:right"><button class="sp-rm" data-rm="'+esc(s)+'" title="Remove">✕</button></td>'+
                  '</tr>';
         }).join("")
-      : '<tr><td colspan="5" style="padding:26px 12px;text-align:center;color:var(--text-3)">No pairs selected yet — Load Movers to build your universe.</td></tr>';
+      : '<tr><td colspan="6" style="padding:26px 12px;text-align:center;color:var(--text-3)">No pairs selected yet — Load Movers to build your universe.</td></tr>';
 
     host.innerHTML =
       '<div class="sp-univ">'+
@@ -3391,7 +3396,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         '</div>'+
         '<div class="sp-listwrap">'+
           '<div class="sp-lhead"><span>'+stars.length+' pair'+(stars.length===1?"":"s")+' selected</span><span class="sp-live" id="spLiveStat">—</span></div>'+
-          '<table class="sp-list"><thead><tr><th>#</th><th>SYMBOL</th><th style="text-align:right">PRICE</th><th style="text-align:right">24H %</th><th></th></tr></thead>'+
+          '<table class="sp-list"><thead><tr><th>#</th><th>SYMBOL</th><th style="text-align:right">PRICE</th><th style="text-align:right">24H %</th><th style="text-align:right">24H VOL</th><th></th></tr></thead>'+
           '<tbody>'+rows+'</tbody></table>'+
         '</div>'+
       '</div>';
@@ -3419,7 +3424,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     SP_LIVE.cells={};
     [].forEach.call(host.querySelectorAll('.sp-list tbody tr[data-sym]'),function(tr){
       var s=tr.getAttribute('data-sym');
-      SP_LIVE.cells[s]={ p:tr.querySelector('.sp-price'), c:tr.querySelector('.sp-chg') };
+      SP_LIVE.cells[s]={ p:tr.querySelector('.sp-price'), c:tr.querySelector('.sp-chg'), v:tr.querySelector('.sp-vol') };
     });
     _spEnsureLive();
   }
@@ -3448,8 +3453,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         });
         var byChg=pool.slice().sort(function(a,b){ return b.changePct - a.changePct; });
         var picked={};
-        SP_LAST_CHG={}; SP_LAST_PX={}; SP_LIVE.price={}; SP_LIVE.chg={};
-        var add=function(p){ var s=String(p.symbol).toUpperCase(); picked[s]=true; SP_LAST_CHG[s]=p.changePct; SP_LAST_PX[s]=(typeof p.price==="number"?p.price:parseFloat(p.price)); };
+        SP_LAST_CHG={}; SP_LAST_PX={}; SP_LAST_VOL={}; SP_LIVE.price={}; SP_LIVE.chg={}; SP_LIVE.vol={};
+        var add=function(p){ var s=String(p.symbol).toUpperCase(); picked[s]=true; SP_LAST_CHG[s]=p.changePct; SP_LAST_PX[s]=(typeof p.price==="number"?p.price:parseFloat(p.price)); SP_LAST_VOL[s]=(typeof p.quoteVolume==="number"?p.quoteVolume:parseFloat(p.quoteVolume)); };
         if(SP_CFG.dir==="both"||SP_CFG.dir==="gainers") byChg.slice(0,SP_CFG.gainers).forEach(add);
         if(SP_CFG.dir==="both"||SP_CFG.dir==="losers")  byChg.slice(Math.max(0,byChg.length-SP_CFG.losers)).forEach(add);
         var keys=Object.keys(picked);
@@ -3493,11 +3498,18 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var a=Math.abs(p), d = a>=1000?2 : a>=1?4 : a>=0.01?5 : a>=0.0001?6 : 8;
     return p.toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
   }
+  function _spFmtVol(v){
+    if(v==null||!isFinite(v)) return "—";
+    if(v>=1e9) return (v/1e9).toFixed(2)+"B";
+    if(v>=1e6) return (v/1e6).toFixed(2)+"M";
+    if(v>=1e3) return (v/1e3).toFixed(2)+"K";
+    return String(Math.round(v));
+  }
   function _spSetLiveStat(txt, live){
     var el=E("spLiveStat"); if(!el) return;
     el.textContent=txt; el.className="sp-live"+(live?" on":"");
   }
-  function _spApplyTick(sym, price, chg){
+  function _spApplyTick(sym, price, chg, vol){
     var cell=SP_LIVE.cells[sym]; if(!cell) return;
     if(cell.p && typeof price==="number" && isFinite(price)){
       var nv=_spFmtPrice(price), prev=cell.p.getAttribute("data-raw");
@@ -3512,11 +3524,15 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       cell.c.textContent=(chg>=0?"+":"")+chg.toFixed(2)+"%";
       cell.c.className="sp-chg "+(chg>=0?"sp-up":"sp-dn");
     }
+    if(cell.v && typeof vol==="number" && isFinite(vol)){
+      cell.v.textContent=_spFmtVol(vol);
+    }
   }
-  function _spBumpTick(sym, price, chg){
+  function _spBumpTick(sym, price, chg, vol){
     if(typeof price==="number" && isFinite(price)) SP_LIVE.price[sym]=price;
     if(typeof chg==="number" && isFinite(chg)) SP_LIVE.chg[sym]=chg;
-    _spApplyTick(sym, price, chg);
+    if(typeof vol==="number" && isFinite(vol)) SP_LIVE.vol[sym]=vol;
+    _spApplyTick(sym, price, chg, vol);
   }
   function _spStopLive(){
     SP_LIVE.active=false;
@@ -3570,7 +3586,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     _spOpenWS(url, { onmsg:function(data){
       var arr; try{ arr=JSON.parse(data); }catch(_){ return; }
       if(!Array.isArray(arr)) return;
-      for(var i=0;i<arr.length;i++){ var t=arr[i], s=t.s; if(s && SP_LIVE.syms[s]) _spBumpTick(s, parseFloat(t.c), parseFloat(t.P)); }
+      for(var i=0;i<arr.length;i++){ var t=arr[i], s=t.s; if(s && SP_LIVE.syms[s]) _spBumpTick(s, parseFloat(t.c), parseFloat(t.P), parseFloat(t.q)); }
     }});
   }
   function _spWSBybit(){
@@ -3590,7 +3606,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         if(!s||!SP_LIVE.syms[s]) return;
         var price=(d.lastPrice!=null)?parseFloat(d.lastPrice):undefined;
         var chg  =(d.price24hPcnt!=null)?parseFloat(d.price24hPcnt)*100:undefined;
-        _spBumpTick(s, price, chg);
+        var vol  =(d.turnover24h!=null)?parseFloat(d.turnover24h):undefined;
+        _spBumpTick(s, price, chg, vol);
       }
     });
   }
@@ -3615,7 +3632,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
           if(!SP_LIVE.syms[s]) continue;
           var price=parseFloat(t.last), o=parseFloat(t.open24h);
           var chg=(isFinite(o)&&o>0)?((price-o)/o*100):undefined;
-          _spBumpTick(s, price, chg);
+          var vol=(t.volCcy24h!=null)?parseFloat(t.volCcy24h):undefined;
+          _spBumpTick(s, price, chg, vol);
         }
       }
     });
@@ -3633,7 +3651,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
           if(!SP_LIVE.syms[s]) continue;
           var price=parseFloat(t.lastPrice);
           var chg=(t.riseFallRate!=null)?parseFloat(t.riseFallRate)*100:undefined;
-          _spBumpTick(s, price, chg);
+          var vol=(t.amount24!=null)?parseFloat(t.amount24):undefined;
+          _spBumpTick(s, price, chg, vol);
         }
       }
     });
