@@ -32605,6 +32605,43 @@ def api_pairs():
     return jsonify(get_pairs_exchange(exchange, market)[:limit])
 
 
+# Short-cached fresh prices for the Selected Pairs live list. Streams from the
+# SAME source the pair list came from, so every symbol matches — and it works
+# even when the browser can't reach the exchange WebSocket directly.
+_live_px_cache: Dict[str, Any] = {}   # "exchange:market" -> (ts, {SYM: {p,c,v}})
+
+@app.route("/api/live-prices")
+@login_required
+def api_live_prices():
+    exchange = request.args.get("exchange", "binance").lower()
+    market = request.args.get("market", "perpetual")
+    key = f"{exchange}:{market}"
+    now = time.time()
+    ent = _live_px_cache.get(key)
+    if ent and now - ent[0] < 3:
+        return jsonify(ent[1])
+    try:
+        # Force a fresh fetch by expiring the 120s pair cache for this source.
+        if exchange in ("bybit", "okx", "mexc"):
+            if exchange in EXCHANGE_PAIR_CACHE:
+                EXCHANGE_PAIR_CACHE[exchange]["ts"] = 0
+        else:
+            mkey = "perpetual" if market == "perpetual" else "spot"
+            if mkey in PAIR_CACHE:
+                PAIR_CACHE[mkey]["ts"] = 0
+        pairs = get_pairs_exchange(exchange, market)
+    except Exception as e:
+        print(f"[live-prices] {key} error: {e}")
+        return jsonify(ent[1] if ent else {})
+    out: Dict[str, Any] = {}
+    for p in pairs:
+        s = p.get("symbol")
+        if s:
+            out[s] = {"p": p.get("price"), "c": p.get("changePct"), "v": p.get("quoteVolume")}
+    _live_px_cache[key] = (now, out)
+    return jsonify(out)
+
+
 @app.route("/api/my-permissions")
 @login_required
 def api_my_permissions():

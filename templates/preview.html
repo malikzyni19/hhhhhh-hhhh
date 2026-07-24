@@ -3538,7 +3538,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     _spApplyTick(sym, price, chg, vol);
   }
   function _spStopLive(){
-    SP_LIVE.active=false;
+    SP_LIVE.active=false; SP_LIVE._polling=false;
     if(SP_LIVE.pingT){ clearInterval(SP_LIVE.pingT); SP_LIVE.pingT=null; }
     if(SP_LIVE.pollT){ clearInterval(SP_LIVE.pollT); SP_LIVE.pollT=null; }
     if(SP_LIVE.statT){ clearInterval(SP_LIVE.statT); SP_LIVE.statT=null; }
@@ -3550,12 +3550,12 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   function _spLiveStat(){
     if(!SP_LIVE.active) return;
     var ex=(EXCH_NAME&&EXCH_NAME[SP_LIVE.exchange])||SP_LIVE.exchange;
-    var msg="● Live · "+ex;
+    var msg="● Live · "+ex+(SP_LIVE._polling?" · server":"");
     if(SP_LIVE.applied>0){
       var age=SP_LIVE.lastApplied?Math.max(0,Math.round((Date.now()-SP_LIVE.lastApplied)/1000)):0;
-      msg+=" · "+(SP_LIVE.applied>999?(( SP_LIVE.applied/1000).toFixed(1)+"k"):SP_LIVE.applied)+" upd · "+age+"s ago";
-    } else if(SP_LIVE.rx>0){ msg+=" · rx "+SP_LIVE.rx+" (no match)"; }
-    else { msg+=" · waiting for data…"; }
+      msg+=" · "+(SP_LIVE.applied>999?((SP_LIVE.applied/1000).toFixed(1)+"k"):SP_LIVE.applied)+" upd · "+age+"s";
+    } else if(SP_LIVE.rx>0){ msg+=" · connecting…"; }
+    else { msg+=" · waiting…"; }
     _spSetLiveStat(msg, true);
   }
   function _spEnsureLive(){
@@ -3565,13 +3565,45 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var sig=ST.exchange+"|"+ST.market;
     if(SP_LIVE.active && SP_LIVE.sig===sig && SP_LIVE.ws) return;   // already streaming the right feed
     _spStopLive();
-    SP_LIVE.rx=0; SP_LIVE.applied=0; SP_LIVE.lastApplied=0;
+    SP_LIVE.rx=0; SP_LIVE.applied=0; SP_LIVE.lastApplied=0; SP_LIVE._polling=false;
     SP_LIVE.active=true; SP_LIVE.sig=sig; SP_LIVE.exchange=ST.exchange; SP_LIVE.market=ST.market;
     var ex=ST.exchange;
     SP_LIVE._start = (ex==="binance")?_spWSBinance : (ex==="bybit")?_spWSBybit :
                      (ex==="okx")?_spWSOkx : (ex==="mexc")?_spWSMexc : null;
-    if(SP_LIVE._start) SP_LIVE._start();
-    else { SP_LIVE.active=false; _spSetLiveStat("Snapshot",false); }
+    if(SP_LIVE._start){
+      SP_LIVE._start();
+      // Watchdog: if the socket delivers no usable ticks within 7s (blocked, or
+      // symbols the exchange WS doesn't recognise), fall back to backend polling.
+      (function(watchSig){
+        setTimeout(function(){
+          if(SP_LIVE.active && SP_LIVE.sig===watchSig && SP_LIVE.applied===0) _spStartPoll();
+        }, 7000);
+      })(sig);
+    } else { _spStartPoll(); }   // exchange without a WS adapter → poll backend
+  }
+  // Backend price relay: polls /api/live-prices (same source as the loaded
+  // universe, so every symbol matches) every 3s. Used as a fallback when the
+  // direct exchange WebSocket can't deliver usable ticks.
+  function _spStartPoll(){
+    if(SP_LIVE.pollT) return;
+    SP_LIVE._polling=true;
+    if(SP_LIVE.ws){ try{ SP_LIVE.ws.onclose=null; SP_LIVE.ws.onmessage=null; SP_LIVE.ws.onerror=null; SP_LIVE.ws.close(); }catch(_){ } SP_LIVE.ws=null; }
+    if(!SP_LIVE.statT){ SP_LIVE.statT=setInterval(_spLiveStat, 1500); }
+    var poll=function(){
+      if(!SP_LIVE.active) return;
+      fetch("/api/live-prices?exchange="+encodeURIComponent(SP_LIVE.exchange)+"&market="+encodeURIComponent(SP_LIVE.market),{credentials:"same-origin"})
+        .then(function(r){ return r.ok?r.json():null; })
+        .then(function(map){
+          if(!SP_LIVE.active||!map) return;
+          SP_LIVE.rx++;
+          for(var s in SP_LIVE.syms){
+            var d=map[s]; if(!d) continue;
+            _spBumpTick(s, (d.p!=null?parseFloat(d.p):undefined), (d.c!=null?parseFloat(d.c):undefined), (d.v!=null?parseFloat(d.v):undefined));
+          }
+        }).catch(function(){});
+    };
+    poll();
+    SP_LIVE.pollT=setInterval(poll, 3000);
   }
   function _spOpenWS(url, h){
     var ws, opened=false;
