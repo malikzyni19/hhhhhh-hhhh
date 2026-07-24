@@ -2371,6 +2371,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     ".sp-list .sp-price{color:var(--text)}"+
     ".sp-list .sp-vol{color:var(--text-2)}"+
     ".sp-up{color:var(--green-2)}.sp-dn{color:var(--red-2)}"+
+    ".sp-list td.sp-up{color:var(--green-2)!important}.sp-list td.sp-dn{color:var(--red-2)!important}"+
     "@keyframes spFlashUp{0%{background:rgba(34,197,94,.28)}100%{background:transparent}}"+
     "@keyframes spFlashDn{0%{background:rgba(239,68,68,.28)}100%{background:transparent}}"+
     ".sp-flash-up{animation:spFlashUp .6s ease-out}"+
@@ -3580,14 +3581,23 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     };
   }
   function _spWSBinance(){
-    var url = SP_LIVE.market==="perpetual"
-      ? "wss://fstream.binance.com/ws/!ticker@arr"
-      : "wss://stream.binance.com:9443/ws/!ticker@arr";
-    _spOpenWS(url, { onmsg:function(data){
-      var arr; try{ arr=JSON.parse(data); }catch(_){ return; }
-      if(!Array.isArray(arr)) return;
-      for(var i=0;i<arr.length;i++){ var t=arr[i], s=t.s; if(s && SP_LIVE.syms[s]) _spBumpTick(s, parseFloat(t.c), parseFloat(t.P), parseFloat(t.q)); }
-    }});
+    var base = SP_LIVE.market==="perpetual"
+      ? "wss://fstream.binance.com/ws"
+      : "wss://stream.binance.com:9443/ws";
+    _spOpenWS(base, {
+      onopen:function(ws){
+        var params=Object.keys(SP_LIVE.syms).map(function(s){ return s.toLowerCase()+"@ticker"; });
+        var id=1;
+        for(var i=0;i<params.length;i+=100){
+          try{ ws.send(JSON.stringify({method:"SUBSCRIBE",params:params.slice(i,i+100),id:id++})); }catch(_){ }
+        }
+      },
+      onmsg:function(data){
+        var t; try{ t=JSON.parse(data); }catch(_){ return; }
+        if(!t || t.e!=="24hrTicker" || !t.s || !SP_LIVE.syms[t.s]) return;   // ignore SUBSCRIBE acks
+        _spBumpTick(t.s, parseFloat(t.c), parseFloat(t.P), parseFloat(t.q));
+      }
+    });
   }
   function _spWSBybit(){
     var url = SP_LIVE.market==="perpetual"
