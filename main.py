@@ -210,6 +210,18 @@ def _parse_ua(ua: str) -> dict:
 _SKIP_MAINTENANCE_PATHS = ("/admin", "/static", "/api/", "/login",
                            "/logout", "/guest", "/favicon")
 
+# Cache maintenance settings for 60 s to avoid 2 DB queries on every HTTP request.
+_maint_cache: dict = {"mode": False, "message": "", "ts": 0.0}
+_maint_cache_lock = threading.Lock()
+_MAINT_CACHE_TTL  = 60  # seconds
+
+
+def _invalidate_maint_cache() -> None:
+    """Call from admin endpoints that toggle maintenance_mode."""
+    with _maint_cache_lock:
+        _maint_cache["ts"] = 0.0
+
+
 @app.before_request
 def _maintenance_check():
     path = request.path
@@ -218,10 +230,23 @@ def _maintenance_check():
     if session.get("is_admin"):
         return None
     try:
-        s = _GlobalSetting.query.filter_by(key="maintenance_mode").first()
-        if s and s.value == "true":
-            msg_s = _GlobalSetting.query.filter_by(key="maintenance_message").first()
-            msg   = msg_s.value if msg_s else "We're upgrading. Back soon!"
+        now = time.monotonic()
+        with _maint_cache_lock:
+            if now - _maint_cache["ts"] < _MAINT_CACHE_TTL:
+                enabled = _maint_cache["mode"]
+                msg     = _maint_cache["message"]
+            else:
+                enabled = None  # needs refresh
+        if enabled is None:
+            s = _GlobalSetting.query.filter_by(key="maintenance_mode").first()
+            enabled = bool(s and s.value == "true")
+            msg_s   = _GlobalSetting.query.filter_by(key="maintenance_message").first()
+            msg     = (msg_s.value if msg_s else "") or "We're upgrading. Back soon!"
+            with _maint_cache_lock:
+                _maint_cache["mode"]    = enabled
+                _maint_cache["message"] = msg
+                _maint_cache["ts"]      = time.monotonic()
+        if enabled:
             return render_template("maintenance.html", message=msg)
     except Exception:
         pass
@@ -830,6 +855,27 @@ _ob_books: Dict[str, Dict] = {}
 
 _ob_ws_threads: Dict[str, threading.Thread] = {}
 _ob_ws_running: Dict[str, bool] = {}
+
+# ── Active-symbols in-memory cache (shared by all WS loops) ──────────────────
+# Querying the DB on every websocket message (every ~1s) was burning Neon's
+# 5 GB/month free-tier data transfer quota. This cache refreshes every 30s
+# and falls back to the stale list on DB error instead of returning [].
+_active_syms_cache: dict = {
+    "binance":    [],   # result of _lm_ws_active_binance_symbols
+    "all":        [],   # result of _lm_mx_active_symbols
+    "ts":         0.0,  # monotonic time of last successful "binance" DB refresh
+    "all_ts":     0.0,  # monotonic time of last successful "all" DB refresh
+}
+_active_syms_lock = threading.Lock()
+_ACTIVE_SYMS_TTL  = 30  # seconds between DB refreshes
+
+
+def _invalidate_active_syms_cache() -> None:
+    """Call after adding/removing a LiveMonitorItem so the next loop tick re-queries."""
+    with _active_syms_lock:
+        _active_syms_cache["ts"]     = 0.0
+        _active_syms_cache["all_ts"] = 0.0
+
 
 # ── Phase 10.2: LM live-price WebSocket cache ─────────────────────────────────
 _lm_ws_cache: dict = {}
@@ -10761,26 +10807,45 @@ def _lm_ws_get(exchange: str, symbol: str):
 
 
 def _lm_ws_active_binance_symbols() -> list:
-    """Return sorted list of active Binance LM symbols from the DB + adhoc set."""
-    try:
-        with app.app_context():
-            from models import LiveMonitorItem as _LMIQ
-            rows = _LMIQ.query.filter_by(is_active=True).all()
-            syms = []
-            for r in rows:
-                ex  = (getattr(r, "exchange", "") or "").lower()
-                sym = (getattr(r, "symbol",   "") or "").upper()
-                if ex in ("binance", "") and sym and sym not in syms:
-                    syms.append(sym)
-    except Exception as e:
-        print(f"[LM-WS] active_symbols error: {e}")
-        syms = []
+    """Return sorted list of active Binance LM symbols from the cache+DB + adhoc set.
+    DB is queried at most once every _ACTIVE_SYMS_TTL seconds to avoid burning
+    Neon's data-transfer quota."""
+    now = time.monotonic()
+    with _active_syms_lock:
+        if now - _active_syms_cache["ts"] < _ACTIVE_SYMS_TTL:
+            cached = list(_active_syms_cache["binance"])
+        else:
+            cached = None  # cache expired — need a DB refresh
+
+    if cached is None:
+        try:
+            with app.app_context():
+                from models import LiveMonitorItem as _LMIQ
+                rows = _LMIQ.query.filter_by(is_active=True).all()
+                syms = []
+                for r in rows:
+                    ex  = (getattr(r, "exchange", "") or "").lower()
+                    sym = (getattr(r, "symbol",   "") or "").upper()
+                    if ex in ("binance", "") and sym and sym not in syms:
+                        syms.append(sym)
+                syms = sorted(syms)
+                with _active_syms_lock:
+                    _active_syms_cache["binance"] = syms
+                    # update shared timestamp only after a successful read of ALL symbols
+                    _active_syms_cache["ts"] = time.monotonic()
+                cached = syms
+        except Exception as e:
+            print(f"[LM-WS] active_symbols error: {e}")
+            # Return stale cache on DB error — keeps WS alive instead of unsubscribing
+            with _active_syms_lock:
+                cached = list(_active_syms_cache["binance"])
+
     # Union with adhoc symbols (data-health requests without a DB LM item)
     with _lm_ws_adhoc_lock:
         for sym in _lm_ws_adhoc_syms:
-            if sym not in syms:
-                syms.append(sym)
-    return sorted(syms)
+            if sym not in cached:
+                cached.append(sym)
+    return sorted(cached)
 
 
 def _lm_ws_ensure_adhoc(symbol: str):
@@ -12919,15 +12984,27 @@ def _mx_mexc_sym(symbol: str) -> str:
 # ── Active multi-exchange symbols helper ─────────────────────────────────────
 
 def _lm_mx_active_symbols() -> list:
-    """Return sorted list of symbols from active Live Monitor items."""
+    """Return sorted list of symbols from active Live Monitor items.
+    DB is queried at most once every _ACTIVE_SYMS_TTL seconds to avoid burning
+    Neon's data-transfer quota. Falls back to stale cache on DB error."""
+    now = time.monotonic()
+    with _active_syms_lock:
+        if now - _active_syms_cache["all_ts"] < _ACTIVE_SYMS_TTL:
+            return list(_active_syms_cache["all"])
+        stale = list(_active_syms_cache["all"])
+
     try:
         with app.app_context():
             from models import LiveMonitorItem as _LMI
             rows = _LMI.query.filter_by(is_active=True).with_entities(_LMI.symbol).all()
-            return sorted({r.symbol for r in rows})
+            syms = sorted({r.symbol for r in rows})
+            with _active_syms_lock:
+                _active_syms_cache["all"]    = syms
+                _active_syms_cache["all_ts"] = time.monotonic()
+            return syms
     except Exception as e:
         print(f"[MX-WS] active_symbols error: {e}")
-        return []
+        return stale
 
 
 # ── Cache updaters ───────────────────────────────────────────────────────────
@@ -24468,6 +24545,8 @@ def api_lm_items_post():
         )
         _db.session.add(ev)
         _db.session.commit()
+        if created:
+            _invalidate_active_syms_cache()
     except Exception as e:
         _db.session.rollback()
         return jsonify({"error": "db", "message": str(e)}), 500
@@ -26492,6 +26571,7 @@ def api_lm_items_delete(item_id):
     _db.session.add(ev)
     try:
         _db.session.commit()
+        _invalidate_active_syms_cache()
     except Exception as e:
         _db.session.rollback()
         return jsonify({"error": "db", "message": str(e)}), 500
