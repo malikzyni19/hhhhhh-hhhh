@@ -2526,6 +2526,11 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       { type:"select", key:"tf", label:"Timeframe",
         options:[["1h","1H"],["4h","4H"],["6h","6H"],["12h","12H"],["1d","1D"]],
         help:"Candle interval used to detect bias-shift rejections." },
+      { type:"select", bind:"state", key:"scanMode", label:"Scope",
+        options:[["market","Full market"],["selected","Selected (watchlist)"]],
+        help:"Full market = round-robin every USDT pair. Selected = scan only your Selected Pairs / starred symbols." },
+      { type:"num", bind:"state", key:"pairsPerCycle", label:"Pairs / cycle",
+        help:"How many symbols are checked per scan request (Full market round-robin). Bigger batches = more results but more API weight." },
       { type:"select", key:"mode", label:"Mode", rerender:true,
         options:[["normal","Normal"],["expert","Expert"]],
         help:"Normal uses tuned presets. Expert exposes the raw candle-quality controls below." },
@@ -2762,10 +2767,12 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     }
     if(ST.mode==="bias"){
       var bo=ST.modeOptions.bias||{};
-      // Desktop Bias scans full market by default so the backend never returns
-      // no_selected_pairs (it defaults scanMode to "selected").
-      var biasScanMode="market";
+      // Scope is shared with Main Scan (ST.scanMode): Full market round-robins
+      // every pair; Selected scans only the starred / Selected Pairs universe.
       var biasWatch=Object.keys(ST.stars).filter(function(s){return ST.stars[s];});
+      var biasScanMode=ST.scanMode||"market";
+      // Selected scope with an empty universe would return no_selected_pairs — fall back to market.
+      if(biasScanMode==="selected" && !biasWatch.length) biasScanMode="market";
       return {url:"/api/bias_scan", body:{
         timeframe:bo.tf||"1d", tf:bo.tf||"1d", market:market, exchange:ST.exchange,
         scanMode:biasScanMode,
