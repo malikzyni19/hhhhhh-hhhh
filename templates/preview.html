@@ -3321,8 +3321,9 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   /* Live-price engine state. Prices/24h% stream straight from each exchange's
      public WebSocket (the REST /api/pairs feed is cached up to 120s, so it is
      not live). If a socket can't connect, the list keeps the load-time snapshot. */
-  var SP_LIVE = { price:{}, chg:{}, vol:{}, cells:{}, ws:null, pollT:null, pingT:null,
-                  active:false, exchange:null, market:null, syms:{}, sig:"", _start:null };
+  var SP_LIVE = { price:{}, chg:{}, vol:{}, cells:{}, ws:null, pollT:null, pingT:null, statT:null,
+                  active:false, exchange:null, market:null, syms:{}, sig:"", _start:null,
+                  rx:0, applied:0, lastApplied:0 };
   function _spIsJunk(sym){
     return /(UP|DOWN|BULL|BEAR)USDT$/.test(sym)
         || /\d+(L|S)USDT$/.test(sym)
@@ -3512,6 +3513,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   }
   function _spApplyTick(sym, price, chg, vol){
     var cell=SP_LIVE.cells[sym]; if(!cell) return;
+    SP_LIVE.applied++; SP_LIVE.lastApplied=Date.now();
     if(cell.p && typeof price==="number" && isFinite(price)){
       var nv=_spFmtPrice(price), prev=cell.p.getAttribute("data-raw");
       if(cell.p.textContent!==nv){
@@ -3539,7 +3541,22 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     SP_LIVE.active=false;
     if(SP_LIVE.pingT){ clearInterval(SP_LIVE.pingT); SP_LIVE.pingT=null; }
     if(SP_LIVE.pollT){ clearInterval(SP_LIVE.pollT); SP_LIVE.pollT=null; }
+    if(SP_LIVE.statT){ clearInterval(SP_LIVE.statT); SP_LIVE.statT=null; }
     if(SP_LIVE.ws){ try{ SP_LIVE.ws.onclose=null; SP_LIVE.ws.onmessage=null; SP_LIVE.ws.onerror=null; SP_LIVE.ws.close(); }catch(_){ } SP_LIVE.ws=null; }
+  }
+  // Diagnostic status line: tells us whether frames arrive (rx) and whether
+  // they match rows (applied). "waiting…" = nothing arriving; "rx N no-match"
+  // = arriving but symbols don't line up; "N upd" climbing = working.
+  function _spLiveStat(){
+    if(!SP_LIVE.active) return;
+    var ex=(EXCH_NAME&&EXCH_NAME[SP_LIVE.exchange])||SP_LIVE.exchange;
+    var msg="● Live · "+ex;
+    if(SP_LIVE.applied>0){
+      var age=SP_LIVE.lastApplied?Math.max(0,Math.round((Date.now()-SP_LIVE.lastApplied)/1000)):0;
+      msg+=" · "+(SP_LIVE.applied>999?(( SP_LIVE.applied/1000).toFixed(1)+"k"):SP_LIVE.applied)+" upd · "+age+"s ago";
+    } else if(SP_LIVE.rx>0){ msg+=" · rx "+SP_LIVE.rx+" (no match)"; }
+    else { msg+=" · waiting for data…"; }
+    _spSetLiveStat(msg, true);
   }
   function _spEnsureLive(){
     var syms=_spStarList();
@@ -3548,6 +3565,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var sig=ST.exchange+"|"+ST.market;
     if(SP_LIVE.active && SP_LIVE.sig===sig && SP_LIVE.ws) return;   // already streaming the right feed
     _spStopLive();
+    SP_LIVE.rx=0; SP_LIVE.applied=0; SP_LIVE.lastApplied=0;
     SP_LIVE.active=true; SP_LIVE.sig=sig; SP_LIVE.exchange=ST.exchange; SP_LIVE.market=ST.market;
     var ex=ST.exchange;
     SP_LIVE._start = (ex==="binance")?_spWSBinance : (ex==="bybit")?_spWSBybit :
@@ -3563,13 +3581,15 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     ws.onopen=function(){
       opened=true;
       _spSetLiveStat("● Live · "+((EXCH_NAME&&EXCH_NAME[SP_LIVE.exchange])||SP_LIVE.exchange), true);
+      if(SP_LIVE.statT) clearInterval(SP_LIVE.statT);
+      SP_LIVE.statT=setInterval(_spLiveStat, 1500);
       if(h.onopen){ try{ h.onopen(ws); }catch(_){ } }
       if(h.ping){
         if(SP_LIVE.pingT) clearInterval(SP_LIVE.pingT);
         SP_LIVE.pingT=setInterval(function(){ if(ws.readyState===1) try{ h.ping(ws); }catch(_){ } }, h.pingMs||20000);
       }
     };
-    ws.onmessage=function(ev){ if(SP_LIVE.active && h.onmsg) h.onmsg(ev.data); };
+    ws.onmessage=function(ev){ if(!SP_LIVE.active) return; SP_LIVE.rx++; if(h.onmsg) h.onmsg(ev.data); };
     ws.onerror=function(){ /* onclose handles cleanup + fallback */ };
     ws.onclose=function(){
       if(SP_LIVE.pingT){ clearInterval(SP_LIVE.pingT); SP_LIVE.pingT=null; }
