@@ -16,11 +16,26 @@ admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
 
 _USERNAME_RE = re.compile(r'^[a-zA-Z0-9_]{3,30}$')
 
+# Emergency admin key — set EMERGENCY_ADMIN_KEY in Koyeb environment variables.
+# Only activates when the database is unreachable (tried first, falls back on exception).
+# Empty/unset = no bypass (fail-secure). Never stored in code.
+_EMERGENCY_ADMIN_KEY = os.environ.get("EMERGENCY_ADMIN_KEY", "")
+
+
+def _is_emergency_admin() -> bool:
+    """True when the request is authenticated via the emergency key session."""
+    return bool(session.get("emergency_admin") and session.get("is_admin"))
+
 
 def admin_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        if not current_user.is_authenticated or not current_user.is_admin:
+        if _is_emergency_admin():
+            return f(*args, **kwargs)
+        try:
+            if not current_user.is_authenticated or not current_user.is_admin:
+                return redirect(url_for("admin.login"))
+        except Exception:
             return redirect(url_for("admin.login"))
         return f(*args, **kwargs)
     return decorated
@@ -55,31 +70,51 @@ def _admin_count():
 # ── Login ──────────────────────────────────────────────────────────
 @admin_bp.route("/login", methods=["GET", "POST"])
 def login():
-    if current_user.is_authenticated and current_user.is_admin:
+    if _is_emergency_admin():
         return redirect(url_for("admin.dashboard"))
+    try:
+        if current_user.is_authenticated and current_user.is_admin:
+            return redirect(url_for("admin.dashboard"))
+    except Exception:
+        pass
 
     error = None
     if request.method == "POST":
         username = request.form.get("username", "").strip().lower()
         password = request.form.get("password", "")
 
-        user = User.query.filter_by(username=username).first()
+        db_available = True
+        user = None
+        try:
+            user = User.query.filter_by(username=username).first()
+        except Exception:
+            db_available = False
 
-        if not user or not user.check_password(password):
-            error = "Invalid username or password."
-        elif not user.is_admin:
-            error = "Access denied — admin only."
-        elif user.status != "active":
-            error = f"Account is {user.status}. Contact support."
+        if db_available:
+            if not user or not user.check_password(password):
+                error = "Invalid username or password."
+            elif not user.is_admin:
+                error = "Access denied — admin only."
+            elif user.status != "active":
+                error = f"Account is {user.status}. Contact support."
+            else:
+                login_user(user, remember=False)
+                session["is_admin"] = True
+                try:
+                    user.last_login_at = datetime.now(timezone.utc)
+                    user.last_login_ip = _get_ip()
+                    db.session.commit()
+                except Exception:
+                    pass
+                return redirect(url_for("admin.dashboard"))
         else:
-            login_user(user, remember=False)
-            session["is_admin"] = True
-
-            user.last_login_at = datetime.now(timezone.utc)
-            user.last_login_ip = _get_ip()
-            db.session.commit()
-
-            return redirect(url_for("admin.dashboard"))
+            # DB is unreachable — allow emergency key if configured
+            if _EMERGENCY_ADMIN_KEY and password == _EMERGENCY_ADMIN_KEY:
+                session["emergency_admin"] = True
+                session["is_admin"] = True
+                session.permanent = False
+                return redirect(url_for("admin.dashboard"))
+            error = "Database unavailable. Use the emergency admin key if configured."
 
     return render_template("admin/login.html", error=error)
 
@@ -87,10 +122,14 @@ def login():
 # ── Logout ─────────────────────────────────────────────────────────
 @admin_bp.route("/logout")
 def logout():
-    if current_user.is_authenticated:
-        _log_action("logout")
+    try:
+        if current_user.is_authenticated:
+            _log_action("logout")
+    except Exception:
+        pass
     logout_user()
     session.pop("is_admin", None)
+    session.pop("emergency_admin", None)
     return redirect(url_for("admin.login"))
 
 
