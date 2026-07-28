@@ -12147,14 +12147,23 @@ def _lm_flow_persist_candle(symbol: str, bucket: dict):
                         _lm_flow_cap_check_last_ts["futures"] = _now_ts
                         _run_cap_check = True
                 if _run_cap_check:
-                    _total = _FC.query.count()
-                    if _total > _LM_FLOW_GLOBAL_CAP:
-                        _over = _total - _LM_FLOW_GLOBAL_CAP
-                        _old = (_FC.query.order_by(_FC.candle_open_ms.asc())
-                                .limit(_over).all())
-                        for _r in _old:
-                            _db.session.delete(_r)
-                        _db.session.commit()
+                    try:
+                        _total = _FC.query.count()
+                        if _total > _LM_FLOW_GLOBAL_CAP:
+                            _over = _total - _LM_FLOW_GLOBAL_CAP
+                            _old = (_FC.query.order_by(_FC.candle_open_ms.asc())
+                                    .limit(_over).all())
+                            for _r in _old:
+                                _db.session.delete(_r)
+                            _db.session.commit()
+                    except Exception:
+                        # Don't let a failed cap check silently block retries
+                        # for a full interval — clear the stamp so the next
+                        # symbol's hourly boundary (same wall-clock window)
+                        # can retry instead of going dark for an hour.
+                        with _lm_flow_cap_check_lock:
+                            _lm_flow_cap_check_last_ts["futures"] = 0.0
+                        raise
     except Exception as _e:
         print(f"[LM-FLOW] persist error {symbol}: {_e}")
         try:
@@ -12440,14 +12449,23 @@ def _lm_spot_flow_persist_candle(symbol: str, bucket: dict):
                         _lm_flow_cap_check_last_ts["spot"] = _now_ts
                         _run_cap_check = True
                 if _run_cap_check:
-                    _total = _SFC.query.count()
-                    if _total > _LM_FLOW_GLOBAL_CAP:
-                        _over = _total - _LM_FLOW_GLOBAL_CAP
-                        _old = (_SFC.query.order_by(_SFC.candle_open_ms.asc())
-                                .limit(_over).all())
-                        for _r in _old:
-                            _db.session.delete(_r)
-                        _db.session.commit()
+                    try:
+                        _total = _SFC.query.count()
+                        if _total > _LM_FLOW_GLOBAL_CAP:
+                            _over = _total - _LM_FLOW_GLOBAL_CAP
+                            _old = (_SFC.query.order_by(_SFC.candle_open_ms.asc())
+                                    .limit(_over).all())
+                            for _r in _old:
+                                _db.session.delete(_r)
+                            _db.session.commit()
+                    except Exception:
+                        # Don't let a failed cap check silently block retries
+                        # for a full interval — clear the stamp so the next
+                        # symbol's hourly boundary (same wall-clock window)
+                        # can retry instead of going dark for an hour.
+                        with _lm_flow_cap_check_lock:
+                            _lm_flow_cap_check_last_ts["spot"] = 0.0
+                        raise
     except Exception as _e:
         print(f"[LM-SPOTFLOW] persist error {symbol}: {_e}")
         try:
