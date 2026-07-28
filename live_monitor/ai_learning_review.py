@@ -1840,7 +1840,19 @@ def _lm_get_learning_reviews(
     offset        = 0,
 ) -> list:
     from models import LiveMonitorLearningReview as _LR
-    q = _LR.query.filter_by(user_id=user_id)
+    from sqlalchemy.orm import load_only as _load_only_lr
+    # Called with include_json=False below, so review_json/evidence_json
+    # (the two large Text blob columns) are never read from these rows —
+    # project to the fields _serialize_review(include_json=False) actually
+    # uses instead of transferring the blobs for every row in this list.
+    q = _LR.query.options(_load_only_lr(
+        _LR.id, _LR.user_id, _LR.item_id, _LR.review_scope, _LR.period,
+        _LR.symbol, _LR.side, _LR.status, _LR.title, _LR.summary,
+        _LR.sample_size, _LR.sample_quality, _LR.confidence_level,
+        _LR.warning_count, _LR.source, _LR.model_name, _LR.prompt_version,
+        _LR.parent_review_id, _LR.human_note, _LR.created_at,
+        _LR.updated_at, _LR.reviewed_at,
+    )).filter_by(user_id=user_id)
     if item_id is not None:
         q = q.filter_by(item_id=int(item_id))
     if review_scope and review_scope in _VALID_SCOPES:

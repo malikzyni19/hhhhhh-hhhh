@@ -325,7 +325,12 @@ check("6-10 oi_regime has current+dominant fields",
 
 with main.app.app_context():
     row3 = LiveMonitorItem.query.get(item_id)
-    with patch.object(main, "_lm_get_flow_candles_series", side_effect=RuntimeError("boom")):
+    # Patches the shared aggregation step (order_flow_series now reuses the
+    # raw batch fetched once for the data-health context instead of calling
+    # _lm_get_flow_candles_series a second time — see main._lm_fetch_flow1m_raw
+    # / main._lm_aggregate_flow_candles) so this still exercises a genuine
+    # flow-series failure regardless of which internal path computes it.
+    with patch.object(main, "_lm_aggregate_flow_candles", side_effect=RuntimeError("boom")):
         ctx5 = _lm_build_ai_execution_context(row3, snapshot={})
 check("6-11 error isolated: overall context still ok=True", ctx5.get("ok") is True, ctx5.get("error"))
 ofs3 = ctx5.get("order_flow_series")

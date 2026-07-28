@@ -24,7 +24,7 @@ _MTF_METHOD_QUALITY = {
 }
 
 
-def _lm_build_ai_execution_context(item, snapshot=None) -> dict:  # noqa: C901
+def _lm_build_ai_execution_context(item, snapshot=None, flow1m_raw=None) -> dict:  # noqa: C901
     """Build complete structured AI execution context (Phase 11.2).
 
     Aggregates:
@@ -37,6 +37,12 @@ def _lm_build_ai_execution_context(item, snapshot=None) -> dict:  # noqa: C901
       - SMC + Orderflow Fusion (Phase 11.1B)
       - Deterministic danger context
       - AI-allowed actions preview (advisory only — no execution in Phase 11.2)
+
+    `flow1m_raw`: optional pre-fetched raw 1m flow-candle batch (see
+    _lm_build_data_health_context) — pass this when the caller already
+    fetched it (e.g. it also builds its own data-health context) so this
+    function doesn't issue a second query for the same symbol's data. When
+    omitted, fetched internally exactly as before.
 
     Evidence-only. No AI call. No order. No Binance Testnet.
     """
@@ -130,8 +136,22 @@ def _lm_build_ai_execution_context(item, snapshot=None) -> dict:  # noqa: C901
         }
 
         # ── TASK 4: Data health context ───────────────────────────────────────
+        # Fetch the raw 1m flow-candle batch once here and hand it to both the
+        # data-health builder (its CVD / CVD Divergence / OI Regime rows) and
+        # the order_flow_series section further below (TASK 11), instead of
+        # each independently querying live_monitor_flow_candles for the same
+        # symbol's data.
+        if flow1m_raw is not None:
+            _shared_flow1m_raw = flow1m_raw
+        else:
+            try:
+                _shared_flow1m_raw = _m._lm_fetch_flow1m_raw(symbol, 300)
+            except Exception:
+                _shared_flow1m_raw = None
+
         try:
-            dh = _m._lm_build_data_health_context(symbol, norm_src, snap=snap)
+            dh = _m._lm_build_data_health_context(symbol, norm_src, snap=snap,
+                                                   flow1m_raw=_shared_flow1m_raw)
         except Exception as _edh:
             dh = {
                 "critical_status": "unavailable",
@@ -540,7 +560,13 @@ def _lm_build_ai_execution_context(item, snapshot=None) -> dict:  # noqa: C901
         # is computed after and independently of that decision.
         order_flow_series_ctx = None
         try:
-            _of_candles = _m._lm_get_flow_candles_series(symbol, "5m", 24)  # last ~2h
+            # Reuse the raw batch fetched above for the data-health context
+            # when available (identical result — aggregation is bucket-local,
+            # see _lm_aggregate_flow_candles); otherwise fetch fresh exactly
+            # as before.
+            _of_candles = (_m._lm_aggregate_flow_candles(_shared_flow1m_raw, "5m", 24)
+                          if _shared_flow1m_raw is not None
+                          else _m._lm_get_flow_candles_series(symbol, "5m", 24))  # last ~2h
             if len(_of_candles) >= 3:
                 _of_recent = [{
                     "t":           c.get("t"),

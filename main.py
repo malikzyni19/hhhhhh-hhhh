@@ -12007,6 +12007,15 @@ _LM_FLOW_RETENTION_MS    = 3 * 86_400_000  # 3-day rolling retention per symbol
 _LM_FLOW_GLOBAL_CAP      = 100_000         # hard table cap (free-tier backstop)
 _LM_FLOW_OI_SAMPLE_SEC   = 55              # OI snapshot cadence
 
+# The global row cap is table-wide (not per-symbol), so the unfiltered
+# COUNT(*) needed to check it is a full-table scan. Each active symbol's
+# hourly retention pass would otherwise re-run that same table-wide count
+# redundantly (same wall-clock hour boundary for all symbols). Gate it to
+# run at most once per interval per table instead of once per symbol.
+_lm_flow_cap_check_lock       = threading.Lock()
+_lm_flow_cap_check_last_ts    = {"futures": 0.0, "spot": 0.0}
+_LM_FLOW_CAP_CHECK_MIN_INTERVAL_SEC = 3600
+
 
 def _lm_flow_tick(symbol: str, side: str, usd_vol: float, price: float, now: float):
     """Accumulate one aggTrade tick into the current 1m bucket.
@@ -12129,14 +12138,23 @@ def _lm_flow_persist_candle(symbol: str, bucket: dict):
                 _FC.query.filter(_FC.symbol == symbol,
                                  _FC.candle_open_ms < _cut).delete(synchronize_session=False)
                 _db.session.commit()
-                _total = _FC.query.count()
-                if _total > _LM_FLOW_GLOBAL_CAP:
-                    _over = _total - _LM_FLOW_GLOBAL_CAP
-                    _old = (_FC.query.order_by(_FC.candle_open_ms.asc())
-                            .limit(_over).all())
-                    for _r in _old:
-                        _db.session.delete(_r)
-                    _db.session.commit()
+
+                _run_cap_check = False
+                with _lm_flow_cap_check_lock:
+                    _now_ts = time.time()
+                    if (_now_ts - _lm_flow_cap_check_last_ts["futures"]
+                            >= _LM_FLOW_CAP_CHECK_MIN_INTERVAL_SEC):
+                        _lm_flow_cap_check_last_ts["futures"] = _now_ts
+                        _run_cap_check = True
+                if _run_cap_check:
+                    _total = _FC.query.count()
+                    if _total > _LM_FLOW_GLOBAL_CAP:
+                        _over = _total - _LM_FLOW_GLOBAL_CAP
+                        _old = (_FC.query.order_by(_FC.candle_open_ms.asc())
+                                .limit(_over).all())
+                        for _r in _old:
+                            _db.session.delete(_r)
+                        _db.session.commit()
     except Exception as _e:
         print(f"[LM-FLOW] persist error {symbol}: {_e}")
         try:
@@ -12413,14 +12431,23 @@ def _lm_spot_flow_persist_candle(symbol: str, bucket: dict):
                 _SFC.query.filter(_SFC.symbol == symbol,
                                   _SFC.candle_open_ms < _cut).delete(synchronize_session=False)
                 _db.session.commit()
-                _total = _SFC.query.count()
-                if _total > _LM_FLOW_GLOBAL_CAP:
-                    _over = _total - _LM_FLOW_GLOBAL_CAP
-                    _old = (_SFC.query.order_by(_SFC.candle_open_ms.asc())
-                            .limit(_over).all())
-                    for _r in _old:
-                        _db.session.delete(_r)
-                    _db.session.commit()
+
+                _run_cap_check = False
+                with _lm_flow_cap_check_lock:
+                    _now_ts = time.time()
+                    if (_now_ts - _lm_flow_cap_check_last_ts["spot"]
+                            >= _LM_FLOW_CAP_CHECK_MIN_INTERVAL_SEC):
+                        _lm_flow_cap_check_last_ts["spot"] = _now_ts
+                        _run_cap_check = True
+                if _run_cap_check:
+                    _total = _SFC.query.count()
+                    if _total > _LM_FLOW_GLOBAL_CAP:
+                        _over = _total - _LM_FLOW_GLOBAL_CAP
+                        _old = (_SFC.query.order_by(_SFC.candle_open_ms.asc())
+                                .limit(_over).all())
+                        for _r in _old:
+                            _db.session.delete(_r)
+                        _db.session.commit()
     except Exception as _e:
         print(f"[LM-SPOTFLOW] persist error {symbol}: {_e}")
         try:
@@ -14716,13 +14743,21 @@ def _lm107_maybe_log_source_event(uid: int, item, new_src: str, old_src: str,
 # ── Phase 10.4: Data Health Context Helper ────────────────────────────────────
 
 def _lm_build_data_health_context(symbol: str, exchange: str,
-                                   snap: dict = None, user_id=None) -> dict:
+                                   snap: dict = None, user_id=None,
+                                   flow1m_raw=None) -> dict:
     """Build 11-row Live Monitor Data Health context dict.
 
     Pure: reads in-memory caches + provided snap dict only.
     Does NOT start WS threads or OB streams — caller is responsible for those
     side effects before calling this function.
     Does NOT use Flask request context.
+
+    `flow1m_raw`: optional pre-fetched list of up to 300 most-recent 1m
+    LiveMonitorFlowCandle rows (descending by candle_open_ms) for `symbol`.
+    Callers that already hold this batch (e.g. a caller that also needs the
+    same series for its own order-flow section) can pass it in to skip the
+    internal query; when omitted, this function fetches it itself exactly
+    as before.
 
     Returns:
         {symbol, exchange, ws_enabled, fetched_at, rows, critical_status, ai_data_gate}
@@ -15175,10 +15210,25 @@ def _lm_build_data_health_context(symbol: str, exchange: str,
     # behind this row is what the AI reads for divergences. Binance-derived,
     # shown regardless of analysis source.
     # ═════════════════════════════════════════════════════════════════════════
+    # Shared 1m flow-candle fetch — feeds ROW 7b (CVD, needs 61 rows) and
+    # ROW 7c/7d (CVD Divergence / OI Regime, needs 300 rows for 5m/60
+    # aggregation) below. Fetched once at the larger of the two limits and
+    # reused, instead of two separate round-trips against the same table.
+    if flow1m_raw is not None:
+        _flow1m_raw = flow1m_raw
+        _flow1m_raw_err = None
+    else:
+        _flow1m_raw = None
+        _flow1m_raw_err = None
+        try:
+            _flow1m_raw = _lm_fetch_flow1m_raw(symbol, 300)
+        except Exception as _fc1err:
+            _flow1m_raw_err = str(_fc1err)[:60]
+
     try:
-        from models import LiveMonitorFlowCandle as _FCdh
-        _fc_rows = (_FCdh.query.filter_by(symbol=symbol, timeframe="1m")
-                    .order_by(_FCdh.candle_open_ms.desc()).limit(61).all())
+        if _flow1m_raw_err:
+            raise RuntimeError(_flow1m_raw_err)
+        _fc_rows = (_flow1m_raw or [])[:61]
         if _fc_rows:
             _fc_now  = _fc_rows[0]
             _cvd_now = float(_fc_now.cvd_usd)
@@ -15218,7 +15268,13 @@ def _lm_build_data_health_context(symbol: str, exchange: str,
     _flow5m_candles = None
     _flow5m_err = None
     try:
-        _flow5m_candles = _lm_get_flow_candles_series(symbol, "5m", 60)
+        if _flow1m_raw_err:
+            raise RuntimeError(_flow1m_raw_err)
+        # Aggregate from the same raw 1m rows fetched above for ROW 7b instead
+        # of re-querying live_monitor_flow_candles a second time — identical
+        # result, since _flow1m_raw (limit 300) is a superset of the 300 rows
+        # a fresh 5m/60 fetch would pull (limit * factor = 60 * 5 = 300).
+        _flow5m_candles = _lm_aggregate_flow_candles(_flow1m_raw or [], "5m", 60)
     except Exception as _fc5err:
         _flow5m_err = str(_fc5err)[:60]
 
@@ -15461,7 +15517,12 @@ def _lm_build_data_health_context(symbol: str, exchange: str,
 
             # Futures cross-check reuses the already-shipped perp flow-candle series —
             # same trend classifier, so "agree"/"diverge" compares like-for-like.
-            _fut_candles = _lm_get_flow_candles_series(symbol, "5m", 24)
+            # Reuse the 5m/60 series already fetched above for CVD Divergence/OI
+            # Regime (its last 24 buckets are identical to a fresh 5m/24 fetch,
+            # since bucket aggregation is local per-bucket) instead of re-querying
+            # live_monitor_flow_candles a second time for the same data.
+            _fut_candles = (_flow5m_candles[-24:] if _flow5m_candles is not None
+                            else _lm_get_flow_candles_series(symbol, "5m", 24))
             _fut_trend = (_lm_cvd_trend_label(_fut_candles, "cvd_usd", lookback=6)
                          if len(_fut_candles) >= 3 else None)
             if _fut_trend and _sp_trend != "flat" and _fut_trend != "flat":
@@ -19194,6 +19255,20 @@ def _lm_align_orderflow_to_candles_for_tf(
             for s in snap_rows
         ]
 
+        # Batch-fetch feature rows for every candle in this window in one
+        # round-trip instead of one query per candle (was up to `lim` queries).
+        feat_rows_by_open_time = {
+            f.open_time: f
+            for f in _LMCF9e_al.query.filter(
+                _LMCF9e_al.user_id   == user_id,
+                _LMCF9e_al.exchange  == exchange,
+                _LMCF9e_al.market    == market,
+                _LMCF9e_al.symbol    == symbol,
+                _LMCF9e_al.timeframe == timeframe,
+                _LMCF9e_al.open_time.in_([c.open_time for c in candle_rows]),
+            ).all()
+        }
+
         aligned_count = 0
         for candle in candle_rows:
             open_ms  = candle.open_time
@@ -19205,10 +19280,7 @@ def _lm_align_orderflow_to_candles_for_tf(
             window   = [s for s in snap_dicts
                         if open_ms <= s["sample_time"] < close_ms1]
 
-            feat_row = _LMCF9e_al.query.filter_by(
-                user_id=user_id, exchange=exchange, market=market,
-                symbol=symbol, timeframe=timeframe, open_time=open_ms
-            ).first()
+            feat_row = feat_rows_by_open_time.get(open_ms)
 
             patterns  = _json_loads_safe(
                 getattr(feat_row, "detected_patterns_json", None), []
@@ -21500,6 +21572,18 @@ def _lm_build_trade_proposal_context(row, snapshot=None) -> dict:
     except Exception:
         pass
 
+    # Fetch the raw 1m flow-candle batch once and share it between the
+    # "live_data_health" build below and the nested ai_execution_context
+    # build (which builds its own data-health context internally) — the
+    # flow-candle query is symbol-only (not exchange-scoped), so the same
+    # batch is valid input for both regardless of their different
+    # analysis-source parameters.
+    try:
+        _flow1m_raw_shared = _lm_fetch_flow1m_raw(
+            (getattr(row, "symbol", None) or "").upper(), 300)
+    except Exception:
+        _flow1m_raw_shared = None
+
     return {
         "setup": {
             "symbol":       (getattr(row, "symbol", None) or "").upper(),
@@ -21553,6 +21637,7 @@ def _lm_build_trade_proposal_context(row, snapshot=None) -> dict:
             (getattr(row, "symbol", None) or "").upper(),
             asc["analysis_source"],      # Phase 10.7: use resolved analysis source
             snap=snap,
+            flow1m_raw=_flow1m_raw_shared,
         ),
         "rules": {
             "proposal_only":        True,
@@ -21564,7 +21649,8 @@ def _lm_build_trade_proposal_context(row, snapshot=None) -> dict:
             "analysis_data_confirmation_only":   True,
             "parent_setup_zones_immutable":      True,
         },
-        "ai_execution_context":      (lambda: _lm_build_ai_execution_context(row, snap))(),
+        "ai_execution_context":      (lambda: _lm_build_ai_execution_context(
+            row, snap, flow1m_raw=_flow1m_raw_shared))(),
         "ai_trade_control_decision": (lambda _aec=None: _lm_build_ai_trade_control_decision(
             row, snap, ai_exec_ctx=_aec
         ))(snap.get("latest_ai_execution_context")),
@@ -26126,7 +26212,15 @@ def _lm_bias_shift_auto_refresh_loop():  # noqa: C901
             try:
                 with app.app_context():
                     from models import LiveMonitorItem as _LMI9i_scan
-                    rows = _LMI9i_scan.query.filter_by(is_active=True).all()
+                    from sqlalchemy.orm import load_only as _load_only_9i
+                    # _lm_is_bias_shift_item only reads source_tab + snapshot_json —
+                    # project to those (+id) instead of transferring the full row
+                    # (13 other columns) for every active item of every user, every
+                    # cycle, just to run this yes/no filter.
+                    rows = (_LMI9i_scan.query
+                            .options(_load_only_9i(_LMI9i_scan.source_tab,
+                                                   _LMI9i_scan.snapshot_json))
+                            .filter_by(is_active=True).all())
                     bias_item_ids = [r.id for r in rows if _lm_is_bias_shift_item(r)]
             except Exception as _scan_e:
                 last_error_str = f"scan: {str(_scan_e)[:120]}"
@@ -31611,23 +31705,29 @@ def api_lm_liq_debug():
 _LM_FLOW_TF_FACTOR = {"1m": 1, "5m": 5, "15m": 15, "1h": 60}
 
 
-def _lm_get_flow_candles_series(symbol: str, tf: str = "1m", limit: int = 120) -> list:
-    """Fetch stored 1m flow candles for `symbol` and aggregate on read to `tf`.
+def _lm_fetch_flow1m_raw(symbol: str, limit: int = 300) -> list:
+    """Fetch up to `limit` most-recent 1m LiveMonitorFlowCandle rows for
+    `symbol`, descending by candle_open_ms. Single query, no aggregation —
+    callers that need multiple derived views (CVD row, 5m-aggregated series,
+    order-flow series) should fetch once via this helper and reuse the
+    result instead of each issuing their own query for the same rows."""
+    from models import LiveMonitorFlowCandle as _FCraw
+    return (_FCraw.query.filter_by(symbol=symbol, timeframe="1m")
+            .order_by(_FCraw.candle_open_ms.desc()).limit(limit).all())
 
-    Shared by the read API (api_lm_flow_candles) and the divergence/regime
-    engine below, so both operate on identical series construction. 1m rows
-    are stored as-is; higher timeframes sum delta/buy/sell/ticks per bucket
-    and take cvd/price at bucket close, oi as the last non-null sample with
-    oi_delta vs the previous bucket's oi (not the previous 1m row's).
 
-    tf must be a key of _LM_FLOW_TF_FACTOR; limit is the caller's
-    responsibility to have already validated/clamped.
+def _lm_aggregate_flow_candles(base_rows: list, tf: str, limit: int) -> list:
+    """Aggregate already-fetched 1m flow-candle rows into `tf` buckets.
+
+    Pure in-memory aggregation, no DB access — factored out of
+    _lm_get_flow_candles_series so callers that already hold a batch of raw
+    1m rows (e.g. the Data Health context, which fetches once and reuses for
+    multiple rows) can aggregate without a second round-trip. `base_rows`
+    must be ordered descending by candle_open_ms (most-recent-first), the
+    same contract as the query _lm_get_flow_candles_series issues.
     """
     factor = _LM_FLOW_TF_FACTOR[tf]
-    from models import LiveMonitorFlowCandle as _FC
-    base = (_FC.query.filter_by(symbol=symbol, timeframe="1m")
-            .order_by(_FC.candle_open_ms.desc())
-            .limit(limit * factor).all())
+    base = list(base_rows)
     base.reverse()  # ascending time
 
     def _row_out(t, price, buy, sell, delta, cvd, oi_c, oi_d, ticks):
@@ -31671,6 +31771,26 @@ def _lm_get_flow_candles_series(symbol: str, tf: str = "1m", limit: int = 120) -
                                     g["delta"], g["cvd"], g["oi"], oi_d, g["ticks"]))
         candles = candles[-limit:]
     return candles
+
+
+def _lm_get_flow_candles_series(symbol: str, tf: str = "1m", limit: int = 120) -> list:
+    """Fetch stored 1m flow candles for `symbol` and aggregate on read to `tf`.
+
+    Shared by the read API (api_lm_flow_candles) and the divergence/regime
+    engine below, so both operate on identical series construction. 1m rows
+    are stored as-is; higher timeframes sum delta/buy/sell/ticks per bucket
+    and take cvd/price at bucket close, oi as the last non-null sample with
+    oi_delta vs the previous bucket's oi (not the previous 1m row's).
+
+    tf must be a key of _LM_FLOW_TF_FACTOR; limit is the caller's
+    responsibility to have already validated/clamped.
+    """
+    factor = _LM_FLOW_TF_FACTOR[tf]
+    from models import LiveMonitorFlowCandle as _FC
+    base = (_FC.query.filter_by(symbol=symbol, timeframe="1m")
+            .order_by(_FC.candle_open_ms.desc())
+            .limit(limit * factor).all())
+    return _lm_aggregate_flow_candles(base, tf, limit)
 
 
 def _lm_parse_flow_query_args(default_limit: int = 120):
@@ -31913,8 +32033,13 @@ def api_lm_data_health():
     parent_exchange = exchange  # default same as analysis source
     try:
         from models import LiveMonitorItem as _LMIDH
-        _lm_snap_row = _LMIDH.query.filter_by(
-            symbol=symbol, is_active=True, user_id=uid).first()
+        from sqlalchemy.orm import load_only as _load_only_dh
+        # Only snapshot_json + exchange are read from this row below — project
+        # to those columns instead of transferring the full row (13 other
+        # columns, several of them large) on every 4s Data Health poll.
+        _lm_snap_row = _LMIDH.query.options(
+            _load_only_dh(_LMIDH.snapshot_json, _LMIDH.exchange)
+        ).filter_by(symbol=symbol, is_active=True, user_id=uid).first()
         if _lm_snap_row:
             snap = _json_loads_safe(_lm_snap_row.snapshot_json, {})
             parent_exchange = _lm_normalize_exchange(
