@@ -252,12 +252,26 @@ def _lm_query_closed_paper_trades_from_filters(user_id, filters: dict) -> tuple:
         raise ValueError(f"unvalidated_performance_filters:{list(field_errors.keys())}")
 
     from models import LiveMonitorPaperTrade as _T
+    from sqlalchemy.orm import load_only as _load_only_pp
     f = filters
 
     _perf_ts = _sa_func.coalesce(_T.closed_at, _T.updated_at, _T.created_at)
 
+    # Only these fields are ever read as attributes from the rows this query
+    # returns (verified across paper_performance.py + ai_learning_review.py
+    # consumers) — project to them instead of transferring all 13 large
+    # Text snapshot/context JSON columns per row (up to _MAX_ROWS=5000 rows).
+    _PT_LOAD_COLS = (
+        _T.id, _T.user_id, _T.item_id, _T.position_id, _T.symbol, _T.side,
+        _T.quantity, _T.entry_price, _T.exit_price, _T.status, _T.outcome,
+        _T.outcome_reason, _T.realized_pnl, _T.realized_pnl_pct, _T.risk_reward,
+        _T.duration_seconds, _T.closed_at, _T.updated_at, _T.created_at,
+        _T.ai_decision_json, _T.entry_snapshot_json,
+        _T.ai_post_trade_review_json, _T.execution_intent_json,
+    )
+
     def _base_q():
-        q = _T.query.filter(
+        q = _T.query.options(_load_only_pp(*_PT_LOAD_COLS)).filter(
             _T.user_id == user_id,
             _sa_func.lower(_sa_func.trim(_T.status)) == "closed",
             _T.realized_pnl.isnot(None),

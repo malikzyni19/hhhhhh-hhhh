@@ -2055,8 +2055,18 @@ def _lm_get_paper_trade_journal(user_id, item_id=None, limit=100):
     from models import (
         LiveMonitorPaperTrade as _PT_gj,
     )
+    from sqlalchemy.orm import load_only as _load_only_gj
     try:
-        q = _PT_gj.query.filter_by(user_id=user_id)
+        # Only the fields serialized below are read from each row — project
+        # to those instead of transferring all 13 large Text snapshot/context
+        # JSON columns (only ai_post_trade_review_json is actually used).
+        q = _PT_gj.query.options(_load_only_gj(
+            _PT_gj.id, _PT_gj.item_id, _PT_gj.position_id, _PT_gj.symbol,
+            _PT_gj.side, _PT_gj.quantity, _PT_gj.entry_price, _PT_gj.exit_price,
+            _PT_gj.outcome, _PT_gj.outcome_reason, _PT_gj.realized_pnl,
+            _PT_gj.realized_pnl_pct, _PT_gj.risk_reward, _PT_gj.duration_seconds,
+            _PT_gj.closed_at, _PT_gj.ai_post_trade_review_json,
+        )).filter_by(user_id=user_id)
         if item_id is not None:
             q = q.filter_by(item_id=item_id)
         rows = q.order_by(_PT_gj.id.desc()).limit(limit).all()
