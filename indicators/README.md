@@ -15,7 +15,8 @@ separates spot from perpetuals, and shows which venue is driving.
 | File | Phase | Status |
 |---|---|---|
 | `cvd_engine_p1.pine` | 1 — parity harness | parity confirmed (tick rule) |
-| `cvd_engine_p2.pine` | 2 — multi-venue aggregation | ready to test |
+| `cvd_engine_p2.pine` | 2 — multi-venue aggregation | verified vs built-in (~1% on live bar) |
+| `cvd_engine_p3.pine` | 3 — spot vs perp comparison | ready to test |
 
 ## Phase plan
 
@@ -79,7 +80,42 @@ which Pine can't build across feeds.
 The diagnostics table reports the displayed stream's CVD, per-stream bar delta,
 **active/enabled venue counts per stream** (so an unlisted venue on an alt is
 visible, never mistaken for flat flow), engine + history depth, and request
-budget used (26/40).
+budget used.
+
+Venues updated after first testing: BitMEX dropped; Hyperliquid (spot + perp)
+and KuCoin (spot) added. 15 venues total (10 spot, 5 perp), 30/40 requests.
+Hyperliquid tickers are unverified on TradingView — if unlisted, the venue
+simply shows inactive.
+
+### Verification result
+
+Tested by setting P2 to Binance spot only and comparing to the built-in CVD on
+a `BINANCE:ETHUSDT` chart: `8.27K` vs `8.38K`, ~1.3% apart on a live forming
+bar, with identical candle shapes. This confirms the delta engine survived being
+wrapped into the per-venue `f_delta` function. An earlier `4.12B` Global reading
+was the disabled-venue leak (fixed); post-fix, ETH Global reads a sane `93.58K`.
+
+## Phase 3 — spot vs perp comparison
+
+`cvd_engine_p3.pine` is a superset of Phase 2. Same validated engine, plus the
+divergence view the project was built for. Three views:
+
+- **Single stream** — Phase 2 behaviour (candles / line / columns of Global,
+  Spot, or Perp).
+- **Spot vs Perp** — both streams overlaid as lines. Default scaling is
+  **Z-Score**, because perp volume dwarfs spot and a raw overlay flattens spot
+  into the baseline, hiding the divergence. Raw is available for true magnitude.
+- **Spot-Perp Spread** — the difference `z_spot − z_perp` as one histogram
+  crossing zero: **> 0 spot leading** (accumulation), **< 0 perp leading**
+  (leverage-driven).
+
+The z-score normalises each cumulative stream against its own recent mean over a
+configurable window, making the two comparable. Note the cumulative streams
+reset on the anchor, so the z-score window spans multiple anchor periods — fine
+for visual comparison; Phase 5 refines this into slope-based divergence
+detection with a liquidation-cascade filter and alerts.
+
+Phase 3 only visualises divergence. Detection and alerts are Phase 5.
 
 Not compile-tested — no Pine toolchain locally.
 
