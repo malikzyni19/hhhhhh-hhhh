@@ -2315,7 +2315,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   var ST={
     market:    _ls_get("zyni-market","perpetual"),
     signal:    _ls_get("zyni-signal","OB"),
-    mode:      "main",
+    mode:      _ls_get("zyni-scan-mode","main"),
     view:      "scanner",
     exchange:  _loadExchange(),
     scanMode:  _ls_get("zyni-scanMode","market"),
@@ -3801,6 +3801,11 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   function renderAll(){
     var bodyEl=document.querySelector('.body');
     if(bodyEl) bodyEl.setAttribute('data-mode', ST.mode);
+    // Sync sidebar nav active class (needed on first load when mode is restored
+    // from localStorage but the HTML still has data-mode="main" marked active).
+    [].forEach.call(document.querySelectorAll('.side .nav-item[data-mode]'),function(x){
+      x.classList.toggle('active', x.getAttribute('data-mode')===ST.mode);
+    });
     var m=ST.mode;
     if(m==="main"){
       E("tblHost").hidden=false; E("tabView").hidden=true;
@@ -5251,7 +5256,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       if(m===ST.mode) return;
       [].forEach.call(document.querySelectorAll('.side .nav-item[data-mode]'),function(x){x.classList.remove('active');});
       el.classList.add('active');
-      ST.mode=m; ST.sel=-1;
+      ST.mode=m; ST.sel=-1; _ls_set("zyni-scan-mode", m);
       _syncCurrentTabLocked();
       _renderPreviewBanner();
       if(ST.currentTabLocked){
