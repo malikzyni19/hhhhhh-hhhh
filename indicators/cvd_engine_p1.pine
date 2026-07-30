@@ -40,9 +40,9 @@ const int INTRABAR_CAP = 100000
 // request functions cannot retrieve tick data, so they fall back (see below).
 string i_ltf = input.string("1 minute", "Lower Timeframe", group = G_ENG,
      options = ["Chart",
-                "1 tick", "10 ticks", "100 ticks", "1000 ticks",
-                "1 second", "5 seconds", "10 seconds", "15 seconds", "30 seconds", "45 seconds",
-                "1 minute", "3 minutes", "5 minutes", "15 minutes", "30 minutes"],
+                  "1 tick", "10 ticks", "100 ticks", "1000 ticks",
+                  "1 second", "5 seconds", "10 seconds", "15 seconds", "30 seconds", "45 seconds",
+                  "1 minute", "3 minutes", "5 minutes", "15 minutes", "30 minutes"],
      tooltip = "Chart = no intrabar breakdown (cheap, full history, crude delta).\n" +
                "Seconds require a Pro+ plan. Ticks are not retrievable from Pine " +
                "and fall back to 1 minute.\n\n" +
@@ -65,14 +65,14 @@ string i_anchor = input.string("1 Day", "Anchor Period", group = G_ENG,
 // ── venue inputs ─────────────────────────────────────────────────────────────
 string i_venue = input.string("Chart symbol", "Venue", group = G_VEN,
      options = ["Chart symbol",
-                "Binance Spot", "Binance Perp",
-                "OKX Spot", "OKX Perp",
-                "Bybit Spot", "Bybit Perp",
-                "Bitget Spot", "Bitget Perp",
-                "Coinbase Spot", "Kraken Spot",
-                "Upbit Spot", "Bithumb Spot",
-                "Gate Spot", "MEXC Spot",
-                "BitMEX Perp"],
+                  "Binance Spot", "Binance Perp",
+                  "OKX Spot", "OKX Perp",
+                  "Bybit Spot", "Bybit Perp",
+                  "Bitget Spot", "Bitget Perp",
+                  "Coinbase Spot", "Kraken Spot",
+                  "Upbit Spot", "Bithumb Spot",
+                  "Gate Spot", "MEXC Spot",
+                  "BitMEX Perp"],
      tooltip = "The pair is built from the chart's base currency, so this works " +
                "on any asset. Missing pairs are ignored rather than breaking the " +
                "script - watch the Status row.")
@@ -115,24 +115,23 @@ string qUSDT = i_quote == "Auto" ? "USDT" : i_quote
 string qUSD  = i_quote == "Auto" ? "USD"  : i_quote
 string qKRW  = i_quote == "Auto" ? "KRW"  : i_quote
 
-string venueSym =
-      venue == "Chart symbol"  ? syminfo.tickerid
-    : venue == "Binance Spot"  ? "BINANCE:"  + base  + qUSDT
-    : venue == "Binance Perp"  ? "BINANCE:"  + base  + qUSDT + ".P"
-    : venue == "OKX Spot"      ? "OKX:"      + base  + qUSDT
-    : venue == "OKX Perp"      ? "OKX:"      + base  + qUSDT + ".P"
-    : venue == "Bybit Spot"    ? "BYBIT:"    + base  + qUSDT
-    : venue == "Bybit Perp"    ? "BYBIT:"    + base  + qUSDT + ".P"
-    : venue == "Bitget Spot"   ? "BITGET:"   + base  + qUSDT
-    : venue == "Bitget Perp"   ? "BITGET:"   + base  + qUSDT + ".P"
-    : venue == "Coinbase Spot" ? "COINBASE:" + base  + qUSD
-    : venue == "Kraken Spot"   ? "KRAKEN:"   + baseX + qUSD
-    : venue == "Upbit Spot"    ? "UPBIT:"    + base  + qKRW
-    : venue == "Bithumb Spot"  ? "BITHUMB:"  + base  + qKRW
-    : venue == "Gate Spot"     ? "GATEIO:"   + base  + qUSDT
-    : venue == "MEXC Spot"     ? "MEXC:"     + base  + qUSDT
-    : venue == "BitMEX Perp"   ? "BITMEX:"   + baseX + "USD"
-    : syminfo.tickerid
+string venueSym = venue == "Chart symbol" ? syminfo.tickerid :
+  venue == "Binance Spot"  ? "BINANCE:"  + base  + qUSDT :
+  venue == "Binance Perp"  ? "BINANCE:"  + base  + qUSDT + ".P" :
+  venue == "OKX Spot"      ? "OKX:"      + base  + qUSDT :
+  venue == "OKX Perp"      ? "OKX:"      + base  + qUSDT + ".P" :
+  venue == "Bybit Spot"    ? "BYBIT:"    + base  + qUSDT :
+  venue == "Bybit Perp"    ? "BYBIT:"    + base  + qUSDT + ".P" :
+  venue == "Bitget Spot"   ? "BITGET:"   + base  + qUSDT :
+  venue == "Bitget Perp"   ? "BITGET:"   + base  + qUSDT + ".P" :
+  venue == "Coinbase Spot" ? "COINBASE:" + base  + qUSD :
+  venue == "Kraken Spot"   ? "KRAKEN:"   + baseX + qUSD :
+  venue == "Upbit Spot"    ? "UPBIT:"    + base  + qKRW :
+  venue == "Bithumb Spot"  ? "BITHUMB:"  + base  + qKRW :
+  venue == "Gate Spot"     ? "GATEIO:"   + base  + qUSDT :
+  venue == "MEXC Spot"     ? "MEXC:"     + base  + qUSDT :
+  venue == "BitMEX Perp"   ? "BITMEX:"   + baseX + "USD" :
+  syminfo.tickerid
 
 // Volume denomination. BASE = already in coins. USD = inverse contract, volume
 // is USD notional and must be divided by price to reach base units.
@@ -145,19 +144,18 @@ float unitMult  = 1.0                                 // contract size multiplie
 bool isTickSel = str.contains(i_ltf, "tick")
 bool isSecSel  = str.contains(i_ltf, "second")
 
-string ltfRaw =
-      i_ltf == "1 second"   ? "1S"
-    : i_ltf == "5 seconds"  ? "5S"
-    : i_ltf == "10 seconds" ? "10S"
-    : i_ltf == "15 seconds" ? "15S"
-    : i_ltf == "30 seconds" ? "30S"
-    : i_ltf == "45 seconds" ? "45S"
-    : i_ltf == "1 minute"   ? "1"
-    : i_ltf == "3 minutes"  ? "3"
-    : i_ltf == "5 minutes"  ? "5"
-    : i_ltf == "15 minutes" ? "15"
-    : i_ltf == "30 minutes" ? "30"
-    : "1"
+string ltfRaw = i_ltf == "1 second" ? "1S" :
+  i_ltf == "5 seconds"   ? "5S" :
+  i_ltf == "10 seconds"  ? "10S" :
+  i_ltf == "15 seconds"  ? "15S" :
+  i_ltf == "30 seconds"  ? "30S" :
+  i_ltf == "45 seconds"  ? "45S" :
+  i_ltf == "1 minute"    ? "1" :
+  i_ltf == "3 minutes"   ? "3" :
+  i_ltf == "5 minutes"   ? "5" :
+  i_ltf == "15 minutes"  ? "15" :
+  i_ltf == "30 minutes"  ? "30" :
+  "1"
 
 int chartSecs = timeframe.in_seconds(timeframe.period)
 int ltfSecs   = timeframe.in_seconds(ltfRaw)
@@ -318,18 +316,18 @@ plot(nIntra,   "Out: Intrabars", display = display.none)
 // =============================================================================
 f_abbr(float v) =>
     float a = math.abs(v)
-    a >= 1e9 ? str.tostring(v / 1e9, "#.##") + "B"
-      : a >= 1e6 ? str.tostring(v / 1e6, "#.##") + "M"
-      : a >= 1e3 ? str.tostring(v / 1e3, "#.##") + "K"
-      : str.tostring(v, "#.##")
+    a >= 1e9 ? str.tostring(v / 1e9, "#.##") + "B" :
+      a >= 1e6 ? str.tostring(v / 1e6, "#.##") + "M" :
+      a >= 1e3 ? str.tostring(v / 1e3, "#.##") + "K" :
+      str.tostring(v, "#.##")
 
-var table tbl = table.new(
-     i_tpos == "Top Left"      ? position.top_left
-   : i_tpos == "Bottom Right"  ? position.bottom_right
-   : i_tpos == "Bottom Left"   ? position.bottom_left
-   : i_tpos == "Middle Right"  ? position.middle_right
-   :                             position.top_right,
-     2, 9,
+string tblPos = i_tpos == "Top Left" ? position.top_left :
+  i_tpos == "Bottom Right" ? position.bottom_right :
+  i_tpos == "Bottom Left" ? position.bottom_left :
+  i_tpos == "Middle Right" ? position.middle_right :
+  position.top_right
+
+var table tbl = table.new(tblPos, 2, 9,
      bgcolor      = color.new(#0b0b0f, 15),
      border_color = color.new(color.gray, 70),
      border_width = 1, frame_width = 1,
@@ -349,8 +347,7 @@ if i_table and barstate.islast
         warnCol := i_dn
     else if useLtf and not ltfOk
         // Most common cause on a free plan: a seconds resolution was requested.
-        warn := isSecSel ? "seconds LTF needs Pro+ → chart bar"
-                         : "LTF unavailable → chart bar"
+        warn := isSecSel ? "seconds LTF needs Pro+ → chart bar" : "LTF unavailable → chart bar"
         warnCol := i_dn
     else if not isCrypto
         warn := "non-crypto — chart symbol only"
