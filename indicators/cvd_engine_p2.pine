@@ -20,10 +20,12 @@
 //  volume is already in the base asset. Only inverse contracts (BitMEX) are
 //  converted, by dividing USD-notional volume by price inside the loop.
 //
-//  ROBUSTNESS: every request uses ignore_invalid_symbol, and a disabled venue is
-//  requested with an empty symbol so it returns na cheaply. Either way a missing
-//  or off venue contributes exactly zero and is excluded from the active count -
-//  it never breaks the script and is never mistaken for flat flow.
+//  ROBUSTNESS: every request uses ignore_invalid_symbol. Correctness for a
+//  disabled venue is enforced on its enable flag inside f_delta, NOT on the
+//  symbol - an empty-symbol request does not reliably return na and can leak the
+//  chart symbol's data into the aggregate. Gating on the flag guarantees a
+//  disabled or missing venue contributes exactly zero and is excluded from the
+//  active count.
 // =============================================================================
 
 indicator("CVD Engine — P2 Aggregate", "CVD·P2", overlay = false, format = format.volume, precision = 2)
@@ -97,7 +99,8 @@ string i_tpos  = input.string("Top Right", "Position", group = G_TBL,
 //  SYMBOL CONSTRUCTION
 // -----------------------------------------------------------------------------
 //  Built from syminfo.basecurrency, so this works on any pair. A disabled venue
-//  resolves to "" which, with ignore_invalid_symbol, returns na without cost.
+//  resolves to "" to skip the intrabar fetch cost; the enable flag passed to
+//  f_delta is what actually guarantees a zero contribution.
 // =============================================================================
 bool   isCrypto = syminfo.type == "crypto"
 string base  = syminfo.basecurrency
@@ -166,14 +169,18 @@ bool   newPeriod = i_anchor == "None" ? false : timeframe.change(anchorTf)
 //  runHi >= 0 and runLo <= 0 by construction, and both bracket barDelta, so the
 //  per-venue candle wick always contains its own open and close.
 // =============================================================================
-f_delta(array<float> aO, array<float> aH, array<float> aL, array<float> aC, array<float> aV,
+f_delta(bool en, array<float> aO, array<float> aH, array<float> aL, array<float> aC, array<float> aV,
         float bO, float bH, float bL, float bC, float bV,
         bool useL, simple string rule, bool inv, float mult) =>
     var int   dCarry = 0
     var float cCarry = na
 
     int  nn     = na(aC) ? 0 : array.size(aC)
-    bool useArr = useL and nn > 0
+    // A disabled venue must contribute exactly zero regardless of what the
+    // request returned. Empty-symbol requests do not reliably return na - they
+    // can fall back to the chart symbol and leak its data into the aggregate -
+    // so correctness is enforced here, on the enable flag, not on the symbol.
+    bool useArr = en and useL and nn > 0
 
     float run = 0.0
     float hi  = 0.0
@@ -211,7 +218,7 @@ f_delta(array<float> aO, array<float> aH, array<float> aL, array<float> aC, arra
         cCarry := array.get(aC, nn - 1)
         dCarry := ld
         [run, hi, lo, true]
-    else if not na(bC)
+    else if en and not na(bC)
         float v_ = nz(bV)
         float d  = 0.0
         if rule == "Proportional"
@@ -243,55 +250,55 @@ f_delta(array<float> aO, array<float> aH, array<float> aL, array<float> aC, arra
 // =============================================================================
 [lBinS_o, lBinS_h, lBinS_l, lBinS_c, lBinS_v] = request.security_lower_tf(sBinS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
 [bBinS_o, bBinS_h, bBinS_l, bBinS_c, bBinS_v] = request.security(sBinS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dBinS, hBinS, loBinS, okBinS] = f_delta(lBinS_o, lBinS_h, lBinS_l, lBinS_c, lBinS_v, bBinS_o, bBinS_h, bBinS_l, bBinS_c, bBinS_v, useLtf, i_class, false, 1.0)
+[dBinS, hBinS, loBinS, okBinS] = f_delta(en_binS, lBinS_o, lBinS_h, lBinS_l, lBinS_c, lBinS_v, bBinS_o, bBinS_h, bBinS_l, bBinS_c, bBinS_v, useLtf, i_class, false, 1.0)
 
 [lCbS_o, lCbS_h, lCbS_l, lCbS_c, lCbS_v] = request.security_lower_tf(sCbS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
 [bCbS_o, bCbS_h, bCbS_l, bCbS_c, bCbS_v] = request.security(sCbS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dCbS, hCbS, loCbS, okCbS] = f_delta(lCbS_o, lCbS_h, lCbS_l, lCbS_c, lCbS_v, bCbS_o, bCbS_h, bCbS_l, bCbS_c, bCbS_v, useLtf, i_class, false, 1.0)
+[dCbS, hCbS, loCbS, okCbS] = f_delta(en_cbS, lCbS_o, lCbS_h, lCbS_l, lCbS_c, lCbS_v, bCbS_o, bCbS_h, bCbS_l, bCbS_c, bCbS_v, useLtf, i_class, false, 1.0)
 
 [lOkS_o, lOkS_h, lOkS_l, lOkS_c, lOkS_v] = request.security_lower_tf(sOkS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
 [bOkS_o, bOkS_h, bOkS_l, bOkS_c, bOkS_v] = request.security(sOkS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dOkS, hOkS, loOkS, okOkS] = f_delta(lOkS_o, lOkS_h, lOkS_l, lOkS_c, lOkS_v, bOkS_o, bOkS_h, bOkS_l, bOkS_c, bOkS_v, useLtf, i_class, false, 1.0)
+[dOkS, hOkS, loOkS, okOkS] = f_delta(en_okS, lOkS_o, lOkS_h, lOkS_l, lOkS_c, lOkS_v, bOkS_o, bOkS_h, bOkS_l, bOkS_c, bOkS_v, useLtf, i_class, false, 1.0)
 
 [lByS_o, lByS_h, lByS_l, lByS_c, lByS_v] = request.security_lower_tf(sByS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
 [bByS_o, bByS_h, bByS_l, bByS_c, bByS_v] = request.security(sByS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dByS, hByS, loByS, okByS] = f_delta(lByS_o, lByS_h, lByS_l, lByS_c, lByS_v, bByS_o, bByS_h, bByS_l, bByS_c, bByS_v, useLtf, i_class, false, 1.0)
+[dByS, hByS, loByS, okByS] = f_delta(en_byS, lByS_o, lByS_h, lByS_l, lByS_c, lByS_v, bByS_o, bByS_h, bByS_l, bByS_c, bByS_v, useLtf, i_class, false, 1.0)
 
 [lKrS_o, lKrS_h, lKrS_l, lKrS_c, lKrS_v] = request.security_lower_tf(sKrS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
 [bKrS_o, bKrS_h, bKrS_l, bKrS_c, bKrS_v] = request.security(sKrS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dKrS, hKrS, loKrS, okKrS] = f_delta(lKrS_o, lKrS_h, lKrS_l, lKrS_c, lKrS_v, bKrS_o, bKrS_h, bKrS_l, bKrS_c, bKrS_v, useLtf, i_class, false, 1.0)
+[dKrS, hKrS, loKrS, okKrS] = f_delta(en_krS, lKrS_o, lKrS_h, lKrS_l, lKrS_c, lKrS_v, bKrS_o, bKrS_h, bKrS_l, bKrS_c, bKrS_v, useLtf, i_class, false, 1.0)
 
 [lBgS_o, lBgS_h, lBgS_l, lBgS_c, lBgS_v] = request.security_lower_tf(sBgS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
 [bBgS_o, bBgS_h, bBgS_l, bBgS_c, bBgS_v] = request.security(sBgS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dBgS, hBgS, loBgS, okBgS] = f_delta(lBgS_o, lBgS_h, lBgS_l, lBgS_c, lBgS_v, bBgS_o, bBgS_h, bBgS_l, bBgS_c, bBgS_v, useLtf, i_class, false, 1.0)
+[dBgS, hBgS, loBgS, okBgS] = f_delta(en_bgS, lBgS_o, lBgS_h, lBgS_l, lBgS_c, lBgS_v, bBgS_o, bBgS_h, bBgS_l, bBgS_c, bBgS_v, useLtf, i_class, false, 1.0)
 
 [lUpS_o, lUpS_h, lUpS_l, lUpS_c, lUpS_v] = request.security_lower_tf(sUpS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
 [bUpS_o, bUpS_h, bUpS_l, bUpS_c, bUpS_v] = request.security(sUpS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dUpS, hUpS, loUpS, okUpS] = f_delta(lUpS_o, lUpS_h, lUpS_l, lUpS_c, lUpS_v, bUpS_o, bUpS_h, bUpS_l, bUpS_c, bUpS_v, useLtf, i_class, false, 1.0)
+[dUpS, hUpS, loUpS, okUpS] = f_delta(en_upS, lUpS_o, lUpS_h, lUpS_l, lUpS_c, lUpS_v, bUpS_o, bUpS_h, bUpS_l, bUpS_c, bUpS_v, useLtf, i_class, false, 1.0)
 
 [lBhS_o, lBhS_h, lBhS_l, lBhS_c, lBhS_v] = request.security_lower_tf(sBhS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
 [bBhS_o, bBhS_h, bBhS_l, bBhS_c, bBhS_v] = request.security(sBhS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dBhS, hBhS, loBhS, okBhS] = f_delta(lBhS_o, lBhS_h, lBhS_l, lBhS_c, lBhS_v, bBhS_o, bBhS_h, bBhS_l, bBhS_c, bBhS_v, useLtf, i_class, false, 1.0)
+[dBhS, hBhS, loBhS, okBhS] = f_delta(en_bhS, lBhS_o, lBhS_h, lBhS_l, lBhS_c, lBhS_v, bBhS_o, bBhS_h, bBhS_l, bBhS_c, bBhS_v, useLtf, i_class, false, 1.0)
 
 [lBinP_o, lBinP_h, lBinP_l, lBinP_c, lBinP_v] = request.security_lower_tf(sBinP, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
 [bBinP_o, bBinP_h, bBinP_l, bBinP_c, bBinP_v] = request.security(sBinP, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dBinP, hBinP, loBinP, okBinP] = f_delta(lBinP_o, lBinP_h, lBinP_l, lBinP_c, lBinP_v, bBinP_o, bBinP_h, bBinP_l, bBinP_c, bBinP_v, useLtf, i_class, false, 1.0)
+[dBinP, hBinP, loBinP, okBinP] = f_delta(en_binP, lBinP_o, lBinP_h, lBinP_l, lBinP_c, lBinP_v, bBinP_o, bBinP_h, bBinP_l, bBinP_c, bBinP_v, useLtf, i_class, false, 1.0)
 
 [lByP_o, lByP_h, lByP_l, lByP_c, lByP_v] = request.security_lower_tf(sByP, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
 [bByP_o, bByP_h, bByP_l, bByP_c, bByP_v] = request.security(sByP, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dByP, hByP, loByP, okByP] = f_delta(lByP_o, lByP_h, lByP_l, lByP_c, lByP_v, bByP_o, bByP_h, bByP_l, bByP_c, bByP_v, useLtf, i_class, false, 1.0)
+[dByP, hByP, loByP, okByP] = f_delta(en_byP, lByP_o, lByP_h, lByP_l, lByP_c, lByP_v, bByP_o, bByP_h, bByP_l, bByP_c, bByP_v, useLtf, i_class, false, 1.0)
 
 [lOkP_o, lOkP_h, lOkP_l, lOkP_c, lOkP_v] = request.security_lower_tf(sOkP, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
 [bOkP_o, bOkP_h, bOkP_l, bOkP_c, bOkP_v] = request.security(sOkP, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dOkP, hOkP, loOkP, okOkP] = f_delta(lOkP_o, lOkP_h, lOkP_l, lOkP_c, lOkP_v, bOkP_o, bOkP_h, bOkP_l, bOkP_c, bOkP_v, useLtf, i_class, false, 1.0)
+[dOkP, hOkP, loOkP, okOkP] = f_delta(en_okP, lOkP_o, lOkP_h, lOkP_l, lOkP_c, lOkP_v, bOkP_o, bOkP_h, bOkP_l, bOkP_c, bOkP_v, useLtf, i_class, false, 1.0)
 
 [lBgP_o, lBgP_h, lBgP_l, lBgP_c, lBgP_v] = request.security_lower_tf(sBgP, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
 [bBgP_o, bBgP_h, bBgP_l, bBgP_c, bBgP_v] = request.security(sBgP, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dBgP, hBgP, loBgP, okBgP] = f_delta(lBgP_o, lBgP_h, lBgP_l, lBgP_c, lBgP_v, bBgP_o, bBgP_h, bBgP_l, bBgP_c, bBgP_v, useLtf, i_class, false, 1.0)
+[dBgP, hBgP, loBgP, okBgP] = f_delta(en_bgP, lBgP_o, lBgP_h, lBgP_l, lBgP_c, lBgP_v, bBgP_o, bBgP_h, bBgP_l, bBgP_c, bBgP_v, useLtf, i_class, false, 1.0)
 
 [lBmP_o, lBmP_h, lBmP_l, lBmP_c, lBmP_v] = request.security_lower_tf(sBmP, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
 [bBmP_o, bBmP_h, bBmP_l, bBmP_c, bBmP_v] = request.security(sBmP, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dBmP, hBmP, loBmP, okBmP] = f_delta(lBmP_o, lBmP_h, lBmP_l, lBmP_c, lBmP_v, bBmP_o, bBmP_h, bBmP_l, bBmP_c, bBmP_v, useLtf, i_class, true, 1.0)
+[dBmP, hBmP, loBmP, okBmP] = f_delta(en_bmP, lBmP_o, lBmP_h, lBmP_l, lBmP_c, lBmP_v, bBmP_o, bBmP_h, bBmP_l, bBmP_c, bBmP_v, useLtf, i_class, true, 1.0)
 
 // =============================================================================
 //  STREAM AGGREGATION
@@ -332,13 +339,19 @@ int   selAct = i_stream == "Spot" ? spotActive : i_stream == "Perp" ? perpActive
 int   selEn  = i_stream == "Spot" ? spotEnabled : i_stream == "Perp" ? perpEnabled : spotEnabled + perpEnabled
 
 // ── cumulative with anchor reset ─────────────────────────────────────────────
+// barsSinceReset is a diagnostic: if the anchor is working, it climbs through
+// the period then snaps to 0. A value in the thousands means the reset is not
+// firing and the cumulative is drifting over the whole history.
 var float cumSpot = 0.0
 var float cumPerp = 0.0
 var float cumGlbl = 0.0
+var int   barsSinceReset = 0
+barsSinceReset := barsSinceReset + 1
 if newPeriod
     cumSpot := 0.0
     cumPerp := 0.0
     cumGlbl := 0.0
+    barsSinceReset := 0
 
 // track all three so the hidden outputs stay live regardless of what is shown
 float spotC = cumSpot + spotBar
@@ -402,7 +415,7 @@ string tblPos = i_tpos == "Top Left" ? position.top_left :
   i_tpos == "Middle Right" ? position.middle_right :
   position.top_right
 
-var table tbl = table.new(tblPos, 2, 9,
+var table tbl = table.new(tblPos, 2, 10,
      bgcolor      = color.new(#0b0b0f, 15),
      border_color = color.new(color.gray, 70),
      border_width = 1, frame_width = 1,
@@ -461,8 +474,12 @@ if i_table and barstate.islast
                (useLtf ? " · ~" + str.tostring(depthBars) + "b" : ""),
                text_color = cVal, text_size = size.tiny)
 
-    table.cell(tbl, 0, 7, "Requests", text_color = cLbl, text_size = size.tiny)
-    table.cell(tbl, 1, 7, str.tostring(reqUsed) + " / 40", text_color = cVal, text_size = size.tiny)
+    table.cell(tbl, 0, 7, "Anchor", text_color = cLbl, text_size = size.tiny)
+    table.cell(tbl, 1, 7, i_anchor + " · +" + str.tostring(barsSinceReset) + " bars",
+               text_color = i_anchor == "None" ? color.orange : cVal, text_size = size.tiny)
 
-    table.cell(tbl, 0, 8, "Status", text_color = cLbl, text_size = size.tiny)
-    table.cell(tbl, 1, 8, warn, text_color = warnCol, text_size = size.tiny)
+    table.cell(tbl, 0, 8, "Requests", text_color = cLbl, text_size = size.tiny)
+    table.cell(tbl, 1, 8, str.tostring(reqUsed) + " / 40", text_color = cVal, text_size = size.tiny)
+
+    table.cell(tbl, 0, 9, "Status", text_color = cLbl, text_size = size.tiny)
+    table.cell(tbl, 1, 9, warn, text_color = warnCol, text_size = size.tiny)
