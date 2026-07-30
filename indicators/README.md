@@ -83,10 +83,23 @@ The diagnostics table reports the displayed stream's CVD, per-stream bar delta,
 visible, never mistaken for flat flow), engine + history depth, and request
 budget used.
 
-Venues updated after first testing: BitMEX dropped; Hyperliquid (spot + perp),
-KuCoin (spot) and MEXC (spot + perp) added. 17 venues total (11 spot, 6 perp),
-34/40 requests. Hyperliquid and MEXC perp tickers are unverified on TradingView —
-if unlisted, the venue simply shows inactive and contributes zero.
+Venues updated after testing: BitMEX dropped; Hyperliquid (spot + perp), KuCoin,
+MEXC (spot + perp), Gate.io and HTX added. **19 venues (13 spot, 6 perp),
+38/40 requests** — two request slots left, so at most one more venue fits before
+the engine needs restructuring.
+
+Gate.io and HTX were added after a coverage audit on a low-cap token (Talus/US)
+found them to be the #1 and #4 spot venues by volume while both were absent from
+the list. Measured coverage there was ~18% of spot volume before, ~72% after. The
+lesson generalises: **on low-caps, venue coverage decides whether the spot read
+means anything at all.** Always check the Status row before trusting a spot-vs-perp
+conclusion.
+
+Hyperliquid, MEXC perp and HTX tickers are unverified on TradingView — if a feed
+is unlisted the venue shows inactive and contributes zero. HTX is requested as
+`HTX:` (its current name); if it reports inactive on a coin known to trade there,
+`HUOBI:` is the fallback. DEX venues (e.g. Cetus) have no TradingView feed and are
+a permanent blind spot.
 
 ### Verification result
 
