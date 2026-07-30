@@ -83,10 +83,10 @@ The diagnostics table reports the displayed stream's CVD, per-stream bar delta,
 visible, never mistaken for flat flow), engine + history depth, and request
 budget used.
 
-Venues updated after first testing: BitMEX dropped; Hyperliquid (spot + perp)
-and KuCoin (spot) added. 15 venues total (10 spot, 5 perp), 30/40 requests.
-Hyperliquid tickers are unverified on TradingView — if unlisted, the venue
-simply shows inactive.
+Venues updated after first testing: BitMEX dropped; Hyperliquid (spot + perp),
+KuCoin (spot) and MEXC (spot + perp) added. 17 venues total (11 spot, 6 perp),
+34/40 requests. Hyperliquid and MEXC perp tickers are unverified on TradingView —
+if unlisted, the venue simply shows inactive and contributes zero.
 
 ### Verification result
 
