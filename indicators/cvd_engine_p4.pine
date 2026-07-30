@@ -409,9 +409,9 @@ f_delta(bool en, array<float> aO, array<float> aH, array<float> aL, array<float>
 //  upper envelope (it assumes every venue peaks simultaneously) but it always
 //  contains the true open and close, so it never misleads on direction.
 // =============================================================================
-float spotBar = dBinS + dCbS + dOkS + dByS + dKrS + dBgS + dGtS + dHtS + dMxS + dHlS + dUpS + dBhS
-float spotHi  = hBinS + hCbS + hOkS + hByS + hKrS + hBgS + hGtS + hHtS + hMxS + hHlS + hUpS + hBhS
-float spotLo  = loBinS + loCbS + loOkS + loByS + loKrS + loBgS + loGtS + loHtS + loMxS + loHlS + loUpS + loBhS
+float spotBar = dBinS + dCbS + dOkS + dByS + dKrS + dBgS + dGtS + dHtS + dMxS + dHlS
+float spotHi  = hBinS + hCbS + hOkS + hByS + hKrS + hBgS + hGtS + hHtS + hMxS + hHlS
+float spotLo  = loBinS + loCbS + loOkS + loByS + loKrS + loBgS + loGtS + loHtS + loMxS + loHlS
 
 float perpBar = dBinP + dByP + dOkP + dBgP + dHlP + dMxP
 float perpHi  = hBinP + hByP + hOkP + hBgP + hHlP + hMxP
@@ -631,12 +631,12 @@ float ldMxP = ta.correlation(dMxP[1], barRet, i_leadLen)
 // Inactive venues get -1 so a descending sort sinks them below every active one.
 var array<string> vName = array.from("Binance·S", "Coinbase·S", "OKX·S", "Bybit·S", "Kraken·S", "Bitget·S", "Gate·S", "HTX·S", "MEXC·S", "Hyperliq·S", "Binance·P", "Bybit·P", "OKX·P", "Bitget·P", "Hyperliq·P", "MEXC·P")
 var array<color>  vCol  = array.from(#f0b90b, #2962ff, #00e5ff, #ff7043, #7e57c2, #26c6da, #5c6bc0, #a1887f, #d4e157, #26a69a, #ffca28, #ff8a65, #4dd0e1, #4db6ac, #9ccc65, #c0ca33)
-array<float> vShare= array.from(shBinS, shCbS, shOkS, shByS, shKrS, shBgS, shKcS, shMxS, shHlS, shUpS, shBhS, shBinP, shByP, shOkP, shBgP, shHlP, shMxP)
-array<float> vDelta= array.from(dBinS, dCbS, dOkS, dByS, dKrS, dBgS, dKcS, dMxS, dHlS, dUpS, dBhS, dBinP, dByP, dOkP, dBgP, dHlP, dMxP)
+array<float> vShare = array.from(shBinS, shCbS, shOkS, shByS, shKrS, shBgS, shGtS, shHtS, shMxS, shHlS, shBinP, shByP, shOkP, shBgP, shHlP, shMxP)
+array<float> vDelta = array.from(dBinS, dCbS, dOkS, dByS, dKrS, dBgS, dGtS, dHtS, dMxS, dHlS, dBinP, dByP, dOkP, dBgP, dHlP, dMxP)
 array<float> vCumv = array.from(cBinS, cCbS, cOkS, cByS, cKrS, cBgS, cGtS, cHtS, cMxS, cHlS, cBinP, cByP, cOkP, cBgP, cHlP, cMxP)
-array<float> vDz   = array.from(dzBinS, dzCbS, dzOkS, dzByS, dzKrS, dzBgS, dzGtS, dzHtS, dzMxS, dzHlS, dzBinP, dzByP, dzOkP, dzBgP, dzHlP, dzMxP)
+array<float> vDz = array.from(dzBinS, dzCbS, dzOkS, dzByS, dzKrS, dzBgS, dzGtS, dzHtS, dzMxS, dzHlS, dzBinP, dzByP, dzOkP, dzBgP, dzHlP, dzMxP)
 array<float> vLead = array.from(ldBinS, ldCbS, ldOkS, ldByS, ldKrS, ldBgS, ldGtS, ldHtS, ldMxS, ldHlS, ldBinP, ldByP, ldOkP, ldBgP, ldHlP, ldMxP)
-array<bool>  vAct  = array.from(okBinS, okCbS, okOkS, okByS, okKrS, okBgS, okGtS, okHtS, okMxS, okHlS, okBinP, okByP, okOkP, okBgP, okHlP, okMxP)
+array<bool>  vAct = array.from(okBinS, okCbS, okOkS, okByS, okKrS, okBgS, okGtS, okHtS, okMxS, okHlS, okBinP, okByP, okOkP, okBgP, okHlP, okMxP)
 array<float> vRank  = array.from(okBinS ? math.abs(cBinS) : -1.0,
   okCbS ? math.abs(cCbS) : -1.0,
   okOkS ? math.abs(cOkS) : -1.0,
