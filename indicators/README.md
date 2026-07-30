@@ -14,7 +14,8 @@ separates spot from perpetuals, and shows which venue is driving.
 
 | File | Phase | Status |
 |---|---|---|
-| `cvd_engine_p1.pine` | 1 — parity harness | ready to test |
+| `cvd_engine_p1.pine` | 1 — parity harness | parity confirmed (tick rule) |
+| `cvd_engine_p2.pine` | 2 — multi-venue aggregation | ready to test |
 
 ## Phase plan
 
@@ -53,6 +54,34 @@ The 0.52% residual came from the tick chain breaking at chart-bar boundaries:
 its own open instead of the previous bar's final close. On a monthly anchor at
 4H that is ~180 broken links, each able to mis-sign or discard one minute of
 volume. Both are now carried across bars via `dirCarry` / `closeCarry`.
+
+## Phase 2 — multi-venue aggregation
+
+`cvd_engine_p2.pine` runs the Phase-1 delta engine (now the shared `f_delta`
+function, tick rule as default) across up to 13 venues and sums them into three
+streams: **Spot**, **Perp**, **Global**. Pick which to plot as candles, a line,
+or per-bar delta columns.
+
+Venues are checkboxes. Defaults are a conservative six — Binance/Coinbase/OKX
+spot, Binance/Bybit perp — that run on a free plan; the rest (Kraken, Bitget,
+Gate/MEXC, Upbit, Bithumb spot; OKX/Bitget/BitMEX perp) are one click away. A
+disabled venue is requested with an empty symbol, so it costs no intrabar
+processing and contributes exactly zero.
+
+**Aggregate candle wicks are an upper envelope.** The wick is the sum of each
+venue's within-bar running extreme. Because venues are not synchronised, that
+sum assumes every venue peaks at once, so the wick is slightly wide — but it
+always contains the true open and close, so it never misleads on direction. The
+body (open/close) is exact. This is a deliberate, documented approximation;
+per-venue precise wicks are not achievable without a merged intrabar timeline,
+which Pine can't build across feeds.
+
+The diagnostics table reports the displayed stream's CVD, per-stream bar delta,
+**active/enabled venue counts per stream** (so an unlisted venue on an alt is
+visible, never mistaken for flat flow), engine + history depth, and request
+budget used (26/40).
+
+Not compile-tested — no Pine toolchain locally.
 
 ## Design decisions
 
