@@ -83,10 +83,10 @@ The diagnostics table reports the displayed stream's CVD, per-stream bar delta,
 visible, never mistaken for flat flow), engine + history depth, and request
 budget used.
 
-Venues updated after testing: BitMEX dropped; Hyperliquid (spot + perp), KuCoin,
-MEXC (spot + perp), Gate.io and HTX added. **19 venues (13 spot, 6 perp),
-38/40 requests** — two request slots left, so at most one more venue fits before
-the engine needs restructuring.
+Venue set after testing: BitMEX, KuCoin, Upbit and Bithumb dropped; Hyperliquid
+(spot + perp), MEXC (spot + perp), Gate.io and HTX added. **16 venues
+(10 spot, 6 perp), 32/40 requests** — four request slots free, so up to four more
+venues fit before the engine needs restructuring.
 
 Gate.io and HTX were added after a coverage audit on a low-cap token (Talus/US)
 found them to be the #1 and #4 spot venues by volume while both were absent from

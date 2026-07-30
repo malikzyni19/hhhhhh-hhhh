@@ -138,13 +138,10 @@ bool en_okS  = input.bool(true,  "OKX",         group = G_SPT, inline = "s2")
 bool en_byS  = input.bool(false, "Bybit",       group = G_SPT, inline = "s2")
 bool en_krS  = input.bool(false, "Kraken",      group = G_SPT, inline = "s3")
 bool en_bgS  = input.bool(false, "Bitget",      group = G_SPT, inline = "s3")
-bool en_kcS  = input.bool(false, "KuCoin",      group = G_SPT, inline = "s4")
-bool en_mxS  = input.bool(false, "MEXC",        group = G_SPT, inline = "s6")
-bool en_gtS  = input.bool(true,  "Gate.io",     group = G_SPT, inline = "s7")
-bool en_htS  = input.bool(true,  "HTX",         group = G_SPT, inline = "s7")
-bool en_hlS  = input.bool(false, "Hyperliquid", group = G_SPT, inline = "s4")
-bool en_upS  = input.bool(false, "Upbit",       group = G_SPT, inline = "s5")
-bool en_bhS  = input.bool(false, "Bithumb",     group = G_SPT, inline = "s5")
+bool en_gtS  = input.bool(true,  "Gate.io",     group = G_SPT, inline = "s4")
+bool en_htS  = input.bool(true,  "HTX",         group = G_SPT, inline = "s4")
+bool en_mxS  = input.bool(false, "MEXC",        group = G_SPT, inline = "s5")
+bool en_hlS  = input.bool(false, "Hyperliquid", group = G_SPT, inline = "s5")
 
 bool en_binP = input.bool(true,  "Binance",     group = G_PRP, inline = "p1")
 bool en_byP  = input.bool(true,  "Bybit",       group = G_PRP, inline = "p1")
@@ -157,7 +154,7 @@ int i_leadLen = input.int(100, "Lead-lag window", group = G_STR, minval = 20, ma
      tooltip = "Lookback for the lead-lag correlation. Longer is steadier but slower to react.")
 
 // ── per-venue line controls ──────────────────────────────────────────────────
-int  i_topLines = input.int(4, "Venue lines to draw", group = G_VLN, minval = 1, maxval = 19,
+int  i_topLines = input.int(4, "Venue lines to draw", group = G_VLN, minval = 1, maxval = 16,
      tooltip = "Used by the Per-venue views. Only the largest venues are drawn, so the pane " +
                "stays readable.\n\n" +
                "Selection is by LIFETIME volume, not by the current period. That is deliberate: " +
@@ -176,7 +173,7 @@ bool   i_dash = input.bool(true, "Show dashboard", group = G_CTB,
                "the diagnostics table. Only ever one at a time.")
 string i_dpos = input.string("Top Right", "Position", group = G_CTB,
      options = ["Top Right", "Top Left", "Bottom Right", "Bottom Left", "Middle Right"])
-int    i_topN = input.int(5, "Table rows", group = G_CTB, minval = 1, maxval = 19,
+int    i_topN = input.int(5, "Table rows", group = G_CTB, minval = 1, maxval = 16,
      tooltip = "How many venues to list, ranked by share of the CURRENT period's flow - so the " +
                "table is responsive even though the lines are stable.")
 bool   i_showAll = input.bool(false, "List all active venues", group = G_CTB)
@@ -200,13 +197,10 @@ string sOkS  = f_sym(en_okS,  "OKX:"         + base  + "USDT")
 string sByS  = f_sym(en_byS,  "BYBIT:"       + base  + "USDT")
 string sKrS  = f_sym(en_krS,  "KRAKEN:"      + baseX + "USD")
 string sBgS  = f_sym(en_bgS,  "BITGET:"      + base  + "USDT")
-string sKcS  = f_sym(en_kcS,  "KUCOIN:"      + base  + "USDT")
 string sMxS  = f_sym(en_mxS,  "MEXC:"        + base  + "USDT")
 string sGtS  = f_sym(en_gtS,  "GATEIO:"      + base  + "USDT")
 string sHtS  = f_sym(en_htS,  "HTX:"         + base  + "USDT")   // if inactive, try HUOBI:
 string sHlS  = f_sym(en_hlS,  "HYPERLIQUID:" + base  + "USDC")   // unverified ticker
-string sUpS  = f_sym(en_upS,  "UPBIT:"       + base  + "KRW")
-string sBhS  = f_sym(en_bhS,  "BITHUMB:"     + base  + "KRW")
 
 string sBinP = f_sym(en_binP, "BINANCE:"     + base  + "USDT.P")
 string sByP  = f_sym(en_byP,  "BYBIT:"       + base  + "USDT.P")
@@ -333,7 +327,7 @@ f_delta(bool en, array<float> aO, array<float> aH, array<float> aL, array<float>
 //  scope. The request calls are NOT wrapped in a helper function: request.* wants
 //  a `simple string` symbol, and passing the symbol through a function parameter
 //  can demote it to `series`, which fails to compile. Inlining keeps every
-//  symbol simple. 19 venues × 2 = 38 calls, within the 40-call budget. Disabled
+//  symbol simple. 16 venues × 2 = 32 calls, within the 40-call budget. Disabled
 //  venues carry an empty symbol, so their requests return na and f_delta
 //  short-circuits to a zero result.
 //
@@ -364,9 +358,6 @@ f_delta(bool en, array<float> aO, array<float> aH, array<float> aL, array<float>
 [bBgS_o, bBgS_h, bBgS_l, bBgS_c, bBgS_v] = request.security(sBgS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
 [dBgS, hBgS, loBgS, okBgS] = f_delta(en_bgS, lBgS_o, lBgS_h, lBgS_l, lBgS_c, lBgS_v, bBgS_o, bBgS_h, bBgS_l, bBgS_c, bBgS_v, useLtf, i_class, false, 1.0)
 
-[lKcS_o, lKcS_h, lKcS_l, lKcS_c, lKcS_v] = request.security_lower_tf(sKcS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
-[bKcS_o, bKcS_h, bKcS_l, bKcS_c, bKcS_v] = request.security(sKcS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dKcS, hKcS, loKcS, okKcS] = f_delta(en_kcS, lKcS_o, lKcS_h, lKcS_l, lKcS_c, lKcS_v, bKcS_o, bKcS_h, bKcS_l, bKcS_c, bKcS_v, useLtf, i_class, false, 1.0)
 
 [lHlS_o, lHlS_h, lHlS_l, lHlS_c, lHlS_v] = request.security_lower_tf(sHlS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
 [bHlS_o, bHlS_h, bHlS_l, bHlS_c, bHlS_v] = request.security(sHlS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
@@ -384,13 +375,7 @@ f_delta(bool en, array<float> aO, array<float> aH, array<float> aL, array<float>
 [bHtS_o, bHtS_h, bHtS_l, bHtS_c, bHtS_v] = request.security(sHtS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
 [dHtS, hHtS, loHtS, okHtS] = f_delta(en_htS, lHtS_o, lHtS_h, lHtS_l, lHtS_c, lHtS_v, bHtS_o, bHtS_h, bHtS_l, bHtS_c, bHtS_v, useLtf, i_class, false, 1.0)
 
-[lUpS_o, lUpS_h, lUpS_l, lUpS_c, lUpS_v] = request.security_lower_tf(sUpS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
-[bUpS_o, bUpS_h, bUpS_l, bUpS_c, bUpS_v] = request.security(sUpS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dUpS, hUpS, loUpS, okUpS] = f_delta(en_upS, lUpS_o, lUpS_h, lUpS_l, lUpS_c, lUpS_v, bUpS_o, bUpS_h, bUpS_l, bUpS_c, bUpS_v, useLtf, i_class, false, 1.0)
 
-[lBhS_o, lBhS_h, lBhS_l, lBhS_c, lBhS_v] = request.security_lower_tf(sBhS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
-[bBhS_o, bBhS_h, bBhS_l, bBhS_c, bBhS_v] = request.security(sBhS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dBhS, hBhS, loBhS, okBhS] = f_delta(en_bhS, lBhS_o, lBhS_h, lBhS_l, lBhS_c, lBhS_v, bBhS_o, bBhS_h, bBhS_l, bBhS_c, bBhS_v, useLtf, i_class, false, 1.0)
 
 [lBinP_o, lBinP_h, lBinP_l, lBinP_c, lBinP_v] = request.security_lower_tf(sBinP, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
 [bBinP_o, bBinP_h, bBinP_l, bBinP_c, bBinP_v] = request.security(sBinP, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
@@ -424,9 +409,9 @@ f_delta(bool en, array<float> aO, array<float> aH, array<float> aL, array<float>
 //  upper envelope (it assumes every venue peaks simultaneously) but it always
 //  contains the true open and close, so it never misleads on direction.
 // =============================================================================
-float spotBar = dBinS + dCbS + dOkS + dByS + dKrS + dBgS + dKcS + dMxS + dGtS + dHtS + dHlS + dUpS + dBhS
-float spotHi  = hBinS + hCbS + hOkS + hByS + hKrS + hBgS + hKcS + hMxS + hGtS + hHtS + hHlS + hUpS + hBhS
-float spotLo  = loBinS + loCbS + loOkS + loByS + loKrS + loBgS + loKcS + loMxS + loGtS + loHtS + loHlS + loUpS + loBhS
+float spotBar = dBinS + dCbS + dOkS + dByS + dKrS + dBgS + dGtS + dHtS + dMxS + dHlS + dUpS + dBhS
+float spotHi  = hBinS + hCbS + hOkS + hByS + hKrS + hBgS + hGtS + hHtS + hMxS + hHlS + hUpS + hBhS
+float spotLo  = loBinS + loCbS + loOkS + loByS + loKrS + loBgS + loGtS + loHtS + loMxS + loHlS + loUpS + loBhS
 
 float perpBar = dBinP + dByP + dOkP + dBgP + dHlP + dMxP
 float perpHi  = hBinP + hByP + hOkP + hBgP + hHlP + hMxP
@@ -437,15 +422,15 @@ float glblHi  = spotHi + perpHi
 float glblLo  = spotLo + perpLo
 
 // active-venue counts (venues that actually returned data this bar)
-int spotActive = (okBinS ? 1 : 0) + (okCbS ? 1 : 0) + (okOkS ? 1 : 0) + (okByS ? 1 : 0) +
-  (okKrS ? 1 : 0) + (okBgS ? 1 : 0) + (okKcS ? 1 : 0) + (okMxS ? 1 : 0) + (okGtS ? 1 : 0) + (okHtS ? 1 : 0) + (okHlS ? 1 : 0) + (okUpS ? 1 : 0) + (okBhS ? 1 : 0)
+int spotActive = (okBinS ? 1 : 0) + (okCbS ? 1 : 0) + (okOkS ? 1 : 0) + (okByS ? 1 : 0) + (okKrS ? 1 : 0) +
+  (okBgS ? 1 : 0) + (okGtS ? 1 : 0) + (okHtS ? 1 : 0) + (okMxS ? 1 : 0) + (okHlS ? 1 : 0)
 int perpActive = (okBinP ? 1 : 0) + (okByP ? 1 : 0) + (okOkP ? 1 : 0) + (okBgP ? 1 : 0) + (okHlP ? 1 : 0) + (okMxP ? 1 : 0)
 
-int spotEnabled = (en_binS ? 1 : 0) + (en_cbS ? 1 : 0) + (en_okS ? 1 : 0) + (en_byS ? 1 : 0) +
-  (en_krS ? 1 : 0) + (en_bgS ? 1 : 0) + (en_kcS ? 1 : 0) + (en_mxS ? 1 : 0) + (en_gtS ? 1 : 0) + (en_htS ? 1 : 0) + (en_hlS ? 1 : 0) + (en_upS ? 1 : 0) + (en_bhS ? 1 : 0)
+int spotEnabled = (en_binS ? 1 : 0) + (en_cbS ? 1 : 0) + (en_okS ? 1 : 0) + (en_byS ? 1 : 0) + (en_krS ? 1 : 0) +
+  (en_bgS ? 1 : 0) + (en_gtS ? 1 : 0) + (en_htS ? 1 : 0) + (en_mxS ? 1 : 0) + (en_hlS ? 1 : 0)
 int perpEnabled = (en_binP ? 1 : 0) + (en_byP ? 1 : 0) + (en_okP ? 1 : 0) + (en_bgP ? 1 : 0) + (en_hlP ? 1 : 0) + (en_mxP ? 1 : 0)
 
-int reqUsed = 2 * (19)          // 19 venues × (intrabar + chart-bar) request
+int reqUsed = 2 * (16)          // 16 venues × (intrabar + chart-bar) request
 
 // ── select the displayed stream ──────────────────────────────────────────────
 float selBar = i_stream == "Spot" ? spotBar : i_stream == "Perp" ? perpBar : glblBar
@@ -519,7 +504,7 @@ float spread  = zSpot - zPerp
 //  computed above.
 //
 //  f_cum keeps its accumulator in `var` state, and Pine keeps `var` per
-//  call-site, so each of the 19 calls maintains an independent anchor-reset
+//  call-site, so each of the 16 calls maintains an independent anchor-reset
 //  cumulative. Returning a real series (rather than holding these in an array)
 //  is deliberate: ta.sma/ta.stdev/ta.correlation need series inputs and cannot
 //  operate on array elements.
@@ -538,13 +523,10 @@ float cOkS = f_cum(dOkS, newPeriod)
 float cByS = f_cum(dByS, newPeriod)
 float cKrS = f_cum(dKrS, newPeriod)
 float cBgS = f_cum(dBgS, newPeriod)
-float cKcS = f_cum(dKcS, newPeriod)
 float cHlS = f_cum(dHlS, newPeriod)
 float cMxS = f_cum(dMxS, newPeriod)
 float cGtS = f_cum(dGtS, newPeriod)
 float cHtS = f_cum(dHtS, newPeriod)
-float cUpS = f_cum(dUpS, newPeriod)
-float cBhS = f_cum(dBhS, newPeriod)
 float cBinP = f_cum(dBinP, newPeriod)
 float cByP = f_cum(dByP, newPeriod)
 float cOkP = f_cum(dOkP, newPeriod)
@@ -559,13 +541,10 @@ float totAbs = math.abs(cBinS) +
   math.abs(cByS) +
   math.abs(cKrS) +
   math.abs(cBgS) +
-  math.abs(cKcS) +
-  math.abs(cMxS) +
   math.abs(cGtS) +
   math.abs(cHtS) +
+  math.abs(cMxS) +
   math.abs(cHlS) +
-  math.abs(cUpS) +
-  math.abs(cBhS) +
   math.abs(cBinP) +
   math.abs(cByP) +
   math.abs(cOkP) +
@@ -581,13 +560,10 @@ float shOkS = totAbs > 0 ? 100.0 * cOkS / totAbs : 0.0
 float shByS = totAbs > 0 ? 100.0 * cByS / totAbs : 0.0
 float shKrS = totAbs > 0 ? 100.0 * cKrS / totAbs : 0.0
 float shBgS = totAbs > 0 ? 100.0 * cBgS / totAbs : 0.0
-float shKcS = totAbs > 0 ? 100.0 * cKcS / totAbs : 0.0
 float shHlS = totAbs > 0 ? 100.0 * cHlS / totAbs : 0.0
 float shMxS = totAbs > 0 ? 100.0 * cMxS / totAbs : 0.0
 float shGtS = totAbs > 0 ? 100.0 * cGtS / totAbs : 0.0
 float shHtS = totAbs > 0 ? 100.0 * cHtS / totAbs : 0.0
-float shUpS = totAbs > 0 ? 100.0 * cUpS / totAbs : 0.0
-float shBhS = totAbs > 0 ? 100.0 * cBhS / totAbs : 0.0
 float shBinP = totAbs > 0 ? 100.0 * cBinP / totAbs : 0.0
 float shByP = totAbs > 0 ? 100.0 * cByP / totAbs : 0.0
 float shOkP = totAbs > 0 ? 100.0 * cOkP / totAbs : 0.0
@@ -602,13 +578,10 @@ float zcOkS = f_z(cOkS, i_normLen)
 float zcByS = f_z(cByS, i_normLen)
 float zcKrS = f_z(cKrS, i_normLen)
 float zcBgS = f_z(cBgS, i_normLen)
-float zcKcS = f_z(cKcS, i_normLen)
 float zcHlS = f_z(cHlS, i_normLen)
 float zcMxS = f_z(cMxS, i_normLen)
 float zcGtS = f_z(cGtS, i_normLen)
 float zcHtS = f_z(cHtS, i_normLen)
-float zcUpS = f_z(cUpS, i_normLen)
-float zcBhS = f_z(cBhS, i_normLen)
 float zcBinP = f_z(cBinP, i_normLen)
 float zcByP = f_z(cByP, i_normLen)
 float zcOkP = f_z(cOkP, i_normLen)
@@ -623,13 +596,10 @@ float dzOkS = f_z(dOkS, i_normLen)
 float dzByS = f_z(dByS, i_normLen)
 float dzKrS = f_z(dKrS, i_normLen)
 float dzBgS = f_z(dBgS, i_normLen)
-float dzKcS = f_z(dKcS, i_normLen)
 float dzHlS = f_z(dHlS, i_normLen)
 float dzMxS = f_z(dMxS, i_normLen)
 float dzGtS = f_z(dGtS, i_normLen)
 float dzHtS = f_z(dHtS, i_normLen)
-float dzUpS = f_z(dUpS, i_normLen)
-float dzBhS = f_z(dBhS, i_normLen)
 float dzBinP = f_z(dBinP, i_normLen)
 float dzByP = f_z(dByP, i_normLen)
 float dzOkP = f_z(dOkP, i_normLen)
@@ -646,13 +616,10 @@ float ldOkS = ta.correlation(dOkS[1], barRet, i_leadLen)
 float ldByS = ta.correlation(dByS[1], barRet, i_leadLen)
 float ldKrS = ta.correlation(dKrS[1], barRet, i_leadLen)
 float ldBgS = ta.correlation(dBgS[1], barRet, i_leadLen)
-float ldKcS = ta.correlation(dKcS[1], barRet, i_leadLen)
 float ldHlS = ta.correlation(dHlS[1], barRet, i_leadLen)
 float ldMxS = ta.correlation(dMxS[1], barRet, i_leadLen)
 float ldGtS = ta.correlation(dGtS[1], barRet, i_leadLen)
 float ldHtS = ta.correlation(dHtS[1], barRet, i_leadLen)
-float ldUpS = ta.correlation(dUpS[1], barRet, i_leadLen)
-float ldBhS = ta.correlation(dBhS[1], barRet, i_leadLen)
 float ldBinP = ta.correlation(dBinP[1], barRet, i_leadLen)
 float ldByP = ta.correlation(dByP[1], barRet, i_leadLen)
 float ldOkP = ta.correlation(dOkP[1], barRet, i_leadLen)
@@ -662,27 +629,24 @@ float ldMxP = ta.correlation(dMxP[1], barRet, i_leadLen)
 
 // ── ranking ──────────────────────────────────────────────────────────────────
 // Inactive venues get -1 so a descending sort sinks them below every active one.
-var array<string> vName = array.from("Binance·S", "Coinbase·S", "OKX·S", "Bybit·S", "Kraken·S", "Bitget·S", "KuCoin·S", "MEXC·S", "Gate·S", "HTX·S", "Hyperliq·S", "Upbit·S", "Bithumb·S", "Binance·P", "Bybit·P", "OKX·P", "Bitget·P", "Hyperliq·P", "MEXC·P")
-var array<color>  vCol  = array.from(#f0b90b, #2962ff, #00e5ff, #ff7043, #7e57c2, #26c6da, #66bb6a, #d4e157, #5c6bc0, #a1887f, #26a69a, #ec407a, #ab47bc, #ffca28, #ff8a65, #4dd0e1, #4db6ac, #9ccc65, #c0ca33)
+var array<string> vName = array.from("Binance·S", "Coinbase·S", "OKX·S", "Bybit·S", "Kraken·S", "Bitget·S", "Gate·S", "HTX·S", "MEXC·S", "Hyperliq·S", "Binance·P", "Bybit·P", "OKX·P", "Bitget·P", "Hyperliq·P", "MEXC·P")
+var array<color>  vCol  = array.from(#f0b90b, #2962ff, #00e5ff, #ff7043, #7e57c2, #26c6da, #5c6bc0, #a1887f, #d4e157, #26a69a, #ffca28, #ff8a65, #4dd0e1, #4db6ac, #9ccc65, #c0ca33)
 array<float> vShare= array.from(shBinS, shCbS, shOkS, shByS, shKrS, shBgS, shKcS, shMxS, shHlS, shUpS, shBhS, shBinP, shByP, shOkP, shBgP, shHlP, shMxP)
 array<float> vDelta= array.from(dBinS, dCbS, dOkS, dByS, dKrS, dBgS, dKcS, dMxS, dHlS, dUpS, dBhS, dBinP, dByP, dOkP, dBgP, dHlP, dMxP)
-array<float> vCumv = array.from(cBinS, cCbS, cOkS, cByS, cKrS, cBgS, cKcS, cMxS, cGtS, cHtS, cHlS, cUpS, cBhS, cBinP, cByP, cOkP, cBgP, cHlP, cMxP)
-array<float> vDz   = array.from(dzBinS, dzCbS, dzOkS, dzByS, dzKrS, dzBgS, dzKcS, dzMxS, dzGtS, dzHtS, dzHlS, dzUpS, dzBhS, dzBinP, dzByP, dzOkP, dzBgP, dzHlP, dzMxP)
-array<float> vLead = array.from(ldBinS, ldCbS, ldOkS, ldByS, ldKrS, ldBgS, ldKcS, ldMxS, ldGtS, ldHtS, ldHlS, ldUpS, ldBhS, ldBinP, ldByP, ldOkP, ldBgP, ldHlP, ldMxP)
-array<bool>  vAct  = array.from(okBinS, okCbS, okOkS, okByS, okKrS, okBgS, okKcS, okMxS, okGtS, okHtS, okHlS, okUpS, okBhS, okBinP, okByP, okOkP, okBgP, okHlP, okMxP)
+array<float> vCumv = array.from(cBinS, cCbS, cOkS, cByS, cKrS, cBgS, cGtS, cHtS, cMxS, cHlS, cBinP, cByP, cOkP, cBgP, cHlP, cMxP)
+array<float> vDz   = array.from(dzBinS, dzCbS, dzOkS, dzByS, dzKrS, dzBgS, dzGtS, dzHtS, dzMxS, dzHlS, dzBinP, dzByP, dzOkP, dzBgP, dzHlP, dzMxP)
+array<float> vLead = array.from(ldBinS, ldCbS, ldOkS, ldByS, ldKrS, ldBgS, ldGtS, ldHtS, ldMxS, ldHlS, ldBinP, ldByP, ldOkP, ldBgP, ldHlP, ldMxP)
+array<bool>  vAct  = array.from(okBinS, okCbS, okOkS, okByS, okKrS, okBgS, okGtS, okHtS, okMxS, okHlS, okBinP, okByP, okOkP, okBgP, okHlP, okMxP)
 array<float> vRank  = array.from(okBinS ? math.abs(cBinS) : -1.0,
   okCbS ? math.abs(cCbS) : -1.0,
   okOkS ? math.abs(cOkS) : -1.0,
   okByS ? math.abs(cByS) : -1.0,
   okKrS ? math.abs(cKrS) : -1.0,
   okBgS ? math.abs(cBgS) : -1.0,
-  okKcS ? math.abs(cKcS) : -1.0,
-  okMxS ? math.abs(cMxS) : -1.0,
   okGtS ? math.abs(cGtS) : -1.0,
   okHtS ? math.abs(cHtS) : -1.0,
+  okMxS ? math.abs(cMxS) : -1.0,
   okHlS ? math.abs(cHlS) : -1.0,
-  okUpS ? math.abs(cUpS) : -1.0,
-  okBhS ? math.abs(cBhS) : -1.0,
   okBinP ? math.abs(cBinP) : -1.0,
   okByP ? math.abs(cByP) : -1.0,
   okOkP ? math.abs(cOkP) : -1.0,
@@ -695,7 +659,7 @@ array<int> vOrder = array.sort_indices(vRank, order.descending)
 // Consensus: how many active venues agree with the global cumulative direction.
 int glblSign = glblC > 0 ? 1 : glblC < 0 ? -1 : 0
 int agreeCnt = 0
-for i = 0 to 18
+for i = 0 to 15
     if array.get(vAct, i)
         float cv = array.get(vCumv, i)
         int sg = cv > 0 ? 1 : cv < 0 ? -1 : 0
@@ -727,13 +691,10 @@ float lfOkS = f_life(dOkS)
 float lfByS = f_life(dByS)
 float lfKrS = f_life(dKrS)
 float lfBgS = f_life(dBgS)
-float lfKcS = f_life(dKcS)
 float lfHlS = f_life(dHlS)
 float lfMxS = f_life(dMxS)
 float lfGtS = f_life(dGtS)
 float lfHtS = f_life(dHtS)
-float lfUpS = f_life(dUpS)
-float lfBhS = f_life(dBhS)
 float lfBinP = f_life(dBinP)
 float lfByP = f_life(dByP)
 float lfOkP = f_life(dOkP)
@@ -748,13 +709,10 @@ bool plOkS = okOkS and i_venSpot
 bool plByS = okByS and i_venSpot
 bool plKrS = okKrS and i_venSpot
 bool plBgS = okBgS and i_venSpot
-bool plKcS = okKcS and i_venSpot
 bool plHlS = okHlS and i_venSpot
 bool plMxS = okMxS and i_venSpot
 bool plGtS = okGtS and i_venSpot
 bool plHtS = okHtS and i_venSpot
-bool plUpS = okUpS and i_venSpot
-bool plBhS = okBhS and i_venSpot
 bool plBinP = okBinP and i_venPerp
 bool plByP = okByP and i_venPerp
 bool plOkP = okOkP and i_venPerp
@@ -762,16 +720,16 @@ bool plBgP = okBgP and i_venPerp
 bool plHlP = okHlP and i_venPerp
 bool plMxP = okMxP and i_venPerp
 
-array<float> vLife = array.from(lfBinS, lfCbS, lfOkS, lfByS, lfKrS, lfBgS, lfKcS, lfMxS, lfGtS, lfHtS, lfHlS, lfUpS, lfBhS, lfBinP, lfByP, lfOkP, lfBgP, lfHlP, lfMxP)
-array<bool>  vPool = array.from(plBinS, plCbS, plOkS, plByS, plKrS, plBgS, plKcS, plMxS, plGtS, plHtS, plHlS, plUpS, plBhS, plBinP, plByP, plOkP, plBgP, plHlP, plMxP)
+array<float> vLife = array.from(lfBinS, lfCbS, lfOkS, lfByS, lfKrS, lfBgS, lfGtS, lfHtS, lfMxS, lfHlS, lfBinP, lfByP, lfOkP, lfBgP, lfHlP, lfMxP)
+array<bool>  vPool = array.from(plBinS, plCbS, plOkS, plByS, plKrS, plBgS, plGtS, plHtS, plMxS, plHlS, plBinP, plByP, plOkP, plBgP, plHlP, plMxP)
 
 // Rank within the pool: how many pool venues have strictly more lifetime flow.
 // 15x15 is trivial, and it keeps ties harmless (tied venues share a rank).
-array<int> vLineRank = array.new_int(19, 999)
-for i = 0 to 18
+array<int> vLineRank = array.new_int(16, 999)
+for i = 0 to 15
     if array.get(vPool, i)
         int higher = 0
-        for j = 0 to 18
+        for j = 0 to 15
             if array.get(vPool, j) and j != i and array.get(vLife, j) > array.get(vLife, i)
                 higher := higher + 1
         array.set(vLineRank, i, higher)
@@ -782,19 +740,16 @@ bool drOkS = array.get(vLineRank, 2) < i_topLines
 bool drByS = array.get(vLineRank, 3) < i_topLines
 bool drKrS = array.get(vLineRank, 4) < i_topLines
 bool drBgS = array.get(vLineRank, 5) < i_topLines
-bool drKcS = array.get(vLineRank, 6) < i_topLines
-bool drMxS = array.get(vLineRank, 7) < i_topLines
-bool drGtS = array.get(vLineRank, 8) < i_topLines
-bool drHtS = array.get(vLineRank, 9) < i_topLines
-bool drHlS = array.get(vLineRank, 10) < i_topLines
-bool drUpS = array.get(vLineRank, 11) < i_topLines
-bool drBhS = array.get(vLineRank, 12) < i_topLines
-bool drBinP = array.get(vLineRank, 13) < i_topLines
-bool drByP = array.get(vLineRank, 14) < i_topLines
-bool drOkP = array.get(vLineRank, 15) < i_topLines
-bool drBgP = array.get(vLineRank, 16) < i_topLines
-bool drHlP = array.get(vLineRank, 17) < i_topLines
-bool drMxP = array.get(vLineRank, 18) < i_topLines
+bool drGtS = array.get(vLineRank, 6) < i_topLines
+bool drHtS = array.get(vLineRank, 7) < i_topLines
+bool drMxS = array.get(vLineRank, 8) < i_topLines
+bool drHlS = array.get(vLineRank, 9) < i_topLines
+bool drBinP = array.get(vLineRank, 10) < i_topLines
+bool drByP = array.get(vLineRank, 11) < i_topLines
+bool drOkP = array.get(vLineRank, 12) < i_topLines
+bool drBgP = array.get(vLineRank, 13) < i_topLines
+bool drHlP = array.get(vLineRank, 14) < i_topLines
+bool drMxP = array.get(vLineRank, 15) < i_topLines
 
 bool vSingle  = i_view == "Single stream"
 bool vCompare = i_view == "Spot vs Perp"
@@ -843,13 +798,10 @@ plot(vVenShare and drOkS ? shOkS : na, "Share OKX·S", color = #00e5ff, linewidt
 plot(vVenShare and drByS ? shByS : na, "Share Bybit·S", color = #ff7043, linewidth = 2)
 plot(vVenShare and drKrS ? shKrS : na, "Share Kraken·S", color = #7e57c2, linewidth = 2)
 plot(vVenShare and drBgS ? shBgS : na, "Share Bitget·S", color = #26c6da, linewidth = 2)
-plot(vVenShare and drKcS ? shKcS : na, "Share KuCoin·S", color = #66bb6a, linewidth = 2)
-plot(vVenShare and drMxS ? shMxS : na, "Share MEXC·S", color = #d4e157, linewidth = 2)
 plot(vVenShare and drGtS ? shGtS : na, "Share Gate·S", color = #5c6bc0, linewidth = 2)
 plot(vVenShare and drHtS ? shHtS : na, "Share HTX·S", color = #a1887f, linewidth = 2)
+plot(vVenShare and drMxS ? shMxS : na, "Share MEXC·S", color = #d4e157, linewidth = 2)
 plot(vVenShare and drHlS ? shHlS : na, "Share Hyperliq·S", color = #26a69a, linewidth = 2)
-plot(vVenShare and drUpS ? shUpS : na, "Share Upbit·S", color = #ec407a, linewidth = 2)
-plot(vVenShare and drBhS ? shBhS : na, "Share Bithumb·S", color = #ab47bc, linewidth = 2)
 plot(vVenShare and drBinP ? shBinP : na, "Share Binance·P", color = #ffca28, linewidth = 2)
 plot(vVenShare and drByP ? shByP : na, "Share Bybit·P", color = #ff8a65, linewidth = 2)
 plot(vVenShare and drOkP ? shOkP : na, "Share OKX·P", color = #4dd0e1, linewidth = 2)
@@ -863,13 +815,10 @@ plot(vVenCvd and drOkS ? zcOkS : na, "CVD z OKX·S", color = #00e5ff, linewidth 
 plot(vVenCvd and drByS ? zcByS : na, "CVD z Bybit·S", color = #ff7043, linewidth = 2)
 plot(vVenCvd and drKrS ? zcKrS : na, "CVD z Kraken·S", color = #7e57c2, linewidth = 2)
 plot(vVenCvd and drBgS ? zcBgS : na, "CVD z Bitget·S", color = #26c6da, linewidth = 2)
-plot(vVenCvd and drKcS ? zcKcS : na, "CVD z KuCoin·S", color = #66bb6a, linewidth = 2)
-plot(vVenCvd and drMxS ? zcMxS : na, "CVD z MEXC·S", color = #d4e157, linewidth = 2)
 plot(vVenCvd and drGtS ? zcGtS : na, "CVD z Gate·S", color = #5c6bc0, linewidth = 2)
 plot(vVenCvd and drHtS ? zcHtS : na, "CVD z HTX·S", color = #a1887f, linewidth = 2)
+plot(vVenCvd and drMxS ? zcMxS : na, "CVD z MEXC·S", color = #d4e157, linewidth = 2)
 plot(vVenCvd and drHlS ? zcHlS : na, "CVD z Hyperliq·S", color = #26a69a, linewidth = 2)
-plot(vVenCvd and drUpS ? zcUpS : na, "CVD z Upbit·S", color = #ec407a, linewidth = 2)
-plot(vVenCvd and drBhS ? zcBhS : na, "CVD z Bithumb·S", color = #ab47bc, linewidth = 2)
 plot(vVenCvd and drBinP ? zcBinP : na, "CVD z Binance·P", color = #ffca28, linewidth = 2)
 plot(vVenCvd and drByP ? zcByP : na, "CVD z Bybit·P", color = #ff8a65, linewidth = 2)
 plot(vVenCvd and drOkP ? zcOkP : na, "CVD z OKX·P", color = #4dd0e1, linewidth = 2)
@@ -1010,8 +959,8 @@ if showDiag and barstate.islast
 //  Venues ranked by share of the anchor period's flow. Venue names are tinted to
 //  match their plot colour so this table also serves as the chart legend.
 // =============================================================================
-// 1 header + up to 19 venue rows + 4 summary rows
-var table ctb = table.new(dashPos, 6, 24,
+// 1 header + up to 16 venue rows + 4 summary rows
+var table ctb = table.new(dashPos, 6, 21,
      bgcolor      = color.new(#0b0b0f, 15),
      border_color = color.new(color.gray, 70),
      border_width = 1, frame_width = 1,
@@ -1027,10 +976,10 @@ f_bar(float pct) =>
     out
 
 if barstate.islast and not showCtab
-    table.clear(ctb, 0, 0, 5, 23)
+    table.clear(ctb, 0, 0, 5, 20)
 
 if showCtab and barstate.islast
-    table.clear(ctb, 0, 0, 5, 23)
+    table.clear(ctb, 0, 0, 5, 20)
 
     color hbg = color.new(#16202e, 0)
     color lbl = color.new(color.gray, 20)
