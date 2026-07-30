@@ -1,0 +1,88 @@
+# Aggregated CVD Engine — Pine v6
+
+Multi-exchange cumulative volume delta with spot/perp decomposition, built for
+any pair (not BTC-only).
+
+## Why this exists
+
+Watching one exchange's CVD hides the flow that actually moves price. Real
+buying often starts on a venue you are not looking at — a Korean spot book, or
+a perp venue leading the move. This engine aggregates delta across venues,
+separates spot from perpetuals, and shows which venue is driving.
+
+## Files
+
+| File | Phase | Status |
+|---|---|---|
+| `cvd_engine_p1.pine` | 1 — parity harness | ready to test |
+
+## Phase plan
+
+| Phase | Deliverable | Exit criterion |
+|---|---|---|
+| **1** | Venue registry, unit normalization, single-venue CVD, parity mode | Our number matches TradingView's built-in CVD; classification rule identified |
+| 2 | Multi-venue aggregation, spot/perp streams, candles + columns | Sane on BTC, ETH and a mid-cap alt; no crash on missing pairs |
+| 3 | Comparison lines, normalization modes, spot−perp spread | Divergence visually obvious on known events |
+| 4 | Contribution table, venue lead-lag ranking | Ranking matches reality on a known Korean-led alt pump |
+| 5 | Divergence detection, liquidation filter, alerts | Confirmed-bar only, no repaint |
+
+Phase 1 carries all the risk. If parity fails, everything downstream is built
+on a wrong measurement.
+
+## Validating Phase 1
+
+1. Add TradingView's built-in **CVD** indicator to the chart.
+2. Set this script's **Venue** = `Chart symbol`.
+3. Match **Lower Timeframe** and **Anchor Period** between the two.
+4. Compare the built-in's last value to the `CVD` row in this script's table.
+5. If they disagree, cycle **Volume Classification** until they agree.
+
+Step 5 is the actual experiment. TradingView does not publish which rule its
+CVD uses, so we determine it by measurement rather than assumption, then lock
+it in for Phase 2.
+
+## Design decisions
+
+**Units are base (coins), not USD.** The built-in CVD reports base units — a
+`LABUSDT` reading of `-31.33M` means 31.33 million LAB net sold. Matching that
+removes an entire subsystem: KRW- and JPY-quoted venues need no FX conversion
+because their volume is already denominated in the base asset. Only inverse
+contracts (BitMEX, Deribit) need conversion, and they are handled explicitly.
+
+**Dynamic symbols.** Pairs are built from `syminfo.basecurrency`, so the script
+works on any asset. Every request uses `ignore_invalid_symbol` — without it, a
+single unlisted pair kills the whole script.
+
+**The LTF dropdown is the engine switch.** `Chart` needs no intrabar data, so it
+uses `request.security` — cheap, full history, crude delta. Any other value uses
+`request.security_lower_tf` — accurate, but history collapses.
+
+**Degrade loudly, never silently.** Plan gating, unlisted pairs and unusable
+resolutions all fall back to chart-bar delta and report it in the Status row.
+A silently wrong number is the failure mode this design exists to prevent.
+
+## Known platform limits
+
+- **40** `request.*()` calls per script.
+- **~100,000** intrabars per `request.security_lower_tf` call. This, not the
+  plan, is what caps history:
+
+  | Chart TF | LTF | Intrabars/bar | Usable history |
+  |---|---|---|---|
+  | 15m | 1m | 15 | 5,000 (plan-capped) |
+  | 1H | 1m | 60 | ~1,660 bars |
+  | 4H | 1m | 240 | ~415 bars |
+  | 4H | 5m | 48 | ~2,080 bars |
+  | 1D | 1m | 1440 | ~69 bars |
+  | 1D | 15m | 96 | ~1,040 bars |
+
+- **Seconds resolutions require Pro+.** Listed in the dropdown, gated at runtime.
+- **Tick resolutions cannot be requested from Pine** at all. Present in the
+  dropdown to mirror the built-in's UI; they fall back to 1m.
+- Free plan: 5,000 bars of history, 2 indicators per chart, no webhook alerts.
+
+## Free-plan guidance
+
+Run on **15m or lower with 1m LTF** (full history, precise delta), or on
+**4H/1D with `Chart` LTF** (full history, crude delta). On 4H with 1m LTF the
+script is correct but only reaches back about two months.
