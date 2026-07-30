@@ -151,6 +151,26 @@ array elements, because `ta.sma`/`ta.stdev`/`ta.correlation` cannot operate on
 array elements. Ranking then uses `array.sort_indices` over per-venue absolute
 flow, with inactive venues set to −1 so they sink below every active one.
 
+**Venue lines are limited to the top N (default 4)** so the pane stays readable.
+Selection is by **lifetime** absolute flow, not by the current period — ranking
+by the current period would make a line vanish mid-chart the moment its venue
+slipped a place, and a coloured slot would jump between exchanges. Lifetime flow
+only grows, so each line keeps one stable identity and colour end to end. Two
+toggles pick the pool: *Spot venues* and *Perp venues*, independently.
+
+The two rankings answer different questions, deliberately:
+
+| | Ranked by | Answers |
+|---|---|---|
+| Lines | lifetime flow (stable) | which venues are the majors here |
+| Table | current period flow (responsive) | who is driving *this* move |
+
+**One dashboard at a time.** The pane is narrow, so the contribution table
+*replaces* the diagnostics table whenever a Per-venue view is active — they never
+stack. Both share one position input, and the hidden one is cleared rather than
+left stale. The venue table carries its own Consensus / Dominant / Setup / Status
+footer so swapping dashboards never hides a warning.
+
 **Caveat: lead-lag is a heuristic.** Correlation is not causation, and on a free
 plan the sample window is limited. Read it as a hint about who is leading.
 

@@ -65,8 +65,8 @@ const string G_ENG = "Engine"
 const string G_STR = "Stream & Display"
 const string G_SPT = "Spot Venues"
 const string G_PRP = "Perp Venues"
-const string G_CTB = "Contribution Table"
-const string G_TBL = "Diagnostics"
+const string G_VLN = "Venue Lines"
+const string G_CTB = "Dashboard"
 
 const int INTRABAR_CAP = 100000
 
@@ -152,17 +152,30 @@ bool en_hlP  = input.bool(false, "Hyperliquid", group = G_PRP, inline = "p3")
 int i_leadLen = input.int(100, "Lead-lag window", group = G_STR, minval = 20, maxval = 500,
      tooltip = "Lookback for the lead-lag correlation. Longer is steadier but slower to react.")
 
-bool   i_ctab = input.bool(true, "Show contribution table", group = G_CTB)
-string i_ctpos = input.string("Bottom Right", "Position", group = G_CTB,
-     options = ["Bottom Right", "Bottom Left", "Top Right", "Top Left", "Middle Right"])
-int    i_topN = input.int(5, "Rows", group = G_CTB, minval = 1, maxval = 15,
-     tooltip = "How many venues to list, ranked by share of period flow. Kept small by " +
-               "default because a 15-row table does not fit a phone screen.")
-bool   i_showAll = input.bool(false, "Show all active venues", group = G_CTB)
+// ── per-venue line controls ──────────────────────────────────────────────────
+int  i_topLines = input.int(4, "Venue lines to draw", group = G_VLN, minval = 1, maxval = 15,
+     tooltip = "Used by the Per-venue views. Only the largest venues are drawn, so the pane " +
+               "stays readable.\n\n" +
+               "Selection is by LIFETIME volume, not by the current period. That is deliberate: " +
+               "ranking by the current period would make lines appear and vanish mid-chart as " +
+               "the order changed. Lifetime volume is slow-moving, so each line keeps a stable " +
+               "identity and colour across the whole chart. Use the table to see who is driving " +
+               "right now.")
+bool i_venSpot = input.bool(true, "Spot venues", group = G_VLN, inline = "vl")
+bool i_venPerp = input.bool(true, "Perp venues", group = G_VLN, inline = "vl")
 
-bool   i_table = input.bool(true, "Show diagnostics", group = G_TBL)
-string i_tpos  = input.string("Top Right", "Position", group = G_TBL,
+// ── dashboard ────────────────────────────────────────────────────────────────
+// One dashboard at a time. The pane is narrow, so the venue table REPLACES the
+// diagnostics table whenever a Per-venue view is active, rather than stacking.
+bool   i_dash = input.bool(true, "Show dashboard", group = G_CTB,
+     tooltip = "Per-venue views show the exchange contribution table; every other view shows " +
+               "the diagnostics table. Only ever one at a time.")
+string i_dpos = input.string("Top Right", "Position", group = G_CTB,
      options = ["Top Right", "Top Left", "Bottom Right", "Bottom Left", "Middle Right"])
+int    i_topN = input.int(5, "Table rows", group = G_CTB, minval = 1, maxval = 15,
+     tooltip = "How many venues to list, ranked by share of the CURRENT period's flow - so the " +
+               "table is responsive even though the lines are stable.")
+bool   i_showAll = input.bool(false, "List all active venues", group = G_CTB)
 
 // =============================================================================
 //  SYMBOL CONSTRUCTION
@@ -644,11 +657,87 @@ float dominance  = actCnt > 0 ? math.abs(array.get(vShare, topIdx)) : 0.0
 string topVenue  = actCnt > 0 ? array.get(vName, topIdx) : "—"
 
 
+
+// ── stable line selection ────────────────────────────────────────────────────
+//  Which venues get drawn is ranked by LIFETIME absolute flow, not by the
+//  current period. Period ranking would reorder constantly, so a line would
+//  vanish mid-chart the moment its venue slipped a place, and a coloured slot
+//  would jump between exchanges. Lifetime flow only ever grows, so the order is
+//  effectively stable and every line keeps one identity and colour end to end.
+//  The table handles the "who is driving right now" question instead.
+f_life(float d) =>
+    var float t = 0.0
+    t := t + math.abs(d)
+    t
+float lfBinS = f_life(dBinS)
+float lfCbS = f_life(dCbS)
+float lfOkS = f_life(dOkS)
+float lfByS = f_life(dByS)
+float lfKrS = f_life(dKrS)
+float lfBgS = f_life(dBgS)
+float lfKcS = f_life(dKcS)
+float lfHlS = f_life(dHlS)
+float lfUpS = f_life(dUpS)
+float lfBhS = f_life(dBhS)
+float lfBinP = f_life(dBinP)
+float lfByP = f_life(dByP)
+float lfOkP = f_life(dOkP)
+float lfBgP = f_life(dBgP)
+float lfHlP = f_life(dHlP)
+
+// Pool = active AND its market type is ticked for plotting.
+bool plBinS = okBinS and i_venSpot
+bool plCbS = okCbS and i_venSpot
+bool plOkS = okOkS and i_venSpot
+bool plByS = okByS and i_venSpot
+bool plKrS = okKrS and i_venSpot
+bool plBgS = okBgS and i_venSpot
+bool plKcS = okKcS and i_venSpot
+bool plHlS = okHlS and i_venSpot
+bool plUpS = okUpS and i_venSpot
+bool plBhS = okBhS and i_venSpot
+bool plBinP = okBinP and i_venPerp
+bool plByP = okByP and i_venPerp
+bool plOkP = okOkP and i_venPerp
+bool plBgP = okBgP and i_venPerp
+bool plHlP = okHlP and i_venPerp
+
+array<float> vLife = array.from(lfBinS, lfCbS, lfOkS, lfByS, lfKrS, lfBgS, lfKcS, lfHlS, lfUpS, lfBhS, lfBinP, lfByP, lfOkP, lfBgP, lfHlP)
+array<bool>  vPool = array.from(plBinS, plCbS, plOkS, plByS, plKrS, plBgS, plKcS, plHlS, plUpS, plBhS, plBinP, plByP, plOkP, plBgP, plHlP)
+
+// Rank within the pool: how many pool venues have strictly more lifetime flow.
+// 15x15 is trivial, and it keeps ties harmless (tied venues share a rank).
+array<int> vLineRank = array.new_int(15, 999)
+for i = 0 to 14
+    if array.get(vPool, i)
+        int higher = 0
+        for j = 0 to 14
+            if array.get(vPool, j) and j != i and array.get(vLife, j) > array.get(vLife, i)
+                higher := higher + 1
+        array.set(vLineRank, i, higher)
+
+bool drBinS = array.get(vLineRank, 0) < i_topLines
+bool drCbS = array.get(vLineRank, 1) < i_topLines
+bool drOkS = array.get(vLineRank, 2) < i_topLines
+bool drByS = array.get(vLineRank, 3) < i_topLines
+bool drKrS = array.get(vLineRank, 4) < i_topLines
+bool drBgS = array.get(vLineRank, 5) < i_topLines
+bool drKcS = array.get(vLineRank, 6) < i_topLines
+bool drHlS = array.get(vLineRank, 7) < i_topLines
+bool drUpS = array.get(vLineRank, 8) < i_topLines
+bool drBhS = array.get(vLineRank, 9) < i_topLines
+bool drBinP = array.get(vLineRank, 10) < i_topLines
+bool drByP = array.get(vLineRank, 11) < i_topLines
+bool drOkP = array.get(vLineRank, 12) < i_topLines
+bool drBgP = array.get(vLineRank, 13) < i_topLines
+bool drHlP = array.get(vLineRank, 14) < i_topLines
+
 bool vSingle  = i_view == "Single stream"
 bool vCompare = i_view == "Spot vs Perp"
 bool vSpread  = i_view == "Spot-Perp Spread"
 bool vVenShare = i_view == "Per-venue Share %"
 bool vVenCvd   = i_view == "Per-venue CVD (z)"
+bool vVenue    = vVenShare or vVenCvd
 
 // =============================================================================
 //  PLOTS
@@ -684,37 +773,37 @@ plot(vSpread and anyCompare ? spread : na, "Spot-Perp Spread",
 
 // ── Per-venue views ──────────────────────────────────────────────────────────
 // Only the enabled+active venues render; the contribution table is the legend.
-plot(vVenShare and okBinS ? shBinS : na, "Share Binance·S", color = #f0b90b, linewidth = 2)
-plot(vVenShare and okCbS ? shCbS : na, "Share Coinbase·S", color = #2962ff, linewidth = 2)
-plot(vVenShare and okOkS ? shOkS : na, "Share OKX·S", color = #00e5ff, linewidth = 2)
-plot(vVenShare and okByS ? shByS : na, "Share Bybit·S", color = #ff7043, linewidth = 2)
-plot(vVenShare and okKrS ? shKrS : na, "Share Kraken·S", color = #7e57c2, linewidth = 2)
-plot(vVenShare and okBgS ? shBgS : na, "Share Bitget·S", color = #26c6da, linewidth = 2)
-plot(vVenShare and okKcS ? shKcS : na, "Share KuCoin·S", color = #66bb6a, linewidth = 2)
-plot(vVenShare and okHlS ? shHlS : na, "Share Hyperliq·S", color = #26a69a, linewidth = 2)
-plot(vVenShare and okUpS ? shUpS : na, "Share Upbit·S", color = #ec407a, linewidth = 2)
-plot(vVenShare and okBhS ? shBhS : na, "Share Bithumb·S", color = #ab47bc, linewidth = 2)
-plot(vVenShare and okBinP ? shBinP : na, "Share Binance·P", color = #ffca28, linewidth = 2)
-plot(vVenShare and okByP ? shByP : na, "Share Bybit·P", color = #ff8a65, linewidth = 2)
-plot(vVenShare and okOkP ? shOkP : na, "Share OKX·P", color = #4dd0e1, linewidth = 2)
-plot(vVenShare and okBgP ? shBgP : na, "Share Bitget·P", color = #4db6ac, linewidth = 2)
-plot(vVenShare and okHlP ? shHlP : na, "Share Hyperliq·P", color = #9ccc65, linewidth = 2)
+plot(vVenShare and drBinS ? shBinS : na, "Share Binance·S", color = #f0b90b, linewidth = 2)
+plot(vVenShare and drCbS ? shCbS : na, "Share Coinbase·S", color = #2962ff, linewidth = 2)
+plot(vVenShare and drOkS ? shOkS : na, "Share OKX·S", color = #00e5ff, linewidth = 2)
+plot(vVenShare and drByS ? shByS : na, "Share Bybit·S", color = #ff7043, linewidth = 2)
+plot(vVenShare and drKrS ? shKrS : na, "Share Kraken·S", color = #7e57c2, linewidth = 2)
+plot(vVenShare and drBgS ? shBgS : na, "Share Bitget·S", color = #26c6da, linewidth = 2)
+plot(vVenShare and drKcS ? shKcS : na, "Share KuCoin·S", color = #66bb6a, linewidth = 2)
+plot(vVenShare and drHlS ? shHlS : na, "Share Hyperliq·S", color = #26a69a, linewidth = 2)
+plot(vVenShare and drUpS ? shUpS : na, "Share Upbit·S", color = #ec407a, linewidth = 2)
+plot(vVenShare and drBhS ? shBhS : na, "Share Bithumb·S", color = #ab47bc, linewidth = 2)
+plot(vVenShare and drBinP ? shBinP : na, "Share Binance·P", color = #ffca28, linewidth = 2)
+plot(vVenShare and drByP ? shByP : na, "Share Bybit·P", color = #ff8a65, linewidth = 2)
+plot(vVenShare and drOkP ? shOkP : na, "Share OKX·P", color = #4dd0e1, linewidth = 2)
+plot(vVenShare and drBgP ? shBgP : na, "Share Bitget·P", color = #4db6ac, linewidth = 2)
+plot(vVenShare and drHlP ? shHlP : na, "Share Hyperliq·P", color = #9ccc65, linewidth = 2)
 
-plot(vVenCvd and okBinS ? zcBinS : na, "CVD z Binance·S", color = #f0b90b, linewidth = 2)
-plot(vVenCvd and okCbS ? zcCbS : na, "CVD z Coinbase·S", color = #2962ff, linewidth = 2)
-plot(vVenCvd and okOkS ? zcOkS : na, "CVD z OKX·S", color = #00e5ff, linewidth = 2)
-plot(vVenCvd and okByS ? zcByS : na, "CVD z Bybit·S", color = #ff7043, linewidth = 2)
-plot(vVenCvd and okKrS ? zcKrS : na, "CVD z Kraken·S", color = #7e57c2, linewidth = 2)
-plot(vVenCvd and okBgS ? zcBgS : na, "CVD z Bitget·S", color = #26c6da, linewidth = 2)
-plot(vVenCvd and okKcS ? zcKcS : na, "CVD z KuCoin·S", color = #66bb6a, linewidth = 2)
-plot(vVenCvd and okHlS ? zcHlS : na, "CVD z Hyperliq·S", color = #26a69a, linewidth = 2)
-plot(vVenCvd and okUpS ? zcUpS : na, "CVD z Upbit·S", color = #ec407a, linewidth = 2)
-plot(vVenCvd and okBhS ? zcBhS : na, "CVD z Bithumb·S", color = #ab47bc, linewidth = 2)
-plot(vVenCvd and okBinP ? zcBinP : na, "CVD z Binance·P", color = #ffca28, linewidth = 2)
-plot(vVenCvd and okByP ? zcByP : na, "CVD z Bybit·P", color = #ff8a65, linewidth = 2)
-plot(vVenCvd and okOkP ? zcOkP : na, "CVD z OKX·P", color = #4dd0e1, linewidth = 2)
-plot(vVenCvd and okBgP ? zcBgP : na, "CVD z Bitget·P", color = #4db6ac, linewidth = 2)
-plot(vVenCvd and okHlP ? zcHlP : na, "CVD z Hyperliq·P", color = #9ccc65, linewidth = 2)
+plot(vVenCvd and drBinS ? zcBinS : na, "CVD z Binance·S", color = #f0b90b, linewidth = 2)
+plot(vVenCvd and drCbS ? zcCbS : na, "CVD z Coinbase·S", color = #2962ff, linewidth = 2)
+plot(vVenCvd and drOkS ? zcOkS : na, "CVD z OKX·S", color = #00e5ff, linewidth = 2)
+plot(vVenCvd and drByS ? zcByS : na, "CVD z Bybit·S", color = #ff7043, linewidth = 2)
+plot(vVenCvd and drKrS ? zcKrS : na, "CVD z Kraken·S", color = #7e57c2, linewidth = 2)
+plot(vVenCvd and drBgS ? zcBgS : na, "CVD z Bitget·S", color = #26c6da, linewidth = 2)
+plot(vVenCvd and drKcS ? zcKcS : na, "CVD z KuCoin·S", color = #66bb6a, linewidth = 2)
+plot(vVenCvd and drHlS ? zcHlS : na, "CVD z Hyperliq·S", color = #26a69a, linewidth = 2)
+plot(vVenCvd and drUpS ? zcUpS : na, "CVD z Upbit·S", color = #ec407a, linewidth = 2)
+plot(vVenCvd and drBhS ? zcBhS : na, "CVD z Bithumb·S", color = #ab47bc, linewidth = 2)
+plot(vVenCvd and drBinP ? zcBinP : na, "CVD z Binance·P", color = #ffca28, linewidth = 2)
+plot(vVenCvd and drByP ? zcByP : na, "CVD z Bybit·P", color = #ff8a65, linewidth = 2)
+plot(vVenCvd and drOkP ? zcOkP : na, "CVD z OKX·P", color = #4dd0e1, linewidth = 2)
+plot(vVenCvd and drBgP ? zcBgP : na, "CVD z Bitget·P", color = #4db6ac, linewidth = 2)
+plot(vVenCvd and drHlP ? zcHlP : na, "CVD z Hyperliq·P", color = #9ccc65, linewidth = 2)
 
 hline(i_zero ? 0 : na, "Zero", color = color.new(color.gray, 55))
 
@@ -736,19 +825,27 @@ f_abbr(float v) =>
       a >= 1e3 ? str.tostring(v / 1e3, "#.##") + "K" :
       str.tostring(v, "#.##")
 
-string tblPos = i_tpos == "Top Left" ? position.top_left :
-  i_tpos == "Bottom Right" ? position.bottom_right :
-  i_tpos == "Bottom Left" ? position.bottom_left :
-  i_tpos == "Middle Right" ? position.middle_right :
+// Both dashboards share one position input - only one is ever visible.
+string dashPos = i_dpos == "Top Left" ? position.top_left :
+  i_dpos == "Bottom Right" ? position.bottom_right :
+  i_dpos == "Bottom Left" ? position.bottom_left :
+  i_dpos == "Middle Right" ? position.middle_right :
   position.top_right
 
-var table tbl = table.new(tblPos, 2, 12,
+// Per-venue views get the contribution table; everything else gets diagnostics.
+bool showDiag = i_dash and not vVenue
+bool showCtab = i_dash and vVenue
+
+var table tbl = table.new(dashPos, 2, 12,
      bgcolor      = color.new(#0b0b0f, 15),
      border_color = color.new(color.gray, 70),
      border_width = 1, frame_width = 1,
      frame_color  = color.new(color.gray, 55))
 
-if i_table and barstate.islast
+if barstate.islast and not showDiag
+    table.clear(tbl, 0, 0, 1, 11)
+
+if showDiag and barstate.islast
     color cHdr = color.new(#16202e, 0)
     color cLbl = color.new(color.gray, 20)
     color cVal = color.white
@@ -841,14 +938,8 @@ if i_table and barstate.islast
 //  Venues ranked by share of the anchor period's flow. Venue names are tinted to
 //  match their plot colour so this table also serves as the chart legend.
 // =============================================================================
-string ctPos = i_ctpos == "Bottom Left" ? position.bottom_left :
-  i_ctpos == "Top Right" ? position.top_right :
-  i_ctpos == "Top Left" ? position.top_left :
-  i_ctpos == "Middle Right" ? position.middle_right :
-  position.bottom_right
-
-// 1 header + up to 15 venue rows
-var table ctb = table.new(ctPos, 6, 16,
+// 1 header + up to 15 venue rows + 4 summary rows
+var table ctb = table.new(dashPos, 6, 20,
      bgcolor      = color.new(#0b0b0f, 15),
      border_color = color.new(color.gray, 70),
      border_width = 1, frame_width = 1,
@@ -863,8 +954,11 @@ f_bar(float pct) =>
         out := out + (i <= filled ? "█" : "·")
     out
 
-if i_ctab and barstate.islast
-    table.clear(ctb, 0, 0, 5, 15)
+if barstate.islast and not showCtab
+    table.clear(ctb, 0, 0, 5, 19)
+
+if showCtab and barstate.islast
+    table.clear(ctb, 0, 0, 5, 19)
 
     color hbg = color.new(#16202e, 0)
     color lbl = color.new(color.gray, 20)
@@ -902,3 +996,41 @@ if i_ctab and barstate.islast
                            text_color = color.white, text_size = size.tiny)
                 table.cell(ctb, 5, r + 1, na(ldv) ? "—" : str.tostring(ldv, "#.##"),
                            text_color = na(ldv) ? lbl : (ldv >= 0 ? i_up : i_dn), text_size = size.tiny)
+
+    // Summary rows. The venue table REPLACES the diagnostics table, so the
+    // warnings and setup readouts have to live here too - a silent wrong number
+    // is the failure mode this project has been guarding against throughout.
+    int fr = nShow + 1
+
+    string vwarn = ""
+    color  vwcol = i_up
+    if not isCrypto
+        vwarn := "non-crypto — aggregation off"
+        vwcol := color.orange
+    else if actCnt == 0
+        vwarn := "no venues returned data"
+        vwcol := i_dn
+    else if actCnt < spotEnabled + perpEnabled
+        vwarn := str.tostring(spotEnabled + perpEnabled - actCnt) + " enabled venue(s) unlisted"
+        vwcol := color.orange
+    else if useLtf and depthBars < 500
+        vwarn := "shallow history ~" + str.tostring(depthBars) + " bars"
+        vwcol := color.orange
+    else
+        vwarn := "ok"
+
+    table.cell(ctb, 0, fr, "Consensus", text_color = lbl, text_size = size.tiny)
+    table.cell(ctb, 1, fr, str.tostring(consensus, "#") + "% of " + str.tostring(actCnt),
+               text_color = consensus >= 66 ? i_up : consensus >= 34 ? color.orange : i_dn,
+               text_size = size.tiny)
+
+    table.cell(ctb, 0, fr + 1, "Dominant", text_color = lbl, text_size = size.tiny)
+    table.cell(ctb, 1, fr + 1, topVenue + " " + str.tostring(dominance, "#") + "%",
+               text_color = dominance >= 60 ? color.orange : color.white, text_size = size.tiny)
+
+    table.cell(ctb, 0, fr + 2, "Setup", text_color = lbl, text_size = size.tiny)
+    table.cell(ctb, 1, fr + 2, i_anchor + " · " + (useLtf ? "intrabar " + ltfUsed : "chart bar"),
+               text_color = color.white, text_size = size.tiny)
+
+    table.cell(ctb, 0, fr + 3, "Status", text_color = lbl, text_size = size.tiny)
+    table.cell(ctb, 1, fr + 3, vwarn, text_color = vwcol, text_size = size.tiny)
