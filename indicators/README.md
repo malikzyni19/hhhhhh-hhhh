@@ -16,7 +16,8 @@ separates spot from perpetuals, and shows which venue is driving.
 |---|---|---|
 | `cvd_engine_p1.pine` | 1 — parity harness | parity confirmed (tick rule) |
 | `cvd_engine_p2.pine` | 2 — multi-venue aggregation | verified vs built-in (~1% on live bar) |
-| `cvd_engine_p3.pine` | 3 — spot vs perp comparison | ready to test |
+| `cvd_engine_p3.pine` | 3 — spot vs perp comparison | working |
+| `cvd_engine_p4.pine` | 4 — venue contribution & lead-lag | ready to test |
 
 ## Phase plan
 
@@ -116,6 +117,42 @@ for visual comparison; Phase 5 refines this into slope-based divergence
 detection with a liquidation-cascade filter and alerts.
 
 Phase 3 only visualises divergence. Detection and alerts are Phase 5.
+
+## Phase 4 — venue contribution & lead-lag
+
+`cvd_engine_p4.pine` answers "which exchange is driving this move". Everything is
+derived from the per-venue deltas Phase 2 already produces, so it costs **zero
+additional data requests** — still 30/40.
+
+**Contribution table** — one row per active venue, ranked by share of the anchor
+period's flow: delta, signed share % (with a block-character bar), agreement with
+global direction, own z-score, and lead-lag score. Venue names are tinted to
+match their plot colour, so the table doubles as the legend — a chart legend is
+not usable on mobile. Defaults to the top 5 rows; a 15-row table does not fit a
+phone screen.
+
+**Two new views** in the View selector:
+- *Per-venue Share %* — each venue's signed slice of period flow. Absolute shares
+  sum to 100, so every venue sits on one comparable axis.
+- *Per-venue CVD (z)* — each venue's own cumulative CVD, z-scored.
+
+**Three metrics** added to the diagnostics table:
+- *Consensus* — share of active venues agreeing with global direction.
+- *Dominance* — the top venue's share; above ~60% the move is single-venue
+  driven, which often means a wick or liquidation cascade, not conviction.
+- *Lead-lag* (per venue, in the contribution table) — rolling correlation of a
+  venue's **previous-bar** delta against this bar's price move, so it measures
+  predictive power rather than coincidence.
+
+Implementation note: per-venue cumulatives use an `f_cum` helper whose
+accumulator lives in `var` state, so each of the 15 call-sites keeps an
+independent anchor-reset series. They are deliberately kept as series rather than
+array elements, because `ta.sma`/`ta.stdev`/`ta.correlation` cannot operate on
+array elements. Ranking then uses `array.sort_indices` over per-venue absolute
+flow, with inactive venues set to −1 so they sink below every active one.
+
+**Caveat: lead-lag is a heuristic.** Correlation is not causation, and on a free
+plan the sample window is limited. Read it as a hint about who is leading.
 
 Not compile-tested — no Pine toolchain locally.
 
