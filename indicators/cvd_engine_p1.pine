@@ -216,10 +216,19 @@ bool useLtfEff = useLtf and ltfOk
 //  wicks, and converts to base units per intrabar (price varies within the bar,
 //  so inverse conversion must happen inside the loop, not after).
 // =============================================================================
+//  The tick rule is a chain: each intrabar's direction is decided against the
+//  previous intrabar's close, and a tie inherits the previous direction. That
+//  chain must not break at chart-bar boundaries - if it does, the first
+//  intrabar of every bar is judged against the wrong reference and any tie
+//  there drops that minute's volume entirely. Over a monthly anchor on 4H
+//  that is ~180 broken links and a visible drift against the built-in.
+var int   dirCarry   = 0    // last direction, carried across bars
+var float closeCarry = na   // last intrabar close of the previous bar
+
 float run    = 0.0        // running cumulative within this bar
 float runHi  = 0.0        // highest value the running cumulative reached
 float runLo  = 0.0        // lowest
-int   lastDir = 0         // carried direction for tick-rule ties
+int   lastDir = dirCarry  // seed from the previous bar, not from zero
 
 if useLtfEff
     for i = 0 to nIntra - 1
@@ -235,7 +244,8 @@ if useLtfEff
             d := rng > 0 ? v_ * ((2.0 * (c_ - l_) / rng) - 1.0) : 0.0
             lastDir := d > 0 ? 1 : d < 0 ? -1 : lastDir
         else if i_class == "Tick rule"
-            float pc = i > 0 ? array.get(ltfC, i - 1) : o_
+            // i == 0 reaches back to the previous chart bar's final close.
+            float pc = i > 0 ? array.get(ltfC, i - 1) : nz(closeCarry, o_)
             int dir = c_ > pc ? 1 : c_ < pc ? -1 : lastDir
             lastDir := dir
             d := dir * v_
@@ -249,6 +259,10 @@ if useLtfEff
         run   := run + dBase
         runHi := math.max(runHi, run)
         runLo := math.min(runLo, run)
+
+    // Hand the chain to the next bar.
+    closeCarry := array.get(ltfC, nIntra - 1)
+    dirCarry   := lastDir
 
 else if not na(barC)
     float v_ = nz(barV)

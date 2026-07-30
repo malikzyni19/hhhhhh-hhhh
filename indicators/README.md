@@ -41,6 +41,19 @@ Step 5 is the actual experiment. TradingView does not publish which rule its
 CVD uses, so we determine it by measurement rather than assumption, then lock
 it in for Phase 2.
 
+### Result
+
+**Tick rule.** Measured on `BINANCE:ETHUSDT`, 4H chart, 1m LTF, monthly anchor:
+ours `96.84K` vs built-in `97.35K` — 0.52% apart with visually identical candle
+shapes. `Bar direction` and `Proportional` were both clearly wrong, so the rule
+is unambiguous.
+
+The 0.52% residual came from the tick chain breaking at chart-bar boundaries:
+`lastDir` reset to zero each bar, and the first intrabar was compared against
+its own open instead of the previous bar's final close. On a monthly anchor at
+4H that is ~180 broken links, each able to mis-sign or discard one minute of
+volume. Both are now carried across bars via `dirCarry` / `closeCarry`.
+
 ## Design decisions
 
 **Units are base (coins), not USD.** The built-in CVD reports base units — a
