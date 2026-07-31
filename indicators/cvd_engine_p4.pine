@@ -108,7 +108,15 @@ float gapTol = input.float(0.05, "Gap tolerance %", group = G_ENG, minval = 0.0,
      "misread as gapped; lower it if a sparse feed is not being caught.") / 100.0
 
 string i_anchor = input.string("1 Day", "Anchor Period", group = G_ENG,
-     options = ["None", "1 Day", "1 Week", "1 Month"])
+     options = ["None", "1 Hour", "2 Hours", "4 Hours", "1 Day", "2 Days",
+                  "1 Week", "2 Weeks", "1 Month", "2 Months", "6 Months",
+                  "1 Year", "2 Years"],
+     tooltip = "Cumulative delta resets at the start of each period.\n\n" +
+               "Pick an anchor LONGER than your chart timeframe. A 1 Hour anchor on a 4H chart " +
+               "resets on every bar, which reduces the CVD to that single bar's delta - the " +
+               "Status row warns when this happens.\n\n" +
+               "'None' accumulates from the first bar, so the absolute value drifts and stops " +
+               "meaning much over a long history.")
 
 // ── view & display ───────────────────────────────────────────────────────────
 string i_view = input.string("Spot vs Perp", "View", group = G_STR,
@@ -261,8 +269,37 @@ int ltfUsedSecs = timeframe.in_seconds(ltfUsed)
 int intrabarsPer = useLtf and ltfUsedSecs > 0 ? math.max(1, int(chartSecs / ltfUsedSecs)) : 1
 int depthBars    = useLtf ? int(INTRABAR_CAP / intrabarsPer) : 0
 
-string anchorTf  = i_anchor == "1 Week" ? "W" : i_anchor == "1 Month" ? "M" : "D"
-bool   newPeriod = i_anchor == "None" ? false : timeframe.change(anchorTf)
+// Year anchors are handled by comparing the year field rather than through a
+// timeframe string: Pine's month-based resolutions are not guaranteed beyond 12M,
+// and passing an unsupported one to timeframe.change() is a runtime error. The
+// fallback "D" keeps anchorTf valid at all times, since Pine evaluates the
+// timeframe.change() call regardless of which ternary branch is taken.
+string anchorTf =
+  i_anchor == "1 Hour"   ? "60" :
+  i_anchor == "2 Hours"  ? "120" :
+  i_anchor == "4 Hours"  ? "240" :
+  i_anchor == "1 Day"    ? "D" :
+  i_anchor == "2 Days"   ? "2D" :
+  i_anchor == "1 Week"   ? "W" :
+  i_anchor == "2 Weeks"  ? "2W" :
+  i_anchor == "1 Month"  ? "M" :
+  i_anchor == "2 Months" ? "2M" :
+  i_anchor == "6 Months" ? "6M" :
+  "D"
+
+bool yearChange = not na(year[1]) and year != year[1]
+bool tfChange   = timeframe.change(anchorTf)
+bool newPeriod =
+  i_anchor == "None"    ? false :
+  i_anchor == "1 Year"  ? yearChange :
+  i_anchor == "2 Years" ? (yearChange and year % 2 == 0) :
+  tfChange
+
+// An anchor at or below the chart timeframe resets every bar. Legal, but it
+// silently turns cumulative CVD into per-bar delta, so it gets flagged.
+int  anchorSecs  = timeframe.in_seconds(anchorTf)
+bool anchorTooShort = i_anchor != "None" and i_anchor != "1 Year" and
+  i_anchor != "2 Years" and anchorSecs <= chartSecs
 
 // =============================================================================
 //  DELTA FUNCTION
@@ -1019,6 +1056,9 @@ if showDiag and barstate.islast
     else if isSecSel and not forcedChart and ltfUsed == "1"
         warn := "seconds need Pro+ → 1m"
         warnCol := color.orange
+    else if anchorTooShort
+        warn := "anchor <= chart TF — resets every bar"
+        warnCol := color.orange
     else if fbBars > 0
         warn := str.tostring(fbBars) + " bars used coarse chart-bar delta"
         warnCol := color.orange
@@ -1164,6 +1204,9 @@ if showCtab and barstate.islast
         vwcol := i_dn
     else if actCnt < spotEnabled + perpEnabled
         vwarn := str.tostring(spotEnabled + perpEnabled - actCnt) + " enabled venue(s) unlisted"
+        vwcol := color.orange
+    else if anchorTooShort
+        vwarn := "anchor <= chart TF — resets every bar"
         vwcol := color.orange
     else if useLtf and depthBars < 500
         vwarn := "shallow history ~" + str.tostring(depthBars) + " bars"
