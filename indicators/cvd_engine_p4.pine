@@ -637,6 +637,7 @@ array<float> vCumv = array.from(cBinS, cCbS, cOkS, cByS, cKrS, cBgS, cGtS, cHtS,
 array<float> vDz = array.from(dzBinS, dzCbS, dzOkS, dzByS, dzKrS, dzBgS, dzGtS, dzHtS, dzMxS, dzHlS, dzBinP, dzByP, dzOkP, dzBgP, dzHlP, dzMxP)
 array<float> vLead = array.from(ldBinS, ldCbS, ldOkS, ldByS, ldKrS, ldBgS, ldGtS, ldHtS, ldMxS, ldHlS, ldBinP, ldByP, ldOkP, ldBgP, ldHlP, ldMxP)
 array<bool>  vAct = array.from(okBinS, okCbS, okOkS, okByS, okKrS, okBgS, okGtS, okHtS, okMxS, okHlS, okBinP, okByP, okOkP, okBgP, okHlP, okMxP)
+array<bool>  vEnab = array.from(en_binS, en_cbS, en_okS, en_byS, en_krS, en_bgS, en_gtS, en_htS, en_mxS, en_hlS, en_binP, en_byP, en_okP, en_bgP, en_hlP, en_mxP)
 array<float> vRank  = array.from(okBinS ? math.abs(cBinS) : -1.0,
   okCbS ? math.abs(cCbS) : -1.0,
   okOkS ? math.abs(cOkS) : -1.0,
@@ -665,6 +666,18 @@ for i = 0 to 15
         int sg = cv > 0 ? 1 : cv < 0 ? -1 : 0
         if sg != 0 and sg == glblSign
             agreeCnt := agreeCnt + 1
+
+// Name the enabled venues that returned nothing. "3 unlisted" is not
+// actionable; "Binance·S, Coinbase·S" tells you exactly what to swap out.
+string missList = ""
+int    missCnt  = 0
+for i = 0 to 15
+    if array.get(vEnab, i) and not array.get(vAct, i)
+        missCnt := missCnt + 1
+        if missCnt <= 3
+            missList := missList + (missList == "" ? "" : ", ") + array.get(vName, i)
+if missCnt > 3
+    missList := missList + " +" + str.tostring(missCnt - 3)
 
 int   actCnt     = spotActive + perpActive
 float consensus  = actCnt > 0 ? 100.0 * agreeCnt / actCnt : 0.0
@@ -877,6 +890,33 @@ plot(vVenCvd and drMxP ? zcMxP : na, "CVD z MEXC·P", color = #c0ca33, linewidth
 
 hline(i_zero ? 0 : na, "Zero", color = color.new(color.gray, 55))
 
+// ── empty-pane notice ────────────────────────────────────────────────────────
+//  A blank pane is ambiguous - it looks exactly like a broken script. When no
+//  enabled venue lists the pair there is genuinely nothing to plot, so the pane
+//  says so on the chart instead of leaving it to be guessed. Note this is not
+//  an error state: a venue that does not list the pair contributes zero and is
+//  excluded from the active count, so a partially-listed pair still plots
+//  normally from whichever venues do carry it.
+bool paneEmpty = vSingle ? not anyData :
+  (vCompare or vSpread) ? not anyCompare :
+  (spotActive + perpActive) == 0
+
+var label emptyLbl = na
+if barstate.islast
+    label.delete(emptyLbl)
+    if not isCrypto
+        emptyLbl := label.new(bar_index, 0.0,
+             "Not a crypto symbol\nMulti-venue aggregation is disabled",
+             style = label.style_label_center, textalign = text.align_center,
+             color = color.new(#2a2a1f, 20), textcolor = color.orange, size = size.small)
+    else if paneEmpty
+        emptyLbl := label.new(bar_index, 0.0,
+             "No " + (vSingle ? i_stream : "venue") + " data for " + base + "\n" +
+             "0 of " + str.tostring(selEn) + " enabled venue(s) list this pair\n" +
+             "Enable more venues in settings",
+             style = label.style_label_center, textalign = text.align_center,
+             color = color.new(#3a1f1f, 20), textcolor = color.orange, size = size.small)
+
 // Hidden outputs — all three streams + spread, for later phases / companions.
 plot(spotC, "Out: Spot CVD",   display = display.none)
 plot(perpC, "Out: Perp CVD",   display = display.none)
@@ -911,7 +951,7 @@ bool showCtab = i_dash and vVenue
 //  even when it has been cleared, because clearing empties cells but does not
 //  release the position. Sized for the wider contribution layout; the
 //  diagnostics layout simply leaves columns 2-5 empty and Pine collapses them.
-var table dash = table.new(dashPos, 6, 21,
+var table dash = table.new(dashPos, 6, 22,
      bgcolor      = color.new(#0b0b0f, 15),
      border_color = color.new(color.gray, 70),
      border_width = 1, frame_width = 1,
@@ -920,7 +960,7 @@ var table dash = table.new(dashPos, 6, 21,
 // Clear once per bar, before either layout fills it. Whichever dashboard is
 // active then writes only its own cells; nothing stale survives a view switch.
 if barstate.islast
-    table.clear(dash, 0, 0, 5, 20)
+    table.clear(dash, 0, 0, 5, 21)
 
 if showDiag and barstate.islast
     color cHdr = color.new(#16202e, 0)
@@ -1012,8 +1052,12 @@ if showDiag and barstate.islast
     table.cell(dash, 1, 11, fbBars > 0 ? str.tostring(fbBars) + " bars on chart-bar" : "none",
                text_color = fbBars > 0 ? color.orange : i_up, text_size = size.tiny)
 
-    table.cell(dash, 0, 12, "Status", text_color = cLbl, text_size = size.tiny)
-    table.cell(dash, 1, 12, warn, text_color = warnCol, text_size = size.tiny)
+    table.cell(dash, 0, 12, "Unlisted", text_color = cLbl, text_size = size.tiny)
+    table.cell(dash, 1, 12, missCnt > 0 ? missList : "none",
+               text_color = missCnt > 0 ? color.orange : i_up, text_size = size.tiny)
+
+    table.cell(dash, 0, 13, "Status", text_color = cLbl, text_size = size.tiny)
+    table.cell(dash, 1, 13, warn, text_color = warnCol, text_size = size.tiny)
 
 
 // =============================================================================
@@ -1105,5 +1149,9 @@ if showCtab and barstate.islast
     table.cell(dash, 1, fr + 2, i_anchor + " · " + (useLtf ? "intrabar " + ltfUsed : "chart bar"),
                text_color = color.white, text_size = size.tiny)
 
-    table.cell(dash, 0, fr + 3, "Status", text_color = lbl, text_size = size.tiny)
-    table.cell(dash, 1, fr + 3, vwarn, text_color = vwcol, text_size = size.tiny)
+    table.cell(dash, 0, fr + 3, "Unlisted", text_color = lbl, text_size = size.tiny)
+    table.cell(dash, 1, fr + 3, missCnt > 0 ? missList : "none",
+               text_color = missCnt > 0 ? color.orange : i_up, text_size = size.tiny)
+
+    table.cell(dash, 0, fr + 4, "Status", text_color = lbl, text_size = size.tiny)
+    table.cell(dash, 1, fr + 4, vwarn, text_color = vwcol, text_size = size.tiny)
