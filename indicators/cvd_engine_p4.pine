@@ -84,18 +84,20 @@ string i_ltf = input.string("1 minute", "Lower Timeframe", group = G_ENG,
 
 // Tick rule is locked as the default: Phase 1 confirmed it matches the built-in.
 // The other two remain available for experimentation and cross-checks.
-string i_class = input.string("Tick rule", "Volume Classification", group = G_ENG,
-     options = ["Tick rule", "Bar direction", "Auto (gap-aware)", "Proportional"],
-     tooltip = "Tick rule: close vs the previous intrabar's close. Matched the built-in exactly " +
-               "on a dense feed (ETH, one venue) but was 16% off on a sparse one (BULLA).\n\n" +
-               "Bar direction: close vs the bar's own open. The reverse - matched on the sparse " +
-               "feed, 4.5% off on the dense one.\n\n" +
-               "Auto (gap-aware): tick rule while trading is continuous, bar direction across a " +
-               "gap. On a dense feed each bar opens where the last one closed, so both " +
-               "comparisons are identical and this behaves as tick rule. On a sparse feed the " +
-               "previous close is stale, so it falls back to the bar's own open. One rule that " +
-               "should reproduce both results - a hypothesis under test.\n\n" +
-               "Proportional: volume split by where close sits in the bar's range.")
+string i_class = input.string("Bar direction", "Volume Classification", group = G_ENG,
+     options = ["Bar direction", "Tick rule", "Auto (gap-aware)", "Proportional"],
+     tooltip = "Bar direction (default, and the rule TradingView uses): an intrabar's whole " +
+               "volume is buying if it closed above its own open, selling if below, and is " +
+               "discarded on a doji.\n\n" +
+               "Confirmed by matching the built-in CVD exactly on both a dense liquid pair (ETH) " +
+               "and an illiquid low-cap (LAB), under one controlled protocol: a single venue, " +
+               "1 Day anchor, 5m lower timeframe, both indicators set identically. It is also " +
+               "the only rule that returns the same value across different chart timeframes, " +
+               "which a correct CVD must.\n\n" +
+               "Tick rule and Auto are kept for experimentation and do NOT match the built-in. " +
+               "An earlier result suggesting tick rule matched came from an uncontrolled test " +
+               "where the anchor and lower timeframe also differed.\n\n" +
+               "Proportional: volume split by where close sits in the bar's range. Never matched.")
 
 // Gap threshold for Auto. A bar counts as continuous when its open sits within this
 // much of the previous close. Expressed as a percentage because a foreign symbol's

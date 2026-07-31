@@ -14,7 +14,7 @@ separates spot from perpetuals, and shows which venue is driving.
 
 | File | Phase | Status |
 |---|---|---|
-| `cvd_engine_p1.pine` | 1 — parity harness | parity confirmed (tick rule) |
+| `cvd_engine_p1.pine` | 1 — parity harness | superseded — see Result below |
 | `cvd_engine_p2.pine` | 2 — multi-venue aggregation | verified vs built-in (~1% on live bar) |
 | `cvd_engine_p3.pine` | 3 — spot vs perp comparison | working |
 | `cvd_engine_p4.pine` | 4 — venue contribution & lead-lag | ready to test |
@@ -44,18 +44,49 @@ Step 5 is the actual experiment. TradingView does not publish which rule its
 CVD uses, so we determine it by measurement rather than assumption, then lock
 it in for Phase 2.
 
-### Result
+### Result: bar direction
 
-**Tick rule.** Measured on `BINANCE:ETHUSDT`, 4H chart, 1m LTF, monthly anchor:
-ours `96.84K` vs built-in `97.35K` — 0.52% apart with visually identical candle
-shapes. `Bar direction` and `Proportional` were both clearly wrong, so the rule
-is unambiguous.
+**An intrabar's whole volume is buying if it closed above its own open, selling
+if below, and is discarded on a doji.**
 
-The 0.52% residual came from the tick chain breaking at chart-bar boundaries:
-`lastDir` reset to zero each bar, and the first intrabar was compared against
-its own open instead of the previous bar's final close. On a monthly anchor at
-4H that is ~180 broken links, each able to mis-sign or discard one minute of
-volume. Both are now carried across bars via `dirCarry` / `closeCarry`.
+Confirmed by matching the built-in exactly on both a dense liquid pair
+(`ETHUSDT`) and an illiquid low-cap (`LABUSDT`) under one controlled protocol.
+It is also the only rule that returns the same value across different chart
+timeframes — on `BULLAUSDT` it gave an identical figure at 1H and 4H, which a
+correct CVD must, and which tick rule did not.
+
+#### The standard test protocol
+
+Getting here took several contradictory rounds, all caused by changing more than
+one variable at a time. Use this every time:
+
+| Setting | Value |
+|---|---|
+| Venues | exactly one — table must read `spot 1/1` |
+| Anchor | `1 Day`, on **both** indicators |
+| Lower timeframe | `5m`, on **both** indicators |
+| Read on | a closed bar, never the live one |
+
+The built-in's **"Use custom timeframe" checkbox must be ticked** — otherwise its
+timeframe dropdown is greyed out and it silently uses its own automatic choice
+while appearing to say something else. That alone caused one false result.
+
+#### An earlier conclusion here was wrong
+
+This section previously recorded **tick rule** as the answer, based on a 4H chart
+with 1m LTF and a monthly anchor. That test was uncontrolled — anchor and LTF
+both differed from later runs — and the match did not reproduce. Under the
+protocol above, bar direction matches and tick rule does not.
+
+The lesson generalises: on a dense feed each bar opens where the previous one
+closed, so "close vs previous close" and "close vs own open" are nearly the same
+comparison and the rules are hard to tell apart. Only a sparse feed separates
+them. **Validate a classification rule on an illiquid pair, not a liquid one.**
+
+Tick rule, Auto (gap-aware) and Proportional are kept as selectable options for
+experimentation; none of them match. The cross-bar tick chain (`dirCarry` /
+`closeCarry`) remains in the engine for the tick-rule path but is no longer
+load-bearing.
 
 ## Phase 2 — multi-venue aggregation
 
