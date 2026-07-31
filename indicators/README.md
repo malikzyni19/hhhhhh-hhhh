@@ -184,6 +184,25 @@ stack. Both share one position input, and the hidden one is cleared rather than
 left stale. The venue table carries its own Consensus / Dominant / Setup / Status
 footer so swapping dashboards never hides a warning.
 
+### Memory is the real venue ceiling
+
+Not the 40-request limit — memory. Each `request.security_lower_tf` holds arrays
+of up to 100,000 intrabars per venue, and TradingView caps total script memory.
+In practice this stopped the script at about **6 simultaneously enabled venues**.
+
+Fix: request only `open, close, volume` instead of `open, high, low, close,
+volume`. Intrabar high/low were needed **solely** by the Proportional
+classification — the CVD candle's wick comes from the running cumulative's own
+min/max, not from intrabar extremes. Dropping those two arrays cuts per-venue
+intrabar memory by ~40%.
+
+Proportional was removed as a result. It never matched the built-in in any test,
+so the trade is two unused arrays for roughly 40% more venue headroom. Tick rule
+and Bar direction are unaffected, as are candle wicks.
+
+If memory still bites, the next lever is `calc_bars_count` on the `indicator()`
+call, which caps how far back the script computes.
+
 **Caveat: lead-lag is a heuristic.** Correlation is not causation, and on a free
 plan the sample window is limited. Read it as a hint about who is leading.
 

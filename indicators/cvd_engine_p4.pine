@@ -85,8 +85,12 @@ string i_ltf = input.string("1 minute", "Lower Timeframe", group = G_ENG,
 // Tick rule is locked as the default: Phase 1 confirmed it matches the built-in.
 // The other two remain available for experimentation and cross-checks.
 string i_class = input.string("Tick rule", "Volume Classification", group = G_ENG,
-     options = ["Tick rule", "Bar direction", "Proportional"],
-     tooltip = "Tick rule matched the built-in CVD in Phase 1 parity testing and is the default.")
+     options = ["Tick rule", "Bar direction"],
+     tooltip = "Tick rule matched the built-in CVD exactly on a liquid pair and is the default.\n\n" +
+               "Proportional was removed: it was the only rule needing intrabar high/low, and " +
+               "holding those two extra arrays per venue is what pushed the script over " +
+               "TradingView's memory limit past ~6 venues. It never matched the built-in, so " +
+               "dropping it costs nothing and buys roughly 40% more venue headroom.")
 
 string i_anchor = input.string("1 Day", "Anchor Period", group = G_ENG,
      options = ["None", "1 Day", "1 Week", "1 Month"])
@@ -255,8 +259,13 @@ bool   newPeriod = i_anchor == "None" ? false : timeframe.change(anchorTf)
 //  runHi >= 0 and runLo <= 0 by construction, and both bracket barDelta, so the
 //  per-venue candle wick always contains its own open and close.
 // =============================================================================
-f_delta(bool en, array<float> aO, array<float> aH, array<float> aL, array<float> aC, array<float> aV,
-        float bO, float bH, float bL, float bC, float bV,
+//  Requests only open/close/volume per venue. Intrabar high/low were needed
+//  solely by the Proportional rule; the candle wick comes from the running
+//  cumulative's own min/max, not from intrabar extremes. Dropping those two
+//  arrays cuts per-venue intrabar memory by ~40%, which is the binding limit on
+//  how many venues can run at once.
+f_delta(bool en, array<float> aO, array<float> aC, array<float> aV,
+        float bO, float bC, float bV,
         bool useL, simple string rule, bool inv, float mult) =>
     var int   dCarry = 0
     var float cCarry = na
@@ -276,17 +285,11 @@ f_delta(bool en, array<float> aO, array<float> aH, array<float> aL, array<float>
     if useArr
         for i = 0 to nn - 1
             float o_ = array.get(aO, i)
-            float h_ = array.get(aH, i)
-            float l_ = array.get(aL, i)
             float c_ = array.get(aC, i)
             float v_ = nz(array.get(aV, i))
 
             float d = 0.0
-            if rule == "Proportional"
-                float rng = h_ - l_
-                d := rng > 0 ? v_ * ((2.0 * (c_ - l_) / rng) - 1.0) : 0.0
-                ld := d > 0 ? 1 : d < 0 ? -1 : ld
-            else if rule == "Bar direction"
+            if rule == "Bar direction"
                 int dir = c_ > o_ ? 1 : c_ < o_ ? -1 : 0
                 ld := dir != 0 ? dir : ld
                 d := dir * v_
@@ -307,10 +310,7 @@ f_delta(bool en, array<float> aO, array<float> aH, array<float> aL, array<float>
     else if en and not na(bC)
         float v_ = nz(bV)
         float d  = 0.0
-        if rule == "Proportional"
-            float rng = bH - bL
-            d := rng > 0 ? v_ * ((2.0 * (bC - bL) / rng) - 1.0) : 0.0
-        else if rule == "Bar direction"
+        if rule == "Bar direction"
             d := (bC > bO ? 1 : bC < bO ? -1 : 0) * v_
         else
             float pc = nz(bC[1], bO)
@@ -334,72 +334,72 @@ f_delta(bool en, array<float> aO, array<float> aH, array<float> aL, array<float>
 //  request.security_lower_tf always uses the [O,H,L,C,V] tuple; the chart-bar
 //  request mirrors it so f_delta receives a consistent shape.
 // =============================================================================
-[lBinS_o, lBinS_h, lBinS_l, lBinS_c, lBinS_v] = request.security_lower_tf(sBinS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
-[bBinS_o, bBinS_h, bBinS_l, bBinS_c, bBinS_v] = request.security(sBinS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dBinS, hBinS, loBinS, okBinS] = f_delta(en_binS, lBinS_o, lBinS_h, lBinS_l, lBinS_c, lBinS_v, bBinS_o, bBinS_h, bBinS_l, bBinS_c, bBinS_v, useLtf, i_class, false, 1.0)
+[lBinS_o, lBinS_c, lBinS_v] = request.security_lower_tf(sBinS, ltfUsed, [open, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
+[bBinS_o, bBinS_c, bBinS_v] = request.security(sBinS, timeframe.period, [open, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+[dBinS, hBinS, loBinS, okBinS] = f_delta(en_binS, lBinS_o, lBinS_c, lBinS_v, bBinS_o, bBinS_c, bBinS_v, useLtf, i_class, false, 1.0)
 
-[lCbS_o, lCbS_h, lCbS_l, lCbS_c, lCbS_v] = request.security_lower_tf(sCbS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
-[bCbS_o, bCbS_h, bCbS_l, bCbS_c, bCbS_v] = request.security(sCbS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dCbS, hCbS, loCbS, okCbS] = f_delta(en_cbS, lCbS_o, lCbS_h, lCbS_l, lCbS_c, lCbS_v, bCbS_o, bCbS_h, bCbS_l, bCbS_c, bCbS_v, useLtf, i_class, false, 1.0)
+[lCbS_o, lCbS_c, lCbS_v] = request.security_lower_tf(sCbS, ltfUsed, [open, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
+[bCbS_o, bCbS_c, bCbS_v] = request.security(sCbS, timeframe.period, [open, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+[dCbS, hCbS, loCbS, okCbS] = f_delta(en_cbS, lCbS_o, lCbS_c, lCbS_v, bCbS_o, bCbS_c, bCbS_v, useLtf, i_class, false, 1.0)
 
-[lOkS_o, lOkS_h, lOkS_l, lOkS_c, lOkS_v] = request.security_lower_tf(sOkS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
-[bOkS_o, bOkS_h, bOkS_l, bOkS_c, bOkS_v] = request.security(sOkS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dOkS, hOkS, loOkS, okOkS] = f_delta(en_okS, lOkS_o, lOkS_h, lOkS_l, lOkS_c, lOkS_v, bOkS_o, bOkS_h, bOkS_l, bOkS_c, bOkS_v, useLtf, i_class, false, 1.0)
+[lOkS_o, lOkS_c, lOkS_v] = request.security_lower_tf(sOkS, ltfUsed, [open, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
+[bOkS_o, bOkS_c, bOkS_v] = request.security(sOkS, timeframe.period, [open, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+[dOkS, hOkS, loOkS, okOkS] = f_delta(en_okS, lOkS_o, lOkS_c, lOkS_v, bOkS_o, bOkS_c, bOkS_v, useLtf, i_class, false, 1.0)
 
-[lByS_o, lByS_h, lByS_l, lByS_c, lByS_v] = request.security_lower_tf(sByS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
-[bByS_o, bByS_h, bByS_l, bByS_c, bByS_v] = request.security(sByS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dByS, hByS, loByS, okByS] = f_delta(en_byS, lByS_o, lByS_h, lByS_l, lByS_c, lByS_v, bByS_o, bByS_h, bByS_l, bByS_c, bByS_v, useLtf, i_class, false, 1.0)
+[lByS_o, lByS_c, lByS_v] = request.security_lower_tf(sByS, ltfUsed, [open, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
+[bByS_o, bByS_c, bByS_v] = request.security(sByS, timeframe.period, [open, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+[dByS, hByS, loByS, okByS] = f_delta(en_byS, lByS_o, lByS_c, lByS_v, bByS_o, bByS_c, bByS_v, useLtf, i_class, false, 1.0)
 
-[lKrS_o, lKrS_h, lKrS_l, lKrS_c, lKrS_v] = request.security_lower_tf(sKrS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
-[bKrS_o, bKrS_h, bKrS_l, bKrS_c, bKrS_v] = request.security(sKrS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dKrS, hKrS, loKrS, okKrS] = f_delta(en_krS, lKrS_o, lKrS_h, lKrS_l, lKrS_c, lKrS_v, bKrS_o, bKrS_h, bKrS_l, bKrS_c, bKrS_v, useLtf, i_class, false, 1.0)
+[lKrS_o, lKrS_c, lKrS_v] = request.security_lower_tf(sKrS, ltfUsed, [open, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
+[bKrS_o, bKrS_c, bKrS_v] = request.security(sKrS, timeframe.period, [open, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+[dKrS, hKrS, loKrS, okKrS] = f_delta(en_krS, lKrS_o, lKrS_c, lKrS_v, bKrS_o, bKrS_c, bKrS_v, useLtf, i_class, false, 1.0)
 
-[lBgS_o, lBgS_h, lBgS_l, lBgS_c, lBgS_v] = request.security_lower_tf(sBgS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
-[bBgS_o, bBgS_h, bBgS_l, bBgS_c, bBgS_v] = request.security(sBgS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dBgS, hBgS, loBgS, okBgS] = f_delta(en_bgS, lBgS_o, lBgS_h, lBgS_l, lBgS_c, lBgS_v, bBgS_o, bBgS_h, bBgS_l, bBgS_c, bBgS_v, useLtf, i_class, false, 1.0)
-
-
-[lHlS_o, lHlS_h, lHlS_l, lHlS_c, lHlS_v] = request.security_lower_tf(sHlS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
-[bHlS_o, bHlS_h, bHlS_l, bHlS_c, bHlS_v] = request.security(sHlS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dHlS, hHlS, loHlS, okHlS] = f_delta(en_hlS, lHlS_o, lHlS_h, lHlS_l, lHlS_c, lHlS_v, bHlS_o, bHlS_h, bHlS_l, bHlS_c, bHlS_v, useLtf, i_class, false, 1.0)
-
-[lMxS_o, lMxS_h, lMxS_l, lMxS_c, lMxS_v] = request.security_lower_tf(sMxS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
-[bMxS_o, bMxS_h, bMxS_l, bMxS_c, bMxS_v] = request.security(sMxS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dMxS, hMxS, loMxS, okMxS] = f_delta(en_mxS, lMxS_o, lMxS_h, lMxS_l, lMxS_c, lMxS_v, bMxS_o, bMxS_h, bMxS_l, bMxS_c, bMxS_v, useLtf, i_class, false, 1.0)
-
-[lGtS_o, lGtS_h, lGtS_l, lGtS_c, lGtS_v] = request.security_lower_tf(sGtS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
-[bGtS_o, bGtS_h, bGtS_l, bGtS_c, bGtS_v] = request.security(sGtS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dGtS, hGtS, loGtS, okGtS] = f_delta(en_gtS, lGtS_o, lGtS_h, lGtS_l, lGtS_c, lGtS_v, bGtS_o, bGtS_h, bGtS_l, bGtS_c, bGtS_v, useLtf, i_class, false, 1.0)
-
-[lHtS_o, lHtS_h, lHtS_l, lHtS_c, lHtS_v] = request.security_lower_tf(sHtS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
-[bHtS_o, bHtS_h, bHtS_l, bHtS_c, bHtS_v] = request.security(sHtS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dHtS, hHtS, loHtS, okHtS] = f_delta(en_htS, lHtS_o, lHtS_h, lHtS_l, lHtS_c, lHtS_v, bHtS_o, bHtS_h, bHtS_l, bHtS_c, bHtS_v, useLtf, i_class, false, 1.0)
+[lBgS_o, lBgS_c, lBgS_v] = request.security_lower_tf(sBgS, ltfUsed, [open, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
+[bBgS_o, bBgS_c, bBgS_v] = request.security(sBgS, timeframe.period, [open, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+[dBgS, hBgS, loBgS, okBgS] = f_delta(en_bgS, lBgS_o, lBgS_c, lBgS_v, bBgS_o, bBgS_c, bBgS_v, useLtf, i_class, false, 1.0)
 
 
+[lHlS_o, lHlS_c, lHlS_v] = request.security_lower_tf(sHlS, ltfUsed, [open, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
+[bHlS_o, bHlS_c, bHlS_v] = request.security(sHlS, timeframe.period, [open, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+[dHlS, hHlS, loHlS, okHlS] = f_delta(en_hlS, lHlS_o, lHlS_c, lHlS_v, bHlS_o, bHlS_c, bHlS_v, useLtf, i_class, false, 1.0)
 
-[lBinP_o, lBinP_h, lBinP_l, lBinP_c, lBinP_v] = request.security_lower_tf(sBinP, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
-[bBinP_o, bBinP_h, bBinP_l, bBinP_c, bBinP_v] = request.security(sBinP, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dBinP, hBinP, loBinP, okBinP] = f_delta(en_binP, lBinP_o, lBinP_h, lBinP_l, lBinP_c, lBinP_v, bBinP_o, bBinP_h, bBinP_l, bBinP_c, bBinP_v, useLtf, i_class, false, 1.0)
+[lMxS_o, lMxS_c, lMxS_v] = request.security_lower_tf(sMxS, ltfUsed, [open, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
+[bMxS_o, bMxS_c, bMxS_v] = request.security(sMxS, timeframe.period, [open, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+[dMxS, hMxS, loMxS, okMxS] = f_delta(en_mxS, lMxS_o, lMxS_c, lMxS_v, bMxS_o, bMxS_c, bMxS_v, useLtf, i_class, false, 1.0)
 
-[lByP_o, lByP_h, lByP_l, lByP_c, lByP_v] = request.security_lower_tf(sByP, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
-[bByP_o, bByP_h, bByP_l, bByP_c, bByP_v] = request.security(sByP, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dByP, hByP, loByP, okByP] = f_delta(en_byP, lByP_o, lByP_h, lByP_l, lByP_c, lByP_v, bByP_o, bByP_h, bByP_l, bByP_c, bByP_v, useLtf, i_class, false, 1.0)
+[lGtS_o, lGtS_c, lGtS_v] = request.security_lower_tf(sGtS, ltfUsed, [open, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
+[bGtS_o, bGtS_c, bGtS_v] = request.security(sGtS, timeframe.period, [open, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+[dGtS, hGtS, loGtS, okGtS] = f_delta(en_gtS, lGtS_o, lGtS_c, lGtS_v, bGtS_o, bGtS_c, bGtS_v, useLtf, i_class, false, 1.0)
 
-[lOkP_o, lOkP_h, lOkP_l, lOkP_c, lOkP_v] = request.security_lower_tf(sOkP, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
-[bOkP_o, bOkP_h, bOkP_l, bOkP_c, bOkP_v] = request.security(sOkP, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dOkP, hOkP, loOkP, okOkP] = f_delta(en_okP, lOkP_o, lOkP_h, lOkP_l, lOkP_c, lOkP_v, bOkP_o, bOkP_h, bOkP_l, bOkP_c, bOkP_v, useLtf, i_class, false, 1.0)
+[lHtS_o, lHtS_c, lHtS_v] = request.security_lower_tf(sHtS, ltfUsed, [open, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
+[bHtS_o, bHtS_c, bHtS_v] = request.security(sHtS, timeframe.period, [open, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+[dHtS, hHtS, loHtS, okHtS] = f_delta(en_htS, lHtS_o, lHtS_c, lHtS_v, bHtS_o, bHtS_c, bHtS_v, useLtf, i_class, false, 1.0)
 
-[lBgP_o, lBgP_h, lBgP_l, lBgP_c, lBgP_v] = request.security_lower_tf(sBgP, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
-[bBgP_o, bBgP_h, bBgP_l, bBgP_c, bBgP_v] = request.security(sBgP, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dBgP, hBgP, loBgP, okBgP] = f_delta(en_bgP, lBgP_o, lBgP_h, lBgP_l, lBgP_c, lBgP_v, bBgP_o, bBgP_h, bBgP_l, bBgP_c, bBgP_v, useLtf, i_class, false, 1.0)
 
-[lHlP_o, lHlP_h, lHlP_l, lHlP_c, lHlP_v] = request.security_lower_tf(sHlP, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
-[bHlP_o, bHlP_h, bHlP_l, bHlP_c, bHlP_v] = request.security(sHlP, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dHlP, hHlP, loHlP, okHlP] = f_delta(en_hlP, lHlP_o, lHlP_h, lHlP_l, lHlP_c, lHlP_v, bHlP_o, bHlP_h, bHlP_l, bHlP_c, bHlP_v, useLtf, i_class, false, 1.0)
 
-[lMxP_o, lMxP_h, lMxP_l, lMxP_c, lMxP_v] = request.security_lower_tf(sMxP, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
-[bMxP_o, bMxP_h, bMxP_l, bMxP_c, bMxP_v] = request.security(sMxP, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
-[dMxP, hMxP, loMxP, okMxP] = f_delta(en_mxP, lMxP_o, lMxP_h, lMxP_l, lMxP_c, lMxP_v, bMxP_o, bMxP_h, bMxP_l, bMxP_c, bMxP_v, useLtf, i_class, false, 1.0)
+[lBinP_o, lBinP_c, lBinP_v] = request.security_lower_tf(sBinP, ltfUsed, [open, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
+[bBinP_o, bBinP_c, bBinP_v] = request.security(sBinP, timeframe.period, [open, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+[dBinP, hBinP, loBinP, okBinP] = f_delta(en_binP, lBinP_o, lBinP_c, lBinP_v, bBinP_o, bBinP_c, bBinP_v, useLtf, i_class, false, 1.0)
+
+[lByP_o, lByP_c, lByP_v] = request.security_lower_tf(sByP, ltfUsed, [open, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
+[bByP_o, bByP_c, bByP_v] = request.security(sByP, timeframe.period, [open, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+[dByP, hByP, loByP, okByP] = f_delta(en_byP, lByP_o, lByP_c, lByP_v, bByP_o, bByP_c, bByP_v, useLtf, i_class, false, 1.0)
+
+[lOkP_o, lOkP_c, lOkP_v] = request.security_lower_tf(sOkP, ltfUsed, [open, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
+[bOkP_o, bOkP_c, bOkP_v] = request.security(sOkP, timeframe.period, [open, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+[dOkP, hOkP, loOkP, okOkP] = f_delta(en_okP, lOkP_o, lOkP_c, lOkP_v, bOkP_o, bOkP_c, bOkP_v, useLtf, i_class, false, 1.0)
+
+[lBgP_o, lBgP_c, lBgP_v] = request.security_lower_tf(sBgP, ltfUsed, [open, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
+[bBgP_o, bBgP_c, bBgP_v] = request.security(sBgP, timeframe.period, [open, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+[dBgP, hBgP, loBgP, okBgP] = f_delta(en_bgP, lBgP_o, lBgP_c, lBgP_v, bBgP_o, bBgP_c, bBgP_v, useLtf, i_class, false, 1.0)
+
+[lHlP_o, lHlP_c, lHlP_v] = request.security_lower_tf(sHlP, ltfUsed, [open, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
+[bHlP_o, bHlP_c, bHlP_v] = request.security(sHlP, timeframe.period, [open, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+[dHlP, hHlP, loHlP, okHlP] = f_delta(en_hlP, lHlP_o, lHlP_c, lHlP_v, bHlP_o, bHlP_c, bHlP_v, useLtf, i_class, false, 1.0)
+
+[lMxP_o, lMxP_c, lMxP_v] = request.security_lower_tf(sMxP, ltfUsed, [open, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
+[bMxP_o, bMxP_c, bMxP_v] = request.security(sMxP, timeframe.period, [open, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+[dMxP, hMxP, loMxP, okMxP] = f_delta(en_mxP, lMxP_o, lMxP_c, lMxP_v, bMxP_o, bMxP_c, bMxP_v, useLtf, i_class, false, 1.0)
 
 // =============================================================================
 //  STREAM AGGREGATION
