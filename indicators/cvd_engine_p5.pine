@@ -1067,41 +1067,28 @@ plot(vSpread and anyCompare ? spread : na, "Spot-Perp Spread",
 
 // ── Per-venue views ──────────────────────────────────────────────────────────
 // Only the enabled+active venues render; the contribution table is the legend.
-plot(vVenShare and drBinS ? shBinS : na, "Share Binance·S", color = #f0b90b, linewidth = 2)
-plot(vVenShare and drCbS ? shCbS : na, "Share Coinbase·S", color = #2962ff, linewidth = 2)
-plot(vVenShare and drOkS ? shOkS : na, "Share OKX·S", color = #00e5ff, linewidth = 2)
-plot(vVenShare and drByS ? shByS : na, "Share Bybit·S", color = #ff7043, linewidth = 2)
-plot(vVenShare and drKrS ? shKrS : na, "Share Kraken·S", color = #7e57c2, linewidth = 2)
-plot(vVenShare and drBgS ? shBgS : na, "Share Bitget·S", color = #26c6da, linewidth = 2)
-plot(vVenShare and drKcS ? shKcS : na, "Share KuCoin·S", color = #66bb6a, linewidth = 2)
-plot(vVenShare and drGtS ? shGtS : na, "Share Gate·S", color = #5c6bc0, linewidth = 2)
-plot(vVenShare and drHtS ? shHtS : na, "Share HTX·S", color = #a1887f, linewidth = 2)
-plot(vVenShare and drMxS ? shMxS : na, "Share MEXC·S", color = #d4e157, linewidth = 2)
-plot(vVenShare and drHlS ? shHlS : na, "Share Hyperliq·S", color = #26a69a, linewidth = 2)
-plot(vVenShare and drBinP ? shBinP : na, "Share Binance·P", color = #ffca28, linewidth = 2)
-plot(vVenShare and drByP ? shByP : na, "Share Bybit·P", color = #ff8a65, linewidth = 2)
-plot(vVenShare and drOkP ? shOkP : na, "Share OKX·P", color = #4dd0e1, linewidth = 2)
-plot(vVenShare and drBgP ? shBgP : na, "Share Bitget·P", color = #4db6ac, linewidth = 2)
-plot(vVenShare and drHlP ? shHlP : na, "Share Hyperliq·P", color = #9ccc65, linewidth = 2)
-plot(vVenShare and drMxP ? shMxP : na, "Share MEXC·P", color = #c0ca33, linewidth = 2)
+// One plot per venue, not one per view. The two per-venue views never render
+// at the same time, so a single output can carry whichever is active - and at
+// 17 venues a second bank costs 17 of TradingView's 65 plot outputs for
+// nothing. The value is na unless this venue is in the drawn top-N.
+plot(drBinS ? (vVenShare ? shBinS : vVenCvd ? zcBinS : na) : na, "Binance·S", color = #f0b90b, linewidth = 2)
+plot(drCbS ? (vVenShare ? shCbS : vVenCvd ? zcCbS : na) : na, "Coinbase·S", color = #2962ff, linewidth = 2)
+plot(drOkS ? (vVenShare ? shOkS : vVenCvd ? zcOkS : na) : na, "OKX·S", color = #00e5ff, linewidth = 2)
+plot(drByS ? (vVenShare ? shByS : vVenCvd ? zcByS : na) : na, "Bybit·S", color = #ff7043, linewidth = 2)
+plot(drKrS ? (vVenShare ? shKrS : vVenCvd ? zcKrS : na) : na, "Kraken·S", color = #7e57c2, linewidth = 2)
+plot(drBgS ? (vVenShare ? shBgS : vVenCvd ? zcBgS : na) : na, "Bitget·S", color = #26c6da, linewidth = 2)
+plot(drKcS ? (vVenShare ? shKcS : vVenCvd ? zcKcS : na) : na, "KuCoin·S", color = #66bb6a, linewidth = 2)
+plot(drGtS ? (vVenShare ? shGtS : vVenCvd ? zcGtS : na) : na, "Gate·S", color = #5c6bc0, linewidth = 2)
+plot(drHtS ? (vVenShare ? shHtS : vVenCvd ? zcHtS : na) : na, "HTX·S", color = #a1887f, linewidth = 2)
+plot(drMxS ? (vVenShare ? shMxS : vVenCvd ? zcMxS : na) : na, "MEXC·S", color = #d4e157, linewidth = 2)
+plot(drHlS ? (vVenShare ? shHlS : vVenCvd ? zcHlS : na) : na, "Hyperliq·S", color = #26a69a, linewidth = 2)
+plot(drBinP ? (vVenShare ? shBinP : vVenCvd ? zcBinP : na) : na, "Binance·P", color = #ffca28, linewidth = 2)
+plot(drByP ? (vVenShare ? shByP : vVenCvd ? zcByP : na) : na, "Bybit·P", color = #ff8a65, linewidth = 2)
+plot(drOkP ? (vVenShare ? shOkP : vVenCvd ? zcOkP : na) : na, "OKX·P", color = #4dd0e1, linewidth = 2)
+plot(drBgP ? (vVenShare ? shBgP : vVenCvd ? zcBgP : na) : na, "Bitget·P", color = #4db6ac, linewidth = 2)
+plot(drHlP ? (vVenShare ? shHlP : vVenCvd ? zcHlP : na) : na, "Hyperliq·P", color = #9ccc65, linewidth = 2)
+plot(drMxP ? (vVenShare ? shMxP : vVenCvd ? zcMxP : na) : na, "MEXC·P", color = #c0ca33, linewidth = 2)
 
-plot(vVenCvd and drBinS ? zcBinS : na, "CVD z Binance·S", color = #f0b90b, linewidth = 2)
-plot(vVenCvd and drCbS ? zcCbS : na, "CVD z Coinbase·S", color = #2962ff, linewidth = 2)
-plot(vVenCvd and drOkS ? zcOkS : na, "CVD z OKX·S", color = #00e5ff, linewidth = 2)
-plot(vVenCvd and drByS ? zcByS : na, "CVD z Bybit·S", color = #ff7043, linewidth = 2)
-plot(vVenCvd and drKrS ? zcKrS : na, "CVD z Kraken·S", color = #7e57c2, linewidth = 2)
-plot(vVenCvd and drBgS ? zcBgS : na, "CVD z Bitget·S", color = #26c6da, linewidth = 2)
-plot(vVenCvd and drKcS ? zcKcS : na, "CVD z KuCoin·S", color = #66bb6a, linewidth = 2)
-plot(vVenCvd and drGtS ? zcGtS : na, "CVD z Gate·S", color = #5c6bc0, linewidth = 2)
-plot(vVenCvd and drHtS ? zcHtS : na, "CVD z HTX·S", color = #a1887f, linewidth = 2)
-plot(vVenCvd and drMxS ? zcMxS : na, "CVD z MEXC·S", color = #d4e157, linewidth = 2)
-plot(vVenCvd and drHlS ? zcHlS : na, "CVD z Hyperliq·S", color = #26a69a, linewidth = 2)
-plot(vVenCvd and drBinP ? zcBinP : na, "CVD z Binance·P", color = #ffca28, linewidth = 2)
-plot(vVenCvd and drByP ? zcByP : na, "CVD z Bybit·P", color = #ff8a65, linewidth = 2)
-plot(vVenCvd and drOkP ? zcOkP : na, "CVD z OKX·P", color = #4dd0e1, linewidth = 2)
-plot(vVenCvd and drBgP ? zcBgP : na, "CVD z Bitget·P", color = #4db6ac, linewidth = 2)
-plot(vVenCvd and drHlP ? zcHlP : na, "CVD z Hyperliq·P", color = #9ccc65, linewidth = 2)
-plot(vVenCvd and drMxP ? zcMxP : na, "CVD z MEXC·P", color = #c0ca33, linewidth = 2)
 
 hline(i_zero ? 0 : na, "Zero", color = color.new(color.gray, 55))
 
@@ -1160,13 +1147,9 @@ if barstate.islast
              style = label.style_label_center, textalign = text.align_center,
              color = color.new(#3a1f1f, 20), textcolor = color.orange, size = size.small)
 
-// Hidden outputs — all three streams + spread, for later phases / companions.
-plot(spotC, "Out: Spot CVD",   display = display.none)
-plot(perpC, "Out: Perp CVD",   display = display.none)
-plot(glblC, "Out: Global CVD", display = display.none)
-plot(spotBar, "Out: Spot Δ",   display = display.none)
-plot(perpBar, "Out: Perp Δ",   display = display.none)
-plot(spread,  "Out: Spread z", display = display.none)
+// Hidden display=none outputs were removed to stay inside TradingView's 65-plot
+// limit. They existed only for a companion script that was never built; if one
+// is ever needed they cost one plot each to reinstate.
 
 // =============================================================================
 //  DIAGNOSTICS
