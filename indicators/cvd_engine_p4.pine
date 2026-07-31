@@ -906,14 +906,21 @@ string dashPos = i_dpos == "Top Left" ? position.top_left :
 bool showDiag = i_dash and not vVenue
 bool showCtab = i_dash and vVenue
 
-var table tbl = table.new(dashPos, 2, 13,
+//  ONE table object for both dashboards. Two tables declared at the same
+//  position overlap - the one created later draws on top and hides the other,
+//  even when it has been cleared, because clearing empties cells but does not
+//  release the position. Sized for the wider contribution layout; the
+//  diagnostics layout simply leaves columns 2-5 empty and Pine collapses them.
+var table dash = table.new(dashPos, 6, 21,
      bgcolor      = color.new(#0b0b0f, 15),
      border_color = color.new(color.gray, 70),
      border_width = 1, frame_width = 1,
      frame_color  = color.new(color.gray, 55))
 
-if barstate.islast and not showDiag
-    table.clear(tbl, 0, 0, 1, 12)
+// Clear once per bar, before either layout fills it. Whichever dashboard is
+// active then writes only its own cells; nothing stale survives a view switch.
+if barstate.islast
+    table.clear(dash, 0, 0, 5, 20)
 
 if showDiag and barstate.islast
     color cHdr = color.new(#16202e, 0)
@@ -959,54 +966,54 @@ if showDiag and barstate.islast
       str.tostring(spread, "#.##") + "  " + (spread >= 0 ? "spot ▲" : "perp ▲")
     color r3col = vSingle ? (selBar >= 0 ? i_up : i_dn) : (spread >= 0 ? i_spot : i_perp)
 
-    table.cell(tbl, 0, 0, "CVD ENGINE",  text_color = cVal, text_size = size.tiny, bgcolor = cHdr)
-    table.cell(tbl, 1, 0, "P4 · venues", text_color = cLbl, text_size = size.tiny, bgcolor = cHdr)
+    table.cell(dash, 0, 0, "CVD ENGINE",  text_color = cVal, text_size = size.tiny, bgcolor = cHdr)
+    table.cell(dash, 1, 0, "P4 · venues", text_color = cLbl, text_size = size.tiny, bgcolor = cHdr)
 
-    table.cell(tbl, 0, 1, "View", text_color = cLbl, text_size = size.tiny)
-    table.cell(tbl, 1, 1, i_view + (vSingle ? "" : " · " + i_norm), text_color = cVal, text_size = size.tiny)
+    table.cell(dash, 0, 1, "View", text_color = cLbl, text_size = size.tiny)
+    table.cell(dash, 1, 1, i_view + (vSingle ? "" : " · " + i_norm), text_color = cVal, text_size = size.tiny)
 
-    table.cell(tbl, 0, 2, r2lbl, text_color = cLbl, text_size = size.tiny)
-    table.cell(tbl, 1, 2, r2val, text_color = r2col, text_size = size.small)
+    table.cell(dash, 0, 2, r2lbl, text_color = cLbl, text_size = size.tiny)
+    table.cell(dash, 1, 2, r2val, text_color = r2col, text_size = size.small)
 
-    table.cell(tbl, 0, 3, r3lbl, text_color = cLbl, text_size = size.tiny)
-    table.cell(tbl, 1, 3, r3val, text_color = r3col, text_size = size.tiny)
+    table.cell(dash, 0, 3, r3lbl, text_color = cLbl, text_size = size.tiny)
+    table.cell(dash, 1, 3, r3val, text_color = r3col, text_size = size.tiny)
 
-    table.cell(tbl, 0, 4, "Spot / Perp Δ", text_color = cLbl, text_size = size.tiny)
-    table.cell(tbl, 1, 4, f_abbr(spotBar) + " / " + f_abbr(perpBar), text_color = cVal, text_size = size.tiny)
+    table.cell(dash, 0, 4, "Spot / Perp Δ", text_color = cLbl, text_size = size.tiny)
+    table.cell(dash, 1, 4, f_abbr(spotBar) + " / " + f_abbr(perpBar), text_color = cVal, text_size = size.tiny)
 
-    table.cell(tbl, 0, 5, "Active venues", text_color = cLbl, text_size = size.tiny)
-    table.cell(tbl, 1, 5, "spot " + str.tostring(spotActive) + "/" + str.tostring(spotEnabled) +
+    table.cell(dash, 0, 5, "Active venues", text_color = cLbl, text_size = size.tiny)
+    table.cell(dash, 1, 5, "spot " + str.tostring(spotActive) + "/" + str.tostring(spotEnabled) +
                "  perp " + str.tostring(perpActive) + "/" + str.tostring(perpEnabled),
                text_color = cVal, text_size = size.tiny)
 
-    table.cell(tbl, 0, 6, "Engine", text_color = cLbl, text_size = size.tiny)
-    table.cell(tbl, 1, 6, (useLtf ? "intrabar " + ltfUsed : "chart bar") +
+    table.cell(dash, 0, 6, "Engine", text_color = cLbl, text_size = size.tiny)
+    table.cell(dash, 1, 6, (useLtf ? "intrabar " + ltfUsed : "chart bar") +
                (useLtf ? " · ~" + str.tostring(depthBars) + "b" : ""),
                text_color = cVal, text_size = size.tiny)
 
-    table.cell(tbl, 0, 7, "Anchor", text_color = cLbl, text_size = size.tiny)
-    table.cell(tbl, 1, 7, i_anchor + " · +" + str.tostring(barsSinceReset) + " bars",
+    table.cell(dash, 0, 7, "Anchor", text_color = cLbl, text_size = size.tiny)
+    table.cell(dash, 1, 7, i_anchor + " · +" + str.tostring(barsSinceReset) + " bars",
                text_color = i_anchor == "None" ? color.orange : cVal, text_size = size.tiny)
 
-    table.cell(tbl, 0, 8, "Requests", text_color = cLbl, text_size = size.tiny)
-    table.cell(tbl, 1, 8, str.tostring(reqUsed) + " / 40", text_color = cVal, text_size = size.tiny)
+    table.cell(dash, 0, 8, "Requests", text_color = cLbl, text_size = size.tiny)
+    table.cell(dash, 1, 8, str.tostring(reqUsed) + " / 40", text_color = cVal, text_size = size.tiny)
 
-    table.cell(tbl, 0, 9, "Consensus", text_color = cLbl, text_size = size.tiny)
-    table.cell(tbl, 1, 9, actCnt > 0 ? str.tostring(consensus, "#") + "% of " +
+    table.cell(dash, 0, 9, "Consensus", text_color = cLbl, text_size = size.tiny)
+    table.cell(dash, 1, 9, actCnt > 0 ? str.tostring(consensus, "#") + "% of " +
                str.tostring(actCnt) + " venues" : "—",
                text_color = consensus >= 66 ? i_up : consensus >= 34 ? color.orange : i_dn,
                text_size = size.tiny)
 
-    table.cell(tbl, 0, 10, "Dominant", text_color = cLbl, text_size = size.tiny)
-    table.cell(tbl, 1, 10, actCnt > 0 ? topVenue + " " + str.tostring(dominance, "#") + "%" : "—",
+    table.cell(dash, 0, 10, "Dominant", text_color = cLbl, text_size = size.tiny)
+    table.cell(dash, 1, 10, actCnt > 0 ? topVenue + " " + str.tostring(dominance, "#") + "%" : "—",
                text_color = dominance >= 60 ? color.orange : cVal, text_size = size.tiny)
 
-    table.cell(tbl, 0, 11, "Fallback", text_color = cLbl, text_size = size.tiny)
-    table.cell(tbl, 1, 11, fbBars > 0 ? str.tostring(fbBars) + " bars on chart-bar" : "none",
+    table.cell(dash, 0, 11, "Fallback", text_color = cLbl, text_size = size.tiny)
+    table.cell(dash, 1, 11, fbBars > 0 ? str.tostring(fbBars) + " bars on chart-bar" : "none",
                text_color = fbBars > 0 ? color.orange : i_up, text_size = size.tiny)
 
-    table.cell(tbl, 0, 12, "Status", text_color = cLbl, text_size = size.tiny)
-    table.cell(tbl, 1, 12, warn, text_color = warnCol, text_size = size.tiny)
+    table.cell(dash, 0, 12, "Status", text_color = cLbl, text_size = size.tiny)
+    table.cell(dash, 1, 12, warn, text_color = warnCol, text_size = size.tiny)
 
 
 // =============================================================================
@@ -1015,12 +1022,6 @@ if showDiag and barstate.islast
 //  Venues ranked by share of the anchor period's flow. Venue names are tinted to
 //  match their plot colour so this table also serves as the chart legend.
 // =============================================================================
-// 1 header + up to 16 venue rows + 4 summary rows
-var table ctb = table.new(dashPos, 6, 21,
-     bgcolor      = color.new(#0b0b0f, 15),
-     border_color = color.new(color.gray, 70),
-     border_width = 1, frame_width = 1,
-     frame_color  = color.new(color.gray, 55))
 
 // Draws a proportional bar from block characters - a share column reads far
 // faster as a bar than as a number.
@@ -1031,21 +1032,16 @@ f_bar(float pct) =>
         out := out + (i <= filled ? "█" : "·")
     out
 
-if barstate.islast and not showCtab
-    table.clear(ctb, 0, 0, 5, 20)
-
 if showCtab and barstate.islast
-    table.clear(ctb, 0, 0, 5, 20)
-
     color hbg = color.new(#16202e, 0)
     color lbl = color.new(color.gray, 20)
 
-    table.cell(ctb, 0, 0, "VENUE",  text_color = color.white, text_size = size.tiny, bgcolor = hbg)
-    table.cell(ctb, 1, 0, "Δ",      text_color = lbl, text_size = size.tiny, bgcolor = hbg)
-    table.cell(ctb, 2, 0, "Share",  text_color = lbl, text_size = size.tiny, bgcolor = hbg)
-    table.cell(ctb, 3, 0, "Agr",    text_color = lbl, text_size = size.tiny, bgcolor = hbg)
-    table.cell(ctb, 4, 0, "z",      text_color = lbl, text_size = size.tiny, bgcolor = hbg)
-    table.cell(ctb, 5, 0, "Lead",   text_color = lbl, text_size = size.tiny, bgcolor = hbg)
+    table.cell(dash, 0, 0, "VENUE",  text_color = color.white, text_size = size.tiny, bgcolor = hbg)
+    table.cell(dash, 1, 0, "Δ",      text_color = lbl, text_size = size.tiny, bgcolor = hbg)
+    table.cell(dash, 2, 0, "Share",  text_color = lbl, text_size = size.tiny, bgcolor = hbg)
+    table.cell(dash, 3, 0, "Agr",    text_color = lbl, text_size = size.tiny, bgcolor = hbg)
+    table.cell(dash, 4, 0, "z",      text_color = lbl, text_size = size.tiny, bgcolor = hbg)
+    table.cell(dash, 5, 0, "Lead",   text_color = lbl, text_size = size.tiny, bgcolor = hbg)
 
     int nShow = i_showAll ? actCnt : math.min(i_topN, actCnt)
 
@@ -1061,17 +1057,17 @@ if showCtab and barstate.islast
                 int   sg  = cv > 0 ? 1 : cv < 0 ? -1 : 0
                 bool  agr = sg != 0 and sg == glblSign
 
-                table.cell(ctb, 0, r + 1, array.get(vName, vi),
+                table.cell(dash, 0, r + 1, array.get(vName, vi),
                            text_color = array.get(vCol, vi), text_size = size.tiny)
-                table.cell(ctb, 1, r + 1, f_abbr(dv),
+                table.cell(dash, 1, r + 1, f_abbr(dv),
                            text_color = dv >= 0 ? i_up : i_dn, text_size = size.tiny)
-                table.cell(ctb, 2, r + 1, f_bar(shv) + " " + str.tostring(shv, "#") + "%",
+                table.cell(dash, 2, r + 1, f_bar(shv) + " " + str.tostring(shv, "#") + "%",
                            text_color = shv >= 0 ? i_up : i_dn, text_size = size.tiny)
-                table.cell(ctb, 3, r + 1, agr ? "▲" : "▼",
+                table.cell(dash, 3, r + 1, agr ? "▲" : "▼",
                            text_color = agr ? i_up : color.orange, text_size = size.tiny)
-                table.cell(ctb, 4, r + 1, str.tostring(dzv, "#.#"),
+                table.cell(dash, 4, r + 1, str.tostring(dzv, "#.#"),
                            text_color = color.white, text_size = size.tiny)
-                table.cell(ctb, 5, r + 1, na(ldv) ? "—" : str.tostring(ldv, "#.##"),
+                table.cell(dash, 5, r + 1, na(ldv) ? "—" : str.tostring(ldv, "#.##"),
                            text_color = na(ldv) ? lbl : (ldv >= 0 ? i_up : i_dn), text_size = size.tiny)
 
     // Summary rows. The venue table REPLACES the diagnostics table, so the
@@ -1096,18 +1092,18 @@ if showCtab and barstate.islast
     else
         vwarn := "ok"
 
-    table.cell(ctb, 0, fr, "Consensus", text_color = lbl, text_size = size.tiny)
-    table.cell(ctb, 1, fr, str.tostring(consensus, "#") + "% of " + str.tostring(actCnt),
+    table.cell(dash, 0, fr, "Consensus", text_color = lbl, text_size = size.tiny)
+    table.cell(dash, 1, fr, str.tostring(consensus, "#") + "% of " + str.tostring(actCnt),
                text_color = consensus >= 66 ? i_up : consensus >= 34 ? color.orange : i_dn,
                text_size = size.tiny)
 
-    table.cell(ctb, 0, fr + 1, "Dominant", text_color = lbl, text_size = size.tiny)
-    table.cell(ctb, 1, fr + 1, topVenue + " " + str.tostring(dominance, "#") + "%",
+    table.cell(dash, 0, fr + 1, "Dominant", text_color = lbl, text_size = size.tiny)
+    table.cell(dash, 1, fr + 1, topVenue + " " + str.tostring(dominance, "#") + "%",
                text_color = dominance >= 60 ? color.orange : color.white, text_size = size.tiny)
 
-    table.cell(ctb, 0, fr + 2, "Setup", text_color = lbl, text_size = size.tiny)
-    table.cell(ctb, 1, fr + 2, i_anchor + " · " + (useLtf ? "intrabar " + ltfUsed : "chart bar"),
+    table.cell(dash, 0, fr + 2, "Setup", text_color = lbl, text_size = size.tiny)
+    table.cell(dash, 1, fr + 2, i_anchor + " · " + (useLtf ? "intrabar " + ltfUsed : "chart bar"),
                text_color = color.white, text_size = size.tiny)
 
-    table.cell(ctb, 0, fr + 3, "Status", text_color = lbl, text_size = size.tiny)
-    table.cell(ctb, 1, fr + 3, vwarn, text_color = vwcol, text_size = size.tiny)
+    table.cell(dash, 0, fr + 3, "Status", text_color = lbl, text_size = size.tiny)
+    table.cell(dash, 1, fr + 3, vwarn, text_color = vwcol, text_size = size.tiny)
