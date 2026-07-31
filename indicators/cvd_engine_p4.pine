@@ -674,6 +674,55 @@ string topVenue  = actCnt > 0 ? array.get(vName, topIdx) : "—"
 
 
 
+
+// ── fallback detection ───────────────────────────────────────────────────────
+//  A venue silently drops to chart-bar classification whenever its intrabar
+//  request comes back empty - typically because the feed's 1m history does not
+//  reach as far back as the anchor window. That mixes two different calculation
+//  methods across one chart, and on a 4H chart the fallback bar is 4 hours wide,
+//  which is drastically coarser than 1m. This counts it so the mixing is visible
+//  instead of silent.
+bool fbBinS = en_binS and useLtf and (na(lBinS_c) ? 0 : array.size(lBinS_c)) == 0 and not na(bBinS_c)
+bool fbCbS = en_cbS and useLtf and (na(lCbS_c) ? 0 : array.size(lCbS_c)) == 0 and not na(bCbS_c)
+bool fbOkS = en_okS and useLtf and (na(lOkS_c) ? 0 : array.size(lOkS_c)) == 0 and not na(bOkS_c)
+bool fbByS = en_byS and useLtf and (na(lByS_c) ? 0 : array.size(lByS_c)) == 0 and not na(bByS_c)
+bool fbKrS = en_krS and useLtf and (na(lKrS_c) ? 0 : array.size(lKrS_c)) == 0 and not na(bKrS_c)
+bool fbBgS = en_bgS and useLtf and (na(lBgS_c) ? 0 : array.size(lBgS_c)) == 0 and not na(bBgS_c)
+bool fbGtS = en_gtS and useLtf and (na(lGtS_c) ? 0 : array.size(lGtS_c)) == 0 and not na(bGtS_c)
+bool fbHtS = en_htS and useLtf and (na(lHtS_c) ? 0 : array.size(lHtS_c)) == 0 and not na(bHtS_c)
+bool fbMxS = en_mxS and useLtf and (na(lMxS_c) ? 0 : array.size(lMxS_c)) == 0 and not na(bMxS_c)
+bool fbHlS = en_hlS and useLtf and (na(lHlS_c) ? 0 : array.size(lHlS_c)) == 0 and not na(bHlS_c)
+bool fbBinP = en_binP and useLtf and (na(lBinP_c) ? 0 : array.size(lBinP_c)) == 0 and not na(bBinP_c)
+bool fbByP = en_byP and useLtf and (na(lByP_c) ? 0 : array.size(lByP_c)) == 0 and not na(bByP_c)
+bool fbOkP = en_okP and useLtf and (na(lOkP_c) ? 0 : array.size(lOkP_c)) == 0 and not na(bOkP_c)
+bool fbBgP = en_bgP and useLtf and (na(lBgP_c) ? 0 : array.size(lBgP_c)) == 0 and not na(bBgP_c)
+bool fbHlP = en_hlP and useLtf and (na(lHlP_c) ? 0 : array.size(lHlP_c)) == 0 and not na(bHlP_c)
+bool fbMxP = en_mxP and useLtf and (na(lMxP_c) ? 0 : array.size(lMxP_c)) == 0 and not na(bMxP_c)
+
+int fbNow = (fbBinS ? 1 : 0) +
+  (fbCbS ? 1 : 0) +
+  (fbOkS ? 1 : 0) +
+  (fbByS ? 1 : 0) +
+  (fbKrS ? 1 : 0) +
+  (fbBgS ? 1 : 0) +
+  (fbGtS ? 1 : 0) +
+  (fbHtS ? 1 : 0) +
+  (fbMxS ? 1 : 0) +
+  (fbHlS ? 1 : 0) +
+  (fbBinP ? 1 : 0) +
+  (fbByP ? 1 : 0) +
+  (fbOkP ? 1 : 0) +
+  (fbBgP ? 1 : 0) +
+  (fbHlP ? 1 : 0) +
+  (fbMxP ? 1 : 0)
+
+// Bars in which at least one active venue used the coarse fallback.
+var int fbBars = 0
+if newPeriod
+    fbBars := 0
+if fbNow > 0
+    fbBars := fbBars + 1
+
 // ── stable line selection ────────────────────────────────────────────────────
 //  Which venues get drawn is ranked by LIFETIME absolute flow, not by the
 //  current period. Period ranking would reorder constantly, so a line would
@@ -857,14 +906,14 @@ string dashPos = i_dpos == "Top Left" ? position.top_left :
 bool showDiag = i_dash and not vVenue
 bool showCtab = i_dash and vVenue
 
-var table tbl = table.new(dashPos, 2, 12,
+var table tbl = table.new(dashPos, 2, 13,
      bgcolor      = color.new(#0b0b0f, 15),
      border_color = color.new(color.gray, 70),
      border_width = 1, frame_width = 1,
      frame_color  = color.new(color.gray, 55))
 
 if barstate.islast and not showDiag
-    table.clear(tbl, 0, 0, 1, 11)
+    table.clear(tbl, 0, 0, 1, 12)
 
 if showDiag and barstate.islast
     color cHdr = color.new(#16202e, 0)
@@ -887,6 +936,9 @@ if showDiag and barstate.islast
         warnCol := color.orange
     else if isSecSel and not forcedChart and ltfUsed == "1"
         warn := "seconds need Pro+ → 1m"
+        warnCol := color.orange
+    else if fbBars > 0
+        warn := str.tostring(fbBars) + " bars used coarse chart-bar delta"
         warnCol := color.orange
     else if useLtf and depthBars < 500
         warn := "shallow history ~" + str.tostring(depthBars) + " bars"
@@ -949,8 +1001,12 @@ if showDiag and barstate.islast
     table.cell(tbl, 1, 10, actCnt > 0 ? topVenue + " " + str.tostring(dominance, "#") + "%" : "—",
                text_color = dominance >= 60 ? color.orange : cVal, text_size = size.tiny)
 
-    table.cell(tbl, 0, 11, "Status", text_color = cLbl, text_size = size.tiny)
-    table.cell(tbl, 1, 11, warn, text_color = warnCol, text_size = size.tiny)
+    table.cell(tbl, 0, 11, "Fallback", text_color = cLbl, text_size = size.tiny)
+    table.cell(tbl, 1, 11, fbBars > 0 ? str.tostring(fbBars) + " bars on chart-bar" : "none",
+               text_color = fbBars > 0 ? color.orange : i_up, text_size = size.tiny)
+
+    table.cell(tbl, 0, 12, "Status", text_color = cLbl, text_size = size.tiny)
+    table.cell(tbl, 1, 12, warn, text_color = warnCol, text_size = size.tiny)
 
 
 // =============================================================================
