@@ -17,7 +17,8 @@ separates spot from perpetuals, and shows which venue is driving.
 | `cvd_engine_p1.pine` | 1 — parity harness | superseded — see Result below |
 | `cvd_engine_p2.pine` | 2 — multi-venue aggregation | verified vs built-in (~1% on live bar) |
 | `cvd_engine_p3.pine` | 3 — spot vs perp comparison | working |
-| `cvd_engine_p4.pine` | 4 — venue contribution & lead-lag | ready to test |
+| `cvd_engine_p4.pine` | 4 — venue contribution & lead-lag | engine verified; venue views untested |
+| `cvd_engine_p5.pine` | 5 — divergence detection & alerts | ready to test |
 
 ## Phase plan
 
@@ -265,3 +266,46 @@ A silently wrong number is the failure mode this design exists to prevent.
 Run on **15m or lower with 1m LTF** (full history, precise delta), or on
 **4H/1D with `Chart` LTF** (full history, crude delta). On 4H with 1m LTF the
 script is correct but only reaches back about two months.
+
+## Phase 5 — divergence detection & alerts
+
+`cvd_engine_p5.pine` is a superset of Phase 4. It turns the spot-vs-perp picture
+into flagged events. Everything derives from series that already exist, so it
+adds **no requests and no intrabar arrays** — it costs nothing against the venue
+ceiling.
+
+**Divergence** is measured on the **slope** of each z-scored stream, not the sign
+of a cumulative. An unanchored cumulative's sign is dominated by drift and stays
+put for weeks; sign-based divergence latches and almost never fires usefully.
+This was the central flaw in the script that started this project.
+
+**The liquidation filter** suppresses signals rather than emitting them. A
+cascade is perp flow at an extreme while spot is absent and price moves hard —
+positions being closed for their owners, not a view. It always produces a large
+spot-vs-perp divergence that means nothing, and it is the single biggest source
+of false signals.
+
+> Correction to an earlier description: a cascade does **not** move perp flow
+> against price. Longs liquidated are forced sells that push price down — flow
+> and price move together, exactly like ordinary selling. What identifies a
+> cascade is the **asymmetry**, not opposing directions.
+
+**Context** decides the label, because the same divergence means opposite things
+in different places:
+
+| Divergence | Near a low | Near a high |
+|---|---|---|
+| Spot buying into perp selling | **ACCUMULATION** | **DISTRIBUTION** |
+| Perp buying, spot absent | **LEVERAGED SELLOFF** | **FRAGILE RALLY** |
+
+This comes from a chart where a large positive spread printed at the high and
+preceded a 99% collapse. Reading the spread's sign alone would have called it
+accumulation.
+
+**Alerts** use one `alert()` with a JSON payload rather than several
+`alertcondition()` entries — a free plan allows a single active alert, so one
+configurable alert reporting which signal fired beats four that cannot all be
+enabled. It fires once per **closed** bar, so it cannot repaint.
+
+Markers are drawn in the indicator's own pane rather than forced onto the price
+chart, so the script carries no dependency on `force_overlay`.
