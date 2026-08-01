@@ -18,20 +18,24 @@ TradingView Desktop is installed.**
 
 ## Install (one time)
 
-From the repo root:
+This repo gitignores `.mcp.json` and `.claude/`, so the config **cannot be
+shipped through git** — it has to be created on your machine. That is what the
+script does:
 
 ```bash
-git clone https://github.com/tradesdontlie/tradingview-mcp.git tradingview-mcp
-cd tradingview-mcp
-npm install
-cd ..
+bash scripts/install_tv_mcp.sh
 ```
 
-`.mcp.json` already points at `./tradingview-mcp/src/server.js`, a relative path,
-so no username or absolute path needs editing. The clone is gitignored — it is a
-local dependency, not vendored source.
+It clones the server into `tradingview-mcp/`, runs `npm install`, writes a
+`.mcp.json` pointing at `./tradingview-mcp/src/server.js` (a relative path, so no
+username or absolute path needs editing), and copies the bundled skills into
+`.claude/skills/`. If a `.mcp.json` already exists it refuses to overwrite it and
+prints the entry to merge by hand.
 
-Restart Claude Code afterwards. MCP servers are only picked up at startup.
+On Windows, run it from Git Bash or WSL — or do the four steps manually, they are
+short.
+
+**Restart Claude Code afterwards.** MCP servers are only read at startup.
 
 ## Launch TradingView with the debug port
 
