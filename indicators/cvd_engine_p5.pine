@@ -1046,8 +1046,17 @@ bool ctxOK    = not i_ctxOn or nearHigh or nearLow
 float pvHi = ta.pivothigh(high, i_divLook, i_divLook)
 float pvLo = ta.pivotlow(low, i_divLook, i_divLook)
 
-var float phA = na, phB = na, chA = na, chB = na   // last two pivot highs: price, cvd
-var float plA = na, plB = na, clA = na, clB = na   // last two pivot lows
+// One declaration per line: Pine has no comma-separated declaration list, so
+// "var float a = na, b = na" types only the first and leaves the rest untyped,
+// which then cannot take na.
+var float phA = na          // price at the older of the last two pivot highs
+var float phB = na          // price at the newer
+var float chA = na          // CVD at the older
+var float chB = na          // CVD at the newer
+var float plA = na          // and the same four for pivot lows
+var float plB = na
+var float clA = na
+var float clB = na
 
 if not na(pvHi)
     phA := phB
