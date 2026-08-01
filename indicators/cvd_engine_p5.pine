@@ -212,51 +212,68 @@ bool i_venPerp = input.bool(true, "Perp venues", group = G_VLN, inline = "vl")
 // One dashboard at a time. The pane is narrow, so the venue table REPLACES the
 // diagnostics table whenever a Per-venue view is active, rather than stacking.
 // ── signals ──────────────────────────────────────────────────────────────────
+//  Nine inputs, down from fourteen. Related knobs were folded into named presets
+//  rather than left as separate numbers: two cascade thresholds became one
+//  sensitivity, the range on/off plus its length became one dropdown, and three
+//  marker/tint toggles became one. Every remaining input changes behaviour in a
+//  way a preset cannot express.
 bool i_sigOn = input.bool(true, "Enable signals", group = G_SIG)
 
-int i_divLen = input.int(10, "Divergence lookback", group = G_SIG, minval = 2, maxval = 200,
-     tooltip = "Bars used to measure each stream's slope. Slope, not the sign of the cumulative: " +
-               "an unanchored cumulative's sign latches for weeks and barely ever flips.")
+string i_divMode = input.string("Both — confluence only", "Divergence mode", group = G_SIG,
+     options = ["Price vs CVD", "Spot vs Perp", "Both — either fires", "Both — confluence only"],
+     tooltip = "Price vs CVD: does flow confirm the price move at all. Price makes a higher high " +
+               "while CVD makes a lower high, or the mirror at a low.\n\n" +
+               "Spot vs Perp: real money or borrowed money. Spot and perp flow moving opposite " +
+               "ways.\n\n" +
+               "Both — either fires: shows each independently. More signals, individually weaker.\n\n" +
+               "Both — confluence only (default): fires only when the two agree. Far rarer, and " +
+               "the only combination that says both 'nobody is behind this move' AND 'what is " +
+               "behind it is leverage'. Each half alone is a common condition, not a signal.")
 
-float i_divThresh = input.float(1.5, "Divergence threshold (z)", group = G_SIG, minval = 0.1,
+int i_divLook = input.int(10, "Lookback", group = G_SIG, minval = 2, maxval = 100,
+     tooltip = "Pivot leg length for the price-vs-CVD test, and the slope window for spot-vs-perp.")
+
+float i_divThresh = input.float(1.5, "Divergence threshold", group = G_SIG, minval = 0.1,
      maxval = 6.0, step = 0.1,
-     tooltip = "How far apart the two streams must be, in standard deviations, before a " +
-               "divergence counts. Higher = fewer, stronger signals.")
+     tooltip = "In standard deviations. Applies to both tests: how far apart spot and perp must " +
+               "be, and how large the CVD disagreement at two pivots must be. Higher = fewer, " +
+               "stronger signals.")
 
-bool i_liqOn = input.bool(true, "Liquidation filter", group = G_SIG,
-     tooltip = "Suppresses signals during a liquidation cascade: perp flow violent while spot " +
-               "is absent. That is forced closure rather than a view, and it always produces a " +
-               "large spot-vs-perp divergence that means nothing. The biggest single source of " +
-               "false signals.")
+string i_liqMode = input.string("Normal", "Liquidation filter", group = G_SIG,
+     options = ["Off", "Loose", "Normal", "Strict"],
+     tooltip = "Suppresses signals during a cascade — perp flow extreme while spot is absent and " +
+               "price moves hard. Forced closure, not a view, and it always produces a large " +
+               "divergence that means nothing. Strict catches more cascades and therefore " +
+               "suppresses more signals.")
 
-float i_liqHi = input.float(2.0, "Cascade: perp/price z above", group = G_SIG, minval = 0.5,
-     maxval = 6.0, step = 0.1)
-float i_liqLo = input.float(1.0, "Cascade: spot z below", group = G_SIG, minval = 0.1,
-     maxval = 3.0, step = 0.1)
+string i_ctxMode = input.string("50 bars", "Price context", group = G_SIG,
+     options = ["Off", "25 bars", "50 bars", "100 bars"],
+     tooltip = "Only fire near the edge of the recent range, and let which edge decide the label. " +
+               "The same divergence is accumulation at a low and distribution at a high. Off " +
+               "fires anywhere and loses that distinction.")
 
-bool i_ctxOn = input.bool(true, "Require price at an extreme", group = G_SIG,
-     tooltip = "The same divergence means opposite things depending on where price is. Spot " +
-               "buying into perp selling is accumulation after capitulation, and retail buying " +
-               "the top after a parabolic run. With this on, signals only fire near the edge of " +
-               "the recent range, and the label reflects which edge.")
+string i_sigDisp = input.string("Both", "Markers", group = G_SIG,
+     options = ["Off", "Pane", "Chart", "Both"])
 
-int i_ctxLen = input.int(50, "Range lookback", group = G_SIG, minval = 5, maxval = 500)
-float i_ctxTol = input.float(20.0, "Extreme = outer % of range", group = G_SIG, minval = 1.0,
-     maxval = 50.0, step = 1.0) / 100.0
+int i_bgOpacity = input.int(90, "Background opacity", group = G_SIG, minval = 50, maxval = 100,
+     tooltip = "Transparency of the divergence tint. A divergence persists until invalidated, so " +
+               "this paints regions rather than single bars — keep it faint or it becomes " +
+               "wallpaper. 100 turns the tint off entirely.")
 
-bool i_sigMarks = input.bool(true, "Markers in pane", group = G_SIG, inline = "sg")
-bool i_sigBg    = input.bool(true, "Tint cascades", group = G_SIG, inline = "sg")
-
-// Pine renders a table inside the pane its script occupies, and table.new() has
-// no force_overlay, so the dashboard itself cannot be moved to the price chart.
-// Labels and plotshapes CAN be forced there, so the price-chart versions below
-// are a label and shapes rather than a second table.
-bool i_ovMarks = input.bool(true, "Markers on price chart", group = G_SIG,
-     tooltip = "Draws the same signal triangles on the main chart instead of only in this pane.")
 bool i_ovBoard = input.bool(true, "Signal board on price chart", group = G_SIG,
-     tooltip = "A compact read-out floated on the main chart. It is a label, not the full " +
-               "dashboard table - Pine cannot move a table out of its own pane.")
-int i_ovOffset = input.int(12, "Board offset (bars right)", group = G_SIG, minval = 0, maxval = 60)
+     tooltip = "Compact read-out floated on the main chart. A label, not the dashboard table — " +
+               "Pine cannot move a table out of its own pane.")
+
+// derived from the presets above
+float i_liqHi  = i_liqMode == "Loose" ? 2.5 : i_liqMode == "Strict" ? 1.5 : 2.0
+float i_liqLo  = i_liqMode == "Loose" ? 0.7 : i_liqMode == "Strict" ? 1.4 : 1.0
+bool  i_liqOn  = i_liqMode != "Off"
+int   i_ctxLen = i_ctxMode == "25 bars" ? 25 : i_ctxMode == "100 bars" ? 100 : 50
+bool  i_ctxOn  = i_ctxMode != "Off"
+float i_ctxTol = 0.20
+bool  i_sigMarks = i_sigDisp == "Pane" or i_sigDisp == "Both"
+bool  i_ovMarks  = i_sigDisp == "Chart" or i_sigDisp == "Both"
+int   i_ovOffset = 12
 
 bool   i_dash = input.bool(true, "Show dashboard", group = G_CTB,
      tooltip = "Per-venue views show the exchange contribution table; every other view shows " +
@@ -980,8 +997,8 @@ bool vVenue    = vVenShare or vVenCvd
 //  cumulative. An unanchored cumulative's sign is dominated by drift and stays
 //  put for weeks, which is why sign-based divergence latches and almost never
 //  fires at a useful moment.
-float spotMom = zSpot - zSpot[i_divLen]
-float perpMom = zPerp - zPerp[i_divLen]
+float spotMom = zSpot - zSpot[i_divLook]
+float perpMom = zPerp - zPerp[i_divLook]
 
 bool spotLed = spotMom > 0 and perpMom < 0     // spot buying into perp selling
 bool perpLed = perpMom > 0 and spotMom < 0     // leverage lifting, spot absent
@@ -1014,24 +1031,92 @@ bool nearHigh = ctxRange > 0 and close >= ctxHi - ctxRange * i_ctxTol
 bool nearLow  = ctxRange > 0 and close <= ctxLo + ctxRange * i_ctxTol
 bool ctxOK    = not i_ctxOn or nearHigh or nearLow
 
+// ── price vs CVD divergence ──────────────────────────────────────────────────
+//  The classic order-flow read: does flow confirm the price move at all.
+//
+//  Pivot-based on the CHART timeframe, deliberately. Divergence needs swing highs
+//  and lows across a SEQUENCE of bars, and our lower-timeframe data arrives as a
+//  separate array per chart bar with no continuity to run pivots over. Computing
+//  it on a lower timeframe via request.security is not an option either: Pine
+//  cannot nest requests, so it would return single-exchange CVD and discard the
+//  entire aggregation. Chart timeframe is also the version you can verify by eye.
+//
+//  A pivot is confirmed i_divLook bars after it happens, so the CVD reading that
+//  belongs with it is the value from that same bar - hence the [i_divLook] offset.
+float pvHi = ta.pivothigh(high, i_divLook, i_divLook)
+float pvLo = ta.pivotlow(low, i_divLook, i_divLook)
+
+var float phA = na, phB = na, chA = na, chB = na   // last two pivot highs: price, cvd
+var float plA = na, plB = na, clA = na, clB = na   // last two pivot lows
+
+if not na(pvHi)
+    phA := phB
+    chA := chB
+    phB := pvHi
+    chB := glblC[i_divLook]
+if not na(pvLo)
+    plA := plB
+    clA := clB
+    plB := pvLo
+    clB := glblC[i_divLook]
+
+// Strength gate: the CVD disagreement has to be large relative to how much CVD
+// normally moves, or every wiggle between two pivots counts as a divergence.
+float cvdSd = ta.stdev(glblC, i_normLen)
+bool bearRaw = not na(phA) and phB > phA and chB < chA and
+  (chA - chB) >= cvdSd * i_divThresh
+bool bullRaw = not na(plA) and plB < plA and clB > clA and
+  (clB - clA) >= cvdSd * i_divThresh
+
+// A divergence is a condition, not an instant. It stays live until price breaks
+// the pivot that formed it, which is what makes a background tint the right shape
+// for it - and what stops it painting forever.
+var bool pcBear = false
+var bool pcBull = false
+if bearRaw
+    pcBear := true
+if pcBear and (na(phB) or close > phB)
+    pcBear := false
+if bullRaw
+    pcBull := true
+if pcBull and (na(plB) or close < plB)
+    pcBull := false
+
 // ── resolved signals (state, not events) ─────────────────────────────────────
+bool usePC   = i_divMode == "Price vs CVD" or str.startswith(i_divMode, "Both")
+bool useSP   = i_divMode == "Spot vs Perp" or str.startswith(i_divMode, "Both")
+bool needAll = i_divMode == "Both — confluence only"
+
 bool sigLive = i_sigOn and anyCompare and divWide and ctxOK and not liqCascade
 
-bool sAccum   = sigLive and spotLed and (nearLow  or not i_ctxOn)   // real bid absorbing shorts
-bool sDistrib = sigLive and spotLed and nearHigh and i_ctxOn        // spot buying the top
-bool sFragile = sigLive and perpLed and (nearHigh or not i_ctxOn)   // leverage-only rally
-bool sLevSell = sigLive and perpLed and nearLow and i_ctxOn         // leverage-only flush
+// spot-vs-perp family
+bool sAccum   = useSP and sigLive and spotLed and (nearLow  or not i_ctxOn)
+bool sDistrib = useSP and sigLive and spotLed and nearHigh and i_ctxOn
+bool sFragile = useSP and sigLive and perpLed and (nearHigh or not i_ctxOn)
+bool sLevSell = useSP and sigLive and perpLed and nearLow and i_ctxOn
 
-// Fire on the transition, and only on a closed bar - a signal that appears and
-// vanishes while a bar forms is worse than no signal.
-bool anySig  = sAccum or sDistrib or sFragile or sLevSell
+bool spBull = sAccum or sLevSell
+bool spBear = sDistrib or sFragile
+
+// price-vs-CVD family, subject to the same cascade suppression
+bool divBull = usePC and i_sigOn and pcBull and not liqCascade
+bool divBear = usePC and i_sigOn and pcBear and not liqCascade
+
+// Confluence means BOTH families agree on direction. Either half alone is a
+// common condition; together they say nobody is behind the move AND what is
+// behind it is leverage.
+bool finalBull = needAll ? (spBull and divBull) : (spBull or divBull)
+bool finalBear = needAll ? (spBear and divBear) : (spBear or divBear)
+
+bool anySig  = finalBull or finalBear
 bool sigNew  = anySig and not anySig[1]
 
-string sigName = sDistrib ? "DISTRIBUTION" : sAccum ? "ACCUMULATION" :
-  sFragile ? "FRAGILE RALLY" : sLevSell ? "LEVERAGED SELLOFF" :
-  liqCascade ? "LIQUIDATION" : "—"
-color sigCol = sAccum or sLevSell ? i_up : sDistrib or sFragile ? i_dn :
-  liqCascade ? color.orange : color.new(color.gray, 30)
+string sigName = liqCascade ? "LIQUIDATION" :
+  finalBear ? (sDistrib ? "DISTRIBUTION" : sFragile ? "FRAGILE RALLY" : "BEARISH DIV") :
+  finalBull ? (sAccum ? "ACCUMULATION" : sLevSell ? "LEVERAGED SELLOFF" : "BULLISH DIV") :
+  "—"
+color sigCol = liqCascade ? color.orange : finalBull ? i_up : finalBear ? i_dn :
+  color.new(color.gray, 30)
 
 // =============================================================================
 //  PLOTS
@@ -1095,7 +1180,7 @@ hline(i_zero ? 0 : na, "Zero", color = color.new(color.gray, 55))
 // ── signal markers ───────────────────────────────────────────────────────────
 //  Drawn in this pane rather than forced onto the price chart, so the script has
 //  no dependency on force_overlay.
-plotshape(i_sigMarks and sAccum   and not sAccum[1]   ? 1 : na, "Accumulation",
+plotshape(i_sigMarks and sAccum and not sAccum[1]   ? 1 : na, "Accumulation",
      style = shape.triangleup,   location = location.bottom, color = i_up,   size = size.tiny)
 plotshape(i_sigMarks and sLevSell and not sLevSell[1] ? 1 : na, "Leveraged selloff",
      style = shape.triangleup,   location = location.bottom, color = i_spot, size = size.tiny)
@@ -1104,10 +1189,16 @@ plotshape(i_sigMarks and sDistrib and not sDistrib[1] ? 1 : na, "Distribution",
 plotshape(i_sigMarks and sFragile and not sFragile[1] ? 1 : na, "Fragile rally",
      style = shape.triangledown, location = location.top,    color = i_perp, size = size.tiny)
 
-bgcolor(i_sigBg and liqCascade ? color.new(color.orange, 88) : na, title = "Liquidation cascade")
+// One bgcolor rather than three: cascade takes priority over direction, because a
+// cascade means the direction is not trustworthy in the first place.
+bgcolor(i_bgOpacity >= 100 ? na :
+     liqCascade ? color.new(color.orange, 88) :
+     finalBull  ? color.new(i_up, i_bgOpacity) :
+     finalBear  ? color.new(i_dn, i_bgOpacity) : na,
+     title = "Signal / cascade tint")
 
 // ── the same markers, on the price chart ─────────────────────────────────────
-plotshape(i_ovMarks and sAccum   and not sAccum[1]   ? 1 : na, "Accumulation (chart)",
+plotshape(i_ovMarks and sAccum and not sAccum[1]   ? 1 : na, "Accumulation (chart)",
      style = shape.triangleup,   location = location.belowbar, color = i_up,   size = size.small,
      force_overlay = true)
 plotshape(i_ovMarks and sLevSell and not sLevSell[1] ? 1 : na, "Leveraged selloff (chart)",

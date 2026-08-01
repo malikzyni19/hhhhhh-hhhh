@@ -309,3 +309,47 @@ enabled. It fires once per **closed** bar, so it cannot repaint.
 
 Markers are drawn in the indicator's own pane rather than forced onto the price
 chart, so the script carries no dependency on `force_overlay`.
+
+### Price vs CVD divergence, and the mode selector
+
+Phase 5 originally detected only spot-vs-perp divergence. The classic order-flow
+read — **does flow confirm the price move at all** — was missing, and that is the
+more fundamental question. It is now a second detector with its own display: a
+green/red **background tint** rather than markers, because a divergence is a
+*condition* that persists until invalidated, not an instant.
+
+Detection is pivot-based on the **chart timeframe**, deliberately:
+
+- Divergence needs swing highs and lows across a *sequence* of bars. Lower-
+  timeframe data arrives as a separate array per chart bar with no continuity to
+  run pivots over.
+- Computing it at a lower timeframe through `request.security` is not an option
+  either: Pine cannot nest requests, so it would return **single-exchange** CVD
+  and discard the whole aggregation engine.
+- Chart timeframe is also the only version that can be checked by eye, which
+  matters given how many "confirmed" assumptions in this project turned out wrong.
+
+A rolling lower-timeframe buffer would work and is a defined next step, but it
+cannot be visually validated, so it comes second.
+
+**Divergence mode** selects which detector runs:
+
+| Mode | Behaviour |
+|---|---|
+| `Price vs CVD` | Is anyone behind this move |
+| `Spot vs Perp` | Real money or borrowed money |
+| `Both — either fires` | Each independently; more signals, individually weaker |
+| `Both — confluence only` **(default)** | Only when the two agree |
+
+Confluence is the default because each half alone is a common condition rather
+than a signal. Price diverges from CVD constantly in a trend; spot and perp
+diverge through every cascade. Together they say *nobody is behind this move*
+**and** *what is behind it is leverage*.
+
+### Settings trimmed
+
+The Signals group went from **14 inputs to 9**. Two cascade thresholds became one
+`Liquidation filter` preset; a range on/off plus its length became one
+`Price context` dropdown; three marker and tint toggles became one `Markers`
+selector plus a `Background opacity` slider. Every remaining input changes
+behaviour in a way a preset cannot express.
