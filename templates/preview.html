@@ -15618,6 +15618,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       var rep=(d.reports_by_class||{})[cls];
       if(rep){
         html+=_btApSummaryHtml(rep,cls);
+        html+=_btApVisualSummaryHtml(rep);
         html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:12px 0">';
         html+='<div><div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">Reason Delta — % in losers minus % in winners</div><canvas id="btApChart1" height="170"></canvas></div>';
         html+='<div><div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">Failure Modes (losing trades)</div><canvas id="btApChart2" height="170"></canvas></div>';
@@ -15731,6 +15732,138 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     if(v==null) return "—";
     if(typeof v==="number") return dec!=null?v.toFixed(dec):String(v);
     return String(v);
+  }
+
+  /* v1-style visual summary — three inline SVG panels: grade mix, zone
+     penetration by respect, top pattern deltas. Sits above the detail
+     tables so the story lands at a glance; tables below still carry the
+     exact numbers. Uses existing app tokens only. */
+  function _btApVisualSummaryHtml(rep){
+    function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
+    var GRADE_ORDER=["clean_win","stressed_win","paused_positive","paused_flat","reversal_loss","hard_loss","ambiguous"];
+    var gd=(rep.grade_distribution)||{};
+    var counts=gd.counts||{};
+    var gTotal=0;
+    GRADE_ORDER.forEach(function(k){gTotal+=(counts[k]||0);});
+    /* Panel 1 — Grade mix, horizontal 100% stacked bar */
+    var mix='';
+    if(gTotal>0){
+      var acc=0;
+      var segs='';
+      GRADE_ORDER.forEach(function(k){
+        var v=counts[k]||0;if(!v)return;
+        var w=(v/gTotal)*100;
+        var m=_AP_GRADE_META[k]||{c:"var(--text-3)",l:k};
+        segs+='<div title="'+esc(m.l)+': '+v+' ('+w.toFixed(1)+'%)" style="background:'+m.c+';width:'+w+'%;height:100%"></div>';
+        acc+=w;
+      });
+      mix='<div style="display:flex;width:100%;height:14px;border-radius:4px;overflow:hidden;background:var(--bg-card-2);border:1px solid var(--border)">'+segs+'</div>';
+      /* legend */
+      var leg='<div style="display:flex;flex-wrap:wrap;gap:8px 14px;margin-top:8px;font-size:9px;color:var(--text-2)">';
+      GRADE_ORDER.forEach(function(k){
+        var v=counts[k]||0;if(!v)return;
+        var m=_AP_GRADE_META[k]||{c:"var(--text-3)",l:k};
+        var pct=(v/gTotal)*100;
+        leg+='<span style="display:inline-flex;align-items:center;gap:5px"><span style="display:inline-block;width:8px;height:8px;background:'+m.c+';border-radius:2px"></span>'+
+             esc(m.l)+' <span style="color:var(--text-3);font-family:var(--mono);font-size:9px">'+pct.toFixed(0)+'%</span></span>';
+      });
+      leg+='</div>';
+      mix+=leg;
+    } else {
+      mix='<div style="font-size:10px;color:var(--text-3);padding:14px 0">No graded trades.</div>';
+    }
+    /* Panel 2 — Zone penetration by respect, vertical bars */
+    var pen=(rep.penetration_by_respect||[]).filter(function(p){return p.count>0;});
+    var penSvg='';
+    if(pen.length){
+      var pmax=0;
+      pen.forEach(function(p){if(p.avg_penetration_pct!=null&&p.avg_penetration_pct>pmax)pmax=p.avg_penetration_pct;});
+      if(pmax<10)pmax=10;
+      pmax=Math.min(100,Math.ceil(pmax/10)*10);
+      var W=280,H=140,PADL=32,PADR=8,PADT=10,PADB=28;
+      var iw=W-PADL-PADR,ih=H-PADT-PADB;
+      var order=["respected","partial","not_respected","neutral"];
+      var visible=order.filter(function(k){return pen.some(function(p){return p.respect_class===k;});});
+      var bw=iw/Math.max(1,visible.length);
+      var s='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:'+H+'px;display:block" preserveAspectRatio="none">';
+      /* horizontal gridlines at 0, 50%, 100% of pmax */
+      [0,0.5,1].forEach(function(t){
+        var y=PADT+ih-t*ih;
+        s+='<line x1="'+PADL+'" x2="'+(W-PADR)+'" y1="'+y+'" y2="'+y+'" stroke="var(--border)" stroke-width="1"/>';
+        s+='<text x="'+(PADL-4)+'" y="'+(y+3)+'" text-anchor="end" font-size="8" fill="var(--text-3)" font-family="var(--mono)">'+Math.round(t*pmax)+'%</text>';
+      });
+      visible.forEach(function(k,i){
+        var p=pen.filter(function(x){return x.respect_class===k;})[0];
+        var m=_AP_RESPECT_META[k]||{c:"var(--text-3)",l:k};
+        var avg=(p&&p.avg_penetration_pct!=null)?p.avg_penetration_pct:0;
+        var med=(p&&p.median_penetration_pct!=null)?p.median_penetration_pct:null;
+        var x=PADL+i*bw+bw*0.20;
+        var w=bw*0.60;
+        var hh=(avg/pmax)*ih;
+        var y=PADT+ih-hh;
+        s+='<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+hh+'" fill="'+m.c+'" opacity="0.85" rx="2"/>';
+        if(med!=null){
+          var my=PADT+ih-(med/pmax)*ih;
+          s+='<line x1="'+x+'" x2="'+(x+w)+'" y1="'+my+'" y2="'+my+'" stroke="var(--text)" stroke-width="1.5" opacity="0.75"/>';
+        }
+        s+='<text x="'+(x+w/2)+'" y="'+(y-3)+'" text-anchor="middle" font-size="9" fill="var(--text)" font-family="var(--mono)" font-weight="600">'+avg.toFixed(1)+'%</text>';
+        s+='<text x="'+(x+w/2)+'" y="'+(H-14)+'" text-anchor="middle" font-size="9" fill="var(--text-2)">'+esc(m.l)+'</text>';
+        s+='<text x="'+(x+w/2)+'" y="'+(H-4)+'" text-anchor="middle" font-size="8" fill="var(--text-3)" font-family="var(--mono)">n='+(p?p.count:0)+'</text>';
+      });
+      s+='</svg>';
+      penSvg=s;
+    } else {
+      penSvg='<div style="font-size:10px;color:var(--text-3);padding:14px 0">No penetration data.</div>';
+    }
+    /* Panel 3 — Top pattern deltas (sorted by absolute failing delta) */
+    var pb=(rep.pattern_book||[]).filter(function(p){return p.failing_delta_pct!=null;});
+    pb=pb.slice().sort(function(a,b){return Math.abs(b.failing_delta_pct)-Math.abs(a.failing_delta_pct);}).slice(0,6);
+    var patSvg='';
+    if(pb.length){
+      var mx=0;pb.forEach(function(p){var a=Math.abs(p.failing_delta_pct);if(a>mx)mx=a;});
+      if(mx<10)mx=10;mx=Math.ceil(mx/5)*5;
+      var W2=340,rowH=20,PADL2=140,PADR2=42,PADT2=6;
+      var H2=PADT2+rowH*pb.length+8;
+      var iw2=W2-PADL2-PADR2;var mid=PADL2+iw2/2;
+      var s2='<svg viewBox="0 0 '+W2+' '+H2+'" style="width:100%;height:'+H2+'px;display:block" preserveAspectRatio="none">';
+      s2+='<line x1="'+mid+'" x2="'+mid+'" y1="'+PADT2+'" y2="'+(H2-8)+'" stroke="var(--border-2)" stroke-width="1"/>';
+      s2+='<text x="'+PADL2+'" y="'+(H2-1)+'" font-size="8" fill="var(--text-3)" font-family="var(--mono)">−'+mx+'%</text>';
+      s2+='<text x="'+mid+'" y="'+(H2-1)+'" text-anchor="middle" font-size="8" fill="var(--text-3)" font-family="var(--mono)">0</text>';
+      s2+='<text x="'+(W2-PADR2)+'" y="'+(H2-1)+'" text-anchor="end" font-size="8" fill="var(--text-3)" font-family="var(--mono)">+'+mx+'%</text>';
+      pb.forEach(function(p,i){
+        var y=PADT2+i*rowH+rowH/2;
+        var d=p.failing_delta_pct;
+        var w=(Math.abs(d)/mx)*(iw2/2);
+        var col=d>0?"var(--red)":"var(--green)";
+        var x0=d>0?mid:mid-w;
+        s2+='<rect x="'+x0+'" y="'+(y-6)+'" width="'+w+'" height="12" fill="'+col+'" opacity="0.85" rx="2"/>';
+        s2+='<text x="'+(PADL2-6)+'" y="'+(y+3)+'" text-anchor="end" font-size="10" fill="var(--text)">'+esc(p.feature)+'</text>';
+        var lx=d>0?(x0+w+3):(x0-3);var la=d>0?"start":"end";
+        s2+='<text x="'+lx+'" y="'+(y+3)+'" text-anchor="'+la+'" font-size="9" fill="var(--text-2)" font-family="var(--mono)">'+(d>0?"+":"")+d.toFixed(1)+'%</text>';
+      });
+      s2+='</svg>';
+      patSvg=s2;
+    } else {
+      patSvg='<div style="font-size:10px;color:var(--text-3);padding:14px 0">No pattern data.</div>';
+    }
+    /* Layout — three panels side by side, wraps on narrow screens */
+    var html='<div style="display:grid;grid-template-columns:1fr 1fr 1.15fr;gap:12px;margin:12px 0 4px">';
+    html+='<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:10px 12px">';
+    html+='<div style="font-size:10px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">Grade mix — '+gTotal+' graded</div>';
+    html+=mix;
+    html+='</div>';
+    html+='<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:10px 12px">';
+    html+='<div style="font-size:10px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px">Zone penetration by respect</div>';
+    html+='<div style="font-size:9px;color:var(--text-3);margin-bottom:4px">Bars = mean, tick = median</div>';
+    html+=penSvg;
+    html+='</div>';
+    html+='<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:10px 12px">';
+    html+='<div style="font-size:10px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px">Top pattern deltas</div>';
+    html+='<div style="font-size:9px;color:var(--text-3);margin-bottom:4px">Fail % gap when the pattern is present − absent</div>';
+    html+=patSvg;
+    html+='</div>';
+    html+='</div>';
+    return html;
   }
 
   function _btApSummaryHtml(rep,cls){
