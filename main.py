@@ -6654,6 +6654,8 @@ def parse_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
         "breakerApproachPct": float(payload.get("breakerApproachPct", 2.0)),
         "breakerMaxAge":      int(payload.get("breakerMaxAge", 200)),
         "breakerRequireFvg":  bool(payload.get("breakerRequireFvg", False)),
+        "useObModule":        bool(payload.get("useObModule", True)),
+        "useFvgModule":       bool(payload.get("useFvgModule", True)),
     }
 
 
@@ -33045,6 +33047,29 @@ def api_scan():
     elif filter_mode == "match" and checked_signals:
         # OR logic — at least one checked signal must be present
         results = [r for r in results if any(has_signal(r, s) for s in checked_signals)]
+
+    # Strip non-selected module alerts from each surviving result so only
+    # the chosen module types appear in the alerts list and topAlert.
+    if filter_mode == "match" and checked_signals:
+        _SIG_SETUPS = {
+            "OB":      {"OB_APPROACH", "OB_CONSOL"},
+            "FVG":     {"FVG"},
+            "FIB":     {"FIB_APPROACH", "FIB_REACTION"},
+            "BREAKER": {"BREAKER_APPROACH", "BREAKER_INSIDE"},
+        }
+        _allowed_setups = set()
+        for _s in checked_signals:
+            _allowed_setups |= _SIG_SETUPS.get(_s, set())
+
+        cleaned = []
+        for r in results:
+            kept = [a for a in r.get("alerts", []) if a.get("setup") in _allowed_setups]
+            if kept:
+                r = dict(r)
+                r["alerts"] = kept
+                r["topAlert"] = max(kept, key=lambda a: a.get("strength", 0))
+                cleaned.append(r)
+        results = cleaned
 
     if _scan_user_id:
         try:
