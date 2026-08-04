@@ -16774,6 +16774,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       if(rep){
         html+=_btApSummaryHtml(rep,cls);
         html+=_btApVisualSummaryHtml(rep);
+        html+=_btApVerdictBoardHtml(rep);
         html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:12px 0">';
         html+='<div><div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">Reason Delta — % in losers minus % in winners</div><canvas id="btApChart1" height="170"></canvas></div>';
         html+='<div><div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">Failure Modes (losing trades)</div><canvas id="btApChart2" height="170"></canvas></div>';
@@ -17017,6 +17018,142 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     html+='<div style="font-size:9px;color:var(--text-3);margin-bottom:4px">Fail % gap when the pattern is present − absent</div>';
     html+=patSvg;
     html+='</div>';
+    html+='</div>';
+    return html;
+  }
+
+  /* Verdict Board — deterministic decision per (symbol × timeframe) group
+     computed from the trade log the user just ran. Rules use MFE hit-rates
+     and expectancy to emit one of: TRADE / HOLD LONG / CLOSE @ 3R /
+     CLOSE @ 2R / SKIP / THIN SAMPLE / NEEDS REVIEW. Research label — the
+     board is a hypothesis for walk-forward validation, NOT a signal, and
+     nothing is wired into Scanner, alerts, paper trading, or execution. */
+  var _AP_VERDICT_META={
+    TRADE:        {c:"var(--green)",   note:"Positive expectancy at the target RR — candidate for forward validation"},
+    HOLD_LONG:    {c:"var(--green-2)", note:"Historically reached 5R MFE in ≥40% of touches"},
+    CLOSE_3R:     {c:"var(--accent)",  note:"Frequently reached 3R MFE but rarely continued to 5R"},
+    CLOSE_2R:     {c:"var(--yellow)",  note:"Frequently reached 2R MFE but stalled before 3R"},
+    SKIP:         {c:"var(--red)",     note:"Negative expectancy and few touches reached 2R"},
+    THIN_SAMPLE:  {c:"var(--text-3)",  note:"Sample below the 20-trade gate — no verdict"},
+    NEEDS_REVIEW: {c:"var(--text-2)",  note:"Mixed signals — inspect features before deciding"}
+  };
+  function _btApVerdictBoardHtml(rep){
+    function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
+    function med(a){if(!a.length)return null;var b=a.slice().sort(function(x,y){return x-y;});var m=Math.floor(b.length/2);return b.length%2?b[m]:(b[m-1]+b[m])/2;}
+    var rows=((rep.trade_log||{}).rows)||[];
+    if(!rows.length){
+      return '<div style="margin:10px 0 4px;font-size:11px;font-weight:700;color:var(--text)">OB Verdict Board</div>'+
+             '<div style="font-size:10px;color:var(--text-3);padding:6px">No trades to score.</div>';
+    }
+    var groups={};
+    rows.forEach(function(r){
+      if(!r||!r.symbol||!r.timeframe) return;
+      var k=r.symbol+"|"+r.timeframe;
+      if(!groups[k])groups[k]={symbol:r.symbol,tf:r.timeframe,trades:[]};
+      groups[k].trades.push(r);
+    });
+    var summaries=[];
+    Object.keys(groups).forEach(function(k){
+      var g=groups[k];var ts=g.trades;var n=ts.length;
+      var wins=0,expSum=0,expN=0;
+      var mfe=[],mae=[];
+      var hits2=0,hits3=0,hits5=0;
+      ts.forEach(function(t){
+        if(t.realized_r!=null){expSum+=t.realized_r;expN++;if(t.realized_r>0)wins++;}
+        if(t.mfe_r!=null){
+          mfe.push(t.mfe_r);
+          if(t.mfe_r>=2)hits2++;
+          if(t.mfe_r>=3)hits3++;
+          if(t.mfe_r>=5)hits5++;
+        }
+        if(t.mae_r!=null)mae.push(t.mae_r);
+      });
+      var mfeN=mfe.length;
+      var pct2=mfeN?hits2/mfeN*100:null;
+      var pct3=mfeN?hits3/mfeN*100:null;
+      var pct5=mfeN?hits5/mfeN*100:null;
+      var winRate=n>0?wins/n*100:null;
+      var expR=expN>0?expSum/expN:null;
+      var vKey,why;
+      if(n<20){
+        vKey="THIN_SAMPLE";why="n="+n+" < 20";
+      } else if(expR!=null&&expR<0&&(pct2==null||pct2<30)){
+        vKey="SKIP";why="exp "+expR.toFixed(2)+"R, only "+(pct2==null?"—":pct2.toFixed(0)+"%")+" hit 2R";
+      } else if(pct5!=null&&pct5>=40){
+        vKey="HOLD_LONG";why=pct5.toFixed(0)+"% hit 5R MFE";
+      } else if(pct3!=null&&pct3>=45&&(pct5==null||pct5<25)){
+        vKey="CLOSE_3R";why=pct3.toFixed(0)+"% hit 3R, "+(pct5==null?"—":pct5.toFixed(0))+"% hit 5R";
+      } else if(pct2!=null&&pct2>=55&&(pct3==null||pct3<30)){
+        vKey="CLOSE_2R";why=pct2.toFixed(0)+"% hit 2R, "+(pct3==null?"—":pct3.toFixed(0))+"% hit 3R";
+      } else if(expR!=null&&expR>0){
+        vKey="TRADE";why="exp "+expR.toFixed(2)+"R at target";
+      } else {
+        vKey="NEEDS_REVIEW";why="no clean pattern";
+      }
+      summaries.push({
+        symbol:g.symbol,tf:g.tf,n:n,
+        winRate:winRate,expR:expR,
+        pct2:pct2,pct3:pct3,pct5:pct5,
+        medMFE:med(mfe),medMAE:med(mae),
+        verdict:vKey,why:why
+      });
+    });
+    /* Sort: HOLD_LONG / TRADE first, SKIP last. Use `in` (not `||`) so
+       HOLD_LONG's rank of 0 isn't collapsed to the fallback by JS falsy. */
+    var ORD={HOLD_LONG:0,TRADE:1,CLOSE_3R:2,CLOSE_2R:3,NEEDS_REVIEW:4,THIN_SAMPLE:5,SKIP:6};
+    summaries.sort(function(a,b){
+      var oa=(a.verdict in ORD)?ORD[a.verdict]:9;
+      var ob=(b.verdict in ORD)?ORD[b.verdict]:9;
+      var o=oa-ob;
+      if(o!==0)return o;
+      var ea=a.expR==null?-9999:a.expR;var eb=b.expR==null?-9999:b.expR;
+      return eb-ea;
+    });
+    var counts={};summaries.forEach(function(s){counts[s.verdict]=(counts[s.verdict]||0)+1;});
+    /* Header + verdict count chips */
+    var truncNote=((rep.trade_log||{}).truncated)?' <span style="color:var(--yellow);font-weight:500;font-size:9px">(scored on last '+((rep.trade_log||{}).cap||"")+' trades)</span>':'';
+    var html='<div style="margin:14px 0 6px;font-size:11px;font-weight:700;color:var(--text)">OB Verdict Board — historical read of each symbol × timeframe'+truncNote+'</div>';
+    html+='<div style="font-size:9px;color:var(--text-3);margin-bottom:6px">Deterministic rules over the trade log at the selected RR. Sample-gated (n ≥ 20). Research observation only — hypothesis for walk-forward, not a live signal.</div>';
+    var chipOrder=["HOLD_LONG","TRADE","CLOSE_3R","CLOSE_2R","NEEDS_REVIEW","THIN_SAMPLE","SKIP"];
+    var chipLabels={HOLD_LONG:"Hold long",TRADE:"Trade",CLOSE_3R:"Close @ 3R",CLOSE_2R:"Close @ 2R",NEEDS_REVIEW:"Needs review",THIN_SAMPLE:"Thin sample",SKIP:"Skip"};
+    html+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">';
+    chipOrder.forEach(function(k){
+      var c=counts[k]||0;if(!c)return;
+      var m=_AP_VERDICT_META[k];
+      html+='<span style="display:inline-flex;align-items:center;gap:5px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:12px;padding:2px 8px;font-size:10px">'+
+        '<span style="display:inline-block;width:8px;height:8px;background:'+m.c+';border-radius:50%"></span>'+
+        chipLabels[k]+' <span style="color:var(--text-3);font-family:var(--mono)">'+c+'</span></span>';
+    });
+    html+='</div>';
+    html+='<div style="overflow-x:auto"><table class="bt-table" style="font-size:10px;width:100%">';
+    html+='<thead><tr><th>Verdict</th><th>Symbol</th><th>TF</th><th>N</th><th>Win %</th><th>Exp R</th><th>≥2R MFE</th><th>≥3R MFE</th><th>≥5R MFE</th><th>Med MFE</th><th>Med MAE</th><th>Why</th></tr></thead><tbody>';
+    function nfmt(v,d){return v==null?"—":(typeof v==="number"?v.toFixed(d==null?2:d):String(v));}
+    function pfmt(v){return v==null?"—":v.toFixed(0)+"%";}
+    summaries.forEach(function(s){
+      var m=_AP_VERDICT_META[s.verdict];
+      html+='<tr>';
+      html+='<td style="font-weight:700;color:'+m.c+'" title="'+esc(m.note)+'">'+chipLabels[s.verdict]+'</td>';
+      html+='<td style="font-weight:600">'+esc(s.symbol)+'</td>';
+      html+='<td>'+esc(s.tf)+'</td>';
+      html+='<td style="font-family:var(--mono)">'+s.n+'</td>';
+      html+='<td style="font-family:var(--mono)">'+pfmt(s.winRate)+'</td>';
+      html+='<td style="font-family:var(--mono);color:'+(s.expR!=null&&s.expR>=0?"var(--green)":"var(--red)")+'">'+nfmt(s.expR,2)+'</td>';
+      html+='<td style="font-family:var(--mono)">'+pfmt(s.pct2)+'</td>';
+      html+='<td style="font-family:var(--mono)">'+pfmt(s.pct3)+'</td>';
+      html+='<td style="font-family:var(--mono)">'+pfmt(s.pct5)+'</td>';
+      html+='<td style="font-family:var(--mono)">'+nfmt(s.medMFE,2)+'</td>';
+      html+='<td style="font-family:var(--mono)">'+nfmt(s.medMAE,2)+'</td>';
+      html+='<td style="color:var(--text-2)">'+esc(s.why)+'</td>';
+      html+='</tr>';
+    });
+    html+='</tbody></table></div>';
+    /* Legend explaining each verdict */
+    html+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:6px 12px;margin:8px 0 4px;font-size:9px;color:var(--text-2)">';
+    chipOrder.forEach(function(k){
+      var m=_AP_VERDICT_META[k];
+      html+='<div style="display:flex;gap:6px;align-items:baseline"><span style="display:inline-block;width:6px;height:6px;background:'+m.c+';border-radius:50%;margin-top:5px;flex:0 0 6px"></span>'+
+        '<span><b style="color:var(--text)">'+chipLabels[k]+'</b> — '+esc(m.note)+'</span></div>';
+    });
     html+='</div>';
     return html;
   }
