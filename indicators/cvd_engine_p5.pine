@@ -233,11 +233,18 @@ string i_divMode = input.string("Both — confluence only", "Divergence mode", g
 int i_divLook = input.int(10, "Lookback", group = G_SIG, minval = 2, maxval = 100,
      tooltip = "Pivot leg length for the price-vs-CVD test, and the slope window for spot-vs-perp.")
 
-float i_divThresh = input.float(1.5, "Divergence threshold", group = G_SIG, minval = 0.1,
+float i_divThresh = input.float(1.5, "Spot-vs-perp threshold", group = G_SIG, minval = 0.1,
      maxval = 6.0, step = 0.1,
-     tooltip = "In standard deviations. Applies to both tests: how far apart spot and perp must " +
-               "be, and how large the CVD disagreement at two pivots must be. Higher = fewer, " +
-               "stronger signals.")
+     tooltip = "How far apart spot and perp must be, in standard deviations, for a spot-vs-perp " +
+               "divergence. Does not affect the price-vs-CVD test.")
+
+float i_pcStrength = input.float(0.0, "Price-vs-CVD strength filter", group = G_SIG, minval = 0.0,
+     maxval = 10.0, step = 0.5,
+     tooltip = "Extra filter on price-vs-CVD: how large the CVD disagreement between two pivots " +
+               "must be, measured in typical per-bar CVD moves.\n\n" +
+               "0 = off, which is the default. A pivot divergence is already a specific event; " +
+               "the pivot lookback is the real filter. Raise this only if you get too many " +
+               "signals — it was set too high initially and suppressed every one.")
 
 string i_liqMode = input.string("Normal", "Liquidation filter", group = G_SIG,
      options = ["Off", "Loose", "Normal", "Strict"],
@@ -1058,24 +1065,40 @@ var float plB = na
 var float clA = na
 var float clB = na
 
+// The ANCHORED cumulative cannot be used here. It resets every anchor period, so
+// two pivots either side of a reset are not comparable at all - the later one
+// restarts near zero and the comparison is meaningless. Divergence needs a
+// continuous series, so it gets its own never-resetting cumulative.
+var float divCvd = 0.0
+divCvd := divCvd + glblBar
+
 if not na(pvHi)
     phA := phB
     chA := chB
     phB := pvHi
-    chB := glblC[i_divLook]
+    chB := divCvd[i_divLook]
 if not na(pvLo)
     plA := plB
     clA := clB
     plB := pvLo
-    clB := glblC[i_divLook]
+    clB := divCvd[i_divLook]
 
-// Strength gate: the CVD disagreement has to be large relative to how much CVD
-// normally moves, or every wiggle between two pivots counts as a divergence.
-float cvdSd = ta.stdev(glblC, i_normLen)
+// Optional strength gate, measured in typical PER-BAR CVD moves. The earlier
+// version normalised against the standard deviation of the cumulative itself,
+// which is roughly a whole period's worth of flow - a bar so high that nothing
+// cleared it, and no signal ever fired on any pair. Default is now 0 (off): a
+// pivot divergence is already a specific event, and the pivot lookback is the
+// real filter.
+float cvdStep = ta.stdev(glblBar, i_normLen)
 bool bearRaw = not na(phA) and phB > phA and chB < chA and
-  (chA - chB) >= cvdSd * i_divThresh
+  (i_pcStrength <= 0 or (chA - chB) >= cvdStep * i_pcStrength)
 bool bullRaw = not na(plA) and plB < plA and clB > clA and
-  (clB - clA) >= cvdSd * i_divThresh
+  (i_pcStrength <= 0 or (clB - clA) >= cvdStep * i_pcStrength)
+
+// Counted so "nothing is showing" can be diagnosed instead of guessed at.
+var int pcFound = 0
+if bearRaw or bullRaw
+    pcFound := pcFound + 1
 
 // A divergence is a condition, not an instant. It stays live until price breaks
 // the pivot that formed it, which is what makes a background tint the right shape
@@ -1277,7 +1300,7 @@ bool showCtab = i_dash and vVenue
 //  even when it has been cleared, because clearing empties cells but does not
 //  release the position. Sized for the wider contribution layout; the
 //  diagnostics layout simply leaves columns 2-5 empty and Pine collapses them.
-var table dash = table.new(dashPos, 6, 24,
+var table dash = table.new(dashPos, 6, 25,
      bgcolor      = color.new(#0b0b0f, 15),
      border_color = color.new(color.gray, 70),
      border_width = 1, frame_width = 1,
@@ -1286,7 +1309,7 @@ var table dash = table.new(dashPos, 6, 24,
 // Clear once per bar, before either layout fills it. Whichever dashboard is
 // active then writes only its own cells; nothing stale survives a view switch.
 if barstate.islast
-    table.clear(dash, 0, 0, 5, 23)
+    table.clear(dash, 0, 0, 5, 24)
 
 if showDiag and barstate.islast
     color cHdr = color.new(#16202e, 0)
@@ -1389,8 +1412,13 @@ if showDiag and barstate.islast
     table.cell(dash, 1, 13, i_sigOn ? sigName : "off",
                text_color = i_sigOn ? sigCol : cLbl, text_size = size.small)
 
-    table.cell(dash, 0, 14, "Status", text_color = cLbl, text_size = size.tiny)
-    table.cell(dash, 1, 14, warn, text_color = warnCol, text_size = size.tiny)
+    table.cell(dash, 0, 14, "Price÷CVD div", text_color = cLbl, text_size = size.tiny)
+    table.cell(dash, 1, 14, (pcBull ? "BULL live" : pcBear ? "BEAR live" : "none") +
+               "  ·  " + str.tostring(pcFound) + " found",
+               text_color = pcBull ? i_up : pcBear ? i_dn : cLbl, text_size = size.tiny)
+
+    table.cell(dash, 0, 15, "Status", text_color = cLbl, text_size = size.tiny)
+    table.cell(dash, 1, 15, warn, text_color = warnCol, text_size = size.tiny)
 
 
 // =============================================================================
