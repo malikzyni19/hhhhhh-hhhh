@@ -4506,7 +4506,11 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
     current_atr = atr[-1] if atr[-1] is not None else max((max(h[-14:]) - min(l[-14:])), 1e-10)
 
     obs, _ = detect_obs(o, h, l, c, v, settings["iLen"], settings["sLen"])
-    fvgs = detect_fvgs(o, h, l, c, v, tf)
+    use_ob  = settings.get("useObModule", True)
+    use_fvg = settings.get("useFvgModule", True)
+    # Only detect FVGs when at least one module that needs them is active.
+    # Breaker module does its own detect_fvgs() call internally.
+    fvgs = detect_fvgs(o, h, l, c, v, tf) if (use_fvg or use_ob) else []
 
     corr_value = None
     corr_label = None
@@ -4522,7 +4526,7 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
 
     # ── FVG alerts — collect ALL qualifying FVGs into one grouped alert ──
     qualifying_fvgs = []
-    for fvg in fvgs:
+    for fvg in (fvgs if use_fvg else []):
         if not filter_fvg(fvg, obs, price, settings):
             continue
         overlap_best = 0.0
@@ -4588,7 +4592,9 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
     # max_ob=None returns ALL active OBs (no mixed truncation) so each direction
     # gets its own complete pool before showLast=5 + hideOverlap are applied.
     # Alert logic uses the original obs (max_ob=5 mixed) — unchanged.
-    obs_tv_src, _ = detect_obs(o, h, l, c, v, settings["iLen"], settings["sLen"], max_ob=None)
+    # Skip expensive second detect + TV volume share when OB module is off.
+    obs_tv_src, _ = (detect_obs(o, h, l, c, v, settings["iLen"], settings["sLen"], max_ob=None)
+                     if use_ob else ([], None))
     bull_tv_src = [ob for ob in obs_tv_src if ob["type"] == "bullish"]
     bear_tv_src = [ob for ob in obs_tv_src if ob["type"] == "bearish"]
     tv_bull_pool = _tv_visible_pool(bull_tv_src)
@@ -4710,18 +4716,18 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
     use_high_prob = settings.get("useHighProbOB", False)
     min_quality   = int(settings.get("obMinQuality", 50))
 
-    # ── Orderflow fetch — once per pair, only if OBs exist near price ──
+    # ── Orderflow fetch + quality scoring — skip entirely when OB module off ──
     ob_approach_pct_base_pre = settings.get("obDistancePct", settings.get("approachPct", 2.0))
-    _near_obs_check = [
+    _near_obs_check = ([
         ob for ob in bullish_obs_filt + bearish_obs_filt
         if obq_dist_from_price(price, ob["top"], ob["bottom"], ob.get("type","bullish"))
            <= ob_approach_pct_base_pre * 3
-    ]
+    ] if use_ob else [])
     _of_data = fetch_orderflow_data(symbol) if _near_obs_check else {
         "trades": [], "oi": None, "oi_change": None, "funding_rate": None
     }
 
-    for ob in bullish_obs_filt + bearish_obs_filt:
+    for ob in (bullish_obs_filt + bearish_obs_filt if use_ob else []):
         q_score, q_meta = score_ob_quality(ob, o, h, l, c, v, obs, fvgs, itrend, trend, times=times)
 
         # Orderflow analysis for this specific OB zone
@@ -4780,7 +4786,8 @@ def analyze_pair(symbol: str, candles: List[Dict[str, float]], tf: str, settings
     bullish_obs_filt.sort(key=lambda ob: (_ob_dist_from_price(ob, price), -(ob.get("tvObVolumeSharePct") or 0), -ob.get("quality", 0), ob.get("bar", 0)))
     bearish_obs_filt.sort(key=lambda ob: (_ob_dist_from_price(ob, price), -(ob.get("tvObVolumeSharePct") or 0), -ob.get("quality", 0), ob.get("bar", 0)))
 
-    for direction, ob_list in [("bullish", bullish_obs_filt), ("bearish", bearish_obs_filt)]:
+    for direction, ob_list in ([("bullish", bullish_obs_filt), ("bearish", bearish_obs_filt)]
+                               if use_ob else []):
         if not ob_list:
             continue
 
