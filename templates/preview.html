@@ -15362,6 +15362,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         '<button class="bt-compare-tab'+(mode==="explorer"?" active":"")+'" data-cmode="explorer">Trade Explorer</button>'+
         '<button class="bt-compare-tab'+(mode==="autopsy"?" active":"")+'" data-cmode="autopsy">Autopsy</button>'+
         '<button class="bt-compare-tab'+(mode==="profilewf"?" active":"")+'" data-cmode="profilewf">Profile WF</button>'+
+        '<button class="bt-compare-tab'+(mode==="playbook"?" active":"")+'" data-cmode="playbook">OB Playbook</button>'+
       '</div>'+
       '<div id="btCompareModeContent"></div>';
     [].forEach.call(el.querySelectorAll("[data-cmode]"),function(btn){
@@ -15374,6 +15375,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     else if(mode==="explorer") _btRenderTradeExplorerMode();
     else if(mode==="autopsy") _btRenderAutopsyMode();
     else if(mode==="profilewf") _btRenderProfileWfMode();
+    else if(mode==="playbook") _btRenderPlaybookMode();
     else _btRenderBatchMode();
   }
 
@@ -18067,6 +18069,297 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     ["combo_htf_first_touch","HTF-aligned + first touch"],
     ["combo_quality","HTF + touch<=2 + strong disp + fresh"]
   ];
+
+  /* ── OB Playbook (one pair, multi-timeframe) ─────────────────────────────
+     A per-pair "what kind of OB should I trade" lookup. Enter one symbol,
+     pick 1-4 timeframes, hit Run. Pools the trade log across all chosen
+     TFs of that pair, groups the trades by OB "type signature" (direction
+     × ob_kind × HTF alignment × touch bucket), sample-gates each group at
+     n>=20, and ranks by expectancy at the selected RR. Research label —
+     the highest-ranked type is a HYPOTHESIS to check on TradingView, not
+     a live trade signal.
+
+     Reuses the existing /api/backtest/ob-historical/autopsy endpoint.
+     Server caps at 2 timeframes per call, so 3-4 TFs are chunked into
+     two sequential calls and the trade logs concatenated client-side. */
+  var _PB_TF_ALL=["15m","30m","1h","4h"];
+
+  function _btRenderPlaybookMode(){
+    var el=document.getElementById("btCompareModeContent"); if(!el) return;
+    var d=_btState.pbData||null;
+    var running=_btState.pbRunning||false;
+    var sym=(_btState.pbSymbol||"BTCUSDT").toUpperCase();
+    var selTfs=(_btState.pbSelTfs||["1h","4h"]).slice();
+    var candles=_btState.pbCandles||1000;
+    var rr=_btState.pbRR||2;
+    var html='<div style="padding:12px 0">';
+    html+='<div class="bt-stab-header" style="margin-bottom:4px">';
+    html+='<span style="font-size:13px;font-weight:600;color:var(--text-1)">OB Playbook — which type of OB on this pair wins more</span>';
+    html+='</div>';
+    html+='<div style="font-size:11px;color:var(--text-2);margin-bottom:6px">Pool the pair\'s historical OBs across the selected timeframes, group by OB type (direction × kind × HTF alignment × touch), and rank by historical expectancy. Use the winning type as a checklist when eyeballing OBs on TradingView.</div>';
+    html+='<div style="font-size:10px;color:#f59e0b;margin-bottom:10px">Research observation only. Winning types are hypotheses — validate on the Profile WF tab before treating any as an edge.</div>';
+    /* Symbol input */
+    html+='<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">';
+    html+='<span style="font-size:11px;color:var(--text-2);font-weight:600">Symbol:</span>';
+    html+='<input id="btPbSym" type="text" value="'+esc(sym)+'" spellcheck="false" style="width:120px;padding:4px 8px;font-size:11px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:var(--mono);text-transform:uppercase" />';
+    html+='<span style="font-size:9px;color:var(--text-3)">USDT will be appended if missing</span>';
+    html+='</div>';
+    /* Timeframes */
+    html+='<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px">';
+    html+='<span style="font-size:11px;color:var(--text-2);font-weight:600">Timeframes:</span>';
+    _PB_TF_ALL.forEach(function(tf){
+      var on=selTfs.indexOf(tf)>=0;
+      html+='<button class="bt-rr-btn'+(on?" active":"")+'" data-pbtf="'+tf+'" style="font-size:11px">'+tf+'</button>';
+    });
+    html+='<span style="font-size:9px;color:var(--text-3)">up to 4</span>';
+    html+='</div>';
+    /* Candles + RR */
+    html+='<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:12px">';
+    html+='<span style="font-size:11px;color:var(--text-2);font-weight:600">Candles:</span>';
+    [500,1000,2000,3000].forEach(function(c){
+      html+='<button class="bt-rr-btn'+(candles===c?" active":"")+'" data-pbcandles="'+c+'" style="font-size:11px">'+c+'</button>';
+    });
+    html+='<span style="font-size:11px;color:var(--text-2);font-weight:600;margin-left:10px">RR:</span>';
+    [1,2,3].forEach(function(r){
+      html+='<button class="bt-rr-btn'+(rr===r?" active":"")+'" data-pbrr="'+r+'" style="font-size:11px">'+r+'R</button>';
+    });
+    html+='<button id="btPbRunBtn" class="bt-run-btn" style="font-size:12px;padding:6px 18px;margin-left:10px" '+(running?"disabled":"")+'>'+
+      (running?'★ Running…':'▶ Run Playbook')+'</button>';
+    html+='</div>';
+    /* Results */
+    html+='<div id="btPbResults">';
+    if(running){
+      html+='<div style="font-size:12px;color:var(--text-2);padding:12px">Running playbook — fetching '+esc(sym)+' across '+selTfs.length+' timeframes…</div>';
+    } else if(d&&d.ok){
+      html+=_btPbRenderResultsHtml(d);
+    } else if(d&&!d.ok){
+      html+='<div class="bt-mtf-err">'+esc(d.error||"Request failed")+'</div>';
+    } else {
+      html+='<div style="font-size:12px;color:var(--text-2);padding:12px">Enter a pair and pick timeframes, then run the playbook.</div>';
+    }
+    html+='</div>';
+    html+='</div>';
+    el.innerHTML=html;
+    /* Wire controls */
+    var symIn=document.getElementById("btPbSym");
+    if(symIn){
+      symIn.addEventListener("input",function(){ _btState.pbSymbol=(symIn.value||"").trim().toUpperCase(); });
+    }
+    [].forEach.call(el.querySelectorAll("[data-pbtf]"),function(b){
+      b.addEventListener("click",function(){
+        var tf=b.getAttribute("data-pbtf");
+        var arr=(_btState.pbSelTfs||["1h","4h"]).slice();
+        var i=arr.indexOf(tf); if(i>=0) arr.splice(i,1); else arr.push(tf);
+        _btState.pbSelTfs=arr;
+        _btRenderPlaybookMode();
+      });
+    });
+    [].forEach.call(el.querySelectorAll("[data-pbcandles]"),function(b){
+      b.addEventListener("click",function(){ _btState.pbCandles=parseInt(b.getAttribute("data-pbcandles"),10); _btRenderPlaybookMode(); });
+    });
+    [].forEach.call(el.querySelectorAll("[data-pbrr]"),function(b){
+      b.addEventListener("click",function(){ _btState.pbRR=parseInt(b.getAttribute("data-pbrr"),10); _btRenderPlaybookMode(); });
+    });
+    var runBtn=document.getElementById("btPbRunBtn");
+    if(runBtn) runBtn.addEventListener("click",_btRunPlaybook);
+  }
+
+  function _btRunPlaybook(){
+    var sym=(_btState.pbSymbol||"").trim().toUpperCase();
+    if(!sym){ _btState.pbData={ok:false,error:"Enter a pair."}; _btRenderPlaybookMode(); return; }
+    if(!sym.endsWith("USDT")) sym=sym+"USDT";
+    var tfs=(_btState.pbSelTfs||["1h","4h"]).slice();
+    if(!tfs.length){ _btState.pbData={ok:false,error:"Pick at least one timeframe."}; _btRenderPlaybookMode(); return; }
+    if(tfs.length>4){ _btState.pbData={ok:false,error:"Max 4 timeframes."}; _btRenderPlaybookMode(); return; }
+    var candles=_btState.pbCandles||1000;
+    var rr=_btState.pbRR||2;
+    /* Chunk into pairs of ≤2 to respect the server's per-call TF cap. */
+    var chunks=[];for(var i=0;i<tfs.length;i+=2) chunks.push(tfs.slice(i,i+2));
+    _btState.pbRunning=true; _btState.pbData=null; _btRenderPlaybookMode();
+    var acc={rows:[]};
+    var runKey="pb_"+sym+"_"+tfs.join("|")+"_"+candles+"_"+rr;
+    _btState._pbRunKey=runKey;
+    (function next(idx){
+      if(_btState._pbRunKey!==runKey) return;   // stale run
+      if(idx>=chunks.length){
+        _btState.pbRunning=false;
+        _btState.pbData={
+          ok:true, symbol:sym, timeframes:tfs, candle_count:candles, rr:rr,
+          rows:acc.rows
+        };
+        _btRenderPlaybookMode();
+        return;
+      }
+      fetch("/api/backtest/ob-historical/autopsy",{
+        method:"POST", credentials:"same-origin",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          symbols:[sym], timeframes:chunks[idx],
+          candle_count:candles, rr:rr,
+          ob_classes:["internal"]
+        })
+      }).then(function(rr2){ if(!rr2.ok) throw new Error("HTTP "+rr2.status); return rr2.json(); })
+        .then(function(d){
+          if(_btState._pbRunKey!==runKey) return;
+          if(!d||!d.ok){
+            _btState.pbRunning=false;
+            _btState.pbData={ok:false,error:(d&&d.error)||"Backtest failed"};
+            _btRenderPlaybookMode();
+            return;
+          }
+          var rep=((d.reports_by_class||{}).internal)||{};
+          var rows=((rep.trade_log||{}).rows)||[];
+          rows.forEach(function(r){ if(r) acc.rows.push(r); });
+          next(idx+1);
+        })
+        .catch(function(e){
+          if(_btState._pbRunKey!==runKey) return;
+          _btState.pbRunning=false;
+          _btState.pbData={ok:false,error:"Playbook run failed: "+e.message};
+          _btRenderPlaybookMode();
+        });
+    })(0);
+  }
+
+  /* Type signature: direction × ob_kind × HTF alignment class × touch class.
+     Note: the server's trade_log.rows do NOT include `touch_bucket` — only
+     `touch_number` — so derive first-vs-later from the numeric field. */
+  function _btPbTypeSig(t){
+    if(!t) return null;
+    var dir=t.direction==="bullish"?"bull":t.direction==="bearish"?"bear":"unknown";
+    var kind=t.ob_kind||"unknown";
+    var htf=t.htf_alignment==="with"?"aligned":t.htf_alignment==="against"?"against":"neutral";
+    var tn=(typeof t.touch_number==="number")?t.touch_number:null;
+    var touch=(tn===1)?"first":(tn!=null?"later":"unknown");
+    return {dir:dir,kind:kind,htf:htf,touch:touch};
+  }
+  function _btPbTypeKey(sig){ return sig.dir+"|"+sig.kind+"|"+sig.htf+"|"+sig.touch; }
+  function _btPbTypeLabel(sig){
+    var d=sig.dir==="bull"?"Bullish":sig.dir==="bear"?"Bearish":"?";
+    var k=sig.kind==="continuation"?"continuation":sig.kind==="reversal"?"reversal":sig.kind;
+    var h=sig.htf==="aligned"?"HTF-aligned":sig.htf==="against"?"HTF-against":"HTF-neutral";
+    var to=sig.touch==="first"?"first touch":sig.touch==="later"?"2nd+ touch":"touch #?";
+    return d+" "+k+" · "+h+" · "+to;
+  }
+  function _btPbTypeChecklist(sig){
+    var lines=[];
+    lines.push("Direction: "+(sig.dir==="bull"?"bullish OB (demand)":sig.dir==="bear"?"bearish OB (supply)":"—"));
+    lines.push("OB kind: "+(sig.kind==="continuation"?"continuation (with formation trend)":sig.kind==="reversal"?"reversal (against formation trend)":sig.kind));
+    lines.push("HTF trend: "+(sig.htf==="aligned"?"aligned with the OB direction":sig.htf==="against"?"against the OB direction":"neutral / unknown"));
+    lines.push("Touch #: "+(sig.touch==="first"?"first touch of the zone":sig.touch==="later"?"second touch or later":"unknown touch number"));
+    return lines;
+  }
+
+  function _btPbGroupsFromRows(rows,rr){
+    var groups={};
+    var baseWins=0,baseExpSum=0,baseExpN=0;
+    rows.forEach(function(t){
+      var sig=_btPbTypeSig(t); if(!sig) return;
+      var k=_btPbTypeKey(sig);
+      if(!groups[k]) groups[k]={sig:sig,trades:[]};
+      groups[k].trades.push(t);
+      if(t.realized_r!=null){baseExpSum+=t.realized_r;baseExpN++;if(t.realized_r>0)baseWins++;}
+    });
+    var baseline={trades:rows.length, win_rate_pct:rows.length?(baseWins/rows.length*100):null,
+                  expectancy_r:baseExpN?(baseExpSum/baseExpN):null};
+    var out=[];
+    Object.keys(groups).forEach(function(k){
+      var g=groups[k];var ts=g.trades;var n=ts.length;
+      var wins=0,expSum=0,expN=0,mfe=[],mae=[],hits2=0,hits3=0,hits5=0;
+      ts.forEach(function(t){
+        if(t.realized_r!=null){expSum+=t.realized_r;expN++;if(t.realized_r>0)wins++;}
+        if(t.mfe_r!=null){mfe.push(t.mfe_r);if(t.mfe_r>=2)hits2++;if(t.mfe_r>=3)hits3++;if(t.mfe_r>=5)hits5++;}
+        if(t.mae_r!=null)mae.push(t.mae_r);
+      });
+      function med(a){if(!a.length)return null;var b=a.slice().sort(function(x,y){return x-y;});var m=Math.floor(b.length/2);return b.length%2?b[m]:(b[m-1]+b[m])/2;}
+      var winRate=n>0?wins/n*100:null;
+      var expR=expN>0?expSum/expN:null;
+      var mfeN=mfe.length;
+      out.push({
+        sig:g.sig, key:k, n:n,
+        winRate:winRate, expR:expR,
+        pct2:mfeN?hits2/mfeN*100:null,
+        pct3:mfeN?hits3/mfeN*100:null,
+        pct5:mfeN?hits5/mfeN*100:null,
+        medMFE:med(mfe), medMAE:med(mae),
+        retention_pct:rows.length?(n/rows.length*100):null,
+        exp_delta:(baseline.expectancy_r!=null&&expR!=null)?(expR-baseline.expectancy_r):null,
+        adequate:n>=20
+      });
+    });
+    /* Rank: adequate first, then by expectancy desc, then win rate desc */
+    out.sort(function(a,b){
+      if(a.adequate!==b.adequate) return a.adequate?-1:1;
+      var ea=a.expR==null?-9999:a.expR;var eb=b.expR==null?-9999:b.expR;
+      if(eb!==ea) return eb-ea;
+      var wa=a.winRate==null?-1:a.winRate;var wb=b.winRate==null?-1:b.winRate;
+      return wb-wa;
+    });
+    return {baseline:baseline, groups:out};
+  }
+
+  function _btPbRenderResultsHtml(d){
+    var res=_btPbGroupsFromRows(d.rows||[],d.rr);
+    var groups=res.groups;var base=res.baseline;
+    function nfmt(v,dec){return v==null?"—":v.toFixed(dec==null?2:dec);}
+    function pfmt(v){return v==null?"—":v.toFixed(0)+"%";}
+    var html='';
+    /* Header: pair + TFs + baseline */
+    html+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:4px 0 10px">';
+    html+='<span style="font-family:var(--mono);font-size:12px;font-weight:700;color:var(--text)">'+esc(d.symbol)+'</span>';
+    html+='<span style="font-size:10px;color:var(--text-3)">across '+(d.timeframes||[]).join(" · ")+' · '+d.candle_count+' candles · '+d.rr+'R target</span>';
+    html+='<span style="font-size:10px;color:var(--text-2);margin-left:auto">Baseline: '+(base.trades||0)+' trades · WR '+pfmt(base.win_rate_pct)+' · Exp '+nfmt(base.expectancy_r,2)+'R</span>';
+    html+='</div>';
+    if(!(d.rows||[]).length){
+      html+='<div style="font-size:11px;color:var(--text-3);padding:12px">No trades to analyze. Try a different pair or more candles.</div>';
+      return html;
+    }
+    /* Best-of callout */
+    var winner=null;
+    for(var i=0;i<groups.length;i++){ if(groups[i].adequate&&groups[i].expR!=null&&groups[i].expR>(base.expectancy_r||0)){winner=groups[i];break;} }
+    if(winner){
+      var lines=_btPbTypeChecklist(winner.sig);
+      html+='<div style="background:var(--yellow-soft);border:1px solid var(--yellow-soft-2);border-left:4px solid var(--yellow);border-radius:8px;padding:14px 16px;margin-bottom:14px">';
+      html+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">';
+      html+='<span style="font-family:var(--mono);font-size:9px;font-weight:700;color:var(--yellow);letter-spacing:.6px;padding:1px 6px;border:1px solid var(--yellow);border-radius:3px">BEST TYPE</span>';
+      html+='<span style="font-size:14px;font-weight:700;color:var(--text)">'+esc(_btPbTypeLabel(winner.sig))+'</span></div>';
+      html+='<div style="font-size:11px;color:var(--text-2);margin-bottom:8px">On '+esc(d.symbol)+' across '+(d.timeframes||[]).join(" · ")+', this OB type historically won <b style="color:var(--green)">'+pfmt(winner.winRate)+'</b> with <b style="color:var(--green)">'+nfmt(winner.expR,2)+'R</b> expectancy across <b>'+winner.n+' trades</b> ('+pfmt(winner.retention_pct)+' of the pool). Δ vs baseline: <b style="color:'+(winner.exp_delta!=null&&winner.exp_delta>0?"var(--green)":"var(--red)")+'">'+(winner.exp_delta!=null&&winner.exp_delta>0?"+":"")+nfmt(winner.exp_delta,2)+'R</b>.</div>';
+      html+='<div style="font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;font-weight:700;margin-bottom:4px">TradingView checklist</div>';
+      html+='<ul style="margin:0;padding-left:18px;font-size:11px;color:var(--text-2);line-height:1.6">';
+      lines.forEach(function(l){ html+='<li>'+esc(l)+'</li>'; });
+      html+='</ul>';
+      html+='<div style="font-size:9px;color:var(--text-3);margin-top:8px;font-style:italic">Research observation — hypothesis for Profile WF validation, not a live signal.</div>';
+      html+='</div>';
+    } else {
+      html+='<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:11px;color:var(--text-2)">No OB type in this run beat the baseline at n≥20. Try a different pair or more candles.</div>';
+    }
+    /* Full table */
+    html+='<div style="margin:12px 0 4px;font-size:11px;font-weight:700;color:var(--text-1)">All OB types — ranked by expectancy</div>';
+    html+='<div style="font-size:9px;color:var(--text-3);margin-bottom:4px">Grey = below 20-trade sample gate; use for context only. Δ Exp = expectancy − baseline.</div>';
+    html+='<div style="overflow-x:auto"><table class="bt-table" style="font-size:10px;width:100%">';
+    html+='<thead><tr><th>Type</th><th>N</th><th>Retention</th><th>Win %</th><th>Exp R</th><th>Δ Exp</th><th>≥2R MFE</th><th>≥3R MFE</th><th>≥5R MFE</th><th>Med MFE</th><th>Med MAE</th></tr></thead><tbody>';
+    groups.forEach(function(g){
+      var muted=!g.adequate;
+      var trStyle=muted?' style="opacity:.55"':'';
+      var expCol=g.expR!=null?(g.expR>=(base.expectancy_r||0)?"var(--green)":"var(--red)"):"var(--text-3)";
+      var dExpCol=g.exp_delta!=null?(g.exp_delta>0?"var(--green)":"var(--red)"):"var(--text-3)";
+      html+='<tr'+trStyle+'>';
+      html+='<td style="font-weight:600">'+esc(_btPbTypeLabel(g.sig))+(muted?' <span style="color:var(--text-3);font-weight:400">(n<20)</span>':'')+'</td>';
+      html+='<td style="font-family:var(--mono)">'+g.n+'</td>';
+      html+='<td style="font-family:var(--mono)">'+pfmt(g.retention_pct)+'</td>';
+      html+='<td style="font-family:var(--mono)">'+pfmt(g.winRate)+'</td>';
+      html+='<td style="font-family:var(--mono);color:'+expCol+';font-weight:700">'+nfmt(g.expR,2)+'</td>';
+      html+='<td style="font-family:var(--mono);color:'+dExpCol+'">'+(g.exp_delta!=null&&g.exp_delta>0?"+":"")+nfmt(g.exp_delta,2)+'</td>';
+      html+='<td style="font-family:var(--mono)">'+pfmt(g.pct2)+'</td>';
+      html+='<td style="font-family:var(--mono)">'+pfmt(g.pct3)+'</td>';
+      html+='<td style="font-family:var(--mono)">'+pfmt(g.pct5)+'</td>';
+      html+='<td style="font-family:var(--mono)">'+nfmt(g.medMFE,2)+'</td>';
+      html+='<td style="font-family:var(--mono)">'+nfmt(g.medMAE,2)+'</td>';
+      html+='</tr>';
+    });
+    html+='</tbody></table></div>';
+    return html;
+  }
 
   function _btRenderProfileWfMode(){
     var el=document.getElementById("btCompareModeContent"); if(!el) return;
