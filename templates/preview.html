@@ -2324,7 +2324,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     exchange:  _loadExchange(),
     scanMode:  _ls_get("zyni-scanMode","market"),
     results:[], sel:-1, scannedAt:0, scanned:0,
-    prev:null, stars:{},
+    prev:null, stars:_loadStars(),          // restored from localStorage (durable across refresh/redeploy)
     auto:      _ls_getBool("zyni-auto-scan-enabled", false),   // OFF by default
     timer:     null,
     busy:      false,
@@ -3281,20 +3281,44 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var fr=E("cmFrame"); if(fr) fr.src="about:blank";   // stop the stream when hidden
   }
 
-  /* ── watchlist persistence ── */
+  /* ── watchlist persistence ──
+     The server stores the watchlist in an ephemeral /tmp file that is wiped on
+     every app restart/deploy, so we ALSO mirror the starred set to localStorage.
+     localStorage is the durable source of truth across refreshes; the server
+     copy is a best-effort sync used only when it actually has data. */
+  function _saveStars(){
+    try{ localStorage.setItem("zyni-desktop-stars", JSON.stringify(Object.keys(ST.stars).filter(function(s){return ST.stars[s];}))); }catch(_){ }
+  }
+  function _loadStars(){
+    try{
+      var a=JSON.parse(localStorage.getItem("zyni-desktop-stars")||"[]"), o={};
+      (a||[]).forEach(function(s){ if(s) o[String(s).toUpperCase()]=true; });
+      return o;
+    }catch(_){ return {}; }
+  }
   function loadWatchlist(){
     if(location.protocol==="file:") return;
     fetch("/api/watchlist/get",{credentials:"same-origin"})
       .then(function(r){if(!r.ok)throw new Error("HTTP "+r.status);return r.json();})
       .then(function(d){
-        ST.stars={};
-        ((d&&d.pairs)||[]).forEach(function(p){ if(p) ST.stars[String(p).toUpperCase()]=true; });
+        var srv=((d&&d.pairs)||[]).map(function(p){return String(p).toUpperCase();}).filter(Boolean);
+        var haveLocal=Object.keys(ST.stars).filter(function(s){return ST.stars[s];}).length;
+        if(haveLocal){
+          // localStorage is authoritative (it survives refresh/redeploy); just
+          // make sure the server copy matches — never let a stale server list win.
+          syncWatchlist();
+        } else if(srv.length){
+          // No local set → restore from server (e.g. first load on a new device).
+          ST.stars={}; srv.forEach(function(s){ ST.stars[s]=true; }); _saveStars();
+        }
         try{ renderTable(); renderMobileCards(); if(ST.sel>=0) renderInsight(); }catch(_){}
+        if(ST.mode==="selected"){ try{ renderSelectedPairs(); renderSelectedPairsInsight(); }catch(_){} }
       })
-      .catch(function(){/* leave ST.stars as-is */});
+      .catch(function(){/* offline / server error — keep localStorage-restored stars */});
   }
   var _wlSyncT=null;
   function syncWatchlist(){
+    _saveStars();                              // durable local mirror, synchronous
     if(location.protocol==="file:") return;
     clearTimeout(_wlSyncT);
     _wlSyncT=setTimeout(function(){
