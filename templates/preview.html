@@ -25,6 +25,8 @@
   --accent-teal:#2dd4bf;
   --accent-soft:rgba(34,211,238,.10);
   --accent-soft-2:rgba(34,211,238,.18);
+  --yellow-soft:rgba(251,191,36,.08);
+  --yellow-soft-2:rgba(251,191,36,.25);
   --green:#22c55e;
   --green-2:#34d399;
   --red:#ef4444;
@@ -50,6 +52,8 @@
   --accent-teal:#0d9488;
   --accent-soft:rgba(2,132,199,.10);
   --accent-soft-2:rgba(2,132,199,.18);
+  --yellow-soft:rgba(180,83,9,.10);
+  --yellow-soft-2:rgba(180,83,9,.30);
   --green:#16a34a;
   --green-2:#0f7a39;
   --red:#dc2626;
@@ -5060,6 +5064,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         '<div class="dd-btns">'+
           '<button class="btn" data-dd="orderflow" type="button"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 12h6l3-8 3 16 3-8h3"/></svg>Order Flow</button>'+
           '<button class="btn" data-dd="zoneliq" type="button"><svg class="ico ico-sm" viewBox="0 0 24 24"><rect x="3" y="10" width="4" height="10"/><rect x="10" y="6" width="4" height="14"/><rect x="17" y="13" width="4" height="7"/></svg>Zone Liquidity</button>'+
+          '<button class="btn" data-dd="histverdict" type="button" title="Historical read of OBs on this symbol × timeframe (research only)"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M4 20h16M6 16l4-4 3 3 5-6"/><circle cx="6" cy="16" r="1.6"/><circle cx="10" cy="12" r="1.6"/><circle cx="13" cy="15" r="1.6"/><circle cx="18" cy="9" r="1.6"/></svg>Historical Verdict</button>'+
         '</div>'+
         '<div class="dd-out" id="ddOut"></div>'+
       '</div></div>';
@@ -5121,6 +5126,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       b.addEventListener('click',function(){
         var kind=b.getAttribute('data-dd');
         var tf=(a.timeframe||r.timeframe||"4H").toLowerCase();
+        if(kind==="histverdict"){ _snRunHistVerdict(out,r.symbol,tf,2); return; }
         out.innerHTML='<div class="row-msg">Loading '+esc(kind)+'…</div>';
         var url,opts={credentials:"same-origin"};
         if(kind==="orderflow"){
@@ -5134,6 +5140,195 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
           .then(function(rr){if(!rr.ok) throw new Error("HTTP "+rr.status); return rr.json();})
           .then(function(d){ out.innerHTML='<div class="dd-result">'+_ddPretty(d,14)+'</div>'; })
           .catch(function(e){ out.innerHTML='<div class="row-msg err">'+esc(kind)+' failed: '+esc(e.message)+'</div>'; });
+      });
+    });
+  }
+
+  /* ── Historical Verdict (Setup Insight → Deep Dive) ─────────────────────
+     Manual, on-demand call. Fetches the backtest autopsy for THIS symbol ×
+     timeframe (internal OB class only — production scanner uses iLen=5),
+     applies the same rule ladder as the Autopsy Verdict Board, and shows
+     the historical read as an observation.
+
+     Research only. Never triggers a live signal, never mutates scanner
+     scoring, never writes to the DB, never opens an alert. Nothing about
+     this UI escapes the Setup Insight panel. */
+  var _SN_HV_CACHE={};   // key = symbol|tf|rr, value = {resp} — session-scoped, in-memory
+
+  function _snRunHistVerdict(out, symbol, tf, rr){
+    if(!out) return;
+    if(!symbol||!tf){ out.innerHTML='<div class="row-msg err">Missing symbol / timeframe.</div>'; return; }
+    var key=symbol+"|"+tf+"|"+rr;
+    /* Race guard: stamp the latest request key on the container. Older
+       fetches that resolve out of order compare their own key to the
+       stamp before rendering and drop themselves if the user has since
+       clicked another RR. */
+    out._snhvPending=key;
+    if(_SN_HV_CACHE[key]){ _snRenderHistVerdict(out, symbol, tf, rr, _SN_HV_CACHE[key].resp); return; }
+    out.innerHTML='<div class="row-msg">Fetching historical OB data for '+esc(symbol)+' '+esc(tf)+' @ '+rr+'R… this can take a few seconds.</div>';
+    fetch("/api/backtest/ob-historical/autopsy",{
+      method:"POST", credentials:"same-origin",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        symbols:[symbol], timeframes:[tf],
+        candle_count:1000, rr:rr,
+        ob_classes:["internal"]
+      })
+    }).then(function(rr2){ if(!rr2.ok) throw new Error("HTTP "+rr2.status); return rr2.json(); })
+      .then(function(d){
+        if(out._snhvPending!==key) return;   // stale response — user moved on
+        if(!d||!d.ok){ out.innerHTML='<div class="row-msg err">Backtest failed: '+esc((d&&d.error)||"unknown")+'</div>'; return; }
+        _SN_HV_CACHE[key]={resp:d};
+        _snRenderHistVerdict(out, symbol, tf, rr, d);
+      })
+      .catch(function(e){
+        if(out._snhvPending!==key) return;
+        out.innerHTML='<div class="row-msg err">Historical verdict fetch failed: '+esc(e.message)+'</div>';
+      });
+  }
+
+  /* Classifier shared with the Autopsy Verdict Board rule ladder */
+  function _snClassify(trades){
+    var n=trades.length;
+    var wins=0,expSum=0,expN=0;
+    var mfe=[],mae=[];
+    var hits2=0,hits3=0,hits5=0;
+    trades.forEach(function(t){
+      if(!t)return;
+      if(t.realized_r!=null){expSum+=t.realized_r;expN++;if(t.realized_r>0)wins++;}
+      if(t.mfe_r!=null){
+        mfe.push(t.mfe_r);
+        if(t.mfe_r>=2)hits2++;
+        if(t.mfe_r>=3)hits3++;
+        if(t.mfe_r>=5)hits5++;
+      }
+      if(t.mae_r!=null)mae.push(t.mae_r);
+    });
+    var mfeN=mfe.length;
+    var pct2=mfeN?hits2/mfeN*100:null;
+    var pct3=mfeN?hits3/mfeN*100:null;
+    var pct5=mfeN?hits5/mfeN*100:null;
+    var winRate=n>0?wins/n*100:null;
+    var expR=expN>0?expSum/expN:null;
+    function med(a){if(!a.length)return null;var b=a.slice().sort(function(x,y){return x-y;});var m=Math.floor(b.length/2);return b.length%2?b[m]:(b[m-1]+b[m])/2;}
+    var vKey,why;
+    if(n<20){
+      vKey="THIN_SAMPLE"; why="n="+n+" < 20";
+    } else if(expR!=null&&expR<0&&(pct2==null||pct2<30)){
+      vKey="SKIP"; why="exp "+expR.toFixed(2)+"R, only "+(pct2==null?"—":pct2.toFixed(0)+"%")+" hit 2R";
+    } else if(pct5!=null&&pct5>=40){
+      vKey="HOLD_LONG"; why=pct5.toFixed(0)+"% hit 5R MFE";
+    } else if(pct3!=null&&pct3>=45&&(pct5==null||pct5<25)){
+      vKey="CLOSE_3R"; why=pct3.toFixed(0)+"% hit 3R, "+(pct5==null?"—":pct5.toFixed(0))+"% hit 5R";
+    } else if(pct2!=null&&pct2>=55&&(pct3==null||pct3<30)){
+      vKey="CLOSE_2R"; why=pct2.toFixed(0)+"% hit 2R, "+(pct3==null?"—":pct3.toFixed(0))+"% hit 3R";
+    } else if(expR!=null&&expR>0){
+      vKey="TRADE"; why="exp "+expR.toFixed(2)+"R at target";
+    } else {
+      vKey="NEEDS_REVIEW"; why="no clean pattern";
+    }
+    return {n:n,winRate:winRate,expR:expR,pct2:pct2,pct3:pct3,pct5:pct5,medMFE:med(mfe),medMAE:med(mae),mfe:mfe,verdict:vKey,why:why};
+  }
+
+  var _SN_HV_META={
+    TRADE:        {c:"var(--green)",   label:"Trade",         note:"Positive expectancy at the target RR"},
+    HOLD_LONG:    {c:"var(--green-2)", label:"Hold long",     note:"Historically reached 5R MFE in ≥40% of touches"},
+    CLOSE_3R:     {c:"var(--accent)",  label:"Close @ 3R",    note:"Frequently reached 3R MFE but rarely continued to 5R"},
+    CLOSE_2R:     {c:"var(--yellow)",  label:"Close @ 2R",    note:"Frequently reached 2R MFE but stalled before 3R"},
+    SKIP:         {c:"var(--red)",     label:"Skip",          note:"Negative expectancy and few touches reached 2R"},
+    THIN_SAMPLE:  {c:"var(--text-3)",  label:"Thin sample",   note:"Sample below the 20-trade gate"},
+    NEEDS_REVIEW: {c:"var(--text-2)",  label:"Needs review",  note:"Mixed signals — inspect features before deciding"}
+  };
+
+  function _snRenderHistVerdict(out, symbol, tf, rr, resp){
+    var rep=((resp||{}).reports_by_class||{}).internal||{};
+    var rows=((rep.trade_log||{}).rows)||[];
+    var summary=_snClassify(rows);
+    var m=_SN_HV_META[summary.verdict]||_SN_HV_META.NEEDS_REVIEW;
+    function pfmt(v){return v==null?"—":v.toFixed(0)+"%";}
+    function nfmt(v,d){return v==null?"—":v.toFixed(d==null?2:d);}
+    var truncNote=(rep.trade_log&&rep.trade_log.truncated)?' (last '+(rep.trade_log.cap||"?")+' trades)':'';
+    var h='<div class="dd-result" style="padding:6px 4px">';
+    /* Research watermark banner */
+    h+='<div style="display:flex;align-items:center;gap:8px;background:var(--yellow-soft);border:1px solid var(--yellow-soft-2);border-radius:6px;padding:6px 10px;margin-bottom:10px">';
+    h+='<span style="font-family:var(--mono);font-size:9px;font-weight:700;color:var(--yellow);letter-spacing:.6px;padding:1px 6px;border:1px solid var(--yellow);border-radius:3px">RESEARCH</span>';
+    h+='<span style="font-size:10px;color:var(--text-2);line-height:1.35">Historical observation only. Not a live signal, not an alert. Backtest of past OBs on this symbol × timeframe.</span>';
+    h+='</div>';
+    /* Verdict chip */
+    h+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">';
+    h+='<span style="display:inline-flex;align-items:center;gap:6px;background:var(--bg-card-2);border:1px solid '+m.c+';border-radius:14px;padding:4px 12px">';
+    h+='<span style="display:inline-block;width:10px;height:10px;background:'+m.c+';border-radius:50%"></span>';
+    h+='<span style="font-size:12px;font-weight:700;color:'+m.c+'">'+m.label+'</span></span>';
+    h+='<span style="font-size:11px;color:var(--text-2)">'+esc(m.note)+'</span></div>';
+    h+='<div style="font-size:10px;color:var(--text-3);margin:-6px 0 8px">'+esc(symbol)+' · '+esc(tf.toUpperCase())+' · internal OBs · '+rr+'R target · '+summary.n+' historical trades'+esc(truncNote)+'</div>';
+    /* Stat strip */
+    var stats=[
+      {k:"Trades", v:summary.n},
+      {k:"Win %", v:pfmt(summary.winRate)},
+      {k:"Exp R", v:nfmt(summary.expR,2), c:summary.expR!=null&&summary.expR>=0?"var(--green)":"var(--red)"},
+      {k:"≥2R MFE", v:pfmt(summary.pct2)},
+      {k:"≥3R MFE", v:pfmt(summary.pct3)},
+      {k:"≥5R MFE", v:pfmt(summary.pct5)},
+      {k:"Med MFE", v:nfmt(summary.medMFE,2)},
+      {k:"Med MAE", v:nfmt(summary.medMAE,2)}
+    ];
+    h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(70px,1fr));gap:6px;margin-bottom:10px">';
+    stats.forEach(function(s){
+      h+='<div style="background:var(--bg-card-2);border:1px solid var(--border);border-radius:4px;padding:6px 8px">';
+      h+='<div style="font-size:8px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px">'+esc(s.k)+'</div>';
+      h+='<div style="font-size:12px;font-weight:700;font-family:var(--mono);color:'+(s.c||"var(--text)")+'">'+s.v+'</div></div>';
+    });
+    h+='</div>';
+    /* MFE histogram (deterministic bins: 0-1R, 1-2R, 2-3R, 3-5R, 5R+) */
+    if(summary.mfe.length){
+      var bins=[0,0,0,0,0];
+      summary.mfe.forEach(function(v){
+        if(v<1)bins[0]++;
+        else if(v<2)bins[1]++;
+        else if(v<3)bins[2]++;
+        else if(v<5)bins[3]++;
+        else bins[4]++;
+      });
+      var mx=Math.max.apply(null,bins);
+      var labels=["<1R","1–2R","2–3R","3–5R","≥5R"];
+      var cols=["var(--red)","var(--yellow)","var(--accent)","var(--green)","var(--green-2)"];
+      var W=280,H=90,PADL=22,PADR=6,PADT=6,PADB=20;
+      var iw=W-PADL-PADR,ih=H-PADT-PADB;
+      var bw=iw/5;
+      var s='<div style="font-size:10px;font-weight:600;color:var(--text-2);margin-bottom:4px">MFE distribution</div>';
+      s+='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:'+H+'px;display:block" preserveAspectRatio="none">';
+      /* baseline */
+      s+='<line x1="'+PADL+'" x2="'+(W-PADR)+'" y1="'+(PADT+ih)+'" y2="'+(PADT+ih)+'" stroke="var(--border)" stroke-width="1"/>';
+      s+='<text x="'+(PADL-4)+'" y="'+(PADT+ih)+'" text-anchor="end" font-size="8" fill="var(--text-3)" font-family="var(--mono)">0</text>';
+      s+='<text x="'+(PADL-4)+'" y="'+(PADT+8)+'" text-anchor="end" font-size="8" fill="var(--text-3)" font-family="var(--mono)">'+mx+'</text>';
+      bins.forEach(function(cnt,i){
+        var hh=mx>0?(cnt/mx)*ih:0;
+        var x=PADL+i*bw+bw*0.18;
+        var w=bw*0.64;
+        var y=PADT+ih-hh;
+        s+='<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+hh+'" fill="'+cols[i]+'" opacity="0.85" rx="2"/>';
+        if(cnt>0){s+='<text x="'+(x+w/2)+'" y="'+(y-2)+'" text-anchor="middle" font-size="8" fill="var(--text-2)" font-family="var(--mono)">'+cnt+'</text>';}
+        s+='<text x="'+(x+w/2)+'" y="'+(H-6)+'" text-anchor="middle" font-size="8" fill="var(--text-3)">'+labels[i]+'</text>';
+      });
+      s+='</svg>';
+      h+=s;
+    }
+    /* Why + RR toggle */
+    h+='<div style="margin-top:10px;font-size:10px;color:var(--text-2)"><b style="color:var(--text)">Why:</b> '+esc(summary.why)+'</div>';
+    h+='<div style="margin-top:10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">';
+    h+='<span style="font-size:9px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px;font-weight:600">Re-score at:</span>';
+    [1,2,3].forEach(function(rv){
+      h+='<button type="button" data-snhv-rr="'+rv+'" style="font-size:10px;padding:3px 10px;background:'+(rv===rr?"var(--accent-soft-2)":"var(--bg-card-2)")+';border:1px solid '+(rv===rr?"var(--accent)":"var(--border)")+';color:'+(rv===rr?"var(--accent)":"var(--text-2)")+';border-radius:12px;cursor:pointer;font-family:var(--mono)">'+rv+'R</button>';
+    });
+    h+='</div>';
+    h+='</div>';
+    out.innerHTML=h;
+    /* Wire RR toggle — re-run (uses cache when present) */
+    [].forEach.call(out.querySelectorAll("[data-snhv-rr]"),function(b){
+      b.addEventListener("click",function(){
+        var nr=parseInt(b.getAttribute("data-snhv-rr"),10);
+        if(!nr||nr===rr) return;
+        _snRunHistVerdict(out, symbol, tf, nr);
       });
     });
   }
@@ -16774,6 +16969,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       if(rep){
         html+=_btApSummaryHtml(rep,cls);
         html+=_btApVisualSummaryHtml(rep);
+        html+=_btApVerdictBoardHtml(rep);
         html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:12px 0">';
         html+='<div><div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">Reason Delta — % in losers minus % in winners</div><canvas id="btApChart1" height="170"></canvas></div>';
         html+='<div><div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">Failure Modes (losing trades)</div><canvas id="btApChart2" height="170"></canvas></div>';
@@ -17017,6 +17213,142 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     html+='<div style="font-size:9px;color:var(--text-3);margin-bottom:4px">Fail % gap when the pattern is present − absent</div>';
     html+=patSvg;
     html+='</div>';
+    html+='</div>';
+    return html;
+  }
+
+  /* Verdict Board — deterministic decision per (symbol × timeframe) group
+     computed from the trade log the user just ran. Rules use MFE hit-rates
+     and expectancy to emit one of: TRADE / HOLD LONG / CLOSE @ 3R /
+     CLOSE @ 2R / SKIP / THIN SAMPLE / NEEDS REVIEW. Research label — the
+     board is a hypothesis for walk-forward validation, NOT a signal, and
+     nothing is wired into Scanner, alerts, paper trading, or execution. */
+  var _AP_VERDICT_META={
+    TRADE:        {c:"var(--green)",   note:"Positive expectancy at the target RR — candidate for forward validation"},
+    HOLD_LONG:    {c:"var(--green-2)", note:"Historically reached 5R MFE in ≥40% of touches"},
+    CLOSE_3R:     {c:"var(--accent)",  note:"Frequently reached 3R MFE but rarely continued to 5R"},
+    CLOSE_2R:     {c:"var(--yellow)",  note:"Frequently reached 2R MFE but stalled before 3R"},
+    SKIP:         {c:"var(--red)",     note:"Negative expectancy and few touches reached 2R"},
+    THIN_SAMPLE:  {c:"var(--text-3)",  note:"Sample below the 20-trade gate — no verdict"},
+    NEEDS_REVIEW: {c:"var(--text-2)",  note:"Mixed signals — inspect features before deciding"}
+  };
+  function _btApVerdictBoardHtml(rep){
+    function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
+    function med(a){if(!a.length)return null;var b=a.slice().sort(function(x,y){return x-y;});var m=Math.floor(b.length/2);return b.length%2?b[m]:(b[m-1]+b[m])/2;}
+    var rows=((rep.trade_log||{}).rows)||[];
+    if(!rows.length){
+      return '<div style="margin:10px 0 4px;font-size:11px;font-weight:700;color:var(--text)">OB Verdict Board</div>'+
+             '<div style="font-size:10px;color:var(--text-3);padding:6px">No trades to score.</div>';
+    }
+    var groups={};
+    rows.forEach(function(r){
+      if(!r||!r.symbol||!r.timeframe) return;
+      var k=r.symbol+"|"+r.timeframe;
+      if(!groups[k])groups[k]={symbol:r.symbol,tf:r.timeframe,trades:[]};
+      groups[k].trades.push(r);
+    });
+    var summaries=[];
+    Object.keys(groups).forEach(function(k){
+      var g=groups[k];var ts=g.trades;var n=ts.length;
+      var wins=0,expSum=0,expN=0;
+      var mfe=[],mae=[];
+      var hits2=0,hits3=0,hits5=0;
+      ts.forEach(function(t){
+        if(t.realized_r!=null){expSum+=t.realized_r;expN++;if(t.realized_r>0)wins++;}
+        if(t.mfe_r!=null){
+          mfe.push(t.mfe_r);
+          if(t.mfe_r>=2)hits2++;
+          if(t.mfe_r>=3)hits3++;
+          if(t.mfe_r>=5)hits5++;
+        }
+        if(t.mae_r!=null)mae.push(t.mae_r);
+      });
+      var mfeN=mfe.length;
+      var pct2=mfeN?hits2/mfeN*100:null;
+      var pct3=mfeN?hits3/mfeN*100:null;
+      var pct5=mfeN?hits5/mfeN*100:null;
+      var winRate=n>0?wins/n*100:null;
+      var expR=expN>0?expSum/expN:null;
+      var vKey,why;
+      if(n<20){
+        vKey="THIN_SAMPLE";why="n="+n+" < 20";
+      } else if(expR!=null&&expR<0&&(pct2==null||pct2<30)){
+        vKey="SKIP";why="exp "+expR.toFixed(2)+"R, only "+(pct2==null?"—":pct2.toFixed(0)+"%")+" hit 2R";
+      } else if(pct5!=null&&pct5>=40){
+        vKey="HOLD_LONG";why=pct5.toFixed(0)+"% hit 5R MFE";
+      } else if(pct3!=null&&pct3>=45&&(pct5==null||pct5<25)){
+        vKey="CLOSE_3R";why=pct3.toFixed(0)+"% hit 3R, "+(pct5==null?"—":pct5.toFixed(0))+"% hit 5R";
+      } else if(pct2!=null&&pct2>=55&&(pct3==null||pct3<30)){
+        vKey="CLOSE_2R";why=pct2.toFixed(0)+"% hit 2R, "+(pct3==null?"—":pct3.toFixed(0))+"% hit 3R";
+      } else if(expR!=null&&expR>0){
+        vKey="TRADE";why="exp "+expR.toFixed(2)+"R at target";
+      } else {
+        vKey="NEEDS_REVIEW";why="no clean pattern";
+      }
+      summaries.push({
+        symbol:g.symbol,tf:g.tf,n:n,
+        winRate:winRate,expR:expR,
+        pct2:pct2,pct3:pct3,pct5:pct5,
+        medMFE:med(mfe),medMAE:med(mae),
+        verdict:vKey,why:why
+      });
+    });
+    /* Sort: HOLD_LONG / TRADE first, SKIP last. Use `in` (not `||`) so
+       HOLD_LONG's rank of 0 isn't collapsed to the fallback by JS falsy. */
+    var ORD={HOLD_LONG:0,TRADE:1,CLOSE_3R:2,CLOSE_2R:3,NEEDS_REVIEW:4,THIN_SAMPLE:5,SKIP:6};
+    summaries.sort(function(a,b){
+      var oa=(a.verdict in ORD)?ORD[a.verdict]:9;
+      var ob=(b.verdict in ORD)?ORD[b.verdict]:9;
+      var o=oa-ob;
+      if(o!==0)return o;
+      var ea=a.expR==null?-9999:a.expR;var eb=b.expR==null?-9999:b.expR;
+      return eb-ea;
+    });
+    var counts={};summaries.forEach(function(s){counts[s.verdict]=(counts[s.verdict]||0)+1;});
+    /* Header + verdict count chips */
+    var truncNote=((rep.trade_log||{}).truncated)?' <span style="color:var(--yellow);font-weight:500;font-size:9px">(scored on last '+((rep.trade_log||{}).cap||"")+' trades)</span>':'';
+    var html='<div style="margin:14px 0 6px;font-size:11px;font-weight:700;color:var(--text)">OB Verdict Board — historical read of each symbol × timeframe'+truncNote+'</div>';
+    html+='<div style="font-size:9px;color:var(--text-3);margin-bottom:6px">Deterministic rules over the trade log at the selected RR. Sample-gated (n ≥ 20). Research observation only — hypothesis for walk-forward, not a live signal.</div>';
+    var chipOrder=["HOLD_LONG","TRADE","CLOSE_3R","CLOSE_2R","NEEDS_REVIEW","THIN_SAMPLE","SKIP"];
+    var chipLabels={HOLD_LONG:"Hold long",TRADE:"Trade",CLOSE_3R:"Close @ 3R",CLOSE_2R:"Close @ 2R",NEEDS_REVIEW:"Needs review",THIN_SAMPLE:"Thin sample",SKIP:"Skip"};
+    html+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">';
+    chipOrder.forEach(function(k){
+      var c=counts[k]||0;if(!c)return;
+      var m=_AP_VERDICT_META[k];
+      html+='<span style="display:inline-flex;align-items:center;gap:5px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:12px;padding:2px 8px;font-size:10px">'+
+        '<span style="display:inline-block;width:8px;height:8px;background:'+m.c+';border-radius:50%"></span>'+
+        chipLabels[k]+' <span style="color:var(--text-3);font-family:var(--mono)">'+c+'</span></span>';
+    });
+    html+='</div>';
+    html+='<div style="overflow-x:auto"><table class="bt-table" style="font-size:10px;width:100%">';
+    html+='<thead><tr><th>Verdict</th><th>Symbol</th><th>TF</th><th>N</th><th>Win %</th><th>Exp R</th><th>≥2R MFE</th><th>≥3R MFE</th><th>≥5R MFE</th><th>Med MFE</th><th>Med MAE</th><th>Why</th></tr></thead><tbody>';
+    function nfmt(v,d){return v==null?"—":(typeof v==="number"?v.toFixed(d==null?2:d):String(v));}
+    function pfmt(v){return v==null?"—":v.toFixed(0)+"%";}
+    summaries.forEach(function(s){
+      var m=_AP_VERDICT_META[s.verdict];
+      html+='<tr>';
+      html+='<td style="font-weight:700;color:'+m.c+'" title="'+esc(m.note)+'">'+chipLabels[s.verdict]+'</td>';
+      html+='<td style="font-weight:600">'+esc(s.symbol)+'</td>';
+      html+='<td>'+esc(s.tf)+'</td>';
+      html+='<td style="font-family:var(--mono)">'+s.n+'</td>';
+      html+='<td style="font-family:var(--mono)">'+pfmt(s.winRate)+'</td>';
+      html+='<td style="font-family:var(--mono);color:'+(s.expR!=null&&s.expR>=0?"var(--green)":"var(--red)")+'">'+nfmt(s.expR,2)+'</td>';
+      html+='<td style="font-family:var(--mono)">'+pfmt(s.pct2)+'</td>';
+      html+='<td style="font-family:var(--mono)">'+pfmt(s.pct3)+'</td>';
+      html+='<td style="font-family:var(--mono)">'+pfmt(s.pct5)+'</td>';
+      html+='<td style="font-family:var(--mono)">'+nfmt(s.medMFE,2)+'</td>';
+      html+='<td style="font-family:var(--mono)">'+nfmt(s.medMAE,2)+'</td>';
+      html+='<td style="color:var(--text-2)">'+esc(s.why)+'</td>';
+      html+='</tr>';
+    });
+    html+='</tbody></table></div>';
+    /* Legend explaining each verdict */
+    html+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:6px 12px;margin:8px 0 4px;font-size:9px;color:var(--text-2)">';
+    chipOrder.forEach(function(k){
+      var m=_AP_VERDICT_META[k];
+      html+='<div style="display:flex;gap:6px;align-items:baseline"><span style="display:inline-block;width:6px;height:6px;background:'+m.c+';border-radius:50%;margin-top:5px;flex:0 0 6px"></span>'+
+        '<span><b style="color:var(--text)">'+chipLabels[k]+'</b> — '+esc(m.note)+'</span></div>';
+    });
     html+='</div>';
     return html;
   }
