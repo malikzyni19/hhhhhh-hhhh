@@ -4673,8 +4673,19 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       '<div class="kpi-v '+(cls||"")+'">'+val+'</div>'+
       '<div class="kpi-d">'+sub+'</div></div>';
   }
+  /* Returns signal-filtered results for the main tab at render time.
+     Keeps ST.results untouched so re-filtering is always lossless. */
+  function _mainRS(){
+    if(ST.mode!=="main"||_isAllSignals()) return ST.results;
+    return ST.results.map(function(r){
+      var keep=(r.alerts||[]).filter(function(a){return _signalMatches(a.setup);});
+      if(!keep.length) return null;
+      var top=keep.reduce(function(b,a){return (a.strength||0)>(b.strength||0)?a:b;},keep[0]);
+      return Object.assign({},r,{alerts:keep,topAlert:top});
+    }).filter(Boolean);
+  }
   function renderKPI(){
-    var rs=ST.results,n=rs.length;
+    var rs=_mainRS(),n=rs.length;
     var hi=rs.filter(function(r){return r.confidence==="High";}).length;
     var bu=rs.filter(function(r){return dirOf(r)==="bull";}).length;
     var be=rs.filter(function(r){return dirOf(r)==="bear";}).length;
@@ -4695,7 +4706,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   }
 
   function renderTable(){
-    var rs=ST.results;
+    var rs=_mainRS();
     if(!rs.length){msg("No setups match the current filter. Try a different signal or market.");return;}
     var mkt=ST.market==="perpetual"?"Perp":"Spot";
     E("tbody").innerHTML=rs.map(function(r,i){
@@ -4891,7 +4902,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 
   function renderMobileCards(){
     var box=E("mcards"); if(!box) return;
-    var rs=ST.results;
+    var rs=_mainRS();
     if(!rs.length){box.innerHTML='<div class="row-msg">No setups match the current filter.</div>';return;}
     box.innerHTML=rs.map(function(r,i){
       var pages = buildMobileCardPages(r);          // always build so accordion animates
@@ -14009,7 +14020,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   if(E("tutIntroYes")) E("tutIntroYes").addEventListener("click", function(){
     if(E("tutIntroNever") && E("tutIntroNever").checked){
       _tutPrefs.desktopTutorialNeverShow = true;
-      _tutSavePrefs({});
+      _tutSavePrefs({desktopTutorialNeverShow:true});
     }
     /* User opted in — clear the "skipped this session" flag so further
        tab switches still surface their tutorials. */
@@ -14022,7 +14033,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     _tutSessionSkipped = true;
     if(E("tutIntroNever") && E("tutIntroNever").checked){
       _tutPrefs.desktopTutorialNeverShow = true;
-      _tutSavePrefs({});
+      _tutSavePrefs({desktopTutorialNeverShow:true});
     }
     _tutHideIntro();
   });
