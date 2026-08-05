@@ -1222,9 +1222,26 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 .tbl-host::-webkit-scrollbar{height:8px}
 .tbl-host::-webkit-scrollbar-thumb{background:var(--border-2);border-radius:4px}
 .tbl-host::-webkit-scrollbar-track{background:transparent}
-.tab-view{margin-top:4px}
+/* Wide tab tables (Bias Shift runs 12 columns) scroll instead of clipping their
+   trailing columns when the insight panel is open. Mirrors .tbl-host. */
+.tab-view{margin-top:4px;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.tab-view::-webkit-scrollbar{height:8px}
+.tab-view::-webkit-scrollbar-thumb{background:var(--border-2);border-radius:4px}
+.tab-view::-webkit-scrollbar-track{background:transparent}
 .tab-view[hidden]{display:none}
 .tab-view .tv-empty{padding:60px 24px;text-align:center;color:var(--text-3);font-size:13px}
+/* Bias Shift scan breakdown — where the batch got filtered out */
+/* sticky-left so it stays put while a wide table scrolls under it */
+.bias-diag{position:sticky;left:0;margin:2px 0 10px;padding:8px 10px;
+  border:1px solid var(--border);border-radius:8px;background:rgba(255,255,255,.015)}
+.bias-diag .bd-head{font-size:11px;color:var(--text-2);font-family:var(--mono)}
+.bias-diag .bd-head b{color:var(--text)}
+.bias-diag .bd-chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
+.bias-diag .bd-chip{font-size:10px;color:var(--text-3);background:var(--bg-hover);
+  border:1px solid var(--border);border-radius:999px;padding:2px 8px;white-space:nowrap}
+.bias-diag .bd-chip b{color:var(--text-2);font-family:var(--mono)}
+.bias-diag .bd-note{margin-top:7px;font-size:10.5px;color:var(--yellow-2,#f59e0b)}
+.bias-breach{color:var(--red-2);font-weight:700}
 .tv-tbl{width:100%;border-collapse:collapse;font-size:12px;table-layout:auto}
 .tv-tbl thead th{
   text-align:left;font-size:9.5px;font-weight:700;letter-spacing:.5px;color:var(--text-3);
@@ -1955,7 +1972,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
               <option value="rsi_below">RSI &lt;</option>
               <option value="price_above">Price &gt;</option>
               <option value="price_below">Price &lt;</option>
-              <option value="bias_shift">Bias shifts (BOS/CHoCH)</option>
+              <option value="bias_shift">Bias shift (rejection candle)</option>
             </select></div>
           <div class="sp-field"><label>Value</label><input type="number" id="alVal" step="any" placeholder="e.g. 80"></div>
           <div class="sp-field"><label>Timeframe</label>
@@ -2990,10 +3007,28 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
           ST.results = []; ST.sel = -1; ST.scanned = ST.tabData.ath_atl.scanned;
         } else if(modeAtScan === "bias"){
           var br = (d && (d.results || d.shifts)) || [];
-          ST.tabData.bias.items = br;
+          // Full-market scope round-robins a batch at a time, so replacing the
+          // list each scan threw away every earlier batch. Merge instead — a
+          // newer read of the same symbol+TF wins, everything else persists
+          // until the user hits Clear (same contract as Main Scan).
+          var bExisting = ST.tabData.bias.items || [];
+          var bKey = function(x){ return (x.symbol||x.pair||"")+"|"+(x.timeframe||x.tf||""); };
+          var bFresh = {};
+          br.forEach(function(x){ bFresh[bKey(x)] = true; });
+          var bMerged = bExisting.filter(function(x){ return !bFresh[bKey(x)]; }).concat(br);
+          var _bGo = {"A+":0,"A":1,"B":2,"C":3,"D":4};
+          bMerged.sort(function(a,z){
+            var d1=(+z.score||0)-(+a.score||0); if(d1) return d1;
+            return (_bGo[a.grade]!=null?_bGo[a.grade]:4)-(_bGo[z.grade]!=null?_bGo[z.grade]:4);
+          });
+          ST.tabData.bias.items = bMerged;
           ST.tabData.bias.raw = d;
           ST.tabData.bias.scanned = (d && d.scanned) || br.length;
+          ST.tabData.bias.batchFound = br.length;
+          ST.tabData.bias.scannedAt = Date.now();
+          ST.tabData.bias.sel = -1;
           ST.results = []; ST.sel = -1; ST.scanned = ST.tabData.bias.scanned;
+          try{ evaluateAlerts(_biasAlertRows(bMerged)); }catch(_){}
         }
         renderAll();
         _saveTabData();
@@ -4523,6 +4558,14 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       detail:  x.detail||"",
       invalidationLevel: x.invalidationLevel,
       invalidationText:  x.invalidationText||x.invalidation||"",
+      invStatus:      x.invalidationStatus||"",
+      invBreachedLive:!!x.invalidationBreachedLive,
+      invDistPct:     x.invalidationDistancePct!=null?+x.invalidationDistancePct:null,
+      price:          x.currentPrice!=null?+x.currentPrice:(x.price!=null?+x.price:null),
+      signalTime:     x.signalCandleTime!=null?+x.signalCandleTime:null,
+      signalOffset:   x.signalCandleOffset!=null?+x.signalCandleOffset:null,
+      confluencesFound: x.confluencesFound||[],
+      volSpike:       !!x.volSpike,
       suggestedConfirmationTf: x.suggestedConfirmationTf||"",
       reasonChain: x.reasonChain||x.gates||[],
       scoreBreakdown: x.scoreBreakdown||{},
@@ -4533,37 +4576,106 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       rejectionPrice:{ open:x.rejectionOpen, high:x.rejectionHigh, low:x.rejectionLow, close:x.rejectionClose },
     };
   }
+  /* Bias rows carry their own shape; map them into the row shape the shared
+     alert engine understands so bias setups can actually fire notifications. */
+  function _biasAlertRows(raw){
+    return (raw||[]).map(function(x){
+      var b=normalizeBiasRow(x); if(!b) return null;
+      var dir=b.bias.indexOf("bull")>=0?"bullish":b.bias.indexOf("bear")>=0?"bearish":"";
+      var t=dir==="bullish"?1:dir==="bearish"?-1:0;
+      var a={setup:"BIAS_SHIFT",direction:dir,timeframe:b.tf,
+             detail:b.detail||b.setupType||"Bias shift",strength:5,meta:{}};
+      return {symbol:b.symbol,timeframe:b.tf,price:(x.price!=null?+x.price:null),
+              score:(b.score!=null?b.score:0),grade:b.grade,rsi:null,
+              trend:t,itrend:t,alerts:[a],topAlert:a};
+    }).filter(Boolean);
+  }
   function renderBiasKPI(){
     var items = ((ST.tabData.bias.items)||[]).map(normalizeBiasRow).filter(Boolean);
     var bull = items.filter(function(x){return x.bias.indexOf("bull")>=0;}).length;
     var bear = items.filter(function(x){return x.bias.indexOf("bear")>=0;}).length;
-    var conf = items.filter(function(x){return /confirm/i.test(x.confirmation);}).length;
-    var early= items.filter(function(x){return /early|unconfirmed|pending/i.test(x.confirmation);}).length;
+    // "early_unconfirmed" contains "confirm", so a bare /confirm/i test counted
+    // unconfirmed setups as confirmed — exclude the early/pending wording first.
+    var _isEarly=function(x){ return /early|unconfirmed|pending/i.test(x.confirmation); };
+    var conf = items.filter(function(x){return /confirm/i.test(x.confirmation) && !_isEarly(x);}).length;
+    var early= items.filter(_isEarly).length;
     var scores=items.map(function(x){return x.score;}).filter(function(s){return s!=null;});
     var avgS = scores.length ? Math.round(scores.reduce(function(a,s){return a+s;},0)/scores.length) : "—";
+    var breached=items.filter(function(x){return x.invBreachedLive;}).length;
+    var cov=(ST.tabData.bias.raw||{}).marketCoverage||null;
+    var covSub = cov
+      ? ("batch "+cov.startIndex+"–"+cov.endIndex+" of "+cov.totalPairs)
+      : (ST.tabData.bias.batchFound!=null?("+"+ST.tabData.bias.batchFound+" this scan"):"");
     E("kpiRow").innerHTML=
-      kpi("BIAS SETUPS", items.length, "")+
+      kpi("BIAS SETUPS", items.length, covSub)+
       kpi("BULLISH BIAS", bull, items.length?Math.round(bull/items.length*100)+"%":"", "g")+
       kpi("BEARISH BIAS", bear, items.length?Math.round(bear/items.length*100)+"%":"", "r")+
       kpi("CONFIRMED", conf, items.length?Math.round(conf/items.length*100)+"%":"")+
       kpi("EARLY / UNCONFIRMED", early, "")+
-      kpi("AVG SCORE", avgS, "");
+      kpi(breached?"LIVE BREACHED":"AVG SCORE", breached||avgS,
+          breached?"invalidation hit intrabar":"", breached?"r":"");
+  }
+  /* "Why did I get nothing?" strip — the scanner already returns a full
+     rejection funnel + round-robin coverage; surface it instead of dropping it. */
+  function _biasDiagStrip(){
+    var raw=ST.tabData.bias.raw||{};
+    var dg=raw.diagnostics; if(!dg) return "";
+    var rj=dg.rejected||{}, su=dg.settingsUsed||{}, cov=raw.marketCoverage||null;
+    var LBL={notEnoughCandles:"not enough candles", noPriorMove:"no prior move",
+      noCleanPriorDrive:"prior drive too weak/choppy", weakOrChoppyPriorDrive:"weak drive",
+      biasFilterMismatch:"bias filter", volumeFilter:"volume filter",
+      noRejectionCandle:"no rejection candle", notConfirmed:"awaiting confirmation",
+      confluenceRequired:"no confluence", minimumGrade:"below min grade",
+      invalidated:"already invalidated", errors:"fetch errors"};
+    var parts=Object.keys(LBL).filter(function(k){return (rj[k]||0)>0;})
+      .sort(function(a,b){return (rj[b]||0)-(rj[a]||0);})
+      .map(function(k){
+        return '<span class="bd-chip"><b>'+rj[k]+'</b> '+esc(LBL[k])+'</span>';
+      }).join("");
+    var head='<b>'+(dg.symbolsScanned||0)+'</b> scanned · <b>'+
+      (dg.setupsFoundBeforeFilters||0)+'</b> found · <b>'+(dg.setupsReturned||0)+'</b> kept'+
+      (cov?(' · batch '+cov.startIndex+'–'+cov.endIndex+' / '+cov.totalPairs+
+            (cov.cycleComplete?' · cycle complete':'')):'');
+    var note = su.signalSearchFloorApplied
+      ? '<div class="bd-note">Confirmed detection needs a follow-up candle — signal search widened to '+
+        esc(String(su.signalSearchCandles))+' candles for this scan.</div>' : '';
+    return '<div class="bias-diag"><div class="bd-head">'+head+'</div>'+
+      (parts?'<div class="bd-chips">'+parts+'</div>':'')+note+'</div>';
   }
   function _biasConflSpec(b){
     return [{k:"OB",on:b.obConf},{k:"FVG",on:b.fvgConf},{k:"FIB",on:b.fibConf}];
+  }
+  /* rel() tops out in hours; a 1D signal candle can be days old. */
+  function _biasAge(ms){
+    if(!ms) return "—";
+    var s=Math.max(0,Math.floor((Date.now()-ms)/1000));
+    if(s>=86400) return Math.floor(s/86400)+"d "+Math.floor((s%86400)/3600)+"h ago";
+    return rel(ms);
   }
   function renderBiasTable(){
     var raw=(ST.tabData.bias.items)||[];
     var items=raw.map(normalizeBiasRow).filter(Boolean);
     var host=E("tabView");
-    if(!items.length){ host.innerHTML='<div class="tv-empty">No bias shifts found. Try Early strength or a lower min grade.</div>'; return; }
+    var diag=_biasDiagStrip();
+    if(!items.length){
+      host.innerHTML=diag+'<div class="tv-empty">No bias setups found. '+
+        'The breakdown above shows where this batch was filtered out.</div>';
+      return;
+    }
     var sel=ST.tabData.bias.sel;
     var rows = items.map(function(b,i){
       var dir = b.bias.indexOf("bull")>=0?"bull":b.bias.indexOf("bear")>=0?"bear":"warn";
       var prior = (b.priorDirection?b.priorDirection:"—") + (b.priorNetPct!=null?(" · "+(b.priorNetPct>=0?"+":"")+b.priorNetPct.toFixed(2)+"%"):"") +
                   (b.priorCandles!=null?(" · "+b.priorCandles+"c"):"");
       var invalid = b.invalidationLevel!=null?fmt(b.invalidationLevel):(b.invalidationText?esc(b.invalidationText):"—");
+      if(b.invBreachedLive){
+        invalid='<span class="bias-breach" title="Current price has breached this level intrabar">'+invalid+' ⚠</span>';
+      } else if(b.invDistPct!=null){
+        invalid+=' <span style="color:var(--text-3);font-size:10px">'+b.invDistPct.toFixed(2)+'% away</span>';
+      }
       var confl=_confluencePills(_biasConflSpec(b));
+      var age = b.signalTime!=null ? _biasAge(b.signalTime)
+              : (b.signalOffset!=null ? (b.signalOffset===0?"last candle":b.signalOffset+" candles ago") : "—");
       return '<tr data-i="'+i+'"'+(i===sel?' class="sel"':'')+'>'+
         '<td class="sym">'+esc(b.symbol)+'</td>'+
         '<td>'+esc(b.tf)+'</td>'+
@@ -4572,17 +4684,19 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         '<td><span class="tv-grade" data-g="'+esc(b.grade)+'">'+esc(b.grade)+'</span>'+(b.gradeLabel?' <span style="color:var(--text-3);font-size:10.5px">'+esc(b.gradeLabel)+'</span>':"")+'</td>'+
         '<td class="r">'+(b.score!=null?Math.round(b.score):"—")+'</td>'+
         '<td>'+esc(prior)+'</td>'+
+        '<td class="r">'+(b.price!=null?fmt(b.price):"—")+'</td>'+
         '<td class="r">'+invalid+'</td>'+
         '<td>'+confl+'</td>'+
+        '<td>'+esc(age)+'</td>'+
         '<td>'+esc(b.suggestedConfirmationTf||"—")+'</td>'+
       '</tr>';
     }).join("");
-    host.innerHTML=
+    host.innerHTML= diag+
       '<table class="tv-tbl"><thead><tr>'+
         '<th>SYMBOL</th><th>TF</th><th>BIAS</th><th>STATUS</th>'+
         '<th>GRADE</th><th class="r">SCORE</th>'+
-        '<th>PRIOR MOVE</th><th class="r">INVALIDATION</th>'+
-        '<th>CONFLUENCE</th><th>CONFIRM TF</th>'+
+        '<th>PRIOR MOVE</th><th class="r">PRICE</th><th class="r">INVALIDATION</th>'+
+        '<th>CONFLUENCE</th><th>SIGNAL AGE</th><th>CONFIRM TF</th>'+
       '</tr></thead><tbody>'+rows+'</tbody></table>';
   }
   function renderBiasInsight(rRaw){
@@ -4617,9 +4731,19 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       _ti("Lower wick %", b.rejectionWick.dn!=null?(+b.rejectionWick.dn).toFixed(2)+"%":"—")+
       _ti("Body %",       b.rejectionWick.body!=null?(+b.rejectionWick.body).toFixed(2)+"%":"—")+
 
+      '<div class="ti-h">Signal candle timing</div>'+
+      _ti("Signal candle", b.signalTime!=null?_biasAge(b.signalTime):"—")+
+      _ti("Candles back",  b.signalOffset!=null?b.signalOffset:"—")+
+
       '<div class="ti-h">Invalidation</div>'+
       _ti("Level", b.invalidationLevel!=null?fmt(b.invalidationLevel):"—")+
       _ti("Note",  b.invalidationText||"—")+
+      _tiB("Status", b.invBreachedLive
+        ? '<span class="bias-breach">Breached live (intrabar)</span>'
+        : (b.invStatus==="valid" ? '<span style="color:var(--green-2,#22c55e)">Valid</span>'
+                                 : esc(b.invStatus||"—")))+
+      _ti("Distance to level", b.invDistPct!=null?(b.invDistPct.toFixed(2)+"%"):"—")+
+      _ti("Current price", b.price!=null?fmt(b.price):"—")+
       _ti("Suggested confirmation TF", b.suggestedConfirmationTf||"—")+
 
       '<div class="ti-h">Confluence</div>'+
@@ -4643,6 +4767,10 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       ((b.obConf||b.fvgConf||b.fibConf)
         ? insightRow("OB / FVG / Fib confluence present","pass")
         : insightRow("No OB / FVG / Fib confluence","warn"))+
+      (b.invBreachedLive
+        ? insightRow("Current price has breached the invalidation level intrabar","fail")
+        : (b.invStatus==="valid" ? insightRow("Invalidation level still holding","pass") : ""))+
+      (b.volSpike?insightRow("Volume spike on the rejection candle","pass"):"")+
 
       _insFoot(b.symbol);
   }
@@ -4657,7 +4785,12 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     }
     var sEl=E("mainSub"); if(sEl) sEl.textContent = MODE_SUB[ST.mode]||"All instruments across selected markets";
     if(E("lastScan")) E("lastScan").textContent=ST.scannedAt?rel(ST.scannedAt):"—";
-    var n=ST.results.length;
+    // Tab-view modes keep their rows in tabData, not ST.results — reading only
+    // ST.results made the pager claim "No setups found" with a full table.
+    var td=ST.tabData[ST.mode]||{};
+    var tabRows=(ST.mode==="main"||ST.mode==="compressed")
+      ? ST.results : (td.items||td.results||ST.results||[]);
+    var n=tabRows.length;
     var page=ST.page||1;
     var start = n ? ((page-1)*ST.pairsPerCycle + 1) : 0;
     var end   = n ? (start + n - 1) : 0;
@@ -5530,6 +5663,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       if("results" in ST.tabData[m]) ST.tabData[m].results=[];
       if("items"   in ST.tabData[m]) ST.tabData[m].items=[];
       ST.tabData[m].scanned=0; ST.tabData[m].raw=null;
+      ST.tabData[m].sel=-1; ST.tabData[m].batchFound=null;
     }
     ST.results=[]; ST.sel=-1; ST.page=1; ST.scannedAt=0;
     renderAll();
@@ -12572,37 +12706,55 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         _dbPaint("dbBreaking",html);
       }).catch(function(){ _dbPaint("dbBreaking",'<div class="row-msg err">ATH/ATL fetch failed.</div>'); });
   }
+  /* The dashboard cycle runs every 60s; a full bias scan per cycle burned 24
+     tokens a minute unattended. Reuse the Bias tab's own results when they're
+     fresh, otherwise scan at most once every _DB_BIAS_TTL. cursorScope keeps
+     this off the scanner's round-robin cursor. */
+  var _DB_BIAS_TTL = 10*60*1000;
+  var _dbBiasLastAt = 0, _dbBiasLastHtml = "";
   function _dbLoadBiasShifts(){
+    var bTab=ST.tabData.bias||{}, tabItems=bTab.items||[];
+    if(tabItems.length && bTab.scannedAt && (Date.now()-bTab.scannedAt) < _DB_BIAS_TTL){
+      _dbPaintBiasShifts(tabItems); return;
+    }
+    if(_dbBiasLastHtml && (Date.now()-_dbBiasLastAt) < _DB_BIAS_TTL){
+      _dbPaint("dbBiasShifts", _dbBiasLastHtml); return;
+    }
+    _dbBiasLastAt = Date.now();
     fetch("/api/bias_scan",{method:"POST",credentials:"same-origin",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({timeframe:ST.settings.tf||"4h",tf:ST.settings.tf||"4h",
         market:ST.market,exchange:ST.exchange,
         scanMode:"market", symbols:[], pairsPerCycle:24, roundRobin:true,
+        cursorScope:"dashboard",
         mode:"normal", biasStrength:"balanced", detectionMode:"early",
         confluenceMode:"optional", minimumGrade:"B+",
         useObConfluence:true, useFvgConfluence:true, useFibConfluence:true})})
       .then(function(r){return r.ok?r.json():null;})
       .then(function(d){
-        var rs=(d&&(d.results||d.shifts))||[];
-        // keep only items that actually shifted bias
-        rs=rs.filter(function(it){
-          var ev=(it.event||"").toString().toUpperCase();
-          if(ev.indexOf("BOS")>=0||ev.indexOf("CHOCH")>=0||ev.indexOf("SHIFT")>=0) return true;
-          if(it.bias||it.direction) return true;
-          if(it.shifts && it.shifts.length) return true;
-          return false;
-        });
-        if(!rs.length){ _dbPaint("dbBiasShifts",'<div class="row-msg">No bias shifts detected this scan.</div>'); return; }
-        var html=rs.slice(0,6).map(function(it){
-          var b=(it.bias||it.direction||"").toString().toLowerCase();
-          var cls=b.indexOf("bull")>=0?"g":b.indexOf("bear")>=0?"r":"";
-          var ev=(it.event||"shift").toString().toUpperCase();
-          return '<div class="db-item"><span class="db-i-sym">'+_dbFmtSym(it.symbol||it.pair)+'</span>'+
-            '<span class="db-i-meta">'+esc(ev)+'</span>'+
-            '<span class="db-i-tail '+cls+'">'+esc(b||"—")+'</span></div>';
-        }).join("");
-        _dbPaint("dbBiasShifts",html);
+        _dbPaintBiasShifts((d&&(d.results||d.shifts))||[]);
       }).catch(function(){ _dbPaint("dbBiasShifts",'<div class="row-msg err">Bias scan failed.</div>'); });
+  }
+  function _dbPaintBiasShifts(rs){
+    rs=(rs||[]).filter(function(it){ return !!(it.bias||it.direction||it.biasDirection); });
+    if(!rs.length){
+      _dbBiasLastHtml='<div class="row-msg">No bias setups detected this scan.</div>';
+      _dbPaint("dbBiasShifts",_dbBiasLastHtml); return;
+    }
+    // The scanner emits grade/score/confirmation, never an "event" field —
+    // the old tile read it.event and always printed a hardcoded "SHIFT".
+    var html=rs.slice(0,6).map(function(it){
+      var b=(it.bias||it.biasDirection||it.direction||"").toString().toLowerCase();
+      var cls=b.indexOf("bull")>=0?"g":b.indexOf("bear")>=0?"r":"";
+      var meta=[it.grade?("Grade "+it.grade):"", it.score!=null?Math.round(it.score):"",
+                /confirm/i.test(it.confirmationStatus||"")?"confirmed":"early"]
+               .filter(Boolean).join(" · ");
+      return '<div class="db-item"><span class="db-i-sym">'+_dbFmtSym(it.symbol||it.pair)+'</span>'+
+        '<span class="db-i-meta">'+esc(meta)+'</span>'+
+        '<span class="db-i-tail '+cls+'">'+esc(b||"—")+'</span></div>';
+    }).join("");
+    _dbBiasLastHtml=html;
+    _dbPaint("dbBiasShifts",html);
   }
   function _dbLoadWatchlist(){
     var pairs=Object.keys(ST.stars).filter(function(s){return ST.stars[s];});
@@ -12745,8 +12897,15 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       } else if(a.type==="price_below" && r.price!=null && +r.price < a.value){
         fired="Price "+fmt(r.price)+" < "+a.value; dir="bear";
       } else if(a.type==="bias_shift"){
+        // Fires off the Bias Shift scanner (rejection-candle bias), which is the
+        // only detector that emits BIAS_SHIFT.
         var setup=(r.topAlert&&r.topAlert.setup)||"";
-        if(/BOS|CHOCH|SHIFT|BIAS/i.test(setup)) { fired="Bias event: "+setup; dir=dirOf(r); }
+        if(/SHIFT|BIAS/i.test(setup)){
+          dir=dirOf(r);
+          fired="Bias shift "+(dir==="bull"?"bullish":dir==="bear"?"bearish":"")+
+                (r.grade?(" · grade "+r.grade):"")+
+                (r.score?(" · score "+Math.round(r.score)):"");
+        }
       }
       if(fired){
         // dedupe: don't refire same alert within 5 minutes

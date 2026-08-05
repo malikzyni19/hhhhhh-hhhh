@@ -34690,17 +34690,24 @@ def api_bias_scan():
         p = _bias_normal_presets(bias_strength)
         prior_move_n             = p["prior_move_n"]
         signal_search_n          = p["signal_search_n"]
-        min_prior_checks         = p["min_prior_checks"]
         min_wick_pct             = p["min_wick_pct"]
         min_body_pct             = p["min_body_pct"]
         require_close_beyond_mid = p["require_close_beyond_mid"]
     else:
         prior_move_n             = max(1, int(payload.get("priorMoveCandles", 3)))
         signal_search_n          = max(1, int(payload.get("signalSearchCandles", 2)))
-        min_prior_checks         = 2
         min_wick_pct             = float(payload.get("minWickPct", 35)) / 100.0
         min_body_pct             = float(payload.get("minBodyPct", 15)) / 100.0
         require_close_beyond_mid = bool(payload.get("requireCloseBeyondMidpoint", False))
+
+    # Confirmed mode needs at least one candle AFTER the rejection candle to
+    # confirm against. With signal_search_n == 1 the only candidate is the last
+    # closed candle, so the confirmation loop has nothing to scan and every
+    # setup is dropped — Confirmed returned zero results on Balanced/Strong.
+    signal_search_floor_applied = False
+    if detection_mode == "confirmed" and signal_search_n < 2:
+        signal_search_n = 2
+        signal_search_floor_applied = True
 
     minimum_grade = payload.get("minimumGrade", "B+")
 
@@ -34715,9 +34722,12 @@ def api_bias_scan():
     pairs_per_cycle = max(5, min(100, int(payload.get("pairsPerCycle", 20))))
     exchange        = payload.get("exchange", "binance").lower()
 
-    # Per-user cursor key — prevents different users/settings from sharing state
-    username   = session.get("username", "anonymous")
-    cursor_key = f"{username}|{exchange}|{market}|{tf}"
+    # Per-user cursor key — prevents different users/settings from sharing state.
+    # cursorScope separates callers that scan on their own cadence (the dashboard
+    # tile) from the Bias tab, so they never advance each other's round-robin.
+    username     = session.get("username", "anonymous")
+    cursor_scope = str(payload.get("cursorScope", "scanner"))[:32]
+    cursor_key   = f"{username}|{exchange}|{market}|{tf}|{cursor_scope}"
     market_coverage = None
 
     if scan_mode == "market":
@@ -34781,21 +34791,46 @@ def api_bias_scan():
             "chopRejected":    0,
         },
         "settingsUsed": {
-            "timeframe":      tf,
-            "mode":           bias_mode,
-            "biasStrength":   bias_strength,
-            "detectionMode":  detection_mode,
-            "confluenceMode": confluence_mode,
-            "minimumGrade":   minimum_grade,
-            "volumeFilter":   volume_filter_mode,
-            "scanMode":       scan_mode,
-            "pairsPerCycle":  pairs_per_cycle,
+            "timeframe":        tf,
+            "mode":             bias_mode,
+            "biasStrength":     bias_strength,
+            "detectionMode":    detection_mode,
+            "confluenceMode":   confluence_mode,
+            "minimumGrade":     minimum_grade,
+            "volumeFilter":     volume_filter_mode,
+            "scanMode":         scan_mode,
+            "pairsPerCycle":    pairs_per_cycle,
+            "priorMoveCandles": prior_move_n,
+            "signalSearchCandles": signal_search_n,
+            "signalSearchFloorApplied": signal_search_floor_applied,
         },
     }
 
+    # Network is the bottleneck here — fetch every symbol's candles in parallel
+    # (same worker count as /api/scan), then analyse sequentially because the
+    # analysis loop mutates shared diagnostics counters.
+    def _bias_fetch(_sym: str):
+        try:
+            return _sym, get_klines_exchange(_sym, tf, fetch_limit, market, exchange), False
+        except Exception as _fe:
+            print(f"[DEBUG] bias_scan {_sym} fetch error: {_fe}")
+            return _sym, None, True
+
+    klines_by_sym: dict = {}
+    fetch_errors: set = set()
+    if symbols:
+        with ThreadPoolExecutor(max_workers=min(10, len(symbols))) as _pool:
+            for _s, _kl, _err in _pool.map(_bias_fetch, symbols):
+                klines_by_sym[_s] = _kl
+                if _err:
+                    fetch_errors.add(_s)
+
     for sym in symbols:
         try:
-            kl = get_klines_exchange(sym, tf, fetch_limit, market, exchange)
+            if sym in fetch_errors:
+                diagnostics["rejected"]["errors"] += 1
+                continue
+            kl = klines_by_sym.get(sym)
             if not kl or len(kl) < prior_move_n + signal_search_n + 2:
                 diagnostics["rejected"]["notEnoughCandles"] += 1
                 continue
@@ -35145,6 +35180,7 @@ def api_bias_scan():
                     best = candidate
 
             if best is not None:
+                diagnostics["setupsFoundBeforeFilters"] += 1
                 # Compute live / closed invalidation status
                 inv_level  = best["invalidationLevel"]
                 inv_dir    = best["bias"]
@@ -35215,7 +35251,8 @@ def api_bias_scan():
         elif _q == "impulse": diagnostics["adaptivePriorDrive"]["impulseAccepted"] += 1
 
     # Phase 3: apply minimum grade filter, then sort by best setup first
-    diagnostics["setupsFoundBeforeFilters"] = len(results)
+    # setupsFoundBeforeFilters is counted per accepted candidate inside the loop,
+    # so it stays a true "found" total ahead of the invalidation + grade filters.
     _before_grade = len(results)
     results = [r for r in results if _grade_passes_filter(r.get("grade", "D"), minimum_grade)]
     diagnostics["rejected"]["minimumGrade"] = _before_grade - len(results)
