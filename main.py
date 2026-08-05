@@ -35002,6 +35002,342 @@ def _bias_confluence(
     return {"ob": ob_conf, "fvg": fvg_conf, "fib": fib_conf}
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Rejection Blocks — detection + lifecycle (Phase 1)
+#
+# A rejection block is the band between the extreme WICK and the extreme BODY
+# of a liquidity sweep that was reclaimed and then confirmed:
+#
+#   bullish (a low was swept)    zone = [min(low) , min(open,close)]
+#   bearish (a high was swept)   zone = [max(open,close) , max(high)]
+#
+# The wick is where price went and was refused; the body is where it was
+# accepted. The band between them is the unfilled area — that is the block.
+# Using the whole candle range instead would make price permanently "inside"
+# the zone and render the retest logic meaningless.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_RB_TOUCH_CLEARANCE = 0.5   # mirrors _OB_TOUCH_CLEARANCE for consistent retest counting
+
+
+def _rb_config(tf: str, overrides: dict | None = None) -> dict:
+    """Timeframe-aware rejection-block defaults.
+
+    maxAgeCandles falls as the timeframe rises: a 1D candle carries far more
+    information than a 15m one, so a block stays relevant for fewer bars even
+    though that is a longer stretch of wall-clock time.
+    """
+    t = (tf or "").lower()
+    if t in ("1d", "12h"):
+        base = {"sweepMinPct": 0.15, "maxAgeCandles": 20, "swingLeft": 3, "swingRight": 3}
+    elif t in ("6h", "4h"):
+        base = {"sweepMinPct": 0.12, "maxAgeCandles": 30, "swingLeft": 3, "swingRight": 3}
+    elif t in ("2h", "1h"):
+        base = {"sweepMinPct": 0.10, "maxAgeCandles": 36, "swingLeft": 3, "swingRight": 3}
+    else:                                     # 30m, 15m and below
+        base = {"sweepMinPct": 0.08, "maxAgeCandles": 48, "swingLeft": 2, "swingRight": 2}
+
+    base.update({
+        "reclaimWindow":     2,               # candles allowed to reclaim the swept level
+        "confirmWindow":     3,               # candles allowed to produce the confirm candle
+        "maxTouches":        2,               # respected retests before the block is spent
+        "maxDistanceAtr":    3.0,             # ATR-normalised "price ran away" guard
+        "localLookback":     2,               # candles before the pierce for local liquidity
+        "minBlockHeightPct": 0.02,            # reject degenerate/hairline zones
+        "sweepSources":      ["swing", "local"],
+    })
+    if overrides:
+        base.update({k: v for k, v in overrides.items() if v is not None})
+    return base
+
+
+def _rb_swing_levels(h: list, l: list, cfg: dict) -> tuple[list, list]:
+    """Confirmed swing highs/lows as (pivot_index, level, confirmed_at_index).
+
+    detect_pivots marks a pivot at i only once `right` bars have printed after
+    it, so the level is not knowable until i + right. Callers must not use a
+    swing before its confirmed_at bar or the detector reads the future.
+    """
+    ph, pl = detect_pivots(h, l, cfg["swingLeft"], cfg["swingRight"])
+    right = cfg["swingRight"]
+    highs = [(i, h[i], i + right) for i in range(len(ph)) if ph[i]]
+    lows  = [(i, l[i], i + right) for i in range(len(pl)) if pl[i]]
+    return highs, lows
+
+
+def _rb_latest_swing(pool: list, before_idx: int):
+    """Most recent swing level already CONFIRMED strictly before before_idx."""
+    best = None
+    for (pi, lvl, conf_at) in pool:
+        if conf_at < before_idx and pi < before_idx:
+            best = (pi, lvl)
+        elif conf_at >= before_idx:
+            break
+    return best
+
+
+def _rb_walk_lifecycle(o: list, h: list, l: list, c: list, v: list, ts: list,
+                       direction: str, rb_low: float, rb_high: float,
+                       formed_idx: int, cfg: dict, avg_vol: float) -> dict:
+    """Walk forward from the confirm candle and track what happened to the zone.
+
+    States: fresh → tested → respected → mitigated, or invalidated.
+      * a wick entering the zone counts as a TEST
+      * a close back out of the zone, in the block's direction, is RESPECTED
+      * only a CLOSE beyond the far edge invalidates; wicks through do not
+      * repeat touches need a clearance move away first, so one long visit is
+        not counted as several retests
+    """
+    n = len(c)
+    height   = max(rb_high - rb_low, 1e-12)
+    clear_by = _RB_TOUCH_CLEARANCE * height
+    is_bull  = direction == "bullish"
+    clear_level = (rb_high + clear_by) if is_bull else (rb_low - clear_by)
+
+    state          = "fresh"
+    touches        = 0
+    retests: list  = []
+    cleared        = True
+    invalidated_at = None
+    parked         = False   # last candle CLOSED inside the zone (still testing)
+
+    for j in range(formed_idx + 1, n):
+        if (is_bull and c[j] < rb_low) or ((not is_bull) and c[j] > rb_high):
+            state = "invalidated"
+            invalidated_at = ts[j]
+            break
+
+        inside = (l[j] <= rb_high) and (h[j] >= rb_low)
+        # A wick through the zone that closes back out is a reaction, not a
+        # candle sitting in the zone — only a close inside keeps it "testing".
+        parked = rb_low <= c[j] <= rb_high
+
+        if inside:
+            respected = (c[j] > rb_high) if is_bull else (c[j] < rb_low)
+            if cleared:
+                touches += 1
+                cleared = False
+                retests.append({
+                    "at":       ts[j],
+                    "index":    j,
+                    "reaction": "respected" if respected else "inside",
+                    "volRatio": round(v[j] / avg_vol, 2) if avg_vol > 0 else None,
+                })
+            elif respected and retests and retests[-1]["reaction"] == "inside":
+                # price sat in the zone then left in our favour — upgrade the
+                # open retest instead of opening a second one
+                retests[-1]["reaction"] = "respected"
+            state = "respected" if respected else "tested"
+        else:
+            if (is_bull and l[j] > clear_level) or ((not is_bull) and h[j] < clear_level):
+                cleared = True
+
+    if state != "invalidated":
+        if touches >= cfg["maxTouches"]:
+            state = "mitigated"     # spent, even if price is back in the zone
+        elif parked:
+            state = "tested"
+
+    return {
+        "state":         state,
+        "touches":       touches,
+        "retests":       retests,
+        "invalidatedAt": invalidated_at,
+        "respectedCount": sum(1 for r in retests if r["reaction"] == "respected"),
+    }
+
+
+def _detect_rejection_blocks(o: list, h: list, l: list, c: list, v: list, ts: list,
+                             tf: str, cfg: dict | None = None,
+                             atr: list | None = None,
+                             current_price: float | None = None) -> list:
+    """Find rejection blocks and resolve each one's lifecycle.
+
+    Phases (candle budgets, not fixed candle counts, so a pattern that takes
+    5 or 6 candles still qualifies as long as the structure holds):
+
+      A  pierce   — a wick extends beyond a liquidity level by >= sweepMinPct
+      B  reclaim  — within reclaimWindow, a candle CLOSES back on the origin
+                    side of that level, and price never keeps extending past
+                    the pierce (that would be a breakdown, not a sweep)
+      C  confirm  — within confirmWindow, a directional candle closes beyond
+                    the reclaim candle's close
+
+    Liquidity levels come from confirmed swings and/or the local highs/lows
+    right before the pierce. Only closed candles may be passed in.
+    """
+    cfg = cfg or _rb_config(tf)
+    n = len(c)
+    out: list = []
+    if n < cfg["swingLeft"] + cfg["swingRight"] + cfg["confirmWindow"] + 6:
+        return out
+
+    if atr is None:
+        atr = calc_atr(h, l, c, 14)
+
+    sources   = cfg.get("sweepSources") or ["swing", "local"]
+    use_swing = "swing" in sources
+    use_local = "local" in sources
+    swing_highs, swing_lows = _rb_swing_levels(h, l, cfg) if use_swing else ([], [])
+
+    sweep_frac = cfg["sweepMinPct"] / 100.0
+    look       = max(1, int(cfg["localLookback"]))
+
+    for p in range(look + 1, n - 1):
+        for direction in ("bullish", "bearish"):
+            is_bull = direction == "bullish"
+
+            levels: list = []
+            if use_swing:
+                sw = _rb_latest_swing(swing_lows if is_bull else swing_highs, p)
+                if sw:
+                    levels.append((sw[1], "swing"))
+            if use_local:
+                seg = l[p - look:p] if is_bull else h[p - look:p]
+                if seg:
+                    levels.append((min(seg) if is_bull else max(seg), "local"))
+
+            for lvl, src in levels:
+                if lvl <= 0:
+                    continue
+
+                # ── Phase A: the wick must genuinely pierce the level ──────
+                if is_bull:
+                    pierced = l[p] < lvl * (1.0 - sweep_frac)
+                else:
+                    pierced = h[p] > lvl * (1.0 + sweep_frac)
+                if not pierced:
+                    continue
+
+                # ── Phase B: reclaim the level without extending the pierce ─
+                r = None
+                for j in range(p, min(p + 1 + cfg["reclaimWindow"], n)):
+                    if j > p:
+                        # still extending past the pierce → breakdown, not a sweep
+                        if is_bull and l[j] < l[p] * (1.0 - sweep_frac):
+                            break
+                        if (not is_bull) and h[j] > h[p] * (1.0 + sweep_frac):
+                            break
+                    if (is_bull and c[j] > lvl) or ((not is_bull) and c[j] < lvl):
+                        r = j
+                        break
+                if r is None:
+                    continue
+
+                # ── Phase C: a directional candle closing beyond the reclaim ─
+                f = None
+                for j in range(r + 1, min(r + 1 + cfg["confirmWindow"], n)):
+                    if is_bull and c[j] < l[p]:
+                        break                      # lost the sweep low on a close
+                    if (not is_bull) and c[j] > h[p]:
+                        break
+                    if is_bull and c[j] > o[j] and c[j] > c[r]:
+                        f = j
+                        break
+                    if (not is_bull) and c[j] < o[j] and c[j] < c[r]:
+                        f = j
+                        break
+                if f is None:
+                    continue
+
+                # ── Zone: extreme wick ↔ extreme body across the block ──────
+                span = range(p, f + 1)
+                if is_bull:
+                    rb_low  = min(l[i] for i in span)
+                    rb_high = min(min(o[i], c[i]) for i in span)
+                else:
+                    rb_high = max(h[i] for i in span)
+                    rb_low  = max(max(o[i], c[i]) for i in span)
+                if rb_high <= rb_low:
+                    continue                       # no wick beyond the bodies
+                height_pct = (rb_high - rb_low) / max(abs(rb_low), 1e-12) * 100.0
+                if height_pct < cfg["minBlockHeightPct"]:
+                    continue
+
+                vol_lb  = min(20, p)
+                avg_vol = sum(v[p - vol_lb:p]) / vol_lb if vol_lb > 0 else 0.0
+
+                life = _rb_walk_lifecycle(o, h, l, c, v, ts, direction,
+                                          rb_low, rb_high, f, cfg, avg_vol)
+
+                age   = (n - 1) - f
+                max_age = max(1, int(cfg["maxAgeCandles"]))
+                fresh   = max(0.0, min(1.0, 1.0 - age / max_age))
+                px      = current_price if current_price is not None else c[-1]
+                atr_v   = atr[-1] if atr and atr[-1] else None
+                if px > rb_high:
+                    gap = px - rb_high
+                elif px < rb_low:
+                    gap = rb_low - px
+                else:
+                    gap = 0.0
+                dist_atr = round(gap / atr_v, 2) if atr_v else None
+
+                sweep_depth = (abs(lvl - (l[p] if is_bull else h[p]))
+                               / max(abs(lvl), 1e-12) * 100.0)
+
+                out.append({
+                    "direction":      direction,
+                    "rbHigh":         round(rb_high, 8),
+                    "rbLow":          round(rb_low, 8),
+                    "heightPct":      round(height_pct, 4),
+                    "sweptLevel":     round(lvl, 8),
+                    "sweepSource":    src,
+                    "sweepDepthPct":  round(sweep_depth, 4),
+                    "pierceIndex":    p,
+                    "reclaimIndex":   r,
+                    "formedIndex":    f,
+                    "formedAt":       ts[f],
+                    "blockCandles":   f - p + 1,
+                    "ageCandles":     age,
+                    "freshness":      round(fresh, 3),
+                    "expired":        age > max_age,
+                    "distanceAtr":    dist_atr,
+                    "far":            (dist_atr is not None
+                                       and dist_atr > cfg["maxDistanceAtr"]),
+                    "state":          life["state"],
+                    "retestCount":    life["touches"],
+                    "respectedCount": life["respectedCount"],
+                    "retests":        life["retests"],
+                    "invalidatedAt":  life["invalidatedAt"],
+                    "volume": {
+                        "sweepRatio":   round(v[p] / avg_vol, 2) if avg_vol > 0 else None,
+                        "reclaimRatio": round(v[r] / avg_vol, 2) if avg_vol > 0 else None,
+                        "avgVolume":    round(avg_vol, 4),
+                    },
+                })
+
+    return _rb_dedupe(out)
+
+
+def _rb_dedupe(blocks: list, overlap_thresh: float = 0.5) -> list:
+    """Collapse same-direction blocks whose zones substantially overlap.
+
+    Consecutive candles routinely produce near-identical blocks. Keep the
+    freshest (latest formation); on a tie prefer the swing-sourced one, since
+    a confirmed swing is stronger liquidity than a two-candle local extreme.
+    """
+    def _rank(b):
+        return (b["formedIndex"], 1 if b["sweepSource"] == "swing" else 0)
+
+    kept: list = []
+    for b in sorted(blocks, key=_rank, reverse=True):
+        dup = False
+        for k in kept:
+            if k["direction"] != b["direction"]:
+                continue
+            lo = max(k["rbLow"], b["rbLow"])
+            hi = min(k["rbHigh"], b["rbHigh"])
+            inter = max(0.0, hi - lo)
+            smaller = min(k["rbHigh"] - k["rbLow"], b["rbHigh"] - b["rbLow"])
+            if smaller > 0 and inter / smaller >= overlap_thresh:
+                dup = True
+                break
+        if not dup:
+            kept.append(b)
+    kept.sort(key=lambda x: x["formedIndex"], reverse=True)
+    return kept
+
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 @app.route("/api/bias_scan", methods=["POST"])
