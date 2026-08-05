@@ -294,7 +294,7 @@ _tab_controls: Dict[str, bool] = {
 # ── Guest access system ──
 _guest_controls: Dict = {
     "enabled": True,
-    "tabs": {"scan": True, "compressed": False, "trending": True, "ath_atl": False, "bias": False},
+    "tabs": {"scan": True, "compressed": False, "base": False, "trending": True, "ath_atl": False, "bias": False},
     "max_scans_per_session": 5,
     "max_pairs": 20,
     "session_label": "Guest",
@@ -33594,6 +33594,347 @@ def api_compressed_scan():
         "timeframe": tf,
         "market": market,
         "exchange": exchange,
+        "usedClosedCandles": True,
+    })
+
+
+# ─── Accumulation Base scan ────────────────────────────────────────────────
+# Deliberately separate from /api/compressed_scan. That scan looks for tight
+# intraday coils (range <= ~2% over ~12 candles). This one looks for wide
+# post-capitulation accumulation ranges (range 40-70% over 100-600 daily
+# candles). They share only the closed-candle rule.
+#
+# Binance + MEXC only: OKX caps klines at 300/request and Bybit at 200, which
+# cannot cover a multi-month base. get_klines_exchange_window() does not help
+# there — it only paginates Binance endpoints regardless of the exchange tag.
+
+BASE_SCAN_EXCHANGES = {"binance", "mexc"}
+BASE_SCAN_TF = {"1d", "1w"}   # 1w has no INTERVAL_MAP entry outside Binance
+
+
+def _base_percentile_box(closes, lo_pct=10.0, hi_pct=90.0):
+    """Band from percentiles, NOT max/min.
+
+    Accumulation bases routinely spike well outside the range price actually
+    holds (a single wick to 2x the band top is common). max(high)/min(low)
+    would inflate the box past those spikes and the breakout would never fire.
+    """
+    arr = np.asarray(closes, dtype=float)
+    return float(np.percentile(arr, lo_pct)), float(np.percentile(arr, hi_pct))
+
+
+def _base_drift_pct(closes):
+    """Total linear-regression drift across the window, as % of mean price.
+
+    Near zero = flat base. Large magnitude = still trending, not basing.
+    """
+    n = len(closes)
+    if n < 10:
+        return None
+    y = np.asarray(closes, dtype=float)
+    mean_p = float(np.mean(y))
+    if mean_p <= 0:
+        return None
+    slope = float(np.polyfit(np.arange(n, dtype=float), y, 1)[0])
+    return (slope * n / mean_p) * 100.0
+
+
+def _base_mid_crossings(closes, mid):
+    """Times price crosses the band mid.
+
+    This is the real range-vs-trend discriminator: a genuine range oscillates
+    across its midpoint many times, a trend crosses once and leaves.
+    """
+    crossings = 0
+    prev = None
+    for cl in closes:
+        side = 1 if cl > mid else (-1 if cl < mid else 0)
+        if side == 0:
+            continue
+        if prev is not None and side != prev:
+            crossings += 1
+        prev = side
+    return crossings
+
+
+def _base_evaluate(h, l, c, v, end_idx, base_window, max_drift_pct, drawdown_pct):
+    """Score the base_window candles ending at end_idx. None if it isn't a base.
+
+    Returns geometry + quality metrics + a 0-100 score.
+    """
+    start = end_idx - base_window + 1
+    if start < 0 or end_idx >= len(c):
+        return None
+    bc = c[start:end_idx + 1]
+    bh = h[start:end_idx + 1]
+    bl = l[start:end_idx + 1]
+    bv = v[start:end_idx + 1]
+    if len(bc) < 20:
+        return None
+
+    base_low, base_high = _base_percentile_box(bc)
+    band = base_high - base_low
+    if band <= 1e-10:
+        return None
+    base_mid = (base_high + base_low) / 2.0
+
+    drift = _base_drift_pct(bc)
+    if drift is None:
+        return None
+
+    crossings = _base_mid_crossings(bc, base_mid)
+    upper_touches = sum(1 for x in bh if x >= base_high)
+    lower_touches = sum(1 for x in bl if x <= base_low)
+
+    # Hard gates — must actually behave like a two-sided range
+    if abs(drift) > max_drift_pct:
+        return None
+    if crossings < 3 or upper_touches < 1 or lower_touches < 1:
+        return None
+
+    # Volatility / volume contraction measured against the pre-base history.
+    # Mean true-range-as-%-of-price avoids ATR's EMA warmup on short slices.
+    ctx_h, ctx_l, ctx_c, ctx_v = h[:start], l[:start], c[:start], v[:start]
+    base_rng_pct = float(np.mean([hi - lo for hi, lo in zip(bh, bl)])) / max(float(np.mean(bc)), 1e-10) * 100.0
+    if len(ctx_c) >= 20:
+        ctx_rng_pct = float(np.mean([hi - lo for hi, lo in zip(ctx_h, ctx_l)])) / max(float(np.mean(ctx_c)), 1e-10) * 100.0
+        atr_ratio = round(base_rng_pct / max(ctx_rng_pct, 1e-10), 3)
+        atr_state = ("strong_contraction" if atr_ratio <= 0.55
+                     else "contracting" if atr_ratio <= 0.85
+                     else "normal" if atr_ratio <= 1.15 else "expanding")
+        vol_ratio = round(float(np.mean(bv)) / max(float(np.mean(ctx_v)), 1e-10), 3)
+        vol_state = ("drying" if vol_ratio <= 0.6
+                     else "normal" if vol_ratio <= 1.2 else "expanding")
+    else:
+        atr_ratio, atr_state = None, "unknown"
+        vol_ratio, vol_state = None, "unknown"
+
+    # Score 0-100
+    score = 0.0
+    score += 20.0 * max(0.0, 1.0 - abs(drift) / max(max_drift_pct, 1e-10))      # flatness
+    score += 20.0 * min(1.0, crossings / max(base_window / 25.0, 1.0))          # oscillation
+    score += 10.0 * min(1.0, (min(upper_touches, 3) + min(lower_touches, 3)) / 6.0)
+    if atr_ratio is not None:
+        score += 20.0 * max(0.0, min(1.0, (1.15 - atr_ratio) / 0.65))           # vol contraction
+    if vol_ratio is not None:
+        score += 15.0 * max(0.0, min(1.0, (1.2 - vol_ratio) / 0.6))             # volume dry-up
+    score += 15.0 * min(1.0, drawdown_pct / 80.0)                               # depth of crash
+
+    return {
+        "start": start,
+        "end": end_idx,
+        "baseLow": base_low,
+        "baseHigh": base_high,
+        "baseMid": base_mid,
+        "band": band,
+        "driftPct": round(drift, 2),
+        "crossings": crossings,
+        "upperTouches": upper_touches,
+        "lowerTouches": lower_touches,
+        "baseRangePct": round(base_rng_pct, 3),
+        "atrBaseRatio": atr_ratio,
+        "atrState": atr_state,
+        "volumeBaseRatio": vol_ratio,
+        "volumeState": vol_state,
+        "score": round(min(score, 100.0)),
+        "baseVolMean": float(np.mean(bv)),
+    }
+
+
+@app.route("/api/base_scan", methods=["POST"])
+@login_required
+def api_base_scan():
+    err = _guest_tab_check("base")
+    if err is not None: return err
+    _tok_user, _tok_uid = _check_and_get_token_user()
+    if _tok_user == "limit":
+        return jsonify({"error": "daily_limit_reached", "message": "Daily scan tokens exhausted. Resets at midnight UTC."}), 429
+    payload = request.get_json(force=True) or {}
+
+    exchange = str(payload.get("exchange", "binance")).lower()
+    if exchange not in BASE_SCAN_EXCHANGES:
+        return jsonify({"error": "invalid_input",
+                        "message": "Base scan supports binance and mexc only — OKX (300) and Bybit (200) cap kline history below what a multi-month base needs."}), 400
+
+    tf = payload.get("timeframe", "1d")
+    if tf not in BASE_SCAN_TF:
+        return jsonify({"error": "invalid_input", "message": "timeframe must be 1d or 1w"}), 400
+    if tf == "1w" and exchange != "binance":
+        return jsonify({"error": "invalid_input", "message": "1w is Binance-only — no weekly interval mapping for mexc"}), 400
+
+    market = payload.get("market", "perpetual")
+    if market not in ("spot", "perpetual"):
+        return jsonify({"error": "invalid_input", "message": "market must be spot or perpetual"}), 400
+
+    try:
+        base_window = int(payload.get("baseWindow", 180))
+        if not (40 <= base_window <= 600):
+            return jsonify({"error": "invalid_input", "message": "baseWindow must be between 40 and 600"}), 400
+    except (ValueError, TypeError):
+        return jsonify({"error": "invalid_input", "message": "baseWindow must be an integer"}), 400
+
+    try:
+        min_drawdown = float(payload.get("minDrawdownPct", 60.0))
+        if not (0 <= min_drawdown <= 95):
+            return jsonify({"error": "invalid_input", "message": "minDrawdownPct must be between 0 and 95"}), 400
+    except (ValueError, TypeError):
+        return jsonify({"error": "invalid_input", "message": "minDrawdownPct must be a number"}), 400
+
+    try:
+        max_drift = float(payload.get("maxDriftPct", 25.0))
+        if not (1 <= max_drift <= 100):
+            return jsonify({"error": "invalid_input", "message": "maxDriftPct must be between 1 and 100"}), 400
+    except (ValueError, TypeError):
+        return jsonify({"error": "invalid_input", "message": "maxDriftPct must be a number"}), 400
+
+    try:
+        max_break_age = int(payload.get("maxBreakoutAge", 30))
+        if not (0 <= max_break_age <= 200):
+            return jsonify({"error": "invalid_input", "message": "maxBreakoutAge must be between 0 and 200"}), 400
+    except (ValueError, TypeError):
+        return jsonify({"error": "invalid_input", "message": "maxBreakoutAge must be an integer"}), 400
+
+    raw_symbols = payload.get("symbols") or []
+    if raw_symbols:
+        normed = []
+        for _s in raw_symbols:
+            _s = str(_s).strip().upper().replace("/", "").replace("-", "").replace("_", "")
+            if _s and not _s.endswith("USDT"):
+                _s += "USDT"
+            if _s:
+                normed.append(_s)
+        symbols = list(dict.fromkeys(normed))
+    else:
+        symbols = [p["symbol"] for p in get_pairs_exchange(exchange, market)[:80]]
+
+    need = min(1500, base_window * 2 + max_break_age + 60)
+    print(f"[DEBUG] base_scan exchange={exchange} market={market} tf={tf} window={base_window} need={need} symbols={len(symbols)}")
+
+    results = []
+    errors = 0
+    for sym in symbols:
+        try:
+            kl = get_klines_exchange(sym, tf, need, market, exchange)
+            if not kl or len(kl) < base_window + 30:
+                errors += 1
+                continue
+            # Closed candles only — the forming candle never participates
+            closed = kl[:-1]
+            h = [x["high"] for x in closed]
+            l = [x["low"] for x in closed]
+            c = [x["close"] for x in closed]
+            v = [x["volume"] for x in closed]
+            n = len(c)
+            price = c[-1]
+
+            # A real accumulation base sits at the end of a deep decline
+            window_high = max(h)
+            drawdown = ((window_high - price) / max(window_high, 1e-10)) * 100.0
+            if drawdown < min_drawdown:
+                continue
+
+            # Grid-search where the base ENDS. A pair that broke out 60 candles
+            # ago still needs its band measured from before that breakout —
+            # otherwise the post-breakout candles drag the 90th percentile up
+            # and the band no longer describes the base.
+            step = max(1, max_break_age // 10)
+            best = None
+            for off in range(0, max_break_age + 1, step):
+                cand = _base_evaluate(h, l, c, v, n - 1 - off, base_window, max_drift, drawdown)
+                if cand is None:
+                    continue
+                if best is None or cand["score"] > best["score"]:
+                    best = cand
+            if best is None:
+                continue
+
+            base_low = round(best["baseLow"], 8)
+            base_high = round(best["baseHigh"], 8)
+            base_mid = round(best["baseMid"], 8)
+            band = max(best["band"], 1e-10)
+
+            price_pos = round(max(0.0, min(100.0, ((price - best["baseLow"]) / band) * 100.0)), 1)
+            base_end_bars_ago = (n - 1) - best["end"]
+
+            # Where has price gone since the base ended?
+            post_c = c[best["end"] + 1:]
+            post_v = v[best["end"] + 1:]
+            breakout_bars_ago = None
+            breakout_vol_ratio = None
+            for i, cl in enumerate(post_c):
+                if cl > best["baseHigh"]:
+                    breakout_bars_ago = len(post_c) - 1 - i
+                    if i < len(post_v):
+                        breakout_vol_ratio = round(post_v[i] / max(best["baseVolMean"], 1e-10), 2)
+                    break
+
+            if price > best["baseHigh"]:
+                status = "fresh_breakout" if (breakout_bars_ago is not None and breakout_bars_ago <= 3) else "breakout_holding"
+            elif price < best["baseLow"]:
+                status = "breakdown"
+            elif price_pos >= 85:
+                status = "testing_base_high"
+            else:
+                status = "basing"
+
+            score = best["score"]
+            grade = "A+" if score >= 85 else "A" if score >= 75 else "B" if score >= 60 else "C"
+
+            sparkline = [float(c[i]) for i in range(max(0, n - 40), n)]
+            results.append({
+                "symbol": sym,
+                "price": price,
+                "timeframe": tf,
+                "exchange": exchange,
+                "market": market,
+                "baseLow": base_low,
+                "baseHigh": base_high,
+                "baseMid": base_mid,
+                "baseWidthPct": round((band / max(best["baseMid"], 1e-10)) * 100.0, 1),
+                "baseWindow": base_window,
+                "baseEndBarsAgo": base_end_bars_ago,
+                "pricePositionPct": price_pos,
+                "distanceToBaseHighPct": round(((best["baseHigh"] - price) / max(price, 1e-10)) * 100.0, 2),
+                "distanceToBaseLowPct": round(((price - best["baseLow"]) / max(price, 1e-10)) * 100.0, 2),
+                "excursionPct": round(((price - best["baseHigh"]) / max(best["baseHigh"], 1e-10)) * 100.0, 2) if price > best["baseHigh"] else 0.0,
+                "driftPct": best["driftPct"],
+                "midCrossings": best["crossings"],
+                "upperTouches": best["upperTouches"],
+                "lowerTouches": best["lowerTouches"],
+                "atrBaseRatio": best["atrBaseRatio"],
+                "atrState": best["atrState"],
+                "volumeBaseRatio": best["volumeBaseRatio"],
+                "volumeState": best["volumeState"],
+                "drawdownFromHighPct": round(drawdown, 1),
+                "windowHigh": round(window_high, 8),
+                "breakoutBarsAgo": breakout_bars_ago,
+                "breakoutVolumeRatio": breakout_vol_ratio,
+                "status": status,
+                "baseScore": score,
+                "baseGrade": grade,
+                "sparkline": sparkline,
+            })
+        except Exception as e:
+            errors += 1
+            print(f"[DEBUG] base_scan {sym} error: {e}")
+            continue
+
+    results.sort(key=lambda x: (-x["baseScore"], -x["drawdownFromHighPct"]))
+    print(f"[DEBUG] base_scan results={len(results)} errors={errors}")
+
+    if _tok_uid:
+        try: consume_tokens(_tok_uid, len(symbols))
+        except Exception as _te: print(f"[Tokens] base: {_te}")
+
+    return jsonify({
+        "ok": True,
+        "scanned": len(symbols),
+        "results": results,
+        "errors": errors,
+        "timeframe": tf,
+        "market": market,
+        "exchange": exchange,
+        "baseWindow": base_window,
         "usedClosedCandles": True,
     })
 
