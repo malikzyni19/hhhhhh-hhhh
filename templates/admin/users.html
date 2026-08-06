@@ -395,28 +395,50 @@ code, .mono { font-family: 'JetBrains Mono', monospace !important; }
   <a href="{{ url_for('admin.users_create') }}" class="adm-btn-cyan">+ Add User</a>
 </div>
 
-<!-- Search + filter bar -->
+<!-- Search + filter bar (server-side: search spans ALL pages, not just this one) -->
 <div class="adm-card" style="margin-bottom:20px">
   <div class="adm-card-body" style="padding:14px 18px">
-    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-      <input id="userSearch" type="text" placeholder="Search username…"
+    <form method="GET" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      {% if status_filter %}<input type="hidden" name="status" value="{{ status_filter }}">{% endif %}
+      {% if role_filter %}<input type="hidden" name="role" value="{{ role_filter }}">{% endif %}
+
+      <input id="userSearch" type="text" name="q" value="{{ search or '' }}"
+             placeholder="Search username or email…"
              style="flex:1;min-width:180px;background:#04090f;color:var(--text);border:1.5px solid var(--border);border-radius:9px;padding:9px 14px;font-family:'Poppins',sans-serif;font-size:13px;outline:none;transition:border-color .2s"
-             onfocus="this.style.borderColor='rgba(34,211,238,.4)'" onblur="this.style.borderColor='var(--border)'"
-             oninput="filterUsers(this.value)"/>
+             onfocus="this.style.borderColor='rgba(34,211,238,.4)'" onblur="this.style.borderColor='var(--border)'"/>
+
+      <select name="sort" onchange="this.form.submit()"
+              style="background:#04090f;color:var(--text);border:1.5px solid var(--border);border-radius:9px;padding:9px 12px;font-size:12.5px;outline:none">
+        {% for v, lbl in [('created_desc','Newest first'),('created_asc','Oldest first'),
+                          ('username','Username A–Z'),('last_login','Recently active')] %}
+          <option value="{{ v }}" {% if sort == v %}selected{% endif %}>{{ lbl }}</option>
+        {% endfor %}
+      </select>
+
+      <button type="submit" class="adm-btn-cyan" style="padding:9px 18px">Search</button>
+      {% if search %}
+        <a href="{{ url_for('admin.users', status=status_filter, role=role_filter) }}"
+           class="adm-filter-pill">Clear</a>
+      {% endif %}
+
       <div style="display:flex;gap:6px;flex-wrap:wrap">
-        <a href="{{ url_for('admin.users') }}"                      class="adm-filter-pill {% if not status_filter and not role_filter %}active{% endif %}">All</a>
-        <a href="{{ url_for('admin.users', status='active') }}"     class="adm-filter-pill {% if status_filter=='active'  %}active{% endif %}">Active</a>
-        <a href="{{ url_for('admin.users', status='paused') }}"     class="adm-filter-pill {% if status_filter=='paused'  %}active{% endif %}">Paused</a>
-        <a href="{{ url_for('admin.users', role='admin') }}"        class="adm-filter-pill {% if role_filter=='admin'     %}active{% endif %}">Admins</a>
-        <a href="{{ url_for('admin.users', role='user') }}"         class="adm-filter-pill {% if role_filter=='user'      %}active{% endif %}">Users</a>
+        <a href="{{ url_for('admin.users', q=search, sort=sort) }}"                      class="adm-filter-pill {% if not status_filter and not role_filter %}active{% endif %}">All</a>
+        <a href="{{ url_for('admin.users', status='active', q=search, sort=sort) }}"     class="adm-filter-pill {% if status_filter=='active'  %}active{% endif %}">Active</a>
+        <a href="{{ url_for('admin.users', status='paused', q=search, sort=sort) }}"     class="adm-filter-pill {% if status_filter=='paused'  %}active{% endif %}">Paused</a>
+        <a href="{{ url_for('admin.users', role='admin', q=search, sort=sort) }}"        class="adm-filter-pill {% if role_filter=='admin'     %}active{% endif %}">Admins</a>
+        <a href="{{ url_for('admin.users', role='user', q=search, sort=sort) }}"         class="adm-filter-pill {% if role_filter=='user'      %}active{% endif %}">Users</a>
       </div>
-    </div>
+    </form>
   </div>
 </div>
 
 <!-- Bulk actions bar (visible when rows are selected) -->
 <div id="bulkBar">
   <span class="bulk-count" id="bulkCount">0 users selected</span>
+  <button class="bulk-btn bulk-btn-clear" onclick="bulkAction('status','active')">Activate</button>
+  <button class="bulk-btn bulk-btn-clear" onclick="bulkAction('status','paused')">Pause</button>
+  <button class="bulk-btn bulk-btn-clear" onclick="bulkAction('role','user')">Set role: user</button>
+  <button class="bulk-btn bulk-btn-clear" onclick="bulkAction('role','guest')">Set role: guest</button>
   <button class="bulk-btn bulk-btn-del" onclick="openBulkDelModal()">
     <i class="fa-solid fa-trash-can" style="font-family:unset;font-size:11px"></i> Delete Selected
   </button>
@@ -523,6 +545,34 @@ code, .mono { font-family: 'JetBrains Mono', monospace !important; }
       </tbody>
     </table>
   </div>
+
+  {% if pagination and pagination.pages > 1 %}
+  <div class="adm-pager">
+    <div>
+      Showing {{ pagination.items | length }} of {{ pagination.total }}
+      · page {{ pagination.page }} of {{ pagination.pages }}
+    </div>
+    <div class="adm-pager-links">
+      {% if pagination.has_prev %}
+        <a href="{{ url_for('admin.users', page=pagination.prev_num, status=status_filter, role=role_filter, q=search, sort=sort) }}">‹ Prev</a>
+      {% endif %}
+      {% for p in pagination.iter_pages(left_edge=1, right_edge=1, left_current=2, right_current=2) %}
+        {% if p %}
+          {% if p == pagination.page %}
+            <span class="cur">{{ p }}</span>
+          {% else %}
+            <a href="{{ url_for('admin.users', page=p, status=status_filter, role=role_filter, q=search, sort=sort) }}">{{ p }}</a>
+          {% endif %}
+        {% else %}
+          <span class="gap">…</span>
+        {% endif %}
+      {% endfor %}
+      {% if pagination.has_next %}
+        <a href="{{ url_for('admin.users', page=pagination.next_num, status=status_filter, role=role_filter, q=search, sort=sort) }}">Next ›</a>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
 </div>
 
 <!-- ══ DETAIL DRAWER ══ -->
@@ -596,6 +646,11 @@ code, .mono { font-family: 'JetBrains Mono', monospace !important; }
     <button id="drawerDelBtn" class="drawer-btn drawer-btn-del" onclick="openDelModalFromDrawer()">
       <i class="fa-solid fa-trash-can" style="font-family:unset;font-size:12px"></i> Delete User
     </button>
+    <form method="POST" id="impersonateForm" style="display:none;margin-top:8px">
+      <button type="submit" class="drawer-btn" style="width:100%;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.28);color:var(--amber)">
+        <i class="fa-solid fa-eye" style="font-family:unset;font-size:12px"></i> View as this user
+      </button>
+    </form>
   </div>
 </div>
 
@@ -668,11 +723,47 @@ let _delUsername    = null;
 /* ══════════════════════════════════════════════════════
    SEARCH FILTER
 ══════════════════════════════════════════════════════ */
-function filterUsers(q) {
-  q = q.toLowerCase();
-  document.querySelectorAll('.user-row').forEach(row => {
-    row.style.display = row.dataset.username.toLowerCase().includes(q) ? '' : 'none';
-  });
+/* Search is server-side now (see the GET form above) so it spans every page,
+   not just the rows currently rendered. */
+
+function clearSelection() {
+  document.querySelectorAll('.row-check').forEach(cb => cb.checked = false);
+  const all = document.getElementById('checkAll');
+  if (all) { all.checked = false; all.indeterminate = false; }
+  onRowCheck();
+}
+
+async function bulkAction(action, value) {
+  const ids = getCheckedIds();
+  if (!ids.length) return;
+
+  const label = action === 'status'
+    ? `set status to "${value}"`
+    : `change role to "${value}"`;
+  if (!confirm(`Apply to ${ids.length} user(s): ${label}?`)) return;
+
+  const bar = document.getElementById('bulkBar');
+  bar.querySelectorAll('button').forEach(b => b.disabled = true);
+
+  try {
+    const resp = await fetch('/admin/users/bulk-action', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ ids, action, value })
+    });
+    const j = await resp.json();
+    if (!j.ok) {
+      const msgs = {
+        last_admin:         'That would leave no active admin account.',
+        cannot_modify_self: 'You cannot change your own account here.',
+      };
+      throw new Error(msgs[j.error] || j.error || 'request failed');
+    }
+    location.reload();
+  } catch (e) {
+    alert('Bulk action failed: ' + e.message);
+    bar.querySelectorAll('button').forEach(b => b.disabled = false);
+  }
 }
 
 /* ══════════════════════════════════════════════════════
@@ -745,6 +836,15 @@ function populateDrawer(d) {
   // hide delete btn for self or show it
   const delBtn = document.getElementById('drawerDelBtn');
   delBtn.style.display = d.is_self ? 'none' : 'flex';
+
+  // impersonation — never offered for yourself or for another admin
+  const impForm = document.getElementById('impersonateForm');
+  if (!d.is_self && d.role !== 'admin') {
+    impForm.action = '/admin/users/' + d.id + '/impersonate';
+    impForm.style.display = 'block';
+  } else {
+    impForm.style.display = 'none';
+  }
 
   // hide skeleton, reveal content
   skel.style.display    = 'none';
@@ -912,13 +1012,6 @@ function onRowCheck() {
 function toggleSelectAll(master) {
   document.querySelectorAll('.row-check[data-id]:not(:disabled)')
           .forEach(cb => cb.checked = master.checked);
-  onRowCheck();
-}
-
-function clearSelection() {
-  document.querySelectorAll('.row-check').forEach(cb => cb.checked = false);
-  document.getElementById('checkAll').checked       = false;
-  document.getElementById('checkAll').indeterminate = false;
   onRowCheck();
 }
 

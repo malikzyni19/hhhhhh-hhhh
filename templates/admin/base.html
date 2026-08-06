@@ -73,11 +73,82 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 .badge.blue{background:rgba(59,130,246,.12);color:var(--blue);border:1px solid rgba(59,130,246,.2)}
 .badge.cyan{background:rgba(34,211,238,.1);color:var(--cyan);border:1px solid rgba(34,211,238,.2)}
 
+/* ── Nav groups + sub-items ── */
+.adm-nav-group{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted2);padding:8px 20px 4px;font-weight:700}
+.adm-nav-sub{padding-left:32px;font-size:11px}
+
+/* ── Flash messages ── */
+.adm-flash{display:flex;align-items:flex-start;gap:10px;padding:11px 14px;border-radius:8px;font-size:12px;margin-bottom:16px;line-height:1.5}
+.adm-flash-icon{font-weight:700;flex-shrink:0}
+.adm-flash.success{background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.3);color:var(--green)}
+.adm-flash.error{background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.3);color:var(--red)}
+.adm-flash.warn{background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);color:var(--amber)}
+
+/* ── Buttons ── */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:7px;font-size:11.5px;font-weight:600;letter-spacing:.4px;cursor:pointer;border:1px solid transparent;transition:all .15s;text-decoration:none;font-family:inherit}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn-primary{background:rgba(34,211,238,.12);border-color:rgba(34,211,238,.3);color:var(--cyan)}
+.btn-primary:hover:not(:disabled){background:rgba(34,211,238,.22)}
+.btn-danger{background:rgba(248,113,113,.1);border-color:rgba(248,113,113,.28);color:var(--red)}
+.btn-danger:hover:not(:disabled){background:rgba(248,113,113,.2)}
+.btn-ghost{background:transparent;border-color:var(--border);color:var(--muted)}
+.btn-ghost:hover:not(:disabled){color:var(--text);border-color:var(--muted2)}
+.btn-sm{padding:4px 10px;font-size:10.5px}
+
+/* ── Form controls ── */
+.inp{width:100%;background:#04090f;border:1px solid var(--border);border-radius:7px;padding:8px 11px;color:var(--text);font-size:12px;font-family:inherit;transition:border-color .15s}
+.inp:focus{outline:none;border-color:rgba(34,211,238,.45)}
+.lbl{display:block;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted2);font-weight:600;margin-bottom:6px}
+.field{margin-bottom:14px}
+
+/* ── Toolbar ── */
+.adm-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:16px}
+.adm-toolbar .inp{width:auto;min-width:200px;flex:1}
+
+/* ── Sticky table headers + scroll cap ── */
+.adm-table-wrap.scroll{max-height:560px;overflow-y:auto}
+.adm-table-wrap.scroll .adm-table th{position:sticky;top:0;background:var(--bg3);z-index:2}
+
+/* ── Pagination ── */
+.adm-pager{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 18px;border-top:1px solid var(--border);font-size:11.5px;color:var(--muted);flex-wrap:wrap}
+.adm-pager-links{display:flex;gap:6px;flex-wrap:wrap}
+.adm-pager-links a,.adm-pager-links span{padding:4px 9px;border-radius:6px;border:1px solid var(--border);color:var(--muted);text-decoration:none;font-family:'JetBrains Mono',monospace;font-size:11px}
+.adm-pager-links a:hover{color:var(--cyan);border-color:rgba(34,211,238,.35)}
+.adm-pager-links .cur{background:rgba(34,211,238,.12);border-color:rgba(34,211,238,.35);color:var(--cyan);font-weight:700}
+.adm-pager-links .gap{border:none}
+
+/* ── Meter bars ── */
+.meter{height:7px;background:#04090f;border:1px solid var(--border);border-radius:99px;overflow:hidden}
+.meter-fill{height:100%;border-radius:99px;transition:width .4s}
+.meter-fill.green{background:var(--green)}
+.meter-fill.amber{background:var(--amber)}
+.meter-fill.red{background:var(--red)}
+.meter-fill.cyan{background:var(--cyan)}
+
 /* ── Mobile ── */
 .adm-mob-toggle{display:none;position:fixed;top:12px;left:14px;z-index:100;background:var(--bg3);border:1px solid var(--border);color:var(--cyan);width:32px;height:32px;border-radius:7px;font-size:16px;cursor:pointer;align-items:center;justify-content:center}
+@media(max-width:1100px){
+  .adm-sidebar{width:64px}
+  .adm-sidebar .adm-nav-item{padding:11px 0;justify-content:center;gap:0}
+  .adm-sidebar .adm-nav-item span:not(.adm-nav-icon){display:none}
+  .adm-sidebar .adm-nav-item{font-size:0}
+  .adm-sidebar .adm-nav-icon{font-size:15px}
+  .adm-nav-group,.adm-sidebar-logo-badge{display:none}
+  .adm-sidebar-logo{padding:16px 8px;text-align:center}
+  .adm-sidebar-logo-text{font-size:11px;letter-spacing:0}
+  .adm-topbar{left:64px}
+  .adm-main{margin-left:64px}
+}
 @media(max-width:768px){
-  .adm-sidebar{transform:translateX(-220px)}
+  .adm-sidebar{width:220px;transform:translateX(-220px)}
   .adm-sidebar.open{transform:translateX(0)}
+  .adm-sidebar .adm-nav-item{padding:10px 20px;justify-content:flex-start;gap:10px;font-size:12px}
+  .adm-sidebar .adm-nav-item span:not(.adm-nav-icon){display:inline}
+  .adm-sidebar .adm-nav-sub{padding-left:32px;font-size:11px}
+  .adm-nav-group{display:block}
+  .adm-sidebar-logo{padding:20px 20px 16px;text-align:left}
+  .adm-sidebar-logo-text{font-size:16px;letter-spacing:2px}
+  .adm-sidebar-logo-badge{display:inline-block}
   .adm-topbar{left:0;padding:0 14px 0 52px}
   .adm-main{margin-left:0;padding:14px}
   .adm-mob-toggle{display:flex}
@@ -113,19 +184,43 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <a href="{{ url_for('admin.settings') }}" class="adm-nav-item {% if request.endpoint == 'admin.settings' %}active{% endif %}">
         <span class="adm-nav-icon">⚙</span>Settings
       </a>
-      <a href="{{ url_for('admin.role_edit', role='admin') }}" class="adm-nav-item" style="padding-left:32px;font-size:11px" {% if request.endpoint == 'admin.role_edit' and request.view_args.get('role') == 'admin' %}style="padding-left:32px;font-size:11px;color:var(--cyan)"{% endif %}>
-        <span class="adm-nav-icon">👑</span>Admin Role
+      {% for r, ricon, rlabel in [('admin','👑','Admin Role'), ('user','👤','User Role'), ('guest','👥','Guest Role')] %}
+      <a href="{{ url_for('admin.role_edit', role=r) }}"
+         class="adm-nav-item adm-nav-sub {% if request.endpoint == 'admin.role_edit' and request.view_args.get('role') == r %}active{% endif %}">
+        <span class="adm-nav-icon">{{ ricon }}</span>{{ rlabel }}
       </a>
-      <a href="{{ url_for('admin.role_edit', role='user') }}" class="adm-nav-item" style="padding-left:32px;font-size:11px" {% if request.endpoint == 'admin.role_edit' and request.view_args.get('role') == 'user' %}style="padding-left:32px;font-size:11px;color:var(--cyan)"{% endif %}>
-        <span class="adm-nav-icon">👤</span>User Role
-      </a>
-      <a href="{{ url_for('admin.role_edit', role='guest') }}" class="adm-nav-item" style="padding-left:32px;font-size:11px" {% if request.endpoint == 'admin.role_edit' and request.view_args.get('role') == 'guest' %}style="padding-left:32px;font-size:11px;color:var(--cyan)"{% endif %}>
-        <span class="adm-nav-icon">👥</span>Guest Role
-      </a>
+      {% endfor %}
+
       <div class="adm-nav-sep"></div>
-      <a href="#" class="adm-nav-item">
-        <span class="adm-nav-icon">📋</span>Logs
+      <div class="adm-nav-group">Screener</div>
+      <a href="{{ url_for('admin.sys_database') }}" class="adm-nav-item {% if request.endpoint == 'admin.sys_database' %}active{% endif %}">
+        <span class="adm-nav-icon">🗄</span>Database Usage
       </a>
+      <a href="{{ url_for('admin.sys_signals') }}" class="adm-nav-item {% if request.endpoint == 'admin.sys_signals' %}active{% endif %}">
+        <span class="adm-nav-icon">🎯</span>Signal Accuracy
+      </a>
+      <a href="{{ url_for('admin.sys_live_monitor') }}" class="adm-nav-item {% if request.endpoint == 'admin.sys_live_monitor' %}active{% endif %}">
+        <span class="adm-nav-icon">📡</span>Live Monitor
+      </a>
+      <a href="{{ url_for('admin.sys_exchanges') }}" class="adm-nav-item {% if request.endpoint == 'admin.sys_exchanges' %}active{% endif %}">
+        <span class="adm-nav-icon">🔌</span>Exchanges
+      </a>
+      <a href="{{ url_for('admin.sys_presets') }}" class="adm-nav-item {% if request.endpoint == 'admin.sys_presets' %}active{% endif %}">
+        <span class="adm-nav-icon">🎚</span>Scan Presets
+      </a>
+      <a href="{{ url_for('admin.sys_email') }}" class="adm-nav-item {% if request.endpoint == 'admin.sys_email' %}active{% endif %}">
+        <span class="adm-nav-icon">✉</span>Email Health
+      </a>
+
+      <div class="adm-nav-sep"></div>
+      <div class="adm-nav-group">Security</div>
+      <a href="{{ url_for('admin.security_page') }}" class="adm-nav-item {% if request.endpoint == 'admin.security_page' %}active{% endif %}">
+        <span class="adm-nav-icon">🛡</span>Bot Cleanup
+      </a>
+      <a href="{{ url_for('admin.logs') }}" class="adm-nav-item {% if request.endpoint == 'admin.logs' %}active{% endif %}">
+        <span class="adm-nav-icon">📋</span>Audit Logs
+      </a>
+
       <div class="adm-nav-sep"></div>
       <a href="/" class="adm-nav-item">
         <span class="adm-nav-icon">←</span>Back to Screener
@@ -137,16 +232,26 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
   <header class="adm-topbar">
     <div class="adm-topbar-title">{% block page_title %}Dashboard{% endblock %}</div>
     <div class="adm-topbar-right">
-      <div class="adm-topbar-user">Logged in as <span>{{ current_user.username }}</span></div>
+      <div class="adm-topbar-user">Logged in as <span>{{ session.get('emergency_admin') and 'emergency-admin' or (current_user.username if current_user.is_authenticated else '—') }}</span></div>
       <a href="{{ url_for('admin.logout') }}" class="adm-topbar-logout">Logout</a>
     </div>
   </header>
 
   <!-- Main -->
   <main class="adm-main">
+    {% if session.get('emergency_admin') %}
+      <div class="adm-flash warn">
+        <span class="adm-flash-icon">!</span>
+        <span><strong>Emergency access mode.</strong> The database is unreachable, so pages that read or write data will be empty or fail. Restore the database connection to use the full panel.</span>
+      </div>
+    {% endif %}
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% for cat, msg in messages %}
-        <div style="background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.3);color:var(--green);padding:10px 14px;border-radius:8px;font-size:12px;margin-bottom:16px">{{ msg }}</div>
+        {% set c = 'error' if cat in ('error','danger') else ('warn' if cat == 'warning' else 'success') %}
+        <div class="adm-flash {{ c }}">
+          <span class="adm-flash-icon">{% if c == 'error' %}✕{% elif c == 'warn' %}!{% else %}✓{% endif %}</span>
+          <span>{{ msg }}</span>
+        </div>
       {% endfor %}
     {% endwith %}
     {% block content %}{% endblock %}
