@@ -2479,6 +2479,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   var DEFAULT_MODE_OPTIONS = {
     ath_atl: { mode:"both", status:"near_level", windowHours:24, breakTolPct:0.10, nearPct:3.0 },
     compressed: { tf:"4h", lookback:30, maxPct:5.0 },
+    base: { tf:"1d", scope:"market", baseWindow:180, minDrawdownPct:60, maxDriftPct:25, maxBreakoutAge:30 },
     trending: { tf:"4h", mode:"bullish" },
     bias: {
       tf:"1d", mode:"normal",
@@ -2544,6 +2545,9 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       { type:"select", key:"tf", label:"Timeframe",
         options:[["1d","1d"],["1w","1w · Binance"]],
         help:"Daily or weekly only — accumulation bases run for months." },
+      { type:"select", key:"scope", label:"Scope",
+        options:[["market","Top 80 by volume"],["selected","Selected (watchlist)"]],
+        help:"Bases form in beaten-down low-caps, which rarely sit in the top 80 by volume. Star the pairs you care about and switch to Selected to scan them directly." },
       { type:"num", key:"baseWindow", label:"Base window",
         help:"Length of the base in CANDLES. ~180 for a mid-length daily base; drop to 40-60 on 1w." },
       { type:"num", key:"minDrawdownPct", label:"Min drawdown %", step:1,
@@ -2787,8 +2791,13 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     }
     if(ST.mode==="base"){
       var b=ST.modeOptions.base||{};
+      var bWatch=Object.keys(ST.stars).filter(function(s){return ST.stars[s];});
+      var bScope=b.scope||"market";
+      // Starred nothing but asked for Selected → fall back to market scope.
+      if(bScope==="selected" && !bWatch.length) bScope="market";
       return {url:"/api/base_scan", body:{
         timeframe:b.tf||"1d", market:market, exchange:ST.exchange,
+        symbols: bScope==="selected" ? bWatch : [],
         baseWindow:+b.baseWindow||180,
         minDrawdownPct:(b.minDrawdownPct!=null?+b.minDrawdownPct:60),
         maxDriftPct:+b.maxDriftPct||25,
