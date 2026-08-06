@@ -35044,6 +35044,8 @@ def _rb_config(tf: str, overrides: dict | None = None) -> dict:
         "localLookback":     2,               # candles before the pierce for local liquidity
         "minBlockHeightPct": 0.02,            # reject degenerate/hairline zones
         "sweepSources":      ["swing", "local"],
+        "volSweepMult":      1.5,             # sweep volume vs 20-candle average
+        "volRetestMax":      0.7,             # retest should arrive on LOWER volume
     })
     if overrides:
         base.update({k: v for k, v in overrides.items() if v is not None})
@@ -35337,6 +35339,185 @@ def _rb_dedupe(blocks: list, overlap_thresh: float = 0.5) -> list:
     kept.sort(key=lambda x: x["formedIndex"], reverse=True)
     return kept
 
+
+def _rb_is_dead(blk: dict) -> bool:
+    """A block that can no longer be traded: spent, broken, stale or far away."""
+    return (blk["state"] in ("invalidated", "mitigated")
+            or blk["expired"] or blk["far"])
+
+
+def _score_rejection_block(blk: dict, cfg: dict, volume_mode: str) -> dict:
+    """Score 0-100 with a readable breakdown, graded by _grade_from_score.
+
+    Weighting: sweep quality 25, formation tightness 15, volume 20,
+    lifecycle state 25, freshness 15. Freshness is a component here rather
+    than a multiplier applied on top, so age is never counted twice.
+    """
+    pts = 0
+    bd: list[str] = []
+
+    # ── Sweep quality (25) ────────────────────────────────────────────────
+    if blk["sweepSource"] == "swing":
+        pts += 15; bd.append("+15 swept a confirmed swing level")
+    else:
+        pts += 8;  bd.append("+8 swept a local extreme")
+
+    depth = blk["sweepDepthPct"]
+    if cfg["sweepMinPct"] <= depth <= 2.0:
+        pts += 10; bd.append(f"+10 sweep depth {depth:.2f}% in range")
+    else:
+        pts += 4;  bd.append(f"+4 sweep depth {depth:.2f}% outside ideal range")
+
+    # ── Formation tightness (15) ──────────────────────────────────────────
+    bc = blk["blockCandles"]
+    if bc <= 3:
+        pts += 15; bd.append(f"+15 tight {bc}-candle formation")
+    elif bc <= 5:
+        pts += 9;  bd.append(f"+9 {bc}-candle formation")
+    else:
+        pts += 4;  bd.append(f"+4 slow {bc}-candle formation")
+
+    # ── Volume (20) ───────────────────────────────────────────────────────
+    vol = blk.get("volume") or {}
+    sr  = vol.get("sweepRatio")
+    rr  = vol.get("reclaimRatio")
+    tr  = None
+    for r in reversed(blk.get("retests") or []):
+        if r.get("volRatio") is not None:
+            tr = r["volRatio"]
+            break
+
+    if volume_mode == "off":
+        pts += 10; bd.append("+10 volume scoring off (neutral credit)")
+    else:
+        if sr is not None and sr >= cfg["volSweepMult"]:
+            pts += 8;  bd.append(f"+8 sweep volume {sr:.1f}x average")
+        elif sr is not None and sr < 0.8:
+            pts -= 10; bd.append(f"-10 dead sweep, volume only {sr:.1f}x average")
+        if sr is not None and rr is not None and rr >= sr:
+            pts += 5;  bd.append(f"+5 reclaim absorbed the sweep ({rr:.1f}x)")
+        if tr is not None and tr <= cfg["volRetestMax"]:
+            pts += 7;  bd.append(f"+7 dry retest, volume {tr:.1f}x average")
+
+    # ── Lifecycle state (25) ──────────────────────────────────────────────
+    state_pts = {"respected": 25, "fresh": 18, "tested": 12,
+                 "mitigated": 5, "invalidated": 0}
+    st = blk["state"]
+    pts += state_pts.get(st, 10)
+    bd.append(f"+{state_pts.get(st, 10)} state: {st}")
+
+    # ── Freshness (15) ────────────────────────────────────────────────────
+    fp = int(round(15 * blk["freshness"]))
+    pts += fp
+    bd.append(f"+{fp} freshness {blk['freshness']:.2f} ({blk['ageCandles']} candles old)")
+
+    score = max(0, min(100, pts))
+    return {"score": score, "breakdown": bd,
+            "volumeRatios": {"sweep": sr, "reclaim": rr, "retest": tr}}
+
+
+def _rb_reason_chain(blk: dict, tf: str) -> list:
+    """Human-readable account of how the block formed and what happened since."""
+    is_bull = blk["direction"] == "bullish"
+    side    = "low" if is_bull else "high"
+    chain = [
+        f"Swept the {blk['sweepSource']} {side} at {blk['sweptLevel']:.6f}"
+        f" by {blk['sweepDepthPct']:.2f}%",
+        f"Reclaimed the level and confirmed over {blk['blockCandles']} candles",
+        f"Rejection block zone {blk['rbLow']:.6f} - {blk['rbHigh']:.6f}"
+        f" (wick to body, {blk['heightPct']:.2f}% tall)",
+    ]
+    vol = blk.get("volume") or {}
+    if vol.get("sweepRatio") is not None:
+        chain.append(f"Sweep volume {vol['sweepRatio']:.1f}x the 20-candle average")
+    if blk["retestCount"]:
+        resp = blk["respectedCount"]
+        chain.append(f"{blk['retestCount']} retest(s), {resp} respected")
+        last = blk["retests"][-1] if blk["retests"] else None
+        if last and last.get("volRatio") is not None:
+            chain.append(f"Latest retest volume {last['volRatio']:.1f}x average")
+    else:
+        chain.append("Not retested yet — zone is untouched")
+    chain.append(
+        f"Invalidation: close {'below' if is_bull else 'above'}"
+        f" {(blk['rbLow'] if is_bull else blk['rbHigh']):.6f}")
+    chain.append(f"Suggested confirmation TF: {_suggested_conf_tf(tf)}")
+    return chain
+
+
+def _rb_build_row(blk: dict, sym: str, tf: str, cfg: dict, volume_mode: str,
+                  closes: list, current_price: float | None) -> dict:
+    """Shape a block into the same row contract the Bias Shift tab already uses.
+
+    Keeping score / grade / reasonChain / invalidation* identical to bias rows
+    means the table, insight panel, alert mapper and Live Monitor payload all
+    work without a parallel code path.
+    """
+    is_bull  = blk["direction"] == "bullish"
+    scored   = _score_rejection_block(blk, cfg, volume_mode)
+    score    = scored["score"]
+    graded   = _grade_from_score(score)
+    inv_level = blk["rbLow"] if is_bull else blk["rbHigh"]
+
+    px = current_price if current_price is not None else closes[-1]
+    closed_inv = blk["state"] == "invalidated"
+    live_br    = (px < inv_level) if is_bull else (px > inv_level)
+    if closed_inv:
+        inv_status = "closed_invalidated"
+    elif live_br:
+        inv_status = "live_breached"
+    else:
+        inv_status = "valid"
+    dist_pct = (round((px - inv_level) / px * 100, 4) if is_bull
+                else round((inv_level - px) / px * 100, 4)) if px else None
+
+    confidence = "Strong" if score >= 85 else "Moderate" if score >= 65 else "Weak"
+    label = "Bullish Rejection Block" if is_bull else "Bearish Rejection Block"
+
+    return {
+        "detector":      "rejection_block",
+        "symbol":        sym,
+        "price":         round(closes[-1], 8),
+        "currentPrice":  current_price,
+        "timeframe":     tf,
+        "bias":          blk["direction"],
+        "direction":     blk["direction"],
+        "biasDirection": blk["direction"],
+        "signal":        "REJECTION_BLOCK",
+        "setupType":     label,
+        "pattern":       f"{label} · {blk['sweepSource']} sweep",
+        "detail": (
+            f"Zone {blk['rbLow']:.6f}-{blk['rbHigh']:.6f}"
+            f" · {blk['state']}"
+            f" · {blk['retestCount']} retest(s)"
+            f" · Grade {graded['grade']} ({score})"
+            f" · {blk['ageCandles']}c old"
+        ),
+        "score":          score,
+        "grade":          graded["grade"],
+        "gradeLabel":     graded["gradeLabel"],
+        "scoreBreakdown": scored["breakdown"],
+        "confidence":     confidence,
+        # lifecycle state doubles as the confirmation column the tab renders
+        "confirmationStatus": "confirmed" if blk["state"] == "respected"
+                              else "early_unconfirmed",
+        "invalidationLevel":        inv_level,
+        "invalidationText": (f"Invalid below {inv_level:.6f}" if is_bull
+                             else f"Invalid above {inv_level:.6f}"),
+        "invalidationStatus":       inv_status,
+        "invalidationBreachedLive": bool(live_br and not closed_inv),
+        "invalidationClosed":       closed_inv,
+        "invalidationDistancePct":  dist_pct,
+        "signalCandleTime":         blk["formedAt"],
+        "signalCandleOffset":       blk["ageCandles"],
+        "suggestedConfirmationTf":  _suggested_conf_tf(tf),
+        "reasonChain":              _rb_reason_chain(blk, tf),
+        "sparkline": [float(closes[i]) for i in range(max(0, len(closes) - 24), len(closes))],
+        "zoneHigh": blk["rbHigh"],
+        "zoneLow":  blk["rbLow"],
+        "rb":       blk,
+    }
+
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -35361,6 +35542,23 @@ def api_bias_scan():
     volume_filter_mode = payload.get("volumeFilter", "optional")
     use_volume_filter  = volume_filter_mode == "required"
     vol_multiplier     = float(payload.get("volumeMultiplier", 1.5))
+
+    # ── Rejection Block sub-detector ──────────────────────────────────────
+    # Runs on the candles this scan already fetched, so it costs CPU only.
+    _rb_payload   = payload.get("rejectionBlock") or {}
+    rb_enabled    = bool(_rb_payload.get("enabled", False))
+    rb_signal_mode = _rb_payload.get("signalMode", "formation")   # formation | retest
+    rb_include_dead = bool(_rb_payload.get("includeDead", False))
+    rb_volume_mode  = _rb_payload.get("volumeMode", "optional")   # off | optional | required
+    rb_overrides = {
+        k: _rb_payload.get(k) for k in (
+            "sweepMinPct", "maxAgeCandles", "maxTouches", "reclaimWindow",
+            "confirmWindow", "maxDistanceAtr", "localLookback",
+            "minBlockHeightPct", "sweepSources", "volSweepMult", "volRetestMax",
+            "swingLeft", "swingRight",
+        ) if _rb_payload.get(k) is not None
+    }
+    rb_cfg = _rb_config(tf, rb_overrides) if rb_enabled else None
 
     if bias_mode == "normal":
         # Fix #2: presets set candle-quality params only; detectionMode stays from payload
@@ -35438,7 +35636,14 @@ def api_bias_scan():
         }), 400
 
     results = []
+    rb_rows: list = []          # rejection-block rows, merged in before filtering
     fetch_limit = prior_move_n + signal_search_n + 30
+    if rb_enabled and rb_cfg:
+        # Blocks need swing lookback + the whole age budget + room to walk the
+        # lifecycle forward. Without this they silently vanish at the window edge.
+        fetch_limit = max(fetch_limit,
+                          rb_cfg["swingLeft"] + rb_cfg["swingRight"]
+                          + rb_cfg["maxAgeCandles"] + 60)
 
     diagnostics: dict = {
         "symbolsRequested":         len(symbols),
@@ -35480,8 +35685,20 @@ def api_bias_scan():
             "priorMoveCandles": prior_move_n,
             "signalSearchCandles": signal_search_n,
             "signalSearchFloorApplied": signal_search_floor_applied,
+            "rejectionBlockEnabled":    rb_enabled,
+            "rejectionBlockSignalMode": rb_signal_mode if rb_enabled else None,
+            "rejectionBlockVolumeMode": rb_volume_mode if rb_enabled else None,
         },
     }
+    if rb_enabled:
+        diagnostics["rejectionBlocks"] = {
+            "detected":   0,   # raw formations found
+            "dead":       0,   # invalidated / mitigated / expired / ran away
+            "signalMode": 0,   # dropped by the formation vs retest toggle
+            "volume":     0,   # dropped by volumeMode = required
+            "returned":   0,   # survived into the results list
+            "byState":    {},
+        }
 
     # Network is the bottleneck here — fetch every symbol's candles in parallel
     # (same worker count as /api/scan), then analyse sequentially because the
@@ -35529,6 +35746,34 @@ def api_bias_scan():
             avg_vol = sum(v[n - vol_lb:n]) / max(vol_lb, 1) if vol_lb > 0 else 0
 
             diagnostics["symbolsScanned"] += 1
+
+            # ── Rejection Block sub-detector ──────────────────────────────
+            # Independent of the bias-shift search below: a symbol can have a
+            # rejection block without a bias shift and vice versa.
+            if rb_enabled and rb_cfg:
+                _rbd = diagnostics["rejectionBlocks"]
+                for _blk in _detect_rejection_blocks(o, h, l, c, v, ts, tf,
+                                                     cfg=rb_cfg,
+                                                     current_price=current_price):
+                    _rbd["detected"] += 1
+                    _rbd["byState"][_blk["state"]] = _rbd["byState"].get(_blk["state"], 0) + 1
+
+                    if not rb_include_dead and _rb_is_dead(_blk):
+                        _rbd["dead"] += 1
+                        continue
+                    # "retest" only wants blocks price has actually returned to
+                    if rb_signal_mode == "retest" and _blk["retestCount"] < 1:
+                        _rbd["signalMode"] += 1
+                        continue
+                    if rb_volume_mode == "required":
+                        _sr = (_blk.get("volume") or {}).get("sweepRatio")
+                        if _sr is None or _sr < rb_cfg["volSweepMult"]:
+                            _rbd["volume"] += 1
+                            continue
+                    rb_rows.append(_rb_build_row(_blk, sym, tf, rb_cfg,
+                                                 rb_volume_mode, c, current_price))
+                    _rbd["returned"] += 1
+
             best: dict | None = None
 
             # Per-symbol rejection trackers for diagnostics
@@ -35777,6 +36022,7 @@ def api_bias_scan():
 
                 candidate = {
                     # ── compat fields ──
+                    "detector":     "bias_shift",
                     "symbol":       sym,
                     "price":        round(c[-1], 8),
                     "timeframe":    tf,
@@ -35926,6 +36172,12 @@ def api_bias_scan():
         if   _q == "clean":   diagnostics["adaptivePriorDrive"]["cleanAccepted"]   += 1
         elif _q == "good":    diagnostics["adaptivePriorDrive"]["goodAccepted"]    += 1
         elif _q == "impulse": diagnostics["adaptivePriorDrive"]["impulseAccepted"] += 1
+
+    # Rejection blocks join the same result list so they share the grade
+    # filter, the sort, and every downstream consumer (table, alerts, LM).
+    if rb_rows:
+        diagnostics["setupsFoundBeforeFilters"] += len(rb_rows)
+        results.extend(rb_rows)
 
     # Phase 3: apply minimum grade filter, then sort by best setup first
     # setupsFoundBeforeFilters is counted per accepted candidate inside the loop,

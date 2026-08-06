@@ -1,4 +1,4 @@
-"""Rejection Block detector tests (Phase 1).
+"""Rejection Block tests — detector (Phase 1) and API wiring (Phase 2).
 
 Exercises _detect_rejection_blocks against hand-built candle series:
 
@@ -10,6 +10,7 @@ Exercises _detect_rejection_blocks against hand-built candle series:
   * lifecycle — fresh / tested / respected / mitigated / invalidated
   * freshness + expiry, ATR distance, volume ratios, dedupe
   * no lookahead — swings are not used before the bar that confirms them
+  * /api/bias_scan integration — row shape, filters, volume mode, grading
 
 Run: DATABASE_URL=sqlite:///./_test_rb.db python3 _test_rejection_blocks.py
 """
@@ -322,8 +323,202 @@ def main_test():
           f"{len(s.detect())} blocks")
 
 
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 2 — /api/bias_scan integration
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _api_klines(series):
+    """Series rows -> the kline dicts get_klines_exchange returns.
+
+    One extra running candle is appended because the scanner strips the last
+    one; without it the confirm candle would be discarded.
+    """
+    out = []
+    for i, (o, h, l, c, v) in enumerate(series.rows):
+        out.append({"open": o, "high": h, "low": l, "close": c,
+                    "volume": v, "openTime": T0 + i * STEP})
+    last = series.rows[-1][3]
+    out.append({"open": last, "high": last * 1.001, "low": last * 0.999,
+                "close": last, "volume": 500.0,
+                "openTime": T0 + len(series.rows) * STEP})
+    return out
+
+
+def api_scan(body, series):
+    main.app.config["LOGIN_DISABLED"] = True
+    main._guest_tab_check = lambda *_a, **_k: None
+    main._check_and_get_token_user = lambda *_a, **_k: (None, None)
+    main.consume_tokens = lambda *_a, **_k: None
+    kl = _api_klines(series)
+    main.get_klines_exchange = lambda *_a, **_k: kl
+    with main.app.test_client() as cli:
+        with cli.session_transaction() as sess:
+            sess["logged_in"] = True
+            sess["username"] = "tester"
+        resp = cli.post("/api/bias_scan", json=body)
+        assert resp.status_code == 200, f"HTTP {resp.status_code}: {resp.data[:300]}"
+        return resp.get_json()
+
+
+API_BASE = {
+    "timeframe": "1d", "tf": "1d", "market": "perpetual", "exchange": "binance",
+    "scanMode": "selected", "symbols": ["TESTUSDT"],
+    "mode": "normal", "biasStrength": "balanced", "detectionMode": "early",
+    "confluenceMode": "optional", "minimumGrade": "C+", "volumeFilter": "optional",
+}
+
+
+def rb_rows(d):
+    return [r for r in d["results"] if r.get("detector") == "rejection_block"]
+
+
+def api_tests():
+    print("\n[11] API — disabled by default")
+    s = bullish_rb()
+    d = api_scan(dict(API_BASE), s)
+    check("no RB rows when not enabled", len(rb_rows(d)) == 0, f"{len(rb_rows(d))} rows")
+    check("no RB diagnostics block when disabled", "rejectionBlocks" not in d["diagnostics"])
+    check("settingsUsed reports it off",
+          d["diagnostics"]["settingsUsed"]["rejectionBlockEnabled"] is False)
+
+    print("\n[12] API — enabled, block surfaces as a row")
+    d = api_scan(dict(API_BASE, rejectionBlock={"enabled": True}), s)
+    rows = rb_rows(d)
+    check("an RB row is returned", len(rows) > 0, f"{len(rows)} rows")
+    if not rows:
+        return
+    r = rows[0]
+    check("row carries the detector discriminator", r["detector"] == "rejection_block")
+    check("row is graded", r["grade"] in ("A+", "A", "B", "C", "D"), r["grade"])
+    check("row is scored 0-100", 0 <= r["score"] <= 100, str(r["score"]))
+    check("zone exposed for the UI",
+          r["zoneLow"] < r["zoneHigh"], f"{r['zoneLow']}-{r['zoneHigh']}")
+    check("invalidation is the far zone edge",
+          abs(r["invalidationLevel"] - r["rb"]["rbLow"]) < 1e-9,
+          f"{r['invalidationLevel']} vs {r['rb']['rbLow']}")
+    check("invalidation status resolved", r["invalidationStatus"] in
+          ("valid", "live_breached", "closed_invalidated"), r["invalidationStatus"])
+    check("reason chain is populated", len(r["reasonChain"]) >= 4, str(len(r["reasonChain"])))
+    check("score breakdown is populated", len(r["scoreBreakdown"]) >= 5,
+          str(len(r["scoreBreakdown"])))
+    check("signal age carried for the tab",
+          r["signalCandleTime"] == r["rb"]["formedAt"])
+    check("bias rows are tagged too",
+          all(x.get("detector") for x in d["results"]))
+
+    print("\n[13] API — dead blocks are filtered out by default")
+    dead = bullish_rb()
+    dead.flat(2, 104.0)
+    dead.add(103.0, 103.4, 96.5, 97.0, 900.0)        # closes below the zone
+    d = api_scan(dict(API_BASE, rejectionBlock={"enabled": True}), dead)
+    dg = d["diagnostics"]["rejectionBlocks"]
+    check("invalidated block not returned",
+          all(x["rb"]["state"] != "invalidated" for x in rb_rows(d)))
+    check("dead count recorded", dg["dead"] >= 1, str(dg))
+
+    d = api_scan(dict(API_BASE,
+                      rejectionBlock={"enabled": True, "includeDead": True}), dead)
+    check("includeDead surfaces them",
+          any(x["rb"]["state"] == "invalidated" for x in rb_rows(d)),
+          str([x["rb"]["state"] for x in rb_rows(d)]))
+
+    print("\n[14] API — formation vs retest toggle")
+    fresh = bullish_rb()
+    d = api_scan(dict(API_BASE,
+                      rejectionBlock={"enabled": True, "signalMode": "formation"}), fresh)
+    check("formation mode shows an untested block", len(rb_rows(d)) > 0)
+
+    d = api_scan(dict(API_BASE,
+                      rejectionBlock={"enabled": True, "signalMode": "retest"}), fresh)
+    check("retest mode hides an untested block", len(rb_rows(d)) == 0,
+          f"{len(rb_rows(d))} rows")
+    check("drop attributed to the toggle",
+          d["diagnostics"]["rejectionBlocks"]["signalMode"] >= 1,
+          str(d["diagnostics"]["rejectionBlocks"]))
+
+    retested = bullish_rb()
+    retested.flat(3, 104.0)
+    retested.add(103.0, 103.5, 99.5, 102.5, 900.0)
+    d = api_scan(dict(API_BASE,
+                      rejectionBlock={"enabled": True, "signalMode": "retest"}), retested)
+    rows = rb_rows(d)
+    check("retest mode shows a retested block", len(rows) > 0, f"{len(rows)} rows")
+    check("respected state marked as confirmed for the tab",
+          rows and rows[0]["confirmationStatus"] == "confirmed",
+          str(rows and rows[0]["confirmationStatus"]))
+
+    print("\n[15] API — volume mode")
+    quiet = bullish_base()
+    quiet.add(100.5, 101.8, 98.0, 101.5, 300.0)      # sweep on LOW volume
+    quiet.add(101.5, 103.5, 101.0, 103.2, 400.0)
+    d = api_scan(dict(API_BASE,
+                      rejectionBlock={"enabled": True, "volumeMode": "optional"}), quiet)
+    check("quiet sweep still returned when volume optional", len(rb_rows(d)) > 0)
+    lo_score = rb_rows(d)[0]["score"] if rb_rows(d) else None
+
+    d = api_scan(dict(API_BASE,
+                      rejectionBlock={"enabled": True, "volumeMode": "required"}), quiet)
+    check("quiet sweep rejected when volume required", len(rb_rows(d)) == 0,
+          f"{len(rb_rows(d))} rows")
+    check("drop attributed to volume",
+          d["diagnostics"]["rejectionBlocks"]["volume"] >= 1,
+          str(d["diagnostics"]["rejectionBlocks"]))
+
+    d = api_scan(dict(API_BASE,
+                      rejectionBlock={"enabled": True, "volumeMode": "optional"}),
+                 bullish_rb())
+    hi_score = rb_rows(d)[0]["score"] if rb_rows(d) else None
+    check("a volume-backed sweep outscores a quiet one",
+          lo_score is not None and hi_score is not None and hi_score > lo_score,
+          f"quiet={lo_score} spike={hi_score}")
+
+    print("\n[16] API — grade filter and diagnostics wiring")
+    d = api_scan(dict(API_BASE, minimumGrade="A",
+                      rejectionBlock={"enabled": True}), bullish_rb())
+    check("grade filter also applies to RB rows",
+          all(x["grade"] in ("A+", "A") for x in rb_rows(d)),
+          str([x["grade"] for x in rb_rows(d)]))
+    dg = d["diagnostics"]["rejectionBlocks"]
+    check("byState histogram populated", isinstance(dg.get("byState"), dict)
+          and sum(dg["byState"].values()) == dg["detected"], str(dg))
+    check("settingsUsed echoes the mode",
+          d["diagnostics"]["settingsUsed"]["rejectionBlockSignalMode"] == "formation")
+
+    print("\n[17] API — config overrides reach the detector")
+    d = api_scan(dict(API_BASE, rejectionBlock={
+        "enabled": True, "sweepMinPct": 5.0}), bullish_rb())
+    check("a huge sweepMinPct suppresses detection", len(rb_rows(d)) == 0,
+          f"{len(rb_rows(d))} rows")
+    # swing-only must still find the swing-sourced block
+    d = api_scan(dict(API_BASE, rejectionBlock={
+        "enabled": True, "sweepSources": ["swing"]}), bullish_rb())
+    swing_rows = rb_rows(d)
+    check("swing-only finds the swing block", len(swing_rows) > 0, f"{len(swing_rows)} rows")
+    check("and labels every row 'swing'",
+          swing_rows and all(x["rb"]["sweepSource"] == "swing" for x in swing_rows),
+          str([x["rb"]["sweepSource"] for x in swing_rows]))
+
+    # local-only needs a series whose local extreme is the thing being raided;
+    # asserting on bullish_rb here would pass vacuously on an empty list.
+    loc = bullish_base()
+    loc.add(100.5, 101.8, 98.0, 101.5, 2000.0)     # pierces the local low (102.0)
+    loc.add(101.5, 103.5, 101.0, 103.2, 1500.0)    # reclaims above it
+    loc.add(103.2, 105.0, 103.0, 104.5, 1400.0)    # confirms
+    d = api_scan(dict(API_BASE, rejectionBlock={
+        "enabled": True, "sweepSources": ["local"]}), loc)
+    local_rows = rb_rows(d)
+    check("local-only finds a local-sourced block", len(local_rows) > 0,
+          f"{len(local_rows)} rows")
+    check("and labels every row 'local'",
+          local_rows and all(x["rb"]["sweepSource"] == "local" for x in local_rows),
+          str([x["rb"]["sweepSource"] for x in local_rows]))
+
+
 if __name__ == "__main__":
     main_test()
+    api_tests()
     print("\n" + ("-" * 62))
     if failures:
         print(f"FAILED ({len(failures)}): " + ", ".join(failures))
