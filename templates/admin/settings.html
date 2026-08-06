@@ -11,7 +11,7 @@
   <div class="adm-card-header">
     <div class="adm-card-title">Maintenance Mode</div>
     <label class="toggle-wrap">
-      <input type="checkbox" name="maintenance_mode" value="true" id="maintToggle"
+      <input type="checkbox" value="true" id="maintToggle"
              {% if cfg.maintenance_mode == 'true' %}checked{% endif %}
              onchange="document.getElementById('maintValue').value=this.checked?'true':'false'">
       <input type="hidden" name="maintenance_mode" id="maintValue" value="{{ cfg.maintenance_mode }}">
@@ -32,7 +32,7 @@
   <div class="adm-card-header">
     <div class="adm-card-title">Guest Access</div>
     <label class="toggle-wrap">
-      <input type="checkbox" name="allow_guest_access" value="true" id="guestToggle"
+      <input type="checkbox" value="true" id="guestToggle"
              {% if cfg.allow_guest_access != 'false' %}checked{% endif %}
              onchange="document.getElementById('guestValue').value=this.checked?'true':'false'">
       <input type="hidden" name="allow_guest_access" id="guestValue" value="{{ cfg.allow_guest_access }}">
@@ -87,7 +87,35 @@
   </div>
 </div>
 
-<!-- ── 4. SYSTEM INFO ── -->
+<!-- ── 4. RATE LIMITS ── -->
+<div class="adm-card" style="margin-bottom:20px">
+  <div class="adm-card-header"><div class="adm-card-title">Rate Limits &amp; Abuse Control</div></div>
+  <div class="adm-card-body">
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px">
+      <div class="adm-field">
+        <label>Scans / Hour (per user)</label>
+        <input type="number" name="rl_scans_per_hour" value="{{ cfg.rl_scans_per_hour }}" min="1" max="10000"/>
+      </div>
+      <div class="adm-field">
+        <label>AI Calls / Day (per user)</label>
+        <input type="number" name="rl_ai_calls_per_day" value="{{ cfg.rl_ai_calls_per_day }}" min="0" max="10000"/>
+      </div>
+      <div class="adm-field">
+        <label>Failed Logins Before Lock</label>
+        <input type="number" name="rl_login_attempts" value="{{ cfg.rl_login_attempts }}" min="1" max="50"/>
+      </div>
+      <div class="adm-field">
+        <label>Signups / IP / Day</label>
+        <input type="number" name="rl_signup_per_ip_day" value="{{ cfg.rl_signup_per_ip_day }}" min="1" max="100"/>
+      </div>
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin-top:4px">
+      Stored in <code style="color:var(--cyan)">GlobalSetting</code>. Read these at your enforcement points via <code style="color:var(--cyan)">_get_setting()</code>.
+    </div>
+  </div>
+</div>
+
+<!-- ── 5. SYSTEM INFO ── -->
 <div class="adm-card" style="margin-bottom:28px">
   <div class="adm-card-header">
     <div class="adm-card-title">System Info</div>

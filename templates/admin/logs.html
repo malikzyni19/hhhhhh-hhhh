@@ -1,0 +1,108 @@
+{% extends "admin/base.html" %}
+{% block title %}Audit Logs — ZyNi Admin{% endblock %}
+{% block page_title %}Audit Logs{% endblock %}
+
+{% block content %}
+
+<form method="GET" class="adm-toolbar">
+  <select name="action" class="inp" style="min-width:170px;flex:0">
+    <option value="">All actions</option>
+    {% for a in actions %}
+      <option value="{{ a }}" {% if action_filter == a %}selected{% endif %}>{{ a }}</option>
+    {% endfor %}
+  </select>
+
+  <select name="admin" class="inp" style="min-width:150px;flex:0">
+    <option value="">All admins</option>
+    {% for a in admins %}
+      <option value="{{ a.id }}" {% if admin_filter == a.id|string %}selected{% endif %}>{{ a.username }}</option>
+    {% endfor %}
+  </select>
+
+  <select name="days" class="inp" style="min-width:130px;flex:0">
+    <option value="">All time</option>
+    {% for d, lbl in [('1','Last 24 hours'),('7','Last 7 days'),('30','Last 30 days'),('90','Last 90 days')] %}
+      <option value="{{ d }}" {% if days == d %}selected{% endif %}>{{ lbl }}</option>
+    {% endfor %}
+  </select>
+
+  <button type="submit" class="btn btn-primary">Filter</button>
+  {% if action_filter or admin_filter or days %}
+    <a href="{{ url_for('admin.logs') }}" class="btn btn-ghost">Clear</a>
+  {% endif %}
+</form>
+
+<div class="adm-card">
+  <div class="adm-card-header">
+    <div class="adm-card-title">Admin Activity</div>
+    <div style="font-size:11px;color:var(--muted);font-family:'JetBrains Mono',monospace">
+      {{ pagination.total if pagination else 0 }} entries
+    </div>
+  </div>
+
+  <div class="adm-table-wrap scroll">
+    <table class="adm-table">
+      <thead>
+        <tr>
+          <th>When</th>
+          <th>Action</th>
+          <th>Admin</th>
+          <th>Target</th>
+          <th>Details</th>
+          <th>IP</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td style="color:var(--muted);font-size:11px;white-space:nowrap;font-family:'JetBrains Mono',monospace">
+            {{ r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else '—' }}
+          </td>
+          <td><span class="badge {% if 'delete' in r.action or 'purge' in r.action %}red{% elif 'login' in r.action or 'logout' in r.action %}blue{% elif 'impersonate' in r.action %}amber{% else %}cyan{% endif %}">{{ r.action }}</span></td>
+          <td style="font-family:'JetBrains Mono',monospace;color:var(--cyan);font-size:11px">
+            {{ r.admin.username if r.admin else '—' }}
+          </td>
+          <td style="font-size:11px;color:var(--muted)">
+            {{ ('#' ~ r.target_user_id) if r.target_user_id else '—' }}
+          </td>
+          <td style="font-size:11px;color:var(--muted);max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ r.details or '' }}">
+            {{ r.details or '—' }}
+          </td>
+          <td style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--muted2)">
+            {{ r.ip_address or '—' }}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="adm-empty">No log entries match these filters.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if pagination and pagination.pages > 1 %}
+  <div class="adm-pager">
+    <div>Page {{ pagination.page }} of {{ pagination.pages }}</div>
+    <div class="adm-pager-links">
+      {% if pagination.has_prev %}
+        <a href="{{ url_for('admin.logs', page=pagination.prev_num, action=action_filter, admin=admin_filter, days=days) }}">‹ Prev</a>
+      {% endif %}
+      {% for p in pagination.iter_pages(left_edge=1, right_edge=1, left_current=2, right_current=2) %}
+        {% if p %}
+          {% if p == pagination.page %}
+            <span class="cur">{{ p }}</span>
+          {% else %}
+            <a href="{{ url_for('admin.logs', page=p, action=action_filter, admin=admin_filter, days=days) }}">{{ p }}</a>
+          {% endif %}
+        {% else %}
+          <span class="gap">…</span>
+        {% endif %}
+      {% endfor %}
+      {% if pagination.has_next %}
+        <a href="{{ url_for('admin.logs', page=pagination.next_num, action=action_filter, admin=admin_filter, days=days) }}">Next ›</a>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}

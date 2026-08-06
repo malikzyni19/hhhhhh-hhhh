@@ -1,0 +1,119 @@
+{% extends "admin/base.html" %}
+{% block title %}Signal Accuracy — ZyNi Admin{% endblock %}
+{% block page_title %}Signal Accuracy{% endblock %}
+
+{% block content %}
+
+<form method="GET" class="adm-toolbar">
+  <select name="days" class="inp" style="min-width:150px;flex:0" onchange="this.form.submit()">
+    {% for d, lbl in [(7,'Last 7 days'),(30,'Last 30 days'),(90,'Last 90 days'),(180,'Last 6 months'),(365,'Last year')] %}
+      <option value="{{ d }}" {% if data.days == d %}selected{% endif %}>{{ lbl }}</option>
+    {% endfor %}
+  </select>
+  <noscript><button type="submit" class="btn btn-primary">Apply</button></noscript>
+</form>
+
+{% if data.error %}
+  <div class="adm-flash error"><span class="adm-flash-icon">✕</span><span>{{ data.error }}</span></div>
+{% endif %}
+
+{% set t = data.totals %}
+<div class="adm-stats-grid">
+  <div class="adm-stat-card cyan">
+    <div class="adm-stat-label">Win Rate</div>
+    <div class="adm-stat-value cyan">{{ (t.win_rate ~ '%') if t.win_rate is not none else '—' }}</div>
+  </div>
+  <div class="adm-stat-card green">
+    <div class="adm-stat-label">Won</div>
+    <div class="adm-stat-value green">{{ t.won or 0 }}</div>
+  </div>
+  <div class="adm-stat-card" style="border-color:rgba(248,113,113,.25)">
+    <div class="adm-stat-label">Lost</div>
+    <div class="adm-stat-value" style="color:var(--red)">{{ t.lost or 0 }}</div>
+  </div>
+  <div class="adm-stat-card amber">
+    <div class="adm-stat-label">Expired</div>
+    <div class="adm-stat-value amber">{{ t.expired or 0 }}</div>
+  </div>
+</div>
+
+{% macro breakdown(title, rows, label) %}
+<div class="adm-card" style="margin-bottom:0">
+  <div class="adm-card-header"><div class="adm-card-title">{{ title }}</div></div>
+  <div class="adm-table-wrap">
+    <table class="adm-table">
+      <thead>
+        <tr><th>{{ label }}</th><th style="text-align:right">W</th><th style="text-align:right">L</th>
+            <th style="text-align:right">Exp</th><th style="text-align:right">Win %</th><th style="width:120px">Rate</th></tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--text)">{{ r.key }}</td>
+          <td style="text-align:right;color:var(--green);font-family:'JetBrains Mono',monospace;font-size:11.5px">{{ r.won }}</td>
+          <td style="text-align:right;color:var(--red);font-family:'JetBrains Mono',monospace;font-size:11.5px">{{ r.lost }}</td>
+          <td style="text-align:right;color:var(--muted);font-family:'JetBrains Mono',monospace;font-size:11.5px">{{ r.expired }}</td>
+          <td style="text-align:right;font-family:'JetBrains Mono',monospace;font-size:11.5px;font-weight:700;
+                     color:{% if r.win_rate is none %}var(--muted){% elif r.win_rate >= 55 %}var(--green){% elif r.win_rate >= 45 %}var(--amber){% else %}var(--red){% endif %}">
+            {{ (r.win_rate ~ '%') if r.win_rate is not none else '—' }}
+          </td>
+          <td>
+            <div class="meter">
+              <div class="meter-fill {% if r.win_rate is none %}cyan{% elif r.win_rate >= 55 %}green{% elif r.win_rate >= 45 %}amber{% else %}red{% endif %}"
+                   style="width:{{ r.win_rate | round | int if r.win_rate is not none else 0 }}%"></div>
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="adm-empty">No resolved signals in this window.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endmacro %}
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px" class="sig-grid">
+  {{ breakdown('By Module', data.by_module, 'Module') }}
+  {{ breakdown('By Timeframe', data.by_timeframe, 'Timeframe') }}
+</div>
+
+<div class="adm-card">
+  <div class="adm-card-header">
+    <div class="adm-card-title">Recent Signals</div>
+    <div style="font-size:11px;color:var(--muted);font-family:'JetBrains Mono',monospace">{{ t.total or 0 }} in window</div>
+  </div>
+  <div class="adm-table-wrap scroll">
+    <table class="adm-table">
+      <thead>
+        <tr><th>Detected</th><th>Pair</th><th>Module</th><th>TF</th><th>Dir</th>
+            <th style="text-align:right">Score</th><th>Result</th></tr>
+      </thead>
+      <tbody>
+        {% for r in data.recent %}
+        <tr>
+          <td style="color:var(--muted);font-size:11px;white-space:nowrap;font-family:'JetBrains Mono',monospace">{{ r.created }}</td>
+          <td style="font-family:'JetBrains Mono',monospace;color:var(--cyan);font-size:11.5px">{{ r.symbol }}</td>
+          <td style="font-size:11px">{{ r.module }}</td>
+          <td style="font-size:11px;color:var(--muted)">{{ r.timeframe }}</td>
+          <td>
+            <span class="badge {{ 'green' if r.direction == 'bullish' else ('red' if r.direction == 'bearish' else 'blue') }}">{{ r.direction }}</span>
+          </td>
+          <td style="text-align:right;font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--muted)">{{ r.score }}</td>
+          <td>
+            <span class="badge {% if r.result == 'won' %}green{% elif r.result == 'lost' %}red{% elif r.result == 'expired' %}amber{% else %}blue{% endif %}">{{ r.result }}</span>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="adm-empty">No signals recorded in this window.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<style>
+@media(max-width:900px){ .sig-grid{grid-template-columns:1fr!important} }
+</style>
+
+{% endblock %}

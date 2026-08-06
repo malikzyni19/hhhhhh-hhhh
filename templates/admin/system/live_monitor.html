@@ -1,0 +1,137 @@
+{% extends "admin/base.html" %}
+{% block title %}Live Monitor — ZyNi Admin{% endblock %}
+{% block page_title %}Live Monitor Overview{% endblock %}
+
+{% block content %}
+
+{% if data.error %}
+  <div class="adm-flash error"><span class="adm-flash-icon">✕</span><span>{{ data.error }}</span></div>
+{% endif %}
+
+<div class="adm-stats-grid">
+  <div class="adm-stat-card cyan">
+    <div class="adm-stat-label">Active Items</div>
+    <div class="adm-stat-value cyan">{{ data.total }}</div>
+  </div>
+  <div class="adm-stat-card blue">
+    <div class="adm-stat-label">Exchanges</div>
+    <div class="adm-stat-value blue">{{ data.by_exchange | length }}</div>
+  </div>
+  <div class="adm-stat-card green">
+    <div class="adm-stat-label">Users Watching</div>
+    <div class="adm-stat-value green">{{ data.by_user | length }}</div>
+  </div>
+  <div class="adm-stat-card amber">
+    <div class="adm-stat-label">WS Caches</div>
+    <div class="adm-stat-value amber">{{ data.ws.caches | length if data.ws.caches else 0 }}</div>
+  </div>
+</div>
+
+<!-- Websocket health -->
+<div class="adm-card">
+  <div class="adm-card-header">
+    <div class="adm-card-title">Websocket Feed Health</div>
+    <div style="font-size:10.5px;color:var(--muted)">"Fresh" = updated in the last 60 s</div>
+  </div>
+  <div class="adm-card-body">
+    {% if data.ws.caches %}
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px">
+      {% for c in data.ws.caches %}
+      <div style="background:#04090f;border:1px solid var(--border);border-radius:8px;padding:14px">
+        <div style="font-size:9.5px;color:var(--muted2);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">{{ c.label }}</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;color:var(--cyan);margin-bottom:8px">
+          {{ c.fresh }}<span style="font-size:12px;color:var(--muted)"> / {{ c.entries }}</span>
+        </div>
+        <div class="meter">
+          <div class="meter-fill {{ 'green' if c.entries and c.fresh == c.entries else ('amber' if c.fresh else 'red') }}"
+               style="width:{{ (c.fresh / c.entries * 100) | round | int if c.entries else 0 }}%"></div>
+        </div>
+        <div style="font-size:10.5px;color:var(--muted);margin-top:6px">streams fresh</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+      <div style="font-size:12px;color:var(--muted)">Websocket state unavailable in this worker process.</div>
+    {% endif %}
+  </div>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px" class="lm-grid">
+  <div class="adm-card" style="margin-bottom:0">
+    <div class="adm-card-header"><div class="adm-card-title">By Exchange</div></div>
+    <div class="adm-table-wrap">
+      <table class="adm-table">
+        <thead><tr><th>Exchange</th><th style="text-align:right">Items</th><th style="width:45%">Share</th></tr></thead>
+        <tbody>
+          {% set exmax = (data.by_exchange | map(attribute='count') | max) if data.by_exchange else 1 %}
+          {% for e in data.by_exchange %}
+          <tr>
+            <td style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--cyan)">{{ e.exchange }}</td>
+            <td style="text-align:right;font-family:'JetBrains Mono',monospace;font-size:11.5px">{{ e.count }}</td>
+            <td><div class="meter"><div class="meter-fill cyan" style="width:{{ (e.count / exmax * 100) | round | int if exmax else 0 }}%"></div></div></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="3" class="adm-empty">No active items.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="adm-card" style="margin-bottom:0">
+    <div class="adm-card-header"><div class="adm-card-title">Top Watchers</div></div>
+    <div class="adm-table-wrap">
+      <table class="adm-table">
+        <thead><tr><th>User</th><th style="text-align:right">Items</th><th style="width:45%">Share</th></tr></thead>
+        <tbody>
+          {% set umax = (data.by_user | map(attribute='count') | max) if data.by_user else 1 %}
+          {% for u in data.by_user %}
+          <tr>
+            <td><a href="{{ url_for('admin.users_edit', user_id=u.user_id) }}"
+                   style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--cyan);text-decoration:none">{{ u.user }}</a></td>
+            <td style="text-align:right;font-family:'JetBrains Mono',monospace;font-size:11.5px">{{ u.count }}</td>
+            <td><div class="meter"><div class="meter-fill green" style="width:{{ (u.count / umax * 100) | round | int if umax else 0 }}%"></div></div></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="3" class="adm-empty">No active items.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="adm-card">
+  <div class="adm-card-header">
+    <div class="adm-card-title">Active Items</div>
+    <div style="font-size:11px;color:var(--muted);font-family:'JetBrains Mono',monospace">showing {{ data.rows | length }} of {{ data.total }}</div>
+  </div>
+  <div class="adm-table-wrap scroll">
+    <table class="adm-table">
+      <thead>
+        <tr><th>Symbol</th><th>Exchange</th><th>User</th><th>Setup</th><th>TF</th><th>Status</th><th>Added</th></tr>
+      </thead>
+      <tbody>
+        {% for i in data.rows %}
+        <tr>
+          <td style="font-family:'JetBrains Mono',monospace;color:var(--cyan);font-size:11.5px">{{ i.symbol }}</td>
+          <td style="font-size:11px;color:var(--muted)">{{ i.exchange }}</td>
+          <td style="font-size:11px">{{ i.user }}</td>
+          <td style="font-size:11px;color:var(--muted)">{{ i.setup }}</td>
+          <td style="font-size:11px;color:var(--muted)">{{ i.tf }}</td>
+          <td><span class="badge {{ 'green' if i.status == 'watching' else 'blue' }}">{{ i.status }}</span></td>
+          <td style="font-size:11px;color:var(--muted);white-space:nowrap;font-family:'JetBrains Mono',monospace">{{ i.created }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="adm-empty">No active Live Monitor items.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<style>
+@media(max-width:900px){ .lm-grid{grid-template-columns:1fr!important} }
+</style>
+
+{% endblock %}

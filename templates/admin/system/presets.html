@@ -1,0 +1,93 @@
+{% extends "admin/base.html" %}
+{% block title %}Scan Presets — ZyNi Admin{% endblock %}
+{% block page_title %}Scan Presets{% endblock %}
+
+{% block content %}
+
+<form method="POST">
+<div class="adm-card">
+  <div class="adm-card-header"><div class="adm-card-title">Global Default Preset</div></div>
+  <div class="adm-card-body">
+    <div style="font-size:12px;color:var(--muted);margin-bottom:18px;line-height:1.6">
+      The configuration new users start with, and the fallback when a user has no saved preset.
+    </div>
+
+    <div class="field">
+      <label class="lbl">Timeframes</label>
+      <div class="chip-grid">
+        {% for tf in all_timeframes %}
+        <label class="chip">
+          <input type="checkbox" name="tf" value="{{ tf }}" {% if tf in default.timeframes %}checked{% endif %}>
+          <span>{{ tf }}</span>
+        </label>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="field">
+      <label class="lbl">Modules</label>
+      <div class="chip-grid">
+        {% for m in all_modules %}
+        <label class="chip">
+          <input type="checkbox" name="mod" value="{{ m }}" {% if m in default.modules %}checked{% endif %}>
+          <span>{{ m }}</span>
+        </label>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px">
+      <div class="field">
+        <label class="lbl">Default Exchange</label>
+        <select name="exchange" class="inp">
+          {% for ex in all_exchanges %}
+          <option value="{{ ex }}" {% if default.exchange == ex %}selected{% endif %}>{{ ex|title }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label class="lbl">Minimum Score</label>
+        <input type="number" name="min_score" class="inp" value="{{ default.min_score }}" min="0" max="100">
+      </div>
+    </div>
+
+    <button type="submit" class="btn btn-primary">Save Default Preset</button>
+  </div>
+</div>
+</form>
+
+<div class="adm-card">
+  <div class="adm-card-header">
+    <div class="adm-card-title">User-Saved Presets</div>
+    <div style="font-size:11px;color:var(--muted);font-family:'JetBrains Mono',monospace">{{ presets | length }} shown</div>
+  </div>
+  <div class="adm-table-wrap scroll">
+    <table class="adm-table">
+      <thead><tr><th>Preset Name</th><th>Owner</th><th>Created</th></tr></thead>
+      <tbody>
+        {% for p in presets %}
+        <tr>
+          <td style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--text)">{{ p.name }}</td>
+          <td style="font-size:11.5px;color:var(--cyan);font-family:'JetBrains Mono',monospace">{{ p.user }}</td>
+          <td style="font-size:11px;color:var(--muted);font-family:'JetBrains Mono',monospace">{{ p.created }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3" class="adm-empty">No user presets saved yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<style>
+.chip-grid{display:flex;flex-wrap:wrap;gap:8px}
+.chip{position:relative;cursor:pointer}
+.chip input{position:absolute;opacity:0;width:0;height:0}
+.chip span{display:inline-block;padding:6px 13px;border-radius:7px;border:1px solid var(--border);
+           background:#04090f;color:var(--muted);font-size:11.5px;font-weight:600;
+           font-family:'JetBrains Mono',monospace;transition:all .15s}
+.chip:hover span{border-color:var(--muted2);color:var(--text)}
+.chip input:checked + span{background:rgba(34,211,238,.12);border-color:rgba(34,211,238,.4);color:var(--cyan)}
+</style>
+
+{% endblock %}
