@@ -1731,6 +1731,10 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         <svg class="ico" viewBox="0 0 24 24"><path d="M4 7h16M7 12h10M10 17h4"/></svg>
         <div><div class="nt">Compressed</div><div class="ns">High probability zones</div></div>
       </div>
+      <div class="nav-item" data-mode="base" role="button" tabindex="0">
+        <svg class="ico" viewBox="0 0 24 24"><path d="M3 20h18"/><rect x="5" y="13" width="14" height="5" rx="1"/><path d="M4 9l5-5 4 3 7-5"/></svg>
+        <div><div class="nt">Accumulation</div><div class="ns">Long bases &amp; breakouts</div></div>
+      </div>
       <div class="nav-item" data-mode="trending" role="button" tabindex="0">
         <svg class="ico" viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 8-8"/><path d="M17 7h4v4"/></svg>
         <div><div class="nt">Trending</div><div class="ns">Trend aligned setups</div></div>
@@ -2456,10 +2460,11 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   function confClass(s){return s>=80?"hi":s>=65?"mid":"lo";}
 
   /* ── data fetch ── */
-  var MODE_LABEL = {main:"Main Scan",compressed:"Compressed",trending:"Trending",ath_atl:"ATH / ATL",bias:"Structure / Bias",selected:"Selected Pairs"};
+  var MODE_LABEL = {main:"Main Scan",compressed:"Compressed",base:"Accumulation",trending:"Trending",ath_atl:"ATH / ATL",bias:"Structure / Bias",selected:"Selected Pairs"};
   var MODE_SUB = {
     main:"All instruments across selected markets",
     compressed:"High-probability compressed zones",
+    base:"Long post-capitulation bases and their breakouts (Binance / MEXC, 1d–1w)",
     trending:"Trend-aligned movers with volume",
     ath_atl:"Pairs near all-time highs / lows",
     bias:"Market-structure shifts (BOS / CHoCH)",
@@ -2534,6 +2539,19 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         help:"Candle interval used to detect compression boxes." },
       { type:"num", key:"lookback", label:"Lookback bars", help:"Window of candles to measure compression." },
       { type:"num", key:"maxPct", label:"Max range %", step:0.1, help:"Maximum high-low range (in %) within the window. Smaller = tighter compression." },
+    ],
+    base: [
+      { type:"select", key:"tf", label:"Timeframe",
+        options:[["1d","1d"],["1w","1w · Binance"]],
+        help:"Daily or weekly only — accumulation bases run for months." },
+      { type:"num", key:"baseWindow", label:"Base window",
+        help:"Length of the base in CANDLES. ~180 for a mid-length daily base; drop to 40-60 on 1w." },
+      { type:"num", key:"minDrawdownPct", label:"Min drawdown %", step:1,
+        help:"How far price must be off the window high. Filters for bases at the lows, not ranges at the highs." },
+      { type:"num", key:"maxDriftPct", label:"Max drift %", step:1,
+        help:"Maximum regression drift across the base. Low = flat base; high = still trending." },
+      { type:"num", key:"maxBreakoutAge", label:"Max breakout age",
+        help:"How many candles back to look for the base end. Raise it to catch pairs that broke out a while ago." },
     ],
     trending: [
       { type:"select", key:"tf", label:"Timeframe",
@@ -2767,6 +2785,16 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         roundRobin:ST.roundRobin, pairsPerCycle:ST.pairsPerCycle
       }};
     }
+    if(ST.mode==="base"){
+      var b=ST.modeOptions.base||{};
+      return {url:"/api/base_scan", body:{
+        timeframe:b.tf||"1d", market:market, exchange:ST.exchange,
+        baseWindow:+b.baseWindow||180,
+        minDrawdownPct:(b.minDrawdownPct!=null?+b.minDrawdownPct:60),
+        maxDriftPct:+b.maxDriftPct||25,
+        maxBreakoutAge:(b.maxBreakoutAge!=null?+b.maxBreakoutAge:30)
+      }};
+    }
     if(ST.mode==="trending"){
       var t=ST.modeOptions.trending||{};
       return {url:"/api/trending_scan", body:{
@@ -2992,6 +3020,12 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
           try{ evaluateAlerts(ST.results); }catch(_){}
           /* User-driven selection only — no auto-open of first row (Task 1). */
           ST.sel = -1;
+        } else if(modeAtScan === "base"){
+          var barr = Array.isArray(d) ? d : (d && (d.results || d.items) || []);
+          ST.tabData.base.items = barr;
+          ST.tabData.base.scanned = (d && d.scanned) || barr.length;
+          ST.tabData.base.raw = d;
+          ST.tabData.base.sel = -1;
         } else if(modeAtScan === "trending"){
           var arr = Array.isArray(d) ? d : (d && (d.results || d.items) || []);
           ST.tabData.trending.items = arr;
@@ -3375,6 +3409,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   ST.tabData = {
     main:       {results:[], scanned:0, raw:null, sel:-1},
     compressed: {results:[], scanned:0, raw:null, sel:-1},
+    base:       {items:[],   scanned:0, raw:null, sel:-1},
     trending:   {items:[],   scanned:0, raw:null, sel:-1},
     ath_atl:    {items:[],   scanned:0, raw:null, sel:-1, found:0, totalScanned:0},
     bias:       {items:[],   scanned:0, raw:null, sel:-1},
@@ -3791,7 +3826,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   }
 
   var INSIGHT_TITLES = {
-    main:"Setup Insight", compressed:"Compression Insight",
+    main:"Setup Insight", compressed:"Compression Insight", base:"Accumulation Insight",
     trending:"Market Mover Insight", ath_atl:"Level Breakout Insight",
     bias:"Bias & Structure Insight", selected:"Selected Pairs"
   };
@@ -3876,6 +3911,9 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     } else if(m==="compressed"){
       E("tblHost").hidden=true; E("tabView").hidden=false;
       renderCompressedKPI(); renderCompressedTable();
+    } else if(m==="base"){
+      E("tblHost").hidden=true; E("tabView").hidden=false;
+      renderBaseKPI(); renderBaseTable();
     } else if(m==="trending"){
       E("tblHost").hidden=true; E("tabView").hidden=false;
       renderTrendingKPI(); renderTrendingTable();
@@ -3918,6 +3956,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var rows = td.results || td.items || [];
     var row  = (td.sel>=0) ? rows[td.sel] : null;
     if(mode==="compressed") renderCompressedInsight(row);
+    else if(mode==="base") renderBaseInsight(row);
     else if(mode==="trending") renderTrendingInsight(row);
     else if(mode==="ath_atl") renderAthAtlInsight(row);
     else if(mode==="bias") renderBiasInsight(row);
@@ -4190,6 +4229,108 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       kpi("PAIRS SCANNED", ST.tabData.compressed.scanned||items.length, "")+
       kpi("ERRORS", (ST.tabData.compressed.raw&&ST.tabData.compressed.raw.errors)||0, "");
   }
+  /* ── Accumulation (long base) tab ── */
+  function _baseStatusLabel(s){
+    return ({
+      fresh_breakout:"Fresh breakout",
+      breakout_holding:"Breakout holding",
+      testing_base_high:"Testing base high",
+      basing:"Basing",
+      breakdown:"Breakdown"
+    })[s] || (s||"—");
+  }
+  function _baseStatusClass(s){
+    if(s==="fresh_breakout"||s==="breakout_holding") return "bull";
+    if(s==="breakdown") return "bear";
+    return "warn";
+  }
+  function renderBaseKPI(){
+    var items = (ST.tabData.base.items)||[];
+    var raw   = ST.tabData.base.raw||{};
+    var broke = items.filter(function(x){return /breakout/.test(String(x.status||""));}).length;
+    var aPlus = items.filter(function(x){var g=String(x.baseGrade||"");return g.indexOf("A")===0;}).length;
+    var avgDD = items.length ? items.reduce(function(a,x){return a+(+x.drawdownFromHighPct||0);},0)/items.length : 0;
+    E("kpiRow").innerHTML=
+      kpi("BASES FOUND", items.length, "")+
+      kpi("A / A+ GRADE", aPlus, items.length?Math.round(aPlus/items.length*100)+"% of found":"", "g")+
+      kpi("BROKEN OUT", broke, items.length?Math.round(broke/items.length*100)+"% of found":"", "")+
+      kpi("AVG DRAWDOWN", avgDD.toFixed(1)+"%", "")+
+      kpi("PAIRS SCANNED", ST.tabData.base.scanned||items.length, "")+
+      kpi("ERRORS", raw.errors||0, "");
+  }
+  function renderBaseTable(){
+    var items = (ST.tabData.base.items)||[];
+    var host = E("tabView");
+    if(!items.length){
+      host.innerHTML='<div class="tv-empty">No accumulation bases found. Try a larger Base window, a lower Min drawdown %, or a higher Max drift %.</div>';
+      return;
+    }
+    var sel = ST.tabData.base.sel;
+    var rows = items.map(function(it,i){
+      var band=(it.baseLow!=null&&it.baseHigh!=null)?(fmt(it.baseLow)+" – "+fmt(it.baseHigh)):"—";
+      var wid =(it.baseWidthPct!=null)?(+it.baseWidthPct).toFixed(1)+"%":"—";
+      var pos =(it.pricePositionPct!=null)?Math.round(+it.pricePositionPct)+"%":"—";
+      var dd  =(it.drawdownFromHighPct!=null)?(+it.drawdownFromHighPct).toFixed(1)+"%":"—";
+      var dft =(it.driftPct!=null)?(+it.driftPct).toFixed(1)+"%":"—";
+      var atr =esc(it.atrState||"—").replace(/_/g," ");
+      var g   =String(it.baseGrade||"—");
+      var sc  =(it.baseScore!=null)?Math.round(+it.baseScore):"—";
+      var grade='<span class="tv-grade" data-g="'+esc(g)+'">'+esc(g)+'</span> <span style="color:var(--text-3);font-size:10.5px">'+sc+'</span>';
+      var st  ='<span class="tv-pill '+_baseStatusClass(it.status)+'">'+esc(_baseStatusLabel(it.status))+'</span>';
+      return '<tr data-i="'+i+'"'+(i===sel?' class="sel"':'')+'>'+
+        '<td class="sym">'+esc(String(it.symbol||""))+'</td>'+
+        '<td>'+esc(it.timeframe||"—")+'</td>'+
+        '<td class="r">'+esc(band)+'</td>'+
+        '<td class="r">'+wid+'</td>'+
+        '<td class="r">'+pos+'</td>'+
+        '<td class="r">'+dd+'</td>'+
+        '<td class="r">'+dft+'</td>'+
+        '<td>'+atr+'</td>'+
+        '<td>'+grade+'</td>'+
+        '<td>'+st+'</td>'+
+      '</tr>';
+    }).join("");
+    host.innerHTML=
+      '<table class="tv-tbl"><thead><tr>'+
+        '<th>SYMBOL</th><th>TF</th><th class="r">BAND (low–high)</th>'+
+        '<th class="r">WIDTH</th><th class="r">POSITION</th><th class="r">DRAWDOWN</th>'+
+        '<th class="r">DRIFT</th><th>ATR</th><th>GRADE</th><th>STATUS</th>'+
+      '</tr></thead><tbody>'+rows+'</tbody></table>';
+  }
+  function renderBaseInsight(r){
+    var box=E("insScroll");
+    if(!r){ box.innerHTML=_insHead("base")+'<div class="row-msg">Pick a base to see details.</div>'; setFoot(null); return; }
+    var sym=String(r.symbol||"");
+    var brk=(r.breakoutBarsAgo!=null)
+      ? (r.breakoutBarsAgo+" bar"+(r.breakoutBarsAgo===1?"":"s")+" ago · +"+(+r.excursionPct||0).toFixed(2)+"% above band"
+         +(r.breakoutVolumeRatio!=null?(" · vol "+r.breakoutVolumeRatio+"×"):""))
+      : "No breakout yet";
+    box.innerHTML = _insHead("base")+
+      '<div class="ins-title"><span class="ins-sym">'+esc(sym)+'</span>'+
+        '<span class="tag mkt">'+esc(ST.market==="perpetual"?"Perp":"Spot")+'</span>'+
+        '<span class="tag '+_baseStatusClass(r.status)+'">'+esc(_baseStatusLabel(r.status))+'</span></div>'+
+      '<div class="ins-meta"><span>'+esc(r.timeframe||"—")+' · base '+esc(String(r.baseWindow||"—"))+' bars</span><span>'+rel(ST.scannedAt)+'</span></div>'+
+      '<div class="ti-h">BASE GEOMETRY</div>'+
+        _ti("Band", esc((r.baseLow!=null?fmt(r.baseLow):"—")+" – "+(r.baseHigh!=null?fmt(r.baseHigh):"—")))+
+        _ti("Mid", esc(r.baseMid!=null?fmt(r.baseMid):"—"))+
+        _ti("Width", esc(r.baseWidthPct!=null?(+r.baseWidthPct).toFixed(1)+"%":"—"))+
+        _ti("Price position", esc(r.pricePositionPct!=null?Math.round(+r.pricePositionPct)+"% inside band":"—"))+
+        _ti("To band high", esc(r.distanceToBaseHighPct!=null?(+r.distanceToBaseHighPct).toFixed(2)+"%":"—"))+
+        _ti("To band low", esc(r.distanceToBaseLowPct!=null?(+r.distanceToBaseLowPct).toFixed(2)+"%":"—"))+
+      '<div class="ti-h">BASE QUALITY</div>'+
+        _ti("Drawdown from high", esc(r.drawdownFromHighPct!=null?((+r.drawdownFromHighPct).toFixed(1)+"% from "+fmt(r.windowHigh)):"—"))+
+        _ti("Drift across base", esc(r.driftPct!=null?(+r.driftPct).toFixed(1)+"%":"—"))+
+        _ti("Mid crossings", esc(r.midCrossings!=null?String(r.midCrossings):"—"))+
+        _ti("Edge touches", esc(r.upperTouches!=null?(r.upperTouches+" up / "+r.lowerTouches+" down"):"—"))+
+        _ti("Range contraction", esc(String(r.atrState||"—").replace(/_/g," ")+(r.atrBaseRatio!=null?(" ("+r.atrBaseRatio+"×)"):"")))+
+        _ti("Volume", esc(String(r.volumeState||"—").replace(/_/g," ")+(r.volumeBaseRatio!=null?(" ("+r.volumeBaseRatio+"×)"):"")))+
+      '<div class="ti-h">BREAKOUT</div>'+
+        _ti("Status", esc(brk))+
+        _ti("Base measured to", esc(r.baseEndBarsAgo?(r.baseEndBarsAgo+" bars ago"):"latest candle"))+
+        _ti("Score", esc(r.baseScore!=null?(r.baseScore+" · "+String(r.baseGrade||"")):"—"));
+    setFoot(null);
+  }
+
   function _compConflBadges(it){
     return [
       {k:"OB",  on: !!(it.obConfluence  && it.obConfluence.has)},
