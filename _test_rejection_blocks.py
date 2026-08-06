@@ -573,10 +573,62 @@ def detect_mode_tests():
           isinstance(d["results"], list) and "rejected" in d["diagnostics"])
 
 
+def selected_scope_tests():
+    print("\n[19] Selected scope respects pairs / cycle")
+    s = bullish_rb()
+    universe = [f"S{i}USDT" for i in range(200)]
+    main.BIAS_SCAN_CURSOR.clear()
+
+    body = dict(API_BASE, scanMode="selected", symbols=universe, pairsPerCycle=24)
+    d = api_scan(body, s)
+    cov = d.get("marketCoverage") or {}
+    check("only pairsPerCycle symbols are scanned", d["scanned"] == 24, str(d["scanned"]))
+    check("diagnostics agree", d["diagnostics"]["symbolsScanned"] == 24,
+          str(d["diagnostics"]["symbolsScanned"]))
+    check("coverage reports the full selected universe",
+          cov.get("totalPairs") == 200, str(cov))
+    check("first batch starts at 1", cov.get("startIndex") == 1, str(cov.get("startIndex")))
+    check("first batch ends at 24", cov.get("endIndex") == 24, str(cov.get("endIndex")))
+
+    d2 = api_scan(body, s)
+    cov2 = d2.get("marketCoverage") or {}
+    check("second scan advances the cursor", cov2.get("startIndex") == 25,
+          str(cov2.get("startIndex")))
+    check("second batch is also capped", d2["scanned"] == 24, str(d2["scanned"]))
+
+    # a universe smaller than the batch is scanned in one go
+    d3 = api_scan(dict(API_BASE, scanMode="selected",
+                       symbols=universe[:10], pairsPerCycle=24), s)
+    cov3 = d3.get("marketCoverage") or {}
+    check("a small universe runs as one batch", d3["scanned"] == 10, str(d3["scanned"]))
+    check("and is marked cycle complete", cov3.get("cycleComplete") is True, str(cov3))
+
+    # market and selected cursors must not share state
+    main.BIAS_SCAN_CURSOR.clear()
+    main.get_pairs_exchange = lambda *_a, **_k: [{"symbol": f"M{i}USDT"} for i in range(200)]
+    api_scan(dict(API_BASE, scanMode="market", symbols=[], pairsPerCycle=24), s)
+    keys = sorted(main.BIAS_SCAN_CURSOR)
+    api_scan(dict(API_BASE, scanMode="selected", symbols=universe, pairsPerCycle=24), s)
+    keys2 = sorted(main.BIAS_SCAN_CURSOR)
+    check("market and selected keep separate cursors", len(keys2) == 2, str(keys2))
+    mkey = [k for k in keys2 if k.endswith("|market")][0]
+    check("the selected scan did not move the market cursor",
+          main.BIAS_SCAN_CURSOR[mkey] == 24, str(main.BIAS_SCAN_CURSOR[mkey]))
+
+    # empty selection still errors clearly
+    with main.app.test_client() as cli:
+        with cli.session_transaction() as sess:
+            sess["logged_in"] = True; sess["username"] = "tester"
+        r = cli.post("/api/bias_scan", json=dict(API_BASE, scanMode="selected", symbols=[]))
+    check("empty selection still returns no_selected_pairs", r.status_code == 400,
+          str(r.status_code))
+
+
 if __name__ == "__main__":
     main_test()
     api_tests()
     detect_mode_tests()
+    selected_scope_tests()
     print("\n" + ("-" * 62))
     if failures:
         print(f"FAILED ({len(failures)}): " + ", ".join(failures))

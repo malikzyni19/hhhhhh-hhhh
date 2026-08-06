@@ -184,7 +184,8 @@ def main_test():
     scan(dict(mk, cursorScope="dashboard"))
     keys = sorted(main.BIAS_SCAN_CURSOR)
     check("scanner and dashboard hold separate cursors", len(keys) == 2, str(keys))
-    scanner_key = [k for k in keys if k.endswith("|scanner")][0]
+    # cursor keys are user|exchange|market|tf|cursorScope|scanMode
+    scanner_key = [k for k in keys if "|scanner|" in k][0]
     check("dashboard scan did not move the scanner cursor",
           main.BIAS_SCAN_CURSOR[scanner_key] == after_scanner[scanner_key],
           f"{after_scanner[scanner_key]} -> {main.BIAS_SCAN_CURSOR[scanner_key]}")
@@ -192,7 +193,10 @@ def main_test():
     print("\n[7] parallel fetch analyses every requested symbol once")
     FETCHED.clear()
     syms = [f"P{i}USDT" for i in range(24)]
-    d = scan(dict(BASE, symbols=syms, detectionMode="early"))
+    # Selected scope now batches by pairsPerCycle too, so ask for the whole
+    # list in one batch — otherwise the default 20 would defer the last four.
+    d = scan(dict(BASE, symbols=syms, detectionMode="early",
+                  pairsPerCycle=len(syms)))
     check("every symbol fetched exactly once", sorted(FETCHED) == sorted(syms),
           f"{len(FETCHED)} fetches for {len(syms)} symbols")
     check("every symbol analysed",
@@ -201,8 +205,20 @@ def main_test():
     check("one result per symbol", len(d["results"]) == len(syms),
           f"{len(d['results'])} results")
 
+    print("\n[7b] Selected scope honours pairs / cycle")
+    main.BIAS_SCAN_CURSOR.clear()
+    FETCHED.clear()
+    many = [f"Q{i}USDT" for i in range(200)]
+    d = scan(dict(BASE, symbols=many, detectionMode="early", pairsPerCycle=24))
+    check("a 200-pair selection scans only one batch", len(FETCHED) == 24,
+          f"{len(FETCHED)} fetched")
+    cov = d.get("marketCoverage") or {}
+    check("coverage reports the selected universe", cov.get("totalPairs") == 200, str(cov))
+    check("batch is reported", (cov.get("startIndex"), cov.get("endIndex")) == (1, 24), str(cov))
+
     print("\n[8] diagnostics count found setups before the grade filter")
-    d = scan(dict(BASE, symbols=syms, detectionMode="early", minimumGrade="A"))
+    d = scan(dict(BASE, symbols=syms, detectionMode="early", minimumGrade="A",
+                  pairsPerCycle=len(syms)))
     dg = d["diagnostics"]
     check("setupsFoundBeforeFilters counts pre-filter candidates",
           dg["setupsFoundBeforeFilters"] == len(syms),

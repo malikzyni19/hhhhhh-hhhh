@@ -35617,9 +35617,11 @@ def api_bias_scan():
     # Per-user cursor key — prevents different users/settings from sharing state.
     # cursorScope separates callers that scan on their own cadence (the dashboard
     # tile) from the Bias tab, so they never advance each other's round-robin.
+    # scan_mode is part of the key so the Full-market and Selected round-robins
+    # keep independent positions instead of yanking each other mid-list.
     username     = session.get("username", "anonymous")
     cursor_scope = str(payload.get("cursorScope", "scanner"))[:32]
-    cursor_key   = f"{username}|{exchange}|{market}|{tf}|{cursor_scope}"
+    cursor_key   = f"{username}|{exchange}|{market}|{tf}|{cursor_scope}|{scan_mode}"
     market_coverage = None
 
     if scan_mode == "market":
@@ -35643,8 +35645,37 @@ def api_bias_scan():
             "cycleComplete":  cycle_complete,
         }
     elif passed_symbols:
-        # Selected Pairs mode — use only what the frontend sent
-        symbols = passed_symbols
+        # Selected Pairs — round-robin the chosen universe in the same batch
+        # size as Full market. This branch used to scan every selected symbol
+        # and ignore pairsPerCycle entirely, so asking for 24 scanned all 200.
+        total_pairs = len(passed_symbols)
+        if total_pairs <= pairs_per_cycle:
+            symbols = passed_symbols
+            market_coverage = {
+                "mode":           "single_batch",
+                "totalPairs":     total_pairs,
+                "batchSize":      len(symbols),
+                "startIndex":     1,
+                "endIndex":       total_pairs,
+                "nextStartIndex": 1,
+                "cycleComplete":  True,
+            }
+        else:
+            start    = BIAS_SCAN_CURSOR.get(cursor_key, 0) % total_pairs
+            symbols  = passed_symbols[start:start + pairs_per_cycle]
+            next_cur = (start + pairs_per_cycle) % total_pairs
+            BIAS_SCAN_CURSOR[cursor_key] = next_cur
+            print(f"[BIAS_SCAN] round_robin(selected) user={username} tf={tf} "
+                  f"batch={start+1}-{start+len(symbols)}/{total_pairs}")
+            market_coverage = {
+                "mode":           "round_robin",
+                "totalPairs":     total_pairs,
+                "batchSize":      len(symbols),
+                "startIndex":     start + 1,
+                "endIndex":       start + len(symbols),
+                "nextStartIndex": next_cur + 1,
+                "cycleComplete":  (start + pairs_per_cycle) >= total_pairs,
+            }
     else:
         # Selected Pairs with nothing selected — tell the user clearly
         return jsonify({
