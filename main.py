@@ -35098,6 +35098,7 @@ def _bias_confluence(
 # ─────────────────────────────────────────────────────────────────────────────
 
 _RB_TOUCH_CLEARANCE = 0.5   # mirrors _OB_TOUCH_CLEARANCE for consistent retest counting
+_RB_PENDING_SCORE_CAP = 79  # top of grade B — a pending block never grades A/A+
 
 # _grade_from_score hardcodes bias-shift wording ("A+ — Elite Bias Shift"),
 # which is the wrong detector's label on a block row.
@@ -35131,7 +35132,14 @@ def _rb_config(tf: str, overrides: dict | None = None) -> dict:
         "reclaimWindow":     2,               # candles allowed to reclaim the swept level
         "confirmWindow":     3,               # candles allowed to produce the confirm candle
         "maxTouches":        2,               # respected retests before the block is spent
-        "maxDistanceAtr":    3.0,             # ATR-normalised "price ran away" guard
+        # ATR-normalised "price ran away" guard. Tight by default: the point of
+        # the scan is catching a formation you can still act on, and a violent
+        # confirm candle can leave a brand-new block several ATR behind price.
+        "maxDistanceAtr":    1.5,
+        # Emit blocks that have pierced and reclaimed but not yet confirmed.
+        # ~65% of those go on to confirm, so they are a watch signal, not a
+        # finished setup — scoring caps them below the confirmed grades.
+        "allowPending":      False,
         "localLookback":     2,               # candles before the pierce for local liquidity
         "minBlockHeightPct": 0.02,            # reject degenerate/hairline zones
         "sweepSources":      ["swing", "local"],
@@ -35275,7 +35283,11 @@ def _detect_rejection_blocks(o: list, h: list, l: list, c: list, v: list, ts: li
     sweep_frac = cfg["sweepMinPct"] / 100.0
     look       = max(1, int(cfg["localLookback"]))
 
-    for p in range(look + 1, n - 1):
+    # Runs to n, not n-1: a pending block's pierce can BE the newest closed
+    # candle. A confirmed block still cannot form there — its phase C window is
+    # empty, so it falls through to the pending check and is dropped unless
+    # pending blocks are allowed.
+    for p in range(look + 1, n):
         for direction in ("bullish", "bearish"):
             is_bull = direction == "bullish"
 
@@ -35317,11 +35329,17 @@ def _detect_rejection_blocks(o: list, h: list, l: list, c: list, v: list, ts: li
                     continue
 
                 # ── Phase C: a directional candle closing beyond the reclaim ─
+                # Three outcomes matter separately: confirmed, failed outright
+                # (lost the sweep extreme on a close), or the confirm window has
+                # simply not finished yet — the last of those is "pending".
                 f = None
+                broke = False
                 for j in range(r + 1, min(r + 1 + cfg["confirmWindow"], n)):
                     if is_bull and c[j] < l[p]:
-                        break                      # lost the sweep low on a close
+                        broke = True               # lost the sweep low on a close
+                        break
                     if (not is_bull) and c[j] > h[p]:
+                        broke = True
                         break
                     if is_bull and c[j] > o[j] and c[j] > c[r]:
                         f = j
@@ -35329,8 +35347,19 @@ def _detect_rejection_blocks(o: list, h: list, l: list, c: list, v: list, ts: li
                     if (not is_bull) and c[j] < o[j] and c[j] < c[r]:
                         f = j
                         break
+
+                pending = False
                 if f is None:
-                    continue
+                    if broke:
+                        continue                   # setup failed, not pending
+                    if (r + cfg["confirmWindow"]) < (n - 1):
+                        continue                   # window elapsed with no confirm
+                    if not cfg.get("allowPending"):
+                        continue
+                    # Provisional block: the zone covers pierce→reclaim only and
+                    # may widen once the confirm candle prints.
+                    pending = True
+                    f = r
 
                 # ── Zone: extreme wick ↔ extreme body across the block ──────
                 span = range(p, f + 1)
@@ -35351,6 +35380,11 @@ def _detect_rejection_blocks(o: list, h: list, l: list, c: list, v: list, ts: li
 
                 life = _rb_walk_lifecycle(o, h, l, c, v, ts, direction,
                                           rb_low, rb_high, f, cfg, avg_vol)
+                # "pending" replaces "fresh" only — a pending block that already
+                # broke or got tested keeps the state the walk resolved, so the
+                # dead-block filter still sees it.
+                if pending and life["state"] == "fresh":
+                    life["state"] = "pending"
 
                 age   = (n - 1) - f
                 max_age = max(1, int(cfg["maxAgeCandles"]))
@@ -35370,6 +35404,7 @@ def _detect_rejection_blocks(o: list, h: list, l: list, c: list, v: list, ts: li
 
                 out.append({
                     "direction":      direction,
+                    "pending":        pending,
                     "rbHigh":         round(rb_high, 8),
                     "rbLow":          round(rb_low, 8),
                     "heightPct":      round(height_pct, 4),
@@ -35492,7 +35527,7 @@ def _score_rejection_block(blk: dict, cfg: dict, volume_mode: str) -> dict:
 
     # ── Lifecycle state (25) ──────────────────────────────────────────────
     state_pts = {"respected": 25, "fresh": 18, "tested": 12,
-                 "mitigated": 5, "invalidated": 0}
+                 "pending": 10, "mitigated": 5, "invalidated": 0}
     st = blk["state"]
     pts += state_pts.get(st, 10)
     bd.append(f"+{state_pts.get(st, 10)} state: {st}")
@@ -35503,6 +35538,11 @@ def _score_rejection_block(blk: dict, cfg: dict, volume_mode: str) -> dict:
     bd.append(f"+{fp} freshness {blk['freshness']:.2f} ({blk['ageCandles']} candles old)")
 
     score = max(0, min(100, pts))
+    # A pending block has not produced its confirm candle, so it cannot earn a
+    # confirmed grade no matter how good the sweep looked. Cap it inside B.
+    if blk.get("pending") and score > _RB_PENDING_SCORE_CAP:
+        bd.append(f"capped at {_RB_PENDING_SCORE_CAP} — awaiting confirmation candle")
+        score = _RB_PENDING_SCORE_CAP
     return {"score": score, "breakdown": bd,
             "volumeRatios": {"sweep": sr, "reclaim": rr, "retest": tr}}
 
@@ -35564,6 +35604,8 @@ def _rb_build_row(blk: dict, sym: str, tf: str, cfg: dict, volume_mode: str,
 
     confidence = "Strong" if score >= 85 else "Moderate" if score >= 65 else "Weak"
     label = "Bullish Rejection Block" if is_bull else "Bearish Rejection Block"
+    if blk.get("pending"):
+        label = "Pending " + label
 
     return {
         "detector":      "rejection_block",
@@ -35645,6 +35687,12 @@ def api_bias_scan():
     run_bias   = detect_mode in ("bias", "both")
     rb_enabled = detect_mode in ("rejection_block", "both")
 
+    # confirmed | both | pending — whether a block that has pierced and
+    # reclaimed but not yet confirmed is surfaced as an early watch signal.
+    rb_formation_mode = _rb_payload.get("formationMode", "confirmed")
+    if rb_formation_mode not in ("confirmed", "both", "pending"):
+        rb_formation_mode = "confirmed"
+
     rb_signal_mode = _rb_payload.get("signalMode", "formation")   # formation | retest
     rb_include_dead = bool(_rb_payload.get("includeDead", False))
     rb_volume_mode  = _rb_payload.get("volumeMode", "optional")   # off | optional | required
@@ -35656,6 +35704,8 @@ def api_bias_scan():
             "swingLeft", "swingRight",
         ) if _rb_payload.get(k) is not None
     }
+    if rb_enabled:
+        rb_overrides["allowPending"] = rb_formation_mode in ("both", "pending")
     rb_cfg = _rb_config(tf, rb_overrides) if rb_enabled else None
 
     if bias_mode == "normal":
@@ -35817,6 +35867,8 @@ def api_bias_scan():
             "detect":                   detect_mode,
             "rejectionBlockEnabled":    rb_enabled,
             "rejectionBlockSignalMode": rb_signal_mode if rb_enabled else None,
+            "rejectionBlockFormationMode": rb_formation_mode if rb_enabled else None,
+            "rejectionBlockMaxDistanceAtr": (rb_cfg or {}).get("maxDistanceAtr"),
             "rejectionBlockVolumeMode": rb_volume_mode if rb_enabled else None,
         },
     }
@@ -35824,6 +35876,7 @@ def api_bias_scan():
         diagnostics["rejectionBlocks"] = {
             "detected":   0,   # raw formations found
             "dead":       0,   # invalidated / mitigated / expired / ran away
+            "formationMode": 0,  # dropped by the confirmed vs pending toggle
             "signalMode": 0,   # dropped by the formation vs retest toggle
             "volume":     0,   # dropped by volumeMode = required
             "returned":   0,   # survived into the results list
@@ -35890,6 +35943,10 @@ def api_bias_scan():
 
                     if not rb_include_dead and _rb_is_dead(_blk):
                         _rbd["dead"] += 1
+                        continue
+                    # "pending" wants only the unconfirmed watch signals
+                    if rb_formation_mode == "pending" and not _blk.get("pending"):
+                        _rbd["formationMode"] += 1
                         continue
                     # "retest" only wants blocks price has actually returned to
                     if rb_signal_mode == "retest" and _blk["retestCount"] < 1:

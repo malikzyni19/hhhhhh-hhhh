@@ -509,8 +509,10 @@ def api_tests():
     loc.add(100.5, 101.8, 98.0, 101.5, 2000.0)     # pierces the local low (102.0)
     loc.add(101.5, 103.5, 101.0, 103.2, 1500.0)    # reclaims above it
     loc.add(103.2, 105.0, 103.0, 104.5, 1400.0)    # confirms
+    # maxDistanceAtr is loosened here so this case tests the sweep source, not
+    # the runaway-price gate — this fixture's confirm candle ends ~2 ATR away.
     d = api_scan(dict(API_BASE, rejectionBlock={
-        "enabled": True, "sweepSources": ["local"]}), loc)
+        "enabled": True, "sweepSources": ["local"], "maxDistanceAtr": 99}), loc)
     local_rows = rb_rows(d)
     check("local-only finds a local-sourced block", len(local_rows) > 0,
           f"{len(local_rows)} rows")
@@ -624,11 +626,147 @@ def selected_scope_tests():
           str(r.status_code))
 
 
+def pending_and_distance_tests():
+    print("\n[20] pending formation — pierce + reclaim, confirm candle not in yet")
+    # Ends on the reclaim candle: nothing after it, so the confirm window is
+    # still open and the block is pending rather than failed.
+    pend = bullish_base()
+    pend.add(100.5, 101.8, 98.0, 101.5, 2000.0)      # pierce + reclaim, no confirm
+
+    off = [b for b in pend.detect() if b["direction"] == "bullish"]
+    check("pending is off by default", not off, f"{len(off)} blocks")
+
+    on = [b for b in pend.detect(allowPending=True) if b["direction"] == "bullish"]
+    check("allowPending surfaces it", len(on) > 0, f"{len(on)} blocks")
+    if on:
+        b = on[0]
+        check("state is pending", b["state"] == "pending", b["state"])
+        check("flagged as pending", b["pending"] is True)
+        check("zone is provisional — pierce to reclaim only",
+              b["formedIndex"] == b["reclaimIndex"],
+              f"formed={b['formedIndex']} reclaim={b['reclaimIndex']}")
+
+    # confirmed blocks must never be flagged pending
+    conf = [b for b in bullish_rb().detect(allowPending=True)
+            if b["direction"] == "bullish"]
+    check("a confirmed block is not pending",
+          conf and conf[0]["pending"] is False, str(conf and conf[0]["pending"]))
+
+    # a setup that broke the sweep low is dead, not pending
+    dead = bullish_base()
+    dead.add(100.5, 101.8, 98.0, 101.5, 2000.0)
+    dead.add(101.5, 101.6, 97.0, 97.2, 900.0)        # closes below the sweep low
+    got = [b for b in dead.detect(allowPending=True)
+           if b["direction"] == "bullish" and b["pierceIndex"] == 30]
+    check("a broken setup is not offered as pending",
+          not any(b.get("pending") for b in got), str([b["state"] for b in got]))
+
+    # window elapsed with no confirm → dropped, not pending forever
+    stale = bullish_base()
+    stale.add(100.5, 101.8, 98.0, 101.5, 2000.0)
+    stale.add(101.5, 101.6, 100.9, 101.0, 900.0)
+    stale.add(101.0, 101.2, 100.6, 100.8, 900.0)
+    stale.add(100.8, 101.0, 100.5, 100.7, 900.0)
+    stale.flat(3, 101.0)
+    got = [b for b in stale.detect(allowPending=True)
+           if b["direction"] == "bullish" and b["pierceIndex"] == 30]
+    check("an elapsed confirm window drops the block",
+          not any(b.get("pending") for b in got), str([b["state"] for b in got]))
+
+    print("\n[21] pending scoring is capped below the confirmed grades")
+    cfg = main._rb_config("1d", {"allowPending": True})
+    if on:
+        sc = main._score_rejection_block(on[0], cfg, "optional")
+        check("a real pending block scores in B or below", sc["score"] <= 79,
+              str(sc["score"]))
+        check("pending never grades above B",
+              main._grade_from_score(sc["score"])["grade"] in ("B", "C", "D"),
+              main._grade_from_score(sc["score"])["grade"])
+
+    # Best case for a pending block: perfect sweep, tight, volume-backed, brand
+    # new — but no dry retest, because it has not been retested. State weighting
+    # alone lands it at 78, so the explicit cap is a guard rather than the
+    # mechanism. Confirming the same block lifts it into A.
+    best = {"pending": True, "state": "pending", "sweepSource": "swing",
+            "sweepDepthPct": 1.0, "blockCandles": 2, "freshness": 1.0,
+            "ageCandles": 0, "retests": [],
+            "volume": {"sweepRatio": 3.0, "reclaimRatio": 3.0}}
+    best_score = main._score_rejection_block(best, cfg, "optional")["score"]
+    check("best possible pending tops out inside B", best_score <= 79, str(best_score))
+    conf_score = main._score_rejection_block(
+        dict(best, pending=False, state="fresh"), cfg, "optional")["score"]
+    check("the same block scores higher once confirmed", conf_score > best_score,
+          f"pending={best_score} confirmed={conf_score}")
+
+    # And the cap still clamps if scoring ever pushes a pending block higher
+    over = dict(best, retests=[{"volRatio": 0.3}])   # would add the dry-retest bonus
+    sc_over = main._score_rejection_block(over, cfg, "optional")
+    check("the cap clamps an over-scoring pending block", sc_over["score"] == 79,
+          str(sc_over["score"]))
+    check("and says so in the breakdown",
+          any("capped" in x for x in sc_over["breakdown"]),
+          str(sc_over["breakdown"][-1]))
+
+    print("\n[22] API — formation mode")
+    d = api_scan(dict(API_BASE, rejectionBlock={"enabled": True}), pend)
+    check("confirmed-only returns nothing for a pending setup",
+          len(rb_rows(d)) == 0, f"{len(rb_rows(d))} rows")
+    check("settingsUsed echoes confirmed",
+          d["diagnostics"]["settingsUsed"]["rejectionBlockFormationMode"] == "confirmed")
+
+    d = api_scan(dict(API_BASE, rejectionBlock={
+        "enabled": True, "formationMode": "both"}), pend)
+    rows = rb_rows(d)
+    check("formationMode=both surfaces the pending block", len(rows) > 0,
+          f"{len(rows)} rows")
+    if rows:
+        check("row is labelled Pending", rows[0]["setupType"].startswith("Pending"),
+              rows[0]["setupType"])
+        check("row grade is B or lower", rows[0]["grade"] in ("B", "C", "D"),
+              rows[0]["grade"])
+
+    # The fixture also throws off an unrelated pending block, so assert on the
+    # absence of CONFIRMED rows rather than an empty result.
+    d = api_scan(dict(API_BASE, rejectionBlock={
+        "enabled": True, "formationMode": "pending"}), bullish_rb())
+    check("formationMode=pending hides confirmed blocks",
+          all(x["rb"]["pending"] for x in rb_rows(d)),
+          str([(x["rb"]["pending"], x["rb"]["state"]) for x in rb_rows(d)]))
+    check("drop attributed to the formation toggle",
+          d["diagnostics"]["rejectionBlocks"]["formationMode"] >= 1,
+          str(d["diagnostics"]["rejectionBlocks"]))
+
+    print("\n[23] runaway-price gate")
+    check("default maxDistanceAtr tightened to 1.5",
+          main._rb_config("1d")["maxDistanceAtr"] == 1.5,
+          str(main._rb_config("1d")["maxDistanceAtr"]))
+    runaway = bullish_base()
+    runaway.add(100.5, 101.8, 98.0, 101.5, 2000.0)
+    runaway.add(101.5, 103.5, 101.0, 103.2, 1500.0)
+    runaway.add(103.2, 112.0, 103.0, 111.5, 1500.0)     # violent move away
+    near = [b for b in runaway.detect(maxDistanceAtr=99)
+            if b["direction"] == "bullish" and b["pierceIndex"] == 30]
+    check("the block is still detected", len(near) > 0)
+    if near:
+        check("it is far from price", near[0]["distanceAtr"] > 1.5,
+              str(near[0]["distanceAtr"]))
+        check("and flagged far under the default gate",
+              [b for b in runaway.detect() if b["pierceIndex"] == 30
+               and b["direction"] == "bullish"][0]["far"] is True)
+    d = api_scan(dict(API_BASE, rejectionBlock={"enabled": True}), runaway)
+    check("a runaway block is filtered out by default",
+          not any(x["rb"]["pierceIndex"] == 30 for x in rb_rows(d)),
+          str([(x["rb"]["pierceIndex"], x["rb"]["distanceAtr"]) for x in rb_rows(d)]))
+    check("settingsUsed reports the gate",
+          d["diagnostics"]["settingsUsed"]["rejectionBlockMaxDistanceAtr"] == 1.5)
+
+
 if __name__ == "__main__":
     main_test()
     api_tests()
     detect_mode_tests()
     selected_scope_tests()
+    pending_and_distance_tests()
     print("\n" + ("-" * 62))
     if failures:
         print(f"FAILED ({len(failures)}): " + ", ".join(failures))
