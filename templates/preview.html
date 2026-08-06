@@ -1283,6 +1283,12 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 .rb-dist{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--text-2)}
 .rb-dist.g{color:var(--green-2)}
 .rb-dist.r{color:var(--red-2)}
+.rb-chop{margin-left:5px;font-size:9px;font-weight:700;letter-spacing:.3px;
+  color:var(--red-2);border:1px solid rgba(239,68,68,.3);border-radius:3px;
+  padding:0 4px;text-transform:uppercase}
+.rb-rr{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--text-2)}
+.rb-rr.g{color:var(--green-2)}
+.rb-rr.r{color:var(--text-3)}
 .tv-tbl{width:100%;border-collapse:collapse;font-size:12px;table-layout:auto}
 .tv-tbl thead th{
   text-align:left;font-size:9.5px;font-weight:700;letter-spacing:.5px;color:var(--text-3);
@@ -2535,6 +2541,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       detect:"bias",
       rbSignalMode:"formation", rbVolumeMode:"optional",
       rbFormationMode:"confirmed", rbMaxDistanceAtr:1.5,
+      rbRegimeMode:"off", rbMinPriorMovePct:0,
       rbIncludeDead:false, detectorFilter:"all"
     },
   };
@@ -2663,6 +2670,11 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       { type:"select", key:"rbFormationMode", label:"RB formation", rb:true,
         options:[["confirmed","Confirmed only"],["both","Pending + confirmed"],["pending","Pending only"]],
         help:"Confirmed waits for the candle that closes beyond the reclaim. Pending flags a block as soon as the sweep is reclaimed — about 65% of those go on to confirm, so treat them as a watch, not a finished setup. Pending blocks are capped at grade B." },
+      { type:"select", key:"rbRegimeMode", label:"Market regime", rb:true,
+        options:[["off","Off"],["optional","Optional"],["required","Trending only"]],
+        help:"Chop filter. Measures path efficiency over 20 candles — how much net ground price covered versus how far it actually travelled. A range covers a lot of distance going nowhere; a trend goes somewhere. Trending only hides blocks that formed inside chop." },
+      { type:"num", key:"rbMinPriorMovePct", label:"Min prior move %", step:0.5, rb:true,
+        help:"Require the drive INTO the swept level to have travelled at least this far. A 15% drop into a swept low leaves room to retrace; a 2% drift does not. 0 disables it. This is about magnitude — the drive being clean is scored separately and cannot tell chop from trend on its own." },
       { type:"num", key:"rbMaxDistanceAtr", label:"Max distance (ATR)", step:0.1, rb:true,
         help:"Hide blocks price has already run away from, measured in ATR. A violent confirm candle can leave a brand-new block several ATR behind — lower this to only see blocks you can still trade." },
       { type:"select", key:"rbSignalMode", label:"RB signal", rb:true,
@@ -2942,7 +2954,9 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
           signalMode:     bo.rbSignalMode||"formation",
           formationMode:  bo.rbFormationMode||"confirmed",
           volumeMode:     bo.rbVolumeMode||"optional",
-          maxDistanceAtr: (+bo.rbMaxDistanceAtr>0?+bo.rbMaxDistanceAtr:1.5),
+          maxDistanceAtr:  (+bo.rbMaxDistanceAtr>0?+bo.rbMaxDistanceAtr:1.5),
+          regimeMode:      bo.rbRegimeMode||"off",
+          minPriorMovePct: +bo.rbMinPriorMovePct||0,
           includeDead:    !!bo.rbIncludeDead
         }
       }};
@@ -4937,6 +4951,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       var RLBL={dead:"spent / broken / stale / price gone",
                 formationMode:"filtered by RB formation mode",
                 signalMode:"filtered by RB signal mode",
+                regime:"formed in a choppy market",
+                priorMove:"prior move too small",
                 volume:"no volume behind the sweep"};
       var rbChips=Object.keys(RLBL).filter(function(k){return (rbd[k]||0)>0;})
         .map(function(k){ return '<span class="bd-chip"><b>'+rbd[k]+'</b> '+esc(RLBL[k])+'</span>'; }).join("");
@@ -4963,7 +4979,21 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   function _rbStateBadge(rb){
     if(!rb) return "—";
     var st=rb.state||"";
-    return '<span class="rb-state rb-'+esc(st)+'">'+esc(RB_STATE_LABEL[st]||st)+'</span>';
+    var out='<span class="rb-state rb-'+esc(st)+'">'+esc(RB_STATE_LABEL[st]||st)+'</span>';
+    // Regime rides with the state instead of claiming its own column: a block
+    // that formed in chop is worth flagging wherever the block is shown.
+    var rg=rb.regime||{};
+    if(rg.efficiencyRatio!=null && !rg.trending){
+      out+='<span class="rb-chop" title="Formed in a choppy market — efficiency '+
+           (+rg.efficiencyRatio).toFixed(2)+'">chop</span>';
+    }
+    return out;
+  }
+  function _rbRrCell(rb){
+    if(!rb || !rb.target || rb.target.rr==null) return '<span style="color:var(--text-3)">—</span>';
+    var rr=rb.target.rr;
+    var cls=rr>=3?"g":rr>=1.5?"":"r";
+    return '<span class="rb-rr '+cls+'">'+rr.toFixed(1)+'R</span>';
   }
   function _rbZoneCell(b){
     if(b.zoneLow==null||b.zoneHigh==null) return "—";
@@ -5103,7 +5133,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       var mid = mode==="rb"
         ? '<td class="r">'+_rbZoneCell(b)+'</td>'+
           '<td>'+_rbRetestCell(b.rb)+'</td>'+
-          '<td class="r">'+_rbDistCell(b)+'</td>'
+          '<td class="r">'+_rbDistCell(b)+'</td>'+
+          '<td class="r">'+_rbRrCell(b.rb)+'</td>'
         : mode==="bias"
           ? '<td>'+esc(prior)+'</td>'
           : '';
@@ -5124,7 +5155,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       (mode==="rb"?'<th>STATE</th>':'<th>STATUS</th>')+
       '<th>GRADE</th><th class="r">SCORE</th>'+
       (mode==="rb"
-        ? '<th class="r">ZONE</th><th>RETESTS</th><th class="r">DISTANCE</th>'
+        ? '<th class="r">ZONE</th><th>RETESTS</th><th class="r">DISTANCE</th><th class="r">R:R</th>'
         : mode==="bias" ? '<th>PRIOR MOVE</th>' : '')+
       '<th class="r">PRICE</th><th class="r">INVALIDATION</th>'+
       (mode==="bias"?'<th>CONFLUENCE</th>':'')+
@@ -5166,6 +5197,30 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       _tiB("State", _rbStateBadge(rb))+
       _tiB("Freshness", _rbFreshCell(rb))+
       _ti("Distance (ATR)", rb.distanceAtr!=null?(+rb.distanceAtr).toFixed(2)+"×":"—")+
+
+      '<div class="ti-h">Market context</div>'+
+      _tiB("Regime", (function(){
+        var rg=rb.regime||{};
+        if(rg.efficiencyRatio==null) return "—";
+        var cls=rg.trending?"var(--green-2)":"var(--red-2)";
+        return '<span style="color:'+cls+';font-weight:700">'+
+               (rg.trending?"Trending":"Choppy")+'</span>'+
+               '<span style="color:var(--text-3);font-size:10px;margin-left:5px">'+
+               'efficiency '+(+rg.efficiencyRatio).toFixed(2)+' over '+(rg.window||20)+'c</span>';
+      })())+
+      _ti("Drive into the sweep", (function(){
+        var dv=rb.priorDrive||{};
+        if(!dv.netPct) return "—";
+        return dv.netPct.toFixed(2)+"% over "+(dv.candles||"?")+" candles"+
+               (dv.matchesSweep?"":" (opposite direction)");
+      })())+
+      _ti("Drive quality", (rb.priorDrive&&rb.priorDrive.quality)||"—")+
+      _ti("First target", (rb.target&&rb.target.level!=null)?fmt(rb.target.level):"—")+
+      _ti("Target distance", (rb.target&&rb.target.distancePct!=null)
+            ? rb.target.distancePct.toFixed(2)+"%" : "—")+
+      _tiB("R:R to target", (rb.target&&rb.target.rr!=null)
+            ? '<span style="color:'+(rb.target.rr>=2?"var(--green-2)":"var(--text-2)")+
+              ';font-weight:700">'+rb.target.rr.toFixed(2)+'R</span>' : "—")+
 
       '<div class="ti-h">Liquidity sweep</div>'+
       _ti("Swept level", rb.sweptLevel!=null?fmt(rb.sweptLevel):"—")+

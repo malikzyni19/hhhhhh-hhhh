@@ -35145,10 +35145,80 @@ def _rb_config(tf: str, overrides: dict | None = None) -> dict:
         "sweepSources":      ["swing", "local"],
         "volSweepMult":      1.5,             # sweep volume vs 20-candle average
         "volRetestMax":      0.7,             # retest should arrive on LOWER volume
+        # Market regime — the anti-chop filter. 0.35 separated a mean-reverting
+        # range (1.6% above it) from a trend (61.3% above it) in simulation;
+        # the threshold itself wants tuning against live results.
+        "regimeWindow":      20,
+        "regimeMinRatio":    0.35,
+        # Over-extension: how far the drive into the swept level travelled.
+        # 0 disables it. This is about magnitude, not cleanliness.
+        "minPriorMovePct":   0.0,
+        "priorMoveCandles":  4,
+        "priorMoveStrength": "balanced",
     })
     if overrides:
         base.update({k: v for k, v in overrides.items() if v is not None})
     return base
+
+
+def _rb_efficiency_ratio(c: list, idx: int, win: int = 20) -> float | None:
+    """Kaufman efficiency ratio — |net move| / total path travelled.
+
+    This is the chop detector. A short "clean drive" check cannot do this job:
+    a 3-8 candle directional run appears constantly in noise, so requiring one
+    filters roughly as many trending setups as choppy ones. Path efficiency
+    separates them properly — a range covers ground going nowhere (~0.10),
+    a trend goes somewhere (~0.46).
+    """
+    start = max(0, idx - win)
+    seg = c[start:idx + 1]
+    if len(seg) < 3:
+        return None
+    net  = abs(seg[-1] - seg[0])
+    path = sum(abs(seg[k] - seg[k - 1]) for k in range(1, len(seg)))
+    return round(net / path, 4) if path > 0 else None
+
+
+def _rb_prior_drive(o: list, h: list, l: list, c: list, pierce_idx: int,
+                    direction: str, tf: str, cfg: dict) -> dict:
+    """The move that ran INTO the swept level, and where it started.
+
+    Reuses the bias engine's adaptive drive detector rather than growing a
+    second one. Magnitude is what matters for target potential — a 15% drop
+    into a swept low leaves room to retrace, a 2% drift does not — so netPct
+    is reported separately from the accept/reject verdict, which measures
+    cleanliness and is only worth scoring points.
+    """
+    want = "down" if direction == "bullish" else "up"
+    try:
+        pr = _detect_prior_move_adaptive(
+            o, h, l, c, pierce_idx, tf,
+            int(cfg.get("priorMoveCandles", 4)),
+            str(cfg.get("priorMoveStrength", "balanced")), "normal",
+        )
+    except Exception:
+        return {"found": False, "netPct": 0.0, "quality": "none",
+                "direction": None, "matchesSweep": False,
+                "originIndex": None, "originPrice": None}
+
+    start = pr.get("priorStart")
+    if start is None or start < 0:
+        start = max(0, pierce_idx - 4)
+    if direction == "bullish":
+        origin = max(h[start:pierce_idx + 1]) if pierce_idx >= start else None
+    else:
+        origin = min(l[start:pierce_idx + 1]) if pierce_idx >= start else None
+
+    return {
+        "found":        bool(pr.get("accepted")),
+        "quality":      pr.get("quality", "none"),
+        "direction":    pr.get("direction"),
+        "matchesSweep": pr.get("direction") == want,
+        "netPct":       round(abs(float(pr.get("netPct") or 0.0)), 3),
+        "candles":      pr.get("windowN"),
+        "originIndex":  start,
+        "originPrice":  round(origin, 8) if origin else None,
+    }
 
 
 def _rb_swing_levels(h: list, l: list, cfg: dict) -> tuple[list, list]:
@@ -35402,6 +35472,36 @@ def _detect_rejection_blocks(o: list, h: list, l: list, c: list, v: list, ts: li
                 sweep_depth = (abs(lvl - (l[p] if is_bull else h[p]))
                                / max(abs(lvl), 1e-12) * 100.0)
 
+                # ── Context: was this a trend or chop, and how far did the
+                # move into the sweep travel? ─────────────────────────────
+                er = _rb_efficiency_ratio(c, p, int(cfg["regimeWindow"]))
+                regime = {
+                    "efficiencyRatio": er,
+                    "window":          int(cfg["regimeWindow"]),
+                    "trending":        (er is not None and er >= cfg["regimeMinRatio"]),
+                    "label":           ("trending" if (er is not None and er >= cfg["regimeMinRatio"])
+                                        else "choppy" if er is not None else "unknown"),
+                }
+                drive = _rb_prior_drive(o, h, l, c, p, direction, tf, cfg)
+
+                # First natural target: back to where the drive started. Entry
+                # is the near edge of the zone, stop is the far edge.
+                entry = rb_high if is_bull else rb_low
+                risk  = rb_high - rb_low
+                tgt   = drive.get("originPrice")
+                rr    = None
+                if tgt and risk > 0:
+                    reward = (tgt - entry) if is_bull else (entry - tgt)
+                    if reward > 0:
+                        rr = round(reward / risk, 2)
+                target = {
+                    "level":     tgt,
+                    "entry":     round(entry, 8),
+                    "rr":        rr,
+                    "distancePct": (round(abs(tgt - entry) / entry * 100, 2)
+                                    if tgt and entry else None),
+                }
+
                 out.append({
                     "direction":      direction,
                     "pending":        pending,
@@ -35422,6 +35522,9 @@ def _detect_rejection_blocks(o: list, h: list, l: list, c: list, v: list, ts: li
                     "distanceAtr":    dist_atr,
                     "far":            (dist_atr is not None
                                        and dist_atr > cfg["maxDistanceAtr"]),
+                    "regime":         regime,
+                    "priorDrive":     drive,
+                    "target":         target,
                     "state":          life["state"],
                     "retestCount":    life["touches"],
                     "respectedCount": life["respectedCount"],
@@ -35482,26 +35585,49 @@ def _score_rejection_block(blk: dict, cfg: dict, volume_mode: str) -> dict:
     pts = 0
     bd: list[str] = []
 
-    # ── Sweep quality (25) ────────────────────────────────────────────────
+    # ── Sweep quality (20) ────────────────────────────────────────────────
     if blk["sweepSource"] == "swing":
-        pts += 15; bd.append("+15 swept a confirmed swing level")
+        pts += 12; bd.append("+12 swept a confirmed swing level")
     else:
-        pts += 8;  bd.append("+8 swept a local extreme")
+        pts += 6;  bd.append("+6 swept a local extreme")
 
     depth = blk["sweepDepthPct"]
     if cfg["sweepMinPct"] <= depth <= 2.0:
-        pts += 10; bd.append(f"+10 sweep depth {depth:.2f}% in range")
+        pts += 8;  bd.append(f"+8 sweep depth {depth:.2f}% in range")
     else:
-        pts += 4;  bd.append(f"+4 sweep depth {depth:.2f}% outside ideal range")
+        pts += 3;  bd.append(f"+3 sweep depth {depth:.2f}% outside ideal range")
 
-    # ── Formation tightness (15) ──────────────────────────────────────────
+    # ── Formation tightness (10) ──────────────────────────────────────────
     bc = blk["blockCandles"]
     if bc <= 3:
-        pts += 15; bd.append(f"+15 tight {bc}-candle formation")
+        pts += 10; bd.append(f"+10 tight {bc}-candle formation")
     elif bc <= 5:
-        pts += 9;  bd.append(f"+9 {bc}-candle formation")
+        pts += 6;  bd.append(f"+6 {bc}-candle formation")
     else:
-        pts += 4;  bd.append(f"+4 slow {bc}-candle formation")
+        pts += 3;  bd.append(f"+3 slow {bc}-candle formation")
+
+    # ── Context: regime + over-extension (15) ─────────────────────────────
+    # Regime is the anti-chop signal; prior-move magnitude is the room-to-target
+    # signal. Drive *quality* only nudges, because it cannot tell chop from trend.
+    reg = blk.get("regime") or {}
+    er  = reg.get("efficiencyRatio")
+    if er is None:
+        pts += 4; bd.append("+4 regime unknown (not enough history)")
+    elif reg.get("trending"):
+        pts += 8; bd.append(f"+8 trending market (efficiency {er:.2f})")
+    elif er >= cfg["regimeMinRatio"] * 0.6:
+        pts += 4; bd.append(f"+4 mixed regime (efficiency {er:.2f})")
+    else:
+        bd.append(f"+0 choppy market (efficiency {er:.2f})")
+
+    drv = blk.get("priorDrive") or {}
+    net = drv.get("netPct") or 0.0
+    if drv.get("matchesSweep") and net >= 8.0:
+        pts += 5; bd.append(f"+5 over-extended {net:.1f}% drive into the sweep")
+    elif drv.get("matchesSweep") and net >= 3.0:
+        pts += 3; bd.append(f"+3 {net:.1f}% drive into the sweep")
+    if drv.get("found") and drv.get("matchesSweep"):
+        pts += 2; bd.append(f"+2 {drv.get('quality')} drive quality")
 
     # ── Volume (20) ───────────────────────────────────────────────────────
     vol = blk.get("volume") or {}
@@ -35532,8 +35658,8 @@ def _score_rejection_block(blk: dict, cfg: dict, volume_mode: str) -> dict:
     pts += state_pts.get(st, 10)
     bd.append(f"+{state_pts.get(st, 10)} state: {st}")
 
-    # ── Freshness (15) ────────────────────────────────────────────────────
-    fp = int(round(15 * blk["freshness"]))
+    # ── Freshness (10) ────────────────────────────────────────────────────
+    fp = int(round(10 * blk["freshness"]))
     pts += fp
     bd.append(f"+{fp} freshness {blk['freshness']:.2f} ({blk['ageCandles']} candles old)")
 
@@ -35693,6 +35819,12 @@ def api_bias_scan():
     if rb_formation_mode not in ("confirmed", "both", "pending"):
         rb_formation_mode = "confirmed"
 
+    # off | optional | required — the anti-chop gate
+    rb_regime_mode = _rb_payload.get("regimeMode", "off")
+    if rb_regime_mode not in ("off", "optional", "required"):
+        rb_regime_mode = "off"
+    rb_min_prior_move = float(_rb_payload.get("minPriorMovePct") or 0.0)
+
     rb_signal_mode = _rb_payload.get("signalMode", "formation")   # formation | retest
     rb_include_dead = bool(_rb_payload.get("includeDead", False))
     rb_volume_mode  = _rb_payload.get("volumeMode", "optional")   # off | optional | required
@@ -35701,7 +35833,8 @@ def api_bias_scan():
             "sweepMinPct", "maxAgeCandles", "maxTouches", "reclaimWindow",
             "confirmWindow", "maxDistanceAtr", "localLookback",
             "minBlockHeightPct", "sweepSources", "volSweepMult", "volRetestMax",
-            "swingLeft", "swingRight",
+            "swingLeft", "swingRight", "regimeWindow", "regimeMinRatio",
+            "minPriorMovePct", "priorMoveCandles", "priorMoveStrength",
         ) if _rb_payload.get(k) is not None
     }
     if rb_enabled:
@@ -35869,6 +36002,9 @@ def api_bias_scan():
             "rejectionBlockSignalMode": rb_signal_mode if rb_enabled else None,
             "rejectionBlockFormationMode": rb_formation_mode if rb_enabled else None,
             "rejectionBlockMaxDistanceAtr": (rb_cfg or {}).get("maxDistanceAtr"),
+            "rejectionBlockRegimeMode":     rb_regime_mode if rb_enabled else None,
+            "rejectionBlockRegimeMinRatio": (rb_cfg or {}).get("regimeMinRatio"),
+            "rejectionBlockMinPriorMovePct": rb_min_prior_move if rb_enabled else None,
             "rejectionBlockVolumeMode": rb_volume_mode if rb_enabled else None,
         },
     }
@@ -35877,6 +36013,8 @@ def api_bias_scan():
             "detected":   0,   # raw formations found
             "dead":       0,   # invalidated / mitigated / expired / ran away
             "formationMode": 0,  # dropped by the confirmed vs pending toggle
+            "regime":     0,   # dropped by the choppy-market gate
+            "priorMove":  0,   # dropped by the minimum prior-move requirement
             "signalMode": 0,   # dropped by the formation vs retest toggle
             "volume":     0,   # dropped by volumeMode = required
             "returned":   0,   # survived into the results list
@@ -35956,6 +36094,16 @@ def api_bias_scan():
                         _sr = (_blk.get("volume") or {}).get("sweepRatio")
                         if _sr is None or _sr < rb_cfg["volSweepMult"]:
                             _rbd["volume"] += 1
+                            continue
+                    if rb_regime_mode == "required" and not (
+                            _blk.get("regime") or {}).get("trending"):
+                        _rbd["regime"] += 1
+                        continue
+                    if rb_min_prior_move > 0:
+                        _dv = _blk.get("priorDrive") or {}
+                        if not _dv.get("matchesSweep") or \
+                                (_dv.get("netPct") or 0.0) < rb_min_prior_move:
+                            _rbd["priorMove"] += 1
                             continue
                     rb_rows.append(_rb_build_row(_blk, sym, tf, rb_cfg,
                                                  rb_volume_mode, c, current_price))

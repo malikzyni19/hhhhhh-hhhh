@@ -690,7 +690,10 @@ def pending_and_distance_tests():
     best = {"pending": True, "state": "pending", "sweepSource": "swing",
             "sweepDepthPct": 1.0, "blockCandles": 2, "freshness": 1.0,
             "ageCandles": 0, "retests": [],
-            "volume": {"sweepRatio": 3.0, "reclaimRatio": 3.0}}
+            "volume": {"sweepRatio": 3.0, "reclaimRatio": 3.0},
+            "regime": {"efficiencyRatio": 0.7, "trending": True},
+            "priorDrive": {"found": True, "matchesSweep": True,
+                           "netPct": 12.0, "quality": "clean"}}
     best_score = main._score_rejection_block(best, cfg, "optional")["score"]
     check("best possible pending tops out inside B", best_score <= 79, str(best_score))
     conf_score = main._score_rejection_block(
@@ -761,12 +764,129 @@ def pending_and_distance_tests():
           d["diagnostics"]["settingsUsed"]["rejectionBlockMaxDistanceAtr"] == 1.5)
 
 
+def _regime_series(n, seed, kind):
+    """kind: 'chop' = mean-reverting range, 'trend' = persistent momentum."""
+    import random
+    rnd = random.Random(seed)
+    s = Series()
+    px, anchor, mom = 100.0, 100.0, 0.0
+    for _ in range(n):
+        op = px
+        if kind == "chop":
+            step = -0.25 * (px - anchor) / anchor + rnd.gauss(0, 0.018)
+        else:
+            mom = 0.75 * mom + rnd.gauss(0, 0.010)
+            step = mom
+        cl = op * (1 + step)
+        bh, bl = max(op, cl), min(op, cl)
+        rng = abs(cl - op) + op * 0.010 * abs(rnd.gauss(0, 1))
+        s.add(op, bh + rng * rnd.random() * .6, bl - rng * rnd.random() * .6, cl)
+        px = cl
+    return s
+
+
+def context_tests():
+    print("\n[24] efficiency ratio separates chop from trend")
+    import statistics
+    med = {}
+    for kind in ("chop", "trend"):
+        vals = []
+        for seed in range(40):
+            o, h, l, c, v, ts = _regime_series(200, seed, kind).unzip()
+            for i in range(30, len(c)):
+                er = main._rb_efficiency_ratio(c, i, 20)
+                if er is not None:
+                    vals.append(er)
+        med[kind] = statistics.median(vals)
+    check("chop scores low", med["chop"] < 0.25, f"median {med['chop']:.3f}")
+    check("trend scores high", med["trend"] > 0.35, f"median {med['trend']:.3f}")
+    check("the two separate clearly", med["trend"] > med["chop"] * 2,
+          f"chop={med['chop']:.3f} trend={med['trend']:.3f}")
+    check("short history returns None", main._rb_efficiency_ratio([1.0, 2.0], 1, 20) is None)
+
+    print("\n[25] blocks carry regime, prior drive and target")
+    b = [x for x in bullish_rb().detect() if x["direction"] == "bullish"][0]
+    check("regime attached", isinstance(b.get("regime"), dict) and
+          "efficiencyRatio" in b["regime"], str(b.get("regime")))
+    check("regime is labelled", b["regime"]["label"] in ("trending", "choppy", "unknown"),
+          b["regime"]["label"])
+    check("prior drive attached", isinstance(b.get("priorDrive"), dict), str(type(b.get("priorDrive"))))
+    check("drive direction is checked against the sweep",
+          "matchesSweep" in b["priorDrive"])
+    check("drive magnitude reported", b["priorDrive"]["netPct"] >= 0,
+          str(b["priorDrive"]["netPct"]))
+    check("target block attached", isinstance(b.get("target"), dict), str(b.get("target")))
+    check("target uses the drive origin",
+          b["target"]["level"] == b["priorDrive"]["originPrice"],
+          f"{b['target']['level']} vs {b['priorDrive']['originPrice']}")
+    if b["target"]["rr"] is not None:
+        check("R:R is positive when the target is beyond entry",
+              b["target"]["rr"] > 0, str(b["target"]["rr"]))
+
+    print("\n[26] API — regime gate")
+    d = api_scan(dict(API_BASE, rejectionBlock={"enabled": True}), bullish_rb())
+    check("regime gate is off by default",
+          d["diagnostics"]["settingsUsed"]["rejectionBlockRegimeMode"] == "off")
+    base_rows = len(rb_rows(d))
+    check("nothing filtered when off", base_rows > 0, f"{base_rows} rows")
+
+    # a deliberately choppy fixture: flat base means a very low efficiency ratio
+    d = api_scan(dict(API_BASE, rejectionBlock={
+        "enabled": True, "regimeMode": "required"}), bullish_rb())
+    dg = d["diagnostics"]["rejectionBlocks"]
+    check("required gate reports what it dropped", "regime" in dg, str(dg))
+    check("surviving rows are all trending",
+          all((x["rb"]["regime"] or {}).get("trending") for x in rb_rows(d)),
+          str([(x["rb"]["regime"] or {}).get("efficiencyRatio") for x in rb_rows(d)]))
+    check("settingsUsed echoes the threshold",
+          d["diagnostics"]["settingsUsed"]["rejectionBlockRegimeMinRatio"] == 0.35)
+
+    print("\n[27] API — minimum prior move")
+    d = api_scan(dict(API_BASE, rejectionBlock={
+        "enabled": True, "minPriorMovePct": 0}), bullish_rb())
+    check("zero disables the requirement", len(rb_rows(d)) == base_rows,
+          f"{len(rb_rows(d))} vs {base_rows}")
+
+    d = api_scan(dict(API_BASE, rejectionBlock={
+        "enabled": True, "minPriorMovePct": 50}), bullish_rb())
+    check("an unreachable threshold filters everything", len(rb_rows(d)) == 0,
+          f"{len(rb_rows(d))} rows")
+    check("drop attributed to prior move",
+          d["diagnostics"]["rejectionBlocks"]["priorMove"] >= 1,
+          str(d["diagnostics"]["rejectionBlocks"]))
+    check("settingsUsed echoes the requirement",
+          d["diagnostics"]["settingsUsed"]["rejectionBlockMinPriorMovePct"] == 50)
+
+    print("\n[28] scoring stays on a 100-point scale")
+    cfg = main._rb_config("1d")
+    perfect = {"sweepSource": "swing", "sweepDepthPct": 1.0, "blockCandles": 2,
+               "freshness": 1.0, "ageCandles": 0, "state": "respected",
+               "retests": [{"volRatio": 0.3}],
+               "volume": {"sweepRatio": 3.0, "reclaimRatio": 3.0},
+               "regime": {"efficiencyRatio": 0.7, "trending": True},
+               "priorDrive": {"found": True, "matchesSweep": True,
+                              "netPct": 12.0, "quality": "clean"}}
+    check("a perfect block reaches 100",
+          main._score_rejection_block(perfect, cfg, "optional")["score"] == 100)
+    choppy = dict(perfect, regime={"efficiencyRatio": 0.05, "trending": False},
+                  priorDrive={"found": False, "matchesSweep": False,
+                              "netPct": 0.5, "quality": "none"})
+    ch_score = main._score_rejection_block(choppy, cfg, "optional")["score"]
+    check("chop with no drive scores lower", ch_score < 100, str(ch_score))
+    check("the context swing is 15 points",
+          100 - ch_score == 15, f"delta={100 - ch_score}")
+    check("choppy market is called out in the breakdown",
+          any("choppy" in x for x in
+              main._score_rejection_block(choppy, cfg, "optional")["breakdown"]))
+
+
 if __name__ == "__main__":
     main_test()
     api_tests()
     detect_mode_tests()
     selected_scope_tests()
     pending_and_distance_tests()
+    context_tests()
     print("\n" + ("-" * 62))
     if failures:
         print(f"FAILED ({len(failures)}): " + ", ".join(failures))
