@@ -516,9 +516,64 @@ def api_tests():
           str([x["rb"]["sweepSource"] for x in local_rows]))
 
 
+def detect_mode_tests():
+    print("\n[18] detect mode — which detectors actually run")
+    s = bullish_rb()
+
+    # legacy payloads must keep working: no `detect` key at all
+    d = api_scan(dict(API_BASE), s)
+    check("legacy payload with no detect key stays bias-only",
+          d["diagnostics"]["settingsUsed"]["detect"] == "bias",
+          d["diagnostics"]["settingsUsed"]["detect"])
+    check("legacy bias-only returns no RB rows", len(rb_rows(d)) == 0)
+
+    d = api_scan(dict(API_BASE, rejectionBlock={"enabled": True}), s)
+    check("legacy rejectionBlock.enabled still means both",
+          d["diagnostics"]["settingsUsed"]["detect"] == "both",
+          d["diagnostics"]["settingsUsed"]["detect"])
+    check("legacy enabled flag still yields RB rows", len(rb_rows(d)) > 0)
+
+    # explicit modes
+    d = api_scan(dict(API_BASE, detect="bias"), s)
+    check("detect=bias returns no RB rows", len(rb_rows(d)) == 0)
+    check("detect=bias reports no RB diagnostics", "rejectionBlocks" not in d["diagnostics"])
+
+    d = api_scan(dict(API_BASE, detect="rejection_block"), s)
+    rbs = rb_rows(d)
+    bias = [r for r in d["results"] if r.get("detector") == "bias_shift"]
+    check("detect=rejection_block returns RB rows", len(rbs) > 0, f"{len(rbs)} rows")
+    check("detect=rejection_block runs no bias search", len(bias) == 0,
+          f"{len(bias)} bias rows")
+    rj = d["diagnostics"]["rejected"]
+    check("RB-only logs no phantom bias rejections",
+          all(rj[k] == 0 for k in ("noPriorMove", "noCleanPriorDrive",
+                                   "noRejectionCandle", "notConfirmed")),
+          str(rj))
+    check("symbols are still counted as scanned",
+          d["diagnostics"]["symbolsScanned"] == 1,
+          str(d["diagnostics"]["symbolsScanned"]))
+
+    d = api_scan(dict(API_BASE, detect="both"), s)
+    check("detect=both runs the RB detector", len(rb_rows(d)) > 0)
+    check("detect=both echoes the mode",
+          d["diagnostics"]["settingsUsed"]["detect"] == "both")
+
+    # an unknown value must not silently disable everything
+    d = api_scan(dict(API_BASE, detect="nonsense", rejectionBlock={"enabled": True}), s)
+    check("an unknown detect value falls back sanely",
+          d["diagnostics"]["settingsUsed"]["detect"] == "both",
+          d["diagnostics"]["settingsUsed"]["detect"])
+
+    # a bias-producing series proves detect=bias still finds bias setups
+    d = api_scan(dict(API_BASE, detect="bias"), bearish_rb())
+    check("detect=bias still runs the bias engine",
+          isinstance(d["results"], list) and "rejected" in d["diagnostics"])
+
+
 if __name__ == "__main__":
     main_test()
     api_tests()
+    detect_mode_tests()
     print("\n" + ("-" * 62))
     if failures:
         print(f"FAILED ({len(failures)}): " + ", ".join(failures))

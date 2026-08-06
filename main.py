@@ -35543,10 +35543,17 @@ def api_bias_scan():
     use_volume_filter  = volume_filter_mode == "required"
     vol_multiplier     = float(payload.get("volumeMultiplier", 1.5))
 
-    # ── Rejection Block sub-detector ──────────────────────────────────────
-    # Runs on the candles this scan already fetched, so it costs CPU only.
-    _rb_payload   = payload.get("rejectionBlock") or {}
-    rb_enabled    = bool(_rb_payload.get("enabled", False))
+    # ── Which detectors run ───────────────────────────────────────────────
+    # "detect" is the single switch: bias | rejection_block | both. Legacy
+    # payloads that only set rejectionBlock.enabled still mean "both", and a
+    # payload with neither keeps the original bias-only behaviour.
+    _rb_payload = payload.get("rejectionBlock") or {}
+    detect_mode = payload.get("detect")
+    if detect_mode not in ("bias", "rejection_block", "both"):
+        detect_mode = "both" if bool(_rb_payload.get("enabled", False)) else "bias"
+    run_bias   = detect_mode in ("bias", "both")
+    rb_enabled = detect_mode in ("rejection_block", "both")
+
     rb_signal_mode = _rb_payload.get("signalMode", "formation")   # formation | retest
     rb_include_dead = bool(_rb_payload.get("includeDead", False))
     rb_volume_mode  = _rb_payload.get("volumeMode", "optional")   # off | optional | required
@@ -35685,6 +35692,7 @@ def api_bias_scan():
             "priorMoveCandles": prior_move_n,
             "signalSearchCandles": signal_search_n,
             "signalSearchFloorApplied": signal_search_floor_applied,
+            "detect":                   detect_mode,
             "rejectionBlockEnabled":    rb_enabled,
             "rejectionBlockSignalMode": rb_signal_mode if rb_enabled else None,
             "rejectionBlockVolumeMode": rb_volume_mode if rb_enabled else None,
@@ -35785,7 +35793,9 @@ def api_bias_scan():
             _d_vol_miss       = False
             _d_conf_miss      = False
 
-            for sig_offset in range(signal_search_n):
+            # detect="rejection_block" skips the bias search entirely — the
+            # empty range keeps this cheap without re-indenting the body.
+            for sig_offset in (range(signal_search_n) if run_bias else ()):
                 sig_idx = n - 1 - sig_offset
                 if sig_idx < prior_move_n + 1:
                     continue
@@ -36142,8 +36152,10 @@ def api_bias_scan():
                     diagnostics["rejected"]["invalidated"] += 1
                 else:
                     results.append(best)
-            else:
-                # Attribute primary rejection reason (priority order)
+            elif run_bias:
+                # Attribute primary rejection reason (priority order).
+                # Guarded so an RB-only scan does not log a bias rejection for
+                # every symbol it never looked at.
                 if not _d_had_prior and _d_weak_prior:
                     diagnostics["rejected"]["noCleanPriorDrive"] += 1
                     diagnostics["rejected"]["noAdaptivePriorDrive"] += 1

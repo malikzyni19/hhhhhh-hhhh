@@ -2523,8 +2523,9 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       minWickPct:35, minBodyPct:20, requireCloseBeyondMidpoint:true,
       volumeFilter:"optional", volumeMultiplier:1.5,
       useObConfluence:true, useFvgConfluence:true, useFibConfluence:true,
-      // Rejection Block sub-detector (Phase 3)
-      rbEnabled:false, rbSignalMode:"formation", rbVolumeMode:"optional",
+      // Which detectors run: bias | rejection_block | both
+      detect:"bias",
+      rbSignalMode:"formation", rbVolumeMode:"optional",
       rbIncludeDead:false, detectorFilter:"all"
     },
   };
@@ -2603,6 +2604,10 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         help:"Bullish/Bearish movers by % change, or High Volume by quote-volume surge." },
     ],
     bias: [
+      // Governs everything below it, so it leads the row.
+      { type:"select", key:"detect", label:"Detect", rerender:true,
+        options:[["bias","Bias shifts"],["rejection_block","Rejection blocks"],["both","Both"]],
+        help:"Which engine runs. Rejection blocks only skips the bias-shift search entirely, so the scan is faster and the results are purely blocks. A rejection block is a swept liquidity level that was reclaimed and confirmed; the zone is the band between the extreme wick and the extreme body." },
       { type:"select", key:"tf", label:"Timeframe",
         options:[["1h","1H"],["4h","4H"],["6h","6H"],["12h","12H"],["1d","1D"]],
         help:"Candle interval used to detect bias-shift rejections." },
@@ -2645,9 +2650,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       { type:"check", key:"useObConfluence", label:"OB confluence",  help:"Boost grade when the rejection is near an Order Block." },
       { type:"check", key:"useFvgConfluence", label:"FVG confluence", help:"Boost grade when the rejection is near a Fair Value Gap." },
       { type:"check", key:"useFibConfluence", label:"Fib confluence", help:"Boost grade when the rejection is near a Fibonacci level." },
-      // ── Rejection Block sub-detector ──
-      { type:"check", key:"rbEnabled", label:"Rejection blocks", rerender:true,
-        help:"Also find rejection blocks — a swept liquidity level that was reclaimed and confirmed. The zone is the band between the extreme wick and the extreme body." },
+      // ── Rejection Block controls (shown when Detect includes them) ──
       { type:"select", key:"rbSignalMode", label:"RB signal", rb:true,
         options:[["formation","Formation (all live)"],["retest","Retest only"]],
         help:"Formation lists every live block. Retest only shows blocks price has actually returned to." },
@@ -2717,11 +2720,20 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     host.hidden=false;
     // Expert-only fields are hidden unless the bias tab is in Expert mode.
     var expertOn = (ST.mode==="bias") && ((ST.modeOptions.bias||{}).mode==="expert");
-    // Rejection-block settings only appear once the sub-detector is switched on.
-    var rbOn = (ST.mode==="bias") && !!((ST.modeOptions.bias||{}).rbEnabled);
+    var _det = (ST.modeOptions.bias||{}).detect || "bias";
+    // Rejection-block settings appear only when that engine is running, and
+    // the bias-engine knobs disappear when it isn't — a control that cannot
+    // affect the scan should not be on screen.
+    var rbOn   = (ST.mode==="bias") && (_det==="rejection_block" || _det==="both");
+    var biasOn = (ST.mode==="bias") && (_det==="bias" || _det==="both");
+    var BIAS_ONLY={mode:1,biasStrength:1,detectionMode:1,confluenceMode:1,
+      priorMoveCandles:1,signalSearchCandles:1,minWickPct:1,minBodyPct:1,
+      requireCloseBeyondMidpoint:1,volumeFilter:1,volumeMultiplier:1,
+      useObConfluence:1,useFvgConfluence:1,useFibConfluence:1};
     var visible = schema.filter(function(f){
       if(f.expert && !expertOn) return false;
       if(f.rb && !rbOn) return false;
+      if(ST.mode==="bias" && f.key && BIAS_ONLY[f.key] && !biasOn) return false;
       return true;
     });
     host.innerHTML='<div class="tc-h">'+esc(MODE_LABEL[ST.mode]||"")+' settings</div>'+
@@ -2909,9 +2921,10 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         useObConf: bo.useObConfluence!==false,
         useFvgConf: bo.useFvgConfluence!==false,
         useFibConf: bo.useFibConfluence!==false,
-        // Rejection Block sub-detector — off unless explicitly enabled
+        // Which engine(s) run: bias | rejection_block | both
+        detect: bo.detect||"bias",
         rejectionBlock: {
-          enabled:     !!bo.rbEnabled,
+          enabled:     (bo.detect==="rejection_block"||bo.detect==="both"),
           signalMode:  bo.rbSignalMode||"formation",
           volumeMode:  bo.rbVolumeMode||"optional",
           includeDead: !!bo.rbIncludeDead
@@ -4812,12 +4825,16 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   }
   function renderBiasKPI(){
     var _allItems = ((ST.tabData.bias.items)||[]).map(normalizeBiasRow).filter(Boolean);
-    var _det = _biasDetFilter();
+    var _det = _biasDetFilter(_allItems);
     var items = (_det==="all") ? _allItems
               : _allItems.filter(function(x){ return x.detector===_det; });
     // Rejection blocks are graded by lifecycle state, not confirmation status,
-    // so the KPI row swaps to the states that actually mean something for them.
-    if(_det==="rejection_block"){
+    // so the KPI row swaps to the states that actually mean something for them
+    // — either because that filter is active, or because an RB-only scan means
+    // every row on screen is a block.
+    var _rbView = _det==="rejection_block" ||
+      (items.length && items.every(function(x){ return x.detector==="rejection_block"; }));
+    if(_rbView){
       var st=function(s){ return items.filter(function(x){
         return x.rb && x.rb.state===s; }).length; };
       var untouched=items.filter(function(x){ return x.rb && !x.rb.retestCount; }).length;
@@ -4931,13 +4948,29 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     return '<span class="rb-freshbar '+cls+'"><i style="width:'+pct+'%"></i></span>'+
            '<span style="font-size:10px;color:var(--text-3);margin-left:4px">'+pct+'%</span>';
   }
-  /* Detector filter — the tab can hold both bias shifts and rejection blocks. */
-  function _biasDetFilter(){ return (ST.modeOptions.bias||{}).detectorFilter||"all"; }
+  /* Detector filter — the tab can hold both bias shifts and rejection blocks.
+     The filter only means anything when both are actually present; with a
+     single-detector scan a stale filter would hide every row and there would
+     be no chip left to undo it, so it collapses to "all". */
+  function _biasDetCounts(items){
+    return {
+      bias: items.filter(function(x){return x.detector!=="rejection_block";}).length,
+      rb:   items.filter(function(x){return x.detector==="rejection_block";}).length
+    };
+  }
+  function _biasDetFilter(items){
+    var cur=(ST.modeOptions.bias||{}).detectorFilter||"all";
+    if(items){
+      var n=_biasDetCounts(items);
+      if(!n.bias || !n.rb) return "all";
+    }
+    return cur;
+  }
   function _biasFilterChips(items){
-    var cur=_biasDetFilter();
-    var nBias=items.filter(function(x){return x.detector!=="rejection_block";}).length;
-    var nRb  =items.filter(function(x){return x.detector==="rejection_block";}).length;
-    if(!nRb && cur==="all") return "";        // nothing to disambiguate
+    var n=_biasDetCounts(items);
+    if(!n.bias || !n.rb) return "";           // nothing to disambiguate
+    var cur=_biasDetFilter(items);
+    var nBias=n.bias, nRb=n.rb;
     var spec=[["all","All",nBias+nRb],["bias_shift","Bias Shift",nBias],
               ["rejection_block","Rejection Block",nRb]];
     return '<div class="det-chips">'+spec.map(function(s){
@@ -4948,7 +4981,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   function renderBiasTable(){
     var raw=(ST.tabData.bias.items)||[];
     var all=raw.map(normalizeBiasRow).filter(Boolean);
-    var det=_biasDetFilter();
+    var det=_biasDetFilter(all);
     var items=(det==="all")?all:all.filter(function(x){return x.detector===det;});
     var host=E("tabView");
     var diag=_biasDiagStrip();
@@ -4960,9 +4993,15 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       _bindDetChips();
       return;
     }
-    // Column set follows the filter so neither detector carries the other's
-    // dead columns. "All" shows the shared core plus a SETUP column.
-    var mode = det==="rejection_block" ? "rb" : det==="bias_shift" ? "bias" : "mixed";
+    // Column set follows what is actually on screen so neither detector
+    // carries the other's dead columns. A single-detector scan gets that
+    // detector's columns even though the filter collapsed to "all"; only a
+    // genuinely mixed list falls back to the shared core plus a TYPE column.
+    var _onlyRb   = items.every(function(x){ return x.detector==="rejection_block"; });
+    var _onlyBias = items.every(function(x){ return x.detector!=="rejection_block"; });
+    var mode = (det==="rejection_block" || _onlyRb) ? "rb"
+             : (det==="bias_shift" || _onlyBias)    ? "bias"
+             : "mixed";
     // Row data-i indexes the FILTERED list, so the insight panel and footer
     // actions must resolve against the same view or they select the wrong row.
     ST.tabData.bias.view = items.map(function(x){ return x.raw; });
