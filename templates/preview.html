@@ -1242,6 +1242,39 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 .bias-diag .bd-chip b{color:var(--text-2);font-family:var(--mono)}
 .bias-diag .bd-note{margin-top:7px;font-size:10.5px;color:var(--yellow-2,#f59e0b)}
 .bias-breach{color:var(--red-2);font-weight:700}
+/* Detector filter chips — the tab holds bias shifts and rejection blocks */
+.det-chips{position:sticky;left:0;display:flex;gap:6px;margin:0 0 9px}
+.det-chip{font-size:10.5px;color:var(--text-3);background:var(--bg-hover);
+  border:1px solid var(--border);border-radius:999px;padding:3px 10px;
+  cursor:pointer;white-space:nowrap;transition:color .14s,border-color .14s}
+.det-chip:hover{color:var(--text-2);border-color:var(--border-2)}
+.det-chip.on{color:var(--accent);border-color:var(--accent)}
+.det-chip b{font-family:var(--mono);margin-left:2px}
+.det-tag{font-size:9.5px;font-weight:700;border-radius:4px;padding:1px 5px;
+  border:1px solid var(--border)}
+.det-tag.rb{color:var(--accent);border-color:rgba(56,189,248,.35)}
+.det-tag.bs{color:var(--text-3)}
+/* Rejection block lifecycle badges */
+.rb-state{font-size:10px;font-weight:700;border-radius:999px;padding:2px 8px;
+  border:1px solid var(--border);white-space:nowrap}
+.rb-state.rb-fresh{color:var(--green-2);border-color:rgba(34,197,94,.35);
+  background:rgba(34,197,94,.08)}
+.rb-state.rb-tested{color:var(--yellow-2,#f59e0b);border-color:rgba(251,191,36,.35);
+  background:rgba(251,191,36,.08)}
+.rb-state.rb-respected{color:var(--accent);border-color:rgba(56,189,248,.35);
+  background:rgba(56,189,248,.08)}
+.rb-state.rb-mitigated{color:var(--text-3)}
+.rb-state.rb-invalidated{color:var(--red-2);border-color:rgba(239,68,68,.35);
+  background:rgba(239,68,68,.08)}
+.rb-zone{font-family:var(--mono);font-size:11px;white-space:nowrap}
+/* NB: named -freshbar, not -fresh — `.rb-state.rb-fresh` is the state badge
+   for the "fresh" lifecycle state, and a shared class name collapsed that
+   badge into a 5px-tall clipped bar. */
+.rb-freshbar{display:inline-block;vertical-align:middle;width:46px;height:5px;
+  border-radius:3px;background:var(--bg-hover);overflow:hidden}
+.rb-freshbar i{display:block;height:100%;background:var(--accent)}
+.rb-freshbar.g i{background:var(--green-2)}
+.rb-freshbar.r i{background:var(--red-2)}
 .tv-tbl{width:100%;border-collapse:collapse;font-size:12px;table-layout:auto}
 .tv-tbl thead th{
   text-align:left;font-size:9.5px;font-weight:700;letter-spacing:.5px;color:var(--text-3);
@@ -1973,6 +2006,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
               <option value="price_above">Price &gt;</option>
               <option value="price_below">Price &lt;</option>
               <option value="bias_shift">Bias shift (rejection candle)</option>
+              <option value="rejection_block">Rejection block retest</option>
             </select></div>
           <div class="sp-field"><label>Value</label><input type="number" id="alVal" step="any" placeholder="e.g. 80"></div>
           <div class="sp-field"><label>Timeframe</label>
@@ -2482,7 +2516,10 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       priorMoveCandles:4, signalSearchCandles:1,
       minWickPct:35, minBodyPct:20, requireCloseBeyondMidpoint:true,
       volumeFilter:"optional", volumeMultiplier:1.5,
-      useObConfluence:true, useFvgConfluence:true, useFibConfluence:true
+      useObConfluence:true, useFvgConfluence:true, useFibConfluence:true,
+      // Rejection Block sub-detector (Phase 3)
+      rbEnabled:false, rbSignalMode:"formation", rbVolumeMode:"optional",
+      rbIncludeDead:false, detectorFilter:"all"
     },
   };
   function _loadModeOptions(){
@@ -2586,6 +2623,17 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       { type:"check", key:"useObConfluence", label:"OB confluence",  help:"Boost grade when the rejection is near an Order Block." },
       { type:"check", key:"useFvgConfluence", label:"FVG confluence", help:"Boost grade when the rejection is near a Fair Value Gap." },
       { type:"check", key:"useFibConfluence", label:"Fib confluence", help:"Boost grade when the rejection is near a Fibonacci level." },
+      // ── Rejection Block sub-detector ──
+      { type:"check", key:"rbEnabled", label:"Rejection blocks", rerender:true,
+        help:"Also find rejection blocks — a swept liquidity level that was reclaimed and confirmed. The zone is the band between the extreme wick and the extreme body." },
+      { type:"select", key:"rbSignalMode", label:"RB signal", rb:true,
+        options:[["formation","Formation (all live)"],["retest","Retest only"]],
+        help:"Formation lists every live block. Retest only shows blocks price has actually returned to." },
+      { type:"select", key:"rbVolumeMode", label:"RB volume", rb:true,
+        options:[["off","Off"],["optional","Optional"],["required","Required"]],
+        help:"Optional scores volume (sweep spike, reclaim absorption, dry retest). Required hides blocks whose sweep had no volume behind it." },
+      { type:"check", key:"rbIncludeDead", label:"Include spent blocks", rb:true,
+        help:"Also show invalidated, exhausted, expired and far-away blocks. Off by default — raw formation is very noisy." },
     ],
   };
 
@@ -2647,7 +2695,13 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     host.hidden=false;
     // Expert-only fields are hidden unless the bias tab is in Expert mode.
     var expertOn = (ST.mode==="bias") && ((ST.modeOptions.bias||{}).mode==="expert");
-    var visible = schema.filter(function(f){ return !f.expert || expertOn; });
+    // Rejection-block settings only appear once the sub-detector is switched on.
+    var rbOn = (ST.mode==="bias") && !!((ST.modeOptions.bias||{}).rbEnabled);
+    var visible = schema.filter(function(f){
+      if(f.expert && !expertOn) return false;
+      if(f.rb && !rbOn) return false;
+      return true;
+    });
     host.innerHTML='<div class="tc-h">'+esc(MODE_LABEL[ST.mode]||"")+' settings</div>'+
       '<div class="tc-row">'+visible.map(function(f){return _ctrlField(ST.mode,f);}).join("")+'</div>';
     var byKey={};
@@ -2817,7 +2871,14 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         // legacy aliases (harmless if backend ignores them)
         useObConf: bo.useObConfluence!==false,
         useFvgConf: bo.useFvgConfluence!==false,
-        useFibConf: bo.useFibConfluence!==false
+        useFibConf: bo.useFibConfluence!==false,
+        // Rejection Block sub-detector — off unless explicitly enabled
+        rejectionBlock: {
+          enabled:     !!bo.rbEnabled,
+          signalMode:  bo.rbSignalMode||"formation",
+          volumeMode:  bo.rbVolumeMode||"optional",
+          includeDead: !!bo.rbIncludeDead
+        }
       }};
     }
     return null;
@@ -3915,7 +3976,9 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var box=E("insScroll"); if(!box) return;
     if(mode==="main"){ renderInsight(); return; }                          // existing setup insight
     var td=ST.tabData[mode]||{};
-    var rows = td.results || td.items || [];
+    // `view` is the filtered list the table actually rendered (bias tab has a
+    // detector filter); fall back to the full list for tabs without one.
+    var rows = td.view || td.results || td.items || [];
     var row  = (td.sel>=0) ? rows[td.sel] : null;
     if(mode==="compressed") renderCompressedInsight(row);
     else if(mode==="trending") renderTrendingInsight(row);
@@ -3961,7 +4024,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     if(m === "main") return ST.results[ST.sel]||null;
     var td = ST.tabData && ST.tabData[m];
     if(!td) return null;
-    var arr = td.results || td.items || [];
+    var arr = td.view || td.results || td.items || [];
     var sel = (typeof td.sel==="number") ? td.sel : -1;
     return (sel>=0 && sel<arr.length) ? arr[sel] : null;
   }
@@ -4539,8 +4602,13 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   function normalizeBiasRow(x){
     if(!x) return null;
     var bias = String(x.biasDirection||x.bias||x.direction||"").toLowerCase();
+    var _rb = x.rb || null;
     return {
       raw:x,
+      detector: x.detector || (_rb ? "rejection_block" : "bias_shift"),
+      rb: _rb,
+      zoneHigh: x.zoneHigh!=null?+x.zoneHigh:(_rb?+_rb.rbHigh:null),
+      zoneLow:  x.zoneLow!=null?+x.zoneLow:(_rb?+_rb.rbLow:null),
       symbol: x.symbol||x.pair||"",
       tf:     x.timeframe||x.tf||(ST.modeOptions.bias||{}).tf||"—",
       bias:   bias,
@@ -4583,15 +4651,37 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       var b=normalizeBiasRow(x); if(!b) return null;
       var dir=b.bias.indexOf("bull")>=0?"bullish":b.bias.indexOf("bear")>=0?"bearish":"";
       var t=dir==="bullish"?1:dir==="bearish"?-1:0;
-      var a={setup:"BIAS_SHIFT",direction:dir,timeframe:b.tf,
-             detail:b.detail||b.setupType||"Bias shift",strength:5,meta:{}};
+      var isRb=b.detector==="rejection_block";
+      var a={setup:isRb?"REJECTION_BLOCK":"BIAS_SHIFT",direction:dir,timeframe:b.tf,
+             detail:b.detail||b.setupType||(isRb?"Rejection block":"Bias shift"),
+             strength:5,meta:{}};
       return {symbol:b.symbol,timeframe:b.tf,price:(x.price!=null?+x.price:null),
-              score:(b.score!=null?b.score:0),grade:b.grade,rsi:null,
-              trend:t,itrend:t,alerts:[a],topAlert:a};
+              score:(b.score!=null?b.score:0),grade:b.grade,rsi:null,rb:b.rb,
+              detector:b.detector,trend:t,itrend:t,alerts:[a],topAlert:a};
     }).filter(Boolean);
   }
   function renderBiasKPI(){
-    var items = ((ST.tabData.bias.items)||[]).map(normalizeBiasRow).filter(Boolean);
+    var _allItems = ((ST.tabData.bias.items)||[]).map(normalizeBiasRow).filter(Boolean);
+    var _det = _biasDetFilter();
+    var items = (_det==="all") ? _allItems
+              : _allItems.filter(function(x){ return x.detector===_det; });
+    // Rejection blocks are graded by lifecycle state, not confirmation status,
+    // so the KPI row swaps to the states that actually mean something for them.
+    if(_det==="rejection_block"){
+      var st=function(s){ return items.filter(function(x){
+        return x.rb && x.rb.state===s; }).length; };
+      var untouched=items.filter(function(x){ return x.rb && !x.rb.retestCount; }).length;
+      var _rbCov=(ST.tabData.bias.raw||{}).marketCoverage||null;
+      E("kpiRow").innerHTML=
+        kpi("REJECTION BLOCKS", items.length,
+            _rbCov?("batch "+_rbCov.startIndex+"–"+_rbCov.endIndex+" of "+_rbCov.totalPairs):"")+
+        kpi("BULLISH", items.filter(function(x){return x.bias.indexOf("bull")>=0;}).length,"","g")+
+        kpi("BEARISH", items.filter(function(x){return x.bias.indexOf("bear")>=0;}).length,"","r")+
+        kpi("FRESH", st("fresh"), untouched+" untouched")+
+        kpi("RETESTING", st("tested"), "")+
+        kpi("RESPECTED", st("respected"), "", "g");
+      return;
+    }
     var bull = items.filter(function(x){return x.bias.indexOf("bull")>=0;}).length;
     var bear = items.filter(function(x){return x.bias.indexOf("bear")>=0;}).length;
     // "early_unconfirmed" contains "confirm", so a bare /confirm/i test counted
@@ -4606,8 +4696,10 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var covSub = cov
       ? ("batch "+cov.startIndex+"–"+cov.endIndex+" of "+cov.totalPairs)
       : (ST.tabData.bias.batchFound!=null?("+"+ST.tabData.bias.batchFound+" this scan"):"");
+    var _mixed = _det==="all" && _allItems.some(function(x){
+      return x.detector==="rejection_block"; });
     E("kpiRow").innerHTML=
-      kpi("BIAS SETUPS", items.length, covSub)+
+      kpi(_mixed?"SETUPS":"BIAS SETUPS", items.length, covSub)+
       kpi("BULLISH BIAS", bull, items.length?Math.round(bull/items.length*100)+"%":"", "g")+
       kpi("BEARISH BIAS", bear, items.length?Math.round(bear/items.length*100)+"%":"", "r")+
       kpi("CONFIRMED", conf, items.length?Math.round(conf/items.length*100)+"%":"")+
@@ -4639,8 +4731,20 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var note = su.signalSearchFloorApplied
       ? '<div class="bd-note">Confirmed detection needs a follow-up candle — signal search widened to '+
         esc(String(su.signalSearchCandles))+' candles for this scan.</div>' : '';
+    // Rejection-block funnel, so an empty RB scan explains itself too
+    var rbLine="";
+    var rbd=dg.rejectionBlocks;
+    if(rbd){
+      var RLBL={dead:"spent / broken / stale", signalMode:"filtered by RB signal mode",
+                volume:"no volume behind the sweep"};
+      var rbChips=Object.keys(RLBL).filter(function(k){return (rbd[k]||0)>0;})
+        .map(function(k){ return '<span class="bd-chip"><b>'+rbd[k]+'</b> '+esc(RLBL[k])+'</span>'; }).join("");
+      rbLine='<div class="bd-head" style="margin-top:7px">Rejection blocks: <b>'+
+        (rbd.detected||0)+'</b> found · <b>'+(rbd.returned||0)+'</b> kept</div>'+
+        (rbChips?'<div class="bd-chips">'+rbChips+'</div>':'');
+    }
     return '<div class="bias-diag"><div class="bd-head">'+head+'</div>'+
-      (parts?'<div class="bd-chips">'+parts+'</div>':'')+note+'</div>';
+      (parts?'<div class="bd-chips">'+parts+'</div>':'')+rbLine+note+'</div>';
   }
   function _biasConflSpec(b){
     return [{k:"OB",on:b.obConf},{k:"FVG",on:b.fvgConf},{k:"FIB",on:b.fibConf}];
@@ -4652,16 +4756,66 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     if(s>=86400) return Math.floor(s/86400)+"d "+Math.floor((s%86400)/3600)+"h ago";
     return rel(ms);
   }
+  /* ── Rejection block helpers ── */
+  var RB_STATE_LABEL={fresh:"Fresh",tested:"Retesting",respected:"Respected",
+                      mitigated:"Spent",invalidated:"Broken"};
+  function _rbStateBadge(rb){
+    if(!rb) return "—";
+    var st=rb.state||"";
+    return '<span class="rb-state rb-'+esc(st)+'">'+esc(RB_STATE_LABEL[st]||st)+'</span>';
+  }
+  function _rbZoneCell(b){
+    if(b.zoneLow==null||b.zoneHigh==null) return "—";
+    return '<span class="rb-zone">'+fmt(b.zoneLow)+' – '+fmt(b.zoneHigh)+'</span>';
+  }
+  function _rbRetestCell(rb){
+    if(!rb) return "—";
+    var n=rb.retestCount||0;
+    if(!n) return '<span style="color:var(--text-3)">untouched</span>';
+    return n+' ('+(rb.respectedCount||0)+' respected)';
+  }
+  function _rbFreshCell(rb){
+    if(!rb) return "—";
+    var pct=Math.round((rb.freshness!=null?rb.freshness:0)*100);
+    var cls=pct>=66?"g":pct>=33?"":"r";
+    return '<span class="rb-freshbar '+cls+'"><i style="width:'+pct+'%"></i></span>'+
+           '<span style="font-size:10px;color:var(--text-3);margin-left:4px">'+pct+'%</span>';
+  }
+  /* Detector filter — the tab can hold both bias shifts and rejection blocks. */
+  function _biasDetFilter(){ return (ST.modeOptions.bias||{}).detectorFilter||"all"; }
+  function _biasFilterChips(items){
+    var cur=_biasDetFilter();
+    var nBias=items.filter(function(x){return x.detector!=="rejection_block";}).length;
+    var nRb  =items.filter(function(x){return x.detector==="rejection_block";}).length;
+    if(!nRb && cur==="all") return "";        // nothing to disambiguate
+    var spec=[["all","All",nBias+nRb],["bias_shift","Bias Shift",nBias],
+              ["rejection_block","Rejection Block",nRb]];
+    return '<div class="det-chips">'+spec.map(function(s){
+      return '<span class="det-chip'+(cur===s[0]?" on":"")+'" data-det="'+s[0]+'">'+
+             esc(s[1])+' <b>'+s[2]+'</b></span>';
+    }).join("")+'</div>';
+  }
   function renderBiasTable(){
     var raw=(ST.tabData.bias.items)||[];
-    var items=raw.map(normalizeBiasRow).filter(Boolean);
+    var all=raw.map(normalizeBiasRow).filter(Boolean);
+    var det=_biasDetFilter();
+    var items=(det==="all")?all:all.filter(function(x){return x.detector===det;});
     var host=E("tabView");
     var diag=_biasDiagStrip();
+    var chips=_biasFilterChips(all);
     if(!items.length){
-      host.innerHTML=diag+'<div class="tv-empty">No bias setups found. '+
-        'The breakdown above shows where this batch was filtered out.</div>';
+      host.innerHTML=diag+chips+'<div class="tv-empty">'+
+        (all.length?'No rows for this filter.':'No bias setups found. '+
+         'The breakdown above shows where this batch was filtered out.')+'</div>';
+      _bindDetChips();
       return;
     }
+    // Column set follows the filter so neither detector carries the other's
+    // dead columns. "All" shows the shared core plus a SETUP column.
+    var mode = det==="rejection_block" ? "rb" : det==="bias_shift" ? "bias" : "mixed";
+    // Row data-i indexes the FILTERED list, so the insight panel and footer
+    // actions must resolve against the same view or they select the wrong row.
+    ST.tabData.bias.view = items.map(function(x){ return x.raw; });
     var sel=ST.tabData.bias.sel;
     var rows = items.map(function(b,i){
       var dir = b.bias.indexOf("bull")>=0?"bull":b.bias.indexOf("bear")>=0?"bear":"warn";
@@ -4676,28 +4830,94 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       var confl=_confluencePills(_biasConflSpec(b));
       var age = b.signalTime!=null ? _biasAge(b.signalTime)
               : (b.signalOffset!=null ? (b.signalOffset===0?"last candle":b.signalOffset+" candles ago") : "—");
-      return '<tr data-i="'+i+'"'+(i===sel?' class="sel"':'')+'>'+
+      var core =
         '<td class="sym">'+esc(b.symbol)+'</td>'+
         '<td>'+esc(b.tf)+'</td>'+
         '<td><span class="tv-pill '+dir+'">'+esc(b.bias?b.bias[0].toUpperCase()+b.bias.slice(1):"—")+'</span></td>'+
-        '<td>'+esc(b.confirmation)+'</td>'+
+        (mode==="mixed"
+          ? '<td><span class="det-tag '+(b.detector==="rejection_block"?"rb":"bs")+'">'+
+            (b.detector==="rejection_block"?"RB":"Bias")+'</span></td>' : '')+
+        (mode==="rb" ? '<td>'+_rbStateBadge(b.rb)+'</td>'
+                     : '<td>'+esc(b.confirmation)+'</td>')+
         '<td><span class="tv-grade" data-g="'+esc(b.grade)+'">'+esc(b.grade)+'</span>'+(b.gradeLabel?' <span style="color:var(--text-3);font-size:10.5px">'+esc(b.gradeLabel)+'</span>':"")+'</td>'+
-        '<td class="r">'+(b.score!=null?Math.round(b.score):"—")+'</td>'+
-        '<td>'+esc(prior)+'</td>'+
+        '<td class="r">'+(b.score!=null?Math.round(b.score):"—")+'</td>';
+
+      var mid = mode==="rb"
+        ? '<td class="r">'+_rbZoneCell(b)+'</td>'+
+          '<td>'+_rbRetestCell(b.rb)+'</td>'+
+          '<td>'+_rbFreshCell(b.rb)+'</td>'
+        : mode==="bias"
+          ? '<td>'+esc(prior)+'</td>'
+          : '';
+
+      var tail =
         '<td class="r">'+(b.price!=null?fmt(b.price):"—")+'</td>'+
         '<td class="r">'+invalid+'</td>'+
-        '<td>'+confl+'</td>'+
+        (mode==="bias" ? '<td>'+confl+'</td>' : '')+
         '<td>'+esc(age)+'</td>'+
-        '<td>'+esc(b.suggestedConfirmationTf||"—")+'</td>'+
-      '</tr>';
+        (mode==="bias" ? '<td>'+esc(b.suggestedConfirmationTf||"—")+'</td>' : '');
+
+      return '<tr data-i="'+i+'"'+(i===sel?' class="sel"':'')+'>'+core+mid+tail+'</tr>';
     }).join("");
-    host.innerHTML= diag+
-      '<table class="tv-tbl"><thead><tr>'+
-        '<th>SYMBOL</th><th>TF</th><th>BIAS</th><th>STATUS</th>'+
-        '<th>GRADE</th><th class="r">SCORE</th>'+
-        '<th>PRIOR MOVE</th><th class="r">PRICE</th><th class="r">INVALIDATION</th>'+
-        '<th>CONFLUENCE</th><th>SIGNAL AGE</th><th>CONFIRM TF</th>'+
-      '</tr></thead><tbody>'+rows+'</tbody></table>';
+
+    var head =
+      '<th>SYMBOL</th><th>TF</th><th>BIAS</th>'+
+      (mode==="mixed"?'<th>TYPE</th>':'')+
+      (mode==="rb"?'<th>STATE</th>':'<th>STATUS</th>')+
+      '<th>GRADE</th><th class="r">SCORE</th>'+
+      (mode==="rb"
+        ? '<th class="r">ZONE</th><th>RETESTS</th><th>FRESHNESS</th>'
+        : mode==="bias" ? '<th>PRIOR MOVE</th>' : '')+
+      '<th class="r">PRICE</th><th class="r">INVALIDATION</th>'+
+      (mode==="bias"?'<th>CONFLUENCE</th>':'')+
+      '<th>SIGNAL AGE</th>'+
+      (mode==="bias"?'<th>CONFIRM TF</th>':'');
+
+    host.innerHTML= diag+chips+
+      '<table class="tv-tbl"><thead><tr>'+head+'</tr></thead><tbody>'+rows+'</tbody></table>';
+    _bindDetChips();
+  }
+  function _bindDetChips(){
+    [].forEach.call(document.querySelectorAll('#tabView .det-chip'),function(el){
+      el.addEventListener("click",function(){
+        ST.modeOptions.bias.detectorFilter = el.getAttribute("data-det");
+        _saveModeOptions();
+        ST.tabData.bias.sel = -1;
+        renderAll();
+      });
+    });
+  }
+  /* Rejection-block detail: the zone, how it was swept, its lifecycle and the
+     per-phase volume read that separates a real reclaim from a dead wick. */
+  function _rbInsightBlock(b){
+    var rb=b.rb; if(!rb) return "";
+    var vol=rb.volume||{};
+    var last=(rb.retests&&rb.retests.length)?rb.retests[rb.retests.length-1]:null;
+    var retestRows=(rb.retests||[]).map(function(r,i){
+      return _ti("Retest "+(i+1),
+        _biasAge(r.at)+" · "+esc(r.reaction)+
+        (r.volRatio!=null?(" · "+(+r.volRatio).toFixed(1)+"x vol"):""));
+    }).join("");
+    return '<div class="ti-h">Rejection block zone</div>'+
+      _tiB("Zone", _rbZoneCell(b))+
+      _ti("Height", rb.heightPct!=null?(+rb.heightPct).toFixed(2)+"%":"—")+
+      _tiB("State", _rbStateBadge(rb))+
+      _tiB("Freshness", _rbFreshCell(rb))+
+      _ti("Distance (ATR)", rb.distanceAtr!=null?(+rb.distanceAtr).toFixed(2)+"×":"—")+
+
+      '<div class="ti-h">Liquidity sweep</div>'+
+      _ti("Swept level", rb.sweptLevel!=null?fmt(rb.sweptLevel):"—")+
+      _ti("Source", rb.sweepSource==="swing"?"Confirmed swing":"Local extreme")+
+      _ti("Sweep depth", rb.sweepDepthPct!=null?(+rb.sweepDepthPct).toFixed(2)+"%":"—")+
+      _ti("Formation", (rb.blockCandles!=null?rb.blockCandles:"—")+" candles")+
+
+      '<div class="ti-h">Volume read</div>'+
+      _ti("Sweep",   vol.sweepRatio!=null?(+vol.sweepRatio).toFixed(1)+"x average":"—")+
+      _ti("Reclaim", vol.reclaimRatio!=null?(+vol.reclaimRatio).toFixed(1)+"x average":"—")+
+      _ti("Latest retest", last&&last.volRatio!=null?(+last.volRatio).toFixed(1)+"x average":"—")+
+
+      '<div class="ti-h">Retests ('+(rb.retestCount||0)+")</div>"+
+      (retestRows||'<div class="row-msg">Zone has not been retested yet.</div>');
   }
   function renderBiasInsight(rRaw){
     var box=E("insScroll");
@@ -4731,8 +4951,11 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       _ti("Lower wick %", b.rejectionWick.dn!=null?(+b.rejectionWick.dn).toFixed(2)+"%":"—")+
       _ti("Body %",       b.rejectionWick.body!=null?(+b.rejectionWick.body).toFixed(2)+"%":"—")+
 
+      (b.detector==="rejection_block" ? _rbInsightBlock(b) : "")+
+
       '<div class="ti-h">Signal candle timing</div>'+
-      _ti("Signal candle", b.signalTime!=null?_biasAge(b.signalTime):"—")+
+      _ti(b.detector==="rejection_block"?"Formed":"Signal candle",
+          b.signalTime!=null?_biasAge(b.signalTime):"—")+
       _ti("Candles back",  b.signalOffset!=null?b.signalOffset:"—")+
 
       '<div class="ti-h">Invalidation</div>'+
@@ -4788,8 +5011,10 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     // Tab-view modes keep their rows in tabData, not ST.results — reading only
     // ST.results made the pager claim "No setups found" with a full table.
     var td=ST.tabData[ST.mode]||{};
+    // `view` is the filtered list actually on screen — without it the pager
+    // counts rows the detector filter is hiding.
     var tabRows=(ST.mode==="main"||ST.mode==="compressed")
-      ? ST.results : (td.items||td.results||ST.results||[]);
+      ? ST.results : (td.view||td.items||td.results||ST.results||[]);
     var n=tabRows.length;
     var page=ST.page||1;
     var start = n ? ((page-1)*ST.pairsPerCycle + 1) : 0;
@@ -5663,7 +5888,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       if("results" in ST.tabData[m]) ST.tabData[m].results=[];
       if("items"   in ST.tabData[m]) ST.tabData[m].items=[];
       ST.tabData[m].scanned=0; ST.tabData[m].raw=null;
-      ST.tabData[m].sel=-1; ST.tabData[m].batchFound=null;
+      ST.tabData[m].sel=-1; ST.tabData[m].batchFound=null; ST.tabData[m].view=null;
     }
     ST.results=[]; ST.sel=-1; ST.page=1; ST.scannedAt=0;
     renderAll();
@@ -12905,6 +13130,17 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
           fired="Bias shift "+(dir==="bull"?"bullish":dir==="bear"?"bearish":"")+
                 (r.grade?(" · grade "+r.grade):"")+
                 (r.score?(" · score "+Math.round(r.score)):"");
+        }
+      } else if(a.type==="rejection_block"){
+        // Fires when price has actually returned to the block — the arrival at
+        // the level is the actionable moment, not the formation.
+        var _rb=r.rb;
+        if(_rb && (_rb.state==="tested"||_rb.state==="respected")){
+          dir=dirOf(r);
+          fired="Rejection block "+esc(_rb.state)+" · "+
+                (dir==="bull"?"bullish":dir==="bear"?"bearish":"")+
+                " zone "+fmt(_rb.rbLow)+"–"+fmt(_rb.rbHigh)+
+                (r.grade?(" · grade "+r.grade):"");
         }
       }
       if(fired){
