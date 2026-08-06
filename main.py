@@ -3440,6 +3440,7 @@ def detect_breakers(
 
         mitigated_at  = None
         consumed_at   = None
+        touched_at    = None  # first bar price traded back into the zone after the flip
         mitigated_dir = None  # direction AFTER flip
 
         # Scan candles after OB formed
@@ -3455,16 +3456,26 @@ def detect_breakers(
                     mitigated_at  = j
                     mitigated_dir = "bullish"
             else:
-                # Already a breaker — check if consumed
-                if mitigated_dir == "bullish" and cur > zt:
+                # First touch: has price traded back into the breaker zone (a wick counts)?
+                if touched_at is None and h[j] >= zb and l[j] <= zt:
+                    touched_at = j
+                # Breaker invalidated when price closes beyond the FAR side, matching the Pine
+                # `breaker_invalidated` (bullish-OB breaker → close > top; bearish-OB breaker →
+                # close < bottom). The consumed side is the OPPOSITE of the mitigation side.
+                if mitigated_dir == "bearish" and cur > zt:      # was a bullish OB, reclaimed above top
                     consumed_at = j
                     break
-                elif mitigated_dir == "bearish" and cur < zb:
+                elif mitigated_dir == "bullish" and cur < zb:    # was a bearish OB, reclaimed below bottom
                     consumed_at = j
                     break
 
-        # Only keep active breakers (mitigated but not consumed)
+        # Only keep active breakers (mitigated, not reclaimed)
         if mitigated_at is None or consumed_at is not None:
+            continue
+
+        # Pending-first-touch only: drop any breaker whose zone price has already tested even once
+        # (this also excludes breakers price is currently sitting inside).
+        if touched_at is not None:
             continue
 
         age = n - 1 - mitigated_at
