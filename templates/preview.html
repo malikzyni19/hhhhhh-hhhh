@@ -1778,7 +1778,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       </div>
       <div class="nav-item" data-mode="bias" role="button" tabindex="0">
         <svg class="ico" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M6 8.5v7M8.3 6.8 15.7 11M15.7 13 8.3 17.2"/></svg>
-        <div><div class="nt">Structure / Bias</div><div class="ns">Market structure scan</div></div>
+        <div><div class="nt">Bias Detection</div><div class="ns">Rejection candles &amp; blocks</div></div>
       </div>
       <div class="nav-item" data-mode="selected" role="button" tabindex="0">
         <svg class="ico" viewBox="0 0 24 24"><path d="M4 6h11M4 12h7M4 18h5"/><circle cx="17" cy="15" r="3.2"/><path d="M19.3 17.3 22 20"/></svg>
@@ -2494,14 +2494,14 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   function confClass(s){return s>=80?"hi":s>=65?"mid":"lo";}
 
   /* ── data fetch ── */
-  var MODE_LABEL = {main:"Main Scan",compressed:"Compressed",base:"Accumulation",trending:"Trending",ath_atl:"ATH / ATL",bias:"Structure / Bias",selected:"Selected Pairs"};
+  var MODE_LABEL = {main:"Main Scan",compressed:"Compressed",base:"Accumulation",trending:"Trending",ath_atl:"ATH / ATL",bias:"Bias Detection",selected:"Selected Pairs"};
   var MODE_SUB = {
     main:"All instruments across selected markets",
     compressed:"High-probability compressed zones",
     base:"Long post-capitulation bases and their breakouts (Binance / MEXC, 1d–1w)",
     trending:"Trend-aligned movers with volume",
     ath_atl:"Pairs near all-time highs / lows",
-    bias:"Market-structure shifts (BOS / CHoCH)",
+    bias:"Rejection-candle bias shifts and rejection blocks",
     selected:"Build a custom scan universe from the biggest movers"
   };
 
@@ -3898,7 +3898,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   var INSIGHT_TITLES = {
     main:"Setup Insight", compressed:"Compression Insight", base:"Accumulation Insight",
     trending:"Market Mover Insight", ath_atl:"Level Breakout Insight",
-    bias:"Bias & Structure Insight", selected:"Selected Pairs"
+    bias:"Bias Detection Insight", selected:"Selected Pairs"
   };
 
   /* sessionStorage cache so refresh keeps the last visible results (Wave 16) */
@@ -13203,7 +13203,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       case "rsi_below":return "RSI < "+a.value;
       case "price_above":return "Price > "+a.value;
       case "price_below":return "Price < "+a.value;
-      case "bias_shift":return "Bias shift (BOS/CHoCH)";
+      case "bias_shift":return "Bias shift (rejection candle)";
+      case "rejection_block":return "Rejection block retest";
     }
     return a.type;
   }
@@ -14272,8 +14273,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         text:"Each row shows the symbol, price, previous level and break / distance." }
     ],
     scanner_bias: [
-      { kind:"info", title:"Structure / Bias",
-        text:"Detects bias-shift rejections and structure shifts (BOS / CHoCH)." },
+      { kind:"info", title:"Bias Detection",
+        text:"Finds bias shifts from rejection candles after a clean drive, and rejection blocks — a swept liquidity level that was reclaimed and confirmed." },
       { kind:"highlight", sel:"[data-opt='tf']", title:"Timeframe",
         text:"Bias detection works on 1H and higher — pick 1H, 4H, 6H, 12H or 1D." },
       { kind:"highlight", sel:"[data-opt='mode']", title:"Normal vs. Expert",
