@@ -33880,6 +33880,82 @@ def api_base_scan():
             score = best["score"]
             grade = "A+" if score >= 85 else "A" if score >= 75 else "B" if score >= 60 else "C"
 
+            # ── Setup confidence ────────────────────────────────────────────
+            # baseScore answers "was this a good base?". It does NOT answer
+            # "is this a trustworthy setup right now?" — a pair can score A on
+            # base quality while still trending hard (so it never consolidated)
+            # or while its band spans a 19x price range (so the band is
+            # meaningless). Those two blind spots are what this layer closes.
+            width_pct = round((band / max(best["baseMid"], 1e-10)) * 100.0, 1)
+            drift_abs = abs(best["driftPct"])
+
+            # 1. Consolidation validity (35) — the "after consolidation" test.
+            #    Flat = real base. Sloped = trend continuation wearing a costume.
+            conf = 35.0 * max(0.0, 1.0 - drift_abs / 20.0)
+            # 2. Band sanity (15) — ideal 15-50% wide; taper to 0 by 100%.
+            if width_pct < 8:
+                conf += 15.0 * (width_pct / 8.0)          # too tight = illiquid/flatline
+            elif width_pct <= 50:
+                conf += 15.0
+            else:
+                conf += 15.0 * max(0.0, (100.0 - width_pct) / 50.0)
+            # 3. Base quality (25) — reuses oscillation / touches / vol / depth.
+            conf += 25.0 * (score / 100.0)
+            # 4. Trigger proximity (15) — how actionable it is right now.
+            if status == "testing_base_high":
+                conf += 15.0
+            elif status == "fresh_breakout":
+                conf += 14.0
+            elif status in ("breakout_holding", "breakdown"):
+                conf += 10.0
+            else:  # basing — nearer an edge is more actionable than mid-band
+                conf += min(8.0, abs(price_pos - 50.0) / 50.0 * 8.0)
+            # 5. Volatility posture (10)
+            conf += {"strong_contraction": 10.0, "contracting": 7.0,
+                     "normal": 3.0}.get(best["atrState"], 0.0)
+
+            # Stale breakouts decay — a break 20 bars ago is not a fresh setup.
+            if breakout_bars_ago is not None and breakout_bars_ago > 10:
+                conf -= min(10.0, (breakout_bars_ago - 10) * 0.5)
+
+            setup_score = int(round(max(0.0, min(conf, 100.0))))
+
+            # Structural-invalidity caps. Subtracting points is not enough for
+            # these two: a band wider than the price is not a slightly worse
+            # base, it is not a base at all; and a "breakout" off a steeply
+            # sloped channel is trend continuation, not consolidation. Without
+            # caps a 180%-wide band still scored Medium purely on flat drift.
+            # Thresholds match the flags below, so any flagged row is capped.
+            if width_pct > 120:
+                setup_score = min(setup_score, 25)
+            elif width_pct > 80:
+                setup_score = min(setup_score, 40)
+            if drift_abs > 15:
+                setup_score = min(setup_score, 45)
+
+            confidence = ("High" if setup_score >= 75 else
+                          "Medium" if setup_score >= 55 else
+                          "Low" if setup_score >= 35 else "Weak")
+
+            if status in ("fresh_breakout", "breakout_holding", "testing_base_high"):
+                direction = "bullish"
+            elif status == "breakdown":
+                direction = "bearish"
+            else:
+                direction = "neutral"
+
+            # Plain-language reasons a row is downranked, so the number is
+            # never a black box.
+            flags = []
+            if drift_abs > 15:
+                flags.append("Still trending")
+            if width_pct > 80:
+                flags.append("Band too wide")
+            if best["atrState"] == "expanding":
+                flags.append("Vol expanding")
+            if breakout_bars_ago is not None and breakout_bars_ago > 10:
+                flags.append("Stale break")
+
             sparkline = [float(c[i]) for i in range(max(0, n - 40), n)]
             results.append({
                 "symbol": sym,
@@ -33912,6 +33988,10 @@ def api_base_scan():
                 "status": status,
                 "baseScore": score,
                 "baseGrade": grade,
+                "setupScore": setup_score,
+                "confidence": confidence,
+                "direction": direction,
+                "flags": flags,
                 "sparkline": sparkline,
             })
         except Exception as e:
@@ -33919,7 +33999,8 @@ def api_base_scan():
             print(f"[DEBUG] base_scan {sym} error: {e}")
             continue
 
-    results.sort(key=lambda x: (-x["baseScore"], -x["drawdownFromHighPct"]))
+    # Best setups first — confidence leads, base quality breaks ties.
+    results.sort(key=lambda x: (-x["setupScore"], -x["baseScore"], -x["drawdownFromHighPct"]))
     print(f"[DEBUG] base_scan results={len(results)} errors={errors}")
 
     if _tok_uid:

@@ -3333,8 +3333,12 @@ async function scanBase(){
       ? summaryHtml + rows.map((x,i) => {
           const starred = isStarred(x.symbol);
           const tvSym = tvSymbolFor(exch, mkt, x.symbol);
-          const scoreHtml = typeof x.baseScore==='number'
-            ? `<span style="font-size:10px;font-weight:700;color:var(--accent);margin-left:2px">B${x.baseScore}</span>` : '';
+          const scoreHtml = typeof x.setupScore==='number'
+            ? `<span style="font-size:10px;font-weight:700;color:var(--accent);margin-left:2px">${x.setupScore}</span>` : '';
+          const confHtml = x.confidence
+            ? `<span class="badge ${x.confidence==='High'?'bull':x.confidence==='Medium'?'warn':'neutral'}" style="font-size:9px${(x.confidence==='Low'||x.confidence==='Weak')?';opacity:.55':''}">${x.confidence}</span>` : '';
+          const flagHtml = (x.flags&&x.flags.length)
+            ? `<div class="result-detail" style="font-size:10px;opacity:.6">⚠ ${x.flags.join(' · ')}</div>` : '';
           const gradeHtml = x.baseGrade ? `<span class="badge ${compressedGradeClass(x.baseGrade)}" style="font-size:9px">${x.baseGrade}</span>` : '';
           const statusHtml = x.status ? `<span class="badge ${baseStatusClass(x.status)}" style="font-size:9px">${baseStatusLabel(x.status)}</span>` : '';
           const atrHtml = x.atrState ? `<span class="badge ${baseAtrClass(x.atrState)}" style="font-size:9px">${baseAtrLabel(x.atrState)}</span>` : '';
@@ -3353,13 +3357,13 @@ async function scanBase(){
                 <span class="star-btn ${starred?'starred':''}" onclick="event.stopPropagation();toggleWatchlistStar(this,'${x.symbol}')">${starred?'★':'☆'}</span>
               </span>
             </div>
-            <div class="badges">${statusHtml}${gradeHtml}${atrHtml}${volHtml}</div>
+            <div class="badges">${confHtml}${statusHtml}${gradeHtml}${atrHtml}${volHtml}</div>
             <div class="result-details">
               <div class="result-detail">Band ${fmtPx(x.baseLow)} – ${fmtPx(x.baseHigh)} | Mid ${fmtPx(x.baseMid)} | Width ${fmtP(x.baseWidthPct,1)}%</div>
               <div class="result-detail">Position ${fmtP(x.pricePositionPct,1)}% | ↑ ${fmtP(x.distanceToBaseHighPct)}% ↓ ${fmtP(x.distanceToBaseLowPct)}%</div>
               <div class="result-detail">Drawdown ${fmtP(x.drawdownFromHighPct,1)}% from ${fmtPx(x.windowHigh)}</div>
               <div class="result-detail" style="font-size:10px;opacity:.8">Drift ${fmtP(x.driftPct,1)}% · ${x.midCrossings} mid-crossings · touches ${x.upperTouches}↑/${x.lowerTouches}↓</div>
-              ${brkLine}${ageLine}
+              ${brkLine}${ageLine}${flagHtml}
               <div class="scan-time">Scanned: ${scanTime}</div>
             </div>
           </div>`;
