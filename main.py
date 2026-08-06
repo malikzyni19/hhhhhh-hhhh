@@ -35018,6 +35018,16 @@ def _bias_confluence(
 
 _RB_TOUCH_CLEARANCE = 0.5   # mirrors _OB_TOUCH_CLEARANCE for consistent retest counting
 
+# _grade_from_score hardcodes bias-shift wording ("A+ — Elite Bias Shift"),
+# which is the wrong detector's label on a block row.
+_RB_GRADE_LABEL = {
+    "A+": "A+ — Elite Rejection Block",
+    "A":  "A — Strong Rejection Block",
+    "B":  "B — Valid Rejection Block",
+    "C":  "C — Watch Only",
+    "D":  "D — Weak Block",
+}
+
 
 def _rb_config(tf: str, overrides: dict | None = None) -> dict:
     """Timeframe-aware rejection-block defaults.
@@ -35495,7 +35505,7 @@ def _rb_build_row(blk: dict, sym: str, tf: str, cfg: dict, volume_mode: str,
         ),
         "score":          score,
         "grade":          graded["grade"],
-        "gradeLabel":     graded["gradeLabel"],
+        "gradeLabel":     _RB_GRADE_LABEL.get(graded["grade"], graded["gradeLabel"]),
         "scoreBreakdown": scored["breakdown"],
         "confidence":     confidence,
         # lifecycle state doubles as the confirmation column the tab renders

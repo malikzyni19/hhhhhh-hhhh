@@ -5002,6 +5002,23 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var mode = (det==="rejection_block" || _onlyRb) ? "rb"
              : (det==="bias_shift" || _onlyBias)    ? "bias"
              : "mixed";
+
+    // Rejection blocks sort by how much of their life is left, not by score:
+    // untouched zones first, then 1 retest, then 2 — a virgin block is worth
+    // more than one that has already been traded into. Inside each group the
+    // freshest formation leads, then whatever price is closest to.
+    if(mode==="rb"){
+      items.sort(function(a,z){
+        var ra=a.rb||{}, rz=z.rb||{};
+        var d=(ra.retestCount||0)-(rz.retestCount||0);          if(d) return d;
+        d=(rz.freshness||0)-(ra.freshness||0);                  if(d) return d;
+        var da=ra.distanceAtr, dz=rz.distanceAtr;               // nulls sort last
+        if(da!=null&&dz!=null&&da!==dz) return da-dz;
+        if(da==null&&dz!=null) return 1;
+        if(dz==null&&da!=null) return -1;
+        return (z.score||0)-(a.score||0);
+      });
+    }
     // Row data-i indexes the FILTERED list, so the insight panel and footer
     // actions must resolve against the same view or they select the wrong row.
     ST.tabData.bias.view = items.map(function(x){ return x.raw; });

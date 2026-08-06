@@ -401,6 +401,9 @@ def api_tests():
     check("invalidation status resolved", r["invalidationStatus"] in
           ("valid", "live_breached", "closed_invalidated"), r["invalidationStatus"])
     check("reason chain is populated", len(r["reasonChain"]) >= 4, str(len(r["reasonChain"])))
+    check("grade label names the right detector",
+          "Rejection Block" in r["gradeLabel"] and "Bias Shift" not in r["gradeLabel"],
+          r["gradeLabel"])
     check("score breakdown is populated", len(r["scoreBreakdown"]) >= 5,
           str(len(r["scoreBreakdown"])))
     check("signal age carried for the tab",
