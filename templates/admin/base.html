@@ -127,28 +127,9 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 
 /* ── Mobile ── */
 .adm-mob-toggle{display:none;position:fixed;top:12px;left:14px;z-index:100;background:var(--bg3);border:1px solid var(--border);color:var(--cyan);width:32px;height:32px;border-radius:7px;font-size:16px;cursor:pointer;align-items:center;justify-content:center}
-@media(max-width:1100px){
-  .adm-sidebar{width:64px}
-  .adm-sidebar .adm-nav-item{padding:11px 0;justify-content:center;gap:0}
-  .adm-sidebar .adm-nav-item span:not(.adm-nav-icon){display:none}
-  .adm-sidebar .adm-nav-item{font-size:0}
-  .adm-sidebar .adm-nav-icon{font-size:15px}
-  .adm-nav-group,.adm-sidebar-logo-badge{display:none}
-  .adm-sidebar-logo{padding:16px 8px;text-align:center}
-  .adm-sidebar-logo-text{font-size:11px;letter-spacing:0}
-  .adm-topbar{left:64px}
-  .adm-main{margin-left:64px}
-}
 @media(max-width:768px){
-  .adm-sidebar{width:220px;transform:translateX(-220px)}
+  .adm-sidebar{transform:translateX(-220px)}
   .adm-sidebar.open{transform:translateX(0)}
-  .adm-sidebar .adm-nav-item{padding:10px 20px;justify-content:flex-start;gap:10px;font-size:12px}
-  .adm-sidebar .adm-nav-item span:not(.adm-nav-icon){display:inline}
-  .adm-sidebar .adm-nav-sub{padding-left:32px;font-size:11px}
-  .adm-nav-group{display:block}
-  .adm-sidebar-logo{padding:20px 20px 16px;text-align:left}
-  .adm-sidebar-logo-text{font-size:16px;letter-spacing:2px}
-  .adm-sidebar-logo-badge{display:inline-block}
   .adm-topbar{left:0;padding:0 14px 0 52px}
   .adm-main{margin-left:0;padding:14px}
   .adm-mob-toggle{display:flex}
