@@ -177,9 +177,6 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <a href="{{ url_for('admin.sys_database') }}" class="adm-nav-item {% if request.endpoint == 'admin.sys_database' %}active{% endif %}">
         <span class="adm-nav-icon">🗄</span>Database Usage
       </a>
-      <a href="{{ url_for('admin.sys_signals') }}" class="adm-nav-item {% if request.endpoint == 'admin.sys_signals' %}active{% endif %}">
-        <span class="adm-nav-icon">🎯</span>Signal Accuracy
-      </a>
       <a href="{{ url_for('admin.sys_live_monitor') }}" class="adm-nav-item {% if request.endpoint == 'admin.sys_live_monitor' %}active{% endif %}">
         <span class="adm-nav-icon">📡</span>Live Monitor
       </a>
