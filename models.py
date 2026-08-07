@@ -199,6 +199,8 @@ class DailyTokenUsage(db.Model):
     tokens_used  = db.Column(db.Integer, default=0)
     scan_count   = db.Column(db.Integer, default=0)
     last_scan_at = db.Column(db.DateTime, nullable=True)
+    # Tier enforcement: AI requests are metered separately from scan tokens.
+    ai_calls     = db.Column(db.Integer, default=0, nullable=False, server_default="0")
 
     __table_args__ = (db.UniqueConstraint("user_id", "date", name="uq_user_date"),)
 

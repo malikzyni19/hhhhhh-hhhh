@@ -613,6 +613,12 @@ def _auto_migrate():
                     conn.execute(text(_stmt))
                 conn.commit()
                 print("[MIGRATE] tier columns ensured on users table")
+                conn.execute(text(
+                    "ALTER TABLE daily_token_usage ADD COLUMN IF NOT EXISTS "
+                    "ai_calls INTEGER NOT NULL DEFAULT 0"
+                ))
+                conn.commit()
+                print("[MIGRATE] ai_calls column ensured on daily_token_usage")
                 # Phase 10.8: OB Distance/Approach settings column on user_preferences
                 conn.execute(text(
                     "ALTER TABLE user_preferences ADD COLUMN IF NOT EXISTS "
@@ -8029,6 +8035,61 @@ def _current_user_id_and_user():
         return u.id, u
     except Exception:
         return None, None
+
+
+# ── Tier quota gates ─────────────────────────────────────────────────────────
+# Each returns an error response tuple when the user is over their plan limit,
+# or None when the request may proceed. A 402 tells the frontend to show an
+# upgrade prompt rather than a generic failure.
+
+def _tier_gate_live_monitor(uid, user):
+    """Block a new Live Monitor item once the plan's item cap is reached."""
+    try:
+        from permissions import check_live_monitor_quota
+        from models import LiveMonitorItem as _LMI
+        current = _LMI.query.filter_by(user_id=uid, is_active=True).count()
+        ok, used, limit = check_live_monitor_quota(user, current)
+        if not ok:
+            return jsonify({
+                "error":   "tier_limit",
+                "limit":   "live_monitor_items",
+                "used":    used,
+                "max":     limit,
+                "message": f"Your plan allows {limit} active Live Monitor "
+                           f"item{'' if limit == 1 else 's'}. Remove one or upgrade to add more.",
+            }), 402
+    except Exception as e:
+        print(f"[TIER] live monitor gate error: {e}")
+    return None
+
+
+def _tier_gate_ai(uid, user):
+    """Block an AI request once the plan's daily call budget is spent."""
+    try:
+        from permissions import check_ai_quota
+        ok, used, limit = check_ai_quota(user)
+        if not ok:
+            return jsonify({
+                "error":   "tier_limit",
+                "limit":   "ai_calls_per_day",
+                "used":    used,
+                "max":     limit,
+                "message": f"You have used all {limit} AI request"
+                           f"{'' if limit == 1 else 's'} for today. "
+                           f"The limit resets at midnight UTC, or upgrade for more.",
+            }), 402
+    except Exception as e:
+        print(f"[TIER] ai gate error: {e}")
+    return None
+
+
+def _tier_charge_ai(uid):
+    """Record one AI call against today's budget."""
+    try:
+        from permissions import consume_ai_call
+        consume_ai_call(uid)
+    except Exception as e:
+        print(f"[TIER] ai charge error: {e}")
 
 
 def _json_dumps_safe(obj) -> str:
@@ -23712,10 +23773,15 @@ def _lm_call_ai_provider(context: dict, user_message: str = None,
         "configured":  agent.get("configured", False),
     }
 
+    # The local fallback costs nothing, so it is never metered.
     if provider == "local_fallback" or not agent.get("configured"):
         return {**base_result, "ok": False, "configured": False,
                 "analysis": _lm_local_ai_fallback(context, user_message),
                 "error": "AI provider not configured"}
+
+    # Meter every real provider invocation. Consensus fans out to one call per
+    # agent, so a 3-agent run correctly costs 3 against the daily budget.
+    _lm_meter_ai_call()
 
     try:
         if provider in ("openrouter", "openai", "deepseek", "custom_openai"):
@@ -23734,6 +23800,23 @@ def _lm_call_ai_provider(context: dict, user_message: str = None,
         return {**base_result, "ok": False,
                 "analysis": _lm_local_ai_fallback(context, user_message),
                 "error": f"Provider error: {type(_e).__name__}"}
+
+
+def _lm_meter_ai_call() -> None:
+    """Charge one AI call to the requesting user's daily budget.
+
+    Only meters inside a request context — background workers (auto-refresh,
+    learning review) are system work and must not consume a user's quota.
+    """
+    try:
+        from flask import has_request_context
+        if not has_request_context():
+            return
+        uid = _current_user_id()
+        if uid:
+            _tier_charge_ai(uid)
+    except Exception as e:
+        print(f"[TIER] ai meter error: {e}")
 
 
 def _lm_call_ai_agent(context: dict, user_message: str = None) -> dict:
@@ -23979,7 +24062,7 @@ def api_scan_presets_list():
 @app.route("/api/scan-presets", methods=["POST"])
 @login_required
 def api_scan_presets_create():
-    uid = _current_user_id()
+    uid, _preset_user = _current_user_id_and_user()
     if not uid:
         return jsonify({"error": "no_user"}), 401
     data = request.get_json(force=True) or {}
@@ -23993,9 +24076,28 @@ def api_scan_presets_create():
         return jsonify({"error": "bad_payload"}), 400
     from models import db as _db, ScanPreset as _P
     is_def = bool(data.get("isDefault"))
+    existing = _P.query.filter_by(user_id=uid, name=name).first()
+    if not existing:
+        # Overwriting a preset by name is always allowed; only a new one counts.
+        try:
+            from permissions import check_preset_quota
+            current = _P.query.filter_by(user_id=uid).count()
+            ok, used, limit = check_preset_quota(_preset_user, current)
+            if not ok:
+                return jsonify({
+                    "error":   "tier_limit",
+                    "limit":   "scan_presets",
+                    "used":    used,
+                    "max":     limit,
+                    "message": f"Your plan allows {limit} saved preset"
+                               f"{'' if limit == 1 else 's'}. "
+                               f"Delete one or upgrade to save more.",
+                }), 402
+        except Exception as e:
+            print(f"[TIER] preset gate error: {e}")
+
     if is_def:
         _P.query.filter_by(user_id=uid, is_default=True).update({"is_default": False})
-    existing = _P.query.filter_by(user_id=uid, name=name).first()
     if existing:
         existing.payload    = payload_str
         existing.is_default = is_def
@@ -24530,7 +24632,7 @@ def api_lm_items_get():
 @login_required
 def api_lm_items_post():
     """Save a full setup snapshot to Live Monitor. Creates or updates if duplicate zone."""
-    uid, _ = _current_user_id_and_user()
+    uid, _lm_user = _current_user_id_and_user()
     if not uid:
         return jsonify({"error": "no_user"}), 401
 
@@ -24632,6 +24734,11 @@ def api_lm_items_post():
         row = existing
         created = False
     else:
+        # Only a genuinely new item counts against the plan's item cap —
+        # updating an existing watch is always allowed.
+        _gate = _tier_gate_live_monitor(uid, _lm_user)
+        if _gate:
+            return _gate
         row = _LMI(
             user_id             = uid,
             symbol              = symbol,
@@ -27251,9 +27358,13 @@ def api_lm_ai_providers():
 @login_required
 def api_lm_items_ai_analyze(item_id):
     """Run AI analysis on one Live Monitor item. Stores result in snapshot_json."""
-    uid, _ = _current_user_id_and_user()
+    uid, _ai_user = _current_user_id_and_user()
     if not uid:
         return jsonify({"error": "no_user"}), 401
+
+    _gate = _tier_gate_ai(uid, _ai_user)
+    if _gate:
+        return _gate
 
     from models import db as _db, LiveMonitorItem as _LMI, LiveMonitorEvent as _LME
     row = _LMI.query.filter_by(id=item_id).first()
@@ -27365,9 +27476,13 @@ def api_lm_items_ai_analyze(item_id):
 @login_required
 def api_lm_items_ai_consensus(item_id):
     """Run all configured AI agents and return a consensus verdict. Stores in snapshot_json."""
-    uid, _ = _current_user_id_and_user()
+    uid, _ai_user = _current_user_id_and_user()
     if not uid:
         return jsonify({"error": "no_user"}), 401
+
+    _gate = _tier_gate_ai(uid, _ai_user)
+    if _gate:
+        return _gate
 
     from models import db as _db, LiveMonitorItem as _LMI, LiveMonitorEvent as _LME
     row = _LMI.query.filter_by(id=item_id).first()
@@ -28500,9 +28615,13 @@ def api_lm_items_ai_trade_proposal(item_id):
     Refreshes stale data if needed, calls AI with proposal prompt, creates
     LiveMonitorTrade record (status=proposed or draft). No execution.
     """
-    uid, _ = _current_user_id_and_user()
+    uid, _ai_user = _current_user_id_and_user()
     if not uid:
         return jsonify({"error": "no_user"}), 401
+
+    _gate = _tier_gate_ai(uid, _ai_user)
+    if _gate:
+        return _gate
 
     from models import db as _db, LiveMonitorItem as _LMI, LiveMonitorTrade as _LMT
     row = _LMI.query.filter_by(id=item_id).first()
@@ -28974,9 +29093,13 @@ def _lm_chat_save(uid, row, role: str, content: str,
 @login_required
 def api_lm_items_ai_chat(item_id):
     """Handle a live chat message about one item. Saves history to DB (Phase 10.5)."""
-    uid, _ = _current_user_id_and_user()
+    uid, _ai_user = _current_user_id_and_user()
     if not uid:
         return jsonify({"error": "no_user"}), 401
+
+    _gate = _tier_gate_ai(uid, _ai_user)
+    if _gate:
+        return _gate
 
     from models import LiveMonitorItem as _LMI
     row = _LMI.query.filter_by(id=item_id).first()
@@ -32829,6 +32952,16 @@ def api_my_permissions():
         perms["role"]     = user.role
         # Global tab toggles (admin can disable any tab for everyone)
         perms["tab_controls"] = dict(_tab_controls)
+        # Live tier usage so the UI can show remaining budget and upgrade prompts
+        try:
+            from permissions import ai_calls_today
+            from models import LiveMonitorItem as _LMIQ, ScanPreset as _SPQ
+            perms["ai_calls_used_today"] = ai_calls_today(user.id)
+            perms["live_monitor_used"]   = _LMIQ.query.filter_by(
+                user_id=user.id, is_active=True).count()
+            perms["scan_presets_used"]   = _SPQ.query.filter_by(user_id=user.id).count()
+        except Exception as _ue:
+            print(f"[PERMS] usage counts error: {_ue}")
         return jsonify(perms)
     except Exception as e:
         return jsonify({"error": str(e), "is_admin": False, "daily_tokens": 500,

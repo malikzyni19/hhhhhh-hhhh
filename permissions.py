@@ -203,6 +203,79 @@ def check_module_access(user, module: str) -> bool:
     return module in perms["allowed_modules"]
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Tier quota enforcement
+#
+# Each helper returns (allowed, current, limit). Admins are always allowed and
+# report a sentinel limit. On any internal error the helper fails OPEN — a
+# broken quota check must never lock a paying user out of the product.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_UNLIMITED = 999999
+
+
+def _quota(user, perm_key: str, default: int):
+    """Resolve one tier limit for a user. Returns None for admins (no limit)."""
+    if getattr(user, "role", "") == "admin":
+        return None
+    try:
+        return int(get_user_permissions(user).get(perm_key, default))
+    except Exception:
+        return None
+
+
+def check_live_monitor_quota(user, current_count: int):
+    """Can this user add another Live Monitor item?"""
+    limit = _quota(user, "max_live_monitor_items", 3)
+    if limit is None:
+        return True, current_count, _UNLIMITED
+    return current_count < limit, current_count, limit
+
+
+def check_preset_quota(user, current_count: int):
+    """Can this user save another scan preset?"""
+    limit = _quota(user, "max_scan_presets", 2)
+    if limit is None:
+        return True, current_count, _UNLIMITED
+    return current_count < limit, current_count, limit
+
+
+def ai_calls_today(user_id: int) -> int:
+    try:
+        row = DailyTokenUsage.query.filter_by(user_id=user_id, date=date.today()).first()
+        return int(row.ai_calls or 0) if row else 0
+    except Exception:
+        return 0
+
+
+def check_ai_quota(user):
+    """Can this user make another AI request today?"""
+    limit = _quota(user, "ai_calls_per_day", 5)
+    if limit is None:
+        return True, 0, _UNLIMITED
+    used = ai_calls_today(user.id)
+    return used < limit, used, limit
+
+
+def consume_ai_call(user_id: int, count: int = 1) -> None:
+    """Record AI usage. Never raises — billing must not break the feature."""
+    try:
+        today = date.today()
+        row = DailyTokenUsage.query.filter_by(user_id=user_id, date=today).first()
+        if not row:
+            row = DailyTokenUsage(user_id=user_id, date=today,
+                                  tokens_used=0, scan_count=0, ai_calls=0)
+            db.session.add(row)
+        row.ai_calls = (row.ai_calls or 0) + count
+        db.session.commit()
+    except Exception as e:
+        print(f"[PERMS] consume_ai_call error: {e}")
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+
+
 def get_tier_plan(tier: str):
     """Return the TierPlan row for a tier, or None."""
     try:
