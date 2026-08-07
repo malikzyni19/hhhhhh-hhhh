@@ -37194,10 +37194,16 @@ def api_zone_liquidity():
     # ── Ensure full order book stream is running ──
     # Works for both watchlist pairs (already streaming) and
     # scan page pairs (starts on-demand, waits up to 4s, auto-stops after 2min)
-    book_ready = ensure_ob_stream(symbol, wait_sec=4.0)
+    try:
+        book_ready = ensure_ob_stream(symbol, wait_sec=4.0)
+    except Exception:
+        book_ready = False
 
     if book_ready:
-        ob_result = get_ob_zone_levels(symbol, zone_top, zone_bottom, ob_type)
+        try:
+            ob_result = get_ob_zone_levels(symbol, zone_top, zone_bottom, ob_type)
+        except Exception:
+            ob_result = {"ready": False}
         if ob_result.get("ready"):
             return jsonify({
                 "symbol":         symbol,

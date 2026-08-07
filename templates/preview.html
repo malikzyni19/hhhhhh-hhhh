@@ -497,6 +497,36 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
 .dd-out{font-size:11.5px;color:var(--text-2)}
 .dd-out .dd-result{background:var(--bg-card-2);border:1px solid var(--border);border-radius:8px;padding:10px;max-height:240px;overflow:auto}
 .dd-out .kv{font-size:11.5px;padding:3px 0;border:0}
+/* Zone Liquidity popup modal */
+.zl-card{width:min(820px,96vw);height:auto;max-height:min(700px,90vh)}
+.zl-body{flex:1;min-height:0;overflow-y:auto;padding:16px 18px;display:flex;flex-direction:column;gap:14px}
+.zl-verdict{padding:10px 14px;border-radius:8px;background:var(--bg-card-2);display:flex;flex-direction:column;gap:4px}
+.zl-v-label{font-size:14px;font-weight:700;letter-spacing:.3px}
+.zl-v-desc{font-size:12px;color:var(--text-2);margin-top:1px}
+.zl-v-insight{font-size:11.5px;color:var(--text-3);margin-top:2px;font-style:italic}
+.zl-verdict.inst{border-left:3px solid #e53e3e}.zl-verdict.inst .zl-v-label{color:#e53e3e}
+.zl-verdict.strong{border-left:3px solid #f97316}.zl-verdict.strong .zl-v-label{color:#f97316}
+.zl-verdict.moderate{border-left:3px solid #eab308}.zl-verdict.moderate .zl-v-label{color:#eab308}
+.zl-verdict.weak{border-left:3px solid var(--text-3)}.zl-verdict.weak .zl-v-label{color:var(--text-3)}
+.zl-verdict.empty{border-left:3px solid var(--border)}
+.zl-totals{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.zl-tot-card{background:var(--bg-card-2);border-radius:8px;padding:10px 13px}
+.zl-tot-label{font-size:10.5px;color:var(--text-3);margin-bottom:3px}
+.zl-tot-val{font-size:15px;font-weight:700;color:var(--text)}
+.zl-tot-val.g{color:#22c55e}.zl-tot-val.r2{color:#ef4444}
+.zl-tbl-wrap{overflow-x:auto}
+.zl-table{width:100%;border-collapse:collapse;font-size:12px}
+.zl-table th{padding:6px 9px;text-align:left;font-size:10.5px;font-weight:600;color:var(--text-3);border-bottom:1px solid var(--border);white-space:nowrap}
+.zl-table td{padding:5px 9px;border-bottom:1px solid var(--border-light,var(--border));white-space:nowrap;color:var(--text-2)}
+.zl-table tr:last-child td{border-bottom:none}
+.zl-table tr.zl-inside{background:rgba(99,102,241,.07)}
+.zl-price{font-weight:600;color:var(--text);font-family:monospace,monospace}
+.zl-bid{color:#22c55e}.zl-ask{color:#ef4444}
+.zl-bar{font-family:monospace,monospace;font-size:10px;color:var(--text-3);letter-spacing:-1px}
+.zl-icon{text-align:center;font-size:13px}
+.zl-pos-tag{font-size:10px;color:var(--text-3);padding:1px 5px;border-radius:4px;background:var(--bg-card-2)}
+.zl-source{font-size:10.5px;color:var(--text-3);text-align:center;padding-top:2px}
+@media(max-width:640px){.zl-card{height:92vh;max-height:92vh}.zl-body{padding:10px 12px}}
 .dd-out .kv .k{color:var(--text-3);font-size:11px}
 .dd-out .kv .v{color:var(--text);font-family:var(--mono);font-size:11px}
 /* footer */
@@ -2264,7 +2294,25 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       </div>
     </div>
     <div class="cm-body"><iframe id="cmFrame" title="TradingView chart" frameborder="0" allowtransparency="true" scrolling="no" allowfullscreen></iframe></div>
-    <div class="cm-note">Live TradingView chart. Private / unpublished Pine indicators can't load in an embed — use “Open in TradingView” to view those.</div>
+    <div class=”cm-note”>Live TradingView chart. Private / unpublished Pine indicators can't load in an embed — use “Open in TradingView” to view those.</div>
+  </div>
+</div>
+
+<!-- ═══ Zone Liquidity popup modal ═══ -->
+<div class=”chart-modal-bd” id=”zlModalBd”></div>
+<div class=”chart-modal” id=”zlModal” role=”dialog” aria-modal=”true” aria-labelledby=”zlSym”>
+  <div class=”chart-modal-card zl-card”>
+    <div class=”cm-head”>
+      <div class=”cm-title”>
+        <svg class=”ico” viewBox=”0 0 24 24” fill=”currentColor” style=”flex-shrink:0”><rect x=”3” y=”10” width=”4” height=”10”/><rect x=”10” y=”6” width=”4” height=”14”/><rect x=”17” y=”13” width=”4” height=”7”/></svg>
+        <span class=”cm-sym” id=”zlSym”>—</span>
+        <span class=”cm-tags” id=”zlTags”></span>
+      </div>
+      <div class=”cm-head-r”>
+        <button class=”ic-btn” id=”zlClose” type=”button” aria-label=”Close”><svg class=”ico” viewBox=”0 0 24 24”><path d=”M6 6l12 12M18 6L6 18”/></svg></button>
+      </div>
+    </div>
+    <div class=”zl-body” id=”zlBody”></div>
   </div>
 </div>
 
@@ -3461,6 +3509,87 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     E("chartModal").classList.remove("open");
     document.body.classList.remove("sheet-open");
     var fr=E("cmFrame"); if(fr) fr.src="about:blank";   // stop the stream when hidden
+  }
+
+  /* ── Zone Liquidity popup ── */
+  function _openZlModal(data, symbol){
+    E("zlSym").textContent = symbol || "—";
+    var ob_type = (data && data.ob_type) || "bullish";
+    E("zlTags").innerHTML = '<span class="tag">'+(ob_type==="bullish"?"Bullish OB":"Bearish OB")+'</span>';
+    E("zlBody").innerHTML = _zlRender(data);
+    E("zlModalBd").classList.add("open");
+    E("zlModal").classList.add("open");
+    document.body.classList.add("sheet-open");
+  }
+  function _closeZlModal(){
+    E("zlModalBd").classList.remove("open");
+    E("zlModal").classList.remove("open");
+    document.body.classList.remove("sheet-open");
+  }
+  function _zlRender(d){
+    if(!d) return '<div class="row-msg err">No data returned.</div>';
+    if(d.error) return '<div class="row-msg err">'+esc(d.error)+'</div>';
+    var verdict=(d.verdict||"WEAK").toUpperCase();
+    var vMap={INSTITUTIONAL:"inst",STRONG:"strong",MODERATE:"moderate",WEAK:"weak",EMPTY:"empty"};
+    var vCls=vMap[verdict]||"weak";
+    var html='';
+    /* verdict card */
+    html+='<div class="zl-verdict '+vCls+'">';
+    html+='<div class="zl-v-label">'+esc(verdict)+'</div>';
+    if(d.verdict_desc) html+='<div class="zl-v-desc">'+esc(d.verdict_desc)+'</div>';
+    if(d.insight)      html+='<div class="zl-v-insight">'+esc(d.insight)+'</div>';
+    html+='</div>';
+    /* totals */
+    if(d.total_bid_fmt||d.total_ask_fmt){
+      html+='<div class="zl-totals">';
+      html+='<div class="zl-tot-card"><div class="zl-tot-label">Total Bids (Zone)</div><div class="zl-tot-val g">'+esc(d.total_bid_fmt||"—")+'</div></div>';
+      html+='<div class="zl-tot-card"><div class="zl-tot-label">Total Asks (Zone)</div><div class="zl-tot-val r2">'+esc(d.total_ask_fmt||"—")+'</div></div>';
+      html+='</div>';
+    } else if(d.total_fmt){
+      html+='<div class="zl-totals">';
+      html+='<div class="zl-tot-card" style="grid-column:1/-1"><div class="zl-tot-label">Total Zone Liquidity</div><div class="zl-tot-val">'+esc(d.total_fmt)+'</div></div>';
+      html+='</div>';
+    }
+    /* WS-path ladder (full bid+ask depth table) */
+    var ladder=d.ladder;
+    if(ladder&&ladder.length){
+      html+='<div class="zl-tbl-wrap"><table class="zl-table"><thead><tr>';
+      html+='<th>Price</th><th>Zone</th><th>Bids (USDT)</th><th>Asks (USDT)</th><th>Depth</th><th></th>';
+      html+='</tr></thead><tbody>';
+      for(var i=0;i<ladder.length;i++){
+        var row=ladder[i];
+        var trCls=(row.zone_pos==="inside")?" class=\"zl-inside\"":"";
+        html+='<tr'+trCls+'>';
+        html+='<td class="zl-price">'+esc(row.price)+'</td>';
+        html+='<td><span class="zl-pos-tag">'+esc(row.zone_pos||"")+'</span></td>';
+        html+='<td class="zl-bid">'+esc(row.bid_fmt||"—")+'</td>';
+        html+='<td class="zl-ask">'+esc(row.ask_fmt||"—")+'</td>';
+        html+='<td class="zl-bar">'+esc(row.bar||"")+'</td>';
+        html+='<td class="zl-icon">'+esc(row.icon||"")+'</td>';
+        html+='</tr>';
+      }
+      html+='</tbody></table></div>';
+    }
+    /* REST-fallback levels (single-side) */
+    var levels=d.levels;
+    if(levels&&levels.length){
+      var side=(d.side==="bids")?"Bid":"Ask";
+      html+='<div class="zl-tbl-wrap"><table class="zl-table"><thead><tr>';
+      html+='<th>Price</th><th>'+side+' Qty</th><th>USDT</th><th>Ratio</th><th></th>';
+      html+='</tr></thead><tbody>';
+      for(var j=0;j<levels.length;j++){
+        var lv=levels[j];
+        var lCls=(d.side==="bids")?" class=\"zl-bid\"":" class=\"zl-ask\"";
+        html+='<tr><td class="zl-price">'+esc(String(lv.price))+'</td>';
+        html+='<td'+lCls+'>'+esc(lv.qtyFmt||String(lv.qty))+'</td>';
+        html+='<td>'+esc(lv.usdtFmt||String(lv.usdt))+'</td>';
+        html+='<td class="zl-bar">×'+esc(String(lv.ratio))+'</td>';
+        html+='<td class="zl-icon">'+esc(lv.icon||"")+'</td></tr>';
+      }
+      html+='</tbody></table></div>';
+    }
+    if(d.source) html+='<div class="zl-source">'+esc(d.source)+'</div>';
+    return html||'<div class="row-msg">No order data available.</div>';
   }
 
   /* ── watchlist persistence ──
@@ -5848,7 +5977,10 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         } else { out.innerHTML='<div class="row-msg err">Unknown deep-dive '+esc(kind)+'.</div>'; return; }
         fetch(url,opts)
           .then(function(rr){if(!rr.ok) throw new Error("HTTP "+rr.status); return rr.json();})
-          .then(function(d){ out.innerHTML='<div class="dd-result">'+_ddPretty(d,14)+'</div>'; })
+          .then(function(d){
+            if(kind==="zoneliq"){ out.innerHTML=''; _openZlModal(d, r.symbol); }
+            else { out.innerHTML='<div class="dd-result">'+_ddPretty(d,14)+'</div>'; }
+          })
           .catch(function(e){ out.innerHTML='<div class="row-msg err">'+esc(kind)+' failed: '+esc(e.message)+'</div>'; });
       });
     });
@@ -6256,6 +6388,10 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     if(_cmCtx){ _cmCtx.tf=this.value; _cmRender(); }
   });
   addEventListener("keydown",function(e){ if(e.key==="Escape" && E("chartModal") && E("chartModal").classList.contains("open")) closeChartModal(); });
+  /* Zone Liquidity modal controls */
+  if(E("zlClose")) E("zlClose").addEventListener("click",_closeZlModal);
+  if(E("zlModalBd")) E("zlModalBd").addEventListener("click",_closeZlModal);
+  addEventListener("keydown",function(e){ if(e.key==="Escape" && E("zlModal") && E("zlModal").classList.contains("open")) _closeZlModal(); });
 
   /* ── Settings panel (Wave 6) ── */
   function _populateSettingsForm(){
