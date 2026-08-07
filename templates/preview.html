@@ -3513,7 +3513,14 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 
   /* ── Zone Liquidity popup ── */
   function _openZlModal(data, symbol){
-    E("zlSym").textContent = symbol || "—";
+    var symEl=E("zlSym");
+    if(!symEl){
+      /* Modal HTML not in DOM (stale server cache) — fall back to inline display */
+      var out=E("ddOut");
+      if(out) out.innerHTML='<div class="dd-result">'+_zlRender(data)+'</div>';
+      return;
+    }
+    symEl.textContent = symbol || "—";
     var ob_type = (data && data.ob_type) || "bullish";
     E("zlTags").innerHTML = '<span class="tag">'+(ob_type==="bullish"?"Bullish OB":"Bearish OB")+'</span>';
     E("zlBody").innerHTML = _zlRender(data);
