@@ -162,6 +162,9 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <a href="{{ url_for('admin.users') }}" class="adm-nav-item {% if request.endpoint and request.endpoint.startswith('admin.users') %}active{% endif %}">
         <span class="adm-nav-icon">👥</span>Users
       </a>
+      <a href="{{ url_for('admin.tiers') }}" class="adm-nav-item {% if request.endpoint in ('admin.tiers','admin.tier_edit') %}active{% endif %}">
+        <span class="adm-nav-icon">◈</span>Tiers &amp; Plans
+      </a>
       <a href="{{ url_for('admin.settings') }}" class="adm-nav-item {% if request.endpoint == 'admin.settings' %}active{% endif %}">
         <span class="adm-nav-icon">⚙</span>Settings
       </a>

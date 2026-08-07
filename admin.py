@@ -7,10 +7,12 @@ from functools import wraps
 from datetime import datetime, timezone
 
 from models import (db, User, AdminLog, GlobalSetting, RolePermission, UserPermission,
-                    LoginHistory, DailyTokenUsage, EmailVerification,
+                    LoginHistory, DailyTokenUsage, EmailVerification, TierPlan,
                     BacktestRun, IntelligenceSettings, PasswordResetToken, UserPreference,
-                    ALL_MODULES, ALL_TABS, ALL_EXCHANGES, ALL_TIMEFRAMES)
-from permissions import get_user_permissions, save_user_permissions, _bust_cache
+                    ALL_MODULES, ALL_TABS, ALL_EXCHANGES, ALL_TIMEFRAMES,
+                    ALL_TIERS, DEFAULT_TIER, TIER_LABELS)
+from permissions import (get_user_permissions, save_user_permissions, _bust_cache,
+                         set_user_tier)
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
 
@@ -196,6 +198,27 @@ def dashboard():
         recent_users = []
         db_connected = False
 
+    # Tier distribution + revenue estimate
+    tier_stats, mrr = [], 0.0
+    try:
+        counts = dict(db.session.query(User.tier, db.func.count(User.id))
+                                .filter(User.role != "admin")
+                                .group_by(User.tier).all())
+        prices = {r.tier: (r.price_monthly or 0.0) for r in TierPlan.query.all()}
+        paid_total = sum(counts.get(t, 0) for t in ALL_TIERS)
+        for t in ALL_TIERS:
+            n = counts.get(t, 0)
+            mrr += n * prices.get(t, 0.0)
+            tier_stats.append({
+                "tier":  t,
+                "label": TIER_LABELS.get(t, t),
+                "count": n,
+                "price": prices.get(t, 0.0),
+                "pct":   round(n / paid_total * 100) if paid_total else 0,
+            })
+    except Exception as e:
+        print(f"[ADMIN-DASH] tier stats error: {e}")
+
     return render_template(
         "admin/dashboard.html",
         total_users=total_users,
@@ -206,6 +229,8 @@ def dashboard():
         recent_logs=recent_logs,
         recent_users=recent_users,
         db_connected=db_connected,
+        tier_stats=tier_stats,
+        mrr=mrr,
         server_time=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
         app_version="1.0.0",
     )
@@ -221,6 +246,7 @@ _USERS_PER_PAGE = 50
 def users():
     status_filter = request.args.get("status")
     role_filter   = request.args.get("role")
+    tier_filter   = request.args.get("tier")
     search        = (request.args.get("q") or "").strip()
     sort          = (request.args.get("sort") or "created_desc").strip()
     try:
@@ -231,12 +257,15 @@ def users():
     pagination  = None
     all_users   = []
     total_count = 0
+    tier_counts = {}
     try:
         q = User.query
         if status_filter:
             q = q.filter_by(status=status_filter)
         if role_filter:
             q = q.filter_by(role=role_filter)
+        if tier_filter in ALL_TIERS:
+            q = q.filter_by(tier=tier_filter)
         if search:
             like = f"%{search}%"
             q = q.filter(db.or_(User.username.ilike(like), User.email.ilike(like)))
@@ -246,6 +275,7 @@ def users():
             "created_asc":  User.created_at.asc(),
             "username":     User.username.asc(),
             "last_login":   User.last_login_at.desc(),
+            "tier":         User.tier.asc(),
         }
         q = q.order_by(sort_map.get(sort, User.created_at.desc()))
 
@@ -254,6 +284,11 @@ def users():
         pagination  = q.paginate(page=page, per_page=_USERS_PER_PAGE, error_out=False)
         all_users   = pagination.items
         total_count = User.query.count()
+
+        for t, n in (db.session.query(User.tier, db.func.count(User.id))
+                               .filter(User.role != "admin")
+                               .group_by(User.tier).all()):
+            tier_counts[t] = n
     except Exception as e:
         print(f"[ADMIN-USERS] DB error: {e}")
 
@@ -264,6 +299,10 @@ def users():
         total_count=total_count,
         status_filter=status_filter,
         role_filter=role_filter,
+        tier_filter=tier_filter,
+        tier_counts=tier_counts,
+        all_tiers=ALL_TIERS,
+        tier_labels=TIER_LABELS,
         search=search,
         sort=sort,
     )
@@ -281,12 +320,14 @@ def users_bulk_action():
 
     if not isinstance(ids, list) or not ids:
         return jsonify({"ok": False, "error": "no_ids"}), 400
-    if action not in ("status", "role"):
+    if action not in ("status", "role", "tier"):
         return jsonify({"ok": False, "error": "bad_action"}), 400
     if action == "status" and value not in ("active", "paused", "banned"):
         return jsonify({"ok": False, "error": "bad_status"}), 400
     if action == "role" and value not in ("admin", "user"):
         return jsonify({"ok": False, "error": "bad_role"}), 400
+    if action == "tier" and value not in ALL_TIERS:
+        return jsonify({"ok": False, "error": "bad_tier"}), 400
 
     try:
         ids = [int(i) for i in ids]
@@ -314,8 +355,13 @@ def users_bulk_action():
         for u in rows:
             if action == "status":
                 u.status = value
-            else:
+            elif action == "role":
                 u.role = value
+            else:
+                u.tier       = value
+                u.tier_since = datetime.now(timezone.utc)
+                # Bulk moves carry no expiry date; the free tier never expires.
+                u.tier_expires_at = None
             changed += 1
 
         db.session.commit()
@@ -574,6 +620,7 @@ def users_edit(user_id):
         eff=eff, user_perm=user_perm,
         login_history=login_history, stats=stats,
         daily_series=daily_series,
+        all_tiers=ALL_TIERS, tier_labels=TIER_LABELS, default_tier=DEFAULT_TIER,
         all_modules=ALL_MODULES, all_tabs=ALL_TABS,
         all_exchanges=ALL_EXCHANGES, all_timeframes=ALL_TIMEFRAMES,
     )
@@ -595,6 +642,10 @@ def users_detail_json(user_id):
         "last_login_at":  user.last_login_at.strftime("%Y-%m-%d %H:%M UTC") if user.last_login_at else "Never",
         "last_login_ip":  getattr(user, "last_login_ip", None) or "—",
         "is_self":        user.id == _admin_id(),
+        "tier":           user.tier,
+        "tier_label":     TIER_LABELS.get(user.effective_tier, user.effective_tier),
+        "tier_expired":   bool(user.tier_is_expired),
+        "tier_expires_at": user.tier_expires_at.strftime("%Y-%m-%d") if user.tier_expires_at else "",
     })
 
 
@@ -4072,3 +4123,172 @@ def sys_email():
 
     return render_template("admin/system/email.html",
                            status=status, recent=recent, counts=counts)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# SUBSCRIPTION TIERS
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _tier_rows():
+    """All tier plans in display order, creating any that are missing."""
+    rows = {r.tier: r for r in TierPlan.query.all()}
+    changed = False
+    for i, t in enumerate(ALL_TIERS):
+        if t not in rows:
+            r = TierPlan(tier=t, display_name=TIER_LABELS.get(t, t), sort_order=i + 1)
+            db.session.add(r)
+            rows[t] = r
+            changed = True
+    if changed:
+        db.session.commit()
+    return [rows[t] for t in ALL_TIERS]
+
+
+def _tier_lists(row):
+    """Parse a TierPlan's JSON list columns into real lists."""
+    def p(v, fallback):
+        if not v:
+            return fallback[:]
+        try:
+            out = json.loads(v)
+            return out if isinstance(out, list) else fallback[:]
+        except Exception:
+            return fallback[:]
+    return {
+        "modules":    p(row.allowed_modules,    ALL_MODULES),
+        "tabs":       p(row.allowed_tabs,       ALL_TABS),
+        "exchanges":  p(row.allowed_exchanges,  ALL_EXCHANGES),
+        "timeframes": p(row.allowed_timeframes, ALL_TIMEFRAMES),
+    }
+
+
+@admin_bp.route("/tiers")
+@admin_required
+def tiers():
+    """Overview of every subscription tier plus how many users are on each."""
+    rows, counts, lists = [], {}, {}
+    try:
+        rows = _tier_rows()
+        for r in rows:
+            lists[r.tier] = _tier_lists(r)
+        for t in ALL_TIERS:
+            counts[t] = User.query.filter_by(tier=t).filter(User.role != "admin").count()
+    except Exception as e:
+        print(f"[ADMIN-TIERS] error: {e}")
+        flash(f"Could not load tiers: {e}", "error")
+
+    return render_template("admin/tiers.html",
+                           rows=rows, counts=counts, lists=lists,
+                           tier_labels=TIER_LABELS, all_tabs=ALL_TABS)
+
+
+@admin_bp.route("/tiers/<tier>", methods=["GET", "POST"])
+@admin_required
+def tier_edit(tier):
+    if tier not in ALL_TIERS:
+        return redirect(url_for("admin.tiers"))
+
+    row = TierPlan.query.filter_by(tier=tier).first()
+    if not row:
+        row = TierPlan(tier=tier, display_name=TIER_LABELS.get(tier, tier),
+                       sort_order=ALL_TIERS.index(tier) + 1)
+        db.session.add(row)
+        db.session.commit()
+
+    if request.method == "POST":
+        try:
+            def as_int(name, current, lo=0, hi=10_000_000):
+                try:
+                    return max(lo, min(hi, int(request.form.get(name, current))))
+                except (TypeError, ValueError):
+                    return current
+
+            row.display_name = (request.form.get("display_name") or TIER_LABELS.get(tier, tier)).strip()[:60]
+            row.description  = (request.form.get("description") or "").strip()[:255] or None
+            try:
+                row.price_monthly = max(0.0, float(request.form.get("price_monthly", row.price_monthly)))
+            except (TypeError, ValueError):
+                pass
+            # The free tier is always available — it is the fallback for lapsed plans.
+            row.is_active = True if tier == DEFAULT_TIER else bool(request.form.get("is_active"))
+
+            row.daily_tokens           = as_int("daily_tokens",           row.daily_tokens)
+            row.max_pairs_per_scan     = as_int("max_pairs_per_scan",     row.max_pairs_per_scan, 1)
+            row.max_pairs_per_cycle    = as_int("max_pairs_per_cycle",    row.max_pairs_per_cycle, 1)
+            row.max_live_monitor_items = as_int("max_live_monitor_items", row.max_live_monitor_items)
+            row.ai_calls_per_day       = as_int("ai_calls_per_day",       row.ai_calls_per_day)
+            row.max_scan_presets       = as_int("max_scan_presets",       row.max_scan_presets)
+
+            row.allowed_modules    = json.dumps(request.form.getlist("allowed_modules"))
+            row.allowed_tabs       = json.dumps(request.form.getlist("allowed_tabs"))
+            row.allowed_exchanges  = json.dumps(request.form.getlist("allowed_exchanges"))
+            row.allowed_timeframes = json.dumps(request.form.getlist("allowed_timeframes"))
+
+            row.updated_by = _admin_id()
+            row.updated_at = datetime.now(timezone.utc)
+            db.session.commit()
+
+            # Every user on this tier must pick up the new limits immediately.
+            try:
+                from permissions import _CACHE
+                for u in User.query.filter_by(tier=tier).all():
+                    _CACHE.pop(u.id, None)
+            except Exception:
+                pass
+
+            _log_action(f"tier_save:{tier}", f"Updated {tier} plan")
+            flash(f"{row.display_name} plan saved.", "success")
+            return redirect(url_for("admin.tier_edit", tier=tier))
+        except Exception as e:
+            db.session.rollback()
+            flash(f"Error saving plan: {e}", "error")
+
+    user_count = 0
+    try:
+        user_count = User.query.filter_by(tier=tier).filter(User.role != "admin").count()
+    except Exception:
+        pass
+
+    return render_template("admin/tier_edit.html",
+                           tier=tier, row=row, lists=_tier_lists(row),
+                           user_count=user_count,
+                           is_default_tier=(tier == DEFAULT_TIER),
+                           tier_labels=TIER_LABELS,
+                           all_modules=ALL_MODULES, all_tabs=ALL_TABS,
+                           all_exchanges=ALL_EXCHANGES, all_timeframes=ALL_TIMEFRAMES)
+
+
+@admin_bp.route("/users/<int:user_id>/tier", methods=["POST"])
+@admin_required
+def users_set_tier(user_id):
+    """Change one user's tier, with an optional expiry date."""
+    tier = (request.form.get("tier") or "").strip()
+    raw_exp = (request.form.get("tier_expires_at") or "").strip()
+
+    user = User.query.filter_by(id=user_id).first()
+    if not user:
+        flash("User not found.", "error")
+        return redirect(url_for("admin.users"))
+    if tier not in ALL_TIERS:
+        flash("Unknown tier.", "error")
+        return redirect(url_for("admin.users_edit", user_id=user_id))
+
+    expires = None
+    if raw_exp and tier != DEFAULT_TIER:
+        try:
+            expires = datetime.strptime(raw_exp, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        except ValueError:
+            flash("Expiry date must be YYYY-MM-DD. Tier not changed.", "error")
+            return redirect(url_for("admin.users_edit", user_id=user_id))
+
+    try:
+        set_user_tier(user, tier, expires_at=expires)
+        _log_action("set_tier", f"{user.username} → {tier}"
+                    + (f" until {raw_exp}" if expires else ""),
+                    target_user_id=user.id)
+        flash(f"{user.username} moved to {TIER_LABELS.get(tier, tier)}.", "success")
+    except Exception as e:
+        db.session.rollback()
+        flash(f"Could not change tier: {e}", "error")
+
+    return redirect(url_for("admin.users_edit", user_id=user_id))

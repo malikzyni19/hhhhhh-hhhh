@@ -410,7 +410,8 @@ code, .mono { font-family: 'JetBrains Mono', monospace !important; }
       <select name="sort" onchange="this.form.submit()"
               style="background:#04090f;color:var(--text);border:1.5px solid var(--border);border-radius:9px;padding:9px 12px;font-size:12.5px;outline:none">
         {% for v, lbl in [('created_desc','Newest first'),('created_asc','Oldest first'),
-                          ('username','Username A–Z'),('last_login','Recently active')] %}
+                          ('username','Username A–Z'),('last_login','Recently active'),
+                          ('tier','Tier')] %}
           <option value="{{ v }}" {% if sort == v %}selected{% endif %}>{{ lbl }}</option>
         {% endfor %}
       </select>
@@ -428,6 +429,17 @@ code, .mono { font-family: 'JetBrains Mono', monospace !important; }
         <a href="{{ url_for('admin.users', role='admin', q=search, sort=sort) }}"        class="adm-filter-pill {% if role_filter=='admin'     %}active{% endif %}">Admins</a>
         <a href="{{ url_for('admin.users', role='user', q=search, sort=sort) }}"         class="adm-filter-pill {% if role_filter=='user'      %}active{% endif %}">Users</a>
       </div>
+
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <span style="font-size:10px;color:var(--muted2);letter-spacing:1px;text-transform:uppercase;font-weight:600">Tier</span>
+        {% for t in all_tiers %}
+        <a href="{{ url_for('admin.users', tier=t, q=search, sort=sort) }}"
+           class="adm-filter-pill {% if tier_filter == t %}active{% endif %}">
+          {{ tier_labels.get(t, t) }}
+          <span style="opacity:.65">{{ tier_counts.get(t, 0) }}</span>
+        </a>
+        {% endfor %}
+      </div>
     </form>
   </div>
 </div>
@@ -438,6 +450,9 @@ code, .mono { font-family: 'JetBrains Mono', monospace !important; }
   <button class="bulk-btn bulk-btn-clear" onclick="bulkAction('status','active')">Activate</button>
   <button class="bulk-btn bulk-btn-clear" onclick="bulkAction('status','paused')">Pause</button>
   <button class="bulk-btn bulk-btn-clear" onclick="bulkAction('role','user')">Set role: user</button>
+  {% for t in all_tiers %}
+  <button class="bulk-btn bulk-btn-clear" onclick="bulkAction('tier','{{ t }}')">→ {{ tier_labels.get(t, t) }}</button>
+  {% endfor %}
   <button class="bulk-btn bulk-btn-del" onclick="openBulkDelModal()">
     <i class="fa-solid fa-trash-can" style="font-family:unset;font-size:11px"></i> Delete Selected
   </button>
@@ -457,6 +472,7 @@ code, .mono { font-family: 'JetBrains Mono', monospace !important; }
           <th>Username</th>
           <th>Email</th>
           <th>Role</th>
+          <th>Tier</th>
           <th>Status</th>
           <th>Joined</th>
           <th>Last Login</th>
@@ -475,7 +491,7 @@ code, .mono { font-family: 'JetBrains Mono', monospace !important; }
             </td>
             <td>
               <span class="mono" style="color:var(--cyan);font-weight:600;font-size:13px">{{ u.username }}</span>
-              {% if u.id == current_user.id %}
+              {% if current_user.is_authenticated and u.id == current_user.id %}
                 <span style="font-size:9px;color:var(--muted);margin-left:4px">(you)</span>
               {% endif %}
             </td>
@@ -487,6 +503,19 @@ code, .mono { font-family: 'JetBrains Mono', monospace !important; }
                 <span class="badge cyan">admin</span>
               {% else %}
                 <span class="badge blue">user</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if u.role == 'admin' %}
+                <span style="font-size:11px;color:var(--muted2)">—</span>
+              {% else %}
+                {% set et = u.effective_tier %}
+                <span class="badge {{ 'amber' if et == 'pro_plus' else ('cyan' if et == 'pro' else 'blue') }}">
+                  {{ tier_labels.get(et, et) }}
+                </span>
+                {% if u.tier_is_expired %}
+                  <span class="badge red" title="Subscription lapsed — limited to Basic">expired</span>
+                {% endif %}
               {% endif %}
             </td>
             <td>
@@ -537,7 +566,7 @@ code, .mono { font-family: 'JetBrains Mono', monospace !important; }
           </tr>
           {% endfor %}
         {% else %}
-          <tr><td colspan="9" class="adm-empty">No users found.</td></tr>
+          <tr><td colspan="10" class="adm-empty">No users found.</td></tr>
         {% endif %}
       </tbody>
     </table>
@@ -551,21 +580,21 @@ code, .mono { font-family: 'JetBrains Mono', monospace !important; }
     </div>
     <div class="adm-pager-links">
       {% if pagination.has_prev %}
-        <a href="{{ url_for('admin.users', page=pagination.prev_num, status=status_filter, role=role_filter, q=search, sort=sort) }}">‹ Prev</a>
+        <a href="{{ url_for('admin.users', page=pagination.prev_num, status=status_filter, role=role_filter, tier=tier_filter, q=search, sort=sort) }}">‹ Prev</a>
       {% endif %}
       {% for p in pagination.iter_pages(left_edge=1, right_edge=1, left_current=2, right_current=2) %}
         {% if p %}
           {% if p == pagination.page %}
             <span class="cur">{{ p }}</span>
           {% else %}
-            <a href="{{ url_for('admin.users', page=p, status=status_filter, role=role_filter, q=search, sort=sort) }}">{{ p }}</a>
+            <a href="{{ url_for('admin.users', page=p, status=status_filter, role=role_filter, tier=tier_filter, q=search, sort=sort) }}">{{ p }}</a>
           {% endif %}
         {% else %}
           <span class="gap">…</span>
         {% endif %}
       {% endfor %}
       {% if pagination.has_next %}
-        <a href="{{ url_for('admin.users', page=pagination.next_num, status=status_filter, role=role_filter, q=search, sort=sort) }}">Next ›</a>
+        <a href="{{ url_for('admin.users', page=pagination.next_num, status=status_filter, role=role_filter, tier=tier_filter, q=search, sort=sort) }}">Next ›</a>
       {% endif %}
     </div>
   </div>
@@ -734,9 +763,9 @@ async function bulkAction(action, value) {
   const ids = getCheckedIds();
   if (!ids.length) return;
 
-  const label = action === 'status'
-    ? `set status to "${value}"`
-    : `change role to "${value}"`;
+  const label = action === 'status' ? `set status to "${value}"`
+              : action === 'role'   ? `change role to "${value}"`
+              :                       `move to the "${value}" tier`;
   if (!confirm(`Apply to ${ids.length} user(s): ${label}?`)) return;
 
   const bar = document.getElementById('bulkBar');
@@ -813,6 +842,19 @@ function populateDrawer(d) {
   badgeEl.innerHTML =
     `<span style="background:rgba(${rc.slice(1).match(/../g).map(h=>parseInt(h,16)).join(',')},0.12);border:1px solid rgba(${rc.slice(1).match(/../g).map(h=>parseInt(h,16)).join(',')},0.3);color:${rc};padding:3px 10px;border-radius:20px;font-size:10.5px;font-weight:600">${d.role}</span>` +
     `<span style="background:${d.status==='active'?'rgba(34,197,94,.1)':'rgba(245,158,11,.1)'};border:1px solid ${d.status==='active'?'rgba(34,197,94,.3)':'rgba(245,158,11,.3)'};color:${d.status==='active'?'#22c55e':'#f59e0b'};padding:3px 10px;border-radius:20px;font-size:10.5px;font-weight:600">${d.status}</span>`;
+
+  // tier badge — admins are not on a plan
+  if (d.role !== 'admin' && d.tier_label) {
+    const tc = d.tier === 'pro_plus' ? '245,158,11'
+             : d.tier === 'pro'      ? '34,211,238'
+             :                         '59,130,246';
+    badgeEl.innerHTML +=
+      `<span style="background:rgba(${tc},0.12);border:1px solid rgba(${tc},0.3);color:rgb(${tc});padding:3px 10px;border-radius:20px;font-size:10.5px;font-weight:600">${d.tier_label}</span>`;
+    if (d.tier_expired) {
+      badgeEl.innerHTML +=
+        `<span title="Subscription lapsed" style="background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.3);color:#f87171;padding:3px 10px;border-radius:20px;font-size:10.5px;font-weight:600">expired</span>`;
+    }
+  }
 
   // info fields
   document.getElementById('dId').textContent     = '#' + d.id;
@@ -941,7 +983,7 @@ async function executeDelete() {
           // show empty if none left
           if (!document.querySelectorAll('.user-row').length) {
             const tb = document.getElementById('usersBody');
-            tb.innerHTML = '<tr><td colspan="8" class="adm-empty">No users found.</td></tr>';
+            tb.innerHTML = '<tr><td colspan="10" class="adm-empty">No users found.</td></tr>';
           }
         }
       });
@@ -1087,7 +1129,7 @@ async function executeBulkDelete() {
     setTimeout(() => {
       if (!document.querySelectorAll('.user-row').length) {
         document.getElementById('usersBody').innerHTML =
-          '<tr><td colspan="9" class="adm-empty">No users found.</td></tr>';
+          '<tr><td colspan="10" class="adm-empty">No users found.</td></tr>';
       }
     }, 500);
 

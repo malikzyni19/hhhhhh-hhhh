@@ -603,6 +603,16 @@ def _auto_migrate():
                 ))
                 conn.commit()
                 print("[MIGRATE] email_verified column ensured on users table")
+                # Subscription tiers: basic / pro / pro_plus
+                for _stmt in [
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                    "tier VARCHAR(20) NOT NULL DEFAULT 'basic'",
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS tier_expires_at TIMESTAMP",
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS tier_since TIMESTAMP",
+                ]:
+                    conn.execute(text(_stmt))
+                conn.commit()
+                print("[MIGRATE] tier columns ensured on users table")
                 # Phase 10.8: OB Distance/Approach settings column on user_preferences
                 conn.execute(text(
                     "ALTER TABLE user_preferences ADD COLUMN IF NOT EXISTS "
@@ -692,6 +702,84 @@ def _auto_migrate():
                 print("[MIGRATE] Phase 11.13 paper_risk_guard_settings_json column ensured on user_preferences")
         except Exception as exc:
             print(f"[MIGRATE] Auto-migration warning: {exc}")
+
+        # Seed the tier_plans table with sane starting values. Existing rows are
+        # never overwritten — admins edit these from /admin/tiers.
+        try:
+            _seed_tier_plans()
+        except Exception as exc:
+            print(f"[MIGRATE] tier seed warning: {exc}")
+
+
+_TIER_SEED = {
+    "basic": {
+        "display_name": "Basic", "price_monthly": 0.0, "sort_order": 1,
+        "description": "Free plan — core scanning on Binance.",
+        "daily_tokens": 100, "max_pairs_per_scan": 30, "max_pairs_per_cycle": 20,
+        "max_live_monitor_items": 3, "ai_calls_per_day": 5, "max_scan_presets": 2,
+        "allowed_modules":    ["ob", "fvg"],
+        "allowed_tabs":       ["scan", "pairs", "settings"],
+        "allowed_exchanges":  ["binance"],
+        "allowed_timeframes": ["1h", "4h"],
+    },
+    "pro": {
+        "display_name": "Pro", "price_monthly": 29.0, "sort_order": 2,
+        "description": "All modules, multi-exchange, full timeframe range.",
+        "daily_tokens": 1000, "max_pairs_per_scan": 150, "max_pairs_per_cycle": 75,
+        "max_live_monitor_items": 25, "ai_calls_per_day": 50, "max_scan_presets": 10,
+        "allowed_modules":    ["ob", "fvg", "bb", "fib"],
+        "allowed_tabs":       ["scan", "pairs", "settings", "compressed", "trending", "bias", "watchlist"],
+        "allowed_exchanges":  ["binance", "bybit"],
+        "allowed_timeframes": ["15m", "30m", "1h", "4h", "1d"],
+    },
+    "pro_plus": {
+        "display_name": "Pro Plus", "price_monthly": 79.0, "sort_order": 3,
+        "description": "Everything unlocked, highest limits.",
+        "daily_tokens": 5000, "max_pairs_per_scan": 500, "max_pairs_per_cycle": 250,
+        "max_live_monitor_items": 100, "ai_calls_per_day": 300, "max_scan_presets": 50,
+        "allowed_modules":    None,   # None => every option
+        "allowed_tabs":       None,
+        "allowed_exchanges":  None,
+        "allowed_timeframes": None,
+    },
+}
+
+
+def _seed_tier_plans():
+    """Insert any missing TierPlan rows. Never modifies existing rows."""
+    import json as _json
+    from models import (TierPlan as _TP, ALL_TIERS as _AT,
+                        ALL_MODULES as _AM, ALL_TABS as _ATB,
+                        ALL_EXCHANGES as _AE, ALL_TIMEFRAMES as _ATF)
+    with app.app_context():
+        created = []
+        for tier in _AT:
+            if _TP.query.filter_by(tier=tier).first():
+                continue
+            spec = dict(_TIER_SEED[tier])
+            row = _TP(
+                tier=tier,
+                display_name=spec["display_name"],
+                description=spec["description"],
+                price_monthly=spec["price_monthly"],
+                sort_order=spec["sort_order"],
+                is_active=True,
+                daily_tokens=spec["daily_tokens"],
+                max_pairs_per_scan=spec["max_pairs_per_scan"],
+                max_pairs_per_cycle=spec["max_pairs_per_cycle"],
+                max_live_monitor_items=spec["max_live_monitor_items"],
+                ai_calls_per_day=spec["ai_calls_per_day"],
+                max_scan_presets=spec["max_scan_presets"],
+                allowed_modules=_json.dumps(spec["allowed_modules"] if spec["allowed_modules"] is not None else _AM),
+                allowed_tabs=_json.dumps(spec["allowed_tabs"] if spec["allowed_tabs"] is not None else _ATB),
+                allowed_exchanges=_json.dumps(spec["allowed_exchanges"] if spec["allowed_exchanges"] is not None else _AE),
+                allowed_timeframes=_json.dumps(spec["allowed_timeframes"] if spec["allowed_timeframes"] is not None else _ATF),
+            )
+            db.session.add(row)
+            created.append(tier)
+        if created:
+            db.session.commit()
+            print(f"[MIGRATE] seeded tier_plans: {', '.join(created)}")
 
 
 # Run auto-migration at startup

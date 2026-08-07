@@ -1,0 +1,155 @@
+{% extends "admin/base.html" %}
+{% block title %}{{ row.display_name or tier_labels[tier] }} Plan — ZyNi Admin{% endblock %}
+{% block page_title %}Tiers · {{ row.display_name or tier_labels[tier] }}{% endblock %}
+
+{% block content %}
+
+{% set accent = {'basic': 'blue', 'pro': 'cyan', 'pro_plus': 'amber'} %}
+
+<div style="margin-bottom:18px">
+  <a href="{{ url_for('admin.tiers') }}" class="btn btn-ghost btn-sm">← All tiers</a>
+</div>
+
+<form method="POST">
+
+<!-- Identity -->
+<div class="adm-card">
+  <div class="adm-card-header">
+    <div class="adm-card-title">Plan Details</div>
+    <span class="badge {{ accent[tier] }}">{{ tier }}</span>
+  </div>
+  <div class="adm-card-body">
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px">
+      <div class="field">
+        <label class="lbl">Display Name</label>
+        <input type="text" class="inp" name="display_name" maxlength="60"
+               value="{{ row.display_name or tier_labels[tier] }}">
+      </div>
+      <div class="field">
+        <label class="lbl">Price / Month (USD)</label>
+        <input type="number" class="inp" name="price_monthly" step="0.01" min="0"
+               value="{{ '%g'|format(row.price_monthly or 0) }}"
+               {% if is_default_tier %}readonly title="The free tier is always $0"{% endif %}>
+      </div>
+      <div class="field" style="grid-column:1/-1">
+        <label class="lbl">Description</label>
+        <input type="text" class="inp" name="description" maxlength="255"
+               placeholder="Short line shown on the tiers overview"
+               value="{{ row.description or '' }}">
+      </div>
+    </div>
+
+    {% if is_default_tier %}
+      <div class="adm-flash warn" style="margin-bottom:0">
+        <span class="adm-flash-icon">!</span>
+        <span>This is the default free tier. It cannot be hidden — lapsed paid plans fall back to it.</span>
+      </div>
+    {% else %}
+      <label class="sw-row" style="max-width:320px">
+        <div>
+          <div class="sw-name">Plan available</div>
+          <div class="sw-sub">Uncheck to retire this plan</div>
+        </div>
+        <input type="checkbox" name="is_active" value="true" {% if row.is_active %}checked{% endif %}>
+        <span class="sw"></span>
+      </label>
+    {% endif %}
+
+    <div style="font-size:11.5px;color:var(--muted);margin-top:14px">
+      <strong style="color:var(--text)">{{ user_count }}</strong>
+      non-admin user{{ '' if user_count == 1 else 's' }} currently on this plan.
+      Saving applies the new limits to all of them immediately.
+    </div>
+  </div>
+</div>
+
+<!-- Limits -->
+<div class="adm-card">
+  <div class="adm-card-header"><div class="adm-card-title">Limits</div></div>
+  <div class="adm-card-body">
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px">
+      {% for name, label, hint in [
+          ('daily_tokens',           'Daily Tokens',        'Scan budget per day'),
+          ('max_pairs_per_scan',     'Pairs / Scan',        'Cap on one scan'),
+          ('max_pairs_per_cycle',    'Pairs / Cycle',       'Round-robin batch size'),
+          ('max_live_monitor_items', 'Live Monitor Items',  'Concurrent watched setups'),
+          ('ai_calls_per_day',       'AI Calls / Day',      'Analysis + chat requests'),
+          ('max_scan_presets',       'Saved Presets',       'Stored scanner configs')] %}
+      <div class="field">
+        <label class="lbl">{{ label }}</label>
+        <input type="number" class="inp" name="{{ name }}" min="0"
+               value="{{ row[name] if row[name] is not none else 0 }}">
+        <div style="font-size:10.5px;color:var(--muted2);margin-top:5px">{{ hint }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<!-- Access -->
+{% macro chips(field, options, selected, label) %}
+<div class="field">
+  <label class="lbl">{{ label }}</label>
+  <div class="chip-grid">
+    {% for o in options %}
+    <label class="chip">
+      <input type="checkbox" name="{{ field }}" value="{{ o }}" {% if o in selected %}checked{% endif %}>
+      <span>{{ o }}</span>
+    </label>
+    {% endfor %}
+  </div>
+</div>
+{% endmacro %}
+
+<div class="adm-card">
+  <div class="adm-card-header">
+    <div class="adm-card-title">Feature Access</div>
+    <button type="button" class="btn btn-ghost btn-sm" onclick="selectAll(true)">Select all</button>
+  </div>
+  <div class="adm-card-body">
+    {{ chips('allowed_modules',    all_modules,    lists.modules,    'Modules') }}
+    {{ chips('allowed_exchanges',  all_exchanges,  lists.exchanges,  'Exchanges') }}
+    {{ chips('allowed_timeframes', all_timeframes, lists.timeframes, 'Timeframes') }}
+    {{ chips('allowed_tabs',       all_tabs,       lists.tabs,       'Tabs') }}
+    <div style="font-size:11.5px;color:var(--muted);margin-top:4px">
+      Unchecking everything in a group blocks that group entirely for this plan.
+    </div>
+  </div>
+</div>
+
+<div style="position:sticky;bottom:0;padding:16px 0;background:var(--bg);border-top:1px solid var(--border);display:flex;gap:12px;z-index:10">
+  <button type="submit" class="btn btn-primary" style="padding:11px 26px;font-size:12.5px">Save Plan</button>
+  <a href="{{ url_for('admin.tiers') }}" class="btn btn-ghost" style="padding:11px 20px">Cancel</a>
+</div>
+
+</form>
+
+<style>
+.chip-grid{display:flex;flex-wrap:wrap;gap:8px}
+.chip{position:relative;cursor:pointer}
+.chip input{position:absolute;opacity:0;width:0;height:0}
+.chip span{display:inline-block;padding:6px 13px;border-radius:7px;border:1px solid var(--border);
+           background:#04090f;color:var(--muted);font-size:11.5px;font-weight:600;
+           font-family:'JetBrains Mono',monospace;transition:all .15s}
+.chip:hover span{border-color:var(--muted2);color:var(--text)}
+.chip input:checked + span{background:rgba(34,211,238,.12);border-color:rgba(34,211,238,.4);color:var(--cyan)}
+.chip input:focus-visible + span{outline:2px solid rgba(34,211,238,.5);outline-offset:2px}
+
+.sw-row{display:flex;align-items:center;justify-content:space-between;gap:12px;background:#04090f;
+        border:1px solid var(--border);border-radius:9px;padding:13px 15px;cursor:pointer;position:relative}
+.sw-name{font-size:12.5px;font-weight:600;color:var(--text);margin-bottom:3px}
+.sw-sub{font-size:10.5px;color:var(--muted)}
+.sw-row input{position:absolute;opacity:0;width:0;height:0}
+.sw{position:relative;width:40px;height:22px;border-radius:22px;background:#1a2e40;flex-shrink:0;transition:.2s}
+.sw::before{content:'';position:absolute;width:16px;height:16px;left:3px;top:3px;background:#64748b;border-radius:50%;transition:.2s}
+.sw-row input:checked ~ .sw{background:rgba(34,211,238,.25);box-shadow:inset 0 0 0 1px rgba(34,211,238,.4)}
+.sw-row input:checked ~ .sw::before{transform:translateX(18px);background:var(--cyan)}
+</style>
+
+<script>
+function selectAll(on){
+  document.querySelectorAll('.chip input[type=checkbox]').forEach(c => c.checked = on);
+}
+</script>
+
+{% endblock %}

@@ -8,9 +8,10 @@ import json
 import time
 from datetime import date, datetime, timezone
 from models import (
-    db, RolePermission, UserPermission,
+    db, RolePermission, UserPermission, TierPlan,
     DailyTokenUsage, GlobalSetting,
     ALL_MODULES, ALL_TABS, ALL_EXCHANGES, ALL_TIMEFRAMES,
+    ALL_TIERS, DEFAULT_TIER, TIER_LABELS,
 )
 
 _CACHE: dict = {}          # {user_id: (ts, perms_dict)}
@@ -78,30 +79,44 @@ def get_user_permissions(user) -> dict:
         today_row  = DailyTokenUsage.query.filter_by(user_id=uid, date=date.today()).first()
         tokens_used = today_row.tokens_used if today_row else 0
 
+        # Subscription tier. A lapsed paid tier falls back to basic via
+        # User.effective_tier, so an expired Pro user is limited immediately.
+        tier = getattr(user, "effective_tier", DEFAULT_TIER) or DEFAULT_TIER
+        tier_plan = None
+        if user.role != "admin":
+            tier_plan = TierPlan.query.filter_by(tier=tier, is_active=True).first()
+
         def resolve(field, fallback):
-            # User override first
+            # 1. Per-user override — an admin deliberately pinning one account
             if user_perm:
                 v = getattr(user_perm, field, None)
                 if v is not None:
                     parsed = _parse_json(v, fallback)
                     return parsed if parsed is not None else fallback
-            # Role permission table
+            # 2. Subscription tier — what the user is actually paying for
+            if tier_plan is not None:
+                v = getattr(tier_plan, field, None)
+                if v is not None:
+                    parsed = _parse_json(v, fallback)
+                    return parsed if parsed is not None else fallback
+            # 3. Role permission table
             if role_perm:
                 v = getattr(role_perm, field, None)
                 if v is not None:
                     parsed = _parse_json(v, fallback)
                     return parsed if parsed is not None else fallback
-            # Hardcoded role default
+            # 4. Hardcoded role default
             return role_defaults.get(field, fallback)
 
-        daily_tokens = resolve("daily_tokens", 500)
-        if isinstance(daily_tokens, str):
-            daily_tokens = int(daily_tokens)
+        def as_int(v, fallback):
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                return fallback
 
-        max_scan  = resolve("max_pairs_per_scan",  100)
-        max_cycle = resolve("max_pairs_per_cycle", 50)
-        if isinstance(max_scan, str):  max_scan  = int(max_scan)
-        if isinstance(max_cycle, str): max_cycle = int(max_cycle)
+        daily_tokens = as_int(resolve("daily_tokens", 500), 500)
+        max_scan     = as_int(resolve("max_pairs_per_scan",  100), 100)
+        max_cycle    = as_int(resolve("max_pairs_per_cycle", 50), 50)
 
         perms = {
             "daily_tokens":        daily_tokens,
@@ -114,6 +129,16 @@ def get_user_permissions(user) -> dict:
             "allowed_exchanges":   resolve("allowed_exchanges", role_defaults["allowed_exchanges"]),
             "allowed_timeframes":  resolve("allowed_timeframes",role_defaults["allowed_timeframes"]),
             "is_admin":            user.role == "admin",
+            # Tier context — surfaced so the UI can show plan state and upsells
+            "tier":                tier,
+            "tier_label":          TIER_LABELS.get(tier, tier),
+            "tier_expired":        bool(getattr(user, "tier_is_expired", False)),
+            "max_live_monitor_items": as_int(
+                getattr(tier_plan, "max_live_monitor_items", None), 5) if tier_plan else 999999,
+            "ai_calls_per_day": as_int(
+                getattr(tier_plan, "ai_calls_per_day", None), 10) if tier_plan else 999999,
+            "max_scan_presets": as_int(
+                getattr(tier_plan, "max_scan_presets", None), 3) if tier_plan else 999999,
         }
         _CACHE[uid] = (time.time(), perms)
         return perms
@@ -131,6 +156,12 @@ def get_user_permissions(user) -> dict:
             "allowed_exchanges":   role_defaults["allowed_exchanges"],
             "allowed_timeframes":  role_defaults["allowed_timeframes"],
             "is_admin":            getattr(user, "role", "") == "admin",
+            "tier":                DEFAULT_TIER,
+            "tier_label":          TIER_LABELS.get(DEFAULT_TIER, DEFAULT_TIER),
+            "tier_expired":        False,
+            "max_live_monitor_items": 3,
+            "ai_calls_per_day":       5,
+            "max_scan_presets":       2,
         }
 
 
@@ -170,6 +201,27 @@ def check_module_access(user, module: str) -> bool:
         return True
     perms = get_user_permissions(user)
     return module in perms["allowed_modules"]
+
+
+def get_tier_plan(tier: str):
+    """Return the TierPlan row for a tier, or None."""
+    try:
+        return TierPlan.query.filter_by(tier=tier).first()
+    except Exception:
+        return None
+
+
+def set_user_tier(user, tier: str, expires_at=None) -> bool:
+    """Move a user onto a tier. Returns False for an unknown tier."""
+    if tier not in ALL_TIERS:
+        return False
+    user.tier            = tier
+    user.tier_since      = datetime.now(timezone.utc)
+    # The free tier never expires; clear any leftover date from a paid plan.
+    user.tier_expires_at = None if tier == DEFAULT_TIER else expires_at
+    db.session.commit()
+    _bust_cache(user.id)
+    return True
 
 
 def save_user_permissions(user_id: int, overrides: dict, admin_id: int) -> None:
