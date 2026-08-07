@@ -165,7 +165,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <a href="{{ url_for('admin.settings') }}" class="adm-nav-item {% if request.endpoint == 'admin.settings' %}active{% endif %}">
         <span class="adm-nav-icon">⚙</span>Settings
       </a>
-      {% for r, ricon, rlabel in [('admin','👑','Admin Role'), ('user','👤','User Role'), ('guest','👥','Guest Role')] %}
+      {% for r, ricon, rlabel in [('admin','👑','Admin Role'), ('user','👤','User Role')] %}
       <a href="{{ url_for('admin.role_edit', role=r) }}"
          class="adm-nav-item adm-nav-sub {% if request.endpoint == 'admin.role_edit' and request.view_args.get('role') == r %}active{% endif %}">
         <span class="adm-nav-icon">{{ ricon }}</span>{{ rlabel }}

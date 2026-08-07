@@ -7,7 +7,7 @@ from functools import wraps
 from datetime import datetime, timezone
 
 from models import (db, User, AdminLog, GlobalSetting, RolePermission, UserPermission,
-                    LoginHistory, DailyTokenUsage, EmailVerification, GuestDevice,
+                    LoginHistory, DailyTokenUsage, EmailVerification,
                     BacktestRun, IntelligenceSettings, PasswordResetToken, UserPreference,
                     ALL_MODULES, ALL_TABS, ALL_EXCHANGES, ALL_TIMEFRAMES)
 from permissions import get_user_permissions, save_user_permissions, _bust_cache
@@ -285,7 +285,7 @@ def users_bulk_action():
         return jsonify({"ok": False, "error": "bad_action"}), 400
     if action == "status" and value not in ("active", "paused", "banned"):
         return jsonify({"ok": False, "error": "bad_status"}), 400
-    if action == "role" and value not in ("admin", "user", "guest"):
+    if action == "role" and value not in ("admin", "user"):
         return jsonify({"ok": False, "error": "bad_role"}), 400
 
     try:
@@ -414,7 +414,7 @@ def users_create():
         elif password and password != confirm:
             errors["confirm_password"] = "Passwords do not match."
 
-        if role not in ("user", "admin", "guest"):
+        if role not in ("user", "admin"):
             role = "user"
         if status not in ("active", "paused"):
             status = "active"
@@ -470,7 +470,7 @@ def users_edit(user_id):
             elif new_password != confirm_pwd:
                 errors["confirm_password"] = "Passwords do not match."
 
-        if new_role not in ("user", "admin", "guest"):
+        if new_role not in ("user", "admin"):
             new_role = user.role
         if new_status not in ("active", "paused", "banned"):
             new_status = user.status
@@ -632,7 +632,6 @@ def users_delete(user_id):
         # Delete owned records (strict FK — cannot be nullified)
         EmailVerification.query.filter_by(user_id=uid).delete(synchronize_session=False)
         PasswordResetToken.query.filter_by(user_id=uid).delete(synchronize_session=False)
-        GuestDevice.query.filter_by(user_id=uid).delete(synchronize_session=False)
         LoginHistory.query.filter_by(user_id=uid).delete(synchronize_session=False)
         DailyTokenUsage.query.filter_by(user_id=uid).delete(synchronize_session=False)
         UserPermission.query.filter_by(user_id=uid).delete(synchronize_session=False)
@@ -699,7 +698,6 @@ def users_bulk_delete():
             uid = u.id
             EmailVerification.query.filter_by(user_id=uid).delete(synchronize_session=False)
             PasswordResetToken.query.filter_by(user_id=uid).delete(synchronize_session=False)
-            GuestDevice.query.filter_by(user_id=uid).delete(synchronize_session=False)
             LoginHistory.query.filter_by(user_id=uid).delete(synchronize_session=False)
             DailyTokenUsage.query.filter_by(user_id=uid).delete(synchronize_session=False)
             UserPermission.query.filter_by(user_id=uid).delete(synchronize_session=False)
@@ -839,7 +837,7 @@ def _set_setting(key, value, description=None):
 def settings():
     role_perms = {}
     try:
-        for role in ("admin", "user", "guest"):
+        for role in ("admin", "user"):
             rp = RolePermission.query.filter_by(role=role).first()
             if rp:
                 role_perms[role] = {
@@ -859,10 +857,6 @@ def settings():
             _set_setting("maintenance_mode",    request.form.get("maintenance_mode", "false"))
             _set_setting("maintenance_message", request.form.get("maintenance_message", ""))
             _set_setting("default_exchange",    request.form.get("default_exchange", "binance"))
-            _set_setting("allow_guest_access",  request.form.get("allow_guest_access", "true"))
-            _set_setting("max_guest_tokens",    request.form.get("max_guest_tokens", "50"))
-            _set_setting("guest_session_hours", request.form.get("guest_session_hours", "2"))
-            _set_setting("guest_expire_days",   request.form.get("guest_expire_days", "30"))
 
             # Rate limiting / abuse control
             _set_setting("rl_scans_per_hour",   request.form.get("rl_scans_per_hour",   "60"))
@@ -888,10 +882,6 @@ def settings():
         "maintenance_mode":    _get_setting("maintenance_mode",    "false"),
         "maintenance_message": _get_setting("maintenance_message", ""),
         "default_exchange":    _get_setting("default_exchange",    "binance"),
-        "allow_guest_access":  _get_setting("allow_guest_access",  "true"),
-        "max_guest_tokens":    _get_setting("max_guest_tokens",    "50"),
-        "guest_session_hours": _get_setting("guest_session_hours", "2"),
-        "guest_expire_days":   _get_setting("guest_expire_days",   "30"),
         "rl_scans_per_hour":   _get_setting("rl_scans_per_hour",   "60"),
         "rl_ai_calls_per_day": _get_setting("rl_ai_calls_per_day", "50"),
         "rl_login_attempts":   _get_setting("rl_login_attempts",   "5"),
@@ -955,7 +945,7 @@ def _parse_rp_lists(rp):
 @admin_bp.route("/roles/<role>", methods=["GET", "POST"])
 @admin_required
 def role_edit(role):
-    if role not in ("admin", "user", "guest"):
+    if role not in ("admin", "user"):
         return redirect(url_for("admin.settings"))
 
     rp = _get_role_perm(role)
@@ -3535,7 +3525,7 @@ def debug_ob_tv_parity():
 #   1. email_verified = False  AND  created_at older than 30 minutes (never verified)
 #   2. role = "user", status = "active", never logged in (last_login_at IS NULL),
 #      AND created_at older than 24 hours
-#   3. Guest accounts with role="user" created in bulk from the same creation window
+#   3. Accounts with role="user" created in bulk from the same creation window
 #      (≥ 5 accounts created within the same 5-minute window)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -3679,7 +3669,6 @@ def security_purge_non_admins():
             EmailVerification.query.filter_by(user_id=u.id).delete()
             LoginHistory.query.filter_by(user_id=u.id).delete()
             DailyTokenUsage.query.filter_by(user_id=u.id).delete()
-            GuestDevice.query.filter_by(user_id=u.id).delete()
             db.session.delete(u)
 
         db.session.commit()

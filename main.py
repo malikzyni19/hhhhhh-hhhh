@@ -208,7 +208,7 @@ def _parse_ua(ua: str) -> dict:
 
 # ── Maintenance mode ────────────────────────────────────────────────
 _SKIP_MAINTENANCE_PATHS = ("/admin", "/static", "/api/", "/login",
-                           "/logout", "/guest", "/favicon")
+                           "/logout", "/favicon")
 
 # Cache maintenance settings for 60 s to avoid 2 DB queries on every HTTP request.
 _maint_cache: dict = {"mode": False, "message": "", "ts": 0.0}
@@ -290,17 +290,6 @@ _tab_controls: Dict[str, bool] = {
     "scan": True, "compressed": True, "trending": True,
     "ath_atl": True, "bias": True, "live_monitor": True
 }
-
-# ── Guest access system ──
-_guest_controls: Dict = {
-    "enabled": True,
-    "tabs": {"scan": True, "compressed": False, "base": False, "trending": True, "ath_atl": False, "bias": False},
-    "max_scans_per_session": 5,
-    "max_pairs": 20,
-    "session_label": "Guest",
-}
-_guest_sessions: Dict[str, dict] = {}
-_guest_lock = threading.Lock()
 
 # ── App start time for uptime tracking ──
 _app_start_time = datetime.now(timezone.utc)
@@ -6705,29 +6694,6 @@ def admin_required(f):
     return decorated
 
 
-def _guest_tab_check(tab_name: str):
-    """Returns error tuple if guest is blocked, else None. Also increments scan count."""
-    if not session.get("is_guest"):
-        return None
-    if not _guest_controls.get("enabled", True):
-        return jsonify({"error": "Guest access is disabled."}), 403
-    if not _guest_controls["tabs"].get(tab_name, False):
-        return jsonify({"error": f"The '{tab_name}' tab is not available for guests."}), 403
-    guest_id = session.get("guest_id", "")
-    max_scans = int(_guest_controls.get("max_scans_per_session", 5))
-    with _guest_lock:
-        gs = _guest_sessions.get(guest_id, {})
-        if gs.get("scan_count", 0) >= max_scans:
-            return jsonify({"error": f"Guest scan limit reached ({max_scans}/session). Sign in for unlimited access."}), 429
-        gs["scan_count"] = gs.get("scan_count", 0) + 1
-        tabs = gs.get("tabs_visited", [])
-        if tab_name not in tabs:
-            tabs.append(tab_name)
-        gs["tabs_visited"] = tabs
-        _guest_sessions[guest_id] = gs
-    return None
-
-
 def _mask_email(email: str) -> str:
     """Return a privacy-masked email hint like a***n@g***.com."""
     if "@" not in email:
@@ -7893,60 +7859,6 @@ def api_admin_tab_toggle():
         return jsonify({"error": "Unknown tab"}), 400
     _tab_controls[tab] = enabled
     return jsonify({"ok": True, "tab_controls": _tab_controls})
-
-
-@app.route("/api/admin/guest/controls", methods=["GET", "POST"])
-@admin_required
-def api_admin_guest_controls():
-    if request.method == "GET":
-        return jsonify({"guest_controls": _guest_controls})
-    data = request.get_json(force=True) or {}
-    if "enabled" in data:
-        _guest_controls["enabled"] = bool(data["enabled"])
-    if "max_scans_per_session" in data:
-        _guest_controls["max_scans_per_session"] = max(1, int(data["max_scans_per_session"]))
-    if "max_pairs" in data:
-        _guest_controls["max_pairs"] = max(1, int(data["max_pairs"]))
-    if "tabs" in data and isinstance(data["tabs"], dict):
-        for tab, val in data["tabs"].items():
-            if tab in _guest_controls["tabs"]:
-                _guest_controls["tabs"][tab] = bool(val)
-    return jsonify({"ok": True, "guest_controls": _guest_controls})
-
-
-@app.route("/api/admin/guest/sessions")
-@admin_required
-def api_admin_guest_sessions():
-    with _guest_lock:
-        sessions = [{"guest_id": k, **v} for k, v in _guest_sessions.items()]
-    return jsonify({"sessions": sessions, "total": len(sessions)})
-
-
-# ── Guest login ──
-@app.route("/guest/login", methods=["POST"])
-def guest_login():
-    if not _guest_controls.get("enabled", True):
-        return jsonify({"error": "Guest access is currently disabled."}), 403
-    guest_id = os.urandom(12).hex()
-    display  = f"guest_{guest_id[:6]}"
-    session["logged_in"]  = True
-    session["is_guest"]   = True
-    session["guest_id"]   = guest_id
-    session["username"]   = display
-    ip      = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
-    ua      = request.headers.get("User-Agent", "unknown")
-    now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    with _guest_lock:
-        _guest_sessions[guest_id] = {
-            "ip": ip, "ua": ua,
-            "login_time": datetime.now(timezone.utc).isoformat(),
-            "scan_count": 0, "tabs_visited": [],
-        }
-    LOGIN_AUDIT_LOG.appendleft({
-        "username": f"GUEST-{guest_id[:6]}", "time": now_utc,
-        "ip": ip, "geo": "", "ua": ua, "success": True
-    })
-    return redirect(url_for("index"))
 
 
 # ── Watchlist streaming endpoints ──
@@ -32819,8 +32731,7 @@ def api_my_permissions():
                             "allowed_tabs": ["scan","pairs","settings"],
                             "allowed_modules": ["ob","fvg","fib","bias"],
                             "allowed_exchanges": ["binance"], "allowed_timeframes": ["1h","4h"],
-                            "tab_controls": dict(_tab_controls),
-                            "is_guest": bool(session.get("is_guest"))})
+                            "tab_controls": dict(_tab_controls)})
         perms = get_user_permissions(user)
         maint = _GlobalSetting.query.filter_by(key="maintenance_mode").first()
         perms["maintenance_mode"] = (maint.value == "true") if maint else False
@@ -32830,14 +32741,6 @@ def api_my_permissions():
         perms["role"]     = user.role
         # Global tab toggles (admin can disable any tab for everyone)
         perms["tab_controls"] = dict(_tab_controls)
-        # Guest-specific limits (only meaningful when is_guest=True)
-        perms["is_guest"] = bool(session.get("is_guest"))
-        if perms["is_guest"]:
-            perms["guest_controls"] = {
-                "tabs": dict(_guest_controls.get("tabs", {})),
-                "max_scans_per_session": int(_guest_controls.get("max_scans_per_session", 5)),
-                "max_pairs": int(_guest_controls.get("max_pairs", 20)),
-            }
         return jsonify(perms)
     except Exception as e:
         return jsonify({"error": str(e), "is_admin": False, "daily_tokens": 500,
@@ -32845,61 +32748,6 @@ def api_my_permissions():
                         "allowed_modules": ["ob","fvg","fib","bias"],
                         "allowed_exchanges": ["binance"], "allowed_timeframes": ["1h","4h"],
                         "tab_controls": dict(_tab_controls)})
-
-
-@app.route("/guest-access")
-def guest_access():
-    """Auto-login guest by device fingerprint."""
-    import hashlib, secrets
-    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
-    ua = request.headers.get("User-Agent", "")
-    lang = request.headers.get("Accept-Language", "")
-    fp_raw = f"{ip}|{ua}|{lang}"
-    fp = hashlib.sha256(fp_raw.encode()).hexdigest()
-    try:
-        from models import GuestDevice
-        allow = True
-        try:
-            gs = _GlobalSetting.query.filter_by(key="allow_guest_access").first()
-            if gs and gs.value == "false":
-                allow = False
-        except Exception:
-            pass
-        if not allow:
-            return redirect(url_for("index"))
-
-        gd = GuestDevice.query.filter_by(device_fingerprint=fp).first()
-        if gd:
-            user = _DBUser.query.get(gd.user_id)
-            if user and user.status == "active":
-                gd.last_seen_at = datetime.now(timezone.utc)
-                db.session.commit()
-                session["logged_in"] = True
-                session["username"]  = user.username
-                session["user_id"]   = user.id
-                return redirect(url_for("index"))
-
-        # Create new guest
-        rnd = secrets.token_hex(3)
-        gname = f"guest_{rnd}"
-        gpwd  = secrets.token_urlsafe(16)
-        new_user = _DBUser(username=gname, role="guest", status="active")
-        new_user.set_password(gpwd)
-        db.session.add(new_user)
-        db.session.flush()
-        gd_new = GuestDevice(device_fingerprint=fp, user_id=new_user.id,
-                              ip_address=ip, user_agent=ua)
-        db.session.add(gd_new)
-        db.session.commit()
-        session["logged_in"] = True
-        session["username"]  = gname
-        session["user_id"]   = new_user.id
-        session["is_guest"]  = True
-        session["guest_id"]  = gname
-        return redirect(url_for("index"))
-    except Exception as e:
-        print(f"[GUEST-ACCESS] Error: {e}")
-        return redirect(url_for("index"))
 
 
 def _get_scan_user_id():
@@ -32945,8 +32793,6 @@ def _check_and_get_token_user():
 @app.route("/api/scan", methods=["POST"])
 @login_required
 def api_scan():
-    err = _guest_tab_check("scan")
-    if err is not None: return err
 
     # Token check
     _scan_user_id = None
@@ -32967,13 +32813,6 @@ def api_scan():
     mode = payload.get("scanMode", "selected")
     pairs_per_cycle = int(payload.get("pairsPerCycle", 20))
 
-    # Guests are capped by admin-set max_pairs (was previously stored but unused).
-    if session.get("is_guest"):
-        cap = max(1, int(_guest_controls.get("max_pairs", 20)))
-        if pairs_per_cycle > cap:
-            pairs_per_cycle = cap
-        if isinstance(symbols, list) and len(symbols) > cap:
-            symbols = symbols[:cap]
 
     # FIX BUG 1: Full Market ALWAYS ignores selectedPairs
     # even if frontend accidentally sends them
@@ -33331,8 +33170,6 @@ def _compressed_action_plan(box_location, trade_score, compression_score,
 @app.route("/api/compressed_scan", methods=["POST"])
 @login_required
 def api_compressed_scan():
-    err = _guest_tab_check("compressed")
-    if err is not None: return err
     _tok_user, _tok_uid = _check_and_get_token_user()
     if _tok_user == "limit":
         return _daily_limit_response()
@@ -33774,8 +33611,6 @@ def _base_evaluate(h, l, c, v, end_idx, base_window, max_drift_pct, drawdown_pct
 @app.route("/api/base_scan", methods=["POST"])
 @login_required
 def api_base_scan():
-    err = _guest_tab_check("base")
-    if err is not None: return err
     _tok_user, _tok_uid = _check_and_get_token_user()
     if _tok_user == "limit":
         return jsonify({"error": "daily_limit_reached", "message": "Daily scan tokens exhausted. Resets at midnight UTC."}), 429
@@ -34053,8 +33888,6 @@ def api_base_scan():
 @app.route("/api/trending_scan", methods=["POST"])
 @login_required
 def api_trending_scan():
-    err = _guest_tab_check("trending")
-    if err is not None: return err
     _tok_user, _tok_uid = _check_and_get_token_user()
     if _tok_user == "limit":
         return _daily_limit_response()
@@ -34130,8 +33963,6 @@ def _ath_window_label(window_hours: int) -> str:
 @app.route("/api/ath_atl_scan", methods=["POST"])
 @login_required
 def api_ath_atl_scan():
-    err = _guest_tab_check("ath_atl")
-    if err is not None: return err
     _tok_user, _tok_uid = _check_and_get_token_user()
     if _tok_user == "limit":
         return _daily_limit_response()
@@ -35813,8 +35644,6 @@ def _rb_build_row(blk: dict, sym: str, tf: str, cfg: dict, volume_mode: str,
 @app.route("/api/bias_scan", methods=["POST"])
 @login_required
 def api_bias_scan():
-    err = _guest_tab_check("bias")
-    if err is not None: return err
     _tok_user, _tok_uid = _check_and_get_token_user()
     if _tok_user == "limit":
         return _daily_limit_response()
@@ -40874,9 +40703,6 @@ def _bt_run_ob_historical_backtest(params: dict) -> dict:
 @app.route("/api/backtest/ob-historical", methods=["POST"])
 @login_required
 def api_backtest_ob_historical():
-    err = _guest_tab_check("backtest")
-    if err is not None:
-        return err
 
     payload = request.get_json(force=True) or {}
     params, parse_error = _bt_parse_ob_historical_payload(payload)
@@ -40894,9 +40720,6 @@ def api_backtest_ob_historical():
 @app.route("/api/backtest/ob-historical/debug", methods=["GET"])
 @login_required
 def api_backtest_ob_historical_debug():
-    err = _guest_tab_check("backtest")
-    if err is not None:
-        return err
 
     # ── Build params from query string ────────────────────────────────────────
     raw_rr = request.args.get("rr_values", "1,2,3")
@@ -41420,9 +41243,6 @@ def api_backtest_ob_historical_debug():
 @app.route("/api/backtest/ob-historical/threshold-stability", methods=["POST"])
 @login_required
 def api_backtest_ob_historical_threshold_stability():
-    err = _guest_tab_check("backtest")
-    if err is not None:
-        return err
 
     import time as _t14
     payload = request.get_json(force=True) or {}
@@ -43179,9 +42999,6 @@ def _bt_run_walk_forward(
 @app.route("/api/backtest/ob-historical/threshold-walk-forward", methods=["POST"])
 @login_required
 def api_backtest_ob_historical_threshold_walk_forward():
-    err = _guest_tab_check("backtest")
-    if err is not None:
-        return err
 
     import time as _t_wf_ep
     payload = request.get_json(force=True) or {}
@@ -44316,9 +44133,6 @@ _TE_FORBIDDEN_REQUEST_KEYS = (
 @app.route("/api/backtest/ob-historical/trade-explorer", methods=["POST"])
 @login_required
 def api_backtest_ob_historical_trade_explorer():
-    err = _guest_tab_check("backtest")
-    if err is not None:
-        return err
 
     payload = request.get_json(force=True) or {}
 
@@ -44436,9 +44250,6 @@ def api_backtest_ob_historical_trade_explorer():
            methods=["POST"])
 @login_required
 def api_backtest_ob_historical_trade_explorer_detail(touch_trade_id: str):
-    err = _guest_tab_check("backtest")
-    if err is not None:
-        return err
 
     payload = request.get_json(force=True) or {}
     for banned in _TE_FORBIDDEN_REQUEST_KEYS:
@@ -46343,9 +46154,6 @@ _AP_FORBIDDEN_REQUEST_KEYS = (
 @app.route("/api/backtest/ob-historical/autopsy", methods=["POST"])
 @login_required
 def api_backtest_ob_historical_autopsy():
-    err = _guest_tab_check("backtest")
-    if err is not None:
-        return err
 
     payload = request.get_json(force=True, silent=True) or {}
     if not isinstance(payload, dict):
@@ -46800,9 +46608,6 @@ _PWF_FORBIDDEN_KEYS = (
 @app.route("/api/backtest/ob-historical/profile-walk-forward", methods=["POST"])
 @login_required
 def api_backtest_ob_historical_profile_walk_forward():
-    err = _guest_tab_check("backtest")
-    if err is not None:
-        return err
 
     payload = request.get_json(force=True, silent=True) or {}
     if not isinstance(payload, dict):
@@ -47125,9 +46930,6 @@ def _bt_run_ob_mtf_backtest(params: dict) -> dict:
 @app.route("/api/backtest/ob-mtf", methods=["POST"])
 @login_required
 def api_backtest_ob_mtf():
-    err = _guest_tab_check("backtest")
-    if err is not None:
-        return err
 
     payload = request.get_json(force=True) or {}
 
@@ -47193,9 +46995,6 @@ def api_backtest_ob_mtf():
 @app.route("/api/backtest/ob-mtf/debug", methods=["GET"])
 @login_required
 def api_backtest_ob_mtf_debug():
-    err = _guest_tab_check("backtest")
-    if err is not None:
-        return err
 
     symbol = _bt_clean_symbol(request.args.get("symbol", "BTCUSDT"))
     raw_tfs = request.args.get("timeframes", "15m,1h,4h")
@@ -47556,9 +47355,6 @@ def _bt_run_ob_batch_backtest(params: dict) -> dict:
 @app.route("/api/backtest/ob-batch", methods=["POST"])
 @login_required
 def api_backtest_ob_batch():
-    err = _guest_tab_check("backtest")
-    if err is not None:
-        return err
 
     payload = request.get_json(force=True) or {}
 
@@ -47638,9 +47434,6 @@ def api_backtest_ob_batch():
 @app.route("/api/backtest/ob-batch/debug", methods=["GET"])
 @login_required
 def api_backtest_ob_batch_debug():
-    err = _guest_tab_check("backtest")
-    if err is not None:
-        return err
 
     raw_syms = request.args.get("symbols", "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT")
     symbols = []

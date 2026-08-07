@@ -53,8 +53,6 @@
               <td>
                 {% if u.role == 'admin' %}
                   <span class="badge cyan">admin</span>
-                {% elif u.role == 'guest' %}
-                  <span class="badge" style="background:rgba(100,116,139,.12);color:#94a3b8;border:1px solid rgba(100,116,139,.2)">guest</span>
                 {% else %}
                   <span class="badge blue">user</span>
                 {% endif %}

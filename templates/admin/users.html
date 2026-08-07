@@ -438,7 +438,6 @@ code, .mono { font-family: 'JetBrains Mono', monospace !important; }
   <button class="bulk-btn bulk-btn-clear" onclick="bulkAction('status','active')">Activate</button>
   <button class="bulk-btn bulk-btn-clear" onclick="bulkAction('status','paused')">Pause</button>
   <button class="bulk-btn bulk-btn-clear" onclick="bulkAction('role','user')">Set role: user</button>
-  <button class="bulk-btn bulk-btn-clear" onclick="bulkAction('role','guest')">Set role: guest</button>
   <button class="bulk-btn bulk-btn-del" onclick="openBulkDelModal()">
     <i class="fa-solid fa-trash-can" style="font-family:unset;font-size:11px"></i> Delete Selected
   </button>
@@ -486,8 +485,6 @@ code, .mono { font-family: 'JetBrains Mono', monospace !important; }
             <td>
               {% if u.role == 'admin' %}
                 <span class="badge cyan">admin</span>
-              {% elif u.role == 'guest' %}
-                <span class="badge" style="background:rgba(100,116,139,.12);color:#94a3b8;border:1px solid rgba(100,116,139,.2)">guest</span>
               {% else %}
                 <span class="badge blue">user</span>
               {% endif %}
@@ -811,7 +808,7 @@ function populateDrawer(d) {
   // badges
   const badgeEl = document.getElementById('drawerBadges');
   badgeEl.innerHTML = '';
-  const roleColors = { admin: '#22d3ee', user: '#3b82f6', guest: '#94a3b8' };
+  const roleColors = { admin: '#22d3ee', user: '#3b82f6' };
   const rc = roleColors[d.role] || '#94a3b8';
   badgeEl.innerHTML =
     `<span style="background:rgba(${rc.slice(1).match(/../g).map(h=>parseInt(h,16)).join(',')},0.12);border:1px solid rgba(${rc.slice(1).match(/../g).map(h=>parseInt(h,16)).join(',')},0.3);color:${rc};padding:3px 10px;border-radius:20px;font-size:10.5px;font-weight:600">${d.role}</span>` +

@@ -131,23 +131,6 @@ class DailyTokenUsage(db.Model):
         return f"<DailyTokenUsage user_id={self.user_id} date={self.date}>"
 
 
-class GuestDevice(db.Model):
-    __tablename__ = "guest_devices"
-
-    id                 = db.Column(db.Integer, primary_key=True)
-    device_fingerprint = db.Column(db.String(255), unique=True, nullable=False)
-    user_id            = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    first_seen_at      = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    last_seen_at       = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    ip_address         = db.Column(db.String(45), nullable=True)
-    user_agent         = db.Column(db.Text, nullable=True)
-
-    user = db.relationship("User", foreign_keys=[user_id])
-
-    def __repr__(self) -> str:
-        return f"<GuestDevice fp={self.device_fingerprint[:12]}…>"
-
-
 class LoginHistory(db.Model):
     __tablename__ = "login_history"
 

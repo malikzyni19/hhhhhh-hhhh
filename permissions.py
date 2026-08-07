@@ -35,15 +35,6 @@ _ROLE_DEFAULTS = {
         "allowed_exchanges":   ["binance"],
         "allowed_timeframes":  ["15m", "1h", "4h"],
     },
-    "guest": {
-        "daily_tokens":        50,
-        "max_pairs_per_scan":  20,
-        "max_pairs_per_cycle": 10,
-        "allowed_modules":     ["ob"],
-        "allowed_tabs":        ["scan"],
-        "allowed_exchanges":   ["binance"],
-        "allowed_timeframes":  ["1h"],
-    },
 }
 
 

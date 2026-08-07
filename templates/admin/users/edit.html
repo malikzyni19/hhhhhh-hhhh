@@ -24,7 +24,6 @@
       </div>
       <div style="display:flex;gap:6px">
         {% if user.role == 'admin' %}<span class="badge cyan">admin</span>
-        {% elif user.role == 'guest' %}<span class="badge" style="background:rgba(100,116,139,.12);color:#94a3b8;border:1px solid rgba(100,116,139,.2)">guest</span>
         {% else %}<span class="badge blue">user</span>{% endif %}
         {% if user.status == 'active' %}<span class="badge green">active</span>
         {% elif user.status == 'paused' %}<span class="badge amber">paused</span>
@@ -129,7 +128,6 @@
             <select name="role">
               <option value="user"  {% if user.role=='user'  %}selected{% endif %}>user</option>
               <option value="admin" {% if user.role=='admin' %}selected{% endif %}>admin</option>
-              <option value="guest" {% if user.role=='guest' %}selected{% endif %}>guest</option>
             </select>
             {% if errors.role %}<div class="adm-field-error">{{ errors.role }}</div>{% endif %}
           </div>
