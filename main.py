@@ -37260,127 +37260,180 @@ def api_zone_liquidity():
     if zone_top <= 0 or zone_bottom <= 0 or zone_top <= zone_bottom:
         return jsonify({"error": "could not detect OB zone"}), 200
 
-    # ── Ensure full order book stream is running ──
-    # Works for both watchlist pairs (already streaming) and
-    # scan page pairs (starts on-demand, waits up to 4s, auto-stops after 2min)
+    # ── Kick off Binance WS so _lm_build_ob_wall_map gets the live book ──
     try:
-        book_ready = ensure_ob_stream(symbol, wait_sec=4.0)
+        ensure_ob_stream(symbol, wait_sec=4.0)
     except Exception:
-        book_ready = False
+        pass
 
-    if book_ready:
-        try:
-            ob_result = get_ob_zone_levels(symbol, zone_top, zone_bottom, ob_type)
-        except Exception:
-            ob_result = {"ready": False}
-        if ob_result.get("ready"):
-            return jsonify({
-                "symbol":         symbol,
-                "ob_type":        ob_type,
-                "zone_top":       ob_result.get("zone_top", round(zone_top, 8)),
-                "zone_bottom":    ob_result.get("zone_bottom", round(zone_bottom, 8)),
-                "side":           "bids" if ob_type == "bullish" else "asks",
-                "ladder":         ob_result.get("ladder", []),
-                "center":         ob_result.get("center", ""),
-                "center_f":       ob_result.get("center_f", 0),
-                "step":           ob_result.get("step", 0),
-                "verdict":        ob_result.get("verdict", "EMPTY"),
-                "verdict_desc":   ob_result.get("verdict_desc", ""),
-                "insight":        ob_result.get("insight", ""),
-                "total_bid_usdt": ob_result.get("total_bid_usdt", 0),
-                "total_ask_usdt": ob_result.get("total_ask_usdt", 0),
-                "total_bid_fmt":  ob_result.get("total_bid_fmt", "0"),
-                "total_ask_fmt":  ob_result.get("total_ask_fmt", "0"),
-                "extreme_count":  ob_result.get("extreme_count", 0),
-                "heavy_count":    ob_result.get("heavy_count", 0),
-                "book_age_sec":   ob_result.get("book_age_sec", 0),
-                "total_bids":     ob_result.get("total_bids", 0),
-                "total_asks":     ob_result.get("total_asks", 0),
-                "zone_note":      ob_result.get("zone_note", ""),
-                "source":         f"live_ws · {ob_result.get('total_bids',0)} bids / {ob_result.get('total_asks',0)} asks · {ob_result.get('book_age_sec',0)}s old",
-            })
+    def _zl_zone_pos(p: float) -> str:
+        if p > zone_top:    return "above"
+        if p < zone_bottom: return "below"
+        return "inside"
 
-    # ── Fallback: REST depth endpoint ──
-    # Note: limited to ~$10 range from current price for most pairs
+    def _zl_verdict(zone_in: list) -> tuple:
+        ext = sum(1 for lv in zone_in if lv.get("strength_pct", 0) >= 75)
+        hvy = sum(1 for lv in zone_in if 45 <= lv.get("strength_pct", 0) < 75)
+        strong = ext + hvy
+        if ext >= 2 or (ext >= 1 and hvy >= 2):
+            return "INSTITUTIONAL", "Extreme institutional liquidity inside zone", ext, hvy
+        if strong >= 3:
+            return "STRONG", "Multiple heavy walls inside zone", ext, hvy
+        if strong >= 1:
+            return "MODERATE", "Some liquidity present inside zone", ext, hvy
+        if len(zone_in) >= 2:
+            return "WEAK", "Thin orders inside zone", ext, hvy
+        return "EMPTY", "Very little liquidity inside zone", ext, hvy
+
+    # ── Primary path: multi-exchange aggregated OB ──
+    # _lm_build_ob_wall_map("aggregated") aggregates Binance WS + Bybit REST + OKX REST,
+    # clusters near-price levels, and annotates with strength_pct / stability / meaning.
+    try:
+        wall_map = _lm_build_ob_wall_map(symbol, "aggregated")
+    except Exception:
+        wall_map = {"ok": False}
+
+    if wall_map.get("ok"):
+        current_price  = wall_map.get("current_price", 0)
+        sources_used   = wall_map.get("sources_used", [])
+        sources_skip   = wall_map.get("sources_skipped", [])
+
+        bids = [{**lv, "zone_pos": _zl_zone_pos(lv["price"])} for lv in wall_map.get("bids", [])]
+        asks = [{**lv, "zone_pos": _zl_zone_pos(lv["price"])} for lv in wall_map.get("asks", [])]
+
+        zone_side = bids if ob_type == "bullish" else asks
+        zone_in   = [lv for lv in zone_side if lv["zone_pos"] == "inside"]
+        verdict, verdict_desc, ext_cnt, hvy_cnt = _zl_verdict(zone_in)
+
+        total_bid = sum(lv["size_usd"] for lv in bids)
+        total_ask = sum(lv["size_usd"] for lv in asks)
+        zb_usdt   = sum(lv["size_usd"] for lv in bids if lv["zone_pos"] == "inside")
+        za_usdt   = sum(lv["size_usd"] for lv in asks if lv["zone_pos"] == "inside")
+        rel_bid   = sum(lv["size_usd"] for lv in bids if lv["zone_pos"] == "below")
+        rel_ask   = sum(lv["size_usd"] for lv in asks if lv["zone_pos"] == "above")
+
+        parts = []
+        if zb_usdt: parts.append(f"Zone bids: {fmt_vol(zb_usdt)}")
+        if za_usdt: parts.append(f"Zone asks: {fmt_vol(za_usdt)}")
+        if rel_bid: parts.append(f"Support below: {fmt_vol(rel_bid)}")
+        if rel_ask: parts.append(f"Resistance above: {fmt_vol(rel_ask)}")
+        insight = " · ".join(parts) if parts else "No significant zone liquidity detected"
+
+        src_str  = " + ".join(sources_used) if sources_used else "none"
+        skip_str = (", skipped: " + " + ".join(sources_skip)) if sources_skip else ""
+
+        return jsonify({
+            "symbol":          symbol,
+            "ob_type":         ob_type,
+            "zone_top":        round(zone_top, 8),
+            "zone_bottom":     round(zone_bottom, 8),
+            "current_price":   round(current_price, 6),
+            "bids":            bids,
+            "asks":            asks,
+            "verdict":         verdict,
+            "verdict_desc":    verdict_desc,
+            "insight":         insight,
+            "total_bid_fmt":   fmt_vol(total_bid),
+            "total_ask_fmt":   fmt_vol(total_ask),
+            "zone_bid_fmt":    fmt_vol(zb_usdt),
+            "zone_ask_fmt":    fmt_vol(za_usdt),
+            "extreme_count":   ext_cnt,
+            "heavy_count":     hvy_cnt,
+            "sources_used":    sources_used,
+            "sources_skipped": sources_skip,
+            "source":          f"aggregated: {src_str}{skip_str}",
+        })
+
+    # ── Fallback: Binance REST depth snapshot ──
     try:
         r = req.get(
             f"{BINANCE_FUTURES_API}/fapi/v1/depth",
-            params={"symbol": symbol, "limit": 1000},
+            params={"symbol": symbol, "limit": 500},
             timeout=6,
         )
         if r.status_code != 200:
-            return jsonify({"error": "binance error"}), 502
+            return jsonify({"error": "binance depth unavailable"}), 502
 
-        book = r.json()
-        side_key   = "bids" if ob_type == "bullish" else "asks"
-        all_levels = book.get(side_key, [])
+        book     = r.json()
+        raw_bids = {float(p): float(q) for p, q in book.get("bids", []) if float(q) > 0}
+        raw_asks = {float(p): float(q) for p, q in book.get("asks", []) if float(q) > 0}
 
-        parsed = []
-        for row in all_levels:
-            try:
-                parsed.append((float(row[0]), float(row[1])))
-            except Exception:
-                continue
+        if not raw_bids and not raw_asks:
+            return jsonify({"error": "no order book data"}), 200
 
-        if not parsed:
-            return jsonify({"error": "no order book data — add pair to watchlist for full depth"}), 200
+        best_bid = max(raw_bids) if raw_bids else 0.0
+        best_ask = min(raw_asks) if raw_asks else 0.0
+        cp       = (best_bid + best_ask) / 2.0 if best_bid and best_ask else (zone_top + zone_bottom) / 2.0
 
-        all_qtys = [q for _, q in parsed]
-        avg_qty  = sum(all_qtys) / max(len(all_qtys), 1)
+        def _zl_rest_levels(levels_dict: dict, is_bid: bool) -> list:
+            out = []
+            for p, q in levels_dict.items():
+                dist = round(abs(p - cp) / max(cp, 1e-10) * 100, 3)
+                if dist > 10.0: continue
+                if is_bid and p >= cp: continue
+                if not is_bid and p <= cp: continue
+                u = p * q
+                if u < 1000: continue
+                out.append({"price": float(p), "distance_pct": dist,
+                             "size_usd": round(u), "zone_pos": _zl_zone_pos(float(p))})
+            out.sort(key=lambda x: -x["price"] if is_bid else x["price"])
+            return out
 
-        zone_size   = abs(zone_top - zone_bottom)
-        zone_buffer = zone_size * 0.5
-        zone_levels = [(p, q) for p, q in parsed
-                       if (zone_bottom - zone_buffer) <= p <= (zone_top + zone_buffer)]
-        zone_note = "in_zone"
-        if not zone_levels:
-            zone_mid    = (zone_top + zone_bottom) / 2
-            zone_levels = sorted(parsed, key=lambda x: abs(x[0] - zone_mid))[:15]
-            zone_note   = "nearest_to_zone"
+        def _zl_annotate(levels: list, side_lbl: str) -> list:
+            if not levels: return []
+            usds  = [lv["size_usd"] for lv in levels]
+            max_u = max(usds) or 1
+            mdn_u = sorted(usds)[len(usds) // 2] or 1
+            result = []
+            for lv in levels:
+                u    = lv["size_usd"]
+                spct = round(u / max_u * 100) if max_u else 0
+                stab = ("5/5 stable" if u >= mdn_u * 3 else "4/5 stable" if u >= mdn_u * 2
+                        else "3/5 stable" if u >= mdn_u else "2/5 stable" if u >= mdn_u * 0.5
+                        else "1/5 stable")
+                d = lv["distance_pct"]
+                mn  = (f"Very close; {side_lbl} may be tested immediately." if d < 0.3
+                       else f"Near price; short-term {side_lbl} level." if d < 1.0
+                       else f"Mid-range {side_lbl}; relevant for swing moves." if d < 3.0
+                       else f"Far {side_lbl}; significant only on large moves.")
+                result.append({**lv, "size_label": fmt_vol(float(u)),
+                                "strength_pct": spct, "stability": stab, "meaning": mn})
+            return result
 
-        def _classify_wall_r(qty):
-            r2 = qty / max(avg_qty, 1e-10)
-            if r2 >= 3.0: return "EXTREME", "🔴"
-            if r2 >= 2.0: return "HEAVY",   "🟠"
-            if r2 >= 1.5: return "MODERATE","🟡"
-            return "WEAK", "⚪"
+        bids = _zl_annotate(_zl_rest_levels(raw_bids, True),  "support")
+        asks = _zl_annotate(_zl_rest_levels(raw_asks, False), "resistance")
 
-        levels_out = []; total_zone_qty = 0.0
-        extreme_count = heavy_count = moderate_count = 0
-        for p, q in sorted(zone_levels, reverse=(ob_type == "bearish")):
-            cls, icon = _classify_wall_r(q)
-            usdt_val  = q * p
-            levels_out.append({"price": round(p,8), "qty": round(q,4), "qtyFmt": fmt_vol(q),
-                "usdt": round(usdt_val,2), "usdtFmt": fmt_vol(usdt_val), "class": cls, "icon": icon,
-                "ratio": round(q/max(avg_qty,1e-10),2)})
-            total_zone_qty += usdt_val
-            if cls=="EXTREME": extreme_count+=1
-            elif cls=="HEAVY": heavy_count+=1
-            elif cls=="MODERATE": moderate_count+=1
+        zone_side = bids if ob_type == "bullish" else asks
+        zone_in   = [lv for lv in zone_side if lv["zone_pos"] == "inside"]
+        verdict, verdict_desc, ext_cnt, hvy_cnt = _zl_verdict(zone_in)
+        verdict_desc += " (Binance snapshot only)"
 
-        strong = extreme_count + heavy_count
-        zl     = "in zone" if zone_note=="in_zone" else "nearest to zone"
-        if extreme_count>=2 or (extreme_count>=1 and heavy_count>=2):
-            verdict="INSTITUTIONAL"; verdict_desc=f"Extreme institutional liquidity ({zl})"
-        elif strong>=3:
-            verdict="STRONG"; verdict_desc=f"Multiple heavy walls ({zl})"
-        elif strong>=1:
-            verdict="MODERATE"; verdict_desc=f"Some liquidity present ({zl})"
-        elif moderate_count>=2:
-            verdict="WEAK"; verdict_desc=f"Mostly normal orders ({zl})"
-        else:
-            verdict="EMPTY"; verdict_desc=f"Very little liquidity ({zl}) — add pair to watchlist for full depth"
+        total_bid = sum(lv["size_usd"] for lv in bids)
+        total_ask = sum(lv["size_usd"] for lv in asks)
+        zb_usdt   = sum(lv["size_usd"] for lv in bids if lv["zone_pos"] == "inside")
+        za_usdt   = sum(lv["size_usd"] for lv in asks if lv["zone_pos"] == "inside")
 
-        return jsonify({"symbol": symbol, "ob_type": ob_type,
-            "zone_top": round(zone_top,8), "zone_bottom": round(zone_bottom,8),
-            "side": "bids" if ob_type=="bullish" else "asks",
-            "levels": levels_out, "total_usdt": round(total_zone_qty,2),
-            "total_fmt": fmt_vol(total_zone_qty), "extreme_count": extreme_count,
-            "heavy_count": heavy_count, "moderate_count": moderate_count,
-            "avg_book_qty": round(avg_qty,4), "verdict": verdict,
-            "verdict_desc": verdict_desc, "verdict_color": verdict.lower(),
-            "zone_note": zone_note,
-            "source": "rest_snapshot (limited range — add to watchlist for full depth)"})
+        return jsonify({
+            "symbol":          symbol,
+            "ob_type":         ob_type,
+            "zone_top":        round(zone_top, 8),
+            "zone_bottom":     round(zone_bottom, 8),
+            "current_price":   round(cp, 6),
+            "bids":            bids,
+            "asks":            asks,
+            "verdict":         verdict,
+            "verdict_desc":    verdict_desc,
+            "insight":         "",
+            "total_bid_fmt":   fmt_vol(total_bid),
+            "total_ask_fmt":   fmt_vol(total_ask),
+            "zone_bid_fmt":    fmt_vol(zb_usdt),
+            "zone_ask_fmt":    fmt_vol(za_usdt),
+            "extreme_count":   ext_cnt,
+            "heavy_count":     hvy_cnt,
+            "sources_used":    ["binance_rest"],
+            "sources_skipped": ["bybit", "okx"],
+            "source":          "binance_rest_snapshot (limited depth — add to watchlist for multi-exchange)",
+        })
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500

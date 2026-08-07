@@ -530,8 +530,12 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
 .zl-wall-scroll th{position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase;white-space:nowrap}
 .zl-wall-scroll td{padding:6px;font-size:10px;white-space:nowrap;border-bottom:1px solid rgba(148,163,184,.08)}
 .zl-source{padding:6px 16px;font-size:10px;color:#4b6074;text-align:center;background:rgba(15,27,43,.4);border-top:1px solid rgba(148,163,184,.05)}
-/* REST fallback single-column */
-.zl-wall-single{padding:12px}
+/* controls bar — Window + Min Wall selectors */
+.zl-ctrls{display:flex;align-items:center;gap:8px;padding:7px 16px;background:rgba(10,20,34,.85);border-bottom:1px solid rgba(34,211,238,.08);flex-wrap:wrap;flex-shrink:0}
+.zl-cl{font-size:10px;color:#8294aa;font-weight:600;text-transform:uppercase;letter-spacing:.3px;white-space:nowrap}
+.zl-csel{background:#0a1422;border:1px solid rgba(148,163,184,.15);color:#c5d8ea;font-size:11px;padding:3px 7px;border-radius:5px;outline:none;cursor:pointer}
+.zl-csel:focus,.zl-csel:hover{border-color:rgba(34,211,238,.35);color:#e5f3ff}
+.zl-csrc{margin-left:auto;font-size:9px;color:#4b6074;font-style:italic;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media(max-width:640px){.zl-card{height:92vh;max-height:92vh}.zl-walls{grid-template-columns:1fr}.zl-wall-side+.zl-wall-side{border-left:none;border-top:1px solid rgba(34,211,238,.1)}}
 .dd-out .kv .k{color:var(--text-3);font-size:11px}
 .dd-out .kv .v{color:var(--text);font-family:var(--mono);font-size:11px}
@@ -2318,6 +2322,27 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         <button class=”ic-btn” id=”zlClose” type=”button” aria-label=”Close”><svg class=”ico” viewBox=”0 0 24 24”><path d=”M6 6l12 12M18 6L6 18”/></svg></button>
       </div>
     </div>
+    <div class=”zl-ctrls” id=”zlCtrls”>
+      <span class=”zl-cl”>Window:</span>
+      <select class=”zl-csel” id=”zlWin” onchange=”window._zlApply()”>
+        <option value=”0.5”>&#177;0.50%</option>
+        <option value=”1”>&#177;1.00%</option>
+        <option value=”2”>&#177;2.00%</option>
+        <option value=”3”>&#177;3.00%</option>
+        <option value=”5” selected>&#177;5.00%</option>
+        <option value=”7.5”>&#177;7.50%</option>
+        <option value=”10”>&#177;10.00%</option>
+      </select>
+      <span class=”zl-cl”>Min Wall:</span>
+      <select class=”zl-csel” id=”zlMinW” onchange=”window._zlApply()”>
+        <option value=”0” selected>Auto</option>
+        <option value=”250000”>$250K+</option>
+        <option value=”450000”>$450K+</option>
+        <option value=”1000000”>$1M+</option>
+        <option value=”2000000”>$2M+</option>
+      </select>
+      <span class=”zl-csrc” id=”zlSrc”></span>
+    </div>
     <div class=”zl-body” id=”zlBody”></div>
   </div>
 </div>
@@ -3518,6 +3543,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   }
 
   /* ── Zone Liquidity popup ── */
+  var _zlData=null;
   function _openZlModal(data, symbol){
     var symEl=E("zlSym");
     if(!symEl){
@@ -3526,63 +3552,64 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       if(out) out.innerHTML='<div class="dd-result">'+_zlRender(data)+'</div>';
       return;
     }
+    _zlData=data;
     symEl.textContent = symbol || "—";
     var ob_type = (data && data.ob_type) || "bullish";
     E("zlTags").innerHTML = '<span class="tag">'+(ob_type==="bullish"?"Bullish OB":"Bearish OB")+'</span>';
-    E("zlBody").innerHTML = _zlRender(data);
+    var srcEl=E("zlSrc");
+    if(srcEl) srcEl.textContent=(data&&data.source)?data.source:"";
+    _zlApply();
     E("zlModalBd").classList.add("open");
     E("zlModal").classList.add("open");
     document.body.classList.add("sheet-open");
+  }
+  function _zlApply(){
+    if(!_zlData) return;
+    var winEl=E("zlWin"),minEl=E("zlMinW");
+    var wP=winEl?parseFloat(winEl.value):5.0;
+    var mW=minEl?parseFloat(minEl.value):0;
+    var bodyEl=E("zlBody");
+    if(bodyEl) bodyEl.innerHTML=_zlRender(_zlData,wP,mW);
   }
   function _closeZlModal(){
     E("zlModalBd").classList.remove("open");
     E("zlModal").classList.remove("open");
     document.body.classList.remove("sheet-open");
   }
-  function _zlRender(d){
+  function _zlRender(d,winPct,minWall){
     if(!d) return '<div class="row-msg err">No data returned.</div>';
     if(d.error) return '<div class="row-msg err">'+esc(d.error)+'</div>';
+    var wP=(winPct!==undefined)?winPct:5.0;
+    var mW=(minWall!==undefined)?minWall:0;
     var verdict=(d.verdict||"WEAK").toUpperCase();
     var vMap={INSTITUTIONAL:"inst",STRONG:"strong",MODERATE:"moderate",WEAK:"weak",EMPTY:"empty"};
     var vCls=vMap[verdict]||"weak";
     var obType=(d.ob_type||"bullish").toLowerCase();
+    /* filter bids/asks by window and min-wall (same logic as Live Monitor) */
+    var bids=(d.bids||[]).filter(function(l){return l.distance_pct<=wP&&l.size_usd>=mW;});
+    var asks=(d.asks||[]).filter(function(l){return l.distance_pct<=wP&&l.size_usd>=mW;});
     /* helpers */
-    function _cls2pct(c){var m={EXTREME:90,HEAVY:70,MODERATE:45,WEAK:15};return m[(c||"").toUpperCase()]||15;}
-    function _cls2stab(c){var m={EXTREME:"5/5 stable",HEAVY:"4/5 stable",MODERATE:"3/5 stable",WEAK:"1/5 stable"};return m[(c||"").toUpperCase()]||"1/5 stable";}
-    function _meaning(cls,zp,side){
-      var c=(cls||"").toUpperCase(),z=(zp||"").toLowerCase();
-      if(side==="bid"){
-        if(z==="inside"){if(c==="EXTREME")return"Extreme buy pressure inside zone — strong bounce likely";if(c==="HEAVY")return"Heavy bid support inside zone — watch for reversal";if(c==="MODERATE")return"Moderate bid support active inside zone";return"Weak bid inside zone — thin support";}
-        if(z==="below"){if(c==="EXTREME")return"Key support floor below zone — major demand area";if(c==="HEAVY")return"Heavy bid wall below zone — price magnet";if(c==="MODERATE")return"Moderate support below current zone";return"Weak support below zone — breakout risk";}
-        if(c==="EXTREME")return"Strong trapped bid above zone";if(c==="HEAVY")return"Heavy bid sitting above zone";return"Bid level above zone";
-      }
-      if(z==="inside"){if(c==="EXTREME")return"Extreme ask pressure inside zone — strong rejection likely";if(c==="HEAVY")return"Heavy ask wall inside zone — watch for sell-off";if(c==="MODERATE")return"Moderate resistance active inside zone";return"Weak ask inside zone — thin resistance";}
-      if(z==="above"){if(c==="EXTREME")return"Key resistance ceiling above zone — major supply area";if(c==="HEAVY")return"Heavy ask wall above zone — price magnet";if(c==="MODERATE")return"Moderate resistance above zone";return"Weak resistance above zone — breakout possible";}
-      if(c==="EXTREME")return"Strong trapped ask below zone";if(c==="HEAVY")return"Heavy ask sitting below zone";return"Ask level below zone";
-    }
     function _priceStr(p){return(typeof p==="number")?(p>=1?p.toFixed(4):p.toFixed(6)):esc(String(p));}
     function _zpColor(zp){var z=(zp||"").toLowerCase();return z==="inside"?"#22d3ee":z==="below"?"#22c55e":z==="above"?"#ef4444":"#8294aa";}
     function _th(t){return"<th style='position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase;white-space:nowrap'>"+t+"</th>";}
-    var TH="<thead><tr>"+_th("#")+_th("Price")+_th("Zone")+_th("Size")+_th("Strength")+_th("Stability")+_th("Meaning")+"</tr></thead>";
-    function _row(item,i,side){
-      var cls=(item["class"]||"").toUpperCase();
-      var w=Math.max(5,_cls2pct(cls));
+    var TH="<thead><tr>"+_th("#")+_th("Price")+_th("Dist%")+_th("Zone")+_th("Size")+_th("Strength")+_th("Stability")+_th("Meaning")+"</tr></thead>";
+    function _row(lv,i,side){
       var pc=(side==="bid")?"#22c55e":"#ef4444";
       var bg=(side==="bid")?"linear-gradient(90deg,rgba(34,197,94,.35),#22c55e)":"linear-gradient(90deg,rgba(239,68,68,.35),#ef4444)";
-      var sz=(side==="bid")?(item.bid_fmt||"—"):(item.ask_fmt||"—");
-      var zp=item.zone_pos||"";
+      var w=Math.max(5,lv.strength_pct||0);
+      var zp=lv.zone_pos||"";
       return"<tr style='border-bottom:1px solid rgba(148,163,184,.08)'>"+
         "<td style='padding:6px;color:#9eb3c7;font-size:10px'>#"+(i+1)+"</td>"+
-        "<td style='padding:6px;color:"+pc+";font-weight:700;font-size:11px'>"+_priceStr(item.price)+"</td>"+
+        "<td style='padding:6px;color:"+pc+";font-weight:700;font-size:11px'>"+_priceStr(lv.price)+"</td>"+
+        "<td style='padding:6px;color:#a9bdd2;font-size:10px'>"+(lv.distance_pct!==undefined?lv.distance_pct.toFixed(2)+"%":"—")+"</td>"+
         "<td style='padding:6px'><span style='color:"+_zpColor(zp)+";font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.3px'>"+esc(zp||"—")+"</span></td>"+
-        "<td style='padding:6px;color:#e5f3ff;font-weight:700;font-size:11px'>"+esc(sz)+"</td>"+
+        "<td style='padding:6px;color:#e5f3ff;font-weight:700;font-size:11px'>"+esc(lv.size_label||"—")+"</td>"+
         "<td style='padding:6px'><div style='width:80px;height:7px;background:rgba(148,163,184,.16);border-radius:999px;overflow:hidden'><div style='height:100%;border-radius:999px;background:"+bg+";width:"+w+"%'></div></div></td>"+
-        "<td style='padding:6px;color:#9eb3c7;font-size:10px'>"+esc(_cls2stab(cls))+"</td>"+
-        "<td style='padding:6px;color:#9eb3c7;font-size:10px;white-space:normal;max-width:180px'>"+esc(_meaning(cls,zp,side))+"</td>"+
+        "<td style='padding:6px;color:#9eb3c7;font-size:10px'>"+esc(lv.stability||"—")+"</td>"+
+        "<td style='padding:6px;color:#9eb3c7;font-size:10px;white-space:normal;max-width:180px'>"+esc(lv.meaning||"—")+"</td>"+
       "</tr>";
     }
-    function _emptyRow(msg){return"<tr><td colspan='7' style='padding:18px;color:#9eb3c7;font-size:11px;text-align:center'>"+esc(msg)+"</td></tr>";}
-    /* build HTML */
+    function _emptyRow(msg){return"<tr><td colspan='8' style='padding:18px;color:#9eb3c7;font-size:11px;text-align:center'>"+esc(msg)+"</td></tr>";}
     var html='';
     /* verdict strip */
     html+='<div class="zl-verdict '+vCls+'"><div class="zl-v-label">'+esc(verdict)+'</div>';
@@ -3591,54 +3618,21 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     html+='</div>';
     /* summary stats */
     html+='<div class="zl-summary">';
-    html+='<div class="zl-stat"><div class="zl-stat-k">Total Bids (Zone)</div><div class="zl-stat-v g">'+esc(d.total_bid_fmt||(d.side==="bids"?d.total_fmt:null)||"—")+'</div></div>';
-    html+='<div class="zl-stat"><div class="zl-stat-k">Total Asks (Zone)</div><div class="zl-stat-v r2">'+esc(d.total_ask_fmt||(d.side==="asks"?d.total_fmt:null)||"—")+'</div></div>';
+    html+='<div class="zl-stat"><div class="zl-stat-k">Total Bids</div><div class="zl-stat-v g">'+esc(d.total_bid_fmt||"—")+'</div></div>';
+    html+='<div class="zl-stat"><div class="zl-stat-k">Total Asks</div><div class="zl-stat-v r2">'+esc(d.total_ask_fmt||"—")+'</div></div>';
     html+='<div class="zl-stat"><div class="zl-stat-k">Zone Type</div><div class="zl-stat-v" style="font-size:12px">'+esc(obType==="bullish"?"Bullish OB":"Bearish OB")+'</div></div>';
     html+='</div>';
-    /* WS-path: two-column bid / ask wall tables */
-    var ladder=d.ladder;
-    if(ladder&&ladder.length){
-      var bids=ladder.filter(function(r){return(r.bid_usdt||0)>0;}).sort(function(a,b){return(b.bid_usdt||0)-(a.bid_usdt||0);});
-      var asks=ladder.filter(function(r){return(r.ask_usdt||0)>0;}).sort(function(a,b){return(b.ask_usdt||0)-(a.ask_usdt||0);});
-      html+='<div class="zl-walls">';
-      html+='<div class="zl-wall-side"><div class="zl-wall-title bid">BID WALLS / SUPPORT ('+bids.length+')</div>';
-      html+='<div class="zl-wall-scroll"><table style="width:100%;border-collapse:collapse;min-width:340px">'+TH+'<tbody>';
-      html+=bids.length?bids.map(function(r,i){return _row(r,i,"bid");}).join(""):_emptyRow("No major BID wall found in this zone.");
-      html+='</tbody></table></div></div>';
-      html+='<div class="zl-wall-side"><div class="zl-wall-title ask">ASK WALLS / RESISTANCE ('+asks.length+')</div>';
-      html+='<div class="zl-wall-scroll"><table style="width:100%;border-collapse:collapse;min-width:340px">'+TH+'<tbody>';
-      html+=asks.length?asks.map(function(r,i){return _row(r,i,"ask");}).join(""):_emptyRow("No major ASK wall found in this zone.");
-      html+='</tbody></table></div></div>';
-      html+='</div>';
-    /* REST-fallback: single-side table */
-    } else if(d.levels&&d.levels.length){
-      var side=(d.side==="bids")?"bid":"ask";
-      var sideTitle=(side==="bid")?"BID WALLS / SUPPORT":"ASK WALLS / RESISTANCE";
-      var pc2=(side==="bid")?"#22c55e":"#ef4444";
-      var bg2=(side==="bid")?"linear-gradient(90deg,rgba(34,197,94,.35),#22c55e)":"linear-gradient(90deg,rgba(239,68,68,.35),#ef4444)";
-      html+='<div class="zl-walls"><div class="zl-wall-side" style="grid-column:1/-1">';
-      html+='<div class="zl-wall-title '+side+'">'+sideTitle+' ('+d.levels.length+')</div>';
-      html+='<div class="zl-wall-scroll"><table style="width:100%;border-collapse:collapse;min-width:340px">'+TH+'<tbody>';
-      for(var j=0;j<d.levels.length;j++){
-        var lv=d.levels[j];
-        var ratio=lv.ratio||1;
-        var spct=ratio>=5?90:ratio>=3?70:ratio>=1.5?45:15;
-        var ww=Math.max(5,spct);
-        var stab=spct>=90?"5/5 stable":spct>=70?"4/5 stable":spct>=45?"3/5 stable":"1/5 stable";
-        html+="<tr style='border-bottom:1px solid rgba(148,163,184,.08)'>"+
-          "<td style='padding:6px;color:#9eb3c7;font-size:10px'>#"+(j+1)+"</td>"+
-          "<td style='padding:6px;color:"+pc2+";font-weight:700;font-size:11px'>"+_priceStr(lv.price)+"</td>"+
-          "<td style='padding:6px;color:#8294aa;font-size:10px'>—</td>"+
-          "<td style='padding:6px;color:#e5f3ff;font-weight:700;font-size:11px'>"+esc(lv.usdtFmt||lv.qtyFmt||"—")+"</td>"+
-          "<td style='padding:6px'><div style='width:80px;height:7px;background:rgba(148,163,184,.16);border-radius:999px;overflow:hidden'><div style='height:100%;border-radius:999px;background:"+bg2+";width:"+ww+"%'></div></div></td>"+
-          "<td style='padding:6px;color:#9eb3c7;font-size:10px'>"+esc(stab)+"</td>"+
-          "<td style='padding:6px;color:#9eb3c7;font-size:10px'>×"+esc(String(ratio))+" vs avg</td>"+
-        "</tr>";
-      }
-      html+='</tbody></table></div></div></div>';
-    } else {
-      html+='<div class="zl-walls"><div class="zl-wall-side" style="grid-column:1/-1">'+_emptyRow("No order book data available for this zone.")+'</div></div>';
-    }
+    /* two-column bid / ask wall tables */
+    html+='<div class="zl-walls">';
+    html+='<div class="zl-wall-side"><div class="zl-wall-title bid">BID WALLS / SUPPORT ('+bids.length+')</div>';
+    html+='<div class="zl-wall-scroll"><table style="width:100%;border-collapse:collapse;min-width:380px">'+TH+'<tbody>';
+    html+=bids.length?bids.map(function(lv,i){return _row(lv,i,"bid");}).join(""):_emptyRow("No bid walls in selected window / min-wall filter.");
+    html+='</tbody></table></div></div>';
+    html+='<div class="zl-wall-side"><div class="zl-wall-title ask">ASK WALLS / RESISTANCE ('+asks.length+')</div>';
+    html+='<div class="zl-wall-scroll"><table style="width:100%;border-collapse:collapse;min-width:380px">'+TH+'<tbody>';
+    html+=asks.length?asks.map(function(lv,i){return _row(lv,i,"ask");}).join(""):_emptyRow("No ask walls in selected window / min-wall filter.");
+    html+='</tbody></table></div></div>';
+    html+='</div>';
     if(d.source) html+='<div class="zl-source">'+esc(d.source)+'</div>';
     return html;
   }
@@ -6444,6 +6438,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   if(E("zlClose")) E("zlClose").addEventListener("click",_closeZlModal);
   if(E("zlModalBd")) E("zlModalBd").addEventListener("click",_closeZlModal);
   addEventListener("keydown",function(e){ if(e.key==="Escape" && E("zlModal") && E("zlModal").classList.contains("open")) _closeZlModal(); });
+  window._zlApply=_zlApply;
 
   /* ── Settings panel (Wave 6) ── */
   function _populateSettingsForm(){
