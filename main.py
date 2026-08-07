@@ -1708,6 +1708,9 @@ PAIR_CACHE: Dict[str, Any] = {
     "perpetual": {"ts": 0, "pairs": []},
 }
 ROUND_ROBIN_STATE: Dict[str, int] = {"index": 0}
+# Round-robin cursor for Selected Pairs mode — cycles through the user's
+# selected list in pairsPerCycle-sized batches, same as market mode.
+ROUND_ROBIN_SELECTED_STATE: Dict[str, int] = {"index": 0}
 # Per-user round-robin cursor for Bias Shift full-market scans.
 # Key: "username|exchange|market|tf" — isolates each user's position.
 BIAS_SCAN_CURSOR: Dict[str, int] = {}
@@ -32986,10 +32989,26 @@ def api_scan():
         else:
             symbols = all_pairs[:pairs_per_cycle]
     else:
-        # Selected Pairs mode — use only what frontend sent
-        # If nothing selected, fall back to top pairs
+        # Selected Pairs mode — cycle through the user's selected list in batches,
+        # exactly like market mode does with the full pair list.
         if not symbols:
+            # Nothing selected — fall back to top market pairs
             symbols = [p["symbol"] for p in get_pairs_exchange(exchange, market)[:pairs_per_cycle]]
+        elif len(symbols) <= pairs_per_cycle:
+            # All selected pairs fit in one cycle — scan them all, reset cursor
+            ROUND_ROBIN_SELECTED_STATE["index"] = 0
+        elif payload.get("roundRobin", False):
+            # More selected pairs than one cycle — advance cursor
+            start = ROUND_ROBIN_SELECTED_STATE["index"] % len(symbols)
+            chosen = symbols[start:start + pairs_per_cycle]
+            if len(chosen) < pairs_per_cycle:
+                chosen += symbols[:max(0, pairs_per_cycle - len(chosen))]
+            ROUND_ROBIN_SELECTED_STATE["index"] = (start + pairs_per_cycle) % len(symbols)
+            symbols = chosen
+        else:
+            # roundRobin=False (Prev / reset) — reset cursor, scan first batch
+            ROUND_ROBIN_SELECTED_STATE["index"] = 0
+            symbols = symbols[:pairs_per_cycle]
 
     btc_closes = None
     try:

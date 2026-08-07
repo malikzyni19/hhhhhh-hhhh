@@ -3178,8 +3178,6 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
           ST.tabData[modeAtScan].raw = d;
           ST.results = merged;                     // setup-style tabs share this
           ST.scanned = ST.tabData[modeAtScan].scanned;
-          // Selected-pairs always returns all pairs in one batch — keep page at 1.
-          if(modeAtScan==="main" && ST.scanMode==="selected") ST.page=1;
           try{ evaluateAlerts(ST.results); }catch(_){}
           /* User-driven selection only — no auto-open of first row (Task 1). */
           ST.sel = -1;
@@ -5465,20 +5463,14 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       ? ST.results : (td.view||td.items||td.results||ST.results||[]);
     var n=tabRows.length;
     var page=ST.page||1;
-    // In selected-pairs mode the backend always returns all selected pairs in one
-    // batch — there is no "next page" of different pairs, so lock the pager to 1.
-    var isSelMode=(ST.mode==="main"||ST.mode==="bias")&&ST.scanMode==="selected";
-    if(isSelMode) page=1;
     var start = n ? ((page-1)*ST.pairsPerCycle + 1) : 0;
     var end   = n ? (start + n - 1) : 0;
     E("pagerInfo").textContent = n
-      ? (isSelMode
-          ? ("Showing 1–"+n+" · "+n+" selected pair"+(n!==1?"s":""))
-          : ("Showing "+start+"–"+end+" · page "+page+" · "+ST.pairsPerCycle+"/page"))
+      ? ("Showing "+start+"–"+end+" · page "+page+" · "+ST.pairsPerCycle+"/page")
       : "No setups found";
     var cur=E("pgCur"); if(cur) cur.textContent=page;
-    var prev=E("pgPrev"); if(prev) prev.classList.toggle("disabled", isSelMode||page<=1);
-    var next=E("pgNext"); if(next) next.classList.toggle("disabled", isSelMode);
+    var prev=E("pgPrev"); if(prev) prev.classList.toggle("disabled", page<=1);
+    var next=E("pgNext"); if(next) next.classList.remove("disabled");
   }
 
   function kpi(label,val,sub,cls){
