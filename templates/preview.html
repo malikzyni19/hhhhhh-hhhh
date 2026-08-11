@@ -2309,8 +2309,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 </div>
 
 <!-- ═══ Zone Liquidity popup modal ═══ -->
-<div class=”chart-modal-bd” id=”zlModalBd”></div>
-<div class=”chart-modal” id=”zlModal” role=”dialog” aria-modal=”true” aria-labelledby=”zlSym”>
+<div class=”chart-modal-bd” id=”zlModalBd” style=”display:none”></div>
+<div class=”chart-modal” id=”zlModal” role=”dialog” aria-modal=”true” aria-labelledby=”zlSym” style=”display:none”>
   <div class=”chart-modal-card zl-card”>
     <div class=”cm-head”>
       <div class=”cm-title”>
@@ -3562,8 +3562,9 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var srcEl=E("zlSrc");
     if(srcEl) srcEl.textContent=(data&&data.source)?data.source:"";
     _zlApply();
-    E("zlModalBd").classList.add("open");
-    E("zlModal").classList.add("open");
+    var _bd=E("zlModalBd"),_md=E("zlModal");
+    if(_bd){_bd.style.cssText='display:block;position:fixed;inset:0;background:rgba(2,8,16,.8);z-index:9100;';_bd.classList.add("open");}
+    if(_md){_md.style.cssText='display:flex;position:fixed;inset:0;z-index:9101;align-items:center;justify-content:center;padding:24px;';_md.classList.add("open");}
     document.body.classList.add("sheet-open");
   }
   function _zlApply(){
@@ -3575,8 +3576,9 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     if(bodyEl) bodyEl.innerHTML=_zlRender(_zlData,wP,mW);
   }
   function _closeZlModal(){
-    E("zlModalBd").classList.remove("open");
-    E("zlModal").classList.remove("open");
+    var _bd=E("zlModalBd"),_md=E("zlModal");
+    if(_bd){_bd.classList.remove("open");_bd.style.cssText='display:none';}
+    if(_md){_md.classList.remove("open");_md.style.cssText='display:none';}
     document.body.classList.remove("sheet-open");
   }
   function _zlRender(d,winPct,minWall){
