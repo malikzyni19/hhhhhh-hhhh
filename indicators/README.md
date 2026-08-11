@@ -353,3 +353,54 @@ The Signals group went from **14 inputs to 9**. Two cascade thresholds became on
 `Price context` dropdown; three marker and tint toggles became one `Markers`
 selector plus a `Background opacity` slider. Every remaining input changes
 behaviour in a way a preset cannot express.
+
+### Auto lower timeframe
+
+Choosing the lower timeframe by hand is the easiest way to get a wrong reading.
+Too fine and the intrabar cap truncates history, so older bars silently fall back
+to whole-bar classification — on a daily chart that means an entire day counted
+as all-buying or all-selling. That produced a real false result during testing:
+a 1D chart on 1m LTF showed heavy divergence that simply was not there, because
+only ~69 days had real data.
+
+Auto derives the lower timeframe from the chart timeframe by keeping the intrabar
+ratio under a target:
+
+```
+intrabars per bar = chart TF / LTF
+depth in bars     = 100,000 / intrabars per bar
+```
+
+Computed from the ratio, not a lookup table, so odd chart timeframes (45m, 2h,
+3D) resolve sensibly rather than falling through to a default. At the Balanced
+target of 100:
+
+| Chart | LTF | Ratio | Depth |
+|---|---|---|---|
+| 15m–1h | 1m | 15–60 | 1,600–6,600 |
+| 2h–4h | 3m | 40–80 | 1,250–2,500 |
+| 6h–8h | 5m | 72–96 | 1,040–1,390 |
+| 12h–1D | 15m | 48–96 | 1,040–2,080 |
+| 2D | 30m | 96 | 1,040 |
+| 3D | 1h | 72 | 1,390 |
+| 1W | 2h | 84 | 1,190 |
+| 1M | 1D | 30 | 3,300 |
+
+**Auto precision** shifts the target: *Higher precision* (200) picks a finer LTF
+and reaches back less far, *More history* (50) does the reverse.
+
+Seconds are never chosen automatically. They are gated on free plans, and
+selecting one on the user's behalf would hand them a resolution their account
+cannot serve.
+
+**Custom lower timeframe** works like the built-in's *use custom timeframe*: untick
+Auto and the dropdown applies. The dashboard always reports the lower timeframe in
+use **and its source** — `intrabar 15m (auto)` or `intrabar 1m (manual)` — because
+a dropdown displaying a value it is not using is precisely how a mismatched
+setting hides. That exact trap in the built-in CVD cost one full test round.
+
+**This does not eliminate fallback entirely.** It removes the two causes that come
+from settings — depth exhaustion and plan-gated resolutions — but a venue whose
+history simply does not reach back far enough will still fall back, and no LTF
+choice fixes that. When the Fallback row fires now, it is reporting something
+about the data rather than about the configuration.

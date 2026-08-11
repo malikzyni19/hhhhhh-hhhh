@@ -86,7 +86,25 @@ const string G_CTB = "Dashboard"
 const int INTRABAR_CAP = 100000
 
 // ── engine inputs (identical semantics to Phase 1) ───────────────────────────
-string i_ltf = input.string("1 minute", "Lower Timeframe", group = G_ENG,
+// Auto lower-timeframe. Picking an LTF by hand is the easiest way to get a wrong
+// reading: too fine and the intrabar cap truncates history, so older bars quietly
+// fall back to whole-bar classification. Auto derives it from the chart timeframe
+// so the ratio - and therefore the depth - stays sane at every chart setting.
+bool i_ltfAuto = input.bool(true, "Auto lower timeframe", group = G_ENG,
+     tooltip = "Derives the lower timeframe from the chart timeframe so intrabar depth never " +
+               "collapses. Untick to choose it yourself, like the built-in CVD's 'use custom " +
+               "timeframe'.\n\n" +
+               "The dashboard always shows which lower timeframe is actually in use and whether " +
+               "it came from auto or from you - the dropdown below is ignored while this is on, " +
+               "and a stale-looking dropdown is exactly how a mismatched setting hides.")
+
+string i_ltfPrec = input.string("Balanced", "Auto precision", group = G_ENG,
+     options = ["Higher precision", "Balanced", "More history"],
+     tooltip = "Trades intrabar precision against how far back the data reaches. Higher " +
+               "precision picks a finer lower timeframe and reaches back less far; More history " +
+               "does the reverse. Only used when Auto is on.")
+
+string i_ltf = input.string("1 minute", "Custom lower timeframe", group = G_ENG,
      options = ["Chart",
                   "1 tick", "10 ticks", "100 ticks", "1000 ticks",
                   "1 second", "5 seconds", "10 seconds", "15 seconds", "30 seconds", "45 seconds",
@@ -343,15 +361,50 @@ string ltfRaw = i_ltf == "1 second" ? "1S" :
   i_ltf == "30 minutes"  ? "30" :
   "1"
 
-int  chartSecs   = timeframe.in_seconds(timeframe.period)
-int  ltfSecs     = timeframe.in_seconds(ltfRaw)
-bool chartTooLow = chartSecs <= 60
-bool ltfNotLower = ltfSecs >= chartSecs
-bool forcedChart = i_ltf == "Chart" or chartTooLow
-bool fellBack    = not forcedChart and (isTickSel or ltfNotLower)
+int chartSecs = timeframe.in_seconds(timeframe.period)
 
-string ltfUsed = forcedChart ? "1" : (fellBack ? "1" : ltfRaw)
-bool   useLtf  = not forcedChart
+// ── auto lower timeframe ─────────────────────────────────────────────────────
+//  Pick the FINEST standard resolution whose intrabar count per chart bar stays
+//  under a target, because that count is what decides history:
+//
+//      intrabars per bar = chart TF / LTF
+//      depth in bars     = 100,000 / intrabars per bar
+//
+//  Derived from the ratio rather than a lookup table, so odd chart timeframes
+//  (45m, 2h, 3D) resolve sensibly instead of falling through to a default.
+//  Seconds are never chosen: they are gated on free plans, and picking one
+//  automatically would hand the user a resolution their account cannot serve.
+int autoTarget = i_ltfPrec == "Higher precision" ? 200 : i_ltfPrec == "More history" ? 50 : 100
+
+string ltfAuto =
+  chartSecs <= 60 * autoTarget      ? "1" :
+  chartSecs <= 180 * autoTarget     ? "3" :
+  chartSecs <= 300 * autoTarget     ? "5" :
+  chartSecs <= 900 * autoTarget     ? "15" :
+  chartSecs <= 1800 * autoTarget    ? "30" :
+  chartSecs <= 3600 * autoTarget    ? "60" :
+  chartSecs <= 7200 * autoTarget    ? "120" :
+  chartSecs <= 14400 * autoTarget   ? "240" :
+  "D"
+
+bool isTickSel = str.contains(i_ltf, "tick")
+bool isSecSel  = str.contains(i_ltf, "second")
+
+// A 1m chart has no lower minute resolution, so intrabar work is impossible there
+// whichever mode is selected.
+bool chartTooLow = chartSecs <= 60
+bool manualChart = not i_ltfAuto and i_ltf == "Chart"
+bool forcedChart = manualChart or chartTooLow
+
+int  ltfSecs     = timeframe.in_seconds(ltfRaw)
+bool ltfNotLower = ltfSecs >= chartSecs
+bool fellBack    = not i_ltfAuto and not forcedChart and (isTickSel or ltfNotLower)
+
+string ltfUsed = forcedChart ? "1" :
+  i_ltfAuto ? ltfAuto :
+  fellBack  ? ltfAuto :
+  ltfRaw
+bool useLtf = not forcedChart
 
 int ltfUsedSecs = timeframe.in_seconds(ltfUsed)
 int intrabarsPer = useLtf and ltfUsedSecs > 0 ? math.max(1, int(chartSecs / ltfUsedSecs)) : 1
@@ -1379,8 +1432,9 @@ if showDiag and barstate.islast
                text_color = cVal, text_size = size.tiny)
 
     table.cell(dash, 0, 6, "Engine", text_color = cLbl, text_size = size.tiny)
-    table.cell(dash, 1, 6, (useLtf ? "intrabar " + ltfUsed : "chart bar") +
-               (useLtf ? " · ~" + str.tostring(depthBars) + "b" : ""),
+    table.cell(dash, 1, 6, useLtfEff ? "intrabar " + ltfUsed +
+               (i_ltfAuto ? " (auto)" : " (manual)") + " · ~" + str.tostring(depthBars) + "b"
+               : "chart bar",
                text_color = cVal, text_size = size.tiny)
 
     table.cell(dash, 0, 7, "Anchor", text_color = cLbl, text_size = size.tiny)
@@ -1510,7 +1564,8 @@ if showCtab and barstate.islast
                text_color = dominance >= 60 ? color.orange : color.white, text_size = size.tiny)
 
     table.cell(dash, 0, fr + 2, "Setup", text_color = lbl, text_size = size.tiny)
-    table.cell(dash, 1, fr + 2, i_anchor + " · " + (useLtf ? "intrabar " + ltfUsed : "chart bar"),
+    table.cell(dash, 1, fr + 2, i_anchor + " · " + (useLtfEff ? "intrabar " + ltfUsed +
+               (i_ltfAuto ? " (auto)" : " (man)") : "chart bar"),
                text_color = color.white, text_size = size.tiny)
 
     table.cell(dash, 0, fr + 3, "Unlisted", text_color = lbl, text_size = size.tiny)
