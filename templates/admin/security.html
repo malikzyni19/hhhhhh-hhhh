@@ -1,0 +1,176 @@
+{% extends "admin/base.html" %}
+{% block title %}Bot Cleanup — ZyNi Admin{% endblock %}
+{% block page_title %}Security · Bot Cleanup{% endblock %}
+
+{% block content %}
+
+<div class="adm-card">
+  <div class="adm-card-header">
+    <div class="adm-card-title">Suspicious Accounts</div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-primary btn-sm" id="scanBtn" onclick="scanBots()">Run Scan</button>
+      <button class="btn btn-danger btn-sm" id="delBtn" onclick="deleteSelected()" disabled>Delete Selected</button>
+    </div>
+  </div>
+  <div class="adm-card-body">
+    <div style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:4px">
+      Flags accounts matching either rule:
+      <span class="badge amber" style="margin:0 3px">never_verified</span> email unverified for over 30 minutes, or
+      <span class="badge blue" style="margin:0 3px">never_logged_in</span> registered over 24 hours ago and never signed in.
+      Admin accounts are always excluded. Deletion is permanent.
+    </div>
+  </div>
+</div>
+
+<div class="adm-card" id="resultCard" style="display:none">
+  <div class="adm-card-header">
+    <div class="adm-card-title">Scan Results — <span id="resCount" style="color:var(--cyan)">0</span> found</div>
+    <label style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px;cursor:pointer">
+      <input type="checkbox" id="selAll" onchange="toggleAll(this)"> Select all
+    </label>
+  </div>
+  <div class="adm-table-wrap scroll">
+    <table class="adm-table">
+      <thead>
+        <tr>
+          <th style="width:34px"></th>
+          <th>Username</th>
+          <th>Email</th>
+          <th>Reason</th>
+          <th>Verified</th>
+          <th>Created</th>
+        </tr>
+      </thead>
+      <tbody id="resBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="adm-card" style="border-color:rgba(248,113,113,.3)">
+  <div class="adm-card-header">
+    <div class="adm-card-title" style="color:var(--red)">Danger Zone</div>
+  </div>
+  <div class="adm-card-body">
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6">
+      Permanently delete <strong style="color:var(--red)">every non-admin account</strong>. This cannot be undone.
+      Type <code style="color:var(--amber)">DELETE ALL NON ADMIN USERS</code> below to enable the button.
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      <input type="text" class="inp" id="purgeConfirm" placeholder="DELETE ALL NON ADMIN USERS"
+             style="max-width:280px" oninput="document.getElementById('purgeBtn').disabled = this.value !== 'DELETE ALL NON ADMIN USERS'">
+      <button class="btn btn-danger" id="purgeBtn" disabled onclick="purgeAll()">Purge All Non-Admins</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let found = [];
+
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+  {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+async function scanBots(){
+  const btn = document.getElementById('scanBtn');
+  btn.disabled = true; btn.textContent = 'Scanning…';
+  try {
+    const r = await fetch('/admin/security/bots');
+    const j = await r.json();
+    if(!j.ok) throw new Error(j.error || 'scan failed');
+    found = j.accounts || [];
+    render();
+  } catch(e){
+    alert('Scan failed: ' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Run Scan';
+  }
+}
+
+function render(){
+  document.getElementById('resultCard').style.display = '';
+  document.getElementById('resCount').textContent = found.length;
+  document.getElementById('selAll').checked = false;
+  const body = document.getElementById('resBody');
+
+  if(!found.length){
+    body.innerHTML = '<tr><td colspan="6" class="adm-empty">No suspicious accounts found. ✓</td></tr>';
+    syncBtn();
+    return;
+  }
+
+  body.innerHTML = found.map(a => `
+    <tr>
+      <td><input type="checkbox" class="botChk" value="${a.id}" onchange="syncBtn()"></td>
+      <td style="font-family:'JetBrains Mono',monospace;color:var(--cyan);font-size:11.5px">${esc(a.username)}</td>
+      <td style="font-size:11px;color:var(--muted)">${esc(a.email) || '—'}</td>
+      <td><span class="badge ${a.reason === 'never_verified' ? 'amber' : 'blue'}">${esc(a.reason)}</span></td>
+      <td>${a.email_verified
+            ? '<span class="badge green">yes</span>'
+            : '<span class="badge red">no</span>'}</td>
+      <td style="font-size:11px;color:var(--muted);white-space:nowrap">${esc((a.created_at || '').slice(0,16).replace('T',' '))}</td>
+    </tr>`).join('');
+  syncBtn();
+}
+
+function toggleAll(cb){
+  document.querySelectorAll('.botChk').forEach(c => c.checked = cb.checked);
+  syncBtn();
+}
+
+function selectedIds(){
+  return Array.from(document.querySelectorAll('.botChk:checked')).map(c => parseInt(c.value, 10));
+}
+
+function syncBtn(){
+  const n = selectedIds().length;
+  const b = document.getElementById('delBtn');
+  b.disabled = n === 0;
+  b.textContent = n ? `Delete Selected (${n})` : 'Delete Selected';
+}
+
+async function deleteSelected(){
+  const ids = selectedIds();
+  if(!ids.length) return;
+  if(!confirm(`Permanently delete ${ids.length} account(s)? This cannot be undone.`)) return;
+
+  const btn = document.getElementById('delBtn');
+  btn.disabled = true; btn.textContent = 'Deleting…';
+  try {
+    const r = await fetch('/admin/security/bots/delete', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ ids })
+    });
+    const j = await r.json();
+    if(!j.ok && j.error) throw new Error(j.error);
+    alert(`Deleted ${j.deleted != null ? j.deleted : ids.length} account(s).`);
+    found = found.filter(a => !ids.includes(a.id));
+    render();
+  } catch(e){
+    alert('Delete failed: ' + e.message);
+    syncBtn();
+  }
+}
+
+async function purgeAll(){
+  if(!confirm('Delete EVERY non-admin account? This is irreversible.')) return;
+  if(!confirm('Final confirmation — proceed with full purge?')) return;
+  const btn = document.getElementById('purgeBtn');
+  btn.disabled = true; btn.textContent = 'Purging…';
+  try {
+    const r = await fetch('/admin/security/purge-non-admins', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ confirm: 'DELETE ALL NON ADMIN USERS' })
+    });
+    const j = await r.json();
+    if(j.error) throw new Error(j.error);
+    alert(`Purged ${j.deleted != null ? j.deleted : 0} account(s).`);
+    location.reload();
+  } catch(e){
+    alert('Purge failed: ' + e.message);
+    btn.textContent = 'Purge All Non-Admins';
+  }
+}
+</script>
+
+{% endblock %}
