@@ -33699,6 +33699,12 @@ def api_compressed_scan():
 BASE_SCAN_EXCHANGES = {"binance", "mexc"}
 BASE_SCAN_TF = {"1d", "1w"}   # 1w has no INTERVAL_MAP entry outside Binance
 
+# Own cursor, deliberately not shared with ROUND_ROBIN_STATE. Base scanning
+# pulls ~450 daily candles per pair against Main Scan's much lighter fetch, so
+# the two advance at very different rates; sharing one index would make both
+# skip around the market unpredictably.
+BASE_ROUND_ROBIN_STATE: Dict[str, int] = {"index": 0}
+
 
 def _base_percentile_box(closes, lo_pct=10.0, hi_pct=90.0):
     """Band from percentiles, NOT max/min.
@@ -33880,6 +33886,13 @@ def api_base_scan():
     except (ValueError, TypeError):
         return jsonify({"error": "invalid_input", "message": "maxBreakoutAge must be an integer"}), 400
 
+    try:
+        pairs_per_cycle = int(payload.get("pairsPerCycle", 80))
+        if not (1 <= pairs_per_cycle <= 200):
+            return jsonify({"error": "invalid_input", "message": "pairsPerCycle must be between 1 and 200"}), 400
+    except (ValueError, TypeError):
+        return jsonify({"error": "invalid_input", "message": "pairsPerCycle must be an integer"}), 400
+
     raw_symbols = payload.get("symbols") or []
     if raw_symbols:
         normed = []
@@ -33891,7 +33904,17 @@ def api_base_scan():
                 normed.append(_s)
         symbols = list(dict.fromkeys(normed))
     else:
-        symbols = [p["symbol"] for p in get_pairs_exchange(exchange, market)[:80]]
+        all_pairs = [p["symbol"] for p in get_pairs_exchange(exchange, market)]
+        if payload.get("roundRobin", True) and all_pairs:
+            # Walk the market a batch at a time, wrapping at the end, so
+            # repeated scans cover new ground instead of re-checking the head.
+            start = BASE_ROUND_ROBIN_STATE["index"] % len(all_pairs)
+            symbols = all_pairs[start:start + pairs_per_cycle]
+            if len(symbols) < pairs_per_cycle:
+                symbols += all_pairs[:max(0, pairs_per_cycle - len(symbols))]
+            BASE_ROUND_ROBIN_STATE["index"] = (start + pairs_per_cycle) % len(all_pairs)
+        else:
+            symbols = all_pairs[:pairs_per_cycle]
 
     need = min(1500, base_window * 2 + max_break_age + 60)
     print(f"[DEBUG] base_scan exchange={exchange} market={market} tf={tf} window={base_window} need={need} symbols={len(symbols)}")
@@ -34102,6 +34125,8 @@ def api_base_scan():
         "market": market,
         "exchange": exchange,
         "baseWindow": base_window,
+        "pairsPerCycle": pairs_per_cycle,
+        "nextRoundRobinIndex": BASE_ROUND_ROBIN_STATE["index"],
         "usedClosedCandles": True,
     })
 

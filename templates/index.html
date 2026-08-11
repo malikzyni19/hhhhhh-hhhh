@@ -1860,6 +1860,9 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
         <div class="field"><label>Max Drift %</label><input id="baseMaxDrift" type="number" step="1" value="25"></div>
         <div class="field"><label>Max Breakout Age</label><input id="baseMaxBreakAge" type="number" value="30" min="0" max="200"></div>
       </div>
+      <div class="row">
+        <div class="field"><label>Pairs / Cycle</label><input id="basePairsPerCycle" type="number" value="40" min="1" max="200"></div>
+      </div>
       <button class="btn-primary" onclick="scanBase()" style="margin-top:4px">▶ SCAN BASES</button>
       <div id="baseResults" class="results" style="margin-top:12px"><div class="empty">Click Scan Bases to begin</div></div>
     </div>
@@ -3312,6 +3315,8 @@ async function scanBase(){
     minDrawdownPct: +$('baseMinDrawdown').value,
     maxDriftPct: +$('baseMaxDrift').value,
     maxBreakoutAge: +$('baseMaxBreakAge').value,
+    pairsPerCycle: +$('basePairsPerCycle').value || 40,
+    roundRobin: true,
     symbols: [...selectedPairs],
     market: marketType(),
     exchange: currentExchange()
@@ -3531,7 +3536,7 @@ const SAVE_IDS_VAL = [
   'btcCorrelationMode','btcLookback',
   'scanSource','pairsPerCycle','autoInterval','marketType',
   'compressedTf','compressedLookback','compressedMaxPct',
-  'baseTf','baseWindow','baseMinDrawdown','baseMaxDrift','baseMaxBreakAge',
+  'baseTf','baseWindow','baseMinDrawdown','baseMaxDrift','baseMaxBreakAge','basePairsPerCycle',
   'trendingTf','trendingMode','trendingLimit',
   'athMode','athStatus','athWindowHours','athBreakTolPct','athNearPct','athLimit',
   'tvLinkTarget',
