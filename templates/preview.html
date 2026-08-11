@@ -2690,7 +2690,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       { type:"num", key:"maxBreakoutAge", label:"Max breakout age",
         help:"How many candles back to look for the base end. Raise it to catch pairs that broke out a while ago." },
       { type:"num", bind:"state", key:"pairsPerCycle", label:"Pairs / cycle",
-        help:"Symbols checked per scan. Base scanning pulls ~450 daily candles per pair, so smaller batches finish far faster — hit Scan again to continue through the market from where it left off. Ignored when Scope is Selected." },
+        help:"Symbols checked per scan. Base scanning pulls ~450 daily candles per pair, so smaller batches finish far faster — hit Scan again to continue from where the last one stopped. Applies to both scopes; a watchlist that fits in one cycle is scanned whole." },
     ],
     trending: [
       { type:"select", key:"tf", label:"Timeframe",

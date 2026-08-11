@@ -33704,6 +33704,7 @@ BASE_SCAN_TF = {"1d", "1w"}   # 1w has no INTERVAL_MAP entry outside Binance
 # the two advance at very different rates; sharing one index would make both
 # skip around the market unpredictably.
 BASE_ROUND_ROBIN_STATE: Dict[str, int] = {"index": 0}
+BASE_ROUND_ROBIN_SELECTED_STATE: Dict[str, int] = {"index": 0}
 
 
 def _base_percentile_box(closes, lo_pct=10.0, hi_pct=90.0):
@@ -33903,6 +33904,20 @@ def api_base_scan():
             if _s:
                 normed.append(_s)
         symbols = list(dict.fromkeys(normed))
+        # Selected scope cycles too, mirroring /api/scan. A 200-pair watchlist
+        # at ~450 candles each is otherwise one very heavy request.
+        if len(symbols) <= pairs_per_cycle:
+            BASE_ROUND_ROBIN_SELECTED_STATE["index"] = 0
+        elif payload.get("roundRobin", True):
+            start = BASE_ROUND_ROBIN_SELECTED_STATE["index"] % len(symbols)
+            chosen = symbols[start:start + pairs_per_cycle]
+            if len(chosen) < pairs_per_cycle:
+                chosen += symbols[:max(0, pairs_per_cycle - len(chosen))]
+            BASE_ROUND_ROBIN_SELECTED_STATE["index"] = (start + pairs_per_cycle) % len(symbols)
+            symbols = chosen
+        else:
+            BASE_ROUND_ROBIN_SELECTED_STATE["index"] = 0
+            symbols = symbols[:pairs_per_cycle]
     else:
         all_pairs = [p["symbol"] for p in get_pairs_exchange(exchange, market)]
         if payload.get("roundRobin", True) and all_pairs:
