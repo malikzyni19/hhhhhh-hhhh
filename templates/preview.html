@@ -2304,46 +2304,46 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       </div>
     </div>
     <div class="cm-body"><iframe id="cmFrame" title="TradingView chart" frameborder="0" allowtransparency="true" scrolling="no" allowfullscreen></iframe></div>
-    <div class=”cm-note”>Live TradingView chart. Private / unpublished Pine indicators can't load in an embed — use “Open in TradingView” to view those.</div>
+    <div class="cm-note">Live TradingView chart. Private / unpublished Pine indicators can't load in an embed — use “Open in TradingView” to view those.</div>
   </div>
 </div>
 
 <!-- ═══ Zone Liquidity popup modal ═══ -->
-<div class=”chart-modal-bd” id=”zlModalBd” style=”display:none”></div>
-<div class=”chart-modal” id=”zlModal” role=”dialog” aria-modal=”true” aria-labelledby=”zlSym” style=”display:none”>
-  <div class=”chart-modal-card zl-card”>
-    <div class=”cm-head”>
-      <div class=”cm-title”>
-        <svg class=”ico” viewBox=”0 0 24 24” fill=”currentColor” style=”flex-shrink:0”><rect x=”3” y=”10” width=”4” height=”10”/><rect x=”10” y=”6” width=”4” height=”14”/><rect x=”17” y=”13” width=”4” height=”7”/></svg>
-        <span class=”cm-sym” id=”zlSym”>—</span>
-        <span class=”cm-tags” id=”zlTags”></span>
+<div class="chart-modal-bd" id="zlModalBd"></div>
+<div class="chart-modal" id="zlModal" role="dialog" aria-modal="true" aria-labelledby="zlSym">
+  <div class="chart-modal-card zl-card">
+    <div class="cm-head">
+      <div class="cm-title">
+        <svg class="ico" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink:0"><rect x="3" y="10" width="4" height="10"/><rect x="10" y="6" width="4" height="14"/><rect x="17" y="13" width="4" height="7"/></svg>
+        <span class="cm-sym" id="zlSym">—</span>
+        <span class="cm-tags" id="zlTags"></span>
       </div>
-      <div class=”cm-head-r”>
-        <button class=”ic-btn” id=”zlClose” type=”button” aria-label=”Close”><svg class=”ico” viewBox=”0 0 24 24”><path d=”M6 6l12 12M18 6L6 18”/></svg></button>
+      <div class="cm-head-r">
+        <button class="ic-btn" id="zlClose" type="button" aria-label="Close"><svg class="ico" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
       </div>
     </div>
-    <div class=”zl-ctrls” id=”zlCtrls”>
-      <span class=”zl-cl”>Window:</span>
-      <select class=”zl-csel” id=”zlWin” onchange=”window._zlApply()”>
-        <option value=”0.5”>&#177;0.50%</option>
-        <option value=”1”>&#177;1.00%</option>
-        <option value=”2”>&#177;2.00%</option>
-        <option value=”3”>&#177;3.00%</option>
-        <option value=”5” selected>&#177;5.00%</option>
-        <option value=”7.5”>&#177;7.50%</option>
-        <option value=”10”>&#177;10.00%</option>
+    <div class="zl-ctrls" id="zlCtrls">
+      <span class="zl-cl">Window:</span>
+      <select class="zl-csel" id="zlWin" onchange="window._zlApply()">
+        <option value="0.5">&#177;0.50%</option>
+        <option value="1">&#177;1.00%</option>
+        <option value="2">&#177;2.00%</option>
+        <option value="3">&#177;3.00%</option>
+        <option value="5" selected>&#177;5.00%</option>
+        <option value="7.5">&#177;7.50%</option>
+        <option value="10">&#177;10.00%</option>
       </select>
-      <span class=”zl-cl”>Min Wall:</span>
-      <select class=”zl-csel” id=”zlMinW” onchange=”window._zlApply()”>
-        <option value=”0” selected>Auto</option>
-        <option value=”250000”>$250K+</option>
-        <option value=”450000”>$450K+</option>
-        <option value=”1000000”>$1M+</option>
-        <option value=”2000000”>$2M+</option>
+      <span class="zl-cl">Min Wall:</span>
+      <select class="zl-csel" id="zlMinW" onchange="window._zlApply()">
+        <option value="0" selected>Auto</option>
+        <option value="250000">$250K+</option>
+        <option value="450000">$450K+</option>
+        <option value="1000000">$1M+</option>
+        <option value="2000000">$2M+</option>
       </select>
-      <span class=”zl-csrc” id=”zlSrc”></span>
+      <span class="zl-csrc" id="zlSrc"></span>
     </div>
-    <div class=”zl-body” id=”zlBody”></div>
+    <div class="zl-body" id="zlBody"></div>
   </div>
 </div>
 
@@ -3562,9 +3562,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var srcEl=E("zlSrc");
     if(srcEl) srcEl.textContent=(data&&data.source)?data.source:"";
     _zlApply();
-    var _bd=E("zlModalBd"),_md=E("zlModal");
-    if(_bd){_bd.style.cssText='display:block;position:fixed;inset:0;background:rgba(2,8,16,.8);z-index:9100;';_bd.classList.add("open");}
-    if(_md){_md.style.cssText='display:flex;position:fixed;inset:0;z-index:9101;align-items:center;justify-content:center;padding:24px;';_md.classList.add("open");}
+    E("zlModalBd").classList.add("open");
+    E("zlModal").classList.add("open");
     document.body.classList.add("sheet-open");
   }
   function _zlApply(){
@@ -3576,9 +3575,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     if(bodyEl) bodyEl.innerHTML=_zlRender(_zlData,wP,mW);
   }
   function _closeZlModal(){
-    var _bd=E("zlModalBd"),_md=E("zlModal");
-    if(_bd){_bd.classList.remove("open");_bd.style.cssText='display:none';}
-    if(_md){_md.classList.remove("open");_md.style.cssText='display:none';}
+    E("zlModalBd").classList.remove("open");
+    E("zlModal").classList.remove("open");
     document.body.classList.remove("sheet-open");
   }
   function _zlRender(d,winPct,minWall){
