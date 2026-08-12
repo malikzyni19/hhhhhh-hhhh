@@ -8160,7 +8160,15 @@ def admin_cvd_study_status():
 @app.route("/admin/debug/cvd-flow-study")
 @_cvd_study_guard
 def admin_cvd_study_page():
-    return render_template("cvd_flow_study.html")
+    # No-store: a phone cached this page and kept running the study with the
+    # old form defaults for two full rounds, producing reports that looked
+    # complete but silently used the wrong sampling. A research page that
+    # changes between runs must never be served from cache.
+    resp = make_response(render_template("cvd_flow_study.html"))
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
 
 
 # ── Watchlist streaming endpoints ──

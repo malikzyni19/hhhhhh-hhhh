@@ -95,6 +95,11 @@ SAPI_MIRROR = "https://data-api.binance.vision"   # geo-safe spot mirror
 
 USER_AGENT = "cvd-flow-study/1.0"
 
+# Benchmark for market-neutral returns. Nearly every alt is a levered bet
+# on this one, so "does the flow predict the coin BEYOND what BTC did" is a
+# different and much harder question than raw forward return.
+BENCHMARK = "BTCUSDT"
+
 # Pause between kline requests. Raised by the admin route: there the study
 # shares a Binance IP with the live scanner, and a rate-limit ban would take
 # the production scanner down with it. From a laptop 0.12s is plenty.
@@ -431,11 +436,19 @@ class Cell:
     def __init__(self):
         self.signed: List[float] = []          # fwd return * sign(flow), excess
         self.raw: List[float] = []             # fwd return, raw
+        # Same edge measured on the coin's move RELATIVE TO BITCOIN. Almost
+        # every alt tracks BTC, so 30 symbols agreeing is not 30 independent
+        # confirmations — it can be one BTC move counted thirty times. This
+        # column asks whether the flow predicted anything BTC did not.
+        self.signed_mn: List[float] = []
         self.per_symbol: Dict[str, List[float]] = {}
 
-    def add(self, symbol: str, signed_excess: float, raw: float):
+    def add(self, symbol: str, signed_excess: float, raw: float,
+            signed_mn: Optional[float] = None):
         self.signed.append(signed_excess)
         self.raw.append(raw)
+        if signed_mn is not None:
+            self.signed_mn.append(signed_mn)
         self.per_symbol.setdefault(symbol, []).append(signed_excess)
 
     def summary(self, min_per_symbol: int = 5) -> Dict:
@@ -454,6 +467,9 @@ class Cell:
             "raw_mean": statistics.fmean(self.raw),
             "symbols": len(syms),
             "symbols_positive": pos,
+            "n_mn": len(self.signed_mn),
+            "mean_mn": statistics.fmean(self.signed_mn) if self.signed_mn else None,
+            "t_mn": _tstat(self.signed_mn),
         }
 
 
@@ -480,13 +496,27 @@ def run(args, progress=None) -> Dict:
         return {}
 
     horizons = args.horizons
-    # cells[stream][flow][price][H]
-    cells: Dict = {
-        s: {f: {p: {h: Cell() for h in horizons} for p in PRICE_BUCKETS}
-            for f in FLOW_BUCKETS}
-        for s in STREAMS
-    }
+    hmax = max(horizons)
+
+    def _new_cells():
+        return {s: {f: {p: {h: Cell() for h in horizons} for p in PRICE_BUCKETS}
+                    for f in FLOW_BUCKETS}
+                for s in STREAMS}
+
+    # Two parallel sets. `cells` follows --stride and drives the big
+    # exploration table. `icells` always samples one bar in hmax so forward
+    # windows never overlap, and it is what the robustness screen reads —
+    # significance must not depend on a UI field anyone can leave at 1.
+    cells = _new_cells()
+    icells = _new_cells()
     baseline: Dict[int, Cell] = {h: Cell() for h in horizons}
+
+    # Benchmark for the market-neutral column.
+    btc = fetch_klines(BENCHMARK, args.tf, args.bars, "perp")
+    btc_map = {r["t"]: r["c"] for r in btc}
+    if not btc_map:
+        print("warning: no benchmark data — market-neutral column unavailable",
+              file=sys.stderr)
 
     used, skipped = [], []
     total = len(symbols)
@@ -523,7 +553,8 @@ def run(args, progress=None) -> Dict:
             _skip("overlap", f"only {len(srows)} overlapping bars")
             continue
 
-        _accumulate(sym, srows, prows, args, cells, baseline, spot_scale)
+        _accumulate(sym, srows, prows, args, cells, icells, baseline,
+                    spot_scale, btc_map)
         used.append(sym)
         print(f"ok ({len(srows)} bars)")
         if progress:
@@ -540,12 +571,14 @@ def run(args, progress=None) -> Dict:
         "symbols_used": used,
         "symbols_skipped": skipped,
         "cells": cells,
+        "icells": icells,
         "baseline": baseline,
         "horizons": horizons,
     }
 
 
-def _accumulate(sym, srows, prows, args, cells, baseline, spot_scale: float = 1.0):
+def _accumulate(sym, srows, prows, args, cells, icells, baseline,
+                spot_scale: float = 1.0, btc_map: Optional[Dict] = None):
     """Bucket every eligible bar of one symbol into the cell accumulators."""
     closes = [r["c"] for r in prows]        # perp price is the traded price
     n = len(closes)
@@ -573,17 +606,47 @@ def _accumulate(sym, srows, prows, args, cells, baseline, spot_scale: float = 1.
     hmax = max(args.horizons)
     start = args.lookback + args.window + 1
 
+    # Benchmark-relative return at each bar, per horizon. None where the
+    # benchmark has no bar at that timestamp (or for the benchmark itself,
+    # where the answer would be a trivial zero).
+    is_bench = (sym == BENCHMARK)
+    btc_map = btc_map or {}
+
+    def _rel(i: int, h: int, raw: float) -> Optional[float]:
+        if is_bench or not btc_map:
+            return None
+        a = btc_map.get(prows[i]["t"])
+        b = btc_map.get(prows[i + h]["t"])
+        if a is None or b is None or a <= 0:
+            return None
+        return raw - (b / a - 1.0) * 100.0
+
     # Unconditional forward return per symbol, per horizon — the drift we
-    # subtract so a bull sample cannot masquerade as predictive flow.
+    # subtract so a bull sample cannot masquerade as predictive flow. The same
+    # is done for the benchmark-relative series, so a coin that simply
+    # outperformed BTC all period does not read as predictive flow either.
     drift: Dict[int, float] = {}
+    drift_rel: Dict[int, float] = {}
     for h in args.horizons:
-        rets = [(closes[i + h] / closes[i] - 1.0) * 100.0
-                for i in range(start, n - hmax) if closes[i] > 0]
+        rets, rels = [], []
+        for i in range(start, n - hmax):
+            if closes[i] <= 0:
+                continue
+            r = (closes[i + h] / closes[i] - 1.0) * 100.0
+            rets.append(r)
+            rl = _rel(i, h, r)
+            if rl is not None:
+                rels.append(rl)
         drift[h] = statistics.fmean(rets) if rets else 0.0
+        drift_rel[h] = statistics.fmean(rels) if rels else 0.0
         for r in rets:
             baseline[h].add(sym, r - drift[h], r)
 
-    for i in range(start, n - hmax, args.stride):
+    for i in range(start, n - hmax):
+        in_sample = ((i - start) % args.stride == 0)
+        in_indep = ((i - start) % hmax == 0)
+        if not (in_sample or in_indep):
+            continue
         if not inbase[i]:
             continue
         mz = move_z[i]
@@ -609,7 +672,13 @@ def _accumulate(sym, srows, prows, args, cells, baseline, spot_scale: float = 1.
                 if closes[i] <= 0:
                     continue
                 raw = (closes[i + h] / closes[i] - 1.0) * 100.0
-                cells[stream][fb][pb][h].add(sym, sign * (raw - drift[h]), raw)
+                sgn = sign * (raw - drift[h])
+                rl = _rel(i, h, raw)
+                mn = None if rl is None else sign * (rl - drift_rel[h])
+                if in_sample:
+                    cells[stream][fb][pb][h].add(sym, sgn, raw, mn)
+                if in_indep:
+                    icells[stream][fb][pb][h].add(sym, sgn, raw, mn)
 
 
 # ───────────────────────────── reporting ─────────────────────────────
@@ -715,8 +784,8 @@ def _screen(res: Dict, args, min_t: float = 2.0, min_agree: float = 0.70) -> Lis
         for fb in FLOW_BUCKETS:
             for pb in PRICE_BUCKETS:
                 for h in res["horizons"]:
-                    s = res["cells"][stream][fb][pb][h].summary(
-                        args.min_events_per_symbol)
+                    s = res.get("icells", res["cells"])[stream][fb][pb][h]\
+                        .summary(args.min_events_per_symbol)
                     if s["n"] < args.min_cell_events:
                         continue
                     if s["t"] is None or abs(s["t"]) < min_t:
@@ -834,11 +903,29 @@ def _verdict_lines(res: Dict, args) -> List[str]:
         add("  not predict forward returns here.")
     else:
         add(f"  {'stream':<7} {'flow':<5} {'price':<8} {'bars':>5} {'edge %':>8}"
-            f" {'med %':>8} {'t':>6} {'agree':>6} {'n':>6}")
+            f" {'med %':>8} {'t':>6} {'agree':>6} {'n':>6} {'vsBTC%':>8} {'tBTC':>6}")
         for stream, fb, pb, h, s, agree in survivors[:12]:
+            mn = "     —" if s.get("mean_mn") is None else f"{s['mean_mn']:>8.2f}"
+            tm = "     —" if s.get("t_mn") is None else f"{s['t_mn']:>6.1f}"
             add(f"  {stream:<7} {fb:<5} {pb:<8} {h:>5} {s['mean']:>8.2f}"
                 f" {s['median']:>8.2f} {s['t']:>6.1f} {agree*100:>5.0f}%"
-                f" {s['n']:>6}")
+                f" {s['n']:>6} {mn} {tm}")
+        add("")
+        # The BTC columns are the ones that decide whether any of this is
+        # tradeable information or just beta wearing a costume.
+        held = [r for r in survivors
+                if r[4].get("t_mn") is not None and abs(r[4]["t_mn"]) >= 2.0
+                and (r[4]["mean_mn"] > 0) == (r[4]["mean"] > 0)]
+        add(f"  vsBTC% / tBTC = the same edge measured on each coin's move")
+        add("  RELATIVE TO BITCOIN. Almost every alt is a levered BTC bet, so")
+        add("  30 symbols agreeing can be one BTC move counted 30 times.")
+        add(f"  Of {len(survivors)} survivors, {len(held)} keep a same-signed")
+        add("  edge at |t|>=2 once BTC is removed.")
+        if survivors and not held:
+            add("  NONE survive it. On this sample the flow signal is BTC beta:")
+            add("  it tells you where the whole market went, not which coin to")
+            add("  pick. Useful as a market-wide risk filter, useless as a")
+            add("  per-pair scanner column.")
         add("")
         add("  Read the price column: QUIET is the 'quiet candles' setup,")
         add("  ALIGNED is plain flow momentum, OPPOSED is flow diverging from")
@@ -878,8 +965,8 @@ def _luck_lines(res: Dict, args, n_survivors: int) -> List[str]:
         for fb in FLOW_BUCKETS:
             for pb in PRICE_BUCKETS:
                 for h in res["horizons"]:
-                    s = res["cells"][stream][fb][pb][h].summary(
-                        args.min_events_per_symbol)
+                    s = res.get("icells", res["cells"])[stream][fb][pb][h]\
+                        .summary(args.min_events_per_symbol)
                     if s["n"] >= args.min_cell_events and s.get("t") is not None:
                         tested += 1
     expected = tested * 0.0455        # two-sided |t| >= 2 under the null
@@ -899,14 +986,13 @@ def _luck_lines(res: Dict, args, n_survivors: int) -> List[str]:
         add("  cell at t just over 2 is exactly what chance delivers.")
 
     hmax = max(res["horizons"])
+    add("")
+    add(f"  The ROBUST CELLS screen above always samples one bar in {hmax}, so")
+    add("  its forward windows never overlap regardless of the stride setting.")
     if args.stride < hmax:
-        add("")
-        add(f"  OVERLAP: stride is {args.stride} but the longest horizon is"
-            f" {hmax} bars, so")
-        add("  consecutive events share most of their forward window. The")
-        add("  t-stats above are inflated \u2014 treat them as a ranking, not as")
-        add(f"  significance. Re-run with stride {hmax} for independent")
-        add("  samples; an edge that dies there was never real.")
+        add(f"  The big per-horizon tables use stride {args.stride}, so their")
+        add("  t columns ARE inflated by overlap \u2014 read those as a ranking")
+        add("  only. The screen is the part to trust.")
     return L
 
 
