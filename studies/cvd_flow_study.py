@@ -213,7 +213,26 @@ def spot_symbol_for(perp: str) -> Tuple[str, float]:
     return perp, 1.0
 
 
-def top_symbols(market: str, n: int, quote: str = "USDT") -> List[str]:
+def spot_universe(quote: str = "USDT") -> set:
+    """Every symbol that actually trades on Binance spot.
+
+    Binance now lists tokenized equities and commodities as perps — XAUUSDT,
+    SOXLUSDT, SAMSUNGUSDT, CLUSDT — which rank high on futures volume but have
+    no spot market at all. Ranking by perp volume alone spent most of the
+    symbol budget fetching pairs that could never qualify, so the perp list is
+    intersected with this set before anything is downloaded.
+    """
+    data = (_get_json(SAPI + "/api/v3/exchangeInfo", {"permissions": "SPOT"})
+            or _get_json(SAPI_MIRROR + "/api/v3/exchangeInfo", {"permissions": "SPOT"}))
+    out = set()
+    for s in (data or {}).get("symbols", []):
+        if s.get("status") == "TRADING" and str(s.get("symbol", "")).endswith(quote):
+            out.add(s["symbol"])
+    return out
+
+
+def top_symbols(market: str, n: int, quote: str = "USDT",
+                require_spot: bool = False) -> List[str]:
     """Top-N USDT pairs by 24h quote volume."""
     if market == "perp":
         data = _get_json(FAPI + "/fapi/v1/ticker/24hr", {})
@@ -238,7 +257,14 @@ def top_symbols(market: str, n: int, quote: str = "USDT") -> List[str]:
             continue
         rows.append((qv, sym))
     rows.sort(reverse=True)
-    return [s for _, s in rows[:n]]
+    ranked = [s for _, s in rows]
+    if require_spot:
+        uni = spot_universe(quote)
+        if uni:      # only filter when the lookup succeeded — never silently
+                     # return an empty universe because one request failed
+            ranked = [s for s in ranked
+                      if s in uni or spot_symbol_for(s)[0] in uni]
+    return ranked[:n]
 
 
 # ─────────────────────── series construction ───────────────────────
@@ -444,7 +470,8 @@ def run(args, progress=None) -> Dict:
     The callback exists so a long run can report itself from somewhere other
     than a terminal — the admin route drives a status page from it.
     """
-    symbols = args.symbol_list or top_symbols("perp", args.symbols)
+    symbols = args.symbol_list or top_symbols("perp", args.symbols,
+                                              require_spot=True)
     if not symbols:
         print("Could not fetch a symbol list. Check network access to Binance.",
               file=sys.stderr)
@@ -670,6 +697,47 @@ def report(res: Dict, args, stream=None) -> None:
     (stream or sys.stdout).write(render(res, args))
 
 
+def _screen(res: Dict, args, min_t: float = 2.0, min_agree: float = 0.70) -> List:
+    """Every cell that survives a robustness screen, strongest first.
+
+    Four filters, each one added because a cell passed the previous ones while
+    still being junk:
+      * enough events            — a big t on 6 samples means nothing
+      * |t| >= min_t             — the verdict once crowned a cell at t=1.0
+      * symbol agreement         — one coin can carry a pooled average
+      * mean and median agree    — at a 24-bar horizon a single 300% alt move
+                                   drags the mean positive while the median
+                                   sits negative. Sign disagreement means the
+                                   average describes an outlier, not a rule.
+    """
+    out = []
+    for stream in STREAMS:
+        for fb in FLOW_BUCKETS:
+            for pb in PRICE_BUCKETS:
+                for h in res["horizons"]:
+                    s = res["cells"][stream][fb][pb][h].summary(
+                        args.min_events_per_symbol)
+                    if s["n"] < args.min_cell_events:
+                        continue
+                    if s["t"] is None or abs(s["t"]) < min_t:
+                        continue
+                    if s["symbols"] < 3:
+                        continue
+                    # Agreement is measured toward the edge's own direction:
+                    # a consistent FADE is as real a finding as a consistent
+                    # FOLLOW, and counting only positives would hide it.
+                    agree = s["symbols_positive"] / s["symbols"]
+                    if s["mean"] < 0:
+                        agree = 1.0 - agree
+                    if agree < min_agree:
+                        continue
+                    if (s["mean"] > 0) != (s["median"] > 0):
+                        continue
+                    out.append((stream, fb, pb, h, s, agree))
+    out.sort(key=lambda r: -abs(r[4]["t"]))
+    return out
+
+
 def _verdict_lines(res: Dict, args) -> List[str]:
     """Plain-language answer to Q1 and Q2, from the QUIET bucket only."""
     horizons = res["horizons"]
@@ -728,32 +796,55 @@ def _verdict_lines(res: Dict, args) -> List[str]:
         add("     as 'which stream is best'. **")
         add("")
 
+    # \u2500\u2500 Q2: does the quiet-price setup predict anything at all? \u2500\u2500
+    quiet_hit = None
+    for stream, fb, pb, h, s, agree in _screen(res, args):
+        if pb == "QUIET":
+            quiet_hit = (stream, fb, h, s, agree)
+            break
+
     if best is None:
-        add(f"  No cell reached {args.min_cell_events} events. Loosen --flow-z,")
-        add("  raise --quiet-z, or widen the sample with --symbols / --bars.")
-        return L
-    stream, m, h, _t = best
-    if abs(m) < 0.05:
-        add("  No usable edge in either direction. The 'big CVD, quiet price'")
-        add("  setup does not predict the next move on this sample. Do NOT wire")
-        add("  it into the scanner as a signal.")
-    elif m > 0:
-        add(f"  Price FOLLOWS the flow. Strongest on {stream} at {h} bars"
-            f" ({m:+.3f}% edge).")
-        add("  This supports the 'large buying the sellers cannot absorb' reading:")
-        add("  quiet price plus one-sided flow precedes a move in the flow's")
-        add(f"  direction. Build the scanner column on the {stream} stream,")
-        add(f"  scored at roughly a {h}-bar horizon.")
+        add(f"  No QUIET cell reached {args.min_cell_events} events. Loosen")
+        add("  --flow-z, raise --quiet-z, or widen the sample.")
+    elif quiet_hit is None:
+        add("  THE QUIET-PRICE SETUP SHOWS NO USABLE EDGE on this sample.")
+        add("  Not one 'big CVD move, quiet candles' cell survives a basic")
+        add("  robustness screen (enough events, |t| >= 2, 70% of symbols")
+        add("  agreeing, mean and median pointing the same way).")
+        add("  On this evidence, do NOT build a scanner signal on it.")
     else:
-        add(f"  Price FADES the flow. Strongest on {stream} at {h} bars"
-            f" ({m:+.3f}% edge).")
-        add("  This is the absorption reading: flow that cannot move price is")
-        add("  being absorbed, and price resolves AGAINST it. If it holds up,")
-        add("  the scanner column should be inverted relative to the raw flow.")
+        stream, fb, h, s, agree = quiet_hit
+        d = "FOLLOWS" if s["mean"] > 0 else "FADES"
+        add(f"  Quiet-price flow survives the screen: price {d} the flow on")
+        add(f"  {stream}, {fb} flow, at {h} bars \u2014 edge {s['mean']:+.3f}%,")
+        add(f"  t={s['t']:.1f}, {agree*100:.0f}% of symbols agree, n={s['n']}.")
     add("")
-    add("  Compare the QUIET rows against ALIGNED. If ALIGNED is just as strong,")
-    add("  the quiet-price condition is adding nothing and plain flow momentum")
-    add("  is the whole effect \u2014 that would be a much less interesting result.")
+
+    # \u2500\u2500 The wider screen: where IS the signal, if not in QUIET? \u2500\u2500
+    survivors = _screen(res, args)
+    add("-" * 78)
+    add("  ROBUST CELLS  (n >= %d, |t| >= 2, >=70%% symbols agree, mean and"
+        % args.min_cell_events)
+    add("                 median same sign) \u2014 strongest first")
+    add("-" * 78)
+    if not survivors:
+        add("  Nothing survives. No bucket on this sample carries a signal that")
+        add("  is both statistically and cross-sectionally consistent. That is")
+        add("  a real answer, not a failed run \u2014 it says this feature set does")
+        add("  not predict forward returns here.")
+    else:
+        add(f"  {'stream':<7} {'flow':<5} {'price':<8} {'bars':>5} {'edge %':>8}"
+            f" {'med %':>8} {'t':>6} {'agree':>6} {'n':>6}")
+        for stream, fb, pb, h, s, agree in survivors[:12]:
+            add(f"  {stream:<7} {fb:<5} {pb:<8} {h:>5} {s['mean']:>8.2f}"
+                f" {s['median']:>8.2f} {s['t']:>6.1f} {agree*100:>5.0f}%"
+                f" {s['n']:>6}")
+        add("")
+        add("  Read the price column: QUIET is the 'quiet candles' setup,")
+        add("  ALIGNED is plain flow momentum, OPPOSED is flow diverging from")
+        add("  price. Whichever dominates this list is where the information")
+        add("  actually is \u2014 and it is not necessarily the one we set out to")
+        add("  test.")
     return L
 
 
