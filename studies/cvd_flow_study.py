@@ -95,6 +95,11 @@ SAPI_MIRROR = "https://data-api.binance.vision"   # geo-safe spot mirror
 
 USER_AGENT = "cvd-flow-study/1.0"
 
+# Pause between kline requests. Raised by the admin route: there the study
+# shares a Binance IP with the live scanner, and a rate-limit ban would take
+# the production scanner down with it. From a laptop 0.12s is plenty.
+REQUEST_SLEEP = 0.12
+
 
 # ───────────────────────────── HTTP ─────────────────────────────
 
@@ -180,7 +185,7 @@ def fetch_klines(symbol: str, interval: str, want: int, market: str) -> List[Dic
         end_ms = batch[0]["t"] - 1
         if len(batch) < params["limit"]:
             break                        # ran out of history
-        time.sleep(0.12)                 # be polite to the weight limiter
+        time.sleep(REQUEST_SLEEP)        # be polite to the weight limiter
 
     # Deduplicate and sort; drop the still-forming last bar.
     seen = {}
@@ -415,11 +420,18 @@ FLOW_BUCKETS = ("UP", "DOWN")
 PRICE_BUCKETS = ("QUIET", "ALIGNED", "OPPOSED")
 
 
-def run(args) -> Dict:
+def run(args, progress=None) -> Dict:
+    """Run the study. `progress(done, total, message)` is called per symbol.
+
+    The callback exists so a long run can report itself from somewhere other
+    than a terminal — the admin route drives a status page from it.
+    """
     symbols = args.symbol_list or top_symbols("perp", args.symbols)
     if not symbols:
         print("Could not fetch a symbol list. Check network access to Binance.",
               file=sys.stderr)
+        if progress:
+            progress(0, 0, "Could not fetch a symbol list — no route to Binance.")
         return {}
 
     horizons = args.horizons
@@ -432,27 +444,35 @@ def run(args) -> Dict:
     baseline: Dict[int, Cell] = {h: Cell() for h in horizons}
 
     used, skipped = [], []
+    total = len(symbols)
+    need = args.lookback + args.window + max(horizons) + 50
     for idx, sym in enumerate(symbols, 1):
-        print(f"[{idx}/{len(symbols)}] {sym} ...", end=" ", flush=True)
+        print(f"[{idx}/{total}] {sym} ...", end=" ", flush=True)
+
+        def _skip(reason: str, note: str):
+            print(f"skip ({note})")
+            skipped.append((sym, reason))
+            if progress:
+                progress(idx, total, f"{sym} — skipped, {note}")
+
         perp = fetch_klines(sym, args.tf, args.bars, "perp")
         spot = fetch_klines(sym, args.tf, args.bars, "spot")
-        if len(perp) < args.lookback + args.window + max(horizons) + 50:
-            print("skip (perp history too short)")
-            skipped.append((sym, "perp history"))
+        if len(perp) < need:
+            _skip("perp history", "perp history too short")
             continue
-        if len(spot) < args.lookback + args.window + max(horizons) + 50:
-            print("skip (no/short spot listing)")
-            skipped.append((sym, "spot history"))
+        if len(spot) < need:
+            _skip("spot history", "no/short spot listing")
             continue
         srows, prows = align(spot, perp)
-        if len(srows) < args.lookback + args.window + max(horizons) + 50:
-            print("skip (too little overlap)")
-            skipped.append((sym, "overlap"))
+        if len(srows) < need:
+            _skip("overlap", "too little spot/perp overlap")
             continue
 
         _accumulate(sym, srows, prows, args, cells, baseline)
         used.append(sym)
         print(f"ok ({len(srows)} bars)")
+        if progress:
+            progress(idx, total, f"{sym} — ok, {len(srows)} bars")
 
     return {
         "params": {
@@ -538,44 +558,52 @@ def _accumulate(sym, srows, prows, args, cells, baseline):
 
 def _fmt(v, nd=3, width=8):
     if v is None:
-        return "—".rjust(width)
+        return "\u2014".rjust(width)
     return f"{v:.{nd}f}".rjust(width)
 
 
-def report(res: Dict, args) -> None:
+def render(res: Dict, args) -> str:
+    """Build the whole report as text.
+
+    Returns a string rather than printing so the same output can go to a
+    terminal, a file, or an HTML page without three copies of the formatting.
+    """
     if not res:
-        return
+        return "No results.\n"
+    L: List[str] = []
+    add = L.append
+
     horizons = res["horizons"]
     cells = res["cells"]
     baseline = res["baseline"]
-
-    print()
-    print("=" * 78)
-    print("  CVD FLOW STUDY — does price follow the flow, or fade it?")
-    print("=" * 78)
     p = res["params"]
-    print(f"  timeframe {p['tf']}   bars/symbol {p['bars']}   flow window {p['window']} bars")
-    print(f"  z lookback {p['lookback']}   flow threshold |z|>={p['flow_z']}   quiet |z|<={p['quiet_z']}")
-    print(f"  sampling stride {p['stride']}   horizons {horizons}"
-          + (f"   [inside accumulation bases only, window {p['base_window']}]"
-             if p["in_base"] else ""))
-    print(f"  symbols used {len(res['symbols_used'])}"
-          f"   skipped {len(res['symbols_skipped'])}")
-    print()
-    print("  SIGNED EDGE = mean(forward return x sign(flow)) minus that symbol's")
-    print("  own drift.  POSITIVE = price FOLLOWS the flow.  NEGATIVE = price FADES it.")
-    print("  'syms' = how many symbols show a positive edge, out of those with enough")
-    print("  events. That ratio is the honest robustness check, not the t-stat.")
-    print()
+
+    add("")
+    add("=" * 78)
+    add("  CVD FLOW STUDY \u2014 does price follow the flow, or fade it?")
+    add("=" * 78)
+    add(f"  timeframe {p['tf']}   bars/symbol {p['bars']}   flow window {p['window']} bars")
+    add(f"  z lookback {p['lookback']}   flow threshold |z|>={p['flow_z']}   quiet |z|<={p['quiet_z']}")
+    add(f"  sampling stride {p['stride']}   horizons {horizons}"
+        + (f"   [inside accumulation bases only, window {p['base_window']}]"
+           if p["in_base"] else ""))
+    add(f"  symbols used {len(res['symbols_used'])}"
+        f"   skipped {len(res['symbols_skipped'])}")
+    add("")
+    add("  SIGNED EDGE = mean(forward return x sign(flow)) minus that symbol's")
+    add("  own drift.  POSITIVE = price FOLLOWS the flow.  NEGATIVE = price FADES it.")
+    add("  'syms' = how many symbols show a positive edge, out of those with enough")
+    add("  events. That ratio is the honest robustness check, not the t-stat.")
+    add("")
 
     for h in horizons:
         b = baseline[h].summary()
-        print("-" * 78)
-        print(f"  HORIZON: {h} bars forward"
-              f"   (unconditional mean move {b.get('raw_mean', 0.0):+.3f}%)")
-        print("-" * 78)
-        print(f"  {'stream':<7} {'flow':<5} {'price':<8} {'N':>7} "
-              f"{'edge %':>8} {'med %':>8} {'win %':>7} {'t':>7} {'syms':>9}")
+        add("-" * 78)
+        add(f"  HORIZON: {h} bars forward"
+            f"   (unconditional mean move {b.get('raw_mean', 0.0):+.3f}%)")
+        add("-" * 78)
+        add(f"  {'stream':<7} {'flow':<5} {'price':<8} {'N':>7} "
+            f"{'edge %':>8} {'med %':>8} {'win %':>7} {'t':>7} {'syms':>9}")
         for stream in STREAMS:
             for fb in FLOW_BUCKETS:
                 for pb in PRICE_BUCKETS:
@@ -583,21 +611,29 @@ def report(res: Dict, args) -> None:
                     if s["n"] == 0:
                         continue
                     syms = f"{s['symbols_positive']}/{s['symbols']}"
-                    print(f"  {stream:<7} {fb:<5} {pb:<8} {s['n']:>7} "
-                          f"{_fmt(s['mean'])} {_fmt(s['median'])} "
-                          f"{s['win']:>6.1f} {_fmt(s['t'], 2, 7)} {syms:>9}")
-            print()
+                    add(f"  {stream:<7} {fb:<5} {pb:<8} {s['n']:>7} "
+                        f"{_fmt(s['mean'])} {_fmt(s['median'])} "
+                        f"{s['win']:>6.1f} {_fmt(s['t'], 2, 7)} {syms:>9}")
+            add("")
 
-    _verdict(res, args)
+    L.extend(_verdict_lines(res, args))
+    return "\n".join(L) + "\n"
 
 
-def _verdict(res: Dict, args) -> None:
+def report(res: Dict, args, stream=None) -> None:
+    """Print the report. Thin wrapper over render()."""
+    (stream or sys.stdout).write(render(res, args))
+
+
+def _verdict_lines(res: Dict, args) -> List[str]:
     """Plain-language answer to Q1 and Q2, from the QUIET bucket only."""
     horizons = res["horizons"]
     cells = res["cells"]
-    print("=" * 78)
-    print("  VERDICT")
-    print("=" * 78)
+    L: List[str] = []
+    add = L.append
+    add("=" * 78)
+    add("  VERDICT")
+    add("=" * 78)
 
     # Ranked by |t|, NOT by |edge|. Forward returns compound, so the longest
     # horizon always has the largest raw edge and picking by magnitude would
@@ -613,14 +649,12 @@ def _verdict(res: Dict, args) -> None:
             merged += cells[stream]["UP"]["QUIET"][h].signed
             merged += cells[stream]["DOWN"]["QUIET"][h].signed
             if not merged:
-                line.append(f"h{h}: —")
+                line.append(f"h{h}: \u2014")
                 continue
             m = statistics.fmean(merged)
             t = _tstat(merged)
-            sp = (up.get("symbols_positive", 0) + dn.get("symbols_positive", 0))
-            st = (up.get("symbols", 0) + dn.get("symbols", 0))
-            agree += sp
-            total += st
+            agree += up.get("symbols_positive", 0) + dn.get("symbols_positive", 0)
+            total += up.get("symbols", 0) + dn.get("symbols", 0)
             line.append(f"h{h}: {m:+.3f}% (t={t:.1f})" if t is not None
                         else f"h{h}: {m:+.3f}%")
             # A handful of events can produce a huge t by luck; require a
@@ -629,36 +663,41 @@ def _verdict(res: Dict, args) -> None:
                 if best is None or abs(t) > abs(best[3]):
                     best = (stream, m, h, t)
         share = (100.0 * agree / total) if total else 0.0
-        print(f"  {stream:<7} quiet-price flow  " + "   ".join(line))
-        print(f"  {'':<7} symbol agreement {share:.0f}%")
-    print()
+        add(f"  {stream:<7} quiet-price flow  " + "   ".join(line))
+        add(f"  {'':<7} symbol agreement {share:.0f}%")
+    add("")
 
     if best is None:
-        print(f"  No cell reached {args.min_cell_events} events. Loosen --flow-z,")
-        print("  raise --quiet-z, or widen the sample with --symbols / --bars.")
-        return
+        add(f"  No cell reached {args.min_cell_events} events. Loosen --flow-z,")
+        add("  raise --quiet-z, or widen the sample with --symbols / --bars.")
+        return L
     stream, m, h, _t = best
     if abs(m) < 0.05:
-        print("  No usable edge in either direction. The 'big CVD, quiet price'")
-        print("  setup does not predict the next move on this sample. Do NOT wire")
-        print("  it into the scanner as a signal.")
+        add("  No usable edge in either direction. The 'big CVD, quiet price'")
+        add("  setup does not predict the next move on this sample. Do NOT wire")
+        add("  it into the scanner as a signal.")
     elif m > 0:
-        print(f"  Price FOLLOWS the flow. Strongest on {stream} at {h} bars"
-              f" ({m:+.3f}% edge).")
-        print("  This supports the 'large buying the sellers cannot absorb' reading:")
-        print("  quiet price plus one-sided flow precedes a move in the flow's")
-        print("  direction. Build the scanner column on the")
-        print(f"  {stream} stream, scored at roughly a {h}-bar horizon.")
+        add(f"  Price FOLLOWS the flow. Strongest on {stream} at {h} bars"
+            f" ({m:+.3f}% edge).")
+        add("  This supports the 'large buying the sellers cannot absorb' reading:")
+        add("  quiet price plus one-sided flow precedes a move in the flow's")
+        add(f"  direction. Build the scanner column on the {stream} stream,")
+        add(f"  scored at roughly a {h}-bar horizon.")
     else:
-        print(f"  Price FADES the flow. Strongest on {stream} at {h} bars"
-              f" ({m:+.3f}% edge).")
-        print("  This is the absorption reading: flow that cannot move price is")
-        print("  being absorbed, and price resolves AGAINST it. If it holds up,")
-        print("  the scanner column should be inverted relative to the raw flow.")
-    print()
-    print("  Compare the QUIET rows against ALIGNED. If ALIGNED is just as strong,")
-    print("  the quiet-price condition is adding nothing and plain flow momentum")
-    print("  is the whole effect — that would be a much less interesting result.")
+        add(f"  Price FADES the flow. Strongest on {stream} at {h} bars"
+            f" ({m:+.3f}% edge).")
+        add("  This is the absorption reading: flow that cannot move price is")
+        add("  being absorbed, and price resolves AGAINST it. If it holds up,")
+        add("  the scanner column should be inverted relative to the raw flow.")
+    add("")
+    add("  Compare the QUIET rows against ALIGNED. If ALIGNED is just as strong,")
+    add("  the quiet-price condition is adding nothing and plain flow momentum")
+    add("  is the whole effect \u2014 that would be a much less interesting result.")
+    return L
+
+
+def _verdict(res: Dict, args, stream=None) -> None:
+    (stream or sys.stdout).write("\n".join(_verdict_lines(res, args)) + "\n")
 
 
 # ───────────────────────────── cli ─────────────────────────────

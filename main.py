@@ -7955,6 +7955,157 @@ def api_admin_tab_toggle():
     return jsonify({"ok": True, "tab_controls": _tab_controls})
 
 
+# ── CVD flow study (temporary research route) ──
+#
+# Answers, from history rather than from argument: when aggregated CVD moves
+# hard while the candles stay quiet, does price FOLLOW the flow or FADE it,
+# and which stream (spot / perp / both) carries the information. The result
+# decides how the Accumulation section's Flow column gets built — nothing is
+# wired into the scanner until this says the signal is real.
+#
+# It runs in a background thread ON PURPOSE. gunicorn here is
+# `--timeout 120 --workers 1`: a multi-minute study in the request path would
+# hit the timeout AND block the only worker, freezing the site for every user
+# until it finished. The handler returns immediately and the page polls.
+#
+# Delete this block and studies/ once the question is settled.
+
+_cvd_study_lock  = threading.Lock()
+_cvd_study_state = {
+    "running":  False,
+    "done":     0,
+    "total":    0,
+    "message":  "",
+    "log":      [],
+    "report":   "",
+    "error":    "",
+    "started":  None,
+    "finished": None,
+    "params":   {},
+}
+
+# Hard ceilings. The study shares a Binance IP with the live scanner, so an
+# unbounded run could get the production address rate-limited.
+_CVD_STUDY_MAX_SYMBOLS = 40
+_CVD_STUDY_MAX_BARS    = 1500
+
+
+def _cvd_study_worker(params: dict):
+    """Run the study off-request and record progress into _cvd_study_state."""
+    import io
+    import types as _types
+
+    def _progress(done, total, message):
+        with _cvd_study_lock:
+            _cvd_study_state["done"]    = done
+            _cvd_study_state["total"]   = total
+            _cvd_study_state["message"] = message
+            _cvd_study_state["log"].append(message)
+            del _cvd_study_state["log"][:-200]   # bound the buffer
+
+    try:
+        # Imported here, not at module scope: a broken study file must never
+        # be able to stop the site from booting.
+        from studies import cvd_flow_study as cfs
+
+        # From the server we share an IP with the live scanner; slow the
+        # request cadence down well below what a laptop would use.
+        cfs.REQUEST_SLEEP = 0.35
+
+        args = _types.SimpleNamespace(
+            tf=params["tf"], bars=params["bars"], symbols=params["symbols"],
+            symbol_list=params["symbol_list"], window=params["window"],
+            lookback=params["lookback"], flow_z=params["flow_z"],
+            quiet_z=params["quiet_z"], horizons=params["horizons"],
+            stride=params["stride"], min_events_per_symbol=5,
+            min_cell_events=params["min_cell_events"],
+            in_base=params["in_base"], base_window=params["base_window"],
+            base_drift=params["base_drift"], json=None,
+        )
+        buf = io.StringIO()
+        res = cfs.run(args, progress=_progress)
+        if not res:
+            raise RuntimeError("no results — could not reach Binance from the server")
+        cfs.report(res, args, stream=buf)
+        text = buf.getvalue()
+        with _cvd_study_lock:
+            _cvd_study_state["report"] = text
+    except Exception as e:
+        traceback.print_exc()
+        with _cvd_study_lock:
+            _cvd_study_state["error"] = f"{type(e).__name__}: {e}"
+    finally:
+        with _cvd_study_lock:
+            _cvd_study_state["running"]  = False
+            _cvd_study_state["finished"] = datetime.now(timezone.utc).isoformat()
+
+
+@app.route("/admin/debug/cvd-flow-study/start", methods=["POST"])
+@admin_required
+def admin_cvd_study_start():
+    body = request.get_json(force=True, silent=True) or {}
+
+    def _num(key, default, lo, hi, cast=float):
+        try:
+            v = cast(body.get(key, default))
+        except (TypeError, ValueError):
+            return default
+        return max(lo, min(hi, v))
+
+    raw_syms = body.get("symbolList") or ""
+    symbol_list = [s.strip().upper() for s in str(raw_syms).replace(",", " ").split()
+                   if s.strip()] or None
+
+    tf = str(body.get("tf", "4h"))
+    if tf not in ("1m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d"):
+        return jsonify({"error": "unsupported timeframe"}), 400
+
+    params = {
+        "tf":          tf,
+        "bars":        _num("bars", 1500, 300, _CVD_STUDY_MAX_BARS, int),
+        "symbols":     _num("symbols", 15, 1, _CVD_STUDY_MAX_SYMBOLS, int),
+        "symbol_list": symbol_list,
+        "window":      _num("window", 6, 1, 50, int),
+        "lookback":    _num("lookback", 200, 30, 500, int),
+        "flow_z":      _num("flowZ", 2.0, 0.5, 5.0),
+        "quiet_z":     _num("quietZ", 0.5, 0.05, 3.0),
+        "stride":      _num("stride", 1, 1, 50, int),
+        "min_cell_events": _num("minCellEvents", 30, 5, 500, int),
+        "horizons":    [1, 3, 6, 12, 24],
+        "in_base":     bool(body.get("inBase", False)),
+        "base_window": _num("baseWindow", 60, 20, 300, int),
+        "base_drift":  _num("baseDrift", 25.0, 1.0, 100.0),
+    }
+
+    with _cvd_study_lock:
+        if _cvd_study_state["running"]:
+            return jsonify({"error": "a study is already running"}), 409
+        _cvd_study_state.update({
+            "running": True, "done": 0,
+            "total": len(symbol_list) if symbol_list else params["symbols"],
+            "message": "starting…", "log": [], "report": "", "error": "",
+            "started": datetime.now(timezone.utc).isoformat(),
+            "finished": None, "params": params,
+        })
+
+    threading.Thread(target=_cvd_study_worker, args=(params,),
+                     daemon=True, name="cvd-flow-study").start()
+    return jsonify({"ok": True, "params": params})
+
+
+@app.route("/admin/debug/cvd-flow-study/status")
+@admin_required
+def admin_cvd_study_status():
+    with _cvd_study_lock:
+        return jsonify(dict(_cvd_study_state))
+
+
+@app.route("/admin/debug/cvd-flow-study")
+@admin_required
+def admin_cvd_study_page():
+    return render_template("cvd_flow_study.html")
+
+
 # ── Watchlist streaming endpoints ──
 
 @app.route("/api/watchlist/register", methods=["POST"])

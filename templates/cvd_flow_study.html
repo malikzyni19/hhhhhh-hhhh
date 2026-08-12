@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>CVD Flow Study — ZyNi</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg-app:#05080e; --bg-card:#0e1521; --bg-card-2:#101826;
+  --border:#1b2636; --border-2:#243144;
+  --text:#e6edf6; --text-2:#8a9bb3; --text-3:#566377;
+  --accent:#22d3ee; --green:#2dd4bf; --red:#f87171; --amber:#fbbf24;
+}
+body{
+  background:var(--bg-app); color:var(--text);
+  font-family:Inter,system-ui,-apple-system,sans-serif;
+  padding:14px; padding-bottom:60px; line-height:1.5;
+}
+h1{font-size:17px;font-weight:700;letter-spacing:-.2px}
+.sub{color:var(--text-2);font-size:12.5px;margin-top:4px}
+.card{
+  background:var(--bg-card); border:1px solid var(--border);
+  border-radius:12px; padding:14px; margin-top:14px;
+}
+.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+label{display:block;font-size:11px;color:var(--text-2);margin-bottom:4px;
+  text-transform:uppercase;letter-spacing:.4px}
+input,select{
+  width:100%; background:var(--bg-card-2); border:1px solid var(--border-2);
+  color:var(--text); border-radius:8px; padding:9px 10px; font-size:15px;
+  font-family:inherit;
+}
+/* 16px minimum stops iOS Safari zooming the page on focus */
+input,select{font-size:16px}
+.full{grid-column:1/-1}
+.row{display:flex;align-items:center;gap:8px;margin-top:10px}
+button{
+  background:var(--accent); color:#04222a; border:0; border-radius:9px;
+  padding:12px 16px; font-size:15px; font-weight:600; font-family:inherit;
+  width:100%; margin-top:12px;
+}
+button:disabled{opacity:.45}
+button.ghost{background:transparent;color:var(--text-2);
+  border:1px solid var(--border-2);margin-top:8px}
+.hint{color:var(--text-3);font-size:11.5px;margin-top:8px}
+.bar{height:6px;background:var(--bg-card-2);border-radius:99px;overflow:hidden;
+  margin-top:10px}
+.bar span{display:block;height:100%;background:var(--accent);width:0%;
+  transition:width .3s}
+.status{font-size:13px;color:var(--text-2);margin-top:8px;
+  font-family:'JetBrains Mono',monospace;word-break:break-word}
+.err{color:var(--red);font-size:13px;margin-top:8px}
+pre{
+  background:#060a11; border:1px solid var(--border); border-radius:10px;
+  padding:12px; margin-top:12px; overflow-x:auto;
+  font-family:'JetBrains Mono',monospace; font-size:10.5px; line-height:1.45;
+  white-space:pre; color:#cfe0f0;
+}
+.legend{font-size:12px;color:var(--text-2);margin-top:10px}
+.legend b{color:var(--green)}
+.legend i{color:var(--red);font-style:normal}
+</style>
+</head>
+<body>
+
+<h1>CVD Flow Study</h1>
+<div class="sub">
+  Does price <b>follow</b> the flow, or <b>fade</b> it? Runs in the background —
+  it will not block the site.
+</div>
+
+<div class="card">
+  <div class="grid">
+    <div>
+      <label>Timeframe</label>
+      <select id="tf">
+        <option>15m</option><option>30m</option><option>1h</option>
+        <option>2h</option><option selected>4h</option><option>1d</option>
+      </select>
+    </div>
+    <div>
+      <label>Symbols</label>
+      <input id="symbols" type="number" value="15" min="1" max="40" />
+    </div>
+    <div>
+      <label>Bars each</label>
+      <input id="bars" type="number" value="1500" min="300" max="1500" />
+    </div>
+    <div>
+      <label>Flow window</label>
+      <input id="window" type="number" value="6" min="1" max="50" />
+    </div>
+    <div>
+      <label>Flow |z| ≥</label>
+      <input id="flowZ" type="number" step="0.1" value="2.0" />
+    </div>
+    <div>
+      <label>Quiet |z| ≤</label>
+      <input id="quietZ" type="number" step="0.05" value="0.5" />
+    </div>
+    <div>
+      <label>Stride</label>
+      <input id="stride" type="number" value="1" min="1" max="50" />
+    </div>
+    <div>
+      <label>Inside base only</label>
+      <select id="inBase">
+        <option value="0" selected>no</option>
+        <option value="1">yes</option>
+      </select>
+    </div>
+    <div class="full">
+      <label>Specific symbols (optional)</label>
+      <input id="symbolList" placeholder="BTCUSDT ETHUSDT — blank = top volume" />
+    </div>
+  </div>
+
+  <button id="go">Run study</button>
+  <div class="hint">
+    15 symbols at 4h takes roughly 2–4 minutes. Requests are deliberately
+    throttled so this cannot get the server rate-limited by Binance while the
+    live scanner is running. Leave this page — the run continues; come back to
+    read it.
+  </div>
+
+  <div class="bar"><span id="barfill"></span></div>
+  <div class="status" id="status">idle</div>
+  <div class="err" id="err"></div>
+</div>
+
+<div class="card" id="resultCard" style="display:none">
+  <div class="legend">
+    <b>Positive edge = price FOLLOWS the flow.</b>
+    <i>Negative = price FADES it (absorption).</i>
+    Trust the <b>syms</b> column over the t-stat.
+  </div>
+  <pre id="report"></pre>
+  <button class="ghost" id="copy">Copy report</button>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let timer = null;
+
+function paint(s){
+  const pct = s.total ? Math.round(100 * s.done / s.total) : 0;
+  $('barfill').style.width = pct + '%';
+  if (s.running) {
+    $('status').textContent = `running — ${s.done}/${s.total} · ${s.message || ''}`;
+    $('go').disabled = true;
+    $('go').textContent = 'Running…';
+  } else {
+    $('go').disabled = false;
+    $('go').textContent = 'Run study';
+    $('status').textContent = s.report ? `done — ${s.done}/${s.total} symbols`
+                                       : (s.error ? 'failed' : 'idle');
+  }
+  $('err').textContent = s.error || '';
+  if (s.report) {
+    $('resultCard').style.display = 'block';
+    $('report').textContent = s.report;
+  }
+}
+
+async function poll(){
+  try {
+    const r = await fetch('/admin/debug/cvd-flow-study/status');
+    if (!r.ok) return;
+    const s = await r.json();
+    paint(s);
+    // Stop polling once it settles, so an idle phone is not hitting the
+    // server every two seconds forever.
+    if (!s.running && timer) { clearInterval(timer); timer = null; }
+  } catch (e) { /* transient network on mobile — keep polling */ }
+}
+
+$('go').onclick = async () => {
+  $('err').textContent = '';
+  $('resultCard').style.display = 'none';
+  const body = {
+    tf: $('tf').value,
+    symbols: +$('symbols').value,
+    bars: +$('bars').value,
+    window: +$('window').value,
+    flowZ: +$('flowZ').value,
+    quietZ: +$('quietZ').value,
+    stride: +$('stride').value,
+    inBase: $('inBase').value === '1',
+    symbolList: $('symbolList').value
+  };
+  const r = await fetch('/admin/debug/cvd-flow-study/start', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  });
+  const j = await r.json();
+  if (!r.ok) { $('err').textContent = j.error || 'failed to start'; return; }
+  $('go').disabled = true;
+  if (!timer) timer = setInterval(poll, 2000);
+  poll();
+};
+
+$('copy').onclick = async () => {
+  try {
+    await navigator.clipboard.writeText($('report').textContent);
+    $('copy').textContent = 'Copied';
+  } catch (e) {
+    // clipboard API needs HTTPS + a user gesture; select as a fallback
+    const rg = document.createRange();
+    rg.selectNodeContents($('report'));
+    getSelection().removeAllRanges();
+    getSelection().addRange(rg);
+    $('copy').textContent = 'Selected — long-press to copy';
+  }
+  setTimeout(() => { $('copy').textContent = 'Copy report'; }, 2500);
+};
+
+// A run started before this page loaded (or before a refresh) keeps going —
+// pick it up instead of showing a misleading "idle".
+(async () => {
+  await poll();
+  const r = await fetch('/admin/debug/cvd-flow-study/status');
+  if (r.ok && (await r.json()).running) timer = setInterval(poll, 2000);
+})();
+</script>
+</body>
+</html>
