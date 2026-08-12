@@ -135,6 +135,14 @@ pre{
   </div>
 
   <button id="go">Run study</button>
+  <button class="ghost" id="goProxy">Check proxy accuracy</button>
+  <div class="hint">
+    <b>Check proxy accuracy</b> answers a different question: only Binance
+    publishes the real buy/sell split, so multi-venue CVD can only ever use
+    the bar-direction approximation. This grades that approximation against
+    the real thing on the one venue where both exist. Uses
+    <span id="subTfLabel">15m</span> sub-bars.
+  </div>
   <div class="hint">
     <b>Independent sampling</b> is the honest setting: it takes one event per
     24 bars so forward windows do not overlap. It cuts the event count ~24x,
@@ -197,10 +205,12 @@ async function poll(){
   } catch (e) { /* transient network on mobile — keep polling */ }
 }
 
-$('go').onclick = async () => {
+async function start(mode){
   $('err').textContent = '';
   $('resultCard').style.display = 'none';
   const body = {
+    mode: mode,
+    subTf: '15m',
     tf: $('tf').value,
     symbols: +$('symbols').value,
     bars: +$('bars').value,
@@ -222,7 +232,10 @@ $('go').onclick = async () => {
   $('go').disabled = true;
   if (!timer) timer = setInterval(poll, 2000);
   poll();
-};
+}
+
+$('go').onclick = () => start('flow');
+$('goProxy').onclick = () => start('proxy');
 
 $('copy').onclick = async () => {
   try {

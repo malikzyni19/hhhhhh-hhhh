@@ -8079,12 +8079,23 @@ def _cvd_study_worker(params: dict):
             in_base=params["in_base"], base_window=params["base_window"],
             base_drift=params["base_drift"], json=None,
         )
-        buf = io.StringIO()
-        res = cfs.run(args, progress=_progress)
-        if not res:
-            raise RuntimeError("no results — could not reach Binance from the server")
-        cfs.report(res, args, stream=buf)
-        text = buf.getvalue()
+        if params.get("mode") == "proxy":
+            from studies import cvd_proxy_check as cpc
+            args.sub_tf = params["sub_tf"]
+            args.max_sub_bars = params["max_sub_bars"]
+            pres = cpc.run_proxy_check(args, progress=_progress)
+            if not pres:
+                raise RuntimeError(
+                    "no results — could not reach Binance from the server")
+            text = cpc.render_proxy(pres)
+        else:
+            buf = io.StringIO()
+            res = cfs.run(args, progress=_progress)
+            if not res:
+                raise RuntimeError(
+                    "no results — could not reach Binance from the server")
+            cfs.report(res, args, stream=buf)
+            text = buf.getvalue()
         with _cvd_study_lock:
             _cvd_study_state["report"] = text
     except Exception as e:
@@ -8134,6 +8145,12 @@ def admin_cvd_study_start():
         # sparser buckets (QUIET especially) ever reach the evidence floor.
         "horizons":    [h for h in (1, 3, 6, 12, 24)
                         if h <= _num("maxHorizon", 24, 1, 24, int)],
+        "mode":        "proxy" if body.get("mode") == "proxy" else "flow",
+        "sub_tf":      str(body.get("subTf", "15m")),
+        # Sub-bar fetches are the heavy part: a 4h bar needs 16 15m bars or 48
+        # 5m ones. Capped so a single run cannot spend an hour hammering
+        # Binance from the same IP the live scanner uses.
+        "max_sub_bars": _num("maxSubBars", 12000, 1000, 40000, int),
         "in_base":     bool(body.get("inBase", False)),
         "base_window": _num("baseWindow", 60, 20, 300, int),
         "base_drift":  _num("baseDrift", 25.0, 1.0, 100.0),
