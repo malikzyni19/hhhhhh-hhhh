@@ -80,12 +80,21 @@ def make_series(n: int, mode: str, seed: int, window: int = 6, horizon: int = 6)
     return rows
 
 
-def run_world(mode: str, symbols=("AAAUSDT", "BBBUSDT", "CCCUSDT", "DDDUSDT")):
-    """Run the real study end to end against synthetic klines."""
-    data = {s: make_series(1400, mode, seed=hash(s) & 0xFFFF) for s in symbols}
+def run_world(mode: str, symbols=("AAAUSDT", "BBBUSDT", "CCCUSDT", "DDDUSDT"),
+              benchmark=None):
+    """Run the real study end to end against synthetic klines.
 
-    S.fetch_klines = lambda sym, tf, want, market: data[sym]
-    S.top_symbols = lambda market, n, quote="USDT": list(symbols)
+    `benchmark` supplies the BTCUSDT series the market-neutral column is
+    measured against. When it is None the study still asks for it, so the
+    fetch must return an empty list rather than raising — a missing benchmark
+    has to degrade to "no vsBTC column", never to a crash.
+    """
+    data = {s: make_series(1400, mode, seed=hash(s) & 0xFFFF) for s in symbols}
+    if benchmark is not None:
+        data[S.BENCHMARK] = benchmark
+
+    S.fetch_klines = lambda sym, tf, want, market: data.get(sym, [])
+    S.top_symbols = lambda market, n, quote="USDT", require_spot=False: list(symbols)
 
     args = types.SimpleNamespace(
         tf="1m", bars=1400, symbols=len(symbols), symbol_list=list(symbols),
@@ -117,9 +126,28 @@ def main():
         if not ok:
             failures.append(f"{mode}: edge {mean:+.3f}% has the wrong sign")
 
-    # The QUIET bucket must actually be populated by the planted events, and
-    # the trailing z-scores must not leak the future: shifting every forward
-    # return by one bar should NOT preserve the edge if the code peeked.
+    # BETA WORLD: every symbol IS the benchmark, bar for bar. The raw edge
+    # must still show up, and the vs-BTC edge must collapse to ~0 — otherwise
+    # the market-neutral column cannot tell alpha from beta, which is the one
+    # job it exists to do.
+    syms = ("AAAUSDT", "BBBUSDT", "CCCUSDT", "DDDUSDT")
+    bench = make_series(1400, "follow", seed=hash("AAAUSDT") & 0xFFFF)
+    res, merged = run_world("follow", syms, benchmark=bench)
+    cell = res["icells"]["global"]["UP"]["QUIET"][6]
+    raw_edge = sum(cell.signed) / len(cell.signed) if cell.signed else 0.0
+    mn_edge = (sum(cell.signed_mn) / len(cell.signed_mn)) if cell.signed_mn else None
+    if mn_edge is None:
+        failures.append("beta: no market-neutral samples collected")
+        print("  beta    FAIL — vsBTC column never populated")
+    else:
+        ok = abs(raw_edge) > 0.5 and abs(mn_edge) < 0.5
+        print(f"  beta    raw={raw_edge:+.3f}%  vsBTC={mn_edge:+.3f}%  "
+              f"(vsBTC must be ~0)  {'OK' if ok else 'FAIL'}")
+        if not ok:
+            failures.append(
+                f"beta: raw {raw_edge:+.3f}% / vsBTC {mn_edge:+.3f}% — the "
+                "market-neutral column did not cancel pure beta")
+
     print()
     if failures:
         for f in failures:
