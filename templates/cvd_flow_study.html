@@ -122,6 +122,16 @@ pre{
       </select>
     </div>
     <div>
+      <label>Proxy sub-bars</label>
+      <!-- This IS the proxy's resolution. 15m gives 16 sub-bars per 4h bar,
+           1m gives 240. Judging the rule on 15m alone would be unfair to it. -->
+      <select id="subTf">
+        <option value="15m">15m (16/bar, fastest)</option>
+        <option value="5m" selected>5m (48/bar)</option>
+        <option value="1m">1m (240/bar, slow)</option>
+      </select>
+    </div>
+    <div>
       <label>Inside base only</label>
       <select id="inBase">
         <option value="0" selected>no</option>
@@ -141,7 +151,7 @@ pre{
     publishes the real buy/sell split, so multi-venue CVD can only ever use
     the bar-direction approximation. This grades that approximation against
     the real thing on the one venue where both exist. Uses
-    <span id="subTfLabel">15m</span> sub-bars.
+    the sub-bar setting above — run it at 15m, 5m and 1m and compare.
   </div>
   <div class="hint">
     <b>Independent sampling</b> is the honest setting: it takes one event per
@@ -210,7 +220,7 @@ async function start(mode){
   $('resultCard').style.display = 'none';
   const body = {
     mode: mode,
-    subTf: '15m',
+    subTf: $('subTf').value,
     tf: $('tf').value,
     symbols: +$('symbols').value,
     bars: +$('bars').value,

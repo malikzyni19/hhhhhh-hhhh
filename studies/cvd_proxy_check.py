@@ -123,12 +123,16 @@ def run_proxy_check(args, progress=None) -> Dict:
     per_bar = chart_ms // sub_ms
 
     rows: List[Dict] = []
+    lookbacks: List[int] = []
     total = len(symbols)
     for idx, sym in enumerate(symbols, 1):
         if progress:
             progress(idx - 1, total, f"{sym} — fetching")
         chart = fetch_klines(sym, args.tf, args.bars, "perp")
-        if len(chart) < args.lookback + args.window + 20:
+        # Floor, not args.lookback: the lookback is shrunk to fit coverage
+        # further down, so gating on the requested value here would skip every
+        # symbol before that adjustment ever ran.
+        if len(chart) < 40 + args.window + 20:
             if progress:
                 progress(idx, total, f"{sym} — skipped, short history")
             continue
@@ -155,10 +159,21 @@ def run_proxy_check(args, progress=None) -> Dict:
                 continue
             true_v.append(2.0 * r["tb"] - r["v"])
             prox_v.append(pmap.get(b, 0.0))
-        if len(true_v) < args.lookback + args.window + 20:
+
+        # Finer sub-bars cover fewer chart bars for the same fetch budget: at
+        # 1m a 4h bar needs 240 sub-bars, so coverage can fall below the
+        # z-score lookback and every symbol would be skipped, reporting
+        # "no data" for what is really a budget limit. Shrink the lookback to
+        # fit instead, and say so.
+        lookback = args.lookback
+        need = lookback + args.window + 20
+        if len(true_v) < need:
+            lookback = len(true_v) - args.window - 20
+        if lookback < 40:
             if progress:
-                progress(idx, total, f"{sym} — skipped, {len(true_v)} covered bars")
+                progress(idx, total, f"{sym} — skipped, only {len(true_v)} covered bars")
             continue
+        lookbacks.append(lookback)
 
         corr = pearson(true_v, prox_v)
         both = [(a, b) for a, b in zip(true_v, prox_v) if a != 0 and b != 0]
@@ -168,9 +183,9 @@ def run_proxy_check(args, progress=None) -> Dict:
         # Bucket agreement — the metric that decides whether the proxy is
         # usable for this study, since the study only ever sees buckets.
         tz = rolling_z([v or 0.0 for v in window_sums(true_v, args.window)],
-                       args.lookback)
+                       lookback)
         pz = rolling_z([v or 0.0 for v in window_sums(prox_v, args.window)],
-                       args.lookback)
+                       lookback)
         same = tot = same_act = tot_act = 0
         for a, b in zip(tz, pz):
             ba, bb = _bucket(a, args.flow_z), _bucket(b, args.flow_z)
@@ -199,7 +214,9 @@ def run_proxy_check(args, progress=None) -> Dict:
 
     return {"rows": rows, "params": {
         "tf": args.tf, "sub_tf": args.sub_tf, "bars": args.bars,
-        "window": args.window, "lookback": args.lookback, "flow_z": args.flow_z,
+        "window": args.window, "lookback": args.lookback,
+        "flow_z": args.flow_z, "sub_per_bar": per_bar,
+        "lookback_used": (min(lookbacks) if lookbacks else args.lookback),
     }}
 
 
@@ -216,8 +233,15 @@ def render_proxy(res: Dict) -> str:
     add("=" * 78)
     add("  PROXY CHECK — does bar-direction reproduce true taker delta?")
     add("=" * 78)
-    add(f"  chart {p['tf']}   sub-bars {p['sub_tf']}   flow window {p['window']}"
-        f"   z lookback {p['lookback']}   |z|>={p['flow_z']}")
+    add(f"  chart {p['tf']}   sub-bars {p['sub_tf']}"
+        f"   ({p.get('sub_per_bar', '?')} sub-bars per chart bar)")
+    add(f"  flow window {p['window']}   z lookback"
+        f" {p.get('lookback_used', p['lookback'])}   |z|>={p['flow_z']}")
+    add("")
+    add("  Sub-bar granularity IS the proxy's resolution: bar-direction\n"
+        "  approximates tick classification, so 16 sub-bars per bar is a much\n"
+        "  coarser approximation than 240. Compare runs across 15m / 5m / 1m\n"
+        "  before concluding anything about the rule itself.")
     add("")
     add("  Only Binance publishes the real taker split, so this is the one")
     add("  venue where the proxy can be graded. Multi-venue aggregation can")

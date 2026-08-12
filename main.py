@@ -8146,11 +8146,13 @@ def admin_cvd_study_start():
         "horizons":    [h for h in (1, 3, 6, 12, 24)
                         if h <= _num("maxHorizon", 24, 1, 24, int)],
         "mode":        "proxy" if body.get("mode") == "proxy" else "flow",
-        "sub_tf":      str(body.get("subTf", "15m")),
+        "sub_tf":      (str(body.get("subTf", "15m"))
+                        if str(body.get("subTf", "15m")) in
+                        ("1m", "3m", "5m", "15m", "30m") else "15m"),
         # Sub-bar fetches are the heavy part: a 4h bar needs 16 15m bars or 48
         # 5m ones. Capped so a single run cannot spend an hour hammering
         # Binance from the same IP the live scanner uses.
-        "max_sub_bars": _num("maxSubBars", 12000, 1000, 40000, int),
+        "max_sub_bars": _num("maxSubBars", 40000, 1000, 150000, int),
         "in_base":     bool(body.get("inBase", False)),
         "base_window": _num("baseWindow", 60, 20, 300, int),
         "base_drift":  _num("baseDrift", 25.0, 1.0, 100.0),
