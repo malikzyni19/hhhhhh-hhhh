@@ -8128,7 +8128,12 @@ def admin_cvd_study_start():
         "quiet_z":     _num("quietZ", 0.5, 0.05, 3.0),
         "stride":      _num("stride", 1, 1, 50, int),
         "min_cell_events": _num("minCellEvents", 30, 5, 500, int),
-        "horizons":    [1, 3, 6, 12, 24],
+        # Independent sampling takes one bar per max-horizon, so the longest
+        # horizon sets how many events the screen can ever see. Capping it at
+        # 6 instead of 24 quadruples the independent sample — the only way the
+        # sparser buckets (QUIET especially) ever reach the evidence floor.
+        "horizons":    [h for h in (1, 3, 6, 12, 24)
+                        if h <= _num("maxHorizon", 24, 1, 24, int)],
         "in_base":     bool(body.get("inBase", False)),
         "base_window": _num("baseWindow", 60, 20, 300, int),
         "base_drift":  _num("baseDrift", 25.0, 1.0, 100.0),
