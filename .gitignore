@@ -23,6 +23,3 @@ instance/
 *.backup-*.html
 *.backup-*.py
 *.backup-*.js
-
-# TradingView MCP server (cloned locally, not vendored)
-tradingview-mcp/
