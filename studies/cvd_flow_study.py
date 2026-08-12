@@ -726,6 +726,18 @@ def render(res: Dict, args) -> str:
             reasons.setdefault(why, []).append(sym)
         for why, syms in sorted(reasons.items()):
             add(f"  skipped ({why}): " + " ".join(syms))
+    if p["flow_z"] <= p["quiet_z"]:
+        # The setup is "flow unusually large, price unusually still", so the
+        # flow threshold must sit ABOVE the quiet threshold. Inverted, QUIET
+        # swallows most bars and stops isolating anything — and the report
+        # still prints a full, confident-looking table. Almost always a swap
+        # of the two fields.
+        add("")
+        add(f"  ** THRESHOLDS LOOK SWAPPED: flow |z|>={p['flow_z']} is at or")
+        add(f"     below quiet |z|<={p['quiet_z']}. The setup needs the flow bar")
+        add("     HIGHER than the quiet bar (e.g. flow 1.5, quiet 0.75).")
+        add("     As set, nearly every bar lands in QUIET and the buckets stop")
+        add("     separating anything. Re-run with the two values exchanged. **")
     if len(res["symbols_used"]) < 8:
         add("")
         add("  ** WARNING: too few symbols for a trustworthy result. Anything")
