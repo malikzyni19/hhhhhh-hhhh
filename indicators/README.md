@@ -115,10 +115,23 @@ The diagnostics table reports the displayed stream's CVD, per-stream bar delta,
 visible, never mistaken for flat flow), engine + history depth, and request
 budget used.
 
-Venue set after testing: BitMEX, KuCoin, Upbit and Bithumb dropped; Hyperliquid
-(spot + perp), MEXC (spot + perp), Gate.io and HTX added. **16 venues
-(10 spot, 6 perp), 32/40 requests** — four request slots free, so up to four more
-venues fit before the engine needs restructuring.
+Venue set after testing: BitMEX and Bithumb dropped; Hyperliquid (spot + perp),
+MEXC (spot + perp), Gate.io and HTX added; KuCoin later restored, then Upbit and
+DigiFinex added to spot. **19 venues (13 spot, 6 perp), 38/40 requests** — one
+venue slot left before the engine needs restructuring, since every venue costs
+two requests (`request.security_lower_tf` + `request.security`).
+
+Upbit is quoted `UPBIT:<base>KRW`, not USDT: the KRW book is where Upbit's real
+depth sits. That costs nothing to mix in because the engine sums **base units
+(coins), not notional** — the same choice that made the built-in-CVD parity work
+— so no FX conversion is involved. Coins with no KRW market simply show
+inactive via `ignore_invalid_symbol`. DigiFinex is USDT-quoted and its ticker
+prefix is unverified on TradingView, like Hyperliquid's.
+
+Adding a venue touches ~25 sites. The one that bit us in Phase 4 is the
+`array.get(vLineRank, N)` block, whose indices must match array position — the
+indices are now generated from the `vShare` member order rather than written by
+hand, so they cannot drift out of step with the arrays they index into.
 
 Gate.io and HTX were added after a coverage audit on a low-cap token (Talus/US)
 found them to be the #1 and #4 spot venues by volume while both were absent from
