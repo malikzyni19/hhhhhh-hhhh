@@ -8120,7 +8120,7 @@ def admin_cvd_study_start():
     params = {
         "tf":          tf,
         "bars":        _num("bars", 1500, 300, _CVD_STUDY_MAX_BARS, int),
-        "symbols":     _num("symbols", 15, 1, _CVD_STUDY_MAX_SYMBOLS, int),
+        "symbols":     _num("symbols", 30, 1, _CVD_STUDY_MAX_SYMBOLS, int),
         "symbol_list": symbol_list,
         "window":      _num("window", 6, 1, 50, int),
         "lookback":    _num("lookback", 200, 30, 500, int),

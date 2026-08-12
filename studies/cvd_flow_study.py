@@ -195,6 +195,24 @@ def fetch_klines(symbol: str, interval: str, want: int, market: str) -> List[Dic
     return rows[:-1] if rows else rows
 
 
+# Binance lists small-denomination coins as multiplied perp contracts —
+# 1000PEPEUSDT, 1000SATSUSDT — while spot lists the plain coin. Looking the
+# perp name up on spot returns nothing, which silently drops exactly the
+# high-volume alts the study most wants. The multiplier also matters
+# arithmetically: one 1000PEPE contract is 1000 PEPE, so spot base volume has
+# to be divided by it before spot and perp deltas can be added together.
+_MULT_PREFIXES = (("1000000", 1_000_000.0), ("10000", 10_000.0),
+                  ("1000", 1_000.0))
+
+
+def spot_symbol_for(perp: str) -> Tuple[str, float]:
+    """(spot symbol, units of spot base per 1 perp contract)."""
+    for pref, mult in _MULT_PREFIXES:
+        if perp.startswith(pref) and len(perp) > len(pref) + 4:
+            return perp[len(pref):], mult
+    return perp, 1.0
+
+
 def top_symbols(market: str, n: int, quote: str = "USDT") -> List[str]:
     """Top-N USDT pairs by 24h quote volume."""
     if market == "perp":
@@ -456,19 +474,29 @@ def run(args, progress=None) -> Dict:
                 progress(idx, total, f"{sym} — skipped, {note}")
 
         perp = fetch_klines(sym, args.tf, args.bars, "perp")
-        spot = fetch_klines(sym, args.tf, args.bars, "spot")
         if len(perp) < need:
-            _skip("perp history", "perp history too short")
-            continue
-        if len(spot) < need:
-            _skip("spot history", "no/short spot listing")
-            continue
-        srows, prows = align(spot, perp)
-        if len(srows) < need:
-            _skip("overlap", "too little spot/perp overlap")
+            _skip("perp history", f"perp history {len(perp)} < {need} bars")
             continue
 
-        _accumulate(sym, srows, prows, args, cells, baseline)
+        # Try the perp's own name on spot first, then the de-multiplied name.
+        spot_scale = 1.0
+        spot = fetch_klines(sym, args.tf, args.bars, "spot")
+        if len(spot) < need:
+            alt, mult = spot_symbol_for(sym)
+            if alt != sym:
+                alt_rows = fetch_klines(alt, args.tf, args.bars, "spot")
+                if len(alt_rows) >= need:
+                    spot, spot_scale = alt_rows, mult
+        if len(spot) < need:
+            _skip("spot history", f"no/short spot listing ({len(spot)} bars)")
+            continue
+
+        srows, prows = align(spot, perp)
+        if len(srows) < need:
+            _skip("overlap", f"only {len(srows)} overlapping bars")
+            continue
+
+        _accumulate(sym, srows, prows, args, cells, baseline, spot_scale)
         used.append(sym)
         print(f"ok ({len(srows)} bars)")
         if progress:
@@ -490,14 +518,17 @@ def run(args, progress=None) -> Dict:
     }
 
 
-def _accumulate(sym, srows, prows, args, cells, baseline):
+def _accumulate(sym, srows, prows, args, cells, baseline, spot_scale: float = 1.0):
     """Bucket every eligible bar of one symbol into the cell accumulators."""
     closes = [r["c"] for r in prows]        # perp price is the traded price
     n = len(closes)
 
     sd = bar_deltas(srows)
     pd_ = bar_deltas(prows)
-    gd = [a + b for a, b in zip(sd, pd_)]   # base units, same coin: additive
+    # Convert spot base units into perp contract units before adding, or a
+    # 1000x-denominated contract would let spot swamp the global stream by
+    # three orders of magnitude while looking perfectly reasonable.
+    gd = [a / spot_scale + b for a, b in zip(sd, pd_)]
 
     flows = {
         "spot": window_sums(sd, args.window),
@@ -589,6 +620,20 @@ def render(res: Dict, args) -> str:
            if p["in_base"] else ""))
     add(f"  symbols used {len(res['symbols_used'])}"
         f"   skipped {len(res['symbols_skipped'])}")
+    if res["symbols_used"]:
+        add("  used:    " + " ".join(res["symbols_used"]))
+    if res["symbols_skipped"]:
+        # A run that quietly drops most of its universe produces confident
+        # numbers from almost no data, so the skips are printed, not buried.
+        reasons: Dict[str, List[str]] = {}
+        for sym, why in res["symbols_skipped"]:
+            reasons.setdefault(why, []).append(sym)
+        for why, syms in sorted(reasons.items()):
+            add(f"  skipped ({why}): " + " ".join(syms))
+    if len(res["symbols_used"]) < 8:
+        add("")
+        add("  ** WARNING: too few symbols for a trustworthy result. Anything")
+        add("     below ~8 symbols is a pilot run, not evidence. **")
     add("")
     add("  SIGNED EDGE = mean(forward return x sign(flow)) minus that symbol's")
     add("  own drift.  POSITIVE = price FOLLOWS the flow.  NEGATIVE = price FADES it.")
@@ -639,6 +684,7 @@ def _verdict_lines(res: Dict, args) -> List[str]:
     # horizon always has the largest raw edge and picking by magnitude would
     # mechanically crown it regardless of whether the signal got any cleaner.
     best = None
+    eligible = set()
     for stream in STREAMS:
         line = []
         agree, total = 0, 0
@@ -660,12 +706,27 @@ def _verdict_lines(res: Dict, args) -> List[str]:
             # A handful of events can produce a huge t by luck; require a
             # sample worth reading before a cell can be called the winner.
             if t is not None and len(merged) >= args.min_cell_events:
+                eligible.add(stream)
                 if best is None or abs(t) > abs(best[3]):
                     best = (stream, m, h, t)
         share = (100.0 * agree / total) if total else 0.0
+        nq = (len(cells[stream]["UP"]["QUIET"][horizons[0]].signed)
+              + len(cells[stream]["DOWN"]["QUIET"][horizons[0]].signed))
+        mark = "" if stream in eligible else f"   [only {nq} events — not eligible]"
         add(f"  {stream:<7} quiet-price flow  " + "   ".join(line))
-        add(f"  {'':<7} symbol agreement {share:.0f}%")
+        add(f"  {'':<7} symbol agreement {share:.0f}%{mark}")
     add("")
+
+    # Naming a winner drawn from a field of one is not a comparison. Say so
+    # rather than letting the headline imply the streams were weighed against
+    # each other.
+    if best is not None and len(eligible) < len(STREAMS):
+        missing = [s for s in STREAMS if s not in eligible]
+        add(f"  ** {', '.join(missing)} did not reach {args.min_cell_events} events,")
+        add(f"     so the line below compares nothing — {best[0]} was the only")
+        add("     stream eligible. Re-run with more symbols before reading it")
+        add("     as 'which stream is best'. **")
+        add("")
 
     if best is None:
         add(f"  No cell reached {args.min_cell_events} events. Loosen --flow-z,")
