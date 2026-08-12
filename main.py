@@ -7970,6 +7970,63 @@ def api_admin_tab_toggle():
 #
 # Delete this block and studies/ once the question is settled.
 
+def _cvd_study_admin_ok() -> bool:
+    """True when the caller is an admin by EITHER auth path.
+
+    The site has two: the admin panel logs in through Flask-Login, while
+    main.py's admin_required only looks at session["is_admin"]. A panel
+    login that never round-trips through admin.login therefore fails
+    admin_required and gets bounced to the homepage, which reads as "the
+    route is broken" rather than "you are not authorised". Same dual check
+    admin.py already uses for its cross-surface routes.
+    """
+    try:
+        from flask_login import current_user
+        if current_user.is_authenticated and getattr(current_user, "is_admin", False):
+            return True
+    except Exception:
+        pass
+    return bool(session.get("is_admin"))
+
+
+def _cvd_study_guard(f):
+    """admin gate that says WHY it refused instead of redirecting to index."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if _cvd_study_admin_ok():
+            return f(*args, **kwargs)
+        try:
+            from flask_login import current_user
+            fl_auth  = bool(current_user.is_authenticated)
+            fl_admin = bool(getattr(current_user, "is_admin", False))
+        except Exception:
+            fl_auth = fl_admin = False
+        detail = {
+            "error": "admin only",
+            "flask_login_authenticated": fl_auth,
+            "flask_login_is_admin": fl_admin,
+            "session_is_admin": bool(session.get("is_admin")),
+            "session_logged_in": bool(session.get("logged_in")),
+            "hint": "Log in at /admin/login (the admin panel), not the main site.",
+        }
+        if request.path.endswith(("/start", "/status")):
+            return jsonify(detail), 403
+        return (
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<div style=\"font-family:system-ui;background:#05080e;color:#e6edf6;"
+            "padding:20px;line-height:1.6\">"
+            "<h2 style='font-size:17px'>Admin only</h2>"
+            "<p style='color:#8a9bb3;font-size:14px'>You are not signed in as an "
+            "admin for this route. What the server sees:</p>"
+            f"<pre style=\"background:#0e1521;border:1px solid #1b2636;"
+            f"border-radius:8px;padding:12px;font-size:12px;overflow-x:auto\">"
+            f"{json.dumps(detail, indent=2)}</pre>"
+            "<p style='font-size:14px'><a style='color:#22d3ee' href='/admin/login'>"
+            "Sign in to the admin panel</a>, then reload this page.</p></div>"
+        ), 403
+    return decorated
+
+
 _cvd_study_lock  = threading.Lock()
 _cvd_study_state = {
     "running":  False,
@@ -8041,7 +8098,7 @@ def _cvd_study_worker(params: dict):
 
 
 @app.route("/admin/debug/cvd-flow-study/start", methods=["POST"])
-@admin_required
+@_cvd_study_guard
 def admin_cvd_study_start():
     body = request.get_json(force=True, silent=True) or {}
 
@@ -8094,14 +8151,14 @@ def admin_cvd_study_start():
 
 
 @app.route("/admin/debug/cvd-flow-study/status")
-@admin_required
+@_cvd_study_guard
 def admin_cvd_study_status():
     with _cvd_study_lock:
         return jsonify(dict(_cvd_study_state))
 
 
 @app.route("/admin/debug/cvd-flow-study")
-@admin_required
+@_cvd_study_guard
 def admin_cvd_study_page():
     return render_template("cvd_flow_study.html")
 
