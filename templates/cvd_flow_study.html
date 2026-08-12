@@ -112,6 +112,16 @@ pre{
       </select>
     </div>
     <div>
+      <label>Max horizon</label>
+      <!-- Independent sampling takes one bar per max-horizon, so this is the
+           real sample-size dial: 6 gives 4x the events that 24 does. -->
+      <select id="maxHorizon">
+        <option value="24" selected>24 bars (fewest events)</option>
+        <option value="12">12 bars</option>
+        <option value="6">6 bars (4x events)</option>
+      </select>
+    </div>
+    <div>
       <label>Inside base only</label>
       <select id="inBase">
         <option value="0" selected>no</option>
@@ -198,6 +208,7 @@ $('go').onclick = async () => {
     flowZ: +$('flowZ').value,
     quietZ: +$('quietZ').value,
     stride: +$('stride').value,
+    maxHorizon: +$('maxHorizon').value,
     inBase: $('inBase').value === '1',
     symbolList: $('symbolList').value
   };
