@@ -1,0 +1,500 @@
+//@version=6
+// =============================================================================
+//  CVD ENGINE — PHASE 2: MULTI-VENUE AGGREGATION
+// -----------------------------------------------------------------------------
+//  Phase 1 proved a single feed reproduces the built-in CVD using the tick
+//  rule. Phase 2 runs that exact same delta computation across many venues and
+//  sums the results into three streams:
+//
+//      SPOT   = Σ enabled spot venues
+//      PERP   = Σ enabled perpetual venues
+//      GLOBAL = SPOT + PERP
+//
+//  The delta math is identical to Phase 1 - it is now a function, f_delta,
+//  called once per venue, so there is a single source of truth rather than 15
+//  copies to keep in sync. The tick-rule carry lives in `var` state inside that
+//  function; because Pine keeps `var` per call-site, each venue gets its own
+//  independent chain across bars.
+//
+//  UNITS: base (coins), matching the built-in. KRW/USDC/USD venues need no FX -
+//  volume is already in the base asset. All current venues are linear; f_delta
+//  keeps an inverse-contract path (divide USD-notional volume by price) for any
+//  inverse feed added later.
+//
+//  ROBUSTNESS: every request uses ignore_invalid_symbol. Correctness for a
+//  disabled venue is enforced on its enable flag inside f_delta, NOT on the
+//  symbol - an empty-symbol request does not reliably return na and can leak the
+//  chart symbol's data into the aggregate. Gating on the flag guarantees a
+//  disabled or missing venue contributes exactly zero and is excluded from the
+//  active count.
+// =============================================================================
+
+indicator("CVD Engine — P2 Aggregate", "CVD·P2", overlay = false, format = format.volume, precision = 2)
+
+// ── groups ───────────────────────────────────────────────────────────────────
+const string G_ENG = "Engine"
+const string G_STR = "Stream & Display"
+const string G_SPT = "Spot Venues"
+const string G_PRP = "Perp Venues"
+const string G_TBL = "Diagnostics"
+
+const int INTRABAR_CAP = 100000
+
+// ── engine inputs (identical semantics to Phase 1) ───────────────────────────
+string i_ltf = input.string("1 minute", "Lower Timeframe", group = G_ENG,
+     options = ["Chart",
+                  "1 tick", "10 ticks", "100 ticks", "1000 ticks",
+                  "1 second", "5 seconds", "10 seconds", "15 seconds", "30 seconds", "45 seconds",
+                  "1 minute", "3 minutes", "5 minutes", "15 minutes", "30 minutes"],
+     tooltip = "Chart = no intrabar breakdown (cheap, full history, crude delta).\n" +
+               "Seconds require Pro+. Ticks are not retrievable from Pine → fall back to 1m.\n\n" +
+               "Every enabled venue runs its own intrabar breakdown, so lowering the LTF or " +
+               "enabling more venues both increase load. If you hit 'script took too long', " +
+               "raise the LTF or disable venues.")
+
+// Tick rule is locked as the default: Phase 1 confirmed it matches the built-in.
+// The other two remain available for experimentation and cross-checks.
+string i_class = input.string("Tick rule", "Volume Classification", group = G_ENG,
+     options = ["Tick rule", "Bar direction", "Proportional"],
+     tooltip = "Tick rule matched the built-in CVD in Phase 1 parity testing and is the default.")
+
+string i_anchor = input.string("1 Day", "Anchor Period", group = G_ENG,
+     options = ["None", "1 Day", "1 Week", "1 Month"])
+
+// ── stream & display ─────────────────────────────────────────────────────────
+string i_stream = input.string("Global", "Stream", group = G_STR,
+     options = ["Global", "Spot", "Perp"],
+     tooltip = "Which aggregated stream to plot. Spot-vs-perp comparison overlays arrive in Phase 3.")
+
+string i_mode = input.string("CVD Candles", "Display", group = G_STR,
+     options = ["CVD Candles", "CVD Line", "Per-bar Delta"])
+
+color i_up   = input.color(#26a69a, "Up",   group = G_STR, inline = "col")
+color i_dn   = input.color(#ef5350, "Down", group = G_STR, inline = "col")
+bool  i_zero = input.bool(true, "Zero line", group = G_STR)
+
+// ── venue toggles ────────────────────────────────────────────────────────────
+// Defaults are a conservative five-venue set (3 spot + 2 perp) that runs
+// comfortably on a free plan. Everything else is one checkbox away; a disabled
+// venue skips its intrabar processing (empty symbol) and is force-zeroed in
+// f_delta. Hyperliquid tickers are unverified on TradingView - if a feed is not
+// listed it simply shows inactive and contributes nothing.
+bool en_binS = input.bool(true,  "Binance",     group = G_SPT, inline = "s1")
+bool en_cbS  = input.bool(true,  "Coinbase",    group = G_SPT, inline = "s1")
+bool en_okS  = input.bool(true,  "OKX",         group = G_SPT, inline = "s2")
+bool en_byS  = input.bool(false, "Bybit",       group = G_SPT, inline = "s2")
+bool en_krS  = input.bool(false, "Kraken",      group = G_SPT, inline = "s3")
+bool en_bgS  = input.bool(false, "Bitget",      group = G_SPT, inline = "s3")
+bool en_kcS  = input.bool(false, "KuCoin",      group = G_SPT, inline = "s4")
+bool en_hlS  = input.bool(false, "Hyperliquid", group = G_SPT, inline = "s4")
+bool en_upS  = input.bool(false, "Upbit",       group = G_SPT, inline = "s5")
+bool en_bhS  = input.bool(false, "Bithumb",     group = G_SPT, inline = "s5")
+
+bool en_binP = input.bool(true,  "Binance",     group = G_PRP, inline = "p1")
+bool en_byP  = input.bool(true,  "Bybit",       group = G_PRP, inline = "p1")
+bool en_okP  = input.bool(false, "OKX",         group = G_PRP, inline = "p2")
+bool en_bgP  = input.bool(false, "Bitget",      group = G_PRP, inline = "p2")
+bool en_hlP  = input.bool(false, "Hyperliquid", group = G_PRP, inline = "p3")
+
+bool   i_table = input.bool(true, "Show diagnostics", group = G_TBL)
+string i_tpos  = input.string("Top Right", "Position", group = G_TBL,
+     options = ["Top Right", "Top Left", "Bottom Right", "Bottom Left", "Middle Right"])
+
+// =============================================================================
+//  SYMBOL CONSTRUCTION
+// -----------------------------------------------------------------------------
+//  Built from syminfo.basecurrency, so this works on any pair. A disabled venue
+//  resolves to "" to skip the intrabar fetch cost; the enable flag passed to
+//  f_delta is what actually guarantees a zero contribution.
+// =============================================================================
+bool   isCrypto = syminfo.type == "crypto"
+string base  = syminfo.basecurrency
+string baseX = base == "BTC" ? "XBT" : base          // Kraken BTC alias (XBT)
+
+f_sym(bool en, string s) => en and isCrypto ? s : ""
+
+string sBinS = f_sym(en_binS, "BINANCE:"     + base  + "USDT")
+string sCbS  = f_sym(en_cbS,  "COINBASE:"    + base  + "USD")
+string sOkS  = f_sym(en_okS,  "OKX:"         + base  + "USDT")
+string sByS  = f_sym(en_byS,  "BYBIT:"       + base  + "USDT")
+string sKrS  = f_sym(en_krS,  "KRAKEN:"      + baseX + "USD")
+string sBgS  = f_sym(en_bgS,  "BITGET:"      + base  + "USDT")
+string sKcS  = f_sym(en_kcS,  "KUCOIN:"      + base  + "USDT")
+string sHlS  = f_sym(en_hlS,  "HYPERLIQUID:" + base  + "USDC")   // unverified ticker
+string sUpS  = f_sym(en_upS,  "UPBIT:"       + base  + "KRW")
+string sBhS  = f_sym(en_bhS,  "BITHUMB:"     + base  + "KRW")
+
+string sBinP = f_sym(en_binP, "BINANCE:"     + base  + "USDT.P")
+string sByP  = f_sym(en_byP,  "BYBIT:"       + base  + "USDT.P")
+string sOkP  = f_sym(en_okP,  "OKX:"         + base  + "USDT.P")
+string sBgP  = f_sym(en_bgP,  "BITGET:"      + base  + "USDT.P")
+string sHlP  = f_sym(en_hlP,  "HYPERLIQUID:" + base  + "USDC.P") // unverified ticker
+
+// =============================================================================
+//  TIMEFRAME RESOLUTION (identical logic to Phase 1)
+// =============================================================================
+bool isTickSel = str.contains(i_ltf, "tick")
+bool isSecSel  = str.contains(i_ltf, "second")
+
+string ltfRaw = i_ltf == "1 second" ? "1S" :
+  i_ltf == "5 seconds"   ? "5S" :
+  i_ltf == "10 seconds"  ? "10S" :
+  i_ltf == "15 seconds"  ? "15S" :
+  i_ltf == "30 seconds"  ? "30S" :
+  i_ltf == "45 seconds"  ? "45S" :
+  i_ltf == "1 minute"    ? "1" :
+  i_ltf == "3 minutes"   ? "3" :
+  i_ltf == "5 minutes"   ? "5" :
+  i_ltf == "15 minutes"  ? "15" :
+  i_ltf == "30 minutes"  ? "30" :
+  "1"
+
+int  chartSecs   = timeframe.in_seconds(timeframe.period)
+int  ltfSecs     = timeframe.in_seconds(ltfRaw)
+bool chartTooLow = chartSecs <= 60
+bool ltfNotLower = ltfSecs >= chartSecs
+bool forcedChart = i_ltf == "Chart" or chartTooLow
+bool fellBack    = not forcedChart and (isTickSel or ltfNotLower)
+
+string ltfUsed = forcedChart ? "1" : (fellBack ? "1" : ltfRaw)
+bool   useLtf  = not forcedChart
+
+int ltfUsedSecs = timeframe.in_seconds(ltfUsed)
+int intrabarsPer = useLtf and ltfUsedSecs > 0 ? math.max(1, int(chartSecs / ltfUsedSecs)) : 1
+int depthBars    = useLtf ? int(INTRABAR_CAP / intrabarsPer) : 0
+
+string anchorTf  = i_anchor == "1 Week" ? "W" : i_anchor == "1 Month" ? "M" : "D"
+bool   newPeriod = i_anchor == "None" ? false : timeframe.change(anchorTf)
+
+// =============================================================================
+//  DELTA FUNCTION
+// -----------------------------------------------------------------------------
+//  The Phase 1 delta engine, verbatim in behaviour, wrapped so it can be reused
+//  per venue. Returns [barDelta, runHi, runLo, hasData]. The tick-rule carry is
+//  `var` inside the function, so each of the 13 call-sites keeps its own chain.
+//
+//  runHi >= 0 and runLo <= 0 by construction, and both bracket barDelta, so the
+//  per-venue candle wick always contains its own open and close.
+// =============================================================================
+f_delta(bool en, array<float> aO, array<float> aH, array<float> aL, array<float> aC, array<float> aV,
+        float bO, float bH, float bL, float bC, float bV,
+        bool useL, simple string rule, bool inv, float mult) =>
+    var int   dCarry = 0
+    var float cCarry = na
+
+    int  nn     = na(aC) ? 0 : array.size(aC)
+    // A disabled venue must contribute exactly zero regardless of what the
+    // request returned. Empty-symbol requests do not reliably return na - they
+    // can fall back to the chart symbol and leak its data into the aggregate -
+    // so correctness is enforced here, on the enable flag, not on the symbol.
+    bool useArr = en and useL and nn > 0
+
+    float run = 0.0
+    float hi  = 0.0
+    float lo  = 0.0
+    int   ld  = dCarry
+
+    if useArr
+        for i = 0 to nn - 1
+            float o_ = array.get(aO, i)
+            float h_ = array.get(aH, i)
+            float l_ = array.get(aL, i)
+            float c_ = array.get(aC, i)
+            float v_ = nz(array.get(aV, i))
+
+            float d = 0.0
+            if rule == "Proportional"
+                float rng = h_ - l_
+                d := rng > 0 ? v_ * ((2.0 * (c_ - l_) / rng) - 1.0) : 0.0
+                ld := d > 0 ? 1 : d < 0 ? -1 : ld
+            else if rule == "Bar direction"
+                int dir = c_ > o_ ? 1 : c_ < o_ ? -1 : 0
+                ld := dir != 0 ? dir : ld
+                d := dir * v_
+            else
+                float pc = i > 0 ? array.get(aC, i - 1) : nz(cCarry, o_)
+                int dir = c_ > pc ? 1 : c_ < pc ? -1 : ld
+                ld := dir
+                d := dir * v_
+
+            float dBase = inv ? (c_ > 0 ? d * mult / c_ : 0.0) : d * mult
+            run := run + dBase
+            hi  := math.max(hi, run)
+            lo  := math.min(lo, run)
+
+        cCarry := array.get(aC, nn - 1)
+        dCarry := ld
+        [run, hi, lo, true]
+    else if en and not na(bC)
+        float v_ = nz(bV)
+        float d  = 0.0
+        if rule == "Proportional"
+            float rng = bH - bL
+            d := rng > 0 ? v_ * ((2.0 * (bC - bL) / rng) - 1.0) : 0.0
+        else if rule == "Bar direction"
+            d := (bC > bO ? 1 : bC < bO ? -1 : 0) * v_
+        else
+            float pc = nz(bC[1], bO)
+            d := (bC > pc ? 1 : bC < pc ? -1 : 0) * v_
+        float dBase = inv ? (bC > 0 ? d * mult / bC : 0.0) : d * mult
+        [dBase, math.max(0.0, dBase), math.min(0.0, dBase), true]
+    else
+        [0.0, 0.0, 0.0, false]
+
+// =============================================================================
+//  DATA + PER-VENUE DELTA
+// -----------------------------------------------------------------------------
+//  One intrabar request and one chart-bar request per venue, all at global
+//  scope. The request calls are NOT wrapped in a helper function: request.* wants
+//  a `simple string` symbol, and passing the symbol through a function parameter
+//  can demote it to `series`, which fails to compile. Inlining keeps every
+//  symbol simple. 15 venues × 2 = 30 calls, within the 40-call budget. Disabled
+//  venues carry an empty symbol, so their requests return na and f_delta
+//  short-circuits to a zero result.
+//
+//  request.security_lower_tf always uses the [O,H,L,C,V] tuple; the chart-bar
+//  request mirrors it so f_delta receives a consistent shape.
+// =============================================================================
+[lBinS_o, lBinS_h, lBinS_l, lBinS_c, lBinS_v] = request.security_lower_tf(sBinS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
+[bBinS_o, bBinS_h, bBinS_l, bBinS_c, bBinS_v] = request.security(sBinS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+[dBinS, hBinS, loBinS, okBinS] = f_delta(en_binS, lBinS_o, lBinS_h, lBinS_l, lBinS_c, lBinS_v, bBinS_o, bBinS_h, bBinS_l, bBinS_c, bBinS_v, useLtf, i_class, false, 1.0)
+
+[lCbS_o, lCbS_h, lCbS_l, lCbS_c, lCbS_v] = request.security_lower_tf(sCbS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
+[bCbS_o, bCbS_h, bCbS_l, bCbS_c, bCbS_v] = request.security(sCbS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+[dCbS, hCbS, loCbS, okCbS] = f_delta(en_cbS, lCbS_o, lCbS_h, lCbS_l, lCbS_c, lCbS_v, bCbS_o, bCbS_h, bCbS_l, bCbS_c, bCbS_v, useLtf, i_class, false, 1.0)
+
+[lOkS_o, lOkS_h, lOkS_l, lOkS_c, lOkS_v] = request.security_lower_tf(sOkS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
+[bOkS_o, bOkS_h, bOkS_l, bOkS_c, bOkS_v] = request.security(sOkS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+[dOkS, hOkS, loOkS, okOkS] = f_delta(en_okS, lOkS_o, lOkS_h, lOkS_l, lOkS_c, lOkS_v, bOkS_o, bOkS_h, bOkS_l, bOkS_c, bOkS_v, useLtf, i_class, false, 1.0)
+
+[lByS_o, lByS_h, lByS_l, lByS_c, lByS_v] = request.security_lower_tf(sByS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
+[bByS_o, bByS_h, bByS_l, bByS_c, bByS_v] = request.security(sByS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+[dByS, hByS, loByS, okByS] = f_delta(en_byS, lByS_o, lByS_h, lByS_l, lByS_c, lByS_v, bByS_o, bByS_h, bByS_l, bByS_c, bByS_v, useLtf, i_class, false, 1.0)
+
+[lKrS_o, lKrS_h, lKrS_l, lKrS_c, lKrS_v] = request.security_lower_tf(sKrS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
+[bKrS_o, bKrS_h, bKrS_l, bKrS_c, bKrS_v] = request.security(sKrS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+[dKrS, hKrS, loKrS, okKrS] = f_delta(en_krS, lKrS_o, lKrS_h, lKrS_l, lKrS_c, lKrS_v, bKrS_o, bKrS_h, bKrS_l, bKrS_c, bKrS_v, useLtf, i_class, false, 1.0)
+
+[lBgS_o, lBgS_h, lBgS_l, lBgS_c, lBgS_v] = request.security_lower_tf(sBgS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
+[bBgS_o, bBgS_h, bBgS_l, bBgS_c, bBgS_v] = request.security(sBgS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+[dBgS, hBgS, loBgS, okBgS] = f_delta(en_bgS, lBgS_o, lBgS_h, lBgS_l, lBgS_c, lBgS_v, bBgS_o, bBgS_h, bBgS_l, bBgS_c, bBgS_v, useLtf, i_class, false, 1.0)
+
+[lKcS_o, lKcS_h, lKcS_l, lKcS_c, lKcS_v] = request.security_lower_tf(sKcS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
+[bKcS_o, bKcS_h, bKcS_l, bKcS_c, bKcS_v] = request.security(sKcS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+[dKcS, hKcS, loKcS, okKcS] = f_delta(en_kcS, lKcS_o, lKcS_h, lKcS_l, lKcS_c, lKcS_v, bKcS_o, bKcS_h, bKcS_l, bKcS_c, bKcS_v, useLtf, i_class, false, 1.0)
+
+[lHlS_o, lHlS_h, lHlS_l, lHlS_c, lHlS_v] = request.security_lower_tf(sHlS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
+[bHlS_o, bHlS_h, bHlS_l, bHlS_c, bHlS_v] = request.security(sHlS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+[dHlS, hHlS, loHlS, okHlS] = f_delta(en_hlS, lHlS_o, lHlS_h, lHlS_l, lHlS_c, lHlS_v, bHlS_o, bHlS_h, bHlS_l, bHlS_c, bHlS_v, useLtf, i_class, false, 1.0)
+
+[lUpS_o, lUpS_h, lUpS_l, lUpS_c, lUpS_v] = request.security_lower_tf(sUpS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
+[bUpS_o, bUpS_h, bUpS_l, bUpS_c, bUpS_v] = request.security(sUpS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+[dUpS, hUpS, loUpS, okUpS] = f_delta(en_upS, lUpS_o, lUpS_h, lUpS_l, lUpS_c, lUpS_v, bUpS_o, bUpS_h, bUpS_l, bUpS_c, bUpS_v, useLtf, i_class, false, 1.0)
+
+[lBhS_o, lBhS_h, lBhS_l, lBhS_c, lBhS_v] = request.security_lower_tf(sBhS, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
+[bBhS_o, bBhS_h, bBhS_l, bBhS_c, bBhS_v] = request.security(sBhS, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+[dBhS, hBhS, loBhS, okBhS] = f_delta(en_bhS, lBhS_o, lBhS_h, lBhS_l, lBhS_c, lBhS_v, bBhS_o, bBhS_h, bBhS_l, bBhS_c, bBhS_v, useLtf, i_class, false, 1.0)
+
+[lBinP_o, lBinP_h, lBinP_l, lBinP_c, lBinP_v] = request.security_lower_tf(sBinP, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
+[bBinP_o, bBinP_h, bBinP_l, bBinP_c, bBinP_v] = request.security(sBinP, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+[dBinP, hBinP, loBinP, okBinP] = f_delta(en_binP, lBinP_o, lBinP_h, lBinP_l, lBinP_c, lBinP_v, bBinP_o, bBinP_h, bBinP_l, bBinP_c, bBinP_v, useLtf, i_class, false, 1.0)
+
+[lByP_o, lByP_h, lByP_l, lByP_c, lByP_v] = request.security_lower_tf(sByP, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
+[bByP_o, bByP_h, bByP_l, bByP_c, bByP_v] = request.security(sByP, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+[dByP, hByP, loByP, okByP] = f_delta(en_byP, lByP_o, lByP_h, lByP_l, lByP_c, lByP_v, bByP_o, bByP_h, bByP_l, bByP_c, bByP_v, useLtf, i_class, false, 1.0)
+
+[lOkP_o, lOkP_h, lOkP_l, lOkP_c, lOkP_v] = request.security_lower_tf(sOkP, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
+[bOkP_o, bOkP_h, bOkP_l, bOkP_c, bOkP_v] = request.security(sOkP, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+[dOkP, hOkP, loOkP, okOkP] = f_delta(en_okP, lOkP_o, lOkP_h, lOkP_l, lOkP_c, lOkP_v, bOkP_o, bOkP_h, bOkP_l, bOkP_c, bOkP_v, useLtf, i_class, false, 1.0)
+
+[lBgP_o, lBgP_h, lBgP_l, lBgP_c, lBgP_v] = request.security_lower_tf(sBgP, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
+[bBgP_o, bBgP_h, bBgP_l, bBgP_c, bBgP_v] = request.security(sBgP, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+[dBgP, hBgP, loBgP, okBgP] = f_delta(en_bgP, lBgP_o, lBgP_h, lBgP_l, lBgP_c, lBgP_v, bBgP_o, bBgP_h, bBgP_l, bBgP_c, bBgP_v, useLtf, i_class, false, 1.0)
+
+[lHlP_o, lHlP_h, lHlP_l, lHlP_c, lHlP_v] = request.security_lower_tf(sHlP, ltfUsed, [open, high, low, close, volume], ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
+[bHlP_o, bHlP_h, bHlP_l, bHlP_c, bHlP_v] = request.security(sHlP, timeframe.period, [open, high, low, close, volume], ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+[dHlP, hHlP, loHlP, okHlP] = f_delta(en_hlP, lHlP_o, lHlP_h, lHlP_l, lHlP_c, lHlP_v, bHlP_o, bHlP_h, bHlP_l, bHlP_c, bHlP_v, useLtf, i_class, false, 1.0)
+
+// =============================================================================
+//  STREAM AGGREGATION
+// -----------------------------------------------------------------------------
+//  Missing/disabled venues already returned zeros, so the sums are na-safe. The
+//  aggregate candle's wick is the sum of per-venue running extremes: this is an
+//  upper envelope (it assumes every venue peaks simultaneously) but it always
+//  contains the true open and close, so it never misleads on direction.
+// =============================================================================
+float spotBar = dBinS + dCbS + dOkS + dByS + dKrS + dBgS + dKcS + dHlS + dUpS + dBhS
+float spotHi  = hBinS + hCbS + hOkS + hByS + hKrS + hBgS + hKcS + hHlS + hUpS + hBhS
+float spotLo  = loBinS + loCbS + loOkS + loByS + loKrS + loBgS + loKcS + loHlS + loUpS + loBhS
+
+float perpBar = dBinP + dByP + dOkP + dBgP + dHlP
+float perpHi  = hBinP + hByP + hOkP + hBgP + hHlP
+float perpLo  = loBinP + loByP + loOkP + loBgP + loHlP
+
+float glblBar = spotBar + perpBar
+float glblHi  = spotHi + perpHi
+float glblLo  = spotLo + perpLo
+
+// active-venue counts (venues that actually returned data this bar)
+int spotActive = (okBinS ? 1 : 0) + (okCbS ? 1 : 0) + (okOkS ? 1 : 0) + (okByS ? 1 : 0) +
+  (okKrS ? 1 : 0) + (okBgS ? 1 : 0) + (okKcS ? 1 : 0) + (okHlS ? 1 : 0) + (okUpS ? 1 : 0) + (okBhS ? 1 : 0)
+int perpActive = (okBinP ? 1 : 0) + (okByP ? 1 : 0) + (okOkP ? 1 : 0) + (okBgP ? 1 : 0) + (okHlP ? 1 : 0)
+
+int spotEnabled = (en_binS ? 1 : 0) + (en_cbS ? 1 : 0) + (en_okS ? 1 : 0) + (en_byS ? 1 : 0) +
+  (en_krS ? 1 : 0) + (en_bgS ? 1 : 0) + (en_kcS ? 1 : 0) + (en_hlS ? 1 : 0) + (en_upS ? 1 : 0) + (en_bhS ? 1 : 0)
+int perpEnabled = (en_binP ? 1 : 0) + (en_byP ? 1 : 0) + (en_okP ? 1 : 0) + (en_bgP ? 1 : 0) + (en_hlP ? 1 : 0)
+
+int reqUsed = 2 * (15)          // 15 venues × (intrabar + chart-bar) request
+
+// ── select the displayed stream ──────────────────────────────────────────────
+float selBar = i_stream == "Spot" ? spotBar : i_stream == "Perp" ? perpBar : glblBar
+float selHi  = i_stream == "Spot" ? spotHi  : i_stream == "Perp" ? perpHi  : glblHi
+float selLo  = i_stream == "Spot" ? spotLo  : i_stream == "Perp" ? perpLo  : glblLo
+int   selAct = i_stream == "Spot" ? spotActive : i_stream == "Perp" ? perpActive : spotActive + perpActive
+int   selEn  = i_stream == "Spot" ? spotEnabled : i_stream == "Perp" ? perpEnabled : spotEnabled + perpEnabled
+
+// ── cumulative with anchor reset ─────────────────────────────────────────────
+// barsSinceReset is a diagnostic: if the anchor is working, it climbs through
+// the period then snaps to 0. A value in the thousands means the reset is not
+// firing and the cumulative is drifting over the whole history.
+var float cumSpot = 0.0
+var float cumPerp = 0.0
+var float cumGlbl = 0.0
+var int   barsSinceReset = 0
+barsSinceReset := barsSinceReset + 1
+if newPeriod
+    cumSpot := 0.0
+    cumPerp := 0.0
+    cumGlbl := 0.0
+    barsSinceReset := 0
+
+// track all three so the hidden outputs stay live regardless of what is shown
+float spotC = cumSpot + spotBar
+float perpC = cumPerp + perpBar
+float glblC = cumGlbl + glblBar
+cumSpot := spotC
+cumPerp := perpC
+cumGlbl := glblC
+
+// displayed stream's candle, rebuilt from the pre-update cumulative
+float baseCum = i_stream == "Spot" ? (spotC - spotBar) : i_stream == "Perp" ? (perpC - perpBar) : (glblC - glblBar)
+float cvdO = baseCum
+float cvdC = baseCum + selBar
+float cvdH = baseCum + selHi
+float cvdL = baseCum + selLo
+
+bool anyData = selAct > 0
+
+// =============================================================================
+//  PLOTS
+// =============================================================================
+bool showCandles = i_mode == "CVD Candles"
+bool showLine    = i_mode == "CVD Line"
+bool showCols    = i_mode == "Per-bar Delta"
+
+color bodyCol = cvdC >= cvdO ? i_up : i_dn
+
+plotcandle(showCandles and anyData ? cvdO : na,
+           showCandles and anyData ? cvdH : na,
+           showCandles and anyData ? cvdL : na,
+           showCandles and anyData ? cvdC : na,
+           title = "CVD Candles", color = bodyCol,
+           wickcolor = bodyCol, bordercolor = bodyCol)
+
+plot(showLine and anyData ? cvdC : na, "CVD Line", color = bodyCol, linewidth = 2)
+plot(showCols and anyData ? selBar : na, "Per-bar Delta",
+     color = selBar >= 0 ? i_up : i_dn, style = plot.style_columns)
+
+hline(i_zero ? 0 : na, "Zero", color = color.new(color.gray, 55))
+
+// Hidden outputs — all three streams, for the Phase 3 comparison companion.
+plot(spotC, "Out: Spot CVD",   display = display.none)
+plot(perpC, "Out: Perp CVD",   display = display.none)
+plot(glblC, "Out: Global CVD", display = display.none)
+plot(spotBar, "Out: Spot Δ",   display = display.none)
+plot(perpBar, "Out: Perp Δ",   display = display.none)
+
+// =============================================================================
+//  DIAGNOSTICS
+// =============================================================================
+f_abbr(float v) =>
+    float a = math.abs(v)
+    a >= 1e9 ? str.tostring(v / 1e9, "#.##") + "B" :
+      a >= 1e6 ? str.tostring(v / 1e6, "#.##") + "M" :
+      a >= 1e3 ? str.tostring(v / 1e3, "#.##") + "K" :
+      str.tostring(v, "#.##")
+
+string tblPos = i_tpos == "Top Left" ? position.top_left :
+  i_tpos == "Bottom Right" ? position.bottom_right :
+  i_tpos == "Bottom Left" ? position.bottom_left :
+  i_tpos == "Middle Right" ? position.middle_right :
+  position.top_right
+
+var table tbl = table.new(tblPos, 2, 10,
+     bgcolor      = color.new(#0b0b0f, 15),
+     border_color = color.new(color.gray, 70),
+     border_width = 1, frame_width = 1,
+     frame_color  = color.new(color.gray, 55))
+
+if i_table and barstate.islast
+    color cHdr = color.new(#16202e, 0)
+    color cLbl = color.new(color.gray, 20)
+    color cVal = color.white
+
+    string warn = ""
+    color  warnCol = color.new(color.gray, 30)
+    if not isCrypto
+        warn := "non-crypto — aggregation off"
+        warnCol := color.orange
+    else if not anyData
+        warn := "no venues returned data"
+        warnCol := i_dn
+    else if selAct < selEn
+        warn := str.tostring(selEn - selAct) + " enabled venue(s) unlisted here"
+        warnCol := color.orange
+    else if isSecSel and not forcedChart and ltfUsed == "1"
+        warn := "seconds need Pro+ → 1m"
+        warnCol := color.orange
+    else if useLtf and depthBars < 500
+        warn := "shallow history ~" + str.tostring(depthBars) + " bars"
+        warnCol := color.orange
+    else
+        warn := "ok"
+        warnCol := i_up
+
+    table.cell(tbl, 0, 0, "CVD ENGINE",    text_color = cVal, text_size = size.tiny, bgcolor = cHdr)
+    table.cell(tbl, 1, 0, "P2 · aggregate", text_color = cLbl, text_size = size.tiny, bgcolor = cHdr)
+
+    table.cell(tbl, 0, 1, "Stream", text_color = cLbl, text_size = size.tiny)
+    table.cell(tbl, 1, 1, i_stream, text_color = cVal, text_size = size.tiny)
+
+    table.cell(tbl, 0, 2, i_stream + " CVD", text_color = cLbl, text_size = size.tiny)
+    table.cell(tbl, 1, 2, anyData ? f_abbr(cvdC) : "—",
+               text_color = cvdC >= 0 ? i_up : i_dn, text_size = size.small)
+
+    table.cell(tbl, 0, 3, "Bar Δ", text_color = cLbl, text_size = size.tiny)
+    table.cell(tbl, 1, 3, anyData ? f_abbr(selBar) : "—",
+               text_color = selBar >= 0 ? i_up : i_dn, text_size = size.tiny)
+
+    table.cell(tbl, 0, 4, "Spot / Perp Δ", text_color = cLbl, text_size = size.tiny)
+    table.cell(tbl, 1, 4, f_abbr(spotBar) + " / " + f_abbr(perpBar), text_color = cVal, text_size = size.tiny)
+
+    table.cell(tbl, 0, 5, "Active venues", text_color = cLbl, text_size = size.tiny)
+    table.cell(tbl, 1, 5, "spot " + str.tostring(spotActive) + "/" + str.tostring(spotEnabled) +
+               "  perp " + str.tostring(perpActive) + "/" + str.tostring(perpEnabled),
+               text_color = cVal, text_size = size.tiny)
+
+    table.cell(tbl, 0, 6, "Engine", text_color = cLbl, text_size = size.tiny)
+    table.cell(tbl, 1, 6, (useLtf ? "intrabar " + ltfUsed : "chart bar") +
+               (useLtf ? " · ~" + str.tostring(depthBars) + "b" : ""),
+               text_color = cVal, text_size = size.tiny)
+
+    table.cell(tbl, 0, 7, "Anchor", text_color = cLbl, text_size = size.tiny)
+    table.cell(tbl, 1, 7, i_anchor + " · +" + str.tostring(barsSinceReset) + " bars",
+               text_color = i_anchor == "None" ? color.orange : cVal, text_size = size.tiny)
+
+    table.cell(tbl, 0, 8, "Requests", text_color = cLbl, text_size = size.tiny)
+    table.cell(tbl, 1, 8, str.tostring(reqUsed) + " / 40", text_color = cVal, text_size = size.tiny)
+
+    table.cell(tbl, 0, 9, "Status", text_color = cLbl, text_size = size.tiny)
+    table.cell(tbl, 1, 9, warn, text_color = warnCol, text_size = size.tiny)

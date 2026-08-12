@@ -1,0 +1,123 @@
+{% extends "admin/base.html" %}
+{% block title %}Subscription Tiers — ZyNi Admin{% endblock %}
+{% block page_title %}Subscription Tiers{% endblock %}
+
+{% block content %}
+
+{% set accent = {'basic': 'var(--muted)', 'pro': 'var(--cyan)', 'pro_plus': 'var(--amber)'} %}
+{% set badge  = {'basic': 'blue',         'pro': 'cyan',       'pro_plus': 'amber'} %}
+
+<div class="tier-grid">
+  {% for r in rows %}
+  {% set l = lists.get(r.tier, {}) %}
+  <div class="tier-card {% if r.tier == 'pro' %}featured{% endif %}">
+    {% if r.tier == 'pro' %}<div class="tier-ribbon">Most popular</div>{% endif %}
+
+    <div class="tier-head">
+      <div>
+        <div class="tier-name" style="color:{{ accent[r.tier] }}">{{ r.display_name or tier_labels[r.tier] }}</div>
+        <div class="tier-desc">{{ r.description or '—' }}</div>
+      </div>
+      {% if not r.is_active %}<span class="badge red">hidden</span>{% endif %}
+    </div>
+
+    <div class="tier-price">
+      {% if r.price_monthly and r.price_monthly > 0 %}
+        <span class="tier-cur">$</span>{{ '%g'|format(r.price_monthly) }}<span class="tier-per">/mo</span>
+      {% else %}
+        Free
+      {% endif %}
+    </div>
+
+    <div class="tier-users">
+      <span class="badge {{ badge[r.tier] }}">{{ counts.get(r.tier, 0) }}</span>
+      user{{ '' if counts.get(r.tier, 0) == 1 else 's' }} on this plan
+    </div>
+
+    <ul class="tier-feats">
+      <li><span>Daily tokens</span><b>{{ '{:,}'.format(r.daily_tokens) }}</b></li>
+      <li><span>Pairs / scan</span><b>{{ r.max_pairs_per_scan }}</b></li>
+      <li><span>Pairs / cycle</span><b>{{ r.max_pairs_per_cycle }}</b></li>
+      <li><span>Live Monitor items</span><b>{{ r.max_live_monitor_items }}</b></li>
+      <li><span>AI calls / day</span><b>{{ r.ai_calls_per_day }}</b></li>
+      <li><span>Saved presets</span><b>{{ r.max_scan_presets }}</b></li>
+    </ul>
+
+    <div class="tier-lists">
+      <div class="tier-list-row">
+        <span class="tier-list-lbl">Modules</span>
+        <span class="tier-list-val">{{ (l.modules | join(', ')) or '—' }}</span>
+      </div>
+      <div class="tier-list-row">
+        <span class="tier-list-lbl">Exchanges</span>
+        <span class="tier-list-val">{{ (l.exchanges | join(', ')) or '—' }}</span>
+      </div>
+      <div class="tier-list-row">
+        <span class="tier-list-lbl">Timeframes</span>
+        <span class="tier-list-val">{{ (l.timeframes | join(', ')) or '—' }}</span>
+      </div>
+      <div class="tier-list-row">
+        <span class="tier-list-lbl">Tabs</span>
+        <span class="tier-list-val">{{ l.tabs | length }} of {{ all_tabs | length }}</span>
+      </div>
+    </div>
+
+    <a href="{{ url_for('admin.tier_edit', tier=r.tier) }}" class="btn btn-primary" style="width:100%;justify-content:center">
+      Edit {{ r.display_name or tier_labels[r.tier] }}
+    </a>
+  </div>
+  {% else %}
+  <div class="adm-card"><div class="adm-empty">No tier plans found.</div></div>
+  {% endfor %}
+</div>
+
+<div class="adm-card">
+  <div class="adm-card-header"><div class="adm-card-title">How Tiers Resolve</div></div>
+  <div class="adm-card-body">
+    <div style="font-size:12px;color:var(--muted);line-height:1.9">
+      Limits are resolved in this order, first match wins:
+      <div style="margin:12px 0 12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+        <span class="res-step">Per-user override</span><span class="res-arrow">→</span>
+        <span class="res-step">Tier plan</span><span class="res-arrow">→</span>
+        <span class="res-step">Role permission</span><span class="res-arrow">→</span>
+        <span class="res-step">Built-in default</span>
+      </div>
+      Admin accounts bypass every limit. A paid plan whose expiry date has passed is
+      treated as <strong style="color:var(--text)">Basic</strong> until it is renewed, so
+      access drops the moment a subscription lapses.
+    </div>
+  </div>
+</div>
+
+<style>
+.tier-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px;margin-bottom:20px}
+.tier-card{background:var(--bg3);border:1px solid var(--border);border-radius:14px;padding:22px 20px;
+           display:flex;flex-direction:column;position:relative;transition:border-color .18s,transform .18s}
+.tier-card:hover{border-color:var(--muted2);transform:translateY(-2px)}
+.tier-card.featured{border-color:rgba(34,211,238,.35);box-shadow:0 0 0 1px rgba(34,211,238,.08),0 8px 32px rgba(0,0,0,.35)}
+.tier-ribbon{position:absolute;top:-1px;right:18px;background:rgba(34,211,238,.15);border:1px solid rgba(34,211,238,.4);
+             border-top:none;color:var(--cyan);font-size:9px;font-weight:700;letter-spacing:1px;
+             text-transform:uppercase;padding:4px 10px;border-radius:0 0 6px 6px}
+.tier-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:14px}
+.tier-name{font-size:17px;font-weight:700;letter-spacing:.3px;margin-bottom:5px}
+.tier-desc{font-size:11.5px;color:var(--muted);line-height:1.5}
+.tier-price{font-family:'JetBrains Mono',monospace;font-size:30px;font-weight:700;color:var(--text);margin-bottom:4px}
+.tier-cur{font-size:17px;color:var(--muted);vertical-align:super;margin-right:1px}
+.tier-per{font-size:12px;color:var(--muted);font-weight:500}
+.tier-users{font-size:11.5px;color:var(--muted);margin-bottom:18px;display:flex;align-items:center;gap:7px}
+.tier-feats{list-style:none;padding:0;margin:0 0 16px;border-top:1px solid var(--border)}
+.tier-feats li{display:flex;justify-content:space-between;align-items:center;gap:10px;
+               padding:9px 0;border-bottom:1px solid rgba(26,46,64,.5);font-size:12px}
+.tier-feats li span{color:var(--muted)}
+.tier-feats li b{font-family:'JetBrains Mono',monospace;color:var(--text);font-weight:700}
+.tier-lists{margin-bottom:18px}
+.tier-list-row{display:flex;gap:10px;padding:6px 0;font-size:11px;line-height:1.5}
+.tier-list-lbl{color:var(--muted2);text-transform:uppercase;letter-spacing:.8px;font-weight:600;
+               flex-shrink:0;width:82px}
+.tier-list-val{color:var(--muted);font-family:'JetBrains Mono',monospace;word-break:break-word}
+.res-step{background:#04090f;border:1px solid var(--border);border-radius:6px;padding:5px 11px;
+          font-size:11px;color:var(--text);font-weight:600}
+.res-arrow{color:var(--muted2);font-size:12px}
+</style>
+
+{% endblock %}

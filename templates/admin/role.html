@@ -3,8 +3,8 @@
 {% block page_title %}{{ role|capitalize }} Role Permissions{% endblock %}
 
 {% block content %}
-{% set role_colors = {'admin': 'cyan', 'user': 'blue', 'guest': 'amber'} %}
-{% set role_icons  = {'admin': '👑', 'user': '👤', 'guest': '👥'} %}
+{% set role_colors = {'admin': 'cyan', 'user': 'blue'} %}
+{% set role_icons  = {'admin': '👑', 'user': '👤'} %}
 {% set rc = role_colors.get(role, 'blue') %}
 {% set ri = role_icons.get(role, '👤') %}
 
@@ -22,8 +22,7 @@
   </div>
   <div class="adm-card-body" style="font-size:12px;color:var(--muted)">
     {% if role == 'admin' %}Admins have unrestricted access to everything. Settings below are stored but not enforced for admin accounts.
-    {% elif role == 'user' %}Default permissions for all registered users unless overridden per-user.
-    {% else %}Permissions for anonymous guest devices. Keep limits low.
+    {% else %}Baseline permissions for registered users. A user's tier and any per-user override are applied on top of this.
     {% endif %}
   </div>
 </div>

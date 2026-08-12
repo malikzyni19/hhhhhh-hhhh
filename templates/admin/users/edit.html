@@ -24,7 +24,6 @@
       </div>
       <div style="display:flex;gap:6px">
         {% if user.role == 'admin' %}<span class="badge cyan">admin</span>
-        {% elif user.role == 'guest' %}<span class="badge" style="background:rgba(100,116,139,.12);color:#94a3b8;border:1px solid rgba(100,116,139,.2)">guest</span>
         {% else %}<span class="badge blue">user</span>{% endif %}
         {% if user.status == 'active' %}<span class="badge green">active</span>
         {% elif user.status == 'paused' %}<span class="badge amber">paused</span>
@@ -129,7 +128,6 @@
             <select name="role">
               <option value="user"  {% if user.role=='user'  %}selected{% endif %}>user</option>
               <option value="admin" {% if user.role=='admin' %}selected{% endif %}>admin</option>
-              <option value="guest" {% if user.role=='guest' %}selected{% endif %}>guest</option>
             </select>
             {% if errors.role %}<div class="adm-field-error">{{ errors.role }}</div>{% endif %}
           </div>
@@ -169,11 +167,77 @@
     </div>
   </div>
 
+  <!-- ── SUBSCRIPTION TIER ── -->
+  {% if user.role != 'admin' %}
+  {% set et = user.effective_tier %}
+  <div class="adm-card" style="margin-bottom:20px">
+    <div class="adm-card-header">
+      <div class="adm-card-title">Subscription</div>
+      <span class="badge {{ 'amber' if et == 'pro_plus' else ('cyan' if et == 'pro' else 'blue') }}">
+        {{ tier_labels.get(et, et) }}
+      </span>
+    </div>
+    <div class="adm-card-body">
+      {% if user.tier_is_expired %}
+        <div class="adm-flash warn">
+          <span class="adm-flash-icon">!</span>
+          <span>The <strong>{{ tier_labels.get(user.tier, user.tier) }}</strong> plan expired on
+                {{ user.tier_expires_at.strftime('%Y-%m-%d') }}. This account is limited to
+                <strong>{{ tier_labels.get(default_tier, default_tier) }}</strong> until renewed.</span>
+        </div>
+      {% endif %}
+
+      <form method="POST" action="{{ url_for('admin.users_set_tier', user_id=user.id) }}">
+        <div class="field">
+          <label class="lbl">Plan</label>
+          <div class="tier-pick">
+            {% for t in all_tiers %}
+            <label class="tier-opt">
+              <input type="radio" name="tier" value="{{ t }}" {% if user.tier == t %}checked{% endif %}
+                     onchange="document.getElementById('expWrap').style.display = this.value === '{{ default_tier }}' ? 'none' : 'block'">
+              <span>{{ tier_labels.get(t, t) }}</span>
+            </label>
+            {% endfor %}
+          </div>
+        </div>
+
+        <div class="field" id="expWrap" style="{% if user.tier == default_tier %}display:none{% endif %}">
+          <label class="lbl">Expires On <span style="text-transform:none;letter-spacing:0;color:var(--muted)">— leave blank for no expiry</span></label>
+          <input type="date" class="inp" name="tier_expires_at" style="max-width:220px"
+                 value="{{ user.tier_expires_at.strftime('%Y-%m-%d') if user.tier_expires_at else '' }}">
+          <div style="font-size:10.5px;color:var(--muted2);margin-top:5px">
+            Once this date passes the account drops to {{ tier_labels.get(default_tier, default_tier) }} automatically.
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary">Update Subscription</button>
+        <a href="{{ url_for('admin.tiers') }}" class="btn btn-ghost">Edit plan limits →</a>
+      </form>
+
+      {% if user.tier_since %}
+      <div style="font-size:11px;color:var(--muted);margin-top:14px">
+        On this plan since {{ user.tier_since.strftime('%Y-%m-%d') }}.
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <style>
+  .tier-pick{display:flex;flex-wrap:wrap;gap:8px}
+  .tier-opt{position:relative;cursor:pointer}
+  .tier-opt input{position:absolute;opacity:0;width:0;height:0}
+  .tier-opt span{display:inline-block;padding:9px 18px;border-radius:9px;border:1px solid var(--border);
+                 background:#04090f;color:var(--muted);font-size:12.5px;font-weight:600;transition:all .15s}
+  .tier-opt:hover span{border-color:var(--muted2);color:var(--text)}
+  .tier-opt input:checked + span{background:rgba(34,211,238,.12);border-color:rgba(34,211,238,.45);color:var(--cyan)}
+  </style>
+  {% endif %}
+
   <!-- ── PERMISSIONS OVERRIDE ── -->
   <div class="adm-card" style="margin-bottom:20px">
     <div class="adm-card-header">
       <div class="adm-card-title">Permissions Override</div>
-      <div style="font-size:11px;color:var(--muted)">Role: <span style="color:var(--cyan)">{{ user.role }}</span> · Null = use role default</div>
+      <div style="font-size:11px;color:var(--muted)">Role: <span style="color:var(--cyan)">{{ user.role }}</span> · Null = use tier default</div>
     </div>
     <div class="adm-card-body">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">

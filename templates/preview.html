@@ -25,6 +25,8 @@
   --accent-teal:#2dd4bf;
   --accent-soft:rgba(34,211,238,.10);
   --accent-soft-2:rgba(34,211,238,.18);
+  --yellow-soft:rgba(251,191,36,.08);
+  --yellow-soft-2:rgba(251,191,36,.25);
   --green:#22c55e;
   --green-2:#34d399;
   --red:#ef4444;
@@ -50,6 +52,8 @@
   --accent-teal:#0d9488;
   --accent-soft:rgba(2,132,199,.10);
   --accent-soft-2:rgba(2,132,199,.18);
+  --yellow-soft:rgba(180,83,9,.10);
+  --yellow-soft-2:rgba(180,83,9,.30);
   --green:#16a34a;
   --green-2:#0f7a39;
   --red:#dc2626;
@@ -493,6 +497,46 @@ body[data-view="backtest"]  .body{grid-template-columns:210px 1fr}
 .dd-out{font-size:11.5px;color:var(--text-2)}
 .dd-out .dd-result{background:var(--bg-card-2);border:1px solid var(--border);border-radius:8px;padding:10px;max-height:240px;overflow:auto}
 .dd-out .kv{font-size:11.5px;padding:3px 0;border:0}
+/* Zone Liquidity popup modal — dark order-book style matching Live Monitor */
+.zl-card{width:min(960px,96vw);height:auto;max-height:min(720px,92vh);background:#06111f}
+.zl-body{flex:1;min-height:0;overflow-y:auto;padding:0;background:#06111f;display:flex;flex-direction:column}
+/* modal header override — dark */
+.zl-card .cm-head{background:#06111f;border-bottom:1px solid rgba(34,211,238,.15)}
+.zl-card .cm-sym{color:#e5f3ff}
+/* verdict bar */
+.zl-verdict{padding:10px 16px;border-left:3px solid #6b7f95;background:rgba(255,255,255,.025);display:flex;flex-direction:column;gap:3px}
+.zl-v-label{font-size:13px;font-weight:700;letter-spacing:.4px;color:#e5f3ff;text-transform:uppercase}
+.zl-v-desc{font-size:11.5px;color:#8294aa;margin-top:1px}
+.zl-v-insight{font-size:11px;color:#6b7f95;margin-top:2px;font-style:italic}
+.zl-verdict.inst{border-left-color:#e53e3e}.zl-verdict.inst .zl-v-label{color:#e53e3e}
+.zl-verdict.strong{border-left-color:#f97316}.zl-verdict.strong .zl-v-label{color:#f97316}
+.zl-verdict.moderate{border-left-color:#f59e0b}.zl-verdict.moderate .zl-v-label{color:#f59e0b}
+.zl-verdict.weak{border-left-color:#6b7f95}
+.zl-verdict.empty{border-left-color:rgba(148,163,184,.3)}
+/* summary stats row */
+.zl-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:10px 16px;background:rgba(15,27,43,.6)}
+.zl-stat{background:rgba(15,27,43,.82);border-radius:10px;padding:9px 12px}
+.zl-stat-k{font-size:10px;color:#8294aa;margin-bottom:3px;text-transform:uppercase;letter-spacing:.3px}
+.zl-stat-v{font-size:15px;font-weight:700;color:#e5f3ff}
+.zl-stat-v.g{color:#22c55e}.zl-stat-v.r2{color:#ef4444}
+/* two-column bid/ask walls layout */
+.zl-walls{display:grid;grid-template-columns:1fr 1fr;border-top:1px solid rgba(34,211,238,.08)}
+.zl-wall-side{padding:12px;overflow:hidden}
+.zl-wall-side+.zl-wall-side{border-left:1px solid rgba(34,211,238,.1)}
+.zl-wall-title{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid rgba(148,163,184,.1)}
+.zl-wall-title.bid{color:#22c55e}.zl-wall-title.ask{color:#ef4444}
+.zl-wall-scroll{overflow-x:auto;max-height:340px;overflow-y:auto}
+.zl-wall-scroll table{width:100%;border-collapse:collapse;min-width:340px}
+.zl-wall-scroll th{position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase;white-space:nowrap}
+.zl-wall-scroll td{padding:6px;font-size:10px;white-space:nowrap;border-bottom:1px solid rgba(148,163,184,.08)}
+.zl-source{padding:6px 16px;font-size:10px;color:#4b6074;text-align:center;background:rgba(15,27,43,.4);border-top:1px solid rgba(148,163,184,.05)}
+/* controls bar — Window + Min Wall selectors */
+.zl-ctrls{display:flex;align-items:center;gap:8px;padding:7px 16px;background:rgba(10,20,34,.85);border-bottom:1px solid rgba(34,211,238,.08);flex-wrap:wrap;flex-shrink:0}
+.zl-cl{font-size:10px;color:#8294aa;font-weight:600;text-transform:uppercase;letter-spacing:.3px;white-space:nowrap}
+.zl-csel{background:#0a1422;border:1px solid rgba(148,163,184,.15);color:#c5d8ea;font-size:11px;padding:3px 7px;border-radius:5px;outline:none;cursor:pointer}
+.zl-csel:focus,.zl-csel:hover{border-color:rgba(34,211,238,.35);color:#e5f3ff}
+.zl-csrc{margin-left:auto;font-size:9px;color:#4b6074;font-style:italic;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media(max-width:640px){.zl-card{height:92vh;max-height:92vh}.zl-walls{grid-template-columns:1fr}.zl-wall-side+.zl-wall-side{border-left:none;border-top:1px solid rgba(34,211,238,.1)}}
 .dd-out .kv .k{color:var(--text-3);font-size:11px}
 .dd-out .kv .v{color:var(--text);font-family:var(--mono);font-size:11px}
 /* footer */
@@ -1218,9 +1262,73 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 .tbl-host::-webkit-scrollbar{height:8px}
 .tbl-host::-webkit-scrollbar-thumb{background:var(--border-2);border-radius:4px}
 .tbl-host::-webkit-scrollbar-track{background:transparent}
-.tab-view{margin-top:4px}
+/* Wide tab tables (Bias Shift runs 12 columns) scroll instead of clipping their
+   trailing columns when the insight panel is open. Mirrors .tbl-host. */
+.tab-view{margin-top:4px;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.tab-view::-webkit-scrollbar{height:8px}
+.tab-view::-webkit-scrollbar-thumb{background:var(--border-2);border-radius:4px}
+.tab-view::-webkit-scrollbar-track{background:transparent}
 .tab-view[hidden]{display:none}
 .tab-view .tv-empty{padding:60px 24px;text-align:center;color:var(--text-3);font-size:13px}
+/* Bias Shift scan breakdown — where the batch got filtered out */
+/* sticky-left so it stays put while a wide table scrolls under it */
+.bias-diag{position:sticky;left:0;margin:2px 0 10px;padding:8px 10px;
+  border:1px solid var(--border);border-radius:8px;background:rgba(255,255,255,.015)}
+.bias-diag .bd-head{font-size:11px;color:var(--text-2);font-family:var(--mono)}
+.bias-diag .bd-head b{color:var(--text)}
+.bias-diag .bd-chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
+.bias-diag .bd-chip{font-size:10px;color:var(--text-3);background:var(--bg-hover);
+  border:1px solid var(--border);border-radius:999px;padding:2px 8px;white-space:nowrap}
+.bias-diag .bd-chip b{color:var(--text-2);font-family:var(--mono)}
+.bias-diag .bd-note{margin-top:7px;font-size:10.5px;color:var(--yellow-2,#f59e0b)}
+.bias-breach{color:var(--red-2);font-weight:700}
+/* Detector filter chips — the tab holds bias shifts and rejection blocks */
+.det-chips{position:sticky;left:0;display:flex;gap:6px;margin:0 0 9px}
+.det-chip{font-size:10.5px;color:var(--text-3);background:var(--bg-hover);
+  border:1px solid var(--border);border-radius:999px;padding:3px 10px;
+  cursor:pointer;white-space:nowrap;transition:color .14s,border-color .14s}
+.det-chip:hover{color:var(--text-2);border-color:var(--border-2)}
+.det-chip.on{color:var(--accent);border-color:var(--accent)}
+.det-chip b{font-family:var(--mono);margin-left:2px}
+.det-tag{font-size:9.5px;font-weight:700;border-radius:4px;padding:1px 5px;
+  border:1px solid var(--border)}
+.det-tag.rb{color:var(--accent);border-color:rgba(56,189,248,.35)}
+.det-tag.bs{color:var(--text-3)}
+/* Rejection block lifecycle badges */
+.rb-state{font-size:10px;font-weight:700;border-radius:999px;padding:2px 8px;
+  border:1px solid var(--border);white-space:nowrap}
+/* pending = swept and reclaimed, confirm candle not in yet. Dashed border so
+   it never reads as a completed block at a glance. */
+.rb-state.rb-pending{color:var(--text-2);border-style:dashed;
+  border-color:var(--border-2);background:transparent}
+.rb-state.rb-fresh{color:var(--green-2);border-color:rgba(34,197,94,.35);
+  background:rgba(34,197,94,.08)}
+.rb-state.rb-tested{color:var(--yellow-2,#f59e0b);border-color:rgba(251,191,36,.35);
+  background:rgba(251,191,36,.08)}
+.rb-state.rb-respected{color:var(--accent);border-color:rgba(56,189,248,.35);
+  background:rgba(56,189,248,.08)}
+.rb-state.rb-mitigated{color:var(--text-3)}
+.rb-state.rb-invalidated{color:var(--red-2);border-color:rgba(239,68,68,.35);
+  background:rgba(239,68,68,.08)}
+.rb-zone{font-family:var(--mono);font-size:11px;white-space:nowrap}
+/* NB: named -freshbar, not -fresh — `.rb-state.rb-fresh` is the state badge
+   for the "fresh" lifecycle state, and a shared class name collapsed that
+   badge into a 5px-tall clipped bar. */
+.rb-freshbar{display:inline-block;vertical-align:middle;width:46px;height:5px;
+  border-radius:3px;background:var(--bg-hover);overflow:hidden}
+.rb-freshbar i{display:block;height:100%;background:var(--accent)}
+.rb-freshbar.g i{background:var(--green-2)}
+.rb-freshbar.r i{background:var(--red-2)}
+/* distance from price to the zone — green = still at it, red = already gone */
+.rb-dist{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--text-2)}
+.rb-dist.g{color:var(--green-2)}
+.rb-dist.r{color:var(--red-2)}
+.rb-chop{margin-left:5px;font-size:9px;font-weight:700;letter-spacing:.3px;
+  color:var(--red-2);border:1px solid rgba(239,68,68,.3);border-radius:3px;
+  padding:0 4px;text-transform:uppercase}
+.rb-rr{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--text-2)}
+.rb-rr.g{color:var(--green-2)}
+.rb-rr.r{color:var(--text-3)}
 .tv-tbl{width:100%;border-collapse:collapse;font-size:12px;table-layout:auto}
 .tv-tbl thead th{
   text-align:left;font-size:9.5px;font-weight:700;letter-spacing:.5px;color:var(--text-3);
@@ -1710,6 +1818,10 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         <svg class="ico" viewBox="0 0 24 24"><path d="M4 7h16M7 12h10M10 17h4"/></svg>
         <div><div class="nt">Compressed</div><div class="ns">High probability zones</div></div>
       </div>
+      <div class="nav-item" data-mode="base" role="button" tabindex="0">
+        <svg class="ico" viewBox="0 0 24 24"><path d="M3 20h18"/><rect x="5" y="13" width="14" height="5" rx="1"/><path d="M4 9l5-5 4 3 7-5"/></svg>
+        <div><div class="nt">Accumulation</div><div class="ns">Long bases &amp; breakouts</div></div>
+      </div>
       <div class="nav-item" data-mode="trending" role="button" tabindex="0">
         <svg class="ico" viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 8-8"/><path d="M17 7h4v4"/></svg>
         <div><div class="nt">Trending</div><div class="ns">Trend aligned setups</div></div>
@@ -1720,7 +1832,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       </div>
       <div class="nav-item" data-mode="bias" role="button" tabindex="0">
         <svg class="ico" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M6 8.5v7M8.3 6.8 15.7 11M15.7 13 8.3 17.2"/></svg>
-        <div><div class="nt">Structure / Bias</div><div class="ns">Market structure scan</div></div>
+        <div><div class="nt">Bias Detection</div><div class="ns">Rejection candles &amp; blocks</div></div>
       </div>
       <div class="nav-item" data-mode="selected" role="button" tabindex="0">
         <svg class="ico" viewBox="0 0 24 24"><path d="M4 6h11M4 12h7M4 18h5"/><circle cx="17" cy="15" r="3.2"/><path d="M19.3 17.3 22 20"/></svg>
@@ -1951,7 +2063,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
               <option value="rsi_below">RSI &lt;</option>
               <option value="price_above">Price &gt;</option>
               <option value="price_below">Price &lt;</option>
-              <option value="bias_shift">Bias shifts (BOS/CHoCH)</option>
+              <option value="bias_shift">Bias shift (rejection candle)</option>
+              <option value="rejection_block">Rejection block retest</option>
             </select></div>
           <div class="sp-field"><label>Value</label><input type="number" id="alVal" step="any" placeholder="e.g. 80"></div>
           <div class="sp-field"><label>Timeframe</label>
@@ -2195,6 +2308,45 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   </div>
 </div>
 
+<!-- ═══ Zone Liquidity popup modal ═══ -->
+<div class="chart-modal-bd" id="zlModalBd"></div>
+<div class="chart-modal" id="zlModal" role="dialog" aria-modal="true" aria-labelledby="zlSym">
+  <div class="chart-modal-card zl-card">
+    <div class="cm-head">
+      <div class="cm-title">
+        <svg class="ico" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink:0"><rect x="3" y="10" width="4" height="10"/><rect x="10" y="6" width="4" height="14"/><rect x="17" y="13" width="4" height="7"/></svg>
+        <span class="cm-sym" id="zlSym">—</span>
+        <span class="cm-tags" id="zlTags"></span>
+      </div>
+      <div class="cm-head-r">
+        <button class="ic-btn" id="zlClose" type="button" aria-label="Close"><svg class="ico" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
+    </div>
+    <div class="zl-ctrls" id="zlCtrls">
+      <span class="zl-cl">Window:</span>
+      <select class="zl-csel" id="zlWin" onchange="window._zlApply()">
+        <option value="0.5">&#177;0.50%</option>
+        <option value="1">&#177;1.00%</option>
+        <option value="2">&#177;2.00%</option>
+        <option value="3">&#177;3.00%</option>
+        <option value="5" selected>&#177;5.00%</option>
+        <option value="7.5">&#177;7.50%</option>
+        <option value="10">&#177;10.00%</option>
+      </select>
+      <span class="zl-cl">Min Wall:</span>
+      <select class="zl-csel" id="zlMinW" onchange="window._zlApply()">
+        <option value="0" selected>Auto</option>
+        <option value="250000">$250K+</option>
+        <option value="450000">$450K+</option>
+        <option value="1000000">$1M+</option>
+        <option value="2000000">$2M+</option>
+      </select>
+      <span class="zl-csrc" id="zlSrc"></span>
+    </div>
+    <div class="zl-body" id="zlBody"></div>
+  </div>
+</div>
+
 <script>
 (function fitApp(){
   var W=1560;                       // design width — must fit the full topbar
@@ -2315,12 +2467,12 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   var ST={
     market:    _ls_get("zyni-market","perpetual"),
     signal:    _ls_get("zyni-signal","OB"),
-    mode:      "main",
+    mode:      _ls_get("zyni-scan-mode","main"),
     view:      "scanner",
     exchange:  _loadExchange(),
     scanMode:  _ls_get("zyni-scanMode","market"),
     results:[], sel:-1, scannedAt:0, scanned:0,
-    prev:null, stars:{},
+    prev:null, stars:_loadStars(),          // restored from localStorage (durable across refresh/redeploy)
     auto:      _ls_getBool("zyni-auto-scan-enabled", false),   // OFF by default
     timer:     null,
     busy:      false,
@@ -2435,13 +2587,14 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   function confClass(s){return s>=80?"hi":s>=65?"mid":"lo";}
 
   /* ── data fetch ── */
-  var MODE_LABEL = {main:"Main Scan",compressed:"Compressed",trending:"Trending",ath_atl:"ATH / ATL",bias:"Structure / Bias",selected:"Selected Pairs"};
+  var MODE_LABEL = {main:"Main Scan",compressed:"Compressed",base:"Accumulation",trending:"Trending",ath_atl:"ATH / ATL",bias:"Bias Detection",selected:"Selected Pairs"};
   var MODE_SUB = {
     main:"All instruments across selected markets",
     compressed:"High-probability compressed zones",
+    base:"Long post-capitulation bases and their breakouts (Binance / MEXC, 1d–1w)",
     trending:"Trend-aligned movers with volume",
     ath_atl:"Pairs near all-time highs / lows",
-    bias:"Market-structure shifts (BOS / CHoCH)",
+    bias:"Rejection-candle bias shifts and rejection blocks",
     selected:"Build a custom scan universe from the biggest movers"
   };
 
@@ -2453,6 +2606,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   var DEFAULT_MODE_OPTIONS = {
     ath_atl: { mode:"both", status:"near_level", windowHours:24, breakTolPct:0.10, nearPct:3.0 },
     compressed: { tf:"4h", lookback:30, maxPct:5.0 },
+    base: { tf:"1d", scope:"market", baseWindow:180, minDrawdownPct:60, maxDriftPct:25, maxBreakoutAge:30 },
     trending: { tf:"4h", mode:"bullish" },
     bias: {
       tf:"1d", mode:"normal",
@@ -2461,7 +2615,13 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       priorMoveCandles:4, signalSearchCandles:1,
       minWickPct:35, minBodyPct:20, requireCloseBeyondMidpoint:true,
       volumeFilter:"optional", volumeMultiplier:1.5,
-      useObConfluence:true, useFvgConfluence:true, useFibConfluence:true
+      useObConfluence:true, useFvgConfluence:true, useFibConfluence:true,
+      // Which detectors run: bias | rejection_block | both
+      detect:"bias",
+      rbSignalMode:"formation", rbVolumeMode:"optional",
+      rbFormationMode:"confirmed", rbMaxDistanceAtr:1.5,
+      rbRegimeMode:"off", rbMinPriorMovePct:0,
+      rbIncludeDead:false, detectorFilter:"all"
     },
   };
   function _loadModeOptions(){
@@ -2514,6 +2674,24 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       { type:"num", key:"lookback", label:"Lookback bars", help:"Window of candles to measure compression." },
       { type:"num", key:"maxPct", label:"Max range %", step:0.1, help:"Maximum high-low range (in %) within the window. Smaller = tighter compression." },
     ],
+    base: [
+      { type:"select", key:"tf", label:"Timeframe",
+        options:[["1d","1d"],["1w","1w · Binance"]],
+        help:"Daily or weekly only — accumulation bases run for months." },
+      { type:"select", key:"scope", label:"Scope",
+        options:[["market","Full market (cycled)"],["selected","Selected (watchlist)"]],
+        help:"Full market walks the whole exchange Pairs/cycle at a time, resuming where the last scan stopped. Bases form in beaten-down low-caps, so to target specific pairs build a universe in the Selected Pairs tab (or star rows in a results table) and pick Selected." },
+      { type:"num", key:"baseWindow", label:"Base window",
+        help:"Length of the base in CANDLES. ~180 for a mid-length daily base; drop to 40-60 on 1w." },
+      { type:"num", key:"minDrawdownPct", label:"Min drawdown %", step:1,
+        help:"How far price must be off the window high. Filters for bases at the lows, not ranges at the highs." },
+      { type:"num", key:"maxDriftPct", label:"Max drift %", step:1,
+        help:"Maximum regression drift across the base. Low = flat base; high = still trending." },
+      { type:"num", key:"maxBreakoutAge", label:"Max breakout age",
+        help:"How many candles back to look for the base end. Raise it to catch pairs that broke out a while ago." },
+      { type:"num", bind:"state", key:"pairsPerCycle", label:"Pairs / cycle",
+        help:"Symbols checked per scan. Base scanning pulls ~450 daily candles per pair, so smaller batches finish far faster — hit Scan again to continue from where the last one stopped. Applies to both scopes; a watchlist that fits in one cycle is scanned whole." },
+    ],
     trending: [
       { type:"select", key:"tf", label:"Timeframe",
         options:[["15m","15m"],["1h","1h"],["4h","4h"],["1d","1d"]],
@@ -2523,9 +2701,18 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         help:"Bullish/Bearish movers by % change, or High Volume by quote-volume surge." },
     ],
     bias: [
+      // Governs everything below it, so it leads the row.
+      { type:"select", key:"detect", label:"Detect", rerender:true,
+        options:[["bias","Bias shifts"],["rejection_block","Rejection blocks"],["both","Both"]],
+        help:"Which engine runs. Rejection blocks only skips the bias-shift search entirely, so the scan is faster and the results are purely blocks. A rejection block is a swept liquidity level that was reclaimed and confirmed; the zone is the band between the extreme wick and the extreme body." },
       { type:"select", key:"tf", label:"Timeframe",
         options:[["1h","1H"],["4h","4H"],["6h","6H"],["12h","12H"],["1d","1D"]],
         help:"Candle interval used to detect bias-shift rejections." },
+      { type:"select", bind:"state", key:"scanMode", label:"Scope",
+        options:[["market","Full market"],["selected","Selected (watchlist)"]],
+        help:"Full market = round-robin every USDT pair. Selected = scan only your Selected Pairs / starred symbols." },
+      { type:"num", bind:"state", key:"pairsPerCycle", label:"Pairs / cycle",
+        help:"How many symbols are checked per scan request. Applies to both scopes — Full market and Selected both round-robin through their universe in batches this size, so results build up over successive scans. Bigger batches = more results per scan but more API weight." },
       { type:"select", key:"mode", label:"Mode", rerender:true,
         options:[["normal","Normal"],["expert","Expert"]],
         help:"Normal uses tuned presets. Expert exposes the raw candle-quality controls below." },
@@ -2560,6 +2747,25 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       { type:"check", key:"useObConfluence", label:"OB confluence",  help:"Boost grade when the rejection is near an Order Block." },
       { type:"check", key:"useFvgConfluence", label:"FVG confluence", help:"Boost grade when the rejection is near a Fair Value Gap." },
       { type:"check", key:"useFibConfluence", label:"Fib confluence", help:"Boost grade when the rejection is near a Fibonacci level." },
+      // ── Rejection Block controls (shown when Detect includes them) ──
+      { type:"select", key:"rbFormationMode", label:"RB formation", rb:true,
+        options:[["confirmed","Confirmed only"],["both","Pending + confirmed"],["pending","Pending only"]],
+        help:"Confirmed waits for the candle that closes beyond the reclaim. Pending flags a block as soon as the sweep is reclaimed — about 65% of those go on to confirm, so treat them as a watch, not a finished setup. Pending blocks are capped at grade B." },
+      { type:"select", key:"rbRegimeMode", label:"Market regime", rb:true,
+        options:[["off","Off"],["optional","Optional"],["required","Trending only"]],
+        help:"Chop filter. Measures path efficiency over 20 candles — how much net ground price covered versus how far it actually travelled. A range covers a lot of distance going nowhere; a trend goes somewhere. Trending only hides blocks that formed inside chop." },
+      { type:"num", key:"rbMinPriorMovePct", label:"Min prior move %", step:0.5, rb:true,
+        help:"Require the drive INTO the swept level to have travelled at least this far. A 15% drop into a swept low leaves room to retrace; a 2% drift does not. 0 disables it. This is about magnitude — the drive being clean is scored separately and cannot tell chop from trend on its own." },
+      { type:"num", key:"rbMaxDistanceAtr", label:"Max distance (ATR)", step:0.1, rb:true,
+        help:"Hide blocks price has already run away from, measured in ATR. A violent confirm candle can leave a brand-new block several ATR behind — lower this to only see blocks you can still trade." },
+      { type:"select", key:"rbSignalMode", label:"RB signal", rb:true,
+        options:[["formation","Formation (all live)"],["retest","Retest only"]],
+        help:"Formation lists every live block. Retest only shows blocks price has actually returned to." },
+      { type:"select", key:"rbVolumeMode", label:"RB volume", rb:true,
+        options:[["off","Off"],["optional","Optional"],["required","Required"]],
+        help:"Optional scores volume (sweep spike, reclaim absorption, dry retest). Required hides blocks whose sweep had no volume behind it." },
+      { type:"check", key:"rbIncludeDead", label:"Include spent blocks", rb:true,
+        help:"Also show invalidated, exhausted, expired and far-away blocks. Off by default — raw formation is very noisy." },
     ],
   };
 
@@ -2621,7 +2827,22 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     host.hidden=false;
     // Expert-only fields are hidden unless the bias tab is in Expert mode.
     var expertOn = (ST.mode==="bias") && ((ST.modeOptions.bias||{}).mode==="expert");
-    var visible = schema.filter(function(f){ return !f.expert || expertOn; });
+    var _det = (ST.modeOptions.bias||{}).detect || "bias";
+    // Rejection-block settings appear only when that engine is running, and
+    // the bias-engine knobs disappear when it isn't — a control that cannot
+    // affect the scan should not be on screen.
+    var rbOn   = (ST.mode==="bias") && (_det==="rejection_block" || _det==="both");
+    var biasOn = (ST.mode==="bias") && (_det==="bias" || _det==="both");
+    var BIAS_ONLY={mode:1,biasStrength:1,detectionMode:1,confluenceMode:1,
+      priorMoveCandles:1,signalSearchCandles:1,minWickPct:1,minBodyPct:1,
+      requireCloseBeyondMidpoint:1,volumeFilter:1,volumeMultiplier:1,
+      useObConfluence:1,useFvgConfluence:1,useFibConfluence:1};
+    var visible = schema.filter(function(f){
+      if(f.expert && !expertOn) return false;
+      if(f.rb && !rbOn) return false;
+      if(ST.mode==="bias" && f.key && BIAS_ONLY[f.key] && !biasOn) return false;
+      return true;
+    });
     host.innerHTML='<div class="tc-h">'+esc(MODE_LABEL[ST.mode]||"")+' settings</div>'+
       '<div class="tc-row">'+visible.map(function(f){return _ctrlField(ST.mode,f);}).join("")+'</div>';
     var byKey={};
@@ -2741,6 +2962,22 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         roundRobin:ST.roundRobin, pairsPerCycle:ST.pairsPerCycle
       }};
     }
+    if(ST.mode==="base"){
+      var b=ST.modeOptions.base||{};
+      var bWatch=Object.keys(ST.stars).filter(function(s){return ST.stars[s];});
+      var bScope=b.scope||"market";
+      // Starred nothing but asked for Selected → fall back to market scope.
+      if(bScope==="selected" && !bWatch.length) bScope="market";
+      return {url:"/api/base_scan", body:{
+        timeframe:b.tf||"1d", market:market, exchange:ST.exchange,
+        symbols: bScope==="selected" ? bWatch : [],
+        baseWindow:+b.baseWindow||180,
+        minDrawdownPct:(b.minDrawdownPct!=null?+b.minDrawdownPct:60),
+        maxDriftPct:+b.maxDriftPct||25,
+        maxBreakoutAge:(b.maxBreakoutAge!=null?+b.maxBreakoutAge:30),
+        pairsPerCycle:ST.pairsPerCycle, roundRobin:ST.roundRobin
+      }};
+    }
     if(ST.mode==="trending"){
       var t=ST.modeOptions.trending||{};
       return {url:"/api/trending_scan", body:{
@@ -2762,10 +2999,12 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     }
     if(ST.mode==="bias"){
       var bo=ST.modeOptions.bias||{};
-      // Desktop Bias scans full market by default so the backend never returns
-      // no_selected_pairs (it defaults scanMode to "selected").
-      var biasScanMode="market";
+      // Scope is shared with Main Scan (ST.scanMode): Full market round-robins
+      // every pair; Selected scans only the starred / Selected Pairs universe.
       var biasWatch=Object.keys(ST.stars).filter(function(s){return ST.stars[s];});
+      var biasScanMode=ST.scanMode||"market";
+      // Selected scope with an empty universe would return no_selected_pairs — fall back to market.
+      if(biasScanMode==="selected" && !biasWatch.length) biasScanMode="market";
       return {url:"/api/bias_scan", body:{
         timeframe:bo.tf||"1d", tf:bo.tf||"1d", market:market, exchange:ST.exchange,
         scanMode:biasScanMode,
@@ -2789,7 +3028,19 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         // legacy aliases (harmless if backend ignores them)
         useObConf: bo.useObConfluence!==false,
         useFvgConf: bo.useFvgConfluence!==false,
-        useFibConf: bo.useFibConfluence!==false
+        useFibConf: bo.useFibConfluence!==false,
+        // Which engine(s) run: bias | rejection_block | both
+        detect: bo.detect||"bias",
+        rejectionBlock: {
+          enabled:     (bo.detect==="rejection_block"||bo.detect==="both"),
+          signalMode:     bo.rbSignalMode||"formation",
+          formationMode:  bo.rbFormationMode||"confirmed",
+          volumeMode:     bo.rbVolumeMode||"optional",
+          maxDistanceAtr:  (+bo.rbMaxDistanceAtr>0?+bo.rbMaxDistanceAtr:1.5),
+          regimeMode:      bo.rbRegimeMode||"off",
+          minPriorMovePct: +bo.rbMinPriorMovePct||0,
+          includeDead:    !!bo.rbIncludeDead
+        }
       }};
     }
     return null;
@@ -2964,6 +3215,12 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
           try{ evaluateAlerts(ST.results); }catch(_){}
           /* User-driven selection only — no auto-open of first row (Task 1). */
           ST.sel = -1;
+        } else if(modeAtScan === "base"){
+          var barr = Array.isArray(d) ? d : (d && (d.results || d.items) || []);
+          ST.tabData.base.items = barr;
+          ST.tabData.base.scanned = (d && d.scanned) || barr.length;
+          ST.tabData.base.raw = d;
+          ST.tabData.base.sel = -1;
         } else if(modeAtScan === "trending"){
           var arr = Array.isArray(d) ? d : (d && (d.results || d.items) || []);
           ST.tabData.trending.items = arr;
@@ -2979,10 +3236,28 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
           ST.results = []; ST.sel = -1; ST.scanned = ST.tabData.ath_atl.scanned;
         } else if(modeAtScan === "bias"){
           var br = (d && (d.results || d.shifts)) || [];
-          ST.tabData.bias.items = br;
+          // Full-market scope round-robins a batch at a time, so replacing the
+          // list each scan threw away every earlier batch. Merge instead — a
+          // newer read of the same symbol+TF wins, everything else persists
+          // until the user hits Clear (same contract as Main Scan).
+          var bExisting = ST.tabData.bias.items || [];
+          var bKey = function(x){ return (x.symbol||x.pair||"")+"|"+(x.timeframe||x.tf||""); };
+          var bFresh = {};
+          br.forEach(function(x){ bFresh[bKey(x)] = true; });
+          var bMerged = bExisting.filter(function(x){ return !bFresh[bKey(x)]; }).concat(br);
+          var _bGo = {"A+":0,"A":1,"B":2,"C":3,"D":4};
+          bMerged.sort(function(a,z){
+            var d1=(+z.score||0)-(+a.score||0); if(d1) return d1;
+            return (_bGo[a.grade]!=null?_bGo[a.grade]:4)-(_bGo[z.grade]!=null?_bGo[z.grade]:4);
+          });
+          ST.tabData.bias.items = bMerged;
           ST.tabData.bias.raw = d;
           ST.tabData.bias.scanned = (d && d.scanned) || br.length;
+          ST.tabData.bias.batchFound = br.length;
+          ST.tabData.bias.scannedAt = Date.now();
+          ST.tabData.bias.sel = -1;
           ST.results = []; ST.sel = -1; ST.scanned = ST.tabData.bias.scanned;
+          try{ evaluateAlerts(_biasAlertRows(bMerged)); }catch(_){}
         }
         renderAll();
         _saveTabData();
@@ -3270,20 +3545,139 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var fr=E("cmFrame"); if(fr) fr.src="about:blank";   // stop the stream when hidden
   }
 
-  /* ── watchlist persistence ── */
+  /* ── Zone Liquidity popup ── */
+  var _zlData=null;
+  function _openZlModal(data, symbol){
+    var symEl=E("zlSym");
+    if(!symEl){
+      /* Modal HTML not in DOM (stale server cache) — fall back to inline display */
+      var out=E("ddOut");
+      if(out) out.innerHTML='<div class="dd-result">'+_zlRender(data)+'</div>';
+      return;
+    }
+    _zlData=data;
+    symEl.textContent = symbol || "—";
+    var ob_type = (data && data.ob_type) || "bullish";
+    E("zlTags").innerHTML = '<span class="tag">'+(ob_type==="bullish"?"Bullish OB":"Bearish OB")+'</span>';
+    var srcEl=E("zlSrc");
+    if(srcEl) srcEl.textContent=(data&&data.source)?data.source:"";
+    _zlApply();
+    E("zlModalBd").classList.add("open");
+    E("zlModal").classList.add("open");
+    document.body.classList.add("sheet-open");
+  }
+  function _zlApply(){
+    if(!_zlData) return;
+    var winEl=E("zlWin"),minEl=E("zlMinW");
+    var wP=winEl?parseFloat(winEl.value):5.0;
+    var mW=minEl?parseFloat(minEl.value):0;
+    var bodyEl=E("zlBody");
+    if(bodyEl) bodyEl.innerHTML=_zlRender(_zlData,wP,mW);
+  }
+  function _closeZlModal(){
+    E("zlModalBd").classList.remove("open");
+    E("zlModal").classList.remove("open");
+    document.body.classList.remove("sheet-open");
+  }
+  function _zlRender(d,winPct,minWall){
+    if(!d) return '<div class="row-msg err">No data returned.</div>';
+    if(d.error) return '<div class="row-msg err">'+esc(d.error)+'</div>';
+    var wP=(winPct!==undefined)?winPct:5.0;
+    var mW=(minWall!==undefined)?minWall:0;
+    var verdict=(d.verdict||"WEAK").toUpperCase();
+    var vMap={INSTITUTIONAL:"inst",STRONG:"strong",MODERATE:"moderate",WEAK:"weak",EMPTY:"empty"};
+    var vCls=vMap[verdict]||"weak";
+    var obType=(d.ob_type||"bullish").toLowerCase();
+    /* filter bids/asks by window and min-wall (same logic as Live Monitor) */
+    var bids=(d.bids||[]).filter(function(l){return l.distance_pct<=wP&&l.size_usd>=mW;});
+    var asks=(d.asks||[]).filter(function(l){return l.distance_pct<=wP&&l.size_usd>=mW;});
+    /* helpers */
+    function _priceStr(p){return(typeof p==="number")?(p>=1?p.toFixed(4):p.toFixed(6)):esc(String(p));}
+    function _zpColor(zp){var z=(zp||"").toLowerCase();return z==="inside"?"#22d3ee":z==="below"?"#22c55e":z==="above"?"#ef4444":"#8294aa";}
+    function _th(t){return"<th style='position:sticky;top:0;background:#0a1422;color:#8294aa;font-size:10px;text-align:left;padding:7px 6px;text-transform:uppercase;white-space:nowrap'>"+t+"</th>";}
+    var TH="<thead><tr>"+_th("#")+_th("Price")+_th("Dist%")+_th("Zone")+_th("Size")+_th("Strength")+_th("Stability")+_th("Meaning")+"</tr></thead>";
+    function _row(lv,i,side){
+      var pc=(side==="bid")?"#22c55e":"#ef4444";
+      var bg=(side==="bid")?"linear-gradient(90deg,rgba(34,197,94,.35),#22c55e)":"linear-gradient(90deg,rgba(239,68,68,.35),#ef4444)";
+      var w=Math.max(5,lv.strength_pct||0);
+      var zp=lv.zone_pos||"";
+      return"<tr style='border-bottom:1px solid rgba(148,163,184,.08)'>"+
+        "<td style='padding:6px;color:#9eb3c7;font-size:10px'>#"+(i+1)+"</td>"+
+        "<td style='padding:6px;color:"+pc+";font-weight:700;font-size:11px'>"+_priceStr(lv.price)+"</td>"+
+        "<td style='padding:6px;color:#a9bdd2;font-size:10px'>"+(lv.distance_pct!==undefined?lv.distance_pct.toFixed(2)+"%":"—")+"</td>"+
+        "<td style='padding:6px'><span style='color:"+_zpColor(zp)+";font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.3px'>"+esc(zp||"—")+"</span></td>"+
+        "<td style='padding:6px;color:#e5f3ff;font-weight:700;font-size:11px'>"+esc(lv.size_label||"—")+"</td>"+
+        "<td style='padding:6px'><div style='width:80px;height:7px;background:rgba(148,163,184,.16);border-radius:999px;overflow:hidden'><div style='height:100%;border-radius:999px;background:"+bg+";width:"+w+"%'></div></div></td>"+
+        "<td style='padding:6px;color:#9eb3c7;font-size:10px'>"+esc(lv.stability||"—")+"</td>"+
+        "<td style='padding:6px;color:#9eb3c7;font-size:10px;white-space:normal;max-width:180px'>"+esc(lv.meaning||"—")+"</td>"+
+      "</tr>";
+    }
+    function _emptyRow(msg){return"<tr><td colspan='8' style='padding:18px;color:#9eb3c7;font-size:11px;text-align:center'>"+esc(msg)+"</td></tr>";}
+    var html='';
+    /* verdict strip */
+    html+='<div class="zl-verdict '+vCls+'"><div class="zl-v-label">'+esc(verdict)+'</div>';
+    if(d.verdict_desc) html+='<div class="zl-v-desc">'+esc(d.verdict_desc)+'</div>';
+    if(d.insight)      html+='<div class="zl-v-insight">'+esc(d.insight)+'</div>';
+    html+='</div>';
+    /* summary stats */
+    html+='<div class="zl-summary">';
+    html+='<div class="zl-stat"><div class="zl-stat-k">Total Bids</div><div class="zl-stat-v g">'+esc(d.total_bid_fmt||"—")+'</div></div>';
+    html+='<div class="zl-stat"><div class="zl-stat-k">Total Asks</div><div class="zl-stat-v r2">'+esc(d.total_ask_fmt||"—")+'</div></div>';
+    html+='<div class="zl-stat"><div class="zl-stat-k">Zone Type</div><div class="zl-stat-v" style="font-size:12px">'+esc(obType==="bullish"?"Bullish OB":"Bearish OB")+'</div></div>';
+    html+='</div>';
+    /* two-column bid / ask wall tables */
+    html+='<div class="zl-walls">';
+    html+='<div class="zl-wall-side"><div class="zl-wall-title bid">BID WALLS / SUPPORT ('+bids.length+')</div>';
+    html+='<div class="zl-wall-scroll"><table style="width:100%;border-collapse:collapse;min-width:380px">'+TH+'<tbody>';
+    html+=bids.length?bids.map(function(lv,i){return _row(lv,i,"bid");}).join(""):_emptyRow("No bid walls in selected window / min-wall filter.");
+    html+='</tbody></table></div></div>';
+    html+='<div class="zl-wall-side"><div class="zl-wall-title ask">ASK WALLS / RESISTANCE ('+asks.length+')</div>';
+    html+='<div class="zl-wall-scroll"><table style="width:100%;border-collapse:collapse;min-width:380px">'+TH+'<tbody>';
+    html+=asks.length?asks.map(function(lv,i){return _row(lv,i,"ask");}).join(""):_emptyRow("No ask walls in selected window / min-wall filter.");
+    html+='</tbody></table></div></div>';
+    html+='</div>';
+    if(d.source) html+='<div class="zl-source">'+esc(d.source)+'</div>';
+    return html;
+  }
+
+  /* ── watchlist persistence ──
+     The server stores the watchlist in an ephemeral /tmp file that is wiped on
+     every app restart/deploy, so we ALSO mirror the starred set to localStorage.
+     localStorage is the durable source of truth across refreshes; the server
+     copy is a best-effort sync used only when it actually has data. */
+  function _saveStars(){
+    try{ localStorage.setItem("zyni-desktop-stars", JSON.stringify(Object.keys(ST.stars).filter(function(s){return ST.stars[s];}))); }catch(_){ }
+  }
+  function _loadStars(){
+    try{
+      var a=JSON.parse(localStorage.getItem("zyni-desktop-stars")||"[]"), o={};
+      (a||[]).forEach(function(s){ if(s) o[String(s).toUpperCase()]=true; });
+      return o;
+    }catch(_){ return {}; }
+  }
   function loadWatchlist(){
     if(location.protocol==="file:") return;
     fetch("/api/watchlist/get",{credentials:"same-origin"})
       .then(function(r){if(!r.ok)throw new Error("HTTP "+r.status);return r.json();})
       .then(function(d){
-        ST.stars={};
-        ((d&&d.pairs)||[]).forEach(function(p){ if(p) ST.stars[String(p).toUpperCase()]=true; });
+        var srv=((d&&d.pairs)||[]).map(function(p){return String(p).toUpperCase();}).filter(Boolean);
+        var haveLocal=Object.keys(ST.stars).filter(function(s){return ST.stars[s];}).length;
+        if(haveLocal){
+          // localStorage is authoritative (it survives refresh/redeploy); just
+          // make sure the server copy matches — never let a stale server list win.
+          syncWatchlist();
+        } else if(srv.length){
+          // No local set → restore from server (e.g. first load on a new device).
+          ST.stars={}; srv.forEach(function(s){ ST.stars[s]=true; }); _saveStars();
+        }
         try{ renderTable(); renderMobileCards(); if(ST.sel>=0) renderInsight(); }catch(_){}
+        if(ST.mode==="selected"){ try{ renderSelectedPairs(); renderSelectedPairsInsight(); }catch(_){} }
       })
-      .catch(function(){/* leave ST.stars as-is */});
+      .catch(function(){/* offline / server error — keep localStorage-restored stars */});
   }
   var _wlSyncT=null;
   function syncWatchlist(){
+    _saveStars();                              // durable local mirror, synchronous
     if(location.protocol==="file:") return;
     clearTimeout(_wlSyncT);
     _wlSyncT=setTimeout(function(){
@@ -3305,6 +3699,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   ST.tabData = {
     main:       {results:[], scanned:0, raw:null, sel:-1},
     compressed: {results:[], scanned:0, raw:null, sel:-1},
+    base:       {items:[],   scanned:0, raw:null, sel:-1},
     trending:   {items:[],   scanned:0, raw:null, sel:-1},
     ath_atl:    {items:[],   scanned:0, raw:null, sel:-1, found:0, totalScanned:0},
     bias:       {items:[],   scanned:0, raw:null, sel:-1},
@@ -3321,8 +3716,9 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   /* Live-price engine state. Prices/24h% stream straight from each exchange's
      public WebSocket (the REST /api/pairs feed is cached up to 120s, so it is
      not live). If a socket can't connect, the list keeps the load-time snapshot. */
-  var SP_LIVE = { price:{}, chg:{}, vol:{}, cells:{}, ws:null, pollT:null, pingT:null,
-                  active:false, exchange:null, market:null, syms:{}, sig:"", _start:null };
+  var SP_LIVE = { price:{}, chg:{}, vol:{}, cells:{}, ws:null, pollT:null, pingT:null, statT:null,
+                  active:false, exchange:null, market:null, syms:{}, sig:"", _start:null,
+                  rx:0, applied:0, lastApplied:0 };
   function _spIsJunk(sym){
     return /(UP|DOWN|BULL|BEAR)USDT$/.test(sym)
         || /\d+(L|S)USDT$/.test(sym)
@@ -3512,6 +3908,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   }
   function _spApplyTick(sym, price, chg, vol){
     var cell=SP_LIVE.cells[sym]; if(!cell) return;
+    SP_LIVE.applied++; SP_LIVE.lastApplied=Date.now();
     if(cell.p && typeof price==="number" && isFinite(price)){
       var nv=_spFmtPrice(price), prev=cell.p.getAttribute("data-raw");
       if(cell.p.textContent!==nv){
@@ -3536,10 +3933,25 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     _spApplyTick(sym, price, chg, vol);
   }
   function _spStopLive(){
-    SP_LIVE.active=false;
+    SP_LIVE.active=false; SP_LIVE._polling=false;
     if(SP_LIVE.pingT){ clearInterval(SP_LIVE.pingT); SP_LIVE.pingT=null; }
     if(SP_LIVE.pollT){ clearInterval(SP_LIVE.pollT); SP_LIVE.pollT=null; }
+    if(SP_LIVE.statT){ clearInterval(SP_LIVE.statT); SP_LIVE.statT=null; }
     if(SP_LIVE.ws){ try{ SP_LIVE.ws.onclose=null; SP_LIVE.ws.onmessage=null; SP_LIVE.ws.onerror=null; SP_LIVE.ws.close(); }catch(_){ } SP_LIVE.ws=null; }
+  }
+  // Diagnostic status line: tells us whether frames arrive (rx) and whether
+  // they match rows (applied). "waiting…" = nothing arriving; "rx N no-match"
+  // = arriving but symbols don't line up; "N upd" climbing = working.
+  function _spLiveStat(){
+    if(!SP_LIVE.active) return;
+    var ex=(EXCH_NAME&&EXCH_NAME[SP_LIVE.exchange])||SP_LIVE.exchange;
+    var msg="● Live · "+ex+(SP_LIVE._polling?" · server":"");
+    if(SP_LIVE.applied>0){
+      var age=SP_LIVE.lastApplied?Math.max(0,Math.round((Date.now()-SP_LIVE.lastApplied)/1000)):0;
+      msg+=" · "+(SP_LIVE.applied>999?((SP_LIVE.applied/1000).toFixed(1)+"k"):SP_LIVE.applied)+" upd · "+age+"s";
+    } else if(SP_LIVE.rx>0){ msg+=" · connecting…"; }
+    else { msg+=" · waiting…"; }
+    _spSetLiveStat(msg, true);
   }
   function _spEnsureLive(){
     var syms=_spStarList();
@@ -3548,12 +3960,45 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var sig=ST.exchange+"|"+ST.market;
     if(SP_LIVE.active && SP_LIVE.sig===sig && SP_LIVE.ws) return;   // already streaming the right feed
     _spStopLive();
+    SP_LIVE.rx=0; SP_LIVE.applied=0; SP_LIVE.lastApplied=0; SP_LIVE._polling=false;
     SP_LIVE.active=true; SP_LIVE.sig=sig; SP_LIVE.exchange=ST.exchange; SP_LIVE.market=ST.market;
     var ex=ST.exchange;
     SP_LIVE._start = (ex==="binance")?_spWSBinance : (ex==="bybit")?_spWSBybit :
                      (ex==="okx")?_spWSOkx : (ex==="mexc")?_spWSMexc : null;
-    if(SP_LIVE._start) SP_LIVE._start();
-    else { SP_LIVE.active=false; _spSetLiveStat("Snapshot",false); }
+    if(SP_LIVE._start){
+      SP_LIVE._start();
+      // Watchdog: if the socket delivers no usable ticks within 7s (blocked, or
+      // symbols the exchange WS doesn't recognise), fall back to backend polling.
+      (function(watchSig){
+        setTimeout(function(){
+          if(SP_LIVE.active && SP_LIVE.sig===watchSig && SP_LIVE.applied===0) _spStartPoll();
+        }, 7000);
+      })(sig);
+    } else { _spStartPoll(); }   // exchange without a WS adapter → poll backend
+  }
+  // Backend price relay: polls /api/live-prices (same source as the loaded
+  // universe, so every symbol matches) every 3s. Used as a fallback when the
+  // direct exchange WebSocket can't deliver usable ticks.
+  function _spStartPoll(){
+    if(SP_LIVE.pollT) return;
+    SP_LIVE._polling=true;
+    if(SP_LIVE.ws){ try{ SP_LIVE.ws.onclose=null; SP_LIVE.ws.onmessage=null; SP_LIVE.ws.onerror=null; SP_LIVE.ws.close(); }catch(_){ } SP_LIVE.ws=null; }
+    if(!SP_LIVE.statT){ SP_LIVE.statT=setInterval(_spLiveStat, 1500); }
+    var poll=function(){
+      if(!SP_LIVE.active) return;
+      fetch("/api/live-prices?exchange="+encodeURIComponent(SP_LIVE.exchange)+"&market="+encodeURIComponent(SP_LIVE.market),{credentials:"same-origin"})
+        .then(function(r){ return r.ok?r.json():null; })
+        .then(function(map){
+          if(!SP_LIVE.active||!map) return;
+          SP_LIVE.rx++;
+          for(var s in SP_LIVE.syms){
+            var d=map[s]; if(!d) continue;
+            _spBumpTick(s, (d.p!=null?parseFloat(d.p):undefined), (d.c!=null?parseFloat(d.c):undefined), (d.v!=null?parseFloat(d.v):undefined));
+          }
+        }).catch(function(){});
+    };
+    poll();
+    SP_LIVE.pollT=setInterval(poll, 3000);
   }
   function _spOpenWS(url, h){
     var ws, opened=false;
@@ -3563,13 +4008,15 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     ws.onopen=function(){
       opened=true;
       _spSetLiveStat("● Live · "+((EXCH_NAME&&EXCH_NAME[SP_LIVE.exchange])||SP_LIVE.exchange), true);
+      if(SP_LIVE.statT) clearInterval(SP_LIVE.statT);
+      SP_LIVE.statT=setInterval(_spLiveStat, 1500);
       if(h.onopen){ try{ h.onopen(ws); }catch(_){ } }
       if(h.ping){
         if(SP_LIVE.pingT) clearInterval(SP_LIVE.pingT);
         SP_LIVE.pingT=setInterval(function(){ if(ws.readyState===1) try{ h.ping(ws); }catch(_){ } }, h.pingMs||20000);
       }
     };
-    ws.onmessage=function(ev){ if(SP_LIVE.active && h.onmsg) h.onmsg(ev.data); };
+    ws.onmessage=function(ev){ if(!SP_LIVE.active) return; SP_LIVE.rx++; if(h.onmsg) h.onmsg(ev.data); };
     ws.onerror=function(){ /* onclose handles cleanup + fallback */ };
     ws.onclose=function(){
       if(SP_LIVE.pingT){ clearInterval(SP_LIVE.pingT); SP_LIVE.pingT=null; }
@@ -3669,9 +4116,9 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   }
 
   var INSIGHT_TITLES = {
-    main:"Setup Insight", compressed:"Compression Insight",
+    main:"Setup Insight", compressed:"Compression Insight", base:"Accumulation Insight",
     trending:"Market Mover Insight", ath_atl:"Level Breakout Insight",
-    bias:"Bias & Structure Insight", selected:"Selected Pairs"
+    bias:"Bias Detection Insight", selected:"Selected Pairs"
   };
 
   /* sessionStorage cache so refresh keeps the last visible results (Wave 16) */
@@ -3742,6 +4189,11 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   function renderAll(){
     var bodyEl=document.querySelector('.body');
     if(bodyEl) bodyEl.setAttribute('data-mode', ST.mode);
+    // Sync sidebar nav active class (needed on first load when mode is restored
+    // from localStorage but the HTML still has data-mode="main" marked active).
+    [].forEach.call(document.querySelectorAll('.side .nav-item[data-mode]'),function(x){
+      x.classList.toggle('active', x.getAttribute('data-mode')===ST.mode);
+    });
     var m=ST.mode;
     if(m==="main"){
       E("tblHost").hidden=false; E("tabView").hidden=true;
@@ -3749,6 +4201,9 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     } else if(m==="compressed"){
       E("tblHost").hidden=true; E("tabView").hidden=false;
       renderCompressedKPI(); renderCompressedTable();
+    } else if(m==="base"){
+      E("tblHost").hidden=true; E("tabView").hidden=false;
+      renderBaseKPI(); renderBaseTable();
     } else if(m==="trending"){
       E("tblHost").hidden=true; E("tabView").hidden=false;
       renderTrendingKPI(); renderTrendingTable();
@@ -3788,9 +4243,12 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     var box=E("insScroll"); if(!box) return;
     if(mode==="main"){ renderInsight(); return; }                          // existing setup insight
     var td=ST.tabData[mode]||{};
-    var rows = td.results || td.items || [];
+    // `view` is the filtered list the table actually rendered (bias tab has a
+    // detector filter); fall back to the full list for tabs without one.
+    var rows = td.view || td.results || td.items || [];
     var row  = (td.sel>=0) ? rows[td.sel] : null;
     if(mode==="compressed") renderCompressedInsight(row);
+    else if(mode==="base") renderBaseInsight(row);
     else if(mode==="trending") renderTrendingInsight(row);
     else if(mode==="ath_atl") renderAthAtlInsight(row);
     else if(mode==="bias") renderBiasInsight(row);
@@ -3834,7 +4292,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     if(m === "main") return ST.results[ST.sel]||null;
     var td = ST.tabData && ST.tabData[m];
     if(!td) return null;
-    var arr = td.results || td.items || [];
+    var arr = td.view || td.results || td.items || [];
     var sel = (typeof td.sel==="number") ? td.sel : -1;
     return (sel>=0 && sel<arr.length) ? arr[sel] : null;
   }
@@ -4063,6 +4521,123 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       kpi("PAIRS SCANNED", ST.tabData.compressed.scanned||items.length, "")+
       kpi("ERRORS", (ST.tabData.compressed.raw&&ST.tabData.compressed.raw.errors)||0, "");
   }
+  /* ── Accumulation (long base) tab ── */
+  function _baseStatusLabel(s){
+    return ({
+      fresh_breakout:"Fresh breakout",
+      breakout_holding:"Breakout holding",
+      testing_base_high:"Testing base high",
+      basing:"Basing",
+      breakdown:"Breakdown"
+    })[s] || (s||"—");
+  }
+  function _baseStatusClass(s){
+    if(s==="fresh_breakout"||s==="breakout_holding") return "bull";
+    if(s==="breakdown") return "bear";
+    return "warn";
+  }
+  /* Confidence pill. Low/Weak are dimmed rather than coloured red — red reads
+     as "bearish direction" here, and confidence is direction-agnostic. */
+  function _baseConfPill(c,s){
+    var cls = (c==="High") ? "bull" : (c==="Medium") ? "warn" : "";
+    var dim = (c==="Low"||c==="Weak") ? ' style="opacity:.5"' : '';
+    return '<span class="tv-pill '+cls+'"'+dim+'>'+esc((c||"—")+" "+(s!=null?s:""))+'</span>';
+  }
+  function renderBaseKPI(){
+    var items = (ST.tabData.base.items)||[];
+    var raw   = ST.tabData.base.raw||{};
+    var broke = items.filter(function(x){return /breakout/.test(String(x.status||""));}).length;
+    var hiCf  = items.filter(function(x){return x.confidence==="High";}).length;
+    var avgDD = items.length ? items.reduce(function(a,x){return a+(+x.drawdownFromHighPct||0);},0)/items.length : 0;
+    E("kpiRow").innerHTML=
+      kpi("BASES FOUND", items.length, "")+
+      kpi("HIGH CONFIDENCE", hiCf, items.length?Math.round(hiCf/items.length*100)+"% of found":"", "g")+
+      kpi("BROKEN OUT", broke, items.length?Math.round(broke/items.length*100)+"% of found":"", "")+
+      kpi("AVG DRAWDOWN", avgDD.toFixed(1)+"%", "")+
+      kpi("PAIRS SCANNED", ST.tabData.base.scanned||items.length, "")+
+      kpi("ERRORS", raw.errors||0, "");
+  }
+  function renderBaseTable(){
+    var items = (ST.tabData.base.items)||[];
+    var host = E("tabView");
+    if(!items.length){
+      host.innerHTML='<div class="tv-empty">No accumulation bases found. Try a larger Base window, a lower Min drawdown %, or a higher Max drift %.</div>';
+      return;
+    }
+    var sel = ST.tabData.base.sel;
+    var rows = items.map(function(it,i){
+      var band=(it.baseLow!=null&&it.baseHigh!=null)?(fmt(it.baseLow)+" – "+fmt(it.baseHigh)):"—";
+      var wid =(it.baseWidthPct!=null)?(+it.baseWidthPct).toFixed(1)+"%":"—";
+      var pos =(it.pricePositionPct!=null)?Math.round(+it.pricePositionPct)+"%":"—";
+      var dd  =(it.drawdownFromHighPct!=null)?(+it.drawdownFromHighPct).toFixed(1)+"%":"—";
+      var dft =(it.driftPct!=null)?(+it.driftPct).toFixed(1)+"%":"—";
+      var atr =esc(it.atrState||"—").replace(/_/g," ");
+      var g   =String(it.baseGrade||"—");
+      var sc  =(it.baseScore!=null)?Math.round(+it.baseScore):"—";
+      var grade='<span class="tv-grade" data-g="'+esc(g)+'">'+esc(g)+'</span> <span style="color:var(--text-3);font-size:10.5px">'+sc+'</span>';
+      var st  ='<span class="tv-pill '+_baseStatusClass(it.status)+'">'+esc(_baseStatusLabel(it.status))+'</span>';
+      var conf=_baseConfPill(it.confidence, it.setupScore);
+      var flg =(it.flags&&it.flags.length)
+        ? '<div style="color:var(--text-3);font-size:9.5px;margin-top:2px">'+esc(it.flags.join(" · "))+'</div>' : '';
+      return '<tr data-i="'+i+'"'+(i===sel?' class="sel"':'')+'>'+
+        '<td class="sym">'+esc(String(it.symbol||""))+'</td>'+
+        '<td>'+conf+'</td>'+
+        '<td>'+esc(it.timeframe||"—")+'</td>'+
+        '<td class="r">'+esc(band)+'</td>'+
+        '<td class="r">'+wid+'</td>'+
+        '<td class="r">'+pos+'</td>'+
+        '<td class="r">'+dd+'</td>'+
+        '<td class="r">'+dft+'</td>'+
+        '<td>'+atr+'</td>'+
+        '<td>'+grade+'</td>'+
+        '<td>'+st+flg+'</td>'+
+      '</tr>';
+    }).join("");
+    host.innerHTML=
+      '<table class="tv-tbl"><thead><tr>'+
+        '<th>SYMBOL</th><th>CONFIDENCE</th><th>TF</th><th class="r">BAND (low–high)</th>'+
+        '<th class="r">WIDTH</th><th class="r">POSITION</th><th class="r">DRAWDOWN</th>'+
+        '<th class="r">DRIFT</th><th>ATR</th><th>GRADE</th><th>STATUS</th>'+
+      '</tr></thead><tbody>'+rows+'</tbody></table>';
+  }
+  function renderBaseInsight(r){
+    var box=E("insScroll");
+    if(!r){ box.innerHTML=_insHead("base")+'<div class="row-msg">Pick a base to see details.</div>'; setFoot(null); return; }
+    var sym=String(r.symbol||"");
+    var brk=(r.breakoutBarsAgo!=null)
+      ? (r.breakoutBarsAgo+" bar"+(r.breakoutBarsAgo===1?"":"s")+" ago · +"+(+r.excursionPct||0).toFixed(2)+"% above band"
+         +(r.breakoutVolumeRatio!=null?(" · vol "+r.breakoutVolumeRatio+"×"):""))
+      : "No breakout yet";
+    box.innerHTML = _insHead("base")+
+      '<div class="ins-title"><span class="ins-sym">'+esc(sym)+'</span>'+
+        '<span class="tag mkt">'+esc(ST.market==="perpetual"?"Perp":"Spot")+'</span>'+
+        '<span class="tag '+_baseStatusClass(r.status)+'">'+esc(_baseStatusLabel(r.status))+'</span></div>'+
+      '<div class="ins-meta"><span>'+esc(r.timeframe||"—")+' · base '+esc(String(r.baseWindow||"—"))+' bars</span><span>'+rel(ST.scannedAt)+'</span></div>'+
+      '<div class="ti-h">SETUP CONFIDENCE</div>'+
+        _ti("Confidence", _baseConfPill(r.confidence, r.setupScore))+
+        _ti("Direction", esc(String(r.direction||"neutral")))+
+        _ti("Warnings", (r.flags&&r.flags.length)?esc(r.flags.join(" · ")):"none")+
+      '<div class="ti-h">BASE GEOMETRY</div>'+
+        _ti("Band", esc((r.baseLow!=null?fmt(r.baseLow):"—")+" – "+(r.baseHigh!=null?fmt(r.baseHigh):"—")))+
+        _ti("Mid", esc(r.baseMid!=null?fmt(r.baseMid):"—"))+
+        _ti("Width", esc(r.baseWidthPct!=null?(+r.baseWidthPct).toFixed(1)+"%":"—"))+
+        _ti("Price position", esc(r.pricePositionPct!=null?Math.round(+r.pricePositionPct)+"% inside band":"—"))+
+        _ti("To band high", esc(r.distanceToBaseHighPct!=null?(+r.distanceToBaseHighPct).toFixed(2)+"%":"—"))+
+        _ti("To band low", esc(r.distanceToBaseLowPct!=null?(+r.distanceToBaseLowPct).toFixed(2)+"%":"—"))+
+      '<div class="ti-h">BASE QUALITY</div>'+
+        _ti("Drawdown from high", esc(r.drawdownFromHighPct!=null?((+r.drawdownFromHighPct).toFixed(1)+"% from "+fmt(r.windowHigh)):"—"))+
+        _ti("Drift across base", esc(r.driftPct!=null?(+r.driftPct).toFixed(1)+"%":"—"))+
+        _ti("Mid crossings", esc(r.midCrossings!=null?String(r.midCrossings):"—"))+
+        _ti("Edge touches", esc(r.upperTouches!=null?(r.upperTouches+" up / "+r.lowerTouches+" down"):"—"))+
+        _ti("Range contraction", esc(String(r.atrState||"—").replace(/_/g," ")+(r.atrBaseRatio!=null?(" ("+r.atrBaseRatio+"×)"):"")))+
+        _ti("Volume", esc(String(r.volumeState||"—").replace(/_/g," ")+(r.volumeBaseRatio!=null?(" ("+r.volumeBaseRatio+"×)"):"")))+
+      '<div class="ti-h">BREAKOUT</div>'+
+        _ti("Status", esc(brk))+
+        _ti("Base measured to", esc(r.baseEndBarsAgo?(r.baseEndBarsAgo+" bars ago"):"latest candle"))+
+        _ti("Score", esc(r.baseScore!=null?(r.baseScore+" · "+String(r.baseGrade||"")):"—"));
+    setFoot(null);
+  }
+
   function _compConflBadges(it){
     return [
       {k:"OB",  on: !!(it.obConfluence  && it.obConfluence.has)},
@@ -4412,8 +4987,13 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   function normalizeBiasRow(x){
     if(!x) return null;
     var bias = String(x.biasDirection||x.bias||x.direction||"").toLowerCase();
+    var _rb = x.rb || null;
     return {
       raw:x,
+      detector: x.detector || (_rb ? "rejection_block" : "bias_shift"),
+      rb: _rb,
+      zoneHigh: x.zoneHigh!=null?+x.zoneHigh:(_rb?+_rb.rbHigh:null),
+      zoneLow:  x.zoneLow!=null?+x.zoneLow:(_rb?+_rb.rbLow:null),
       symbol: x.symbol||x.pair||"",
       tf:     x.timeframe||x.tf||(ST.modeOptions.bias||{}).tf||"—",
       bias:   bias,
@@ -4431,6 +5011,14 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       detail:  x.detail||"",
       invalidationLevel: x.invalidationLevel,
       invalidationText:  x.invalidationText||x.invalidation||"",
+      invStatus:      x.invalidationStatus||"",
+      invBreachedLive:!!x.invalidationBreachedLive,
+      invDistPct:     x.invalidationDistancePct!=null?+x.invalidationDistancePct:null,
+      price:          x.currentPrice!=null?+x.currentPrice:(x.price!=null?+x.price:null),
+      signalTime:     x.signalCandleTime!=null?+x.signalCandleTime:null,
+      signalOffset:   x.signalCandleOffset!=null?+x.signalCandleOffset:null,
+      confluencesFound: x.confluencesFound||[],
+      volSpike:       !!x.volSpike,
       suggestedConfirmationTf: x.suggestedConfirmationTf||"",
       reasonChain: x.reasonChain||x.gates||[],
       scoreBreakdown: x.scoreBreakdown||{},
@@ -4441,57 +5029,389 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       rejectionPrice:{ open:x.rejectionOpen, high:x.rejectionHigh, low:x.rejectionLow, close:x.rejectionClose },
     };
   }
+  /* Bias rows carry their own shape; map them into the row shape the shared
+     alert engine understands so bias setups can actually fire notifications. */
+  function _biasAlertRows(raw){
+    return (raw||[]).map(function(x){
+      var b=normalizeBiasRow(x); if(!b) return null;
+      var dir=b.bias.indexOf("bull")>=0?"bullish":b.bias.indexOf("bear")>=0?"bearish":"";
+      var t=dir==="bullish"?1:dir==="bearish"?-1:0;
+      var isRb=b.detector==="rejection_block";
+      var a={setup:isRb?"REJECTION_BLOCK":"BIAS_SHIFT",direction:dir,timeframe:b.tf,
+             detail:b.detail||b.setupType||(isRb?"Rejection block":"Bias shift"),
+             strength:5,meta:{}};
+      return {symbol:b.symbol,timeframe:b.tf,price:(x.price!=null?+x.price:null),
+              score:(b.score!=null?b.score:0),grade:b.grade,rsi:null,rb:b.rb,
+              detector:b.detector,trend:t,itrend:t,alerts:[a],topAlert:a};
+    }).filter(Boolean);
+  }
   function renderBiasKPI(){
-    var items = ((ST.tabData.bias.items)||[]).map(normalizeBiasRow).filter(Boolean);
+    var _allItems = ((ST.tabData.bias.items)||[]).map(normalizeBiasRow).filter(Boolean);
+    var _det = _biasDetFilter(_allItems);
+    var items = (_det==="all") ? _allItems
+              : _allItems.filter(function(x){ return x.detector===_det; });
+    // Rejection blocks are graded by lifecycle state, not confirmation status,
+    // so the KPI row swaps to the states that actually mean something for them
+    // — either because that filter is active, or because an RB-only scan means
+    // every row on screen is a block.
+    var _rbView = _det==="rejection_block" ||
+      (items.length && items.every(function(x){ return x.detector==="rejection_block"; }));
+    if(_rbView){
+      var st=function(s){ return items.filter(function(x){
+        return x.rb && x.rb.state===s; }).length; };
+      var untouched=items.filter(function(x){ return x.rb && !x.rb.retestCount; }).length;
+      var _rbCov=(ST.tabData.bias.raw||{}).marketCoverage||null;
+      var nPending=st("pending");
+      E("kpiRow").innerHTML=
+        kpi("REJECTION BLOCKS", items.length,
+            _rbCov?("batch "+_rbCov.startIndex+"–"+_rbCov.endIndex+" of "+_rbCov.totalPairs):"")+
+        kpi("BULLISH", items.filter(function(x){return x.bias.indexOf("bull")>=0;}).length,"","g")+
+        kpi("BEARISH", items.filter(function(x){return x.bias.indexOf("bear")>=0;}).length,"","r")+
+        (nPending?kpi("PENDING", nPending, "awaiting confirm"):kpi("RETESTING", st("tested"), ""))+
+        kpi("FRESH", st("fresh"), untouched+" untouched")+
+        kpi("RESPECTED", st("respected"), "", "g");
+      return;
+    }
     var bull = items.filter(function(x){return x.bias.indexOf("bull")>=0;}).length;
     var bear = items.filter(function(x){return x.bias.indexOf("bear")>=0;}).length;
-    var conf = items.filter(function(x){return /confirm/i.test(x.confirmation);}).length;
-    var early= items.filter(function(x){return /early|unconfirmed|pending/i.test(x.confirmation);}).length;
+    // "early_unconfirmed" contains "confirm", so a bare /confirm/i test counted
+    // unconfirmed setups as confirmed — exclude the early/pending wording first.
+    var _isEarly=function(x){ return /early|unconfirmed|pending/i.test(x.confirmation); };
+    var conf = items.filter(function(x){return /confirm/i.test(x.confirmation) && !_isEarly(x);}).length;
+    var early= items.filter(_isEarly).length;
     var scores=items.map(function(x){return x.score;}).filter(function(s){return s!=null;});
     var avgS = scores.length ? Math.round(scores.reduce(function(a,s){return a+s;},0)/scores.length) : "—";
+    var breached=items.filter(function(x){return x.invBreachedLive;}).length;
+    var cov=(ST.tabData.bias.raw||{}).marketCoverage||null;
+    var covSub = cov
+      ? ("batch "+cov.startIndex+"–"+cov.endIndex+" of "+cov.totalPairs)
+      : (ST.tabData.bias.batchFound!=null?("+"+ST.tabData.bias.batchFound+" this scan"):"");
+    var _mixed = _det==="all" && _allItems.some(function(x){
+      return x.detector==="rejection_block"; });
     E("kpiRow").innerHTML=
-      kpi("BIAS SETUPS", items.length, "")+
+      kpi(_mixed?"SETUPS":"BIAS SETUPS", items.length, covSub)+
       kpi("BULLISH BIAS", bull, items.length?Math.round(bull/items.length*100)+"%":"", "g")+
       kpi("BEARISH BIAS", bear, items.length?Math.round(bear/items.length*100)+"%":"", "r")+
       kpi("CONFIRMED", conf, items.length?Math.round(conf/items.length*100)+"%":"")+
       kpi("EARLY / UNCONFIRMED", early, "")+
-      kpi("AVG SCORE", avgS, "");
+      kpi(breached?"LIVE BREACHED":"AVG SCORE", breached||avgS,
+          breached?"invalidation hit intrabar":"", breached?"r":"");
+  }
+  /* "Why did I get nothing?" strip — the scanner already returns a full
+     rejection funnel + round-robin coverage; surface it instead of dropping it. */
+  function _biasDiagStrip(){
+    var raw=ST.tabData.bias.raw||{};
+    var dg=raw.diagnostics; if(!dg) return "";
+    var rj=dg.rejected||{}, su=dg.settingsUsed||{}, cov=raw.marketCoverage||null;
+    var LBL={notEnoughCandles:"not enough candles", noPriorMove:"no prior move",
+      noCleanPriorDrive:"prior drive too weak/choppy", weakOrChoppyPriorDrive:"weak drive",
+      biasFilterMismatch:"bias filter", volumeFilter:"volume filter",
+      noRejectionCandle:"no rejection candle", notConfirmed:"awaiting confirmation",
+      confluenceRequired:"no confluence", minimumGrade:"below min grade",
+      invalidated:"already invalidated", errors:"fetch errors"};
+    var parts=Object.keys(LBL).filter(function(k){return (rj[k]||0)>0;})
+      .sort(function(a,b){return (rj[b]||0)-(rj[a]||0);})
+      .map(function(k){
+        return '<span class="bd-chip"><b>'+rj[k]+'</b> '+esc(LBL[k])+'</span>';
+      }).join("");
+    var head='<b>'+(dg.symbolsScanned||0)+'</b> scanned · <b>'+
+      (dg.setupsFoundBeforeFilters||0)+'</b> found · <b>'+(dg.setupsReturned||0)+'</b> kept'+
+      (cov?(' · batch '+cov.startIndex+'–'+cov.endIndex+' / '+cov.totalPairs+
+            (cov.cycleComplete?' · cycle complete':'')):'');
+    var note = su.signalSearchFloorApplied
+      ? '<div class="bd-note">Confirmed detection needs a follow-up candle — signal search widened to '+
+        esc(String(su.signalSearchCandles))+' candles for this scan.</div>' : '';
+    // Rejection-block funnel, so an empty RB scan explains itself too
+    var rbLine="";
+    var rbd=dg.rejectionBlocks;
+    if(rbd){
+      var RLBL={dead:"spent / broken / stale / price gone",
+                formationMode:"filtered by RB formation mode",
+                signalMode:"filtered by RB signal mode",
+                regime:"formed in a choppy market",
+                priorMove:"prior move too small",
+                volume:"no volume behind the sweep"};
+      var rbChips=Object.keys(RLBL).filter(function(k){return (rbd[k]||0)>0;})
+        .map(function(k){ return '<span class="bd-chip"><b>'+rbd[k]+'</b> '+esc(RLBL[k])+'</span>'; }).join("");
+      rbLine='<div class="bd-head" style="margin-top:7px">Rejection blocks: <b>'+
+        (rbd.detected||0)+'</b> found · <b>'+(rbd.returned||0)+'</b> kept</div>'+
+        (rbChips?'<div class="bd-chips">'+rbChips+'</div>':'');
+    }
+    return '<div class="bias-diag"><div class="bd-head">'+head+'</div>'+
+      (parts?'<div class="bd-chips">'+parts+'</div>':'')+rbLine+note+'</div>';
   }
   function _biasConflSpec(b){
     return [{k:"OB",on:b.obConf},{k:"FVG",on:b.fvgConf},{k:"FIB",on:b.fibConf}];
   }
+  /* rel() tops out in hours; a 1D signal candle can be days old. */
+  function _biasAge(ms){
+    if(!ms) return "—";
+    var s=Math.max(0,Math.floor((Date.now()-ms)/1000));
+    if(s>=86400) return Math.floor(s/86400)+"d "+Math.floor((s%86400)/3600)+"h ago";
+    return rel(ms);
+  }
+  /* ── Rejection block helpers ── */
+  var RB_STATE_LABEL={pending:"Pending",fresh:"Fresh",tested:"Retesting",
+                      respected:"Respected",mitigated:"Spent",invalidated:"Broken"};
+  function _rbStateBadge(rb){
+    if(!rb) return "—";
+    var st=rb.state||"";
+    var out='<span class="rb-state rb-'+esc(st)+'">'+esc(RB_STATE_LABEL[st]||st)+'</span>';
+    // Regime rides with the state instead of claiming its own column: a block
+    // that formed in chop is worth flagging wherever the block is shown.
+    var rg=rb.regime||{};
+    if(rg.efficiencyRatio!=null && !rg.trending){
+      out+='<span class="rb-chop" title="Formed in a choppy market — efficiency '+
+           (+rg.efficiencyRatio).toFixed(2)+'">chop</span>';
+    }
+    return out;
+  }
+  function _rbRrCell(rb){
+    if(!rb || !rb.target || rb.target.rr==null) return '<span style="color:var(--text-3)">—</span>';
+    var rr=rb.target.rr;
+    var cls=rr>=3?"g":rr>=1.5?"":"r";
+    return '<span class="rb-rr '+cls+'">'+rr.toFixed(1)+'R</span>';
+  }
+  function _rbZoneCell(b){
+    if(b.zoneLow==null||b.zoneHigh==null) return "—";
+    return '<span class="rb-zone">'+fmt(b.zoneLow)+' – '+fmt(b.zoneHigh)+'</span>';
+  }
+  function _rbRetestCell(rb){
+    if(!rb) return "—";
+    var n=rb.retestCount||0;
+    if(!n) return '<span style="color:var(--text-3)">untouched</span>';
+    return n+' ('+(rb.respectedCount||0)+' respected)';
+  }
+  function _rbFreshCell(rb){
+    if(!rb) return "—";
+    var pct=Math.round((rb.freshness!=null?rb.freshness:0)*100);
+    var cls=pct>=66?"g":pct>=33?"":"r";
+    return '<span class="rb-freshbar '+cls+'"><i style="width:'+pct+'%"></i></span>'+
+           '<span style="font-size:10px;color:var(--text-3);margin-left:4px">'+pct+'%</span>';
+  }
+  /* How far price has travelled from the zone. Freshness only says WHEN a
+     block formed — a violent confirm candle can leave a brand-new block far
+     behind price, which is the difference between a tradable setup and a
+     historical one. */
+  function _rbDistCell(b){
+    var rb=b.rb; if(!rb) return "—";
+    var a=rb.distanceAtr;
+    if(a==null) return '<span style="color:var(--text-3)">—</span>';
+    var cls=a<=0.5?"g":a<=1.0?"":"r";
+    var pctTxt="";
+    if(b.price!=null && rb.rbLow!=null && rb.rbHigh!=null && b.price>0){
+      var gap = b.price>rb.rbHigh ? (b.price-rb.rbHigh)
+              : b.price<rb.rbLow  ? (rb.rbLow-b.price) : 0;
+      pctTxt=' <span style="color:var(--text-3);font-size:10px">'+
+             (gap/b.price*100).toFixed(2)+'%</span>';
+    }
+    return '<span class="rb-dist '+cls+'">'+a.toFixed(2)+'×</span>'+pctTxt;
+  }
+  /* Detector filter — the tab can hold both bias shifts and rejection blocks.
+     The filter only means anything when both are actually present; with a
+     single-detector scan a stale filter would hide every row and there would
+     be no chip left to undo it, so it collapses to "all". */
+  function _biasDetCounts(items){
+    return {
+      bias: items.filter(function(x){return x.detector!=="rejection_block";}).length,
+      rb:   items.filter(function(x){return x.detector==="rejection_block";}).length
+    };
+  }
+  function _biasDetFilter(items){
+    var cur=(ST.modeOptions.bias||{}).detectorFilter||"all";
+    if(items){
+      var n=_biasDetCounts(items);
+      if(!n.bias || !n.rb) return "all";
+    }
+    return cur;
+  }
+  function _biasFilterChips(items){
+    var n=_biasDetCounts(items);
+    if(!n.bias || !n.rb) return "";           // nothing to disambiguate
+    var cur=_biasDetFilter(items);
+    var nBias=n.bias, nRb=n.rb;
+    var spec=[["all","All",nBias+nRb],["bias_shift","Bias Shift",nBias],
+              ["rejection_block","Rejection Block",nRb]];
+    return '<div class="det-chips">'+spec.map(function(s){
+      return '<span class="det-chip'+(cur===s[0]?" on":"")+'" data-det="'+s[0]+'">'+
+             esc(s[1])+' <b>'+s[2]+'</b></span>';
+    }).join("")+'</div>';
+  }
   function renderBiasTable(){
     var raw=(ST.tabData.bias.items)||[];
-    var items=raw.map(normalizeBiasRow).filter(Boolean);
+    var all=raw.map(normalizeBiasRow).filter(Boolean);
+    var det=_biasDetFilter(all);
+    var items=(det==="all")?all:all.filter(function(x){return x.detector===det;});
     var host=E("tabView");
-    if(!items.length){ host.innerHTML='<div class="tv-empty">No bias shifts found. Try Early strength or a lower min grade.</div>'; return; }
+    var diag=_biasDiagStrip();
+    var chips=_biasFilterChips(all);
+    if(!items.length){
+      host.innerHTML=diag+chips+'<div class="tv-empty">'+
+        (all.length?'No rows for this filter.':'No bias setups found. '+
+         'The breakdown above shows where this batch was filtered out.')+'</div>';
+      _bindDetChips();
+      return;
+    }
+    // Column set follows what is actually on screen so neither detector
+    // carries the other's dead columns. A single-detector scan gets that
+    // detector's columns even though the filter collapsed to "all"; only a
+    // genuinely mixed list falls back to the shared core plus a TYPE column.
+    var _onlyRb   = items.every(function(x){ return x.detector==="rejection_block"; });
+    var _onlyBias = items.every(function(x){ return x.detector!=="rejection_block"; });
+    var mode = (det==="rejection_block" || _onlyRb) ? "rb"
+             : (det==="bias_shift" || _onlyBias)    ? "bias"
+             : "mixed";
+
+    // Rejection blocks sort by how much of their life is left, not by score:
+    // untouched zones first, then 1 retest, then 2 — a virgin block is worth
+    // more than one that has already been traded into. Inside each group the
+    // freshest formation leads, then whatever price is closest to.
+    if(mode==="rb"){
+      items.sort(function(a,z){
+        var ra=a.rb||{}, rz=z.rb||{};
+        var d=(ra.retestCount||0)-(rz.retestCount||0);          if(d) return d;
+        d=(rz.freshness||0)-(ra.freshness||0);                  if(d) return d;
+        var da=ra.distanceAtr, dz=rz.distanceAtr;               // nulls sort last
+        if(da!=null&&dz!=null&&da!==dz) return da-dz;
+        if(da==null&&dz!=null) return 1;
+        if(dz==null&&da!=null) return -1;
+        return (z.score||0)-(a.score||0);
+      });
+    }
+    // Row data-i indexes the FILTERED list, so the insight panel and footer
+    // actions must resolve against the same view or they select the wrong row.
+    ST.tabData.bias.view = items.map(function(x){ return x.raw; });
     var sel=ST.tabData.bias.sel;
     var rows = items.map(function(b,i){
       var dir = b.bias.indexOf("bull")>=0?"bull":b.bias.indexOf("bear")>=0?"bear":"warn";
       var prior = (b.priorDirection?b.priorDirection:"—") + (b.priorNetPct!=null?(" · "+(b.priorNetPct>=0?"+":"")+b.priorNetPct.toFixed(2)+"%"):"") +
                   (b.priorCandles!=null?(" · "+b.priorCandles+"c"):"");
       var invalid = b.invalidationLevel!=null?fmt(b.invalidationLevel):(b.invalidationText?esc(b.invalidationText):"—");
+      if(b.invBreachedLive){
+        invalid='<span class="bias-breach" title="Current price has breached this level intrabar">'+invalid+' ⚠</span>';
+      } else if(b.invDistPct!=null){
+        invalid+=' <span style="color:var(--text-3);font-size:10px">'+b.invDistPct.toFixed(2)+'% away</span>';
+      }
       var confl=_confluencePills(_biasConflSpec(b));
-      return '<tr data-i="'+i+'"'+(i===sel?' class="sel"':'')+'>'+
+      var age = b.signalTime!=null ? _biasAge(b.signalTime)
+              : (b.signalOffset!=null ? (b.signalOffset===0?"last candle":b.signalOffset+" candles ago") : "—");
+      var core =
         '<td class="sym">'+esc(b.symbol)+'</td>'+
         '<td>'+esc(b.tf)+'</td>'+
         '<td><span class="tv-pill '+dir+'">'+esc(b.bias?b.bias[0].toUpperCase()+b.bias.slice(1):"—")+'</span></td>'+
-        '<td>'+esc(b.confirmation)+'</td>'+
+        (mode==="mixed"
+          ? '<td><span class="det-tag '+(b.detector==="rejection_block"?"rb":"bs")+'">'+
+            (b.detector==="rejection_block"?"RB":"Bias")+'</span></td>' : '')+
+        (mode==="rb" ? '<td>'+_rbStateBadge(b.rb)+'</td>'
+                     : '<td>'+esc(b.confirmation)+'</td>')+
         '<td><span class="tv-grade" data-g="'+esc(b.grade)+'">'+esc(b.grade)+'</span>'+(b.gradeLabel?' <span style="color:var(--text-3);font-size:10.5px">'+esc(b.gradeLabel)+'</span>':"")+'</td>'+
-        '<td class="r">'+(b.score!=null?Math.round(b.score):"—")+'</td>'+
-        '<td>'+esc(prior)+'</td>'+
+        '<td class="r">'+(b.score!=null?Math.round(b.score):"—")+'</td>';
+
+      var mid = mode==="rb"
+        ? '<td class="r">'+_rbZoneCell(b)+'</td>'+
+          '<td>'+_rbRetestCell(b.rb)+'</td>'+
+          '<td class="r">'+_rbDistCell(b)+'</td>'+
+          '<td class="r">'+_rbRrCell(b.rb)+'</td>'
+        : mode==="bias"
+          ? '<td>'+esc(prior)+'</td>'
+          : '';
+
+      var tail =
+        '<td class="r">'+(b.price!=null?fmt(b.price):"—")+'</td>'+
         '<td class="r">'+invalid+'</td>'+
-        '<td>'+confl+'</td>'+
-        '<td>'+esc(b.suggestedConfirmationTf||"—")+'</td>'+
-      '</tr>';
+        (mode==="bias" ? '<td>'+confl+'</td>' : '')+
+        '<td>'+esc(age)+'</td>'+
+        (mode==="bias" ? '<td>'+esc(b.suggestedConfirmationTf||"—")+'</td>' : '');
+
+      return '<tr data-i="'+i+'"'+(i===sel?' class="sel"':'')+'>'+core+mid+tail+'</tr>';
     }).join("");
-    host.innerHTML=
-      '<table class="tv-tbl"><thead><tr>'+
-        '<th>SYMBOL</th><th>TF</th><th>BIAS</th><th>STATUS</th>'+
-        '<th>GRADE</th><th class="r">SCORE</th>'+
-        '<th>PRIOR MOVE</th><th class="r">INVALIDATION</th>'+
-        '<th>CONFLUENCE</th><th>CONFIRM TF</th>'+
-      '</tr></thead><tbody>'+rows+'</tbody></table>';
+
+    var head =
+      '<th>SYMBOL</th><th>TF</th><th>BIAS</th>'+
+      (mode==="mixed"?'<th>TYPE</th>':'')+
+      (mode==="rb"?'<th>STATE</th>':'<th>STATUS</th>')+
+      '<th>GRADE</th><th class="r">SCORE</th>'+
+      (mode==="rb"
+        ? '<th class="r">ZONE</th><th>RETESTS</th><th class="r">DISTANCE</th><th class="r">R:R</th>'
+        : mode==="bias" ? '<th>PRIOR MOVE</th>' : '')+
+      '<th class="r">PRICE</th><th class="r">INVALIDATION</th>'+
+      (mode==="bias"?'<th>CONFLUENCE</th>':'')+
+      '<th>SIGNAL AGE</th>'+
+      (mode==="bias"?'<th>CONFIRM TF</th>':'');
+
+    host.innerHTML= diag+chips+
+      '<table class="tv-tbl"><thead><tr>'+head+'</tr></thead><tbody>'+rows+'</tbody></table>';
+    _bindDetChips();
+  }
+  function _bindDetChips(){
+    [].forEach.call(document.querySelectorAll('#tabView .det-chip'),function(el){
+      el.addEventListener("click",function(){
+        ST.modeOptions.bias.detectorFilter = el.getAttribute("data-det");
+        _saveModeOptions();
+        ST.tabData.bias.sel = -1;
+        renderAll();
+      });
+    });
+  }
+  /* Rejection-block detail: the zone, how it was swept, its lifecycle and the
+     per-phase volume read that separates a real reclaim from a dead wick. */
+  function _rbInsightBlock(b){
+    var rb=b.rb; if(!rb) return "";
+    var vol=rb.volume||{};
+    var last=(rb.retests&&rb.retests.length)?rb.retests[rb.retests.length-1]:null;
+    var retestRows=(rb.retests||[]).map(function(r,i){
+      return _ti("Retest "+(i+1),
+        _biasAge(r.at)+" · "+esc(r.reaction)+
+        (r.volRatio!=null?(" · "+(+r.volRatio).toFixed(1)+"x vol"):""));
+    }).join("");
+    return '<div class="ti-h">Rejection block zone</div>'+
+      (rb.pending
+        ? '<div class="row-msg" style="color:var(--yellow-2,#f59e0b)">Pending — swept and '+
+          'reclaimed, but the confirmation candle has not closed yet. The zone below is '+
+          'provisional and may widen when it does.</div>' : "")+
+      _tiB("Zone", _rbZoneCell(b))+
+      _ti("Height", rb.heightPct!=null?(+rb.heightPct).toFixed(2)+"%":"—")+
+      _tiB("State", _rbStateBadge(rb))+
+      _tiB("Freshness", _rbFreshCell(rb))+
+      _ti("Distance (ATR)", rb.distanceAtr!=null?(+rb.distanceAtr).toFixed(2)+"×":"—")+
+
+      '<div class="ti-h">Market context</div>'+
+      _tiB("Regime", (function(){
+        var rg=rb.regime||{};
+        if(rg.efficiencyRatio==null) return "—";
+        var cls=rg.trending?"var(--green-2)":"var(--red-2)";
+        return '<span style="color:'+cls+';font-weight:700">'+
+               (rg.trending?"Trending":"Choppy")+'</span>'+
+               '<span style="color:var(--text-3);font-size:10px;margin-left:5px">'+
+               'efficiency '+(+rg.efficiencyRatio).toFixed(2)+' over '+(rg.window||20)+'c</span>';
+      })())+
+      _ti("Drive into the sweep", (function(){
+        var dv=rb.priorDrive||{};
+        if(!dv.netPct) return "—";
+        return dv.netPct.toFixed(2)+"% over "+(dv.candles||"?")+" candles"+
+               (dv.matchesSweep?"":" (opposite direction)");
+      })())+
+      _ti("Drive quality", (rb.priorDrive&&rb.priorDrive.quality)||"—")+
+      _ti("First target", (rb.target&&rb.target.level!=null)?fmt(rb.target.level):"—")+
+      _ti("Target distance", (rb.target&&rb.target.distancePct!=null)
+            ? rb.target.distancePct.toFixed(2)+"%" : "—")+
+      _tiB("R:R to target", (rb.target&&rb.target.rr!=null)
+            ? '<span style="color:'+(rb.target.rr>=2?"var(--green-2)":"var(--text-2)")+
+              ';font-weight:700">'+rb.target.rr.toFixed(2)+'R</span>' : "—")+
+
+      '<div class="ti-h">Liquidity sweep</div>'+
+      _ti("Swept level", rb.sweptLevel!=null?fmt(rb.sweptLevel):"—")+
+      _ti("Source", rb.sweepSource==="swing"?"Confirmed swing":"Local extreme")+
+      _ti("Sweep depth", rb.sweepDepthPct!=null?(+rb.sweepDepthPct).toFixed(2)+"%":"—")+
+      _ti("Formation", (rb.blockCandles!=null?rb.blockCandles:"—")+" candles")+
+
+      '<div class="ti-h">Volume read</div>'+
+      _ti("Sweep",   vol.sweepRatio!=null?(+vol.sweepRatio).toFixed(1)+"x average":"—")+
+      _ti("Reclaim", vol.reclaimRatio!=null?(+vol.reclaimRatio).toFixed(1)+"x average":"—")+
+      _ti("Latest retest", last&&last.volRatio!=null?(+last.volRatio).toFixed(1)+"x average":"—")+
+
+      '<div class="ti-h">Retests ('+(rb.retestCount||0)+")</div>"+
+      (retestRows||'<div class="row-msg">Zone has not been retested yet.</div>');
   }
   function renderBiasInsight(rRaw){
     var box=E("insScroll");
@@ -4525,9 +5445,22 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       _ti("Lower wick %", b.rejectionWick.dn!=null?(+b.rejectionWick.dn).toFixed(2)+"%":"—")+
       _ti("Body %",       b.rejectionWick.body!=null?(+b.rejectionWick.body).toFixed(2)+"%":"—")+
 
+      (b.detector==="rejection_block" ? _rbInsightBlock(b) : "")+
+
+      '<div class="ti-h">Signal candle timing</div>'+
+      _ti(b.detector==="rejection_block"?"Formed":"Signal candle",
+          b.signalTime!=null?_biasAge(b.signalTime):"—")+
+      _ti("Candles back",  b.signalOffset!=null?b.signalOffset:"—")+
+
       '<div class="ti-h">Invalidation</div>'+
       _ti("Level", b.invalidationLevel!=null?fmt(b.invalidationLevel):"—")+
       _ti("Note",  b.invalidationText||"—")+
+      _tiB("Status", b.invBreachedLive
+        ? '<span class="bias-breach">Breached live (intrabar)</span>'
+        : (b.invStatus==="valid" ? '<span style="color:var(--green-2,#22c55e)">Valid</span>'
+                                 : esc(b.invStatus||"—")))+
+      _ti("Distance to level", b.invDistPct!=null?(b.invDistPct.toFixed(2)+"%"):"—")+
+      _ti("Current price", b.price!=null?fmt(b.price):"—")+
       _ti("Suggested confirmation TF", b.suggestedConfirmationTf||"—")+
 
       '<div class="ti-h">Confluence</div>'+
@@ -4551,6 +5484,10 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       ((b.obConf||b.fvgConf||b.fibConf)
         ? insightRow("OB / FVG / Fib confluence present","pass")
         : insightRow("No OB / FVG / Fib confluence","warn"))+
+      (b.invBreachedLive
+        ? insightRow("Current price has breached the invalidation level intrabar","fail")
+        : (b.invStatus==="valid" ? insightRow("Invalidation level still holding","pass") : ""))+
+      (b.volSpike?insightRow("Volume spike on the rejection candle","pass"):"")+
 
       _insFoot(b.symbol);
   }
@@ -4565,7 +5502,14 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     }
     var sEl=E("mainSub"); if(sEl) sEl.textContent = MODE_SUB[ST.mode]||"All instruments across selected markets";
     if(E("lastScan")) E("lastScan").textContent=ST.scannedAt?rel(ST.scannedAt):"—";
-    var n=ST.results.length;
+    // Tab-view modes keep their rows in tabData, not ST.results — reading only
+    // ST.results made the pager claim "No setups found" with a full table.
+    var td=ST.tabData[ST.mode]||{};
+    // `view` is the filtered list actually on screen — without it the pager
+    // counts rows the detector filter is hiding.
+    var tabRows=(ST.mode==="main"||ST.mode==="compressed")
+      ? ST.results : (td.view||td.items||td.results||ST.results||[]);
+    var n=tabRows.length;
     var page=ST.page||1;
     var start = n ? ((page-1)*ST.pairsPerCycle + 1) : 0;
     var end   = n ? (start + n - 1) : 0;
@@ -4574,6 +5518,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       : "No setups found";
     var cur=E("pgCur"); if(cur) cur.textContent=page;
     var prev=E("pgPrev"); if(prev) prev.classList.toggle("disabled", page<=1);
+    var next=E("pgNext"); if(next) next.classList.remove("disabled");
   }
 
   function kpi(label,val,sub,cls){
@@ -4581,8 +5526,19 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       '<div class="kpi-v '+(cls||"")+'">'+val+'</div>'+
       '<div class="kpi-d">'+sub+'</div></div>';
   }
+  /* Returns signal-filtered results for the main tab at render time.
+     Keeps ST.results untouched so re-filtering is always lossless. */
+  function _mainRS(){
+    if(ST.mode!=="main"||_isAllSignals()) return ST.results;
+    return ST.results.map(function(r){
+      var keep=(r.alerts||[]).filter(function(a){return _signalMatches(a.setup);});
+      if(!keep.length) return null;
+      var top=keep.reduce(function(b,a){return (a.strength||0)>(b.strength||0)?a:b;},keep[0]);
+      return Object.assign({},r,{alerts:keep,topAlert:top});
+    }).filter(Boolean);
+  }
   function renderKPI(){
-    var rs=ST.results,n=rs.length;
+    var rs=_mainRS(),n=rs.length;
     var hi=rs.filter(function(r){return r.confidence==="High";}).length;
     var bu=rs.filter(function(r){return dirOf(r)==="bull";}).length;
     var be=rs.filter(function(r){return dirOf(r)==="bear";}).length;
@@ -4603,7 +5559,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   }
 
   function renderTable(){
-    var rs=ST.results;
+    var rs=_mainRS();
     if(!rs.length){msg("No setups match the current filter. Try a different signal or market.");return;}
     var mkt=ST.market==="perpetual"?"Perp":"Spot";
     E("tbody").innerHTML=rs.map(function(r,i){
@@ -4799,7 +5755,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
 
   function renderMobileCards(){
     var box=E("mcards"); if(!box) return;
-    var rs=ST.results;
+    var rs=_mainRS();
     if(!rs.length){box.innerHTML='<div class="row-msg">No setups match the current filter.</div>';return;}
     box.innerHTML=rs.map(function(r,i){
       var pages = buildMobileCardPages(r);          // always build so accordion animates
@@ -4996,6 +5952,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         '<div class="dd-btns">'+
           '<button class="btn" data-dd="orderflow" type="button"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M3 12h6l3-8 3 16 3-8h3"/></svg>Order Flow</button>'+
           '<button class="btn" data-dd="zoneliq" type="button"><svg class="ico ico-sm" viewBox="0 0 24 24"><rect x="3" y="10" width="4" height="10"/><rect x="10" y="6" width="4" height="14"/><rect x="17" y="13" width="4" height="7"/></svg>Zone Liquidity</button>'+
+          '<button class="btn" data-dd="histverdict" type="button" title="Historical read of OBs on this symbol × timeframe (research only)"><svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M4 20h16M6 16l4-4 3 3 5-6"/><circle cx="6" cy="16" r="1.6"/><circle cx="10" cy="12" r="1.6"/><circle cx="13" cy="15" r="1.6"/><circle cx="18" cy="9" r="1.6"/></svg>Historical Verdict</button>'+
         '</div>'+
         '<div class="dd-out" id="ddOut"></div>'+
       '</div></div>';
@@ -5057,6 +6014,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       b.addEventListener('click',function(){
         var kind=b.getAttribute('data-dd');
         var tf=(a.timeframe||r.timeframe||"4H").toLowerCase();
+        if(kind==="histverdict"){ _snRunHistVerdict(out,r.symbol,tf,2); return; }
         out.innerHTML='<div class="row-msg">Loading '+esc(kind)+'…</div>';
         var url,opts={credentials:"same-origin"};
         if(kind==="orderflow"){
@@ -5068,8 +6026,200 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         } else { out.innerHTML='<div class="row-msg err">Unknown deep-dive '+esc(kind)+'.</div>'; return; }
         fetch(url,opts)
           .then(function(rr){if(!rr.ok) throw new Error("HTTP "+rr.status); return rr.json();})
-          .then(function(d){ out.innerHTML='<div class="dd-result">'+_ddPretty(d,14)+'</div>'; })
+          .then(function(d){
+            if(kind==="zoneliq"){ out.innerHTML=''; _openZlModal(d, r.symbol); }
+            else { out.innerHTML='<div class="dd-result">'+_ddPretty(d,14)+'</div>'; }
+          })
           .catch(function(e){ out.innerHTML='<div class="row-msg err">'+esc(kind)+' failed: '+esc(e.message)+'</div>'; });
+      });
+    });
+  }
+
+  /* ── Historical Verdict (Setup Insight → Deep Dive) ─────────────────────
+     Manual, on-demand call. Fetches the backtest autopsy for THIS symbol ×
+     timeframe (internal OB class only — production scanner uses iLen=5),
+     applies the same rule ladder as the Autopsy Verdict Board, and shows
+     the historical read as an observation.
+
+     Research only. Never triggers a live signal, never mutates scanner
+     scoring, never writes to the DB, never opens an alert. Nothing about
+     this UI escapes the Setup Insight panel. */
+  var _SN_HV_CACHE={};   // key = symbol|tf|rr, value = {resp} — session-scoped, in-memory
+
+  function _snRunHistVerdict(out, symbol, tf, rr){
+    if(!out) return;
+    if(!symbol||!tf){ out.innerHTML='<div class="row-msg err">Missing symbol / timeframe.</div>'; return; }
+    var key=symbol+"|"+tf+"|"+rr;
+    /* Race guard: stamp the latest request key on the container. Older
+       fetches that resolve out of order compare their own key to the
+       stamp before rendering and drop themselves if the user has since
+       clicked another RR. */
+    out._snhvPending=key;
+    if(_SN_HV_CACHE[key]){ _snRenderHistVerdict(out, symbol, tf, rr, _SN_HV_CACHE[key].resp); return; }
+    out.innerHTML='<div class="row-msg">Fetching historical OB data for '+esc(symbol)+' '+esc(tf)+' @ '+rr+'R… this can take a few seconds.</div>';
+    fetch("/api/backtest/ob-historical/autopsy",{
+      method:"POST", credentials:"same-origin",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        symbols:[symbol], timeframes:[tf],
+        candle_count:1000, rr:rr,
+        ob_classes:["internal"]
+      })
+    }).then(function(rr2){ if(!rr2.ok) throw new Error("HTTP "+rr2.status); return rr2.json(); })
+      .then(function(d){
+        if(out._snhvPending!==key) return;   // stale response — user moved on
+        if(!d||!d.ok){ out.innerHTML='<div class="row-msg err">Backtest failed: '+esc((d&&d.error)||"unknown")+'</div>'; return; }
+        _SN_HV_CACHE[key]={resp:d};
+        _snRenderHistVerdict(out, symbol, tf, rr, d);
+      })
+      .catch(function(e){
+        if(out._snhvPending!==key) return;
+        out.innerHTML='<div class="row-msg err">Historical verdict fetch failed: '+esc(e.message)+'</div>';
+      });
+  }
+
+  /* Classifier shared with the Autopsy Verdict Board rule ladder */
+  function _snClassify(trades){
+    var n=trades.length;
+    var wins=0,expSum=0,expN=0;
+    var mfe=[],mae=[];
+    var hits2=0,hits3=0,hits5=0;
+    trades.forEach(function(t){
+      if(!t)return;
+      if(t.realized_r!=null){expSum+=t.realized_r;expN++;if(t.realized_r>0)wins++;}
+      if(t.mfe_r!=null){
+        mfe.push(t.mfe_r);
+        if(t.mfe_r>=2)hits2++;
+        if(t.mfe_r>=3)hits3++;
+        if(t.mfe_r>=5)hits5++;
+      }
+      if(t.mae_r!=null)mae.push(t.mae_r);
+    });
+    var mfeN=mfe.length;
+    var pct2=mfeN?hits2/mfeN*100:null;
+    var pct3=mfeN?hits3/mfeN*100:null;
+    var pct5=mfeN?hits5/mfeN*100:null;
+    var winRate=n>0?wins/n*100:null;
+    var expR=expN>0?expSum/expN:null;
+    function med(a){if(!a.length)return null;var b=a.slice().sort(function(x,y){return x-y;});var m=Math.floor(b.length/2);return b.length%2?b[m]:(b[m-1]+b[m])/2;}
+    var vKey,why;
+    if(n<20){
+      vKey="THIN_SAMPLE"; why="n="+n+" < 20";
+    } else if(expR!=null&&expR<0&&(pct2==null||pct2<30)){
+      vKey="SKIP"; why="exp "+expR.toFixed(2)+"R, only "+(pct2==null?"—":pct2.toFixed(0)+"%")+" hit 2R";
+    } else if(pct5!=null&&pct5>=40){
+      vKey="HOLD_LONG"; why=pct5.toFixed(0)+"% hit 5R MFE";
+    } else if(pct3!=null&&pct3>=45&&(pct5==null||pct5<25)){
+      vKey="CLOSE_3R"; why=pct3.toFixed(0)+"% hit 3R, "+(pct5==null?"—":pct5.toFixed(0))+"% hit 5R";
+    } else if(pct2!=null&&pct2>=55&&(pct3==null||pct3<30)){
+      vKey="CLOSE_2R"; why=pct2.toFixed(0)+"% hit 2R, "+(pct3==null?"—":pct3.toFixed(0))+"% hit 3R";
+    } else if(expR!=null&&expR>0){
+      vKey="TRADE"; why="exp "+expR.toFixed(2)+"R at target";
+    } else {
+      vKey="NEEDS_REVIEW"; why="no clean pattern";
+    }
+    return {n:n,winRate:winRate,expR:expR,pct2:pct2,pct3:pct3,pct5:pct5,medMFE:med(mfe),medMAE:med(mae),mfe:mfe,verdict:vKey,why:why};
+  }
+
+  var _SN_HV_META={
+    TRADE:        {c:"var(--green)",   label:"Trade",         note:"Positive expectancy at the target RR"},
+    HOLD_LONG:    {c:"var(--green-2)", label:"Hold long",     note:"Historically reached 5R MFE in ≥40% of touches"},
+    CLOSE_3R:     {c:"var(--accent)",  label:"Close @ 3R",    note:"Frequently reached 3R MFE but rarely continued to 5R"},
+    CLOSE_2R:     {c:"var(--yellow)",  label:"Close @ 2R",    note:"Frequently reached 2R MFE but stalled before 3R"},
+    SKIP:         {c:"var(--red)",     label:"Skip",          note:"Negative expectancy and few touches reached 2R"},
+    THIN_SAMPLE:  {c:"var(--text-3)",  label:"Thin sample",   note:"Sample below the 20-trade gate"},
+    NEEDS_REVIEW: {c:"var(--text-2)",  label:"Needs review",  note:"Mixed signals — inspect features before deciding"}
+  };
+
+  function _snRenderHistVerdict(out, symbol, tf, rr, resp){
+    var rep=((resp||{}).reports_by_class||{}).internal||{};
+    var rows=((rep.trade_log||{}).rows)||[];
+    var summary=_snClassify(rows);
+    var m=_SN_HV_META[summary.verdict]||_SN_HV_META.NEEDS_REVIEW;
+    function pfmt(v){return v==null?"—":v.toFixed(0)+"%";}
+    function nfmt(v,d){return v==null?"—":v.toFixed(d==null?2:d);}
+    var truncNote=(rep.trade_log&&rep.trade_log.truncated)?' (last '+(rep.trade_log.cap||"?")+' trades)':'';
+    var h='<div class="dd-result" style="padding:6px 4px">';
+    /* Research watermark banner */
+    h+='<div style="display:flex;align-items:center;gap:8px;background:var(--yellow-soft);border:1px solid var(--yellow-soft-2);border-radius:6px;padding:6px 10px;margin-bottom:10px">';
+    h+='<span style="font-family:var(--mono);font-size:9px;font-weight:700;color:var(--yellow);letter-spacing:.6px;padding:1px 6px;border:1px solid var(--yellow);border-radius:3px">RESEARCH</span>';
+    h+='<span style="font-size:10px;color:var(--text-2);line-height:1.35">Historical observation only. Not a live signal, not an alert. Backtest of past OBs on this symbol × timeframe.</span>';
+    h+='</div>';
+    /* Verdict chip */
+    h+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">';
+    h+='<span style="display:inline-flex;align-items:center;gap:6px;background:var(--bg-card-2);border:1px solid '+m.c+';border-radius:14px;padding:4px 12px">';
+    h+='<span style="display:inline-block;width:10px;height:10px;background:'+m.c+';border-radius:50%"></span>';
+    h+='<span style="font-size:12px;font-weight:700;color:'+m.c+'">'+m.label+'</span></span>';
+    h+='<span style="font-size:11px;color:var(--text-2)">'+esc(m.note)+'</span></div>';
+    h+='<div style="font-size:10px;color:var(--text-3);margin:-6px 0 8px">'+esc(symbol)+' · '+esc(tf.toUpperCase())+' · internal OBs · '+rr+'R target · '+summary.n+' historical trades'+esc(truncNote)+'</div>';
+    /* Stat strip */
+    var stats=[
+      {k:"Trades", v:summary.n},
+      {k:"Win %", v:pfmt(summary.winRate)},
+      {k:"Exp R", v:nfmt(summary.expR,2), c:summary.expR!=null&&summary.expR>=0?"var(--green)":"var(--red)"},
+      {k:"≥2R MFE", v:pfmt(summary.pct2)},
+      {k:"≥3R MFE", v:pfmt(summary.pct3)},
+      {k:"≥5R MFE", v:pfmt(summary.pct5)},
+      {k:"Med MFE", v:nfmt(summary.medMFE,2)},
+      {k:"Med MAE", v:nfmt(summary.medMAE,2)}
+    ];
+    h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(70px,1fr));gap:6px;margin-bottom:10px">';
+    stats.forEach(function(s){
+      h+='<div style="background:var(--bg-card-2);border:1px solid var(--border);border-radius:4px;padding:6px 8px">';
+      h+='<div style="font-size:8px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px">'+esc(s.k)+'</div>';
+      h+='<div style="font-size:12px;font-weight:700;font-family:var(--mono);color:'+(s.c||"var(--text)")+'">'+s.v+'</div></div>';
+    });
+    h+='</div>';
+    /* MFE histogram (deterministic bins: 0-1R, 1-2R, 2-3R, 3-5R, 5R+) */
+    if(summary.mfe.length){
+      var bins=[0,0,0,0,0];
+      summary.mfe.forEach(function(v){
+        if(v<1)bins[0]++;
+        else if(v<2)bins[1]++;
+        else if(v<3)bins[2]++;
+        else if(v<5)bins[3]++;
+        else bins[4]++;
+      });
+      var mx=Math.max.apply(null,bins);
+      var labels=["<1R","1–2R","2–3R","3–5R","≥5R"];
+      var cols=["var(--red)","var(--yellow)","var(--accent)","var(--green)","var(--green-2)"];
+      var W=280,H=90,PADL=22,PADR=6,PADT=6,PADB=20;
+      var iw=W-PADL-PADR,ih=H-PADT-PADB;
+      var bw=iw/5;
+      var s='<div style="font-size:10px;font-weight:600;color:var(--text-2);margin-bottom:4px">MFE distribution</div>';
+      s+='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:'+H+'px;display:block" preserveAspectRatio="none">';
+      /* baseline */
+      s+='<line x1="'+PADL+'" x2="'+(W-PADR)+'" y1="'+(PADT+ih)+'" y2="'+(PADT+ih)+'" stroke="var(--border)" stroke-width="1"/>';
+      s+='<text x="'+(PADL-4)+'" y="'+(PADT+ih)+'" text-anchor="end" font-size="8" fill="var(--text-3)" font-family="var(--mono)">0</text>';
+      s+='<text x="'+(PADL-4)+'" y="'+(PADT+8)+'" text-anchor="end" font-size="8" fill="var(--text-3)" font-family="var(--mono)">'+mx+'</text>';
+      bins.forEach(function(cnt,i){
+        var hh=mx>0?(cnt/mx)*ih:0;
+        var x=PADL+i*bw+bw*0.18;
+        var w=bw*0.64;
+        var y=PADT+ih-hh;
+        s+='<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+hh+'" fill="'+cols[i]+'" opacity="0.85" rx="2"/>';
+        if(cnt>0){s+='<text x="'+(x+w/2)+'" y="'+(y-2)+'" text-anchor="middle" font-size="8" fill="var(--text-2)" font-family="var(--mono)">'+cnt+'</text>';}
+        s+='<text x="'+(x+w/2)+'" y="'+(H-6)+'" text-anchor="middle" font-size="8" fill="var(--text-3)">'+labels[i]+'</text>';
+      });
+      s+='</svg>';
+      h+=s;
+    }
+    /* Why + RR toggle */
+    h+='<div style="margin-top:10px;font-size:10px;color:var(--text-2)"><b style="color:var(--text)">Why:</b> '+esc(summary.why)+'</div>';
+    h+='<div style="margin-top:10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">';
+    h+='<span style="font-size:9px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px;font-weight:600">Re-score at:</span>';
+    [1,2,3].forEach(function(rv){
+      h+='<button type="button" data-snhv-rr="'+rv+'" style="font-size:10px;padding:3px 10px;background:'+(rv===rr?"var(--accent-soft-2)":"var(--bg-card-2)")+';border:1px solid '+(rv===rr?"var(--accent)":"var(--border)")+';color:'+(rv===rr?"var(--accent)":"var(--text-2)")+';border-radius:12px;cursor:pointer;font-family:var(--mono)">'+rv+'R</button>';
+    });
+    h+='</div>';
+    h+='</div>';
+    out.innerHTML=h;
+    /* Wire RR toggle — re-run (uses cache when present) */
+    [].forEach.call(out.querySelectorAll("[data-snhv-rr]"),function(b){
+      b.addEventListener("click",function(){
+        var nr=parseInt(b.getAttribute("data-snhv-rr"),10);
+        if(!nr||nr===rr) return;
+        _snRunHistVerdict(out, symbol, tf, nr);
       });
     });
   }
@@ -5192,7 +6342,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       if(m===ST.mode) return;
       [].forEach.call(document.querySelectorAll('.side .nav-item[data-mode]'),function(x){x.classList.remove('active');});
       el.classList.add('active');
-      ST.mode=m; ST.sel=-1;
+      ST.mode=m; ST.sel=-1; _ls_set("zyni-scan-mode", m);
       _syncCurrentTabLocked();
       _renderPreviewBanner();
       if(ST.currentTabLocked){
@@ -5236,6 +6386,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       if("results" in ST.tabData[m]) ST.tabData[m].results=[];
       if("items"   in ST.tabData[m]) ST.tabData[m].items=[];
       ST.tabData[m].scanned=0; ST.tabData[m].raw=null;
+      ST.tabData[m].sel=-1; ST.tabData[m].batchFound=null; ST.tabData[m].view=null;
     }
     ST.results=[]; ST.sel=-1; ST.page=1; ST.scannedAt=0;
     renderAll();
@@ -5286,6 +6437,11 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     if(_cmCtx){ _cmCtx.tf=this.value; _cmRender(); }
   });
   addEventListener("keydown",function(e){ if(e.key==="Escape" && E("chartModal") && E("chartModal").classList.contains("open")) closeChartModal(); });
+  /* Zone Liquidity modal controls */
+  if(E("zlClose")) E("zlClose").addEventListener("click",_closeZlModal);
+  if(E("zlModalBd")) E("zlModalBd").addEventListener("click",_closeZlModal);
+  addEventListener("keydown",function(e){ if(e.key==="Escape" && E("zlModal") && E("zlModal").classList.contains("open")) _closeZlModal(); });
+  window._zlApply=_zlApply;
 
   /* ── Settings panel (Wave 6) ── */
   function _populateSettingsForm(){
@@ -12278,37 +13434,55 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         _dbPaint("dbBreaking",html);
       }).catch(function(){ _dbPaint("dbBreaking",'<div class="row-msg err">ATH/ATL fetch failed.</div>'); });
   }
+  /* The dashboard cycle runs every 60s; a full bias scan per cycle burned 24
+     tokens a minute unattended. Reuse the Bias tab's own results when they're
+     fresh, otherwise scan at most once every _DB_BIAS_TTL. cursorScope keeps
+     this off the scanner's round-robin cursor. */
+  var _DB_BIAS_TTL = 10*60*1000;
+  var _dbBiasLastAt = 0, _dbBiasLastHtml = "";
   function _dbLoadBiasShifts(){
+    var bTab=ST.tabData.bias||{}, tabItems=bTab.items||[];
+    if(tabItems.length && bTab.scannedAt && (Date.now()-bTab.scannedAt) < _DB_BIAS_TTL){
+      _dbPaintBiasShifts(tabItems); return;
+    }
+    if(_dbBiasLastHtml && (Date.now()-_dbBiasLastAt) < _DB_BIAS_TTL){
+      _dbPaint("dbBiasShifts", _dbBiasLastHtml); return;
+    }
+    _dbBiasLastAt = Date.now();
     fetch("/api/bias_scan",{method:"POST",credentials:"same-origin",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({timeframe:ST.settings.tf||"4h",tf:ST.settings.tf||"4h",
         market:ST.market,exchange:ST.exchange,
         scanMode:"market", symbols:[], pairsPerCycle:24, roundRobin:true,
+        cursorScope:"dashboard",
         mode:"normal", biasStrength:"balanced", detectionMode:"early",
         confluenceMode:"optional", minimumGrade:"B+",
         useObConfluence:true, useFvgConfluence:true, useFibConfluence:true})})
       .then(function(r){return r.ok?r.json():null;})
       .then(function(d){
-        var rs=(d&&(d.results||d.shifts))||[];
-        // keep only items that actually shifted bias
-        rs=rs.filter(function(it){
-          var ev=(it.event||"").toString().toUpperCase();
-          if(ev.indexOf("BOS")>=0||ev.indexOf("CHOCH")>=0||ev.indexOf("SHIFT")>=0) return true;
-          if(it.bias||it.direction) return true;
-          if(it.shifts && it.shifts.length) return true;
-          return false;
-        });
-        if(!rs.length){ _dbPaint("dbBiasShifts",'<div class="row-msg">No bias shifts detected this scan.</div>'); return; }
-        var html=rs.slice(0,6).map(function(it){
-          var b=(it.bias||it.direction||"").toString().toLowerCase();
-          var cls=b.indexOf("bull")>=0?"g":b.indexOf("bear")>=0?"r":"";
-          var ev=(it.event||"shift").toString().toUpperCase();
-          return '<div class="db-item"><span class="db-i-sym">'+_dbFmtSym(it.symbol||it.pair)+'</span>'+
-            '<span class="db-i-meta">'+esc(ev)+'</span>'+
-            '<span class="db-i-tail '+cls+'">'+esc(b||"—")+'</span></div>';
-        }).join("");
-        _dbPaint("dbBiasShifts",html);
+        _dbPaintBiasShifts((d&&(d.results||d.shifts))||[]);
       }).catch(function(){ _dbPaint("dbBiasShifts",'<div class="row-msg err">Bias scan failed.</div>'); });
+  }
+  function _dbPaintBiasShifts(rs){
+    rs=(rs||[]).filter(function(it){ return !!(it.bias||it.direction||it.biasDirection); });
+    if(!rs.length){
+      _dbBiasLastHtml='<div class="row-msg">No bias setups detected this scan.</div>';
+      _dbPaint("dbBiasShifts",_dbBiasLastHtml); return;
+    }
+    // The scanner emits grade/score/confirmation, never an "event" field —
+    // the old tile read it.event and always printed a hardcoded "SHIFT".
+    var html=rs.slice(0,6).map(function(it){
+      var b=(it.bias||it.biasDirection||it.direction||"").toString().toLowerCase();
+      var cls=b.indexOf("bull")>=0?"g":b.indexOf("bear")>=0?"r":"";
+      var meta=[it.grade?("Grade "+it.grade):"", it.score!=null?Math.round(it.score):"",
+                /confirm/i.test(it.confirmationStatus||"")?"confirmed":"early"]
+               .filter(Boolean).join(" · ");
+      return '<div class="db-item"><span class="db-i-sym">'+_dbFmtSym(it.symbol||it.pair)+'</span>'+
+        '<span class="db-i-meta">'+esc(meta)+'</span>'+
+        '<span class="db-i-tail '+cls+'">'+esc(b||"—")+'</span></div>';
+    }).join("");
+    _dbBiasLastHtml=html;
+    _dbPaint("dbBiasShifts",html);
   }
   function _dbLoadWatchlist(){
     var pairs=Object.keys(ST.stars).filter(function(s){return ST.stars[s];});
@@ -12382,7 +13556,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       case "rsi_below":return "RSI < "+a.value;
       case "price_above":return "Price > "+a.value;
       case "price_below":return "Price < "+a.value;
-      case "bias_shift":return "Bias shift (BOS/CHoCH)";
+      case "bias_shift":return "Bias shift (rejection candle)";
+      case "rejection_block":return "Rejection block retest";
     }
     return a.type;
   }
@@ -12451,8 +13626,26 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       } else if(a.type==="price_below" && r.price!=null && +r.price < a.value){
         fired="Price "+fmt(r.price)+" < "+a.value; dir="bear";
       } else if(a.type==="bias_shift"){
+        // Fires off the Bias Shift scanner (rejection-candle bias), which is the
+        // only detector that emits BIAS_SHIFT.
         var setup=(r.topAlert&&r.topAlert.setup)||"";
-        if(/BOS|CHOCH|SHIFT|BIAS/i.test(setup)) { fired="Bias event: "+setup; dir=dirOf(r); }
+        if(/SHIFT|BIAS/i.test(setup)){
+          dir=dirOf(r);
+          fired="Bias shift "+(dir==="bull"?"bullish":dir==="bear"?"bearish":"")+
+                (r.grade?(" · grade "+r.grade):"")+
+                (r.score?(" · score "+Math.round(r.score)):"");
+        }
+      } else if(a.type==="rejection_block"){
+        // Fires when price has actually returned to the block — the arrival at
+        // the level is the actionable moment, not the formation.
+        var _rb=r.rb;
+        if(_rb && (_rb.state==="tested"||_rb.state==="respected")){
+          dir=dirOf(r);
+          fired="Rejection block "+esc(_rb.state)+" · "+
+                (dir==="bull"?"bullish":dir==="bear"?"bearish":"")+
+                " zone "+fmt(_rb.rbLow)+"–"+fmt(_rb.rbHigh)+
+                (r.grade?(" · grade "+r.grade):"");
+        }
       }
       if(fired){
         // dedupe: don't refire same alert within 5 minutes
@@ -13433,8 +14626,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         text:"Each row shows the symbol, price, previous level and break / distance." }
     ],
     scanner_bias: [
-      { kind:"info", title:"Structure / Bias",
-        text:"Detects bias-shift rejections and structure shifts (BOS / CHoCH)." },
+      { kind:"info", title:"Bias Detection",
+        text:"Finds bias shifts from rejection candles after a clean drive, and rejection blocks — a swept liquidity level that was reclaimed and confirmed." },
       { kind:"highlight", sel:"[data-opt='tf']", title:"Timeframe",
         text:"Bias detection works on 1H and higher — pick 1H, 4H, 6H, 12H or 1D." },
       { kind:"highlight", sel:"[data-opt='mode']", title:"Normal vs. Expert",
@@ -13726,7 +14919,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   if(E("tutIntroYes")) E("tutIntroYes").addEventListener("click", function(){
     if(E("tutIntroNever") && E("tutIntroNever").checked){
       _tutPrefs.desktopTutorialNeverShow = true;
-      _tutSavePrefs({});
+      _tutSavePrefs({desktopTutorialNeverShow:true});
     }
     /* User opted in — clear the "skipped this session" flag so further
        tab switches still surface their tutorials. */
@@ -13739,7 +14932,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     _tutSessionSkipped = true;
     if(E("tutIntroNever") && E("tutIntroNever").checked){
       _tutPrefs.desktopTutorialNeverShow = true;
-      _tutSavePrefs({});
+      _tutSavePrefs({desktopTutorialNeverShow:true});
     }
     _tutHideIntro();
   });
@@ -15103,6 +16296,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         '<button class="bt-compare-tab'+(mode==="explorer"?" active":"")+'" data-cmode="explorer">Trade Explorer</button>'+
         '<button class="bt-compare-tab'+(mode==="autopsy"?" active":"")+'" data-cmode="autopsy">Autopsy</button>'+
         '<button class="bt-compare-tab'+(mode==="profilewf"?" active":"")+'" data-cmode="profilewf">Profile WF</button>'+
+        '<button class="bt-compare-tab'+(mode==="playbook"?" active":"")+'" data-cmode="playbook">OB Playbook</button>'+
       '</div>'+
       '<div id="btCompareModeContent"></div>';
     [].forEach.call(el.querySelectorAll("[data-cmode]"),function(btn){
@@ -15115,6 +16309,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     else if(mode==="explorer") _btRenderTradeExplorerMode();
     else if(mode==="autopsy") _btRenderAutopsyMode();
     else if(mode==="profilewf") _btRenderProfileWfMode();
+    else if(mode==="playbook") _btRenderPlaybookMode();
     else _btRenderBatchMode();
   }
 
@@ -16709,6 +17904,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       var rep=(d.reports_by_class||{})[cls];
       if(rep){
         html+=_btApSummaryHtml(rep,cls);
+        html+=_btApVisualSummaryHtml(rep);
+        html+=_btApVerdictBoardHtml(rep);
         html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:12px 0">';
         html+='<div><div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">Reason Delta — % in losers minus % in winners</div><canvas id="btApChart1" height="170"></canvas></div>';
         html+='<div><div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px">Failure Modes (losing trades)</div><canvas id="btApChart2" height="170"></canvas></div>';
@@ -16822,6 +18019,274 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     if(v==null) return "—";
     if(typeof v==="number") return dec!=null?v.toFixed(dec):String(v);
     return String(v);
+  }
+
+  /* v1-style visual summary — three inline SVG panels: grade mix, zone
+     penetration by respect, top pattern deltas. Sits above the detail
+     tables so the story lands at a glance; tables below still carry the
+     exact numbers. Uses existing app tokens only. */
+  function _btApVisualSummaryHtml(rep){
+    function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
+    var GRADE_ORDER=["clean_win","stressed_win","paused_positive","paused_flat","reversal_loss","hard_loss","ambiguous"];
+    var gd=(rep.grade_distribution)||{};
+    var counts=gd.counts||{};
+    var gTotal=0;
+    GRADE_ORDER.forEach(function(k){gTotal+=(counts[k]||0);});
+    /* Panel 1 — Grade mix, horizontal 100% stacked bar */
+    var mix='';
+    if(gTotal>0){
+      var acc=0;
+      var segs='';
+      GRADE_ORDER.forEach(function(k){
+        var v=counts[k]||0;if(!v)return;
+        var w=(v/gTotal)*100;
+        var m=_AP_GRADE_META[k]||{c:"var(--text-3)",l:k};
+        segs+='<div title="'+esc(m.l)+': '+v+' ('+w.toFixed(1)+'%)" style="background:'+m.c+';width:'+w+'%;height:100%"></div>';
+        acc+=w;
+      });
+      mix='<div style="display:flex;width:100%;height:14px;border-radius:4px;overflow:hidden;background:var(--bg-card-2);border:1px solid var(--border)">'+segs+'</div>';
+      /* legend */
+      var leg='<div style="display:flex;flex-wrap:wrap;gap:8px 14px;margin-top:8px;font-size:9px;color:var(--text-2)">';
+      GRADE_ORDER.forEach(function(k){
+        var v=counts[k]||0;if(!v)return;
+        var m=_AP_GRADE_META[k]||{c:"var(--text-3)",l:k};
+        var pct=(v/gTotal)*100;
+        leg+='<span style="display:inline-flex;align-items:center;gap:5px"><span style="display:inline-block;width:8px;height:8px;background:'+m.c+';border-radius:2px"></span>'+
+             esc(m.l)+' <span style="color:var(--text-3);font-family:var(--mono);font-size:9px">'+pct.toFixed(0)+'%</span></span>';
+      });
+      leg+='</div>';
+      mix+=leg;
+    } else {
+      mix='<div style="font-size:10px;color:var(--text-3);padding:14px 0">No graded trades.</div>';
+    }
+    /* Panel 2 — Zone penetration by respect, vertical bars */
+    var pen=(rep.penetration_by_respect||[]).filter(function(p){return p.count>0;});
+    var penSvg='';
+    if(pen.length){
+      var pmax=0;
+      pen.forEach(function(p){if(p.avg_penetration_pct!=null&&p.avg_penetration_pct>pmax)pmax=p.avg_penetration_pct;});
+      if(pmax<10)pmax=10;
+      pmax=Math.min(100,Math.ceil(pmax/10)*10);
+      var W=280,H=140,PADL=32,PADR=8,PADT=10,PADB=28;
+      var iw=W-PADL-PADR,ih=H-PADT-PADB;
+      var order=["respected","partial","not_respected","neutral"];
+      var visible=order.filter(function(k){return pen.some(function(p){return p.respect_class===k;});});
+      var bw=iw/Math.max(1,visible.length);
+      var s='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:'+H+'px;display:block" preserveAspectRatio="none">';
+      /* horizontal gridlines at 0, 50%, 100% of pmax */
+      [0,0.5,1].forEach(function(t){
+        var y=PADT+ih-t*ih;
+        s+='<line x1="'+PADL+'" x2="'+(W-PADR)+'" y1="'+y+'" y2="'+y+'" stroke="var(--border)" stroke-width="1"/>';
+        s+='<text x="'+(PADL-4)+'" y="'+(y+3)+'" text-anchor="end" font-size="8" fill="var(--text-3)" font-family="var(--mono)">'+Math.round(t*pmax)+'%</text>';
+      });
+      visible.forEach(function(k,i){
+        var p=pen.filter(function(x){return x.respect_class===k;})[0];
+        var m=_AP_RESPECT_META[k]||{c:"var(--text-3)",l:k};
+        var avg=(p&&p.avg_penetration_pct!=null)?p.avg_penetration_pct:0;
+        var med=(p&&p.median_penetration_pct!=null)?p.median_penetration_pct:null;
+        var x=PADL+i*bw+bw*0.20;
+        var w=bw*0.60;
+        var hh=(avg/pmax)*ih;
+        var y=PADT+ih-hh;
+        s+='<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+hh+'" fill="'+m.c+'" opacity="0.85" rx="2"/>';
+        if(med!=null){
+          var my=PADT+ih-(med/pmax)*ih;
+          s+='<line x1="'+x+'" x2="'+(x+w)+'" y1="'+my+'" y2="'+my+'" stroke="var(--text)" stroke-width="1.5" opacity="0.75"/>';
+        }
+        s+='<text x="'+(x+w/2)+'" y="'+(y-3)+'" text-anchor="middle" font-size="9" fill="var(--text)" font-family="var(--mono)" font-weight="600">'+avg.toFixed(1)+'%</text>';
+        s+='<text x="'+(x+w/2)+'" y="'+(H-14)+'" text-anchor="middle" font-size="9" fill="var(--text-2)">'+esc(m.l)+'</text>';
+        s+='<text x="'+(x+w/2)+'" y="'+(H-4)+'" text-anchor="middle" font-size="8" fill="var(--text-3)" font-family="var(--mono)">n='+(p?p.count:0)+'</text>';
+      });
+      s+='</svg>';
+      penSvg=s;
+    } else {
+      penSvg='<div style="font-size:10px;color:var(--text-3);padding:14px 0">No penetration data.</div>';
+    }
+    /* Panel 3 — Top pattern deltas (sorted by absolute failing delta) */
+    var pb=(rep.pattern_book||[]).filter(function(p){return p.failing_delta_pct!=null;});
+    pb=pb.slice().sort(function(a,b){return Math.abs(b.failing_delta_pct)-Math.abs(a.failing_delta_pct);}).slice(0,6);
+    var patSvg='';
+    if(pb.length){
+      var mx=0;pb.forEach(function(p){var a=Math.abs(p.failing_delta_pct);if(a>mx)mx=a;});
+      if(mx<10)mx=10;mx=Math.ceil(mx/5)*5;
+      var W2=340,rowH=20,PADL2=140,PADR2=42,PADT2=6;
+      var H2=PADT2+rowH*pb.length+8;
+      var iw2=W2-PADL2-PADR2;var mid=PADL2+iw2/2;
+      var s2='<svg viewBox="0 0 '+W2+' '+H2+'" style="width:100%;height:'+H2+'px;display:block" preserveAspectRatio="none">';
+      s2+='<line x1="'+mid+'" x2="'+mid+'" y1="'+PADT2+'" y2="'+(H2-8)+'" stroke="var(--border-2)" stroke-width="1"/>';
+      s2+='<text x="'+PADL2+'" y="'+(H2-1)+'" font-size="8" fill="var(--text-3)" font-family="var(--mono)">−'+mx+'%</text>';
+      s2+='<text x="'+mid+'" y="'+(H2-1)+'" text-anchor="middle" font-size="8" fill="var(--text-3)" font-family="var(--mono)">0</text>';
+      s2+='<text x="'+(W2-PADR2)+'" y="'+(H2-1)+'" text-anchor="end" font-size="8" fill="var(--text-3)" font-family="var(--mono)">+'+mx+'%</text>';
+      pb.forEach(function(p,i){
+        var y=PADT2+i*rowH+rowH/2;
+        var d=p.failing_delta_pct;
+        var w=(Math.abs(d)/mx)*(iw2/2);
+        var col=d>0?"var(--red)":"var(--green)";
+        var x0=d>0?mid:mid-w;
+        s2+='<rect x="'+x0+'" y="'+(y-6)+'" width="'+w+'" height="12" fill="'+col+'" opacity="0.85" rx="2"/>';
+        s2+='<text x="'+(PADL2-6)+'" y="'+(y+3)+'" text-anchor="end" font-size="10" fill="var(--text)">'+esc(p.feature)+'</text>';
+        var lx=d>0?(x0+w+3):(x0-3);var la=d>0?"start":"end";
+        s2+='<text x="'+lx+'" y="'+(y+3)+'" text-anchor="'+la+'" font-size="9" fill="var(--text-2)" font-family="var(--mono)">'+(d>0?"+":"")+d.toFixed(1)+'%</text>';
+      });
+      s2+='</svg>';
+      patSvg=s2;
+    } else {
+      patSvg='<div style="font-size:10px;color:var(--text-3);padding:14px 0">No pattern data.</div>';
+    }
+    /* Layout — three panels side by side, wraps on narrow screens */
+    var html='<div style="display:grid;grid-template-columns:1fr 1fr 1.15fr;gap:12px;margin:12px 0 4px">';
+    html+='<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:10px 12px">';
+    html+='<div style="font-size:10px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">Grade mix — '+gTotal+' graded</div>';
+    html+=mix;
+    html+='</div>';
+    html+='<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:10px 12px">';
+    html+='<div style="font-size:10px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px">Zone penetration by respect</div>';
+    html+='<div style="font-size:9px;color:var(--text-3);margin-bottom:4px">Bars = mean, tick = median</div>';
+    html+=penSvg;
+    html+='</div>';
+    html+='<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:10px 12px">';
+    html+='<div style="font-size:10px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px">Top pattern deltas</div>';
+    html+='<div style="font-size:9px;color:var(--text-3);margin-bottom:4px">Fail % gap when the pattern is present − absent</div>';
+    html+=patSvg;
+    html+='</div>';
+    html+='</div>';
+    return html;
+  }
+
+  /* Verdict Board — deterministic decision per (symbol × timeframe) group
+     computed from the trade log the user just ran. Rules use MFE hit-rates
+     and expectancy to emit one of: TRADE / HOLD LONG / CLOSE @ 3R /
+     CLOSE @ 2R / SKIP / THIN SAMPLE / NEEDS REVIEW. Research label — the
+     board is a hypothesis for walk-forward validation, NOT a signal, and
+     nothing is wired into Scanner, alerts, paper trading, or execution. */
+  var _AP_VERDICT_META={
+    TRADE:        {c:"var(--green)",   note:"Positive expectancy at the target RR — candidate for forward validation"},
+    HOLD_LONG:    {c:"var(--green-2)", note:"Historically reached 5R MFE in ≥40% of touches"},
+    CLOSE_3R:     {c:"var(--accent)",  note:"Frequently reached 3R MFE but rarely continued to 5R"},
+    CLOSE_2R:     {c:"var(--yellow)",  note:"Frequently reached 2R MFE but stalled before 3R"},
+    SKIP:         {c:"var(--red)",     note:"Negative expectancy and few touches reached 2R"},
+    THIN_SAMPLE:  {c:"var(--text-3)",  note:"Sample below the 20-trade gate — no verdict"},
+    NEEDS_REVIEW: {c:"var(--text-2)",  note:"Mixed signals — inspect features before deciding"}
+  };
+  function _btApVerdictBoardHtml(rep){
+    function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
+    function med(a){if(!a.length)return null;var b=a.slice().sort(function(x,y){return x-y;});var m=Math.floor(b.length/2);return b.length%2?b[m]:(b[m-1]+b[m])/2;}
+    var rows=((rep.trade_log||{}).rows)||[];
+    if(!rows.length){
+      return '<div style="margin:10px 0 4px;font-size:11px;font-weight:700;color:var(--text)">OB Verdict Board</div>'+
+             '<div style="font-size:10px;color:var(--text-3);padding:6px">No trades to score.</div>';
+    }
+    var groups={};
+    rows.forEach(function(r){
+      if(!r||!r.symbol||!r.timeframe) return;
+      var k=r.symbol+"|"+r.timeframe;
+      if(!groups[k])groups[k]={symbol:r.symbol,tf:r.timeframe,trades:[]};
+      groups[k].trades.push(r);
+    });
+    var summaries=[];
+    Object.keys(groups).forEach(function(k){
+      var g=groups[k];var ts=g.trades;var n=ts.length;
+      var wins=0,expSum=0,expN=0;
+      var mfe=[],mae=[];
+      var hits2=0,hits3=0,hits5=0;
+      ts.forEach(function(t){
+        if(t.realized_r!=null){expSum+=t.realized_r;expN++;if(t.realized_r>0)wins++;}
+        if(t.mfe_r!=null){
+          mfe.push(t.mfe_r);
+          if(t.mfe_r>=2)hits2++;
+          if(t.mfe_r>=3)hits3++;
+          if(t.mfe_r>=5)hits5++;
+        }
+        if(t.mae_r!=null)mae.push(t.mae_r);
+      });
+      var mfeN=mfe.length;
+      var pct2=mfeN?hits2/mfeN*100:null;
+      var pct3=mfeN?hits3/mfeN*100:null;
+      var pct5=mfeN?hits5/mfeN*100:null;
+      var winRate=n>0?wins/n*100:null;
+      var expR=expN>0?expSum/expN:null;
+      var vKey,why;
+      if(n<20){
+        vKey="THIN_SAMPLE";why="n="+n+" < 20";
+      } else if(expR!=null&&expR<0&&(pct2==null||pct2<30)){
+        vKey="SKIP";why="exp "+expR.toFixed(2)+"R, only "+(pct2==null?"—":pct2.toFixed(0)+"%")+" hit 2R";
+      } else if(pct5!=null&&pct5>=40){
+        vKey="HOLD_LONG";why=pct5.toFixed(0)+"% hit 5R MFE";
+      } else if(pct3!=null&&pct3>=45&&(pct5==null||pct5<25)){
+        vKey="CLOSE_3R";why=pct3.toFixed(0)+"% hit 3R, "+(pct5==null?"—":pct5.toFixed(0))+"% hit 5R";
+      } else if(pct2!=null&&pct2>=55&&(pct3==null||pct3<30)){
+        vKey="CLOSE_2R";why=pct2.toFixed(0)+"% hit 2R, "+(pct3==null?"—":pct3.toFixed(0))+"% hit 3R";
+      } else if(expR!=null&&expR>0){
+        vKey="TRADE";why="exp "+expR.toFixed(2)+"R at target";
+      } else {
+        vKey="NEEDS_REVIEW";why="no clean pattern";
+      }
+      summaries.push({
+        symbol:g.symbol,tf:g.tf,n:n,
+        winRate:winRate,expR:expR,
+        pct2:pct2,pct3:pct3,pct5:pct5,
+        medMFE:med(mfe),medMAE:med(mae),
+        verdict:vKey,why:why
+      });
+    });
+    /* Sort: HOLD_LONG / TRADE first, SKIP last. Use `in` (not `||`) so
+       HOLD_LONG's rank of 0 isn't collapsed to the fallback by JS falsy. */
+    var ORD={HOLD_LONG:0,TRADE:1,CLOSE_3R:2,CLOSE_2R:3,NEEDS_REVIEW:4,THIN_SAMPLE:5,SKIP:6};
+    summaries.sort(function(a,b){
+      var oa=(a.verdict in ORD)?ORD[a.verdict]:9;
+      var ob=(b.verdict in ORD)?ORD[b.verdict]:9;
+      var o=oa-ob;
+      if(o!==0)return o;
+      var ea=a.expR==null?-9999:a.expR;var eb=b.expR==null?-9999:b.expR;
+      return eb-ea;
+    });
+    var counts={};summaries.forEach(function(s){counts[s.verdict]=(counts[s.verdict]||0)+1;});
+    /* Header + verdict count chips */
+    var truncNote=((rep.trade_log||{}).truncated)?' <span style="color:var(--yellow);font-weight:500;font-size:9px">(scored on last '+((rep.trade_log||{}).cap||"")+' trades)</span>':'';
+    var html='<div style="margin:14px 0 6px;font-size:11px;font-weight:700;color:var(--text)">OB Verdict Board — historical read of each symbol × timeframe'+truncNote+'</div>';
+    html+='<div style="font-size:9px;color:var(--text-3);margin-bottom:6px">Deterministic rules over the trade log at the selected RR. Sample-gated (n ≥ 20). Research observation only — hypothesis for walk-forward, not a live signal.</div>';
+    var chipOrder=["HOLD_LONG","TRADE","CLOSE_3R","CLOSE_2R","NEEDS_REVIEW","THIN_SAMPLE","SKIP"];
+    var chipLabels={HOLD_LONG:"Hold long",TRADE:"Trade",CLOSE_3R:"Close @ 3R",CLOSE_2R:"Close @ 2R",NEEDS_REVIEW:"Needs review",THIN_SAMPLE:"Thin sample",SKIP:"Skip"};
+    html+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">';
+    chipOrder.forEach(function(k){
+      var c=counts[k]||0;if(!c)return;
+      var m=_AP_VERDICT_META[k];
+      html+='<span style="display:inline-flex;align-items:center;gap:5px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:12px;padding:2px 8px;font-size:10px">'+
+        '<span style="display:inline-block;width:8px;height:8px;background:'+m.c+';border-radius:50%"></span>'+
+        chipLabels[k]+' <span style="color:var(--text-3);font-family:var(--mono)">'+c+'</span></span>';
+    });
+    html+='</div>';
+    html+='<div style="overflow-x:auto"><table class="bt-table" style="font-size:10px;width:100%">';
+    html+='<thead><tr><th>Verdict</th><th>Symbol</th><th>TF</th><th>N</th><th>Win %</th><th>Exp R</th><th>≥2R MFE</th><th>≥3R MFE</th><th>≥5R MFE</th><th>Med MFE</th><th>Med MAE</th><th>Why</th></tr></thead><tbody>';
+    function nfmt(v,d){return v==null?"—":(typeof v==="number"?v.toFixed(d==null?2:d):String(v));}
+    function pfmt(v){return v==null?"—":v.toFixed(0)+"%";}
+    summaries.forEach(function(s){
+      var m=_AP_VERDICT_META[s.verdict];
+      html+='<tr>';
+      html+='<td style="font-weight:700;color:'+m.c+'" title="'+esc(m.note)+'">'+chipLabels[s.verdict]+'</td>';
+      html+='<td style="font-weight:600">'+esc(s.symbol)+'</td>';
+      html+='<td>'+esc(s.tf)+'</td>';
+      html+='<td style="font-family:var(--mono)">'+s.n+'</td>';
+      html+='<td style="font-family:var(--mono)">'+pfmt(s.winRate)+'</td>';
+      html+='<td style="font-family:var(--mono);color:'+(s.expR!=null&&s.expR>=0?"var(--green)":"var(--red)")+'">'+nfmt(s.expR,2)+'</td>';
+      html+='<td style="font-family:var(--mono)">'+pfmt(s.pct2)+'</td>';
+      html+='<td style="font-family:var(--mono)">'+pfmt(s.pct3)+'</td>';
+      html+='<td style="font-family:var(--mono)">'+pfmt(s.pct5)+'</td>';
+      html+='<td style="font-family:var(--mono)">'+nfmt(s.medMFE,2)+'</td>';
+      html+='<td style="font-family:var(--mono)">'+nfmt(s.medMAE,2)+'</td>';
+      html+='<td style="color:var(--text-2)">'+esc(s.why)+'</td>';
+      html+='</tr>';
+    });
+    html+='</tbody></table></div>';
+    /* Legend explaining each verdict */
+    html+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:6px 12px;margin:8px 0 4px;font-size:9px;color:var(--text-2)">';
+    chipOrder.forEach(function(k){
+      var m=_AP_VERDICT_META[k];
+      html+='<div style="display:flex;gap:6px;align-items:baseline"><span style="display:inline-block;width:6px;height:6px;background:'+m.c+';border-radius:50%;margin-top:5px;flex:0 0 6px"></span>'+
+        '<span><b style="color:var(--text)">'+chipLabels[k]+'</b> — '+esc(m.note)+'</span></div>';
+    });
+    html+='</div>';
+    return html;
   }
 
   function _btApSummaryHtml(rep,cls){
@@ -17538,6 +19003,297 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     ["combo_htf_first_touch","HTF-aligned + first touch"],
     ["combo_quality","HTF + touch<=2 + strong disp + fresh"]
   ];
+
+  /* ── OB Playbook (one pair, multi-timeframe) ─────────────────────────────
+     A per-pair "what kind of OB should I trade" lookup. Enter one symbol,
+     pick 1-4 timeframes, hit Run. Pools the trade log across all chosen
+     TFs of that pair, groups the trades by OB "type signature" (direction
+     × ob_kind × HTF alignment × touch bucket), sample-gates each group at
+     n>=20, and ranks by expectancy at the selected RR. Research label —
+     the highest-ranked type is a HYPOTHESIS to check on TradingView, not
+     a live trade signal.
+
+     Reuses the existing /api/backtest/ob-historical/autopsy endpoint.
+     Server caps at 2 timeframes per call, so 3-4 TFs are chunked into
+     two sequential calls and the trade logs concatenated client-side. */
+  var _PB_TF_ALL=["15m","30m","1h","4h"];
+
+  function _btRenderPlaybookMode(){
+    var el=document.getElementById("btCompareModeContent"); if(!el) return;
+    var d=_btState.pbData||null;
+    var running=_btState.pbRunning||false;
+    var sym=(_btState.pbSymbol||"BTCUSDT").toUpperCase();
+    var selTfs=(_btState.pbSelTfs||["1h","4h"]).slice();
+    var candles=_btState.pbCandles||1000;
+    var rr=_btState.pbRR||2;
+    var html='<div style="padding:12px 0">';
+    html+='<div class="bt-stab-header" style="margin-bottom:4px">';
+    html+='<span style="font-size:13px;font-weight:600;color:var(--text-1)">OB Playbook — which type of OB on this pair wins more</span>';
+    html+='</div>';
+    html+='<div style="font-size:11px;color:var(--text-2);margin-bottom:6px">Pool the pair\'s historical OBs across the selected timeframes, group by OB type (direction × kind × HTF alignment × touch), and rank by historical expectancy. Use the winning type as a checklist when eyeballing OBs on TradingView.</div>';
+    html+='<div style="font-size:10px;color:#f59e0b;margin-bottom:10px">Research observation only. Winning types are hypotheses — validate on the Profile WF tab before treating any as an edge.</div>';
+    /* Symbol input */
+    html+='<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">';
+    html+='<span style="font-size:11px;color:var(--text-2);font-weight:600">Symbol:</span>';
+    html+='<input id="btPbSym" type="text" value="'+esc(sym)+'" spellcheck="false" style="width:120px;padding:4px 8px;font-size:11px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:var(--mono);text-transform:uppercase" />';
+    html+='<span style="font-size:9px;color:var(--text-3)">USDT will be appended if missing</span>';
+    html+='</div>';
+    /* Timeframes */
+    html+='<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px">';
+    html+='<span style="font-size:11px;color:var(--text-2);font-weight:600">Timeframes:</span>';
+    _PB_TF_ALL.forEach(function(tf){
+      var on=selTfs.indexOf(tf)>=0;
+      html+='<button class="bt-rr-btn'+(on?" active":"")+'" data-pbtf="'+tf+'" style="font-size:11px">'+tf+'</button>';
+    });
+    html+='<span style="font-size:9px;color:var(--text-3)">up to 4</span>';
+    html+='</div>';
+    /* Candles + RR */
+    html+='<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:12px">';
+    html+='<span style="font-size:11px;color:var(--text-2);font-weight:600">Candles:</span>';
+    [500,1000,2000,3000].forEach(function(c){
+      html+='<button class="bt-rr-btn'+(candles===c?" active":"")+'" data-pbcandles="'+c+'" style="font-size:11px">'+c+'</button>';
+    });
+    html+='<span style="font-size:11px;color:var(--text-2);font-weight:600;margin-left:10px">RR:</span>';
+    [1,2,3].forEach(function(r){
+      html+='<button class="bt-rr-btn'+(rr===r?" active":"")+'" data-pbrr="'+r+'" style="font-size:11px">'+r+'R</button>';
+    });
+    html+='<button id="btPbRunBtn" class="bt-run-btn" style="font-size:12px;padding:6px 18px;margin-left:10px" '+(running?"disabled":"")+'>'+
+      (running?'★ Running…':'▶ Run Playbook')+'</button>';
+    html+='</div>';
+    /* Results */
+    html+='<div id="btPbResults">';
+    if(running){
+      html+='<div style="font-size:12px;color:var(--text-2);padding:12px">Running playbook — fetching '+esc(sym)+' across '+selTfs.length+' timeframes…</div>';
+    } else if(d&&d.ok){
+      html+=_btPbRenderResultsHtml(d);
+    } else if(d&&!d.ok){
+      html+='<div class="bt-mtf-err">'+esc(d.error||"Request failed")+'</div>';
+    } else {
+      html+='<div style="font-size:12px;color:var(--text-2);padding:12px">Enter a pair and pick timeframes, then run the playbook.</div>';
+    }
+    html+='</div>';
+    html+='</div>';
+    el.innerHTML=html;
+    /* Wire controls */
+    var symIn=document.getElementById("btPbSym");
+    if(symIn){
+      symIn.addEventListener("input",function(){ _btState.pbSymbol=(symIn.value||"").trim().toUpperCase(); });
+    }
+    [].forEach.call(el.querySelectorAll("[data-pbtf]"),function(b){
+      b.addEventListener("click",function(){
+        var tf=b.getAttribute("data-pbtf");
+        var arr=(_btState.pbSelTfs||["1h","4h"]).slice();
+        var i=arr.indexOf(tf); if(i>=0) arr.splice(i,1); else arr.push(tf);
+        _btState.pbSelTfs=arr;
+        _btRenderPlaybookMode();
+      });
+    });
+    [].forEach.call(el.querySelectorAll("[data-pbcandles]"),function(b){
+      b.addEventListener("click",function(){ _btState.pbCandles=parseInt(b.getAttribute("data-pbcandles"),10); _btRenderPlaybookMode(); });
+    });
+    [].forEach.call(el.querySelectorAll("[data-pbrr]"),function(b){
+      b.addEventListener("click",function(){ _btState.pbRR=parseInt(b.getAttribute("data-pbrr"),10); _btRenderPlaybookMode(); });
+    });
+    var runBtn=document.getElementById("btPbRunBtn");
+    if(runBtn) runBtn.addEventListener("click",_btRunPlaybook);
+  }
+
+  function _btRunPlaybook(){
+    var sym=(_btState.pbSymbol||"").trim().toUpperCase();
+    if(!sym){ _btState.pbData={ok:false,error:"Enter a pair."}; _btRenderPlaybookMode(); return; }
+    if(!sym.endsWith("USDT")) sym=sym+"USDT";
+    var tfs=(_btState.pbSelTfs||["1h","4h"]).slice();
+    if(!tfs.length){ _btState.pbData={ok:false,error:"Pick at least one timeframe."}; _btRenderPlaybookMode(); return; }
+    if(tfs.length>4){ _btState.pbData={ok:false,error:"Max 4 timeframes."}; _btRenderPlaybookMode(); return; }
+    var candles=_btState.pbCandles||1000;
+    var rr=_btState.pbRR||2;
+    /* Chunk into pairs of ≤2 to respect the server's per-call TF cap. */
+    var chunks=[];for(var i=0;i<tfs.length;i+=2) chunks.push(tfs.slice(i,i+2));
+    _btState.pbRunning=true; _btState.pbData=null; _btRenderPlaybookMode();
+    var acc={rows:[]};
+    var runKey="pb_"+sym+"_"+tfs.join("|")+"_"+candles+"_"+rr;
+    _btState._pbRunKey=runKey;
+    (function next(idx){
+      if(_btState._pbRunKey!==runKey) return;   // stale run
+      if(idx>=chunks.length){
+        _btState.pbRunning=false;
+        _btState.pbData={
+          ok:true, symbol:sym, timeframes:tfs, candle_count:candles, rr:rr,
+          rows:acc.rows
+        };
+        _btRenderPlaybookMode();
+        return;
+      }
+      fetch("/api/backtest/ob-historical/autopsy",{
+        method:"POST", credentials:"same-origin",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          symbols:[sym], timeframes:chunks[idx],
+          candle_count:candles, rr:rr,
+          ob_classes:["internal"]
+        })
+      }).then(function(rr2){ if(!rr2.ok) throw new Error("HTTP "+rr2.status); return rr2.json(); })
+        .then(function(d){
+          if(_btState._pbRunKey!==runKey) return;
+          if(!d||!d.ok){
+            _btState.pbRunning=false;
+            _btState.pbData={ok:false,error:(d&&d.error)||"Backtest failed"};
+            _btRenderPlaybookMode();
+            return;
+          }
+          var rep=((d.reports_by_class||{}).internal)||{};
+          var rows=((rep.trade_log||{}).rows)||[];
+          rows.forEach(function(r){ if(r) acc.rows.push(r); });
+          next(idx+1);
+        })
+        .catch(function(e){
+          if(_btState._pbRunKey!==runKey) return;
+          _btState.pbRunning=false;
+          _btState.pbData={ok:false,error:"Playbook run failed: "+e.message};
+          _btRenderPlaybookMode();
+        });
+    })(0);
+  }
+
+  /* Type signature: direction × ob_kind × HTF alignment class × touch class.
+     Note: the server's trade_log.rows do NOT include `touch_bucket` — only
+     `touch_number` — so derive first-vs-later from the numeric field. */
+  function _btPbTypeSig(t){
+    if(!t) return null;
+    var dir=t.direction==="bullish"?"bull":t.direction==="bearish"?"bear":"unknown";
+    var kind=t.ob_kind||"unknown";
+    var htf=t.htf_alignment==="with"?"aligned":t.htf_alignment==="against"?"against":"neutral";
+    var tn=(typeof t.touch_number==="number")?t.touch_number:null;
+    var touch=(tn===1)?"first":(tn!=null?"later":"unknown");
+    return {dir:dir,kind:kind,htf:htf,touch:touch};
+  }
+  function _btPbTypeKey(sig){ return sig.dir+"|"+sig.kind+"|"+sig.htf+"|"+sig.touch; }
+  function _btPbTypeLabel(sig){
+    var d=sig.dir==="bull"?"Bullish":sig.dir==="bear"?"Bearish":"?";
+    var k=sig.kind==="continuation"?"continuation":sig.kind==="reversal"?"reversal":sig.kind;
+    var h=sig.htf==="aligned"?"HTF-aligned":sig.htf==="against"?"HTF-against":"HTF-neutral";
+    var to=sig.touch==="first"?"first touch":sig.touch==="later"?"2nd+ touch":"touch #?";
+    return d+" "+k+" · "+h+" · "+to;
+  }
+  function _btPbTypeChecklist(sig){
+    var lines=[];
+    lines.push("Direction: "+(sig.dir==="bull"?"bullish OB (demand)":sig.dir==="bear"?"bearish OB (supply)":"—"));
+    lines.push("OB kind: "+(sig.kind==="continuation"?"continuation (with formation trend)":sig.kind==="reversal"?"reversal (against formation trend)":sig.kind));
+    lines.push("HTF trend: "+(sig.htf==="aligned"?"aligned with the OB direction":sig.htf==="against"?"against the OB direction":"neutral / unknown"));
+    lines.push("Touch #: "+(sig.touch==="first"?"first touch of the zone":sig.touch==="later"?"second touch or later":"unknown touch number"));
+    return lines;
+  }
+
+  function _btPbGroupsFromRows(rows,rr){
+    var groups={};
+    var baseWins=0,baseExpSum=0,baseExpN=0;
+    rows.forEach(function(t){
+      var sig=_btPbTypeSig(t); if(!sig) return;
+      var k=_btPbTypeKey(sig);
+      if(!groups[k]) groups[k]={sig:sig,trades:[]};
+      groups[k].trades.push(t);
+      if(t.realized_r!=null){baseExpSum+=t.realized_r;baseExpN++;if(t.realized_r>0)baseWins++;}
+    });
+    var baseline={trades:rows.length, win_rate_pct:rows.length?(baseWins/rows.length*100):null,
+                  expectancy_r:baseExpN?(baseExpSum/baseExpN):null};
+    var out=[];
+    Object.keys(groups).forEach(function(k){
+      var g=groups[k];var ts=g.trades;var n=ts.length;
+      var wins=0,expSum=0,expN=0,mfe=[],mae=[],hits2=0,hits3=0,hits5=0;
+      ts.forEach(function(t){
+        if(t.realized_r!=null){expSum+=t.realized_r;expN++;if(t.realized_r>0)wins++;}
+        if(t.mfe_r!=null){mfe.push(t.mfe_r);if(t.mfe_r>=2)hits2++;if(t.mfe_r>=3)hits3++;if(t.mfe_r>=5)hits5++;}
+        if(t.mae_r!=null)mae.push(t.mae_r);
+      });
+      function med(a){if(!a.length)return null;var b=a.slice().sort(function(x,y){return x-y;});var m=Math.floor(b.length/2);return b.length%2?b[m]:(b[m-1]+b[m])/2;}
+      var winRate=n>0?wins/n*100:null;
+      var expR=expN>0?expSum/expN:null;
+      var mfeN=mfe.length;
+      out.push({
+        sig:g.sig, key:k, n:n,
+        winRate:winRate, expR:expR,
+        pct2:mfeN?hits2/mfeN*100:null,
+        pct3:mfeN?hits3/mfeN*100:null,
+        pct5:mfeN?hits5/mfeN*100:null,
+        medMFE:med(mfe), medMAE:med(mae),
+        retention_pct:rows.length?(n/rows.length*100):null,
+        exp_delta:(baseline.expectancy_r!=null&&expR!=null)?(expR-baseline.expectancy_r):null,
+        adequate:n>=20
+      });
+    });
+    /* Rank: adequate first, then by expectancy desc, then win rate desc */
+    out.sort(function(a,b){
+      if(a.adequate!==b.adequate) return a.adequate?-1:1;
+      var ea=a.expR==null?-9999:a.expR;var eb=b.expR==null?-9999:b.expR;
+      if(eb!==ea) return eb-ea;
+      var wa=a.winRate==null?-1:a.winRate;var wb=b.winRate==null?-1:b.winRate;
+      return wb-wa;
+    });
+    return {baseline:baseline, groups:out};
+  }
+
+  function _btPbRenderResultsHtml(d){
+    var res=_btPbGroupsFromRows(d.rows||[],d.rr);
+    var groups=res.groups;var base=res.baseline;
+    function nfmt(v,dec){return v==null?"—":v.toFixed(dec==null?2:dec);}
+    function pfmt(v){return v==null?"—":v.toFixed(0)+"%";}
+    var html='';
+    /* Header: pair + TFs + baseline */
+    html+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:4px 0 10px">';
+    html+='<span style="font-family:var(--mono);font-size:12px;font-weight:700;color:var(--text)">'+esc(d.symbol)+'</span>';
+    html+='<span style="font-size:10px;color:var(--text-3)">across '+(d.timeframes||[]).join(" · ")+' · '+d.candle_count+' candles · '+d.rr+'R target</span>';
+    html+='<span style="font-size:10px;color:var(--text-2);margin-left:auto">Baseline: '+(base.trades||0)+' trades · WR '+pfmt(base.win_rate_pct)+' · Exp '+nfmt(base.expectancy_r,2)+'R</span>';
+    html+='</div>';
+    if(!(d.rows||[]).length){
+      html+='<div style="font-size:11px;color:var(--text-3);padding:12px">No trades to analyze. Try a different pair or more candles.</div>';
+      return html;
+    }
+    /* Best-of callout */
+    var winner=null;
+    for(var i=0;i<groups.length;i++){ if(groups[i].adequate&&groups[i].expR!=null&&groups[i].expR>(base.expectancy_r||0)){winner=groups[i];break;} }
+    if(winner){
+      var lines=_btPbTypeChecklist(winner.sig);
+      html+='<div style="background:var(--yellow-soft);border:1px solid var(--yellow-soft-2);border-left:4px solid var(--yellow);border-radius:8px;padding:14px 16px;margin-bottom:14px">';
+      html+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">';
+      html+='<span style="font-family:var(--mono);font-size:9px;font-weight:700;color:var(--yellow);letter-spacing:.6px;padding:1px 6px;border:1px solid var(--yellow);border-radius:3px">BEST TYPE</span>';
+      html+='<span style="font-size:14px;font-weight:700;color:var(--text)">'+esc(_btPbTypeLabel(winner.sig))+'</span></div>';
+      html+='<div style="font-size:11px;color:var(--text-2);margin-bottom:8px">On '+esc(d.symbol)+' across '+(d.timeframes||[]).join(" · ")+', this OB type historically won <b style="color:var(--green)">'+pfmt(winner.winRate)+'</b> with <b style="color:var(--green)">'+nfmt(winner.expR,2)+'R</b> expectancy across <b>'+winner.n+' trades</b> ('+pfmt(winner.retention_pct)+' of the pool). Δ vs baseline: <b style="color:'+(winner.exp_delta!=null&&winner.exp_delta>0?"var(--green)":"var(--red)")+'">'+(winner.exp_delta!=null&&winner.exp_delta>0?"+":"")+nfmt(winner.exp_delta,2)+'R</b>.</div>';
+      html+='<div style="font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;font-weight:700;margin-bottom:4px">TradingView checklist</div>';
+      html+='<ul style="margin:0;padding-left:18px;font-size:11px;color:var(--text-2);line-height:1.6">';
+      lines.forEach(function(l){ html+='<li>'+esc(l)+'</li>'; });
+      html+='</ul>';
+      html+='<div style="font-size:9px;color:var(--text-3);margin-top:8px;font-style:italic">Research observation — hypothesis for Profile WF validation, not a live signal.</div>';
+      html+='</div>';
+    } else {
+      html+='<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:11px;color:var(--text-2)">No OB type in this run beat the baseline at n≥20. Try a different pair or more candles.</div>';
+    }
+    /* Full table */
+    html+='<div style="margin:12px 0 4px;font-size:11px;font-weight:700;color:var(--text-1)">All OB types — ranked by expectancy</div>';
+    html+='<div style="font-size:9px;color:var(--text-3);margin-bottom:4px">Grey = below 20-trade sample gate; use for context only. Δ Exp = expectancy − baseline.</div>';
+    html+='<div style="overflow-x:auto"><table class="bt-table" style="font-size:10px;width:100%">';
+    html+='<thead><tr><th>Type</th><th>N</th><th>Retention</th><th>Win %</th><th>Exp R</th><th>Δ Exp</th><th>≥2R MFE</th><th>≥3R MFE</th><th>≥5R MFE</th><th>Med MFE</th><th>Med MAE</th></tr></thead><tbody>';
+    groups.forEach(function(g){
+      var muted=!g.adequate;
+      var trStyle=muted?' style="opacity:.55"':'';
+      var expCol=g.expR!=null?(g.expR>=(base.expectancy_r||0)?"var(--green)":"var(--red)"):"var(--text-3)";
+      var dExpCol=g.exp_delta!=null?(g.exp_delta>0?"var(--green)":"var(--red)"):"var(--text-3)";
+      html+='<tr'+trStyle+'>';
+      html+='<td style="font-weight:600">'+esc(_btPbTypeLabel(g.sig))+(muted?' <span style="color:var(--text-3);font-weight:400">(n<20)</span>':'')+'</td>';
+      html+='<td style="font-family:var(--mono)">'+g.n+'</td>';
+      html+='<td style="font-family:var(--mono)">'+pfmt(g.retention_pct)+'</td>';
+      html+='<td style="font-family:var(--mono)">'+pfmt(g.winRate)+'</td>';
+      html+='<td style="font-family:var(--mono);color:'+expCol+';font-weight:700">'+nfmt(g.expR,2)+'</td>';
+      html+='<td style="font-family:var(--mono);color:'+dExpCol+'">'+(g.exp_delta!=null&&g.exp_delta>0?"+":"")+nfmt(g.exp_delta,2)+'</td>';
+      html+='<td style="font-family:var(--mono)">'+pfmt(g.pct2)+'</td>';
+      html+='<td style="font-family:var(--mono)">'+pfmt(g.pct3)+'</td>';
+      html+='<td style="font-family:var(--mono)">'+pfmt(g.pct5)+'</td>';
+      html+='<td style="font-family:var(--mono)">'+nfmt(g.medMFE,2)+'</td>';
+      html+='<td style="font-family:var(--mono)">'+nfmt(g.medMAE,2)+'</td>';
+      html+='</tr>';
+    });
+    html+='</tbody></table></div>';
+    return html;
+  }
 
   function _btRenderProfileWfMode(){
     var el=document.getElementById("btCompareModeContent"); if(!el) return;

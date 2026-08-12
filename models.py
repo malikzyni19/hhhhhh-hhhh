@@ -6,9 +6,21 @@ from datetime import datetime, timezone
 db = SQLAlchemy()
 
 ALL_MODULES     = ["ob", "fvg", "bb", "fib"]
-ALL_TABS        = ["scan", "pairs", "settings", "compressed", "trending", "athatl", "bias", "watchlist"]
+ALL_TABS        = ["scan", "pairs", "settings", "compressed", "base", "trending", "athatl", "bias", "watchlist"]
 ALL_EXCHANGES   = ["binance", "bybit", "okx", "mexc"]
 ALL_TIMEFRAMES  = ["15m", "30m", "1h", "4h", "1d"]
+
+# ── Subscription tiers ───────────────────────────────────────────────────────
+# Ordered cheapest → most capable. "basic" is the free tier every new account
+# starts on. Roles (admin/user) control authorisation; tiers control entitlement.
+ALL_TIERS       = ["basic", "pro", "pro_plus"]
+DEFAULT_TIER    = "basic"
+
+TIER_LABELS = {
+    "basic":    "Basic",
+    "pro":      "Pro",
+    "pro_plus": "Pro Plus",
+}
 
 
 class User(UserMixin, db.Model):
@@ -26,6 +38,12 @@ class User(UserMixin, db.Model):
     last_login_ip  = db.Column(db.String(45), nullable=True)
     notes          = db.Column(db.Text, nullable=True)
 
+    # ── Subscription ──
+    tier            = db.Column(db.String(20), default=DEFAULT_TIER, nullable=False,
+                                server_default=DEFAULT_TIER, index=True)
+    tier_expires_at = db.Column(db.DateTime, nullable=True)   # NULL = never expires
+    tier_since      = db.Column(db.DateTime, nullable=True)
+
     def set_password(self, password: str) -> None:
         self.password_hash = generate_password_hash(password)
 
@@ -36,8 +54,65 @@ class User(UserMixin, db.Model):
     def is_admin(self) -> bool:
         return self.role == "admin"
 
+    @property
+    def tier_is_expired(self) -> bool:
+        """True when a paid tier has lapsed and should be treated as basic."""
+        if self.tier == DEFAULT_TIER or self.tier_expires_at is None:
+            return False
+        exp = self.tier_expires_at
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        return exp < datetime.now(timezone.utc)
+
+    @property
+    def effective_tier(self) -> str:
+        """The tier actually in force — a lapsed subscription falls back to basic."""
+        if self.tier not in ALL_TIERS:
+            return DEFAULT_TIER
+        return DEFAULT_TIER if self.tier_is_expired else self.tier
+
+    @property
+    def tier_label(self) -> str:
+        return TIER_LABELS.get(self.effective_tier, self.effective_tier)
+
     def __repr__(self) -> str:
-        return f"<User {self.username} [{self.role}]>"
+        return f"<User {self.username} [{self.role}/{self.tier}]>"
+
+
+class TierPlan(db.Model):
+    """Per-tier entitlements. One row per entry in ALL_TIERS."""
+    __tablename__ = "tier_plans"
+
+    id           = db.Column(db.Integer, primary_key=True)
+    tier         = db.Column(db.String(20), unique=True, nullable=False, index=True)
+    display_name = db.Column(db.String(60), nullable=False, default="")
+    description  = db.Column(db.String(255), nullable=True)
+    price_monthly = db.Column(db.Float, default=0.0, nullable=False)
+    sort_order   = db.Column(db.Integer, default=0, nullable=False)
+    is_active    = db.Column(db.Boolean, default=True, nullable=False, server_default="true")
+
+    # Scan limits
+    daily_tokens        = db.Column(db.Integer, default=500,  nullable=False)
+    max_pairs_per_scan  = db.Column(db.Integer, default=100,  nullable=False)
+    max_pairs_per_cycle = db.Column(db.Integer, default=50,   nullable=False)
+
+    # Feature limits
+    max_live_monitor_items = db.Column(db.Integer, default=5,  nullable=False)
+    ai_calls_per_day       = db.Column(db.Integer, default=10, nullable=False)
+    max_scan_presets       = db.Column(db.Integer, default=3,  nullable=False)
+
+    # Access lists — JSON arrays, same shape as RolePermission
+    allowed_modules    = db.Column(db.Text, nullable=True)
+    allowed_tabs       = db.Column(db.Text, nullable=True)
+    allowed_exchanges  = db.Column(db.Text, nullable=True)
+    allowed_timeframes = db.Column(db.Text, nullable=True)
+
+    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
+                           onupdate=lambda: datetime.now(timezone.utc))
+    updated_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<TierPlan {self.tier}>"
 
 
 class AdminLog(db.Model):
@@ -124,28 +199,13 @@ class DailyTokenUsage(db.Model):
     tokens_used  = db.Column(db.Integer, default=0)
     scan_count   = db.Column(db.Integer, default=0)
     last_scan_at = db.Column(db.DateTime, nullable=True)
+    # Tier enforcement: AI requests are metered separately from scan tokens.
+    ai_calls     = db.Column(db.Integer, default=0, nullable=False, server_default="0")
 
     __table_args__ = (db.UniqueConstraint("user_id", "date", name="uq_user_date"),)
 
     def __repr__(self) -> str:
         return f"<DailyTokenUsage user_id={self.user_id} date={self.date}>"
-
-
-class GuestDevice(db.Model):
-    __tablename__ = "guest_devices"
-
-    id                 = db.Column(db.Integer, primary_key=True)
-    device_fingerprint = db.Column(db.String(255), unique=True, nullable=False)
-    user_id            = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    first_seen_at      = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    last_seen_at       = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    ip_address         = db.Column(db.String(45), nullable=True)
-    user_agent         = db.Column(db.Text, nullable=True)
-
-    user = db.relationship("User", foreign_keys=[user_id])
-
-    def __repr__(self) -> str:
-        return f"<GuestDevice fp={self.device_fingerprint[:12]}…>"
 
 
 class LoginHistory(db.Model):

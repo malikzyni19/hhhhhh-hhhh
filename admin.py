@@ -7,20 +7,37 @@ from functools import wraps
 from datetime import datetime, timezone
 
 from models import (db, User, AdminLog, GlobalSetting, RolePermission, UserPermission,
-                    LoginHistory, DailyTokenUsage, EmailVerification, GuestDevice,
+                    LoginHistory, DailyTokenUsage, EmailVerification, TierPlan,
                     BacktestRun, IntelligenceSettings, PasswordResetToken, UserPreference,
-                    ALL_MODULES, ALL_TABS, ALL_EXCHANGES, ALL_TIMEFRAMES)
-from permissions import get_user_permissions, save_user_permissions, _bust_cache
+                    ALL_MODULES, ALL_TABS, ALL_EXCHANGES, ALL_TIMEFRAMES,
+                    ALL_TIERS, DEFAULT_TIER, TIER_LABELS)
+from permissions import (get_user_permissions, save_user_permissions, _bust_cache,
+                         set_user_tier)
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
 
 _USERNAME_RE = re.compile(r'^[a-zA-Z0-9_]{3,30}$')
 
+# Emergency admin key — set EMERGENCY_ADMIN_KEY in Koyeb environment variables.
+# Only activates when the database is unreachable (tried first, falls back on exception).
+# Empty/unset = no bypass (fail-secure). Never stored in code.
+_EMERGENCY_ADMIN_KEY = os.environ.get("EMERGENCY_ADMIN_KEY", "")
+
+
+def _is_emergency_admin() -> bool:
+    """True when the request is authenticated via the emergency key session."""
+    return bool(session.get("emergency_admin") and session.get("is_admin"))
+
 
 def admin_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        if not current_user.is_authenticated or not current_user.is_admin:
+        if _is_emergency_admin():
+            return f(*args, **kwargs)
+        try:
+            if not current_user.is_authenticated or not current_user.is_admin:
+                return redirect(url_for("admin.login"))
+        except Exception:
             return redirect(url_for("admin.login"))
         return f(*args, **kwargs)
     return decorated
@@ -30,10 +47,36 @@ def _get_ip():
     return request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
 
 
+def _admin_id():
+    """Current admin's user id, or None for an emergency (DB-down) session.
+
+    Every write path must use this instead of current_user.id — the emergency
+    session is an AnonymousUser and has no .id, which would raise AttributeError.
+    """
+    try:
+        if current_user.is_authenticated:
+            return current_user.id
+    except Exception:
+        pass
+    return None
+
+
+def _admin_name():
+    """Display name for the current admin, safe for emergency sessions."""
+    if _is_emergency_admin():
+        return "emergency-admin"
+    try:
+        if current_user.is_authenticated:
+            return current_user.username
+    except Exception:
+        pass
+    return "unknown"
+
+
 def _log_action(action: str, details: str = None, target_user_id: int = None):
     try:
         entry = AdminLog(
-            admin_id=current_user.id,
+            admin_id=_admin_id(),
             action=action,
             target_user_id=target_user_id,
             details=details,
@@ -55,31 +98,51 @@ def _admin_count():
 # ── Login ──────────────────────────────────────────────────────────
 @admin_bp.route("/login", methods=["GET", "POST"])
 def login():
-    if current_user.is_authenticated and current_user.is_admin:
+    if _is_emergency_admin():
         return redirect(url_for("admin.dashboard"))
+    try:
+        if current_user.is_authenticated and current_user.is_admin:
+            return redirect(url_for("admin.dashboard"))
+    except Exception:
+        pass
 
     error = None
     if request.method == "POST":
         username = request.form.get("username", "").strip().lower()
         password = request.form.get("password", "")
 
-        user = User.query.filter_by(username=username).first()
+        db_available = True
+        user = None
+        try:
+            user = User.query.filter_by(username=username).first()
+        except Exception:
+            db_available = False
 
-        if not user or not user.check_password(password):
-            error = "Invalid username or password."
-        elif not user.is_admin:
-            error = "Access denied — admin only."
-        elif user.status != "active":
-            error = f"Account is {user.status}. Contact support."
+        if db_available:
+            if not user or not user.check_password(password):
+                error = "Invalid username or password."
+            elif not user.is_admin:
+                error = "Access denied — admin only."
+            elif user.status != "active":
+                error = f"Account is {user.status}. Contact support."
+            else:
+                login_user(user, remember=False)
+                session["is_admin"] = True
+                try:
+                    user.last_login_at = datetime.now(timezone.utc)
+                    user.last_login_ip = _get_ip()
+                    db.session.commit()
+                except Exception:
+                    pass
+                return redirect(url_for("admin.dashboard"))
         else:
-            login_user(user, remember=False)
-            session["is_admin"] = True
-
-            user.last_login_at = datetime.now(timezone.utc)
-            user.last_login_ip = _get_ip()
-            db.session.commit()
-
-            return redirect(url_for("admin.dashboard"))
+            # DB is unreachable — allow emergency key if configured
+            if _EMERGENCY_ADMIN_KEY and password == _EMERGENCY_ADMIN_KEY:
+                session["emergency_admin"] = True
+                session["is_admin"] = True
+                session.permanent = False
+                return redirect(url_for("admin.dashboard"))
+            error = "Database unavailable. Use the emergency admin key if configured."
 
     return render_template("admin/login.html", error=error)
 
@@ -87,10 +150,14 @@ def login():
 # ── Logout ─────────────────────────────────────────────────────────
 @admin_bp.route("/logout")
 def logout():
-    if current_user.is_authenticated:
-        _log_action("logout")
+    try:
+        if current_user.is_authenticated:
+            _log_action("logout")
+    except Exception:
+        pass
     logout_user()
     session.pop("is_admin", None)
+    session.pop("emergency_admin", None)
     return redirect(url_for("admin.login"))
 
 
@@ -131,6 +198,27 @@ def dashboard():
         recent_users = []
         db_connected = False
 
+    # Tier distribution + revenue estimate
+    tier_stats, mrr = [], 0.0
+    try:
+        counts = dict(db.session.query(User.tier, db.func.count(User.id))
+                                .filter(User.role != "admin")
+                                .group_by(User.tier).all())
+        prices = {r.tier: (r.price_monthly or 0.0) for r in TierPlan.query.all()}
+        paid_total = sum(counts.get(t, 0) for t in ALL_TIERS)
+        for t in ALL_TIERS:
+            n = counts.get(t, 0)
+            mrr += n * prices.get(t, 0.0)
+            tier_stats.append({
+                "tier":  t,
+                "label": TIER_LABELS.get(t, t),
+                "count": n,
+                "price": prices.get(t, 0.0),
+                "pct":   round(n / paid_total * 100) if paid_total else 0,
+            })
+    except Exception as e:
+        print(f"[ADMIN-DASH] tier stats error: {e}")
+
     return render_template(
         "admin/dashboard.html",
         total_users=total_users,
@@ -141,6 +229,8 @@ def dashboard():
         recent_logs=recent_logs,
         recent_users=recent_users,
         db_connected=db_connected,
+        tier_stats=tier_stats,
+        mrr=mrr,
         server_time=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
         app_version="1.0.0",
     )
@@ -148,33 +238,195 @@ def dashboard():
 
 
 # ── Users List ─────────────────────────────────────────────────────
+_USERS_PER_PAGE = 50
+
+
 @admin_bp.route("/users")
 @admin_required
 def users():
+    status_filter = request.args.get("status")
+    role_filter   = request.args.get("role")
+    tier_filter   = request.args.get("tier")
+    search        = (request.args.get("q") or "").strip()
+    sort          = (request.args.get("sort") or "created_desc").strip()
     try:
-        status_filter = request.args.get("status")
-        role_filter   = request.args.get("role")
+        page = max(1, int(request.args.get("page", 1)))
+    except (TypeError, ValueError):
+        page = 1
 
-        q = User.query.order_by(User.created_at.desc())
+    pagination  = None
+    all_users   = []
+    total_count = 0
+    tier_counts = {}
+    try:
+        q = User.query
         if status_filter:
             q = q.filter_by(status=status_filter)
         if role_filter:
             q = q.filter_by(role=role_filter)
+        if tier_filter in ALL_TIERS:
+            q = q.filter_by(tier=tier_filter)
+        if search:
+            like = f"%{search}%"
+            q = q.filter(db.or_(User.username.ilike(like), User.email.ilike(like)))
 
-        all_users   = q.all()
+        sort_map = {
+            "created_desc": User.created_at.desc(),
+            "created_asc":  User.created_at.asc(),
+            "username":     User.username.asc(),
+            "last_login":   User.last_login_at.desc(),
+            "tier":         User.tier.asc(),
+        }
+        q = q.order_by(sort_map.get(sort, User.created_at.desc()))
+
+        # Paginate — previously this loaded EVERY user row on every page view,
+        # which was a significant chunk of the database egress bill.
+        pagination  = q.paginate(page=page, per_page=_USERS_PER_PAGE, error_out=False)
+        all_users   = pagination.items
         total_count = User.query.count()
+
+        for t, n in (db.session.query(User.tier, db.func.count(User.id))
+                               .filter(User.role != "admin")
+                               .group_by(User.tier).all()):
+            tier_counts[t] = n
     except Exception as e:
         print(f"[ADMIN-USERS] DB error: {e}")
-        all_users   = []
-        total_count = 0
 
     return render_template(
         "admin/users.html",
         users=all_users,
+        pagination=pagination,
         total_count=total_count,
         status_filter=status_filter,
         role_filter=role_filter,
+        tier_filter=tier_filter,
+        tier_counts=tier_counts,
+        all_tiers=ALL_TIERS,
+        tier_labels=TIER_LABELS,
+        search=search,
+        sort=sort,
     )
+
+
+# ── Bulk status / role change ──────────────────────────────────────
+@admin_bp.route("/users/bulk-action", methods=["POST"])
+@admin_required
+def users_bulk_action():
+    """Apply a status or role change to many users at once."""
+    data   = request.get_json(silent=True) or {}
+    ids    = data.get("ids") or []
+    action = (data.get("action") or "").strip()
+    value  = (data.get("value")  or "").strip()
+
+    if not isinstance(ids, list) or not ids:
+        return jsonify({"ok": False, "error": "no_ids"}), 400
+    if action not in ("status", "role", "tier"):
+        return jsonify({"ok": False, "error": "bad_action"}), 400
+    if action == "status" and value not in ("active", "paused", "banned"):
+        return jsonify({"ok": False, "error": "bad_status"}), 400
+    if action == "role" and value not in ("admin", "user"):
+        return jsonify({"ok": False, "error": "bad_role"}), 400
+    if action == "tier" and value not in ALL_TIERS:
+        return jsonify({"ok": False, "error": "bad_tier"}), 400
+
+    try:
+        ids = [int(i) for i in ids]
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "bad_ids"}), 400
+
+    me = _admin_id()
+    if me in ids:
+        return jsonify({"ok": False, "error": "cannot_modify_self"}), 400
+
+    try:
+        rows = User.query.filter(User.id.in_(ids)).all()
+
+        # Never allow the last active admin to be demoted or deactivated.
+        if action == "role" and value != "admin":
+            demoting = sum(1 for u in rows if u.role == "admin")
+            if demoting and _admin_count() - demoting < 1:
+                return jsonify({"ok": False, "error": "last_admin"}), 400
+        if action == "status" and value != "active":
+            deactivating = sum(1 for u in rows if u.role == "admin" and u.status == "active")
+            if deactivating and _admin_count() - deactivating < 1:
+                return jsonify({"ok": False, "error": "last_admin"}), 400
+
+        changed = 0
+        for u in rows:
+            if action == "status":
+                u.status = value
+            elif action == "role":
+                u.role = value
+            else:
+                u.tier       = value
+                u.tier_since = datetime.now(timezone.utc)
+                # Bulk moves carry no expiry date; the free tier never expires.
+                u.tier_expires_at = None
+            changed += 1
+
+        db.session.commit()
+
+        try:
+            from permissions import _CACHE
+            for u in rows:
+                _CACHE.pop(u.id, None)
+        except Exception:
+            pass
+
+        _log_action(f"bulk_{action}", f"Set {action}={value} on {changed} user(s)")
+        return jsonify({"ok": True, "changed": changed})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# ── Impersonate ("view as user") ───────────────────────────────────
+@admin_bp.route("/users/<int:user_id>/impersonate", methods=["POST"])
+@admin_required
+def users_impersonate(user_id):
+    """Log in as another user, keeping a breadcrumb so we can switch back."""
+    if _is_emergency_admin():
+        flash("Impersonation is unavailable in emergency mode.", "error")
+        return redirect(url_for("admin.users"))
+
+    me = _admin_id()
+    if me is None:
+        return redirect(url_for("admin.login"))
+    if user_id == me:
+        flash("You are already signed in as that account.", "warning")
+        return redirect(url_for("admin.users"))
+
+    user = User.query.filter_by(id=user_id).first()
+    if not user:
+        flash("User not found.", "error")
+        return redirect(url_for("admin.users"))
+    if user.role == "admin":
+        flash("Cannot impersonate another admin.", "error")
+        return redirect(url_for("admin.users"))
+
+    _log_action("impersonate", f"Impersonated {user.username}", target_user_id=user.id)
+
+    login_user(user, remember=False)
+    session["impersonator_id"] = me
+    session.pop("is_admin", None)
+    flash(f"You are now viewing the app as {user.username}.", "warning")
+    return redirect("/")
+
+
+@admin_bp.route("/stop-impersonating", methods=["GET", "POST"])
+def stop_impersonating():
+    """Return to the original admin account."""
+    orig = session.pop("impersonator_id", None)
+    if not orig:
+        return redirect("/")
+    admin_user = User.query.filter_by(id=orig).first()
+    if not admin_user or not admin_user.is_admin:
+        logout_user()
+        return redirect(url_for("admin.login"))
+    login_user(admin_user, remember=False)
+    session["is_admin"] = True
+    flash("Returned to your admin account.", "success")
+    return redirect(url_for("admin.users"))
 
 
 # ── Create User ────────────────────────────────────────────────────
@@ -208,7 +460,7 @@ def users_create():
         elif password and password != confirm:
             errors["confirm_password"] = "Passwords do not match."
 
-        if role not in ("user", "admin", "guest"):
+        if role not in ("user", "admin"):
             role = "user"
         if status not in ("active", "paused"):
             status = "active"
@@ -264,7 +516,7 @@ def users_edit(user_id):
             elif new_password != confirm_pwd:
                 errors["confirm_password"] = "Passwords do not match."
 
-        if new_role not in ("user", "admin", "guest"):
+        if new_role not in ("user", "admin"):
             new_role = user.role
         if new_status not in ("active", "paused", "banned"):
             new_status = user.status
@@ -305,6 +557,7 @@ def users_edit(user_id):
     user_perm = None
     login_history = []
     stats = None
+    daily_series = []
     try:
         eff       = get_user_permissions(user)
         user_perm = UserPermission.query.filter_by(user_id=user_id).first()
@@ -330,10 +583,14 @@ def users_edit(user_id):
             LoginHistory.user_id == user_id,
             LoginHistory.logged_in_at >= week_start
         ).count()
-        month_usage = DailyTokenUsage.query.filter(
+        # Pull enough history to cover both the calendar month and the 30-day
+        # sparkline in a single query.
+        series_start = today - timedelta(days=29)
+        usage_rows = DailyTokenUsage.query.filter(
             DailyTokenUsage.user_id == user_id,
-            DailyTokenUsage.date >= month_start
+            DailyTokenUsage.date >= min(month_start, series_start)
         ).all()
+        month_usage  = [u for u in usage_rows if u.date >= month_start]
         month_scans  = sum(u.scan_count  for u in month_usage)
         month_tokens = sum(u.tokens_used for u in month_usage)
         week_usage   = [u for u in month_usage if u.date >= week_start]
@@ -342,6 +599,18 @@ def users_edit(user_id):
             "month_logins": month_logins, "month_scans": month_scans, "month_tokens": month_tokens,
             "week_logins":  week_logins,  "week_scans":  week_scans,
         }
+
+        # 30-day sparkline — built from month_usage that is already loaded,
+        # so this costs no additional query.
+        by_date = {u.date: u for u in usage_rows}
+        for i in range(29, -1, -1):
+            d   = today - timedelta(days=i)
+            row = by_date.get(d)
+            daily_series.append({
+                "date":   d.isoformat(),
+                "scans":  row.scan_count  if row else 0,
+                "tokens": row.tokens_used if row else 0,
+            })
     except Exception as e:
         print(f"[ADMIN-EDIT] extra context error: {e}")
 
@@ -350,6 +619,8 @@ def users_edit(user_id):
         user=user, errors=errors,
         eff=eff, user_perm=user_perm,
         login_history=login_history, stats=stats,
+        daily_series=daily_series,
+        all_tiers=ALL_TIERS, tier_labels=TIER_LABELS, default_tier=DEFAULT_TIER,
         all_modules=ALL_MODULES, all_tabs=ALL_TABS,
         all_exchanges=ALL_EXCHANGES, all_timeframes=ALL_TIMEFRAMES,
     )
@@ -370,7 +641,11 @@ def users_detail_json(user_id):
         "created_at":     user.created_at.strftime("%Y-%m-%d %H:%M UTC") if user.created_at else "—",
         "last_login_at":  user.last_login_at.strftime("%Y-%m-%d %H:%M UTC") if user.last_login_at else "Never",
         "last_login_ip":  getattr(user, "last_login_ip", None) or "—",
-        "is_self":        user.id == current_user.id,
+        "is_self":        user.id == _admin_id(),
+        "tier":           user.tier,
+        "tier_label":     TIER_LABELS.get(user.effective_tier, user.effective_tier),
+        "tier_expired":   bool(user.tier_is_expired),
+        "tier_expires_at": user.tier_expires_at.strftime("%Y-%m-%d") if user.tier_expires_at else "",
     })
 
 
@@ -387,7 +662,7 @@ def users_delete(user_id):
         flash(msg, "error")
         return redirect(url_for("admin.users"))
 
-    if user.id == current_user.id:
+    if user.id == _admin_id():
         return _err("You cannot delete your own account.")
 
     if user.role == "admin" and _admin_count() <= 1:
@@ -408,7 +683,6 @@ def users_delete(user_id):
         # Delete owned records (strict FK — cannot be nullified)
         EmailVerification.query.filter_by(user_id=uid).delete(synchronize_session=False)
         PasswordResetToken.query.filter_by(user_id=uid).delete(synchronize_session=False)
-        GuestDevice.query.filter_by(user_id=uid).delete(synchronize_session=False)
         LoginHistory.query.filter_by(user_id=uid).delete(synchronize_session=False)
         DailyTokenUsage.query.filter_by(user_id=uid).delete(synchronize_session=False)
         UserPermission.query.filter_by(user_id=uid).delete(synchronize_session=False)
@@ -462,7 +736,7 @@ def users_bulk_delete():
             User.query
             .filter(User.id.in_(ids))
             .filter(User.role != "admin")
-            .filter(User.id != current_user.id)
+            .filter(User.id != (_admin_id() or -1))
             .all()
         )
         if not targets:
@@ -475,7 +749,6 @@ def users_bulk_delete():
             uid = u.id
             EmailVerification.query.filter_by(user_id=uid).delete(synchronize_session=False)
             PasswordResetToken.query.filter_by(user_id=uid).delete(synchronize_session=False)
-            GuestDevice.query.filter_by(user_id=uid).delete(synchronize_session=False)
             LoginHistory.query.filter_by(user_id=uid).delete(synchronize_session=False)
             DailyTokenUsage.query.filter_by(user_id=uid).delete(synchronize_session=False)
             UserPermission.query.filter_by(user_id=uid).delete(synchronize_session=False)
@@ -503,7 +776,7 @@ def users_bulk_delete():
 def users_toggle_status(user_id):
     user = User.query.get_or_404(user_id)
 
-    if user.id == current_user.id:
+    if user.id == _admin_id():
         return jsonify({"error": "Cannot change your own status."}), 400
 
     if user.role == "admin" and user.status == "active" and _admin_count() <= 1:
@@ -578,7 +851,7 @@ def users_save_permissions(user_id):
         overrides[field] = v if isinstance(v, list) else None
 
     try:
-        save_user_permissions(user_id, overrides, current_user.id)
+        save_user_permissions(user_id, overrides, _admin_id())
         _log_action("edit_permissions", f"Updated permissions for {user.username}", target_user_id=user_id)
         return jsonify({"success": True})
     except Exception as e:
@@ -601,10 +874,10 @@ def _set_setting(key, value, description=None):
         if s:
             s.value = value
             s.updated_at = datetime.now(timezone.utc)
-            s.updated_by = current_user.id
+            s.updated_by = _admin_id()
         else:
             s = GlobalSetting(key=key, value=value, description=description,
-                              updated_by=current_user.id)
+                              updated_by=_admin_id())
             db.session.add(s)
     except Exception as e:
         print(f"[SETTINGS] Error setting {key}: {e}")
@@ -615,7 +888,7 @@ def _set_setting(key, value, description=None):
 def settings():
     role_perms = {}
     try:
-        for role in ("admin", "user", "guest"):
+        for role in ("admin", "user"):
             rp = RolePermission.query.filter_by(role=role).first()
             if rp:
                 role_perms[role] = {
@@ -635,27 +908,18 @@ def settings():
             _set_setting("maintenance_mode",    request.form.get("maintenance_mode", "false"))
             _set_setting("maintenance_message", request.form.get("maintenance_message", ""))
             _set_setting("default_exchange",    request.form.get("default_exchange", "binance"))
-            _set_setting("allow_guest_access",  request.form.get("allow_guest_access", "true"))
-            _set_setting("max_guest_tokens",    request.form.get("max_guest_tokens", "50"))
-            _set_setting("guest_session_hours", request.form.get("guest_session_hours", "2"))
-            _set_setting("guest_expire_days",   request.form.get("guest_expire_days", "30"))
 
-            # Role permissions
-            for role in ("admin", "user", "guest"):
-                rp = RolePermission.query.filter_by(role=role).first()
-                if not rp:
-                    rp = RolePermission(role=role)
-                    db.session.add(rp)
-                prefix = f"role_{role}_"
-                rp.daily_tokens        = int(request.form.get(prefix + "daily_tokens", rp.daily_tokens or 500))
-                rp.max_pairs_per_scan  = int(request.form.get(prefix + "max_scan",  rp.max_pairs_per_scan  or 100))
-                rp.max_pairs_per_cycle = int(request.form.get(prefix + "max_cycle", rp.max_pairs_per_cycle or 50))
-                rp.allowed_modules     = json.dumps([m for m in ALL_MODULES    if request.form.get(prefix + "mod_"  + m)])
-                rp.allowed_tabs        = json.dumps([t for t in ALL_TABS       if request.form.get(prefix + "tab_"  + t)])
-                rp.allowed_exchanges   = json.dumps([e for e in ALL_EXCHANGES  if request.form.get(prefix + "exch_" + e)])
-                rp.allowed_timeframes  = json.dumps([f for f in ALL_TIMEFRAMES if request.form.get(prefix + "tf_"   + f)])
-                rp.updated_by = current_user.id
-                rp.updated_at = datetime.now(timezone.utc)
+            # Rate limiting / abuse control
+            _set_setting("rl_scans_per_hour",   request.form.get("rl_scans_per_hour",   "60"))
+            _set_setting("rl_ai_calls_per_day", request.form.get("rl_ai_calls_per_day", "50"))
+            _set_setting("rl_login_attempts",   request.form.get("rl_login_attempts",   "5"))
+            _set_setting("rl_signup_per_ip_day", request.form.get("rl_signup_per_ip_day", "3"))
+
+            # NOTE: Role permissions are intentionally NOT written here.
+            # They are edited on /admin/roles/<role>. A previous version rebuilt
+            # allowed_modules/tabs/exchanges/timeframes from `role_<role>_*` form
+            # fields that this page never renders — so every save silently reset
+            # all three roles to an empty permission set.
 
             db.session.commit()
             _log_action("update_settings", "Updated global settings")
@@ -669,10 +933,10 @@ def settings():
         "maintenance_mode":    _get_setting("maintenance_mode",    "false"),
         "maintenance_message": _get_setting("maintenance_message", ""),
         "default_exchange":    _get_setting("default_exchange",    "binance"),
-        "allow_guest_access":  _get_setting("allow_guest_access",  "true"),
-        "max_guest_tokens":    _get_setting("max_guest_tokens",    "50"),
-        "guest_session_hours": _get_setting("guest_session_hours", "2"),
-        "guest_expire_days":   _get_setting("guest_expire_days",   "30"),
+        "rl_scans_per_hour":   _get_setting("rl_scans_per_hour",   "60"),
+        "rl_ai_calls_per_day": _get_setting("rl_ai_calls_per_day", "50"),
+        "rl_login_attempts":   _get_setting("rl_login_attempts",   "5"),
+        "rl_signup_per_ip_day": _get_setting("rl_signup_per_ip_day", "3"),
     }
     try:
         total_users    = User.query.count()
@@ -732,7 +996,7 @@ def _parse_rp_lists(rp):
 @admin_bp.route("/roles/<role>", methods=["GET", "POST"])
 @admin_required
 def role_edit(role):
-    if role not in ("admin", "user", "guest"):
+    if role not in ("admin", "user"):
         return redirect(url_for("admin.settings"))
 
     rp = _get_role_perm(role)
@@ -748,7 +1012,7 @@ def role_edit(role):
             rp.allowed_exchanges   = json.dumps(request.form.getlist("allowed_exchanges"))
             rp.allowed_timeframes  = json.dumps(request.form.getlist("allowed_timeframes"))
             rp.updated_at          = datetime.now(timezone.utc)
-            rp.updated_by          = current_user.id
+            rp.updated_by          = _admin_id()
             if not RolePermission.query.filter_by(role=role).first():
                 db.session.add(rp)
             db.session.commit()
@@ -3312,7 +3576,7 @@ def debug_ob_tv_parity():
 #   1. email_verified = False  AND  created_at older than 30 minutes (never verified)
 #   2. role = "user", status = "active", never logged in (last_login_at IS NULL),
 #      AND created_at older than 24 hours
-#   3. Guest accounts with role="user" created in bulk from the same creation window
+#   3. Accounts with role="user" created in bulk from the same creation window
 #      (≥ 5 accounts created within the same 5-minute window)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -3456,12 +3720,11 @@ def security_purge_non_admins():
             EmailVerification.query.filter_by(user_id=u.id).delete()
             LoginHistory.query.filter_by(user_id=u.id).delete()
             DailyTokenUsage.query.filter_by(user_id=u.id).delete()
-            GuestDevice.query.filter_by(user_id=u.id).delete()
             db.session.delete(u)
 
         db.session.commit()
         try:
-            admin_id = current_user.id if current_user.is_authenticated else None
+            admin_id = _admin_id()
             if admin_id:
                 log = AdminLog(admin_id=admin_id, action="purge_non_admins",
                                details=f"Deleted ALL {count} non-admin users. Sample: {', '.join(sample)}")
@@ -3474,3 +3737,558 @@ def security_purge_non_admins():
     except Exception as _e:
         db.session.rollback()
         return jsonify({"error": str(_e)}), 500
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# AUDIT LOGS
+# ═════════════════════════════════════════════════════════════════════════════
+
+_LOGS_PER_PAGE = 60
+
+
+@admin_bp.route("/logs")
+@admin_required
+def logs():
+    """Paginated AdminLog viewer with action / admin / date filters."""
+    action_filter = (request.args.get("action") or "").strip()
+    admin_filter  = (request.args.get("admin")  or "").strip()
+    days          = (request.args.get("days")   or "").strip()
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+    except (TypeError, ValueError):
+        page = 1
+
+    pagination   = None
+    rows         = []
+    actions      = []
+    admins       = []
+    try:
+        q = AdminLog.query
+        if action_filter:
+            q = q.filter(AdminLog.action == action_filter)
+        if admin_filter:
+            try:
+                q = q.filter(AdminLog.admin_id == int(admin_filter))
+            except ValueError:
+                pass
+        if days:
+            try:
+                from datetime import timedelta
+                cutoff = datetime.now(timezone.utc) - timedelta(days=int(days))
+                q = q.filter(AdminLog.created_at >= cutoff)
+            except ValueError:
+                pass
+
+        pagination = (q.order_by(AdminLog.created_at.desc())
+                       .paginate(page=page, per_page=_LOGS_PER_PAGE, error_out=False))
+        rows = pagination.items
+
+        actions = [r[0] for r in db.session.query(AdminLog.action)
+                                           .distinct().order_by(AdminLog.action).all()]
+        admins  = User.query.filter_by(role="admin").order_by(User.username).all()
+    except Exception as e:
+        print(f"[ADMIN-LOGS] DB error: {e}")
+
+    return render_template(
+        "admin/logs.html",
+        rows=rows, pagination=pagination,
+        actions=actions, admins=admins,
+        action_filter=action_filter, admin_filter=admin_filter, days=days,
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# SECURITY — bot cleanup UI (backs the existing /security/bots JSON endpoints)
+# ═════════════════════════════════════════════════════════════════════════════
+
+@admin_bp.route("/security")
+@admin_required
+def security_page():
+    return render_template("admin/security.html")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# SYSTEM — database usage
+# ═════════════════════════════════════════════════════════════════════════════
+
+@admin_bp.route("/system/database")
+@admin_required
+def sys_database():
+    """Row counts, table sizes and the in-process cache state.
+
+    Aimed at catching runaway egress before the hosting quota is exhausted.
+    """
+    from sqlalchemy import text
+
+    info = {"connected": False, "db_size": None, "tables": [], "counts": {}, "caches": {}}
+
+    try:
+        db.session.execute(text("SELECT 1"))
+        info["connected"] = True
+    except Exception as e:
+        info["error"] = str(e)
+        return render_template("admin/system/database.html", info=info)
+
+    # Total database size
+    try:
+        info["db_size"] = db.session.execute(
+            text("SELECT pg_size_pretty(pg_database_size(current_database()))")
+        ).scalar()
+    except Exception:
+        pass
+
+    # Per-table size + estimated row count (pg_class estimates are free —
+    # a real COUNT(*) on every table would itself be an egress problem).
+    try:
+        rows = db.session.execute(text("""
+            SELECT c.relname                                   AS table_name,
+                   pg_size_pretty(pg_total_relation_size(c.oid)) AS total_size,
+                   pg_total_relation_size(c.oid)               AS size_bytes,
+                   GREATEST(c.reltuples, 0)::bigint            AS est_rows
+              FROM pg_class c
+              JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE c.relkind = 'r' AND n.nspname = 'public'
+             ORDER BY pg_total_relation_size(c.oid) DESC
+             LIMIT 40
+        """)).all()
+        info["tables"] = [
+            {"name": r.table_name, "size": r.total_size,
+             "bytes": int(r.size_bytes or 0), "rows": int(r.est_rows or 0)}
+            for r in rows
+        ]
+    except Exception as e:
+        print(f"[ADMIN-DB] table stats error: {e}")
+
+    # Exact counts for the handful of tables that actually matter
+    for label, model in (("users", User), ("admin_logs", AdminLog),
+                         ("login_history", LoginHistory)):
+        try:
+            info["counts"][label] = model.query.count()
+        except Exception:
+            info["counts"][label] = None
+    try:
+        from models import LiveMonitorItem as _LMI
+        info["counts"]["live_monitor_active"] = _LMI.query.filter_by(is_active=True).count()
+    except Exception:
+        info["counts"]["live_monitor_active"] = None
+
+    # In-process cache state — these are what keep the WS loops off the DB
+    try:
+        import main as _m
+        import time as _t
+        with _m._active_syms_lock:
+            age_b = _t.monotonic() - _m._active_syms_cache["ts"]
+            age_a = _t.monotonic() - _m._active_syms_cache["all_ts"]
+            info["caches"]["active_symbols"] = {
+                "binance_count": len(_m._active_syms_cache["binance"]),
+                "all_count":     len(_m._active_syms_cache["all"]),
+                "binance_age":   round(age_b, 1),
+                "all_age":       round(age_a, 1),
+                "ttl":           _m._ACTIVE_SYMS_TTL,
+            }
+        with _m._maint_cache_lock:
+            info["caches"]["maintenance"] = {
+                "age": round(_t.monotonic() - _m._maint_cache["ts"], 1),
+                "ttl": _m._MAINT_CACHE_TTL,
+                "mode": _m._maint_cache["mode"],
+            }
+    except Exception as e:
+        print(f"[ADMIN-DB] cache introspection error: {e}")
+
+    return render_template("admin/system/database.html", info=info)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# SYSTEM — Live Monitor overview
+# ═════════════════════════════════════════════════════════════════════════════
+
+@admin_bp.route("/system/live-monitor")
+@admin_required
+def sys_live_monitor():
+    """Active LM items across all users + websocket loop health."""
+    # NOTE: the key is "rows", not "items" — `data.items` in Jinja resolves to
+    # dict.items (the method), not the value.
+    data = {"rows": [], "by_exchange": [], "by_user": [], "ws": {}, "total": 0}
+
+    try:
+        from models import LiveMonitorItem as _LMI
+        rows = (_LMI.query.filter_by(is_active=True)
+                          .order_by(_LMI.added_at.desc())
+                          .limit(200).all())
+        data["total"] = _LMI.query.filter_by(is_active=True).count()
+
+        ex_buckets, user_buckets = {}, {}
+        for r in rows:
+            ex = (r.exchange or "—").lower()
+            ex_buckets[ex] = ex_buckets.get(ex, 0) + 1
+            user_buckets[r.user_id] = user_buckets.get(r.user_id, 0) + 1
+
+        data["by_exchange"] = sorted(
+            [{"exchange": k, "count": v} for k, v in ex_buckets.items()],
+            key=lambda x: -x["count"])
+
+        names = {}
+        if user_buckets:
+            for u in User.query.filter(User.id.in_(list(user_buckets))).all():
+                names[u.id] = u.username
+        data["by_user"] = sorted(
+            [{"user": names.get(k, f"#{k}"), "user_id": k, "count": v}
+             for k, v in user_buckets.items()],
+            key=lambda x: -x["count"])[:20]
+
+        data["rows"] = [{
+            "id":       r.id,
+            "symbol":   r.symbol,
+            "exchange": r.exchange,
+            "user":     names.get(r.user_id, f"#{r.user_id}"),
+            "setup":    r.setup_type or "—",
+            "tf":       r.timeframe or "—",
+            "status":   r.status or "—",
+            "created":  r.added_at.strftime("%m-%d %H:%M") if r.added_at else "—",
+        } for r in rows[:100]]
+    except Exception as e:
+        print(f"[ADMIN-LM] error: {e}")
+        data["error"] = str(e)
+
+    # Websocket loop health from main.py's in-process state
+    try:
+        import main as _m
+        import time as _t
+        now = _t.time()
+
+        def _cache_health(cache, lock, label):
+            try:
+                with lock:
+                    n = len(cache)
+                    fresh = sum(1 for v in cache.values()
+                                if isinstance(v, dict) and now - (v.get("ts") or 0) < 60)
+                return {"label": label, "entries": n, "fresh": fresh}
+            except Exception:
+                return {"label": label, "entries": 0, "fresh": 0}
+
+        data["ws"]["caches"] = [
+            _cache_health(_m._lm_ws_cache,   _m._lm_ws_lock,   "Binance mark price"),
+            _cache_health(_m._lm_liq_cache,  _m._lm_liq_lock,  "Liquidations"),
+            _cache_health(_m._lm_mx_books,   _m._lm_mx_books_lock, "Multi-exchange books"),
+        ]
+        data["ws"]["running"] = {
+            "lm_ws":  getattr(_m, "_lm_ws_running", None),
+            "lm_liq": getattr(_m, "_lm_liq_running", None),
+        }
+    except Exception as e:
+        print(f"[ADMIN-LM] ws introspection error: {e}")
+
+    return render_template("admin/system/live_monitor.html", data=data)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# SYSTEM — exchange kill switches
+# ═════════════════════════════════════════════════════════════════════════════
+
+_EXCHANGES = ("binance", "bybit", "okx", "mexc")
+
+
+@admin_bp.route("/system/exchanges", methods=["GET", "POST"])
+@admin_required
+def sys_exchanges():
+    """Enable/disable individual exchange feeds without a redeploy."""
+    if request.method == "POST":
+        try:
+            for ex in _EXCHANGES:
+                val = "true" if request.form.get(f"ex_{ex}") else "false"
+                _set_setting(f"exchange_enabled_{ex}", val)
+            for feed in ("markprice", "liquidations", "delta"):
+                val = "true" if request.form.get(f"feed_{feed}") else "false"
+                _set_setting(f"feed_enabled_{feed}", val)
+            db.session.commit()
+            _log_action("update_exchanges", "Updated exchange/feed toggles")
+            flash("Exchange settings saved.", "success")
+        except Exception as e:
+            db.session.rollback()
+            flash(f"Error saving exchange settings: {e}", "error")
+        return redirect(url_for("admin.sys_exchanges"))
+
+    cfg = {ex: _get_setting(f"exchange_enabled_{ex}", "true") for ex in _EXCHANGES}
+    feeds = {f: _get_setting(f"feed_enabled_{f}", "true")
+             for f in ("markprice", "liquidations", "delta")}
+    return render_template("admin/system/exchanges.html",
+                           exchanges=_EXCHANGES, cfg=cfg, feeds=feeds)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# SYSTEM — scan presets
+# ═════════════════════════════════════════════════════════════════════════════
+
+@admin_bp.route("/system/presets", methods=["GET", "POST"])
+@admin_required
+def sys_presets():
+    """Browse user scan presets and edit the global default."""
+    from models import ScanPreset
+
+    if request.method == "POST":
+        try:
+            _set_setting("default_preset_timeframes",
+                         ",".join(request.form.getlist("tf")))
+            _set_setting("default_preset_modules",
+                         ",".join(request.form.getlist("mod")))
+            _set_setting("default_preset_exchange",
+                         request.form.get("exchange", "binance"))
+            _set_setting("default_preset_min_score",
+                         request.form.get("min_score", "60"))
+            db.session.commit()
+            _log_action("update_default_preset", "Updated global default scan preset")
+            flash("Default preset saved.", "success")
+        except Exception as e:
+            db.session.rollback()
+            flash(f"Error saving preset: {e}", "error")
+        return redirect(url_for("admin.sys_presets"))
+
+    default = {
+        "timeframes": [t for t in _get_setting("default_preset_timeframes", "15m,1h,4h").split(",") if t],
+        "modules":    [m for m in _get_setting("default_preset_modules", "OB,FVG,FIB").split(",") if m],
+        "exchange":   _get_setting("default_preset_exchange",  "binance"),
+        "min_score":  _get_setting("default_preset_min_score", "60"),
+    }
+
+    presets = []
+    try:
+        rows = ScanPreset.query.order_by(ScanPreset.created_at.desc()).limit(100).all()
+        uids = {r.user_id for r in rows if r.user_id}
+        names = {}
+        if uids:
+            for u in User.query.filter(User.id.in_(list(uids))).all():
+                names[u.id] = u.username
+        presets = [{
+            "id":      r.id,
+            "name":    getattr(r, "name", "—"),
+            "user":    names.get(r.user_id, f"#{r.user_id}"),
+            "created": r.created_at.strftime("%Y-%m-%d") if r.created_at else "—",
+        } for r in rows]
+    except Exception as e:
+        print(f"[ADMIN-PRESETS] error: {e}")
+
+    return render_template("admin/system/presets.html",
+                           default=default, presets=presets,
+                           all_modules=ALL_MODULES, all_timeframes=ALL_TIMEFRAMES,
+                           all_exchanges=ALL_EXCHANGES)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# SYSTEM — email health
+# ═════════════════════════════════════════════════════════════════════════════
+
+@admin_bp.route("/system/email")
+@admin_required
+def sys_email():
+    """Surface provider configuration and recent verification-email activity."""
+    status = {"resend_key": False, "smtp": False, "from": "", "provider": "unknown"}
+    try:
+        status["resend_key"] = bool(os.environ.get("RESEND_API_KEY"))
+        status["smtp"]       = bool(os.environ.get("GMAIL_USER") and
+                                    os.environ.get("GMAIL_APP_PASSWORD"))
+        status["from"]       = os.environ.get("MAIL_FROM", "") or os.environ.get("GMAIL_USER", "")
+        status["provider"]   = ("resend" if status["resend_key"]
+                                else ("smtp" if status["smtp"] else "none"))
+    except Exception:
+        pass
+
+    recent, counts = [], {}
+    try:
+        from datetime import timedelta
+        # EmailVerification stores only user_id — join User for the address.
+        rows = (db.session.query(EmailVerification, User)
+                .outerjoin(User, EmailVerification.user_id == User.id)
+                .order_by(EmailVerification.created_at.desc())
+                .limit(50).all())
+        now_utc = datetime.now(timezone.utc)
+        recent = []
+        for ev, u in rows:
+            exp = ev.expires_at
+            if exp is not None and exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+            recent.append({
+                "email":   (u.email if u else None) or "—",
+                "user":    (u.username if u else "—"),
+                "used":    ev.used,
+                "expired": bool(exp and exp < now_utc and not ev.used),
+                "created": ev.created_at.strftime("%m-%d %H:%M") if ev.created_at else "—",
+            })
+
+        day = datetime.now(timezone.utc) - timedelta(days=1)
+        counts["last_24h"] = EmailVerification.query.filter(
+            EmailVerification.created_at >= day).count()
+        counts["total"] = EmailVerification.query.count()
+    except Exception as e:
+        print(f"[ADMIN-EMAIL] error: {e}")
+
+    return render_template("admin/system/email.html",
+                           status=status, recent=recent, counts=counts)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# SUBSCRIPTION TIERS
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _tier_rows():
+    """All tier plans in display order, creating any that are missing."""
+    rows = {r.tier: r for r in TierPlan.query.all()}
+    changed = False
+    for i, t in enumerate(ALL_TIERS):
+        if t not in rows:
+            r = TierPlan(tier=t, display_name=TIER_LABELS.get(t, t), sort_order=i + 1)
+            db.session.add(r)
+            rows[t] = r
+            changed = True
+    if changed:
+        db.session.commit()
+    return [rows[t] for t in ALL_TIERS]
+
+
+def _tier_lists(row):
+    """Parse a TierPlan's JSON list columns into real lists."""
+    def p(v, fallback):
+        if not v:
+            return fallback[:]
+        try:
+            out = json.loads(v)
+            return out if isinstance(out, list) else fallback[:]
+        except Exception:
+            return fallback[:]
+    return {
+        "modules":    p(row.allowed_modules,    ALL_MODULES),
+        "tabs":       p(row.allowed_tabs,       ALL_TABS),
+        "exchanges":  p(row.allowed_exchanges,  ALL_EXCHANGES),
+        "timeframes": p(row.allowed_timeframes, ALL_TIMEFRAMES),
+    }
+
+
+@admin_bp.route("/tiers")
+@admin_required
+def tiers():
+    """Overview of every subscription tier plus how many users are on each."""
+    rows, counts, lists = [], {}, {}
+    try:
+        rows = _tier_rows()
+        for r in rows:
+            lists[r.tier] = _tier_lists(r)
+        for t in ALL_TIERS:
+            counts[t] = User.query.filter_by(tier=t).filter(User.role != "admin").count()
+    except Exception as e:
+        print(f"[ADMIN-TIERS] error: {e}")
+        flash(f"Could not load tiers: {e}", "error")
+
+    return render_template("admin/tiers.html",
+                           rows=rows, counts=counts, lists=lists,
+                           tier_labels=TIER_LABELS, all_tabs=ALL_TABS)
+
+
+@admin_bp.route("/tiers/<tier>", methods=["GET", "POST"])
+@admin_required
+def tier_edit(tier):
+    if tier not in ALL_TIERS:
+        return redirect(url_for("admin.tiers"))
+
+    row = TierPlan.query.filter_by(tier=tier).first()
+    if not row:
+        row = TierPlan(tier=tier, display_name=TIER_LABELS.get(tier, tier),
+                       sort_order=ALL_TIERS.index(tier) + 1)
+        db.session.add(row)
+        db.session.commit()
+
+    if request.method == "POST":
+        try:
+            def as_int(name, current, lo=0, hi=10_000_000):
+                try:
+                    return max(lo, min(hi, int(request.form.get(name, current))))
+                except (TypeError, ValueError):
+                    return current
+
+            row.display_name = (request.form.get("display_name") or TIER_LABELS.get(tier, tier)).strip()[:60]
+            row.description  = (request.form.get("description") or "").strip()[:255] or None
+            try:
+                row.price_monthly = max(0.0, float(request.form.get("price_monthly", row.price_monthly)))
+            except (TypeError, ValueError):
+                pass
+            # The free tier is always available — it is the fallback for lapsed plans.
+            row.is_active = True if tier == DEFAULT_TIER else bool(request.form.get("is_active"))
+
+            row.daily_tokens           = as_int("daily_tokens",           row.daily_tokens)
+            row.max_pairs_per_scan     = as_int("max_pairs_per_scan",     row.max_pairs_per_scan, 1)
+            row.max_pairs_per_cycle    = as_int("max_pairs_per_cycle",    row.max_pairs_per_cycle, 1)
+            row.max_live_monitor_items = as_int("max_live_monitor_items", row.max_live_monitor_items)
+            row.ai_calls_per_day       = as_int("ai_calls_per_day",       row.ai_calls_per_day)
+            row.max_scan_presets       = as_int("max_scan_presets",       row.max_scan_presets)
+
+            row.allowed_modules    = json.dumps(request.form.getlist("allowed_modules"))
+            row.allowed_tabs       = json.dumps(request.form.getlist("allowed_tabs"))
+            row.allowed_exchanges  = json.dumps(request.form.getlist("allowed_exchanges"))
+            row.allowed_timeframes = json.dumps(request.form.getlist("allowed_timeframes"))
+
+            row.updated_by = _admin_id()
+            row.updated_at = datetime.now(timezone.utc)
+            db.session.commit()
+
+            # Every user on this tier must pick up the new limits immediately.
+            try:
+                from permissions import _CACHE
+                for u in User.query.filter_by(tier=tier).all():
+                    _CACHE.pop(u.id, None)
+            except Exception:
+                pass
+
+            _log_action(f"tier_save:{tier}", f"Updated {tier} plan")
+            flash(f"{row.display_name} plan saved.", "success")
+            return redirect(url_for("admin.tier_edit", tier=tier))
+        except Exception as e:
+            db.session.rollback()
+            flash(f"Error saving plan: {e}", "error")
+
+    user_count = 0
+    try:
+        user_count = User.query.filter_by(tier=tier).filter(User.role != "admin").count()
+    except Exception:
+        pass
+
+    return render_template("admin/tier_edit.html",
+                           tier=tier, row=row, lists=_tier_lists(row),
+                           user_count=user_count,
+                           is_default_tier=(tier == DEFAULT_TIER),
+                           tier_labels=TIER_LABELS,
+                           all_modules=ALL_MODULES, all_tabs=ALL_TABS,
+                           all_exchanges=ALL_EXCHANGES, all_timeframes=ALL_TIMEFRAMES)
+
+
+@admin_bp.route("/users/<int:user_id>/tier", methods=["POST"])
+@admin_required
+def users_set_tier(user_id):
+    """Change one user's tier, with an optional expiry date."""
+    tier = (request.form.get("tier") or "").strip()
+    raw_exp = (request.form.get("tier_expires_at") or "").strip()
+
+    user = User.query.filter_by(id=user_id).first()
+    if not user:
+        flash("User not found.", "error")
+        return redirect(url_for("admin.users"))
+    if tier not in ALL_TIERS:
+        flash("Unknown tier.", "error")
+        return redirect(url_for("admin.users_edit", user_id=user_id))
+
+    expires = None
+    if raw_exp and tier != DEFAULT_TIER:
+        try:
+            expires = datetime.strptime(raw_exp, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        except ValueError:
+            flash("Expiry date must be YYYY-MM-DD. Tier not changed.", "error")
+            return redirect(url_for("admin.users_edit", user_id=user_id))
+
+    try:
+        set_user_tier(user, tier, expires_at=expires)
+        _log_action("set_tier", f"{user.username} → {tier}"
+                    + (f" until {raw_exp}" if expires else ""),
+                    target_user_id=user.id)
+        flash(f"{user.username} moved to {TIER_LABELS.get(tier, tier)}.", "success")
+    except Exception as e:
+        db.session.rollback()
+        flash(f"Could not change tier: {e}", "error")
+
+    return redirect(url_for("admin.users_edit", user_id=user_id))
