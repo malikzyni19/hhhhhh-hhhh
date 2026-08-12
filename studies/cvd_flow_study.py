@@ -845,6 +845,68 @@ def _verdict_lines(res: Dict, args) -> List[str]:
         add("  price. Whichever dominates this list is where the information")
         add("  actually is \u2014 and it is not necessarily the one we set out to")
         add("  test.")
+        add("")
+        ups = sum(1 for r in survivors if r[1] == "UP")
+        if survivors and ups == 0:
+            add("  NOTE: every surviving cell is DOWN flow. Not one buy-side cell")
+            add("  cleared the screen. Whatever this measures, it works on")
+            add("  selling and not on buying \u2014 do not assume it mirrors.")
+        elif survivors and ups == len(survivors):
+            add("  NOTE: every surviving cell is UP flow. Nothing on the sell")
+            add("  side cleared the screen.")
+
+    L.extend(_luck_lines(res, args, len(survivors)))
+    return L
+
+
+def _luck_lines(res: Dict, args, n_survivors: int) -> List[str]:
+    """Two corrections that decide whether the table above means anything.
+
+    Screening many cells and reporting the winners is how noise gets published:
+    at |t| >= 2 roughly one test in twenty passes by chance alone, so a screen
+    over 90 cells is expected to hand back about four survivors even if CVD
+    carried no information whatsoever.
+
+    Overlapping samples compound it. At stride 1 with a 24-bar horizon,
+    consecutive events share almost all of their forward window, so the
+    effective sample is a small fraction of n and every t-stat is inflated.
+    """
+    L: List[str] = []
+    add = L.append
+    tested = 0
+    for stream in STREAMS:
+        for fb in FLOW_BUCKETS:
+            for pb in PRICE_BUCKETS:
+                for h in res["horizons"]:
+                    s = res["cells"][stream][fb][pb][h].summary(
+                        args.min_events_per_symbol)
+                    if s["n"] >= args.min_cell_events and s.get("t") is not None:
+                        tested += 1
+    expected = tested * 0.0455        # two-sided |t| >= 2 under the null
+
+    add("")
+    add("-" * 78)
+    add("  HOW MUCH OF THIS IS LUCK")
+    add("-" * 78)
+    add(f"  cells screened {tested}   expected to pass |t|>=2 by chance alone"
+        f" {expected:.1f}   actually passed {n_survivors}")
+    if n_survivors <= expected:
+        add("  The survivor count is at or below what pure noise produces.")
+        add("  Treat NOTHING in the table above as a finding.")
+    else:
+        add("  Only cells well clear of that budget \u2014 and repeated across")
+        add("  neighbouring horizons or streams \u2014 should be believed. A lone")
+        add("  cell at t just over 2 is exactly what chance delivers.")
+
+    hmax = max(res["horizons"])
+    if args.stride < hmax:
+        add("")
+        add(f"  OVERLAP: stride is {args.stride} but the longest horizon is"
+            f" {hmax} bars, so")
+        add("  consecutive events share most of their forward window. The")
+        add("  t-stats above are inflated \u2014 treat them as a ranking, not as")
+        add(f"  significance. Re-run with stride {hmax} for independent")
+        add("  samples; an edge that dies there was never real.")
     return L
 
 
