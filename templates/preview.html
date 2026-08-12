@@ -1778,6 +1778,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
                 <option value="bybit">Bybit</option>
                 <option value="okx">OKX</option>
                 <option value="mexc">MEXC</option>
+                <option value="upbit">Upbit</option>
               </select>
             </label>
             <div class="seg" id="segMarket"><button data-mkt="spot" class="on">Spot</button><button data-mkt="perpetual">Perpetual</button></div>
@@ -2310,7 +2311,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   function _ls_setBool(k,v){_ls_set(k,v?"1":"0");}
 
   /* exchange picker (Queue PR #195) */
-  var SUPPORTED_EXCHANGES=["binance","bybit","okx","mexc"];
+  var SUPPORTED_EXCHANGES=["binance","bybit","okx","mexc","upbit"];
   function _loadExchange(){
     var v=(_ls_get("zyni-exchange","binance")||"binance").toLowerCase();
     return SUPPORTED_EXCHANGES.indexOf(v)>=0?v:"binance";
@@ -3091,7 +3092,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   /* ── permission gating (Task 5) — real perms from /api/my-permissions ── */
   var TAB_OF_MODE = {main:"scan", compressed:"compressed", trending:"trending", ath_atl:"athatl", bias:"bias"};
   var TAB_OF_VIEW = {scanner:"scan", live:"watchlist", watchlist:"pairs", settings:"settings"};
-  var EXCH_NAME   = {binance:"Binance", bybit:"Bybit", okx:"OKX", mexc:"MEXC"};
+  var EXCH_NAME   = {binance:"Binance", bybit:"Bybit", okx:"OKX", mexc:"MEXC", upbit:"Upbit"};
   var ALL_TF_VOCAB = ["15m","30m","1h","4h","1d"];
   function _isAdmin(){ return !!(ST.perms && ST.perms.is_admin); }
   // returns true when allowed; fail-safe (no perms loaded / field absent / admin) → allowed
@@ -3604,7 +3605,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
     SP_LIVE.active=true; SP_LIVE.sig=sig; SP_LIVE.exchange=ST.exchange; SP_LIVE.market=ST.market;
     var ex=ST.exchange;
     SP_LIVE._start = (ex==="binance")?_spWSBinance : (ex==="bybit")?_spWSBybit :
-                     (ex==="okx")?_spWSOkx : (ex==="mexc")?_spWSMexc : null;
+                     (ex==="okx")?_spWSOkx : (ex==="mexc")?_spWSMexc :
+                     (ex==="upbit")?_spWSUpbit : null;
     if(SP_LIVE._start){
       SP_LIVE._start();
       // Watchdog: if the socket delivers no usable ticks within 7s (blocked, or
@@ -3643,6 +3645,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   function _spOpenWS(url, h){
     var ws, opened=false;
     try{ ws=new WebSocket(url); }catch(_){ SP_LIVE.active=false; _spSetLiveStat("Snapshot (live unavailable)",false); return; }
+    try{ ws.binaryType="arraybuffer"; }catch(_){ }   // Upbit streams binary frames
     SP_LIVE.ws=ws;
     _spSetLiveStat("Connecting live…",false);
     ws.onopen=function(){
@@ -3656,7 +3659,13 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         SP_LIVE.pingT=setInterval(function(){ if(ws.readyState===1) try{ h.ping(ws); }catch(_){ } }, h.pingMs||20000);
       }
     };
-    ws.onmessage=function(ev){ if(!SP_LIVE.active) return; SP_LIVE.rx++; if(h.onmsg) h.onmsg(ev.data); };
+    ws.onmessage=function(ev){
+      if(!SP_LIVE.active) return; SP_LIVE.rx++; if(!h.onmsg) return;
+      var d=ev.data;
+      if(d instanceof ArrayBuffer){ try{ d=new TextDecoder("utf-8").decode(d); }catch(_){ return; } }
+      else if(typeof Blob!=="undefined" && d instanceof Blob){ d.text().then(function(x){ if(SP_LIVE.active) h.onmsg(x); }).catch(function(){}); return; }
+      h.onmsg(d);
+    };
     ws.onerror=function(){ /* onclose handles cleanup + fallback */ };
     ws.onclose=function(){
       if(SP_LIVE.pingT){ clearInterval(SP_LIVE.pingT); SP_LIVE.pingT=null; }
@@ -3751,6 +3760,26 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
           var vol=(t.amount24!=null)?parseFloat(t.amount24):undefined;
           _spBumpTick(s, price, chg, vol);
         }
+      }
+    });
+  }
+  function _spWSUpbit(){
+    // Upbit is spot-only (USDT market). Frames are binary → decoded upstream.
+    _spOpenWS("wss://api.upbit.com/websocket/v1", {
+      onopen:function(ws){
+        var codes=Object.keys(SP_LIVE.syms).map(function(s){ return "USDT-"+s.slice(0,-4); });
+        ws.send(JSON.stringify([{ticket:"zyni-sp-"+Date.now()},{type:"ticker",codes:codes},{format:"DEFAULT"}]));
+      },
+      ping:function(ws){ try{ ws.send("PING"); }catch(_){ } }, pingMs:60000,
+      onmsg:function(data){
+        var m; try{ m=JSON.parse(data); }catch(_){ return; }
+        if(!m || m.type!=="ticker" || !m.code) return;
+        var s=String(m.code).split("-")[1]+"USDT";     // USDT-BTC → BTCUSDT
+        if(!SP_LIVE.syms[s]) return;
+        var price=parseFloat(m.trade_price);
+        var chg=(m.signed_change_rate!=null)?parseFloat(m.signed_change_rate)*100:undefined;
+        var vol=(m.acc_trade_price_24h!=null)?parseFloat(m.acc_trade_price_24h):undefined;
+        _spBumpTick(s, price, chg, vol);
       }
     });
   }

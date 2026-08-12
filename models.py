@@ -7,7 +7,7 @@ db = SQLAlchemy()
 
 ALL_MODULES     = ["ob", "fvg", "bb", "fib"]
 ALL_TABS        = ["scan", "pairs", "settings", "compressed", "trending", "athatl", "bias", "watchlist"]
-ALL_EXCHANGES   = ["binance", "bybit", "okx", "mexc"]
+ALL_EXCHANGES   = ["binance", "bybit", "okx", "mexc", "upbit"]
 ALL_TIMEFRAMES  = ["15m", "30m", "1h", "4h", "1d"]
 
 

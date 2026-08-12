@@ -1632,6 +1632,7 @@ OKX_PERP_API        = "https://www.okx.com/api/v5/market"
 MEXC_SPOT_API       = "https://api.mexc.com/api/v3"
 MEXC_PERP_API       = "https://contract.mexc.com/api/v1/contract"   # public market endpoints
 MEXC_CONTRACT_PRIV  = "https://contract.mexc.com/api/v1/private"     # private account endpoints
+UPBIT_API           = "https://api.upbit.com/v1"                     # Upbit (spot-only; USDT market)
 BYBIT_API_V5        = "https://api.bybit.com"                         # Bybit V5 public endpoints
 OKX_API_V5          = "https://www.okx.com"                           # OKX V5 public endpoints
 
@@ -1662,6 +1663,7 @@ EXCHANGE_PAIR_CACHE: Dict[str, Dict] = {
     "bybit":   {"ts": 0, "pairs": {}},
     "okx":     {"ts": 0, "pairs": {}},
     "mexc":    {"ts": 0, "pairs": {}},
+    "upbit":   {"ts": 0, "pairs": {}},
 }
 
 # Complete set of USDT perpetual futures symbols actively traded on Binance
@@ -5744,6 +5746,90 @@ def get_klines_mexc(symbol: str, interval: str, limit: int = 300, market: str = 
         return []
 
 
+def get_pairs_upbit(market: str = "perpetual") -> List[Dict[str, Any]]:
+    """Fetch USDT pairs from Upbit. Upbit is spot-only, so the market arg is
+    ignored — we always return its USDT market (symbols normalized to BTCUSDT)."""
+    cache = EXCHANGE_PAIR_CACHE["upbit"]
+    mkey = "usdt"
+    if time.time() - cache["ts"] < 120 and cache["pairs"].get(mkey):
+        return cache["pairs"][mkey]
+    try:
+        r = req.get(f"{UPBIT_API}/market/all", params={"isDetails": "false"}, timeout=15)
+        if r.status_code != 200:
+            return cache["pairs"].get(mkey, [])
+        markets = [m.get("market", "") for m in r.json()
+                   if str(m.get("market", "")).startswith("USDT-")]
+        if not markets:
+            return []
+        pairs = []
+        # Upbit's /ticker accepts many markets per call; chunk to stay safe.
+        for i in range(0, len(markets), 100):
+            chunk = markets[i:i + 100]
+            tr = req.get(f"{UPBIT_API}/ticker", params={"markets": ",".join(chunk)}, timeout=15)
+            if tr.status_code != 200:
+                continue
+            for t in tr.json():
+                mk = t.get("market", "")                 # "USDT-BTC"
+                coin = mk.split("-", 1)[1] if "-" in mk else mk
+                sym = f"{coin}USDT"
+                price = safe_float(t.get("trade_price", 0))
+                vol = safe_float(t.get("acc_trade_price_24h", 0))   # 24h quote volume (USDT)
+                if price <= 0:
+                    continue
+                pairs.append({
+                    "symbol": sym,
+                    "price": price,
+                    "changePct": safe_float(t.get("signed_change_rate", 0)) * 100,
+                    "quoteVolume": vol,
+                    "volume": safe_float(t.get("acc_trade_volume_24h", 0)),
+                })
+        pairs.sort(key=lambda x: x["quoteVolume"], reverse=True)
+        cache["ts"] = time.time()
+        cache["pairs"][mkey] = pairs
+        print(f"[Upbit] get_pairs usdt: {len(pairs)} pairs")
+        return pairs
+    except Exception as e:
+        print(f"[Upbit] get_pairs error: {e}")
+        return cache["pairs"].get(mkey, [])
+
+
+def get_klines_upbit(symbol: str, interval: str, limit: int = 200,
+                     market: str = "perpetual") -> List[Dict[str, float]]:
+    """Fetch OHLCV candles from Upbit (USDT market). Max 200 candles/request."""
+    try:
+        base = symbol[:-4] if symbol.endswith("USDT") else symbol
+        mk = f"USDT-{base}"
+        cnt = max(1, min(limit, 200))
+        iv = (interval or "4h").lower()
+        if iv in ("1d", "1day", "day"):
+            url = f"{UPBIT_API}/candles/days"
+        elif iv in ("1w", "1week", "week"):
+            url = f"{UPBIT_API}/candles/weeks"
+        else:
+            unit_map = {"1m": 1, "3m": 3, "5m": 5, "10m": 10, "15m": 15,
+                        "30m": 30, "1h": 60, "4h": 240}
+            unit = unit_map.get(iv, 240)   # 6h/12h etc. not native on Upbit → nearest (4h)
+            url = f"{UPBIT_API}/candles/minutes/{unit}"
+        r = req.get(url, params={"market": mk, "count": cnt}, timeout=15)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        if not isinstance(data, list):
+            return []
+        data = list(reversed(data))   # Upbit returns newest-first
+        return [{
+            "openTime": int(k.get("timestamp", 0)),
+            "open":  float(k.get("opening_price", 0)),
+            "high":  float(k.get("high_price", 0)),
+            "low":   float(k.get("low_price", 0)),
+            "close": float(k.get("trade_price", 0)),
+            "volume": float(k.get("candle_acc_trade_volume", 0)),
+        } for k in data]
+    except Exception as e:
+        print(f"[Upbit] get_klines {symbol} error: {e}")
+        return []
+
+
 def get_pairs_exchange(exchange: str, market: str = "perpetual") -> List[Dict[str, Any]]:
     """Universal get_pairs — routes to correct exchange"""
     exchange = (exchange or "binance").lower()
@@ -5753,6 +5839,8 @@ def get_pairs_exchange(exchange: str, market: str = "perpetual") -> List[Dict[st
         return get_pairs_okx(market)
     elif exchange == "mexc":
         return get_pairs_mexc(market)
+    elif exchange == "upbit":
+        return get_pairs_upbit(market)
     else:
         return get_pairs(market)  # Binance (default)
 
@@ -5773,6 +5861,8 @@ def get_klines_exchange(symbol: str, interval: str, limit: int = 300,
         result = get_klines_okx(symbol, interval, limit, market)
     elif exchange == "mexc":
         result = get_klines_mexc(symbol, interval, limit, market)
+    elif exchange == "upbit":
+        result = get_klines_upbit(symbol, interval, limit, market)
     else:
         # get_klines() auto-paginates when limit > 1500
         result = get_klines(symbol, interval, limit, market)
