@@ -26242,6 +26242,14 @@ from live_monitor import (
     _lm_get_paper_risk_guard_state,
     _lm_validate_paper_order_against_risk_guard,
     _lm_record_paper_risk_guard_event,
+    # Phase SIG-1: signal alert settings + Telegram delivery
+    get_or_create_signal_settings,
+    serialize_signal_settings,
+    apply_signal_settings_update,
+    signal_module_catalog,
+    send_telegram_message,
+    test_telegram_connection,
+    escape_html,
     # Phase 11.14: Paper Performance Dashboard
     _lm_normalize_performance_period,
     _lm_build_paper_performance_filters,
@@ -30946,6 +30954,165 @@ def api_lm_paper_risk_guard_settings_update(item_id):
     result = _lm_update_paper_risk_guard_settings(uid, body)
     code   = 200 if result.get("ok") else 400
     return jsonify(result), code
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Phase SIG-1: Signal alert settings + Telegram linking
+#
+# Per-user configuration for which setups reach the user and how. Detection is
+# global; these settings decide delivery. No order placement anywhere in this
+# section — the only credential handled is the user's own Telegram bot token.
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Shown in the settings UI as the "reset to defaults" target and as hints.
+# Mirrors live_monitor/signal_settings.py DEFAULTS, minus anything secret.
+_LM_SIGNAL_DEFAULTS_PUBLIC = {
+    "min_confluence":        1,
+    "max_signals_per_day":   6,
+    "per_pair_cooldown_min": 240,
+    "min_confidence":        65,
+    "trigger_mode":          "in_zone",
+    "approach_pct":          1.5,
+    "coin_scope":            "top_volume",
+    "coin_scope_limit":      100,
+}
+
+
+@app.route("/api/live-monitor/signal-settings", methods=["GET"])
+@login_required
+def api_lm_signal_settings_get():
+    """GET: Current signal settings for this user, plus the module catalog."""
+    uid, _ = _current_user_id_and_user()
+    try:
+        row = get_or_create_signal_settings(uid)
+        return jsonify({
+            "ok":       True,
+            "settings": serialize_signal_settings(row),
+            "modules":  signal_module_catalog(),
+            "defaults": _LM_SIGNAL_DEFAULTS_PUBLIC,
+        })
+    except Exception as exc:
+        print(f"[SIG-1] settings get error user={uid}: {exc}")
+        return jsonify({"ok": False, "error": "settings_unavailable",
+                        "message": str(exc)[:160]}), 500
+
+
+@app.route("/api/live-monitor/signal-settings", methods=["POST"])
+@login_required
+def api_lm_signal_settings_update():
+    """POST: Patch signal settings. Only keys present in the body are changed."""
+    uid, _ = _current_user_id_and_user()
+    body = request.get_json(force=True, silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"ok": False, "error": "invalid_body"}), 400
+
+    # The bot token is never accepted here — it only moves through the
+    # dedicated link endpoint below, which verifies it before storing.
+    body.pop("telegram_bot_token", None)
+    body.pop("telegram_chat_id",   None)
+
+    try:
+        from models import db as _sigdb
+        row = get_or_create_signal_settings(uid)
+        ok, field_errors, changed = apply_signal_settings_update(row, body)
+        if not ok:
+            _sigdb.session.rollback()
+            return jsonify({"ok": False, "error": "settings_validation_failed",
+                            "field_errors": field_errors}), 422
+        if changed:
+            _sigdb.session.commit()
+        return jsonify({"ok": True, "changed": changed,
+                        "settings": serialize_signal_settings(row)})
+    except Exception as exc:
+        try:
+            from models import db as _sigdb2
+            _sigdb2.session.rollback()
+        except Exception:
+            pass
+        print(f"[SIG-1] settings update error user={uid}: {exc}")
+        return jsonify({"ok": False, "error": "settings_update_failed",
+                        "message": str(exc)[:160]}), 500
+
+
+@app.route("/api/live-monitor/signal-settings/telegram/link", methods=["POST"])
+@login_required
+def api_lm_signal_telegram_link():
+    """POST: Verify a bot token + chat ID by sending a test message, then store.
+
+    Nothing is saved unless the test message actually arrives — that way a
+    stored credential always means a working one.
+    """
+    uid, _ = _current_user_id_and_user()
+    body = request.get_json(force=True, silent=True) or {}
+    token   = str(body.get("telegram_bot_token") or "").strip()
+    chat_id = str(body.get("telegram_chat_id")   or "").strip()
+
+    try:
+        from models import db as _sigdb3
+        row = get_or_create_signal_settings(uid)
+
+        # Allow re-testing an already-stored token without retyping it.
+        if not token and row.telegram_bot_token:
+            token = row.telegram_bot_token
+        if not chat_id and row.telegram_chat_id:
+            chat_id = row.telegram_chat_id
+
+        result = test_telegram_connection(token, chat_id)
+
+        if not result.get("ok"):
+            row.telegram_last_error = str(result.get("message") or "")[:255]
+            _sigdb3.session.commit()
+            return jsonify({"ok": False,
+                            "error":   result.get("error", "telegram_test_failed"),
+                            "message": result.get("message"),
+                            "settings": serialize_signal_settings(row)}), 400
+
+        row.telegram_bot_token   = token
+        row.telegram_chat_id     = chat_id
+        row.telegram_verified_at = datetime.now(timezone.utc)
+        row.telegram_last_error  = None
+        _sigdb3.session.commit()
+
+        return jsonify({"ok": True,
+                        "message":      result.get("message"),
+                        "bot_username": result.get("bot_username"),
+                        "settings":     serialize_signal_settings(row)})
+    except Exception as exc:
+        try:
+            from models import db as _sigdb4
+            _sigdb4.session.rollback()
+        except Exception:
+            pass
+        print(f"[SIG-1] telegram link error user={uid}: {exc}")
+        return jsonify({"ok": False, "error": "telegram_link_failed",
+                        "message": str(exc)[:160]}), 500
+
+
+@app.route("/api/live-monitor/signal-settings/telegram/unlink", methods=["POST"])
+@login_required
+def api_lm_signal_telegram_unlink():
+    """POST: Remove stored Telegram credentials and stop delivery."""
+    uid, _ = _current_user_id_and_user()
+    try:
+        from models import db as _sigdb5
+        row = get_or_create_signal_settings(uid)
+        row.telegram_bot_token   = None
+        row.telegram_chat_id     = None
+        row.telegram_verified_at = None
+        row.telegram_last_error  = None
+        # Delivery cannot stay on without a destination.
+        row.delivery_enabled     = False
+        _sigdb5.session.commit()
+        return jsonify({"ok": True, "settings": serialize_signal_settings(row)})
+    except Exception as exc:
+        try:
+            from models import db as _sigdb6
+            _sigdb6.session.rollback()
+        except Exception:
+            pass
+        print(f"[SIG-1] telegram unlink error user={uid}: {exc}")
+        return jsonify({"ok": False, "error": "telegram_unlink_failed",
+                        "message": str(exc)[:160]}), 500
 
 
 @app.route("/api/live-monitor/paper-performance", methods=["GET"])

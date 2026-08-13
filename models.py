@@ -1390,3 +1390,193 @@ class LiveMonitorSpotFlowCandle(db.Model):
     def __repr__(self) -> str:
         return (f"<SpotFlowCandle {self.exchange}:{self.symbol} {self.timeframe} "
                 f"open={self.candle_open_ms} delta={self.delta_usd:.0f}>")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Signal Alerts (Phase SIG-1) — Live Monitor → Telegram setup alerts
+#
+# Replaces the retired auto-trading path. Detection is GLOBAL (a setup is found
+# once, across all users); delivery is PER-USER (each user receives only the
+# signals matching their own settings, through their own Telegram bot).
+#
+# No order placement. No exchange execution. Alert delivery + outcome tracking
+# only — these tables never hold API keys for trading, only a Telegram bot
+# token used to send messages.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class LiveMonitorSignalSettings(db.Model):
+    """Per-user configuration controlling which signals reach them, and how.
+
+    One row per user. Created on first access with defaults (see
+    live_monitor/signal_settings.py) so a user never has to configure
+    anything before the system works.
+    """
+    __tablename__ = "live_monitor_signal_settings"
+
+    id      = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"),
+                        nullable=False, unique=True, index=True)
+
+    # ── Master switch ────────────────────────────────────────────────────────
+    enabled = db.Column(db.Boolean, nullable=False, default=False,
+                        server_default="false")
+
+    # ── Which scan modules may produce signals ───────────────────────────────
+    # JSON list of module keys, e.g. ["ob","fvg","bb","ath_atl","accumulation",
+    # "compressed","bias_shift","fib_confluence","liquidity_sweep"]
+    enabled_modules_json = db.Column(db.Text, nullable=True)
+
+    # ── Confluence ───────────────────────────────────────────────────────────
+    # Minimum number of distinct modules that must agree on the same pair and
+    # direction before a candidate is eligible. 1 = single-module signals allowed.
+    min_confluence = db.Column(db.Integer, nullable=False, default=1,
+                               server_default="1")
+
+    # ── Volume control ───────────────────────────────────────────────────────
+    max_signals_per_day  = db.Column(db.Integer, nullable=False, default=6,
+                                     server_default="6")
+    # Minimum minutes between two signals for the SAME pair (anti-spam).
+    per_pair_cooldown_min = db.Column(db.Integer, nullable=False, default=240,
+                                      server_default="240")
+    # Minimum AI confidence (0-100) required to send.
+    min_confidence = db.Column(db.Integer, nullable=False, default=65,
+                               server_default="65")
+
+    # ── Trigger timing ───────────────────────────────────────────────────────
+    # "approach"  → fire when price nears the zone (early warning)
+    # "in_zone"   → fire when price is in the zone AND order flow confirms
+    # "both"      → send both, tagged as separate alert kinds
+    trigger_mode = db.Column(db.String(20), nullable=False, default="in_zone",
+                             server_default="in_zone")
+    # How close (percent) price must be to the zone to count as "approaching".
+    approach_pct = db.Column(db.Float, nullable=False, default=1.5,
+                             server_default="1.5")
+
+    # ── Coin scope ───────────────────────────────────────────────────────────
+    # "top_volume" → top N pairs by 24h volume
+    # "watchlist"  → only pairs in symbols_json
+    # "all"        → every supported USDT perpetual
+    coin_scope       = db.Column(db.String(20), nullable=False, default="top_volume",
+                                 server_default="top_volume")
+    coin_scope_limit = db.Column(db.Integer, nullable=False, default=100,
+                                 server_default="100")
+    symbols_json     = db.Column(db.Text, nullable=True)   # JSON list, watchlist mode
+
+    # ── Direction / timeframe filters ────────────────────────────────────────
+    allow_long   = db.Column(db.Boolean, nullable=False, default=True,
+                             server_default="true")
+    allow_short  = db.Column(db.Boolean, nullable=False, default=True,
+                             server_default="true")
+    timeframes_json = db.Column(db.Text, nullable=True)    # JSON list, null = all
+
+    # ── Telegram delivery ────────────────────────────────────────────────────
+    # Each user links their OWN bot. Token is stored so the server can send on
+    # their behalf; it grants no trading access of any kind.
+    telegram_bot_token = db.Column(db.Text,        nullable=True)
+    telegram_chat_id   = db.Column(db.String(64),  nullable=True)
+    telegram_verified_at = db.Column(db.DateTime,  nullable=True)
+    telegram_last_error  = db.Column(db.String(255), nullable=True)
+
+    # Master delivery switch, separate from `enabled`: lets the funnel run and
+    # record everything while sending nothing (shadow mode).
+    delivery_enabled = db.Column(db.Boolean, nullable=False, default=False,
+                                 server_default="false")
+
+    created_at = db.Column(db.DateTime,
+                           default=lambda: datetime.now(timezone.utc),
+                           nullable=False)
+    updated_at = db.Column(db.DateTime,
+                           default=lambda: datetime.now(timezone.utc),
+                           onupdate=lambda: datetime.now(timezone.utc),
+                           nullable=True)
+
+    user = db.relationship("User", foreign_keys=[user_id])
+
+    def __repr__(self) -> str:
+        return (f"<LMSignalSettings user={self.user_id} enabled={self.enabled} "
+                f"delivery={self.delivery_enabled} conf>={self.min_confluence}>")
+
+
+class LiveMonitorSignalAlert(db.Model):
+    """One alert generated for one user about one setup, plus its outcome.
+
+    Written when the funnel decides a setup is worth sending, BEFORE delivery
+    is attempted — so a failed send leaves a record rather than losing it.
+    Outcome fields are filled in later by the tracker.
+    """
+    __tablename__ = "live_monitor_signal_alerts"
+
+    id      = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"),
+                        nullable=False, index=True)
+
+    # Stable dedup key: user + pair + direction + modules + candle bucket.
+    alert_key = db.Column(db.String(80), nullable=False, unique=True, index=True)
+
+    # ── What the setup is ────────────────────────────────────────────────────
+    symbol     = db.Column(db.String(30), nullable=False, index=True)
+    exchange   = db.Column(db.String(20), nullable=False, default="binance")
+    direction  = db.Column(db.String(10), nullable=False)   # long | short
+    timeframe  = db.Column(db.String(10), nullable=True)
+    alert_kind = db.Column(db.String(20), nullable=False, default="in_zone")
+    tier       = db.Column(db.String(2),  nullable=True)    # "A" | "B"
+
+    # Which scan modules contributed, and how many agreed.
+    modules_json     = db.Column(db.Text,    nullable=True)  # JSON list of keys
+    confluence_count = db.Column(db.Integer, nullable=False, default=1)
+
+    # ── Levels (AI-decided, validated deterministically) ─────────────────────
+    zone_high     = db.Column(db.Float, nullable=True)
+    zone_low      = db.Column(db.Float, nullable=True)
+    entry_price      = db.Column(db.Float, nullable=True)
+    stop_loss        = db.Column(db.Float, nullable=True)
+    take_profit_1    = db.Column(db.Float, nullable=True)
+    take_profit_2    = db.Column(db.Float, nullable=True)
+    risk_reward      = db.Column(db.Float, nullable=True)
+    price_at_alert   = db.Column(db.Float, nullable=True)
+
+    # ── AI verdict ───────────────────────────────────────────────────────────
+    ai_confidence = db.Column(db.Integer, nullable=True)     # 0-100
+    ai_summary    = db.Column(db.Text,    nullable=True)     # short human rationale
+    ai_model      = db.Column(db.String(80), nullable=True)
+    evidence_json = db.Column(db.Text,    nullable=True)     # order-flow snapshot used
+
+    # ── Delivery ─────────────────────────────────────────────────────────────
+    # pending | sent | failed | suppressed | shadow
+    delivery_status  = db.Column(db.String(20), nullable=False,
+                                 default="pending", index=True)
+    delivery_error   = db.Column(db.String(255), nullable=True)
+    telegram_message_id = db.Column(db.String(40), nullable=True)
+    sent_at          = db.Column(db.DateTime, nullable=True)
+
+    # ── Outcome tracking ─────────────────────────────────────────────────────
+    # pending | target_hit | stop_hit | invalidated | expired
+    outcome         = db.Column(db.String(20), nullable=False,
+                                default="pending", index=True)
+    outcome_reason  = db.Column(db.String(60), nullable=True)
+    outcome_price   = db.Column(db.Float,    nullable=True)
+    outcome_at      = db.Column(db.DateTime, nullable=True)
+    result_r        = db.Column(db.Float,    nullable=True)   # result in R multiples
+    mfe_pct         = db.Column(db.Float,    nullable=True)   # best excursion
+    mae_pct         = db.Column(db.Float,    nullable=True)   # worst excursion
+    followup_sent_at = db.Column(db.DateTime, nullable=True)
+
+    created_at = db.Column(db.DateTime,
+                           default=lambda: datetime.now(timezone.utc),
+                           nullable=False, index=True)
+    updated_at = db.Column(db.DateTime,
+                           default=lambda: datetime.now(timezone.utc),
+                           onupdate=lambda: datetime.now(timezone.utc),
+                           nullable=True)
+
+    user = db.relationship("User", foreign_keys=[user_id])
+
+    __table_args__ = (
+        db.Index("ix_lm_sig_alert_user_created", "user_id", "created_at"),
+        db.Index("ix_lm_sig_alert_user_symbol",  "user_id", "symbol", "created_at"),
+        db.Index("ix_lm_sig_alert_open",         "outcome", "delivery_status"),
+    )
+
+    def __repr__(self) -> str:
+        return (f"<LMSignalAlert user={self.user_id} {self.symbol} {self.direction} "
+                f"tier={self.tier} {self.delivery_status}/{self.outcome}>")

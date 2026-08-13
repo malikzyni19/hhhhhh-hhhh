@@ -44,6 +44,18 @@ from live_monitor.mtf_orderflow import (
     _lm_build_mtf_orderflow_history,
     _lm_build_mtf_history_summary,
 )
+from live_monitor.signal_settings import (
+    SIGNAL_MODULES,
+    get_or_create_signal_settings,
+    serialize_signal_settings,
+    apply_signal_settings_update,
+    signal_module_catalog,
+)
+from live_monitor.telegram_notify import (
+    escape_html,
+    send_telegram_message,
+    test_telegram_connection,
+)
 from live_monitor.smc_orderflow_fusion import _lm_build_smc_orderflow_fusion
 from live_monitor.ai_execution_context import _lm_build_ai_execution_context
 from live_monitor.ai_trade_control import _lm_build_ai_trade_control_decision
@@ -256,4 +268,13 @@ __all__ = [
     "_lm_get_paper_risk_guard_state",
     "_lm_validate_paper_order_against_risk_guard",
     "_lm_record_paper_risk_guard_event",
+    # Phase SIG-1: Signal alert settings + Telegram delivery
+    "SIGNAL_MODULES",
+    "get_or_create_signal_settings",
+    "serialize_signal_settings",
+    "apply_signal_settings_update",
+    "signal_module_catalog",
+    "escape_html",
+    "send_telegram_message",
+    "test_telegram_connection",
 ]
