@@ -31115,6 +31115,131 @@ def api_lm_signal_telegram_unlink():
                         "message": str(exc)[:160]}), 500
 
 
+@app.route("/api/live-monitor/signal-alerts", methods=["GET"])
+@login_required
+def api_lm_signal_alerts_list():
+    """GET: This user's signal alert history plus hit-rate stats.
+
+    Read-only. Bounded by an explicit limit and a period window so the query
+    stays cheap no matter how much history accumulates.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"ok": False, "error": "no_user"}), 401
+
+    period  = (request.args.get("period") or "30d").strip().lower()
+    outcome = (request.args.get("outcome") or "").strip().lower() or None
+    module  = (request.args.get("module") or "").strip().lower() or None
+    try:
+        limit = min(max(int(request.args.get("limit", 50)), 1), 200)
+    except (TypeError, ValueError):
+        limit = 50
+
+    _PERIOD_DAYS = {"7d": 7, "30d": 30, "90d": 90, "365d": 365}
+    since = None
+    if period in _PERIOD_DAYS:
+        since = datetime.now(timezone.utc) - timedelta(days=_PERIOD_DAYS[period])
+
+    try:
+        from models import LiveMonitorSignalAlert as _SA
+        from sqlalchemy.orm import load_only as _load_only_sa
+        from sqlalchemy import func as _func_sa
+
+        base = _SA.query.filter(_SA.user_id == uid)
+        if since is not None:
+            base = base.filter(_SA.created_at >= since)
+        if outcome in ("pending", "target_hit", "stop_hit", "invalidated", "expired"):
+            base = base.filter(_SA.outcome == outcome)
+
+        # evidence_json is a large blob and is never shown in the list — project
+        # to the columns the table actually renders.
+        rows = (base.options(_load_only_sa(
+                    _SA.id, _SA.symbol, _SA.direction, _SA.timeframe, _SA.tier,
+                    _SA.alert_kind, _SA.modules_json, _SA.confluence_count,
+                    _SA.entry_price, _SA.stop_loss, _SA.take_profit_1,
+                    _SA.risk_reward, _SA.ai_confidence, _SA.ai_summary,
+                    _SA.delivery_status, _SA.outcome, _SA.outcome_reason,
+                    _SA.result_r, _SA.created_at, _SA.sent_at, _SA.outcome_at,
+                ))
+                .order_by(_SA.created_at.desc())
+                .limit(limit).all())
+
+        def _mods(raw):
+            try:
+                val = _json_loads_safe(raw, [])
+                return val if isinstance(val, list) else []
+            except Exception:
+                return []
+
+        # Module filter is applied in Python because modules_json is a JSON
+        # list column — the row count here is already limit-bounded.
+        alerts = []
+        for a in rows:
+            mods = _mods(a.modules_json)
+            if module and module not in mods:
+                continue
+            alerts.append({
+                "id":             a.id,
+                "symbol":         a.symbol,
+                "direction":      a.direction,
+                "timeframe":      a.timeframe,
+                "tier":           a.tier,
+                "alert_kind":     a.alert_kind,
+                "modules":        mods,
+                "confluence":     a.confluence_count,
+                "entry_price":    a.entry_price,
+                "stop_loss":      a.stop_loss,
+                "take_profit":    a.take_profit_1,
+                "risk_reward":    a.risk_reward,
+                "confidence":     a.ai_confidence,
+                "summary":        a.ai_summary,
+                "delivery_status": a.delivery_status,
+                "outcome":        a.outcome,
+                "outcome_reason": a.outcome_reason,
+                "result_r":       a.result_r,
+                "created_at":     a.created_at.isoformat() if a.created_at else None,
+                "sent_at":        a.sent_at.isoformat()    if a.sent_at    else None,
+                "outcome_at":     a.outcome_at.isoformat() if a.outcome_at else None,
+            })
+
+        # Stats are computed over the whole period, not just the returned page,
+        # so the headline numbers don't change when the user pages the table.
+        stat_q = _SA.query.filter(_SA.user_id == uid)
+        if since is not None:
+            stat_q = stat_q.filter(_SA.created_at >= since)
+        counts = dict(
+            stat_q.with_entities(_SA.outcome, _func_sa.count(_SA.id))
+                  .group_by(_SA.outcome).all()
+        )
+        wins   = int(counts.get("target_hit", 0))
+        losses = int(counts.get("stop_hit", 0))
+        closed = wins + losses
+        total  = int(sum(counts.values()))
+
+        return jsonify({
+            "ok":     True,
+            "period": period,
+            "alerts": alerts,
+            "count":  len(alerts),
+            "stats": {
+                "total_alerts": total,
+                "target_hit":   wins,
+                "stop_hit":     losses,
+                "invalidated":  int(counts.get("invalidated", 0)),
+                "expired":      int(counts.get("expired", 0)),
+                "pending":      int(counts.get("pending", 0)),
+                "resolved":     closed,
+                # None (not 0) while nothing has resolved — an unmeasured
+                # system should not display a win rate of zero percent.
+                "win_rate":     (round(wins * 100.0 / closed, 1) if closed else None),
+            },
+        })
+    except Exception as exc:
+        print(f"[SIG-1] alert list error user={uid}: {exc}")
+        return jsonify({"ok": False, "error": "alerts_unavailable",
+                        "message": str(exc)[:160]}), 500
+
+
 @app.route("/api/live-monitor/paper-performance", methods=["GET"])
 @login_required
 def api_lm_paper_performance():
