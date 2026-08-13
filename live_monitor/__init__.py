@@ -56,6 +56,18 @@ from live_monitor.telegram_notify import (
     send_telegram_message,
     test_telegram_connection,
 )
+from live_monitor.signal_intake import (
+    normalize_scan_results,
+    record_candidates,
+    expire_stale_candidates,
+    build_candidate_key,
+)
+from live_monitor.signal_confluence import (
+    build_confluence_groups,
+    filter_groups_for_settings,
+    score_group,
+    MODULE_WEIGHT,
+)
 from live_monitor.smc_orderflow_fusion import _lm_build_smc_orderflow_fusion
 from live_monitor.ai_execution_context import _lm_build_ai_execution_context
 from live_monitor.ai_trade_control import _lm_build_ai_trade_control_decision
@@ -277,4 +289,13 @@ __all__ = [
     "escape_html",
     "send_telegram_message",
     "test_telegram_connection",
+    # Phase SIG-2: signal intake + confluence
+    "normalize_scan_results",
+    "record_candidates",
+    "expire_stale_candidates",
+    "build_candidate_key",
+    "build_confluence_groups",
+    "filter_groups_for_settings",
+    "score_group",
+    "MODULE_WEIGHT",
 ]

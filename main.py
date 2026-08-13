@@ -26247,6 +26247,11 @@ from live_monitor import (
     serialize_signal_settings,
     apply_signal_settings_update,
     signal_module_catalog,
+    normalize_scan_results,
+    record_candidates,
+    expire_stale_candidates,
+    build_confluence_groups,
+    filter_groups_for_settings,
     send_telegram_message,
     test_telegram_connection,
     escape_html,
@@ -33344,6 +33349,18 @@ def api_scan():
         except Exception:
             pass
 
+    # ── Phase SIG-2: signal candidate intake — NEVER blocks scan response ──
+    # Normalizes this scan's zone alerts into the shared candidate table so
+    # they can be compared against every other scan tab for confluence.
+    try:
+        _sig_cands = normalize_scan_results("scan", results,
+                                            exchange=exchange, market=market)
+        if _sig_cands:
+            _sig_res = record_candidates(_sig_cands)
+            print(f"[SIG-2] api_scan intake: {_sig_res}")
+    except Exception as _sig_err:
+        print(f"[SIG-2] api_scan intake error: {_sig_err}")
+
     # ── Intelligence logging hook — NEVER blocks scan response ────────────
     try:
         from signal_extractor import extract_zone_signals_from_api_scan_result
@@ -33846,6 +33863,14 @@ def api_compressed_scan():
         try: consume_tokens(_tok_uid, len(symbols))
         except Exception as _te: print(f"[Tokens] compressed: {_te}")
 
+    # ── Phase SIG-2: candidate intake (never blocks the scan response) ──
+    try:
+        _sig_c = normalize_scan_results("compressed", results, exchange=exchange, market=market)
+        if _sig_c:
+            print(f"[SIG-2] compressed_scan intake: {record_candidates(_sig_c)}")
+    except Exception as _sig_e:
+        print(f"[SIG-2] compressed_scan intake error: {_sig_e}")
+
     return jsonify({
         "ok": True,
         "scanned": len(symbols),
@@ -33909,6 +33934,15 @@ def api_trending_scan():
     if _tok_uid:
         try: consume_tokens(_tok_uid, len(pairs[:80]))
         except Exception as _te: print(f"[Tokens] trending: {_te}")
+    # ── Phase SIG-2: candidate intake (never blocks the scan response) ──
+    try:
+        _sig_c = normalize_scan_results("accumulation", out[:limit],
+                                        exchange=exchange, market=market)
+        if _sig_c:
+            print(f"[SIG-2] trending_scan intake: {record_candidates(_sig_c)}")
+    except Exception as _sig_e:
+        print(f"[SIG-2] trending_scan intake error: {_sig_e}")
+
     return jsonify(out[:limit])
 
 
@@ -34162,6 +34196,14 @@ def api_ath_atl_scan():
     if _tok_uid:
         try: consume_tokens(_tok_uid, len(batch_pairs))
         except Exception as _te: print(f"[Tokens] ath_atl: {_te}")
+
+    # ── Phase SIG-2: candidate intake (never blocks the scan response) ──
+    try:
+        _sig_c = normalize_scan_results("ath_atl", accumulated_list, exchange=exchange, market=market)
+        if _sig_c:
+            print(f"[SIG-2] ath_atl_scan intake: {record_candidates(_sig_c)}")
+    except Exception as _sig_e:
+        print(f"[SIG-2] ath_atl_scan intake error: {_sig_e}")
 
     return jsonify({
         "totalPairs": total_pairs,
@@ -35502,6 +35544,14 @@ def api_bias_scan():
     if _tok_uid:
         try: consume_tokens(_tok_uid, len(symbols))
         except Exception as _te: print(f"[Tokens] bias: {_te}")
+    # ── Phase SIG-2: candidate intake (never blocks the scan response) ──
+    try:
+        _sig_c = normalize_scan_results("bias", results, exchange=exchange, market=market)
+        if _sig_c:
+            print(f"[SIG-2] bias_scan intake: {record_candidates(_sig_c)}")
+    except Exception as _sig_e:
+        print(f"[SIG-2] bias_scan intake error: {_sig_e}")
+
     return jsonify({
         "results":        results,
         "scanned":        len(symbols),

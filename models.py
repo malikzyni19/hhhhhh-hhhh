@@ -1580,3 +1580,59 @@ class LiveMonitorSignalAlert(db.Model):
     def __repr__(self) -> str:
         return (f"<LMSignalAlert user={self.user_id} {self.symbol} {self.direction} "
                 f"tier={self.tier} {self.delivery_status}/{self.outcome}>")
+
+
+class LiveMonitorSignalCandidate(db.Model):
+    """A setup found by one scan module — the top of the signal funnel.
+
+    GLOBAL, not per-user: a setup is detected once and every eligible user's
+    settings are evaluated against it later. This is what makes adding users
+    cheap, and what makes cross-module confluence possible at all — every
+    scan tab writes here in one shape, so they can finally be compared.
+
+    Deduplicated by `candidate_key`, which folds the detection time into its
+    timeframe's candle bucket. Re-scanning the same candle updates
+    `last_seen_at` instead of inserting a duplicate row.
+    """
+    __tablename__ = "live_monitor_signal_candidates"
+
+    id            = db.Column(db.Integer, primary_key=True)
+    candidate_key = db.Column(db.String(80), nullable=False, unique=True, index=True)
+
+    # ── Origin ───────────────────────────────────────────────────────────────
+    module    = db.Column(db.String(30), nullable=False, index=True)  # ob | bias_shift | …
+    symbol    = db.Column(db.String(30), nullable=False, index=True)
+    exchange  = db.Column(db.String(20), nullable=False, default="binance")
+    market    = db.Column(db.String(20), nullable=False, default="perpetual")
+    timeframe = db.Column(db.String(10), nullable=True)
+
+    # ── Setup shape ──────────────────────────────────────────────────────────
+    direction      = db.Column(db.String(10), nullable=False, default="neutral")
+    zone_high      = db.Column(db.Float, nullable=True)
+    zone_low       = db.Column(db.Float, nullable=True)
+    detected_price = db.Column(db.Float, nullable=True)
+
+    # Normalized 0-100 so modules with different native scales can be ranked
+    # against each other. `grade` keeps the module's own label for display.
+    score = db.Column(db.Integer, nullable=False, default=0, index=True)
+    grade = db.Column(db.String(20), nullable=True)
+
+    # Bounded module-specific extras, for the AI context and the UI.
+    meta_json = db.Column(db.Text, nullable=True)
+
+    # ── Lifecycle ────────────────────────────────────────────────────────────
+    # active → the setup stands; expired → its candle window passed unused.
+    status       = db.Column(db.String(20), nullable=False, default="active", index=True)
+    detected_at  = db.Column(db.DateTime, nullable=False,
+                             default=lambda: datetime.now(timezone.utc), index=True)
+    last_seen_at = db.Column(db.DateTime, nullable=True)
+    expires_at   = db.Column(db.DateTime, nullable=True, index=True)
+
+    __table_args__ = (
+        db.Index("ix_lm_cand_symbol_active", "symbol", "status", "detected_at"),
+        db.Index("ix_lm_cand_module_active", "module", "status"),
+    )
+
+    def __repr__(self) -> str:
+        return (f"<LMSignalCandidate {self.module}:{self.symbol} {self.direction} "
+                f"score={self.score} {self.status}>")
