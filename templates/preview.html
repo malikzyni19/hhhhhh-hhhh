@@ -3711,7 +3711,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
      Builds ST.stars (the "Selected / watchlist" scan scope) from the biggest
      24h movers of the active exchange, so Main Scan with Scope=Selected runs
      across a curated universe instead of the whole market. */
-  var SP_CFG = { dir:"both", gainers:100, losers:100, minVol:0, excludeJunk:true, loading:false, note:"" };
+  var SP_CFG = { dir:"both", gainers:100, losers:100, minVol:0, excludeJunk:true, excludeStocks:true, loading:false, note:"" };
   var SP_LAST_PX = {};   // symbol -> snapshot price captured at load (seeds the list before live ticks)
   var SP_LAST_VOL = {};  // symbol -> snapshot 24h quote volume captured at load
   /* Live-price engine state. Prices/24h% stream straight from each exchange's
@@ -3725,6 +3725,8 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         || /\d+(L|S)USDT$/.test(sym)
         || /^(USDC|BUSD|TUSD|DAI|FDUSD|USDD|USDP|GUSD|EUR|AEUR)/.test(sym);
   }
+  // Tokenized-stock pairs (MEXC/Upbit list many, e.g. AAPLSTOCKUSDT, BRKBSTOCKUSDT).
+  function _spIsStock(sym){ return /STOCK/.test(String(sym||"")); }
   function _spStarList(){
     return Object.keys(ST.stars).filter(function(s){ return ST.stars[s]; }).sort();
   }
@@ -3783,6 +3785,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
             fld("spMinVol","Min Vol (USDT)",SP_CFG.minVol,0,100000)+
           '</div>'+
           '<label class="sp-chk"><input id="spExclJunk" type="checkbox"'+(SP_CFG.excludeJunk?" checked":"")+'> Exclude stablecoins &amp; leveraged tokens</label>'+
+          '<label class="sp-chk"><input id="spExclStocks" type="checkbox"'+(SP_CFG.excludeStocks?" checked":"")+'> Exclude stock pairs</label>'+
           '<div class="sp-actions">'+
             '<button class="btn btn-primary" id="spLoadBtn" type="button">'+(SP_CFG.loading?"Loading…":"⚡ Load Movers")+'</button>'+
             '<button class="btn" id="spScanBtn" type="button" title="Switch to Main Scan and scan these pairs">Scan in Main Scan</button>'+
@@ -3804,11 +3807,12 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       b.classList.toggle('on', b.getAttribute('data-dir')===SP_CFG.dir);
       b.addEventListener('click',function(){ SP_CFG.dir=b.getAttribute('data-dir'); _spReadInputs(); renderSelectedPairs(); });
     });
-    var g=E("spGainers"), l=E("spLosers"), v=E("spMinVol"), x=E("spExclJunk");
+    var g=E("spGainers"), l=E("spLosers"), v=E("spMinVol"), x=E("spExclJunk"), xs=E("spExclStocks");
     if(g) g.addEventListener('change',_spReadInputs);
     if(l) l.addEventListener('change',_spReadInputs);
     if(v) v.addEventListener('change',_spReadInputs);
     if(x) x.addEventListener('change',_spReadInputs);
+    if(xs) xs.addEventListener('change',_spReadInputs);
     if(E("spLoadBtn"))  E("spLoadBtn").addEventListener('click', _spLoadMovers);
     if(E("spScanBtn"))  E("spScanBtn").addEventListener('click', _spScanInMain);
     if(E("spClearBtn")) E("spClearBtn").addEventListener('click', function(){ ST.stars={}; syncWatchlist(); SP_CFG.note="Universe cleared."; renderSelectedPairs(); renderSelectedPairsInsight(); });
@@ -3828,11 +3832,12 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   }
   var SP_LAST_CHG = {};   // symbol -> last known 24h changePct (for the list display)
   function _spReadInputs(){
-    var g=E("spGainers"), l=E("spLosers"), v=E("spMinVol"), x=E("spExclJunk");
+    var g=E("spGainers"), l=E("spLosers"), v=E("spMinVol"), x=E("spExclJunk"), xs=E("spExclStocks");
     if(g) SP_CFG.gainers = Math.max(0, parseInt(g.value,10)||0);
     if(l) SP_CFG.losers  = Math.max(0, parseInt(l.value,10)||0);
     if(v) SP_CFG.minVol  = Math.max(0, parseFloat(v.value)||0);
     if(x) SP_CFG.excludeJunk = !!x.checked;
+    if(xs) SP_CFG.excludeStocks = !!xs.checked;
   }
   function _spLoadMovers(){
     _spReadInputs();
@@ -3847,6 +3852,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
           if(!p || typeof p.changePct!=="number") return false;
           if(SP_CFG.minVol && (p.quoteVolume||0) < SP_CFG.minVol) return false;
           if(SP_CFG.excludeJunk && _spIsJunk(String(p.symbol||""))) return false;
+          if(SP_CFG.excludeStocks && _spIsStock(p.symbol)) return false;
           return true;
         });
         var byChg=pool.slice().sort(function(a,b){ return b.changePct - a.changePct; });
