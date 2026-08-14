@@ -76,6 +76,18 @@ from live_monitor.signal_promoter import (
     max_watched_coins,
     AUTO_SOURCE_TAB,
 )
+from live_monitor.signal_trigger import (
+    evaluate_group,
+    evaluate_groups,
+    get_symbol_price,
+    zone_position,
+    flow_history_ready,
+)
+from live_monitor.signal_verdict import (
+    judge_setup,
+    validate_verdict,
+    build_verdict_context,
+)
 from live_monitor.smc_orderflow_fusion import _lm_build_smc_orderflow_fusion
 from live_monitor.ai_execution_context import _lm_build_ai_execution_context
 from live_monitor.ai_trade_control import _lm_build_ai_trade_control_decision
@@ -313,4 +325,13 @@ __all__ = [
     "demote_stale_watches",
     "max_watched_coins",
     "AUTO_SOURCE_TAB",
+    # Phase SIG-4/5: trigger + AI verdict
+    "evaluate_group",
+    "evaluate_groups",
+    "get_symbol_price",
+    "zone_position",
+    "flow_history_ready",
+    "judge_setup",
+    "validate_verdict",
+    "build_verdict_context",
 ]
