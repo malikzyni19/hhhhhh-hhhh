@@ -97,6 +97,14 @@ from live_monitor.signal_alert import (
     build_alert_key,
     record_and_send,
 )
+from live_monitor.signal_outcome import (
+    resolve_alert,
+    resolve_from_path,
+    result_in_r,
+    track_open_alerts,
+    track_open_alerts_for_all,
+    module_accuracy,
+)
 from live_monitor.smc_orderflow_fusion import _lm_build_smc_orderflow_fusion
 from live_monitor.ai_execution_context import _lm_build_ai_execution_context
 from live_monitor.ai_trade_control import _lm_build_ai_trade_control_decision
@@ -351,4 +359,11 @@ __all__ = [
     "assign_tier",
     "build_alert_key",
     "record_and_send",
+    # Phase SIG-7: outcome tracking
+    "resolve_alert",
+    "resolve_from_path",
+    "result_in_r",
+    "track_open_alerts",
+    "track_open_alerts_for_all",
+    "module_accuracy",
 ]
