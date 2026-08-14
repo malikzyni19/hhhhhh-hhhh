@@ -26252,6 +26252,9 @@ from live_monitor import (
     expire_stale_candidates,
     build_confluence_groups,
     filter_groups_for_settings,
+    run_promotion_cycle,
+    run_promotion_for_all_enabled,
+    max_watched_coins,
     send_telegram_message,
     test_telegram_connection,
     escape_html,
@@ -31117,6 +31120,113 @@ def api_lm_signal_telegram_unlink():
             pass
         print(f"[SIG-1] telegram unlink error user={uid}: {exc}")
         return jsonify({"ok": False, "error": "telegram_unlink_failed",
+                        "message": str(exc)[:160]}), 500
+
+
+# ── Phase SIG-3: promotion scheduler ─────────────────────────────────────────
+# Ranks candidates and puts the strongest under close watch, under a hard
+# ceiling. Detection is global; this runs per user because the ranking depends
+# on each user's own settings.
+
+_lm_sig_promo_thread = None
+_lm_sig_promo_lock   = threading.Lock()
+_lm_sig_promo_state  = {"enabled": False, "last_cycle_at": None,
+                        "last_error": None, "last_result": None}
+
+
+def _lm_signal_promotion_enabled() -> bool:
+    return (os.environ.get("ZYNI_SIG_PROMOTION_ENABLED", "1") or "").strip().lower() \
+        in ("1", "true", "yes", "on")
+
+
+def _lm_signal_promotion_loop():
+    """Background loop: one promotion pass for every opted-in user."""
+    cycle = max(60, int(os.environ.get("ZYNI_SIG_PROMO_CYCLE_SEC", "300") or 300))
+    print(f"[SIG-3] promotion scheduler started cycle={cycle}s "
+          f"max_watched={max_watched_coins()}")
+
+    while True:
+        started = time.time()
+        try:
+            with app.app_context():
+                result = run_promotion_for_all_enabled()
+            with _lm_sig_promo_lock:
+                _lm_sig_promo_state["last_cycle_at"] = int(started)
+                _lm_sig_promo_state["last_result"]   = result
+                _lm_sig_promo_state["last_error"]    = None
+            if result.get("users"):
+                print(f"[SIG-3] promotion cycle: {result['users']} user(s) processed")
+        except Exception as exc:
+            with _lm_sig_promo_lock:
+                _lm_sig_promo_state["last_error"] = str(exc)[:200]
+            print(f"[SIG-3] promotion cycle error: {exc}")
+
+        time.sleep(max(15.0, cycle - (time.time() - started)))
+
+
+def _ensure_lm_signal_promotion():
+    global _lm_sig_promo_thread
+    if _lm_sig_promo_thread and _lm_sig_promo_thread.is_alive():
+        return
+    _lm_sig_promo_thread = threading.Thread(
+        target=_lm_signal_promotion_loop, daemon=True, name="lm-signal-promo")
+    with _lm_sig_promo_lock:
+        _lm_sig_promo_state["enabled"] = True
+    _lm_sig_promo_thread.start()
+
+
+if _lm_signal_promotion_enabled():
+    _ensure_lm_signal_promotion()
+else:
+    print("[SIG-3] promotion scheduler DISABLED (ZYNI_SIG_PROMOTION_ENABLED not truthy)")
+
+
+@app.route("/api/live-monitor/signal-promotion/run", methods=["POST"])
+@login_required
+def api_lm_signal_promotion_run():
+    """POST: Run a promotion pass now for this user, instead of waiting."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"ok": False, "error": "no_user"}), 401
+    try:
+        result = run_promotion_cycle(uid)
+        return jsonify({"ok": bool(result.get("ok", True)), "result": result})
+    except Exception as exc:
+        print(f"[SIG-3] manual promotion failed user={uid}: {exc}")
+        return jsonify({"ok": False, "error": "promotion_failed",
+                        "message": str(exc)[:160]}), 500
+
+
+@app.route("/api/live-monitor/signal-candidates", methods=["GET"])
+@login_required
+def api_lm_signal_candidates():
+    """GET: What the scans have found and how they group — the funnel's input.
+
+    Shows both the raw ranking and what survives this user's settings, so it
+    is obvious whether a setting is doing the filtering.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"ok": False, "error": "no_user"}), 401
+    try:
+        hours = min(max(int(request.args.get("hours", 12)), 1), 72)
+    except (TypeError, ValueError):
+        hours = 12
+    try:
+        settings = get_or_create_signal_settings(uid)
+        groups   = build_confluence_groups(window_hours=hours)
+        matched  = filter_groups_for_settings(groups, settings)
+        return jsonify({
+            "ok":            True,
+            "window_hours":  hours,
+            "total_groups":  len(groups),
+            "matched_groups": len(matched),
+            "max_watched":   max_watched_coins(),
+            "groups":        matched[:50],
+        })
+    except Exception as exc:
+        print(f"[SIG-3] candidate list failed user={uid}: {exc}")
+        return jsonify({"ok": False, "error": "candidates_unavailable",
                         "message": str(exc)[:160]}), 500
 
 

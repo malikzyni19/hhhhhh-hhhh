@@ -68,6 +68,14 @@ from live_monitor.signal_confluence import (
     score_group,
     MODULE_WEIGHT,
 )
+from live_monitor.signal_promoter import (
+    run_promotion_cycle,
+    run_promotion_for_all_enabled,
+    promote_groups,
+    demote_stale_watches,
+    max_watched_coins,
+    AUTO_SOURCE_TAB,
+)
 from live_monitor.smc_orderflow_fusion import _lm_build_smc_orderflow_fusion
 from live_monitor.ai_execution_context import _lm_build_ai_execution_context
 from live_monitor.ai_trade_control import _lm_build_ai_trade_control_decision
@@ -298,4 +306,11 @@ __all__ = [
     "filter_groups_for_settings",
     "score_group",
     "MODULE_WEIGHT",
+    # Phase SIG-3: promotion
+    "run_promotion_cycle",
+    "run_promotion_for_all_enabled",
+    "promote_groups",
+    "demote_stale_watches",
+    "max_watched_coins",
+    "AUTO_SOURCE_TAB",
 ]
