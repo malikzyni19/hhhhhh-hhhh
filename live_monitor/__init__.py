@@ -88,6 +88,15 @@ from live_monitor.signal_verdict import (
     validate_verdict,
     build_verdict_context,
 )
+from live_monitor.signal_alert import (
+    run_alert_cycle,
+    run_alert_cycle_for_all_enabled,
+    check_gate,
+    format_alert_message,
+    assign_tier,
+    build_alert_key,
+    record_and_send,
+)
 from live_monitor.smc_orderflow_fusion import _lm_build_smc_orderflow_fusion
 from live_monitor.ai_execution_context import _lm_build_ai_execution_context
 from live_monitor.ai_trade_control import _lm_build_ai_trade_control_decision
@@ -334,4 +343,12 @@ __all__ = [
     "judge_setup",
     "validate_verdict",
     "build_verdict_context",
+    # Phase SIG-6: alert gate + delivery
+    "run_alert_cycle",
+    "run_alert_cycle_for_all_enabled",
+    "check_gate",
+    "format_alert_message",
+    "assign_tier",
+    "build_alert_key",
+    "record_and_send",
 ]

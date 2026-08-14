@@ -26475,6 +26475,8 @@ from live_monitor import (
     run_promotion_cycle,
     run_promotion_for_all_enabled,
     max_watched_coins,
+    run_alert_cycle,
+    run_alert_cycle_for_all_enabled,
     send_telegram_message,
     test_telegram_connection,
     escape_html,
@@ -31386,12 +31388,21 @@ def _lm_signal_promotion_loop():
         try:
             with app.app_context():
                 result = run_promotion_for_all_enabled()
+                # Alerting runs in the same tick so a coin promoted a moment
+                # ago is evaluated now rather than a whole cycle later.
+                alerts = run_alert_cycle_for_all_enabled()
             with _lm_sig_promo_lock:
                 _lm_sig_promo_state["last_cycle_at"] = int(started)
                 _lm_sig_promo_state["last_result"]   = result
+                _lm_sig_promo_state["last_alerts"]   = alerts
                 _lm_sig_promo_state["last_error"]    = None
             if result.get("users"):
-                print(f"[SIG-3] promotion cycle: {result['users']} user(s) processed")
+                _sent = sum((r or {}).get("sent", 0)
+                            for r in (alerts.get("results") or {}).values())
+                _shadow = sum((r or {}).get("shadow", 0)
+                              for r in (alerts.get("results") or {}).values())
+                print(f"[SIG-3] cycle: {result['users']} user(s) | "
+                      f"alerts sent={_sent} recorded_only={_shadow}")
         except Exception as exc:
             with _lm_sig_promo_lock:
                 _lm_sig_promo_state["last_error"] = str(exc)[:200]
@@ -31430,6 +31441,26 @@ def api_lm_signal_promotion_run():
     except Exception as exc:
         print(f"[SIG-3] manual promotion failed user={uid}: {exc}")
         return jsonify({"ok": False, "error": "promotion_failed",
+                        "message": str(exc)[:160]}), 500
+
+
+@app.route("/api/live-monitor/signal-alerts/run", methods=["POST"])
+@login_required
+def api_lm_signal_alert_run():
+    """POST: Run one alert pass now for this user, instead of waiting.
+
+    Honours every setting, including the delivery switch — with sending off
+    this records what would have gone out without messaging anyone.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"ok": False, "error": "no_user"}), 401
+    try:
+        result = run_alert_cycle(uid)
+        return jsonify({"ok": bool(result.get("ok", True)), "result": result})
+    except Exception as exc:
+        print(f"[SIG-6] manual alert run failed user={uid}: {exc}")
+        return jsonify({"ok": False, "error": "alert_run_failed",
                         "message": str(exc)[:160]}), 500
 
 
