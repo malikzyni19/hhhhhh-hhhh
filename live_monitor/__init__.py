@@ -44,6 +44,50 @@ from live_monitor.mtf_orderflow import (
     _lm_build_mtf_orderflow_history,
     _lm_build_mtf_history_summary,
 )
+from live_monitor.signal_settings import (
+    SIGNAL_MODULES,
+    get_or_create_signal_settings,
+    serialize_signal_settings,
+    apply_signal_settings_update,
+    signal_module_catalog,
+)
+from live_monitor.telegram_notify import (
+    escape_html,
+    send_telegram_message,
+    test_telegram_connection,
+)
+from live_monitor.signal_intake import (
+    normalize_scan_results,
+    record_candidates,
+    expire_stale_candidates,
+    build_candidate_key,
+)
+from live_monitor.signal_confluence import (
+    build_confluence_groups,
+    filter_groups_for_settings,
+    score_group,
+    MODULE_WEIGHT,
+)
+from live_monitor.signal_promoter import (
+    run_promotion_cycle,
+    run_promotion_for_all_enabled,
+    promote_groups,
+    demote_stale_watches,
+    max_watched_coins,
+    AUTO_SOURCE_TAB,
+)
+from live_monitor.signal_trigger import (
+    evaluate_group,
+    evaluate_groups,
+    get_symbol_price,
+    zone_position,
+    flow_history_ready,
+)
+from live_monitor.signal_verdict import (
+    judge_setup,
+    validate_verdict,
+    build_verdict_context,
+)
 from live_monitor.smc_orderflow_fusion import _lm_build_smc_orderflow_fusion
 from live_monitor.ai_execution_context import _lm_build_ai_execution_context
 from live_monitor.ai_trade_control import _lm_build_ai_trade_control_decision
@@ -256,4 +300,38 @@ __all__ = [
     "_lm_get_paper_risk_guard_state",
     "_lm_validate_paper_order_against_risk_guard",
     "_lm_record_paper_risk_guard_event",
+    # Phase SIG-1: Signal alert settings + Telegram delivery
+    "SIGNAL_MODULES",
+    "get_or_create_signal_settings",
+    "serialize_signal_settings",
+    "apply_signal_settings_update",
+    "signal_module_catalog",
+    "escape_html",
+    "send_telegram_message",
+    "test_telegram_connection",
+    # Phase SIG-2: signal intake + confluence
+    "normalize_scan_results",
+    "record_candidates",
+    "expire_stale_candidates",
+    "build_candidate_key",
+    "build_confluence_groups",
+    "filter_groups_for_settings",
+    "score_group",
+    "MODULE_WEIGHT",
+    # Phase SIG-3: promotion
+    "run_promotion_cycle",
+    "run_promotion_for_all_enabled",
+    "promote_groups",
+    "demote_stale_watches",
+    "max_watched_coins",
+    "AUTO_SOURCE_TAB",
+    # Phase SIG-4/5: trigger + AI verdict
+    "evaluate_group",
+    "evaluate_groups",
+    "get_symbol_price",
+    "zone_position",
+    "flow_history_ready",
+    "judge_setup",
+    "validate_verdict",
+    "build_verdict_context",
 ]

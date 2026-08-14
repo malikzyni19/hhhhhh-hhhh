@@ -6566,7 +6566,7 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   /* Q2 HOTFIX: workspace pane switching — .lm-left (setup list) is permanent;
      only the panes inside .lm-right swap. No ID-level display rule → [hidden] wins cleanly. */
   var _lmActiveWorkspace='setups';
-  var _LM_WS_IDS=['setups','terminal','riskguard','journal'];
+  var _LM_WS_IDS=['setups','signals','history'];
   function _lmSwitchPane(ws){
     // Show target workspace pane, hide others (inside .lm-right)
     _LM_WS_IDS.forEach(function(w){
@@ -6581,17 +6581,18 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       if(ai) ai.classList.add('active');
     }
     // Update workspace badge in topbar
-    var _wsLabels={setups:'Live Setups',terminal:'Trading Terminal',riskguard:'Risk Guard',journal:'Trade Journal'};
+    var _wsLabels={setups:'Live Setups',signals:'Signal Settings',history:'Signal History'};
     var badge=document.getElementById('lmWsBadge');
     if(badge) badge.textContent=_wsLabels[ws]||ws;
     // Set data-workspace on outer for CSS show/hide of setup-specific topbar controls
     var outer=document.querySelector('.lm-outer');
     if(outer) outer.setAttribute('data-workspace',ws);
     // Refresh terminal active-item display when entering terminal workspace
-    if(ws==='terminal'){
-      try{_lmUpdateTerminalActiveItem();}catch(e){}
-      try{window._lmTodRefreshDraft();}catch(e){}
-      try{window._lmLoadExecutionMode();}catch(e){}
+    if(ws==='signals'){
+      try{window._lmSigLoadSettings();}catch(e){}
+    }
+    if(ws==='history'){
+      try{window._lmSigLoadHistory();}catch(e){}
     }
     // Persist selection
     try{localStorage.setItem('zyni_lm_workspace',ws);}catch(e){}
@@ -6638,17 +6639,13 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
           '<svg class="ico" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>'+
           '<div><div class="nt">Live Setups</div><div class="ns">Active monitoring</div></div>'+
         '</div>'+
-        '<div class="nav-item" data-lmpane="terminal" role="button" tabindex="0">'+
-          '<svg class="ico" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>'+
-          '<div><div class="nt">Trading Terminal</div><div class="ns">Demo execution</div></div>'+
+        '<div class="nav-item" data-lmpane="signals" role="button" tabindex="0">'+
+          '<svg class="ico" viewBox="0 0 24 24"><path d="M4 11a9 9 0 0 1 9 9M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>'+
+          '<div><div class="nt">Signal Settings</div><div class="ns">Alerts &amp; Telegram</div></div>'+
         '</div>'+
-        '<div class="nav-item" data-lmpane="riskguard" role="button" tabindex="0">'+
-          '<svg class="ico" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>'+
-          '<div><div class="nt">Risk Guard</div><div class="ns">Safety controls</div></div>'+
-        '</div>'+
-        '<div class="nav-item" data-lmpane="journal" role="button" tabindex="0">'+
-          '<svg class="ico" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>'+
-          '<div><div class="nt">Trade Journal</div><div class="ns">Closed trades</div></div>'+
+        '<div class="nav-item" data-lmpane="history" role="button" tabindex="0">'+
+          '<svg class="ico" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg>'+
+          '<div><div class="nt">Signal History</div><div class="ns">Sent signals &amp; results</div></div>'+
         '</div>'+
         '<div class="side-spacer"></div>'+
         '<div class="side-foot"><span class="live-dot"></span>Live Monitor Active</div>';
@@ -6896,681 +6893,223 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
               '<div class="lm-right-scroll" id="lmRight"></div>'+
             '</div>'+
 
-            /* PANE: Trading Terminal */
-            '<div id="lmWsPane-terminal" class="lm-ws-pane" hidden>'+
+            /* PANE: Signal Settings */
+            '<div id="lmWsPane-signals" class="lm-ws-pane" hidden>'+
               '<div class="lm-ws-page">'+
                 '<div class="lm-ws-header">'+
                   '<div class="lm-ws-htitle">'+
-                    '<svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>'+
-                    'Trading Terminal'+
+                    '<svg viewBox="0 0 24 24"><path d="M4 11a9 9 0 0 1 9 9M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>'+
+                    'Signal Settings'+
                   '</div>'+
-                  '<div id="lmTermActiveItem" style="display:flex;align-items:center;gap:8px">'+
-                    '<span style="font-size:10px;color:var(--text-3)">No setup selected — </span>'+
-                    '<button class="btn lm-sm-btn" onclick="_lmSwitchPane(\'setups\')" style="font-size:9px;padding:2px 8px">&#8592; Go to Live Setups</button>'+
+                  '<span style="font-size:10px;color:var(--text-3)">Which setups reach you, and how</span>'+
+                '</div>'+
+
+                '<div id="lmSigLoading" style="font-size:11px;color:var(--text-3);padding:10px 0">Loading settings…</div>'+
+                '<div id="lmSigBody" style="display:none">'+
+
+                  /* ── Master status strip ── */
+                  '<div class="lm-ws-section" id="lmSigStatusStrip" style="margin-top:0">'+
+                    '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
+                      '<label style="display:flex;align-items:center;gap:6px;cursor:pointer">'+
+                        '<input type="checkbox" id="lmSigEnabled" style="cursor:pointer">'+
+                        '<span style="font-size:11px;font-weight:600;color:var(--text-2)">Signal engine on</span>'+
+                      '</label>'+
+                      '<label style="display:flex;align-items:center;gap:6px;cursor:pointer">'+
+                        '<input type="checkbox" id="lmSigDelivery" style="cursor:pointer">'+
+                        '<span style="font-size:11px;font-weight:600;color:var(--text-2)">Send to Telegram</span>'+
+                      '</label>'+
+                      '<span id="lmSigModeBadge" style="font-size:9px;padding:2px 7px;border-radius:10px"></span>'+
+                    '</div>'+
+                    '<div style="font-size:9px;color:var(--text-3);line-height:1.5;margin-top:3px">'+
+                      'With the engine on but sending off, every signal is still found and recorded — you can review them in Signal History before letting anything reach your phone.'+
+                    '</div>'+
+                  '</div>'+
+
+                  /* ── Telegram ── */
+                  '<div class="lm-ws-section">'+
+                    '<div class="lm-ws-sh">Telegram</div>'+
+                    '<div id="lmSigTgStatus" style="font-size:10px;padding:4px 7px;border-radius:3px;margin-bottom:6px"></div>'+
+                    '<div id="lmSigTgForm" style="display:grid;grid-template-columns:1fr 1fr;gap:6px 8px">'+
+                      '<div>'+
+                        '<label style="font-size:10px;color:var(--text-3);display:block;margin-bottom:2px">Bot token</label>'+
+                        '<input id="lmSigTgToken" type="password" autocomplete="off" placeholder="123456789:AA…" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:3px 6px;font-size:10px;color:var(--text-1);width:100%">'+
+                      '</div>'+
+                      '<div>'+
+                        '<label style="font-size:10px;color:var(--text-3);display:block;margin-bottom:2px">Chat ID</label>'+
+                        '<input id="lmSigTgChat" type="text" autocomplete="off" placeholder="e.g. 812345678" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:3px 6px;font-size:10px;color:var(--text-1);width:100%">'+
+                      '</div>'+
+                    '</div>'+
+                    '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px">'+
+                      '<button class="btn lm-sm-btn" style="color:var(--green,#4ade80)" onclick="window._lmSigLinkTelegram()">Connect &amp; send test</button>'+
+                      '<button class="btn lm-sm-btn" style="color:var(--text-3)" onclick="window._lmSigUnlinkTelegram()">Disconnect</button>'+
+                      '<button class="btn lm-sm-btn" style="color:var(--text-3)" onclick="window._lmSigToggleHelp()">How do I get these?</button>'+
+                    '</div>'+
+                    '<div id="lmSigTgHelp" style="display:none;margin-top:7px;padding:8px 10px;background:var(--bg-3,#1e293b);border-radius:4px;font-size:10px;color:var(--text-2);line-height:1.7">'+
+                      '<b>Create your bot</b><br>'+
+                      '1. Open Telegram and search for <b>@BotFather</b><br>'+
+                      '2. Send <b>/newbot</b> and follow the prompts (any name works)<br>'+
+                      '3. It replies with a token like <span style="font-family:var(--mono)">123456789:AAH…</span> — paste that above<br>'+
+                      '<br>'+
+                      '<b>Get your chat ID</b><br>'+
+                      '4. Search for <b>@userinfobot</b> and press Start<br>'+
+                      '5. It replies with your ID, a number — paste that above<br>'+
+                      '<br>'+
+                      '<b>Important:</b> open a chat with your own new bot and press <b>Start</b>, otherwise Telegram will not let it message you.<br>'+
+                      '<br>'+
+                      'Then press <b>Connect &amp; send test</b>. A message arrives in Telegram if it worked.'+
+                    '</div>'+
+                  '</div>'+
+
+                  /* ── Scan modules ── */
+                  '<div class="lm-ws-section">'+
+                    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">'+
+                      '<div class="lm-ws-sh" style="margin:0;flex:1">Scan types</div>'+
+                      '<button class="btn lm-sm-btn" style="font-size:9px;color:var(--text-3)" onclick="window._lmSigToggleAllModules(true)">All</button>'+
+                      '<button class="btn lm-sm-btn" style="font-size:9px;color:var(--text-3)" onclick="window._lmSigToggleAllModules(false)">None</button>'+
+                    '</div>'+
+                    '<div id="lmSigModules" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:4px 10px"></div>'+
+                  '</div>'+
+
+                  /* ── Quality filters ── */
+                  '<div class="lm-ws-section">'+
+                    '<div class="lm-ws-sh">Quality</div>'+
+                    '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px 12px">'+
+                      '<div>'+
+                        '<label style="font-size:10px;color:var(--text-3);display:block;margin-bottom:2px">Minimum scan types agreeing</label>'+
+                        '<input id="lmSigMinConf" type="number" min="1" max="5" step="1" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:3px 6px;font-size:10px;color:var(--text-1);width:100%">'+
+                        '<div style="font-size:9px;color:var(--text-3);line-height:1.5;margin-top:3px">1 sends single-type setups. 2+ only sends when several scans agree on the same pair — far stronger, far rarer.</div>'+
+                      '</div>'+
+                      '<div>'+
+                        '<label style="font-size:10px;color:var(--text-3);display:block;margin-bottom:2px">Minimum AI confidence</label>'+
+                        '<input id="lmSigMinConfidence" type="number" min="0" max="100" step="5" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:3px 6px;font-size:10px;color:var(--text-1);width:100%">'+
+                        '<div style="font-size:9px;color:var(--text-3);line-height:1.5;margin-top:3px">Setups the AI scores below this are recorded but never sent.</div>'+
+                      '</div>'+
+                    '</div>'+
+                  '</div>'+
+
+                  /* ── Volume ── */
+                  '<div class="lm-ws-section">'+
+                    '<div class="lm-ws-sh">How many you receive</div>'+
+                    '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px 12px">'+
+                      '<div>'+
+                        '<label style="font-size:10px;color:var(--text-3);display:block;margin-bottom:2px">Max signals per day</label>'+
+                        '<input id="lmSigMaxDay" type="number" min="1" max="50" step="1" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:3px 6px;font-size:10px;color:var(--text-1);width:100%">'+
+                      '</div>'+
+                      '<div>'+
+                        '<label style="font-size:10px;color:var(--text-3);display:block;margin-bottom:2px">Wait between signals on the same pair (minutes)</label>'+
+                        '<input id="lmSigCooldown" type="number" min="15" max="1440" step="15" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:3px 6px;font-size:10px;color:var(--text-1);width:100%">'+
+                      '</div>'+
+                    '</div>'+
+                  '</div>'+
+
+                  /* ── Timing ── */
+                  '<div class="lm-ws-section">'+
+                    '<div class="lm-ws-sh">When to alert</div>'+
+                    '<div id="lmSigTrigger" style="display:flex;flex-direction:column;gap:4px"></div>'+
+                    '<div id="lmSigApproachWrap" style="margin-top:7px;max-width:230px">'+
+                      '<label style="font-size:10px;color:var(--text-3);display:block;margin-bottom:2px">Alert when price is within (%) of the zone</label>'+
+                      '<input id="lmSigApproachPct" type="number" min="0.1" max="10" step="0.1" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:3px 6px;font-size:10px;color:var(--text-1);width:100%">'+
+                    '</div>'+
+                  '</div>'+
+
+                  /* ── Coins ── */
+                  '<div class="lm-ws-section">'+
+                    '<div class="lm-ws-sh">Which coins</div>'+
+                    '<div id="lmSigScope" style="display:flex;flex-direction:column;gap:4px"></div>'+
+                    '<div id="lmSigScopeLimitWrap" style="margin-top:7px;max-width:230px">'+
+                      '<label style="font-size:10px;color:var(--text-3);display:block;margin-bottom:2px">How many top pairs</label>'+
+                      '<input id="lmSigScopeLimit" type="number" min="10" max="500" step="10" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:3px 6px;font-size:10px;color:var(--text-1);width:100%">'+
+                    '</div>'+
+                    '<div id="lmSigSymbolsWrap" style="display:none;margin-top:7px">'+
+                      '<label style="font-size:10px;color:var(--text-3);display:block;margin-bottom:2px">Your pairs (comma or space separated)</label>'+
+                      '<textarea id="lmSigSymbols" rows="2" placeholder="BTCUSDT ETHUSDT SOLUSDT" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:3px 6px;font-size:10px;color:var(--text-1);width:100%;resize:vertical;font-family:var(--mono)"></textarea>'+
+                    '</div>'+
+                  '</div>'+
+
+                  /* ── Direction + timeframe ── */
+                  '<div class="lm-ws-section">'+
+                    '<div class="lm-ws-sh">Direction &amp; timeframe</div>'+
+                    '<div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:7px">'+
+                      '<label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:10px;color:var(--text-2)">'+
+                        '<input type="checkbox" id="lmSigLong" style="cursor:pointer"> Long setups'+
+                      '</label>'+
+                      '<label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:10px;color:var(--text-2)">'+
+                        '<input type="checkbox" id="lmSigShort" style="cursor:pointer"> Short setups'+
+                      '</label>'+
+                    '</div>'+
+                    '<label style="font-size:10px;color:var(--text-3);display:block;margin-bottom:2px">Timeframes</label>'+
+                    '<div id="lmSigTimeframes" style="display:flex;gap:10px;flex-wrap:wrap"></div>'+
+                    '<div style="font-size:9px;color:var(--text-3);line-height:1.5;margin-top:3px">Select none to accept every timeframe.</div>'+
+                  '</div>'+
+
+                  /* ── Save bar ── */
+                  '<div class="lm-ws-section" style="display:flex;align-items:center;gap:9px;flex-wrap:wrap">'+
+                    '<button class="btn lm-sm-btn" style="color:var(--green,#4ade80);font-weight:700" onclick="window._lmSigSaveSettings()">Save settings</button>'+
+                    '<button class="btn lm-sm-btn" style="color:var(--text-3)" onclick="window._lmSigLoadSettings()">Discard changes</button>'+
+                    '<span id="lmSigSaveMsg" style="font-size:10px"></span>'+
+                  '</div>'+
+
+                '</div>'+ /* end lmSigBody */
+              '</div>'+ /* end lm-ws-page */
+            '</div>'+ /* end lmWsPane-signals */
+
+            /* PANE: Signal History */
+            '<div id="lmWsPane-history" class="lm-ws-pane" hidden>'+
+              '<div class="lm-ws-page">'+
+                '<div class="lm-ws-header">'+
+                  '<div class="lm-ws-htitle">'+
+                    '<svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg>'+
+                    'Signal History'+
+                  '</div>'+
+                  '<span style="font-size:10px;color:var(--text-3)">Every signal sent, and how it resolved</span>'+
+                '</div>'+
+
+                '<div class="lm-ws-section" style="margin-top:0">'+
+                  '<div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap">'+
+                    '<select id="lmSigHistPeriod" class="lm-mini-input" style="font-size:10px;padding:3px 5px;background:var(--bg-3,#1e293b);border:1px solid var(--border,#334155);border-radius:3px;color:var(--text-2)" onchange="window._lmSigLoadHistory()">'+
+                      '<option value="7d">Last 7 days</option>'+
+                      '<option value="30d" selected>Last 30 days</option>'+
+                      '<option value="90d">Last 90 days</option>'+
+                      '<option value="all">All time</option>'+
+                    '</select>'+
+                    '<select id="lmSigHistOutcome" class="lm-mini-input" style="font-size:10px;padding:3px 5px;background:var(--bg-3,#1e293b);border:1px solid var(--border,#334155);border-radius:3px;color:var(--text-2)" onchange="window._lmSigLoadHistory()">'+
+                      '<option value="">All outcomes</option>'+
+                      '<option value="pending">Still open</option>'+
+                      '<option value="target_hit">Hit target</option>'+
+                      '<option value="stop_hit">Hit stop</option>'+
+                      '<option value="invalidated">Invalidated</option>'+
+                      '<option value="expired">Expired</option>'+
+                    '</select>'+
+                    '<button class="btn lm-sm-btn" style="color:var(--text-3)" onclick="window._lmSigLoadHistory()">Refresh</button>'+
                   '</div>'+
                 '</div>'+
 
-                /* ── Execution Mode Header ────────────────────────────────── */
-                '<div id="lmExecModeBar" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0 10px;border-bottom:1px solid rgba(255,255,255,.07);margin-bottom:10px">'+
-                  '<div>'+
-                    '<div style="font-size:9px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">Execution Mode</div>'+
-                    '<div style="display:flex;align-items:center;gap:6px">'+
-                      '<span id="lmExecModeLabel" style="font-size:12px;font-weight:700;color:var(--green,#4ade80)">Internal Paper</span>'+
-                      '<span id="lmExecModePurpose" style="font-size:9px;color:var(--text-3)">Primary Strategy Testing</span>'+
-                    '</div>'+
-                  '</div>'+
-                  '<div style="display:flex;gap:4px">'+
-                    '<button class="btn lm-sm-btn" id="lmExecModeBtn-paper" '+
-                      'style="font-size:9px;padding:2px 7px;border-color:rgba(74,222,128,.5);color:var(--green,#4ade80)" '+
-                      'onclick="window._lmSetExecutionMode(\'internal_paper\')" title="Primary Strategy Testing">'+
-                      'Paper'+
-                    '</button>'+
-                    '<button class="btn lm-sm-btn" id="lmExecModeBtn-testnet" '+
-                      'style="font-size:9px;padding:2px 7px" '+
-                      'onclick="window._lmSetExecutionMode(\'binance_testnet\')" title="API Testing Only — not for strategy validation">'+
-                      'Testnet'+
-                    '</button>'+
-                    '<button class="btn lm-sm-btn" id="lmExecModeBtn-live" disabled '+
-                      'style="font-size:9px;padding:2px 7px;opacity:.35;cursor:not-allowed" '+
-                      'title="Future / Disabled">'+
-                      'Live'+
-                    '</button>'+
+                '<div id="lmSigHistStats" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(115px,1fr));gap:7px;margin:9px 0"></div>'+
+
+                '<div class="lm-ws-section">'+
+                  '<div id="lmSigHistEmpty" style="font-size:11px;color:var(--text-3);padding:14px 0;line-height:1.7"></div>'+
+                  '<div id="lmSigHistTableWrap" style="display:none;overflow-x:auto">'+
+                    '<table style="width:100%;border-collapse:collapse;font-size:10px">'+
+                      '<thead>'+
+                        '<tr style="color:var(--text-3);text-align:left">'+
+                          '<th style="padding:4px 6px;font-weight:600">When</th>'+
+                          '<th style="padding:4px 6px;font-weight:600">Pair</th>'+
+                          '<th style="padding:4px 6px;font-weight:600">Side</th>'+
+                          '<th style="padding:4px 6px;font-weight:600">Scans</th>'+
+                          '<th style="padding:4px 6px;font-weight:600">Conf</th>'+
+                          '<th style="padding:4px 6px;font-weight:600">Entry</th>'+
+                          '<th style="padding:4px 6px;font-weight:600">Stop</th>'+
+                          '<th style="padding:4px 6px;font-weight:600">Target</th>'+
+                          '<th style="padding:4px 6px;font-weight:600">Result</th>'+
+                        '</tr>'+
+                      '</thead>'+
+                      '<tbody id="lmSigHistTbody"></tbody>'+
+                    '</table>'+
                   '</div>'+
                 '</div>'+
-                '<div id="lmExecModeWarn" style="display:none;font-size:9px;padding:4px 8px;margin-bottom:8px;border-radius:4px;background:rgba(251,191,36,.09);color:var(--yellow,#facc15);border:1px solid rgba(251,191,36,.22)">'+
-                  '&#9888; Binance Testnet is API-testing only. Internal Paper remains primary for strategy validation.'+
-                '</div>'+
-
-                /* ── GROUP 1: Internal Paper Trading (open) ────────────────── */
-                '<div class="lm-term-group" id="lmTermGrp-paper">'+
-                  '<div class="lm-term-grp-hdr" onclick="window._lmToggleTermGroup(\'paper\')">'+
-                    '<span class="lm-term-grp-arrow" id="lmTermGrpArr-paper">▼</span>'+
-                    '<span>Internal Paper Trading</span>'+
-                    '<span style="font-size:9px;color:var(--green,#4ade80);margin-left:6px">Phase 11.7B</span>'+
-                  '</div>'+
-                  '<div id="lmTermGrpBody-paper">'+
-                    '<div class="lm-ws-grid-2" style="padding:0 0 8px">'+
-
-                      /* Left: Account + Order Draft */
-                      '<div>'+
-                        '<div class="lm-ws-section" style="background:rgba(74,222,128,.04);border-color:rgba(74,222,128,.2)">'+
-                          '<div class="lm-ws-sh" style="color:var(--green,#4ade80)">Paper Account</div>'+
-                          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:10px;color:var(--text-3)">'+
-                            '<span>Starting balance:</span><span id="lmPapAccStart" style="color:var(--text-1)">—</span>'+
-                            '<span>Cash balance:</span><span id="lmPapAccBal" style="color:var(--green,#4ade80);font-weight:700">—</span>'+
-                            '<span>Equity:</span><span id="lmPapAccEq" style="color:var(--text-1)">—</span>'+
-                            '<span>Realized PnL:</span><span id="lmPapAccPnl" style="color:var(--text-1)">—</span>'+
-                            '<span>Unrealized PnL:</span><span id="lmPapAccUpnl" style="color:var(--text-1)">—</span>'+
-                            '<span>Open orders:</span><span id="lmPapAccOrders" style="color:var(--text-1)">—</span>'+
-                            '<span>Open positions:</span><span id="lmPapAccPos" style="color:var(--text-1)">—</span>'+
-                          '</div>'+
-                          '<div style="margin-top:8px">'+
-                            '<button class="btn lm-sm-btn" style="width:100%;justify-content:center" onclick="window._lmPapRefreshAccount()">Refresh Account</button>'+
-                          '</div>'+
-                        '</div>'+
-
-                        '<div class="lm-ws-section" style="background:rgba(74,222,128,.04);border-color:rgba(74,222,128,.2)">'+
-                          '<div class="lm-ws-sh" style="color:var(--green,#4ade80)">Paper Order Draft</div>'+
-                          '<table style="width:100%;font-size:10px;border-collapse:collapse">'+
-                            '<tr><td style="color:var(--text-3);padding:2px 0;width:44%">Symbol</td><td id="lmPap-symbol" style="color:var(--text-1)">—</td></tr>'+
-                            '<tr><td style="color:var(--text-3);padding:2px 0">Side</td><td id="lmPap-side" style="color:var(--text-1)">—</td></tr>'+
-                            '<tr><td style="color:var(--text-3);padding:2px 0">Type</td><td style="color:var(--text-1)">LIMIT / GTC</td></tr>'+
-                            '<tr><td style="color:var(--text-3);padding:2px 0">Entry Price</td><td id="lmPap-price" style="color:var(--text-1)">—</td></tr>'+
-                            '<tr><td style="color:var(--text-3);padding:2px 0">Intent OK</td><td id="lmPap-intentOk" style="color:var(--text-1)">—</td></tr>'+
-                            '<tr><td style="color:var(--text-3);padding:2px 0">Paper Ready</td><td id="lmPap-ready" style="color:var(--text-1)">—</td></tr>'+
-                            '<tr><td style="color:var(--text-3);padding:2px 0">Est. Notional</td><td id="lmPap-notional" style="color:var(--text-1)">—</td></tr>'+
-                          '</table>'+
-                          '<div style="margin-top:8px;display:flex;gap:4px;align-items:center">'+
-                            '<label style="font-size:9px;color:var(--text-3);white-space:nowrap">Qty:</label>'+
-                            '<input id="lmPapQtyInput" type="text" placeholder="e.g. 0.001" '+
-                              'style="flex:1;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:4px;padding:4px 8px;font-size:10px;color:var(--text-1);outline:none" '+
-                              'oninput="window._lmPapRefreshDraft()" />'+
-                            '<button class="btn lm-sm-btn" style="white-space:nowrap" onclick="window._lmPapRefreshDraft()">Refresh</button>'+
-                          '</div>'+
-                          '<div id="lmPap-qtyErr" style="display:none;font-size:9px;color:#f87171;padding:2px 0"></div>'+
-                          '<div id="lmPap-reasons" style="display:none;font-size:9px;color:var(--yellow);padding:2px 0;line-height:1.4"></div>'+
-                          '<div id="lmPap-warnings" style="display:none;font-size:9px;color:var(--yellow);padding:2px 0;line-height:1.4"></div>'+
-                          '<div style="margin-top:8px">'+
-                            '<button class="btn lm-sm-btn" id="lmPapSubmitBtn" disabled '+
-                              'style="width:100%;justify-content:center;background:rgba(74,222,128,.15);border-color:rgba(74,222,128,.4);color:#4ade80;cursor:not-allowed;opacity:.5" '+
-                              'onclick="window._lmPapSubmitOrder()">'+
-                              'Submit Paper Order'+
-                            '</button>'+
-                          '</div>'+
-                          '<div id="lmPap-result" style="display:none;font-size:9px;padding:4px 0;line-height:1.5"></div>'+
-                          '<div style="font-size:9px;color:var(--text-3);padding:4px 0 0;line-height:1.4">'+
-                            '<b style="color:#f87171">Manual submit only.</b> No Binance API. DB-only paper record.'+
-                          '</div>'+
-                        '</div>'+
-                      '</div>'+
-
-                      /* Right: Orders table + Positions + Process Fills */
-                      '<div>'+
-                        '<div class="lm-ws-section">'+
-                          '<div class="lm-ws-sh">Paper Orders</div>'+
-                          '<div class="lm-tbl-wrap" style="max-height:160px">'+
-                            '<table class="lm-inner-tbl" id="lmPapOrdersTbl">'+
-                              '<thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Price</th><th>Status</th><th>Fill</th><th>Client ID</th></tr></thead>'+
-                              '<tbody id="lmPapOrdersTbody"><tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:14px 0">No paper orders</td></tr></tbody>'+
-                            '</table>'+
-                          '</div>'+
-                          '<div style="margin-top:6px;display:flex;gap:4px">'+
-                            '<button class="btn lm-sm-btn" style="flex:1;justify-content:center" onclick="window._lmPapRefreshOrders()">Refresh Orders</button>'+
-                            '<button class="btn lm-sm-btn" id="lmPapFillsBtn" style="flex:1;justify-content:center;color:var(--yellow,#facc15)" onclick="window._lmPapProcessFills()">Process Paper Fills</button>'+
-                          '</div>'+
-                          '<div id="lmPapFillResult" style="display:none;font-size:9px;padding:4px 0;line-height:1.5;margin-top:4px"></div>'+
-                        '</div>'+
-
-                        '<div class="lm-ws-section">'+
-                          '<div class="lm-ws-sh">Paper Positions</div>'+
-                          '<div class="lm-tbl-wrap" style="max-height:140px">'+
-                            '<table class="lm-inner-tbl" id="lmPapPosTbl">'+
-                              '<thead><tr><th>Symbol</th><th>Side</th><th>Size</th><th>Entry</th><th>Mark</th><th>PnL</th><th>PnL%</th><th>Status</th></tr></thead>'+
-                              '<tbody id="lmPapPosTbody"><tr><td colspan="8" style="text-align:center;color:var(--text-3);padding:14px 0">No positions</td></tr></tbody>'+
-                            '</table>'+
-                          '</div>'+
-                          '<div style="margin-top:6px;display:flex;gap:4px">'+
-                            '<button class="btn lm-sm-btn" style="flex:1;justify-content:center" onclick="window._lmPapRefreshPositions()">Refresh</button>'+
-                            '<button id="lmPapMarkBtn" class="btn lm-sm-btn" style="flex:1;justify-content:center" onclick="window._lmPapRefreshMarks()">PnL</button>'+
-                            '<button id="lmPapExitBtn" class="btn lm-sm-btn" style="flex:1;justify-content:center;color:var(--yellow,#facc15)" onclick="window._lmPapCheckExits()">Check TP/SL</button>'+
-                          '</div>'+
-                          '<div id="lmPapMarkResult" style="display:none;margin-top:4px;font-size:10px;padding:4px 6px;border-radius:4px;background:var(--bg-3,#1e293b)"></div>'+
-                          '<div id="lmPapExitResult" style="display:none;margin-top:4px;font-size:10px;padding:4px 6px;border-radius:4px;background:var(--bg-3,#1e293b)"></div>'+
-                        '</div>'+
-                      '</div>'+
-
-                    '</div>'+ /* end grid-2 */
-
-                    /* Paper Trade Journal */
-                    '<div class="lm-ws-section" style="margin-top:4px">'+
-                      '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">'+
-                        '<div class="lm-ws-sh" style="margin:0;flex:1">Paper Trade Journal</div>'+
-                        '<button id="lmPapJnlSyncBtn" class="btn lm-sm-btn" style="color:var(--yellow,#facc15)" onclick="window._lmPapSyncJournal()">Sync Journal</button>'+
-                        '<button class="btn lm-sm-btn" onclick="window._lmPapRefreshJournal()">Refresh</button>'+
-                      '</div>'+
-                      '<div id="lmPapJnlResult" style="display:none;font-size:9px;padding:3px 0 4px;line-height:1.5"></div>'+
-                      '<div class="lm-tbl-wrap" style="max-height:180px">'+
-                        '<table class="lm-inner-tbl" id="lmPapJnlTbl">'+
-                          '<thead><tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>Outcome</th><th>PnL</th><th>PnL%</th><th>Reason</th><th>Closed</th><th>AI</th></tr></thead>'+
-                          '<tbody id="lmPapJnlTbody"><tr><td colspan="10" style="text-align:center;color:var(--text-3);padding:14px 0">No journal entries — click Sync Journal to build</td></tr></tbody>'+
-                        '</table>'+
-                      '</div>'+
-                    '</div>'+
-
-                    /* Paper Auto Safety Gate — Phase 11.12 */
-                    '<div class="lm-ws-section" id="lmPapAutoGateSection" style="margin-top:4px">'+
-                      '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">'+
-                        '<div class="lm-ws-sh" style="margin:0;flex:1">Paper Auto Safety Gate</div>'+
-                        '<span style="font-size:9px;color:var(--text-3)">Advisory · Phase 11.12</span>'+
-                      '</div>'+
-                      '<div id="lmPapGateStatus" style="font-size:9px;padding:3px 0 5px;color:var(--text-3)">Not evaluated — click Evaluate to run checks</div>'+
-                      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">'+
-                        '<button class="btn lm-sm-btn" onclick="window._lmPapAutoGateEvaluate()">Evaluate</button>'+
-                        '<button id="lmPapGateArmBtn" class="btn lm-sm-btn" style="display:none;color:var(--green,#4ade80)" title="Arming is metadata only. It does not submit paper orders in Phase 11.12." onclick="window._lmPapAutoGateArm()">Arm Gate</button>'+
-                        '<button id="lmPapGateDisarmBtn" class="btn lm-sm-btn" style="display:none;color:var(--text-3)" onclick="window._lmPapAutoGateDisarm()">Disarm</button>'+
-                        '<button class="btn lm-sm-btn" style="color:var(--text-3)" onclick="window._lmPapAutoGateRefresh()">Refresh</button>'+
-                      '</div>'+
-                      '<div id="lmPapGateChecks" style="display:none">'+
-                        '<table class="lm-inner-tbl" style="font-size:9px">'+
-                          '<thead><tr><th>Check</th><th>Pass</th><th>Note</th></tr></thead>'+
-                          '<tbody id="lmPapGateChecksTbody"></tbody>'+
-                        '</table>'+
-                      '</div>'+
-                      '<div id="lmPapGateAdvisory" style="display:none;font-size:9px;margin-top:4px;padding:4px 6px;background:var(--bg-3,#1e293b);border-radius:3px;color:var(--yellow,#facc15)"></div>'+
-                      '<div style="font-size:8px;color:var(--text-4,#475569);margin-top:5px">Gate is advisory only. can_auto_submit is always false. No auto execution.</div>'+
-                    '</div>'+
-
-                    /* Paper Risk Guard — Phase 11.13 */
-                    '<div class="lm-ws-section" id="lmPapRiskGuardSection" style="margin-top:4px">'+
-                      '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">'+
-                        '<div class="lm-ws-sh" style="margin:0;flex:1">Paper Risk Guard</div>'+
-                        '<span style="font-size:9px;color:var(--text-3)">Phase 11.13</span>'+
-                      '</div>'+
-                      '<div id="lmPapRgStatus" style="font-size:9px;padding:3px 0 5px;color:var(--text-3)">Not evaluated — click Check Risk to evaluate</div>'+
-                      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">'+
-                        '<button class="btn lm-sm-btn" style="color:var(--yellow,#facc15)" onclick="window._lmPapRgCheck()">Check Risk</button>'+
-                        '<button class="btn lm-sm-btn" style="color:var(--text-3)" onclick="window._lmPapRgRefresh()">Refresh</button>'+
-                        '<button class="btn lm-sm-btn" style="color:var(--text-3)" onclick="window._lmPapRgShowSettings()">Settings</button>'+
-                      '</div>'+
-                      '<div id="lmPapRgMetrics" style="display:none;font-size:9px;margin-bottom:4px">'+
-                        '<table style="width:100%;border-collapse:collapse;font-size:9px">'+
-                          '<tbody id="lmPapRgMetricsTbody"></tbody>'+
-                        '</table>'+
-                      '</div>'+
-                      '<div id="lmPapRgBlocking" style="display:none;font-size:9px;padding:4px 6px;background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.25);border-radius:3px;color:#f87171;margin-bottom:4px;line-height:1.5"></div>'+
-                      '<div id="lmPapRgWarnings" style="display:none;font-size:9px;padding:4px 6px;background:rgba(250,204,21,.06);border:1px solid rgba(250,204,21,.2);border-radius:3px;color:var(--yellow,#facc15);margin-bottom:4px;line-height:1.5"></div>'+
-                      '<div id="lmPapRgSettings" style="display:none;margin-top:6px;padding:6px;background:var(--bg-3,#1e293b);border-radius:4px;font-size:9px">'+
-                        '<div style="font-weight:600;color:var(--text-2);margin-bottom:4px">Risk Limits</div>'+
-                        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 8px">'+
-                          '<label style="color:var(--text-3)">Max Risk %</label>'+
-                          '<input id="lmPapRgMaxPct" type="number" step="0.1" min="0.1" max="5" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
-                          '<label style="color:var(--text-3)">Max $ Risk</label>'+
-                          '<input id="lmPapRgMaxAmt" type="number" step="1" min="1" placeholder="none" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
-                          '<label style="color:var(--text-3)">Max Notional</label>'+
-                          '<input id="lmPapRgMaxNot" type="number" step="10" min="10" placeholder="none" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
-                          '<label style="color:var(--text-3)">Min R:R</label>'+
-                          '<input id="lmPapRgMinRr" type="number" step="0.1" min="0.5" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
-                          '<label style="color:var(--text-3)">Max Open Pos</label>'+
-                          '<input id="lmPapRgMaxPos" type="number" step="1" min="1" max="20" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
-                          '<label style="color:var(--text-3)">Max Open Orders</label>'+
-                          '<input id="lmPapRgMaxOrd" type="number" step="1" min="1" max="20" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
-                          '<label style="color:var(--text-3)">Max Sym Pos</label>'+
-                          '<input id="lmPapRgMaxSymPos" type="number" step="1" min="1" max="5" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
-                          '<label style="color:var(--text-3)">Max Sym Orders</label>'+
-                          '<input id="lmPapRgMaxSymOrd" type="number" step="1" min="1" max="5" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
-                          '<label style="color:var(--text-3)">Max Daily Loss %</label>'+
-                          '<input id="lmPapRgMaxDailyLoss" type="number" step="0.5" min="0.5" max="20" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
-                          '<label style="color:var(--text-3)">Min Equity $</label>'+
-                          '<input id="lmPapRgMinEquity" type="number" step="1" min="0" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px 5px;font-size:9px;color:var(--text-1);width:100%">'+
-                          '<label style="color:var(--text-3)">SL Required</label>'+
-                          '<span style="color:var(--green,#4ade80);font-size:9px;line-height:1.6">YES — always required</span>'+
-                          '<label style="color:var(--text-3)">TP Required</label>'+
-                          '<span style="color:var(--green,#4ade80);font-size:9px;line-height:1.6">YES — always required</span>'+
-                        '</div>'+
-                        '<div style="font-size:8px;color:var(--text-4,#475569);margin-top:5px">Paper Risk Guard requires both SL and TP so risk and reward can be calculated before submission.</div>'+
-                        '<button class="btn lm-sm-btn" style="margin-top:6px;color:var(--green,#4ade80)" onclick="window._lmPapRgSaveSettings()">Save Limits</button>'+
-                        '<div id="lmPapRgSettingsMsg" style="display:none;font-size:9px;padding:2px 0;margin-top:2px"></div>'+
-                        '<div id="lmPapRgFieldErrors" style="display:none;font-size:9px;padding:3px 5px;margin-top:3px;background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.25);border-radius:3px;color:#f87171;line-height:1.6"></div>'+
-                      '</div>'+
-                      '<div style="font-size:8px;color:var(--text-4,#475569);margin-top:5px">Risk guard blocks unsafe orders. can_auto_submit is always false.</div>'+
-                    '</div>'+
-
-                    /* ── Phase 11.14: Paper Performance Dashboard ──────────── */
-                    '<div class="lm-ws-section" id="lmPapPerfSection" style="margin-top:4px">'+
-                      '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">'+
-                        '<div class="lm-ws-sh" style="margin:0;flex:1">Paper Performance</div>'+
-                        '<span style="font-size:9px;color:var(--text-3)">Phase 11.14 · read-only</span>'+
-                      '</div>'+
-                      /* Filters row */
-                      '<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-bottom:6px">'+
-                        '<select id="lmPapPerfScope" class="lm-mini-input" style="font-size:9px;padding:2px 4px;background:var(--bg-3,#1e293b);border:1px solid var(--border,#334155);border-radius:3px;color:var(--text-2)" onchange="window._lmPapPerfRefresh()">'+
-                          '<option value="all" selected>All Trades</option>'+
-                          '<option value="symbol">This Symbol</option>'+
-                          '<option value="item">This Item</option>'+
-                        '</select>'+
-                        '<select id="lmPapPerfPeriod" class="lm-mini-input" style="font-size:9px;padding:2px 4px;background:var(--bg-3,#1e293b);border:1px solid var(--border,#334155);border-radius:3px;color:var(--text-2)">'+
-                          '<option value="7d">7 days</option>'+
-                          '<option value="30d" selected>30 days</option>'+
-                          '<option value="90d">90 days</option>'+
-                          '<option value="365d">365 days</option>'+
-                          '<option value="all">All time</option>'+
-                        '</select>'+
-                        '<select id="lmPapPerfSide" class="lm-mini-input" style="font-size:9px;padding:2px 4px;background:var(--bg-3,#1e293b);border:1px solid var(--border,#334155);border-radius:3px;color:var(--text-2)">'+
-                          '<option value="">All sides</option>'+
-                          '<option value="BUY">Long</option>'+
-                          '<option value="SELL">Short</option>'+
-                        '</select>'+
-                        '<button class="btn lm-sm-btn" style="color:var(--green,#4ade80)" onclick="window._lmPapPerfRefresh()">Refresh</button>'+
-                      '</div>'+
-                      /* Status / sample quality message */
-                      '<div id="lmPapPerfStatus" style="font-size:9px;color:var(--text-3);margin-bottom:5px">Click Refresh to load performance analytics</div>'+
-                      /* Summary cards */
-                      '<div id="lmPapPerfCards" style="display:none;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:6px">'+
-                        '<div class="lm-pp-card"><div class="lm-pp-cl">Net PnL</div><div id="lmPapPerfNetPnl" class="lm-pp-cv">—</div></div>'+
-                        '<div class="lm-pp-card"><div class="lm-pp-cl">Win Rate</div><div id="lmPapPerfWinRate" class="lm-pp-cv">—</div></div>'+
-                        '<div class="lm-pp-card"><div class="lm-pp-cl">Profit Factor</div><div id="lmPapPerfPF" class="lm-pp-cv">—</div></div>'+
-                        '<div class="lm-pp-card"><div class="lm-pp-cl">Expectancy</div><div id="lmPapPerfExp" class="lm-pp-cv">—</div></div>'+
-                        '<div class="lm-pp-card"><div class="lm-pp-cl">Avg Win</div><div id="lmPapPerfAvgWin" class="lm-pp-cv">—</div></div>'+
-                        '<div class="lm-pp-card"><div class="lm-pp-cl">Avg Loss</div><div id="lmPapPerfAvgLoss" class="lm-pp-cv">—</div></div>'+
-                        '<div class="lm-pp-card"><div class="lm-pp-cl">Max Drawdown</div><div id="lmPapPerfDD" class="lm-pp-cv">—</div></div>'+
-                        '<div class="lm-pp-card"><div class="lm-pp-cl">Trades</div><div id="lmPapPerfCount" class="lm-pp-cv">—</div></div>'+
-                      '</div>'+
-                      /* Trend + streaks row */
-                      '<div id="lmPapPerfMeta" style="display:none;font-size:9px;color:var(--text-3);margin-bottom:5px;line-height:1.6">'+
-                        '<span id="lmPapPerfTrend"></span>'+
-                        '<span style="margin-left:8px" id="lmPapPerfStreaks"></span>'+
-                        '<span style="margin-left:8px" id="lmPapPerfWLB"></span>'+
-                      '</div>'+
-                      /* Account context */
-                      '<div id="lmPapPerfAcct" style="display:none;font-size:9px;color:var(--text-3);margin-bottom:5px;line-height:1.6">'+
-                        'Equity: <span id="lmPapPerfEquity">—</span> &nbsp;|&nbsp; Realized: <span id="lmPapPerfRealized">—</span> &nbsp;|&nbsp; Unrealized: <span id="lmPapPerfUnrealized">—</span>'+
-                      '</div>'+
-                      /* Warnings */
-                      '<div id="lmPapPerfWarnings" style="display:none;font-size:9px;padding:4px 6px;background:rgba(250,204,21,.06);border:1px solid rgba(250,204,21,.2);border-radius:3px;color:var(--yellow,#facc15);margin-bottom:4px;line-height:1.5"></div>'+
-                      /* Equity curve canvas */
-                      '<div id="lmPapPerfChartWrap" style="display:none;margin-bottom:6px">'+
-                        '<div style="font-size:9px;font-weight:600;color:var(--text-2);margin-bottom:3px">Equity Curve</div>'+
-                        '<canvas id="lmPapPerfChart" style="width:100%;height:80px;display:block;border-radius:3px;background:var(--bg-3,#1e293b)"></canvas>'+
-                      '</div>'+
-                      /* Breakdowns */
-                      '<div id="lmPapPerfBreakdowns" style="display:none">'+
-                        '<div style="font-size:9px;font-weight:600;color:var(--text-2);margin-bottom:3px">Breakdowns</div>'+
-                        '<table style="width:100%;border-collapse:collapse;font-size:9px;margin-bottom:4px">'+
-                          '<thead><tr>'+
-                            '<th style="text-align:left;padding:2px 3px;color:var(--text-3)">Symbol</th>'+
-                            '<th style="text-align:right;padding:2px 3px;color:var(--text-3)">Trades</th>'+
-                            '<th style="text-align:right;padding:2px 3px;color:var(--text-3)">Win%</th>'+
-                            '<th style="text-align:right;padding:2px 3px;color:var(--text-3)">Net PnL</th>'+
-                          '</tr></thead>'+
-                          '<tbody id="lmPapPerfSymTbody"></tbody>'+
-                        '</table>'+
-                        '<table style="width:100%;border-collapse:collapse;font-size:9px;margin-bottom:4px">'+
-                          '<thead><tr>'+
-                            '<th style="text-align:left;padding:2px 3px;color:var(--text-3)">Exit Reason</th>'+
-                            '<th style="text-align:right;padding:2px 3px;color:var(--text-3)">Count</th>'+
-                            '<th style="text-align:right;padding:2px 3px;color:var(--text-3)">Net PnL</th>'+
-                          '</tr></thead>'+
-                          '<tbody id="lmPapPerfExitTbody"></tbody>'+
-                        '</table>'+
-                      '</div>'+
-                      /* Recent trades */
-                      '<div id="lmPapPerfRecent" style="display:none">'+
-                        '<div style="font-size:9px;font-weight:600;color:var(--text-2);margin-bottom:3px">Recent Closed Trades</div>'+
-                        '<table style="width:100%;border-collapse:collapse;font-size:9px">'+
-                          '<thead><tr>'+
-                            '<th style="text-align:left;padding:2px 3px;color:var(--text-3)">Symbol</th>'+
-                            '<th style="text-align:left;padding:2px 3px;color:var(--text-3)">Side</th>'+
-                            '<th style="text-align:right;padding:2px 3px;color:var(--text-3)">PnL</th>'+
-                            '<th style="text-align:left;padding:2px 3px;color:var(--text-3)">Exit</th>'+
-                          '</tr></thead>'+
-                          '<tbody id="lmPapPerfRecentTbody"></tbody>'+
-                        '</table>'+
-                      '</div>'+
-                      '<div style="font-size:8px;color:var(--text-4,#475569);margin-top:5px">Analytics only. No orders. No execution. Read-only.</div>'+
-                    '</div>'+
-
-                    /* ── Phase 11.15: AI Learning Review Loop ─────────── */
-                    '<div class="lm-ws-section" id="lmLearnRevSection" style="margin-top:4px">'+
-                      '<div class="lm-ws-sh-row" style="display:flex;align-items:center;gap:6px;margin-bottom:4px">'+
-                        '<div class="lm-ws-sh" style="margin:0;flex:1">AI Learning Review</div>'+
-                        '<button id="lmLearnRevGenBtn" onclick="window._lmLearningReviewGenerate()" style="font-size:9px;padding:2px 7px;background:var(--accent,#3b82f6);color:#fff;border:none;border-radius:3px;cursor:pointer">Generate</button>'+
-                        '<button id="lmLearnRevRefreshBtn" onclick="window._lmLearningReviewRefresh()" style="font-size:9px;padding:2px 7px;background:var(--bg-3,#1e293b);color:var(--text-2,#cbd5e1);border:1px solid var(--border,#334155);border-radius:3px;cursor:pointer">↻</button>'+
-                      '</div>'+
-                      '<div id="lmLearnRevBanner" style="font-size:9px;color:var(--text-3,#94a3b8);background:var(--bg-3,#1e293b);border:1px solid var(--border,#334155);border-radius:3px;padding:4px 6px;margin-bottom:5px;line-height:1.4">'+
-                        '⚠ Advisory only. AI observations are based on past paper trades. No recommendations are applied automatically. No strategy changes. No parameter edits. Human review required for all insights.'+
-                      '</div>'+
-                      '<div id="lmLearnRevStatus" style="font-size:9px;color:var(--text-3,#94a3b8);min-height:14px;margin-bottom:3px"></div>'+
-                      '<div id="lmLearnRevList" style="display:flex;flex-direction:column;gap:3px"></div>'+
-                      /* Detail panel (hidden until a review is opened) */
-                      '<div id="lmLearnRevDetail" style="display:none;margin-top:6px;background:var(--bg-3,#1e293b);border:1px solid var(--border,#334155);border-radius:4px;padding:6px">'+
-                        '<div style="display:flex;align-items:center;gap:4px;margin-bottom:4px">'+
-                          '<span id="lmLearnRevDetailTitle" style="font-size:10px;font-weight:600;color:var(--text-1,#f1f5f9);flex:1"></span>'+
-                          '<button onclick="document.getElementById(\'lmLearnRevDetail\').style.display=\'none\'" style="font-size:9px;padding:1px 5px;background:transparent;color:var(--text-3,#94a3b8);border:1px solid var(--border,#334155);border-radius:3px;cursor:pointer">✕</button>'+
-                        '</div>'+
-                        '<div id="lmLearnRevDetailMeta" style="font-size:9px;color:var(--text-3,#94a3b8);margin-bottom:4px"></div>'+
-                        '<div id="lmLearnRevDetailSummary" style="font-size:9px;color:var(--text-2,#cbd5e1);margin-bottom:5px;line-height:1.5"></div>'+
-                        '<div id="lmLearnRevDetailObs" style="display:flex;flex-direction:column;gap:3px;margin-bottom:5px"></div>'+
-                        '<div id="lmLearnRevDetailProposals" style="margin-bottom:5px"></div>'+
-                        '<div id="lmLearnRevDetailWntc" style="margin-bottom:5px;padding:4px 6px;background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.2);border-radius:3px"></div>'+
-                        '<div id="lmLearnRevDetailWarns" style="font-size:8px;color:var(--warn,#f59e0b);margin-bottom:5px"></div>'+
-                        '<div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">'+
-                          '<button id="lmLearnRevAcceptBtn" onclick="window._lmLearningReviewUpdate(\'accepted_insight\')" style="font-size:9px;padding:2px 7px;background:var(--green,#22c55e);color:#fff;border:none;border-radius:3px;cursor:pointer">Accept Insight</button>'+
-                          '<button id="lmLearnRevRejectBtn" onclick="window._lmLearningReviewUpdate(\'rejected\')" style="font-size:9px;padding:2px 7px;background:var(--red,#ef4444);color:#fff;border:none;border-radius:3px;cursor:pointer">Reject</button>'+
-                          '<button id="lmLearnRevArchiveBtn" onclick="window._lmLearningReviewUpdate(\'archived\')" style="font-size:9px;padding:2px 7px;background:var(--bg-4,#0f172a);color:var(--text-3,#94a3b8);border:1px solid var(--border,#334155);border-radius:3px;cursor:pointer">Archive</button>'+
-                        '</div>'+
-                        '<div style="margin-top:5px">'+
-                          '<textarea id="lmLearnRevNoteInput" placeholder="Add a note (optional)…" rows="2" style="width:100%;font-size:9px;background:var(--bg-2,#0f172a);color:var(--text-1,#f1f5f9);border:1px solid var(--border,#334155);border-radius:3px;padding:3px 5px;resize:vertical;box-sizing:border-box"></textarea>'+
-                          '<button onclick="window._lmLearningReviewSaveNote()" style="margin-top:3px;font-size:9px;padding:2px 7px;background:var(--bg-3,#1e293b);color:var(--text-2,#cbd5e1);border:1px solid var(--border,#334155);border-radius:3px;cursor:pointer">Save Note</button>'+
-                        '</div>'+
-                      '</div>'+
-                      '<div style="font-size:8px;color:var(--text-4,#475569);margin-top:5px">Advisory only. AI observations from paper trade history. No automatic execution.</div>'+
-                    '</div>'+
-
-                  '</div>'+ /* end lmTermGrpBody-paper */
-                '</div>'+ /* end GROUP 1 */
-
-                /* ── GROUP 2: Execution Readiness (open) ───────────────────── */
-                '<div class="lm-term-group" id="lmTermGrp-execready">'+
-                  '<div class="lm-term-grp-hdr" onclick="window._lmToggleTermGroup(\'execready\')">'+
-                    '<span class="lm-term-grp-arrow" id="lmTermGrpArr-execready">▼</span>'+
-                    '<span>Execution Readiness</span>'+
-                    '<span style="font-size:9px;color:var(--text-3);margin-left:6px">Simulation · Phase 11.6</span>'+
-                  '</div>'+
-                  '<div id="lmTermGrpBody-execready">'+
-                    '<div class="lm-ws-section" id="lmExecSimSection">'+
-                      '<div class="lm-ws-sh">Execution Simulator</div>'+
-                      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:10px;margin-bottom:8px">'+
-                        '<span style="color:var(--text-3)">Execution status:</span><span style="color:var(--yellow,#facc15);font-weight:700">SIMULATION ONLY</span>'+
-                        '<span style="color:var(--text-3)">Exchange orders:</span><span style="color:var(--red-2,#f87171);font-weight:700">DISABLED</span>'+
-                        '<span style="color:var(--text-3)">Execution:</span><span style="color:var(--red-2,#f87171);font-weight:700">DISABLED</span>'+
-                      '</div>'+
-                      '<div id="lmSimGrid" style="display:none">'+
-                        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:10px;color:var(--text-3);padding:2px 0 6px">'+
-                          '<span>Ready for testnet:</span><span id="lmSimReady" style="font-weight:700">—</span>'+
-                          '<span>Intent valid:</span><span id="lmSimIntent">—</span>'+
-                          '<span>Policy valid:</span><span id="lmSimPolicy">—</span>'+
-                          '<span>Decision valid:</span><span id="lmSimDecision">—</span>'+
-                          '<span>Filter valid:</span><span id="lmSimFilter">—</span>'+
-                          '<span>Data health:</span><span id="lmSimData">—</span>'+
-                        '</div>'+
-                        '<div id="lmSimIntentBox" style="display:none;font-size:9.5px;color:var(--text-3);padding:4px 6px;background:var(--bg-2);border-radius:4px;margin-bottom:4px;line-height:1.5"></div>'+
-                        '<div id="lmSimReasons" style="display:none;font-size:9px;color:var(--red-2,#f87171);padding:3px 6px;background:rgba(239,68,68,.07);border-radius:4px;margin-bottom:4px"></div>'+
-                        '<div id="lmSimWarnings" style="display:none;font-size:9px;color:var(--yellow,#facc15);padding:3px 6px;background:rgba(251,191,36,.06);border-radius:4px"></div>'+
-                      '</div>'+
-                      '<div style="margin-top:8px">'+
-                        '<button class="btn lm-sm-btn" id="lmRunSimBtn" style="width:100%;justify-content:center" onclick="window._lmRunSimulation()">Run Simulation</button>'+
-                      '</div>'+
-                      '<div style="font-size:9px;color:var(--text-3);padding:5px 0 0;line-height:1.4">'+
-                        '<b style="color:var(--yellow)">Phase 11.6</b> — Simulation only. No orders. No execution. No automation.'+
-                      '</div>'+
-                    '</div>'+
-                  '</div>'+ /* end lmTermGrpBody-execready */
-                '</div>'+ /* end GROUP 2 */
-
-                /* ── GROUP 3: Binance Testnet (collapsed, API Testing Only) ── */
-                '<div class="lm-term-group" id="lmTermGrp-testnet">'+
-                  '<div class="lm-term-grp-hdr" onclick="window._lmToggleTermGroup(\'testnet\')">'+
-                    '<span class="lm-term-grp-arrow" id="lmTermGrpArr-testnet">▶</span>'+
-                    '<span>Binance Testnet</span>'+
-                    '<span style="font-size:9px;color:var(--yellow,#facc15);margin-left:6px">API Testing Only · Phase 11.5 / 11.7A</span>'+
-                  '</div>'+
-                  '<div id="lmTermGrpBody-testnet" style="display:none">'+
-                    '<div class="lm-ws-grid-2" style="padding:0 0 8px">'+
-                      '<div>'+
-                        '<div class="lm-ws-section" id="lmBtConnectorSection">'+
-                          '<div class="lm-ws-sh">Binance Testnet Connector</div>'+
-                          '<div id="lmBtStatusGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;font-size:10px;color:var(--text-3)">'+
-                            '<span>Testnet locked:</span><span id="lmBtTestnetLocked" style="color:var(--green)">—</span>'+
-                            '<span>Credentials:</span><span id="lmBtCreds" style="color:var(--text-3)">—</span>'+
-                            '<span>Ping:</span><span id="lmBtPing" style="color:var(--text-3)">—</span>'+
-                            '<span>Server time:</span><span id="lmBtServerTime" style="color:var(--text-3)">—</span>'+
-                            '<span>Account:</span><span id="lmBtAccount" style="color:var(--text-3)">—</span>'+
-                            '<span>Balance (USDT):</span><span id="lmBtBalance" style="color:var(--text-3)">—</span>'+
-                            '<span>Positions:</span><span id="lmBtPositions" style="color:var(--text-3)">—</span>'+
-                            '<span>Avail. USDT:</span><span id="lmBtAvailUsdt" style="color:var(--accent);font-weight:700">—</span>'+
-                            '<span>Last checked:</span><span id="lmBtCheckedAt" style="color:var(--text-3)">—</span>'+
-                            '<span>Orders enabled:</span><span style="color:var(--red-2,#f87171);font-weight:700">FALSE</span>'+
-                            '<span>Execution:</span><span style="color:var(--red-2,#f87171);font-weight:700">FALSE</span>'+
-                            '<span>Mode:</span><span style="color:var(--yellow,#facc15);font-weight:700">READ ONLY</span>'+
-                          '</div>'+
-                          '<div id="lmBtError" style="display:none;font-size:10px;color:var(--red);padding:3px 6px;background:rgba(239,68,68,.07);border-radius:4px;margin:6px 0"></div>'+
-                          '<div style="display:flex;gap:6px;margin-top:8px">'+
-                            '<button class="btn lm-sm-btn" id="lmBtCheckBtn" style="flex:1;justify-content:center" onclick="window._lmBtCheck()">Check Connection</button>'+
-                            '<button class="btn lm-sm-btn" id="lmBtBalanceBtn" style="flex:1;justify-content:center" onclick="window._lmBtRefreshBalance()">Refresh Balance</button>'+
-                            '<button class="btn lm-sm-btn" id="lmBtPositionsBtn" style="flex:1;justify-content:center" onclick="window._lmBtRefreshPositions()">Refresh Positions</button>'+
-                          '</div>'+
-                          '<div style="font-size:9px;color:var(--text-3);padding:5px 0 0;line-height:1.4">'+
-                            '<b style="color:var(--yellow)">Phase 11.5</b> — Read-only. Testnet only (demo-fapi.binance.com). No execution.'+
-                          '</div>'+
-                        '</div>'+
-                      '</div>'+
-                      '<div>'+
-                        '<div class="lm-ws-section" style="background:rgba(251,191,36,.04);border-color:rgba(251,191,36,.2)">'+
-                          '<div class="lm-ws-sh" style="color:var(--yellow,#facc15)">Testnet Order Draft <span style="font-size:9px;opacity:.7;font-weight:400">(Phase 11.7A)</span></div>'+
-                          '<table style="width:100%;font-size:10px;border-collapse:collapse">'+
-                            '<tr><td style="color:var(--text-3);padding:2px 0;width:44%">Symbol</td><td id="lmTod-symbol" style="color:var(--text-1)">—</td></tr>'+
-                            '<tr><td style="color:var(--text-3);padding:2px 0">Side</td><td id="lmTod-side" style="color:var(--text-1)">—</td></tr>'+
-                            '<tr><td style="color:var(--text-3);padding:2px 0">Type</td><td style="color:var(--text-1)">LIMIT / GTC</td></tr>'+
-                            '<tr><td style="color:var(--text-3);padding:2px 0">Entry Price</td><td id="lmTod-price" style="color:var(--text-1)">—</td></tr>'+
-                            '<tr><td style="color:var(--text-3);padding:2px 0">Sim Ready</td><td id="lmTod-simReady" style="color:var(--text-1)">—</td></tr>'+
-                            '<tr><td style="color:var(--text-3);padding:2px 0">Connector</td><td id="lmTod-connector" style="color:var(--text-1)">—</td></tr>'+
-                            '<tr><td style="color:var(--text-3);padding:2px 0">Order Env</td><td id="lmTod-orderEnv" style="color:var(--text-1)">—</td></tr>'+
-                            '<tr><td style="color:var(--text-3);padding:2px 0">Filter OK</td><td id="lmTod-filterOk" style="color:var(--text-1)">—</td></tr>'+
-                            '<tr><td style="color:var(--text-3);padding:2px 0">Est. Notional</td><td id="lmTod-notional" style="color:var(--text-1)">—</td></tr>'+
-                          '</table>'+
-                          '<div style="margin-top:8px;display:flex;gap:4px;align-items:center">'+
-                            '<label style="font-size:9px;color:var(--text-3);white-space:nowrap">Qty:</label>'+
-                            '<input id="lmTodQtyInput" type="text" placeholder="e.g. 0.001" '+
-                              'style="flex:1;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:4px;padding:4px 8px;font-size:10px;color:var(--text-1);outline:none" '+
-                              'oninput="window._lmTodRefreshDraft()" />'+
-                            '<button class="btn lm-sm-btn" id="lmTodDraftBtn" style="white-space:nowrap" onclick="window._lmTodRefreshDraft()">Refresh</button>'+
-                          '</div>'+
-                          '<div id="lmTod-qtyErr" style="display:none;font-size:9px;color:#f87171;padding:2px 0"></div>'+
-                          '<div id="lmTod-reasons" style="display:none;font-size:9px;color:var(--yellow);padding:2px 0;line-height:1.4"></div>'+
-                          '<div style="margin-top:8px">'+
-                            '<button class="btn lm-sm-btn" id="lmTodSubmitBtn" disabled '+
-                              'style="width:100%;justify-content:center;background:rgba(16,185,129,.15);border-color:rgba(16,185,129,.4);color:#6ee7b7;cursor:not-allowed;opacity:.5" '+
-                              'onclick="window._lmTodSubmitOrder()">'+
-                              'Submit Testnet Order'+
-                            '</button>'+
-                          '</div>'+
-                          '<div id="lmTod-result" style="display:none;font-size:9px;padding:4px 0;line-height:1.5"></div>'+
-                          '<div style="font-size:9px;color:var(--text-3);padding:4px 0 0;line-height:1.4">'+
-                            '<b style="color:#f87171">Manual submit only.</b> No TP/SL. No automation. Entry order only.'+
-                          '</div>'+
-                        '</div>'+
-                        '<div class="lm-ws-section">'+
-                          '<div class="lm-ws-sh">Order Status</div>'+
-                          '<div style="font-size:10px;color:var(--text-3);line-height:1.5">'+
-                            'Last submitted testnet order status appears here after Submit Testnet Order.'+
-                          '</div>'+
-                          '<div id="lmTodResultExpanded" style="display:none;font-size:10px;padding:4px 0;line-height:1.6"></div>'+
-                        '</div>'+
-                      '</div>'+
-                    '</div>'+
-                  '</div>'+ /* end lmTermGrpBody-testnet */
-                '</div>'+ /* end GROUP 3 */
-
-                /* ── GROUP 4: Logs (collapsed, no action buttons) ──────────── */
-                '<div class="lm-term-group" id="lmTermGrp-logs">'+
-                  '<div class="lm-term-grp-hdr" onclick="window._lmToggleTermGroup(\'logs\')">'+
-                    '<span class="lm-term-grp-arrow" id="lmTermGrpArr-logs">▶</span>'+
-                    '<span>Logs</span>'+
-                  '</div>'+
-                  '<div id="lmTermGrpBody-logs" style="display:none">'+
-                    '<div class="lm-ws-section">'+
-                      '<div class="lm-ws-sh">Order Log</div>'+
-                      '<div class="lm-tbl-wrap" style="max-height:160px">'+
-                        '<table class="lm-inner-tbl">'+
-                          '<thead><tr><th>Symbol</th><th>Side</th><th>Type</th><th>Qty</th><th>Price</th><th>Status</th><th>Client ID</th></tr></thead>'+
-                          '<tbody><tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:14px 0">No entries</td></tr></tbody>'+
-                        '</table>'+
-                      '</div>'+
-                    '</div>'+
-                  '</div>'+ /* end lmTermGrpBody-logs */
-                '</div>'+ /* end GROUP 4 */
 
               '</div>'+ /* end lm-ws-page */
-            '</div>'+ /* end lmWsPane-terminal */
-
-            /* PANE: Risk Guard */
-            '<div id="lmWsPane-riskguard" class="lm-ws-pane" hidden>'+
-              '<div class="lm-ws-page">'+
-                '<div class="lm-ws-header">'+
-                  '<div class="lm-ws-htitle">'+
-                    '<svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>'+
-                    'Risk Guard'+
-                  '</div>'+
-                  '<span style="font-size:10px;color:var(--text-3)">Safety controls &amp; policy enforcement</span>'+
-                '</div>'+
-                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+
-                  '<div class="lm-rg-card">'+
-                    '<div class="lm-rg-card-top"><span class="lm-rg-ico off"></span><span class="lm-rg-label">Trading Status</span><span class="lm-rg-val">DISABLED</span></div>'+
-                    '<div class="lm-rg-note">Demo trading is off. Set DEMO_TRADING_ENABLED=true to enable.</div>'+
-                  '</div>'+
-                  '<div class="lm-rg-card">'+
-                    '<div class="lm-rg-card-top"><span class="lm-rg-ico ok"></span><span class="lm-rg-label">Max Concurrent Trades</span><span class="lm-rg-val">3</span></div>'+
-                    '<div class="lm-rg-note">Hard limit on simultaneous open positions.</div>'+
-                  '</div>'+
-                  '<div class="lm-rg-card">'+
-                    '<div class="lm-rg-card-top"><span class="lm-rg-ico ok"></span><span class="lm-rg-label">Max Loss / Trade</span><span class="lm-rg-val">1.0 %</span></div>'+
-                    '<div class="lm-rg-note">Risk Guard rejects proposals exceeding this threshold.</div>'+
-                  '</div>'+
-                  '<div class="lm-rg-card">'+
-                    '<div class="lm-rg-card-top"><span class="lm-rg-ico ok"></span><span class="lm-rg-label">Max Leverage</span><span class="lm-rg-val">5 ×</span></div>'+
-                    '<div class="lm-rg-note">Leverage cap enforced before any demo submission.</div>'+
-                  '</div>'+
-                  '<div class="lm-rg-card">'+
-                    '<div class="lm-rg-card-top"><span class="lm-rg-ico warn"></span><span class="lm-rg-label">Data Freshness</span><span class="lm-rg-val">UNKNOWN</span></div>'+
-                    '<div class="lm-rg-note">Stale or missing market data will block execution.</div>'+
-                  '</div>'+
-                  '<div class="lm-rg-card">'+
-                    '<div class="lm-rg-card-top"><span class="lm-rg-ico off"></span><span class="lm-rg-label">Last Decision</span><span class="lm-rg-val">—</span></div>'+
-                    '<div class="lm-rg-note">No proposals evaluated yet this session.</div>'+
-                  '</div>'+
-                '</div>'+
-                '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:10px">'+
-                  '<div class="lm-ws-section">'+
-                    '<div class="lm-ws-sh">Exposure Limits</div>'+
-                    '<div style="font-size:10px;color:var(--text-3);line-height:1.7">'+
-                      '<div style="display:flex;justify-content:space-between"><span>Daily exposure cap</span><span style="color:var(--text-2)">—</span></div>'+
-                      '<div style="display:flex;justify-content:space-between"><span>Max portfolio risk</span><span style="color:var(--text-2)">—</span></div>'+
-                      '<div style="display:flex;justify-content:space-between"><span>Correlation limit</span><span style="color:var(--text-2)">—</span></div>'+
-                    '</div>'+
-                  '</div>'+
-                  '<div class="lm-ws-section">'+
-                    '<div class="lm-ws-sh">Daily Limits</div>'+
-                    '<div style="font-size:10px;color:var(--text-3);line-height:1.7">'+
-                      '<div style="display:flex;justify-content:space-between"><span>Trades today</span><span style="color:var(--text-2)">0</span></div>'+
-                      '<div style="display:flex;justify-content:space-between"><span>Daily loss limit</span><span style="color:var(--text-2)">—</span></div>'+
-                      '<div style="display:flex;justify-content:space-between"><span>Session P&amp;L</span><span style="color:var(--text-2)">—</span></div>'+
-                    '</div>'+
-                  '</div>'+
-                  '<div class="lm-ws-section">'+
-                    '<div class="lm-ws-sh">Policy Blocks</div>'+
-                    '<div style="font-size:10px;color:var(--text-3);line-height:1.7">'+
-                      '<div style="display:flex;justify-content:space-between"><span>AI blocks</span><span style="color:var(--text-2)">0</span></div>'+
-                      '<div style="display:flex;justify-content:space-between"><span>Policy blocks</span><span style="color:var(--text-2)">0</span></div>'+
-                      '<div style="display:flex;justify-content:space-between"><span>Setup blocks</span><span style="color:var(--text-2)">0</span></div>'+
-                    '</div>'+
-                  '</div>'+
-                '</div>'+
-                '<div class="lm-ws-section" style="margin-top:10px">'+
-                  '<div class="lm-ws-sh">Risk Events</div>'+
-                  '<div class="lm-tbl-wrap" style="max-height:220px">'+
-                    '<table class="lm-inner-tbl">'+
-                      '<thead><tr><th>Time</th><th>Type</th><th>Symbol</th><th>Reason</th><th>Action</th></tr></thead>'+
-                      '<tbody><tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:18px 0">No risk events this session</td></tr></tbody>'+
-                    '</table>'+
-                  '</div>'+
-                '</div>'+
-              '</div>'+
-            '</div>'+ /* end lmWsPane-riskguard */
-
-            /* PANE: Trade Journal */
-            '<div id="lmWsPane-journal" class="lm-ws-pane" hidden>'+
-              '<div class="lm-ws-page">'+
-                '<div class="lm-ws-header">'+
-                  '<div class="lm-ws-htitle">'+
-                    '<svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>'+
-                    'Trade Journal'+
-                  '</div>'+
-                  '<span style="font-size:10px;color:var(--text-3)">Closed trades, history &amp; performance</span>'+
-                '</div>'+
-                '<div class="lm-jn-cards" style="grid-template-columns:repeat(4,1fr)">'+
-                  '<div class="lm-jn-card"><div class="lm-jn-card-l">TOTAL TRADES</div><div class="lm-jn-card-v">0</div></div>'+
-                  '<div class="lm-jn-card"><div class="lm-jn-card-l">WIN RATE</div><div class="lm-jn-card-v">—</div></div>'+
-                  '<div class="lm-jn-card"><div class="lm-jn-card-l">AVG R</div><div class="lm-jn-card-v">—</div></div>'+
-                  '<div class="lm-jn-card"><div class="lm-jn-card-l">NET PnL</div><div class="lm-jn-card-v">—</div></div>'+
-                '</div>'+
-                '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:10px">'+
-                  '<div class="lm-ws-section">'+
-                    '<div class="lm-ws-sh">TP Hits</div>'+
-                    '<div style="font-size:24px;font-weight:700;font-family:var(--mono);color:var(--green-2,#4ade80);margin:4px 0">0</div>'+
-                    '<div style="font-size:10px;color:var(--text-3)">Take-profit targets hit</div>'+
-                  '</div>'+
-                  '<div class="lm-ws-section">'+
-                    '<div class="lm-ws-sh">SL Hits</div>'+
-                    '<div style="font-size:24px;font-weight:700;font-family:var(--mono);color:var(--red-2,#f87171);margin:4px 0">0</div>'+
-                    '<div style="font-size:10px;color:var(--text-3)">Stop-loss exits</div>'+
-                  '</div>'+
-                  '<div class="lm-ws-section">'+
-                    '<div class="lm-ws-sh">AI Interventions</div>'+
-                    '<div style="font-size:24px;font-weight:700;font-family:var(--mono);color:var(--yellow,#facc15);margin:4px 0">0</div>'+
-                    '<div style="font-size:10px;color:var(--text-3)">AI-blocked or modified</div>'+
-                  '</div>'+
-                '</div>'+
-                '<div class="lm-ws-section" style="margin-top:10px">'+
-                  '<div class="lm-ws-sh">Closed Trades</div>'+
-                  '<div class="lm-tbl-wrap" style="max-height:280px">'+
-                    '<table class="lm-inner-tbl" style="min-width:620px">'+
-                      '<thead><tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL</th><th>R</th><th>Duration</th><th>Status</th></tr></thead>'+
-                      '<tbody><tr><td colspan="8" style="text-align:center;color:var(--text-3);padding:20px 0">No closed trades</td></tr></tbody>'+
-                    '</table>'+
-                  '</div>'+
-                '</div>'+
-                '<div class="lm-ws-section" style="margin-top:10px">'+
-                  '<div class="lm-ws-sh">AI Intervention History</div>'+
-                  '<div class="lm-tbl-wrap" style="max-height:180px">'+
-                    '<table class="lm-inner-tbl" style="min-width:580px">'+
-                      '<thead><tr><th>Time</th><th>Symbol</th><th>Action</th><th>Confidence</th><th>Reason</th></tr></thead>'+
-                      '<tbody><tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:14px 0">No AI interventions recorded</td></tr></tbody>'+
-                    '</table>'+
-                  '</div>'+
-                '</div>'+
-                '<div class="lm-ws-section" style="margin-top:10px">'+
-                  '<div class="lm-ws-sh">Execution Logs</div>'+
-                  '<div class="lm-tbl-wrap" style="max-height:160px">'+
-                    '<table class="lm-inner-tbl" style="min-width:580px">'+
-                      '<thead><tr><th>Time</th><th>Symbol</th><th>Type</th><th>Client ID</th><th>Status</th><th>Error</th></tr></thead>'+
-                      '<tbody><tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:14px 0">No execution logs</td></tr></tbody>'+
-                    '</table>'+
-                  '</div>'+
-                '</div>'+
-                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">'+
-                  '<div class="lm-ws-section">'+
-                    '<div class="lm-ws-sh">Performance Statistics</div>'+
-                    '<div style="font-size:10px;color:var(--text-3);line-height:1.8">'+
-                      '<div style="display:flex;justify-content:space-between"><span>Profit factor</span><span style="color:var(--text-2)">—</span></div>'+
-                      '<div style="display:flex;justify-content:space-between"><span>Best trade</span><span style="color:var(--green-2,#4ade80)">—</span></div>'+
-                      '<div style="display:flex;justify-content:space-between"><span>Worst trade</span><span style="color:var(--red-2,#f87171)">—</span></div>'+
-                      '<div style="display:flex;justify-content:space-between"><span>Avg hold time</span><span style="color:var(--text-2)">—</span></div>'+
-                      '<div style="display:flex;justify-content:space-between"><span>Max drawdown</span><span style="color:var(--text-2)">—</span></div>'+
-                    '</div>'+
-                  '</div>'+
-                  '<div class="lm-ws-section">'+
-                    '<div class="lm-ws-sh">Session Summary</div>'+
-                    '<div style="font-size:10px;color:var(--text-3);line-height:1.8">'+
-                      '<div style="display:flex;justify-content:space-between"><span>Trades opened</span><span style="color:var(--text-2)">0</span></div>'+
-                      '<div style="display:flex;justify-content:space-between"><span>Trades closed</span><span style="color:var(--text-2)">0</span></div>'+
-                      '<div style="display:flex;justify-content:space-between"><span>Testnet orders</span><span style="color:var(--text-2)">0</span></div>'+
-                      '<div style="display:flex;justify-content:space-between"><span>AI decisions</span><span style="color:var(--text-2)">—</span></div>'+
-                      '<div style="display:flex;justify-content:space-between"><span>Simulations run</span><span style="color:var(--text-2)">—</span></div>'+
-                    '</div>'+
-                  '</div>'+
-                '</div>'+
-              '</div>'+
-            '</div>'+ /* end lmWsPane-journal */
+            '</div>'+ /* end lmWsPane-history */
 
           '</div>'+ /* end .lm-right */
 
@@ -11506,6 +11045,388 @@ select.cdd-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
         '</tr>';
     }).join('');
   };
+
+  /* ── Phase SIG-1: Signal Settings + Signal History ────────────────────── */
+  (function(){
+    var _sigModules = [];      /* catalog from the server */
+    var _sigState   = null;    /* last loaded settings */
+
+    var TRIGGERS = [
+      {v:'in_zone',  t:'When price reaches the zone and order flow confirms',
+                     d:'The precise moment. Fewer alerts, all immediately actionable.'},
+      {v:'approach', t:'When price is approaching the zone',
+                     d:'Early warning with time to prepare. More alerts, some never trigger.'},
+      {v:'both',     t:'Both, as separate alerts',
+                     d:'A heads-up followed by a confirmation. Roughly doubles the message count.'}
+    ];
+    var SCOPES = [
+      {v:'top_volume', t:'Top pairs by volume',
+                       d:'Good liquidity and manageable cost.'},
+      {v:'watchlist',  t:'Only my chosen pairs',
+                       d:'Tightest control, lowest cost.'},
+      {v:'all',        t:'Every USDT perpetual',
+                       d:'Maximum coverage, but far more noise and database usage.'}
+    ];
+    var TFS = ['5m','15m','30m','1h','4h','1d'];
+
+    function $(id){ return document.getElementById(id); }
+    function _on(id){ var e=$(id); return !!(e && e.checked); }
+    function _num(id){ var e=$(id); return e ? e.value : null; }
+
+    function _msg(el, text, kind){
+      if(!el) return;
+      var col = kind==='ok' ? 'var(--green,#4ade80)'
+              : kind==='err' ? '#f87171'
+              : 'var(--text-3)';
+      el.textContent = text || '';
+      el.style.color = col;
+    }
+
+    /* ── Radio-style option lists ─────────────────────────────────────── */
+    function _renderChoices(host, opts, name, current, onPick){
+      if(!host) return;
+      host.innerHTML = opts.map(function(o){
+        return '<label style="display:flex;gap:7px;align-items:flex-start;cursor:pointer;padding:4px 0">'+
+          '<input type="radio" name="'+name+'" value="'+o.v+'" style="margin-top:2px;cursor:pointer"'+
+            (o.v===current?' checked':'')+'>'+
+          '<span>'+
+            '<span style="font-size:10px;color:var(--text-2);display:block">'+esc(o.t)+'</span>'+
+            '<span style="font-size:9px;color:var(--text-3)">'+esc(o.d)+'</span>'+
+          '</span>'+
+        '</label>';
+      }).join('');
+      [].forEach.call(host.querySelectorAll('input[type=radio]'), function(r){
+        r.addEventListener('change', function(){ if(onPick) onPick(r.value); });
+      });
+    }
+    function _pickedRadio(name){
+      var r = document.querySelector('input[name="'+name+'"]:checked');
+      return r ? r.value : null;
+    }
+
+    /* ── Conditional field visibility ─────────────────────────────────── */
+    function _syncTriggerUI(mode){
+      var w = $('lmSigApproachWrap');
+      if(w) w.style.display = (mode==='approach'||mode==='both') ? '' : 'none';
+    }
+    function _syncScopeUI(scope){
+      var lim = $('lmSigScopeLimitWrap'), sym = $('lmSigSymbolsWrap');
+      if(lim) lim.style.display = (scope==='top_volume') ? '' : 'none';
+      if(sym) sym.style.display = (scope==='watchlist')  ? '' : 'none';
+    }
+
+    function _syncModeBadge(){
+      var b = $('lmSigModeBadge'); if(!b) return;
+      var on = _on('lmSigEnabled'), send = _on('lmSigDelivery');
+      var txt, bg, fg;
+      if(!on){            txt='Off';          bg='rgba(148,163,184,.15)'; fg='var(--text-3)'; }
+      else if(!send){     txt='Recording only'; bg='rgba(250,204,21,.14)';  fg='var(--yellow,#facc15)'; }
+      else {              txt='Sending to Telegram'; bg='rgba(74,222,128,.14)'; fg='var(--green,#4ade80)'; }
+      b.textContent=txt; b.style.background=bg; b.style.color=fg;
+    }
+
+    /* ── Telegram status strip ────────────────────────────────────────── */
+    function _renderTgStatus(s){
+      var el = $('lmSigTgStatus'); if(!el) return;
+      if(s.telegram_configured){
+        el.style.background='rgba(74,222,128,.10)';
+        el.style.border='1px solid rgba(74,222,128,.25)';
+        el.style.color='var(--green,#4ade80)';
+        el.innerHTML='Connected'+(s.telegram_token_hint?' &middot; token '+esc(s.telegram_token_hint):'')+
+                     (s.telegram_chat_id?' &middot; chat '+esc(s.telegram_chat_id):'');
+      } else if(s.telegram_last_error){
+        el.style.background='rgba(248,113,113,.09)';
+        el.style.border='1px solid rgba(248,113,113,.25)';
+        el.style.color='#f87171';
+        el.textContent=s.telegram_last_error;
+      } else {
+        el.style.background='rgba(148,163,184,.08)';
+        el.style.border='1px solid rgba(148,163,184,.18)';
+        el.style.color='var(--text-3)';
+        el.textContent='Not connected. Signals will be recorded but cannot be sent.';
+      }
+    }
+
+    /* ── Modules ──────────────────────────────────────────────────────── */
+    function _renderModules(enabled){
+      var host = $('lmSigModules'); if(!host) return;
+      var on = {}; (enabled||[]).forEach(function(k){ on[k]=1; });
+      host.innerHTML = _sigModules.map(function(m){
+        return '<label style="display:flex;gap:6px;align-items:flex-start;cursor:pointer">'+
+          '<input type="checkbox" data-sigmod="'+esc(m.key)+'" style="margin-top:2px;cursor:pointer"'+
+            (on[m.key]?' checked':'')+'>'+
+          '<span>'+
+            '<span style="font-size:10px;color:var(--text-2);display:block">'+esc(m.label)+'</span>'+
+            '<span style="font-size:9px;color:var(--text-3)">'+esc(m.desc)+'</span>'+
+          '</span>'+
+        '</label>';
+      }).join('');
+    }
+    function _pickedModules(){
+      return [].map.call(
+        document.querySelectorAll('#lmSigModules input[data-sigmod]:checked'),
+        function(c){ return c.getAttribute('data-sigmod'); });
+    }
+
+    function _renderTimeframes(sel){
+      var host=$('lmSigTimeframes'); if(!host) return;
+      var on={}; (sel||[]).forEach(function(t){ on[t]=1; });
+      host.innerHTML = TFS.map(function(t){
+        return '<label style="display:flex;gap:4px;align-items:center;cursor:pointer;font-size:10px;color:var(--text-2)">'+
+          '<input type="checkbox" data-sigtf="'+t+'" style="cursor:pointer"'+(on[t]?' checked':'')+'> '+t+
+        '</label>';
+      }).join('');
+    }
+    function _pickedTfs(){
+      return [].map.call(
+        document.querySelectorAll('#lmSigTimeframes input[data-sigtf]:checked'),
+        function(c){ return c.getAttribute('data-sigtf'); });
+    }
+
+    /* ── Populate the whole form ──────────────────────────────────────── */
+    function _fill(s){
+      _sigState = s;
+      if($('lmSigEnabled'))      $('lmSigEnabled').checked  = !!s.enabled;
+      if($('lmSigDelivery'))     $('lmSigDelivery').checked = !!s.delivery_enabled;
+      if($('lmSigMinConf'))      $('lmSigMinConf').value       = s.min_confluence;
+      if($('lmSigMinConfidence'))$('lmSigMinConfidence').value = s.min_confidence;
+      if($('lmSigMaxDay'))       $('lmSigMaxDay').value        = s.max_signals_per_day;
+      if($('lmSigCooldown'))     $('lmSigCooldown').value      = s.per_pair_cooldown_min;
+      if($('lmSigApproachPct'))  $('lmSigApproachPct').value   = s.approach_pct;
+      if($('lmSigScopeLimit'))   $('lmSigScopeLimit').value    = s.coin_scope_limit;
+      if($('lmSigLong'))         $('lmSigLong').checked  = !!s.allow_long;
+      if($('lmSigShort'))        $('lmSigShort').checked = !!s.allow_short;
+      if($('lmSigSymbols'))      $('lmSigSymbols').value = (s.symbols||[]).join(' ');
+
+      _renderModules(s.enabled_modules);
+      _renderTimeframes(s.timeframes);
+      _renderChoices($('lmSigTrigger'), TRIGGERS, 'lmSigTriggerMode', s.trigger_mode, _syncTriggerUI);
+      _renderChoices($('lmSigScope'),   SCOPES,   'lmSigScopeMode',   s.coin_scope,   _syncScopeUI);
+      _syncTriggerUI(s.trigger_mode);
+      _syncScopeUI(s.coin_scope);
+      _renderTgStatus(s);
+      _syncModeBadge();
+
+      ['lmSigEnabled','lmSigDelivery'].forEach(function(id){
+        var e=$(id); if(e && !e._sigBound){ e._sigBound=1; e.addEventListener('change',_syncModeBadge); }
+      });
+    }
+
+    /* ── Load ─────────────────────────────────────────────────────────── */
+    window._lmSigLoadSettings = function(){
+      var load=$('lmSigLoading'), body=$('lmSigBody');
+      if(load){ load.style.display=''; load.textContent='Loading settings…'; }
+      if(body) body.style.display='none';
+      fetch('/api/live-monitor/signal-settings',{credentials:'same-origin'})
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+          if(!d || !d.ok){
+            if(load) load.textContent='Could not load settings: '+((d&&d.message)||'unknown error');
+            return;
+          }
+          _sigModules = d.modules || [];
+          _fill(d.settings || {});
+          if(load) load.style.display='none';
+          if(body) body.style.display='';
+          _msg($('lmSigSaveMsg'),'');
+        })
+        .catch(function(e){
+          if(load) load.textContent='Could not load settings: '+e;
+        });
+    };
+
+    /* ── Save ─────────────────────────────────────────────────────────── */
+    window._lmSigSaveSettings = function(){
+      var out = $('lmSigSaveMsg');
+      _msg(out,'Saving…');
+      var syms = ($('lmSigSymbols') ? $('lmSigSymbols').value : '')
+                   .split(/[\s,]+/).filter(function(x){ return x; })
+                   .map(function(x){ return x.toUpperCase(); });
+      var payload = {
+        enabled:               _on('lmSigEnabled'),
+        delivery_enabled:      _on('lmSigDelivery'),
+        enabled_modules:       _pickedModules(),
+        min_confluence:        Number(_num('lmSigMinConf')),
+        min_confidence:        Number(_num('lmSigMinConfidence')),
+        max_signals_per_day:   Number(_num('lmSigMaxDay')),
+        per_pair_cooldown_min: Number(_num('lmSigCooldown')),
+        approach_pct:          Number(_num('lmSigApproachPct')),
+        coin_scope_limit:      Number(_num('lmSigScopeLimit')),
+        allow_long:            _on('lmSigLong'),
+        allow_short:           _on('lmSigShort'),
+        symbols:               syms,
+        timeframes:            _pickedTfs(),
+        trigger_mode:          _pickedRadio('lmSigTriggerMode') || 'in_zone',
+        coin_scope:            _pickedRadio('lmSigScopeMode')   || 'top_volume'
+      };
+      fetch('/api/live-monitor/signal-settings',{
+        method:'POST', credentials:'same-origin',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(payload)
+      })
+      .then(function(r){ return r.json().then(function(d){ return {s:r.status,d:d}; }); })
+      .then(function(res){
+        var d=res.d||{};
+        if(res.s===422 && d.field_errors){
+          var parts=[];
+          for(var k in d.field_errors){ parts.push(_explain(k, d.field_errors[k])); }
+          _msg(out, parts.join('  •  '), 'err');
+          return;
+        }
+        if(!d.ok){ _msg(out, d.message || 'Could not save.', 'err'); return; }
+        _fill(d.settings||{});
+        _msg(out, d.changed ? 'Saved.' : 'No changes to save.', d.changed?'ok':null);
+      })
+      .catch(function(e){ _msg(out,'Could not save: '+e,'err'); });
+    };
+
+    /* Server error codes → plain language. */
+    function _explain(field, code){
+      var c = String(code||'');
+      if(c.indexOf('telegram_not_linked')>=0)
+        return 'Connect Telegram before turning sending on.';
+      if(c.indexOf('at_least_one_direction')>=0)
+        return 'Pick long, short, or both.';
+      if(c.indexOf('at_least_one_module')>=0)
+        return 'Pick at least one scan type.';
+      if(c.indexOf('watchlist_scope_requires')>=0)
+        return 'Add at least one pair, or choose a different coin option.';
+      if(c.indexOf('invalid_symbols')>=0)
+        return 'Some pairs look wrong: '+c.split(':').slice(1).join(':');
+      if(c.indexOf('invalid_timeframes')>=0)
+        return 'Unsupported timeframe selected.';
+      return field+': '+c;
+    }
+
+    /* ── Telegram ─────────────────────────────────────────────────────── */
+    window._lmSigToggleHelp = function(){
+      var h=$('lmSigTgHelp'); if(h) h.style.display = (h.style.display==='none'?'':'none');
+    };
+    window._lmSigToggleAllModules = function(on){
+      [].forEach.call(document.querySelectorAll('#lmSigModules input[data-sigmod]'),
+        function(c){ c.checked = !!on; });
+    };
+    window._lmSigLinkTelegram = function(){
+      var out=$('lmSigSaveMsg');
+      _msg(out,'Connecting to Telegram…');
+      fetch('/api/live-monitor/signal-settings/telegram/link',{
+        method:'POST', credentials:'same-origin',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          telegram_bot_token: ($('lmSigTgToken')?$('lmSigTgToken').value:'').trim(),
+          telegram_chat_id:   ($('lmSigTgChat') ?$('lmSigTgChat').value :'').trim()
+        })
+      })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(d.settings) _fill(d.settings);
+        if(!d.ok){ _msg(out, d.message || 'Could not connect.', 'err'); return; }
+        if($('lmSigTgToken')) $('lmSigTgToken').value='';
+        _msg(out, d.message || 'Connected.', 'ok');
+      })
+      .catch(function(e){ _msg(out,'Could not connect: '+e,'err'); });
+    };
+    window._lmSigUnlinkTelegram = function(){
+      var out=$('lmSigSaveMsg');
+      fetch('/api/live-monitor/signal-settings/telegram/unlink',
+            {method:'POST',credentials:'same-origin'})
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+          if(d.settings) _fill(d.settings);
+          _msg(out, d.ok ? 'Telegram disconnected. Sending is now off.' : 'Could not disconnect.',
+               d.ok?null:'err');
+        })
+        .catch(function(e){ _msg(out,'Could not disconnect: '+e,'err'); });
+    };
+
+    /* ── History ──────────────────────────────────────────────────────── */
+    function _statCard(label, value, colour){
+      return '<div style="background:var(--bg-3,#1e293b);border-radius:4px;padding:7px 9px">'+
+        '<div style="font-size:16px;font-weight:700;color:'+(colour||'var(--text-1)')+'">'+esc(value)+'</div>'+
+        '<div style="font-size:9px;color:var(--text-3);margin-top:1px">'+esc(label)+'</div>'+
+      '</div>';
+    }
+    function _fmtWhen(iso){
+      if(!iso) return '—';
+      try{
+        var d=new Date(iso);
+        return d.toLocaleDateString(undefined,{month:'short',day:'numeric'})+' '+
+               d.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
+      }catch(e){ return String(iso).slice(0,16); }
+    }
+    var OUTCOMES = {
+      pending:     {t:'Open',        c:'var(--text-3)'},
+      target_hit:  {t:'Target',      c:'var(--green,#4ade80)'},
+      stop_hit:    {t:'Stop',        c:'#f87171'},
+      invalidated: {t:'Invalidated', c:'var(--yellow,#facc15)'},
+      expired:     {t:'Expired',     c:'var(--text-3)'}
+    };
+
+    window._lmSigLoadHistory = function(){
+      var period  = $('lmSigHistPeriod')  ? $('lmSigHistPeriod').value  : '30d';
+      var outcome = $('lmSigHistOutcome') ? $('lmSigHistOutcome').value : '';
+      var url = '/api/live-monitor/signal-alerts?period='+encodeURIComponent(period)+
+                (outcome ? '&outcome='+encodeURIComponent(outcome) : '');
+      var empty=$('lmSigHistEmpty'), wrap=$('lmSigHistTableWrap'), stats=$('lmSigHistStats');
+      if(empty){ empty.style.display=''; empty.textContent='Loading…'; }
+      if(wrap) wrap.style.display='none';
+
+      fetch(url,{credentials:'same-origin'})
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+          if(!d || !d.ok){
+            if(empty) empty.textContent='Could not load history: '+((d&&d.message)||'unknown error');
+            return;
+          }
+          var s=d.stats||{};
+          if(stats){
+            stats.innerHTML =
+              _statCard('Signals sent', s.total_alerts||0) +
+              _statCard('Hit target', s.target_hit||0, 'var(--green,#4ade80)') +
+              _statCard('Hit stop', s.stop_hit||0, '#f87171') +
+              _statCard('Still open', s.pending||0) +
+              _statCard('Win rate',
+                        (s.win_rate===null||s.win_rate===undefined) ? '—' : (s.win_rate+'%'),
+                        (s.win_rate===null||s.win_rate===undefined) ? 'var(--text-3)'
+                          : (s.win_rate>=50?'var(--green,#4ade80)':'#f87171'));
+          }
+          var rows=d.alerts||[];
+          if(!rows.length){
+            if(wrap) wrap.style.display='none';
+            if(empty){
+              empty.style.display='';
+              empty.innerHTML = (s.total_alerts
+                ? 'No signals match this filter.'
+                : 'No signals yet.<br><span style="color:var(--text-3)">Once the signal engine is on, everything it finds appears here — including while sending is off, so you can judge quality before switching Telegram on.</span>');
+            }
+            return;
+          }
+          if(empty) empty.style.display='none';
+          if(wrap)  wrap.style.display='';
+          var tb=$('lmSigHistTbody'); if(!tb) return;
+          tb.innerHTML = rows.map(function(a){
+            var oc = OUTCOMES[a.outcome] || {t:a.outcome||'—', c:'var(--text-3)'};
+            var dirCol = (a.direction==='long') ? 'var(--green,#4ade80)' : '#f87171';
+            var res = oc.t + ((a.result_r!==null && a.result_r!==undefined)
+                       ? ' ('+(a.result_r>0?'+':'')+a.result_r+'R)' : '');
+            return '<tr style="border-top:1px solid var(--border,#334155)">'+
+              '<td style="padding:4px 6px;color:var(--text-3);white-space:nowrap">'+esc(_fmtWhen(a.sent_at||a.created_at))+'</td>'+
+              '<td style="padding:4px 6px;font-family:var(--mono);color:var(--text-2)">'+esc(a.symbol||'—')+'</td>'+
+              '<td style="padding:4px 6px;color:'+dirCol+'">'+esc((a.direction||'').toUpperCase())+'</td>'+
+              '<td style="padding:4px 6px;color:var(--text-3)">'+esc((a.modules||[]).length||'—')+'</td>'+
+              '<td style="padding:4px 6px;color:var(--text-3)">'+esc(a.confidence!==null&&a.confidence!==undefined?a.confidence:'—')+'</td>'+
+              '<td style="padding:4px 6px;font-family:var(--mono);color:var(--text-3)">'+esc(a.entry_price!==null&&a.entry_price!==undefined?a.entry_price:'—')+'</td>'+
+              '<td style="padding:4px 6px;font-family:var(--mono);color:var(--text-3)">'+esc(a.stop_loss!==null&&a.stop_loss!==undefined?a.stop_loss:'—')+'</td>'+
+              '<td style="padding:4px 6px;font-family:var(--mono);color:var(--text-3)">'+esc(a.take_profit!==null&&a.take_profit!==undefined?a.take_profit:'—')+'</td>'+
+              '<td style="padding:4px 6px;color:'+oc.c+'">'+esc(res)+'</td>'+
+            '</tr>';
+          }).join('');
+        })
+        .catch(function(e){
+          if(empty){ empty.style.display=''; empty.textContent='Could not load history: '+e; }
+        });
+    };
+  })();
 
   /* ── Phase 11.15 Hotfix: AI Learning Review Loop ─────────────────────── */
   (function(){

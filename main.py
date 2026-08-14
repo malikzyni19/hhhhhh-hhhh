@@ -26462,6 +26462,22 @@ from live_monitor import (
     _lm_get_paper_risk_guard_state,
     _lm_validate_paper_order_against_risk_guard,
     _lm_record_paper_risk_guard_event,
+    # Phase SIG-1: signal alert settings + Telegram delivery
+    get_or_create_signal_settings,
+    serialize_signal_settings,
+    apply_signal_settings_update,
+    signal_module_catalog,
+    normalize_scan_results,
+    record_candidates,
+    expire_stale_candidates,
+    build_confluence_groups,
+    filter_groups_for_settings,
+    run_promotion_cycle,
+    run_promotion_for_all_enabled,
+    max_watched_coins,
+    send_telegram_message,
+    test_telegram_connection,
+    escape_html,
     # Phase 11.14: Paper Performance Dashboard
     _lm_normalize_performance_period,
     _lm_build_paper_performance_filters,
@@ -31184,6 +31200,397 @@ def api_lm_paper_risk_guard_settings_update(item_id):
     return jsonify(result), code
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Phase SIG-1: Signal alert settings + Telegram linking
+#
+# Per-user configuration for which setups reach the user and how. Detection is
+# global; these settings decide delivery. No order placement anywhere in this
+# section — the only credential handled is the user's own Telegram bot token.
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Shown in the settings UI as the "reset to defaults" target and as hints.
+# Mirrors live_monitor/signal_settings.py DEFAULTS, minus anything secret.
+_LM_SIGNAL_DEFAULTS_PUBLIC = {
+    "min_confluence":        1,
+    "max_signals_per_day":   6,
+    "per_pair_cooldown_min": 240,
+    "min_confidence":        65,
+    "trigger_mode":          "in_zone",
+    "approach_pct":          1.5,
+    "coin_scope":            "top_volume",
+    "coin_scope_limit":      100,
+}
+
+
+@app.route("/api/live-monitor/signal-settings", methods=["GET"])
+@login_required
+def api_lm_signal_settings_get():
+    """GET: Current signal settings for this user, plus the module catalog."""
+    uid, _ = _current_user_id_and_user()
+    try:
+        row = get_or_create_signal_settings(uid)
+        return jsonify({
+            "ok":       True,
+            "settings": serialize_signal_settings(row),
+            "modules":  signal_module_catalog(),
+            "defaults": _LM_SIGNAL_DEFAULTS_PUBLIC,
+        })
+    except Exception as exc:
+        print(f"[SIG-1] settings get error user={uid}: {exc}")
+        return jsonify({"ok": False, "error": "settings_unavailable",
+                        "message": str(exc)[:160]}), 500
+
+
+@app.route("/api/live-monitor/signal-settings", methods=["POST"])
+@login_required
+def api_lm_signal_settings_update():
+    """POST: Patch signal settings. Only keys present in the body are changed."""
+    uid, _ = _current_user_id_and_user()
+    body = request.get_json(force=True, silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"ok": False, "error": "invalid_body"}), 400
+
+    # The bot token is never accepted here — it only moves through the
+    # dedicated link endpoint below, which verifies it before storing.
+    body.pop("telegram_bot_token", None)
+    body.pop("telegram_chat_id",   None)
+
+    try:
+        from models import db as _sigdb
+        row = get_or_create_signal_settings(uid)
+        ok, field_errors, changed = apply_signal_settings_update(row, body)
+        if not ok:
+            _sigdb.session.rollback()
+            return jsonify({"ok": False, "error": "settings_validation_failed",
+                            "field_errors": field_errors}), 422
+        if changed:
+            _sigdb.session.commit()
+        return jsonify({"ok": True, "changed": changed,
+                        "settings": serialize_signal_settings(row)})
+    except Exception as exc:
+        try:
+            from models import db as _sigdb2
+            _sigdb2.session.rollback()
+        except Exception:
+            pass
+        print(f"[SIG-1] settings update error user={uid}: {exc}")
+        return jsonify({"ok": False, "error": "settings_update_failed",
+                        "message": str(exc)[:160]}), 500
+
+
+@app.route("/api/live-monitor/signal-settings/telegram/link", methods=["POST"])
+@login_required
+def api_lm_signal_telegram_link():
+    """POST: Verify a bot token + chat ID by sending a test message, then store.
+
+    Nothing is saved unless the test message actually arrives — that way a
+    stored credential always means a working one.
+    """
+    uid, _ = _current_user_id_and_user()
+    body = request.get_json(force=True, silent=True) or {}
+    token   = str(body.get("telegram_bot_token") or "").strip()
+    chat_id = str(body.get("telegram_chat_id")   or "").strip()
+
+    try:
+        from models import db as _sigdb3
+        row = get_or_create_signal_settings(uid)
+
+        # Allow re-testing an already-stored token without retyping it.
+        if not token and row.telegram_bot_token:
+            token = row.telegram_bot_token
+        if not chat_id and row.telegram_chat_id:
+            chat_id = row.telegram_chat_id
+
+        result = test_telegram_connection(token, chat_id)
+
+        if not result.get("ok"):
+            row.telegram_last_error = str(result.get("message") or "")[:255]
+            _sigdb3.session.commit()
+            return jsonify({"ok": False,
+                            "error":   result.get("error", "telegram_test_failed"),
+                            "message": result.get("message"),
+                            "settings": serialize_signal_settings(row)}), 400
+
+        row.telegram_bot_token   = token
+        row.telegram_chat_id     = chat_id
+        row.telegram_verified_at = datetime.now(timezone.utc)
+        row.telegram_last_error  = None
+        _sigdb3.session.commit()
+
+        return jsonify({"ok": True,
+                        "message":      result.get("message"),
+                        "bot_username": result.get("bot_username"),
+                        "settings":     serialize_signal_settings(row)})
+    except Exception as exc:
+        try:
+            from models import db as _sigdb4
+            _sigdb4.session.rollback()
+        except Exception:
+            pass
+        print(f"[SIG-1] telegram link error user={uid}: {exc}")
+        return jsonify({"ok": False, "error": "telegram_link_failed",
+                        "message": str(exc)[:160]}), 500
+
+
+@app.route("/api/live-monitor/signal-settings/telegram/unlink", methods=["POST"])
+@login_required
+def api_lm_signal_telegram_unlink():
+    """POST: Remove stored Telegram credentials and stop delivery."""
+    uid, _ = _current_user_id_and_user()
+    try:
+        from models import db as _sigdb5
+        row = get_or_create_signal_settings(uid)
+        row.telegram_bot_token   = None
+        row.telegram_chat_id     = None
+        row.telegram_verified_at = None
+        row.telegram_last_error  = None
+        # Delivery cannot stay on without a destination.
+        row.delivery_enabled     = False
+        _sigdb5.session.commit()
+        return jsonify({"ok": True, "settings": serialize_signal_settings(row)})
+    except Exception as exc:
+        try:
+            from models import db as _sigdb6
+            _sigdb6.session.rollback()
+        except Exception:
+            pass
+        print(f"[SIG-1] telegram unlink error user={uid}: {exc}")
+        return jsonify({"ok": False, "error": "telegram_unlink_failed",
+                        "message": str(exc)[:160]}), 500
+
+
+# ── Phase SIG-3: promotion scheduler ─────────────────────────────────────────
+# Ranks candidates and puts the strongest under close watch, under a hard
+# ceiling. Detection is global; this runs per user because the ranking depends
+# on each user's own settings.
+
+_lm_sig_promo_thread = None
+_lm_sig_promo_lock   = threading.Lock()
+_lm_sig_promo_state  = {"enabled": False, "last_cycle_at": None,
+                        "last_error": None, "last_result": None}
+
+
+def _lm_signal_promotion_enabled() -> bool:
+    return (os.environ.get("ZYNI_SIG_PROMOTION_ENABLED", "1") or "").strip().lower() \
+        in ("1", "true", "yes", "on")
+
+
+def _lm_signal_promotion_loop():
+    """Background loop: one promotion pass for every opted-in user."""
+    cycle = max(60, int(os.environ.get("ZYNI_SIG_PROMO_CYCLE_SEC", "300") or 300))
+    print(f"[SIG-3] promotion scheduler started cycle={cycle}s "
+          f"max_watched={max_watched_coins()}")
+
+    while True:
+        started = time.time()
+        try:
+            with app.app_context():
+                result = run_promotion_for_all_enabled()
+            with _lm_sig_promo_lock:
+                _lm_sig_promo_state["last_cycle_at"] = int(started)
+                _lm_sig_promo_state["last_result"]   = result
+                _lm_sig_promo_state["last_error"]    = None
+            if result.get("users"):
+                print(f"[SIG-3] promotion cycle: {result['users']} user(s) processed")
+        except Exception as exc:
+            with _lm_sig_promo_lock:
+                _lm_sig_promo_state["last_error"] = str(exc)[:200]
+            print(f"[SIG-3] promotion cycle error: {exc}")
+
+        time.sleep(max(15.0, cycle - (time.time() - started)))
+
+
+def _ensure_lm_signal_promotion():
+    global _lm_sig_promo_thread
+    if _lm_sig_promo_thread and _lm_sig_promo_thread.is_alive():
+        return
+    _lm_sig_promo_thread = threading.Thread(
+        target=_lm_signal_promotion_loop, daemon=True, name="lm-signal-promo")
+    with _lm_sig_promo_lock:
+        _lm_sig_promo_state["enabled"] = True
+    _lm_sig_promo_thread.start()
+
+
+if _lm_signal_promotion_enabled():
+    _ensure_lm_signal_promotion()
+else:
+    print("[SIG-3] promotion scheduler DISABLED (ZYNI_SIG_PROMOTION_ENABLED not truthy)")
+
+
+@app.route("/api/live-monitor/signal-promotion/run", methods=["POST"])
+@login_required
+def api_lm_signal_promotion_run():
+    """POST: Run a promotion pass now for this user, instead of waiting."""
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"ok": False, "error": "no_user"}), 401
+    try:
+        result = run_promotion_cycle(uid)
+        return jsonify({"ok": bool(result.get("ok", True)), "result": result})
+    except Exception as exc:
+        print(f"[SIG-3] manual promotion failed user={uid}: {exc}")
+        return jsonify({"ok": False, "error": "promotion_failed",
+                        "message": str(exc)[:160]}), 500
+
+
+@app.route("/api/live-monitor/signal-candidates", methods=["GET"])
+@login_required
+def api_lm_signal_candidates():
+    """GET: What the scans have found and how they group — the funnel's input.
+
+    Shows both the raw ranking and what survives this user's settings, so it
+    is obvious whether a setting is doing the filtering.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"ok": False, "error": "no_user"}), 401
+    try:
+        hours = min(max(int(request.args.get("hours", 12)), 1), 72)
+    except (TypeError, ValueError):
+        hours = 12
+    try:
+        settings = get_or_create_signal_settings(uid)
+        groups   = build_confluence_groups(window_hours=hours)
+        matched  = filter_groups_for_settings(groups, settings)
+        return jsonify({
+            "ok":            True,
+            "window_hours":  hours,
+            "total_groups":  len(groups),
+            "matched_groups": len(matched),
+            "max_watched":   max_watched_coins(),
+            "groups":        matched[:50],
+        })
+    except Exception as exc:
+        print(f"[SIG-3] candidate list failed user={uid}: {exc}")
+        return jsonify({"ok": False, "error": "candidates_unavailable",
+                        "message": str(exc)[:160]}), 500
+
+
+@app.route("/api/live-monitor/signal-alerts", methods=["GET"])
+@login_required
+def api_lm_signal_alerts_list():
+    """GET: This user's signal alert history plus hit-rate stats.
+
+    Read-only. Bounded by an explicit limit and a period window so the query
+    stays cheap no matter how much history accumulates.
+    """
+    uid, _ = _current_user_id_and_user()
+    if not uid:
+        return jsonify({"ok": False, "error": "no_user"}), 401
+
+    period  = (request.args.get("period") or "30d").strip().lower()
+    outcome = (request.args.get("outcome") or "").strip().lower() or None
+    module  = (request.args.get("module") or "").strip().lower() or None
+    try:
+        limit = min(max(int(request.args.get("limit", 50)), 1), 200)
+    except (TypeError, ValueError):
+        limit = 50
+
+    _PERIOD_DAYS = {"7d": 7, "30d": 30, "90d": 90, "365d": 365}
+    since = None
+    if period in _PERIOD_DAYS:
+        since = datetime.now(timezone.utc) - timedelta(days=_PERIOD_DAYS[period])
+
+    try:
+        from models import LiveMonitorSignalAlert as _SA
+        from sqlalchemy.orm import load_only as _load_only_sa
+        from sqlalchemy import func as _func_sa
+
+        base = _SA.query.filter(_SA.user_id == uid)
+        if since is not None:
+            base = base.filter(_SA.created_at >= since)
+        if outcome in ("pending", "target_hit", "stop_hit", "invalidated", "expired"):
+            base = base.filter(_SA.outcome == outcome)
+
+        # evidence_json is a large blob and is never shown in the list — project
+        # to the columns the table actually renders.
+        rows = (base.options(_load_only_sa(
+                    _SA.id, _SA.symbol, _SA.direction, _SA.timeframe, _SA.tier,
+                    _SA.alert_kind, _SA.modules_json, _SA.confluence_count,
+                    _SA.entry_price, _SA.stop_loss, _SA.take_profit_1,
+                    _SA.risk_reward, _SA.ai_confidence, _SA.ai_summary,
+                    _SA.delivery_status, _SA.outcome, _SA.outcome_reason,
+                    _SA.result_r, _SA.created_at, _SA.sent_at, _SA.outcome_at,
+                ))
+                .order_by(_SA.created_at.desc())
+                .limit(limit).all())
+
+        def _mods(raw):
+            try:
+                val = _json_loads_safe(raw, [])
+                return val if isinstance(val, list) else []
+            except Exception:
+                return []
+
+        # Module filter is applied in Python because modules_json is a JSON
+        # list column — the row count here is already limit-bounded.
+        alerts = []
+        for a in rows:
+            mods = _mods(a.modules_json)
+            if module and module not in mods:
+                continue
+            alerts.append({
+                "id":             a.id,
+                "symbol":         a.symbol,
+                "direction":      a.direction,
+                "timeframe":      a.timeframe,
+                "tier":           a.tier,
+                "alert_kind":     a.alert_kind,
+                "modules":        mods,
+                "confluence":     a.confluence_count,
+                "entry_price":    a.entry_price,
+                "stop_loss":      a.stop_loss,
+                "take_profit":    a.take_profit_1,
+                "risk_reward":    a.risk_reward,
+                "confidence":     a.ai_confidence,
+                "summary":        a.ai_summary,
+                "delivery_status": a.delivery_status,
+                "outcome":        a.outcome,
+                "outcome_reason": a.outcome_reason,
+                "result_r":       a.result_r,
+                "created_at":     a.created_at.isoformat() if a.created_at else None,
+                "sent_at":        a.sent_at.isoformat()    if a.sent_at    else None,
+                "outcome_at":     a.outcome_at.isoformat() if a.outcome_at else None,
+            })
+
+        # Stats are computed over the whole period, not just the returned page,
+        # so the headline numbers don't change when the user pages the table.
+        stat_q = _SA.query.filter(_SA.user_id == uid)
+        if since is not None:
+            stat_q = stat_q.filter(_SA.created_at >= since)
+        counts = dict(
+            stat_q.with_entities(_SA.outcome, _func_sa.count(_SA.id))
+                  .group_by(_SA.outcome).all()
+        )
+        wins   = int(counts.get("target_hit", 0))
+        losses = int(counts.get("stop_hit", 0))
+        closed = wins + losses
+        total  = int(sum(counts.values()))
+
+        return jsonify({
+            "ok":     True,
+            "period": period,
+            "alerts": alerts,
+            "count":  len(alerts),
+            "stats": {
+                "total_alerts": total,
+                "target_hit":   wins,
+                "stop_hit":     losses,
+                "invalidated":  int(counts.get("invalidated", 0)),
+                "expired":      int(counts.get("expired", 0)),
+                "pending":      int(counts.get("pending", 0)),
+                "resolved":     closed,
+                # None (not 0) while nothing has resolved — an unmeasured
+                # system should not display a win rate of zero percent.
+                "win_rate":     (round(wins * 100.0 / closed, 1) if closed else None),
+            },
+        })
+    except Exception as exc:
+        print(f"[SIG-1] alert list error user={uid}: {exc}")
+        return jsonify({"ok": False, "error": "alerts_unavailable",
+                        "message": str(exc)[:160]}), 500
+
+
 @app.route("/api/live-monitor/paper-performance", methods=["GET"])
 @login_required
 def api_lm_paper_performance():
@@ -33264,6 +33671,18 @@ def api_scan():
         except Exception:
             pass
 
+    # ── Phase SIG-2: signal candidate intake — NEVER blocks scan response ──
+    # Normalizes this scan's zone alerts into the shared candidate table so
+    # they can be compared against every other scan tab for confluence.
+    try:
+        _sig_cands = normalize_scan_results("scan", results,
+                                            exchange=exchange, market=market)
+        if _sig_cands:
+            _sig_res = record_candidates(_sig_cands)
+            print(f"[SIG-2] api_scan intake: {_sig_res}")
+    except Exception as _sig_err:
+        print(f"[SIG-2] api_scan intake error: {_sig_err}")
+
     # ── Intelligence logging hook — NEVER blocks scan response ────────────
     try:
         from signal_extractor import extract_zone_signals_from_api_scan_result
@@ -33763,6 +34182,14 @@ def api_compressed_scan():
     if _tok_uid:
         try: consume_tokens(_tok_uid, len(symbols))
         except Exception as _te: print(f"[Tokens] compressed: {_te}")
+
+    # ── Phase SIG-2: candidate intake (never blocks the scan response) ──
+    try:
+        _sig_c = normalize_scan_results("compressed", results, exchange=exchange, market=market)
+        if _sig_c:
+            print(f"[SIG-2] compressed_scan intake: {record_candidates(_sig_c)}")
+    except Exception as _sig_e:
+        print(f"[SIG-2] compressed_scan intake error: {_sig_e}")
 
     return jsonify({
         "ok": True,
@@ -34285,6 +34712,15 @@ def api_trending_scan():
     if _tok_uid:
         try: consume_tokens(_tok_uid, len(pairs[:80]))
         except Exception as _te: print(f"[Tokens] trending: {_te}")
+    # ── Phase SIG-2: candidate intake (never blocks the scan response) ──
+    try:
+        _sig_c = normalize_scan_results("accumulation", out[:limit],
+                                        exchange=exchange, market=market)
+        if _sig_c:
+            print(f"[SIG-2] trending_scan intake: {record_candidates(_sig_c)}")
+    except Exception as _sig_e:
+        print(f"[SIG-2] trending_scan intake error: {_sig_e}")
+
     return jsonify(out[:limit])
 
 
@@ -34536,6 +34972,14 @@ def api_ath_atl_scan():
     if _tok_uid:
         try: consume_tokens(_tok_uid, len(batch_pairs))
         except Exception as _te: print(f"[Tokens] ath_atl: {_te}")
+
+    # ── Phase SIG-2: candidate intake (never blocks the scan response) ──
+    try:
+        _sig_c = normalize_scan_results("ath_atl", accumulated_list, exchange=exchange, market=market)
+        if _sig_c:
+            print(f"[SIG-2] ath_atl_scan intake: {record_candidates(_sig_c)}")
+    except Exception as _sig_e:
+        print(f"[SIG-2] ath_atl_scan intake error: {_sig_e}")
 
     return jsonify({
         "totalPairs": total_pairs,
@@ -36757,6 +37201,14 @@ def api_bias_scan():
     if _tok_uid:
         try: consume_tokens(_tok_uid, len(symbols))
         except Exception as _te: print(f"[Tokens] bias: {_te}")
+    # ── Phase SIG-2: candidate intake (never blocks the scan response) ──
+    try:
+        _sig_c = normalize_scan_results("bias", results, exchange=exchange, market=market)
+        if _sig_c:
+            print(f"[SIG-2] bias_scan intake: {record_candidates(_sig_c)}")
+    except Exception as _sig_e:
+        print(f"[SIG-2] bias_scan intake error: {_sig_e}")
+
     return jsonify({
         "results":        results,
         "scanned":        len(symbols),
